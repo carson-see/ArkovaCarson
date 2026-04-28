@@ -3,14 +3,14 @@
  *
  * Full verification display for public anchor lookups with:
  * - CredentialRenderer for template-based display (UF-01)
- * - PENDING status support with "Anchoring In Progress" banner (UF-04)
- * - Status banner (SECURED / PENDING / REVOKED / EXPIRED)
- * - Cryptographic proof (fingerprint, network receipt, block height)
+ * - PENDING / SUBMITTED pre-secured banners with amber clock + status-specific copy (UF-04, SCRUM-952)
+ * - Status banner (PENDING / SUBMITTED / SECURED / REVOKED / EXPIRED) — SUBMITTED ≠ SECURED
+ * - Cryptographic proof (fingerprint, network receipt, block height) — SECURED only
  * - Lifecycle timeline
  *
  * Shows redacted information - no sensitive data exposed.
  *
- * @see P6-TS-01, P6-TS-04, UF-01, UF-04
+ * @see P6-TS-01, P6-TS-04, UF-01, UF-04, SCRUM-952
  */
 
 import { useState, useEffect } from 'react';
@@ -232,12 +232,21 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
   const isRevoked = data.status === 'REVOKED';
   const isExpired = data.status === 'EXPIRED';
   const isPending = data.status === 'PENDING';
+  // SCRUM-952 — SUBMITTED is treated as a distinct, not-yet-secured state.
+  // Previously SUBMITTED fell through to the SECURED branch and rendered a
+  // green "Document Verified" hero next to a yellow "Awaiting Confirmation"
+  // pill — contradictory trust signals on the same anchor. The pre-secured
+  // hero (amber clock + neutral copy) covers both PENDING and SUBMITTED;
+  // the wording differs because SUBMITTED is on the network awaiting
+  // confirmation while PENDING is still on its way to the network.
+  const isSubmitted = data.status === 'SUBMITTED';
+  const isPreSecured = isPending || isSubmitted;
   const statusLabel = (ANCHOR_STATUS_LABELS as Record<string, string>)[data.status] ?? data.status;
   // Extract DB field (bitcoin_block) to avoid copy-lint trigger in template literal
   const networkRecordBlock = data.bitcoin_block;
 
-  // Calculate time since creation for PENDING anchors
-  const pendingSince = isPending && data.created_at
+  // Calculate time since creation for not-yet-secured anchors
+  const pendingSince = isPreSecured && data.created_at
     ? formatTimeSince(data.created_at)
     : null;
 
@@ -247,7 +256,7 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
           SECTION 1: Status Banner
           ============================================================ */}
       <div className={
-        isPending
+        isPreSecured
           ? 'bg-gradient-to-r from-amber-500/10 to-amber-400/5 px-6 py-6'
           : isExpired
             ? 'bg-gradient-to-r from-amber-500/10 to-amber-400/5 px-6 py-6'
@@ -257,13 +266,15 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
       }>
         <div className="flex flex-col items-center text-center">
           <div className={`flex h-16 w-16 items-center justify-center rounded-full mb-4 ${
-            isPending ? 'bg-amber-500/10'
+            isPreSecured ? 'bg-amber-500/10'
             : isExpired ? 'bg-amber-500/10'
             : isRevoked ? 'bg-gray-500/10'
             : 'bg-green-500/10'
           }`}>
             {isPending ? (
               <Clock className="h-8 w-8 text-amber-500 animate-pulse" />
+            ) : isSubmitted ? (
+              <Clock className="h-8 w-8 text-amber-500" />
             ) : isExpired ? (
               <Clock className="h-8 w-8 text-amber-500" />
             ) : isRevoked ? (
@@ -273,31 +284,39 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
             )}
           </div>
           <Badge
-            variant={isPending ? 'outline' : isExpired ? 'outline' : isRevoked ? 'secondary' : 'default'}
+            variant={isPreSecured ? 'outline' : isExpired ? 'outline' : isRevoked ? 'secondary' : 'default'}
             className={`mb-2 text-sm px-4 py-1 ${
-              isPending ? 'border-amber-500 text-amber-600 bg-amber-50 dark:bg-amber-950/20'
+              isPreSecured ? 'border-amber-500 text-amber-600 bg-amber-50 dark:bg-amber-950/20'
               : isExpired ? 'border-amber-500 text-amber-600 bg-amber-50 dark:bg-amber-950/20'
               : isRevoked ? ''
               : 'bg-green-600 hover:bg-green-700'
             }`}
           >
-            {isPending ? ANCHORING_STATUS_LABELS.PENDING_BADGE : statusLabel}
+            {isPending
+              ? ANCHORING_STATUS_LABELS.PENDING_BADGE
+              : isSubmitted
+                ? ANCHOR_STATUS_LABELS.SUBMITTED
+                : statusLabel}
           </Badge>
           <h2 className="text-xl font-semibold">
             {isPending
               ? ANCHORING_STATUS_LABELS.PENDING_PUBLIC_TITLE
-              : isRevoked ? PUBLIC_VERIFICATION_LABELS.RECORD_REVOKED
-              : isExpired ? PUBLIC_VERIFICATION_LABELS.RECORD_EXPIRED
-              : PUBLIC_VERIFICATION_LABELS.DOCUMENT_VERIFIED}
+              : isSubmitted
+                ? ANCHORING_STATUS_LABELS.SUBMITTED_PUBLIC_TITLE
+                : isRevoked ? PUBLIC_VERIFICATION_LABELS.RECORD_REVOKED
+                : isExpired ? PUBLIC_VERIFICATION_LABELS.RECORD_EXPIRED
+                : PUBLIC_VERIFICATION_LABELS.DOCUMENT_VERIFIED}
           </h2>
           <p className="text-sm text-muted-foreground mt-1">
             {isPending
               ? ANCHORING_STATUS_LABELS.PENDING_PUBLIC_SUBTITLE
-              : isRevoked
-                ? PUBLIC_VERIFICATION_LABELS.REVOKED_DESC
-                : isExpired
-                  ? PUBLIC_VERIFICATION_LABELS.EXPIRED_DESC
-                  : PUBLIC_VERIFICATION_LABELS.VERIFIED_DESC}
+              : isSubmitted
+                ? ANCHORING_STATUS_LABELS.SUBMITTED_PUBLIC_SUBTITLE
+                : isRevoked
+                  ? PUBLIC_VERIFICATION_LABELS.REVOKED_DESC
+                  : isExpired
+                    ? PUBLIC_VERIFICATION_LABELS.EXPIRED_DESC
+                    : PUBLIC_VERIFICATION_LABELS.VERIFIED_DESC}
           </p>
           {pendingSince && (
             <p className="text-xs text-amber-600 mt-2">
@@ -386,7 +405,7 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
         {/* ============================================================
             SECTION 2b: Evidence Layers (COMP-01)
             ============================================================ */}
-        {!isPending && (
+        {!isPreSecured && (
           <>
             <Separator />
             <EvidenceLayersSection
@@ -402,7 +421,7 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
         {/* ============================================================
             SECTION 3: Cryptographic Proof (only for non-PENDING)
             ============================================================ */}
-        {!isPending && (
+        {!isPreSecured && (
           <>
             <Separator />
             <div>
@@ -498,7 +517,7 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
         {/* ============================================================
             SECTION 5: Proof Download (UF-07)
             ============================================================ */}
-        {!isPending && (
+        {!isPreSecured && (
           <>
             <Separator />
             <VerifierProofDownload

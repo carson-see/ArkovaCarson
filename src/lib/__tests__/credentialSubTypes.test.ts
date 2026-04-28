@@ -7,6 +7,7 @@ import {
   ALL_SUB_TYPES,
   isValidSubType,
 } from '../validators';
+import { formatCredentialSubType } from '../copy';
 
 describe('Credential Sub-Type Taxonomy (GRE-01)', () => {
   it('every credential type has at least one sub-type', () => {
@@ -98,6 +99,63 @@ describe('Credential Sub-Type Taxonomy (GRE-01)', () => {
           promptSource,
           `extraction prompt missing ${type}.${subType} — update services/worker/src/ai/prompts/extraction.ts`,
         ).toContain(subType);
+      }
+    }
+  });
+});
+
+describe('formatCredentialSubType (SCRUM-952)', () => {
+  it('returns "—" for nullish input', () => {
+    expect(formatCredentialSubType(null)).toBe('—');
+    expect(formatCredentialSubType(undefined)).toBe('—');
+    expect(formatCredentialSubType('')).toBe('—');
+  });
+
+  it('returns "Unclassified" for the explicit unclassified sentinel', () => {
+    expect(formatCredentialSubType('unclassified')).toBe('Unclassified');
+  });
+
+  it('title-cases simple snake_case subtypes', () => {
+    expect(formatCredentialSubType('professional_certification')).toBe('Professional Certification');
+    expect(formatCredentialSubType('completion_certificate')).toBe('Completion Certificate');
+    expect(formatCredentialSubType('bachelor')).toBe('Bachelor');
+    expect(formatCredentialSubType('doctorate')).toBe('Doctorate');
+  });
+
+  it('preserves canonical acronym capitalization', () => {
+    expect(formatCredentialSubType('nursing_rn')).toBe('Nursing RN');
+    expect(formatCredentialSubType('medical_md')).toBe('Medical MD');
+    expect(formatCredentialSubType('engineering_pe')).toBe('Engineering PE');
+    expect(formatCredentialSubType('professional_jd')).toBe('Professional JD');
+    expect(formatCredentialSubType('cpa')).toBe('CPA');
+    expect(formatCredentialSubType('cdl')).toBe('CDL');
+  });
+
+  it('handles SEC-filing short codes', () => {
+    expect(formatCredentialSubType('10k')).toBe('10-K');
+    expect(formatCredentialSubType('10q')).toBe('10-Q');
+    expect(formatCredentialSubType('8k')).toBe('8-K');
+    expect(formatCredentialSubType('def14a')).toBe('DEF 14A');
+    expect(formatCredentialSubType('s1')).toBe('S-1');
+  });
+
+  it('handles VA / FINRA / NPI / DEA acronyms', () => {
+    expect(formatCredentialSubType('va_disability')).toBe('VA Disability');
+    expect(formatCredentialSubType('finra_broker')).toBe('FINRA Broker');
+    expect(formatCredentialSubType('npi_registration')).toBe('NPI Registration');
+    expect(formatCredentialSubType('dea_registration')).toBe('DEA Registration');
+  });
+
+  it('falls back to title case for unrecognized but well-formed subtypes', () => {
+    expect(formatCredentialSubType('weird_made_up_subtype')).toBe('Weird Made Up Subtype');
+  });
+
+  it('every subtype in CREDENTIAL_SUB_TYPES produces a non-empty, non-"Other" label', () => {
+    for (const subTypes of Object.values(CREDENTIAL_SUB_TYPES)) {
+      for (const sub of subTypes) {
+        const label = formatCredentialSubType(sub);
+        expect(label, `subtype ${sub}`).not.toBe('');
+        expect(label, `subtype ${sub}`).not.toBe('Other');
       }
     }
   });

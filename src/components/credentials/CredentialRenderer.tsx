@@ -32,6 +32,7 @@ import {
   CREDENTIAL_TYPE_LABELS,
   ANCHOR_STATUS_LABELS,
   CREDENTIAL_RENDERER_LABELS as LABELS,
+  formatCredentialSubType,
 } from '@/lib/copy';
 import type { TemplateDisplayData } from '@/hooks/useCredentialTemplate';
 
@@ -200,9 +201,33 @@ export function CredentialRenderer({
   const config = TYPE_CONFIG[typeKey] ?? TYPE_CONFIG.OTHER;
   const TypeIcon = config.icon;
 
-  const credentialLabel = credentialType
+  // SCRUM-952 — when credential_type is OTHER (or unknown) but metadata
+  // carries a recognized subtype (e.g. `professional_certification`),
+  // surface the subtype as the user-visible Type label so we don't mark
+  // a known credential as the generic "Other" fallback. The parent type
+  // is preserved in CREDENTIAL_TYPE_LABELS for rendering when present
+  // and unambiguous.
+  //
+  // Key precedence: `sub_type` is the canonical anchor column (per
+  // migration 0213 / GRE-01). `subtype` (no underscore) is the legacy
+  // Gemini extraction-payload key that some callers still emit. Prefer
+  // the canonical column so a stale extraction-payload subtype can't
+  // shadow the schema-blessed value.
+  const subtypeRaw =
+    metadata && typeof metadata.sub_type === 'string'
+      ? metadata.sub_type
+      : metadata && typeof metadata.subtype === 'string'
+        ? metadata.subtype
+        : null;
+  const typeLabel = credentialType
     ? (CREDENTIAL_TYPE_LABELS as Record<string, string>)[credentialType] ?? credentialType
     : null;
+  const credentialLabel =
+    typeLabel && typeLabel !== CREDENTIAL_TYPE_LABELS.OTHER
+      ? typeLabel
+      : subtypeRaw
+        ? formatCredentialSubType(subtypeRaw)
+        : typeLabel;
 
   const statusLabel = status
     ? (ANCHOR_STATUS_LABELS as Record<string, string>)[status] ?? status
