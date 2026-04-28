@@ -76,6 +76,11 @@ jobs:
         run: npm ci
 
       - name: Enforce pinned package versions
+        env:
+          # SCRUM-1005: pipe PR labels so the override label
+          # `dep-range-intentional` works on PR runs. On `push` events
+          # github.event.pull_request is null and this is empty.
+          PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
         run: npm run ci:dep-pinning
 
       - name: Run npm audit (root production dependencies)

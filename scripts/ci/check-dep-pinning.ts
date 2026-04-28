@@ -15,12 +15,61 @@
  * Override: PR labeled `dep-range-intentional`.
  */
 
-import { readFileSync, existsSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { readFileSync, existsSync, statSync, realpathSync } from 'node:fs';
+import { resolve, sep, join } from 'node:path';
+import { tmpdir } from 'node:os';
 
 const OVERRIDE_LABEL = 'dep-range-intentional';
-const REPO = resolve(import.meta.dirname, '..', '..');
-const prLabels = (process.env.PR_LABELS ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+
+/**
+ * Resolve the repo root, validating any user-supplied DEP_PINNING_REPO_ROOT
+ * to prevent the script from reading arbitrary files on disk.
+ *
+ * Security: SonarCloud flagged the previous unconstrained
+ * `JSON.parse(readFileSync(resolve(REPO, relPath)))` as a path-traversal
+ * hotspot — a malicious env var could point at /etc/, ~/.ssh/, etc.
+ *
+ * Allowed locations:
+ *   1. The script's own repo (the default fallback)
+ *   2. Anywhere under the OS temp dir (CI fixtures, vitest tmp dirs)
+ *
+ * The candidate must also contain a `package.json` — anything else is
+ * not a plausible repo root and is rejected.
+ */
+export function resolveRepoRoot(): string {
+  const fallback = resolve(import.meta.dirname, '..', '..');
+  const envRoot = process.env.DEP_PINNING_REPO_ROOT;
+  if (!envRoot) return fallback;
+
+  const resolved = resolve(envRoot);
+
+  // Resolve symlinks for both candidate and allowlist roots so a
+  // symlinked /tmp -> /private/tmp (macOS) doesn't fool the prefix check.
+  const realResolved = existsSync(resolved) ? realpathSync(resolved) : resolved;
+  const realFallback = realpathSync(fallback);
+  const realTmp = realpathSync(tmpdir());
+
+  const isInRepo = realResolved === realFallback || realResolved.startsWith(realFallback + sep);
+  const isInTmp = realResolved === realTmp || realResolved.startsWith(realTmp + sep);
+
+  if (!isInRepo && !isInTmp) {
+    throw new Error(
+      `DEP_PINNING_REPO_ROOT=${envRoot} resolves to ${realResolved}, which is outside both the repo root (${realFallback}) and the OS temp dir (${realTmp}) — refusing for safety.`,
+    );
+  }
+
+  // Sanity: must look like a repo (contain package.json) and be a directory.
+  if (!existsSync(resolved) || !statSync(resolved).isDirectory()) {
+    throw new Error(`DEP_PINNING_REPO_ROOT=${envRoot} is not an existing directory — refusing.`);
+  }
+  if (!existsSync(join(resolved, 'package.json'))) {
+    throw new Error(
+      `DEP_PINNING_REPO_ROOT=${envRoot} has no package.json — not a valid repo root.`,
+    );
+  }
+
+  return resolved;
+}
 
 interface Violation {
   file: string;
@@ -36,8 +85,8 @@ const PACKAGE_JSONS = [
   'services/edge/package.json',
 ];
 
-function scanPackageJson(relPath: string): Violation[] {
-  const absPath = resolve(REPO, relPath);
+function scanPackageJson(repo: string, relPath: string): Violation[] {
+  const absPath = resolve(repo, relPath);
   if (!existsSync(absPath)) return [];
 
   const pkg = JSON.parse(readFileSync(absPath, 'utf8'));
@@ -58,9 +107,12 @@ function scanPackageJson(relPath: string): Violation[] {
 }
 
 function main(): void {
+  const repo = resolveRepoRoot();
+  const prLabels = (process.env.PR_LABELS ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+
   const allViolations: Violation[] = [];
   for (const rel of PACKAGE_JSONS) {
-    allViolations.push(...scanPackageJson(rel));
+    allViolations.push(...scanPackageJson(repo, rel));
   }
 
   if (allViolations.length === 0) {
@@ -87,4 +139,21 @@ function main(): void {
   process.exit(1);
 }
 
-main();
+// Run main() only when executed directly (not when imported by tests).
+// Compare realpath of argv[1] against this module's filename so /tmp -> /private/tmp
+// symlink resolution (macOS) doesn't fool us.
+function isDirectRun(): boolean {
+  const argv = process.argv[1];
+  if (!argv) return false;
+  try {
+    const argvReal = realpathSync(argv);
+    const selfPath = join(import.meta.dirname, 'check-dep-pinning.ts');
+    const selfReal = realpathSync(selfPath);
+    return argvReal === selfReal;
+  } catch {
+    return false;
+  }
+}
+if (isDirectRun()) {
+  main();
+}
