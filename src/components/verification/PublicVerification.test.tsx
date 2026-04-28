@@ -68,9 +68,13 @@ describe('PublicVerification', () => {
 
     render(<PublicVerification publicId="ARK-DOC-123" />);
 
-    expect(await screen.findByText('Record Submitted - Awaiting Network Confirmation')).toBeInTheDocument();
+    expect(await screen.findByText('Record Submitted · Awaiting Network Confirmation')).toBeInTheDocument();
     expect(screen.getByText('Awaiting Confirmation')).toBeInTheDocument();
-    expect(screen.getByText('Finalization usually takes about 60 minutes.')).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        'Finalization usually takes ≈60 minutes once the network observes the next checkpoint.',
+      ),
+    ).toBeInTheDocument();
     expect(screen.queryByText('Document Verified')).not.toBeInTheDocument();
     expect(screen.queryByText('Cryptographic Proof')).not.toBeInTheDocument();
     expect(screen.queryByTestId('proof-download')).not.toBeInTheDocument();
