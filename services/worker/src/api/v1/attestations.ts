@@ -223,9 +223,13 @@ router.post('/', async (req: Request, res: Response) => {
       }).catch((err: unknown) => logger.warn({ error: err }, 'Attestation creation webhook failed'));
     }
 
+    // SCRUM-1271-B — drop `attestation_id` (internal UUID). Customers reference
+    // attestations by `public_id` per CLAUDE.md §6. The `attestation_id` field
+    // is preserved in v1 for now under §1.8 freeze, but only as the same value
+    // as `public_id` (no UUID exposure).
     res.status(201).json({
       public_id: attestation.public_id,
-      attestation_id: attestation.id,
+      attestation_id: attestation.public_id,
       attestation_type: attestation.attestation_type,
       status: attestation.status,
       fingerprint: attestation.fingerprint,
@@ -322,8 +326,9 @@ router.get('/:publicId', async (req: Request, res: Response) => {
       // Proof
       fingerprint: attestation.fingerprint,
       evidence_fingerprint: attestation.evidence_fingerprint,
+      // SCRUM-1271-B — drop the internal `id` UUID from evidence rows. The
+      // fingerprint is the natural identifier for evidence items.
       evidence: (evidenceItems ?? []).map((e: Record<string, unknown>) => ({
-        id: e.id,
         evidence_type: e.evidence_type,
         description: e.description,
         fingerprint: e.fingerprint,
