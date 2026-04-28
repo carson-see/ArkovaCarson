@@ -2267,6 +2267,7 @@ export const AUDIT_MY_ORG_LABELS = {
   DESCRIPTION:
     'Run a live compliance audit across every jurisdiction you operate in. Get a scored report with prioritised next steps in under 30 seconds.',
   CTA: 'Start compliance audit',
+  RUNNING: 'Running compliance audit…',
   PROGRESS_ANALYZING: 'Analyzing credentials…',
   PROGRESS_CHECKING: 'Checking regulatory requirements…',
   PROGRESS_GENERATING: 'Generating compliance report…',

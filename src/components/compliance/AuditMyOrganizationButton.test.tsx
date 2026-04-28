@@ -98,6 +98,26 @@ describe('NCA-07 AuditMyOrganizationButton', () => {
     });
   });
 
+  it('SCRUM-950: button enters aria-busy + disabled + spinner + "Running…" while audit runs', async () => {
+    // fetchFn that hangs so we observe the busy state
+    let resolve: (v: Response) => void = () => {};
+    const fetchFn = vi.fn(() => new Promise<Response>(r => { resolve = r; }));
+    renderWithRouter(<AuditMyOrganizationButton fetchFn={fetchFn} disablePhaseAnimation />);
+    const trigger = screen.getByTestId('audit-trigger') as HTMLButtonElement;
+    fireEvent.click(trigger);
+
+    await waitFor(() => {
+      const t = screen.getByTestId('audit-trigger') as HTMLButtonElement;
+      expect(t.getAttribute('aria-busy')).toBe('true');
+      expect(t.disabled).toBe(true);
+      expect(t.textContent).toContain('Running compliance audit');
+      expect(t.querySelector('svg.animate-spin')).not.toBeNull();
+    });
+
+    // resolve the in-flight call so timers cleanup
+    resolve({ ok: true, status: 201, json: async () => ({ id: 'a1', status: 'COMPLETED' }) } as unknown as Response);
+  });
+
   it('keyboard-navigable — button is focusable with aria-label + role=status progress', async () => {
     const fetchFn = vi.fn(async () => ({
       ok: true,

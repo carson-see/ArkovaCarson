@@ -1201,7 +1201,7 @@ export function PipelineAdminPage() {
 
                             {anchorDetails.chain_block_height && (
                               <div>
-                                <span className="text-[10px] text-muted-foreground">Block Height</span>
+                                <span className="text-[10px] text-muted-foreground">Network Checkpoint</span>
                                 <p className="text-xs font-mono mt-0.5">{anchorDetails.chain_block_height.toLocaleString()}</p>
                               </div>
                             )}

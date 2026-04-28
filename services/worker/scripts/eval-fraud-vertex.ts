@@ -20,6 +20,7 @@ import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execSync } from 'node:child_process';
 import { FRAUD_TRAINING_SEED, FRAUD_SYSTEM_PROMPT } from '../src/ai/eval/fraud-training-seed.js';
+import { FRAUD_HOLDOUT_SET } from '../src/ai/eval/fraud-holdout-set.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -172,18 +173,18 @@ async function pool<T, U>(items: T[], n: number, fn: (item: T) => Promise<U>): P
 }
 
 async function main() {
-  // The tuned model was trained on all 100 entries; eval here is a
-  // train-set sanity check (memorization floor) since we do not have a
-  // disjoint held-out set in the training-format schema. F1 should be
-  // near 100% if tuning ran correctly. A held-out generalization eval
-  // is tracked as follow-up work — needs a 20-entry disjoint set in
-  // the same `extractedFields → expectedOutput` shape.
-  const dataset = FRAUD_TRAINING_SEED;
+  // EVAL_MODE controls which dataset:
+  //   "holdout" (default) → FRAUD_HOLDOUT_SET (20 disjoint entries; true generalization)
+  //   "train"             → FRAUD_TRAINING_SEED (100 entries; memorization floor)
+  const mode = (process.env.EVAL_MODE || 'holdout').toLowerCase();
+  const dataset = mode === 'train' ? FRAUD_TRAINING_SEED : FRAUD_HOLDOUT_SET;
+  const datasetLabel = mode === 'train' ? 'training seed (memorization floor)' : 'held-out set (true generalization)';
   console.log(`\n=== SCRUM-1467 / GME2-01 fraud eval against Vertex tuned Gemini ===`);
   console.log(`  Endpoint:   ${ENDPOINT_ID}`);
   console.log(`  Project:    ${PROJECT_ID}`);
   console.log(`  Region:     ${REGION}`);
-  console.log(`  Dataset:    ${dataset.length} entries (training seed; memorization floor)`);
+  console.log(`  Mode:       ${mode}`);
+  console.log(`  Dataset:    ${dataset.length} entries (${datasetLabel})`);
   console.log(`  Concurrency: ${CONCURRENCY}`);
   console.log('');
 

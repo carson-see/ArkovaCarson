@@ -1,0 +1,35 @@
+{
+  "$schema": "https://docs.arkova.ai/schemas/proof-public-keys.v1.json",
+  "service": "arkova-proof-bundle",
+  "bundle_version": "1.0.0",
+  "signature_algorithm": "Ed25519",
+  "verification_url": "https://docs.arkova.ai/keys.json",
+  "verification_doc": "https://arkova.atlassian.net/wiki/spaces/A — page `11_proof_packages`",
+  "_notice": "Verifiers should pin a copy of this file alongside the bundle so verification works offline. After key rotation, retired keys remain in this list (status: retired) so historical bundles stay verifiable.",
+  "keys": [
+    {
+      "signing_key_id": "arkova-proof-2026-04",
+      "status": "active",
+      "algorithm": "Ed25519",
+      "publicKeyPem": "-----BEGIN PUBLIC KEY-----\n<populate via scripts/proof/publish-public-key.ts after KMS key is provisioned>\n-----END PUBLIC KEY-----",
+      "issued_at_utc": "2026-04-28T00:00:00Z",
+      "retired_at_utc": null,
+      "kms_key_name": "projects/arkova1/locations/us-central1/keyRings/proof-signing/cryptoKeys/proof-ed25519/cryptoKeyVersions/1",
+      "notes": "First production proof-bundle signing key. Rotation policy: every 12 months OR on suspected compromise."
+    }
+  ],
+  "rotation_policy": {
+    "interval_months": 12,
+    "process": [
+      "Operator: provision new GCP KMS Ed25519 key version under same keyring (`proof-signing/proof-ed25519`).",
+      "Operator: run `npx tsx services/worker/scripts/proof/publish-public-key.ts <new_key_resource> <new_signing_key_id>` to append the new key to docs/public-keys.json.",
+      "Worker: redeploy with PROOF_SIGNING_KMS_KEY pointing at the new key version + PROOF_SIGNING_KEY_ID set to the new id.",
+      "Operator: mark previous key `status: retired` in docs/public-keys.json + set `retired_at_utc`. Do NOT remove the entry — historical bundles must remain verifiable."
+    ],
+    "compromise_response": [
+      "Mark compromised key `status: compromised` in docs/public-keys.json with `retired_at_utc`.",
+      "Disable the KMS key version in GCP Console (prevents further signing).",
+      "Rotate per process above and announce on docs.arkova.ai with the affected window so verifiers can require a co-signed re-issue."
+    ]
+  }
+}

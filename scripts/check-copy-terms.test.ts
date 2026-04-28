@@ -9,7 +9,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { FORBIDDEN_TERMS } from './check-copy-terms.js';
+import { FORBIDDEN_TERMS, COMPOUND_BANNED_PHRASES } from './check-copy-terms.js';
 
 function matches(term: string, haystack: string): boolean {
   return new RegExp(term, 'gi').test(haystack);
@@ -48,5 +48,45 @@ describe('FORBIDDEN_TERMS — postgrest CamelCase', () => {
 
   it('does not match unrelated words sharing a prefix', () => {
     expect(matches(term, 'postgresql is the DB')).toBe(false);
+  });
+});
+
+describe('COMPOUND_BANNED_PHRASES (SCRUM-951)', () => {
+  function compoundMatches(phrase: string, haystack: string): boolean {
+    const re = new RegExp(`(?<![-\\w])${phrase.replace(/ /g, '\\s+')}(?![-\\w])`, 'gi');
+    return re.test(haystack);
+  }
+
+  it('flags "Block Height" inside a className-bearing JSX line', () => {
+    const phrase = COMPOUND_BANNED_PHRASES.find(p => p === 'block height');
+    expect(phrase).toBeDefined();
+    expect(compoundMatches(phrase!, '<p className="text-xs text-muted-foreground">Block Height</p>')).toBe(true);
+  });
+
+  it('flags "Block Height" case-insensitively', () => {
+    expect(compoundMatches('block height', 'block height')).toBe(true);
+    expect(compoundMatches('block height', 'BLOCK HEIGHT')).toBe(true);
+    expect(compoundMatches('block height', 'Block  Height')).toBe(true); // multi-space
+  });
+
+  it('flags "Transaction Hash" + "Gas Fee" + "Gas Price"', () => {
+    expect(compoundMatches('transaction hash', 'tx Transaction Hash here')).toBe(true);
+    expect(compoundMatches('gas fee', 'pay the Gas Fee')).toBe(true);
+    expect(compoundMatches('gas price', 'high Gas Price')).toBe(true);
+  });
+
+  it('does not match adjacent words from different phrases', () => {
+    expect(compoundMatches('block height', 'the block of code has a height attribute')).toBe(false);
+    expect(compoundMatches('gas fee', 'the gas station has a fee schedule')).toBe(false);
+  });
+
+  it('does not match inside identifiers (hyphen / underscore boundaries)', () => {
+    expect(compoundMatches('block height', 'cssBlock-height-class')).toBe(false);
+    expect(compoundMatches('block height', 'data-block_height')).toBe(false);
+  });
+
+  it('exposes a non-empty compound-phrase list', () => {
+    expect(COMPOUND_BANNED_PHRASES.length).toBeGreaterThan(0);
+    expect(COMPOUND_BANNED_PHRASES).toContain('block height');
   });
 });

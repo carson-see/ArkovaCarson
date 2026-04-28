@@ -51,6 +51,28 @@ export const FORBIDDEN_TERMS = [
   String.raw`(?<![-\w])issue credential(?![-\w])`,
 ];
 
+/**
+ * Compound banned phrases (SCRUM-951): two-or-more-word terms that should
+ * NEVER appear in any source line — including lines that also carry
+ * `className=` attributes. The single-word `block` / `hash` rules are
+ * skipped on className lines (because Tailwind's `block` display class
+ * shares the literal token), but compound phrases like "Block Height" are
+ * unambiguous engineering jargon — there's no class name with that exact
+ * pair of words. So we check them with the same regex engine but bypass
+ * the className skip in `shouldSkipLine`.
+ */
+export const COMPOUND_BANNED_PHRASES = [
+  'block height',
+  'block hash',
+  'block number',
+  'block time',
+  'gas price',
+  'gas fee',
+  'gas limit',
+  'transaction hash',
+  'transaction id',
+];
+
 // File patterns to check (UI-facing files)
 // These patterns define which files are scanned for UI copy
 const _INCLUDE_PATTERNS = [
@@ -129,8 +151,15 @@ function shouldCheck(filePath: string): boolean {
  * Returns true if the line should be skipped (comments, imports, CSS classes, crypto API).
  */
 function shouldSkipLine(line: string, trimmed: string): boolean {
-  // Skip comments and imports
-  if (trimmed.startsWith('//') || trimmed.startsWith('*') || trimmed.startsWith('import ')) {
+  // Skip comments (incl. JSX braced comments) and imports.
+  if (
+    trimmed.startsWith('//') ||
+    trimmed.startsWith('*') ||
+    trimmed.startsWith('/*') ||
+    trimmed.startsWith('{/*') ||
+    trimmed.includes('*/}') ||
+    trimmed.startsWith('import ')
+  ) {
     return true;
   }
   // Skip CSS class names (e.g. Tailwind "block" means display:block)
@@ -177,6 +206,35 @@ function findTermViolations(line: string, lineNum: number, filePath: string): Vi
   return results;
 }
 
+/**
+ * Finds compound-banned-phrase violations (SCRUM-951). Run separately
+ * from `findTermViolations` so we can apply this check on lines that
+ * `shouldSkipLine` would otherwise skip — compound phrases are too
+ * specific to false-positive on Tailwind classes / DOM API params.
+ */
+function findCompoundPhraseViolations(line: string, lineNum: number, filePath: string): Violation[] {
+  // Skip comments (// or /* …) and JSX braced comments {/* … */} — those
+  // legitimately reference the banned phrase to document the rename.
+  const trimmed = line.trim();
+  if (trimmed.startsWith('//') || trimmed.startsWith('*') || trimmed.startsWith('/*') ||
+      trimmed.startsWith('{/*') || trimmed.includes('*/}')) {
+    return [];
+  }
+  const results: Violation[] = [];
+  for (const phrase of COMPOUND_BANNED_PHRASES) {
+    const regex = new RegExp(`(?<![-\\w])${phrase.replace(/ /g, '\\s+')}(?![-\\w])`, 'gi');
+    const match = line.match(regex);
+    if (!match) continue;
+    results.push({
+      file: filePath,
+      line: lineNum,
+      term: match[0],
+      context: line.trim().substring(0, 80),
+    });
+  }
+  return results;
+}
+
 function checkFile(filePath: string): Violation[] {
   const violations: Violation[] = [];
   const content = fs.readFileSync(filePath, 'utf-8');
@@ -185,6 +243,11 @@ function checkFile(filePath: string): Violation[] {
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     const trimmed = line.trim();
+
+    // Compound phrases (SCRUM-951) bypass the className/skip filter — they
+    // are unambiguous engineering jargon that should never appear in any
+    // source string, even alongside Tailwind classes.
+    violations.push(...findCompoundPhraseViolations(line, i + 1, filePath));
 
     if (shouldSkipLine(line, trimmed)) {
       continue;

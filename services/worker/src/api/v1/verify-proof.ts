@@ -15,19 +15,32 @@
 
 import { Router, Request, Response } from 'express';
 import { createSignedBundle, staticEd25519Signer, type SignerFn } from '../../proof/signed-bundle.js';
+import { kmsEd25519Signer } from '../../proof/kms-ed25519-signer.js';
 
 const router = Router();
 
-// Resolve the signer once per request. Returns null when neither env var is
-// set so `?format=signed` can respond 503 (caller degrades to the legacy
-// unsigned shape) instead of silently shipping an unsigned bundle.
-// Production will swap `staticEd25519Signer` for a GCP KMS adapter; the
-// `SignerFn` contract doesn't change.
+// Resolve the signer once per request. Returns null when no production
+// or dev signing material is configured, so `?format=signed` can respond
+// 503 (caller degrades to the legacy unsigned shape) instead of silently
+// shipping an unsigned bundle.
+//
+// Resolution order:
+//   1. PROOF_SIGNING_KMS_KEY + PROOF_SIGNING_KEY_ID → GCP KMS Ed25519
+//      signer (production: private key never leaves KMS, per AC of
+//      SCRUM-900 and `feedback_no_aws.md`)
+//   2. PROOF_SIGNING_KEY_PEM + PROOF_SIGNING_KEY_ID → static-PEM signer
+//      (dev / preview / unit fixtures only — never set in prod)
+//   3. None of the above → null → 503
 function resolveSigner(): { sign: SignerFn; keyId: string } | null {
-  const pem = process.env.PROOF_SIGNING_KEY_PEM;
   const keyId = process.env.PROOF_SIGNING_KEY_ID;
-  if (!pem || !keyId) return null;
-  return { sign: staticEd25519Signer(pem, keyId), keyId };
+  if (!keyId) return null;
+  const kmsKeyName = process.env.PROOF_SIGNING_KMS_KEY;
+  if (kmsKeyName) {
+    return { sign: kmsEd25519Signer({ kmsKeyName, signingKeyId: keyId }), keyId };
+  }
+  const pem = process.env.PROOF_SIGNING_KEY_PEM;
+  if (pem) return { sign: staticEd25519Signer(pem, keyId), keyId };
+  return null;
 }
 
 /** Merkle proof entry matching the stored format */
