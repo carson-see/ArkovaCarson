@@ -11,8 +11,11 @@ from httpx import Response
 from arkova import (
     ArkovaClient,
     ArkovaError,
+    VERIFY_BATCH_MAX_SIZE,
     VERIFY_BATCH_SYNC_LIMIT,
     AnchorReceipt,
+    BatchJob,
+    BatchVerificationResult,
     VerificationResult,
     WebhookEndpoint,
     WebhookEndpointWithSecret,
@@ -275,6 +278,227 @@ class TestVerifyBatch:
 
     def test_limit_constant_is_20(self):
         assert VERIFY_BATCH_SYNC_LIMIT == 20
+
+    def test_max_size_constant_is_100(self):
+        assert VERIFY_BATCH_MAX_SIZE == 100
+
+
+# ── Batch Verify (async / job-based) ──────────────────────────────────
+
+
+class TestVerifyBatchAsync:
+    def test_rejects_below_sync_threshold(self, client):
+        ids = [f"ARK-{i}" for i in range(VERIFY_BATCH_SYNC_LIMIT)]
+        with pytest.raises(ArkovaError) as exc_info:
+            client.verify_batch_async(ids)
+        assert exc_info.value.code == "batch_too_small"
+        assert exc_info.value.status_code == 400
+
+    def test_rejects_above_max_size(self, client):
+        ids = [f"ARK-{i}" for i in range(VERIFY_BATCH_MAX_SIZE + 1)]
+        with pytest.raises(ArkovaError) as exc_info:
+            client.verify_batch_async(ids)
+        assert exc_info.value.code == "batch_too_large"
+        assert exc_info.value.status_code == 400
+
+    @respx.mock
+    def test_returns_job_for_in_range_count(self, client):
+        ids = [f"ARK-{i}" for i in range(VERIFY_BATCH_SYNC_LIMIT + 1)]
+        respx.post(f"{BASE_URL}/api/v1/verify/batch").mock(
+            return_value=Response(
+                202,
+                json={
+                    "job_id": "job_abc123",
+                    "total": len(ids),
+                    "expires_at": "2026-05-05T00:00:00Z",
+                },
+            )
+        )
+        job = client.verify_batch_async(ids)
+        assert isinstance(job, BatchJob)
+        assert job.job_id == "job_abc123"
+        assert job.status == "submitted"
+        assert job.total == len(ids)
+        assert job.expires_at == "2026-05-05T00:00:00Z"
+        assert job.results is None
+
+    @respx.mock
+    def test_raises_when_server_omits_job_id(self, client):
+        ids = [f"ARK-{i}" for i in range(VERIFY_BATCH_SYNC_LIMIT + 1)]
+        respx.post(f"{BASE_URL}/api/v1/verify/batch").mock(
+            return_value=Response(200, json={"results": [], "total": len(ids)})
+        )
+        with pytest.raises(ArkovaError) as exc_info:
+            client.verify_batch_async(ids)
+        assert exc_info.value.code == "unexpected_response"
+
+
+class TestGetBatchJob:
+    @respx.mock
+    def test_processing_status_no_results(self, client):
+        respx.get(f"{BASE_URL}/api/v1/jobs/job_abc").mock(
+            return_value=Response(
+                200,
+                json={
+                    "job_id": "job_abc",
+                    "status": "processing",
+                    "total": 30,
+                    "created_at": "2026-04-28T00:00:00Z",
+                    "completed_at": None,
+                    "expires_at": "2026-05-05T00:00:00Z",
+                },
+            )
+        )
+        job = client.get_batch_job("job_abc")
+        assert job.status == "processing"
+        assert job.total == 30
+        assert job.results is None
+        assert job.error_message is None
+
+    @respx.mock
+    def test_complete_status_maps_results(self, client):
+        respx.get(f"{BASE_URL}/api/v1/jobs/job_done").mock(
+            return_value=Response(
+                200,
+                json={
+                    "job_id": "job_done",
+                    "status": "complete",
+                    "total": 2,
+                    "created_at": "2026-04-28T00:00:00Z",
+                    "completed_at": "2026-04-28T00:01:00Z",
+                    "expires_at": "2026-05-05T00:00:00Z",
+                    "results": [
+                        {
+                            "public_id": "ARK-1",
+                            "verified": True,
+                            "status": "ACTIVE",
+                            "issuer_name": "University A",
+                        },
+                        {
+                            "public_id": "ARK-2",
+                            "verified": False,
+                            "error": "Record not found",
+                        },
+                    ],
+                },
+            )
+        )
+        job = client.get_batch_job("job_done")
+        assert job.status == "complete"
+        assert job.completed_at == "2026-04-28T00:01:00Z"
+        assert job.results is not None
+        assert len(job.results) == 2
+        assert isinstance(job.results[0], BatchVerificationResult)
+        assert job.results[0].public_id == "ARK-1"
+        assert job.results[0].verified is True
+        assert job.results[1].public_id == "ARK-2"
+        assert job.results[1].error == "Record not found"
+
+    @respx.mock
+    def test_failed_status_includes_error(self, client):
+        respx.get(f"{BASE_URL}/api/v1/jobs/job_bad").mock(
+            return_value=Response(
+                200,
+                json={
+                    "job_id": "job_bad",
+                    "status": "failed",
+                    "total": 25,
+                    "created_at": "2026-04-28T00:00:00Z",
+                    "completed_at": "2026-04-28T00:01:00Z",
+                    "expires_at": "2026-05-05T00:00:00Z",
+                    "error_message": "Background worker crashed",
+                },
+            )
+        )
+        job = client.get_batch_job("job_bad")
+        assert job.status == "failed"
+        assert job.error_message == "Background worker crashed"
+        assert job.results is None
+
+    @respx.mock
+    def test_404_raises_arkova_error(self, client):
+        respx.get(f"{BASE_URL}/api/v1/jobs/missing").mock(
+            return_value=Response(404, json={"error": "not_found", "message": "Job not found"})
+        )
+        with pytest.raises(ArkovaError) as exc_info:
+            client.get_batch_job("missing")
+        assert exc_info.value.status_code == 404
+
+
+class TestWaitForBatchJob:
+    @respx.mock
+    def test_polls_until_complete(self, client):
+        # First call: processing. Second call: complete.
+        route = respx.get(f"{BASE_URL}/api/v1/jobs/job_xyz").mock(
+            side_effect=[
+                Response(
+                    200,
+                    json={
+                        "job_id": "job_xyz",
+                        "status": "processing",
+                        "total": 25,
+                        "created_at": "2026-04-28T00:00:00Z",
+                        "expires_at": "2026-05-05T00:00:00Z",
+                    },
+                ),
+                Response(
+                    200,
+                    json={
+                        "job_id": "job_xyz",
+                        "status": "complete",
+                        "total": 25,
+                        "created_at": "2026-04-28T00:00:00Z",
+                        "completed_at": "2026-04-28T00:01:00Z",
+                        "expires_at": "2026-05-05T00:00:00Z",
+                        "results": [
+                            {"public_id": "ARK-1", "verified": True, "status": "ACTIVE"},
+                        ],
+                    },
+                ),
+            ]
+        )
+        job = client.wait_for_batch_job("job_xyz", timeout=5.0, poll_interval=0.0)
+        assert job.status == "complete"
+        assert route.call_count == 2
+
+    @respx.mock
+    def test_returns_failed_terminal_state(self, client):
+        respx.get(f"{BASE_URL}/api/v1/jobs/job_fail").mock(
+            return_value=Response(
+                200,
+                json={
+                    "job_id": "job_fail",
+                    "status": "failed",
+                    "total": 25,
+                    "created_at": "2026-04-28T00:00:00Z",
+                    "completed_at": "2026-04-28T00:01:00Z",
+                    "expires_at": "2026-05-05T00:00:00Z",
+                    "error_message": "boom",
+                },
+            )
+        )
+        job = client.wait_for_batch_job("job_fail", timeout=5.0, poll_interval=0.0)
+        assert job.status == "failed"
+        assert job.error_message == "boom"
+
+    @respx.mock
+    def test_raises_on_timeout(self, client):
+        respx.get(f"{BASE_URL}/api/v1/jobs/job_slow").mock(
+            return_value=Response(
+                200,
+                json={
+                    "job_id": "job_slow",
+                    "status": "processing",
+                    "total": 25,
+                    "created_at": "2026-04-28T00:00:00Z",
+                    "expires_at": "2026-05-05T00:00:00Z",
+                },
+            )
+        )
+        with pytest.raises(ArkovaError) as exc_info:
+            client.wait_for_batch_job("job_slow", timeout=0.0, poll_interval=0.0)
+        assert exc_info.value.code == "batch_job_timeout"
+        assert exc_info.value.status_code == 408
 
 
 # ── Webhooks ──────────────────────────────────────────────────────────
