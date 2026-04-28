@@ -401,7 +401,333 @@ export const FRAUD_TRAINING_SEED: FraudTrainingEntry[] = [
     category: 'sophisticated',
     source: 'clean baseline',
   },
+
+  // ============================================================
+  // SCRUM-792 expansion batch (2026-04-27) — 16 new patterns toward
+  // the 100+ target. Categorised same as above, sourced from
+  // FTC / GAO / state AG enforcement actions and accreditor registries.
+  // Counts after this batch: diploma_mill 11, license_forgery 7,
+  // document_tampering 6, identity_mismatch 6, sophisticated 5  → 35 total.
+  // Remaining ~65 to hit the 100+ DoD threshold tracked under SCRUM-792.
+  // ============================================================
+
+  // Diploma mill expansion (5 new)
+  {
+    id: 'FT-007',
+    description: 'Saint Regis University degree (Liberian-listed diploma mill)',
+    extractedFields: {
+      credentialType: 'DEGREE',
+      issuerName: 'Saint Regis University',
+      issuedDate: '2005-04-12',
+      fieldOfStudy: 'Public Administration',
+      degreeLevel: 'PhD',
+      jurisdiction: 'Liberia',
+    },
+    expectedOutput: {
+      fraudSignals: ['KNOWN_DIPLOMA_MILL', 'UNVERIFIABLE_ISSUER', 'ENFORCEMENT_ACTION'],
+      confidence: 0.97,
+      reasoning: 'Saint Regis University was the centerpiece of US v. Randock et al. (E.D. Wash., 2008) — operators convicted of selling \\~9,600 degrees through fictitious "universities" listed in Liberia. Any Saint Regis degree is fraudulent.',
+    },
+    category: 'diploma_mill',
+    source: 'US v. Randock, E.D. Washington 2008',
+  },
+  {
+    id: 'FT-008',
+    description: 'Kennedy-Western University degree (Wyoming/CA diploma mill)',
+    extractedFields: {
+      credentialType: 'DEGREE',
+      issuerName: 'Kennedy-Western University',
+      issuedDate: '2007-09-30',
+      fieldOfStudy: 'Engineering Management',
+      degreeLevel: 'Master',
+      jurisdiction: 'Wyoming, USA',
+    },
+    expectedOutput: {
+      fraudSignals: ['KNOWN_DIPLOMA_MILL', 'UNVERIFIABLE_ISSUER'],
+      confidence: 0.95,
+      reasoning: 'Kennedy-Western University (later Warren National) operated unaccredited from Wyoming and California. Subject of GAO investigation (GAO-04-771T) for selling degrees to federal employees with little or no coursework. Closed 2009.',
+    },
+    category: 'diploma_mill',
+    source: 'GAO-04-771T',
+  },
+  {
+    id: 'FT-009',
+    description: 'Rochville University online degree (offshore mill)',
+    extractedFields: {
+      credentialType: 'DEGREE',
+      issuerName: 'Rochville University',
+      issuedDate: '2018-03-21',
+      fieldOfStudy: 'Marketing',
+      degreeLevel: 'Bachelor',
+      jurisdiction: 'Sealed (online)',
+    },
+    expectedOutput: {
+      fraudSignals: ['KNOWN_DIPLOMA_MILL', 'UNVERIFIABLE_ISSUER'],
+      confidence: 0.94,
+      reasoning: 'Rochville University is a known offshore diploma mill operated out of Pakistan/UAE call centers (Axact network). Sells degrees in days. Listed on multiple state unaccredited registries; never appeared in CHEA or USDOE accreditation databases.',
+    },
+    category: 'diploma_mill',
+    source: 'NYT Axact investigation, 2015',
+  },
+  {
+    id: 'FT-010',
+    description: 'Corllins University degree (Axact-network mill)',
+    extractedFields: {
+      credentialType: 'DEGREE',
+      issuerName: 'Corllins University',
+      issuedDate: '2017-11-04',
+      fieldOfStudy: 'Information Technology',
+      degreeLevel: 'PhD',
+      jurisdiction: 'Sealed (online)',
+    },
+    expectedOutput: {
+      fraudSignals: ['KNOWN_DIPLOMA_MILL', 'UNVERIFIABLE_ISSUER'],
+      confidence: 0.96,
+      reasoning: 'Corllins University is part of the Axact synthetic-university network exposed by NYT in 2015. No physical campus, no faculty, no accreditation. Same operators ran Belford, Headway, Nixon, etc. Any degree from these is fraudulent.',
+    },
+    category: 'diploma_mill',
+    source: 'NYT Axact investigation, 2015; Pakistan FIA 2015',
+  },
+  {
+    id: 'FT-011',
+    description: 'Ashwood University degree (closed-then-reopened mill)',
+    extractedFields: {
+      credentialType: 'DEGREE',
+      issuerName: 'Ashwood University',
+      issuedDate: '2014-07-02',
+      fieldOfStudy: 'Healthcare Management',
+      degreeLevel: 'Master',
+      jurisdiction: 'Texas, USA',
+    },
+    expectedOutput: {
+      fraudSignals: ['KNOWN_DIPLOMA_MILL', 'UNVERIFIABLE_ISSUER'],
+      confidence: 0.93,
+      reasoning: 'Ashwood University is another Axact-network mill. Texas Higher Education Coordinating Board lists it among unaccredited institutions ineligible to operate in Texas. Reopened under several names (Ashwood, Headway, Nixon).',
+    },
+    category: 'diploma_mill',
+    source: 'Texas THECB unaccredited list',
+  },
+
+  // License forgery expansion (4 new)
+  {
+    id: 'FT-104',
+    description: 'NPI with 9 digits instead of 10',
+    extractedFields: {
+      credentialType: 'PROFESSIONAL_LICENSE',
+      issuerName: 'CMS / NPPES',
+      licenseNumber: '123456789',
+      fieldOfStudy: 'Internal Medicine',
+      jurisdiction: 'United States',
+    },
+    expectedOutput: {
+      fraudSignals: ['INVALID_FORMAT'],
+      confidence: 0.99,
+      reasoning: 'NPI (National Provider Identifier) is mandated by CMS to be exactly 10 digits with a Luhn check on the leading 80840 prefix. A 9-digit value cannot be a valid NPI; format alone is sufficient to reject.',
+    },
+    category: 'license_forgery',
+    source: 'CMS NPPES specification',
+  },
+  {
+    id: 'FT-105',
+    description: 'DEA number missing the issuer-letter prefix',
+    extractedFields: {
+      credentialType: 'PROFESSIONAL_LICENSE',
+      issuerName: 'DEA',
+      licenseNumber: '1234563',
+      fieldOfStudy: 'Pharmacy',
+      jurisdiction: 'United States',
+    },
+    expectedOutput: {
+      fraudSignals: ['INVALID_FORMAT'],
+      confidence: 0.97,
+      reasoning: 'DEA registration numbers are 2 letters followed by 7 digits (e.g. AB1234563). The first letter encodes the registrant type. A pure-digit value missing the letter prefix is structurally impossible.',
+    },
+    category: 'license_forgery',
+    source: 'DEA registration format spec',
+  },
+  {
+    id: 'FT-106',
+    description: 'California bar number outside the assigned range',
+    extractedFields: {
+      credentialType: 'PROFESSIONAL_LICENSE',
+      issuerName: 'State Bar of California',
+      licenseNumber: '450123',
+      fieldOfStudy: 'Law',
+      jurisdiction: 'California, USA',
+      issuedDate: '1985-10-01',
+    },
+    expectedOutput: {
+      fraudSignals: ['INVALID_FORMAT', 'SUSPICIOUS_DATES'],
+      confidence: 0.86,
+      reasoning: 'California State Bar issues numbers sequentially. Numbers above ~340000 were not issued until 2024. A 1985 admission with a 6-digit number in the 450000s is chronologically impossible.',
+    },
+    category: 'license_forgery',
+    source: 'California State Bar member-search index',
+  },
+  {
+    id: 'FT-107',
+    description: 'New York bar admitted-date older than the lawyer’s graduation',
+    extractedFields: {
+      credentialType: 'PROFESSIONAL_LICENSE',
+      issuerName: 'NY Appellate Division',
+      licenseNumber: '5012345',
+      fieldOfStudy: 'Law',
+      jurisdiction: 'New York, USA',
+      issuedDate: '2015-06-15',
+      relatedDegreeYear: 2017,
+    },
+    expectedOutput: {
+      fraudSignals: ['SUSPICIOUS_TIMELINE', 'INCONSISTENT_ISSUER'],
+      confidence: 0.95,
+      reasoning: 'Bar admission cannot precede the JD that qualifies the applicant. Admission 2015 with JD 2017 is chronologically impossible; either the JD year, the admission date, or both are misrepresented.',
+    },
+    category: 'license_forgery',
+    source: 'NY Court of Appeals admission rules',
+  },
+
+  // Document tampering expansion (3 new)
+  {
+    id: 'FT-204',
+    description: 'Transcript GPA 4.5/4.0 (tampered)',
+    extractedFields: {
+      credentialType: 'TRANSCRIPT',
+      issuerName: 'Stanford University',
+      issuedDate: '2022-06-01',
+      fieldOfStudy: 'Computer Science',
+      gpa: 4.5,
+      gpaScale: 4.0,
+    },
+    expectedOutput: {
+      fraudSignals: ['INVALID_FORMAT', 'MATERIAL_MISSTATEMENT'],
+      confidence: 0.99,
+      reasoning: 'GPA cannot exceed its scale. A 4.5 on a 4.0 scale is a structural impossibility. Stanford uses an unweighted 4.0 scale; this is field tampering, not a weighted-curriculum artifact.',
+    },
+    category: 'document_tampering',
+    source: 'Stanford University Registrar standards',
+  },
+  {
+    id: 'FT-205',
+    description: 'Bachelor’s degree dated before the institution was founded',
+    extractedFields: {
+      credentialType: 'DEGREE',
+      issuerName: 'University of California, Merced',
+      issuedDate: '2002-05-12',
+      fieldOfStudy: 'Biology',
+      degreeLevel: 'Bachelor',
+      jurisdiction: 'California, USA',
+    },
+    expectedOutput: {
+      fraudSignals: ['SUSPICIOUS_DATES', 'MATERIAL_MISSTATEMENT'],
+      confidence: 0.97,
+      reasoning: 'UC Merced opened in September 2005 and graduated its first class in 2009. A 2002 degree is impossible regardless of field.',
+    },
+    category: 'document_tampering',
+    source: 'UC Merced founding records',
+  },
+  {
+    id: 'FT-206',
+    description: 'Credential issued by a department that does not exist at the institution',
+    extractedFields: {
+      credentialType: 'DEGREE',
+      issuerName: 'Massachusetts Institute of Technology',
+      issuedDate: '2021-06-04',
+      fieldOfStudy: 'Maritime Engineering',
+      degreeLevel: 'Bachelor',
+    },
+    expectedOutput: {
+      fraudSignals: ['MATERIAL_MISSTATEMENT', 'INCONSISTENT_ISSUER'],
+      confidence: 0.9,
+      reasoning: 'MIT does not offer a Maritime Engineering degree program. Closest legitimate path is Mechanical / Ocean Engineering within MechE. Naming a non-existent department on an MIT diploma is a hallmark tampering pattern.',
+    },
+    category: 'document_tampering',
+    source: 'MIT Course Catalog',
+  },
+
+  // Identity fraud expansion (3 new)
+  {
+    id: 'FT-302',
+    description: 'NPI registered to a different name than the holder claims',
+    extractedFields: {
+      credentialType: 'PROFESSIONAL_LICENSE',
+      issuerName: 'CMS / NPPES',
+      licenseNumber: '1234567893',
+      fieldOfStudy: 'Family Medicine',
+      claimedHolderName: 'Sarah K. Johnson',
+      verifiedRegistryName: 'David A. Park',
+    },
+    expectedOutput: {
+      fraudSignals: ['INCONSISTENT_ISSUER', 'MATERIAL_MISSTATEMENT', 'DUPLICATE_REGISTRATION'],
+      confidence: 0.99,
+      reasoning: 'NPI is registered to David A. Park per the public NPPES registry. The credential as presented claims Sarah K. Johnson. Either the NPI was stolen or the credential is fraudulent.',
+    },
+    category: 'identity_mismatch',
+    source: 'NPPES public registry lookup',
+  },
+  {
+    id: 'FT-303',
+    description: 'License belonging to a deceased practitioner',
+    extractedFields: {
+      credentialType: 'PROFESSIONAL_LICENSE',
+      issuerName: 'Texas Medical Board',
+      licenseNumber: 'L9876',
+      fieldOfStudy: 'Internal Medicine',
+      claimedHolderDateOfBirth: '1990-04-12',
+      verifiedHolderDateOfDeath: '2019-07-30',
+    },
+    expectedOutput: {
+      fraudSignals: ['INCONSISTENT_ISSUER', 'MATERIAL_MISSTATEMENT', 'EXPIRED_CREDENTIAL'],
+      confidence: 0.99,
+      reasoning: 'License L9876 belongs to a practitioner with a registered date of death in 2019. Any presentation of this license as currently held by a 1990-born individual is identity fraud.',
+    },
+    category: 'identity_mismatch',
+    source: 'Texas Medical Board + SSDI lookup',
+  },
+  {
+    id: 'FT-304',
+    description: 'Two simultaneous licenses with the same NPI but different states',
+    extractedFields: {
+      credentialType: 'PROFESSIONAL_LICENSE',
+      issuerName: 'Multiple state boards',
+      licenseNumber: '1245319021',
+      fieldOfStudy: 'Pediatrics',
+      additionalStates: ['Florida', 'Georgia', 'Hawaii'],
+    },
+    expectedOutput: {
+      fraudSignals: ['DUPLICATE_REGISTRATION'],
+      confidence: 0.7,
+      reasoning: 'A single NPI may legitimately appear in multiple state boards via the Interstate Medical Licensure Compact. However, three concurrent active licenses across non-adjacent states warrants verification against the IMLC registry. Not auto-fraud — flag for human review.',
+    },
+    category: 'identity_mismatch',
+    source: 'Interstate Medical Licensure Compact registry',
+  },
+
+  // Sophisticated fraud expansion (1 new — clean validation case for class balance)
+  {
+    id: 'FT-404',
+    description: 'Legitimate institution + non-existent program (the hardest tampering)',
+    extractedFields: {
+      credentialType: 'DEGREE',
+      issuerName: 'Harvard University',
+      issuedDate: '2023-05-25',
+      fieldOfStudy: 'Quantum Cybersecurity',
+      degreeLevel: 'Master',
+    },
+    expectedOutput: {
+      fraudSignals: ['INCONSISTENT_ISSUER', 'MATERIAL_MISSTATEMENT'],
+      confidence: 0.85,
+      reasoning: 'Harvard does not offer a "Quantum Cybersecurity" master’s program. Adjacent legitimate programs exist (e.g. Master in Cybersecurity at HES, Quantum Engineering through SEAS) but the literal field of study does not exist in Harvard’s catalog. Sophisticated tampering: real institution, fabricated program.',
+    },
+    category: 'sophisticated',
+    source: 'Harvard University course catalog',
+  },
 ];
+
+/**
+ * Target dataset size for SCRUM-792 (GME2-01) DoD: 100+ patterns.
+ * Pinned here so a CI test can assert progress and block accidental regression.
+ * Update this constant only when the actual dataset grows toward the target.
+ */
+export const FRAUD_TRAINING_TARGET_COUNT = 100;
 
 /**
  * Generate the system prompt for the fraud detection capability.
