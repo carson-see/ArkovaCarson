@@ -202,6 +202,147 @@ describe('POST /api/v1/compliance/audit', () => {
     expect(typeof recs.overflow_count).toBe('number');
   });
 
+  // SCRUM-954 / BUG-2026-04-21-007 — see compliance-audit.ts loadOrgJurisdictions.
+  it('derives default-scope per_jurisdiction from jurisdiction_rules for orgs with no configured jurisdictions (SCRUM-954)', async () => {
+    vi.mocked(getCallerOrgId).mockResolvedValue('org-1');
+
+    const insertCalls: Array<Record<string, unknown>> = [];
+
+    const inserted = {
+      id: '99999999-9999-9999-9999-999999999999',
+      org_id: 'org-1',
+      overall_score: 0,
+      overall_grade: 'F',
+      per_jurisdiction: [],
+      gaps: [],
+      quarantines: [],
+      status: 'COMPLETED',
+      started_at: new Date().toISOString(),
+      completed_at: new Date().toISOString(),
+      duration_ms: 50,
+      jurisdiction_filter: null,
+      error_code: null,
+      error_message: null,
+      metadata: {},
+      created_at: new Date().toISOString(),
+    };
+
+    vi.mocked(db.from).mockImplementation((table: string): never => {
+      if (table === 'compliance_audits') {
+        const builder = makeBuilder({ maybeSingleData: null, singleData: inserted });
+        builder.insert = vi.fn((payload: Record<string, unknown>) => {
+          insertCalls.push(payload);
+          return builder;
+        });
+        return builder as unknown as never;
+      }
+      if (table === 'organizations') {
+        return makeBuilder({
+          maybeSingleData: { jurisdictions: [], industry: 'accounting' },
+        }) as unknown as never;
+      }
+      if (table === 'compliance_scores') {
+        return makeBuilder({ selectData: [] }) as unknown as never;
+      }
+      if (table === 'jurisdiction_rules') {
+        return makeBuilder({
+          selectData: [
+            {
+              id: 'r-ca',
+              jurisdiction_code: 'US-CA',
+              industry_code: 'accounting',
+              rule_name: 'CA',
+              required_credential_types: ['LICENSE'],
+              optional_credential_types: [],
+              regulatory_reference: 'CA code',
+              details: {},
+            },
+            {
+              id: 'r-ny',
+              jurisdiction_code: 'US-NY',
+              industry_code: 'accounting',
+              rule_name: 'NY',
+              required_credential_types: ['LICENSE'],
+              optional_credential_types: [],
+              regulatory_reference: 'NY code',
+              details: {},
+            },
+          ],
+        }) as unknown as never;
+      }
+      if (table === 'anchors') {
+        return makeBuilder({ selectData: [] }) as unknown as never;
+      }
+      return makeBuilder({ selectData: [] }) as unknown as never;
+    });
+
+    const app = buildApp('user-1');
+    await request(app).post('/api/v1/compliance/audit').send({}).expect(201);
+
+    expect(insertCalls.length).toBe(1);
+    const payload = insertCalls[0];
+    const topLevel = payload.per_jurisdiction as Array<{ jurisdiction_code: string }>;
+    const metadata = payload.metadata as Record<string, unknown>;
+    const meta = metadata.per_jurisdiction as Array<{ jurisdiction_code: string }>;
+
+    // Both the top-level column and metadata mirror should be populated
+    // so the scorecard read-side fallback (PR #607) and the page-level
+    // normalize step both have data to work with.
+    expect(topLevel.length).toBe(2);
+    expect(meta.length).toBe(2);
+    expect(topLevel.map((p) => p.jurisdiction_code).sort()).toEqual(['US-CA', 'US-NY']);
+  });
+
+  it('leaves per_jurisdiction empty when the org has no configured jurisdictions AND no rules apply (SCRUM-954)', async () => {
+    vi.mocked(getCallerOrgId).mockResolvedValue('org-1');
+
+    const insertCalls: Array<Record<string, unknown>> = [];
+
+    const inserted = {
+      id: '88888888-8888-8888-8888-888888888888',
+      org_id: 'org-1',
+      overall_score: 100,
+      overall_grade: 'A',
+      per_jurisdiction: [],
+      gaps: [],
+      quarantines: [],
+      status: 'COMPLETED',
+      started_at: new Date().toISOString(),
+      completed_at: new Date().toISOString(),
+      duration_ms: 10,
+      jurisdiction_filter: null,
+      error_code: null,
+      error_message: null,
+      metadata: {},
+      created_at: new Date().toISOString(),
+    };
+
+    vi.mocked(db.from).mockImplementation((table: string): never => {
+      if (table === 'compliance_audits') {
+        const builder = makeBuilder({ maybeSingleData: null, singleData: inserted });
+        builder.insert = vi.fn((payload: Record<string, unknown>) => {
+          insertCalls.push(payload);
+          return builder;
+        });
+        return builder as unknown as never;
+      }
+      if (table === 'organizations') {
+        return makeBuilder({
+          maybeSingleData: { jurisdictions: [], industry: 'niche-industry' },
+        }) as unknown as never;
+      }
+      // No scores, no rules — legitimate "no per-jurisdiction data" case.
+      return makeBuilder({ selectData: [] }) as unknown as never;
+    });
+
+    const app = buildApp('user-1');
+    await request(app).post('/api/v1/compliance/audit').send({}).expect(201);
+
+    expect(insertCalls.length).toBe(1);
+    const topLevel = insertCalls[0].per_jurisdiction as unknown[];
+    expect(topLevel).toEqual([]);
+  });
+
   it('returns idempotent completed audit when a recent one exists', async () => {
     vi.mocked(getCallerOrgId).mockResolvedValue('org-1');
 
