@@ -53,6 +53,7 @@ import {
   shouldFailClosedWhenSigningKeyMissing,
   validateBearer,
 } from '../../../services/edge/src/mcp-server';
+import { unwrapSignedEntry } from '../../../services/edge/src/mcp-origin-allowlist';
 import { verifySupabaseJwt } from '../../../services/edge/src/supabase-jwt';
 import type { Env } from '../../../services/edge/src/env';
 
@@ -477,6 +478,66 @@ describe('mcp-server — shouldFailClosedWhenSigningKeyMissing (SCRUM-1283 R3-10
     expect(shouldFailClosedWhenSigningKeyMissing(envWith('TRUE'))).toBe(false);
     expect(shouldFailClosedWhenSigningKeyMissing(envWith('1'))).toBe(false);
     expect(shouldFailClosedWhenSigningKeyMissing(envWith(''))).toBe(false);
+  });
+});
+
+describe('mcp-origin-allowlist — unwrapSignedEntry (SCRUM-1283 R3-10 sub-A)', () => {
+  async function signHex(secret: string, msg: string): Promise<string> {
+    const enc = new TextEncoder();
+    const key = await crypto.subtle.importKey(
+      'raw',
+      enc.encode(secret),
+      { name: 'HMAC', hash: 'SHA-256' },
+      false,
+      ['sign'],
+    );
+    const sig = await crypto.subtle.sign('HMAC', key, enc.encode(msg));
+    return Array.from(new Uint8Array(sig))
+      .map((b) => b.toString(16).padStart(2, '0'))
+      .join('');
+  }
+
+  it('returns the raw entry when no secret is configured (legacy back-compat)', async () => {
+    const raw = JSON.stringify({ mode: 'allowlist', cidrs: ['1.2.3.4/32'] });
+    expect(await unwrapSignedEntry(raw, undefined)).toBe(raw);
+  });
+
+  it('verifies a well-formed signed envelope and returns the inner value', async () => {
+    const inner = JSON.stringify({ mode: 'allowlist', cidrs: ['1.2.3.4/32'] });
+    const signature = await signHex('test-secret', inner);
+    const envelope = JSON.stringify({ value: inner, signature });
+    expect(await unwrapSignedEntry(envelope, 'test-secret')).toBe(inner);
+  });
+
+  it('rejects an envelope with a forged signature', async () => {
+    const inner = JSON.stringify({ mode: 'allowlist', cidrs: ['1.2.3.4/32'] });
+    const envelope = JSON.stringify({ value: inner, signature: '00'.repeat(32) });
+    expect(await unwrapSignedEntry(envelope, 'test-secret')).toBeNull();
+  });
+
+  it('rejects raw legacy JSON when a secret IS configured (no envelope shape)', async () => {
+    // Legacy un-enveloped entry must NOT be accepted once HMAC enforcement is on.
+    const raw = JSON.stringify({ mode: 'allowlist', cidrs: ['1.2.3.4/32'] });
+    expect(await unwrapSignedEntry(raw, 'test-secret')).toBeNull();
+  });
+
+  it('rejects malformed JSON', async () => {
+    expect(await unwrapSignedEntry('not-json', 'test-secret')).toBeNull();
+  });
+
+  it('rejects an envelope with non-string value or signature fields', async () => {
+    expect(
+      await unwrapSignedEntry(
+        JSON.stringify({ value: { mode: 'allowlist' }, signature: '00' }),
+        'test-secret',
+      ),
+    ).toBeNull();
+    expect(
+      await unwrapSignedEntry(
+        JSON.stringify({ value: 'inner', signature: 42 }),
+        'test-secret',
+      ),
+    ).toBeNull();
   });
 });
 
