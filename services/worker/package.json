@@ -12,7 +12,8 @@
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
-    "eval:regression": "tsx scripts/nessie-eval-regression.ts"
+    "eval:regression": "tsx scripts/nessie-eval-regression.ts",
+    "audit:golden": "tsx scripts/golden-distribution-audit.ts"
   },
   "dependencies": {
     "@arizeai/openinference-semantic-conventions": "2.3.0",
