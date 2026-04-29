@@ -39,9 +39,13 @@ export const bitcoinAnchorMachine = defineMachine({
     // SUBMITTED = worker has broadcast to mempool (tx unconfirmed)
     // SECURED = chain_tx_id confirmed on-chain (check-confirmations cron)
     // REVOKED = org admin revoked (terminal)
+    // SUPERSEDED = org admin replaced with a new fingerprint (terminal). Added by
+    //   migration 0225_ark104_superseded_enum.sql; transition wired by
+    //   0226_ark104_lineage_rpcs.sql `supersede_anchor()` (any non-terminal,
+    //   non-legal-hold state → SUPERSEDED).
     status: mapVar(
       "Anchors",
-      enumType("PENDING", "BROADCASTING", "SUBMITTED", "SECURED", "REVOKED"),
+      enumType("PENDING", "BROADCASTING", "SUBMITTED", "SECURED", "REVOKED", "SUPERSEDED"),
       lit("PENDING")
     ),
 
@@ -165,11 +169,12 @@ export const bitcoinAnchorMachine = defineMachine({
       ]
     },
 
-    // Admin places legal hold (on SECURED or REVOKED anchors)
+    // Admin places legal hold (on SECURED, REVOKED, or SUPERSEDED anchors —
+    // any post-broadcast lifecycle state may carry an audit-retention hold).
     placeLegalHold: {
       params: { a: "Anchors" },
       guard: and(
-        isin(index(status, param("a")), setOf(lit("SECURED"), lit("REVOKED"))),
+        isin(index(status, param("a")), setOf(lit("SECURED"), lit("REVOKED"), lit("SUPERSEDED"))),
         not(index(legalHold, param("a")))
       ),
       updates: [
@@ -177,15 +182,63 @@ export const bitcoinAnchorMachine = defineMachine({
       ]
     },
 
-    // Admin removes legal hold (on SECURED or REVOKED anchors)
+    // Admin removes legal hold (on SECURED, REVOKED, or SUPERSEDED anchors).
     removeLegalHold: {
       params: { a: "Anchors" },
       guard: and(
-        isin(index(status, param("a")), setOf(lit("SECURED"), lit("REVOKED"))),
+        isin(index(status, param("a")), setOf(lit("SECURED"), lit("REVOKED"), lit("SUPERSEDED"))),
         index(legalHold, param("a"))
       ),
       updates: [
         setMap("legalHold", param("a"), lit(false))
+      ]
+    },
+
+    // Org admin supersedes an anchor with a new fingerprint.
+    // Maps to: supersede_anchor() RPC (migration 0226). Allowed from any
+    // non-terminal status; blocked if the anchor is under legal hold.
+    // Terminal: locks fingerprint, metadata, and credential_type so no
+    // future writes are possible (downstream from SUPERSEDED there is no
+    // action with a guard that admits it).
+    supersede: {
+      params: { a: "Anchors" },
+      guard: and(
+        not(isin(index(status, param("a")), setOf(lit("REVOKED"), lit("SUPERSEDED")))),
+        not(index(legalHold, param("a")))
+      ),
+      updates: [
+        setMap("status", param("a"), lit("SUPERSEDED")),
+        setMap("fingerprintLocked", param("a"), lit(true)),
+        setMap("metadataLocked", param("a"), lit(true)),
+        setMap("credentialTypeLocked", param("a"), lit(true))
+      ]
+    },
+
+    // Reorg detection reverts a SECURED anchor back to SUBMITTED.
+    // Maps to: detectReorgs() in services/worker/src/jobs/chain-maintenance.ts:152.
+    // For anchors SECURED within REORG_CHECK_DEPTH_BLOCKS (10) blocks, the
+    // cron re-queries mempool.space; if the block hash changed or the TX is
+    // no longer confirmed, the anchor reverts. chainTxId is retained (the
+    // TX still exists, just no longer in a confirmed block). Legal-hold
+    // anchors are frozen — the cron must skip them to preserve the
+    // legalHoldPreventsSecuredToRevoked invariant (the chained
+    // chainSubmitFail path could otherwise rewind a legal-hold anchor to
+    // PENDING, which is the spec contract this guard upholds).
+    reorgDetected: {
+      params: { a: "Anchors" },
+      guard: and(
+        eq(index(status, param("a")), lit("SECURED")),
+        eq(index(actor, param("a")), lit("worker")),
+        eq(index(chainTxId, param("a")), lit("has_tx")),
+        not(index(legalHold, param("a")))
+      ),
+      updates: [
+        setMap("status", param("a"), lit("SUBMITTED")),
+        // Reorg unwinds the metadata lock — the anchor isn't terminal-confirmed
+        // anymore. fingerprint + credential_type stay locked because the
+        // anchor has been broadcast (immutable from the user's POV regardless
+        // of confirmation state).
+        setMap("metadataLocked", param("a"), lit(false))
       ]
     }
   },
@@ -235,9 +288,12 @@ export const bitcoinAnchorMachine = defineMachine({
       )
     },
 
-    // INV-3: REVOKED is terminal — no transitions out
-    revokedIsTerminal: {
-      description: "REVOKED is a terminal state with no outbound transitions",
+    // INV-3: REVOKED implies a chain_tx_id is set (revoke can only fire from
+    // SECURED, which requires has_tx). Terminal-no-transitions for REVOKED
+    // and SUPERSEDED is enforced by the absence of any action with a guard
+    // that admits those states.
+    revokedRequiresChainTx: {
+      description: "REVOKED anchors carry the chain_tx_id from their SECURED predecessor",
       formula: forall("Anchors", "a",
         or(
           not(eq(index(status, param("a")), lit("REVOKED"))),
@@ -246,12 +302,15 @@ export const bitcoinAnchorMachine = defineMachine({
       )
     },
 
-    // INV-4: Metadata is locked once SECURED
+    // INV-4: Metadata is locked once SECURED, REVOKED, or SUPERSEDED. SUPERSEDED
+    // joins the set because supersede_anchor() (migration 0226) is the
+    // terminal handoff to a child anchor; the superseded row must stop
+    // accepting metadata writes.
     metadataImmutableAfterSecured: {
-      description: "Metadata is immutable once anchor is SECURED or REVOKED",
+      description: "Metadata is immutable once anchor is SECURED, REVOKED, or SUPERSEDED",
       formula: forall("Anchors", "a",
         or(
-          not(isin(index(status, param("a")), setOf(lit("SECURED"), lit("REVOKED")))),
+          not(isin(index(status, param("a")), setOf(lit("SECURED"), lit("REVOKED"), lit("SUPERSEDED")))),
           index(metadataLocked, param("a"))
         )
       )
@@ -268,7 +327,13 @@ export const bitcoinAnchorMachine = defineMachine({
       )
     },
 
-    // INV-7: credential_type is locked once anchor leaves PENDING (TLA-01)
+    // INV-7: credential_type is locked once anchor leaves PENDING (TLA-01).
+    // SCRUM-1274 (R3-1) decision: keep this invariant as the user-facing
+    // contract. Migration 0172 lets service_role mutate credential_type for
+    // operator-only fixes; that's a deliberate backdoor (not modeled in this
+    // spec because no client-facing path can reach service_role). If the
+    // operator path is ever exposed to user-actor flows, parameterize the
+    // lock by actor and update this comment.
     credentialTypeImmutableAfterPending: {
       description: "credential_type is immutable once status leaves initial PENDING",
       formula: forall("Anchors", "a",

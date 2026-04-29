@@ -116,11 +116,18 @@ export async function detectReorgs(): Promise<ReorgCheckResult> {
     const tipHeight = parseInt(await tipResp.text(), 10);
     const minBlockHeight = tipHeight - REORG_CHECK_DEPTH_BLOCKS;
 
-    // Fetch recently SECURED anchors within the check depth
+    // Fetch recently SECURED anchors within the check depth.
+    // SCRUM-1274 (R3-1): exclude legal-hold anchors. Legal hold is a
+    // freeze contract — the reorg cron must not silently revert a
+    // legal-hold anchor SECURED → SUBMITTED, since the chained
+    // chainSubmitFail path could then unwind it to PENDING in violation
+    // of legalHoldPreventsSecuredToRevoked. Reorgs on legal-hold
+    // anchors require operator intervention.
     const { data: recentAnchors, error } = await db
       .from('anchors')
       .select('id, chain_tx_id, chain_block_height, fingerprint')
       .eq('status', 'SECURED')
+      .eq('legal_hold', false)
       .gte('chain_block_height', minBlockHeight)
       .not('chain_tx_id', 'is', null)
       .is('deleted_at', null)

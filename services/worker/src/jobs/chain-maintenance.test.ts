@@ -122,6 +122,40 @@ describe('Chain Maintenance Jobs', () => {
       const result = await detectReorgs();
       expect(result.checked).toBe(0);
     });
+
+    // SCRUM-1274 (R3-1): the reorg cron must skip legal-hold anchors. Without
+    // this filter, the chained chainSubmitFail path could rewind a legal-hold
+    // anchor to PENDING — violating the legalHoldPreventsSecuredToRevoked
+    // invariant in machines/bitcoinAnchor.machine.ts. This test pins the
+    // filter shape so a future refactor can't silently drop it.
+    it('filters out legal-hold anchors (legal_hold = false)', async () => {
+      global.fetch = vi.fn().mockResolvedValue({
+        ok: true, text: async () => '100',
+      } as Response);
+
+      const eqCalls: Array<[string, unknown]> = [];
+      const chain: Record<string, unknown> = {};
+      chain.select = vi.fn(() => chain);
+      chain.eq = vi.fn((col: string, val: unknown) => {
+        eqCalls.push([col, val]);
+        return chain;
+      });
+      chain.gte = vi.fn(() => chain);
+      chain.not = vi.fn(() => chain);
+      chain.is = vi.fn(() => chain);
+      chain.limit = vi.fn(() =>
+        Promise.resolve({ data: [], error: null }),
+      );
+      mockDb.from.mockReturnValue(chain as never);
+
+      await detectReorgs();
+      expect(eqCalls).toEqual(
+        expect.arrayContaining([
+          ['status', 'SECURED'],
+          ['legal_hold', false],
+        ]),
+      );
+    });
   });
 
   // ─── NET-1: Stuck TX Monitor ──────────────────────────────────────

@@ -14,5 +14,9 @@
   "Action_placeLegalHold_1": "placeLegalHold(\"a1\")",
   "Action_placeLegalHold_2": "placeLegalHold(\"a2\")",
   "Action_removeLegalHold_1": "removeLegalHold(\"a1\")",
-  "Action_removeLegalHold_2": "removeLegalHold(\"a2\")"
+  "Action_removeLegalHold_2": "removeLegalHold(\"a2\")",
+  "Action_supersede_1": "supersede(\"a1\")",
+  "Action_supersede_2": "supersede(\"a2\")",
+  "Action_reorgDetected_1": "reorgDetected(\"a1\")",
+  "Action_reorgDetected_2": "reorgDetected(\"a2\")"
 }
