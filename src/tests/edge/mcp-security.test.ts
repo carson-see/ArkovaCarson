@@ -54,6 +54,10 @@ import {
   validateBearer,
 } from '../../../services/edge/src/mcp-server';
 import { unwrapSignedEntry } from '../../../services/edge/src/mcp-origin-allowlist';
+import {
+  buildSignedReportUrl,
+  verifySignedReportUrl,
+} from '../../../services/edge/src/r2-signed-url';
 import { verifySupabaseJwt } from '../../../services/edge/src/supabase-jwt';
 import type { Env } from '../../../services/edge/src/env';
 
@@ -538,6 +542,76 @@ describe('mcp-origin-allowlist — unwrapSignedEntry (SCRUM-1283 R3-10 sub-A)', 
         'test-secret',
       ),
     ).toBeNull();
+  });
+});
+
+describe('r2-signed-url — buildSignedReportUrl / verifySignedReportUrl (SCRUM-1283 R3-10 sub-C)', () => {
+  const SECRET = 'r2-test-secret';
+  const BASE = 'https://edge.arkova.ai';
+
+  it('round-trips a signed URL: build then verify yields the same key', async () => {
+    const key = 'org-1/portfolio/2026-04-29.md';
+    const signed = await buildSignedReportUrl(BASE, key, SECRET, 60);
+    const verdict = await verifySignedReportUrl(new URL(signed), SECRET);
+    expect(verdict.ok).toBe(true);
+    if (verdict.ok) expect(verdict.key).toBe(key);
+  });
+
+  it('rejects an expired URL (expires < now)', async () => {
+    const key = 'org-1/portfolio/2026-04-29.md';
+    const signed = await buildSignedReportUrl(BASE, key, SECRET, -10); // already expired
+    const verdict = await verifySignedReportUrl(new URL(signed), SECRET);
+    expect(verdict.ok).toBe(false);
+    if (!verdict.ok) expect(verdict.reason).toBe('expired');
+  });
+
+  it('rejects a tampered signature', async () => {
+    const key = 'org-1/portfolio/2026-04-29.md';
+    const signed = await buildSignedReportUrl(BASE, key, SECRET, 60);
+    const url = new URL(signed);
+    url.searchParams.set('sig', '00'.repeat(32));
+    const verdict = await verifySignedReportUrl(url, SECRET);
+    expect(verdict.ok).toBe(false);
+    if (!verdict.ok) expect(verdict.reason).toBe('invalid_signature');
+  });
+
+  it('rejects when key is swapped after signing (signature binds the key)', async () => {
+    const signed = await buildSignedReportUrl(BASE, 'org-1/secret.md', SECRET, 60);
+    const original = new URL(signed);
+    // Mutate the path to a different key but keep the original sig + expires.
+    const tampered = new URL(`/reports/dl/${encodeURIComponent('org-2/spy.md')}`, BASE);
+    tampered.searchParams.set('expires', original.searchParams.get('expires')!);
+    tampered.searchParams.set('sig', original.searchParams.get('sig')!);
+    const verdict = await verifySignedReportUrl(tampered, SECRET);
+    expect(verdict.ok).toBe(false);
+    if (!verdict.ok) expect(verdict.reason).toBe('invalid_signature');
+  });
+
+  it('rejects malformed URL (missing query params)', async () => {
+    const url = new URL(`${BASE}/reports/dl/${encodeURIComponent('org-1/x.md')}`);
+    const verdict = await verifySignedReportUrl(url, SECRET);
+    expect(verdict.ok).toBe(false);
+    if (!verdict.ok) expect(verdict.reason).toBe('malformed');
+  });
+
+  it('rejects URLs that do not start with /reports/dl/', async () => {
+    const url = new URL(`${BASE}/wrong/path?expires=9999999999&sig=00`);
+    const verdict = await verifySignedReportUrl(url, SECRET);
+    expect(verdict.ok).toBe(false);
+    if (!verdict.ok) expect(verdict.reason).toBe('malformed');
+  });
+
+  it('throws when build is called without a secret (operator misconfig)', async () => {
+    await expect(buildSignedReportUrl(BASE, 'k', '', 60)).rejects.toThrow(
+      /R2_REPORT_DOWNLOAD_SECRET/,
+    );
+  });
+
+  it('verify returns malformed when secret is empty (defense-in-depth)', async () => {
+    const url = new URL(`${BASE}/reports/dl/${encodeURIComponent('k')}?expires=9999&sig=00`);
+    const verdict = await verifySignedReportUrl(url, '');
+    expect(verdict.ok).toBe(false);
+    if (!verdict.ok) expect(verdict.reason).toBe('malformed');
   });
 });
 
