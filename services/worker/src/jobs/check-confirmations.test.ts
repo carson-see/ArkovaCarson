@@ -147,8 +147,17 @@ vi.mock('../utils/db.js', () => {
             return {};
         }
       }),
-      // RACE-3: Advisory lock mock — always returns true (lock acquired)
-      rpc: vi.fn(() => ({ data: true, error: null })),
+      // RACE-3: Advisory lock mock — always returns true (lock acquired).
+      // 2026-04-29: also handles drain_submitted_to_secured_for_tx — returns
+      // a single batch's worth then 0 to terminate the worker's drain loop.
+      rpc: vi.fn((name: string) => {
+        if (name === 'drain_submitted_to_secured_for_tx') {
+          // First call returns 1 row updated (test fixtures use 1-2 anchors
+          // per tx). capped=false signals the worker drain loop to exit.
+          return { data: { updated: 1, capped: false }, error: null };
+        }
+        return { data: true, error: null };
+      }),
     },
   };
 });
@@ -411,8 +420,17 @@ describe('checkSubmittedConfirmations', () => {
 
   it('handles DB update error without crashing', async () => {
     mockAnchorsSelectResult.data = [MOCK_SUBMITTED_ANCHOR];
-    (mockAnchorsUpdateResult as Record<string, unknown>).error = { message: 'DB error' };
-    (mockAnchorsUpdateResult as Record<string, unknown>).count = 0;
+
+    // 2026-04-29: error propagation now flows through the
+    // drain_submitted_to_secured_for_tx RPC, not the chained .update().
+    // Override the rpc mock for this case to return an error.
+    const { db } = await import('../utils/db.js');
+    const rpcSpy = vi.spyOn(db, 'rpc').mockImplementation(((name: string) => {
+      if (name === 'drain_submitted_to_secured_for_tx') {
+        return Promise.resolve({ data: null, error: { message: 'DB error' } });
+      }
+      return Promise.resolve({ data: true, error: null });
+    }) as never);
 
     mockFetch
       .mockResolvedValueOnce({ ok: true, text: () => Promise.resolve('200200') }) // tip height
@@ -426,5 +444,7 @@ describe('checkSubmittedConfirmations', () => {
     expect(result.checked).toBe(1);
     expect(result.confirmed).toBe(0);
     expect(mockLogger.error).toHaveBeenCalled();
+
+    rpcSpy.mockRestore();
   });
 });

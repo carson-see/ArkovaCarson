@@ -547,26 +547,57 @@ export async function checkSubmittedConfirmations(): Promise<{ checked: number; 
           return 0;
         }
 
-        // PERF-2: Bulk promote ALL anchors sharing this tx_id
-        // Uses chain_tx_id filter instead of .in('id', [...]) to avoid
-        // PostgREST URL parameter limits (8K+ UUIDs = ~312KB query string
-        // which silently fails or gets truncated by proxies/load balancers).
+        // 2026-04-29 hotfix: the previous single-shot bulk UPDATE on 10k
+        // rows reliably hit the 60s PostgREST statement_timeout because of
+        // BEFORE-UPDATE trigger overhead (5 triggers × 10k rows = 50k
+        // function invocations + autovacuum I/O competition). Result:
+        // 14-day SECURED gap (Apr 15 -> Apr 29). 1.18M anchors stuck in
+        // SUBMITTED on confirmed Bitcoin txs.
+        //
+        // Fix: call drain_submitted_to_secured_for_tx() RPC which batches
+        // the UPDATE in 100-row chunks server-side and returns a count.
+        // We loop until the RPC reports no more rows to drain or hits
+        // its iteration cap (then we'll pick up the rest on the next cron
+        // tick).
         let groupConfirmed = 0;
+        let drainErr: unknown = null;
 
-        const { error: bulkErr, count } = await db
-          .from('anchors')
-          .update({
-            status: 'SECURED',
-            chain_block_height: blockHeight,
-            chain_timestamp: blockTimestamp,
-          })
-          .eq('chain_tx_id', txId)
-          .eq('status', 'SUBMITTED');
+        // Iterate so a single tick can drain a full 10k-anchor TX in
+        // worst case ~10 calls × ~5s each ~= 50s. The new advisory-lock-
+        // protected refresh-stats and Cloud Run's 5-min HTTP timeout
+        // both leave plenty of headroom.
+        const MAX_DRAIN_CALLS = 25;
+        for (let i = 0; i < MAX_DRAIN_CALLS; i++) {
+          // Cast through unknown — the RPC was added in migration
+          // drain_submitted_to_secured_helper_v2 (2026-04-29 hotfix);
+          // generated types haven't been regenerated yet.
+          const rpcRes = await (db as unknown as {
+            rpc: (name: string, args: Record<string, unknown>) => Promise<{
+              data: { updated: number; capped: boolean } | null;
+              error: unknown;
+            }>;
+          }).rpc('drain_submitted_to_secured_for_tx', {
+            p_chain_tx_id: txId,
+            p_block_height: blockHeight,
+            p_block_timestamp: blockTimestamp,
+            p_batch_size: 100,
+            p_max_iterations: 5,
+          });
+          const data = rpcRes.data;
+          const error = rpcRes.error;
 
-        if (bulkErr) {
-          logger.error({ txId, error: bulkErr }, 'Bulk SECURED update failed');
-        } else {
-          groupConfirmed = count ?? 0;
+          if (error) {
+            drainErr = error;
+            break;
+          }
+          const updated = Number(data?.updated ?? 0);
+          groupConfirmed += updated;
+          // Done draining when the RPC returns fewer than max possible rows.
+          if (!data?.capped || updated === 0) break;
+        }
+
+        if (drainErr) {
+          logger.error({ txId, error: drainErr }, 'Bulk SECURED update failed');
         }
 
         // Batch audit event — one summary row per TX instead of per-anchor
