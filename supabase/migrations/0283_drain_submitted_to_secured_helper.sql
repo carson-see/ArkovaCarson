@@ -26,7 +26,7 @@ CREATE OR REPLACE FUNCTION public.refresh_pipeline_dashboard_cache()
 RETURNS jsonb
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path TO 'public'
+SET search_path = public
 SET statement_timeout TO '90s'
 AS $function$
 DECLARE
@@ -89,7 +89,7 @@ CREATE OR REPLACE FUNCTION public.drain_submitted_to_secured_for_tx(
 RETURNS jsonb
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path TO 'public'
+SET search_path = public
 SET statement_timeout TO '50s'
 AS $function$
 DECLARE
