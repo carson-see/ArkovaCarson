@@ -183,7 +183,15 @@ function withTelemetry(
     // payloads still decrement the bucket (a compromised key cannot
     // bypass rate limits by submitting invalid args). The registry adds
     // strict-mode unknown-field rejection + a scrubbed error envelope.
-    const decision = await enforceRateLimit(telemetry.env, telemetry.apiKeyId, toolName);
+    // SCRUM-1283 (R3-10) sub-issue B: pass userId so OAuth Bearer callers
+    // (apiKeyId === null) still get bucketed by user id instead of bypassing
+    // the rate limit entirely.
+    const decision = await enforceRateLimit(
+      telemetry.env,
+      telemetry.apiKeyId,
+      toolName,
+      telemetry.userId,
+    );
     if (!decision.ok) {
       outcome = 'rate_limited';
       logOnce();
