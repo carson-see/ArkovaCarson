@@ -416,13 +416,26 @@ async function evaluateEntry(
     const confidence = parsed.confidence ?? 0;
 
     const citationAcc = scoreCitationAccuracy(entry.expectedCitations, citations);
-    const faithfulness = scoreFaithfulness(answer, [entry.query]); // simplified — in prod use actual context docs
+    // SCRUM-1281 (R3-8 sub-B): faithfulness still uses the query as a stand-in
+    // for retrieved context — the call path doesn't pre-retrieve docs. Tracked
+    // as a remaining gap in sub-PR B follow-up; for now the keyword-overlap
+    // signal against the query catches the most egregious off-topic answers.
+    const faithfulness = scoreFaithfulness(answer, [entry.query]);
     const answerRel = scoreAnswerRelevance(answer, entry.expectedKeyPoints);
     const riskRecall = entry.expectedRisks.length > 0
       ? scoreRiskDetection(entry.expectedRisks, risks, answer)
       : -1; // N/A
 
-    const actualQuality = (citationAcc * 0.3 + faithfulness * 0.2 + answerRel * 0.3 + (riskRecall >= 0 ? riskRecall * 0.2 : 0.2));
+    // SCRUM-1281 (R3-8 sub-B): when riskRecall is N/A (no expected risks), the
+    // previous formula tacked on a flat `0.2` — every non-risk entry got a free
+    // 20% bonus regardless of actual quality. Fix: redistribute the 0.2 weight
+    // proportionally across the remaining three components so the score still
+    // sums to 1.0 in both cases.
+    //   risk-relevant : citationAcc*0.30 + faithfulness*0.20 + answerRel*0.30 + riskRecall*0.20  (sum = 1.0)
+    //   N/A           : citationAcc*0.375 + faithfulness*0.25 + answerRel*0.375                  (sum = 1.0)
+    const actualQuality = riskRecall >= 0
+      ? citationAcc * 0.30 + faithfulness * 0.20 + answerRel * 0.30 + riskRecall * 0.20
+      : citationAcc * 0.375 + faithfulness * 0.25 + answerRel * 0.375;
 
     return {
       entryId: entry.id,
