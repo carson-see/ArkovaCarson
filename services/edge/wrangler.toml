@@ -56,6 +56,11 @@ CF_AI_MODEL = "@cf/nvidia/nemotron"
 # x402PaymentGate is pointed at edge.arkova.ai/x402/verify (currently
 # defaults to https://x402.org/facilitator).
 ENABLE_X402_FACILITATOR = "false"
+# SCRUM-1283 (R3-10) adjacent: oracle_batch_verify fail-closed when
+# MCP_SIGNING_KEY is missing. Production sets this to "true" so operators
+# get an explicit failure instead of silently shipping `signed: false`
+# payloads. Dev/preview can leave unset to keep the soft-fail behavior.
+EDGE_REQUIRE_MCP_SIGNING = "true"
 
 # ── Secrets (set via `wrangler secret put`) ────────────────────────────
 # SUPABASE_URL

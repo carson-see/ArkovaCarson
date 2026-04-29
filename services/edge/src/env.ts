@@ -52,6 +52,14 @@ export interface Env {
   // Callers verify the signature to detect tampering.
   MCP_SIGNING_KEY?: string;
 
+  // SCRUM-1283 (R3-10) adjacent: when set to "true", oracle_batch_verify
+  // refuses to emit unsigned envelopes if MCP_SIGNING_KEY is missing
+  // (returns isError + a 503-shaped tool result). Default behavior
+  // (var unset/false) keeps the existing soft-fail with `signed: false`
+  // marker so dev/preview deploys without the secret continue to work.
+  // Production wrangler.toml MUST set this to "true".
+  EDGE_REQUIRE_MCP_SIGNING?: string;
+
   // x402 Facilitator (Item #16, RISK-7)
   BASE_RPC_URL: string;
   USDC_CONTRACT_ADDRESS?: string;

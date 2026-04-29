@@ -440,12 +440,29 @@ function createMcpServer(config: ScopedConfig, telemetry: RequestTelemetryContex
           );
           const envelope = { query_id: crypto.randomUUID(), results, queried_at: new Date().toISOString() };
           const signingKey = telemetry.env.MCP_SIGNING_KEY;
-          // F-4 (edge bug-bounty 2026-04-26): if the signing key is
-          // missing in production, the response is shape-different (no
-          // signature/alg/key_id). Surface it on every call with an
-          // explicit `signed:false` marker so downstream callers fail
+          // SCRUM-1283 (R3-10) adjacent: when EDGE_REQUIRE_MCP_SIGNING is
+          // "true" (production wrangler.toml), refuse to emit unsigned
+          // envelopes if MCP_SIGNING_KEY is missing. Operators get an
+          // explicit failure instead of silently shipping `signed: false`
+          // payloads. Dev/preview without the secret continues to work
+          // because the var defaults to unset (soft-fail path retained).
+          if (!signingKey && shouldFailClosedWhenSigningKeyMissing(telemetry.env)) {
+            warnSigningKeyMissingOnce();
+            return {
+              content: [{
+                type: 'text' as const,
+                text: JSON.stringify({
+                  error: 'signing_key_missing',
+                  message: 'oracle_batch_verify is fail-closed in this environment because MCP_SIGNING_KEY is not provisioned. Provision via `wrangler secret put MCP_SIGNING_KEY --name arkova-edge` and retry.',
+                }),
+              }],
+              isError: true,
+            };
+          }
+          // F-4 (edge bug-bounty 2026-04-26): when signing key missing in
+          // dev/preview (EDGE_REQUIRE_MCP_SIGNING unset/false), return an
+          // explicit `signed: false` marker so downstream callers fail
           // closed instead of silently accepting unsigned envelopes.
-          // Prior behavior returned the raw payload with no indicator.
           const body = signingKey
             ? await signEnvelope(envelope, signingKey)
             : { payload: envelope, signature: null, alg: null, key_id: null, signed: false };
@@ -977,6 +994,19 @@ export async function handleMcpRequest(
       { status: 500, headers: errorHeaders },
     );
   }
+}
+
+/**
+ * SCRUM-1283 (R3-10) adjacent: should oracle_batch_verify fail-closed when
+ * `MCP_SIGNING_KEY` is missing in this environment? Production wrangler.toml
+ * sets `EDGE_REQUIRE_MCP_SIGNING = "true"`; dev/preview leaves it unset and
+ * the soft-fail path (`signed: false` marker) continues to work.
+ *
+ * Exported for unit tests so the env-var contract is locked in (typo or
+ * casing change → caught at PR time).
+ */
+export function shouldFailClosedWhenSigningKeyMissing(env: Env): boolean {
+  return env.EDGE_REQUIRE_MCP_SIGNING === 'true';
 }
 
 /**
