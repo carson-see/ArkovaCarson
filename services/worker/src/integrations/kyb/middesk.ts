@@ -18,8 +18,8 @@
  *   - 1.7: Real network calls are mocked in tests; this module is pure HTTP
  *          plus a pure crypto function so stubs fit into vi.mock cleanly.
  */
-import crypto from 'node:crypto';
 import { z } from 'zod';
+import { verifyHmacSha256Hex } from '../oauth/hmac.js';
 
 const MIDDESK_BASE_SANDBOX = 'https://api-sandbox.middesk.com';
 const MIDDESK_BASE_PROD = 'https://api.middesk.com';
@@ -192,24 +192,14 @@ export function verifyMiddeskSignature(args: {
   signature: string | undefined;
   secret: string;
 }): boolean {
-  if (!args.signature || !args.secret) return false;
-
-  const bodyBuf = Buffer.isBuffer(args.rawBody) ? args.rawBody : Buffer.from(args.rawBody);
-  const expected = crypto.createHmac('sha256', args.secret).update(bodyBuf).digest('hex');
-
-  const a = Buffer.from(expected, 'hex');
-  let b: Buffer;
-  try {
-    b = Buffer.from(args.signature, 'hex');
-  } catch {
-    return false;
-  }
-  if (a.length !== b.length) return false;
-  try {
-    return crypto.timingSafeEqual(a, b);
-  } catch {
-    return false;
-  }
+  // SCRUM-1282 (R3-9): delegate to the canonical helper so all webhook
+  // handlers share one constant-time HMAC implementation. Behavior is
+  // identical (raw-body, hex-digest, length check, timingSafeEqual).
+  return verifyHmacSha256Hex({
+    rawBody: args.rawBody,
+    signature: args.signature,
+    secret: args.secret,
+  });
 }
 
 /** Parse + validate the JSON body of a webhook payload. Throws on malformed input. */
