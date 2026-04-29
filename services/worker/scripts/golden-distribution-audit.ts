@@ -205,8 +205,18 @@ function main(): void {
     else if (a === '--out') outPath = resolve(args[++i]);
   }
   if (inputs.length === 0) {
-    inputs.push(resolve('training-data/gemini-golden-train.jsonl'));
-    inputs.push(resolve('training-data/gemini-golden-validation.jsonl'));
+    // Local-developer default: full curated golden if it exists.
+    // CI default falls back to the committed fixture (services/worker/training-data/fixtures/),
+    // so the audit can always run regardless of whether the gitignored canonical file is present.
+    const canonicalTrain = resolve('training-data/gemini-golden-train.jsonl');
+    const canonicalValidation = resolve('training-data/gemini-golden-validation.jsonl');
+    const fixture = resolve('training-data/fixtures/golden-fixture.jsonl');
+    try {
+      readFileSync(canonicalTrain, 'utf-8');
+      inputs.push(canonicalTrain, canonicalValidation);
+    } catch {
+      inputs.push(fixture);
+    }
   }
   const gate: AcceptanceGate = { minTotal, minPerType, minFraudPositive };
   const { report } = runAudit(inputs, gate);
