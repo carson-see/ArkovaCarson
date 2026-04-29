@@ -10,6 +10,17 @@
  * `challenge` — admins can opt a key out by writing a wildcard-CIDR
  * entry. The module is pure; `computeAllowlistDecision()` is tested
  * without the Workers runtime.
+ *
+ * SCRUM-1283 (R3-10) sub-issue A — KV write contract:
+ *   When `MCP_ALLOWLIST_HMAC_SECRET` is set (production), each KV value
+ *   under `allow:<api_key_id>` MUST be the JSON shape:
+ *     { "value": <inner-entry-json-string>, "signature": "<hex-hmac>" }
+ *   where signature = HMAC-SHA256(value, secret) hex-encoded. Verify
+ *   uses `crypto.subtle` with constant-time compare. Mismatch ⇒
+ *   challenge (fail-closed). When the secret is unset (dev/preview),
+ *   the legacy raw-JSON entry shape is still accepted for back-compat.
+ *   Operators wrap entries via the `tools/edge/sign-allowlist-entry.ts`
+ *   helper before `wrangler kv put`.
  */
 
 import { z } from 'zod';
@@ -134,7 +145,18 @@ export async function enforceOriginAllowlist(
   try {
     const raw = await kv.get(`allow:${apiKeyId}`);
     if (raw) {
-      const parsed = ALLOWLIST_ENTRY_SCHEMA.safeParse(JSON.parse(raw));
+      // SCRUM-1283 (R3-10) sub-issue A: when an HMAC secret is configured,
+      // require the `{value, signature}` envelope shape and verify the
+      // signature before parsing the inner entry. Without the secret
+      // (dev/preview), accept the legacy raw entry JSON for back-compat.
+      const innerJson = await unwrapSignedEntry(raw, env.MCP_ALLOWLIST_HMAC_SECRET);
+      if (innerJson === null) {
+        console.error(
+          '[mcp-origin-allowlist] KV entry failed HMAC verification or envelope shape; fail-safe to challenge',
+        );
+        return { ok: false, reason: 'challenge', retryable: true };
+      }
+      const parsed = ALLOWLIST_ENTRY_SCHEMA.safeParse(JSON.parse(innerJson));
       if (!parsed.success) {
         // Malformed / tampered / schema-incompatible entry → fail closed.
         console.error(
@@ -150,6 +172,59 @@ export async function enforceOriginAllowlist(
   }
 
   return computeAllowlistDecision(entry, req);
+}
+
+/** SCRUM-1283 (R3-10) sub-issue A: unwrap and verify a signed allowlist
+ *  KV value. Returns the inner-entry JSON string when the envelope is
+ *  valid OR when no secret is configured (legacy back-compat). Returns
+ *  `null` when an envelope is required but missing/forged. */
+export async function unwrapSignedEntry(
+  raw: string,
+  secret: string | undefined,
+): Promise<string | null> {
+  if (!secret) {
+    // Legacy mode: accept the raw entry JSON as-is.
+    return raw;
+  }
+  let envelope: { value?: unknown; signature?: unknown };
+  try {
+    envelope = JSON.parse(raw) as { value?: unknown; signature?: unknown };
+  } catch {
+    return null;
+  }
+  if (typeof envelope.value !== 'string' || typeof envelope.signature !== 'string') {
+    return null;
+  }
+  const expected = await hmacSha256Hex(secret, envelope.value);
+  if (!constantTimeEqualHex(expected, envelope.signature)) {
+    return null;
+  }
+  return envelope.value;
+}
+
+async function hmacSha256Hex(secret: string, message: string): Promise<string> {
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    'raw',
+    enc.encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign'],
+  );
+  const sigBuf = await crypto.subtle.sign('HMAC', key, enc.encode(message));
+  return Array.from(new Uint8Array(sigBuf))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+/** Hex strings only; equal length required. Constant-time over the bytes. */
+function constantTimeEqualHex(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) {
+    diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  return diff === 0;
 }
 
 /** Render a `challenge` or `rejected` decision to an HTTP response. */

@@ -30,6 +30,16 @@ export interface Env {
   // Provision with: `wrangler kv:namespace create MCP_ORIGIN_ALLOWLIST_KV`.
   MCP_ORIGIN_ALLOWLIST_KV?: KVNamespace;
 
+  // SCRUM-1283 (R3-10) sub-issue A: HMAC secret used to sign the entries
+  // stored under `allow:<api_key_id>`. When set, the allowlist read path
+  // expects each KV entry to be a `{value, signature}` envelope and
+  // verifies signature == HMAC-SHA256(value, secret) using a constant-time
+  // compare. A compromised KV write-path that lacks the secret cannot
+  // forge a valid envelope. When unset (dev/preview), the gate accepts
+  // the legacy raw-JSON entry shape for back-compat. Production sets this
+  // via `wrangler secret put MCP_ALLOWLIST_HMAC_SECRET --name arkova-edge`.
+  MCP_ALLOWLIST_HMAC_SECRET?: string;
+
   // Environment variables
   ENABLE_AI_FALLBACK: string;
   CF_AI_MODEL: string;
