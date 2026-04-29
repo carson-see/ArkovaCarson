@@ -53,6 +53,36 @@ COMMENT ON POLICY parent_split_tokens_service_role ON parent_split_tokens IS
   'SCRUM-1275 (R3-2): explicit service_role policy. Tokens looked up by hash '
   'via service_role only in the Phase 3b sub-org rollover flow.';
 
+-- Conditional policies for tables that exist in dev/CI fixtures (created by
+-- migrations 0116 / 0175) but not in prod (dropped out-of-band before the
+-- migration drift gate existed). The DO-block guard makes the migration
+-- effective in dev/CI fixtures and a no-op in prod, keeping the FORCE RLS
+-- guarantee consistent across environments without diverging migration
+-- application.
+
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE n.nspname = 'public' AND c.relname = 'webhook_idempotency'
+  ) AND NOT EXISTS (
+    SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'webhook_idempotency'
+  ) THEN
+    EXECUTE 'CREATE POLICY webhook_idempotency_service_role ON webhook_idempotency '
+         || 'FOR ALL TO service_role USING (true) WITH CHECK (true)';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+    WHERE n.nspname = 'public' AND c.relname = 'activation_tokens'
+  ) AND NOT EXISTS (
+    SELECT 1 FROM pg_policies WHERE schemaname = 'public' AND tablename = 'activation_tokens'
+  ) THEN
+    EXECUTE 'CREATE POLICY activation_tokens_service_role ON activation_tokens '
+         || 'FOR ALL TO service_role USING (true) WITH CHECK (true)';
+  END IF;
+END $$;
+
 -- Defensive verification: zero tables in public schema may have FORCE RLS without
 -- at least one policy after this migration.
 DO $$
