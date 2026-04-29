@@ -11,7 +11,7 @@ VARIABLES status, chainTxId, fingerprintLocked, metadataLocked, credentialTypeLo
 vars == <<status, chainTxId, fingerprintLocked, metadataLocked, credentialTypeLocked, legalHold, actor>>
 
 TypeOK ==
-  /\ status \in [Anchors -> {"PENDING", "BROADCASTING", "SUBMITTED", "SECURED", "REVOKED"}]
+  /\ status \in [Anchors -> {"PENDING", "BROADCASTING", "SUBMITTED", "SECURED", "REVOKED", "SUPERSEDED"}]
   /\ chainTxId \in [Anchors -> {"has_tx"} \cup {Null}]
   /\ fingerprintLocked \in [Anchors -> BOOLEAN]
   /\ metadataLocked \in [Anchors -> BOOLEAN]
@@ -27,10 +27,10 @@ broadcastingNoChainTx ==
   \A a \in Anchors : (~(status[a] = "BROADCASTING")) \/ (chainTxId[a] = Null)
 fingerprintImmutableAfterPending ==
   \A a \in Anchors : (status[a] = "PENDING") \/ (fingerprintLocked[a])
-revokedIsTerminal ==
+revokedRequiresChainTx ==
   \A a \in Anchors : (~(status[a] = "REVOKED")) \/ (chainTxId[a] = "has_tx")
 metadataImmutableAfterSecured ==
-  \A a \in Anchors : (~(status[a] \in {"SECURED", "REVOKED"})) \/ (metadataLocked[a])
+  \A a \in Anchors : (~(status[a] \in {"SECURED", "REVOKED", "SUPERSEDED"})) \/ (metadataLocked[a])
 onlyWorkerSecures ==
   \A a \in Anchors : (~(status[a] = "SECURED")) \/ (actor[a] = "worker")
 credentialTypeImmutableAfterPending ==
@@ -82,14 +82,28 @@ revoke(a) ==
   /\ UNCHANGED <<chainTxId, fingerprintLocked, metadataLocked, credentialTypeLocked, legalHold, actor>>
 placeLegalHold(a) ==
   /\ a \in Anchors
-  /\ (status[a] \in {"SECURED", "REVOKED"}) /\ (~(legalHold[a]))
+  /\ (status[a] \in {"SECURED", "REVOKED", "SUPERSEDED"}) /\ (~(legalHold[a]))
   /\ legalHold' = [legalHold EXCEPT ![a] = TRUE]
   /\ UNCHANGED <<status, chainTxId, fingerprintLocked, metadataLocked, credentialTypeLocked, actor>>
 removeLegalHold(a) ==
   /\ a \in Anchors
-  /\ (status[a] \in {"SECURED", "REVOKED"}) /\ (legalHold[a])
+  /\ (status[a] \in {"SECURED", "REVOKED", "SUPERSEDED"}) /\ (legalHold[a])
   /\ legalHold' = [legalHold EXCEPT ![a] = FALSE]
   /\ UNCHANGED <<status, chainTxId, fingerprintLocked, metadataLocked, credentialTypeLocked, actor>>
+supersede(a) ==
+  /\ a \in Anchors
+  /\ (~(status[a] \in {"REVOKED", "SUPERSEDED"})) /\ (~(legalHold[a]))
+  /\ status' = [status EXCEPT ![a] = "SUPERSEDED"]
+  /\ fingerprintLocked' = [fingerprintLocked EXCEPT ![a] = TRUE]
+  /\ metadataLocked' = [metadataLocked EXCEPT ![a] = TRUE]
+  /\ credentialTypeLocked' = [credentialTypeLocked EXCEPT ![a] = TRUE]
+  /\ UNCHANGED <<chainTxId, legalHold, actor>>
+reorgDetected(a) ==
+  /\ a \in Anchors
+  /\ (status[a] = "SECURED") /\ (actor[a] = "worker") /\ (chainTxId[a] = "has_tx") /\ (~(legalHold[a]))
+  /\ status' = [status EXCEPT ![a] = "SUBMITTED"]
+  /\ metadataLocked' = [metadataLocked EXCEPT ![a] = FALSE]
+  /\ UNCHANGED <<chainTxId, fingerprintLocked, credentialTypeLocked, legalHold, actor>>
 
 Action_workerClaim_1 ==
   /\ status["a1"] = "PENDING"
@@ -164,21 +178,45 @@ Action_revoke_2 ==
   /\ status' = [status EXCEPT !["a2"] = "REVOKED"]
   /\ UNCHANGED <<chainTxId, fingerprintLocked, metadataLocked, credentialTypeLocked, legalHold, actor>>
 Action_placeLegalHold_1 ==
-  /\ (status["a1"] \in {"SECURED", "REVOKED"}) /\ (~(legalHold["a1"]))
+  /\ (status["a1"] \in {"SECURED", "REVOKED", "SUPERSEDED"}) /\ (~(legalHold["a1"]))
   /\ legalHold' = [legalHold EXCEPT !["a1"] = TRUE]
   /\ UNCHANGED <<status, chainTxId, fingerprintLocked, metadataLocked, credentialTypeLocked, actor>>
 Action_placeLegalHold_2 ==
-  /\ (status["a2"] \in {"SECURED", "REVOKED"}) /\ (~(legalHold["a2"]))
+  /\ (status["a2"] \in {"SECURED", "REVOKED", "SUPERSEDED"}) /\ (~(legalHold["a2"]))
   /\ legalHold' = [legalHold EXCEPT !["a2"] = TRUE]
   /\ UNCHANGED <<status, chainTxId, fingerprintLocked, metadataLocked, credentialTypeLocked, actor>>
 Action_removeLegalHold_1 ==
-  /\ (status["a1"] \in {"SECURED", "REVOKED"}) /\ (legalHold["a1"])
+  /\ (status["a1"] \in {"SECURED", "REVOKED", "SUPERSEDED"}) /\ (legalHold["a1"])
   /\ legalHold' = [legalHold EXCEPT !["a1"] = FALSE]
   /\ UNCHANGED <<status, chainTxId, fingerprintLocked, metadataLocked, credentialTypeLocked, actor>>
 Action_removeLegalHold_2 ==
-  /\ (status["a2"] \in {"SECURED", "REVOKED"}) /\ (legalHold["a2"])
+  /\ (status["a2"] \in {"SECURED", "REVOKED", "SUPERSEDED"}) /\ (legalHold["a2"])
   /\ legalHold' = [legalHold EXCEPT !["a2"] = FALSE]
   /\ UNCHANGED <<status, chainTxId, fingerprintLocked, metadataLocked, credentialTypeLocked, actor>>
+Action_supersede_1 ==
+  /\ (~(status["a1"] \in {"REVOKED", "SUPERSEDED"})) /\ (~(legalHold["a1"]))
+  /\ status' = [status EXCEPT !["a1"] = "SUPERSEDED"]
+  /\ fingerprintLocked' = [fingerprintLocked EXCEPT !["a1"] = TRUE]
+  /\ metadataLocked' = [metadataLocked EXCEPT !["a1"] = TRUE]
+  /\ credentialTypeLocked' = [credentialTypeLocked EXCEPT !["a1"] = TRUE]
+  /\ UNCHANGED <<chainTxId, legalHold, actor>>
+Action_supersede_2 ==
+  /\ (~(status["a2"] \in {"REVOKED", "SUPERSEDED"})) /\ (~(legalHold["a2"]))
+  /\ status' = [status EXCEPT !["a2"] = "SUPERSEDED"]
+  /\ fingerprintLocked' = [fingerprintLocked EXCEPT !["a2"] = TRUE]
+  /\ metadataLocked' = [metadataLocked EXCEPT !["a2"] = TRUE]
+  /\ credentialTypeLocked' = [credentialTypeLocked EXCEPT !["a2"] = TRUE]
+  /\ UNCHANGED <<chainTxId, legalHold, actor>>
+Action_reorgDetected_1 ==
+  /\ (status["a1"] = "SECURED") /\ (actor["a1"] = "worker") /\ (chainTxId["a1"] = "has_tx") /\ (~(legalHold["a1"]))
+  /\ status' = [status EXCEPT !["a1"] = "SUBMITTED"]
+  /\ metadataLocked' = [metadataLocked EXCEPT !["a1"] = FALSE]
+  /\ UNCHANGED <<chainTxId, fingerprintLocked, credentialTypeLocked, legalHold, actor>>
+Action_reorgDetected_2 ==
+  /\ (status["a2"] = "SECURED") /\ (actor["a2"] = "worker") /\ (chainTxId["a2"] = "has_tx") /\ (~(legalHold["a2"]))
+  /\ status' = [status EXCEPT !["a2"] = "SUBMITTED"]
+  /\ metadataLocked' = [metadataLocked EXCEPT !["a2"] = FALSE]
+  /\ UNCHANGED <<chainTxId, fingerprintLocked, credentialTypeLocked, legalHold, actor>>
 
 Init ==
   /\ status = [x \in Anchors |-> "PENDING"]
@@ -198,6 +236,8 @@ Next ==
   \/ \E a \in Anchors : revoke(a)
   \/ \E a \in Anchors : placeLegalHold(a)
   \/ \E a \in Anchors : removeLegalHold(a)
+  \/ \E a \in Anchors : supersede(a)
+  \/ \E a \in Anchors : reorgDetected(a)
 
 EquivalenceNext ==
   \/ Action_workerClaim_1
@@ -216,6 +256,10 @@ EquivalenceNext ==
   \/ Action_placeLegalHold_2
   \/ Action_removeLegalHold_1
   \/ Action_removeLegalHold_2
+  \/ Action_supersede_1
+  \/ Action_supersede_2
+  \/ Action_reorgDetected_1
+  \/ Action_reorgDetected_2
 
 Spec == Init /\ [][Next]_vars
 EquivalenceSpec == Init /\ [][EquivalenceNext]_vars
