@@ -14,7 +14,19 @@
 
 ## Now
 
-### 2026-04-28 — R3/R4 cleanup wave: SCRUM-1278 + 1280 + 1276 + 1297 + 1289 (PR [#643](https://github.com/carson-see/ArkovaCarson/pull/643) merged)
+### 2026-04-29 — R2-8 sub-B + sub-C scaffolding: SCRUM-1444 sanitizer + SCRUM-1445 migration (branch `claude/focused-fermi-s6ABx`)
+
+Engineering-only, no prod-state changes. Stacked on `origin/main` at `b6d0657` (post PR #651).
+
+**SCRUM-1444 (R2-8 sub-B)** — `services/worker/src/api/v1/attestations.ts` audit confirmed every response path was already free of internal-UUID leaks (POST `/`, GET `/:publicId`, GET `/`, batch-create, batch-verify, PATCH revoke). The list endpoint's `...a` spread was only protected by an explicit SELECT that excluded `id`/`attester_user_id`/`attester_org_id`/`anchor_id` — a future SELECT widening would leak silently. New `toPublicAttestation()` helper mirrors the `toPublicAgent` pattern (SCRUM-1271-A): strips `id`, `attester_user_id`, `attester_org_id`, `anchor_id`, plus every key in `BANNED_RESPONSE_KEYS` from `response-schemas.ts`. Helper applied to the list spread (defense-in-depth). New `attestations-sanitizer.test.ts` (5 tests) pins the contract.
+
+**SCRUM-1445 (R2-8 sub-C) — schema scaffold only** — Migration `supabase/migrations/0283_webhooks_public_id.sql` adds `public_id` to `webhook_endpoints` (`WHK-{org_prefix}-{8}`) and `webhook_delivery_logs` (`DLV-{12}`). Backfills existing rows using `organizations.org_prefix` from migration 0085, or `IND` fallback. NOT NULL + UNIQUE INDEX on the new columns. `NOTIFY pgrst, 'reload schema'`. The v2 route cutover + webhooks.ts response-shape rewrite are deferred — that's a routing change, not a schema change, once 0283 lands.
+
+**Tests:** 5/5 sanitizer + 26/26 attestations + 63/63 sibling v1 tests (agents-sanitizer, agents, response-schemas, webhooks-crud) all green. Worker `tsc --noEmit` exit 0. `check-migration-prefix-uniqueness.ts` + `check-rls-auth-uid-wrap.ts` both green.
+
+**Stalled-In-Progress audit:** of the 10 In Progress tickets, 4 are parent epics (SCRUM-772 GME2, SCRUM-550 DEP, SCRUM-1246 RECOVERY, SCRUM-1041 SEC-HARDEN, SCRUM-804 NVI-blocked). 6 are stories: 1060 MFA audit (vendor-evidence work), 1302 Playwright auth (PR #642 open), 1289 R4-4 coverage (partial in #643), 1276 R3-3 (AC1+AC4 in #644, AC2/AC3/AC5 owed), 1275 R3-2 (work in #645), 1444+1445 (this session). PO Roadmap "R3 wave 1 of 11 done" is stale — actual state is 7 of 11 work-merged after PRs #643–#651.
+
+
 
 PR #643 merged at sha [d7c49247](https://github.com/carson-see/ArkovaCarson/commit/d7c4924729f2697defab0967e9f28152bf0254a7). All five RECOVERY (SCRUM-1246) children touched in one branch. Engineering + one prod migration applied via Supabase MCP.
 
