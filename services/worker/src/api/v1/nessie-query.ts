@@ -19,6 +19,7 @@ import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { createEmbeddingProvider } from '../../ai/factory.js';
 import { GEMINI_GENERATION_MODEL } from '../../ai/gemini-config.js';
+import { traceAiProviderCall } from '../../ai/observability.js';
 import { buildIntelligenceSystemPrompt } from '../../ai/prompts/intelligence.js';
 import type { IntelligenceMode } from '../../ai/prompts/intelligence.js';
 import { hybridSearch } from '../../ai/hybrid-search.js';
@@ -423,28 +424,39 @@ async function generateVerifiedContext(
   const togetherKey = process.env.TOGETHER_API_KEY;
 
   if (intelligenceModel && togetherKey) {
-    // Route to Nessie Intelligence model on Together AI (30s timeout)
+    // Route to Nessie Intelligence model on Together AI (30s timeout).
+    // SCRUM-1281 (R3-8 sub-A): wrapped in traceAiProviderCall so Arize spans
+    // flow for the Together path; the existing AbortController/setTimeout
+    // pattern stays in place because Together fetch needs explicit cleanup.
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 30_000);
 
     try {
-      const response = await fetch('https://api.together.xyz/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${togetherKey}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
+      const response = await traceAiProviderCall(
+        {
+          provider: 'together',
+          operation: 'rag',
           model: intelligenceModel,
-          messages: [
-            { role: 'system', content: systemPrompt },
-            { role: 'user', content: prompt },
-          ],
-          temperature: 0.2,
-          max_tokens: 4096,
+          inputCharacterCount: prompt.length,
+        },
+        () => fetch('https://api.together.xyz/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${togetherKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            model: intelligenceModel,
+            messages: [
+              { role: 'system', content: systemPrompt },
+              { role: 'user', content: prompt },
+            ],
+            temperature: 0.2,
+            max_tokens: 4096,
+          }),
+          signal: controller.signal,
         }),
-        signal: controller.signal,
-      });
+      );
 
       clearTimeout(timeout);
 
@@ -471,7 +483,10 @@ async function generateVerifiedContext(
     }
   }
 
-  // Fallback: Use Gemini SDK
+  // Fallback: Use Gemini SDK.
+  // SCRUM-1281 (R3-8 sub-A): added maxOutputTokens cap (4096; matches the
+  // Together max_tokens), AbortSignal.timeout (30s parity with Together),
+  // and traceAiProviderCall wrapper so Arize spans flow.
   {
     const { GoogleGenerativeAI: GenAI } = await import('@google/generative-ai');
     const geminiKey = process.env.GEMINI_API_KEY;
@@ -486,11 +501,22 @@ async function generateVerifiedContext(
       generationConfig: {
         responseMimeType: 'application/json',
         temperature: 0.2,
+        maxOutputTokens: 4096,
       },
     });
-    const response = await model.generateContent({
-      contents: [{ role: 'user', parts: [{ text: prompt }] }],
-    });
+    const response = await traceAiProviderCall(
+      {
+        provider: 'gemini',
+        operation: 'rag',
+        model: modelName,
+        inputCharacterCount: prompt.length,
+      },
+      () => model.generateContent(
+        { contents: [{ role: 'user', parts: [{ text: prompt }] }] },
+        { signal: AbortSignal.timeout(30_000) },
+      ),
+      (generated) => ({ tokensUsed: generated.response.usageMetadata?.totalTokenCount }),
+    );
     text = response.response.text();
     tokensUsed = response.response.usageMetadata?.totalTokenCount;
   }

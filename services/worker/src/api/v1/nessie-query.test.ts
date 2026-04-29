@@ -45,10 +45,16 @@ vi.mock('../../utils/queryMonitor.js', () => ({
   recordQueryMetric: vi.fn(),
 }));
 
+// SCRUM-1281 (R3-8 sub-A): capture the config passed to getGenerativeModel
+// so tests can assert maxOutputTokens is wired and the runtime is not
+// emitting uncapped outputs through the Gemini fallback path.
+const capturedGetGenerativeModelConfig: { config?: Record<string, unknown> } = {};
+
 vi.mock('@google/generative-ai', () => {
   return {
     GoogleGenerativeAI: class MockGoogleGenerativeAI {
-      getGenerativeModel() {
+      getGenerativeModel(config?: Record<string, unknown>) {
+        capturedGetGenerativeModelConfig.config = config;
         return { generateContent: mockGenerateContent };
       }
     },
@@ -286,6 +292,30 @@ describe('GET /nessie/query', () => {
       const citation = res.body.citations[0];
       expect(citation.anchor_proof).toBeDefined();
       expect(citation.anchor_proof.chain_tx_id).toBe('tx-abc');
+    });
+
+    // SCRUM-1281 (R3-8 sub-A): pin the cost-guardrail and abort wiring on
+    // the Gemini fallback. Without these, a malformed prompt could run the
+    // model to its default ceiling, and a network stall would block the
+    // /nessie/query response indefinitely.
+    it('Gemini fallback config carries maxOutputTokens=4096 (SCRUM-1281)', async () => {
+      capturedGetGenerativeModelConfig.config = undefined;
+      const app = buildApp();
+      await request(app).get('/nessie/query?q=apple+report&mode=context');
+      const cfg = capturedGetGenerativeModelConfig.config as
+        | { generationConfig?: { maxOutputTokens?: number } }
+        | undefined;
+      expect(cfg?.generationConfig?.maxOutputTokens).toBe(4096);
+    });
+
+    it('Gemini fallback generateContent is invoked with an AbortSignal (SCRUM-1281)', async () => {
+      mockGenerateContent.mockClear();
+      const app = buildApp();
+      await request(app).get('/nessie/query?q=apple+report&mode=context');
+      // Second arg to model.generateContent should carry the timeout signal.
+      const lastCall = mockGenerateContent.mock.calls.at(-1);
+      const optionsArg = lastCall?.[1] as { signal?: AbortSignal } | undefined;
+      expect(optionsArg?.signal).toBeInstanceOf(AbortSignal);
     });
 
     it('falls back to retrieval-only when no docs found for context mode', async () => {
