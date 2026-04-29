@@ -132,6 +132,12 @@ export function scoreCitationAccuracy(
 /**
  * Score faithfulness: are claims grounded in the provided context?
  * Uses keyword overlap as a proxy (production should use RAGAS or LLM judge).
+ *
+ * SCRUM-1281 (R3-8 sub-B): zero citations now scores 0.0, not 0.5. The
+ * previous "0.5 = uncertain" floor graded a model that emitted no
+ * citations the same as one with 50%-grounded answers — exactly the
+ * "free quality" failure mode the recovery audit flagged. A model
+ * declining to cite is a faithfulness fail, not a draw.
  */
 export function scoreFaithfulness(
   answer: string,
@@ -143,7 +149,7 @@ export function scoreFaithfulness(
   // Extract key phrases from answer (sentences with citations)
   const citedSentences = answer.split(/[.!?]+/).filter((s) => s.includes('['));
 
-  if (citedSentences.length === 0) return 0.5; // No citations = uncertain
+  if (citedSentences.length === 0) return 0; // SCRUM-1281: no citations = no grounding signal.
 
   let groundedCount = 0;
   for (const sentence of citedSentences) {
