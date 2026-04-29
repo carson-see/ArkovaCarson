@@ -1,0 +1,7 @@
+{
+  "_comment": "SCRUM-1275 (R3-2) — historical tables referenced in migrations but no longer present in prod. Verified missing via `information_schema.tables` MCP query 2026-04-29. The CI lint skips these to avoid false positives on archived schema references.",
+  "missing_in_prod": [
+    "webhook_idempotency",
+    "activation_tokens"
+  ]
+}
