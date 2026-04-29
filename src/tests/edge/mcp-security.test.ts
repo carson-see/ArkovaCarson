@@ -145,14 +145,46 @@ describe('mcp-rate-limit — enforceRateLimit (SCRUM-919)', () => {
     warn.mockRestore();
   });
 
-  it('passes through when apiKeyId is null (OAuth bearer case)', async () => {
+  // SCRUM-1283 (R3-10) sub-issue B: OAuth Bearer callers (apiKeyId=null,
+  // userId provided) now bucket on `oauth-${userId}` instead of bypassing
+  // the rate limit entirely.
+  it('falls back to oauth-${userId} bucket when apiKeyId is null', async () => {
+    const store = new Map<string, string>();
+    const kv = {
+      get: vi.fn(async (k: string) => store.get(k) ?? null),
+      put: vi.fn(async (k: string, v: string) => { store.set(k, v); }),
+    } as unknown as KVNamespace;
+
+    const r = await enforceRateLimit(makeEnv({ kv }), null, 'nessie_query', 'user-42');
+    expect(r.ok).toBe(true);
+    expect(kv.get).toHaveBeenCalledTimes(1);
+    const calledKey = vi.mocked(kv.get).mock.calls[0][0];
+    expect(calledKey).toMatch(/^rl:oauth-user-42:nessie_query:\d+$/);
+  });
+
+  it('passes through when both apiKeyId and userId are null (no caller id)', async () => {
     const kv = {
       get: vi.fn(),
       put: vi.fn(),
     } as unknown as KVNamespace;
     const r = await enforceRateLimit(makeEnv({ kv }), null, 'nessie_query');
     expect(r.ok).toBe(true);
+    // No caller id → cannot bucket; KV not touched.
     expect(kv.get).not.toHaveBeenCalled();
+  });
+
+  it('prefers apiKeyId over userId when both are present (preserves existing un-prefixed bucket shape)', async () => {
+    const store = new Map<string, string>();
+    const kv = {
+      get: vi.fn(async (k: string) => store.get(k) ?? null),
+      put: vi.fn(async (k: string, v: string) => { store.set(k, v); }),
+    } as unknown as KVNamespace;
+
+    await enforceRateLimit(makeEnv({ kv }), 'key-A', 'nessie_query', 'user-42');
+    const calledKey = vi.mocked(kv.get).mock.calls[0][0];
+    // API-key path keeps the legacy un-prefixed shape so historical
+    // buckets continue to be honored.
+    expect(calledKey).toMatch(/^rl:key-A:nessie_query:\d+$/);
   });
 
   it('allows under-limit requests + increments the counter', async () => {

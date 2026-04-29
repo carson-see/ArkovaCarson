@@ -37,14 +37,22 @@ function currentWindowStart(now: number = Date.now()): number {
 }
 
 /**
- * Check + increment the rate-limit counter for (apiKeyId, toolName). Returns
+ * Check + increment the rate-limit counter for (caller, toolName). Returns
  * a decision. Safe to call when `env.MCP_RATE_LIMIT_KV` is undefined — that
  * case is a pass-through with a one-time console warning.
+ *
+ * SCRUM-1283 (R3-10) sub-issue B: when `apiKeyId` is null (OAuth Bearer
+ * caller), the bucket falls back to `oauth-${userId}` instead of skipping.
+ * Previously OAuth callers were unrate-limited entirely — a stolen Bearer
+ * token could exhaust nessie_query / oracle_batch_verify quota. Pass
+ * `userId` (the auth.userId from validateBearer) so the OAuth path is
+ * still bucketed.
  */
 export async function enforceRateLimit(
   env: Env,
   apiKeyId: string | null,
   toolName: string,
+  userId: string | null = null,
 ): Promise<RateLimitDecision> {
   const kv = env.MCP_RATE_LIMIT_KV;
   if (!kv) {
@@ -52,17 +60,23 @@ export async function enforceRateLimit(
     return { ok: true };
   }
 
-  // OAuth-bearer callers (no API key) don't have a stable per-agent bucket
-  // today — rate-limit them by user id on the auth layer. For now we skip
-  // the counter to avoid one bucket per OAuth user; tightening this is an
-  // MCP-SEC-01 follow-up.
-  if (!apiKeyId) {
+  // Resolve the per-caller bucket id. Prefer the API-key id (per-agent
+  // contract — preserve the existing un-prefixed key shape so historical
+  // buckets continue to be honored), fall back to a `oauth-${userId}`
+  // namespace for OAuth Bearer callers. Both null → can't bucket; pass.
+  let callerId: string | null = null;
+  if (apiKeyId) {
+    callerId = apiKeyId;
+  } else if (userId) {
+    callerId = `oauth-${userId}`;
+  }
+  if (!callerId) {
     return { ok: true };
   }
 
   const limit = TOOL_LIMITS_RPM[toolName] ?? TOOL_LIMITS_RPM.default;
   const windowStart = currentWindowStart();
-  const key = `rl:${apiKeyId}:${toolName}:${windowStart}`;
+  const key = `rl:${callerId}:${toolName}:${windowStart}`;
 
   // Read-increment-write. CF KV isn't strongly consistent across regions, so
   // distributed bursts can exceed the limit by a small margin. Acceptable for
