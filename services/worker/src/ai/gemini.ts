@@ -178,6 +178,10 @@ export class GeminiProvider implements IAIProvider {
             generationConfig: {
               responseMimeType: 'application/json',
               temperature: 0.1,
+              // SCRUM-1281 (R3-8 sub-C) — cap output. extractMetadata returns a
+              // bounded JSON object; runaway emission can blow Vertex/Gemini
+              // quota when the prompt is malformed.
+              maxOutputTokens: 2048,
             },
           });
 
@@ -321,6 +325,10 @@ export class GeminiProvider implements IAIProvider {
         generationConfig: {
           responseMimeType: 'application/json',
           temperature: 0.1,
+          // SCRUM-1281 (R3-8 sub-C) — cap output. generateTags returns a small
+          // tag list (≈10–50 tokens typical). 1024 leaves headroom without
+          // letting a malformed prompt run the model to its default ceiling.
+          maxOutputTokens: 1024,
         },
       });
 
