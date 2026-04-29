@@ -40,6 +40,16 @@ export interface Env {
   // via `wrangler secret put MCP_ALLOWLIST_HMAC_SECRET --name arkova-edge`.
   MCP_ALLOWLIST_HMAC_SECRET?: string;
 
+  // SCRUM-1283 (R3-10) sub-issue C: HMAC secret used to sign R2 report
+  // download URLs. Required — the report-generator returns a download URL
+  // that includes `?expires=<unix-seconds>&sig=<hex>`; the /reports/dl
+  // route verifies the signature + expiry before streaming bytes from R2.
+  // Without this, the previous behavior returned a hardcoded R2 URL that
+  // wasn't actually signed (anyone who guessed a key could try to
+  // download). Provision via `wrangler secret put R2_REPORT_DOWNLOAD_SECRET
+  // --name arkova-edge`.
+  R2_REPORT_DOWNLOAD_SECRET?: string;
+
   // Environment variables
   ENABLE_AI_FALLBACK: string;
   CF_AI_MODEL: string;
