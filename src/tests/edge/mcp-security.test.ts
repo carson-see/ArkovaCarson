@@ -47,7 +47,12 @@ import { fenceUserInput, SAFETY_PREFIX } from '../../../services/edge/src/mcp-pr
 import { enforceRateLimit, __resetKvWarningForTests } from '../../../services/edge/src/mcp-rate-limit';
 import { logMcpToolCall } from '../../../services/edge/src/mcp-audit-log';
 import { signEnvelope, verifyEnvelope } from '../../../services/edge/src/mcp-hmac';
-import { applyMcpSecurityHeaders, getCorsOrigin, validateBearer } from '../../../services/edge/src/mcp-server';
+import {
+  applyMcpSecurityHeaders,
+  getCorsOrigin,
+  shouldFailClosedWhenSigningKeyMissing,
+  validateBearer,
+} from '../../../services/edge/src/mcp-server';
 import { verifySupabaseJwt } from '../../../services/edge/src/supabase-jwt';
 import type { Env } from '../../../services/edge/src/env';
 
@@ -451,6 +456,27 @@ describe('mcp-server — applyMcpSecurityHeaders (SCRUM-1283 R3-10)', () => {
     );
     expect(headers.get('Mcp-Session-Id')).toBe('sess-abc');
     expect(headers.get('Content-Type')).toBe('application/json');
+  });
+});
+
+describe('mcp-server — shouldFailClosedWhenSigningKeyMissing (SCRUM-1283 R3-10 adjacent)', () => {
+  function envWith(value: string | undefined): Env {
+    return { EDGE_REQUIRE_MCP_SIGNING: value } as unknown as Env;
+  }
+
+  it('returns true only when EDGE_REQUIRE_MCP_SIGNING is exactly the string "true"', () => {
+    expect(shouldFailClosedWhenSigningKeyMissing(envWith('true'))).toBe(true);
+  });
+
+  it('returns false when EDGE_REQUIRE_MCP_SIGNING is unset (dev/preview default)', () => {
+    expect(shouldFailClosedWhenSigningKeyMissing(envWith(undefined))).toBe(false);
+  });
+
+  it('returns false for falsy/uppercase variants (string match is exact)', () => {
+    expect(shouldFailClosedWhenSigningKeyMissing(envWith('false'))).toBe(false);
+    expect(shouldFailClosedWhenSigningKeyMissing(envWith('TRUE'))).toBe(false);
+    expect(shouldFailClosedWhenSigningKeyMissing(envWith('1'))).toBe(false);
+    expect(shouldFailClosedWhenSigningKeyMissing(envWith(''))).toBe(false);
   });
 });
 
