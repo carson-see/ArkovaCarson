@@ -291,4 +291,64 @@ describe('POST /webhooks/ats/:provider/:integrationId', () => {
       }),
     );
   });
+
+  // SCRUM-1282 (R3-9): the inline `verifyLeverSignature` helper was removed
+  // in favor of `verifyHmacSha256Hex(integrations/oauth/hmac.ts)` with a
+  // prefix-stripping shim. This test pins the Lever-format signature contract
+  // (`sha256=<hex>`) so a future refactor of the canonical helper or the
+  // shim cannot silently break Lever delivery.
+  it('accepts a Lever-format `sha256=<hex>` signature via the canonical helper', async () => {
+    const body = JSON.stringify({
+      data: {
+        candidate_name: 'Lever Candidate',
+        candidate_email: 'lever@example.com',
+        toStageId: 'stage-x',
+      },
+    });
+    const leverSig = `sha256=${signPayload(body)}`;
+
+    dbFromMock.mockReturnValueOnce(
+      integrationLookup({
+        id: INTEGRATION_ID,
+        org_id: 'org-1',
+        webhook_secret: WEBHOOK_SECRET,
+      }),
+    );
+    dbFromMock.mockReturnValueOnce(nonceInsert(null));
+    dbFromMock.mockReturnValueOnce(attestationLookup([]));
+
+    const res = await request(createApp())
+      .post(`/webhooks/ats/lever/${INTEGRATION_ID}`)
+      .set('Content-Type', 'application/json')
+      .set('X-Lever-Signature', leverSig)
+      .send(body);
+
+    expect(res.status).toBe(202);
+  });
+
+  // SCRUM-1282 (R3-9): negative path — a Lever signature without the prefix
+  // must still verify (canonical helper accepts raw hex too) since the
+  // strip-prefix shim is a no-op when the prefix isn't present.
+  it('accepts a raw-hex Lever signature (no `sha256=` prefix)', async () => {
+    const body = JSON.stringify({ data: { candidate_name: 'Raw' } });
+    const sig = signPayload(body);
+
+    dbFromMock.mockReturnValueOnce(
+      integrationLookup({
+        id: INTEGRATION_ID,
+        org_id: 'org-1',
+        webhook_secret: WEBHOOK_SECRET,
+      }),
+    );
+    dbFromMock.mockReturnValueOnce(nonceInsert(null));
+    dbFromMock.mockReturnValueOnce(attestationLookup([]));
+
+    const res = await request(createApp())
+      .post(`/webhooks/ats/lever/${INTEGRATION_ID}`)
+      .set('Content-Type', 'application/json')
+      .set('X-Lever-Signature', sig)
+      .send(body);
+
+    expect(res.status).toBe(202);
+  });
 });
