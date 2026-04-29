@@ -47,7 +47,7 @@ import { fenceUserInput, SAFETY_PREFIX } from '../../../services/edge/src/mcp-pr
 import { enforceRateLimit, __resetKvWarningForTests } from '../../../services/edge/src/mcp-rate-limit';
 import { logMcpToolCall } from '../../../services/edge/src/mcp-audit-log';
 import { signEnvelope, verifyEnvelope } from '../../../services/edge/src/mcp-hmac';
-import { getCorsOrigin, validateBearer } from '../../../services/edge/src/mcp-server';
+import { applyMcpSecurityHeaders, getCorsOrigin, validateBearer } from '../../../services/edge/src/mcp-server';
 import { verifySupabaseJwt } from '../../../services/edge/src/supabase-jwt';
 import type { Env } from '../../../services/edge/src/env';
 
@@ -389,6 +389,36 @@ describe('mcp-server — getCorsOrigin (bug-bounty F1, 2026-04-26)', () => {
     expect(out).toBe('https://app.arkova.ai');
     // arkova-carson must NEVER be allowlisted by default
     expect(getCorsOrigin(reqWithOrigin('https://arkova-carson.vercel.app'), {} as Env)).toBe('null');
+  });
+});
+
+describe('mcp-server — applyMcpSecurityHeaders (SCRUM-1283 R3-10)', () => {
+  it('sets Cache-Control: no-store and X-Content-Type-Options: nosniff on every MCP response', () => {
+    const headers = applyMcpSecurityHeaders(new Headers(), 'https://app.arkova.ai');
+    expect(headers.get('Cache-Control')).toBe('no-store');
+    expect(headers.get('X-Content-Type-Options')).toBe('nosniff');
+    expect(headers.get('Access-Control-Allow-Origin')).toBe('https://app.arkova.ai');
+    expect(headers.get('Vary')).toBe('Origin');
+  });
+
+  it('overrides any pre-existing Cache-Control header from the upstream MCP transport', () => {
+    // Pre-existing Cache-Control: public, max-age=300 from a transport response
+    // (e.g. a misconfigured proxy header) must be replaced — MCP responses
+    // carry per-tenant tool output and cannot be cached cross-request.
+    const headers = applyMcpSecurityHeaders(
+      new Headers({ 'Cache-Control': 'public, max-age=300' }),
+      'https://app.arkova.ai',
+    );
+    expect(headers.get('Cache-Control')).toBe('no-store');
+  });
+
+  it('does not strip unrelated headers from the upstream response', () => {
+    const headers = applyMcpSecurityHeaders(
+      new Headers({ 'Mcp-Session-Id': 'sess-abc', 'Content-Type': 'application/json' }),
+      'https://app.arkova.ai',
+    );
+    expect(headers.get('Mcp-Session-Id')).toBe('sess-abc');
+    expect(headers.get('Content-Type')).toBe('application/json');
   });
 });
 

@@ -951,9 +951,7 @@ export async function handleMcpRequest(
       },
     });
 
-    const headers = new Headers(response.headers);
-    headers.set('Access-Control-Allow-Origin', corsOrigin);
-    headers.set('Vary', 'Origin');
+    const headers = applyMcpSecurityHeaders(new Headers(response.headers), corsOrigin);
 
     return new Response(response.body, {
       status: response.status,
@@ -962,15 +960,35 @@ export async function handleMcpRequest(
     });
   } catch (error) {
     console.error('[mcp-server] Request handling failed:', error);
+    const errorHeaders = applyMcpSecurityHeaders(
+      new Headers({ 'Content-Type': 'application/json' }),
+      corsOrigin,
+    );
     return new Response(
       JSON.stringify({ error: 'MCP server error', message: 'Internal server error' }),
-      { status: 500, headers: {
-        'Content-Type': 'application/json',
-        'Access-Control-Allow-Origin': corsOrigin,
-        Vary: 'Origin',
-      } },
+      { status: 500, headers: errorHeaders },
     );
   }
+}
+
+/**
+ * SCRUM-1283 (R3-10): apply the MCP-response security header set.
+ *
+ * MCP responses carry tool output that may include request-specific data
+ * (verification verdicts, anchor proofs, search results scoped to the
+ * caller's API key). Caching them in shared proxies or browsers risks
+ * cross-tenant leakage; sniffing the content type risks executable
+ * interpretation in some clients. Both are blocked by these headers.
+ *
+ * Exported for unit-test coverage; mutates AND returns the headers
+ * object for fluent chaining.
+ */
+export function applyMcpSecurityHeaders(headers: Headers, corsOrigin: string): Headers {
+  headers.set('Access-Control-Allow-Origin', corsOrigin);
+  headers.set('Vary', 'Origin');
+  headers.set('Cache-Control', 'no-store');
+  headers.set('X-Content-Type-Options', 'nosniff');
+  return headers;
 }
 
 export { SERVER_NAME, SERVER_VERSION };
