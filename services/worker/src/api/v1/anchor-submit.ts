@@ -12,13 +12,16 @@ import { Router, Request, Response } from 'express';
 import { randomUUID } from 'crypto';
 import { z } from 'zod';
 import { buildVerifyUrl } from '../../lib/urls.js';
+import {
+  ANCHOR_CREDENTIAL_TYPES,
+  hasPublicCredentialEvidenceMetadataKeys,
+  parsePublicCredentialEvidenceMetadata,
+} from '../../lib/credential-evidence.js';
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 import { deductOrgCredit } from '../../utils/orgCredits.js';
 
 const router = Router();
-
-const CREDENTIAL_TYPES = ['DEGREE', 'LICENSE', 'CERTIFICATE', 'TRANSCRIPT', 'PROFESSIONAL', 'OTHER'] as const;
 
 // Frozen request shape per CLAUDE.md §1.8 — additive nullable fields only.
 // Fingerprint must be 64-char hex (SHA-256). Description capped to keep
@@ -29,7 +32,7 @@ const CREDENTIAL_TYPES = ['DEGREE', 'LICENSE', 'CERTIFICATE', 'TRANSCRIPT', 'PRO
 const SAFE_METADATA_KEY = /^[a-zA-Z0-9_.-]+$/;
 const AnchorSubmitSchema = z.object({
   fingerprint: z.string().regex(/^[a-fA-F0-9]{64}$/, 'must be a 64-character hex SHA-256 hash'),
-  credential_type: z.enum(CREDENTIAL_TYPES).optional(),
+  credential_type: z.enum(ANCHOR_CREDENTIAL_TYPES).optional(),
   description: z.string().max(1000).optional(),
   metadata: z.record(z.string().regex(SAFE_METADATA_KEY, 'metadata keys must match [a-zA-Z0-9_.-]+'), z.unknown()).optional(),
 }).strict();
@@ -72,6 +75,15 @@ router.post('/', async (req: Request, res: Response) => {
   const body: AnchorSubmitRequest = parsed.data;
 
   const fingerprint = body.fingerprint.toLowerCase();
+  const publicSafeCredentialEvidenceMetadata = parsePublicCredentialEvidenceMetadata(body.metadata);
+  if (body.metadata && hasPublicCredentialEvidenceMetadataKeys(body.metadata) && !publicSafeCredentialEvidenceMetadata) {
+    res.status(400).json({
+      error: 'invalid_request',
+      message: 'Request body failed validation',
+      details: [{ path: 'metadata', code: 'invalid_credential_evidence_metadata', message: 'Credential evidence metadata is invalid or not public-safe' }],
+    });
+    return;
+  }
 
   try {
     // Check for duplicate fingerprint (idempotent — return existing if already anchored)
@@ -153,6 +165,7 @@ router.post('/', async (req: Request, res: Response) => {
         filename: `api-${fingerprint.slice(0, 12)}`,
         credential_type: credentialType,
         description: body.description ?? null,
+        metadata: publicSafeCredentialEvidenceMetadata,
       })
       .select('public_id, fingerprint, status, created_at')
       .single();
