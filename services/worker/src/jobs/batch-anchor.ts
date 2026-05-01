@@ -63,6 +63,42 @@ export const MAX_ANCHOR_AGE_MS = 3 * 60 * 60 * 1000; // 3 hours
  */
 export const ABSOLUTE_FEE_CAP_SAT_PER_VB = 200;
 
+function claimErrorSummary(error: unknown): string {
+  if (!error || typeof error !== 'object') return String(error ?? '');
+  const record = error as Record<string, unknown>;
+  return [record.code, record.message, record.details, record.hint]
+    .filter((value): value is string => typeof value === 'string')
+    .join(' ')
+    .toLowerCase();
+}
+
+function isClaimPendingAnchorsMigrationCompatError(error: unknown): boolean {
+  const summary = claimErrorSummary(error);
+  if (!summary) return false;
+
+  const code = typeof error === 'object' && error !== null
+    ? (error as Record<string, unknown>).code
+    : undefined;
+  const knownMissingFunctionCode = code === 'PGRST202' || code === '42883';
+  const looksLikeMissingFunction = summary.includes('function not found')
+    || summary.includes('could not find the function')
+    || summary.includes('does not exist')
+    || summary.includes('schema cache')
+    || summary.includes('no function matches');
+
+  return (knownMissingFunctionCode && looksLikeMissingFunction)
+    || summary.includes('function not found')
+    || summary.includes('could not find the function')
+    || (
+      summary.includes('claim_pending_anchors')
+      && (
+        summary.includes('schema cache')
+        || summary.includes('does not exist')
+        || summary.includes('no function matches')
+      )
+    );
+}
+
 // =============================================================================
 // ARK-102 (SCRUM-1012): Pinned Trigger A/B/C decision points
 // =============================================================================
@@ -313,8 +349,12 @@ async function _processBatchAnchorsInner(opts: ProcessBatchAnchorOptions = {}): 
 
     if (claimError) {
       if (allClaimed.length === 0) {
-        logger.warn({ error: claimError }, 'claim_pending_anchors RPC failed — falling back to legacy batch');
-        return legacyProcessBatchAnchors(opts.orgId);
+        if (isClaimPendingAnchorsMigrationCompatError(claimError)) {
+          logger.warn({ error: claimError }, 'claim_pending_anchors RPC unavailable — falling back to legacy batch');
+          return legacyProcessBatchAnchors(opts.orgId);
+        }
+        logger.error({ error: claimError }, 'claim_pending_anchors RPC failed — skipping batch without legacy fallback');
+        return EMPTY;
       }
       // Partial claim succeeded — proceed with what we have
       logger.warn({ error: claimError, claimedSoFar: allClaimed.length }, 'claim_pending_anchors chunk failed — proceeding with partial batch');

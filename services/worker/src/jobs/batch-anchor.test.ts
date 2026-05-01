@@ -76,11 +76,12 @@ vi.mock('../chain/client.js', () => ({
 }));
 
 const mockDbRpc = vi.hoisted(() => vi.fn());
+const mockSelectEq = vi.hoisted(() => vi.fn());
 
 vi.mock('../utils/db.js', () => {
   // Legacy select chain for fallback path
   const selectChain: Record<string, unknown> = {};
-  selectChain.eq = vi.fn(() => selectChain);
+  selectChain.eq = mockSelectEq.mockImplementation(() => selectChain);
   selectChain.is = vi.fn(() => selectChain);
   selectChain.order = vi.fn(() => selectChain);
   selectChain.limit = vi.fn().mockResolvedValue({ data: [], error: null });
@@ -155,10 +156,13 @@ describe('processBatchAnchors', () => {
     expect(result.processed).toBe(0);
   });
 
-  it('falls back to legacy path when RPC returns an error', async () => {
+  it('falls back to legacy path when claim RPC is migration-incompatible', async () => {
     mockDbRpc.mockResolvedValue({
       data: null,
-      error: { message: 'function not found' },
+      error: {
+        code: 'PGRST202',
+        message: 'Could not find the function public.claim_pending_anchors in the schema cache',
+      },
     });
 
     const result = await processBatchAnchors();
@@ -168,6 +172,41 @@ describe('processBatchAnchors', () => {
     expect(mockLogger.warn).toHaveBeenCalledWith(
       expect.objectContaining({ error: expect.any(Object) }),
       expect.stringContaining('falling back to legacy'),
+    );
+  });
+
+  it('scopes legacy fallback to orgId when old claim RPC signature is still deployed', async () => {
+    mockDbRpc.mockResolvedValue({
+      data: null,
+      error: {
+        code: 'PGRST202',
+        message: 'Could not find function public.claim_pending_anchors(p_exclude_pipeline, p_limit, p_org_id, p_worker_id) in the schema cache',
+      },
+    });
+
+    await processBatchAnchors({ force: true, orgId: 'org-1' });
+
+    const orgScopeCalls = mockSelectEq.mock.calls.filter((call) => call[0] === 'org_id');
+    expect(orgScopeCalls).toEqual([
+      ['org_id', 'org-1'],
+      ['org_id', 'org-1'],
+    ]);
+  });
+
+  it('does not use legacy fallback for non-migration claim RPC errors', async () => {
+    mockDbRpc.mockResolvedValue({
+      data: null,
+      error: { code: 'PGRST301', message: 'permission denied' },
+    });
+
+    const result = await processBatchAnchors({ force: true, orgId: 'org-1' });
+
+    expect(result).toEqual({ processed: 0, batchId: null, merkleRoot: null, txId: null });
+    const orgScopeCalls = mockSelectEq.mock.calls.filter((call) => call[0] === 'org_id');
+    expect(orgScopeCalls).toEqual([['org_id', 'org-1']]);
+    expect(mockLogger.error).toHaveBeenCalledWith(
+      expect.objectContaining({ error: expect.any(Object) }),
+      expect.stringContaining('without legacy fallback'),
     );
   });
 
