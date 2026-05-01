@@ -12,7 +12,7 @@ import type { Request, Response, NextFunction } from 'express';
 // Mock the DB module
 vi.mock('../utils/db.js', () => ({
   db: {
-    from: vi.fn(),
+    rpc: vi.fn(),
   },
 }));
 
@@ -27,6 +27,8 @@ vi.mock('../utils/logger.js', () => ({
 
 import { db } from '../utils/db.js';
 
+const mockedRpc = db.rpc as ReturnType<typeof vi.fn>;
+
 function createMockReqRes() {
   const req = {} as Request;
   const res = {
@@ -38,16 +40,19 @@ function createMockReqRes() {
   return { req, res, next };
 }
 
-function mockFlagQuery(flagValue: string | boolean | null, error: unknown = null) {
-  const selectMock = vi.fn().mockReturnValue({
-    eq: vi.fn().mockReturnValue({
-      single: vi.fn().mockResolvedValue({
-        data: flagValue !== null ? { value: flagValue } : null,
-        error,
-      }),
-    }),
+function mockFlagRpc(flagValue: boolean | null, error: { message: string; code?: string } | null = null) {
+  mockedRpc.mockResolvedValue({
+    data: flagValue,
+    error,
   });
-  (db.from as ReturnType<typeof vi.fn>).mockReturnValue({ select: selectMock });
+}
+
+function restoreVerificationApiEnv(value: string | undefined) {
+  if (value === undefined) {
+    delete process.env.ENABLE_VERIFICATION_API;
+    return;
+  }
+  process.env.ENABLE_VERIFICATION_API = value;
 }
 
 describe('featureGate middleware', () => {
@@ -58,72 +63,74 @@ describe('featureGate middleware', () => {
 
   describe('isVerificationApiEnabled', () => {
     it('returns true when flag is boolean true', async () => {
-      mockFlagQuery(true);
+      mockFlagRpc(true);
       expect(await isVerificationApiEnabled()).toBe(true);
+      expect(mockedRpc).toHaveBeenCalledWith('get_flag', {
+        p_flag_key: 'ENABLE_VERIFICATION_API',
+      });
     });
 
     it('returns false when flag is boolean false', async () => {
-      mockFlagQuery(false);
-      expect(await isVerificationApiEnabled()).toBe(false);
-    });
-
-    it('returns false for string value (strict boolean check)', async () => {
-      mockFlagQuery('true');
-      expect(await isVerificationApiEnabled()).toBe(false);
-    });
-
-    it('falls back to env var when flag is not found in DB', async () => {
       const origEnv = process.env.ENABLE_VERIFICATION_API;
       process.env.ENABLE_VERIFICATION_API = 'true';
-      mockFlagQuery(null, { message: 'not found' });
-      expect(await isVerificationApiEnabled()).toBe(true);
-      process.env.ENABLE_VERIFICATION_API = origEnv;
+      mockFlagRpc(false);
+      expect(await isVerificationApiEnabled()).toBe(false);
+      restoreVerificationApiEnv(origEnv);
     });
 
-    it('returns false on DB error when env var not set', async () => {
+    it('falls back to env var when flag RPC returns an error', async () => {
+      const origEnv = process.env.ENABLE_VERIFICATION_API;
+      process.env.ENABLE_VERIFICATION_API = 'true';
+      mockFlagRpc(null, { message: 'not found' });
+      expect(await isVerificationApiEnabled()).toBe(true);
+      restoreVerificationApiEnv(origEnv);
+    });
+
+    it('falls back to env var when flag RPC throws', async () => {
+      const origEnv = process.env.ENABLE_VERIFICATION_API;
+      process.env.ENABLE_VERIFICATION_API = 'true';
+      mockedRpc.mockRejectedValue(new Error('connection refused'));
+      expect(await isVerificationApiEnabled()).toBe(true);
+      restoreVerificationApiEnv(origEnv);
+    });
+
+    it('returns false on DB error when env var is not set', async () => {
       const origEnv = process.env.ENABLE_VERIFICATION_API;
       delete process.env.ENABLE_VERIFICATION_API;
-      (db.from as ReturnType<typeof vi.fn>).mockReturnValue({
-        select: vi.fn().mockReturnValue({
-          eq: vi.fn().mockReturnValue({
-            single: vi.fn().mockRejectedValue(new Error('connection refused')),
-          }),
-        }),
-      });
+      mockedRpc.mockRejectedValue(new Error('connection refused'));
       expect(await isVerificationApiEnabled()).toBe(false);
-      process.env.ENABLE_VERIFICATION_API = origEnv;
+      restoreVerificationApiEnv(origEnv);
     });
 
     it('caches the result for subsequent calls', async () => {
-      mockFlagQuery(true);
+      mockFlagRpc(true);
 
       await isVerificationApiEnabled();
       await isVerificationApiEnabled();
       await isVerificationApiEnabled();
 
-      // DB should only be called once due to caching
-      expect(db.from).toHaveBeenCalledTimes(1);
+      expect(mockedRpc).toHaveBeenCalledTimes(1);
     });
 
     it('refreshes cache after TTL expires', async () => {
-      mockFlagQuery(true);
+      mockFlagRpc(true);
 
       await isVerificationApiEnabled();
-      expect(db.from).toHaveBeenCalledTimes(1);
+      expect(mockedRpc).toHaveBeenCalledTimes(1);
 
       // Expire the cache by resetting
       _resetFlagCache();
 
-      mockFlagQuery(false);
+      mockFlagRpc(false);
       const result = await isVerificationApiEnabled();
       expect(result).toBe(false);
-      expect(db.from).toHaveBeenCalledTimes(2);
+      expect(mockedRpc).toHaveBeenCalledTimes(2);
     });
   });
 
   describe('verificationApiGate middleware', () => {
     it('calls next() when API is enabled', async () => {
-      mockFlagQuery(true);
+      mockFlagRpc(true);
       const { req, res, next } = createMockReqRes();
 
       const middleware = verificationApiGate();
@@ -134,7 +141,7 @@ describe('featureGate middleware', () => {
     });
 
     it('returns 503 when API is disabled', async () => {
-      mockFlagQuery(false);
+      mockFlagRpc(false);
       const { req, res, next } = createMockReqRes();
 
       const middleware = verificationApiGate();
@@ -152,13 +159,7 @@ describe('featureGate middleware', () => {
     it('returns 503 on DB failure when env not set (fail-closed)', async () => {
       const origEnv = process.env.ENABLE_VERIFICATION_API;
       delete process.env.ENABLE_VERIFICATION_API;
-      (db.from as ReturnType<typeof vi.fn>).mockReturnValue({
-        select: vi.fn().mockReturnValue({
-          eq: vi.fn().mockReturnValue({
-            single: vi.fn().mockRejectedValue(new Error('DB down')),
-          }),
-        }),
-      });
+      mockedRpc.mockRejectedValue(new Error('DB down'));
       const { req, res, next } = createMockReqRes();
 
       const middleware = verificationApiGate();
@@ -166,7 +167,7 @@ describe('featureGate middleware', () => {
 
       expect(next).not.toHaveBeenCalled();
       expect(res.status).toHaveBeenCalledWith(503);
-      process.env.ENABLE_VERIFICATION_API = origEnv;
+      restoreVerificationApiEnv(origEnv);
     });
   });
 });
