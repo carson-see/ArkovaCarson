@@ -36,6 +36,7 @@ export interface AcceptanceGate {
   minTotal: number;
   minPerType: number;
   minFraudPositive: number;
+  expectedTypes?: string[];
 }
 
 export interface GapReport {
@@ -44,12 +45,44 @@ export interface GapReport {
   totalGap: number;
   fraudGap: number;
   typesUnderFloor: Array<{ type: string; count: number; deficit: number }>;
+  expectedTypes: string[];
   passed: boolean;
 }
 
+export const DEFAULT_EXPECTED_CREDENTIAL_TYPES = [
+  'DEGREE',
+  'CERTIFICATE',
+  'LICENSE',
+  'TRANSCRIPT',
+  'PROFESSIONAL',
+  'CLE',
+  'BADGE',
+  'ATTESTATION',
+  'FINANCIAL',
+  'LEGAL',
+  'INSURANCE',
+  'RESUME',
+  'MEDICAL',
+  'MILITARY',
+  'IDENTITY',
+  'SEC_FILING',
+  'PATENT',
+  'REGULATION',
+  'PUBLICATION',
+  'OTHER',
+] as const;
+
 const CREDENTIAL_TYPE_RE = /"credentialType"\s*:\s*"([A-Z_]+)"/;
 const CREDENTIAL_HINT_RE = /credential\s*type\s*hint\s*[:=]\s*([A-Z_]+)/i;
-const FRAUD_POSITIVE_RE = /"fraudSignals"\s*:\s*\[\s*"/;
+const FRAUD_POSITIVE_RE = /"fraudSignals"\s*:\s*\[\s*(?!\])/;
+
+function normalizeTypes(types: string[]): string[] {
+  return [...new Set(types.map((type) => type.trim().toUpperCase()).filter(Boolean))].sort();
+}
+
+function hasStructuredFraudSignals(value: unknown): boolean {
+  return Array.isArray(value) && value.length > 0;
+}
 
 /**
  * Extract credentialType + fraud-positive flag from a single jsonl line.
@@ -66,6 +99,7 @@ export function parseGoldenLine(line: string): GoldenRow {
     return { credentialType: null, fraudPositive: false };
   }
   const blobs: string[] = [];
+  let structuredFraudPositive = false;
   if (parsed && typeof parsed === 'object') {
     const obj = parsed as Record<string, unknown>;
     if (Array.isArray(obj.contents)) {
@@ -83,9 +117,11 @@ export function parseGoldenLine(line: string): GoldenRow {
       }
     }
     if (typeof obj.credentialType === 'string') blobs.push(`"credentialType":"${obj.credentialType}"`);
+    if (hasStructuredFraudSignals(obj.fraudSignals)) structuredFraudPositive = true;
     if (obj.output && typeof obj.output === 'object') {
       const out = obj.output as Record<string, unknown>;
       if (typeof out.credentialType === 'string') blobs.push(`"credentialType":"${out.credentialType}"`);
+      if (hasStructuredFraudSignals(out.fraudSignals)) structuredFraudPositive = true;
     }
   }
   const full = blobs.join('\n');
@@ -96,7 +132,7 @@ export function parseGoldenLine(line: string): GoldenRow {
     const m2 = full.match(CREDENTIAL_HINT_RE);
     if (m2) credentialType = m2[1].toUpperCase();
   }
-  const fraudPositive = FRAUD_POSITIVE_RE.test(full);
+  const fraudPositive = structuredFraudPositive || FRAUD_POSITIVE_RE.test(full);
   return { credentialType, fraudPositive };
 }
 
@@ -119,22 +155,26 @@ export function computeGap(audit: DistributionAudit, gate: AcceptanceGate): GapR
   const totalGap = Math.max(0, gate.minTotal - audit.totalRows);
   const fraudGap = Math.max(0, gate.minFraudPositive - audit.fraudPositive);
   const typesUnderFloor: Array<{ type: string; count: number; deficit: number }> = [];
-  for (const [type, count] of Object.entries(audit.byType)) {
+  const expectedTypes = normalizeTypes(gate.expectedTypes ?? [...DEFAULT_EXPECTED_CREDENTIAL_TYPES]);
+  const typesToCheck = normalizeTypes([...expectedTypes, ...Object.keys(audit.byType)]);
+  for (const type of typesToCheck) {
+    const count = audit.byType[type] ?? 0;
     if (count < gate.minPerType) {
       typesUnderFloor.push({ type, count, deficit: gate.minPerType - count });
     }
   }
   typesUnderFloor.sort((a, b) => b.deficit - a.deficit);
   const passed = totalGap === 0 && fraudGap === 0 && typesUnderFloor.length === 0;
-  return { audit, gate, totalGap, fraudGap, typesUnderFloor, passed };
+  return { audit, gate, totalGap, fraudGap, typesUnderFloor, expectedTypes, passed };
 }
 
 export function renderMarkdownReport(report: GapReport, sourceFiles: string[]): string {
-  const { audit, gate, totalGap, fraudGap, typesUnderFloor, passed } = report;
+  const { audit, gate, totalGap, fraudGap, typesUnderFloor, expectedTypes, passed } = report;
   const lines: string[] = [];
   lines.push(`# Golden Distribution Audit\n`);
   lines.push(`**Sources.** ${sourceFiles.join(', ')}\n`);
   lines.push(`**Acceptance gate.** ≥${gate.minTotal} rows, every type ≥${gate.minPerType}, fraud-positive ≥${gate.minFraudPositive}\n`);
+  lines.push(`**Expected types.** ${expectedTypes.join(', ')}\n`);
   lines.push(`**Verdict.** ${passed ? 'PASSED' : 'FAILED'}\n`);
   lines.push(`## Summary\n`);
   lines.push(`| Metric | Current | Target | Gap |`);
@@ -143,7 +183,9 @@ export function renderMarkdownReport(report: GapReport, sourceFiles: string[]): 
   lines.push(`| Fraud-positive entries | ${audit.fraudPositive} | ${gate.minFraudPositive} | ${fraudGap > 0 ? `+${fraudGap}` : '0'} |`);
   lines.push(`| Types under ${gate.minPerType}-sample floor | ${typesUnderFloor.length} | 0 | ${typesUnderFloor.length} |`);
   lines.push(`| Unparseable rows | ${audit.unparseableRows} | 0 | ${audit.unparseableRows} |\n`);
-  const sorted = Object.entries(audit.byType).sort((a, b) => b[1] - a[1]);
+  const sorted = normalizeTypes([...expectedTypes, ...Object.keys(audit.byType)])
+    .map((type) => [type, audit.byType[type] ?? 0] as const)
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
   lines.push(`## Per-type distribution\n`);
   lines.push(`| Type | Count | Status |`);
   lines.push(`|---|---:|---|`);
@@ -193,6 +235,7 @@ function main(): void {
   let minTotal = 5000;
   let minPerType = 30;
   let minFraudPositive = 200;
+  const expectedTypes: string[] = [];
   let jsonOutput = false;
   let outPath: string | null = null;
   for (let i = 0; i < args.length; i += 1) {
@@ -201,6 +244,8 @@ function main(): void {
     else if (a === '--min-total') minTotal = parseInt(args[++i], 10);
     else if (a === '--min-per-type') minPerType = parseInt(args[++i], 10);
     else if (a === '--min-fraud-positive') minFraudPositive = parseInt(args[++i], 10);
+    else if (a === '--expected-type') expectedTypes.push(args[++i]);
+    else if (a === '--expected-types') expectedTypes.push(...args[++i].split(','));
     else if (a === '--json') jsonOutput = true;
     else if (a === '--out') outPath = resolve(args[++i]);
   }
@@ -218,7 +263,12 @@ function main(): void {
       inputs.push(fixture);
     }
   }
-  const gate: AcceptanceGate = { minTotal, minPerType, minFraudPositive };
+  const gate: AcceptanceGate = {
+    minTotal,
+    minPerType,
+    minFraudPositive,
+    ...(expectedTypes.length > 0 ? { expectedTypes } : {}),
+  };
   const { report } = runAudit(inputs, gate);
   if (jsonOutput) {
     const out = JSON.stringify(report, null, 2);

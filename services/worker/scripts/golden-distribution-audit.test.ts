@@ -10,6 +10,7 @@ import { describe, expect, it } from 'vitest';
 import {
   auditDistribution,
   computeGap,
+  DEFAULT_EXPECTED_CREDENTIAL_TYPES,
   parseGoldenLine,
   renderMarkdownReport,
   type AcceptanceGate,
@@ -74,6 +75,34 @@ describe('parseGoldenLine', () => {
     });
   });
 
+  it('flags fraud-positive when structured output.fraudSignals is non-empty', () => {
+    const line = JSON.stringify({
+      output: {
+        credentialType: 'LICENSE',
+        fraudSignals: ['issuer-domain-mismatch'],
+      },
+    });
+    expect(parseGoldenLine(line)).toEqual({
+      credentialType: 'LICENSE',
+      fraudPositive: true,
+    });
+  });
+
+  it('flags fraud-positive when fraudSignals contains structured objects', () => {
+    const line = JSON.stringify({
+      messages: [
+        {
+          role: 'assistant',
+          content: '{"credentialType":"DEGREE","fraudSignals":[{"signal":"date-conflict"}]}',
+        },
+      ],
+    });
+    expect(parseGoldenLine(line)).toEqual({
+      credentialType: 'DEGREE',
+      fraudPositive: true,
+    });
+  });
+
   it('treats empty fraudSignals array as not fraud-positive', () => {
     const line = JSON.stringify({
       contents: [
@@ -128,7 +157,12 @@ describe('auditDistribution', () => {
 });
 
 describe('computeGap', () => {
-  const gate: AcceptanceGate = { minTotal: 100, minPerType: 10, minFraudPositive: 5 };
+  const gate: AcceptanceGate = {
+    minTotal: 100,
+    minPerType: 10,
+    minFraudPositive: 5,
+    expectedTypes: ['DEGREE', 'LICENSE'],
+  };
 
   it('reports zero gap and passed=true when audit meets all gates', () => {
     const audit = {
@@ -181,6 +215,30 @@ describe('computeGap', () => {
     expect(r.typesUnderFloor[1].deficit).toBe(2);
     expect(r.passed).toBe(false);
   });
+
+  it('fails closed when an expected credential type has zero rows', () => {
+    const audit = {
+      totalRows: 100,
+      unparseableRows: 0,
+      fraudPositive: 5,
+      byType: { DEGREE: 100 },
+    };
+    const r = computeGap(audit, gate);
+    expect(r.passed).toBe(false);
+    expect(r.typesUnderFloor).toContainEqual({ type: 'LICENSE', count: 0, deficit: 10 });
+  });
+
+  it('uses the full launch credential taxonomy by default', () => {
+    const audit = {
+      totalRows: 5000,
+      unparseableRows: 0,
+      fraudPositive: 200,
+      byType: Object.fromEntries(DEFAULT_EXPECTED_CREDENTIAL_TYPES.map((type) => [type, 30])),
+    };
+    const r = computeGap(audit, { minTotal: 5000, minPerType: 30, minFraudPositive: 200 });
+    expect(r.expectedTypes).toEqual([...DEFAULT_EXPECTED_CREDENTIAL_TYPES].sort());
+    expect(r.passed).toBe(true);
+  });
 });
 
 describe('renderMarkdownReport', () => {
@@ -191,7 +249,12 @@ describe('renderMarkdownReport', () => {
       fraudPositive: 45,
       byType: { CERTIFICATE: 187, DEGREE: 146, MEDICAL: 18 },
     };
-    const gate: AcceptanceGate = { minTotal: 5000, minPerType: 30, minFraudPositive: 200 };
+    const gate: AcceptanceGate = {
+      minTotal: 5000,
+      minPerType: 30,
+      minFraudPositive: 200,
+      expectedTypes: ['CERTIFICATE', 'DEGREE', 'MEDICAL'],
+    };
     const report = computeGap(audit, gate);
     const md = renderMarkdownReport(report, ['fixture.jsonl']);
     expect(md).toContain('FAILED');
@@ -208,7 +271,12 @@ describe('renderMarkdownReport', () => {
       fraudPositive: 200,
       byType: { DEGREE: 2500, LICENSE: 2500 },
     };
-    const gate: AcceptanceGate = { minTotal: 5000, minPerType: 30, minFraudPositive: 200 };
+    const gate: AcceptanceGate = {
+      minTotal: 5000,
+      minPerType: 30,
+      minFraudPositive: 200,
+      expectedTypes: ['DEGREE', 'LICENSE'],
+    };
     const report = computeGap(audit, gate);
     const md = renderMarkdownReport(report, ['fixture.jsonl']);
     expect(md).toContain('PASSED');
