@@ -61,12 +61,7 @@ BEGIN
       DROP CONSTRAINT IF EXISTS api_keys_scopes_known_values;
 
     EXECUTE format(
-      'ALTER TABLE public.api_keys
-        ADD CONSTRAINT api_keys_scopes_known_values
-        CHECK (
-          coalesce(array_length(scopes, 1), 0) >= 1
-          AND scopes <@ %L::text[]
-        )',
+      'ALTER TABLE public.api_keys ADD CONSTRAINT api_keys_scopes_known_values CHECK (coalesce(array_length(scopes, 1), 0) >= 1 AND scopes <@ %L::text[])',
       canonical_scopes
     );
 
@@ -107,12 +102,7 @@ BEGIN
       DROP CONSTRAINT IF EXISTS agents_allowed_scopes_known_values;
 
     EXECUTE format(
-      'ALTER TABLE public.agents
-        ADD CONSTRAINT agents_allowed_scopes_known_values
-        CHECK (
-          coalesce(array_length(allowed_scopes, 1), 0) >= 1
-          AND allowed_scopes <@ %L::text[]
-        )',
+      'ALTER TABLE public.agents ADD CONSTRAINT agents_allowed_scopes_known_values CHECK (coalesce(array_length(allowed_scopes, 1), 0) >= 1 AND allowed_scopes <@ %L::text[])',
       canonical_scopes
     );
 
