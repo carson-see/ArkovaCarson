@@ -218,3 +218,45 @@ export interface OrganizationSummary {
   websiteUrl: string | null;
   verificationStatus: string | null;
 }
+
+export interface OrganizationDetails extends OrganizationSummary {
+  description: string | null;
+  industryTag: string | null;
+  orgType: string | null;
+  location: string | null;
+  logoUrl: string | null;
+}
+
+export interface RecordDetails {
+  publicId: string | null;
+  verified: boolean;
+  status: string;
+  fingerprint: string | null;
+  title: string | null;
+  description: string | null;
+  issuerName: string | null;
+  credentialType: string | null;
+  subType: string | null;
+  issuedDate: string | null;
+  expiryDate: string | null;
+  anchorTimestamp: string | null;
+  networkReceiptId: string | null;
+  recordUri: string | null;
+  complianceControls: Record<string, unknown> | null;
+  chainConfirmations: number | null;
+  parentPublicId: string | null;
+  versionNumber: number | null;
+  revocationTxId: string | null;
+  revocationBlockHeight: number | null;
+}
+
+export interface FingerprintDetails extends Omit<RecordDetails, 'fingerprint'> {
+  fingerprint: string;
+  fileMime: string | null;
+  fileSize: number | null;
+}
+
+export interface DocumentDetails extends RecordDetails {
+  fileMime: string | null;
+  fileSize: number | null;
+}

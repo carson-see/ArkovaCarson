@@ -210,6 +210,109 @@ def test_get_anchor_maps_rich_fields() -> None:
     assert result.confidence_scores == {"issuer_name": 0.99}
 
 
+def test_v2_resource_detail_methods_map_public_shapes() -> None:
+    seen_paths: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_paths.append(request.url.path)
+        if request.url.path.endswith("/organizations/org_acme"):
+            return json_response(
+                {
+                    "public_id": "org_acme",
+                    "display_name": "Acme Corp",
+                    "description": "Verified healthcare org",
+                    "domain": "acme.com",
+                    "website_url": "https://acme.com",
+                    "verification_status": "VERIFIED",
+                    "industry_tag": "healthcare",
+                    "org_type": "employer",
+                    "location": "Detroit, MI",
+                    "logo_url": None,
+                }
+            )
+        if request.url.path.endswith("/records/ARK-DOC-ABC"):
+            return json_response(
+                {
+                    "public_id": "ARK-DOC-ABC",
+                    "verified": True,
+                    "status": "ACTIVE",
+                    "fingerprint": "a" * 64,
+                    "title": "Contract.pdf",
+                    "description": "Signed agreement",
+                    "issuer_name": "Acme Corp",
+                    "credential_type": "LEGAL",
+                    "sub_type": "contract",
+                    "issued_date": "2026-04-01",
+                    "expiry_date": None,
+                    "anchor_timestamp": "2026-04-24T12:00:00Z",
+                    "network_receipt_id": "tx-1",
+                    "record_uri": "https://app.arkova.ai/verify/ARK-DOC-ABC",
+                    "compliance_controls": {"soc2": True},
+                    "chain_confirmations": 6,
+                    "parent_public_id": None,
+                    "version_number": 2,
+                    "revocation_tx_id": None,
+                    "revocation_block_height": None,
+                }
+            )
+        raise AssertionError(f"unexpected path {request.url.path}")
+
+    with Arkova(api_key="ak_test", transport=httpx.MockTransport(handler)) as client:
+        org = client.get_organization("org_acme")
+        record = client.get_record("ARK-DOC-ABC")
+
+    assert seen_paths == ["/v2/organizations/org_acme", "/v2/records/ARK-DOC-ABC"]
+    assert org.public_id == "org_acme"
+    assert org.industry_tag == "healthcare"
+    assert not hasattr(org, "id")
+    assert record.public_id == "ARK-DOC-ABC"
+    assert record.parent_public_id is None
+    assert not hasattr(record, "id")
+
+
+def test_v2_fingerprint_and_document_detail_methods() -> None:
+    fingerprint = "a" * 64
+    seen_paths: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_paths.append(request.url.path)
+        return json_response(
+            {
+                "public_id": "ARK-DOC-ABC",
+                "verified": True,
+                "status": "ACTIVE",
+                "fingerprint": fingerprint,
+                "title": "Contract.pdf",
+                "description": None,
+                "issuer_name": "Acme Corp",
+                "credential_type": "LEGAL",
+                "sub_type": None,
+                "issued_date": None,
+                "expiry_date": None,
+                "anchor_timestamp": "2026-04-24T12:00:00Z",
+                "network_receipt_id": "tx-1",
+                "record_uri": "https://app.arkova.ai/verify/ARK-DOC-ABC",
+                "compliance_controls": None,
+                "chain_confirmations": None,
+                "parent_public_id": None,
+                "version_number": None,
+                "revocation_tx_id": None,
+                "revocation_block_height": None,
+                "file_mime": "application/pdf",
+                "file_size": 12345,
+            }
+        )
+
+    with Arkova(api_key="ak_test", transport=httpx.MockTransport(handler)) as client:
+        fingerprint_detail = client.get_fingerprint(fingerprint)
+        document = client.get_document("ARK-DOC-ABC")
+
+    assert seen_paths == [f"/v2/fingerprints/{fingerprint}", "/v2/documents/ARK-DOC-ABC"]
+    assert fingerprint_detail.fingerprint == fingerprint
+    assert fingerprint_detail.file_mime == "application/pdf"
+    assert document.file_size == 12345
+
+
 def test_async_client_get_anchor() -> None:
     async def run() -> str:
         async def handler(_request: httpx.Request) -> httpx.Response:

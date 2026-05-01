@@ -218,6 +218,7 @@ const verification = await arkova.verifyFingerprint(fingerprint);
 
 const anchor = await arkova.getAnchor(results[0].publicId);
 const orgs = await arkova.listOrgs();
+const detail = await arkova.getDocument(results[0].publicId);
 ```
 
 Retries are built in for `429`, `500`, `502`, `503`, and `504`. For rate limits, the SDK reads `Retry-After` and waits before retrying. API v2 errors are exposed as `ArkovaError.problem` with the full RFC 7807 `{ type, title, status, detail, instance }` payload.
@@ -482,6 +483,10 @@ Override with `baseUrl` config option for staging or local development.
 | `arkova.verifyFingerprint(fingerprint)` | API v2 fingerprint verification |
 | `arkova.getAnchor(publicId)` | API v2 public anchor lookup |
 | `arkova.listOrgs()` | API v2 organization context for the API key |
+| `arkova.getOrganization(publicId)` | API v2 organization detail by public ID |
+| `arkova.getRecord(publicId)` | API v2 record detail by public ID |
+| `arkova.getFingerprint(fingerprint)` | API v2 fingerprint detail by SHA-256 hash |
+| `arkova.getDocument(publicId)` | API v2 document detail by public ID |
 | `arkova.query(q, options?)` | Nessie retrieval search over public records |
 | `arkova.ask(q, options?)` | Nessie RAG with cited answer |
 | `arkova.webhooks.create(input)` | Register a webhook endpoint |

@@ -44,13 +44,13 @@ The foundation. v1 is frozen and now publishes a 12-month deprecation calendar. 
 
 ### 2. API v2 — `https://api.arkova.ai/v2`
 
-Agent-ready REST surface for search, fingerprint verification, public anchor lookup, and organization context. API v2 uses scoped API keys and RFC 7807 `application/problem+json` errors.
+Agent-ready REST surface for search, post-search resource detail, fingerprint verification, public anchor lookup, and organization context. API v2 uses scoped API keys and RFC 7807 `application/problem+json` errors.
 
 | Scope | Default quota | Endpoints |
 |---|---:|---|
-| `read:search` | 1,000 req/min | `/search`, `/organizations`, `/records`, `/fingerprints`, `/documents` |
-| `read:records` | 500 req/min | `/verify/{fingerprint}`, `/anchors/{public_id}` |
-| `read:orgs` | 500 req/min | `/orgs` |
+| `read:search` | 1,000 req/min | `/search`, `/organizations`, `/records`, `/fingerprints`, `/documents` search aliases |
+| `read:records` | 500 req/min | `/verify/{fingerprint}`, `/anchors/{public_id}`, `/records/{public_id}`, `/fingerprints/{fingerprint}`, `/documents/{public_id}` |
+| `read:orgs` | 500 req/min | `/orgs`, `/organizations/{public_id}` |
 | `write:anchors` | 100 req/min | Reserved for v2 write endpoints |
 | `admin:rules` | 50 req/min | Reserved for v2 admin endpoints |
 
@@ -80,7 +80,7 @@ with Arkova(api_key="ak_live_...") as arkova:
     results = arkova.search("registered nurse", type="record")
 ```
 
-Current methods: `search`, `verify_fingerprint`, `get_anchor`, and `list_orgs`, with matching async methods on `AsyncArkova`. The Python SDK preserves API v2 `application/problem+json` errors, honors `Retry-After` during retries, and maps nullable rich verification fields when the API returns them.
+Current methods: `search`, `verify_fingerprint`, `get_anchor`, `list_orgs`, `get_organization`, `get_record`, `get_fingerprint`, and `get_document`, with matching async methods on `AsyncArkova`. The Python SDK preserves API v2 `application/problem+json` errors, honors `Retry-After` during retries, and maps nullable rich verification fields when the API returns them.
 
 For anchoring, webhook management, and other v1 write/admin workflows, use the REST API directly or the TypeScript SDK until equivalent v2 Python methods are published.
 
@@ -222,6 +222,7 @@ External:
 
 | Date | Story | What shipped |
 |---|---|---|
+| 2026-05-01 | SCRUM-1132 | API v2 resource detail endpoints for organizations, records, fingerprints, and documents, plus SDK/OpenAPI coverage. |
 | 2026-04-24 | SCRUM-1110 | v1 deprecation calendar, migration guide, and production `Deprecation` header wiring. |
 | 2026-04-24 | SCRUM-1111 | API v2 per-scope rate limits backed by Upstash Redis with documented env overrides. |
 | 2026-04-24 | SCRUM-1112 | Python SDK package (`pip install arkova`) with sync/async typed clients and publish workflow. |

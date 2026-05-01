@@ -230,6 +230,154 @@ describe('API v2 agent methods', () => {
     expect(result[0]).not.toHaveProperty('id');
   });
 
+  it('fetches v2 resource details without exposing internal ids', async () => {
+    const client = new Arkova({ apiKey: 'ak_test' });
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          id: 'org-internal-uuid',
+          public_id: 'org_acme',
+          display_name: 'Acme Corp',
+          description: 'Verified healthcare org',
+          domain: 'acme.com',
+          website_url: 'https://acme.com',
+          verification_status: 'VERIFIED',
+          industry_tag: 'healthcare',
+          org_type: 'employer',
+          location: 'Detroit, MI',
+          logo_url: null,
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          id: 'anchor-internal-uuid',
+          public_id: 'ARK-DOC-ABC',
+          verified: true,
+          status: 'ACTIVE',
+          fingerprint: 'a'.repeat(64),
+          title: 'Contract.pdf',
+          description: 'Signed agreement',
+          issuer_name: 'Acme Corp',
+          credential_type: 'LEGAL',
+          sub_type: 'contract',
+          issued_date: '2026-04-01',
+          expiry_date: null,
+          anchor_timestamp: '2026-04-24T12:00:00Z',
+          network_receipt_id: 'tx-1',
+          record_uri: 'https://app.arkova.ai/verify/ARK-DOC-ABC',
+          compliance_controls: { soc2: true },
+          chain_confirmations: 6,
+          parent_public_id: null,
+          version_number: 2,
+          revocation_tx_id: null,
+          revocation_block_height: null,
+        }),
+      });
+
+    const organization = await client.getOrganization('org_acme');
+    const record = await client.getRecord('ARK-DOC-ABC');
+
+    expect(organization).toMatchObject({
+      publicId: 'org_acme',
+      displayName: 'Acme Corp',
+      industryTag: 'healthcare',
+    });
+    expect(organization).not.toHaveProperty('id');
+    expect(record).toMatchObject({
+      publicId: 'ARK-DOC-ABC',
+      title: 'Contract.pdf',
+      parentPublicId: null,
+    });
+    expect(record).not.toHaveProperty('id');
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringContaining('/api/v2/organizations/org_acme'),
+      expect.anything(),
+    );
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringContaining('/api/v2/records/ARK-DOC-ABC'),
+      expect.anything(),
+    );
+  });
+
+  it('fetches fingerprint and document detail endpoints', async () => {
+    const client = new Arkova({ apiKey: 'ak_test' });
+    const fingerprint = 'a'.repeat(64);
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          verified: true,
+          status: 'ACTIVE',
+          fingerprint,
+          public_id: 'ARK-DOC-ABC',
+          title: 'Contract.pdf',
+          issuer_name: 'Acme Corp',
+          credential_type: 'LEGAL',
+          sub_type: null,
+          description: null,
+          anchor_timestamp: '2026-04-24T12:00:00Z',
+          network_receipt_id: 'tx-1',
+          record_uri: 'https://app.arkova.ai/verify/ARK-DOC-ABC',
+          compliance_controls: null,
+          chain_confirmations: null,
+          parent_public_id: null,
+          version_number: null,
+          revocation_tx_id: null,
+          revocation_block_height: null,
+          file_mime: 'application/pdf',
+          file_size: 12345,
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          public_id: 'ARK-DOC-ABC',
+          verified: true,
+          status: 'ACTIVE',
+          fingerprint,
+          title: 'Contract.pdf',
+          description: null,
+          issuer_name: 'Acme Corp',
+          credential_type: 'LEGAL',
+          sub_type: null,
+          issued_date: null,
+          expiry_date: null,
+          anchor_timestamp: '2026-04-24T12:00:00Z',
+          network_receipt_id: 'tx-1',
+          record_uri: 'https://app.arkova.ai/verify/ARK-DOC-ABC',
+          compliance_controls: null,
+          chain_confirmations: null,
+          parent_public_id: null,
+          version_number: null,
+          revocation_tx_id: null,
+          revocation_block_height: null,
+          file_mime: 'application/pdf',
+          file_size: 12345,
+        }),
+      });
+
+    const fingerprintDetail = await client.getFingerprint(fingerprint);
+    const document = await client.getDocument('ARK-DOC-ABC');
+
+    expect(fingerprintDetail.fingerprint).toBe(fingerprint);
+    expect(fingerprintDetail.fileMime).toBe('application/pdf');
+    expect(document.fileSize).toBe(12345);
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringContaining(`/api/v2/fingerprints/${fingerprint}`),
+      expect.anything(),
+    );
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringContaining('/api/v2/documents/ARK-DOC-ABC'),
+      expect.anything(),
+    );
+  });
+
   it('maps RFC 7807 problem+json errors', async () => {
     const client = new Arkova({ apiKey: 'ak_test', retry: { retries: 0 } });
     mockFetch.mockResolvedValueOnce({

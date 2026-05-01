@@ -32,6 +32,11 @@ export const publicIdSchema = z
   .regex(PUBLIC_ID_RE, 'public_id must match ARK-<TYPE>-<SUFFIX>')
   .max(64);
 
+export const orgPublicIdSchema = z
+  .string()
+  .regex(/^[A-Za-z0-9][A-Za-z0-9_-]{2,100}$/, 'public_id must be a stable organization public identifier')
+  .max(100);
+
 export const contentHashSchema = z
   .string()
   .regex(SHA256_HEX_RE, 'content_hash must be 64 hex chars')
@@ -113,6 +118,30 @@ export const agentGetAnchorSchema = z
   })
   .strict();
 
+export const agentGetOrganizationSchema = z
+  .object({
+    public_id: orgPublicIdSchema,
+  })
+  .strict();
+
+export const agentGetRecordSchema = z
+  .object({
+    public_id: publicIdSchema,
+  })
+  .strict();
+
+export const agentGetFingerprintSchema = z
+  .object({
+    fingerprint: contentHashSchema,
+  })
+  .strict();
+
+export const agentGetDocumentSchema = z
+  .object({
+    public_id: publicIdSchema,
+  })
+  .strict();
+
 // ── Registry ─────────────────────────────────────────────────────────────
 export const MCP_TOOL_SCHEMAS = {
   verify_credential: verifyCredentialSchema,
@@ -125,6 +154,10 @@ export const MCP_TOOL_SCHEMAS = {
   verify: agentVerifySchema,
   list_orgs: agentListOrgsSchema,
   get_anchor: agentGetAnchorSchema,
+  get_organization: agentGetOrganizationSchema,
+  get_record: agentGetRecordSchema,
+  get_fingerprint: agentGetFingerprintSchema,
+  get_document: agentGetDocumentSchema,
   oracle_batch_verify: oracleBatchVerifySchema,
   list_agents: listAgentsSchema,
 } as const;

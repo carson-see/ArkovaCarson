@@ -21,6 +21,10 @@ import {
   handleAgentVerify,
   handleAgentListOrgs,
   handleAgentGetAnchor,
+  handleAgentGetOrganization,
+  handleAgentGetRecord,
+  handleAgentGetFingerprint,
+  handleAgentGetDocument,
   TOOL_DEFINITIONS,
 } from '../../edge/src/mcp-tools.js';
 
@@ -45,7 +49,7 @@ afterEach(() => {
 
 describe('TOOL_DEFINITIONS', () => {
   it('exports legacy tools plus v2 agent aliases', () => {
-    expect(TOOL_DEFINITIONS).toHaveLength(10);
+    expect(TOOL_DEFINITIONS).toHaveLength(14);
   });
 
   it('all tools have name, description, and inputSchema', () => {
@@ -60,7 +64,16 @@ describe('TOOL_DEFINITIONS', () => {
   it('exposes verify_batch and v2 agent aliases', () => {
     const names = TOOL_DEFINITIONS.map((t) => t.name);
     expect(names).toContain('verify_batch');
-    expect(names).toEqual(expect.arrayContaining(['search', 'verify', 'list_orgs', 'get_anchor']));
+    expect(names).toEqual(expect.arrayContaining([
+      'search',
+      'verify',
+      'list_orgs',
+      'get_anchor',
+      'get_organization',
+      'get_record',
+      'get_fingerprint',
+      'get_document',
+    ]));
   });
 });
 
@@ -234,6 +247,122 @@ describe('agent v2 MCP aliases', () => {
     expect(JSON.stringify(parsed)).not.toContain('org-1');
     expect(mockFetch.mock.calls[0][0]).toContain('user_id=eq.test-user-id');
     expect(mockFetch.mock.calls[0][0]).toContain('organizations%28public_id%2Cdisplay_name%2Cdomain%2Cwebsite_url%2Cverification_status%29');
+  });
+
+  it('get_organization(public_id) scopes through org_members and omits internal ids', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ([{
+        organizations: {
+          id: 'org-1',
+          public_id: 'org_acme',
+          display_name: 'Acme Corp',
+          description: 'Verified healthcare org',
+          domain: 'acme.com',
+          website_url: 'https://acme.com',
+          verification_status: 'VERIFIED',
+          industry_tag: 'healthcare',
+          org_type: 'employer',
+          location: 'Detroit, MI',
+          logo_url: null,
+        },
+      }]),
+    });
+
+    const result = await handleAgentGetOrganization({ public_id: 'org_acme' }, CONFIG);
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed).toMatchObject({
+      public_id: 'org_acme',
+      display_name: 'Acme Corp',
+      industry_tag: 'healthcare',
+    });
+    expect(parsed).not.toHaveProperty('id');
+    expect(JSON.stringify(parsed)).not.toContain('org-1');
+    expect(mockFetch.mock.calls[0][0]).toContain('user_id=eq.test-user-id');
+    expect(mockFetch.mock.calls[0][0]).toContain('organizations.public_id=eq.org_acme');
+  });
+
+  it('get_record(public_id) returns detail without legacy-only fields', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        status: 'SECURED',
+        public_id: 'ARK-DOC-ABC',
+        fingerprint: 'a'.repeat(64),
+        title: 'Contract.pdf',
+        description: 'Signed agreement',
+        org_name: 'Acme Corp',
+        credential_type: 'LEGAL',
+        sub_type: 'contract',
+        issued_at: '2026-04-01',
+        expires_at: null,
+        created_at: '2026-04-24T12:00:00Z',
+        chain_tx_id: 'tx-1',
+        chain_confirmations: 6,
+        parent_public_id: null,
+        version_number: 2,
+      }),
+    });
+
+    const result = await handleAgentGetRecord({ public_id: 'ARK-DOC-ABC' }, CONFIG);
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed).toMatchObject({
+      public_id: 'ARK-DOC-ABC',
+      verified: true,
+      status: 'ACTIVE',
+      fingerprint: 'a'.repeat(64),
+      title: 'Contract.pdf',
+      issuer_name: 'Acme Corp',
+      parent_public_id: null,
+    });
+    expect(parsed).not.toHaveProperty('recipient_identifier');
+    expect(parsed).not.toHaveProperty('id');
+  });
+
+  it('get_fingerprint and get_document return SCRUM-1132 detail envelopes', async () => {
+    const fingerprint = 'd'.repeat(64);
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ([{
+          public_id: 'ARK-DOC-FP',
+          title: 'Credential.pdf',
+          content_hash: fingerprint,
+          metadata: { chain_tx_id: 'tx-1', anchored_at: '2026-04-24T12:00:00Z' },
+          anchor_id: 'anchor-1',
+        }]),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          status: 'SECURED',
+          public_id: 'ARK-DOC-ABC',
+          fingerprint,
+          filename: 'Credential.pdf',
+          org_name: 'Acme Corp',
+          credential_type: 'LEGAL',
+          created_at: '2026-04-24T12:00:00Z',
+          file_mime: 'application/pdf',
+          file_size: 12345,
+        }),
+      });
+
+    const fingerprintResult = await handleAgentGetFingerprint({ fingerprint }, CONFIG);
+    const documentResult = await handleAgentGetDocument({ public_id: 'ARK-DOC-ABC' }, CONFIG);
+    const fingerprintParsed = JSON.parse(fingerprintResult.content[0].text);
+    const documentParsed = JSON.parse(documentResult.content[0].text);
+
+    expect(fingerprintParsed).toMatchObject({
+      verified: true,
+      status: 'ACTIVE',
+      fingerprint,
+      public_id: 'ARK-DOC-FP',
+    });
+    expect(documentParsed).toMatchObject({
+      public_id: 'ARK-DOC-ABC',
+      file_mime: 'application/pdf',
+      file_size: 12345,
+    });
   });
 });
 

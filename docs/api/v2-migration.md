@@ -32,8 +32,8 @@ v2 keys are scope-aware. Ask your Arkova admin for only the scopes your integrat
 | Scope | Use |
 |---|---|
 | `read:search` | Search records, organizations, fingerprints, and documents. |
-| `read:records` | Verify fingerprints and fetch public anchors. |
-| `read:orgs` | List organization context for agent workflows. |
+| `read:records` | Verify fingerprints and fetch public anchor, record, fingerprint, and document details. |
+| `read:orgs` | List and inspect organization context for agent workflows. |
 | `write:anchors` | Submit anchors when write endpoints become generally available. |
 | `admin:rules` | Manage rule workflows when admin endpoints become generally available. |
 
@@ -45,6 +45,10 @@ v2 keys are scope-aware. Ask your Arkova admin for only the scopes your integrat
 | Fingerprint lookup through v1 search flows | `GET /api/v2/verify/{fingerprint}` | Accepts a 64-character SHA-256 hex fingerprint. |
 | Search-oriented v1 endpoints | `GET /api/v2/search?q=...` | Cursor pagination and typed result rows with public IDs only. |
 | Resource-specific search views | `GET /api/v2/organizations?q=...`, `/records`, `/fingerprints`, `/documents` | Aliases for `/search?type=...`; useful for OpenAPI tool importers and agents. |
+| Post-search organization inspect | `GET /api/v2/organizations/{public_id}` | Returns the API key's organization profile without internal UUIDs. |
+| Post-search record inspect | `GET /api/v2/records/{public_id}` | Returns public-id-keyed receipt and record metadata; no `anchors.id`, `org_id`, or `user_id`. |
+| Post-search fingerprint inspect | `GET /api/v2/fingerprints/{fingerprint}` | Returns the public record linked to an exact SHA-256 fingerprint, or problem+json `404`. |
+| Post-search document inspect | `GET /api/v2/documents/{public_id}` | Returns document metadata and anchor receipt fields only; documents themselves are never returned. |
 | Agent org bootstrap | `GET /api/v2/orgs` | Returns organization context for the API key without internal organization UUIDs. |
 
 ## Rate Limits
@@ -82,7 +86,7 @@ Clients should branch on `status` and `type`, not string-match `detail`.
 - TypeScript: `@arkova/sdk`
 - Python: `pip install arkova`
 
-The Python SDK currently exposes the v2 read-only surface: `search`, `verify_fingerprint`, `get_anchor`, and `list_orgs`, with sync and async clients. It preserves RFC 7807 problem details, honors `Retry-After`, and maps nullable rich verification fields when returned.
+The Python SDK currently exposes the v2 read-only surface: `search`, `verify_fingerprint`, `get_anchor`, `list_orgs`, `get_organization`, `get_record`, `get_fingerprint`, and `get_document`, with sync and async clients. It preserves RFC 7807 problem details, honors `Retry-After`, and maps nullable rich verification fields when returned.
 
 The TypeScript SDK remains the broader wrapper for anchoring, batch verification, webhooks, and v1/v2 migration support. Do not assume Python has v1 write/admin parity until the package reference lists those methods.
 

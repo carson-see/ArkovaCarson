@@ -8,6 +8,27 @@ const searchParameters = [
 ] as const;
 
 const resourceSearchParameters = searchParameters.filter(parameter => parameter.name !== 'type');
+const orgPublicIdPathParameter = {
+  name: 'public_id',
+  in: 'path',
+  required: true,
+  schema: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9_-]{2,100}$' },
+  description: 'Organization public ID returned by search or list_orgs.',
+} as const;
+const anchorPublicIdPathParameter = {
+  name: 'public_id',
+  in: 'path',
+  required: true,
+  schema: { type: 'string', pattern: '^ARK-[A-Z0-9-]{3,60}$' },
+  description: 'Arkova public ID returned by search.',
+} as const;
+const fingerprintPathParameter = {
+  name: 'fingerprint',
+  in: 'path',
+  required: true,
+  schema: { type: 'string', pattern: '^[a-fA-F0-9]{64}$' },
+  description: 'SHA-256 document fingerprint.',
+} as const;
 
 const searchResponses = {
   '200': { description: 'Search results.', content: { 'application/json': { schema: { $ref: '#/components/schemas/SearchResponse' } } } },
@@ -31,6 +52,21 @@ function resourceSearchPath(operationId: string, summary: string, description: s
   } as const;
 }
 
+function detailResponses(schemaName: 'OrganizationDetail' | 'RecordDetail' | 'FingerprintDetail' | 'DocumentDetail') {
+  return {
+    '200': {
+      description: 'Resource detail.',
+      content: { 'application/json': { schema: { $ref: `#/components/schemas/${schemaName}` } } },
+    },
+    '400': { $ref: '#/components/responses/ValidationError' },
+    '401': { $ref: '#/components/responses/AuthenticationRequired' },
+    '403': { $ref: '#/components/responses/InvalidScope' },
+    '404': { $ref: '#/components/responses/NotFound' },
+    '429': { $ref: '#/components/responses/RateLimited' },
+    '500': { $ref: '#/components/responses/InternalError' },
+  } as const;
+}
+
 export const openApiV2Spec = {
   openapi: '3.1.0',
   info: {
@@ -48,6 +84,7 @@ export const openApiV2Spec = {
   tags: [
     { name: 'Agent Tools', description: 'Read-only operations designed for direct agent tool use.' },
     { name: 'Search', description: 'Search verified organizations, anchors, fingerprints, and documents.' },
+    { name: 'Resource Details', description: 'Post-search detail endpoints for API-key clients and agents.' },
   ],
   paths: {
     '/search': {
@@ -90,6 +127,74 @@ export const openApiV2Spec = {
       'Search document metadata',
       'Alias for `/search?type=document`. Returns document-oriented search rows using public identifiers only.',
     ),
+    '/organizations/{public_id}': {
+      get: {
+        tags: ['Resource Details'],
+        operationId: 'get_organization',
+        summary: 'Get organization detail',
+        description:
+          'Fetch the organization profile for the organization attached to the authenticated API key. Does not return internal organization UUIDs.',
+        'x-agent-usage': {
+          tool_name: 'get_organization',
+          when_to_use: 'Use after search or list_orgs returns an organization public_id.',
+          arguments: { public_id: 'Organization public identifier, for example org_acme.' },
+          auth: 'Bearer API key with read:orgs scope.',
+        },
+        parameters: [orgPublicIdPathParameter],
+        responses: detailResponses('OrganizationDetail'),
+      },
+    },
+    '/records/{public_id}': {
+      get: {
+        tags: ['Resource Details'],
+        operationId: 'get_record',
+        summary: 'Get record detail',
+        description:
+          'Fetch public-id-keyed anchor record metadata after search returns a record result. Internal anchor, user, and organization UUIDs are never returned.',
+        'x-agent-usage': {
+          tool_name: 'get_record',
+          when_to_use: 'Use after search returns a record public_id and the agent needs verification metadata.',
+          arguments: { public_id: 'Arkova public identifier, for example ARK-DOC-ABCDEF.' },
+          auth: 'Bearer API key with read:records scope.',
+        },
+        parameters: [anchorPublicIdPathParameter],
+        responses: detailResponses('RecordDetail'),
+      },
+    },
+    '/fingerprints/{fingerprint}': {
+      get: {
+        tags: ['Resource Details'],
+        operationId: 'get_fingerprint',
+        summary: 'Get fingerprint detail',
+        description:
+          'Fetch a public-id-backed fingerprint detail record by exact SHA-256 fingerprint. Missing fingerprints return problem+json 404; use verify for the boolean verification workflow.',
+        'x-agent-usage': {
+          tool_name: 'get_fingerprint',
+          when_to_use: 'Use when a search result or external workflow supplies an exact SHA-256 fingerprint and the agent needs the linked public record.',
+          arguments: { fingerprint: '64-character lowercase or uppercase SHA-256 hex string.' },
+          auth: 'Bearer API key with read:records scope.',
+        },
+        parameters: [fingerprintPathParameter],
+        responses: detailResponses('FingerprintDetail'),
+      },
+    },
+    '/documents/{public_id}': {
+      get: {
+        tags: ['Resource Details'],
+        operationId: 'get_document',
+        summary: 'Get document detail',
+        description:
+          'Fetch document-oriented public metadata by Arkova public ID. Documents themselves are never returned; this endpoint returns metadata and receipt fields only.',
+        'x-agent-usage': {
+          tool_name: 'get_document',
+          when_to_use: 'Use after search returns a document public_id and the agent needs file metadata plus anchor receipt details.',
+          arguments: { public_id: 'Arkova public identifier, for example ARK-DOC-ABCDEF.' },
+          auth: 'Bearer API key with read:records scope.',
+        },
+        parameters: [anchorPublicIdPathParameter],
+        responses: detailResponses('DocumentDetail'),
+      },
+    },
     '/verify/{fingerprint}': {
       get: {
         tags: ['Agent Tools'],
@@ -254,6 +359,167 @@ export const openApiV2Spec = {
           network_receipt_id: { type: ['string', 'null'] },
           record_uri: { type: 'string', format: 'uri' },
           jurisdiction: { type: ['string', 'null'] },
+        },
+      },
+      OrganizationDetail: {
+        type: 'object',
+        required: ['public_id', 'display_name', 'description', 'domain', 'website_url', 'verification_status', 'industry_tag', 'org_type', 'location', 'logo_url'],
+        properties: {
+          public_id: { type: ['string', 'null'] },
+          display_name: { type: 'string' },
+          description: { type: ['string', 'null'] },
+          domain: { type: ['string', 'null'] },
+          website_url: { type: ['string', 'null'], format: 'uri' },
+          verification_status: { type: ['string', 'null'] },
+          industry_tag: { type: ['string', 'null'] },
+          org_type: { type: ['string', 'null'] },
+          location: { type: ['string', 'null'] },
+          logo_url: { type: ['string', 'null'], format: 'uri' },
+        },
+      },
+      RecordDetail: {
+        type: 'object',
+        required: [
+          'public_id',
+          'verified',
+          'status',
+          'fingerprint',
+          'title',
+          'description',
+          'issuer_name',
+          'credential_type',
+          'sub_type',
+          'issued_date',
+          'expiry_date',
+          'anchor_timestamp',
+          'network_receipt_id',
+          'record_uri',
+          'compliance_controls',
+          'chain_confirmations',
+          'parent_public_id',
+          'version_number',
+          'revocation_tx_id',
+          'revocation_block_height',
+        ],
+        properties: {
+          public_id: { type: ['string', 'null'] },
+          verified: { type: 'boolean' },
+          status: { type: 'string' },
+          fingerprint: { type: ['string', 'null'] },
+          title: { type: ['string', 'null'] },
+          description: { type: ['string', 'null'] },
+          issuer_name: { type: ['string', 'null'] },
+          credential_type: { type: ['string', 'null'] },
+          sub_type: { type: ['string', 'null'] },
+          issued_date: { type: ['string', 'null'] },
+          expiry_date: { type: ['string', 'null'] },
+          anchor_timestamp: { type: ['string', 'null'], format: 'date-time' },
+          network_receipt_id: { type: ['string', 'null'] },
+          record_uri: { type: ['string', 'null'], format: 'uri' },
+          compliance_controls: { type: ['object', 'null'], additionalProperties: true },
+          chain_confirmations: { type: ['integer', 'null'] },
+          parent_public_id: { type: ['string', 'null'] },
+          version_number: { type: ['integer', 'null'] },
+          revocation_tx_id: { type: ['string', 'null'] },
+          revocation_block_height: { type: ['integer', 'null'] },
+        },
+      },
+      FingerprintDetail: {
+        type: 'object',
+        required: [
+          'verified',
+          'status',
+          'fingerprint',
+          'public_id',
+          'title',
+          'issuer_name',
+          'credential_type',
+          'sub_type',
+          'description',
+          'anchor_timestamp',
+          'network_receipt_id',
+          'record_uri',
+          'compliance_controls',
+          'chain_confirmations',
+          'parent_public_id',
+          'version_number',
+          'revocation_tx_id',
+          'revocation_block_height',
+          'file_mime',
+          'file_size',
+        ],
+        properties: {
+          verified: { type: 'boolean' },
+          status: { type: 'string' },
+          fingerprint: { type: 'string' },
+          public_id: { type: ['string', 'null'] },
+          title: { type: ['string', 'null'] },
+          issuer_name: { type: ['string', 'null'] },
+          credential_type: { type: ['string', 'null'] },
+          sub_type: { type: ['string', 'null'] },
+          description: { type: ['string', 'null'] },
+          anchor_timestamp: { type: ['string', 'null'], format: 'date-time' },
+          network_receipt_id: { type: ['string', 'null'] },
+          record_uri: { type: ['string', 'null'], format: 'uri' },
+          compliance_controls: { type: ['object', 'null'], additionalProperties: true },
+          chain_confirmations: { type: ['integer', 'null'] },
+          parent_public_id: { type: ['string', 'null'] },
+          version_number: { type: ['integer', 'null'] },
+          revocation_tx_id: { type: ['string', 'null'] },
+          revocation_block_height: { type: ['integer', 'null'] },
+          file_mime: { type: ['string', 'null'] },
+          file_size: { type: ['integer', 'null'] },
+        },
+      },
+      DocumentDetail: {
+        type: 'object',
+        required: [
+          'public_id',
+          'verified',
+          'status',
+          'fingerprint',
+          'title',
+          'description',
+          'issuer_name',
+          'credential_type',
+          'sub_type',
+          'issued_date',
+          'expiry_date',
+          'anchor_timestamp',
+          'network_receipt_id',
+          'record_uri',
+          'compliance_controls',
+          'chain_confirmations',
+          'parent_public_id',
+          'version_number',
+          'revocation_tx_id',
+          'revocation_block_height',
+          'file_mime',
+          'file_size',
+        ],
+        properties: {
+          public_id: { type: ['string', 'null'] },
+          verified: { type: 'boolean' },
+          status: { type: 'string' },
+          fingerprint: { type: ['string', 'null'] },
+          title: { type: ['string', 'null'] },
+          description: { type: ['string', 'null'] },
+          issuer_name: { type: ['string', 'null'] },
+          credential_type: { type: ['string', 'null'] },
+          sub_type: { type: ['string', 'null'] },
+          issued_date: { type: ['string', 'null'] },
+          expiry_date: { type: ['string', 'null'] },
+          anchor_timestamp: { type: ['string', 'null'], format: 'date-time' },
+          network_receipt_id: { type: ['string', 'null'] },
+          record_uri: { type: ['string', 'null'], format: 'uri' },
+          compliance_controls: { type: ['object', 'null'], additionalProperties: true },
+          chain_confirmations: { type: ['integer', 'null'] },
+          parent_public_id: { type: ['string', 'null'] },
+          version_number: { type: ['integer', 'null'] },
+          revocation_tx_id: { type: ['string', 'null'] },
+          revocation_block_height: { type: ['integer', 'null'] },
+          file_mime: { type: ['string', 'null'] },
+          file_size: { type: ['integer', 'null'] },
         },
       },
       Org: {

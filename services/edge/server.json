@@ -39,6 +39,22 @@
       "description": "Get redacted public anchor metadata by Arkova public ID."
     },
     {
+      "name": "get_organization",
+      "description": "Get organization detail by organization public ID."
+    },
+    {
+      "name": "get_record",
+      "description": "Get record detail by Arkova public ID."
+    },
+    {
+      "name": "get_fingerprint",
+      "description": "Get fingerprint detail by exact SHA-256 hash."
+    },
+    {
+      "name": "get_document",
+      "description": "Get document detail by Arkova public ID."
+    },
+    {
       "name": "verify_credential",
       "description": "Verify a credential's authenticity and current status by its public identifier."
     },
@@ -57,6 +73,18 @@
     {
       "name": "verify_document",
       "description": "Verify a document by its SHA-256 fingerprint and get anchor proof."
+    },
+    {
+      "name": "verify_batch",
+      "description": "Verify up to 100 credentials in one call."
+    },
+    {
+      "name": "oracle_batch_verify",
+      "description": "Batch-verify up to 25 credentials with signed query-envelope metadata."
+    },
+    {
+      "name": "list_agents",
+      "description": "List AI agents registered to the authenticated caller's organization."
     }
   ],
   "resources": [

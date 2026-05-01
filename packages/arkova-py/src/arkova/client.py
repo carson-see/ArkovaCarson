@@ -12,9 +12,13 @@ from pydantic import ValidationError
 from .errors import ArkovaError
 from .models import (
     Anchor,
+    DocumentDetail,
+    FingerprintDetail,
     FingerprintVerification,
+    OrganizationDetail,
     OrgList,
     ProblemDetail,
+    RecordDetail,
     SearchResponse,
     SearchType,
 )
@@ -137,6 +141,24 @@ class Arkova:
     def list_orgs(self) -> OrgList:
         return _parse_json(self._request("GET", "/orgs"), OrgList)
 
+    def get_organization(self, public_id: str) -> OrganizationDetail:
+        return _parse_json(
+            self._request("GET", f"/organizations/{public_id}"),
+            OrganizationDetail,
+        )
+
+    def get_record(self, public_id: str) -> RecordDetail:
+        return _parse_json(self._request("GET", f"/records/{public_id}"), RecordDetail)
+
+    def get_fingerprint(self, fingerprint: str) -> FingerprintDetail:
+        return _parse_json(
+            self._request("GET", f"/fingerprints/{fingerprint}"),
+            FingerprintDetail,
+        )
+
+    def get_document(self, public_id: str) -> DocumentDetail:
+        return _parse_json(self._request("GET", f"/documents/{public_id}"), DocumentDetail)
+
     def _request(
         self,
         method: str,
@@ -210,6 +232,24 @@ class AsyncArkova:
 
     async def list_orgs(self) -> OrgList:
         return _parse_json(await self._request("GET", "/orgs"), OrgList)
+
+    async def get_organization(self, public_id: str) -> OrganizationDetail:
+        return _parse_json(
+            await self._request("GET", f"/organizations/{public_id}"),
+            OrganizationDetail,
+        )
+
+    async def get_record(self, public_id: str) -> RecordDetail:
+        return _parse_json(await self._request("GET", f"/records/{public_id}"), RecordDetail)
+
+    async def get_fingerprint(self, fingerprint: str) -> FingerprintDetail:
+        return _parse_json(
+            await self._request("GET", f"/fingerprints/{fingerprint}"),
+            FingerprintDetail,
+        )
+
+    async def get_document(self, public_id: str) -> DocumentDetail:
+        return _parse_json(await self._request("GET", f"/documents/{public_id}"), DocumentDetail)
 
     async def _request(
         self,

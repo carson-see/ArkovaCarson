@@ -24,6 +24,10 @@ import type {
   FingerprintVerification,
   AnchorDetails,
   OrganizationSummary,
+  OrganizationDetails,
+  RecordDetails,
+  FingerprintDetails,
+  DocumentDetails,
 } from './types';
 
 const DEFAULT_BASE_URL = 'https://arkova-worker-270018525501.us-central1.run.app';
@@ -241,6 +245,46 @@ export class Arkova {
       'Organization list failed',
     );
     return data.organizations.map(mapOrganizationSummary);
+  }
+
+  /**
+   * Fetch organization detail by public ID.
+   * Requires a key with `read:orgs`.
+   */
+  async getOrganization(publicId: string): Promise<OrganizationDetails> {
+    const response = await this.fetch(`/api/v2/organizations/${encodeURIComponent(publicId)}`);
+    const data = await jsonOrThrow<Record<string, unknown>>(response, 'Organization lookup failed');
+    return mapOrganizationDetails(data);
+  }
+
+  /**
+   * Fetch record detail by Arkova public ID.
+   * Requires a key with `read:records`.
+   */
+  async getRecord(publicId: string): Promise<RecordDetails> {
+    const response = await this.fetch(`/api/v2/records/${encodeURIComponent(publicId)}`);
+    const data = await jsonOrThrow<Record<string, unknown>>(response, 'Record lookup failed');
+    return mapRecordDetails(data);
+  }
+
+  /**
+   * Fetch fingerprint detail by exact SHA-256 fingerprint.
+   * Requires a key with `read:records`.
+   */
+  async getFingerprint(fingerprint: string): Promise<FingerprintDetails> {
+    const response = await this.fetch(`/api/v2/fingerprints/${encodeURIComponent(fingerprint)}`);
+    const data = await jsonOrThrow<Record<string, unknown>>(response, 'Fingerprint lookup failed');
+    return mapFingerprintDetails(data);
+  }
+
+  /**
+   * Fetch document detail by Arkova public ID.
+   * Requires a key with `read:records`.
+   */
+  async getDocument(publicId: string): Promise<DocumentDetails> {
+    const response = await this.fetch(`/api/v2/documents/${encodeURIComponent(publicId)}`);
+    const data = await jsonOrThrow<Record<string, unknown>>(response, 'Document lookup failed');
+    return mapDocumentDetails(data);
   }
 
   /**
@@ -634,6 +678,59 @@ function mapOrganizationSummary(row: Record<string, unknown>): OrganizationSumma
     domain: (row.domain as string | null) ?? null,
     websiteUrl: (row.website_url as string | null) ?? null,
     verificationStatus: (row.verification_status as string | null) ?? null,
+  };
+}
+
+function mapOrganizationDetails(row: Record<string, unknown>): OrganizationDetails {
+  return {
+    ...mapOrganizationSummary(row),
+    description: (row.description as string | null) ?? null,
+    industryTag: (row.industry_tag as string | null) ?? null,
+    orgType: (row.org_type as string | null) ?? null,
+    location: (row.location as string | null) ?? null,
+    logoUrl: (row.logo_url as string | null) ?? null,
+  };
+}
+
+function mapRecordDetails(row: Record<string, unknown>): RecordDetails {
+  return {
+    publicId: (row.public_id as string | null) ?? null,
+    verified: row.verified as boolean,
+    status: row.status as string,
+    fingerprint: (row.fingerprint as string | null) ?? null,
+    title: (row.title as string | null) ?? null,
+    description: (row.description as string | null) ?? null,
+    issuerName: (row.issuer_name as string | null) ?? null,
+    credentialType: (row.credential_type as string | null) ?? null,
+    subType: (row.sub_type as string | null) ?? null,
+    issuedDate: (row.issued_date as string | null) ?? null,
+    expiryDate: (row.expiry_date as string | null) ?? null,
+    anchorTimestamp: (row.anchor_timestamp as string | null) ?? null,
+    networkReceiptId: (row.network_receipt_id as string | null) ?? null,
+    recordUri: (row.record_uri as string | null) ?? null,
+    complianceControls: (row.compliance_controls as Record<string, unknown> | null) ?? null,
+    chainConfirmations: (row.chain_confirmations as number | null) ?? null,
+    parentPublicId: (row.parent_public_id as string | null) ?? null,
+    versionNumber: (row.version_number as number | null) ?? null,
+    revocationTxId: (row.revocation_tx_id as string | null) ?? null,
+    revocationBlockHeight: (row.revocation_block_height as number | null) ?? null,
+  };
+}
+
+function mapFingerprintDetails(row: Record<string, unknown>): FingerprintDetails {
+  return {
+    ...mapRecordDetails(row),
+    fingerprint: row.fingerprint as string,
+    fileMime: (row.file_mime as string | null) ?? null,
+    fileSize: (row.file_size as number | null) ?? null,
+  };
+}
+
+function mapDocumentDetails(row: Record<string, unknown>): DocumentDetails {
+  return {
+    ...mapRecordDetails(row),
+    fileMime: (row.file_mime as string | null) ?? null,
+    fileSize: (row.file_size as number | null) ?? null,
   };
 }
 

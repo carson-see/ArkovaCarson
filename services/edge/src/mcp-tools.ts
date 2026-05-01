@@ -92,6 +92,22 @@ export interface AgentGetAnchorInput {
   public_id: string;
 }
 
+export interface AgentGetOrganizationInput {
+  public_id: string;
+}
+
+export interface AgentGetRecordInput {
+  public_id: string;
+}
+
+export interface AgentGetFingerprintInput {
+  fingerprint: string;
+}
+
+export interface AgentGetDocumentInput {
+  public_id: string;
+}
+
 export interface SupabaseConfig {
   supabaseUrl: string;
   supabaseKey: string;
@@ -328,6 +344,66 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       required: ['public_id'],
     },
   },
+  {
+    name: 'get_organization',
+    description:
+      'Get organization detail by organization public ID. Use after search or list_orgs returns an organization public_id.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        public_id: {
+          type: 'string',
+          description: 'Organization public identifier (for example org_acme).',
+        },
+      },
+      required: ['public_id'],
+    },
+  },
+  {
+    name: 'get_record',
+    description:
+      'Get record detail by Arkova public ID. Use after search returns a record public_id.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        public_id: {
+          type: 'string',
+          description: 'Arkova public identifier (for example ARK-DOC-ABCDEF).',
+        },
+      },
+      required: ['public_id'],
+    },
+  },
+  {
+    name: 'get_fingerprint',
+    description:
+      'Get fingerprint detail by exact SHA-256 hash. Use when an agent needs the public record linked to a fingerprint.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        fingerprint: {
+          type: 'string',
+          description: '64-character SHA-256 document fingerprint.',
+        },
+      },
+      required: ['fingerprint'],
+    },
+  },
+  {
+    name: 'get_document',
+    description:
+      'Get document detail by Arkova public ID. Returns metadata and receipt fields only, never document bytes.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        public_id: {
+          type: 'string',
+          description: 'Arkova public identifier (for example ARK-DOC-ABCDEF).',
+        },
+      },
+      required: ['public_id'],
+    },
+  },
 ];
 
 // ---------------------------------------------------------------------------
@@ -370,6 +446,50 @@ function shapeV2AnchorRow(data: Record<string, unknown>, publicId: string): Reco
   const publicAnchor = { ...shapeAnchorRow(data, publicId) };
   delete publicAnchor.recipient_identifier;
   return publicAnchor;
+}
+
+function numberOrNull(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function objectOrNull(value: unknown): Record<string, unknown> | null {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function shapeMcpRecordDetail(data: Record<string, unknown>, publicId: string): Record<string, unknown> {
+  const anchor = shapeV2AnchorRow(data, publicId);
+  return {
+    public_id: publicId,
+    verified: anchor.verified,
+    status: anchor.status,
+    fingerprint: data.fingerprint ?? data.content_hash ?? null,
+    title: data.title ?? data.filename ?? null,
+    description: data.description ?? null,
+    issuer_name: anchor.issuer_name ?? null,
+    credential_type: anchor.credential_type ?? null,
+    sub_type: data.sub_type ?? null,
+    issued_date: anchor.issued_date ?? null,
+    expiry_date: anchor.expiry_date ?? null,
+    anchor_timestamp: anchor.anchor_timestamp ?? null,
+    network_receipt_id: anchor.network_receipt_id ?? null,
+    record_uri: anchor.record_uri ?? null,
+    compliance_controls: objectOrNull(data.compliance_controls),
+    chain_confirmations: numberOrNull(data.chain_confirmations),
+    parent_public_id: data.parent_public_id ?? null,
+    version_number: numberOrNull(data.version_number),
+    revocation_tx_id: data.revocation_tx_id ?? null,
+    revocation_block_height: numberOrNull(data.revocation_block_height),
+  };
+}
+
+function shapeMcpDocumentDetail(data: Record<string, unknown>, publicId: string): Record<string, unknown> {
+  return {
+    ...shapeMcpRecordDetail(data, publicId),
+    file_mime: data.file_mime ?? null,
+    file_size: numberOrNull(data.file_size),
+  };
 }
 
 /**
@@ -836,6 +956,159 @@ export async function handleAgentGetAnchor(
     const msg = error instanceof Error && error.name === 'AbortError'
       ? 'Anchor lookup timed out'
       : `Anchor lookup failed: ${error instanceof Error ? error.message : 'Unknown error'}`;
+    return errorResult(msg);
+  }
+}
+
+/** Agent-friendly alias for API v2 `get_organization(public_id)`. */
+export async function handleAgentGetOrganization(
+  input: AgentGetOrganizationInput,
+  config: SupabaseConfig,
+): Promise<ToolResult> {
+  const params = new URLSearchParams({
+    user_id: `eq.${config.userId}`,
+    'organizations.public_id': `eq.${input.public_id}`,
+    select: 'organizations(public_id,display_name,description,domain,website_url,verification_status,industry_tag,org_type,location,logo_url)',
+    limit: '1',
+  });
+
+  try {
+    const response = await supabaseFetch(config, `/rest/v1/org_members?${params.toString()}`);
+    if (!response.ok) {
+      return errorResult(`Organization lookup failed: HTTP ${response.status}`);
+    }
+
+    const memberships = await response.json() as Array<Record<string, unknown>>;
+    const membership = Array.isArray(memberships) ? memberships[0] : null;
+    const org = membership?.organizations as Record<string, unknown> | null | undefined;
+    if (!org || typeof org.public_id !== 'string') {
+      return textResult({ error: `Organization "${input.public_id}" not found.` });
+    }
+
+    return textResult({
+      public_id: org.public_id,
+      display_name: org.display_name,
+      description: org.description ?? null,
+      domain: org.domain ?? null,
+      website_url: org.website_url ?? null,
+      verification_status: org.verification_status ?? null,
+      industry_tag: org.industry_tag ?? null,
+      org_type: org.org_type ?? null,
+      location: org.location ?? null,
+      logo_url: org.logo_url ?? null,
+    });
+  } catch (error) {
+    const msg = error instanceof Error && error.name === 'AbortError'
+      ? 'Organization lookup timed out'
+      : `Organization lookup failed: ${error instanceof Error ? error.message : 'Unknown error'}`;
+    return errorResult(msg);
+  }
+}
+
+/** Agent-friendly alias for API v2 `get_record(public_id)`. */
+export async function handleAgentGetRecord(
+  input: AgentGetRecordInput,
+  config: SupabaseConfig,
+): Promise<ToolResult> {
+  try {
+    const response = await supabaseFetch(config, '/rest/v1/rpc/get_public_anchor', {
+      method: 'POST',
+      body: JSON.stringify({ p_public_id: input.public_id }),
+    });
+
+    if (!response.ok) {
+      return textResult({ error: `Record "${input.public_id}" not found.` });
+    }
+
+    const data = (await response.json()) as Record<string, unknown>;
+    return textResult(shapeMcpRecordDetail(data, input.public_id));
+  } catch (error) {
+    const msg = error instanceof Error && error.name === 'AbortError'
+      ? 'Record lookup timed out'
+      : `Record lookup failed: ${error instanceof Error ? error.message : 'Unknown error'}`;
+    return errorResult(msg);
+  }
+}
+
+/** Agent-friendly alias for API v2 `get_fingerprint(fingerprint)`. */
+export async function handleAgentGetFingerprint(
+  input: AgentGetFingerprintInput,
+  config: SupabaseConfig,
+): Promise<ToolResult> {
+  const result = await handleAgentVerify({ fingerprint: input.fingerprint }, config);
+  if (result.isError) return result;
+
+  const parsed = parseToolJson(result);
+  if (!parsed || parsed.verified === false) {
+    return textResult({
+      verified: false,
+      status: 'UNKNOWN',
+      fingerprint: input.fingerprint,
+      public_id: null,
+      title: null,
+      issuer_name: null,
+      credential_type: null,
+      sub_type: null,
+      description: null,
+      anchor_timestamp: null,
+      network_receipt_id: null,
+      record_uri: null,
+      compliance_controls: null,
+      chain_confirmations: null,
+      parent_public_id: null,
+      version_number: null,
+      revocation_tx_id: null,
+      revocation_block_height: null,
+      file_mime: null,
+      file_size: null,
+    });
+  }
+
+  return textResult({
+    verified: parsed.verified,
+    status: parsed.status,
+    fingerprint: input.fingerprint,
+    public_id: parsed.public_id ?? null,
+    title: parsed.title ?? null,
+    issuer_name: parsed.issuer_name ?? null,
+    credential_type: parsed.credential_type ?? null,
+    sub_type: parsed.sub_type ?? null,
+    description: parsed.description ?? null,
+    anchor_timestamp: parsed.anchor_timestamp ?? null,
+    network_receipt_id: parsed.network_receipt_id ?? null,
+    record_uri: parsed.record_uri ?? null,
+    compliance_controls: parsed.compliance_controls ?? null,
+    chain_confirmations: parsed.chain_confirmations ?? null,
+    parent_public_id: parsed.parent_public_id ?? null,
+    version_number: parsed.version_number ?? null,
+    revocation_tx_id: parsed.revocation_tx_id ?? null,
+    revocation_block_height: parsed.revocation_block_height ?? null,
+    file_mime: parsed.file_mime ?? null,
+    file_size: parsed.file_size ?? null,
+  });
+}
+
+/** Agent-friendly alias for API v2 `get_document(public_id)`. */
+export async function handleAgentGetDocument(
+  input: AgentGetDocumentInput,
+  config: SupabaseConfig,
+): Promise<ToolResult> {
+  try {
+    const response = await supabaseFetch(config, '/rest/v1/rpc/get_public_anchor', {
+      method: 'POST',
+      body: JSON.stringify({ p_public_id: input.public_id }),
+    });
+
+    if (!response.ok) {
+      return textResult({ error: `Document "${input.public_id}" not found.` });
+    }
+
+    const data = (await response.json()) as Record<string, unknown>;
+    return textResult(shapeMcpDocumentDetail(data, input.public_id));
+  } catch (error) {
+    const msg = error instanceof Error && error.name === 'AbortError'
+      ? 'Document lookup timed out'
+      : `Document lookup failed: ${error instanceof Error ? error.message : 'Unknown error'}`;
     return errorResult(msg);
   }
 }

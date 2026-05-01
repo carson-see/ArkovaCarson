@@ -37,6 +37,10 @@ describe('MCP_TOOL_SCHEMAS registry', () => {
         'verify',
         'list_orgs',
         'get_anchor',
+        'get_organization',
+        'get_record',
+        'get_fingerprint',
+        'get_document',
         'oracle_batch_verify',
         'list_agents',
       ]),
@@ -136,6 +140,13 @@ describe('validateToolArgs — agent v2 aliases', () => {
     const result = validateToolArgs('get_anchor', { public_id: VALID_PUBLIC_ID });
     expect(result.ok).toBe(true);
   });
+
+  it('accepts SCRUM-1132 resource detail aliases', () => {
+    expect(validateToolArgs('get_organization', { public_id: 'org_acme' }).ok).toBe(true);
+    expect(validateToolArgs('get_record', { public_id: VALID_PUBLIC_ID }).ok).toBe(true);
+    expect(validateToolArgs('get_fingerprint', { fingerprint: VALID_HASH }).ok).toBe(true);
+    expect(validateToolArgs('get_document', { public_id: VALID_PUBLIC_ID }).ok).toBe(true);
+  });
 });
 
 describe('MCP v2 alias parity with REST v2 OpenAPI', () => {
@@ -145,7 +156,16 @@ describe('MCP v2 alias parity with REST v2 OpenAPI', () => {
       .filter((operation): operation is NonNullable<typeof operation> => Boolean(operation?.['x-agent-usage']))
       .map((operation) => operation['x-agent-usage'].tool_name);
 
-    expect(agentToolNames.sort()).toEqual(['get_anchor', 'list_orgs', 'search', 'verify']);
+    expect(agentToolNames.sort()).toEqual([
+      'get_anchor',
+      'get_document',
+      'get_fingerprint',
+      'get_organization',
+      'get_record',
+      'list_orgs',
+      'search',
+      'verify',
+    ]);
     expect(Object.keys(MCP_TOOL_SCHEMAS)).toEqual(expect.arrayContaining(agentToolNames));
     expect(TOOL_DEFINITIONS.map((tool) => tool.name)).toEqual(expect.arrayContaining(agentToolNames));
   });
@@ -155,11 +175,19 @@ describe('MCP v2 alias parity with REST v2 OpenAPI', () => {
     expect(validateToolArgs('verify', { fingerprint: VALID_HASH }).ok).toBe(true);
     expect(validateToolArgs('list_orgs', {}).ok).toBe(true);
     expect(validateToolArgs('get_anchor', { public_id: VALID_PUBLIC_ID }).ok).toBe(true);
+    expect(validateToolArgs('get_organization', { public_id: 'org_acme' }).ok).toBe(true);
+    expect(validateToolArgs('get_record', { public_id: VALID_PUBLIC_ID }).ok).toBe(true);
+    expect(validateToolArgs('get_fingerprint', { fingerprint: VALID_HASH }).ok).toBe(true);
+    expect(validateToolArgs('get_document', { public_id: VALID_PUBLIC_ID }).ok).toBe(true);
 
     expect(validateToolArgs('search', {}).ok).toBe(false);
     expect(validateToolArgs('verify', {}).ok).toBe(false);
     expect(validateToolArgs('list_orgs', { anything: true }).ok).toBe(false);
     expect(validateToolArgs('get_anchor', {}).ok).toBe(false);
+    expect(validateToolArgs('get_organization', {}).ok).toBe(false);
+    expect(validateToolArgs('get_record', {}).ok).toBe(false);
+    expect(validateToolArgs('get_fingerprint', {}).ok).toBe(false);
+    expect(validateToolArgs('get_document', {}).ok).toBe(false);
   });
 
   it('uses the OpenAPI search limit ceiling for MCP max_results', () => {
