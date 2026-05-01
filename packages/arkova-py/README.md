@@ -34,6 +34,11 @@ with Arkova(api_key="ak_live_...") as arkova:
     print(result.verified, result.public_id)
 ```
 
+Verification and anchor models include nullable rich fields when the API returns
+them, including `sub_type`, `description`, `confidence_scores`,
+`compliance_controls`, `chain_confirmations`, version lineage, revocation
+provenance, and file metadata.
+
 ## Async client
 
 ```python

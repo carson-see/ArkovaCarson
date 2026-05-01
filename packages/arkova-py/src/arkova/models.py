@@ -41,9 +41,22 @@ class FingerprintVerification(ArkovaModel):
     fingerprint: str
     public_id: str | None = None
     title: str | None = None
+    issuer_name: str | None = None
+    credential_type: str | None = None
+    sub_type: str | None = None
+    description: str | None = None
     anchor_timestamp: str | None = None
     network_receipt_id: str | None = None
     record_uri: str | None = None
+    compliance_controls: dict[str, Any] | None = None
+    chain_confirmations: int | None = None
+    parent_public_id: str | None = None
+    version_number: int | None = None
+    revocation_tx_id: str | None = None
+    revocation_block_height: int | None = None
+    file_mime: str | None = None
+    file_size: int | None = None
+    confidence_scores: dict[str, Any] | None = None
 
 
 class Anchor(ArkovaModel):
@@ -53,11 +66,22 @@ class Anchor(ArkovaModel):
     record_uri: str
     issuer_name: str | None = None
     credential_type: str | None = None
+    sub_type: str | None = None
+    description: str | None = None
     issued_date: str | None = None
     expiry_date: str | None = None
     anchor_timestamp: str | None = None
     network_receipt_id: str | None = None
     jurisdiction: str | None = None
+    compliance_controls: dict[str, Any] | None = None
+    chain_confirmations: int | None = None
+    parent_public_id: str | None = None
+    version_number: int | None = None
+    revocation_tx_id: str | None = None
+    revocation_block_height: int | None = None
+    file_mime: str | None = None
+    file_size: int | None = None
+    confidence_scores: dict[str, Any] | None = None
 
 
 class Org(ArkovaModel):

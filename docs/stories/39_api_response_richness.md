@@ -28,7 +28,7 @@ Every addition below is a **nullable field or a new endpoint**. No existing fiel
 | `revocation_tx_id` + `revocation_block_height` | `anchors.revocation_tx_id`, `anchors.revocation_block_height` | Revocation provenance chain |
 | `file_mime` + `file_size` | `anchors.file_mime`, `anchors.file_size` | Document metadata |
 
-**Files:** `services/worker/src/routes/verify.ts` (Zod schema), `docs/api/openapi.yaml`, `sdks/typescript/src/types.ts`, `sdks/python/arkova/types.py`
+**Files:** `services/worker/src/routes/verify.ts` (Zod schema), `docs/api/openapi.yaml`, `sdks/typescript/src/types.ts`, `packages/arkova-py/src/arkova/models.py`
 
 ### API-RICH-02 — `POST /ai/extract` + `/verify/{publicId}` per-field confidence
 

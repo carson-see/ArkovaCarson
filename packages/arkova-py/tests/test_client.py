@@ -107,6 +107,86 @@ def test_retries_429_before_success() -> None:
     assert sleeps == [3.0]
 
 
+def test_verify_fingerprint_maps_rich_fields() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return json_response(
+            {
+                "verified": True,
+                "status": "ACTIVE",
+                "fingerprint": "a" * 64,
+                "public_id": "ARK-DOC-RICH",
+                "issuer_name": "University of Michigan",
+                "credential_type": "DEGREE",
+                "sub_type": "Bachelor of Science",
+                "description": "BS Computer Science, awarded May 2025.",
+                "compliance_controls": {
+                    "ferpa": True,
+                    "retention_policy": "student-records-v1",
+                },
+                "chain_confirmations": 6,
+                "parent_public_id": "ARK-DOC-PARENT",
+                "version_number": 2,
+                "revocation_tx_id": None,
+                "revocation_block_height": None,
+                "file_mime": "application/pdf",
+                "file_size": 48123,
+                "confidence_scores": {
+                    "issuer_name": 0.99,
+                    "credential_type": 0.97,
+                },
+            }
+        )
+
+    with Arkova(api_key="ak_test", transport=httpx.MockTransport(handler)) as client:
+        result = client.verify_fingerprint("a" * 64)
+
+    assert result.sub_type == "Bachelor of Science"
+    assert result.description == "BS Computer Science, awarded May 2025."
+    assert result.compliance_controls == {
+        "ferpa": True,
+        "retention_policy": "student-records-v1",
+    }
+    assert result.chain_confirmations == 6
+    assert result.parent_public_id == "ARK-DOC-PARENT"
+    assert result.version_number == 2
+    assert result.revocation_tx_id is None
+    assert result.revocation_block_height is None
+    assert result.file_mime == "application/pdf"
+    assert result.file_size == 48123
+    assert result.confidence_scores == {
+        "issuer_name": 0.99,
+        "credential_type": 0.97,
+    }
+
+
+def test_get_anchor_maps_rich_fields() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return json_response(
+            {
+                "public_id": "ARK-DOC-RICH",
+                "verified": True,
+                "status": "ACTIVE",
+                "record_uri": "https://app.arkova.ai/verify/ARK-DOC-RICH",
+                "issuer_name": "University of Michigan",
+                "credential_type": "DEGREE",
+                "sub_type": "Bachelor of Science",
+                "description": "BS Computer Science, awarded May 2025.",
+                "chain_confirmations": 6,
+                "version_number": 2,
+                "confidence_scores": {"issuer_name": 0.99},
+            }
+        )
+
+    with Arkova(api_key="ak_test", transport=httpx.MockTransport(handler)) as client:
+        result = client.get_anchor("ARK-DOC-RICH")
+
+    assert result.sub_type == "Bachelor of Science"
+    assert result.description == "BS Computer Science, awarded May 2025."
+    assert result.chain_confirmations == 6
+    assert result.version_number == 2
+    assert result.confidence_scores == {"issuer_name": 0.99}
+
+
 def test_async_client_get_anchor() -> None:
     async def run() -> str:
         async def handler(_request: httpx.Request) -> httpx.Response:

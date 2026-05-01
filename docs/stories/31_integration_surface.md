@@ -33,7 +33,7 @@ Arkova's core infrastructure is complete: POST /anchor wired E2E, 13 verificatio
 | [SCRUM-643](https://arkova.atlassian.net/browse/SCRUM-643) | INT-02 MCP Server Tool Enhancement | 3 | **COMPLETE** |
 | [SCRUM-644](https://arkova.atlassian.net/browse/SCRUM-644) | INT-03 Embeddable Verification Bundle | 5 | **COMPLETE** |
 | [SCRUM-645](https://arkova.atlassian.net/browse/SCRUM-645) | INT-09 Webhook CRUD via API | 3 | **COMPLETE** |
-| [SCRUM-646](https://arkova.atlassian.net/browse/SCRUM-646) | INT-04 Python SDK (`arkova-python`) | 3 | **COMPLETE** — v0.2.0, full TS parity, 37 tests |
+| [SCRUM-646](https://arkova.atlassian.net/browse/SCRUM-646) | INT-04 Python SDK (`arkova-python`) | 3 | **SUPERSEDED** — canonical package is now `packages/arkova-py/` |
 | [SCRUM-647](https://arkova.atlassian.net/browse/SCRUM-647) | INT-05 Zapier / Make.com | 5 | **COMPLETE** — Zapier CLI app + Make.com module, 15 tests |
 | [SCRUM-648](https://arkova.atlassian.net/browse/SCRUM-648) | INT-06 Clio (Law Firm DMS) | 8 | **COMPLETE** — OAuth2, sidebar, CLE tab, webhooks, 22 tests |
 | [SCRUM-649](https://arkova.atlassian.net/browse/SCRUM-649) | INT-07 Bullhorn Marketplace App | 8 | **COMPLETE** — candidate tab, status sync, webhooks, 15 tests |
@@ -41,7 +41,10 @@ Arkova's core infrastructure is complete: POST /anchor wired E2E, 13 verificatio
 
 ## What Was Built (Session 39)
 
-### INT-04: Python SDK v0.2.0 (`sdks/python/`)
+### INT-04: Python SDK v0.2.0 (`sdks/python/`) — superseded
+
+> 2026-05-01 update: this historical SDK copy was removed as authoritative source. The canonical Python SDK package is `packages/arkova-py/`, which is the directory used by the publish workflow and API docs.
+
 - Full parity with TypeScript SDK: `anchor()`, `verify()`, `verify_batch()`, `query()`, `ask()`
 - Webhook management namespace: `webhooks.create/list/get/update/delete/test()`
 - Typed with frozen dataclasses: 13 types (AnchorReceipt, VerificationResult, WebhookEndpoint, NessieQueryResult, etc.)
@@ -88,7 +91,7 @@ Arkova's core infrastructure is complete: POST /anchor wired E2E, 13 verificatio
 
 - [x] All 9 INT stories COMPLETE with passing tests
 - [x] TypeScript SDK at `packages/sdk/`
-- [x] Python SDK at `sdks/python/` (v0.2.0)
+- [x] Python SDK at `packages/arkova-py/`
 - [x] Zapier app at `integrations/zapier/`
 - [x] Make.com module definition at `integrations/zapier/src/makecom.json`
 - [x] Clio integration at `integrations/clio/`
