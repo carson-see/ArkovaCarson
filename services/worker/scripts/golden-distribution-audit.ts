@@ -17,7 +17,7 @@
  *     [--json]
  */
 
-import { readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, relative, resolve } from 'node:path';
 
 export interface GoldenRow {
@@ -77,6 +77,22 @@ const CREDENTIAL_TYPE_RE = /"credentialType"\s*:\s*"([A-Z_]+)"/;
 const CREDENTIAL_HINT_RE = /credential\s*type\s*hint\s*[:=]\s*([A-Z_]+)/i;
 const FRAUD_POSITIVE_RE = /"fraudSignals"\s*:\s*\[\s*(?!\])/;
 const ASSISTANT_ROLES = new Set(['assistant', 'model']);
+const DEFAULT_MIN_TOTAL = 5000;
+const DEFAULT_MIN_PER_TYPE = 30;
+const DEFAULT_MIN_FRAUD_POSITIVE = 200;
+
+interface TextBlobs {
+  outputBlobs: string[];
+  promptBlobs: string[];
+  structuredFraudPositive: boolean;
+}
+
+interface CliOptions {
+  inputs: string[];
+  gate: AcceptanceGate;
+  jsonOutput: boolean;
+  outPath: string | null;
+}
 
 function normalizeTypes(types: string[]): string[] {
   return [...new Set(types.map((type) => type.trim().toUpperCase()).filter(Boolean))].sort((a, b) =>
@@ -94,6 +110,79 @@ function hasStructuredFraudSignals(value: unknown): boolean {
   return Array.isArray(value) && value.length > 0;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object';
+}
+
+function normalizedRole(value: unknown): string {
+  return typeof value === 'string' ? value.toLowerCase() : '';
+}
+
+function isAssistantRole(value: unknown): boolean {
+  return ASSISTANT_ROLES.has(normalizedRole(value));
+}
+
+function createTextBlobs(): TextBlobs {
+  return {
+    outputBlobs: [],
+    promptBlobs: [],
+    structuredFraudPositive: false,
+  };
+}
+
+function appendPartTexts(parts: unknown, target: string[]): void {
+  if (!Array.isArray(parts)) return;
+  for (const part of parts) {
+    if (isRecord(part) && typeof part.text === 'string') target.push(part.text);
+  }
+}
+
+function collectVertexContents(contents: unknown, blobs: TextBlobs): void {
+  if (!Array.isArray(contents)) return;
+  for (const content of contents) {
+    if (!isRecord(content)) continue;
+    const target = isAssistantRole(content.role) ? blobs.outputBlobs : blobs.promptBlobs;
+    appendPartTexts(content.parts, target);
+  }
+}
+
+function collectChatMessages(messages: unknown, blobs: TextBlobs): void {
+  if (!Array.isArray(messages)) return;
+  for (const message of messages) {
+    if (!isRecord(message)) continue;
+    const target = isAssistantRole(message.role) ? blobs.outputBlobs : blobs.promptBlobs;
+    if (typeof message.content === 'string') target.push(message.content);
+  }
+}
+
+function collectStructuredOutput(obj: Record<string, unknown>, blobs: TextBlobs): void {
+  if (typeof obj.credentialType === 'string') {
+    blobs.outputBlobs.push(JSON.stringify({ credentialType: obj.credentialType }));
+  }
+  if (hasStructuredFraudSignals(obj.fraudSignals)) blobs.structuredFraudPositive = true;
+  if (!isRecord(obj.output)) return;
+
+  blobs.outputBlobs.push(JSON.stringify(obj.output));
+  if (hasStructuredFraudSignals(obj.output.fraudSignals)) blobs.structuredFraudPositive = true;
+}
+
+function collectTextBlobs(parsed: unknown): TextBlobs {
+  const blobs = createTextBlobs();
+  if (!isRecord(parsed)) return blobs;
+  collectVertexContents(parsed.contents, blobs);
+  collectChatMessages(parsed.messages, blobs);
+  collectStructuredOutput(parsed, blobs);
+  return blobs;
+}
+
+function findCredentialType(outputText: string, fallbackText: string): string | null {
+  const credentialMatch = CREDENTIAL_TYPE_RE.exec(outputText) ?? CREDENTIAL_TYPE_RE.exec(fallbackText);
+  if (credentialMatch) return credentialMatch[1];
+
+  const hintMatch = CREDENTIAL_HINT_RE.exec(fallbackText);
+  return hintMatch ? hintMatch[1].toUpperCase() : null;
+}
+
 /**
  * Extract credentialType + fraud-positive flag from a single jsonl line.
  * Handles both vertex AI (`{contents: [{role, parts: [{text}]}]}`) and chat
@@ -108,45 +197,10 @@ export function parseGoldenLine(line: string): GoldenRow {
   } catch {
     return { credentialType: null, fraudPositive: false };
   }
-  const outputBlobs: string[] = [];
-  const promptBlobs: string[] = [];
-  let structuredFraudPositive = false;
-  if (parsed && typeof parsed === 'object') {
-    const obj = parsed as Record<string, unknown>;
-    if (Array.isArray(obj.contents)) {
-      for (const c of obj.contents as Array<Record<string, unknown>>) {
-        const target = ASSISTANT_ROLES.has(String(c.role ?? '').toLowerCase()) ? outputBlobs : promptBlobs;
-        if (Array.isArray(c.parts)) {
-          for (const p of c.parts as Array<Record<string, unknown>>) {
-            if (typeof p.text === 'string') target.push(p.text);
-          }
-        }
-      }
-    }
-    if (Array.isArray(obj.messages)) {
-      for (const m of obj.messages as Array<Record<string, unknown>>) {
-        const target = ASSISTANT_ROLES.has(String(m.role ?? '').toLowerCase()) ? outputBlobs : promptBlobs;
-        if (typeof m.content === 'string') target.push(m.content);
-      }
-    }
-    if (typeof obj.credentialType === 'string') outputBlobs.push(`"credentialType":"${obj.credentialType}"`);
-    if (hasStructuredFraudSignals(obj.fraudSignals)) structuredFraudPositive = true;
-    if (obj.output && typeof obj.output === 'object') {
-      const out = obj.output as Record<string, unknown>;
-      outputBlobs.push(JSON.stringify(out));
-      if (hasStructuredFraudSignals(out.fraudSignals)) structuredFraudPositive = true;
-    }
-  }
+  const { outputBlobs, promptBlobs, structuredFraudPositive } = collectTextBlobs(parsed);
   const outputText = outputBlobs.join('\n');
-  const promptText = promptBlobs.join('\n');
-  const fallbackText = [outputText, promptText].filter(Boolean).join('\n');
-  let credentialType: string | null = null;
-  const m = outputText.match(CREDENTIAL_TYPE_RE) ?? fallbackText.match(CREDENTIAL_TYPE_RE);
-  if (m) credentialType = m[1];
-  if (!credentialType) {
-    const m2 = fallbackText.match(CREDENTIAL_HINT_RE);
-    if (m2) credentialType = m2[1].toUpperCase();
-  }
+  const fallbackText = [outputText, promptBlobs.join('\n')].filter(Boolean).join('\n');
+  const credentialType = findCredentialType(outputText, fallbackText);
   const fraudPositive = structuredFraudPositive || FRAUD_POSITIVE_RE.test(outputText || fallbackText);
   return { credentialType, fraudPositive };
 }
@@ -186,36 +240,59 @@ export function computeGap(audit: DistributionAudit, gate: AcceptanceGate): GapR
 
 export function renderMarkdownReport(report: GapReport, sourceFiles: string[]): string {
   const { audit, gate, totalGap, fraudGap, unparseableGap, typesUnderFloor, expectedTypes, passed } = report;
-  const lines: string[] = [];
-  lines.push(`# Golden Distribution Audit\n`);
-  lines.push(`**Sources.** ${sourceFiles.map(formatSourceFile).join(', ')}\n`);
-  lines.push(`**Acceptance gate.** ≥${gate.minTotal} rows, every type ≥${gate.minPerType}, fraud-positive ≥${gate.minFraudPositive}\n`);
-  lines.push(`**Expected types.** ${expectedTypes.join(', ')}\n`);
-  lines.push(`**Verdict.** ${passed ? 'PASSED' : 'FAILED'}\n`);
-  lines.push(`## Summary\n`);
-  lines.push(`| Metric | Current | Target | Gap |`);
-  lines.push(`|---|---:|---:|---:|`);
-  lines.push(`| Total rows | ${audit.totalRows} | ${gate.minTotal} | ${totalGap > 0 ? `+${totalGap}` : '0'} |`);
-  lines.push(`| Fraud-positive entries | ${audit.fraudPositive} | ${gate.minFraudPositive} | ${fraudGap > 0 ? `+${fraudGap}` : '0'} |`);
-  lines.push(`| Types under ${gate.minPerType}-sample floor | ${typesUnderFloor.length} | 0 | ${typesUnderFloor.length} |`);
-  lines.push(`| Unparseable rows | ${audit.unparseableRows} | 0 | ${unparseableGap} |\n`);
   const sorted = normalizeTypes([...expectedTypes, ...Object.keys(audit.byType)])
     .map((type) => [type, audit.byType[type] ?? 0] as const)
     .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
-  lines.push(`## Per-type distribution\n`);
-  lines.push(`| Type | Count | Status |`);
-  lines.push(`|---|---:|---|`);
-  for (const [type, count] of sorted) {
-    const status = count >= gate.minPerType ? 'OK' : `UNDER (need +${gate.minPerType - count})`;
-    lines.push(`| ${type} | ${count} | ${status} |`);
-  }
-  if (typesUnderFloor.length > 0) {
-    lines.push(`\n## Types under floor (sorted by deficit)\n`);
-    for (const t of typesUnderFloor) {
-      lines.push(`- **${t.type}** — ${t.count} / ${gate.minPerType} (need +${t.deficit})`);
-    }
-  }
-  return lines.join('\n') + '\n';
+  const summaryRows = [
+    `| Total rows | ${audit.totalRows} | ${gate.minTotal} | ${formatGap(totalGap)} |`,
+    `| Fraud-positive entries | ${audit.fraudPositive} | ${gate.minFraudPositive} | ${formatGap(fraudGap)} |`,
+    `| Types under ${gate.minPerType}-sample floor | ${typesUnderFloor.length} | 0 | ${typesUnderFloor.length} |`,
+    `| Unparseable rows | ${audit.unparseableRows} | 0 | ${unparseableGap} |`,
+  ];
+  const perTypeRows = sorted.map(([type, count]) => {
+    const deficit = gate.minPerType - count;
+    const status = deficit <= 0 ? 'OK' : `UNDER (need +${deficit})`;
+    return `| ${type} | ${count} | ${status} |`;
+  });
+  const underFloorSection =
+    typesUnderFloor.length === 0
+      ? []
+      : [
+          '',
+          '## Types under floor (sorted by deficit)',
+          '',
+          ...typesUnderFloor.map((t) => `- **${t.type}** — ${t.count} / ${gate.minPerType} (need +${t.deficit})`),
+        ];
+
+  return [
+    '# Golden Distribution Audit',
+    '',
+    `**Sources.** ${sourceFiles.map(formatSourceFile).join(', ')}`,
+    '',
+    `**Acceptance gate.** ≥${gate.minTotal} rows, every type ≥${gate.minPerType}, fraud-positive ≥${gate.minFraudPositive}`,
+    '',
+    `**Expected types.** ${expectedTypes.join(', ')}`,
+    '',
+    `**Verdict.** ${passed ? 'PASSED' : 'FAILED'}`,
+    '',
+    '## Summary',
+    '',
+    '| Metric | Current | Target | Gap |',
+    '|---|---:|---:|---:|',
+    ...summaryRows,
+    '',
+    '## Per-type distribution',
+    '',
+    '| Type | Count | Status |',
+    '|---|---:|---|',
+    ...perTypeRows,
+    ...underFloorSection,
+    '',
+  ].join('\n');
+}
+
+function formatGap(gap: number): string {
+  return gap > 0 ? `+${gap}` : '0';
 }
 
 export function loadJsonlRows(filePath: string): GoldenRow[] {
@@ -241,50 +318,84 @@ export function runAudit(
   return { report, rowCount: allRows.length };
 }
 
-// ---------------------------------------------------------------------------
-// CLI shim — only runs when invoked directly, not when imported by tests.
-// ---------------------------------------------------------------------------
+function resolveDefaultInputs(): string[] {
+  const canonicalTrain = resolve('training-data/gemini-golden-train.jsonl');
+  const canonicalValidation = resolve('training-data/gemini-golden-validation.jsonl');
+  const fixture = resolve('training-data/fixtures/golden-fixture.jsonl');
+  return existsSync(canonicalTrain) ? [canonicalTrain, canonicalValidation] : [fixture];
+}
 
-function main(): void {
-  const args = process.argv.slice(2);
+function readArgValue(args: string[], index: number): string {
+  return args[index + 1] ?? '';
+}
+
+function parseCliArgs(args: string[]): CliOptions {
   const inputs: string[] = [];
-  let minTotal = 5000;
-  let minPerType = 30;
-  let minFraudPositive = 200;
+  let minTotal = DEFAULT_MIN_TOTAL;
+  let minPerType = DEFAULT_MIN_PER_TYPE;
+  let minFraudPositive = DEFAULT_MIN_FRAUD_POSITIVE;
   const expectedTypes: string[] = [];
   let jsonOutput = false;
   let outPath: string | null = null;
+
   for (let i = 0; i < args.length; i += 1) {
-    const a = args[i];
-    if (a === '--input') inputs.push(resolve(args[++i]));
-    else if (a === '--min-total') minTotal = parseInt(args[++i], 10);
-    else if (a === '--min-per-type') minPerType = parseInt(args[++i], 10);
-    else if (a === '--min-fraud-positive') minFraudPositive = parseInt(args[++i], 10);
-    else if (a === '--expected-type') expectedTypes.push(args[++i]);
-    else if (a === '--expected-types') expectedTypes.push(...args[++i].split(','));
-    else if (a === '--json') jsonOutput = true;
-    else if (a === '--out') outPath = resolve(args[++i]);
-  }
-  if (inputs.length === 0) {
-    // Local-developer default: full curated golden if it exists.
-    // CI default falls back to the committed fixture (services/worker/training-data/fixtures/),
-    // so the audit can always run regardless of whether the gitignored canonical file is present.
-    const canonicalTrain = resolve('training-data/gemini-golden-train.jsonl');
-    const canonicalValidation = resolve('training-data/gemini-golden-validation.jsonl');
-    const fixture = resolve('training-data/fixtures/golden-fixture.jsonl');
-    try {
-      readFileSync(canonicalTrain, 'utf-8');
-      inputs.push(canonicalTrain, canonicalValidation);
-    } catch {
-      inputs.push(fixture);
+    const arg = args[i];
+    const value = readArgValue(args, i);
+    switch (arg) {
+      case '--json':
+        jsonOutput = true;
+        break;
+      case '--input':
+        inputs.push(resolve(value));
+        i += 1;
+        break;
+      case '--min-total':
+        minTotal = Number.parseInt(value, 10);
+        i += 1;
+        break;
+      case '--min-per-type':
+        minPerType = Number.parseInt(value, 10);
+        i += 1;
+        break;
+      case '--min-fraud-positive':
+        minFraudPositive = Number.parseInt(value, 10);
+        i += 1;
+        break;
+      case '--expected-type':
+        expectedTypes.push(value);
+        i += 1;
+        break;
+      case '--expected-types':
+        expectedTypes.push(...value.split(','));
+        i += 1;
+        break;
+      case '--out':
+        outPath = resolve(value);
+        i += 1;
+        break;
     }
   }
+
   const gate: AcceptanceGate = {
     minTotal,
     minPerType,
     minFraudPositive,
     ...(expectedTypes.length > 0 ? { expectedTypes } : {}),
   };
+  return {
+    inputs: inputs.length > 0 ? inputs : resolveDefaultInputs(),
+    gate,
+    jsonOutput,
+    outPath,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// CLI shim — only runs when invoked directly, not when imported by tests.
+// ---------------------------------------------------------------------------
+
+function main(): void {
+  const { inputs, gate, jsonOutput, outPath } = parseCliArgs(process.argv.slice(2));
   const { report } = runAudit(inputs, gate);
   if (jsonOutput) {
     const out = JSON.stringify(report, null, 2);
