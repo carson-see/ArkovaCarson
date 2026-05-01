@@ -71,7 +71,7 @@ The final package stores `evidencePackageHash` alongside the normalized input, b
 Before a `source_url` enters the evidence package:
 
 - require absolute `http` or `https`
-- reject localhost, `.localhost`, `.local`, private IPv4, loopback IPv4, link-local IPv4, loopback IPv6, link-local IPv6, and unique-local IPv6 literals
+- reject localhost, `.localhost`, `.local`, private IPv4, loopback IPv4, link-local IPv4, CGNAT IPv4 (`100.64.0.0/10`), IPv4-mapped IPv6 for those ranges (for example `::ffff:127.0.0.1`), loopback IPv6, link-local IPv6, and unique-local IPv6 literals
 - strip username/password
 - strip fragments
 - strip known secret query params such as `token`, `access_token`, `signature`, `key`, `secret`, `jwt`, `authorization`

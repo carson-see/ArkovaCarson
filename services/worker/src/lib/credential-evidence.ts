@@ -101,10 +101,30 @@ function isPrivateIpv4(hostname: string): boolean {
     a === 0 ||
     a === 10 ||
     a === 127 ||
+    (a === 100 && b >= 64 && b <= 127) ||
     (a === 169 && b === 254) ||
     (a === 172 && b >= 16 && b <= 31) ||
     (a === 192 && b === 168)
   );
+}
+
+function ipv4FromMappedIpv6(hostname: string): string | null {
+  const normalized = stripIpv6Brackets(hostname.toLowerCase());
+  const dottedMatch = /^(?:::ffff:|0:0:0:0:0:ffff:)(\d{1,3}(?:\.\d{1,3}){3})$/.exec(normalized);
+  if (dottedMatch && isIP(dottedMatch[1]) === 4) return dottedMatch[1];
+
+  const hexMatch = /^(?:::ffff:|0:0:0:0:0:ffff:)([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(normalized);
+  if (!hexMatch) return null;
+
+  const high = Number.parseInt(hexMatch[1], 16);
+  const low = Number.parseInt(hexMatch[2], 16);
+  if (high > 0xffff || low > 0xffff) return null;
+  return [
+    (high >> 8) & 0xff,
+    high & 0xff,
+    (low >> 8) & 0xff,
+    low & 0xff,
+  ].join('.');
 }
 
 function isPrivateIpv6(hostname: string): boolean {
@@ -130,6 +150,10 @@ function assertPublicHttpHost(hostname: string): void {
 
   const ipVersion = isIP(normalized);
   if (ipVersion === 4 && isPrivateIpv4(normalized)) {
+    throw new Error('source URL must not target a private IPv4 address');
+  }
+  const mappedIpv4 = ipVersion === 6 ? ipv4FromMappedIpv6(normalized) : null;
+  if (mappedIpv4 && isPrivateIpv4(mappedIpv4)) {
     throw new Error('source URL must not target a private IPv4 address');
   }
   if (ipVersion === 6 && isPrivateIpv6(normalized)) {
@@ -337,6 +361,17 @@ export const PublicCredentialEvidenceMetadataSchema = z.object({
 
 const PUBLIC_CREDENTIAL_EVIDENCE_METADATA_KEYS = new Set(Object.keys(PublicCredentialEvidenceMetadataSchema.shape));
 
+export type PublicCredentialEvidenceMetadataParseResult =
+  | {
+    ok: true;
+    metadata: Record<string, string | number | boolean | null>;
+  }
+  | {
+    ok: false;
+    reason: 'not_object' | 'no_public_metadata_keys' | 'invalid_public_metadata';
+    issues?: Array<{ path: string; code: string; message: string }>;
+  };
+
 export function hasPublicCredentialEvidenceMetadataKeys(metadata: unknown): boolean {
   return (
     !!metadata &&
@@ -348,17 +383,38 @@ export function hasPublicCredentialEvidenceMetadataKeys(metadata: unknown): bool
   );
 }
 
-export function parsePublicCredentialEvidenceMetadata(
+export function parsePublicCredentialEvidenceMetadataResult(
   metadata: unknown,
-): Record<string, string | number | boolean | null> | null {
-  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return null;
+): PublicCredentialEvidenceMetadataParseResult {
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) {
+    return { ok: false, reason: 'not_object' };
+  }
   const candidate = Object.fromEntries(
     Object.entries(metadata as Record<string, unknown>).filter(([key]) =>
       PUBLIC_CREDENTIAL_EVIDENCE_METADATA_KEYS.has(key),
     ),
   );
-  if (Object.keys(candidate).length === 0) return null;
+  if (Object.keys(candidate).length === 0) {
+    return { ok: false, reason: 'no_public_metadata_keys' };
+  }
   const parsed = PublicCredentialEvidenceMetadataSchema.partial().safeParse(candidate);
-  if (!parsed.success) return null;
-  return compactPublicMetadata(parsed.data);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      reason: 'invalid_public_metadata',
+      issues: parsed.error.issues.map((issue) => ({
+        path: issue.path.join('.'),
+        code: issue.code,
+        message: issue.message,
+      })),
+    };
+  }
+  return { ok: true, metadata: compactPublicMetadata(parsed.data) };
+}
+
+export function parsePublicCredentialEvidenceMetadata(
+  metadata: unknown,
+): Record<string, string | number | boolean | null> | null {
+  const parsed = parsePublicCredentialEvidenceMetadataResult(metadata);
+  return parsed.ok ? parsed.metadata : null;
 }

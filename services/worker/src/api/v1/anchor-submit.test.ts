@@ -143,6 +143,7 @@ describe('POST /api/v1/anchor — Zod validation', () => {
     expect(res.body.fingerprint).toBe(VALID_FINGERPRINT);
     expect(res.body.status).toBe('PENDING');
     expect(res.body.record_uri).toContain('/verify/');
+    expect(mockInsert.mock.calls[0]?.[0]).not.toHaveProperty('metadata');
   });
 
   it('accepts BADGE credential type and persists public-safe evidence metadata', async () => {
@@ -198,6 +199,34 @@ describe('POST /api/v1/anchor — Zod validation', () => {
 
     expect(res.status).toBe(400);
     expect(res.body.details[0].path).toBe('metadata');
+    expect(mockInsert).not.toHaveBeenCalled();
+    expect(mockLogger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadataKeys: expect.arrayContaining(['source_provider', 'source_url']),
+        reason: 'invalid_public_metadata',
+        issues: expect.arrayContaining([
+          expect.objectContaining({ path: 'source_url' }),
+        ]),
+      }),
+      expect.stringContaining('Rejected invalid credential evidence metadata'),
+    );
+  });
+
+  it('rejects IPv4-mapped IPv6 credential evidence source URLs', async () => {
+    const res = await request(makeApp()).post('/v1/anchor').send({
+      fingerprint: VALID_FINGERPRINT,
+      credential_type: 'BADGE',
+      metadata: {
+        source_url: 'https://[::ffff:127.0.0.1]/private-badge',
+        source_provider: 'credly',
+      },
+    });
+
+    expect(res.status).toBe(400);
+    expect(res.body.details[0]).toMatchObject({
+      path: 'metadata',
+      code: 'invalid_credential_evidence_metadata',
+    });
     expect(mockInsert).not.toHaveBeenCalled();
   });
 

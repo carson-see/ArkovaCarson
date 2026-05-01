@@ -5,6 +5,7 @@ import {
   computeCredentialEvidenceHash,
   normalizeCredentialSourceUrl,
   parsePublicCredentialEvidenceMetadata,
+  parsePublicCredentialEvidenceMetadataResult,
   toPublicSafeCredentialEvidenceMetadata,
   type CredentialEvidenceHashInput,
 } from './credential-evidence.js';
@@ -90,7 +91,16 @@ describe('credential-evidence', () => {
     expect(() => normalizeCredentialSourceUrl('https://127.0.0.1/credential')).toThrow(
       'private IPv4',
     );
+    expect(() => normalizeCredentialSourceUrl('https://100.64.0.1/credential')).toThrow(
+      'private IPv4',
+    );
     expect(() => normalizeCredentialSourceUrl('https://192.168.0.5/credential')).toThrow(
+      'private IPv4',
+    );
+    expect(() => normalizeCredentialSourceUrl('https://[::ffff:127.0.0.1]/credential')).toThrow(
+      'private IPv4',
+    );
+    expect(() => normalizeCredentialSourceUrl('https://[::ffff:100.64.0.1]/credential')).toThrow(
       'private IPv4',
     );
     expect(() => normalizeCredentialSourceUrl('https://[::1]/credential')).toThrow(
@@ -150,6 +160,24 @@ describe('credential-evidence', () => {
     });
     expect(parsed).not.toHaveProperty('recipient_display_name');
     expect(parsed).not.toHaveProperty('access_token');
+  });
+
+  it('returns structured metadata parse errors for observability', () => {
+    const parsed = parsePublicCredentialEvidenceMetadataResult({
+      source_url: 'https://[::ffff:127.0.0.1]/credential',
+      source_provider: 'credly',
+    });
+
+    expect(parsed).toMatchObject({
+      ok: false,
+      reason: 'invalid_public_metadata',
+      issues: expect.arrayContaining([
+        expect.objectContaining({
+          path: 'source_url',
+          message: expect.stringContaining('private IPv4'),
+        }),
+      ]),
+    });
   });
 
   it('returns known fixture hashes to detect accidental canonicalization drift', () => {

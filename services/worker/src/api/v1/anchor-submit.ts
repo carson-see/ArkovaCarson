@@ -15,7 +15,7 @@ import { buildVerifyUrl } from '../../lib/urls.js';
 import {
   ANCHOR_CREDENTIAL_TYPES,
   hasPublicCredentialEvidenceMetadataKeys,
-  parsePublicCredentialEvidenceMetadata,
+  parsePublicCredentialEvidenceMetadataResult,
 } from '../../lib/credential-evidence.js';
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
@@ -105,8 +105,19 @@ router.post('/', async (req: Request, res: Response) => {
   const body: AnchorSubmitRequest = parsed.data;
 
   const fingerprint = body.fingerprint.toLowerCase();
-  const publicSafeCredentialEvidenceMetadata = parsePublicCredentialEvidenceMetadata(body.metadata);
-  if (body.metadata && hasPublicCredentialEvidenceMetadataKeys(body.metadata) && !publicSafeCredentialEvidenceMetadata) {
+  const parsedCredentialEvidenceMetadata = parsePublicCredentialEvidenceMetadataResult(body.metadata);
+  const publicSafeCredentialEvidenceMetadata = parsedCredentialEvidenceMetadata.ok
+    ? parsedCredentialEvidenceMetadata.metadata
+    : null;
+  if (body.metadata && hasPublicCredentialEvidenceMetadataKeys(body.metadata) && !parsedCredentialEvidenceMetadata.ok) {
+    logger.warn(
+      {
+        metadataKeys: Object.keys(body.metadata).sort(),
+        reason: parsedCredentialEvidenceMetadata.reason,
+        issues: parsedCredentialEvidenceMetadata.issues,
+      },
+      'Rejected invalid credential evidence metadata on anchor submit',
+    );
     res.status(400).json({
       error: 'invalid_request',
       message: 'Request body failed validation',
@@ -153,19 +164,20 @@ router.post('/', async (req: Request, res: Response) => {
 
     // credential_type already validated by Zod enum; defaults to 'OTHER'.
     const credentialType = body.credential_type ?? 'OTHER';
+    const insertPayload = {
+      fingerprint,
+      public_id: publicId,
+      status: 'PENDING' as const,
+      org_id: orgId,
+      user_id: req.apiKey.userId,
+      filename: `api-${fingerprint.slice(0, 12)}`,
+      credential_type: credentialType,
+      description: body.description ?? null,
+      ...(publicSafeCredentialEvidenceMetadata ? { metadata: publicSafeCredentialEvidenceMetadata } : {}),
+    };
     const { data: anchor, error: insertError } = await db
       .from('anchors')
-      .insert({
-        fingerprint,
-        public_id: publicId,
-        status: 'PENDING' as const,
-        org_id: orgId,
-        user_id: req.apiKey.userId,
-        filename: `api-${fingerprint.slice(0, 12)}`,
-        credential_type: credentialType,
-        description: body.description ?? null,
-        metadata: publicSafeCredentialEvidenceMetadata,
-      })
+      .insert(insertPayload)
       .select('public_id, fingerprint, status, created_at')
       .single();
 
