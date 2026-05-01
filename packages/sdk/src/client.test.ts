@@ -171,6 +171,7 @@ describe('API v2 agent methods', () => {
     const result = await client.search('acme', { type: 'org', limit: 5 });
 
     expect(result.results[0].publicId).toBe('org_acme');
+    expect(result.results[0]).not.toHaveProperty('id');
     expect(result.nextCursor).toBe('cursor-1');
     expect(mockFetch).toHaveBeenCalledWith(
       expect.stringContaining('/api/v2/search?q=acme&type=org&limit=5'),
@@ -200,6 +201,33 @@ describe('API v2 agent methods', () => {
 
     expect(result.publicId).toBe('ARK-DOC-ABC');
     expect(result.networkReceiptId).toBe('tx-1');
+  });
+
+  it('lists org context without exposing internal org ids', async () => {
+    const client = new Arkova({ apiKey: 'ak_test' });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        organizations: [{
+          id: 'org-internal-uuid',
+          public_id: 'org_acme',
+          display_name: 'Acme Corp',
+          domain: 'acme.com',
+          website_url: 'https://acme.com',
+          verification_status: 'VERIFIED',
+        }],
+      }),
+    });
+
+    const result = await client.listOrgs();
+
+    expect(result[0]).toMatchObject({
+      publicId: 'org_acme',
+      displayName: 'Acme Corp',
+      verificationStatus: 'VERIFIED',
+    });
+    expect(result[0]).not.toHaveProperty('id');
   });
 
   it('maps RFC 7807 problem+json errors', async () => {

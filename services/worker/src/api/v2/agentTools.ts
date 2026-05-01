@@ -156,7 +156,7 @@ agentToolsRouter.get(
 
     try {
       const { data, error } = await v2Db.from('organizations')
-        .select('id, public_id, display_name, domain, website_url, verification_status')
+        .select('public_id, display_name, domain, website_url, verification_status')
         .eq('id', req.apiKey.orgId)
         .maybeSingle();
 
@@ -168,8 +168,7 @@ agentToolsRouter.get(
 
       res.json({
         organizations: data ? [{
-          id: data.id,
-          public_id: data.public_id ?? data.id,
+          public_id: typeof data.public_id === 'string' ? data.public_id : null,
           display_name: data.display_name,
           domain: data.domain,
           website_url: data.website_url,

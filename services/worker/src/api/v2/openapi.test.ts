@@ -11,6 +11,23 @@ describe('openApiV2Spec', () => {
     expect(openApiV2Spec.paths['/orgs'].get.operationId).toBe('list_orgs');
   });
 
+  it('documents implemented resource search aliases', () => {
+    expect(openApiV2Spec.paths['/organizations'].get.operationId).toBe('search_organizations');
+    expect(openApiV2Spec.paths['/records'].get.operationId).toBe('search_records');
+    expect(openApiV2Spec.paths['/fingerprints'].get.operationId).toBe('search_fingerprints');
+    expect(openApiV2Spec.paths['/documents'].get.operationId).toBe('search_documents');
+  });
+
+  it('does not publish internal id fields in v2 public schemas', () => {
+    const searchResult = openApiV2Spec.components.schemas.SearchResult;
+    const org = openApiV2Spec.components.schemas.Org;
+
+    expect(searchResult.required).not.toContain('id');
+    expect(searchResult.properties).not.toHaveProperty('id');
+    expect(org.required).not.toContain('id');
+    expect(org.properties).not.toHaveProperty('id');
+  });
+
   it('documents all v2 error responses as application/problem+json', () => {
     const responses = openApiV2Spec.components.responses;
     for (const key of ['ValidationError', 'AuthenticationRequired', 'InvalidScope', 'NotFound', 'RateLimited', 'InternalError'] as const) {

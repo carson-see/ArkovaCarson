@@ -111,8 +111,9 @@ describe('agentToolsRouter', () => {
   });
 
   it('lists the API key organization context', async () => {
+    const select = vi.fn().mockReturnThis();
     (db.from as ReturnType<typeof vi.fn>).mockReturnValue({
-      select: vi.fn().mockReturnThis(),
+      select,
       eq: vi.fn().mockReturnThis(),
       maybeSingle: vi.fn().mockResolvedValue({
         data: {
@@ -130,8 +131,11 @@ describe('agentToolsRouter', () => {
     const res = await request(buildApp()).get('/orgs');
 
     expect(res.status).toBe(200);
+    expect(select).toHaveBeenCalledWith('public_id, display_name, domain, website_url, verification_status');
     expect(res.body.organizations).toEqual([
-      expect.objectContaining({ id: 'org-1', public_id: 'org_acme' }),
+      expect.objectContaining({ public_id: 'org_acme' }),
     ]);
+    expect(res.body.organizations[0]).not.toHaveProperty('id');
+    expect(JSON.stringify(res.body)).not.toContain('org-1');
   });
 });

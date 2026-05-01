@@ -591,7 +591,6 @@ function mapVerificationResult(row: Record<string, unknown>): VerificationResult
 function mapSearchResult(row: Record<string, unknown>): SearchResult {
   return {
     type: row.type as SearchResult['type'],
-    id: row.id as string,
     publicId: row.public_id as string,
     score: row.score as number,
     snippet: row.snippet as string,
@@ -630,8 +629,7 @@ function mapAnchorDetails(row: Record<string, unknown>): AnchorDetails {
 
 function mapOrganizationSummary(row: Record<string, unknown>): OrganizationSummary {
   return {
-    id: row.id as string,
-    publicId: row.public_id as string,
+    publicId: (row.public_id as string | null) ?? null,
     displayName: row.display_name as string,
     domain: (row.domain as string | null) ?? null,
     websiteUrl: (row.website_url as string | null) ?? null,

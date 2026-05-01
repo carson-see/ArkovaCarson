@@ -23,7 +23,6 @@ class ProblemDetail(ArkovaModel):
 
 class SearchResult(ArkovaModel):
     type: SearchResultType
-    id: str
     public_id: str
     score: float
     snippet: str
@@ -85,8 +84,7 @@ class Anchor(ArkovaModel):
 
 
 class Org(ArkovaModel):
-    id: str
-    public_id: str
+    public_id: str | None = None
     display_name: str
     domain: str | None = None
     website_url: str | None = None

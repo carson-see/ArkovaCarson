@@ -27,7 +27,6 @@ def test_search_returns_pydantic_models_and_auth_header() -> None:
                 "results": [
                     {
                         "type": "record",
-                        "id": "rec_1",
                         "public_id": "ARK-DOC-ABC",
                         "score": 1.0,
                         "snippet": "Nursing license",
@@ -42,6 +41,30 @@ def test_search_returns_pydantic_models_and_auth_header() -> None:
 
     assert seen_headers == ["Bearer ak_test"]
     assert result.results[0].public_id == "ARK-DOC-ABC"
+
+
+def test_list_orgs_does_not_require_internal_id() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return json_response(
+            {
+                "organizations": [
+                    {
+                        "public_id": "org_acme",
+                        "display_name": "Acme Corp",
+                        "domain": "acme.com",
+                        "website_url": "https://acme.com",
+                        "verification_status": "VERIFIED",
+                    }
+                ]
+            }
+        )
+
+    with Arkova(api_key="ak_test", transport=httpx.MockTransport(handler)) as client:
+        result = client.list_orgs()
+
+    assert result.organizations[0].public_id == "org_acme"
+    assert result.organizations[0].display_name == "Acme Corp"
+    assert not hasattr(result.organizations[0], "id")
 
 
 def test_problem_json_errors_preserve_retry_after() -> None:

@@ -175,7 +175,6 @@ export interface SearchOptions {
 
 export interface SearchResult {
   type: Exclude<SearchType, 'all'>;
-  id: string;
   publicId: string;
   score: number;
   snippet: string;
@@ -213,8 +212,7 @@ export interface AnchorDetails {
 }
 
 export interface OrganizationSummary {
-  id: string;
-  publicId: string;
+  publicId: string | null;
   displayName: string;
   domain: string | null;
   websiteUrl: string | null;

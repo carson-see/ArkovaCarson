@@ -1,12 +1,43 @@
 import { Request, Response } from 'express';
 
+const searchParameters = [
+  { name: 'q', in: 'query', required: true, schema: { type: 'string', minLength: 1, maxLength: 500 }, description: 'Search query.' },
+  { name: 'type', in: 'query', required: false, schema: { $ref: '#/components/schemas/SearchType' }, description: 'Result type filter. Defaults to all.' },
+  { name: 'cursor', in: 'query', required: false, schema: { type: 'string' }, description: 'Opaque cursor from the previous response.' },
+  { name: 'limit', in: 'query', required: false, schema: { type: 'integer', minimum: 1, maximum: 100, default: 50 }, description: 'Maximum results.' },
+] as const;
+
+const resourceSearchParameters = searchParameters.filter(parameter => parameter.name !== 'type');
+
+const searchResponses = {
+  '200': { description: 'Search results.', content: { 'application/json': { schema: { $ref: '#/components/schemas/SearchResponse' } } } },
+  '400': { $ref: '#/components/responses/ValidationError' },
+  '401': { $ref: '#/components/responses/AuthenticationRequired' },
+  '403': { $ref: '#/components/responses/InvalidScope' },
+  '429': { $ref: '#/components/responses/RateLimited' },
+  '500': { $ref: '#/components/responses/InternalError' },
+} as const;
+
+function resourceSearchPath(operationId: string, summary: string, description: string) {
+  return {
+    get: {
+      tags: ['Search'],
+      operationId,
+      summary,
+      description,
+      parameters: resourceSearchParameters,
+      responses: searchResponses,
+    },
+  } as const;
+}
+
 export const openApiV2Spec = {
   openapi: '3.1.0',
   info: {
     title: 'Arkova Verification API v2',
     version: '0.2.0',
     description:
-      'Agent-ready Arkova verification API. Read-only tools are described with operation descriptions and x-agent-usage annotations for MCP, Gemini, and OpenAPI function-call importers. Scope-aware quotas are enforced per API key: read:search 1,000/min, read:records 500/min, read:orgs 500/min, write:anchors 100/min, and admin:rules 50/min.',
+      'Agent-ready Arkova verification API. Read-only tools are described with operation descriptions and x-agent-usage annotations for MCP, Gemini, and OpenAPI function-call importers. Scope-aware quotas are enforced per API key: read:search 1,000/min, read:records 500/min, and read:orgs 500/min.',
   },
   jsonSchemaDialect: 'https://json-schema.org/draft/2020-12/schema',
   servers: [
@@ -35,22 +66,30 @@ export const openApiV2Spec = {
           },
           auth: 'Bearer API key with read:search scope.',
         },
-        parameters: [
-          { name: 'q', in: 'query', required: true, schema: { type: 'string', minLength: 1, maxLength: 500 }, description: 'Search query.' },
-          { name: 'type', in: 'query', required: false, schema: { $ref: '#/components/schemas/SearchType' }, description: 'Result type filter. Defaults to all.' },
-          { name: 'cursor', in: 'query', required: false, schema: { type: 'string' }, description: 'Opaque cursor from the previous response.' },
-          { name: 'limit', in: 'query', required: false, schema: { type: 'integer', minimum: 1, maximum: 100, default: 50 }, description: 'Maximum results.' },
-        ],
-        responses: {
-          '200': { description: 'Search results.', content: { 'application/json': { schema: { $ref: '#/components/schemas/SearchResponse' } } } },
-          '400': { $ref: '#/components/responses/ValidationError' },
-          '401': { $ref: '#/components/responses/AuthenticationRequired' },
-          '403': { $ref: '#/components/responses/InvalidScope' },
-          '429': { $ref: '#/components/responses/RateLimited' },
-          '500': { $ref: '#/components/responses/InternalError' },
-        },
+        parameters: searchParameters,
+        responses: searchResponses,
       },
     },
+    '/organizations': resourceSearchPath(
+      'search_organizations',
+      'Search organizations visible to the API key',
+      'Alias for `/search?type=org`. Returns organization rows scoped to the authenticated API key without internal organization UUIDs.',
+    ),
+    '/records': resourceSearchPath(
+      'search_records',
+      'Search verified records',
+      'Alias for `/search?type=record`. Returns record-style search results using public identifiers only.',
+    ),
+    '/fingerprints': resourceSearchPath(
+      'search_fingerprints',
+      'Search exact fingerprints',
+      'Alias for `/search?type=fingerprint`. Use for exact SHA-256 fingerprint discovery before calling verify.',
+    ),
+    '/documents': resourceSearchPath(
+      'search_documents',
+      'Search document metadata',
+      'Alias for `/search?type=document`. Returns document-oriented search rows using public identifiers only.',
+    ),
     '/verify/{fingerprint}': {
       get: {
         tags: ['Agent Tools'],
@@ -169,10 +208,9 @@ export const openApiV2Spec = {
       SearchType: { type: 'string', enum: ['all', 'org', 'record', 'fingerprint', 'document'], default: 'all' },
       SearchResult: {
         type: 'object',
-        required: ['type', 'id', 'public_id', 'score', 'snippet'],
+        required: ['type', 'public_id', 'score', 'snippet'],
         properties: {
           type: { $ref: '#/components/schemas/SearchType' },
-          id: { type: 'string' },
           public_id: { type: 'string' },
           score: { type: 'number' },
           snippet: { type: 'string' },
@@ -220,10 +258,9 @@ export const openApiV2Spec = {
       },
       Org: {
         type: 'object',
-        required: ['id', 'public_id', 'display_name'],
+        required: ['public_id', 'display_name'],
         properties: {
-          id: { type: 'string' },
-          public_id: { type: 'string' },
+          public_id: { type: ['string', 'null'] },
           display_name: { type: 'string' },
           domain: { type: ['string', 'null'] },
           website_url: { type: ['string', 'null'], format: 'uri' },

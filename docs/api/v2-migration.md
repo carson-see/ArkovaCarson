@@ -43,8 +43,9 @@ v2 keys are scope-aware. Ask your Arkova admin for only the scopes your integrat
 |---|---|---|
 | `GET /api/v1/verify/{publicId}` | `GET /api/v2/anchors/{public_id}` | Returns redacted public anchor metadata. |
 | Fingerprint lookup through v1 search flows | `GET /api/v2/verify/{fingerprint}` | Accepts a 64-character SHA-256 hex fingerprint. |
-| Search-oriented v1 endpoints | `GET /api/v2/search?q=...` | Cursor pagination and typed result rows. |
-| Agent org bootstrap | `GET /api/v2/orgs` | Returns organization context for the API key. |
+| Search-oriented v1 endpoints | `GET /api/v2/search?q=...` | Cursor pagination and typed result rows with public IDs only. |
+| Resource-specific search views | `GET /api/v2/organizations?q=...`, `/records`, `/fingerprints`, `/documents` | Aliases for `/search?type=...`; useful for OpenAPI tool importers and agents. |
+| Agent org bootstrap | `GET /api/v2/orgs` | Returns organization context for the API key without internal organization UUIDs. |
 
 ## Rate Limits
 
