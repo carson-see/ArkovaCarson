@@ -66,6 +66,16 @@ function normalizeDrainedAnchors(value: unknown): SecuredWebhookAnchor[] {
     .filter((item): item is SecuredWebhookAnchor => item !== null);
 }
 
+function invalidateDrainedVerificationCaches(anchors: SecuredWebhookAnchor[]): void {
+  const publicIds = new Set(
+    anchors.map((anchor) => anchor.public_id).filter((publicId): publicId is string => Boolean(publicId)),
+  );
+
+  for (const publicId of publicIds) {
+    void invalidateVerificationCache(publicId);
+  }
+}
+
 export async function fanOutSecuredAnchorWebhooks(
   anchors: SecuredWebhookAnchor[],
   txId: string,
@@ -488,6 +498,16 @@ export async function checkSubmittedConfirmations(): Promise<{ checked: number; 
   }
   confirmationCheckRunning = true;
 
+  try {
+    return await checkSubmittedConfirmationsUnlocked();
+  } finally {
+    // RACE-3: Always release the in-process mutex, even if an unexpected
+    // exception occurs after acquiring it.
+    confirmationCheckRunning = false;
+  }
+}
+
+async function checkSubmittedConfirmationsUnlocked(): Promise<{ checked: number; confirmed: number }> {
   // PERF/C5: Fetch chain_tx_id column only, capped at 500 rows.
   // With ~1K records/TX from Merkle batching, 500 rows covers plenty of unique tx_ids.
   // We only need MAX_TX_CHECKS_PER_RUN (100) unique tx_ids per run.
@@ -503,13 +523,11 @@ export async function checkSubmittedConfirmations(): Promise<{ checked: number; 
 
   if (txError) {
     logger.error({ error: txError }, 'Failed to fetch SUBMITTED anchor tx_ids');
-    confirmationCheckRunning = false;
     return { checked: 0, confirmed: 0 };
   }
 
   if (!txRows || txRows.length === 0) {
     logger.debug('No SUBMITTED anchors to check');
-    confirmationCheckRunning = false;
     return { checked: 0, confirmed: 0 };
   }
 
@@ -596,7 +614,7 @@ export async function checkSubmittedConfirmations(): Promise<{ checked: number; 
         // protected refresh-stats and Cloud Run's 5-min HTTP timeout
         // both leave plenty of headroom.
         const MAX_DRAIN_CALLS = 25;
-        for (let i = 0; i < MAX_DRAIN_CALLS; i++) {
+        for (let drainAttempt = 0; drainAttempt < MAX_DRAIN_CALLS; drainAttempt++) {
           // Cast through unknown — the RPC was added in migration
           // drain_submitted_to_secured_helper_v2 (2026-04-29 hotfix);
           // generated types haven't been regenerated yet.
@@ -609,6 +627,7 @@ export async function checkSubmittedConfirmations(): Promise<{ checked: number; 
             p_chain_tx_id: txId,
             p_block_height: blockHeight,
             p_block_timestamp: blockTimestamp,
+            p_confirmations: confirmations,
             p_batch_size: 100,
             p_max_iterations: 5,
           });
@@ -648,6 +667,8 @@ export async function checkSubmittedConfirmations(): Promise<{ checked: number; 
             'Bulk confirmed anchor group (shared tx)',
           );
 
+          invalidateDrainedVerificationCaches(drainedAnchors);
+
           // SCRUM-1264 (R2-1): Fan out per-anchor `anchor.secured` webhooks.
           // The pre-2026-03-27 single-anchor path emitted one webhook per
           // SECURED anchor (jobs/anchor.ts:283 still does this for SUBMITTED).
@@ -664,6 +685,13 @@ export async function checkSubmittedConfirmations(): Promise<{ checked: number; 
           // their `confirmationCheckRunning` mutex. The helper never throws
           // (errors → DLQ via deliverToEndpoint), so a detached promise is
           // safe; we attach a .catch to surface unexpected throws.
+          //
+          // Intentionally do not replay per-anchor "secured" emails here. This
+          // emergency bulk drain can promote thousands of historical anchors in
+          // one cron tick; sending that backlog as user email would create a
+          // noisy blast. Webhooks remain the durable integration contract for
+          // this backfill path, while the single-anchor path keeps its normal
+          // best-effort email behavior.
           const fanOutPromise = drainedAnchors.length > 0
             ? fanOutSecuredAnchorWebhooks(drainedAnchors, txId, blockHeight, blockTimestamp)
             : fanOutBulkSecuredWebhooks(txId, blockHeight, blockTimestamp);
@@ -685,9 +713,6 @@ export async function checkSubmittedConfirmations(): Promise<{ checked: number; 
       }
     }
   }
-
-  // RACE-3: Release in-process mutex
-  confirmationCheckRunning = false;
 
   logger.info(
     { txChecked: checked, anchorsConfirmed: confirmed, totalSubmitted: txRows.length },

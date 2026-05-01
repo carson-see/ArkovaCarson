@@ -6,7 +6,7 @@
 --
 -- ROLLBACK: DROP TRIGGER IF EXISTS prevent_metadata_edit_trigger ON
 --           public.anchors; -- (only if we want it back, was a duplicate)
---           DROP FUNCTION IF EXISTS public.drain_submitted_to_secured_for_tx;
+--           DROP FUNCTION IF EXISTS public.drain_submitted_to_secured_for_tx(text, int, timestamptz, int, int, int);
 --           restore the prior public.refresh_pipeline_dashboard_cache()
 --           implementation from migration 0265.
 --
@@ -86,12 +86,15 @@ REVOKE ALL ON FUNCTION public.refresh_pipeline_dashboard_cache() FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.refresh_pipeline_dashboard_cache() TO service_role;
 
 -- ── 3. Batched drain helper ──────────────────────────────────────────
+DROP FUNCTION IF EXISTS public.drain_submitted_to_secured_for_tx(text, int, timestamptz, int, int);
+
 CREATE OR REPLACE FUNCTION public.drain_submitted_to_secured_for_tx(
   p_chain_tx_id text,
   p_block_height int,
   p_block_timestamp timestamptz,
   p_batch_size int DEFAULT 100,
-  p_max_iterations int DEFAULT 5
+  p_max_iterations int DEFAULT 5,
+  p_confirmations int DEFAULT 1
 )
 RETURNS jsonb
 LANGUAGE plpgsql
@@ -108,6 +111,10 @@ DECLARE
 BEGIN
   -- Tell BEFORE-UPDATE triggers to short-circuit. SECURITY DEFINER doesn't
   -- change get_caller_role()'s reading of the JWT claim GUC.
+  -- Contract: protect_anchor_fields/protect_anchor_status_transition and the
+  -- duplicate-metadata guard depend on get_caller_role() honoring this
+  -- service_role GUC. Preserve that trigger short-circuit if those guards are
+  -- refactored.
   PERFORM set_config('request.jwt.claim.role', 'service_role', true);
 
   LOOP
@@ -127,7 +134,32 @@ BEGIN
           chain_timestamp = p_block_timestamp
       FROM batch
       WHERE a.id = batch.id
-      RETURNING a.public_id, a.org_id
+      RETURNING a.id, a.public_id, a.org_id, a.fingerprint
+    ),
+    chain_index AS (
+      INSERT INTO public.anchor_chain_index (
+        fingerprint_sha256,
+        chain_tx_id,
+        chain_block_height,
+        chain_block_timestamp,
+        confirmations,
+        anchor_id
+      )
+      SELECT
+        u.fingerprint,
+        p_chain_tx_id,
+        p_block_height,
+        p_block_timestamp,
+        GREATEST(p_confirmations, 1),
+        u.id
+      FROM updated u
+      WHERE u.fingerprint IS NOT NULL
+      ON CONFLICT (fingerprint_sha256, chain_tx_id) DO UPDATE
+      SET chain_block_height = EXCLUDED.chain_block_height,
+          chain_block_timestamp = EXCLUDED.chain_block_timestamp,
+          confirmations = GREATEST(COALESCE(public.anchor_chain_index.confirmations, 0), EXCLUDED.confirmations),
+          anchor_id = EXCLUDED.anchor_id
+      RETURNING 1
     )
     SELECT
       count(*)::int,
@@ -160,5 +192,5 @@ BEGIN
 END;
 $function$;
 
-REVOKE ALL ON FUNCTION public.drain_submitted_to_secured_for_tx(text, int, timestamptz, int, int) FROM PUBLIC;
-GRANT EXECUTE ON FUNCTION public.drain_submitted_to_secured_for_tx(text, int, timestamptz, int, int) TO service_role;
+REVOKE ALL ON FUNCTION public.drain_submitted_to_secured_for_tx(text, int, timestamptz, int, int, int) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.drain_submitted_to_secured_for_tx(text, int, timestamptz, int, int, int) TO service_role;

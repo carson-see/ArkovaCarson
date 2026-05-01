@@ -19,6 +19,8 @@ const {
   mockAnchorsUpdateResult,
   mockSendEmail,
   mockBuildAnchorSecuredEmail,
+  mockDrainResults,
+  mockInvalidateVerificationCache,
 } = vi.hoisted(() => {
   const mockLogger = {
     info: vi.fn(),
@@ -33,10 +35,19 @@ const {
   const mockFetch = vi.fn();
   const mockSendEmail = vi.fn();
   const mockBuildAnchorSecuredEmail = vi.fn();
+  const mockInvalidateVerificationCache = vi.fn();
 
   // Configurable results per test
   const mockAnchorsSelectResult: { data: unknown; error: unknown } = { data: [], error: null };
   const mockAnchorsUpdateResult: { error: unknown } = { error: null };
+  const mockDrainResults: Array<{
+    data: {
+      updated: number;
+      capped: boolean;
+      anchors: Array<{ public_id: string | null; org_id: string | null }>;
+    } | null;
+    error: unknown;
+  }> = [];
 
   return {
     mockLogger,
@@ -48,6 +59,8 @@ const {
     mockAnchorsUpdateResult,
     mockSendEmail,
     mockBuildAnchorSecuredEmail,
+    mockDrainResults,
+    mockInvalidateVerificationCache,
   };
 });
 
@@ -78,6 +91,10 @@ vi.mock('../email/index.js', () => ({
 
 vi.mock('../middleware/aiFeatureGate.js', () => ({
   isSemanticSearchEnabled: vi.fn().mockResolvedValue(false),
+}));
+
+vi.mock('../utils/verifyCache.js', () => ({
+  invalidateVerificationCache: mockInvalidateVerificationCache,
 }));
 
 vi.mock('../ai/embeddings.js', () => ({
@@ -152,16 +169,12 @@ vi.mock('../utils/db.js', () => {
       // a single batch's worth then 0 to terminate the worker's drain loop.
       rpc: vi.fn((name: string) => {
         if (name === 'drain_submitted_to_secured_for_tx') {
-          // First call returns 1 row updated (test fixtures use 1-2 anchors
-          // per tx). capped=false signals the worker drain loop to exit.
-          return {
-            data: {
-              updated: 1,
-              capped: false,
-              anchors: [{ public_id: 'pub-001', org_id: 'org-001' }],
-            },
-            error: null,
-          };
+          return (
+            mockDrainResults.shift() ?? {
+              data: { updated: 0, capped: false, anchors: [] },
+              error: null,
+            }
+          );
         }
         return { data: true, error: null };
       }),
@@ -221,6 +234,15 @@ describe('checkSubmittedConfirmations', () => {
     mockDispatchWebhookEvent.mockResolvedValue(undefined);
     mockSendEmail.mockResolvedValue({ success: true, messageId: 'msg-001' });
     mockBuildAnchorSecuredEmail.mockReturnValue({ subject: 'Test Subject', html: '<p>test</p>' });
+    mockInvalidateVerificationCache.mockResolvedValue(undefined);
+    mockDrainResults.splice(0, mockDrainResults.length, {
+      data: {
+        updated: 1,
+        capped: false,
+        anchors: [{ public_id: 'pub-001', org_id: 'org-001' }],
+      },
+      error: null,
+    });
   });
 
   afterEach(() => {
@@ -243,6 +265,20 @@ describe('checkSubmittedConfirmations', () => {
     const result = await checkSubmittedConfirmations();
     expect(result).toEqual({ checked: 0, confirmed: 0 });
     expect(mockLogger.error).toHaveBeenCalled();
+  });
+
+  it('releases the in-process mutex after unexpected failures', async () => {
+    const { db } = await import('../utils/db.js');
+    const fromMock = db.from as unknown as { mockImplementationOnce: (impl: () => never) => void };
+    fromMock.mockImplementationOnce(() => {
+      throw new Error('unexpected DB failure');
+    });
+
+    await expect(checkSubmittedConfirmations()).rejects.toThrow('unexpected DB failure');
+
+    mockAnchorsSelectResult.data = [];
+    const result = await checkSubmittedConfirmations();
+    expect(result).toEqual({ checked: 0, confirmed: 0 });
   });
 
   // ---- Unconfirmed ----
@@ -339,6 +375,59 @@ describe('checkSubmittedConfirmations', () => {
     const result = await checkSubmittedConfirmations();
     expect(result.confirmed).toBe(1);
     expect(result.checked).toBe(1);
+  });
+
+  it('continues draining capped RPC batches and invalidates every verification cache', async () => {
+    mockAnchorsSelectResult.data = [MOCK_SUBMITTED_ANCHOR];
+    mockDrainResults.splice(
+      0,
+      mockDrainResults.length,
+      {
+        data: {
+          updated: 2,
+          capped: true,
+          anchors: [
+            { public_id: 'pub-001', org_id: 'org-001' },
+            { public_id: 'pub-002', org_id: 'org-001' },
+          ],
+        },
+        error: null,
+      },
+      {
+        data: {
+          updated: 1,
+          capped: false,
+          anchors: [{ public_id: 'pub-003', org_id: 'org-002' }],
+        },
+        error: null,
+      },
+    );
+
+    mockFetch
+      .mockResolvedValueOnce({ ok: true, text: () => Promise.resolve('200200') }) // tip height
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve(MOCK_CONFIRMED_TX),
+      });
+
+    const { db } = await import('../utils/db.js');
+
+    const result = await checkSubmittedConfirmations();
+
+    expect(result).toEqual({ checked: 1, confirmed: 3 });
+    expect(db.rpc).toHaveBeenCalledTimes(2);
+    expect(db.rpc).toHaveBeenNthCalledWith(
+      1,
+      'drain_submitted_to_secured_for_tx',
+      expect.objectContaining({
+        p_chain_tx_id: MOCK_SUBMITTED_ANCHOR.chain_tx_id,
+        p_confirmations: 101,
+      }),
+    );
+    expect(mockInvalidateVerificationCache).toHaveBeenCalledWith('pub-001');
+    expect(mockInvalidateVerificationCache).toHaveBeenCalledWith('pub-002');
+    expect(mockInvalidateVerificationCache).toHaveBeenCalledWith('pub-003');
+    expect(mockDispatchWebhookEvent).toHaveBeenCalledTimes(3);
   });
 
   // ---- Mempool API errors ----
