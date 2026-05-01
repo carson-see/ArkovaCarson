@@ -222,7 +222,7 @@ async function _processBatchAnchorsInner(opts: ProcessBatchAnchorOptions = {}): 
         .order('created_at', { ascending: true })
         .limit(1)
         .single(),
-      opts.orgId ? getOrgPendingCount(opts.orgId) : callRpc<FastCountsRpc>(db, 'get_anchor_status_counts_fast'),
+      opts.orgId ? getOrgPendingThresholdSnapshot(opts.orgId) : callRpc<FastCountsRpc>(db, 'get_anchor_status_counts_fast'),
     ]);
 
     const stats = oldestRes.data;
@@ -456,23 +456,29 @@ async function _processBatchAnchorsInner(opts: ProcessBatchAnchorOptions = {}): 
   };
 }
 
-async function getOrgPendingCount(orgId: string): Promise<{ data: FastCountsRpc | null; error: unknown }> {
+async function getOrgPendingThresholdSnapshot(orgId: string): Promise<{ data: FastCountsRpc | null; error: unknown }> {
   try {
-    const { count, error } = await db
+    // We only need to know whether the org queue crossed Trigger B's
+    // threshold; avoid exact counts because they scan the hot anchors table.
+    const { data, error } = await db
       .from('anchors')
-      .select('id', { count: 'exact', head: true })
+      .select('id')
       .eq('status', 'PENDING')
       .eq('org_id', orgId)
-      .is('deleted_at', null);
+      .is('deleted_at', null)
+      .order('created_at', { ascending: true })
+      .range(MIN_BATCH_THRESHOLD - 1, MIN_BATCH_THRESHOLD - 1)
+      .maybeSingle();
     if (error) return { data: null, error };
+    const pendingCount = data ? MIN_BATCH_THRESHOLD : 1;
     return {
       data: {
-        PENDING: count ?? 0,
+        PENDING: pendingCount,
         SUBMITTED: 0,
         BROADCASTING: 0,
         SECURED: 0,
         REVOKED: 0,
-        total: count ?? 0,
+        total: pendingCount,
       },
       error: null,
     };
