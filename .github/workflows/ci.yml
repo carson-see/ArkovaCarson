@@ -92,6 +92,9 @@ jobs:
       - name: Block tracked filenames with spaces (SCRUM-1294)
         run: npx tsx scripts/ci/check-filename-spaces.ts
 
+      - name: Block API contract duplicate drift (SCRUM-1586)
+        run: npm run ci:api-contract-drift
+
       - name: Block migration prefix collisions (SCRUM-1287)
         run: npx tsx scripts/ci/check-migration-prefix-uniqueness.ts
 
