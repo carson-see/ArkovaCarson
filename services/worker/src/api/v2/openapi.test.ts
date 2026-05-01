@@ -1,6 +1,84 @@
 import { describe, it, expect } from 'vitest';
 import { openApiV2Spec } from './openapi.js';
 
+type JsonSchema = {
+  $ref?: string;
+  type?: string | readonly string[];
+  required?: readonly string[];
+  properties?: Record<string, JsonSchema>;
+  items?: JsonSchema;
+};
+
+function schemaFor(name: keyof typeof openApiV2Spec.components.schemas): JsonSchema {
+  return openApiV2Spec.components.schemas[name] as JsonSchema;
+}
+
+function resolveSchema(schema: JsonSchema): JsonSchema {
+  if (!schema.$ref) return schema;
+  const name = schema.$ref.replace('#/components/schemas/', '') as keyof typeof openApiV2Spec.components.schemas;
+  return schemaFor(name);
+}
+
+function typeList(schema: JsonSchema): string[] {
+  if (!schema.type) return [];
+  return typeof schema.type === 'string' ? [schema.type] : [...schema.type];
+}
+
+function expectMatchesSchema(schema: JsonSchema, value: unknown, path = '$'): void {
+  const resolved = resolveSchema(schema);
+  const allowedTypes = typeList(resolved);
+
+  if (value === null) {
+    expect(allowedTypes, `${path} allows null`).toContain('null');
+    return;
+  }
+
+  if (allowedTypes.includes('object')) {
+    expect(typeof value, `${path} is object`).toBe('object');
+    expect(Array.isArray(value), `${path} is not array`).toBe(false);
+    const objectValue = value as Record<string, unknown>;
+    for (const key of resolved.required ?? []) {
+      expect(objectValue, `${path}.${key} is required`).toHaveProperty(key);
+    }
+    for (const [key, childSchema] of Object.entries(resolved.properties ?? {})) {
+      if (Object.prototype.hasOwnProperty.call(objectValue, key)) {
+        expectMatchesSchema(childSchema, objectValue[key], `${path}.${key}`);
+      }
+    }
+    return;
+  }
+
+  if (allowedTypes.includes('array')) {
+    expect(Array.isArray(value), `${path} is array`).toBe(true);
+    const child = resolved.items;
+    if (child) {
+      for (const [index, item] of (value as unknown[]).entries()) {
+        expectMatchesSchema(child, item, `${path}[${index}]`);
+      }
+    }
+    return;
+  }
+
+  if (allowedTypes.includes('integer')) {
+    expect(Number.isInteger(value), `${path} is integer`).toBe(true);
+    return;
+  }
+
+  if (allowedTypes.includes('number')) {
+    expect(typeof value, `${path} is number`).toBe('number');
+    return;
+  }
+
+  if (allowedTypes.includes('boolean')) {
+    expect(typeof value, `${path} is boolean`).toBe('boolean');
+    return;
+  }
+
+  if (allowedTypes.includes('string')) {
+    expect(typeof value, `${path} is string`).toBe('string');
+  }
+}
+
 describe('openApiV2Spec', () => {
   it('publishes an OpenAPI 3.1 agent spec with x-agent-usage annotations', () => {
     expect(openApiV2Spec.openapi).toBe('3.1.0');
@@ -33,5 +111,53 @@ describe('openApiV2Spec', () => {
     for (const key of ['ValidationError', 'AuthenticationRequired', 'InvalidScope', 'NotFound', 'RateLimited', 'InternalError'] as const) {
       expect(responses[key].content).toHaveProperty('application/problem+json');
     }
+  });
+
+  it('schemas accept representative route output envelopes', () => {
+    expectMatchesSchema(schemaFor('SearchResponse'), {
+      results: [{
+        type: 'org',
+        public_id: 'org_acme',
+        score: 1,
+        snippet: 'Acme Corp',
+        metadata: { domain: 'acme.com' },
+      }],
+      next_cursor: null,
+    });
+
+    expectMatchesSchema(schemaFor('FingerprintVerification'), {
+      verified: true,
+      status: 'ACTIVE',
+      fingerprint: 'a'.repeat(64),
+      public_id: 'ARK-DOC-ABC',
+      title: 'Contract.pdf',
+      anchor_timestamp: '2026-04-24T12:00:00Z',
+      network_receipt_id: 'tx-1',
+      record_uri: 'https://app.arkova.ai/verify/ARK-DOC-ABC',
+    });
+
+    expectMatchesSchema(schemaFor('Anchor'), {
+      public_id: 'ARK-DOC-ABC',
+      verified: true,
+      status: 'ACTIVE',
+      issuer_name: 'Acme Corp',
+      credential_type: 'LICENSE',
+      issued_date: null,
+      expiry_date: null,
+      anchor_timestamp: '2026-04-24T12:00:00Z',
+      network_receipt_id: 'tx-1',
+      record_uri: 'https://app.arkova.ai/verify/ARK-DOC-ABC',
+      jurisdiction: null,
+    });
+
+    expectMatchesSchema(schemaFor('OrgList'), {
+      organizations: [{
+        public_id: 'org_acme',
+        display_name: 'Acme Corp',
+        domain: 'acme.com',
+        website_url: 'https://acme.com',
+        verification_status: 'VERIFIED',
+      }],
+    });
   });
 });

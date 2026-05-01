@@ -73,12 +73,32 @@ Input:
 |---|---|:---:|---|
 | `q` | string | yes | Natural language query or exact SHA-256 fingerprint |
 | `type` | `all`, `org`, `record`, `fingerprint`, `document` | no | Default `all` |
-| `max_results` | number | no | Default 10, max 50 |
+| `max_results` | number | no | Default 10, max 100; maps to REST v2 `limit` |
 
 Example:
 
 ```json
 { "q": "Acme compliance certificate", "type": "document", "max_results": 5 }
+```
+
+Output matches the REST v2 `SearchResponse` envelope:
+
+```json
+{
+  "results": [
+    {
+      "type": "document",
+      "public_id": "ARK-DOC-ABCDEF",
+      "score": 1,
+      "snippet": "Acme compliance certificate",
+      "metadata": {
+        "credential_type": "COMPLIANCE",
+        "status": "ACTIVE"
+      }
+    }
+  ],
+  "next_cursor": null
+}
 ```
 
 ### `verify`
@@ -91,7 +111,7 @@ Input:
 
 ### `list_orgs`
 
-No input fields. Returns the caller's organization context as derived from the authenticated user and `org_members`.
+No input fields. Returns the caller's public organization context as derived from the authenticated user and `org_members`. The v2 alias does not return internal organization UUIDs.
 
 ### `get_anchor`
 
@@ -100,6 +120,8 @@ Input:
 | Field | Type | Required | Description |
 |---|---|:---:|---|
 | `public_id` | string | yes | Arkova public ID, for example `ARK-DOC-ABCDEF` |
+
+Output matches the REST v2 public `Anchor` schema and omits legacy-only fields such as `recipient_identifier`.
 
 ---
 
@@ -420,6 +442,7 @@ curl -X POST https://edge.arkova.ai/mcp \
 
 | Version | Date | Story | Change |
 |---|---|---|---|
+| v1.2 | 2026-05-01 | SCRUM-1583 | Aligned v2 MCP alias schemas and responses with REST v2 OpenAPI: public IDs only, REST-style search envelope, and `max_results` cap 100. |
 | v1.1 | 2026-04-11 | INT-02 (SCRUM-643) | Added `verify_batch` tool (cle_verify deferred to INT-02b) |
 | v1.0 | 2026-03-22 | PH1-SDK-03 | Added `nessie_query`, `anchor_document`, `verify_document` |
 | v0.9 | 2026-03-08 | P8-S19 | Initial release with `verify_credential` + `search_credentials` |

@@ -292,7 +292,7 @@ function createMcpServer(config: ScopedConfig, telemetry: RequestTelemetryContex
     {
       q: freeTextQuerySchema.describe('Natural language query or exact SHA-256 fingerprint'),
       type: z.enum(['all', 'org', 'record', 'fingerprint', 'document']).optional().describe('Optional result filter (default: all)'),
-      max_results: z.number().int().min(1).max(50).optional().describe('Maximum results to return (default: 10, max: 50)'),
+      max_results: z.number().int().min(1).max(100).optional().describe('Maximum results to return (default: 10, max: 100)'),
     },
     withTelemetry(
       'search',

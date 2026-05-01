@@ -16,6 +16,8 @@ import {
   validationErrorToToolResult,
   type McpToolName,
 } from '../../edge/src/mcp-tool-schemas.js';
+import { TOOL_DEFINITIONS } from '../../edge/src/mcp-tools.js';
+import { openApiV2Spec } from './api/v2/openapi.js';
 
 const VALID_PUBLIC_ID = 'ARK-DEG-ABCDEF';
 const VALID_HASH = 'a'.repeat(64);
@@ -106,8 +108,13 @@ describe('validateToolArgs — search_credentials', () => {
 
 describe('validateToolArgs — agent v2 aliases', () => {
   it('accepts search(q,type?)', () => {
-    const result = validateToolArgs('search', { q: 'acme', type: 'org', max_results: 5 });
+    const result = validateToolArgs('search', { q: 'acme', type: 'org', max_results: 100 });
     expect(result.ok).toBe(true);
+  });
+
+  it('uses the REST v2 search limit ceiling', () => {
+    const result = validateToolArgs('search', { q: 'acme', max_results: 101 });
+    expect(result.ok).toBe(false);
   });
 
   it('rejects unknown search type', () => {
@@ -128,6 +135,44 @@ describe('validateToolArgs — agent v2 aliases', () => {
   it('accepts get_anchor(public_id)', () => {
     const result = validateToolArgs('get_anchor', { public_id: VALID_PUBLIC_ID });
     expect(result.ok).toBe(true);
+  });
+});
+
+describe('MCP v2 alias parity with REST v2 OpenAPI', () => {
+  it('registers every OpenAPI x-agent-usage tool alias', () => {
+    const agentToolNames = Object.values(openApiV2Spec.paths)
+      .map((path) => 'get' in path ? path.get : null)
+      .filter((operation): operation is NonNullable<typeof operation> => Boolean(operation?.['x-agent-usage']))
+      .map((operation) => operation['x-agent-usage'].tool_name);
+
+    expect(agentToolNames.sort()).toEqual(['get_anchor', 'list_orgs', 'search', 'verify']);
+    expect(Object.keys(MCP_TOOL_SCHEMAS)).toEqual(expect.arrayContaining(agentToolNames));
+    expect(TOOL_DEFINITIONS.map((tool) => tool.name)).toEqual(expect.arrayContaining(agentToolNames));
+  });
+
+  it('keeps v2 alias required arguments aligned with OpenAPI', () => {
+    expect(validateToolArgs('search', { q: 'acme' }).ok).toBe(true);
+    expect(validateToolArgs('verify', { fingerprint: VALID_HASH }).ok).toBe(true);
+    expect(validateToolArgs('list_orgs', {}).ok).toBe(true);
+    expect(validateToolArgs('get_anchor', { public_id: VALID_PUBLIC_ID }).ok).toBe(true);
+
+    expect(validateToolArgs('search', {}).ok).toBe(false);
+    expect(validateToolArgs('verify', {}).ok).toBe(false);
+    expect(validateToolArgs('list_orgs', { anything: true }).ok).toBe(false);
+    expect(validateToolArgs('get_anchor', {}).ok).toBe(false);
+  });
+
+  it('uses the OpenAPI search limit ceiling for MCP max_results', () => {
+    const limitParameter = openApiV2Spec.paths['/search'].get.parameters.find(
+      (parameter) => parameter.name === 'limit',
+    );
+    const max = limitParameter?.schema && 'maximum' in limitParameter.schema
+      ? limitParameter.schema.maximum
+      : undefined;
+
+    expect(max).toBe(100);
+    expect(validateToolArgs('search', { q: 'acme', max_results: max }).ok).toBe(true);
+    expect(validateToolArgs('search', { q: 'acme', max_results: Number(max) + 1 }).ok).toBe(false);
   });
 });
 

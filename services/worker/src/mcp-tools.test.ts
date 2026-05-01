@@ -139,35 +139,60 @@ describe('agent v2 MCP aliases', () => {
   it('search(q,type=org) calls the public org search RPC', async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
-      json: async () => ([{ id: 'org-1', display_name: 'Acme Corp', domain: 'acme.com' }]),
+      json: async () => ([{
+        id: 'org-1',
+        public_id: 'org_acme',
+        display_name: 'Acme Corp',
+        domain: 'acme.com',
+        website_url: 'https://acme.com',
+        verification_status: 'VERIFIED',
+      }]),
     });
 
     const result = await handleAgentSearch({ q: 'acme', type: 'org', max_results: 5 }, CONFIG);
     expect(result.isError).toBeUndefined();
     const parsed = JSON.parse(result.content[0].text);
-    expect(parsed.results[0]).toMatchObject({ type: 'org', id: 'org-1' });
+    expect(parsed).toMatchObject({
+      results: [expect.objectContaining({ type: 'org', public_id: 'org_acme', score: 1 })],
+      next_cursor: null,
+    });
+    expect(parsed.results[0]).not.toHaveProperty('id');
+    expect(JSON.stringify(parsed)).not.toContain('org-1');
     expect(mockFetch.mock.calls[0][0]).toContain('/rest/v1/rpc/search_organizations_public');
   });
 
-  it('verify(fingerprint) delegates to document verification', async () => {
+  it('verify(fingerprint) returns the REST v2 verification envelope', async () => {
     const validHash = 'c'.repeat(64);
     mockFetch.mockResolvedValueOnce({
       ok: true,
       json: async () => ([{
         id: 'rec-1',
+        public_id: 'ARK-DOC-ABC',
         source: 'mcp',
+        title: 'Credential.pdf',
         content_hash: validHash,
-        metadata: {},
-        anchor_id: null,
+        metadata: { chain_tx_id: 'tx-1', anchored_at: '2026-04-24T12:00:00Z' },
+        anchor_id: 'anchor-1',
       }]),
     });
 
     const result = await handleAgentVerify({ fingerprint: validHash }, CONFIG);
     const parsed = JSON.parse(result.content[0].text);
-    expect(parsed.status).toBe('PENDING');
+    expect(parsed).toMatchObject({
+      verified: true,
+      status: 'ACTIVE',
+      fingerprint: validHash,
+      public_id: 'ARK-DOC-ABC',
+      title: 'Credential.pdf',
+      anchor_timestamp: '2026-04-24T12:00:00Z',
+      network_receipt_id: 'tx-1',
+      record_uri: 'https://app.arkova.ai/verify/ARK-DOC-ABC',
+    });
+    expect(parsed).not.toHaveProperty('record_id');
+    expect(parsed).not.toHaveProperty('anchor_proof');
   });
 
-  it('get_anchor(public_id) delegates to public anchor lookup', async () => {
+  it('get_anchor(public_id) returns public anchor metadata without legacy-only fields', async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
       json: async () => ({
@@ -181,9 +206,11 @@ describe('agent v2 MCP aliases', () => {
     const result = await handleAgentGetAnchor({ public_id: 'ARK-LIC-ABC' }, CONFIG);
     const parsed = JSON.parse(result.content[0].text);
     expect(parsed.verified).toBe(true);
+    expect(parsed.public_id).toBe('ARK-LIC-ABC');
+    expect(parsed).not.toHaveProperty('recipient_identifier');
   });
 
-  it('list_orgs scopes the query by authenticated user id', async () => {
+  it('list_orgs scopes the query by authenticated user id and omits internal ids', async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
       json: async () => ([{
@@ -201,8 +228,12 @@ describe('agent v2 MCP aliases', () => {
 
     const result = await handleAgentListOrgs(CONFIG);
     const parsed = JSON.parse(result.content[0].text);
-    expect(parsed.organizations[0]).toMatchObject({ id: 'org-1', role: 'ORG_ADMIN' });
+    expect(parsed.organizations[0]).toMatchObject({ public_id: 'org_acme' });
+    expect(parsed.organizations[0]).not.toHaveProperty('id');
+    expect(parsed.organizations[0]).not.toHaveProperty('role');
+    expect(JSON.stringify(parsed)).not.toContain('org-1');
     expect(mockFetch.mock.calls[0][0]).toContain('user_id=eq.test-user-id');
+    expect(mockFetch.mock.calls[0][0]).toContain('organizations%28public_id%2Cdisplay_name%2Cdomain%2Cwebsite_url%2Cverification_status%29');
   });
 });
 

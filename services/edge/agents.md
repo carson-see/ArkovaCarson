@@ -32,7 +32,7 @@ Cloudflare Workers deployment at `edge.arkova.ai`. Handles MCP server, AI fallba
 
 PR #455 closed the critical findings:
 - `list_agents` previously used service-role + no org filter → cross-org leak. Now calls `get_agents_for_user(p_user_id)` SECURITY DEFINER RPC (migration 0221) joining through `org_members`.
-- Zod input validators tightened: `public_id` → `/^ARK-[A-Z0-9-]{3,60}$/` + max 64; `content_hash` → 64 hex (reuses exported `SHA256_HEX_RE` from `mcp-tools.ts`); `max_results`/`limit` → int 1–50; `source_url` → URL + ≤2048.
+- Zod input validators tightened: `public_id` → `/^ARK-[A-Z0-9-]{3,60}$/` + max 64; `content_hash` → 64 hex (reuses exported `SHA256_HEX_RE` from `mcp-tools.ts`); legacy `max_results`/`limit` → int 1–50, v2 `search.max_results` follows REST v2 `limit` at int 1–100; `source_url` → URL + ≤2048.
 - `oracle_batch_verify` description no longer claims HMAC-signed results. Real signing tracked as MCP-SEC-02.
 
 Open (epic [SCRUM-918](https://arkova.atlassian.net/browse/SCRUM-918)):

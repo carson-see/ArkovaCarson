@@ -282,7 +282,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         },
         max_results: {
           type: 'number',
-          description: 'Maximum number of results to return (default: 10, max: 50).',
+          description: 'Maximum number of results to return (default: 10, max: 100).',
         },
       },
       required: ['q'],
@@ -364,6 +364,12 @@ function shapeAnchorRow(
     record_uri: `https://app.arkova.ai/verify/${resolvedPublicId}`,
     ...(data?.jurisdiction ? { jurisdiction: data.jurisdiction as string } : {}),
   };
+}
+
+function shapeV2AnchorRow(data: Record<string, unknown>, publicId: string): Record<string, unknown> {
+  const publicAnchor = { ...shapeAnchorRow(data, publicId) };
+  delete publicAnchor.recipient_identifier;
+  return publicAnchor;
 }
 
 /**
@@ -468,16 +474,19 @@ async function searchAgentOrgs(
   if (!response.ok) return [];
 
   const rows = await response.json() as Array<Record<string, unknown>>;
-  return (Array.isArray(rows) ? rows : []).map((org, index) => ({
-    type: 'org',
-    rank: index + 1,
-    id: org.id,
-    public_id: org.id,
-    snippet: org.display_name ?? org.domain ?? '',
-    metadata: {
-      domain: org.domain ?? null,
-    },
-  }));
+  return (Array.isArray(rows) ? rows : [])
+    .filter((org): org is Record<string, unknown> & { public_id: string } => typeof org.public_id === 'string')
+    .map((org) => ({
+      type: 'org',
+      public_id: org.public_id,
+      score: 1.0,
+      snippet: org.display_name ?? org.domain ?? '',
+      metadata: {
+        domain: org.domain ?? null,
+        website_url: org.website_url ?? null,
+        verification_status: org.verification_status ?? null,
+      },
+    }));
 }
 
 async function searchAgentRecords(
@@ -495,11 +504,43 @@ async function searchAgentRecords(
   if (!Array.isArray(records)) return [];
 
   const resultType = input.type === 'document' ? 'document' : 'record';
-  return records.map((record, index) => ({
+  return records
+    .filter((record): record is Record<string, unknown> & { public_id: string } => (
+      typeof (record as Record<string, unknown>).public_id === 'string'
+    ))
+    .map((record) => ({
     type: resultType,
-    rank: index + 1,
-    ...(record as Record<string, unknown>),
+    public_id: record.public_id,
+    score: 1.0,
+    snippet: (record.title as string | undefined) ?? (record.credential_type as string | undefined) ?? record.public_id,
+    metadata: {
+      credential_type: record.credential_type ?? null,
+      status: record.status ?? null,
+      anchor_timestamp: record.anchor_timestamp ?? null,
+      record_uri: record.record_uri ?? null,
+    },
   }));
+}
+
+function fingerprintSearchResult(
+  parsed: Record<string, unknown> | null,
+  fingerprint: string,
+): Record<string, unknown> | null {
+  if (!parsed || parsed.verified === false || typeof parsed.public_id !== 'string') {
+    return null;
+  }
+
+  return {
+    type: 'fingerprint',
+    public_id: parsed.public_id,
+    score: 1.0,
+    snippet: (parsed.title as string | undefined) ?? parsed.public_id,
+    metadata: {
+      status: parsed.status ?? null,
+      fingerprint,
+      record_uri: parsed.record_uri ?? null,
+    },
+  };
 }
 
 /**
@@ -515,32 +556,30 @@ export async function handleAgentSearch(
     return errorResult('Error: q is required');
   }
 
-  const maxResults = Math.min(input.max_results ?? 10, 50);
+  const maxResults = Math.min(input.max_results ?? 10, 100);
   const type = input.type ?? 'all';
 
   try {
     if (type === 'fingerprint') {
       if (!SHA256_HEX_RE.test(input.q)) {
-        return textResult({ query: input.q, total: 0, results: [] });
+        return textResult({ results: [], next_cursor: null });
       }
       const result = await handleVerifyDocument({ content_hash: input.q }, config);
       const parsed = parseToolJson(result);
-      const found = parsed && !(parsed.verified === false && typeof parsed.message === 'string');
       return textResult({
-        query: input.q,
-        total: found ? 1 : 0,
-        results: found && parsed ? [{ type: 'fingerprint', rank: 1, ...parsed }] : [],
+        results: [fingerprintSearchResult(parsed, input.q)].filter(Boolean),
+        next_cursor: null,
       });
     }
 
     if (type === 'org') {
       const orgs = await searchAgentOrgs(input.q, config);
-      return textResult({ query: input.q, total: orgs.length, results: orgs.slice(0, maxResults) });
+      return textResult({ results: orgs.slice(0, maxResults), next_cursor: null });
     }
 
     if (type === 'record' || type === 'document') {
       const records = await searchAgentRecords({ ...input, max_results: maxResults }, config);
-      return textResult({ query: input.q, total: records.length, results: records });
+      return textResult({ results: records, next_cursor: null });
     }
 
     const [orgs, records] = await Promise.all([
@@ -548,7 +587,7 @@ export async function handleAgentSearch(
       searchAgentRecords({ ...input, max_results: maxResults }, config),
     ]);
     const results = [...orgs, ...records].slice(0, maxResults);
-    return textResult({ query: input.q, total: results.length, results });
+    return textResult({ results, next_cursor: null });
   } catch (error) {
     const msg = error instanceof Error && error.name === 'AbortError'
       ? 'Agent search timed out'
@@ -696,7 +735,7 @@ export async function handleVerifyDocument(
   try {
     const response = await supabaseFetch(
       config,
-      `/rest/v1/public_records?content_hash=eq.${encodeURIComponent(input.content_hash)}&select=id,source,source_url,record_type,title,content_hash,metadata,anchor_id&limit=1`,
+      `/rest/v1/public_records?content_hash=eq.${encodeURIComponent(input.content_hash)}&select=id,public_id,source,source_url,record_type,title,content_hash,metadata,anchor_id,created_at&limit=1`,
     );
 
     if (!response.ok) {
@@ -717,11 +756,13 @@ export async function handleVerifyDocument(
       verified: isAnchored,
       status: isAnchored ? 'ANCHORED' : 'PENDING',
       record_id: record.id,
+      public_id: record.public_id ?? null,
       source: record.source,
       source_url: record.source_url,
       record_type: record.record_type,
       title: record.title,
       content_hash: record.content_hash,
+      anchor_timestamp: (meta.anchored_at as string | null) ?? (record.created_at as string | null) ?? null,
       anchor_proof: isAnchored
         ? {
             chain_tx_id: (meta.chain_tx_id as string) ?? null,
@@ -744,7 +785,34 @@ export async function handleAgentVerify(
   input: AgentVerifyInput,
   config: SupabaseConfig,
 ): Promise<ToolResult> {
-  return handleVerifyDocument({ content_hash: input.fingerprint }, config);
+  const result = await handleVerifyDocument({ content_hash: input.fingerprint }, config);
+  if (result.isError) return result;
+
+  const parsed = parseToolJson(result);
+  if (!parsed || (parsed.verified === false && typeof parsed.message === 'string')) {
+    return textResult({
+      verified: false,
+      status: 'UNKNOWN',
+      fingerprint: input.fingerprint,
+      public_id: null,
+      anchor_timestamp: null,
+      network_receipt_id: null,
+      record_uri: null,
+    });
+  }
+
+  const proof = parsed.anchor_proof as Record<string, unknown> | null | undefined;
+  const publicId = typeof parsed.public_id === 'string' ? parsed.public_id : null;
+  return textResult({
+    verified: parsed.verified === true,
+    status: parsed.status === 'ANCHORED' ? 'ACTIVE' : parsed.status,
+    fingerprint: input.fingerprint,
+    public_id: publicId,
+    title: parsed.title ?? null,
+    anchor_timestamp: proof?.anchored_at ?? parsed.anchor_timestamp ?? null,
+    network_receipt_id: proof?.chain_tx_id ?? null,
+    record_uri: publicId ? `https://app.arkova.ai/verify/${publicId}` : null,
+  });
 }
 
 /** Agent-friendly alias for API v2 `get_anchor(public_id)`. */
@@ -752,7 +820,24 @@ export async function handleAgentGetAnchor(
   input: AgentGetAnchorInput,
   config: SupabaseConfig,
 ): Promise<ToolResult> {
-  return handleVerifyCredential({ public_id: input.public_id }, config);
+  try {
+    const response = await supabaseFetch(config, '/rest/v1/rpc/get_public_anchor', {
+      method: 'POST',
+      body: JSON.stringify({ p_public_id: input.public_id }),
+    });
+
+    if (!response.ok) {
+      return textResult({ verified: false, error: `Anchor "${input.public_id}" not found.` });
+    }
+
+    const data = (await response.json()) as Record<string, unknown>;
+    return textResult(shapeV2AnchorRow(data, input.public_id));
+  } catch (error) {
+    const msg = error instanceof Error && error.name === 'AbortError'
+      ? 'Anchor lookup timed out'
+      : `Anchor lookup failed: ${error instanceof Error ? error.message : 'Unknown error'}`;
+    return errorResult(msg);
+  }
 }
 
 /**
@@ -763,7 +848,7 @@ export async function handleAgentGetAnchor(
 export async function handleAgentListOrgs(config: SupabaseConfig): Promise<ToolResult> {
   const params = new URLSearchParams({
     user_id: `eq.${config.userId}`,
-    select: 'role,organizations(id,public_id,display_name,domain,website_url,verification_status)',
+    select: 'organizations(public_id,display_name,domain,website_url,verification_status)',
     limit: '50',
   });
 
@@ -777,15 +862,13 @@ export async function handleAgentListOrgs(config: SupabaseConfig): Promise<ToolR
     const organizations = (Array.isArray(memberships) ? memberships : []).map((membership) => {
       const org = membership.organizations as Record<string, unknown> | null | undefined;
       return {
-        id: org?.id,
-        public_id: org?.public_id ?? org?.id,
+        public_id: typeof org?.public_id === 'string' ? org.public_id : null,
         display_name: org?.display_name,
         domain: org?.domain ?? null,
         website_url: org?.website_url ?? null,
         verification_status: org?.verification_status ?? null,
-        role: membership.role,
       };
-    }).filter((org) => org.id);
+    }).filter((org) => org.public_id);
 
     return textResult({ organizations });
   } catch (error) {
