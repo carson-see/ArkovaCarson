@@ -13,7 +13,9 @@
 --
 -- ROLLBACK:
 --   DROP TRIGGER IF EXISTS set_webhook_endpoint_public_id ON webhook_endpoints;
+--   DROP TRIGGER IF EXISTS set_webhook_delivery_log_public_id ON webhook_delivery_logs;
 --   DROP FUNCTION IF EXISTS public.set_webhook_endpoint_public_id();
+--   DROP FUNCTION IF EXISTS public.set_webhook_delivery_log_public_id();
 --   ALTER TABLE webhook_delivery_logs ALTER COLUMN public_id DROP DEFAULT;
 --   ALTER TABLE webhook_endpoints DROP COLUMN public_id;
 --   ALTER TABLE webhook_delivery_logs DROP COLUMN public_id;
@@ -29,13 +31,15 @@ AS $$
 DECLARE
   v_org_prefix text;
 BEGIN
-  IF NULLIF(btrim(NEW.public_id), '') IS NULL THEN
+  NEW.public_id := NULLIF(btrim(NEW.public_id), '');
+
+  IF NEW.public_id IS NULL THEN
     SELECT org_prefix
       INTO v_org_prefix
       FROM organizations
       WHERE id = NEW.org_id;
 
-    NEW.public_id := 'WHK-' || COALESCE(NULLIF(v_org_prefix, ''), 'IND') || '-' ||
+    NEW.public_id := 'WHK-' || COALESCE(NULLIF(btrim(v_org_prefix), ''), 'IND') || '-' ||
       upper(substring(replace(gen_random_uuid()::text, '-', '') from 1 for 8));
   END IF;
 
@@ -44,6 +48,26 @@ END;
 $$;
 
 REVOKE ALL ON FUNCTION public.set_webhook_endpoint_public_id() FROM PUBLIC;
+
+CREATE OR REPLACE FUNCTION public.set_webhook_delivery_log_public_id()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+  NEW.public_id := NULLIF(btrim(NEW.public_id), '');
+
+  IF NEW.public_id IS NULL THEN
+    NEW.public_id := 'DLV-' ||
+      upper(substring(replace(gen_random_uuid()::text, '-', '') from 1 for 12));
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.set_webhook_delivery_log_public_id() FROM PUBLIC;
 
 -- ─── webhook_endpoints.public_id ─────────────────────────────────────────
 ALTER TABLE webhook_endpoints
@@ -59,7 +83,7 @@ CREATE TRIGGER set_webhook_endpoint_public_id
 -- falls back to 'IND' (the same convention as attestations.ts /
 -- agents.ts public-id generation).
 UPDATE webhook_endpoints we
-SET public_id = 'WHK-' || COALESCE(o.org_prefix, 'IND') || '-' ||
+SET public_id = 'WHK-' || COALESCE(NULLIF(btrim(o.org_prefix), ''), 'IND') || '-' ||
                 upper(substring(replace(gen_random_uuid()::text, '-', '') from 1 for 8))
 FROM organizations o
 WHERE we.org_id = o.id AND we.public_id IS NULL;
@@ -89,6 +113,12 @@ ALTER TABLE webhook_delivery_logs
   ALTER COLUMN public_id SET DEFAULT (
     'DLV-' || upper(substring(replace(gen_random_uuid()::text, '-', '') from 1 for 12))
   );
+
+DROP TRIGGER IF EXISTS set_webhook_delivery_log_public_id ON webhook_delivery_logs;
+CREATE TRIGGER set_webhook_delivery_log_public_id
+  BEFORE INSERT ON webhook_delivery_logs
+  FOR EACH ROW
+  EXECUTE FUNCTION public.set_webhook_delivery_log_public_id();
 
 UPDATE webhook_delivery_logs
 SET public_id = 'DLV-' ||
