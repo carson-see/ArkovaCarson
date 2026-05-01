@@ -7,8 +7,8 @@
 -- ROLLBACK: DROP TRIGGER IF EXISTS prevent_metadata_edit_trigger ON
 --           public.anchors; -- (only if we want it back, was a duplicate)
 --           DROP FUNCTION IF EXISTS public.drain_submitted_to_secured_for_tx;
---           CREATE OR REPLACE FUNCTION public.refresh_pipeline_dashboard_cache
---           ... (see prior version in migration 0265).
+--           restore the prior public.refresh_pipeline_dashboard_cache()
+--           implementation from migration 0265.
 --
 -- Three things land together:
 --   1. drop the duplicate prevent_metadata_edit_trigger (dup of trg_prevent_metadata_edit)
