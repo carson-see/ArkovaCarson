@@ -1,14 +1,24 @@
-import { BANNED_RESPONSE_KEYS } from './response-schemas.js';
+const PUBLIC_ATTESTATION_KEYS = [
+  'public_id',
+  'attestation_type',
+  'status',
+  'subject_type',
+  'subject_identifier',
+  'attester_name',
+  'attester_type',
+  'summary',
+  'issued_at',
+  'expires_at',
+  'created_at',
+  'fingerprint',
+  'chain_tx_id',
+] as const;
 
 export function toPublicAttestation<T extends Record<string, unknown>>(row: T | null | undefined): Partial<T> {
   if (!row) return {};
-  const sanitized: Record<string, unknown> = { ...row };
-  delete sanitized.id;
-  delete sanitized.attester_user_id;
-  delete sanitized.attester_org_id;
-  delete sanitized.anchor_id;
-  for (const banned of BANNED_RESPONSE_KEYS) {
-    delete sanitized[banned];
+  const sanitized: Record<string, unknown> = {};
+  for (const key of PUBLIC_ATTESTATION_KEYS) {
+    if (key in row) sanitized[key] = row[key];
   }
   return sanitized as Partial<T>;
 }

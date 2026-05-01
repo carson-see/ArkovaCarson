@@ -24,7 +24,7 @@ Engineering-only, no prod-state changes. Stacked on `origin/main` at `b6d0657` (
 
 **Tests:** 5/5 sanitizer + 26/26 attestations + 63/63 sibling v1 tests (agents-sanitizer, agents, response-schemas, webhooks-crud) all green. Worker `tsc --noEmit` exit 0. `check-migration-prefix-uniqueness.ts` + `check-rls-auth-uid-wrap.ts` both green.
 
-**Stalled-In-Progress audit:** of the 10 In Progress tickets, 4 are parent epics (SCRUM-772 GME2, SCRUM-550 DEP, SCRUM-1246 RECOVERY, SCRUM-1041 SEC-HARDEN, SCRUM-804 NVI-blocked). 6 are stories: 1060 MFA audit (vendor-evidence work), 1302 Playwright auth (PR #642 open), 1289 R4-4 coverage (partial in #643), 1276 R3-3 (AC1+AC4 in #644, AC2/AC3/AC5 owed), 1275 R3-2 (work in #645), 1444+1445 (this session). PO Roadmap "R3 wave 1 of 11 done" is stale — actual state is 7 of 11 work-merged after PRs #643–#651.
+**Stalled-In-Progress audit:** of the stalled In Progress tickets, 5 are parent epics (SCRUM-772 GME2, SCRUM-550 DEP, SCRUM-1246 RECOVERY, SCRUM-1041 SEC-HARDEN, SCRUM-804 NVI-blocked). 6 are stories: 1060 MFA audit (vendor-evidence work), 1302 Playwright auth (PR #642 open), 1289 R4-4 coverage (partial in #643), 1276 R3-3 (AC1+AC4 in #644, AC2/AC3/AC5 owed), 1275 R3-2 (work in #645), 1444+1445 (this session). PO Roadmap "R3 wave 1 of 11 done" is stale — actual state is 7 of 11 work-merged after PRs #643–#651.
 
 
 

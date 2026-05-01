@@ -591,4 +591,5 @@ Once your management is fully API-driven, you can stop accessing `app.arkova.ai`
 
 | Version | Date | Story | Change |
 |---|---|---|---|
+| v1.1 | 2026-05-01 | SCRUM-1445 | Added database-level `public_id` fields for webhook endpoints (`WHK-{org_prefix}-{8}`) and delivery logs (`DLV-{12}`) as the prerequisite for a future v2 public-ID-only webhook API. |
 | v1.0 | 2026-04-11 | INT-09 (SCRUM-645) | Initial CRUD API for webhook endpoints. POST/GET/PATCH/DELETE plus existing test/deliveries. |

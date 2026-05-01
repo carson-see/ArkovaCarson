@@ -44,6 +44,17 @@ describe('attestations.ts public shape (SCRUM-1444 / SCRUM-1271-B)', () => {
     expect(out).not.toHaveProperty('attester_user_id');
     expect(out).not.toHaveProperty('attester_org_id');
     expect(out).not.toHaveProperty('anchor_id');
+    expect(out).not.toHaveProperty('org_id');
+  });
+
+  it('drops unapproved future columns instead of relying on a blacklist', () => {
+    const out = toPublicAttestation({
+      ...fullDbRow,
+      internal_review_notes: 'never expose this',
+      raw_claim_payload: { pii: true },
+    });
+    expect(out).not.toHaveProperty('internal_review_notes');
+    expect(out).not.toHaveProperty('raw_claim_payload');
   });
 
   it('strips every BANNED_RESPONSE_KEYS field', () => {
