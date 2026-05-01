@@ -20,34 +20,12 @@ import { verifyAuthToken } from '../../auth.js';
 import { config } from '../../config.js';
 import { buildVerifyUrl, buildAttestationVerifyUrl } from '../../lib/urls.js';
 import { dispatchWebhookEvent } from '../../webhooks/delivery.js';
-import { BANNED_RESPONSE_KEYS } from './response-schemas.js';
+import { toPublicAttestation } from './attestationResponse.js';
 
 const router = Router();
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const dbAny = db as any;
-
-/**
- * SCRUM-1271-B / SCRUM-1444 — strip internal-actor UUIDs and the row's
- * own `id` from outbound attestation payloads. The list/detail SELECTs
- * already omit `id` / `attester_user_id` / `attester_org_id` / `anchor_id`,
- * but a future edit that adds those columns to the SELECT would silently
- * leak through `...a` spread. This is the defensive last-mile filter.
- *
- * Mirrors the `toPublicAgent` pattern in agents.ts (SCRUM-1271-A).
- */
-function toPublicAttestation<T extends Record<string, unknown>>(row: T | null | undefined): Partial<T> {
-  if (!row) return {};
-  const sanitized: Record<string, unknown> = { ...row };
-  delete sanitized.id;
-  delete sanitized.attester_user_id;
-  delete sanitized.attester_org_id;
-  delete sanitized.anchor_id;
-  for (const banned of BANNED_RESPONSE_KEYS) {
-    delete sanitized[banned];
-  }
-  return sanitized as Partial<T>;
-}
 
 // ─── Type Code Mapping ────────────────────────────────────
 const ATTESTATION_TYPE_CODES: Record<string, string> = {

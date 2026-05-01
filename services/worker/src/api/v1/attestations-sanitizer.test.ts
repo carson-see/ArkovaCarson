@@ -13,21 +13,8 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { BANNED_RESPONSE_KEYS, findBannedKeys } from './response-schemas.js';
-
-// Re-implement the contract here to pin the shape. The route's private
-// `toPublicAttestation` must keep this contract or the route tests break.
-function publicAttestationShape(row: Record<string, unknown>): Record<string, unknown> {
-  const sanitized: Record<string, unknown> = { ...row };
-  delete sanitized.id;
-  delete sanitized.attester_user_id;
-  delete sanitized.attester_org_id;
-  delete sanitized.anchor_id;
-  for (const banned of BANNED_RESPONSE_KEYS) {
-    delete sanitized[banned];
-  }
-  return sanitized;
-}
+import { toPublicAttestation } from './attestationResponse.js';
+import { findBannedKeys } from './response-schemas.js';
 
 describe('attestations.ts public shape (SCRUM-1444 / SCRUM-1271-B)', () => {
   const fullDbRow = {
@@ -52,7 +39,7 @@ describe('attestations.ts public shape (SCRUM-1444 / SCRUM-1271-B)', () => {
   };
 
   it('strips internal id, attester_user_id, attester_org_id, anchor_id', () => {
-    const out = publicAttestationShape(fullDbRow);
+    const out = toPublicAttestation(fullDbRow);
     expect(out).not.toHaveProperty('id');
     expect(out).not.toHaveProperty('attester_user_id');
     expect(out).not.toHaveProperty('attester_org_id');
@@ -60,12 +47,12 @@ describe('attestations.ts public shape (SCRUM-1444 / SCRUM-1271-B)', () => {
   });
 
   it('strips every BANNED_RESPONSE_KEYS field', () => {
-    const out = publicAttestationShape(fullDbRow);
+    const out = toPublicAttestation(fullDbRow);
     expect(findBannedKeys(out)).toEqual([]);
   });
 
   it('preserves customer-facing fields (public_id, attestation_type, fingerprint, ...)', () => {
-    const out = publicAttestationShape(fullDbRow);
+    const out = toPublicAttestation(fullDbRow);
     expect(out).toMatchObject({
       public_id: 'ARK-ARKOVA-VER-A1B2C3',
       attestation_type: 'VERIFICATION',
@@ -77,12 +64,14 @@ describe('attestations.ts public shape (SCRUM-1444 / SCRUM-1271-B)', () => {
   });
 
   it('returns empty object for null / undefined input', () => {
-    expect(publicAttestationShape({})).toEqual({});
+    expect(toPublicAttestation(null)).toEqual({});
+    expect(toPublicAttestation(undefined)).toEqual({});
+    expect(toPublicAttestation({})).toEqual({});
   });
 
   it('does not mutate the input row', () => {
     const before = { ...fullDbRow };
-    publicAttestationShape(fullDbRow);
+    toPublicAttestation(fullDbRow);
     expect(fullDbRow).toEqual(before);
   });
 });
