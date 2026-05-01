@@ -103,7 +103,7 @@ describe('scopeSatisfies', () => {
   });
 
   it('keeps the database scope CHECK constraint aligned with the canonical vocabulary', () => {
-    const migration = readRepoFile('supabase/migrations/0283_api_key_scope_vocabulary.sql');
+    const migration = readRepoFile('supabase/migrations/0285_api_key_scope_vocabulary.sql');
 
     for (const scope of API_KEY_SCOPES) {
       expect(migration).toContain(`'${scope}'`);

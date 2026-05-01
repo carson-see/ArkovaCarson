@@ -94,8 +94,8 @@ describe('canonical agent workflow documentation', () => {
 
       expect(openApiV2Spec.paths[surface.specPath].get.operationId).toBe(surface.operationId);
       expect(mcpToolsSource).toContain(`name: '${surface.mcpTool}'`);
-      expect(tsClientSource).toMatch(new RegExp(`async ${surface.tsMethod}\\(`));
-      expect(pyClientSource).toMatch(new RegExp(`def\\s+${surface.pyMethod}\\(`));
+      expect(tsClientSource).toMatch(new RegExp(String.raw`async ${surface.tsMethod}\(`));
+      expect(pyClientSource).toMatch(new RegExp(String.raw`def\s+${surface.pyMethod}\(`));
     }
   });
 

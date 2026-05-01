@@ -34,7 +34,7 @@ const mockMaybeSingle = vi.fn();
 
 function mockQueryResult(data: Record<string, unknown> | null, error: unknown = null) {
   mockMaybeSingle.mockResolvedValueOnce({ data, error });
-  (db.from as ReturnType<typeof vi.fn>).mockReturnValue({
+  vi.mocked(db.from).mockReturnValue({
     select: mockSelect,
     eq: mockEq,
     in: mockIn,
@@ -44,7 +44,7 @@ function mockQueryResult(data: Record<string, unknown> | null, error: unknown = 
     order: mockOrder,
     limit: mockLimit,
     maybeSingle: mockMaybeSingle,
-  });
+  } as never);
 }
 
 function buildApp(scopes = ['read:records', 'read:orgs']) {

@@ -29,7 +29,7 @@ const v2Db = db as unknown as {
 };
 
 function sanitizeFilterValue(v: string): string {
-  return v.replace(/[%_\\,().]/g, c => `\\${c}`);
+  return v.replaceAll(/[%_\\,().]/g, (c) => `\\${c}`);
 }
 
 function visibleAnchorScope(orgId: string | null | undefined): string {

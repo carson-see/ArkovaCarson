@@ -591,6 +591,12 @@ function parseToolJson(result: ToolResult): Record<string, unknown> | null {
   }
 }
 
+function toolErrorMessage(error: unknown, timeoutMessage: string, failurePrefix: string): string {
+  if (error instanceof Error && error.name === 'AbortError') return timeoutMessage;
+  const detail = error instanceof Error ? error.message : 'Unknown error';
+  return `${failurePrefix}: ${detail}`;
+}
+
 async function searchAgentOrgs(
   query: string,
   config: SupabaseConfig,
@@ -607,7 +613,7 @@ async function searchAgentOrgs(
     .map((org) => ({
       type: 'org',
       public_id: org.public_id,
-      score: 1.0,
+      score: 1,
       snippet: org.display_name ?? org.domain ?? '',
       metadata: {
         domain: org.domain ?? null,
@@ -637,17 +643,17 @@ async function searchAgentRecords(
       typeof (record as Record<string, unknown>).public_id === 'string'
     ))
     .map((record) => ({
-    type: resultType,
-    public_id: record.public_id,
-    score: 1.0,
-    snippet: (record.title as string | undefined) ?? (record.credential_type as string | undefined) ?? record.public_id,
-    metadata: {
-      credential_type: record.credential_type ?? null,
-      status: record.status ?? null,
-      anchor_timestamp: record.anchor_timestamp ?? null,
-      record_uri: record.record_uri ?? null,
-    },
-  }));
+      type: resultType,
+      public_id: record.public_id,
+      score: 1,
+      snippet: (record.title as string | undefined) ?? (record.credential_type as string | undefined) ?? record.public_id,
+      metadata: {
+        credential_type: record.credential_type ?? null,
+        status: record.status ?? null,
+        anchor_timestamp: record.anchor_timestamp ?? null,
+        record_uri: record.record_uri ?? null,
+      },
+    }));
 }
 
 function fingerprintSearchResult(
@@ -661,7 +667,7 @@ function fingerprintSearchResult(
   return {
     type: 'fingerprint',
     public_id: parsed.public_id,
-    score: 1.0,
+    score: 1,
     snippet: (parsed.title as string | undefined) ?? parsed.public_id,
     metadata: {
       status: parsed.status ?? null,
@@ -961,10 +967,7 @@ export async function handleAgentGetAnchor(
     const data = (await response.json()) as Record<string, unknown>;
     return textResult(shapeV2AnchorRow(data, input.public_id));
   } catch (error) {
-    const msg = error instanceof Error && error.name === 'AbortError'
-      ? 'Anchor lookup timed out'
-      : `Anchor lookup failed: ${error instanceof Error ? error.message : 'Unknown error'}`;
-    return errorResult(msg);
+    return errorResult(toolErrorMessage(error, 'Anchor lookup timed out', 'Anchor lookup failed'));
   }
 }
 
@@ -1006,10 +1009,7 @@ export async function handleAgentGetOrganization(
       logo_url: org.logo_url ?? null,
     });
   } catch (error) {
-    const msg = error instanceof Error && error.name === 'AbortError'
-      ? 'Organization lookup timed out'
-      : `Organization lookup failed: ${error instanceof Error ? error.message : 'Unknown error'}`;
-    return errorResult(msg);
+    return errorResult(toolErrorMessage(error, 'Organization lookup timed out', 'Organization lookup failed'));
   }
 }
 
@@ -1031,10 +1031,7 @@ export async function handleAgentGetRecord(
     const data = (await response.json()) as Record<string, unknown>;
     return textResult(shapeMcpRecordDetail(data, input.public_id));
   } catch (error) {
-    const msg = error instanceof Error && error.name === 'AbortError'
-      ? 'Record lookup timed out'
-      : `Record lookup failed: ${error instanceof Error ? error.message : 'Unknown error'}`;
-    return errorResult(msg);
+    return errorResult(toolErrorMessage(error, 'Record lookup timed out', 'Record lookup failed'));
   }
 }
 
@@ -1114,10 +1111,7 @@ export async function handleAgentGetDocument(
     const data = (await response.json()) as Record<string, unknown>;
     return textResult(shapeMcpDocumentDetail(data, input.public_id));
   } catch (error) {
-    const msg = error instanceof Error && error.name === 'AbortError'
-      ? 'Document lookup timed out'
-      : `Document lookup failed: ${error instanceof Error ? error.message : 'Unknown error'}`;
-    return errorResult(msg);
+    return errorResult(toolErrorMessage(error, 'Document lookup timed out', 'Document lookup failed'));
   }
 }
 

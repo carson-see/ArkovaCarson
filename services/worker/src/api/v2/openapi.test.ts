@@ -24,6 +24,47 @@ function typeList(schema: JsonSchema): string[] {
   return typeof schema.type === 'string' ? [schema.type] : [...schema.type];
 }
 
+function expectObjectMatchesSchema(schema: JsonSchema, value: unknown, path: string): void {
+  expect(typeof value, `${path} is object`).toBe('object');
+  expect(Array.isArray(value), `${path} is not array`).toBe(false);
+  const objectValue = value as Record<string, unknown>;
+  for (const key of schema.required ?? []) {
+    expect(objectValue, `${path}.${key} is required`).toHaveProperty(key);
+  }
+  for (const [key, childSchema] of Object.entries(schema.properties ?? {})) {
+    if (Object.hasOwn(objectValue, key)) {
+      expectMatchesSchema(childSchema, objectValue[key], `${path}.${key}`);
+    }
+  }
+}
+
+function expectArrayMatchesSchema(schema: JsonSchema, value: unknown, path: string): void {
+  expect(Array.isArray(value), `${path} is array`).toBe(true);
+  const child = schema.items;
+  if (!child) return;
+  for (const [index, item] of (value as unknown[]).entries()) {
+    expectMatchesSchema(child, item, `${path}[${index}]`);
+  }
+}
+
+function expectPrimitiveMatchesSchema(allowedTypes: string[], value: unknown, path: string): void {
+  if (allowedTypes.includes('integer')) {
+    expect(Number.isInteger(value), `${path} is integer`).toBe(true);
+    return;
+  }
+  if (allowedTypes.includes('number')) {
+    expect(typeof value, `${path} is number`).toBe('number');
+    return;
+  }
+  if (allowedTypes.includes('boolean')) {
+    expect(typeof value, `${path} is boolean`).toBe('boolean');
+    return;
+  }
+  if (allowedTypes.includes('string')) {
+    expect(typeof value, `${path} is string`).toBe('string');
+  }
+}
+
 function expectMatchesSchema(schema: JsonSchema, value: unknown, path = '$'): void {
   const resolved = resolveSchema(schema);
   const allowedTypes = typeList(resolved);
@@ -34,49 +75,16 @@ function expectMatchesSchema(schema: JsonSchema, value: unknown, path = '$'): vo
   }
 
   if (allowedTypes.includes('object')) {
-    expect(typeof value, `${path} is object`).toBe('object');
-    expect(Array.isArray(value), `${path} is not array`).toBe(false);
-    const objectValue = value as Record<string, unknown>;
-    for (const key of resolved.required ?? []) {
-      expect(objectValue, `${path}.${key} is required`).toHaveProperty(key);
-    }
-    for (const [key, childSchema] of Object.entries(resolved.properties ?? {})) {
-      if (Object.prototype.hasOwnProperty.call(objectValue, key)) {
-        expectMatchesSchema(childSchema, objectValue[key], `${path}.${key}`);
-      }
-    }
+    expectObjectMatchesSchema(resolved, value, path);
     return;
   }
 
   if (allowedTypes.includes('array')) {
-    expect(Array.isArray(value), `${path} is array`).toBe(true);
-    const child = resolved.items;
-    if (child) {
-      for (const [index, item] of (value as unknown[]).entries()) {
-        expectMatchesSchema(child, item, `${path}[${index}]`);
-      }
-    }
+    expectArrayMatchesSchema(resolved, value, path);
     return;
   }
 
-  if (allowedTypes.includes('integer')) {
-    expect(Number.isInteger(value), `${path} is integer`).toBe(true);
-    return;
-  }
-
-  if (allowedTypes.includes('number')) {
-    expect(typeof value, `${path} is number`).toBe('number');
-    return;
-  }
-
-  if (allowedTypes.includes('boolean')) {
-    expect(typeof value, `${path} is boolean`).toBe('boolean');
-    return;
-  }
-
-  if (allowedTypes.includes('string')) {
-    expect(typeof value, `${path} is string`).toBe('string');
-  }
+  expectPrimitiveMatchesSchema(allowedTypes, value, path);
 }
 
 describe('openApiV2Spec', () => {

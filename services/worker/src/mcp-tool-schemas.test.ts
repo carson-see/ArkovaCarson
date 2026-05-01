@@ -155,8 +155,9 @@ describe('MCP v2 alias parity with REST v2 OpenAPI', () => {
       .map((path) => 'get' in path ? path.get : null)
       .filter((operation): operation is NonNullable<typeof operation> => Boolean(operation?.['x-agent-usage']))
       .map((operation) => operation['x-agent-usage'].tool_name);
+    const sortedAgentToolNames = [...agentToolNames].sort((a, b) => a.localeCompare(b));
 
-    expect(agentToolNames.sort()).toEqual([
+    expect(sortedAgentToolNames).toEqual([
       'get_anchor',
       'get_document',
       'get_fingerprint',

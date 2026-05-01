@@ -25,6 +25,30 @@
 -- NOTIFY pgrst, 'reload schema';
 
 DO $$
+DECLARE
+  canonical_scopes CONSTANT text[] := ARRAY[
+    'read:records',
+    'read:orgs',
+    'read:search',
+    'write:anchors',
+    'admin:rules',
+    'verify',
+    'verify:batch',
+    'usage:read',
+    'keys:manage',
+    'compliance:read',
+    'compliance:write',
+    'oracle:read',
+    'oracle:write',
+    'anchor:write',
+    'anchor:read',
+    'attestations:write',
+    'attestations:read',
+    'webhooks:manage',
+    'agents:manage',
+    'keys:read'
+  ];
+  legacy_agent_scopes CONSTANT text[] := ARRAY['attest', 'oracle', 'batch', 'usage'];
 BEGIN
   IF EXISTS (
     SELECT 1
@@ -36,33 +60,15 @@ BEGIN
     ALTER TABLE public.api_keys
       DROP CONSTRAINT IF EXISTS api_keys_scopes_known_values;
 
-    ALTER TABLE public.api_keys
-      ADD CONSTRAINT api_keys_scopes_known_values
-      CHECK (
-        coalesce(array_length(scopes, 1), 0) >= 1
-        AND scopes <@ ARRAY[
-          'read:records',
-          'read:orgs',
-          'read:search',
-          'write:anchors',
-          'admin:rules',
-          'verify',
-          'verify:batch',
-          'usage:read',
-          'keys:manage',
-          'compliance:read',
-          'compliance:write',
-          'oracle:read',
-          'oracle:write',
-          'anchor:write',
-          'anchor:read',
-          'attestations:write',
-          'attestations:read',
-          'webhooks:manage',
-          'agents:manage',
-          'keys:read'
-        ]::text[]
-      );
+    EXECUTE format(
+      'ALTER TABLE public.api_keys
+        ADD CONSTRAINT api_keys_scopes_known_values
+        CHECK (
+          coalesce(array_length(scopes, 1), 0) >= 1
+          AND scopes <@ %L::text[]
+        )',
+      canonical_scopes
+    );
 
     COMMENT ON COLUMN public.api_keys.scopes IS
       'Canonical scope vocabulary: read:records, read:orgs, read:search, write:anchors, admin:rules, compliance:read, compliance:write, oracle:read, oracle:write, anchor:read, anchor:write, attestations:read, attestations:write, webhooks:manage, agents:manage, keys:read. Legacy verify, verify:batch, usage:read, keys:manage remain accepted for v1 compatibility.';
@@ -92,7 +98,7 @@ BEGIN
         ORDER BY mapped_scope
       )
     )
-    WHERE allowed_scopes && ARRAY['attest', 'oracle', 'batch', 'usage']::text[];
+    WHERE allowed_scopes && legacy_agent_scopes;
 
     ALTER TABLE public.agents
       ALTER COLUMN allowed_scopes SET DEFAULT ARRAY['verify'];
@@ -100,36 +106,18 @@ BEGIN
     ALTER TABLE public.agents
       DROP CONSTRAINT IF EXISTS agents_allowed_scopes_known_values;
 
-    ALTER TABLE public.agents
-      ADD CONSTRAINT agents_allowed_scopes_known_values
-      CHECK (
-        coalesce(array_length(allowed_scopes, 1), 0) >= 1
-        AND allowed_scopes <@ ARRAY[
-          'read:records',
-          'read:orgs',
-          'read:search',
-          'write:anchors',
-          'admin:rules',
-          'verify',
-          'verify:batch',
-          'usage:read',
-          'keys:manage',
-          'compliance:read',
-          'compliance:write',
-          'oracle:read',
-          'oracle:write',
-          'anchor:write',
-          'anchor:read',
-          'attestations:write',
-          'attestations:read',
-          'webhooks:manage',
-          'agents:manage',
-          'keys:read'
-        ]::text[]
-      );
+    EXECUTE format(
+      'ALTER TABLE public.agents
+        ADD CONSTRAINT agents_allowed_scopes_known_values
+        CHECK (
+          coalesce(array_length(allowed_scopes, 1), 0) >= 1
+          AND allowed_scopes <@ %L::text[]
+        )',
+      canonical_scopes
+    );
 
     COMMENT ON COLUMN public.agents.allowed_scopes IS
-      'Canonical API key scopes this agent may hold. Historical attest/oracle/batch/usage aliases were normalized in migration 0283.';
+      'Canonical API key scopes this agent may hold. Historical attest/oracle/batch/usage aliases were normalized in migration 0285.';
   END IF;
 END $$;
 

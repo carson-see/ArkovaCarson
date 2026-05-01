@@ -7,7 +7,7 @@
  * quietly returning in future PRs.
  */
 
-import { execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -91,37 +91,41 @@ function projectNameFromPyproject(content: string): string | undefined {
   return undefined;
 }
 
+function inspectTrackedPath(path: string, input: DriftInput): DriftFinding[] {
+  const findings: DriftFinding[] = [];
+  if (isDeprecatedPythonSdkBody(path)) {
+    findings.push({
+      path,
+      reason: 'stale duplicate Python SDK package body; only README redirects may remain',
+    });
+  }
+  if (FORBIDDEN_GENERATED_ARTIFACTS.has(path)) {
+    findings.push({
+      path,
+      reason: 'generated planning artifact belongs in the artifact archive, not a code PR',
+    });
+  }
+  if (isGeneratedPath(path)) {
+    findings.push({
+      path,
+      reason: 'tracked generated output/cache directory',
+    });
+  }
+  return findings;
+}
+
+function isArkovaPythonPackage(path: string, input: DriftInput): boolean {
+  return path.endsWith('pyproject.toml') && projectNameFromPyproject(input.readFile(path)) === 'arkova';
+}
+
 export function findApiContractDrift(input: DriftInput): DriftFinding[] {
   const findings: DriftFinding[] = [];
-  const trackedFiles = input.trackedFiles.map(normalizePath).sort();
+  const trackedFiles = input.trackedFiles.map(normalizePath).sort((a, b) => a.localeCompare(b));
   const arkovaPythonPackages: string[] = [];
 
   for (const path of trackedFiles) {
-    if (isDeprecatedPythonSdkBody(path)) {
-      findings.push({
-        path,
-        reason: 'stale duplicate Python SDK package body; only README redirects may remain',
-      });
-    }
-
-    if (FORBIDDEN_GENERATED_ARTIFACTS.has(path)) {
-      findings.push({
-        path,
-        reason: 'generated planning artifact belongs in the artifact archive, not a code PR',
-      });
-    }
-
-    if (isGeneratedPath(path)) {
-      findings.push({
-        path,
-        reason: 'tracked generated output/cache directory',
-      });
-    }
-
-    if (path.endsWith('pyproject.toml')) {
-      const name = projectNameFromPyproject(input.readFile(path));
-      if (name === 'arkova') arkovaPythonPackages.push(path);
-    }
+    findings.push(...inspectTrackedPath(path, input));
+    if (isArkovaPythonPackage(path, input)) arkovaPythonPackages.push(path);
   }
 
   for (const path of arkovaPythonPackages) {
@@ -144,7 +148,7 @@ export function findApiContractDrift(input: DriftInput): DriftFinding[] {
 }
 
 function gitLsFiles(repo: string): string[] {
-  return execSync('git ls-files', { cwd: repo, encoding: 'utf8' })
+  return execFileSync('/usr/bin/git', ['ls-files'], { cwd: repo, encoding: 'utf8' })
     .split('\n')
     .map((line) => line.trim())
     .filter(Boolean);
