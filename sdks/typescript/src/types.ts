@@ -47,3 +47,28 @@ export interface ArkovaConfig {
   /** Request timeout in milliseconds. Defaults to 30000. */
   timeout?: number;
 }
+
+/** A VerificationResult with the public_id it was looked up by (batch only). */
+export interface BatchVerificationResult extends VerificationResult {
+  public_id: string;
+}
+
+/** Server-side batch verification job. Created when >20 IDs are submitted. */
+export interface BatchJob {
+  job_id: string;
+  status: 'submitted' | 'processing' | 'complete' | 'failed';
+  total: number;
+  created_at: string;
+  expires_at: string;
+  completed_at?: string | null;
+  results?: BatchVerificationResult[];
+  error_message?: string;
+}
+
+/** Options for ArkovaClient.waitForBatchJob. */
+export interface WaitForBatchJobOptions {
+  /** Max ms to wait before throwing. Defaults to 300000 (5 min). */
+  timeoutMs?: number;
+  /** Ms between polls. Defaults to 2000. */
+  pollIntervalMs?: number;
+}

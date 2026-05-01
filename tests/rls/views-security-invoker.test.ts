@@ -9,13 +9,13 @@
  *
  * The runtime `security_invoker = true` flag on the surviving public
  * views (`payment_ledger`, `v_slow_queries`, `calibration_features`) is
- * statically enforced by `scripts/ci/check-view-security-invoker.ts` —
+ * statically enforced by `scripts/ci/check-views-security-invoker.ts` —
  * runtime introspection through Supabase's REST surface can't read
  * `pg_class.reloptions` (pg_catalog isn't exposed), so the lint is the
  * canonical guard for that property.
  *
  * Prerequisites: Supabase running locally with all migrations
- * (including 0279) applied.
+ * (including 0281) applied.
  */
 
 import { describe, it, expect, beforeAll } from 'vitest';

@@ -46,7 +46,7 @@ describe('check-rls-policy-coverage', () => {
     writeMigration(repoRoot, '0001_init.sql', 'CREATE TABLE foo (id int);');
     const { code, stdout } = run(repoRoot);
     expect(code).toBe(0);
-    expect(stdout).toContain('No tables with bare ENABLE+FORCE');
+    expect(stdout).toContain('every RLS-enabled table has a policy');
   });
 
   it('passes when ENABLE + CREATE POLICY are in the same migration', () => {
@@ -93,13 +93,15 @@ describe('check-rls-policy-coverage', () => {
     expect(run(repoRoot).code).toBe(0);
   });
 
-  it('treats only ENABLE without FORCE as a non-issue (force is what blocks service_role)', () => {
+  it('fails when ENABLE without FORCE has no policy', () => {
     writeMigration(
       repoRoot,
       '0001_enable_only.sql',
       `CREATE TABLE foo (id int);\nALTER TABLE foo ENABLE ROW LEVEL SECURITY;`,
     );
-    expect(run(repoRoot).code).toBe(0);
+    const { code, stderr } = run(repoRoot);
+    expect(code).toBe(1);
+    expect(stderr).toContain('foo');
   });
 
   it('handles schema-qualified table names', () => {

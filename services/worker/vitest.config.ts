@@ -77,10 +77,12 @@ export default defineConfig({
           statements: 75,
         },
         'src/stripe/handlers.ts': {
-          branches: 75,
-          functions: 70,
-          lines: 70,
-          statements: 70,
+          // SCRUM-1289 (R4-4): bumped 75/70/70/70 → 80 across the board.
+          // Actual coverage 2026-04-28: 88.99 / 88.11 / 85.71 / 89.47.
+          branches: 80,
+          functions: 80,
+          lines: 80,
+          statements: 80,
         },
         'src/config.ts': {
           // Restored from 65 → 70 (DEP-05). PR #347 (SCRUM-534) added

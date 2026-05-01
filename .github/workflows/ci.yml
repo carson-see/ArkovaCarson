@@ -95,11 +95,25 @@ jobs:
       - name: Block migration prefix collisions (SCRUM-1287)
         run: npx tsx scripts/ci/check-migration-prefix-uniqueness.ts
 
-      - name: Block bare CREATE VIEW without security_invoker (SCRUM-1276)
-        run: npx tsx scripts/ci/check-view-security-invoker.ts
+      - name: Block CREATE VIEW without security_invoker (SCRUM-1276)
+        env:
+          PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+        run: npx tsx scripts/ci/check-views-security-invoker.ts
 
-      - name: Block FORCE RLS without policy / deny-all comment (SCRUM-1275)
+      - name: Block bare auth.uid() in new RLS policies (SCRUM-1278)
+        env:
+          PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+        run: npx tsx scripts/ci/check-rls-auth-uid-wrap.ts
+
+      - name: Block ENABLE RLS without policy (SCRUM-1275)
+        env:
+          PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
         run: npx tsx scripts/ci/check-rls-policy-coverage.ts
+
+      - name: Block inline crypto.createHmac in webhook handlers (SCRUM-1282)
+        env:
+          PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+        run: npx tsx scripts/ci/check-webhook-hmac-consolidation.ts
 
       - name: Run npm audit (root production dependencies)
         # Fail on critical severity. Known high-severity exceptions (no upstream fix):

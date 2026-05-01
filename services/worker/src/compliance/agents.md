@@ -1,6 +1,6 @@
 # agents.md — services/worker/src/compliance/
 
-_Last updated: 2026-04-17_
+_Last updated: 2026-04-28_
 
 ## What This Folder Contains
 
@@ -40,6 +40,17 @@ persistence.
 - API-layer tests in `src/api/v1/compliance-*.test.ts` mock the DB layer
   at the `db.from(table)` level — see `compliance-audit.test.ts` for the
   fluent-builder mock pattern.
+
+## Recent Changes
+
+- **2026-04-28 — SCRUM-954** (`src/api/v1/compliance-audit.ts`): `loadOrgJurisdictions`
+  gained a third fallback. Orgs with no `organizations.jurisdictions` and no
+  historical `compliance_scores` ("Arkova default scope") now derive distinct
+  `(jurisdiction_code, industry_code)` pairs from `jurisdiction_rules`
+  matching the org's industry. Without this, `calculateOrgAudit` produced
+  empty `per_jurisdiction` and the `/compliance/scorecard` page showed
+  "No jurisdiction data" even after a successful audit. Empty-state is now
+  only shown when there are truly no rules for the org's industry.
 
 ## Related
 

@@ -85,18 +85,24 @@ async function hasActiveSubscription(userId: string): Promise<PaymentSource | nu
 
 /**
  * Check if an x402 payment exists that could fund this anchor.
- * Looks for recent unlinked x402 payments from the same org.
+ * Looks for recent verified, unlinked x402 payments from the same org.
+ *
+ * SCRUM-1280 (R3-7): the previous query had NO `org_id` filter, so the
+ * latest x402 payment from ANY org could authorize an anchor for ANY
+ * other org — a cross-tenant payment-guard bypass. Now scoped by both
+ * `org_id` AND `verified = true` so only confirmed on-chain payments
+ * count, and only for the calling org.
  */
 async function hasX402Payment(orgId: string | null, _anchorId: string): Promise<PaymentSource | null> {
   if (!orgId) return null;
 
   try {
-    // Check for x402 payments associated with this anchor's org
-    // that haven't been linked to another anchor yet
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data } = await (db as any)
       .from('x402_payments')
       .select('id, tx_hash')
+      .eq('org_id', orgId)
+      .eq('verified', true)
       .order('created_at', { ascending: false })
       .limit(1);
 

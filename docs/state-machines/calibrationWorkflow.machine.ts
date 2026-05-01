@@ -39,6 +39,16 @@ const activeCalibration = variable("activeCalibration");
  * Simplifications:
  * - hasEvalData removed: implied by status progression past EVALUATING
  * - improvesAccuracy removed: merged into knotsValid (validation checks both)
+ *
+ * SCRUM-1274 (R3-1) status note: this spec is documentation-only — the
+ * tla-precheck runtimeAdapter is intentionally absent because the
+ * calibration pipeline runs as one-shot CLI scripts under
+ * services/worker/scripts/ai-eval/* rather than a long-lived state
+ * machine bound to a DB table. Keeping the spec runnable under
+ * `tla-precheck check` (the proof block at the bottom is intact) so
+ * invariant regressions are caught during refactors, but no code
+ * adapter is generated. If a future ARK-* story binds calibration
+ * state to a DB row, wire the runtimeAdapter at that point.
  */
 export const calibrationWorkflowMachine = defineMachine({
   version: 2,

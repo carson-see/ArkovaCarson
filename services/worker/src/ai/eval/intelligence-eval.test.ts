@@ -51,8 +51,12 @@ describe('intelligence-eval', () => {
       expect(scoreFaithfulness('', ['some context'])).toBe(0);
     });
 
-    it('returns 0.5 when answer has no citations', () => {
-      expect(scoreFaithfulness('Some generic answer without citations.', ['context'])).toBe(0.5);
+    // SCRUM-1281 (R3-8 sub-B): zero citations now grades 0, not 0.5. The
+    // previous "0.5 = uncertain" floor graded a no-citation answer the same
+    // as a 50%-grounded one — the recovery audit flagged this as a "free
+    // quality" failure mode that obscured eval signal.
+    it('returns 0 when answer has no citations (SCRUM-1281)', () => {
+      expect(scoreFaithfulness('Some generic answer without citations.', ['context'])).toBe(0);
     });
   });
 

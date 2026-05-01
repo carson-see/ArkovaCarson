@@ -27,9 +27,17 @@ export function stripJsonFence(text: string): string {
   return text.replace(/^```(?:json)?\n/, '').replace(/\n```$/, '').trim();
 }
 
+// SCRUM-1281 (R3-8 sub-C) — wall-clock cap. opus-teacher / opus-judge call
+// this thousands of times across distillation/judging runs; without a
+// timeout, a single stalled Anthropic request hangs the whole script. 60s
+// matches the longest single-request budget observed in NVI-07/NVI-12 and
+// is well below the script's per-batch retry window.
+const DEFAULT_TIMEOUT_MS = 60_000;
+
 /**
  * Call the Anthropic Messages API and return the concatenated text content.
  * Throws on non-2xx responses with the first 500 bytes of the error body.
+ * Throws on AbortError when the per-call wall clock exceeds the timeout.
  */
 export async function callAnthropicMessages(opts: AnthropicCallOpts): Promise<string> {
   const res = await fetch(ANTHROPIC_API_URL, {
@@ -45,6 +53,7 @@ export async function callAnthropicMessages(opts: AnthropicCallOpts): Promise<st
       system: opts.system,
       messages: [{ role: 'user', content: opts.userContent }],
     }),
+    signal: AbortSignal.timeout(DEFAULT_TIMEOUT_MS),
   });
   if (!res.ok) {
     const body = await res.text();

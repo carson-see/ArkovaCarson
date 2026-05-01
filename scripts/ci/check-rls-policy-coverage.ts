@@ -1,48 +1,69 @@
 #!/usr/bin/env -S npx tsx
 /**
- * SCRUM-1275 (R3-2) — block tables with FORCE RLS but no policy.
+ * SCRUM-1275 (R3-2) - block new ENABLE/FORCE RLS without a policy.
  *
- * `ENABLE + FORCE ROW LEVEL SECURITY` on a table with NO policy silently
- * denies all queries — including from `service_role`, which is otherwise
- * RLS-bypassed. The 24-table audit in SCRUM-1275 found this pattern
- * silently locking out worker code in several places.
+ * Postgres tables with RLS enabled and no policy become silent deny-all
+ * for non-bypass roles. `FORCE ROW LEVEL SECURITY` tightens that further.
+ * This is sometimes intentional, but it should be explicit and reviewed.
  *
- * Allowed forms (none of these triggers a violation):
+ * Allowed forms:
+ *   1. A CREATE POLICY ... ON <table> exists in the same or another migration.
+ *   2. A COMMENT ON TABLE <table> IS '...Deny-all by design...' documents
+ *      deliberate quarantine/no-user-access behavior.
+ *   3. The table is listed in the baseline as historically referenced but
+ *      missing in production.
  *
- *   1. The same migration adds a CREATE POLICY ... ON <table>.
- *   2. A later migration adds CREATE POLICY ... ON <table>.
- *   3. The migration carries a `Deny-all by design` comment on the table:
- *        COMMENT ON TABLE <table> IS '...Deny-all by design...';
- *
- * Override label (when the rule misfires): `rls-policy-coverage-approved`
- * on the PR. Override is enforced at the workflow level, not here.
+ * Override: PR labeled `rls-no-policy-intentional`.
  */
 
+import { existsSync, readFileSync } from 'node:fs';
 import { resolve, join } from 'node:path';
-import { existsSync } from 'node:fs';
-import { loadBaseline, loadMigrations } from './lib/migration-lint';
+import { loadMigrations } from './lib/migration-lint';
 
-const REPO = process.env.RLS_POLICY_COVERAGE_REPO_ROOT
+const OVERRIDE_LABEL = 'rls-no-policy-intentional';
+const REPO = process.env.RLS_POLICY_REPO_ROOT
+  ?? process.env.RLS_POLICY_COVERAGE_REPO_ROOT
   ?? resolve(import.meta.dirname, '..', '..');
 const MIGRATIONS_DIR = join(REPO, 'supabase', 'migrations');
 const BASELINE_PATH = join(REPO, 'scripts', 'ci', 'snapshots', 'rls-policy-coverage-baseline.json');
+const prLabels = (process.env.PR_LABELS ?? '').split(',').map((s) => s.trim()).filter(Boolean);
 
-function unquoteIdent(s: string): string {
-  return s.replace(/^"|"$/g, '');
+interface Baseline {
+  missing_in_prod?: string[];
+  grandfathered?: string[];
 }
 
-function bareName(qualified: string): string {
-  // Strip optional `public.` schema prefix and surrounding quotes.
-  const noSchema = qualified.replace(/^public\./i, '').replace(/^"public"\./i, '');
-  return unquoteIdent(noSchema);
+interface Finding {
+  table: string;
+  enabledIn: string;
+}
+
+function normalizeIdent(raw: string): string {
+  return raw
+    .replace(/^"public"\./i, '')
+    .replace(/^public\./i, '')
+    .replace(/^"|"$/g, '')
+    .toLowerCase();
+}
+
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function tableRefPattern(table: string): string {
+  const escaped = escapeRegex(table);
+  return `(?:(?:"public"|public)\\.)?"?${escaped}"?\\b`;
+}
+
+function loadBaseline(): Set<string> {
+  if (!existsSync(BASELINE_PATH)) return new Set();
+  const raw = JSON.parse(readFileSync(BASELINE_PATH, 'utf8')) as Baseline;
+  return new Set([...(raw.missing_in_prod ?? []), ...(raw.grandfathered ?? [])].map((t) => t.toLowerCase()));
 }
 
 function tableHasPolicy(sql: string, table: string): boolean {
-  // Policy name can be a bare identifier (\w+) or a quoted identifier
-  // ("Org members can read..."). The ON clause can be schema-qualified
-  // and the table name itself may be quoted.
   const re = new RegExp(
-    `CREATE\\s+POLICY\\s+(?:\\w+|"[^"]+")\\s+ON\\s+(?:public\\.)?\"?${table}\"?\\b`,
+    `CREATE\\s+POLICY\\s+(?:"[^"]+"|\\w+)\\s+ON\\s+${tableRefPattern(table)}`,
     'i',
   );
   return re.test(sql);
@@ -50,7 +71,7 @@ function tableHasPolicy(sql: string, table: string): boolean {
 
 function tableHasDenyAllComment(sql: string, table: string): boolean {
   const re = new RegExp(
-    `COMMENT\\s+ON\\s+TABLE\\s+(?:public\\.)?\"?${table}\"?\\s+IS\\s+'[^']*Deny-all by design[^']*'`,
+    `COMMENT\\s+ON\\s+TABLE\\s+${tableRefPattern(table)}\\s+IS\\s+'[^']*[Dd]eny-?all\\s+by\\s+design[^']*'`,
     'i',
   );
   return re.test(sql);
@@ -62,60 +83,55 @@ function main(): void {
     return;
   }
 
-  const grandfathered = loadBaseline(BASELINE_PATH);
+  const baseline = loadBaseline();
   const migrations = loadMigrations(MIGRATIONS_DIR);
+  const enabledByTable = new Map<string, string>();
+  const enableOrForceRe =
+    /ALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?((?:(?:"public"|public)\.)?(?:"[^"]+"|\w+))\s+(?:ENABLE|FORCE)\s+ROW\s+LEVEL\s+SECURITY/gi;
 
-  // Pass 1: collect every table that ever sets FORCE ROW LEVEL SECURITY.
-  // Track the first migration where it happens so error output is helpful.
-  const forceRlsByTable = new Map<string, string>();
-  for (const mig of migrations) {
-    const re =
-      /ALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?((?:public\.)?"?\w+"?)\s+FORCE\s+ROW\s+LEVEL\s+SECURITY/gi;
-    let m: RegExpExecArray | null;
-    while ((m = re.exec(mig.stripped)) !== null) {
-      const tbl = bareName(m[1]);
-      if (!forceRlsByTable.has(tbl)) {
-        forceRlsByTable.set(tbl, mig.file);
+  for (const migration of migrations) {
+    let match: RegExpExecArray | null;
+    while ((match = enableOrForceRe.exec(migration.stripped)) !== null) {
+      const table = normalizeIdent(match[1]);
+      if (!enabledByTable.has(table)) {
+        enabledByTable.set(table, migration.file);
       }
     }
   }
 
-  // Pass 2: for each table with FORCE RLS, check across all migrations
-  // for a CREATE POLICY ... ON <table> or a deny-all comment. Scan the
-  // ORIGINAL SQL (not stripped) so policies inside DO/EXECUTE blocks
-  // (e.g. 0275's anchoring_jobs IF EXISTS guard) are counted.
-  const violations: Array<{ table: string; firstMigration: string }> = [];
-  for (const [table, firstMigration] of forceRlsByTable) {
-    if (grandfathered.has(table)) continue;
-    let hasPolicy = false;
-    let hasDenyAllComment = false;
-    for (const mig of migrations) {
-      if (tableHasPolicy(mig.sql, table)) hasPolicy = true;
-      if (tableHasDenyAllComment(mig.sql, table)) hasDenyAllComment = true;
-    }
-    if (!hasPolicy && !hasDenyAllComment) {
-      violations.push({ table, firstMigration });
+  const findings: Finding[] = [];
+  for (const [table, enabledIn] of enabledByTable) {
+    if (baseline.has(table)) continue;
+
+    const hasPolicyOrComment = migrations.some((migration) => {
+      return tableHasPolicy(migration.sql, table) || tableHasDenyAllComment(migration.sql, table);
+    });
+
+    if (!hasPolicyOrComment) {
+      findings.push({ table, enabledIn });
     }
   }
 
-  if (violations.length === 0) {
-    console.log(
-      `OK — No tables with bare ENABLE+FORCE ROW LEVEL SECURITY ` +
-        `(${grandfathered.size} grandfathered).`,
-    );
+  if (findings.length === 0) {
+    console.log(`OK - every RLS-enabled table has a policy or deny-all comment (${baseline.size} baseline exemptions).`);
     return;
   }
 
-  console.error(
-    `::error::SCRUM-1275: ${violations.length} table(s) with FORCE RLS but no policy:`,
-  );
-  for (const v of violations) {
-    console.error(`  ${v.table}  (FORCE RLS first set in ${v.firstMigration})`);
+  if (prLabels.includes(OVERRIDE_LABEL)) {
+    console.log(`PR labeled ${OVERRIDE_LABEL}; allowing ${findings.length} RLS table(s) without policy.`);
+    for (const finding of findings) {
+      console.log(`  ${finding.table} (enabled in ${finding.enabledIn})`);
+    }
+    return;
+  }
+
+  console.error(`::error::SCRUM-1275: ${findings.length} table(s) with ENABLE/FORCE RLS but no policy:`);
+  for (const finding of findings) {
+    console.error(`  ${finding.table}  (first enabled in ${finding.enabledIn})`);
   }
   console.error('');
-  console.error('Add CREATE POLICY ... ON <table> ... in the same or a later migration,');
-  console.error('OR add a COMMENT ON TABLE <table> IS \'...Deny-all by design...\' to');
-  console.error('document the deliberate deny-all intent.');
+  console.error('Add CREATE POLICY ... ON <table> ..., add a documented deny-all comment,');
+  console.error(`or label the PR with ${OVERRIDE_LABEL} after review.`);
   process.exit(1);
 }
 

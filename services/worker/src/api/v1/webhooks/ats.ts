@@ -12,9 +12,9 @@
  */
 
 import { Router, Request, Response } from 'express';
-import crypto from 'node:crypto';
 import { db } from '../../../utils/db.js';
 import { logger } from '../../../utils/logger.js';
+import { verifyHmacSha256Hex } from '../../../integrations/oauth/hmac.js';
 
 
 const router = Router();
@@ -25,32 +25,11 @@ const SUPPORTED_PROVIDERS = ['greenhouse', 'lever', 'generic'] as const;
 type AtsProvider = (typeof SUPPORTED_PROVIDERS)[number];
 
 /**
- * Constant-time HMAC-SHA256 signature verification.
- * Returns false (rather than throwing) if buffers differ in length.
+ * Lever prepends "sha256=" to its signature header — strip before delegating
+ * to the canonical hex verifier.
  */
-function verifyHmacSignature(payload: string, signature: string, secret: string): boolean {
-  const expected = crypto.createHmac('sha256', secret).update(payload).digest('hex');
-  try {
-    return crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
-  } catch {
-    // timingSafeEqual throws if buffers differ in length
-    return false;
-  }
-}
-
-/**
- * Lever prepends "sha256=" to its signature header.
- */
-function verifyLeverSignature(payload: string, signature: string, secret: string): boolean {
-  const expected = crypto.createHmac('sha256', secret).update(payload).digest('hex');
-  try {
-    return crypto.timingSafeEqual(
-      Buffer.from(`sha256=${expected}`),
-      Buffer.from(signature),
-    );
-  } catch {
-    return false;
-  }
+function stripLeverPrefix(signature: string): string {
+  return signature.startsWith('sha256=') ? signature.slice(7) : signature;
 }
 
 /**
@@ -68,14 +47,13 @@ function getSignatureHeader(req: Request, provider: AtsProvider): string | undef
 }
 
 /**
- * Verify signature for a given provider.
+ * Verify signature for a given provider through the canonical
+ * `verifyHmacSha256Hex` helper. Greenhouse and generic use raw hex; Lever
+ * uses `sha256=<hex>` so we strip the prefix before delegating.
  */
 function verifySignature(provider: AtsProvider, payload: string, signature: string, secret: string): boolean {
-  if (provider === 'lever') {
-    return verifyLeverSignature(payload, signature, secret);
-  }
-  // greenhouse and generic both use plain HMAC-SHA256
-  return verifyHmacSignature(payload, signature, secret);
+  const sigHex = provider === 'lever' ? stripLeverPrefix(signature) : signature;
+  return verifyHmacSha256Hex({ rawBody: payload, signature: sigHex, secret });
 }
 
 /**

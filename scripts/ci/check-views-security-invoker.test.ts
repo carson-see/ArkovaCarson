@@ -1,5 +1,5 @@
 /**
- * Tests for check-view-security-invoker.ts (SCRUM-1276).
+ * Tests for check-views-security-invoker.ts (SCRUM-1276).
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
@@ -10,12 +10,12 @@ import {
   makeTempMigrationsRepo,
 } from './lib/migration-lint-test-helpers';
 
-const SCRIPT = join(process.cwd(), 'scripts/ci/check-view-security-invoker.ts');
+const SCRIPT = join(process.cwd(), 'scripts/ci/check-views-security-invoker.ts');
 const ENV_VAR = 'VIEW_SECURITY_INVOKER_REPO_ROOT';
 
 const run = (repoRoot: string) => runLintScript(SCRIPT, ENV_VAR, repoRoot);
 
-describe('check-view-security-invoker', () => {
+describe('check-views-security-invoker', () => {
   let repoRoot: string;
 
   beforeEach(() => {
@@ -30,7 +30,7 @@ describe('check-view-security-invoker', () => {
     writeFileSync(join(repoRoot, 'supabase/migrations/0001_init.sql'), 'CREATE TABLE foo (id int);');
     const { code, stdout } = run(repoRoot);
     expect(code).toBe(0);
-    expect(stdout).toContain('No bare CREATE VIEW');
+    expect(stdout).toContain('no new bare CREATE VIEW');
   });
 
   it('passes when CREATE VIEW has security_invoker=true on the same statement', () => {
@@ -70,10 +70,7 @@ CREATE OR REPLACE VIEW public.bar AS SELECT 1;`,
     expect(stderr).toContain('leaky');
   });
 
-  it('ignores DO $$ template strings that programmatically build CREATE VIEW (one-shot loops)', () => {
-    // 0112's `'CREATE OR REPLACE VIEW public.%I WITH (security_invoker = true) AS %s'`
-    // template lives inside a quoted string, not as a top-level statement. Linter
-    // must not flag it.
+  it('ignores DO $$ template strings that programmatically build CREATE VIEW', () => {
     writeFileSync(
       join(repoRoot, 'supabase/migrations/0001_loop.sql'),
       `DO $$
@@ -99,14 +96,14 @@ AS
     expect(stderr).toContain('multiline');
   });
 
-  it('grandfathers files listed in the snapshot baseline', () => {
+  it('grandfathers files or views listed in the snapshot baseline', () => {
     writeFileSync(
       join(repoRoot, 'supabase/migrations/0001_grandfathered.sql'),
       `CREATE OR REPLACE VIEW public.legacy AS SELECT 1;`,
     );
     mkdirSync(join(repoRoot, 'scripts/ci/snapshots'), { recursive: true });
     writeFileSync(
-      join(repoRoot, 'scripts/ci/snapshots/view-security-invoker-baseline.json'),
+      join(repoRoot, 'scripts/ci/snapshots/views-security-invoker-baseline.json'),
       JSON.stringify({ grandfathered: ['0001_grandfathered.sql'] }),
     );
     expect(run(repoRoot).code).toBe(0);
