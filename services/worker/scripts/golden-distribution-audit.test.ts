@@ -11,6 +11,7 @@ import {
   auditDistribution,
   computeGap,
   DEFAULT_EXPECTED_CREDENTIAL_TYPES,
+  formatSourceFile,
   parseGoldenLine,
   renderMarkdownReport,
   type AcceptanceGate,
@@ -154,6 +155,15 @@ describe('auditDistribution', () => {
       byType: {},
     });
   });
+
+  it('counts fraud-positive rows even when the credential type is unparseable', () => {
+    const audit = auditDistribution([
+      { credentialType: null, fraudPositive: true },
+      { credentialType: 'DEGREE', fraudPositive: false },
+    ]);
+    expect(audit.unparseableRows).toBe(1);
+    expect(audit.fraudPositive).toBe(1);
+  });
 });
 
 describe('computeGap', () => {
@@ -175,6 +185,7 @@ describe('computeGap', () => {
     expect(r.passed).toBe(true);
     expect(r.totalGap).toBe(0);
     expect(r.fraudGap).toBe(0);
+    expect(r.unparseableGap).toBe(0);
     expect(r.typesUnderFloor).toEqual([]);
   });
 
@@ -228,6 +239,18 @@ describe('computeGap', () => {
     expect(r.typesUnderFloor).toContainEqual({ type: 'LICENSE', count: 0, deficit: 10 });
   });
 
+  it('fails closed when any row is unparseable', () => {
+    const audit = {
+      totalRows: 100,
+      unparseableRows: 1,
+      fraudPositive: 5,
+      byType: { DEGREE: 50, LICENSE: 50 },
+    };
+    const r = computeGap(audit, gate);
+    expect(r.unparseableGap).toBe(1);
+    expect(r.passed).toBe(false);
+  });
+
   it('uses the full launch credential taxonomy by default', () => {
     const audit = {
       totalRows: 5000,
@@ -236,8 +259,14 @@ describe('computeGap', () => {
       byType: Object.fromEntries(DEFAULT_EXPECTED_CREDENTIAL_TYPES.map((type) => [type, 30])),
     };
     const r = computeGap(audit, { minTotal: 5000, minPerType: 30, minFraudPositive: 200 });
-    expect(r.expectedTypes).toEqual([...DEFAULT_EXPECTED_CREDENTIAL_TYPES].sort());
+    expect(r.expectedTypes).toEqual([...DEFAULT_EXPECTED_CREDENTIAL_TYPES].sort((a, b) => a.localeCompare(b)));
     expect(r.passed).toBe(true);
+  });
+});
+
+describe('formatSourceFile', () => {
+  it('keeps in-repo paths readable without leaking absolute workstation prefixes', () => {
+    expect(formatSourceFile('/tmp/outside/full-golden.jsonl')).toBe('full-golden.jsonl');
   });
 });
 
@@ -262,6 +291,25 @@ describe('renderMarkdownReport', () => {
     expect(md).toContain('| Fraud-positive entries | 45 | 200 | +155 |');
     expect(md).toContain('CERTIFICATE');
     expect(md).toContain('UNDER (need +12)');
+  });
+
+  it('sanitizes absolute source paths in the report header', () => {
+    const audit = {
+      totalRows: 5000,
+      unparseableRows: 0,
+      fraudPositive: 200,
+      byType: { DEGREE: 2500, LICENSE: 2500 },
+    };
+    const gate: AcceptanceGate = {
+      minTotal: 5000,
+      minPerType: 30,
+      minFraudPositive: 200,
+      expectedTypes: ['DEGREE', 'LICENSE'],
+    };
+    const report = computeGap(audit, gate);
+    const md = renderMarkdownReport(report, ['/tmp/outside/full-golden.jsonl']);
+    expect(md).toContain('**Sources.** full-golden.jsonl');
+    expect(md).not.toContain('/tmp/outside');
   });
 
   it('renders PASSED verdict when gate is met', () => {

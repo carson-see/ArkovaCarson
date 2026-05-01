@@ -18,7 +18,7 @@
  */
 
 import { readFileSync, writeFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { basename, relative, resolve } from 'node:path';
 
 export interface GoldenRow {
   credentialType: string | null;
@@ -44,6 +44,7 @@ export interface GapReport {
   gate: AcceptanceGate;
   totalGap: number;
   fraudGap: number;
+  unparseableGap: number;
   typesUnderFloor: Array<{ type: string; count: number; deficit: number }>;
   expectedTypes: string[];
   passed: boolean;
@@ -77,7 +78,15 @@ const CREDENTIAL_HINT_RE = /credential\s*type\s*hint\s*[:=]\s*([A-Z_]+)/i;
 const FRAUD_POSITIVE_RE = /"fraudSignals"\s*:\s*\[\s*(?!\])/;
 
 function normalizeTypes(types: string[]): string[] {
-  return [...new Set(types.map((type) => type.trim().toUpperCase()).filter(Boolean))].sort();
+  return [...new Set(types.map((type) => type.trim().toUpperCase()).filter(Boolean))].sort((a, b) =>
+    a.localeCompare(b),
+  );
+}
+
+export function formatSourceFile(filePath: string): string {
+  const relativePath = relative(process.cwd(), filePath);
+  if (relativePath && !relativePath.startsWith('..')) return relativePath;
+  return basename(filePath);
 }
 
 function hasStructuredFraudSignals(value: unknown): boolean {
@@ -141,12 +150,12 @@ export function auditDistribution(rows: GoldenRow[]): DistributionAudit {
   let fraudPositive = 0;
   let unparseable = 0;
   for (const r of rows) {
+    if (r.fraudPositive) fraudPositive += 1;
     if (!r.credentialType) {
       unparseable += 1;
       continue;
     }
     byType[r.credentialType] = (byType[r.credentialType] ?? 0) + 1;
-    if (r.fraudPositive) fraudPositive += 1;
   }
   return { totalRows: rows.length, unparseableRows: unparseable, fraudPositive, byType };
 }
@@ -154,6 +163,7 @@ export function auditDistribution(rows: GoldenRow[]): DistributionAudit {
 export function computeGap(audit: DistributionAudit, gate: AcceptanceGate): GapReport {
   const totalGap = Math.max(0, gate.minTotal - audit.totalRows);
   const fraudGap = Math.max(0, gate.minFraudPositive - audit.fraudPositive);
+  const unparseableGap = audit.unparseableRows;
   const typesUnderFloor: Array<{ type: string; count: number; deficit: number }> = [];
   const expectedTypes = normalizeTypes(gate.expectedTypes ?? [...DEFAULT_EXPECTED_CREDENTIAL_TYPES]);
   const typesToCheck = normalizeTypes([...expectedTypes, ...Object.keys(audit.byType)]);
@@ -164,15 +174,15 @@ export function computeGap(audit: DistributionAudit, gate: AcceptanceGate): GapR
     }
   }
   typesUnderFloor.sort((a, b) => b.deficit - a.deficit);
-  const passed = totalGap === 0 && fraudGap === 0 && typesUnderFloor.length === 0;
-  return { audit, gate, totalGap, fraudGap, typesUnderFloor, expectedTypes, passed };
+  const passed = totalGap === 0 && fraudGap === 0 && unparseableGap === 0 && typesUnderFloor.length === 0;
+  return { audit, gate, totalGap, fraudGap, unparseableGap, typesUnderFloor, expectedTypes, passed };
 }
 
 export function renderMarkdownReport(report: GapReport, sourceFiles: string[]): string {
-  const { audit, gate, totalGap, fraudGap, typesUnderFloor, expectedTypes, passed } = report;
+  const { audit, gate, totalGap, fraudGap, unparseableGap, typesUnderFloor, expectedTypes, passed } = report;
   const lines: string[] = [];
   lines.push(`# Golden Distribution Audit\n`);
-  lines.push(`**Sources.** ${sourceFiles.join(', ')}\n`);
+  lines.push(`**Sources.** ${sourceFiles.map(formatSourceFile).join(', ')}\n`);
   lines.push(`**Acceptance gate.** ≥${gate.minTotal} rows, every type ≥${gate.minPerType}, fraud-positive ≥${gate.minFraudPositive}\n`);
   lines.push(`**Expected types.** ${expectedTypes.join(', ')}\n`);
   lines.push(`**Verdict.** ${passed ? 'PASSED' : 'FAILED'}\n`);
@@ -182,7 +192,7 @@ export function renderMarkdownReport(report: GapReport, sourceFiles: string[]): 
   lines.push(`| Total rows | ${audit.totalRows} | ${gate.minTotal} | ${totalGap > 0 ? `+${totalGap}` : '0'} |`);
   lines.push(`| Fraud-positive entries | ${audit.fraudPositive} | ${gate.minFraudPositive} | ${fraudGap > 0 ? `+${fraudGap}` : '0'} |`);
   lines.push(`| Types under ${gate.minPerType}-sample floor | ${typesUnderFloor.length} | 0 | ${typesUnderFloor.length} |`);
-  lines.push(`| Unparseable rows | ${audit.unparseableRows} | 0 | ${audit.unparseableRows} |\n`);
+  lines.push(`| Unparseable rows | ${audit.unparseableRows} | 0 | ${unparseableGap} |\n`);
   const sorted = normalizeTypes([...expectedTypes, ...Object.keys(audit.byType)])
     .map((type) => [type, audit.byType[type] ?? 0] as const)
     .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
