@@ -18,7 +18,7 @@
  */
 
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { basename, relative, resolve } from 'node:path';
+import { basename, isAbsolute, relative, resolve } from 'node:path';
 
 export interface GoldenRow {
   credentialType: string | null;
@@ -70,6 +70,9 @@ export const DEFAULT_EXPECTED_CREDENTIAL_TYPES = [
   'PATENT',
   'REGULATION',
   'PUBLICATION',
+  'CHARITY',
+  'FINANCIAL_ADVISOR',
+  'BUSINESS_ENTITY',
   'OTHER',
 ] as const;
 
@@ -101,8 +104,15 @@ function normalizeTypes(types: string[]): string[] {
 }
 
 export function formatSourceFile(filePath: string): string {
+  const normalized = filePath.replace(/\\/g, '/');
+  if (!isAbsolute(filePath)) return normalized;
+
+  const workerMarker = '/services/worker/';
+  const workerIndex = normalized.lastIndexOf(workerMarker);
+  if (workerIndex >= 0) return normalized.slice(workerIndex + workerMarker.length);
+
   const relativePath = relative(process.cwd(), filePath);
-  if (relativePath && !relativePath.startsWith('..')) return relativePath;
+  if (relativePath && !relativePath.startsWith('..')) return relativePath.replace(/\\/g, '/');
   return basename(filePath);
 }
 
@@ -201,7 +211,7 @@ export function parseGoldenLine(line: string): GoldenRow {
   const outputText = outputBlobs.join('\n');
   const fallbackText = [outputText, promptBlobs.join('\n')].filter(Boolean).join('\n');
   const credentialType = findCredentialType(outputText, fallbackText);
-  const fraudPositive = structuredFraudPositive || FRAUD_POSITIVE_RE.test(outputText || fallbackText);
+  const fraudPositive = structuredFraudPositive || (outputText !== '' && FRAUD_POSITIVE_RE.test(outputText));
   return { credentialType, fraudPositive };
 }
 
@@ -325,11 +335,22 @@ function resolveDefaultInputs(): string[] {
   return existsSync(canonicalTrain) ? [canonicalTrain, canonicalValidation] : [fixture];
 }
 
-function readArgValue(args: string[], index: number): string {
-  return args[index + 1] ?? '';
+function readRequiredArgValue(args: string[], index: number, flag: string): string {
+  const value = args[index + 1];
+  if (value === undefined || value.trim() === '' || value.startsWith('--')) {
+    throw new Error(`Missing value for ${flag}`);
+  }
+  return value;
 }
 
-function parseCliArgs(args: string[]): CliOptions {
+function parseNonNegativeInt(value: string, flag: string): number {
+  if (!/^\d+$/.test(value)) {
+    throw new Error(`Invalid value for ${flag}: ${value}`);
+  }
+  return Number.parseInt(value, 10);
+}
+
+export function parseCliArgs(args: string[]): CliOptions {
   const inputs: string[] = [];
   let minTotal = DEFAULT_MIN_TOTAL;
   let minPerType = DEFAULT_MIN_PER_TYPE;
@@ -340,39 +361,49 @@ function parseCliArgs(args: string[]): CliOptions {
 
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i];
-    const value = readArgValue(args, i);
     switch (arg) {
       case '--json':
         jsonOutput = true;
         break;
       case '--input':
-        inputs.push(resolve(value));
+        inputs.push(resolve(readRequiredArgValue(args, i, '--input')));
         i += 1;
         break;
       case '--min-total':
-        minTotal = Number.parseInt(value, 10);
+        minTotal = parseNonNegativeInt(readRequiredArgValue(args, i, '--min-total'), '--min-total');
         i += 1;
         break;
       case '--min-per-type':
-        minPerType = Number.parseInt(value, 10);
+        minPerType = parseNonNegativeInt(readRequiredArgValue(args, i, '--min-per-type'), '--min-per-type');
         i += 1;
         break;
       case '--min-fraud-positive':
-        minFraudPositive = Number.parseInt(value, 10);
+        minFraudPositive = parseNonNegativeInt(
+          readRequiredArgValue(args, i, '--min-fraud-positive'),
+          '--min-fraud-positive',
+        );
         i += 1;
         break;
       case '--expected-type':
-        expectedTypes.push(value);
+        expectedTypes.push(readRequiredArgValue(args, i, '--expected-type'));
         i += 1;
         break;
-      case '--expected-types':
-        expectedTypes.push(...value.split(','));
+      case '--expected-types': {
+        const values = readRequiredArgValue(args, i, '--expected-types')
+          .split(',')
+          .map((value) => value.trim())
+          .filter(Boolean);
+        if (values.length === 0) throw new Error('Invalid value for --expected-types');
+        expectedTypes.push(...values);
         i += 1;
         break;
+      }
       case '--out':
-        outPath = resolve(value);
+        outPath = resolve(readRequiredArgValue(args, i, '--out'));
         i += 1;
         break;
+      default:
+        throw new Error(`Unknown flag: ${arg}`);
     }
   }
 
@@ -395,18 +426,24 @@ function parseCliArgs(args: string[]): CliOptions {
 // ---------------------------------------------------------------------------
 
 function main(): void {
-  const { inputs, gate, jsonOutput, outPath } = parseCliArgs(process.argv.slice(2));
-  const { report } = runAudit(inputs, gate);
-  if (jsonOutput) {
-    const out = JSON.stringify(report, null, 2);
-    if (outPath) writeFileSync(outPath, out);
-    else process.stdout.write(out + '\n');
-  } else {
-    const md = renderMarkdownReport(report, inputs);
-    if (outPath) writeFileSync(outPath, md);
-    else process.stdout.write(md);
+  try {
+    const { inputs, gate, jsonOutput, outPath } = parseCliArgs(process.argv.slice(2));
+    const { report } = runAudit(inputs, gate);
+    if (jsonOutput) {
+      const out = JSON.stringify(report, null, 2);
+      if (outPath) writeFileSync(outPath, out);
+      else process.stdout.write(out + '\n');
+    } else {
+      const md = renderMarkdownReport(report, inputs);
+      if (outPath) writeFileSync(outPath, md);
+      else process.stdout.write(md);
+    }
+    process.exit(report.passed ? 0 : 1);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    process.stderr.write(`golden-distribution-audit: ${message}\n`);
+    process.exit(1);
   }
-  process.exit(report.passed ? 0 : 1);
 }
 
 const invokedPath = process.argv[1] ?? '';

@@ -17,7 +17,6 @@ import { createClient } from '@supabase/supabase-js';
 import { writeFileSync, mkdirSync, appendFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { execSync } from 'node:child_process';
-import { EXTRACTION_SYSTEM_PROMPT } from '../src/ai/prompts/extraction.js';
 
 const OUTPUT_PATH = resolve(import.meta.dirname ?? '.', '../training-data/finetune-server-8b.jsonl');
 const PAGE_SIZE = 1000;

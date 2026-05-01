@@ -20,7 +20,6 @@ import { config as dotenvConfig } from 'dotenv';
 import { resolve } from 'node:path';
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { GEMINI_GENERATION_MODEL } from '../src/ai/gemini-config.js';
-import { createHash } from 'node:crypto';
 dotenvConfig({ path: resolve(import.meta.dirname ?? '.', '../.env') });
 
 import {

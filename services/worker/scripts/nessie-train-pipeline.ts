@@ -415,7 +415,7 @@ function stepValidate(stats: Record<string, number>): { totalExamples: number; w
   return { totalExamples, warnings };
 }
 
-function stepSplit(totalExamples: number): { trainCount: number; holdoutCount: number } {
+function stepSplit(_totalExamples: number): { trainCount: number; holdoutCount: number } {
   console.log('\n--- Step 3: Create holdout evaluation set ---');
 
   const content = readFileSync(TRAINING_FILE, 'utf-8');

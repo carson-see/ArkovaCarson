@@ -7,7 +7,6 @@
  */
 
 import { GoogleAuth } from 'google-auth-library';
-import { GEMINI_GENERATION_MODEL } from '../src/ai/gemini-config.js';
 import { FULL_GOLDEN_DATASET } from '../src/ai/eval/golden-dataset.js';
 import { GOLDEN_DATASET_PHASE10 } from '../src/ai/eval/golden-dataset-phase10.js';
 import { GOLDEN_DATASET_PHASE11 } from '../src/ai/eval/golden-dataset-phase11.js';

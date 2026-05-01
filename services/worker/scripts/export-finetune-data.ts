@@ -62,7 +62,7 @@ async function main(): Promise<void> {
   // We reconstruct training text from metadata fields + description/label/filename.
   console.log('Fetching SECURED anchors with metadata...');
 
-  let allRecords: RawTrainingRecord[] = [];
+  const allRecords: RawTrainingRecord[] = [];
   let page = 0;
   const pageSize = 1000;
   let hasMore = true;

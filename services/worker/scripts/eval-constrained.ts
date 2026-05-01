@@ -18,7 +18,6 @@ import {
   scoreFaithfulness,
   scoreAnswerRelevance,
   scoreRiskDetection,
-  pearsonCorrelation,
 } from '../src/ai/eval/intelligence-eval.js';
 import type { IntelligenceEvalEntry } from '../src/ai/eval/intelligence-eval.js';
 import { buildIntelligenceSystemPrompt } from '../src/ai/prompts/intelligence.js';

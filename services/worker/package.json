@@ -8,7 +8,7 @@
     "build": "tsc -p tsconfig.build.json",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint src/ scripts/golden-distribution-audit.ts scripts/golden-distribution-audit.test.ts",
+    "lint": "eslint src/ \"scripts/**/*.ts\"",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",

@@ -43,8 +43,6 @@ async function main() {
 
   // Check current state
   console.log('\nCurrent anchor status counts:');
-  const { data: counts } = await db.rpc('get_anchor_counts').select();
-  // Fallback: manual counts
   for (const status of ['PENDING', 'BROADCASTING', 'SUBMITTED', 'SECURED', 'REVOKED']) {
     const { count, error } = await db.from('anchors').select('*', { count: 'exact', head: true }).eq('status', status);
     if (error) console.log(`  ${status}: error - ${error.message}`);

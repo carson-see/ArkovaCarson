@@ -11,7 +11,7 @@ export default tseslint.config(
   ...tseslint.configs.recommended,
   {
     files: ['src/**/*.ts', 'scripts/**/*.ts'],
-    ignores: ['src/**/*.test.ts', 'src/**/*.spec.ts'],
+    ignores: ['src/**/*.test.ts', 'src/**/*.spec.ts', 'scripts/**/*.test.ts', 'scripts/**/*.spec.ts'],
     plugins: {
       arkova: arkovaPlugin,
     },

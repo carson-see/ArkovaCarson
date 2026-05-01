@@ -28,10 +28,10 @@
  */
 
 import { config as dotenvConfig } from 'dotenv';
-import { resolve, dirname } from 'node:path';
+import { resolve } from 'node:path';
 import { GEMINI_DISTILLATION_MODEL } from '../src/ai/gemini-config.js';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
-import { writeFileSync, mkdirSync, existsSync, readFileSync } from 'node:fs';
+import { writeFileSync, mkdirSync, readFileSync } from 'node:fs';
 dotenvConfig({ path: resolve(import.meta.dirname ?? '.', '../.env') });
 
 import {

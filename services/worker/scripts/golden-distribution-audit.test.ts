@@ -12,6 +12,7 @@ import {
   computeGap,
   DEFAULT_EXPECTED_CREDENTIAL_TYPES,
   formatSourceFile,
+  parseCliArgs,
   parseGoldenLine,
   renderMarkdownReport,
   type AcceptanceGate,
@@ -129,6 +130,19 @@ describe('parseGoldenLine', () => {
       messages: [
         { role: 'system', content: 'Example: {"credentialType":"DEGREE","fraudSignals":["sample"]}' },
         { role: 'assistant', content: '{"credentialType":"DEGREE","fraudSignals":[]}' },
+      ],
+    });
+    expect(parseGoldenLine(line)).toEqual({
+      credentialType: 'DEGREE',
+      fraudPositive: false,
+    });
+  });
+
+  it('does not count prompt-only fraud examples when assistant output is absent', () => {
+    const line = JSON.stringify({
+      messages: [
+        { role: 'system', content: 'Example: {"credentialType":"DEGREE","fraudSignals":["sample"]}' },
+        { role: 'user', content: 'Credential type hint: DEGREE\n--- text ---' },
       ],
     });
     expect(parseGoldenLine(line)).toEqual({
@@ -294,7 +308,54 @@ describe('computeGap', () => {
 
 describe('formatSourceFile', () => {
   it('keeps in-repo paths readable without leaking absolute workstation prefixes', () => {
+    expect(formatSourceFile('/Users/carson/Desktop/arkova-mvpcopy-main/services/worker/training-data/full-golden.jsonl')).toBe(
+      'training-data/full-golden.jsonl',
+    );
+  });
+
+  it('falls back to basenames for absolute paths outside the worker tree', () => {
     expect(formatSourceFile('/opt/arkova/outside/full-golden.jsonl')).toBe('full-golden.jsonl');
+  });
+});
+
+describe('parseCliArgs', () => {
+  it('parses explicit options and trims expected type lists', () => {
+    const parsed = parseCliArgs([
+      '--input',
+      'training-data/fixtures/golden-fixture.jsonl',
+      '--min-total',
+      '10',
+      '--min-per-type',
+      '2',
+      '--min-fraud-positive',
+      '1',
+      '--expected-types',
+      ' degree, license ',
+      '--json',
+      '--out',
+      'docs/eval/out.json',
+    ]);
+
+    expect(parsed.inputs[0]).toMatch(/training-data\/fixtures\/golden-fixture\.jsonl$/);
+    expect(parsed.gate).toEqual({
+      minTotal: 10,
+      minPerType: 2,
+      minFraudPositive: 1,
+      expectedTypes: ['degree', 'license'],
+    });
+    expect(parsed.jsonOutput).toBe(true);
+    expect(parsed.outPath).toMatch(/docs\/eval\/out\.json$/);
+  });
+
+  it.each([
+    [['--input'], 'Missing value for --input'],
+    [['--input', '--json'], 'Missing value for --input'],
+    [['--min-total', 'NaN'], 'Invalid value for --min-total: NaN'],
+    [['--min-per-type', '-1'], 'Invalid value for --min-per-type: -1'],
+    [['--expected-types', ','], 'Invalid value for --expected-types'],
+    [['--surprise'], 'Unknown flag: --surprise'],
+  ])('fails fast for malformed CLI arguments %#', (args, message) => {
+    expect(() => parseCliArgs(args)).toThrow(message);
   });
 });
 
