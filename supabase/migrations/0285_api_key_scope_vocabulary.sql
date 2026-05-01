@@ -49,6 +49,7 @@ DECLARE
     'keys:read'
   ];
   legacy_agent_scopes CONSTANT text[] := ARRAY['attest', 'oracle', 'batch', 'usage'];
+  default_agent_scopes CONSTANT text[] := ARRAY['verify'];
 BEGIN
   IF EXISTS (
     SELECT 1
@@ -98,7 +99,7 @@ BEGIN
             ),
             ARRAY[]::text[]
           ),
-          ARRAY['verify']
+          default_agent_scopes
         ) AS allowed_scopes
       FROM public.agents a
     )
@@ -113,8 +114,10 @@ BEGIN
         OR NOT a.allowed_scopes <@ canonical_scopes
       );
 
-    ALTER TABLE public.agents
-      ALTER COLUMN allowed_scopes SET DEFAULT ARRAY['verify'];
+    EXECUTE format(
+      'ALTER TABLE public.agents ALTER COLUMN allowed_scopes SET DEFAULT %L::text[]',
+      default_agent_scopes
+    );
 
     ALTER TABLE public.agents
       DROP CONSTRAINT IF EXISTS agents_allowed_scopes_known_values;

@@ -9,6 +9,12 @@
 import { API_KEY_LABELS } from '@/lib/copy';
 import {
   API_KEY_SCOPES,
+  SELECTABLE_API_SCOPES as SELECTABLE_API_SCOPE_IDS,
+  type ApiKeyScope as ApiScope,
+} from '../../services/worker/src/api/apiScopes';
+
+export {
+  API_KEY_SCOPES,
   API_V2_SCOPES,
   COMPLIANCE_API_SCOPES,
   DEFAULT_API_KEY_SCOPES,
@@ -20,20 +26,6 @@ import {
   type ApiKeyScope as ApiScope,
   type ApiV2Scope,
 } from '../../services/worker/src/api/apiScopes';
-
-export {
-  API_KEY_SCOPES,
-  API_V2_SCOPES,
-  COMPLIANCE_API_SCOPES,
-  DEFAULT_API_KEY_SCOPES,
-  LEGACY_API_SCOPES,
-  SELECTABLE_API_SCOPE_IDS,
-  isApiV2Scope,
-  isComplianceScope,
-  scopeSatisfies,
-  type ApiScope,
-  type ApiV2Scope,
-};
 
 export interface ScopeDescriptor {
   id: ApiScope;
