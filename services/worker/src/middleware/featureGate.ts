@@ -24,7 +24,7 @@ let flagCache: FlagCache | null = null;
 /**
  * Read the ENABLE_VERIFICATION_API flag with TTL caching.
  * Uses get_flag() so production/local switchboard column differences stay
- * behind the database RPC. Falls back to env only if the RPC can't be read.
+ * behind the database RPC. Fail closed if the switchboard can't be read.
  */
 export async function isVerificationApiEnabled(): Promise<boolean> {
   const now = Date.now();
@@ -34,28 +34,21 @@ export async function isVerificationApiEnabled(): Promise<boolean> {
   }
 
   const envFallback = process.env.ENABLE_VERIFICATION_API === 'true';
+  const { data, error } = await callRpc<boolean>(db, 'get_flag', {
+    p_flag_key: 'ENABLE_VERIFICATION_API',
+  });
 
-  try {
-    const { data, error } = await callRpc<boolean>(db, 'get_flag', {
-      p_flag_key: 'ENABLE_VERIFICATION_API',
-    });
-
-    if (error || typeof data !== 'boolean') {
-      logger.warn(
-        { error, envFallback },
-        'Failed to read ENABLE_VERIFICATION_API flag from DB, falling back to env',
-      );
-      flagCache = { value: envFallback, expiresAt: now + FLAG_CACHE_TTL_MS };
-      return envFallback;
-    }
-
-    flagCache = { value: data, expiresAt: now + FLAG_CACHE_TTL_MS };
-    return data;
-  } catch (err) {
-    logger.error({ error: err, envFallback }, 'Error reading switchboard flag, falling back to env');
-    flagCache = { value: envFallback, expiresAt: now + FLAG_CACHE_TTL_MS };
-    return envFallback;
+  if (error || typeof data !== 'boolean') {
+    logger.warn(
+      { error, envFallback },
+      'Failed to read ENABLE_VERIFICATION_API flag from DB, failing closed',
+    );
+    flagCache = { value: false, expiresAt: now + FLAG_CACHE_TTL_MS };
+    return false;
   }
+
+  flagCache = { value: data, expiresAt: now + FLAG_CACHE_TTL_MS };
+  return data;
 }
 
 /**
