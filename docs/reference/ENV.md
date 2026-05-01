@@ -62,6 +62,7 @@ LOG_LEVEL=info
 FRONTEND_URL=http://localhost:5173  # REQUIRED in production (SCRUM-534 / PR #347) — worker fails loudly if NODE_ENV=production and FRONTEND_URL is unset
 USE_MOCKS=false
 ENABLE_PROD_NETWORK_ANCHORING=false
+ENABLE_ORG_CREDIT_ENFORCEMENT=false # launch-gated org credit ledger enforcement for instant anchors
 BATCH_ANCHOR_INTERVAL_MINUTES=10
 BATCH_ANCHOR_MAX_SIZE=100
 MAX_FEE_THRESHOLD_SAT_PER_VBYTE=
@@ -92,9 +93,15 @@ CLOUDFLARE_TUNNEL_TOKEN=            # never logged (INFRA-01, ADR-002)
 ## x402 payments (worker only)
 ```bash
 X402_FACILITATOR_URL=               # x402 facilitator URL (PH1-PAY-01)
+ENABLE_X402_FACILITATOR=false       # edge /x402/verify kill switch; default off until paywall launch
 ARKOVA_USDC_ADDRESS=                # USDC receiving address on Base
 X402_NETWORK=eip155:84532           # Base Sepolia default
 BASE_RPC_URL=                       # Base network RPC for payment verification
+```
+
+## Edge MCP server (Cloudflare Worker)
+```bash
+ENABLE_MCP_SERVER=false             # MCP server kill switch; set true only after tool contract/UAT validation
 ```
 
 ## Email (worker only)
@@ -272,10 +279,12 @@ GCP_SECRET_MANAGER_PROJECT_ID=
 # URL in DocuSign Admin before enabling customer connections.
 DOCUSIGN_INTEGRATION_KEY=
 DOCUSIGN_CLIENT_SECRET=
+ENABLE_DOCUSIGN_OAUTH=false         # DocuSign OAuth routes; default off pending org-scale launch validation
 
 # DocuSign Connect HMAC secret. The worker verifies X-DocuSign-Signature-1
 # over the raw body before parsing or enqueueing events.
 DOCUSIGN_CONNECT_HMAC_SECRET=
+ENABLE_DOCUSIGN_WEBHOOK=false       # /webhooks/docusign intake; default off until org-wide Connect testing passes
 
 # Sandbox vs production DocuSign account server. Default true. Only a literal
 # "false" flips to production account.docusign.com.
@@ -286,7 +295,7 @@ DOCUSIGN_DEMO=true
 
 # Monthly anchor allocation rollover job. When false the first-of-month
 # cron no-ops; orgs keep their current period open indefinitely.
-ENABLE_ALLOCATION_ROLLOVER=true
+ENABLE_ALLOCATION_ROLLOVER=false
 
 # Grace-expiry sweep (flips orgs from "grace" to "suspended" when the
 # 3-day timer elapses). Keep true unless manually managing dunning.
@@ -322,8 +331,9 @@ VEREMARK_WEBHOOK_SECRET=            # Veremark webhook HMAC; gated by ENABLE_VER
 ENABLE_VEREMARK_WEBHOOK=false       # default off; flip per-customer when wired
 
 # SCRUM-1099 / SCRUM-1100 — Drive / Workspace
-ENABLE_DRIVE_OAUTH=true             # Drive OAuth flow exposed on /api/v1/integrations/google_drive
-ENABLE_WORKSPACE_RENEWAL=true       # 6-hourly Drive watch-channel renewal cron
+ENABLE_DRIVE_OAUTH=false            # Drive OAuth flow exposed on /api/v1/integrations/google_drive; default off until Drive launch
+ENABLE_DRIVE_WEBHOOK=false          # Google Drive push notification intake; default off until changes.list/folder matching is validated
+ENABLE_WORKSPACE_RENEWAL=false      # 6-hourly Drive watch-channel renewal cron; set true with Drive launch
 
 # GRC connectors (Drata / Vanta / Anecdotes — SCRUM-1144..1148)
 DRATA_CLIENT_ID=                    # Drata OAuth client id
@@ -333,6 +343,7 @@ VANTA_CLIENT_SECRET=                # Vanta OAuth client secret (Secret Manager)
 ANECDOTES_CLIENT_ID=                # Anecdotes OAuth client id
 ANECDOTES_CLIENT_SECRET=            # Anecdotes OAuth client secret (Secret Manager)
 ENABLE_GRC_INTEGRATIONS=false       # umbrella flag for all 3 GRC connectors
+ENABLE_ATS_WEBHOOK=false            # ATS webhook intake; default off pending tenant-isolation validation
 ENABLE_RULE_ACTION_DISPATCHER=true  # 2-min cron that fans rule executions out to actions
 ```
 
@@ -419,4 +430,3 @@ CHAIN_API_URL=
 CHAIN_API_KEY=
 CHAIN_NETWORK=                      # "testnet" | "mainnet"
 ```
-

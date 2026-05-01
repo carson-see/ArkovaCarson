@@ -171,16 +171,24 @@ const ConfigSchema = z.object({
    * (HANDOFF.md "Drive + DocuSign live in prod").
    */
   enableDriveOauth: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(false),
+  /** Drive webhook intake — when false, Drive push notifications return 503. Default false while folder delta processing is launch-gated. */
+  enableDriveWebhook: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(false),
   /** Google OAuth client id (Drive). Required when ENABLE_DRIVE_OAUTH=true in production. */
   googleOauthClientId: z.string().optional(),
   /** Google OAuth client secret (Drive). Required when ENABLE_DRIVE_OAUTH=true in production. */
   googleOauthClientSecret: z.string().optional(),
+  /** DocuSign OAuth flow — when false, /api/v1/integrations/docusign routes 503. Default false pending org-scale validation. */
+  enableDocusignOauth: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(false),
+  /** DocuSign Connect webhook — when false, /webhooks/docusign returns 503. Default false pending org-scale validation. */
+  enableDocusignWebhook: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(false),
   /** DocuSign integration key. Required when DOCUSIGN_CONNECT_HMAC_SECRET is set. */
   docusignIntegrationKey: z.string().optional(),
   /** DocuSign client secret. Required when DOCUSIGN_INTEGRATION_KEY is set. */
   docusignClientSecret: z.string().optional(),
   /** DocuSign Connect raw-body HMAC secret. Worker rejects POST /webhooks/docusign without it. */
   docusignConnectHmacSecret: z.string().optional(),
+  /** ATS webhook intake — when false, ATS inbound webhooks return 503. Default false pending tenant-isolation validation. */
+  enableAtsWebhook: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(false),
   /** Adobe Sign OAuth client secret. Routes 503 when unset. */
   adobeSignClientSecret: z.string().optional(),
   /** Checkr Connect webhook HMAC. Routes 503 when unset. */
@@ -370,6 +378,34 @@ const ConfigSchema = z.object({
     });
   }
 
+  if (
+    cfg.nodeEnv === 'production'
+    && cfg.enableDocusignOauth
+    && (!cfg.docusignIntegrationKey || !cfg.docusignClientSecret)
+  ) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message:
+        'ENABLE_DOCUSIGN_OAUTH=true in production requires both '
+        + 'DOCUSIGN_INTEGRATION_KEY and DOCUSIGN_CLIENT_SECRET.',
+      path: ['docusignIntegrationKey'],
+    });
+  }
+
+  if (
+    cfg.nodeEnv === 'production'
+    && cfg.enableDocusignWebhook
+    && !cfg.docusignConnectHmacSecret
+  ) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message:
+        'ENABLE_DOCUSIGN_WEBHOOK=true in production requires '
+        + 'DOCUSIGN_CONNECT_HMAC_SECRET for raw-body Connect verification.',
+      path: ['docusignConnectHmacSecret'],
+    });
+  }
+
   // DocuSign: integration key + client secret travel together. Either both are
   // set or both are unset (vendor-gated route returns 503). A half-set pair is
   // a deployment bug.
@@ -505,11 +541,15 @@ function loadConfig(): Config {
     buildSha: process.env.BUILD_SHA,
     integrationStateHmacSecret: process.env.INTEGRATION_STATE_HMAC_SECRET,
     enableDriveOauth: process.env.ENABLE_DRIVE_OAUTH,
+    enableDriveWebhook: process.env.ENABLE_DRIVE_WEBHOOK,
     googleOauthClientId: process.env.GOOGLE_OAUTH_CLIENT_ID,
     googleOauthClientSecret: process.env.GOOGLE_OAUTH_CLIENT_SECRET,
+    enableDocusignOauth: process.env.ENABLE_DOCUSIGN_OAUTH,
+    enableDocusignWebhook: process.env.ENABLE_DOCUSIGN_WEBHOOK,
     docusignIntegrationKey: process.env.DOCUSIGN_INTEGRATION_KEY,
     docusignClientSecret: process.env.DOCUSIGN_CLIENT_SECRET,
     docusignConnectHmacSecret: process.env.DOCUSIGN_CONNECT_HMAC_SECRET,
+    enableAtsWebhook: process.env.ENABLE_ATS_WEBHOOK,
     adobeSignClientSecret: process.env.ADOBE_SIGN_CLIENT_SECRET,
     checkrWebhookSecret: process.env.CHECKR_WEBHOOK_SECRET,
     veremarkWebhookSecret: process.env.VEREMARK_WEBHOOK_SECRET,

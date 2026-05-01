@@ -302,7 +302,7 @@ router.use('/audit-export', requireAuth, auditExportRouter);
 
 // ─── GRC platform integrations — Vanta, Drata, Anecdotes (CML-05) ───
 import { killSwitch } from '../../middleware/integrationKillSwitch.js';
-router.use('/grc', killSwitch('ENABLE_GRC_INTEGRATION'), grcFeatureGate(), requireAuth, grcRouter);
+router.use('/grc', killSwitch('ENABLE_GRC_INTEGRATIONS'), grcFeatureGate(), requireAuth, grcRouter);
 
 // ATS webhooks mounted in index.ts for raw-body HMAC (SCRUM-1214/1215).
 // Path: /api/v1/webhooks/ats/:provider/:integrationId. Kill-switch is applied

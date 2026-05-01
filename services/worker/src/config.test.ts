@@ -458,6 +458,10 @@ describe('SCRUM-1258 batch 2 — feature flags + observability + treasury', () =
       expect(c.enableAllocationRollover).toBe(false);
       expect(c.enableVisualFraudDetection).toBe(false);
       expect(c.enableGrcIntegrations).toBe(false);
+      expect(c.enableDriveWebhook).toBe(false);
+      expect(c.enableDocusignOauth).toBe(false);
+      expect(c.enableDocusignWebhook).toBe(false);
+      expect(c.enableAtsWebhook).toBe(false);
       expect(c.enableAdesSignatures).toBe(false);
       expect(c.enableDemoInjector).toBe(false);
       expect(c.enableSyntheticData).toBe(false);
@@ -474,12 +478,20 @@ describe('SCRUM-1258 batch 2 — feature flags + observability + treasury', () =
         ENABLE_VISUAL_FRAUD_DETECTION: 'true',
         ENABLE_DEMO_INJECTOR: 'false',
         ENABLE_GRC_INTEGRATIONS: 'true',
+        ENABLE_DRIVE_WEBHOOK: 'true',
+        ENABLE_DOCUSIGN_OAUTH: 'true',
+        ENABLE_DOCUSIGN_WEBHOOK: 'false',
+        ENABLE_ATS_WEBHOOK: 'true',
       },
       (mod) => {
         const c = mod.config as Record<string, unknown>;
         expect(c.enableVisualFraudDetection).toBe(true);
         expect(c.enableDemoInjector).toBe(false);
         expect(c.enableGrcIntegrations).toBe(true);
+        expect(c.enableDriveWebhook).toBe(true);
+        expect(c.enableDocusignOauth).toBe(true);
+        expect(c.enableDocusignWebhook).toBe(false);
+        expect(c.enableAtsWebhook).toBe(true);
       },
     );
   });

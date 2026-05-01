@@ -1,0 +1,2084 @@
+{
+  "findings": [
+    {
+      "action": "Add to canonical registry or update architecture so operators know this flag is controlled elsewhere.",
+      "evidence": "flagRegistry.ts claims to centralize worker feature flags, but this launch-critical flag is not loaded/logged there.",
+      "priority": "P1",
+      "title": "ENABLE_MCP_SERVER absent from worker flagRegistry"
+    },
+    {
+      "action": "Add to canonical registry or update architecture so operators know this flag is controlled elsewhere.",
+      "evidence": "flagRegistry.ts claims to centralize worker feature flags, but this launch-critical flag is not loaded/logged there.",
+      "priority": "P1",
+      "title": "ENABLE_X402_FACILITATOR absent from worker flagRegistry"
+    },
+    {
+      "action": "Define environment-specific defaults in the canonical register and stop relying on scattered fallback values.",
+      "evidence": ".env.example=false; docs/reference/ENV.md=false; frontend-switchboard=true; supabase-seed-default=false; supabase-seed-value=true",
+      "priority": "P1",
+      "title": "ENABLE_AI_EXTRACTION has conflicting parsed defaults"
+    },
+    {
+      "action": "Define environment-specific defaults in the canonical register and stop relying on scattered fallback values.",
+      "evidence": "docs/reference/ENV.md=false; frontend-switchboard=true; supabase-seed-default=false; supabase-seed-value=true",
+      "priority": "P1",
+      "title": "ENABLE_AI_FRAUD has conflicting parsed defaults"
+    },
+    {
+      "action": "Define environment-specific defaults in the canonical register and stop relying on scattered fallback values.",
+      "evidence": "docs/reference/ENV.md=false; frontend-switchboard=true; supabase-seed-default=false; supabase-seed-value=true",
+      "priority": "P1",
+      "title": "ENABLE_AI_REPORTS has conflicting parsed defaults"
+    },
+    {
+      "action": "Define environment-specific defaults in the canonical register and stop relying on scattered fallback values.",
+      "evidence": ".env.example=false; docs/reference/ENV.md=false; frontend-switchboard=true; supabase-seed-default=false; supabase-seed-value=true",
+      "priority": "P1",
+      "title": "ENABLE_SEMANTIC_SEARCH has conflicting parsed defaults"
+    },
+    {
+      "action": "Define environment-specific defaults in the canonical register and stop relying on scattered fallback values.",
+      "evidence": ".env.example=false; docs/reference/ENV.md=false; frontend-switchboard=true; supabase-seed-default=false; supabase-seed-value=true",
+      "priority": "P0",
+      "title": "ENABLE_VERIFICATION_API has conflicting parsed defaults"
+    },
+    {
+      "action": "Define environment-specific defaults in the canonical register and stop relying on scattered fallback values.",
+      "evidence": "frontend-switchboard=true; supabase-seed-default=false; supabase-seed-value=false",
+      "priority": "P1",
+      "title": "ENABLE_X402_PAYMENTS has conflicting parsed defaults"
+    }
+  ],
+  "flag_count": 62,
+  "flags": [
+    {
+      "categories": [
+        "docs",
+        "env-doc",
+        "other",
+        "worker-code",
+        "worker-config",
+        "worker-registry"
+      ],
+      "classification": "roadmap-or-optional",
+      "defaults": {
+        "docs/reference/ENV.md": "false",
+        "worker-config": "false"
+      },
+      "examples": [
+        "docs/reference/ENV.md:352",
+        "scripts/ci/snapshots/worker-env-adhoc-baseline.json:31",
+        "docs/stories/23_phase3_esignatures.md:903"
+      ],
+      "files": [
+        "docs/bugs/bug_log.md",
+        "docs/reference/ENV.md",
+        "docs/stories/23_phase3_esignatures.md",
+        "scripts/ci/snapshots/worker-env-adhoc-baseline.json",
+        "services/worker/src/config.ts",
+        "services/worker/src/middleware/adesFeatureGate.test.ts",
+        "services/worker/src/middleware/adesFeatureGate.ts",
+        "services/worker/src/middleware/flagRegistry.ts",
+        "services/worker/src/signatures/agents.md",
+        "services/worker/src/signatures/compliance/auditProofExporter.ts"
+      ],
+      "launch_reason": "Keep outside beta launch unless explicitly scoped and tested.",
+      "name": "ENABLE_ADES_SIGNATURES",
+      "priority": "P2"
+    },
+    {
+      "categories": [
+        "db-seed-or-migration",
+        "deploy-config",
+        "docs",
+        "env-doc",
+        "env-example",
+        "frontend-admin-ui",
+        "frontend-code",
+        "frontend-switchboard",
+        "worker-code",
+        "worker-registry"
+      ],
+      "classification": "roadmap-or-optional",
+      "defaults": {
+        ".env.example": "false",
+        "docs/reference/ENV.md": "false",
+        "frontend-switchboard": "true",
+        "supabase-seed-default": "false",
+        "supabase-seed-value": "true"
+      },
+      "examples": [
+        ".env.example:105",
+        "scripts/deploy-worker.sh:35",
+        "docs/reference/ENV.md:401"
+      ],
+      "files": [
+        ".env.example",
+        ".github/workflows/deploy-worker.yml",
+        "docs/bugs/e2e_journey_validation.md",
+        "docs/bugs/uat_launch_readiness_4.md",
+        "docs/bugs/uat_systematic_sweep_2026_03_31.md",
+        "docs/compliance/pentest-scope.md",
+        "docs/compliance/security-training.md",
+        "docs/compliance/soc2-evidence.md",
+        "docs/reference/ENV.md",
+        "docs/runbooks/sarah-sprint-1-deploy-checklist.md",
+        "docs/stories/12_p8_ai_intelligence.md",
+        "docs/stories/16_beta_readiness.md",
+        "docs/wiki/TECHNICAL_SECURITY_WIKI.md",
+        "docs/wiki/generate-wiki-docx.cjs",
+        "scripts/deploy-worker.sh",
+        "services/worker/.env.example",
+        "services/worker/src/api/v1/docs.ts",
+        "services/worker/src/api/v1/router.ts",
+        "services/worker/src/middleware/aiFeatureGate.test.ts",
+        "services/worker/src/middleware/aiFeatureGate.ts",
+        "services/worker/src/middleware/flagRegistry.test.ts",
+        "services/worker/src/middleware/flagRegistry.ts",
+        "src/components/dashboard/BatchAIDashboard.tsx",
+        "src/lib/switchboard.ts",
+        "src/pages/PlatformControlsPage.tsx",
+        "supabase/seed.sql"
+      ],
+      "launch_reason": "Keep outside beta launch unless explicitly scoped and tested.",
+      "name": "ENABLE_AI_EXTRACTION",
+      "priority": "P2"
+    },
+    {
+      "categories": [
+        "docs",
+        "edge-code",
+        "env-doc",
+        "env-example",
+        "other",
+        "worker-code",
+        "worker-config",
+        "worker-registry"
+      ],
+      "classification": "unclassified",
+      "defaults": {
+        ".env.example": "false",
+        "docs/reference/ENV.md": "false",
+        "worker-config": "false"
+      },
+      "examples": [
+        ".env.example:97",
+        "docs/reference/ENV.md:147",
+        "docs/wiki/TECHNICAL_SECURITY_WIKI.md:389"
+      ],
+      "files": [
+        ".env.example",
+        "docs/reference/ENV.md",
+        "docs/stories/13_infrastructure_edge.md",
+        "docs/wiki/TECHNICAL_SECURITY_WIKI.md",
+        "docs/wiki/generate-wiki-docx.cjs",
+        "scripts/ci/snapshots/worker-env-adhoc-baseline.json",
+        "services/edge/agents.md",
+        "services/edge/src/ai-fallback.ts",
+        "services/edge/src/env.ts",
+        "services/edge/wrangler.toml",
+        "services/worker/src/ai/cloudflare-fallback.test.ts",
+        "services/worker/src/ai/cloudflare-fallback.ts",
+        "services/worker/src/ai/factory.test.ts",
+        "services/worker/src/ai/factory.ts",
+        "services/worker/src/config.ts",
+        "services/worker/src/middleware/flagRegistry.ts"
+      ],
+      "launch_reason": "Needs owner and registry entry if still active.",
+      "name": "ENABLE_AI_FALLBACK",
+      "priority": "P3"
+    },
+    {
+      "categories": [
+        "db-seed-or-migration",
+        "deploy-config",
+        "docs",
+        "env-doc",
+        "env-example",
+        "frontend-admin-ui",
+        "frontend-switchboard",
+        "worker-code",
+        "worker-registry"
+      ],
+      "classification": "roadmap-or-optional",
+      "defaults": {
+        "docs/reference/ENV.md": "false",
+        "frontend-switchboard": "true",
+        "supabase-seed-default": "false",
+        "supabase-seed-value": "true"
+      },
+      "examples": [
+        "docs/reference/ENV.md:403",
+        "docs/reference/ENV.md:407",
+        "supabase/seed.sql:204"
+      ],
+      "files": [
+        ".github/workflows/deploy-worker.yml",
+        "docs/reference/ENV.md",
+        "docs/stories/12_p8_ai_intelligence.md",
+        "docs/wiki/TECHNICAL_SECURITY_WIKI.md",
+        "services/worker/.env.example",
+        "services/worker/src/api/v1/docs.ts",
+        "services/worker/src/api/v1/router.ts",
+        "services/worker/src/middleware/aiFeatureGate.test.ts",
+        "services/worker/src/middleware/aiFeatureGate.ts",
+        "services/worker/src/middleware/flagRegistry.test.ts",
+        "services/worker/src/middleware/flagRegistry.ts",
+        "src/lib/switchboard.ts",
+        "src/pages/PlatformControlsPage.tsx",
+        "supabase/seed.sql"
+      ],
+      "launch_reason": "Keep outside beta launch unless explicitly scoped and tested.",
+      "name": "ENABLE_AI_FRAUD",
+      "priority": "P2"
+    },
+    {
+      "categories": [
+        "db-seed-or-migration",
+        "deploy-config",
+        "docs",
+        "env-doc",
+        "frontend-admin-ui",
+        "frontend-switchboard",
+        "worker-code",
+        "worker-registry"
+      ],
+      "classification": "roadmap-or-optional",
+      "defaults": {
+        "docs/reference/ENV.md": "false",
+        "frontend-switchboard": "true",
+        "supabase-seed-default": "false",
+        "supabase-seed-value": "true"
+      },
+      "examples": [
+        "docs/reference/ENV.md:404",
+        "supabase/seed.sql:206",
+        ".github/workflows/deploy-worker.yml:140"
+      ],
+      "files": [
+        ".github/workflows/deploy-worker.yml",
+        "docs/reference/ENV.md",
+        "docs/stories/12_p8_ai_intelligence.md",
+        "services/worker/src/api/v1/router.ts",
+        "services/worker/src/middleware/aiFeatureGate.ts",
+        "services/worker/src/middleware/flagRegistry.test.ts",
+        "services/worker/src/middleware/flagRegistry.ts",
+        "src/lib/switchboard.ts",
+        "src/pages/PlatformControlsPage.tsx",
+        "supabase/migrations/0064_p8_phase2_ai_intelligence.sql",
+        "supabase/migrations/0066_audit_compensating_fixes.sql",
+        "supabase/seed.sql"
+      ],
+      "launch_reason": "Keep outside beta launch unless explicitly scoped and tested.",
+      "name": "ENABLE_AI_REPORTS",
+      "priority": "P2"
+    },
+    {
+      "categories": [
+        "docs",
+        "env-doc",
+        "other",
+        "worker-code",
+        "worker-config",
+        "worker-registry"
+      ],
+      "classification": "launch-critical",
+      "defaults": {
+        "docs/reference/ENV.md": "false",
+        "worker-config": "false"
+      },
+      "examples": [
+        "docs/reference/ENV.md:298",
+        "docs/runbooks/billing/phase-3-rollover-grace.md:32",
+        "scripts/ci/snapshots/worker-env-adhoc-baseline.json:33"
+      ],
+      "files": [
+        "docs/reference/ENV.md",
+        "docs/runbooks/billing/phase-3-rollover-grace.md",
+        "scripts/ci/snapshots/worker-env-adhoc-baseline.json",
+        "services/worker/src/config.ts",
+        "services/worker/src/jobs/monthly-allocation-rollover.test.ts",
+        "services/worker/src/jobs/monthly-allocation-rollover.ts",
+        "services/worker/src/middleware/flagRegistry.ts"
+      ],
+      "launch_reason": "Monthly credit rollover policy",
+      "name": "ENABLE_ALLOCATION_ROLLOVER",
+      "priority": "P1"
+    },
+    {
+      "categories": [
+        "env-doc",
+        "integration-kill-switch",
+        "worker-code",
+        "worker-config",
+        "worker-registry"
+      ],
+      "classification": "roadmap-or-optional",
+      "defaults": {
+        "docs/reference/ENV.md": "false"
+      },
+      "examples": [
+        "docs/reference/ENV.md:346",
+        "services/worker/src/config.test.ts:484",
+        "services/worker/src/config.ts:552"
+      ],
+      "files": [
+        "docs/reference/ENV.md",
+        "services/worker/src/config.test.ts",
+        "services/worker/src/config.ts",
+        "services/worker/src/middleware/flagRegistry.ts",
+        "services/worker/src/middleware/integrationKillSwitch.ts"
+      ],
+      "launch_reason": "Keep outside beta launch unless explicitly scoped and tested.",
+      "name": "ENABLE_ATS_WEBHOOK",
+      "priority": "P2"
+    },
+    {
+      "categories": [
+        "db-seed-or-migration",
+        "docs",
+        "frontend-admin-ui",
+        "frontend-switchboard",
+        "worker-code",
+        "worker-registry"
+      ],
+      "classification": "platform-switchboard",
+      "defaults": {
+        "frontend-switchboard": "true"
+      },
+      "examples": [
+        "src/pages/PlatformControlsPage.tsx:52",
+        "docs/runbooks/anchor-disk-hygiene.md:82",
+        "docs/stories/22_phase2_agentic_layer.md:61"
+      ],
+      "files": [
+        "docs/runbooks/anchor-disk-hygiene.md",
+        "docs/stories/22_phase2_agentic_layer.md",
+        "services/worker/src/jobs/attestationAnchor.test.ts",
+        "services/worker/src/jobs/attestationAnchor.ts",
+        "services/worker/src/middleware/flagRegistry.ts",
+        "src/lib/switchboard.ts",
+        "src/pages/PlatformControlsPage.tsx",
+        "supabase/migrations/0086_attestation_anchoring_flag.sql"
+      ],
+      "launch_reason": "Platform flag; verify owner before changing default.",
+      "name": "ENABLE_ATTESTATION_ANCHORING",
+      "priority": "P2"
+    },
+    {
+      "categories": [
+        "docs",
+        "env-example",
+        "frontend-admin-ui",
+        "frontend-switchboard",
+        "worker-code",
+        "worker-registry"
+      ],
+      "classification": "platform-switchboard",
+      "defaults": {
+        "frontend-switchboard": "false"
+      },
+      "examples": [
+        "src/pages/PlatformControlsPage.tsx:60",
+        "services/worker/src/jobs/batch-anchor.ts:10",
+        "services/worker/src/jobs/batch-anchor.ts:14"
+      ],
+      "files": [
+        "docs/stories/11_mvp_launch_gaps.md",
+        "services/worker/.env.example",
+        "services/worker/src/jobs/batch-anchor.ts",
+        "services/worker/src/middleware/flagRegistry.ts",
+        "src/lib/switchboard.ts",
+        "src/pages/PlatformControlsPage.tsx"
+      ],
+      "launch_reason": "Platform flag; verify owner before changing default.",
+      "name": "ENABLE_BATCH_ANCHORING",
+      "priority": "P2"
+    },
+    {
+      "categories": [
+        "docs",
+        "env-doc",
+        "other",
+        "worker-code",
+        "worker-config",
+        "worker-registry"
+      ],
+      "classification": "unclassified",
+      "defaults": {
+        "docs/reference/ENV.md": "false",
+        "worker-config": "false"
+      },
+      "examples": [
+        "docs/reference/ENV.md:377",
+        "scripts/ci/snapshots/worker-env-adhoc-baseline.json:34",
+        "docs/runbooks/gcp-max-setup.md:93"
+      ],
+      "files": [
+        "docs/reference/ENV.md",
+        "docs/runbooks/gcp-max-setup.md",
+        "scripts/ci/snapshots/worker-env-adhoc-baseline.json",
+        "services/worker/src/config.ts",
+        "services/worker/src/jobs/cloud-logging-drain.ts",
+        "services/worker/src/middleware/flagRegistry.ts"
+      ],
+      "launch_reason": "Needs owner and registry entry if still active.",
+      "name": "ENABLE_CLOUD_LOGGING_SINK",
+      "priority": "P3"
+    },
+    {
+      "categories": [
+        "db-seed-or-migration",
+        "worker-registry"
+      ],
+      "classification": "roadmap-or-optional",
+      "defaults": {},
+      "examples": [
+        "supabase/migrations/0196_compliance_engine_flags.sql:3",
+        "supabase/migrations/0196_compliance_engine_flags.sql:20",
+        "supabase/migrations/0196_compliance_engine_flags.sql:24"
+      ],
+      "files": [
+        "services/worker/src/middleware/flagRegistry.ts",
+        "supabase/migrations/0196_compliance_engine_flags.sql"
+      ],
+      "launch_reason": "Keep outside beta launch unless explicitly scoped and tested.",
+      "name": "ENABLE_COMPLIANCE_ENGINE",
+      "priority": "P2"
+    },
+    {
+      "categories": [
+        "env-doc",
+        "other",
+        "worker-code",
+        "worker-config"
+      ],
+      "classification": "unclassified",
+      "defaults": {
+        "docs/reference/ENV.md": "false"
+      },
+      "examples": [
+        "docs/reference/ENV.md:189",
+        "scripts/ci/snapshots/worker-env-adhoc-baseline.json:35",
+        "services/worker/src/config.ts:534"
+      ],
+      "files": [
+        "docs/reference/ENV.md",
+        "scripts/ci/snapshots/worker-env-adhoc-baseline.json",
+        "services/worker/src/ai/nessie.test.ts",
+        "services/worker/src/ai/nessie.ts",
+        "services/worker/src/config.ts"
+      ],
+      "launch_reason": "Needs owner and registry entry if still active.",
+      "name": "ENABLE_CONSTRAINED_DECODING",
+      "priority": "P3"
+    },
+    {
+      "categories": [
+        "env-doc",
+        "other",
+        "worker-code",
+        "worker-config",
+        "worker-registry"
+      ],
+      "classification": "roadmap-or-optional",
+      "defaults": {
+        "docs/reference/ENV.md": "false",
+        "worker-config": "false"
+      },
+      "examples": [
+        "docs/reference/ENV.md:390",
+        "scripts/ci/snapshots/worker-env-adhoc-baseline.json:36",
+        "services/worker/src/config.test.ts:479"
+      ],
+      "files": [
+        "docs/reference/ENV.md",
+        "scripts/ci/snapshots/worker-env-adhoc-baseline.json",
+        "services/worker/src/api/demo-event-injector.test.ts",
+        "services/worker/src/api/demo-event-injector.ts",
+        "services/worker/src/api/v1/openapi-ciba.ts",
+        "services/worker/src/config.test.ts",
+        "services/worker/src/config.ts",
+        "services/worker/src/middleware/flagRegistry.ts"
+      ],
+      "launch_reason": "Keep outside beta launch unless explicitly scoped and tested.",
+      "name": "ENABLE_DEMO_INJECTOR",
+      "priority": "P2"
+    },
+    {
+      "categories": [
+        "env-doc",
+        "integration-kill-switch",
+        "worker-code",
+        "worker-config",
+        "worker-registry"
+      ],
+      "classification": "launch-critical",
+      "defaults": {
+        "docs/reference/ENV.md": "false"
+      },
+      "examples": [
+        "docs/reference/ENV.md:282",
+        "services/worker/src/config.test.ts:482",
+        "services/worker/src/config.ts:389"
+      ],
+      "files": [
+        "docs/reference/ENV.md",
+        "services/worker/src/config.test.ts",
+        "services/worker/src/config.ts",
+        "services/worker/src/index.ts",
+        "services/worker/src/middleware/flagRegistry.ts",
+        "services/worker/src/middleware/integrationKillSwitch.ts"
+      ],
+      "launch_reason": "DocuSign organization account connection",
+      "name": "ENABLE_DOCUSIGN_OAUTH",
+      "priority": "P0"
+    },
+    {
+      "categories": [
+        "env-doc",
+        "integration-kill-switch",
+        "worker-code",
+        "worker-config",
+        "worker-registry"
+      ],
+      "classification": "launch-critical",
+      "defaults": {
+        "docs/reference/ENV.md": "false"
+      },
+      "examples": [
+        "docs/reference/ENV.md:287",
+        "services/worker/src/config.test.ts:483",
+        "services/worker/src/config.ts:403"
+      ],
+      "files": [
+        "docs/reference/ENV.md",
+        "services/worker/src/config.test.ts",
+        "services/worker/src/config.ts",
+        "services/worker/src/index.ts",
+        "services/worker/src/middleware/flagRegistry.ts",
+        "services/worker/src/middleware/integrationKillSwitch.ts"
+      ],
+      "launch_reason": "DocuSign completed-contract automation",
+      "name": "ENABLE_DOCUSIGN_WEBHOOK",
+      "priority": "P0"
+    },
+    {
+      "categories": [
+        "docs",
+        "env-doc",
+        "integration-kill-switch",
+        "worker-code",
+        "worker-config",
+        "worker-registry"
+      ],
+      "classification": "launch-critical",
+      "defaults": {
+        "docs/reference/ENV.md": "false"
+      },
+      "examples": [
+        "docs/reference/ENV.md:334",
+        "docs/runbooks/oauth-state-secret-rotation.md:94",
+        "services/worker/src/config.test.ts:203"
+      ],
+      "files": [
+        "docs/reference/ENV.md",
+        "docs/runbooks/oauth-state-secret-rotation.md",
+        "services/worker/src/config.test.ts",
+        "services/worker/src/config.ts",
+        "services/worker/src/index.ts",
+        "services/worker/src/middleware/flagRegistry.ts",
+        "services/worker/src/middleware/integrationKillSwitch.test.ts",
+        "services/worker/src/middleware/integrationKillSwitch.ts"
+      ],
+      "launch_reason": "Google Drive account connection",
+      "name": "ENABLE_DRIVE_OAUTH",
+      "priority": "P0"
+    },
+    {
+      "categories": [
+        "env-doc",
+        "integration-kill-switch",
+        "worker-code",
+        "worker-config",
+        "worker-registry"
+      ],
+      "classification": "launch-critical",
+      "defaults": {
+        "docs/reference/ENV.md": "false"
+      },
+      "examples": [
+        "docs/reference/ENV.md:335",
+        "services/worker/src/config.test.ts:481",
+        "services/worker/src/config.ts:544"
+      ],
+      "files": [
+        "docs/reference/ENV.md",
+        "services/worker/src/api/v1/router.ts",
+        "services/worker/src/config.test.ts",
+        "services/worker/src/config.ts",
+        "services/worker/src/middleware/flagRegistry.ts",
+        "services/worker/src/middleware/integrationKillSwitch.ts"
+      ],
+      "launch_reason": "Google Drive watched-folder automation",
+      "name": "ENABLE_DRIVE_WEBHOOK",
+      "priority": "P0"
+    },
+    {
+      "categories": [
+        "frontend-code"
+      ],
+      "classification": "unclassified",
+      "defaults": {},
+      "examples": [
+        "src/lib/env.ts:44"
+      ],
+      "files": [
+        "src/lib/env.ts"
+      ],
+      "launch_reason": "Needs owner and registry entry if still active.",
+      "name": "ENABLE_DSAR_UI",
+      "priority": "P3"
+    },
+    {
+      "categories": [
+        "docs"
+      ],
+      "classification": "unclassified",
+      "defaults": {},
+      "examples": [
+        "docs/stories/16_beta_readiness.md:157"
+      ],
+      "files": [
+        "docs/stories/16_beta_readiness.md"
+      ],
+      "launch_reason": "Needs owner and registry entry if still active.",
+      "name": "ENABLE_EMAIL_NOTIFICATIONS",
+      "priority": "P3"
+    },
+    {
+      "categories": [
+        "db-seed-or-migration",
+        "docs",
+        "worker-code",
+        "worker-registry"
+      ],
+      "classification": "unclassified",
+      "defaults": {},
+      "examples": [
+        "services/worker/src/routes/cron.ts:718",
+        "services/worker/src/routes/cron.ts:719",
+        "docs/stories/27_nessie_compliance_engine.md:337"
+      ],
+      "files": [
+        "docs/stories/27_nessie_compliance_engine.md",
+        "services/worker/src/middleware/flagRegistry.ts",
+        "services/worker/src/routes/cron.ts",
+        "supabase/migrations/0196_compliance_engine_flags.sql"
+      ],
+      "launch_reason": "Needs owner and registry entry if still active.",
+      "name": "ENABLE_EXPIRY_ALERTS",
+      "priority": "P3"
+    },
+    {
+      "categories": [
+        "worker-code"
+      ],
+      "classification": "unclassified",
+      "defaults": {},
+      "examples": [
+        "services/worker/src/api/v1/verify.test.ts:442"
+      ],
+      "files": [
+        "services/worker/src/api/v1/verify.test.ts"
+      ],
+      "launch_reason": "Needs owner and registry entry if still active.",
+      "name": "ENABLE_FRAUD_SIGNALS",
+      "priority": "P3"
+    },
+    {
+      "categories": [
+        "docs",
+        "worker-code"
+      ],
+      "classification": "unclassified",
+      "defaults": {},
+      "examples": [
+        "docs/design/gemb2/gemb2-01-spike.md:37",
+        "docs/design/gemb2/gemb2-01-spike.md:155",
+        "services/worker/src/ai/embeddings/gemini2.ts:16"
+      ],
+      "files": [
+        "docs/design/gemb2/gemb2-01-spike.md",
+        "services/worker/src/ai/embeddings/gemini2.ts"
+      ],
+      "launch_reason": "Needs owner and registry entry if still active.",
+      "name": "ENABLE_GEMB2",
+      "priority": "P3"
+    },
+    {
+      "categories": [
+        "docs"
+      ],
+      "classification": "unclassified",
+      "defaults": {},
+      "examples": [
+        "docs/design/gemb2/gemb2-02-rag-swap.md:54",
+        "docs/design/gemb2/gemb2-02-rag-swap.md:55"
+      ],
+      "files": [
+        "docs/design/gemb2/gemb2-02-rag-swap.md"
+      ],
+      "launch_reason": "Needs owner and registry entry if still active.",
+      "name": "ENABLE_GEMB2_BACKFILL",
+      "priority": "P3"
+    },
+    {
+      "categories": [
+        "docs",
+        "worker-code"
+      ],
+      "classification": "unclassified",
+      "defaults": {},
+      "examples": [
+        "docs/design/gemb2/gemb2-02-rag-swap.md:48",
+        "docs/design/gemb2/gemb2-02-rag-swap.md:50",
+        "docs/design/gemb2/gemb2-02-rag-swap.md:56"
+      ],
+      "files": [
+        "docs/design/gemb2/gemb2-02-rag-swap.md",
+        "services/worker/src/ai/embeddings/agents.md",
+        "services/worker/src/ai/gemini-config.ts"
+      ],
+      "launch_reason": "Needs owner and registry entry if still active.",
+      "name": "ENABLE_GEMB2_RAG",
+      "priority": "P3"
+    },
+    {
+      "categories": [
+        "docs",
+        "env-doc"
+      ],
+      "classification": "unclassified",
+      "defaults": {
+        "docs/reference/ENV.md": "true"
+      },
+      "examples": [
+        "docs/reference/ENV.md:302",
+        "docs/runbooks/billing/phase-3-rollover-grace.md:33"
+      ],
+      "files": [
+        "docs/reference/ENV.md",
+        "docs/runbooks/billing/phase-3-rollover-grace.md"
+      ],
+      "launch_reason": "Needs owner and registry entry if still active.",
+      "name": "ENABLE_GRACE_EXPIRY_SWEEP",
+      "priority": "P3"
+    },
+    {
+      "categories": [
+        "db-seed-or-migration",
+        "docs",
+        "env-doc",
+        "integration-kill-switch",
+        "other",
+        "worker-code",
+        "worker-config",
+        "worker-registry"
+      ],
+      "classification": "launch-critical",
+      "defaults": {
+        "docs/reference/ENV.md": "false",
+        "supabase-seed-default": "false",
+        "supabase-seed-value": "false",
+        "worker-config": "false"
+      },
+      "examples": [
+        "docs/reference/ENV.md:345",
+        "supabase/seed.sql:208",
+        "scripts/ci/snapshots/worker-env-adhoc-baseline.json:37"
+      ],
+      "files": [
+        "docs/reference/ENV.md",
+        "docs/stories/19_compliance_mapping.md",
+        "scripts/ci/snapshots/worker-env-adhoc-baseline.json",
+        "services/worker/src/api/v1/router.ts",
+        "services/worker/src/config.test.ts",
+        "services/worker/src/config.ts",
+        "services/worker/src/middleware/flagRegistry.ts",
+        "services/worker/src/middleware/grcFeatureGate.ts",
+        "services/worker/src/middleware/integrationKillSwitch.ts",
+        "supabase/seed.sql"
+      ],
+      "launch_reason": "GRC config/switchboard name currently used elsewhere",
+      "name": "ENABLE_GRC_INTEGRATIONS",
+      "priority": "P0"
+    },
+    {
+      "categories": [
+        "worker-code"
+      ],
+      "classification": "unclassified",
+      "defaults": {},
+      "examples": [
+        "services/worker/src/integrations/connectors/schemas.ts:17"
+      ],
+      "files": [
+        "services/worker/src/integrations/connectors/schemas.ts"
+      ],
+      "launch_reason": "Needs owner and registry entry if still active.",
+      "name": "ENABLE_INT10_WORKSPACE",
+      "priority": "P3"
+    },
+    {
+      "categories": [
+        "worker-code"
+      ],
+      "classification": "unclassified",
+      "defaults": {},
+      "examples": [
+        "services/worker/src/integrations/connectors/schemas.ts:18"
+      ],
+      "files": [
+        "services/worker/src/integrations/connectors/schemas.ts"
+      ],
+      "launch_reason": "Needs owner and registry entry if still active.",
+      "name": "ENABLE_INT12_ESIGN",
+      "priority": "P3"
+    },
+    {
+      "categories": [
+        "worker-code"
+      ],
+      "classification": "unclassified",
+      "defaults": {},
+      "examples": [
+        "services/worker/src/integrations/connectors/schemas.ts:19"
+      ],
+      "files": [
+        "services/worker/src/integrations/connectors/schemas.ts"
+      ],
+      "launch_reason": "Needs owner and registry entry if still active.",
+      "name": "ENABLE_INT13_ATS",
+      "priority": "P3"
+    },
+    {
+      "categories": [
+        "docs",
+        "edge-code",
+        "env-doc"
+      ],
+      "classification": "launch-critical",
+      "defaults": {
+        "docs/reference/ENV.md": "false"
+      },
+      "examples": [
+        "docs/reference/ENV.md:104",
+        "docs/runbooks/mcp-kill-switch.md:30",
+        "docs/runbooks/mcp-kill-switch.md:50"
+      ],
+      "files": [
+        "docs/reference/ENV.md",
+        "docs/runbooks/mcp-kill-switch.md",
+        "docs/runbooks/sarah-sprint-1-deploy-checklist.md",
+        "services/edge/src/mcp-kill-switch.ts",
+        "services/edge/src/mcp-server.ts"
+      ],
+      "launch_reason": "MCP server exposure",
+      "name": "ENABLE_MCP_SERVER",
+      "priority": "P1"
+    },
+    {
+      "categories": [
+        "docs",
+        "env-doc",
+        "other",
+        "worker-code",
+        "worker-config",
+        "worker-registry"
+      ],
+      "classification": "roadmap-or-optional",
+      "defaults": {
+        "docs/reference/ENV.md": "false",
+        "worker-config": "false"
+      },
+      "examples": [
+        "docs/reference/ENV.md:388",
+        "scripts/ci/snapshots/worker-env-adhoc-baseline.json:38",
+        "docs/stories/28_gemini_migration_evolution.md:362"
+      ],
+      "files": [
+        "docs/reference/ENV.md",
+        "docs/stories/28_gemini_migration_evolution.md",
+        "scripts/ci/snapshots/worker-env-adhoc-baseline.json",
+        "services/worker/src/ai/multimodal-embedding.test.ts",
+        "services/worker/src/ai/multimodal-embedding.ts",
+        "services/worker/src/config.ts",
+        "services/worker/src/middleware/flagRegistry.ts"
+      ],
+      "launch_reason": "Keep outside beta launch unless explicitly scoped and tested.",
+      "name": "ENABLE_MULTIMODAL_EMBEDDINGS",
+      "priority": "P2"
+    },
+    {
+      "categories": [
+        "docs",
+        "env-doc",
+        "other",
+        "worker-code",
+        "worker-config",
+        "worker-registry"
+      ],
+      "classification": "roadmap-or-optional",
+      "defaults": {
+        "docs/reference/ENV.md": "false",
+        "worker-config": "false"
+      },
+      "examples": [
+        "docs/reference/ENV.md:389",
+        "docs/runbooks/nca-audit-uat.md:77",
+        "docs/runbooks/nca-audit-uat.md:124"
+      ],
+      "files": [
+        "docs/reference/ENV.md",
+        "docs/runbooks/nca-audit-uat.md",
+        "docs/stories/40_sales_accuracy_sprint.md",
+        "scripts/ci/snapshots/worker-env-adhoc-baseline.json",
+        "services/worker/src/compliance/recommendation-enrichment.ts",
+        "services/worker/src/config.ts",
+        "services/worker/src/middleware/flagRegistry.ts"
+      ],
+      "launch_reason": "Keep outside beta launch unless explicitly scoped and tested.",
+      "name": "ENABLE_NESSIE_RAG_RECOMMENDATIONS",
+      "priority": "P2"
+    },
+    {
+      "categories": [
+        "db-seed-or-migration",
+        "frontend-admin-ui",
+        "frontend-code",
+        "frontend-switchboard",
+        "worker-registry"
+      ],
+      "classification": "platform-switchboard",
+      "defaults": {
+        "frontend-switchboard": "true",
+        "supabase-seed-default": "true",
+        "supabase-seed-value": "true"
+      },
+      "examples": [
+        "supabase/seed.sql:199",
+        "src/pages/PlatformControlsPage.tsx:78",
+        "supabase/migrations/0271_restore_get_flag_again.sql:16"
+      ],
+      "files": [
+        "services/worker/src/middleware/flagRegistry.ts",
+        "src/lib/switchboard.test.ts",
+        "src/lib/switchboard.ts",
+        "src/pages/PlatformControlsPage.tsx",
+        "supabase/migrations/0021_switchboard_flags.sql",
+        "supabase/migrations/0271_restore_get_flag_again.sql",
+        "supabase/seed.sql"
+      ],
+      "launch_reason": "Platform flag; verify owner before changing default.",
+      "name": "ENABLE_NEW_CHECKOUTS",
+      "priority": "P2"
+    },
+    {
+      "categories": [
+        "env-doc",
+        "worker-code",
+        "worker-config",
+        "worker-registry"
+      ],
+      "classification": "launch-critical",
+      "defaults": {
+        "docs/reference/ENV.md": "false"
+      },
+      "examples": [
+        "docs/reference/ENV.md:65",
+        "services/worker/src/config.ts:518",
+        "services/worker/src/middleware/flagRegistry.ts:29"
+      ],
+      "files": [
+        "docs/reference/ENV.md",
+        "services/worker/src/api/v1/anchor-submit.ts",
+        "services/worker/src/config.ts",
+        "services/worker/src/middleware/flagRegistry.ts"
+      ],
+      "launch_reason": "Bitcoin cost-control credits",
+      "name": "ENABLE_ORG_CREDIT_ENFORCEMENT",
+      "priority": "P0"
+    },
+    {
+      "categories": [
+        "docs",
+        "worker-code"
+      ],
+      "classification": "unclassified",
+      "defaults": {},
+      "examples": [
+        "docs/runbooks/kyb/middesk.md:60",
+        "services/worker/src/api/v1/org-kyb.ts:12"
+      ],
+      "files": [
+        "docs/runbooks/kyb/middesk.md",
+        "services/worker/src/api/v1/org-kyb.ts"
+      ],
+      "launch_reason": "Needs owner and registry entry if still active.",
+      "name": "ENABLE_ORG_KYB",
+      "priority": "P3"
+    },
+    {
+      "categories": [
+        "db-seed-or-migration",
+        "docs",
+        "frontend-admin-ui",
+        "frontend-switchboard",
+        "worker-code",
+        "worker-registry"
+      ],
+      "classification": "platform-switchboard",
+      "defaults": {
+        "frontend-switchboard": "false",
+        "supabase-seed-default": "false",
+        "supabase-seed-value": "false"
+      },
+      "examples": [
+        "supabase/seed.sql:198",
+        "src/pages/PlatformControlsPage.tsx:80",
+        "services/worker/src/webhooks/delivery.ts:454"
+      ],
+      "files": [
+        "docs/stories/08_p7_go_live.md",
+        "services/worker/src/middleware/flagRegistry.ts",
+        "services/worker/src/webhooks/delivery.ts",
+        "src/lib/switchboard.ts",
+        "src/pages/PlatformControlsPage.tsx",
+        "supabase/migrations/0021_switchboard_flags.sql",
+        "supabase/seed.sql"
+      ],
+      "launch_reason": "Platform flag; verify owner before changing default.",
+      "name": "ENABLE_OUTBOUND_WEBHOOKS",
+      "priority": "P2"
+    },
+    {
+      "categories": [
+        "worker-code"
+      ],
+      "classification": "unclassified",
+      "defaults": {},
+      "examples": [
+        "services/worker/src/middleware/paymentTierRouter.ts:13"
+      ],
+      "files": [
+        "services/worker/src/middleware/paymentTierRouter.ts"
+      ],
+      "launch_reason": "Needs owner and registry entry if still active.",
+      "name": "ENABLE_PAYMENT_TIERS",
+      "priority": "P3"
+    },
+    {
+      "categories": [
+        "db-seed-or-migration",
+        "deploy-config",
+        "docs",
+        "env-doc",
+        "env-example",
+        "frontend-admin-ui",
+        "frontend-code",
+        "frontend-switchboard",
+        "worker-code",
+        "worker-config",
+        "worker-registry"
+      ],
+      "classification": "launch-critical",
+      "defaults": {
+        ".env.example": "false",
+        "docs/reference/ENV.md": "false",
+        "frontend-switchboard": "false",
+        "supabase-seed-default": "false",
+        "supabase-seed-value": "false"
+      },
+      "examples": [
+        ".env.example:104",
+        "docs/BETA_PRODUCTION_READINESS.md:193",
+        "scripts/deploy-worker.sh:33"
+      ],
+      "files": [
+        ".env.example",
+        ".github/workflows/deploy-worker.yml",
+        "docs/BETA_PRODUCTION_READINESS.md",
+        "docs/bugs/bug_log.md",
+        "docs/compliance/tabletop-exercise-2026-04-12.md",
+        "docs/deployment/self-hosted/README.md",
+        "docs/ops/key-rotation-runbook.md",
+        "docs/reference/ENV.md",
+        "docs/runbooks/anchor-disk-hygiene.md",
+        "docs/stories/08_p7_go_live.md",
+        "docs/stories/10_deferred_hardening.md",
+        "docs/stories/11_mvp_launch_gaps.md",
+        "docs/stories/16_beta_readiness.md",
+        "scripts/deploy-worker.sh",
+        "services/worker/.env.example",
+        "services/worker/docker-compose.yml",
+        "services/worker/scripts/generate-signet-keypair.ts",
+        "services/worker/src/chain/client.test.ts",
+        "services/worker/src/chain/client.ts",
+        "services/worker/src/chain/fee-estimator.ts",
+        "services/worker/src/config.test.ts",
+        "services/worker/src/config.ts",
+        "services/worker/src/infra/tunnel.test.ts",
+        "services/worker/src/jobs/anchor.ts",
+        "services/worker/src/jobs/attestationAnchor.ts",
+        "services/worker/src/jobs/chain-maintenance.ts",
+        "services/worker/src/jobs/check-confirmations.ts",
+        "services/worker/src/jobs/publicRecordAnchor.ts",
+        "services/worker/src/jobs/revocation.ts",
+        "services/worker/src/middleware/flagRegistry.test.ts",
+        "services/worker/src/middleware/flagRegistry.ts",
+        "services/worker/src/routes/cron.ts",
+        "src/lib/switchboard.test.ts",
+        "src/lib/switchboard.ts",
+        "src/pages/PlatformControlsPage.tsx",
+        "supabase/migrations/0021_switchboard_flags.sql",
+        "supabase/seed.sql"
+      ],
+      "launch_reason": "Real anchoring vs mock anchoring",
+      "name": "ENABLE_PROD_NETWORK_ANCHORING",
+      "priority": "P0"
+    },
+    {
+      "categories": [
+        "db-seed-or-migration",
+        "docs",
+        "frontend-admin-ui",
+        "frontend-switchboard",
+        "worker-code",
+        "worker-registry"
+      ],
+      "classification": "platform-switchboard",
+      "defaults": {
+        "frontend-switchboard": "true"
+      },
+      "examples": [
+        "src/pages/PlatformControlsPage.tsx:49",
+        "src/pages/PlatformControlsPage.tsx:236",
+        "src/pages/PlatformControlsPage.tsx:242"
+      ],
+      "files": [
+        "docs/runbooks/sarah-sprint-1-deploy-checklist.md",
+        "services/worker/src/jobs/__tests__/cmsPhysicianFetcher.test.ts",
+        "services/worker/src/jobs/__tests__/edgarFetcher.test.ts",
+        "services/worker/src/jobs/__tests__/fccUlsFetcher.test.ts",
+        "services/worker/src/jobs/__tests__/federalRegisterFetcher.test.ts",
+        "services/worker/src/jobs/__tests__/newFetchers.test.ts",
+        "services/worker/src/jobs/__tests__/usptoFetcher.test.ts",
+        "services/worker/src/jobs/acncFetcher.ts",
+        "services/worker/src/jobs/brazilFetcher.test.ts",
+        "services/worker/src/jobs/brazilFetcher.ts",
+        "services/worker/src/jobs/calbarFetcher.ts",
+        "services/worker/src/jobs/ceFetcher.ts",
+        "services/worker/src/jobs/certificationFetcher.ts",
+        "services/worker/src/jobs/cleFetcher.ts",
+        "services/worker/src/jobs/cmsPhysicianFetcher.ts",
+        "services/worker/src/jobs/complianceFrameworkFetcher.test.ts",
+        "services/worker/src/jobs/complianceFrameworkFetcher.ts",
+        "services/worker/src/jobs/courtlistenerFetcher.ts",
+        "services/worker/src/jobs/dapipFetcher.ts",
+        "services/worker/src/jobs/ecfrFetcher.ts",
+        "services/worker/src/jobs/edgarFetcher.ts",
+        "services/worker/src/jobs/edgarFormAdvFetcher.ts",
+        "services/worker/src/jobs/enforcementFetcher.ts",
+        "services/worker/src/jobs/fccUlsFetcher.ts",
+        "services/worker/src/jobs/federalRegisterFetcher.ts",
+        "services/worker/src/jobs/finraBrokerCheckFetcher.ts",
+        "services/worker/src/jobs/insuranceLicenseFetcher.ts",
+        "services/worker/src/jobs/ipedsFetcher.ts",
+        "services/worker/src/jobs/jurisdictionFetcher.ts",
+        "services/worker/src/jobs/licensingBoardFetcher.ts",
+        "services/worker/src/jobs/ncesFetcher.test.ts",
+        "services/worker/src/jobs/ncesFetcher.ts",
+        "services/worker/src/jobs/npiFetcher.ts",
+        "services/worker/src/jobs/openStatesFetcher.ts",
+        "services/worker/src/jobs/openalexFetcher.ts",
+        "services/worker/src/jobs/samGovFetcher.ts",
+        "services/worker/src/jobs/secIapdFetcher.ts",
+        "services/worker/src/jobs/singaporeFetcher.test.ts",
+        "services/worker/src/jobs/singaporeFetcher.ts",
+        "services/worker/src/jobs/singaporeHealthFetcher.test.ts",
+        "services/worker/src/jobs/singaporeHealthFetcher.ts",
+        "services/worker/src/jobs/sosFetcher.ts",
+        "services/worker/src/jobs/usptoFetcher.ts",
+        "services/worker/src/middleware/flagRegistry.ts",
+        "services/worker/src/utils/pipeline.ts",
+        "src/lib/switchboard.ts",
+        "src/pages/PlatformControlsPage.tsx",
+        "supabase/migrations/0077_public_records.sql"
+      ],
+      "launch_reason": "Platform flag; verify owner before changing default.",
+      "name": "ENABLE_PUBLIC_RECORDS_INGESTION",
+      "priority": "P2"
+    },
+    {
+      "categories": [
+        "db-seed-or-migration",
+        "docs",
+        "frontend-admin-ui",
+        "frontend-switchboard",
+        "worker-code",
+        "worker-registry"
+      ],
+      "classification": "platform-switchboard",
+      "defaults": {
+        "frontend-switchboard": "true"
+      },
+      "examples": [
+        "src/pages/PlatformControlsPage.tsx:50",
+        "src/pages/PlatformControlsPage.tsx:250",
+        "src/pages/PlatformControlsPage.tsx:256"
+      ],
+      "files": [
+        "docs/bugs/UAT_S35_bugs.md",
+        "docs/runbooks/anchor-disk-hygiene.md",
+        "docs/stories/17_phase1_5_foundation.md",
+        "services/worker/src/jobs/__tests__/publicRecordAnchor.test.ts",
+        "services/worker/src/jobs/publicRecordAnchor.ts",
+        "services/worker/src/middleware/flagRegistry.ts",
+        "src/lib/switchboard.ts",
+        "src/pages/PlatformControlsPage.tsx",
+        "supabase/migrations/0079_public_record_anchoring_flag.sql",
+        "supabase/migrations/0119_fix_get_flag_overload_ambiguity.sql"
+      ],
+      "launch_reason": "Platform flag; verify owner before changing default.",
+      "name": "ENABLE_PUBLIC_RECORD_ANCHORING",
+      "priority": "P2"
+    },
+    {
+      "categories": [
+        "db-seed-or-migration",
+        "docs",
+        "frontend-admin-ui",
+        "frontend-switchboard",
+        "worker-code",
+        "worker-registry"
+      ],
+      "classification": "platform-switchboard",
+      "defaults": {
+        "frontend-switchboard": "true"
+      },
+      "examples": [
+        "docs/plans/nessie-intelligence-training-plan.md:80",
+        "docs/plans/nessie-intelligence-training-plan.md:88",
+        "src/pages/PlatformControlsPage.tsx:51"
+      ],
+      "files": [
+        "docs/plans/nessie-intelligence-training-plan.md",
+        "docs/stories/17_phase1_5_foundation.md",
+        "docs/stories/21_nessie_model_training.md",
+        "docs/stories/27_nessie_compliance_engine.md",
+        "services/worker/src/api/v1/nessie-query.ts",
+        "services/worker/src/jobs/__tests__/publicRecordEmbedder.test.ts",
+        "services/worker/src/jobs/publicRecordEmbedder.ts",
+        "services/worker/src/middleware/flagRegistry.ts",
+        "src/lib/switchboard.ts",
+        "src/pages/PlatformControlsPage.tsx",
+        "supabase/migrations/0080_public_record_embeddings.sql",
+        "supabase/migrations/0158_enable_public_record_embeddings.sql"
+      ],
+      "launch_reason": "Platform flag; verify owner before changing default.",
+      "name": "ENABLE_PUBLIC_RECORD_EMBEDDINGS",
+      "priority": "P2"
+    },
+    {
+      "categories": [
+        "env-doc",
+        "other",
+        "worker-code",
+        "worker-config",
+        "worker-registry"
+      ],
+      "classification": "launch-critical",
+      "defaults": {
+        "docs/reference/ENV.md": "true",
+        "worker-config": "true"
+      },
+      "examples": [
+        "docs/reference/ENV.md:223",
+        "scripts/ci/snapshots/worker-env-adhoc-baseline.json:40",
+        "services/worker/src/config.ts:222"
+      ],
+      "files": [
+        "docs/reference/ENV.md",
+        "scripts/ci/snapshots/worker-env-adhoc-baseline.json",
+        "services/worker/agents.md",
+        "services/worker/src/config.ts",
+        "services/worker/src/jobs/queue-reminders.ts",
+        "services/worker/src/middleware/flagRegistry.ts"
+      ],
+      "launch_reason": "Queue reminder/digest behavior",
+      "name": "ENABLE_QUEUE_REMINDERS",
+      "priority": "P0"
+    },
+    {
+      "categories": [
+        "db-seed-or-migration",
+        "frontend-admin-ui",
+        "frontend-code",
+        "frontend-switchboard",
+        "worker-registry"
+      ],
+      "classification": "platform-switchboard",
+      "defaults": {
+        "frontend-switchboard": "true",
+        "supabase-seed-default": "true",
+        "supabase-seed-value": "true"
+      },
+      "examples": [
+        "supabase/seed.sql:200",
+        "src/pages/PlatformControlsPage.tsx:79",
+        "supabase/migrations/0021_switchboard_flags.sql:125"
+      ],
+      "files": [
+        "services/worker/src/middleware/flagRegistry.ts",
+        "src/lib/switchboard.test.ts",
+        "src/lib/switchboard.ts",
+        "src/pages/PlatformControlsPage.tsx",
+        "supabase/migrations/0021_switchboard_flags.sql",
+        "supabase/seed.sql"
+      ],
+      "launch_reason": "Platform flag; verify owner before changing default.",
+      "name": "ENABLE_REPORTS",
+      "priority": "P2"
+    },
+    {
+      "categories": [
+        "docs",
+        "env-doc",
+        "other",
+        "worker-code",
+        "worker-config",
+        "worker-registry"
+      ],
+      "classification": "launch-critical",
+      "defaults": {
+        "docs/reference/ENV.md": "true",
+        "worker-config": "true"
+      },
+      "examples": [
+        "docs/reference/ENV.md:219",
+        "docs/runbooks/sec-harden/sec-harden-02-secret-manager-migration.md:121",
+        "scripts/ci/snapshots/worker-env-adhoc-baseline.json:41"
+      ],
+      "files": [
+        "docs/reference/ENV.md",
+        "docs/runbooks/sec-harden/sec-harden-02-secret-manager-migration.md",
+        "scripts/ci/snapshots/worker-env-adhoc-baseline.json",
+        "services/worker/agents.md",
+        "services/worker/src/config.ts",
+        "services/worker/src/jobs/rules-engine.test.ts",
+        "services/worker/src/jobs/rules-engine.ts",
+        "services/worker/src/middleware/flagRegistry.ts"
+      ],
+      "launch_reason": "Rule evaluation for automation",
+      "name": "ENABLE_RULES_ENGINE",
+      "priority": "P0"
+    },
+    {
+      "categories": [
+        "env-doc",
+        "other",
+        "worker-code",
+        "worker-config",
+        "worker-registry"
+      ],
+      "classification": "launch-critical",
+      "defaults": {
+        "docs/reference/ENV.md": "true",
+        "worker-config": "true"
+      },
+      "examples": [
+        "docs/reference/ENV.md:347",
+        "scripts/ci/snapshots/worker-env-adhoc-baseline.json:42",
+        "services/worker/src/jobs/rule-action-dispatcher.ts:25"
+      ],
+      "files": [
+        "docs/reference/ENV.md",
+        "scripts/ci/snapshots/worker-env-adhoc-baseline.json",
+        "services/worker/src/config.ts",
+        "services/worker/src/jobs/rule-action-dispatcher.test.ts",
+        "services/worker/src/jobs/rule-action-dispatcher.ts",
+        "services/worker/src/middleware/flagRegistry.ts"
+      ],
+      "launch_reason": "Rule action fan-out",
+      "name": "ENABLE_RULE_ACTION_DISPATCHER",
+      "priority": "P0"
+    },
+    {
+      "categories": [
+        "db-seed-or-migration",
+        "deploy-config",
+        "docs",
+        "env-doc",
+        "env-example",
+        "frontend-admin-ui",
+        "frontend-code",
+        "frontend-switchboard",
+        "worker-code",
+        "worker-registry"
+      ],
+      "classification": "roadmap-or-optional",
+      "defaults": {
+        ".env.example": "false",
+        "docs/reference/ENV.md": "false",
+        "frontend-switchboard": "true",
+        "supabase-seed-default": "false",
+        "supabase-seed-value": "true"
+      },
+      "examples": [
+        ".env.example:106",
+        "docs/reference/ENV.md:402",
+        "supabase/seed.sql:203"
+      ],
+      "files": [
+        ".env.example",
+        ".github/workflows/deploy-worker.yml",
+        "docs/reference/ENV.md",
+        "docs/stories/12_p8_ai_intelligence.md",
+        "docs/wiki/TECHNICAL_SECURITY_WIKI.md",
+        "services/worker/.env.example",
+        "services/worker/src/api/v1/ai-search.ts",
+        "services/worker/src/api/v1/ai-verify-search.ts",
+        "services/worker/src/api/v1/docs.ts",
+        "services/worker/src/api/v1/router.ts",
+        "services/worker/src/jobs/check-confirmations.ts",
+        "services/worker/src/middleware/aiFeatureGate.test.ts",
+        "services/worker/src/middleware/aiFeatureGate.ts",
+        "services/worker/src/middleware/flagRegistry.test.ts",
+        "services/worker/src/middleware/flagRegistry.ts",
+        "src/components/search/SemanticSearch.tsx",
+        "src/hooks/useSemanticSearch.ts",
+        "src/lib/switchboard.ts",
+        "src/pages/PlatformControlsPage.tsx",
+        "supabase/seed.sql"
+      ],
+      "launch_reason": "Keep outside beta launch unless explicitly scoped and tested.",
+      "name": "ENABLE_SEMANTIC_SEARCH",
+      "priority": "P2"
+    },
+    {
+      "categories": [
+        "docs"
+      ],
+      "classification": "unclassified",
+      "defaults": {},
+      "examples": [
+        "docs/design/gemb2/gemb2-04-supersede-spike.md:19"
+      ],
+      "files": [
+        "docs/design/gemb2/gemb2-04-supersede-spike.md"
+      ],
+      "launch_reason": "Needs owner and registry entry if still active.",
+      "name": "ENABLE_SEMANTIC_SUPERSEDE",
+      "priority": "P3"
+    },
+    {
+      "categories": [
+        "worker-code"
+      ],
+      "classification": "unclassified",
+      "defaults": {},
+      "examples": [
+        "services/worker/scripts/nessie-multi-lora-pipeline.ts:91",
+        "services/worker/scripts/nessie-multi-lora-pipeline.ts:358",
+        "services/worker/scripts/nessie-multi-lora-pipeline.ts:932"
+      ],
+      "files": [
+        "services/worker/scripts/nessie-multi-lora-pipeline.ts"
+      ],
+      "launch_reason": "Needs owner and registry entry if still active.",
+      "name": "ENABLE_SYNTHETIC",
+      "priority": "P3"
+    },
+    {
+      "categories": [
+        "docs",
+        "env-doc",
+        "other",
+        "worker-code",
+        "worker-config",
+        "worker-registry"
+      ],
+      "classification": "roadmap-or-optional",
+      "defaults": {
+        "docs/reference/ENV.md": "false",
+        "worker-config": "false"
+      },
+      "examples": [
+        "docs/reference/ENV.md:190",
+        "scripts/ci/snapshots/worker-env-adhoc-baseline.json:43",
+        "services/worker/src/config.test.ts:560"
+      ],
+      "files": [
+        "docs/reference/ENV.md",
+        "docs/stories/13_infrastructure_edge.md",
+        "scripts/ci/snapshots/worker-env-adhoc-baseline.json",
+        "services/worker/src/ai/replicate.test.ts",
+        "services/worker/src/ai/replicate.ts",
+        "services/worker/src/config.test.ts",
+        "services/worker/src/config.ts",
+        "services/worker/src/middleware/flagRegistry.ts"
+      ],
+      "launch_reason": "Keep outside beta launch unless explicitly scoped and tested.",
+      "name": "ENABLE_SYNTHETIC_DATA",
+      "priority": "P2"
+    },
+    {
+      "categories": [
+        "env-doc",
+        "other",
+        "worker-code",
+        "worker-config",
+        "worker-registry"
+      ],
+      "classification": "launch-critical",
+      "defaults": {
+        "docs/reference/ENV.md": "true",
+        "worker-config": "true"
+      },
+      "examples": [
+        "docs/reference/ENV.md:227",
+        "scripts/ci/snapshots/worker-env-adhoc-baseline.json:44",
+        "services/worker/src/config.test.ts:546"
+      ],
+      "files": [
+        "docs/reference/ENV.md",
+        "scripts/ci/snapshots/worker-env-adhoc-baseline.json",
+        "services/worker/agents.md",
+        "services/worker/src/config.test.ts",
+        "services/worker/src/config.ts",
+        "services/worker/src/jobs/treasury-alert.ts",
+        "services/worker/src/middleware/flagRegistry.ts"
+      ],
+      "launch_reason": "Spend/treasury alerting",
+      "name": "ENABLE_TREASURY_ALERTS",
+      "priority": "P1"
+    },
+    {
+      "categories": [
+        "docs",
+        "env-doc",
+        "other",
+        "worker-code",
+        "worker-config",
+        "worker-registry"
+      ],
+      "classification": "roadmap-or-optional",
+      "defaults": {
+        "docs/reference/ENV.md": "false"
+      },
+      "examples": [
+        "docs/reference/ENV.md:330",
+        "docs/reference/ENV.md:331",
+        "scripts/ci/snapshots/worker-env-adhoc-baseline.json:45"
+      ],
+      "files": [
+        "docs/integrations/background-checks-spike.md",
+        "docs/reference/ENV.md",
+        "scripts/ci/snapshots/worker-env-adhoc-baseline.json",
+        "services/worker/src/api/v1/webhooks/veremark.test.ts",
+        "services/worker/src/api/v1/webhooks/veremark.ts",
+        "services/worker/src/config.test.ts",
+        "services/worker/src/config.ts",
+        "services/worker/src/middleware/flagRegistry.ts"
+      ],
+      "launch_reason": "Keep outside beta launch unless explicitly scoped and tested.",
+      "name": "ENABLE_VEREMARK_WEBHOOK",
+      "priority": "P2"
+    },
+    {
+      "categories": [
+        "db-seed-or-migration",
+        "deploy-config",
+        "docs",
+        "env-doc",
+        "env-example",
+        "frontend-admin-ui",
+        "frontend-switchboard",
+        "other",
+        "worker-code",
+        "worker-config",
+        "worker-registry"
+      ],
+      "classification": "launch-critical",
+      "defaults": {
+        ".env.example": "false",
+        "docs/reference/ENV.md": "false",
+        "frontend-switchboard": "true",
+        "supabase-seed-default": "false",
+        "supabase-seed-value": "true"
+      },
+      "examples": [
+        ".env.example:63",
+        "scripts/deploy-worker.sh:36",
+        "docs/reference/ENV.md:74"
+      ],
+      "files": [
+        ".env.example",
+        ".github/workflows/deploy-worker.yml",
+        "docs/bugs/e2e_journey_validation.md",
+        "docs/bugs/uat_launch_readiness_3.md",
+        "docs/bugs/uat_systematic_sweep_2026_03_31.md",
+        "docs/compliance/pentest-scope.md",
+        "docs/launch/first-client-launch-command-center-2026-05-01.md",
+        "docs/reference/ENV.md",
+        "docs/runbooks/sarah-sprint-1-deploy-checklist.md",
+        "docs/stories/09_p45_verification_api.md",
+        "scripts/ci/snapshots/worker-env-adhoc-baseline.json",
+        "scripts/deploy-worker.sh",
+        "services/worker/.env.example",
+        "services/worker/src/api/v1/ai-verify-search.ts",
+        "services/worker/src/api/v1/router.ts",
+        "services/worker/src/config.ts",
+        "services/worker/src/index.ts",
+        "services/worker/src/middleware/featureGate.test.ts",
+        "services/worker/src/middleware/featureGate.ts",
+        "services/worker/src/middleware/flagRegistry.test.ts",
+        "services/worker/src/middleware/flagRegistry.ts",
+        "src/lib/switchboard.ts",
+        "src/pages/PlatformControlsPage.tsx",
+        "supabase/migrations/0057_verification_api_foundation.sql",
+        "supabase/seed.sql"
+      ],
+      "launch_reason": "External API beta access",
+      "name": "ENABLE_VERIFICATION_API",
+      "priority": "P0"
+    },
+    {
+      "categories": [
+        "env-doc",
+        "other",
+        "worker-code",
+        "worker-config",
+        "worker-registry"
+      ],
+      "classification": "unclassified",
+      "defaults": {
+        "docs/reference/ENV.md": "false",
+        "worker-config": "false"
+      },
+      "examples": [
+        "docs/reference/ENV.md:161",
+        "scripts/ci/snapshots/worker-env-adhoc-baseline.json:47",
+        "services/worker/src/config.ts:218"
+      ],
+      "files": [
+        "docs/reference/ENV.md",
+        "scripts/ci/snapshots/worker-env-adhoc-baseline.json",
+        "services/worker/src/ai/vertex-client.test.ts",
+        "services/worker/src/ai/vertex-client.ts",
+        "services/worker/src/config.ts",
+        "services/worker/src/middleware/flagRegistry.ts"
+      ],
+      "launch_reason": "Needs owner and registry entry if still active.",
+      "name": "ENABLE_VERTEX_AI",
+      "priority": "P3"
+    },
+    {
+      "categories": [
+        "env-doc",
+        "worker-code",
+        "worker-config",
+        "worker-registry"
+      ],
+      "classification": "roadmap-or-optional",
+      "defaults": {
+        "docs/reference/ENV.md": "false",
+        "worker-config": "false"
+      },
+      "examples": [
+        "docs/reference/ENV.md:405",
+        "services/worker/src/config.test.ts:478",
+        "services/worker/src/config.ts:232"
+      ],
+      "files": [
+        "docs/reference/ENV.md",
+        "services/worker/agents.md",
+        "services/worker/src/api/v1/router.ts",
+        "services/worker/src/config.test.ts",
+        "services/worker/src/config.ts",
+        "services/worker/src/middleware/aiFeatureGate.test.ts",
+        "services/worker/src/middleware/aiFeatureGate.ts",
+        "services/worker/src/middleware/flagRegistry.ts"
+      ],
+      "launch_reason": "Keep outside beta launch unless explicitly scoped and tested.",
+      "name": "ENABLE_VISUAL_FRAUD_DETECTION",
+      "priority": "P2"
+    },
+    {
+      "categories": [
+        "docs"
+      ],
+      "classification": "unclassified",
+      "defaults": {},
+      "examples": [
+        "docs/stories/22_phase2_agentic_layer.md:85"
+      ],
+      "files": [
+        "docs/stories/22_phase2_agentic_layer.md"
+      ],
+      "launch_reason": "Needs owner and registry entry if still active.",
+      "name": "ENABLE_WEBHOOK_DISPATCH",
+      "priority": "P3"
+    },
+    {
+      "categories": [
+        "env-doc",
+        "other",
+        "worker-code",
+        "worker-config",
+        "worker-registry"
+      ],
+      "classification": "launch-critical",
+      "defaults": {
+        "docs/reference/ENV.md": "true",
+        "worker-config": "true"
+      },
+      "examples": [
+        "docs/reference/ENV.md:215",
+        "scripts/ci/snapshots/worker-env-adhoc-baseline.json:48",
+        "services/worker/src/config.ts:226"
+      ],
+      "files": [
+        "docs/reference/ENV.md",
+        "scripts/ci/snapshots/worker-env-adhoc-baseline.json",
+        "services/worker/agents.md",
+        "services/worker/src/config.ts",
+        "services/worker/src/middleware/flagRegistry.ts",
+        "services/worker/src/middleware/webhookHmac.test.ts",
+        "services/worker/src/middleware/webhookHmac.ts"
+      ],
+      "launch_reason": "Inbound webhook security",
+      "name": "ENABLE_WEBHOOK_HMAC",
+      "priority": "P0"
+    },
+    {
+      "categories": [
+        "env-doc",
+        "other",
+        "worker-code",
+        "worker-config",
+        "worker-registry"
+      ],
+      "classification": "launch-critical",
+      "defaults": {
+        "docs/reference/ENV.md": "false",
+        "worker-config": "false"
+      },
+      "examples": [
+        "docs/reference/ENV.md:336",
+        "scripts/ci/snapshots/worker-env-adhoc-baseline.json:49",
+        "services/worker/src/jobs/workspace-subscription-renewal.ts:138"
+      ],
+      "files": [
+        "docs/reference/ENV.md",
+        "scripts/ci/snapshots/worker-env-adhoc-baseline.json",
+        "services/worker/src/config.ts",
+        "services/worker/src/jobs/workspace-subscription-renewal.test.ts",
+        "services/worker/src/jobs/workspace-subscription-renewal.ts",
+        "services/worker/src/middleware/flagRegistry.ts"
+      ],
+      "launch_reason": "Drive watch renewal",
+      "name": "ENABLE_WORKSPACE_RENEWAL",
+      "priority": "P0"
+    },
+    {
+      "categories": [
+        "edge-code",
+        "env-doc"
+      ],
+      "classification": "launch-critical",
+      "defaults": {
+        "docs/reference/ENV.md": "false"
+      },
+      "examples": [
+        "docs/reference/ENV.md:96",
+        "services/edge/src/env.ts:91",
+        "services/edge/src/x402-facilitator.ts:149"
+      ],
+      "files": [
+        "docs/reference/ENV.md",
+        "services/edge/agents.md",
+        "services/edge/src/env.ts",
+        "services/edge/src/x402-facilitator.ts",
+        "services/edge/wrangler.toml"
+      ],
+      "launch_reason": "x402 facilitator endpoint",
+      "name": "ENABLE_X402_FACILITATOR",
+      "priority": "P1"
+    },
+    {
+      "categories": [
+        "db-seed-or-migration",
+        "docs",
+        "frontend-admin-ui",
+        "frontend-switchboard",
+        "worker-code",
+        "worker-registry"
+      ],
+      "classification": "launch-critical",
+      "defaults": {
+        "frontend-switchboard": "true",
+        "supabase-seed-default": "false",
+        "supabase-seed-value": "false"
+      },
+      "examples": [
+        "supabase/seed.sql:207",
+        "docs/reference/X402_API_ARCHITECTURE.md:98",
+        "docs/reference/X402_API_ARCHITECTURE.md:176"
+      ],
+      "files": [
+        "docs/reference/X402_API_ARCHITECTURE.md",
+        "docs/stories/17_phase1_5_foundation.md",
+        "services/worker/src/middleware/flagRegistry.ts",
+        "services/worker/src/middleware/x402PaymentGate.ts",
+        "src/lib/switchboard.ts",
+        "src/pages/PlatformControlsPage.tsx",
+        "supabase/migrations/0080_public_record_embeddings.sql",
+        "supabase/seed.sql"
+      ],
+      "launch_reason": "Agentic payment enforcement",
+      "name": "ENABLE_X402_PAYMENTS",
+      "priority": "P1"
+    },
+    {
+      "categories": [
+        "db-seed-or-migration",
+        "frontend-admin-ui",
+        "frontend-code",
+        "frontend-switchboard",
+        "worker-registry"
+      ],
+      "classification": "environment-safety",
+      "defaults": {
+        "frontend-switchboard": "false",
+        "supabase-seed-default": "false",
+        "supabase-seed-value": "false"
+      },
+      "examples": [
+        "supabase/seed.sql:201",
+        "src/pages/PlatformControlsPage.tsx:77",
+        "src/pages/PlatformControlsPage.tsx:89"
+      ],
+      "files": [
+        "services/worker/src/middleware/flagRegistry.ts",
+        "src/lib/switchboard.test.ts",
+        "src/lib/switchboard.ts",
+        "src/pages/PlatformControlsPage.tsx",
+        "supabase/migrations/0021_switchboard_flags.sql",
+        "supabase/seed.sql"
+      ],
+      "launch_reason": "Environment-wide runtime behavior; must be explicit in launch config.",
+      "name": "MAINTENANCE_MODE",
+      "priority": "P0"
+    },
+    {
+      "categories": [
+        "deploy-config",
+        "env-doc",
+        "env-example",
+        "other",
+        "worker-code",
+        "worker-config",
+        "worker-registry"
+      ],
+      "classification": "environment-safety",
+      "defaults": {
+        ".env.example": "false",
+        "docs/reference/ENV.md": "false"
+      },
+      "examples": [
+        ".env.example:22",
+        "docs/reference/ENV.md:63",
+        "services/worker/src/stripe/client.ts:7"
+      ],
+      "files": [
+        ".env.example",
+        ".github/workflows/deploy-worker.yml",
+        "docs/reference/ENV.md",
+        "scripts/ci/snapshots/worker-env-adhoc-baseline.json",
+        "services/worker/.env.example",
+        "services/worker/docker-compose.yml",
+        "services/worker/src/config.test.ts",
+        "services/worker/src/config.ts",
+        "services/worker/src/infra/tunnel.test.ts",
+        "services/worker/src/middleware/flagRegistry.test.ts",
+        "services/worker/src/middleware/flagRegistry.ts",
+        "services/worker/src/signatures/engineFactory.ts",
+        "services/worker/src/stripe/client.ts"
+      ],
+      "launch_reason": "Environment-wide runtime behavior; must be explicit in launch config.",
+      "name": "USE_MOCKS",
+      "priority": "P0"
+    },
+    {
+      "categories": [
+        "docs",
+        "frontend-code"
+      ],
+      "classification": "frontend-build-flag",
+      "defaults": {},
+      "examples": [
+        "docs/bugs/bug_log.md:20",
+        "src/lib/env.ts:25",
+        "src/lib/env.ts:44"
+      ],
+      "files": [
+        "docs/bugs/bug_log.md",
+        "src/components/auth/DataCorrectionForm.test.tsx",
+        "src/components/auth/DataCorrectionForm.tsx",
+        "src/lib/env.ts",
+        "src/vite-env.d.ts"
+      ],
+      "launch_reason": "Frontend build-time flag; verify server-side enforcement exists if sensitive.",
+      "name": "VITE_ENABLE_DSAR_UI",
+      "priority": "P2"
+    }
+  ],
+  "generated_at": "2026-05-01",
+  "registry_sets": {
+    "db_seed": [
+      "ENABLE_AI_EXTRACTION",
+      "ENABLE_AI_FRAUD",
+      "ENABLE_AI_REPORTS",
+      "ENABLE_GRC_INTEGRATIONS",
+      "ENABLE_NEW_CHECKOUTS",
+      "ENABLE_OUTBOUND_WEBHOOKS",
+      "ENABLE_PROD_NETWORK_ANCHORING",
+      "ENABLE_REPORTS",
+      "ENABLE_SEMANTIC_SEARCH",
+      "ENABLE_VERIFICATION_API",
+      "ENABLE_X402_PAYMENTS",
+      "MAINTENANCE_MODE"
+    ],
+    "frontend_switchboard": [
+      "ENABLE_AI_EXTRACTION",
+      "ENABLE_AI_FRAUD",
+      "ENABLE_AI_REPORTS",
+      "ENABLE_ATTESTATION_ANCHORING",
+      "ENABLE_BATCH_ANCHORING",
+      "ENABLE_NEW_CHECKOUTS",
+      "ENABLE_OUTBOUND_WEBHOOKS",
+      "ENABLE_PROD_NETWORK_ANCHORING",
+      "ENABLE_PUBLIC_RECORDS_INGESTION",
+      "ENABLE_PUBLIC_RECORD_ANCHORING",
+      "ENABLE_PUBLIC_RECORD_EMBEDDINGS",
+      "ENABLE_REPORTS",
+      "ENABLE_SEMANTIC_SEARCH",
+      "ENABLE_VERIFICATION_API",
+      "ENABLE_X402_PAYMENTS",
+      "MAINTENANCE_MODE"
+    ],
+    "integration_killswitch": [
+      "ENABLE_ATS_WEBHOOK",
+      "ENABLE_DOCUSIGN_OAUTH",
+      "ENABLE_DOCUSIGN_WEBHOOK",
+      "ENABLE_DRIVE_OAUTH",
+      "ENABLE_DRIVE_WEBHOOK",
+      "ENABLE_GRC_INTEGRATIONS"
+    ],
+    "platform_controls": [
+      "ENABLE_AI_EXTRACTION",
+      "ENABLE_AI_FRAUD",
+      "ENABLE_AI_REPORTS",
+      "ENABLE_ATTESTATION_ANCHORING",
+      "ENABLE_BATCH_ANCHORING",
+      "ENABLE_NEW_CHECKOUTS",
+      "ENABLE_OUTBOUND_WEBHOOKS",
+      "ENABLE_PROD_NETWORK_ANCHORING",
+      "ENABLE_PUBLIC_RECORDS_INGESTION",
+      "ENABLE_PUBLIC_RECORD_ANCHORING",
+      "ENABLE_PUBLIC_RECORD_EMBEDDINGS",
+      "ENABLE_REPORTS",
+      "ENABLE_SEMANTIC_SEARCH",
+      "ENABLE_VERIFICATION_API",
+      "ENABLE_X402_PAYMENTS",
+      "MAINTENANCE_MODE"
+    ],
+    "worker_config_comments": [
+      "ENABLE_ADES_SIGNATURES",
+      "ENABLE_AI_FALLBACK",
+      "ENABLE_ALLOCATION_ROLLOVER",
+      "ENABLE_ATS_WEBHOOK",
+      "ENABLE_CLOUD_LOGGING_SINK",
+      "ENABLE_CONSTRAINED_DECODING",
+      "ENABLE_DEMO_INJECTOR",
+      "ENABLE_DOCUSIGN_OAUTH",
+      "ENABLE_DOCUSIGN_WEBHOOK",
+      "ENABLE_DRIVE_OAUTH",
+      "ENABLE_DRIVE_WEBHOOK",
+      "ENABLE_GRC_INTEGRATIONS",
+      "ENABLE_MULTIMODAL_EMBEDDINGS",
+      "ENABLE_NESSIE_RAG_RECOMMENDATIONS",
+      "ENABLE_ORG_CREDIT_ENFORCEMENT",
+      "ENABLE_PROD_NETWORK_ANCHORING",
+      "ENABLE_QUEUE_REMINDERS",
+      "ENABLE_RULES_ENGINE",
+      "ENABLE_RULE_ACTION_DISPATCHER",
+      "ENABLE_SYNTHETIC_DATA",
+      "ENABLE_TREASURY_ALERTS",
+      "ENABLE_VEREMARK_WEBHOOK",
+      "ENABLE_VERIFICATION_API",
+      "ENABLE_VERTEX_AI",
+      "ENABLE_VISUAL_FRAUD_DETECTION",
+      "ENABLE_WEBHOOK_HMAC",
+      "ENABLE_WORKSPACE_RENEWAL",
+      "USE_MOCKS"
+    ],
+    "worker_registry": [
+      "ENABLE_ADES_SIGNATURES",
+      "ENABLE_AI_EXTRACTION",
+      "ENABLE_AI_FALLBACK",
+      "ENABLE_AI_FRAUD",
+      "ENABLE_AI_REPORTS",
+      "ENABLE_ALLOCATION_ROLLOVER",
+      "ENABLE_ATS_WEBHOOK",
+      "ENABLE_ATTESTATION_ANCHORING",
+      "ENABLE_BATCH_ANCHORING",
+      "ENABLE_CLOUD_LOGGING_SINK",
+      "ENABLE_COMPLIANCE_ENGINE",
+      "ENABLE_DEMO_INJECTOR",
+      "ENABLE_DOCUSIGN_OAUTH",
+      "ENABLE_DOCUSIGN_WEBHOOK",
+      "ENABLE_DRIVE_OAUTH",
+      "ENABLE_DRIVE_WEBHOOK",
+      "ENABLE_EXPIRY_ALERTS",
+      "ENABLE_GRC_INTEGRATIONS",
+      "ENABLE_MULTIMODAL_EMBEDDINGS",
+      "ENABLE_NESSIE_RAG_RECOMMENDATIONS",
+      "ENABLE_NEW_CHECKOUTS",
+      "ENABLE_ORG_CREDIT_ENFORCEMENT",
+      "ENABLE_OUTBOUND_WEBHOOKS",
+      "ENABLE_PROD_NETWORK_ANCHORING",
+      "ENABLE_PUBLIC_RECORDS_INGESTION",
+      "ENABLE_PUBLIC_RECORD_ANCHORING",
+      "ENABLE_PUBLIC_RECORD_EMBEDDINGS",
+      "ENABLE_QUEUE_REMINDERS",
+      "ENABLE_REPORTS",
+      "ENABLE_RULES_ENGINE",
+      "ENABLE_RULE_ACTION_DISPATCHER",
+      "ENABLE_SEMANTIC_SEARCH",
+      "ENABLE_SYNTHETIC_DATA",
+      "ENABLE_TREASURY_ALERTS",
+      "ENABLE_VEREMARK_WEBHOOK",
+      "ENABLE_VERIFICATION_API",
+      "ENABLE_VERTEX_AI",
+      "ENABLE_VISUAL_FRAUD_DETECTION",
+      "ENABLE_WEBHOOK_HMAC",
+      "ENABLE_WORKSPACE_RENEWAL",
+      "ENABLE_X402_PAYMENTS",
+      "MAINTENANCE_MODE",
+      "USE_MOCKS"
+    ]
+  }
+}
