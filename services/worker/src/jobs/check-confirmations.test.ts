@@ -430,6 +430,37 @@ describe('checkSubmittedConfirmations', () => {
     expect(mockDispatchWebhookEvent).toHaveBeenCalledTimes(3);
   });
 
+  it('does not re-query secured anchors for webhook fan-out when the drain RPC omits anchor identities', async () => {
+    mockAnchorsSelectResult.data = [MOCK_SUBMITTED_ANCHOR];
+    mockDrainResults.splice(0, mockDrainResults.length, {
+      data: {
+        updated: 1,
+        capped: false,
+        anchors: [],
+      },
+      error: null,
+    });
+
+    mockFetch
+      .mockResolvedValueOnce({ ok: true, text: () => Promise.resolve('200200') }) // tip height
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve(MOCK_CONFIRMED_TX),
+      });
+
+    const result = await checkSubmittedConfirmations();
+
+    expect(result).toEqual({ checked: 1, confirmed: 1 });
+    expect(mockDispatchWebhookEvent).not.toHaveBeenCalled();
+    expect(mockLogger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        txId: MOCK_SUBMITTED_ANCHOR.chain_tx_id,
+        confirmed: 1,
+      }),
+      expect.stringContaining('refusing to re-query all SECURED anchors'),
+    );
+  });
+
   // ---- Mempool API errors ----
 
   it('handles mempool.space 404 gracefully', async () => {

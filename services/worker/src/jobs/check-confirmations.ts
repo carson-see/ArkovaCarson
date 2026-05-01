@@ -678,15 +678,20 @@ async function checkSubmittedConfirmationsUnlocked(): Promise<{ checked: number;
           // noisy blast. Webhooks remain the durable integration contract for
           // this backfill path, while the single-anchor path keeps its normal
           // best-effort email behavior.
-          const fanOutPromise = drainedAnchors.length > 0
-            ? fanOutSecuredAnchorWebhooks(drainedAnchors, txId, blockHeight, blockTimestamp)
-            : fanOutBulkSecuredWebhooks(txId, blockHeight, blockTimestamp);
-          void fanOutPromise.catch((fanOutErr) => {
-            logger.error(
-              { txId, error: fanOutErr },
-              'Detached bulk webhook fan-out unexpectedly threw — should never happen (helper catches internally)',
+          if (drainedAnchors.length > 0) {
+            const fanOutPromise = fanOutSecuredAnchorWebhooks(drainedAnchors, txId, blockHeight, blockTimestamp);
+            void fanOutPromise.catch((fanOutErr) => {
+              logger.error(
+                { txId, error: fanOutErr },
+                'Detached bulk webhook fan-out unexpectedly threw — should never happen (helper catches internally)',
+              );
+            });
+          } else {
+            logger.warn(
+              { txId, confirmed: groupConfirmed },
+              'Bulk webhook fan-out skipped because drain RPC returned no updated anchor identities; refusing to re-query all SECURED anchors for the tx to avoid duplicate webhook replay',
             );
-          });
+          }
         }
 
         return groupConfirmed;
