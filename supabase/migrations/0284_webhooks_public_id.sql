@@ -29,7 +29,7 @@ AS $$
 DECLARE
   v_org_prefix text;
 BEGIN
-  IF NEW.public_id IS NULL OR btrim(NEW.public_id) = '' THEN
+  IF NULLIF(btrim(NEW.public_id), '') IS NULL THEN
     SELECT org_prefix
       INTO v_org_prefix
       FROM organizations
