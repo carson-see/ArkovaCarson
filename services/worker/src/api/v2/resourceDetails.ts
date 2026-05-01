@@ -24,6 +24,12 @@ interface V2QueryBuilder {
   maybeSingle(): Promise<{ data: Record<string, unknown> | null; error: unknown }>;
 }
 
+interface AnchorDetailRoute {
+  path: string;
+  label: string;
+  mapRow: (row: Record<string, unknown>) => Record<string, unknown>;
+}
+
 const v2Db = db as unknown as {
   from(table: string): V2QueryBuilder;
 };
@@ -195,6 +201,39 @@ async function lookupAnchorByPublicId(
     .maybeSingle();
 }
 
+function registerAnchorDetailRoute(route: AnchorDetailRoute): void {
+  const lookupLabel = route.label.toLowerCase();
+  resourceDetailsRouter.get(
+    route.path,
+    requireScopeV2('read:records'),
+    createV2ScopeRateLimit('read:records'),
+    async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+      const publicId = pathParam(req.params.publicId);
+      if (!publicId || !PUBLIC_ID_RE.test(publicId)) {
+        next(validation('public_id must match ARK-<TYPE>-<SUFFIX>'));
+        return;
+      }
+
+      try {
+        const { data, error } = await lookupAnchorByPublicId(publicId, req.apiKey?.orgId);
+        if (error) {
+          logger.error({ error }, `v2 ${lookupLabel} detail lookup failed`);
+          next(ProblemError.internalError(`Failed to load ${lookupLabel} detail.`));
+          return;
+        }
+        if (!data) {
+          next(ProblemError.notFound(`${route.label} ${publicId} was not found.`));
+          return;
+        }
+
+        res.json(route.mapRow(data));
+      } catch (err) {
+        next(err);
+      }
+    },
+  );
+}
+
 resourceDetailsRouter.get(
   '/organizations/:publicId',
   requireScopeV2('read:orgs'),
@@ -234,65 +273,8 @@ resourceDetailsRouter.get(
   },
 );
 
-resourceDetailsRouter.get(
-  '/records/:publicId',
-  requireScopeV2('read:records'),
-  createV2ScopeRateLimit('read:records'),
-  async (req: Request, res: Response, next: NextFunction): Promise<void> => {
-    const publicId = pathParam(req.params.publicId);
-    if (!publicId || !PUBLIC_ID_RE.test(publicId)) {
-      next(validation('public_id must match ARK-<TYPE>-<SUFFIX>'));
-      return;
-    }
-
-    try {
-      const { data, error } = await lookupAnchorByPublicId(publicId, req.apiKey?.orgId);
-      if (error) {
-        logger.error({ error }, 'v2 record detail lookup failed');
-        next(ProblemError.internalError('Failed to load record detail.'));
-        return;
-      }
-      if (!data) {
-        next(ProblemError.notFound(`Record ${publicId} was not found.`));
-        return;
-      }
-
-      res.json(mapRecordDetail(data));
-    } catch (err) {
-      next(err);
-    }
-  },
-);
-
-resourceDetailsRouter.get(
-  '/documents/:publicId',
-  requireScopeV2('read:records'),
-  createV2ScopeRateLimit('read:records'),
-  async (req: Request, res: Response, next: NextFunction): Promise<void> => {
-    const publicId = pathParam(req.params.publicId);
-    if (!publicId || !PUBLIC_ID_RE.test(publicId)) {
-      next(validation('public_id must match ARK-<TYPE>-<SUFFIX>'));
-      return;
-    }
-
-    try {
-      const { data, error } = await lookupAnchorByPublicId(publicId, req.apiKey?.orgId);
-      if (error) {
-        logger.error({ error }, 'v2 document detail lookup failed');
-        next(ProblemError.internalError('Failed to load document detail.'));
-        return;
-      }
-      if (!data) {
-        next(ProblemError.notFound(`Document ${publicId} was not found.`));
-        return;
-      }
-
-      res.json(mapDocumentDetail(data));
-    } catch (err) {
-      next(err);
-    }
-  },
-);
+registerAnchorDetailRoute({ path: '/records/:publicId', label: 'Record', mapRow: mapRecordDetail });
+registerAnchorDetailRoute({ path: '/documents/:publicId', label: 'Document', mapRow: mapDocumentDetail });
 
 resourceDetailsRouter.get(
   '/fingerprints/:fingerprint',

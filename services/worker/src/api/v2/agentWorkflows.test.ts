@@ -17,85 +17,29 @@ const tsClientSource = readRepoFile('packages/sdk/src/client.ts');
 const pyClientSource = readRepoFile('packages/arkova-py/src/arkova/client.py');
 
 const canonicalSurface = [
-  {
-    endpoint: '/api/v2/search',
-    specPath: '/search',
-    operationId: 'search',
-    mcpTool: 'search',
-    tsMethod: 'search',
-    pyMethod: 'search',
-  },
-  {
-    endpoint: '/api/v2/orgs',
-    specPath: '/orgs',
-    operationId: 'list_orgs',
-    mcpTool: 'list_orgs',
-    tsMethod: 'listOrgs',
-    pyMethod: 'list_orgs',
-  },
-  {
-    endpoint: '/api/v2/organizations/{public_id}',
-    specPath: '/organizations/{public_id}',
-    operationId: 'get_organization',
-    mcpTool: 'get_organization',
-    tsMethod: 'getOrganization',
-    pyMethod: 'get_organization',
-  },
-  {
-    endpoint: '/api/v2/records/{public_id}',
-    specPath: '/records/{public_id}',
-    operationId: 'get_record',
-    mcpTool: 'get_record',
-    tsMethod: 'getRecord',
-    pyMethod: 'get_record',
-  },
-  {
-    endpoint: '/api/v2/fingerprints/{fingerprint}',
-    specPath: '/fingerprints/{fingerprint}',
-    operationId: 'get_fingerprint',
-    mcpTool: 'get_fingerprint',
-    tsMethod: 'getFingerprint',
-    pyMethod: 'get_fingerprint',
-  },
-  {
-    endpoint: '/api/v2/documents/{public_id}',
-    specPath: '/documents/{public_id}',
-    operationId: 'get_document',
-    mcpTool: 'get_document',
-    tsMethod: 'getDocument',
-    pyMethod: 'get_document',
-  },
-  {
-    endpoint: '/api/v2/verify/{fingerprint}',
-    specPath: '/verify/{fingerprint}',
-    operationId: 'verify',
-    mcpTool: 'verify',
-    tsMethod: 'verifyFingerprint',
-    pyMethod: 'verify_fingerprint',
-  },
-  {
-    endpoint: '/api/v2/anchors/{public_id}',
-    specPath: '/anchors/{public_id}',
-    operationId: 'get_anchor',
-    mcpTool: 'get_anchor',
-    tsMethod: 'getAnchor',
-    pyMethod: 'get_anchor',
-  },
+  ['/api/v2/search', '/search', 'search', 'search', 'search', 'search'],
+  ['/api/v2/orgs', '/orgs', 'list_orgs', 'list_orgs', 'listOrgs', 'list_orgs'],
+  ['/api/v2/organizations/{public_id}', '/organizations/{public_id}', 'get_organization', 'get_organization', 'getOrganization', 'get_organization'],
+  ['/api/v2/records/{public_id}', '/records/{public_id}', 'get_record', 'get_record', 'getRecord', 'get_record'],
+  ['/api/v2/fingerprints/{fingerprint}', '/fingerprints/{fingerprint}', 'get_fingerprint', 'get_fingerprint', 'getFingerprint', 'get_fingerprint'],
+  ['/api/v2/documents/{public_id}', '/documents/{public_id}', 'get_document', 'get_document', 'getDocument', 'get_document'],
+  ['/api/v2/verify/{fingerprint}', '/verify/{fingerprint}', 'verify', 'verify', 'verifyFingerprint', 'verify_fingerprint'],
+  ['/api/v2/anchors/{public_id}', '/anchors/{public_id}', 'get_anchor', 'get_anchor', 'getAnchor', 'get_anchor'],
 ] as const;
 
 describe('canonical agent workflow documentation', () => {
   it('keeps the REST, MCP, TypeScript, and Python surface matrix aligned with shipped code', () => {
-    for (const surface of canonicalSurface) {
-      expect(workflowDoc).toContain(surface.endpoint);
-      expect(workflowDoc).toContain(surface.operationId);
-      expect(workflowDoc).toContain(surface.mcpTool);
-      expect(workflowDoc).toContain(`arkova.${surface.tsMethod}()`);
-      expect(workflowDoc).toContain(`arkova.${surface.pyMethod}()`);
+    for (const [endpoint, specPath, operationId, mcpTool, tsMethod, pyMethod] of canonicalSurface) {
+      expect(workflowDoc).toContain(endpoint);
+      expect(workflowDoc).toContain(operationId);
+      expect(workflowDoc).toContain(mcpTool);
+      expect(workflowDoc).toContain(`arkova.${tsMethod}()`);
+      expect(workflowDoc).toContain(`arkova.${pyMethod}()`);
 
-      expect(openApiV2Spec.paths[surface.specPath].get.operationId).toBe(surface.operationId);
-      expect(mcpToolsSource).toContain(`name: '${surface.mcpTool}'`);
-      expect(tsClientSource).toMatch(new RegExp(String.raw`async ${surface.tsMethod}\(`));
-      expect(pyClientSource).toMatch(new RegExp(String.raw`def\s+${surface.pyMethod}\(`));
+      expect(openApiV2Spec.paths[specPath].get.operationId).toBe(operationId);
+      expect(mcpToolsSource).toContain(`name: '${mcpTool}'`);
+      expect(tsClientSource).toMatch(new RegExp(String.raw`async ${tsMethod}\(`));
+      expect(pyClientSource).toMatch(new RegExp(String.raw`def\s+${pyMethod}\(`));
     }
   });
 

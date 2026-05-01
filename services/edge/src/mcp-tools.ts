@@ -160,6 +160,40 @@ function textResult(data: unknown): ToolResult {
 // Tool Definitions
 // ---------------------------------------------------------------------------
 
+function emptyInputSchema(): ToolDefinition['inputSchema'] {
+  return {
+    type: 'object',
+    properties: {},
+    required: [],
+  };
+}
+
+function singleStringInputSchema(name: string, description: string): ToolDefinition['inputSchema'] {
+  return {
+    type: 'object',
+    properties: {
+      [name]: {
+        type: 'string',
+        description,
+      },
+    },
+    required: [name],
+  };
+}
+
+const ARKOVA_PUBLIC_ID_INPUT = singleStringInputSchema(
+  'public_id',
+  'Arkova public identifier (for example ARK-DOC-ABCDEF).',
+);
+const ORG_PUBLIC_ID_INPUT = singleStringInputSchema(
+  'public_id',
+  'Organization public identifier (for example org_acme).',
+);
+const FINGERPRINT_INPUT = singleStringInputSchema(
+  'fingerprint',
+  '64-character SHA-256 document fingerprint.',
+);
+
 export const TOOL_DEFINITIONS: ToolDefinition[] = [
   {
     name: 'verify_credential',
@@ -316,101 +350,43 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
     name: 'verify',
     description:
       'Agent-friendly v2 verification tool. Verify whether a SHA-256 document fingerprint has been anchored.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        fingerprint: {
-          type: 'string',
-          description: '64-character SHA-256 document fingerprint.',
-        },
-      },
-      required: ['fingerprint'],
-    },
+    inputSchema: FINGERPRINT_INPUT,
   },
   {
     name: 'list_orgs',
     description:
       'List the organizations available to the authenticated caller. Use to establish org context before scoped searches.',
-    inputSchema: {
-      type: 'object',
-      properties: {},
-      required: [],
-    },
+    inputSchema: emptyInputSchema(),
   },
   {
     name: 'get_anchor',
     description:
       'Get redacted public anchor metadata by Arkova public ID. Use after search returns a public_id.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        public_id: {
-          type: 'string',
-          description: 'Arkova public identifier (for example ARK-DOC-ABCDEF).',
-        },
-      },
-      required: ['public_id'],
-    },
+    inputSchema: ARKOVA_PUBLIC_ID_INPUT,
   },
   {
     name: 'get_organization',
     description:
       'Get organization detail by organization public ID. Use after search or list_orgs returns an organization public_id.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        public_id: {
-          type: 'string',
-          description: 'Organization public identifier (for example org_acme).',
-        },
-      },
-      required: ['public_id'],
-    },
+    inputSchema: ORG_PUBLIC_ID_INPUT,
   },
   {
     name: 'get_record',
     description:
       'Get record detail by Arkova public ID. Use after search returns a record public_id.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        public_id: {
-          type: 'string',
-          description: 'Arkova public identifier (for example ARK-DOC-ABCDEF).',
-        },
-      },
-      required: ['public_id'],
-    },
+    inputSchema: ARKOVA_PUBLIC_ID_INPUT,
   },
   {
     name: 'get_fingerprint',
     description:
       'Get fingerprint detail by exact SHA-256 hash. Use when an agent needs the public record linked to a fingerprint.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        fingerprint: {
-          type: 'string',
-          description: '64-character SHA-256 document fingerprint.',
-        },
-      },
-      required: ['fingerprint'],
-    },
+    inputSchema: FINGERPRINT_INPUT,
   },
   {
     name: 'get_document',
     description:
       'Get document detail by Arkova public ID. Returns metadata and receipt fields only, never document bytes.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        public_id: {
-          type: 'string',
-          description: 'Arkova public identifier (for example ARK-DOC-ABCDEF).',
-        },
-      },
-      required: ['public_id'],
-    },
+    inputSchema: ARKOVA_PUBLIC_ID_INPUT,
   },
 ];
 
