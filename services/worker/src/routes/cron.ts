@@ -1159,11 +1159,20 @@ cronRouter.post('/regulatory-change-scan', async (_req, res) => {
 // the legacy materialized views fresh so anything still pointing at
 // them keeps working. Each call is wrapped so a failure in one
 // pathway doesn't kill the other.
+type PipelineDashboardCacheRefreshResult = {
+  status?: 'refreshed' | 'skipped';
+  reason?: string;
+  duration_ms?: number;
+};
+
 cronRouter.post('/refresh-stats', async (_req, res) => {
   const errors: Array<{ source: string; message: string }> = [];
+  let pipelineDashboardResult: PipelineDashboardCacheRefreshResult | null = null;
 
   try {
-    await callRpc(db, 'refresh_pipeline_dashboard_cache');
+    const result = await callRpc<PipelineDashboardCacheRefreshResult>(db, 'refresh_pipeline_dashboard_cache');
+    if (result.error) throw new Error(result.error.message);
+    pipelineDashboardResult = result.data;
   } catch (error) {
     logger.error({ error }, 'refresh_pipeline_dashboard_cache failed');
     errors.push({
@@ -1173,7 +1182,8 @@ cronRouter.post('/refresh-stats', async (_req, res) => {
   }
 
   try {
-    await callRpc(db, 'refresh_stats_materialized_views');
+    const result = await callRpc(db, 'refresh_stats_materialized_views');
+    if (result.error) throw new Error(result.error.message);
   } catch (error) {
     logger.warn({ error }, 'refresh_stats_materialized_views failed (non-fatal)');
     errors.push({
@@ -1188,11 +1198,24 @@ cronRouter.post('/refresh-stats', async (_req, res) => {
     return;
   }
 
+  const refreshed = ['pipeline_dashboard_cache', 'stats_materialized_views'].filter(
+    (s) => !errors.some((e) => e.source === s),
+  );
+
+  if (pipelineDashboardResult?.status === 'skipped') {
+    res.json({
+      status: 'skipped',
+      reason: pipelineDashboardResult.reason,
+      duration_ms: pipelineDashboardResult.duration_ms,
+      refreshed: refreshed.filter((s) => s !== 'pipeline_dashboard_cache'),
+      errors,
+    });
+    return;
+  }
+
   res.json({
     status: 'refreshed',
-    refreshed: ['pipeline_dashboard_cache', 'stats_materialized_views'].filter(
-      (s) => !errors.some((e) => e.source === s),
-    ),
+    refreshed,
     errors,
   });
 });

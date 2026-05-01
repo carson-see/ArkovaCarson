@@ -194,3 +194,7 @@ $function$;
 
 REVOKE ALL ON FUNCTION public.drain_submitted_to_secured_for_tx(text, int, timestamptz, int, int, int) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.drain_submitted_to_secured_for_tx(text, int, timestamptz, int, int, int) TO service_role;
+
+-- PostgREST caches RPC signatures and grants. Reload after function changes so
+-- the worker can call the new signature immediately after deployment.
+NOTIFY pgrst, 'reload schema';

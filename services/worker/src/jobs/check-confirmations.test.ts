@@ -528,19 +528,21 @@ describe('checkSubmittedConfirmations', () => {
       return Promise.resolve({ data: true, error: null });
     }) as never);
 
-    mockFetch
-      .mockResolvedValueOnce({ ok: true, text: () => Promise.resolve('200200') }) // tip height
-      .mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve(MOCK_CONFIRMED_TX),
-      });
+    try {
+      mockFetch
+        .mockResolvedValueOnce({ ok: true, text: () => Promise.resolve('200200') }) // tip height
+        .mockResolvedValueOnce({
+          ok: true,
+          json: () => Promise.resolve(MOCK_CONFIRMED_TX),
+        });
 
-    const result = await checkSubmittedConfirmations();
-    // Update failed so confirmed should be 0
-    expect(result.checked).toBe(1);
-    expect(result.confirmed).toBe(0);
-    expect(mockLogger.error).toHaveBeenCalled();
-
-    rpcSpy.mockRestore();
+      const result = await checkSubmittedConfirmations();
+      // Update failed so confirmed should be 0
+      expect(result.checked).toBe(1);
+      expect(result.confirmed).toBe(0);
+      expect(mockLogger.error).toHaveBeenCalled();
+    } finally {
+      rpcSpy.mockRestore();
+    }
   });
 });

@@ -1264,6 +1264,30 @@ describe('cron routes', () => {
       expect(res.body.errors[0].source).toBe('stats_materialized_views');
     });
 
+    it('propagates skipped dashboard refresh status from the RPC', async () => {
+      const callRpcMock = callRpc as ReturnType<typeof vi.fn>;
+      callRpcMock
+        .mockResolvedValueOnce({
+          data: {
+            status: 'skipped',
+            reason: 'another refresh in progress',
+            duration_ms: 9,
+          },
+          error: null,
+        })
+        .mockResolvedValueOnce({ data: null, error: null });
+      const app = createApp();
+      const res = await request(app).post('/cron/refresh-stats');
+      expect(res.status).toBe(200);
+      expect(res.body).toMatchObject({
+        status: 'skipped',
+        reason: 'another refresh in progress',
+        duration_ms: 9,
+        refreshed: ['stats_materialized_views'],
+        errors: [],
+      });
+    });
+
     it('returns 500 only when BOTH refresh paths fail', async () => {
       const callRpcMock = callRpc as ReturnType<typeof vi.fn>;
       callRpcMock.mockRejectedValue(new Error('fail'));

@@ -46,12 +46,6 @@ type SecuredWebhookAnchor = {
   org_id: string | null;
 };
 
-type DrainSubmittedToSecuredResult = {
-  updated: number;
-  capped: boolean;
-  anchors?: SecuredWebhookAnchor[];
-};
-
 function normalizeDrainedAnchors(value: unknown): SecuredWebhookAnchor[] {
   if (!Array.isArray(value)) return [];
   return value
@@ -615,15 +609,7 @@ async function checkSubmittedConfirmationsUnlocked(): Promise<{ checked: number;
         // both leave plenty of headroom.
         const MAX_DRAIN_CALLS = 25;
         for (let drainAttempt = 0; drainAttempt < MAX_DRAIN_CALLS; drainAttempt++) {
-          // Cast through unknown — the RPC was added in migration
-          // drain_submitted_to_secured_helper_v2 (2026-04-29 hotfix);
-          // generated types haven't been regenerated yet.
-          const rpcRes = await (db as unknown as {
-            rpc: (name: string, args: Record<string, unknown>) => Promise<{
-              data: DrainSubmittedToSecuredResult | null;
-              error: unknown;
-            }>;
-          }).rpc('drain_submitted_to_secured_for_tx', {
+          const rpcRes = await db.rpc('drain_submitted_to_secured_for_tx', {
             p_chain_tx_id: txId,
             p_block_height: blockHeight,
             p_block_timestamp: blockTimestamp,
