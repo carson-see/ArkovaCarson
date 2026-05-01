@@ -49,6 +49,21 @@ describe('check-api-contract-drift (SCRUM-1586)', () => {
     });
   });
 
+  it('recognizes canonical Python package names with inline TOML comments', () => {
+    const findings = run(
+      ['packages/arkova-py/pyproject.toml'],
+      {
+        'packages/arkova-py/pyproject.toml': `
+[project]
+name = "arkova" # canonical SDK package
+version = "0.1.0"
+`,
+      },
+    );
+
+    expect(findings).toEqual([]);
+  });
+
   it('flags resurrected stale Python SDK source bodies', () => {
     expect(findingPaths([
       'packages/arkova-py/pyproject.toml',

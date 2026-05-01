@@ -174,6 +174,19 @@ describe('agent v2 MCP aliases', () => {
     expect(mockFetch.mock.calls[0][0]).toContain('/rest/v1/rpc/search_organizations_public');
   });
 
+  it('search(q,type=record) honors the OpenAPI 100-result ceiling', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ([]),
+    });
+
+    const result = await handleAgentSearch({ q: 'degree', type: 'record', max_results: 100 }, CONFIG);
+
+    expect(result.isError).toBeUndefined();
+    expect(JSON.parse(result.content[0].text)).toEqual({ results: [], next_cursor: null });
+    expect(JSON.parse(mockFetch.mock.calls[0][1].body)).toMatchObject({ p_query: 'degree', p_limit: 100 });
+  });
+
   it('verify(fingerprint) returns the REST v2 verification envelope', async () => {
     const validHash = 'c'.repeat(64);
     mockFetch.mockResolvedValueOnce({
@@ -221,6 +234,17 @@ describe('agent v2 MCP aliases', () => {
     expect(parsed.verified).toBe(true);
     expect(parsed.public_id).toBe('ARK-LIC-ABC');
     expect(parsed).not.toHaveProperty('recipient_identifier');
+  });
+
+  it('rejects malformed get_* identifiers before network lookup', async () => {
+    const badHash = 'not-a-hash';
+
+    expect((await handleAgentGetAnchor({ public_id: 'bad-id' }, CONFIG)).isError).toBe(true);
+    expect((await handleAgentGetRecord({ public_id: 'bad-id' }, CONFIG)).isError).toBe(true);
+    expect((await handleAgentGetDocument({ public_id: 'bad-id' }, CONFIG)).isError).toBe(true);
+    expect((await handleAgentGetOrganization({ public_id: 'bad id' }, CONFIG)).isError).toBe(true);
+    expect((await handleAgentGetFingerprint({ fingerprint: badHash }, CONFIG)).isError).toBe(true);
+    expect(mockFetch).not.toHaveBeenCalled();
   });
 
   it('list_orgs scopes the query by authenticated user id and omits internal ids', async () => {

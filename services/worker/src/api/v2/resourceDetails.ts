@@ -174,6 +174,8 @@ function mapFingerprintDetail(row: Record<string, unknown>, fingerprint: string)
     credential_type: detail.credential_type,
     sub_type: detail.sub_type,
     description: detail.description,
+    issued_date: detail.issued_date,
+    expiry_date: detail.expiry_date,
     anchor_timestamp: detail.anchor_timestamp,
     network_receipt_id: detail.network_receipt_id,
     record_uri: detail.record_uri,

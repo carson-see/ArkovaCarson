@@ -175,6 +175,8 @@ describe('resourceDetailsRouter', () => {
       status: 'ACTIVE',
       fingerprint,
       public_id: 'ARK-DOC-FP',
+      issued_date: '2026-04-01',
+      expiry_date: null,
     });
   });
 

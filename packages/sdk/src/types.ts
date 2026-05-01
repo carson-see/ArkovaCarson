@@ -212,7 +212,7 @@ export interface AnchorDetails {
 }
 
 export interface OrganizationSummary {
-  publicId: string | null;
+  publicId: string;
   displayName: string;
   domain: string | null;
   websiteUrl: string | null;

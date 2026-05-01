@@ -19,22 +19,23 @@
  */
 
 import { z } from 'zod';
-import { SHA256_HEX_RE } from './mcp-tools';
+import { ARKOVA_PUBLIC_ID_RE, ORG_PUBLIC_ID_RE, SHA256_HEX_RE } from './mcp-tools';
 
 /** Arkova public-ID pattern — `ARK-<TYPE>-<SUFFIX>`. Kept in lock-step
  *  with mcp-server.ts's inline regex so both enforcement layers stay
  *  aligned. */
-export const PUBLIC_ID_RE = /^ARK-[A-Z0-9-]{3,60}$/;
+export const PUBLIC_ID_RE = ARKOVA_PUBLIC_ID_RE;
+export const ORG_ID_RE = ORG_PUBLIC_ID_RE;
 
 // ── Leaf validators (reusable across tools) ──────────────────────────────
 export const publicIdSchema = z
   .string()
-  .regex(PUBLIC_ID_RE, 'public_id must match ARK-<TYPE>-<SUFFIX>')
+  .regex(ARKOVA_PUBLIC_ID_RE, 'public_id must match ARK-<TYPE>-<SUFFIX>')
   .max(64);
 
 export const orgPublicIdSchema = z
   .string()
-  .regex(/^[A-Za-z0-9][A-Za-z0-9_-]{2,100}$/, 'public_id must be a stable organization public identifier')
+  .regex(ORG_ID_RE, 'public_id must be a stable organization public identifier')
   .max(100);
 
 export const contentHashSchema = z

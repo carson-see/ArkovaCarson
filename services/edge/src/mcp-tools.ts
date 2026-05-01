@@ -36,6 +36,8 @@ const FETCH_TIMEOUT_MS = 10_000;
 /** SHA-256 hex pattern (64 hex chars). Exported so mcp-server.ts can
  *  reuse the single source of truth for its Zod input validator. */
 export const SHA256_HEX_RE = /^[a-fA-F0-9]{64}$/;
+export const ARKOVA_PUBLIC_ID_RE = /^ARK-[A-Z0-9-]{3,60}$/;
+export const ORG_PUBLIC_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{2,100}$/;
 
 export interface ToolDefinition {
   name: string;
@@ -154,6 +156,21 @@ function errorResult(message: string): ToolResult {
 
 function textResult(data: unknown): ToolResult {
   return { content: [{ type: 'text', text: JSON.stringify(data) }] };
+}
+
+function invalidPublicIdResult(publicId: string, entity = 'public_id'): ToolResult | null {
+  if (ARKOVA_PUBLIC_ID_RE.test(publicId)) return null;
+  return errorResult(`Error: ${entity} must match ARK-<TYPE>-<SUFFIX>`);
+}
+
+function invalidOrgPublicIdResult(publicId: string): ToolResult | null {
+  if (ORG_PUBLIC_ID_RE.test(publicId)) return null;
+  return errorResult('Error: public_id must be a stable organization public identifier');
+}
+
+function invalidFingerprintResult(fingerprint: string): ToolResult | null {
+  if (SHA256_HEX_RE.test(fingerprint)) return null;
+  return errorResult('Error: fingerprint must be a valid 64-character SHA-256 hex string');
 }
 
 // ---------------------------------------------------------------------------
@@ -523,32 +540,13 @@ export async function handleSearchCredentials(
   const maxResults = Math.min(input.max_results ?? 10, 50);
 
   try {
-    // INJ-01: Use RPC with bound parameters instead of URL interpolation
-    const sanitizedQuery = input.query.replace(/[%_\\]/g, '\\$&');
-    const response = await supabaseFetch(config, '/rest/v1/rpc/search_public_credentials', {
-      method: 'POST',
-      body: JSON.stringify({ p_query: sanitizedQuery, p_limit: maxResults }),
-    });
-
-    if (!response.ok) {
-      return errorResult(`Search failed: HTTP ${response.status}`);
-    }
-
-    const results = await response.json() as Array<Record<string, unknown>>;
+    const results = await fetchPublicCredentialSearch(input.query, maxResults, config);
 
     if (!Array.isArray(results) || results.length === 0) {
       return textResult({ query: input.query, total: 0, results: [] });
     }
 
-    const mapped = results.map((r, i) => ({
-      rank: i + 1,
-      public_id: r.public_id,
-      title: r.title,
-      credential_type: r.credential_type,
-      status: mapStatus(r.status as string),
-      anchor_timestamp: r.created_at,
-      record_uri: `https://app.arkova.ai/verify/${r.public_id}`,
-    }));
+    const mapped = mapCredentialSearchRows(results);
 
     return textResult({ query: input.query, total: mapped.length, results: mapped });
   } catch (error) {
@@ -557,6 +555,38 @@ export async function handleSearchCredentials(
       : `Search failed: ${error instanceof Error ? error.message : 'Unknown error'}`;
     return errorResult(msg);
   }
+}
+
+async function fetchPublicCredentialSearch(
+  query: string,
+  maxResults: number,
+  config: SupabaseConfig,
+): Promise<Array<Record<string, unknown>>> {
+  // INJ-01: Use RPC with bound parameters instead of URL interpolation.
+  const sanitizedQuery = query.replace(/[%_\\]/g, '\\$&');
+  const response = await supabaseFetch(config, '/rest/v1/rpc/search_public_credentials', {
+    method: 'POST',
+    body: JSON.stringify({ p_query: sanitizedQuery, p_limit: maxResults }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+
+  const results = await response.json() as unknown;
+  return Array.isArray(results) ? results as Array<Record<string, unknown>> : [];
+}
+
+function mapCredentialSearchRows(rows: Array<Record<string, unknown>>): Array<Record<string, unknown>> {
+  return rows.map((r, i) => ({
+    rank: i + 1,
+    public_id: r.public_id,
+    title: r.title,
+    credential_type: r.credential_type,
+    status: mapStatus(r.status as string),
+    anchor_timestamp: r.created_at,
+    record_uri: `https://app.arkova.ai/verify/${r.public_id}`,
+  }));
 }
 
 function parseToolJson(result: ToolResult): Record<string, unknown> | null {
@@ -603,15 +633,8 @@ async function searchAgentRecords(
   input: AgentSearchInput,
   config: SupabaseConfig,
 ): Promise<Array<Record<string, unknown>>> {
-  const result = await handleSearchCredentials(
-    { query: input.q, max_results: input.max_results },
-    config,
-  );
-  if (result.isError) return [];
-
-  const parsed = parseToolJson(result);
-  const records = parsed?.results;
-  if (!Array.isArray(records)) return [];
+  const maxResults = Math.min(input.max_results ?? 10, 100);
+  const records = mapCredentialSearchRows(await fetchPublicCredentialSearch(input.q, maxResults, config));
 
   const resultType = input.type === 'document' ? 'document' : 'record';
   return records
@@ -930,6 +953,9 @@ export async function handleAgentGetAnchor(
   input: AgentGetAnchorInput,
   config: SupabaseConfig,
 ): Promise<ToolResult> {
+  const invalid = invalidPublicIdResult(input.public_id);
+  if (invalid) return invalid;
+
   try {
     const response = await supabaseFetch(config, '/rest/v1/rpc/get_public_anchor', {
       method: 'POST',
@@ -952,6 +978,9 @@ export async function handleAgentGetOrganization(
   input: AgentGetOrganizationInput,
   config: SupabaseConfig,
 ): Promise<ToolResult> {
+  const invalid = invalidOrgPublicIdResult(input.public_id);
+  if (invalid) return invalid;
+
   const params = new URLSearchParams({
     user_id: `eq.${config.userId}`,
     'organizations.public_id': `eq.${input.public_id}`,
@@ -994,6 +1023,9 @@ export async function handleAgentGetRecord(
   input: AgentGetRecordInput,
   config: SupabaseConfig,
 ): Promise<ToolResult> {
+  const invalid = invalidPublicIdResult(input.public_id);
+  if (invalid) return invalid;
+
   try {
     const response = await supabaseFetch(config, '/rest/v1/rpc/get_public_anchor', {
       method: 'POST',
@@ -1016,6 +1048,9 @@ export async function handleAgentGetFingerprint(
   input: AgentGetFingerprintInput,
   config: SupabaseConfig,
 ): Promise<ToolResult> {
+  const invalid = invalidFingerprintResult(input.fingerprint);
+  if (invalid) return invalid;
+
   const result = await handleAgentVerify({ fingerprint: input.fingerprint }, config);
   if (result.isError) return result;
 
@@ -1094,6 +1129,9 @@ export async function handleAgentGetDocument(
   input: AgentGetDocumentInput,
   config: SupabaseConfig,
 ): Promise<ToolResult> {
+  const invalid = invalidPublicIdResult(input.public_id);
+  if (invalid) return invalid;
+
   try {
     const response = await supabaseFetch(config, '/rest/v1/rpc/get_public_anchor', {
       method: 'POST',

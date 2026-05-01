@@ -234,7 +234,7 @@ export const openApiV2Spec = {
     title: 'Arkova Verification API v2',
     version: '0.2.0',
     description:
-      'Agent-ready Arkova verification API. Read-only tools are described with operation descriptions and x-agent-usage annotations for MCP, Gemini, and OpenAPI function-call importers. Scope-aware quotas are enforced per API key: read:search 1,000/min, read:records 500/min, and read:orgs 500/min.',
+      'Agent-ready Arkova verification API. Read-only tools are described with operation descriptions and x-agent-usage annotations for MCP, Gemini, and OpenAPI function-call importers. Default per-minute scope-aware quotas are read:search 1,000, read:records 500, read:orgs 500, write:anchors 100, and admin:rules 50; deployments may override these via API_V2_RATE_LIMIT_* environment variables.',
   },
   jsonSchemaDialect: 'https://json-schema.org/draft/2020-12/schema',
   servers: [
@@ -465,14 +465,13 @@ export const openApiV2Spec = {
           anchor_timestamp: { type: ['string', 'null'] },
           network_receipt_id: { type: ['string', 'null'] },
           record_uri: { type: 'string', format: 'uri' },
-          jurisdiction: { type: ['string', 'null'] },
         },
       },
       OrganizationDetail: {
         type: 'object',
         required: ['public_id', 'display_name', 'description', 'domain', 'website_url', 'verification_status', 'industry_tag', 'org_type', 'location', 'logo_url'],
         properties: {
-          public_id: { type: ['string', 'null'] },
+          public_id: { type: 'string' },
           display_name: { type: 'string' },
           description: { type: ['string', 'null'] },
           domain: { type: ['string', 'null'] },
@@ -512,7 +511,7 @@ export const openApiV2Spec = {
         type: 'object',
         required: ['public_id', 'display_name'],
         properties: {
-          public_id: { type: ['string', 'null'] },
+          public_id: { type: 'string' },
           display_name: { type: 'string' },
           domain: { type: ['string', 'null'] },
           website_url: { type: ['string', 'null'], format: 'uri' },

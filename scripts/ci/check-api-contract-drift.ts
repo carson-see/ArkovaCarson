@@ -89,7 +89,7 @@ function projectNameFromPyproject(content: string): string | undefined {
     if (inProject && /^\[.+\]\s*$/.test(trimmed)) return undefined;
     if (!inProject) continue;
 
-    const match = /^name\s*=\s*["']([^"']+)["']\s*$/.exec(trimmed);
+    const match = /^name\s*=\s*["']([^"']+)["'](?:\s+#.*)?$/.exec(trimmed);
     if (match) return match[1];
   }
 

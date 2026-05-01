@@ -186,7 +186,6 @@ describe('openApiV2Spec', () => {
       anchor_timestamp: '2026-04-24T12:00:00Z',
       network_receipt_id: 'tx-1',
       record_uri: 'https://app.arkova.ai/verify/ARK-DOC-ABC',
-      jurisdiction: null,
     });
 
     expectMatchesSchema(schemaFor('OrgList'), {
@@ -245,6 +244,8 @@ describe('openApiV2Spec', () => {
       credential_type: 'LEGAL',
       sub_type: 'contract',
       description: 'Signed agreement',
+      issued_date: '2026-04-01',
+      expiry_date: null,
       anchor_timestamp: '2026-04-24T12:00:00Z',
       network_receipt_id: 'tx-1',
       record_uri: 'https://app.arkova.ai/verify/ARK-DOC-ABC',

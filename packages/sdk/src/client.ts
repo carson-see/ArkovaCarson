@@ -673,7 +673,7 @@ function mapAnchorDetails(row: Record<string, unknown>): AnchorDetails {
 
 function mapOrganizationSummary(row: Record<string, unknown>): OrganizationSummary {
   return {
-    publicId: (row.public_id as string | null) ?? null,
+    publicId: row.public_id as string,
     displayName: row.display_name as string,
     domain: (row.domain as string | null) ?? null,
     websiteUrl: (row.website_url as string | null) ?? null,
