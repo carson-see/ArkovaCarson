@@ -172,7 +172,7 @@ function shouldDropQueryKey(key: string): boolean {
 
 function compareQueryEntries([aKey, aVal]: [string, string], [bKey, bVal]: [string, string]): number {
   const keyComparison = aKey.localeCompare(bKey);
-  return keyComparison !== 0 ? keyComparison : aVal.localeCompare(bVal);
+  return keyComparison === 0 ? aVal.localeCompare(bVal) : keyComparison;
 }
 
 /**

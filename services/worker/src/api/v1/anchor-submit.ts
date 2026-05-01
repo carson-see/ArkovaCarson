@@ -112,7 +112,7 @@ router.post('/', async (req: Request, res: Response) => {
   if (body.metadata && hasPublicCredentialEvidenceMetadataKeys(body.metadata) && !parsedCredentialEvidenceMetadata.ok) {
     logger.warn(
       {
-        metadataKeys: Object.keys(body.metadata).sort(),
+        metadataKeys: Object.keys(body.metadata).sort((a, b) => a.localeCompare(b)),
         reason: parsedCredentialEvidenceMetadata.reason,
         issues: parsedCredentialEvidenceMetadata.issues,
       },
