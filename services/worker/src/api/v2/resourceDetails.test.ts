@@ -4,21 +4,10 @@ import request from 'supertest';
 import { resourceDetailsRouter } from './resourceDetails.js';
 import { v2ErrorHandler } from './problem.js';
 
-vi.mock('../../utils/db.js', () => ({
-  db: { from: vi.fn() },
-}));
-
-vi.mock('../../config.js', () => ({
-  config: { nodeEnv: 'test' },
-}));
-
-vi.mock('../../utils/logger.js', () => ({
-  logger: { warn: vi.fn(), error: vi.fn(), info: vi.fn() },
-}));
-
-vi.mock('../../middleware/errorSanitizer.js', () => ({
-  sanitizeErrorMessage: (m: string) => m,
-}));
+vi.mock('../../utils/db.js', () => ({ db: { from: vi.fn() } }));
+vi.mock('../../config.js', () => ({ config: { nodeEnv: 'test' } }));
+vi.mock('../../utils/logger.js', () => ({ logger: { warn: vi.fn(), error: vi.fn(), info: vi.fn() } }));
+vi.mock('../../middleware/errorSanitizer.js', () => ({ sanitizeErrorMessage: (m: string) => m }));
 
 import { db } from '../../utils/db.js';
 
