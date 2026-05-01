@@ -8,14 +8,21 @@ import { ApiKeyScopeDisplay } from './ApiKeyScopeDisplay';
 
 describe('ApiKeyScopeDisplay', () => {
   it('renders scope badges', () => {
-    render(<ApiKeyScopeDisplay scopes={['verify', 'batch', 'usage']} />);
+    render(<ApiKeyScopeDisplay scopes={['verify', 'verify:batch', 'usage:read']} />);
     expect(screen.getByText('Verify')).toBeInTheDocument();
     expect(screen.getByText('Batch')).toBeInTheDocument();
     expect(screen.getByText('Usage')).toBeInTheDocument();
   });
 
+  it('renders compliance and management scopes from the canonical vocabulary', () => {
+    render(<ApiKeyScopeDisplay scopes={['compliance:read', 'webhooks:manage', 'keys:read']} />);
+    expect(screen.getByText('Compliance read')).toBeInTheDocument();
+    expect(screen.getByText('Manage webhooks')).toBeInTheDocument();
+    expect(screen.getByText('Keys read')).toBeInTheDocument();
+  });
+
   it('renders compact mode with count', () => {
-    render(<ApiKeyScopeDisplay scopes={['verify', 'batch']} compact={true} />);
+    render(<ApiKeyScopeDisplay scopes={['verify', 'verify:batch']} compact={true} />);
     expect(screen.getByText('2 scopes')).toBeInTheDocument();
   });
 

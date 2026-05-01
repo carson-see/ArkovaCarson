@@ -4,15 +4,15 @@
 
 import { describe, it, expect } from 'vitest';
 import { z } from 'zod';
+import { API_KEY_SCOPES } from '../apiScopes.js';
 
-const VALID_SCOPES = ['verify', 'verify:batch', 'usage:read', 'attest', 'oracle'] as const;
 const VALID_AGENT_TYPES = ['llm_agent', 'ats_integration', 'hr_platform', 'compliance_tool', 'custom'] as const;
 
 const CreateAgentSchema = z.object({
   name: z.string().min(1).max(200),
   description: z.string().max(1000).optional(),
   agent_type: z.enum(VALID_AGENT_TYPES).default('custom'),
-  allowed_scopes: z.array(z.enum(VALID_SCOPES)).min(1).default(['verify']),
+  allowed_scopes: z.array(z.enum(API_KEY_SCOPES)).min(1).default(['verify']),
   framework: z.string().max(100).optional(),
   version: z.string().max(50).optional(),
   callback_url: z.string().url().startsWith('https://').optional(),
@@ -22,7 +22,7 @@ const CreateAgentSchema = z.object({
 const UpdateAgentSchema = z.object({
   name: z.string().min(1).max(200).optional(),
   description: z.string().max(1000).optional(),
-  allowed_scopes: z.array(z.enum(VALID_SCOPES)).min(1).optional(),
+  allowed_scopes: z.array(z.enum(API_KEY_SCOPES)).min(1).optional(),
   status: z.enum(['active', 'suspended']).optional(),
   framework: z.string().max(100).optional(),
   version: z.string().max(50).optional(),
@@ -72,6 +72,11 @@ describe('Agent Identity schemas', () => {
       expect(CreateAgentSchema.safeParse({ name: 'Test', allowed_scopes: ['admin'] }).success).toBe(false);
     });
 
+    it('rejects stale pre-canonical agent scope aliases', () => {
+      expect(CreateAgentSchema.safeParse({ name: 'Test', allowed_scopes: ['attest'] }).success).toBe(false);
+      expect(CreateAgentSchema.safeParse({ name: 'Test', allowed_scopes: ['oracle'] }).success).toBe(false);
+    });
+
     it('rejects empty scopes array', () => {
       expect(CreateAgentSchema.safeParse({ name: 'Test', allowed_scopes: [] }).success).toBe(false);
     });
@@ -92,7 +97,7 @@ describe('Agent Identity schemas', () => {
     });
 
     it('accepts all valid scopes', () => {
-      const result = CreateAgentSchema.safeParse({ name: 'Test', allowed_scopes: [...VALID_SCOPES] });
+      const result = CreateAgentSchema.safeParse({ name: 'Test', allowed_scopes: [...API_KEY_SCOPES] });
       expect(result.success).toBe(true);
     });
   });

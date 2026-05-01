@@ -4,6 +4,8 @@
 
 This directory is the canonical home for Arkova's developer-facing API documentation. Everything here is written for engineers shipping integrations: REST endpoints, MCP tools, SDKs, embeddable widgets, and the webhook lifecycle.
 
+The canonical-vs-historical source map is maintained in [Canonical API sources](./canonical-sources.md). Use that page before relying on older guides, docx exports, Confluence audit pages, or backlog markdown.
+
 The full machine-readable v1 API spec is at [`openapi.yaml`](./openapi.yaml). The API v2 agent spec is published at `https://api.arkova.ai/v2/openapi.json` and mirrored by the worker at `/api/v2/openapi.json`. Hosted Swagger UI is at [`https://app.arkova.ai/api/docs`](https://app.arkova.ai/api/docs).
 
 ---
@@ -15,6 +17,8 @@ The full machine-readable v1 API spec is at [`openapi.yaml`](./openapi.yaml). Th
 | Anchor + verify credentials from TypeScript / JavaScript | [`@arkova/sdk`](../../packages/sdk/README.md) |
 | Search, verify fingerprints, and inspect v2 resources from Python | [`arkova`](../../packages/arkova-py/README.md) |
 | Follow the canonical agent workflow across REST, MCP, and SDKs | [Agent API workflows](./agent-workflows.md) |
+| Understand the canonical API source map and SDK contract strategy | [Canonical API sources](./canonical-sources.md) |
+| See supported API key scopes | [API key scope vocabulary](./api-scope-vocabulary.md) |
 | Move from API v1 to v2 | [v1 to v2 migration guide](./v2-migration.md) |
 | Drop a verification badge on any third-party site | [`@arkova/embed`](../../packages/embed/README.md) |
 | Register and manage webhooks programmatically | [Webhooks developer guide](./webhooks.md) |

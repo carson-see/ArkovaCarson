@@ -1,11 +1,18 @@
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
 import {
   scopeSatisfies,
   API_V2_SCOPES,
   LEGACY_API_SCOPES,
   COMPLIANCE_API_SCOPES,
+  API_KEY_SCOPES,
+  SELECTABLE_API_SCOPES,
   isComplianceScope,
 } from './apiScopes.js';
+
+function readRepoFile(path: string): string {
+  return readFileSync(new URL(`../../../../${path}`, import.meta.url), 'utf8');
+}
 
 describe('scopeSatisfies', () => {
   it('returns true when the required scope is directly present', () => {
@@ -47,6 +54,10 @@ describe('scopeSatisfies', () => {
   it('exports all expected legacy scopes', () => {
     expect(LEGACY_API_SCOPES).toContain('verify');
     expect(LEGACY_API_SCOPES).toContain('verify:batch');
+    expect(LEGACY_API_SCOPES).toContain('usage:read');
+    expect(LEGACY_API_SCOPES).toContain('keys:manage');
+    expect(LEGACY_API_SCOPES).not.toContain('batch');
+    expect(LEGACY_API_SCOPES).not.toContain('usage');
   });
 
   // SCRUM-1272 (R2-9) — compliance scope vocabulary + back-compat semantics.
@@ -80,5 +91,38 @@ describe('scopeSatisfies', () => {
     expect(scopeSatisfies(['verify'], 'oracle:write')).toBe(false);
     expect(scopeSatisfies(['verify'], 'attestations:write')).toBe(false);
     expect(scopeSatisfies(['verify'], 'compliance:read')).toBe(false);
+  });
+
+  it('keeps the frontend vocabulary imported from the worker source of truth', () => {
+    const frontendSource = readRepoFile('src/lib/apiScopes.ts');
+
+    expect(frontendSource).toContain("from '../../services/worker/src/api/apiScopes'");
+    expect(frontendSource).not.toContain("export const API_V2_SCOPES = [");
+    expect(frontendSource).not.toContain("'batch'");
+    expect(frontendSource).not.toContain("'usage'");
+  });
+
+  it('keeps the database scope CHECK constraint aligned with the canonical vocabulary', () => {
+    const migration = readRepoFile('supabase/migrations/0283_api_key_scope_vocabulary.sql');
+
+    for (const scope of API_KEY_SCOPES) {
+      expect(migration).toContain(`'${scope}'`);
+    }
+    expect(migration).toContain('api_keys_scopes_known_values');
+    expect(migration).toContain('agents_allowed_scopes_known_values');
+    expect(migration).toContain("WHEN 'attest' THEN 'attestations:write'");
+    expect(migration).toContain("WHEN 'oracle' THEN 'oracle:read'");
+  });
+
+  it('keeps new-key picker choices restricted to API v2 scopes', () => {
+    expect(SELECTABLE_API_SCOPES).toEqual(API_V2_SCOPES);
+  });
+
+  it('keeps agent delegation schemas on the API key vocabulary', () => {
+    const agentsSource = readRepoFile('services/worker/src/api/v1/agents.ts');
+
+    expect(agentsSource).toContain("import { API_KEY_SCOPES } from '../apiScopes.js'");
+    expect(agentsSource).toContain('z.enum(API_KEY_SCOPES)');
+    expect(agentsSource).not.toContain("['verify', 'verify:batch', 'usage:read', 'attest', 'oracle']");
   });
 });

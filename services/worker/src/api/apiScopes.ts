@@ -47,6 +47,11 @@ export type ApiKeyScope = typeof API_KEY_SCOPES[number];
 
 export const DEFAULT_API_KEY_SCOPES: ApiV2Scope[] = ['read:search'];
 
+// Scopes surfaced in the customer-facing create-key picker. Compliance and
+// legacy scopes remain accepted/displayable, but are not offered for new keys
+// until their product flows have explicit UX.
+export const SELECTABLE_API_SCOPES = API_V2_SCOPES;
+
 export function isApiV2Scope(scope: string): scope is ApiV2Scope {
   return (API_V2_SCOPES as readonly string[]).includes(scope);
 }

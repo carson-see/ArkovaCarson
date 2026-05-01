@@ -1,6 +1,7 @@
 # Arkova API — Complete Setup & Usage Guide
 
 > **Last updated:** 2026-03-28
+> **Status:** Historical setup guide. For the current API contract, SDKs, MCP tools, v2 workflows, and scope vocabulary, use [docs/api/README.md](../api/README.md) and [docs/api/canonical-sources.md](../api/canonical-sources.md).
 > **Production API:** `https://arkova-worker-270018525501.us-central1.run.app`
 > **App:** `https://arkova-26.vercel.app`
 > **Interactive docs:** `https://arkova-worker-270018525501.us-central1.run.app/api/docs`

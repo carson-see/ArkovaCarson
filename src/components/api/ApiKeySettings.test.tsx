@@ -11,7 +11,7 @@ const mockKey: ApiKeyMasked = {
   id: 'key-1',
   key_prefix: 'ak_live_abc1',
   name: 'Production',
-  scopes: ['verify', 'batch'],
+  scopes: ['verify', 'verify:batch'],
   rate_limit_tier: 'standard',
   is_active: true,
   created_at: '2026-03-10T00:00:00Z',

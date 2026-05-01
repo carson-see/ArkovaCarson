@@ -2,7 +2,7 @@
  * API Key Scope Display (P4.5-TS-11)
  *
  * Renders scope badges for an API key.
- * Shows which permissions (verify, batch, usage) a key has.
+ * Shows canonical v2, legacy, and compliance/management permissions.
  */
 
 import { Badge } from '@/components/ui/badge';

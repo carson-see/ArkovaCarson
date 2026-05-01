@@ -17,6 +17,7 @@ import { z } from 'zod';
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 import { generateApiKey } from '../../middleware/apiKeyAuth.js';
+import { API_KEY_SCOPES } from '../apiScopes.js';
 
 // agents table not yet in database.types.ts — use untyped client
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -66,14 +67,13 @@ async function verifyAgentOwnership(agentId: string, orgId: string, res: Respons
 
 const router = Router();
 
-const VALID_SCOPES = ['verify', 'verify:batch', 'usage:read', 'attest', 'oracle'] as const;
 const VALID_AGENT_TYPES = ['llm_agent', 'ats_integration', 'hr_platform', 'compliance_tool', 'custom'] as const;
 
 const CreateAgentSchema = z.object({
   name: z.string().min(1).max(200),
   description: z.string().max(1000).optional(),
   agent_type: z.enum(VALID_AGENT_TYPES).default('custom'),
-  allowed_scopes: z.array(z.enum(VALID_SCOPES)).min(1).default(['verify']),
+  allowed_scopes: z.array(z.enum(API_KEY_SCOPES)).min(1).default(['verify']),
   framework: z.string().max(100).optional(),
   version: z.string().max(50).optional(),
   callback_url: z.string().url().startsWith('https://').optional(),
@@ -83,7 +83,7 @@ const CreateAgentSchema = z.object({
 const UpdateAgentSchema = z.object({
   name: z.string().min(1).max(200).optional(),
   description: z.string().max(1000).optional(),
-  allowed_scopes: z.array(z.enum(VALID_SCOPES)).min(1).optional(),
+  allowed_scopes: z.array(z.enum(API_KEY_SCOPES)).min(1).optional(),
   status: z.enum(['active', 'suspended']).optional(),
   framework: z.string().max(100).optional(),
   version: z.string().max(50).optional(),
