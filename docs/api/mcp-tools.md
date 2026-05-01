@@ -2,9 +2,11 @@
 
 > **Status:** Production | **Story:** [INT-02 / SCRUM-643](https://arkova.atlassian.net/browse/SCRUM-643) | **Endpoint:** `https://edge.arkova.ai/mcp`
 
-The Arkova [Model Context Protocol](https://modelcontextprotocol.io) server exposes ten tools that let AI agents (Claude, LangChain, AutoGen, custom agents) verify credentials, anchor documents, and query verified public records — all without writing HTTP requests. SCRUM-1107 adds the v2 agent aliases (`search`, `verify`, `list_orgs`, `get_anchor`) that match the OpenAPI 3.1 operation IDs published at `https://api.arkova.ai/v2/openapi.json`.
+The Arkova [Model Context Protocol](https://modelcontextprotocol.io) server exposes sixteen tools that let AI agents (Claude, LangChain, AutoGen, custom agents) verify credentials, anchor documents, and query verified public records — all without writing HTTP requests. SCRUM-1107 adds the v2 agent aliases (`search`, `verify`, `list_orgs`, `get_anchor`) that match the OpenAPI 3.1 operation IDs published at `https://api.arkova.ai/v2/openapi.json`; SCRUM-1132 adds the post-search detail aliases (`get_organization`, `get_record`, `get_fingerprint`, `get_document`).
 
 This is the verification layer for the agentic economy. Same infrastructure as the REST API; just exposed through the MCP transport so any tool-using LLM can call it natively.
+
+For recommended call order across REST v2, MCP, TypeScript, and Python, see the canonical [Agent API workflows](./agent-workflows.md).
 
 ---
 
@@ -52,6 +54,8 @@ This is the verification layer for the agentic economy. Same infrastructure as t
 | 12 | `anchor_document` | Submit a SHA-256 fingerprint for anchoring | PH1-SDK-03 |
 | 13 | `verify_document` | Verify a document by its fingerprint | PH1-SDK-03 |
 | 14 | **`verify_batch`** | **Verify up to 100 credentials in one call** | **INT-02** |
+| 15 | `oracle_batch_verify` | Batch-verify up to 25 credentials with query-envelope metadata | PH2-AGENT-06 |
+| 16 | `list_agents` | List active AI agents visible to the authenticated caller's organization | PH2-AGENT-06 |
 
 > **CLE compliance tool deferred:** `cle_verify` was scoped for INT-02 but pulled before merge — the underlying `rpc/cle_verify` does not exist in the schema. The HTTP route at `/api/v1/cle/verify` is live and usable via the REST API or `@arkova/sdk`. Tracked as follow-up **INT-02b** (expose it through MCP by threading caller API keys through the edge handler context).
 

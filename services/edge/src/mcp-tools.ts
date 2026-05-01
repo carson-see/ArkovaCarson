@@ -5,6 +5,14 @@
  * MCP endpoint and tests.
  *
  * Tools:
+ *   - search:            Agent-friendly v2 search across public resources
+ *   - verify:            Verify a SHA-256 fingerprint through API v2
+ *   - list_orgs:         List caller organization context
+ *   - get_anchor:        Fetch redacted public anchor metadata
+ *   - get_organization:  Fetch organization detail by public ID
+ *   - get_record:        Fetch record detail by public ID
+ *   - get_fingerprint:   Fetch fingerprint detail by SHA-256 hash
+ *   - get_document:      Fetch document detail by public ID
  *   - verify_credential: Verify a credential by public ID
  *   - search_credentials: Semantic search across credentials
  *   - nessie_query:      RAG query with verified citations (PH1-SDK-03)

@@ -14,6 +14,7 @@ The full machine-readable v1 API spec is at [`openapi.yaml`](./openapi.yaml). Th
 |---|---|
 | Anchor + verify credentials from TypeScript / JavaScript | [`@arkova/sdk`](../../packages/sdk/README.md) |
 | Search, verify fingerprints, and inspect v2 resources from Python | [`arkova`](../../packages/arkova-py/README.md) |
+| Follow the canonical agent workflow across REST, MCP, and SDKs | [Agent API workflows](./agent-workflows.md) |
 | Move from API v1 to v2 | [v1 to v2 migration guide](./v2-migration.md) |
 | Drop a verification badge on any third-party site | [`@arkova/embed`](../../packages/embed/README.md) |
 | Register and manage webhooks programmatically | [Webhooks developer guide](./webhooks.md) |
@@ -54,7 +55,7 @@ Agent-ready REST surface for search, post-search resource detail, fingerprint ve
 | `write:anchors` | 100 req/min | Reserved for v2 write endpoints |
 | `admin:rules` | 50 req/min | Reserved for v2 admin endpoints |
 
-📖 [v1 to v2 migration guide](./v2-migration.md)
+📖 [Agent API workflows](./agent-workflows.md) and [v1 to v2 migration guide](./v2-migration.md)
 
 ### 3. TypeScript SDK — `@arkova/sdk`
 
@@ -99,7 +100,7 @@ A vanilla-JS, zero-dependency, CSP-safe `<script>` tag that drops a verification
 
 ### 6. MCP server — `https://edge.arkova.ai/mcp`
 
-Model Context Protocol endpoint for AI agents. New integrations should prefer the v2 aliases `search`, `verify`, `list_orgs`, and `get_anchor`; legacy tools remain available as `verify_credential`, `search_credentials`, `nessie_query`, `anchor_document`, `verify_document`, and `verify_batch`. (A `cle_verify` tool was scoped for INT-02 but deferred — the HTTP CLE route remains available via the REST API and the SDK. Tracked as INT-02b.)
+Model Context Protocol endpoint for AI agents. New integrations should prefer the v2 aliases `search`, `verify`, `list_orgs`, `get_anchor`, `get_organization`, `get_record`, `get_fingerprint`, and `get_document`; legacy tools remain available as `verify_credential`, `search_credentials`, `nessie_query`, `anchor_document`, `verify_document`, and `verify_batch`. (A `cle_verify` tool was scoped for INT-02 but deferred — the HTTP CLE route remains available via the REST API and the SDK. Tracked as INT-02b.)
 
 ```json
 {
@@ -112,7 +113,7 @@ Model Context Protocol endpoint for AI agents. New integrations should prefer th
 }
 ```
 
-📖 [Full MCP tool reference](./mcp-tools.md)
+📖 [Agent API workflows](./agent-workflows.md) and [Full MCP tool reference](./mcp-tools.md)
 
 ### 7. Webhooks (outbound) — your URL
 

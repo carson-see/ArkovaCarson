@@ -602,6 +602,11 @@ function createMcpServer(config: ScopedConfig, telemetry: RequestTelemetryContex
           'Authentication: API key (X-API-Key header) or OAuth Bearer token.',
           'Get your API key at https://app.arkova.ai/settings/api-keys',
           '',
+          'Canonical agent workflow: list_orgs when context matters, then search,',
+          'inspect with get_document/get_record/get_fingerprint/get_organization,',
+          'verify SHA-256 fingerprints with verify, and fetch public lifecycle proof',
+          'with get_anchor.',
+          '',
           'Rate limits: 1,000 req/min per API key. Batch: 10 req/min.',
         ].join('\n'),
       }],
@@ -661,7 +666,7 @@ function createMcpServer(config: ScopedConfig, telemetry: RequestTelemetryContex
 
   prompt(
     'search-and-verify',
-    'Search for credentials matching a query and verify the top result',
+    'Search with v2 aliases, inspect detail, and verify the top result',
     { query: freeTextQuerySchema.describe('What to search for') },
     async ({ query }) => ({
       messages: [{
@@ -670,8 +675,10 @@ function createMcpServer(config: ScopedConfig, telemetry: RequestTelemetryContex
           type: 'text' as const,
           text:
             `${SAFETY_PREFIX}\n\n` +
-            `Run search_credentials with the query provided below, then verify the top result with verify_credential. ` +
-            'Summarize your findings.\n\n' +
+            'Run search with the query provided below. Inspect the top result with get_document, get_record, ' +
+            'get_fingerprint, or get_organization based on the result type. If detail includes a SHA-256 ' +
+            'fingerprint, call verify with that fingerprint. If the user needs public proof or lifecycle status, ' +
+            'call get_anchor with the public_id. Summarize only returned public metadata and proof fields.\n\n' +
             fenceUserInput(query, 'query'),
         },
       }],

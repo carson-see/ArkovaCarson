@@ -106,7 +106,7 @@
     },
     {
       "name": "search-and-verify",
-      "description": "Search for credentials and verify the top result."
+      "description": "Search with v2 aliases, inspect detail, and verify the top result."
     },
     {
       "name": "anchor-and-verify",
