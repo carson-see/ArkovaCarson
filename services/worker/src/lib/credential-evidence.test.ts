@@ -106,6 +106,12 @@ describe('credential-evidence', () => {
     expect(() => normalizeCredentialSourceUrl('https://[::1]/credential')).toThrow(
       'private IPv6',
     );
+    expect(() => normalizeCredentialSourceUrl('https://[fe80::1]/credential')).toThrow(
+      'private IPv6',
+    );
+    expect(() => normalizeCredentialSourceUrl('https://[fe90::1]/credential')).toThrow(
+      'private IPv6',
+    );
   });
 
   it('supports BADGE/Open Badge evidence without provider fetching', () => {

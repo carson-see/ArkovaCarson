@@ -129,12 +129,15 @@ function ipv4FromMappedIpv6(hostname: string): string | null {
 
 function isPrivateIpv6(hostname: string): boolean {
   const normalized = hostname.toLowerCase();
+  const firstHextet = Number.parseInt(normalized.split(':', 1)[0] ?? '', 16);
+  const isLinkLocal = Number.isInteger(firstHextet) && firstHextet >= 0xfe80 && firstHextet <= 0xfebf;
+
   return (
     normalized === '::1' ||
     normalized === '0:0:0:0:0:0:0:1' ||
     normalized.startsWith('fc') ||
     normalized.startsWith('fd') ||
-    normalized.startsWith('fe80:')
+    isLinkLocal
   );
 }
 
