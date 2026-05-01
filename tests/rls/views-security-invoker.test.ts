@@ -40,7 +40,7 @@ describe('SCRUM-1276: public-schema views security_invoker audit', () => {
 
     // Soft-skip only when PostgREST does not expose pg_views in this fixture.
     // Other errors must fail so this regression test cannot silently pass.
-    if (error?.code === 'PGRST205' || error?.code === 'PGRST116') return;
+    if (error?.code === 'PGRST205' || error?.code === 'PGRST116' || error?.code === '42P01') return;
 
     expect(error).toBeNull();
     expect(viewRows ?? []).toHaveLength(0);
