@@ -38,7 +38,7 @@
     },
     {
       "action": "Define environment-specific defaults in the canonical register and stop relying on scattered fallback values.",
-      "evidence": ".env.example=false; docs/reference/ENV.md=false; frontend-switchboard=true; supabase-seed-default=false; supabase-seed-value=true",
+      "evidence": ".env.example=false; docs/reference/ENV.md=false; frontend-switchboard=true; supabase-seed-default=false; supabase-seed-value=true; worker-config=true",
       "priority": "P0",
       "title": "ENABLE_VERIFICATION_API has conflicting parsed defaults"
     },
@@ -108,9 +108,9 @@
         "supabase-seed-value": "true"
       },
       "examples": [
-        ".env.example:105",
         "scripts/deploy-worker.sh:35",
-        "docs/reference/ENV.md:401"
+        ".env.example:105",
+        "supabase/seed.sql:202"
       ],
       "files": [
         ".env.example",
@@ -208,9 +208,9 @@
         "supabase-seed-value": "true"
       },
       "examples": [
+        "supabase/seed.sql:204",
         "docs/reference/ENV.md:403",
-        "docs/reference/ENV.md:407",
-        "supabase/seed.sql:204"
+        "docs/reference/ENV.md:407"
       ],
       "files": [
         ".github/workflows/deploy-worker.yml",
@@ -251,8 +251,8 @@
         "supabase-seed-value": "true"
       },
       "examples": [
-        "docs/reference/ENV.md:404",
         "supabase/seed.sql:206",
+        "docs/reference/ENV.md:404",
         ".github/workflows/deploy-worker.yml:140"
       ],
       "files": [
@@ -348,8 +348,8 @@
       },
       "examples": [
         "src/pages/PlatformControlsPage.tsx:52",
-        "docs/runbooks/anchor-disk-hygiene.md:82",
-        "docs/stories/22_phase2_agentic_layer.md:61"
+        "supabase/migrations/0086_attestation_anchoring_flag.sql:1",
+        "supabase/migrations/0086_attestation_anchoring_flag.sql:4"
       ],
       "files": [
         "docs/runbooks/anchor-disk-hygiene.md",
@@ -380,8 +380,8 @@
       },
       "examples": [
         "src/pages/PlatformControlsPage.tsx:60",
-        "services/worker/src/jobs/batch-anchor.ts:10",
-        "services/worker/src/jobs/batch-anchor.ts:14"
+        "docs/stories/11_mvp_launch_gaps.md:621",
+        "docs/stories/11_mvp_launch_gaps.md:629"
       ],
       "files": [
         "docs/stories/11_mvp_launch_gaps.md",
@@ -794,8 +794,8 @@
         "worker-config": "false"
       },
       "examples": [
-        "docs/reference/ENV.md:345",
         "supabase/seed.sql:208",
+        "docs/reference/ENV.md:345",
         "scripts/ci/snapshots/worker-env-adhoc-baseline.json:37"
       ],
       "files": [
@@ -1101,9 +1101,9 @@
         "supabase-seed-value": "false"
       },
       "examples": [
-        ".env.example:104",
         "docs/BETA_PRODUCTION_READINESS.md:193",
-        "scripts/deploy-worker.sh:33"
+        "scripts/deploy-worker.sh:33",
+        "scripts/deploy-worker.sh:47"
       ],
       "files": [
         ".env.example",
@@ -1437,8 +1437,8 @@
       },
       "examples": [
         ".env.example:106",
-        "docs/reference/ENV.md:402",
-        "supabase/seed.sql:203"
+        "supabase/seed.sql:203",
+        "docs/reference/ENV.md:402"
       ],
       "files": [
         ".env.example",
@@ -1575,12 +1575,13 @@
       ],
       "classification": "roadmap-or-optional",
       "defaults": {
-        "docs/reference/ENV.md": "false"
+        "docs/reference/ENV.md": "false",
+        "worker-config": "false"
       },
       "examples": [
         "docs/reference/ENV.md:330",
         "docs/reference/ENV.md:331",
-        "scripts/ci/snapshots/worker-env-adhoc-baseline.json:45"
+        "docs/integrations/background-checks-spike.md:14"
       ],
       "files": [
         "docs/integrations/background-checks-spike.md",
@@ -1616,12 +1617,13 @@
         "docs/reference/ENV.md": "false",
         "frontend-switchboard": "true",
         "supabase-seed-default": "false",
-        "supabase-seed-value": "true"
+        "supabase-seed-value": "true",
+        "worker-config": "true"
       },
       "examples": [
-        ".env.example:63",
         "scripts/deploy-worker.sh:36",
-        "docs/reference/ENV.md:74"
+        ".env.example:63",
+        "supabase/seed.sql:205"
       ],
       "files": [
         ".env.example",
@@ -1899,8 +1901,8 @@
       },
       "examples": [
         ".env.example:22",
-        "docs/reference/ENV.md:63",
-        "services/worker/src/stripe/client.ts:7"
+        "services/worker/src/stripe/client.ts:7",
+        "docs/reference/ENV.md:63"
       ],
       "files": [
         ".env.example",

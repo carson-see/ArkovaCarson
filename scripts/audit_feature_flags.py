@@ -217,13 +217,32 @@ def parse_simple_defaults(flags: dict[str, Flag]) -> None:
 
     # Worker config defaults are documented in comments immediately above each schema field.
     text = load_text("services/worker/src/config.ts")
-    for name, default in re.findall(
-        r"/\*\*[^*]*?((?:ENABLE_[A-Z0-9_]+|USE_MOCKS|MAINTENANCE_MODE))[^*]*?\*/\s*\n\s*[a-zA-Z0-9_]+:\s*z\.preprocess\([^;]+?\.default\((true|false)\)",
-        text,
-        re.S,
-    ):
-        if name in flags:
-            flags[name].defaults["worker-config"] = default
+    pending_comment_flag: str | None = None
+    comment_lines: list[str] = []
+    in_comment = False
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("/**"):
+            in_comment = True
+            comment_lines = [stripped]
+            if "*/" in stripped:
+                in_comment = False
+                matches = FLAG_RE.findall(" ".join(comment_lines))
+                pending_comment_flag = matches[-1] if matches else None
+            continue
+        if in_comment:
+            comment_lines.append(stripped)
+            if "*/" in stripped:
+                in_comment = False
+                matches = FLAG_RE.findall(" ".join(comment_lines))
+                pending_comment_flag = matches[-1] if matches else None
+            continue
+
+        if pending_comment_flag and "z.preprocess" in stripped and ".default(" in stripped:
+            default_match = re.search(r"\.default\((true|false)\)", stripped)
+            if default_match and pending_comment_flag in flags:
+                flags[pending_comment_flag].defaults["worker-config"] = default_match.group(1)
+            pending_comment_flag = None
 
 
 def collect_registry_sets() -> dict[str, set[str]]:
