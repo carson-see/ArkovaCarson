@@ -41,6 +41,91 @@ const BULK_WEBHOOK_FAN_OUT_CONCURRENCY = Math.max(
   Number.parseInt(process.env.BULK_WEBHOOK_FAN_OUT_CONCURRENCY ?? '20', 10) || 20,
 );
 
+type SecuredWebhookAnchor = {
+  public_id: string | null;
+  org_id: string | null;
+};
+
+type DrainSubmittedToSecuredResult = {
+  updated: number;
+  capped: boolean;
+  anchors?: SecuredWebhookAnchor[];
+};
+
+function normalizeDrainedAnchors(value: unknown): SecuredWebhookAnchor[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => {
+      if (!item || typeof item !== 'object') return null;
+      const row = item as Record<string, unknown>;
+      return {
+        public_id: typeof row.public_id === 'string' ? row.public_id : null,
+        org_id: typeof row.org_id === 'string' ? row.org_id : null,
+      };
+    })
+    .filter((item): item is SecuredWebhookAnchor => item !== null);
+}
+
+export async function fanOutSecuredAnchorWebhooks(
+  anchors: SecuredWebhookAnchor[],
+  txId: string,
+  blockHeight: number,
+  blockTimestamp: string,
+): Promise<void> {
+  const eligible = anchors.filter(
+    (a): a is { public_id: string; org_id: string } =>
+      typeof a.org_id === 'string' && typeof a.public_id === 'string' && a.public_id.length > 0,
+  );
+
+  if (eligible.length === 0) {
+    logger.debug(
+      { txId, anchorsTotal: anchors.length },
+      'Bulk webhook fan-out: no anchors with both org_id + public_id; nothing to dispatch',
+    );
+    return;
+  }
+
+  const tasks = eligible.map((anchor) => async () => {
+    await dispatchWebhookEvent(anchor.org_id, 'anchor.secured', anchor.public_id, {
+      public_id: anchor.public_id,
+      status: 'SECURED',
+      chain_tx_id: txId,
+      chain_block_height: blockHeight,
+      chain_timestamp: blockTimestamp,
+      secured_at: blockTimestamp,
+    });
+  });
+
+  const result = await runWithConcurrency(tasks, BULK_WEBHOOK_FAN_OUT_CONCURRENCY);
+
+  if (result.rejected.length > 0) {
+    const firstReason = result.rejected[0]?.reason;
+    const formatReason = (reason: unknown): string => {
+      if (reason instanceof Error) return reason.message;
+      if (reason === null || reason === undefined) return 'unknown';
+      try {
+        return JSON.stringify(reason);
+      } catch {
+        return String(reason);
+      }
+    };
+    logger.warn(
+      {
+        txId,
+        anchorsDispatched: result.fulfilled.length,
+        anchorsFailed: result.rejected.length,
+        firstError: formatReason(firstReason),
+      },
+      'Bulk webhook fan-out: some dispatches failed (DLQ holds the durable retries)',
+    );
+  } else {
+    logger.info(
+      { txId, anchorsDispatched: result.fulfilled.length },
+      'Bulk webhook fan-out: anchor.secured delivered for all anchors in tx',
+    );
+  }
+}
+
 /**
  * Fan out per-anchor `anchor.secured` webhooks after the bulk SECURED update.
  * SCRUM-1264 (R2-1) — restores the customer-facing webhook contract that
@@ -98,64 +183,7 @@ export async function fanOutBulkSecuredWebhooks(
     return;
   }
 
-  const eligible = securedAnchors.filter(
-    (a): a is { id: string; public_id: string; org_id: string } =>
-      typeof a.org_id === 'string' && typeof a.public_id === 'string' && a.public_id.length > 0,
-  );
-
-  if (eligible.length === 0) {
-    logger.debug(
-      { txId, anchorsTotal: securedAnchors.length },
-      'Bulk webhook fan-out: no anchors with both org_id + public_id; nothing to dispatch',
-    );
-    return;
-  }
-
-  const tasks = eligible.map((anchor) => async () => {
-    // PR #567 review-fix: pass `public_id` (NOT `anchor.id`) as the eventId
-    // arg so the outer envelope's `event_id` is the public slug rather than
-    // the internal UUID. CLAUDE.md §6 — `anchors.id` must never leak.
-    await dispatchWebhookEvent(anchor.org_id, 'anchor.secured', anchor.public_id, {
-      public_id: anchor.public_id,
-      status: 'SECURED',
-      chain_tx_id: txId,
-      chain_block_height: blockHeight,
-      chain_timestamp: blockTimestamp,
-      secured_at: blockTimestamp,
-    });
-  });
-
-  const result = await runWithConcurrency(tasks, BULK_WEBHOOK_FAN_OUT_CONCURRENCY);
-
-  if (result.rejected.length > 0) {
-    // PR #567 CodeRabbit nit fix: stringify non-Error rejections via JSON
-    // (with try/catch) so a future caller throwing a plain object doesn't
-    // log `firstError: '[object Object]'`.
-    const firstReason = result.rejected[0]?.reason;
-    const formatReason = (reason: unknown): string => {
-      if (reason instanceof Error) return reason.message;
-      if (reason === null || reason === undefined) return 'unknown';
-      try {
-        return JSON.stringify(reason);
-      } catch {
-        return String(reason);
-      }
-    };
-    logger.warn(
-      {
-        txId,
-        anchorsDispatched: result.fulfilled.length,
-        anchorsFailed: result.rejected.length,
-        firstError: formatReason(firstReason),
-      },
-      'Bulk webhook fan-out: some dispatches failed (DLQ holds the durable retries)',
-    );
-  } else {
-    logger.info(
-      { txId, anchorsDispatched: result.fulfilled.length },
-      'Bulk webhook fan-out: anchor.secured delivered for all anchors in tx',
-    );
-  }
+  await fanOutSecuredAnchorWebhooks(securedAnchors, txId, blockHeight, blockTimestamp);
 }
 
 /** In-process mutex — prevents concurrent confirmation check runs */
@@ -560,6 +588,7 @@ export async function checkSubmittedConfirmations(): Promise<{ checked: number; 
         // its iteration cap (then we'll pick up the rest on the next cron
         // tick).
         let groupConfirmed = 0;
+        const drainedAnchors: SecuredWebhookAnchor[] = [];
         let drainErr: unknown = null;
 
         // Iterate so a single tick can drain a full 10k-anchor TX in
@@ -573,7 +602,7 @@ export async function checkSubmittedConfirmations(): Promise<{ checked: number; 
           // generated types haven't been regenerated yet.
           const rpcRes = await (db as unknown as {
             rpc: (name: string, args: Record<string, unknown>) => Promise<{
-              data: { updated: number; capped: boolean } | null;
+              data: DrainSubmittedToSecuredResult | null;
               error: unknown;
             }>;
           }).rpc('drain_submitted_to_secured_for_tx', {
@@ -592,6 +621,7 @@ export async function checkSubmittedConfirmations(): Promise<{ checked: number; 
           }
           const updated = Number(data?.updated ?? 0);
           groupConfirmed += updated;
+          drainedAnchors.push(...normalizeDrainedAnchors(data?.anchors));
           // Done draining when the RPC returns fewer than max possible rows.
           if (!data?.capped || updated === 0) break;
         }
@@ -634,7 +664,10 @@ export async function checkSubmittedConfirmations(): Promise<{ checked: number; 
           // their `confirmationCheckRunning` mutex. The helper never throws
           // (errors → DLQ via deliverToEndpoint), so a detached promise is
           // safe; we attach a .catch to surface unexpected throws.
-          void fanOutBulkSecuredWebhooks(txId, blockHeight, blockTimestamp).catch((fanOutErr) => {
+          const fanOutPromise = drainedAnchors.length > 0
+            ? fanOutSecuredAnchorWebhooks(drainedAnchors, txId, blockHeight, blockTimestamp)
+            : fanOutBulkSecuredWebhooks(txId, blockHeight, blockTimestamp);
+          void fanOutPromise.catch((fanOutErr) => {
             logger.error(
               { txId, error: fanOutErr },
               'Detached bulk webhook fan-out unexpectedly threw — should never happen (helper catches internally)',

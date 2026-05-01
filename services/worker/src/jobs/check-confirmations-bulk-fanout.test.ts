@@ -71,7 +71,7 @@ vi.mock('../email/index.js', () => ({
 vi.mock('../utils/verifyCache.js', () => ({ invalidateVerificationCache: vi.fn() }));
 
 // ---- System under test ----
-import { fanOutBulkSecuredWebhooks } from './check-confirmations.js';
+import { fanOutBulkSecuredWebhooks, fanOutSecuredAnchorWebhooks } from './check-confirmations.js';
 
 const TX = 'fake-tx-id';
 const BLOCK_HEIGHT = 850000;
@@ -95,6 +95,38 @@ describe('fanOutBulkSecuredWebhooks (SCRUM-1264 R2-1)', () => {
     await fanOutBulkSecuredWebhooks(TX, BLOCK_HEIGHT, BLOCK_TIMESTAMP);
 
     expect(mockDispatchWebhookEvent).toHaveBeenCalledTimes(3);
+  });
+
+  it('can fan out from the exact anchors returned by the drain RPC without querying the full tx', async () => {
+    anchorsSelectChain.data = [
+      { id: 'already-secured', public_id: 'old-pub', org_id: 'org-A' },
+    ];
+
+    await fanOutSecuredAnchorWebhooks(
+      [
+        { public_id: 'new-pub-1', org_id: 'org-A' },
+        { public_id: 'new-pub-2', org_id: 'org-B' },
+      ],
+      TX,
+      BLOCK_HEIGHT,
+      BLOCK_TIMESTAMP,
+    );
+
+    expect(mockDispatchWebhookEvent).toHaveBeenCalledTimes(2);
+    expect(mockDispatchWebhookEvent).toHaveBeenNthCalledWith(
+      1,
+      'org-A',
+      'anchor.secured',
+      'new-pub-1',
+      expect.objectContaining({ public_id: 'new-pub-1' }),
+    );
+    expect(mockDispatchWebhookEvent).toHaveBeenNthCalledWith(
+      2,
+      'org-B',
+      'anchor.secured',
+      'new-pub-2',
+      expect.objectContaining({ public_id: 'new-pub-2' }),
+    );
   });
 
   it('skips anchors with null org_id (no customer subscribed)', async () => {

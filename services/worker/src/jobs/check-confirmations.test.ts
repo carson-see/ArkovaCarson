@@ -154,7 +154,14 @@ vi.mock('../utils/db.js', () => {
         if (name === 'drain_submitted_to_secured_for_tx') {
           // First call returns 1 row updated (test fixtures use 1-2 anchors
           // per tx). capped=false signals the worker drain loop to exit.
-          return { data: { updated: 1, capped: false }, error: null };
+          return {
+            data: {
+              updated: 1,
+              capped: false,
+              anchors: [{ public_id: 'pub-001', org_id: 'org-001' }],
+            },
+            error: null,
+          };
         }
         return { data: true, error: null };
       }),

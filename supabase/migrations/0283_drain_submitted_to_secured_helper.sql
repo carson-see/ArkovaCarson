@@ -17,6 +17,10 @@
 --   3. add drain_submitted_to_secured_for_tx() helper that batches the
 --      SUBMITTED → SECURED UPDATE in 100-row chunks so it fits under
 --      the 60s PostgREST timeout. The worker calls this in a loop.
+--
+-- SECURITY: drain_submitted_to_secured_for_tx is SECURITY DEFINER because
+-- the worker calls it through PostgREST; do not leave the default PUBLIC
+-- EXECUTE grant in place.
 
 -- ── 1. Drop duplicate trigger ────────────────────────────────────────
 DROP TRIGGER IF EXISTS prevent_metadata_edit_trigger ON public.anchors;
@@ -78,6 +82,9 @@ BEGIN
 END;
 $function$;
 
+REVOKE ALL ON FUNCTION public.refresh_pipeline_dashboard_cache() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.refresh_pipeline_dashboard_cache() TO service_role;
+
 -- ── 3. Batched drain helper ──────────────────────────────────────────
 CREATE OR REPLACE FUNCTION public.drain_submitted_to_secured_for_tx(
   p_chain_tx_id text,
@@ -94,6 +101,8 @@ SET statement_timeout TO '50s'
 AS $function$
 DECLARE
   v_updated int;
+  v_updated_anchors jsonb;
+  v_anchors jsonb := '[]'::jsonb;
   v_total_updated int := 0;
   v_iterations int := 0;
 BEGIN
@@ -107,17 +116,35 @@ BEGIN
       WHERE chain_tx_id = p_chain_tx_id
         AND status = 'SUBMITTED'
         AND deleted_at IS NULL
+      ORDER BY created_at ASC
       LIMIT p_batch_size
+      FOR UPDATE SKIP LOCKED
+    ),
+    updated AS (
+      UPDATE anchors a
+      SET status = 'SECURED',
+          chain_block_height = p_block_height,
+          chain_timestamp = p_block_timestamp
+      FROM batch
+      WHERE a.id = batch.id
+      RETURNING a.public_id, a.org_id
     )
-    UPDATE anchors a
-    SET status = 'SECURED',
-        chain_block_height = p_block_height,
-        chain_timestamp = p_block_timestamp
-    FROM batch
-    WHERE a.id = batch.id;
+    SELECT
+      count(*)::int,
+      COALESCE(
+        jsonb_agg(
+          jsonb_build_object(
+            'public_id', public_id,
+            'org_id', org_id
+          )
+        ),
+        '[]'::jsonb
+      )
+    INTO v_updated, v_updated_anchors
+    FROM updated;
 
-    GET DIAGNOSTICS v_updated = ROW_COUNT;
     v_total_updated := v_total_updated + v_updated;
+    v_anchors := v_anchors || v_updated_anchors;
     v_iterations := v_iterations + 1;
 
     EXIT WHEN v_updated < p_batch_size OR v_iterations >= p_max_iterations;
@@ -127,9 +154,11 @@ BEGIN
     'tx_id', p_chain_tx_id,
     'updated', v_total_updated,
     'iterations', v_iterations,
+    'anchors', v_anchors,
     'capped', v_iterations >= p_max_iterations
   );
 END;
 $function$;
 
+REVOKE ALL ON FUNCTION public.drain_submitted_to_secured_for_tx(text, int, timestamptz, int, int) FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.drain_submitted_to_secured_for_tx(text, int, timestamptz, int, int) TO service_role;
