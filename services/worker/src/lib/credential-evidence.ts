@@ -59,6 +59,8 @@ export const CREDENTIAL_EVIDENCE_EXTRACTION_METHODS = [
 export type AnchorCredentialType = (typeof ANCHOR_CREDENTIAL_TYPES)[number];
 export type CredentialEvidenceVerificationLevel = (typeof CREDENTIAL_EVIDENCE_VERIFICATION_LEVELS)[number];
 export type CredentialEvidenceExtractionMethod = (typeof CREDENTIAL_EVIDENCE_EXTRACTION_METHODS)[number];
+type PublicMetadataValue = string | number | boolean | null;
+type CompactablePublicMetadata = Record<string, PublicMetadataValue | undefined>;
 
 const SHA_256_HEX = /^[a-fA-F0-9]{64}$/;
 const PROVIDER_SLUG = /^[a-z][a-z0-9_-]{1,63}$/;
@@ -90,7 +92,7 @@ const TRACKING_QUERY_PREFIXES = ['utm_'];
 const TRACKING_QUERY_KEYS = new Set(['fbclid', 'gclid', 'mc_cid', 'mc_eid']);
 
 function isPrivateIpv4(hostname: string): boolean {
-  const parts = hostname.split('.').map((part) => Number(part));
+  const parts = hostname.split('.').map(Number);
   if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) {
     return false;
   }
@@ -116,8 +118,12 @@ function isPrivateIpv6(hostname: string): boolean {
   );
 }
 
+function stripIpv6Brackets(hostname: string): string {
+  return hostname.startsWith('[') && hostname.endsWith(']') ? hostname.slice(1, -1) : hostname;
+}
+
 function assertPublicHttpHost(hostname: string): void {
-  const normalized = hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  const normalized = stripIpv6Brackets(hostname.toLowerCase());
   if (!normalized || normalized === 'localhost' || normalized.endsWith('.localhost') || normalized.endsWith('.local')) {
     throw new Error('source URL host must be a public internet host');
   }
@@ -138,6 +144,11 @@ function shouldDropQueryKey(key: string): boolean {
     TRACKING_QUERY_KEYS.has(normalized) ||
     TRACKING_QUERY_PREFIXES.some((prefix) => normalized.startsWith(prefix))
   );
+}
+
+function compareQueryEntries([aKey, aVal]: [string, string], [bKey, bVal]: [string, string]): number {
+  const keyComparison = aKey.localeCompare(bKey);
+  return keyComparison !== 0 ? keyComparison : aVal.localeCompare(bVal);
 }
 
 /**
@@ -170,10 +181,7 @@ export function normalizeCredentialSourceUrl(rawUrl: string): string {
 
   const entries = [...parsed.searchParams.entries()]
     .filter(([key]) => !shouldDropQueryKey(key))
-    .sort(([aKey, aVal], [bKey, bVal]) => {
-      if (aKey !== bKey) return aKey < bKey ? -1 : 1;
-      return aVal < bVal ? -1 : aVal > bVal ? 1 : 0;
-    });
+    .sort(compareQueryEntries);
   parsed.search = '';
   for (const [key, value] of entries) {
     parsed.searchParams.append(key, value);
@@ -264,10 +272,10 @@ export function buildCredentialEvidencePackage(input: CredentialEvidenceHashInpu
   });
 }
 
-function compactPublicMetadata(metadata: Record<string, string | number | boolean | null | undefined>): Record<string, string | number | boolean | null> {
+function compactPublicMetadata(metadata: CompactablePublicMetadata): Record<string, PublicMetadataValue> {
   return Object.fromEntries(
     Object.entries(metadata).filter(([, value]) => value !== undefined),
-  ) as Record<string, string | number | boolean | null>;
+  ) as Record<string, PublicMetadataValue>;
 }
 
 /**
@@ -279,7 +287,7 @@ function compactPublicMetadata(metadata: Record<string, string | number | boolea
  */
 export function toPublicSafeCredentialEvidenceMetadata(
   evidencePackage: CredentialEvidencePackage,
-): Record<string, string | number | boolean | null> {
+): Record<string, PublicMetadataValue> {
   return compactPublicMetadata({
     evidence_schema_version: evidencePackage.schemaVersion,
     evidence_package_hash: evidencePackage.evidencePackageHash,

@@ -84,16 +84,16 @@ describe('credential-evidence', () => {
 
   it('rejects non-public or non-http source URLs', () => {
     expect(() => normalizeCredentialSourceUrl('javascript:alert(1)')).toThrow('http or https');
-    expect(() => normalizeCredentialSourceUrl('http://localhost:3000/credential')).toThrow(
+    expect(() => normalizeCredentialSourceUrl('https://localhost:3000/credential')).toThrow(
       'public internet host',
     );
-    expect(() => normalizeCredentialSourceUrl('http://127.0.0.1/credential')).toThrow(
+    expect(() => normalizeCredentialSourceUrl('https://127.0.0.1/credential')).toThrow(
       'private IPv4',
     );
     expect(() => normalizeCredentialSourceUrl('https://192.168.0.5/credential')).toThrow(
       'private IPv4',
     );
-    expect(() => normalizeCredentialSourceUrl('http://[::1]/credential')).toThrow(
+    expect(() => normalizeCredentialSourceUrl('https://[::1]/credential')).toThrow(
       'private IPv6',
     );
   });
