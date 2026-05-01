@@ -671,10 +671,10 @@ jobs:
         # finalized GitHub releases — they're effectively immutable).
         if: steps.tla-changed.outputs.changed == 'true'
         env:
-          # Pin updated 2026-04-28 — upstream re-released v1.8.0 with a new
+          # Pin updated 2026-05-01 — upstream re-released v1.8.0 with a new
           # binary; verified locally via:
           #   curl -fsSL <release-url> | sha256sum
-          TLA2TOOLS_SHA256: accf1505b3a27679b532753e0430dbea1673c9935d7991dc2536b99ce69976fa
+          TLA2TOOLS_SHA256: 1f1859e9d9c9b6d0341e9676ada01c6b757c38790f962928cabea598c3460b17
         run: |
           mkdir -p "$HOME/.tla"
           curl -fsSL -o "$HOME/.tla/tla2tools.jar" \
