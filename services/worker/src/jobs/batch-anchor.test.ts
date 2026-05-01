@@ -199,6 +199,18 @@ describe('processBatchAnchors', () => {
     expect(result.txId).toBe(MOCK_RECEIPT.receiptId);
   });
 
+  it('passes orgId through to claim_pending_anchors for manual org queue runs', async () => {
+    mockDbRpc
+      .mockResolvedValueOnce({ data: [ANCHOR_A, ANCHOR_B], error: null }) // claim
+      .mockResolvedValueOnce({ data: 2, error: null }); // submit_batch_anchors
+
+    await processBatchAnchors({ force: true, orgId: 'org-1' });
+
+    expect(mockDbRpc).toHaveBeenCalledWith('claim_pending_anchors', expect.objectContaining({
+      p_org_id: 'org-1',
+    }));
+  });
+
   it('submits the Merkle root (not individual fingerprints) to chain', async () => {
     mockDbRpc
       .mockResolvedValueOnce({ data: [ANCHOR_A, ANCHOR_B], error: null }) // claim

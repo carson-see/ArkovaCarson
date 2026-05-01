@@ -373,10 +373,7 @@ describe('handleRunOrgAnchorQueue', () => {
     await handleRunOrgAnchorQueue('user-1', mockReq(), res);
 
     expect(status).not.toHaveBeenCalled();
-    // SCRUM-1243: processBatchAnchors() takes no args today — org-scoping is
-    // not yet plumbed through to the claim RPC. The endpoint still authorizes
-    // against the caller's org, but the underlying batch is global.
-    expect(processBatchAnchorsMock).toHaveBeenCalledWith();
+    expect(processBatchAnchorsMock).toHaveBeenCalledWith({ force: true, orgId: 'org-1' });
     expect(json).toHaveBeenCalledWith({
       ok: true,
       processed: 42,

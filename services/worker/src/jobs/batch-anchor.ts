@@ -138,6 +138,13 @@ export interface BatchAnchorResult {
   txId: string | null;
 }
 
+export interface ProcessBatchAnchorOptions {
+  /** Bypass economic age/size deferral. Used by daily flush + explicit org queue runs. */
+  force?: boolean;
+  /** Restrict pending-anchor discovery and claims to a single organization. */
+  orgId?: string;
+}
+
 /**
  * PostgREST row limit per response. Supabase caps RPC results at 1000 rows.
  * We claim in chunks of this size and accumulate up to BATCH_SIZE.
@@ -163,7 +170,7 @@ let batchProcessingRunning = false;
  * SCALE-2: Pre-claim fee check with dynamic ceiling based on backlog age
  * SCALE-3: In-process mutex prevents overlapping runs
  */
-export async function processBatchAnchors(opts: { force?: boolean } = {}): Promise<BatchAnchorResult> {
+export async function processBatchAnchors(opts: ProcessBatchAnchorOptions = {}): Promise<BatchAnchorResult> {
   const EMPTY: BatchAnchorResult = { processed: 0, batchId: null, merkleRoot: null, txId: null };
 
   // SCALE-3: Mutex — skip if already running
@@ -179,7 +186,7 @@ export async function processBatchAnchors(opts: { force?: boolean } = {}): Promi
   }
 }
 
-async function _processBatchAnchorsInner(opts: { force?: boolean } = {}): Promise<BatchAnchorResult> {
+async function _processBatchAnchorsInner(opts: ProcessBatchAnchorOptions = {}): Promise<BatchAnchorResult> {
   const EMPTY: BatchAnchorResult = { processed: 0, batchId: null, merkleRoot: null, txId: null };
 
   // Phase 0a: Pre-flight UTXO check — skip immediately if treasury is empty.
@@ -203,16 +210,19 @@ async function _processBatchAnchorsInner(opts: { force?: boolean } = {}): Promis
     // Pending count via get_anchor_status_counts_fast (pg_class.reltuples +
     // 1s per-status budget); avoids the exact-count scan on the bloated
     // anchors table that timed out the prior implementation.
+    let oldestQuery = db
+      .from('anchors')
+      .select('created_at')
+      .eq('status', 'PENDING')
+      .is('deleted_at', null);
+    if (opts.orgId) oldestQuery = oldestQuery.eq('org_id', opts.orgId);
+
     const [oldestRes, countsRes] = await Promise.all([
-      db
-        .from('anchors')
-        .select('created_at')
-        .eq('status', 'PENDING')
-        .is('deleted_at', null)
+      oldestQuery
         .order('created_at', { ascending: true })
         .limit(1)
         .single(),
-      callRpc<FastCountsRpc>(db, 'get_anchor_status_counts_fast'),
+      opts.orgId ? getOrgPendingCount(opts.orgId) : callRpc<FastCountsRpc>(db, 'get_anchor_status_counts_fast'),
     ]);
 
     const stats = oldestRes.data;
@@ -240,8 +250,8 @@ async function _processBatchAnchorsInner(opts: { force?: boolean } = {}): Promis
     // Used by the daily-anchor-flush Cloud Scheduler job.
     if (opts.force) {
       logger.info(
-        { pendingCount, oldestAgeMs: oldestPendingAgeMs },
-        'Forced batch flush (daily 3am EST sweep)',
+        { pendingCount, oldestAgeMs: oldestPendingAgeMs, orgId: opts.orgId ?? null },
+        opts.orgId ? 'Forced org batch flush' : 'Forced batch flush (daily 3am EST sweep)',
       );
     } else if (!triggerB_shouldFireOnAge({ pendingCount, oldestPendingAgeMs })) {
       logger.debug(
@@ -290,6 +300,7 @@ async function _processBatchAnchorsInner(opts: { force?: boolean } = {}): Promis
         p_worker_id: `batch-${process.pid}`,
         p_limit: chunkSize,
         p_exclude_pipeline: false,
+        p_org_id: opts.orgId ?? null,
       }), 30_000);
     } catch (timeoutErr) {
       logger.error({ error: timeoutErr, claimedSoFar: allClaimed.length }, 'claim_pending_anchors timed out in batch');
@@ -303,7 +314,7 @@ async function _processBatchAnchorsInner(opts: { force?: boolean } = {}): Promis
     if (claimError) {
       if (allClaimed.length === 0) {
         logger.warn({ error: claimError }, 'claim_pending_anchors RPC failed — falling back to legacy batch');
-        return legacyProcessBatchAnchors();
+        return legacyProcessBatchAnchors(opts.orgId);
       }
       // Partial claim succeeded — proceed with what we have
       logger.warn({ error: claimError, claimedSoFar: allClaimed.length }, 'claim_pending_anchors chunk failed — proceeding with partial batch');
@@ -445,6 +456,31 @@ async function _processBatchAnchorsInner(opts: { force?: boolean } = {}): Promis
   };
 }
 
+async function getOrgPendingCount(orgId: string): Promise<{ data: FastCountsRpc | null; error: unknown }> {
+  try {
+    const { count, error } = await db
+      .from('anchors')
+      .select('id', { count: 'exact', head: true })
+      .eq('status', 'PENDING')
+      .eq('org_id', orgId)
+      .is('deleted_at', null);
+    if (error) return { data: null, error };
+    return {
+      data: {
+        PENDING: count ?? 0,
+        SUBMITTED: 0,
+        BROADCASTING: 0,
+        SECURED: 0,
+        REVOKED: 0,
+        total: count ?? 0,
+      },
+      error: null,
+    };
+  } catch (error) {
+    return { data: null, error };
+  }
+}
+
 /** Revert a single batch anchor from BROADCASTING back to PENDING */
 async function revertBatchAnchorToPending(anchorId: string): Promise<void> {
   try {
@@ -559,12 +595,15 @@ async function bulkRevertToPending(anchorIds: string[]): Promise<void> {
  * Legacy fallback: batch processing without claim RPC.
  * Used when migration 0111 hasn't been applied yet.
  */
-async function legacyProcessBatchAnchors(): Promise<BatchAnchorResult> {
-  const { data: pendingAnchors, error: fetchError } = await db
+async function legacyProcessBatchAnchors(orgId?: string): Promise<BatchAnchorResult> {
+  let pendingQuery = db
     .from('anchors')
     .select('id, fingerprint, metadata, credential_type')
     .eq('status', 'PENDING')
-    .is('chain_tx_id', null)
+    .is('chain_tx_id', null);
+  if (orgId) pendingQuery = pendingQuery.eq('org_id', orgId);
+
+  const { data: pendingAnchors, error: fetchError } = await pendingQuery
     .order('created_at', { ascending: true })
     .limit(BATCH_SIZE);
 
