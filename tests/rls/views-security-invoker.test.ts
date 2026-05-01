@@ -38,11 +38,11 @@ describe('SCRUM-1276: public-schema views security_invoker audit', () => {
       .eq('schemaname', 'public')
       .eq('viewname', 'public_org_profiles');
 
-    // Soft-skip if PostgREST refuses pg_views in this fixture — the lint
-    // is the canonical guard. The migration's defensive DROP IF EXISTS
-    // also pins the runtime state.
+    // Soft-skip only when PostgREST does not expose pg_views in this fixture.
+    // Other errors must fail so this regression test cannot silently pass.
     if (error?.code === 'PGRST205' || error?.code === 'PGRST116') return;
 
+    expect(error).toBeNull();
     expect(viewRows ?? []).toHaveLength(0);
   });
 
