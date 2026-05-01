@@ -50,6 +50,20 @@ describe('parseGoldenLine', () => {
     expect(parseGoldenLine(line).credentialType).toBe('PUBLICATION');
   });
 
+  it('prefers assistant output over prompt examples when extracting credentialType', () => {
+    const line = JSON.stringify({
+      messages: [
+        { role: 'system', content: 'Example: {"credentialType":"DEGREE"}' },
+        { role: 'user', content: 'Credential type hint: DEGREE\n--- text ---' },
+        { role: 'assistant', content: '{"credentialType":"LICENSE","fraudSignals":[]}' },
+      ],
+    });
+    expect(parseGoldenLine(line)).toEqual({
+      credentialType: 'LICENSE',
+      fraudPositive: false,
+    });
+  });
+
   it('falls back to credential-type hint regex when JSON not embedded', () => {
     const line = JSON.stringify({
       messages: [
@@ -86,6 +100,19 @@ describe('parseGoldenLine', () => {
     expect(parseGoldenLine(line)).toEqual({
       credentialType: 'LICENSE',
       fraudPositive: true,
+    });
+  });
+
+  it('does not count prompt-only fraud examples when assistant output is clean', () => {
+    const line = JSON.stringify({
+      messages: [
+        { role: 'system', content: 'Example: {"credentialType":"DEGREE","fraudSignals":["sample"]}' },
+        { role: 'assistant', content: '{"credentialType":"DEGREE","fraudSignals":[]}' },
+      ],
+    });
+    expect(parseGoldenLine(line)).toEqual({
+      credentialType: 'DEGREE',
+      fraudPositive: false,
     });
   });
 

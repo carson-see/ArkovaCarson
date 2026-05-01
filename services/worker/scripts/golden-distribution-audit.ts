@@ -76,6 +76,7 @@ export const DEFAULT_EXPECTED_CREDENTIAL_TYPES = [
 const CREDENTIAL_TYPE_RE = /"credentialType"\s*:\s*"([A-Z_]+)"/;
 const CREDENTIAL_HINT_RE = /credential\s*type\s*hint\s*[:=]\s*([A-Z_]+)/i;
 const FRAUD_POSITIVE_RE = /"fraudSignals"\s*:\s*\[\s*(?!\])/;
+const ASSISTANT_ROLES = new Set(['assistant', 'model']);
 
 function normalizeTypes(types: string[]): string[] {
   return [...new Set(types.map((type) => type.trim().toUpperCase()).filter(Boolean))].sort((a, b) =>
@@ -107,41 +108,46 @@ export function parseGoldenLine(line: string): GoldenRow {
   } catch {
     return { credentialType: null, fraudPositive: false };
   }
-  const blobs: string[] = [];
+  const outputBlobs: string[] = [];
+  const promptBlobs: string[] = [];
   let structuredFraudPositive = false;
   if (parsed && typeof parsed === 'object') {
     const obj = parsed as Record<string, unknown>;
     if (Array.isArray(obj.contents)) {
       for (const c of obj.contents as Array<Record<string, unknown>>) {
+        const target = ASSISTANT_ROLES.has(String(c.role ?? '').toLowerCase()) ? outputBlobs : promptBlobs;
         if (Array.isArray(c.parts)) {
           for (const p of c.parts as Array<Record<string, unknown>>) {
-            if (typeof p.text === 'string') blobs.push(p.text);
+            if (typeof p.text === 'string') target.push(p.text);
           }
         }
       }
     }
     if (Array.isArray(obj.messages)) {
       for (const m of obj.messages as Array<Record<string, unknown>>) {
-        if (typeof m.content === 'string') blobs.push(m.content);
+        const target = ASSISTANT_ROLES.has(String(m.role ?? '').toLowerCase()) ? outputBlobs : promptBlobs;
+        if (typeof m.content === 'string') target.push(m.content);
       }
     }
-    if (typeof obj.credentialType === 'string') blobs.push(`"credentialType":"${obj.credentialType}"`);
+    if (typeof obj.credentialType === 'string') outputBlobs.push(`"credentialType":"${obj.credentialType}"`);
     if (hasStructuredFraudSignals(obj.fraudSignals)) structuredFraudPositive = true;
     if (obj.output && typeof obj.output === 'object') {
       const out = obj.output as Record<string, unknown>;
-      if (typeof out.credentialType === 'string') blobs.push(`"credentialType":"${out.credentialType}"`);
+      outputBlobs.push(JSON.stringify(out));
       if (hasStructuredFraudSignals(out.fraudSignals)) structuredFraudPositive = true;
     }
   }
-  const full = blobs.join('\n');
+  const outputText = outputBlobs.join('\n');
+  const promptText = promptBlobs.join('\n');
+  const fallbackText = [outputText, promptText].filter(Boolean).join('\n');
   let credentialType: string | null = null;
-  const m = full.match(CREDENTIAL_TYPE_RE);
+  const m = outputText.match(CREDENTIAL_TYPE_RE) ?? fallbackText.match(CREDENTIAL_TYPE_RE);
   if (m) credentialType = m[1];
   if (!credentialType) {
-    const m2 = full.match(CREDENTIAL_HINT_RE);
+    const m2 = fallbackText.match(CREDENTIAL_HINT_RE);
     if (m2) credentialType = m2[1].toUpperCase();
   }
-  const fraudPositive = structuredFraudPositive || FRAUD_POSITIVE_RE.test(full);
+  const fraudPositive = structuredFraudPositive || FRAUD_POSITIVE_RE.test(outputText || fallbackText);
   return { credentialType, fraudPositive };
 }
 
