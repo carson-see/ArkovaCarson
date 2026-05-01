@@ -14,6 +14,11 @@ import { pathToFileURL } from 'node:url';
 
 const DEFAULT_REPO = resolve(import.meta.dirname, '..', '..');
 const CANONICAL_PYTHON_SDK = 'packages/arkova-py/pyproject.toml';
+const GIT_BINARY_CANDIDATES = [
+  '/usr/bin/git',
+  '/opt/homebrew/bin/git',
+  '/usr/local/bin/git',
+];
 
 const DEPRECATED_PYTHON_SDK_PATHS = [
   'packages/python-sdk/.gitignore',
@@ -148,10 +153,18 @@ export function findApiContractDrift(input: DriftInput): DriftFinding[] {
 }
 
 function gitLsFiles(repo: string): string[] {
-  return execFileSync('git', ['ls-files'], { cwd: repo, encoding: 'utf8' })
+  return execFileSync(resolveGitBinary(), ['ls-files'], { cwd: repo, encoding: 'utf8' })
     .split('\n')
     .map((line) => line.trim())
     .filter(Boolean);
+}
+
+function resolveGitBinary(): string {
+  const gitBinary = GIT_BINARY_CANDIDATES.find((candidate) => existsSync(candidate));
+  if (!gitBinary) {
+    throw new Error(`git binary not found in fixed candidates: ${GIT_BINARY_CANDIDATES.join(', ')}`);
+  }
+  return gitBinary;
 }
 
 function main(): void {
