@@ -67,26 +67,33 @@ function detailResponses(schemaName: 'OrganizationDetail' | 'RecordDetail' | 'Fi
   } as const;
 }
 
-function resourceDetailPath(
-  operationId: string,
-  summary: string,
-  description: string,
-  toolName: string,
-  whenToUse: string,
-  args: Record<string, string>,
-  auth: string,
-  parameters: readonly [typeof orgPublicIdPathParameter | typeof anchorPublicIdPathParameter | typeof fingerprintPathParameter],
-  schemaName: 'OrganizationDetail' | 'RecordDetail' | 'FingerprintDetail' | 'DocumentDetail',
-) {
+interface ResourceDetailPathOptions {
+  operationId: string;
+  summary: string;
+  description: string;
+  toolName: string;
+  whenToUse: string;
+  args: Record<string, string>;
+  auth: string;
+  parameters: readonly (typeof orgPublicIdPathParameter | typeof anchorPublicIdPathParameter | typeof fingerprintPathParameter)[];
+  schemaName: 'OrganizationDetail' | 'RecordDetail' | 'FingerprintDetail' | 'DocumentDetail';
+}
+
+function resourceDetailPath(options: ResourceDetailPathOptions) {
   return {
     get: {
       tags: ['Resource Details'],
-      operationId,
-      summary,
-      description,
-      'x-agent-usage': { tool_name: toolName, when_to_use: whenToUse, arguments: args, auth },
-      parameters,
-      responses: detailResponses(schemaName),
+      operationId: options.operationId,
+      summary: options.summary,
+      description: options.description,
+      'x-agent-usage': {
+        tool_name: options.toolName,
+        when_to_use: options.whenToUse,
+        arguments: options.args,
+        auth: options.auth,
+      },
+      parameters: options.parameters,
+      responses: detailResponses(options.schemaName),
     },
   } as const;
 }
@@ -103,32 +110,38 @@ function agentToolResponses(schemaName: 'FingerprintVerification' | 'Anchor', ok
   } as const;
 }
 
-function agentToolPath(
-  operationId: string,
-  summary: string,
-  description: string,
-  toolName: string,
-  whenToUse: string,
-  args: Record<string, string>,
-  parameter: typeof anchorPublicIdPathParameter | typeof fingerprintPathParameter,
-  schemaName: 'FingerprintVerification' | 'Anchor',
-  okDescription: string,
-  includeNotFound = false,
-) {
+interface AgentToolPathOptions {
+  operationId: string;
+  summary: string;
+  description: string;
+  toolName: string;
+  whenToUse: string;
+  args: Record<string, string>;
+  parameter: typeof anchorPublicIdPathParameter | typeof fingerprintPathParameter;
+  schemaName: 'FingerprintVerification' | 'Anchor';
+  okDescription: string;
+  includeNotFound?: boolean;
+}
+
+function agentToolPath(options: AgentToolPathOptions) {
   return {
     get: {
       tags: ['Agent Tools'],
-      operationId,
-      summary,
-      description,
+      operationId: options.operationId,
+      summary: options.summary,
+      description: options.description,
       'x-agent-usage': {
-        tool_name: toolName,
-        when_to_use: whenToUse,
-        arguments: args,
+        tool_name: options.toolName,
+        when_to_use: options.whenToUse,
+        arguments: options.args,
         auth: 'Bearer API key with read:records scope.',
       },
-      parameters: [parameter],
-      responses: agentToolResponses(schemaName, okDescription, includeNotFound),
+      parameters: [options.parameter],
+      responses: agentToolResponses(
+        options.schemaName,
+        options.okDescription,
+        options.includeNotFound ?? false,
+      ),
     },
   } as const;
 }
@@ -275,73 +288,73 @@ export const openApiV2Spec = {
       'Search document metadata',
       'Alias for `/search?type=document`. Returns document-oriented search rows using public identifiers only.',
     ),
-    '/organizations/{public_id}': resourceDetailPath(
-      'get_organization',
-      'Get organization detail',
-      'Fetch the organization profile for the organization attached to the authenticated API key. Does not return internal organization UUIDs.',
-      'get_organization',
-      'Use after search or list_orgs returns an organization public_id.',
-      { public_id: 'Organization public identifier, for example org_acme.' },
-      'Bearer API key with read:orgs scope.',
-      [orgPublicIdPathParameter],
-      'OrganizationDetail',
-    ),
-    '/records/{public_id}': resourceDetailPath(
-      'get_record',
-      'Get record detail',
-      'Fetch public-id-keyed anchor record metadata after search returns a record result. Internal anchor, user, and organization UUIDs are never returned.',
-      'get_record',
-      'Use after search returns a record public_id and the agent needs verification metadata.',
-      { public_id: 'Arkova public identifier, for example ARK-DOC-ABCDEF.' },
-      'Bearer API key with read:records scope.',
-      [anchorPublicIdPathParameter],
-      'RecordDetail',
-    ),
-    '/fingerprints/{fingerprint}': resourceDetailPath(
-      'get_fingerprint',
-      'Get fingerprint detail',
-      'Fetch a public-id-backed fingerprint detail record by exact SHA-256 fingerprint. Missing fingerprints return problem+json 404; use verify for the boolean verification workflow.',
-      'get_fingerprint',
-      'Use when a search result or external workflow supplies an exact SHA-256 fingerprint and the agent needs the linked public record.',
-      { fingerprint: '64-character lowercase or uppercase SHA-256 hex string.' },
-      'Bearer API key with read:records scope.',
-      [fingerprintPathParameter],
-      'FingerprintDetail',
-    ),
-    '/documents/{public_id}': resourceDetailPath(
-      'get_document',
-      'Get document detail',
-      'Fetch document-oriented public metadata by Arkova public ID. Documents themselves are never returned; this endpoint returns metadata and receipt fields only.',
-      'get_document',
-      'Use after search returns a document public_id and the agent needs file metadata plus anchor receipt details.',
-      { public_id: 'Arkova public identifier, for example ARK-DOC-ABCDEF.' },
-      'Bearer API key with read:records scope.',
-      [anchorPublicIdPathParameter],
-      'DocumentDetail',
-    ),
-    '/verify/{fingerprint}': agentToolPath(
-      'verify',
-      'Verify a document fingerprint',
-      'Verify whether a SHA-256 document fingerprint has been anchored in Arkova and return the public receipt metadata when present.',
-      'verify',
-      'Use when the user has a SHA-256 fingerprint and wants to know whether it is anchored.',
-      { fingerprint: '64-character lowercase or uppercase SHA-256 hex string.' },
-      fingerprintPathParameter,
-      'FingerprintVerification',
-      'Verification result.',
-    ),
-    '/anchors/{public_id}': agentToolPath(
-      'get_anchor',
-      'Get a public anchor by Arkova ID',
-      'Fetch redacted public anchor metadata by Arkova public ID. This is the follow-up call after search returns a public_id.',
-      'get_anchor',
-      'Use after search returns a public_id or when the user supplies an Arkova public ID.',
-      { public_id: 'Arkova public identifier, for example ARK-DEG-ABCDEF.' },
-      anchorPublicIdPathParameter,
-      'Anchor',
-      'Anchor metadata.',
-      true,
-    ),
+    '/organizations/{public_id}': resourceDetailPath({
+      operationId: 'get_organization',
+      summary: 'Get organization detail',
+      description: 'Fetch the organization profile for the organization attached to the authenticated API key. Does not return internal organization UUIDs.',
+      toolName: 'get_organization',
+      whenToUse: 'Use after search or list_orgs returns an organization public_id.',
+      args: { public_id: 'Organization public identifier, for example org_acme.' },
+      auth: 'Bearer API key with read:orgs scope.',
+      parameters: [orgPublicIdPathParameter],
+      schemaName: 'OrganizationDetail',
+    }),
+    '/records/{public_id}': resourceDetailPath({
+      operationId: 'get_record',
+      summary: 'Get record detail',
+      description: 'Fetch public-id-keyed anchor record metadata after search returns a record result. Internal anchor, user, and organization UUIDs are never returned.',
+      toolName: 'get_record',
+      whenToUse: 'Use after search returns a record public_id and the agent needs verification metadata.',
+      args: { public_id: 'Arkova public identifier, for example ARK-DOC-ABCDEF.' },
+      auth: 'Bearer API key with read:records scope.',
+      parameters: [anchorPublicIdPathParameter],
+      schemaName: 'RecordDetail',
+    }),
+    '/fingerprints/{fingerprint}': resourceDetailPath({
+      operationId: 'get_fingerprint',
+      summary: 'Get fingerprint detail',
+      description: 'Fetch a public-id-backed fingerprint detail record by exact SHA-256 fingerprint. Missing fingerprints return problem+json 404; use verify for the boolean verification workflow.',
+      toolName: 'get_fingerprint',
+      whenToUse: 'Use when a search result or external workflow supplies an exact SHA-256 fingerprint and the agent needs the linked public record.',
+      args: { fingerprint: '64-character lowercase or uppercase SHA-256 hex string.' },
+      auth: 'Bearer API key with read:records scope.',
+      parameters: [fingerprintPathParameter],
+      schemaName: 'FingerprintDetail',
+    }),
+    '/documents/{public_id}': resourceDetailPath({
+      operationId: 'get_document',
+      summary: 'Get document detail',
+      description: 'Fetch document-oriented public metadata by Arkova public ID. Documents themselves are never returned; this endpoint returns metadata and receipt fields only.',
+      toolName: 'get_document',
+      whenToUse: 'Use after search returns a document public_id and the agent needs file metadata plus anchor receipt details.',
+      args: { public_id: 'Arkova public identifier, for example ARK-DOC-ABCDEF.' },
+      auth: 'Bearer API key with read:records scope.',
+      parameters: [anchorPublicIdPathParameter],
+      schemaName: 'DocumentDetail',
+    }),
+    '/verify/{fingerprint}': agentToolPath({
+      operationId: 'verify',
+      summary: 'Verify a document fingerprint',
+      description: 'Verify whether a SHA-256 document fingerprint has been anchored in Arkova and return the public receipt metadata when present.',
+      toolName: 'verify',
+      whenToUse: 'Use when the user has a SHA-256 fingerprint and wants to know whether it is anchored.',
+      args: { fingerprint: '64-character lowercase or uppercase SHA-256 hex string.' },
+      parameter: fingerprintPathParameter,
+      schemaName: 'FingerprintVerification',
+      okDescription: 'Verification result.',
+    }),
+    '/anchors/{public_id}': agentToolPath({
+      operationId: 'get_anchor',
+      summary: 'Get a public anchor by Arkova ID',
+      description: 'Fetch redacted public anchor metadata by Arkova public ID. This is the follow-up call after search returns a public_id.',
+      toolName: 'get_anchor',
+      whenToUse: 'Use after search returns a public_id or when the user supplies an Arkova public ID.',
+      args: { public_id: 'Arkova public identifier, for example ARK-DEG-ABCDEF.' },
+      parameter: anchorPublicIdPathParameter,
+      schemaName: 'Anchor',
+      okDescription: 'Anchor metadata.',
+      includeNotFound: true,
+    }),
     '/orgs': {
       get: {
         tags: ['Agent Tools'],

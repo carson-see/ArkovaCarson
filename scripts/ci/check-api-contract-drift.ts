@@ -148,7 +148,7 @@ export function findApiContractDrift(input: DriftInput): DriftFinding[] {
 }
 
 function gitLsFiles(repo: string): string[] {
-  return execFileSync('/usr/bin/git', ['ls-files'], { cwd: repo, encoding: 'utf8' })
+  return execFileSync('git', ['ls-files'], { cwd: repo, encoding: 'utf8' })
     .split('\n')
     .map((line) => line.trim())
     .filter(Boolean);

@@ -112,6 +112,8 @@ describe('scopeSatisfies', () => {
     expect(migration).toContain('agents_allowed_scopes_known_values');
     expect(migration).toContain("WHEN 'attest' THEN 'attestations:write'");
     expect(migration).toContain("WHEN 'oracle' THEN 'oracle:read'");
+    expect(migration).toContain("WHEN 'batch' THEN 'verify:batch'");
+    expect(migration).toContain("WHEN 'usage' THEN 'usage:read'");
   });
 
   it('keeps new-key picker choices restricted to API v2 scopes', () => {
@@ -119,7 +121,7 @@ describe('scopeSatisfies', () => {
   });
 
   it('keeps agent delegation schemas on the API key vocabulary', () => {
-    const agentsSource = readRepoFile('services/worker/src/api/v1/agents.ts');
+    const agentsSource = readRepoFile('services/worker/src/api/v1/agentSchemas.ts');
 
     expect(agentsSource).toContain("import { API_KEY_SCOPES } from '../apiScopes.js'");
     expect(agentsSource).toContain('z.enum(API_KEY_SCOPES)');

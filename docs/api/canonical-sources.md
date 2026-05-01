@@ -1,12 +1,14 @@
-# Arkova API Canonical Sources
+# Arkova API Engineering Source Map
 
-> Status: Canonical source map | Stories: SCRUM-1584, SCRUM-1585
+> Status: Engineering mirror/index | Stories: SCRUM-1584, SCRUM-1585
 
-This page defines which API documents and SDK paths are authoritative. Anything listed as historical can be useful background, but must not be treated as the current API contract.
+This page maps the repository files that implement and mirror the current API behavior. It does not replace Arkova's product/documentation policy: Confluence remains the documentation source of truth, every backlog item must exist in `docs/BACKLOG.md`, and detailed story artifacts must live in `docs/stories/*` when a story exists.
 
-## Canonical API Contract
+Use this page as an engineering index for code review and drift checks. If code behavior changes, update the implementation, repo mirror, Confluence source page, and relevant backlog/story artifacts together.
 
-| Surface | Canonical source | Notes |
+## API Contract Engineering Mirrors
+
+| Surface | Repo mirror or implementation | Notes |
 |---|---|---|
 | API documentation index | `docs/api/README.md` | Entry point for developer-facing API docs. |
 | API v1 OpenAPI | `docs/api/openapi.yaml` | Frozen v1 REST contract and Swagger import source. |
@@ -19,7 +21,7 @@ This page defines which API documents and SDK paths are authoritative. Anything 
 | TypeScript SDK | `packages/sdk` | Canonical TypeScript package. |
 | Python SDK | `packages/arkova-py` | Canonical Python package published as `arkova`. |
 
-## Historical Or Redirect-Only
+## Redirect-Only Or Historical Repo Artifacts
 
 | Path or page | Status | Replacement |
 |---|---|---|
@@ -27,11 +29,10 @@ This page defines which API documents and SDK paths are authoritative. Anything 
 | `sdks/python/README.md` | Redirect-only; package body removed. | `packages/arkova-py` |
 | `docs/guides/API_GUIDE.md` | Historical March 2026 setup guide. | `docs/api/README.md` |
 | `docs/guides/Arkova_API_Guide.docx` | Historical exported copy of the old setup guide. | `docs/api/README.md` |
-| Root roadmap/backlog `.docx` files | Historical planning artifacts, not API contract. | Jira plus `docs/api/*` for API docs |
-| `docs/stories/*` | Historical backlog/story archive. | Jira for live status, `docs/api/*` for current API behavior |
-| Confluence `API Changelog` page | Historical planning/changelog page as of 2026-04-16. | This repo's `docs/api/*` and release PRs |
-| Confluence `SCRUM-1049 - API-V2 ... AUDIT` pages | Audit/planning evidence. | This repo's `docs/api/*` and Jira issue status |
-| Confluence `API-V2-07 - v1 -> v2 deprecation calendar` | Historical plan; contains stale host/spec claims. | `docs/api/v1-deprecation-communication-plan.md` and `docs/api/v2-migration.md` |
+| Root roadmap/backlog `.docx` files | Historical planning exports in this repo; not API implementation. | Confluence/Jira plus current repo mirrors |
+| Confluence `API Changelog` page | Source-of-truth page may need updates when repo mirrors change. | Keep aligned with this PR's API docs and release notes |
+| Confluence `SCRUM-1049 - API-V2 ... AUDIT` pages | Audit/planning evidence. | Keep linked from Jira/story artifacts |
+| Confluence `API-V2-07 - v1 -> v2 deprecation calendar` | Historical plan; contains stale host/spec claims. | `docs/api/v1-deprecation-communication-plan.md`, `docs/api/v2-migration.md`, and Confluence update |
 
 ## SDK Contract Strategy
 

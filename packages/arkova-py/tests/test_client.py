@@ -276,6 +276,33 @@ def test_v2_fingerprint_and_document_detail_methods() -> None:
 
     def handler(request: httpx.Request) -> httpx.Response:
         seen_paths.append(request.url.path)
+        if request.url.path.startswith("/v2/fingerprints/"):
+            return json_response(
+                {
+                    "public_id": "ARK-DOC-FP",
+                    "verified": True,
+                    "status": "ACTIVE",
+                    "fingerprint": fingerprint,
+                    "title": "Fingerprint receipt",
+                    "description": None,
+                    "issuer_name": "Acme Corp",
+                    "credential_type": "LEGAL",
+                    "sub_type": None,
+                    "issued_date": None,
+                    "expiry_date": None,
+                    "anchor_timestamp": "2026-04-24T12:00:00Z",
+                    "network_receipt_id": "tx-1",
+                    "record_uri": "https://app.arkova.ai/verify/ARK-DOC-FP",
+                    "compliance_controls": None,
+                    "chain_confirmations": None,
+                    "parent_public_id": None,
+                    "version_number": None,
+                    "revocation_tx_id": None,
+                    "revocation_block_height": None,
+                    "file_mime": None,
+                    "file_size": None,
+                }
+            )
         return json_response(
             {
                 "public_id": "ARK-DOC-ABC",
@@ -309,7 +336,10 @@ def test_v2_fingerprint_and_document_detail_methods() -> None:
 
     assert seen_paths == [f"/v2/fingerprints/{fingerprint}", "/v2/documents/ARK-DOC-ABC"]
     assert fingerprint_detail.fingerprint == fingerprint
-    assert fingerprint_detail.file_mime == "application/pdf"
+    assert fingerprint_detail.public_id == "ARK-DOC-FP"
+    assert fingerprint_detail.file_size is None
+    assert document.public_id == "ARK-DOC-ABC"
+    assert document.file_mime == "application/pdf"
     assert document.file_size == 12345
 
 

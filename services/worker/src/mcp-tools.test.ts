@@ -336,6 +336,21 @@ describe('agent v2 MCP aliases', () => {
         ok: true,
         json: async () => ({
           status: 'SECURED',
+          public_id: 'ARK-DOC-FP',
+          fingerprint,
+          filename: 'Credential.pdf',
+          org_name: 'Acme Corp',
+          credential_type: 'LEGAL',
+          created_at: '2026-04-24T12:00:00Z',
+          chain_confirmations: 6,
+          file_mime: 'application/pdf',
+          file_size: 12345,
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          status: 'SECURED',
           public_id: 'ARK-DOC-ABC',
           fingerprint,
           filename: 'Credential.pdf',
@@ -357,12 +372,36 @@ describe('agent v2 MCP aliases', () => {
       status: 'ACTIVE',
       fingerprint,
       public_id: 'ARK-DOC-FP',
+      issuer_name: 'Acme Corp',
+      file_mime: 'application/pdf',
+      file_size: 12345,
     });
     expect(documentParsed).toMatchObject({
       public_id: 'ARK-DOC-ABC',
       file_mime: 'application/pdf',
       file_size: 12345,
     });
+  });
+
+  it('get_fingerprint reports an error when the detail envelope cannot be loaded', async () => {
+    const fingerprint = 'e'.repeat(64);
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ([{
+          public_id: 'ARK-DOC-FP',
+          title: 'Credential.pdf',
+          content_hash: fingerprint,
+          metadata: { chain_tx_id: 'tx-1', anchored_at: '2026-04-24T12:00:00Z' },
+          anchor_id: 'anchor-1',
+        }]),
+      })
+      .mockResolvedValueOnce({ ok: false, status: 500, json: async () => ({}) });
+
+    const result = await handleAgentGetFingerprint({ fingerprint }, CONFIG);
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('Fingerprint detail lookup failed: HTTP 500');
   });
 });
 

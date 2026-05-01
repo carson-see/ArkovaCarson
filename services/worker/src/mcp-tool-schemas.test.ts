@@ -181,14 +181,30 @@ describe('MCP v2 alias parity with REST v2 OpenAPI', () => {
     expect(validateToolArgs('get_fingerprint', { fingerprint: VALID_HASH }).ok).toBe(true);
     expect(validateToolArgs('get_document', { public_id: VALID_PUBLIC_ID }).ok).toBe(true);
 
+    expect(validateToolArgs('search', { q: 'acme', extra: true }).ok).toBe(false);
+    expect(validateToolArgs('verify', { fingerprint: VALID_HASH, extra: true }).ok).toBe(false);
+    expect(validateToolArgs('list_orgs', { extra: true }).ok).toBe(false);
+    expect(validateToolArgs('get_anchor', { public_id: VALID_PUBLIC_ID, extra: true }).ok).toBe(false);
+    expect(validateToolArgs('get_organization', { public_id: 'org_acme', extra: true }).ok).toBe(false);
+    expect(validateToolArgs('get_record', { public_id: VALID_PUBLIC_ID, extra: true }).ok).toBe(false);
+    expect(validateToolArgs('get_fingerprint', { fingerprint: VALID_HASH, extra: true }).ok).toBe(false);
+    expect(validateToolArgs('get_document', { public_id: VALID_PUBLIC_ID, extra: true }).ok).toBe(false);
+
     expect(validateToolArgs('search', {}).ok).toBe(false);
+    expect(validateToolArgs('search', { anything: true }).ok).toBe(false);
     expect(validateToolArgs('verify', {}).ok).toBe(false);
+    expect(validateToolArgs('verify', { anything: true }).ok).toBe(false);
     expect(validateToolArgs('list_orgs', { anything: true }).ok).toBe(false);
     expect(validateToolArgs('get_anchor', {}).ok).toBe(false);
+    expect(validateToolArgs('get_anchor', { anything: true }).ok).toBe(false);
     expect(validateToolArgs('get_organization', {}).ok).toBe(false);
+    expect(validateToolArgs('get_organization', { anything: true }).ok).toBe(false);
     expect(validateToolArgs('get_record', {}).ok).toBe(false);
+    expect(validateToolArgs('get_record', { anything: true }).ok).toBe(false);
     expect(validateToolArgs('get_fingerprint', {}).ok).toBe(false);
+    expect(validateToolArgs('get_fingerprint', { anything: true }).ok).toBe(false);
     expect(validateToolArgs('get_document', {}).ok).toBe(false);
+    expect(validateToolArgs('get_document', { anything: true }).ok).toBe(false);
   });
 
   it('uses the OpenAPI search limit ceiling for MCP max_results', () => {

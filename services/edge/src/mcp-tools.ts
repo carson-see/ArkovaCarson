@@ -1045,11 +1045,31 @@ export async function handleAgentGetFingerprint(
     });
   }
 
+  const publicId = typeof parsed.public_id === 'string' ? parsed.public_id : null;
+  if (publicId) {
+    try {
+      const response = await supabaseFetch(config, '/rest/v1/rpc/get_public_anchor', {
+        method: 'POST',
+        body: JSON.stringify({ p_public_id: publicId }),
+      });
+      if (response.ok) {
+        const data = (await response.json()) as Record<string, unknown>;
+        return textResult({
+          ...shapeMcpDocumentDetail(data, publicId),
+          fingerprint: input.fingerprint,
+        });
+      }
+      return errorResult(`Fingerprint detail lookup failed: HTTP ${response.status}`);
+    } catch (error) {
+      return errorResult(toolErrorMessage(error, 'Fingerprint detail lookup timed out', 'Fingerprint detail lookup failed'));
+    }
+  }
+
   return textResult({
     verified: parsed.verified,
     status: parsed.status,
     fingerprint: input.fingerprint,
-    public_id: parsed.public_id ?? null,
+    public_id: publicId,
     title: parsed.title ?? null,
     issuer_name: parsed.issuer_name ?? null,
     credential_type: parsed.credential_type ?? null,

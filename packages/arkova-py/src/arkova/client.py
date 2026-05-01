@@ -174,8 +174,6 @@ class Arkova:
 
             self._sleep(_retry_after(response.headers.get("Retry-After")) or 2**attempt)
 
-        raise ArkovaError("Arkova API request failed after retries")
-
 
 class AsyncArkova:
     """Asynchronous Arkova API v2 client."""
@@ -269,5 +267,3 @@ class AsyncArkova:
             )
             if hasattr(maybe_awaitable, "__await__"):
                 await maybe_awaitable
-
-        raise ArkovaError("Arkova API request failed after retries")

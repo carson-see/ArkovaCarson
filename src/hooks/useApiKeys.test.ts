@@ -24,6 +24,7 @@ describe('ApiKeyMasked interface', () => {
 
     expect(key.key_prefix).toMatch(/^ak_/);
     expect(key.scopes).toContain('verify');
+    expect(key.scopes).toContain('verify:batch');
     expect(key.is_active).toBe(true);
   });
 

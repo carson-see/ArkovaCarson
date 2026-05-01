@@ -21,8 +21,10 @@ const mockOrder = vi.fn().mockReturnThis();
 const mockLimit = vi.fn().mockReturnThis();
 const mockMaybeSingle = vi.fn();
 
-function mockQueryResult(data: Record<string, unknown> | null, error: unknown = null) {
-  mockMaybeSingle.mockResolvedValueOnce({ data, error });
+function mockQueryResults(results: Array<{ data: Record<string, unknown> | null; error?: unknown }>) {
+  for (const result of results) {
+    mockMaybeSingle.mockResolvedValueOnce({ data: result.data, error: result.error ?? null });
+  }
   vi.mocked(db.from).mockReturnValue({
     select: mockSelect,
     eq: mockEq,
@@ -34,6 +36,10 @@ function mockQueryResult(data: Record<string, unknown> | null, error: unknown = 
     limit: mockLimit,
     maybeSingle: mockMaybeSingle,
   } as never);
+}
+
+function mockQueryResult(data: Record<string, unknown> | null, error: unknown = null) {
+  mockQueryResults([{ data, error }]);
 }
 
 function buildApp(scopes = ['read:records', 'read:orgs']) {
@@ -137,6 +143,7 @@ describe('resourceDetailsRouter', () => {
     expect(res.body).not.toHaveProperty('org_id');
     expect(res.body).not.toHaveProperty('user_id');
     expect(JSON.stringify(res.body)).not.toContain('internal-anchor-id');
+    expect(mockOr).toHaveBeenCalledWith('status.eq.SECURED,org_id.eq.org-1');
   });
 
   it('returns document detail with document metadata fields', async () => {
@@ -148,22 +155,46 @@ describe('resourceDetailsRouter', () => {
     expect(res.body.file_mime).toBe('application/pdf');
     expect(res.body.file_size).toBe(12345);
     expect(res.body.public_id).toBe('ARK-DOC-ABC');
+    expect(mockOr).toHaveBeenCalledWith('status.eq.SECURED,org_id.eq.org-1');
   });
 
-  it('returns fingerprint detail by exact SHA-256 value', async () => {
+  it('returns public secured fingerprint detail before same-org pending rows', async () => {
     const fingerprint = 'b'.repeat(64);
-    mockQueryResult(anchorRow({ fingerprint, public_id: 'ARK-DOC-FP' }));
+    mockQueryResult(anchorRow({ fingerprint, public_id: 'ARK-DOC-FP', status: 'SECURED' }));
 
     const res = await request(buildApp()).get(`/fingerprints/${fingerprint.toUpperCase()}`);
 
     expect(res.status).toBe(200);
     expect(mockEq).toHaveBeenCalledWith('fingerprint', fingerprint);
+    expect(mockEq).toHaveBeenCalledWith('status', 'SECURED');
     expect(mockNot).toHaveBeenCalledWith('public_id', 'is', null);
+    expect(mockIn).not.toHaveBeenCalledWith('status', ['SECURED', 'SUBMITTED', 'PENDING']);
+    expect(mockOr).not.toHaveBeenCalled();
     expect(res.body).toMatchObject({
       verified: true,
       status: 'ACTIVE',
       fingerprint,
       public_id: 'ARK-DOC-FP',
+    });
+  });
+
+  it('falls back to same-org pending fingerprint detail when no public secured row exists', async () => {
+    const fingerprint = 'c'.repeat(64);
+    mockQueryResults([
+      { data: null },
+      { data: anchorRow({ fingerprint, public_id: 'ARK-DOC-FP-PENDING', status: 'PENDING' }) },
+    ]);
+
+    const res = await request(buildApp()).get(`/fingerprints/${fingerprint}`);
+
+    expect(res.status).toBe(200);
+    expect(mockIn).toHaveBeenCalledWith('status', ['SECURED', 'SUBMITTED', 'PENDING']);
+    expect(mockOr).toHaveBeenCalledWith('status.eq.SECURED,org_id.eq.org-1');
+    expect(res.body).toMatchObject({
+      verified: false,
+      status: 'PENDING',
+      fingerprint,
+      public_id: 'ARK-DOC-FP-PENDING',
     });
   });
 

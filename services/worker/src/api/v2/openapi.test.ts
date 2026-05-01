@@ -7,6 +7,7 @@ type JsonSchema = {
   required?: readonly string[];
   properties?: Record<string, JsonSchema>;
   items?: JsonSchema;
+  additionalProperties?: boolean | JsonSchema;
 };
 
 function schemaFor(name: keyof typeof openApiV2Spec.components.schemas): JsonSchema {
@@ -34,6 +35,18 @@ function expectObjectMatchesSchema(schema: JsonSchema, value: unknown, path: str
   for (const [key, childSchema] of Object.entries(schema.properties ?? {})) {
     if (Object.hasOwn(objectValue, key)) {
       expectMatchesSchema(childSchema, objectValue[key], `${path}.${key}`);
+    }
+  }
+  const knownProperties = schema.properties ?? {};
+  const extraKeys = Object.keys(objectValue).filter((key) => !Object.hasOwn(knownProperties, key));
+  if (schema.additionalProperties === false) {
+    expect(extraKeys, `${path} has no unexpected properties`).toEqual([]);
+    return;
+  }
+  if (schema.additionalProperties && typeof schema.additionalProperties === 'object') {
+    const additionalSchema = resolveSchema(schema.additionalProperties);
+    for (const key of extraKeys) {
+      expectMatchesSchema(additionalSchema, objectValue[key], `${path}.${key}`);
     }
   }
 }

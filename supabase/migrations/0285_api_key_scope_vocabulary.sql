@@ -76,24 +76,42 @@ BEGIN
       AND table_name = 'agents'
       AND column_name = 'allowed_scopes'
   ) THEN
-    UPDATE public.agents
-    SET allowed_scopes = (
-      SELECT ARRAY(
-        SELECT DISTINCT mapped_scope
-        FROM unnest(allowed_scopes) AS existing_scope(scope)
-        CROSS JOIN LATERAL (
-          SELECT CASE scope
-            WHEN 'attest' THEN 'attestations:write'
-            WHEN 'oracle' THEN 'oracle:read'
-            WHEN 'batch' THEN 'verify:batch'
-            WHEN 'usage' THEN 'usage:read'
-            ELSE scope
-          END AS mapped_scope
-        ) mapped
-        ORDER BY mapped_scope
-      )
+    WITH normalized_agent_scopes AS (
+      SELECT
+        a.id,
+        COALESCE(
+          NULLIF(
+            ARRAY(
+              SELECT DISTINCT mapped_scope
+              FROM unnest(coalesce(a.allowed_scopes, ARRAY[]::text[])) AS existing_scope(scope)
+              CROSS JOIN LATERAL (
+                SELECT CASE scope
+                  WHEN 'attest' THEN 'attestations:write'
+                  WHEN 'oracle' THEN 'oracle:read'
+                  WHEN 'batch' THEN 'verify:batch'
+                  WHEN 'usage' THEN 'usage:read'
+                  ELSE scope
+                END AS mapped_scope
+              ) mapped
+              WHERE mapped_scope = ANY(canonical_scopes)
+              ORDER BY mapped_scope
+            ),
+            ARRAY[]::text[]
+          ),
+          ARRAY['verify']
+        ) AS allowed_scopes
+      FROM public.agents a
     )
-    WHERE allowed_scopes && legacy_agent_scopes;
+    UPDATE public.agents a
+    SET allowed_scopes = normalized_agent_scopes.allowed_scopes
+    FROM normalized_agent_scopes
+    WHERE a.id = normalized_agent_scopes.id
+      AND (
+        a.allowed_scopes IS NULL
+        OR coalesce(array_length(a.allowed_scopes, 1), 0) = 0
+        OR a.allowed_scopes && legacy_agent_scopes
+        OR NOT a.allowed_scopes <@ canonical_scopes
+      );
 
     ALTER TABLE public.agents
       ALTER COLUMN allowed_scopes SET DEFAULT ARRAY['verify'];
@@ -102,9 +120,11 @@ BEGIN
       DROP CONSTRAINT IF EXISTS agents_allowed_scopes_known_values;
 
     EXECUTE format(
-      'ALTER TABLE public.agents ADD CONSTRAINT agents_allowed_scopes_known_values CHECK (coalesce(array_length(allowed_scopes, 1), 0) >= 1 AND allowed_scopes <@ %L::text[])',
+      'ALTER TABLE public.agents ADD CONSTRAINT agents_allowed_scopes_known_values CHECK (coalesce(array_length(allowed_scopes, 1), 0) >= 1 AND allowed_scopes <@ %L::text[]) NOT VALID',
       canonical_scopes
     );
+
+    ALTER TABLE public.agents VALIDATE CONSTRAINT agents_allowed_scopes_known_values;
 
     COMMENT ON COLUMN public.agents.allowed_scopes IS
       'Canonical API key scopes this agent may hold. Historical attest/oracle/batch/usage aliases were normalized in migration 0285.';

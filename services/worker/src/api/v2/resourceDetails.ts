@@ -201,6 +201,36 @@ async function lookupAnchorByPublicId(
     .maybeSingle();
 }
 
+async function lookupPublicSecuredAnchorByFingerprint(
+  fingerprint: string,
+): Promise<{ data: Record<string, unknown> | null; error: unknown }> {
+  return v2Db.from('anchors')
+    .select(anchorSelectColumns())
+    .eq('fingerprint', fingerprint)
+    .eq('status', 'SECURED')
+    .is('deleted_at', null)
+    .not('public_id', 'is', null)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+}
+
+async function lookupVisibleAnchorByFingerprint(
+  fingerprint: string,
+  orgId: string | null | undefined,
+): Promise<{ data: Record<string, unknown> | null; error: unknown }> {
+  return v2Db.from('anchors')
+    .select(anchorSelectColumns())
+    .eq('fingerprint', fingerprint)
+    .in('status', ['SECURED', 'SUBMITTED', 'PENDING'])
+    .is('deleted_at', null)
+    .not('public_id', 'is', null)
+    .or(visibleAnchorScope(orgId))
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+}
+
 function registerAnchorDetailRoute(route: AnchorDetailRoute): void {
   const lookupLabel = route.label.toLowerCase();
   resourceDetailsRouter.get(
@@ -289,28 +319,29 @@ resourceDetailsRouter.get(
 
     try {
       const normalizedFingerprint = fingerprint.toLowerCase();
-      const { data, error } = await v2Db.from('anchors')
-        .select(anchorSelectColumns())
-        .eq('fingerprint', normalizedFingerprint)
-        .in('status', ['SECURED', 'SUBMITTED', 'PENDING'])
-        .is('deleted_at', null)
-        .not('public_id', 'is', null)
-        .or(visibleAnchorScope(req.apiKey?.orgId))
-        .order('created_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
+      const publicLookup = await lookupPublicSecuredAnchorByFingerprint(normalizedFingerprint);
 
-      if (error) {
-        logger.error({ error }, 'v2 fingerprint detail lookup failed');
+      if (publicLookup.error) {
+        logger.error({ error: publicLookup.error }, 'v2 fingerprint detail lookup failed');
         next(ProblemError.internalError('Failed to load fingerprint detail.'));
         return;
       }
-      if (!data) {
+
+      const fallbackLookup = publicLookup.data
+        ? publicLookup
+        : await lookupVisibleAnchorByFingerprint(normalizedFingerprint, req.apiKey?.orgId);
+
+      if (fallbackLookup.error) {
+        logger.error({ error: fallbackLookup.error }, 'v2 fingerprint detail lookup failed');
+        next(ProblemError.internalError('Failed to load fingerprint detail.'));
+        return;
+      }
+      if (!fallbackLookup.data) {
         next(ProblemError.notFound(`Fingerprint ${normalizedFingerprint} was not found.`));
         return;
       }
 
-      res.json(mapFingerprintDetail(data, normalizedFingerprint));
+      res.json(mapFingerprintDetail(fallbackLookup.data, normalizedFingerprint));
     } catch (err) {
       next(err);
     }
