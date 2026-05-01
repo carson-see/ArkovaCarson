@@ -1,6 +1,6 @@
 # Arkova Python SDK
 
-Typed Python client for the Arkova Verification API v2.
+Typed Python client for the Arkova Verification API v2 read-only surface.
 
 ## Install
 
@@ -9,6 +9,19 @@ pip install arkova
 ```
 
 Python 3.10 or newer is supported.
+
+## Current surface
+
+| Method | Sync client | Async client | Endpoint |
+| --- | --- | --- | --- |
+| Search records, organizations, fingerprints, and documents | `search()` | `search()` | `GET /search` |
+| Verify a SHA-256 fingerprint | `verify_fingerprint()` | `verify_fingerprint()` | `GET /verify/{fingerprint}` |
+| Fetch public anchor metadata | `get_anchor()` | `get_anchor()` | `GET /anchors/{public_id}` |
+| List organization context | `list_orgs()` | `list_orgs()` | `GET /orgs` |
+
+This package does not currently expose v1 anchoring, webhook management, or
+x402 write/payment helpers. Use the REST API directly or `@arkova/sdk` for
+those surfaces until equivalent v2 Python methods are published.
 
 ## Quick start
 

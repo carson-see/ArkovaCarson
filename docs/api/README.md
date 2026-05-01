@@ -13,7 +13,7 @@ The full machine-readable v1 API spec is at [`openapi.yaml`](./openapi.yaml). Th
 | What you want to do | Read this |
 |---|---|
 | Anchor + verify credentials from TypeScript / JavaScript | [`@arkova/sdk`](../../packages/sdk/README.md) |
-| Anchor + verify from Python | [`arkova`](../../packages/arkova-py/README.md) |
+| Search, verify fingerprints, and inspect v2 resources from Python | [`arkova`](../../packages/arkova-py/README.md) |
 | Move from API v1 to v2 | [v1 to v2 migration guide](./v2-migration.md) |
 | Drop a verification badge on any third-party site | [`@arkova/embed`](../../packages/embed/README.md) |
 | Register and manage webhooks programmatically | [Webhooks developer guide](./webhooks.md) |
@@ -71,7 +71,7 @@ const result = await arkova.verify(receipt.publicId);
 
 ### 4. Python SDK — `arkova`
 
-Typed Python 3.10+ client with sync and async entry points. Install with `pip install arkova`.
+Typed Python 3.10+ client for the API v2 read-only surface. Install with `pip install arkova`.
 
 ```python
 from arkova import Arkova
@@ -79,6 +79,10 @@ from arkova import Arkova
 with Arkova(api_key="ak_live_...") as arkova:
     results = arkova.search("registered nurse", type="record")
 ```
+
+Current methods: `search`, `verify_fingerprint`, `get_anchor`, and `list_orgs`, with matching async methods on `AsyncArkova`. The Python SDK preserves API v2 `application/problem+json` errors, honors `Retry-After` during retries, and maps nullable rich verification fields when the API returns them.
+
+For anchoring, webhook management, and other v1 write/admin workflows, use the REST API directly or the TypeScript SDK until equivalent v2 Python methods are published.
 
 📖 [Full Python SDK reference](../../packages/arkova-py/README.md) and [example notebook](./arkova-py-example.ipynb)
 

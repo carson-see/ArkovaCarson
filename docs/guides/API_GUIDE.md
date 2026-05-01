@@ -655,41 +655,42 @@ console.log(fp); // "7b3f9..."
 
 ### Python SDK
 
+The `arkova` Python package is the typed API v2 read-only client. It currently
+supports search, fingerprint verification, anchor lookup, and organization
+listing. Use direct REST calls or `@arkova/sdk` for anchoring, webhook
+management, and x402 write/payment helpers until those methods are added to the
+Python package.
+
 **Install:**
 
 ```bash
 pip install arkova
-# Requires: httpx
 ```
 
 **Usage:**
 
 ```python
-from arkova import ArkovaClient
+from arkova import Arkova
 
-client = ArkovaClient(api_key="ak_live_your_key_here")
+with Arkova(api_key="ak_live_your_key_here") as arkova:
+    # --- Search verified records ---
+    results = arkova.search("registered nurse", type="record", limit=5)
+    for item in results.results:
+        print(item.public_id, item.type, item.snippet)
 
-# --- Verify a credential ---
-result = client.verify("ARK-2026-ABCD1234")
-print(result.verified)      # True
-print(result.status)        # "ACTIVE"
-print(result.issuer_name)   # "University of Michigan"
+    # --- Verify a SHA-256 fingerprint ---
+    verification = arkova.verify_fingerprint("a" * 64)
+    print(verification.verified)
+    print(verification.status)
+    print(verification.issuer_name)
 
-# --- Anchor new data ---
-receipt = client.anchor(b"my important document text")
-print(receipt.public_id)    # "ARK-2026-F7A3B2C1"
+    # --- Fetch public anchor metadata ---
+    anchor = arkova.get_anchor("ARK-DOC-EXAMPLE")
+    print(anchor.public_id, anchor.chain_status)
 
-# --- Anchor a file ---
-with open("my_diploma.pdf", "rb") as f:
-    receipt = client.anchor(f.read(), credential_type="DEGREE")
-
-# --- Verify raw data ---
-result = client.verify_data(b"my important document text")
-print(result.verified)
-
-# --- Use as context manager ---
-with ArkovaClient(api_key="ak_live_...") as client:
-    result = client.verify("ARK-2026-ABCD1234")
+    # --- List organization context ---
+    orgs = arkova.list_orgs()
+    print([org.display_name for org in orgs.organizations])
 ```
 
 ---

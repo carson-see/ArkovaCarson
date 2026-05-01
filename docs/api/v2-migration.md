@@ -1,6 +1,6 @@
 # Arkova API v1 to v2 Migration Guide
 
-Last updated: 2026-04-24
+Last updated: 2026-05-01
 
 ## Deprecation Calendar
 
@@ -81,7 +81,9 @@ Clients should branch on `status` and `type`, not string-match `detail`.
 - TypeScript: `@arkova/sdk`
 - Python: `pip install arkova`
 
-Both SDKs expose v2 search, fingerprint verification, anchor lookup, organization listing, retry handling, and problem detail errors.
+The Python SDK currently exposes the v2 read-only surface: `search`, `verify_fingerprint`, `get_anchor`, and `list_orgs`, with sync and async clients. It preserves RFC 7807 problem details, honors `Retry-After`, and maps nullable rich verification fields when returned.
+
+The TypeScript SDK remains the broader wrapper for anchoring, batch verification, webhooks, and v1/v2 migration support. Do not assume Python has v1 write/admin parity until the package reference lists those methods.
 
 ## Cutover Checklist
 
