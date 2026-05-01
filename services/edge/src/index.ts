@@ -61,6 +61,14 @@ export default {
       });
     }
 
+    // SCRUM-1283 (R3-10) sub-issue C: end-user report download. Auth comes
+    // from the HMAC signature + expiry on the URL, NOT CRON_SECRET, so this
+    // route MUST be matched BEFORE the /report* internal-auth gate below.
+    if (url.pathname.startsWith('/reports/dl/')) {
+      const { handleSignedReportDownload } = await import('./report-generator');
+      return handleSignedReportDownload(request, env);
+    }
+
     // Internal routes — require CRON_SECRET auth
     if (url.pathname.startsWith('/report') || url.pathname.startsWith('/ai-fallback') || url.pathname.startsWith('/crawl')) {
       const authError = verifyInternalAuth(request, env);

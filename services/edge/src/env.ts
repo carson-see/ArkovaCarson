@@ -30,6 +30,26 @@ export interface Env {
   // Provision with: `wrangler kv:namespace create MCP_ORIGIN_ALLOWLIST_KV`.
   MCP_ORIGIN_ALLOWLIST_KV?: KVNamespace;
 
+  // SCRUM-1283 (R3-10) sub-issue A: HMAC secret used to sign the entries
+  // stored under `allow:<api_key_id>`. When set, the allowlist read path
+  // expects each KV entry to be a `{value, signature}` envelope and
+  // verifies signature == HMAC-SHA256(value, secret) using a constant-time
+  // compare. A compromised KV write-path that lacks the secret cannot
+  // forge a valid envelope. When unset (dev/preview), the gate accepts
+  // the legacy raw-JSON entry shape for back-compat. Production sets this
+  // via `wrangler secret put MCP_ALLOWLIST_HMAC_SECRET --name arkova-edge`.
+  MCP_ALLOWLIST_HMAC_SECRET?: string;
+
+  // SCRUM-1283 (R3-10) sub-issue C: HMAC secret used to sign R2 report
+  // download URLs. Required — the report-generator returns a download URL
+  // that includes `?expires=<unix-seconds>&sig=<hex>`; the /reports/dl
+  // route verifies the signature + expiry before streaming bytes from R2.
+  // Without this, the previous behavior returned a hardcoded R2 URL that
+  // wasn't actually signed (anyone who guessed a key could try to
+  // download). Provision via `wrangler secret put R2_REPORT_DOWNLOAD_SECRET
+  // --name arkova-edge`.
+  R2_REPORT_DOWNLOAD_SECRET?: string;
+
   // Environment variables
   ENABLE_AI_FALLBACK: string;
   CF_AI_MODEL: string;
@@ -51,6 +71,14 @@ export interface Env {
   // MCP-SEC-02: HMAC signing key for oracle_batch_verify envelopes.
   // Callers verify the signature to detect tampering.
   MCP_SIGNING_KEY?: string;
+
+  // SCRUM-1283 (R3-10) adjacent: when set to "true", oracle_batch_verify
+  // refuses to emit unsigned envelopes if MCP_SIGNING_KEY is missing
+  // (returns isError + a 503-shaped tool result). Default behavior
+  // (var unset/false) keeps the existing soft-fail with `signed: false`
+  // marker so dev/preview deploys without the secret continue to work.
+  // Production wrangler.toml MUST set this to "true".
+  EDGE_REQUIRE_MCP_SIGNING?: string;
 
   // x402 Facilitator (Item #16, RISK-7)
   BASE_RPC_URL: string;

@@ -47,7 +47,17 @@ import { fenceUserInput, SAFETY_PREFIX } from '../../../services/edge/src/mcp-pr
 import { enforceRateLimit, __resetKvWarningForTests } from '../../../services/edge/src/mcp-rate-limit';
 import { logMcpToolCall } from '../../../services/edge/src/mcp-audit-log';
 import { signEnvelope, verifyEnvelope } from '../../../services/edge/src/mcp-hmac';
-import { getCorsOrigin, validateBearer } from '../../../services/edge/src/mcp-server';
+import {
+  applyMcpSecurityHeaders,
+  getCorsOrigin,
+  shouldFailClosedWhenSigningKeyMissing,
+  validateBearer,
+} from '../../../services/edge/src/mcp-server';
+import { unwrapSignedEntry } from '../../../services/edge/src/mcp-origin-allowlist';
+import {
+  buildSignedReportUrl,
+  verifySignedReportUrl,
+} from '../../../services/edge/src/r2-signed-url';
 import { verifySupabaseJwt } from '../../../services/edge/src/supabase-jwt';
 import type { Env } from '../../../services/edge/src/env';
 
@@ -145,14 +155,46 @@ describe('mcp-rate-limit — enforceRateLimit (SCRUM-919)', () => {
     warn.mockRestore();
   });
 
-  it('passes through when apiKeyId is null (OAuth bearer case)', async () => {
+  // SCRUM-1283 (R3-10) sub-issue B: OAuth Bearer callers (apiKeyId=null,
+  // userId provided) now bucket on `oauth-${userId}` instead of bypassing
+  // the rate limit entirely.
+  it('falls back to oauth-${userId} bucket when apiKeyId is null', async () => {
+    const store = new Map<string, string>();
+    const kv = {
+      get: vi.fn(async (k: string) => store.get(k) ?? null),
+      put: vi.fn(async (k: string, v: string) => { store.set(k, v); }),
+    } as unknown as KVNamespace;
+
+    const r = await enforceRateLimit(makeEnv({ kv }), null, 'nessie_query', 'user-42');
+    expect(r.ok).toBe(true);
+    expect(kv.get).toHaveBeenCalledTimes(1);
+    const calledKey = vi.mocked(kv.get).mock.calls[0][0];
+    expect(calledKey).toMatch(/^rl:oauth-user-42:nessie_query:\d+$/);
+  });
+
+  it('passes through when both apiKeyId and userId are null (no caller id)', async () => {
     const kv = {
       get: vi.fn(),
       put: vi.fn(),
     } as unknown as KVNamespace;
     const r = await enforceRateLimit(makeEnv({ kv }), null, 'nessie_query');
     expect(r.ok).toBe(true);
+    // No caller id → cannot bucket; KV not touched.
     expect(kv.get).not.toHaveBeenCalled();
+  });
+
+  it('prefers apiKeyId over userId when both are present (preserves existing un-prefixed bucket shape)', async () => {
+    const store = new Map<string, string>();
+    const kv = {
+      get: vi.fn(async (k: string) => store.get(k) ?? null),
+      put: vi.fn(async (k: string, v: string) => { store.set(k, v); }),
+    } as unknown as KVNamespace;
+
+    await enforceRateLimit(makeEnv({ kv }), 'key-A', 'nessie_query', 'user-42');
+    const calledKey = vi.mocked(kv.get).mock.calls[0][0];
+    // API-key path keeps the legacy un-prefixed shape so historical
+    // buckets continue to be honored.
+    expect(calledKey).toMatch(/^rl:key-A:nessie_query:\d+$/);
   });
 
   it('allows under-limit requests + increments the counter', async () => {
@@ -389,6 +431,187 @@ describe('mcp-server — getCorsOrigin (bug-bounty F1, 2026-04-26)', () => {
     expect(out).toBe('https://app.arkova.ai');
     // arkova-carson must NEVER be allowlisted by default
     expect(getCorsOrigin(reqWithOrigin('https://arkova-carson.vercel.app'), {} as Env)).toBe('null');
+  });
+});
+
+describe('mcp-server — applyMcpSecurityHeaders (SCRUM-1283 R3-10)', () => {
+  it('sets Cache-Control: no-store and X-Content-Type-Options: nosniff on every MCP response', () => {
+    const headers = applyMcpSecurityHeaders(new Headers(), 'https://app.arkova.ai');
+    expect(headers.get('Cache-Control')).toBe('no-store');
+    expect(headers.get('X-Content-Type-Options')).toBe('nosniff');
+    expect(headers.get('Access-Control-Allow-Origin')).toBe('https://app.arkova.ai');
+    expect(headers.get('Vary')).toBe('Origin');
+  });
+
+  it('overrides any pre-existing Cache-Control header from the upstream MCP transport', () => {
+    // Pre-existing Cache-Control: public, max-age=300 from a transport response
+    // (e.g. a misconfigured proxy header) must be replaced — MCP responses
+    // carry per-tenant tool output and cannot be cached cross-request.
+    const headers = applyMcpSecurityHeaders(
+      new Headers({ 'Cache-Control': 'public, max-age=300' }),
+      'https://app.arkova.ai',
+    );
+    expect(headers.get('Cache-Control')).toBe('no-store');
+  });
+
+  it('does not strip unrelated headers from the upstream response', () => {
+    const headers = applyMcpSecurityHeaders(
+      new Headers({ 'Mcp-Session-Id': 'sess-abc', 'Content-Type': 'application/json' }),
+      'https://app.arkova.ai',
+    );
+    expect(headers.get('Mcp-Session-Id')).toBe('sess-abc');
+    expect(headers.get('Content-Type')).toBe('application/json');
+  });
+});
+
+describe('mcp-server — shouldFailClosedWhenSigningKeyMissing (SCRUM-1283 R3-10 adjacent)', () => {
+  function envWith(value: string | undefined): Env {
+    return { EDGE_REQUIRE_MCP_SIGNING: value } as unknown as Env;
+  }
+
+  it('returns true only when EDGE_REQUIRE_MCP_SIGNING is exactly the string "true"', () => {
+    expect(shouldFailClosedWhenSigningKeyMissing(envWith('true'))).toBe(true);
+  });
+
+  it('returns false when EDGE_REQUIRE_MCP_SIGNING is unset (dev/preview default)', () => {
+    expect(shouldFailClosedWhenSigningKeyMissing(envWith(undefined))).toBe(false);
+  });
+
+  it('returns false for falsy/uppercase variants (string match is exact)', () => {
+    expect(shouldFailClosedWhenSigningKeyMissing(envWith('false'))).toBe(false);
+    expect(shouldFailClosedWhenSigningKeyMissing(envWith('TRUE'))).toBe(false);
+    expect(shouldFailClosedWhenSigningKeyMissing(envWith('1'))).toBe(false);
+    expect(shouldFailClosedWhenSigningKeyMissing(envWith(''))).toBe(false);
+  });
+});
+
+describe('mcp-origin-allowlist — unwrapSignedEntry (SCRUM-1283 R3-10 sub-A)', () => {
+  async function signHex(secret: string, msg: string): Promise<string> {
+    const enc = new TextEncoder();
+    const key = await crypto.subtle.importKey(
+      'raw',
+      enc.encode(secret),
+      { name: 'HMAC', hash: 'SHA-256' },
+      false,
+      ['sign'],
+    );
+    const sig = await crypto.subtle.sign('HMAC', key, enc.encode(msg));
+    return Array.from(new Uint8Array(sig))
+      .map((b) => b.toString(16).padStart(2, '0'))
+      .join('');
+  }
+
+  it('returns the raw entry when no secret is configured (legacy back-compat)', async () => {
+    const raw = JSON.stringify({ mode: 'allowlist', cidrs: ['1.2.3.4/32'] });
+    expect(await unwrapSignedEntry(raw, undefined)).toBe(raw);
+  });
+
+  it('verifies a well-formed signed envelope and returns the inner value', async () => {
+    const inner = JSON.stringify({ mode: 'allowlist', cidrs: ['1.2.3.4/32'] });
+    const signature = await signHex('test-secret', inner);
+    const envelope = JSON.stringify({ value: inner, signature });
+    expect(await unwrapSignedEntry(envelope, 'test-secret')).toBe(inner);
+  });
+
+  it('rejects an envelope with a forged signature', async () => {
+    const inner = JSON.stringify({ mode: 'allowlist', cidrs: ['1.2.3.4/32'] });
+    const envelope = JSON.stringify({ value: inner, signature: '00'.repeat(32) });
+    expect(await unwrapSignedEntry(envelope, 'test-secret')).toBeNull();
+  });
+
+  it('rejects raw legacy JSON when a secret IS configured (no envelope shape)', async () => {
+    // Legacy un-enveloped entry must NOT be accepted once HMAC enforcement is on.
+    const raw = JSON.stringify({ mode: 'allowlist', cidrs: ['1.2.3.4/32'] });
+    expect(await unwrapSignedEntry(raw, 'test-secret')).toBeNull();
+  });
+
+  it('rejects malformed JSON', async () => {
+    expect(await unwrapSignedEntry('not-json', 'test-secret')).toBeNull();
+  });
+
+  it('rejects an envelope with non-string value or signature fields', async () => {
+    expect(
+      await unwrapSignedEntry(
+        JSON.stringify({ value: { mode: 'allowlist' }, signature: '00' }),
+        'test-secret',
+      ),
+    ).toBeNull();
+    expect(
+      await unwrapSignedEntry(
+        JSON.stringify({ value: 'inner', signature: 42 }),
+        'test-secret',
+      ),
+    ).toBeNull();
+  });
+});
+
+describe('r2-signed-url — buildSignedReportUrl / verifySignedReportUrl (SCRUM-1283 R3-10 sub-C)', () => {
+  const SECRET = 'r2-test-secret';
+  const BASE = 'https://edge.arkova.ai';
+
+  it('round-trips a signed URL: build then verify yields the same key', async () => {
+    const key = 'org-1/portfolio/2026-04-29.md';
+    const signed = await buildSignedReportUrl(BASE, key, SECRET, 60);
+    const verdict = await verifySignedReportUrl(new URL(signed), SECRET);
+    expect(verdict.ok).toBe(true);
+    if (verdict.ok) expect(verdict.key).toBe(key);
+  });
+
+  it('rejects an expired URL (expires < now)', async () => {
+    const key = 'org-1/portfolio/2026-04-29.md';
+    const signed = await buildSignedReportUrl(BASE, key, SECRET, -10); // already expired
+    const verdict = await verifySignedReportUrl(new URL(signed), SECRET);
+    expect(verdict.ok).toBe(false);
+    if (!verdict.ok) expect(verdict.reason).toBe('expired');
+  });
+
+  it('rejects a tampered signature', async () => {
+    const key = 'org-1/portfolio/2026-04-29.md';
+    const signed = await buildSignedReportUrl(BASE, key, SECRET, 60);
+    const url = new URL(signed);
+    url.searchParams.set('sig', '00'.repeat(32));
+    const verdict = await verifySignedReportUrl(url, SECRET);
+    expect(verdict.ok).toBe(false);
+    if (!verdict.ok) expect(verdict.reason).toBe('invalid_signature');
+  });
+
+  it('rejects when key is swapped after signing (signature binds the key)', async () => {
+    const signed = await buildSignedReportUrl(BASE, 'org-1/secret.md', SECRET, 60);
+    const original = new URL(signed);
+    // Mutate the path to a different key but keep the original sig + expires.
+    const tampered = new URL(`/reports/dl/${encodeURIComponent('org-2/spy.md')}`, BASE);
+    tampered.searchParams.set('expires', original.searchParams.get('expires')!);
+    tampered.searchParams.set('sig', original.searchParams.get('sig')!);
+    const verdict = await verifySignedReportUrl(tampered, SECRET);
+    expect(verdict.ok).toBe(false);
+    if (!verdict.ok) expect(verdict.reason).toBe('invalid_signature');
+  });
+
+  it('rejects malformed URL (missing query params)', async () => {
+    const url = new URL(`${BASE}/reports/dl/${encodeURIComponent('org-1/x.md')}`);
+    const verdict = await verifySignedReportUrl(url, SECRET);
+    expect(verdict.ok).toBe(false);
+    if (!verdict.ok) expect(verdict.reason).toBe('malformed');
+  });
+
+  it('rejects URLs that do not start with /reports/dl/', async () => {
+    const url = new URL(`${BASE}/wrong/path?expires=9999999999&sig=00`);
+    const verdict = await verifySignedReportUrl(url, SECRET);
+    expect(verdict.ok).toBe(false);
+    if (!verdict.ok) expect(verdict.reason).toBe('malformed');
+  });
+
+  it('throws when build is called without a secret (operator misconfig)', async () => {
+    await expect(buildSignedReportUrl(BASE, 'k', '', 60)).rejects.toThrow(
+      /R2_REPORT_DOWNLOAD_SECRET/,
+    );
+  });
+
+  it('verify returns malformed when secret is empty (defense-in-depth)', async () => {
+    const url = new URL(`${BASE}/reports/dl/${encodeURIComponent('k')}?expires=9999&sig=00`);
+    const verdict = await verifySignedReportUrl(url, '');
+    expect(verdict.ok).toBe(false);
+    if (!verdict.ok) expect(verdict.reason).toBe('malformed');
   });
 });
 
