@@ -7,7 +7,7 @@
  * @created 2026-03-10 11:00 PM EST
  */
 
-import { test, expect } from './fixtures';
+import { test, expect, getServiceClient, createTestAnchor, deleteTestAnchor, SEED_USERS } from './fixtures';
 import {
   getSecureDocumentButton,
   getSecureDocumentDialog,
@@ -16,6 +16,8 @@ import {
 } from './helpers/dashboard';
 
 test.describe('Dashboard', () => {
+  const serviceClient = getServiceClient();
+
   test.describe('Individual User Dashboard', () => {
     test('dashboard loads with profile summary and stats', async ({ individualPage }) => {
       await openDashboard(individualPage);
@@ -71,18 +73,32 @@ test.describe('Dashboard', () => {
 
   test.describe('Navigation', () => {
     test('clicking a record navigates to record detail', async ({ individualPage }) => {
-      await openDashboard(individualPage);
+      const anchor = await createTestAnchor(serviceClient, {
+        userId: SEED_USERS.individual.id,
+        status: 'SECURED',
+        filename: `e2e_dashboard_nav_${Date.now()}.pdf`,
+      });
 
-      // Look for any record row with an actions menu
-      const actionsButton = individualPage.getByRole('button', { name: /Actions/i });
-      if (await actionsButton.first().isVisible({ timeout: 5000 }).catch(() => false)) {
-        await actionsButton.first().click();
+      try {
+        await openDashboard(individualPage);
+
+        const recordCard = individualPage
+          .getByRole('button')
+          .filter({ hasText: anchor.filename })
+          .first();
+        await expect(recordCard).toBeVisible({ timeout: 15_000 });
+
+        const actionsButton = recordCard.getByRole('button', { name: /^Actions$/ });
+        await expect(actionsButton).toBeVisible({ timeout: 5_000 });
+        await actionsButton.click();
 
         const viewRecord = individualPage.getByRole('menuitem', { name: /View Record/i });
-        if (await viewRecord.isVisible({ timeout: 3000 }).catch(() => false)) {
-          await viewRecord.click();
-          await expect(individualPage).toHaveURL(/\/records\//, { timeout: 10000 });
-        }
+        await expect(viewRecord).toBeVisible({ timeout: 5_000 });
+        await viewRecord.click();
+
+        await expect(individualPage).toHaveURL(new RegExp(`/records/${anchor.id}$`), { timeout: 10_000 });
+      } finally {
+        await deleteTestAnchor(serviceClient, anchor.id);
       }
     });
   });
