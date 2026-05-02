@@ -17,7 +17,11 @@
 
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve, join } from 'node:path';
-import { loadMigrations, stripSqlComments } from './lib/migration-lint';
+import {
+  loadMigrations,
+  stripSqlCommentsAndStringLiterals,
+  stripSqlStringLiterals,
+} from './lib/migration-lint';
 
 const OVERRIDE_LABEL = 'view-security-definer-intentional';
 const REPO = process.env.VIEWS_LINT_REPO_ROOT
@@ -92,17 +96,19 @@ function findViolations(file: string, strippedSql: string): Finding[] {
     const line = lineNumber(strippedSql, offset);
 
     const statementSql = strippedSql.slice(offset, statementEnd(strippedSql, offset));
-    const statementWithoutComments = stripSqlComments(statementSql);
-    if (/WITH\s*\(\s*security_invoker\s*=\s*(?:true|on)\s*\)/i.test(statementWithoutComments)) {
+    const statementWithoutCommentsOrStrings = stripSqlCommentsAndStringLiterals(statementSql);
+    if (/WITH\s*\(\s*security_invoker\s*=\s*(?:true|on)\s*\)/i.test(statementWithoutCommentsOrStrings)) {
       continue;
     }
 
-    if (alterSecurityInvokerRegex(view, alterReCache).test(stripSqlComments(strippedSql.slice(offset)))) {
+    const followingWithoutCommentsOrStrings = stripSqlCommentsAndStringLiterals(strippedSql.slice(offset));
+    if (alterSecurityInvokerRegex(view, alterReCache).test(followingWithoutCommentsOrStrings)) {
       continue;
     }
 
     const preceding = lines.slice(Math.max(0, line - 6), line - 1).join('\n');
-    if (/--\s*DELIBERATE:\s*definer-rights view/i.test(preceding)) {
+    const precedingWithoutStrings = stripSqlStringLiterals(preceding);
+    if (/^\s*--\s*DELIBERATE:\s*definer-rights view/im.test(precedingWithoutStrings)) {
       continue;
     }
 

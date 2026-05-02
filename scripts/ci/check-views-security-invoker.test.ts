@@ -95,6 +95,41 @@ COMMENT ON VIEW public.leaky IS 'security_invoker = true';`,
     expect(stderr).toContain('leaky');
   });
 
+  it('does not accept security_invoker text from a same-statement string literal', () => {
+    writeFileSync(
+      join(repoRoot, 'supabase/migrations/0001_bad_same_statement_text.sql'),
+      `CREATE OR REPLACE VIEW public.leaky AS
+  SELECT 'WITH (security_invoker = true)' AS fake_option;`,
+    );
+    const { code, stderr } = run(repoRoot);
+    expect(code).toBe(1);
+    expect(stderr).toContain('leaky');
+  });
+
+  it('does not accept ALTER VIEW text from a later string literal', () => {
+    writeFileSync(
+      join(repoRoot, 'supabase/migrations/0001_bad_later_text.sql'),
+      `CREATE OR REPLACE VIEW public.leaky AS SELECT 1;
+SELECT 'ALTER VIEW public.leaky SET (security_invoker = true);';`,
+    );
+    const { code, stderr } = run(repoRoot);
+    expect(code).toBe(1);
+    expect(stderr).toContain('leaky');
+  });
+
+  it('does not accept the deliberate-definer override text from a string literal', () => {
+    writeFileSync(
+      join(repoRoot, 'supabase/migrations/0001_bad_fake_override.sql'),
+      `SELECT '
+-- DELIBERATE: definer-rights view
+';
+CREATE OR REPLACE VIEW public.leaky AS SELECT 1;`,
+    );
+    const { code, stderr } = run(repoRoot);
+    expect(code).toBe(1);
+    expect(stderr).toContain('leaky');
+  });
+
   it('finds the view name even when CREATE VIEW spans multiple lines', () => {
     writeFileSync(
       join(repoRoot, 'supabase/migrations/0001_multi.sql'),

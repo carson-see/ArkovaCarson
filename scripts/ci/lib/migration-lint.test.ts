@@ -92,6 +92,20 @@ CREATE TABLE public."/*not_a_comment*/"(id int);`;
     expect(stripped).toContain('"/*not_a_comment*/"');
     expect(newlineCount(stripped)).toBe(newlineCount(sql));
   });
+
+  it('strips nested block comments like PostgreSQL does', () => {
+    const sql = `/* outer comment
+  /* nested fake SQL */
+  CREATE POLICY fake_policy ON public.audit_events USING (true);
+*/
+CREATE POLICY real_policy ON public.audit_events USING (true);`;
+
+    const stripped = stripSqlComments(sql);
+
+    expect(stripped).not.toContain('fake_policy');
+    expect(stripped).toContain('CREATE POLICY real_policy');
+    expect(newlineCount(stripped)).toBe(newlineCount(sql));
+  });
 });
 
 describe('stripSqlCommentsAndStringLiterals', () => {

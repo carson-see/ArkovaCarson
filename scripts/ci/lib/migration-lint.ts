@@ -110,10 +110,17 @@ export function stripSqlComments(sql: string): string {
     if (current === '/' && next === '*') {
       const start = i;
       i += 2;
-      while (i < sql.length) {
-        if (sql[i] === '*' && sql[i + 1] === '/') {
+      let depth = 1;
+      while (i < sql.length && depth > 0) {
+        if (sql[i] === '/' && sql[i + 1] === '*') {
+          depth += 1;
           i += 2;
-          break;
+          continue;
+        }
+        if (sql[i] === '*' && sql[i + 1] === '/') {
+          depth -= 1;
+          i += 2;
+          continue;
         }
         i += 1;
       }
@@ -129,33 +136,32 @@ export function stripSqlComments(sql: string): string {
 }
 
 /**
- * Remove comments and then blank quoted string contents. The quote
- * delimiters stay in place so simple statement regexes can still reason
- * about SQL shape without being fooled by SQL text embedded in literals.
+ * Blank quoted string contents. The quote delimiters stay in place so simple
+ * statement regexes can still reason about SQL shape without being fooled by
+ * SQL text embedded in literals.
  */
-export function stripSqlCommentsAndStringLiterals(sql: string): string {
-  const withoutComments = stripSqlComments(sql);
+export function stripSqlStringLiterals(sql: string): string {
   let output = '';
   let i = 0;
 
-  while (i < withoutComments.length) {
-    const current = withoutComments[i];
+  while (i < sql.length) {
+    const current = sql[i];
 
     if (current === "'") {
       output += "'";
       i += 1;
-      while (i < withoutComments.length) {
-        if (withoutComments[i] === "'" && withoutComments[i + 1] === "'") {
+      while (i < sql.length) {
+        if (sql[i] === "'" && sql[i + 1] === "'") {
           output += '  ';
           i += 2;
           continue;
         }
-        if (withoutComments[i] === "'") {
+        if (sql[i] === "'") {
           output += "'";
           i += 1;
           break;
         }
-        output += withoutComments[i] === '\n' ? '\n' : ' ';
+        output += sql[i] === '\n' ? '\n' : ' ';
         i += 1;
       }
       continue;
@@ -164,18 +170,18 @@ export function stripSqlCommentsAndStringLiterals(sql: string): string {
     if (current === '"') {
       output += '"';
       i += 1;
-      while (i < withoutComments.length) {
-        if (withoutComments[i] === '"' && withoutComments[i + 1] === '"') {
+      while (i < sql.length) {
+        if (sql[i] === '"' && sql[i + 1] === '"') {
           output += '  ';
           i += 2;
           continue;
         }
-        if (withoutComments[i] === '"') {
+        if (sql[i] === '"') {
           output += '"';
           i += 1;
           break;
         }
-        output += withoutComments[i] === '\n' ? '\n' : ' ';
+        output += sql[i] === '\n' ? '\n' : ' ';
         i += 1;
       }
       continue;
@@ -186,6 +192,13 @@ export function stripSqlCommentsAndStringLiterals(sql: string): string {
   }
 
   return output;
+}
+
+/**
+ * Remove comments and then blank quoted string contents.
+ */
+export function stripSqlCommentsAndStringLiterals(sql: string): string {
+  return stripSqlStringLiterals(stripSqlComments(sql));
 }
 
 export interface MigrationFile {
