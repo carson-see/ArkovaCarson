@@ -5,7 +5,7 @@
  * ENABLE_VERIFICATION_API switchboard flag.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { isVerificationApiEnabled, verificationApiGate, _resetFlagCache } from './featureGate.js';
 import type { Request, Response, NextFunction } from 'express';
 
@@ -47,18 +47,14 @@ function mockFlagRpc(flagValue: boolean | null, error: { message: string; code?:
   });
 }
 
-function restoreVerificationApiEnv(value: string | undefined) {
-  if (value === undefined) {
-    delete process.env.ENABLE_VERIFICATION_API;
-    return;
-  }
-  process.env.ENABLE_VERIFICATION_API = value;
-}
-
 describe('featureGate middleware', () => {
   beforeEach(() => {
     _resetFlagCache();
     vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
   });
 
   describe('isVerificationApiEnabled', () => {
@@ -71,43 +67,33 @@ describe('featureGate middleware', () => {
     });
 
     it('returns false when flag is boolean false', async () => {
-      const origEnv = process.env.ENABLE_VERIFICATION_API;
-      process.env.ENABLE_VERIFICATION_API = 'true';
+      vi.stubEnv('ENABLE_VERIFICATION_API', 'true');
       mockFlagRpc(false);
       expect(await isVerificationApiEnabled()).toBe(false);
-      restoreVerificationApiEnv(origEnv);
     });
 
     it('fails closed when flag RPC returns an error', async () => {
-      const origEnv = process.env.ENABLE_VERIFICATION_API;
-      process.env.ENABLE_VERIFICATION_API = 'true';
+      vi.stubEnv('ENABLE_VERIFICATION_API', 'true');
       mockFlagRpc(null, { message: 'not found' });
       expect(await isVerificationApiEnabled()).toBe(false);
-      restoreVerificationApiEnv(origEnv);
     });
 
     it('fails closed when flag RPC returns non-boolean data without an error', async () => {
-      const origEnv = process.env.ENABLE_VERIFICATION_API;
-      process.env.ENABLE_VERIFICATION_API = 'true';
+      vi.stubEnv('ENABLE_VERIFICATION_API', 'true');
       mockedRpc.mockResolvedValue({ data: null, error: null });
       expect(await isVerificationApiEnabled()).toBe(false);
-      restoreVerificationApiEnv(origEnv);
     });
 
     it('fails closed when get_flag returns a normalized RPC_THREW error', async () => {
-      const origEnv = process.env.ENABLE_VERIFICATION_API;
-      process.env.ENABLE_VERIFICATION_API = 'true';
+      vi.stubEnv('ENABLE_VERIFICATION_API', 'true');
       mockFlagRpc(null, { message: 'connection refused', code: 'RPC_THREW' });
       expect(await isVerificationApiEnabled()).toBe(false);
-      restoreVerificationApiEnv(origEnv);
     });
 
     it('returns false on DB error when env var is not set', async () => {
-      const origEnv = process.env.ENABLE_VERIFICATION_API;
-      delete process.env.ENABLE_VERIFICATION_API;
+      vi.stubEnv('ENABLE_VERIFICATION_API', undefined);
       mockFlagRpc(null, { message: 'connection refused', code: 'RPC_THREW' });
       expect(await isVerificationApiEnabled()).toBe(false);
-      restoreVerificationApiEnv(origEnv);
     });
 
     it('caches the result for subsequent calls', async () => {
@@ -165,8 +151,7 @@ describe('featureGate middleware', () => {
     });
 
     it('returns 503 on DB failure when env not set (fail-closed)', async () => {
-      const origEnv = process.env.ENABLE_VERIFICATION_API;
-      delete process.env.ENABLE_VERIFICATION_API;
+      vi.stubEnv('ENABLE_VERIFICATION_API', undefined);
       mockFlagRpc(null, { message: 'DB down', code: 'RPC_THREW' });
       const { req, res, next } = createMockReqRes();
 
@@ -175,7 +160,18 @@ describe('featureGate middleware', () => {
 
       expect(next).not.toHaveBeenCalled();
       expect(res.status).toHaveBeenCalledWith(503);
-      restoreVerificationApiEnv(origEnv);
+    });
+
+    it('returns 503 on DB failure when env is true (fail-closed)', async () => {
+      vi.stubEnv('ENABLE_VERIFICATION_API', 'true');
+      mockFlagRpc(null, { message: 'DB down', code: 'RPC_THREW' });
+      const { req, res, next } = createMockReqRes();
+
+      const middleware = verificationApiGate();
+      await middleware(req, res, next);
+
+      expect(next).not.toHaveBeenCalled();
+      expect(res.status).toHaveBeenCalledWith(503);
     });
   });
 });
