@@ -5,6 +5,8 @@
  * SUBMITTED → SECURED when a transaction is confirmed.
  */
 
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // ---- Hoisted mocks ----
@@ -575,5 +577,21 @@ describe('checkSubmittedConfirmations', () => {
     } finally {
       rpcSpy.mockRestore();
     }
+  });
+});
+
+describe('drain_submitted_to_secured_for_tx migration', () => {
+  it('persists confirmations on anchors during the bulk SECURED drain', () => {
+    const sql = readFileSync(
+      resolve(process.cwd(), '../../supabase/migrations/0283_drain_submitted_to_secured_helper.sql'),
+      'utf8',
+    );
+
+    expect(sql).toMatch(
+      /UPDATE anchors a\s+SET[\s\S]*chain_confirmations = GREATEST\(p_confirmations, 1\)[\s\S]*FROM batch/,
+    );
+    expect(sql).toMatch(
+      /INSERT INTO public\.anchor_chain_index[\s\S]*confirmations[\s\S]*GREATEST\(p_confirmations, 1\)/,
+    );
   });
 });

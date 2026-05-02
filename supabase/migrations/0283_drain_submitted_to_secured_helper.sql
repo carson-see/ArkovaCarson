@@ -131,7 +131,8 @@ BEGIN
       UPDATE anchors a
       SET status = 'SECURED',
           chain_block_height = p_block_height,
-          chain_timestamp = p_block_timestamp
+          chain_timestamp = p_block_timestamp,
+          chain_confirmations = GREATEST(p_confirmations, 1)
       FROM batch
       WHERE a.id = batch.id
       RETURNING a.id, a.public_id, a.org_id, a.fingerprint
