@@ -41,6 +41,7 @@ def test_search_returns_pydantic_models_and_auth_header() -> None:
 
     assert seen_headers == ["Bearer ak_test"]
     assert result.results[0].public_id == "ARK-DOC-ABC"
+    assert "id" not in result.results[0].model_dump()
 
 
 def test_list_orgs_does_not_require_internal_id() -> None:
@@ -65,6 +66,7 @@ def test_list_orgs_does_not_require_internal_id() -> None:
     assert result.organizations[0].public_id == "org_acme"
     assert result.organizations[0].display_name == "Acme Corp"
     assert not hasattr(result.organizations[0], "id")
+    assert "id" not in result.organizations[0].model_dump()
 
 
 def test_problem_json_errors_preserve_retry_after() -> None:
@@ -265,6 +267,7 @@ def test_v2_resource_detail_methods_map_public_shapes() -> None:
     assert org.public_id == "org_acme"
     assert org.industry_tag == "healthcare"
     assert not hasattr(org, "id")
+    assert "id" not in org.model_dump()
     assert record.public_id == "ARK-DOC-ABC"
     assert record.parent_public_id is None
     assert not hasattr(record, "id")

@@ -41,9 +41,9 @@ Arkova's core infrastructure is complete: POST /anchor wired E2E, 13 verificatio
 
 ## What Was Built (Session 39)
 
-### INT-04: Python SDK v0.2.0 (`sdks/python/`) — superseded
+### INT-04: Python SDK v0.2.0 (`packages/arkova-py/`) — canonicalized
 
-> 2026-05-01 update: this historical SDK copy was removed as authoritative source. The canonical Python SDK package is `packages/arkova-py/`, which is the directory used by the publish workflow and API docs.
+> 2026-05-01 update: the historical duplicate SDK copy was removed as an authoritative source. The canonical Python SDK package is `packages/arkova-py/`, which is the directory used by the publish workflow and API docs.
 
 - Full parity with TypeScript SDK: `anchor()`, `verify()`, `verify_batch()`, `query()`, `ask()`
 - Webhook management namespace: `webhooks.create/list/get/update/delete/test()`

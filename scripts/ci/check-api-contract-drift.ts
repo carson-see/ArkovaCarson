@@ -5,6 +5,10 @@
  * The API audit found duplicate SDK package bodies and generated planning
  * artifacts sitting in normal source paths. This check keeps those from
  * quietly returning in future PRs.
+ *
+ * Scope note: this guard catches duplicate SDK bodies and generated/stale
+ * artifacts. Semantic API parity is covered by the route/OpenAPI/MCP/SDK tests,
+ * not by this file-list guard.
  */
 
 import { execFileSync } from 'node:child_process';
@@ -73,6 +77,7 @@ export interface DriftInput {
 }
 
 function normalizePath(path: string): string {
+  // Git emits forward slashes, but test fixtures may use Windows-style paths.
   return path.replaceAll('\\', '/');
 }
 

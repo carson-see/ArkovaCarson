@@ -34,18 +34,20 @@ Use this page as an engineering index for code review and drift checks. If code 
 | Confluence `SCRUM-1049 - API-V2 ... AUDIT` pages | Audit/planning evidence. | Keep linked from Jira/story artifacts |
 | Confluence `API-V2-07 - v1 -> v2 deprecation calendar` | Historical plan; contains stale host/spec claims. | `docs/api/v1-deprecation-communication-plan.md`, `docs/api/v2-migration.md`, and Confluence update |
 
-## SDK Contract Strategy
+## SCRUM-1584 SDK Contract Decision
 
 Arkova does not currently have an SDK generation toolchain in this repository. There is no checked-in OpenAPI generator, orval, swagger-codegen, or openapi-typescript workflow.
 
-For the current API v2 read-only surface, the accepted strategy is contract-tested hand-written SDKs:
+SCRUM-1584 is satisfied by the contract-tested SDK path rather than generated SDKs. This is not a deferred cleanup item: for the current API v2 read-only surface, generated SDKs would add another artifact with no owner and no stable write/admin surface to amortize the tooling cost.
+
+The accepted SDK contract strategy is:
 
 - TypeScript SDK tests assert v2 request paths, rich verification fields, `application/problem+json`, and `Retry-After` behavior.
 - Python SDK tests assert the same behavior for sync and async clients.
 - `npm run ci:api-contract-drift` prevents duplicate SDK package bodies and generated planning artifacts from returning.
 - Worker tests pin OpenAPI operation IDs, MCP aliases, SDK method names, and canonical workflow docs.
 
-Generated SDKs should be reconsidered only when API v2 has a larger stable write/admin surface or when Arkova commits to generator ownership. Until then, adding a generator would introduce another artifact that can drift.
+If Arkova later wants generated SDKs, that is a new product/engineering decision with explicit generator ownership, not unfinished acceptance criteria for SCRUM-1584.
 
 ## Maintenance Rules
 

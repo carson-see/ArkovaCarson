@@ -114,6 +114,11 @@ describe('scopeSatisfies', () => {
     expect(migration).toContain("WHEN 'oracle' THEN 'oracle:read'");
     expect(migration).toContain("WHEN 'batch' THEN 'verify:batch'");
     expect(migration).toContain("WHEN 'usage' THEN 'usage:read'");
+    expect(migration).toContain('DROP CONSTRAINT IF EXISTS agents_allowed_scopes_known_values');
+    expect(migration).toContain('NOT VALID');
+    expect(migration).toContain('VALIDATE CONSTRAINT agents_allowed_scopes_known_values');
+    expect(migration).toContain('a.allowed_scopes IS NULL');
+    expect(migration).toContain('OR NOT a.allowed_scopes <@ canonical_scopes');
   });
 
   it('keeps new-key picker choices restricted to API v2 scopes', () => {

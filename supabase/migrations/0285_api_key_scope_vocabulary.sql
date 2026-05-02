@@ -127,6 +127,9 @@ BEGIN
       canonical_scopes
     );
 
+    -- VALIDATE scans existing agent rows under a SHARE UPDATE EXCLUSIVE lock.
+    -- Expected to be brief for today's table size; schedule during a quiet
+    -- window if agent registrations grow materially.
     ALTER TABLE public.agents VALIDATE CONSTRAINT agents_allowed_scopes_known_values;
 
     COMMENT ON COLUMN public.agents.allowed_scopes IS

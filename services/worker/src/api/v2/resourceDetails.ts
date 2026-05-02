@@ -4,12 +4,14 @@ import { logger } from '../../utils/logger.js';
 import { requireScopeV2 } from './scopeGuard.js';
 import { ProblemError } from './problem.js';
 import { createV2ScopeRateLimit } from './rateLimit.js';
+import {
+  ARKOVA_PUBLIC_ID_RE as PUBLIC_ID_RE,
+  ORG_PUBLIC_ID_RE,
+  SHA256_HEX_RE,
+} from './patterns.js';
 
 export const resourceDetailsRouter = Router();
 
-const ORG_PUBLIC_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{2,100}$/;
-const PUBLIC_ID_RE = /^ARK-[A-Z0-9-]{3,60}$/;
-const SHA256_HEX_RE = /^[a-fA-F0-9]{64}$/;
 const VERIFY_BASE_URL = 'https://app.arkova.ai/verify';
 
 interface V2QueryBuilder {
@@ -39,6 +41,8 @@ function sanitizeFilterValue(v: string): string {
 }
 
 function visibleAnchorScope(orgId: string | null | undefined): string {
+  // orgId must come from authenticated req.apiKey.orgId; the scope guard is
+  // what prevents unauthenticated caller-supplied org filters from reaching DB.
   return orgId
     ? `status.eq.SECURED,org_id.eq.${sanitizeFilterValue(orgId)}`
     : 'status.eq.SECURED';

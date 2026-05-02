@@ -1,4 +1,9 @@
 import { Request, Response } from 'express';
+import {
+  ARKOVA_PUBLIC_ID_PATTERN,
+  ORG_PUBLIC_ID_PATTERN,
+  SHA256_HEX_PATTERN,
+} from './patterns.js';
 
 const searchParameters = [
   { name: 'q', in: 'query', required: true, schema: { type: 'string', minLength: 1, maxLength: 500 }, description: 'Search query.' },
@@ -12,21 +17,21 @@ const orgPublicIdPathParameter = {
   name: 'public_id',
   in: 'path',
   required: true,
-  schema: { type: 'string', pattern: '^[A-Za-z0-9][A-Za-z0-9_-]{2,100}$' },
+  schema: { type: 'string', pattern: ORG_PUBLIC_ID_PATTERN },
   description: 'Organization public ID returned by search or list_orgs.',
 } as const;
 const anchorPublicIdPathParameter = {
   name: 'public_id',
   in: 'path',
   required: true,
-  schema: { type: 'string', pattern: '^ARK-[A-Z0-9-]{3,60}$' },
+  schema: { type: 'string', pattern: ARKOVA_PUBLIC_ID_PATTERN },
   description: 'Arkova public ID returned by search.',
 } as const;
 const fingerprintPathParameter = {
   name: 'fingerprint',
   in: 'path',
   required: true,
-  schema: { type: 'string', pattern: '^[a-fA-F0-9]{64}$' },
+  schema: { type: 'string', pattern: SHA256_HEX_PATTERN },
   description: 'SHA-256 document fingerprint.',
 } as const;
 
@@ -234,7 +239,7 @@ export const openApiV2Spec = {
     title: 'Arkova Verification API v2',
     version: '0.2.0',
     description:
-      'Agent-ready Arkova verification API. Read-only tools are described with operation descriptions and x-agent-usage annotations for MCP, Gemini, and OpenAPI function-call importers. Default per-minute scope-aware quotas are read:search 1,000, read:records 500, read:orgs 500, write:anchors 100, and admin:rules 50; deployments may override these via API_V2_RATE_LIMIT_* environment variables.',
+      'Agent-ready Arkova verification API. Read-only tools are described with operation descriptions and x-agent-usage annotations for MCP, Gemini, and OpenAPI function-call importers. Authenticated API keys default to a 1,000 req/min base bucket; API v2 also applies per-minute scope-aware buckets of read:search 1,000, read:records 500, read:orgs 500, write:anchors 100, and admin:rules 50. Deployments may override the scope buckets via API_V2_RATE_LIMIT_* environment variables.',
   },
   jsonSchemaDialect: 'https://json-schema.org/draft/2020-12/schema',
   servers: [

@@ -4,11 +4,14 @@ import { logger } from '../../utils/logger.js';
 import { requireScopeV2 } from './scopeGuard.js';
 import { ProblemError } from './problem.js';
 import { createV2ScopeRateLimit } from './rateLimit.js';
+import {
+  ARKOVA_PUBLIC_ID_RE as PUBLIC_ID_RE,
+  SHA256_HEX_RE,
+} from './patterns.js';
 
 export const agentToolsRouter = Router();
 
-const PUBLIC_ID_RE = /^ARK-[A-Z0-9-]{3,60}$/;
-const SHA256_HEX_RE = /^[a-fA-F0-9]{64}$/;
+const PUBLIC_ORG_SELECT = 'public_id, display_name, domain, website_url, verification_status';
 
 interface V2QueryBuilder {
   select(columns: string): V2QueryBuilder;
@@ -31,6 +34,8 @@ function sanitizeFilterValue(v: string): string {
 }
 
 function visibleAnchorScope(orgId: string | null | undefined): string {
+  // orgId must come from authenticated req.apiKey.orgId; the scope guard is
+  // what prevents unauthenticated caller-supplied org filters from reaching DB.
   return orgId
     ? `status.eq.SECURED,org_id.eq.${sanitizeFilterValue(orgId)}`
     : 'status.eq.SECURED';
@@ -155,8 +160,10 @@ agentToolsRouter.get(
     }
 
     try {
+      // Security boundary: keep this SELECT public-only. If it widens, the
+      // response mapper below will not automatically redact newly selected PII.
       const { data, error } = await v2Db.from('organizations')
-        .select('public_id, display_name, domain, website_url, verification_status')
+        .select(PUBLIC_ORG_SELECT)
         .eq('id', req.apiKey.orgId)
         .maybeSingle();
 
