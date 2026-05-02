@@ -73,7 +73,10 @@ jobs:
           node-version: '20'
 
       - name: Install dependencies
-        run: npm ci
+        # Dependency scanning does not execute the app. Suppress package
+        # lifecycle scripts so this security gate cannot fail because a
+        # transitive package postinstall tries to download external binaries.
+        run: npm ci --ignore-scripts
 
       - name: Enforce pinned package versions
         env:
@@ -126,7 +129,7 @@ jobs:
         # - snarkjs -> bfj -> jsonpath -> underscore <=1.13.7: GHSA-qpx9-hpmf-5gmw
         #   DoS vuln, not exploitable server-side. Tracked for replacement.
         working-directory: services/worker
-        run: npm ci && npm audit --audit-level=critical --omit=dev
+        run: npm ci --ignore-scripts && npm audit --audit-level=critical --omit=dev
 
   # SCRUM-1068: Sonatype SCA evidence job. Non-blocking for the first sprint;
   # GPL/AGPL/SSPL license policy is enforced locally even when Lifecycle
