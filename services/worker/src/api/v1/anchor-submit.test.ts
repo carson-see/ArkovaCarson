@@ -198,7 +198,11 @@ describe('POST /api/v1/anchor — Zod validation', () => {
     });
 
     expect(res.status).toBe(400);
-    expect(res.body.details[0].path).toBe('metadata');
+    expect(res.body.details[0]).toMatchObject({
+      path: 'metadata.source_url',
+      code: 'custom',
+      message: expect.stringContaining('private IPv4'),
+    });
     expect(mockInsert).not.toHaveBeenCalled();
     expect(mockLogger.warn).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -224,8 +228,9 @@ describe('POST /api/v1/anchor — Zod validation', () => {
 
     expect(res.status).toBe(400);
     expect(res.body.details[0]).toMatchObject({
-      path: 'metadata',
-      code: 'invalid_credential_evidence_metadata',
+      path: 'metadata.source_url',
+      code: 'custom',
+      message: expect.stringContaining('private IPv4'),
     });
     expect(mockInsert).not.toHaveBeenCalled();
   });

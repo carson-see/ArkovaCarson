@@ -6,6 +6,7 @@
  * can hash before anchoring.
  */
 import { createHash } from 'node:crypto';
+import { Buffer } from 'node:buffer';
 import { isIP } from 'node:net';
 import { z } from 'zod';
 import { canonicaliseJson } from '../utils/canonical-json.js';
@@ -145,9 +146,18 @@ function stripIpv6Brackets(hostname: string): string {
   return hostname.startsWith('[') && hostname.endsWith(']') ? hostname.slice(1, -1) : hostname;
 }
 
+function normalizeHttpHostnameForValidation(hostname: string): string {
+  return stripIpv6Brackets(hostname.toLowerCase()).replace(/\.+$/u, '');
+}
+
 function assertPublicHttpHost(hostname: string): void {
-  const normalized = stripIpv6Brackets(hostname.toLowerCase());
-  if (!normalized || normalized === 'localhost' || normalized.endsWith('.localhost') || normalized.endsWith('.local')) {
+  const normalized = normalizeHttpHostnameForValidation(hostname);
+  const isLocalName =
+    normalized.length === 0 ||
+    normalized === 'localhost' ||
+    normalized.endsWith('.localhost') ||
+    normalized.endsWith('.local');
+  if (isLocalName) {
     throw new Error('source URL host must be a public internet host');
   }
 
@@ -173,9 +183,13 @@ function shouldDropQueryKey(key: string): boolean {
   );
 }
 
+function compareUtf8Strings(a: string, b: string): number {
+  return Buffer.compare(Buffer.from(a, 'utf8'), Buffer.from(b, 'utf8'));
+}
+
 function compareQueryEntries([aKey, aVal]: [string, string], [bKey, bVal]: [string, string]): number {
-  const keyComparison = aKey.localeCompare(bKey);
-  return keyComparison === 0 ? aVal.localeCompare(bVal) : keyComparison;
+  const keyComparison = compareUtf8Strings(aKey, bKey);
+  return keyComparison === 0 ? compareUtf8Strings(aVal, bVal) : keyComparison;
 }
 
 /**
@@ -204,7 +218,7 @@ export function normalizeCredentialSourceUrl(rawUrl: string): string {
   parsed.username = '';
   parsed.password = '';
   parsed.hash = '';
-  parsed.hostname = parsed.hostname.toLowerCase();
+  parsed.hostname = parsed.hostname.toLowerCase().replace(/\.+$/u, '');
 
   const entries = [...parsed.searchParams.entries()]
     .filter(([key]) => !shouldDropQueryKey(key))

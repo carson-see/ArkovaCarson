@@ -83,6 +83,24 @@ describe('credential-evidence', () => {
     ).toBe('https://credentials.example.com/path?locale=en&view=public');
   });
 
+  it('sorts retained query parameters by deterministic UTF-8 byte order', () => {
+    expect(
+      normalizeCredentialSourceUrl('https://credentials.example.com/path?%C3%A9=1&z=2&a=3&k=%C3%A9&k=z'),
+    ).toBe('https://credentials.example.com/path?a=3&k=z&k=%C3%A9&z=2&%C3%A9=1');
+  });
+
+  it('normalizes trailing dots before host allow/deny decisions', () => {
+    expect(normalizeCredentialSourceUrl('https://Credentials.Example.com./path')).toBe(
+      'https://credentials.example.com/path',
+    );
+    expect(() => normalizeCredentialSourceUrl('https://localhost./credential')).toThrow(
+      'public internet host',
+    );
+    expect(() => normalizeCredentialSourceUrl('https://example.local./credential')).toThrow(
+      'public internet host',
+    );
+  });
+
   it('rejects non-public or non-http source URLs', () => {
     expect(() => normalizeCredentialSourceUrl('javascript:alert(1)')).toThrow('http or https');
     expect(() => normalizeCredentialSourceUrl('https://localhost:3000/credential')).toThrow(

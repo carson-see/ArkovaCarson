@@ -118,10 +118,21 @@ router.post('/', async (req: Request, res: Response) => {
       },
       'Rejected invalid credential evidence metadata on anchor submit',
     );
+    const credentialEvidenceDetails = parsedCredentialEvidenceMetadata.issues?.map((issue) => ({
+      path: issue.path ? `metadata.${issue.path}` : 'metadata',
+      code: issue.code,
+      message: issue.message,
+    })) ?? [
+      {
+        path: 'metadata',
+        code: 'invalid_credential_evidence_metadata',
+        message: 'Credential evidence metadata is invalid or not public-safe',
+      },
+    ];
     res.status(400).json({
       error: 'invalid_request',
       message: 'Request body failed validation',
-      details: [{ path: 'metadata', code: 'invalid_credential_evidence_metadata', message: 'Credential evidence metadata is invalid or not public-safe' }],
+      details: credentialEvidenceDetails,
     });
     return;
   }
