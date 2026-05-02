@@ -41,4 +41,21 @@ describe('handleAgentSearch', () => {
       }),
     );
   });
+
+  it('escapes Postgres LIKE wildcards before record search RPC calls', async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify([]), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await handleAgentSearch(
+      { q: 'contract%_\\', type: 'record', max_results: 10 },
+      config,
+    );
+
+    expect(result.isError).toBeUndefined();
+    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    expect(JSON.parse(requestInit.body as string)).toEqual({
+      p_query: String.raw`contract\%\_\\`,
+      p_limit: 10,
+    });
+  });
 });

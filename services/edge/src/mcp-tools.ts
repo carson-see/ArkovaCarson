@@ -38,6 +38,7 @@ const FETCH_TIMEOUT_MS = 10_000;
 export const SHA256_HEX_RE = /^[a-fA-F0-9]{64}$/;
 export const ARKOVA_PUBLIC_ID_RE = /^ARK-[A-Z0-9-]{3,60}$/;
 export const ORG_PUBLIC_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{2,100}$/;
+const POSTGRES_LIKE_WILDCARD_RE = /[%_\\]/g;
 
 export interface ToolDefinition {
   name: string;
@@ -563,7 +564,7 @@ async function fetchPublicCredentialSearch(
   config: SupabaseConfig,
 ): Promise<Array<Record<string, unknown>>> {
   // INJ-01: Use RPC with bound parameters instead of URL interpolation.
-  const sanitizedQuery = query.replaceAll(/[%_\\]/g, String.raw`\$&`);
+  const sanitizedQuery = escapeForPostgresLike(query);
   const response = await supabaseFetch(config, '/rest/v1/rpc/search_public_credentials', {
     method: 'POST',
     body: JSON.stringify({ p_query: sanitizedQuery, p_limit: maxResults }),
@@ -601,6 +602,10 @@ function toolErrorMessage(error: unknown, timeoutMessage: string, failurePrefix:
   if (error instanceof Error && error.name === 'AbortError') return timeoutMessage;
   const detail = error instanceof Error ? error.message : 'Unknown error';
   return `${failurePrefix}: ${detail}`;
+}
+
+function escapeForPostgresLike(query: string): string {
+  return query.replaceAll(POSTGRES_LIKE_WILDCARD_RE, String.raw`\$&`);
 }
 
 async function searchAgentOrgs(

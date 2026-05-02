@@ -223,7 +223,7 @@ const detail = await arkova.getDocument(results[0].publicId);
 
 Retries are built in for `429`, `500`, `502`, `503`, and `504`. For rate limits, the SDK reads `Retry-After` and waits before retrying. API v2 errors are exposed as `ArkovaError.problem` with the full RFC 7807 `{ type, title, status, detail, instance }` payload.
 
-**Type note:** organization summaries and search/detail objects may expose `publicId: string | null` when the API cannot safely publish an identifier. Check `publicId` before passing it to detail calls or string methods.
+**Type note:** record, document, and fingerprint detail responses may expose `publicId: string | null` when the API cannot safely publish an identifier. Organization summaries always include `publicId: string`. Check nullable `publicId` values before passing them to follow-up detail calls or string methods.
 
 ---
 
