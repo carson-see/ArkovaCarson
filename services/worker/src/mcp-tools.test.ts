@@ -43,9 +43,24 @@ afterEach(() => {
 
 // ── TOOL_DEFINITIONS ──────────────────────────────────────────────────
 
+const EXPECTED_TOOL_NAMES = [
+  'verify_credential',
+  'search_credentials',
+  'nessie_query',
+  'anchor_document',
+  'verify_document',
+  'verify_batch',
+  'search',
+  'verify',
+  'list_orgs',
+  'get_anchor',
+  'oracle_batch_verify',
+  'list_agents',
+];
+
 describe('TOOL_DEFINITIONS', () => {
-  it('exports legacy tools plus v2 agent aliases', () => {
-    expect(TOOL_DEFINITIONS).toHaveLength(10);
+  it('exports legacy, v2, oracle, and agent registry tools', () => {
+    expect(TOOL_DEFINITIONS.map((tool) => tool.name)).toEqual(EXPECTED_TOOL_NAMES);
   });
 
   it('all tools have name, description, and inputSchema', () => {
