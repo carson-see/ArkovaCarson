@@ -44,7 +44,7 @@ test.describe('Mobile Viewport (375px)', () => {
 
   test.describe('Dashboard', () => {
     test('dashboard renders mobile layout with stat cards stacked', async ({ individualPage }) => {
-      await individualPage.goto('/vault');
+      await individualPage.goto('/dashboard');
       await expect(individualPage.getByText(/Welcome back/i)).toBeVisible({ timeout: 10000 });
 
       // Stat cards should be visible
@@ -57,7 +57,7 @@ test.describe('Mobile Viewport (375px)', () => {
     });
 
     test('Secure Document button is accessible on mobile', async ({ individualPage }) => {
-      await individualPage.goto('/vault');
+      await individualPage.goto('/dashboard');
       await individualPage.waitForTimeout(2000);
 
       const secureBtn = individualPage.getByRole('button', { name: /Secure Document/i });
@@ -75,7 +75,7 @@ test.describe('Mobile Viewport (375px)', () => {
 
   test.describe('Navigation', () => {
     test('mobile menu toggle is visible and functional', async ({ individualPage }) => {
-      await individualPage.goto('/vault');
+      await individualPage.goto('/dashboard');
       await individualPage.waitForTimeout(2000);
 
       // On mobile, sidebar should be collapsed/hidden by default
@@ -96,7 +96,7 @@ test.describe('Mobile Viewport (375px)', () => {
     });
 
     test('sidebar navigation items are accessible on mobile', async ({ individualPage }) => {
-      await individualPage.goto('/vault');
+      await individualPage.goto('/dashboard');
       await individualPage.waitForTimeout(2000);
 
       // On mobile, try opening sidebar if it's collapsed
@@ -220,7 +220,7 @@ test.describe('Mobile Viewport (375px)', () => {
 
   test.describe('Touch Targets', () => {
     test('interactive elements meet minimum touch target size', async ({ individualPage }) => {
-      await individualPage.goto('/vault');
+      await individualPage.goto('/dashboard');
       await individualPage.waitForTimeout(2000);
 
       // Check all visible buttons have adequate touch targets

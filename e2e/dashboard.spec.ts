@@ -12,7 +12,7 @@ import { test, expect } from './fixtures';
 test.describe('Dashboard', () => {
   test.describe('Individual User Dashboard', () => {
     test('dashboard loads with welcome message and stats', async ({ individualPage }) => {
-      await individualPage.goto('/vault');
+      await individualPage.goto('/dashboard');
 
       // Welcome message
       await expect(individualPage.getByText(/Welcome back/i)).toBeVisible({ timeout: 10000 });
@@ -24,7 +24,7 @@ test.describe('Dashboard', () => {
     });
 
     test('My Records section is visible', async ({ individualPage }) => {
-      await individualPage.goto('/vault');
+      await individualPage.goto('/dashboard');
 
       await expect(individualPage.getByRole('heading', { name: 'My Records' })).toBeVisible({
         timeout: 10000,
@@ -32,14 +32,14 @@ test.describe('Dashboard', () => {
     });
 
     test('Secure Document button is visible and clickable', async ({ individualPage }) => {
-      await individualPage.goto('/vault');
+      await individualPage.goto('/dashboard');
 
       const secureBtn = individualPage.getByRole('button', { name: /Secure Document/i });
       await expect(secureBtn.first()).toBeVisible({ timeout: 10000 });
     });
 
     test('Secure Document button opens dialog', async ({ individualPage }) => {
-      await individualPage.goto('/vault');
+      await individualPage.goto('/dashboard');
       await individualPage.waitForTimeout(2000); // Wait for page to fully load
 
       const secureBtn = individualPage.getByRole('button', { name: /Secure Document/i });
@@ -52,7 +52,7 @@ test.describe('Dashboard', () => {
     });
 
     test('privacy toggle is present', async ({ individualPage }) => {
-      await individualPage.goto('/vault');
+      await individualPage.goto('/dashboard');
 
       await expect(
         individualPage.getByText('Public Verification Profile')
@@ -75,7 +75,7 @@ test.describe('Dashboard', () => {
 
   test.describe('Navigation', () => {
     test('clicking a record navigates to record detail', async ({ individualPage }) => {
-      await individualPage.goto('/vault');
+      await individualPage.goto('/dashboard');
 
       // Wait for records list to load
       await individualPage.waitForTimeout(3000);

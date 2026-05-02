@@ -19,7 +19,7 @@ test.describe('Anchor Creation (Secure Document)', () => {
   }
 
   test('Secure Document dialog opens and shows upload step', async ({ individualPage }) => {
-    await individualPage.goto('/vault');
+    await individualPage.goto('/dashboard');
     await individualPage.waitForTimeout(2000);
 
     // Click Secure Document button
@@ -41,7 +41,7 @@ test.describe('Anchor Creation (Secure Document)', () => {
   });
 
   test('Continue button is disabled until file is selected', async ({ individualPage }) => {
-    await individualPage.goto('/vault');
+    await individualPage.goto('/dashboard');
     await individualPage.waitForTimeout(2000);
 
     const secureBtn = individualPage.getByRole('button', { name: /Secure Document/i });
@@ -59,7 +59,7 @@ test.describe('Anchor Creation (Secure Document)', () => {
   });
 
   test('file upload generates fingerprint', async ({ individualPage }) => {
-    await individualPage.goto('/vault');
+    await individualPage.goto('/dashboard');
     await individualPage.waitForTimeout(2000);
 
     const secureBtn = individualPage.getByRole('button', { name: /Secure Document/i });
@@ -88,7 +88,7 @@ test.describe('Anchor Creation (Secure Document)', () => {
   test('confirm step shows file details and Secure Document button', async ({
     individualPage,
   }) => {
-    await individualPage.goto('/vault');
+    await individualPage.goto('/dashboard');
     await individualPage.waitForTimeout(2000);
 
     const secureBtn = individualPage.getByRole('button', { name: /Secure Document/i });
@@ -123,7 +123,7 @@ test.describe('Anchor Creation (Secure Document)', () => {
   });
 
   test('cancel closes the dialog without creating a record', async ({ individualPage }) => {
-    await individualPage.goto('/vault');
+    await individualPage.goto('/dashboard');
     await individualPage.waitForTimeout(2000);
 
     const secureBtn = individualPage.getByRole('button', { name: /Secure Document/i });

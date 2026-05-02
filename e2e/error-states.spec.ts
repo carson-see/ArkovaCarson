@@ -70,7 +70,7 @@ test.describe('Error States', () => {
   test.describe('Expired Session', () => {
     test('clearing cookies redirects to auth on next navigation', async ({ individualPage }) => {
       // Verify we are authenticated first
-      await individualPage.goto('/vault');
+      await individualPage.goto('/dashboard');
       await expect(
         individualPage.getByText(/Vault/i)
           .or(individualPage.getByText(/My Records/i))
@@ -81,7 +81,7 @@ test.describe('Error States', () => {
       await individualPage.context().clearCookies();
 
       // Navigate to a protected route
-      await individualPage.goto('/vault');
+      await individualPage.goto('/dashboard');
 
       // Should redirect to auth page
       await expect(

@@ -19,7 +19,7 @@ test.describe('Frontend Performance', () => {
   test.describe('Dashboard Load', () => {
     test('dashboard loads within 5 seconds', async ({ individualPage }) => {
       const start = Date.now();
-      await individualPage.goto('/vault');
+      await individualPage.goto('/dashboard');
 
       // Wait for meaningful content to render
       await expect(
@@ -40,7 +40,7 @@ test.describe('Frontend Performance', () => {
     });
 
     test('dashboard stats render without long delay', async ({ individualPage }) => {
-      await individualPage.goto('/vault');
+      await individualPage.goto('/dashboard');
 
       const start = Date.now();
 
@@ -92,7 +92,7 @@ test.describe('Frontend Performance', () => {
   test.describe('Navigation Performance', () => {
     test('navigating between pages does not exceed 3 seconds', async ({ individualPage }) => {
       // Start on vault
-      await individualPage.goto('/vault');
+      await individualPage.goto('/dashboard');
       await expect(
         individualPage
           .getByText(/Vault/i)

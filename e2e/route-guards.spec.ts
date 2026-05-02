@@ -14,8 +14,8 @@ test.use({ storageState: { cookies: [], origins: [] } });
 
 test.describe('Route Guards', () => {
   test.describe('Unauthenticated Access', () => {
-    test('redirects /vault to /auth when not logged in', async ({ page }) => {
-      await page.goto('/vault');
+    test('redirects /records to auth when not logged in', async ({ page }) => {
+      await page.goto('/records');
 
       await expect(
         page.getByText(/Authentication Required/i).or(page.getByLabel('Email address'))
@@ -39,17 +39,31 @@ test.describe('Route Guards', () => {
     });
   });
 
-  test.describe('Role-based Routing', () => {
-    test('INDIVIDUAL users cannot access /dashboard', async ({ page }) => {
+  test.describe('Authenticated Routing', () => {
+    test.use({ storageState: '.auth/individual.json' });
+
+    test('INDIVIDUAL users can access the dashboard entrypoint', async ({ page }) => {
       await page.goto('/dashboard');
 
-      await expect(page.getByText(/Dashboard/i).or(page.getByText(/Authentication Required/i))).toBeVisible();
+      await expect(
+        page.getByText(/Welcome back/i)
+          .or(page.getByText(/My Records/i))
+          .or(page.getByText(/Secure Document/i))
+      ).toBeVisible({ timeout: 10000 });
     });
+  });
 
-    test('ORG_ADMIN users cannot access /vault directly', async ({ page }) => {
-      await page.goto('/vault');
+  test.describe('Org Admin Routing', () => {
+    test.use({ storageState: '.auth/orgAdmin.json' });
 
-      await expect(page.getByText(/Vault/i).or(page.getByText(/Authentication Required/i))).toBeVisible();
+    test('ORG_ADMIN users can access the dashboard entrypoint', async ({ page }) => {
+      await page.goto('/dashboard');
+
+      await expect(
+        page.getByText(/Dashboard/i)
+          .or(page.getByText(/Organization/i))
+          .or(page.getByText(/Welcome/i))
+      ).toBeVisible({ timeout: 10000 });
     });
   });
 

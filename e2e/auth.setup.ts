@@ -48,12 +48,21 @@ async function loginAndSave(
 
 // ── Setup tests — one per distinct seed user ──────────────────────────
 
-setup('authenticate as individual (carson)', async ({ page }) => {
+setup('authenticate as individual (demo-user)', async ({ page }) => {
   await loginAndSave(
     page,
     SEED_USERS.individual.email,
     SEED_USERS.individual.password,
     `${STORAGE_DIR}/individual.json`,
+  );
+});
+
+setup('authenticate as orgAdmin (demo-admin)', async ({ page }) => {
+  await loginAndSave(
+    page,
+    SEED_USERS.orgAdmin.email,
+    SEED_USERS.orgAdmin.password,
+    `${STORAGE_DIR}/orgAdmin.json`,
   );
 });
 
