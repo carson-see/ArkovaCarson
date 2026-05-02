@@ -58,7 +58,7 @@ test.describe('Member Invite Flow', () => {
     const dialog = await openInviteDialog(orgAdminPage);
 
     // Type invalid email
-    await dialog.getByLabel('Email address').fill('not-an-email@example');
+    await dialog.getByLabel('Email address').fill('invalid-email@localhost');
 
     // Submit
     await dialog.getByRole('button', { name: /Send Invitation/i }).click();

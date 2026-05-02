@@ -44,16 +44,47 @@ test.describe('Authentication', () => {
   });
 
   test('signup creates account and enters the authenticated app', async ({ page }) => {
+    const serviceClient = getServiceClient();
+    const email = `${uniqueTestId('e2e-signup')}@test.arkova.io`;
+    let userId: string | null = null;
+
     await page.goto('/signup');
 
-    await page.getByLabel('Full name').fill('Test User');
-    await page.getByLabel('Email address').fill(`test-${Date.now()}@example.com`);
-    await page.getByLabel('Password', { exact: true }).fill('testpassword123');
-    await page.getByLabel('Confirm password').fill('testpassword123');
+    try {
+      await page.getByLabel('Full name').fill('Test User');
+      await page.getByLabel('Email address').fill(email);
+      await page.getByLabel('Password', { exact: true }).fill('testpassword123');
+      await page.getByLabel('Confirm password').fill('testpassword123');
 
-    await page.getByRole('button', { name: 'Create account' }).click();
+      await page.getByRole('button', { name: 'Create account' }).click();
 
-    await page.waitForURL(/\/(dashboard|onboarding|review-pending)/, { timeout: 15000 });
+      await page.waitForURL(/\/(dashboard|onboarding|review-pending)/, { timeout: 15000 });
+
+      const { data: profile } = await serviceClient
+        .from('profiles')
+        .select('id')
+        .eq('email', email)
+        .maybeSingle();
+      userId = (profile?.id as string | undefined) ?? null;
+    } finally {
+      if (!userId) {
+        const { data: profile } = await serviceClient
+          .from('profiles')
+          .select('id')
+          .eq('email', email)
+          .maybeSingle();
+        userId = (profile?.id as string | undefined) ?? null;
+      }
+
+      if (!userId) {
+        const { data: users } = await serviceClient.auth.admin.listUsers();
+        userId = users.users.find((user) => user.email === email)?.id ?? null;
+      }
+
+      if (userId) {
+        await serviceClient.auth.admin.deleteUser(userId);
+      }
+    }
   });
 
   test('shows validation error for password mismatch', async ({ page }) => {

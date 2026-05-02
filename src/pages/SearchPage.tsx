@@ -73,7 +73,7 @@ export function SearchPage() {
     title: string | null;
     credential_type: string | null;
     status: string;
-    created_at: string;
+    created_at: string | null;
     org_id: string | null;
     /** RPC returns anchored_at, mapped to created_at */
     anchored_at?: string;
@@ -89,6 +89,13 @@ export function SearchPage() {
   const [verifyingFile, setVerifyingFile] = useState(false);
   const [verifyFileName, setVerifyFileName] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const formatResultDate = (value: string | null | undefined): string | null => {
+    if (!value) return null;
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) return null;
+    return parsed.toLocaleDateString();
+  };
 
   const searchFingerprint = useCallback(async (fp: string) => {
     const isValid = /^[a-f0-9]{64}$/i.test(fp);
@@ -115,7 +122,7 @@ export function SearchPage() {
         // failures. Surface the real error to the console so prod triage
         // can see why a search failed without needing to reproduce.
         console.error('[search] fingerprint query failed:', queryError);
-        setFpError('Search failed. Please try again.');
+        setFpError(SEARCH_LABELS.SEARCH_ERROR);
         return;
       }
 
@@ -134,7 +141,7 @@ export function SearchPage() {
       }
     } catch (err) {
       console.error('[search] fingerprint search threw:', err);
-      setFpError('Search failed. Please try again.');
+      setFpError(SEARCH_LABELS.SEARCH_ERROR);
     } finally {
       setFpSearching(false);
     }
@@ -152,7 +159,7 @@ export function SearchPage() {
         title: (inner.title as string | null) ?? (inner.filename as string | null) ?? null,
         credential_type: (inner.credential_type as string | null) ?? null,
         status: inner.status as string,
-        created_at: (inner.anchored_at as string) ?? (inner.created_at as string) ?? '',
+        created_at: (inner.anchored_at as string | null) ?? (inner.created_at as string | null) ?? null,
         org_id: (inner.issuer_public_id as string | null) ?? (inner.org_id as string | null) ?? null,
       };
     });
@@ -204,7 +211,7 @@ export function SearchPage() {
         setPersonError(null);
       } catch (fallbackErr) {
         console.error('[search] fallback public credentials search failed:', fallbackErr);
-        setPersonError('Search failed. Please try again.');
+        setPersonError(SEARCH_LABELS.SEARCH_ERROR);
       }
     } finally {
       setPersonSearching(false);
@@ -432,39 +439,45 @@ export function SearchPage() {
               <p className="text-xs text-muted-foreground uppercase tracking-wider">
                 {SEARCH_LABELS.PERSON_CREDENTIALS}
               </p>
-              {personResults.map((result) => (
-                <Card
-                  key={result.public_id}
-                  className="glass-card cursor-pointer hover:shadow-card-hover transition-shadow"
-                  onClick={() => navigate(verifyPath(result.public_id))}
-                >
-                  <CardContent className="p-4">
-                    <div className="flex items-center justify-between">
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium truncate">
-                          {result.title || result.public_id || 'Untitled Record'}
-                        </p>
-                        <div className="flex items-center gap-2 mt-1">
-                          {result.credential_type && (
-                            <span className="text-xs text-muted-foreground">
-                              {CREDENTIAL_TYPE_LABELS[result.credential_type as keyof typeof CREDENTIAL_TYPE_LABELS] ?? result.credential_type}
-                            </span>
-                          )}
-                          <span className="text-xs text-muted-foreground">
-                            {new Date(result.created_at).toLocaleDateString()}
-                          </span>
+              {personResults.map((result) => {
+                const resultDate = formatResultDate(result.created_at);
+
+                return (
+                  <Card
+                    key={result.public_id}
+                    className="glass-card cursor-pointer hover:shadow-card-hover transition-shadow"
+                    onClick={() => navigate(verifyPath(result.public_id))}
+                  >
+                    <CardContent className="p-4">
+                      <div className="flex items-center justify-between">
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium truncate">
+                            {result.title || result.public_id || 'Untitled Record'}
+                          </p>
+                          <div className="flex items-center gap-2 mt-1">
+                            {result.credential_type && (
+                              <span className="text-xs text-muted-foreground">
+                                {CREDENTIAL_TYPE_LABELS[result.credential_type as keyof typeof CREDENTIAL_TYPE_LABELS] ?? result.credential_type}
+                              </span>
+                            )}
+                            {resultDate && (
+                              <span className="text-xs text-muted-foreground">
+                                {resultDate}
+                              </span>
+                            )}
+                          </div>
                         </div>
+                        <Badge
+                          variant={result.status === 'SECURED' ? 'default' : 'secondary'}
+                          className={result.status === 'SECURED' ? 'bg-green-600' : ''}
+                        >
+                          {result.status === 'SECURED' ? 'Verified' : result.status}
+                        </Badge>
                       </div>
-                      <Badge
-                        variant={result.status === 'SECURED' ? 'default' : 'secondary'}
-                        className={result.status === 'SECURED' ? 'bg-green-600' : ''}
-                      >
-                        {result.status === 'SECURED' ? 'Verified' : result.status}
-                      </Badge>
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
+                    </CardContent>
+                  </Card>
+                );
+              })}
             </div>
           )}
 

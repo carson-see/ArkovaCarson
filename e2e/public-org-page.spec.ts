@@ -14,8 +14,8 @@ import { test, expect } from './fixtures';
 
 const ARKOVA_ORG_ID = 'aaaaaaaa-0000-0000-0000-000000000001';
 const ORG_PAGE_PATH = `/issuer/${ARKOVA_ORG_ID}`;
-// Path prefix for og:url assertion (route shape stable across deploys).
-const ORG_PAGE_URL_RE = /\/issuer\//;
+// Assert the specific seeded org, not just the issuer route family.
+const ORG_PAGE_URL_RE = new RegExp(`/issuer/${ARKOVA_ORG_ID}(?:$|[/?#])`);
 
 test.describe('Public org page — anonymous visitor', () => {
   test.use({ storageState: { cookies: [], origins: [] } });

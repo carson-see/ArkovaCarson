@@ -24,7 +24,7 @@ import { AnchorDisclaimer } from './AnchorDisclaimer';
 import { CredentialRenderer } from '@/components/credentials/CredentialRenderer';
 import { useCredentialTemplate } from '@/hooks/useCredentialTemplate';
 import { formatFingerprint } from '@/lib/fileHasher';
-import { LIFECYCLE_LABELS, CREDENTIAL_TYPE_LABELS, SHARE_LABELS, EXPLORER_LABELS, FINGERPRINT_TOOLTIP, VERSION_HISTORY_LABELS, RECORDS_LIST_LABELS, formatCredentialType, getTemplateDescription } from '@/lib/copy';
+import { LIFECYCLE_LABELS, CREDENTIAL_TYPE_LABELS, SHARE_LABELS, EXPLORER_LABELS, FINGERPRINT_TOOLTIP, VERSION_HISTORY_LABELS, RECORDS_LIST_LABELS, RECORD_DETAIL_LABELS, formatCredentialType, getTemplateDescription } from '@/lib/copy';
 import {
   Tooltip,
   TooltipContent,
@@ -385,7 +385,11 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
                 size="sm"
                 className="h-7 px-2 text-xs"
                 onClick={handleCopyFingerprint}
-                aria-label={copied ? 'Document fingerprint copied' : 'Copy document fingerprint'}
+                aria-label={
+                  copied
+                    ? RECORD_DETAIL_LABELS.FINGERPRINT_COPIED_ARIA
+                    : RECORD_DETAIL_LABELS.FINGERPRINT_COPY_ARIA
+                }
               >
                 {copied ? (
                   <>
