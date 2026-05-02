@@ -66,9 +66,9 @@
         "worker-config": "false"
       },
       "examples": [
-        "docs/reference/ENV.md:352",
-        "scripts/ci/snapshots/worker-env-adhoc-baseline.json:31",
-        "docs/bugs/bug_log.md:70"
+        "services/worker/src/config.ts:236",
+        "services/worker/src/config.ts:574",
+        "services/worker/src/middleware/adesFeatureGate.test.ts:4"
       ],
       "files": [
         "docs/bugs/bug_log.md",
@@ -109,8 +109,8 @@
       },
       "examples": [
         ".env.example:105",
-        "scripts/deploy-worker.sh:35",
-        "docs/reference/ENV.md:401"
+        ".github/workflows/deploy-worker.yml:140",
+        "src/components/dashboard/BatchAIDashboard.tsx:7"
       ],
       "files": [
         ".env.example",
@@ -164,8 +164,8 @@
       },
       "examples": [
         ".env.example:97",
-        "docs/reference/ENV.md:147",
-        "scripts/ci/snapshots/worker-env-adhoc-baseline.json:32"
+        "services/edge/agents.md:19",
+        "services/edge/agents.md:108"
       ],
       "files": [
         ".env.example",
@@ -209,9 +209,9 @@
         "supabase-seed-value": "true"
       },
       "examples": [
-        "docs/reference/ENV.md:403",
-        "docs/reference/ENV.md:407",
-        "supabase/seed.sql:204"
+        ".github/workflows/deploy-worker.yml:140",
+        "src/lib/switchboard.ts:26",
+        "src/lib/switchboard.ts:184"
       ],
       "files": [
         ".github/workflows/deploy-worker.yml",
@@ -253,9 +253,9 @@
         "supabase-seed-value": "true"
       },
       "examples": [
-        "docs/reference/ENV.md:404",
-        "supabase/seed.sql:206",
-        ".github/workflows/deploy-worker.yml:140"
+        ".github/workflows/deploy-worker.yml:140",
+        "src/lib/switchboard.ts:27",
+        "src/pages/PlatformControlsPage.tsx:69"
       ],
       "files": [
         ".github/workflows/deploy-worker.yml",
@@ -291,9 +291,9 @@
         "worker-config": "false"
       },
       "examples": [
-        "docs/reference/ENV.md:298",
-        "scripts/ci/snapshots/worker-env-adhoc-baseline.json:33",
-        "docs/runbooks/billing/phase-3-rollover-grace.md:32"
+        "services/worker/src/config.ts:230",
+        "services/worker/src/config.ts:571",
+        "services/worker/src/jobs/monthly-allocation-rollover.test.ts:32"
       ],
       "files": [
         "docs/reference/ENV.md",
@@ -321,9 +321,9 @@
         "docs/reference/ENV.md": "false"
       },
       "examples": [
-        "docs/reference/ENV.md:346",
         "services/worker/src/config.test.ts:484",
-        "services/worker/src/config.ts:552"
+        "services/worker/src/config.ts:552",
+        "services/worker/src/middleware/flagRegistry.ts:50"
       ],
       "files": [
         "docs/reference/ENV.md",
@@ -350,9 +350,9 @@
         "frontend-switchboard": "true"
       },
       "examples": [
-        "supabase/migrations/0086_attestation_anchoring_flag.sql:1",
-        "supabase/migrations/0086_attestation_anchoring_flag.sql:4",
-        "supabase/migrations/0086_attestation_anchoring_flag.sql:8"
+        "src/lib/switchboard.ts:28",
+        "src/pages/PlatformControlsPage.tsx:52",
+        "services/worker/src/jobs/attestationAnchor.test.ts:71"
       ],
       "files": [
         "docs/runbooks/anchor-disk-hygiene.md",
@@ -382,9 +382,9 @@
         "frontend-switchboard": "false"
       },
       "examples": [
-        "src/pages/PlatformControlsPage.tsx:60",
-        "services/worker/src/jobs/batch-anchor.ts:10",
-        "services/worker/src/jobs/batch-anchor.ts:14"
+        "src/lib/switchboard.ts:23",
+        "src/lib/switchboard.ts:163",
+        "src/pages/PlatformControlsPage.tsx:60"
       ],
       "files": [
         "docs/stories/11_mvp_launch_gaps.md",
@@ -413,9 +413,9 @@
         "worker-config": "false"
       },
       "examples": [
-        "docs/reference/ENV.md:377",
-        "scripts/ci/snapshots/worker-env-adhoc-baseline.json:34",
-        "docs/runbooks/gcp-max-setup.md:93"
+        "services/worker/src/config.ts:246",
+        "services/worker/src/config.ts:579",
+        "services/worker/src/jobs/cloud-logging-drain.ts:44"
       ],
       "files": [
         "docs/reference/ENV.md",
@@ -438,7 +438,7 @@
       "classification": "launch-critical",
       "defaults": {},
       "examples": [
-        "docs/launch/first-client-launch-command-center-2026-05-01.md:90",
+        "services/worker/src/middleware/flagRegistry.ts:66",
         "supabase/migrations/0196_compliance_engine_flags.sql:3",
         "supabase/migrations/0196_compliance_engine_flags.sql:20"
       ],
@@ -463,9 +463,9 @@
         "docs/reference/ENV.md": "false"
       },
       "examples": [
-        "docs/reference/ENV.md:189",
-        "scripts/ci/snapshots/worker-env-adhoc-baseline.json:35",
-        "services/worker/src/config.ts:534"
+        "services/worker/src/ai/nessie.test.ts:260",
+        "services/worker/src/ai/nessie.test.ts:264",
+        "services/worker/src/ai/nessie.test.ts:301"
       ],
       "files": [
         "docs/reference/ENV.md",
@@ -492,9 +492,9 @@
         "worker-config": "false"
       },
       "examples": [
-        "docs/reference/ENV.md:390",
-        "scripts/ci/snapshots/worker-env-adhoc-baseline.json:36",
-        "services/worker/src/config.test.ts:479"
+        "services/worker/src/api/demo-event-injector.test.ts:98",
+        "services/worker/src/api/demo-event-injector.test.ts:125",
+        "services/worker/src/api/demo-event-injector.test.ts:127"
       ],
       "files": [
         "docs/reference/ENV.md",
@@ -523,9 +523,9 @@
         "docs/reference/ENV.md": "false"
       },
       "examples": [
-        "docs/reference/ENV.md:282",
         "services/worker/src/config.test.ts:482",
-        "services/worker/src/config.ts:389"
+        "services/worker/src/config.ts:389",
+        "services/worker/src/config.ts:547"
       ],
       "files": [
         "docs/reference/ENV.md",
@@ -552,9 +552,9 @@
         "docs/reference/ENV.md": "false"
       },
       "examples": [
-        "docs/reference/ENV.md:287",
         "services/worker/src/config.test.ts:483",
-        "services/worker/src/config.ts:403"
+        "services/worker/src/config.ts:403",
+        "services/worker/src/config.ts:548"
       ],
       "files": [
         "docs/reference/ENV.md",
@@ -582,9 +582,9 @@
         "docs/reference/ENV.md": "false"
       },
       "examples": [
-        "docs/reference/ENV.md:334",
-        "docs/runbooks/oauth-state-secret-rotation.md:94",
-        "services/worker/src/config.test.ts:203"
+        "services/worker/src/config.test.ts:203",
+        "services/worker/src/config.test.ts:376",
+        "services/worker/src/config.test.ts:379"
       ],
       "files": [
         "docs/reference/ENV.md",
@@ -613,7 +613,7 @@
         "docs/reference/ENV.md": "false"
       },
       "examples": [
-        "docs/reference/ENV.md:335",
+        "services/worker/src/api/v1/router.ts:318",
         "services/worker/src/config.test.ts:481",
         "services/worker/src/config.ts:544"
       ],
@@ -671,9 +671,9 @@
       "classification": "unclassified",
       "defaults": {},
       "examples": [
+        "services/worker/src/middleware/flagRegistry.ts:65",
         "services/worker/src/routes/cron.ts:718",
-        "services/worker/src/routes/cron.ts:719",
-        "docs/stories/27_nessie_compliance_engine.md:337"
+        "services/worker/src/routes/cron.ts:719"
       ],
       "files": [
         "docs/stories/27_nessie_compliance_engine.md",
@@ -709,9 +709,9 @@
       "classification": "unclassified",
       "defaults": {},
       "examples": [
+        "services/worker/src/ai/embeddings/gemini2.ts:16",
         "docs/design/gemb2/gemb2-01-spike.md:37",
-        "docs/design/gemb2/gemb2-01-spike.md:155",
-        "services/worker/src/ai/embeddings/gemini2.ts:16"
+        "docs/design/gemb2/gemb2-01-spike.md:155"
       ],
       "files": [
         "docs/design/gemb2/gemb2-01-spike.md",
@@ -746,9 +746,9 @@
       "classification": "unclassified",
       "defaults": {},
       "examples": [
-        "docs/design/gemb2/gemb2-02-rag-swap.md:48",
-        "docs/design/gemb2/gemb2-02-rag-swap.md:50",
-        "docs/design/gemb2/gemb2-02-rag-swap.md:56"
+        "services/worker/src/ai/embeddings/agents.md:32",
+        "services/worker/src/ai/gemini-config.ts:120",
+        "docs/design/gemb2/gemb2-02-rag-swap.md:48"
       ],
       "files": [
         "docs/design/gemb2/gemb2-02-rag-swap.md",
@@ -799,9 +799,9 @@
         "worker-config": "false"
       },
       "examples": [
-        "docs/reference/ENV.md:345",
-        "supabase/seed.sql:208",
-        "scripts/ci/snapshots/worker-env-adhoc-baseline.json:37"
+        "services/worker/src/api/v1/router.ts:305",
+        "services/worker/src/config.test.ts:480",
+        "services/worker/src/config.ts:234"
       ],
       "files": [
         "docs/reference/ENV.md",
@@ -878,9 +878,9 @@
         "docs/reference/ENV.md": "false"
       },
       "examples": [
-        "docs/reference/ENV.md:104",
-        "docs/runbooks/mcp-kill-switch.md:30",
-        "docs/runbooks/mcp-kill-switch.md:50"
+        "services/edge/src/mcp-kill-switch.ts:4",
+        "services/edge/src/mcp-kill-switch.ts:63",
+        "services/edge/src/mcp-server.ts:877"
       ],
       "files": [
         "docs/reference/ENV.md",
@@ -908,9 +908,9 @@
         "worker-config": "false"
       },
       "examples": [
-        "docs/reference/ENV.md:388",
-        "scripts/ci/snapshots/worker-env-adhoc-baseline.json:38",
-        "docs/stories/28_gemini_migration_evolution.md:362"
+        "services/worker/src/ai/multimodal-embedding.test.ts:15",
+        "services/worker/src/ai/multimodal-embedding.test.ts:20",
+        "services/worker/src/ai/multimodal-embedding.test.ts:22"
       ],
       "files": [
         "docs/reference/ENV.md",
@@ -940,9 +940,9 @@
         "worker-config": "false"
       },
       "examples": [
-        "docs/reference/ENV.md:389",
-        "scripts/ci/snapshots/worker-env-adhoc-baseline.json:39",
-        "docs/runbooks/nca-audit-uat.md:77"
+        "services/worker/src/compliance/recommendation-enrichment.ts:10",
+        "services/worker/src/compliance/recommendation-enrichment.ts:154",
+        "services/worker/src/compliance/recommendation-enrichment.ts:162"
       ],
       "files": [
         "docs/reference/ENV.md",
@@ -972,9 +972,9 @@
         "supabase-seed-value": "true"
       },
       "examples": [
-        "supabase/seed.sql:199",
-        "src/pages/PlatformControlsPage.tsx:78",
-        "supabase/migrations/0271_restore_get_flag_again.sql:16"
+        "src/lib/switchboard.test.ts:80",
+        "src/lib/switchboard.ts:20",
+        "src/lib/switchboard.ts:142"
       ],
       "files": [
         "services/worker/src/middleware/flagRegistry.ts",
@@ -1001,7 +1001,7 @@
         "docs/reference/ENV.md": "false"
       },
       "examples": [
-        "docs/reference/ENV.md:65",
+        "services/worker/src/api/v1/anchor-submit.ts:106",
         "services/worker/src/config.ts:518",
         "services/worker/src/middleware/flagRegistry.ts:29"
       ],
@@ -1023,8 +1023,8 @@
       "classification": "unclassified",
       "defaults": {},
       "examples": [
-        "docs/runbooks/kyb/middesk.md:60",
-        "services/worker/src/api/v1/org-kyb.ts:12"
+        "services/worker/src/api/v1/org-kyb.ts:12",
+        "docs/runbooks/kyb/middesk.md:60"
       ],
       "files": [
         "docs/runbooks/kyb/middesk.md",
@@ -1050,9 +1050,9 @@
         "supabase-seed-value": "false"
       },
       "examples": [
-        "supabase/seed.sql:198",
-        "src/pages/PlatformControlsPage.tsx:80",
-        "services/worker/src/webhooks/delivery.ts:454"
+        "src/lib/switchboard.ts:19",
+        "src/lib/switchboard.ts:135",
+        "src/pages/PlatformControlsPage.tsx:80"
       ],
       "files": [
         "docs/stories/08_p7_go_live.md",
@@ -1106,9 +1106,9 @@
         "supabase-seed-value": "false"
       },
       "examples": [
-        "docs/BETA_PRODUCTION_READINESS.md:193",
         ".env.example:104",
-        "scripts/deploy-worker.sh:33"
+        ".github/workflows/deploy-worker.yml:140",
+        "src/lib/switchboard.test.ts:48"
       ],
       "files": [
         ".env.example",
@@ -1167,9 +1167,9 @@
         "frontend-switchboard": "true"
       },
       "examples": [
+        "src/lib/switchboard.ts:29",
         "src/pages/PlatformControlsPage.tsx:49",
-        "src/pages/PlatformControlsPage.tsx:236",
-        "src/pages/PlatformControlsPage.tsx:242"
+        "src/pages/PlatformControlsPage.tsx:236"
       ],
       "files": [
         "docs/runbooks/sarah-sprint-1-deploy-checklist.md",
@@ -1239,9 +1239,9 @@
         "frontend-switchboard": "true"
       },
       "examples": [
+        "src/lib/switchboard.ts:30",
         "src/pages/PlatformControlsPage.tsx:50",
-        "src/pages/PlatformControlsPage.tsx:250",
-        "src/pages/PlatformControlsPage.tsx:256"
+        "src/pages/PlatformControlsPage.tsx:250"
       ],
       "files": [
         "docs/bugs/UAT_S35_bugs.md",
@@ -1273,9 +1273,9 @@
         "frontend-switchboard": "true"
       },
       "examples": [
-        "docs/plans/nessie-intelligence-training-plan.md:80",
-        "docs/plans/nessie-intelligence-training-plan.md:88",
-        "src/pages/PlatformControlsPage.tsx:51"
+        "src/lib/switchboard.ts:31",
+        "src/pages/PlatformControlsPage.tsx:51",
+        "services/worker/src/api/v1/nessie-query.ts:13"
       ],
       "files": [
         "docs/plans/nessie-intelligence-training-plan.md",
@@ -1309,9 +1309,9 @@
         "worker-config": "true"
       },
       "examples": [
-        "docs/reference/ENV.md:223",
-        "scripts/ci/snapshots/worker-env-adhoc-baseline.json:40",
-        "services/worker/src/config.ts:222"
+        "services/worker/agents.md:75",
+        "services/worker/src/config.ts:222",
+        "services/worker/src/config.ts:567"
       ],
       "files": [
         "docs/reference/ENV.md",
@@ -1341,9 +1341,9 @@
         "supabase-seed-value": "true"
       },
       "examples": [
-        "supabase/seed.sql:200",
-        "src/pages/PlatformControlsPage.tsx:79",
-        "docs/launch/first-client-launch-command-center-2026-05-01.md:90"
+        "src/lib/switchboard.test.ts:136",
+        "src/lib/switchboard.test.ts:139",
+        "src/lib/switchboard.ts:21"
       ],
       "files": [
         "docs/launch/first-client-launch-command-center-2026-05-01.md",
@@ -1373,9 +1373,9 @@
         "worker-config": "true"
       },
       "examples": [
-        "docs/reference/ENV.md:219",
-        "scripts/ci/snapshots/worker-env-adhoc-baseline.json:41",
-        "docs/runbooks/sec-harden/sec-harden-02-secret-manager-migration.md:121"
+        "services/worker/agents.md:75",
+        "services/worker/src/config.ts:220",
+        "services/worker/src/config.ts:566"
       ],
       "files": [
         "docs/reference/ENV.md",
@@ -1405,9 +1405,9 @@
         "worker-config": "true"
       },
       "examples": [
-        "docs/reference/ENV.md:347",
-        "scripts/ci/snapshots/worker-env-adhoc-baseline.json:42",
-        "services/worker/src/jobs/rule-action-dispatcher.ts:25"
+        "services/worker/src/config.ts:228",
+        "services/worker/src/config.ts:570",
+        "services/worker/src/jobs/rule-action-dispatcher.test.ts:143"
       ],
       "files": [
         "docs/reference/ENV.md",
@@ -1444,8 +1444,8 @@
       },
       "examples": [
         ".env.example:106",
-        "docs/reference/ENV.md:402",
-        "supabase/seed.sql:203"
+        ".github/workflows/deploy-worker.yml:140",
+        "src/components/search/SemanticSearch.tsx:5"
       ],
       "files": [
         ".env.example",
@@ -1523,9 +1523,9 @@
         "worker-config": "false"
       },
       "examples": [
-        "docs/reference/ENV.md:190",
-        "scripts/ci/snapshots/worker-env-adhoc-baseline.json:43",
-        "services/worker/src/config.test.ts:560"
+        "services/worker/src/ai/replicate.test.ts:28",
+        "services/worker/src/ai/replicate.test.ts:30",
+        "services/worker/src/ai/replicate.test.ts:37"
       ],
       "files": [
         "docs/reference/ENV.md",
@@ -1555,9 +1555,9 @@
         "worker-config": "true"
       },
       "examples": [
-        "docs/reference/ENV.md:227",
-        "scripts/ci/snapshots/worker-env-adhoc-baseline.json:44",
-        "services/worker/src/config.test.ts:546"
+        "services/worker/agents.md:75",
+        "services/worker/src/config.test.ts:546",
+        "services/worker/src/config.ts:224"
       ],
       "files": [
         "docs/reference/ENV.md",
@@ -1587,9 +1587,9 @@
         "worker-config": "false"
       },
       "examples": [
-        "docs/reference/ENV.md:330",
-        "docs/reference/ENV.md:331",
-        "scripts/ci/snapshots/worker-env-adhoc-baseline.json:45"
+        "services/worker/src/api/v1/webhooks/veremark.test.ts:4",
+        "services/worker/src/api/v1/webhooks/veremark.test.ts:45",
+        "services/worker/src/api/v1/webhooks/veremark.test.ts:62"
       ],
       "files": [
         "docs/integrations/background-checks-spike.md",
@@ -1630,8 +1630,8 @@
       },
       "examples": [
         ".env.example:63",
-        "scripts/deploy-worker.sh:36",
-        "docs/reference/ENV.md:74"
+        ".github/workflows/deploy-worker.yml:140",
+        "src/lib/switchboard.ts:32"
       ],
       "files": [
         ".env.example",
@@ -1678,9 +1678,9 @@
         "worker-config": "false"
       },
       "examples": [
-        "docs/reference/ENV.md:161",
-        "scripts/ci/snapshots/worker-env-adhoc-baseline.json:47",
-        "services/worker/src/config.ts:218"
+        "services/worker/src/ai/vertex-client.test.ts:109",
+        "services/worker/src/ai/vertex-client.test.ts:114",
+        "services/worker/src/ai/vertex-client.test.ts:116"
       ],
       "files": [
         "docs/reference/ENV.md",
@@ -1708,8 +1708,8 @@
         "worker-config": "false"
       },
       "examples": [
-        "docs/reference/ENV.md:405",
-        "docs/launch/first-client-launch-command-center-2026-05-01.md:90",
+        "services/worker/agents.md:130",
+        "services/worker/src/api/v1/router.ts:275",
         "services/worker/src/config.test.ts:478"
       ],
       "files": [
@@ -1757,9 +1757,9 @@
         "worker-config": "true"
       },
       "examples": [
-        "docs/reference/ENV.md:215",
-        "scripts/ci/snapshots/worker-env-adhoc-baseline.json:48",
-        "services/worker/src/config.ts:226"
+        "services/worker/agents.md:75",
+        "services/worker/src/config.ts:226",
+        "services/worker/src/config.ts:569"
       ],
       "files": [
         "docs/reference/ENV.md",
@@ -1788,9 +1788,9 @@
         "worker-config": "false"
       },
       "examples": [
-        "docs/reference/ENV.md:336",
-        "scripts/ci/snapshots/worker-env-adhoc-baseline.json:49",
-        "services/worker/src/config.ts:248"
+        "services/worker/src/config.ts:248",
+        "services/worker/src/config.ts:580",
+        "services/worker/src/jobs/workspace-subscription-renewal.test.ts:149"
       ],
       "files": [
         "docs/reference/ENV.md",
@@ -1814,9 +1814,9 @@
         "docs/reference/ENV.md": "false"
       },
       "examples": [
-        "docs/reference/ENV.md:96",
-        "services/edge/src/env.ts:91",
-        "services/edge/src/x402-facilitator.ts:149"
+        "services/edge/agents.md:70",
+        "services/edge/agents.md:98",
+        "services/edge/agents.md:118"
       ],
       "files": [
         "docs/reference/ENV.md",
@@ -1845,9 +1845,9 @@
         "supabase-seed-value": "false"
       },
       "examples": [
-        "supabase/seed.sql:207",
-        "docs/reference/X402_API_ARCHITECTURE.md:98",
-        "docs/reference/X402_API_ARCHITECTURE.md:176"
+        "src/lib/switchboard.ts:33",
+        "src/pages/PlatformControlsPage.tsx:82",
+        "services/worker/src/middleware/flagRegistry.ts:67"
       ],
       "files": [
         "docs/reference/X402_API_ARCHITECTURE.md",
@@ -1878,9 +1878,9 @@
         "supabase-seed-value": "false"
       },
       "examples": [
-        "supabase/seed.sql:201",
-        "src/pages/PlatformControlsPage.tsx:77",
-        "src/pages/PlatformControlsPage.tsx:89"
+        "src/lib/switchboard.test.ts:60",
+        "src/lib/switchboard.test.ts:61",
+        "src/lib/switchboard.test.ts:71"
       ],
       "files": [
         "services/worker/src/middleware/flagRegistry.ts",
@@ -1911,8 +1911,8 @@
       },
       "examples": [
         ".env.example:22",
-        "docs/reference/ENV.md:63",
-        "services/worker/src/stripe/client.ts:7"
+        ".github/workflows/deploy-worker.yml:140",
+        "services/worker/.env.example:83"
       ],
       "files": [
         ".env.example",
@@ -1941,9 +1941,9 @@
       "classification": "frontend-build-flag",
       "defaults": {},
       "examples": [
-        "docs/bugs/bug_log.md:20",
-        "src/lib/env.ts:25",
-        "src/lib/env.ts:44"
+        "src/components/auth/DataCorrectionForm.test.tsx:49",
+        "src/components/auth/DataCorrectionForm.test.tsx:96",
+        "src/components/auth/DataCorrectionForm.tsx:45"
       ],
       "files": [
         "docs/bugs/bug_log.md",

@@ -20,7 +20,31 @@ ROOT = Path(__file__).resolve().parents[1]
 OUT_MD = ROOT / "docs" / "audits" / "feature-flag-register-2026-05-01.md"
 OUT_JSON = ROOT / "docs" / "audits" / "feature-flag-register-2026-05-01.json"
 
-FLAG_RE = re.compile(r"\b(?:VITE_)?(?:ENABLE_[A-Z0-9_]+)\b|\b(?:MAINTENANCE_MODE|USE_MOCKS)\b")
+ENV_EXAMPLE = ".env.example"
+ENV_TEST_EXAMPLE = ".env.test.example"
+ENV_DOC = "docs/reference/ENV.md"
+FRONTEND_SWITCHBOARD = "src/lib/switchboard.ts"
+PLATFORM_CONTROLS = "src/pages/PlatformControlsPage.tsx"
+SUPABASE_SEED = "supabase/seed.sql"
+WORKER_CONFIG = "services/worker/src/config.ts"
+WORKER_FLAG_REGISTRY = "services/worker/src/middleware/flagRegistry.ts"
+INTEGRATION_KILL_SWITCH = "services/worker/src/middleware/integrationKillSwitch.ts"
+
+REG_WORKER = "worker_registry"
+REG_FRONTEND = "frontend_switchboard"
+REG_INTEGRATION_KILL_SWITCH = "integration_killswitch"
+REG_WORKER_CONFIG = "worker_config_comments"
+REG_DB_SEED = "db_seed"
+REG_PLATFORM_CONTROLS = "platform_controls"
+
+FLAG_RE = re.compile(r"\b(?:VITE_)?ENABLE_[A-Z0-9_]+\b|\bMAINTENANCE_MODE\b|\bUSE_MOCKS\b")
+DEFAULT_LINE_RE = re.compile(r"^((?:VITE_)?ENABLE_[A-Z0-9_]+|MAINTENANCE_MODE|USE_MOCKS)\s*=\s*([^#\s]+)")
+FRONTEND_FLAGS_BODY_RE = re.compile(r"export const FLAGS = \{(?P<body>.*?)\} as const;", re.S)
+FRONTEND_DEFAULT_RE = re.compile(r"\b([A-Z0-9_]+):\s*(true|false)")
+SUPABASE_DEFAULT_RE = re.compile(
+    r"\('((?:ENABLE_[A-Z0-9_]+|MAINTENANCE_MODE|USE_MOCKS))',\s*(true|false),\s*(true|false)"
+)
+ZOD_DEFAULT_RE = re.compile(r"\.default\((true|false)\)")
 
 EXCLUDE_GLOBS = [
     "!node_modules",
@@ -41,8 +65,8 @@ EXCLUDE_GLOBS = [
 ]
 
 SEARCH_PATHS = [
-    ".env.example",
-    ".env.test.example",
+    ENV_EXAMPLE,
+    ENV_TEST_EXAMPLE,
     ".github",
     "src",
     "services",
@@ -97,6 +121,45 @@ IGNORE_MATCHES = {
     "ENABLE_X",
 }
 
+EXACT_CATEGORIES = {
+    WORKER_CONFIG: "worker-config",
+    WORKER_FLAG_REGISTRY: "worker-registry",
+    INTEGRATION_KILL_SWITCH: "integration-kill-switch",
+    FRONTEND_SWITCHBOARD: "frontend-switchboard",
+    PLATFORM_CONTROLS: "frontend-admin-ui",
+    ENV_DOC: "env-doc",
+}
+
+PREFIX_CATEGORIES = [
+    ("supabase/seed", "db-seed-or-migration"),
+    ("supabase/migrations", "db-seed-or-migration"),
+    (".github/", "deploy-config"),
+    ("scripts/deploy", "deploy-config"),
+    ("services/edge/", "edge-code"),
+    ("services/worker/", "worker-code"),
+    ("src/", "frontend-code"),
+    ("docs/", "docs"),
+]
+
+DOCUMENTED_ENV_FLAGS = [
+    "ENABLE_ORG_CREDIT_ENFORCEMENT",
+    "ENABLE_DOCUSIGN_WEBHOOK",
+    "ENABLE_DRIVE_WEBHOOK",
+    "ENABLE_DRIVE_OAUTH",
+    "ENABLE_WORKSPACE_RENEWAL",
+    "ENABLE_X402_FACILITATOR",
+    "ENABLE_MCP_SERVER",
+]
+
+REGISTRY_SOURCES = {
+    REG_WORKER: WORKER_FLAG_REGISTRY,
+    REG_FRONTEND: FRONTEND_SWITCHBOARD,
+    REG_INTEGRATION_KILL_SWITCH: INTEGRATION_KILL_SWITCH,
+    REG_WORKER_CONFIG: WORKER_CONFIG,
+    REG_DB_SEED: SUPABASE_SEED,
+    REG_PLATFORM_CONTROLS: PLATFORM_CONTROLS,
+}
+
 
 @dataclass
 class Flag:
@@ -115,6 +178,8 @@ def run_rg() -> list[tuple[str, int, str]]:
         "-I",
         "--with-filename",
         "--hidden",
+        "--sort",
+        "path",
     ]
     for glob in EXCLUDE_GLOBS:
         cmd.extend(["--glob", glob])
@@ -145,32 +210,14 @@ def run_rg() -> list[tuple[str, int, str]]:
 
 
 def category_for(path: str) -> str:
-    if path == "services/worker/src/config.ts":
-        return "worker-config"
-    if path == "services/worker/src/middleware/flagRegistry.ts":
-        return "worker-registry"
-    if path == "services/worker/src/middleware/integrationKillSwitch.ts":
-        return "integration-kill-switch"
-    if path == "src/lib/switchboard.ts":
-        return "frontend-switchboard"
-    if path == "src/pages/PlatformControlsPage.tsx":
-        return "frontend-admin-ui"
-    if path.startswith("supabase/seed") or path.startswith("supabase/migrations"):
-        return "db-seed-or-migration"
-    if path in {".env.example", ".env.test.example"} or path.endswith(".env.example"):
+    exact = EXACT_CATEGORIES.get(path)
+    if exact:
+        return exact
+    if path in {ENV_EXAMPLE, ENV_TEST_EXAMPLE} or path.endswith(ENV_EXAMPLE):
         return "env-example"
-    if path == "docs/reference/ENV.md":
-        return "env-doc"
-    if path.startswith(".github/") or path.startswith("scripts/deploy"):
-        return "deploy-config"
-    if path.startswith("services/edge/"):
-        return "edge-code"
-    if path.startswith("services/worker/"):
-        return "worker-code"
-    if path.startswith("src/"):
-        return "frontend-code"
-    if path.startswith("docs/"):
-        return "docs"
+    for prefix, category in PREFIX_CATEGORIES:
+        if path.startswith(prefix):
+            return category
     return "other"
 
 
@@ -181,96 +228,84 @@ def load_text(path: str) -> str:
         return ""
 
 
-def parse_simple_defaults(flags: dict[str, Flag]) -> None:
-    # .env examples and docs/reference/ENV.md lines like ENABLE_X=false.
-    for path, label in [
-        (".env.example", ".env.example"),
-        (".env.test.example", ".env.test.example"),
-        ("docs/reference/ENV.md", "docs/reference/ENV.md"),
-    ]:
-        text = load_text(path)
-        for line in text.splitlines():
-            line = line.strip()
-            m = re.match(r"^((?:VITE_)?ENABLE_[A-Z0-9_]+|MAINTENANCE_MODE|USE_MOCKS)\s*=\s*([^#\s]+)", line)
-            if not m:
-                continue
-            name, value = m.group(1), m.group(2)
-            if name in flags:
-                flags[name].defaults[label] = value
+def record_default(flags: dict[str, Flag], name: str, label: str, value: str) -> None:
+    if name in flags:
+        flags[name].defaults[label] = value
 
-    # Frontend switchboard defaults.
-    text = load_text("src/lib/switchboard.ts")
-    obj = re.search(r"export const FLAGS = \{(?P<body>.*?)\} as const;", text, re.S)
-    if obj:
-        for name, value in re.findall(r"\b([A-Z0-9_]+):\s*(true|false)", obj.group("body")):
-            if name in flags:
-                flags[name].defaults["frontend-switchboard"] = value
 
-    # Supabase seed defaults: (id, value, default_value, ...).
-    text = load_text("supabase/seed.sql")
-    for name, value, default in re.findall(
-        r"\('((?:ENABLE_[A-Z0-9_]+|MAINTENANCE_MODE|USE_MOCKS))',\s*(true|false),\s*(true|false)",
-        text,
-    ):
-        if name in flags:
-            flags[name].defaults["supabase-seed-value"] = value
-            flags[name].defaults["supabase-seed-default"] = default
+def parse_env_style_defaults(flags: dict[str, Flag]) -> None:
+    for path in [ENV_EXAMPLE, ENV_TEST_EXAMPLE, ENV_DOC]:
+        for line in load_text(path).splitlines():
+            match = DEFAULT_LINE_RE.match(line.strip())
+            if match:
+                record_default(flags, match.group(1), path, match.group(2))
 
+
+def parse_frontend_switchboard_defaults(flags: dict[str, Flag]) -> None:
+    match = FRONTEND_FLAGS_BODY_RE.search(load_text(FRONTEND_SWITCHBOARD))
+    if not match:
+        return
+    for name, value in FRONTEND_DEFAULT_RE.findall(match.group("body")):
+        record_default(flags, name, "frontend-switchboard", value)
+
+
+def parse_supabase_seed_defaults(flags: dict[str, Flag]) -> None:
+    for name, value, default in SUPABASE_DEFAULT_RE.findall(load_text(SUPABASE_SEED)):
+        record_default(flags, name, "supabase-seed-value", value)
+        record_default(flags, name, "supabase-seed-default", default)
+
+
+def last_flag_from_text(text: str) -> str | None:
+    matches = [name for name in FLAG_RE.findall(text) if name not in IGNORE_MATCHES]
+    return matches[-1] if matches else None
+
+
+def maybe_record_worker_config_default(flags: dict[str, Flag], pending_flag: str | None, line: str) -> str | None:
+    if not pending_flag or "z.preprocess" not in line or ".default(" not in line:
+        return pending_flag
+    default_match = ZOD_DEFAULT_RE.search(line)
+    if default_match:
+        record_default(flags, pending_flag, "worker-config", default_match.group(1))
+    return None
+
+
+def parse_worker_config_defaults(flags: dict[str, Flag]) -> None:
     # Worker config defaults are documented in comments immediately above each schema field.
-    text = load_text("services/worker/src/config.ts")
     pending_comment_flag: str | None = None
     comment_lines: list[str] = []
-    in_comment = False
-    for line in text.splitlines():
+    for line in load_text(WORKER_CONFIG).splitlines():
         stripped = line.strip()
-        if stripped.startswith("/**"):
-            in_comment = True
-            comment_lines = [stripped]
-            if "*/" in stripped:
-                in_comment = False
-                matches = FLAG_RE.findall(" ".join(comment_lines))
-                pending_comment_flag = matches[-1] if matches else None
-            continue
-        if in_comment:
-            comment_lines.append(stripped)
-            if "*/" in stripped:
-                in_comment = False
-                matches = FLAG_RE.findall(" ".join(comment_lines))
-                pending_comment_flag = matches[-1] if matches else None
+        if not comment_lines and not stripped.startswith("/**"):
+            pending_comment_flag = maybe_record_worker_config_default(flags, pending_comment_flag, stripped)
             continue
 
-        if pending_comment_flag and "z.preprocess" in stripped and ".default(" in stripped:
-            default_match = re.search(r"\.default\((true|false)\)", stripped)
-            if default_match and pending_comment_flag in flags:
-                flags[pending_comment_flag].defaults["worker-config"] = default_match.group(1)
-            pending_comment_flag = None
+        if stripped.startswith("/**"):
+            comment_lines = [stripped]
+            if "*/" in stripped:
+                pending_comment_flag = last_flag_from_text(" ".join(comment_lines))
+                comment_lines = []
+            continue
+
+        if comment_lines:
+            comment_lines.append(stripped)
+            if "*/" in stripped:
+                pending_comment_flag = last_flag_from_text(" ".join(comment_lines))
+                comment_lines = []
+
+
+def parse_simple_defaults(flags: dict[str, Flag]) -> None:
+    parse_env_style_defaults(flags)
+    parse_frontend_switchboard_defaults(flags)
+    parse_supabase_seed_defaults(flags)
+    parse_worker_config_defaults(flags)
+
+
+def collect_flags_from(path: str) -> set[str]:
+    return {name for name in FLAG_RE.findall(load_text(path)) if name not in IGNORE_MATCHES}
 
 
 def collect_registry_sets() -> dict[str, set[str]]:
-    result: dict[str, set[str]] = {
-        "worker_registry": set(),
-        "frontend_switchboard": set(),
-        "integration_killswitch": set(),
-        "worker_config_comments": set(),
-        "db_seed": set(),
-        "platform_controls": set(),
-    }
-
-    for name in FLAG_RE.findall(load_text("services/worker/src/middleware/flagRegistry.ts")):
-        result["worker_registry"].add(name if isinstance(name, str) else name[0])
-    for name in FLAG_RE.findall(load_text("src/lib/switchboard.ts")):
-        result["frontend_switchboard"].add(name if isinstance(name, str) else name[0])
-    for name in FLAG_RE.findall(load_text("services/worker/src/middleware/integrationKillSwitch.ts")):
-        result["integration_killswitch"].add(name if isinstance(name, str) else name[0])
-    for name in FLAG_RE.findall(load_text("services/worker/src/config.ts")):
-        if name in IGNORE_MATCHES:
-            continue
-        result["worker_config_comments"].add(name if isinstance(name, str) else name[0])
-    for name in FLAG_RE.findall(load_text("supabase/seed.sql")):
-        result["db_seed"].add(name if isinstance(name, str) else name[0])
-    for name in FLAG_RE.findall(load_text("src/pages/PlatformControlsPage.tsx")):
-        result["platform_controls"].add(name if isinstance(name, str) else name[0])
-    return result
+    return {registry: collect_flags_from(path) for registry, path in REGISTRY_SOURCES.items()}
 
 
 def build_inventory() -> tuple[dict[str, Flag], dict[str, set[str]]]:
@@ -298,7 +333,7 @@ def classify(flag: Flag, registries: dict[str, set[str]]) -> tuple[str, str, str
         return "P2", "frontend-build-flag", "Frontend build-time flag; verify server-side enforcement exists if sensitive."
     if name in {"MAINTENANCE_MODE", "USE_MOCKS"}:
         return "P0", "environment-safety", "Environment-wide runtime behavior; must be explicit in launch config."
-    if name in registries["frontend_switchboard"] or name in registries["db_seed"]:
+    if name in registries[REG_FRONTEND] or name in registries[REG_DB_SEED]:
         return "P2", "platform-switchboard", "Platform flag; verify owner before changing default."
     return "P3", "unclassified", "Needs owner and registry entry if still active."
 
@@ -309,69 +344,89 @@ def default_summary(flag: Flag) -> str:
     return "; ".join(f"{k}={v}" for k, v in sorted(flag.defaults.items()))
 
 
+def add_finding(findings: list[dict[str, str]], priority: str, title: str, evidence: str, action: str) -> None:
+    findings.append({
+        "priority": priority,
+        "title": title,
+        "evidence": evidence,
+        "action": action,
+    })
+
+
+def append_grc_name_drift(flags: dict[str, Flag], findings: list[dict[str, str]]) -> None:
+    if "ENABLE_GRC_INTEGRATION" in flags and "ENABLE_GRC_INTEGRATIONS" in flags:
+        add_finding(
+            findings,
+            "P0",
+            "GRC integration flag name drift",
+            "Router/integration kill switch references ENABLE_GRC_INTEGRATION while config, DB seed, and grcFeatureGate use ENABLE_GRC_INTEGRATIONS.",
+            "Pick one canonical flag, migrate code/docs/env, and add an unknown-flag check.",
+        )
+
+
+def append_killswitch_schema_findings(registries: dict[str, set[str]], findings: list[dict[str, str]]) -> None:
+    for name in sorted(registries[REG_INTEGRATION_KILL_SWITCH]):
+        if name in registries[REG_WORKER_CONFIG] or name == "ENABLE_GRC_INTEGRATION":
+            continue
+        add_finding(
+            findings,
+            "P0" if name in LAUNCH_CRITICAL else "P1",
+            f"{name} is an integration kill switch with no worker config schema entry",
+            "The route can be disabled by env var, but config.ts does not absorb/log/validate this flag.",
+            "Add to canonical registry/config or explicitly document as env-only kill switch with launch value.",
+        )
+
+
+def append_launch_registry_findings(flags: dict[str, Flag], registries: dict[str, set[str]], findings: list[dict[str, str]]) -> None:
+    worker_registry = registries[REG_WORKER]
+    for name in sorted(LAUNCH_CRITICAL):
+        if name not in flags or not name.startswith("ENABLE_") or name in worker_registry:
+            continue
+        add_finding(
+            findings,
+            "P0" if LAUNCH_CRITICAL[name][0] == "P0" else "P1",
+            f"{name} absent from worker flagRegistry",
+            "flagRegistry.ts claims to centralize worker feature flags, but this launch-critical flag is not loaded/logged there.",
+            "Add to canonical registry or update architecture so operators know this flag is controlled elsewhere.",
+        )
+
+
+def append_conflicting_default_findings(flags: dict[str, Flag], findings: list[dict[str, str]]) -> None:
+    for name, flag in sorted(flags.items()):
+        if len(set(flag.defaults.values())) <= 1:
+            continue
+        priority = LAUNCH_CRITICAL[name][0] if name in LAUNCH_CRITICAL else "P2"
+        add_finding(
+            findings,
+            priority,
+            f"{name} has conflicting parsed defaults",
+            default_summary(flag),
+            "Define environment-specific defaults in the canonical register and stop relying on scattered fallback values.",
+        )
+
+
+def append_env_doc_findings(flags: dict[str, Flag], findings: list[dict[str, str]]) -> None:
+    for name in DOCUMENTED_ENV_FLAGS:
+        if name not in flags or ENV_DOC in flags[name].files:
+            continue
+        priority = "P0" if name in LAUNCH_CRITICAL and LAUNCH_CRITICAL[name][0] == "P0" else "P1"
+        evidence = f"Referenced in {', '.join(sorted(flags[name].files)[:5])}."
+        add_finding(
+            findings,
+            priority,
+            f"{name} missing from docs/reference/ENV.md",
+            evidence,
+            "Add to canonical environment docs with default, owner, launch value, and fail mode.",
+        )
+
+
 def drift_findings(flags: dict[str, Flag], registries: dict[str, set[str]]) -> list[dict[str, str]]:
     findings: list[dict[str, str]] = []
-
-    if "ENABLE_GRC_INTEGRATION" in flags and "ENABLE_GRC_INTEGRATIONS" in flags:
-        findings.append({
-            "priority": "P0",
-            "title": "GRC integration flag name drift",
-            "evidence": "Router/integration kill switch references ENABLE_GRC_INTEGRATION while config, DB seed, and grcFeatureGate use ENABLE_GRC_INTEGRATIONS.",
-            "action": "Pick one canonical flag, migrate code/docs/env, and add an unknown-flag check.",
-        })
-
-    for name in sorted(registries["integration_killswitch"]):
-        if name not in registries["worker_config_comments"] and name != "ENABLE_GRC_INTEGRATION":
-            findings.append({
-                "priority": "P0" if name in LAUNCH_CRITICAL else "P1",
-                "title": f"{name} is an integration kill switch with no worker config schema entry",
-                "evidence": "The route can be disabled by env var, but config.ts does not absorb/log/validate this flag.",
-                "action": "Add to canonical registry/config or explicitly document as env-only kill switch with launch value.",
-            })
-
-    worker_registry = registries["worker_registry"]
-    for name in sorted(LAUNCH_CRITICAL):
-        if name in flags and name.startswith("ENABLE_") and name not in worker_registry:
-            findings.append({
-                "priority": "P0" if LAUNCH_CRITICAL[name][0] == "P0" else "P1",
-                "title": f"{name} absent from worker flagRegistry",
-                "evidence": "flagRegistry.ts claims to centralize worker feature flags, but this launch-critical flag is not loaded/logged there.",
-                "action": "Add to canonical registry or update architecture so operators know this flag is controlled elsewhere.",
-            })
-
-    for name, flag in sorted(flags.items()):
-        defaults = flag.defaults
-        if len(set(defaults.values())) > 1:
-            relevant = name in LAUNCH_CRITICAL or name in {
-                "ENABLE_AI_EXTRACTION",
-                "ENABLE_SEMANTIC_SEARCH",
-                "ENABLE_AI_FRAUD",
-                "ENABLE_AI_REPORTS",
-            }
-            priority = LAUNCH_CRITICAL[name][0] if name in LAUNCH_CRITICAL else ("P1" if relevant else "P2")
-            findings.append({
-                "priority": priority,
-                "title": f"{name} has conflicting parsed defaults",
-                "evidence": default_summary(flag),
-                "action": "Define environment-specific defaults in the canonical register and stop relying on scattered fallback values.",
-            })
-
-    for name in [
-        "ENABLE_ORG_CREDIT_ENFORCEMENT",
-        "ENABLE_DOCUSIGN_WEBHOOK",
-        "ENABLE_DRIVE_WEBHOOK",
-        "ENABLE_DRIVE_OAUTH",
-        "ENABLE_WORKSPACE_RENEWAL",
-        "ENABLE_X402_FACILITATOR",
-        "ENABLE_MCP_SERVER",
-    ]:
-        if name in flags and "docs/reference/ENV.md" not in flags[name].files:
-            findings.append({
-                "priority": "P0" if name in LAUNCH_CRITICAL and LAUNCH_CRITICAL[name][0] == "P0" else "P1",
-                "title": f"{name} missing from docs/reference/ENV.md",
-                "evidence": f"Referenced in {', '.join(sorted(flags[name].files)[:5])}.",
-                "action": "Add to canonical environment docs with default, owner, launch value, and fail mode.",
-            })
+    append_grc_name_drift(flags, findings)
+    append_killswitch_schema_findings(registries, findings)
+    append_launch_registry_findings(flags, registries, findings)
+    append_conflicting_default_findings(flags, findings)
+    append_env_doc_findings(flags, findings)
 
     return findings
 
