@@ -3,6 +3,16 @@
 Status: draft for review  
 Scope: schema, canonicalization, hash helper, public-safe metadata, and migration plan only.
 
+## MVP Release Boundary
+
+SCRUM-1597's mergeable slice is the metadata-backed credential evidence
+foundation: accepted credential evidence fields are validated, canonicalized,
+hashed, projected into public-safe `anchors.metadata`, and covered by fixtures
+and API submit tests. The dedicated `credential_evidence_records` table below
+is a planned follow-on for provider adapters, account-linked imports, and
+private/raw evidence retention; it is not part of this MVP slice and should not
+be checked off as delivered by this PR.
+
 ## Goal
 
 Arkova needs to anchor credential evidence from third-party sources without overstating the trust level. The hash must bind the original `source_url`, normalized source metadata, credential summary, and evidence-strength label into one deterministic `credential_evidence_v1` package.
