@@ -107,6 +107,89 @@ def test_retries_429_before_success() -> None:
     assert sleeps == [3.0]
 
 
+def test_verify_maps_rich_v1_verification_fields() -> None:
+    seen_paths: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_paths.append(request.url.path)
+        assert request.headers.get("authorization") == "Bearer ak_test"
+        return json_response(
+            {
+                "verified": True,
+                "status": "ACTIVE",
+                "issuer_name": "University of Michigan",
+                "recipient_identifier": "hash_123",
+                "credential_type": "DEGREE",
+                "issued_date": "2025-05-01",
+                "expiry_date": None,
+                "anchor_timestamp": "2026-04-24T12:00:00Z",
+                "bitcoin_block": 123456,
+                "network_receipt_id": "tx-1",
+                "merkle_proof_hash": None,
+                "record_uri": "https://app.arkova.ai/verify/ARK-2026-ABC",
+                "jurisdiction": "US-MI",
+                "explorer_url": "https://mempool.space/tx/tx-1",
+                "description": "Bachelor of Science credential",
+                "ferpa_notice": "Redisclosure notice",
+                "directory_info_suppressed": False,
+                "compliance_controls": {"SOC2-CC6.1": True},
+                "chain_confirmations": 6,
+                "parent_public_id": "ARK-2026-PARENT",
+                "version_number": 2,
+                "revocation_tx_id": None,
+                "revocation_block_height": None,
+                "file_mime": "application/pdf",
+                "file_size": 2048,
+                "confidence_scores": {
+                    "overall": 0.92,
+                    "grounding": 0.88,
+                    "fields": {"issuerName": 0.95},
+                },
+                "sub_type": "official_undergraduate",
+            }
+        )
+
+    with Arkova(
+        api_key="ak_test",
+        base_url="https://api.arkova.test/v2",
+        transport=httpx.MockTransport(handler),
+    ) as client:
+        result = client.verify("ARK-2026-ABC")
+
+    assert seen_paths == ["/v1/verify/ARK-2026-ABC"]
+    assert result.verified is True
+    assert result.issuer_name == "University of Michigan"
+    assert result.description == "Bachelor of Science credential"
+    assert result.compliance_controls == {"SOC2-CC6.1": True}
+    assert result.chain_confirmations == 6
+    assert result.parent_public_id == "ARK-2026-PARENT"
+    assert result.version_number == 2
+    assert result.file_mime == "application/pdf"
+    assert result.file_size == 2048
+    assert result.confidence_scores == {
+        "overall": 0.92,
+        "grounding": 0.88,
+        "fields": {"issuerName": 0.95},
+    }
+    assert result.sub_type == "official_undergraduate"
+
+
+def test_verify_uses_api_v1_sibling_path_when_base_url_includes_api_v2() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/v1/verify/ARK-2026-ABC"
+        return json_response({"verified": False, "status": "PENDING"})
+
+    with Arkova(
+        api_key="ak_test",
+        base_url="https://worker.example/api/v2",
+        transport=httpx.MockTransport(handler),
+    ) as client:
+        result = client.verify("ARK-2026-ABC")
+
+    assert result.verified is False
+    assert result.status == "PENDING"
+
+
 def test_async_client_get_anchor() -> None:
     async def run() -> str:
         async def handler(_request: httpx.Request) -> httpx.Response:
@@ -127,3 +210,28 @@ def test_async_client_get_anchor() -> None:
             return result.record_uri
 
     assert asyncio.run(run()) == "https://app.arkova.ai/verify/ARK-DOC-ABC"
+
+
+def test_async_verify_maps_rich_v1_verification_fields() -> None:
+    async def run() -> str | None:
+        async def handler(request: httpx.Request) -> httpx.Response:
+            assert request.url.path == "/v1/verify/ARK-2026-ABC"
+            return json_response(
+                {
+                    "verified": True,
+                    "status": "ACTIVE",
+                    "description": "Transcript",
+                    "confidence_scores": {"overall": 0.81},
+                    "sub_type": "official_transcript",
+                }
+            )
+
+        async with AsyncArkova(
+            api_key="ak_test",
+            base_url="https://api.arkova.test/v2",
+            transport=httpx.MockTransport(handler),
+        ) as client:
+            result = await client.verify("ARK-2026-ABC")
+            return result.confidence_scores["overall"] if result.confidence_scores else None
+
+    assert asyncio.run(run()) == 0.81
