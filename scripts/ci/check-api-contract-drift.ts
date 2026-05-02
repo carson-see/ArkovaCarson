@@ -36,6 +36,8 @@ interface OpenApiSpec {
 
 type ZodObjectLike = z.ZodObject<z.ZodRawShape>;
 
+const byLocale = (a: string, b: string): number => a.localeCompare(b);
+
 const AGENT_OPENAPI_PATHS = [
   '/search',
   '/verify/{fingerprint}',
@@ -57,7 +59,7 @@ function schemaShape(schema: z.ZodTypeAny): z.ZodRawShape | null {
 }
 
 export function zodObjectKeys(schema: z.ZodTypeAny): string[] {
-  return Object.keys(schemaShape(schema) ?? {}).sort();
+  return Object.keys(schemaShape(schema) ?? {}).sort(byLocale);
 }
 
 export function zodRequiredKeys(schema: z.ZodTypeAny): string[] {
@@ -67,7 +69,7 @@ export function zodRequiredKeys(schema: z.ZodTypeAny): string[] {
   return Object.entries(shape)
     .filter(([, field]) => !field.safeParse(undefined).success)
     .map(([key]) => key)
-    .sort();
+    .sort(byLocale);
 }
 
 export function collectMcpContractDrift(
@@ -76,8 +78,8 @@ export function collectMcpContractDrift(
 ): ContractDriftViolation[] {
   const violations: ContractDriftViolation[] = [];
   const definitionByName = new Map(definitions.map((definition) => [definition.name, definition]));
-  const definitionNames = [...definitionByName.keys()].sort();
-  const schemaNames = Object.keys(schemas).sort();
+  const definitionNames = [...definitionByName.keys()].sort(byLocale);
+  const schemaNames = Object.keys(schemas).sort(byLocale);
 
   const missingDefinitions = schemaNames.filter((name) => !definitionByName.has(name));
   const missingSchemas = definitionNames.filter((name) => !schemas[name]);
@@ -93,9 +95,9 @@ export function collectMcpContractDrift(
   for (const name of definitionNames.filter((candidate) => schemas[candidate])) {
     const definition = definitionByName.get(name)!;
     const schema = schemas[name];
-    const definedProperties = Object.keys(definition.inputSchema.properties).sort();
+    const definedProperties = Object.keys(definition.inputSchema.properties).sort(byLocale);
     const schemaProperties = zodObjectKeys(schema);
-    const definedRequired = [...definition.inputSchema.required].sort();
+    const definedRequired = [...definition.inputSchema.required].sort(byLocale);
     const schemaRequired = zodRequiredKeys(schema);
 
     if (JSON.stringify(definedProperties) !== JSON.stringify(schemaProperties)) {

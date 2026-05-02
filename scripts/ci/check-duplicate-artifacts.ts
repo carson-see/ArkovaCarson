@@ -25,16 +25,61 @@ export interface DuplicateArtifactViolation {
   kind: DuplicateArtifactKind;
 }
 
-const BACKUP_OR_MERGE_SUFFIX_RE = /\.(?:bak|backup|orig|rej|tmp|temp|old)$/i;
-const NUMBERED_COPY_RE = /(?:^|[^\w])(?:copy\s*)?\(\d+\)$/i;
-const SPACE_NUMBERED_COPY_RE = /^.+\s+\d+$/;
-const COPY_SUFFIX_RE = /^.+(?:\s+copy|\s+copy\s+\d+|\s+-\s+copy|\s+-\s+copy\s+\d+)$/i;
-const REPO_COPY_WORKTREE_RE = /(?:^|[-_])(?:arkova-)?(?:mvpcopy|copy)(?:[-_](?:main|pr|worktree|\d+))?$/i;
+const BACKUP_OR_MERGE_SUFFIXES = ['.bak', '.backup', '.orig', '.rej', '.tmp', '.temp', '.old'];
 
 function stripExtension(segment: string): string {
   const dot = segment.lastIndexOf('.');
   if (dot <= 0) return segment;
   return segment.slice(0, dot);
+}
+
+function isDigits(value: string): boolean {
+  return value.length > 0 && [...value].every((ch) => ch >= '0' && ch <= '9');
+}
+
+function hasBackupOrMergeSuffix(segment: string): boolean {
+  const lower = segment.toLowerCase();
+  return BACKUP_OR_MERGE_SUFFIXES.some((suffix) => lower.endsWith(suffix));
+}
+
+function hasNumberedCopySuffix(stem: string): boolean {
+  const trimmed = stem.trimEnd();
+
+  if (trimmed.endsWith(')')) {
+    const open = trimmed.lastIndexOf('(');
+    return open > 0 && isDigits(trimmed.slice(open + 1, -1));
+  }
+
+  const lastSpace = trimmed.lastIndexOf(' ');
+  return lastSpace > 0 && isDigits(trimmed.slice(lastSpace + 1));
+}
+
+function stripTrailingNumber(stem: string): string {
+  const trimmed = stem.trimEnd();
+  const lastSpace = trimmed.lastIndexOf(' ');
+  if (lastSpace <= 0) return trimmed;
+
+  const suffix = trimmed.slice(lastSpace + 1);
+  return isDigits(suffix) ? trimmed.slice(0, lastSpace).trimEnd() : trimmed;
+}
+
+function hasCopySuffix(stem: string): boolean {
+  const lower = stripTrailingNumber(stem).toLowerCase();
+  return lower.endsWith(' copy') || lower.endsWith(' - copy');
+}
+
+function isRepoCopyWorktree(segment: string): boolean {
+  const normalized = segment.toLowerCase().replaceAll('_', '-');
+  return (
+    normalized === 'copy-main'
+    || normalized === 'copy-pr'
+    || normalized === 'copy-worktree'
+    || normalized === 'mvpcopy-main'
+    || normalized === 'arkova-copy-main'
+    || normalized === 'arkova-mvpcopy-main'
+    || normalized.endsWith('-copy-main')
+    || normalized.endsWith('-mvpcopy-main')
+  );
 }
 
 export function classifyDuplicateArtifactPath(filePath: string): DuplicateArtifactViolation[] {
@@ -44,22 +89,22 @@ export function classifyDuplicateArtifactPath(filePath: string): DuplicateArtifa
   for (const segment of segments) {
     const stem = stripExtension(segment);
 
-    if (BACKUP_OR_MERGE_SUFFIX_RE.test(segment)) {
+    if (hasBackupOrMergeSuffix(segment)) {
       violations.push({ path: filePath, segment, kind: 'backup-or-merge-artifact' });
       continue;
     }
 
-    if (NUMBERED_COPY_RE.test(stem) || SPACE_NUMBERED_COPY_RE.test(stem)) {
+    if (hasNumberedCopySuffix(stem)) {
       violations.push({ path: filePath, segment, kind: 'numbered-copy' });
       continue;
     }
 
-    if (COPY_SUFFIX_RE.test(stem)) {
+    if (hasCopySuffix(stem)) {
       violations.push({ path: filePath, segment, kind: 'copy-suffix' });
       continue;
     }
 
-    if (REPO_COPY_WORKTREE_RE.test(segment)) {
+    if (isRepoCopyWorktree(segment)) {
       violations.push({ path: filePath, segment, kind: 'repo-copy-worktree' });
     }
   }
