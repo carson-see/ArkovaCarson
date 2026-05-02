@@ -48,6 +48,9 @@ with Arkova(api_key="ak_live_...") as arkova:
 such as `compliance_controls`, `chain_confirmations`, `parent_public_id`,
 `version_number`, `file_mime`, and `file_size`, plus API-RICH-02 fields
 `confidence_scores` and `sub_type` when the API response includes them.
+The same optional rich fields are typed on v2 `verify_fingerprint()` and
+`get_anchor()` responses, so newer API payloads are not silently hidden by the
+SDK model layer.
 
 ## Async client
 

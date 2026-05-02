@@ -5,7 +5,7 @@ import asyncio
 import httpx
 import pytest
 
-from arkova import Arkova, ArkovaError, AsyncArkova
+from arkova import Anchor, Arkova, ArkovaError, AsyncArkova, FingerprintVerification
 
 
 def json_response(
@@ -105,6 +105,35 @@ def test_retries_429_before_success() -> None:
     assert result.verified is True
     assert attempts == 2
     assert sleeps == [3.0]
+
+
+def test_verify_fingerprint_exposes_typed_rich_fields_when_returned() -> None:
+    assert "confidence_scores" in FingerprintVerification.model_fields
+    assert "sub_type" in FingerprintVerification.model_fields
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return json_response(
+            {
+                "verified": True,
+                "status": "ACTIVE",
+                "fingerprint": "a" * 64,
+                "public_id": "ARK-DOC-ABC",
+                "description": "Transcript",
+                "confidence_scores": {"overall": 0.89},
+                "sub_type": "official_transcript",
+                "file_mime": "application/pdf",
+                "file_size": 4096,
+            }
+        )
+
+    with Arkova(api_key="ak_test", transport=httpx.MockTransport(handler)) as client:
+        result = client.verify_fingerprint("a" * 64)
+
+    assert result.description == "Transcript"
+    assert result.confidence_scores == {"overall": 0.89}
+    assert result.sub_type == "official_transcript"
+    assert result.file_mime == "application/pdf"
+    assert result.file_size == 4096
 
 
 def test_verify_maps_rich_v1_verification_fields() -> None:
@@ -210,6 +239,47 @@ def test_async_client_get_anchor() -> None:
             return result.record_uri
 
     assert asyncio.run(run()) == "https://app.arkova.ai/verify/ARK-DOC-ABC"
+
+
+def test_get_anchor_exposes_typed_rich_fields_when_returned() -> None:
+    assert "confidence_scores" in Anchor.model_fields
+    assert "sub_type" in Anchor.model_fields
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return json_response(
+            {
+                "public_id": "ARK-DOC-ABC",
+                "verified": True,
+                "status": "ACTIVE",
+                "record_uri": "https://app.arkova.ai/verify/ARK-DOC-ABC",
+                "description": "Diploma",
+                "compliance_controls": {"FERPA-99.31": True},
+                "chain_confirmations": 3,
+                "parent_public_id": "ARK-DOC-PARENT",
+                "version_number": 2,
+                "revocation_tx_id": "rev-tx",
+                "revocation_block_height": 123457,
+                "file_mime": "application/pdf",
+                "file_size": 8192,
+                "confidence_scores": {"overall": 0.91},
+                "sub_type": "official_undergraduate",
+            }
+        )
+
+    with Arkova(api_key="ak_test", transport=httpx.MockTransport(handler)) as client:
+        result = client.get_anchor("ARK-DOC-ABC")
+
+    assert result.description == "Diploma"
+    assert result.compliance_controls == {"FERPA-99.31": True}
+    assert result.chain_confirmations == 3
+    assert result.parent_public_id == "ARK-DOC-PARENT"
+    assert result.version_number == 2
+    assert result.revocation_tx_id == "rev-tx"
+    assert result.revocation_block_height == 123457
+    assert result.file_mime == "application/pdf"
+    assert result.file_size == 8192
+    assert result.confidence_scores == {"overall": 0.91}
+    assert result.sub_type == "official_undergraduate"
 
 
 def test_async_verify_maps_rich_v1_verification_fields() -> None:

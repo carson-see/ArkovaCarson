@@ -35,7 +35,21 @@ class SearchResponse(ArkovaModel):
     next_cursor: str | None = None
 
 
-class FingerprintVerification(ArkovaModel):
+class RichVerificationFields(ArkovaModel):
+    description: str | None = None
+    compliance_controls: dict[str, Any] | None = None
+    chain_confirmations: int | None = None
+    parent_public_id: str | None = None
+    version_number: int | None = None
+    revocation_tx_id: str | None = None
+    revocation_block_height: int | None = None
+    file_mime: str | None = None
+    file_size: int | None = None
+    confidence_scores: dict[str, Any] | None = None
+    sub_type: str | None = None
+
+
+class FingerprintVerification(RichVerificationFields):
     verified: bool
     status: str
     fingerprint: str
@@ -46,7 +60,7 @@ class FingerprintVerification(ArkovaModel):
     record_uri: str | None = None
 
 
-class VerificationResult(ArkovaModel):
+class VerificationResult(RichVerificationFields):
     verified: bool
     status: str | None = None
     issuer_name: str | None = None
@@ -61,23 +75,12 @@ class VerificationResult(ArkovaModel):
     record_uri: str | None = None
     jurisdiction: str | None = None
     explorer_url: str | None = None
-    description: str | None = None
     ferpa_notice: str | None = None
     directory_info_suppressed: bool | None = None
-    compliance_controls: dict[str, Any] | None = None
-    chain_confirmations: int | None = None
-    parent_public_id: str | None = None
-    version_number: int | None = None
-    revocation_tx_id: str | None = None
-    revocation_block_height: int | None = None
-    file_mime: str | None = None
-    file_size: int | None = None
-    confidence_scores: dict[str, Any] | None = None
-    sub_type: str | None = None
     error: str | None = None
 
 
-class Anchor(ArkovaModel):
+class Anchor(RichVerificationFields):
     public_id: str
     verified: bool
     status: str
