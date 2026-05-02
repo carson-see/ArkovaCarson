@@ -7,9 +7,9 @@
  * quietly returning in future PRs.
  */
 
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { delimiter, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 const DEFAULT_REPO = resolve(import.meta.dirname, '..', '..');
@@ -19,6 +19,21 @@ const GIT_BINARY_CANDIDATES = [
   '/opt/homebrew/bin/git',
   '/usr/local/bin/git',
 ];
+const PATH_GIT_DIRECTORY_ALLOWLIST = process.platform === 'win32'
+  ? [
+      'C:\\Program Files\\Git\\cmd',
+      'C:\\Program Files\\Git\\bin',
+      'C:\\Program Files (x86)\\Git\\cmd',
+    ]
+  : [
+      '/usr/bin',
+      '/bin',
+      '/usr/local/bin',
+      '/opt/homebrew/bin',
+    ];
+const PATH_GIT_BINARY_NAMES = process.platform === 'win32'
+  ? ['git.exe', 'git.cmd', 'git.bat']
+  : ['git'];
 
 const DEPRECATED_PYTHON_SDK_PATHS = [
   'packages/python-sdk/.gitignore',
@@ -163,10 +178,27 @@ function resolveGitBinary(): string {
   const gitBinary = GIT_BINARY_CANDIDATES.find((candidate) => existsSync(candidate));
   if (gitBinary) return gitBinary;
 
-  const pathGit = spawnSync('git', ['--version'], { stdio: 'ignore' });
-  if (pathGit.status === 0) return 'git';
+  const pathGit = resolveGitBinaryFromFixedPathDirs();
+  if (pathGit) return pathGit;
 
   throw new Error(`git binary not found in fixed candidates: ${GIT_BINARY_CANDIDATES.join(', ')}`);
+}
+
+function resolveGitBinaryFromFixedPathDirs(): string | null {
+  const allowedDirs = new Set(PATH_GIT_DIRECTORY_ALLOWLIST.map((path) => resolve(path)));
+  const pathEntries = (process.env.PATH ?? '').split(delimiter).filter(Boolean);
+
+  for (const entry of pathEntries) {
+    const directory = resolve(entry);
+    if (!allowedDirs.has(directory)) continue;
+
+    const gitBinary = PATH_GIT_BINARY_NAMES
+      .map((binaryName) => join(directory, binaryName))
+      .find((candidate) => existsSync(candidate));
+    if (gitBinary) return gitBinary;
+  }
+
+  return null;
 }
 
 function main(): void {
