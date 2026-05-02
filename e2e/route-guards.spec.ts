@@ -16,6 +16,16 @@ test.describe('Route Guards', () => {
   test.describe('Unauthenticated Access', () => {
     test('redirects /records to auth when not logged in', async ({ page }) => {
       await page.goto('/records');
+      await expect(page).toHaveURL(/\/(auth|login)(\/|\?|$)/);
+
+      await expect(
+        page.getByText(/Authentication Required/i).or(page.getByLabel('Email address'))
+      ).toBeVisible({ timeout: 5000 });
+    });
+
+    test('redirects /vault to auth when not logged in', async ({ page }) => {
+      await page.goto('/vault');
+      await expect(page).toHaveURL(/\/(auth|login)(\/|\?|$)/);
 
       await expect(
         page.getByText(/Authentication Required/i).or(page.getByLabel('Email address'))
@@ -24,6 +34,7 @@ test.describe('Route Guards', () => {
 
     test('redirects /dashboard to /auth when not logged in', async ({ page }) => {
       await page.goto('/dashboard');
+      await expect(page).toHaveURL(/\/(auth|login)(\/|\?|$)/);
 
       await expect(
         page.getByText(/Authentication Required/i).or(page.getByLabel('Email address'))
@@ -32,6 +43,7 @@ test.describe('Route Guards', () => {
 
     test('redirects /onboarding/role to /auth when not logged in', async ({ page }) => {
       await page.goto('/onboarding/role');
+      await expect(page).toHaveURL(/\/(auth|login)(\/|\?|$)/);
 
       await expect(
         page.getByText(/Authentication Required/i).or(page.getByLabel('Email address'))
@@ -44,6 +56,7 @@ test.describe('Route Guards', () => {
 
     test('INDIVIDUAL users can access the dashboard entrypoint', async ({ page }) => {
       await page.goto('/dashboard');
+      await expect(page).toHaveURL(/\/dashboard(\/|\?|$)/);
 
       await expect(
         page.getByText(/Welcome back/i)
@@ -58,6 +71,7 @@ test.describe('Route Guards', () => {
 
     test('ORG_ADMIN users can access the dashboard entrypoint', async ({ page }) => {
       await page.goto('/dashboard');
+      await expect(page).toHaveURL(/\/dashboard(\/|\?|$)/);
 
       await expect(
         page.getByText(/Dashboard/i)
