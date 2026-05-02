@@ -187,6 +187,14 @@ describe('arkova/missing-org-filter', () => {
       },
       {
         code: `
+          supabase.from('attestations').insert([
+            { attester_org_id: orgId, title: 'Document A' },
+            { attester_org_id: orgId, title: 'Document B' },
+          ]);
+        `,
+      },
+      {
+        code: `
           supabase.from('attestations').select('*').match({ attester_org_id: orgId });
         `,
       },
@@ -206,6 +214,15 @@ describe('arkova/missing-org-filter', () => {
       {
         code: `
           supabase.from('org_members').insert({ role: 'owner' });
+        `,
+        errors: [{ messageId: 'missingOrgFilter' }],
+      },
+      {
+        code: `
+          supabase.from('attestations').insert([
+            { attester_org_id: orgId, title: 'Document A' },
+            { title: 'Document B' },
+          ]);
         `,
         errors: [{ messageId: 'missingOrgFilter' }],
       },

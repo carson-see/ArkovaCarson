@@ -162,7 +162,7 @@ module.exports = {
 
           if (
             method.type === 'Identifier' &&
-            (method.name === 'insert' || method.name === 'upsert') &&
+            method.name === 'insert' &&
             payloadHasScopeColumn(nextCall.arguments[0], allowedColumns)
           ) {
             hasOrgFilter = true;
