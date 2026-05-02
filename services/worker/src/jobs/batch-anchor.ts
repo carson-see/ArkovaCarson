@@ -273,18 +273,29 @@ async function _processBatchAnchorsInner(opts: ProcessBatchAnchorOptions = {}): 
     // this hardening is for — silently breaking the
     // "no anchor waits more than MAX_ANCHOR_AGE_MS" SLA documented at L78-79.
     const pendingCount = countsRes.data?.PENDING ?? 1;
+    const pendingCountLogContext = opts.orgId
+      ? {
+          pendingCountForTrigger: pendingCount,
+          pendingCountSource: 'org_threshold_probe',
+          pendingThreshold: MIN_BATCH_THRESHOLD,
+          orgPendingThresholdCrossed: pendingCount >= MIN_BATCH_THRESHOLD,
+        }
+      : {
+          pendingCount,
+          pendingCountSource: 'fast_status_counts',
+        };
 
     // Trigger D: forced flush (daily 3am EST sweep) bypasses the age check
     // and broadcasts whatever is queued, even below MIN_BATCH_THRESHOLD.
     // Used by the daily-anchor-flush Cloud Scheduler job.
     if (opts.force) {
       logger.info(
-        { pendingCount, oldestAgeMs: oldestPendingAgeMs, orgId: opts.orgId ?? null },
+        { ...pendingCountLogContext, oldestAgeMs: oldestPendingAgeMs, orgId: opts.orgId ?? null },
         opts.orgId ? 'Forced org batch flush' : 'Forced batch flush (daily 3am EST sweep)',
       );
     } else if (!triggerB_shouldFireOnAge({ pendingCount, oldestPendingAgeMs })) {
       logger.debug(
-        { pendingCount, oldestAgeMs: oldestPendingAgeMs },
+        { ...pendingCountLogContext, oldestAgeMs: oldestPendingAgeMs, orgId: opts.orgId ?? null },
         'Below batch threshold and oldest anchor is fresh — deferring',
       );
       return EMPTY;
@@ -493,6 +504,7 @@ async function getOrgPendingThresholdSnapshot(orgId: string): Promise<{ data: Fa
   try {
     // We only need to know whether the org queue crossed Trigger B's
     // threshold; avoid exact counts because they scan the hot anchors table.
+    // The returned PENDING value is a trigger sentinel, not a literal count.
     const { data, error } = await db
       .from('anchors')
       .select('id')

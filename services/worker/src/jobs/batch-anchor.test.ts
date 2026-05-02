@@ -12,12 +12,14 @@ import type { ChainReceipt } from '../chain/types.js';
 
 const {
   mockSubmitFingerprint,
+  mockEstimateCurrentFee,
   mockAnchorsUpdate,
   mockLogger,
   setUpdateResult,
   _setUpdateResultQueue,
 } = vi.hoisted(() => {
   const mockSubmitFingerprint = vi.fn();
+  const mockEstimateCurrentFee = vi.fn();
 
   // RACE-1: Update chain supports .eq() chaining + thenable
   // Supports both fixed results and per-call result queues
@@ -49,6 +51,7 @@ const {
 
   return {
     mockSubmitFingerprint,
+    mockEstimateCurrentFee,
     mockAnchorsUpdate,
     mockLogger,
     setUpdateResult,
@@ -77,9 +80,9 @@ vi.mock('../utils/rpc.js', () => ({
 }));
 
 vi.mock('../chain/client.js', () => ({
-  getInitializedChainClient: () => ({ submitFingerprint: mockSubmitFingerprint }),
-  getChainClientAsync: () => Promise.resolve({ submitFingerprint: mockSubmitFingerprint }),
-  getChainClient: () => ({ submitFingerprint: mockSubmitFingerprint }),
+  getInitializedChainClient: () => ({ submitFingerprint: mockSubmitFingerprint, estimateCurrentFee: mockEstimateCurrentFee }),
+  getChainClientAsync: () => Promise.resolve({ submitFingerprint: mockSubmitFingerprint, estimateCurrentFee: mockEstimateCurrentFee }),
+  getChainClient: () => ({ submitFingerprint: mockSubmitFingerprint, estimateCurrentFee: mockEstimateCurrentFee }),
 }));
 
 const mockDbRpc = vi.hoisted(() => vi.fn());
@@ -155,6 +158,7 @@ describe('processBatchAnchors', () => {
     // Default: RPC returns empty (no pending anchors)
     mockDbRpc.mockResolvedValue({ data: [], error: null });
     mockSubmitFingerprint.mockResolvedValue(MOCK_RECEIPT);
+    mockEstimateCurrentFee.mockResolvedValue(1);
     setUpdateResult({ error: null, count: 1 });
   });
 
@@ -305,6 +309,30 @@ describe('processBatchAnchors', () => {
     expect(mockDbRpc).toHaveBeenCalledWith('claim_pending_anchors', expect.objectContaining({
       p_org_id: 'org-1',
     }));
+    expect(mockLogger.info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        pendingCountForTrigger: MIN_BATCH_THRESHOLD,
+        pendingCountSource: 'org_threshold_probe',
+        pendingThreshold: MIN_BATCH_THRESHOLD,
+        orgPendingThresholdCrossed: true,
+        orgId: 'org-1',
+      }),
+      'Forced org batch flush',
+    );
+  });
+
+  it('still enforces the fee ceiling for forced manual org queue runs', async () => {
+    mockEstimateCurrentFee.mockResolvedValueOnce(250);
+
+    const result = await processBatchAnchors({ force: true, orgId: 'org-1' });
+
+    expect(result).toEqual({ processed: 0, batchId: null, merkleRoot: null, txId: null });
+    expect(mockSubmitFingerprint).not.toHaveBeenCalled();
+    expect(mockDbRpc).not.toHaveBeenCalledWith('claim_pending_anchors', expect.any(Object));
+    expect(mockLogger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ currentFee: 250, effectiveCeiling: 200 }),
+      expect.stringContaining('Fee rate exceeds ceiling'),
+    );
   });
 
   it('submits the Merkle root (not individual fingerprints) to chain', async () => {
