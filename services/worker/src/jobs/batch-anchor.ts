@@ -80,23 +80,16 @@ function isClaimPendingAnchorsMigrationCompatError(error: unknown): boolean {
     ? (error as Record<string, unknown>).code
     : undefined;
   const knownMissingFunctionCode = code === 'PGRST202' || code === '42883';
-  const looksLikeMissingFunction = summary.includes('function not found')
+  if (!knownMissingFunctionCode) return false;
+
+  const mentionsClaimRpc = summary.includes('claim_pending_anchors') || summary.includes('p_org_id');
+  if (!mentionsClaimRpc) return false;
+
+  return summary.includes('function not found')
     || summary.includes('could not find the function')
     || summary.includes('does not exist')
     || summary.includes('schema cache')
     || summary.includes('no function matches');
-
-  return (knownMissingFunctionCode && looksLikeMissingFunction)
-    || summary.includes('function not found')
-    || summary.includes('could not find the function')
-    || (
-      summary.includes('claim_pending_anchors')
-      && (
-        summary.includes('schema cache')
-        || summary.includes('does not exist')
-        || summary.includes('no function matches')
-      )
-    );
 }
 
 // =============================================================================

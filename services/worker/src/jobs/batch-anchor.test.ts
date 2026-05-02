@@ -240,6 +240,33 @@ describe('processBatchAnchors', () => {
     );
   });
 
+  it('does not use legacy fallback for missing helper errors unrelated to claim_pending_anchors', async () => {
+    mockDbRpc.mockResolvedValue({
+      data: null,
+      error: {
+        code: '42883',
+        message: 'function public.internal_anchor_helper(uuid) does not exist',
+      },
+    });
+
+    const result = await processBatchAnchors({ force: true, orgId: 'org-1' });
+
+    expect(result).toEqual({ processed: 0, batchId: null, merkleRoot: null, txId: null });
+    const orgScopeCalls = mockSelectEq.mock.calls.filter((call) => call[0] === 'org_id');
+    expect(orgScopeCalls).toEqual([
+      ['org_id', 'org-1'],
+      ['org_id', 'org-1'],
+    ]);
+    expect(mockLogger.warn).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.stringContaining('falling back to legacy'),
+    );
+    expect(mockLogger.error).toHaveBeenCalledWith(
+      expect.objectContaining({ error: expect.any(Object) }),
+      expect.stringContaining('without legacy fallback'),
+    );
+  });
+
   // ---- Single anchor batch ----
 
   it('processes single anchor via batch (INEFF-2: MIN_BATCH_SIZE = 1)', async () => {
