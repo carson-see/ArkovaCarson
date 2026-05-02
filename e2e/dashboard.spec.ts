@@ -55,7 +55,9 @@ test.describe('Dashboard', () => {
     test('privacy toggle is present', async ({ individualPage }) => {
       await openDashboard(individualPage);
 
-      await expect(individualPage.locator('#main-content')).toContainText(/Public profile/i);
+      await expect(
+        individualPage.getByRole('switch', { name: /Toggle profile visibility/i }),
+      ).toBeVisible();
     });
   });
 
@@ -63,11 +65,10 @@ test.describe('Dashboard', () => {
     test('org admin sees dashboard with records', async ({ orgAdminPage }) => {
       await openDashboard(orgAdminPage);
 
-      // Should show org-admin dashboard content
-      await expect(orgAdminPage.locator('#main-content')).toContainText(
-        /Audit My Organization|Total Records|Monthly Usage/i,
-        { timeout: 10000 },
-      );
+      // Should show org-admin-specific dashboard content.
+      await expect(orgAdminPage.locator('#main-content')).toContainText(/Audit My Organization/i, {
+        timeout: 10000,
+      });
     });
   });
 
@@ -96,7 +97,9 @@ test.describe('Dashboard', () => {
         await expect(viewRecord).toBeVisible({ timeout: 5_000 });
         await viewRecord.click();
 
-        await expect(individualPage).toHaveURL(new RegExp(`/records/${anchor.id}$`), { timeout: 10_000 });
+        await expect(individualPage).toHaveURL(`http://localhost:5173/records/${anchor.id}`, {
+          timeout: 10_000,
+        });
       } finally {
         await deleteTestAnchor(serviceClient, anchor.id);
       }
