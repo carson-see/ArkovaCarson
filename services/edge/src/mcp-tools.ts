@@ -37,7 +37,7 @@ const FETCH_TIMEOUT_MS = 10_000;
  *  reuse the single source of truth for its Zod input validator. */
 export const SHA256_HEX_RE = /^[a-fA-F0-9]{64}$/;
 export const ARKOVA_PUBLIC_ID_RE = /^ARK-[A-Z0-9-]{3,60}$/;
-export const ORG_PUBLIC_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{2,100}$/;
+export const ORG_PUBLIC_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{2,99}$/;
 const POSTGRES_LIKE_WILDCARD_RE = /[%_\\]/g;
 
 export interface ToolDefinition {
@@ -638,7 +638,7 @@ async function searchAgentRecords(
   input: AgentSearchInput,
   config: SupabaseConfig,
 ): Promise<Array<Record<string, unknown>>> {
-  const maxResults = Math.min(input.max_results ?? 10, 100);
+  const maxResults = Math.max(1, Math.min(input.max_results ?? 10, 100));
   const records = mapCredentialSearchRows(await fetchPublicCredentialSearch(input.q, maxResults, config));
 
   const resultType = input.type === 'document' ? 'document' : 'record';
@@ -694,7 +694,7 @@ export async function handleAgentSearch(
     return errorResult('Error: q is required');
   }
 
-  const maxResults = Math.min(input.max_results ?? 10, 100);
+  const maxResults = Math.max(1, Math.min(input.max_results ?? 10, 100));
   const type = input.type ?? 'all';
 
   try {

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   handleAgentSearch,
+  ORG_PUBLIC_ID_RE,
   type SupabaseConfig,
 } from '../../services/edge/src/mcp-tools';
 
@@ -16,15 +17,18 @@ describe('handleAgentSearch', () => {
   });
 
   it('honors the advertised 100-result limit for record searches', async () => {
-    const fetchMock = vi.fn(async (..._args: Parameters<typeof fetch>) => new Response(JSON.stringify([
-      {
-        public_id: 'ARK-REC-001',
-        title: 'Record 1',
-        credential_type: 'CONTRACT',
-        status: 'SECURED',
-        created_at: '2026-05-01T00:00:00Z',
-      },
-    ]), { status: 200 }));
+    const fetchMock = vi.fn(async (...args: Parameters<typeof fetch>) => {
+      void args;
+      return new Response(JSON.stringify([
+        {
+          public_id: 'ARK-REC-001',
+          title: 'Record 1',
+          credential_type: 'CONTRACT',
+          status: 'SECURED',
+          created_at: '2026-05-01T00:00:00Z',
+        },
+      ]), { status: 200 });
+    });
     vi.stubGlobal('fetch', fetchMock);
 
     const result = await handleAgentSearch(
@@ -42,8 +46,47 @@ describe('handleAgentSearch', () => {
     );
   });
 
+  it('keeps organization public IDs capped at the documented 100 characters', () => {
+    expect(ORG_PUBLIC_ID_RE.test(`a${'b'.repeat(99)}`)).toBe(true);
+    expect(ORG_PUBLIC_ID_RE.test(`a${'b'.repeat(100)}`)).toBe(false);
+  });
+
+  it('clamps negative max_results to one result for org searches', async () => {
+    const fetchMock = vi.fn(async (...args: Parameters<typeof fetch>) => {
+      void args;
+      return new Response(JSON.stringify([
+        {
+          public_id: 'org_acme',
+          display_name: 'Acme Corp',
+          domain: 'acme.com',
+          website_url: 'https://acme.com',
+          verification_status: 'VERIFIED',
+        },
+        {
+          public_id: 'org_beta',
+          display_name: 'Beta Corp',
+          domain: 'beta.example',
+          website_url: 'https://beta.example',
+          verification_status: 'VERIFIED',
+        },
+      ]), { status: 200 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await handleAgentSearch(
+      { q: 'corp', type: 'org', max_results: -5 },
+      config,
+    );
+
+    expect(result.isError).toBeUndefined();
+    expect(JSON.parse(result.content[0].text).results).toHaveLength(1);
+  });
+
   it('escapes Postgres LIKE wildcards before record search RPC calls', async () => {
-    const fetchMock = vi.fn(async (..._args: Parameters<typeof fetch>) => new Response(JSON.stringify([]), { status: 200 }));
+    const fetchMock = vi.fn(async (...args: Parameters<typeof fetch>) => {
+      void args;
+      return new Response(JSON.stringify([]), { status: 200 });
+    });
     vi.stubGlobal('fetch', fetchMock);
 
     const result = await handleAgentSearch(
