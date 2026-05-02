@@ -322,7 +322,7 @@ def test_get_anchor_exposes_typed_rich_fields_when_returned() -> None:
 
 
 def test_async_verify_maps_rich_v1_verification_fields() -> None:
-    async def run() -> str | None:
+    async def run() -> tuple[float | None, str | None, str | None]:
         def handler(request: httpx.Request) -> httpx.Response:
             assert request.url.path == "/v1/verify/ARK-2026-ABC"
             return json_response(
@@ -341,6 +341,13 @@ def test_async_verify_maps_rich_v1_verification_fields() -> None:
             transport=httpx.MockTransport(handler),
         ) as client:
             result = await client.verify("ARK-2026-ABC")
-            return result.confidence_scores["overall"] if result.confidence_scores else None
+            return (
+                result.confidence_scores["overall"] if result.confidence_scores else None,
+                result.description,
+                result.sub_type,
+            )
 
-    assert asyncio.run(run()) == pytest.approx(0.81)
+    overall, description, sub_type = asyncio.run(run())
+    assert overall == pytest.approx(0.81)
+    assert description == "Transcript"
+    assert sub_type == "official_transcript"

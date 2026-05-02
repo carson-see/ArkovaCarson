@@ -28,10 +28,18 @@ export interface DuplicateArtifactViolation {
 
 const BACKUP_OR_MERGE_SUFFIXES = ['.bak', '.backup', '.orig', '.rej', '.tmp', '.temp', '.old'];
 
-function stripExtension(segment: string): string {
-  const dot = segment.lastIndexOf('.');
-  if (dot <= 0) return segment;
-  return segment.slice(0, dot);
+function stripExtensionChain(segment: string): string {
+  let stem = segment;
+
+  while (true) {
+    const dot = stem.lastIndexOf('.');
+    if (dot <= 0) return stem;
+
+    const extension = stem.slice(dot + 1);
+    if (!/^[A-Za-z0-9]+$/.test(extension)) return stem;
+
+    stem = stem.slice(0, dot);
+  }
 }
 
 function isDigits(value: string): boolean {
@@ -88,7 +96,7 @@ export function classifyDuplicateArtifactPath(filePath: string): DuplicateArtifa
   const segments = filePath.split('/').filter(Boolean);
 
   for (const segment of segments) {
-    const stem = stripExtension(segment);
+    const stem = stripExtensionChain(segment);
 
     if (hasBackupOrMergeSuffix(segment)) {
       violations.push({ path: filePath, segment, kind: 'backup-or-merge-artifact' });

@@ -12,10 +12,15 @@ function expectSingleViolation(path: string, segment: string, kind: DuplicateArt
 describe('check-duplicate-artifacts', () => {
   it('flags Finder-style copy suffixes', () => {
     expectSingleViolation('src/api/client copy.ts', 'client copy.ts', 'copy-suffix');
+    expectSingleViolation('src/api/client copy.test.ts', 'client copy.test.ts', 'copy-suffix');
+    expectSingleViolation('src/api/fixture - copy.spec.ts', 'fixture - copy.spec.ts', 'copy-suffix');
+    expectSingleViolation('src/api/client.v2 copy.ts', 'client.v2 copy.ts', 'copy-suffix');
   });
 
   it('flags numbered duplicate files', () => {
     expectSingleViolation('src/api/client (2).ts', 'client (2).ts', 'numbered-copy');
+    expectSingleViolation('src/api/types (2).d.ts', 'types (2).d.ts', 'numbered-copy');
+    expectSingleViolation('src/api/types.v2 (2).ts', 'types.v2 (2).ts', 'numbered-copy');
   });
 
   it('flags stale merge and backup artifacts', () => {
