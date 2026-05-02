@@ -26,8 +26,10 @@ vi.mock('../utils/logger.js', () => ({
 }));
 
 import { db } from '../utils/db.js';
+import { logger } from '../utils/logger.js';
 
 const mockedRpc = vi.mocked(db.rpc);
+const mockedLogger = vi.mocked(logger);
 
 function createMockReqRes() {
   const req = {} as Request;
@@ -78,6 +80,17 @@ describe('featureGate middleware', () => {
       expect(await isVerificationApiEnabled()).toBe(false);
       expect(await isVerificationApiEnabled()).toBe(false);
       expect(mockedRpc).toHaveBeenCalledTimes(1);
+      expect(mockedLogger.warn).toHaveBeenCalledWith(
+        {
+          error: { message: 'not found' },
+          flagKey: 'ENABLE_VERIFICATION_API',
+        },
+        'Failed to read ENABLE_VERIFICATION_API flag from DB, failing closed',
+      );
+      expect(mockedLogger.warn).not.toHaveBeenCalledWith(
+        expect.objectContaining({ envFallback: expect.any(Boolean) }),
+        expect.any(String),
+      );
     });
 
     it('fails closed when flag RPC returns non-boolean data without an error', async () => {

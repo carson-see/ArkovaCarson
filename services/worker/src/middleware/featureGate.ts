@@ -3,7 +3,8 @@
  *
  * Gates /api/v1/* endpoints behind the ENABLE_VERIFICATION_API switchboard flag.
  * Returns HTTP 503 when the flag is false. Uses TTL-based cache (60s) to avoid
- * per-request DB queries.
+ * per-request DB queries. The legacy ENABLE_VERIFICATION_API env value is not
+ * a runtime fallback for this gate; DB read failures fail closed.
  *
  * The /health endpoint is ALWAYS available regardless of flag state.
  */
@@ -33,14 +34,13 @@ export async function isVerificationApiEnabled(): Promise<boolean> {
     return flagCache.value;
   }
 
-  const envFallback = process.env.ENABLE_VERIFICATION_API === 'true';
   const { data, error } = await callRpc<boolean>(db, 'get_flag', {
     p_flag_key: 'ENABLE_VERIFICATION_API',
   });
 
   if (error || typeof data !== 'boolean') {
     logger.warn(
-      { error, envFallback },
+      { error, flagKey: 'ENABLE_VERIFICATION_API' },
       'Failed to read ENABLE_VERIFICATION_API flag from DB, failing closed',
     );
     flagCache = { value: false, expiresAt: now + FLAG_CACHE_TTL_MS };
