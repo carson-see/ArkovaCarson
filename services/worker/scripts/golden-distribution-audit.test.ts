@@ -1,20 +1,22 @@
 /**
  * SCRUM-1549 — Golden Distribution Audit tests.
  *
- * Pure-function coverage. No filesystem reads in these tests; loadJsonlRows
- * is exercised separately in an integration smoke test that lives outside
- * the unit suite (golden files are too large to fixture inline).
+ * Pure-function coverage plus a fixture-backed smoke test for the CLI's
+ * file-loading path. The large production golden files stay out of tests.
  */
 
 import { describe, expect, it } from 'vitest';
+import { resolve } from 'node:path';
 import {
   auditDistribution,
   computeGap,
   DEFAULT_EXPECTED_CREDENTIAL_TYPES,
   formatSourceFile,
+  loadJsonlRows,
   parseCliArgs,
   parseGoldenLine,
   renderMarkdownReport,
+  runAudit,
   type AcceptanceGate,
   type DistributionAudit,
   type GoldenRow,
@@ -308,7 +310,7 @@ describe('computeGap', () => {
 
 describe('formatSourceFile', () => {
   it('keeps in-repo paths readable without leaking absolute workstation prefixes', () => {
-    expect(formatSourceFile('/Users/carson/Desktop/arkova-mvpcopy-main/services/worker/training-data/full-golden.jsonl')).toBe(
+    expect(formatSourceFile('/tmp/arkova/services/worker/training-data/full-golden.jsonl')).toBe(
       'training-data/full-golden.jsonl',
     );
   });
@@ -402,5 +404,27 @@ describe('renderMarkdownReport', () => {
     const md = renderMarkdownReport(report, ['fixture.jsonl']);
     expect(md).toContain('PASSED');
     expect(md).not.toContain('Types under floor (sorted by deficit)');
+  });
+});
+
+describe('runAudit integration', () => {
+  const fixturePath = resolve(import.meta.dirname ?? '.', '../training-data/fixtures/golden-fixture.jsonl');
+
+  it('loads JSONL rows and audits the fixture end to end', () => {
+    const rows = loadJsonlRows(fixturePath);
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows.some((row) => row.credentialType === 'ATTESTATION')).toBe(true);
+
+    const { report, rowCount } = runAudit([fixturePath], {
+      minTotal: rows.length,
+      minPerType: 0,
+      minFraudPositive: 0,
+      expectedTypes: [],
+    });
+
+    expect(rowCount).toBe(rows.length);
+    expect(report.audit.totalRows).toBe(rows.length);
+    expect(report.audit.byType.ATTESTATION).toBeGreaterThan(0);
+    expect(report.passed).toBe(true);
   });
 });

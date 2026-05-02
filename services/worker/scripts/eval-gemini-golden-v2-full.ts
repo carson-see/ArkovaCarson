@@ -3,10 +3,11 @@
  * Full Gemini Golden v2 Eval — 100 samples, per-field F1 scoring.
  * Uses service account auth (never gcloud CLI).
  *
- * Usage: cd services/worker && GOOGLE_APPLICATION_CREDENTIALS=/Users/carson/arkova-sa-key.json npx tsx scripts/eval-gemini-golden-v2-full.ts
+ * Usage: cd services/worker && GOOGLE_APPLICATION_CREDENTIALS=/path/to/service-account.json npx tsx scripts/eval-gemini-golden-v2-full.ts
  */
 
 import { GoogleAuth } from 'google-auth-library';
+import { GEMINI_GENERATION_MODEL } from '../src/ai/gemini-config.js';
 import { FULL_GOLDEN_DATASET } from '../src/ai/eval/golden-dataset.js';
 import { GOLDEN_DATASET_PHASE10 } from '../src/ai/eval/golden-dataset-phase10.js';
 import { GOLDEN_DATASET_PHASE11 } from '../src/ai/eval/golden-dataset-phase11.js';
@@ -174,7 +175,7 @@ Return a JSON object with the extracted fields, a "confidence" number (0.0 to 1.
   // Save report
   const report = {
     timestamp: new Date().toISOString(),
-    model: 'gemini-golden-v2',
+    model: GEMINI_GENERATION_MODEL,
     endpoint: ENDPOINT,
     samples: total,
     errors,
