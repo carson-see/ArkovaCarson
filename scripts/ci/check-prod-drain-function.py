@@ -93,6 +93,13 @@ def execute_read_only_query() -> dict[str, object]:
       body = response.read().decode("utf-8")
   except urllib.error.HTTPError as error:
     body = error.read().decode("utf-8", errors="replace")
+    if error.code in (401, 403):
+      fail(
+        "SUPABASE_ACCESS_TOKEN cannot run the read-only prod function check "
+        f"(HTTP {error.code}). Rotate the GitHub Actions secret at "
+        "https://app.supabase.com/account/tokens with All projects scope, then "
+        "re-run Migration Drift Check before merging."
+      )
     preview = body[:300].replace("\n", " ")
     fail(f"Supabase read-only SQL endpoint returned HTTP {error.code}: {preview}")
   except urllib.error.URLError as error:

@@ -90,16 +90,12 @@ jobs:
           prod_response=$(cat /tmp/prod_response.json 2>/dev/null || echo "")
 
           if [ "$http_status" = "401" ] || [ "$http_status" = "403" ]; then
-            # Token is invalid/expired/revoked. Same posture as missing token:
-            # fail loud on main pushes, skip on PRs so a stale token doesn't
-            # block unrelated work. Operators should rotate at
-            # https://app.supabase.com/account/tokens.
-            if [ "${GITHUB_EVENT_NAME}" = "push" ] && [ "${GITHUB_REF}" = "refs/heads/main" ]; then
-              echo "::error title=Migration drift check auth failure::SUPABASE_ACCESS_TOKEN returned HTTP $http_status from Supabase Management API. The secret is set but the token is expired/revoked/insufficient. Rotate at https://app.supabase.com/account/tokens (scope: All projects) and update the SUPABASE_ACCESS_TOKEN Actions secret."
-              exit 1
-            fi
-            echo "::notice title=Migration drift check skipped::SUPABASE_ACCESS_TOKEN returned HTTP $http_status — token is set but invalid. Skipping on PR; operator must rotate before next main push."
-            exit 0
+            # Token is invalid/expired/revoked. Missing tokens can be expected
+            # for fork/Dependabot PRs, but a configured token that cannot read
+            # prod is an operations failure. Do not let migration PRs look green
+            # while the drift gate is blind.
+            echo "::error title=Migration drift check auth failure::SUPABASE_ACCESS_TOKEN returned HTTP $http_status from Supabase Management API. The secret is set but expired, revoked, or insufficient. Rotate it at https://app.supabase.com/account/tokens with All projects scope and update the SUPABASE_ACCESS_TOKEN Actions secret."
+            exit 1
           fi
 
           if [ "$http_status" != "200" ]; then
