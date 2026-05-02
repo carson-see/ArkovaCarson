@@ -1378,12 +1378,17 @@ describe('cron routes', () => {
       });
     });
 
-	    it('returns 500 with all errors when both refresh paths fail', async () => {
-	      const callRpcMock = callRpc as ReturnType<typeof vi.fn>;
-	      callRpcMock.mockResolvedValue({ data: null, error: { message: 'fail' } });
-	      const app = createApp();
+    it('returns 500 with all errors when both refresh paths fail', async () => {
+      const callRpcMock = callRpc as ReturnType<typeof vi.fn>;
+      callRpcMock.mockResolvedValue({ data: null, error: { message: 'fail' } });
+      const app = createApp();
       const res = await request(app).post('/cron/refresh-stats');
       expect(res.status).toBe(500);
+      expect(res.body).toMatchObject({
+        status: 'failed',
+        reason: 'all refresh paths failed',
+        refreshed: [],
+      });
       expect(res.body.errors).toHaveLength(2);
     });
   });
@@ -1714,8 +1719,10 @@ describe('cron routes', () => {
       (db.from as ReturnType<typeof vi.fn>).mockReturnValue({
         select: vi.fn().mockReturnValue({
           eq: vi.fn().mockReturnValue({
-            order: vi.fn().mockReturnValue({
-              limit: vi.fn().mockResolvedValue({ data: mockHistory, error: null }),
+            is: vi.fn().mockReturnValue({
+              order: vi.fn().mockReturnValue({
+                limit: vi.fn().mockResolvedValue({ data: mockHistory, error: null }),
+              }),
             }),
           }),
         }),
@@ -1732,8 +1739,10 @@ describe('cron routes', () => {
       (db.from as ReturnType<typeof vi.fn>).mockReturnValue({
         select: vi.fn().mockReturnValue({
           eq: vi.fn().mockReturnValue({
-            order: vi.fn().mockReturnValue({
-              limit: vi.fn().mockResolvedValue({ data: null, error: { message: 'DB error' } }),
+            is: vi.fn().mockReturnValue({
+              order: vi.fn().mockReturnValue({
+                limit: vi.fn().mockResolvedValue({ data: null, error: { message: 'DB error' } }),
+              }),
             }),
           }),
         }),

@@ -1233,7 +1233,14 @@ cronRouter.post('/refresh-stats', async (_req, res) => {
 
   if (errors.length === 2) {
     // Both failed — surface 500 so Cloud Scheduler retries.
-    res.status(500).json({ error: 'All refresh paths failed', errors });
+    res.status(500).json({
+      status: 'failed',
+      reason: 'all refresh paths failed',
+      refreshed: [],
+      succeeded: pipelineDashboardResult?.succeeded,
+      duration_ms: pipelineDashboardResult?.duration_ms,
+      errors,
+    });
     return;
   }
 
@@ -1363,6 +1370,7 @@ cronRouter.post('/smoke-test', async (_req, res) => {
       await db.from('audit_events').insert({
         event_type: 'smoke_test.completed',
         event_category: 'SYSTEM',
+        org_id: null,
         details: JSON.stringify({
           passed,
           failed,
@@ -1399,6 +1407,7 @@ cronRouter.get('/smoke-test/history', async (_req, res) => {
       .from('audit_events')
       .select('created_at, details')
       .eq('event_type', 'smoke_test.completed')
+      .is('org_id', null)
       .order('created_at', { ascending: false })
       .limit(20);
 

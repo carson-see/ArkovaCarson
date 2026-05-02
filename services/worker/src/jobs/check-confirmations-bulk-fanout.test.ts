@@ -72,6 +72,7 @@ vi.mock('../utils/verifyCache.js', () => ({ invalidateVerificationCache: vi.fn()
 
 // ---- System under test ----
 import { fanOutBulkSecuredWebhooks, fanOutSecuredAnchorWebhooks } from './check-confirmations.js';
+import { db } from '../utils/db.js';
 
 const TX = 'fake-tx-id';
 const BLOCK_HEIGHT = 850000;
@@ -126,6 +127,17 @@ describe('fanOutBulkSecuredWebhooks (SCRUM-1264 R2-1)', () => {
       'anchor.secured',
       'new-pub-2',
       expect.objectContaining({ public_id: 'new-pub-2' }),
+    );
+  });
+
+  it('short-circuits an empty drain-RPC anchor list without querying the DB', async () => {
+    await fanOutSecuredAnchorWebhooks([], TX, BLOCK_HEIGHT, BLOCK_TIMESTAMP);
+
+    expect(db.from).not.toHaveBeenCalled();
+    expect(mockDispatchWebhookEvent).not.toHaveBeenCalled();
+    expect(mockLogger.debug).toHaveBeenCalledWith(
+      expect.objectContaining({ txId: TX, anchorsTotal: 0 }),
+      expect.stringContaining('nothing to dispatch'),
     );
   });
 
