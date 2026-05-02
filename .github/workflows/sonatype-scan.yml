@@ -67,7 +67,7 @@ jobs:
 
       - name: Install deps (${{ matrix.workspace.name }})
         working-directory: ${{ matrix.workspace.path }}
-        run: npm ci --no-audit --no-fund
+        run: npm ci --ignore-scripts --no-audit --no-fund
 
       - name: Generate dependency manifest
         working-directory: ${{ matrix.workspace.path }}
