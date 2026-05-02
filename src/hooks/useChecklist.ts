@@ -40,15 +40,10 @@ async function fetchChecklistData(
   orgId: string | null | undefined,
   role: string | null | undefined,
 ): Promise<ChecklistData> {
-  const scopedAttestationCountQuery = orgId
-    ? supabase
-        .from('attestations')
-        .select('id', { count: 'exact', head: true })
-        .eq('attester_org_id', orgId)
-    : supabase
-        .from('attestations')
-        .select('id', { count: 'exact', head: true })
-        .eq('attester_user_id', userId);
+  const scopedAttestationCountQuery = supabase
+    .from('attestations')
+    .select('id', { count: 'exact', head: true })
+    .match(orgId ? { attester_org_id: orgId } : { attester_user_id: userId });
 
   const results = await Promise.allSettled([
     // Templates check (only for ORG_ADMIN)

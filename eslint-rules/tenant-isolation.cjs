@@ -87,6 +87,15 @@ function objectHasScopeColumn(node, allowedColumns) {
   });
 }
 
+function filterHasScopeColumn(node, allowedColumns) {
+  if (objectHasScopeColumn(node, allowedColumns)) return true;
+  if (!node || node.type !== 'ConditionalExpression') return false;
+  return (
+    filterHasScopeColumn(node.consequent, allowedColumns) &&
+    filterHasScopeColumn(node.alternate, allowedColumns)
+  );
+}
+
 function payloadHasScopeColumn(node, allowedColumns) {
   if (!node) return false;
   if (objectHasScopeColumn(node, allowedColumns)) return true;
@@ -162,7 +171,7 @@ module.exports = {
 
           if (method.type === 'Identifier' && method.name === 'match' && nextCall.arguments.length >= 1) {
             const filterArg = nextCall.arguments[0];
-            if (objectHasScopeColumn(filterArg, allowedColumns)) {
+            if (filterHasScopeColumn(filterArg, allowedColumns)) {
               hasOrgFilter = true;
               break;
             }

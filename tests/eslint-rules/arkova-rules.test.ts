@@ -190,6 +190,11 @@ describe('arkova/missing-org-filter', () => {
           supabase.from('attestations').select('*').match({ attester_org_id: orgId });
         `,
       },
+      {
+        code: `
+          supabase.from('attestations').select('id', { count: 'exact', head: true }).match(orgId ? { attester_org_id: orgId } : { attester_user_id: userId });
+        `,
+      },
     ],
     invalid: [
       {
