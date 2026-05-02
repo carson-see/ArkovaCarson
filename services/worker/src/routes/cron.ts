@@ -1163,6 +1163,8 @@ cronRouter.post('/regulatory-change-scan', async (_req, res) => {
 const PipelineDashboardCacheRefreshResultSchema = z.object({
   status: z.enum(['refreshed', 'skipped']),
   reason: z.string().optional(),
+  succeeded: z.number().int().nonnegative().optional(),
+  errors: z.array(z.unknown()).optional(),
   duration_ms: z.number().int().nonnegative().optional(),
 });
 

@@ -1242,7 +1242,15 @@ describe('cron routes', () => {
       // stale (the actual table the dashboard reads). Now drives both.
       const callRpcMock = callRpc as ReturnType<typeof vi.fn>;
       callRpcMock
-        .mockResolvedValueOnce({ data: { status: 'refreshed', duration_ms: 12 }, error: null })
+        .mockResolvedValueOnce({
+          data: {
+            status: 'refreshed',
+            succeeded: 6,
+            errors: [],
+            duration_ms: 12,
+          },
+          error: null,
+        })
         .mockResolvedValueOnce({ data: null, error: null });
       const app = createApp();
       const res = await request(app).post('/cron/refresh-stats');
@@ -1257,7 +1265,15 @@ describe('cron routes', () => {
     it('still returns 200 if the legacy mat-view refresh fails (non-fatal)', async () => {
       const callRpcMock = callRpc as ReturnType<typeof vi.fn>;
       callRpcMock
-        .mockResolvedValueOnce({ data: { status: 'refreshed', duration_ms: 12 }, error: null })
+        .mockResolvedValueOnce({
+          data: {
+            status: 'refreshed',
+            succeeded: 6,
+            errors: [],
+            duration_ms: 12,
+          },
+          error: null,
+        })
         .mockRejectedValueOnce(new Error('mat-view fail'));
       const app = createApp();
       const res = await request(app).post('/cron/refresh-stats');
