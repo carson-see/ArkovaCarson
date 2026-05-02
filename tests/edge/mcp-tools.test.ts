@@ -17,8 +17,8 @@ describe('handleAgentSearch', () => {
   });
 
   it('honors the advertised 100-result limit for record searches', async () => {
-    const fetchMock = vi.fn(async (...args: Parameters<typeof fetch>) => {
-      void args;
+    const fetchMock = vi.fn(async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+      if (!input || !init) throw new Error('Expected fetch input and init');
       return new Response(JSON.stringify([
         {
           public_id: 'ARK-REC-001',
@@ -52,8 +52,8 @@ describe('handleAgentSearch', () => {
   });
 
   it('clamps negative max_results to one result for org searches', async () => {
-    const fetchMock = vi.fn(async (...args: Parameters<typeof fetch>) => {
-      void args;
+    const fetchMock = vi.fn(async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+      if (!input || !init) throw new Error('Expected fetch input and init');
       return new Response(JSON.stringify([
         {
           public_id: 'org_acme',
@@ -83,8 +83,8 @@ describe('handleAgentSearch', () => {
   });
 
   it('escapes Postgres LIKE wildcards before record search RPC calls', async () => {
-    const fetchMock = vi.fn(async (...args: Parameters<typeof fetch>) => {
-      void args;
+    const fetchMock = vi.fn(async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+      if (!input || !init) throw new Error('Expected fetch input and init');
       return new Response(JSON.stringify([]), { status: 200 });
     });
     vi.stubGlobal('fetch', fetchMock);
