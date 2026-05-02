@@ -97,12 +97,18 @@ interface CliOptions {
   outPath: string | null;
 }
 
+/**
+ * Normalize credential type lists into a deterministic, uppercase set.
+ */
 function normalizeTypes(types: string[]): string[] {
   return [...new Set(types.map((type) => type.trim().toUpperCase()).filter(Boolean))].sort((a, b) =>
     a.localeCompare(b),
   );
 }
 
+/**
+ * Render a source path for reports without leaking local workstation prefixes.
+ */
 export function formatSourceFile(filePath: string): string {
   const normalized = filePath.replace(/\\/g, '/');
   if (!isAbsolute(filePath)) return normalized;
@@ -116,22 +122,37 @@ export function formatSourceFile(filePath: string): string {
   return basename(filePath);
 }
 
+/**
+ * Return true when a parsed structured output contains at least one fraud signal.
+ */
 function hasStructuredFraudSignals(value: unknown): boolean {
   return Array.isArray(value) && value.length > 0;
 }
 
+/**
+ * Narrow arbitrary JSON values to object records for safe property access.
+ */
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object';
 }
 
+/**
+ * Normalize chat/Vertex roles before routing text into prompt or output buckets.
+ */
 function normalizedRole(value: unknown): string {
   return typeof value === 'string' ? value.toLowerCase() : '';
 }
 
+/**
+ * Detect model-authored messages across Vertex and chat-completions shapes.
+ */
 function isAssistantRole(value: unknown): boolean {
   return ASSISTANT_ROLES.has(normalizedRole(value));
 }
 
+/**
+ * Create the mutable text bucket used while walking one golden JSONL row.
+ */
 function createTextBlobs(): TextBlobs {
   return {
     outputBlobs: [],
@@ -140,6 +161,9 @@ function createTextBlobs(): TextBlobs {
   };
 }
 
+/**
+ * Append Vertex `parts[].text` payloads into the requested text bucket.
+ */
 function appendPartTexts(parts: unknown, target: string[]): void {
   if (!Array.isArray(parts)) return;
   for (const part of parts) {
@@ -147,6 +171,9 @@ function appendPartTexts(parts: unknown, target: string[]): void {
   }
 }
 
+/**
+ * Collect prompt and model text from Vertex-style `contents` arrays.
+ */
 function collectVertexContents(contents: unknown, blobs: TextBlobs): void {
   if (!Array.isArray(contents)) return;
   for (const content of contents) {
@@ -156,6 +183,9 @@ function collectVertexContents(contents: unknown, blobs: TextBlobs): void {
   }
 }
 
+/**
+ * Collect prompt and assistant text from chat-completions `messages` arrays.
+ */
 function collectChatMessages(messages: unknown, blobs: TextBlobs): void {
   if (!Array.isArray(messages)) return;
   for (const message of messages) {
@@ -165,6 +195,9 @@ function collectChatMessages(messages: unknown, blobs: TextBlobs): void {
   }
 }
 
+/**
+ * Collect top-level or nested structured extraction output fields.
+ */
 function collectStructuredOutput(obj: Record<string, unknown>, blobs: TextBlobs): void {
   if (typeof obj.credentialType === 'string') {
     blobs.outputBlobs.push(JSON.stringify({ credentialType: obj.credentialType }));
@@ -176,6 +209,9 @@ function collectStructuredOutput(obj: Record<string, unknown>, blobs: TextBlobs)
   if (hasStructuredFraudSignals(obj.output.fraudSignals)) blobs.structuredFraudPositive = true;
 }
 
+/**
+ * Flatten all supported row shapes into output text, prompt text, and structured fraud state.
+ */
 function collectTextBlobs(parsed: unknown): TextBlobs {
   const blobs = createTextBlobs();
   if (!isRecord(parsed)) return blobs;
@@ -185,6 +221,9 @@ function collectTextBlobs(parsed: unknown): TextBlobs {
   return blobs;
 }
 
+/**
+ * Find the credential type, preferring model output and using prompt hints only as fallback.
+ */
 function findCredentialType(outputText: string, fallbackText: string): string | null {
   const credentialMatch = CREDENTIAL_TYPE_RE.exec(outputText) ?? CREDENTIAL_TYPE_RE.exec(fallbackText);
   if (credentialMatch) return credentialMatch[1];
@@ -215,6 +254,9 @@ export function parseGoldenLine(line: string): GoldenRow {
   return { credentialType, fraudPositive };
 }
 
+/**
+ * Aggregate parsed rows into total, unparseable, fraud-positive, and per-type counts.
+ */
 export function auditDistribution(rows: GoldenRow[]): DistributionAudit {
   const byType: Record<string, number> = {};
   let fraudPositive = 0;
@@ -230,6 +272,9 @@ export function auditDistribution(rows: GoldenRow[]): DistributionAudit {
   return { totalRows: rows.length, unparseableRows: unparseable, fraudPositive, byType };
 }
 
+/**
+ * Compare an aggregate audit against the launch acceptance gate.
+ */
 export function computeGap(audit: DistributionAudit, gate: AcceptanceGate): GapReport {
   const totalGap = Math.max(0, gate.minTotal - audit.totalRows);
   const fraudGap = Math.max(0, gate.minFraudPositive - audit.fraudPositive);
@@ -248,6 +293,9 @@ export function computeGap(audit: DistributionAudit, gate: AcceptanceGate): GapR
   return { audit, gate, totalGap, fraudGap, unparseableGap, typesUnderFloor, expectedTypes, passed };
 }
 
+/**
+ * Render a human-readable Markdown report suitable for committing to docs/eval.
+ */
 export function renderMarkdownReport(report: GapReport, sourceFiles: string[]): string {
   const { audit, gate, totalGap, fraudGap, unparseableGap, typesUnderFloor, expectedTypes, passed } = report;
   const sorted = normalizeTypes([...expectedTypes, ...Object.keys(audit.byType)])
@@ -301,10 +349,16 @@ export function renderMarkdownReport(report: GapReport, sourceFiles: string[]): 
   ].join('\n');
 }
 
+/**
+ * Format positive deficits with a leading plus sign for report tables.
+ */
 function formatGap(gap: number): string {
   return gap > 0 ? `+${gap}` : '0';
 }
 
+/**
+ * Load and parse all non-empty rows from a JSONL golden dataset file.
+ */
 export function loadJsonlRows(filePath: string): GoldenRow[] {
   const raw = readFileSync(filePath, 'utf-8');
   const rows: GoldenRow[] = [];
@@ -315,6 +369,9 @@ export function loadJsonlRows(filePath: string): GoldenRow[] {
   return rows;
 }
 
+/**
+ * Run the complete audit flow across one or more input files.
+ */
 export function runAudit(
   filePaths: string[],
   gate: AcceptanceGate,
@@ -328,6 +385,9 @@ export function runAudit(
   return { report, rowCount: allRows.length };
 }
 
+/**
+ * Prefer canonical golden files when present, otherwise fall back to the tracked fixture.
+ */
 function resolveDefaultInputs(): string[] {
   const canonicalTrain = resolve('training-data/gemini-golden-train.jsonl');
   const canonicalValidation = resolve('training-data/gemini-golden-validation.jsonl');
@@ -335,6 +395,9 @@ function resolveDefaultInputs(): string[] {
   return existsSync(canonicalTrain) ? [canonicalTrain, canonicalValidation] : [fixture];
 }
 
+/**
+ * Read the required value following a CLI flag and fail fast when absent.
+ */
 function readRequiredArgValue(args: string[], index: number, flag: string): string {
   const value = args[index + 1];
   if (value === undefined || value.trim() === '' || value.startsWith('--')) {
@@ -343,6 +406,9 @@ function readRequiredArgValue(args: string[], index: number, flag: string): stri
   return value;
 }
 
+/**
+ * Parse non-negative integer CLI thresholds with explicit error messages.
+ */
 function parseNonNegativeInt(value: string, flag: string): number {
   if (!/^\d+$/.test(value)) {
     throw new Error(`Invalid value for ${flag}: ${value}`);
@@ -350,6 +416,9 @@ function parseNonNegativeInt(value: string, flag: string): number {
   return Number.parseInt(value, 10);
 }
 
+/**
+ * Parse CLI arguments into input paths, output mode, and acceptance gate settings.
+ */
 export function parseCliArgs(args: string[]): CliOptions {
   const inputs: string[] = [];
   let minTotal = DEFAULT_MIN_TOTAL;
@@ -425,6 +494,9 @@ export function parseCliArgs(args: string[]): CliOptions {
 // CLI shim — only runs when invoked directly, not when imported by tests.
 // ---------------------------------------------------------------------------
 
+/**
+ * CLI entry point that writes a Markdown/JSON report and exits with gate status.
+ */
 function main(): void {
   try {
     const { inputs, gate, jsonOutput, outPath } = parseCliArgs(process.argv.slice(2));
