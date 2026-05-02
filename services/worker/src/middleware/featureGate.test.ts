@@ -76,24 +76,32 @@ describe('featureGate middleware', () => {
       vi.stubEnv('ENABLE_VERIFICATION_API', 'true');
       mockFlagRpc(null, { message: 'not found' });
       expect(await isVerificationApiEnabled()).toBe(false);
+      expect(await isVerificationApiEnabled()).toBe(false);
+      expect(mockedRpc).toHaveBeenCalledTimes(1);
     });
 
     it('fails closed when flag RPC returns non-boolean data without an error', async () => {
       vi.stubEnv('ENABLE_VERIFICATION_API', 'true');
       mockedRpc.mockResolvedValue({ data: null, error: null });
       expect(await isVerificationApiEnabled()).toBe(false);
+      expect(await isVerificationApiEnabled()).toBe(false);
+      expect(mockedRpc).toHaveBeenCalledTimes(1);
     });
 
     it('fails closed when get_flag returns a normalized RPC_THREW error', async () => {
       vi.stubEnv('ENABLE_VERIFICATION_API', 'true');
       mockFlagRpc(null, { message: 'connection refused', code: 'RPC_THREW' });
       expect(await isVerificationApiEnabled()).toBe(false);
+      expect(await isVerificationApiEnabled()).toBe(false);
+      expect(mockedRpc).toHaveBeenCalledTimes(1);
     });
 
     it('returns false on DB error when env var is not set', async () => {
       vi.stubEnv('ENABLE_VERIFICATION_API', undefined);
       mockFlagRpc(null, { message: 'connection refused', code: 'RPC_THREW' });
       expect(await isVerificationApiEnabled()).toBe(false);
+      expect(await isVerificationApiEnabled()).toBe(false);
+      expect(mockedRpc).toHaveBeenCalledTimes(1);
     });
 
     it('caches the result for subsequent calls', async () => {
@@ -142,6 +150,7 @@ describe('featureGate middleware', () => {
       await middleware(req, res, next);
 
       expect(next).not.toHaveBeenCalled();
+      expect(res.setHeader).toHaveBeenCalledWith('Retry-After', '60');
       expect(res.status).toHaveBeenCalledWith(503);
       expect(res.json).toHaveBeenCalledWith({
         error: 'service_unavailable',
@@ -159,6 +168,7 @@ describe('featureGate middleware', () => {
       await middleware(req, res, next);
 
       expect(next).not.toHaveBeenCalled();
+      expect(res.setHeader).toHaveBeenCalledWith('Retry-After', '60');
       expect(res.status).toHaveBeenCalledWith(503);
     });
 
@@ -171,6 +181,7 @@ describe('featureGate middleware', () => {
       await middleware(req, res, next);
 
       expect(next).not.toHaveBeenCalled();
+      expect(res.setHeader).toHaveBeenCalledWith('Retry-After', '60');
       expect(res.status).toHaveBeenCalledWith(503);
     });
   });
