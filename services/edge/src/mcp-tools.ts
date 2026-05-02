@@ -563,7 +563,7 @@ async function fetchPublicCredentialSearch(
   config: SupabaseConfig,
 ): Promise<Array<Record<string, unknown>>> {
   // INJ-01: Use RPC with bound parameters instead of URL interpolation.
-  const sanitizedQuery = query.replace(/[%_\\]/g, '\\$&');
+  const sanitizedQuery = query.replaceAll(/[%_\\]/g, String.raw`\$&`);
   const response = await supabaseFetch(config, '/rest/v1/rpc/search_public_credentials', {
     method: 'POST',
     body: JSON.stringify({ p_query: sanitizedQuery, p_limit: maxResults }),
@@ -639,7 +639,7 @@ async function searchAgentRecords(
   const resultType = input.type === 'document' ? 'document' : 'record';
   return records
     .filter((record): record is Record<string, unknown> & { public_id: string } => (
-      typeof (record as Record<string, unknown>).public_id === 'string'
+      typeof record.public_id === 'string'
     ))
     .map((record) => ({
       type: resultType,

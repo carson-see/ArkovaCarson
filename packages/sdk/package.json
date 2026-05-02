@@ -1,6 +1,6 @@
 {
   "name": "@arkova/sdk",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Arkova verification SDK — anchor and verify documents with cryptographic proof",
   "main": "dist/index.js",
   "module": "dist/index.mjs",

@@ -8,7 +8,7 @@
  */
 
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { accessSync, constants, existsSync, readFileSync } from 'node:fs';
 import { delimiter, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
@@ -175,7 +175,7 @@ function gitLsFiles(repo: string): string[] {
 }
 
 function resolveGitBinary(): string {
-  const gitBinary = GIT_BINARY_CANDIDATES.find((candidate) => existsSync(candidate));
+  const gitBinary = GIT_BINARY_CANDIDATES.find(isExecutableFile);
   if (gitBinary) return gitBinary;
 
   const pathGit = resolveGitBinaryFromFixedPathDirs();
@@ -194,11 +194,20 @@ function resolveGitBinaryFromFixedPathDirs(): string | null {
 
     const gitBinary = PATH_GIT_BINARY_NAMES
       .map((binaryName) => join(directory, binaryName))
-      .find((candidate) => existsSync(candidate));
+      .find(isExecutableFile);
     if (gitBinary) return gitBinary;
   }
 
   return null;
+}
+
+function isExecutableFile(candidate: string): boolean {
+  try {
+    accessSync(candidate, constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function main(): void {
