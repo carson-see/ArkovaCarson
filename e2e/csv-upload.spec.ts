@@ -2,169 +2,129 @@
  * CSV Upload E2E Tests (Tier 2)
  *
  * Tests for the bulk CSV upload wizard: file upload, column mapping,
- * validation errors, processing, and completion.
+ * validation errors, record counts, and reset behavior.
  *
  * @created 2026-03-10 11:30 PM EST
  */
 
+import type { Locator, Page } from '@playwright/test';
 import { test, expect } from './fixtures';
+
+async function openBulkUploadDialog(page: Page): Promise<Locator> {
+  await page.goto('/organization');
+
+  const uploadButton = page.getByRole('button', { name: /^Bulk Upload$/i });
+  await expect(uploadButton).toBeVisible({ timeout: 15_000 });
+  await uploadButton.click();
+
+  const dialog = page.getByRole('dialog', { name: /^Bulk Upload$/i });
+  await expect(dialog).toBeVisible({ timeout: 5_000 });
+  await expect(dialog.getByRole('heading', { name: 'Bulk Upload Records' })).toBeVisible();
+
+  return dialog;
+}
+
+async function expectUploadStep(dialog: Locator) {
+  await expect(dialog.getByText('Drop your CSV or Excel file here')).toBeVisible();
+  await expect(dialog.getByRole('button', { name: /^Select File$/i })).toBeVisible();
+  await expect(dialog.locator('input#csv-file-upload[type="file"]')).toBeAttached();
+  await expect(dialog.getByText(/Upload any spreadsheet/i)).toBeVisible();
+  await expect(dialog.getByText(/Auto-detected columns/i)).toBeVisible();
+}
+
+async function uploadCsv(dialog: Locator, name: string, rows: string[]) {
+  await dialog.locator('input#csv-file-upload[type="file"]').setInputFiles({
+    name,
+    mimeType: 'text/csv',
+    buffer: Buffer.from(rows.join('\n')),
+  });
+}
+
+async function expectReviewStep(dialog: Locator, validCount: number, invalidCount: number) {
+  await expect(
+    dialog.getByRole('heading', { name: 'Column Mapping' })
+  ).toBeVisible({ timeout: 10_000 });
+  const validRecordsLabel = dialog.getByText('Valid records', { exact: true });
+  const invalidRecordsLabel = dialog.getByText('Invalid records', { exact: true });
+
+  await expect(validRecordsLabel).toBeVisible();
+  await expect(invalidRecordsLabel).toBeVisible();
+  await expect(
+    validRecordsLabel.locator('xpath=preceding-sibling::div[1]')
+  ).toHaveText(String(validCount));
+  await expect(
+    invalidRecordsLabel.locator('xpath=preceding-sibling::div[1]')
+  ).toHaveText(String(invalidCount));
+}
 
 test.describe('CSV Upload Wizard', () => {
   test.describe('Upload Step', () => {
     test('bulk upload wizard shows upload UI', async ({ orgAdminPage }) => {
-      await orgAdminPage.goto('/organization');
-      await orgAdminPage.waitForTimeout(2000);
+      const dialog = await openBulkUploadDialog(orgAdminPage);
 
-      // Look for a bulk upload or CSV upload trigger
-      const uploadBtn = orgAdminPage.getByRole('button', { name: /Bulk Upload|CSV Upload|Import/i });
-      if (await uploadBtn.first().isVisible({ timeout: 5000 }).catch(() => false)) {
-        await uploadBtn.first().click();
-
-        // Should show upload UI with file input
-        await expect(
-          orgAdminPage.getByText(/Select CSV File/i)
-            .or(orgAdminPage.getByText(/Drop your CSV file/i))
-            .or(orgAdminPage.getByText(/Bulk Upload/i))
-        ).toBeVisible({ timeout: 5000 });
-
-        // Should explain required columns
-        await expect(
-          orgAdminPage.getByText(/fingerprint/i)
-        ).toBeVisible();
-      }
+      await expectUploadStep(dialog);
     });
 
     test('CSV file upload parses and shows review step', async ({ orgAdminPage }) => {
-      await orgAdminPage.goto('/organization');
-      await orgAdminPage.waitForTimeout(2000);
+      const dialog = await openBulkUploadDialog(orgAdminPage);
 
-      const uploadBtn = orgAdminPage.getByRole('button', { name: /Bulk Upload|CSV Upload|Import/i });
-      if (await uploadBtn.first().isVisible({ timeout: 5000 }).catch(() => false)) {
-        await uploadBtn.first().click();
+      await uploadCsv(dialog, 'e2e-bulk-test.csv', [
+        'fingerprint,filename,email',
+        `${'a'.repeat(64)},test_doc_1.pdf,test1@example.com`,
+        `${'b'.repeat(64)},test_doc_2.pdf,test2@example.com`,
+      ]);
 
-        await expect(
-          orgAdminPage.getByText(/Select CSV File/i)
-            .or(orgAdminPage.getByText(/Drop your CSV file/i))
-        ).toBeVisible({ timeout: 5000 });
-
-        // Upload a valid CSV file
-        const csvContent = [
-          'fingerprint,filename,email',
-          `${'a'.repeat(64)},test_doc_1.pdf,test1@example.com`,
-          `${'b'.repeat(64)},test_doc_2.pdf,test2@example.com`,
-        ].join('\n');
-
-        const fileInput = orgAdminPage.locator('input[type="file"]');
-        await fileInput.setInputFiles({
-          name: 'e2e-bulk-test.csv',
-          mimeType: 'text/csv',
-          buffer: Buffer.from(csvContent),
-        });
-
-        // Should advance to review/mapping step
-        await expect(
-          orgAdminPage.getByText(/Column Mapping/i)
-            .or(orgAdminPage.getByText(/Valid records/i))
-            .or(orgAdminPage.getByText(/Review/i))
-        ).toBeVisible({ timeout: 10000 });
-      }
+      await expectReviewStep(dialog, 2, 0);
+      await expect(dialog.getByRole('button', { name: /^Process 2 Records$/i })).toBeVisible();
     });
   });
 
   test.describe('Validation', () => {
     test('shows validation errors for invalid CSV rows', async ({ orgAdminPage }) => {
-      await orgAdminPage.goto('/organization');
-      await orgAdminPage.waitForTimeout(2000);
+      const dialog = await openBulkUploadDialog(orgAdminPage);
 
-      const uploadBtn = orgAdminPage.getByRole('button', { name: /Bulk Upload|CSV Upload|Import/i });
-      if (await uploadBtn.first().isVisible({ timeout: 5000 }).catch(() => false)) {
-        await uploadBtn.first().click();
+      await uploadCsv(dialog, 'e2e-invalid-csv.csv', [
+        'fingerprint,filename',
+        'invalid-not-a-hash,bad_document.pdf',
+        `${'c'.repeat(64)},good_document.pdf`,
+      ]);
 
-        await expect(
-          orgAdminPage.getByText(/Select CSV File/i)
-            .or(orgAdminPage.getByText(/Drop your CSV file/i))
-        ).toBeVisible({ timeout: 5000 });
-
-        // Upload CSV with invalid fingerprint
-        const csvContent = [
-          'fingerprint,filename',
-          'invalid-not-a-hash,bad_document.pdf',
-          `${'c'.repeat(64)},good_document.pdf`,
-        ].join('\n');
-
-        const fileInput = orgAdminPage.locator('input[type="file"]');
-        await fileInput.setInputFiles({
-          name: 'e2e-invalid-csv.csv',
-          mimeType: 'text/csv',
-          buffer: Buffer.from(csvContent),
-        });
-
-        // Should show validation errors
-        await expect(
-          orgAdminPage.getByText(/Validation Errors/i)
-            .or(orgAdminPage.getByText(/Invalid/i))
-            .or(orgAdminPage.getByText(/invalid/i))
-        ).toBeVisible({ timeout: 10000 });
-      }
+      await expectReviewStep(dialog, 1, 1);
+      await expect(dialog.getByText('Validation Errors')).toBeVisible();
+      await expect(
+        dialog.getByText('Invalid fingerprint format (expected 64-character hex)')
+      ).toBeVisible();
     });
 
     test('valid records count is displayed', async ({ orgAdminPage }) => {
-      await orgAdminPage.goto('/organization');
-      await orgAdminPage.waitForTimeout(2000);
+      const dialog = await openBulkUploadDialog(orgAdminPage);
 
-      const uploadBtn = orgAdminPage.getByRole('button', { name: /Bulk Upload|CSV Upload|Import/i });
-      if (await uploadBtn.first().isVisible({ timeout: 5000 }).catch(() => false)) {
-        await uploadBtn.first().click();
+      await uploadCsv(dialog, 'e2e-valid-csv.csv', [
+        'fingerprint,filename',
+        `${'d'.repeat(64)},valid_doc_1.pdf`,
+        `${'e'.repeat(64)},valid_doc_2.pdf`,
+        `${'f'.repeat(64)},valid_doc_3.pdf`,
+      ]);
 
-        await expect(
-          orgAdminPage.getByText(/Select CSV File/i)
-            .or(orgAdminPage.getByText(/Drop your CSV file/i))
-        ).toBeVisible({ timeout: 5000 });
-
-        // Upload valid CSV
-        const csvContent = [
-          'fingerprint,filename',
-          `${'d'.repeat(64)},valid_doc_1.pdf`,
-          `${'e'.repeat(64)},valid_doc_2.pdf`,
-          `${'f'.repeat(64)},valid_doc_3.pdf`,
-        ].join('\n');
-
-        const fileInput = orgAdminPage.locator('input[type="file"]');
-        await fileInput.setInputFiles({
-          name: 'e2e-valid-csv.csv',
-          mimeType: 'text/csv',
-          buffer: Buffer.from(csvContent),
-        });
-
-        // Should show valid records count
-        await expect(
-          orgAdminPage.getByText(/Valid records/i)
-        ).toBeVisible({ timeout: 10000 });
-      }
+      await expectReviewStep(dialog, 3, 0);
+      await expect(dialog.getByRole('button', { name: /^Process 3 Records$/i })).toBeVisible();
     });
   });
 
-  test.describe('Completion', () => {
-    test('upload another file button resets wizard', async ({ orgAdminPage }) => {
-      // This test verifies the reset flow exists
-      await orgAdminPage.goto('/organization');
-      await orgAdminPage.waitForTimeout(2000);
+  test.describe('Reset', () => {
+    test('back button resets wizard to upload step', async ({ orgAdminPage }) => {
+      const dialog = await openBulkUploadDialog(orgAdminPage);
 
-      const uploadBtn = orgAdminPage.getByRole('button', { name: /Bulk Upload|CSV Upload|Import/i });
-      if (await uploadBtn.first().isVisible({ timeout: 5000 }).catch(() => false)) {
-        await uploadBtn.first().click();
+      await uploadCsv(dialog, 'e2e-reset-csv.csv', [
+        'fingerprint,filename',
+        `${'1'.repeat(64)},reset_doc_1.pdf`,
+      ]);
 
-        // Verify the wizard is open
-        await expect(
-          orgAdminPage.getByText(/Select CSV File/i)
-            .or(orgAdminPage.getByText(/Drop your CSV file/i))
-            .or(orgAdminPage.getByText(/Bulk Upload/i))
-        ).toBeVisible({ timeout: 5000 });
+      await expectReviewStep(dialog, 1, 0);
+      await dialog.getByRole('button', { name: /^Back$/i }).click();
 
-        // Verify file input exists
-        const fileInput = orgAdminPage.locator('input[type="file"]');
-        await expect(fileInput).toBeAttached();
-      }
+      await expectUploadStep(dialog);
+      await expect(dialog.getByRole('heading', { name: 'Column Mapping' })).toBeHidden();
     });
   });
 });

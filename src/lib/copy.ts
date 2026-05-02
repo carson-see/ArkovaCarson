@@ -1100,6 +1100,7 @@ export const DATA_ERROR_LABELS = {
   STATS_UNAVAILABLE_TITLE: 'Pipeline stats temporarily unavailable',
   STATS_UNAVAILABLE_TRAILER: ' — showing last successful values.',
   RECORDS_FETCH_FAILED_TITLE: 'Records fetch failed',
+  TREASURY_UNAVAILABLE_TITLE: 'Treasury data temporarily unavailable',
   X402_UNAVAILABLE_TITLE: 'x402 stats unavailable',
   RETRY: 'Retry',
 } as const;

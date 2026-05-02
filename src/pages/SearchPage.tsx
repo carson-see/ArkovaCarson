@@ -145,6 +145,35 @@ export function SearchPage() {
     setPersonError(null);
     setPersonResults([]);
 
+    const normalizeRows = (rows: Record<string, unknown>[]): PersonResult[] => rows.map((row) => {
+      const inner = (row.search_public_credentials ?? row) as Record<string, unknown>;
+      return {
+        public_id: inner.public_id as string,
+        title: (inner.title as string | null) ?? (inner.filename as string | null) ?? null,
+        credential_type: (inner.credential_type as string | null) ?? null,
+        status: inner.status as string,
+        created_at: (inner.anchored_at as string) ?? (inner.created_at as string) ?? '',
+        org_id: (inner.issuer_public_id as string | null) ?? (inner.org_id as string | null) ?? null,
+      };
+    });
+
+    const searchViaRlsFallback = async (): Promise<PersonResult[]> => {
+      const trimmed = name.trim();
+      if (trimmed.length < 2) return [];
+
+      const { data, error: fallbackError } = await supabase
+        .from('anchors')
+        .select('public_id, filename, credential_type, status, created_at, org_id')
+        .is('deleted_at', null)
+        .in('status', ['SECURED', 'SUBMITTED'])
+        .ilike('filename', `%${trimmed}%`)
+        .limit(20);
+
+      if (fallbackError) throw fallbackError;
+
+      return normalizeRows((data as Record<string, unknown>[]) ?? []);
+    };
+
     try {
       // The `as any` cast predates the generated `Database` types covering
       // this RPC signature. Kept narrow here (one call-site) rather than
@@ -157,28 +186,26 @@ export function SearchPage() {
 
       if (rpcError) {
         console.error('[search] search_public_credentials RPC failed:', rpcError);
-        setPersonError('Search failed. Please try again.');
+        const fallbackRows = await searchViaRlsFallback();
+        setPersonResults(fallbackRows);
+        if (fallbackRows.length === 0) setPersonError(null);
         return;
       }
 
       // RPC returns rows with anchored_at (not created_at) — normalize field names
       const rows = (data as Record<string, unknown>[]) ?? [];
-      const unwrapped: PersonResult[] = rows.map((row) => {
-        const inner = (row.search_public_credentials ?? row) as Record<string, unknown>;
-        return {
-          public_id: inner.public_id as string,
-          title: (inner.title as string | null) ?? null,
-          credential_type: (inner.credential_type as string | null) ?? null,
-          status: inner.status as string,
-          created_at: (inner.anchored_at as string) ?? (inner.created_at as string) ?? '',
-          org_id: (inner.issuer_public_id as string | null) ?? (inner.org_id as string | null) ?? null,
-        };
-      });
-      setPersonResults(unwrapped);
+      setPersonResults(normalizeRows(rows));
     } catch (err) {
       // BUG-UAT5-01 surfaced this silently-caught TypeError — log it.
       console.error('[search] search_public_credentials threw:', err);
-      setPersonError('Search failed. Please try again.');
+      try {
+        const fallbackRows = await searchViaRlsFallback();
+        setPersonResults(fallbackRows);
+        setPersonError(null);
+      } catch (fallbackErr) {
+        console.error('[search] fallback public credentials search failed:', fallbackErr);
+        setPersonError('Search failed. Please try again.');
+      }
     } finally {
       setPersonSearching(false);
     }
@@ -318,6 +345,8 @@ export function SearchPage() {
               <Button
                 onClick={handleSearch}
                 disabled={isSearching || !query.trim()}
+                type="button"
+                aria-label={isSearching ? 'Searching' : 'Search'}
                 size="icon"
                 className="absolute right-1.5 top-1/2 -translate-y-1/2 bg-[#00d4ff] text-[#0d141b] hover:bg-[#00d4ff]/90 rounded-full shadow-glow-sm hover:shadow-glow-md h-9 w-9"
               >

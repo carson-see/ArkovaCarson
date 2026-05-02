@@ -385,6 +385,7 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
                 size="sm"
                 className="h-7 px-2 text-xs"
                 onClick={handleCopyFingerprint}
+                aria-label={copied ? 'Document fingerprint copied' : 'Copy document fingerprint'}
               >
                 {copied ? (
                   <>

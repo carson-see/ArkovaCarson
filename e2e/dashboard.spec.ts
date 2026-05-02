@@ -8,14 +8,20 @@
  */
 
 import { test, expect } from './fixtures';
+import {
+  getSecureDocumentButton,
+  getSecureDocumentDialog,
+  openDashboard,
+  openSecureDocumentDialog,
+} from './helpers/dashboard';
 
 test.describe('Dashboard', () => {
   test.describe('Individual User Dashboard', () => {
-    test('dashboard loads with welcome message and stats', async ({ individualPage }) => {
-      await individualPage.goto('/dashboard');
+    test('dashboard loads with profile summary and stats', async ({ individualPage }) => {
+      await openDashboard(individualPage);
 
-      // Welcome message
-      await expect(individualPage.getByText(/Welcome back/i)).toBeVisible({ timeout: 10000 });
+      // Profile summary
+      await expect(individualPage.locator('#main-content')).toContainText(/Jamie Demo-User/i);
 
       // Stats cards
       await expect(individualPage.getByText('Total Records')).toBeVisible();
@@ -24,7 +30,7 @@ test.describe('Dashboard', () => {
     });
 
     test('My Records section is visible', async ({ individualPage }) => {
-      await individualPage.goto('/dashboard');
+      await openDashboard(individualPage);
 
       await expect(individualPage.getByRole('heading', { name: 'My Records' })).toBeVisible({
         timeout: 10000,
@@ -32,53 +38,40 @@ test.describe('Dashboard', () => {
     });
 
     test('Secure Document button is visible and clickable', async ({ individualPage }) => {
-      await individualPage.goto('/dashboard');
+      await openDashboard(individualPage);
 
-      const secureBtn = individualPage.getByRole('button', { name: /Secure Document/i });
-      await expect(secureBtn.first()).toBeVisible({ timeout: 10000 });
+      await expect(getSecureDocumentButton(individualPage)).toBeVisible({ timeout: 10000 });
     });
 
     test('Secure Document button opens dialog', async ({ individualPage }) => {
-      await individualPage.goto('/dashboard');
-      await individualPage.waitForTimeout(2000); // Wait for page to fully load
-
-      const secureBtn = individualPage.getByRole('button', { name: /Secure Document/i });
-      await secureBtn.first().click();
+      await openSecureDocumentDialog(individualPage);
 
       // Dialog should appear
-      await expect(
-        individualPage.getByRole('heading', { name: /Secure Document/i })
-      ).toBeVisible({ timeout: 5000 });
+      await expect(getSecureDocumentDialog(individualPage)).toBeVisible({ timeout: 5000 });
     });
 
     test('privacy toggle is present', async ({ individualPage }) => {
-      await individualPage.goto('/dashboard');
+      await openDashboard(individualPage);
 
-      await expect(
-        individualPage.getByText('Public Verification Profile')
-      ).toBeVisible({ timeout: 10000 });
+      await expect(individualPage.locator('#main-content')).toContainText(/Public profile/i);
     });
   });
 
   test.describe('Org Admin Dashboard', () => {
     test('org admin sees dashboard with records', async ({ orgAdminPage }) => {
-      await orgAdminPage.goto('/dashboard');
+      await openDashboard(orgAdminPage);
 
-      // Should show dashboard or redirect to appropriate page
-      await expect(
-        orgAdminPage.getByText(/Welcome/i)
-          .or(orgAdminPage.getByText(/Dashboard/i))
-          .or(orgAdminPage.getByText(/Organization/i))
-      ).toBeVisible({ timeout: 10000 });
+      // Should show org-admin dashboard content
+      await expect(orgAdminPage.locator('#main-content')).toContainText(
+        /Audit My Organization|Total Records|Monthly Usage/i,
+        { timeout: 10000 },
+      );
     });
   });
 
   test.describe('Navigation', () => {
     test('clicking a record navigates to record detail', async ({ individualPage }) => {
-      await individualPage.goto('/dashboard');
-
-      // Wait for records list to load
-      await individualPage.waitForTimeout(3000);
+      await openDashboard(individualPage);
 
       // Look for any record row with an actions menu
       const actionsButton = individualPage.getByRole('button', { name: /Actions/i });

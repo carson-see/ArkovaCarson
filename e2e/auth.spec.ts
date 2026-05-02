@@ -6,7 +6,7 @@
  * @updated 2026-03-10 10:30 PM EST — migrated to shared fixtures
  */
 
-import { test, expect, SEED_USERS } from './fixtures';
+import { test, expect, SEED_USERS, getServiceClient } from './fixtures';
 
 // Auth spec tests the login/signup forms themselves — they must start
 // unauthenticated. Override the project-level storageState so the
@@ -29,7 +29,7 @@ test.describe('Authentication', () => {
   test('shows Google OAuth button', async ({ page }) => {
     await page.goto('/login');
 
-    await expect(page.getByRole('button', { name: /Continue with Google/i })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Google' })).toBeVisible();
   });
 
   test('can navigate to signup form', async ({ page }) => {
@@ -42,18 +42,17 @@ test.describe('Authentication', () => {
     await expect(page.getByRole('button', { name: 'Create account' })).toBeVisible();
   });
 
-  test('signup shows "Check your email" success state', async ({ page }) => {
+  test('signup creates account and enters the authenticated app', async ({ page }) => {
     await page.goto('/signup');
 
     await page.getByLabel('Full name').fill('Test User');
-    await page.getByLabel('Email address').fill('test@example.com');
+    await page.getByLabel('Email address').fill(`test-${Date.now()}@example.com`);
     await page.getByLabel('Password', { exact: true }).fill('testpassword123');
     await page.getByLabel('Confirm password').fill('testpassword123');
 
     await page.getByRole('button', { name: 'Create account' }).click();
 
-    // Note: May fail if Supabase not running or email rate limited
-    await expect(page.getByText(/Check your email/i)).toBeVisible({ timeout: 10000 });
+    await page.waitForURL(/\/(dashboard|onboarding|review-pending)/, { timeout: 15000 });
   });
 
   test('shows validation error for password mismatch', async ({ page }) => {
@@ -79,32 +78,75 @@ test.describe('Authentication', () => {
 
     await page.getByRole('button', { name: 'Create account' }).click();
 
-    await expect(page.getByText(/at least 8 characters/i)).toBeVisible();
+    await expect(page.getByLabel('Password', { exact: true })).toBeFocused();
+    await expect
+      .poll(async () =>
+        page.getByLabel('Password', { exact: true }).evaluate((input) => ({
+          valid: (input as HTMLInputElement).validity.valid,
+          message: (input as HTMLInputElement).validationMessage,
+        }))
+      )
+      .toMatchObject({ valid: false, message: /8/ });
   });
 
   test('sign out redirects to auth page', async ({ page }) => {
-    // Log in with seed user via shared helper
-    await page.goto('/login');
-    await page.getByLabel('Email address').fill(SEED_USERS.individual.email);
-    await page.getByLabel('Password').fill(SEED_USERS.individual.password);
-    await page.getByRole('button', { name: 'Sign in' }).click();
+    const serviceClient = getServiceClient();
+    const email = `e2e-signout-${Date.now()}-${Math.random().toString(36).slice(2)}@test.arkova.io`;
+    let userId: string | null = null;
 
-    await page.waitForURL(/\/(vault|dashboard|onboarding)/, { timeout: 10000 });
+    try {
+      const { data: created, error: createError } = await serviceClient.auth.admin.createUser({
+        email,
+        password: SEED_USERS.individual.password,
+        email_confirm: true,
+        user_metadata: { full_name: 'Jamie Demo-User' },
+      });
 
-    // Open user dropdown and sign out
-    const userMenuTrigger = page.locator('[data-testid="user-menu-trigger"]')
-      .or(page.getByRole('button', { name: /avatar|profile|user|menu/i }));
+      if (createError || !created.user) {
+        throw new Error(`Failed to create sign-out test user: ${createError?.message}`);
+      }
 
-    if (await userMenuTrigger.isVisible({ timeout: 3000 }).catch(() => false)) {
-      await userMenuTrigger.click();
+      userId = created.user.id;
+
+      const { error: profileError } = await serviceClient
+        .from('profiles')
+        .upsert({
+          id: userId,
+          email,
+          full_name: 'Jamie Demo-User',
+          role: 'INDIVIDUAL',
+          org_id: null,
+          is_public_profile: false,
+          is_platform_admin: false,
+          disclaimer_accepted_at: new Date().toISOString(),
+        });
+
+      if (profileError) {
+        throw new Error(`Failed to prepare sign-out test profile: ${profileError.message}`);
+      }
+
+      await page.goto('/login');
+      await page.getByLabel('Email address').fill(email);
+      await page.getByLabel('Password').fill(SEED_USERS.individual.password);
+      await page.getByRole('button', { name: 'Sign in' }).click();
+
+      await page.waitForURL(/\/(vault|dashboard|onboarding)/, { timeout: 10000 });
+
+      // Open user dropdown and sign out. The disposable user prevents this
+      // test from invalidating the shared storageState seed session.
+      await page.getByRole('button', { name: /Jamie Demo.*User/i }).click();
+
+      await page.getByRole('menuitem', { name: 'Sign out' })
+        .or(page.getByRole('button', { name: 'Sign out' }))
+        .click();
+
+      // signOut hard-redirects to /login (src/hooks/useAuth.ts), not /auth.
+      await expect(page).toHaveURL(/\/login/, { timeout: 10000 });
+      await expect(page.getByLabel('Email address')).toBeVisible();
+    } finally {
+      if (userId) {
+        await serviceClient.auth.admin.deleteUser(userId);
+      }
     }
-
-    await page.getByRole('menuitem', { name: 'Sign out' })
-      .or(page.getByRole('button', { name: 'Sign out' }))
-      .click();
-
-    // signOut hard-redirects to /login (src/hooks/useAuth.ts), not /auth.
-    await expect(page).toHaveURL(/\/login/, { timeout: 10000 });
-    await expect(page.getByLabel('Email address')).toBeVisible();
   });
 });

@@ -7,7 +7,12 @@
  * @created 2026-03-10 11:00 PM EST
  */
 
-import { test, expect, getServiceClient } from './fixtures';
+import { test, expect, getServiceClient, SEED_USERS } from './fixtures';
+import {
+  expectSecureDocumentUploadStep,
+  getSecureDocumentDialog,
+  openSecureDocumentDialog,
+} from './helpers/dashboard';
 
 test.describe('Anchor Creation (Secure Document)', () => {
   const serviceClient = getServiceClient();
@@ -19,58 +24,40 @@ test.describe('Anchor Creation (Secure Document)', () => {
   }
 
   test('Secure Document dialog opens and shows upload step', async ({ individualPage }) => {
-    await individualPage.goto('/dashboard');
-    await individualPage.waitForTimeout(2000);
-
-    // Click Secure Document button
-    const secureBtn = individualPage.getByRole('button', { name: /Secure Document/i });
-    await secureBtn.first().click();
+    await openSecureDocumentDialog(individualPage);
+    const dialog = getSecureDocumentDialog(individualPage);
 
     // Dialog should show upload UI
     await expect(
-      individualPage.getByText(/Create a permanent, tamper-proof record/i)
+      dialog.getByText(/Create a permanent, tamper-proof record/i)
     ).toBeVisible({ timeout: 5000 });
 
     // Should show drag & drop area
-    await expect(
-      individualPage.getByText(/Drag and drop/i).or(individualPage.getByText(/Select Document/i))
-    ).toBeVisible();
+    await expectSecureDocumentUploadStep(individualPage);
 
     // Should show privacy notice
-    await expect(individualPage.getByText(/never leaves your device/i)).toBeVisible();
+    await expect(dialog.getByText(/never leaves your device/i)).toBeVisible();
   });
 
   test('Continue button is disabled until file is selected', async ({ individualPage }) => {
-    await individualPage.goto('/dashboard');
-    await individualPage.waitForTimeout(2000);
-
-    const secureBtn = individualPage.getByRole('button', { name: /Secure Document/i });
-    await secureBtn.first().click();
-
-    await expect(
-      individualPage.getByText(/Drag and drop/i).or(individualPage.getByText(/Select Document/i))
-    ).toBeVisible({ timeout: 5000 });
+    await openSecureDocumentDialog(individualPage);
+    await expectSecureDocumentUploadStep(individualPage);
+    const dialog = getSecureDocumentDialog(individualPage);
 
     // Continue button should be disabled
-    const continueBtn = individualPage.getByRole('button', { name: /Continue/i });
+    const continueBtn = dialog.locator('button').filter({ hasText: /Continue/i });
     if (await continueBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
       await expect(continueBtn).toBeDisabled();
     }
   });
 
   test('file upload generates fingerprint', async ({ individualPage }) => {
-    await individualPage.goto('/dashboard');
-    await individualPage.waitForTimeout(2000);
-
-    const secureBtn = individualPage.getByRole('button', { name: /Secure Document/i });
-    await secureBtn.first().click();
-
-    await expect(
-      individualPage.getByText(/Drag and drop/i).or(individualPage.getByText(/Select Document/i))
-    ).toBeVisible({ timeout: 5000 });
+    await openSecureDocumentDialog(individualPage);
+    await expectSecureDocumentUploadStep(individualPage);
+    const dialog = getSecureDocumentDialog(individualPage);
 
     // Upload a test file via the hidden file input
-    const fileInput = individualPage.locator('input[type="file"]');
+    const fileInput = dialog.locator('input[type="file"]');
     await fileInput.setInputFiles({
       name: 'e2e-test-document.pdf',
       mimeType: 'application/pdf',
@@ -78,70 +65,66 @@ test.describe('Anchor Creation (Secure Document)', () => {
     });
 
     // Fingerprint should appear after processing
-    await expect(individualPage.getByText('Document Fingerprint')).toBeVisible({ timeout: 10000 });
+    await expect(dialog.getByText('Document Fingerprint')).toBeVisible({ timeout: 10000 });
 
     // Continue button should now be enabled
-    const continueBtn = individualPage.getByRole('button', { name: /Continue/i });
+    const continueBtn = dialog.locator('button').filter({ hasText: /Continue/i });
     await expect(continueBtn).toBeEnabled({ timeout: 5000 });
   });
 
-  test('confirm step shows file details and Secure Document button', async ({
+  test('Continue submits the file and creates an anchor record', async ({
     individualPage,
   }) => {
-    await individualPage.goto('/dashboard');
-    await individualPage.waitForTimeout(2000);
-
-    const secureBtn = individualPage.getByRole('button', { name: /Secure Document/i });
-    await secureBtn.first().click();
-
-    await individualPage
-      .getByText(/Drag and drop/i)
-      .or(individualPage.getByText(/Select Document/i))
-      .waitFor({ timeout: 5000 });
+    await openSecureDocumentDialog(individualPage);
+    await expectSecureDocumentUploadStep(individualPage);
+    const dialog = getSecureDocumentDialog(individualPage);
+    const timestamp = Date.now();
+    const fileName = `e2e-submit-test-${timestamp}.pdf`;
 
     // Upload test file
-    const fileInput = individualPage.locator('input[type="file"]');
+    const fileInput = dialog.locator('input[type="file"]');
     await fileInput.setInputFiles({
-      name: 'e2e-confirm-test.pdf',
+      name: fileName,
       mimeType: 'application/pdf',
-      buffer: Buffer.from('E2E confirm step test content'),
+      buffer: Buffer.from(`E2E submit test content ${timestamp}`),
     });
 
-    await expect(individualPage.getByText('Document Fingerprint')).toBeVisible({ timeout: 10000 });
+    await expect(dialog.getByText('Document Fingerprint')).toBeVisible({ timeout: 10000 });
 
-    // Click Continue to advance to confirm step
-    await individualPage.getByRole('button', { name: /Continue/i }).click();
+    // Click Continue to submit the document. The current product flow may
+    // go straight to anchoring when AI extraction is disabled.
+    await dialog.locator('button').filter({ hasText: /Continue/i }).click();
 
-    // Confirm step should show
-    await expect(
-      individualPage.getByText(/Ready to Secure/i).or(individualPage.getByText(/e2e-confirm-test/i))
-    ).toBeVisible({ timeout: 5000 });
+    let createdAnchorId: string | null = null;
+    await expect.poll(async () => {
+      const { data } = await serviceClient
+        .from('anchors')
+        .select('id')
+        .eq('user_id', SEED_USERS.individual.id)
+        .eq('filename', fileName)
+        .maybeSingle();
+      createdAnchorId = data?.id ?? null;
+      return createdAnchorId;
+    }, { timeout: 10_000 }).not.toBeNull();
 
-    // Secure Document action button should be present
-    const secureActionBtn = individualPage.getByRole('button', { name: /Secure Document/i });
-    await expect(secureActionBtn).toBeVisible();
+    if (createdAnchorId) {
+      await cleanupAnchor(createdAnchorId);
+    }
   });
 
   test('cancel closes the dialog without creating a record', async ({ individualPage }) => {
-    await individualPage.goto('/dashboard');
-    await individualPage.waitForTimeout(2000);
+    await openSecureDocumentDialog(individualPage);
+    const dialog = getSecureDocumentDialog(individualPage);
 
-    const secureBtn = individualPage.getByRole('button', { name: /Secure Document/i });
-    await secureBtn.first().click();
-
-    await expect(
-      individualPage.getByRole('heading', { name: /Secure Document/i })
-    ).toBeVisible({ timeout: 5000 });
+    await expect(dialog).toBeVisible({ timeout: 5000 });
 
     // Click cancel/close
-    const cancelBtn = individualPage.getByRole('button', { name: /Cancel|Close/i });
+    const cancelBtn = dialog.locator('button').filter({ hasText: /Cancel|Close/i });
     if (await cancelBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
       await cancelBtn.click();
 
       // Dialog should close
-      await expect(
-        individualPage.getByRole('heading', { name: /Secure Document/i })
-      ).not.toBeVisible({ timeout: 3000 });
+      await expect(getSecureDocumentDialog(individualPage)).not.toBeVisible({ timeout: 3000 });
     }
   });
 });

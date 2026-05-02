@@ -57,15 +57,16 @@ test.describe('Public org page — anonymous visitor', () => {
       await page.goto(ORG_PAGE_PATH);
       await expect(page.getByText(/Arkova/i).first()).toBeVisible({ timeout: 15000 });
 
-      await expect(page.locator('meta[property="og:type"]')).toHaveAttribute('content', 'profile');
-      await expect(page.locator('meta[property="og:title"]')).toHaveAttribute(
+      await expect(page.locator('meta[property="og:type"][content="profile"]')).toHaveCount(1);
+      await expect(page.locator('meta[property="og:title"]').last()).toHaveAttribute(
         'content',
         /Arkova/i,
       );
-      await expect(page.locator('meta[property="og:url"]')).toHaveAttribute('content', ORG_PAGE_URL_RE);
+      await expect(page.locator('meta[property="og:url"]').last()).toHaveAttribute('content', ORG_PAGE_URL_RE);
 
       const twitterCard = await page
         .locator('meta[name="twitter:card"]')
+        .last()
         .getAttribute('content');
       expect(['summary', 'summary_large_image']).toContain(twitterCard);
     });

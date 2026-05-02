@@ -20,13 +20,18 @@ function createTestFile(name: string): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'arkova-e2e-'));
   const filePath = path.join(dir, name);
   // Minimal PDF structure (valid enough for fingerprinting)
-  fs.writeFileSync(filePath, '%PDF-1.4\n1 0 obj\n<< /Type /Catalog >>\nendobj\n%%EOF\n');
+  fs.writeFileSync(filePath, `%PDF-1.4\n% ${name} ${Date.now()} ${Math.random()}\n1 0 obj\n<< /Type /Catalog >>\nendobj\n%%EOF\n`);
   return filePath;
 }
 
 test.describe('Secure Document Flow', () => {
   const serviceClient = getServiceClient();
   let testFilePath: string;
+
+  async function openRecordsPage(page: import('@playwright/test').Page) {
+    await page.goto('/records');
+    await expect(page.locator('#main-content').getByRole('heading', { name: 'My Records' })).toBeVisible({ timeout: 10000 });
+  }
 
   test.beforeAll(() => {
     testFilePath = createTestFile('e2e_secure_test.pdf');
@@ -55,8 +60,7 @@ test.describe('Secure Document Flow', () => {
   });
 
   test('opens Secure Document dialog from My Records page', async ({ individualPage }) => {
-    await individualPage.goto('/records');
-    await expect(individualPage.getByText('My Records')).toBeVisible({ timeout: 10000 });
+    await openRecordsPage(individualPage);
 
     // Click Secure Document button
     await individualPage.getByRole('button', { name: /Secure Document/i }).click();
@@ -67,15 +71,14 @@ test.describe('Secure Document Flow', () => {
   });
 
   test('shows file upload zone in dialog', async ({ individualPage }) => {
-    await individualPage.goto('/records');
-    await expect(individualPage.getByText('My Records')).toBeVisible({ timeout: 10000 });
+    await openRecordsPage(individualPage);
 
     await individualPage.getByRole('button', { name: /Secure Document/i }).click();
     await expect(individualPage.getByText('Secure Document').first()).toBeVisible();
 
     // Upload zone elements
     await expect(individualPage.getByText(/Drag and drop/i)).toBeVisible();
-    await expect(individualPage.getByRole('button', { name: /Select Document/i })).toBeVisible();
+    await expect(individualPage.getByRole('button', { name: 'Select Document', exact: true })).toBeVisible();
 
     // Privacy notice
     await expect(individualPage.getByText(/never leaves your device/i)).toBeVisible();
@@ -85,8 +88,7 @@ test.describe('Secure Document Flow', () => {
   });
 
   test('Cancel button closes dialog', async ({ individualPage }) => {
-    await individualPage.goto('/records');
-    await expect(individualPage.getByText('My Records')).toBeVisible({ timeout: 10000 });
+    await openRecordsPage(individualPage);
 
     await individualPage.getByRole('button', { name: /Secure Document/i }).click();
     await expect(individualPage.getByText('Secure Document').first()).toBeVisible();
@@ -99,8 +101,7 @@ test.describe('Secure Document Flow', () => {
   });
 
   test('uploading a file enables Continue button', async ({ individualPage }) => {
-    await individualPage.goto('/records');
-    await expect(individualPage.getByText('My Records')).toBeVisible({ timeout: 10000 });
+    await openRecordsPage(individualPage);
 
     await individualPage.getByRole('button', { name: /Secure Document/i }).click();
     await expect(individualPage.getByText('Secure Document').first()).toBeVisible();
@@ -121,8 +122,7 @@ test.describe('Secure Document Flow', () => {
     const uniqueFilePath = createTestFile(`e2e_secure_test_${Date.now()}.pdf`);
 
     try {
-      await individualPage.goto('/records');
-      await expect(individualPage.getByText('My Records')).toBeVisible({ timeout: 10000 });
+      await openRecordsPage(individualPage);
 
       // Step 1: Open dialog
       await individualPage.getByRole('button', { name: /Secure Document/i }).click();
@@ -207,8 +207,7 @@ test.describe('Secure Document Flow', () => {
     const uniqueFilePath = createTestFile(`e2e_secure_done_${Date.now()}.pdf`);
 
     try {
-      await individualPage.goto('/records');
-      await expect(individualPage.getByText('My Records')).toBeVisible({ timeout: 10000 });
+      await openRecordsPage(individualPage);
 
       await individualPage.getByRole('button', { name: /Secure Document/i }).click();
       await expect(individualPage.getByText('Secure Document').first()).toBeVisible();

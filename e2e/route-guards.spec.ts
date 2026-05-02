@@ -6,13 +6,17 @@
  * @updated 2026-03-10 10:30 PM EST — migrated to shared fixtures
  */
 
-import { test, expect, SEED_USERS } from './fixtures';
+import { test, expect, getServiceClient, SEED_USERS } from './fixtures';
+import type { BrowserContext } from '@playwright/test';
+import { createClient } from '@supabase/supabase-js';
 
 // Route guard specs test unauthenticated redirect behavior and
 // mid-onboarding flows — must start with no saved session.
 test.use({ storageState: { cookies: [], origins: [] } });
 
 test.describe('Route Guards', () => {
+  const serviceClient = getServiceClient();
+
   test.describe('Unauthenticated Access', () => {
     test('redirects /records to auth when not logged in', async ({ page }) => {
       await page.goto('/records');
@@ -58,11 +62,10 @@ test.describe('Route Guards', () => {
       await page.goto('/dashboard');
       await expect(page).toHaveURL(/\/dashboard(\/|\?|$)/);
 
-      await expect(
-        page.getByText(/Welcome back/i)
-          .or(page.getByText(/My Records/i))
-          .or(page.getByText(/Secure Document/i))
-      ).toBeVisible({ timeout: 10000 });
+      await expect(page.locator('#main-content')).toContainText(
+        /My Records|Secure Document|Total Records/i,
+        { timeout: 10000 },
+      );
     });
   });
 
@@ -73,48 +76,93 @@ test.describe('Route Guards', () => {
       await page.goto('/dashboard');
       await expect(page).toHaveURL(/\/dashboard(\/|\?|$)/);
 
-      await expect(
-        page.getByText(/Dashboard/i)
-          .or(page.getByText(/Organization/i))
-          .or(page.getByText(/Welcome/i))
-      ).toBeVisible({ timeout: 10000 });
+      await expect(page.locator('#main-content')).toContainText(
+        /Audit My Organization|Total Records|Monthly Usage/i,
+        { timeout: 10000 },
+      );
     });
   });
 
   test.describe('Mid-Onboarding Redirect', () => {
-    test('user with no role is redirected from /dashboard to /onboarding/role', async ({ page }) => {
-      // Sign up a fresh user with no role (mid-onboarding state)
+    test('user with no role is redirected from /dashboard to /onboarding/role', async ({ browser }) => {
       const timestamp = Date.now();
       const email = `e2e-norole-${timestamp}@test.arkova.io`;
       const password = SEED_USERS.individual.password;
+      let context: BrowserContext | null = null;
+      let userId: string | null = null;
 
-      await page.goto('/signup');
-      await page.getByLabel('Full name').fill('No Role User');
-      await page.getByLabel('Email address').fill(email);
-      await page.getByLabel('Password', { exact: true }).fill(password);
-      await page.getByLabel('Confirm password').fill(password);
-      await page.getByRole('button', { name: 'Create account' }).click();
+      try {
+        const { data: created, error: createError } = await serviceClient.auth.admin.createUser({
+          email,
+          password,
+          email_confirm: true,
+          user_metadata: { full_name: 'No Role User' },
+        });
 
-      // In local dev, Supabase auto-confirms email
-      await page.waitForURL(/\/(onboarding\/role|auth)/, { timeout: 15000 }).catch(() => {
-        // Auto-confirm may be off — OK, test validates route guard below
-      });
+        if (createError || !created.user) {
+          throw new Error(`Failed to create no-role test user: ${createError?.message}`);
+        }
 
-      // If ended up on email confirmation page, log in manually
-      if (page.url().includes('/auth') || await page.getByText(/Check your email/i).isVisible().catch(() => false)) {
-        await page.goto('/login');
-        await page.getByLabel('Email address').fill(email);
-        await page.getByLabel('Password').fill(password);
-        await page.getByRole('button', { name: 'Sign in' }).click();
-        await page.waitForURL(/\/(onboarding|vault|dashboard)/, { timeout: 10000 });
+        userId = created.user.id;
+
+        const { error: profileError } = await serviceClient
+          .from('profiles')
+          .upsert({
+            id: userId,
+            email,
+            full_name: 'No Role User',
+            role: null,
+            org_id: null,
+            is_public_profile: false,
+            is_platform_admin: false,
+            disclaimer_accepted_at: new Date().toISOString(),
+          });
+
+        if (profileError) {
+          throw new Error(`Failed to prepare no-role seed profile: ${profileError.message}`);
+        }
+
+        const userClient = createClient(
+          process.env.E2E_SUPABASE_URL || 'http://127.0.0.1:54321',
+          process.env.VITE_SUPABASE_ANON_KEY || '',
+        );
+        const { data: sessionData, error: signInError } = await userClient.auth.signInWithPassword({
+          email,
+          password,
+        });
+
+        if (signInError || !sessionData.session) {
+          throw new Error(`Failed to sign in no-role test user: ${signInError?.message}`);
+        }
+
+        context = await browser.newContext({
+          storageState: {
+            cookies: [],
+            origins: [{
+              origin: 'http://localhost:5173',
+              localStorage: [{
+                name: 'sb-127-auth-token',
+                value: JSON.stringify(sessionData.session),
+              }],
+            }],
+          },
+        });
+        const guardedPage = await context.newPage();
+
+        // Try to navigate to /dashboard directly
+        await guardedPage.goto('/dashboard');
+
+        // RouteGuard should redirect role=NULL users to /onboarding/role
+        await expect(guardedPage).toHaveURL(/\/onboarding\/role/, { timeout: 10000 });
+        await expect(guardedPage.locator('body')).toContainText(
+          /Choose how you'll use the platform|Get Started/i,
+        );
+      } finally {
+        await context?.close();
+        if (userId) {
+          await serviceClient.auth.admin.deleteUser(userId);
+        }
       }
-
-      // Try to navigate to /dashboard directly
-      await page.goto('/dashboard');
-
-      // RouteGuard should redirect role=NULL users to /onboarding/role
-      await expect(page).toHaveURL(/\/onboarding\/role/, { timeout: 10000 });
-      await expect(page.getByText('Individual').or(page.getByText('Organization'))).toBeVisible();
     });
   });
 });

@@ -214,6 +214,7 @@ export function App() {
           <Route path={ROUTES.ENTERPRISE} element={<EnterprisePage />} />
           <Route path={ROUTES.INDEPENDENT_VERIFY} element={<RouteErrorBoundary section="IndependentVerify"><IndependentVerifyPage /></RouteErrorBoundary>} />
           <Route path={ROUTES.DATA_RETENTION} element={<RouteErrorBoundary section="DataRetention"><DataRetentionPage /></RouteErrorBoundary>} />
+          <Route path="/vault" element={<Navigate to={ROUTES.DASHBOARD} replace />} />
 
           {/* OAuth callback — Supabase redirects here after Google sign-in */}
           <Route path={ROUTES.AUTH_CALLBACK} element={<AuthCallbackPage />} />

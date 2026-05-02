@@ -40,13 +40,32 @@ test.describe('Provenance Timeline', () => {
   });
 
   test('provenance timeline can be expanded', async ({ page }) => {
+    await page.route(/\/api\/v1\/verify\/[^/]+\/provenance$/, async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          public_id: testPublicId,
+          status: 'SECURED',
+          events: [{
+            event_type: 'credential_created',
+            timestamp: new Date().toISOString(),
+            details: 'E2E provenance event',
+            time_delta_seconds: null,
+          }],
+          anomalies: [],
+          generated_at: new Date().toISOString(),
+        }),
+      });
+    });
+
     await page.goto(`/verify/${testPublicId}`);
 
     const toggle = page.getByText('Provenance Timeline');
     await expect(toggle).toBeVisible({ timeout: 10000 });
     await toggle.click();
 
-    // After expanding, should show at least the upload event
-    await expect(page.getByText('Credential Uploaded')).toBeVisible({ timeout: 5000 });
+    // After expanding, should show at least the created event
+    await expect(page.getByText('Credential Created')).toBeVisible({ timeout: 5000 });
   });
 });

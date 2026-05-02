@@ -19,10 +19,9 @@ test.describe('Error States', () => {
 
       // Should show a meaningful error — not a blank page
       await expect(
-        individualPage.getByText(/Record Not Found/i)
-          .or(individualPage.getByText(/does not exist/i))
-          .or(individualPage.getByText(/not found/i))
+        individualPage.getByRole('heading', { name: 'Record Not Found' })
       ).toBeVisible({ timeout: 10000 });
+      await expect(individualPage.locator('main')).toContainText(/does not exist|permission to view|not found/i);
     });
 
     test('shows error for malformed record ID', async ({ individualPage }) => {
@@ -30,11 +29,9 @@ test.describe('Error States', () => {
 
       // Should show error or redirect — not crash
       await expect(
-        individualPage.getByText(/Record Not Found/i)
-          .or(individualPage.getByText(/not found/i))
-          .or(individualPage.getByText(/Invalid/i))
-          .or(individualPage.getByText(/Error/i))
+        individualPage.getByRole('heading', { name: 'Record Not Found' })
       ).toBeVisible({ timeout: 10000 });
+      await expect(individualPage.locator('main')).toContainText(/not found|invalid|error/i);
     });
   });
 
@@ -43,15 +40,11 @@ test.describe('Error States', () => {
       await page.goto('/verify/invalid_public_id_999');
 
       await expect(
-        page.getByText(/Verification Failed/i)
+        page.getByRole('heading', { name: 'Verification Failed' })
       ).toBeVisible({ timeout: 10000 });
 
       // Should show helpful message
-      await expect(
-        page.getByText(/Unable to verify/i)
-          .or(page.getByText(/may not exist/i))
-          .or(page.getByText(/not been verified/i))
-      ).toBeVisible();
+      await expect(page.locator('main')).toContainText(/Unable to verify|may not exist|not been verified|not found/i);
     });
 
     test('shows verification failed for empty public_id', async ({ page }) => {
@@ -59,10 +52,7 @@ test.describe('Error States', () => {
 
       // Should show error or redirect — not blank page
       await expect(
-        page.getByText(/Verification Failed/i)
-          .or(page.getByText(/not found/i))
-          .or(page.getByText(/Invalid/i))
-          .or(page.getByRole('heading', { name: /Verify/i }))
+        page.getByRole('heading', { name: /Verify a Credential|Verification Failed|404/i })
       ).toBeVisible({ timeout: 10000 });
     });
   });
@@ -72,22 +62,22 @@ test.describe('Error States', () => {
       // Verify we are authenticated first
       await individualPage.goto('/dashboard');
       await expect(
-        individualPage.getByText(/Vault/i)
-          .or(individualPage.getByText(/My Records/i))
-          .or(individualPage.getByText(/Secure Document/i))
+        individualPage.getByRole('heading', { name: 'My Records' }).first()
       ).toBeVisible({ timeout: 10000 });
 
-      // Simulate session expiry by clearing cookies
+      // Simulate session expiry by clearing browser-held auth state
       await individualPage.context().clearCookies();
+      await individualPage.evaluate(() => {
+        localStorage.clear();
+        sessionStorage.clear();
+      });
 
       // Navigate to a protected route
       await individualPage.goto('/dashboard');
 
       // Should redirect to auth page
       await expect(
-        individualPage.getByText(/Authentication Required/i)
-          .or(individualPage.getByLabel('Email address'))
-          .or(individualPage.getByText(/Sign in/i))
+        individualPage.getByLabel('Email address')
       ).toBeVisible({ timeout: 10000 });
     });
   });
@@ -98,10 +88,8 @@ test.describe('Error States', () => {
 
       // Should show 404, redirect to a known page, or show an error
       await expect(
-        individualPage.getByText(/Not Found/i)
-          .or(individualPage.getByText(/404/i))
-          .or(individualPage.getByText(/Vault/i))
-          .or(individualPage.getByText(/Dashboard/i))
+        individualPage.getByRole('heading', { name: '404' })
+          .or(individualPage.getByRole('heading', { name: /Dashboard|My Records/i }).first())
       ).toBeVisible({ timeout: 10000 });
     });
   });

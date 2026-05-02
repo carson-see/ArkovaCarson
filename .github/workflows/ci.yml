@@ -787,6 +787,10 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Install worker dependencies
+        working-directory: services/worker
+        run: npm ci
+
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
 
@@ -816,6 +820,37 @@ jobs:
       - name: Create auth state directory
         run: mkdir -p .auth
 
+      - name: Start worker for E2E tests
+        working-directory: services/worker
+        run: |
+          node --import tsx src/index.ts > "$RUNNER_TEMP/arkova-worker.log" 2>&1 &
+          echo "$!" > "$RUNNER_TEMP/arkova-worker.pid"
+          for i in {1..60}; do
+            if curl -fsS http://localhost:3001/health >/dev/null; then
+              echo "Worker is ready"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::Worker failed to become healthy for E2E"
+          cat "$RUNNER_TEMP/arkova-worker.log"
+          exit 1
+        env:
+          PORT: 3001
+          NODE_ENV: test
+          LOG_LEVEL: warn
+          SUPABASE_URL: ${{ steps.supabase-e2e-keys.outputs.url }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ steps.supabase-e2e-keys.outputs.service_key }}
+          STRIPE_SECRET_KEY: sk_test_e2e_local
+          STRIPE_WEBHOOK_SECRET: whsec_e2e_local
+          API_KEY_HMAC_SECRET: e2e-local-api-key-hmac-secret
+          USE_MOCKS: true
+          ENABLE_VERIFICATION_API: true
+          ENABLE_PROD_NETWORK_ANCHORING: false
+          BITCOIN_NETWORK: signet
+          FRONTEND_URL: http://localhost:5173
+          CORS_ALLOWED_ORIGINS: http://localhost:5173
+
       - name: Run E2E tests
         # SCRUM-1620: E2E failures and timeouts are launch-blocking signals.
         # Workers=1 in playwright.config.ts; timeout 25 min keeps cold runners
@@ -828,6 +863,15 @@ jobs:
           E2E_SUPABASE_URL: ${{ steps.supabase-e2e-keys.outputs.url }}
           E2E_SUPABASE_SERVICE_KEY: ${{ steps.supabase-e2e-keys.outputs.service_key }}
           E2E_SEED_PASSWORD: Arkova2026!
+          E2E_WORKER_URL: http://127.0.0.1:3001
+
+      - name: Upload worker log
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: failure()
+        with:
+          name: e2e-worker-log
+          path: ${{ runner.temp }}/arkova-worker.log
+          retention-days: 14
 
       - name: Upload Playwright report
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
