@@ -16,7 +16,7 @@ describe('handleAgentSearch', () => {
   });
 
   it('honors the advertised 100-result limit for record searches', async () => {
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify([
+    const fetchMock = vi.fn(async (..._args: Parameters<typeof fetch>) => new Response(JSON.stringify([
       {
         public_id: 'ARK-REC-001',
         title: 'Record 1',
@@ -43,7 +43,7 @@ describe('handleAgentSearch', () => {
   });
 
   it('escapes Postgres LIKE wildcards before record search RPC calls', async () => {
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify([]), { status: 200 }));
+    const fetchMock = vi.fn(async (..._args: Parameters<typeof fetch>) => new Response(JSON.stringify([]), { status: 200 }));
     vi.stubGlobal('fetch', fetchMock);
 
     const result = await handleAgentSearch(
@@ -52,7 +52,10 @@ describe('handleAgentSearch', () => {
     );
 
     expect(result.isError).toBeUndefined();
-    const requestInit = fetchMock.mock.calls[0]?.[1] as RequestInit;
+    const requestInit = fetchMock.mock.calls[0]?.[1];
+    if (!requestInit) {
+      throw new Error('Expected record search RPC request options');
+    }
     expect(JSON.parse(requestInit.body as string)).toEqual({
       p_query: String.raw`contract\%\_\\`,
       p_limit: 10,

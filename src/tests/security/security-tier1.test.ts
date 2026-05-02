@@ -164,7 +164,8 @@ describe('INJ-01: PostgREST injection prevention', () => {
     // Should call the RPC endpoint
     expect(content).toContain('rpc/search_public_credentials');
     // Should sanitize LIKE wildcards
-    expect(content).toContain(String.raw`replace(/[%_\\]/g`);
+    expect(content).toContain(String.raw`POSTGRES_LIKE_WILDCARD_RE = /[%_\\]/g`);
+    expect(content).toContain('replaceAll(POSTGRES_LIKE_WILDCARD_RE');
     // Should NOT contain direct PostgREST filter interpolation
     expect(content).not.toContain('anchors?title=ilike');
     expect(content).not.toContain('anchors?or=');
