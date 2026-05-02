@@ -3,6 +3,7 @@ import { z } from 'zod';
 import {
   collectMcpContractDrift,
   collectOpenApiAgentDrift,
+  collectOpenApiAgentOperations,
   zodObjectKeys,
   zodRequiredKeys,
 } from './check-api-contract-drift.js';
@@ -65,5 +66,29 @@ describe('check-api-contract-drift', () => {
     });
 
     expect(violations).toEqual([]);
+  });
+
+  it('discovers OpenAPI agent operations dynamically from x-agent-usage', () => {
+    const spec = {
+      paths: {
+        '/search': { get: { operationId: 'search', 'x-agent-usage': { tool_name: 'search' } } },
+        '/future-agent': { get: { operationId: 'future_agent', 'x-agent-usage': { tool_name: 'future_agent' } } },
+        '/openapi.json': { get: { operationId: 'get_openapi_v2_spec' } },
+      },
+    };
+
+    expect(collectOpenApiAgentOperations(spec).map((operation) => operation.path)).toEqual([
+      '/future-agent',
+      '/search',
+    ]);
+
+    expect(collectOpenApiAgentDrift(spec, {
+      search: z.object({ q: z.string() }),
+    })).toEqual([
+      {
+        source: 'openapi:/future-agent',
+        message: 'operationId future_agent has no matching MCP validator schema',
+      },
+    ]);
   });
 });

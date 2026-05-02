@@ -38,12 +38,10 @@ type ZodObjectLike = z.ZodObject<z.ZodRawShape>;
 
 const byLocale = (a: string, b: string): number => a.localeCompare(b);
 
-const AGENT_OPENAPI_PATHS = [
-  '/search',
-  '/verify/{fingerprint}',
-  '/anchors/{public_id}',
-  '/orgs',
-] as const;
+interface OpenApiAgentOperation {
+  path: string;
+  operation: OpenApiGetOperation;
+}
 
 function schemaShape(schema: z.ZodTypeAny): z.ZodRawShape | null {
   if (schema instanceof z.ZodObject) return (schema as ZodObjectLike).shape;
@@ -118,14 +116,22 @@ export function collectMcpContractDrift(
   return violations;
 }
 
+export function collectOpenApiAgentOperations(spec: OpenApiSpec): OpenApiAgentOperation[] {
+  return Object.entries(spec.paths)
+    .flatMap(([path, pathItem]) => {
+      const operation = pathItem?.get;
+      return operation?.['x-agent-usage'] ? [{ path, operation }] : [];
+    })
+    .sort((a, b) => byLocale(a.path, b.path));
+}
+
 export function collectOpenApiAgentDrift(
   spec: OpenApiSpec,
   schemas: Record<string, z.ZodTypeAny>,
 ): ContractDriftViolation[] {
   const violations: ContractDriftViolation[] = [];
 
-  for (const path of AGENT_OPENAPI_PATHS) {
-    const operation = spec.paths[path]?.get;
+  for (const { path, operation } of collectOpenApiAgentOperations(spec)) {
     const operationId = operation?.operationId;
     const toolName = operation?.['x-agent-usage']?.tool_name;
 
