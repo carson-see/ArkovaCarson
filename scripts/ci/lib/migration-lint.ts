@@ -18,6 +18,10 @@ interface Baseline {
   grandfathered: string[];
 }
 
+function blankPreservingNewlines(text: string): string {
+  return text.replaceAll(/[^\n]/g, ' ');
+}
+
 /**
  * Load a baseline JSON of grandfathered entries. Returns an empty Set
  * when the file is absent so first-time lints don't trip on missing
@@ -38,13 +42,155 @@ export function loadBaseline(baselinePath: string): Set<string> {
  */
 export function stripDollarQuoted(sql: string): string {
   return sql.replaceAll(DOLLAR_QUOTED_BLOCK, (m) => {
-    return m.replaceAll(/[^\n]/g, ' ');
+    return blankPreservingNewlines(m);
   });
+}
+
+/**
+ * Remove SQL comments while preserving quoted strings and newlines.
+ *
+ * Several migration lints use regexes as a lightweight parser. Blanking
+ * comments first prevents commented-out SQL from satisfying those lints
+ * without shifting line numbers in reported findings.
+ */
+export function stripSqlComments(sql: string): string {
+  let output = '';
+  let i = 0;
+
+  while (i < sql.length) {
+    const current = sql[i];
+    const next = sql[i + 1];
+
+    if (current === "'") {
+      const start = i;
+      i += 1;
+      while (i < sql.length) {
+        if (sql[i] === "'" && sql[i + 1] === "'") {
+          i += 2;
+          continue;
+        }
+        if (sql[i] === "'") {
+          i += 1;
+          break;
+        }
+        i += 1;
+      }
+      output += sql.slice(start, i);
+      continue;
+    }
+
+    if (current === '"') {
+      const start = i;
+      i += 1;
+      while (i < sql.length) {
+        if (sql[i] === '"' && sql[i + 1] === '"') {
+          i += 2;
+          continue;
+        }
+        if (sql[i] === '"') {
+          i += 1;
+          break;
+        }
+        i += 1;
+      }
+      output += sql.slice(start, i);
+      continue;
+    }
+
+    if (current === '-' && next === '-') {
+      const start = i;
+      i += 2;
+      while (i < sql.length && sql[i] !== '\n') {
+        i += 1;
+      }
+      output += blankPreservingNewlines(sql.slice(start, i));
+      continue;
+    }
+
+    if (current === '/' && next === '*') {
+      const start = i;
+      i += 2;
+      while (i < sql.length) {
+        if (sql[i] === '*' && sql[i + 1] === '/') {
+          i += 2;
+          break;
+        }
+        i += 1;
+      }
+      output += blankPreservingNewlines(sql.slice(start, i));
+      continue;
+    }
+
+    output += current;
+    i += 1;
+  }
+
+  return output;
+}
+
+/**
+ * Remove comments and then blank quoted string contents. The quote
+ * delimiters stay in place so simple statement regexes can still reason
+ * about SQL shape without being fooled by SQL text embedded in literals.
+ */
+export function stripSqlCommentsAndStringLiterals(sql: string): string {
+  const withoutComments = stripSqlComments(sql);
+  let output = '';
+  let i = 0;
+
+  while (i < withoutComments.length) {
+    const current = withoutComments[i];
+
+    if (current === "'") {
+      output += "'";
+      i += 1;
+      while (i < withoutComments.length) {
+        if (withoutComments[i] === "'" && withoutComments[i + 1] === "'") {
+          output += '  ';
+          i += 2;
+          continue;
+        }
+        if (withoutComments[i] === "'") {
+          output += "'";
+          i += 1;
+          break;
+        }
+        output += withoutComments[i] === '\n' ? '\n' : ' ';
+        i += 1;
+      }
+      continue;
+    }
+
+    if (current === '"') {
+      output += '"';
+      i += 1;
+      while (i < withoutComments.length) {
+        if (withoutComments[i] === '"' && withoutComments[i + 1] === '"') {
+          output += '  ';
+          i += 2;
+          continue;
+        }
+        if (withoutComments[i] === '"') {
+          output += '"';
+          i += 1;
+          break;
+        }
+        output += withoutComments[i] === '\n' ? '\n' : ' ';
+        i += 1;
+      }
+      continue;
+    }
+
+    output += current;
+    i += 1;
+  }
+
+  return output;
 }
 
 export interface MigrationFile {
   file: string;
-  /** Original SQL — use when policy/comment matches MUST see DO/EXECUTE bodies. */
+  /** Original SQL — use when a lint needs the full migration text. */
   sql: string;
   /** Dollar-quoted blocks blanked — use for top-level-statement scans. */
   stripped: string;

@@ -17,7 +17,7 @@
 
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve, join } from 'node:path';
-import { loadMigrations } from './lib/migration-lint';
+import { loadMigrations, stripSqlComments } from './lib/migration-lint';
 
 const OVERRIDE_LABEL = 'view-security-definer-intentional';
 const REPO = process.env.VIEWS_LINT_REPO_ROOT
@@ -92,11 +92,12 @@ function findViolations(file: string, strippedSql: string): Finding[] {
     const line = lineNumber(strippedSql, offset);
 
     const statementSql = strippedSql.slice(offset, statementEnd(strippedSql, offset));
-    if (/WITH\s*\(\s*security_invoker\s*=\s*(?:true|on)\s*\)/i.test(statementSql)) {
+    const statementWithoutComments = stripSqlComments(statementSql);
+    if (/WITH\s*\(\s*security_invoker\s*=\s*(?:true|on)\s*\)/i.test(statementWithoutComments)) {
       continue;
     }
 
-    if (alterSecurityInvokerRegex(view, alterReCache).test(strippedSql.slice(offset))) {
+    if (alterSecurityInvokerRegex(view, alterReCache).test(stripSqlComments(strippedSql.slice(offset)))) {
       continue;
     }
 

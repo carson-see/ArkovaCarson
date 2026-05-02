@@ -18,7 +18,7 @@
 
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve, join } from 'node:path';
-import { loadMigrations } from './lib/migration-lint';
+import { loadMigrations, stripSqlComments, stripSqlCommentsAndStringLiterals } from './lib/migration-lint';
 
 const OVERRIDE_LABEL = 'rls-no-policy-intentional';
 const REPO = process.env.RLS_POLICY_REPO_ROOT
@@ -80,6 +80,10 @@ function tableHasDenyAllComment(sql: string, table: string): boolean {
 function main(): void {
   const baseline = loadBaseline();
   const migrations = loadMigrations(MIGRATIONS_DIR);
+  const migrationPolicySources = migrations.map((migration) => ({
+    commentsVisible: stripSqlComments(migration.sql),
+    literalsHidden: stripSqlCommentsAndStringLiterals(migration.sql),
+  }));
   const enabledByTable = new Map<string, string>();
   const enableOrForceRe =
     /ALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?((?:(?:"public"|public)\.)?(?:"[^"]+"|\w+))\s+(?:ENABLE|FORCE)\s+ROW\s+LEVEL\s+SECURITY/gi;
@@ -98,8 +102,11 @@ function main(): void {
   for (const [table, enabledIn] of enabledByTable) {
     if (baseline.has(table)) continue;
 
-    const hasPolicyOrComment = migrations.some((migration) => {
-      return tableHasPolicy(migration.sql, table) || tableHasDenyAllComment(migration.sql, table);
+    const hasPolicyOrComment = migrationPolicySources.some((migration) => {
+      return (
+        tableHasPolicy(migration.literalsHidden, table)
+        || tableHasDenyAllComment(migration.commentsVisible, table)
+      );
     });
 
     if (!hasPolicyOrComment) {

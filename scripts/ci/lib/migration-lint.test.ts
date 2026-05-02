@@ -2,7 +2,12 @@ import { describe, expect, it } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { loadMigrations, stripDollarQuoted } from './migration-lint';
+import {
+  loadMigrations,
+  stripDollarQuoted,
+  stripSqlComments,
+  stripSqlCommentsAndStringLiterals,
+} from './migration-lint';
 
 function newlineCount(text: string): number {
   return (text.match(/\n/g) ?? []).length;
@@ -57,6 +62,49 @@ $tag_1$;`;
     const stripped = stripDollarQuoted(sql);
 
     expect(stripped).not.toContain('CREATE VIEW public.dynamic');
+    expect(newlineCount(stripped)).toBe(newlineCount(sql));
+  });
+});
+
+describe('stripSqlComments', () => {
+  it('strips line and block comments while preserving newlines', () => {
+    const sql = `-- CREATE POLICY fake_policy ON public.audit_events
+CREATE TABLE public.audit_events(id uuid);
+/* ALTER VIEW public.audit_summary SET (security_invoker = true); */
+CREATE POLICY real_policy ON public.audit_events USING (true);`;
+
+    const stripped = stripSqlComments(sql);
+
+    expect(stripped).not.toContain('fake_policy');
+    expect(stripped).not.toContain('audit_summary');
+    expect(stripped).toContain('CREATE TABLE public.audit_events');
+    expect(stripped).toContain('CREATE POLICY real_policy');
+    expect(newlineCount(stripped)).toBe(newlineCount(sql));
+  });
+
+  it('does not treat comment markers inside quoted strings or identifiers as comments', () => {
+    const sql = `COMMENT ON TABLE public.quarantine IS 'Deny-all by design -- no user access';
+CREATE TABLE public."/*not_a_comment*/"(id int);`;
+
+    const stripped = stripSqlComments(sql);
+
+    expect(stripped).toContain("'Deny-all by design -- no user access'");
+    expect(stripped).toContain('"/*not_a_comment*/"');
+    expect(newlineCount(stripped)).toBe(newlineCount(sql));
+  });
+});
+
+describe('stripSqlCommentsAndStringLiterals', () => {
+  it('strips string-literal contents after removing comments', () => {
+    const sql = `-- CREATE POLICY fake_policy ON public.audit_events
+SELECT 'CREATE POLICY fake_policy ON public.audit_events';
+CREATE POLICY real_policy ON public.audit_events USING (true);`;
+
+    const stripped = stripSqlCommentsAndStringLiterals(sql);
+
+    expect(stripped).not.toContain('fake_policy');
+    expect(stripped).toContain("SELECT '");
+    expect(stripped).toContain('CREATE POLICY real_policy');
     expect(newlineCount(stripped)).toBe(newlineCount(sql));
   });
 });
