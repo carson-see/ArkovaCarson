@@ -42,6 +42,17 @@ function makeGate(overrides: Partial<AcceptanceGate> = {}): AcceptanceGate {
   };
 }
 
+function passingTwoTypeReport() {
+  return computeGap(
+    makeAudit({
+      totalRows: 5000,
+      fraudPositive: 200,
+      byType: { DEGREE: 2500, LICENSE: 2500 },
+    }),
+    makeGate(),
+  );
+}
+
 describe('parseGoldenLine', () => {
   it('extracts credentialType from vertex format model output', () => {
     const line = JSON.stringify({
@@ -310,7 +321,7 @@ describe('computeGap', () => {
 
 describe('formatSourceFile', () => {
   it('keeps in-repo paths readable without leaking absolute workstation prefixes', () => {
-    expect(formatSourceFile('/tmp/arkova/services/worker/training-data/full-golden.jsonl')).toBe(
+    expect(formatSourceFile('/workspace/arkova/services/worker/training-data/full-golden.jsonl')).toBe(
       'training-data/full-golden.jsonl',
     );
   });
@@ -381,27 +392,13 @@ describe('renderMarkdownReport', () => {
   });
 
   it('sanitizes absolute source paths in the report header', () => {
-    const audit = makeAudit({
-      totalRows: 5000,
-      fraudPositive: 200,
-      byType: { DEGREE: 2500, LICENSE: 2500 },
-    });
-    const gate = makeGate();
-    const report = computeGap(audit, gate);
-    const md = renderMarkdownReport(report, ['/opt/arkova/outside/full-golden.jsonl']);
+    const md = renderMarkdownReport(passingTwoTypeReport(), ['/opt/arkova/outside/full-golden.jsonl']);
     expect(md).toContain('**Sources.** full-golden.jsonl');
     expect(md).not.toContain('/opt/arkova');
   });
 
   it('renders PASSED verdict when gate is met', () => {
-    const audit = makeAudit({
-      totalRows: 5000,
-      fraudPositive: 200,
-      byType: { DEGREE: 2500, LICENSE: 2500 },
-    });
-    const gate = makeGate();
-    const report = computeGap(audit, gate);
-    const md = renderMarkdownReport(report, ['fixture.jsonl']);
+    const md = renderMarkdownReport(passingTwoTypeReport(), ['fixture.jsonl']);
     expect(md).toContain('PASSED');
     expect(md).not.toContain('Types under floor (sorted by deficit)');
   });
