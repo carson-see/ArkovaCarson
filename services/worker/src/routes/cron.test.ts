@@ -1256,15 +1256,17 @@ describe('cron routes', () => {
       const res = await request(app).post('/cron/refresh-stats');
       expect(res.status).toBe(200);
       expect(res.body.status).toBe('refreshed');
+      expect(res.body.succeeded).toBe(6);
+      expect(res.body.duration_ms).toBe(12);
       expect(res.body.errors).toEqual([]);
       // First call must be the dashboard cache (the user-visible one).
       expect(callRpcMock.mock.calls[0]?.[1]).toBe('refresh_pipeline_dashboard_cache');
       expect(callRpcMock.mock.calls[1]?.[1]).toBe('refresh_stats_materialized_views');
     });
 
-	    it('still returns 200 if the legacy mat-view refresh fails (non-fatal)', async () => {
-	      const callRpcMock = callRpc as ReturnType<typeof vi.fn>;
-	      callRpcMock
+    it('still returns 200 if the legacy mat-view refresh fails (non-fatal)', async () => {
+      const callRpcMock = callRpc as ReturnType<typeof vi.fn>;
+      callRpcMock
         .mockResolvedValueOnce({
           data: {
             status: 'refreshed',
@@ -1273,20 +1275,22 @@ describe('cron routes', () => {
             duration_ms: 12,
           },
           error: null,
-	        })
-	        .mockResolvedValueOnce({ data: null, error: { message: 'mat-view fail' } });
+        })
+        .mockResolvedValueOnce({ data: null, error: { message: 'mat-view fail' } });
       const app = createApp();
       const res = await request(app).post('/cron/refresh-stats');
       expect(res.status).toBe(200);
+      expect(res.body.succeeded).toBe(6);
+      expect(res.body.duration_ms).toBe(12);
       expect(res.body.errors).toHaveLength(1);
       expect(res.body.errors[0].source).toBe('stats_materialized_views');
     });
 
-	    it('returns 500 if the dashboard cache refresh fails even when legacy refresh succeeds', async () => {
-	      const callRpcMock = callRpc as ReturnType<typeof vi.fn>;
-	      callRpcMock
-	        .mockResolvedValueOnce({ data: null, error: { message: 'dashboard fail' } })
-	        .mockResolvedValueOnce({ data: null, error: null });
+    it('returns 500 if the dashboard cache refresh fails even when legacy refresh succeeds', async () => {
+      const callRpcMock = callRpc as ReturnType<typeof vi.fn>;
+      callRpcMock
+        .mockResolvedValueOnce({ data: null, error: { message: 'dashboard fail' } })
+        .mockResolvedValueOnce({ data: null, error: null });
       const app = createApp();
       const res = await request(app).post('/cron/refresh-stats');
       expect(res.status).toBe(500);
@@ -1295,39 +1299,41 @@ describe('cron routes', () => {
         reason: 'pipeline_dashboard_cache failed',
         refreshed: ['stats_materialized_views'],
       });
-	      expect(res.body.errors).toEqual([
-	        expect.objectContaining({ source: 'pipeline_dashboard_cache' }),
-	      ]);
-	    });
+      expect(res.body.errors).toEqual([
+        expect.objectContaining({ source: 'pipeline_dashboard_cache' }),
+      ]);
+    });
 
-	    it('returns 500 if the dashboard cache RPC reports partial errors', async () => {
-	      const callRpcMock = callRpc as ReturnType<typeof vi.fn>;
-	      callRpcMock
-	        .mockResolvedValueOnce({
-	          data: {
-	            status: 'refreshed',
-	            succeeded: 5,
-	            errors: [{ source: 'embedded_records', message: 'timeout while refreshing embedded records' }],
-	            duration_ms: 12,
-	          },
-	          error: null,
-	        })
-	        .mockResolvedValueOnce({ data: null, error: null });
-	      const app = createApp();
-	      const res = await request(app).post('/cron/refresh-stats');
-	      expect(res.status).toBe(500);
-	      expect(res.body).toMatchObject({
-	        status: 'failed',
-	        reason: 'pipeline_dashboard_cache failed',
-	        refreshed: ['stats_materialized_views'],
-	      });
-	      expect(res.body.errors[0]).toMatchObject({
-	        source: 'pipeline_dashboard_cache',
-	      });
-	      expect(res.body.errors[0].message).toContain(
-	        'timeout while refreshing embedded records',
-	      );
-	    });
+    it('returns 500 if the dashboard cache RPC reports partial errors', async () => {
+      const callRpcMock = callRpc as ReturnType<typeof vi.fn>;
+      callRpcMock
+        .mockResolvedValueOnce({
+          data: {
+            status: 'refreshed',
+            succeeded: 5,
+            errors: [{ source: 'embedded_records', message: 'timeout while refreshing embedded records' }],
+            duration_ms: 12,
+          },
+          error: null,
+        })
+        .mockResolvedValueOnce({ data: null, error: null });
+      const app = createApp();
+      const res = await request(app).post('/cron/refresh-stats');
+      expect(res.status).toBe(500);
+      expect(res.body).toMatchObject({
+        status: 'failed',
+        reason: 'pipeline_dashboard_cache failed',
+        refreshed: ['stats_materialized_views'],
+        succeeded: 5,
+        duration_ms: 12,
+      });
+      expect(res.body.errors[0]).toMatchObject({
+        source: 'pipeline_dashboard_cache.0',
+      });
+      expect(res.body.errors[0].message).toContain(
+        'timeout while refreshing embedded records',
+      );
+    });
 
     it('returns 500 if the dashboard cache RPC returns a malformed success payload', async () => {
       const callRpcMock = callRpc as ReturnType<typeof vi.fn>;

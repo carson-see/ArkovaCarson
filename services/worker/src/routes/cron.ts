@@ -1184,6 +1184,13 @@ function formatDashboardCacheError(error: unknown): string {
   return String(error);
 }
 
+function hasRefreshError(
+  errors: Array<{ source: string; message: string }>,
+  source: string,
+): boolean {
+  return errors.some((error) => error.source === source || error.source.startsWith(`${source}.`));
+}
+
 cronRouter.post('/refresh-stats', async (_req, res) => {
   const errors: Array<{ source: string; message: string }> = [];
   let pipelineDashboardResult: PipelineDashboardCacheRefreshResult | null = null;
@@ -1197,11 +1204,12 @@ cronRouter.post('/refresh-stats', async (_req, res) => {
     }
     const partialErrors = parsed.data.errors ?? [];
     if (partialErrors.length > 0) {
-      throw new Error(
-        `refresh_pipeline_dashboard_cache reported ${partialErrors.length} error(s): ${partialErrors
-          .map(formatDashboardCacheError)
-          .join('; ')}`,
-      );
+      partialErrors.forEach((detail, index) => {
+        errors.push({
+          source: `pipeline_dashboard_cache.${index}`,
+          message: formatDashboardCacheError(detail),
+        });
+      });
     }
     pipelineDashboardResult = parsed.data;
   } catch (error) {
@@ -1230,7 +1238,7 @@ cronRouter.post('/refresh-stats', async (_req, res) => {
   }
 
   const refreshed = ['pipeline_dashboard_cache', 'stats_materialized_views'].filter(
-    (s) => !errors.some((e) => e.source === s),
+    (s) => !hasRefreshError(errors, s),
   );
 
   if (pipelineDashboardResult?.status === 'skipped') {
@@ -1244,11 +1252,13 @@ cronRouter.post('/refresh-stats', async (_req, res) => {
     return;
   }
 
-  if (errors.some((e) => e.source === 'pipeline_dashboard_cache')) {
+  if (hasRefreshError(errors, 'pipeline_dashboard_cache')) {
     res.status(500).json({
       status: 'failed',
       reason: 'pipeline_dashboard_cache failed',
       refreshed: refreshed.filter((s) => s !== 'pipeline_dashboard_cache'),
+      succeeded: pipelineDashboardResult?.succeeded,
+      duration_ms: pipelineDashboardResult?.duration_ms,
       errors,
     });
     return;
@@ -1257,6 +1267,8 @@ cronRouter.post('/refresh-stats', async (_req, res) => {
   res.json({
     status: 'refreshed',
     refreshed,
+    succeeded: pipelineDashboardResult?.succeeded,
+    duration_ms: pipelineDashboardResult?.duration_ms,
     errors,
   });
 });
