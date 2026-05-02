@@ -27,7 +27,7 @@ vi.mock('../utils/logger.js', () => ({
 
 import { db } from '../utils/db.js';
 
-const mockedRpc = db.rpc as ReturnType<typeof vi.fn>;
+const mockedRpc = vi.mocked(db.rpc);
 
 function createMockReqRes() {
   const req = {} as Request;
