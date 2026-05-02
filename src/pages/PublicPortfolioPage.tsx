@@ -124,6 +124,7 @@ export function PublicPortfolioPage() {
 
       // Fetch attestations
       if (p.attestation_ids && p.attestation_ids.length > 0) {
+        // eslint-disable-next-line arkova/missing-org-filter -- Public portfolios resolve an explicit allowlisted ID set from the share record; anonymous viewers have no org context.
         const { data: aData } = await dbAny
           .from('attestations')
           .select('id, public_id, attestation_type, status, subject_identifier, attester_name, claims, chain_tx_id, issued_at, expires_at')

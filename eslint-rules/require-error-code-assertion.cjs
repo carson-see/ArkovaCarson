@@ -38,17 +38,20 @@ module.exports = {
     const testBlocks = [];
     let currentTestBlock = null;
 
+    function isTestBlockCall(node) {
+      const callee = node.callee;
+      return (
+        (callee.type === 'Identifier' && (callee.name === 'it' || callee.name === 'test')) ||
+        (callee.type === 'MemberExpression' &&
+          callee.object.type === 'Identifier' &&
+          (callee.object.name === 'it' || callee.object.name === 'test'))
+      );
+    }
+
     return {
       // Enter an it() or test() block
       CallExpression(node) {
-        const callee = node.callee;
-        const isTestBlock =
-          (callee.type === 'Identifier' && (callee.name === 'it' || callee.name === 'test')) ||
-          (callee.type === 'MemberExpression' &&
-           callee.object.type === 'Identifier' &&
-           (callee.object.name === 'it' || callee.object.name === 'test'));
-
-        if (isTestBlock && node.arguments.length >= 2) {
+        if (isTestBlockCall(node) && node.arguments.length >= 2) {
           const testName =
             node.arguments[0].type === 'Literal'
               ? String(node.arguments[0].value)
@@ -79,7 +82,15 @@ module.exports = {
               hasSpecificAssertion: false,
             };
             testBlocks.push(currentTestBlock);
+          } else {
+            currentTestBlock = null;
           }
+        }
+      },
+
+      'CallExpression:exit'(node) {
+        if (isTestBlockCall(node) && currentTestBlock?.node === node) {
+          currentTestBlock = null;
         }
       },
 
@@ -96,8 +107,8 @@ module.exports = {
           currentTestBlock.hasErrorCheck = true;
         }
 
-        // Detect specific error assertions: .code, .message, .status, .statusCode, .statusText
-        const specificProps = ['code', 'message', 'statusCode', 'statusText', 'detail'];
+        // Detect specific error assertions: .code, .message, .reason, .statusCode, .statusText
+        const specificProps = ['code', 'message', 'reason', 'statusCode', 'statusText', 'detail'];
         if (specificProps.includes(prop.name)) {
           // Check if this is inside an expect chain
           let parent = node.parent;
@@ -201,6 +212,7 @@ module.exports = {
               prop.key.type === 'Identifier' &&
               (prop.key.name === 'code' ||
                prop.key.name === 'message' ||
+               prop.key.name === 'reason' ||
                prop.key.name === 'status' ||
                prop.key.name === 'statusCode')
             ) {
@@ -229,7 +241,7 @@ module.exports = {
  * e.g., result.current.error, response.error, err.message, x.code
  */
 function isErrorPropertyAccess(node) {
-  const errorProps = ['error', 'message', 'code', 'status', 'statusCode', 'detail'];
+  const errorProps = ['error', 'message', 'reason', 'code', 'status', 'statusCode', 'detail'];
   if (node.type === 'MemberExpression' && node.property.type === 'Identifier') {
     if (errorProps.includes(node.property.name)) return true;
     // Check nested: result.current.error

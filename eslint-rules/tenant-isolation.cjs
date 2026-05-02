@@ -18,9 +18,10 @@
  *   2. Walk forward through the method chain (the CallExpression is the
  *      `object` of the next MemberExpression, whose parent is another
  *      CallExpression, and so on).
- *   3. A link passes if it is `.eq('org_id', ...)` or
- *      `.eq('organization_id', ...)`. If any link passes, the chain is
- *      safe.
+ *   3. A link passes if it filters on one of the table's known tenant or
+ *      caller-scope columns. For most tables that is `org_id` or
+ *      `organization_id`; a small number of user-owned tables also allow
+ *      explicit user columns such as `attester_user_id`.
  *   4. Otherwise report at the `.from(...)` call site.
  *
  * False-positive notes:
@@ -57,7 +58,41 @@ const MULTI_TENANT_TABLES = new Set([
   'org_api_keys',
 ]);
 
-const ORG_ID_COLUMNS = new Set(['org_id', 'organization_id']);
+const DEFAULT_SCOPE_COLUMNS = ['org_id', 'organization_id'];
+
+const TABLE_SCOPE_COLUMNS = new Map([
+  ['attestations', [...DEFAULT_SCOPE_COLUMNS, 'attester_org_id', 'attester_user_id']],
+  ['subscriptions', [...DEFAULT_SCOPE_COLUMNS, 'user_id']],
+  ['org_members', [...DEFAULT_SCOPE_COLUMNS, 'user_id']],
+  ['org_memberships', [...DEFAULT_SCOPE_COLUMNS, 'user_id']],
+]);
+
+function scopeColumnsFor(table) {
+  return new Set(TABLE_SCOPE_COLUMNS.get(table) ?? DEFAULT_SCOPE_COLUMNS);
+}
+
+function propertyName(prop) {
+  if (!prop) return null;
+  if (prop.type === 'Identifier') return prop.name;
+  if (prop.type === 'Literal' && typeof prop.value === 'string') return prop.value;
+  return null;
+}
+
+function objectHasScopeColumn(node, allowedColumns) {
+  if (!node || node.type !== 'ObjectExpression') return false;
+  return node.properties.some((prop) => {
+    if (!prop || prop.type !== 'Property') return false;
+    const key = propertyName(prop.key);
+    return typeof key === 'string' && allowedColumns.has(key);
+  });
+}
+
+function payloadHasScopeColumn(node, allowedColumns) {
+  if (!node) return false;
+  if (objectHasScopeColumn(node, allowedColumns)) return true;
+  if (node.type !== 'ArrayExpression' || node.elements.length === 0) return false;
+  return node.elements.every((element) => objectHasScopeColumn(element, allowedColumns));
+}
 
 /** @type {import('eslint').Rule.RuleModule} */
 module.exports = {
@@ -65,12 +100,12 @@ module.exports = {
     type: 'problem',
     docs: {
       description:
-        'Supabase queries against multi-tenant tables must include .eq("org_id", ...) or .eq("organization_id", ...) in the method chain.',
+        'Supabase queries against multi-tenant tables must include a tenant or caller-scope filter in the method chain.',
       category: 'Security',
     },
     messages: {
       missingOrgFilter:
-        "tenant-isolation: query against multi-tenant table '{{table}}' missing .eq('org_id', ...). See SCRUM-1208.",
+        "tenant-isolation: query against multi-tenant table '{{table}}' missing an allowed tenant/caller scope filter. See SCRUM-1208.",
     },
     schema: [],
   },
@@ -93,6 +128,7 @@ module.exports = {
         // Walk the chain forward. Starting node is the `.from('...')` CallExpression.
         // Chain link shape: CallExpression.parent === MemberExpression,
         // whose parent === CallExpression (the next chained call).
+        const allowedColumns = scopeColumnsFor(table);
         let current = node;
         let hasOrgFilter = false;
 
@@ -109,7 +145,24 @@ module.exports = {
           const method = parentMember.property;
           if (method.type === 'Identifier' && method.name === 'eq' && nextCall.arguments.length >= 1) {
             const colArg = nextCall.arguments[0];
-            if (colArg.type === 'Literal' && typeof colArg.value === 'string' && ORG_ID_COLUMNS.has(colArg.value)) {
+            if (colArg.type === 'Literal' && typeof colArg.value === 'string' && allowedColumns.has(colArg.value)) {
+              hasOrgFilter = true;
+              break;
+            }
+          }
+
+          if (
+            method.type === 'Identifier' &&
+            (method.name === 'insert' || method.name === 'upsert') &&
+            payloadHasScopeColumn(nextCall.arguments[0], allowedColumns)
+          ) {
+            hasOrgFilter = true;
+            break;
+          }
+
+          if (method.type === 'Identifier' && method.name === 'match' && nextCall.arguments.length >= 1) {
+            const filterArg = nextCall.arguments[0];
+            if (objectHasScopeColumn(filterArg, allowedColumns)) {
               hasOrgFilter = true;
               break;
             }

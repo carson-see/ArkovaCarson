@@ -228,7 +228,7 @@ describe('mcp-rate-limit — enforceRateLimit (SCRUM-919)', () => {
     }
   });
 
-  it('fails open when KV read throws', async () => {
+  it('allows traffic when KV read throws', async () => {
     const err = vi.spyOn(console, 'error').mockImplementation(() => {});
     const kv = {
       get: vi.fn(async () => { throw new Error('kv unavailable'); }),
