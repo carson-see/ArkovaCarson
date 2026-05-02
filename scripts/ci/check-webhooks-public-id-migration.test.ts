@@ -8,6 +8,10 @@ const migration = readFileSync(
 );
 
 describe('SCRUM-1445 webhook public-id migration', () => {
+  it('fails fast on lock contention before backfill and NOT NULL enforcement', () => {
+    expect(migration).toContain("SET LOCAL lock_timeout = '5s';");
+  });
+
   it('generates endpoint public IDs in the database before NOT NULL enforcement', () => {
     expect(migration).toContain('CREATE TRIGGER set_webhook_endpoint_public_id');
     expect(migration).toContain('BEFORE INSERT ON webhook_endpoints');
@@ -23,5 +27,12 @@ describe('SCRUM-1445 webhook public-id migration', () => {
     expect(migration).toContain('CREATE TRIGGER set_webhook_delivery_log_public_id');
     expect(migration).toContain('BEFORE INSERT ON webhook_delivery_logs');
     expect(migration).toContain("NEW.public_id := 'DLV-'");
+  });
+
+  it('uses collision-safe 16-hex suffixes for endpoint and delivery-log public IDs', () => {
+    expect(migration).not.toMatch(/from 1 for (8|12)\)/);
+    expect(migration.match(/from 1 for 16/g)).toHaveLength(6);
+    expect(migration).toContain('Customer-facing identifier (WHK-{org_prefix}-{16})');
+    expect(migration).toContain('Customer-facing identifier (DLV-{16})');
   });
 });

@@ -6,9 +6,9 @@
 -- backfills existing rows, and pins uniqueness so the v2 cutover can be
 -- a routing change rather than a schema change.
 --
--- Format: WHK-{org_prefix}-{unique_8} for webhook endpoints (mirrors the
+-- Format: WHK-{org_prefix}-{unique_16} for webhook endpoints (mirrors the
 -- ARK-{org_prefix}-{type}-{unique_6} format used for anchors / attestations).
--- Delivery logs use DLV-{unique_12} since they aren't org-scoped at the
+-- Delivery logs use DLV-{unique_16} since they aren't org-scoped at the
 -- prefix level — uniqueness alone is sufficient.
 --
 -- ROLLBACK:
@@ -21,6 +21,7 @@
 --   ALTER TABLE webhook_delivery_logs DROP COLUMN public_id;
 
 BEGIN;
+SET LOCAL lock_timeout = '5s';
 
 CREATE OR REPLACE FUNCTION public.set_webhook_endpoint_public_id()
 RETURNS trigger
@@ -40,7 +41,7 @@ BEGIN
       WHERE id = NEW.org_id;
 
     NEW.public_id := 'WHK-' || COALESCE(NULLIF(btrim(v_org_prefix), ''), 'IND') || '-' ||
-      upper(substring(replace(gen_random_uuid()::text, '-', '') from 1 for 8));
+      upper(substring(replace(gen_random_uuid()::text, '-', '') from 1 for 16));
   END IF;
 
   RETURN NEW;
@@ -60,7 +61,7 @@ BEGIN
 
   IF NEW.public_id IS NULL THEN
     NEW.public_id := 'DLV-' ||
-      upper(substring(replace(gen_random_uuid()::text, '-', '') from 1 for 12));
+      upper(substring(replace(gen_random_uuid()::text, '-', '') from 1 for 16));
   END IF;
 
   RETURN NEW;
@@ -84,14 +85,14 @@ CREATE TRIGGER set_webhook_endpoint_public_id
 -- agents.ts public-id generation).
 UPDATE webhook_endpoints we
 SET public_id = 'WHK-' || COALESCE(NULLIF(btrim(o.org_prefix), ''), 'IND') || '-' ||
-                upper(substring(replace(gen_random_uuid()::text, '-', '') from 1 for 8))
+                upper(substring(replace(gen_random_uuid()::text, '-', '') from 1 for 16))
 FROM organizations o
 WHERE we.org_id = o.id AND we.public_id IS NULL;
 
 -- Any rows whose org_id no longer resolves get a no-org fallback
 UPDATE webhook_endpoints
 SET public_id = 'WHK-IND-' ||
-                upper(substring(replace(gen_random_uuid()::text, '-', '') from 1 for 8))
+                upper(substring(replace(gen_random_uuid()::text, '-', '') from 1 for 16))
 WHERE public_id IS NULL;
 
 ALTER TABLE webhook_endpoints
@@ -103,7 +104,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS webhook_endpoints_public_id_uidx
   ON webhook_endpoints(public_id);
 
 COMMENT ON COLUMN webhook_endpoints.public_id IS
-  'Customer-facing identifier (WHK-{org_prefix}-{8}). Stable across v1+v2 — see SCRUM-1445.';
+  'Customer-facing identifier (WHK-{org_prefix}-{16}). Stable across v1+v2 — see SCRUM-1445.';
 
 -- ─── webhook_delivery_logs.public_id ─────────────────────────────────────
 ALTER TABLE webhook_delivery_logs
@@ -111,7 +112,7 @@ ALTER TABLE webhook_delivery_logs
 
 ALTER TABLE webhook_delivery_logs
   ALTER COLUMN public_id SET DEFAULT (
-    'DLV-' || upper(substring(replace(gen_random_uuid()::text, '-', '') from 1 for 12))
+    'DLV-' || upper(substring(replace(gen_random_uuid()::text, '-', '') from 1 for 16))
   );
 
 DROP TRIGGER IF EXISTS set_webhook_delivery_log_public_id ON webhook_delivery_logs;
@@ -122,7 +123,7 @@ CREATE TRIGGER set_webhook_delivery_log_public_id
 
 UPDATE webhook_delivery_logs
 SET public_id = 'DLV-' ||
-                upper(substring(replace(gen_random_uuid()::text, '-', '') from 1 for 12))
+                upper(substring(replace(gen_random_uuid()::text, '-', '') from 1 for 16))
 WHERE public_id IS NULL;
 
 ALTER TABLE webhook_delivery_logs
@@ -132,7 +133,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS webhook_delivery_logs_public_id_uidx
   ON webhook_delivery_logs(public_id);
 
 COMMENT ON COLUMN webhook_delivery_logs.public_id IS
-  'Customer-facing identifier (DLV-{12}). Stable across v1+v2 — see SCRUM-1445.';
+  'Customer-facing identifier (DLV-{16}). Stable across v1+v2 — see SCRUM-1445.';
 
 -- Reload PostgREST schema cache so the new columns are queryable via REST.
 NOTIFY pgrst, 'reload schema';

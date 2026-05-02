@@ -12,9 +12,47 @@
  * Mirrors the agents-sanitizer.test.ts pattern (SCRUM-1271-A).
  */
 
-import { describe, it, expect } from 'vitest';
+import express from 'express';
+import request from 'supertest';
+import { beforeEach, describe, it, expect, vi } from 'vitest';
 import { toPublicAttestation } from './attestationResponse.js';
 import { findBannedKeys } from './response-schemas.js';
+import { attestationsRouter } from './attestations.js';
+
+const mockRange = vi.hoisted(() => vi.fn());
+
+vi.mock('../../utils/db.js', () => {
+  const queryChain: Record<string, unknown> = {};
+  queryChain.eq = vi.fn(() => queryChain);
+  queryChain.ilike = vi.fn(() => queryChain);
+  queryChain.lt = vi.fn(() => queryChain);
+  queryChain.order = vi.fn(() => queryChain);
+  queryChain.range = mockRange;
+
+  return {
+    db: {
+      from: vi.fn(() => ({
+        select: vi.fn(() => queryChain),
+      })),
+    },
+  };
+});
+
+vi.mock('../../utils/logger.js', () => ({
+  logger: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
+}));
+
+vi.mock('../../config.js', () => ({
+  config: { frontendUrl: 'https://app.arkova.ai', bitcoinNetwork: 'signet' },
+}));
+
+vi.mock('../../auth.js', () => ({
+  verifyAuthToken: vi.fn(),
+}));
+
+vi.mock('../../webhooks/delivery.js', () => ({
+  dispatchWebhookEvent: vi.fn(),
+}));
 
 describe('attestations.ts public shape (SCRUM-1444 / SCRUM-1271-B)', () => {
   const fullDbRow = {
@@ -37,6 +75,10 @@ describe('attestations.ts public shape (SCRUM-1444 / SCRUM-1271-B)', () => {
     created_at: '2026-04-29T00:00:00Z',
     chain_tx_id: null,
   };
+
+  beforeEach(() => {
+    mockRange.mockResolvedValue({ data: [fullDbRow], count: 1, error: null });
+  });
 
   it('strips internal id, attester_user_id, attester_org_id, anchor_id', () => {
     const out = toPublicAttestation(fullDbRow);
@@ -84,5 +126,21 @@ describe('attestations.ts public shape (SCRUM-1444 / SCRUM-1271-B)', () => {
     const before = { ...fullDbRow };
     toPublicAttestation(fullDbRow);
     expect(fullDbRow).toEqual(before);
+  });
+
+  it('sanitizes list endpoint items before adding verify_url', async () => {
+    const app = express();
+    app.use('/api/v1/attestations', attestationsRouter);
+
+    const res = await request(app).get('/api/v1/attestations').expect(200);
+    const item = res.body.attestations[0];
+
+    expect(findBannedKeys(item)).toEqual([]);
+    expect(item).not.toHaveProperty('id');
+    expect(item).not.toHaveProperty('attester_user_id');
+    expect(item).not.toHaveProperty('attester_org_id');
+    expect(item).not.toHaveProperty('anchor_id');
+    expect(item).not.toHaveProperty('org_id');
+    expect(item.verify_url).toBe('https://app.arkova.ai/verify/attestation/ARK-ARKOVA-VER-A1B2C3');
   });
 });
