@@ -58,6 +58,12 @@ function lineNumber(text: string, idx: number): number {
   return text.slice(0, idx).split('\n').length;
 }
 
+function hasDeliberateDefinerComment(sql: string): boolean {
+  return stripSqlStringLiterals(sql)
+    .split('\n')
+    .some((line) => line.trimStart().toLowerCase().startsWith('-- deliberate: definer-rights view'));
+}
+
 function statementEnd(sql: string, offset: number): number {
   const semicolon = sql.indexOf(';', offset);
   return semicolon === -1 ? sql.length : semicolon + 1;
@@ -107,8 +113,7 @@ function findViolations(file: string, strippedSql: string): Finding[] {
     }
 
     const preceding = lines.slice(Math.max(0, line - 6), line - 1).join('\n');
-    const precedingWithoutStrings = stripSqlStringLiterals(preceding);
-    if (/^\s*--\s*DELIBERATE:\s*definer-rights view/im.test(precedingWithoutStrings)) {
+    if (hasDeliberateDefinerComment(preceding)) {
       continue;
     }
 

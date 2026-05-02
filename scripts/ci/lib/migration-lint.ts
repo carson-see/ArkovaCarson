@@ -22,6 +22,102 @@ function blankPreservingNewlines(text: string): string {
   return text.replaceAll(/[^\n]/g, ' ');
 }
 
+function consumeSingleQuoted(sql: string, start: number): number {
+  let i = start + 1;
+  while (i < sql.length) {
+    if (sql[i] === "'" && sql[i + 1] === "'") {
+      i += 2;
+      continue;
+    }
+    if (sql[i] === "'") {
+      return i + 1;
+    }
+    i += 1;
+  }
+  return i;
+}
+
+function consumeDoubleQuoted(sql: string, start: number): number {
+  let i = start + 1;
+  while (i < sql.length) {
+    if (sql[i] === '"' && sql[i + 1] === '"') {
+      i += 2;
+      continue;
+    }
+    if (sql[i] === '"') {
+      return i + 1;
+    }
+    i += 1;
+  }
+  return i;
+}
+
+function consumeLineComment(sql: string, start: number): number {
+  let i = start + 2;
+  while (i < sql.length && sql[i] !== '\n') {
+    i += 1;
+  }
+  return i;
+}
+
+function consumeBlockComment(sql: string, start: number): number {
+  let i = start + 2;
+  let depth = 1;
+  while (i < sql.length && depth > 0) {
+    if (sql[i] === '/' && sql[i + 1] === '*') {
+      depth += 1;
+      i += 2;
+      continue;
+    }
+    if (sql[i] === '*' && sql[i + 1] === '/') {
+      depth -= 1;
+      i += 2;
+      continue;
+    }
+    i += 1;
+  }
+  return i;
+}
+
+interface SqlToken {
+  text: string;
+  next: number;
+}
+
+function readQuotedToken(sql: string, start: number): SqlToken | null {
+  if (sql[start] === "'") {
+    const next = consumeSingleQuoted(sql, start);
+    return { text: sql.slice(start, next), next };
+  }
+  if (sql[start] === '"') {
+    const next = consumeDoubleQuoted(sql, start);
+    return { text: sql.slice(start, next), next };
+  }
+  return null;
+}
+
+function readBlankedQuotedToken(sql: string, start: number): SqlToken | null {
+  const token = readQuotedToken(sql, start);
+  if (!token) return null;
+
+  const quote = sql[start];
+  const inner = sql.slice(start + 1, token.next - 1);
+  const text = `${quote}${blankPreservingNewlines(inner)}${quote}`;
+  return { text, next: token.next };
+}
+
+function readCommentToken(sql: string, start: number): SqlToken | null {
+  if (sql[start] === '-' && sql[start + 1] === '-') {
+    const next = consumeLineComment(sql, start);
+    return { text: blankPreservingNewlines(sql.slice(start, next)), next };
+  }
+  if (sql[start] === '/' && sql[start + 1] === '*') {
+    const next = consumeBlockComment(sql, start);
+    return { text: blankPreservingNewlines(sql.slice(start, next)), next };
+  }
+  return null;
+}
+
 /**
  * Load a baseline JSON of grandfathered entries. Returns an empty Set
  * when the file is absent so first-time lints don't trip on missing
@@ -58,77 +154,21 @@ export function stripSqlComments(sql: string): string {
   let i = 0;
 
   while (i < sql.length) {
-    const current = sql[i];
-    const next = sql[i + 1];
-
-    if (current === "'") {
-      const start = i;
-      i += 1;
-      while (i < sql.length) {
-        if (sql[i] === "'" && sql[i + 1] === "'") {
-          i += 2;
-          continue;
-        }
-        if (sql[i] === "'") {
-          i += 1;
-          break;
-        }
-        i += 1;
-      }
-      output += sql.slice(start, i);
+    const quoted = readQuotedToken(sql, i);
+    if (quoted) {
+      output += quoted.text;
+      i = quoted.next;
       continue;
     }
 
-    if (current === '"') {
-      const start = i;
-      i += 1;
-      while (i < sql.length) {
-        if (sql[i] === '"' && sql[i + 1] === '"') {
-          i += 2;
-          continue;
-        }
-        if (sql[i] === '"') {
-          i += 1;
-          break;
-        }
-        i += 1;
-      }
-      output += sql.slice(start, i);
+    const comment = readCommentToken(sql, i);
+    if (comment) {
+      output += comment.text;
+      i = comment.next;
       continue;
     }
 
-    if (current === '-' && next === '-') {
-      const start = i;
-      i += 2;
-      while (i < sql.length && sql[i] !== '\n') {
-        i += 1;
-      }
-      output += blankPreservingNewlines(sql.slice(start, i));
-      continue;
-    }
-
-    if (current === '/' && next === '*') {
-      const start = i;
-      i += 2;
-      let depth = 1;
-      while (i < sql.length && depth > 0) {
-        if (sql[i] === '/' && sql[i + 1] === '*') {
-          depth += 1;
-          i += 2;
-          continue;
-        }
-        if (sql[i] === '*' && sql[i + 1] === '/') {
-          depth -= 1;
-          i += 2;
-          continue;
-        }
-        i += 1;
-      }
-      output += blankPreservingNewlines(sql.slice(start, i));
-      continue;
-    }
-
-    output += current;
+    output += sql[i];
     i += 1;
   }
 
@@ -145,49 +185,14 @@ export function stripSqlStringLiterals(sql: string): string {
   let i = 0;
 
   while (i < sql.length) {
-    const current = sql[i];
-
-    if (current === "'") {
-      output += "'";
-      i += 1;
-      while (i < sql.length) {
-        if (sql[i] === "'" && sql[i + 1] === "'") {
-          output += '  ';
-          i += 2;
-          continue;
-        }
-        if (sql[i] === "'") {
-          output += "'";
-          i += 1;
-          break;
-        }
-        output += sql[i] === '\n' ? '\n' : ' ';
-        i += 1;
-      }
+    const quoted = readBlankedQuotedToken(sql, i);
+    if (quoted) {
+      output += quoted.text;
+      i = quoted.next;
       continue;
     }
 
-    if (current === '"') {
-      output += '"';
-      i += 1;
-      while (i < sql.length) {
-        if (sql[i] === '"' && sql[i + 1] === '"') {
-          output += '  ';
-          i += 2;
-          continue;
-        }
-        if (sql[i] === '"') {
-          output += '"';
-          i += 1;
-          break;
-        }
-        output += sql[i] === '\n' ? '\n' : ' ';
-        i += 1;
-      }
-      continue;
-    }
-
-    output += current;
+    output += sql[i];
     i += 1;
   }
 
