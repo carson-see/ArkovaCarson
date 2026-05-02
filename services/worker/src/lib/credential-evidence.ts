@@ -30,6 +30,7 @@ export const ANCHOR_CREDENTIAL_TYPES = [
   'REGULATION',
   'PUBLICATION',
   'CHARITY',
+  'ACCREDITATION',
   'FINANCIAL_ADVISOR',
   'BUSINESS_ENTITY',
   'RESUME',
@@ -67,6 +68,8 @@ const SHA_256_HEX = /^[a-fA-F0-9]{64}$/;
 const PROVIDER_SLUG = /^[a-z][a-z0-9_-]{1,63}$/;
 const SOURCE_ID = /^[A-Za-z0-9._:/#@+-]{1,256}$/;
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
+const ISO_DATE_TIME_WITH_OFFSET =
+  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(Z|[+-]\d{2}:\d{2})$/;
 const SENSITIVE_QUERY_KEYS = new Set([
   'access_token',
   'api_key',
@@ -200,6 +203,44 @@ function compareQueryEntries([aKey, aVal]: [string, string], [bKey, bVal]: [stri
   return keyComparison === 0 ? compareUtf8Strings(aVal, bVal) : keyComparison;
 }
 
+function isValidDateParts(year: number, month: number, day: number): boolean {
+  if (month < 1 || month > 12 || day < 1 || day > 31) return false;
+
+  const date = new Date(0);
+  date.setUTCHours(0, 0, 0, 0);
+  date.setUTCFullYear(year, month - 1, day);
+
+  return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
+}
+
+function isValidDateOnly(value: string): boolean {
+  if (!DATE_ONLY.test(value)) return false;
+  const [year, month, day] = value.split('-').map(Number);
+  return isValidDateParts(year, month, day);
+}
+
+function isValidIsoDateTimeWithOffset(value: string): boolean {
+  const match = ISO_DATE_TIME_WITH_OFFSET.exec(value);
+  if (!match) return false;
+
+  const [, yearValue, monthValue, dayValue, hourValue, minuteValue, secondValue, offset] = match;
+  const year = Number(yearValue);
+  const month = Number(monthValue);
+  const day = Number(dayValue);
+  const hour = Number(hourValue);
+  const minute = Number(minuteValue);
+  const second = Number(secondValue);
+  if (!isValidDateParts(year, month, day) || hour > 23 || minute > 59 || second > 59) return false;
+
+  if (offset !== 'Z') {
+    const offsetHour = Number(offset.slice(1, 3));
+    const offsetMinute = Number(offset.slice(4, 6));
+    if (offsetHour > 23 || offsetMinute > 59) return false;
+  }
+
+  return !Number.isNaN(Date.parse(value));
+}
+
 /**
  * Normalize public credential source URLs before they enter hashed evidence.
  *
@@ -246,8 +287,8 @@ const Sha256HexSchema = z
 
 const DateOrDateTimeSchema = z
   .string()
-  .refine((value) => DATE_ONLY.test(value) || !Number.isNaN(Date.parse(value)), {
-    message: 'must be YYYY-MM-DD or an ISO date-time',
+  .refine((value) => isValidDateOnly(value) || isValidIsoDateTimeWithOffset(value), {
+    message: 'must be YYYY-MM-DD or an ISO 8601 date-time with timezone offset',
   });
 
 const SourceUrlSchema = z.string().transform((value, ctx) => {
@@ -305,19 +346,27 @@ export type CredentialEvidenceHashInput = z.input<typeof CredentialEvidenceHashI
 export type NormalizedCredentialEvidenceHashInput = z.output<typeof CredentialEvidenceHashInputSchema>;
 export type CredentialEvidencePackage = z.output<typeof CredentialEvidencePackageSchema>;
 
+export function canonicalizeNormalizedCredentialEvidence(input: NormalizedCredentialEvidenceHashInput): string {
+  return canonicaliseJson(input);
+}
+
 export function canonicalizeCredentialEvidence(input: CredentialEvidenceHashInput): string {
-  return canonicaliseJson(CredentialEvidenceHashInputSchema.parse(input));
+  return canonicalizeNormalizedCredentialEvidence(CredentialEvidenceHashInputSchema.parse(input));
+}
+
+export function computeNormalizedCredentialEvidenceHash(input: NormalizedCredentialEvidenceHashInput): string {
+  return createHash('sha256').update(canonicalizeNormalizedCredentialEvidence(input)).digest('hex');
 }
 
 export function computeCredentialEvidenceHash(input: CredentialEvidenceHashInput): string {
-  return createHash('sha256').update(canonicalizeCredentialEvidence(input)).digest('hex');
+  return computeNormalizedCredentialEvidenceHash(CredentialEvidenceHashInputSchema.parse(input));
 }
 
 export function buildCredentialEvidencePackage(input: CredentialEvidenceHashInput): CredentialEvidencePackage {
   const normalized = CredentialEvidenceHashInputSchema.parse(input);
   return CredentialEvidencePackageSchema.parse({
     ...normalized,
-    evidencePackageHash: computeCredentialEvidenceHash(normalized),
+    evidencePackageHash: computeNormalizedCredentialEvidenceHash(normalized),
   });
 }
 

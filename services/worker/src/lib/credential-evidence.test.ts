@@ -2,7 +2,10 @@ import { describe, expect, it } from 'vitest';
 import {
   buildCredentialEvidencePackage,
   canonicalizeCredentialEvidence,
+  canonicalizeNormalizedCredentialEvidence,
   computeCredentialEvidenceHash,
+  computeNormalizedCredentialEvidenceHash,
+  CredentialEvidenceHashInputSchema,
   normalizeCredentialSourceUrl,
   parsePublicCredentialEvidenceMetadata,
   parsePublicCredentialEvidenceMetadataResult,
@@ -58,6 +61,17 @@ describe('credential-evidence', () => {
     );
     expect(canonicalizeCredentialEvidence(reordered)).toBe(
       canonicalizeCredentialEvidence(GENERIC_URL_EVIDENCE_INPUT),
+    );
+  });
+
+  it('canonicalizes already-normalized evidence without reparsing it', () => {
+    const normalized = CredentialEvidenceHashInputSchema.parse(GENERIC_URL_EVIDENCE_INPUT);
+
+    expect(canonicalizeNormalizedCredentialEvidence(normalized)).toBe(
+      canonicalizeCredentialEvidence(GENERIC_URL_EVIDENCE_INPUT),
+    );
+    expect(computeNormalizedCredentialEvidenceHash(normalized)).toBe(
+      computeCredentialEvidenceHash(GENERIC_URL_EVIDENCE_INPUT),
     );
   });
 
@@ -134,6 +148,52 @@ describe('credential-evidence', () => {
     expect(evidence.source.provider).toBe('accredible');
     expect(evidence.source.url).toBe('https://credentials.example.com/12345678');
     expect(evidence.evidence.extractionManifestHash).toBe('2'.repeat(64));
+  });
+
+  it('supports ACCREDITATION evidence in parity with the database enum', () => {
+    const evidence = buildCredentialEvidencePackage({
+      ...GENERIC_URL_EVIDENCE_INPUT,
+      credential: {
+        ...GENERIC_URL_EVIDENCE_INPUT.credential,
+        title: 'Institutional Accreditation',
+        type: 'ACCREDITATION',
+      },
+    });
+
+    expect(evidence.credential.type).toBe('ACCREDITATION');
+  });
+
+  it('rejects ambiguous or invalid credential dates', () => {
+    const invalidDates = [
+      '2026-02-30',
+      'April 15, 2026',
+      'Tue, 15 Apr 2026 14:00:00 GMT',
+      '2026-04-15T14:00:00',
+      '2026-04-15T25:00:00Z',
+      '2026-13-01',
+    ];
+
+    for (const issuedAt of invalidDates) {
+      expect(() =>
+        buildCredentialEvidencePackage({
+          ...GENERIC_URL_EVIDENCE_INPUT,
+          credential: {
+            ...GENERIC_URL_EVIDENCE_INPUT.credential,
+            issuedAt,
+          },
+        }),
+      ).toThrow('ISO 8601 date-time with timezone offset');
+    }
+
+    expect(
+      buildCredentialEvidencePackage({
+        ...GENERIC_URL_EVIDENCE_INPUT,
+        credential: {
+          ...GENERIC_URL_EVIDENCE_INPUT.credential,
+          issuedAt: '2026-04-15T14:00:00+03:00',
+        },
+      }).credential.issuedAt,
+    ).toBe('2026-04-15T14:00:00+03:00');
   });
 
   it('creates public-safe metadata without raw recipient display names', () => {
