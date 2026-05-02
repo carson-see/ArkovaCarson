@@ -646,6 +646,7 @@ async function legacyProcessBatchAnchors(orgId?: string): Promise<BatchAnchorRes
     .from('anchors')
     .select('id, fingerprint, metadata, credential_type')
     .eq('status', 'PENDING')
+    .is('deleted_at', null)
     .is('chain_tx_id', null);
   if (orgId) pendingQuery = pendingQuery.eq('org_id', orgId);
 

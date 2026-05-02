@@ -69,6 +69,13 @@ vi.mock('../config.js', () => ({
   },
 }));
 
+vi.mock('../utils/rpc.js', () => ({
+  callRpc: vi.fn(() => Promise.resolve({
+    data: { PENDING: 3000, SUBMITTED: 0, BROADCASTING: 0, SECURED: 0, REVOKED: 0, total: 3000 },
+    error: null,
+  })),
+}));
+
 vi.mock('../chain/client.js', () => ({
   getInitializedChainClient: () => ({ submitFingerprint: mockSubmitFingerprint }),
   getChainClientAsync: () => Promise.resolve({ submitFingerprint: mockSubmitFingerprint }),
@@ -77,14 +84,30 @@ vi.mock('../chain/client.js', () => ({
 
 const mockDbRpc = vi.hoisted(() => vi.fn());
 const mockSelectEq = vi.hoisted(() => vi.fn());
+const mockSelectIs = vi.hoisted(() => vi.fn());
+const mockSelectRange = vi.hoisted(() => vi.fn());
+const mockSelectSingle = vi.hoisted(() => vi.fn());
+const mockSelectMaybeSingle = vi.hoisted(() => vi.fn());
 
 vi.mock('../utils/db.js', () => {
   // Legacy select chain for fallback path
   const selectChain: Record<string, unknown> = {};
   selectChain.eq = mockSelectEq.mockImplementation(() => selectChain);
-  selectChain.is = vi.fn(() => selectChain);
+  selectChain.is = mockSelectIs.mockImplementation(() => selectChain);
   selectChain.order = vi.fn(() => selectChain);
-  selectChain.limit = vi.fn().mockResolvedValue({ data: [], error: null });
+  selectChain.limit = vi.fn(() => selectChain);
+  selectChain.range = mockSelectRange.mockImplementation(() => selectChain);
+  selectChain.single = mockSelectSingle.mockResolvedValue({
+    data: { created_at: '2026-01-01T00:00:00Z' },
+    error: null,
+  });
+  selectChain.maybeSingle = mockSelectMaybeSingle.mockResolvedValue({
+    data: { id: 'threshold-anchor' },
+    error: null,
+  });
+  selectChain.then = (resolve?: (v: unknown) => unknown, reject?: (e: unknown) => unknown) => (
+    Promise.resolve({ data: [], error: null }).then(resolve, reject)
+  );
 
   return {
     db: {
@@ -106,7 +129,7 @@ vi.mock('../utils/db.js', () => {
 
 // ---- System under test ----
 
-import { processBatchAnchors, BATCH_SIZE, MIN_BATCH_SIZE } from './batch-anchor.js';
+import { processBatchAnchors, BATCH_SIZE, MIN_BATCH_SIZE, MIN_BATCH_THRESHOLD } from './batch-anchor.js';
 
 // ---- Fixtures ----
 
@@ -190,7 +213,11 @@ describe('processBatchAnchors', () => {
     expect(orgScopeCalls).toEqual([
       ['org_id', 'org-1'],
       ['org_id', 'org-1'],
+      ['org_id', 'org-1'],
     ]);
+    expect(mockSelectRange).toHaveBeenCalledWith(MIN_BATCH_THRESHOLD - 1, MIN_BATCH_THRESHOLD - 1);
+    expect(mockSelectMaybeSingle).toHaveBeenCalled();
+    expect(mockSelectIs.mock.calls.filter((call) => call[0] === 'deleted_at')).toHaveLength(3);
   });
 
   it('does not use legacy fallback for non-migration claim RPC errors', async () => {
@@ -203,7 +230,10 @@ describe('processBatchAnchors', () => {
 
     expect(result).toEqual({ processed: 0, batchId: null, merkleRoot: null, txId: null });
     const orgScopeCalls = mockSelectEq.mock.calls.filter((call) => call[0] === 'org_id');
-    expect(orgScopeCalls).toEqual([['org_id', 'org-1']]);
+    expect(orgScopeCalls).toEqual([
+      ['org_id', 'org-1'],
+      ['org_id', 'org-1'],
+    ]);
     expect(mockLogger.error).toHaveBeenCalledWith(
       expect.objectContaining({ error: expect.any(Object) }),
       expect.stringContaining('without legacy fallback'),
