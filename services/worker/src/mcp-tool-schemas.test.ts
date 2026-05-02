@@ -16,6 +16,7 @@ import {
   validationErrorToToolResult,
   type McpToolName,
 } from '../../edge/src/mcp-tool-schemas.js';
+import { openApiV2Spec } from './api/v2/openapi.js';
 
 const VALID_PUBLIC_ID = 'ARK-DEG-ABCDEF';
 const VALID_HASH = 'a'.repeat(64);
@@ -39,6 +40,14 @@ describe('MCP_TOOL_SCHEMAS registry', () => {
         'list_agents',
       ]),
     );
+  });
+
+  it('covers every OpenAPI v2 operation exposed as an agent tool', () => {
+    const agentToolNames = Object.values(openApiV2Spec.paths)
+      .map((pathItem) => pathItem.get?.['x-agent-usage']?.tool_name)
+      .filter((name): name is McpToolName => typeof name === 'string');
+
+    expect(Object.keys(MCP_TOOL_SCHEMAS)).toEqual(expect.arrayContaining([...new Set(agentToolNames)]));
   });
 });
 
@@ -105,9 +114,24 @@ describe('validateToolArgs — search_credentials', () => {
 });
 
 describe('validateToolArgs — agent v2 aliases', () => {
-  it('accepts search(q,type?)', () => {
+  it('accepts search(q,type?,limit?) using the REST v2 parameter name', () => {
+    const result = validateToolArgs('search', { q: 'acme', type: 'org', limit: 5 });
+    expect(result.ok).toBe(true);
+  });
+
+  it('keeps max_results as a backwards-compatible search alias', () => {
     const result = validateToolArgs('search', { q: 'acme', type: 'org', max_results: 5 });
     expect(result.ok).toBe(true);
+  });
+
+  it('allows REST v2 search limit parity up to 100', () => {
+    const result = validateToolArgs('search', { q: 'acme', limit: 100 });
+    expect(result.ok).toBe(true);
+  });
+
+  it('rejects search limits above the OpenAPI maximum', () => {
+    const result = validateToolArgs('search', { q: 'acme', limit: 101 });
+    expect(result.ok).toBe(false);
   });
 
   it('rejects unknown search type', () => {

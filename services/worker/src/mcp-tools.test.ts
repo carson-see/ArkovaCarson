@@ -136,17 +136,36 @@ describe('handleSearchCredentials', () => {
 // ── Agent v2 aliases (SCRUM-1107) ─────────────────────────────────────
 
 describe('agent v2 MCP aliases', () => {
-  it('search(q,type=org) calls the public org search RPC', async () => {
+  it('search(q,type=org,limit) calls the public org search RPC', async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
       json: async () => ([{ id: 'org-1', display_name: 'Acme Corp', domain: 'acme.com' }]),
     });
 
-    const result = await handleAgentSearch({ q: 'acme', type: 'org', max_results: 5 }, CONFIG);
+    const result = await handleAgentSearch({ q: 'acme', type: 'org', limit: 5 }, CONFIG);
     expect(result.isError).toBeUndefined();
     const parsed = JSON.parse(result.content[0].text);
     expect(parsed.results[0]).toMatchObject({ type: 'org', id: 'org-1' });
     expect(mockFetch.mock.calls[0][0]).toContain('/rest/v1/rpc/search_organizations_public');
+  });
+
+  it('search(q,type=record,limit) passes the REST v2 limit parameter through to search RPC', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ([{
+        public_id: 'ARK-REC-ABC',
+        title: 'Test record',
+        credential_type: 'LICENSE',
+        status: 'SECURED',
+        created_at: '2026-01-01',
+      }]),
+    });
+
+    const result = await handleAgentSearch({ q: 'license', type: 'record', limit: 75 }, CONFIG);
+    expect(result.isError).toBeUndefined();
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.results[0]).toMatchObject({ type: 'record', public_id: 'ARK-REC-ABC' });
+    expect(JSON.parse(mockFetch.mock.calls[0][1].body)).toMatchObject({ p_limit: 75 });
   });
 
   it('verify(fingerprint) delegates to document verification', async () => {
