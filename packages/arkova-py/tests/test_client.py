@@ -284,7 +284,7 @@ def test_get_anchor_exposes_typed_rich_fields_when_returned() -> None:
 
 def test_async_verify_maps_rich_v1_verification_fields() -> None:
     async def run() -> str | None:
-        async def handler(request: httpx.Request) -> httpx.Response:
+        def handler(request: httpx.Request) -> httpx.Response:
             assert request.url.path == "/v1/verify/ARK-2026-ABC"
             return json_response(
                 {
@@ -304,4 +304,4 @@ def test_async_verify_maps_rich_v1_verification_fields() -> None:
             result = await client.verify("ARK-2026-ABC")
             return result.confidence_scores["overall"] if result.confidence_scores else None
 
-    assert asyncio.run(run()) == 0.81
+    assert asyncio.run(run()) == pytest.approx(0.81)
