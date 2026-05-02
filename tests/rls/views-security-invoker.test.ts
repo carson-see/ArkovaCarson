@@ -2,17 +2,13 @@
  * RLS regression tests for SCRUM-1276 (R3-3) — public-schema views
  * security_invoker audit.
  *
- * Goal: pin that `public_org_profiles` is NOT a view in the live schema
- * (it was DROPPED in 0161 and replaced with the SECURITY DEFINER
- * function `get_public_org_profiles`). Re-introducing the view without
- * security_invoker would re-open the cross-tenant leak.
+ * Goal: pin that `public_org_profiles` is a live view after migration
+ * 0281 and that the SECURITY DEFINER function `get_public_org_profiles`
+ * remains callable as the intentional public organization search path.
  *
- * The runtime `security_invoker = true` flag on the surviving public
- * views (`payment_ledger`, `v_slow_queries`, `calibration_features`) is
- * statically enforced by `scripts/ci/check-views-security-invoker.ts` —
- * runtime introspection through Supabase's REST surface can't read
- * `pg_class.reloptions` (pg_catalog isn't exposed), so the lint is the
- * canonical guard for that property.
+ * The static migration lint also enforces that every newly created view
+ * declares `security_invoker = true`; the sibling runtime test verifies
+ * the reloption and caller-RLS behavior for `public_org_profiles`.
  *
  * Prerequisites: Supabase running locally with all migrations
  * (including 0281) applied.
@@ -28,7 +24,7 @@ describe('SCRUM-1276: public-schema views security_invoker audit', () => {
     serviceClient = createServiceClient();
   });
 
-  it('public_org_profiles is NOT a view (dropped in 0161, replaced with function)', async () => {
+  it('public_org_profiles is a public view after migration 0281', async () => {
     // pg_views IS exposed through the REST surface (it's a public-schema
     // view from Postgres core, accessible to authenticated/service_role).
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -43,13 +39,13 @@ describe('SCRUM-1276: public-schema views security_invoker audit', () => {
     if (error?.code === 'PGRST205' || error?.code === 'PGRST116' || error?.code === '42P01') return;
 
     expect(error).toBeNull();
-    expect(viewRows ?? []).toHaveLength(0);
+    expect(viewRows ?? []).toHaveLength(1);
   });
 
-  it('get_public_org_profiles function exists as the canonical replacement', async () => {
+  it('get_public_org_profiles function succeeds as the intentional public search path', async () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { error } = await (serviceClient as any).rpc('get_public_org_profiles', {});
-    // service_role can call without args; should not 404 (function-not-found)
-    expect(error?.code).not.toBe('42883');
+    const { data, error } = await (serviceClient as any).rpc('get_public_org_profiles', {});
+    expect(error).toBeNull();
+    expect(Array.isArray(data)).toBe(true);
   });
 });

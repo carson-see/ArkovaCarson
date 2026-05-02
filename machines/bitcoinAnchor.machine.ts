@@ -34,6 +34,8 @@ const softDeleted = variable("softDeleted");
 // 0172_fix_credential_type_trigger_service_role.sql made service_role
 // exempt deliberately for backfill / repair flows. Spec now matches code.
 export const bitcoinAnchorMachine = defineMachine({
+  // tla-precheck's DSL schema is currently version 2. The SCRUM-1274
+  // anchor model revision is documented in the header above.
   version: 2,
   moduleName: "BitcoinAnchor",
 
@@ -204,6 +206,8 @@ export const bitcoinAnchorMachine = defineMachine({
     // Legal hold blocks supersede the same way it blocks revoke.
     // SUPERSEDED is terminal, so fingerprint is locked here even if supersede
     // fires from PENDING (idempotent for BROADCASTING/SUBMITTED/SECURED).
+    // Returning actor to client removes any conceptual active worker claim
+    // when a BROADCASTING or SUBMITTED anchor is superseded.
     supersede: {
       params: { a: "Anchors" },
       guard: and(
@@ -217,6 +221,7 @@ export const bitcoinAnchorMachine = defineMachine({
       ),
       updates: [
         setMap("status", param("a"), lit("SUPERSEDED")),
+        setMap("actor", param("a"), lit("client")),
         setMap("fingerprintLocked", param("a"), lit(true))
       ]
     },
@@ -357,16 +362,19 @@ export const bitcoinAnchorMachine = defineMachine({
       )
     },
 
-    // INV-6: Legal hold blocks revocation transition.
-    // Original framing: legalHold ⟹ status ≠ PENDING (placeLegalHold guard
-    // limits to SECURED/REVOKED). The same guarantee covers supersede now,
-    // since the supersede action also blocks under legalHold.
+    // INV-6: Legal hold can only exist on evidentiary terminal/secured rows.
+    // placeLegalHold limits creation to SECURED/REVOKED/SUPERSEDED and every
+    // transition that would escape that set is blocked while legalHold=true.
     legalHoldPreventsSecuredToRevoked: {
-      description: "Legal hold can only be placed on SECURED or REVOKED anchors",
+      description: "Legal hold can only exist on SECURED, REVOKED, or SUPERSEDED anchors",
       formula: forall("Anchors", "a",
         or(
           not(index(legalHold, param("a"))),
-          not(eq(index(status, param("a")), lit("PENDING")))
+          isin(index(status, param("a")), setOf(
+            lit("SECURED"),
+            lit("REVOKED"),
+            lit("SUPERSEDED")
+          ))
         )
       )
     }

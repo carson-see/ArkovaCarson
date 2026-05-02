@@ -34,7 +34,7 @@ metadataImmutableAfterSecured ==
 onlyWorkerSecures ==
   \A a \in Anchors : (~(status[a] = "SECURED")) \/ (actor[a] = "worker")
 legalHoldPreventsSecuredToRevoked ==
-  \A a \in Anchors : (~(legalHold[a])) \/ (~(status[a] = "PENDING"))
+  \A a \in Anchors : (~(legalHold[a])) \/ (status[a] \in {"SECURED", "REVOKED", "SUPERSEDED"})
 
 workerClaim(a) ==
   /\ a \in Anchors
@@ -84,8 +84,9 @@ supersede(a) ==
   /\ a \in Anchors
   /\ (status[a] \in {"PENDING", "BROADCASTING", "SUBMITTED", "SECURED"}) /\ (~(legalHold[a]))
   /\ status' = [status EXCEPT ![a] = "SUPERSEDED"]
+  /\ actor' = [actor EXCEPT ![a] = "client"]
   /\ fingerprintLocked' = [fingerprintLocked EXCEPT ![a] = TRUE]
-  /\ UNCHANGED <<chainTxId, metadataLocked, legalHold, actor, softDeleted>>
+  /\ UNCHANGED <<chainTxId, metadataLocked, legalHold, softDeleted>>
 placeLegalHold(a) ==
   /\ a \in Anchors
   /\ (status[a] \in {"SECURED", "REVOKED", "SUPERSEDED"}) /\ (~(legalHold[a]))
@@ -179,13 +180,15 @@ Action_revoke_2 ==
 Action_supersede_1 ==
   /\ (status["a1"] \in {"PENDING", "BROADCASTING", "SUBMITTED", "SECURED"}) /\ (~(legalHold["a1"]))
   /\ status' = [status EXCEPT !["a1"] = "SUPERSEDED"]
+  /\ actor' = [actor EXCEPT !["a1"] = "client"]
   /\ fingerprintLocked' = [fingerprintLocked EXCEPT !["a1"] = TRUE]
-  /\ UNCHANGED <<chainTxId, metadataLocked, legalHold, actor, softDeleted>>
+  /\ UNCHANGED <<chainTxId, metadataLocked, legalHold, softDeleted>>
 Action_supersede_2 ==
   /\ (status["a2"] \in {"PENDING", "BROADCASTING", "SUBMITTED", "SECURED"}) /\ (~(legalHold["a2"]))
   /\ status' = [status EXCEPT !["a2"] = "SUPERSEDED"]
+  /\ actor' = [actor EXCEPT !["a2"] = "client"]
   /\ fingerprintLocked' = [fingerprintLocked EXCEPT !["a2"] = TRUE]
-  /\ UNCHANGED <<chainTxId, metadataLocked, legalHold, actor, softDeleted>>
+  /\ UNCHANGED <<chainTxId, metadataLocked, legalHold, softDeleted>>
 Action_placeLegalHold_1 ==
   /\ (status["a1"] \in {"SECURED", "REVOKED", "SUPERSEDED"}) /\ (~(legalHold["a1"]))
   /\ legalHold' = [legalHold EXCEPT !["a1"] = TRUE]

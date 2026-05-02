@@ -41,10 +41,6 @@ function normalizeIdent(raw: string): string {
     .toLowerCase();
 }
 
-function displayIdent(raw: string): string {
-  return normalizeIdent(raw);
-}
-
 function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
@@ -58,6 +54,23 @@ function lineNumber(text: string, idx: number): number {
   return text.slice(0, idx).split('\n').length;
 }
 
+function statementEnd(sql: string, offset: number): number {
+  const semicolon = sql.indexOf(';', offset);
+  return semicolon === -1 ? sql.length : semicolon + 1;
+}
+
+function alterSecurityInvokerRegex(view: string, cache: Map<string, RegExp>): RegExp {
+  const cached = cache.get(view);
+  if (cached) return cached;
+
+  const re = new RegExp(
+    `ALTER\\s+VIEW\\s+(?:IF\\s+EXISTS\\s+)?${viewRefPattern(view)}\\s+SET\\s*\\(\\s*security_invoker\\s*=\\s*(?:true|on)\\s*\\)`,
+    'i',
+  );
+  cache.set(view, re);
+  return re;
+}
+
 function loadBaseline(): Set<string> {
   if (!existsSync(BASELINE_PATH)) return new Set();
   const raw = JSON.parse(readFileSync(BASELINE_PATH, 'utf8')) as { grandfathered?: string[] };
@@ -67,6 +80,7 @@ function loadBaseline(): Set<string> {
 function findViolations(file: string, strippedSql: string): Finding[] {
   const findings: Finding[] = [];
   const lines = strippedSql.split('\n');
+  const alterReCache = new Map<string, RegExp>();
   const createViewRe =
     /CREATE\s+(?:OR\s+REPLACE\s+)?(?!MATERIALIZED\s+)VIEW\s+((?:(?:"public"|public)\.)?(?:"[^"]+"|\w+))/gi;
 
@@ -77,16 +91,12 @@ function findViolations(file: string, strippedSql: string): Finding[] {
     const offset = match.index;
     const line = lineNumber(strippedSql, offset);
 
-    const statementWindow = strippedSql.slice(offset, offset + 1000);
-    if (/WITH\s*\(\s*security_invoker\s*=\s*(?:true|on)\s*\)/i.test(statementWindow)) {
+    const statementSql = strippedSql.slice(offset, statementEnd(strippedSql, offset));
+    if (/WITH\s*\(\s*security_invoker\s*=\s*(?:true|on)\s*\)/i.test(statementSql)) {
       continue;
     }
 
-    const alterRe = new RegExp(
-      `ALTER\\s+VIEW\\s+(?:IF\\s+EXISTS\\s+)?${viewRefPattern(view)}\\s+SET\\s*\\(\\s*security_invoker\\s*=\\s*(?:true|on)\\s*\\)`,
-      'i',
-    );
-    if (alterRe.test(strippedSql.slice(offset))) {
+    if (alterSecurityInvokerRegex(view, alterReCache).test(strippedSql.slice(offset))) {
       continue;
     }
 
@@ -95,7 +105,7 @@ function findViolations(file: string, strippedSql: string): Finding[] {
       continue;
     }
 
-    findings.push({ file, view: displayIdent(rawView), line });
+    findings.push({ file, view, line });
   }
 
   return findings;

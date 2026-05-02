@@ -32,8 +32,30 @@ const POST_LOGIN_URL_PATTERN =
   /\/(vault|dashboard|onboarding|organization|records|settings|review-pending)/;
 const LOGIN_FAILURE_TIMEOUT_MS = 15_000;
 
+interface StorageStateFile {
+  origins?: Array<{
+    localStorage?: Array<{
+      name?: string;
+      value?: string;
+    }>;
+  }>;
+}
+
 // Ensure storage directory exists (idempotent)
 fs.mkdirSync(STORAGE_DIR, { recursive: true });
+
+function storageStateHasSupabaseSession(storagePath: string): boolean {
+  const parsed = JSON.parse(fs.readFileSync(storagePath, 'utf8')) as StorageStateFile;
+  return (parsed.origins ?? []).some((origin) =>
+    (origin.localStorage ?? []).some((entry) =>
+      typeof entry.name === 'string' &&
+      entry.name.startsWith('sb-') &&
+      entry.name.includes('auth-token') &&
+      typeof entry.value === 'string' &&
+      entry.value.includes('access_token'),
+    ),
+  );
+}
 
 /**
  * Shared login helper — navigates to /login, fills credentials, races
@@ -51,36 +73,58 @@ async function loginAndSave(
   await page.locator('#email').fill(email);
   await page.locator('#password').fill(password);
 
-  // Race the success-URL navigation against an error-message surface so
+  // Race the success-URL navigation against any error-message surface so
   // a bad seed credential fails the setup at ≤15s instead of 30s.
   const successPromise = page.waitForURL(POST_LOGIN_URL_PATTERN, {
     timeout: LOGIN_FAILURE_TIMEOUT_MS,
+  }).then(() => ({ type: 'success' as const }));
+  const alert = page.getByRole('alert').first();
+  const never = new Promise<never>(() => {
+    // Keep the error watcher out of the race after its own timeout; the
+    // explicit timeoutPromise below owns the "nothing happened" failure mode.
   });
-  const errorPromise = page
-    .getByRole('alert')
-    .filter({ hasText: /invalid|incorrect|wrong/i })
+  const errorPromise = alert
     .waitFor({ state: 'visible', timeout: LOGIN_FAILURE_TIMEOUT_MS })
-    .then(() => 'error' as const)
-    .catch(() => 'no-error' as const);
+    .then(async () => ({
+      type: 'error' as const,
+      message: (await alert.innerText().catch(() => '')).trim(),
+    }))
+    .catch(() => never);
+  const timeoutPromise = page
+    .waitForTimeout(LOGIN_FAILURE_TIMEOUT_MS)
+    .then(() => ({ type: 'timeout' as const }));
 
   await page.getByRole('button', { name: 'Sign in' }).click();
 
-  const result = await Promise.race([
-    successPromise.then(() => 'success' as const),
-    errorPromise,
-  ]);
+  const result = await Promise.race([successPromise, errorPromise, timeoutPromise]);
 
-  if (result === 'error') {
-    const toastText = await page.getByRole('alert').first().innerText().catch(() => '');
+  if (result.type === 'error') {
     throw new Error(
-      `Login failed for ${email}: server returned an error toast (${toastText.trim() || 'no text'}). ` +
+      `Login failed for ${email}: server returned an error toast (${result.message || 'no text'}). ` +
       'Verify the seed user was created by `supabase db reset` and that E2E_SEED_PASSWORD ' +
       'matches the seed.sql password.',
+    );
+  }
+  if (result.type === 'timeout') {
+    throw new Error(
+      `Login timed out for ${email}: neither post-login navigation nor an error toast appeared within ` +
+      `${LOGIN_FAILURE_TIMEOUT_MS}ms. Check the auth API, seed user, and login UI.`,
     );
   }
 
   // Belt-and-suspenders: confirm we're not parked on /login or /auth.
   await expect(page).not.toHaveURL(/\/(login|auth)(\/|$)/);
+
+  await page.waitForFunction(() =>
+    Object.entries(localStorage).some(([key, value]) =>
+      key.startsWith('sb-') &&
+      key.includes('auth-token') &&
+      typeof value === 'string' &&
+      value.includes('access_token'),
+    ),
+    undefined,
+    { timeout: LOGIN_FAILURE_TIMEOUT_MS },
+  );
 
   await page.context().storageState({ path: storagePath });
 
@@ -95,6 +139,13 @@ async function loginAndSave(
   if (stat.size < 100) {
     throw new Error(
       `storageState file ${storagePath} is suspiciously small (${stat.size} bytes). ` +
+      'Browser context lost the auth state before save. Check supabase-js token ' +
+      'persistence and the post-submit redirect race.',
+    );
+  }
+  if (!storageStateHasSupabaseSession(storagePath)) {
+    throw new Error(
+      `storageState file ${storagePath} does not contain a Supabase auth token. ` +
       'Browser context lost the auth state before save. Check supabase-js token ' +
       'persistence and the post-submit redirect race.',
     );

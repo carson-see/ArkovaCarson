@@ -76,12 +76,23 @@ CREATE OR REPLACE VIEW public.bar AS SELECT 1;`,
       `DO $$
 BEGIN
   EXECUTE format(
-    'CREATE OR REPLACE VIEW public.%I WITH (security_invoker = true) AS %s',
+    'CREATE OR REPLACE VIEW public.%I AS %s',
     v_name, v_def
   );
 END $$;`,
     );
     expect(run(repoRoot).code).toBe(0);
+  });
+
+  it('does not accept security_invoker text from a later unrelated statement', () => {
+    writeFileSync(
+      join(repoRoot, 'supabase/migrations/0001_bad_nearby_text.sql'),
+      `CREATE OR REPLACE VIEW public.leaky AS SELECT 1;
+COMMENT ON VIEW public.leaky IS 'security_invoker = true';`,
+    );
+    const { code, stderr } = run(repoRoot);
+    expect(code).toBe(1);
+    expect(stderr).toContain('leaky');
   });
 
   it('finds the view name even when CREATE VIEW spans multiple lines', () => {

@@ -40,7 +40,15 @@ export function runLintScript(
     env: { ...process.env, [repoRootEnvVar]: repoRoot },
     encoding: 'utf8',
   });
-  return { code: res.status ?? 0, stdout: res.stdout, stderr: res.stderr };
+  const stderr = [
+    res.stderr ?? '',
+    res.error ? `spawnSync failed: ${res.error.message}` : '',
+  ].filter(Boolean).join('\n');
+  return {
+    code: res.status ?? (res.error ? 127 : 1),
+    stdout: res.stdout ?? '',
+    stderr,
+  };
 }
 
 /**
