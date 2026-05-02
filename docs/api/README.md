@@ -13,7 +13,7 @@ The full machine-readable v1 API spec is at [`openapi.yaml`](./openapi.yaml). Th
 | What you want to do | Read this |
 |---|---|
 | Anchor + verify credentials from TypeScript / JavaScript | [`@arkova/sdk`](../../packages/sdk/README.md) |
-| Anchor + verify from Python | [`arkova`](../../packages/arkova-py/README.md) |
+| Search + verify from Python | [`arkova`](../../packages/arkova-py/README.md) |
 | Move from API v1 to v2 | [v1 to v2 migration guide](./v2-migration.md) |
 | Drop a verification badge on any third-party site | [`@arkova/embed`](../../packages/embed/README.md) |
 | Register and manage webhooks programmatically | [Webhooks developer guide](./webhooks.md) |
@@ -72,12 +72,15 @@ const result = await arkova.verify(receipt.publicId);
 ### 4. Python SDK — `arkova`
 
 Typed Python 3.10+ client with sync and async entry points. Install with `pip install arkova`.
+The canonical package supports `search`, `verify`, `verify_fingerprint`, `get_anchor`,
+and `list_orgs`; write/anchoring workflows remain in the TypeScript SDK and REST API.
 
 ```python
 from arkova import Arkova
 
 with Arkova(api_key="ak_live_...") as arkova:
     results = arkova.search("registered nurse", type="record")
+    verification = arkova.verify("ARK-2026-ABCD1234")
 ```
 
 📖 [Full Python SDK reference](../../packages/arkova-py/README.md) and [example notebook](./arkova-py-example.ipynb)

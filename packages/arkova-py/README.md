@@ -10,6 +10,14 @@ pip install arkova
 
 Python 3.10 or newer is supported.
 
+## Supported methods
+
+- `search(q, type="all", cursor=None, limit=50)`
+- `verify(public_id)`
+- `verify_fingerprint(fingerprint)`
+- `get_anchor(public_id)`
+- `list_orgs()`
+
 ## Quick start
 
 ```python

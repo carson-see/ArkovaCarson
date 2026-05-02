@@ -81,7 +81,10 @@ Clients should branch on `status` and `type`, not string-match `detail`.
 - TypeScript: `@arkova/sdk`
 - Python: `pip install arkova`
 
-Both SDKs expose v2 search, fingerprint verification, anchor lookup, organization listing, retry handling, and problem detail errors.
+Both SDKs expose v2 search, fingerprint verification, anchor lookup, organization
+listing, retry handling, and problem detail errors. The Python package also
+exposes `verify(public_id)` for the rich v1 verification response while teams
+migrate public-ID verification to the v2 anchor-detail flow.
 
 ## Cutover Checklist
 

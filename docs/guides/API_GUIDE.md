@@ -659,37 +659,32 @@ console.log(fp); // "7b3f9..."
 
 ```bash
 pip install arkova
-# Requires: httpx
 ```
 
 **Usage:**
 
 ```python
-from arkova import ArkovaClient
+from arkova import Arkova
 
-client = ArkovaClient(api_key="ak_live_your_key_here")
+with Arkova(api_key="ak_live_your_key_here") as client:
+    # --- Search the v2 API ---
+    results = client.search("registered nurse", type="record", limit=5)
+    print(results.results[0].public_id)
 
-# --- Verify a credential ---
-result = client.verify("ARK-2026-ABCD1234")
-print(result.verified)      # True
-print(result.status)        # "ACTIVE"
-print(result.issuer_name)   # "University of Michigan"
+    # --- Verify a public ID against the rich v1 response ---
+    verification = client.verify("ARK-2026-ABCD1234")
+    print(verification.verified)
+    print(verification.status)
+    print(verification.description)
 
-# --- Anchor new data ---
-receipt = client.anchor(b"my important document text")
-print(receipt.public_id)    # "ARK-2026-F7A3B2C1"
+    # --- Verify a fingerprint through v2 ---
+    fingerprint = "a" * 64
+    fingerprint_result = client.verify_fingerprint(fingerprint)
+    print(fingerprint_result.public_id)
 
-# --- Anchor a file ---
-with open("my_diploma.pdf", "rb") as f:
-    receipt = client.anchor(f.read(), credential_type="DEGREE")
-
-# --- Verify raw data ---
-result = client.verify_data(b"my important document text")
-print(result.verified)
-
-# --- Use as context manager ---
-with ArkovaClient(api_key="ak_live_...") as client:
-    result = client.verify("ARK-2026-ABCD1234")
+    # --- Inspect anchor and organization context ---
+    anchor = client.get_anchor("ARK-2026-ABCD1234")
+    orgs = client.list_orgs()
 ```
 
 ---
