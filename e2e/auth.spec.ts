@@ -7,6 +7,7 @@
  */
 
 import { test, expect, SEED_USERS, getServiceClient } from './fixtures';
+import { uniqueTestId } from './helpers/unique';
 
 // Auth spec tests the login/signup forms themselves — they must start
 // unauthenticated. Override the project-level storageState so the
@@ -91,7 +92,7 @@ test.describe('Authentication', () => {
 
   test('sign out redirects to auth page', async ({ page }) => {
     const serviceClient = getServiceClient();
-    const email = `e2e-signout-${Date.now()}-${Math.random().toString(36).slice(2)}@test.arkova.io`;
+    const email = `${uniqueTestId('e2e-signout')}@test.arkova.io`;
     let userId: string | null = null;
 
     try {

@@ -11,6 +11,7 @@ import { test, expect, getServiceClient, SEED_USERS } from './fixtures';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
+import { uniqueTestId } from './helpers/unique';
 
 /**
  * Create a temporary test PDF file for upload.
@@ -20,7 +21,7 @@ function createTestFile(name: string): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'arkova-e2e-'));
   const filePath = path.join(dir, name);
   // Minimal PDF structure (valid enough for fingerprinting)
-  fs.writeFileSync(filePath, `%PDF-1.4\n% ${name} ${Date.now()} ${Math.random()}\n1 0 obj\n<< /Type /Catalog >>\nendobj\n%%EOF\n`);
+  fs.writeFileSync(filePath, `%PDF-1.4\n% ${name} ${uniqueTestId('secure-document')}\n1 0 obj\n<< /Type /Catalog >>\nendobj\n%%EOF\n`);
   return filePath;
 }
 

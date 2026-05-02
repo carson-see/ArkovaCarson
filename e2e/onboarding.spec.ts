@@ -6,9 +6,9 @@
  * @updated 2026-03-10 10:30 PM EST — migrated to shared fixtures
  */
 
-import { createClient } from '@supabase/supabase-js';
-import type { Browser, BrowserContext, Page } from '@playwright/test';
-import { test, expect, getServiceClient, SEED_USERS } from './fixtures';
+import type { Browser, Page } from '@playwright/test';
+import { test, expect, getServiceClient } from './fixtures';
+import { withProfileSession, type TestProfileOptions } from './helpers/profile-session';
 
 const serviceClient = getServiceClient();
 
@@ -17,103 +17,23 @@ const serviceClient = getServiceClient();
 // create fresh users per test so the route state is explicit.
 test.use({ storageState: { cookies: [], origins: [] } });
 
-async function createOnboardingPage(
-  browser: Browser,
-  profile: {
-    role: 'INDIVIDUAL' | 'ORG_ADMIN' | null;
-    orgId?: string | null;
-    requiresManualReview?: boolean;
-  },
-): Promise<{ page: Page; context: BrowserContext; userId: string }> {
-  const timestamp = Date.now();
-  const email = `e2e-onboarding-${timestamp}-${Math.random().toString(36).slice(2)}@test.arkova.io`;
-  const password = SEED_USERS.individual.password;
-
-  const { data: created, error: createError } = await serviceClient.auth.admin.createUser({
-    email,
-    password,
-    email_confirm: true,
-    user_metadata: { full_name: 'Onboarding E2E User' },
-  });
-
-  if (createError || !created.user) {
-    throw new Error(`Failed to create onboarding test user: ${createError?.message}`);
-  }
-
-  const userId = created.user.id;
-  const { error: profileError } = await serviceClient
-    .from('profiles')
-    .upsert({
-      id: userId,
-      email,
-      full_name: 'Onboarding E2E User',
-      role: profile.role,
-      org_id: profile.orgId ?? null,
-      requires_manual_review: profile.requiresManualReview ?? false,
-      is_public_profile: false,
-      is_platform_admin: false,
-      disclaimer_accepted_at: new Date().toISOString(),
-    });
-
-  if (profileError) {
-    await serviceClient.auth.admin.deleteUser(userId);
-    throw new Error(`Failed to prepare onboarding test profile: ${profileError.message}`);
-  }
-
-  const userClient = createClient(
-    process.env.E2E_SUPABASE_URL || 'http://127.0.0.1:54321',
-    process.env.VITE_SUPABASE_ANON_KEY || '',
-  );
-  const { data: sessionData, error: signInError } = await userClient.auth.signInWithPassword({
-    email,
-    password,
-  });
-
-  if (signInError || !sessionData.session) {
-    await serviceClient.auth.admin.deleteUser(userId);
-    throw new Error(`Failed to sign in onboarding test user: ${signInError?.message}`);
-  }
-
-  const context = await browser.newContext({
-    storageState: {
-      cookies: [],
-      origins: [{
-        origin: 'http://localhost:5173',
-        localStorage: [{
-          name: 'sb-127-auth-token',
-          value: JSON.stringify(sessionData.session),
-        }],
-      }],
-    },
-  });
-  const page = await context.newPage();
-
-  return { page, context, userId };
-}
-
-async function disposeOnboardingPage(context: BrowserContext | null, userId: string | null) {
-  await context?.close();
-  if (userId) {
-    await serviceClient.auth.admin.deleteUser(userId);
-  }
-}
-
 async function withOnboardingPage(
   browser: Browser,
-  profile: Parameters<typeof createOnboardingPage>[1],
+  profile: TestProfileOptions,
   run: (page: Page) => Promise<void>,
 ) {
-  let context: BrowserContext | null = null;
-  let userId: string | null = null;
-
-  try {
-    const session = await createOnboardingPage(browser, profile);
-    context = session.context;
-    userId = session.userId;
-    await run(session.page);
-  } finally {
-    await disposeOnboardingPage(context, userId);
-  }
+  await withProfileSession(
+    browser,
+    serviceClient,
+    {
+      ...profile,
+      emailPrefix: 'e2e-onboarding',
+      fullName: 'Onboarding E2E User',
+    },
+    async (session) => {
+      await run(session.page);
+    },
+  );
 }
 
 async function openRoleSelector(page: Page) {

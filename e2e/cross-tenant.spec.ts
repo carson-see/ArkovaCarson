@@ -37,6 +37,12 @@ async function expectRecordBlocked(page: Page, recordId: string, protectedValues
   }
 }
 
+async function expectOrgAdminCannotSeeRecordOnOrganizationPage(page: Page, filename: string) {
+  await page.goto('/organization');
+  await expect(page).toHaveURL(/\/organizations\/[0-9a-f-]+/i, { timeout: 10000 });
+  await expect(page.locator('body')).not.toContainText(filename);
+}
+
 test.describe('Cross-Tenant Isolation', () => {
   const serviceClient = getServiceClient();
   const createdAnchorIds: string[] = [];
@@ -116,14 +122,7 @@ test.describe('Cross-Tenant Isolation', () => {
       });
       createdAnchorIds.push(anchor.id);
 
-      // Org A admin views their own dashboard/organization page
-      await orgAdminPage.goto('/organization');
-      await expect(orgAdminPage).toHaveURL(/\/organizations\/[0-9a-f-]+/i, { timeout: 10000 });
-
-      // The Org B record filename should NOT appear anywhere on the page
-      await expect(
-        orgAdminPage.locator('body')
-      ).not.toContainText(anchor.filename);
+      await expectOrgAdminCannotSeeRecordOnOrganizationPage(orgAdminPage, anchor.filename);
     });
 
     test('Org A admin cannot see Org B records in organization registry', async ({ orgAdminPage }) => {
@@ -135,14 +134,7 @@ test.describe('Cross-Tenant Isolation', () => {
       });
       createdAnchorIds.push(anchor.id);
 
-      // Org A admin views their organization page
-      await orgAdminPage.goto('/organization');
-      await expect(orgAdminPage).toHaveURL(/\/organizations\/[0-9a-f-]+/i, { timeout: 10000 });
-
-      // The Org B record should NOT appear
-      await expect(
-        orgAdminPage.locator('body')
-      ).not.toContainText(anchor.filename);
+      await expectOrgAdminCannotSeeRecordOnOrganizationPage(orgAdminPage, anchor.filename);
     });
   });
 });
