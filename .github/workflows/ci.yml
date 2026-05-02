@@ -814,17 +814,11 @@ jobs:
         run: mkdir -p .auth
 
       - name: Run E2E tests
-        # SCRUM-1302: auth.setup /auth → /login route fix shipped here.
-        # ~50 downstream specs (anchor-creation, billing, csv-upload,
-        # cross-tenant, dashboard, api-keys) are still red on main from
-        # pre-existing UI / route renames unrelated to this PR. Restoring
-        # continue-on-error: true so the queue can ship while those are
-        # tracked + fixed under SCRUM-1302 follow-ups.
-        # Workers=1 in playwright.config.ts; timeout 25 min keeps cold
-        # runners from getting cut mid-suite.
+        # SCRUM-1620: E2E failures and timeouts are launch-blocking signals.
+        # Workers=1 in playwright.config.ts; timeout 25 min keeps cold runners
+        # from getting cut mid-suite while still failing the job on timeout.
         run: npx playwright test --project=chromium
         timeout-minutes: 25
-        continue-on-error: true
         env:
           VITE_SUPABASE_URL: ${{ steps.supabase-e2e-keys.outputs.url }}
           VITE_SUPABASE_ANON_KEY: ${{ steps.supabase-e2e-keys.outputs.anon_key }}
