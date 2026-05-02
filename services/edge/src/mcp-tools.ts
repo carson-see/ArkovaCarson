@@ -328,6 +328,31 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       required: ['public_id'],
     },
   },
+  {
+    name: 'oracle_batch_verify',
+    description:
+      'Batch-verify multiple credentials via the Arkova Oracle. Use for bulk verification workflows where an envelope with query_id + per-credential results is needed.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        public_ids: {
+          type: 'array',
+          description: 'Array of Arkova public IDs to verify (max 25).',
+        },
+      },
+      required: ['public_ids'],
+    },
+  },
+  {
+    name: 'list_agents',
+    description:
+      'List AI agents registered to the authenticated caller organization. Returns agent names, types, scopes, and status.',
+    inputSchema: {
+      type: 'object',
+      properties: {},
+      required: [],
+    },
+  },
 ];
 
 // ---------------------------------------------------------------------------
