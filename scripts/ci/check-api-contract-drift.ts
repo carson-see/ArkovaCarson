@@ -7,7 +7,7 @@
  * quietly returning in future PRs.
  */
 
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -96,7 +96,7 @@ function projectNameFromPyproject(content: string): string | undefined {
   return undefined;
 }
 
-function inspectTrackedPath(path: string, input: DriftInput): DriftFinding[] {
+function inspectTrackedPath(path: string): DriftFinding[] {
   const findings: DriftFinding[] = [];
   if (isDeprecatedPythonSdkBody(path)) {
     findings.push({
@@ -129,7 +129,7 @@ export function findApiContractDrift(input: DriftInput): DriftFinding[] {
   const arkovaPythonPackages: string[] = [];
 
   for (const path of trackedFiles) {
-    findings.push(...inspectTrackedPath(path, input));
+    findings.push(...inspectTrackedPath(path));
     if (isArkovaPythonPackage(path, input)) arkovaPythonPackages.push(path);
   }
 
@@ -161,10 +161,12 @@ function gitLsFiles(repo: string): string[] {
 
 function resolveGitBinary(): string {
   const gitBinary = GIT_BINARY_CANDIDATES.find((candidate) => existsSync(candidate));
-  if (!gitBinary) {
-    throw new Error(`git binary not found in fixed candidates: ${GIT_BINARY_CANDIDATES.join(', ')}`);
-  }
-  return gitBinary;
+  if (gitBinary) return gitBinary;
+
+  const pathGit = spawnSync('git', ['--version'], { stdio: 'ignore' });
+  if (pathGit.status === 0) return 'git';
+
+  throw new Error(`git binary not found in fixed candidates: ${GIT_BINARY_CANDIDATES.join(', ')}`);
 }
 
 function main(): void {

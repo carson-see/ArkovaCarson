@@ -187,6 +187,20 @@ describe('agent v2 MCP aliases', () => {
     expect(JSON.parse(mockFetch.mock.calls[0][1].body)).toMatchObject({ p_query: 'degree', p_limit: 100 });
   });
 
+  it('search(q,type=fingerprint) surfaces backend lookup errors', async () => {
+    const validHash = 'f'.repeat(64);
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 503,
+      json: async () => ({}),
+    });
+
+    const result = await handleAgentSearch({ q: validHash, type: 'fingerprint' }, CONFIG);
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('Document lookup failed: HTTP 503');
+  });
+
   it('verify(fingerprint) returns the REST v2 verification envelope', async () => {
     const validHash = 'c'.repeat(64);
     mockFetch.mockResolvedValueOnce({
@@ -304,6 +318,9 @@ describe('agent v2 MCP aliases', () => {
     expect(JSON.stringify(parsed)).not.toContain('org-1');
     expect(mockFetch.mock.calls[0][0]).toContain('user_id=eq.test-user-id');
     expect(mockFetch.mock.calls[0][0]).toContain('organizations.public_id=eq.org_acme');
+    expect(mockFetch.mock.calls[0][0]).toContain(
+      'organizations%21inner%28public_id%2Cdisplay_name%2Cdescription%2Cdomain%2Cwebsite_url%2Cverification_status%2Cindustry_tag%2Corg_type%2Clocation%2Clogo_url%29',
+    );
   });
 
   it('get_record(public_id) returns detail without legacy-only fields', async () => {
@@ -426,6 +443,33 @@ describe('agent v2 MCP aliases', () => {
 
     expect(result.isError).toBe(true);
     expect(result.content[0].text).toContain('Fingerprint detail lookup failed: HTTP 500');
+  });
+
+  it('get_fingerprint preserves a pending verification envelope without detail lookup', async () => {
+    const fingerprint = '1'.repeat(64);
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ([{
+        public_id: 'ARK-DOC-PENDING',
+        title: 'Pending Credential.pdf',
+        content_hash: fingerprint,
+        metadata: {},
+        anchor_id: null,
+      }]),
+    });
+
+    const result = await handleAgentGetFingerprint({ fingerprint }, CONFIG);
+    const parsed = JSON.parse(result.content[0].text);
+
+    expect(result.isError).toBeUndefined();
+    expect(parsed).toMatchObject({
+      verified: false,
+      status: 'PENDING',
+      fingerprint,
+      public_id: 'ARK-DOC-PENDING',
+      title: 'Pending Credential.pdf',
+    });
+    expect(mockFetch).toHaveBeenCalledTimes(1);
   });
 });
 

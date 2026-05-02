@@ -49,6 +49,18 @@ describe('check-api-contract-drift (SCRUM-1586)', () => {
     });
   });
 
+  it('flags the missing canonical Python SDK package even when another arkova package exists', () => {
+    const findings = runWithCanonical(
+      ['packages/other-python-sdk/pyproject.toml'],
+      { 'packages/other-python-sdk/pyproject.toml': canonicalPyproject },
+    );
+
+    expect(findings).toContainEqual({
+      path: 'packages/arkova-py/pyproject.toml',
+      reason: 'canonical Python SDK package is missing',
+    });
+  });
+
   it('recognizes canonical Python package names with inline TOML comments', () => {
     const findings = run(
       ['packages/arkova-py/pyproject.toml'],

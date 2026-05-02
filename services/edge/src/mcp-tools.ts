@@ -698,6 +698,7 @@ export async function handleAgentSearch(
         return textResult({ results: [], next_cursor: null });
       }
       const result = await handleVerifyDocument({ content_hash: input.q }, config);
+      if (result.isError) return result;
       const parsed = parseToolJson(result);
       return textResult({
         results: [fingerprintSearchResult(parsed, input.q)].filter(Boolean),
@@ -984,7 +985,7 @@ export async function handleAgentGetOrganization(
   const params = new URLSearchParams({
     user_id: `eq.${config.userId}`,
     'organizations.public_id': `eq.${input.public_id}`,
-    select: 'organizations(public_id,display_name,description,domain,website_url,verification_status,industry_tag,org_type,location,logo_url)',
+    select: 'organizations!inner(public_id,display_name,description,domain,website_url,verification_status,industry_tag,org_type,location,logo_url)',
     limit: '1',
   });
 
@@ -1055,7 +1056,7 @@ export async function handleAgentGetFingerprint(
   if (result.isError) return result;
 
   const parsed = parseToolJson(result);
-  if (!parsed || parsed.verified === false) {
+  if (!parsed) {
     return textResult({
       verified: false,
       status: 'UNKNOWN',
@@ -1081,6 +1082,56 @@ export async function handleAgentGetFingerprint(
   }
 
   const publicId = typeof parsed.public_id === 'string' ? parsed.public_id : null;
+  if (parsed.verified === false) {
+    if (parsed.status !== 'UNKNOWN' || publicId) {
+      return textResult({
+        verified: false,
+        status: parsed.status ?? 'UNKNOWN',
+        fingerprint: input.fingerprint,
+        public_id: publicId,
+        title: parsed.title ?? null,
+        issuer_name: parsed.issuer_name ?? null,
+        credential_type: parsed.credential_type ?? null,
+        sub_type: parsed.sub_type ?? null,
+        description: parsed.description ?? null,
+        anchor_timestamp: parsed.anchor_timestamp ?? null,
+        network_receipt_id: parsed.network_receipt_id ?? null,
+        record_uri: parsed.record_uri ?? null,
+        compliance_controls: parsed.compliance_controls ?? null,
+        chain_confirmations: parsed.chain_confirmations ?? null,
+        parent_public_id: parsed.parent_public_id ?? null,
+        version_number: parsed.version_number ?? null,
+        revocation_tx_id: parsed.revocation_tx_id ?? null,
+        revocation_block_height: parsed.revocation_block_height ?? null,
+        file_mime: parsed.file_mime ?? null,
+        file_size: parsed.file_size ?? null,
+      });
+    }
+
+    return textResult({
+      verified: false,
+      status: 'UNKNOWN',
+      fingerprint: input.fingerprint,
+      public_id: null,
+      title: null,
+      issuer_name: null,
+      credential_type: null,
+      sub_type: null,
+      description: null,
+      anchor_timestamp: null,
+      network_receipt_id: null,
+      record_uri: null,
+      compliance_controls: null,
+      chain_confirmations: null,
+      parent_public_id: null,
+      version_number: null,
+      revocation_tx_id: null,
+      revocation_block_height: null,
+      file_mime: null,
+      file_size: null,
+    });
+  }
+
   if (publicId) {
     try {
       const response = await supabaseFetch(config, '/rest/v1/rpc/get_public_anchor', {
