@@ -217,6 +217,11 @@ export async function processBatchAnchors(opts: ProcessBatchAnchorOptions = {}):
 
 async function _processBatchAnchorsInner(opts: ProcessBatchAnchorOptions = {}): Promise<BatchAnchorResult> {
   const EMPTY: BatchAnchorResult = { processed: 0, batchId: null, merkleRoot: null, txId: null };
+  const orgId = typeof opts.orgId === 'string' ? opts.orgId.trim() : null;
+  if (opts.orgId !== undefined && !orgId) {
+    logger.error({ orgId: opts.orgId }, 'Invalid empty orgId for org-scoped batch processing');
+    return EMPTY;
+  }
 
   // Phase 0a: Pre-flight UTXO check — skip immediately if treasury is empty.
   const chainClient = getChainClient();
@@ -244,14 +249,14 @@ async function _processBatchAnchorsInner(opts: ProcessBatchAnchorOptions = {}): 
       .select('created_at')
       .eq('status', 'PENDING')
       .is('deleted_at', null);
-    if (opts.orgId) oldestQuery = oldestQuery.eq('org_id', opts.orgId);
+    if (orgId) oldestQuery = oldestQuery.eq('org_id', orgId);
 
     const [oldestRes, countsRes] = await Promise.all([
       oldestQuery
         .order('created_at', { ascending: true })
         .limit(1)
         .single(),
-      opts.orgId ? getOrgPendingThresholdSnapshot(opts.orgId) : callRpc<FastCountsRpc>(db, 'get_anchor_status_counts_fast'),
+      orgId ? getOrgPendingThresholdSnapshot(orgId) : callRpc<FastCountsRpc>(db, 'get_anchor_status_counts_fast'),
     ]);
 
     const stats = oldestRes.data;
@@ -273,7 +278,7 @@ async function _processBatchAnchorsInner(opts: ProcessBatchAnchorOptions = {}): 
     // this hardening is for — silently breaking the
     // "no anchor waits more than MAX_ANCHOR_AGE_MS" SLA documented at L78-79.
     const pendingCount = countsRes.data?.PENDING ?? 1;
-    const pendingCountLogContext = opts.orgId
+    const pendingCountLogContext = orgId
       ? {
           pendingCountForTrigger: pendingCount,
           pendingCountSource: 'org_threshold_probe',
@@ -290,12 +295,12 @@ async function _processBatchAnchorsInner(opts: ProcessBatchAnchorOptions = {}): 
     // Used by the daily-anchor-flush Cloud Scheduler job.
     if (opts.force) {
       logger.info(
-        { ...pendingCountLogContext, oldestAgeMs: oldestPendingAgeMs, orgId: opts.orgId ?? null },
-        opts.orgId ? 'Forced org batch flush' : 'Forced batch flush (daily 3am EST sweep)',
+        { ...pendingCountLogContext, oldestAgeMs: oldestPendingAgeMs, orgId },
+        orgId ? 'Forced org batch flush' : 'Forced batch flush (daily 3am EST sweep)',
       );
     } else if (!triggerB_shouldFireOnAge({ pendingCount, oldestPendingAgeMs })) {
       logger.debug(
-        { ...pendingCountLogContext, oldestAgeMs: oldestPendingAgeMs, orgId: opts.orgId ?? null },
+        { ...pendingCountLogContext, oldestAgeMs: oldestPendingAgeMs, orgId },
         'Below batch threshold and oldest anchor is fresh — deferring',
       );
       return EMPTY;
@@ -340,7 +345,7 @@ async function _processBatchAnchorsInner(opts: ProcessBatchAnchorOptions = {}): 
         p_worker_id: `batch-${process.pid}`,
         p_limit: chunkSize,
         p_exclude_pipeline: false,
-        p_org_id: opts.orgId ?? null,
+        p_org_id: orgId,
       }), 30_000);
     } catch (timeoutErr) {
       logger.error({ error: timeoutErr, claimedSoFar: allClaimed.length }, 'claim_pending_anchors timed out in batch');
@@ -355,7 +360,7 @@ async function _processBatchAnchorsInner(opts: ProcessBatchAnchorOptions = {}): 
       if (allClaimed.length === 0) {
         if (isClaimPendingAnchorsMigrationCompatError(claimError)) {
           logger.warn({ error: claimError }, 'claim_pending_anchors RPC unavailable — falling back to legacy batch');
-          return legacyProcessBatchAnchors(opts.orgId);
+          return legacyProcessBatchAnchors(orgId ?? undefined);
         }
         logger.error({ error: claimError }, 'claim_pending_anchors RPC failed — skipping batch without legacy fallback');
         return EMPTY;

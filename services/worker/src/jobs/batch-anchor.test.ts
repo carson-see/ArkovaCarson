@@ -224,6 +224,19 @@ describe('processBatchAnchors', () => {
     expect(mockSelectIs.mock.calls.filter((call) => call[0] === 'deleted_at')).toHaveLength(3);
   });
 
+  it('fails closed for blank orgId instead of running a global forced flush', async () => {
+    const result = await processBatchAnchors({ force: true, orgId: '   ' });
+
+    expect(result).toEqual({ processed: 0, batchId: null, merkleRoot: null, txId: null });
+    expect(mockDbRpc).not.toHaveBeenCalled();
+    expect(mockSelectEq).not.toHaveBeenCalled();
+    expect(mockSubmitFingerprint).not.toHaveBeenCalled();
+    expect(mockLogger.error).toHaveBeenCalledWith(
+      { orgId: '   ' },
+      'Invalid empty orgId for org-scoped batch processing',
+    );
+  });
+
   it('does not use legacy fallback for non-migration claim RPC errors', async () => {
     mockDbRpc.mockResolvedValue({
       data: null,
