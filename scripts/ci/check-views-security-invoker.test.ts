@@ -26,6 +26,14 @@ function expectBareViewFailure(repoRoot: string, file: string, sql: string, view
   expect(stderr).toContain(view);
 }
 
+function writeBaseline(repoRoot: string, grandfathered: string[]): void {
+  mkdirSync(join(repoRoot, 'scripts/ci/snapshots'), { recursive: true });
+  writeFileSync(
+    join(repoRoot, 'scripts/ci/snapshots/views-security-invoker-baseline.json'),
+    JSON.stringify({ grandfathered }),
+  );
+}
+
 describe('check-views-security-invoker', () => {
   let repoRoot: string;
 
@@ -142,15 +150,14 @@ AS
   });
 
   it('grandfathers files or views listed in the snapshot baseline', () => {
-    writeFileSync(
-      join(repoRoot, 'supabase/migrations/0001_grandfathered.sql'),
-      `CREATE OR REPLACE VIEW public.legacy AS SELECT 1;`,
-    );
-    mkdirSync(join(repoRoot, 'scripts/ci/snapshots'), { recursive: true });
-    writeFileSync(
-      join(repoRoot, 'scripts/ci/snapshots/views-security-invoker-baseline.json'),
-      JSON.stringify({ grandfathered: ['0001_grandfathered.sql'] }),
-    );
+    writeMigration(repoRoot, '0001_grandfathered.sql', `CREATE OR REPLACE VIEW public.legacy AS SELECT 1;`);
+    writeBaseline(repoRoot, ['0001_grandfathered.sql']);
+    expect(run(repoRoot).code).toBe(0);
+  });
+
+  it('grandfathers bare views listed by normalized view name', () => {
+    writeMigration(repoRoot, '0001_legacy_view.sql', `CREATE OR REPLACE VIEW public.legacy_view AS SELECT 1;`);
+    writeBaseline(repoRoot, ['legacy_view']);
     expect(run(repoRoot).code).toBe(0);
   });
 });
