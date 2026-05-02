@@ -47,6 +47,12 @@ while waiting on an upstream release), apply the GitHub label
 `dep-range-intentional`. The script logs the violations and exits 0.
 Remove the label before the next merge so the rule re-engages.
 
+## Active Transitive Overrides
+
+| Package file | Override | Reason | Removal condition |
+| --- | --- | --- | --- |
+| `services/worker/package.json` | `svix: 1.92.2` | SCRUM-1617: keep `resend@6.12.2` while clearing the `resend -> svix -> uuid` production audit path. `svix@1.92.2` removes the vulnerable `uuid` dependency, avoiding npm's heavier Resend downgrade recommendation. | Remove when Resend's direct dependency tree resolves to a Svix version that no longer pulls vulnerable `uuid` versions without an Arkova override; confirm with `npm --prefix services/worker ls resend svix uuid --all` and `npm --prefix services/worker audit --omit=dev`. |
+
 ## Adding or bumping a dependency
 
 `save-exact=true` is set in `.npmrc`, so `npm install --save <pkg>`
