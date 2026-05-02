@@ -8,10 +8,11 @@
  */
 
 import { execFileSync } from 'node:child_process';
-import { resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const REPO = process.env.DUPLICATE_ARTIFACTS_REPO_ROOT ?? resolve(import.meta.dirname, '..', '..');
+const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
+const REPO = process.env.DUPLICATE_ARTIFACTS_REPO_ROOT ?? resolve(SCRIPT_DIR, '..', '..');
 const GIT_BIN = process.env.GIT_BIN ?? '/usr/bin/git';
 
 export type DuplicateArtifactKind =
