@@ -1241,7 +1241,9 @@ describe('cron routes', () => {
       // refresh_stats_materialized_views, leaving pipeline_dashboard_cache
       // stale (the actual table the dashboard reads). Now drives both.
       const callRpcMock = callRpc as ReturnType<typeof vi.fn>;
-      callRpcMock.mockResolvedValue({ data: null, error: null });
+      callRpcMock
+        .mockResolvedValueOnce({ data: { status: 'refreshed', duration_ms: 12 }, error: null })
+        .mockResolvedValueOnce({ data: null, error: null });
       const app = createApp();
       const res = await request(app).post('/cron/refresh-stats');
       expect(res.status).toBe(200);
@@ -1255,7 +1257,7 @@ describe('cron routes', () => {
     it('still returns 200 if the legacy mat-view refresh fails (non-fatal)', async () => {
       const callRpcMock = callRpc as ReturnType<typeof vi.fn>;
       callRpcMock
-        .mockResolvedValueOnce({ data: null, error: null })
+        .mockResolvedValueOnce({ data: { status: 'refreshed', duration_ms: 12 }, error: null })
         .mockRejectedValueOnce(new Error('mat-view fail'));
       const app = createApp();
       const res = await request(app).post('/cron/refresh-stats');
@@ -1280,6 +1282,25 @@ describe('cron routes', () => {
       expect(res.body.errors).toEqual([
         expect.objectContaining({ source: 'pipeline_dashboard_cache' }),
       ]);
+    });
+
+    it('returns 500 if the dashboard cache RPC returns a malformed success payload', async () => {
+      const callRpcMock = callRpc as ReturnType<typeof vi.fn>;
+      callRpcMock
+        .mockResolvedValueOnce({ data: null, error: null })
+        .mockResolvedValueOnce({ data: null, error: null });
+      const app = createApp();
+      const res = await request(app).post('/cron/refresh-stats');
+      expect(res.status).toBe(500);
+      expect(res.body).toMatchObject({
+        status: 'failed',
+        reason: 'pipeline_dashboard_cache failed',
+        refreshed: ['stats_materialized_views'],
+      });
+      expect(res.body.errors[0]).toMatchObject({
+        source: 'pipeline_dashboard_cache',
+      });
+      expect(res.body.errors[0].message).toContain('Invalid refresh_pipeline_dashboard_cache payload');
     });
 
     it('propagates skipped dashboard refresh status from the RPC', async () => {

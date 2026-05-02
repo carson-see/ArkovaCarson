@@ -15,6 +15,7 @@
 import { Router, Request } from 'express';
 import crypto from 'node:crypto';
 import { createRemoteJWKSet, jwtVerify, type JWTVerifyGetKey } from 'jose';
+import { z } from 'zod';
 import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
 import { rateLimit } from '../utils/rateLimit.js';
@@ -1159,11 +1160,13 @@ cronRouter.post('/regulatory-change-scan', async (_req, res) => {
 // the legacy materialized views fresh so anything still pointing at
 // them keeps working. Each call is wrapped so a failure in one
 // pathway doesn't kill the other.
-type PipelineDashboardCacheRefreshResult = {
-  status?: 'refreshed' | 'skipped';
-  reason?: string;
-  duration_ms?: number;
-};
+const PipelineDashboardCacheRefreshResultSchema = z.object({
+  status: z.enum(['refreshed', 'skipped']),
+  reason: z.string().optional(),
+  duration_ms: z.number().int().nonnegative().optional(),
+});
+
+type PipelineDashboardCacheRefreshResult = z.infer<typeof PipelineDashboardCacheRefreshResultSchema>;
 
 cronRouter.post('/refresh-stats', async (_req, res) => {
   const errors: Array<{ source: string; message: string }> = [];
@@ -1172,7 +1175,11 @@ cronRouter.post('/refresh-stats', async (_req, res) => {
   try {
     const result = await callRpc<PipelineDashboardCacheRefreshResult>(db, 'refresh_pipeline_dashboard_cache');
     if (result.error) throw new Error(result.error.message);
-    pipelineDashboardResult = result.data;
+    const parsed = PipelineDashboardCacheRefreshResultSchema.safeParse(result.data);
+    if (!parsed.success) {
+      throw new Error(`Invalid refresh_pipeline_dashboard_cache payload: ${parsed.error.message}`);
+    }
+    pipelineDashboardResult = parsed.data;
   } catch (error) {
     logger.error({ error }, 'refresh_pipeline_dashboard_cache failed');
     errors.push({
