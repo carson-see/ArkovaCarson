@@ -321,9 +321,9 @@
         "docs/reference/ENV.md": "false"
       },
       "examples": [
-        "services/worker/src/config.test.ts:484",
-        "services/worker/src/config.ts:552",
-        "services/worker/src/middleware/flagRegistry.ts:50"
+        "services/worker/src/config.test.ts:213",
+        "services/worker/src/config.test.ts:509",
+        "services/worker/src/config.ts:552"
       ],
       "files": [
         "docs/reference/ENV.md",
@@ -523,9 +523,9 @@
         "docs/reference/ENV.md": "false"
       },
       "examples": [
-        "services/worker/src/config.test.ts:482",
-        "services/worker/src/config.ts:389",
-        "services/worker/src/config.ts:547"
+        "services/worker/src/config.test.ts:208",
+        "services/worker/src/config.test.ts:411",
+        "services/worker/src/config.test.ts:414"
       ],
       "files": [
         "docs/reference/ENV.md",
@@ -552,9 +552,9 @@
         "docs/reference/ENV.md": "false"
       },
       "examples": [
-        "services/worker/src/config.test.ts:483",
-        "services/worker/src/config.ts:403",
-        "services/worker/src/config.ts:548"
+        "services/worker/src/config.test.ts:209",
+        "services/worker/src/config.test.ts:420",
+        "services/worker/src/config.test.ts:423"
       ],
       "files": [
         "docs/reference/ENV.md",
@@ -583,8 +583,8 @@
       },
       "examples": [
         "services/worker/src/config.test.ts:203",
-        "services/worker/src/config.test.ts:376",
-        "services/worker/src/config.test.ts:379"
+        "services/worker/src/config.test.ts:384",
+        "services/worker/src/config.test.ts:387"
       ],
       "files": [
         "docs/reference/ENV.md",
@@ -614,8 +614,8 @@
       },
       "examples": [
         "services/worker/src/api/v1/router.ts:318",
-        "services/worker/src/config.test.ts:481",
-        "services/worker/src/config.ts:544"
+        "services/worker/src/config.test.ts:204",
+        "services/worker/src/config.test.ts:506"
       ],
       "files": [
         "docs/reference/ENV.md",
@@ -800,7 +800,7 @@
       },
       "examples": [
         "services/worker/src/api/v1/router.ts:305",
-        "services/worker/src/config.test.ts:480",
+        "services/worker/src/config.test.ts:505",
         "services/worker/src/config.ts:234"
       ],
       "files": [
@@ -1556,7 +1556,7 @@
       },
       "examples": [
         "services/worker/agents.md:75",
-        "services/worker/src/config.test.ts:546",
+        "services/worker/src/config.test.ts:571",
         "services/worker/src/config.ts:224"
       ],
       "files": [
@@ -1710,7 +1710,7 @@
       "examples": [
         "services/worker/agents.md:130",
         "services/worker/src/api/v1/router.ts:275",
-        "services/worker/src/config.test.ts:478"
+        "services/worker/src/config.test.ts:503"
       ],
       "files": [
         "docs/launch/first-client-launch-command-center-2026-05-01.md",

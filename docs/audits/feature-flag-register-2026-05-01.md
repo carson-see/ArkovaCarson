@@ -76,17 +76,17 @@ The important hygiene finding is that Arkova does not currently have one flag sy
 | `ENABLE_AI_FRAUD` | P0 | launch-critical | docs/reference/ENV.md=false; frontend-switchboard=true; supabase-seed-default=false; supabase-seed-value=true | .github/workflows/deploy-worker.yml:140, src/lib/switchboard.ts:26, src/lib/switchboard.ts:184 |
 | `ENABLE_AI_REPORTS` | P0 | launch-critical | docs/reference/ENV.md=false; frontend-switchboard=true; supabase-seed-default=false; supabase-seed-value=true | .github/workflows/deploy-worker.yml:140, src/lib/switchboard.ts:27, src/pages/PlatformControlsPage.tsx:69 |
 | `ENABLE_ALLOCATION_ROLLOVER` | P1 | launch-critical | docs/reference/ENV.md=false; worker-config=false | services/worker/src/config.ts:230, services/worker/src/config.ts:571, services/worker/src/jobs/monthly-allocation-rollover.test.ts:32 |
-| `ENABLE_ATS_WEBHOOK` | P2 | roadmap-or-optional | docs/reference/ENV.md=false | services/worker/src/config.test.ts:484, services/worker/src/config.ts:552, services/worker/src/middleware/flagRegistry.ts:50 |
+| `ENABLE_ATS_WEBHOOK` | P2 | roadmap-or-optional | docs/reference/ENV.md=false | services/worker/src/config.test.ts:213, services/worker/src/config.test.ts:509, services/worker/src/config.ts:552 |
 | `ENABLE_ATTESTATION_ANCHORING` | P2 | platform-switchboard | frontend-switchboard=true | src/lib/switchboard.ts:28, src/pages/PlatformControlsPage.tsx:52, services/worker/src/jobs/attestationAnchor.test.ts:71 |
 | `ENABLE_BATCH_ANCHORING` | P2 | platform-switchboard | frontend-switchboard=false | src/lib/switchboard.ts:23, src/lib/switchboard.ts:163, src/pages/PlatformControlsPage.tsx:60 |
 | `ENABLE_CLOUD_LOGGING_SINK` | P3 | unclassified | docs/reference/ENV.md=false; worker-config=false | services/worker/src/config.ts:246, services/worker/src/config.ts:579, services/worker/src/jobs/cloud-logging-drain.ts:44 |
 | `ENABLE_COMPLIANCE_ENGINE` | P0 | launch-critical | No parsed default | services/worker/src/middleware/flagRegistry.ts:66, supabase/migrations/0196_compliance_engine_flags.sql:3, supabase/migrations/0196_compliance_engine_flags.sql:20 |
 | `ENABLE_CONSTRAINED_DECODING` | P3 | unclassified | docs/reference/ENV.md=false | services/worker/src/ai/nessie.test.ts:260, services/worker/src/ai/nessie.test.ts:264, services/worker/src/ai/nessie.test.ts:301 |
 | `ENABLE_DEMO_INJECTOR` | P2 | roadmap-or-optional | docs/reference/ENV.md=false; worker-config=false | services/worker/src/api/demo-event-injector.test.ts:98, services/worker/src/api/demo-event-injector.test.ts:125, services/worker/src/api/demo-event-injector.test.ts:127 |
-| `ENABLE_DOCUSIGN_OAUTH` | P0 | launch-critical | docs/reference/ENV.md=false | services/worker/src/config.test.ts:482, services/worker/src/config.ts:389, services/worker/src/config.ts:547 |
-| `ENABLE_DOCUSIGN_WEBHOOK` | P0 | launch-critical | docs/reference/ENV.md=false | services/worker/src/config.test.ts:483, services/worker/src/config.ts:403, services/worker/src/config.ts:548 |
-| `ENABLE_DRIVE_OAUTH` | P0 | launch-critical | docs/reference/ENV.md=false | services/worker/src/config.test.ts:203, services/worker/src/config.test.ts:376, services/worker/src/config.test.ts:379 |
-| `ENABLE_DRIVE_WEBHOOK` | P0 | launch-critical | docs/reference/ENV.md=false | services/worker/src/api/v1/router.ts:318, services/worker/src/config.test.ts:481, services/worker/src/config.ts:544 |
+| `ENABLE_DOCUSIGN_OAUTH` | P0 | launch-critical | docs/reference/ENV.md=false | services/worker/src/config.test.ts:208, services/worker/src/config.test.ts:411, services/worker/src/config.test.ts:414 |
+| `ENABLE_DOCUSIGN_WEBHOOK` | P0 | launch-critical | docs/reference/ENV.md=false | services/worker/src/config.test.ts:209, services/worker/src/config.test.ts:420, services/worker/src/config.test.ts:423 |
+| `ENABLE_DRIVE_OAUTH` | P0 | launch-critical | docs/reference/ENV.md=false | services/worker/src/config.test.ts:203, services/worker/src/config.test.ts:384, services/worker/src/config.test.ts:387 |
+| `ENABLE_DRIVE_WEBHOOK` | P0 | launch-critical | docs/reference/ENV.md=false | services/worker/src/api/v1/router.ts:318, services/worker/src/config.test.ts:204, services/worker/src/config.test.ts:506 |
 | `ENABLE_DSAR_UI` | P3 | unclassified | No parsed default | src/lib/env.ts:44 |
 | `ENABLE_EMAIL_NOTIFICATIONS` | P3 | unclassified | No parsed default | docs/stories/16_beta_readiness.md:157 |
 | `ENABLE_EXPIRY_ALERTS` | P3 | unclassified | No parsed default | services/worker/src/middleware/flagRegistry.ts:65, services/worker/src/routes/cron.ts:718, services/worker/src/routes/cron.ts:719 |
@@ -95,7 +95,7 @@ The important hygiene finding is that Arkova does not currently have one flag sy
 | `ENABLE_GEMB2_BACKFILL` | P3 | unclassified | No parsed default | docs/design/gemb2/gemb2-02-rag-swap.md:54, docs/design/gemb2/gemb2-02-rag-swap.md:55 |
 | `ENABLE_GEMB2_RAG` | P3 | unclassified | No parsed default | services/worker/src/ai/embeddings/agents.md:32, services/worker/src/ai/gemini-config.ts:120, docs/design/gemb2/gemb2-02-rag-swap.md:48 |
 | `ENABLE_GRACE_EXPIRY_SWEEP` | P3 | unclassified | docs/reference/ENV.md=true | docs/reference/ENV.md:302, docs/runbooks/billing/phase-3-rollover-grace.md:33 |
-| `ENABLE_GRC_INTEGRATIONS` | P0 | launch-critical | docs/reference/ENV.md=false; supabase-seed-default=false; supabase-seed-value=false; worker-config=false | services/worker/src/api/v1/router.ts:305, services/worker/src/config.test.ts:480, services/worker/src/config.ts:234 |
+| `ENABLE_GRC_INTEGRATIONS` | P0 | launch-critical | docs/reference/ENV.md=false; supabase-seed-default=false; supabase-seed-value=false; worker-config=false | services/worker/src/api/v1/router.ts:305, services/worker/src/config.test.ts:505, services/worker/src/config.ts:234 |
 | `ENABLE_INT10_WORKSPACE` | P3 | unclassified | No parsed default | services/worker/src/integrations/connectors/schemas.ts:17 |
 | `ENABLE_INT12_ESIGN` | P3 | unclassified | No parsed default | services/worker/src/integrations/connectors/schemas.ts:18 |
 | `ENABLE_INT13_ATS` | P3 | unclassified | No parsed default | services/worker/src/integrations/connectors/schemas.ts:19 |
@@ -119,11 +119,11 @@ The important hygiene finding is that Arkova does not currently have one flag sy
 | `ENABLE_SEMANTIC_SUPERSEDE` | P3 | unclassified | No parsed default | docs/design/gemb2/gemb2-04-supersede-spike.md:19 |
 | `ENABLE_SYNTHETIC` | P3 | unclassified | No parsed default | services/worker/scripts/nessie-multi-lora-pipeline.ts:91, services/worker/scripts/nessie-multi-lora-pipeline.ts:358, services/worker/scripts/nessie-multi-lora-pipeline.ts:932 |
 | `ENABLE_SYNTHETIC_DATA` | P2 | roadmap-or-optional | docs/reference/ENV.md=false; worker-config=false | services/worker/src/ai/replicate.test.ts:28, services/worker/src/ai/replicate.test.ts:30, services/worker/src/ai/replicate.test.ts:37 |
-| `ENABLE_TREASURY_ALERTS` | P1 | launch-critical | docs/reference/ENV.md=true; worker-config=true | services/worker/agents.md:75, services/worker/src/config.test.ts:546, services/worker/src/config.ts:224 |
+| `ENABLE_TREASURY_ALERTS` | P1 | launch-critical | docs/reference/ENV.md=true; worker-config=true | services/worker/agents.md:75, services/worker/src/config.test.ts:571, services/worker/src/config.ts:224 |
 | `ENABLE_VEREMARK_WEBHOOK` | P2 | roadmap-or-optional | docs/reference/ENV.md=false; worker-config=false | services/worker/src/api/v1/webhooks/veremark.test.ts:4, services/worker/src/api/v1/webhooks/veremark.test.ts:45, services/worker/src/api/v1/webhooks/veremark.test.ts:62 |
 | `ENABLE_VERIFICATION_API` | P0 | launch-critical | .env.example=false; docs/reference/ENV.md=false; frontend-switchboard=true; supabase-seed-default=false; supabase-seed-value=true; worker-config=true | .env.example:63, .github/workflows/deploy-worker.yml:140, src/lib/switchboard.ts:32 |
 | `ENABLE_VERTEX_AI` | P3 | unclassified | docs/reference/ENV.md=false; worker-config=false | services/worker/src/ai/vertex-client.test.ts:109, services/worker/src/ai/vertex-client.test.ts:114, services/worker/src/ai/vertex-client.test.ts:116 |
-| `ENABLE_VISUAL_FRAUD_DETECTION` | P0 | launch-critical | docs/reference/ENV.md=false; worker-config=false | services/worker/agents.md:130, services/worker/src/api/v1/router.ts:275, services/worker/src/config.test.ts:478 |
+| `ENABLE_VISUAL_FRAUD_DETECTION` | P0 | launch-critical | docs/reference/ENV.md=false; worker-config=false | services/worker/agents.md:130, services/worker/src/api/v1/router.ts:275, services/worker/src/config.test.ts:503 |
 | `ENABLE_WEBHOOK_DISPATCH` | P3 | unclassified | No parsed default | docs/stories/22_phase2_agentic_layer.md:85 |
 | `ENABLE_WEBHOOK_HMAC` | P0 | launch-critical | docs/reference/ENV.md=true; worker-config=true | services/worker/agents.md:75, services/worker/src/config.ts:226, services/worker/src/config.ts:569 |
 | `ENABLE_WORKSPACE_RENEWAL` | P0 | launch-critical | docs/reference/ENV.md=false; worker-config=false | services/worker/src/config.ts:248, services/worker/src/config.ts:580, services/worker/src/jobs/workspace-subscription-renewal.test.ts:149 |

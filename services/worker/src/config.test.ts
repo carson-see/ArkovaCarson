@@ -201,12 +201,16 @@ const PROD_MAINNET_ENV = {
 // helper explicitly clears these at the top to guarantee hermetic isolation.
 const LEAKY_ENV_KEYS = [
   'ENABLE_DRIVE_OAUTH',
+  'ENABLE_DRIVE_WEBHOOK',
   'GOOGLE_OAUTH_CLIENT_ID',
   'GOOGLE_OAUTH_CLIENT_SECRET',
   'INTEGRATION_STATE_HMAC_SECRET',
+  'ENABLE_DOCUSIGN_OAUTH',
+  'ENABLE_DOCUSIGN_WEBHOOK',
   'DOCUSIGN_INTEGRATION_KEY',
   'DOCUSIGN_CLIENT_SECRET',
   'DOCUSIGN_CONNECT_HMAC_SECRET',
+  'ENABLE_ATS_WEBHOOK',
   'ADOBE_SIGN_CLIENT_SECRET',
   'CHECKR_WEBHOOK_SECRET',
   'VEREMARK_WEBHOOK_SECRET',
@@ -224,6 +228,7 @@ async function withEnv<T>(
   fn: () => Promise<T>,
 ): Promise<T> {
   const saved = { ...process.env };
+  const restoreKeys = new Set([...LEAKY_ENV_KEYS, ...Object.keys(overrides)]);
   for (const k of LEAKY_ENV_KEYS) delete process.env[k];
   Object.assign(process.env, testEnv);
   for (const [k, v] of Object.entries(overrides)) {
@@ -234,6 +239,9 @@ async function withEnv<T>(
   try {
     return await fn();
   } finally {
+    for (const key of restoreKeys) {
+      if (!(key in saved)) delete process.env[key];
+    }
     Object.assign(process.env, saved);
     vi.resetModules();
   }
@@ -397,6 +405,23 @@ describe('SCRUM-1258 vendor connector cross-field guards', () => {
     await expectConfigToReject({
       DOCUSIGN_INTEGRATION_KEY: 'fake-integration-key',
       DOCUSIGN_CLIENT_SECRET: undefined,
+    });
+  });
+
+  it('rejects production with ENABLE_DOCUSIGN_OAUTH=true and missing DocuSign OAuth secrets', async () => {
+    await expectConfigToReject({
+      ...PROD_SIGNET,
+      ENABLE_DOCUSIGN_OAUTH: 'true',
+      DOCUSIGN_INTEGRATION_KEY: undefined,
+      DOCUSIGN_CLIENT_SECRET: undefined,
+    });
+  });
+
+  it('rejects production with ENABLE_DOCUSIGN_WEBHOOK=true and missing DOCUSIGN_CONNECT_HMAC_SECRET', async () => {
+    await expectConfigToReject({
+      ...PROD_SIGNET,
+      ENABLE_DOCUSIGN_WEBHOOK: 'true',
+      DOCUSIGN_CONNECT_HMAC_SECRET: undefined,
     });
   });
 

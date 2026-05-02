@@ -13,12 +13,14 @@ import re
 import subprocess
 from collections import defaultdict
 from dataclasses import dataclass, field
+from datetime import date
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-OUT_MD = ROOT / "docs" / "audits" / "feature-flag-register-2026-05-01.md"
-OUT_JSON = ROOT / "docs" / "audits" / "feature-flag-register-2026-05-01.json"
+STAMP = date.today().isoformat()
+OUT_MD = ROOT / "docs" / "audits" / f"feature-flag-register-{STAMP}.md"
+OUT_JSON = ROOT / "docs" / "audits" / f"feature-flag-register-{STAMP}.json"
 
 ENV_EXAMPLE = ".env.example"
 ENV_TEST_EXAMPLE = ".env.test.example"
@@ -60,7 +62,8 @@ EXCLUDE_GLOBS = [
     "!.env.local",
     "!services/worker/.env",
     "!packages/arkova-py/.venv",
-    "!docs/audits/feature-flag-register-2026-05-01.*",
+    "!docs/audits/feature-flag-register-*.json",
+    "!docs/audits/feature-flag-register-*.md",
     "!scripts/audit_feature_flags.py",
 ]
 
@@ -435,7 +438,7 @@ def write_outputs(flags: dict[str, Flag], registries: dict[str, set[str]]) -> No
     findings = drift_findings(flags, registries)
 
     data = {
-        "generated_at": "2026-05-01",
+        "generated_at": STAMP,
         "flag_count": len(flags),
         "flags": [],
         "findings": findings,
@@ -468,7 +471,7 @@ def write_outputs(flags: dict[str, Flag], registries: dict[str, set[str]]) -> No
     lines: list[str] = []
     lines.append("# Arkova Feature Flag Register")
     lines.append("")
-    lines.append("Date: 2026-05-01")
+    lines.append(f"Date: {STAMP}")
     lines.append("Status: Active audit artifact")
     lines.append("Owner: Launch control / engineering")
     lines.append("")
