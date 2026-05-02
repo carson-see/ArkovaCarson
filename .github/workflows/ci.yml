@@ -502,6 +502,10 @@ jobs:
         if: steps.supabase-start.outcome == 'failure'
         run: echo "::warning::Generated Types Check skipped — Supabase requires Docker (not available on this runner)"
 
+      - name: Stop Supabase
+        if: always()
+        run: supabase stop --no-backup || true
+
   # Run tests
   test:
     name: Tests
@@ -568,6 +572,10 @@ jobs:
         run: |
           npm ci --ignore-scripts
           npm run test:coverage
+
+      - name: Stop Supabase
+        if: always()
+        run: supabase stop --no-backup || true
 
   # AI eval regression gate (GAP-1) — catches prompt quality regressions before deploy
   ai-eval-gate:
@@ -842,6 +850,10 @@ jobs:
           name: playwright-report
           path: playwright-report/
           retention-days: 14
+
+      - name: Stop Supabase
+        if: always()
+        run: supabase stop --no-backup || true
 
   # Performance budget gate (PERF-14) — Lighthouse CI on PR builds
   lighthouse:

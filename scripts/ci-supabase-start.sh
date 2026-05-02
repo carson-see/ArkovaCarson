@@ -20,6 +20,59 @@ MIGRATIONS_DIR="supabase/migrations"
 
 echo "=== CI Supabase Start ==="
 
+configure_ci_supabase_instance() {
+  if [ "${GITHUB_ACTIONS:-}" != "true" ]; then
+    return
+  fi
+
+  local raw_job="${GITHUB_JOB:-ci}"
+  local job_slug
+  job_slug="$(printf '%s' "$raw_job" \
+    | tr '[:upper:]_' '[:lower:]-' \
+    | sed -E 's/[^a-z0-9-]+/-/g; s/^-+//; s/-+$//; s/-+/-/g')"
+  if [ -z "$job_slug" ]; then
+    job_slug="ci"
+  fi
+
+  local offset
+  case "$job_slug" in
+    types-check) offset=0 ;;
+    test) offset=100 ;;
+    e2e) offset=200 ;;
+    *) offset=300 ;;
+  esac
+
+  local project_id="arkova-${job_slug}-${GITHUB_RUN_ID:-local}-${GITHUB_RUN_ATTEMPT:-1}"
+  export SUPABASE_CI_PROJECT_ID="$project_id"
+  export SUPABASE_CI_PORT_OFFSET="$offset"
+
+  python3 - <<'PY'
+from pathlib import Path
+import os
+import re
+
+path = Path("supabase/config.toml")
+text = path.read_text()
+project_id = os.environ["SUPABASE_CI_PROJECT_ID"]
+offset = int(os.environ["SUPABASE_CI_PORT_OFFSET"])
+
+text = re.sub(r'^project_id = "[^"]+"', f'project_id = "{project_id}"', text, count=1, flags=re.MULTILINE)
+for port in (54320, 54321, 54322, 54323, 54324, 54325, 54326, 54327, 54329):
+  text = re.sub(
+    rf'(?m)^(\s*(?:port|shadow_port|smtp_port|pop3_port)\s*=\s*){port}\b',
+    lambda match, port=port: f"{match.group(1)}{port + offset}",
+    text,
+  )
+
+path.write_text(text)
+PY
+
+  echo "Configured Supabase CI project ${project_id} with port offset ${offset}."
+  supabase stop --no-backup || true
+}
+
+configure_ci_supabase_instance
+
 # --- Fix migration filenames ---
 echo "Fixing migration filenames..."
 
