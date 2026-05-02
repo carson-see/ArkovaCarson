@@ -2,47 +2,36 @@ import { describe, expect, it } from 'vitest';
 import {
   classifyDuplicateArtifactPath,
   scanTrackedPaths,
+  type DuplicateArtifactKind,
 } from './check-duplicate-artifacts.js';
+
+function expectSingleViolation(path: string, segment: string, kind: DuplicateArtifactKind): void {
+  expect(classifyDuplicateArtifactPath(path)).toEqual([{ path, segment, kind }]);
+}
 
 describe('check-duplicate-artifacts', () => {
   it('flags Finder-style copy suffixes', () => {
-    expect(classifyDuplicateArtifactPath('src/api/client copy.ts')).toEqual([
-      {
-        path: 'src/api/client copy.ts',
-        segment: 'client copy.ts',
-        kind: 'copy-suffix',
-      },
-    ]);
+    expectSingleViolation('src/api/client copy.ts', 'client copy.ts', 'copy-suffix');
   });
 
   it('flags numbered duplicate files', () => {
-    expect(classifyDuplicateArtifactPath('src/api/client (2).ts')).toEqual([
-      {
-        path: 'src/api/client (2).ts',
-        segment: 'client (2).ts',
-        kind: 'numbered-copy',
-      },
-    ]);
+    expectSingleViolation('src/api/client (2).ts', 'client (2).ts', 'numbered-copy');
   });
 
   it('flags stale merge and backup artifacts', () => {
-    expect(classifyDuplicateArtifactPath('services/worker/src/api/verify.ts.orig')).toEqual([
-      {
-        path: 'services/worker/src/api/verify.ts.orig',
-        segment: 'verify.ts.orig',
-        kind: 'backup-or-merge-artifact',
-      },
-    ]);
+    expectSingleViolation(
+      'services/worker/src/api/verify.ts.orig',
+      'verify.ts.orig',
+      'backup-or-merge-artifact',
+    );
   });
 
   it('flags copied repo/worktree directories inside the repo', () => {
-    expect(classifyDuplicateArtifactPath('arkova-mvpcopy-main/src/App.tsx')).toEqual([
-      {
-        path: 'arkova-mvpcopy-main/src/App.tsx',
-        segment: 'arkova-mvpcopy-main',
-        kind: 'repo-copy-worktree',
-      },
-    ]);
+    expectSingleViolation(
+      'arkova-mvpcopy-main/src/App.tsx',
+      'arkova-mvpcopy-main',
+      'repo-copy-worktree',
+    );
   });
 
   it('does not flag legitimate copy-related source names', () => {
