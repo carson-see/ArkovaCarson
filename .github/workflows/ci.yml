@@ -32,6 +32,11 @@ concurrency:
 env:
   # ARK-SEC-012: Assign to env var to prevent expression injection in run blocks
   BASE_REF_SHA: ${{ github.event.pull_request.base.sha }}
+  # CI should fail on real code/test problems, not one-off npm registry resets.
+  NPM_CONFIG_FETCH_RETRIES: '5'
+  NPM_CONFIG_FETCH_RETRY_FACTOR: '2'
+  NPM_CONFIG_FETCH_RETRY_MINTIMEOUT: '10000'
+  NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT: '120000'
 
 jobs:
   # Secret scanning - block commits containing secrets
@@ -566,7 +571,21 @@ jobs:
       - name: Run worker tests with coverage
         working-directory: services/worker
         run: |
-          npm ci --ignore-scripts
+          for attempt in 1 2 3; do
+            if npm ci --ignore-scripts; then
+              break
+            else
+              status=$?
+            fi
+
+            if [ "$attempt" = "3" ]; then
+              exit "$status"
+            fi
+
+            echo "::warning::Worker npm ci failed on attempt ${attempt}; retrying after transient registry/network failure."
+            npm cache verify || true
+            sleep $((attempt * 15))
+          done
           npm run test:coverage
 
   # AI eval regression gate (GAP-1) — catches prompt quality regressions before deploy
