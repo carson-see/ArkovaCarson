@@ -46,14 +46,15 @@ These are the workflows that should be treated as first-client beta scope unless
 | Org/sub-org hierarchy | Org admins can manage sub-orgs, delegate anchors/credits, revoke sub-orgs, and view rollups. | Role matrix, scoped dashboards, delegated limits, revocation behavior, cross-org isolation tests. |
 | Queueing | Org queue and platform queue behave predictably and safely. | Manual org run is org-scoped, platform batch is explicit, scheduler is durable, queue state is auditable. |
 | API | API returns accurate, useful, stable responses for customers and agents. | Contract tests, SDK parity, no internal UUID leakage, examples, API-key auth tests. |
+| AI, search, fraud, reports, and compliance engine | Extraction, semantic search, fraud scoring/routes, AI-backed reports, visual fraud routes, and compliance-engine routes are treated as first-client scope when their feature flags are enabled. Nessie-specific RAG/recommendation behavior is the exception. | Launch flags have explicit values, route tests prove enabled behavior, fail-closed states are visible to operators, and UAT covers the demo path without silently hiding promised capabilities. |
 | Admin navigation | Admins land on the correct dashboard and navigation routes are role-aware. | Post-login route tests and dashboard smoke tests. |
 | Performance | Core workflows are usable under expected first-client load. | p95 budgets, worker/queue throughput tests, production health visibility. |
 
 Out of beta scope unless separately sold or explicitly pulled in:
 
-- Compliance intelligence / Nessie jurisdictional recommendations.
+- Nessie jurisdictional RAG/recommendations beyond the day-one compliance engine.
 - White labeling.
-- Carfax-style reports.
+- Commercial a la carte / Carfax-style reports distinct from day-one AI-backed reports.
 - Clio, Greenhouse, Lever full connectors.
 - General MCP connector ecosystem launch.
 - x402 paid agentic API access.
@@ -86,6 +87,7 @@ This is the script. Do not jump ahead unless a later item is the only way to unb
 | P0 | Connectors | SCRUM-1048 / LAUNCH-DOCUSIGN-ORG-01 - DocuSign org automation | In Progress epic; child connector story is Done but launch slice is not proven | Validate or reopen SCRUM-1101; add org account coverage, envelope fetch, AUTO_ANCHOR/queue routing, and volume tests. | Completed envelopes from multiple DocuSign org members are captured once and processed according to rule configuration. |
 | P0 | Connectors | SCRUM-1048 / LAUNCH-DRIVE-QUEUE-01 - Google Drive watched folder queue | In Progress epic; child connector stories are Done but launch slice is not proven | Validate or reopen SCRUM-1099 and SCRUM-1100; implement Drive changes/list or equivalent delta fetch, folder matching, queue review, bulk actions, digest. | Updated files in configured folders create reviewable queue items across users without overwhelming admins. |
 | P0 | API | LAUNCH-API-CONTRACT-01 - API contract and response quality | In progress via API audit stories | Complete reopened API richness, SDK, detail endpoint, API-key usability, UUID exposure, and contract drift stories. | API examples and contract tests match shipped behavior for customer and agent consumers. |
+| P0 | AI/compliance | LAUNCH-AI-COMPLIANCE-01 - AI extraction, semantic search, fraud, reports, and compliance engine launch flags | In progress via feature flag audit | Treat `ENABLE_AI_EXTRACTION`, `ENABLE_SEMANTIC_SEARCH`, `ENABLE_AI_FRAUD`, `ENABLE_AI_REPORTS`, `ENABLE_VISUAL_FRAUD_DETECTION`, `ENABLE_COMPLIANCE_ENGINE`, and `ENABLE_REPORTS` as launch-critical; set launch values and UAT enabled behavior. | Day-one AI/compliance/demo capabilities are either enabled and proven or explicitly blocked with named remediation; only Nessie-specific RAG/recommendations remain out of day-one scope. |
 | P0 | Navigation | LAUNCH-NAV-01 - Role-aware admin navigation | Not started | Fix admin post-login and top-left/logo routing; add Playwright coverage. | Admins land on org dashboard and do not get routed to search by primary navigation. |
 | P0 | Performance | LAUNCH-PERF-01 - First-client performance envelope | Not started | Baseline dashboard, queue, upload, verify, and API p95s; identify slow queries/jobs. | Core workflows are usable under first-client load with monitoring and budgets. |
 | P1 | MCP/product | LAUNCH-MCP-X402-01 - MCP and agentic payment validation | Not started | Build harness after API contract stabilizes; decide x402 beta scope. | Internal testers can exercise agentic calls and payments with repeatable fixtures. |
@@ -109,7 +111,7 @@ Checked on 2026-05-01. The important pattern is that several useful child storie
 
 | Parent | Child issue | Jira status | Launch interpretation |
 | --- | --- | --- | --- |
-| SCRUM-1042 | SCRUM-1061 - Gemini Golden Developer API to Vertex SDK | Done | Enterprise hardening. Not first-client beta critical unless AI extraction is pulled into scope. |
+| SCRUM-1042 | SCRUM-1061 - Gemini Golden Developer API to Vertex SDK | Done | AI extraction is first-client scope. Treat this as launch-relevant evidence for the provider path; make Vertex migration blocking only if the current Gemini path cannot meet production reliability/security requirements. |
 | SCRUM-1042 | SCRUM-1062 - BigQuery analytics dataset and piped tables | To Do | Useful later. Not a launch blocker unless analytics/audit export is required for beta operations. |
 | SCRUM-1042 | SCRUM-1063 - Cloud Logging sink for audit_events | Done | Verify evidence. This can support launch observability if it is live in the target environment. |
 | SCRUM-1042 | SCRUM-1064 - Cloud Monitoring dashboards and SLO burn alerts | To Do | Candidate launch slice if production health visibility is weak. |

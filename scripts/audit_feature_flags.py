@@ -53,6 +53,13 @@ SEARCH_PATHS = [
 ]
 
 LAUNCH_CRITICAL = {
+    "ENABLE_AI_EXTRACTION": ("P0", "AI metadata extraction and extraction review workflow"),
+    "ENABLE_SEMANTIC_SEARCH": ("P0", "Semantic search and credential/document discovery"),
+    "ENABLE_AI_FRAUD": ("P0", "Fraud signal scoring and review queue"),
+    "ENABLE_AI_REPORTS": ("P0", "AI-backed reports and exports"),
+    "ENABLE_VISUAL_FRAUD_DETECTION": ("P0", "Visual fraud route"),
+    "ENABLE_COMPLIANCE_ENGINE": ("P0", "Compliance engine routes"),
+    "ENABLE_REPORTS": ("P0", "Report surfaces"),
     "ENABLE_DOCUSIGN_WEBHOOK": ("P0", "DocuSign completed-contract automation"),
     "ENABLE_DOCUSIGN_OAUTH": ("P0", "DocuSign organization account connection"),
     "ENABLE_DRIVE_WEBHOOK": ("P0", "Google Drive watched-folder automation"),
@@ -74,12 +81,6 @@ LAUNCH_CRITICAL = {
 }
 
 ROADMAP_OR_OPTIONAL = {
-    "ENABLE_AI_EXTRACTION",
-    "ENABLE_SEMANTIC_SEARCH",
-    "ENABLE_AI_FRAUD",
-    "ENABLE_AI_REPORTS",
-    "ENABLE_VISUAL_FRAUD_DETECTION",
-    "ENABLE_COMPLIANCE_ENGINE",
     "ENABLE_NESSIE_RAG_RECOMMENDATIONS",
     "ENABLE_MULTIMODAL_EMBEDDINGS",
     "ENABLE_ADES_SIGNATURES",

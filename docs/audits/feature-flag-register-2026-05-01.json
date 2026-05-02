@@ -15,25 +15,25 @@
     {
       "action": "Define environment-specific defaults in the canonical register and stop relying on scattered fallback values.",
       "evidence": ".env.example=false; docs/reference/ENV.md=false; frontend-switchboard=true; supabase-seed-default=false; supabase-seed-value=true",
-      "priority": "P1",
+      "priority": "P0",
       "title": "ENABLE_AI_EXTRACTION has conflicting parsed defaults"
     },
     {
       "action": "Define environment-specific defaults in the canonical register and stop relying on scattered fallback values.",
       "evidence": "docs/reference/ENV.md=false; frontend-switchboard=true; supabase-seed-default=false; supabase-seed-value=true",
-      "priority": "P1",
+      "priority": "P0",
       "title": "ENABLE_AI_FRAUD has conflicting parsed defaults"
     },
     {
       "action": "Define environment-specific defaults in the canonical register and stop relying on scattered fallback values.",
       "evidence": "docs/reference/ENV.md=false; frontend-switchboard=true; supabase-seed-default=false; supabase-seed-value=true",
-      "priority": "P1",
+      "priority": "P0",
       "title": "ENABLE_AI_REPORTS has conflicting parsed defaults"
     },
     {
       "action": "Define environment-specific defaults in the canonical register and stop relying on scattered fallback values.",
       "evidence": ".env.example=false; docs/reference/ENV.md=false; frontend-switchboard=true; supabase-seed-default=false; supabase-seed-value=true",
-      "priority": "P1",
+      "priority": "P0",
       "title": "ENABLE_SEMANTIC_SEARCH has conflicting parsed defaults"
     },
     {
@@ -68,7 +68,7 @@
       "examples": [
         "docs/reference/ENV.md:352",
         "scripts/ci/snapshots/worker-env-adhoc-baseline.json:31",
-        "docs/stories/23_phase3_esignatures.md:903"
+        "docs/bugs/bug_log.md:70"
       ],
       "files": [
         "docs/bugs/bug_log.md",
@@ -99,7 +99,7 @@
         "worker-code",
         "worker-registry"
       ],
-      "classification": "roadmap-or-optional",
+      "classification": "launch-critical",
       "defaults": {
         ".env.example": "false",
         "docs/reference/ENV.md": "false",
@@ -108,9 +108,9 @@
         "supabase-seed-value": "true"
       },
       "examples": [
-        "scripts/deploy-worker.sh:35",
         ".env.example:105",
-        "supabase/seed.sql:202"
+        "scripts/deploy-worker.sh:35",
+        "docs/reference/ENV.md:401"
       ],
       "files": [
         ".env.example",
@@ -121,6 +121,7 @@
         "docs/compliance/pentest-scope.md",
         "docs/compliance/security-training.md",
         "docs/compliance/soc2-evidence.md",
+        "docs/launch/first-client-launch-command-center-2026-05-01.md",
         "docs/reference/ENV.md",
         "docs/runbooks/sarah-sprint-1-deploy-checklist.md",
         "docs/stories/12_p8_ai_intelligence.md",
@@ -140,9 +141,9 @@
         "src/pages/PlatformControlsPage.tsx",
         "supabase/seed.sql"
       ],
-      "launch_reason": "Keep outside beta launch unless explicitly scoped and tested.",
+      "launch_reason": "AI metadata extraction and extraction review workflow",
       "name": "ENABLE_AI_EXTRACTION",
-      "priority": "P2"
+      "priority": "P0"
     },
     {
       "categories": [
@@ -164,7 +165,7 @@
       "examples": [
         ".env.example:97",
         "docs/reference/ENV.md:147",
-        "docs/wiki/TECHNICAL_SECURITY_WIKI.md:389"
+        "scripts/ci/snapshots/worker-env-adhoc-baseline.json:32"
       ],
       "files": [
         ".env.example",
@@ -200,7 +201,7 @@
         "worker-code",
         "worker-registry"
       ],
-      "classification": "roadmap-or-optional",
+      "classification": "launch-critical",
       "defaults": {
         "docs/reference/ENV.md": "false",
         "frontend-switchboard": "true",
@@ -208,12 +209,13 @@
         "supabase-seed-value": "true"
       },
       "examples": [
-        "supabase/seed.sql:204",
         "docs/reference/ENV.md:403",
-        "docs/reference/ENV.md:407"
+        "docs/reference/ENV.md:407",
+        "supabase/seed.sql:204"
       ],
       "files": [
         ".github/workflows/deploy-worker.yml",
+        "docs/launch/first-client-launch-command-center-2026-05-01.md",
         "docs/reference/ENV.md",
         "docs/stories/12_p8_ai_intelligence.md",
         "docs/wiki/TECHNICAL_SECURITY_WIKI.md",
@@ -228,9 +230,9 @@
         "src/pages/PlatformControlsPage.tsx",
         "supabase/seed.sql"
       ],
-      "launch_reason": "Keep outside beta launch unless explicitly scoped and tested.",
+      "launch_reason": "Fraud signal scoring and review queue",
       "name": "ENABLE_AI_FRAUD",
-      "priority": "P2"
+      "priority": "P0"
     },
     {
       "categories": [
@@ -243,7 +245,7 @@
         "worker-code",
         "worker-registry"
       ],
-      "classification": "roadmap-or-optional",
+      "classification": "launch-critical",
       "defaults": {
         "docs/reference/ENV.md": "false",
         "frontend-switchboard": "true",
@@ -251,12 +253,13 @@
         "supabase-seed-value": "true"
       },
       "examples": [
-        "supabase/seed.sql:206",
         "docs/reference/ENV.md:404",
+        "supabase/seed.sql:206",
         ".github/workflows/deploy-worker.yml:140"
       ],
       "files": [
         ".github/workflows/deploy-worker.yml",
+        "docs/launch/first-client-launch-command-center-2026-05-01.md",
         "docs/reference/ENV.md",
         "docs/stories/12_p8_ai_intelligence.md",
         "services/worker/src/api/v1/router.ts",
@@ -269,9 +272,9 @@
         "supabase/migrations/0066_audit_compensating_fixes.sql",
         "supabase/seed.sql"
       ],
-      "launch_reason": "Keep outside beta launch unless explicitly scoped and tested.",
+      "launch_reason": "AI-backed reports and exports",
       "name": "ENABLE_AI_REPORTS",
-      "priority": "P2"
+      "priority": "P0"
     },
     {
       "categories": [
@@ -289,8 +292,8 @@
       },
       "examples": [
         "docs/reference/ENV.md:298",
-        "docs/runbooks/billing/phase-3-rollover-grace.md:32",
-        "scripts/ci/snapshots/worker-env-adhoc-baseline.json:33"
+        "scripts/ci/snapshots/worker-env-adhoc-baseline.json:33",
+        "docs/runbooks/billing/phase-3-rollover-grace.md:32"
       ],
       "files": [
         "docs/reference/ENV.md",
@@ -347,9 +350,9 @@
         "frontend-switchboard": "true"
       },
       "examples": [
-        "src/pages/PlatformControlsPage.tsx:52",
         "supabase/migrations/0086_attestation_anchoring_flag.sql:1",
-        "supabase/migrations/0086_attestation_anchoring_flag.sql:4"
+        "supabase/migrations/0086_attestation_anchoring_flag.sql:4",
+        "supabase/migrations/0086_attestation_anchoring_flag.sql:8"
       ],
       "files": [
         "docs/runbooks/anchor-disk-hygiene.md",
@@ -380,8 +383,8 @@
       },
       "examples": [
         "src/pages/PlatformControlsPage.tsx:60",
-        "docs/stories/11_mvp_launch_gaps.md:621",
-        "docs/stories/11_mvp_launch_gaps.md:629"
+        "services/worker/src/jobs/batch-anchor.ts:10",
+        "services/worker/src/jobs/batch-anchor.ts:14"
       ],
       "files": [
         "docs/stories/11_mvp_launch_gaps.md",
@@ -429,22 +432,24 @@
     {
       "categories": [
         "db-seed-or-migration",
+        "docs",
         "worker-registry"
       ],
-      "classification": "roadmap-or-optional",
+      "classification": "launch-critical",
       "defaults": {},
       "examples": [
+        "docs/launch/first-client-launch-command-center-2026-05-01.md:90",
         "supabase/migrations/0196_compliance_engine_flags.sql:3",
-        "supabase/migrations/0196_compliance_engine_flags.sql:20",
-        "supabase/migrations/0196_compliance_engine_flags.sql:24"
+        "supabase/migrations/0196_compliance_engine_flags.sql:20"
       ],
       "files": [
+        "docs/launch/first-client-launch-command-center-2026-05-01.md",
         "services/worker/src/middleware/flagRegistry.ts",
         "supabase/migrations/0196_compliance_engine_flags.sql"
       ],
-      "launch_reason": "Keep outside beta launch unless explicitly scoped and tested.",
+      "launch_reason": "Compliance engine routes",
       "name": "ENABLE_COMPLIANCE_ENGINE",
-      "priority": "P2"
+      "priority": "P0"
     },
     {
       "categories": [
@@ -794,8 +799,8 @@
         "worker-config": "false"
       },
       "examples": [
-        "supabase/seed.sql:208",
         "docs/reference/ENV.md:345",
+        "supabase/seed.sql:208",
         "scripts/ci/snapshots/worker-env-adhoc-baseline.json:37"
       ],
       "files": [
@@ -936,8 +941,8 @@
       },
       "examples": [
         "docs/reference/ENV.md:389",
-        "docs/runbooks/nca-audit-uat.md:77",
-        "docs/runbooks/nca-audit-uat.md:124"
+        "scripts/ci/snapshots/worker-env-adhoc-baseline.json:39",
+        "docs/runbooks/nca-audit-uat.md:77"
       ],
       "files": [
         "docs/reference/ENV.md",
@@ -1102,8 +1107,8 @@
       },
       "examples": [
         "docs/BETA_PRODUCTION_READINESS.md:193",
-        "scripts/deploy-worker.sh:33",
-        "scripts/deploy-worker.sh:47"
+        ".env.example:104",
+        "scripts/deploy-worker.sh:33"
       ],
       "files": [
         ".env.example",
@@ -1323,12 +1328,13 @@
     {
       "categories": [
         "db-seed-or-migration",
+        "docs",
         "frontend-admin-ui",
         "frontend-code",
         "frontend-switchboard",
         "worker-registry"
       ],
-      "classification": "platform-switchboard",
+      "classification": "launch-critical",
       "defaults": {
         "frontend-switchboard": "true",
         "supabase-seed-default": "true",
@@ -1337,9 +1343,10 @@
       "examples": [
         "supabase/seed.sql:200",
         "src/pages/PlatformControlsPage.tsx:79",
-        "supabase/migrations/0021_switchboard_flags.sql:125"
+        "docs/launch/first-client-launch-command-center-2026-05-01.md:90"
       ],
       "files": [
+        "docs/launch/first-client-launch-command-center-2026-05-01.md",
         "services/worker/src/middleware/flagRegistry.ts",
         "src/lib/switchboard.test.ts",
         "src/lib/switchboard.ts",
@@ -1347,9 +1354,9 @@
         "supabase/migrations/0021_switchboard_flags.sql",
         "supabase/seed.sql"
       ],
-      "launch_reason": "Platform flag; verify owner before changing default.",
+      "launch_reason": "Report surfaces",
       "name": "ENABLE_REPORTS",
-      "priority": "P2"
+      "priority": "P0"
     },
     {
       "categories": [
@@ -1367,8 +1374,8 @@
       },
       "examples": [
         "docs/reference/ENV.md:219",
-        "docs/runbooks/sec-harden/sec-harden-02-secret-manager-migration.md:121",
-        "scripts/ci/snapshots/worker-env-adhoc-baseline.json:41"
+        "scripts/ci/snapshots/worker-env-adhoc-baseline.json:41",
+        "docs/runbooks/sec-harden/sec-harden-02-secret-manager-migration.md:121"
       ],
       "files": [
         "docs/reference/ENV.md",
@@ -1427,7 +1434,7 @@
         "worker-code",
         "worker-registry"
       ],
-      "classification": "roadmap-or-optional",
+      "classification": "launch-critical",
       "defaults": {
         ".env.example": "false",
         "docs/reference/ENV.md": "false",
@@ -1437,12 +1444,13 @@
       },
       "examples": [
         ".env.example:106",
-        "supabase/seed.sql:203",
-        "docs/reference/ENV.md:402"
+        "docs/reference/ENV.md:402",
+        "supabase/seed.sql:203"
       ],
       "files": [
         ".env.example",
         ".github/workflows/deploy-worker.yml",
+        "docs/launch/first-client-launch-command-center-2026-05-01.md",
         "docs/reference/ENV.md",
         "docs/stories/12_p8_ai_intelligence.md",
         "docs/wiki/TECHNICAL_SECURITY_WIKI.md",
@@ -1462,9 +1470,9 @@
         "src/pages/PlatformControlsPage.tsx",
         "supabase/seed.sql"
       ],
-      "launch_reason": "Keep outside beta launch unless explicitly scoped and tested.",
+      "launch_reason": "Semantic search and credential/document discovery",
       "name": "ENABLE_SEMANTIC_SEARCH",
-      "priority": "P2"
+      "priority": "P0"
     },
     {
       "categories": [
@@ -1581,7 +1589,7 @@
       "examples": [
         "docs/reference/ENV.md:330",
         "docs/reference/ENV.md:331",
-        "docs/integrations/background-checks-spike.md:14"
+        "scripts/ci/snapshots/worker-env-adhoc-baseline.json:45"
       ],
       "files": [
         "docs/integrations/background-checks-spike.md",
@@ -1621,9 +1629,9 @@
         "worker-config": "true"
       },
       "examples": [
-        "scripts/deploy-worker.sh:36",
         ".env.example:63",
-        "supabase/seed.sql:205"
+        "scripts/deploy-worker.sh:36",
+        "docs/reference/ENV.md:74"
       ],
       "files": [
         ".env.example",
@@ -1688,22 +1696,24 @@
     },
     {
       "categories": [
+        "docs",
         "env-doc",
         "worker-code",
         "worker-config",
         "worker-registry"
       ],
-      "classification": "roadmap-or-optional",
+      "classification": "launch-critical",
       "defaults": {
         "docs/reference/ENV.md": "false",
         "worker-config": "false"
       },
       "examples": [
         "docs/reference/ENV.md:405",
-        "services/worker/src/config.test.ts:478",
-        "services/worker/src/config.ts:232"
+        "docs/launch/first-client-launch-command-center-2026-05-01.md:90",
+        "services/worker/src/config.test.ts:478"
       ],
       "files": [
+        "docs/launch/first-client-launch-command-center-2026-05-01.md",
         "docs/reference/ENV.md",
         "services/worker/agents.md",
         "services/worker/src/api/v1/router.ts",
@@ -1713,9 +1723,9 @@
         "services/worker/src/middleware/aiFeatureGate.ts",
         "services/worker/src/middleware/flagRegistry.ts"
       ],
-      "launch_reason": "Keep outside beta launch unless explicitly scoped and tested.",
+      "launch_reason": "Visual fraud route",
       "name": "ENABLE_VISUAL_FRAUD_DETECTION",
-      "priority": "P2"
+      "priority": "P0"
     },
     {
       "categories": [
@@ -1780,7 +1790,7 @@
       "examples": [
         "docs/reference/ENV.md:336",
         "scripts/ci/snapshots/worker-env-adhoc-baseline.json:49",
-        "services/worker/src/jobs/workspace-subscription-renewal.ts:138"
+        "services/worker/src/config.ts:248"
       ],
       "files": [
         "docs/reference/ENV.md",
@@ -1901,8 +1911,8 @@
       },
       "examples": [
         ".env.example:22",
-        "services/worker/src/stripe/client.ts:7",
-        "docs/reference/ENV.md:63"
+        "docs/reference/ENV.md:63",
+        "services/worker/src/stripe/client.ts:7"
       ],
       "files": [
         ".env.example",
