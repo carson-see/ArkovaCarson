@@ -112,11 +112,6 @@ function findViolations(file: string, strippedSql: string): Finding[] {
 }
 
 function main(): void {
-  if (!existsSync(MIGRATIONS_DIR)) {
-    console.log(`No migrations directory at ${MIGRATIONS_DIR}; skipping.`);
-    return;
-  }
-
   const baseline = loadBaseline();
   const findings = loadMigrations(MIGRATIONS_DIR)
     .flatMap((migration) => findViolations(migration.file, migration.stripped))

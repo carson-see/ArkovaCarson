@@ -56,7 +56,11 @@ export interface MigrationFile {
  * `_` are skipped (Supabase scratchpad convention).
  */
 export function loadMigrations(migrationsDir: string): MigrationFile[] {
-  if (!existsSync(migrationsDir)) return [];
+  if (!existsSync(migrationsDir)) {
+    throw new Error(
+      `Migrations directory not found: ${migrationsDir}. Manual RLS/view scans must cover **/*.{ts,tsx,js,jsx,sql}.`,
+    );
+  }
   return readdirSync(migrationsDir)
     .filter((f) => f.endsWith('.sql') && !f.startsWith('_'))
     .sort()

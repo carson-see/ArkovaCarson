@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { stripDollarQuoted } from './migration-lint';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { loadMigrations, stripDollarQuoted } from './migration-lint';
 
 function newlineCount(text: string): number {
   return (text.match(/\n/g) ?? []).length;
@@ -55,5 +58,32 @@ $tag_1$;`;
 
     expect(stripped).not.toContain('CREATE VIEW public.dynamic');
     expect(newlineCount(stripped)).toBe(newlineCount(sql));
+  });
+});
+
+describe('loadMigrations', () => {
+  it('fails closed when the migrations directory is missing', () => {
+    const missingDir = join(tmpdir(), `arkova-missing-migrations-${Date.now()}`);
+
+    expect(() => loadMigrations(missingDir)).toThrow(
+      /Migrations directory not found: .*Manual RLS\/view scans must cover \*\*\/\*\.\{ts,tsx,js,jsx,sql\}/,
+    );
+  });
+
+  it('loads sql migrations sorted while skipping scratchpad files', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'arkova-migrations-'));
+    try {
+      writeFileSync(join(dir, '0002_second.sql'), 'select 2;');
+      writeFileSync(join(dir, '_scratch.sql'), 'select 999;');
+      writeFileSync(join(dir, '0001_first.sql'), 'DO $$ SELECT 1; $$;');
+
+      const migrations = loadMigrations(dir);
+
+      expect(migrations.map((migration) => migration.file)).toEqual(['0001_first.sql', '0002_second.sql']);
+      expect(migrations[0].sql).toContain('SELECT 1');
+      expect(migrations[0].stripped).not.toContain('SELECT 1');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

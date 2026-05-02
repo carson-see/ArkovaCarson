@@ -78,11 +78,6 @@ function tableHasDenyAllComment(sql: string, table: string): boolean {
 }
 
 function main(): void {
-  if (!existsSync(MIGRATIONS_DIR)) {
-    console.log(`No migrations directory at ${MIGRATIONS_DIR}; skipping.`);
-    return;
-  }
-
   const baseline = loadBaseline();
   const migrations = loadMigrations(MIGRATIONS_DIR);
   const enabledByTable = new Map<string, string>();
