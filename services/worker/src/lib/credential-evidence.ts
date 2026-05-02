@@ -320,7 +320,6 @@ export const CredentialEvidenceCredentialSchema = z.object({
   issuedAt: DateOrDateTimeSchema.optional(),
   expiresAt: DateOrDateTimeSchema.optional(),
   credentialIdHash: Sha256HexSchema.optional(),
-  recipientDisplayName: z.string().min(1).max(300).optional(),
   recipientIdentifierHash: Sha256HexSchema.optional(),
 }).strict();
 
@@ -379,9 +378,8 @@ function compactPublicMetadata(metadata: CompactablePublicMetadata): Record<stri
 /**
  * Metadata safe to attach to anchors and surface through public verification.
  *
- * Deliberately excludes recipientDisplayName and any raw credential IDs; those
- * can remain inside the private hashed evidence package or be represented by
- * hashes.
+ * Deliberately excludes raw recipient names and raw credential IDs; callers
+ * must provide hashes for recipient/credential identifiers.
  */
 export function toPublicSafeCredentialEvidenceMetadata(
   evidencePackage: CredentialEvidencePackage,

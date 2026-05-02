@@ -20,7 +20,6 @@ export const GENERIC_URL_EVIDENCE_INPUT: CredentialEvidenceHashInput = {
     issuerName: 'Example University',
     issuedAt: '2026-04-15',
     expiresAt: '2028-04-15',
-    recipientDisplayName: 'Public Learner',
     recipientIdentifierHash: 'b'.repeat(64),
   },
   evidence: {

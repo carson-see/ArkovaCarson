@@ -37,7 +37,6 @@ describe('credential-evidence', () => {
       },
       credential: {
         recipientIdentifierHash: 'b'.repeat(64),
-        recipientDisplayName: 'Public Learner',
         expiresAt: '2028-04-15',
         issuedAt: '2026-04-15',
         issuerName: 'Example University',
@@ -163,6 +162,18 @@ describe('credential-evidence', () => {
     expect(evidence.credential.type).toBe('ACCREDITATION');
   });
 
+  it('rejects raw recipient display names in server-bound evidence packages', () => {
+    const rawNameInput = {
+      ...GENERIC_URL_EVIDENCE_INPUT,
+      credential: {
+        ...GENERIC_URL_EVIDENCE_INPUT.credential,
+        recipientDisplayName: 'Raw Recipient Name',
+      },
+    } as unknown as CredentialEvidenceHashInput;
+
+    expect(() => buildCredentialEvidencePackage(rawNameInput)).toThrow('Unrecognized key');
+  });
+
   it('rejects ambiguous or invalid credential dates', () => {
     const invalidDates = [
       '2026-02-30',
@@ -253,7 +264,7 @@ describe('credential-evidence', () => {
 
   it('returns known fixture hashes to detect accidental canonicalization drift', () => {
     expect(computeCredentialEvidenceHash(GENERIC_URL_EVIDENCE_INPUT)).toBe(
-      'f3010fe1086ec3a7ff521bf5fa10ddabc5813104fe814fef2cab6a1e17ccc5c5',
+      'a2378040d2115467a7d8894c724a3ca6c54cf2164e70f474f4c05bd2dd8ba5c7',
     );
     expect(computeCredentialEvidenceHash(OPEN_BADGE_EVIDENCE_INPUT)).toBe(
       '0f6e4eb9a1a64bc4c392335609f4fcda36465ddb6880d3f5f90246692b398167',
