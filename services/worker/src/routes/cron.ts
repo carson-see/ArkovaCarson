@@ -1170,6 +1170,20 @@ const PipelineDashboardCacheRefreshResultSchema = z.object({
 
 type PipelineDashboardCacheRefreshResult = z.infer<typeof PipelineDashboardCacheRefreshResultSchema>;
 
+function formatDashboardCacheError(error: unknown): string {
+  if (typeof error === 'string') return error;
+  if (error && typeof error === 'object') {
+    const maybeMessage = (error as { message?: unknown }).message;
+    if (typeof maybeMessage === 'string') return maybeMessage;
+    try {
+      return JSON.stringify(error) ?? String(error);
+    } catch {
+      return String(error);
+    }
+  }
+  return String(error);
+}
+
 cronRouter.post('/refresh-stats', async (_req, res) => {
   const errors: Array<{ source: string; message: string }> = [];
   let pipelineDashboardResult: PipelineDashboardCacheRefreshResult | null = null;
@@ -1180,6 +1194,14 @@ cronRouter.post('/refresh-stats', async (_req, res) => {
     const parsed = PipelineDashboardCacheRefreshResultSchema.safeParse(result.data);
     if (!parsed.success) {
       throw new Error(`Invalid refresh_pipeline_dashboard_cache payload: ${parsed.error.message}`);
+    }
+    const partialErrors = parsed.data.errors ?? [];
+    if (partialErrors.length > 0) {
+      throw new Error(
+        `refresh_pipeline_dashboard_cache reported ${partialErrors.length} error(s): ${partialErrors
+          .map(formatDashboardCacheError)
+          .join('; ')}`,
+      );
     }
     pipelineDashboardResult = parsed.data;
   } catch (error) {
