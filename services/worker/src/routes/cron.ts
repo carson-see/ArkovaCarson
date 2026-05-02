@@ -1213,6 +1213,16 @@ cronRouter.post('/refresh-stats', async (_req, res) => {
     return;
   }
 
+  if (errors.some((e) => e.source === 'pipeline_dashboard_cache')) {
+    res.status(500).json({
+      status: 'failed',
+      reason: 'pipeline_dashboard_cache failed',
+      refreshed: refreshed.filter((s) => s !== 'pipeline_dashboard_cache'),
+      errors,
+    });
+    return;
+  }
+
   res.json({
     status: 'refreshed',
     refreshed,

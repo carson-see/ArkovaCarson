@@ -1264,6 +1264,24 @@ describe('cron routes', () => {
       expect(res.body.errors[0].source).toBe('stats_materialized_views');
     });
 
+    it('returns 500 if the dashboard cache refresh fails even when legacy refresh succeeds', async () => {
+      const callRpcMock = callRpc as ReturnType<typeof vi.fn>;
+      callRpcMock
+        .mockRejectedValueOnce(new Error('dashboard fail'))
+        .mockResolvedValueOnce({ data: null, error: null });
+      const app = createApp();
+      const res = await request(app).post('/cron/refresh-stats');
+      expect(res.status).toBe(500);
+      expect(res.body).toMatchObject({
+        status: 'failed',
+        reason: 'pipeline_dashboard_cache failed',
+        refreshed: ['stats_materialized_views'],
+      });
+      expect(res.body.errors).toEqual([
+        expect.objectContaining({ source: 'pipeline_dashboard_cache' }),
+      ]);
+    });
+
     it('propagates skipped dashboard refresh status from the RPC', async () => {
       const callRpcMock = callRpc as ReturnType<typeof vi.fn>;
       callRpcMock
@@ -1288,7 +1306,7 @@ describe('cron routes', () => {
       });
     });
 
-    it('returns 500 only when BOTH refresh paths fail', async () => {
+    it('returns 500 with all errors when both refresh paths fail', async () => {
       const callRpcMock = callRpc as ReturnType<typeof vi.fn>;
       callRpcMock.mockRejectedValue(new Error('fail'));
       const app = createApp();
