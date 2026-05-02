@@ -377,9 +377,22 @@ export const bitcoinAnchorMachine = defineMachine({
           ))
         )
       )
+    },
+
+    // INV-7: SUPERSEDED is terminal and cannot represent an active worker
+    // claim. Supersede resets actor to client even when it fires from
+    // BROADCASTING/SUBMITTED, so worker-owned claims cannot be stranded.
+    supersededReleasesWorkerClaim: {
+      description: "SUPERSEDED anchors do not retain a worker-owned claim",
+      formula: forall("Anchors", "a",
+        or(
+          not(eq(index(status, param("a")), lit("SUPERSEDED"))),
+          eq(index(actor, param("a")), lit("client"))
+        )
+      )
     }
 
-    // INV-7 (credentialTypeImmutableAfterPending) intentionally REMOVED —
+    // INV-8 (credentialTypeImmutableAfterPending) intentionally REMOVED —
     // see SCRUM-1274. Migration 0172_fix_credential_type_trigger_service_role.sql
     // makes service_role exempt for backfill/repair flows. CLAUDE.md §1.4
     // documents that credential_type is monotonic for `authenticated` only;

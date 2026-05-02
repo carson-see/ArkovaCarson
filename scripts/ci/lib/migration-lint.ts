@@ -11,6 +11,8 @@
 import { readdirSync, existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
+const DOLLAR_QUOTED_BLOCK = /\$([A-Za-z_]\w*)?\$[\s\S]*?\$\1\$/g;
+
 interface Baseline {
   /** Entries (filenames or table names — interpretation is per-lint) exempt from the rule. */
   grandfathered: string[];
@@ -35,8 +37,8 @@ export function loadBaseline(baselinePath: string): Set<string> {
  * blocks must not match.
  */
 export function stripDollarQuoted(sql: string): string {
-  return sql.replace(/\$([a-zA-Z_][a-zA-Z0-9_]*)?\$[\s\S]*?\$\1\$/g, (m) => {
-    return m.replace(/[^\n]/g, ' ');
+  return sql.replaceAll(DOLLAR_QUOTED_BLOCK, (m) => {
+    return m.replaceAll(/[^\n]/g, ' ');
   });
 }
 

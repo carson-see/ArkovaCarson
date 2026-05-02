@@ -35,6 +35,8 @@ onlyWorkerSecures ==
   \A a \in Anchors : (~(status[a] = "SECURED")) \/ (actor[a] = "worker")
 legalHoldPreventsSecuredToRevoked ==
   \A a \in Anchors : (~(legalHold[a])) \/ (status[a] \in {"SECURED", "REVOKED", "SUPERSEDED"})
+supersededReleasesWorkerClaim ==
+  \A a \in Anchors : (~(status[a] = "SUPERSEDED")) \/ (actor[a] = "client")
 
 workerClaim(a) ==
   /\ a \in Anchors
