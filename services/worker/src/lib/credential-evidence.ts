@@ -94,6 +94,9 @@ const SENSITIVE_QUERY_KEYS = new Set([
 
 const TRACKING_QUERY_PREFIXES = ['utm_'];
 const TRACKING_QUERY_KEYS = new Set(['fbclid', 'gclid', 'mc_cid', 'mc_eid']);
+const EMBEDDED_IPV4_PREFIX = '(?:(?:.*::(?:ffff:)?)|(?:0:0:0:0:0:(?:ffff|0):))';
+const EMBEDDED_IPV4_DOTTED_RE = new RegExp(`^${EMBEDDED_IPV4_PREFIX}(\\d{1,3}(?:\\.\\d{1,3}){3})$`);
+const EMBEDDED_IPV4_HEX_RE = new RegExp(`^${EMBEDDED_IPV4_PREFIX}([0-9a-f]{1,4}):([0-9a-f]{1,4})$`);
 
 function isPrivateIpv4(hostname: string): boolean {
   const parts = hostname.split('.').map(Number);
@@ -112,12 +115,12 @@ function isPrivateIpv4(hostname: string): boolean {
   );
 }
 
-function ipv4FromMappedIpv6(hostname: string): string | null {
+function ipv4FromEmbeddedIpv6(hostname: string): string | null {
   const normalized = stripIpv6Brackets(hostname.toLowerCase());
-  const dottedMatch = /^(?:::ffff:|0:0:0:0:0:ffff:)(\d{1,3}(?:\.\d{1,3}){3})$/.exec(normalized);
+  const dottedMatch = EMBEDDED_IPV4_DOTTED_RE.exec(normalized);
   if (dottedMatch && isIP(dottedMatch[1]) === 4) return dottedMatch[1];
 
-  const hexMatch = /^(?:::ffff:|0:0:0:0:0:ffff:)([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(normalized);
+  const hexMatch = EMBEDDED_IPV4_HEX_RE.exec(normalized);
   if (!hexMatch) return null;
 
   const high = Number.parseInt(hexMatch[1], 16);
@@ -176,8 +179,8 @@ function assertPublicHttpHost(hostname: string): void {
   if (ipVersion === 4 && isPrivateIpv4(normalized)) {
     throw new Error('source URL must not target a private IPv4 address');
   }
-  const mappedIpv4 = ipVersion === 6 ? ipv4FromMappedIpv6(normalized) : null;
-  if (mappedIpv4 && isPrivateIpv4(mappedIpv4)) {
+  const embeddedIpv4 = ipVersion === 6 ? ipv4FromEmbeddedIpv6(normalized) : null;
+  if (embeddedIpv4 && isPrivateIpv4(embeddedIpv4)) {
     throw new Error('source URL must not target a private IPv4 address');
   }
   if (ipVersion === 6 && isPrivateIpv6(normalized)) {

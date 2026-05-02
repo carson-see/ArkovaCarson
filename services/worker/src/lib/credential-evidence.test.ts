@@ -122,6 +122,8 @@ describe('credential-evidence', () => {
       ['https://192.168.0.5/credential', 'private IPv4'],
       ['https://[::ffff:127.0.0.1]/credential', 'private IPv4'],
       ['https://[::ffff:100.64.0.1]/credential', 'private IPv4'],
+      ['https://[::127.0.0.1]/credential', 'private IPv4'],
+      ['https://[::7f00:1]/credential', 'private IPv4'],
       ['https://[::1]/credential', 'private IPv6'],
       ['https://[fe80::1]/credential', 'private IPv6'],
       ['https://[fe90::1]/credential', 'private IPv6'],
