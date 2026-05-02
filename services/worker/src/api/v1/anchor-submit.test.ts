@@ -73,6 +73,24 @@ function makeApp(scopes = ['anchor:write']) {
 
 const VALID_FINGERPRINT = 'a'.repeat(64);
 
+function postBadgeMetadata(metadata: Record<string, unknown>) {
+  return request(makeApp()).post('/v1/anchor').send({
+    fingerprint: VALID_FINGERPRINT,
+    credential_type: 'BADGE',
+    metadata,
+  });
+}
+
+function expectPrivateSourceUrlRejection(res: request.Response) {
+  expect(res.status).toBe(400);
+  expect(res.body.details[0]).toMatchObject({
+    path: 'metadata.source_url',
+    code: 'custom',
+    message: expect.stringContaining('private IPv4'),
+  });
+  expect(mockInsert).not.toHaveBeenCalled();
+}
+
 describe('POST /api/v1/anchor — Zod validation', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -147,23 +165,19 @@ describe('POST /api/v1/anchor — Zod validation', () => {
   });
 
   it('accepts BADGE credential type and persists public-safe evidence metadata', async () => {
-    const res = await request(makeApp()).post('/v1/anchor').send({
-      fingerprint: VALID_FINGERPRINT,
+    const res = await postBadgeMetadata({
+      evidence_schema_version: 'credential_evidence_v1',
+      evidence_package_hash: 'b'.repeat(64),
+      source_url: 'https://credentials.example.com/badges/123?token=secret&utm_source=ad&locale=en',
+      source_provider: 'credly',
+      source_payload_hash: 'c'.repeat(64),
+      verification_level: 'captured_url',
+      extraction_method: 'html_metadata',
+      credential_title: 'Cloud Architecture Fundamentals',
       credential_type: 'BADGE',
-      metadata: {
-        evidence_schema_version: 'credential_evidence_v1',
-        evidence_package_hash: 'b'.repeat(64),
-        source_url: 'https://credentials.example.com/badges/123?token=secret&utm_source=ad&locale=en',
-        source_provider: 'credly',
-        source_payload_hash: 'c'.repeat(64),
-        verification_level: 'captured_url',
-        extraction_method: 'html_metadata',
-        credential_title: 'Cloud Architecture Fundamentals',
-        credential_type: 'BADGE',
-        credential_issuer: 'Example Cloud',
-        recipient_display_name: 'Do Not Persist',
-        access_token: 'Do Not Persist',
-      },
+      credential_issuer: 'Example Cloud',
+      recipient_display_name: 'Do Not Persist',
+      access_token: 'Do Not Persist',
     });
 
     expect(res.status).toBe(201);
@@ -188,22 +202,12 @@ describe('POST /api/v1/anchor — Zod validation', () => {
   });
 
   it('rejects invalid credential evidence metadata instead of persisting unsafe source URLs', async () => {
-    const res = await request(makeApp()).post('/v1/anchor').send({
-      fingerprint: VALID_FINGERPRINT,
-      credential_type: 'BADGE',
-      metadata: {
-        source_url: 'http://127.0.0.1/private-badge',
-        source_provider: 'credly',
-      },
+    const res = await postBadgeMetadata({
+      source_url: 'http://127.0.0.1/private-badge',
+      source_provider: 'credly',
     });
 
-    expect(res.status).toBe(400);
-    expect(res.body.details[0]).toMatchObject({
-      path: 'metadata.source_url',
-      code: 'custom',
-      message: expect.stringContaining('private IPv4'),
-    });
-    expect(mockInsert).not.toHaveBeenCalled();
+    expectPrivateSourceUrlRejection(res);
     expect(mockLogger.warn).toHaveBeenCalledWith(
       expect.objectContaining({
         metadataKeys: expect.arrayContaining(['source_provider', 'source_url']),
@@ -217,22 +221,12 @@ describe('POST /api/v1/anchor — Zod validation', () => {
   });
 
   it('rejects IPv4-mapped IPv6 credential evidence source URLs', async () => {
-    const res = await request(makeApp()).post('/v1/anchor').send({
-      fingerprint: VALID_FINGERPRINT,
-      credential_type: 'BADGE',
-      metadata: {
-        source_url: 'https://[::ffff:127.0.0.1]/private-badge',
-        source_provider: 'credly',
-      },
+    const res = await postBadgeMetadata({
+      source_url: 'https://[::ffff:127.0.0.1]/private-badge',
+      source_provider: 'credly',
     });
 
-    expect(res.status).toBe(400);
-    expect(res.body.details[0]).toMatchObject({
-      path: 'metadata.source_url',
-      code: 'custom',
-      message: expect.stringContaining('private IPv4'),
-    });
-    expect(mockInsert).not.toHaveBeenCalled();
+    expectPrivateSourceUrlRejection(res);
   });
 
   it('returns 401 when API key missing', async () => {

@@ -146,8 +146,16 @@ function stripIpv6Brackets(hostname: string): string {
   return hostname.startsWith('[') && hostname.endsWith(']') ? hostname.slice(1, -1) : hostname;
 }
 
+function stripTrailingDots(value: string): string {
+  let end = value.length;
+  while (end > 0 && value.charCodeAt(end - 1) === 46) {
+    end -= 1;
+  }
+  return end === value.length ? value : value.slice(0, end);
+}
+
 function normalizeHttpHostnameForValidation(hostname: string): string {
-  return stripIpv6Brackets(hostname.toLowerCase()).replace(/\.+$/u, '');
+  return stripTrailingDots(stripIpv6Brackets(hostname.toLowerCase()));
 }
 
 function assertPublicHttpHost(hostname: string): void {
@@ -218,7 +226,7 @@ export function normalizeCredentialSourceUrl(rawUrl: string): string {
   parsed.username = '';
   parsed.password = '';
   parsed.hash = '';
-  parsed.hostname = parsed.hostname.toLowerCase().replace(/\.+$/u, '');
+  parsed.hostname = stripTrailingDots(parsed.hostname.toLowerCase());
 
   const entries = [...parsed.searchParams.entries()]
     .filter(([key]) => !shouldDropQueryKey(key))

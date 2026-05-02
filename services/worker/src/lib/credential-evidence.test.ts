@@ -93,43 +93,30 @@ describe('credential-evidence', () => {
     expect(normalizeCredentialSourceUrl('https://Credentials.Example.com./path')).toBe(
       'https://credentials.example.com/path',
     );
-    expect(() => normalizeCredentialSourceUrl('https://localhost./credential')).toThrow(
-      'public internet host',
-    );
-    expect(() => normalizeCredentialSourceUrl('https://example.local./credential')).toThrow(
-      'public internet host',
-    );
+
+    for (const url of ['https://localhost./credential', 'https://example.local./credential']) {
+      expect(() => normalizeCredentialSourceUrl(url)).toThrow('public internet host');
+    }
   });
 
   it('rejects non-public or non-http source URLs', () => {
     expect(() => normalizeCredentialSourceUrl('javascript:alert(1)')).toThrow('http or https');
-    expect(() => normalizeCredentialSourceUrl('https://localhost:3000/credential')).toThrow(
-      'public internet host',
-    );
-    expect(() => normalizeCredentialSourceUrl('https://127.0.0.1/credential')).toThrow(
-      'private IPv4',
-    );
-    expect(() => normalizeCredentialSourceUrl('https://100.64.0.1/credential')).toThrow(
-      'private IPv4',
-    );
-    expect(() => normalizeCredentialSourceUrl('https://192.168.0.5/credential')).toThrow(
-      'private IPv4',
-    );
-    expect(() => normalizeCredentialSourceUrl('https://[::ffff:127.0.0.1]/credential')).toThrow(
-      'private IPv4',
-    );
-    expect(() => normalizeCredentialSourceUrl('https://[::ffff:100.64.0.1]/credential')).toThrow(
-      'private IPv4',
-    );
-    expect(() => normalizeCredentialSourceUrl('https://[::1]/credential')).toThrow(
-      'private IPv6',
-    );
-    expect(() => normalizeCredentialSourceUrl('https://[fe80::1]/credential')).toThrow(
-      'private IPv6',
-    );
-    expect(() => normalizeCredentialSourceUrl('https://[fe90::1]/credential')).toThrow(
-      'private IPv6',
-    );
+
+    const rejectedUrls = [
+      ['https://localhost:3000/credential', 'public internet host'],
+      ['https://127.0.0.1/credential', 'private IPv4'],
+      ['https://100.64.0.1/credential', 'private IPv4'],
+      ['https://192.168.0.5/credential', 'private IPv4'],
+      ['https://[::ffff:127.0.0.1]/credential', 'private IPv4'],
+      ['https://[::ffff:100.64.0.1]/credential', 'private IPv4'],
+      ['https://[::1]/credential', 'private IPv6'],
+      ['https://[fe80::1]/credential', 'private IPv6'],
+      ['https://[fe90::1]/credential', 'private IPv6'],
+    ] as const;
+
+    for (const [url, message] of rejectedUrls) {
+      expect(() => normalizeCredentialSourceUrl(url)).toThrow(message);
+    }
   });
 
   it('supports BADGE/Open Badge evidence without provider fetching', () => {
