@@ -53,6 +53,18 @@ function passingTwoTypeReport() {
   );
 }
 
+function chatLine(messages: Array<Record<string, unknown>>): string {
+  return JSON.stringify({ messages });
+}
+
+function modelLine(text: string): string {
+  return JSON.stringify({ contents: [{ role: 'model', parts: [{ text }] }] });
+}
+
+function expectParsed(line: string, expected: GoldenRow): void {
+  expect(parseGoldenLine(line)).toEqual(expected);
+}
+
 describe('parseGoldenLine', () => {
   it('extracts credentialType from vertex format model output', () => {
     const line = JSON.stringify({
@@ -65,61 +77,41 @@ describe('parseGoldenLine', () => {
         },
       ],
     });
-    expect(parseGoldenLine(line)).toEqual({
+    expectParsed(line, {
       credentialType: 'DEGREE',
       fraudPositive: false,
     });
   });
 
   it('extracts credentialType from chat-completions messages format', () => {
-    const line = JSON.stringify({
-      messages: [
-        { role: 'system', content: 'extract' },
-        {
-          role: 'user',
-          content: 'Credential type hint: PUBLICATION\n--- text ---',
-        },
-        { role: 'assistant', content: '{"credentialType":"PUBLICATION"}' },
-      ],
-    });
+    const line = chatLine([
+      { role: 'system', content: 'extract' },
+      { role: 'user', content: 'Credential type hint: PUBLICATION\n--- text ---' },
+      { role: 'assistant', content: '{"credentialType":"PUBLICATION"}' },
+    ]);
     expect(parseGoldenLine(line).credentialType).toBe('PUBLICATION');
   });
 
   it('prefers assistant output over prompt examples when extracting credentialType', () => {
-    const line = JSON.stringify({
-      messages: [
-        { role: 'system', content: 'Example: {"credentialType":"DEGREE"}' },
-        { role: 'user', content: 'Credential type hint: DEGREE\n--- text ---' },
-        { role: 'assistant', content: '{"credentialType":"LICENSE","fraudSignals":[]}' },
-      ],
-    });
-    expect(parseGoldenLine(line)).toEqual({
+    const line = chatLine([
+      { role: 'system', content: 'Example: {"credentialType":"DEGREE"}' },
+      { role: 'user', content: 'Credential type hint: DEGREE\n--- text ---' },
+      { role: 'assistant', content: '{"credentialType":"LICENSE","fraudSignals":[]}' },
+    ]);
+    expectParsed(line, {
       credentialType: 'LICENSE',
       fraudPositive: false,
     });
   });
 
   it('falls back to credential-type hint regex when JSON not embedded', () => {
-    const line = JSON.stringify({
-      messages: [
-        { role: 'user', content: 'Credential type hint: LICENSE\nbody' },
-      ],
-    });
+    const line = chatLine([{ role: 'user', content: 'Credential type hint: LICENSE\nbody' }]);
     expect(parseGoldenLine(line).credentialType).toBe('LICENSE');
   });
 
   it('flags fraud-positive when fraudSignals array is non-empty', () => {
-    const line = JSON.stringify({
-      contents: [
-        {
-          role: 'model',
-          parts: [
-            { text: '{"credentialType":"DEGREE","fraudSignals":["defunct-institution"]}' },
-          ],
-        },
-      ],
-    });
-    expect(parseGoldenLine(line)).toEqual({
+    const line = modelLine('{"credentialType":"DEGREE","fraudSignals":["defunct-institution"]}');
+    expectParsed(line, {
       credentialType: 'DEGREE',
       fraudPositive: true,
     });
@@ -132,59 +124,49 @@ describe('parseGoldenLine', () => {
         fraudSignals: ['issuer-domain-mismatch'],
       },
     });
-    expect(parseGoldenLine(line)).toEqual({
+    expectParsed(line, {
       credentialType: 'LICENSE',
       fraudPositive: true,
     });
   });
 
   it('does not count prompt-only fraud examples when assistant output is clean', () => {
-    const line = JSON.stringify({
-      messages: [
-        { role: 'system', content: 'Example: {"credentialType":"DEGREE","fraudSignals":["sample"]}' },
-        { role: 'assistant', content: '{"credentialType":"DEGREE","fraudSignals":[]}' },
-      ],
-    });
-    expect(parseGoldenLine(line)).toEqual({
+    const line = chatLine([
+      { role: 'system', content: 'Example: {"credentialType":"DEGREE","fraudSignals":["sample"]}' },
+      { role: 'assistant', content: '{"credentialType":"DEGREE","fraudSignals":[]}' },
+    ]);
+    expectParsed(line, {
       credentialType: 'DEGREE',
       fraudPositive: false,
     });
   });
 
   it('does not count prompt-only fraud examples when assistant output is absent', () => {
-    const line = JSON.stringify({
-      messages: [
-        { role: 'system', content: 'Example: {"credentialType":"DEGREE","fraudSignals":["sample"]}' },
-        { role: 'user', content: 'Credential type hint: DEGREE\n--- text ---' },
-      ],
-    });
-    expect(parseGoldenLine(line)).toEqual({
+    const line = chatLine([
+      { role: 'system', content: 'Example: {"credentialType":"DEGREE","fraudSignals":["sample"]}' },
+      { role: 'user', content: 'Credential type hint: DEGREE\n--- text ---' },
+    ]);
+    expectParsed(line, {
       credentialType: 'DEGREE',
       fraudPositive: false,
     });
   });
 
   it('flags fraud-positive when fraudSignals contains structured objects', () => {
-    const line = JSON.stringify({
-      messages: [
-        {
-          role: 'assistant',
-          content: '{"credentialType":"DEGREE","fraudSignals":[{"signal":"date-conflict"}]}',
-        },
-      ],
-    });
-    expect(parseGoldenLine(line)).toEqual({
+    const line = chatLine([
+      {
+        role: 'assistant',
+        content: '{"credentialType":"DEGREE","fraudSignals":[{"signal":"date-conflict"}]}',
+      },
+    ]);
+    expectParsed(line, {
       credentialType: 'DEGREE',
       fraudPositive: true,
     });
   });
 
   it('treats empty fraudSignals array as not fraud-positive', () => {
-    const line = JSON.stringify({
-      contents: [
-        { role: 'model', parts: [{ text: '{"credentialType":"DEGREE","fraudSignals":[]}' }] },
-      ],
-    });
+    const line = modelLine('{"credentialType":"DEGREE","fraudSignals":[]}');
     expect(parseGoldenLine(line).fraudPositive).toBe(false);
   });
 
