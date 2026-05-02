@@ -77,6 +77,24 @@ describe('TOOL_DEFINITIONS', () => {
     expect(names).toContain('verify_batch');
     expect(names).toEqual(expect.arrayContaining(['search', 'verify', 'list_orgs', 'get_anchor']));
   });
+
+  it('publishes full array contracts for batch public_id inputs', () => {
+    const verifyBatch = TOOL_DEFINITIONS.find((tool) => tool.name === 'verify_batch');
+    const oracleBatch = TOOL_DEFINITIONS.find((tool) => tool.name === 'oracle_batch_verify');
+
+    expect(verifyBatch?.inputSchema.properties.public_ids).toMatchObject({
+      type: 'array',
+      minItems: 1,
+      maxItems: 100,
+      items: { type: 'string', pattern: '^ARK-[A-Z0-9-]{3,60}$', maxLength: 64 },
+    });
+    expect(oracleBatch?.inputSchema.properties.public_ids).toMatchObject({
+      type: 'array',
+      minItems: 1,
+      maxItems: 25,
+      items: { type: 'string', pattern: '^ARK-[A-Z0-9-]{3,60}$', maxLength: 64 },
+    });
+  });
 });
 
 // ── handleVerifyCredential ────────────────────────────────────────────

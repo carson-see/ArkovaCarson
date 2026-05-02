@@ -9,6 +9,7 @@
 
 import { execFileSync } from 'node:child_process';
 import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const REPO = process.env.DUPLICATE_ARTIFACTS_REPO_ROOT ?? resolve(import.meta.dirname, '..', '..');
 const GIT_BIN = process.env.GIT_BIN ?? '/usr/bin/git';
@@ -140,6 +141,10 @@ function main(): void {
   process.exit(1);
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+function isMainModule(metaUrl: string, argvPath: string | undefined): boolean {
+  return argvPath !== undefined && resolve(fileURLToPath(metaUrl)) === resolve(argvPath);
+}
+
+if (isMainModule(import.meta.url, process.argv[1])) {
   main();
 }

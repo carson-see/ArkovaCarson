@@ -87,8 +87,35 @@ describe('check-api-contract-drift', () => {
     })).toEqual([
       {
         source: 'openapi:/future-agent',
-        message: 'operationId future_agent has no matching MCP validator schema',
+        message: 'missing MCP schema for operationId future_agent',
       },
     ]);
+  });
+
+  it('reports explicit OpenAPI agent drift violation reasons', () => {
+    const spec = {
+      paths: {
+        '/missing-operation-id': { get: { 'x-agent-usage': { tool_name: 'search' } } },
+        '/mismatched-tool': { get: { operationId: 'search', 'x-agent-usage': { tool_name: 'find' } } },
+        '/missing-schema': { get: { operationId: 'future_agent', 'x-agent-usage': { tool_name: 'future_agent' } } },
+      },
+    };
+
+    const violations = collectOpenApiAgentDrift(spec, {
+      search: z.object({ q: z.string() }),
+    });
+
+    expect(violations).toContainEqual({
+      source: 'openapi:/missing-operation-id',
+      message: 'missing operationId',
+    });
+    expect(violations).toContainEqual({
+      source: 'openapi:/mismatched-tool',
+      message: 'x-agent-usage.tool_name find does not match operationId search',
+    });
+    expect(violations).toContainEqual({
+      source: 'openapi:/missing-schema',
+      message: 'missing MCP schema for operationId future_agent',
+    });
   });
 });

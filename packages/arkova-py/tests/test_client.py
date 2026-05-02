@@ -219,6 +219,45 @@ def test_verify_uses_api_v1_sibling_path_when_base_url_includes_api_v2() -> None
     assert result.status == "PENDING"
 
 
+def test_verify_percent_encodes_public_id_sync() -> None:
+    seen_raw_paths: list[bytes] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen_raw_paths.append(request.url.raw_path)
+        return json_response({"verified": True, "status": "ACTIVE"})
+
+    with Arkova(
+        api_key="ak_test",
+        base_url="https://worker.example/api/v2",
+        transport=httpx.MockTransport(handler),
+    ) as client:
+        result = client.verify("ARK-2026/A B?C")
+
+    assert seen_raw_paths == [b"/api/v1/verify/ARK-2026%2FA%20B%3FC"]
+    assert result.verified is True
+
+
+def test_verify_percent_encodes_public_id_async() -> None:
+    async def run() -> tuple[list[bytes], bool]:
+        seen_raw_paths: list[bytes] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen_raw_paths.append(request.url.raw_path)
+            return json_response({"verified": True, "status": "ACTIVE"})
+
+        async with AsyncArkova(
+            api_key="ak_test",
+            base_url="https://worker.example/api/v2",
+            transport=httpx.MockTransport(handler),
+        ) as client:
+            result = await client.verify("ARK-2026/A B?C")
+            return seen_raw_paths, result.verified
+
+    seen_raw_paths, verified = asyncio.run(run())
+    assert seen_raw_paths == [b"/api/v1/verify/ARK-2026%2FA%20B%3FC"]
+    assert verified is True
+
+
 def test_async_client_get_anchor() -> None:
     async def run() -> str:
         async def handler(_request: httpx.Request) -> httpx.Response:

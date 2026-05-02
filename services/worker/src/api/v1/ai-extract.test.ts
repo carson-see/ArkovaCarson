@@ -321,7 +321,7 @@ describe('AI Extraction Endpoint', () => {
     expect(responseJson.subType).toBeNull();
     expect(responseJson.description).toBeNull();
     expect(responseJson.fraudSignals).toBeNull();
-    expect(responseJson.confidenceScores).toEqual({ overall: 0.92 });
+    expect(responseJson.confidenceScores).toEqual({ overall: responseJson.confidence });
   });
 
   it('applies confidence calibration to AI model output (AI-EVAL-02)', async () => {

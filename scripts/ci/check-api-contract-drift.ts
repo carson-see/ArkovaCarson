@@ -6,6 +6,8 @@
  * builders receive one shape while runtime validation accepts another.
  */
 
+import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 
 export interface ContractDriftViolation {
@@ -46,10 +48,23 @@ interface OpenApiAgentOperation {
 function schemaShape(schema: z.ZodTypeAny): z.ZodRawShape | null {
   if (schema instanceof z.ZodObject) return (schema as ZodObjectLike).shape;
 
+  // The worker is pinned to Zod 3.25.76 today. Prefer public object/wrapper
+  // accessors where available, then keep the defensive Zod 3 fallbacks so this
+  // CI guard keeps working across strict/effects-wrapped schemas.
   const candidate = schema as unknown as {
     shape?: z.ZodRawShape;
+    unwrap?: () => z.ZodTypeAny;
+    innerType?: () => z.ZodTypeAny;
+    sourceType?: () => z.ZodTypeAny;
     _def?: { shape?: z.ZodRawShape | (() => z.ZodRawShape) };
   };
+
+  const wrappedSchema = candidate.unwrap?.() ?? candidate.innerType?.() ?? candidate.sourceType?.();
+  if (wrappedSchema && wrappedSchema !== schema) {
+    const wrappedShape = schemaShape(wrappedSchema);
+    if (wrappedShape) return wrappedShape;
+  }
+
   if (candidate.shape) return candidate.shape;
   if (typeof candidate._def?.shape === 'function') return candidate._def.shape();
   if (candidate._def?.shape) return candidate._def.shape;
@@ -150,12 +165,16 @@ export function collectOpenApiAgentDrift(
     if (!schemas[operationId]) {
       violations.push({
         source: `openapi:${path}`,
-        message: `operationId ${operationId} has no matching MCP validator schema`,
+        message: `missing MCP schema for operationId ${operationId}`,
       });
     }
   }
 
   return violations;
+}
+
+function isMainModule(metaUrl: string, argvPath: string | undefined): boolean {
+  return argvPath !== undefined && resolve(fileURLToPath(metaUrl)) === resolve(argvPath);
 }
 
 async function loadRuntimeContracts(): Promise<{
@@ -210,7 +229,7 @@ async function main(): Promise<void> {
   process.exit(1);
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isMainModule(import.meta.url, process.argv[1])) {
   main().catch((error) => {
     console.error('::error::SCRUM-1586: API contract drift check failed to run.');
     console.error(error instanceof Error ? error.stack ?? error.message : String(error));
