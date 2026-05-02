@@ -195,6 +195,7 @@ describe('AI Extraction Endpoint', () => {
           issuerName: 'University of Michigan',
           fieldOfStudy: 'Computer Science',
           subType: 'BACHELOR',
+          description: 'Bachelor of Science in Computer Science',
           fraudSignals: [{ signal: 'font_mismatch', severity: 'low' }],
         },
         confidence: 0.92,
@@ -220,9 +221,10 @@ describe('AI Extraction Endpoint', () => {
       }),
     );
 
-    // API-RICH-02: new nullable fields
+    // API-RICH-02: rich fields are surfaced top-level for agent consumers.
     expect(responseJson.confidenceScores).toEqual({ overall: 0.92 });
     expect(responseJson.subType).toBe('BACHELOR');
+    expect(responseJson.description).toBe('Bachelor of Science in Computer Science');
     expect(responseJson.fraudSignals).toEqual([{ signal: 'font_mismatch', severity: 'low' }]);
   });
 
@@ -289,7 +291,7 @@ describe('AI Extraction Endpoint', () => {
     expect(responseJson.description).toBeNull();
   });
 
-  it('returns null for subType and fraudSignals when not present in extraction (API-RICH-02)', async () => {
+  it('returns null for optional rich fields when they are not present in extraction (API-RICH-02)', async () => {
     const handler = getPostHandler();
     const { req, res } = createMockReqRes(validBody, 'user-123');
 
@@ -317,8 +319,9 @@ describe('AI Extraction Endpoint', () => {
 
     const responseJson: AIExtractResponse = (res.json as ReturnType<typeof vi.fn>).mock.calls[0][0];
     expect(responseJson.subType).toBeNull();
+    expect(responseJson.description).toBeNull();
     expect(responseJson.fraudSignals).toBeNull();
-    expect(responseJson.confidenceScores).toBeDefined();
+    expect(responseJson.confidenceScores).toEqual({ overall: 0.92 });
   });
 
   it('applies confidence calibration to AI model output (AI-EVAL-02)', async () => {
