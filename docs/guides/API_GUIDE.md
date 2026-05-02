@@ -618,9 +618,9 @@ yarn add @arkova/sdk
 **Usage:**
 
 ```typescript
-import { ArkovaClient } from '@arkova/sdk';
+import { Arkova } from '@arkova/sdk';
 
-const client = new ArkovaClient({
+const client = new Arkova({
   apiKey: 'ak_live_your_key_here'
 });
 
@@ -628,28 +628,29 @@ const client = new ArkovaClient({
 const result = await client.verify('ARK-2026-ABCD1234');
 console.log(result.verified);  // true
 console.log(result.status);    // "ACTIVE"
-console.log(result.issuer_name); // "University of Michigan"
+console.log(result.issuerName); // "University of Michigan"
+console.log(result.confidenceScores?.overall);
+console.log(result.subType);
 
 // --- Anchor new data ---
 // The SDK hashes your data locally — the raw data never leaves your machine
 const receipt = await client.anchor('my important document text');
-console.log(receipt.public_id);  // "ARK-2026-F7A3B2C1"
+console.log(receipt.publicId);  // "ARK-2026-F7A3B2C1"
 console.log(receipt.status);     // "PENDING"
 
 // --- Anchor a file ---
 import { readFileSync } from 'fs';
 const fileData = readFileSync('my_diploma.pdf');
-const receipt2 = await client.anchor(fileData, {
-  credentialType: 'DEGREE',
-  description: 'BS Computer Science'
-});
+const fileBuffer = fileData.buffer.slice(fileData.byteOffset, fileData.byteOffset + fileData.byteLength);
+const fileReceipt = await client.anchor(fileBuffer);
+console.log(fileReceipt.publicId);
 
-// --- Verify raw data against the chain ---
-const verification = await client.verifyData('my important document text');
+// --- Verify raw data against a receipt ---
+const verification = await client.verify('my important document text', receipt);
 console.log(verification.verified);
 
 // --- Generate a fingerprint without anchoring ---
-const fp = await ArkovaClient.fingerprint('my data');
+const fp = await client.fingerprint('my data');
 console.log(fp); // "7b3f9..."
 ```
 
