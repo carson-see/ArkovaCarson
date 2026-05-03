@@ -4985,6 +4985,23 @@ export type Database = {
         Returns: undefined
       }
       dev_bypass_kyc: { Args: { p_user_id: string }; Returns: boolean }
+      drain_submitted_to_secured_for_tx: {
+        Args: {
+          p_batch_size?: number
+          p_block_height: number
+          p_block_timestamp: string
+          p_chain_tx_id: string
+          p_confirmations?: number
+          p_max_iterations?: number
+        }
+        Returns: {
+          anchors: Json
+          capped: boolean
+          iterations: number
+          tx_id: string
+          updated: number
+        }
+      }
       enqueue_rule_event: {
         Args: {
           p_external_file_id?: string

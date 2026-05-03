@@ -64,6 +64,10 @@ API keys are scoped to a single organization. All webhook operations are automat
 
 You can subscribe to any subset of these events per endpoint. The default at registration time is `['anchor.secured', 'anchor.revoked']`.
 
+### Backfill Behavior
+
+During operational backfills, Arkova may promote a historical group of already-confirmed anchors from `SUBMITTED` to `SECURED` in a bulk drain. Those backfills still emit one signed `anchor.secured` webhook per affected anchor, using the exact anchor identities updated by the drain job. Arkova intentionally does not replay historical per-anchor secured emails for that same backfill window to avoid sending a large delayed email burst. For customers subscribed to both webhooks and email, the webhook is the durable integration signal for those historical promotions; normal non-backfill anchor confirmation continues to use the standard email path.
+
 ---
 
 ## Endpoints

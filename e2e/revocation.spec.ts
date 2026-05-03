@@ -31,7 +31,7 @@ test.describe('Revocation', () => {
 
       // Navigate to the record
       await orgAdminPage.goto(`/records/${anchor.id}`);
-      await expect(orgAdminPage.getByText('Record Details')).toBeVisible({ timeout: 10000 });
+      await expect(orgAdminPage.getByRole('heading', { name: 'Record Details' })).toBeVisible({ timeout: 10000 });
 
       // Look for revoke button/menu item
       const revokeBtn = orgAdminPage.getByRole('button', { name: /Revoke/i });
@@ -66,7 +66,7 @@ test.describe('Revocation', () => {
       createdAnchorIds.push(anchor.id);
 
       await orgAdminPage.goto(`/records/${anchor.id}`);
-      await expect(orgAdminPage.getByText('Record Details')).toBeVisible({ timeout: 10000 });
+      await expect(orgAdminPage.getByRole('heading', { name: 'Record Details' })).toBeVisible({ timeout: 10000 });
 
       const revokeBtn = orgAdminPage.getByRole('button', { name: /Revoke/i });
       if (await revokeBtn.isVisible({ timeout: 5000 }).catch(() => false)) {
@@ -95,7 +95,7 @@ test.describe('Revocation', () => {
       createdAnchorIds.push(anchor.id);
 
       await orgAdminPage.goto(`/records/${anchor.id}`);
-      await expect(orgAdminPage.getByText('Record Details')).toBeVisible({ timeout: 10000 });
+      await expect(orgAdminPage.getByRole('heading', { name: 'Record Details' })).toBeVisible({ timeout: 10000 });
 
       const revokeBtn = orgAdminPage.getByRole('button', { name: /Revoke/i });
       if (await revokeBtn.isVisible({ timeout: 5000 }).catch(() => false)) {
@@ -126,7 +126,7 @@ test.describe('Revocation', () => {
       createdAnchorIds.push(anchor.id);
 
       await orgAdminPage.goto(`/records/${anchor.id}`);
-      await expect(orgAdminPage.getByText('Record Details')).toBeVisible({ timeout: 10000 });
+      await expect(orgAdminPage.getByRole('heading', { name: 'Record Details' })).toBeVisible({ timeout: 10000 });
 
       const revokeBtn = orgAdminPage.getByRole('button', { name: /Revoke/i });
       if (await revokeBtn.isVisible({ timeout: 5000 }).catch(() => false)) {
@@ -155,7 +155,7 @@ test.describe('Revocation', () => {
       createdAnchorIds.push(anchor.id);
 
       await orgAdminPage.goto(`/records/${anchor.id}`);
-      await expect(orgAdminPage.getByText('Record Details')).toBeVisible({ timeout: 10000 });
+      await expect(orgAdminPage.getByRole('heading', { name: 'Record Details' })).toBeVisible({ timeout: 10000 });
 
       // Should show Revoked status
       await expect(orgAdminPage.getByText('Revoked')).toBeVisible();
