@@ -88,6 +88,14 @@ interface ProofData {
   proof_path: string[] | null;
 }
 
+function toIsoDateTime(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    throw new Error(`Invalid proof package timestamp: ${value}`);
+  }
+  return date.toISOString();
+}
+
 /**
  * Generate a proof package from anchor data
  */
@@ -95,6 +103,12 @@ export function generateProofPackage(
   anchor: AnchorData,
   proof?: ProofData
 ): ProofPackage {
+  const hasNetworkReceipt =
+    anchor.status === 'SECURED' &&
+    Boolean(anchor.chain_tx_id) &&
+    typeof anchor.chain_block_height === 'number' &&
+    Boolean(anchor.chain_timestamp);
+
   const proofPackage: ProofPackage = {
     version: '1.0',
     generated_at: new Date().toISOString(),
@@ -113,11 +127,11 @@ export function generateProofPackage(
     },
 
     network_receipt:
-      anchor.status === 'SECURED' && anchor.chain_tx_id
+      hasNetworkReceipt
         ? {
-            network_proof_id: anchor.chain_tx_id,
+            network_proof_id: anchor.chain_tx_id!,
             block_height: anchor.chain_block_height!,
-            observed_time: anchor.chain_timestamp!,
+            observed_time: toIsoDateTime(anchor.chain_timestamp!),
           }
         : null,
 
@@ -129,7 +143,7 @@ export function generateProofPackage(
       : null,
 
     metadata: {
-      created_at: anchor.created_at,
+      created_at: toIsoDateTime(anchor.created_at),
       user_id: anchor.user_id,
       org_id: anchor.org_id,
     },
@@ -177,6 +191,8 @@ export function downloadProofPackage(proofPackage: ProofPackage, filename: strin
   link.download = filename;
   document.body.appendChild(link);
   link.click();
-  link.remove();
-  URL.revokeObjectURL(url);
+  setTimeout(() => {
+    link.remove();
+    URL.revokeObjectURL(url);
+  }, 100);
 }

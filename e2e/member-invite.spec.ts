@@ -8,123 +8,113 @@
  */
 
 import { test, expect } from './fixtures';
+import type { Page } from '@playwright/test';
+
+async function openPeopleTab(page: Page) {
+  await page.goto('/organization');
+  await page.getByRole('tab', { name: 'People' }).click();
+  await expect(page.getByRole('heading', { name: 'People' })).toBeVisible({ timeout: 10000 });
+}
+
+async function openInviteDialog(page: Page) {
+  await openPeopleTab(page);
+  await page.getByRole('button', { name: /Invite Member/i }).click();
+
+  const dialog = page.getByRole('dialog', { name: 'Invite Team Member' });
+  await expect(dialog).toBeVisible();
+  return dialog;
+}
 
 test.describe('Member Invite Flow', () => {
   test('shows Invite Member button for org admins', async ({ orgAdminPage }) => {
-    await orgAdminPage.goto('/organization');
-
-    // Wait for page to load
-    await expect(orgAdminPage.getByText(/Members/i).first()).toBeVisible({ timeout: 10000 });
+    await openPeopleTab(orgAdminPage);
 
     // Invite Member button should be visible for admins
     await expect(orgAdminPage.getByRole('button', { name: /Invite Member/i })).toBeVisible();
   });
 
   test('opens invite modal when clicking Invite Member', async ({ orgAdminPage }) => {
-    await orgAdminPage.goto('/organization');
-    await expect(orgAdminPage.getByText(/Members/i).first()).toBeVisible({ timeout: 10000 });
-
-    await orgAdminPage.getByRole('button', { name: /Invite Member/i }).click();
-
-    // Modal should open with title
-    await expect(orgAdminPage.getByText('Invite Team Member')).toBeVisible();
+    const dialog = await openInviteDialog(orgAdminPage);
 
     // Email input should be present
-    await expect(orgAdminPage.getByLabel('Email address')).toBeVisible();
+    await expect(dialog.getByLabel('Email address')).toBeVisible();
 
     // Role selector should be present
-    await expect(orgAdminPage.getByLabel('Role')).toBeVisible();
+    await expect(dialog.getByLabel('Role')).toBeVisible();
 
     // Send Invitation button should be present
-    await expect(orgAdminPage.getByRole('button', { name: /Send Invitation/i })).toBeVisible();
+    await expect(dialog.getByRole('button', { name: /Send Invitation/i })).toBeVisible();
   });
 
   test('disables Send Invitation button when email is empty', async ({ orgAdminPage }) => {
-    await orgAdminPage.goto('/organization');
-    await expect(orgAdminPage.getByText(/Members/i).first()).toBeVisible({ timeout: 10000 });
-
-    await orgAdminPage.getByRole('button', { name: /Invite Member/i }).click();
-    await expect(orgAdminPage.getByText('Invite Team Member')).toBeVisible();
+    const dialog = await openInviteDialog(orgAdminPage);
 
     // Button should be disabled when email is empty
-    const sendBtn = orgAdminPage.getByRole('button', { name: /Send Invitation/i });
+    const sendBtn = dialog.getByRole('button', { name: /Send Invitation/i });
     await expect(sendBtn).toBeDisabled();
   });
 
   test('shows validation error for invalid email', async ({ orgAdminPage }) => {
-    await orgAdminPage.goto('/organization');
-    await expect(orgAdminPage.getByText(/Members/i).first()).toBeVisible({ timeout: 10000 });
-
-    await orgAdminPage.getByRole('button', { name: /Invite Member/i }).click();
-    await expect(orgAdminPage.getByText('Invite Team Member')).toBeVisible();
+    const dialog = await openInviteDialog(orgAdminPage);
 
     // Type invalid email
-    await orgAdminPage.getByLabel('Email address').fill('not-an-email');
+    await dialog.getByLabel('Email address').fill('invalid-email@localhost');
 
     // Submit
-    await orgAdminPage.getByRole('button', { name: /Send Invitation/i }).click();
+    await dialog.getByRole('button', { name: /Send Invitation/i }).click();
 
     // Should show validation error
-    await expect(orgAdminPage.getByText(/valid email/i)).toBeVisible();
+    await expect(dialog.getByText(/valid email/i)).toBeVisible();
   });
 
   test('enables Send Invitation button when email is entered', async ({ orgAdminPage }) => {
-    await orgAdminPage.goto('/organization');
-    await expect(orgAdminPage.getByText(/Members/i).first()).toBeVisible({ timeout: 10000 });
-
-    await orgAdminPage.getByRole('button', { name: /Invite Member/i }).click();
-    await expect(orgAdminPage.getByText('Invite Team Member')).toBeVisible();
+    const dialog = await openInviteDialog(orgAdminPage);
 
     // Type valid email
-    await orgAdminPage.getByLabel('Email address').fill('newmember@example.com');
+    await dialog.getByLabel('Email address').fill('newmember@example.com');
 
     // Button should become enabled
-    const sendBtn = orgAdminPage.getByRole('button', { name: /Send Invitation/i });
+    const sendBtn = dialog.getByRole('button', { name: /Send Invitation/i });
     await expect(sendBtn).toBeEnabled();
   });
 
   test('can select Admin role in role dropdown', async ({ orgAdminPage }) => {
-    await orgAdminPage.goto('/organization');
-    await expect(orgAdminPage.getByText(/Members/i).first()).toBeVisible({ timeout: 10000 });
-
-    await orgAdminPage.getByRole('button', { name: /Invite Member/i }).click();
-    await expect(orgAdminPage.getByText('Invite Team Member')).toBeVisible();
+    const dialog = await openInviteDialog(orgAdminPage);
 
     // Click role selector trigger
-    await orgAdminPage.getByLabel('Role').click();
+    await dialog.getByLabel('Role').click();
 
     // Admin option should be available
-    await expect(orgAdminPage.getByText('Admin').first()).toBeVisible();
-    await expect(orgAdminPage.getByText('Member').first()).toBeVisible();
+    const listbox = orgAdminPage.getByRole('listbox');
+    await expect(listbox.getByText('Admin', { exact: true })).toBeVisible();
+    await expect(listbox.getByText('Member', { exact: true })).toBeVisible();
   });
 
   test('closes modal when Cancel is clicked', async ({ orgAdminPage }) => {
-    await orgAdminPage.goto('/organization');
-    await expect(orgAdminPage.getByText(/Members/i).first()).toBeVisible({ timeout: 10000 });
-
-    await orgAdminPage.getByRole('button', { name: /Invite Member/i }).click();
-    await expect(orgAdminPage.getByText('Invite Team Member')).toBeVisible();
+    const dialog = await openInviteDialog(orgAdminPage);
 
     // Click Cancel
-    await orgAdminPage.getByRole('button', { name: /Cancel/i }).click();
+    await dialog.getByRole('button', { name: /Cancel/i }).click();
 
     // Modal should close
-    await expect(orgAdminPage.getByText('Invite Team Member')).not.toBeVisible();
+    await expect(dialog).not.toBeVisible();
   });
 
   test('modal resets form when reopened', async ({ orgAdminPage }) => {
-    await orgAdminPage.goto('/organization');
-    await expect(orgAdminPage.getByText(/Members/i).first()).toBeVisible({ timeout: 10000 });
+    await openPeopleTab(orgAdminPage);
 
     // Open modal, type email, then cancel
     await orgAdminPage.getByRole('button', { name: /Invite Member/i }).click();
-    await expect(orgAdminPage.getByText('Invite Team Member')).toBeVisible();
-    await orgAdminPage.getByLabel('Email address').fill('test@example.com');
-    await orgAdminPage.getByRole('button', { name: /Cancel/i }).click();
+    let dialog = orgAdminPage.getByRole('dialog', { name: 'Invite Team Member' });
+    await expect(dialog).toBeVisible();
+    await dialog.getByLabel('Email address').fill('test@example.com');
+    await dialog.getByRole('button', { name: /Cancel/i }).click();
+    await expect(dialog).not.toBeVisible();
 
     // Reopen modal — email should be cleared
     await orgAdminPage.getByRole('button', { name: /Invite Member/i }).click();
-    await expect(orgAdminPage.getByText('Invite Team Member')).toBeVisible();
-    await expect(orgAdminPage.getByLabel('Email address')).toHaveValue('');
+    dialog = orgAdminPage.getByRole('dialog', { name: 'Invite Team Member' });
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByLabel('Email address')).toHaveValue('');
   });
 });
