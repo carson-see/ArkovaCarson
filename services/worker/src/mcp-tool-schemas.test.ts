@@ -20,6 +20,7 @@ import { openApiV2Spec } from './api/v2/openapi.js';
 
 const VALID_PUBLIC_ID = 'ARK-DEG-ABCDEF';
 const VALID_HASH = 'a'.repeat(64);
+const OPENAPI_OPERATION_METHODS = ['get', 'post', 'put', 'delete', 'patch', 'options', 'head'] as const;
 const searchLimitMax = (() => {
   const parameters = openApiV2Spec.paths['/search'].get.parameters as ReadonlyArray<{
     name: string;
@@ -51,7 +52,9 @@ describe('MCP_TOOL_SCHEMAS registry', () => {
 
   it('covers every OpenAPI v2 operation exposed as an agent tool', () => {
     const agentToolNames = Object.values(openApiV2Spec.paths)
-      .map((pathItem) => pathItem.get?.['x-agent-usage']?.tool_name)
+      .flatMap((pathItem) => OPENAPI_OPERATION_METHODS.map(
+        (method) => pathItem[method]?.['x-agent-usage']?.tool_name,
+      ))
       .filter((name): name is McpToolName => typeof name === 'string');
 
     expect(Object.keys(MCP_TOOL_SCHEMAS)).toEqual(expect.arrayContaining([...new Set(agentToolNames)]));
