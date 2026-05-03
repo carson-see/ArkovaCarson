@@ -818,6 +818,8 @@ export const PUBLIC_ATTESTATION_VERIFY_LABELS = {
   BYTES_SUFFIX: ' bytes',
 } as const;
 
+export const EVIDENCE_PAYLOAD_ERROR = 'Evidence metadata is invalid. Check fingerprints, file names, and descriptions.';
+
 // =============================================================================
 // MY CREDENTIALS / RECIPIENT INBOX (UF-03)
 // =============================================================================

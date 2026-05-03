@@ -72,6 +72,7 @@ import { BulkIssuanceWizard } from '@/components/attestation/BulkIssuanceWizard'
 import { Briefcase, GraduationCap, FileSpreadsheet } from 'lucide-react';
 import { CreatePortfolioDialog } from '@/components/portfolio';
 import { AttestationEvidencePayloadSchema } from '@/lib/validators';
+import { EVIDENCE_PAYLOAD_ERROR } from '@/lib/copy';
 
 const ATTESTATION_TYPES = [
   { value: 'VERIFICATION', label: 'Verification', desc: 'Verify a credential or document is authentic' },
@@ -126,8 +127,6 @@ interface ClaimInput {
   claim: string;
   evidence: string;
 }
-
-const EVIDENCE_PAYLOAD_ERROR = 'Evidence metadata is invalid. Check fingerprints, file names, and descriptions.';
 
 function serializeEvidenceItems(items: EvidenceItem[]) {
   const payload = items.map((item) => ({
