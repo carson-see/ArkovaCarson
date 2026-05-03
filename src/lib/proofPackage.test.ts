@@ -2,7 +2,7 @@
  * Unit tests for Proof Package generation, validation, and export
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   ProofPackageSchema,
   generateProofPackage,
@@ -216,6 +216,17 @@ describe('generateProofPackage', () => {
     expect(pkg.network_receipt!.observed_time).toBe('2026-01-15T12:00:00.000Z');
   });
 
+  it('normalizes Supabase timestamp offsets to ISO datetimes', () => {
+    const pkg = generateProofPackage({
+      ...validAnchorSecured,
+      created_at: '2026-01-15T10:00:00.123+00:00',
+      chain_timestamp: '2026-01-15T12:00:00.456+00:00',
+    });
+
+    expect(pkg.metadata.created_at).toBe('2026-01-15T10:00:00.123Z');
+    expect(pkg.network_receipt!.observed_time).toBe('2026-01-15T12:00:00.456Z');
+  });
+
   it('generates a valid package for a REVOKED anchor (no network receipt)', () => {
     const pkg = generateProofPackage(validAnchorRevoked);
     expect(pkg.verification.status).toBe('REVOKED');
@@ -253,6 +264,12 @@ describe('generateProofPackage', () => {
 
   it('sets network_receipt to null for SECURED anchor without chain_tx_id', () => {
     const anchor = { ...validAnchorSecured, chain_tx_id: null };
+    const pkg = generateProofPackage(anchor);
+    expect(pkg.network_receipt).toBeNull();
+  });
+
+  it('sets network_receipt to null for SECURED anchor with incomplete receipt fields', () => {
+    const anchor = { ...validAnchorSecured, chain_block_height: null };
     const pkg = generateProofPackage(anchor);
     expect(pkg.network_receipt).toBeNull();
   });
@@ -371,6 +388,7 @@ describe('downloadProofPackage', () => {
   let removeSpy: any;
 
   beforeEach(() => {
+    vi.useFakeTimers();
     mockCreateObjectURL = vi.fn(() => 'blob:mock-url');
     mockRevokeObjectURL = vi.fn();
     clickSpy = vi.fn();
@@ -387,6 +405,10 @@ describe('downloadProofPackage', () => {
     } as unknown as HTMLAnchorElement);
   });
 
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it('creates a blob URL, clicks the link, and cleans up', () => {
     const pkg = generateProofPackage(validAnchorSecured);
     downloadProofPackage(pkg, 'test-proof.json');
@@ -394,6 +416,10 @@ describe('downloadProofPackage', () => {
     expect(mockCreateObjectURL).toHaveBeenCalledOnce();
     expect(appendChildSpy).toHaveBeenCalledOnce();
     expect(clickSpy).toHaveBeenCalledOnce();
+    expect(removeSpy).not.toHaveBeenCalled();
+
+    vi.runAllTimers();
+
     expect(removeSpy).toHaveBeenCalledOnce();
     expect(mockRevokeObjectURL).toHaveBeenCalledWith('blob:mock-url');
   });

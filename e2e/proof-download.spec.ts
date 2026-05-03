@@ -97,9 +97,9 @@ test.describe('Proof Download', () => {
 
     // Parse and validate structure
     const proof = JSON.parse(content);
-    expect(proof).toHaveProperty('fingerprint');
-    expect(proof).toHaveProperty('status');
-    expect(proof.status).toBe('SECURED');
+    expect(proof.document.fingerprint).toBe(securedAnchor.fingerprint);
+    expect(proof.verification.status).toBe('SECURED');
+    expect(proof.verification.verified).toBe(true);
   });
 
   test('PENDING records do not show download proof section', async ({ individualPage }) => {
@@ -116,7 +116,7 @@ test.describe('Proof Download', () => {
 
       // Pending records should NOT show download proof section
       // (or the buttons should be hidden/disabled)
-      await expect(individualPage.getByText('Pending')).toBeVisible();
+      await expect(individualPage.getByText('Pending', { exact: true }).first()).toBeVisible();
 
       // The Download Proof Package section should not be visible for PENDING
       await expect(individualPage.getByText(/Download Proof Package/i)).not.toBeVisible();

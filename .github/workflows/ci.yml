@@ -32,6 +32,11 @@ concurrency:
 env:
   # ARK-SEC-012: Assign to env var to prevent expression injection in run blocks
   BASE_REF_SHA: ${{ github.event.pull_request.base.sha }}
+  # CI should fail on real code/test problems, not one-off npm registry resets.
+  NPM_CONFIG_FETCH_RETRIES: '5'
+  NPM_CONFIG_FETCH_RETRY_FACTOR: '2'
+  NPM_CONFIG_FETCH_RETRY_MINTIMEOUT: '10000'
+  NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT: '120000'
 
 jobs:
   # Secret scanning - block commits containing secrets
@@ -73,7 +78,10 @@ jobs:
           node-version: '20'
 
       - name: Install dependencies
-        run: npm ci
+        # Dependency scanning does not execute the app. Suppress package
+        # lifecycle scripts so this security gate cannot fail because a
+        # transitive package postinstall tries to download external binaries.
+        run: npm ci --ignore-scripts
 
       - name: Enforce pinned package versions
         env:
@@ -129,7 +137,7 @@ jobs:
         # - snarkjs -> bfj -> jsonpath -> underscore <=1.13.7: GHSA-qpx9-hpmf-5gmw
         #   DoS vuln, not exploitable server-side. Tracked for replacement.
         working-directory: services/worker
-        run: npm ci && npm audit --audit-level=critical --omit=dev
+        run: npm ci --ignore-scripts && npm audit --audit-level=critical --omit=dev
 
   # SCRUM-1068: Sonatype SCA evidence job. Non-blocking for the first sprint;
   # GPL/AGPL/SSPL license policy is enforced locally even when Lifecycle
@@ -570,7 +578,21 @@ jobs:
       - name: Run worker tests with coverage
         working-directory: services/worker
         run: |
-          npm ci --ignore-scripts
+          for attempt in 1 2 3; do
+            if npm ci --ignore-scripts; then
+              break
+            else
+              status=$?
+            fi
+
+            if [ "$attempt" = "3" ]; then
+              exit "$status"
+            fi
+
+            echo "::warning::Worker npm ci failed on attempt ${attempt}; retrying after transient registry/network failure."
+            npm cache verify || true
+            sleep $((attempt * 15))
+          done
           npm run test:coverage
 
       - name: Stop Supabase
@@ -795,6 +817,10 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Install worker dependencies
+        working-directory: services/worker
+        run: npm ci
+
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
 
@@ -824,24 +850,58 @@ jobs:
       - name: Create auth state directory
         run: mkdir -p .auth
 
+      - name: Start worker for E2E tests
+        working-directory: services/worker
+        run: |
+          node --import tsx src/index.ts > "$RUNNER_TEMP/arkova-worker.log" 2>&1 &
+          echo "$!" > "$RUNNER_TEMP/arkova-worker.pid"
+          for i in {1..60}; do
+            if curl -fsS http://localhost:3001/health >/dev/null; then
+              echo "Worker is ready"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::Worker failed to become healthy for E2E"
+          cat "$RUNNER_TEMP/arkova-worker.log"
+          exit 1
+        env:
+          PORT: 3001
+          NODE_ENV: test
+          LOG_LEVEL: warn
+          SUPABASE_URL: ${{ steps.supabase-e2e-keys.outputs.url }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ steps.supabase-e2e-keys.outputs.service_key }}
+          STRIPE_SECRET_KEY: sk_test_e2e_local
+          STRIPE_WEBHOOK_SECRET: whsec_e2e_local
+          API_KEY_HMAC_SECRET: e2e-local-api-key-hmac-secret
+          USE_MOCKS: true
+          ENABLE_VERIFICATION_API: true
+          ENABLE_PROD_NETWORK_ANCHORING: false
+          BITCOIN_NETWORK: signet
+          FRONTEND_URL: http://localhost:5173
+          CORS_ALLOWED_ORIGINS: http://localhost:5173
+
       - name: Run E2E tests
-        # SCRUM-1302: auth.setup /auth → /login route fix shipped here.
-        # ~50 downstream specs (anchor-creation, billing, csv-upload,
-        # cross-tenant, dashboard, api-keys) are still red on main from
-        # pre-existing UI / route renames unrelated to this PR. Restoring
-        # continue-on-error: true so the queue can ship while those are
-        # tracked + fixed under SCRUM-1302 follow-ups.
-        # Workers=1 in playwright.config.ts; timeout 25 min keeps cold
-        # runners from getting cut mid-suite.
+        # SCRUM-1620: E2E failures and timeouts are launch-blocking signals.
+        # Workers=1 in playwright.config.ts; timeout 25 min keeps cold runners
+        # from getting cut mid-suite while still failing the job on timeout.
         run: npx playwright test --project=chromium
         timeout-minutes: 25
-        continue-on-error: true
         env:
           VITE_SUPABASE_URL: ${{ steps.supabase-e2e-keys.outputs.url }}
           VITE_SUPABASE_ANON_KEY: ${{ steps.supabase-e2e-keys.outputs.anon_key }}
           E2E_SUPABASE_URL: ${{ steps.supabase-e2e-keys.outputs.url }}
           E2E_SUPABASE_SERVICE_KEY: ${{ steps.supabase-e2e-keys.outputs.service_key }}
           E2E_SEED_PASSWORD: Arkova2026!
+          E2E_WORKER_URL: http://127.0.0.1:3001
+
+      - name: Upload worker log
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: failure()
+        with:
+          name: e2e-worker-log
+          path: ${{ runner.temp }}/arkova-worker.log
+          retention-days: 14
 
       - name: Upload Playwright report
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

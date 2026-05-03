@@ -1112,6 +1112,7 @@ export const DATA_ERROR_LABELS = {
   STATS_UNAVAILABLE_TITLE: 'Pipeline stats temporarily unavailable',
   STATS_UNAVAILABLE_TRAILER: ' — showing last successful values.',
   RECORDS_FETCH_FAILED_TITLE: 'Records fetch failed',
+  TREASURY_UNAVAILABLE_TITLE: 'Treasury data temporarily unavailable',
   X402_UNAVAILABLE_TITLE: 'x402 stats unavailable',
   RETRY: 'Retry',
 } as const;
@@ -1735,6 +1736,11 @@ export const CONFIRMATION_PROGRESS_LABELS = {
 export const FINGERPRINT_TOOLTIP = {
   TITLE: 'What is a document fingerprint?',
   DESCRIPTION: 'A document fingerprint is a unique identifier calculated from the document\u2019s contents. Like a human fingerprint, no two documents produce the same one. This fingerprint is what gets permanently anchored.',
+} as const;
+
+export const RECORD_DETAIL_LABELS = {
+  FINGERPRINT_COPY_ARIA: 'Copy document fingerprint',
+  FINGERPRINT_COPIED_ARIA: 'Document fingerprint copied',
 } as const;
 
 export const ONBOARDING_VALUE_PROP_LABELS = {
