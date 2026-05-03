@@ -1,4 +1,4 @@
--- Migration 0283: SCRUM-897 attestation evidence public metadata
+-- Migration 0284: SCRUM-897 attestation evidence public metadata
 -- Purpose:
 --   - Give attestation evidence rows stable public identifiers so public APIs
 --     never need to expose attestation_evidence.id.
