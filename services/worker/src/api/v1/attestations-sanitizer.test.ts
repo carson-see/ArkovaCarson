@@ -110,13 +110,37 @@ function scanLine(
   return { closedAt: -1, endDepth: depth };
 }
 
+/** Find the `(` index after `res.json` or `res.status(...).json` in `line`,
+ * starting at or after `from`. Returns -1 if no response open exists.
+ *
+ * Implemented with `indexOf` rather than a regex to avoid ReDoS patterns
+ * SonarCloud flags (nested optional groups + `[^)]*`). The cost is one
+ * extra `indexOf` per line; cheap given the line count of attestations.ts.
+ */
+function findResponseOpen(line: string, from: number): number {
+  const direct = line.indexOf('res.json(', from);
+  const status = line.indexOf('res.status(', from);
+  // No status() chain → return res.json( open if present.
+  if (status === -1) return direct === -1 ? -1 : direct + 'res.json('.length;
+  // status( chain — find its closing `)` then the `.json(` that follows.
+  const statusClose = line.indexOf(')', status);
+  if (statusClose === -1) return -1;
+  const jsonOpen = line.indexOf('.json(', statusClose);
+  if (jsonOpen === -1) {
+    // No .json after this status — fall through to direct .json on this line.
+    return direct === -1 ? -1 : direct + 'res.json('.length;
+  }
+  // Use whichever appears first.
+  if (direct !== -1 && direct < status) return direct + 'res.json('.length;
+  return jsonOpen + '.json('.length;
+}
+
 /** Scan a source file for non-allowlisted spreads inside res.json(...) /
  * res.status(...).json(...) call arguments. Returns the offending findings. */
 function findUntrustedResponseSpreads(
   source: string,
   allowlist: ReadonlySet<string>,
 ): Array<{ line: number; spread: string }> {
-  const RESPONSE_OPEN = /\bres\s*(?:\.status\s*\([^)]*\))?\s*\.json\s*\(/g;
   const findings: Array<{ line: number; spread: string }> = [];
   const lines = source.split('\n');
 
@@ -129,12 +153,11 @@ function findUntrustedResponseSpreads(
     let scanFrom = 0;
 
     if (!inResponse) {
-      RESPONSE_OPEN.lastIndex = 0;
-      const m = RESPONSE_OPEN.exec(lines[i]);
-      if (!m) continue;
+      const openAt = findResponseOpen(lines[i], 0);
+      if (openAt === -1) continue;
       inResponse = true;
       startLine = i + 1;
-      scanFrom = m.index + m[0].length;
+      scanFrom = openAt;
       depth = 1;
       span = '';
     }
