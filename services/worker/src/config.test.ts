@@ -197,39 +197,14 @@ const PROD_MAINNET_ENV = {
   ENABLE_PROD_NETWORK_ANCHORING: 'true',
 } as const;
 
-// R1-4 vars that leak forward via Object.assign(saved) restore. Each test
-// helper explicitly clears these at the top to guarantee hermetic isolation.
-const LEAKY_ENV_KEYS = [
-  'ENABLE_DRIVE_OAUTH',
-  'ENABLE_DRIVE_WEBHOOK',
-  'GOOGLE_OAUTH_CLIENT_ID',
-  'GOOGLE_OAUTH_CLIENT_SECRET',
-  'INTEGRATION_STATE_HMAC_SECRET',
-  'ENABLE_DOCUSIGN_OAUTH',
-  'ENABLE_DOCUSIGN_WEBHOOK',
-  'DOCUSIGN_INTEGRATION_KEY',
-  'DOCUSIGN_CLIENT_SECRET',
-  'DOCUSIGN_CONNECT_HMAC_SECRET',
-  'ENABLE_ATS_WEBHOOK',
-  'ADOBE_SIGN_CLIENT_SECRET',
-  'CHECKR_WEBHOOK_SECRET',
-  'VEREMARK_WEBHOOK_SECRET',
-  'ENABLE_VEREMARK_WEBHOOK',
-  'MIDDESK_API_KEY',
-  'MIDDESK_WEBHOOK_SECRET',
-  'BUILD_SHA',
-  'BITCOIN_TREASURY_WIF',
-  'GCP_KMS_KEY_RESOURCE_NAME',
-  'KMS_PROVIDER',
-];
-
 async function withEnv<T>(
   overrides: Record<string, string | undefined>,
   fn: () => Promise<T>,
 ): Promise<T> {
   const saved = { ...process.env };
-  const restoreKeys = new Set([...LEAKY_ENV_KEYS, ...Object.keys(overrides)]);
-  for (const k of LEAKY_ENV_KEYS) delete process.env[k];
+  for (const key of Object.keys(process.env)) {
+    delete process.env[key];
+  }
   Object.assign(process.env, testEnv);
   for (const [k, v] of Object.entries(overrides)) {
     if (v === undefined) delete process.env[k];
@@ -239,8 +214,8 @@ async function withEnv<T>(
   try {
     return await fn();
   } finally {
-    for (const key of restoreKeys) {
-      if (!(key in saved)) delete process.env[key];
+    for (const key of Object.keys(process.env)) {
+      delete process.env[key];
     }
     Object.assign(process.env, saved);
     vi.resetModules();
