@@ -59,6 +59,16 @@ Search endpoints return `public_id` values that can be passed directly to the ma
 
 📖 [v1 to v2 migration guide](./v2-migration.md)
 
+### Canonical API key scope vocabulary
+
+`services/worker/src/api/apiScopes.ts` is the code source of truth for API key scopes. The frontend display metadata, v1 OpenAPI enum, SQL `api_keys.scopes` CHECK constraint, and this documentation are parity-checked in CI.
+
+| Group | Scopes |
+|---|---|
+| API v2 REST | `read:records`, `read:orgs`, `read:search`, `write:anchors`, `admin:rules` |
+| Legacy v1 compatibility | `verify`, `verify:batch`, `usage:read`, `keys:manage` |
+| Compliance and operations | `compliance:read`, `compliance:write`, `oracle:read`, `oracle:write`, `anchor:write`, `anchor:read`, `attestations:write`, `attestations:read`, `webhooks:manage`, `agents:manage`, `keys:read` |
+
 ### 3. TypeScript SDK — `@arkova/sdk`
 
 A thin wrapper around the REST API. Three lines of code to anchor and verify. Includes a programmable webhooks namespace, batch verify, error handling, and x402 micropayment support.

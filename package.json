@@ -25,6 +25,7 @@
     "analyze": "ANALYZE=true vite build && echo 'Bundle report: dist/bundle-stats.html'",
     "healthcheck": "tsx scripts/healthcheck/index.ts",
     "audit:secrets": "tsx scripts/secrets/audit-env.ts",
+    "ci:api-scope-vocabulary": "tsx scripts/ci/check-api-scope-vocabulary.ts",
     "ci:dep-pinning": "tsx scripts/ci/check-dep-pinning.ts",
     "ci:duplicate-artifacts": "tsx scripts/ci/check-duplicate-artifacts.ts",
     "ci:retry-after-429": "tsx scripts/ci/check-retry-after-429.ts",

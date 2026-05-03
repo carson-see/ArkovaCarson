@@ -28,4 +28,11 @@ describe('ApiKeyScopeDisplay', () => {
     render(<ApiKeyScopeDisplay scopes={['custom_scope']} />);
     expect(screen.getByText('custom_scope')).toBeInTheDocument();
   });
+
+  it('renders canonical compliance scopes', () => {
+    render(<ApiKeyScopeDisplay scopes={['compliance:read', 'oracle:write', 'keys:read']} />);
+    expect(screen.getByText('Compliance read')).toBeInTheDocument();
+    expect(screen.getByText('Oracle write')).toBeInTheDocument();
+    expect(screen.getByText('Key inventory')).toBeInTheDocument();
+  });
 });
