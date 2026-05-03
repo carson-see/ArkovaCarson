@@ -41,9 +41,9 @@ const CREATE_VIEW_REGEX = /CREATE\s+(?:OR\s+REPLACE\s+)?(?!MATERIALIZED\s+)VIEW\
 // Match `ALTER VIEW <name> SET (security_invoker = true|on)`. The optional
 // `IF EXISTS` and schema-qualifier mirror Postgres' actual ALTER VIEW grammar.
 const ALTER_FIX_REGEX =
-  /ALTER\s+VIEW\s+(?:IF\s+EXISTS\s+)?(?:public\.)?(\w+)\s+SET\s*\(\s*security_invoker\s*=\s*(?:true|on)\s*\)/gi;
+  /ALTER\s+VIEW\s+(?:IF\s+EXISTS\s+)?(?:public\.)?(\w+)\s+SET\s*\([^)]*\bsecurity_invoker\s*=\s*(?:true|on)\b[^)]*\)/gi;
 const ALTER_UNFIX_REGEX =
-  /ALTER\s+VIEW\s+(?:IF\s+EXISTS\s+)?(?:public\.)?(\w+)\s+(?:SET\s*\(\s*security_invoker\s*=\s*(?:false|off)\s*\)|RESET\s*\(\s*security_invoker\s*\))/gi;
+  /ALTER\s+VIEW\s+(?:IF\s+EXISTS\s+)?(?:public\.)?(\w+)\s+(?:SET\s*\([^)]*\bsecurity_invoker\s*=\s*(?:false|off)\b[^)]*\)|RESET\s*\([^)]*\bsecurity_invoker\b[^)]*\))/gi;
 const SECURITY_INVOKER_WITH_REGEX = /\bWITH\s*\([^)]*\bsecurity_invoker\s*=\s*(?:true|on)\b[^)]*\)/i;
 
 interface Finding {

@@ -50,6 +50,19 @@ describe('check-views-security-invoker scanFiles', () => {
     expect(fixedAfter.has('payment_ledger')).toBe(true);
   });
 
+  it('accepts ALTER VIEW SET with security_invoker among other options', () => {
+    const { bareCreates, fixedAfter } = scanFiles([
+      file('supabase/migrations/0100_create.sql', 'CREATE OR REPLACE VIEW payment_ledger AS SELECT 1;'),
+      file(
+        'supabase/migrations/0274_alter.sql',
+        'ALTER VIEW public.payment_ledger SET (check_option = local, security_invoker = true);',
+      ),
+    ]);
+
+    expect(bareCreates).toEqual([]);
+    expect(fixedAfter.has('payment_ledger')).toBe(true);
+  });
+
   it('respects sorted migration order regardless of input order', () => {
     const { bareCreates } = scanFiles([
       file(
@@ -109,6 +122,21 @@ describe('check-views-security-invoker scanFiles', () => {
         'CREATE OR REPLACE VIEW public.v WITH (security_invoker = true) AS SELECT 1;\n',
       ),
       file('supabase/migrations/0500_reset.sql', 'ALTER VIEW public.v RESET (security_invoker);\n'),
+    ]);
+
+    expect(bareCreates.map((f) => f.view)).toEqual(['v']);
+  });
+
+  it('flags multi-option ALTER VIEW RESET containing security_invoker', () => {
+    const { bareCreates } = scanFiles([
+      file(
+        'supabase/migrations/0100_fixed.sql',
+        'CREATE OR REPLACE VIEW public.v WITH (security_invoker = true) AS SELECT 1;\n',
+      ),
+      file(
+        'supabase/migrations/0500_reset.sql',
+        'ALTER VIEW public.v RESET (check_option, security_invoker);\n',
+      ),
     ]);
 
     expect(bareCreates.map((f) => f.view)).toEqual(['v']);
