@@ -35,6 +35,10 @@ describe('MCP_TOOL_SCHEMAS registry', () => {
         'verify',
         'list_orgs',
         'get_anchor',
+        'get_organization',
+        'get_record',
+        'get_fingerprint',
+        'get_document',
         'oracle_batch_verify',
         'list_agents',
       ]),
@@ -128,6 +132,13 @@ describe('validateToolArgs — agent v2 aliases', () => {
   it('accepts get_anchor(public_id)', () => {
     const result = validateToolArgs('get_anchor', { public_id: VALID_PUBLIC_ID });
     expect(result.ok).toBe(true);
+  });
+
+  it('accepts detail endpoint operation schemas', () => {
+    expect(validateToolArgs('get_organization', { public_id: 'org_acme' }).ok).toBe(true);
+    expect(validateToolArgs('get_record', { public_id: VALID_PUBLIC_ID }).ok).toBe(true);
+    expect(validateToolArgs('get_fingerprint', { fingerprint: VALID_HASH }).ok).toBe(true);
+    expect(validateToolArgs('get_document', { public_id: VALID_PUBLIC_ID }).ok).toBe(true);
   });
 });
 

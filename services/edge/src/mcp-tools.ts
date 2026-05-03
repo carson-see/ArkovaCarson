@@ -103,6 +103,10 @@ export interface AgentGetAnchorInput {
   public_id: string;
 }
 
+export interface AgentGetOrganizationInput {
+  public_id: string;
+}
+
 export interface SupabaseConfig {
   supabaseUrl: string;
   supabaseKey: string;
@@ -114,6 +118,20 @@ const PUBLIC_ID_JSON_SCHEMA: ToolInputSchemaProperty = {
   description: 'Arkova public ID matching ARK-<TYPE>-<SUFFIX>.',
   pattern: '^ARK-[A-Z0-9-]{3,60}$',
   maxLength: 64,
+};
+
+const ORG_PUBLIC_ID_JSON_SCHEMA: ToolInputSchemaProperty = {
+  type: 'string',
+  description: 'Organization public ID.',
+  pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{1,127}$',
+  minLength: 2,
+  maxLength: 128,
+};
+
+const FINGERPRINT_JSON_SCHEMA: ToolInputSchemaProperty = {
+  type: 'string',
+  description: '64-character SHA-256 document fingerprint.',
+  pattern: '^[a-fA-F0-9]{64}$',
 };
 
 // ---------------------------------------------------------------------------
@@ -345,6 +363,54 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
           type: 'string',
           description: 'Arkova public identifier (for example ARK-DOC-ABCDEF).',
         },
+      },
+      required: ['public_id'],
+    },
+  },
+  {
+    name: 'get_organization',
+    description:
+      'Get organization profile details by organization public_id. Use after search returns an organization public_id.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        public_id: ORG_PUBLIC_ID_JSON_SCHEMA,
+      },
+      required: ['public_id'],
+    },
+  },
+  {
+    name: 'get_record',
+    description:
+      'Get public-safe record metadata by Arkova public ID. Use after search returns a record public_id.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        public_id: PUBLIC_ID_JSON_SCHEMA,
+      },
+      required: ['public_id'],
+    },
+  },
+  {
+    name: 'get_fingerprint',
+    description:
+      'Get public-safe record metadata by SHA-256 fingerprint. Use after search returns a fingerprint result.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        fingerprint: FINGERPRINT_JSON_SCHEMA,
+      },
+      required: ['fingerprint'],
+    },
+  },
+  {
+    name: 'get_document',
+    description:
+      'Get public-safe document metadata by Arkova public ID. Use after search returns a document public_id.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        public_id: PUBLIC_ID_JSON_SCHEMA,
       },
       required: ['public_id'],
     },
@@ -802,6 +868,24 @@ export async function handleAgentGetAnchor(
   config: SupabaseConfig,
 ): Promise<ToolResult> {
   return handleVerifyCredential({ public_id: input.public_id }, config);
+}
+
+export async function handleAgentGetOrganization(
+  input: AgentGetOrganizationInput,
+  config: SupabaseConfig,
+): Promise<ToolResult> {
+  const result = await handleAgentListOrgs(config);
+  if (result.isError) return result;
+
+  const parsed = parseToolJson(result);
+  const organizations = parsed?.organizations;
+  const match = Array.isArray(organizations)
+    ? organizations.find((org): org is Record<string, unknown> => {
+        return typeof org === 'object' && org !== null && (org as Record<string, unknown>).public_id === input.public_id;
+      })
+    : null;
+
+  return match ? textResult(match) : errorResult(`Organization ${input.public_id} was not found.`);
 }
 
 /**

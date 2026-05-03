@@ -100,6 +100,16 @@ function expectPublicSafeAnchorDetail(body: unknown) {
   expect(serialized).not.toContain('do-not-return');
 }
 
+async function expectNotFoundProblem(path: string) {
+  mockQuery(null);
+
+  const res = await request(buildApp()).get(path);
+
+  expect(res.status).toBe(404);
+  expect(res.type).toBe('application/problem+json');
+  expect(res.body.type).toContain('/not-found');
+}
+
 describe('resourceDetailsRouter', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -175,23 +185,11 @@ describe('resourceDetailsRouter', () => {
   });
 
   it('returns not-found problem for missing records', async () => {
-    mockQuery(null);
-
-    const res = await request(buildApp()).get('/records/ARK-DOC-MISSING');
-
-    expect(res.status).toBe(404);
-    expect(res.type).toBe('application/problem+json');
-    expect(res.body.type).toContain('/not-found');
+    await expectNotFoundProblem('/records/ARK-DOC-MISSING');
   });
 
   it('returns not-found problem for missing organization', async () => {
-    mockQuery(null);
-
-    const res = await request(buildApp()).get('/organizations/org_missing');
-
-    expect(res.status).toBe(404);
-    expect(res.type).toBe('application/problem+json');
-    expect(res.body.type).toContain('/not-found');
+    await expectNotFoundProblem('/organizations/org_missing');
   });
 
   it('returns fingerprint detail with read:records scope', async () => {
@@ -216,13 +214,7 @@ describe('resourceDetailsRouter', () => {
   });
 
   it('returns not-found problem for missing fingerprint', async () => {
-    mockQuery(null);
-
-    const res = await request(buildApp()).get(`/fingerprints/${'a'.repeat(64)}`);
-
-    expect(res.status).toBe(404);
-    expect(res.type).toBe('application/problem+json');
-    expect(res.body.type).toContain('/not-found');
+    await expectNotFoundProblem(`/fingerprints/${'a'.repeat(64)}`);
   });
 
   it('returns document details by public_id', async () => {
@@ -238,12 +230,6 @@ describe('resourceDetailsRouter', () => {
   });
 
   it('returns not-found problem for missing document', async () => {
-    mockQuery(null);
-
-    const res = await request(buildApp()).get('/documents/ARK-DOC-MISSING');
-
-    expect(res.status).toBe(404);
-    expect(res.type).toBe('application/problem+json');
-    expect(res.body.type).toContain('/not-found');
+    await expectNotFoundProblem('/documents/ARK-DOC-MISSING');
   });
 });

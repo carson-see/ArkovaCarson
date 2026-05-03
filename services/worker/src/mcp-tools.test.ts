@@ -21,6 +21,7 @@ import {
   handleAgentVerify,
   handleAgentListOrgs,
   handleAgentGetAnchor,
+  handleAgentGetOrganization,
   TOOL_DEFINITIONS,
 } from '../../edge/src/mcp-tools.js';
 
@@ -54,6 +55,10 @@ const EXPECTED_TOOL_NAMES = [
   'verify',
   'list_orgs',
   'get_anchor',
+  'get_organization',
+  'get_record',
+  'get_fingerprint',
+  'get_document',
   'oracle_batch_verify',
   'list_agents',
 ];
@@ -75,7 +80,16 @@ describe('TOOL_DEFINITIONS', () => {
   it('exposes verify_batch and v2 agent aliases', () => {
     const names = TOOL_DEFINITIONS.map((t) => t.name);
     expect(names).toContain('verify_batch');
-    expect(names).toEqual(expect.arrayContaining(['search', 'verify', 'list_orgs', 'get_anchor']));
+    expect(names).toEqual(expect.arrayContaining([
+      'search',
+      'verify',
+      'list_orgs',
+      'get_anchor',
+      'get_organization',
+      'get_record',
+      'get_fingerprint',
+      'get_document',
+    ]));
   });
 
   it('publishes full array contracts for batch public_id inputs', () => {
@@ -236,6 +250,27 @@ describe('agent v2 MCP aliases', () => {
     const parsed = JSON.parse(result.content[0].text);
     expect(parsed.organizations[0]).toMatchObject({ id: 'org-1', role: 'ORG_ADMIN' });
     expect(mockFetch.mock.calls[0][0]).toContain('user_id=eq.test-user-id');
+  });
+
+  it('get_organization(public_id) filters organizations available to the caller', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ([{
+        role: 'ORG_ADMIN',
+        organizations: {
+          id: 'org-1',
+          public_id: 'org_acme',
+          display_name: 'Acme Corp',
+          domain: 'acme.com',
+          website_url: 'https://acme.com',
+          verification_status: 'VERIFIED',
+        },
+      }]),
+    });
+
+    const result = await handleAgentGetOrganization({ public_id: 'org_acme' }, CONFIG);
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed).toMatchObject({ public_id: 'org_acme', role: 'ORG_ADMIN' });
   });
 });
 
