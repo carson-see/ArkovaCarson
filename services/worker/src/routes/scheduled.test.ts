@@ -54,6 +54,7 @@ describe('setupScheduledJobs', () => {
     setupScheduledJobs(true);
 
     expect(mockCronSchedule).toHaveBeenCalledTimes(13);
+    expect(mockLogger.warn).not.toHaveBeenCalled();
   });
 
   it('keeps production in-process cron enabled by default', async () => {
@@ -63,6 +64,7 @@ describe('setupScheduledJobs', () => {
     setupScheduledJobs(true);
 
     expect(mockCronSchedule).toHaveBeenCalledTimes(13);
+    expect(mockLogger.warn).not.toHaveBeenCalled();
   });
 
   it('skips anchor-table in-process cron in production when maintenance flag is enabled', async () => {
