@@ -49,8 +49,13 @@ function createMockReqRes() {
 }
 
 function mockFlagQuery(_flagKey: string, flagValue: boolean | null, error: unknown = null) {
+  // Mirror the runtime query shape:
+  //   select('enabled').eq('flag_key', flagKey).single()
+  // Pre-fix code used `value` + `id` which silently errored against the
+  // (id uuid, flag_key text, enabled boolean, ...) schema and fell back
+  // to env var on every call. Tests now assert the post-fix contract.
   const singleMock = vi.fn().mockResolvedValue({
-    data: flagValue !== null ? { value: flagValue } : null,
+    data: flagValue !== null ? { enabled: flagValue } : null,
     error,
   });
   const eqMock = vi.fn().mockReturnValue({ single: singleMock });
