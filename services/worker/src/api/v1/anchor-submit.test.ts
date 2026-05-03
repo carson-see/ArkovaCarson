@@ -10,15 +10,16 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 
-const { mockSelectChain, mockInsertChain, mockLogger, mockConfig } = vi.hoisted(() => {
+const { mockSelectChain, mockInsertChain, mockInsert, mockLogger, mockConfig } = vi.hoisted(() => {
   const mockSelectChain = { single: vi.fn(), maybeSingle: vi.fn() };
   const mockInsertChain = { single: vi.fn() };
+  const mockInsert = vi.fn((_value?: unknown) => ({ select: vi.fn(() => ({ single: mockInsertChain.single })) }));
   const mockLogger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
   // Mock the worker config so transitive import (anchor-submit → orgCredits →
   // config.js) doesn't try to load required env vars in the test env and
   // throw "Invalid worker configuration" before any test runs.
   const mockConfig = { enableOrgCreditEnforcement: false };
-  return { mockSelectChain, mockInsertChain, mockLogger, mockConfig };
+  return { mockSelectChain, mockInsertChain, mockInsert, mockLogger, mockConfig };
 });
 
 vi.mock('../../config.js', () => ({
@@ -35,13 +36,11 @@ vi.mock('../../utils/db.js', () => {
   eqChain.is = vi.fn(() => eqChain);
   eqChain.maybeSingle = mockSelectChain.maybeSingle;
 
-  const insertSelectChain: Record<string, unknown> = { single: mockInsertChain.single };
-
   return {
     db: {
       from: vi.fn(() => ({
         select: vi.fn(() => eqChain),
-        insert: vi.fn(() => ({ select: vi.fn(() => insertSelectChain) })),
+        insert: mockInsert,
       })),
     },
   };
@@ -74,9 +73,28 @@ function makeApp(scopes = ['anchor:write']) {
 
 const VALID_FINGERPRINT = 'a'.repeat(64);
 
+function postBadgeMetadata(metadata: Record<string, unknown>) {
+  return request(makeApp()).post('/v1/anchor').send({
+    fingerprint: VALID_FINGERPRINT,
+    credential_type: 'BADGE',
+    metadata,
+  });
+}
+
+function expectPrivateSourceUrlRejection(res: request.Response) {
+  expect(res.status).toBe(400);
+  expect(res.body.details[0]).toMatchObject({
+    path: 'metadata.source_url',
+    code: 'custom',
+    message: expect.stringContaining('private IPv4'),
+  });
+  expect(mockInsert).not.toHaveBeenCalled();
+}
+
 describe('POST /api/v1/anchor — Zod validation', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockInsert.mockImplementation(() => ({ select: vi.fn(() => ({ single: mockInsertChain.single })) }));
     mockSelectChain.maybeSingle.mockResolvedValue({ data: null, error: null });
     mockInsertChain.single.mockResolvedValue({
       data: {
@@ -143,6 +161,72 @@ describe('POST /api/v1/anchor — Zod validation', () => {
     expect(res.body.fingerprint).toBe(VALID_FINGERPRINT);
     expect(res.body.status).toBe('PENDING');
     expect(res.body.record_uri).toContain('/verify/');
+    expect(mockInsert.mock.calls[0]?.[0]).not.toHaveProperty('metadata');
+  });
+
+  it('accepts BADGE credential type and persists public-safe evidence metadata', async () => {
+    const res = await postBadgeMetadata({
+      evidence_schema_version: 'credential_evidence_v1',
+      evidence_package_hash: 'b'.repeat(64),
+      source_url: 'https://credentials.example.com/badges/123?token=secret&utm_source=ad&locale=en',
+      source_provider: 'credly',
+      source_payload_hash: 'c'.repeat(64),
+      verification_level: 'captured_url',
+      extraction_method: 'html_metadata',
+      credential_title: 'Cloud Architecture Fundamentals',
+      credential_type: 'BADGE',
+      credential_issuer: 'Example Cloud',
+      recipient_display_name: 'Do Not Persist',
+      access_token: 'Do Not Persist',
+    });
+
+    expect(res.status).toBe(201);
+    expect(mockInsert).toHaveBeenCalledWith(expect.objectContaining({
+      credential_type: 'BADGE',
+      metadata: expect.objectContaining({
+        evidence_schema_version: 'credential_evidence_v1',
+        evidence_package_hash: 'b'.repeat(64),
+        source_url: 'https://credentials.example.com/badges/123?locale=en',
+        source_provider: 'credly',
+        source_payload_hash: 'c'.repeat(64),
+        verification_level: 'captured_url',
+        extraction_method: 'html_metadata',
+        credential_title: 'Cloud Architecture Fundamentals',
+        credential_type: 'BADGE',
+        credential_issuer: 'Example Cloud',
+      }),
+    }));
+    const insertArg = mockInsert.mock.calls[0]?.[0] as { metadata: Record<string, unknown> };
+    expect(insertArg.metadata).not.toHaveProperty('recipient_display_name');
+    expect(insertArg.metadata).not.toHaveProperty('access_token');
+  });
+
+  it('rejects invalid credential evidence metadata instead of persisting unsafe source URLs', async () => {
+    const res = await postBadgeMetadata({
+      source_url: 'http://127.0.0.1/private-badge',
+      source_provider: 'credly',
+    });
+
+    expectPrivateSourceUrlRejection(res);
+    expect(mockLogger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadataKeys: expect.arrayContaining(['source_provider', 'source_url']),
+        reason: 'invalid_public_metadata',
+        issues: expect.arrayContaining([
+          expect.objectContaining({ path: 'source_url' }),
+        ]),
+      }),
+      expect.stringContaining('Rejected invalid credential evidence metadata'),
+    );
+  });
+
+  it('rejects IPv4-mapped IPv6 credential evidence source URLs', async () => {
+    const res = await postBadgeMetadata({
+      source_url: 'https://[::ffff:127.0.0.1]/private-badge',
+      source_provider: 'credly',
+    });
+
+    expectPrivateSourceUrlRejection(res);
   });
 
   it('returns 401 when API key missing', async () => {
