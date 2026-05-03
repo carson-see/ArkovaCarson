@@ -202,11 +202,11 @@ describe('API Key CRUD — validation schemas', () => {
     }
   });
 
-  it('CreateKeySchema accepts each API v2 scope', async () => {
+  it('CreateKeySchema accepts each canonical API key scope', async () => {
     const { CreateKeySchema } = await import('./keys.js');
-    const { API_V2_SCOPES } = await import('../apiScopes.js');
+    const { API_KEY_SCOPES } = await import('../apiScopes.js');
 
-    for (const scope of API_V2_SCOPES) {
+    for (const scope of API_KEY_SCOPES) {
       const result = CreateKeySchema.safeParse({ name: `Key ${scope}`, scopes: [scope] });
       expect(result.success).toBe(true);
     }

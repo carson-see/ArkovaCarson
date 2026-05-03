@@ -103,6 +103,9 @@ jobs:
       - name: Block migration prefix collisions (SCRUM-1287)
         run: npx tsx scripts/ci/check-migration-prefix-uniqueness.ts
 
+      - name: Block API scope vocabulary drift (SCRUM-1581)
+        run: npm run ci:api-scope-vocabulary
+
       - name: Block CREATE VIEW without security_invoker (SCRUM-1276)
         env:
           PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}

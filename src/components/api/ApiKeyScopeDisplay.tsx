@@ -6,7 +6,7 @@
  */
 
 import { Badge } from '@/components/ui/badge';
-import { API_SCOPE_LABELS, API_SCOPE_BADGE_CLASSES, isApiScope } from '@/lib/apiScopes';
+import { API_SCOPE_LABELS, API_SCOPE_BADGE_CLASSES, isDisplayApiScope } from '@/lib/apiScopes';
 
 interface ApiKeyScopeDisplayProps {
   scopes: string[];
@@ -25,7 +25,7 @@ export function ApiKeyScopeDisplay({ scopes, compact = false }: ApiKeyScopeDispl
   return (
     <div className="flex items-center gap-1 flex-wrap">
       {scopes.map((scope) => {
-        const known = isApiScope(scope);
+        const known = isDisplayApiScope(scope);
         const label = known ? API_SCOPE_LABELS[scope] : scope;
         const className = known ? API_SCOPE_BADGE_CLASSES[scope] : '';
         return (

@@ -7,6 +7,7 @@
 
 import { Router } from 'express';
 import swaggerUi from 'swagger-ui-express';
+import { API_KEY_SCOPES } from '../apiScopes.js';
 
 const router = Router();
 
@@ -232,7 +233,7 @@ export const openApiSpec: Record<string, any> = {
                   name: { type: 'string', minLength: 1, maxLength: 100 },
                   scopes: {
                     type: 'array',
-                    items: { type: 'string', enum: ['verify', 'verify:batch', 'keys:manage', 'usage:read'] },
+                    items: { type: 'string', enum: API_KEY_SCOPES },
                   },
                 },
               },
@@ -270,7 +271,7 @@ export const openApiSpec: Record<string, any> = {
                 type: 'object',
                 properties: {
                   name: { type: 'string' },
-                  scopes: { type: 'array', items: { type: 'string' } },
+                  scopes: { type: 'array', items: { type: 'string', enum: API_KEY_SCOPES } },
                 },
               },
             },
@@ -994,7 +995,7 @@ export const openApiSpec: Record<string, any> = {
           key_id: { type: 'string', format: 'uuid' },
           key_prefix: { type: 'string' },
           name: { type: 'string' },
-          scopes: { type: 'array', items: { type: 'string' } },
+          scopes: { type: 'array', items: { type: 'string', enum: API_KEY_SCOPES } },
           is_active: { type: 'boolean' },
           last_used_at: { type: 'string', format: 'date-time', nullable: true },
           created_at: { type: 'string', format: 'date-time' },
@@ -1007,7 +1008,7 @@ export const openApiSpec: Record<string, any> = {
           raw_key: { type: 'string', description: 'Shown only once — store it securely' },
           key_prefix: { type: 'string' },
           name: { type: 'string' },
-          scopes: { type: 'array', items: { type: 'string' } },
+          scopes: { type: 'array', items: { type: 'string', enum: API_KEY_SCOPES } },
           created_at: { type: 'string', format: 'date-time' },
         },
       },

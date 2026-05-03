@@ -4,6 +4,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { openApiSpec } from './docs.js';
+import { API_KEY_SCOPES } from '../apiScopes.js';
 
 describe('OpenAPI spec', () => {
   it('has valid OpenAPI version', () => {
@@ -69,6 +70,20 @@ describe('OpenAPI spec', () => {
     const keysPath = openApiSpec.paths['/keys'];
     expect(keysPath.get.security).toContainEqual({ SupabaseJWT: [] });
     expect(keysPath.post.security).toContainEqual({ SupabaseJWT: [] });
+  });
+
+  it('publishes the canonical API key scope enum for key management', () => {
+    const keysPath = openApiSpec.paths['/keys'];
+    const createScopeEnum = keysPath.post.requestBody.content['application/json'].schema.properties.scopes.items.enum;
+    const updateScopeEnum = openApiSpec.paths['/keys/{keyId}'].patch
+      .requestBody.content['application/json'].schema.properties.scopes.items.enum;
+    const maskedScopeEnum = openApiSpec.components.schemas.ApiKeyMasked.properties.scopes.items.enum;
+    const createdScopeEnum = openApiSpec.components.schemas.ApiKeyCreated.properties.scopes.items.enum;
+
+    expect(createScopeEnum).toEqual(API_KEY_SCOPES);
+    expect(updateScopeEnum).toEqual(API_KEY_SCOPES);
+    expect(maskedScopeEnum).toEqual(API_KEY_SCOPES);
+    expect(createdScopeEnum).toEqual(API_KEY_SCOPES);
   });
 
   it('has all four tags', () => {
