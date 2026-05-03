@@ -55,6 +55,7 @@ import { anchorBulkRouter } from './anchor-bulk.js';
 import { anchorLifecycleRouter } from './anchor-lifecycle.js';
 import { anchorEvidenceRouter } from './anchor-evidence.js';
 import { anchorExtractionManifestRouter } from './anchor-extraction-manifest.js';
+import { anchorPreSigningRouter } from './contracts/anchor-pre-signing.js';
 import { attestationsRouter } from './attestations.js';
 import { entityVerifyRouter } from './entity-verify.js';
 import { complianceCheckRouter } from './compliance-check.js';
@@ -352,6 +353,11 @@ router.use('/anchor', requireScope('verify'), anchorExtractionManifestRouter);
 router.use('/anchor', requireScope('anchor:write'), anchorSubmitRouter);
 // SCRUM-1171 (HAKI-REQ-02): bulk + retroactive anchoring with original-document metadata
 router.use('/anchor/bulk', requireScope('anchor:write'), anchorBulkRouter);
+
+// ─── GME10.5-A: pre-signing contract anchor (SCRUM-1623 / SCRUM-1629 [Spec]) ───
+// Mounts POST /api/v1/contracts/anchor-pre-signing. [Spec] subtask ships
+// stub + Zod schemas only; real handler arrives in SCRUM-1631 [Build].
+router.use('/contracts', requireScope('anchor:write'), anchorPreSigningRouter);
 
 // ─── Attestations — Phase II ───
 // Create, verify, list, revoke attestations. Batch route middleware lives
