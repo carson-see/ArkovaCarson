@@ -113,7 +113,45 @@ describe('check-api-scope-vocabulary', () => {
           ADD CONSTRAINT agents_allowed_scopes_known_values
           CHECK (allowed_scopes <@ ARRAY['read:records', 'read:search', 'verify', 'oracle:read']::text[]);
       `,
-      apiReadmeMarkdown: '`read:records`, `read:search`, `verify`, `oracle:read`',
+      apiReadmeMarkdown: '### Canonical API key scope vocabulary\n`read:records`, `read:search`, `verify`, `oracle:read`',
+      v2MigrationMarkdown: '## Authentication\n`read:records`, `read:search`',
+      v1OpenApiYaml: `
+        x-arkova-canonical-scopes:
+          - read:records
+          - read:search
+          - verify
+          - oracle:read
+      `,
+    });
+
+    expect(violations).toEqual([]);
+  });
+
+  it('ignores non-canonical aliases that appear outside the canonical README section', () => {
+    const violations = collectScopeVocabularyViolations({
+      workerSource: WORKER_SCOPE_SOURCE,
+      frontendSource: WORKER_SCOPE_SOURCE,
+      dbConstraintSql: `
+        ALTER TABLE public.api_keys
+          ADD CONSTRAINT api_keys_scopes_known_values
+          CHECK (scopes <@ ARRAY['read:records', 'read:search', 'verify', 'oracle:read']::text[]);
+        ALTER TABLE public.agents
+          ADD CONSTRAINT agents_allowed_scopes_known_values
+          CHECK (allowed_scopes <@ ARRAY['read:records', 'read:search', 'verify', 'oracle:read']::text[]);
+      `,
+      // The canonical section is correct; a deprecated alias `batch` is
+      // mentioned in unrelated migration notes elsewhere in the README.
+      // The CI gate must NOT treat that as scope drift.
+      apiReadmeMarkdown: [
+        '## Migration notes',
+        'Earlier API keys used the legacy `batch` short alias before SCRUM-1581.',
+        '',
+        '### Canonical API key scope vocabulary',
+        '`read:records`, `read:search`, `verify`, `oracle:read`',
+        '',
+        '### Other section',
+        'Some other example referencing `keys:manage` for context.',
+      ].join('\n'),
       v2MigrationMarkdown: '## Authentication\n`read:records`, `read:search`',
       v1OpenApiYaml: `
         x-arkova-canonical-scopes:
@@ -139,7 +177,7 @@ describe('check-api-scope-vocabulary', () => {
           ADD CONSTRAINT agents_allowed_scopes_known_values
           CHECK (allowed_scopes <@ ARRAY['read:records', 'read:search', 'verify', 'oracle:read']::text[]);
       `,
-      apiReadmeMarkdown: '`read:records`, `read:search`, `verify`, `oracle:read`',
+      apiReadmeMarkdown: '### Canonical API key scope vocabulary\n`read:records`, `read:search`, `verify`, `oracle:read`',
       v2MigrationMarkdown: '## Authentication\n`read:records`, `read:search`',
       v1OpenApiYaml: `
         x-arkova-canonical-scopes:
@@ -170,7 +208,7 @@ describe('check-api-scope-vocabulary', () => {
           ADD CONSTRAINT agents_allowed_scopes_known_values
           CHECK (allowed_scopes <@ ARRAY['read:records', 'read:search', 'verify', 'oracle:read']::text[]);
       `,
-      apiReadmeMarkdown: '`read:records`, `read:search`, `verify`, `oracle:read`',
+      apiReadmeMarkdown: '### Canonical API key scope vocabulary\n`read:records`, `read:search`, `verify`, `oracle:read`',
       v2MigrationMarkdown: '## Authentication\n`read:records`, `read:search`',
       v1OpenApiYaml: `
         /verify:

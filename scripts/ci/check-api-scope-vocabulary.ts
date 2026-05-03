@@ -332,10 +332,15 @@ export function extractMarkdownSectionCodeScopes(markdown: string, heading: stri
   const headingIndex = lines.findIndex((line) => line.trim() === headingText);
   if (headingIndex === -1) return [];
 
+  // Stop at any heading at the same or higher level than the start heading.
+  // Without this, an `### Other section` after `### Canonical scope ...`
+  // would leak its inline code spans into this section's scope set.
+  const startLevel = headingText.match(/^#+/)?.[0].length ?? 1;
+  const headingPattern = new RegExp(`^#{1,${startLevel}}\\s`);
+
   const sectionLines: string[] = [];
   for (const line of lines.slice(headingIndex + 1)) {
-    const trimmed = line.trimStart();
-    if (trimmed.startsWith('## ')) break;
+    if (headingPattern.test(line.trimStart())) break;
     sectionLines.push(line);
   }
 
@@ -406,7 +411,10 @@ export function collectScopeVocabularyViolations(surfaces: ScopeVocabularySurfac
     ...diffSet(
       'docs/api/README.md canonical scope table',
       worker.API_KEY_SCOPES,
-      extractMarkdownCodeScopes(surfaces.apiReadmeMarkdown),
+      extractMarkdownSectionCodeScopes(
+        surfaces.apiReadmeMarkdown,
+        '### Canonical API key scope vocabulary',
+      ),
     ),
     ...diffSet(
       'docs/api/v2-migration.md v2 scope table',
