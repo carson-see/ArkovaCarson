@@ -25,10 +25,8 @@ const router = Router();
 
 // Frozen request shape per CLAUDE.md §1.8 — additive nullable fields only.
 // Fingerprint must be 64-char hex (SHA-256). Description capped to keep
-// inserts predictable and PostgREST payload size bounded. Metadata keys
-// are restricted to safe identifier characters so prototype-pollution-
-// adjacent keys (`__proto__`, `constructor`, `prototype`) cannot ride
-// through downstream code that may spread metadata into a fresh object.
+// inserts predictable and PostgREST payload size bounded. Metadata key syntax
+// is bounded here; only recognized public evidence keys are persisted below.
 const SAFE_METADATA_KEY = /^[a-zA-Z0-9_.-]+$/;
 const AnchorSubmitSchema = z.object({
   fingerprint: z.string().regex(/^[a-fA-F0-9]{64}$/, 'must be a 64-character hex SHA-256 hash'),
