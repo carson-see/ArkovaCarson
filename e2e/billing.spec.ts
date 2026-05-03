@@ -1,309 +1,185 @@
 /**
  * Billing E2E Tests (QA-E2E-01)
  *
- * Tests for billing flow: pricing page display, plan tiers,
- * subscribe button (Stripe test mode), billing page with
- * plan status badge and usage display.
+ * Verifies the current dedicated billing overview, checkout result pages,
+ * and billing navigation.
  *
  * Stripe test mode — no real charges are made.
  *
  * @created 2026-03-27
  */
 
-import { test, expect } from './fixtures';
+import { test, expect, SEED_USERS } from './fixtures';
+
+test.use({ storageState: { cookies: [], origins: [] } });
+
+async function expectBillingOverview(page: import('@playwright/test').Page) {
+  await expect(
+    page.getByRole('heading', { name: 'Billing & Subscription' })
+  ).toBeVisible({ timeout: 10000 });
+
+  await expect(
+    page.getByText('Manage your plan, view usage, and update payment methods.')
+  ).toBeVisible();
+
+  await expect(
+    page.getByRole('heading', { name: 'Current Plan' })
+  ).toBeVisible({ timeout: 15000 });
+}
+
+async function signInAsIndividual(page: import('@playwright/test').Page) {
+  await page.goto('/login');
+
+  if (page.url().includes('/login')) {
+    await expect(page.getByLabel('Email address')).toBeVisible({ timeout: 10000 });
+    await page.getByLabel('Email address').fill(SEED_USERS.individual.email);
+    await page.getByLabel('Password').fill(SEED_USERS.individual.password);
+    await page.getByRole('button', { name: 'Sign in' }).click();
+  }
+
+  await page.waitForURL(/\/dashboard/, { timeout: 15000 });
+  await expect(page.getByRole('button', { name: /Jamie Demo.*User/i }))
+    .toBeVisible({ timeout: 10000 });
+}
+
+async function openAsIndividual(page: import('@playwright/test').Page, path: string) {
+  await signInAsIndividual(page);
+  await page.goto(path);
+}
 
 test.describe('Billing', () => {
   test.describe('Billing Page', () => {
     test('billing page loads with heading and subtitle', async ({ individualPage }) => {
-      await individualPage.goto('/billing');
+      await openAsIndividual(individualPage, '/billing');
 
-      // Page heading — uses BILLING_LABELS.PAGE_TITLE from PricingPage
-      await expect(
-        individualPage.getByRole('heading', { name: /Billing & Plans/i })
-      ).toBeVisible({ timeout: 10000 });
+      await expectBillingOverview(individualPage);
+    });
 
-      // Subtitle
+    test('current plan details are displayed', async ({ individualPage }) => {
+      await openAsIndividual(individualPage, '/billing');
+      await expectBillingOverview(individualPage);
+
+      await expect(individualPage.getByText('Your subscription details')).toBeVisible();
+      await expect(individualPage.getByText('Active')).toBeVisible();
+      await expect(individualPage.getByText('Beta')).toBeVisible();
+    });
+
+    test('billing action buttons are visible', async ({ individualPage }) => {
+      await openAsIndividual(individualPage, '/billing');
+      await expectBillingOverview(individualPage);
+
+      await expect(individualPage.getByRole('button', { name: /Manage Billing/i })).toBeVisible();
+      await expect(individualPage.getByRole('button', { name: /Upgrade Plan/i })).toBeVisible();
+    });
+
+    test('usage section shows secured record usage', async ({ individualPage }) => {
+      await openAsIndividual(individualPage, '/billing');
+      await expectBillingOverview(individualPage);
+
+      await expect(individualPage.getByRole('heading', { name: /Monthly Usage/i })).toBeVisible();
+      await expect(individualPage.getByText('Records secured')).toBeVisible();
+      await expect(individualPage.getByText(/^\d+$/).first()).toBeVisible();
+    });
+
+    test('fee account section shows payment method state', async ({ individualPage }) => {
+      await openAsIndividual(individualPage, '/billing');
+      await expectBillingOverview(individualPage);
+
+      await expect(individualPage.getByRole('heading', { name: /Fee Account/i })).toBeVisible();
+      await expect(individualPage.getByText('Payment method for subscription billing')).toBeVisible();
       await expect(
-        individualPage.getByText(/Manage your subscription/i)
+        individualPage.getByText(/\*\*\*\* \*\*\*\* \*\*\*\*/)
+          .or(individualPage.getByText('No payment method on file.'))
       ).toBeVisible();
     });
 
-    test('pricing tiers are displayed', async ({ individualPage }) => {
-      await individualPage.goto('/billing');
+    test('billing history section is visible', async ({ individualPage }) => {
+      await openAsIndividual(individualPage, '/billing');
+      await expectBillingOverview(individualPage);
 
-      // Wait for plans to load (past the loading spinner)
-      await expect(
-        individualPage.getByRole('heading', { name: /Choose a Plan/i })
-          .or(individualPage.getByRole('heading', { name: /Change Plan/i }))
-      ).toBeVisible({ timeout: 15000 });
-
-      // Plan names should be visible — at minimum Free/Individual/Professional/Organization
-      // The PricingCard renders plan.name as a CardTitle
-      const planNames = ['Individual', 'Professional', 'Organization'];
-      for (const name of planNames) {
-        await expect(
-          individualPage.getByText(name, { exact: false }).first()
-        ).toBeVisible({ timeout: 5000 });
-      }
-    });
-
-    test('pricing cards show price labels', async ({ individualPage }) => {
-      await individualPage.goto('/billing');
-
-      // Wait for plan grid to render
-      await expect(
-        individualPage.getByRole('heading', { name: /Choose a Plan|Change Plan/i })
-      ).toBeVisible({ timeout: 15000 });
-
-      // At least one price should be visible (e.g. "$10", "$100", or "Custom")
-      await expect(
-        individualPage.getByText(/\$\d+/).first()
-          .or(individualPage.getByText('Custom').first())
-      ).toBeVisible({ timeout: 5000 });
-    });
-
-    test('pricing cards show feature lists', async ({ individualPage }) => {
-      await individualPage.goto('/billing');
-
-      await expect(
-        individualPage.getByRole('heading', { name: /Choose a Plan|Change Plan/i })
-      ).toBeVisible({ timeout: 15000 });
-
-      // Features like "records per month" or "records/month" should appear
-      await expect(
-        individualPage.getByText(/records/i).first()
-      ).toBeVisible({ timeout: 5000 });
-    });
-
-    test('plan description text is visible', async ({ individualPage }) => {
-      await individualPage.goto('/billing');
-
-      await expect(
-        individualPage.getByRole('heading', { name: /Choose a Plan|Change Plan/i })
-      ).toBeVisible({ timeout: 15000 });
-
-      // Plan description from BILLING_LABELS.PLAN_DESCRIPTION
-      await expect(
-        individualPage.getByText(/Select the plan that best fits your needs/i)
-      ).toBeVisible();
+      await expect(individualPage.getByText('Billing History')).toBeVisible();
+      await expect(individualPage.getByText('View and download past receipts')).toBeVisible();
+      await expect(individualPage.getByRole('button', { name: /View History/i })).toBeVisible();
     });
   });
 
-  test.describe('Subscribe Button', () => {
-    test('Select Plan button is visible on pricing cards', async ({ individualPage }) => {
-      await individualPage.goto('/billing');
+  test.describe('Billing Actions', () => {
+    test('Manage Billing button keeps user on billing page when portal is unavailable', async ({ individualPage }) => {
+      await openAsIndividual(individualPage, '/billing');
+      await expectBillingOverview(individualPage);
 
-      await expect(
-        individualPage.getByRole('heading', { name: /Choose a Plan|Change Plan/i })
-      ).toBeVisible({ timeout: 15000 });
-
-      // "Select Plan" or "Current Plan" or "Contact Sales" button should exist
-      const selectBtn = individualPage.getByRole('button', { name: /Select Plan/i });
-      const contactBtn = individualPage.getByRole('button', { name: /Contact Sales/i });
-      const currentBtn = individualPage.getByRole('button', { name: /Current Plan/i });
-
-      // At least one action button should be visible
-      await expect(
-        selectBtn.first()
-          .or(contactBtn.first())
-          .or(currentBtn.first())
-      ).toBeVisible({ timeout: 5000 });
+      await individualPage.getByRole('button', { name: /Manage Billing/i }).click();
+      await expect(individualPage).toHaveURL(/\/billing$/);
+      await expectBillingOverview(individualPage);
     });
 
-    test('clicking Select Plan initiates checkout flow', async ({ individualPage }) => {
-      await individualPage.goto('/billing');
+    test('Upgrade Plan button keeps user on billing page when plan comparison is unavailable', async ({ individualPage }) => {
+      await openAsIndividual(individualPage, '/billing');
+      await expectBillingOverview(individualPage);
 
-      await expect(
-        individualPage.getByRole('heading', { name: /Choose a Plan|Change Plan/i })
-      ).toBeVisible({ timeout: 15000 });
-
-      // Find a "Select Plan" button (not "Current Plan" which is disabled)
-      const selectBtns = individualPage.getByRole('button', { name: /Select Plan/i });
-      const count = await selectBtns.count();
-
-      if (count > 0) {
-        // Click the first available Select Plan button
-        // This should trigger startCheckout which calls the worker
-        // In test mode, it either redirects to Stripe or shows an error
-        // (worker may not be running, so we just verify the click works)
-
-        // Listen for navigation or network request to checkout endpoint
-        const responsePromise = individualPage.waitForResponse(
-          (resp) => resp.url().includes('/api/checkout/session') || resp.url().includes('checkout.stripe.com'),
-          { timeout: 10000 }
-        ).catch(() => null);
-
-        await selectBtns.first().click();
-
-        // Either we get a checkout redirect or an error alert
-        // (depends on whether the worker is running with Stripe keys)
-        const response = await responsePromise;
-
-        if (response) {
-          // Worker responded — checkout session was created
-          // The page would redirect to Stripe checkout in real flow
-          expect(response.status()).toBeLessThan(500);
-        } else {
-          // Worker not running or no Stripe keys — may show error
-          // This is acceptable in a test environment
-          // Just verify the page is still functional
-          await expect(
-            individualPage.getByRole('heading', { name: /Billing & Plans/i })
-          ).toBeVisible();
-        }
-      }
-    });
-  });
-
-  test.describe('Plan Status & Badge', () => {
-    test('current plan shows badge when user has subscription', async ({ individualPage }) => {
-      await individualPage.goto('/billing');
-
-      await expect(
-        individualPage.getByRole('heading', { name: /Choose a Plan|Change Plan/i })
-      ).toBeVisible({ timeout: 15000 });
-
-      // If user has a subscription, one card should show "Current Plan" badge
-      // During beta, user may have a free/beta plan
-      const currentBadge = individualPage.getByText('Current Plan');
-      if (await currentBadge.first().isVisible({ timeout: 5000 }).catch(() => false)) {
-        await expect(currentBadge.first()).toBeVisible();
-      }
-    });
-
-    test('billing overview shows plan status when subscribed', async ({ individualPage }) => {
-      await individualPage.goto('/billing');
-
-      await individualPage.waitForTimeout(3000);
-
-      // If user has an active subscription, BillingOverview is rendered
-      // showing "Current Plan" heading and status badge (Active/Trialing/etc.)
-      const currentPlanHeading = individualPage.getByText('Current Plan');
-      if (await currentPlanHeading.first().isVisible({ timeout: 5000 }).catch(() => false)) {
-        // Status badge should be visible (Active, Trialing, Past Due, or Canceled)
-        const statusBadge = individualPage.getByText(/Active|Trialing|Past Due|Canceled/);
-        await expect(statusBadge.first()).toBeVisible({ timeout: 3000 });
-      }
-    });
-
-    test('recommended badge is shown on Professional plan', async ({ individualPage }) => {
-      await individualPage.goto('/billing');
-
-      await expect(
-        individualPage.getByRole('heading', { name: /Choose a Plan|Change Plan/i })
-      ).toBeVisible({ timeout: 15000 });
-
-      // Professional plan should have "Recommended" badge
-      const recommendedBadge = individualPage.getByText('Recommended');
-      if (await recommendedBadge.isVisible({ timeout: 5000 }).catch(() => false)) {
-        await expect(recommendedBadge).toBeVisible();
-      }
-    });
-  });
-
-  test.describe('Usage Display', () => {
-    test('billing page shows usage section when subscribed', async ({ individualPage }) => {
-      await individualPage.goto('/billing');
-
-      await individualPage.waitForTimeout(3000);
-
-      // If user has an active subscription, BillingOverview shows "Monthly Usage"
-      const usageHeading = individualPage.getByText('Monthly Usage');
-      if (await usageHeading.isVisible({ timeout: 5000 }).catch(() => false)) {
-        await expect(usageHeading).toBeVisible();
-
-        // "Records secured" label should appear
-        await expect(individualPage.getByText('Records secured')).toBeVisible();
-      }
-    });
-
-    test('fee account section is visible when subscribed', async ({ individualPage }) => {
-      await individualPage.goto('/billing');
-
-      await individualPage.waitForTimeout(3000);
-
-      // BillingOverview shows "Fee Account" card (approved terminology)
-      const feeAccountHeading = individualPage.getByText('Fee Account');
-      if (await feeAccountHeading.isVisible({ timeout: 5000 }).catch(() => false)) {
-        await expect(feeAccountHeading).toBeVisible();
-
-        // Either shows payment method or "No payment method on file."
-        await expect(
-          individualPage.getByText(/\*\*\*\* \*\*\*\* \*\*\*\*/)
-            .or(individualPage.getByText('No payment method on file.'))
-        ).toBeVisible();
-      }
+      await individualPage.getByRole('button', { name: /Upgrade Plan/i }).click();
+      await expect(individualPage).toHaveURL(/\/billing$/);
+      await expectBillingOverview(individualPage);
     });
   });
 
   test.describe('Checkout Result Pages', () => {
     test('checkout success page loads with confirmation', async ({ individualPage }) => {
-      await individualPage.goto('/billing/success');
+      await openAsIndividual(individualPage, '/billing/success');
 
-      // Should show success title
       await expect(
         individualPage.getByText('Subscription Activated')
       ).toBeVisible({ timeout: 10000 });
 
-      // Go to Dashboard button
       await expect(
         individualPage.getByRole('link', { name: /Go to Dashboard/i })
       ).toBeVisible();
 
-      // View Billing Details link
       await expect(
         individualPage.getByRole('link', { name: /View Billing Details/i })
       ).toBeVisible();
     });
 
     test('checkout cancel page loads with cancel message', async ({ individualPage }) => {
-      await individualPage.goto('/billing/cancel');
+      await openAsIndividual(individualPage, '/billing/cancel');
 
-      // Should show cancel title
       await expect(
-        individualPage.getByText('Checkout Cancelled')
+        individualPage.getByRole('heading', { name: 'Checkout Cancelled' })
       ).toBeVisible({ timeout: 10000 });
 
-      // Back to Plans button
       await expect(
         individualPage.getByRole('link', { name: /Back to Plans/i })
       ).toBeVisible();
 
-      // Go to Dashboard link
       await expect(
         individualPage.getByRole('link', { name: /Go to Dashboard/i })
       ).toBeVisible();
     });
 
     test('checkout cancel page navigates back to billing', async ({ individualPage }) => {
-      await individualPage.goto('/billing/cancel');
+      await openAsIndividual(individualPage, '/billing/cancel');
 
       await expect(
-        individualPage.getByText('Checkout Cancelled')
+        individualPage.getByRole('heading', { name: 'Checkout Cancelled' })
       ).toBeVisible({ timeout: 10000 });
 
-      // Click "Back to Plans" link
-      await individualPage.getByRole('link', { name: /Back to Plans/i }).click();
-
-      // Should navigate to /billing
-      await expect(individualPage).toHaveURL(/\/billing/, { timeout: 10000 });
+      await Promise.all([
+        individualPage.waitForURL(/\/billing/, { timeout: 10000 }),
+        individualPage.getByRole('link', { name: /Back to Plans/i }).click(),
+      ]);
+      await expectBillingOverview(individualPage);
     });
   });
 
   test.describe('Navigation', () => {
-    test('settings back button navigates to settings page', async ({ individualPage }) => {
-      await individualPage.goto('/billing');
+    test('header settings menu item navigates to settings page', async ({ individualPage }) => {
+      await openAsIndividual(individualPage, '/billing');
+      await expectBillingOverview(individualPage);
 
-      await expect(
-        individualPage.getByRole('heading', { name: /Billing & Plans/i })
-      ).toBeVisible({ timeout: 10000 });
+      await individualPage.getByRole('button', { name: /Jamie Demo.*User/i }).click();
+      await individualPage.getByRole('menuitem', { name: 'Settings' }).click();
 
-      // Back to Settings button
-      const settingsBtn = individualPage.getByRole('button', { name: /Settings/i });
-      if (await settingsBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
-        await settingsBtn.click();
-        await expect(individualPage).toHaveURL(/\/settings/, { timeout: 10000 });
-      }
+      await expect(individualPage).toHaveURL(/\/settings/, { timeout: 10000 });
     });
   });
 });
