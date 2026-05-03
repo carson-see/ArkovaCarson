@@ -162,6 +162,8 @@ def main() -> None:
   migration_sql = MIGRATION.read_text(encoding="utf-8")
   required_local = [
     "REVOKE ALL ON FUNCTION public.drain_submitted_to_secured_for_tx(text, int, timestamptz, int, int, int) FROM PUBLIC;",
+    "REVOKE ALL ON FUNCTION public.drain_submitted_to_secured_for_tx(text, int, timestamptz, int, int, int) FROM anon;",
+    "REVOKE ALL ON FUNCTION public.drain_submitted_to_secured_for_tx(text, int, timestamptz, int, int, int) FROM authenticated;",
     "GRANT EXECUTE ON FUNCTION public.drain_submitted_to_secured_for_tx(text, int, timestamptz, int, int, int) TO service_role;",
   ]
   for needle in required_local:
@@ -189,17 +191,33 @@ def main() -> None:
 
   normalized = normalized_sql(definition)
   required_body_tokens = [
-    "security definer",
-    "set search_path to 'public'",
-    "set statement_timeout to '50s'",
-    "for update skip locked",
-    "set_config('request.jwt.claim.role'::text, 'service_role'::text, true)",
-    "chain_confirmations = greatest(p_confirmations, 1)",
-    "insert into public.anchor_chain_index",
-    "confirmations = greatest(coalesce(anchor_chain_index.confirmations, 0), excluded.confirmations)",
-    "'capped'",
+    ("security definer", ["security definer"]),
+    ("search_path public", ["set search_path to 'public'"]),
+    ("statement_timeout 50s", ["set statement_timeout to '50s'"]),
+    ("skip locked batching", ["for update skip locked"]),
+    (
+      "service_role trigger bypass",
+      [
+        "set_config('request.jwt.claim.role'::text, 'service_role'::text, true)",
+        "set_config('request.jwt.claim.role', 'service_role', true)",
+      ],
+    ),
+    ("confirmation floor", ["chain_confirmations = greatest(p_confirmations, 1)"]),
+    ("chain index upsert", ["insert into public.anchor_chain_index"]),
+    (
+      "monotonic chain index confirmations",
+      [
+        "confirmations = greatest(coalesce(anchor_chain_index.confirmations, 0), excluded.confirmations)",
+        "confirmations = greatest(coalesce(public.anchor_chain_index.confirmations, 0), excluded.confirmations)",
+      ],
+    ),
+    ("capped result flag", ["'capped'"]),
   ]
-  missing = [token for token in required_body_tokens if token not in normalized]
+  missing = [
+    label
+    for label, acceptable_tokens in required_body_tokens
+    if not any(token in normalized for token in acceptable_tokens)
+  ]
   if missing:
     fail("Prod drain function body is missing required behavior tokens: " + ", ".join(missing))
 

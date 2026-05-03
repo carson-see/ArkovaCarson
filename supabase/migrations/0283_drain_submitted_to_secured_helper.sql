@@ -83,6 +83,8 @@ END;
 $function$;
 
 REVOKE ALL ON FUNCTION public.refresh_pipeline_dashboard_cache() FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.refresh_pipeline_dashboard_cache() FROM anon;
+REVOKE ALL ON FUNCTION public.refresh_pipeline_dashboard_cache() FROM authenticated;
 GRANT EXECUTE ON FUNCTION public.refresh_pipeline_dashboard_cache() TO service_role;
 
 -- ── 3. Batched drain helper ──────────────────────────────────────────
@@ -194,7 +196,22 @@ END;
 $function$;
 
 REVOKE ALL ON FUNCTION public.drain_submitted_to_secured_for_tx(text, int, timestamptz, int, int, int) FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.drain_submitted_to_secured_for_tx(text, int, timestamptz, int, int, int) FROM anon;
+REVOKE ALL ON FUNCTION public.drain_submitted_to_secured_for_tx(text, int, timestamptz, int, int, int) FROM authenticated;
 GRANT EXECUTE ON FUNCTION public.drain_submitted_to_secured_for_tx(text, int, timestamptz, int, int, int) TO service_role;
+
+-- Earlier emergency helper overloads were operator-applied before this
+-- migration was normalized. Keep any surviving overload service-role only.
+DO $$
+BEGIN
+  IF to_regprocedure('public.drain_submitted_to_secured_for_tx(text, integer, timestamp with time zone, integer)') IS NOT NULL THEN
+    EXECUTE 'REVOKE ALL ON FUNCTION public.drain_submitted_to_secured_for_tx(text, int, timestamptz, int) FROM PUBLIC';
+    EXECUTE 'REVOKE ALL ON FUNCTION public.drain_submitted_to_secured_for_tx(text, int, timestamptz, int) FROM anon';
+    EXECUTE 'REVOKE ALL ON FUNCTION public.drain_submitted_to_secured_for_tx(text, int, timestamptz, int) FROM authenticated';
+    EXECUTE 'GRANT EXECUTE ON FUNCTION public.drain_submitted_to_secured_for_tx(text, int, timestamptz, int) TO service_role';
+  END IF;
+END;
+$$;
 
 -- PostgREST caches RPC signatures and grants. Reload after function changes so
 -- the worker can call the new signature immediately after deployment.
