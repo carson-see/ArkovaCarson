@@ -67,8 +67,8 @@ const ENABLE_OR_FORCE_RLS_RE = /\s+(?:ENABLE|FORCE)\s+ROW\s+LEVEL\s+SECURITY\b/i
 
 function buildPolicySources(migrations: ReturnType<typeof loadMigrations>): PolicySource[] {
   return migrations.map((migration) => ({
-    commentsVisible: stripSqlComments(migration.sql),
-    literalsHidden: stripSqlCommentsAndStringLiterals(migration.sql),
+    commentsVisible: stripSqlComments(migration.stripped),
+    literalsHidden: stripSqlCommentsAndStringLiterals(migration.stripped),
   }));
 }
 

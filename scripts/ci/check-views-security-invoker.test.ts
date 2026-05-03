@@ -79,6 +79,14 @@ SELECT 'ALTER VIEW public.leaky SET (security_invoker = true);';`,
 CREATE OR REPLACE VIEW public.leaky AS SELECT 1;`,
   ],
   [
+    'does not accept the deliberate-definer override text from a block comment',
+    '0001_bad_block_comment_override.sql',
+    `/*
+-- DELIBERATE: definer-rights view
+*/
+CREATE OR REPLACE VIEW public.leaky AS SELECT 1;`,
+  ],
+  [
     'finds the view name even when CREATE VIEW spans multiple lines',
     '0001_multi.sql',
     `CREATE OR REPLACE VIEW public.multiline

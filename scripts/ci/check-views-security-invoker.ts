@@ -43,8 +43,12 @@ function lineNumber(text: string, idx: number): number {
   return text.slice(0, idx).split('\n').length;
 }
 
+function stripBlockComments(sql: string): string {
+  return sql.replaceAll(/\/\*[\s\S]*?\*\//g, (comment) => comment.replaceAll(/[^\n]/g, ' '));
+}
+
 function hasDeliberateDefinerComment(sql: string): boolean {
-  return stripSqlStringLiterals(sql)
+  return stripSqlStringLiterals(stripBlockComments(sql))
     .split('\n')
     .some((line) => line.trimStart().toLowerCase().startsWith('-- deliberate: definer-rights view'));
 }

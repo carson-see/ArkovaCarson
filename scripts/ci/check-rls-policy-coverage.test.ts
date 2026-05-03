@@ -94,10 +94,38 @@ describe('check-rls-policy-coverage', () => {
     expect(stderr).toContain('foo');
   });
 
+  it('fails when FORCE without ENABLE has no policy', () => {
+    writeMigration(
+      repoRoot,
+      '0001_force_only.sql',
+      `CREATE TABLE foo (id int);\nALTER TABLE foo FORCE ROW LEVEL SECURITY;`,
+    );
+    const { code, stderr } = run(repoRoot);
+    expect(code).toBe(1);
+    expect(stderr).toContain('foo');
+  });
+
   it('handles schema-qualified table names', () => {
     writeMigration(repoRoot, '0001_qualified.sql', rlsForceFor('public.qualified'));
     const { code, stderr } = run(repoRoot);
     expect(code).toBe(1);
     expect(stderr).toContain('qualified');
+  });
+
+  it('does not accept policy text inside dollar-quoted blocks', () => {
+    writeMigration(
+      repoRoot,
+      '0001_fake_policy_in_do.sql',
+      `DO $$
+BEGIN
+  RAISE NOTICE 'CREATE POLICY foo_policy ON foo USING (true)';
+END $$;
+CREATE TABLE foo (id int);
+ALTER TABLE foo ENABLE ROW LEVEL SECURITY;`,
+    );
+
+    const { code, stderr } = run(repoRoot);
+    expect(code).toBe(1);
+    expect(stderr).toContain('foo');
   });
 });
