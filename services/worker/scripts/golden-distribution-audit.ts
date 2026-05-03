@@ -388,11 +388,25 @@ export function runAudit(
 /**
  * Prefer canonical golden files when present, otherwise fall back to the tracked fixture.
  */
-function resolveDefaultInputs(): string[] {
+export function resolveDefaultInputs(): string[] {
   const canonicalTrain = resolve('training-data/gemini-golden-train.jsonl');
   const canonicalValidation = resolve('training-data/gemini-golden-validation.jsonl');
   const fixture = resolve('training-data/fixtures/golden-fixture.jsonl');
-  return existsSync(canonicalTrain) ? [canonicalTrain, canonicalValidation] : [fixture];
+  const hasCanonicalTrain = existsSync(canonicalTrain);
+  const hasCanonicalValidation = existsSync(canonicalValidation);
+
+  if (hasCanonicalTrain !== hasCanonicalValidation) {
+    throw new Error(
+      'Canonical golden train/validation files must exist as a pair: ' +
+        'training-data/gemini-golden-train.jsonl and training-data/gemini-golden-validation.jsonl',
+    );
+  }
+
+  if (hasCanonicalTrain) return [canonicalTrain, canonicalValidation];
+  if (!existsSync(fixture)) {
+    throw new Error(`No golden audit input files found; missing fixture ${fixture}`);
+  }
+  return [fixture];
 }
 
 /**

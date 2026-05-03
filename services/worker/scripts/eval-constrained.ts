@@ -173,7 +173,8 @@ async function main() {
       const risks: string[] = Array.isArray(parsed.risks)
         ? parsed.risks.filter((risk): risk is string => typeof risk === 'string')
         : [];
-      const confidence = typeof parsed.confidence === 'number' ? parsed.confidence : 0;
+      const confidence =
+        typeof parsed.confidence === 'number' && Number.isFinite(parsed.confidence) ? parsed.confidence : 0;
 
       const citationAcc = scoreCitationAccuracy(entry.expectedCitations, citations);
       const faithfulness = scoreFaithfulness(answer, [entry.query]);

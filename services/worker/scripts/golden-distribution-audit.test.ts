@@ -5,8 +5,11 @@
  * file-loading path. The large production golden files stay out of tests.
  */
 
-import { describe, expect, it } from 'vitest';
-import { resolve } from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { afterEach, describe, expect, it } from 'vitest';
 import {
   auditDistribution,
   computeGap,
@@ -16,11 +19,19 @@ import {
   parseCliArgs,
   parseGoldenLine,
   renderMarkdownReport,
+  resolveDefaultInputs,
   runAudit,
   type AcceptanceGate,
   type DistributionAudit,
+  type GapReport,
   type GoldenRow,
 } from './golden-distribution-audit';
+
+const originalCwd = process.cwd();
+
+afterEach(() => {
+  process.chdir(originalCwd);
+});
 
 function makeAudit(overrides: Partial<DistributionAudit> = {}): DistributionAudit {
   const defaults: DistributionAudit = {
@@ -352,6 +363,19 @@ describe('parseCliArgs', () => {
   ])('fails fast for malformed CLI arguments %#', (args, message) => {
     expect(() => parseCliArgs(args)).toThrow(message);
   });
+
+  it('fails fast when canonical train and validation files are not present as a pair', () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'golden-audit-defaults-'));
+    try {
+      mkdirSync(join(tempDir, 'training-data'), { recursive: true });
+      writeFileSync(join(tempDir, 'training-data/gemini-golden-train.jsonl'), '{}\n');
+      process.chdir(tempDir);
+      expect(() => resolveDefaultInputs()).toThrow('Canonical golden train/validation files must exist as a pair');
+    } finally {
+      process.chdir(originalCwd);
+      rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
 });
 
 describe('renderMarkdownReport', () => {
@@ -405,5 +429,41 @@ describe('runAudit integration', () => {
     expect(report.audit.totalRows).toBe(rows.length);
     expect(report.audit.byType.ATTESTATION).toBeGreaterThan(0);
     expect(report.passed).toBe(true);
+  });
+});
+
+describe('CLI smoke', () => {
+  const workerRoot = resolve(import.meta.dirname ?? '.', '..');
+  const scriptPath = resolve(import.meta.dirname ?? '.', 'golden-distribution-audit.ts');
+  const fixturePath = resolve(workerRoot, 'training-data/fixtures/golden-fixture.jsonl');
+
+  it('executes the CLI shim, writes --out JSON, and returns the gate exit code', () => {
+    const tempDir = mkdtempSync(join(tmpdir(), 'golden-audit-cli-'));
+    try {
+      const outPath = join(tempDir, 'audit.json');
+      const result = spawnSync(
+        process.execPath,
+        [
+          '--import',
+          'tsx',
+          scriptPath,
+          '--input',
+          fixturePath,
+          '--min-total',
+          '9999',
+          '--json',
+          '--out',
+          outPath,
+        ],
+        { cwd: workerRoot, encoding: 'utf8' },
+      );
+
+      expect(result.status, result.stderr || result.stdout).toBe(1);
+      const report = JSON.parse(readFileSync(outPath, 'utf8')) as GapReport;
+      expect(report.passed).toBe(false);
+      expect(report.totalGap).toBeGreaterThan(0);
+    } finally {
+      rmSync(tempDir, { recursive: true, force: true });
+    }
   });
 });

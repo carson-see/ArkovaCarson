@@ -644,7 +644,7 @@ jobs:
     permissions:
       contents: read
     env:
-      GOLDEN_AUDIT_ENFORCE: 'false'
+      GOLDEN_AUDIT_ENFORCE: ${{ vars.GOLDEN_AUDIT_ENFORCE || 'false' }}
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -655,7 +655,7 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || 'HEAD~1' }}
         run: |
-          if git diff --name-only "$BASE_SHA" HEAD | grep -qE '^(services/worker/scripts/golden-distribution-audit\.ts|services/worker/scripts/golden-distribution-audit\.test\.ts|services/worker/training-data/|services/worker/docs/eval/golden-audit|services/worker/package\.json|services/worker/eslint\.config\.js)'; then
+          if git diff --name-only "$BASE_SHA" HEAD | grep -qE '^(.github/workflows/ci\.yml|services/worker/scripts/golden-distribution-audit\.ts|services/worker/scripts/golden-distribution-audit\.test\.ts|services/worker/training-data/|services/worker/docs/eval/golden-audit|services/worker/package\.json|services/worker/eslint\.config\.js)'; then
             echo "changed=true" >> "$GITHUB_OUTPUT"
           else
             echo "changed=false" >> "$GITHUB_OUTPUT"
@@ -688,7 +688,14 @@ jobs:
 
           node <<'NODE'
           const fs = require('node:fs');
-          const report = JSON.parse(fs.readFileSync(`${process.env.RUNNER_TEMP}/golden-audit.json`, 'utf8'));
+          let report;
+          try {
+            report = JSON.parse(fs.readFileSync(`${process.env.RUNNER_TEMP}/golden-audit.json`, 'utf8'));
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            console.log(`::error title=Golden audit JSON parse failed::${message}`);
+            process.exit(1);
+          }
           const summary = ['## Golden Distribution Audit'];
           summary.push('### CI fixture smoke');
           summary.push(`- Verdict: ${report.passed ? 'PASSED' : 'FAILED'}`);
