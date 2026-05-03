@@ -124,13 +124,13 @@ describe('validateToolArgs — agent v2 aliases', () => {
     expect(result.ok).toBe(true);
   });
 
-  it('allows REST v2 search limit parity up to 100', () => {
-    const result = validateToolArgs('search', { q: 'acme', limit: 100 });
+  it('allows REST v2 search limit parity up to 50', () => {
+    const result = validateToolArgs('search', { q: 'acme', limit: 50 });
     expect(result.ok).toBe(true);
   });
 
   it('rejects search limits above the OpenAPI maximum', () => {
-    const result = validateToolArgs('search', { q: 'acme', limit: 101 });
+    const result = validateToolArgs('search', { q: 'acme', limit: 51 });
     expect(result.ok).toBe(false);
   });
 

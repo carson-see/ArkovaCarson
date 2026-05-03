@@ -308,7 +308,7 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         },
         limit: {
           type: 'number',
-          description: 'Maximum number of results to return (default: 10, max: 100). Matches the REST v2 search parameter.',
+          description: 'Maximum number of results to return (default: 50, max: 50). Capped to the record search RPC ceiling.',
         },
         max_results: {
           type: 'number',
@@ -472,7 +472,7 @@ export async function handleSearchCredentials(
 
   try {
     // INJ-01: Use RPC with bound parameters instead of URL interpolation
-    const sanitizedQuery = input.query.replace(/[%_\\]/g, '\\$&');
+    const sanitizedQuery = input.query.replaceAll(/[%_\\]/g, String.raw`\$&`);
     const response = await supabaseFetch(config, '/rest/v1/rpc/search_public_credentials', {
       method: 'POST',
       body: JSON.stringify({ p_query: sanitizedQuery, p_limit: maxResults }),
@@ -542,8 +542,8 @@ async function searchAgentRecords(
   input: AgentSearchInput,
   config: SupabaseConfig,
 ): Promise<Array<Record<string, unknown>>> {
-  const maxResults = Math.min(input.limit ?? input.max_results ?? 10, 100);
-  const sanitizedQuery = input.q.replace(/[%_\\]/g, '\\$&');
+  const maxResults = Math.min(input.limit ?? input.max_results ?? 50, 50);
+  const sanitizedQuery = input.q.replaceAll(/[%_\\]/g, String.raw`\$&`);
   const response = await supabaseFetch(config, '/rest/v1/rpc/search_public_credentials', {
     method: 'POST',
     body: JSON.stringify({ p_query: sanitizedQuery, p_limit: maxResults }),
@@ -580,7 +580,7 @@ export async function handleAgentSearch(
     return errorResult('Error: q is required');
   }
 
-  const maxResults = Math.min(input.limit ?? input.max_results ?? 10, 100);
+  const maxResults = Math.min(input.limit ?? input.max_results ?? 50, 50);
   const type = input.type ?? 'all';
 
   try {

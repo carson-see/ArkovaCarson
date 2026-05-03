@@ -182,7 +182,7 @@ describe('agent v2 MCP aliases', () => {
     expect(mockFetch.mock.calls[0][0]).toContain('/rest/v1/rpc/search_organizations_public');
   });
 
-  it('search(q,type=record,limit) passes the REST v2 limit parameter through to search RPC', async () => {
+  it('search(q,type=record,limit) caps the REST v2 limit parameter at the search RPC ceiling', async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
       json: async () => ([{
@@ -198,7 +198,7 @@ describe('agent v2 MCP aliases', () => {
     expect(result.isError).toBeUndefined();
     const parsed = JSON.parse(result.content[0].text);
     expect(parsed.results[0]).toMatchObject({ type: 'record', public_id: 'ARK-REC-ABC' });
-    expect(JSON.parse(mockFetch.mock.calls[0][1].body)).toMatchObject({ p_limit: 75 });
+    expect(JSON.parse(mockFetch.mock.calls[0][1].body)).toMatchObject({ p_limit: 50 });
   });
 
   it('verify(fingerprint) delegates to document verification', async () => {

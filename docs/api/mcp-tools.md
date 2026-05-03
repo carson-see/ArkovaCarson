@@ -73,7 +73,7 @@ Input:
 |---|---|:---:|---|
 | `q` | string | yes | Natural language query or exact SHA-256 fingerprint |
 | `type` | `all`, `org`, `record`, `fingerprint`, `document` | no | Default `all` |
-| `limit` | number | no | Default 10, max 100. Matches the REST v2 `/search` parameter |
+| `limit` | number | no | Default 50, max 50. Matches the RPC-backed search ceiling |
 | `max_results` | number | no | Deprecated compatibility alias for older MCP prompts; prefer `limit` |
 
 Example:

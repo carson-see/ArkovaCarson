@@ -23,7 +23,7 @@ describe('openApiV2Spec', () => {
       const operation = openApiV2Spec.paths[path].get;
       expect(operation.operationId).toBe(operationId);
       expect(operation['x-arkova-alias-for']).toBe(aliasTarget);
-      expect(Object.prototype.hasOwnProperty.call(operation, 'x-agent-usage')).toBe(false);
+      expect(Object.hasOwn(operation, 'x-agent-usage')).toBe(false);
     }
   });
 
