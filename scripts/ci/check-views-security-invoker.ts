@@ -8,16 +8,25 @@
  * declared `WITH (security_invoker = true)` so the underlying table's
  * RLS applies to whoever queries the view.
  *
+ * A view is considered safe if either:
+ *   - The most recent `CREATE [OR REPLACE] VIEW <name>` includes
+ *     `WITH (security_invoker = true)` within the next ~250 chars, OR
+ *   - A later migration applies `ALTER VIEW <name> SET (security_invoker = true)`.
+ *
+ * Migration order is determined by sorted file name (the `NNNN_` prefix).
+ *
  * Override: PR labeled `view-security-definer-intentional` (rare; usually
  * a public-read aggregation that legitimately needs definer semantics).
  */
 
 import { execSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
-import { resolve, join } from 'node:path';
+import { dirname, resolve, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const OVERRIDE_LABEL = 'view-security-definer-intentional';
-const REPO = process.env.VIEWS_LINT_REPO_ROOT ?? resolve(import.meta.dirname, '..', '..');
+const MODULE_DIR = dirname(fileURLToPath(import.meta.url));
+const REPO = process.env.VIEWS_LINT_REPO_ROOT ?? resolve(MODULE_DIR, '..', '..');
 const BASELINE_PATH = join(REPO, 'scripts', 'ci', 'snapshots', 'views-security-invoker-baseline.json');
 const prLabels = (process.env.PR_LABELS ?? '').split(',').map((s) => s.trim()).filter(Boolean);
 
@@ -27,10 +36,42 @@ function loadBaseline(): Set<string> {
   return new Set(raw.grandfathered);
 }
 
-// Match `CREATE [OR REPLACE] [...] VIEW <name>` not immediately followed by
-// `WITH (security_invoker = true)` within ~200 chars (to allow column lists).
-// Also: skip MATERIALIZED VIEW (different semantics; tracked separately).
-const VIEW_REGEX = /CREATE\s+(?:OR\s+REPLACE\s+)?(?!MATERIALIZED\s+)VIEW\s+(?:public\.)?(\w+)/gi;
+// Match `CREATE [OR REPLACE] [...] VIEW <name>`. Skip MATERIALIZED VIEW
+// (different semantics; tracked separately).
+//
+// Postgres lets identifiers be either bare (`my_view`) or double-quoted
+// (`"My View"`, which preserves case + allows non-word chars). We accept
+// both forms so a future migration that uses quoted identifiers cannot
+// silently slip past the linter. The schema qualifier mirrors that:
+// `public.x`, `"public".x`, `public."x"`, or `"public"."x"`.
+const SCHEMA_PREFIX = '(?:(?:"public"|public)\\.)?';
+const VIEW_NAME = '(?:"[^"]+"|\\w+)';
+const CREATE_VIEW_REGEX = new RegExp(
+  `CREATE\\s+(?:OR\\s+REPLACE\\s+)?(?!MATERIALIZED\\s+)VIEW\\s+${SCHEMA_PREFIX}(${VIEW_NAME})`,
+  'gi',
+);
+
+// Match `ALTER VIEW <name> SET (security_invoker = true|on)`. The optional
+// `IF EXISTS` and schema-qualifier mirror Postgres' actual ALTER VIEW grammar.
+const ALTER_FIX_REGEX = new RegExp(
+  `ALTER\\s+VIEW\\s+(?:IF\\s+EXISTS\\s+)?${SCHEMA_PREFIX}(${VIEW_NAME})\\s+SET\\s*\\([^)]*\\bsecurity_invoker\\s*=\\s*(?:true|on)\\b[^)]*\\)`,
+  'gi',
+);
+const ALTER_UNFIX_REGEX = new RegExp(
+  `ALTER\\s+VIEW\\s+(?:IF\\s+EXISTS\\s+)?${SCHEMA_PREFIX}(${VIEW_NAME})\\s+(?:SET\\s*\\([^)]*\\bsecurity_invoker\\s*=\\s*(?:false|off)\\b[^)]*\\)|RESET\\s*\\([^)]*\\bsecurity_invoker\\b[^)]*\\))`,
+  'gi',
+);
+const SECURITY_INVOKER_WITH_REGEX = /\bWITH\s*\([^)]*\bsecurity_invoker\s*=\s*(?:true|on)\b[^)]*\)/i;
+
+// Postgres treats `"foo"` and `foo` as the same identifier when the inner
+// text is lower-case alphanumeric. Strip surrounding quotes so the Map key
+// is consistent across quoted vs unquoted occurrences of the same view.
+function normalizeViewName(raw: string): string {
+  if (raw.length >= 2 && raw.startsWith('"') && raw.endsWith('"')) {
+    return raw.slice(1, -1);
+  }
+  return raw;
+}
 
 interface Finding {
   file: string;
@@ -42,34 +83,166 @@ function lineNumber(text: string, idx: number): number {
   return text.slice(0, idx).split('\n').length;
 }
 
-function scan(): Finding[] {
+interface ScanResult {
+  bareCreates: Finding[];
+  fixedAfter: Set<string>;
+}
+
+type ViewSecurityEvent =
+  | { index: number; kind: 'create'; view: string; isFixed: boolean }
+  | { index: number; kind: 'alter'; view: string }
+  | { index: number; kind: 'unfix'; view: string };
+
+function createViewHeader(text: string, idx: number): string {
+  const tail = text.slice(idx);
+  const asMatch = /\bAS\b/i.exec(tail);
+  return asMatch ? tail.slice(0, asMatch.index) : tail;
+}
+
+// Strip SQL line (`--`) and block (`/* ... */`) comments before regex
+// matching so commented-out CREATE/ALTER statements (or commented-out
+// security_invoker fix lines) cannot bypass or spoof the lint. Preserves
+// newlines so `lineNumber()` remains accurate for surviving statements.
+//
+// Note: this strips comments outside string literals only. Postgres uses
+// `'...'` and `$$...$$` for string literals; neither has built-in comment
+// syntax — `--` inside `'...'` is just data. We don't run on procedural
+// DO blocks here (those are tracked by check-rls-policy-coverage.ts), so
+// the simpler line/block strip is sufficient for migration DDL.
+export function stripSqlComments(body: string): string {
+  let out = '';
+  let i = 0;
+  while (i < body.length) {
+    const c = body[i];
+    const next = body[i + 1];
+    if (c === '-' && next === '-') {
+      // Line comment — skip to (but not past) newline so line numbers stay aligned.
+      while (i < body.length && body[i] !== '\n') i++;
+      continue;
+    }
+    if (c === '/' && next === '*') {
+      // Block comment — skip to */ but emit one space per line so line
+      // numbers stay aligned. Unterminated block treated as comment to
+      // EOF (matches Postgres parser tolerance for streaming clients).
+      i += 2;
+      while (i < body.length && !(body[i] === '*' && body[i + 1] === '/')) {
+        if (body[i] === '\n') out += '\n';
+        i++;
+      }
+      i += 2; // skip closing */
+      continue;
+    }
+    if (c === "'") {
+      // String literal — copy through verbatim including doubled-quote escapes.
+      out += c;
+      i++;
+      while (i < body.length) {
+        const ch = body[i];
+        if (ch === "'" && body[i + 1] === "'") { out += "''"; i += 2; continue; }
+        if (ch === "'") { out += ch; i++; break; }
+        out += ch;
+        i++;
+      }
+      continue;
+    }
+    out += c;
+    i++;
+  }
+  return out;
+}
+
+export function scanFiles(files: ReadonlyArray<{ name: string; body: string }>): ScanResult {
+  // Process in migration order so a later ALTER/REPLACE overrides an earlier
+  // bare CREATE. Caller is responsible for sorting (we sort by file path here
+  // for safety — supabase migrations are NNNN_-prefixed which sorts correctly).
+  const ordered = [...files].sort((a, b) => a.name.localeCompare(b.name));
+
+  // For each view name, track its latest state: 'bare' or 'fixed'.
+  // 'bare' = most-recent CREATE without security_invoker AND no later ALTER fix.
+  // 'fixed' = most-recent migration converted the view OR later ALTER pinned it.
+  const latestState = new Map<string, 'bare' | 'fixed'>();
+  const latestFinding = new Map<string, Finding>();
+
+  for (const { name, body: rawBody } of ordered) {
+    // Strip comments before pattern matching — a commented-out
+    // `-- CREATE VIEW bare_v` or `/* ALTER VIEW v SET (security_invoker = true) */`
+    // is not executable SQL and must not flip latestState.
+    // stripSqlComments preserves newlines so lineNumber() stays accurate.
+    const body = stripSqlComments(rawBody);
+    const events: ViewSecurityEvent[] = [];
+
+    CREATE_VIEW_REGEX.lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = CREATE_VIEW_REGEX.exec(body)) !== null) {
+      const view = normalizeViewName(m[1]);
+      const isFixed = SECURITY_INVOKER_WITH_REGEX.test(createViewHeader(body, m.index));
+      events.push({ index: m.index, kind: 'create', view, isFixed });
+    }
+
+    ALTER_FIX_REGEX.lastIndex = 0;
+    while ((m = ALTER_FIX_REGEX.exec(body)) !== null) {
+      events.push({ index: m.index, kind: 'alter', view: normalizeViewName(m[1]) });
+    }
+
+    ALTER_UNFIX_REGEX.lastIndex = 0;
+    while ((m = ALTER_UNFIX_REGEX.exec(body)) !== null) {
+      events.push({ index: m.index, kind: 'unfix', view: normalizeViewName(m[1]) });
+    }
+
+    events.sort((a, b) => a.index - b.index);
+
+    for (const event of events) {
+      if (event.kind === 'create') {
+        latestState.set(event.view, event.isFixed ? 'fixed' : 'bare');
+        if (!event.isFixed) {
+          latestFinding.set(event.view, {
+            file: name,
+            view: event.view,
+            line: lineNumber(body, event.index),
+          });
+        } else {
+          latestFinding.delete(event.view);
+        }
+      } else {
+        if (event.kind === 'alter') {
+          latestState.set(event.view, 'fixed');
+          latestFinding.delete(event.view);
+        } else {
+          latestState.set(event.view, 'bare');
+          latestFinding.set(event.view, {
+            file: name,
+            view: event.view,
+            line: lineNumber(body, event.index),
+          });
+        }
+      }
+    }
+  }
+
+  const bareCreates: Finding[] = [];
+  const fixedAfter = new Set<string>();
+  for (const [view, state] of latestState) {
+    if (state === 'bare') {
+      const f = latestFinding.get(view);
+      if (f) bareCreates.push(f);
+    } else {
+      fixedAfter.add(view);
+    }
+  }
+  return { bareCreates, fixedAfter };
+}
+
+function readMigrations(): Array<{ name: string; body: string }> {
   const files = execSync('git ls-files supabase/migrations', { cwd: REPO, encoding: 'utf8' })
     .split('\n')
     .filter((p) => p.endsWith('.sql'));
-
-  const findings: Finding[] = [];
-  for (const file of files) {
-    const body = readFileSync(resolve(REPO, file), 'utf8');
-    let match: RegExpExecArray | null;
-    VIEW_REGEX.lastIndex = 0;
-    while ((match = VIEW_REGEX.exec(body)) !== null) {
-      // Look ahead 250 chars from the match for `security_invoker`.
-      const window = body.slice(match.index, match.index + 250);
-      if (/security_invoker\s*=\s*(?:true|on)/i.test(window)) continue;
-      findings.push({
-        file,
-        view: match[1],
-        line: lineNumber(body, match.index),
-      });
-    }
-  }
-  return findings;
+  return files.map((name) => ({ name, body: readFileSync(resolve(REPO, name), 'utf8') }));
 }
 
 function main(): void {
   const baseline = loadBaseline();
-  const all = scan();
-  const novel = all.filter((f) => !baseline.has(f.view));
+  const { bareCreates } = scanFiles(readMigrations());
+  const novel = bareCreates.filter((f) => !baseline.has(f.view));
 
   if (novel.length === 0) {
     console.log(
@@ -92,8 +265,11 @@ function main(): void {
   console.error('');
   console.error('Add `WITH (security_invoker = true)` to the view definition so the underlying');
   console.error('table\'s RLS applies to the caller, not the view owner.');
+  console.error(`Or land a follow-up migration with`);
+  console.error(`  ALTER VIEW <name> SET (security_invoker = true);`);
   console.error(`If a definer view is genuinely required, label the PR with \`${OVERRIDE_LABEL}\`.`);
   process.exit(1);
 }
 
-main();
+const isMain = process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url));
+if (isMain) main();
