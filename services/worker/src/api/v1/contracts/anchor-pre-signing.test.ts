@@ -20,15 +20,31 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 
-const { mockSelectChain, mockInsertChain, mockInsert, mockLogger, mockConfig } = vi.hoisted(() => {
-  const mockSelectChain = { maybeSingle: vi.fn() };
-  const mockInsertChain = { single: vi.fn() };
+// Hoist only the controllable handles. The supabase chain itself gets
+// assembled inside the vi.mock factory below — that keeps this file's
+// mock setup distinct from anchor-submit.test.ts (SonarCloud's New-Code
+// duplication detector flagged the prior verbatim-match shape on PR #680).
+const {
+  selectMaybeSingle,
+  insertSingle,
+  mockInsert,
+  mockLogger,
+  mockConfig,
+  mockDeductOrgCredit,
+} = vi.hoisted(() => {
+  const selectMaybeSingle = vi.fn();
+  const insertSingle = vi.fn();
   const mockInsert = vi.fn((_value?: unknown) => ({
-    select: vi.fn(() => ({ single: mockInsertChain.single })),
+    select: vi.fn(() => ({ single: insertSingle })),
   }));
-  const mockLogger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
-  const mockConfig = { enableOrgCreditEnforcement: false };
-  return { mockSelectChain, mockInsertChain, mockInsert, mockLogger, mockConfig };
+  return {
+    selectMaybeSingle,
+    insertSingle,
+    mockInsert,
+    mockLogger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+    mockConfig: { enableOrgCreditEnforcement: false },
+    mockDeductOrgCredit: vi.fn(),
+  };
 });
 
 vi.mock('../../../config.js', () => ({
@@ -40,15 +56,21 @@ vi.mock('../../../config.js', () => ({
 vi.mock('../../../utils/logger.js', () => ({ logger: mockLogger }));
 
 vi.mock('../../../utils/db.js', () => {
-  const eqChain: Record<string, unknown> = {};
-  eqChain.eq = vi.fn(() => eqChain);
-  eqChain.is = vi.fn(() => eqChain);
-  eqChain.maybeSingle = mockSelectChain.maybeSingle;
-
+  // Build the fluent chain inside the factory so each test gets a fresh
+  // chain object per vi.clearAllMocks(). The handle for the terminal
+  // `.maybeSingle()` is the hoisted `selectMaybeSingle` so tests can
+  // configure return values per-case.
+  const buildSelectChain = () => {
+    const chain: Record<string, unknown> = {};
+    chain.eq = vi.fn(() => chain);
+    chain.is = vi.fn(() => chain);
+    chain.maybeSingle = selectMaybeSingle;
+    return chain;
+  };
   return {
     db: {
       from: vi.fn(() => ({
-        select: vi.fn(() => eqChain),
+        select: vi.fn(buildSelectChain),
         insert: mockInsert,
       })),
     },
@@ -59,7 +81,6 @@ vi.mock('../../../lib/urls.js', () => ({
   buildVerifyUrl: (id: string) => `https://example.test/verify/${id}`,
 }));
 
-const mockDeductOrgCredit = vi.hoisted(() => vi.fn());
 vi.mock('../../../utils/orgCredits.js', () => ({
   deductOrgCredit: mockDeductOrgCredit,
 }));
@@ -111,8 +132,8 @@ describe('POST /api/v1/contracts/anchor-pre-signing — shape contract (inherite
   beforeEach(() => {
     vi.clearAllMocks();
     // Default supabase chain: no existing row, insert returns a fresh anchor.
-    mockSelectChain.maybeSingle.mockResolvedValue({ data: null, error: null });
-    mockInsertChain.single.mockResolvedValue({
+    selectMaybeSingle.mockResolvedValue({ data: null, error: null });
+    insertSingle.mockResolvedValue({
       data: {
         public_id: 'ARK-2026-ABCD1234',
         fingerprint: VALID_FINGERPRINT,
@@ -233,8 +254,8 @@ describe('POST /api/v1/contracts/anchor-pre-signing — shape contract (inherite
 describe('POST /api/v1/contracts/anchor-pre-signing — real handler (SCRUM-1631)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockSelectChain.maybeSingle.mockResolvedValue({ data: null, error: null });
-    mockInsertChain.single.mockResolvedValue({
+    selectMaybeSingle.mockResolvedValue({ data: null, error: null });
+    insertSingle.mockResolvedValue({
       data: {
         public_id: 'ARK-2026-ABCD1234',
         fingerprint: VALID_FINGERPRINT,
@@ -321,7 +342,7 @@ describe('POST /api/v1/contracts/anchor-pre-signing — idempotency', () => {
   });
 
   it('200 + existing receipt when fingerprint already anchored', async () => {
-    mockSelectChain.maybeSingle.mockResolvedValue({
+    selectMaybeSingle.mockResolvedValue({
       data: {
         public_id: 'ARK-2026-EXISTING',
         fingerprint: VALID_FINGERPRINT,
@@ -347,8 +368,8 @@ describe('POST /api/v1/contracts/anchor-pre-signing — idempotency', () => {
 describe('POST /api/v1/contracts/anchor-pre-signing — org credits', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockSelectChain.maybeSingle.mockResolvedValue({ data: null, error: null });
-    mockInsertChain.single.mockResolvedValue({
+    selectMaybeSingle.mockResolvedValue({ data: null, error: null });
+    insertSingle.mockResolvedValue({
       data: {
         public_id: 'ARK-2026-ABCD1234',
         fingerprint: VALID_FINGERPRINT,
