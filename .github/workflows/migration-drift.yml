@@ -36,40 +36,53 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      id-token: write
       # Read-only. No write anywhere.
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
+      - id: gcp-auth
+        name: Authenticate to GCP via Workload Identity Federation
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - id: supabase-management-token
+        name: Pull Supabase Management API token from GCP Secret Manager
+        uses: google-github-actions/get-secretmanager-secrets@bc9c54b29fdffb8a47776820a7d26e77b379d262 # v3.0.0
+        with:
+          secrets: |
+            token:arkova1/supabase_access
+
       - name: Diff local migrations vs Supabase Management API
-        # Skips the drift check gracefully when SUPABASE_ACCESS_TOKEN is not
-        # provisioned (e.g., forks, Dependabot PRs). Without a token the check
-        # emits an informational summary + passes — never blocks on secret
-        # availability.
         env:
-          # Read-only personal access token scoped to the Supabase org.
-          # Generate at https://app.supabase.com/account/tokens with "All projects".
-          # Store as GitHub Actions secret SUPABASE_ACCESS_TOKEN.
-          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          # Supabase Management API token for an account with access to this
+          # project. Do not use anon/service_role JWTs, database passwords, or
+          # project API keys here. Fine-grained tokens need
+          # database_migrations_read and database_read.
+          # Source: GCP Secret Manager `arkova1/supabase_access`.
+          SUPABASE_ACCESS_TOKEN: ${{ steps.supabase-management-token.outputs.token }}
           SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF || 'vzwyaatejekddvltxyye' }}
         run: |
           set -eo pipefail
+          auth_hint="SUPABASE_ACCESS_TOKEN must be a Supabase Management API token for an account that can read project ${SUPABASE_PROJECT_REF}; fine-grained tokens need database_migrations_read and database_read. Do not use anon/service_role JWTs, database passwords, or project API keys."
 
           if [ -z "${SUPABASE_ACCESS_TOKEN:-}" ]; then
-            # For fork/Dependabot PRs the token legitimately isn't available.
-            # For main-branch pushes it's an ops misconfiguration — fail loudly.
             # The 2026-04-24 migration-drift incident (SCRUM-1182) happened
-            # because this block was silently passing on main for weeks while
-            # SUPABASE_ACCESS_TOKEN wasn't provisioned in Actions secrets.
-            if [ "${GITHUB_EVENT_NAME}" = "push" ] && [ "${GITHUB_REF}" = "refs/heads/main" ]; then
-              echo "::error title=Migration drift check NOT RUN::SUPABASE_ACCESS_TOKEN is not configured in GitHub Actions secrets. Provision at https://app.supabase.com/account/tokens with 'All projects' scope, add as Actions secret SUPABASE_ACCESS_TOKEN. This check cannot protect against drift until then."
-              exit 1
-            fi
-            echo "::notice title=Migration drift check skipped::SUPABASE_ACCESS_TOKEN not set — skipping (expected for forks/Dependabot PRs; main-branch pushes fail loudly)."
-            exit 0
+            # because the gate silently passed while blind. Missing Secret
+            # Manager access is now always a hard failure.
+            echo "::error title=Migration drift check NOT RUN::GCP Secret Manager did not provide arkova1/supabase_access. ${auth_hint} Grant the GitHub Actions workload identity service account secretmanager.versions.access on that secret, then rerun this check."
+            exit 1
           fi
 
-          # Collect local migration filenames — strip extension, keep just the
-          # basename so we can compare against the Supabase `name` field.
+          if [[ "${SUPABASE_ACCESS_TOKEN}" == eyJ*.*.* ]]; then
+            echo "::error title=Migration drift check misconfigured::SUPABASE_ACCESS_TOKEN looks like a JWT/project API key, not a Supabase Management API token. ${auth_hint}"
+            exit 1
+          fi
+
+          # Collect local migration filenames — strip extension and keep just
+          # the basename. Arkova's repo convention is `NNNN_description.sql`.
           local_names=$(ls supabase/migrations/ 2>/dev/null | grep -E '\.sql$' | sed 's/\.sql$//' | sort -u)
           if [ -z "$local_names" ]; then
             echo "::error::No local migrations found at supabase/migrations/*.sql"
@@ -86,16 +99,11 @@ jobs:
           prod_response=$(cat /tmp/prod_response.json 2>/dev/null || echo "")
 
           if [ "$http_status" = "401" ] || [ "$http_status" = "403" ]; then
-            # Token is invalid/expired/revoked. Same posture as missing token:
-            # fail loud on main pushes, skip on PRs so a stale token doesn't
-            # block unrelated work. Operators should rotate at
-            # https://app.supabase.com/account/tokens.
-            if [ "${GITHUB_EVENT_NAME}" = "push" ] && [ "${GITHUB_REF}" = "refs/heads/main" ]; then
-              echo "::error title=Migration drift check auth failure::SUPABASE_ACCESS_TOKEN returned HTTP $http_status from Supabase Management API. The secret is set but the token is expired/revoked/insufficient. Rotate at https://app.supabase.com/account/tokens (scope: All projects) and update the SUPABASE_ACCESS_TOKEN Actions secret."
-              exit 1
-            fi
-            echo "::notice title=Migration drift check skipped::SUPABASE_ACCESS_TOKEN returned HTTP $http_status — token is set but invalid. Skipping on PR; operator must rotate before next main push."
-            exit 0
+            # Missing tokens can be expected for fork/Dependabot PRs, but a
+            # configured token that cannot read prod is an operations failure.
+            # Do not let migration PRs look green while the drift gate is blind.
+            echo "::error title=Migration drift check auth failure::Supabase Management API returned HTTP $http_status for project ${SUPABASE_PROJECT_REF}. ${auth_hint} Verify the GitHub Actions secret value and the token owner's project/org access before replacing it."
+            exit 1
           fi
 
           if [ "$http_status" != "200" ]; then
@@ -105,42 +113,57 @@ jobs:
             exit 1
           fi
 
-          # Extract names. jq filter: .[].name. Fallback: grep.
-          prod_names=$(echo "$prod_response" | jq -r '.[].name' 2>/dev/null | sort -u)
-          if [ -z "$prod_names" ]; then
+          # Supabase stores two pieces of migration identity:
+          #   - version: sometimes Arkova's old 4-digit prefix, sometimes a
+          #     Supabase timestamp from operator-applied hotfixes
+          #   - name: usually the description suffix, but some historical rows
+          #     already include Arkova's numeric prefix
+          #
+          # Treat any of these as applied:
+          #   1. exact local basename:         0279_x402_payments_org_scoping
+          #   2. Supabase name suffix:         x402_payments_org_scoping
+          #   3. Supabase version + name:      0175_activate_user_function
+          #   4. operator SCRUM prefix removed: scrum_1170_org_credits... -> org_credits...
+          #
+          # This prevents a giant false-missing list when prod is actually
+          # ahead under timestamped Management API migrations.
+          prod_applied_keys=$(echo "$prod_response" | jq -r '.[] | select(.name != null) | .name, ((.version | tostring) + "_" + .name), (.name | sub("^scrum_[0-9]+_"; ""))' 2>/dev/null | sort -u)
+          if [ -z "$prod_applied_keys" ]; then
             echo "::error::Supabase Management API returned no migrations (unexpected)."
             echo "Response body preview:"
             echo "$prod_response" | head -5
             exit 1
           fi
 
-          # Diff: what's local but not prod?
-          missing=$(comm -23 <(echo "$local_names") <(echo "$prod_names"))
+          prod_keys_file=$(mktemp)
+          echo "$prod_applied_keys" > "$prod_keys_file"
 
-          # Exempt list — see docs/runbooks/migration-drift-playbook.md §
-          # "Exempt migrations" + docs/confluence/16_migration_drift_prevention.md
-          # for each entry's rationale.
+          missing=$(
+            while IFS= read -r local_name; do
+              canonical_suffix=$(echo "$local_name" | sed -E 's/^[0-9]{4}[a-z]?_//')
+              if grep -Fxq "$local_name" "$prod_keys_file" || grep -Fxq "$canonical_suffix" "$prod_keys_file"; then
+                continue
+              fi
+              echo "$local_name"
+            done < <(echo "$local_names")
+          )
+
+          # Exempt / verified-successor list — see
+          # docs/runbooks/migration-drift-playbook.md § "Historical ledger
+          # exceptions" for each entry's rationale.
           #
-          # Categories:
-          #   (a) 0033 / 0078 / 0162 — numbered gaps that never existed as files
-          #   (b) `" 2.sql"` macOS duplicate suffixes for migrations already
-          #       applied in prod under the canonical name — the `.* 2$` rule
-          #       tolerates the copy-paste artefact pending a repo-level cleanup
-          #   (c) 0186 / 0212..0216 — applied under 2026041X version strings
-          #       in prod's schema_migrations (migrations were pushed before
-          #       the current naming convention was stable); the filenames
-          #       exist but the names in prod don't match 1:1
-          #   (d) 0190 RLS subquery caching + 0191 BRIN on anchors —
-          #       intentionally held back for a maintenance window
-          #       (tracked in SCRUM-908)
-          exempt_regex='^(0033|0078|0162|.* 2|0186_.*|0190_.*|0191_.*|0212_.*|0213_.*|0214_.*|0215_.*|0216_.*|0216b_.*)$'
+          # These entries are not deferrals. They are historical migrations
+          # whose effects are present in prod via compensating/successor
+          # migrations or operator-applied names. Do not add entries here
+          # without object-level verification and a dated runbook note.
+          exempt_regex='^(0033|0078|0162|.* 2|0022_seed_schema_alignment|0023_is_public_profile|0024_fix_search_path_revoke_anchor|0068b_submitted_status_and_confirmations|0088b_cle_templates|0135_ats_integrations|0175_fix_pipeline_stats_timeout|0180_fix_public_issuer_perf|0258_ark112_queue_public_id)$'
           filtered_missing=$(echo "$missing" | grep -vE "$exempt_regex" || true)
 
           missing_count=$(echo "$filtered_missing" | grep -c . || true)
 
           echo "## Migration drift check"
           echo "- Local migrations: $(echo "$local_names" | wc -l | tr -d ' ')"
-          echo "- Prod applied:    $(echo "$prod_names"  | wc -l | tr -d ' ')"
+          echo "- Prod applied keys: $(echo "$prod_applied_keys" | wc -l | tr -d ' ')"
           echo "- Missing in prod: $missing_count"
 
           if [ "$missing_count" -gt 0 ]; then
