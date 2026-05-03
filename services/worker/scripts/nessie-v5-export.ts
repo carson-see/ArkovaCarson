@@ -138,7 +138,7 @@ async function main(): Promise<void> {
 
   // Load v4 training data if available
   const v4DataPath = resolve(import.meta.dirname ?? '.', '../training-data/v4');
-  let v4Examples: TrainingExample[] = [];
+  const v4Examples: TrainingExample[] = [];
   if (existsSync(v4DataPath)) {
     const v4Files = ['sec.jsonl', 'legal.jsonl', 'regulatory.jsonl', 'academic.jsonl'];
     for (const f of v4Files) {

@@ -18,7 +18,6 @@ import {
   scoreFaithfulness,
   scoreAnswerRelevance,
   scoreRiskDetection,
-  pearsonCorrelation,
 } from '../src/ai/eval/intelligence-eval.js';
 import type { IntelligenceEvalEntry } from '../src/ai/eval/intelligence-eval.js';
 import { buildIntelligenceSystemPrompt } from '../src/ai/prompts/intelligence.js';
@@ -27,6 +26,30 @@ import { FCRA_EVAL_50 } from './intelligence-dataset/evals/fcra-eval.js';
 import { HIPAA_EVAL_50 } from './intelligence-dataset/evals/hipaa-eval.js';
 import { FCRA_SOURCES } from './intelligence-dataset/sources/fcra-sources.js';
 import { HIPAA_SOURCES } from './intelligence-dataset/sources/hipaa-sources.js';
+
+interface RunpodChatChoice {
+  message?: { content?: unknown };
+}
+
+interface RunpodOutput {
+  choices?: RunpodChatChoice[];
+}
+
+interface RunpodResponse {
+  output?: RunpodOutput | RunpodOutput[];
+}
+
+interface ModelCitation {
+  record_id: string;
+  source?: string;
+}
+
+interface ConstrainedModelResponse {
+  analysis?: unknown;
+  citations?: unknown;
+  risks?: unknown;
+  confidence?: unknown;
+}
 
 function buildSchema(recordIds: string[]) {
   return {
@@ -90,10 +113,11 @@ async function callConstrained(
       headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
-    const data = await res.json() as any;
+    const data = await res.json() as RunpodResponse;
     let out = data.output;
     if (Array.isArray(out)) out = out[0] ?? {};
-    return out?.choices?.[0]?.message?.content ?? '';
+    const content = out?.choices?.[0]?.message?.content;
+    return typeof content === 'string' ? content : '';
   };
 
   let text = await doCall();
@@ -136,11 +160,21 @@ async function main() {
     const sys = buildIntelligenceSystemPrompt(entry.taskType as IntelligenceMode);
     try {
       const { text, latencyMs } = await callConstrained(entry.query, sys, schema);
-      const parsed = JSON.parse(text) as any;
-      const answer = parsed.analysis ?? '';
-      const citations = parsed.citations ?? [];
-      const risks = parsed.risks ?? [];
-      const confidence = parsed.confidence ?? 0;
+      const parsed = JSON.parse(text) as ConstrainedModelResponse;
+      const answer = typeof parsed.analysis === 'string' ? parsed.analysis : '';
+      const citations: ModelCitation[] = Array.isArray(parsed.citations)
+        ? parsed.citations.filter(
+            (citation): citation is ModelCitation =>
+              typeof citation === 'object' &&
+              citation !== null &&
+              typeof (citation as { record_id?: unknown }).record_id === 'string',
+          )
+        : [];
+      const risks: string[] = Array.isArray(parsed.risks)
+        ? parsed.risks.filter((risk): risk is string => typeof risk === 'string')
+        : [];
+      const confidence =
+        typeof parsed.confidence === 'number' && Number.isFinite(parsed.confidence) ? parsed.confidence : 0;
 
       const citationAcc = scoreCitationAccuracy(entry.expectedCitations, citations);
       const faithfulness = scoreFaithfulness(answer, [entry.query]);
