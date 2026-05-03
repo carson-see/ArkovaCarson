@@ -85,9 +85,18 @@ const SigningWorkflowMetadataSchema = z
 // ─── Request shape ────────────────────────────────────────────────────────
 export const PreSigningAnchorSchema = z
   .object({
+    // Lowercase canonicalization at parse time. SHA-256 fingerprints are
+    // case-insensitive but the same digest can be sent as `AA...` or `aa...`
+    // by different SDKs; persisting the raw casing would split idempotency
+    // lookups across two rows. Canonicalize once here so every downstream
+    // consumer (DB insert, idempotency check, audit_events, evidence
+    // package) sees the same string. The /api/v1/anchor handler does the
+    // same lowercase fold post-parse; doing it inside the schema makes the
+    // contract self-enforcing.
     fingerprint: z
       .string()
-      .regex(/^[a-fA-F0-9]{64}$/, 'must be a 64-character hex SHA-256 hash'),
+      .regex(/^[a-fA-F0-9]{64}$/, 'must be a 64-character hex SHA-256 hash')
+      .transform((s) => s.toLowerCase()),
     // For contracts the credential_type is fixed to CONTRACT_PRESIGNING.
     // `.default()` (not `.optional()`) makes the v1 contract deterministic
     // — every parsed request carries `credential_type: 'CONTRACT_PRESIGNING'`

@@ -280,6 +280,26 @@ describe('PreSigningAnchorSchema', () => {
       expect(result.data.credential_type).toBe('CONTRACT_PRESIGNING');
     }
   });
+
+  it('canonicalizes fingerprint to lowercase at parse time (idempotency lock)', () => {
+    const upper = 'A'.repeat(64);
+    const result = PreSigningAnchorSchema.safeParse({ ...VALID_BODY, fingerprint: upper });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      // Same digest in mixed case must parse to the same lowercase string,
+      // otherwise downstream idempotency lookup would split rows.
+      expect(result.data.fingerprint).toBe('a'.repeat(64));
+    }
+  });
+
+  it('canonicalizes mixed-case fingerprint to lowercase', () => {
+    const mixed = 'AaBbCcDdEeFf' + '0'.repeat(52);
+    const result = PreSigningAnchorSchema.safeParse({ ...VALID_BODY, fingerprint: mixed });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.fingerprint).toBe(mixed.toLowerCase());
+    }
+  });
 });
 
 // ─── Router-level scope-gate test (CodeRabbit major) ─────────────────────
@@ -317,5 +337,10 @@ describe('POST /api/v1/contracts/anchor-pre-signing — scope gate', () => {
     // Critical assertion: did NOT reach the handler. The 501 stub response
     // would mean the scope gate is missing.
     expect(res.body.error).not.toBe('not_implemented');
+    // Pin the exact requireScope error payload — proves 403 came from
+    // requireScope('anchor:write'), not from some other middleware that
+    // happened to return 403 with a different shape.
+    expect(res.body.error).toBe('insufficient_scope');
+    expect(res.body.required).toBe('anchor:write');
   });
 });
