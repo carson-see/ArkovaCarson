@@ -101,11 +101,11 @@ vi.mock('../utils/db.js', () => {
   selectChain.limit = vi.fn(() => selectChain);
   selectChain.range = mockSelectRange.mockImplementation(() => selectChain);
   selectChain.single = mockSelectSingle.mockResolvedValue({
-    data: { created_at: '2026-01-01T00:00:00Z' },
+    data: null,
     error: null,
   });
   selectChain.maybeSingle = mockSelectMaybeSingle.mockResolvedValue({
-    data: { id: 'threshold-anchor' },
+    data: null,
     error: null,
   });
   selectChain.then = (resolve?: (v: unknown) => unknown, reject?: (e: unknown) => unknown) => (
