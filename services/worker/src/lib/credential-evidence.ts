@@ -39,6 +39,11 @@ export const ANCHOR_CREDENTIAL_TYPES = [
   'IDENTITY',
   'OTHER',
 ] as const;
+// SCRUM-863 / SCRUM-1623 + SCRUM-1624 — pre/post-signing contract anchor
+// enum values are defined locally in
+// `services/worker/src/api/v1/contracts/anchor-pre-signing.ts` until
+// migration 0285 ships and `database.types.ts` is regenerated. The
+// SCRUM-1631 [Build] subtask folds them into ANCHOR_CREDENTIAL_TYPES.
 
 export const CREDENTIAL_EVIDENCE_VERIFICATION_LEVELS = [
   'issuer_anchored',
