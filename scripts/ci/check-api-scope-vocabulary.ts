@@ -123,43 +123,68 @@ function findStatementEnd(source: string, start: number): number {
 
 function findClosingBracket(source: string, start: number): number {
   let depth = 0;
-  let quote: '"' | "'" | null = null;
+  let cursor = start;
 
-  for (let cursor = start; cursor < source.length; cursor += 1) {
+  while (cursor < source.length) {
     const char = source[cursor];
     const next = source[cursor + 1];
 
-    if (quote) {
-      if (char === '\\') cursor += 1;
-      else if (char === quote) quote = null;
-      continue;
-    }
-
-    if (char === '"' || char === "'") {
-      quote = char;
+    if (isQuote(char)) {
+      cursor = skipQuotedLiteral(source, cursor, char);
       continue;
     }
 
     if (char === '/' && next === '/') {
-      const newline = source.indexOf('\n', cursor + 2);
-      cursor = newline === -1 ? source.length : newline;
+      cursor = skipLineComment(source, cursor);
       continue;
     }
 
     if (char === '/' && next === '*') {
-      const commentEnd = source.indexOf('*/', cursor + 2);
-      cursor = commentEnd === -1 ? source.length : commentEnd + 1;
+      cursor = skipBlockComment(source, cursor);
       continue;
     }
 
-    if (char === '[') depth += 1;
+    if (char === '[') {
+      depth += 1;
+      cursor += 1;
+      continue;
+    }
+
     if (char === ']') {
       depth -= 1;
       if (depth === 0) return cursor;
     }
+    cursor += 1;
   }
 
   return -1;
+}
+
+function isQuote(char: string): char is '"' | "'" {
+  return char === '"' || char === "'";
+}
+
+function skipQuotedLiteral(source: string, start: number, quote: '"' | "'"): number {
+  let cursor = start + 1;
+  while (cursor < source.length) {
+    if (source[cursor] === '\\') {
+      cursor += 2;
+      continue;
+    }
+    if (source[cursor] === quote) return cursor + 1;
+    cursor += 1;
+  }
+  return source.length;
+}
+
+function skipLineComment(source: string, start: number): number {
+  const newline = source.indexOf('\n', start + 2);
+  return newline === -1 ? source.length : newline + 1;
+}
+
+function skipBlockComment(source: string, start: number): number {
+  const commentEnd = source.indexOf('*/', start + 2);
+  return commentEnd === -1 ? source.length : commentEnd + 2;
 }
 
 function parseArrayItems(body: string): ArrayItem[] {
@@ -278,8 +303,8 @@ export function extractSqlConstraintScopes(sql: string, constraintName = 'api_ke
     .split('\n')
     .filter((line) => !line.trimStart().startsWith('--'))
     .join('\n');
-  const escapedName = constraintName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const constraintStart = uncommentedSql.search(new RegExp(`ADD\\s+CONSTRAINT\\s+${escapedName}`, 'i'));
+  const escapedName = constraintName.replaceAll(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
+  const constraintStart = uncommentedSql.search(new RegExp(String.raw`ADD\s+CONSTRAINT\s+${escapedName}`, 'i'));
   if (constraintStart === -1) return [];
 
   const afterConstraint = uncommentedSql.slice(constraintStart);
@@ -295,7 +320,7 @@ export function extractSqlConstraintScopes(sql: string, constraintName = 'api_ke
 
 export function extractMarkdownCodeScopes(markdown: string): string[] {
   const scopes: string[] = [];
-  const inlineOnlyMarkdown = markdown.replace(/```[\s\S]*?```/g, '');
+  const inlineOnlyMarkdown = markdown.replaceAll(/```[\s\S]*?```/g, '');
   const codeSpanRe = /`([^`]+)`/g;
   let match: RegExpExecArray | null;
   while ((match = codeSpanRe.exec(inlineOnlyMarkdown)) !== null) {
@@ -328,10 +353,16 @@ export function extractOpenApiCanonicalScopes(openApiYaml: string): string[] {
 
     const trimmed = line.trim();
     if (trimmed.startsWith('- ')) {
-      scopes.push(trimmed.slice(2).trim().replace(/^['"]|['"]$/g, ''));
+      scopes.push(stripYamlQuotes(trimmed.slice(2).trim()));
     }
   }
   return scopes;
+}
+
+function stripYamlQuotes(value: string): string {
+  if (value.length >= 2 && value.startsWith("'") && value.endsWith("'")) return value.slice(1, -1);
+  if (value.length >= 2 && value.startsWith('"') && value.endsWith('"')) return value.slice(1, -1);
+  return value;
 }
 
 function countLeadingSpaces(line: string): number {
@@ -355,53 +386,36 @@ function looksLikeScope(value: string): boolean {
 export function collectScopeVocabularyViolations(surfaces: ScopeVocabularySurfaces): ScopeVocabularyViolation[] {
   const worker = parseScopeVocabulary(surfaces.workerSource);
   const frontend = parseScopeVocabulary(surfaces.frontendSource);
-  const violations: ScopeVocabularyViolation[] = [];
+  const frontendViolations = SCOPE_ARRAY_NAMES.flatMap((name) => diffOrdered(`frontend ${name}`, worker[name], frontend[name]));
 
-  for (const name of SCOPE_ARRAY_NAMES) {
-    violations.push(...diffOrdered(`frontend ${name}`, worker[name], frontend[name]));
-  }
-
-  violations.push(
+  return [
+    ...frontendViolations,
     ...diffSet(
       'database api_keys_scopes_known_values CHECK constraint',
       worker.API_KEY_SCOPES,
       extractSqlConstraintScopes(surfaces.dbConstraintSql, 'api_keys_scopes_known_values'),
     ),
-  );
-
-  violations.push(
     ...diffSet(
       'database agents_allowed_scopes_known_values CHECK constraint',
       worker.API_KEY_SCOPES,
       extractSqlConstraintScopes(surfaces.dbConstraintSql, 'agents_allowed_scopes_known_values'),
     ),
-  );
-
-  violations.push(
     ...diffSet(
       'docs/api/README.md canonical scope table',
       worker.API_KEY_SCOPES,
       extractMarkdownCodeScopes(surfaces.apiReadmeMarkdown),
     ),
-  );
-
-  violations.push(
     ...diffSet(
       'docs/api/v2-migration.md v2 scope table',
       worker.API_V2_SCOPES,
       extractMarkdownSectionCodeScopes(surfaces.v2MigrationMarkdown, '## Authentication'),
     ),
-  );
-
-  violations.push(
     ...diffSet(
       'docs/api/openapi.yaml x-arkova-canonical-scopes',
       worker.API_KEY_SCOPES,
       extractOpenApiCanonicalScopes(surfaces.v1OpenApiYaml),
     ),
-  );
-
-  return violations;
+  ];
 }
 
 function latestScopeConstraintMigration(repo: string): string {
