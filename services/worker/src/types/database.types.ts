@@ -4571,6 +4571,7 @@ export type Database = {
           idempotency_key: string | null
           next_retry_at: string | null
           payload: Json
+          public_id: string
           response_body: string | null
           response_status: number | null
           status: string
@@ -4587,6 +4588,7 @@ export type Database = {
           idempotency_key?: string | null
           next_retry_at?: string | null
           payload: Json
+          public_id?: string
           response_body?: string | null
           response_status?: number | null
           status: string
@@ -4603,6 +4605,7 @@ export type Database = {
           idempotency_key?: string | null
           next_retry_at?: string | null
           payload?: Json
+          public_id?: string
           response_body?: string | null
           response_status?: number | null
           status?: string
@@ -4659,6 +4662,7 @@ export type Database = {
           id: string
           is_active: boolean
           org_id: string
+          public_id: string
           secret_hash: string
           updated_at: string
           url: string
@@ -4671,6 +4675,7 @@ export type Database = {
           id?: string
           is_active?: boolean
           org_id: string
+          public_id?: string
           secret_hash: string
           updated_at?: string
           url: string
@@ -4683,6 +4688,7 @@ export type Database = {
           id?: string
           is_active?: boolean
           org_id?: string
+          public_id?: string
           secret_hash?: string
           updated_at?: string
           url?: string
