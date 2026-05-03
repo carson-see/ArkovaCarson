@@ -71,6 +71,88 @@ vi.mock('../../webhooks/delivery.js', () => ({
   dispatchWebhookEvent: vi.fn(),
 }));
 
+// ───────────────────────────────────────────────────────────────────────────
+// Helpers for the static-source defense test below. Hoisted to module scope
+// per SonarCloud guidance (the linter wants these out of the describe-block
+// closure to avoid per-test reallocation + to keep each function under its
+// own complexity ceiling). Same behavior as the in-block versions; just
+// rebuilt for cleanliness.
+// ───────────────────────────────────────────────────────────────────────────
+
+/** Scan one body span, append any non-allowlisted `...ident` spread. */
+function collectSpreads(
+  span: string,
+  line: number,
+  allowlist: ReadonlySet<string>,
+  findings: Array<{ line: number; spread: string }>,
+): void {
+  const SPREAD = /\.\.\.([A-Za-z_$][\w$]*)/g;
+  let s: RegExpExecArray | null;
+  while ((s = SPREAD.exec(span)) !== null) {
+    if (!allowlist.has(s[1])) findings.push({ line, spread: `...${s[1]}` });
+  }
+}
+
+/** Walk one line forward from `start`, balancing parens; returns where
+ * the outer `)` closed (-1 if it didn't close on this line). */
+function scanLine(
+  line: string,
+  start: number,
+  initialDepth: number,
+): { closedAt: number; endDepth: number } {
+  let depth = initialDepth;
+  for (let j = start; j < line.length; j++) {
+    const c = line[j];
+    if (c === '(') depth++;
+    else if (c === ')') depth--;
+    if (depth === 0) return { closedAt: j, endDepth: 0 };
+  }
+  return { closedAt: -1, endDepth: depth };
+}
+
+/** Scan a source file for non-allowlisted spreads inside res.json(...) /
+ * res.status(...).json(...) call arguments. Returns the offending findings. */
+function findUntrustedResponseSpreads(
+  source: string,
+  allowlist: ReadonlySet<string>,
+): Array<{ line: number; spread: string }> {
+  const RESPONSE_OPEN = /\bres\s*(?:\.status\s*\([^)]*\))?\s*\.json\s*\(/g;
+  const findings: Array<{ line: number; spread: string }> = [];
+  const lines = source.split('\n');
+
+  let inResponse = false;
+  let startLine = 0;
+  let depth = 0;
+  let span = '';
+
+  for (let i = 0; i < lines.length; i++) {
+    let scanFrom = 0;
+
+    if (!inResponse) {
+      RESPONSE_OPEN.lastIndex = 0;
+      const m = RESPONSE_OPEN.exec(lines[i]);
+      if (!m) continue;
+      inResponse = true;
+      startLine = i + 1;
+      scanFrom = m.index + m[0].length;
+      depth = 1;
+      span = '';
+    }
+
+    const result = scanLine(lines[i], scanFrom, depth);
+    if (result.closedAt >= 0) {
+      span += (span ? '\n' : '') + lines[i].slice(scanFrom, result.closedAt);
+      collectSpreads(span, startLine, allowlist, findings);
+      inResponse = false;
+      span = '';
+    } else {
+      depth = result.endDepth;
+      span += (span ? '\n' : '') + lines[i].slice(scanFrom);
+    }
+  }
+  return findings;
+}
+
 describe('attestations.ts public shape (SCRUM-1444 / SCRUM-1271-B)', () => {
   const fullDbRow = {
     id: 'attestation-uuid-internal',
@@ -172,84 +254,9 @@ describe('attestations.ts public shape (SCRUM-1444 / SCRUM-1271-B)', () => {
   // allowlist with an explicit justification.
   // ───────────────────────────────────────────────────────────────────────
 
-  // Refactored 2026-05-03 to drop SonarCloud cognitive complexity from 43 → low.
-  // The original inline state machine grew complex enough that SonarCloud's
-  // 15-statement guard fired. Splitting into three small helpers keeps the
-  // logic readable and each piece below its own complexity ceiling.
-
-  /** Scan one body span, append any non-allowlisted `...ident` spread. */
-  function collectSpreads(
-    span: string,
-    line: number,
-    allowlist: ReadonlySet<string>,
-    findings: Array<{ line: number; spread: string }>,
-  ): void {
-    const SPREAD = /\.\.\.([A-Za-z_$][\w$]*)/g;
-    let s: RegExpExecArray | null;
-    while ((s = SPREAD.exec(span)) !== null) {
-      if (!allowlist.has(s[1])) findings.push({ line, spread: `...${s[1]}` });
-    }
-  }
-
-  /** Walk one line forward from `start`, balancing parens; returns where
-   * the outer `)` closed (-1 if it didn't close on this line). */
-  function scanLine(
-    line: string,
-    start: number,
-    initialDepth: number,
-  ): { closedAt: number; endDepth: number } {
-    let depth = initialDepth;
-    for (let j = start; j < line.length; j++) {
-      const c = line[j];
-      if (c === '(') depth++;
-      else if (c === ')') depth--;
-      if (depth === 0) return { closedAt: j, endDepth: 0 };
-    }
-    return { closedAt: -1, endDepth: depth };
-  }
-
-  /** Scan a source file for non-allowlisted spreads inside res.json(...) /
-   * res.status(...).json(...) call arguments. Returns the offending findings. */
-  function findUntrustedResponseSpreads(
-    source: string,
-    allowlist: ReadonlySet<string>,
-  ): Array<{ line: number; spread: string }> {
-    const RESPONSE_OPEN = /\bres\s*(?:\.status\s*\([^)]*\))?\s*\.json\s*\(/g;
-    const findings: Array<{ line: number; spread: string }> = [];
-    const lines = source.split('\n');
-
-    let inResponse = false;
-    let startLine = 0;
-    let depth = 0;
-    let span = '';
-
-    for (let i = 0; i < lines.length; i++) {
-      let scanFrom = 0;
-
-      if (!inResponse) {
-        RESPONSE_OPEN.lastIndex = 0;
-        const m = RESPONSE_OPEN.exec(lines[i]);
-        if (!m) continue;
-        inResponse = true;
-        startLine = i + 1;
-        scanFrom = m.index + m[0].length;
-        depth = 1;
-        span = '';
-      }
-
-      const result = scanLine(lines[i], scanFrom, depth);
-      if (result.closedAt >= 0) {
-        span += (span ? '\n' : '') + lines[i].slice(scanFrom, result.closedAt);
-        collectSpreads(span, startLine, allowlist, findings);
-        inResponse = false;
-        span = '';
-      } else {
-        depth = result.endDepth;
-        span += (span ? '\n' : '') + lines[i].slice(scanFrom);
-      }
-    }
-    return findings;
-  }
+  // Helpers `collectSpreads`, `scanLine`, `findUntrustedResponseSpreads`
+  // are at module scope (above the describe block) per SonarCloud's
+  // outer-scope guidance. See the comment block there.
 
   it('attestations.ts has no res.json() spread of untrusted rows (static-source defense)', () => {
     const here = dirname(fileURLToPath(import.meta.url));
