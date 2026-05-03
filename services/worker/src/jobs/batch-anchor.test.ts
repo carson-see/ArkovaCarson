@@ -14,12 +14,14 @@ const {
   mockSubmitFingerprint,
   mockEstimateCurrentFee,
   mockAnchorsUpdate,
+  mockCallRpc,
   mockLogger,
   setUpdateResult,
   _setUpdateResultQueue,
 } = vi.hoisted(() => {
   const mockSubmitFingerprint = vi.fn();
   const mockEstimateCurrentFee = vi.fn();
+  const mockCallRpc = vi.fn();
 
   // RACE-1: Update chain supports .eq() chaining + thenable
   // Supports both fixed results and per-call result queues
@@ -53,6 +55,7 @@ const {
     mockSubmitFingerprint,
     mockEstimateCurrentFee,
     mockAnchorsUpdate,
+    mockCallRpc,
     mockLogger,
     setUpdateResult,
     _setUpdateResultQueue: setUpdateResultQueue,
@@ -73,10 +76,7 @@ vi.mock('../config.js', () => ({
 }));
 
 vi.mock('../utils/rpc.js', () => ({
-  callRpc: vi.fn(() => Promise.resolve({
-    data: { PENDING: 3000, SUBMITTED: 0, BROADCASTING: 0, SECURED: 0, REVOKED: 0, total: 3000 },
-    error: null,
-  })),
+  callRpc: mockCallRpc,
 }));
 
 vi.mock('../chain/client.js', () => ({
@@ -147,6 +147,22 @@ const ANCHOR_A = { id: 'anchor-a', fingerprint: 'aa'.repeat(32), metadata: null 
 const ANCHOR_B = { id: 'anchor-b', fingerprint: 'bb'.repeat(32), metadata: null };
 const ANCHOR_C = { id: 'anchor-c', fingerprint: 'cc'.repeat(32), metadata: null };
 
+function fastCounts(pending: number) {
+  return { PENDING: pending, SUBMITTED: 0, BROADCASTING: 0, SECURED: 0, REVOKED: 0, total: pending };
+}
+
+function mockPendingBacklogReady(): void {
+  mockCallRpc.mockResolvedValue({ data: fastCounts(MIN_BATCH_THRESHOLD), error: null });
+  mockSelectSingle.mockResolvedValue({
+    data: { created_at: '2026-01-01T00:00:00Z' },
+    error: null,
+  });
+  mockSelectMaybeSingle.mockResolvedValue({
+    data: { id: 'threshold-anchor' },
+    error: null,
+  });
+}
+
 // ================================================================
 // processBatchAnchors
 // ================================================================
@@ -156,7 +172,10 @@ describe('processBatchAnchors', () => {
     vi.clearAllMocks();
 
     // Default: RPC returns empty (no pending anchors)
+    mockCallRpc.mockResolvedValue({ data: fastCounts(0), error: null });
     mockDbRpc.mockResolvedValue({ data: [], error: null });
+    mockSelectSingle.mockResolvedValue({ data: null, error: null });
+    mockSelectMaybeSingle.mockResolvedValue({ data: null, error: null });
     mockSubmitFingerprint.mockResolvedValue(MOCK_RECEIPT);
     mockEstimateCurrentFee.mockResolvedValue(1);
     setUpdateResult({ error: null, count: 1 });
@@ -173,6 +192,7 @@ describe('processBatchAnchors', () => {
     expect(result.batchId).toBeNull();
     expect(result.merkleRoot).toBeNull();
     expect(result.txId).toBeNull();
+    expect(mockDbRpc).not.toHaveBeenCalledWith('claim_pending_anchors', expect.any(Object));
   });
 
   it('returns 0 processed when RPC returns null data', async () => {
@@ -184,6 +204,7 @@ describe('processBatchAnchors', () => {
   });
 
   it('falls back to legacy path when claim RPC is migration-incompatible', async () => {
+    mockPendingBacklogReady();
     mockDbRpc.mockResolvedValue({
       data: null,
       error: {
@@ -203,6 +224,7 @@ describe('processBatchAnchors', () => {
   });
 
   it('scopes legacy fallback to orgId when old claim RPC signature is still deployed', async () => {
+    mockPendingBacklogReady();
     mockDbRpc.mockResolvedValue({
       data: null,
       error: {
@@ -238,6 +260,7 @@ describe('processBatchAnchors', () => {
   });
 
   it('does not use legacy fallback for non-migration claim RPC errors', async () => {
+    mockPendingBacklogReady();
     mockDbRpc.mockResolvedValue({
       data: null,
       error: { code: 'PGRST301', message: 'permission denied' },
@@ -258,6 +281,7 @@ describe('processBatchAnchors', () => {
   });
 
   it('does not use legacy fallback for missing helper errors unrelated to claim_pending_anchors', async () => {
+    mockPendingBacklogReady();
     mockDbRpc.mockResolvedValue({
       data: null,
       error: {
@@ -287,6 +311,7 @@ describe('processBatchAnchors', () => {
   // ---- Single anchor batch ----
 
   it('processes single anchor via batch (INEFF-2: MIN_BATCH_SIZE = 1)', async () => {
+    mockPendingBacklogReady();
     mockDbRpc
       .mockResolvedValueOnce({ data: [ANCHOR_A], error: null }) // claim
       .mockResolvedValueOnce({ data: 1, error: null }); // submit_batch_anchors
@@ -300,6 +325,7 @@ describe('processBatchAnchors', () => {
   // ---- Successful batch processing ----
 
   it('processes batch of 3 anchors: builds tree, publishes root, updates all', async () => {
+    mockPendingBacklogReady();
     mockDbRpc
       .mockResolvedValueOnce({ data: [ANCHOR_A, ANCHOR_B, ANCHOR_C], error: null }) // claim
       .mockResolvedValueOnce({ data: 3, error: null }); // submit_batch_anchors
@@ -313,6 +339,7 @@ describe('processBatchAnchors', () => {
   });
 
   it('passes orgId through to claim_pending_anchors for manual org queue runs', async () => {
+    mockPendingBacklogReady();
     mockDbRpc
       .mockResolvedValueOnce({ data: [ANCHOR_A, ANCHOR_B], error: null }) // claim
       .mockResolvedValueOnce({ data: 2, error: null }); // submit_batch_anchors
@@ -335,6 +362,7 @@ describe('processBatchAnchors', () => {
   });
 
   it('still enforces the fee ceiling for forced manual org queue runs', async () => {
+    mockPendingBacklogReady();
     mockEstimateCurrentFee.mockResolvedValueOnce(250);
 
     const result = await processBatchAnchors({ force: true, orgId: 'org-1' });
@@ -349,6 +377,7 @@ describe('processBatchAnchors', () => {
   });
 
   it('submits the Merkle root (not individual fingerprints) to chain', async () => {
+    mockPendingBacklogReady();
     mockDbRpc
       .mockResolvedValueOnce({ data: [ANCHOR_A, ANCHOR_B], error: null }) // claim
       .mockResolvedValueOnce({ data: 2, error: null }); // submit_batch_anchors
@@ -366,6 +395,7 @@ describe('processBatchAnchors', () => {
   });
 
   it('calls submit_batch_anchors RPC with correct params', async () => {
+    mockPendingBacklogReady();
     mockDbRpc
       .mockResolvedValueOnce({ data: [ANCHOR_A, ANCHOR_B], error: null }) // claim
       .mockResolvedValueOnce({ data: 2, error: null }); // submit_batch_anchors
@@ -384,6 +414,7 @@ describe('processBatchAnchors', () => {
   });
 
   it('stores Merkle root in submit_batch_anchors RPC call', async () => {
+    mockPendingBacklogReady();
     mockDbRpc
       .mockResolvedValueOnce({ data: [ANCHOR_A, ANCHOR_B], error: null }) // claim
       .mockResolvedValueOnce({ data: 2, error: null }); // submit_batch_anchors
@@ -400,6 +431,7 @@ describe('processBatchAnchors', () => {
   });
 
   it('marks all anchors as SUBMITTED via bulk RPC after successful publish', async () => {
+    mockPendingBacklogReady();
     mockDbRpc
       .mockResolvedValueOnce({ data: [ANCHOR_A, ANCHOR_B, ANCHOR_C], error: null }) // claim
       .mockResolvedValueOnce({ data: 3, error: null }); // submit_batch_anchors
@@ -416,6 +448,7 @@ describe('processBatchAnchors', () => {
   // ---- Chain publish failure ----
 
   it('returns 0 processed when chain submission fails', async () => {
+    mockPendingBacklogReady();
     mockDbRpc
       .mockResolvedValueOnce({ data: [ANCHOR_A, ANCHOR_B], error: null }); // claim
     mockSubmitFingerprint.mockRejectedValue(new Error('chain unavailable'));
@@ -429,6 +462,7 @@ describe('processBatchAnchors', () => {
   });
 
   it('does not update anchors to SUBMITTED when chain submission fails', async () => {
+    mockPendingBacklogReady();
     mockDbRpc
       .mockResolvedValueOnce({ data: [ANCHOR_A, ANCHOR_B], error: null }); // claim
     mockSubmitFingerprint.mockRejectedValue(new Error('timeout'));
@@ -460,6 +494,7 @@ describe('processBatchAnchors', () => {
   // Crucially: no code path here may set `status: 'PENDING'` after broadcast.
 
   it('retries submit_batch_anchors once if first call fails (transient timeout)', async () => {
+    mockPendingBacklogReady();
     mockDbRpc
       .mockResolvedValueOnce({ data: [ANCHOR_A, ANCHOR_B, ANCHOR_C], error: null }) // claim
       .mockResolvedValueOnce({ data: null, error: { message: 'statement timeout' } }) // RPC attempt #1
@@ -486,6 +521,7 @@ describe('processBatchAnchors', () => {
   });
 
   it('falls back to direct SUBMITTED update when submit_batch_anchors fails twice (prevents double-broadcast)', async () => {
+    mockPendingBacklogReady();
     mockDbRpc
       .mockResolvedValueOnce({ data: [ANCHOR_A, ANCHOR_B, ANCHOR_C], error: null }) // claim
       .mockResolvedValueOnce({ data: null, error: { message: 'statement timeout' } }) // RPC attempt #1
@@ -521,6 +557,7 @@ describe('processBatchAnchors', () => {
   });
 
   it('never reverts to PENDING after a successful chain broadcast', async () => {
+    mockPendingBacklogReady();
     // Both submit_batch_anchors attempts fail with a permanent-looking error.
     mockDbRpc
       .mockResolvedValueOnce({ data: [ANCHOR_A, ANCHOR_B], error: null }) // claim
@@ -538,6 +575,7 @@ describe('processBatchAnchors', () => {
   });
 
   it('reverts BROADCASTING → PENDING when chain broadcast itself fails (pre-tx-id)', async () => {
+    mockPendingBacklogReady();
     // Distinct from the post-broadcast path: if we never got a tx_id back,
     // the safe action is to release the claim so the next cron can retry.
     mockDbRpc
@@ -558,6 +596,7 @@ describe('processBatchAnchors', () => {
   // ---- Batch ID generation ----
 
   it('generates batch ID with timestamp and count', async () => {
+    mockPendingBacklogReady();
     mockDbRpc
       .mockResolvedValueOnce({ data: [ANCHOR_A, ANCHOR_B], error: null }) // claim
       .mockResolvedValueOnce({ data: 2, error: null }); // submit_batch_anchors
@@ -580,6 +619,7 @@ describe('processBatchAnchors', () => {
   // ---- Logging ----
 
   it('logs completion info with batch details', async () => {
+    mockPendingBacklogReady();
     mockDbRpc
       .mockResolvedValueOnce({ data: [ANCHOR_A, ANCHOR_B], error: null }) // claim
       .mockResolvedValueOnce({ data: 2, error: null }); // submit_batch_anchors
