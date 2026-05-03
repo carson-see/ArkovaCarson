@@ -18,10 +18,14 @@
  *   2. Walk forward through the method chain (the CallExpression is the
  *      `object` of the next MemberExpression, whose parent is another
  *      CallExpression, and so on).
- *   3. A link passes if it is `.eq('org_id', ...)` or
- *      `.eq('organization_id', ...)`. If any link passes, the chain is
- *      safe.
- *   4. Otherwise report at the `.from(...)` call site.
+ *   3. A read link passes if it is `.eq('org_id', ...)`,
+ *      `.eq('organization_id', ...)`, `.is('org_id', null)`, or
+ *      `.is('organization_id', null)`. The `.is(..., null)` form is reserved
+ *      for explicit system-level rows.
+ *   4. A write link passes if `.insert(...)` / `.upsert(...)` includes a
+ *      top-level org_id/organization_id key on every literal row object,
+ *      including `org_id: null` for explicit system events.
+ *   5. Otherwise report at the `.from(...)` call site.
  *
  * False-positive notes:
  *   - `organizations` itself is NOT in the list — reads by `public_id`
@@ -58,6 +62,30 @@ const MULTI_TENANT_TABLES = new Set([
 ]);
 
 const ORG_ID_COLUMNS = new Set(['org_id', 'organization_id']);
+
+function isOrgColumnArg(arg) {
+  return arg?.type === 'Literal' && typeof arg.value === 'string' && ORG_ID_COLUMNS.has(arg.value);
+}
+
+function objectExpressionHasOrgKey(node) {
+  if (!node || node.type !== 'ObjectExpression') return false;
+
+  return node.properties.some((property) => {
+    if (property.type !== 'Property') return false;
+    const key = property.key;
+    if (key.type === 'Identifier') return ORG_ID_COLUMNS.has(key.name);
+    if (key.type === 'Literal' && typeof key.value === 'string') return ORG_ID_COLUMNS.has(key.value);
+    return false;
+  });
+}
+
+function writeCallHasOrgScope(node) {
+  const rowsArg = node.arguments[0];
+  if (objectExpressionHasOrgKey(rowsArg)) return true;
+  if (!rowsArg || rowsArg.type !== 'ArrayExpression') return false;
+  if (rowsArg.elements.length === 0) return false;
+  return rowsArg.elements.every((element) => objectExpressionHasOrgKey(element));
+}
 
 /** @type {import('eslint').Rule.RuleModule} */
 module.exports = {
@@ -107,9 +135,15 @@ module.exports = {
           if (nextCall.callee !== parentMember) break;
 
           const method = parentMember.property;
-          if (method.type === 'Identifier' && method.name === 'eq' && nextCall.arguments.length >= 1) {
-            const colArg = nextCall.arguments[0];
-            if (colArg.type === 'Literal' && typeof colArg.value === 'string' && ORG_ID_COLUMNS.has(colArg.value)) {
+          if (method.type === 'Identifier') {
+            if ((method.name === 'eq' || method.name === 'is') && nextCall.arguments.length >= 1) {
+              if (isOrgColumnArg(nextCall.arguments[0])) {
+                hasOrgFilter = true;
+                break;
+              }
+            }
+
+            if ((method.name === 'insert' || method.name === 'upsert') && writeCallHasOrgScope(nextCall)) {
               hasOrgFilter = true;
               break;
             }
