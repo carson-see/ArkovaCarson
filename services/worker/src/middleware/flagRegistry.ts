@@ -95,12 +95,17 @@ class FeatureFlagRegistry {
       });
     }
 
-    // Load DB-backed flags (with env var fallback for stability)
+    // Load DB-backed flags (with env var fallback for stability).
+    // Schema: switchboard_flags(id uuid, flag_key text, enabled boolean, ...).
+    // See SCRUM-1622. Pre-fix code queried `select('id, value').in('id', DB_FLAGS)`
+    // which selected a non-existent column and compared the uuid PK against
+    // text flag names. The `as` cast hid the type mismatch. Every startup
+    // load errored and the registry was env-driven only.
     try {
       const { data, error } = await db
         .from('switchboard_flags')
-        .select('id, value')
-        .in('id', [...DB_FLAGS]);
+        .select('flag_key, enabled')
+        .in('flag_key', [...DB_FLAGS]);
 
       if (error) {
         logger.warn({ error }, 'Failed to load switchboard flags — falling back to env vars');
@@ -110,7 +115,7 @@ class FeatureFlagRegistry {
         }
       } else {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const dbFlagMap = new Map((data ?? []).map((r: any) => [r.id, r.value === true]));
+        const dbFlagMap = new Map((data ?? []).map((r: any) => [r.flag_key, r.enabled === true]));
         for (const key of DB_FLAGS) {
           // If flag not in DB, fall back to env var
           const envFallback = process.env[key] === 'true';
@@ -154,13 +159,14 @@ class FeatureFlagRegistry {
    */
   async refreshDbFlag(name: string): Promise<boolean> {
     try {
+      // Schema: see SCRUM-1622 — select `enabled` keyed by `flag_key`.
       const { data, error } = await db
         .from('switchboard_flags')
-        .select('value')
-        .eq('id', name)
-        .single() as { data: { value: boolean } | null; error: unknown };
+        .select('enabled')
+        .eq('flag_key', name)
+        .single() as { data: { enabled: boolean } | null; error: unknown };
 
-      const value = (!error && data) ? data.value === true : false;
+      const value = (!error && data) ? data.enabled === true : false;
       this.flags.set(name, { value, source: 'db', lastChecked: Date.now() });
       return value;
     } catch {

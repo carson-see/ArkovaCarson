@@ -49,15 +49,24 @@ async function readAIFlag(flagKey: AIFlagKey): Promise<boolean> {
     return cached.value;
   }
 
-  // Env var fallback: if DB query fails, check env (set in Cloud Run deploy)
+  // Env var fallback: if DB query fails, check env (set in Cloud Run deploy).
+  // The DB row is the source of truth; env var is a stabilizer for transient
+  // DB outages so a Supabase blip doesn't trip every gate to 503.
   const envFallback = process.env[flagKey] === 'true';
 
   try {
+    // Schema: switchboard_flags(id uuid, flag_key text, enabled boolean, ...).
+    // Earlier code queried `select('value').eq('id', flagKey)` — that
+    // (a) selected a column that doesn't exist, and (b) compared a uuid
+    // column against a string flag name. Every read errored and fell back
+    // to env var, making the DB-side flag system effectively dead code.
+    // The /admin/controls UI flips would land in the row but the runtime
+    // path was never reading them.
     const { data, error } = await db
       .from('switchboard_flags')
-      .select('value')
-      .eq('id', flagKey)
-      .single() as { data: { value: boolean } | null; error: unknown };
+      .select('enabled')
+      .eq('flag_key', flagKey)
+      .single() as { data: { enabled: boolean } | null; error: unknown };
 
     if (error || !data) {
       logger.warn({ error, flagKey, envFallback }, `Failed to read ${flagKey} flag from DB, falling back to env`);
@@ -65,7 +74,7 @@ async function readAIFlag(flagKey: AIFlagKey): Promise<boolean> {
       return envFallback;
     }
 
-    const enabled = data.value === true;
+    const enabled = data.enabled === true;
     aiFlags[flagKey] = { value: enabled, expiresAt: now + FLAG_CACHE_TTL_MS };
     return enabled;
   } catch (err) {
