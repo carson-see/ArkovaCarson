@@ -4,6 +4,7 @@ const { mockConfig, mockCronSchedule, mockLogger } = vi.hoisted(() => ({
   mockConfig: {
     nodeEnv: 'test',
     batchAnchorIntervalMinutes: 10,
+    disableInProcessAnchorCron: false,
   },
   mockCronSchedule: vi.fn(),
   mockLogger: {
@@ -54,16 +55,26 @@ describe('setupScheduledJobs', () => {
     expect(mockCronSchedule).toHaveBeenCalled();
   });
 
-  it('does not register Cloud Scheduler-owned cron in production', async () => {
+  it('keeps production in-process cron enabled by default', async () => {
     mockConfig.nodeEnv = 'production';
     const { setupScheduledJobs } = await import('./scheduled.js');
 
     setupScheduledJobs(true);
 
-    expect(mockCronSchedule).not.toHaveBeenCalled();
-    expect(mockLogger.info).toHaveBeenCalledWith(
+    expect(mockCronSchedule).toHaveBeenCalled();
+  });
+
+  it('skips anchor-table in-process cron in production when maintenance flag is enabled', async () => {
+    mockConfig.nodeEnv = 'production';
+    mockConfig.disableInProcessAnchorCron = true;
+    const { setupScheduledJobs } = await import('./scheduled.js');
+
+    setupScheduledJobs(true);
+
+    expect(mockCronSchedule).toHaveBeenCalledTimes(5);
+    expect(mockLogger.warn).toHaveBeenCalledWith(
       { jobName: 'process-pending-anchors', expression: '* * * * *' },
-      'Skipping in-process cron in production; Cloud Scheduler owns this job',
+      'Skipping in-process anchor cron in production because DISABLE_IN_PROCESS_ANCHOR_CRON=true',
     );
   });
 });

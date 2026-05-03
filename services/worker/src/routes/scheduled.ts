@@ -25,27 +25,26 @@ import { withCronMonitoring } from '../utils/sentry.js';
 
 type CronTask = Parameters<typeof cron.schedule>[1];
 
-const CLOUD_SCHEDULER_OWNED_PRODUCTION_JOBS = new Set([
+const ANCHOR_TABLE_IN_PROCESS_JOBS = new Set([
   'recover-stuck-broadcasts',
   'process-pending-anchors',
   'process-batch-anchors',
   'check-submitted-confirmations',
   'process-revoked-anchors',
-  'process-webhook-retries',
-  'process-monthly-credits',
-  'cleanup-expired-data',
   'detect-reorgs',
   'monitor-stuck-transactions',
   'rebroadcast-dropped-transactions',
-  'consolidate-utxos',
-  'monitor-fee-rates',
 ]);
 
 function scheduleInProcess(jobName: string, expression: string, task: CronTask): void {
-  if (config.nodeEnv === 'production' && CLOUD_SCHEDULER_OWNED_PRODUCTION_JOBS.has(jobName)) {
-    logger.info(
+  if (
+    config.nodeEnv === 'production'
+    && config.disableInProcessAnchorCron
+    && ANCHOR_TABLE_IN_PROCESS_JOBS.has(jobName)
+  ) {
+    logger.warn(
       { jobName, expression },
-      'Skipping in-process cron in production; Cloud Scheduler owns this job',
+      'Skipping in-process anchor cron in production because DISABLE_IN_PROCESS_ANCHOR_CRON=true',
     );
     return;
   }
