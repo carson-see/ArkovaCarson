@@ -815,6 +815,7 @@ export const PUBLIC_ATTESTATION_VERIFY_LABELS = {
   ATTESTOR_CREDENTIAL_CHAIN: 'Attestor Credential Chain',
   VERIFY_CREDENTIAL: 'Verify Credential',
   VERIFY: 'Verify',
+  BYTES_SUFFIX: ' bytes',
 } as const;
 
 // =============================================================================

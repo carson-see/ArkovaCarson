@@ -100,7 +100,7 @@ def test_get_attestation_includes_evidence_and_attestor_credentials() -> None:
                 "evidence_fingerprint": "b" * 64,
                 "evidence": [
                     {
-                        "public_id": "AEV-ABCDEF123456",
+                        "public_id": "AEV-ABCDEF1234567890ABCDEF1234567890",
                         "evidence_type": "document",
                         "description": "Court filing",
                         "fingerprint": "b" * 64,
@@ -141,7 +141,7 @@ def test_get_attestation_includes_evidence_and_attestor_credentials() -> None:
     client = httpx.Client(base_url="https://api.example", transport=_mock_transport(handler))
     sdk = Arkova(base_url="https://api.example", client=client)
     result = sdk.get_attestation("ARK-ATT-1", include_credentials=True)
-    assert result.evidence[0].public_id == "AEV-ABCDEF123456"
+    assert result.evidence[0].public_id == "AEV-ABCDEF1234567890ABCDEF1234567890"
     assert result.evidence[0].mime == "application/pdf"
     assert result.chain_proof == {"tx_id": "tx-att", "block_height": 800000, "timestamp": None, "explorer_url": None}
     assert result.linked_credential is not None

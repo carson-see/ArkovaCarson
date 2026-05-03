@@ -366,7 +366,7 @@ describe('Attestation rich evidence helpers', () => {
     const { toPublicEvidenceItem } = await import('./attestations.js');
     const item = toPublicEvidenceItem({
       id: 'internal-evidence-id',
-      public_id: 'AEV-ABCDEF123456',
+      public_id: 'AEV-ABCDEF1234567890ABCDEF1234567890',
       evidence_type: 'document',
       description: 'Court filing',
       fingerprint: 'a'.repeat(64),
@@ -376,8 +376,8 @@ describe('Attestation rich evidence helpers', () => {
     });
 
     expect(item).toEqual({
-      id: 'AEV-ABCDEF123456',
-      public_id: 'AEV-ABCDEF123456',
+      id: 'AEV-ABCDEF1234567890ABCDEF1234567890',
+      public_id: 'AEV-ABCDEF1234567890ABCDEF1234567890',
       evidence_type: 'document',
       description: 'Court filing',
       fingerprint: 'a'.repeat(64),

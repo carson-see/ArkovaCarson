@@ -557,10 +557,14 @@ paths:
         - name: include
           in: query
           required: false
+          style: form
+          explode: false
           schema:
-            type: string
-            enum: [credentials]
-          description: Optional comma-separated include list. Use credentials to include the attestor credential lineage, capped at the current credential plus two parent levels. Omit this parameter to preserve the default response shape.
+            type: array
+            items:
+              type: string
+              enum: [credentials]
+          description: Optional comma-separated include list. Use credentials to include the attestor credential lineage, capped at the current credential plus two parent levels. Omit this parameter to receive the default response shape.
       responses:
         "200":
           description: Full attestation details
@@ -587,8 +591,8 @@ paths:
                 fingerprint: "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
                 evidence_fingerprint: "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
                 evidence:
-                  - public_id: "AEV-ABCDEF123456"
-                    id: "AEV-ABCDEF123456"
+                  - public_id: "AEV-ABCDEF1234567890ABCDEF1234567890"
+                    id: "AEV-ABCDEF1234567890ABCDEF1234567890"
                     evidence_type: "document"
                     description: "Registrar source record"
                     fingerprint: "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
@@ -1268,6 +1272,16 @@ components:
           enum: [credential, entity, process, asset]
         subject_identifier:
           type: string
+        subject:
+          type: object
+          deprecated: true
+          description: Deprecated v1 compatibility object mirroring subject_type and subject_identifier.
+          properties:
+            type:
+              type: string
+              enum: [credential, entity, process, asset]
+            identifier:
+              type: string
         fingerprint:
           type: string
           nullable: true
@@ -1368,15 +1382,15 @@ components:
 
     AttestationEvidence:
       type: object
-      required: [id, public_id, evidence_type, fingerprint, mime, size, created_at]
+      required: [id, public_id, evidence_type, fingerprint, created_at]
       properties:
         id:
           type: string
-          pattern: "^AEV-[A-F0-9]{12}$"
+          pattern: "^AEV-[A-F0-9]{32}$"
           description: v1 back-compat alias for public_id; never an internal UUID
         public_id:
           type: string
-          pattern: "^AEV-[A-F0-9]{12}$"
+          pattern: "^AEV-[A-F0-9]{32}$"
           description: Public evidence metadata identifier
         evidence_type:
           type: string

@@ -97,8 +97,8 @@ describe('SCRUM-1442 — v1 response schemas', () => {
 
   it('AttestationEvidenceShape allows only a public id alias, never an internal id', () => {
     const ok = AttestationEvidenceShape.safeParse({
-      id: 'AEV-ABCDEF123456',
-      public_id: 'AEV-ABCDEF123456',
+      id: 'AEV-ABCDEF1234567890ABCDEF1234567890',
+      public_id: 'AEV-ABCDEF1234567890ABCDEF1234567890',
       evidence_type: 'photo',
       description: 'Selfie of credential',
       fingerprint: 'b'.repeat(64),
@@ -110,7 +110,7 @@ describe('SCRUM-1442 — v1 response schemas', () => {
 
     const withInternalId = AttestationEvidenceShape.safeParse({
       id: 'evidence-uuid',
-      public_id: 'AEV-ABCDEF123456',
+      public_id: 'AEV-ABCDEF1234567890ABCDEF1234567890',
       evidence_type: 'photo',
       description: 'Selfie',
       fingerprint: 'b'.repeat(64),

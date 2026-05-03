@@ -267,7 +267,7 @@ describe('getAttestation', () => {
         fingerprint: 'a'.repeat(64),
         evidence_fingerprint: 'b'.repeat(64),
         evidence: [{
-          public_id: 'AEV-ABCDEF123456',
+          public_id: 'AEV-ABCDEF1234567890ABCDEF1234567890',
           evidence_type: 'document',
           description: 'Court filing',
           fingerprint: 'b'.repeat(64),
@@ -304,7 +304,7 @@ describe('getAttestation', () => {
 
     const result = await client.getAttestation('ARK-ATT-1', { includeCredentials: true });
 
-    expect(result.evidence[0].publicId).toBe('AEV-ABCDEF123456');
+    expect(result.evidence[0].publicId).toBe('AEV-ABCDEF1234567890ABCDEF1234567890');
     expect(result.evidence[0].mime).toBe('application/pdf');
     expect(result.linkedCredential?.credentialType).toBeNull();
     expect(result.attestorCredentials?.[0].parentPublicId).toBe('ARK-LAW-0');

@@ -556,13 +556,21 @@ export const openApiSpec: Record<string, any> = {
     '/attestations/{publicId}': {
       get: {
         summary: 'Get attestation',
-        description: 'Retrieve a single public attestation. The default response is unchanged; pass include=credentials to add a bounded attestor credential chain.',
+        description: 'Retrieve a single public attestation. Omit include to receive the default response shape; pass include=credentials to add a bounded attestor credential chain.',
         operationId: 'getAttestation',
         tags: ['Attestations'],
         security: [],
         parameters: [
           { name: 'publicId', in: 'path', required: true, schema: { type: 'string', minLength: 3 } },
-          { name: 'include', in: 'query', required: false, schema: { type: 'string', enum: ['credentials'] }, description: 'Use credentials to include attestor_credentials, capped at the current linked credential plus two parent levels.' },
+          {
+            name: 'include',
+            in: 'query',
+            required: false,
+            style: 'form',
+            explode: false,
+            schema: { type: 'array', items: { type: 'string', enum: ['credentials'] } },
+            description: 'Optional comma-separated include list. Use credentials to include attestor_credentials, capped at the current linked credential plus two parent levels.',
+          },
         ],
         responses: {
           '200': { description: 'Attestation details', content: { 'application/json': { schema: { $ref: '#/components/schemas/Attestation' } } } },
@@ -1084,10 +1092,10 @@ export const openApiSpec: Record<string, any> = {
       },
       AttestationEvidence: {
         type: 'object',
-        required: ['id', 'public_id', 'evidence_type', 'fingerprint', 'mime', 'size', 'created_at'],
+        required: ['id', 'public_id', 'evidence_type', 'fingerprint', 'created_at'],
         properties: {
-          id: { type: 'string', pattern: '^AEV-[A-F0-9]{12}$', description: 'v1 back-compat alias for public_id; never an internal UUID' },
-          public_id: { type: 'string', pattern: '^AEV-[A-F0-9]{12}$' },
+          id: { type: 'string', pattern: '^AEV-[A-F0-9]{32}$', description: 'v1 back-compat alias for public_id; never an internal UUID' },
+          public_id: { type: 'string', pattern: '^AEV-[A-F0-9]{32}$' },
           evidence_type: { type: 'string' },
           description: { type: 'string', nullable: true },
           fingerprint: { type: 'string', pattern: '^[a-fA-F0-9]{64}$' },
@@ -1144,6 +1152,15 @@ export const openApiSpec: Record<string, any> = {
           status: { type: 'string' },
           subject_type: { type: 'string', enum: ['credential', 'entity', 'process', 'asset'] },
           subject_identifier: { type: 'string' },
+          subject: {
+            type: 'object',
+            deprecated: true,
+            description: 'Deprecated v1 compatibility object mirroring subject_type and subject_identifier.',
+            properties: {
+              type: { type: 'string', enum: ['credential', 'entity', 'process', 'asset'] },
+              identifier: { type: 'string' },
+            },
+          },
           attester: {
             type: 'object',
             required: ['name', 'type'],

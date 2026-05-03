@@ -404,7 +404,7 @@ export function PublicAttestationVerifyPage() {
                             <div className="mt-1 flex flex-wrap gap-2 text-[10px] text-[#bbc9cf]">
                               <span>{item.public_id}</span>
                               {item.mime && <span>{item.mime}</span>}
-                              {item.size !== null && <span>{item.size.toLocaleString()} bytes</span>}
+                              {item.size !== null && <span>{item.size.toLocaleString()}{PUBLIC_ATTESTATION_VERIFY_LABELS.BYTES_SUFFIX}</span>}
                             </div>
                             {item.description && (
                               <p className="mt-1 text-xs text-[#bbc9cf]">{item.description}</p>

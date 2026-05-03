@@ -19,11 +19,11 @@ ALTER TABLE public.attestation_evidence
   ADD COLUMN IF NOT EXISTS size_bytes bigint;
 
 UPDATE public.attestation_evidence
-SET public_id = 'AEV-' || upper(substr(replace(id::text, '-', ''), 1, 12))
+SET public_id = 'AEV-' || upper(replace(id::text, '-', ''))
 WHERE public_id IS NULL;
 
 ALTER TABLE public.attestation_evidence
-  ALTER COLUMN public_id SET DEFAULT ('AEV-' || upper(substr(replace(gen_random_uuid()::text, '-', ''), 1, 12))),
+  ALTER COLUMN public_id SET DEFAULT ('AEV-' || upper(replace(gen_random_uuid()::text, '-', ''))),
   ALTER COLUMN public_id SET NOT NULL;
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_attestation_evidence_public_id
@@ -32,7 +32,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_attestation_evidence_public_id
 ALTER TABLE public.attestation_evidence
   DROP CONSTRAINT IF EXISTS attestation_evidence_public_id_format,
   ADD CONSTRAINT attestation_evidence_public_id_format
-    CHECK (public_id ~ '^AEV-[A-F0-9]{12}$');
+    CHECK (public_id ~ '^AEV-[A-F0-9]{32}$');
 
 ALTER TABLE public.attestation_evidence
   DROP CONSTRAINT IF EXISTS attestation_evidence_size_nonnegative,
@@ -119,9 +119,11 @@ BEGIN
 END;
 $$;
 
-GRANT EXECUTE ON FUNCTION get_anchor_lineage(text) TO authenticated, anon;
+REVOKE EXECUTE ON FUNCTION get_anchor_lineage(text) FROM PUBLIC;
+REVOKE EXECUTE ON FUNCTION get_anchor_lineage(text) FROM anon;
+GRANT EXECUTE ON FUNCTION get_anchor_lineage(text) TO authenticated, service_role;
 
 COMMENT ON FUNCTION get_anchor_lineage(text) IS
-  'ARK-104/SCRUM-897: return public-safe lineage for the chain containing p_public_id, including credential_type for attestor credential APIs. Emits no internal UUIDs.';
+  'ARK-104/SCRUM-897: return public-safe lineage for the chain containing p_public_id, including credential_type for worker-mediated attestor credential APIs. Emits no internal UUIDs; direct anon RPC access is revoked.';
 
 NOTIFY pgrst, 'reload schema';

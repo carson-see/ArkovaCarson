@@ -173,7 +173,7 @@ export function shouldIncludeAttestorCredentials(include: unknown): boolean {
 }
 
 function evidencePublicId(): string {
-  return `AEV-${randomUUID().replace(/-/g, '').slice(0, 12).toUpperCase()}`;
+  return `AEV-${randomUUID().replace(/-/g, '').toUpperCase()}`;
 }
 
 function hasMetadataValues(metadata: AttestationMetadata | undefined): boolean {
@@ -524,6 +524,10 @@ router.get('/:publicId', async (req: Request, res: Response) => {
       // Subject
       subject_type: attestation.subject_type,
       subject_identifier: attestation.subject_identifier,
+      subject: {
+        type: attestation.subject_type,
+        identifier: attestation.subject_identifier,
+      },
       // Attester
       attester: {
         name: attestation.attester_name,
