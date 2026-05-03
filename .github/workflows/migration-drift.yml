@@ -174,8 +174,11 @@ jobs:
 
           missing=$(
             while IFS= read -r local_name; do
+              local_version="${local_name%%_*}"
               canonical_suffix=$(echo "$local_name" | sed -E 's/^[0-9]{4}[a-z]?_//')
-              if grep -Fxq "$local_name" "$prod_keys_file" || grep -Fxq "$canonical_suffix" "$prod_keys_file"; then
+              if grep -Fxq "$local_name" "$prod_keys_file" \
+                || grep -Fxq "$local_version" "$prod_keys_file" \
+                || grep -Fxq "$canonical_suffix" "$prod_keys_file"; then
                 continue
               fi
               echo "$local_name"

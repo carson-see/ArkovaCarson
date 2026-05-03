@@ -74,8 +74,9 @@ export function findMissingMigrations(
 
   const missing = localNames
     .filter((name) => {
+      const localVersion = name.split('_')[0];
       const canonicalSuffix = name.replace(/^[0-9]{4}[a-z]?_/, '');
-      return !prodSet.has(name) && !prodSet.has(canonicalSuffix);
+      return !prodSet.has(name) && !prodSet.has(localVersion) && !prodSet.has(canonicalSuffix);
     })
     .filter((name) => !exemptRegex.test(name))
     .sort((a, b) => a.localeCompare(b));
@@ -156,6 +157,13 @@ describe('SCRUM-908: findMissingMigrations — core diff logic', () => {
 
   it('normalizes null migration names to the version fallback identity', () => {
     expect(normalizeProdMigrationKeys({ version: '0001', name: null })).toEqual(['0001']);
+  });
+
+  it('matches version-only prod rows against the local migration prefix', () => {
+    const local = ['0279_x402_payments_org_scoping'];
+    const prod = [{ version: '0279', name: null }];
+    const result = findMissingMigrations(local, prod, EXEMPT_REGEX);
+    expect(result).toEqual([]);
   });
 
   it('normalizes operator-applied SCRUM prefixes to canonical suffixes', () => {
