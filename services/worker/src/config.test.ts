@@ -468,6 +468,15 @@ describe('SCRUM-1258 batch 2 — feature flags + observability + treasury', () =
     });
   });
 
+  it('keeps the in-process anchor cron maintenance switch off by default', async () => {
+    await withConfig({}, (mod) => {
+      expect(mod.config.disableInProcessAnchorCron).toBe(false);
+    });
+    await withConfig({ DISABLE_IN_PROCESS_ANCHOR_CRON: 'true' }, (mod) => {
+      expect(mod.config.disableInProcessAnchorCron).toBe(true);
+    });
+  });
+
   it('coerces ENABLE_* env strings to booleans', async () => {
     await withConfig(
       {

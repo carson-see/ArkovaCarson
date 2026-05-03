@@ -100,6 +100,9 @@ jobs:
       - name: Block tracked filenames with spaces (SCRUM-1294)
         run: npx tsx scripts/ci/check-filename-spaces.ts
 
+      - name: Block duplicate source artifacts and repo-copy worktrees (SCRUM-1586)
+        run: npm run ci:duplicate-artifacts
+
       - name: Block migration prefix collisions (SCRUM-1287)
         run: npx tsx scripts/ci/check-migration-prefix-uniqueness.ts
 
@@ -454,6 +457,9 @@ jobs:
       - name: Verify 429 responses include Retry-After
         run: npm run ci:retry-after-429
 
+      - name: Verify agent API contract drift guards
+        run: npm run ci:api-contract-drift
+
       - name: TypeScript check (edge workers)
         env:
           NODE_OPTIONS: '--max-old-space-size=8192'
@@ -634,6 +640,106 @@ jobs:
       - name: Skip notice
         if: steps.ai-changed.outputs.changed != 'true'
         run: echo "No AI prompt/model changes detected — skipping eval gate"
+
+  # SCRUM-1549 — golden distribution audit visibility.
+  # This is intentionally informational while the committed audit evidence is
+  # known to fail SCRUM-710's 5k/30-per-type/200-fraud gate. The job still runs
+  # on every relevant PR so failed audit status is visible in CI instead of
+  # living only in a markdown artifact. Set GOLDEN_AUDIT_ENFORCE=true when the
+  # remediation data lands and this becomes a blocking launch gate.
+  golden-distribution-audit:
+    name: Golden Distribution Audit
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      GOLDEN_AUDIT_ENFORCE: ${{ vars.GOLDEN_AUDIT_ENFORCE || 'false' }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: Check if golden audit inputs changed
+        id: golden-changed
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || 'HEAD~1' }}
+        run: |
+          if git diff --name-only "$BASE_SHA" HEAD | grep -qE '^(.github/workflows/ci\.yml|services/worker/scripts/golden-distribution-audit\.ts|services/worker/scripts/golden-distribution-audit\.test\.ts|services/worker/training-data/|services/worker/docs/eval/golden-audit|services/worker/package\.json|services/worker/eslint\.config\.js)'; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup Node.js
+        if: steps.golden-changed.outputs.changed == 'true'
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: '20'
+
+      - name: Install worker dependencies
+        if: steps.golden-changed.outputs.changed == 'true'
+        working-directory: services/worker
+        run: npm ci --ignore-scripts
+
+      - name: Run golden distribution audit
+        if: steps.golden-changed.outputs.changed == 'true'
+        working-directory: services/worker
+        run: |
+          set +e
+          npm run audit:golden -- --json --out "$RUNNER_TEMP/golden-audit.json"
+          audit_status=$?
+          set -e
+
+          if [ ! -s "$RUNNER_TEMP/golden-audit.json" ]; then
+            echo "::error title=Golden audit did not produce JSON::audit:golden exited $audit_status before writing a report"
+            exit "$audit_status"
+          fi
+
+          node <<'NODE'
+          const fs = require('node:fs');
+          let report;
+          try {
+            report = JSON.parse(fs.readFileSync(`${process.env.RUNNER_TEMP}/golden-audit.json`, 'utf8'));
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            console.log(`::error title=Golden audit JSON parse failed::${message}`);
+            process.exit(1);
+          }
+          const summary = ['## Golden Distribution Audit'];
+          summary.push('### CI fixture smoke');
+          summary.push(`- Verdict: ${report.passed ? 'PASSED' : 'FAILED'}`);
+          summary.push(`- Total rows: ${report.audit.totalRows} / ${report.gate.minTotal}`);
+          summary.push(`- Fraud-positive rows: ${report.audit.fraudPositive} / ${report.gate.minFraudPositive}`);
+          summary.push(`- Unparseable rows: ${report.audit.unparseableRows}`);
+          summary.push(`- Types under floor: ${report.typesUnderFloor.length}`);
+          const evidencePath = 'docs/eval/golden-audit-2026-04-29.md';
+          if (fs.existsSync(evidencePath)) {
+            const evidence = fs.readFileSync(evidencePath, 'utf8');
+            const verdict = evidence.match(/\*\*Verdict\.\*\* (PASSED|FAILED)/)?.[1] ?? 'UNKNOWN';
+            const total = evidence.match(/\| Total rows \| ([^|]+) \| ([^|]+) \| ([^|]+) \|/) ?? [];
+            const fraud = evidence.match(/\| Fraud-positive entries \| ([^|]+) \| ([^|]+) \| ([^|]+) \|/) ?? [];
+            const underFloor = evidence.match(/\| Types under [^|]+ \| ([^|]+) \| ([^|]+) \| ([^|]+) \|/) ?? [];
+            summary.push('');
+            summary.push('### Committed SCRUM-710 evidence');
+            summary.push(`- Verdict: ${verdict}`);
+            if (total.length) summary.push(`- Total rows: ${total[1].trim()} / ${total[2].trim()} (${total[3].trim()})`);
+            if (fraud.length) summary.push(`- Fraud-positive rows: ${fraud[1].trim()} / ${fraud[2].trim()} (${fraud[3].trim()})`);
+            if (underFloor.length) summary.push(`- Types under floor: ${underFloor[1].trim()} / ${underFloor[2].trim()} (${underFloor[3].trim()})`);
+            if (verdict === 'FAILED') {
+              console.log('::warning title=Committed golden audit evidence failed::services/worker/docs/eval/golden-audit-2026-04-29.md records a FAILED SCRUM-710 gate.');
+              if (process.env.GOLDEN_AUDIT_ENFORCE === 'true') process.exit(1);
+            }
+          }
+          fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${summary.join('\n')}\n`);
+          if (!report.passed) {
+            console.log(`::warning title=Golden audit failed::Dataset remains below SCRUM-710 gate: totalGap=${report.totalGap}, fraudGap=${report.fraudGap}, unparseableGap=${report.unparseableGap}, typesUnderFloor=${report.typesUnderFloor.length}`);
+            if (process.env.GOLDEN_AUDIT_ENFORCE === 'true') process.exit(1);
+          }
+          NODE
+
+      - name: Skip notice
+        if: steps.golden-changed.outputs.changed != 'true'
+        run: echo "No golden audit inputs changed — skipping distribution audit"
 
   # TLA+ state machine verification (TLA-02)
   tla-verify:

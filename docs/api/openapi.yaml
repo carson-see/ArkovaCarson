@@ -904,7 +904,7 @@ components:
           description: Deep link to network explorer
         description:
           type: string
-          description: Immutable credential description
+          description: Immutable credential description, omitted when not present
         compliance_controls:
           type: object
           nullable: true
@@ -960,6 +960,20 @@ components:
           description: >-
             API-RICH-01: Size of the source document in bytes (client-side
             metadata only).
+        confidence_scores:
+          type: object
+          nullable: true
+          additionalProperties: true
+          description: >-
+            API-RICH-02: Per-field confidence scores from the latest extraction
+            manifest. REST responses use snake_case; SDKs expose this as
+            confidenceScores.
+        sub_type:
+          type: string
+          nullable: true
+          description: >-
+            API-RICH-02: Fine-grained credential subtype from anchors.sub_type.
+            REST responses use snake_case; SDKs expose this as subType.
         error:
           type: string
 
@@ -1048,10 +1062,40 @@ components:
           type: number
           minimum: 0
           maximum: 1
+        confidenceScores:
+          type: object
+          nullable: true
+          additionalProperties: true
+          description: API-RICH-02 per-field confidence scores from the extraction manifest.
+        subType:
+          type: string
+          nullable: true
+          description: API-RICH-02 fine-grained credential subtype when extracted.
+        description:
+          type: string
+          nullable: true
+          description: API-RICH-02 human-readable credential summary when extracted.
+        fraudSignals:
+          type: array
+          nullable: true
+          description: >-
+            Fraud indicators returned by /ai/extract when the extraction model
+            emits them. /verify responses do not return fraudSignals today.
+          items:
+            type: object
+            additionalProperties: true
         provider:
           type: string
-        tokensUsed:
+        creditsRemaining:
           type: integer
+          nullable: true
+        manifestHash:
+          type: string
+        degraded:
+          type: boolean
+        fallbackReason:
+          type: string
+          nullable: true
 
     CreateAttestationRequest:
       type: object

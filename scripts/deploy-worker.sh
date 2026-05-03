@@ -40,13 +40,21 @@ CRITICAL_ENV_VARS=(
   "CRON_OIDC_AUDIENCE"
 )
 
-# Required values — deploy fails if these don't match
-declare -A REQUIRED_VALUES=(
-  ["BITCOIN_UTXO_PROVIDER"]="mempool"
-  ["BITCOIN_NETWORK"]="mainnet"
-  ["ENABLE_PROD_NETWORK_ANCHORING"]="true"
-  ["KMS_PROVIDER"]="gcp"
-  ["NODE_ENV"]="production"
+# Required values — deploy fails if these don't match.
+# Keep this Bash 3 compatible because macOS ships Bash 3.2 by default.
+REQUIRED_KEYS=(
+  "BITCOIN_UTXO_PROVIDER"
+  "BITCOIN_NETWORK"
+  "ENABLE_PROD_NETWORK_ANCHORING"
+  "KMS_PROVIDER"
+  "NODE_ENV"
+)
+REQUIRED_EXPECTED=(
+  "mempool"
+  "mainnet"
+  "true"
+  "gcp"
+  "production"
 )
 
 DRY_RUN=false
@@ -74,6 +82,56 @@ warn()  { echo -e "\033[0;33m[WARN]\033[0m  $*" >&2; return; }
 error() { echo -e "\033[0;31m[ERROR]\033[0m $*" >&2; return; }
 ok()    { echo -e "\033[0;32m[OK]\033[0m    $*"; return; }
 
+set_current_var() {
+  local key="$1"
+  local value="$2"
+  local i
+  for i in "${!CURRENT_KEYS[@]}"; do
+    if [[ "${CURRENT_KEYS[$i]}" == "$key" ]]; then
+      CURRENT_VALUES[$i]="$value"
+      return
+    fi
+  done
+  CURRENT_KEYS+=("$key")
+  CURRENT_VALUES+=("$value")
+}
+
+get_current_var() {
+  local key="$1"
+  local i
+  for i in "${!CURRENT_KEYS[@]}"; do
+    if [[ "${CURRENT_KEYS[$i]}" == "$key" ]]; then
+      printf '%s' "${CURRENT_VALUES[$i]}"
+      return
+    fi
+  done
+}
+
+set_new_var() {
+  local key="$1"
+  local value="$2"
+  local i
+  for i in "${!NEW_KEYS[@]}"; do
+    if [[ "${NEW_KEYS[$i]}" == "$key" ]]; then
+      NEW_VALUES[$i]="$value"
+      return
+    fi
+  done
+  NEW_KEYS+=("$key")
+  NEW_VALUES+=("$value")
+}
+
+get_new_var() {
+  local key="$1"
+  local i
+  for i in "${!NEW_KEYS[@]}"; do
+    if [[ "${NEW_KEYS[$i]}" == "$key" ]]; then
+      printf '%s' "${NEW_VALUES[$i]}"
+      return
+    fi
+  done
+}
+
 # ─── Pre-flight checks ──────────────────────────────────────────────
 info "Pre-flight checks..."
 
@@ -99,7 +157,7 @@ info "Fetching current service state..."
 CURRENT_REVISION=$($GCLOUD run services describe "$SERVICE_NAME" \
   --region="$REGION" \
   --project="$PROJECT_ID" \
-  --format='value(status.traffic[0].revisionName)' 2>/dev/null || echo "unknown")
+  --format='value(status.latestReadyRevisionName)' 2>/dev/null || echo "unknown")
 
 SERVICE_URL=$($GCLOUD run services describe "$SERVICE_NAME" \
   --region="$REGION" \
@@ -152,29 +210,34 @@ fi
 # ─── Read current env vars from Cloud Run ────────────────────────────
 info "Reading current env vars from Cloud Run..."
 
-declare -A CURRENT_VARS
+CURRENT_KEYS=()
+CURRENT_VALUES=()
 while IFS= read -r line; do
-  # Extract KEY=VALUE pairs from the service description
-  if [[ "$line" =~ ^[[:space:]]*-[[:space:]]*name:[[:space:]]*(.+) ]]; then
-    CURRENT_KEY="${BASH_REMATCH[1]}"
-  elif [[ "$line" =~ ^[[:space:]]*value:[[:space:]]*(.+) ]]; then
-    CURRENT_VARS["$CURRENT_KEY"]="${BASH_REMATCH[1]}"
+  if [[ "$line" == *$'\t'* ]]; then
+    CURRENT_KEY="${line%%$'\t'*}"
+    CURRENT_VALUE="${line#*$'\t'}"
+    set_current_var "$CURRENT_KEY" "$CURRENT_VALUE"
   fi
 done < <($GCLOUD run services describe "$SERVICE_NAME" \
   --region="$REGION" \
   --project="$PROJECT_ID" \
-  --format='yaml(spec.template.spec.containers[0].env)' 2>/dev/null || echo "")
+  --format='json(spec.template.spec.containers[0].env)' 2>/dev/null \
+  | jq -r '.spec.template.spec.containers[0].env[]? | select(has("value")) | [.name, .value] | @tsv' || echo "")
 
 # ─── Validate required values ────────────────────────────────────────
 info "Validating critical env vars..."
 
-for var in "${!REQUIRED_VALUES[@]}"; do
-  EXPECTED="${REQUIRED_VALUES[$var]}"
-  ACTUAL="${CURRENT_VARS[$var]:-NOT_SET}"
+for i in "${!REQUIRED_KEYS[@]}"; do
+  var="${REQUIRED_KEYS[$i]}"
+  EXPECTED="${REQUIRED_EXPECTED[$i]}"
+  ACTUAL="$(get_current_var "$var")"
+  if [[ -z "$ACTUAL" ]]; then
+    ACTUAL="NOT_SET"
+  fi
 
   if [[ "$ACTUAL" != "$EXPECTED" ]]; then
     warn "$var: current='$ACTUAL', expected='$EXPECTED' — will be corrected"
-    CURRENT_VARS["$var"]="$EXPECTED"
+    set_current_var "$var" "$EXPECTED"
   else
     ok "$var=$ACTUAL"
   fi
@@ -184,18 +247,28 @@ done
 # Use the separator trick to handle values with commas
 ENV_PAIRS=()
 for var in "${CRITICAL_ENV_VARS[@]}"; do
-  VAL="${CURRENT_VARS[$var]:-}"
+  VAL="$(get_current_var "$var")"
   if [[ -n "$VAL" ]]; then
     ENV_PAIRS+=("${var}=${VAL}")
   fi
 done
 
-# Join with || separator (Cloud Run --set-env-vars separator)
-ENV_STRING=$(IFS='||'; echo "${ENV_PAIRS[*]}")
+# Join with || separator (Cloud Run --set-env-vars separator).
+ENV_STRING=""
+for pair in "${ENV_PAIRS[@]}"; do
+  if [[ -z "$ENV_STRING" ]]; then
+    ENV_STRING="$pair"
+  else
+    ENV_STRING="${ENV_STRING}||${pair}"
+  fi
+done
 
 info "Env vars to set:"
 for var in "${CRITICAL_ENV_VARS[@]}"; do
-  VAL="${CURRENT_VARS[$var]:-NOT_SET}"
+  VAL="$(get_current_var "$var")"
+  if [[ -z "$VAL" ]]; then
+    VAL="NOT_SET"
+  fi
   # Mask sensitive-looking values
   if [[ "$var" == *KEY* || "$var" == *SECRET* || "$var" == *WIF* ]]; then
     echo "  $var=***"
@@ -233,7 +306,7 @@ $GCLOUD run deploy "$SERVICE_NAME" \
 NEW_REVISION=$($GCLOUD run services describe "$SERVICE_NAME" \
   --region="$REGION" \
   --project="$PROJECT_ID" \
-  --format='value(status.traffic[0].revisionName)' 2>/dev/null || echo "unknown")
+  --format='value(status.latestReadyRevisionName)' 2>/dev/null || echo "unknown")
 
 info "New revision: $NEW_REVISION"
 
@@ -268,21 +341,27 @@ ok "Health check passed"
 info "Verifying env vars on new revision..."
 VERIFY_FAILED=false
 
-declare -A NEW_VARS
+NEW_KEYS=()
+NEW_VALUES=()
 while IFS= read -r line; do
-  if [[ "$line" =~ ^[[:space:]]*-[[:space:]]*name:[[:space:]]*(.+) ]]; then
-    VERIFY_KEY="${BASH_REMATCH[1]}"
-  elif [[ "$line" =~ ^[[:space:]]*value:[[:space:]]*(.+) ]]; then
-    NEW_VARS["$VERIFY_KEY"]="${BASH_REMATCH[1]}"
+  if [[ "$line" == *$'\t'* ]]; then
+    VERIFY_KEY="${line%%$'\t'*}"
+    VERIFY_VALUE="${line#*$'\t'}"
+    set_new_var "$VERIFY_KEY" "$VERIFY_VALUE"
   fi
 done < <($GCLOUD run services describe "$SERVICE_NAME" \
   --region="$REGION" \
   --project="$PROJECT_ID" \
-  --format='yaml(spec.template.spec.containers[0].env)' 2>/dev/null || echo "")
+  --format='json(spec.template.spec.containers[0].env)' 2>/dev/null \
+  | jq -r '.spec.template.spec.containers[0].env[]? | select(has("value")) | [.name, .value] | @tsv' || echo "")
 
-for var in "${!REQUIRED_VALUES[@]}"; do
-  EXPECTED="${REQUIRED_VALUES[$var]}"
-  ACTUAL="${NEW_VARS[$var]:-NOT_SET}"
+for i in "${!REQUIRED_KEYS[@]}"; do
+  var="${REQUIRED_KEYS[$i]}"
+  EXPECTED="${REQUIRED_EXPECTED[$i]}"
+  ACTUAL="$(get_new_var "$var")"
+  if [[ -z "$ACTUAL" ]]; then
+    ACTUAL="NOT_SET"
+  fi
   if [[ "$ACTUAL" != "$EXPECTED" ]]; then
     error "VERIFICATION FAILED: $var='$ACTUAL' (expected '$EXPECTED')"
     VERIFY_FAILED=true

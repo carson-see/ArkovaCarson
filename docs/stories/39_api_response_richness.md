@@ -34,10 +34,10 @@ Every addition below is a **nullable field or a new endpoint**. No existing fiel
 
 | Field | Source | Purpose |
 |---|---|---|
-| `confidenceScores` (per-field dict) | `extraction_manifests.confidence_scores` | Downstream fraud-flag filtering without running own model |
-| `subType` | `extraction_manifests` Gemini v6 output | Fine-grained classification |
-| `description` | `extraction_manifests` Gemini v6 output | 1-2 sentence human-readable summary |
-| `fraudSignals` | cross-field fraud checks output | Array of fraud indicators (not just overall score) |
+| `/verify`: `confidence_scores`; `/ai/extract`: `confidenceScores` | `extraction_manifests.confidence_scores` | Downstream confidence filtering without running another model |
+| `/verify`: `sub_type`; `/ai/extract`: `subType` | `anchors.sub_type` on verification; Gemini v6 extraction fields on `/ai/extract` | Fine-grained classification |
+| `description` | `anchors.description` on verification; Gemini v6 extraction fields on `/ai/extract` | 1-2 sentence human-readable summary |
+| `/ai/extract`: `fraudSignals` | cross-field fraud checks output when emitted by extraction | Array of fraud indicators. `/verify` does not return `fraudSignals` today. |
 
 **Files:** `services/worker/src/routes/ai-extract.ts`, `services/worker/src/routes/verify.ts`, SDK type updates
 
@@ -108,7 +108,7 @@ Surfaces the VAI-01 verifiable-AI manifest (already stored in `extraction_manife
 ## Priority order
 
 1. **API-RICH-01** (Sprint 1) — highest user value per engineering hour, all DB columns already indexed.
-2. **API-RICH-02** (Sprint 3) — requires Gemini v6 cutover to land (only v6 populates `description` / `subType` in extraction_manifests).
+2. **API-RICH-02** (Sprint 3) — depends on Gemini v6 extraction fields plus persisted `anchors.description` / `anchors.sub_type`; `/verify` reads the persisted anchor fields and the latest extraction manifest confidence scores.
 3. **API-RICH-03** (Sprint 3) — independent, moderate effort.
 4. **API-RICH-04** (Sprint 4) — blocked on no one.
 5. **API-RICH-05** (Sprint 4) — only valuable when ZK proofs actually populate the column; currently sparse.

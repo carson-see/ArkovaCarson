@@ -14,6 +14,7 @@
     "lint": "eslint src/",
     "lint:copy": "tsx scripts/check-copy-terms.ts",
     "gen:types": "supabase gen types typescript --local > src/types/database.types.ts",
+    "ci:api-contract-drift": "tsx scripts/ci/check-api-contract-drift.ts",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "test:watch": "vitest",
@@ -26,6 +27,7 @@
     "audit:secrets": "tsx scripts/secrets/audit-env.ts",
     "ci:api-scope-vocabulary": "tsx scripts/ci/check-api-scope-vocabulary.ts",
     "ci:dep-pinning": "tsx scripts/ci/check-dep-pinning.ts",
+    "ci:duplicate-artifacts": "tsx scripts/ci/check-duplicate-artifacts.ts",
     "ci:retry-after-429": "tsx scripts/ci/check-retry-after-429.ts",
     "security:license-denylist": "tsx scripts/security/license-denylist.ts package-lock.json services/worker/package-lock.json"
   },

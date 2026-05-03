@@ -160,7 +160,7 @@ test.describe('Mobile Viewport (375px)', () => {
 
     test('record detail page renders without horizontal overflow', async ({ individualPage }) => {
       await individualPage.goto(`/records/${testAnchor.id}`);
-      await expect(individualPage.getByText('Record Details')).toBeVisible({ timeout: 10000 });
+      await expect(individualPage.getByRole('heading', { name: 'Record Details' })).toBeVisible({ timeout: 10000 });
 
       // No horizontal overflow
       const scrollWidth = await individualPage.evaluate(() => document.documentElement.scrollWidth);
@@ -170,7 +170,7 @@ test.describe('Mobile Viewport (375px)', () => {
 
     test('fingerprint text wraps properly on mobile', async ({ individualPage }) => {
       await individualPage.goto(`/records/${testAnchor.id}`);
-      await expect(individualPage.getByText('Record Details')).toBeVisible({ timeout: 10000 });
+      await expect(individualPage.getByRole('heading', { name: 'Record Details' })).toBeVisible({ timeout: 10000 });
 
       // Fingerprint should be visible (may be truncated or wrapped)
       const fingerprint = individualPage.getByText(/Document Fingerprint|Fingerprint/i);
