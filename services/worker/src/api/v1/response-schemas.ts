@@ -109,15 +109,21 @@ export type InsufficientCredits = z.infer<typeof InsufficientCreditsShape>;
 // `res.json(...)` arg and asserts no key in the literal matches this list.
 // Add new banned keys here when a new internal UUID surface is identified.
 export const BANNED_RESPONSE_KEYS = [
-  'org_id',         // internal organization UUID
-  'user_id',        // internal auth.users UUID
-  'actor_id',       // internal auth.users UUID (audit_events FK)
-  'registered_by',  // internal auth.users UUID (agents.registered_by)
-  'granted_by',     // internal auth.users UUID (org_credit_allocations)
-  'key_hash',       // HMAC of the raw API key
-  'secret_hash',    // HMAC of webhook secrets
-  'parent_org_id',  // internal organization UUID (only safe inside RPC results, not response bodies)
-  'child_org_id',   // same
+  'org_id',             // internal organization UUID
+  'user_id',            // internal auth.users UUID
+  'actor_id',           // internal auth.users UUID (audit_events FK)
+  'registered_by',      // internal auth.users UUID (agents.registered_by)
+  'granted_by',         // internal auth.users UUID (org_credit_allocations)
+  'key_hash',           // HMAC of the raw API key
+  'secret_hash',        // HMAC of webhook secrets
+  'parent_org_id',      // internal organization UUID (only safe inside RPC results, not response bodies)
+  'child_org_id',       // same
+  // Added in SCRUM-1444 (PR #653) — these are columns toPublicAttestation
+  // strips at the sanitizer boundary; including them here lets findBannedKeys()
+  // catch the same keys at runtime tests + CI lint, not just at sanitizer time.
+  'attester_user_id',   // internal auth.users UUID (attestations.attester_user_id)
+  'attester_org_id',    // internal organization UUID (attestations.attester_org_id)
+  'anchor_id',          // internal anchor UUID (attestations.anchor_id) — leak surface for cross-anchor enumeration
 ] as const;
 
 export type BannedResponseKey = (typeof BANNED_RESPONSE_KEYS)[number];
