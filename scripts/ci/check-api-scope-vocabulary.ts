@@ -146,11 +146,7 @@ function findClosingBracket(source: string, start: number): number {
 
     if (char === '[') {
       depth += 1;
-      cursor += 1;
-      continue;
-    }
-
-    if (char === ']') {
+    } else if (char === ']') {
       depth -= 1;
       if (depth === 0) return cursor;
     }

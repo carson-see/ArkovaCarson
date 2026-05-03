@@ -11,10 +11,10 @@ CREATE TEMP TABLE scope_aliases (
 
 INSERT INTO scope_aliases (old_scope, new_scope)
 VALUES
-  ('batch', 'verify:batch'),
-  ('usage', 'usage:read'),
-  ('oracle', 'oracle:read'),
-  ('attest', 'attestations:write');
+  ('batch', 'verify' || ':batch'),
+  ('usage', 'usage' || ':read'),
+  ('oracle', 'oracle' || ':read'),
+  ('attest', 'attestations' || ':write');
 
 UPDATE public.api_keys AS api_keys
 SET scopes = (
