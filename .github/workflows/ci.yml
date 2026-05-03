@@ -100,6 +100,9 @@ jobs:
       - name: Block tracked filenames with spaces (SCRUM-1294)
         run: npx tsx scripts/ci/check-filename-spaces.ts
 
+      - name: Block duplicate source artifacts and repo-copy worktrees (SCRUM-1586)
+        run: npm run ci:duplicate-artifacts
+
       - name: Block migration prefix collisions (SCRUM-1287)
         run: npx tsx scripts/ci/check-migration-prefix-uniqueness.ts
 
@@ -450,6 +453,9 @@ jobs:
 
       - name: Verify 429 responses include Retry-After
         run: npm run ci:retry-after-429
+
+      - name: Verify agent API contract drift guards
+        run: npm run ci:api-contract-drift
 
       - name: TypeScript check (edge workers)
         env:

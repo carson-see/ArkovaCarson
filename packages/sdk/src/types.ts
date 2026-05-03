@@ -105,8 +105,34 @@ export interface AnchorReceipt {
   networkReceiptId?: string;
 }
 
+/** Additive rich metadata returned by verification and anchor-detail endpoints */
+export interface RichVerificationFields {
+  /** Immutable credential description when present */
+  description?: string | null;
+  /** Regulatory control IDs mapped to this anchor */
+  complianceControls?: Record<string, unknown> | null;
+  /** Bitcoin block confirmations at anchor time */
+  chainConfirmations?: number | null;
+  /** Public ID of the parent anchor in a credential lineage */
+  parentPublicId?: string | null;
+  /** Version in the credential lineage */
+  versionNumber?: number | null;
+  /** Bitcoin transaction ID of the revocation */
+  revocationTxId?: string | null;
+  /** Bitcoin block height at which revocation was anchored */
+  revocationBlockHeight?: number | null;
+  /** Source document MIME type */
+  fileMime?: string | null;
+  /** Source document size in bytes */
+  fileSize?: number | null;
+  /** Per-field AI confidence scores from the latest extraction manifest */
+  confidenceScores?: Record<string, unknown> | null;
+  /** Fine-grained credential subtype */
+  subType?: string | null;
+}
+
 /** Result of a verification check */
-export interface VerificationResult {
+export interface VerificationResult extends RichVerificationFields {
   /** Whether the data matches the anchor */
   verified: boolean;
   /** Current anchor status */
@@ -187,7 +213,7 @@ export interface SearchResponse {
   nextCursor: string | null;
 }
 
-export interface FingerprintVerification {
+export interface FingerprintVerification extends RichVerificationFields {
   verified: boolean;
   status: string;
   fingerprint: string;
@@ -198,7 +224,7 @@ export interface FingerprintVerification {
   recordUri: string | null;
 }
 
-export interface AnchorDetails {
+export interface AnchorDetails extends RichVerificationFields {
   publicId: string;
   verified: boolean;
   status: string;
