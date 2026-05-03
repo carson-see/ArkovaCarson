@@ -39,6 +39,8 @@ jobs:
       # Read-only. No write anywhere.
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
 
       - name: Diff local migrations vs Supabase Management API
         # Skips the drift check gracefully when SUPABASE_ACCESS_TOKEN is not
@@ -68,8 +70,8 @@ jobs:
             exit 0
           fi
 
-          # Collect local migration filenames — strip extension, keep just the
-          # basename so we can compare against the Supabase `name` field.
+          # Collect local migration filenames — strip extension, keep the full
+          # basename (for example `0001_enums`).
           local_names=$(ls supabase/migrations/ 2>/dev/null | grep -E '\.sql$' | sed 's/\.sql$//' | sort -u)
           if [ -z "$local_names" ]; then
             echo "::error::No local migrations found at supabase/migrations/*.sql"
@@ -77,7 +79,10 @@ jobs:
           fi
 
           # Fetch prod applied migrations. Supabase Management API returns an
-          # array of { version, name, ... }.
+          # array of { version, name, ... }. The `name` field may omit the
+          # version prefix, so normalize to the local basename shape before
+          # diffing. Without this, a healthy prod history can look like a giant
+          # false-positive drift list.
           # Capture HTTP status separately so we can distinguish auth failure
           # (token expired/revoked) from genuine API errors.
           http_status=$(curl --silent --output /tmp/prod_response.json -w '%{http_code}' \
@@ -105,8 +110,22 @@ jobs:
             exit 1
           fi
 
-          # Extract names. jq filter: .[].name. Fallback: grep.
-          prod_names=$(echo "$prod_response" | jq -r '.[].name' 2>/dev/null | sort -u)
+          # Normalize applied migrations to the same identity as local files:
+          #   { version: "0001", name: "enums" }      -> 0001_enums
+          #   { version: "0001", name: "0001_enums" } -> 0001_enums
+          #   { version: "0001", name: null }         -> 0001
+          prod_names=$(echo "$prod_response" | jq -r '
+            .[]
+            | (.version | tostring) as $version
+            | ((.name // "") | tostring) as $name
+            | if $name == "" or $name == "null" then
+                $version
+              elif $name | startswith($version + "_") then
+                $name
+              else
+                "\($version)_\($name)"
+              end
+          ' 2>/dev/null | sort -u)
           if [ -z "$prod_names" ]; then
             echo "::error::Supabase Management API returned no migrations (unexpected)."
             echo "Response body preview:"
@@ -145,9 +164,36 @@ jobs:
 
           if [ "$missing_count" -gt 0 ]; then
             echo ""
+            if [ "${GITHUB_EVENT_NAME}" = "pull_request" ]; then
+              base_sha=$(jq -r '.pull_request.base.sha // empty' "$GITHUB_EVENT_PATH")
+              head_sha=$(jq -r '.pull_request.head.sha // empty' "$GITHUB_EVENT_PATH")
+              changed_migrations=$(
+                git diff --name-only "$base_sha" "$head_sha" -- 'supabase/migrations/*.sql' \
+                  | sed 's#^supabase/migrations/##' \
+                  | sed 's/\.sql$//' \
+                  | sort -u
+              )
+              changed_missing=$(comm -12 <(echo "$filtered_missing" | sort -u) <(echo "$changed_migrations" | sort -u))
+              changed_missing_count=$(echo "$changed_missing" | grep -c . || true)
+
+              if [ "$changed_missing_count" -eq 0 ]; then
+                echo "::warning title=Baseline migration drift detected::Production is missing $missing_count migrations from the base branch, but this PR does not add or modify any of those migration files. Tracking remains required via SCRUM-908; not blocking this PR on pre-existing drift."
+                echo "Baseline migrations missing in prod:"
+                echo "$filtered_missing" | sed 's/^/  - /'
+                exit 0
+              fi
+            fi
+
             echo "::error title=Migrations missing in prod::The following migrations exist in supabase/migrations/ but have NOT been applied to prod:"
             echo "$filtered_missing" | sed 's/^/  - /'
             echo ""
+
+            if [ "${GITHUB_EVENT_NAME}" = "pull_request" ]; then
+              echo "::error title=PR migrations missing in prod::This PR adds or modifies migrations that are not applied in prod:"
+              echo "$changed_missing" | sed 's/^/  - /'
+              echo ""
+            fi
+
             echo "Resolution (see docs/runbooks/migration-drift-playbook.md):"
             echo "  1. Review each missing migration for risk."
             echo "  2. Apply via Supabase MCP, \`supabase db push\`, or operator runbook."

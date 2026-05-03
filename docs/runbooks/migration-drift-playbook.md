@@ -10,8 +10,13 @@
 
 Every push to `main` and every PR touching `supabase/migrations/**` diffs
 the local migration file list against the Supabase Management API's
-applied-migrations set. If any local file is missing in prod, the check
-fails with the list of missing files.
+applied-migrations set. The check normalizes Supabase `{ version, name }`
+rows into local filename-shaped identities before comparing them.
+
+On `main`, any local file missing in prod fails the check. On PRs, the
+check blocks only when that PR adds or modifies a migration that is missing
+in prod; pre-existing base-branch drift is reported as a warning and must
+stay tracked in SCRUM-908 until resolved.
 
 Read-only: the action never applies or modifies anything.
 
