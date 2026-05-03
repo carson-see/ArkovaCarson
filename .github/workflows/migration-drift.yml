@@ -40,9 +40,27 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+      id-token: write
       # Read-only. No write anywhere.
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - id: gcp-auth
+        name: Authenticate to GCP via Workload Identity Federation
+        continue-on-error: true
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - id: supabase-management-token
+        name: Pull Supabase Management API token from GCP Secret Manager
+        if: steps.gcp-auth.outcome == 'success'
+        continue-on-error: true
+        uses: google-github-actions/get-secretmanager-secrets@bc9c54b29fdffb8a47776820a7d26e77b379d262 # v3.0.0
+        with:
+          secrets: |
+            token:arkova1/supabase-access-token
 
       - name: Diff local migrations vs Supabase Management API
         # Skips the drift check gracefully when SUPABASE_ACCESS_TOKEN is not
@@ -54,8 +72,9 @@ jobs:
           # project. Do not use anon/service_role JWTs, database passwords, or
           # project API keys here. Fine-grained tokens need
           # database_migrations_read and database_read.
-          # Store as GitHub Actions secret SUPABASE_ACCESS_TOKEN.
-          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          # Preferred source: GCP Secret Manager `arkova1/supabase-access-token`.
+          # Fallback: legacy GitHub Actions secret SUPABASE_ACCESS_TOKEN.
+          SUPABASE_ACCESS_TOKEN: ${{ steps.supabase-management-token.outputs.token || secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF || 'vzwyaatejekddvltxyye' }}
         run: |
           set -eo pipefail
@@ -171,6 +190,6 @@ jobs:
       - name: Check prod drain function body and grants
         if: ${{ hashFiles('supabase/migrations/0283_drain_submitted_to_secured_helper.sql') != '' }}
         env:
-          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_ACCESS_TOKEN: ${{ steps.supabase-management-token.outputs.token || secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF || 'vzwyaatejekddvltxyye' }}
         run: python3 scripts/ci/check-prod-drain-function.py
