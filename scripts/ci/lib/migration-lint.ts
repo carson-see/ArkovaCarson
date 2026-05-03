@@ -15,7 +15,9 @@ const DOLLAR_QUOTED_BLOCK = /\$([A-Za-z_]\w*)?\$[\s\S]*?\$\1\$/g;
 
 interface Baseline {
   /** Entries (filenames or table names — interpretation is per-lint) exempt from the rule. */
-  grandfathered: string[];
+  grandfathered?: string[];
+  /** Historical production-ledger drift exemptions for RLS policy coverage. */
+  missing_in_prod?: string[];
 }
 
 function blankPreservingNewlines(text: string): string {
@@ -126,7 +128,29 @@ function readCommentToken(sql: string, start: number): SqlToken | null {
 export function loadBaseline(baselinePath: string): Set<string> {
   if (!existsSync(baselinePath)) return new Set();
   const raw = JSON.parse(readFileSync(baselinePath, 'utf8')) as Baseline;
-  return new Set(raw.grandfathered);
+  return new Set([...(raw.missing_in_prod ?? []), ...(raw.grandfathered ?? [])].map((entry) => entry.toLowerCase()));
+}
+
+/**
+ * Normalize a public-schema SQL identifier to the unqualified lower-case name.
+ */
+export function normalizePublicIdent(raw: string): string {
+  return raw
+    .replaceAll(/^"public"\./gi, '')
+    .replaceAll(/^public\./gi, '')
+    .replaceAll(/^"|"$/g, '')
+    .toLowerCase();
+}
+
+function escapeRegExpLiteral(value: string): string {
+  return value.replaceAll(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
+}
+
+/**
+ * Regex source for matching `foo`, `public.foo`, or `"public"."foo"`.
+ */
+export function publicSchemaRefPattern(identifier: string): string {
+  return String.raw`(?:(?:"public"|public)\.)?"?${escapeRegExpLiteral(identifier)}"?\b`;
 }
 
 /**

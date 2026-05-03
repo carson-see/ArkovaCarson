@@ -16,9 +16,15 @@
  * Override: PR labeled `rls-no-policy-intentional`.
  */
 
-import { existsSync, readFileSync } from 'node:fs';
 import { resolve, join } from 'node:path';
-import { loadMigrations, stripSqlComments, stripSqlCommentsAndStringLiterals } from './lib/migration-lint';
+import {
+  loadBaseline,
+  loadMigrations,
+  normalizePublicIdent,
+  publicSchemaRefPattern,
+  stripSqlComments,
+  stripSqlCommentsAndStringLiterals,
+} from './lib/migration-lint';
 
 const OVERRIDE_LABEL = 'rls-no-policy-intentional';
 const REPO = process.env.RLS_POLICY_REPO_ROOT
@@ -28,42 +34,14 @@ const MIGRATIONS_DIR = join(REPO, 'supabase', 'migrations');
 const BASELINE_PATH = join(REPO, 'scripts', 'ci', 'snapshots', 'rls-policy-coverage-baseline.json');
 const prLabels = (process.env.PR_LABELS ?? '').split(',').map((s) => s.trim()).filter(Boolean);
 
-interface Baseline {
-  missing_in_prod?: string[];
-  grandfathered?: string[];
-}
-
 interface Finding {
   table: string;
   enabledIn: string;
 }
 
-function normalizeIdent(raw: string): string {
-  return raw
-    .replace(/^"public"\./i, '')
-    .replace(/^public\./i, '')
-    .replace(/^"|"$/g, '')
-    .toLowerCase();
-}
-
-function escapeRegex(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-function tableRefPattern(table: string): string {
-  const escaped = escapeRegex(table);
-  return `(?:(?:"public"|public)\\.)?"?${escaped}"?\\b`;
-}
-
-function loadBaseline(): Set<string> {
-  if (!existsSync(BASELINE_PATH)) return new Set();
-  const raw = JSON.parse(readFileSync(BASELINE_PATH, 'utf8')) as Baseline;
-  return new Set([...(raw.missing_in_prod ?? []), ...(raw.grandfathered ?? [])].map((t) => t.toLowerCase()));
-}
-
 function tableHasPolicy(sql: string, table: string): boolean {
   const re = new RegExp(
-    `CREATE\\s+POLICY\\s+(?:"[^"]+"|\\w+)\\s+ON\\s+${tableRefPattern(table)}`,
+    String.raw`CREATE\s+POLICY\s+(?:"[^"]+"|\w+)\s+ON\s+${publicSchemaRefPattern(table)}`,
     'i',
   );
   return re.test(sql);
@@ -71,19 +49,25 @@ function tableHasPolicy(sql: string, table: string): boolean {
 
 function tableHasDenyAllComment(sql: string, table: string): boolean {
   const re = new RegExp(
-    `COMMENT\\s+ON\\s+TABLE\\s+${tableRefPattern(table)}\\s+IS\\s+'[^']*[Dd]eny-?all\\s+by\\s+design[^']*'`,
+    String.raw`COMMENT\s+ON\s+TABLE\s+${publicSchemaRefPattern(table)}\s+IS\s+'[^']*[Dd]eny-?all\s+by\s+design[^']*'`,
     'i',
   );
   return re.test(sql);
 }
 
-function main(): void {
-  const baseline = loadBaseline();
-  const migrations = loadMigrations(MIGRATIONS_DIR);
-  const migrationPolicySources = migrations.map((migration) => ({
+type PolicySource = {
+  commentsVisible: string;
+  literalsHidden: string;
+};
+
+function buildPolicySources(migrations: ReturnType<typeof loadMigrations>): PolicySource[] {
+  return migrations.map((migration) => ({
     commentsVisible: stripSqlComments(migration.sql),
     literalsHidden: stripSqlCommentsAndStringLiterals(migration.sql),
   }));
+}
+
+function collectEnabledTables(migrations: ReturnType<typeof loadMigrations>): Map<string, string> {
   const enabledByTable = new Map<string, string>();
   const enableOrForceRe =
     /ALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?((?:(?:"public"|public)\.)?(?:"[^"]+"|\w+))\s+(?:ENABLE|FORCE)\s+ROW\s+LEVEL\s+SECURITY/gi;
@@ -91,25 +75,35 @@ function main(): void {
   for (const migration of migrations) {
     let match: RegExpExecArray | null;
     while ((match = enableOrForceRe.exec(migration.stripped)) !== null) {
-      const table = normalizeIdent(match[1]);
+      const table = normalizePublicIdent(match[1]);
       if (!enabledByTable.has(table)) {
         enabledByTable.set(table, migration.file);
       }
     }
   }
+  return enabledByTable;
+}
+
+function hasPolicyOrDenyAllComment(sources: PolicySource[], table: string): boolean {
+  return sources.some((migration) => {
+    return (
+      tableHasPolicy(migration.literalsHidden, table)
+      || tableHasDenyAllComment(migration.commentsVisible, table)
+    );
+  });
+}
+
+function main(): void {
+  const baseline = loadBaseline(BASELINE_PATH);
+  const migrations = loadMigrations(MIGRATIONS_DIR);
+  const migrationPolicySources = buildPolicySources(migrations);
+  const enabledByTable = collectEnabledTables(migrations);
 
   const findings: Finding[] = [];
   for (const [table, enabledIn] of enabledByTable) {
     if (baseline.has(table)) continue;
 
-    const hasPolicyOrComment = migrationPolicySources.some((migration) => {
-      return (
-        tableHasPolicy(migration.literalsHidden, table)
-        || tableHasDenyAllComment(migration.commentsVisible, table)
-      );
-    });
-
-    if (!hasPolicyOrComment) {
+    if (!hasPolicyOrDenyAllComment(migrationPolicySources, table)) {
       findings.push({ table, enabledIn });
     }
   }

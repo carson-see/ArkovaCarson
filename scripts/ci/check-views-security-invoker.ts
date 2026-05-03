@@ -15,10 +15,12 @@
  * Override: PR labeled `view-security-definer-intentional`.
  */
 
-import { existsSync, readFileSync } from 'node:fs';
 import { resolve, join } from 'node:path';
 import {
+  loadBaseline,
   loadMigrations,
+  normalizePublicIdent,
+  publicSchemaRefPattern,
   stripSqlCommentsAndStringLiterals,
   stripSqlStringLiterals,
 } from './lib/migration-lint';
@@ -35,23 +37,6 @@ interface Finding {
   file: string;
   view: string;
   line: number;
-}
-
-function normalizeIdent(raw: string): string {
-  return raw
-    .replace(/^"public"\./i, '')
-    .replace(/^public\./i, '')
-    .replace(/^"|"$/g, '')
-    .toLowerCase();
-}
-
-function escapeRegex(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-function viewRefPattern(view: string): string {
-  const escaped = escapeRegex(view);
-  return `(?:(?:"public"|public)\\.)?"?${escaped}"?\\b`;
 }
 
 function lineNumber(text: string, idx: number): number {
@@ -74,17 +59,11 @@ function alterSecurityInvokerRegex(view: string, cache: Map<string, RegExp>): Re
   if (cached) return cached;
 
   const re = new RegExp(
-    `ALTER\\s+VIEW\\s+(?:IF\\s+EXISTS\\s+)?${viewRefPattern(view)}\\s+SET\\s*\\(\\s*security_invoker\\s*=\\s*(?:true|on)\\s*\\)`,
+    String.raw`ALTER\s+VIEW\s+(?:IF\s+EXISTS\s+)?${publicSchemaRefPattern(view)}\s+SET\s*\(\s*security_invoker\s*=\s*(?:true|on)\s*\)`,
     'i',
   );
   cache.set(view, re);
   return re;
-}
-
-function loadBaseline(): Set<string> {
-  if (!existsSync(BASELINE_PATH)) return new Set();
-  const raw = JSON.parse(readFileSync(BASELINE_PATH, 'utf8')) as { grandfathered?: string[] };
-  return new Set((raw.grandfathered ?? []).map((entry) => entry.toLowerCase()));
 }
 
 function findViolations(file: string, strippedSql: string): Finding[] {
@@ -97,7 +76,7 @@ function findViolations(file: string, strippedSql: string): Finding[] {
   let match: RegExpExecArray | null;
   while ((match = createViewRe.exec(strippedSql)) !== null) {
     const rawView = match[1];
-    const view = normalizeIdent(rawView);
+    const view = normalizePublicIdent(rawView);
     const offset = match.index;
     const line = lineNumber(strippedSql, offset);
 
@@ -124,7 +103,7 @@ function findViolations(file: string, strippedSql: string): Finding[] {
 }
 
 function main(): void {
-  const baseline = loadBaseline();
+  const baseline = loadBaseline(BASELINE_PATH);
   const findings = loadMigrations(MIGRATIONS_DIR)
     .flatMap((migration) => findViolations(migration.file, migration.stripped))
     .filter((finding) => !baseline.has(finding.view) && !baseline.has(finding.file));
