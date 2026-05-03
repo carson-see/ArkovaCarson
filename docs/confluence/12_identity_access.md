@@ -14,7 +14,7 @@ Evidence rows expose public metadata only:
 - `mime` is the MIME type when known.
 - `size` is the artifact size in bytes when known.
 
-Internal evidence UUIDs must not appear in API responses, SDK models, UI copy, or screenshots. The metadata migration is `supabase/migrations/0284_attestation_evidence_public_metadata.sql`.
+Internal evidence UUIDs must not appear in API responses, SDK models, UI copy, or screenshots. The metadata migration is `supabase/migrations/0286_attestation_evidence_public_metadata.sql`.
 
 ### Attestor Credential Chain
 
