@@ -12,7 +12,8 @@
  * reshuffle blows up at import time, not silently at run time.
  */
 
-import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { afterEach, beforeEach } from 'vitest';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -59,6 +60,19 @@ export function makeTempMigrationsRepo(prefix: string): string {
   const root = mkdtempSync(join(tmpdir(), prefix));
   mkdirSync(join(root, 'supabase', 'migrations'), { recursive: true });
   return root;
+}
+
+export function useTempMigrationsRepo(prefix: string, setRoot: (repoRoot: string) => void): void {
+  let currentRoot = '';
+
+  beforeEach(() => {
+    currentRoot = makeTempMigrationsRepo(prefix);
+    setRoot(currentRoot);
+  });
+
+  afterEach(() => {
+    rmSync(currentRoot, { recursive: true, force: true });
+  });
 }
 
 export function writeMigrationFixture(repoRoot: string, file: string, sql: string): void {

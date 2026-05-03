@@ -2,12 +2,11 @@
  * Tests for check-rls-policy-coverage.ts (SCRUM-1275).
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { rmSync } from 'node:fs';
+import { describe, it, expect } from 'vitest';
 import { join } from 'node:path';
 import {
   runLintScript,
-  makeTempMigrationsRepo,
+  useTempMigrationsRepo,
   writeBaselineFixture,
   writeMigrationFixture,
 } from './lib/migration-lint-test-helpers';
@@ -31,14 +30,7 @@ function writeBaseline(repoRoot: string, grandfathered: string[]): void {
 
 describe('check-rls-policy-coverage', () => {
   let repoRoot: string;
-
-  beforeEach(() => {
-    repoRoot = makeTempMigrationsRepo('arkova-rls-coverage-');
-  });
-
-  afterEach(() => {
-    rmSync(repoRoot, { recursive: true, force: true });
-  });
+  useTempMigrationsRepo('arkova-rls-coverage-', (root) => { repoRoot = root; });
 
   it('passes when no migrations enable RLS', () => {
     writeMigration(repoRoot, '0001_init.sql', 'CREATE TABLE foo (id int);');

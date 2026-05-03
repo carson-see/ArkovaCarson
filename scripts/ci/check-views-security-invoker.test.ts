@@ -2,12 +2,11 @@
  * Tests for check-views-security-invoker.ts (SCRUM-1276).
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { rmSync } from 'node:fs';
+import { describe, it, expect } from 'vitest';
 import { join } from 'node:path';
 import {
   runLintScript,
-  makeTempMigrationsRepo,
+  useTempMigrationsRepo,
   writeBaselineFixture,
   writeMigrationFixture,
 } from './lib/migration-lint-test-helpers';
@@ -91,14 +90,7 @@ AS
 
 describe('check-views-security-invoker', () => {
   let repoRoot: string;
-
-  beforeEach(() => {
-    repoRoot = makeTempMigrationsRepo('arkova-view-lint-');
-  });
-
-  afterEach(() => {
-    rmSync(repoRoot, { recursive: true, force: true });
-  });
+  useTempMigrationsRepo('arkova-view-lint-', (root) => { repoRoot = root; });
 
   it('passes when no migrations create views', () => {
     writeMigration(repoRoot, '0001_init.sql', 'CREATE TABLE foo (id int);');
