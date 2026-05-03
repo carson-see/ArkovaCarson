@@ -43,6 +43,7 @@ vi.mock('../utils/sentry.js', () => ({ withCronMonitoring: vi.fn((_name, _schedu
 describe('setupScheduledJobs', () => {
   beforeEach(() => {
     mockConfig.nodeEnv = 'test';
+    mockConfig.disableInProcessAnchorCron = false;
     mockCronSchedule.mockClear();
     vi.clearAllMocks();
   });
@@ -52,7 +53,7 @@ describe('setupScheduledJobs', () => {
 
     setupScheduledJobs(true);
 
-    expect(mockCronSchedule).toHaveBeenCalled();
+    expect(mockCronSchedule).toHaveBeenCalledTimes(13);
   });
 
   it('keeps production in-process cron enabled by default', async () => {
@@ -61,7 +62,7 @@ describe('setupScheduledJobs', () => {
 
     setupScheduledJobs(true);
 
-    expect(mockCronSchedule).toHaveBeenCalled();
+    expect(mockCronSchedule).toHaveBeenCalledTimes(13);
   });
 
   it('skips anchor-table in-process cron in production when maintenance flag is enabled', async () => {
@@ -72,6 +73,7 @@ describe('setupScheduledJobs', () => {
     setupScheduledJobs(true);
 
     expect(mockCronSchedule).toHaveBeenCalledTimes(5);
+    expect(mockLogger.warn).toHaveBeenCalledTimes(8);
     expect(mockLogger.warn).toHaveBeenCalledWith(
       { jobName: 'process-pending-anchors', expression: '* * * * *' },
       'Skipping in-process anchor cron in production because DISABLE_IN_PROCESS_ANCHOR_CRON=true',
