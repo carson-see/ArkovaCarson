@@ -120,6 +120,22 @@ describe('parseGoldenLine', () => {
     expect(parseGoldenLine(line).credentialType).toBe('LICENSE');
   });
 
+  it('does not infer credentialType from prompt-only JSON examples', () => {
+    const line = chatLine([
+      { role: 'system', content: 'Example: {"credentialType":"DEGREE","fraudSignals":[]}' },
+      { role: 'user', content: 'Extract this credential without an explicit hint.' },
+    ]);
+    expect(parseGoldenLine(line).credentialType).toBeNull();
+  });
+
+  it('uses explicit prompt hint instead of prompt JSON examples', () => {
+    const line = chatLine([
+      { role: 'system', content: 'Example: {"credentialType":"DEGREE","fraudSignals":[]}' },
+      { role: 'user', content: 'Credential type hint: LICENSE\n--- text ---' },
+    ]);
+    expect(parseGoldenLine(line).credentialType).toBe('LICENSE');
+  });
+
   it('flags fraud-positive when fraudSignals array is non-empty', () => {
     const line = modelLine('{"credentialType":"DEGREE","fraudSignals":["defunct-institution"]}');
     expectParsed(line, {

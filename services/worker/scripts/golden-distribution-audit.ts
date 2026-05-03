@@ -222,13 +222,13 @@ function collectTextBlobs(parsed: unknown): TextBlobs {
 }
 
 /**
- * Find the credential type, preferring model output and using prompt hints only as fallback.
+ * Find the credential type, preferring model output and using explicit prompt hints only as fallback.
  */
-function findCredentialType(outputText: string, fallbackText: string): string | null {
-  const credentialMatch = CREDENTIAL_TYPE_RE.exec(outputText) ?? CREDENTIAL_TYPE_RE.exec(fallbackText);
+function findCredentialType(outputText: string, promptText: string): string | null {
+  const credentialMatch = CREDENTIAL_TYPE_RE.exec(outputText);
   if (credentialMatch) return credentialMatch[1];
 
-  const hintMatch = CREDENTIAL_HINT_RE.exec(fallbackText);
+  const hintMatch = CREDENTIAL_HINT_RE.exec(promptText);
   return hintMatch ? hintMatch[1].toUpperCase() : null;
 }
 
@@ -248,8 +248,8 @@ export function parseGoldenLine(line: string): GoldenRow {
   }
   const { outputBlobs, promptBlobs, structuredFraudPositive } = collectTextBlobs(parsed);
   const outputText = outputBlobs.join('\n');
-  const fallbackText = [outputText, promptBlobs.join('\n')].filter(Boolean).join('\n');
-  const credentialType = findCredentialType(outputText, fallbackText);
+  const promptText = promptBlobs.join('\n');
+  const credentialType = findCredentialType(outputText, promptText);
   const fraudPositive = structuredFraudPositive || (outputText !== '' && FRAUD_POSITIVE_RE.test(outputText));
   return { credentialType, fraudPositive };
 }
