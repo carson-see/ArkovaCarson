@@ -64,7 +64,7 @@ test.describe('Record Detail', () => {
       await expect(individualPage.getByText(/View and verify/i)).toBeVisible();
 
       // Status badge should show Secured
-      await expect(individualPage.getByText('Secured')).toBeVisible();
+      await expect(individualPage.getByText('Secured', { exact: true }).first()).toBeVisible();
     });
 
     test('shows document fingerprint with copy button', async ({ individualPage }) => {
@@ -73,10 +73,10 @@ test.describe('Record Detail', () => {
       await expect(individualPage.getByText('Record Details')).toBeVisible({ timeout: 10000 });
 
       // Fingerprint section
-      await expect(individualPage.getByText('Document Fingerprint')).toBeVisible();
+      await expect(individualPage.getByText(/Document Fingerprint/).first()).toBeVisible();
 
       // Copy button
-      const copyBtn = individualPage.getByRole('button', { name: /Copy/i });
+      const copyBtn = individualPage.getByRole('button', { name: /Copy document fingerprint/i });
       await expect(copyBtn).toBeVisible();
     });
 
@@ -128,7 +128,7 @@ test.describe('Record Detail', () => {
       await expect(individualPage.getByText('Record Details')).toBeVisible({ timeout: 10000 });
 
       // Status should show Pending
-      await expect(individualPage.getByText('Pending')).toBeVisible();
+      await expect(individualPage.getByText('Pending', { exact: true }).first()).toBeVisible();
     });
 
     test('does not show QR code for PENDING records', async ({ individualPage }) => {
@@ -149,6 +149,7 @@ test.describe('Record Detail', () => {
       await expect(
         individualPage.getByText(/Record Not Found/i)
           .or(individualPage.getByText(/does not exist/i))
+          .first()
       ).toBeVisible({ timeout: 10000 });
     });
   });

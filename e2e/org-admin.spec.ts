@@ -7,11 +7,17 @@
  * @created 2026-03-10 11:30 PM EST
  */
 
-import { test, expect, getServiceClient, createTestAnchor, deleteTestAnchor, SEED_USERS } from './fixtures';
+import { test, expect, getServiceClient, getSeedUserOrgId, createTestAnchor, deleteTestAnchor, SEED_USERS } from './fixtures';
 
 test.describe('Org Admin', () => {
   const serviceClient = getServiceClient();
   const createdAnchorIds: string[] = [];
+  let orgAdminOrgPath: string;
+
+  test.beforeAll(async () => {
+    const orgId = await getSeedUserOrgId(serviceClient, SEED_USERS.orgAdmin.id);
+    orgAdminOrgPath = `/organizations/${orgId}`;
+  });
 
   test.afterAll(async () => {
     for (const id of createdAnchorIds) {
@@ -21,30 +27,29 @@ test.describe('Org Admin', () => {
 
   test.describe('Organization Page', () => {
     test('org admin sees organization page with sections', async ({ orgAdminPage }) => {
-      await orgAdminPage.goto('/organization');
+      await orgAdminPage.goto(orgAdminOrgPath);
 
       // Page heading
-      await expect(
-        orgAdminPage.getByRole('heading', { name: 'Organization' })
-          .or(orgAdminPage.getByText('Organization'))
-      ).toBeVisible({ timeout: 10000 });
+      await expect(orgAdminPage.getByRole('heading', { name: /Acme Corp|Organization/i })).toBeVisible({ timeout: 10000 });
 
-      // Team Members section
-      await expect(orgAdminPage.getByText('Team Members')).toBeVisible();
+      // Current org profile tabs
+      await expect(orgAdminPage.getByRole('tab', { name: 'Home' })).toBeVisible();
+      await expect(orgAdminPage.getByRole('tab', { name: 'People' })).toBeVisible();
 
-      // Organization Records section
-      await expect(orgAdminPage.getByText('Organization Records')).toBeVisible();
+      // Home tab contains org records
+      await expect(orgAdminPage.getByRole('heading', { name: 'Records' })).toBeVisible();
     });
 
     test('members table shows team members', async ({ orgAdminPage }) => {
-      await orgAdminPage.goto('/organization');
-      await expect(orgAdminPage.getByText('Team Members')).toBeVisible({ timeout: 10000 });
+      await orgAdminPage.goto(orgAdminOrgPath);
+      await orgAdminPage.getByRole('tab', { name: 'People' }).click();
+      await expect(orgAdminPage.getByRole('heading', { name: 'People' })).toBeVisible({ timeout: 10000 });
 
       // Should show table headers or member data
       await expect(
-        orgAdminPage.getByText('Member')
-          .or(orgAdminPage.getByText('Role'))
+        orgAdminPage.getByRole('columnheader', { name: 'Member' })
           .or(orgAdminPage.getByText('No members yet'))
+          .first()
       ).toBeVisible();
     });
   });
@@ -59,22 +64,20 @@ test.describe('Org Admin', () => {
       });
       createdAnchorIds.push(anchor.id);
 
-      await orgAdminPage.goto('/organization');
-      await expect(orgAdminPage.getByText('Organization Records')).toBeVisible({ timeout: 10000 });
+      await orgAdminPage.goto(orgAdminOrgPath);
+      await expect(orgAdminPage.getByRole('heading', { name: 'Records' })).toBeVisible({ timeout: 10000 });
 
       // Search input should be visible
       const searchInput = orgAdminPage.getByPlaceholder(/Search by filename/i);
       await expect(searchInput).toBeVisible();
 
       // Status filter should be accessible
-      await expect(
-        orgAdminPage.getByText(/Status/i)
-      ).toBeVisible();
+      await expect(orgAdminPage.getByRole('combobox')).toBeVisible();
     });
 
     test('issue credential button opens form', async ({ orgAdminPage }) => {
-      await orgAdminPage.goto('/organization');
-      await expect(orgAdminPage.getByText('Organization Records')).toBeVisible({ timeout: 10000 });
+      await orgAdminPage.goto(orgAdminOrgPath);
+      await expect(orgAdminPage.getByRole('heading', { name: 'Records' })).toBeVisible({ timeout: 10000 });
 
       // Click Issue Credential button
       const issueBtn = orgAdminPage.getByRole('button', { name: /Issue Credential/i });
@@ -104,8 +107,8 @@ test.describe('Org Admin', () => {
     });
 
     test('export CSV button is present', async ({ orgAdminPage }) => {
-      await orgAdminPage.goto('/organization');
-      await expect(orgAdminPage.getByText('Organization Records')).toBeVisible({ timeout: 10000 });
+      await orgAdminPage.goto(orgAdminOrgPath);
+      await expect(orgAdminPage.getByRole('heading', { name: 'Records' })).toBeVisible({ timeout: 10000 });
 
       // Export CSV button should exist
       const exportBtn = orgAdminPage.getByRole('button', { name: /Export CSV/i });

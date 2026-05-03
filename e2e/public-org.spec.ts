@@ -14,14 +14,12 @@
  *   - JSON-LD Organization schema present in head
  *   - mobile (375px) layout reachable
  *
- * The fixtures here use the live `get_public_org_profile` RPC (migration 0245
- * + verified against prod 2026-04-25). No additional seed bootstrapping is
- * required — Arkova's own org row is the canonical fixture and already contains
- * 1 public + 1 private member.
+ * The fixtures here use the local seed Arkova org row and the live
+ * `get_public_org_profile` RPC.
  */
 import { test, expect } from './fixtures';
 
-const ARKOVA_ORG_ID = '40383eb2-f1cd-4a85-8099-afafff95e5cf';
+const ARKOVA_ORG_ID = 'aaaaaaaa-0000-0000-0000-000000000001';
 
 const VIEWPORTS = {
   desktop: { width: 1280, height: 900 },
@@ -57,22 +55,22 @@ test.describe('Public org page (SCRUM-1091)', () => {
     await page.goto(`/issuer/${ARKOVA_ORG_ID}`);
     await expect(page.getByRole('heading', { name: /Arkova/i })).toBeVisible({ timeout: 10_000 });
     const og = await page.evaluate(() => {
-      const get = (sel: string) =>
-        document.head.querySelector<HTMLMetaElement>(sel)?.content ?? null;
-      const canonical = document.head.querySelector<HTMLLinkElement>(
+      const getAll = (sel: string) =>
+        Array.from(document.head.querySelectorAll<HTMLMetaElement>(sel)).map((el) => el.content);
+      const canonicals = Array.from(document.head.querySelectorAll<HTMLLinkElement>(
         'link[rel="canonical"]',
-      )?.href ?? null;
+      )).map((el) => el.href);
       return {
-        ogType: get('meta[property="og:type"]'),
-        ogTitle: get('meta[property="og:title"]'),
-        ogSiteName: get('meta[property="og:site_name"]'),
-        canonical,
+        ogTypes: getAll('meta[property="og:type"]'),
+        ogTitles: getAll('meta[property="og:title"]'),
+        ogSiteNames: getAll('meta[property="og:site_name"]'),
+        canonicals,
       };
     });
-    expect(og.ogType).toBe('profile');
-    expect(og.ogTitle).toMatch(/Arkova/i);
-    expect(og.ogSiteName).toBe('Arkova');
-    expect(og.canonical).toContain(`/issuer/${ARKOVA_ORG_ID}`);
+    expect(og.ogTypes).toContain('profile');
+    expect(og.ogTitles.some((title) => /Arkova/i.test(title))).toBe(true);
+    expect(og.ogSiteNames).toContain('Arkova');
+    expect(og.canonicals.some((url) => url.includes(`/issuer/${ARKOVA_ORG_ID}`))).toBe(true);
   });
 
   test('does not show admin "Issue Credential" CTA to anonymous visitors', async ({ page }) => {

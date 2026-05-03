@@ -12,13 +12,18 @@
  * @see src/hooks/useTreasuryBalance.ts (SCRUM-1260 hook site)
  */
 
-import { test, expect } from './fixtures';
+import { test, expect, getServiceClient } from './fixtures';
 
 const WORKER_TREASURY_PATTERN = /\/api\/treasury\/(balance|stats|status)/;
+const serviceClient = getServiceClient();
 
 test.describe('SCRUM-1260 R1-6 — Treasury error / stale state', () => {
-  test('treasury hook surfaces error within ~8s, not 60s', async ({ orgAdminPage }) => {
-    await orgAdminPage.route(WORKER_TREASURY_PATTERN, async (route) => {
+  test.beforeEach(async () => {
+    await serviceClient.from('treasury_cache').delete().eq('id', 1);
+  });
+
+  test('treasury hook surfaces error within ~8s, not 60s', async ({ orgBAdminPage }) => {
+    await orgBAdminPage.route(WORKER_TREASURY_PATTERN, async (route) => {
       // Match the hook's WORKER_TIMEOUT_MS=8_000 by stalling slightly past it
       // so the AbortController path runs without hanging the route handler.
       await new Promise<void>((resolve) => setTimeout(resolve, 8_200));
@@ -30,19 +35,16 @@ test.describe('SCRUM-1260 R1-6 — Treasury error / stale state', () => {
     });
 
     const start = Date.now();
-    await orgAdminPage.goto('/admin/treasury');
+    await orgBAdminPage.goto('/admin/treasury');
 
-    await expect(
-      orgAdminPage.getByRole('alert')
-        .filter({ hasText: /treasury|stale|unavailable|unable to/i }),
-    ).toBeVisible({ timeout: 12_000 });
+    await expect(orgBAdminPage.getByTestId('treasury-balance-error')).toBeVisible({ timeout: 12_000 });
 
     // 15s upper bound — generous for slow CI; the hook targets 8s.
     expect(Date.now() - start).toBeLessThan(15_000);
   });
 
-  test('does NOT fall back to direct mempool.space balance polling when worker fails', async ({ orgAdminPage }) => {
-    await orgAdminPage.route(WORKER_TREASURY_PATTERN, (route) =>
+  test('does NOT fall back to direct mempool.space balance polling when worker fails', async ({ orgBAdminPage }) => {
+    await orgBAdminPage.route(WORKER_TREASURY_PATTERN, (route) =>
       route.fulfill({ status: 503, body: '{"error":"unavailable"}' }),
     );
 
@@ -55,18 +57,16 @@ test.describe('SCRUM-1260 R1-6 — Treasury error / stale state', () => {
     // unavailable. We assert by counting mempool /address/<ADDR>/utxo calls
     // (the balance-equivalent endpoint).
     let mempoolBalanceHits = 0;
-    await orgAdminPage.route(/mempool\.space\/api\/address\/[^/]+\/utxo/, (route) => {
+    await orgBAdminPage.route(/mempool\.space\/api\/address\/[^/]+\/utxo/, (route) => {
       mempoolBalanceHits++;
       return route.fulfill({ status: 200, body: '[]' });
     });
 
-    await orgAdminPage.goto('/admin/treasury');
+    await orgBAdminPage.goto('/admin/treasury');
 
     // Wait for the hook's failure state to render — by then any balance
     // fallback would already have fired.
-    await expect(
-      orgAdminPage.getByRole('alert'),
-    ).toBeVisible({ timeout: 12_000 });
+    await expect(orgBAdminPage.getByTestId('treasury-balance-error')).toBeVisible({ timeout: 12_000 });
 
     expect(mempoolBalanceHits).toBe(0);
   });

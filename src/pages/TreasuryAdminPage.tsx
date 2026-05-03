@@ -98,10 +98,14 @@ export function TreasuryAdminPage() {
 
       {/* Error banner */}
       {balanceError && (
-        <div className="mb-6 rounded-lg border border-amber-500/30 bg-amber-500/10 p-4 text-sm text-amber-700">
-          <AlertTriangle className="inline h-4 w-4 mr-2" />
-          {balanceError}
-        </div>
+        <DataErrorBanner
+          data-testid="treasury-balance-error"
+          title={DATA_ERROR_LABELS.TREASURY_UNAVAILABLE_TITLE}
+          message={balanceError}
+          spacing="mb-3"
+          onRetry={handleRefresh}
+          retrying={refreshing}
+        />
       )}
 
       {/* Balance + Anchor Stats */}
