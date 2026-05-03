@@ -234,10 +234,7 @@ export async function handleRunOrgAnchorQueue(
   }
 
   try {
-    // SCRUM-1243: org-scoping isn't plumbed through to claim_pending_anchors
-    // yet, so this triggers the global batch after authorizing the caller as
-    // org admin. Same effect as cron firing — manual kick for ops.
-    const result = await processBatchAnchors();
+    const result = await processBatchAnchors({ force: true, orgId });
 
     res.json({ ok: true, ...result });
     void emitOrgAdminNotifications({

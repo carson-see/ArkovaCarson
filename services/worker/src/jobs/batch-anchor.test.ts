@@ -12,12 +12,16 @@ import type { ChainReceipt } from '../chain/types.js';
 
 const {
   mockSubmitFingerprint,
+  mockEstimateCurrentFee,
   mockAnchorsUpdate,
+  mockCallRpc,
   mockLogger,
   setUpdateResult,
   _setUpdateResultQueue,
 } = vi.hoisted(() => {
   const mockSubmitFingerprint = vi.fn();
+  const mockEstimateCurrentFee = vi.fn();
+  const mockCallRpc = vi.fn();
 
   // RACE-1: Update chain supports .eq() chaining + thenable
   // Supports both fixed results and per-call result queues
@@ -49,7 +53,9 @@ const {
 
   return {
     mockSubmitFingerprint,
+    mockEstimateCurrentFee,
     mockAnchorsUpdate,
+    mockCallRpc,
     mockLogger,
     setUpdateResult,
     _setUpdateResultQueue: setUpdateResultQueue,
@@ -69,21 +75,42 @@ vi.mock('../config.js', () => ({
   },
 }));
 
+vi.mock('../utils/rpc.js', () => ({
+  callRpc: mockCallRpc,
+}));
+
 vi.mock('../chain/client.js', () => ({
-  getInitializedChainClient: () => ({ submitFingerprint: mockSubmitFingerprint }),
-  getChainClientAsync: () => Promise.resolve({ submitFingerprint: mockSubmitFingerprint }),
-  getChainClient: () => ({ submitFingerprint: mockSubmitFingerprint }),
+  getInitializedChainClient: () => ({ submitFingerprint: mockSubmitFingerprint, estimateCurrentFee: mockEstimateCurrentFee }),
+  getChainClientAsync: () => Promise.resolve({ submitFingerprint: mockSubmitFingerprint, estimateCurrentFee: mockEstimateCurrentFee }),
+  getChainClient: () => ({ submitFingerprint: mockSubmitFingerprint, estimateCurrentFee: mockEstimateCurrentFee }),
 }));
 
 const mockDbRpc = vi.hoisted(() => vi.fn());
+const mockSelectEq = vi.hoisted(() => vi.fn());
+const mockSelectIs = vi.hoisted(() => vi.fn());
+const mockSelectRange = vi.hoisted(() => vi.fn());
+const mockSelectSingle = vi.hoisted(() => vi.fn());
+const mockSelectMaybeSingle = vi.hoisted(() => vi.fn());
 
 vi.mock('../utils/db.js', () => {
   // Legacy select chain for fallback path
   const selectChain: Record<string, unknown> = {};
-  selectChain.eq = vi.fn(() => selectChain);
-  selectChain.is = vi.fn(() => selectChain);
+  selectChain.eq = mockSelectEq.mockImplementation(() => selectChain);
+  selectChain.is = mockSelectIs.mockImplementation(() => selectChain);
   selectChain.order = vi.fn(() => selectChain);
-  selectChain.limit = vi.fn().mockResolvedValue({ data: [], error: null });
+  selectChain.limit = vi.fn(() => selectChain);
+  selectChain.range = mockSelectRange.mockImplementation(() => selectChain);
+  selectChain.single = mockSelectSingle.mockResolvedValue({
+    data: null,
+    error: null,
+  });
+  selectChain.maybeSingle = mockSelectMaybeSingle.mockResolvedValue({
+    data: null,
+    error: null,
+  });
+  selectChain.then = (resolve?: (v: unknown) => unknown, reject?: (e: unknown) => unknown) => (
+    Promise.resolve({ data: [], error: null }).then(resolve, reject)
+  );
 
   return {
     db: {
@@ -105,7 +132,7 @@ vi.mock('../utils/db.js', () => {
 
 // ---- System under test ----
 
-import { processBatchAnchors, BATCH_SIZE, MIN_BATCH_SIZE } from './batch-anchor.js';
+import { processBatchAnchors, BATCH_SIZE, MIN_BATCH_SIZE, MIN_BATCH_THRESHOLD } from './batch-anchor.js';
 
 // ---- Fixtures ----
 
@@ -120,6 +147,22 @@ const ANCHOR_A = { id: 'anchor-a', fingerprint: 'aa'.repeat(32), metadata: null 
 const ANCHOR_B = { id: 'anchor-b', fingerprint: 'bb'.repeat(32), metadata: null };
 const ANCHOR_C = { id: 'anchor-c', fingerprint: 'cc'.repeat(32), metadata: null };
 
+function fastCounts(pending: number) {
+  return { PENDING: pending, SUBMITTED: 0, BROADCASTING: 0, SECURED: 0, REVOKED: 0, total: pending };
+}
+
+function mockPendingBacklogReady(): void {
+  mockCallRpc.mockResolvedValue({ data: fastCounts(MIN_BATCH_THRESHOLD), error: null });
+  mockSelectSingle.mockResolvedValue({
+    data: { created_at: '2026-01-01T00:00:00Z' },
+    error: null,
+  });
+  mockSelectMaybeSingle.mockResolvedValue({
+    data: { id: 'threshold-anchor' },
+    error: null,
+  });
+}
+
 // ================================================================
 // processBatchAnchors
 // ================================================================
@@ -129,8 +172,12 @@ describe('processBatchAnchors', () => {
     vi.clearAllMocks();
 
     // Default: RPC returns empty (no pending anchors)
+    mockCallRpc.mockResolvedValue({ data: fastCounts(0), error: null });
     mockDbRpc.mockResolvedValue({ data: [], error: null });
+    mockSelectSingle.mockResolvedValue({ data: null, error: null });
+    mockSelectMaybeSingle.mockResolvedValue({ data: null, error: null });
     mockSubmitFingerprint.mockResolvedValue(MOCK_RECEIPT);
+    mockEstimateCurrentFee.mockResolvedValue(1);
     setUpdateResult({ error: null, count: 1 });
   });
 
@@ -145,6 +192,7 @@ describe('processBatchAnchors', () => {
     expect(result.batchId).toBeNull();
     expect(result.merkleRoot).toBeNull();
     expect(result.txId).toBeNull();
+    expect(mockDbRpc).not.toHaveBeenCalledWith('claim_pending_anchors', expect.any(Object));
   });
 
   it('returns 0 processed when RPC returns null data', async () => {
@@ -155,10 +203,15 @@ describe('processBatchAnchors', () => {
     expect(result.processed).toBe(0);
   });
 
-  it('falls back to legacy path when RPC returns an error', async () => {
+  it('falls back to legacy path when claim RPC is migration-incompatible', async () => {
+    mockPendingBacklogReady();
+    const error = {
+      code: 'PGRST202',
+      message: 'Could not find the function public.claim_pending_anchors in the schema cache',
+    };
     mockDbRpc.mockResolvedValue({
       data: null,
-      error: { message: 'function not found' },
+      error,
     });
 
     const result = await processBatchAnchors();
@@ -166,14 +219,134 @@ describe('processBatchAnchors', () => {
     // Legacy path also returns 0 since select mock returns empty
     expect(result.processed).toBe(0);
     expect(mockLogger.warn).toHaveBeenCalledWith(
-      expect.objectContaining({ error: expect.any(Object) }),
+      expect.objectContaining({ error, migrationCompatMatch: 'could not find the function' }),
       expect.stringContaining('falling back to legacy'),
+    );
+  });
+
+  it.each([
+    [
+      'function not found',
+      { code: 'PGRST202', message: 'Function not found: public.claim_pending_anchors' },
+    ],
+    [
+      'could not find the function',
+      { code: 'PGRST202', message: 'Could not find the function public.claim_pending_anchors in the schema cache' },
+    ],
+    [
+      'does not exist',
+      { code: '42883', message: 'function public.claim_pending_anchors(uuid) does not exist' },
+    ],
+    [
+      'schema cache',
+      { code: 'PGRST202', details: 'schema cache missing p_org_id for claim_pending_anchors' },
+    ],
+    [
+      'no function matches',
+      { code: '42883', hint: 'No function matches the given name and argument types for claim_pending_anchors' },
+    ],
+  ])('logs the matched migration compatibility substring for "%s"', async (migrationCompatMatch, error) => {
+    mockPendingBacklogReady();
+    mockDbRpc.mockResolvedValue({ data: null, error });
+
+    const result = await processBatchAnchors({ force: true, orgId: 'org-1' });
+
+    expect(result.processed).toBe(0);
+    expect(mockLogger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ error, migrationCompatMatch }),
+      expect.stringContaining('falling back to legacy'),
+    );
+  });
+
+  it('scopes legacy fallback to orgId when old claim RPC signature is still deployed', async () => {
+    mockPendingBacklogReady();
+    mockDbRpc.mockResolvedValue({
+      data: null,
+      error: {
+        code: 'PGRST202',
+        message: 'Could not find function public.claim_pending_anchors(p_exclude_pipeline, p_limit, p_org_id, p_worker_id) in the schema cache',
+      },
+    });
+
+    await processBatchAnchors({ force: true, orgId: 'org-1' });
+
+    const orgScopeCalls = mockSelectEq.mock.calls.filter((call) => call[0] === 'org_id');
+    expect(orgScopeCalls).toEqual([
+      ['org_id', 'org-1'],
+      ['org_id', 'org-1'],
+      ['org_id', 'org-1'],
+    ]);
+    expect(mockSelectRange).toHaveBeenCalledWith(MIN_BATCH_THRESHOLD - 1, MIN_BATCH_THRESHOLD - 1);
+    expect(mockSelectMaybeSingle).toHaveBeenCalled();
+    expect(mockSelectIs.mock.calls.filter((call) => call[0] === 'deleted_at')).toHaveLength(3);
+  });
+
+  it('fails closed for blank orgId instead of running a global forced flush', async () => {
+    const result = await processBatchAnchors({ force: true, orgId: '   ' });
+
+    expect(result).toEqual({ processed: 0, batchId: null, merkleRoot: null, txId: null });
+    expect(mockDbRpc).not.toHaveBeenCalled();
+    expect(mockSelectEq).not.toHaveBeenCalled();
+    expect(mockSubmitFingerprint).not.toHaveBeenCalled();
+    expect(mockLogger.error).toHaveBeenCalledWith(
+      { orgId: '   ' },
+      'Invalid empty orgId for org-scoped batch processing',
+    );
+  });
+
+  it('does not use legacy fallback for non-migration claim RPC errors', async () => {
+    mockPendingBacklogReady();
+    mockDbRpc.mockResolvedValue({
+      data: null,
+      error: { code: 'PGRST301', message: 'permission denied' },
+    });
+
+    const result = await processBatchAnchors({ force: true, orgId: 'org-1' });
+
+    expect(result).toEqual({ processed: 0, batchId: null, merkleRoot: null, txId: null });
+    const orgScopeCalls = mockSelectEq.mock.calls.filter((call) => call[0] === 'org_id');
+    expect(orgScopeCalls).toEqual([
+      ['org_id', 'org-1'],
+      ['org_id', 'org-1'],
+    ]);
+    expect(mockLogger.error).toHaveBeenCalledWith(
+      expect.objectContaining({ error: expect.any(Object) }),
+      expect.stringContaining('without legacy fallback'),
+    );
+  });
+
+  it('does not use legacy fallback for missing helper errors unrelated to claim_pending_anchors', async () => {
+    mockPendingBacklogReady();
+    mockDbRpc.mockResolvedValue({
+      data: null,
+      error: {
+        code: '42883',
+        message: 'function public.internal_anchor_helper(uuid) does not exist',
+      },
+    });
+
+    const result = await processBatchAnchors({ force: true, orgId: 'org-1' });
+
+    expect(result).toEqual({ processed: 0, batchId: null, merkleRoot: null, txId: null });
+    const orgScopeCalls = mockSelectEq.mock.calls.filter((call) => call[0] === 'org_id');
+    expect(orgScopeCalls).toEqual([
+      ['org_id', 'org-1'],
+      ['org_id', 'org-1'],
+    ]);
+    expect(mockLogger.warn).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.stringContaining('falling back to legacy'),
+    );
+    expect(mockLogger.error).toHaveBeenCalledWith(
+      expect.objectContaining({ error: expect.any(Object) }),
+      expect.stringContaining('without legacy fallback'),
     );
   });
 
   // ---- Single anchor batch ----
 
   it('processes single anchor via batch (INEFF-2: MIN_BATCH_SIZE = 1)', async () => {
+    mockPendingBacklogReady();
     mockDbRpc
       .mockResolvedValueOnce({ data: [ANCHOR_A], error: null }) // claim
       .mockResolvedValueOnce({ data: 1, error: null }); // submit_batch_anchors
@@ -187,6 +360,7 @@ describe('processBatchAnchors', () => {
   // ---- Successful batch processing ----
 
   it('processes batch of 3 anchors: builds tree, publishes root, updates all', async () => {
+    mockPendingBacklogReady();
     mockDbRpc
       .mockResolvedValueOnce({ data: [ANCHOR_A, ANCHOR_B, ANCHOR_C], error: null }) // claim
       .mockResolvedValueOnce({ data: 3, error: null }); // submit_batch_anchors
@@ -199,7 +373,46 @@ describe('processBatchAnchors', () => {
     expect(result.txId).toBe(MOCK_RECEIPT.receiptId);
   });
 
+  it('passes orgId through to claim_pending_anchors for manual org queue runs', async () => {
+    mockPendingBacklogReady();
+    mockDbRpc
+      .mockResolvedValueOnce({ data: [ANCHOR_A, ANCHOR_B], error: null }) // claim
+      .mockResolvedValueOnce({ data: 2, error: null }); // submit_batch_anchors
+
+    await processBatchAnchors({ force: true, orgId: 'org-1' });
+
+    expect(mockDbRpc).toHaveBeenCalledWith('claim_pending_anchors', expect.objectContaining({
+      p_org_id: 'org-1',
+    }));
+    expect(mockLogger.info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        pendingThresholdSentinel: MIN_BATCH_THRESHOLD,
+        pendingCountSource: 'org_threshold_probe',
+        pendingThreshold: MIN_BATCH_THRESHOLD,
+        orgPendingThresholdCrossed: true,
+        orgId: 'org-1',
+      }),
+      'Forced org batch flush',
+    );
+  });
+
+  it('still enforces the fee ceiling for forced manual org queue runs', async () => {
+    mockPendingBacklogReady();
+    mockEstimateCurrentFee.mockResolvedValueOnce(250);
+
+    const result = await processBatchAnchors({ force: true, orgId: 'org-1' });
+
+    expect(result).toEqual({ processed: 0, batchId: null, merkleRoot: null, txId: null });
+    expect(mockSubmitFingerprint).not.toHaveBeenCalled();
+    expect(mockDbRpc).not.toHaveBeenCalledWith('claim_pending_anchors', expect.any(Object));
+    expect(mockLogger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ currentFee: 250, effectiveCeiling: 200 }),
+      expect.stringContaining('Fee rate exceeds ceiling'),
+    );
+  });
+
   it('submits the Merkle root (not individual fingerprints) to chain', async () => {
+    mockPendingBacklogReady();
     mockDbRpc
       .mockResolvedValueOnce({ data: [ANCHOR_A, ANCHOR_B], error: null }) // claim
       .mockResolvedValueOnce({ data: 2, error: null }); // submit_batch_anchors
@@ -217,6 +430,7 @@ describe('processBatchAnchors', () => {
   });
 
   it('calls submit_batch_anchors RPC with correct params', async () => {
+    mockPendingBacklogReady();
     mockDbRpc
       .mockResolvedValueOnce({ data: [ANCHOR_A, ANCHOR_B], error: null }) // claim
       .mockResolvedValueOnce({ data: 2, error: null }); // submit_batch_anchors
@@ -235,6 +449,7 @@ describe('processBatchAnchors', () => {
   });
 
   it('stores Merkle root in submit_batch_anchors RPC call', async () => {
+    mockPendingBacklogReady();
     mockDbRpc
       .mockResolvedValueOnce({ data: [ANCHOR_A, ANCHOR_B], error: null }) // claim
       .mockResolvedValueOnce({ data: 2, error: null }); // submit_batch_anchors
@@ -251,6 +466,7 @@ describe('processBatchAnchors', () => {
   });
 
   it('marks all anchors as SUBMITTED via bulk RPC after successful publish', async () => {
+    mockPendingBacklogReady();
     mockDbRpc
       .mockResolvedValueOnce({ data: [ANCHOR_A, ANCHOR_B, ANCHOR_C], error: null }) // claim
       .mockResolvedValueOnce({ data: 3, error: null }); // submit_batch_anchors
@@ -267,6 +483,7 @@ describe('processBatchAnchors', () => {
   // ---- Chain publish failure ----
 
   it('returns 0 processed when chain submission fails', async () => {
+    mockPendingBacklogReady();
     mockDbRpc
       .mockResolvedValueOnce({ data: [ANCHOR_A, ANCHOR_B], error: null }); // claim
     mockSubmitFingerprint.mockRejectedValue(new Error('chain unavailable'));
@@ -280,6 +497,7 @@ describe('processBatchAnchors', () => {
   });
 
   it('does not update anchors to SUBMITTED when chain submission fails', async () => {
+    mockPendingBacklogReady();
     mockDbRpc
       .mockResolvedValueOnce({ data: [ANCHOR_A, ANCHOR_B], error: null }); // claim
     mockSubmitFingerprint.mockRejectedValue(new Error('timeout'));
@@ -311,6 +529,7 @@ describe('processBatchAnchors', () => {
   // Crucially: no code path here may set `status: 'PENDING'` after broadcast.
 
   it('retries submit_batch_anchors once if first call fails (transient timeout)', async () => {
+    mockPendingBacklogReady();
     mockDbRpc
       .mockResolvedValueOnce({ data: [ANCHOR_A, ANCHOR_B, ANCHOR_C], error: null }) // claim
       .mockResolvedValueOnce({ data: null, error: { message: 'statement timeout' } }) // RPC attempt #1
@@ -337,6 +556,7 @@ describe('processBatchAnchors', () => {
   });
 
   it('falls back to direct SUBMITTED update when submit_batch_anchors fails twice (prevents double-broadcast)', async () => {
+    mockPendingBacklogReady();
     mockDbRpc
       .mockResolvedValueOnce({ data: [ANCHOR_A, ANCHOR_B, ANCHOR_C], error: null }) // claim
       .mockResolvedValueOnce({ data: null, error: { message: 'statement timeout' } }) // RPC attempt #1
@@ -372,6 +592,7 @@ describe('processBatchAnchors', () => {
   });
 
   it('never reverts to PENDING after a successful chain broadcast', async () => {
+    mockPendingBacklogReady();
     // Both submit_batch_anchors attempts fail with a permanent-looking error.
     mockDbRpc
       .mockResolvedValueOnce({ data: [ANCHOR_A, ANCHOR_B], error: null }) // claim
@@ -389,6 +610,7 @@ describe('processBatchAnchors', () => {
   });
 
   it('reverts BROADCASTING → PENDING when chain broadcast itself fails (pre-tx-id)', async () => {
+    mockPendingBacklogReady();
     // Distinct from the post-broadcast path: if we never got a tx_id back,
     // the safe action is to release the claim so the next cron can retry.
     mockDbRpc
@@ -409,6 +631,7 @@ describe('processBatchAnchors', () => {
   // ---- Batch ID generation ----
 
   it('generates batch ID with timestamp and count', async () => {
+    mockPendingBacklogReady();
     mockDbRpc
       .mockResolvedValueOnce({ data: [ANCHOR_A, ANCHOR_B], error: null }) // claim
       .mockResolvedValueOnce({ data: 2, error: null }); // submit_batch_anchors
@@ -431,6 +654,7 @@ describe('processBatchAnchors', () => {
   // ---- Logging ----
 
   it('logs completion info with batch details', async () => {
+    mockPendingBacklogReady();
     mockDbRpc
       .mockResolvedValueOnce({ data: [ANCHOR_A, ANCHOR_B], error: null }) // claim
       .mockResolvedValueOnce({ data: 2, error: null }); // submit_batch_anchors
