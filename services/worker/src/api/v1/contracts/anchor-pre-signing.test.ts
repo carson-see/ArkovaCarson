@@ -22,11 +22,33 @@
 import { describe, it, expect, vi } from 'vitest';
 import express from 'express';
 import request from 'supertest';
-import { anchorPreSigningRouter, PreSigningAnchorSchema } from './anchor-pre-signing.js';
+
+// Mock the worker config BEFORE importing anything that transitively imports
+// config.js (apiKeyAuth → config). Otherwise config.js throws "Invalid worker
+// configuration" in the test env without prod env vars.
+const { mockConfig } = vi.hoisted(() => ({
+  mockConfig: { enableOrgCreditEnforcement: false },
+}));
+
+vi.mock('../../../config.js', () => ({
+  get config() {
+    return mockConfig;
+  },
+}));
 
 vi.mock('../../../utils/logger.js', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
+
+// db isn't actually used by the stub handler or by `requireScope`, but
+// transitive imports (apiKeyAuth → db) call `getDb()` at module load and
+// fail without env vars. The mock keeps the test hermetic.
+vi.mock('../../../utils/db.js', () => ({
+  db: { from: vi.fn() },
+}));
+
+import { anchorPreSigningRouter, PreSigningAnchorSchema } from './anchor-pre-signing.js';
+import { requireScope } from '../../../middleware/apiKeyAuth.js';
 
 function makeApp(withApiKey = true) {
   const app = express();
@@ -139,11 +161,20 @@ describe('POST /api/v1/contracts/anchor-pre-signing — shape contract', () => {
     expect(res.status).toBe(400);
   });
 
-  it('accepts credential_type: CONTRACT_PRESIGNING (passes Zod)', async () => {
+  it('accepts credential_type: CONTRACT_PRESIGNING explicitly (passes Zod)', async () => {
     const res = await request(makeApp())
       .post('/v1/contracts/anchor-pre-signing')
       .send({ ...VALID_BODY, credential_type: 'CONTRACT_PRESIGNING' });
     // Validation passes → reaches stub → 501.
+    expect(res.status).toBe(501);
+  });
+
+  it('accepts request without credential_type (defaults to CONTRACT_PRESIGNING)', async () => {
+    // .default('CONTRACT_PRESIGNING') makes the field implicit-but-pinned;
+    // the resolved value is always CONTRACT_PRESIGNING after Zod parse.
+    const res = await request(makeApp())
+      .post('/v1/contracts/anchor-pre-signing')
+      .send(VALID_BODY);
     expect(res.status).toBe(501);
   });
 
@@ -240,5 +271,51 @@ describe('PreSigningAnchorSchema', () => {
       },
     });
     expect(result.success).toBe(false);
+  });
+
+  it('parses credential_type to CONTRACT_PRESIGNING when omitted (.default lock)', () => {
+    const result = PreSigningAnchorSchema.safeParse(VALID_BODY);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.credential_type).toBe('CONTRACT_PRESIGNING');
+    }
+  });
+});
+
+// ─── Router-level scope-gate test (CodeRabbit major) ─────────────────────
+//
+// The other tests bypass the v1 router and mount the handler directly. That
+// pins request/response shape but does NOT verify the security contract that
+// `requireScope('anchor:write')` is the gate in front of the handler. One
+// integration case here locks that contract: a request from an API key
+// without the `anchor:write` scope MUST 403 *before* reaching the handler
+// (which would otherwise return 501 — a successful response would mean the
+// scope gate is missing).
+describe('POST /api/v1/contracts/anchor-pre-signing — scope gate', () => {
+  it('403 when API key lacks anchor:write scope', async () => {
+    const app = express();
+    app.use(express.json());
+    app.use((req, _res, next) => {
+      (req as express.Request & { apiKey?: unknown }).apiKey = {
+        keyId: 'key-1',
+        userId: 'user-1',
+        orgId: 'org-1',
+        scopes: ['verify'], // missing anchor:write
+        rateLimitTier: 'paid',
+        keyPrefix: 'arkv_test_',
+      };
+      next();
+    });
+    // Mirror the production mount in services/worker/src/api/v1/router.ts —
+    // requireScope('anchor:write') runs in front of anchorPreSigningRouter.
+    app.use('/v1/contracts', requireScope('anchor:write'), anchorPreSigningRouter);
+
+    const res = await request(app)
+      .post('/v1/contracts/anchor-pre-signing')
+      .send(VALID_BODY);
+    expect(res.status).toBe(403);
+    // Critical assertion: did NOT reach the handler. The 501 stub response
+    // would mean the scope gate is missing.
+    expect(res.body.error).not.toBe('not_implemented');
   });
 });

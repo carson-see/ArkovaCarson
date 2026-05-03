@@ -18,8 +18,8 @@
 --   1. The `parent_anchor_id` self-FK already gives us the pre→post
 --      relationship for free. Post-signing inserts with
 --      parent_anchor_id = <pre-signing anchor.id>; existing lineage
---      checks (idx_anchors_parent_anchor_id, anchors_parent_anchor_id_fkey
---      with ON DELETE RESTRICT) inherit at no cost.
+--      checks (anchors_parent_anchor_id_fkey with ON DELETE RESTRICT,
+--      lineage triggers from migration 0032) inherit at no cost.
 --
 --   2. The verification UI, evidence package, extraction-manifest endpoints
 --      and webhook delivery already operate on `anchors`. A parallel table
@@ -34,9 +34,25 @@
 -- -------
 -- 1. Add CONTRACT_PRESIGNING to credential_type enum
 -- 2. Add CONTRACT_POSTSIGNING to credential_type enum
--- 3. Index for `parent_anchor_id WHERE credential_type = 'CONTRACT_POSTSIGNING'`
---    so the post-signing webhook (SCRUM-1624) can resolve "is this a
---    duplicate post-signing for an envelope already linked?" in O(log n).
+--
+-- WHAT THIS MIGRATION INTENTIONALLY DOES NOT ADD
+-- ----------------------------------------------
+-- A separate partial index `(parent_anchor_id) WHERE credential_type =
+-- 'CONTRACT_POSTSIGNING'` was considered for the SCRUM-1624 webhook
+-- receiver's "is this envelope already linked?" duplicate-check. Migration
+-- 0233 (ARK-104 supersede lock) already creates a UNIQUE partial index
+-- `anchors_unique_active_child_per_parent ON anchors(parent_anchor_id)
+-- WHERE parent_anchor_id IS NOT NULL AND deleted_at IS NULL AND status
+-- NOT IN ('REVOKED')` that subsumes the contract-anchor case for ALL
+-- credential types — the post-signing-as-child enforcement is already a
+-- DB-level invariant, not a webhook-only one. Adding a contract-specific
+-- partial index would be redundant indexes on the same column.
+--
+-- (Per CodeRabbit P1 + Major review on PR #679: the deferred-index pattern
+-- in migration 0255 also documents that CONCURRENTLY index builds on the
+-- 1.4M-row anchors table exceed Supabase's pooler timeout. Even if the
+-- partial-index were not redundant, it would have to ship via 0255-style
+-- deferred-manual-apply, not in-line here.)
 --
 -- ROLLBACK
 -- --------
@@ -49,31 +65,16 @@
 BEGIN;
 SET LOCAL lock_timeout = '5s';
 
--- 1. Add the two new enum values. ALTER TYPE ... ADD VALUE cannot run inside
---    a transaction in some Postgres versions (< 12) — Supabase is on 15+, so
---    this is fine, but keeping it as a single ALTER per value preserves the
---    standard pattern other migrations in this repo use (0091, 0103, 0118,
---    0127, 0212).
+-- 1. Add the two new enum values. Supabase runs Postgres 15+, so ALTER
+--    TYPE ... ADD VALUE inside a transaction is supported. Keeping it as a
+--    single ALTER per value preserves the standard pattern other migrations
+--    in this repo use (0091, 0103, 0118, 0127, 0212).
 ALTER TYPE credential_type ADD VALUE IF NOT EXISTS 'CONTRACT_PRESIGNING';
 ALTER TYPE credential_type ADD VALUE IF NOT EXISTS 'CONTRACT_POSTSIGNING';
 
-COMMIT;
-
--- 2. Partial index for post-signing → pre-signing parent lookups. The
---    SCRUM-1624 webhook receiver calls
---      SELECT id FROM anchors
---      WHERE parent_anchor_id = <pre-id> AND credential_type = 'CONTRACT_POSTSIGNING'
---    on every webhook event to enforce single-post-signing-per-pre-signing.
---    Outside this transaction so the partial-index predicate sees the new
---    enum value already committed.
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_anchors_parent_anchor_id_contract_post
-  ON anchors (parent_anchor_id)
-  WHERE credential_type = 'CONTRACT_POSTSIGNING';
-
-COMMENT ON INDEX idx_anchors_parent_anchor_id_contract_post IS
-  'SCRUM-1624: O(log n) lookup of post-signing anchors by parent (pre-signing) anchor. Used by DocuSign + Adobe Sign webhook receivers to enforce single-post-signing-per-envelope.';
-
--- 3. Reload PostgREST schema cache so the new enum values are queryable
+-- 2. Reload PostgREST schema cache so the new enum values are queryable
 --    immediately via REST. Without this, `?credential_type=eq.CONTRACT_PRESIGNING`
 --    would 400 until PostgREST's TTL refresh ticks (up to 10 minutes).
 NOTIFY pgrst, 'reload schema';
+
+COMMIT;

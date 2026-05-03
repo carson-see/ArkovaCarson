@@ -88,11 +88,14 @@ export const PreSigningAnchorSchema = z
     fingerprint: z
       .string()
       .regex(/^[a-fA-F0-9]{64}$/, 'must be a 64-character hex SHA-256 hash'),
-    // For contracts the credential_type is fixed to CONTRACT_PRESIGNING by
-    // the handler (migration 0285 adds the enum value). The Zod field is
-    // present only to preserve symmetry with /api/v1/anchor; values other
-    // than 'CONTRACT_PRESIGNING' are rejected.
-    credential_type: z.literal('CONTRACT_PRESIGNING').optional(),
+    // For contracts the credential_type is fixed to CONTRACT_PRESIGNING.
+    // `.default()` (not `.optional()`) makes the v1 contract deterministic
+    // — every parsed request carries `credential_type: 'CONTRACT_PRESIGNING'`
+    // whether the client sent it or not. This avoids the implicit defaulting
+    // that pushed the contract decision into [Build]; per CLAUDE.md §1.8
+    // (frozen v1 schema), we want the resolved-value behavior pinned now,
+    // not at handler-implementation time.
+    credential_type: z.literal('CONTRACT_PRESIGNING').default('CONTRACT_PRESIGNING'),
     contract_metadata: ContractMetadataSchema,
     signing_workflow_metadata: SigningWorkflowMetadataSchema,
     description: z.string().max(1000).optional(),
@@ -104,16 +107,21 @@ export type PreSigningAnchorRequest = z.infer<typeof PreSigningAnchorSchema>;
 // ─── Response shape ───────────────────────────────────────────────────────
 //
 // Matches the existing /api/v1/anchor receipt shape so SDKs can reuse
-// receipt-handling code. Adds `parent_anchor_public_id: null` (always null
-// on pre-signing — post-signing is the one that links upward) and the
-// echo'd `contract_metadata` + `signing_workflow_metadata` so the
-// integrator gets a single self-describing object back.
+// receipt-handling code. Adds `parent_public_id: null` (always null on
+// pre-signing — post-signing is the one that links upward) and the echo'd
+// `contract_metadata` + `signing_workflow_metadata` so the integrator gets a
+// single self-describing object back.
+//
+// `parent_public_id` (not `parent_anchor_public_id`) per the existing public
+// anchor lineage convention — see services/worker/src/api/v1/verify.ts and
+// services/worker/src/api/anchor-lineage.ts. Per CodeRabbit review on PR
+// #679, unifying naming before v1 freeze avoids a schema-rename later.
 export interface PreSigningAnchorReceipt {
   public_id: string;
   fingerprint: string;
   credential_type: 'CONTRACT_PRESIGNING';
   status: 'PENDING';
-  parent_anchor_public_id: null;
+  parent_public_id: null;
   contract_metadata: z.infer<typeof ContractMetadataSchema>;
   signing_workflow_metadata: z.infer<typeof SigningWorkflowMetadataSchema>;
   created_at: string;
