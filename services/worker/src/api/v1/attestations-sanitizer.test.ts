@@ -171,74 +171,95 @@ describe('attestations.ts public shape (SCRUM-1444 / SCRUM-1271-B)', () => {
   // route the new spread through `toPublicAttestation()` or extend this
   // allowlist with an explicit justification.
   // ───────────────────────────────────────────────────────────────────────
-  it('attestations.ts has no res.json() spread of untrusted rows (static-source defense)', () => {
-    const here = dirname(fileURLToPath(import.meta.url));
-    const source = readFileSync(resolve(here, 'attestations.ts'), 'utf8');
 
-    const ALLOWLISTED_SPREADS = new Set([
-      'toPublicAttestation', // sanitizer — explicit allowlist, safe by construction
-    ]);
+  // Refactored 2026-05-03 to drop SonarCloud cognitive complexity from 43 → low.
+  // The original inline state machine grew complex enough that SonarCloud's
+  // 15-statement guard fired. Splitting into three small helpers keeps the
+  // logic readable and each piece below its own complexity ceiling.
 
-    const findings: Array<{ line: number; spread: string; context: string }> = [];
+  /** Scan one body span, append any non-allowlisted `...ident` spread. */
+  function collectSpreads(
+    span: string,
+    line: number,
+    allowlist: ReadonlySet<string>,
+    findings: Array<{ line: number; spread: string }>,
+  ): void {
+    const SPREAD = /\.\.\.([A-Za-z_$][\w$]*)/g;
+    let s: RegExpExecArray | null;
+    while ((s = SPREAD.exec(span)) !== null) {
+      if (!allowlist.has(s[1])) findings.push({ line, spread: `...${s[1]}` });
+    }
+  }
 
-    // Scan response-construction spans: `res.json(` and `res.status(...).json(`
-    // up to the matching closing paren. Capture any `...identifier` or
-    // `...identifier(` inside that span.
+  /** Walk one line forward from `start`, balancing parens; returns where
+   * the outer `)` closed (-1 if it didn't close on this line). */
+  function scanLine(
+    line: string,
+    start: number,
+    initialDepth: number,
+  ): { closedAt: number; endDepth: number } {
+    let depth = initialDepth;
+    for (let j = start; j < line.length; j++) {
+      const c = line[j];
+      if (c === '(') depth++;
+      else if (c === ')') depth--;
+      if (depth === 0) return { closedAt: j, endDepth: 0 };
+    }
+    return { closedAt: -1, endDepth: depth };
+  }
+
+  /** Scan a source file for non-allowlisted spreads inside res.json(...) /
+   * res.status(...).json(...) call arguments. Returns the offending findings. */
+  function findUntrustedResponseSpreads(
+    source: string,
+    allowlist: ReadonlySet<string>,
+  ): Array<{ line: number; spread: string }> {
+    const RESPONSE_OPEN = /\bres\s*(?:\.status\s*\([^)]*\))?\s*\.json\s*\(/g;
+    const findings: Array<{ line: number; spread: string }> = [];
     const lines = source.split('\n');
+
     let inResponse = false;
-    let responseStartLine = 0;
+    let startLine = 0;
     let depth = 0;
     let span = '';
 
-    const RESPONSE_OPEN = /\bres\s*(?:\.status\s*\([^)]*\))?\s*\.json\s*\(/g;
-    const SPREAD = /\.\.\.([A-Za-z_$][\w$]*)/g;
-
     for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
       let scanFrom = 0;
 
       if (!inResponse) {
         RESPONSE_OPEN.lastIndex = 0;
-        const m = RESPONSE_OPEN.exec(line);
-        if (m) {
-          inResponse = true;
-          responseStartLine = i + 1;
-          // Start counting from after the opening paren.
-          scanFrom = m.index + m[0].length;
-          depth = 1;
-          span = '';
-        }
+        const m = RESPONSE_OPEN.exec(lines[i]);
+        if (!m) continue;
+        inResponse = true;
+        startLine = i + 1;
+        scanFrom = m.index + m[0].length;
+        depth = 1;
+        span = '';
       }
 
-      if (inResponse) {
-        for (let j = scanFrom; j < line.length; j++) {
-          const c = line[j];
-          if (c === '(') depth++;
-          else if (c === ')') depth--;
-          if (depth === 0) {
-            // End of response span. Check accumulated span for spreads.
-            const tail = line.slice(scanFrom, j);
-            span += (span ? '\n' : '') + tail;
-            SPREAD.lastIndex = 0;
-            let s: RegExpExecArray | null;
-            while ((s = SPREAD.exec(span)) !== null) {
-              const ident = s[1];
-              if (!ALLOWLISTED_SPREADS.has(ident)) {
-                findings.push({ line: responseStartLine, spread: `...${ident}`, context: span.slice(0, 200) });
-              }
-            }
-            inResponse = false;
-            span = '';
-            break;
-          }
-        }
-        if (inResponse) {
-          // Span continues onto next line.
-          span += (span ? '\n' : '') + line.slice(scanFrom);
-        }
+      const result = scanLine(lines[i], scanFrom, depth);
+      if (result.closedAt >= 0) {
+        span += (span ? '\n' : '') + lines[i].slice(scanFrom, result.closedAt);
+        collectSpreads(span, startLine, allowlist, findings);
+        inResponse = false;
+        span = '';
+      } else {
+        depth = result.endDepth;
+        span += (span ? '\n' : '') + lines[i].slice(scanFrom);
       }
     }
+    return findings;
+  }
 
+  it('attestations.ts has no res.json() spread of untrusted rows (static-source defense)', () => {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const source = readFileSync(resolve(here, 'attestations.ts'), 'utf8');
+
+    const ALLOWLISTED_SPREADS = new Set<string>([
+      'toPublicAttestation', // sanitizer — explicit allowlist, safe by construction
+    ]);
+
+    const findings = findUntrustedResponseSpreads(source, ALLOWLISTED_SPREADS);
     expect(findings, 'attestations.ts: untrusted spread in res.json() call').toEqual([]);
   });
 });
