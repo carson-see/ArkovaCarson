@@ -164,7 +164,14 @@ jobs:
           # whose effects are present in prod via compensating/successor
           # migrations or operator-applied names. Do not add entries here
           # without object-level verification and a dated runbook note.
-          exempt_regex='^(0033|0078|0162|.* 2|0022_seed_schema_alignment|0023_is_public_profile|0024_fix_search_path_revoke_anchor|0068b_submitted_status_and_confirmations|0088b_cle_templates|0135_ats_integrations|0175_fix_pipeline_stats_timeout|0180_fix_public_issuer_perf|0258_ark112_queue_public_id)$'
+          #
+          # 0285_contract_anchor_credential_types: SCRUM-1629 [Spec] PR ships
+          # the migration *file* alongside the API spec it documents, but
+          # application is intentionally deferred to SCRUM-1631 [Build] so
+          # the enum values + partial index land at the same time as the
+          # handler that uses them. SCRUM-1631 removes this exemption when
+          # it applies the migration via Supabase MCP.
+          exempt_regex='^(0033|0078|0162|.* 2|0022_seed_schema_alignment|0023_is_public_profile|0024_fix_search_path_revoke_anchor|0068b_submitted_status_and_confirmations|0088b_cle_templates|0135_ats_integrations|0175_fix_pipeline_stats_timeout|0180_fix_public_issuer_perf|0258_ark112_queue_public_id|0285_contract_anchor_credential_types)$'
           filtered_missing=$(echo "$missing" | grep -vE "$exempt_regex" || true)
 
           missing_count=$(echo "$filtered_missing" | grep -c . || true)
