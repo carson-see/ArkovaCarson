@@ -16,7 +16,7 @@ type FlagName =
   | 'ENABLE_DOCUSIGN_OAUTH'      // pre-emptive while we audit token-storage path
   | 'ENABLE_DOCUSIGN_WEBHOOK'    // cross-org lookup with no org_id filter
   | 'ENABLE_ATS_WEBHOOK'         // multi-secret iteration = tenant isolation bypass
-  | 'ENABLE_GRC_INTEGRATION';    // OAuth tokens stored cleartext
+  | 'ENABLE_GRC_INTEGRATIONS';   // OAuth tokens stored cleartext
 
 // Cloud Run replaces containers on env edits; env vars never mutate at
 // runtime. Resolve the gate value once at module factory time instead of

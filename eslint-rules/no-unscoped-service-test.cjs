@@ -42,9 +42,12 @@ module.exports = {
     let hasMockSupabase = false;
     let hasMockFrom = false;
     let hasScopingAssertion = false;
+    let hasNoFromAssertion = false;
+    let hasGlobalTableAssertion = false;
 
     // Scoping field names we look for
     const scopingFields = ['user_id', 'org_id', 'owner_id', 'created_by'];
+    const globalSingletonTables = ['treasury_cache'];
 
     return {
       CallExpression(node) {
@@ -75,7 +78,26 @@ module.exports = {
             ) {
               hasScopingAssertion = true;
             }
+            if (
+              arg.type === 'Literal' &&
+              typeof arg.value === 'string' &&
+              globalSingletonTables.includes(arg.value)
+            ) {
+              hasGlobalTableAssertion = true;
+            }
           }
+        }
+
+        // Detect expect(mockFrom).not.toHaveBeenCalled(); this is a valid
+        // assertion for tests that prove a dangerous fallback table query does
+        // not run at all.
+        if (
+          node.callee.type === 'MemberExpression' &&
+          node.callee.property.type === 'Identifier' &&
+          node.callee.property.name === 'toHaveBeenCalled' &&
+          isNegatedExpectOnFromMock(node)
+        ) {
+          hasNoFromAssertion = true;
         }
       },
 
@@ -138,7 +160,13 @@ module.exports = {
 
       'Program:exit'(node) {
         // Only flag when BOTH: supabase is mocked AND .from() is part of the mock
-        if (hasMockSupabase && hasMockFrom && !hasScopingAssertion) {
+        if (
+          hasMockSupabase &&
+          hasMockFrom &&
+          !hasScopingAssertion &&
+          !hasNoFromAssertion &&
+          !hasGlobalTableAssertion
+        ) {
           context.report({
             node,
             messageId: 'unscopedService',
@@ -148,3 +176,23 @@ module.exports = {
     };
   },
 };
+
+function isNegatedExpectOnFromMock(node) {
+  const maybeNot = node.callee.object;
+  if (!maybeNot || maybeNot.type !== 'MemberExpression') return false;
+  if (maybeNot.property.type !== 'Identifier' || maybeNot.property.name !== 'not') return false;
+
+  const expectCall = maybeNot.object;
+  if (
+    !expectCall ||
+    expectCall.type !== 'CallExpression' ||
+    expectCall.callee.type !== 'Identifier' ||
+    expectCall.callee.name !== 'expect' ||
+    expectCall.arguments.length === 0
+  ) {
+    return false;
+  }
+
+  const expectArg = expectCall.arguments[0];
+  return expectArg.type === 'Identifier' && expectArg.name.toLowerCase().includes('from');
+}
