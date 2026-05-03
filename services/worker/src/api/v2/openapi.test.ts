@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { openApiV2Spec } from './openapi.js';
+import { PUBLIC_ORG_ID_RE } from './resourceIdentifiers.js';
 
 describe('openApiV2Spec', () => {
   it('publishes an OpenAPI 3.1 agent spec with x-agent-usage annotations', () => {
@@ -17,6 +18,13 @@ describe('openApiV2Spec', () => {
 
   it('documents detail endpoint scopes and public-id-only schemas', () => {
     expect(openApiV2Spec.paths['/organizations/{public_id}'].get['x-agent-usage'].auth).toContain('read:orgs');
+    expect(openApiV2Spec.paths['/organizations/{public_id}'].get.parameters).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          schema: expect.objectContaining({ pattern: PUBLIC_ORG_ID_RE.source }),
+        }),
+      ]),
+    );
     expect(openApiV2Spec.paths['/records/{public_id}'].get['x-agent-usage'].auth).toContain('read:records');
     expect(openApiV2Spec.paths['/fingerprints/{fingerprint}'].get['x-agent-usage'].auth).toContain('read:records');
     expect(openApiV2Spec.paths['/documents/{public_id}'].get['x-agent-usage'].auth).toContain('read:records');

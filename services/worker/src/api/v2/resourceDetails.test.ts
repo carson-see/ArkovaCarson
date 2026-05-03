@@ -91,6 +91,15 @@ const anchorRow = {
   },
 };
 
+function expectPublicSafeAnchorDetail(body: unknown) {
+  const serialized = JSON.stringify(body);
+  expect(serialized).not.toContain('anchor-internal-id');
+  expect(serialized).not.toContain('org-1');
+  expect(serialized).not.toContain('user-1');
+  expect(serialized).not.toContain('private@example.com');
+  expect(serialized).not.toContain('do-not-return');
+}
+
 describe('resourceDetailsRouter', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -154,10 +163,7 @@ describe('resourceDetailsRouter', () => {
         source_id: 'abc',
       },
     });
-    expect(JSON.stringify(res.body)).not.toContain('anchor-internal-id');
-    expect(JSON.stringify(res.body)).not.toContain('org-1');
-    expect(JSON.stringify(res.body)).not.toContain('private@example.com');
-    expect(JSON.stringify(res.body)).not.toContain('do-not-return');
+    expectPublicSafeAnchorDetail(res.body);
   });
 
   it('returns problem+json for invalid record public ids', async () => {
@@ -178,6 +184,16 @@ describe('resourceDetailsRouter', () => {
     expect(res.body.type).toContain('/not-found');
   });
 
+  it('returns not-found problem for missing organization', async () => {
+    mockQuery(null);
+
+    const res = await request(buildApp()).get('/organizations/org_missing');
+
+    expect(res.status).toBe(404);
+    expect(res.type).toBe('application/problem+json');
+    expect(res.body.type).toContain('/not-found');
+  });
+
   it('returns fingerprint detail with read:records scope', async () => {
     const chain = mockQuery(anchorRow);
     const fingerprint = 'A'.repeat(64);
@@ -188,6 +204,7 @@ describe('resourceDetailsRouter', () => {
     expect(chain.eq).toHaveBeenCalledWith('fingerprint', fingerprint.toLowerCase());
     expect(res.body.type).toBe('fingerprint');
     expect(res.body.public_id).toBe('ARK-DOC-ABC');
+    expectPublicSafeAnchorDetail(res.body);
   });
 
   it('returns invalid-scope problem when fingerprint detail lacks read:records', async () => {
@@ -196,6 +213,16 @@ describe('resourceDetailsRouter', () => {
     expect(res.status).toBe(403);
     expect(res.type).toBe('application/problem+json');
     expect(res.body.detail).toContain('read:records');
+  });
+
+  it('returns not-found problem for missing fingerprint', async () => {
+    mockQuery(null);
+
+    const res = await request(buildApp()).get(`/fingerprints/${'a'.repeat(64)}`);
+
+    expect(res.status).toBe(404);
+    expect(res.type).toBe('application/problem+json');
+    expect(res.body.type).toContain('/not-found');
   });
 
   it('returns document details by public_id', async () => {
@@ -207,5 +234,16 @@ describe('resourceDetailsRouter', () => {
     expect(res.body.type).toBe('document');
     expect(res.body.public_id).toBe('ARK-DOC-ABC');
     expect(res.body.record_uri).toBe('https://app.arkova.ai/verify/ARK-DOC-ABC');
+    expectPublicSafeAnchorDetail(res.body);
+  });
+
+  it('returns not-found problem for missing document', async () => {
+    mockQuery(null);
+
+    const res = await request(buildApp()).get('/documents/ARK-DOC-MISSING');
+
+    expect(res.status).toBe(404);
+    expect(res.type).toBe('application/problem+json');
+    expect(res.body.type).toContain('/not-found');
   });
 });

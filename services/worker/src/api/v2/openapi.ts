@@ -1,4 +1,5 @@
 import type { Request, Response } from 'express';
+import { PUBLIC_ORG_ID_RE } from './resourceIdentifiers.js';
 
 const ANCHOR_PUBLIC_ID_PARAMETER = {
   name: 'public_id',
@@ -20,7 +21,7 @@ const ORG_PUBLIC_ID_PARAMETER = {
   name: 'public_id',
   in: 'path',
   required: true,
-  schema: { type: 'string', minLength: 2, maxLength: 128 },
+  schema: { type: 'string', minLength: 2, maxLength: 128, pattern: PUBLIC_ORG_ID_RE.source },
   description: 'Organization public ID.',
 } as const;
 
