@@ -25,7 +25,6 @@ import {
 import type {
   IntelligenceEvalEntry,
   IntelligenceEvalResult,
-  IntelligenceEvalReport,
 } from '../src/ai/eval/intelligence-eval.js';
 import { buildIntelligenceSystemPrompt } from '../src/ai/prompts/intelligence.js';
 import type { IntelligenceMode } from '../src/ai/prompts/intelligence.js';

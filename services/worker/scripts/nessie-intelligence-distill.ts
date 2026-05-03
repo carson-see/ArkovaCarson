@@ -20,7 +20,6 @@ import { config as dotenvConfig } from 'dotenv';
 import { resolve } from 'node:path';
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { GEMINI_GENERATION_MODEL } from '../src/ai/gemini-config.js';
-import { createHash } from 'node:crypto';
 dotenvConfig({ path: resolve(import.meta.dirname ?? '.', '../.env') });
 
 import {
@@ -165,7 +164,8 @@ async function fetchPublicRecords(
 
   const db = createClient(supabaseUrl, supabaseKey);
 
-  // Fetch records with content, preferring those with anchors
+  // Fetch records with content, preferring those with anchors.
+  // eslint-disable-next-line arkova/missing-org-filter -- Offline intelligence distillation intentionally samples public records across organizations.
   const { data, error } = await db
     .from('public_records')
     .select('id, source, source_url, record_type, title, content_hash, metadata')
