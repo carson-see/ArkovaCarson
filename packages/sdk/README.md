@@ -170,8 +170,13 @@ The result shape:
   anchorTimestamp: '2026-04-11T10:30:00.000Z',
   networkReceiptId: 'tx-abcdef123456...',
   recordUri: 'https://app.arkova.ai/verify/ARK-2026-001',
+  description: 'Bachelor of Science transcript',
+  confidenceScores: { overall: 0.93, fields: { issuerName: 0.97 } },
+  subType: 'official_undergraduate',
 }
 ```
+
+Verification results also expose rich nullable metadata when the API returns it, including `complianceControls`, `chainConfirmations`, `parentPublicId`, `versionNumber`, `revocationTxId`, `revocationBlockHeight`, `fileMime`, and `fileSize`.
 
 When called with `(data, receipt)` and the SHA-256 hash of `data` doesn't match `receipt.fingerprint`, the SDK returns `{ verified: false, status: 'UNKNOWN', ... }` **without making a network call**. This is the offline tamper detection path.
 
@@ -425,6 +430,7 @@ All types are exported from the package root:
 import type {
   ArkovaConfig,
   AnchorReceipt,
+  RichVerificationFields,
   VerificationResult,
   NessieQueryResult,
   NessieContextResult,
