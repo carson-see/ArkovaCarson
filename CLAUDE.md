@@ -121,7 +121,7 @@ Documents never leave the user's device. Foundational privacy guarantee.
 - Client-side OCR (PDF.js + Tesseract.js) extracts text on device.
 - Client-side PII stripping removes all PII before anything leaves browser.
 - Only PII-stripped structured metadata + fingerprint may flow to server.
-- Gated by `ENABLE_AI_EXTRACTION` (default false). No "raw mode" bypass.
+- Gated by `ENABLE_AI_EXTRACTION` (**default true in production**; `switchboard_flags.enabled = true` and the deploy-worker.yml env-var fallback both set it on). The "default false" wording in earlier revisions of this doc was drift — AI extraction is a launch-required path, not opt-in. Off-prod (local dev / preview) defaults to false unless explicitly enabled. No "raw mode" bypass either way.
 
 ### 1.7 Testing
 - RLS tests: `src/tests/rls/helpers.ts` `withUser()` / `withAuth()`.

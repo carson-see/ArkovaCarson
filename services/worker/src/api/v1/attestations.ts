@@ -20,11 +20,21 @@ import { verifyAuthToken } from '../../auth.js';
 import { config } from '../../config.js';
 import { buildVerifyUrl, buildAttestationVerifyUrl } from '../../lib/urls.js';
 import { dispatchWebhookEvent } from '../../webhooks/delivery.js';
+import { requireScope } from '../../middleware/apiKeyAuth.js';
+import { rateLimit } from '../../utils/rateLimit.js';
 
 const router = Router();
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const dbAny = db as any;
+
+// Batch attestation endpoints share the v1 batch bucket with /verify/batch.
+const attestationBatchRateLimiter = rateLimit({
+  windowMs: 60_000,
+  maxRequests: 10,
+  scope: 'batch',
+  keyGenerator: (req) => req.apiKey?.keyId ?? req.ip ?? 'unknown',
+});
 
 // ─── Type Code Mapping ────────────────────────────────────
 const ATTESTATION_TYPE_CODES: Record<string, string> = {
@@ -435,7 +445,7 @@ const BatchCreateSchema = z.object({
   attestations: z.array(CreateAttestationSchema).min(1).max(100),
 });
 
-router.post('/batch-create', async (req: Request, res: Response) => {
+router.post('/batch-create', attestationBatchRateLimiter, async (req: Request, res: Response) => {
   const userId = await requireAuth(req, res);
   if (!userId) return;
 
@@ -608,7 +618,7 @@ interface BatchAttestationResult {
   } | null;
 }
 
-router.post('/batch-verify', async (req: Request, res: Response) => {
+router.post('/batch-verify', requireScope('verify:batch'), attestationBatchRateLimiter, async (req: Request, res: Response) => {
   // Require API key authentication
   if (!req.apiKey) {
     res.status(401).json({

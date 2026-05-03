@@ -10,8 +10,8 @@ export default tseslint.config(
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
-    files: ['src/**/*.ts'],
-    ignores: ['src/**/*.test.ts', 'src/**/*.spec.ts'],
+    files: ['src/**/*.ts', 'scripts/**/*.ts'],
+    ignores: ['src/**/*.test.ts', 'src/**/*.spec.ts', 'scripts/**/*.test.ts', 'scripts/**/*.spec.ts'],
     plugins: {
       arkova: arkovaPlugin,
     },
@@ -36,7 +36,7 @@ export default tseslint.config(
   // so `npm run lint` (the deploy gate per R0-4) returns zero exit codes when
   // there are no real errors. Same scope as the production-file override above.
   {
-    files: ['src/**/*.test.ts', 'src/**/*.spec.ts'],
+    files: ['src/**/*.test.ts', 'src/**/*.spec.ts', 'scripts/**/*.test.ts', 'scripts/**/*.spec.ts'],
     languageOptions: {
       ecmaVersion: 2020,
       globals: { ...globals.node, ...globals.vitest },

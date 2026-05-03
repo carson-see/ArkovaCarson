@@ -23,7 +23,7 @@ import { FULL_GOLDEN_DATASET } from '../src/ai/eval/golden-dataset.js';
 import { runEval, formatEvalReport, getPromptVersionHash } from '../src/ai/eval/runner.js';
 import { analyzeCalibration, formatCalibrationReport } from '../src/ai/eval/calibration.js';
 import { GEMINI_GENERATION_MODEL } from '../src/ai/gemini-config.js';
-import type { EvalRunResult, AggregateMetrics } from '../src/ai/eval/types.js';
+import type { EvalRunResult } from '../src/ai/eval/types.js';
 
 const args = process.argv.slice(2);
 
