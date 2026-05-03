@@ -24,6 +24,11 @@ import { trackOperation } from './lifecycle.js';
 import { withCronMonitoring } from '../utils/sentry.js';
 
 export function setupScheduledJobs(chainInitialized: boolean): void {
+  if (config.nodeEnv === 'production') {
+    logger.info('In-process cron disabled in production; Cloud Scheduler owns worker job cadence');
+    return;
+  }
+
   // Sentry cron monitoring wrappers (Phase 4, Item 18)
   const monitoredConfirmationCheck = withCronMonitoring(
     'check-confirmations', '*/2 * * * *', checkSubmittedConfirmations,
