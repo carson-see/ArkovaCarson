@@ -16,12 +16,7 @@ import { db } from '../utils/db.js';
 import { invalidateVerificationCache } from '../utils/verifyCache.js';
 import { logger } from '../utils/logger.js';
 import { config } from '../config.js';
-import { buildVerifyUrl, buildRecordUrl } from '../lib/urls.js';
 import { dispatchWebhookEvent } from '../webhooks/delivery.js';
-import { isSemanticSearchEnabled } from '../middleware/aiFeatureGate.js';
-import { generateAndStoreEmbedding } from '../ai/embeddings.js';
-import { createAIProvider } from '../ai/factory.js';
-import { sendEmail, buildAnchorSecuredEmail } from '../email/index.js';
 import { runWithConcurrency } from '../utils/concurrency.js';
 
 /** Maximum unique transactions to check per cron run (rate limit mempool.space) */
@@ -46,6 +41,16 @@ type SecuredWebhookAnchor = {
   org_id: string | null;
 };
 
+type BatchSecuredAuditRow = {
+  event_type: string;
+  event_category: string;
+  actor_id: string;
+  target_type: string;
+  target_id: string;
+  org_id: string | null;
+  details: string;
+};
+
 function normalizeDrainedAnchors(value: unknown): SecuredWebhookAnchor[] {
   if (!Array.isArray(value)) return [];
   return value
@@ -68,6 +73,49 @@ function invalidateDrainedVerificationCaches(anchors: SecuredWebhookAnchor[]): v
   for (const publicId of publicIds) {
     void invalidateVerificationCache(publicId);
   }
+}
+
+function summarizeDrainedOrgCounts(anchors: SecuredWebhookAnchor[]): Array<{ orgId: string | null; count: number }> {
+  const counts = new Map<string | null, number>();
+  for (const anchor of anchors) {
+    counts.set(anchor.org_id, (counts.get(anchor.org_id) ?? 0) + 1);
+  }
+  return Array.from(counts, ([orgId, count]) => ({ orgId, count }));
+}
+
+function buildBatchSecuredAuditRows(
+  txId: string,
+  groupConfirmed: number,
+  blockHeight: number,
+  confirmations: number,
+  drainedAnchors: SecuredWebhookAnchor[],
+): BatchSecuredAuditRow[] {
+  const orgCounts = summarizeDrainedOrgCounts(drainedAnchors);
+  const attributedCount = orgCounts.reduce((sum, row) => sum + row.count, 0);
+  const unknownCount = Math.max(groupConfirmed - attributedCount, 0);
+  const rows = orgCounts.map(({ orgId, count }) => ({
+    event_type: 'anchor.batch_secured',
+    event_category: 'ANCHOR',
+    actor_id: '00000000-0000-0000-0000-000000000000',
+    target_type: 'anchor',
+    target_id: txId,
+    org_id: orgId,
+    details: `Batch confirmed ${count} anchors at block ${blockHeight} (tx: ${txId}, ${confirmations} confirmations; tx_total: ${groupConfirmed})`,
+  }));
+
+  if (rows.length === 0 || unknownCount > 0) {
+    rows.push({
+      event_type: 'anchor.batch_secured',
+      event_category: 'ANCHOR',
+      actor_id: '00000000-0000-0000-0000-000000000000',
+      target_type: 'anchor',
+      target_id: txId,
+      org_id: null,
+      details: `Batch confirmed ${unknownCount || groupConfirmed} anchors at block ${blockHeight} (tx: ${txId}, ${confirmations} confirmations; org attribution unavailable)`,
+    });
+  }
+
+  return rows;
 }
 
 export async function fanOutSecuredAnchorWebhooks(
@@ -320,152 +368,6 @@ async function fetchTxStatus(txid: string): Promise<MempoolTxResponse | null> {
 }
 
 /**
- * Process a single SUBMITTED anchor — check if its transaction has been confirmed.
- *
- * @returns true if anchor was promoted to SECURED
- */
-async function _checkAnchorConfirmation(anchor: {
-  id: string;
-  chain_tx_id: string;
-  user_id: string;
-  org_id: string | null;
-  fingerprint: string;
-  public_id: string | null;
-}, currentTipHeight: number): Promise<boolean> {
-  const txData = await fetchTxStatus(anchor.chain_tx_id);
-
-  if (!txData?.status.confirmed) {
-    logger.debug({ anchorId: anchor.id, txid: anchor.chain_tx_id }, 'Transaction not yet confirmed');
-    return false;
-  }
-
-  const blockHeight = txData.status.block_height ?? 0;
-  const blockTimestamp = txData.status.block_time
-    ? new Date(txData.status.block_time * 1000).toISOString()
-    : new Date().toISOString();
-
-  // CRIT-1: Calculate actual confirmations from block height difference
-  const minConfirmations = getMinConfirmations();
-  let confirmations = 1; // At minimum, TX is in a block
-  if (blockHeight > 0 && currentTipHeight > 0) {
-    confirmations = currentTipHeight - blockHeight + 1;
-  }
-
-  // CRIT-1: Only promote to SECURED when sufficient confirmations reached
-  if (confirmations < minConfirmations) {
-    // Update chain index with current confirmation count (progress tracking)
-    await db
-      .from('anchor_chain_index')
-      .upsert(
-        {
-          fingerprint_sha256: anchor.fingerprint,
-          chain_tx_id: anchor.chain_tx_id,
-          chain_block_height: blockHeight,
-          chain_block_timestamp: blockTimestamp,
-          confirmations,
-          anchor_id: anchor.id,
-        },
-        { onConflict: 'fingerprint_sha256,chain_tx_id' },
-      );
-
-    logger.debug(
-      { anchorId: anchor.id, confirmations, required: minConfirmations, blockHeight },
-      `Anchor confirmed but waiting for ${minConfirmations} confirmations (${confirmations}/${minConfirmations})`,
-    );
-    return false;
-  }
-
-  // Promote SUBMITTED → SECURED (sufficient confirmations reached)
-  const { error: updateError } = await db
-    .from('anchors')
-    .update({
-      status: 'SECURED',
-      chain_block_height: blockHeight,
-      chain_timestamp: blockTimestamp,
-    })
-    .eq('id', anchor.id)
-    .eq('status', 'SUBMITTED'); // Guard: only update if still SUBMITTED
-
-  if (updateError) {
-    logger.error({ anchorId: anchor.id, error: updateError }, 'Failed to promote anchor to SECURED');
-    return false;
-  }
-
-  // PERF-12: Invalidate verification cache on status transition
-  if (anchor.public_id) {
-    void invalidateVerificationCache(anchor.public_id);
-  }
-
-  // Update chain index — non-fatal
-  const { error: indexError } = await db
-    .from('anchor_chain_index')
-    .upsert(
-      {
-        fingerprint_sha256: anchor.fingerprint,
-        chain_tx_id: anchor.chain_tx_id,
-        chain_block_height: blockHeight,
-        chain_block_timestamp: blockTimestamp,
-        confirmations,
-        anchor_id: anchor.id,
-      },
-      { onConflict: 'fingerprint_sha256,chain_tx_id' },
-    );
-
-  if (indexError) {
-    logger.warn({ anchorId: anchor.id, error: indexError }, 'Failed to upsert chain index');
-  }
-
-  // Log audit event — non-fatal
-  await db.from('audit_events').insert({
-    event_type: 'anchor.secured',
-    event_category: 'ANCHOR',
-    actor_id: anchor.user_id,
-    target_type: 'anchor',
-    target_id: anchor.id,
-    org_id: anchor.org_id,
-    details: `Confirmed at block ${blockHeight} (tx: ${anchor.chain_tx_id})`,
-  });
-
-  // Dispatch webhook — non-fatal.
-  // SCRUM-1268 (R2-5): payload contains only public-allowed fields.
-  // `anchor_id` (UUID) and raw `fingerprint` are banned by CLAUDE.md §6 + §1.6.
-  // PR #567 review-fix: eventId is `public_id` (not the internal UUID) so
-  // the outer envelope's `event_id` field is public-safe.
-  if (anchor.org_id && anchor.public_id) {
-    try {
-      await dispatchWebhookEvent(anchor.org_id, 'anchor.secured', anchor.public_id, {
-        public_id: anchor.public_id,
-        status: 'SECURED',
-        chain_tx_id: anchor.chain_tx_id,
-        chain_block_height: blockHeight,
-        chain_timestamp: blockTimestamp,
-        secured_at: blockTimestamp,
-      });
-    } catch (webhookError) {
-      logger.warn({ anchorId: anchor.id, error: webhookError }, 'Failed to dispatch webhook for confirmed anchor');
-    }
-  }
-
-  logger.info(
-    { anchorId: anchor.id, txid: anchor.chain_tx_id, blockHeight },
-    'Anchor promoted SUBMITTED → SECURED (tx confirmed)',
-  );
-
-  // Send "credential secured" email notification (non-blocking, best-effort)
-  trySendSecuredEmail(anchor.id, anchor.user_id, anchor.org_id, anchor.public_id).catch((emailErr) => {
-    logger.debug({ anchorId: anchor.id, error: emailErr }, 'Secured email skipped or failed (non-fatal)');
-  });
-
-  // Auto-generate embedding for semantic search (non-blocking, best-effort)
-  // Only runs if ENABLE_SEMANTIC_SEARCH is true and an AI provider is available
-  tryAutoEmbed(anchor.id, anchor.org_id, anchor.user_id).catch((embedErr) => {
-    logger.debug({ anchorId: anchor.id, error: embedErr }, 'Auto-embed skipped or failed (non-fatal)');
-  });
-
-  return true;
-}
-
-/**
  * Check all SUBMITTED anchors for confirmation.
  * Called by cron every 2 minutes.
  *
@@ -635,18 +537,20 @@ async function checkSubmittedConfirmationsUnlocked(): Promise<{ checked: number;
           logger.error({ txId, error: drainErr }, 'Bulk SECURED update failed');
         }
 
-        // Batch audit event — one summary row per TX instead of per-anchor
-        // (8K+ individual audit rows is excessive and slow)
+        // Batch audit event — one summary row per org slice instead of
+        // per-anchor (8K+ individual audit rows is excessive and slow).
         if (groupConfirmed > 0) {
-          const { error: auditErr } = await db.from('audit_events').insert({
-            event_type: 'anchor.batch_secured',
-            event_category: 'ANCHOR',
-            actor_id: '00000000-0000-0000-0000-000000000000',
-            target_type: 'anchor',
-            target_id: txId,
-            org_id: null,
-            details: `Batch confirmed ${groupConfirmed} anchors at block ${blockHeight} (tx: ${txId}, ${confirmations} confirmations)`,
-          });
+          const auditRows = buildBatchSecuredAuditRows(
+            txId,
+            groupConfirmed,
+            blockHeight,
+            confirmations,
+            drainedAnchors,
+          );
+          const { error: auditErr } =
+            auditRows.length === 1
+              ? await db.from('audit_events').insert(auditRows[0])
+              : await db.from('audit_events').insert(auditRows);
           if (auditErr) logger.warn({ auditErr, txId }, 'Failed to insert batch audit event');
 
           logger.info(
@@ -749,107 +653,4 @@ async function autoConfirmMockAnchors(): Promise<{ checked: number; confirmed: n
 
   logger.info({ count: anchors.length }, 'Auto-confirmed SUBMITTED anchors (mock mode)');
   return { checked: anchors.length, confirmed: anchors.length };
-}
-
-/**
- * Attempt to auto-generate an embedding for a newly SECURED anchor.
- * Non-fatal — if semantic search is disabled, no AI provider, or no metadata,
- * this silently skips without affecting the confirmation flow.
- */
-async function tryAutoEmbed(anchorId: string, orgId: string | null, userId: string): Promise<void> {
-  // Skip if semantic search is not enabled
-  const searchEnabled = await isSemanticSearchEnabled();
-  if (!searchEnabled || !orgId) return;
-
-  // Fetch anchor metadata for embedding
-  const { data: anchor } = await db
-    .from('anchors')
-    .select('metadata, credential_type')
-    .eq('id', anchorId)
-    .single();
-
-  if (!anchor?.metadata) return;
-
-  const metadata = anchor.metadata as Record<string, string | undefined>;
-  metadata.credentialType = (anchor.credential_type as string) ?? metadata.credentialType;
-
-  // Only embed if there's meaningful metadata
-  const nonEmpty = Object.values(metadata).filter((v) => v && v.length > 0);
-  if (nonEmpty.length < 2) return;
-
-  const provider = createAIProvider();
-  const result = await generateAndStoreEmbedding(provider, {
-    anchorId,
-    orgId,
-    metadata,
-    userId,
-  });
-
-  if (result.success) {
-    logger.info({ anchorId, model: result.model }, 'Auto-embedded SECURED anchor for semantic search');
-  }
-}
-
-/**
- * Send "credential secured" email notification to the anchor owner.
- * Non-fatal — if user has no email, or email sending fails, the
- * confirmation flow is not affected.
- */
-async function trySendSecuredEmail(
-  anchorId: string,
-  userId: string,
-  orgId: string | null,
-  publicId: string | null,
-): Promise<void> {
-  // Fetch user email
-  const { data: profile } = await db
-    .from('profiles')
-    .select('email')
-    .eq('id', userId)
-    .single();
-
-  if (!profile?.email) return;
-
-  // Fetch credential label + org name
-  const { data: anchor } = await db
-    .from('anchors')
-    .select('credential_type, metadata')
-    .eq('id', anchorId)
-    .single();
-
-  const metadata = (anchor?.metadata as Record<string, string | undefined>) ?? {};
-  const credentialLabel = metadata.issuerName
-    ? `${metadata.issuerName} — ${(anchor?.credential_type as string) ?? 'Credential'}`
-    : (anchor?.credential_type as string) ?? 'Credential';
-
-  let organizationName: string | undefined;
-  if (orgId) {
-    const { data: org } = await db
-      .from('organizations')
-      .select('display_name')
-      .eq('id', orgId)
-      .single();
-    organizationName = org?.display_name ?? undefined;
-  }
-
-  // Build verification URL
-  const verificationUrl = publicId ? buildVerifyUrl(publicId) : buildRecordUrl(anchorId);
-
-  const emailData = buildAnchorSecuredEmail({
-    recipientEmail: profile.email,
-    credentialLabel,
-    verificationUrl,
-    organizationName,
-  });
-
-  await sendEmail({
-    to: profile.email,
-    ...emailData,
-    emailType: 'anchor_secured',
-    anchorId,
-    actorId: userId,
-    orgId: orgId ?? undefined,
-  });
-
-  logger.info({ anchorId, userId }, 'Sent anchor_secured email notification');
 }

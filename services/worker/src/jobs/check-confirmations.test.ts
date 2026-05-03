@@ -338,7 +338,7 @@ describe('checkSubmittedConfirmations', () => {
         event_category: 'ANCHOR',
         target_type: 'anchor',
         target_id: MOCK_SUBMITTED_ANCHOR.chain_tx_id,
-        org_id: null,
+        org_id: 'org-001',
       }),
     );
   });
@@ -431,6 +431,20 @@ describe('checkSubmittedConfirmations', () => {
     expect(mockInvalidateVerificationCache).toHaveBeenCalledWith('pub-002');
     expect(mockInvalidateVerificationCache).toHaveBeenCalledWith('pub-003');
     expect(mockDispatchWebhookEvent).toHaveBeenCalledTimes(3);
+    expect(mockAuditInsert).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({
+          event_type: 'anchor.batch_secured',
+          org_id: 'org-001',
+          details: expect.stringContaining('Batch confirmed 2 anchors'),
+        }),
+        expect.objectContaining({
+          event_type: 'anchor.batch_secured',
+          org_id: 'org-002',
+          details: expect.stringContaining('Batch confirmed 1 anchors'),
+        }),
+      ]),
+    );
   });
 
   it('does not re-query secured anchors for webhook fan-out when the drain RPC omits anchor identities', async () => {
