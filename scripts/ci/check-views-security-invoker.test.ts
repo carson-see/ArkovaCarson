@@ -73,6 +73,19 @@ describe('check-views-security-invoker scanFiles', () => {
     expect(bareCreates[0].file).toBe('supabase/migrations/0500_b.sql');
   });
 
+  it('preserves statement order inside one migration file', () => {
+    const { bareCreates } = scanFiles([
+      file(
+        'supabase/migrations/0500_mixed.sql',
+        'ALTER VIEW public.v SET (security_invoker = true);\n' +
+          'CREATE OR REPLACE VIEW public.v AS SELECT 1;\n',
+      ),
+    ]);
+
+    expect(bareCreates.map((f) => f.view)).toEqual(['v']);
+    expect(bareCreates[0].line).toBe(2);
+  });
+
   it('skips CREATE MATERIALIZED VIEW (out of scope)', () => {
     const { bareCreates } = scanFiles([
       file('supabase/migrations/0123_x.sql', 'CREATE MATERIALIZED VIEW mv_x AS SELECT 1;'),

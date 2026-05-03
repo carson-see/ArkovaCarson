@@ -58,6 +58,10 @@ interface ScanResult {
   fixedAfter: Set<string>;
 }
 
+type ViewSecurityEvent =
+  | { index: number; kind: 'create'; view: string; isFixed: boolean }
+  | { index: number; kind: 'alter'; view: string };
+
 export function scanFiles(files: ReadonlyArray<{ name: string; body: string }>): ScanResult {
   // Process in migration order so a later ALTER/REPLACE overrides an earlier
   // bare CREATE. Caller is responsible for sorting (we sort by file path here
@@ -71,25 +75,40 @@ export function scanFiles(files: ReadonlyArray<{ name: string; body: string }>):
   const latestFinding = new Map<string, Finding>();
 
   for (const { name, body } of ordered) {
+    const events: ViewSecurityEvent[] = [];
+
     CREATE_VIEW_REGEX.lastIndex = 0;
     let m: RegExpExecArray | null;
     while ((m = CREATE_VIEW_REGEX.exec(body)) !== null) {
       const view = m[1];
       const window = body.slice(m.index, m.index + 250);
       const isFixed = /security_invoker\s*=\s*(?:true|on)/i.test(window);
-      latestState.set(view, isFixed ? 'fixed' : 'bare');
-      if (!isFixed) {
-        latestFinding.set(view, { file: name, view, line: lineNumber(body, m.index) });
-      } else {
-        latestFinding.delete(view);
-      }
+      events.push({ index: m.index, kind: 'create', view, isFixed });
     }
 
     ALTER_FIX_REGEX.lastIndex = 0;
     while ((m = ALTER_FIX_REGEX.exec(body)) !== null) {
-      const view = m[1];
-      latestState.set(view, 'fixed');
-      latestFinding.delete(view);
+      events.push({ index: m.index, kind: 'alter', view: m[1] });
+    }
+
+    events.sort((a, b) => a.index - b.index);
+
+    for (const event of events) {
+      if (event.kind === 'create') {
+        latestState.set(event.view, event.isFixed ? 'fixed' : 'bare');
+        if (!event.isFixed) {
+          latestFinding.set(event.view, {
+            file: name,
+            view: event.view,
+            line: lineNumber(body, event.index),
+          });
+        } else {
+          latestFinding.delete(event.view);
+        }
+      } else {
+        latestState.set(event.view, 'fixed');
+        latestFinding.delete(event.view);
+      }
     }
   }
 
