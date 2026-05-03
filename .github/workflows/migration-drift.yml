@@ -47,7 +47,6 @@ jobs:
 
       - id: gcp-auth
         name: Authenticate to GCP via Workload Identity Federation
-        continue-on-error: true
         uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
         with:
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
@@ -55,43 +54,30 @@ jobs:
 
       - id: supabase-management-token
         name: Pull Supabase Management API token from GCP Secret Manager
-        if: steps.gcp-auth.outcome == 'success'
-        continue-on-error: true
         uses: google-github-actions/get-secretmanager-secrets@bc9c54b29fdffb8a47776820a7d26e77b379d262 # v3.0.0
         with:
           secrets: |
-            token:arkova1/supabase-access-token
+            token:arkova1/supabase_access
 
       - name: Diff local migrations vs Supabase Management API
-        # Skips the drift check gracefully when SUPABASE_ACCESS_TOKEN is not
-        # provisioned (e.g., forks, Dependabot PRs). Without a token the check
-        # emits an informational summary + passes — never blocks on secret
-        # availability.
         env:
           # Supabase Management API token for an account with access to this
           # project. Do not use anon/service_role JWTs, database passwords, or
           # project API keys here. Fine-grained tokens need
           # database_migrations_read and database_read.
-          # Preferred source: GCP Secret Manager `arkova1/supabase-access-token`.
-          # Fallback: legacy GitHub Actions secret SUPABASE_ACCESS_TOKEN.
-          SUPABASE_ACCESS_TOKEN: ${{ steps.supabase-management-token.outputs.token || secrets.SUPABASE_ACCESS_TOKEN }}
+          # Source: GCP Secret Manager `arkova1/supabase_access`.
+          SUPABASE_ACCESS_TOKEN: ${{ steps.supabase-management-token.outputs.token }}
           SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF || 'vzwyaatejekddvltxyye' }}
         run: |
           set -eo pipefail
           auth_hint="SUPABASE_ACCESS_TOKEN must be a Supabase Management API token for an account that can read project ${SUPABASE_PROJECT_REF}; fine-grained tokens need database_migrations_read and database_read. Do not use anon/service_role JWTs, database passwords, or project API keys."
 
           if [ -z "${SUPABASE_ACCESS_TOKEN:-}" ]; then
-            # For fork/Dependabot PRs the token legitimately isn't available.
-            # For main-branch pushes it's an ops misconfiguration — fail loudly.
             # The 2026-04-24 migration-drift incident (SCRUM-1182) happened
-            # because this block was silently passing on main for weeks while
-            # SUPABASE_ACCESS_TOKEN wasn't provisioned in Actions secrets.
-            if [ "${GITHUB_EVENT_NAME}" = "push" ] && [ "${GITHUB_REF}" = "refs/heads/main" ]; then
-              echo "::error title=Migration drift check NOT RUN::SUPABASE_ACCESS_TOKEN is not configured in GitHub Actions secrets. ${auth_hint} This check cannot protect against drift until then."
-              exit 1
-            fi
-            echo "::notice title=Migration drift check skipped::SUPABASE_ACCESS_TOKEN not set — skipping (expected for forks/Dependabot PRs; main-branch pushes fail loudly)."
-            exit 0
+            # because the gate silently passed while blind. Missing Secret
+            # Manager access is now always a hard failure.
+            echo "::error title=Migration drift check NOT RUN::GCP Secret Manager did not provide arkova1/supabase_access. ${auth_hint} Grant the GitHub Actions workload identity service account secretmanager.versions.access on that secret, then rerun this check."
+            exit 1
           fi
 
           if [[ "${SUPABASE_ACCESS_TOKEN}" == eyJ*.*.* ]]; then
@@ -190,6 +176,6 @@ jobs:
       - name: Check prod drain function body and grants
         if: ${{ hashFiles('supabase/migrations/0283_drain_submitted_to_secured_helper.sql') != '' }}
         env:
-          SUPABASE_ACCESS_TOKEN: ${{ steps.supabase-management-token.outputs.token || secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_ACCESS_TOKEN: ${{ steps.supabase-management-token.outputs.token }}
           SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF || 'vzwyaatejekddvltxyye' }}
         run: python3 scripts/ci/check-prod-drain-function.py
