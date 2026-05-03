@@ -22,11 +22,17 @@ async function isGrcEnabled(): Promise<boolean> {
   if (flagCache && flagCache.expiresAt > now) return flagCache.value;
 
   try {
+    // Schema: switchboard_flags(id uuid, flag_key text, enabled boolean, ...).
+    // See SCRUM-1622. Note: /grc is also gated by `killSwitch('ENABLE_GRC_INTEGRATION')`
+    // (env-only, singular flag name) at the router level. That gate is the
+    // outer guard; this gate is the inner one. Fixing the bug here does not
+    // open /grc on its own — the env-only kill-switch still has to be flipped
+    // to "true" before the route accepts traffic.
     const { data, error } = await db
       .from('switchboard_flags')
-      .select('value')
-      .eq('id', 'ENABLE_GRC_INTEGRATIONS')
-      .single() as { data: { value: boolean } | null; error: unknown };
+      .select('enabled')
+      .eq('flag_key', 'ENABLE_GRC_INTEGRATIONS')
+      .single() as { data: { enabled: boolean } | null; error: unknown };
 
     if (error || !data) {
       const envValue = process.env.ENABLE_GRC_INTEGRATIONS === 'true';
@@ -34,7 +40,7 @@ async function isGrcEnabled(): Promise<boolean> {
       return envValue;
     }
 
-    const enabled = data.value === true;
+    const enabled = data.enabled === true;
     flagCache = { value: enabled, expiresAt: now + FLAG_CACHE_TTL_MS };
     return enabled;
   } catch (err) {
