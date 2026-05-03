@@ -43,9 +43,24 @@ afterEach(() => {
 
 // ── TOOL_DEFINITIONS ──────────────────────────────────────────────────
 
+const EXPECTED_TOOL_NAMES = [
+  'verify_credential',
+  'search_credentials',
+  'nessie_query',
+  'anchor_document',
+  'verify_document',
+  'verify_batch',
+  'search',
+  'verify',
+  'list_orgs',
+  'get_anchor',
+  'oracle_batch_verify',
+  'list_agents',
+];
+
 describe('TOOL_DEFINITIONS', () => {
-  it('exports legacy tools plus v2 agent aliases', () => {
-    expect(TOOL_DEFINITIONS).toHaveLength(10);
+  it('exports legacy, v2, oracle, and agent registry tools', () => {
+    expect(TOOL_DEFINITIONS.map((tool) => tool.name)).toEqual(EXPECTED_TOOL_NAMES);
   });
 
   it('all tools have name, description, and inputSchema', () => {
@@ -61,6 +76,24 @@ describe('TOOL_DEFINITIONS', () => {
     const names = TOOL_DEFINITIONS.map((t) => t.name);
     expect(names).toContain('verify_batch');
     expect(names).toEqual(expect.arrayContaining(['search', 'verify', 'list_orgs', 'get_anchor']));
+  });
+
+  it('publishes full array contracts for batch public_id inputs', () => {
+    const verifyBatch = TOOL_DEFINITIONS.find((tool) => tool.name === 'verify_batch');
+    const oracleBatch = TOOL_DEFINITIONS.find((tool) => tool.name === 'oracle_batch_verify');
+
+    expect(verifyBatch?.inputSchema.properties.public_ids).toMatchObject({
+      type: 'array',
+      minItems: 1,
+      maxItems: 100,
+      items: { type: 'string', pattern: '^ARK-[A-Z0-9-]{3,60}$', maxLength: 64 },
+    });
+    expect(oracleBatch?.inputSchema.properties.public_ids).toMatchObject({
+      type: 'array',
+      minItems: 1,
+      maxItems: 25,
+      items: { type: 'string', pattern: '^ARK-[A-Z0-9-]{3,60}$', maxLength: 64 },
+    });
   });
 });
 

@@ -5,6 +5,7 @@ import email.utils
 import time
 from collections.abc import Callable, Mapping
 from typing import Any, TypeVar
+from urllib.parse import quote
 
 import httpx
 from pydantic import ValidationError
@@ -17,6 +18,7 @@ from .models import (
     ProblemDetail,
     SearchResponse,
     SearchType,
+    VerificationResult,
 )
 
 DEFAULT_BASE_URL = "https://api.arkova.ai/v2"
@@ -81,6 +83,19 @@ def _parse_json(response: httpx.Response, model: type[T]) -> T:
         raise ArkovaError("Arkova API returned an unexpected response shape") from exc
 
 
+def _versioned_path(base_url: str, version: str, path: str) -> str:
+    if not path.startswith("/"):
+        path = f"/{path}"
+
+    url = httpx.URL(base_url)
+    segments = tuple(segment for segment in url.path.split("/") if segment)
+    if segments and segments[-1] in {"v1", "v2"}:
+        prefix_segments = (*segments[:-1], version)
+        return str(url.copy_with(path=f"/{'/'.join(prefix_segments)}{path}"))
+
+    return f"/api/{version}{path}"
+
+
 class Arkova:
     """Synchronous Arkova API v2 client."""
 
@@ -124,6 +139,14 @@ class Arkova:
         if cursor:
             params["cursor"] = cursor
         return _parse_json(self._request("GET", "/search", params=params), SearchResponse)
+
+    def verify(self, public_id: str) -> VerificationResult:
+        path = _versioned_path(
+            str(self._client.base_url),
+            "v1",
+            f"/verify/{quote(public_id, safe='')}",
+        )
+        return _parse_json(self._request("GET", path), VerificationResult)
 
     def verify_fingerprint(self, fingerprint: str) -> FingerprintVerification:
         return _parse_json(
@@ -198,6 +221,14 @@ class AsyncArkova:
         if cursor:
             params["cursor"] = cursor
         return _parse_json(await self._request("GET", "/search", params=params), SearchResponse)
+
+    async def verify(self, public_id: str) -> VerificationResult:
+        path = _versioned_path(
+            str(self._client.base_url),
+            "v1",
+            f"/verify/{quote(public_id, safe='')}",
+        )
+        return _parse_json(await self._request("GET", path), VerificationResult)
 
     async def verify_fingerprint(self, fingerprint: str) -> FingerprintVerification:
         return _parse_json(

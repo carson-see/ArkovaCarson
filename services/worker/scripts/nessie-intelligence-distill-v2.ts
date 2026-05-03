@@ -255,7 +255,7 @@ function generateSyntheticContexts(taskType: IntelligenceTaskType, count: number
       const id = `PR-${tmpl.source.toUpperCase().slice(0, 3)}-${String(i * 10 + d + 1).padStart(4, '0')}`;
       const year = 2023 + Math.floor(Math.random() * 3);
 
-      let content = tmpl.contentTemplate
+      const content = tmpl.contentTemplate
         .replace(/{year}/g, String(year))
         .replace('{num}', String(10000 + Math.floor(Math.random() * 90000)))
         .replace('{revenue}', String(100 + Math.floor(Math.random() * 9900)))

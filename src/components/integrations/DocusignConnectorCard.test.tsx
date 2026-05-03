@@ -99,6 +99,9 @@ describe('DocusignConnectorCard', () => {
     render(<DocusignConnectorCard orgId={ORG_ID} />);
 
     const connectButton = await screen.findByRole('button', { name: /connect/i });
+    await waitFor(() => {
+      expect(connectButton).toBeEnabled();
+    });
     fireEvent.click(connectButton);
 
     await waitFor(() => {
@@ -121,6 +124,9 @@ describe('DocusignConnectorCard', () => {
     render(<DocusignConnectorCard orgId={ORG_ID} />);
 
     const connectButton = await screen.findByRole('button', { name: /connect/i });
+    await waitFor(() => {
+      expect(connectButton).toBeEnabled();
+    });
     fireEvent.click(connectButton);
 
     await waitFor(() => {

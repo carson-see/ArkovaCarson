@@ -51,7 +51,7 @@ function generateChosenResponse(template: { task: string; domain: string; query:
   });
 }
 
-function generateRejectedResponse(template: { task: string; domain: string; query: string }): string {
+function generateRejectedResponse(_template: { task: string; domain: string; query: string }): string {
   // Generate a response with hallucinated citations (no real record IDs)
   return JSON.stringify({
     analysis: `The requirements are straightforward and well-documented. You should ensure all documents are current and properly filed. This is generally considered best practice in the industry.`,

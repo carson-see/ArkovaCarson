@@ -27,7 +27,7 @@ const bip32 = BIP32Factory(ecc);
 
 const TESTNET = bitcoin.networks.testnet; // testnet4 uses same params
 
-function prompt(question: string, hidden = false): Promise<string> {
+function prompt(question: string, _hidden = false): Promise<string> {
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout,

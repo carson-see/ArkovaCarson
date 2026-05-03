@@ -34,9 +34,20 @@ export interface ToolDefinition {
   description: string;
   inputSchema: {
     type: 'object';
-    properties: Record<string, { type: string; description: string }>;
+    properties: Record<string, ToolInputSchemaProperty>;
     required: string[];
   };
+}
+
+export interface ToolInputSchemaProperty {
+  type: string;
+  description: string;
+  items?: ToolInputSchemaProperty;
+  minItems?: number;
+  maxItems?: number;
+  minLength?: number;
+  maxLength?: number;
+  pattern?: string;
 }
 
 export interface ToolResult {
@@ -102,6 +113,13 @@ export interface SupabaseConfig {
   supabaseKey: string;
   userId: string;
 }
+
+const PUBLIC_ID_JSON_SCHEMA: ToolInputSchemaProperty = {
+  type: 'string',
+  description: 'Arkova public ID matching ARK-<TYPE>-<SUFFIX>.',
+  pattern: '^ARK-[A-Z0-9-]{3,60}$',
+  maxLength: 64,
+};
 
 // ---------------------------------------------------------------------------
 // Shared Fetch Helper
@@ -264,6 +282,9 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
       properties: {
         public_ids: {
           type: 'array',
+          items: PUBLIC_ID_JSON_SCHEMA,
+          minItems: 1,
+          maxItems: 100,
           description: 'Array of credential public identifiers (max 100). Each is verified individually.',
         },
       },
@@ -335,6 +356,34 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         },
       },
       required: ['public_id'],
+    },
+  },
+  {
+    name: 'oracle_batch_verify',
+    description:
+      'Batch-verify multiple credentials via the Arkova Oracle. Use for bulk verification workflows where an envelope with query_id + per-credential results is needed.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        public_ids: {
+          type: 'array',
+          items: PUBLIC_ID_JSON_SCHEMA,
+          minItems: 1,
+          maxItems: 25,
+          description: 'Array of Arkova public IDs to verify (max 25).',
+        },
+      },
+      required: ['public_ids'],
+    },
+  },
+  {
+    name: 'list_agents',
+    description:
+      'List AI agents registered to the authenticated caller organization. Returns agent names, types, scopes, and status.',
+    inputSchema: {
+      type: 'object',
+      properties: {},
+      required: [],
     },
   },
 ];
