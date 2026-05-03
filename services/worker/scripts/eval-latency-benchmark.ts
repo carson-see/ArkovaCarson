@@ -24,7 +24,6 @@ const requestCount = args.includes('--requests')
 // Gemini 3 Flash pricing (estimated — update when GA pricing published)
 const INPUT_COST_PER_1K = 0.00015;  // $/1K input tokens
 const OUTPUT_COST_PER_1K = 0.0006;  // $/1K output tokens
-const EMBEDDING_COST_PER_1K = 0.00004; // $/1K tokens
 
 async function main() {
   if (!process.env.GEMINI_API_KEY) {

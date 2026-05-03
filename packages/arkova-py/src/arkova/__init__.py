@@ -8,6 +8,7 @@ from .models import (
     ProblemDetail,
     SearchResponse,
     SearchResult,
+    VerificationResult,
 )
 
 __all__ = [
@@ -21,4 +22,5 @@ __all__ = [
     "ProblemDetail",
     "SearchResponse",
     "SearchResult",
+    "VerificationResult",
 ]

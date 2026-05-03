@@ -16,7 +16,7 @@
  */
 
 import 'dotenv/config';
-import { writeFileSync, mkdirSync, readFileSync, existsSync } from 'node:fs';
+import { writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { GEMINI_GENERATION_MODEL } from '../src/ai/gemini-config.js';
 import { FULL_GOLDEN_DATASET } from '../src/ai/eval/golden-dataset.js';
@@ -120,7 +120,7 @@ async function main() {
   });
 
   const newEntries: Array<{ type: string; entry: Record<string, unknown> }> = [];
-  let phase = 14; // New phases start at 14
+  const phase = 14; // New phases start at 14
 
   for (const [type, count] of Object.entries(targets)) {
     if (count <= 0) continue;

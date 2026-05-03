@@ -8,15 +8,18 @@
 
 ## What the check does
 
-Every push to `main` and every PR touching `supabase/migrations/**` diffs
-the local migration file list against the Supabase Management API's
-applied-migrations set. The check normalizes Supabase `{ version, name }`
-rows into local filename-shaped identities before comparing them.
+Every push to `main` and every PR to `main` runs the check and diffs the
+local migration file list against the Supabase Management API's
+applied-migrations set. Supabase's Management API may return Arkova's full
+filename (`0279_x402_payments_org_scoping`), just the description suffix
+(`x402_payments_org_scoping`), or an operator-applied Jira prefix
+(`scrum_1170_org_credits_and_allocations`) depending on how the migration
+was applied, so the check normalizes those forms before comparing.
 
 On `main`, any local file missing in prod fails the check. On PRs, the
-check blocks only when that PR adds or modifies a migration that is missing
-in prod; pre-existing base-branch drift is reported as a warning and must
-stay tracked in SCRUM-908 until resolved.
+check blocks only when that PR adds, modifies, or renames a migration that is
+missing in prod; pre-existing base-branch drift is reported as a warning and
+must stay tracked in SCRUM-908 until resolved.
 
 Read-only: the action never applies or modifies anything.
 
@@ -85,14 +88,32 @@ The check should now pass.
 Add a bug log entry if the drift caused a user-facing incident. See
 `docs/bugs/bug_log.md` for the format.
 
-## Exempt-list discipline
+## Historical ledger exceptions
 
-Two migrations are currently exempt:
+These entries are historical ledger mismatches, not accepted drift. Before
+adding an entry, verify the production object state with read-only SQL and
+record the reason here.
 
-- `0190_rls_subquery_caching` — RLS policy refactor; needs review against
-  current prod policy set
-- `0191_brin_indexes_timeseries` — non-concurrent BRIN on `anchors` (2.8M
-  rows); locks the table during build; apply in maintenance window
+Current verified exceptions:
+
+- `0022_seed_schema_alignment` — prod has the enum values, anchor columns,
+  and `memberships` table.
+- `0023_is_public_profile` — prod has `profiles.is_public_profile`.
+- `0024_fix_search_path_revoke_anchor` — prod `revoke_anchor()` has the
+  secured search path.
+- `0068b_submitted_status_and_confirmations` — effects are present through
+  `0068_add_submitted_enum` plus compensating migration `0141`.
+- `0088b_cle_templates` — effects are present through compensating migration
+  `0142`.
+- `0135_ats_integrations` — prod has the `ats_integrations` table.
+- `0175_fix_pipeline_stats_timeout` — prod has later/superseding pipeline
+  stats RPCs from `0215` / `0242`, including the six-argument
+  `get_public_records_page`.
+- `0180_fix_public_issuer_perf` — prod public issuer RPCs contain the
+  `pipeline_source` exclusion.
+- `0258_ark112_queue_public_id` — prod uses the later
+  `list_pending_resolution_anchors_v2` and `resolve_anchor_queue_by_public_id`
+  RPCs; the older same-name RPC remains for compatibility.
 
 **Adding to the exempt list requires:**
 
@@ -100,7 +121,8 @@ Two migrations are currently exempt:
 2. A corresponding Jira ticket to get it out of the exempt state
 3. Entry in this runbook under a dated "Exempt migrations" subsection
 
-Exempt ≠ abandoned. Each entry must have a plan to land it.
+Do not exempt migrations whose effects are not present in production. Those
+must be applied or replaced by an explicit superseding migration.
 
 ## Emergency bypass
 

@@ -41,11 +41,16 @@ async function isAdesEnabled(): Promise<boolean> {
   }
 
   try {
+    // Schema: switchboard_flags(id uuid, flag_key text, enabled boolean, ...).
+    // Pre-fix code queried `select('value').eq('id', flagKey)` which (a)
+    // selected a non-existent column and (b) compared a uuid PK against a
+    // string flag name. Every read errored and silently fell back to env.
+    // See SCRUM-1622 for the full system-wide bug.
     const { data, error } = await db
       .from('switchboard_flags')
-      .select('value')
-      .eq('id', 'ENABLE_ADES_SIGNATURES')
-      .single() as { data: { value: boolean } | null; error: unknown };
+      .select('enabled')
+      .eq('flag_key', 'ENABLE_ADES_SIGNATURES')
+      .single() as { data: { enabled: boolean } | null; error: unknown };
 
     if (error || !data) {
       const envValue = process.env.ENABLE_ADES_SIGNATURES === 'true';
@@ -53,7 +58,7 @@ async function isAdesEnabled(): Promise<boolean> {
       return envValue;
     }
 
-    const enabled = data.value === true;
+    const enabled = data.enabled === true;
     flagCache = { value: enabled, expiresAt: now + FLAG_CACHE_TTL_MS };
     return enabled;
   } catch {

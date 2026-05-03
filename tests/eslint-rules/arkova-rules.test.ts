@@ -28,6 +28,8 @@ const noUnscopedServiceTest = require('../../eslint-rules/no-unscoped-service-te
 const requireErrorCodeAssertion = require('../../eslint-rules/require-error-code-assertion.cjs');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const noMockEcho = require('../../eslint-rules/no-mock-echo.cjs');
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const tenantIsolation = require('../../eslint-rules/tenant-isolation.cjs');
 
 describe('arkova/no-unscoped-service-test', () => {
   ruleTester.run('no-unscoped-service-test', noUnscopedServiceTest, {
@@ -155,6 +157,37 @@ describe('arkova/no-mock-echo', () => {
           });
         `,
         errors: [{ messageId: 'mockEcho' }],
+      },
+    ],
+  });
+});
+
+describe('arkova/missing-org-filter', () => {
+  ruleTester.run('missing-org-filter', tenantIsolation, {
+    valid: [
+      {
+        filename: 'worker.ts',
+        code: "await db.from('audit_events').select('created_at').is('org_id', null).limit(20);",
+      },
+      {
+        filename: 'worker.ts',
+        code: "await db.from('audit_events').insert({ event_type: 'smoke_test.completed', event_category: 'SYSTEM', org_id: null });",
+      },
+      {
+        filename: 'worker.ts',
+        code: "await db.from('audit_events').insert([{ event_type: 'a', org_id: 'org-1' }, { event_type: 'b', org_id: null }]);",
+      },
+    ],
+    invalid: [
+      {
+        filename: 'worker.ts',
+        code: "await db.from('audit_events').select('created_at').eq('event_type', 'smoke_test.completed').limit(20);",
+        errors: [{ messageId: 'missingOrgFilter' }],
+      },
+      {
+        filename: 'worker.ts',
+        code: "await db.from('audit_events').insert({ event_type: 'smoke_test.completed', event_category: 'SYSTEM' });",
+        errors: [{ messageId: 'missingOrgFilter' }],
       },
     ],
   });
