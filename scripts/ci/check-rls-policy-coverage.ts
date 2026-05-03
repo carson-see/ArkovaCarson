@@ -60,6 +60,11 @@ type PolicySource = {
   literalsHidden: string;
 };
 
+const ALTER_TABLE_PREFIX_RE = /ALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?/gi;
+const PUBLIC_SCHEMA_QUALIFIER_RE = /(?:"public"|public)\./iy;
+const SQL_IDENTIFIER_RE = /"[^"]+"|\w+/y;
+const ENABLE_OR_FORCE_RLS_RE = /\s+(?:ENABLE|FORCE)\s+ROW\s+LEVEL\s+SECURITY\b/iy;
+
 function buildPolicySources(migrations: ReturnType<typeof loadMigrations>): PolicySource[] {
   return migrations.map((migration) => ({
     commentsVisible: stripSqlComments(migration.sql),
@@ -67,15 +72,40 @@ function buildPolicySources(migrations: ReturnType<typeof loadMigrations>): Poli
   }));
 }
 
+function execAt(re: RegExp, sql: string, index: number): RegExpExecArray | null {
+  re.lastIndex = index;
+  return re.exec(sql);
+}
+
+function readAlterTableTarget(sql: string, startIndex: number): { raw: string; end: number } | null {
+  let cursor = startIndex;
+  let raw = '';
+
+  const schema = execAt(PUBLIC_SCHEMA_QUALIFIER_RE, sql, cursor);
+  if (schema) {
+    raw += schema[0];
+    cursor = schema.index + schema[0].length;
+  }
+
+  const table = execAt(SQL_IDENTIFIER_RE, sql, cursor);
+  if (!table) return null;
+
+  raw += table[0];
+  return { raw, end: table.index + table[0].length };
+}
+
 function collectEnabledTables(migrations: ReturnType<typeof loadMigrations>): Map<string, string> {
   const enabledByTable = new Map<string, string>();
-  const enableOrForceRe =
-    /ALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?((?:(?:"public"|public)\.)?(?:"[^"]+"|\w+))\s+(?:ENABLE|FORCE)\s+ROW\s+LEVEL\s+SECURITY/gi;
 
   for (const migration of migrations) {
     let match: RegExpExecArray | null;
-    while ((match = enableOrForceRe.exec(migration.stripped)) !== null) {
-      const table = normalizePublicIdent(match[1]);
+    while ((match = ALTER_TABLE_PREFIX_RE.exec(migration.stripped)) !== null) {
+      const target = readAlterTableTarget(migration.stripped, ALTER_TABLE_PREFIX_RE.lastIndex);
+      if (!target || !execAt(ENABLE_OR_FORCE_RLS_RE, migration.stripped, target.end)) {
+        continue;
+      }
+
+      const table = normalizePublicIdent(target.raw);
       if (!enabledByTable.has(table)) {
         enabledByTable.set(table, migration.file);
       }
