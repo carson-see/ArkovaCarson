@@ -10,8 +10,25 @@
  * the shape of the sanitizer so future refactors cannot regress.
  *
  * Mirrors the agents-sanitizer.test.ts pattern (SCRUM-1271-A).
+ *
+ * Defense-in-depth note (added 2026-05-03 per code-review feedback):
+ * the non-list handlers (POST `/`, GET `/:publicId`, batch-create,
+ * batch-verify, PATCH revoke) use explicit field listing rather than
+ * `toPublicAttestation()` because each has a different v1 response shape
+ * (per CLAUDE.md §1.8 frozen schema) that includes nested `attester` /
+ * `claims` / `chain_proof` / `evidence` blocks; wrapping them through the
+ * flat allowlist would lose those legitimate fields. The static-source
+ * test below scans attestations.ts and pins that **no** `res.json()` /
+ * `res.status(...).json()` call argument passes a `...spread` of an
+ * untrusted object — that's the refactor regression that would silently
+ * leak. If a future change introduces a spread, the test fails and the
+ * author is forced to either route through `toPublicAttestation()` or
+ * add an explicit allowlist alongside the fail.
  */
 
+import { readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import express from 'express';
 import request from 'supertest';
 import { beforeEach, describe, it, expect, vi } from 'vitest';
@@ -142,5 +159,86 @@ describe('attestations.ts public shape (SCRUM-1444 / SCRUM-1271-B)', () => {
     expect(item).not.toHaveProperty('anchor_id');
     expect(item).not.toHaveProperty('org_id');
     expect(item.verify_url).toBe('https://app.arkova.ai/verify/attestation/ARK-ARKOVA-VER-A1B2C3');
+  });
+
+  // ───────────────────────────────────────────────────────────────────────
+  // Static-source defense: pin that no `res.json(...)` / `res.status(...).json(...)`
+  // call argument introduces a `...spread` of an untrusted object — the
+  // refactor regression that would silently leak `id` / `org_id` / etc.
+  //
+  // The list endpoint legitimately uses `...toPublicAttestation(a)` (whitelisted
+  // by name); any other spread fails the test. The author then has to either
+  // route the new spread through `toPublicAttestation()` or extend this
+  // allowlist with an explicit justification.
+  // ───────────────────────────────────────────────────────────────────────
+  it('attestations.ts has no res.json() spread of untrusted rows (static-source defense)', () => {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const source = readFileSync(resolve(here, 'attestations.ts'), 'utf8');
+
+    const ALLOWLISTED_SPREADS = new Set([
+      'toPublicAttestation', // sanitizer — explicit allowlist, safe by construction
+    ]);
+
+    const findings: Array<{ line: number; spread: string; context: string }> = [];
+
+    // Scan response-construction spans: `res.json(` and `res.status(...).json(`
+    // up to the matching closing paren. Capture any `...identifier` or
+    // `...identifier(` inside that span.
+    const lines = source.split('\n');
+    let inResponse = false;
+    let responseStartLine = 0;
+    let depth = 0;
+    let span = '';
+
+    const RESPONSE_OPEN = /\bres\s*(?:\.status\s*\([^)]*\))?\s*\.json\s*\(/g;
+    const SPREAD = /\.\.\.([A-Za-z_$][\w$]*)/g;
+
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      let scanFrom = 0;
+
+      if (!inResponse) {
+        RESPONSE_OPEN.lastIndex = 0;
+        const m = RESPONSE_OPEN.exec(line);
+        if (m) {
+          inResponse = true;
+          responseStartLine = i + 1;
+          // Start counting from after the opening paren.
+          scanFrom = m.index + m[0].length;
+          depth = 1;
+          span = '';
+        }
+      }
+
+      if (inResponse) {
+        for (let j = scanFrom; j < line.length; j++) {
+          const c = line[j];
+          if (c === '(') depth++;
+          else if (c === ')') depth--;
+          if (depth === 0) {
+            // End of response span. Check accumulated span for spreads.
+            const tail = line.slice(scanFrom, j);
+            span += (span ? '\n' : '') + tail;
+            SPREAD.lastIndex = 0;
+            let s: RegExpExecArray | null;
+            while ((s = SPREAD.exec(span)) !== null) {
+              const ident = s[1];
+              if (!ALLOWLISTED_SPREADS.has(ident)) {
+                findings.push({ line: responseStartLine, spread: `...${ident}`, context: span.slice(0, 200) });
+              }
+            }
+            inResponse = false;
+            span = '';
+            break;
+          }
+        }
+        if (inResponse) {
+          // Span continues onto next line.
+          span += (span ? '\n' : '') + line.slice(scanFrom);
+        }
+      }
+    }
+
+    expect(findings, 'attestations.ts: untrusted spread in res.json() call').toEqual([]);
   });
 });
