@@ -174,6 +174,7 @@ export function PipelineAdminPage() {
       let securedRecords = 0;
       let cacheUpdatedAt: string | null = null;
       const bySource: Record<string, number> = {};
+      let workerErrorMessage: string | null = null;
 
       try {
         const response = await workerFetch('/api/admin/pipeline-stats', { method: 'GET' });
@@ -202,7 +203,8 @@ export function PipelineAdminPage() {
         } else {
           throw new Error(`Worker returned ${response.status}`);
         }
-      } catch {
+      } catch (workerErr) {
+        workerErrorMessage = workerErr instanceof Error ? workerErr.message : 'Worker pipeline stats unavailable';
         // Fallback: direct Supabase RPC (may fail due to RLS)
         const { data: pipelineStats, error: rpcError } = await dbAny.rpc('get_pipeline_stats');
         if (!rpcError && pipelineStats) {
@@ -262,7 +264,7 @@ export function PipelineAdminPage() {
       });
       // SCRUM-1260 (R1-6): clear error state on successful refresh so the
       // banner disappears once the worker recovers.
-      setStatsError(null);
+      setStatsError(workerErrorMessage);
     } catch (err) {
       console.error('PipelineAdminPage: failed to fetch stats', err);
       // SCRUM-1260 (R1-6): surface the error instead of silently zeroing.
@@ -381,7 +383,9 @@ export function PipelineAdminPage() {
     if (!isAdmin) return;
     (async () => {
       // Use RPC or distinct query to get record types without fetching 1000 rows
-      const { data } = await dbAny.rpc('get_distinct_record_types').catch(() => ({ data: null }));
+      const { data } = await dbAny
+        .rpc('get_distinct_record_types')
+        .then((result: { data: unknown; error?: unknown }) => result, () => ({ data: null }));
       if (data && Array.isArray(data)) {
         const types = (data as Array<{ record_type: string }>).map((r) => r.record_type).sort();
         setAvailableTypes(types);
