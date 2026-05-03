@@ -7,6 +7,7 @@ import {
   stripDollarQuoted,
   stripSqlComments,
   stripSqlCommentsAndStringLiterals,
+  stripSqlStringLiterals,
 } from './migration-lint';
 
 function newlineCount(text: string): number {
@@ -120,6 +121,23 @@ CREATE POLICY real_policy ON public.audit_events USING (true);`;
     expect(stripped).toContain("SELECT '");
     expect(stripped).toContain('CREATE POLICY real_policy');
     expect(newlineCount(stripped)).toBe(newlineCount(sql));
+  });
+
+  it('preserves double-quoted identifiers while blanking single-quoted strings', () => {
+    const sql = `CREATE POLICY "p" ON "public"."quoted_table" USING (name = 'literal');`;
+
+    const stripped = stripSqlCommentsAndStringLiterals(sql);
+
+    expect(stripped).toContain('"public"."quoted_table"');
+    expect(stripped).not.toContain('literal');
+  });
+});
+
+describe('stripSqlStringLiterals', () => {
+  it('does not blank double-quoted identifiers', () => {
+    const stripped = stripSqlStringLiterals(`ALTER VIEW "public"."quoted_view" SET (security_invoker = true);`);
+
+    expect(stripped).toContain('"public"."quoted_view"');
   });
 });
 

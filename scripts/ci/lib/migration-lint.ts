@@ -99,6 +99,8 @@ function readQuotedToken(sql: string, start: number): SqlToken | null {
 }
 
 function readBlankedQuotedToken(sql: string, start: number): SqlToken | null {
+  if (sql[start] !== "'") return null;
+
   const token = readQuotedToken(sql, start);
   if (!token) return null;
 
@@ -150,7 +152,7 @@ function escapeRegExpLiteral(value: string): string {
  * Regex source for matching `foo`, `public.foo`, or `"public"."foo"`.
  */
 export function publicSchemaRefPattern(identifier: string): string {
-  return String.raw`(?:(?:"public"|public)\.)?"?${escapeRegExpLiteral(identifier)}"?\b`;
+  return String.raw`(?:(?:"public"|public)\.)?"?${escapeRegExpLiteral(identifier)}"?(?![A-Za-z0-9_])`;
 }
 
 /**

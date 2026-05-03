@@ -118,12 +118,31 @@ COMMENT ON VIEW public.leaky IS 'security_invoker = true';`,
     );
   });
 
+  it('does not accept security_invoker text from a same-statement comment', () => {
+    expectBareViewFailure(
+      repoRoot,
+      '0001_bad_same_statement_comment.sql',
+      `CREATE OR REPLACE VIEW public.leaky AS
+  SELECT 1 -- WITH (security_invoker = true)
+;`,
+    );
+  });
+
   it('does not accept ALTER VIEW text from a later string literal', () => {
     expectBareViewFailure(
       repoRoot,
       '0001_bad_later_text.sql',
       `CREATE OR REPLACE VIEW public.leaky AS SELECT 1;
 SELECT 'ALTER VIEW public.leaky SET (security_invoker = true);';`,
+    );
+  });
+
+  it('does not accept ALTER VIEW text from a later comment', () => {
+    expectBareViewFailure(
+      repoRoot,
+      '0001_bad_later_comment.sql',
+      `CREATE OR REPLACE VIEW public.leaky AS SELECT 1;
+-- ALTER VIEW public.leaky SET (security_invoker = true);`,
     );
   });
 
@@ -147,6 +166,28 @@ AS
   SELECT 1;`,
       'multiline',
     );
+  });
+
+  it('ignores CREATE VIEW text inside comments', () => {
+    writeMigration(
+      repoRoot,
+      '0001_comment_only.sql',
+      `-- CREATE OR REPLACE VIEW public.fake AS SELECT 1;
+CREATE TABLE public.real_table (id int);`,
+    );
+
+    expect(run(repoRoot).code).toBe(0);
+  });
+
+  it('handles quoted public schema view names', () => {
+    writeMigration(
+      repoRoot,
+      '0001_quoted_view.sql',
+      `CREATE OR REPLACE VIEW "public"."quoted_view" AS SELECT 1;
+ALTER VIEW "public"."quoted_view" SET (security_invoker = true);`,
+    );
+
+    expect(run(repoRoot).code).toBe(0);
   });
 
   it('grandfathers files or views listed in the snapshot baseline', () => {

@@ -68,26 +68,26 @@ function alterSecurityInvokerRegex(view: string, cache: Map<string, RegExp>): Re
 
 function findViolations(file: string, strippedSql: string): Finding[] {
   const findings: Finding[] = [];
+  const sanitizedSql = stripSqlCommentsAndStringLiterals(strippedSql);
   const lines = strippedSql.split('\n');
   const alterReCache = new Map<string, RegExp>();
   const createViewRe =
     /CREATE\s+(?:OR\s+REPLACE\s+)?(?!MATERIALIZED\s+)VIEW\s+((?:(?:"public"|public)\.)?(?:"[^"]+"|\w+))/gi;
 
   let match: RegExpExecArray | null;
-  while ((match = createViewRe.exec(strippedSql)) !== null) {
+  while ((match = createViewRe.exec(sanitizedSql)) !== null) {
     const rawView = match[1];
     const view = normalizePublicIdent(rawView);
     const offset = match.index;
-    const line = lineNumber(strippedSql, offset);
+    const line = lineNumber(sanitizedSql, offset);
 
-    const statementSql = strippedSql.slice(offset, statementEnd(strippedSql, offset));
-    const statementWithoutCommentsOrStrings = stripSqlCommentsAndStringLiterals(statementSql);
-    if (/WITH\s*\(\s*security_invoker\s*=\s*(?:true|on)\s*\)/i.test(statementWithoutCommentsOrStrings)) {
+    const statementSql = sanitizedSql.slice(offset, statementEnd(sanitizedSql, offset));
+    if (/WITH\s*\(\s*security_invoker\s*=\s*(?:true|on)\s*\)/i.test(statementSql)) {
       continue;
     }
 
-    const followingWithoutCommentsOrStrings = stripSqlCommentsAndStringLiterals(strippedSql.slice(offset));
-    if (alterSecurityInvokerRegex(view, alterReCache).test(followingWithoutCommentsOrStrings)) {
+    const followingSql = sanitizedSql.slice(offset);
+    if (alterSecurityInvokerRegex(view, alterReCache).test(followingSql)) {
       continue;
     }
 

@@ -98,8 +98,7 @@ function collectEnabledTables(migrations: ReturnType<typeof loadMigrations>): Ma
   const enabledByTable = new Map<string, string>();
 
   for (const migration of migrations) {
-    let match: RegExpExecArray | null;
-    while ((match = ALTER_TABLE_PREFIX_RE.exec(migration.stripped)) !== null) {
+    while (ALTER_TABLE_PREFIX_RE.exec(migration.stripped) !== null) {
       const target = readAlterTableTarget(migration.stripped, ALTER_TABLE_PREFIX_RE.lastIndex);
       if (!target || !execAt(ENABLE_OR_FORCE_RLS_RE, migration.stripped, target.end)) {
         continue;
