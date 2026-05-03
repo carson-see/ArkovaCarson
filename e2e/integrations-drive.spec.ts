@@ -56,7 +56,7 @@ test.describe('Google Drive integration', () => {
 
     await orgAdminPage.getByRole('button', { name: 'Connect Drive' }).click();
 
-    await expect(orgAdminPage.getByText('Google Drive connected.')).toBeVisible();
+    await expect(orgAdminPage.getByText('Google Drive connected.').first()).toBeVisible();
     await expect(orgAdminPage).toHaveURL(new RegExp(`/organizations/${orgId}\\?tab=settings`));
   });
 });
