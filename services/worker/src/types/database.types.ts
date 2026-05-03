@@ -5535,6 +5535,8 @@ export type Database = {
         | "MILITARY"
         | "IDENTITY"
         | "ACCREDITATION"
+        | "CONTRACT_PRESIGNING"
+        | "CONTRACT_POSTSIGNING"
       credit_transaction_type:
         | "ALLOCATION"
         | "PURCHASE"
@@ -5819,6 +5821,8 @@ export const Constants = {
         "MILITARY",
         "IDENTITY",
         "ACCREDITATION",
+        "CONTRACT_PRESIGNING",
+        "CONTRACT_POSTSIGNING",
       ],
       credit_transaction_type: [
         "ALLOCATION",

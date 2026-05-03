@@ -1,11 +1,11 @@
 /**
- * SCRUM-1629 [Spec] — POST /api/v1/contracts/anchor-pre-signing
+ * SCRUM-1631 [Build] — POST /api/v1/contracts/anchor-pre-signing
  *
  * GME10.5-A: pre-signing contract anchor. Creates an unsigned-contract anchor
  * receipt BEFORE the e-signature workflow begins. The anchor's `public_id`
  * (ARK-{YEAR}-{8hex}) becomes the durable handle a DocuSign Connect or
  * Adobe Sign webhook will reference to attach the post-signing anchor as a
- * child (via `parent_anchor_id`).
+ * child (via `parent_anchor_id`) — that's SCRUM-1624's job.
  *
  * ## Constitution §1.6 reconciliation
  *
@@ -27,22 +27,38 @@
  *
  * ## Frozen v1 schema (CLAUDE.md §1.8)
  *
- * Once this endpoint ships, request + response shapes are frozen.
- * Additive nullable fields are allowed; renames / removals require a
- * v2 namespace and 12-month deprecation. The Zod schemas below are
- * `.strict()` so unknown fields fail validation rather than silently
- * dropping (which would mask integrator bugs and downstream regressions).
+ * Once this endpoint shipped (SCRUM-1629 [Spec]), request + response
+ * shapes are frozen. Additive nullable fields are allowed; renames /
+ * removals require a v2 namespace and 12-month deprecation. The Zod
+ * schemas below are `.strict()` so unknown fields fail validation
+ * rather than silently dropping (which would mask integrator bugs and
+ * downstream regressions).
  *
  * ## Status
  *
- * SPEC ONLY — this file pins the shape with a stub that returns 501.
- * SCRUM-1630 [Test] writes red-baseline tests against these schemas.
- * SCRUM-1631 [Build] replaces the stub with the real handler.
+ * BUILT — handler now does the real work:
+ *   1. Zod-parse + canonicalize fingerprint
+ *   2. Idempotency check (return existing receipt if fingerprint already
+ *      anchored, same pattern as /api/v1/anchor)
+ *   3. Org-credit deduction (1 credit per pre-signing anchor)
+ *   4. Insert into `anchors` with credential_type=CONTRACT_PRESIGNING
+ *      and contract_metadata + signing_workflow_metadata stored as nested
+ *      keys inside anchors.metadata (jsonb)
+ *   5. Return PreSigningAnchorReceipt with the generated public_id
+ *
+ * SCRUM-1630 [Test] adds the integration tests (real handler against the
+ * mocked supabase chain), beyond the [Spec]'s shape-pinning tests that
+ * already live in this file's sibling .test.ts.
  */
 
 import { Router, Request, Response } from 'express';
+import { randomUUID } from 'crypto';
 import { z } from 'zod';
+import { buildVerifyUrl } from '../../../lib/urls.js';
 import { ANCHOR_CREDENTIAL_TYPES } from '../../../lib/credential-evidence.js';
+import { db } from '../../../utils/db.js';
+import { logger } from '../../../utils/logger.js';
+import { deductOrgCredit } from '../../../utils/orgCredits.js';
 
 const router = Router();
 
@@ -100,10 +116,7 @@ export const PreSigningAnchorSchema = z
     // For contracts the credential_type is fixed to CONTRACT_PRESIGNING.
     // `.default()` (not `.optional()`) makes the v1 contract deterministic
     // — every parsed request carries `credential_type: 'CONTRACT_PRESIGNING'`
-    // whether the client sent it or not. This avoids the implicit defaulting
-    // that pushed the contract decision into [Build]; per CLAUDE.md §1.8
-    // (frozen v1 schema), we want the resolved-value behavior pinned now,
-    // not at handler-implementation time.
+    // whether the client sent it or not.
     credential_type: z.literal('CONTRACT_PRESIGNING').default('CONTRACT_PRESIGNING'),
     contract_metadata: ContractMetadataSchema,
     signing_workflow_metadata: SigningWorkflowMetadataSchema,
@@ -120,11 +133,6 @@ export type PreSigningAnchorRequest = z.infer<typeof PreSigningAnchorSchema>;
 // pre-signing — post-signing is the one that links upward) and the echo'd
 // `contract_metadata` + `signing_workflow_metadata` so the integrator gets a
 // single self-describing object back.
-//
-// `parent_public_id` (not `parent_anchor_public_id`) per the existing public
-// anchor lineage convention — see services/worker/src/api/v1/verify.ts and
-// services/worker/src/api/anchor-lineage.ts. Per CodeRabbit review on PR
-// #679, unifying naming before v1 freeze avoids a schema-rename later.
 export interface PreSigningAnchorReceipt {
   public_id: string;
   fingerprint: string;
@@ -137,19 +145,74 @@ export interface PreSigningAnchorReceipt {
   record_uri: string;
 }
 
-// ─── Stub handler ─────────────────────────────────────────────────────────
+// ─── Org-credit gate ──────────────────────────────────────────────────────
 //
-// SCRUM-1629 is the [Spec] subtask. Implementation lands in [Build]
-// (SCRUM-1631). Until then this returns 501 + a pointer so any premature
-// integrator gets a clear signal rather than a confusing 404.
-router.post('/anchor-pre-signing', (req: Request, res: Response) => {
+// Same pattern as /api/v1/anchor (services/worker/src/api/v1/anchor-submit.ts).
+// Pre-signing counts as 1 credit; SCRUM-1624 post-signing counts as 1 more.
+async function ensureOrgCreditAvailable(orgId: string, res: Response): Promise<boolean> {
+  const deduction = await deductOrgCredit(db, orgId, 1, 'anchor.create');
+  if (deduction.allowed) return true;
+
+  if (deduction.error === 'insufficient_credits') {
+    res.status(402).json({
+      error: 'insufficient_credits',
+      message: 'Organization has insufficient anchor credits for this cycle.',
+      balance: deduction.balance,
+      required: deduction.required,
+    });
+    return false;
+  }
+
+  if (deduction.error === 'rpc_failure') {
+    logger.error({ err: deduction.message, orgId }, 'org_credit_deduct_rpc_failure');
+    res.status(503).json({ error: 'credit_check_unavailable' });
+    return false;
+  }
+
+  logger.warn({ orgId }, 'org_credit_deduct_blocked_uninitialized');
+  res.status(402).json({
+    error: 'org_credits_not_initialized',
+    message:
+      'This organization is not provisioned for credit-based billing. ' +
+      'An operator must seed org_credits before this API key can submit.',
+  });
+  return false;
+}
+
+// ─── Idempotent receipt builder ───────────────────────────────────────────
+//
+// Used both for the "fingerprint already anchored" idempotent return path
+// AND for the freshly-inserted return path. Keeping a single builder makes
+// the response shape provably identical between the two cases.
+function buildReceipt(
+  publicId: string,
+  fingerprint: string,
+  createdAt: string,
+  body: PreSigningAnchorRequest,
+): PreSigningAnchorReceipt {
+  return {
+    public_id: publicId,
+    fingerprint,
+    credential_type: 'CONTRACT_PRESIGNING',
+    status: 'PENDING',
+    parent_public_id: null,
+    contract_metadata: body.contract_metadata,
+    signing_workflow_metadata: body.signing_workflow_metadata,
+    created_at: createdAt,
+    record_uri: buildVerifyUrl(publicId),
+  };
+}
+
+// ─── POST /api/v1/contracts/anchor-pre-signing ────────────────────────────
+router.post('/anchor-pre-signing', async (req: Request, res: Response) => {
   if (!req.apiKey) {
     res.status(401).json({ error: 'API key required. Include X-API-Key header.' });
     return;
   }
 
-  // Even in stub mode we run validation so red-baseline tests can pin
-  // shape rejection without waiting for the [Build] subtask.
+  // Zod validation per CLAUDE.md §1.2 ("Validation: Zod. Every write path.")
+  // Returns RFC 7807-style problem+JSON on validation failure so client
+  // integrations can surface field-level errors to their users.
   const parsed = PreSigningAnchorSchema.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({
@@ -163,21 +226,108 @@ router.post('/anchor-pre-signing', (req: Request, res: Response) => {
     });
     return;
   }
+  const body: PreSigningAnchorRequest = parsed.data;
+  const fingerprint = body.fingerprint; // already lowercased by the schema
 
-  res.status(501).json({
-    error: 'not_implemented',
-    message:
-      'POST /api/v1/contracts/anchor-pre-signing is the [Spec] stub for SCRUM-1629. ' +
-      'The [Build] subtask SCRUM-1631 replaces this with the real handler. ' +
-      'See the SCRUM-1623 child-story chain.',
-    spec_only: true,
-  });
+  try {
+    // Idempotency: if this fingerprint is already anchored (any credential
+    // type), return the existing receipt rather than spending another credit
+    // and inserting a duplicate row. Same convention as /api/v1/anchor.
+    const { data: existing } = await db
+      .from('anchors')
+      .select('public_id, fingerprint, status, created_at')
+      .eq('fingerprint', fingerprint)
+      .is('deleted_at', null)
+      .maybeSingle();
+
+    if (existing) {
+      const receipt = buildReceipt(
+        existing.public_id ?? '',
+        existing.fingerprint,
+        existing.created_at,
+        body,
+      );
+      res.status(200).json(receipt);
+      return;
+    }
+
+    // Generate public_id (same ARK-{YEAR}-{8hex} convention as /api/v1/anchor)
+    const shortId = randomUUID().slice(0, 8).toUpperCase();
+    const publicId = `ARK-${new Date().getFullYear()}-${shortId}`;
+
+    const orgId = req.apiKey.orgId ?? null;
+
+    // SCRUM-1170-B — gate org-credit deduction. Helper short-circuits to
+    // allowed=true when ENABLE_ORG_CREDIT_ENFORCEMENT is off (default), so
+    // existing API-key paths without per-org credit setup are unaffected.
+    if (orgId && !(await ensureOrgCreditAvailable(orgId, res))) {
+      return;
+    }
+
+    const insertPayload = {
+      fingerprint,
+      public_id: publicId,
+      status: 'PENDING' as const,
+      org_id: orgId,
+      user_id: req.apiKey.userId,
+      // anchors.filename is NOT NULL in the schema. Pre-signing anchors
+      // don't have a filename per §1.6 (the document never leaves the
+      // device); use the contract title as a human-readable handle for
+      // the verification UI, prefixed so it's obviously a contract anchor.
+      filename: `contract-pre/${body.contract_metadata.title.slice(0, 80)}`,
+      credential_type: 'CONTRACT_PRESIGNING' as const,
+      description: body.description ?? null,
+      // contract_metadata + signing_workflow_metadata stored as nested keys
+      // inside anchors.metadata (jsonb). The verification UI + SCRUM-1624
+      // post-signing webhook receiver both read these by key.
+      metadata: {
+        contract_metadata: body.contract_metadata,
+        signing_workflow_metadata: body.signing_workflow_metadata,
+      },
+    };
+
+    const { data: anchor, error: insertError } = await db
+      .from('anchors')
+      .insert(insertPayload)
+      .select('public_id, fingerprint, status, created_at')
+      .single();
+
+    if (insertError) {
+      logger.error(
+        { error: insertError, fingerprint: fingerprint.slice(0, 12) },
+        'Failed to create pre-signing contract anchor',
+      );
+      res.status(500).json({ error: 'Failed to create anchor record' });
+      return;
+    }
+
+    const receipt = buildReceipt(
+      anchor.public_id ?? publicId,
+      anchor.fingerprint,
+      anchor.created_at,
+      body,
+    );
+
+    logger.info(
+      {
+        publicId: receipt.public_id,
+        fingerprint: fingerprint.slice(0, 12),
+        provider: body.signing_workflow_metadata.provider,
+        envelope: body.signing_workflow_metadata.external_envelope_id,
+      },
+      'Pre-signing contract anchor created',
+    );
+    res.status(201).json(receipt);
+  } catch (error) {
+    logger.error({ error }, 'Pre-signing contract anchor submission failed');
+    res.status(500).json({ error: 'Internal server error' });
+  }
 });
 
-// Single source of truth for the enum values [Build] (SCRUM-1631) will
-// write to anchors.credential_type. Migration 0285 adds these to the
-// `credential_type` Postgres enum; the corresponding ANCHOR_CREDENTIAL_TYPES
-// TS array is updated in the same change so this assertion stays in sync.
+// Single source of truth for the contract enum values [Build] writes to
+// anchors.credential_type. Migration 0285 added these to the Postgres
+// `credential_type` enum; ANCHOR_CREDENTIAL_TYPES + database.types.ts both
+// already include them after this PR.
 export const CONTRACT_CREDENTIAL_TYPES = ['CONTRACT_PRESIGNING', 'CONTRACT_POSTSIGNING'] as const;
 export type ContractCredentialType = (typeof CONTRACT_CREDENTIAL_TYPES)[number];
 
