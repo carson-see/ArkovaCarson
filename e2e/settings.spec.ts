@@ -9,18 +9,22 @@
 
 import { test, expect } from './fixtures';
 
+function settingsHeading(page: import('@playwright/test').Page) {
+  return page.locator('#main-content').getByRole('heading', { name: 'Settings' }).first();
+}
+
 test.describe('Settings', () => {
   test.describe('Profile Settings', () => {
     test('settings page loads with profile card', async ({ individualPage }) => {
       await individualPage.goto('/settings');
 
       // Page heading
-      await expect(individualPage.getByRole('heading', { name: 'Settings' })).toBeVisible({
+      await expect(settingsHeading(individualPage)).toBeVisible({
         timeout: 10000,
       });
 
       // Profile card
-      await expect(individualPage.getByText('Profile')).toBeVisible();
+      await expect(individualPage.getByRole('heading', { name: 'Profile', exact: true })).toBeVisible();
 
       // Email field (disabled)
       const emailInput = individualPage.locator('#email');
@@ -34,7 +38,7 @@ test.describe('Settings', () => {
 
     test('full name can be edited and saved', async ({ individualPage }) => {
       await individualPage.goto('/settings');
-      await expect(individualPage.getByRole('heading', { name: 'Settings' })).toBeVisible({
+      await expect(settingsHeading(individualPage)).toBeVisible({
         timeout: 10000,
       });
 
@@ -46,7 +50,7 @@ test.describe('Settings', () => {
       await fullNameInput.fill('E2E Test User');
 
       // Save button should be visible
-      const saveBtn = individualPage.getByRole('button', { name: /Save/i });
+      const saveBtn = individualPage.getByRole('button', { name: 'Save' }).first();
       await expect(saveBtn).toBeVisible();
     });
   });
@@ -54,12 +58,12 @@ test.describe('Settings', () => {
   test.describe('Privacy Settings', () => {
     test('privacy toggle is visible on settings page', async ({ individualPage }) => {
       await individualPage.goto('/settings');
-      await expect(individualPage.getByRole('heading', { name: 'Settings' })).toBeVisible({
+      await expect(settingsHeading(individualPage)).toBeVisible({
         timeout: 10000,
       });
 
       // Privacy card
-      await expect(individualPage.getByText('Privacy')).toBeVisible();
+      await expect(individualPage.getByRole('heading', { name: 'Arkova Privacy' })).toBeVisible();
 
       // Public Profile toggle
       await expect(individualPage.getByText('Public Profile')).toBeVisible();
@@ -73,12 +77,12 @@ test.describe('Settings', () => {
   test.describe('Identity Section', () => {
     test('identity section shows User ID', async ({ individualPage }) => {
       await individualPage.goto('/settings');
-      await expect(individualPage.getByRole('heading', { name: 'Settings' })).toBeVisible({
+      await expect(settingsHeading(individualPage)).toBeVisible({
         timeout: 10000,
       });
 
       // Identity card
-      await expect(individualPage.getByText('Identity')).toBeVisible();
+      await expect(individualPage.getByRole('heading', { name: 'Identity', exact: true })).toBeVisible();
 
       // User ID should be displayed
       await expect(individualPage.getByText('User ID')).toBeVisible();
@@ -90,9 +94,7 @@ test.describe('Settings', () => {
       await orgAdminPage.goto('/settings/webhooks');
 
       // Should show webhook configuration
-      await expect(
-        orgAdminPage.getByText(/Webhook/i)
-      ).toBeVisible({ timeout: 10000 });
+      await expect(orgAdminPage.getByRole('heading', { name: /Webhook Endpoints/i })).toBeVisible({ timeout: 10000 });
 
       // Add Endpoint button
       const addBtn = orgAdminPage.getByRole('button', { name: /Add Endpoint/i });
@@ -107,9 +109,7 @@ test.describe('Settings', () => {
       await orgAdminPage.goto('/settings/credential-templates');
 
       // Should show credential templates management
-      await expect(
-        orgAdminPage.getByText(/Credential Templates/i)
-      ).toBeVisible({ timeout: 10000 });
+      await expect(orgAdminPage.getByRole('heading', { name: /Credential Templates/i })).toBeVisible({ timeout: 10000 });
 
       // Add Template button
       const addBtn = orgAdminPage.getByRole('button', { name: /Add Template/i });

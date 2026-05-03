@@ -450,6 +450,12 @@ export function SecureDocumentDialog({
     onOpenChange(false);
   }, [onOpenChange]);
 
+  const handleDialogOpenChange = useCallback((nextOpen: boolean) => {
+    if (!nextOpen) {
+      handleClose();
+    }
+  }, [handleClose]);
+
   const handleRetry = useCallback(() => {
     setStep('upload');
     setFileData(null);
@@ -481,7 +487,7 @@ export function SecureDocumentDialog({
   if (isAuditorMode) return null;
 
   return (
-    <Dialog open={open} onOpenChange={handleClose}>
+    <Dialog open={open} onOpenChange={handleDialogOpenChange}>
       <DialogContent className={step === 'bulk' ? 'max-w-3xl max-h-[90vh] overflow-y-auto' : 'sm:max-w-lg max-h-[90vh] overflow-y-auto'}>
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
