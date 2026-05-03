@@ -12,7 +12,7 @@
  * reshuffle blows up at import time, not silently at run time.
  */
 
-import { mkdtempSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -59,4 +59,14 @@ export function makeTempMigrationsRepo(prefix: string): string {
   const root = mkdtempSync(join(tmpdir(), prefix));
   mkdirSync(join(root, 'supabase', 'migrations'), { recursive: true });
   return root;
+}
+
+export function writeMigrationFixture(repoRoot: string, file: string, sql: string): void {
+  writeFileSync(join(repoRoot, 'supabase', 'migrations', file), sql);
+}
+
+export function writeBaselineFixture(repoRoot: string, file: string, grandfathered: string[]): void {
+  const snapshotsDir = join(repoRoot, 'scripts', 'ci', 'snapshots');
+  mkdirSync(snapshotsDir, { recursive: true });
+  writeFileSync(join(snapshotsDir, file), JSON.stringify({ grandfathered }));
 }

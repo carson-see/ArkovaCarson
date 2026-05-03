@@ -3,11 +3,13 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { writeFileSync, rmSync, mkdirSync } from 'node:fs';
+import { rmSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   runLintScript,
   makeTempMigrationsRepo,
+  writeBaselineFixture,
+  writeMigrationFixture,
 } from './lib/migration-lint-test-helpers';
 
 const SCRIPT = join(process.cwd(), 'scripts/ci/check-views-security-invoker.ts');
@@ -16,7 +18,7 @@ const ENV_VAR = 'VIEW_SECURITY_INVOKER_REPO_ROOT';
 const run = (repoRoot: string) => runLintScript(SCRIPT, ENV_VAR, repoRoot);
 
 function writeMigration(repoRoot: string, file: string, sql: string): void {
-  writeFileSync(join(repoRoot, `supabase/migrations/${file}`), sql);
+  writeMigrationFixture(repoRoot, file, sql);
 }
 
 function expectBareViewFailure(repoRoot: string, file: string, sql: string, view = 'leaky'): void {
@@ -27,12 +29,65 @@ function expectBareViewFailure(repoRoot: string, file: string, sql: string, view
 }
 
 function writeBaseline(repoRoot: string, grandfathered: string[]): void {
-  mkdirSync(join(repoRoot, 'scripts/ci/snapshots'), { recursive: true });
-  writeFileSync(
-    join(repoRoot, 'scripts/ci/snapshots/views-security-invoker-baseline.json'),
-    JSON.stringify({ grandfathered }),
-  );
+  writeBaselineFixture(repoRoot, 'views-security-invoker-baseline.json', grandfathered);
 }
+
+type BareViewCase = [name: string, file: string, sql: string, view?: string];
+
+const bareViewCases: BareViewCase[] = [
+  [
+    'fails when CREATE VIEW lacks security_invoker and has no override comment',
+    '0001_bad.sql',
+    `CREATE OR REPLACE VIEW public.leaky AS SELECT * FROM organizations;`,
+  ],
+  [
+    'does not accept security_invoker text from a later unrelated statement',
+    '0001_bad_nearby_text.sql',
+    `CREATE OR REPLACE VIEW public.leaky AS SELECT 1;
+COMMENT ON VIEW public.leaky IS 'security_invoker = true';`,
+  ],
+  [
+    'does not accept security_invoker text from a same-statement string literal',
+    '0001_bad_same_statement_text.sql',
+    `CREATE OR REPLACE VIEW public.leaky AS
+  SELECT 'WITH (security_invoker = true)' AS fake_option;`,
+  ],
+  [
+    'does not accept security_invoker text from a same-statement comment',
+    '0001_bad_same_statement_comment.sql',
+    `CREATE OR REPLACE VIEW public.leaky AS
+  SELECT 1 -- WITH (security_invoker = true)
+;`,
+  ],
+  [
+    'does not accept ALTER VIEW text from a later string literal',
+    '0001_bad_later_text.sql',
+    `CREATE OR REPLACE VIEW public.leaky AS SELECT 1;
+SELECT 'ALTER VIEW public.leaky SET (security_invoker = true);';`,
+  ],
+  [
+    'does not accept ALTER VIEW text from a later comment',
+    '0001_bad_later_comment.sql',
+    `CREATE OR REPLACE VIEW public.leaky AS SELECT 1;
+-- ALTER VIEW public.leaky SET (security_invoker = true);`,
+  ],
+  [
+    'does not accept the deliberate-definer override text from a string literal',
+    '0001_bad_fake_override.sql',
+    `SELECT '
+-- DELIBERATE: definer-rights view
+';
+CREATE OR REPLACE VIEW public.leaky AS SELECT 1;`,
+  ],
+  [
+    'finds the view name even when CREATE VIEW spans multiple lines',
+    '0001_multi.sql',
+    `CREATE OR REPLACE VIEW public.multiline
+AS
+  SELECT 1;`,
+    'multiline',
+  ],
+];
 
 describe('check-views-security-invoker', () => {
   let repoRoot: string;
@@ -46,23 +101,25 @@ describe('check-views-security-invoker', () => {
   });
 
   it('passes when no migrations create views', () => {
-    writeFileSync(join(repoRoot, 'supabase/migrations/0001_init.sql'), 'CREATE TABLE foo (id int);');
+    writeMigration(repoRoot, '0001_init.sql', 'CREATE TABLE foo (id int);');
     const { code, stdout } = run(repoRoot);
     expect(code).toBe(0);
     expect(stdout).toContain('no new bare CREATE VIEW');
   });
 
   it('passes when CREATE VIEW has security_invoker=true on the same statement', () => {
-    writeFileSync(
-      join(repoRoot, 'supabase/migrations/0001_view.sql'),
+    writeMigration(
+      repoRoot,
+      '0001_view.sql',
       `CREATE OR REPLACE VIEW public.foo WITH (security_invoker = true) AS SELECT 1;`,
     );
     expect(run(repoRoot).code).toBe(0);
   });
 
   it('passes when CREATE VIEW is followed by ALTER VIEW ... security_invoker=true in same migration', () => {
-    writeFileSync(
-      join(repoRoot, 'supabase/migrations/0001_view.sql'),
+    writeMigration(
+      repoRoot,
+      '0001_view.sql',
       `CREATE OR REPLACE VIEW public.foo AS SELECT 1;
 ALTER VIEW public.foo SET (security_invoker = true);`,
     );
@@ -70,25 +127,19 @@ ALTER VIEW public.foo SET (security_invoker = true);`,
   });
 
   it('passes when CREATE VIEW carries the deliberate-definer override comment', () => {
-    writeFileSync(
-      join(repoRoot, 'supabase/migrations/0001_view.sql'),
+    writeMigration(
+      repoRoot,
+      '0001_view.sql',
       `-- DELIBERATE: definer-rights view
 CREATE OR REPLACE VIEW public.bar AS SELECT 1;`,
     );
     expect(run(repoRoot).code).toBe(0);
   });
 
-  it('fails when CREATE VIEW lacks security_invoker and has no override comment', () => {
-    expectBareViewFailure(
-      repoRoot,
-      '0001_bad.sql',
-      `CREATE OR REPLACE VIEW public.leaky AS SELECT * FROM organizations;`,
-    );
-  });
-
   it('ignores DO $$ template strings that programmatically build CREATE VIEW', () => {
-    writeFileSync(
-      join(repoRoot, 'supabase/migrations/0001_loop.sql'),
+    writeMigration(
+      repoRoot,
+      '0001_loop.sql',
       `DO $$
 BEGIN
   EXECUTE format(
@@ -100,72 +151,8 @@ END $$;`,
     expect(run(repoRoot).code).toBe(0);
   });
 
-  it('does not accept security_invoker text from a later unrelated statement', () => {
-    expectBareViewFailure(
-      repoRoot,
-      '0001_bad_nearby_text.sql',
-      `CREATE OR REPLACE VIEW public.leaky AS SELECT 1;
-COMMENT ON VIEW public.leaky IS 'security_invoker = true';`,
-    );
-  });
-
-  it('does not accept security_invoker text from a same-statement string literal', () => {
-    expectBareViewFailure(
-      repoRoot,
-      '0001_bad_same_statement_text.sql',
-      `CREATE OR REPLACE VIEW public.leaky AS
-  SELECT 'WITH (security_invoker = true)' AS fake_option;`,
-    );
-  });
-
-  it('does not accept security_invoker text from a same-statement comment', () => {
-    expectBareViewFailure(
-      repoRoot,
-      '0001_bad_same_statement_comment.sql',
-      `CREATE OR REPLACE VIEW public.leaky AS
-  SELECT 1 -- WITH (security_invoker = true)
-;`,
-    );
-  });
-
-  it('does not accept ALTER VIEW text from a later string literal', () => {
-    expectBareViewFailure(
-      repoRoot,
-      '0001_bad_later_text.sql',
-      `CREATE OR REPLACE VIEW public.leaky AS SELECT 1;
-SELECT 'ALTER VIEW public.leaky SET (security_invoker = true);';`,
-    );
-  });
-
-  it('does not accept ALTER VIEW text from a later comment', () => {
-    expectBareViewFailure(
-      repoRoot,
-      '0001_bad_later_comment.sql',
-      `CREATE OR REPLACE VIEW public.leaky AS SELECT 1;
--- ALTER VIEW public.leaky SET (security_invoker = true);`,
-    );
-  });
-
-  it('does not accept the deliberate-definer override text from a string literal', () => {
-    expectBareViewFailure(
-      repoRoot,
-      '0001_bad_fake_override.sql',
-      `SELECT '
--- DELIBERATE: definer-rights view
-';
-CREATE OR REPLACE VIEW public.leaky AS SELECT 1;`,
-    );
-  });
-
-  it('finds the view name even when CREATE VIEW spans multiple lines', () => {
-    expectBareViewFailure(
-      repoRoot,
-      '0001_multi.sql',
-      `CREATE OR REPLACE VIEW public.multiline
-AS
-  SELECT 1;`,
-      'multiline',
-    );
+  it.each(bareViewCases)('%s', (_name, file, sql, view) => {
+    expectBareViewFailure(repoRoot, file, sql, view);
   });
 
   it('ignores CREATE VIEW text inside comments', () => {

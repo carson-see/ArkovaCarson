@@ -3,11 +3,13 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { writeFileSync, rmSync, mkdirSync } from 'node:fs';
+import { rmSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   runLintScript,
   makeTempMigrationsRepo,
+  writeBaselineFixture,
+  writeMigrationFixture,
 } from './lib/migration-lint-test-helpers';
 
 const SCRIPT = join(process.cwd(), 'scripts/ci/check-rls-policy-coverage.ts');
@@ -20,15 +22,11 @@ function rlsForceFor(table: string): string {
 }
 
 function writeMigration(repoRoot: string, name: string, sql: string): void {
-  writeFileSync(join(repoRoot, 'supabase/migrations/', name), sql);
+  writeMigrationFixture(repoRoot, name, sql);
 }
 
 function writeBaseline(repoRoot: string, grandfathered: string[]): void {
-  mkdirSync(join(repoRoot, 'scripts/ci/snapshots'), { recursive: true });
-  writeFileSync(
-    join(repoRoot, 'scripts/ci/snapshots/rls-policy-coverage-baseline.json'),
-    JSON.stringify({ grandfathered }),
-  );
+  writeBaselineFixture(repoRoot, 'rls-policy-coverage-baseline.json', grandfathered);
 }
 
 describe('check-rls-policy-coverage', () => {
