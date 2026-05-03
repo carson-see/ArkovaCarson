@@ -89,7 +89,7 @@ ${entry.strippedText}`;
       });
 
       process.stdout.write(`\r  Progress: ${total}/${FRAUD_EVAL_DATASET.length}`);
-    } catch (err) {
+    } catch {
       results.push({
         id: entry.id,
         expected: entry.expectedRiskLevel,

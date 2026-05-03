@@ -17,7 +17,6 @@
  */
 
 import type {
-  IntelligenceScenario,
   IntelligenceSource,
   RegulationDataset,
 } from './types';

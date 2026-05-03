@@ -74,7 +74,6 @@ if (validEntries.length < 30) {
 
 // Deterministic 80/20 split by sorted entry ID — same split every run
 validEntries.sort((a, b) => a.id.localeCompare(b.id));
-const testSize = Math.max(10, Math.round(validEntries.length * 0.2));
 const trainEntries: typeof validEntries = [];
 const testEntries: typeof validEntries = [];
 validEntries.forEach((entry, idx) => {
