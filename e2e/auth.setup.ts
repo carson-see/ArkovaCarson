@@ -23,7 +23,7 @@
  * @updated 2026-04-28 — SCRUM-1302 follow-up hardening
  */
 
-import { test as setup, expect } from '@playwright/test';
+import { test as setup, expect, errors as playwrightErrors } from '@playwright/test';
 import fs from 'fs';
 import { getServiceClient, SEED_USERS } from './fixtures/supabase';
 import { acceptDisclaimerIfVisible } from './helpers/dashboard';
@@ -89,14 +89,26 @@ async function loginAndSave(
 
   // Race the success-URL navigation against any error-message surface so
   // a bad seed credential fails the setup at <=15s instead of 30s.
-  const successPromise = page.waitForURL(POST_LOGIN_URL_PATTERN, {
-    timeout: LOGIN_FAILURE_TIMEOUT_MS,
-  }).then(() => ({ type: 'success' as const }));
+  //
+  // Important: page.waitForURL rejects with playwright.errors.TimeoutError
+  // on its own timeout. Promise.race settles on the first SETTLED promise
+  // (resolved OR rejected), so an unhandled successPromise rejection would
+  // throw out of Promise.race before any other arm wins. Catch the
+  // TimeoutError specifically and convert it into the same controlled
+  // 'timeout' shape; rethrow anything else so genuine bugs surface.
+  const successPromise = page
+    .waitForURL(POST_LOGIN_URL_PATTERN, { timeout: LOGIN_FAILURE_TIMEOUT_MS })
+    .then(() => ({ type: 'success' as const }))
+    .catch((err: unknown) => {
+      if (err instanceof playwrightErrors.TimeoutError) {
+        return { type: 'timeout' as const };
+      }
+      throw err;
+    });
   const alert = page.getByRole('alert').first();
-  const never = new Promise<never>(() => {
-    // Keep the error watcher out of the race after its own timeout; the
-    // explicit timeoutPromise below owns the "nothing happened" failure mode.
-  });
+  // The error watcher's own waitFor timeout is fine to swallow — the
+  // successPromise above now owns the timeout fallback shape.
+  const never = new Promise<never>(() => undefined);
   const errorPromise = alert
     .waitFor({ state: 'visible', timeout: LOGIN_FAILURE_TIMEOUT_MS })
     .then(async () => ({
@@ -104,13 +116,14 @@ async function loginAndSave(
       message: (await alert.innerText().catch(() => '')).trim(),
     }))
     .catch(() => never);
-  const timeoutPromise = page
-    .waitForTimeout(LOGIN_FAILURE_TIMEOUT_MS)
-    .then(() => ({ type: 'timeout' as const }));
 
   await page.getByRole('button', { name: 'Sign in' }).click();
 
-  const result = await Promise.race([successPromise, errorPromise, timeoutPromise]);
+  // Two-arm race: success (or its TimeoutError → timeout) vs error toast.
+  // The redundant `waitForTimeout` arm was removed because Promise.race
+  // would have already settled when waitForURL rejected — keeping it
+  // around could mask a real success-arm rejection by a fraction.
+  const result = await Promise.race([successPromise, errorPromise]);
 
   if (result.type === 'error') {
     throw new Error(
