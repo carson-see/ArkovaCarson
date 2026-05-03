@@ -21,6 +21,7 @@ import {
   handleAgentVerify,
   handleAgentListOrgs,
   handleAgentGetAnchor,
+  handleAgentGetOrganization,
   TOOL_DEFINITIONS,
 } from '../../edge/src/mcp-tools.js';
 
@@ -54,6 +55,10 @@ const EXPECTED_TOOL_NAMES = [
   'verify',
   'list_orgs',
   'get_anchor',
+  'get_organization',
+  'get_record',
+  'get_fingerprint',
+  'get_document',
   'oracle_batch_verify',
   'list_agents',
 ];
@@ -75,7 +80,16 @@ describe('TOOL_DEFINITIONS', () => {
   it('exposes verify_batch and v2 agent aliases', () => {
     const names = TOOL_DEFINITIONS.map((t) => t.name);
     expect(names).toContain('verify_batch');
-    expect(names).toEqual(expect.arrayContaining(['search', 'verify', 'list_orgs', 'get_anchor']));
+    expect(names).toEqual(expect.arrayContaining([
+      'search',
+      'verify',
+      'list_orgs',
+      'get_anchor',
+      'get_organization',
+      'get_record',
+      'get_fingerprint',
+      'get_document',
+    ]));
   });
 
   it('publishes full array contracts for batch public_id inputs', () => {
@@ -235,6 +249,48 @@ describe('agent v2 MCP aliases', () => {
     expect(parsed.verified).toBe(true);
   });
 
+  it('get_record (alias of handleAgentGetAnchor) returns the public-safe verify shape', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        status: 'SECURED',
+        public_id: 'ARK-DOC-REC1',
+        org_name: 'Test Org',
+        credential_type: 'DOCUMENT',
+        created_at: '2026-01-01',
+        chain_tx_id: 'tx-receipt-123',
+      }),
+    });
+
+    const result = await handleAgentGetAnchor({ public_id: 'ARK-DOC-REC1' }, CONFIG);
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.verified).toBe(true);
+    expect(parsed.network_receipt_id).toBe('tx-receipt-123');
+    // shapeAnchorRow contract: public-safe envelope, no internal `id`
+    // field leaks even when prod adds it to the RPC response.
+    expect(parsed).not.toHaveProperty('id');
+    expect(parsed).not.toHaveProperty('record_id');
+  });
+
+  it('get_document (alias of handleAgentGetAnchor) returns the public-safe verify shape', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        status: 'SECURED',
+        public_id: 'ARK-DOC-DOC1',
+        org_name: 'Test Org',
+        credential_type: 'DOCUMENT',
+        created_at: '2026-01-02',
+      }),
+    });
+
+    const result = await handleAgentGetAnchor({ public_id: 'ARK-DOC-DOC1' }, CONFIG);
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.verified).toBe(true);
+    expect(parsed).not.toHaveProperty('id');
+    expect(parsed).not.toHaveProperty('record_id');
+  });
+
   it('list_orgs scopes the query by authenticated user id', async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
@@ -255,6 +311,83 @@ describe('agent v2 MCP aliases', () => {
     const parsed = JSON.parse(result.content[0].text);
     expect(parsed.organizations[0]).toMatchObject({ id: 'org-1', role: 'ORG_ADMIN' });
     expect(mockFetch.mock.calls[0][0]).toContain('user_id=eq.test-user-id');
+  });
+
+  it('get_organization(public_id) uses a dedicated query, scopes by caller, and never leaks internal id', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ([{
+        organizations: {
+          public_id: 'org_acme',
+          display_name: 'Acme Corp',
+          description: 'Test organization',
+          domain: 'acme.com',
+          website_url: 'https://acme.com',
+          verification_status: 'VERIFIED',
+        },
+      }]),
+    });
+
+    const result = await handleAgentGetOrganization({ public_id: 'org_acme' }, CONFIG);
+    const parsed = JSON.parse(result.content[0].text);
+
+    // Public-safe contract: must contain description, must NOT contain
+    // the internal `id` column nor the membership `role` (those leak
+    // through if the handler reuses list_orgs).
+    expect(parsed).toEqual({
+      public_id: 'org_acme',
+      display_name: 'Acme Corp',
+      description: 'Test organization',
+      domain: 'acme.com',
+      website_url: 'https://acme.com',
+      verification_status: 'VERIFIED',
+    });
+    expect(parsed).not.toHaveProperty('id');
+    expect(parsed).not.toHaveProperty('role');
+
+    // Caller-scope assertion: user_id MUST filter the membership rows,
+    // and the embedded organization MUST be filtered by public_id —
+    // otherwise an out-of-scope public_id could match a sibling row.
+    const requestUrl = String(mockFetch.mock.calls[0][0]);
+    expect(requestUrl).toContain('user_id=eq.test-user-id');
+    expect(decodeURIComponent(requestUrl)).toContain('organizations.public_id=eq.org_acme');
+  });
+
+  it('get_organization returns not-found when caller has no matching membership', async () => {
+    mockFetch.mockResolvedValueOnce({ ok: true, json: async () => [] });
+
+    const result = await handleAgentGetOrganization({ public_id: 'org_outside_scope' }, CONFIG);
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain('was not found');
+  });
+
+  it('get_fingerprint (handleAgentVerify) strips record_id from the underlying verify shape', async () => {
+    const fingerprint = 'a'.repeat(64);
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ([{
+        id: 'internal-record-id',
+        public_id: 'ARK-DOC-ABC',
+        anchor_id: 'anchor-internal-id',
+        source: 'mcp',
+        source_url: null,
+        record_type: 'document',
+        title: 'Some doc',
+        content_hash: fingerprint,
+        metadata: {},
+      }]),
+    });
+
+    const result = await handleAgentVerify({ fingerprint }, CONFIG);
+    const parsed = JSON.parse(result.content[0].text);
+
+    // Public-safe contract: response must NOT include the internal
+    // public_records.id (CodeRabbit Major: get_fingerprint leaks
+    // internal record_id).
+    expect(parsed).not.toHaveProperty('record_id');
+    expect(JSON.stringify(parsed)).not.toContain('internal-record-id');
+    expect(parsed.verified).toBe(true);
+    expect(parsed.public_id).toBe('ARK-DOC-ABC');
   });
 });
 

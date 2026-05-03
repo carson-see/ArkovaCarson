@@ -50,10 +50,12 @@ Agent-ready REST surface for search, fingerprint verification, public anchor loo
 | Scope | Default quota | Endpoints |
 |---|---:|---|
 | `read:search` | 1,000 req/min | `/search`, `/organizations`, `/records`, `/fingerprints`, `/documents` |
-| `read:records` | 500 req/min | `/verify/{fingerprint}`, `/anchors/{public_id}` |
-| `read:orgs` | 500 req/min | `/orgs` |
+| `read:records` | 500 req/min | `/verify/{fingerprint}`, `/anchors/{public_id}`, `/records/{public_id}`, `/fingerprints/{fingerprint}`, `/documents/{public_id}` |
+| `read:orgs` | 500 req/min | `/orgs`, `/organizations/{public_id}` |
 | `write:anchors` | 100 req/min | Reserved for v2 write endpoints |
 | `admin:rules` | 50 req/min | Reserved for v2 admin endpoints |
+
+Search endpoints return `public_id` values that can be passed directly to the matching detail endpoint. Detail responses are public-id keyed and omit internal database identifiers such as `id`, `org_id`, and `user_id`.
 
 📖 [v1 to v2 migration guide](./v2-migration.md)
 

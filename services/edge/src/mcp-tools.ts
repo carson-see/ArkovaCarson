@@ -108,6 +108,10 @@ export interface AgentGetAnchorInput {
   public_id: string;
 }
 
+export interface AgentGetOrganizationInput {
+  public_id: string;
+}
+
 export interface SupabaseConfig {
   supabaseUrl: string;
   supabaseKey: string;
@@ -119,6 +123,20 @@ const PUBLIC_ID_JSON_SCHEMA: ToolInputSchemaProperty = {
   description: 'Arkova public ID matching ARK-<TYPE>-<SUFFIX>.',
   pattern: '^ARK-[A-Z0-9-]{3,60}$',
   maxLength: 64,
+};
+
+const ORG_PUBLIC_ID_JSON_SCHEMA: ToolInputSchemaProperty = {
+  type: 'string',
+  description: 'Organization public ID.',
+  pattern: '^[A-Za-z0-9][A-Za-z0-9._:-]{1,127}$',
+  minLength: 2,
+  maxLength: 128,
+};
+
+const FINGERPRINT_JSON_SCHEMA: ToolInputSchemaProperty = {
+  type: 'string',
+  description: '64-character SHA-256 document fingerprint.',
+  pattern: '^[a-fA-F0-9]{64}$',
 };
 
 // ---------------------------------------------------------------------------
@@ -354,6 +372,54 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
           type: 'string',
           description: 'Arkova public identifier (for example ARK-DOC-ABCDEF).',
         },
+      },
+      required: ['public_id'],
+    },
+  },
+  {
+    name: 'get_organization',
+    description:
+      'Get organization profile details by organization public_id. Use after search returns an organization public_id.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        public_id: ORG_PUBLIC_ID_JSON_SCHEMA,
+      },
+      required: ['public_id'],
+    },
+  },
+  {
+    name: 'get_record',
+    description:
+      'Get public-safe record metadata by Arkova public ID. Use after search returns a record public_id.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        public_id: PUBLIC_ID_JSON_SCHEMA,
+      },
+      required: ['public_id'],
+    },
+  },
+  {
+    name: 'get_fingerprint',
+    description:
+      'Get public-safe record metadata by SHA-256 fingerprint. Use after search returns a fingerprint result.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        fingerprint: FINGERPRINT_JSON_SCHEMA,
+      },
+      required: ['fingerprint'],
+    },
+  },
+  {
+    name: 'get_document',
+    description:
+      'Get public-safe document metadata by Arkova public ID. Use after search returns a document public_id.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        public_id: PUBLIC_ID_JSON_SCHEMA,
       },
       required: ['public_id'],
     },
@@ -761,7 +827,7 @@ export async function handleVerifyDocument(
   try {
     const response = await supabaseFetch(
       config,
-      `/rest/v1/public_records?content_hash=eq.${encodeURIComponent(input.content_hash)}&select=id,source,source_url,record_type,title,content_hash,metadata,anchor_id&limit=1`,
+      `/rest/v1/public_records?content_hash=eq.${encodeURIComponent(input.content_hash)}&select=id,public_id,source,source_url,record_type,title,content_hash,metadata,anchor_id&limit=1`,
     );
 
     if (!response.ok) {
@@ -781,6 +847,7 @@ export async function handleVerifyDocument(
     return textResult({
       verified: isAnchored,
       status: isAnchored ? 'ANCHORED' : 'PENDING',
+      public_id: record.public_id,
       record_id: record.id,
       source: record.source,
       source_url: record.source_url,
@@ -804,12 +871,28 @@ export async function handleVerifyDocument(
   }
 }
 
-/** Agent-friendly alias for API v2 `verify(fingerprint)`. */
+/**
+ * Agent-friendly alias for API v2 `verify(fingerprint)`.
+ *
+ * Strips the internal `record_id` from `handleVerifyDocument`'s response
+ * before returning. The agent-facing `get_fingerprint` MCP tool advertises
+ * a "public-safe" contract; leaving `record_id` in would expose the
+ * internal `public_records.id` UUID.
+ */
 export async function handleAgentVerify(
   input: AgentVerifyInput,
   config: SupabaseConfig,
 ): Promise<ToolResult> {
-  return handleVerifyDocument({ content_hash: input.fingerprint }, config);
+  const result = await handleVerifyDocument({ content_hash: input.fingerprint }, config);
+  if (result.isError) return result;
+
+  const parsed = parseToolJson(result);
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return result;
+  if (!('record_id' in parsed)) return result;
+
+  const { record_id: _omit, ...publicSafe } = parsed as Record<string, unknown>;
+  void _omit;
+  return textResult(publicSafe);
 }
 
 /** Agent-friendly alias for API v2 `get_anchor(public_id)`. */
@@ -818,6 +901,66 @@ export async function handleAgentGetAnchor(
   config: SupabaseConfig,
 ): Promise<ToolResult> {
   return handleVerifyCredential({ public_id: input.public_id }, config);
+}
+
+/**
+ * Public-safe organization detail. Mirrors the worker's
+ * GET /api/v2/organizations/{public_id} contract by issuing a dedicated
+ * org_members→organizations lookup (NOT a filter over list_orgs), so the
+ * response:
+ *   - never inherits the list endpoint's 50-row cap;
+ *   - never leaks the internal `organizations.id` column;
+ *   - includes `description`.
+ *
+ * Caller scope is enforced at the membership join: only memberships of the
+ * authenticated `config.userId` whose embedded organization matches
+ * `input.public_id` are returned. An out-of-scope `public_id` returns
+ * "not found" rather than leaking org rows the caller cannot see.
+ */
+export async function handleAgentGetOrganization(
+  input: AgentGetOrganizationInput,
+  config: SupabaseConfig,
+): Promise<ToolResult> {
+  const params = new URLSearchParams({
+    user_id: `eq.${config.userId}`,
+    select: 'organizations(public_id,display_name,description,domain,website_url,verification_status)',
+    'organizations.public_id': `eq.${input.public_id}`,
+    limit: '1',
+  });
+
+  try {
+    const response = await supabaseFetch(config, `/rest/v1/org_members?${params.toString()}`);
+    if (!response.ok) {
+      return errorResult(`Organization detail lookup failed: HTTP ${response.status}`);
+    }
+
+    const memberships = await response.json() as Array<Record<string, unknown>>;
+    const org = Array.isArray(memberships)
+      ? (memberships
+          .map((m) => m.organizations)
+          .find((value): value is Record<string, unknown> =>
+            typeof value === 'object' && value !== null) ?? null)
+      : null;
+
+    if (!org) return errorResult(`Organization ${input.public_id} was not found.`);
+
+    const stringOrNull = (value: unknown): string | null =>
+      typeof value === 'string' && value.length > 0 ? value : null;
+
+    return textResult({
+      public_id: stringOrNull(org.public_id),
+      display_name: stringOrNull(org.display_name),
+      description: stringOrNull(org.description),
+      domain: stringOrNull(org.domain),
+      website_url: stringOrNull(org.website_url),
+      verification_status: stringOrNull(org.verification_status),
+    });
+  } catch (error) {
+    const msg = error instanceof Error && error.name === 'AbortError'
+      ? 'Organization detail lookup timed out'
+      : `Organization detail lookup failed: ${error instanceof Error ? error.message : 'Unknown error'}`;
+    return errorResult(msg);
+  }
 }
 
 /**

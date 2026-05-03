@@ -265,6 +265,7 @@ Verify a document by its SHA-256 fingerprint. Returns the anchor proof if found.
 {
   "verified": true,
   "status": "ANCHORED",
+  "public_id": "ARK-DOC-...",
   "record_id": "uuid",
   "content_hash": "abc123...",
   "anchor_proof": {
@@ -275,6 +276,8 @@ Verify a document by its SHA-256 fingerprint. Returns the anchor proof if found.
   }
 }
 ```
+
+> **Note** — The agent-friendly `get_fingerprint` alias returns the same shape **without `record_id`** (it is the internal `public_records.id` UUID and never appears on the public-safe agent surface).
 
 ---
 
