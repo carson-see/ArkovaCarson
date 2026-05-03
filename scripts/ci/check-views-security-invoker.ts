@@ -99,6 +99,58 @@ function createViewHeader(text: string, idx: number): string {
   return asMatch ? tail.slice(0, asMatch.index) : tail;
 }
 
+// Strip SQL line (`--`) and block (`/* ... */`) comments before regex
+// matching so commented-out CREATE/ALTER statements (or commented-out
+// security_invoker fix lines) cannot bypass or spoof the lint. Preserves
+// newlines so `lineNumber()` remains accurate for surviving statements.
+//
+// Note: this strips comments outside string literals only. Postgres uses
+// `'...'` and `$$...$$` for string literals; neither has built-in comment
+// syntax — `--` inside `'...'` is just data. We don't run on procedural
+// DO blocks here (those are tracked by check-rls-policy-coverage.ts), so
+// the simpler line/block strip is sufficient for migration DDL.
+export function stripSqlComments(body: string): string {
+  let out = '';
+  let i = 0;
+  while (i < body.length) {
+    const c = body[i];
+    const next = body[i + 1];
+    if (c === '-' && next === '-') {
+      // Line comment — skip to (but not past) newline so line numbers stay aligned.
+      while (i < body.length && body[i] !== '\n') i++;
+      continue;
+    }
+    if (c === '/' && next === '*') {
+      // Block comment — skip to */ but emit one space per line so line
+      // numbers stay aligned. Unterminated block treated as comment to
+      // EOF (matches Postgres parser tolerance for streaming clients).
+      i += 2;
+      while (i < body.length && !(body[i] === '*' && body[i + 1] === '/')) {
+        if (body[i] === '\n') out += '\n';
+        i++;
+      }
+      i += 2; // skip closing */
+      continue;
+    }
+    if (c === "'") {
+      // String literal — copy through verbatim including doubled-quote escapes.
+      out += c;
+      i++;
+      while (i < body.length) {
+        const ch = body[i];
+        if (ch === "'" && body[i + 1] === "'") { out += "''"; i += 2; continue; }
+        if (ch === "'") { out += ch; i++; break; }
+        out += ch;
+        i++;
+      }
+      continue;
+    }
+    out += c;
+    i++;
+  }
+  return out;
+}
+
 export function scanFiles(files: ReadonlyArray<{ name: string; body: string }>): ScanResult {
   // Process in migration order so a later ALTER/REPLACE overrides an earlier
   // bare CREATE. Caller is responsible for sorting (we sort by file path here
@@ -111,7 +163,12 @@ export function scanFiles(files: ReadonlyArray<{ name: string; body: string }>):
   const latestState = new Map<string, 'bare' | 'fixed'>();
   const latestFinding = new Map<string, Finding>();
 
-  for (const { name, body } of ordered) {
+  for (const { name, body: rawBody } of ordered) {
+    // Strip comments before pattern matching — a commented-out
+    // `-- CREATE VIEW bare_v` or `/* ALTER VIEW v SET (security_invoker = true) */`
+    // is not executable SQL and must not flip latestState.
+    // stripSqlComments preserves newlines so lineNumber() stays accurate.
+    const body = stripSqlComments(rawBody);
     const events: ViewSecurityEvent[] = [];
 
     CREATE_VIEW_REGEX.lastIndex = 0;

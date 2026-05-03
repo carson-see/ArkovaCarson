@@ -246,4 +246,74 @@ describe('check-views-security-invoker scanFiles', () => {
     expect(bareCreates).toEqual([]);
     expect(fixedAfter.has('My_View')).toBe(true);
   });
+
+  // ───────────────────────────────────────────────────────────────────────
+  // Comment-bypass regressions: SQL comments must never spoof or hide the
+  // lint state. A `--` line comment or `/* ... */` block comment that
+  // looks like a CREATE/ALTER statement is not executable SQL and must
+  // not flip the latestState/latestFinding maps.
+  // ───────────────────────────────────────────────────────────────────────
+  it('does not let a commented-out CREATE VIEW count as a real declaration', () => {
+    const { bareCreates, fixedAfter } = scanFiles([
+      file(
+        'supabase/migrations/0100_only_comments.sql',
+        '-- CREATE VIEW commented_v AS SELECT 1;\n' +
+          '/* CREATE VIEW block_commented_v AS SELECT 2; */\n',
+      ),
+    ]);
+    expect(bareCreates).toEqual([]);
+    expect(fixedAfter.has('commented_v')).toBe(false);
+    expect(fixedAfter.has('block_commented_v')).toBe(false);
+  });
+
+  it('does not let a commented-out ALTER VIEW SET satisfy an earlier bare CREATE', () => {
+    const { bareCreates } = scanFiles([
+      file('supabase/migrations/0100_create.sql', 'CREATE VIEW v AS SELECT 1;'),
+      file(
+        'supabase/migrations/0274_fake_fix.sql',
+        '-- ALTER VIEW v SET (security_invoker = true);\n' +
+          '/* ALTER VIEW v SET (security_invoker = true); */\n',
+      ),
+    ]);
+    expect(bareCreates.map((f) => f.view)).toEqual(['v']);
+  });
+
+  it('does not let a commented-out ALTER VIEW RESET regress an earlier fix', () => {
+    const { bareCreates, fixedAfter } = scanFiles([
+      file(
+        'supabase/migrations/0100_fixed.sql',
+        'CREATE OR REPLACE VIEW v WITH (security_invoker = true) AS SELECT 1;',
+      ),
+      file(
+        'supabase/migrations/0500_fake_unfix.sql',
+        '-- ALTER VIEW v RESET (security_invoker);\n' +
+          '/* ALTER VIEW v SET (security_invoker = false); */\n',
+      ),
+    ]);
+    expect(bareCreates).toEqual([]);
+    expect(fixedAfter.has('v')).toBe(true);
+  });
+
+  it('preserves line numbers when stripping comments (lineNumber() stays aligned)', () => {
+    const body =
+      '-- header comment line 1\n' +
+      '/* multi-line block\n' +
+      '   line 3\n' +
+      '   line 4 */\n' +
+      'CREATE VIEW bare_v AS SELECT 1;\n';
+    const { bareCreates } = scanFiles([file('supabase/migrations/0900_z.sql', body)]);
+    expect(bareCreates).toHaveLength(1);
+    expect(bareCreates[0].view).toBe('bare_v');
+    expect(bareCreates[0].line).toBe(5);
+  });
+
+  it('keeps text inside string literals (does not treat -- inside a quoted string as a comment)', () => {
+    const { bareCreates } = scanFiles([
+      file(
+        'supabase/migrations/0100_str.sql',
+        "CREATE VIEW bare_v AS SELECT '-- this is data, not a comment' AS marker;\n",
+      ),
+    ]);
+    expect(bareCreates.map((f) => f.view)).toEqual(['bare_v']);
+  });
 });
