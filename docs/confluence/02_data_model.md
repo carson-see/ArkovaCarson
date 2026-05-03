@@ -8,8 +8,8 @@ SCRUM-1445 adds stable public identifiers for outbound webhook infrastructure. T
 
 | Table | Column | Format | Generation |
 |---|---|---|---|
-| `webhook_endpoints` | `public_id` | `WHK-{org_prefix}-{unique_8}` | `BEFORE INSERT` trigger `public.set_webhook_endpoint_public_id()`; backfilled for existing rows. |
-| `webhook_delivery_logs` | `public_id` | `DLV-{unique_12}` | Column default using `gen_random_uuid()`; backfilled for existing rows. |
+| `webhook_endpoints` | `public_id` | `WHK-{org_prefix}-{unique_16}` | `BEFORE INSERT` trigger `public.set_webhook_endpoint_public_id()`; backfilled for existing rows. |
+| `webhook_delivery_logs` | `public_id` | `DLV-{unique_16}` | Column default using `gen_random_uuid()`; backfilled for existing rows. |
 
 Both columns are `NOT NULL` and uniquely indexed after backfill. The worker TypeScript database types include the new fields in `Row`, `Insert`, and `Update` shapes.
 

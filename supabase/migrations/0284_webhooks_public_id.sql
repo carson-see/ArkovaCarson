@@ -48,7 +48,7 @@ BEGIN
 END;
 $$;
 
-REVOKE ALL ON FUNCTION public.set_webhook_endpoint_public_id() FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.set_webhook_endpoint_public_id() FROM PUBLIC, anon, authenticated;
 
 CREATE OR REPLACE FUNCTION public.set_webhook_delivery_log_public_id()
 RETURNS trigger
@@ -68,7 +68,7 @@ BEGIN
 END;
 $$;
 
-REVOKE ALL ON FUNCTION public.set_webhook_delivery_log_public_id() FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.set_webhook_delivery_log_public_id() FROM PUBLIC, anon, authenticated;
 
 -- ─── webhook_endpoints.public_id ─────────────────────────────────────────
 ALTER TABLE webhook_endpoints
