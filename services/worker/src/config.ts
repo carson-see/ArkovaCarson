@@ -97,6 +97,12 @@ const ConfigSchema = z.object({
    * RPC and returns a structured `insufficient_credits` 402 on shortfall.
    */
   enableOrgCreditEnforcement: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(false),
+  /**
+   * DISABLE_IN_PROCESS_ANCHOR_CRON — production maintenance switch used only
+   * while Cloud Scheduler is paused for anchor-table migrations. Default false:
+   * normal worker cadence is unchanged unless ops explicitly flips it.
+   */
+  disableInProcessAnchorCron: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(false),
 
   // AI Intelligence (P8)
   /** Gemini API key for AI extraction (Constitution 4A: PII-stripped metadata only) */
@@ -516,6 +522,7 @@ function loadConfig(): Config {
     useMocks: process.env.USE_MOCKS,
     enableProdNetworkAnchoring: process.env.ENABLE_PROD_NETWORK_ANCHORING,
     enableOrgCreditEnforcement: process.env.ENABLE_ORG_CREDIT_ENFORCEMENT,
+    disableInProcessAnchorCron: process.env.DISABLE_IN_PROCESS_ANCHOR_CRON,
     apiKeyHmacSecret: process.env.API_KEY_HMAC_SECRET,
     geminiApiKey: process.env.GEMINI_API_KEY,
     geminiModel: process.env.GEMINI_MODEL,

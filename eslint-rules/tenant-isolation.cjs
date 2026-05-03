@@ -18,11 +18,16 @@
  *   2. Walk forward through the method chain (the CallExpression is the
  *      `object` of the next MemberExpression, whose parent is another
  *      CallExpression, and so on).
- *   3. A link passes if it filters on one of the table's known tenant or
+ *   3. A read link passes if it filters on one of the table's known tenant or
  *      caller-scope columns. For most tables that is `org_id` or
  *      `organization_id`; a small number of user-owned tables also allow
  *      explicit user columns such as `attester_user_id`.
- *   4. Otherwise report at the `.from(...)` call site.
+ *   4. `.is('org_id', null)` / `.is('organization_id', null)` are allowed for
+ *      explicit system-level rows.
+ *   5. A write link passes if `.insert(...)` / `.upsert(...)` includes an
+ *      allowed top-level scope key on every literal row object, including
+ *      `org_id: null` for explicit system events.
+ *   6. Otherwise report at the `.from(...)` call site.
  *
  * False-positive notes:
  *   - `organizations` itself is NOT in the list — reads by `public_id`
@@ -59,6 +64,7 @@ const MULTI_TENANT_TABLES = new Set([
 ]);
 
 const DEFAULT_SCOPE_COLUMNS = ['org_id', 'organization_id'];
+const SYSTEM_SCOPE_COLUMNS = new Set(DEFAULT_SCOPE_COLUMNS);
 
 const TABLE_SCOPE_COLUMNS = new Map([
   ['attestations', [...DEFAULT_SCOPE_COLUMNS, 'attester_org_id', 'attester_user_id']],
@@ -101,6 +107,14 @@ function payloadHasScopeColumn(node, allowedColumns) {
   if (objectHasScopeColumn(node, allowedColumns)) return true;
   if (node.type !== 'ArrayExpression' || node.elements.length === 0) return false;
   return node.elements.every((element) => objectHasScopeColumn(element, allowedColumns));
+}
+
+function columnArgInSet(arg, allowedColumns) {
+  return arg?.type === 'Literal' && typeof arg.value === 'string' && allowedColumns.has(arg.value);
+}
+
+function isNullLiteral(arg) {
+  return arg?.type === 'Literal' && arg.value === null;
 }
 
 /** @type {import('eslint').Rule.RuleModule} */
@@ -152,28 +166,38 @@ module.exports = {
           if (nextCall.callee !== parentMember) break;
 
           const method = parentMember.property;
-          if (method.type === 'Identifier' && method.name === 'eq' && nextCall.arguments.length >= 1) {
-            const colArg = nextCall.arguments[0];
-            if (colArg.type === 'Literal' && typeof colArg.value === 'string' && allowedColumns.has(colArg.value)) {
+          if (method.type === 'Identifier') {
+            if (method.name === 'eq' && nextCall.arguments.length >= 1) {
+              if (columnArgInSet(nextCall.arguments[0], allowedColumns)) {
+                hasOrgFilter = true;
+                break;
+              }
+            }
+
+            if (
+              method.name === 'is' &&
+              nextCall.arguments.length >= 2 &&
+              columnArgInSet(nextCall.arguments[0], SYSTEM_SCOPE_COLUMNS) &&
+              isNullLiteral(nextCall.arguments[1])
+            ) {
               hasOrgFilter = true;
               break;
             }
-          }
 
-          if (
-            method.type === 'Identifier' &&
-            method.name === 'insert' &&
-            payloadHasScopeColumn(nextCall.arguments[0], allowedColumns)
-          ) {
-            hasOrgFilter = true;
-            break;
-          }
-
-          if (method.type === 'Identifier' && method.name === 'match' && nextCall.arguments.length >= 1) {
-            const filterArg = nextCall.arguments[0];
-            if (filterHasScopeColumn(filterArg, allowedColumns)) {
+            if (
+              (method.name === 'insert' || method.name === 'upsert') &&
+              payloadHasScopeColumn(nextCall.arguments[0], allowedColumns)
+            ) {
               hasOrgFilter = true;
               break;
+            }
+
+            if (method.name === 'match' && nextCall.arguments.length >= 1) {
+              const filterArg = nextCall.arguments[0];
+              if (filterHasScopeColumn(filterArg, allowedColumns)) {
+                hasOrgFilter = true;
+                break;
+              }
             }
           }
 

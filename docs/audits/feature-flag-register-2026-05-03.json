@@ -66,8 +66,8 @@
         "worker-config": "false"
       },
       "examples": [
-        "services/worker/src/config.ts:236",
-        "services/worker/src/config.ts:574",
+        "services/worker/src/config.ts:242",
+        "services/worker/src/config.ts:581",
         "services/worker/src/middleware/adesFeatureGate.test.ts:4"
       ],
       "files": [
@@ -291,8 +291,8 @@
         "worker-config": "false"
       },
       "examples": [
-        "services/worker/src/config.ts:230",
-        "services/worker/src/config.ts:571",
+        "services/worker/src/config.ts:236",
+        "services/worker/src/config.ts:578",
         "services/worker/src/jobs/monthly-allocation-rollover.test.ts:32"
       ],
       "files": [
@@ -322,8 +322,8 @@
         "worker-config": "false"
       },
       "examples": [
-        "services/worker/src/config.test.ts:484",
-        "services/worker/src/config.ts:552",
+        "services/worker/src/config.test.ts:493",
+        "services/worker/src/config.ts:559",
         "services/worker/src/middleware/flagRegistry.ts:50"
       ],
       "files": [
@@ -414,8 +414,8 @@
         "worker-config": "false"
       },
       "examples": [
-        "services/worker/src/config.ts:246",
-        "services/worker/src/config.ts:579",
+        "services/worker/src/config.ts:252",
+        "services/worker/src/config.ts:586",
         "services/worker/src/jobs/cloud-logging-drain.ts:44"
       ],
       "files": [
@@ -528,7 +528,7 @@
       "examples": [
         "services/worker/src/config.test.ts:386",
         "services/worker/src/config.test.ts:389",
-        "services/worker/src/config.test.ts:482"
+        "services/worker/src/config.test.ts:491"
       ],
       "files": [
         "docs/reference/ENV.md",
@@ -558,7 +558,7 @@
       "examples": [
         "services/worker/src/config.test.ts:395",
         "services/worker/src/config.test.ts:398",
-        "services/worker/src/config.test.ts:483"
+        "services/worker/src/config.test.ts:492"
       ],
       "files": [
         "docs/reference/ENV.md",
@@ -620,8 +620,8 @@
       },
       "examples": [
         "services/worker/src/api/v1/router.ts:318",
-        "services/worker/src/config.test.ts:481",
-        "services/worker/src/config.ts:544"
+        "services/worker/src/config.test.ts:490",
+        "services/worker/src/config.ts:551"
       ],
       "files": [
         "docs/reference/ENV.md",
@@ -678,8 +678,8 @@
       "defaults": {},
       "examples": [
         "services/worker/src/middleware/flagRegistry.ts:65",
-        "services/worker/src/routes/cron.ts:718",
-        "services/worker/src/routes/cron.ts:719"
+        "services/worker/src/routes/cron.ts:719",
+        "services/worker/src/routes/cron.ts:720"
       ],
       "files": [
         "docs/stories/27_nessie_compliance_engine.md",
@@ -775,7 +775,7 @@
         "docs/reference/ENV.md": "true"
       },
       "examples": [
-        "docs/reference/ENV.md:302",
+        "docs/reference/ENV.md:311",
         "docs/runbooks/billing/phase-3-rollover-grace.md:33"
       ],
       "files": [
@@ -806,8 +806,8 @@
       },
       "examples": [
         "services/worker/src/api/v1/router.ts:305",
-        "services/worker/src/config.test.ts:480",
-        "services/worker/src/config.ts:234"
+        "services/worker/src/config.test.ts:489",
+        "services/worker/src/config.ts:240"
       ],
       "files": [
         "docs/reference/ENV.md",
@@ -1009,7 +1009,7 @@
       },
       "examples": [
         "services/worker/src/api/v1/anchor-submit.ts:106",
-        "services/worker/src/config.ts:518",
+        "services/worker/src/config.ts:524",
         "services/worker/src/middleware/flagRegistry.ts:29"
       ],
       "files": [
@@ -1319,8 +1319,8 @@
       },
       "examples": [
         "services/worker/agents.md:75",
-        "services/worker/src/config.ts:222",
-        "services/worker/src/config.ts:567"
+        "services/worker/src/config.ts:228",
+        "services/worker/src/config.ts:574"
       ],
       "files": [
         "docs/reference/ENV.md",
@@ -1383,8 +1383,8 @@
       },
       "examples": [
         "services/worker/agents.md:75",
-        "services/worker/src/config.ts:220",
-        "services/worker/src/config.ts:566"
+        "services/worker/src/config.ts:226",
+        "services/worker/src/config.ts:573"
       ],
       "files": [
         "docs/reference/ENV.md",
@@ -1414,8 +1414,8 @@
         "worker-config": "true"
       },
       "examples": [
-        "services/worker/src/config.ts:228",
-        "services/worker/src/config.ts:570",
+        "services/worker/src/config.ts:234",
+        "services/worker/src/config.ts:577",
         "services/worker/src/jobs/rule-action-dispatcher.test.ts:143"
       ],
       "files": [
@@ -1468,7 +1468,6 @@
         "services/worker/src/api/v1/ai-verify-search.ts",
         "services/worker/src/api/v1/docs.ts",
         "services/worker/src/api/v1/router.ts",
-        "services/worker/src/jobs/check-confirmations.ts",
         "services/worker/src/middleware/aiFeatureGate.test.ts",
         "services/worker/src/middleware/aiFeatureGate.ts",
         "services/worker/src/middleware/flagRegistry.test.ts",
@@ -1565,8 +1564,8 @@
       },
       "examples": [
         "services/worker/agents.md:75",
-        "services/worker/src/config.test.ts:546",
-        "services/worker/src/config.ts:224"
+        "services/worker/src/config.test.ts:555",
+        "services/worker/src/config.ts:230"
       ],
       "files": [
         "docs/reference/ENV.md",
@@ -1720,7 +1719,7 @@
       "examples": [
         "services/worker/agents.md:130",
         "services/worker/src/api/v1/router.ts:275",
-        "services/worker/src/config.test.ts:478"
+        "services/worker/src/config.test.ts:487"
       ],
       "files": [
         "docs/launch/first-client-launch-command-center-2026-05-01.md",
@@ -1768,8 +1767,8 @@
       },
       "examples": [
         "services/worker/agents.md:75",
-        "services/worker/src/config.ts:226",
-        "services/worker/src/config.ts:569"
+        "services/worker/src/config.ts:232",
+        "services/worker/src/config.ts:576"
       ],
       "files": [
         "docs/reference/ENV.md",
@@ -1798,8 +1797,8 @@
         "worker-config": "false"
       },
       "examples": [
-        "services/worker/src/config.ts:248",
-        "services/worker/src/config.ts:580",
+        "services/worker/src/config.ts:254",
+        "services/worker/src/config.ts:587",
         "services/worker/src/jobs/workspace-subscription-renewal.test.ts:149"
       ],
       "files": [

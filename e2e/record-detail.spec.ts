@@ -58,7 +58,7 @@ test.describe('Record Detail', () => {
       await individualPage.goto(`/records/${securedAnchor.id}`);
 
       // Page title
-      await expect(individualPage.getByText('Record Details')).toBeVisible({ timeout: 10000 });
+      await expect(individualPage.getByRole('heading', { name: 'Record Details' })).toBeVisible({ timeout: 10000 });
 
       // Subtitle
       await expect(individualPage.getByText(/View and verify/i)).toBeVisible();
@@ -70,7 +70,7 @@ test.describe('Record Detail', () => {
     test('shows document fingerprint with copy button', async ({ individualPage }) => {
 
       await individualPage.goto(`/records/${securedAnchor.id}`);
-      await expect(individualPage.getByText('Record Details')).toBeVisible({ timeout: 10000 });
+      await expect(individualPage.getByRole('heading', { name: 'Record Details' })).toBeVisible({ timeout: 10000 });
 
       // Fingerprint section
       await expect(individualPage.getByText(/Document Fingerprint/).first()).toBeVisible();
@@ -83,7 +83,7 @@ test.describe('Record Detail', () => {
     test('shows filename and file metadata', async ({ individualPage }) => {
 
       await individualPage.goto(`/records/${securedAnchor.id}`);
-      await expect(individualPage.getByText('Record Details')).toBeVisible({ timeout: 10000 });
+      await expect(individualPage.getByRole('heading', { name: 'Record Details' })).toBeVisible({ timeout: 10000 });
 
       // Filename
       await expect(individualPage.getByText('e2e_record_detail_secured.pdf')).toBeVisible();
@@ -92,7 +92,7 @@ test.describe('Record Detail', () => {
     test('shows QR code for SECURED records', async ({ individualPage }) => {
 
       await individualPage.goto(`/records/${securedAnchor.id}`);
-      await expect(individualPage.getByText('Record Details')).toBeVisible({ timeout: 10000 });
+      await expect(individualPage.getByRole('heading', { name: 'Record Details' })).toBeVisible({ timeout: 10000 });
 
       // QR Code section should be visible for SECURED records
       await expect(individualPage.getByText('Verification QR Code')).toBeVisible();
@@ -101,7 +101,7 @@ test.describe('Record Detail', () => {
     test('shows download proof package buttons', async ({ individualPage }) => {
 
       await individualPage.goto(`/records/${securedAnchor.id}`);
-      await expect(individualPage.getByText('Record Details')).toBeVisible({ timeout: 10000 });
+      await expect(individualPage.getByRole('heading', { name: 'Record Details' })).toBeVisible({ timeout: 10000 });
 
       // Download proof section
       await expect(individualPage.getByText(/Download Proof Package/i)).toBeVisible();
@@ -114,7 +114,7 @@ test.describe('Record Detail', () => {
     test('shows lifecycle timeline', async ({ individualPage }) => {
 
       await individualPage.goto(`/records/${securedAnchor.id}`);
-      await expect(individualPage.getByText('Record Details')).toBeVisible({ timeout: 10000 });
+      await expect(individualPage.getByRole('heading', { name: 'Record Details' })).toBeVisible({ timeout: 10000 });
 
       // Lifecycle section
       await expect(individualPage.getByText('Record Lifecycle')).toBeVisible();
@@ -125,7 +125,7 @@ test.describe('Record Detail', () => {
     test('shows Pending status badge', async ({ individualPage }) => {
 
       await individualPage.goto(`/records/${pendingAnchor.id}`);
-      await expect(individualPage.getByText('Record Details')).toBeVisible({ timeout: 10000 });
+      await expect(individualPage.getByRole('heading', { name: 'Record Details' })).toBeVisible({ timeout: 10000 });
 
       // Status should show Pending
       await expect(individualPage.getByText('Pending', { exact: true }).first()).toBeVisible();
@@ -134,7 +134,7 @@ test.describe('Record Detail', () => {
     test('does not show QR code for PENDING records', async ({ individualPage }) => {
 
       await individualPage.goto(`/records/${pendingAnchor.id}`);
-      await expect(individualPage.getByText('Record Details')).toBeVisible({ timeout: 10000 });
+      await expect(individualPage.getByRole('heading', { name: 'Record Details' })).toBeVisible({ timeout: 10000 });
 
       // QR Code should NOT be visible for PENDING
       await expect(individualPage.getByText('Verification QR Code')).not.toBeVisible();

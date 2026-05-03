@@ -273,3 +273,34 @@ describe('arkova/no-mock-echo', () => {
     ],
   });
 });
+
+describe('arkova/missing-org-filter', () => {
+  ruleTester.run('missing-org-filter', tenantIsolation, {
+    valid: [
+      {
+        filename: 'worker.ts',
+        code: "await db.from('audit_events').select('created_at').is('org_id', null).limit(20);",
+      },
+      {
+        filename: 'worker.ts',
+        code: "await db.from('audit_events').insert({ event_type: 'smoke_test.completed', event_category: 'SYSTEM', org_id: null });",
+      },
+      {
+        filename: 'worker.ts',
+        code: "await db.from('audit_events').insert([{ event_type: 'a', org_id: 'org-1' }, { event_type: 'b', org_id: null }]);",
+      },
+    ],
+    invalid: [
+      {
+        filename: 'worker.ts',
+        code: "await db.from('audit_events').select('created_at').eq('event_type', 'smoke_test.completed').limit(20);",
+        errors: [{ messageId: 'missingOrgFilter' }],
+      },
+      {
+        filename: 'worker.ts',
+        code: "await db.from('audit_events').insert({ event_type: 'smoke_test.completed', event_category: 'SYSTEM' });",
+        errors: [{ messageId: 'missingOrgFilter' }],
+      },
+    ],
+  });
+});
