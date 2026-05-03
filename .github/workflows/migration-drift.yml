@@ -140,7 +140,9 @@ jobs:
           #
           # This prevents a giant false-missing list when prod is actually
           # ahead under timestamped Management API migrations.
-          if ! prod_applied_keys=$(echo "$prod_response" | jq -r '
+          prod_migrations_jq_output=$(mktemp)
+          prod_migrations_jq_error=$(mktemp)
+          if ! echo "$prod_response" | jq -r '
             .[]
             | (.version | tostring) as $version
             | ((.name // "") | tostring) as $name
@@ -151,14 +153,15 @@ jobs:
                 (if $name | startswith($version + "_") then $name else "\($version)_\($name)" end),
                 ($name | sub("^scrum_[0-9]+_"; ""))
               end
-          ' 2>/tmp/prod_migrations_jq_error | sort -u); then
+          ' > "$prod_migrations_jq_output" 2>"$prod_migrations_jq_error"; then
             echo "::error title=Migration drift check parse failure::Supabase Management API returned HTTP 200, but the migrations payload could not be parsed."
             echo "jq error preview:"
-            head -5 /tmp/prod_migrations_jq_error 2>/dev/null || true
+            head -5 "$prod_migrations_jq_error" 2>/dev/null || true
             echo "Response body preview:"
             echo "$prod_response" | head -5
             exit 1
           fi
+          prod_applied_keys=$(sort -u "$prod_migrations_jq_output")
           if [ -z "$prod_applied_keys" ]; then
             echo "::error::Supabase Management API returned no migrations (unexpected)."
             echo "Response body preview:"
