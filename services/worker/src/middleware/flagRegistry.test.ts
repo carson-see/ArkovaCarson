@@ -12,17 +12,21 @@ vi.mock('../config.js', () => ({
   },
 }));
 
+// Mock shape mirrors the runtime query: select('flag_key, enabled').in('flag_key', [...]).
+// Pre-fix code used `id` + `value` which silently errored at runtime against
+// the (id uuid, flag_key text, enabled boolean, ...) schema and fell back
+// to env vars on every startup. Tests now assert the post-fix contract.
 vi.mock('../utils/db.js', () => ({
   db: {
     from: vi.fn().mockReturnValue({
       select: vi.fn().mockReturnValue({
         in: vi.fn().mockResolvedValue({
           data: [
-            { id: 'ENABLE_VERIFICATION_API', value: true },
-            { id: 'ENABLE_AI_EXTRACTION', value: false },
-            { id: 'ENABLE_SEMANTIC_SEARCH', value: true },
-            { id: 'ENABLE_AI_FRAUD', value: false },
-            { id: 'ENABLE_AI_REPORTS', value: false },
+            { flag_key: 'ENABLE_VERIFICATION_API', enabled: true },
+            { flag_key: 'ENABLE_AI_EXTRACTION', enabled: false },
+            { flag_key: 'ENABLE_SEMANTIC_SEARCH', enabled: true },
+            { flag_key: 'ENABLE_AI_FRAUD', enabled: false },
+            { flag_key: 'ENABLE_AI_REPORTS', enabled: false },
           ],
           error: null,
         }),

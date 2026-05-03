@@ -119,20 +119,7 @@ IMPORTANT: Do NOT include the final JSON output in your reasoning. The reasoning
 // ─── Step 1: Load source data ───
 
 async function loadGoldenDataset(): Promise<ReasoningExample[]> {
-  // Dynamic import of golden dataset
-  const goldenPath = path.join(__dirname, '..', 'src', 'ai', 'eval', 'golden-dataset.ts');
-  const goldenPhase9Path = path.join(__dirname, '..', 'src', 'ai', 'eval', 'golden-dataset-phase9.ts');
-
   const examples: ReasoningExample[] = [];
-
-  // Read the golden dataset file and extract entries
-  const content = fs.readFileSync(goldenPath, 'utf-8');
-  const phase9Exists = fs.existsSync(goldenPhase9Path);
-  const phase9Content = phase9Exists ? fs.readFileSync(goldenPhase9Path, 'utf-8') : '';
-
-  // Parse entries from the TypeScript files using regex
-  const entryRegex = /\{\s*id:\s*'(GD-\d+)'[\s\S]*?strippedText:\s*'([\s\S]*?)',\s*\n\s*credential/g;
-  const allContent = content + '\n' + phase9Content;
 
   // Simpler approach: use the training data JSONL which already has the right format
   const trainingPath = path.join(__dirname, '..', 'training-data', 'finetune-server-8b-full-v2.jsonl');
@@ -263,7 +250,7 @@ async function generateReasoningBatch(
       try {
         const reasoning = await generateReasoningTrace(ex);
         return { ...ex, reasoning };
-      } catch (err) {
+      } catch {
         errorCount++;
         if (errorCount % 10 === 0) {
           console.log(`    ${errorCount} errors so far`);

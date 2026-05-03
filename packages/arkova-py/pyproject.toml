@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "arkova"
 version = "0.1.0"
-description = "Typed Python SDK for the Arkova Verification API v2"
+description = "Typed Python SDK for the Arkova Verification APIs"
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }

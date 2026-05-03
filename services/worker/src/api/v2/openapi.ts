@@ -1,4 +1,4 @@
-import { Request, Response } from 'express';
+import type { Request, Response } from 'express';
 
 const ANCHOR_PUBLIC_ID_PARAMETER = {
   name: 'public_id',

@@ -21,7 +21,7 @@
  *   npx tsx services/worker/scripts/audit-env-vars.ts --json   # CI form
  */
 
-import { readFile, readdir, stat } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
 const REPO_ROOT = resolve(import.meta.dirname, '../../..');

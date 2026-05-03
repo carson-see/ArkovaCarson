@@ -41,7 +41,7 @@ v2 keys are scope-aware. Ask your Arkova admin for only the scopes your integrat
 
 | v1 pattern | v2 replacement | Notes |
 |---|---|---|
-| `GET /api/v1/verify/{publicId}` | `GET /api/v2/anchors/{public_id}` | Returns redacted public anchor metadata. |
+| `GET /api/v1/verify/{publicId}` | `GET /api/v2/anchors/{public_id}` | Returns redacted public anchor metadata. Use v1 `verify` while you still need the rich verification contract fields `confidence_scores`, `sub_type`, and `description`. |
 | Fingerprint lookup through v1 search flows | `GET /api/v2/verify/{fingerprint}` | Accepts a 64-character SHA-256 hex fingerprint. |
 | Search-oriented v1 endpoints | `GET /api/v2/search?q=...` | Cursor pagination and typed result rows. |
 | Agent org bootstrap | `GET /api/v2/orgs` | Returns organization context for the API key. |
@@ -81,7 +81,13 @@ Clients should branch on `status` and `type`, not string-match `detail`.
 - TypeScript: `@arkova/sdk`
 - Python: `pip install arkova`
 
-Both SDKs expose v2 search, fingerprint verification, anchor lookup, organization listing, retry handling, and problem detail errors.
+Both SDKs expose v2 search, fingerprint verification, anchor lookup, organization
+listing, retry handling, and problem detail errors. The Python package also
+exposes `verify(public_id)` for the rich v1 verification response while teams
+migrate public-ID verification to the v2 anchor-detail flow.
+REST responses use snake_case (`confidence_scores`, `sub_type`); SDK models expose
+the same data using each language's native style (`confidenceScores`/`subType` in
+TypeScript, `confidence_scores`/`sub_type` in Python).
 
 ## Cutover Checklist
 
