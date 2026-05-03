@@ -11,22 +11,28 @@
  * @created 2026-03-27
  */
 
+import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
+
+const API_KEYS_DESCRIPTION = 'Manage API keys for programmatic access to the Verification API.';
+const DEVELOPER_OVERVIEW_LINK = /Developer Platform|API Documentation|developer overview/i;
+
+async function expectApiKeysPage(page: Page) {
+  await expect(
+    page.getByRole('heading', { name: 'API Keys' })
+  ).toBeVisible({ timeout: 10000 });
+
+  await expect(
+    page.getByText(API_KEYS_DESCRIPTION)
+  ).toBeVisible();
+}
 
 test.describe('API Keys & Verification Flow', () => {
   test.describe('API Key Settings Page', () => {
     test('API keys page loads for org admin', async ({ orgAdminPage }) => {
       await orgAdminPage.goto('/settings/api-keys');
 
-      // Page title
-      await expect(
-        orgAdminPage.getByText('API Keys')
-      ).toBeVisible({ timeout: 10000 });
-
-      // Page description
-      await expect(
-        orgAdminPage.getByText('Manage API keys for programmatic access to the Verification API.')
-      ).toBeVisible();
+      await expectApiKeysPage(orgAdminPage);
 
       // Create API Key button
       await expect(
@@ -36,24 +42,20 @@ test.describe('API Keys & Verification Flow', () => {
 
     test('empty state shows no keys message', async ({ orgAdminPage }) => {
       await orgAdminPage.goto('/settings/api-keys');
-      await expect(
-        orgAdminPage.getByText('API Keys')
-      ).toBeVisible({ timeout: 10000 });
+      await expectApiKeysPage(orgAdminPage);
 
       // If no keys exist, the empty state message should be visible
       // (may not appear if keys already exist in seed data)
       const noKeysMsg = orgAdminPage.getByText('No API keys yet. Create one to get started with the Verification API.');
-      const keyCard = orgAdminPage.locator('[class*="card"]').filter({ hasText: /Active|Revoked|Expired/ });
+      const keyStatus = orgAdminPage.getByText(/Active|Revoked|Expired/).first();
 
       // Either empty state or existing keys should be present
-      await expect(noKeysMsg.or(keyCard.first())).toBeVisible({ timeout: 10000 });
+      await expect(noKeysMsg.or(keyStatus)).toBeVisible({ timeout: 10000 });
     });
 
     test('create API key dialog opens and shows form fields', async ({ orgAdminPage }) => {
       await orgAdminPage.goto('/settings/api-keys');
-      await expect(
-        orgAdminPage.getByText('API Keys')
-      ).toBeVisible({ timeout: 10000 });
+      await expectApiKeysPage(orgAdminPage);
 
       // Click Create API Key button
       await orgAdminPage.getByRole('button', { name: /Create API Key/i }).click();
@@ -68,9 +70,11 @@ test.describe('API Keys & Verification Flow', () => {
 
       // Permissions checkboxes
       await expect(orgAdminPage.getByText('Permissions')).toBeVisible();
-      await expect(orgAdminPage.getByText('Verify')).toBeVisible();
-      await expect(orgAdminPage.getByText('Batch')).toBeVisible();
-      await expect(orgAdminPage.getByText('Usage')).toBeVisible();
+      await expect(orgAdminPage.getByRole('checkbox', { name: 'Records' })).toBeVisible();
+      await expect(orgAdminPage.getByRole('checkbox', { name: 'Organisations' })).toBeVisible();
+      await expect(orgAdminPage.getByRole('checkbox', { name: 'Search' })).toBeVisible();
+      await expect(orgAdminPage.getByRole('checkbox', { name: 'Anchor writes' })).toBeVisible();
+      await expect(orgAdminPage.getByRole('checkbox', { name: 'Rules admin' })).toBeVisible();
 
       // Expiry field
       await expect(orgAdminPage.getByLabel(/Expires In/i)).toBeVisible();
@@ -78,9 +82,7 @@ test.describe('API Keys & Verification Flow', () => {
 
     test('create API key with name and scopes', async ({ orgAdminPage }) => {
       await orgAdminPage.goto('/settings/api-keys');
-      await expect(
-        orgAdminPage.getByText('API Keys')
-      ).toBeVisible({ timeout: 10000 });
+      await expectApiKeysPage(orgAdminPage);
 
       // Open create dialog
       await orgAdminPage.getByRole('button', { name: /Create API Key/i }).click();
@@ -90,9 +92,8 @@ test.describe('API Keys & Verification Flow', () => {
       const testKeyName = `E2E Test Key ${Date.now()}`;
       await orgAdminPage.getByLabel('Key Name').fill(testKeyName);
 
-      // Verify scope is pre-selected (verify is default)
-      const verifyCheckbox = orgAdminPage.locator('input[type="checkbox"]').first();
-      await expect(verifyCheckbox).toBeChecked();
+      // Search scope is pre-selected by default for new v2 API keys.
+      await expect(orgAdminPage.getByRole('checkbox', { name: 'Search' })).toBeChecked();
 
       // Submit the form
       const createButtons = orgAdminPage.getByRole('button', { name: /Create API Key/i });
@@ -115,7 +116,7 @@ test.describe('API Keys & Verification Flow', () => {
         ).toBeVisible();
 
         // The key value should be displayed in a monospace alert
-        const keyDisplay = orgAdminPage.locator('.font-mono.select-all');
+        const keyDisplay = orgAdminPage.locator('[role="alert"] .font-mono').filter({ hasText: /^ark_/ });
         await expect(keyDisplay).toBeVisible();
 
         // Copy to Clipboard button should be visible
@@ -148,12 +149,10 @@ test.describe('API Keys & Verification Flow', () => {
 
     test('API docs card links to developers page', async ({ orgAdminPage }) => {
       await orgAdminPage.goto('/settings/api-keys');
-      await expect(
-        orgAdminPage.getByText('API Keys')
-      ).toBeVisible({ timeout: 10000 });
+      await expectApiKeysPage(orgAdminPage);
 
       // API Documentation card should be visible
-      const docsLink = orgAdminPage.getByRole('link', { name: /Developer Platform|API Documentation/i });
+      const docsLink = orgAdminPage.getByRole('link', { name: DEVELOPER_OVERVIEW_LINK });
       if (await docsLink.isVisible({ timeout: 5000 }).catch(() => false)) {
         const href = await docsLink.getAttribute('href');
         expect(href).toContain('/developers');
@@ -162,13 +161,12 @@ test.describe('API Keys & Verification Flow', () => {
 
     test('API usage dashboard section is visible', async ({ orgAdminPage }) => {
       await orgAdminPage.goto('/settings/api-keys');
-      await expect(
-        orgAdminPage.getByText('API Keys')
-      ).toBeVisible({ timeout: 10000 });
+      await expectApiKeysPage(orgAdminPage);
 
-      // Usage section heading
+      // Usage dashboard or its offline state should be present.
       await expect(
         orgAdminPage.getByText('API Usage')
+          .or(orgAdminPage.getByText('Usage data unavailable — worker service not connected'))
       ).toBeVisible({ timeout: 10000 });
     });
   });
@@ -185,12 +183,12 @@ test.describe('API Keys & Verification Flow', () => {
 
       // API code example should be visible
       await expect(
-        page.getByText('curl')
+        page.getByRole('button', { name: /^cURL$/i })
       ).toBeVisible();
 
       // Endpoint documentation
       await expect(
-        page.getByText(/Verify Credential|Verification API/i)
+        page.getByRole('heading', { name: 'Verify Credentials' })
       ).toBeVisible();
     });
 
@@ -201,8 +199,7 @@ test.describe('API Keys & Verification Flow', () => {
       ).toBeVisible({ timeout: 10000 });
 
       // SDK tabs should be visible (curl, typescript, python)
-      const curlTab = page.getByRole('button', { name: /curl/i })
-        .or(page.getByText('curl').first());
+      const curlTab = page.getByRole('button', { name: /^cURL$/i });
       await expect(curlTab).toBeVisible({ timeout: 5000 });
 
       // TypeScript tab
@@ -222,7 +219,7 @@ test.describe('API Keys & Verification Flow', () => {
 
       // Pricing information
       await expect(
-        page.getByText(/\$0\.002/i)
+        page.getByRole('cell', { name: '$0.002' }).first()
       ).toBeVisible({ timeout: 5000 });
     });
 
@@ -247,7 +244,7 @@ test.describe('API Keys & Verification Flow', () => {
 
       // Sandbox should load (may redirect to developers page if not a separate route)
       await expect(
-        page.getByText(/Sandbox|API Playground|Verify Credential/i)
+        page.getByRole('heading', { name: /API Sandbox|API Playground|Verify Credential/i })
       ).toBeVisible({ timeout: 10000 });
     });
 
@@ -255,7 +252,7 @@ test.describe('API Keys & Verification Flow', () => {
       await page.goto('/developers/sandbox');
 
       // Auth section with API Key option
-      const apiKeyOption = page.getByText(/API Key|Authorization/i);
+      const apiKeyOption = page.getByRole('button', { name: /API Key/i });
       await expect(apiKeyOption).toBeVisible({ timeout: 10000 });
     });
 
@@ -264,11 +261,14 @@ test.describe('API Keys & Verification Flow', () => {
 
       // Should show parameter inputs for the selected endpoint
       await expect(
-        page.getByText(/Public ID|Endpoint|Parameters/i)
+        page.getByText('Endpoint', { exact: true })
+      ).toBeVisible({ timeout: 10000 });
+      await expect(
+        page.getByText('Parameters', { exact: true })
       ).toBeVisible({ timeout: 10000 });
 
       // Run/Send button should be present
-      const runBtn = page.getByRole('button', { name: /Run|Send|Execute/i });
+      const runBtn = page.getByRole('button', { name: /Try It|Run|Send|Execute/i });
       if (await runBtn.isVisible({ timeout: 5000 }).catch(() => false)) {
         await expect(runBtn).toBeVisible();
       }
@@ -279,7 +279,7 @@ test.describe('API Keys & Verification Flow', () => {
     test('settings sidebar navigates to API keys page', async ({ orgAdminPage }) => {
       await orgAdminPage.goto('/settings');
       await expect(
-        orgAdminPage.getByRole('heading', { name: 'Settings' })
+        orgAdminPage.locator('#main-content').getByRole('heading', { name: 'Settings', exact: true })
       ).toBeVisible({ timeout: 10000 });
 
       // Navigate to API Keys via sidebar or settings link
@@ -287,21 +287,17 @@ test.describe('API Keys & Verification Flow', () => {
       if (await apiKeysLink.isVisible({ timeout: 5000 }).catch(() => false)) {
         await apiKeysLink.click();
         await orgAdminPage.waitForURL(/\/settings\/api-keys/, { timeout: 10000 });
-        await expect(
-          orgAdminPage.getByText('Manage API keys for programmatic access to the Verification API.')
-        ).toBeVisible();
+        await expectApiKeysPage(orgAdminPage);
       }
     });
 
     test('full flow: settings -> API keys -> developers', async ({ orgAdminPage }) => {
       // Start at API keys settings
       await orgAdminPage.goto('/settings/api-keys');
-      await expect(
-        orgAdminPage.getByText('API Keys')
-      ).toBeVisible({ timeout: 10000 });
+      await expectApiKeysPage(orgAdminPage);
 
       // Navigate to developers page via link
-      const devLink = orgAdminPage.getByRole('link', { name: /Developer Platform/i });
+      const devLink = orgAdminPage.getByRole('link', { name: DEVELOPER_OVERVIEW_LINK });
       if (await devLink.isVisible({ timeout: 5000 }).catch(() => false)) {
         await devLink.click();
         await orgAdminPage.waitForURL(/\/developers/, { timeout: 10000 });

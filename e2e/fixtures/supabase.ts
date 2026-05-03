@@ -8,6 +8,7 @@
  */
 
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import { createHash } from 'node:crypto';
 
 // Require credentials via environment variables — never hardcode secrets
 function requireEnv(name: string): string {
@@ -24,6 +25,8 @@ function requireEnv(name: string): string {
 const SUPABASE_URL = process.env.E2E_SUPABASE_URL || 'http://127.0.0.1:54321';
 const SUPABASE_SERVICE_KEY = requireEnv('E2E_SUPABASE_SERVICE_KEY');
 const SEED_PASSWORD = requireEnv('E2E_SEED_PASSWORD');
+const ANCHOR_FINGERPRINT_MAX_LENGTH = 64;
+const SHA256_HEX_RE = /^[a-f0-9]{64}$/i;
 
 /**
  * Service-role Supabase client for E2E test setup/teardown.
@@ -36,10 +39,10 @@ export function getServiceClient(): SupabaseClient {
 // ── Seed User Constants ─────────────────────────────────────────────────────
 
 export const SEED_USERS = {
-  /** Platform admin / ORG_ADMIN at Arkova org — Carson */
+  /** Demo org admin at Acme Corp — used for ordinary org-admin E2E flows */
   orgAdmin: {
-    id: '44444444-0000-0000-0000-000000000001',
-    email: 'carson@arkova.ai',
+    id: '55555555-0000-0000-0000-000000000001',
+    email: 'demo-admin@arkova.local',
     password: SEED_PASSWORD,
     role: 'ORG_ADMIN' as const,
   },
@@ -57,16 +60,33 @@ export const SEED_USERS = {
     password: SEED_PASSWORD,
     role: 'ORG_ADMIN' as const,
   },
-  /** Alias for backward compat — points to Carson */
+  /** Demo individual user — used for personal vault / records E2E flows */
   individual: {
-    id: '44444444-0000-0000-0000-000000000001',
-    email: 'carson@arkova.ai',
+    id: '55555555-0000-0000-0000-000000000002',
+    email: 'demo-user@arkova.local',
     password: SEED_PASSWORD,
-    role: 'ORG_ADMIN' as const,
+    role: 'INDIVIDUAL' as const,
   },
 };
 
 // ── Test Data Helpers ───────────────────────────────────────────────────────
+
+export async function getSeedUserOrgId(
+  serviceClient: SupabaseClient,
+  userId: string,
+): Promise<string> {
+  const { data, error } = await serviceClient
+    .from('profiles')
+    .select('org_id')
+    .eq('id', userId)
+    .single();
+
+  if (error || !data?.org_id) {
+    throw new Error(`Unable to resolve seeded org_id for ${userId}: ${error?.message ?? 'missing org_id'}`);
+  }
+
+  return data.org_id as string;
+}
 
 /**
  * Create a test anchor via service client. Returns anchor with public_id if SECURED.
@@ -82,9 +102,14 @@ export async function createTestAnchor(
   } = {}
 ) {
   const timestamp = Date.now();
+  const fingerprintSeed = overrides.fingerprint ?? `e2e_test_${timestamp}`;
+  const fingerprint = SHA256_HEX_RE.test(fingerprintSeed)
+    ? fingerprintSeed.toLowerCase()
+    : createHash('sha256').update(fingerprintSeed).digest('hex');
+
   const defaults = {
     user_id: overrides.userId ?? SEED_USERS.individual.id,
-    fingerprint: overrides.fingerprint ?? `e2e_test_${timestamp}_${'a'.repeat(44)}`,
+    fingerprint: fingerprint.slice(0, ANCHOR_FINGERPRINT_MAX_LENGTH),
     filename: overrides.filename ?? `e2e_test_${timestamp}.pdf`,
     file_size: 12345,
     status: 'PENDING' as const,

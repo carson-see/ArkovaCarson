@@ -46,6 +46,7 @@ export const ROUTES = {
   DOCUMENTS: '/documents',
   MY_CREDENTIALS: '/my-credentials',
   DASHBOARD: '/dashboard',
+  VAULT_LEGACY: '/vault',
   RECORDS: '/records',
   RECORD_DETAIL: '/records/:id',
   ORGANIZATIONS: '/organizations',
@@ -120,14 +121,14 @@ export function destinationToRoute(destination: RouteDestination): string {
       return ROUTES.ONBOARDING_ORG;
     case '/review-pending':
       return ROUTES.REVIEW_PENDING;
-    case '/vault':
+    case ROUTES.VAULT_LEGACY:
     case '/dashboard':
       return ROUTES.DASHBOARD;
   }
 }
 
 /** Destinations that indicate the user has completed onboarding */
-export const MAIN_APP_DESTINATIONS: RouteDestination[] = ['/vault', '/dashboard'];
+export const MAIN_APP_DESTINATIONS: RouteDestination[] = [ROUTES.VAULT_LEGACY, ROUTES.DASHBOARD];
 
 /** Build a verify URL for a given public ID */
 export function verifyPath(publicId: string): string {
