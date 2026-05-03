@@ -151,6 +151,54 @@ def test_get_attestation_includes_evidence_and_attestor_credentials() -> None:
     assert result.attestor_credentials[0].chain_proof == {"tx_id": "tx-cred", "block_height": 800001, "timestamp": None, "explorer_url": None}
 
 
+def test_get_attestation_default_path_omits_credentials_query() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/api/v1/attestations/ARK-ATT-1"
+        assert request.url.query == b""
+        return httpx.Response(
+            200,
+            json={
+                "public_id": "ARK-ATT-1",
+                "attestation_type": "VERIFICATION",
+                "status": "ACTIVE",
+                "subject_type": "credential",
+                "subject_identifier": "ARK-DOC-1",
+                "attester": {"name": "Lawyer One", "type": "INDIVIDUAL", "title": "Advocate"},
+                "claims": [{"claim": "Signed filing"}],
+                "summary": None,
+                "fingerprint": "a" * 64,
+                "evidence_fingerprint": "b" * 64,
+                "evidence": [
+                    {
+                        "public_id": "AEV-ABCDEF1234567890ABCDEF1234567890",
+                        "evidence_type": "document",
+                        "description": "Court filing",
+                        "fingerprint": "b" * 64,
+                        "mime": "application/pdf",
+                        "size": 4096,
+                        "created_at": "2026-05-03T14:00:00Z",
+                    }
+                ],
+                "evidence_count": 1,
+                "chain_proof": {"tx_id": "tx-att", "block_height": 800000, "timestamp": None, "explorer_url": None},
+                "issued_at": "2026-05-03T14:00:00Z",
+                "expires_at": None,
+                "revoked_at": None,
+                "revocation_reason": None,
+                "created_at": "2026-05-03T14:00:00Z",
+                "verify_url": "https://app.arkova.ai/verify/attestation/ARK-ATT-1",
+            },
+        )
+
+    client = httpx.Client(base_url="https://api.example", transport=_mock_transport(handler))
+    sdk = Arkova(base_url="https://api.example", client=client)
+    result = sdk.get_attestation("ARK-ATT-1")
+    assert result.jurisdiction is None
+    assert result.evidence[0].public_id == "AEV-ABCDEF1234567890ABCDEF1234567890"
+    assert result.chain_proof == {"tx_id": "tx-att", "block_height": 800000, "timestamp": None, "explorer_url": None}
+    assert result.attestor_credentials is None
+
+
 def test_verify_batch_posts_array_and_unwraps_results() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         body = json.loads(request.content)

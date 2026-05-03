@@ -191,3 +191,10 @@ jobs:
           fi
 
           echo "::notice title=Migration drift check passed::All local migrations are applied in prod."
+
+      - name: Check prod drain function body and grants
+        if: ${{ !(github.event_name == 'pull_request' && github.actor == 'dependabot[bot]') && hashFiles('supabase/migrations/0283_drain_submitted_to_secured_helper.sql') != '' }}
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ steps.supabase-management-token.outputs.token }}
+          SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF || 'vzwyaatejekddvltxyye' }}
+        run: python3 scripts/ci/check-prod-drain-function.py

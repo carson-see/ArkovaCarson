@@ -21,11 +21,21 @@ import { config } from '../../config.js';
 import { buildVerifyUrl, buildAttestationVerifyUrl } from '../../lib/urls.js';
 import { dispatchWebhookEvent } from '../../webhooks/delivery.js';
 import { isAIExtractionEnabled } from '../../middleware/aiFeatureGate.js';
+import { requireScope } from '../../middleware/apiKeyAuth.js';
+import { rateLimit } from '../../utils/rateLimit.js';
 
 const router = Router();
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const dbAny = db as any;
+
+// Batch attestation endpoints share the v1 batch bucket with /verify/batch.
+const attestationBatchRateLimiter = rateLimit({
+  windowMs: 60_000,
+  maxRequests: 10,
+  scope: 'batch',
+  keyGenerator: (req) => req.apiKey?.keyId ?? req.ip ?? 'unknown',
+});
 
 // ─── Type Code Mapping ────────────────────────────────────
 const ATTESTATION_TYPE_CODES: Record<string, string> = {
@@ -136,6 +146,13 @@ interface AttestorCredential {
 }
 
 const MAX_ATTESTOR_CREDENTIAL_DEPTH = 2;
+const PUBLIC_ATTESTOR_CREDENTIAL_STATUSES = new Set([
+  'SECURED',
+  'CONFIRMED',
+  'REVOKED',
+  'EXPIRED',
+  'SUPERSEDED',
+]);
 
 // ─── Auth helper ───────────────────────────────────────────
 
@@ -257,7 +274,22 @@ export function capAttestorCredentialLineage(
   currentPublicId?: string,
   maxDepth = MAX_ATTESTOR_CREDENTIAL_DEPTH,
 ): AttestorCredential[] {
-  const safeLineage = lineage.filter((item) => typeof item.public_id === 'string');
+  const shapedLineage = lineage.filter((item) => typeof item.public_id === 'string');
+  const currentRawIndex = currentPublicId
+    ? shapedLineage.findIndex((item) => item.public_id === currentPublicId)
+    : -1;
+  if (currentPublicId && currentRawIndex < 0) return [];
+  if (
+    currentRawIndex >= 0
+    && !PUBLIC_ATTESTOR_CREDENTIAL_STATUSES.has(String(shapedLineage[currentRawIndex].status))
+  ) {
+    return [];
+  }
+
+  const safeLineage = shapedLineage.filter((item) => (
+    typeof item.status === 'string'
+    && PUBLIC_ATTESTOR_CREDENTIAL_STATUSES.has(item.status)
+  ));
   const currentIndex = currentPublicId
     ? safeLineage.findIndex((item) => item.public_id === currentPublicId)
     : -1;
@@ -537,7 +569,7 @@ router.get('/:publicId', async (req: Request, res: Response) => {
       // Claims
       claims: publicClaims(attestation.claims),
       summary: attestation.summary,
-      jurisdiction: attestation.jurisdiction,
+      ...(attestation.jurisdiction != null ? { jurisdiction: attestation.jurisdiction } : {}),
       // Proof
       fingerprint: attestation.fingerprint,
       evidence_fingerprint: attestation.evidence_fingerprint,
@@ -552,6 +584,8 @@ router.get('/:publicId', async (req: Request, res: Response) => {
         timestamp: attestation.chain_timestamp,
         explorer_url: explorerUrl,
       } : null,
+      anchored_at: attestation.chain_timestamp ?? null,
+      merkle_root: attestation.chain_merkle_root ?? null,
       // Linked credential
       linked_credential: linkedCredential,
       ...(includeCredentials ? { attestor_credentials: attestorCredentials ?? [] } : {}),
@@ -646,7 +680,7 @@ const BatchCreateSchema = z.object({
   attestations: z.array(CreateAttestationSchema).min(1).max(100),
 });
 
-router.post('/batch-create', async (req: Request, res: Response) => {
+router.post('/batch-create', attestationBatchRateLimiter, async (req: Request, res: Response) => {
   const userId = await requireAuth(req, res);
   if (!userId) return;
 
@@ -836,7 +870,7 @@ interface BatchAttestationResult {
   } | null;
 }
 
-router.post('/batch-verify', async (req: Request, res: Response) => {
+router.post('/batch-verify', requireScope('verify:batch'), attestationBatchRateLimiter, async (req: Request, res: Response) => {
   // Require API key authentication
   if (!req.apiKey) {
     res.status(401).json({

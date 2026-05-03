@@ -12,24 +12,25 @@ import { Router, Request, Response } from 'express';
 import { randomUUID } from 'crypto';
 import { z } from 'zod';
 import { buildVerifyUrl } from '../../lib/urls.js';
+import {
+  ANCHOR_CREDENTIAL_TYPES,
+  hasPublicCredentialEvidenceMetadataKeys,
+  parsePublicCredentialEvidenceMetadataResult,
+} from '../../lib/credential-evidence.js';
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 import { deductOrgCredit } from '../../utils/orgCredits.js';
 
 const router = Router();
 
-const CREDENTIAL_TYPES = ['DEGREE', 'LICENSE', 'CERTIFICATE', 'TRANSCRIPT', 'PROFESSIONAL', 'OTHER'] as const;
-
 // Frozen request shape per CLAUDE.md §1.8 — additive nullable fields only.
 // Fingerprint must be 64-char hex (SHA-256). Description capped to keep
-// inserts predictable and PostgREST payload size bounded. Metadata keys
-// are restricted to safe identifier characters so prototype-pollution-
-// adjacent keys (`__proto__`, `constructor`, `prototype`) cannot ride
-// through downstream code that may spread metadata into a fresh object.
+// inserts predictable and PostgREST payload size bounded. Metadata key syntax
+// is bounded here; only recognized public evidence keys are persisted below.
 const SAFE_METADATA_KEY = /^[a-zA-Z0-9_.-]+$/;
 const AnchorSubmitSchema = z.object({
   fingerprint: z.string().regex(/^[a-fA-F0-9]{64}$/, 'must be a 64-character hex SHA-256 hash'),
-  credential_type: z.enum(CREDENTIAL_TYPES).optional(),
+  credential_type: z.enum(ANCHOR_CREDENTIAL_TYPES).optional(),
   description: z.string().max(1000).optional(),
   metadata: z.record(z.string().regex(SAFE_METADATA_KEY, 'metadata keys must match [a-zA-Z0-9_.-]+'), z.unknown()).optional(),
 }).strict();
@@ -42,6 +43,36 @@ interface AnchorReceipt {
   status: 'PENDING';
   created_at: string;
   record_uri: string;
+}
+
+async function ensureOrgCreditAvailable(orgId: string, res: Response): Promise<boolean> {
+  const deduction = await deductOrgCredit(db, orgId, 1, 'anchor.create');
+  if (deduction.allowed) return true;
+
+  if (deduction.error === 'insufficient_credits') {
+    res.status(402).json({
+      error: 'insufficient_credits',
+      message: 'Organization has insufficient anchor credits for this cycle.',
+      balance: deduction.balance,
+      required: deduction.required,
+    });
+    return false;
+  }
+
+  if (deduction.error === 'rpc_failure') {
+    logger.error({ err: deduction.message, orgId }, 'org_credit_deduct_rpc_failure');
+    res.status(503).json({ error: 'credit_check_unavailable' });
+    return false;
+  }
+
+  logger.warn({ orgId }, 'org_credit_deduct_blocked_uninitialized');
+  res.status(402).json({
+    error: 'org_credits_not_initialized',
+    message:
+      'This organization is not provisioned for credit-based billing. ' +
+      'An operator must seed org_credits before this API key can submit.',
+  });
+  return false;
 }
 
 /**
@@ -72,6 +103,37 @@ router.post('/', async (req: Request, res: Response) => {
   const body: AnchorSubmitRequest = parsed.data;
 
   const fingerprint = body.fingerprint.toLowerCase();
+  const parsedCredentialEvidenceMetadata = parsePublicCredentialEvidenceMetadataResult(body.metadata);
+  const publicSafeCredentialEvidenceMetadata = parsedCredentialEvidenceMetadata.ok
+    ? parsedCredentialEvidenceMetadata.metadata
+    : null;
+  if (body.metadata && hasPublicCredentialEvidenceMetadataKeys(body.metadata) && !parsedCredentialEvidenceMetadata.ok) {
+    logger.warn(
+      {
+        metadataKeys: Object.keys(body.metadata).sort((a, b) => a.localeCompare(b)),
+        reason: parsedCredentialEvidenceMetadata.reason,
+        issues: parsedCredentialEvidenceMetadata.issues,
+      },
+      'Rejected invalid credential evidence metadata on anchor submit',
+    );
+    const credentialEvidenceDetails = parsedCredentialEvidenceMetadata.issues?.map((issue) => ({
+      path: issue.path ? `metadata.${issue.path}` : 'metadata',
+      code: issue.code,
+      message: issue.message,
+    })) ?? [
+      {
+        path: 'metadata',
+        code: 'invalid_credential_evidence_metadata',
+        message: 'Credential evidence metadata is invalid or not public-safe',
+      },
+    ];
+    res.status(400).json({
+      error: 'invalid_request',
+      message: 'Request body failed validation',
+      details: credentialEvidenceDetails,
+    });
+    return;
+  }
 
   try {
     // Check for duplicate fingerprint (idempotent — return existing if already anchored)
@@ -105,55 +167,26 @@ router.post('/', async (req: Request, res: Response) => {
     // SCRUM-1170-B — gate org-credit deduction. Helper short-circuits to
     // allowed=true when ENABLE_ORG_CREDIT_ENFORCEMENT is off (default), so
     // existing API-key paths without per-org credit setup are unaffected.
-    if (orgId) {
-      const deduction = await deductOrgCredit(db, orgId, 1, 'anchor.create');
-      if (!deduction.allowed && deduction.error === 'insufficient_credits') {
-        res.status(402).json({
-          error: 'insufficient_credits',
-          message: 'Organization has insufficient anchor credits for this cycle.',
-          balance: deduction.balance,
-          required: deduction.required,
-        });
-        return;
-      }
-      if (!deduction.allowed && deduction.error === 'rpc_failure') {
-        logger.error({ err: deduction.message, orgId }, 'org_credit_deduct_rpc_failure');
-        // Fail closed only when enforcement is on. The helper's feature_disabled
-        // short-circuit returns allowed=true so this branch is unreachable in the
-        // off state.
-        res.status(503).json({ error: 'credit_check_unavailable' });
-        return;
-      }
-      // org_not_initialized in enforcement mode = fail closed. If enforcement
-      // is ON and the org has no credit row, that's a pre-flight error, not a
-      // bypass. Letting it through silently would leak free anchors when an
-      // operator forgets to seed before flipping the flag (codex review).
-      if (!deduction.allowed && deduction.error === 'org_not_initialized') {
-        logger.warn({ orgId }, 'org_credit_deduct_blocked_uninitialized');
-        res.status(402).json({
-          error: 'org_credits_not_initialized',
-          message:
-            'This organization is not provisioned for credit-based billing. ' +
-            'An operator must seed org_credits before this API key can submit.',
-        });
-        return;
-      }
+    if (orgId && !(await ensureOrgCreditAvailable(orgId, res))) {
+      return;
     }
 
     // credential_type already validated by Zod enum; defaults to 'OTHER'.
     const credentialType = body.credential_type ?? 'OTHER';
+    const insertPayload = {
+      fingerprint,
+      public_id: publicId,
+      status: 'PENDING' as const,
+      org_id: orgId,
+      user_id: req.apiKey.userId,
+      filename: `api-${fingerprint.slice(0, 12)}`,
+      credential_type: credentialType,
+      description: body.description ?? null,
+      ...(publicSafeCredentialEvidenceMetadata ? { metadata: publicSafeCredentialEvidenceMetadata } : {}),
+    };
     const { data: anchor, error: insertError } = await db
       .from('anchors')
-      .insert({
-        fingerprint,
-        public_id: publicId,
-        status: 'PENDING' as const,
-        org_id: orgId,
-        user_id: req.apiKey.userId,
-        filename: `api-${fingerprint.slice(0, 12)}`,
-        credential_type: credentialType,
-        description: body.description ?? null,
-      })
+      .insert(insertPayload)
       .select('public_id, fingerprint, status, created_at')
       .single();
 

@@ -18,6 +18,7 @@ import type {
   PaginatedWebhooks,
   ProblemDetail,
   RetryConfig,
+  RichVerificationFields,
   SearchOptions,
   SearchResponse,
   SearchResult,
@@ -593,9 +594,40 @@ function isProblemDetail(value: unknown): value is ProblemDetail {
     typeof (value as ProblemDetail).status === 'number';
 }
 
+function nullableString(value: unknown): string | null {
+  return typeof value === 'string' ? value : null;
+}
+
+function nullableNumber(value: unknown): number | null {
+  return typeof value === 'number' ? value : null;
+}
+
+function nullableRecord(value: unknown): Record<string, unknown> | null {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function mapRichVerificationFields(row: Record<string, unknown>): RichVerificationFields {
+  return {
+    description: nullableString(row.description),
+    complianceControls: nullableRecord(row.compliance_controls),
+    chainConfirmations: nullableNumber(row.chain_confirmations),
+    parentPublicId: nullableString(row.parent_public_id),
+    versionNumber: nullableNumber(row.version_number),
+    revocationTxId: nullableString(row.revocation_tx_id),
+    revocationBlockHeight: nullableNumber(row.revocation_block_height),
+    fileMime: nullableString(row.file_mime),
+    fileSize: nullableNumber(row.file_size),
+    confidenceScores: nullableRecord(row.confidence_scores),
+    subType: nullableString(row.sub_type),
+  };
+}
+
 /** Shape a snake_case verification row from the REST API into camelCase. */
 function mapVerificationResult(row: Record<string, unknown>): VerificationResult {
   return {
+    ...mapRichVerificationFields(row),
     verified: row.verified as boolean,
     status: row.status as VerificationResult['status'],
     issuerName: row.issuer_name as string,
@@ -621,6 +653,7 @@ function mapSearchResult(row: Record<string, unknown>): SearchResult {
 
 function mapFingerprintVerification(row: Record<string, unknown>): FingerprintVerification {
   return {
+    ...mapRichVerificationFields(row),
     verified: row.verified as boolean,
     status: row.status as string,
     fingerprint: row.fingerprint as string,
@@ -634,6 +667,7 @@ function mapFingerprintVerification(row: Record<string, unknown>): FingerprintVe
 
 function mapAnchorDetails(row: Record<string, unknown>): AnchorDetails {
   return {
+    ...mapRichVerificationFields(row),
     publicId: row.public_id as string,
     verified: row.verified as boolean,
     status: row.status as string,
@@ -694,7 +728,7 @@ function mapAttestorCredential(row: Record<string, unknown>): AttestorCredential
 function mapAttestationDetails(row: Record<string, unknown>): AttestationDetails {
   const linked = row.linked_credential as Record<string, unknown> | null | undefined;
   const attestorCredentials = row.attestor_credentials as Array<Record<string, unknown>> | undefined;
-  return {
+  const details: AttestationDetails = {
     publicId: row.public_id as string,
     attestationType: row.attestation_type as string,
     status: row.status as string,
@@ -703,7 +737,6 @@ function mapAttestationDetails(row: Record<string, unknown>): AttestationDetails
     attester: row.attester as AttestationDetails['attester'],
     claims: row.claims as AttestationDetails['claims'],
     summary: (row.summary as string | null) ?? null,
-    jurisdiction: (row.jurisdiction as string | null) ?? null,
     fingerprint: (row.fingerprint as string | null) ?? null,
     evidenceFingerprint: (row.evidence_fingerprint as string | null) ?? null,
     evidence: ((row.evidence as Array<Record<string, unknown>> | undefined) ?? []).map(mapAttestationEvidence),
@@ -722,6 +755,12 @@ function mapAttestationDetails(row: Record<string, unknown>): AttestationDetails
     createdAt: row.created_at as string,
     verifyUrl: row.verify_url as string,
   };
+
+  if ('jurisdiction' in row) {
+    details.jurisdiction = (row.jurisdiction as string | null) ?? null;
+  }
+
+  return details;
 }
 
 /**

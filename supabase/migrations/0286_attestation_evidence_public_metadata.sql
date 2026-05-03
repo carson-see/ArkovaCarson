@@ -113,7 +113,8 @@ BEGIN
     ORDER BY d.version_number ASC
   ) INTO v_result
   FROM descendants d
-  LEFT JOIN anchors parent ON parent.id = d.parent_anchor_id AND parent.deleted_at IS NULL;
+  LEFT JOIN anchors parent ON parent.id = d.parent_anchor_id AND parent.deleted_at IS NULL
+  WHERE d.status::text IN ('SECURED', 'CONFIRMED', 'REVOKED', 'EXPIRED', 'SUPERSEDED');
 
   RETURN COALESCE(v_result, '[]'::jsonb);
 END;
@@ -121,7 +122,8 @@ $$;
 
 REVOKE EXECUTE ON FUNCTION get_anchor_lineage(text) FROM PUBLIC;
 REVOKE EXECUTE ON FUNCTION get_anchor_lineage(text) FROM anon;
-GRANT EXECUTE ON FUNCTION get_anchor_lineage(text) TO authenticated, service_role;
+REVOKE EXECUTE ON FUNCTION get_anchor_lineage(text) FROM authenticated;
+GRANT EXECUTE ON FUNCTION get_anchor_lineage(text) TO service_role;
 
 COMMENT ON FUNCTION get_anchor_lineage(text) IS
   'ARK-104/SCRUM-897: return public-safe lineage for the chain containing p_public_id, including credential_type for worker-mediated attestor credential APIs. Emits no internal UUIDs; direct anon RPC access is revoked.';

@@ -413,4 +413,51 @@ describe('Attestation rich evidence helpers', () => {
     ]);
     expect(capped[0].chain_proof?.explorer_url).toContain('/tx/tx-1');
   });
+
+  it('filters non-public attestor credential lineage statuses', async () => {
+    const { capAttestorCredentialLineage } = await import('./attestations.js');
+    const lineage = [
+      {
+        public_id: 'ARK-CRED-1',
+        credential_type: 'LICENSE',
+        version_number: 1,
+        parent_public_id: null,
+        status: 'SECURED',
+        fingerprint: '1'.repeat(64),
+        chain_tx_id: 'tx-1',
+        chain_block_height: 800001,
+        chain_timestamp: '2026-05-03T14:00:00Z',
+        is_current: false,
+      },
+      {
+        public_id: 'ARK-CRED-2',
+        credential_type: 'LICENSE',
+        version_number: 2,
+        parent_public_id: 'ARK-CRED-1',
+        status: 'SUBMITTED',
+        fingerprint: '2'.repeat(64),
+        chain_tx_id: 'tx-2',
+        chain_block_height: 800002,
+        chain_timestamp: '2026-05-03T14:00:00Z',
+        is_current: false,
+      },
+      {
+        public_id: 'ARK-CRED-3',
+        credential_type: 'LICENSE',
+        version_number: 3,
+        parent_public_id: 'ARK-CRED-2',
+        status: 'SECURED',
+        fingerprint: '3'.repeat(64),
+        chain_tx_id: 'tx-3',
+        chain_block_height: 800003,
+        chain_timestamp: '2026-05-03T14:00:00Z',
+        is_current: true,
+      },
+    ];
+
+    const capped = capAttestorCredentialLineage(lineage, 'ARK-CRED-3');
+
+    expect(capped.map((item) => item.public_id)).toEqual(['ARK-CRED-1', 'ARK-CRED-3']);
+    expect(capAttestorCredentialLineage(lineage, 'ARK-CRED-2')).toEqual([]);
+  });
 });

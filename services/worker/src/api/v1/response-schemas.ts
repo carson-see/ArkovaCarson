@@ -22,6 +22,7 @@ import { z } from 'zod';
 
 // ─── Shared primitives ────────────────────────────────────────────────────
 const PublicId = z.string().min(3).max(120);
+const EvidencePublicId = z.string().regex(/^AEV-[A-F0-9]{32}$/, 'expected public evidence id');
 const Timestamp = z.string().datetime({ offset: true });
 
 // ─── /api/v1/keys — list / detail / create response shape ────────────────
@@ -56,8 +57,8 @@ export type KeyResponse = z.infer<typeof KeyResponseShape>;
 // evidence identifier as `public_id` and never the internal evidence UUID.
 export const AttestationEvidenceShape = z
   .object({
-    id: PublicId,
-    public_id: PublicId,
+    id: EvidencePublicId,
+    public_id: EvidencePublicId,
     evidence_type: z.string().max(60),
     description: z.string().nullable().optional(),
     fingerprint: z.string().regex(/^[a-fA-F0-9]{64}$/),

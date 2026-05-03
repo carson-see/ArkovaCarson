@@ -108,6 +108,17 @@ describe('verify', () => {
         anchor_timestamp: '2026-01-01T00:00:00Z',
         network_receipt_id: 'tx-abc',
         record_uri: 'https://app.arkova.ai/verify/ARK-2026-001',
+        description: 'Bachelor of Science transcript',
+        compliance_controls: { 'FERPA-99.31': true },
+        chain_confirmations: 6,
+        parent_public_id: 'ARK-2025-001',
+        version_number: 2,
+        revocation_tx_id: null,
+        revocation_block_height: null,
+        file_mime: 'application/pdf',
+        file_size: 2048,
+        confidence_scores: { overall: 0.93, fields: { issuerName: 0.97 } },
+        sub_type: 'official_undergraduate',
       }),
     });
 
@@ -116,6 +127,15 @@ describe('verify', () => {
     expect(result.status).toBe('ACTIVE');
     expect(result.issuerName).toBe('University of Michigan');
     expect(result.networkReceiptId).toBe('tx-abc');
+    expect(result.description).toBe('Bachelor of Science transcript');
+    expect(result.complianceControls).toEqual({ 'FERPA-99.31': true });
+    expect(result.chainConfirmations).toBe(6);
+    expect(result.parentPublicId).toBe('ARK-2025-001');
+    expect(result.versionNumber).toBe(2);
+    expect(result.fileMime).toBe('application/pdf');
+    expect(result.fileSize).toBe(2048);
+    expect(result.confidenceScores).toEqual({ overall: 0.93, fields: { issuerName: 0.97 } });
+    expect(result.subType).toBe('official_undergraduate');
   });
 });
 
@@ -193,6 +213,9 @@ describe('API v2 agent methods', () => {
         anchor_timestamp: '2026-04-24T12:00:00Z',
         network_receipt_id: 'tx-1',
         record_uri: 'https://app.arkova.ai/verify/ARK-DOC-ABC',
+        description: 'Signed employment agreement',
+        confidence_scores: { overall: 0.89 },
+        sub_type: 'executed_contract',
       }),
     });
 
@@ -200,6 +223,41 @@ describe('API v2 agent methods', () => {
 
     expect(result.publicId).toBe('ARK-DOC-ABC');
     expect(result.networkReceiptId).toBe('tx-1');
+    expect(result.description).toBe('Signed employment agreement');
+    expect(result.confidenceScores).toEqual({ overall: 0.89 });
+    expect(result.subType).toBe('executed_contract');
+  });
+
+  it('gets public anchor details with rich fields', async () => {
+    const client = new Arkova({ apiKey: 'ak_test' });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        public_id: 'ARK-DOC-ABC',
+        verified: true,
+        status: 'ACTIVE',
+        issuer_name: 'Acme Legal',
+        credential_type: 'LEGAL',
+        issued_date: '2026-04-01',
+        expiry_date: null,
+        anchor_timestamp: '2026-04-24T12:00:00Z',
+        network_receipt_id: 'tx-1',
+        record_uri: 'https://app.arkova.ai/verify/ARK-DOC-ABC',
+        jurisdiction: 'US-MI',
+        description: 'Board-approved contract',
+        confidence_scores: { overall: 0.91, grounding: 0.87 },
+        sub_type: 'board_resolution',
+      }),
+    });
+
+    const result = await client.getAnchor('ARK-DOC-ABC');
+
+    expect(result.publicId).toBe('ARK-DOC-ABC');
+    expect(result.jurisdiction).toBe('US-MI');
+    expect(result.description).toBe('Board-approved contract');
+    expect(result.confidenceScores).toEqual({ overall: 0.91, grounding: 0.87 });
+    expect(result.subType).toBe('board_resolution');
   });
 
   it('maps RFC 7807 problem+json errors', async () => {
@@ -249,6 +307,46 @@ describe('API v2 agent methods', () => {
 });
 
 describe('getAttestation', () => {
+  it('preserves the default v1 path without credential include or null jurisdiction materialization', async () => {
+    const client = new Arkova({ apiKey: 'ak_test' });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        public_id: 'ARK-ATT-1',
+        attestation_type: 'VERIFICATION',
+        status: 'ACTIVE',
+        subject_type: 'credential',
+        subject_identifier: 'ARK-DOC-1',
+        attester: { name: 'Lawyer One', type: 'INDIVIDUAL', title: 'Advocate' },
+        claims: [{ claim: 'Signed filing' }],
+        summary: null,
+        fingerprint: 'a'.repeat(64),
+        evidence_fingerprint: 'b'.repeat(64),
+        evidence: [],
+        evidence_count: 0,
+        issued_at: '2026-05-03T14:00:00Z',
+        expires_at: null,
+        revoked_at: null,
+        revocation_reason: null,
+        created_at: '2026-05-03T14:00:00Z',
+        verify_url: 'https://app.arkova.ai/verify/attestation/ARK-ATT-1',
+      }),
+    });
+
+    const result = await client.getAttestation('ARK-ATT-1');
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringContaining('/api/v1/attestations/ARK-ATT-1'),
+      expect.anything(),
+    );
+    expect(mockFetch).not.toHaveBeenCalledWith(
+      expect.stringContaining('include=credentials'),
+      expect.anything(),
+    );
+    expect('jurisdiction' in result).toBe(false);
+  });
+
   it('requests SCRUM-897 credential include and maps evidence plus credential chain', async () => {
     const client = new Arkova({ apiKey: 'ak_test' });
     mockFetch.mockResolvedValueOnce({

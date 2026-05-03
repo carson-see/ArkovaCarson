@@ -439,13 +439,13 @@ paths:
               schema:
                 $ref: "#/components/schemas/CreateAttestationResponse"
               example:
-                public_id: "ATT-2026-VER-00042"
-                attestation_id: "ATT-2026-VER-00042"
+                public_id: "ARK-ARKOVA-VER-00042"
+                attestation_id: "ARK-ARKOVA-VER-00042"
                 attestation_type: VERIFICATION
                 fingerprint: "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
                 status: "PENDING"
                 created_at: "2026-03-28T12:00:00Z"
-                verify_url: "https://arkova-worker-270018525501.us-central1.run.app/api/v1/attestations/ATT-2026-VER-00042"
+                verify_url: "https://arkova-worker-270018525501.us-central1.run.app/api/v1/attestations/ARK-ARKOVA-VER-00042"
                 evidence_count: 1
         "400":
           description: Validation error
@@ -520,7 +520,7 @@ paths:
                 $ref: "#/components/schemas/AttestationListResponse"
               example:
                 data:
-                  - public_id: "ATT-2026-VER-00042"
+                  - public_id: "ARK-ARKOVA-VER-00042"
                     attestation_type: VERIFICATION
                     status: SECURED
                     attester_name: "Acme University Registrar"
@@ -552,7 +552,7 @@ paths:
           required: true
           schema:
             type: string
-            example: ATT-2026-VER-00042
+            example: ARK-ARKOVA-VER-00042
           description: The attestation's public identifier
         - name: include
           in: query
@@ -573,7 +573,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/AttestationDetail"
               example:
-                public_id: "ATT-2026-VER-00042"
+                public_id: "ARK-ARKOVA-VER-00042"
                 attestation_type: VERIFICATION
                 status: SECURED
                 subject_type: credential
@@ -629,7 +629,7 @@ paths:
                 revoked_at: null
                 revocation_reason: null
                 created_at: "2026-03-28T12:00:00Z"
-                verify_url: "https://arkova-worker-270018525501.us-central1.run.app/api/v1/attestations/ATT-2026-VER-00042"
+                verify_url: "https://arkova-worker-270018525501.us-central1.run.app/api/v1/attestations/ARK-ARKOVA-VER-00042"
         "404":
           description: Attestation not found
           content:
@@ -662,7 +662,7 @@ paths:
           required: true
           schema:
             type: string
-            example: ATT-2026-VER-00042
+            example: ARK-ARKOVA-VER-00042
           description: The attestation's public identifier
       requestBody:
         required: true
@@ -686,7 +686,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/RevokeAttestationResponse"
               example:
-                public_id: "ATT-2026-VER-00042"
+                public_id: "ARK-ARKOVA-VER-00042"
                 status: "REVOKED"
                 revoked_at: "2026-03-28T14:30:00Z"
         "400":
@@ -753,9 +753,9 @@ paths:
               $ref: "#/components/schemas/BatchVerifyAttestationsRequest"
             example:
               public_ids:
-                - "ATT-2026-VER-00042"
-                - "ATT-2026-END-00099"
-                - "ATT-2026-AUD-00007"
+                - "ARK-ARKOVA-VER-00042"
+                - "ARK-ARKOVA-END-00099"
+                - "ARK-ARKOVA-AUD-00007"
       responses:
         "200":
           description: Batch verification results
@@ -765,18 +765,18 @@ paths:
                 $ref: "#/components/schemas/BatchVerifyAttestationsResponse"
               example:
                 results:
-                  - public_id: "ATT-2026-VER-00042"
+                  - public_id: "ARK-ARKOVA-VER-00042"
                     status: SECURED
                     attestation_type: VERIFICATION
                     attester_name: "Acme University Registrar"
                     anchored_at: "2026-03-28T12:15:00Z"
-                  - public_id: "ATT-2026-END-00099"
+                  - public_id: "ARK-ARKOVA-END-00099"
                     status: EXPIRED
                     attestation_type: ENDORSEMENT
                     attester_name: "State Bar of California"
                     anchored_at: "2025-01-10T08:00:00Z"
                     expires_at: "2026-01-10T08:00:00Z"
-                  - public_id: "ATT-2026-AUD-00007"
+                  - public_id: "ARK-ARKOVA-AUD-00007"
                     error: "not_found"
                 summary:
                   total: 3
@@ -934,7 +934,7 @@ components:
           description: Deep link to network explorer
         description:
           type: string
-          description: Immutable credential description
+          description: Immutable credential description, omitted when not present
         compliance_controls:
           type: object
           nullable: true
@@ -990,6 +990,20 @@ components:
           description: >-
             API-RICH-01: Size of the source document in bytes (client-side
             metadata only).
+        confidence_scores:
+          type: object
+          nullable: true
+          additionalProperties: true
+          description: >-
+            API-RICH-02: Per-field confidence scores from the latest extraction
+            manifest. REST responses use snake_case; SDKs expose this as
+            confidenceScores.
+        sub_type:
+          type: string
+          nullable: true
+          description: >-
+            API-RICH-02: Fine-grained credential subtype from anchors.sub_type.
+            REST responses use snake_case; SDKs expose this as subType.
         error:
           type: string
 
@@ -1078,10 +1092,40 @@ components:
           type: number
           minimum: 0
           maximum: 1
+        confidenceScores:
+          type: object
+          nullable: true
+          additionalProperties: true
+          description: API-RICH-02 per-field confidence scores from the extraction manifest.
+        subType:
+          type: string
+          nullable: true
+          description: API-RICH-02 fine-grained credential subtype when extracted.
+        description:
+          type: string
+          nullable: true
+          description: API-RICH-02 human-readable credential summary when extracted.
+        fraudSignals:
+          type: array
+          nullable: true
+          description: >-
+            Fraud indicators returned by /ai/extract when the extraction model
+            emits them. /verify responses do not return fraudSignals today.
+          items:
+            type: object
+            additionalProperties: true
         provider:
           type: string
-        tokensUsed:
+        creditsRemaining:
           type: integer
+          nullable: true
+        manifestHash:
+          type: string
+        degraded:
+          type: boolean
+        fallbackReason:
+          type: string
+          nullable: true
 
     CreateAttestationRequest:
       type: object
@@ -1339,6 +1383,15 @@ components:
               type: string
               format: uri
               nullable: true
+        anchored_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: Deprecated v1 alias for chain_proof.timestamp.
+        merkle_root:
+          type: string
+          nullable: true
+          description: Deprecated v1 alias for the chain Merkle root when available.
         linked_credential:
           type: object
           nullable: true

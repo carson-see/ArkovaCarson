@@ -440,9 +440,11 @@ export function PublicAttestationVerifyPage() {
                       <div>
                         <code className="text-sm font-mono text-[#00d4ff]">{attestation.linked_credential.public_id}</code>
                         <div className="flex items-center gap-2 mt-1">
-                          <Badge variant="secondary" className="text-[10px]">
-                            {attestation.linked_credential.credential_type}
-                          </Badge>
+                          {attestation.linked_credential.credential_type && (
+                            <Badge variant="secondary" className="text-[10px]">
+                              {attestation.linked_credential.credential_type}
+                            </Badge>
+                          )}
                           <Badge className={attestation.linked_credential.verification_status === 'VERIFIED'
                             ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
                             : 'bg-muted text-muted-foreground'}>
