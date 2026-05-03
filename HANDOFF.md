@@ -14,6 +14,20 @@
 
 ## Now
 
+### 2026-05-03 — SCRUM-1629 [Spec] GME10.5-A pre-signing contract anchor — API + DB shape ([PR #679](https://github.com/carson-see/ArkovaCarson/pull/679), branch `claude/scrum-1623-pre-signing-anchor-spec`)
+
+First subtask of SCRUM-1623 (GME10.5-A pre-signing contract anchor endpoint), umbrella SCRUM-863. [Spec]-only PR — pins the frozen v1 shape (CLAUDE.md §1.8) of `POST /api/v1/contracts/anchor-pre-signing` so [Build] (SCRUM-1631) is a swap-in implementation.
+
+Stub handler `services/worker/src/api/v1/contracts/anchor-pre-signing.ts` returns 501 with `spec_only: true` on the success path, runs full Zod validation on every request. 19 red-baseline tests pin: auth gate (401 without API key), fingerprint hex regex, strict-mode unknown-field rejection (top-level + nested in `contract_metadata`), `credential_type` literal lock to `CONTRACT_PRESIGNING`, signing-provider enum lock (`docusign`/`adobe_sign`/`other`), counterparty-label bounds (1–20), ISO-8601-with-offset effective_date rejection. Worker `npm run typecheck` + `npm run lint` green on new files; full v1 test suite 71/71 files / 639/639 tests green.
+
+**§1.6 reconciliation documented.** SCRUM-863's original "PDF binary in body OR document_url" text predates the §1.6 client-side processing boundary. Pre-signing path: fingerprint-only (document never leaves user's device). Post-signing path (SCRUM-1624): provider fetches signed PDF on customer's behalf, server-side hash, never persists bytes.
+
+**DB decision: reuse `anchors` + new enum values, not parallel `contract_anchors` table.** Migration `supabase/migrations/0285_contract_anchor_credential_types.sql` adds `CONTRACT_PRESIGNING` + `CONTRACT_POSTSIGNING` to the `credential_type` enum + a partial index on `parent_anchor_id WHERE credential_type = 'CONTRACT_POSTSIGNING'` for SCRUM-1624 webhook duplicate-checks (O(log n) vs O(n) seq scan). Rationale: existing `parent_anchor_id` self-FK gives pre→post lineage for free, and verification UI / evidence package / extraction-manifest / webhook delivery / audit_events surface already operates on `anchors`. Migration NOT applied to prod from the [Spec] PR per Carson's authorization scope (migration application belongs to [Build]); 0285 is added to `migration-drift.yml` `exempt_regex` with explicit pointer to SCRUM-1631 which removes the exemption when it applies the migration.
+
+**Confluence design page:** [SCRUM-1629 — [Spec] GME10.5-A Pre-Signing Anchor — API Contract + DB Schema](https://arkova.atlassian.net/wiki/spaces/A/pages/36012035) (id 36012035, parent under space "A" homepage 163950). Documents §1.6 reconciliation, Zod schemas with field rationale, response shape, DB reuse decision, idempotency pattern, org-credit deduction, DoD checklist.
+
+**Companion subtasks:** SCRUM-1630 [Test] writes additional handler-level tests (idempotency, credit deduction, provider routing) once [Build] replaces the 501 stub. SCRUM-1631 [Build] applies migration 0285, regenerates `database.types.ts`, extends `ANCHOR_CREDENTIAL_TYPES` + `parsePublicCredentialEvidenceMetadataResult` allowlist, swaps stub for real handler.
+
 ### 2026-05-03 — SCRUM-1276 (R3-3) AC3 close-out: view linter recognizes `ALTER VIEW SET (security_invoker = true)` (this branch `claude/focused-fermi-kQj1q`)
 
 `scripts/ci/check-views-security-invoker.ts` previously only matched inline `CREATE OR REPLACE VIEW ... WITH (security_invoker = true)`. Views fixed by a follow-up `ALTER VIEW <name> SET (security_invoker = true)` migration (the safer pattern when only the security flag changes — no column-list rewrite, no PostgREST schema-cache churn outside the explicit `NOTIFY`) were treated as still bare, forcing them to live in the grandfather baseline forever. Two such views were sitting in the baseline despite being properly converted in main: `payment_ledger` (migration `0274_audit06_payment_ledger_security_invoker.sql`) and `public_org_profiles` (migration `0281_public_org_profiles_security_invoker.sql`).
