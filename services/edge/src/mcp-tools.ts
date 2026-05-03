@@ -92,6 +92,11 @@ export type AgentSearchType = 'all' | 'org' | 'record' | 'fingerprint' | 'docume
 export interface AgentSearchInput {
   q: string;
   type?: AgentSearchType;
+  /**
+   * REST/OpenAPI v2 uses `limit`; `max_results` is accepted only as a
+   * backwards-compatible MCP alias for older agent prompts.
+   */
+  limit?: number;
   max_results?: number;
 }
 
@@ -301,9 +306,13 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
           type: 'string',
           description: 'Optional result filter: all, org, record, fingerprint, or document.',
         },
+        limit: {
+          type: 'number',
+          description: 'Maximum number of results to return (default: 50, max: 50). Capped to the record search RPC ceiling.',
+        },
         max_results: {
           type: 'number',
-          description: 'Maximum number of results to return (default: 10, max: 50).',
+          description: 'Deprecated alias for limit. Prefer limit for REST v2 parity.',
         },
       },
       required: ['q'],
@@ -463,7 +472,7 @@ export async function handleSearchCredentials(
 
   try {
     // INJ-01: Use RPC with bound parameters instead of URL interpolation
-    const sanitizedQuery = input.query.replace(/[%_\\]/g, '\\$&');
+    const sanitizedQuery = input.query.replaceAll(/[%_\\]/g, String.raw`\$&`);
     const response = await supabaseFetch(config, '/rest/v1/rpc/search_public_credentials', {
       method: 'POST',
       body: JSON.stringify({ p_query: sanitizedQuery, p_limit: maxResults }),
@@ -533,21 +542,28 @@ async function searchAgentRecords(
   input: AgentSearchInput,
   config: SupabaseConfig,
 ): Promise<Array<Record<string, unknown>>> {
-  const result = await handleSearchCredentials(
-    { query: input.q, max_results: input.max_results },
-    config,
-  );
-  if (result.isError) return [];
+  const maxResults = Math.min(input.limit ?? input.max_results ?? 50, 50);
+  const sanitizedQuery = input.q.replaceAll(/[%_\\]/g, String.raw`\$&`);
+  const response = await supabaseFetch(config, '/rest/v1/rpc/search_public_credentials', {
+    method: 'POST',
+    body: JSON.stringify({ p_query: sanitizedQuery, p_limit: maxResults }),
+  });
 
-  const parsed = parseToolJson(result);
-  const records = parsed?.results;
+  if (!response.ok) return [];
+
+  const records = await response.json() as Array<Record<string, unknown>>;
   if (!Array.isArray(records)) return [];
 
   const resultType = input.type === 'document' ? 'document' : 'record';
   return records.map((record, index) => ({
     type: resultType,
     rank: index + 1,
-    ...(record as Record<string, unknown>),
+    public_id: record.public_id,
+    title: record.title,
+    credential_type: record.credential_type,
+    status: mapStatus(record.status as string),
+    anchor_timestamp: record.created_at,
+    record_uri: `https://app.arkova.ai/verify/${record.public_id}`,
   }));
 }
 
@@ -564,7 +580,7 @@ export async function handleAgentSearch(
     return errorResult('Error: q is required');
   }
 
-  const maxResults = Math.min(input.max_results ?? 10, 50);
+  const maxResults = Math.min(input.limit ?? input.max_results ?? 50, 50);
   const type = input.type ?? 'all';
 
   try {

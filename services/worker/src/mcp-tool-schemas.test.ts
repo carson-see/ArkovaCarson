@@ -16,9 +16,25 @@ import {
   validationErrorToToolResult,
   type McpToolName,
 } from '../../edge/src/mcp-tool-schemas.js';
+import { openApiV2Spec } from './api/v2/openapi.js';
 
 const VALID_PUBLIC_ID = 'ARK-DEG-ABCDEF';
 const VALID_HASH = 'a'.repeat(64);
+const OPENAPI_OPERATION_METHODS = ['get', 'post', 'put', 'delete', 'patch', 'options', 'head'] as const;
+const searchLimitMax = (() => {
+  const parameters = openApiV2Spec.paths?.['/search']?.get?.parameters as ReadonlyArray<{
+    name: string;
+    schema?: { maximum?: number };
+  }> | undefined;
+  const maximum = parameters?.find((parameter) => parameter.name === 'limit')?.schema?.maximum;
+  return typeof maximum === 'number' ? maximum : undefined;
+})();
+
+function requireSearchLimitMax(): number {
+  expect(searchLimitMax).toBeDefined();
+  expect(Number.isFinite(searchLimitMax)).toBe(true);
+  return searchLimitMax as number;
+}
 
 describe('MCP_TOOL_SCHEMAS registry', () => {
   it('covers every tool that mcp-server.ts exposes', () => {
@@ -39,6 +55,17 @@ describe('MCP_TOOL_SCHEMAS registry', () => {
         'list_agents',
       ]),
     );
+  });
+
+  it('covers every OpenAPI v2 operation exposed as an agent tool', () => {
+    const agentToolNames = Object.values(openApiV2Spec.paths)
+      .flatMap((pathItem) => OPENAPI_OPERATION_METHODS.map(
+        (method) => pathItem[method]?.['x-agent-usage']?.tool_name,
+      ))
+      .filter((name): name is McpToolName => typeof name === 'string');
+
+    expect(agentToolNames.length).toBeGreaterThan(0);
+    expect(Object.keys(MCP_TOOL_SCHEMAS)).toEqual(expect.arrayContaining([...new Set(agentToolNames)]));
   });
 });
 
@@ -105,9 +132,29 @@ describe('validateToolArgs — search_credentials', () => {
 });
 
 describe('validateToolArgs — agent v2 aliases', () => {
-  it('accepts search(q,type?)', () => {
+  it('has an OpenAPI search limit maximum', () => {
+    expect(searchLimitMax).toBeDefined();
+    expect(Number.isFinite(searchLimitMax)).toBe(true);
+  });
+
+  it('accepts search(q,type?,limit?) using the REST v2 parameter name', () => {
+    const result = validateToolArgs('search', { q: 'acme', type: 'org', limit: 5 });
+    expect(result.ok).toBe(true);
+  });
+
+  it('keeps max_results as a backwards-compatible search alias', () => {
     const result = validateToolArgs('search', { q: 'acme', type: 'org', max_results: 5 });
     expect(result.ok).toBe(true);
+  });
+
+  it('allows REST v2 search limit parity up to the OpenAPI maximum', () => {
+    const result = validateToolArgs('search', { q: 'acme', limit: requireSearchLimitMax() });
+    expect(result.ok).toBe(true);
+  });
+
+  it('rejects search limits above the OpenAPI maximum', () => {
+    const result = validateToolArgs('search', { q: 'acme', limit: requireSearchLimitMax() + 1 });
+    expect(result.ok).toBe(false);
   });
 
   it('rejects unknown search type', () => {
