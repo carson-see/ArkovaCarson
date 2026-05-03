@@ -322,6 +322,53 @@ describe('POST /api/v1/contracts/anchor-pre-signing — real handler (SCRUM-1631
     expect(payload.filename).toMatch(/^contract-pre\//);
   });
 
+  it('strips control characters from contract title before building filename', async () => {
+    // CodeRabbit major on PR #680: `anchors.filename` has DB-side
+    // control-character checks. A title containing \n / \r / etc. would
+    // pass Zod's string check but fail the insert AFTER credit deduction.
+    await request(makeApp())
+      .post('/v1/contracts/anchor-pre-signing')
+      .send({
+        ...VALID_BODY,
+        contract_metadata: {
+          ...VALID_BODY.contract_metadata,
+          title: 'NDA\n\rwith control\x00chars',
+        },
+      });
+    const payload = mockInsert.mock.calls[0]?.[0] as Record<string, unknown>;
+    // \n, \r, and \x00 must all be stripped (replaced with spaces, then trimmed).
+    // eslint-disable-next-line no-control-regex
+    expect(payload.filename).not.toMatch(/[\x00-\x1f\x7f]/);
+    expect(payload.filename).toBe('contract-pre/NDA  with control chars');
+  });
+
+  it('falls back to "untitled" when title is entirely control characters', async () => {
+    await request(makeApp())
+      .post('/v1/contracts/anchor-pre-signing')
+      .send({
+        ...VALID_BODY,
+        contract_metadata: { ...VALID_BODY.contract_metadata, title: '\n\r\t' },
+      });
+    const payload = mockInsert.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(payload.filename).toBe('contract-pre/untitled');
+  });
+
+  it('drops `description` on write (no free-text PII channel)', async () => {
+    // CodeRabbit major on PR #680: writing arbitrary prose into
+    // anchors.description on a contract endpoint opens a PII channel
+    // outside the structured contract metadata. v1 keeps accepting the
+    // field for forward-compat but writes null.
+    await request(makeApp())
+      .post('/v1/contracts/anchor-pre-signing')
+      .send({
+        ...VALID_BODY,
+        description:
+          'Contains the full text of the proposed contract terms which is exactly the kind of thing this endpoint must NOT persist.',
+      });
+    const payload = mockInsert.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(payload.description).toBeNull();
+  });
+
   it('canonicalizes uppercase fingerprint to lowercase before insert', async () => {
     const upper = 'A'.repeat(64);
     const res = await request(makeApp())
@@ -448,6 +495,24 @@ describe('POST /api/v1/contracts/anchor-pre-signing — idempotency', () => {
       .send(VALID_BODY);
     const isCalls = chainIs.mock.calls.map((c) => [c[0], c[1]]);
     expect(isCalls).toContainEqual(['org_id', null]);
+  });
+
+  it('503 when idempotency lookup itself errors (fail-closed)', async () => {
+    // CodeRabbit major on PR #680: `maybeSingle()` errors must NOT be
+    // treated as cache misses. A transient DB failure should surface 503
+    // so the caller retries against a healthy backend rather than
+    // spending credits on a broken lookup.
+    selectMaybeSingle.mockResolvedValue({
+      data: null,
+      error: { message: 'connection reset by peer' },
+    });
+    const res = await request(makeApp())
+      .post('/v1/contracts/anchor-pre-signing')
+      .send(VALID_BODY);
+    expect(res.status).toBe(503);
+    expect(res.body.error).toBe('idempotency_lookup_unavailable');
+    expect(mockInsert).not.toHaveBeenCalled();
+    expect(mockDeductOrgCredit).not.toHaveBeenCalled();
   });
 
   it('500 when stored metadata fails Zod re-parse (defense in depth)', async () => {

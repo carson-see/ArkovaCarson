@@ -256,7 +256,20 @@ router.post('/anchor-pre-signing', async (req: Request, res: Response) => {
       // with NULL org_id so they can't see tenant-scoped anchors.
       existingQuery = existingQuery.is('org_id', null);
     }
-    const { data: existing } = await existingQuery.maybeSingle();
+    const { data: existing, error: lookupError } = await existingQuery.maybeSingle();
+    if (lookupError) {
+      // Fail-closed on idempotency lookup errors (CodeRabbit major on
+      // PR #680). Without this, a transient DB failure would be treated
+      // as a cache miss → credit deducts + insert attempted on a broken
+      // lookup. Surface 503 so the caller retries against a healthy
+      // backend rather than spending credits.
+      logger.error(
+        { error: lookupError, fingerprint: fingerprint.slice(0, 12) },
+        'idempotency_lookup_failed',
+      );
+      res.status(503).json({ error: 'idempotency_lookup_unavailable' });
+      return;
+    }
 
     if (existing) {
       const stored = extractStoredContractMetadata(existing.metadata);
@@ -304,6 +317,17 @@ router.post('/anchor-pre-signing', async (req: Request, res: Response) => {
       return;
     }
 
+    // Sanitize the derived filename (CodeRabbit major on PR #680). The
+    // contract_metadata.title field is bounded by Zod (1..200 chars) but
+    // could contain control characters that pass Zod's string check yet
+    // fail anchors.filename's DB-level character constraints. Stripping
+    // them here prevents an "insert fails AFTER credit deducts" path.
+    const safeTitle = body.contract_metadata.title
+      // eslint-disable-next-line no-control-regex
+      .replace(/[\x00-\x1f\x7f]/g, ' ')
+      .trim()
+      .slice(0, 80);
+
     const insertPayload = {
       fingerprint,
       public_id: publicId,
@@ -314,9 +338,17 @@ router.post('/anchor-pre-signing', async (req: Request, res: Response) => {
       // don't have a filename per §1.6 (the document never leaves the
       // device); use the contract title as a human-readable handle for
       // the verification UI, prefixed so it's obviously a contract anchor.
-      filename: `contract-pre/${body.contract_metadata.title.slice(0, 80)}`,
+      // `safeTitle` strips control characters (CodeRabbit major).
+      filename: `contract-pre/${safeTitle || 'untitled'}`,
       credential_type: 'CONTRACT_PRESIGNING' as const,
-      description: body.description ?? null,
+      // `description` is intentionally NOT persisted (CodeRabbit major on
+      // PR #680). The Zod schema accepts it for forward-compatibility, but
+      // writing arbitrary prose into anchors.description would open a
+      // free-text PII channel on a path that otherwise constrains callers
+      // to structured contract metadata. The field is dropped silently on
+      // write rather than rejected so SDKs that always set it for the
+      // generic /api/v1/anchor endpoint don't break here.
+      description: null,
       // contract_metadata + signing_workflow_metadata stored as nested keys
       // inside anchors.metadata (jsonb). The verification UI + SCRUM-1624
       // post-signing webhook receiver both read these by key.
