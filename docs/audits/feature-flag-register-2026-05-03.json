@@ -211,7 +211,7 @@
       "examples": [
         ".github/workflows/deploy-worker.yml:140",
         "src/lib/switchboard.ts:26",
-        "src/lib/switchboard.ts:184"
+        "src/lib/switchboard.ts:189"
       ],
       "files": [
         ".github/workflows/deploy-worker.yml",
@@ -384,7 +384,7 @@
       },
       "examples": [
         "src/lib/switchboard.ts:23",
-        "src/lib/switchboard.ts:163",
+        "src/lib/switchboard.ts:168",
         "src/pages/PlatformControlsPage.tsx:60"
       ],
       "files": [
@@ -978,9 +978,9 @@
         "supabase-seed-value": "true"
       },
       "examples": [
-        "src/lib/switchboard.test.ts:80",
+        "src/lib/switchboard.test.ts:84",
         "src/lib/switchboard.ts:20",
-        "src/lib/switchboard.ts:142"
+        "src/lib/switchboard.ts:147"
       ],
       "files": [
         "services/worker/src/middleware/flagRegistry.ts",
@@ -1058,7 +1058,7 @@
       },
       "examples": [
         "src/lib/switchboard.ts:19",
-        "src/lib/switchboard.ts:135",
+        "src/lib/switchboard.ts:140",
         "src/pages/PlatformControlsPage.tsx:80"
       ],
       "files": [
@@ -1350,8 +1350,8 @@
         "supabase-seed-value": "true"
       },
       "examples": [
-        "src/lib/switchboard.test.ts:136",
-        "src/lib/switchboard.test.ts:139",
+        "src/lib/switchboard.test.ts:144",
+        "src/lib/switchboard.test.ts:147",
         "src/lib/switchboard.ts:21"
       ],
       "files": [
@@ -1889,7 +1889,7 @@
       "examples": [
         "src/lib/switchboard.test.ts:60",
         "src/lib/switchboard.test.ts:61",
-        "src/lib/switchboard.test.ts:71"
+        "src/lib/switchboard.test.ts:75"
       ],
       "files": [
         "services/worker/src/middleware/flagRegistry.ts",
