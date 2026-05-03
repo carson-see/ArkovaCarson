@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 
 @dataclass(frozen=True)
@@ -66,6 +66,7 @@ class AttestorCredential:
     version_number: Optional[int] = None
     parent_public_id: Optional[str] = None
     is_current: bool = False
+    chain_proof: Optional[Dict[str, Any]] = None
 
 
 @dataclass(frozen=True)
@@ -92,6 +93,8 @@ class AttestationDetails:
     jurisdiction: Optional[str] = None
     fingerprint: Optional[str] = None
     evidence_fingerprint: Optional[str] = None
+    chain_proof: Optional[Dict[str, Any]] = None
+    linked_credential: Optional[Dict[str, Any]] = None
     attestor_credentials: Optional[List[AttestorCredential]] = None
     issued_at: Optional[str] = None
     expires_at: Optional[str] = None

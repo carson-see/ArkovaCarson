@@ -95,6 +95,18 @@ describe('OpenAPI spec', () => {
     expect(responseSchema.properties.attestation_id.format).toBeUndefined();
     expect(responseSchema.properties.attestation_id.description).toContain('public_id');
     expect(responseSchema.properties.evidence_count).toBeDefined();
+
+    const metadataSchema = openApiSpec.components.schemas.AttestationMetadataInput;
+    expect(requestSchema.properties.metadata).toEqual({ $ref: '#/components/schemas/AttestationMetadataInput' });
+    expect(metadataSchema.additionalProperties).toBe(false);
+
+    const evidenceInputSchema = openApiSpec.components.schemas.AttestationEvidenceInput;
+    expect(evidenceInputSchema.additionalProperties).toBe(false);
+    expect(evidenceInputSchema.properties.description.maxLength).toBe(500);
+
+    const evidenceSchema = openApiSpec.components.schemas.AttestationEvidence;
+    expect(evidenceSchema.properties.id.description).toContain('public_id');
+    expect(evidenceSchema.properties.id.description).toContain('never an internal UUID');
   });
 
   it('has all four tags', () => {

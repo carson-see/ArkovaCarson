@@ -110,6 +110,13 @@ def test_get_attestation_includes_evidence_and_attestor_credentials() -> None:
                     }
                 ],
                 "evidence_count": 1,
+                "chain_proof": {"tx_id": "tx-att", "block_height": 800000, "timestamp": None, "explorer_url": None},
+                "linked_credential": {
+                    "public_id": "ARK-LAW-1",
+                    "credential_type": "LICENSE",
+                    "verification_status": "VERIFIED",
+                    "verify_url": "https://app.arkova.ai/verify/ARK-LAW-1",
+                },
                 "attestor_credentials": [
                     {
                         "public_id": "ARK-LAW-1",
@@ -119,6 +126,7 @@ def test_get_attestation_includes_evidence_and_attestor_credentials() -> None:
                         "version_number": 2,
                         "parent_public_id": "ARK-LAW-0",
                         "is_current": True,
+                        "chain_proof": {"tx_id": "tx-cred", "block_height": 800001, "timestamp": None, "explorer_url": None},
                     }
                 ],
                 "issued_at": "2026-05-03T14:00:00Z",
@@ -135,8 +143,12 @@ def test_get_attestation_includes_evidence_and_attestor_credentials() -> None:
     result = sdk.get_attestation("ARK-ATT-1", include_credentials=True)
     assert result.evidence[0].public_id == "AEV-ABCDEF123456"
     assert result.evidence[0].mime == "application/pdf"
+    assert result.chain_proof == {"tx_id": "tx-att", "block_height": 800000, "timestamp": None, "explorer_url": None}
+    assert result.linked_credential is not None
+    assert result.linked_credential["credential_type"] == "LICENSE"
     assert result.attestor_credentials is not None
     assert result.attestor_credentials[0].parent_public_id == "ARK-LAW-0"
+    assert result.attestor_credentials[0].chain_proof == {"tx_id": "tx-cred", "block_height": 800001, "timestamp": None, "explorer_url": None}
 
 
 def test_verify_batch_posts_array_and_unwraps_results() -> None:

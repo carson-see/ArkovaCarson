@@ -52,10 +52,11 @@ export type KeyResponse = z.infer<typeof KeyResponseShape>;
 //
 // SCRUM-1271-B — drop internal `id` UUID. `attestation_id` is preserved
 // in v1 for back-compat but holds the same value as `public_id` (no UUID
-// surface). Evidence items also drop their internal id — the `fingerprint`
-// is the natural identifier.
+// surface). Evidence items keep a legacy `id` key, but it is the same public
+// evidence identifier as `public_id` and never the internal evidence UUID.
 export const AttestationEvidenceShape = z
   .object({
+    id: PublicId,
     public_id: PublicId,
     evidence_type: z.string().max(60),
     description: z.string().nullable().optional(),
@@ -64,7 +65,11 @@ export const AttestationEvidenceShape = z
     size: z.number().int().nonnegative().nullable(),
     created_at: Timestamp,
   })
-  .strict();
+  .strict()
+  .refine((item) => item.id === item.public_id, {
+    message: 'evidence id must mirror public_id',
+    path: ['id'],
+  });
 
 export const AttestationCreateResponseShape = z
   .object({

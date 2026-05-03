@@ -14,7 +14,33 @@ import {
   normalizeFingerprint,
   isValidFilename,
   validateMetadataAgainstTemplate,
+  AttestationEvidencePayloadSchema,
 } from './validators';
+
+describe('AttestationEvidencePayloadSchema', () => {
+  it('accepts public evidence metadata and rejects extra fields', () => {
+    const ok = AttestationEvidencePayloadSchema.safeParse([{
+      evidence_type: 'document',
+      fingerprint: 'a'.repeat(64),
+      mime: 'application/pdf',
+      size: 4096,
+      filename: 'filing.pdf',
+      description: 'Public filing',
+    }]);
+    expect(ok.success).toBe(true);
+
+    const extra = AttestationEvidencePayloadSchema.safeParse([{
+      evidence_type: 'document',
+      fingerprint: 'a'.repeat(64),
+      mime: null,
+      size: null,
+      filename: 'filing.pdf',
+      description: null,
+      internal_id: 'should-not-send',
+    }]);
+    expect(extra.success).toBe(false);
+  });
+});
 
 describe('AnchorCreateSchema', () => {
   const validData = {

@@ -259,7 +259,7 @@ export interface AttestationDetails {
   evidenceCount: number;
   linkedCredential: {
     publicId: string;
-    credentialType: string;
+    credentialType: string | null;
     verificationStatus: string;
     verifyUrl: string;
   } | null;

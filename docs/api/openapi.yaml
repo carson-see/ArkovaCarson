@@ -588,6 +588,7 @@ paths:
                 evidence_fingerprint: "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
                 evidence:
                   - public_id: "AEV-ABCDEF123456"
+                    id: "AEV-ABCDEF123456"
                     evidence_type: "document"
                     description: "Registrar source record"
                     fingerprint: "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
@@ -1133,6 +1134,7 @@ components:
           description: Optional public evidence metadata attached to the attestation. The API stores metadata and fingerprints only, not document bytes.
           items:
             type: object
+            additionalProperties: false
             required: [evidence_type, fingerprint]
             properties:
               evidence_type:
@@ -1156,10 +1158,54 @@ components:
                 type: string
                 nullable: true
                 maxLength: 255
+                description: Public-safe evidence filename metadata only
               description:
                 type: string
                 nullable: true
                 maxLength: 500
+                description: Public-safe evidence description metadata only
+        metadata:
+          $ref: "#/components/schemas/AttestationMetadataInput"
+
+    AttestationMetadataInput:
+      type: object
+      additionalProperties: false
+      description: Optional PII-stripped metadata. Accepted only when ENABLE_AI_EXTRACTION is enabled.
+      properties:
+        template:
+          type: string
+          maxLength: 80
+        credential_type:
+          type: string
+          maxLength: 100
+        credential_sub_type:
+          type: string
+          maxLength: 100
+        document_type:
+          type: string
+          maxLength: 100
+        issuer_name:
+          type: string
+          maxLength: 200
+        issuing_jurisdiction:
+          type: string
+          maxLength: 100
+        issued_date:
+          type: string
+          maxLength: 40
+        expiration_date:
+          type: string
+          maxLength: 40
+        extraction_provider:
+          type: string
+          maxLength: 80
+        extraction_confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+        metadata_fingerprint:
+          type: string
+          pattern: "^[a-fA-F0-9]{64}$"
 
     CreateAttestationResponse:
       type: object
@@ -1279,6 +1325,7 @@ components:
               type: string
             credential_type:
               type: string
+              nullable: true
             verification_status:
               type: string
             verify_url:
@@ -1313,8 +1360,12 @@ components:
 
     AttestationEvidence:
       type: object
-      required: [public_id, evidence_type, fingerprint, mime, size, created_at]
+      required: [id, public_id, evidence_type, fingerprint, mime, size, created_at]
       properties:
+        id:
+          type: string
+          pattern: "^AEV-[A-F0-9]{12}$"
+          description: v1 back-compat alias for public_id; never an internal UUID
         public_id:
           type: string
           pattern: "^AEV-[A-F0-9]{12}$"

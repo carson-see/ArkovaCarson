@@ -120,6 +120,7 @@ def _to_attestation(payload: Dict[str, Any]) -> AttestationDetails:
                 version_number=item.get("version_number"),
                 parent_public_id=item.get("parent_public_id"),
                 is_current=bool(item.get("is_current", False)),
+                chain_proof=item.get("chain_proof"),
             )
             for item in credentials
         ]
@@ -141,6 +142,8 @@ def _to_attestation(payload: Dict[str, Any]) -> AttestationDetails:
         jurisdiction=payload.get("jurisdiction"),
         fingerprint=payload.get("fingerprint"),
         evidence_fingerprint=payload.get("evidence_fingerprint"),
+        chain_proof=payload.get("chain_proof"),
+        linked_credential=payload.get("linked_credential"),
         attestor_credentials=attestor_credentials,
         issued_at=payload.get("issued_at"),
         expires_at=payload.get("expires_at"),

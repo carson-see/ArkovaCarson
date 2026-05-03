@@ -1,5 +1,5 @@
 # agents.md — pages
-_Last updated: 2026-04-24_
+_Last updated: 2026-05-03_
 
 ## What This Folder Contains
 Top-level page components rendered by react-router-dom routes. Each page composes layout (AppShell) with domain-specific hooks and components.

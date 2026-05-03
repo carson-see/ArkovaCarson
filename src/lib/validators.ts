@@ -133,6 +133,20 @@ const fileMimeField = z
   .optional()
   .nullable();
 
+/** Public attestation evidence metadata sent to /api/v1/attestations. */
+export const AttestationEvidencePayloadSchema = z
+  .array(z.object({
+    evidence_type: z.string().trim().min(1, 'Evidence type is required').max(60, 'Evidence type must be 60 characters or less'),
+    fingerprint: z.string().regex(FINGERPRINT_REGEX, 'Fingerprint must be a valid SHA-256 hash (64 hex characters)'),
+    mime: z.string().trim().max(255, 'MIME type must be 255 characters or less').nullable(),
+    size: z.number().int('File size must be an integer').nonnegative('File size must be nonnegative').nullable(),
+    filename: z.string().trim().max(MAX_FILENAME_LENGTH, `Filename must be ${MAX_FILENAME_LENGTH} characters or less`).nullable().optional(),
+    description: z.string().trim().max(500, 'Description must be 500 characters or less').nullable().optional(),
+  }).strict())
+  .max(10, 'At most 10 evidence items can be attached');
+
+export type AttestationEvidencePayload = z.infer<typeof AttestationEvidencePayloadSchema>;
+
 /** Label: 1–500 chars, optional + nullable */
 const labelField = z
   .string()

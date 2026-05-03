@@ -278,7 +278,7 @@ describe('getAttestation', () => {
         evidence_count: 1,
         linked_credential: {
           public_id: 'ARK-LAW-1',
-          credential_type: 'LICENSE',
+          credential_type: null,
           verification_status: 'VERIFIED',
           verify_url: 'https://app.arkova.ai/verify/ARK-LAW-1',
         },
@@ -306,6 +306,7 @@ describe('getAttestation', () => {
 
     expect(result.evidence[0].publicId).toBe('AEV-ABCDEF123456');
     expect(result.evidence[0].mime).toBe('application/pdf');
+    expect(result.linkedCredential?.credentialType).toBeNull();
     expect(result.attestorCredentials?.[0].parentPublicId).toBe('ARK-LAW-0');
     expect(mockFetch).toHaveBeenCalledWith(
       expect.stringContaining('/api/v1/attestations/ARK-ATT-1?include=credentials'),

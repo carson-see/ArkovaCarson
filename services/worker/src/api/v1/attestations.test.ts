@@ -376,6 +376,7 @@ describe('Attestation rich evidence helpers', () => {
     });
 
     expect(item).toEqual({
+      id: 'AEV-ABCDEF123456',
       public_id: 'AEV-ABCDEF123456',
       evidence_type: 'document',
       description: 'Court filing',
@@ -384,10 +385,10 @@ describe('Attestation rich evidence helpers', () => {
       size: 4096,
       created_at: '2026-05-03T14:00:00Z',
     });
-    expect(item).not.toHaveProperty('id');
+    expect(item.id).toBe(item.public_id);
   });
 
-  it('caps attestor credential lineage at current item plus two parent levels', async () => {
+  it('caps attestor credential lineage at requested item plus two parent levels', async () => {
     const { capAttestorCredentialLineage } = await import('./attestations.js');
     const lineage = [1, 2, 3, 4].map((version) => ({
       public_id: `ARK-CRED-${version}`,
@@ -402,14 +403,14 @@ describe('Attestation rich evidence helpers', () => {
       is_current: version === 4,
     }));
 
-    const capped = capAttestorCredentialLineage(lineage);
+    const capped = capAttestorCredentialLineage(lineage, 'ARK-CRED-3');
 
     expect(capped).toHaveLength(3);
     expect(capped.map((item) => item.public_id)).toEqual([
+      'ARK-CRED-1',
       'ARK-CRED-2',
       'ARK-CRED-3',
-      'ARK-CRED-4',
     ]);
-    expect(capped[0].chain_proof?.explorer_url).toContain('/tx/tx-2');
+    expect(capped[0].chain_proof?.explorer_url).toContain('/tx/tx-1');
   });
 });

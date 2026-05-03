@@ -50,7 +50,7 @@ CREATE OR REPLACE FUNCTION get_anchor_lineage(p_public_id TEXT)
 RETURNS jsonb
 LANGUAGE plpgsql
 SECURITY DEFINER
-SET search_path = public, pg_temp
+SET search_path = public
 AS $$
 DECLARE
   v_anchor_id UUID;
@@ -123,3 +123,5 @@ GRANT EXECUTE ON FUNCTION get_anchor_lineage(text) TO authenticated, anon;
 
 COMMENT ON FUNCTION get_anchor_lineage(text) IS
   'ARK-104/SCRUM-897: return public-safe lineage for the chain containing p_public_id, including credential_type for attestor credential APIs. Emits no internal UUIDs.';
+
+NOTIFY pgrst, 'reload schema';

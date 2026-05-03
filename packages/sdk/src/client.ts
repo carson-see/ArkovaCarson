@@ -710,7 +710,7 @@ function mapAttestationDetails(row: Record<string, unknown>): AttestationDetails
     evidenceCount: row.evidence_count as number,
     linkedCredential: linked ? {
       publicId: linked.public_id as string,
-      credentialType: linked.credential_type as string,
+      credentialType: (linked.credential_type as string | null) ?? null,
       verificationStatus: linked.verification_status as string,
       verifyUrl: linked.verify_url as string,
     } : null,
