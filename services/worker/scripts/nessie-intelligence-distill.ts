@@ -164,7 +164,8 @@ async function fetchPublicRecords(
 
   const db = createClient(supabaseUrl, supabaseKey);
 
-  // Fetch records with content, preferring those with anchors
+  // Fetch records with content, preferring those with anchors.
+  // eslint-disable-next-line arkova/missing-org-filter -- Offline intelligence distillation intentionally samples public records across organizations.
   const { data, error } = await db
     .from('public_records')
     .select('id, source, source_url, record_type, title, content_hash, metadata')

@@ -110,7 +110,7 @@ function normalizeTypes(types: string[]): string[] {
  * Render a source path for reports without leaking local workstation prefixes.
  */
 export function formatSourceFile(filePath: string): string {
-  const normalized = filePath.replace(/\\/g, '/');
+  const normalized = filePath.replaceAll('\\', '/');
   if (!isAbsolute(filePath)) return normalized;
 
   const workerMarker = '/services/worker/';
@@ -118,7 +118,7 @@ export function formatSourceFile(filePath: string): string {
   if (workerIndex >= 0) return normalized.slice(workerIndex + workerMarker.length);
 
   const relativePath = relative(process.cwd(), filePath);
-  if (relativePath && !relativePath.startsWith('..')) return relativePath.replace(/\\/g, '/');
+  if (relativePath && !relativePath.startsWith('..')) return relativePath.replaceAll('\\', '/');
   return basename(filePath);
 }
 

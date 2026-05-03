@@ -12,6 +12,16 @@ const BATCH_SIZE = 50; // Small batches to avoid timeouts
 const RETRY_DELAY = 2000;
 const MAX_RETRIES = 3;
 
+interface AnchorMigrationRecord {
+  id: string;
+  status: string;
+  chain_tx_id: string | null;
+  chain_block_height: number | null;
+  chain_timestamp: string | null;
+  chain_confirmations: number | null;
+  metadata: Record<string, unknown> | null;
+}
+
 async function sleep(ms: number) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
@@ -56,7 +66,7 @@ async function main() {
   let consecutiveEmptyBatches = 0;
 
   while (consecutiveEmptyBatches < 3) {
-    let anchors: any[] | null = null;
+    let anchors: AnchorMigrationRecord[] | null = null;
 
     try {
       const result = await withRetry(async () => {

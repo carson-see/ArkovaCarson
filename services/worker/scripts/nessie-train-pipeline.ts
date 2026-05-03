@@ -304,6 +304,7 @@ async function stepExport(): Promise<{ totalExported: number; stats: Record<stri
 
   const supabase = createClient(supabaseUrl!, supabaseKey!);
 
+  // eslint-disable-next-line arkova/missing-org-filter -- Offline model training intentionally samples public records across organizations.
   const { count, error: countError } = await supabase
     .from('public_records')
     .select('*', { count: 'exact', head: true })
@@ -325,6 +326,7 @@ async function stepExport(): Promise<{ totalExported: number; stats: Record<stri
   let page = 0;
 
   while (true) {
+    // eslint-disable-next-line arkova/missing-org-filter -- Offline model training intentionally samples public records across organizations.
     const { data, error } = await supabase
       .from('public_records')
       .select('id, source, record_type, title, metadata, content_hash')

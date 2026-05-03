@@ -262,6 +262,7 @@ async function fetchRecordsForDomain(
   let offset = 0;
 
   while (allRecords.length < limit) {
+    // eslint-disable-next-line arkova/missing-org-filter -- Offline model training intentionally samples public records across organizations.
     const { data, error } = await supabase
       .from('public_records')
       .select('id, source, record_type, title, metadata, content_hash')
