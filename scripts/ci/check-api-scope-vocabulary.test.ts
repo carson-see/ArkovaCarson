@@ -1,3 +1,6 @@
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   collectScopeVocabularyViolations,
@@ -7,6 +10,7 @@ import {
   extractMarkdownSectionCodeScopes,
   extractOpenApiCanonicalScopes,
   extractSqlConstraintScopes,
+  latestConstraintMigration,
   parseScopeVocabulary,
 } from './check-api-scope-vocabulary.js';
 
@@ -191,5 +195,32 @@ describe('check-api-scope-vocabulary', () => {
         detail: 'extra: usage | expected: read:records, read:search, verify, oracle:read | actual: read:records, read:search, verify, oracle:read, usage',
       },
     ]);
+  });
+
+  it('resolves the latest migration independently for each DB constraint', () => {
+    const root = mkdtempSync(join(tmpdir(), 'scope-vocab-'));
+
+    try {
+      const migrationsDir = join(root, 'supabase', 'migrations');
+      mkdirSync(migrationsDir, { recursive: true });
+      writeFileSync(join(migrationsDir, '0285_both.sql'), `
+        ALTER TABLE public.api_keys
+          ADD CONSTRAINT api_keys_scopes_known_values
+          CHECK (scopes <@ ARRAY['verify']::text[]);
+        ALTER TABLE public.agents
+          ADD CONSTRAINT agents_allowed_scopes_known_values
+          CHECK (allowed_scopes <@ ARRAY['verify']::text[]);
+      `);
+      writeFileSync(join(migrationsDir, '0286_agents_only.sql'), `
+        ALTER TABLE public.agents
+          ADD CONSTRAINT agents_allowed_scopes_known_values
+          CHECK (allowed_scopes <@ ARRAY['verify', 'oracle:read']::text[]);
+      `);
+
+      expect(latestConstraintMigration(root, 'api_keys_scopes_known_values')).toContain('0285_both.sql');
+      expect(latestConstraintMigration(root, 'agents_allowed_scopes_known_values')).toContain('0286_agents_only.sql');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });

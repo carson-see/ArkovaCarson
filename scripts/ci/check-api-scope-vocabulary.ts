@@ -327,12 +327,19 @@ export function extractMarkdownCodeScopes(markdown: string): string[] {
 }
 
 export function extractMarkdownSectionCodeScopes(markdown: string, heading: string): string[] {
-  const start = markdown.indexOf(heading);
-  if (start === -1) return [];
-  const afterHeading = markdown.slice(start + heading.length);
-  const nextHeading = afterHeading.search(/\n\s*##\s+/);
-  const section = nextHeading === -1 ? afterHeading : afterHeading.slice(0, nextHeading);
-  return extractMarkdownCodeScopes(section);
+  const headingText = heading.trim();
+  const lines = markdown.split('\n');
+  const headingIndex = lines.findIndex((line) => line.trim() === headingText);
+  if (headingIndex === -1) return [];
+
+  const sectionLines: string[] = [];
+  for (const line of lines.slice(headingIndex + 1)) {
+    const trimmed = line.trimStart();
+    if (trimmed.startsWith('## ')) break;
+    sectionLines.push(line);
+  }
+
+  return extractMarkdownCodeScopes(sectionLines.join('\n'));
 }
 
 export function extractOpenApiCanonicalScopes(openApiYaml: string): string[] {
@@ -414,29 +421,35 @@ export function collectScopeVocabularyViolations(surfaces: ScopeVocabularySurfac
   ];
 }
 
-function latestScopeConstraintMigration(repo: string): string {
+export function latestConstraintMigration(repo: string, constraintName: string): string {
   const migrationsDir = join(repo, 'supabase', 'migrations');
+  const escapedName = constraintName.replaceAll(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
+  const matcher = new RegExp(String.raw`ADD\s+CONSTRAINT\s+${escapedName}`, 'i');
   const candidates = readdirSync(migrationsDir)
     .filter((file) => file.endsWith('.sql'))
     .sort()
     .filter((file) => {
       const content = readFileSync(join(migrationsDir, file), 'utf8');
-      return /ADD\s+CONSTRAINT\s+api_keys_scopes_known_values/i.test(content);
+      return matcher.test(content);
     });
 
   const latest = candidates[candidates.length - 1];
   if (!latest) {
-    throw new Error('No migration defines api_keys_scopes_known_values.');
+    throw new Error(`No migration defines ${constraintName}.`);
   }
   return join(migrationsDir, latest);
 }
 
 function readRepoSurfaces(repo: string): ScopeVocabularySurfaces {
-  const dbConstraintPath = latestScopeConstraintMigration(repo);
+  const apiKeysConstraintPath = latestConstraintMigration(repo, 'api_keys_scopes_known_values');
+  const agentsConstraintPath = latestConstraintMigration(repo, 'agents_allowed_scopes_known_values');
   return {
     workerSource: readFileSync(join(repo, 'services', 'worker', 'src', 'api', 'apiScopes.ts'), 'utf8'),
     frontendSource: readFileSync(join(repo, 'src', 'lib', 'apiScopes.ts'), 'utf8'),
-    dbConstraintSql: readFileSync(dbConstraintPath, 'utf8'),
+    dbConstraintSql: [
+      readFileSync(apiKeysConstraintPath, 'utf8'),
+      apiKeysConstraintPath === agentsConstraintPath ? '' : readFileSync(agentsConstraintPath, 'utf8'),
+    ].filter(Boolean).join('\n'),
     apiReadmeMarkdown: readFileSync(join(repo, 'docs', 'api', 'README.md'), 'utf8'),
     v2MigrationMarkdown: readFileSync(join(repo, 'docs', 'api', 'v2-migration.md'), 'utf8'),
     v1OpenApiYaml: readFileSync(join(repo, 'docs', 'api', 'openapi.yaml'), 'utf8'),

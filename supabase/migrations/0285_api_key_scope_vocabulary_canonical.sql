@@ -3,6 +3,7 @@
 -- ALTER TABLE public.api_keys DROP CONSTRAINT IF EXISTS api_keys_scopes_known_values;
 -- Restore the previous api_keys_scopes_known_values CHECK from migration 0239_api_key_scopes.sql.
 -- ALTER TABLE public.agents DROP CONSTRAINT IF EXISTS agents_allowed_scopes_known_values;
+-- No previous agents_allowed_scopes_known_values CHECK exists in numbered migrations; dropping it restores the prior agents constraint state.
 
 CREATE TEMP TABLE scope_aliases (
   old_scope text PRIMARY KEY,
