@@ -31,6 +31,30 @@ import { logger } from '../utils/logger.js';
 const mockedRpc = vi.mocked(db.rpc);
 const mockedLogger = vi.mocked(logger);
 
+interface MockRpcError {
+  message: string;
+  code?: string;
+}
+
+function mockRpcResponse(data: boolean | null, error: MockRpcError | null = null) {
+  return {
+    data,
+    error: error
+      ? {
+          message: error.message,
+          code: error.code ?? '',
+          details: '',
+          hint: '',
+          name: 'PostgrestError',
+          toJSON: () => error,
+        }
+      : null,
+    count: null,
+    status: error ? 500 : 200,
+    statusText: error ? 'Internal Server Error' : 'OK',
+  } as Awaited<ReturnType<typeof db.rpc>>;
+}
+
 function createMockReqRes() {
   const req = {} as Request;
   const res = {
@@ -42,11 +66,8 @@ function createMockReqRes() {
   return { req, res, next };
 }
 
-function mockFlagRpc(flagValue: boolean | null, error: { message: string; code?: string } | null = null) {
-  mockedRpc.mockResolvedValue({
-    data: flagValue,
-    error,
-  });
+function mockFlagRpc(flagValue: boolean | null, error: MockRpcError | null = null) {
+  mockedRpc.mockResolvedValue(mockRpcResponse(flagValue, error));
 }
 
 describe('featureGate middleware', () => {
@@ -82,7 +103,7 @@ describe('featureGate middleware', () => {
       expect(mockedRpc).toHaveBeenCalledTimes(1);
       expect(mockedLogger.warn).toHaveBeenCalledWith(
         {
-          error: { message: 'not found' },
+          error: expect.objectContaining({ message: 'not found' }),
           flagKey: 'ENABLE_VERIFICATION_API',
         },
         'Failed to read ENABLE_VERIFICATION_API flag from DB, failing closed',
@@ -95,7 +116,7 @@ describe('featureGate middleware', () => {
 
     it('fails closed when flag RPC returns non-boolean data without an error', async () => {
       vi.stubEnv('ENABLE_VERIFICATION_API', 'true');
-      mockedRpc.mockResolvedValue({ data: null, error: null });
+      mockedRpc.mockResolvedValue(mockRpcResponse(null));
       expect(await isVerificationApiEnabled()).toBe(false);
       expect(await isVerificationApiEnabled()).toBe(false);
       expect(mockedRpc).toHaveBeenCalledTimes(1);
