@@ -203,4 +203,47 @@ describe('check-views-security-invoker scanFiles', () => {
     expect(fixedAfter.has('good_v')).toBe(true);
     expect(fixedAfter.has('bad_v')).toBe(false);
   });
+
+  it('flags a bare CREATE VIEW with a double-quoted identifier', () => {
+    expect(bareViewNames([
+      file(
+        'supabase/migrations/0100_quoted.sql',
+        'CREATE VIEW "MyView" AS SELECT 1;',
+      ),
+    ])).toEqual(['MyView']);
+  });
+
+  it('accepts a fixed CREATE VIEW with a double-quoted identifier', () => {
+    const { bareCreates, fixedAfter } = scanFiles([
+      file(
+        'supabase/migrations/0100_quoted.sql',
+        'CREATE OR REPLACE VIEW "MyView" WITH (security_invoker = true) AS SELECT 1;',
+      ),
+    ]);
+    expect(bareCreates).toEqual([]);
+    expect(fixedAfter.has('MyView')).toBe(true);
+  });
+
+  it('treats an ALTER on a quoted identifier as resolving the same bare view', () => {
+    const { bareCreates, fixedAfter } = scanFiles([
+      file('supabase/migrations/0100_create.sql', 'CREATE VIEW my_view AS SELECT 1;'),
+      file(
+        'supabase/migrations/0274_alter.sql',
+        'ALTER VIEW "my_view" SET (security_invoker = true);',
+      ),
+    ]);
+    expect(bareCreates).toEqual([]);
+    expect(fixedAfter.has('my_view')).toBe(true);
+  });
+
+  it('handles a fully quoted schema-qualified view name', () => {
+    const { bareCreates, fixedAfter } = scanFiles([
+      file(
+        'supabase/migrations/0100_quoted.sql',
+        'CREATE OR REPLACE VIEW "public"."My_View" WITH (security_invoker = true) AS SELECT 1;',
+      ),
+    ]);
+    expect(bareCreates).toEqual([]);
+    expect(fixedAfter.has('My_View')).toBe(true);
+  });
 });

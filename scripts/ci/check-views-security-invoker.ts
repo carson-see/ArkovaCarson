@@ -38,15 +38,40 @@ function loadBaseline(): Set<string> {
 
 // Match `CREATE [OR REPLACE] [...] VIEW <name>`. Skip MATERIALIZED VIEW
 // (different semantics; tracked separately).
-const CREATE_VIEW_REGEX = /CREATE\s+(?:OR\s+REPLACE\s+)?(?!MATERIALIZED\s+)VIEW\s+(?:public\.)?(\w+)/gi;
+//
+// Postgres lets identifiers be either bare (`my_view`) or double-quoted
+// (`"My View"`, which preserves case + allows non-word chars). We accept
+// both forms so a future migration that uses quoted identifiers cannot
+// silently slip past the linter. The schema qualifier mirrors that:
+// `public.x`, `"public".x`, `public."x"`, or `"public"."x"`.
+const SCHEMA_PREFIX = '(?:(?:"public"|public)\\.)?';
+const VIEW_NAME = '(?:"[^"]+"|\\w+)';
+const CREATE_VIEW_REGEX = new RegExp(
+  `CREATE\\s+(?:OR\\s+REPLACE\\s+)?(?!MATERIALIZED\\s+)VIEW\\s+${SCHEMA_PREFIX}(${VIEW_NAME})`,
+  'gi',
+);
 
 // Match `ALTER VIEW <name> SET (security_invoker = true|on)`. The optional
 // `IF EXISTS` and schema-qualifier mirror Postgres' actual ALTER VIEW grammar.
-const ALTER_FIX_REGEX =
-  /ALTER\s+VIEW\s+(?:IF\s+EXISTS\s+)?(?:public\.)?(\w+)\s+SET\s*\([^)]*\bsecurity_invoker\s*=\s*(?:true|on)\b[^)]*\)/gi;
-const ALTER_UNFIX_REGEX =
-  /ALTER\s+VIEW\s+(?:IF\s+EXISTS\s+)?(?:public\.)?(\w+)\s+(?:SET\s*\([^)]*\bsecurity_invoker\s*=\s*(?:false|off)\b[^)]*\)|RESET\s*\([^)]*\bsecurity_invoker\b[^)]*\))/gi;
+const ALTER_FIX_REGEX = new RegExp(
+  `ALTER\\s+VIEW\\s+(?:IF\\s+EXISTS\\s+)?${SCHEMA_PREFIX}(${VIEW_NAME})\\s+SET\\s*\\([^)]*\\bsecurity_invoker\\s*=\\s*(?:true|on)\\b[^)]*\\)`,
+  'gi',
+);
+const ALTER_UNFIX_REGEX = new RegExp(
+  `ALTER\\s+VIEW\\s+(?:IF\\s+EXISTS\\s+)?${SCHEMA_PREFIX}(${VIEW_NAME})\\s+(?:SET\\s*\\([^)]*\\bsecurity_invoker\\s*=\\s*(?:false|off)\\b[^)]*\\)|RESET\\s*\\([^)]*\\bsecurity_invoker\\b[^)]*\\))`,
+  'gi',
+);
 const SECURITY_INVOKER_WITH_REGEX = /\bWITH\s*\([^)]*\bsecurity_invoker\s*=\s*(?:true|on)\b[^)]*\)/i;
+
+// Postgres treats `"foo"` and `foo` as the same identifier when the inner
+// text is lower-case alphanumeric. Strip surrounding quotes so the Map key
+// is consistent across quoted vs unquoted occurrences of the same view.
+function normalizeViewName(raw: string): string {
+  if (raw.length >= 2 && raw.startsWith('"') && raw.endsWith('"')) {
+    return raw.slice(1, -1);
+  }
+  return raw;
+}
 
 interface Finding {
   file: string;
@@ -92,19 +117,19 @@ export function scanFiles(files: ReadonlyArray<{ name: string; body: string }>):
     CREATE_VIEW_REGEX.lastIndex = 0;
     let m: RegExpExecArray | null;
     while ((m = CREATE_VIEW_REGEX.exec(body)) !== null) {
-      const view = m[1];
+      const view = normalizeViewName(m[1]);
       const isFixed = SECURITY_INVOKER_WITH_REGEX.test(createViewHeader(body, m.index));
       events.push({ index: m.index, kind: 'create', view, isFixed });
     }
 
     ALTER_FIX_REGEX.lastIndex = 0;
     while ((m = ALTER_FIX_REGEX.exec(body)) !== null) {
-      events.push({ index: m.index, kind: 'alter', view: m[1] });
+      events.push({ index: m.index, kind: 'alter', view: normalizeViewName(m[1]) });
     }
 
     ALTER_UNFIX_REGEX.lastIndex = 0;
     while ((m = ALTER_UNFIX_REGEX.exec(body)) !== null) {
-      events.push({ index: m.index, kind: 'unfix', view: m[1] });
+      events.push({ index: m.index, kind: 'unfix', view: normalizeViewName(m[1]) });
     }
 
     events.sort((a, b) => a.index - b.index);
