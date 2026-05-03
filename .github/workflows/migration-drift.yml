@@ -41,8 +41,14 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
+      - name: Skip prod drift check for Dependabot secretless PRs
+        if: ${{ github.event_name == 'pull_request' && github.actor == 'dependabot[bot]' }}
+        run: |
+          echo "::notice title=Migration drift check skipped for Dependabot::Dependabot pull_request runs do not receive the GCP Workload Identity secrets required for this read-only prod drift check. Non-Dependabot PRs and main pushes still run the full Supabase Management API comparison."
+
       - id: gcp-auth
         name: Authenticate to GCP via Workload Identity Federation
+        if: ${{ !(github.event_name == 'pull_request' && github.actor == 'dependabot[bot]') }}
         uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
         with:
           workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
@@ -50,12 +56,14 @@ jobs:
 
       - id: supabase-management-token
         name: Pull Supabase Management API token from GCP Secret Manager
+        if: ${{ !(github.event_name == 'pull_request' && github.actor == 'dependabot[bot]') }}
         uses: google-github-actions/get-secretmanager-secrets@bc9c54b29fdffb8a47776820a7d26e77b379d262 # v3.0.0
         with:
           secrets: |
             token:arkova1/supabase_access
 
       - name: Diff local migrations vs Supabase Management API
+        if: ${{ !(github.event_name == 'pull_request' && github.actor == 'dependabot[bot]') }}
         env:
           # Supabase Management API token for an account with access to this
           # project. Do not use anon/service_role JWTs, database passwords, or
