@@ -318,12 +318,13 @@
       ],
       "classification": "roadmap-or-optional",
       "defaults": {
-        "docs/reference/ENV.md": "false"
+        "docs/reference/ENV.md": "false",
+        "worker-config": "false"
       },
       "examples": [
-        "services/worker/src/config.test.ts:213",
-        "services/worker/src/config.test.ts:509",
-        "services/worker/src/config.ts:552"
+        "services/worker/src/config.test.ts:484",
+        "services/worker/src/config.ts:552",
+        "services/worker/src/middleware/flagRegistry.ts:50"
       ],
       "files": [
         "docs/reference/ENV.md",
@@ -460,7 +461,8 @@
       ],
       "classification": "unclassified",
       "defaults": {
-        "docs/reference/ENV.md": "false"
+        "docs/reference/ENV.md": "false",
+        "worker-config": "false"
       },
       "examples": [
         "services/worker/src/ai/nessie.test.ts:260",
@@ -520,12 +522,13 @@
       ],
       "classification": "launch-critical",
       "defaults": {
-        "docs/reference/ENV.md": "false"
+        "docs/reference/ENV.md": "false",
+        "worker-config": "false"
       },
       "examples": [
-        "services/worker/src/config.test.ts:208",
-        "services/worker/src/config.test.ts:411",
-        "services/worker/src/config.test.ts:414"
+        "services/worker/src/config.test.ts:386",
+        "services/worker/src/config.test.ts:389",
+        "services/worker/src/config.test.ts:482"
       ],
       "files": [
         "docs/reference/ENV.md",
@@ -549,12 +552,13 @@
       ],
       "classification": "launch-critical",
       "defaults": {
-        "docs/reference/ENV.md": "false"
+        "docs/reference/ENV.md": "false",
+        "worker-config": "false"
       },
       "examples": [
-        "services/worker/src/config.test.ts:209",
-        "services/worker/src/config.test.ts:420",
-        "services/worker/src/config.test.ts:423"
+        "services/worker/src/config.test.ts:395",
+        "services/worker/src/config.test.ts:398",
+        "services/worker/src/config.test.ts:483"
       ],
       "files": [
         "docs/reference/ENV.md",
@@ -579,12 +583,13 @@
       ],
       "classification": "launch-critical",
       "defaults": {
-        "docs/reference/ENV.md": "false"
+        "docs/reference/ENV.md": "false",
+        "worker-config": "false"
       },
       "examples": [
-        "services/worker/src/config.test.ts:203",
-        "services/worker/src/config.test.ts:384",
-        "services/worker/src/config.test.ts:387"
+        "services/worker/src/config.test.ts:359",
+        "services/worker/src/config.test.ts:362",
+        "services/worker/src/config.test.ts:369"
       ],
       "files": [
         "docs/reference/ENV.md",
@@ -610,12 +615,13 @@
       ],
       "classification": "launch-critical",
       "defaults": {
-        "docs/reference/ENV.md": "false"
+        "docs/reference/ENV.md": "false",
+        "worker-config": "false"
       },
       "examples": [
         "services/worker/src/api/v1/router.ts:318",
-        "services/worker/src/config.test.ts:204",
-        "services/worker/src/config.test.ts:506"
+        "services/worker/src/config.test.ts:481",
+        "services/worker/src/config.ts:544"
       ],
       "files": [
         "docs/reference/ENV.md",
@@ -800,7 +806,7 @@
       },
       "examples": [
         "services/worker/src/api/v1/router.ts:305",
-        "services/worker/src/config.test.ts:505",
+        "services/worker/src/config.test.ts:480",
         "services/worker/src/config.ts:234"
       ],
       "files": [
@@ -998,7 +1004,8 @@
       ],
       "classification": "launch-critical",
       "defaults": {
-        "docs/reference/ENV.md": "false"
+        "docs/reference/ENV.md": "false",
+        "worker-config": "false"
       },
       "examples": [
         "services/worker/src/api/v1/anchor-submit.ts:106",
@@ -1103,15 +1110,17 @@
         "docs/reference/ENV.md": "false",
         "frontend-switchboard": "false",
         "supabase-seed-default": "false",
-        "supabase-seed-value": "false"
+        "supabase-seed-value": "false",
+        "worker-config": "false"
       },
       "examples": [
         ".env.example:104",
-        ".github/workflows/deploy-worker.yml:140",
-        "src/lib/switchboard.test.ts:48"
+        ".github/workflows/ci.yml:868",
+        ".github/workflows/deploy-worker.yml:140"
       ],
       "files": [
         ".env.example",
+        ".github/workflows/ci.yml",
         ".github/workflows/deploy-worker.yml",
         "docs/BETA_PRODUCTION_READINESS.md",
         "docs/bugs/bug_log.md",
@@ -1556,7 +1565,7 @@
       },
       "examples": [
         "services/worker/agents.md:75",
-        "services/worker/src/config.test.ts:571",
+        "services/worker/src/config.test.ts:546",
         "services/worker/src/config.ts:224"
       ],
       "files": [
@@ -1630,11 +1639,12 @@
       },
       "examples": [
         ".env.example:63",
-        ".github/workflows/deploy-worker.yml:140",
-        "src/lib/switchboard.ts:32"
+        ".github/workflows/ci.yml:867",
+        ".github/workflows/deploy-worker.yml:140"
       ],
       "files": [
         ".env.example",
+        ".github/workflows/ci.yml",
         ".github/workflows/deploy-worker.yml",
         "docs/bugs/e2e_journey_validation.md",
         "docs/bugs/uat_launch_readiness_3.md",
@@ -1710,7 +1720,7 @@
       "examples": [
         "services/worker/agents.md:130",
         "services/worker/src/api/v1/router.ts:275",
-        "services/worker/src/config.test.ts:503"
+        "services/worker/src/config.test.ts:478"
       ],
       "files": [
         "docs/launch/first-client-launch-command-center-2026-05-01.md",
@@ -1907,15 +1917,17 @@
       "classification": "environment-safety",
       "defaults": {
         ".env.example": "false",
-        "docs/reference/ENV.md": "false"
+        "docs/reference/ENV.md": "false",
+        "worker-config": "false"
       },
       "examples": [
         ".env.example:22",
-        ".github/workflows/deploy-worker.yml:140",
-        "services/worker/.env.example:83"
+        ".github/workflows/ci.yml:866",
+        ".github/workflows/deploy-worker.yml:140"
       ],
       "files": [
         ".env.example",
+        ".github/workflows/ci.yml",
         ".github/workflows/deploy-worker.yml",
         "docs/reference/ENV.md",
         "scripts/ci/snapshots/worker-env-adhoc-baseline.json",
@@ -1957,7 +1969,7 @@
       "priority": "P2"
     }
   ],
-  "generated_at": "2026-05-01",
+  "generated_at": "2026-05-03",
   "registry_sets": {
     "db_seed": [
       "ENABLE_AI_EXTRACTION",

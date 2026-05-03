@@ -263,12 +263,36 @@ def last_flag_from_text(text: str) -> str | None:
     return matches[-1] if matches else None
 
 
+def field_name_to_env_flag(field_name: str) -> str | None:
+    if field_name == "useMocks":
+        return "USE_MOCKS"
+    if not field_name.startswith("enable") or len(field_name) == len("enable"):
+        return None
+    suffix = field_name[len("enable") :]
+    snake = re.sub(r"(?<!^)([A-Z])", r"_\1", suffix).upper()
+    return f"ENABLE_{snake}"
+
+
+def worker_config_field_from_line(line: str) -> str | None:
+    match = re.match(r"^([A-Za-z_][A-Za-z0-9_]*)\s*[:=]", line)
+    if not match:
+        return None
+    return match.group(1)
+
+
 def maybe_record_worker_config_default(flags: dict[str, Flag], pending_flag: str | None, line: str) -> str | None:
-    if not pending_flag or "z.preprocess" not in line or ".default(" not in line:
+    if "z.preprocess" not in line or ".default(" not in line:
+        return pending_flag
+    field_flag = None
+    field_name = worker_config_field_from_line(line)
+    if field_name:
+        field_flag = field_name_to_env_flag(field_name)
+    flag_name = pending_flag or field_flag
+    if not flag_name:
         return pending_flag
     default_match = ZOD_DEFAULT_RE.search(line)
     if default_match:
-        record_default(flags, pending_flag, "worker-config", default_match.group(1))
+        record_default(flags, flag_name, "worker-config", default_match.group(1))
     return None
 
 
