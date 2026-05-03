@@ -1,6 +1,6 @@
 # Arkova Python SDK
 
-Typed Python client for the Arkova Verification API v2.
+Typed Python client for the Arkova Verification APIs.
 
 ## Install
 
@@ -9,6 +9,14 @@ pip install arkova
 ```
 
 Python 3.10 or newer is supported.
+
+## Supported methods
+
+- `search(q, type="all", cursor=None, limit=50)`
+- `verify(public_id)`
+- `verify_fingerprint(fingerprint)`
+- `get_anchor(public_id)`
+- `list_orgs()`
 
 ## Quick start
 
@@ -33,6 +41,24 @@ with Arkova(api_key="ak_live_...") as arkova:
     result = arkova.verify_fingerprint(fingerprint)
     print(result.verified, result.public_id)
 ```
+
+## Verify a public ID
+
+```python
+from arkova import Arkova
+
+with Arkova(api_key="ak_live_...") as arkova:
+    result = arkova.verify("ARK-2026-ABC")
+    print(result.verified, result.description, result.confidence_scores)
+```
+
+`verify()` returns the rich v1 verification shape, including API-RICH-01 fields
+such as `compliance_controls`, `chain_confirmations`, `parent_public_id`,
+`version_number`, `file_mime`, and `file_size`, plus API-RICH-02 fields
+`confidence_scores` and `sub_type` when the API response includes them.
+The same optional rich fields are typed on v2 `verify_fingerprint()` and
+`get_anchor()` responses, so newer API payloads are not silently hidden by the
+SDK model layer.
 
 ## Async client
 
