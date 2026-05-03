@@ -8,6 +8,7 @@ import { createV2ScopeRateLimit } from './rateLimit.js';
 import { apiKeyAuthV2 } from './auth.js';
 import { agentToolsRouter } from './agentTools.js';
 import { apiV2OpenApiHandler } from './openapi.js';
+import { resourceDetailsRouter } from './resourceDetails.js';
 
 export const apiV2Router = Router();
 
@@ -24,6 +25,7 @@ apiV2Router.get('/organizations', requireScopeV2('read:search'), createV2ScopeRa
 apiV2Router.get('/records', requireScopeV2('read:search'), createV2ScopeRateLimit('read:search'), buildSearchHandler('record'));
 apiV2Router.get('/fingerprints', requireScopeV2('read:search'), createV2ScopeRateLimit('read:search'), buildSearchHandler('fingerprint'));
 apiV2Router.get('/documents', requireScopeV2('read:search'), createV2ScopeRateLimit('read:search'), buildSearchHandler('document'));
+apiV2Router.use(resourceDetailsRouter);
 apiV2Router.use(agentToolsRouter);
 
 apiV2Router.use((req, _res, next) => {
