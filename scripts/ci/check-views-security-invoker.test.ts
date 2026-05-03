@@ -86,6 +86,57 @@ describe('check-views-security-invoker scanFiles', () => {
     expect(bareCreates[0].line).toBe(2);
   });
 
+  it('flags negative ALTER VIEW security_invoker changes after a fixed CREATE', () => {
+    const { bareCreates } = scanFiles([
+      file(
+        'supabase/migrations/0100_fixed.sql',
+        'CREATE OR REPLACE VIEW public.v WITH (security_invoker = true) AS SELECT 1;\n',
+      ),
+      file(
+        'supabase/migrations/0500_unfix.sql',
+        'ALTER VIEW public.v SET (security_invoker = false);\n',
+      ),
+    ]);
+
+    expect(bareCreates.map((f) => f.view)).toEqual(['v']);
+    expect(bareCreates[0].file).toBe('supabase/migrations/0500_unfix.sql');
+  });
+
+  it('flags ALTER VIEW RESET security_invoker after a fixed CREATE', () => {
+    const { bareCreates } = scanFiles([
+      file(
+        'supabase/migrations/0100_fixed.sql',
+        'CREATE OR REPLACE VIEW public.v WITH (security_invoker = true) AS SELECT 1;\n',
+      ),
+      file('supabase/migrations/0500_reset.sql', 'ALTER VIEW public.v RESET (security_invoker);\n'),
+    ]);
+
+    expect(bareCreates.map((f) => f.view)).toEqual(['v']);
+  });
+
+  it('does not let a later fixed CREATE satisfy an earlier bare CREATE in the same file', () => {
+    const { bareCreates } = scanFiles([
+      file(
+        'supabase/migrations/0500_two_views.sql',
+        'CREATE VIEW bare_v AS SELECT 1;\n' +
+          'CREATE VIEW fixed_v WITH (security_invoker = true) AS SELECT 2;\n',
+      ),
+    ]);
+
+    expect(bareCreates.map((f) => f.view)).toEqual(['bare_v']);
+  });
+
+  it('does not let security_invoker text in the SELECT body satisfy a bare CREATE', () => {
+    const { bareCreates } = scanFiles([
+      file(
+        'supabase/migrations/0500_select_body.sql',
+        "CREATE VIEW bare_v AS SELECT 'security_invoker = true' AS marker;\n",
+      ),
+    ]);
+
+    expect(bareCreates.map((f) => f.view)).toEqual(['bare_v']);
+  });
+
   it('skips CREATE MATERIALIZED VIEW (out of scope)', () => {
     const { bareCreates } = scanFiles([
       file('supabase/migrations/0123_x.sql', 'CREATE MATERIALIZED VIEW mv_x AS SELECT 1;'),

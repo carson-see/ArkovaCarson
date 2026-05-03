@@ -42,6 +42,9 @@ const CREATE_VIEW_REGEX = /CREATE\s+(?:OR\s+REPLACE\s+)?(?!MATERIALIZED\s+)VIEW\
 // `IF EXISTS` and schema-qualifier mirror Postgres' actual ALTER VIEW grammar.
 const ALTER_FIX_REGEX =
   /ALTER\s+VIEW\s+(?:IF\s+EXISTS\s+)?(?:public\.)?(\w+)\s+SET\s*\(\s*security_invoker\s*=\s*(?:true|on)\s*\)/gi;
+const ALTER_UNFIX_REGEX =
+  /ALTER\s+VIEW\s+(?:IF\s+EXISTS\s+)?(?:public\.)?(\w+)\s+(?:SET\s*\(\s*security_invoker\s*=\s*(?:false|off)\s*\)|RESET\s*\(\s*security_invoker\s*\))/gi;
+const SECURITY_INVOKER_WITH_REGEX = /\bWITH\s*\([^)]*\bsecurity_invoker\s*=\s*(?:true|on)\b[^)]*\)/i;
 
 interface Finding {
   file: string;
@@ -60,7 +63,14 @@ interface ScanResult {
 
 type ViewSecurityEvent =
   | { index: number; kind: 'create'; view: string; isFixed: boolean }
-  | { index: number; kind: 'alter'; view: string };
+  | { index: number; kind: 'alter'; view: string }
+  | { index: number; kind: 'unfix'; view: string };
+
+function createViewHeader(text: string, idx: number): string {
+  const tail = text.slice(idx);
+  const asMatch = /\bAS\b/i.exec(tail);
+  return asMatch ? tail.slice(0, asMatch.index) : tail;
+}
 
 export function scanFiles(files: ReadonlyArray<{ name: string; body: string }>): ScanResult {
   // Process in migration order so a later ALTER/REPLACE overrides an earlier
@@ -81,14 +91,18 @@ export function scanFiles(files: ReadonlyArray<{ name: string; body: string }>):
     let m: RegExpExecArray | null;
     while ((m = CREATE_VIEW_REGEX.exec(body)) !== null) {
       const view = m[1];
-      const window = body.slice(m.index, m.index + 250);
-      const isFixed = /security_invoker\s*=\s*(?:true|on)/i.test(window);
+      const isFixed = SECURITY_INVOKER_WITH_REGEX.test(createViewHeader(body, m.index));
       events.push({ index: m.index, kind: 'create', view, isFixed });
     }
 
     ALTER_FIX_REGEX.lastIndex = 0;
     while ((m = ALTER_FIX_REGEX.exec(body)) !== null) {
       events.push({ index: m.index, kind: 'alter', view: m[1] });
+    }
+
+    ALTER_UNFIX_REGEX.lastIndex = 0;
+    while ((m = ALTER_UNFIX_REGEX.exec(body)) !== null) {
+      events.push({ index: m.index, kind: 'unfix', view: m[1] });
     }
 
     events.sort((a, b) => a.index - b.index);
@@ -106,8 +120,17 @@ export function scanFiles(files: ReadonlyArray<{ name: string; body: string }>):
           latestFinding.delete(event.view);
         }
       } else {
-        latestState.set(event.view, 'fixed');
-        latestFinding.delete(event.view);
+        if (event.kind === 'alter') {
+          latestState.set(event.view, 'fixed');
+          latestFinding.delete(event.view);
+        } else {
+          latestState.set(event.view, 'bare');
+          latestFinding.set(event.view, {
+            file: name,
+            view: event.view,
+            line: lineNumber(body, event.index),
+          });
+        }
       }
     }
   }
