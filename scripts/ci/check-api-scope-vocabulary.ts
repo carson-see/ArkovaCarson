@@ -256,6 +256,23 @@ export function diffOrdered(surface: string, expected: readonly string[], actual
   return [{ surface, detail: details.join(' | ') }];
 }
 
+export function diffSet(surface: string, expected: readonly string[], actual: readonly string[]): ScopeVocabularyViolation[] {
+  const expectedSet = new Set(expected);
+  const actualSet = new Set(actual);
+  const missing = expected.filter((scope) => !actualSet.has(scope));
+  const extra = actual.filter((scope) => !expectedSet.has(scope));
+  if (missing.length === 0 && extra.length === 0) return [];
+
+  const details = [
+    missing.length ? `missing: ${missing.join(', ')}` : '',
+    extra.length ? `extra: ${extra.join(', ')}` : '',
+    `expected: ${expected.join(', ')}`,
+    `actual: ${actual.join(', ')}`,
+  ].filter(Boolean);
+
+  return [{ surface, detail: details.join(' | ') }];
+}
+
 export function extractSqlConstraintScopes(sql: string, constraintName = 'api_keys_scopes_known_values'): string[] {
   const uncommentedSql = sql
     .split('\n')
@@ -288,6 +305,39 @@ export function extractMarkdownCodeScopes(markdown: string): string[] {
   return scopes;
 }
 
+export function extractMarkdownSectionCodeScopes(markdown: string, heading: string): string[] {
+  const start = markdown.indexOf(heading);
+  if (start === -1) return [];
+  const afterHeading = markdown.slice(start + heading.length);
+  const nextHeading = afterHeading.search(/\n\s*##\s+/);
+  const section = nextHeading === -1 ? afterHeading : afterHeading.slice(0, nextHeading);
+  return extractMarkdownCodeScopes(section);
+}
+
+export function extractOpenApiCanonicalScopes(openApiYaml: string): string[] {
+  const lines = openApiYaml.split('\n');
+  const markerIndex = lines.findIndex((line) => line.trim() === 'x-arkova-canonical-scopes:');
+  if (markerIndex === -1) return [];
+
+  const markerIndent = countLeadingSpaces(lines[markerIndex]);
+  const scopes: string[] = [];
+  for (const line of lines.slice(markerIndex + 1)) {
+    if (!line.trim()) continue;
+    const indent = countLeadingSpaces(line);
+    if (indent <= markerIndent) break;
+
+    const trimmed = line.trim();
+    if (trimmed.startsWith('- ')) {
+      scopes.push(trimmed.slice(2).trim().replace(/^['"]|['"]$/g, ''));
+    }
+  }
+  return scopes;
+}
+
+function countLeadingSpaces(line: string): number {
+  return line.length - line.trimStart().length;
+}
+
 function extractQuotedValues(content: string): string[] {
   const values: string[] = [];
   const quotedRe = /'([^']+)'|"([^"]+)"/g;
@@ -302,19 +352,6 @@ function looksLikeScope(value: string): boolean {
   return value === 'verify' || /^[a-z][a-z0-9-]*(?::[a-z][a-z0-9-]*)+$/.test(value);
 }
 
-function missingFromSurface(surface: string, expected: readonly string[], actual: readonly string[]): ScopeVocabularyViolation[] {
-  const actualSet = new Set(actual);
-  const missing = expected.filter((scope) => !actualSet.has(scope));
-  if (missing.length === 0) return [];
-  return [{ surface, detail: `missing: ${missing.join(', ')}` }];
-}
-
-function missingTextMentions(surface: string, expected: readonly string[], content: string): ScopeVocabularyViolation[] {
-  const missing = expected.filter((scope) => !content.includes(scope));
-  if (missing.length === 0) return [];
-  return [{ surface, detail: `missing: ${missing.join(', ')}` }];
-}
-
 export function collectScopeVocabularyViolations(surfaces: ScopeVocabularySurfaces): ScopeVocabularyViolation[] {
   const worker = parseScopeVocabulary(surfaces.workerSource);
   const frontend = parseScopeVocabulary(surfaces.frontendSource);
@@ -325,7 +362,7 @@ export function collectScopeVocabularyViolations(surfaces: ScopeVocabularySurfac
   }
 
   violations.push(
-    ...missingFromSurface(
+    ...diffSet(
       'database api_keys_scopes_known_values CHECK constraint',
       worker.API_KEY_SCOPES,
       extractSqlConstraintScopes(surfaces.dbConstraintSql, 'api_keys_scopes_known_values'),
@@ -333,7 +370,7 @@ export function collectScopeVocabularyViolations(surfaces: ScopeVocabularySurfac
   );
 
   violations.push(
-    ...missingFromSurface(
+    ...diffSet(
       'database agents_allowed_scopes_known_values CHECK constraint',
       worker.API_KEY_SCOPES,
       extractSqlConstraintScopes(surfaces.dbConstraintSql, 'agents_allowed_scopes_known_values'),
@@ -341,7 +378,7 @@ export function collectScopeVocabularyViolations(surfaces: ScopeVocabularySurfac
   );
 
   violations.push(
-    ...missingFromSurface(
+    ...diffSet(
       'docs/api/README.md canonical scope table',
       worker.API_KEY_SCOPES,
       extractMarkdownCodeScopes(surfaces.apiReadmeMarkdown),
@@ -349,18 +386,18 @@ export function collectScopeVocabularyViolations(surfaces: ScopeVocabularySurfac
   );
 
   violations.push(
-    ...missingFromSurface(
+    ...diffSet(
       'docs/api/v2-migration.md v2 scope table',
       worker.API_V2_SCOPES,
-      extractMarkdownCodeScopes(surfaces.v2MigrationMarkdown),
+      extractMarkdownSectionCodeScopes(surfaces.v2MigrationMarkdown, '## Authentication'),
     ),
   );
 
   violations.push(
-    ...missingTextMentions(
-      'docs/api/openapi.yaml /keys scope enum',
+    ...diffSet(
+      'docs/api/openapi.yaml x-arkova-canonical-scopes',
       worker.API_KEY_SCOPES,
-      surfaces.v1OpenApiYaml,
+      extractOpenApiCanonicalScopes(surfaces.v1OpenApiYaml),
     ),
   );
 

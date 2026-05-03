@@ -3,7 +3,7 @@
 -- ALTER TABLE public.api_keys DROP CONSTRAINT IF EXISTS api_keys_scopes_known_values;
 -- ALTER TABLE public.api_keys ADD CONSTRAINT api_keys_scopes_known_values
 --   CHECK (
---     array_length(scopes, 1) >= 1
+--     cardinality(scopes) >= 1
 --     AND scopes <@ ARRAY[
 --       'read:records', 'read:orgs', 'read:search', 'write:anchors',
 --       'admin:rules', 'verify', 'verify:batch', 'usage:read', 'keys:manage'
@@ -33,7 +33,7 @@ ALTER TABLE public.api_keys
 ALTER TABLE public.api_keys
   ADD CONSTRAINT api_keys_scopes_known_values
   CHECK (
-    array_length(scopes, 1) >= 1
+    cardinality(scopes) >= 1
     AND scopes <@ ARRAY[
       'read:records',
       'read:orgs',
@@ -83,7 +83,7 @@ ALTER TABLE public.agents
 ALTER TABLE public.agents
   ADD CONSTRAINT agents_allowed_scopes_known_values
   CHECK (
-    array_length(allowed_scopes, 1) >= 1
+    cardinality(allowed_scopes) >= 1
     AND allowed_scopes <@ ARRAY[
       'read:records',
       'read:orgs',

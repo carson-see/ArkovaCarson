@@ -379,27 +379,27 @@ paths:
                   type: array
                   items:
                     type: string
-                    enum:
-                      - read:records
-                      - read:orgs
-                      - read:search
-                      - write:anchors
-                      - admin:rules
-                      - verify
-                      - verify:batch
-                      - usage:read
-                      - keys:manage
-                      - compliance:read
-                      - compliance:write
-                      - oracle:read
-                      - oracle:write
-                      - anchor:write
-                      - anchor:read
-                      - attestations:write
-                      - attestations:read
-                      - webhooks:manage
-                      - agents:manage
-                      - keys:read
+                  x-arkova-canonical-scopes:
+                    - read:records
+                    - read:orgs
+                    - read:search
+                    - write:anchors
+                    - admin:rules
+                    - verify
+                    - verify:batch
+                    - usage:read
+                    - keys:manage
+                    - compliance:read
+                    - compliance:write
+                    - oracle:read
+                    - oracle:write
+                    - anchor:write
+                    - anchor:read
+                    - attestations:write
+                    - attestations:read
+                    - webhooks:manage
+                    - agents:manage
+                    - keys:read
       responses:
         "201":
           description: API key created (raw key returned only once)

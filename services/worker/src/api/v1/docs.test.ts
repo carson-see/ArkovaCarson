@@ -72,18 +72,26 @@ describe('OpenAPI spec', () => {
     expect(keysPath.post.security).toContainEqual({ SupabaseJWT: [] });
   });
 
-  it('publishes the canonical API key scope enum for key management', () => {
+  it('publishes canonical API key scope metadata without narrowing v1 string arrays', () => {
     const keysPath = openApiSpec.paths['/keys'];
-    const createScopeEnum = keysPath.post.requestBody.content['application/json'].schema.properties.scopes.items.enum;
-    const updateScopeEnum = openApiSpec.paths['/keys/{keyId}'].patch
-      .requestBody.content['application/json'].schema.properties.scopes.items.enum;
-    const maskedScopeEnum = openApiSpec.components.schemas.ApiKeyMasked.properties.scopes.items.enum;
-    const createdScopeEnum = openApiSpec.components.schemas.ApiKeyCreated.properties.scopes.items.enum;
+    const createScopes = keysPath.post.requestBody.content['application/json'].schema.properties.scopes;
+    const updateScopes = openApiSpec.paths['/keys/{keyId}'].patch
+      .requestBody.content['application/json'].schema.properties.scopes;
+    const maskedScopes = openApiSpec.components.schemas.ApiKeyMasked.properties.scopes;
+    const createdScopes = openApiSpec.components.schemas.ApiKeyCreated.properties.scopes;
 
-    expect(createScopeEnum).toEqual(API_KEY_SCOPES);
-    expect(updateScopeEnum).toEqual(API_KEY_SCOPES);
-    expect(maskedScopeEnum).toEqual(API_KEY_SCOPES);
-    expect(createdScopeEnum).toEqual(API_KEY_SCOPES);
+    expect(createScopes.items).toEqual({ type: 'string' });
+    expect(updateScopes.items).toEqual({ type: 'string' });
+    expect(maskedScopes.items).toEqual({ type: 'string' });
+    expect(createdScopes.items).toEqual({ type: 'string' });
+    expect(createScopes.items.enum).toBeUndefined();
+    expect(updateScopes.items.enum).toBeUndefined();
+    expect(maskedScopes.items.enum).toBeUndefined();
+    expect(createdScopes.items.enum).toBeUndefined();
+    expect(createScopes['x-arkova-canonical-scopes']).toEqual(API_KEY_SCOPES);
+    expect(updateScopes['x-arkova-canonical-scopes']).toEqual(API_KEY_SCOPES);
+    expect(maskedScopes['x-arkova-canonical-scopes']).toEqual(API_KEY_SCOPES);
+    expect(createdScopes['x-arkova-canonical-scopes']).toEqual(API_KEY_SCOPES);
   });
 
   it('has all four tags', () => {

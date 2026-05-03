@@ -219,6 +219,13 @@ describe('API Key CRUD — validation schemas', () => {
     expect(result.success).toBe(false);
   });
 
+  it('CreateKeySchema rejects deprecated alias scopes on write', async () => {
+    const { CreateKeySchema } = await import('./keys.js');
+
+    expect(CreateKeySchema.safeParse({ name: 'Batch Alias', scopes: ['batch'] }).success).toBe(false);
+    expect(CreateKeySchema.safeParse({ name: 'Usage Alias', scopes: ['usage'] }).success).toBe(false);
+  });
+
   it('CreateKeySchema rejects empty scope arrays', async () => {
     const { CreateKeySchema } = await import('./keys.js');
 

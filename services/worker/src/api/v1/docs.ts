@@ -230,11 +230,12 @@ export const openApiSpec: Record<string, any> = {
                 type: 'object',
                 required: ['name'],
                 properties: {
-                  name: { type: 'string', minLength: 1, maxLength: 100 },
-                  scopes: {
-                    type: 'array',
-                    items: { type: 'string', enum: API_KEY_SCOPES },
-                  },
+	                  name: { type: 'string', minLength: 1, maxLength: 100 },
+	                  scopes: {
+	                    type: 'array',
+	                    items: { type: 'string' },
+	                    'x-arkova-canonical-scopes': API_KEY_SCOPES,
+	                  },
                 },
               },
             },
@@ -270,8 +271,12 @@ export const openApiSpec: Record<string, any> = {
               schema: {
                 type: 'object',
                 properties: {
-                  name: { type: 'string' },
-                  scopes: { type: 'array', items: { type: 'string', enum: API_KEY_SCOPES } },
+	                  name: { type: 'string' },
+	                  scopes: {
+	                    type: 'array',
+	                    items: { type: 'string' },
+	                    'x-arkova-canonical-scopes': API_KEY_SCOPES,
+	                  },
                 },
               },
             },
@@ -1049,8 +1054,12 @@ export const openApiSpec: Record<string, any> = {
         properties: {
           key_id: { type: 'string', format: 'uuid' },
           key_prefix: { type: 'string' },
-          name: { type: 'string' },
-          scopes: { type: 'array', items: { type: 'string', enum: API_KEY_SCOPES } },
+	          name: { type: 'string' },
+	          scopes: {
+	            type: 'array',
+	            items: { type: 'string' },
+	            'x-arkova-canonical-scopes': API_KEY_SCOPES,
+	          },
           is_active: { type: 'boolean' },
           last_used_at: { type: 'string', format: 'date-time', nullable: true },
           created_at: { type: 'string', format: 'date-time' },
@@ -1062,8 +1071,12 @@ export const openApiSpec: Record<string, any> = {
           key_id: { type: 'string', format: 'uuid' },
           raw_key: { type: 'string', description: 'Shown only once — store it securely' },
           key_prefix: { type: 'string' },
-          name: { type: 'string' },
-          scopes: { type: 'array', items: { type: 'string', enum: API_KEY_SCOPES } },
+	          name: { type: 'string' },
+	          scopes: {
+	            type: 'array',
+	            items: { type: 'string' },
+	            'x-arkova-canonical-scopes': API_KEY_SCOPES,
+	          },
           created_at: { type: 'string', format: 'date-time' },
         },
       },

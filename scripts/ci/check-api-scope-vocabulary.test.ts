@@ -2,7 +2,10 @@ import { describe, expect, it } from 'vitest';
 import {
   collectScopeVocabularyViolations,
   diffOrdered,
+  diffSet,
   extractMarkdownCodeScopes,
+  extractMarkdownSectionCodeScopes,
+  extractOpenApiCanonicalScopes,
   extractSqlConstraintScopes,
   parseScopeVocabulary,
 } from './check-api-scope-vocabulary.js';
@@ -39,6 +42,17 @@ describe('check-api-scope-vocabulary', () => {
     ]);
   });
 
+  it('reports non-canonical extras on checked surfaces', () => {
+    expect(
+      diffSet('database api_keys_scopes_known_values CHECK constraint', ['verify'], ['verify', 'batch']),
+    ).toEqual([
+      {
+        surface: 'database api_keys_scopes_known_values CHECK constraint',
+        detail: 'extra: batch | expected: verify | actual: verify, batch',
+      },
+    ]);
+  });
+
   it('extracts only the active DB CHECK constraint scope array', () => {
     const scopes = extractSqlConstraintScopes(`
       -- COMMENT ON COLUMN public.api_keys.scopes IS 'oracle:read';
@@ -63,6 +77,26 @@ describe('check-api-scope-vocabulary', () => {
     ]);
   });
 
+  it('extracts scope names from a targeted markdown section', () => {
+    expect(extractMarkdownSectionCodeScopes(`
+      ## Authentication
+      Scope: \`read:records\`
+      ## Error Handling
+      Error detail mentions \`verify\`
+    `, '## Authentication')).toEqual(['read:records']);
+  });
+
+  it('extracts exact OpenAPI canonical scopes without matching unrelated path text', () => {
+    expect(extractOpenApiCanonicalScopes(`
+      /verify:
+        get:
+          summary: Verify endpoint
+      x-arkova-canonical-scopes:
+        - read:records
+        - verify
+    `)).toEqual(['read:records', 'verify']);
+  });
+
   it('passes when every surface matches the worker vocabulary', () => {
     const violations = collectScopeVocabularyViolations({
       workerSource: WORKER_SCOPE_SOURCE,
@@ -76,8 +110,14 @@ describe('check-api-scope-vocabulary', () => {
           CHECK (allowed_scopes <@ ARRAY['read:records', 'read:search', 'verify', 'oracle:read']::text[]);
       `,
       apiReadmeMarkdown: '`read:records`, `read:search`, `verify`, `oracle:read`',
-      v2MigrationMarkdown: '`read:records`, `read:search`',
-      v1OpenApiYaml: 'read:records\nread:search\nverify\noracle:read',
+      v2MigrationMarkdown: '## Authentication\n`read:records`, `read:search`',
+      v1OpenApiYaml: `
+        x-arkova-canonical-scopes:
+          - read:records
+          - read:search
+          - verify
+          - oracle:read
+      `,
     });
 
     expect(violations).toEqual([]);
@@ -96,14 +136,59 @@ describe('check-api-scope-vocabulary', () => {
           CHECK (allowed_scopes <@ ARRAY['read:records', 'read:search', 'verify', 'oracle:read']::text[]);
       `,
       apiReadmeMarkdown: '`read:records`, `read:search`, `verify`, `oracle:read`',
-      v2MigrationMarkdown: '`read:records`, `read:search`',
-      v1OpenApiYaml: 'read:records\nread:search\nverify\noracle:read',
+      v2MigrationMarkdown: '## Authentication\n`read:records`, `read:search`',
+      v1OpenApiYaml: `
+        x-arkova-canonical-scopes:
+          - read:records
+          - read:search
+          - verify
+          - oracle:read
+      `,
     });
 
     expect(violations).toEqual([
       {
         surface: 'database api_keys_scopes_known_values CHECK constraint',
-        detail: 'missing: oracle:read',
+        detail: 'missing: oracle:read | expected: read:records, read:search, verify, oracle:read | actual: read:records, read:search, verify',
+      },
+    ]);
+  });
+
+  it('flags stale aliases in SQL constraints and OpenAPI canonical metadata', () => {
+    const violations = collectScopeVocabularyViolations({
+      workerSource: WORKER_SCOPE_SOURCE,
+      frontendSource: WORKER_SCOPE_SOURCE,
+      dbConstraintSql: `
+        ALTER TABLE public.api_keys
+          ADD CONSTRAINT api_keys_scopes_known_values
+          CHECK (scopes <@ ARRAY['read:records', 'read:search', 'verify', 'oracle:read', 'batch']::text[]);
+        ALTER TABLE public.agents
+          ADD CONSTRAINT agents_allowed_scopes_known_values
+          CHECK (allowed_scopes <@ ARRAY['read:records', 'read:search', 'verify', 'oracle:read']::text[]);
+      `,
+      apiReadmeMarkdown: '`read:records`, `read:search`, `verify`, `oracle:read`',
+      v2MigrationMarkdown: '## Authentication\n`read:records`, `read:search`',
+      v1OpenApiYaml: `
+        /verify:
+          get:
+            summary: Verify endpoint
+        x-arkova-canonical-scopes:
+          - read:records
+          - read:search
+          - verify
+          - oracle:read
+          - usage
+      `,
+    });
+
+    expect(violations).toEqual([
+      {
+        surface: 'database api_keys_scopes_known_values CHECK constraint',
+        detail: 'extra: batch | expected: read:records, read:search, verify, oracle:read | actual: read:records, read:search, verify, oracle:read, batch',
+      },
+      {
+        surface: 'docs/api/openapi.yaml x-arkova-canonical-scopes',
+        detail: 'extra: usage | expected: read:records, read:search, verify, oracle:read | actual: read:records, read:search, verify, oracle:read, usage',
       },
     ]);
   });
