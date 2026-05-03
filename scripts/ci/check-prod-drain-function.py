@@ -54,6 +54,18 @@ WITH fn AS (
 SELECT * FROM fn;
 """
 
+SIGNATURE_QUERY = r"""
+SELECT
+  pg_get_function_identity_arguments(p.oid) AS args,
+  p.prosecdef,
+  p.proconfig
+FROM pg_proc p
+JOIN pg_namespace n ON n.oid = p.pronamespace
+WHERE n.nspname = 'public'
+  AND p.proname = 'drain_submitted_to_secured_for_tx'
+ORDER BY args;
+"""
+
 
 def fail(message: str) -> None:
   print(f"::error title=Prod drain function check failed::{message}", file=sys.stderr)
@@ -75,7 +87,7 @@ def rows_from_response(payload: object) -> list[dict[str, object]]:
   return []
 
 
-def execute_read_only_query() -> dict[str, object]:
+def execute_read_only_query(query: str) -> list[dict[str, object]]:
   if not TOKEN:
     if os.environ.get("GITHUB_EVENT_NAME") == "pull_request":
       print(
@@ -90,10 +102,13 @@ def execute_read_only_query() -> dict[str, object]:
 
   request = urllib.request.Request(
     f"https://api.supabase.com/v1/projects/{PROJECT_REF}/database/query/read-only",
-    data=json.dumps({"query": QUERY}).encode("utf-8"),
+    data=json.dumps({"query": query}).encode("utf-8"),
     headers={
       "Authorization": f"Bearer {TOKEN}",
       "Content-Type": "application/json",
+      # Supabase sits behind Cloudflare; Python's default urllib user-agent can
+      # be rejected with 403/1010 even when the token and query are valid.
+      "User-Agent": "arkova-ci-prod-drain-check/1.0",
     },
     method="POST",
   )
@@ -121,10 +136,7 @@ def execute_read_only_query() -> dict[str, object]:
   except json.JSONDecodeError as error:
     fail(f"Supabase SQL response was not JSON: {error}")
 
-  rows = rows_from_response(payload)
-  if len(rows) != 1:
-    fail(f"Expected exactly one drain function row in prod; got {len(rows)}")
-  return rows[0]
+  return rows_from_response(payload)
 
 
 def normalized_sql(sql: str) -> str:
@@ -156,7 +168,21 @@ def main() -> None:
     if needle not in migration_sql:
       fail(f"Local migration is missing required grant posture: {needle}")
 
-  row = execute_read_only_query()
+  rows = execute_read_only_query(QUERY)
+  if len(rows) != 1:
+    present_rows = execute_read_only_query(SIGNATURE_QUERY)
+    signatures = "; ".join(str(row.get("args") or "<unknown>") for row in present_rows)
+    if not signatures:
+      signatures = "none"
+    fail(
+      "Expected exactly one prod drain function with the 6-argument "
+      "p_confirmations signature from migration 0283; got "
+      f"{len(rows)}. Present drain function signatures: {signatures}. "
+      "Apply/reconcile 0283_drain_submitted_to_secured_helper before "
+      "merging worker code that calls the new signature."
+    )
+
+  row = rows[0]
   definition = str(row.get("definition") or "")
   if not definition:
     fail("pg_get_functiondef returned an empty function body")
