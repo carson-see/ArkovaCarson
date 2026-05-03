@@ -70,11 +70,20 @@ ANCHOR_CONFIDENCE_THRESHOLD=0.4
 
 ## Verification API (worker only)
 ```bash
-ENABLE_VERIFICATION_API=false
+ENABLE_VERIFICATION_API=false       # legacy config input only; runtime gate reads switchboard_flags via get_flag
 API_KEY_HMAC_SECRET=
 CORS_ALLOWED_ORIGINS=*
 INTEGRATION_STATE_HMAC_SECRET=      # SCRUM-1236: dedicated HMAC secret for OAuth `state` signing (Drive, GRC). Worker fails closed if unset (no fallback to SUPABASE_JWT_SECRET).
 ```
+
+`/api/v1/*` and `/api/v2/*` verification routes are controlled by the
+`ENABLE_VERIFICATION_API` row in `switchboard_flags`, read through the database
+`get_flag` RPC. The worker does not use the `ENABLE_VERIFICATION_API`
+environment variable as a fallback at request time; if the switchboard read
+fails or returns a non-boolean value, the API fails closed with HTTP 503 and
+`Retry-After: 60`. Flag reads are cached for 60 seconds, so switchboard changes
+can take up to one minute to propagate to a hot worker process. Local/CI seed
+data sets the switchboard row to `true`.
 
 ## Cron auth
 ```bash
@@ -419,4 +428,3 @@ CHAIN_API_URL=
 CHAIN_API_KEY=
 CHAIN_NETWORK=                      # "testnet" | "mainnet"
 ```
-
