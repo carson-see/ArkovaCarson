@@ -11,7 +11,7 @@ That module feeds:
 - worker route scope checks,
 - frontend scope labels and badges,
 - the frontend create-key picker,
-- the SQL CHECK constraint in `supabase/migrations/0285_api_key_scope_vocabulary.sql`.
+- the SQL CHECK constraint in `supabase/migrations/0287_api_key_scope_vocabulary.sql`.
 
 ## API v2 Scopes
 
@@ -40,7 +40,7 @@ These remain accepted for backward compatibility. They are displayable but not o
 
 Short aliases such as `batch` and `usage` are not canonical API key scopes and should not be newly stored.
 
-Historical agent delegation aliases `attest` and `oracle` are also non-canonical. Migration `0285_api_key_scope_vocabulary.sql` normalizes existing agent rows from `attest` to `attestations:write` and from `oracle` to `oracle:read`; new agent registrations validate against the API key vocabulary.
+Historical agent delegation aliases `attest` and `oracle` are also non-canonical. Migration `0287_api_key_scope_vocabulary.sql` normalizes existing agent rows from `attest` to `attestations:write` and from `oracle` to `oracle:read`; new agent registrations validate against the API key vocabulary.
 
 ## Accepted Compliance And Management Scopes
 
