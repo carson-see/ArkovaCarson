@@ -73,6 +73,12 @@ export const CREDENTIAL_TYPE_LABELS = {
   MEDICAL: 'Medical Record',
   MILITARY: 'Military Record',
   IDENTITY: 'Identity Document',
+  ACCREDITATION: 'Accreditation',
+  // SCRUM-863 / SCRUM-1623 — pre/post-signing contract anchors. UI copy
+  // uses neutral terminology ("Contract — Unsigned" / "Contract — Signed")
+  // per CLAUDE.md §1.3 banned-words list (no "Wallet", "Crypto", etc.).
+  CONTRACT_PRESIGNING: 'Contract — Unsigned',
+  CONTRACT_POSTSIGNING: 'Contract — Signed',
   OTHER: 'Other',
 } as const;
 
