@@ -23,12 +23,37 @@ import { recoverStuckBroadcasts } from '../jobs/broadcast-recovery.js';
 import { trackOperation } from './lifecycle.js';
 import { withCronMonitoring } from '../utils/sentry.js';
 
-export function setupScheduledJobs(chainInitialized: boolean): void {
-  if (config.nodeEnv === 'production') {
-    logger.info('In-process cron disabled in production; Cloud Scheduler owns worker job cadence');
+type CronTask = Parameters<typeof cron.schedule>[1];
+
+const CLOUD_SCHEDULER_OWNED_PRODUCTION_JOBS = new Set([
+  'recover-stuck-broadcasts',
+  'process-pending-anchors',
+  'process-batch-anchors',
+  'check-submitted-confirmations',
+  'process-revoked-anchors',
+  'process-webhook-retries',
+  'process-monthly-credits',
+  'cleanup-expired-data',
+  'detect-reorgs',
+  'monitor-stuck-transactions',
+  'rebroadcast-dropped-transactions',
+  'consolidate-utxos',
+  'monitor-fee-rates',
+]);
+
+function scheduleInProcess(jobName: string, expression: string, task: CronTask): void {
+  if (config.nodeEnv === 'production' && CLOUD_SCHEDULER_OWNED_PRODUCTION_JOBS.has(jobName)) {
+    logger.info(
+      { jobName, expression },
+      'Skipping in-process cron in production; Cloud Scheduler owns this job',
+    );
     return;
   }
 
+  cron.schedule(expression, task);
+}
+
+export function setupScheduledJobs(chainInitialized: boolean): void {
   // Sentry cron monitoring wrappers (Phase 4, Item 18)
   const monitoredConfirmationCheck = withCronMonitoring(
     'check-confirmations', '*/2 * * * *', checkSubmittedConfirmations,
@@ -43,7 +68,7 @@ export function setupScheduledJobs(chainInitialized: boolean): void {
   // RACE-1: Recover stuck BROADCASTING anchors every 2 minutes.
   // Runs in all environments — if a worker crashes mid-broadcast, this resets
   // the anchor to PENDING so it can be re-processed.
-  cron.schedule('*/2 * * * *', async () => {
+  scheduleInProcess('recover-stuck-broadcasts', '*/2 * * * *', async () => {
     try {
       const result = await trackOperation(recoverStuckBroadcasts());
       if (result.recovered > 0) {
@@ -59,7 +84,7 @@ export function setupScheduledJobs(chainInitialized: boolean): void {
 
   // Process pending anchors every minute (all environments including production)
   if (chainInitialized) {
-    cron.schedule('* * * * *', async () => {
+    scheduleInProcess('process-pending-anchors', '* * * * *', async () => {
       logger.debug('Running scheduled anchor processing (in-process cron)');
       try {
         await trackOperation(processPendingAnchors());
@@ -70,7 +95,7 @@ export function setupScheduledJobs(chainInitialized: boolean): void {
 
     // Batch anchor processing every 10 minutes
     const batchInterval = config.batchAnchorIntervalMinutes ?? 10;
-    cron.schedule(`*/${batchInterval} * * * *`, async () => {
+    scheduleInProcess('process-batch-anchors', `*/${batchInterval} * * * *`, async () => {
       logger.debug('Running scheduled batch anchor processing (in-process cron)');
       try {
         await trackOperation(processBatchAnchors());
@@ -83,7 +108,7 @@ export function setupScheduledJobs(chainInitialized: boolean): void {
   }
 
   // BETA-01: Check SUBMITTED anchors for blockchain confirmation every 2 minutes
-  cron.schedule('*/2 * * * *', async () => {
+  scheduleInProcess('check-submitted-confirmations', '*/2 * * * *', async () => {
     logger.debug('Running scheduled confirmation check');
     try {
       const result = await trackOperation(monitoredConfirmationCheck());
@@ -96,7 +121,7 @@ export function setupScheduledJobs(chainInitialized: boolean): void {
   });
 
   // BETA-02: Process revoked anchors every 5 minutes
-  cron.schedule('*/5 * * * *', async () => {
+  scheduleInProcess('process-revoked-anchors', '*/5 * * * *', async () => {
     logger.debug('Running scheduled revocation processing');
     try {
       const result = await trackOperation(monitoredRevocations());
@@ -109,7 +134,7 @@ export function setupScheduledJobs(chainInitialized: boolean): void {
   });
 
   // Process webhook retries every 2 minutes
-  cron.schedule('*/2 * * * *', async () => {
+  scheduleInProcess('process-webhook-retries', '*/2 * * * *', async () => {
     logger.debug('Running scheduled webhook retry processing');
     try {
       const retried = await trackOperation(monitoredWebhookRetries());
@@ -122,7 +147,7 @@ export function setupScheduledJobs(chainInitialized: boolean): void {
   });
 
   // Monthly credit allocation on 1st at midnight
-  cron.schedule('0 0 1 * *', async () => {
+  scheduleInProcess('process-monthly-credits', '0 0 1 * *', async () => {
     logger.info('Running monthly credit allocation');
     try {
       const processed = await processMonthlyCredits();
@@ -133,7 +158,7 @@ export function setupScheduledJobs(chainInitialized: boolean): void {
   });
 
   // PII-03: GDPR data retention cleanup — daily at 2:00 AM UTC
-  cron.schedule('0 2 * * *', async () => {
+  scheduleInProcess('cleanup-expired-data', '0 2 * * *', async () => {
     logger.info('Running GDPR data retention cleanup');
     try {
       const { data: result, error } = await callRpc(db, 'cleanup_expired_data');
@@ -149,7 +174,7 @@ export function setupScheduledJobs(chainInitialized: boolean): void {
 
   // Bitcoin Audit: Chain maintenance jobs
   // CRIT-2: Reorg detection every 10 minutes
-  cron.schedule('*/10 * * * *', async () => {
+  scheduleInProcess('detect-reorgs', '*/10 * * * *', async () => {
     try {
       const result = await trackOperation(detectReorgs());
       if (result.reorgsDetected > 0) {
@@ -161,7 +186,7 @@ export function setupScheduledJobs(chainInitialized: boolean): void {
   });
 
   // NET-1: Stuck TX monitor every 10 minutes
-  cron.schedule('*/10 * * * *', async () => {
+  scheduleInProcess('monitor-stuck-transactions', '*/10 * * * *', async () => {
     try {
       const result = await trackOperation(monitorStuckTransactions());
       if (result.stuck > 0) {
@@ -173,7 +198,7 @@ export function setupScheduledJobs(chainInitialized: boolean): void {
   });
 
   // NET-3: Rebroadcast dropped TXs every 6 hours
-  cron.schedule('0 */6 * * *', async () => {
+  scheduleInProcess('rebroadcast-dropped-transactions', '0 */6 * * *', async () => {
     try {
       await trackOperation(rebroadcastDroppedTransactions());
     } catch (error) {
@@ -182,7 +207,7 @@ export function setupScheduledJobs(chainInitialized: boolean): void {
   });
 
   // INEFF-1: UTXO consolidation daily at 4:00 AM UTC
-  cron.schedule('0 4 * * *', async () => {
+  scheduleInProcess('consolidate-utxos', '0 4 * * *', async () => {
     try {
       await trackOperation(consolidateUtxos());
     } catch (error) {
@@ -191,7 +216,7 @@ export function setupScheduledJobs(chainInitialized: boolean): void {
   });
 
   // NET-6: Fee monitoring every 10 minutes
-  cron.schedule('*/10 * * * *', async () => {
+  scheduleInProcess('monitor-fee-rates', '*/10 * * * *', async () => {
     try {
       await trackOperation(monitorFeeRates());
     } catch (error) {

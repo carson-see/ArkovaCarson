@@ -54,7 +54,7 @@ describe('setupScheduledJobs', () => {
     expect(mockCronSchedule).toHaveBeenCalled();
   });
 
-  it('does not register in-process cron in production', async () => {
+  it('does not register Cloud Scheduler-owned cron in production', async () => {
     mockConfig.nodeEnv = 'production';
     const { setupScheduledJobs } = await import('./scheduled.js');
 
@@ -62,7 +62,8 @@ describe('setupScheduledJobs', () => {
 
     expect(mockCronSchedule).not.toHaveBeenCalled();
     expect(mockLogger.info).toHaveBeenCalledWith(
-      'In-process cron disabled in production; Cloud Scheduler owns worker job cadence',
+      { jobName: 'process-pending-anchors', expression: '* * * * *' },
+      'Skipping in-process cron in production; Cloud Scheduler owns this job',
     );
   });
 });
