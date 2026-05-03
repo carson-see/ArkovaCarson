@@ -1008,7 +1008,7 @@
         "worker-config": "false"
       },
       "examples": [
-        "services/worker/src/api/v1/anchor-submit.ts:106",
+        "services/worker/src/api/v1/anchor-submit.ts:168",
         "services/worker/src/config.ts:540",
         "services/worker/src/middleware/flagRegistry.ts:29"
       ],
@@ -1115,7 +1115,7 @@
       },
       "examples": [
         ".env.example:104",
-        ".github/workflows/ci.yml:874",
+        ".github/workflows/ci.yml:974",
         ".github/workflows/deploy-worker.yml:140"
       ],
       "files": [
@@ -1638,7 +1638,7 @@
       },
       "examples": [
         ".env.example:63",
-        ".github/workflows/ci.yml:873",
+        ".github/workflows/ci.yml:973",
         ".github/workflows/deploy-worker.yml:140"
       ],
       "files": [
@@ -1921,7 +1921,7 @@
       },
       "examples": [
         ".env.example:22",
-        ".github/workflows/ci.yml:872",
+        ".github/workflows/ci.yml:972",
         ".github/workflows/deploy-worker.yml:140"
       ],
       "files": [
