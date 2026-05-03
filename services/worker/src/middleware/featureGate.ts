@@ -3,7 +3,8 @@
  *
  * Gates /api/v1/* endpoints behind the ENABLE_VERIFICATION_API switchboard flag.
  * Returns HTTP 503 when the flag is false. Uses TTL-based cache (60s) to avoid
- * per-request DB queries.
+ * per-request DB queries. The legacy ENABLE_VERIFICATION_API env value is not
+ * a runtime fallback for this gate; DB read failures fail closed.
  *
  * The /health endpoint is ALWAYS available regardless of flag state.
  */
@@ -11,6 +12,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { db } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
+import { callRpc } from '../utils/rpc.js';
 
 interface FlagCache {
   value: boolean;
@@ -22,7 +24,8 @@ let flagCache: FlagCache | null = null;
 
 /**
  * Read the ENABLE_VERIFICATION_API flag with TTL caching.
- * Falls back to false (disabled) if the flag can't be read.
+ * Uses get_flag() so production/local switchboard column differences stay
+ * behind the database RPC. Fail closed if the switchboard can't be read.
  */
 export async function isVerificationApiEnabled(): Promise<boolean> {
   const now = Date.now();
@@ -31,29 +34,21 @@ export async function isVerificationApiEnabled(): Promise<boolean> {
     return flagCache.value;
   }
 
-  try {
-    const { data, error } = await db
-      .from('switchboard_flags')
-      .select('value')
-      .eq('id', 'ENABLE_VERIFICATION_API')
-      .single() as { data: { value: boolean } | null; error: unknown };
+  const { data, error } = await callRpc<boolean>(db, 'get_flag', {
+    p_flag_key: 'ENABLE_VERIFICATION_API',
+  });
 
-    if (error || !data) {
-      // Fall back to env var if DB flag not found
-      const envValue = process.env.ENABLE_VERIFICATION_API === 'true';
-      logger.warn({ error, envFallback: envValue }, 'Failed to read ENABLE_VERIFICATION_API flag from DB, falling back to env');
-      flagCache = { value: envValue, expiresAt: now + FLAG_CACHE_TTL_MS };
-      return envValue;
-    }
-
-    const enabled = data.value === true;
-    flagCache = { value: enabled, expiresAt: now + FLAG_CACHE_TTL_MS };
-    return enabled;
-  } catch (err) {
-    logger.error({ error: err }, 'Error reading switchboard flag');
+  if (error || typeof data !== 'boolean') {
+    logger.warn(
+      { error, flagKey: 'ENABLE_VERIFICATION_API' },
+      'Failed to read ENABLE_VERIFICATION_API flag from DB, failing closed',
+    );
     flagCache = { value: false, expiresAt: now + FLAG_CACHE_TTL_MS };
     return false;
   }
+
+  flagCache = { value: data, expiresAt: now + FLAG_CACHE_TTL_MS };
+  return data;
 }
 
 /**
