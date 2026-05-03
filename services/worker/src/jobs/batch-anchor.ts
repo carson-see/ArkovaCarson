@@ -63,8 +63,24 @@ export const MAX_ANCHOR_AGE_MS = 3 * 60 * 60 * 1000; // 3 hours
  */
 export const ABSOLUTE_FEE_CAP_SAT_PER_VB = 200;
 
+const CLAIM_PENDING_ANCHORS_MIGRATION_COMPAT_SUBSTRINGS = [
+  'function not found',
+  'could not find the function',
+  'does not exist',
+  'schema cache',
+  'no function matches',
+] as const;
+
+interface OrgPendingThresholdProbe {
+  pendingThresholdSentinel: number;
+  pendingThreshold: number;
+  thresholdCrossed: boolean;
+}
+
 function claimErrorSummary(error: unknown): string {
-  if (!error || typeof error !== 'object') return String(error ?? '');
+  if (error == null) return '';
+  if (typeof error === 'string') return error.toLowerCase();
+  if (typeof error !== 'object') return String(error).toLowerCase();
   const record = error as Record<string, unknown>;
   return [record.code, record.message, record.details, record.hint]
     .filter((value): value is string => typeof value === 'string')
@@ -72,24 +88,22 @@ function claimErrorSummary(error: unknown): string {
     .toLowerCase();
 }
 
-function isClaimPendingAnchorsMigrationCompatError(error: unknown): boolean {
+function claimPendingAnchorsMigrationCompatMatch(error: unknown): string | null {
   const summary = claimErrorSummary(error);
-  if (!summary) return false;
+  if (!summary) return null;
 
   const code = typeof error === 'object' && error !== null
     ? (error as Record<string, unknown>).code
     : undefined;
   const knownMissingFunctionCode = code === 'PGRST202' || code === '42883';
-  if (!knownMissingFunctionCode) return false;
+  if (!knownMissingFunctionCode) return null;
 
   const mentionsClaimRpc = summary.includes('claim_pending_anchors') || summary.includes('p_org_id');
-  if (!mentionsClaimRpc) return false;
+  if (!mentionsClaimRpc) return null;
 
-  return summary.includes('function not found')
-    || summary.includes('could not find the function')
-    || summary.includes('does not exist')
-    || summary.includes('schema cache')
-    || summary.includes('no function matches');
+  return CLAIM_PENDING_ANCHORS_MIGRATION_COMPAT_SUBSTRINGS.find((substring) => (
+    summary.includes(substring)
+  )) ?? null;
 }
 
 // =============================================================================
@@ -256,7 +270,7 @@ async function _processBatchAnchorsInner(opts: ProcessBatchAnchorOptions = {}): 
         .order('created_at', { ascending: true })
         .limit(1)
         .single(),
-      orgId ? getOrgPendingThresholdSnapshot(orgId) : callRpc<FastCountsRpc>(db, 'get_anchor_status_counts_fast'),
+      orgId ? getOrgPendingThresholdProbe(orgId) : callRpc<FastCountsRpc>(db, 'get_anchor_status_counts_fast'),
     ]);
 
     const stats = oldestRes.data;
@@ -277,10 +291,12 @@ async function _processBatchAnchorsInner(opts: ProcessBatchAnchorOptions = {}): 
     // batch on every cron tick during exactly the RPC-degraded scenario
     // this hardening is for — silently breaking the
     // "no anchor waits more than MAX_ANCHOR_AGE_MS" SLA documented at L78-79.
-    const pendingCount = countsRes.data?.PENDING ?? 1;
+    const pendingCount = orgId
+      ? (countsRes.data as OrgPendingThresholdProbe | null)?.pendingThresholdSentinel ?? 1
+      : (countsRes.data as FastCountsRpc | null)?.PENDING ?? 1;
     const pendingCountLogContext = orgId
       ? {
-          pendingCountForTrigger: pendingCount,
+          pendingThresholdSentinel: pendingCount,
           pendingCountSource: 'org_threshold_probe',
           pendingThreshold: MIN_BATCH_THRESHOLD,
           orgPendingThresholdCrossed: pendingCount >= MIN_BATCH_THRESHOLD,
@@ -358,8 +374,12 @@ async function _processBatchAnchorsInner(opts: ProcessBatchAnchorOptions = {}): 
 
     if (claimError) {
       if (allClaimed.length === 0) {
-        if (isClaimPendingAnchorsMigrationCompatError(claimError)) {
-          logger.warn({ error: claimError }, 'claim_pending_anchors RPC unavailable — falling back to legacy batch');
+        const migrationCompatMatch = claimPendingAnchorsMigrationCompatMatch(claimError);
+        if (migrationCompatMatch) {
+          logger.warn(
+            { error: claimError, migrationCompatMatch },
+            'claim_pending_anchors RPC unavailable — falling back to legacy batch',
+          );
           return legacyProcessBatchAnchors(orgId ?? undefined);
         }
         logger.error({ error: claimError }, 'claim_pending_anchors RPC failed — skipping batch without legacy fallback');
@@ -505,7 +525,7 @@ async function _processBatchAnchorsInner(opts: ProcessBatchAnchorOptions = {}): 
   };
 }
 
-async function getOrgPendingThresholdSnapshot(orgId: string): Promise<{ data: FastCountsRpc | null; error: unknown }> {
+async function getOrgPendingThresholdProbe(orgId: string): Promise<{ data: OrgPendingThresholdProbe | null; error: unknown }> {
   try {
     // We only need to know whether the org queue crossed Trigger B's
     // threshold; avoid exact counts because they scan the hot anchors table.
@@ -520,15 +540,12 @@ async function getOrgPendingThresholdSnapshot(orgId: string): Promise<{ data: Fa
       .range(MIN_BATCH_THRESHOLD - 1, MIN_BATCH_THRESHOLD - 1)
       .maybeSingle();
     if (error) return { data: null, error };
-    const pendingCount = data ? MIN_BATCH_THRESHOLD : 1;
+    const pendingThresholdSentinel = data ? MIN_BATCH_THRESHOLD : 1;
     return {
       data: {
-        PENDING: pendingCount,
-        SUBMITTED: 0,
-        BROADCASTING: 0,
-        SECURED: 0,
-        REVOKED: 0,
-        total: pendingCount,
+        pendingThresholdSentinel,
+        pendingThreshold: MIN_BATCH_THRESHOLD,
+        thresholdCrossed: pendingThresholdSentinel >= MIN_BATCH_THRESHOLD,
       },
       error: null,
     };

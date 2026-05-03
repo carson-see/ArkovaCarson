@@ -205,12 +205,13 @@ describe('processBatchAnchors', () => {
 
   it('falls back to legacy path when claim RPC is migration-incompatible', async () => {
     mockPendingBacklogReady();
+    const error = {
+      code: 'PGRST202',
+      message: 'Could not find the function public.claim_pending_anchors in the schema cache',
+    };
     mockDbRpc.mockResolvedValue({
       data: null,
-      error: {
-        code: 'PGRST202',
-        message: 'Could not find the function public.claim_pending_anchors in the schema cache',
-      },
+      error,
     });
 
     const result = await processBatchAnchors();
@@ -218,7 +219,41 @@ describe('processBatchAnchors', () => {
     // Legacy path also returns 0 since select mock returns empty
     expect(result.processed).toBe(0);
     expect(mockLogger.warn).toHaveBeenCalledWith(
-      expect.objectContaining({ error: expect.any(Object) }),
+      expect.objectContaining({ error, migrationCompatMatch: 'could not find the function' }),
+      expect.stringContaining('falling back to legacy'),
+    );
+  });
+
+  it.each([
+    [
+      'function not found',
+      { code: 'PGRST202', message: 'Function not found: public.claim_pending_anchors' },
+    ],
+    [
+      'could not find the function',
+      { code: 'PGRST202', message: 'Could not find the function public.claim_pending_anchors in the schema cache' },
+    ],
+    [
+      'does not exist',
+      { code: '42883', message: 'function public.claim_pending_anchors(uuid) does not exist' },
+    ],
+    [
+      'schema cache',
+      { code: 'PGRST202', details: 'schema cache missing p_org_id for claim_pending_anchors' },
+    ],
+    [
+      'no function matches',
+      { code: '42883', hint: 'No function matches the given name and argument types for claim_pending_anchors' },
+    ],
+  ])('logs the matched migration compatibility substring for "%s"', async (migrationCompatMatch, error) => {
+    mockPendingBacklogReady();
+    mockDbRpc.mockResolvedValue({ data: null, error });
+
+    const result = await processBatchAnchors({ force: true, orgId: 'org-1' });
+
+    expect(result.processed).toBe(0);
+    expect(mockLogger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ error, migrationCompatMatch }),
       expect.stringContaining('falling back to legacy'),
     );
   });
@@ -351,7 +386,7 @@ describe('processBatchAnchors', () => {
     }));
     expect(mockLogger.info).toHaveBeenCalledWith(
       expect.objectContaining({
-        pendingCountForTrigger: MIN_BATCH_THRESHOLD,
+        pendingThresholdSentinel: MIN_BATCH_THRESHOLD,
         pendingCountSource: 'org_threshold_probe',
         pendingThreshold: MIN_BATCH_THRESHOLD,
         orgPendingThresholdCrossed: true,
