@@ -9,7 +9,7 @@
  *   npx tsx scripts/run-training.ts --gemini-only  # Gemini only
  */
 
-import { writeFileSync, mkdirSync, existsSync } from 'node:fs';
+import { writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
 import 'dotenv/config';

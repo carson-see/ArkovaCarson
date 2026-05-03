@@ -118,8 +118,12 @@ docs/bugs/*.pdf
 docs/eval/*.json
 services/worker/docs/eval/*.json
 
-# Training data (large JSONL files)
-services/worker/training-data/
+# Training data (large JSONL files) — exclude contents but allow committed fixture set.
+# Git can't re-include files under a fully-ignored directory, so use `dir/*` pattern
+# with negations rather than `dir/`. See SCRUM-1549.
+services/worker/training-data/*
+!services/worker/training-data/fixtures/
+!services/worker/training-data/.gitkeep
 
 # Playwright reports
 playwright-report/

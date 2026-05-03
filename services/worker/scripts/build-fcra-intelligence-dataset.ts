@@ -400,7 +400,7 @@ for (const entry of ALL_ENTRIES) {
     JSON.parse(example.messages[2].content); // round-trip
     validated.push(entry);
     validCount++;
-  } catch (e) {
+  } catch {
     console.warn(`   ⚠️ skipped invalid: ${entry.query.slice(0, 60)}`);
   }
 }
