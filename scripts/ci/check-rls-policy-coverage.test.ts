@@ -59,6 +59,41 @@ describe('check-rls-policy-coverage', () => {
     expect(run(repoRoot).code).toBe(0);
   });
 
+  it('passes when an idempotent DO block creates the policy', () => {
+    writeMigration(
+      repoRoot,
+      '0001_do_block_policy.sql',
+      `CREATE TABLE portfolio (id int);\n${rlsForceFor('portfolio')}\nDO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_policies WHERE policyname = 'portfolio_owner' AND tablename = 'portfolio') THEN
+    CREATE POLICY "portfolio_owner" ON portfolio FOR ALL USING (true) WITH CHECK (true);
+  END IF;
+END $$;`,
+    );
+
+    expect(run(repoRoot).code).toBe(0);
+  });
+
+  it('passes when a DO block executes dollar-quoted policy SQL', () => {
+    writeMigration(
+      repoRoot,
+      '0001_execute_policy.sql',
+      `CREATE TABLE queue (id int);\n${rlsForceFor('queue')}\nDO $$
+BEGIN
+  EXECUTE $POL$
+    CREATE POLICY queue_no_user_access
+      ON public.queue
+      FOR ALL
+      TO authenticated, anon
+      USING (false)
+      WITH CHECK (false)
+  $POL$;
+END $$;`,
+    );
+
+    expect(run(repoRoot).code).toBe(0);
+  });
+
   it('passes when DELIBERATE deny-all comment is present', () => {
     writeMigration(
       repoRoot,
@@ -119,6 +154,23 @@ describe('check-rls-policy-coverage', () => {
       `DO $$
 BEGIN
   RAISE NOTICE 'CREATE POLICY foo_policy ON foo USING (true)';
+END $$;
+CREATE TABLE foo (id int);
+ALTER TABLE foo ENABLE ROW LEVEL SECURITY;`,
+    );
+
+    const { code, stderr } = run(repoRoot);
+    expect(code).toBe(1);
+    expect(stderr).toContain('foo');
+  });
+
+  it('does not accept policy text in non-executed dollar-quoted strings inside DO blocks', () => {
+    writeMigration(
+      repoRoot,
+      '0001_fake_policy_in_dollar_string.sql',
+      `DO $$
+BEGIN
+  RAISE NOTICE $msg$CREATE POLICY foo_policy ON foo USING (true)$msg$;
 END $$;
 CREATE TABLE foo (id int);
 ALTER TABLE foo ENABLE ROW LEVEL SECURITY;`,

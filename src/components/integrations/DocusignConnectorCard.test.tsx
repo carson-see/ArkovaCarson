@@ -3,7 +3,8 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { DocusignConnectorCard } from './DocusignConnectorCard';
 
 const supabaseQuery = {
@@ -91,6 +92,7 @@ describe('DocusignConnectorCard', () => {
   });
 
   it('redirects to the DocuSign authorization URL on Connect click', async () => {
+    const user = userEvent.setup();
     workerFetch.mockResolvedValue({
       ok: true,
       json: () => Promise.resolve({ authorizationUrl: 'https://account-d.docusign.com/oauth/auth?x=1', url: 'https://account-d.docusign.com/oauth/auth?x=1' }),
@@ -99,7 +101,8 @@ describe('DocusignConnectorCard', () => {
     render(<DocusignConnectorCard orgId={ORG_ID} />);
 
     const connectButton = await screen.findByRole('button', { name: /connect/i });
-    fireEvent.click(connectButton);
+    await waitFor(() => expect(connectButton).toBeEnabled());
+    await user.click(connectButton);
 
     await waitFor(() => {
       expect(workerFetch).toHaveBeenCalledWith(
@@ -113,6 +116,7 @@ describe('DocusignConnectorCard', () => {
   });
 
   it('surfaces a worker error message instead of redirecting on failure', async () => {
+    const user = userEvent.setup();
     workerFetch.mockResolvedValue({
       ok: false,
       json: () => Promise.resolve({ error: 'Must be org admin to connect DocuSign' }),
@@ -121,7 +125,8 @@ describe('DocusignConnectorCard', () => {
     render(<DocusignConnectorCard orgId={ORG_ID} />);
 
     const connectButton = await screen.findByRole('button', { name: /connect/i });
-    fireEvent.click(connectButton);
+    await waitFor(() => expect(connectButton).toBeEnabled());
+    await user.click(connectButton);
 
     await waitFor(() => {
       expect(screen.getByText(/must be org admin to connect docusign/i)).toBeInTheDocument();

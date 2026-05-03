@@ -60,15 +60,95 @@ type PolicySource = {
   literalsHidden: string;
 };
 
+type DollarQuotedBlock = {
+  delimiter: string;
+  body: string;
+  end: number;
+};
+
 const ALTER_TABLE_PREFIX_RE = /ALTER\s+TABLE\s+(?:IF\s+EXISTS\s+)?/gi;
 const PUBLIC_SCHEMA_QUALIFIER_RE = /(?:"public"|public)\./iy;
 const SQL_IDENTIFIER_RE = /"[^"]+"|\w+/y;
 const ENABLE_OR_FORCE_RLS_RE = /\s+(?:ENABLE|FORCE)\s+ROW\s+LEVEL\s+SECURITY\b/iy;
+const DOLLAR_QUOTE_START_RE = /\$([A-Za-z_]\w*)?\$/y;
+const DO_BLOCK_RE = /\bDO\s+/gi;
+const EXECUTE_PREFIX_RE = /(?:^|[\s;])EXECUTE\s*$/i;
+
+function blankPreservingNewlines(text: string): string {
+  return text.replaceAll(/[^\n]/g, ' ');
+}
+
+function readDollarQuotedBlock(sql: string, start: number): DollarQuotedBlock | null {
+  DOLLAR_QUOTE_START_RE.lastIndex = start;
+  const open = DOLLAR_QUOTE_START_RE.exec(sql);
+  if (!open || open.index !== start) return null;
+
+  const delimiter = open[0];
+  const bodyStart = start + delimiter.length;
+  const bodyEnd = sql.indexOf(delimiter, bodyStart);
+  if (bodyEnd === -1) return null;
+
+  return {
+    delimiter,
+    body: sql.slice(bodyStart, bodyEnd),
+    end: bodyEnd + delimiter.length,
+  };
+}
+
+function previousKeywordIsExecute(output: string): boolean {
+  return EXECUTE_PREFIX_RE.test(output.slice(-80));
+}
+
+function sanitizePlpgsqlPolicySource(body: string): string {
+  let output = '';
+  let cursor = 0;
+
+  while (cursor < body.length) {
+    const executableDollarSql = readDollarQuotedBlock(body, cursor);
+    if (executableDollarSql) {
+      if (previousKeywordIsExecute(output)) {
+        output += stripSqlCommentsAndStringLiterals(executableDollarSql.body);
+      } else {
+        output += blankPreservingNewlines(executableDollarSql.body);
+      }
+      cursor = executableDollarSql.end;
+      continue;
+    }
+
+    output += body[cursor];
+    cursor += 1;
+  }
+
+  return stripSqlCommentsAndStringLiterals(output);
+}
+
+function extractExecutableDoPolicySource(sql: string): string {
+  const sources: string[] = [];
+
+  for (const match of sql.matchAll(DO_BLOCK_RE)) {
+    let cursor = match.index + match[0].length;
+    while (/\s/.test(sql[cursor] ?? '')) cursor += 1;
+
+    const block = readDollarQuotedBlock(sql, cursor);
+    if (!block) continue;
+
+    sources.push(sanitizePlpgsqlPolicySource(block.body));
+  }
+
+  return sources.join('\n');
+}
+
+function buildLiteralsHiddenPolicySource(sql: string, stripped: string): string {
+  return [
+    stripSqlCommentsAndStringLiterals(stripped),
+    extractExecutableDoPolicySource(sql),
+  ].join('\n');
+}
 
 function buildPolicySources(migrations: ReturnType<typeof loadMigrations>): PolicySource[] {
   return migrations.map((migration) => ({
     commentsVisible: stripSqlComments(migration.stripped),
-    literalsHidden: stripSqlCommentsAndStringLiterals(migration.stripped),
+    literalsHidden: buildLiteralsHiddenPolicySource(migration.sql, migration.stripped),
   }));
 }
 
