@@ -191,6 +191,11 @@ describe('featureGate middleware', () => {
         message: 'Verification API is not currently enabled',
         retry_after: 60,
       });
+      expect(res.json).toHaveBeenCalledWith({
+        error: 'service_unavailable',
+        message: 'Verification API is not currently enabled',
+        retry_after: 60,
+      });
     });
 
     it('returns 503 on DB failure when env not set (fail-closed)', async () => {
@@ -204,6 +209,11 @@ describe('featureGate middleware', () => {
       expect(next).not.toHaveBeenCalled();
       expect(res.setHeader).toHaveBeenCalledWith('Retry-After', '60');
       expect(res.status).toHaveBeenCalledWith(503);
+      expect(res.json).toHaveBeenCalledWith({
+        error: 'service_unavailable',
+        message: 'Verification API is not currently enabled',
+        retry_after: 60,
+      });
     });
 
     it('returns 503 on DB failure when env is true (fail-closed)', async () => {
