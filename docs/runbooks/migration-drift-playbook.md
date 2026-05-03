@@ -8,15 +8,18 @@
 
 ## What the check does
 
-Every push to `main` and every PR touching `supabase/migrations/**` diffs
-the local migration file list against the Supabase Management API's
+Every push to `main` and every PR to `main` runs the check and diffs the
+local migration file list against the Supabase Management API's
 applied-migrations set. Supabase's Management API may return Arkova's full
 filename (`0279_x402_payments_org_scoping`), just the description suffix
 (`x402_payments_org_scoping`), or an operator-applied Jira prefix
 (`scrum_1170_org_credits_and_allocations`) depending on how the migration
-was applied, so the check normalizes those forms before comparing. If any
-local file is missing in prod after that normalization, the check fails with
-the list of missing files.
+was applied, so the check normalizes those forms before comparing.
+
+On `main`, any local file missing in prod fails the check. On PRs, the
+check blocks only when that PR adds, modifies, or renames a migration that is
+missing in prod; pre-existing base-branch drift is reported as a warning and
+must stay tracked in SCRUM-908 until resolved.
 
 Read-only: the action never applies or modifies anything.
 

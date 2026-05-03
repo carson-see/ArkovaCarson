@@ -34,6 +34,28 @@ describe('openApiV2Spec', () => {
     expect(openApiV2Spec.components.schemas.ResourceDetail.properties).not.toHaveProperty('user_id');
   });
 
+  it('documents the implemented direct search aliases', () => {
+    const aliases = [
+      ['/organizations', 'search_organizations', '/search?type=org'],
+      ['/records', 'search_records', '/search?type=record'],
+      ['/fingerprints', 'search_fingerprints', '/search?type=fingerprint'],
+      ['/documents', 'search_documents', '/search?type=document'],
+    ] as const;
+
+    for (const [path, operationId, aliasTarget] of aliases) {
+      const operation = openApiV2Spec.paths[path].get;
+      expect(operation.operationId).toBe(operationId);
+      expect(operation['x-arkova-alias-for']).toBe(aliasTarget);
+      expect(Object.hasOwn(operation, 'x-agent-usage')).toBe(false);
+    }
+  });
+
+  it('keeps the search response schema aligned with the public response shape', () => {
+    const schema = openApiV2Spec.components.schemas.SearchResult;
+    expect(schema.required).toEqual(['type', 'public_id', 'score', 'snippet']);
+    expect(schema.properties).not.toHaveProperty('id');
+  });
+
   it('documents all v2 error responses as application/problem+json', () => {
     const responses = openApiV2Spec.components.responses;
     for (const key of ['ValidationError', 'AuthenticationRequired', 'InvalidScope', 'NotFound', 'RateLimited', 'InternalError'] as const) {

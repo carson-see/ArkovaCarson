@@ -197,34 +197,14 @@ const PROD_MAINNET_ENV = {
   ENABLE_PROD_NETWORK_ANCHORING: 'true',
 } as const;
 
-// R1-4 vars that leak forward via Object.assign(saved) restore. Each test
-// helper explicitly clears these at the top to guarantee hermetic isolation.
-const LEAKY_ENV_KEYS = [
-  'ENABLE_DRIVE_OAUTH',
-  'GOOGLE_OAUTH_CLIENT_ID',
-  'GOOGLE_OAUTH_CLIENT_SECRET',
-  'INTEGRATION_STATE_HMAC_SECRET',
-  'DOCUSIGN_INTEGRATION_KEY',
-  'DOCUSIGN_CLIENT_SECRET',
-  'DOCUSIGN_CONNECT_HMAC_SECRET',
-  'ADOBE_SIGN_CLIENT_SECRET',
-  'CHECKR_WEBHOOK_SECRET',
-  'VEREMARK_WEBHOOK_SECRET',
-  'ENABLE_VEREMARK_WEBHOOK',
-  'MIDDESK_API_KEY',
-  'MIDDESK_WEBHOOK_SECRET',
-  'BUILD_SHA',
-  'BITCOIN_TREASURY_WIF',
-  'GCP_KMS_KEY_RESOURCE_NAME',
-  'KMS_PROVIDER',
-];
-
 async function withEnv<T>(
   overrides: Record<string, string | undefined>,
   fn: () => Promise<T>,
 ): Promise<T> {
   const saved = { ...process.env };
-  for (const k of LEAKY_ENV_KEYS) delete process.env[k];
+  for (const key of Object.keys(process.env)) {
+    delete process.env[key];
+  }
   Object.assign(process.env, testEnv);
   for (const [k, v] of Object.entries(overrides)) {
     if (v === undefined) delete process.env[k];
@@ -234,6 +214,9 @@ async function withEnv<T>(
   try {
     return await fn();
   } finally {
+    for (const key of Object.keys(process.env)) {
+      delete process.env[key];
+    }
     Object.assign(process.env, saved);
     vi.resetModules();
   }
@@ -400,6 +383,23 @@ describe('SCRUM-1258 vendor connector cross-field guards', () => {
     });
   });
 
+  it('rejects production with ENABLE_DOCUSIGN_OAUTH=true and missing DocuSign OAuth secrets', async () => {
+    await expectConfigToReject({
+      ...PROD_SIGNET,
+      ENABLE_DOCUSIGN_OAUTH: 'true',
+      DOCUSIGN_INTEGRATION_KEY: undefined,
+      DOCUSIGN_CLIENT_SECRET: undefined,
+    });
+  });
+
+  it('rejects production with ENABLE_DOCUSIGN_WEBHOOK=true and missing DOCUSIGN_CONNECT_HMAC_SECRET', async () => {
+    await expectConfigToReject({
+      ...PROD_SIGNET,
+      ENABLE_DOCUSIGN_WEBHOOK: 'true',
+      DOCUSIGN_CONNECT_HMAC_SECRET: undefined,
+    });
+  });
+
   it('rejects when ENABLE_VEREMARK_WEBHOOK=true but VEREMARK_WEBHOOK_SECRET is missing', async () => {
     await expectConfigToReject({
       ENABLE_VEREMARK_WEBHOOK: 'true',
@@ -458,6 +458,10 @@ describe('SCRUM-1258 batch 2 — feature flags + observability + treasury', () =
       expect(c.enableAllocationRollover).toBe(false);
       expect(c.enableVisualFraudDetection).toBe(false);
       expect(c.enableGrcIntegrations).toBe(false);
+      expect(c.enableDriveWebhook).toBe(false);
+      expect(c.enableDocusignOauth).toBe(false);
+      expect(c.enableDocusignWebhook).toBe(false);
+      expect(c.enableAtsWebhook).toBe(false);
       expect(c.enableAdesSignatures).toBe(false);
       expect(c.enableDemoInjector).toBe(false);
       expect(c.enableSyntheticData).toBe(false);
@@ -483,12 +487,20 @@ describe('SCRUM-1258 batch 2 — feature flags + observability + treasury', () =
         ENABLE_VISUAL_FRAUD_DETECTION: 'true',
         ENABLE_DEMO_INJECTOR: 'false',
         ENABLE_GRC_INTEGRATIONS: 'true',
+        ENABLE_DRIVE_WEBHOOK: 'true',
+        ENABLE_DOCUSIGN_OAUTH: 'true',
+        ENABLE_DOCUSIGN_WEBHOOK: 'false',
+        ENABLE_ATS_WEBHOOK: 'true',
       },
       (mod) => {
         const c = mod.config as Record<string, unknown>;
         expect(c.enableVisualFraudDetection).toBe(true);
         expect(c.enableDemoInjector).toBe(false);
         expect(c.enableGrcIntegrations).toBe(true);
+        expect(c.enableDriveWebhook).toBe(true);
+        expect(c.enableDocusignOauth).toBe(true);
+        expect(c.enableDocusignWebhook).toBe(false);
+        expect(c.enableAtsWebhook).toBe(true);
       },
     );
   });

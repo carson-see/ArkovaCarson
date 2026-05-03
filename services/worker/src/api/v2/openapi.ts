@@ -96,6 +96,38 @@ function agentToolGet(config: AgentToolGetConfig) {
   };
 }
 
+const SEARCH_PARAMETERS = [
+  { name: 'q', in: 'query', required: true, schema: { type: 'string', minLength: 1, maxLength: 500 }, description: 'Search query.' },
+  { name: 'type', in: 'query', required: false, schema: { $ref: '#/components/schemas/SearchType' }, description: 'Result type filter. Defaults to all.' },
+  { name: 'cursor', in: 'query', required: false, schema: { type: 'string' }, description: 'Opaque cursor from the previous response.' },
+  { name: 'limit', in: 'query', required: false, schema: { type: 'integer', minimum: 1, maximum: 50, default: 50 }, description: 'Maximum results.' },
+] as const;
+
+const SEARCH_ALIAS_PARAMETERS = SEARCH_PARAMETERS.filter((p) => p.name !== 'type');
+
+const SEARCH_RESPONSES = {
+  '200': { description: 'Search results.', content: { 'application/json': { schema: { $ref: '#/components/schemas/SearchResponse' } } } },
+  '400': { $ref: '#/components/responses/ValidationError' },
+  '401': { $ref: '#/components/responses/AuthenticationRequired' },
+  '403': { $ref: '#/components/responses/InvalidScope' },
+  '429': { $ref: '#/components/responses/RateLimited' },
+  '500': { $ref: '#/components/responses/InternalError' },
+} as const;
+
+function searchAliasPath(resourceType: 'org' | 'record' | 'fingerprint' | 'document', operationId: string, summary: string, description: string) {
+  return {
+    get: {
+      tags: ['Search'],
+      operationId,
+      summary,
+      description,
+      'x-arkova-alias-for': `/search?type=${resourceType}`,
+      parameters: SEARCH_ALIAS_PARAMETERS,
+      responses: SEARCH_RESPONSES,
+    },
+  } as const;
+}
+
 export const openApiV2Spec = {
   openapi: '3.1.0',
   info: {
@@ -131,15 +163,34 @@ export const openApiV2Spec = {
           },
           auth: 'Bearer API key with read:search scope.',
         },
-        parameters: [
-          { name: 'q', in: 'query', required: true, schema: { type: 'string', minLength: 1, maxLength: 500 }, description: 'Search query.' },
-          { name: 'type', in: 'query', required: false, schema: { $ref: '#/components/schemas/SearchType' }, description: 'Result type filter. Defaults to all.' },
-          { name: 'cursor', in: 'query', required: false, schema: { type: 'string' }, description: 'Opaque cursor from the previous response.' },
-          { name: 'limit', in: 'query', required: false, schema: { type: 'integer', minimum: 1, maximum: 100, default: 50 }, description: 'Maximum results.' },
-        ],
-        responses: responsesWith('Search results.', '#/components/schemas/SearchResponse', RESPONSE_GROUPS.validatedScopedRead),
+        parameters: SEARCH_PARAMETERS,
+        responses: SEARCH_RESPONSES,
       },
     },
+    '/organizations': searchAliasPath(
+      'org',
+      'search_organizations',
+      'Search organizations',
+      'Search the authenticated API key organization context. This is a direct alias for /search?type=org.',
+    ),
+    '/records': searchAliasPath(
+      'record',
+      'search_records',
+      'Search records',
+      'Search anchored records visible to the API key. This is a direct alias for /search?type=record.',
+    ),
+    '/fingerprints': searchAliasPath(
+      'fingerprint',
+      'search_fingerprints',
+      'Search fingerprints',
+      'Search exact document fingerprints visible to the API key. This is a direct alias for /search?type=fingerprint.',
+    ),
+    '/documents': searchAliasPath(
+      'document',
+      'search_documents',
+      'Search documents',
+      'Search document metadata visible to the API key. This is a direct alias for /search?type=document.',
+    ),
     '/verify/{fingerprint}': {
       get: agentToolGet({
         operationId: 'verify',
@@ -286,10 +337,9 @@ export const openApiV2Spec = {
       SearchType: { type: 'string', enum: ['all', 'org', 'record', 'fingerprint', 'document'], default: 'all' },
       SearchResult: {
         type: 'object',
-        required: ['type', 'id', 'public_id', 'score', 'snippet'],
+        required: ['type', 'public_id', 'score', 'snippet'],
         properties: {
           type: { $ref: '#/components/schemas/SearchType' },
-          id: { type: 'string' },
           public_id: { type: 'string' },
           score: { type: 'number' },
           snippet: { type: 'string' },

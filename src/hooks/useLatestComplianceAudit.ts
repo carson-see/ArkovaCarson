@@ -53,7 +53,7 @@ export function useLatestComplianceAudit() {
   }, []);
 
   useEffect(() => {
-    void fetchLatest();
+    void Promise.resolve().then(fetchLatest);
   }, [fetchLatest]);
 
   return { audit, loading, error, refetch: fetchLatest };

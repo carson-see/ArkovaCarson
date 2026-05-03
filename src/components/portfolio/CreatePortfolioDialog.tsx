@@ -105,7 +105,7 @@ export function CreatePortfolioDialog({ open, onOpenChange, onCreated }: CreateP
         dbAny
           .from('attestations')
           .select('id, public_id, attestation_type, status, subject_identifier, attester_name')
-          .eq('user_id', user!.id)
+          .eq('attester_user_id', user!.id)
           .order('created_at', { ascending: false }),
         dbAny
           .from('anchors')

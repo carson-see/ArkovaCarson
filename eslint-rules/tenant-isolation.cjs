@@ -18,14 +18,16 @@
  *   2. Walk forward through the method chain (the CallExpression is the
  *      `object` of the next MemberExpression, whose parent is another
  *      CallExpression, and so on).
- *   3. A read link passes if it is `.eq('org_id', ...)`,
- *      `.eq('organization_id', ...)`, `.is('org_id', null)`, or
- *      `.is('organization_id', null)`. The `.is(..., null)` form is reserved
- *      for explicit system-level rows.
- *   4. A write link passes if `.insert(...)` / `.upsert(...)` includes a
- *      top-level org_id/organization_id key on every literal row object,
- *      including `org_id: null` for explicit system events.
- *   5. Otherwise report at the `.from(...)` call site.
+ *   3. A read link passes if it filters on one of the table's known tenant or
+ *      caller-scope columns. For most tables that is `org_id` or
+ *      `organization_id`; a small number of user-owned tables also allow
+ *      explicit user columns such as `attester_user_id`.
+ *   4. `.is('org_id', null)` / `.is('organization_id', null)` are allowed for
+ *      explicit system-level rows.
+ *   5. A write link passes if `.insert(...)` / `.upsert(...)` includes an
+ *      allowed top-level scope key on every literal row object, including
+ *      `org_id: null` for explicit system events.
+ *   6. Otherwise report at the `.from(...)` call site.
  *
  * False-positive notes:
  *   - `organizations` itself is NOT in the list — reads by `public_id`
@@ -61,30 +63,58 @@ const MULTI_TENANT_TABLES = new Set([
   'org_api_keys',
 ]);
 
-const ORG_ID_COLUMNS = new Set(['org_id', 'organization_id']);
+const DEFAULT_SCOPE_COLUMNS = ['org_id', 'organization_id'];
+const SYSTEM_SCOPE_COLUMNS = new Set(DEFAULT_SCOPE_COLUMNS);
 
-function isOrgColumnArg(arg) {
-  return arg?.type === 'Literal' && typeof arg.value === 'string' && ORG_ID_COLUMNS.has(arg.value);
+const TABLE_SCOPE_COLUMNS = new Map([
+  ['attestations', [...DEFAULT_SCOPE_COLUMNS, 'attester_org_id', 'attester_user_id']],
+  ['subscriptions', [...DEFAULT_SCOPE_COLUMNS, 'user_id']],
+  ['org_members', [...DEFAULT_SCOPE_COLUMNS, 'user_id']],
+  ['org_memberships', [...DEFAULT_SCOPE_COLUMNS, 'user_id']],
+]);
+
+function scopeColumnsFor(table) {
+  return new Set(TABLE_SCOPE_COLUMNS.get(table) ?? DEFAULT_SCOPE_COLUMNS);
 }
 
-function objectExpressionHasOrgKey(node) {
-  if (!node || node.type !== 'ObjectExpression') return false;
+function propertyName(prop) {
+  if (!prop) return null;
+  if (prop.type === 'Identifier') return prop.name;
+  if (prop.type === 'Literal' && typeof prop.value === 'string') return prop.value;
+  return null;
+}
 
-  return node.properties.some((property) => {
-    if (property.type !== 'Property') return false;
-    const key = property.key;
-    if (key.type === 'Identifier') return ORG_ID_COLUMNS.has(key.name);
-    if (key.type === 'Literal' && typeof key.value === 'string') return ORG_ID_COLUMNS.has(key.value);
-    return false;
+function objectHasScopeColumn(node, allowedColumns) {
+  if (!node || node.type !== 'ObjectExpression') return false;
+  return node.properties.some((prop) => {
+    if (!prop || prop.type !== 'Property') return false;
+    const key = propertyName(prop.key);
+    return typeof key === 'string' && allowedColumns.has(key);
   });
 }
 
-function writeCallHasOrgScope(node) {
-  const rowsArg = node.arguments[0];
-  if (objectExpressionHasOrgKey(rowsArg)) return true;
-  if (!rowsArg || rowsArg.type !== 'ArrayExpression') return false;
-  if (rowsArg.elements.length === 0) return false;
-  return rowsArg.elements.every((element) => objectExpressionHasOrgKey(element));
+function filterHasScopeColumn(node, allowedColumns) {
+  if (objectHasScopeColumn(node, allowedColumns)) return true;
+  if (!node || node.type !== 'ConditionalExpression') return false;
+  return (
+    filterHasScopeColumn(node.consequent, allowedColumns) &&
+    filterHasScopeColumn(node.alternate, allowedColumns)
+  );
+}
+
+function payloadHasScopeColumn(node, allowedColumns) {
+  if (!node) return false;
+  if (objectHasScopeColumn(node, allowedColumns)) return true;
+  if (node.type !== 'ArrayExpression' || node.elements.length === 0) return false;
+  return node.elements.every((element) => objectHasScopeColumn(element, allowedColumns));
+}
+
+function columnArgInSet(arg, allowedColumns) {
+  return arg?.type === 'Literal' && typeof arg.value === 'string' && allowedColumns.has(arg.value);
+}
+
+function isNullLiteral(arg) {
+  return arg?.type === 'Literal' && arg.value === null;
 }
 
 /** @type {import('eslint').Rule.RuleModule} */
@@ -93,12 +123,12 @@ module.exports = {
     type: 'problem',
     docs: {
       description:
-        'Supabase queries against multi-tenant tables must include .eq("org_id", ...) or .eq("organization_id", ...) in the method chain.',
+        'Supabase queries against multi-tenant tables must include a tenant or caller-scope filter in the method chain.',
       category: 'Security',
     },
     messages: {
       missingOrgFilter:
-        "tenant-isolation: query against multi-tenant table '{{table}}' missing .eq('org_id', ...). See SCRUM-1208.",
+        "tenant-isolation: query against multi-tenant table '{{table}}' missing an allowed tenant/caller scope filter. See SCRUM-1208.",
     },
     schema: [],
   },
@@ -121,6 +151,7 @@ module.exports = {
         // Walk the chain forward. Starting node is the `.from('...')` CallExpression.
         // Chain link shape: CallExpression.parent === MemberExpression,
         // whose parent === CallExpression (the next chained call).
+        const allowedColumns = scopeColumnsFor(table);
         let current = node;
         let hasOrgFilter = false;
 
@@ -136,16 +167,37 @@ module.exports = {
 
           const method = parentMember.property;
           if (method.type === 'Identifier') {
-            if ((method.name === 'eq' || method.name === 'is') && nextCall.arguments.length >= 1) {
-              if (isOrgColumnArg(nextCall.arguments[0])) {
+            if (method.name === 'eq' && nextCall.arguments.length >= 1) {
+              if (columnArgInSet(nextCall.arguments[0], allowedColumns)) {
                 hasOrgFilter = true;
                 break;
               }
             }
 
-            if ((method.name === 'insert' || method.name === 'upsert') && writeCallHasOrgScope(nextCall)) {
+            if (
+              method.name === 'is' &&
+              nextCall.arguments.length >= 2 &&
+              columnArgInSet(nextCall.arguments[0], SYSTEM_SCOPE_COLUMNS) &&
+              isNullLiteral(nextCall.arguments[1])
+            ) {
               hasOrgFilter = true;
               break;
+            }
+
+            if (
+              (method.name === 'insert' || method.name === 'upsert') &&
+              payloadHasScopeColumn(nextCall.arguments[0], allowedColumns)
+            ) {
+              hasOrgFilter = true;
+              break;
+            }
+
+            if (method.name === 'match' && nextCall.arguments.length >= 1) {
+              const filterArg = nextCall.arguments[0];
+              if (filterHasScopeColumn(filterArg, allowedColumns)) {
+                hasOrgFilter = true;
+                break;
+              }
             }
           }
 

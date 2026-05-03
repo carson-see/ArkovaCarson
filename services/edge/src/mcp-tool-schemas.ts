@@ -64,6 +64,7 @@ export const agentSearchSchema = z
   .object({
     q: freeTextQuerySchema,
     type: z.enum(['all', 'org', 'record', 'fingerprint', 'document']).optional(),
+    limit: z.number().int().min(1).max(50).optional(),
     max_results: z.number().int().min(1).max(50).optional(),
   })
   .strict();

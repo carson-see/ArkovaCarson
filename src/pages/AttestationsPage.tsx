@@ -172,13 +172,27 @@ export function AttestationsPage() {
   const [revokeConfirm, setRevokeConfirm] = useState('');
   const [revoking, setRevoking] = useState(false);
   const [revokeError, setRevokeError] = useState<string | null>(null);
+  const profileOrgId = profile?.org_id;
+  const userId = user?.id;
 
   const fetchAttestations = useCallback(async () => {
+    if (!userId || profileLoading) {
+      setLoading(profileLoading);
+      return;
+    }
+
     setLoading(true);
     try {
-      const { data, error } = await dbAny
-        .from('attestations')
-        .select('*')
+      const scopedQuery = profileOrgId
+        ? dbAny
+            .from('attestations')
+            .select('*')
+            .eq('attester_org_id', profileOrgId)
+        : dbAny
+            .from('attestations')
+            .select('*')
+            .eq('attester_user_id', userId);
+      const { data, error } = await scopedQuery
         .order('created_at', { ascending: false })
         .limit(100);
 
@@ -190,7 +204,7 @@ export function AttestationsPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [profileOrgId, profileLoading, userId]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- async data fetch; setState is post-await
