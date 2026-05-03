@@ -21,10 +21,12 @@
 
 import { execSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
-import { resolve, join } from 'node:path';
+import { dirname, resolve, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const OVERRIDE_LABEL = 'view-security-definer-intentional';
-const REPO = process.env.VIEWS_LINT_REPO_ROOT ?? resolve(import.meta.dirname, '..', '..');
+const MODULE_DIR = dirname(fileURLToPath(import.meta.url));
+const REPO = process.env.VIEWS_LINT_REPO_ROOT ?? resolve(MODULE_DIR, '..', '..');
 const BASELINE_PATH = join(REPO, 'scripts', 'ci', 'snapshots', 'views-security-invoker-baseline.json');
 const prLabels = (process.env.PR_LABELS ?? '').split(',').map((s) => s.trim()).filter(Boolean);
 
@@ -187,5 +189,5 @@ function main(): void {
   process.exit(1);
 }
 
-const isMain = process.argv[1] && resolve(process.argv[1]) === resolve(import.meta.filename ?? '');
+const isMain = process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url));
 if (isMain) main();

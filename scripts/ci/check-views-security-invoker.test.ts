@@ -51,6 +51,7 @@ describe('check-views-security-invoker scanFiles', () => {
 
   it.each([
     ['single security_invoker option', 'ALTER VIEW public.payment_ledger SET (security_invoker = true);'],
+    ['security_invoker = on', 'ALTER VIEW public.payment_ledger SET (security_invoker = on);'],
     [
       'security_invoker among other options',
       'ALTER VIEW public.payment_ledger SET (check_option = local, security_invoker = true);',
@@ -119,7 +120,17 @@ describe('check-views-security-invoker scanFiles', () => {
     expect(bareCreates.map((f) => f.view)).toEqual(['v']);
   });
 
-  it('does not let a later fixed CREATE satisfy an earlier bare CREATE in the same file', () => {
+  it('treats a later fixed CREATE for the same view as the latest state', () => {
+    expect(bareViewNames([
+      file(
+        'supabase/migrations/0500_same_view.sql',
+        'CREATE VIEW v AS SELECT 1;\n' +
+          'CREATE VIEW v WITH (security_invoker = true) AS SELECT 2;\n',
+      ),
+    ])).toEqual([]);
+  });
+
+  it('does not let a fixed CREATE for another view satisfy an earlier bare CREATE', () => {
     expect(bareViewNames([
       file(
         'supabase/migrations/0500_two_views.sql',
