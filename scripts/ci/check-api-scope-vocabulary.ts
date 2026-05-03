@@ -69,22 +69,147 @@ export function resolveRepoRoot(): string {
 
 function parseExportedArrays(source: string): Map<string, ArrayItem[]> {
   const arrays = new Map<string, ArrayItem[]>();
-  const arrayRe = /export\s+const\s+(\w+)(?:\s*:[^=]+)?\s*=\s*\[([\s\S]*?)\]\s*(?:as\s+const)?\s*;/g;
-  let match: RegExpExecArray | null;
 
-  while ((match = arrayRe.exec(source)) !== null) {
-    const [, name, body] = match;
-    const items: ArrayItem[] = [];
-    const itemRe = /\.\.\.(\w+)|['"]([^'"]+)['"]/g;
-    let itemMatch: RegExpExecArray | null;
-    while ((itemMatch = itemRe.exec(body)) !== null) {
-      const [, spread, literal] = itemMatch;
-      items.push(spread ? { spread } : literal);
+  for (let cursor = 0; cursor < source.length;) {
+    const exportStart = source.indexOf('export const', cursor);
+    if (exportStart === -1) break;
+
+    const nameStart = skipWhitespace(source, exportStart + 'export const'.length);
+    const nameEnd = readIdentifierEnd(source, nameStart);
+    if (nameEnd === nameStart) {
+      cursor = exportStart + 'export const'.length;
+      continue;
     }
+
+    const name = source.slice(nameStart, nameEnd);
+    const statementEnd = findStatementEnd(source, nameEnd);
+    const equalsIndex = source.indexOf('=', nameEnd);
+    const arrayStart = equalsIndex === -1 || equalsIndex > statementEnd ? -1 : source.indexOf('[', equalsIndex);
+    if (arrayStart === -1 || arrayStart > statementEnd) {
+      cursor = statementEnd + 1;
+      continue;
+    }
+
+    const arrayEnd = findClosingBracket(source, arrayStart);
+    if (arrayEnd === -1 || arrayEnd > statementEnd) {
+      cursor = statementEnd + 1;
+      continue;
+    }
+
+    const items = parseArrayItems(source.slice(arrayStart + 1, arrayEnd));
     arrays.set(name, items);
+    cursor = statementEnd + 1;
   }
 
   return arrays;
+}
+
+function skipWhitespace(source: string, start: number): number {
+  let cursor = start;
+  while (cursor < source.length && /\s/.test(source[cursor])) cursor += 1;
+  return cursor;
+}
+
+function readIdentifierEnd(source: string, start: number): number {
+  let cursor = start;
+  while (cursor < source.length && /[A-Za-z0-9_$]/.test(source[cursor])) cursor += 1;
+  return cursor;
+}
+
+function findStatementEnd(source: string, start: number): number {
+  const end = source.indexOf(';', start);
+  return end === -1 ? source.length : end;
+}
+
+function findClosingBracket(source: string, start: number): number {
+  let depth = 0;
+  let quote: '"' | "'" | null = null;
+
+  for (let cursor = start; cursor < source.length; cursor += 1) {
+    const char = source[cursor];
+    const next = source[cursor + 1];
+
+    if (quote) {
+      if (char === '\\') cursor += 1;
+      else if (char === quote) quote = null;
+      continue;
+    }
+
+    if (char === '"' || char === "'") {
+      quote = char;
+      continue;
+    }
+
+    if (char === '/' && next === '/') {
+      const newline = source.indexOf('\n', cursor + 2);
+      cursor = newline === -1 ? source.length : newline;
+      continue;
+    }
+
+    if (char === '/' && next === '*') {
+      const commentEnd = source.indexOf('*/', cursor + 2);
+      cursor = commentEnd === -1 ? source.length : commentEnd + 1;
+      continue;
+    }
+
+    if (char === '[') depth += 1;
+    if (char === ']') {
+      depth -= 1;
+      if (depth === 0) return cursor;
+    }
+  }
+
+  return -1;
+}
+
+function parseArrayItems(body: string): ArrayItem[] {
+  const items: ArrayItem[] = [];
+
+  for (let cursor = 0; cursor < body.length;) {
+    cursor = skipWhitespace(body, cursor);
+    if (body[cursor] === ',') {
+      cursor += 1;
+      continue;
+    }
+
+    if (body.startsWith('...', cursor)) {
+      const spreadStart = cursor + 3;
+      const spreadEnd = readIdentifierEnd(body, spreadStart);
+      if (spreadEnd > spreadStart) items.push({ spread: body.slice(spreadStart, spreadEnd) });
+      cursor = spreadEnd;
+      continue;
+    }
+
+    if (body[cursor] === '"' || body[cursor] === "'") {
+      const { value, end } = readStringLiteral(body, cursor);
+      items.push(value);
+      cursor = end;
+      continue;
+    }
+
+    cursor += 1;
+  }
+
+  return items;
+}
+
+function readStringLiteral(source: string, start: number): { value: string; end: number } {
+  const quote = source[start];
+  let value = '';
+
+  for (let cursor = start + 1; cursor < source.length; cursor += 1) {
+    const char = source[cursor];
+    if (char === '\\') {
+      const next = source[cursor + 1];
+      if (next) value += next;
+      cursor += 1;
+      continue;
+    }
+    if (char === quote) return { value, end: cursor + 1 };
+    value += char;
+  }
+
+  return { value, end: source.length };
 }
 
 function resolveArray(name: string, arrays: Map<string, ArrayItem[]>, stack: string[] = []): string[] {
@@ -132,7 +257,10 @@ export function diffOrdered(surface: string, expected: readonly string[], actual
 }
 
 export function extractSqlConstraintScopes(sql: string, constraintName = 'api_keys_scopes_known_values'): string[] {
-  const uncommentedSql = sql.replace(/^\s*--.*$/gm, '');
+  const uncommentedSql = sql
+    .split('\n')
+    .filter((line) => !line.trimStart().startsWith('--'))
+    .join('\n');
   const escapedName = constraintName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const constraintStart = uncommentedSql.search(new RegExp(`ADD\\s+CONSTRAINT\\s+${escapedName}`, 'i'));
   if (constraintStart === -1) return [];
