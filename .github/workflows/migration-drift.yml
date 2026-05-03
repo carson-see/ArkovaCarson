@@ -16,16 +16,13 @@
 name: Migration Drift Check
 
 on:
+  # This workflow is a required branch-protection context. It must run on every
+  # PR/main push; path filters leave non-migration PRs permanently blocked with
+  # a missing required check.
   push:
     branches: [main]
-    paths:
-      - 'supabase/migrations/**'
-      - '.github/workflows/migration-drift.yml'
   pull_request:
     branches: [main]
-    paths:
-      - 'supabase/migrations/**'
-      - '.github/workflows/migration-drift.yml'
 
 # Cancel stale runs on the same branch — no reason to keep a drift-check
 # running when a newer commit has replaced it.
