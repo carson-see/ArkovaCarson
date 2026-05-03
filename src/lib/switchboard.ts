@@ -95,11 +95,16 @@ export async function getFlag(flagId: FlagId): Promise<boolean> {
  * Get all flags
  */
 export async function getAllFlags(): Promise<Record<FlagId, boolean>> {
-  // Use any to bypass type checking since new tables aren't in generated types
+  // Schema: switchboard_flags(id uuid, flag_key text, enabled boolean, ...).
+  // See SCRUM-1622 — pre-fix code asked for `id, value` which selected a
+  // non-existent `value` column. The whole `/admin/controls` UI was reading
+  // wrong-shaped rows and silently filling the default-flags map every time.
+  // Generated `database.types.ts` already has the correct shape; the `as any`
+  // cast on the query is what kept the bug invisible to tsc.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data, error } = await (supabase as any)
     .from('switchboard_flags')
-    .select('id, value');
+    .select('flag_key, enabled');
 
   if (error) {
     console.error('Failed to fetch flags:', error);
@@ -108,9 +113,9 @@ export async function getAllFlags(): Promise<Record<FlagId, boolean>> {
 
   const flags: Record<FlagId, boolean> = { ...FLAGS };
 
-  for (const row of (data || []) as Array<{ id: string; value: boolean }>) {
-    if (row.id in flags) {
-      flags[row.id as FlagId] = row.value;
+  for (const row of (data || []) as Array<{ flag_key: string; enabled: boolean }>) {
+    if (row.flag_key in flags) {
+      flags[row.flag_key as FlagId] = row.enabled;
     }
   }
 
@@ -208,13 +213,19 @@ export function subscribeFlagChanges(
       'postgres_changes',
       { event: '*', schema: 'public', table: 'switchboard_flags' },
       (payload) => {
-        const newRow = payload.new as { id?: string; value?: boolean } | undefined;
-        if (!newRow?.id || typeof newRow.value !== 'boolean') return;
+        // Postgres CDC payload mirrors the actual row columns. Schema is
+        // (id uuid, flag_key text, enabled boolean, ...). See SCRUM-1622 —
+        // pre-fix code keyed cache + dispatched callback by `newRow.id`
+        // (the UUID PK), but `getFlag(flagId)` keys its cache by flag_key.
+        // The two halves of the cache never agreed; flag flips never
+        // invalidated the cache that real callers were reading from.
+        const newRow = payload.new as { flag_key?: string; enabled?: boolean } | undefined;
+        if (!newRow?.flag_key || typeof newRow.enabled !== 'boolean') return;
         // Only process known flags
-        if (!(newRow.id in FLAGS)) return;
-        // Invalidate cache on realtime update
-        _flagCache.set(newRow.id, { value: newRow.value, expires: Date.now() + FLAG_CACHE_TTL_MS });
-        onFlagChange(newRow.id as FlagId, newRow.value);
+        if (!(newRow.flag_key in FLAGS)) return;
+        // Invalidate cache on realtime update — key matches getFlag()'s key.
+        _flagCache.set(newRow.flag_key, { value: newRow.enabled, expires: Date.now() + FLAG_CACHE_TTL_MS });
+        onFlagChange(newRow.flag_key as FlagId, newRow.enabled);
       },
     )
     .subscribe();
