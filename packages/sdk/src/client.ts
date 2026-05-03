@@ -24,6 +24,9 @@ import type {
   FingerprintVerification,
   AnchorDetails,
   OrganizationSummary,
+  AttestationDetails,
+  AttestationEvidence,
+  AttestorCredential,
 } from './types';
 
 const DEFAULT_BASE_URL = 'https://arkova-worker-270018525501.us-central1.run.app';
@@ -241,6 +244,23 @@ export class Arkova {
       'Organization list failed',
     );
     return data.organizations.map(mapOrganizationSummary);
+  }
+
+  /**
+   * Fetch a public attestation by public ID.
+   *
+   * By default this preserves the frozen v1 response shape. Pass
+   * `{ includeCredentials: true }` to request the SCRUM-897 evidence array
+   * plus the bounded attestor credential chain.
+   */
+  async getAttestation(
+    publicId: string,
+    options: { includeCredentials?: boolean } = {},
+  ): Promise<AttestationDetails> {
+    const suffix = options.includeCredentials ? '?include=credentials' : '';
+    const response = await this.fetch(`/api/v1/attestations/${encodeURIComponent(publicId)}${suffix}`);
+    const data = await jsonOrThrow<Record<string, unknown>>(response, 'Attestation lookup failed');
+    return mapAttestationDetails(data);
   }
 
   /**
@@ -636,6 +656,71 @@ function mapOrganizationSummary(row: Record<string, unknown>): OrganizationSumma
     domain: (row.domain as string | null) ?? null,
     websiteUrl: (row.website_url as string | null) ?? null,
     verificationStatus: (row.verification_status as string | null) ?? null,
+  };
+}
+
+function mapAttestationEvidence(row: Record<string, unknown>): AttestationEvidence {
+  return {
+    publicId: row.public_id as string,
+    evidenceType: row.evidence_type as string,
+    description: (row.description as string | null) ?? null,
+    fingerprint: row.fingerprint as string,
+    mime: (row.mime as string | null) ?? null,
+    size: (row.size as number | null) ?? null,
+    createdAt: row.created_at as string,
+  };
+}
+
+function mapAttestorCredential(row: Record<string, unknown>): AttestorCredential {
+  const proof = row.chain_proof as Record<string, unknown> | null | undefined;
+  return {
+    publicId: row.public_id as string,
+    credentialType: (row.credential_type as string | null) ?? null,
+    status: row.status as string,
+    fingerprint: (row.fingerprint as string | null) ?? null,
+    versionNumber: (row.version_number as number | null) ?? null,
+    parentPublicId: (row.parent_public_id as string | null) ?? null,
+    isCurrent: Boolean(row.is_current),
+    chainProof: proof ? {
+      txId: proof.tx_id as string,
+      blockHeight: (proof.block_height as number | null) ?? null,
+      timestamp: (proof.timestamp as string | null) ?? null,
+      explorerUrl: (proof.explorer_url as string | null) ?? null,
+    } : null,
+    recordUri: row.record_uri as string,
+  };
+}
+
+function mapAttestationDetails(row: Record<string, unknown>): AttestationDetails {
+  const linked = row.linked_credential as Record<string, unknown> | null | undefined;
+  const attestorCredentials = row.attestor_credentials as Array<Record<string, unknown>> | undefined;
+  return {
+    publicId: row.public_id as string,
+    attestationType: row.attestation_type as string,
+    status: row.status as string,
+    subjectType: row.subject_type as string,
+    subjectIdentifier: row.subject_identifier as string,
+    attester: row.attester as AttestationDetails['attester'],
+    claims: row.claims as AttestationDetails['claims'],
+    summary: (row.summary as string | null) ?? null,
+    jurisdiction: (row.jurisdiction as string | null) ?? null,
+    fingerprint: (row.fingerprint as string | null) ?? null,
+    evidenceFingerprint: (row.evidence_fingerprint as string | null) ?? null,
+    evidence: ((row.evidence as Array<Record<string, unknown>> | undefined) ?? []).map(mapAttestationEvidence),
+    evidenceCount: row.evidence_count as number,
+    linkedCredential: linked ? {
+      publicId: linked.public_id as string,
+      credentialType: linked.credential_type as string,
+      verificationStatus: linked.verification_status as string,
+      verifyUrl: linked.verify_url as string,
+    } : null,
+    attestorCredentials: attestorCredentials?.map(mapAttestorCredential),
+    issuedAt: row.issued_at as string,
+    expiresAt: (row.expires_at as string | null) ?? null,
+    revokedAt: (row.revoked_at as string | null) ?? null,
+    revocationReason: (row.revocation_reason as string | null) ?? null,
+    createdAt: row.created_at as string,
+    verifyUrl: row.verify_url as string,
   };
 }
 

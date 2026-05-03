@@ -248,6 +248,72 @@ describe('API v2 agent methods', () => {
   });
 });
 
+describe('getAttestation', () => {
+  it('requests SCRUM-897 credential include and maps evidence plus credential chain', async () => {
+    const client = new Arkova({ apiKey: 'ak_test' });
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        public_id: 'ARK-ATT-1',
+        attestation_type: 'VERIFICATION',
+        status: 'ACTIVE',
+        subject_type: 'credential',
+        subject_identifier: 'ARK-DOC-1',
+        attester: { name: 'Lawyer One', type: 'INDIVIDUAL', title: 'Advocate' },
+        claims: [{ claim: 'Signed filing', evidence: 'Court upload' }],
+        summary: null,
+        jurisdiction: 'KE',
+        fingerprint: 'a'.repeat(64),
+        evidence_fingerprint: 'b'.repeat(64),
+        evidence: [{
+          public_id: 'AEV-ABCDEF123456',
+          evidence_type: 'document',
+          description: 'Court filing',
+          fingerprint: 'b'.repeat(64),
+          mime: 'application/pdf',
+          size: 4096,
+          created_at: '2026-05-03T14:00:00Z',
+        }],
+        evidence_count: 1,
+        linked_credential: {
+          public_id: 'ARK-LAW-1',
+          credential_type: 'LICENSE',
+          verification_status: 'VERIFIED',
+          verify_url: 'https://app.arkova.ai/verify/ARK-LAW-1',
+        },
+        attestor_credentials: [{
+          public_id: 'ARK-LAW-1',
+          credential_type: 'LICENSE',
+          status: 'SECURED',
+          fingerprint: 'c'.repeat(64),
+          version_number: 2,
+          parent_public_id: 'ARK-LAW-0',
+          is_current: true,
+          chain_proof: null,
+          record_uri: 'https://app.arkova.ai/verify/ARK-LAW-1',
+        }],
+        issued_at: '2026-05-03T14:00:00Z',
+        expires_at: null,
+        revoked_at: null,
+        revocation_reason: null,
+        created_at: '2026-05-03T14:00:00Z',
+        verify_url: 'https://app.arkova.ai/verify/attestation/ARK-ATT-1',
+      }),
+    });
+
+    const result = await client.getAttestation('ARK-ATT-1', { includeCredentials: true });
+
+    expect(result.evidence[0].publicId).toBe('AEV-ABCDEF123456');
+    expect(result.evidence[0].mime).toBe('application/pdf');
+    expect(result.attestorCredentials?.[0].parentPublicId).toBe('ARK-LAW-0');
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringContaining('/api/v1/attestations/ARK-ATT-1?include=credentials'),
+      expect.anything(),
+    );
+  });
+});
+
 describe('verifyBatch', () => {
   it('returns empty array for empty input', async () => {
     const client = new Arkova({ apiKey: 'ak_test' });

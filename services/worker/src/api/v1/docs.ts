@@ -479,7 +479,7 @@ export const openApiSpec: Record<string, any> = {
     '/attestations': {
       post: {
         summary: 'Create attestation',
-        description: 'Create a new attestation claim for a credential. Collision retry (3x). Requires JWT or API key.',
+        description: 'Create a new public attestation with optional evidence metadata. Collision retry (3x). Requires JWT or API key.',
         operationId: 'createAttestation',
         tags: ['Attestations'],
         security: [{ SupabaseJWT: [] }, { ApiKeyBearer: [] }],
@@ -489,19 +489,46 @@ export const openApiSpec: Record<string, any> = {
             'application/json': {
               schema: {
                 type: 'object',
-                required: ['anchor_public_id', 'attestation_type', 'claim'],
+                required: ['attestation_type', 'attester_name', 'subject_identifier', 'claims'],
                 properties: {
-                  anchor_public_id: { type: 'string' },
-                  attestation_type: { type: 'string', enum: ['identity', 'employment', 'education', 'certification', 'compliance'] },
-                  claim: { type: 'object', additionalProperties: true },
+                  anchor_id: { type: 'string', format: 'uuid', description: 'Optional linked anchor UUID for owned credentials' },
+                  subject_type: { type: 'string', enum: ['credential', 'entity', 'process', 'asset'], default: 'credential' },
+                  subject_identifier: { type: 'string', description: 'Public ID or stable external identifier for the attestation subject' },
+                  attestation_type: { type: 'string', enum: ['VERIFICATION', 'ENDORSEMENT', 'AUDIT', 'APPROVAL', 'WITNESS', 'COMPLIANCE', 'SUPPLY_CHAIN', 'IDENTITY', 'CUSTOM'] },
+                  attester_name: { type: 'string' },
+                  attester_type: { type: 'string', enum: ['INSTITUTION', 'CORPORATION', 'INDIVIDUAL', 'REGULATORY', 'THIRD_PARTY'], default: 'INSTITUTION' },
+                  attester_title: { type: 'string' },
+                  claims: {
+                    type: 'array',
+                    minItems: 1,
+                    maxItems: 50,
+                    items: {
+                      type: 'object',
+                      required: ['claim'],
+                      properties: {
+                        claim: { type: 'string' },
+                        evidence: { type: 'string' },
+                      },
+                    },
+                  },
+                  summary: { type: 'string' },
+                  jurisdiction: { type: 'string' },
+                  evidence_fingerprint: { type: 'string', pattern: '^[a-fA-F0-9]{64}$' },
+                  evidence: {
+                    type: 'array',
+                    maxItems: 10,
+                    description: 'Evidence metadata only. Arkova stores public metadata and fingerprints, not document bytes.',
+                    items: { $ref: '#/components/schemas/AttestationEvidenceInput' },
+                  },
                   expires_at: { type: 'string', format: 'date-time', nullable: true },
+                  metadata: { type: 'object', additionalProperties: true },
                 },
               },
             },
           },
         },
         responses: {
-          '201': { description: 'Attestation created', content: { 'application/json': { schema: { $ref: '#/components/schemas/Attestation' } } } },
+          '201': { description: 'Attestation created', content: { 'application/json': { schema: { $ref: '#/components/schemas/CreateAttestationResponse' } } } },
           '400': { $ref: '#/components/responses/BadRequest' },
           '401': { $ref: '#/components/responses/Unauthorized' },
         },
@@ -513,24 +540,29 @@ export const openApiSpec: Record<string, any> = {
         tags: ['Attestations'],
         security: [],
         parameters: [
-          { name: 'anchor_public_id', in: 'query', schema: { type: 'string' }, description: 'Filter by anchor public ID' },
+          { name: 'anchor_id', in: 'query', schema: { type: 'string', format: 'uuid' }, description: 'Filter by linked anchor UUID for owned credentials' },
+          { name: 'subject_identifier', in: 'query', schema: { type: 'string' }, description: 'Filter by subject public ID or external identifier' },
+          { name: 'attestation_type', in: 'query', schema: { type: 'string' }, description: 'Filter by attestation type' },
+          { name: 'status', in: 'query', schema: { type: 'string' }, description: 'Filter by status' },
           { name: 'cursor', in: 'query', schema: { type: 'string' }, description: 'Pagination cursor (opaque string from previous response)' },
-          { name: 'limit', in: 'query', schema: { type: 'integer', default: 20, maximum: 100 } },
+          { name: 'page', in: 'query', schema: { type: 'integer', default: 1, minimum: 1 } },
+          { name: 'limit', in: 'query', schema: { type: 'integer', default: 25, minimum: 1, maximum: 100 } },
         ],
         responses: {
           '200': { description: 'Paginated attestation list', content: { 'application/json': { schema: { type: 'object', properties: { attestations: { type: 'array', items: { $ref: '#/components/schemas/Attestation' } }, next_cursor: { type: 'string', nullable: true }, has_more: { type: 'boolean' } } } } } },
         },
       },
     },
-    '/attestations/{attestationId}': {
+    '/attestations/{publicId}': {
       get: {
         summary: 'Get attestation',
-        description: 'Retrieve a single attestation by ID. Public access, checks expiry.',
+        description: 'Retrieve a single public attestation. The default response is unchanged; pass include=credentials to add a bounded attestor credential chain.',
         operationId: 'getAttestation',
         tags: ['Attestations'],
         security: [],
         parameters: [
-          { name: 'attestationId', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'publicId', in: 'path', required: true, schema: { type: 'string', minLength: 3 } },
+          { name: 'include', in: 'query', required: false, schema: { type: 'string', enum: ['credentials'] }, description: 'Use credentials to include attestor_credentials, capped at the current linked credential plus two parent levels.' },
         ],
         responses: {
           '200': { description: 'Attestation details', content: { 'application/json': { schema: { $ref: '#/components/schemas/Attestation' } } } },
@@ -538,7 +570,7 @@ export const openApiSpec: Record<string, any> = {
         },
       },
     },
-    '/attestations/{attestationId}/revoke': {
+    '/attestations/{publicId}/revoke': {
       patch: {
         summary: 'Revoke attestation',
         description: 'Revoke an attestation. Requires ownership (JWT or API key that created it).',
@@ -546,7 +578,7 @@ export const openApiSpec: Record<string, any> = {
         tags: ['Attestations'],
         security: [{ SupabaseJWT: [] }, { ApiKeyBearer: [] }],
         parameters: [
-          { name: 'attestationId', in: 'path', required: true, schema: { type: 'string' } },
+          { name: 'publicId', in: 'path', required: true, schema: { type: 'string', minLength: 3 } },
         ],
         requestBody: {
           content: {
@@ -1019,20 +1051,136 @@ export const openApiSpec: Record<string, any> = {
           message: { type: 'string' },
         },
       },
+      AttestationEvidenceInput: {
+        type: 'object',
+        required: ['evidence_type', 'fingerprint'],
+        properties: {
+          evidence_type: { type: 'string', maxLength: 60, default: 'document' },
+          fingerprint: { type: 'string', pattern: '^[a-fA-F0-9]{64}$', description: 'SHA-256 evidence artifact fingerprint' },
+          mime: { type: 'string', nullable: true, maxLength: 255 },
+          size: { type: 'integer', minimum: 0, nullable: true },
+          filename: { type: 'string', nullable: true, maxLength: 255 },
+          description: { type: 'string', nullable: true, maxLength: 500 },
+        },
+      },
+      AttestationEvidence: {
+        type: 'object',
+        required: ['public_id', 'evidence_type', 'fingerprint', 'mime', 'size', 'created_at'],
+        properties: {
+          public_id: { type: 'string', pattern: '^AEV-[A-F0-9]{12}$' },
+          evidence_type: { type: 'string' },
+          description: { type: 'string', nullable: true },
+          fingerprint: { type: 'string', pattern: '^[a-fA-F0-9]{64}$' },
+          mime: { type: 'string', nullable: true },
+          size: { type: 'integer', minimum: 0, nullable: true },
+          created_at: { type: 'string', format: 'date-time' },
+        },
+      },
+      AttestorCredential: {
+        type: 'object',
+        required: ['public_id', 'status', 'is_current', 'chain_proof', 'record_uri'],
+        properties: {
+          public_id: { type: 'string' },
+          credential_type: { type: 'string', nullable: true },
+          status: { type: 'string' },
+          fingerprint: { type: 'string', nullable: true },
+          version_number: { type: 'integer', nullable: true },
+          parent_public_id: { type: 'string', nullable: true },
+          is_current: { type: 'boolean' },
+          chain_proof: {
+            type: 'object',
+            nullable: true,
+            properties: {
+              tx_id: { type: 'string' },
+              block_height: { type: 'integer', nullable: true },
+              timestamp: { type: 'string', format: 'date-time', nullable: true },
+              explorer_url: { type: 'string', format: 'uri', nullable: true },
+            },
+          },
+          record_uri: { type: 'string', format: 'uri' },
+        },
+      },
+      CreateAttestationResponse: {
+        type: 'object',
+        required: ['public_id', 'attestation_id', 'attestation_type', 'status', 'fingerprint', 'created_at', 'verify_url'],
+        properties: {
+          public_id: { type: 'string' },
+          attestation_id: { type: 'string', description: 'v1 back-compat alias for public_id; never an internal UUID' },
+          attestation_type: { type: 'string' },
+          status: { type: 'string', enum: ['PENDING'] },
+          fingerprint: { type: 'string', pattern: '^[a-fA-F0-9]{64}$' },
+          created_at: { type: 'string', format: 'date-time' },
+          verify_url: { type: 'string', format: 'uri' },
+          evidence_count: { type: 'integer', minimum: 0 },
+          warning: { type: 'string' },
+        },
+      },
       Attestation: {
         type: 'object',
+        required: ['public_id', 'attestation_type', 'status', 'subject_type', 'subject_identifier', 'attester', 'claims', 'evidence', 'evidence_count', 'created_at', 'verify_url'],
         properties: {
-          id: { type: 'string', format: 'uuid' },
           public_id: { type: 'string' },
-          anchor_public_id: { type: 'string' },
-          attestation_type: { type: 'string', enum: ['identity', 'employment', 'education', 'certification', 'compliance'] },
-          attester_name: { type: 'string' },
-          claim: { type: 'object', additionalProperties: true },
-          status: { type: 'string', enum: ['active', 'revoked', 'expired'] },
+          attestation_type: { type: 'string', enum: ['VERIFICATION', 'ENDORSEMENT', 'AUDIT', 'APPROVAL', 'WITNESS', 'COMPLIANCE', 'SUPPLY_CHAIN', 'IDENTITY', 'CUSTOM'] },
+          status: { type: 'string' },
+          subject_type: { type: 'string', enum: ['credential', 'entity', 'process', 'asset'] },
+          subject_identifier: { type: 'string' },
+          attester: {
+            type: 'object',
+            required: ['name', 'type'],
+            properties: {
+              name: { type: 'string' },
+              type: { type: 'string', enum: ['INSTITUTION', 'CORPORATION', 'INDIVIDUAL', 'REGULATORY', 'THIRD_PARTY'] },
+              title: { type: 'string', nullable: true },
+            },
+          },
+          claims: {
+            type: 'array',
+            items: {
+              type: 'object',
+              required: ['claim'],
+              properties: {
+                claim: { type: 'string' },
+                evidence: { type: 'string' },
+              },
+            },
+          },
+          summary: { type: 'string', nullable: true },
+          jurisdiction: { type: 'string', nullable: true },
+          fingerprint: { type: 'string', nullable: true, pattern: '^[a-fA-F0-9]{64}$' },
+          evidence_fingerprint: { type: 'string', nullable: true, pattern: '^[a-fA-F0-9]{64}$' },
+          evidence: { type: 'array', items: { $ref: '#/components/schemas/AttestationEvidence' } },
+          evidence_count: { type: 'integer', minimum: 0 },
+          chain_proof: {
+            type: 'object',
+            nullable: true,
+            properties: {
+              tx_id: { type: 'string' },
+              block_height: { type: 'integer', nullable: true },
+              timestamp: { type: 'string', format: 'date-time', nullable: true },
+              explorer_url: { type: 'string', format: 'uri', nullable: true },
+            },
+          },
+          linked_credential: {
+            type: 'object',
+            nullable: true,
+            properties: {
+              public_id: { type: 'string' },
+              credential_type: { type: 'string' },
+              verification_status: { type: 'string' },
+              verify_url: { type: 'string', format: 'uri' },
+            },
+          },
+          attestor_credentials: {
+            type: 'array',
+            description: 'Present only with include=credentials. Capped at the current linked credential plus two parent levels.',
+            items: { $ref: '#/components/schemas/AttestorCredential' },
+          },
+          issued_at: { type: 'string', format: 'date-time', nullable: true },
           expires_at: { type: 'string', format: 'date-time', nullable: true },
           revoked_at: { type: 'string', format: 'date-time', nullable: true },
           revocation_reason: { type: 'string', nullable: true },
           created_at: { type: 'string', format: 'date-time' },
+          verify_url: { type: 'string', format: 'uri' },
         },
       },
       WebhookDelivery: {

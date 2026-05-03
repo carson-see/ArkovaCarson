@@ -300,6 +300,14 @@ export function AttestationsPage() {
           claims: data.claims,
           summary: data.summary,
           evidence_fingerprint: evidenceItems.length > 0 ? evidenceItems[0].fingerprint : undefined,
+          evidence: evidenceItems.map((item) => ({
+            evidence_type: item.evidenceType,
+            fingerprint: item.fingerprint,
+            mime: item.file.type || null,
+            size: item.file.size,
+            filename: item.filename,
+            description: item.description || null,
+          })),
         }),
       });
 
@@ -355,6 +363,15 @@ export function AttestationsPage() {
           })),
           summary: summary.trim() || undefined,
           jurisdiction: jurisdiction.trim() || undefined,
+          evidence_fingerprint: evidenceItems.length > 0 ? evidenceItems[0].fingerprint : undefined,
+          evidence: evidenceItems.map((item) => ({
+            evidence_type: item.evidenceType,
+            fingerprint: item.fingerprint,
+            mime: item.file.type || null,
+            size: item.file.size,
+            filename: item.filename,
+            description: item.description || null,
+          })),
           expires_at: expiresAt || undefined,
         }),
       });

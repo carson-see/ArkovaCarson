@@ -350,3 +350,66 @@ describe('Attestation Validation', () => {
     expect(result.success).toBe(false);
   });
 });
+
+// ─── SCRUM-897 Rich Evidence + Credential Include Helpers ─────────────
+
+describe('Attestation rich evidence helpers', () => {
+  it('parses include=credentials from comma-separated query values', async () => {
+    const { shouldIncludeAttestorCredentials } = await import('./attestations.js');
+    expect(shouldIncludeAttestorCredentials('credentials')).toBe(true);
+    expect(shouldIncludeAttestorCredentials('evidence, credentials')).toBe(true);
+    expect(shouldIncludeAttestorCredentials(['foo', 'credentials'])).toBe(true);
+    expect(shouldIncludeAttestorCredentials(undefined)).toBe(false);
+  });
+
+  it('maps public evidence without leaking the internal evidence UUID', async () => {
+    const { toPublicEvidenceItem } = await import('./attestations.js');
+    const item = toPublicEvidenceItem({
+      id: 'internal-evidence-id',
+      public_id: 'AEV-ABCDEF123456',
+      evidence_type: 'document',
+      description: 'Court filing',
+      fingerprint: 'a'.repeat(64),
+      mime_type: 'application/pdf',
+      size_bytes: 4096,
+      created_at: '2026-05-03T14:00:00Z',
+    });
+
+    expect(item).toEqual({
+      public_id: 'AEV-ABCDEF123456',
+      evidence_type: 'document',
+      description: 'Court filing',
+      fingerprint: 'a'.repeat(64),
+      mime: 'application/pdf',
+      size: 4096,
+      created_at: '2026-05-03T14:00:00Z',
+    });
+    expect(item).not.toHaveProperty('id');
+  });
+
+  it('caps attestor credential lineage at current item plus two parent levels', async () => {
+    const { capAttestorCredentialLineage } = await import('./attestations.js');
+    const lineage = [1, 2, 3, 4].map((version) => ({
+      public_id: `ARK-CRED-${version}`,
+      credential_type: 'LICENSE',
+      version_number: version,
+      parent_public_id: version === 1 ? null : `ARK-CRED-${version - 1}`,
+      status: 'SECURED',
+      fingerprint: `${version}`.repeat(64),
+      chain_tx_id: `tx-${version}`,
+      chain_block_height: 800000 + version,
+      chain_timestamp: '2026-05-03T14:00:00Z',
+      is_current: version === 4,
+    }));
+
+    const capped = capAttestorCredentialLineage(lineage);
+
+    expect(capped).toHaveLength(3);
+    expect(capped.map((item) => item.public_id)).toEqual([
+      'ARK-CRED-2',
+      'ARK-CRED-3',
+      'ARK-CRED-4',
+    ]);
+    expect(capped[0].chain_proof?.explorer_url).toContain('/tx/tx-2');
+  });
+});

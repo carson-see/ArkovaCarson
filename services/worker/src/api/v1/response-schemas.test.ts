@@ -97,18 +97,24 @@ describe('SCRUM-1442 — v1 response schemas', () => {
 
   it('AttestationEvidenceShape strips the internal id (no field for it)', () => {
     const ok = AttestationEvidenceShape.safeParse({
+      public_id: 'AEV-ABCDEF123456',
       evidence_type: 'photo',
       description: 'Selfie of credential',
       fingerprint: 'b'.repeat(64),
+      mime: 'image/png',
+      size: 1024,
       created_at: '2026-04-27T00:00:00Z',
     });
     expect(ok.success).toBe(true);
 
     const withId = AttestationEvidenceShape.safeParse({
       id: 'evidence-uuid',
+      public_id: 'AEV-ABCDEF123456',
       evidence_type: 'photo',
       description: 'Selfie',
       fingerprint: 'b'.repeat(64),
+      mime: null,
+      size: null,
       created_at: '2026-04-27T00:00:00Z',
     });
     expect(withId.success).toBe(false);

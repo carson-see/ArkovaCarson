@@ -7,13 +7,22 @@ same shape for anchor / verify / verifyBatch.
 
 from .client import Arkova, AsyncArkova
 from .errors import ArkovaError
-from .models import AnchorReceipt, VerificationResult
+from .models import (
+    AnchorReceipt,
+    AttestationDetails,
+    AttestationEvidence,
+    AttestorCredential,
+    VerificationResult,
+)
 
 __all__ = [
     "Arkova",
     "AsyncArkova",
     "ArkovaError",
     "AnchorReceipt",
+    "AttestationDetails",
+    "AttestationEvidence",
+    "AttestorCredential",
     "VerificationResult",
 ]
 

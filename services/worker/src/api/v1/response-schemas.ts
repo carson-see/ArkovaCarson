@@ -56,9 +56,12 @@ export type KeyResponse = z.infer<typeof KeyResponseShape>;
 // is the natural identifier.
 export const AttestationEvidenceShape = z
   .object({
+    public_id: PublicId,
     evidence_type: z.string().max(60),
     description: z.string().nullable().optional(),
     fingerprint: z.string().regex(/^[a-fA-F0-9]{64}$/),
+    mime: z.string().nullable(),
+    size: z.number().int().nonnegative().nullable(),
     created_at: Timestamp,
   })
   .strict();
@@ -72,6 +75,8 @@ export const AttestationCreateResponseShape = z
     fingerprint: z.string().regex(/^[a-fA-F0-9]{64}$/),
     created_at: Timestamp,
     verify_url: z.string().url(),
+    evidence_count: z.number().int().nonnegative().optional(),
+    warning: z.string().optional(),
   })
   .strict();
 

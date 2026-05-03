@@ -15,7 +15,13 @@ from typing import Any, Dict, List, Optional, Sequence, Union
 import httpx
 
 from .errors import ArkovaError
-from .models import AnchorReceipt, VerificationResult
+from .models import (
+    AnchorReceipt,
+    AttestationDetails,
+    AttestationEvidence,
+    AttestorCredential,
+    VerificationResult,
+)
 
 DEFAULT_BASE_URL = "https://arkova-worker-270018525501.us-central1.run.app"
 DEFAULT_TIMEOUT_S = 30.0
@@ -87,6 +93,63 @@ def _to_verification(payload: Dict[str, Any]) -> VerificationResult:
     )
 
 
+def _to_attestation(payload: Dict[str, Any]) -> AttestationDetails:
+    attester = payload.get("attester") if isinstance(payload.get("attester"), dict) else {}
+    evidence = [
+        AttestationEvidence(
+            public_id=item["public_id"],
+            evidence_type=item["evidence_type"],
+            fingerprint=item["fingerprint"],
+            created_at=item["created_at"],
+            description=item.get("description"),
+            mime=item.get("mime"),
+            size=item.get("size"),
+        )
+        for item in payload.get("evidence", []) or []
+    ]
+    credentials = payload.get("attestor_credentials")
+    attestor_credentials = None
+    if isinstance(credentials, list):
+        attestor_credentials = [
+            AttestorCredential(
+                public_id=item["public_id"],
+                status=item["status"],
+                record_uri=item["record_uri"],
+                credential_type=item.get("credential_type"),
+                fingerprint=item.get("fingerprint"),
+                version_number=item.get("version_number"),
+                parent_public_id=item.get("parent_public_id"),
+                is_current=bool(item.get("is_current", False)),
+            )
+            for item in credentials
+        ]
+
+    return AttestationDetails(
+        public_id=payload["public_id"],
+        attestation_type=payload["attestation_type"],
+        status=payload["status"],
+        subject_type=payload["subject_type"],
+        subject_identifier=payload["subject_identifier"],
+        attester_name=attester.get("name", ""),
+        attester_type=attester.get("type", ""),
+        attester_title=attester.get("title"),
+        claims=payload.get("claims", []) or [],
+        evidence=evidence,
+        evidence_count=int(payload.get("evidence_count", len(evidence))),
+        verify_url=payload["verify_url"],
+        summary=payload.get("summary"),
+        jurisdiction=payload.get("jurisdiction"),
+        fingerprint=payload.get("fingerprint"),
+        evidence_fingerprint=payload.get("evidence_fingerprint"),
+        attestor_credentials=attestor_credentials,
+        issued_at=payload.get("issued_at"),
+        expires_at=payload.get("expires_at"),
+        revoked_at=payload.get("revoked_at"),
+        revocation_reason=payload.get("revocation_reason"),
+        created_at=payload.get("created_at"),
+    )
+
+
 class Arkova:
     """Synchronous Arkova client.
 
@@ -137,6 +200,24 @@ class Arkova:
         resp = self._client.get(f"/api/v1/verify/{public_id}")
         _raise_for_status(resp)
         return _to_verification(resp.json())
+
+    def get_attestation(
+        self,
+        public_id: str,
+        *,
+        include_credentials: bool = False,
+    ) -> AttestationDetails:
+        """Fetch a public attestation by public ID.
+
+        Set include_credentials=True for the SCRUM-897 evidence array and
+        bounded attestor credential chain.
+        """
+        path = f"/api/v1/attestations/{public_id}"
+        if include_credentials:
+            path += "?include=credentials"
+        resp = self._client.get(path)
+        _raise_for_status(resp)
+        return _to_attestation(resp.json())
 
     def verify_batch(self, public_ids: Sequence[str]) -> List[VerificationResult]:
         """Verify up to MAX_BATCH_SIZE anchors in one round-trip."""
@@ -198,6 +279,19 @@ class AsyncArkova:
         resp = await self._client.get(f"/api/v1/verify/{public_id}")
         _raise_for_status(resp)
         return _to_verification(resp.json())
+
+    async def get_attestation(
+        self,
+        public_id: str,
+        *,
+        include_credentials: bool = False,
+    ) -> AttestationDetails:
+        path = f"/api/v1/attestations/{public_id}"
+        if include_credentials:
+            path += "?include=credentials"
+        resp = await self._client.get(path)
+        _raise_for_status(resp)
+        return _to_attestation(resp.json())
 
     async def verify_batch(self, public_ids: Sequence[str]) -> List[VerificationResult]:
         if not public_ids:

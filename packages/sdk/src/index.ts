@@ -46,5 +46,8 @@ export type {
   SearchResponse,
   FingerprintVerification,
   AnchorDetails,
+  AttestationDetails,
+  AttestationEvidence,
+  AttestorCredential,
   OrganizationSummary,
 } from './types';

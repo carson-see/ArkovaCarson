@@ -71,6 +71,32 @@ describe('OpenAPI spec', () => {
     expect(keysPath.post.security).toContainEqual({ SupabaseJWT: [] });
   });
 
+  it('documents public attestation detail includes without internal IDs', () => {
+    const attestationPath = openApiSpec.paths['/attestations/{publicId}'];
+    expect(attestationPath).toBeDefined();
+    expect(openApiSpec.paths['/attestations/{attestationId}']).toBeUndefined();
+
+    const parameters = attestationPath.get.parameters;
+    expect(parameters).toContainEqual(expect.objectContaining({ name: 'publicId', in: 'path' }));
+    expect(parameters).toContainEqual(expect.objectContaining({ name: 'include', in: 'query' }));
+
+    const schema = openApiSpec.components.schemas.Attestation;
+    expect(schema.properties.id).toBeUndefined();
+    expect(schema.properties.evidence).toBeDefined();
+    expect(schema.properties.attestor_credentials).toBeDefined();
+  });
+
+  it('documents attestation create evidence metadata and public alias response', () => {
+    const createPath = openApiSpec.paths['/attestations'];
+    const requestSchema = createPath.post.requestBody.content['application/json'].schema;
+    expect(requestSchema.properties.evidence).toBeDefined();
+
+    const responseSchema = openApiSpec.components.schemas.CreateAttestationResponse;
+    expect(responseSchema.properties.attestation_id.format).toBeUndefined();
+    expect(responseSchema.properties.attestation_id.description).toContain('public_id');
+    expect(responseSchema.properties.evidence_count).toBeDefined();
+  });
+
   it('has all four tags', () => {
     const tagNames = openApiSpec.tags.map((t: { name: string }) => t.name);
     expect(tagNames).toContain('Verification');
