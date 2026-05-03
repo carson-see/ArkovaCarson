@@ -4,11 +4,9 @@ import { logger } from '../../utils/logger.js';
 import { requireScopeV2 } from './scopeGuard.js';
 import { ProblemError } from './problem.js';
 import { createV2ScopeRateLimit } from './rateLimit.js';
+import { PUBLIC_ANCHOR_ID_RE, SHA256_HEX_RE, visibleAnchorScope } from './resourceIdentifiers.js';
 
 export const agentToolsRouter = Router();
-
-const PUBLIC_ID_RE = /^ARK-[A-Z0-9-]{3,60}$/;
-const SHA256_HEX_RE = /^[a-fA-F0-9]{64}$/;
 
 interface V2QueryBuilder {
   select(columns: string): V2QueryBuilder;
@@ -25,16 +23,6 @@ const v2Db = db as unknown as {
   from(table: string): V2QueryBuilder;
   rpc(functionName: string, args: Record<string, unknown>): Promise<{ data: unknown; error: unknown }>;
 };
-
-function sanitizeFilterValue(v: string): string {
-  return v.replace(/[%_\\,().]/g, c => `\\${c}`);
-}
-
-function visibleAnchorScope(orgId: string | null | undefined): string {
-  return orgId
-    ? `status.eq.SECURED,org_id.eq.${sanitizeFilterValue(orgId)}`
-    : 'status.eq.SECURED';
-}
 
 function pathParam(value: string | string[] | undefined): string | null {
   return typeof value === 'string' ? value : null;
@@ -122,7 +110,7 @@ agentToolsRouter.get(
   createV2ScopeRateLimit('read:records'),
   async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     const publicId = pathParam(req.params.publicId);
-    if (!publicId || !PUBLIC_ID_RE.test(publicId)) {
+    if (!publicId || !PUBLIC_ANCHOR_ID_RE.test(publicId)) {
       next(ProblemError.validationError('public_id must match ARK-<TYPE>-<SUFFIX>'));
       return;
     }
