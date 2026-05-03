@@ -23,15 +23,25 @@ echo "=== CI Supabase Start ==="
 # --- Fix migration filenames ---
 echo "Fixing migration filenames..."
 
-# Handle 0068a/0068b: ADD VALUE must be a separate transaction
-# 00680 sorts before 0068_ because '0' (48) < '_' (95)
+# Handle 0068 enum migration history:
+# - 0068_add_submitted_enum.sql in the repo may already contain the 0068b body
+#   from an earlier local merge; truncate it back to the enum-only migration.
+# - 0068a/0068b have letter suffixes rejected by newer Supabase CLI versions.
+# - ADD VALUE must commit before any later migration uses SUBMITTED.
+# 00680/00681 sort before 0068_ because digits (48-57) sort before '_' (95).
+MIGRATION_0068_BASE="$MIGRATIONS_DIR/0068_add_submitted_enum.sql"
+if [ -f "$MIGRATION_0068_BASE" ] && grep -q '^-- MERGED FROM: 0068b_submitted_status_and_confirmations.sql' "$MIGRATION_0068_BASE"; then
+  awk '/^-- MERGED FROM: 0068b_submitted_status_and_confirmations.sql/ { exit } { print }' "$MIGRATION_0068_BASE" > /tmp/0068_enum_only.sql
+  cp /tmp/0068_enum_only.sql "$MIGRATION_0068_BASE"
+  echo "  Split merged 0068_add back to enum-only migration"
+fi
 if [ -f "$MIGRATIONS_DIR/0068a_add_submitted_enum.sql" ]; then
   mv "$MIGRATIONS_DIR/0068a_add_submitted_enum.sql" "$MIGRATIONS_DIR/00680_add_submitted_enum.sql"
   echo "  Renamed 0068a → 00680 (sorts before 0068_)"
 fi
 if [ -f "$MIGRATIONS_DIR/0068b_submitted_status_and_confirmations.sql" ]; then
-  mv "$MIGRATIONS_DIR/0068b_submitted_status_and_confirmations.sql" "$MIGRATIONS_DIR/0068_submitted_status_and_confirmations.sql"
-  echo "  Renamed 0068b → 0068"
+  mv "$MIGRATIONS_DIR/0068b_submitted_status_and_confirmations.sql" "$MIGRATIONS_DIR/00681_submitted_status_and_confirmations.sql"
+  echo "  Renamed 0068b → 00681 (runs after 00680 enum add)"
 fi
 
 # Handle 0088/0088b: ADD VALUE in 0088, usage in 0088b — keep separate

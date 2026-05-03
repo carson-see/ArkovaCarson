@@ -14,7 +14,7 @@
  *     mode whenever the toggle had been clicked in a prior test session
  *     and React reused the same hydrated DOM.
  *   - Race the post-submit redirect against any login-error toast so the
- *     setup fails fast (≤15s) on a real auth error instead of timing
+ *     setup fails fast (<=15s) on a real auth error instead of timing
  *     out at 30s and burning CI minutes.
  *   - Verify the storageState file was actually written and contains
  *     a Supabase session — catches silent state-save failures.
@@ -24,13 +24,15 @@
  */
 
 import { test as setup, expect } from '@playwright/test';
-import { SEED_USERS } from './fixtures/supabase';
 import fs from 'fs';
+import { getServiceClient, SEED_USERS } from './fixtures/supabase';
+import { acceptDisclaimerIfVisible } from './helpers/dashboard';
 
 const STORAGE_DIR = '.auth';
 const POST_LOGIN_URL_PATTERN =
   /\/(vault|dashboard|onboarding|organization|records|settings|review-pending)/;
 const LOGIN_FAILURE_TIMEOUT_MS = 15_000;
+const serviceClient = getServiceClient();
 
 interface StorageStateFile {
   origins?: Array<{
@@ -43,6 +45,17 @@ interface StorageStateFile {
 
 // Ensure storage directory exists (idempotent)
 fs.mkdirSync(STORAGE_DIR, { recursive: true });
+
+async function markDisclaimerAccepted(userId: string) {
+  const { error } = await serviceClient
+    .from('profiles')
+    .update({ disclaimer_accepted_at: new Date().toISOString() })
+    .eq('id', userId);
+
+  if (error) {
+    throw new Error(`Failed to prepare E2E seed user ${userId}: ${error.message}`);
+  }
+}
 
 function storageStateHasSupabaseSession(storagePath: string): boolean {
   const parsed = JSON.parse(fs.readFileSync(storagePath, 'utf8')) as StorageStateFile;
@@ -59,7 +72,8 @@ function storageStateHasSupabaseSession(storagePath: string): boolean {
 
 /**
  * Shared login helper — navigates to /login, fills credentials, races
- * post-submit redirect against any error toast, and saves storageState.
+ * post-submit redirect against any error toast, accepts the dashboard
+ * disclaimer when visible, and saves storageState.
  */
 async function loginAndSave(
   page: import('@playwright/test').Page,
@@ -74,7 +88,7 @@ async function loginAndSave(
   await page.locator('#password').fill(password);
 
   // Race the success-URL navigation against any error-message surface so
-  // a bad seed credential fails the setup at ≤15s instead of 30s.
+  // a bad seed credential fails the setup at <=15s instead of 30s.
   const successPromise = page.waitForURL(POST_LOGIN_URL_PATTERN, {
     timeout: LOGIN_FAILURE_TIMEOUT_MS,
   }).then(() => ({ type: 'success' as const }));
@@ -126,6 +140,7 @@ async function loginAndSave(
     { timeout: LOGIN_FAILURE_TIMEOUT_MS },
   );
 
+  await acceptDisclaimerIfVisible(page);
   await page.context().storageState({ path: storagePath });
 
   // Verify the file was actually written and contains a Supabase session.
@@ -154,7 +169,8 @@ async function loginAndSave(
 
 // ── Setup tests — one per distinct seed user ──────────────────────────
 
-setup('authenticate as individual (carson)', async ({ page }) => {
+setup('authenticate as individual (demo-user)', async ({ page }) => {
+  await markDisclaimerAccepted(SEED_USERS.individual.id);
   await loginAndSave(
     page,
     SEED_USERS.individual.email,
@@ -163,7 +179,18 @@ setup('authenticate as individual (carson)', async ({ page }) => {
   );
 });
 
+setup('authenticate as orgAdmin (demo-admin)', async ({ page }) => {
+  await markDisclaimerAccepted(SEED_USERS.orgAdmin.id);
+  await loginAndSave(
+    page,
+    SEED_USERS.orgAdmin.email,
+    SEED_USERS.orgAdmin.password,
+    `${STORAGE_DIR}/orgAdmin.json`,
+  );
+});
+
 setup('authenticate as orgBAdmin (sarah)', async ({ page }) => {
+  await markDisclaimerAccepted(SEED_USERS.orgBAdmin.id);
   await loginAndSave(
     page,
     SEED_USERS.orgBAdmin.email,

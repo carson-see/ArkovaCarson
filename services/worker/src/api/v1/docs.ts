@@ -1310,15 +1310,15 @@ const nordicVaultCss = `
   .swagger-ui .highlight-code .microlight code { color: #5eead4 !important; }
 `;
 
+// JSON spec endpoint
+router.get('/spec.json', (_req, res) => {
+  res.json(openApiSpec);
+});
+
 router.use('/', swaggerUi.serve, swaggerUi.setup(openApiSpec, {
   customCss: nordicVaultCss,
   customSiteTitle: 'Arkova Verification API Docs',
   customfavIcon: 'https://arkova-26.vercel.app/favicon.ico',
 }));
-
-// JSON spec endpoint
-router.get('/spec.json', (_req, res) => {
-  res.json(openApiSpec);
-});
 
 export { router as docsRouter };

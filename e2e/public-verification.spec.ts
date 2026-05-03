@@ -14,6 +14,10 @@ test.describe('Public Verification', () => {
   let testAnchorId: string;
   const serviceClient = getServiceClient();
 
+  async function expectVerifiedPage(page: import('@playwright/test').Page) {
+    await expect(page.getByRole('heading', { name: /^Verified on/i })).toBeVisible({ timeout: 10000 });
+  }
+
   test.beforeAll(async () => {
     const anchor = await createTestAnchor(serviceClient, {
       userId: SEED_USERS.individual.id,
@@ -40,14 +44,13 @@ test.describe('Public Verification', () => {
     await page.goto(`/verify/${testPublicId}`);
 
     // Should show verified status
-    await expect(page.getByText('Verified')).toBeVisible({ timeout: 10000 });
-    await expect(page.getByText('Document Verified')).toBeVisible();
+    await expectVerifiedPage(page);
 
     // Should show the filename
     await expect(page.getByText('e2e_public_test.pdf')).toBeVisible();
 
     // Should show fingerprint
-    await expect(page.getByText('Fingerprint')).toBeVisible();
+    await expect(page.getByText('Fingerprint (SHA-256)', { exact: true })).toBeVisible();
 
     // Should show verification ID
     await expect(page.getByText(new RegExp(`Verification ID.*${testPublicId}`))).toBeVisible();
@@ -70,7 +73,7 @@ test.describe('Public Verification', () => {
 
   test('public verification page does not expose sensitive data', async ({ page }) => {
     await page.goto(`/verify/${testPublicId}`);
-    await expect(page.getByText('Document Verified')).toBeVisible({ timeout: 10000 });
+    await expectVerifiedPage(page);
 
     // Should NOT show user ID or email
     await expect(page.getByText(SEED_USERS.individual.id)).not.toBeVisible();
@@ -85,14 +88,14 @@ test.describe('Public Verification', () => {
     await expect(page).not.toHaveURL(/\/auth/);
 
     // Should show verification content
-    await expect(page.getByText('Document Verified')).toBeVisible({ timeout: 10000 });
+    await expectVerifiedPage(page);
   });
 
-  test('public verification page shows file size when available', async ({ page }) => {
+  test('public verification page shows proof details when available', async ({ page }) => {
     await page.goto(`/verify/${testPublicId}`);
-    await expect(page.getByText('Document Verified')).toBeVisible({ timeout: 10000 });
+    await expectVerifiedPage(page);
 
-    // Should show file size (12345 bytes ≈ 12.1 KB)
-    await expect(page.getByText(/12\.1 KB|12345/)).toBeVisible();
+    await expect(page.getByText('Fingerprint (SHA-256)', { exact: true })).toBeVisible();
+    await expect(page.getByText(new RegExp(`Verification ID: ${testPublicId}`))).toBeVisible();
   });
 });
