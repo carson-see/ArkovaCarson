@@ -264,9 +264,23 @@ router.get('/:publicId', async (req: Request, res: Response) => {
   }
 
   try {
+    // Narrow SELECT to exactly the columns the response builds out (lines
+    // 308–356 below). This is defense-in-depth alongside the static-source
+    // defense in attestations-sanitizer.test.ts: the test catches a future
+    // res.json() spread, the narrow SELECT removes the latent attack surface
+    // even if a refactor accidentally widens the response.
     const { data: attestation, error } = await dbAny
       .from('attestations')
-      .select('*')
+      .select(
+        'public_id, attestation_type, status, ' +
+        'subject_type, subject_identifier, ' +
+        'attester_name, attester_type, attester_title, attester_org_id, ' +
+        'claims, summary, jurisdiction, ' +
+        'fingerprint, evidence_fingerprint, ' +
+        'chain_tx_id, chain_block_height, chain_timestamp, ' +
+        'issued_at, expires_at, revoked_at, revocation_reason, created_at, ' +
+        'anchor_id'
+      )
       .eq('public_id', publicId)
       .single();
 
