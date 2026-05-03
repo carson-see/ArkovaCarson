@@ -20,6 +20,13 @@ from pathlib import Path
 PROJECT_REF = os.environ.get("SUPABASE_PROJECT_REF", "vzwyaatejekddvltxyye")
 TOKEN = os.environ.get("SUPABASE_ACCESS_TOKEN")
 MIGRATION = Path("supabase/migrations/0283_drain_submitted_to_secured_helper.sql")
+AUTH_HINT = (
+  "SUPABASE_ACCESS_TOKEN must be a Supabase Management API token for an "
+  f"account that can read project {PROJECT_REF}; fine-grained tokens need "
+  "database_read for this check and database_migrations_read for the paired "
+  "migration drift check. Do not use anon/service_role JWTs, database "
+  "passwords, or project API keys."
+)
 
 QUERY = r"""
 WITH fn AS (
@@ -76,7 +83,10 @@ def execute_read_only_query() -> dict[str, object]:
         "SUPABASE_ACCESS_TOKEN is not available to this pull_request run."
       )
       sys.exit(0)
-    fail("SUPABASE_ACCESS_TOKEN is required for the read-only function body check")
+    fail(f"SUPABASE_ACCESS_TOKEN is required for the read-only function body check. {AUTH_HINT}")
+
+  if TOKEN.startswith("eyJ") and TOKEN.count(".") == 2:
+    fail(f"SUPABASE_ACCESS_TOKEN looks like a JWT/project API key, not a Supabase Management API token. {AUTH_HINT}")
 
   request = urllib.request.Request(
     f"https://api.supabase.com/v1/projects/{PROJECT_REF}/database/query/read-only",
@@ -95,10 +105,11 @@ def execute_read_only_query() -> dict[str, object]:
     body = error.read().decode("utf-8", errors="replace")
     if error.code in (401, 403):
       fail(
-        "SUPABASE_ACCESS_TOKEN cannot run the read-only prod function check "
-        f"(HTTP {error.code}). Rotate the GitHub Actions secret at "
-        "https://app.supabase.com/account/tokens with All projects scope, then "
-        "re-run Migration Drift Check before merging."
+        "Supabase Management API rejected the read-only prod function check "
+        f"for project {PROJECT_REF} (HTTP {error.code}). {AUTH_HINT} Verify "
+        "the GitHub Actions secret value and the token owner's project/org "
+        "access before replacing it, then re-run Migration Drift Check before "
+        "merging."
       )
     preview = body[:300].replace("\n", " ")
     fail(f"Supabase read-only SQL endpoint returned HTTP {error.code}: {preview}")

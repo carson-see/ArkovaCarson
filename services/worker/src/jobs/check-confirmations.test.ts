@@ -338,6 +338,7 @@ describe('checkSubmittedConfirmations', () => {
         event_category: 'ANCHOR',
         target_type: 'anchor',
         target_id: MOCK_SUBMITTED_ANCHOR.chain_tx_id,
+        org_id: null,
       }),
     );
   });

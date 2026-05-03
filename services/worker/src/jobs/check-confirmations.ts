@@ -644,6 +644,7 @@ async function checkSubmittedConfirmationsUnlocked(): Promise<{ checked: number;
             actor_id: '00000000-0000-0000-0000-000000000000',
             target_type: 'anchor',
             target_id: txId,
+            org_id: null,
             details: `Batch confirmed ${groupConfirmed} anchors at block ${blockHeight} (tx: ${txId}, ${confirmations} confirmations)`,
           });
           if (auditErr) logger.warn({ auditErr, txId }, 'Failed to insert batch audit event');
