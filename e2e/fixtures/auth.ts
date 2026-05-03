@@ -6,15 +6,15 @@
  * login flows. The setup project logs in each seed user once and saves
  * cookies + localStorage to `.auth/*.json`.
  *
- * For tests that need the default `individual` (carson) session, the
+ * For tests that need the default `individual` (demo-user) session, the
  * project-level `storageState` in `playwright.config.ts` handles it
  * automatically — every `page` fixture is already authenticated.
  *
  * The `individualPage` fixture is therefore just the default `page`
  * (already authenticated via project storageState).
  *
- * The `orgAdminPage` fixture is also the default `page` because
- * orgAdmin and individual are the same seed user (carson@arkova.ai).
+ * The `orgAdminPage` fixture opens a separate browser context with the
+ * demo org-admin storageState.
  *
  * The `orgBAdminPage` fixture creates a new browser context with
  * sarah's storageState for cross-tenant tests.
@@ -26,6 +26,7 @@ import { test as base, type Page, type BrowserContext } from '@playwright/test';
 
 // Storage state paths (written by e2e/auth.setup.ts)
 const INDIVIDUAL_STATE = '.auth/individual.json';
+const ORG_ADMIN_STATE = '.auth/orgAdmin.json';
 const ORG_B_ADMIN_STATE = '.auth/orgBAdmin.json';
 
 // Re-export SEED_USERS keys for type safety
@@ -35,9 +36,9 @@ type SeedUserKey = keyof typeof SEED_USERS;
 // ── Extended Test Fixtures ──────────────────────────────────────────────────
 
 type AuthFixtures = {
-  /** Page logged in as INDIVIDUAL user (carson) — uses project default storageState */
+  /** Page logged in as INDIVIDUAL user (demo-user) — uses project default storageState */
   individualPage: Page;
-  /** Page logged in as ORG_ADMIN (carson) — same user as individual */
+  /** Page logged in as ORG_ADMIN (demo-admin) — separate browser context */
   orgAdminPage: Page;
   /** Page logged in as ORG_B_ADMIN (sarah) — separate browser context */
   orgBAdminPage: Page;
@@ -47,11 +48,11 @@ type AuthFixtures = {
 
 /**
  * Map seed user keys to their storageState file paths.
- * individual and orgAdmin are the same user (carson).
+ * individual and orgAdmin intentionally use different seeded users.
  */
 const STORAGE_STATE_MAP: Record<SeedUserKey, string> = {
   individual: INDIVIDUAL_STATE,
-  orgAdmin: INDIVIDUAL_STATE,
+  orgAdmin: ORG_ADMIN_STATE,
   registrar: ORG_B_ADMIN_STATE,
   orgBAdmin: ORG_B_ADMIN_STATE,
 };
@@ -67,9 +68,14 @@ export const test = base.extend<AuthFixtures>({
     await use(page);
   },
 
-  // orgAdminPage: same user as individual (carson), reuse default page
-  orgAdminPage: async ({ page }, use) => {
+  // orgAdminPage: separate seeded org-admin session.
+  orgAdminPage: async ({ browser }, use) => {
+    const context: BrowserContext = await browser.newContext({
+      storageState: ORG_ADMIN_STATE,
+    });
+    const page = await context.newPage();
     await use(page);
+    await context.close();
   },
 
   // orgBAdminPage: different user (sarah) — needs its own browser context

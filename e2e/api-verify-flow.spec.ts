@@ -71,7 +71,7 @@ test.describe('API Verification Flow (QA-E2E-02)', () => {
     test('verify by public_id returns anchor proof', async ({ request }) => {
       // The verification API should be accessible without API key
       const response = await request.get(
-        `${WORKER_URL}/api/v1/verify?public_id=${testPublicId}`,
+        `${WORKER_URL}/api/v1/verify/${encodeURIComponent(testPublicId)}`,
       );
 
       // May get 402 (payment required) or 200 depending on feature flags
@@ -81,15 +81,15 @@ test.describe('API Verification Flow (QA-E2E-02)', () => {
 
       if (status === 200) {
         const body = await response.json();
-        expect(body).toHaveProperty('public_id', testPublicId);
-        expect(body).toHaveProperty('status', 'SECURED');
-        expect(body).toHaveProperty('fingerprint');
+        expect(body).toHaveProperty('verified', true);
+        expect(body).toHaveProperty('status', 'ACTIVE');
+        expect(body).toHaveProperty('record_uri');
       }
     });
 
     test('verify with invalid public_id returns 404', async ({ request }) => {
       const response = await request.get(
-        `${WORKER_URL}/api/v1/verify?public_id=nonexistent_abc123`,
+        `${WORKER_URL}/api/v1/verify/nonexistent_abc123`,
       );
 
       // Should be 404 or 402 (payment gate may intercept first)
@@ -99,7 +99,7 @@ test.describe('API Verification Flow (QA-E2E-02)', () => {
 
     test('verify returns rate limit headers', async ({ request }) => {
       const response = await request.get(
-        `${WORKER_URL}/api/v1/verify?public_id=${testPublicId}`,
+        `${WORKER_URL}/api/v1/verify/${encodeURIComponent(testPublicId)}`,
       );
 
       // Rate limit headers should be present regardless of auth
@@ -147,7 +147,7 @@ test.describe('API Verification Flow (QA-E2E-02)', () => {
       await expect(page.getByText('e2e_api_verify_test.pdf')).toBeVisible();
 
       // Should show fingerprint section
-      await expect(page.getByText('Fingerprint')).toBeVisible();
+      await expect(page.getByText(/^Fingerprint \(SHA-256\)$/)).toBeVisible();
 
       // Should show "Secured by Arkova" branding
       await expect(page.getByText('Secured by Arkova')).toBeVisible();

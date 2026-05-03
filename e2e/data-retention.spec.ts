@@ -18,10 +18,12 @@ test.describe('Data Retention Policy Page', () => {
   test('renders retention schedule table', async ({ page }) => {
     await page.goto('/privacy/data-retention');
 
-    await expect(page.getByText('Retention Schedule')).toBeVisible();
-    await expect(page.getByText('Anchor Records')).toBeVisible();
-    await expect(page.getByText('Audit Events')).toBeVisible();
-    await expect(page.getByText('User Accounts')).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Retention Schedule' })).toBeVisible();
+
+    const schedule = page.getByRole('table');
+    await expect(schedule.getByRole('cell', { name: 'Anchor Records' })).toBeVisible();
+    await expect(schedule.getByRole('cell', { name: 'Audit Events' })).toBeVisible();
+    await expect(schedule.getByRole('cell', { name: 'User Accounts' })).toBeVisible();
   });
 
   test('renders right to erasure section', async ({ page }) => {
@@ -47,6 +49,6 @@ test.describe('Data Retention Policy Page', () => {
     await page.goto('/privacy/data-retention');
 
     await expect(page.getByRole('heading', { name: 'Data Retention Policy' })).toBeVisible({ timeout: 5000 });
-    await expect(page.getByText('Anchor Records')).toBeVisible();
+    await expect(page.getByRole('table').getByRole('cell', { name: 'Anchor Records' })).toBeVisible();
   });
 });

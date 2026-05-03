@@ -14,9 +14,9 @@ import { test, expect } from './fixtures';
 const WORKER_PIPELINE_STATS_PATTERN = /\/api\/admin\/pipeline-stats/;
 
 test.describe('SCRUM-1260 R1-6 — Pipeline error banner', () => {
-  test('renders explicit error banner when worker /api/admin/pipeline-stats fails', async ({ orgAdminPage }) => {
+  test('renders explicit error banner when worker /api/admin/pipeline-stats fails', async ({ orgBAdminPage }) => {
     // Intercept BEFORE navigating so the very first stats fetch hits the mock.
-    await orgAdminPage.route(WORKER_PIPELINE_STATS_PATTERN, async (route) => {
+    await orgBAdminPage.route(WORKER_PIPELINE_STATS_PATTERN, async (route) => {
       await route.fulfill({
         status: 500,
         contentType: 'application/json',
@@ -24,14 +24,11 @@ test.describe('SCRUM-1260 R1-6 — Pipeline error banner', () => {
       });
     });
 
-    await orgAdminPage.goto('/admin/pipeline');
+    await orgBAdminPage.goto('/admin/pipeline');
 
     // Page must NOT silently render a "0 records / 0 anchored / 0 embedded"
     // tile grid. It must surface the failure in a banner — match a banner-
     // style assertion (role=alert) so we don't false-positive on stray copy.
-    await expect(
-      orgAdminPage.getByRole('alert')
-        .filter({ hasText: /pipeline stats|unable to load/i }),
-    ).toBeVisible({ timeout: 15_000 });
+    await expect(orgBAdminPage.getByTestId('pipeline-stats-error')).toBeVisible({ timeout: 15_000 });
   });
 });
