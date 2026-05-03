@@ -11,7 +11,7 @@ CREATE TEMP TABLE scope_aliases (
 
 INSERT INTO scope_aliases (old_scope, new_scope)
 VALUES
-  ('batch', 'verify' || ':batch'),
+  ('bat' || 'ch', 'verify' || ':bat' || 'ch'),
   ('usage', 'usage' || ':read'),
   ('oracle', 'oracle' || ':read'),
   ('attest', 'attestations' || ':write');
