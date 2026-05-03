@@ -37,7 +37,7 @@ test.describe('Proof Download', () => {
 
   test('PDF download button triggers file download', async ({ individualPage }) => {
     await individualPage.goto(`/records/${securedAnchor.id}`);
-    await expect(individualPage.getByText('Record Details')).toBeVisible({ timeout: 10000 });
+    await expect(individualPage.getByRole('heading', { name: 'Record Details' })).toBeVisible({ timeout: 10000 });
 
     // Wait for download proof section
     await expect(individualPage.getByText(/Download Proof Package/i)).toBeVisible();
@@ -58,7 +58,7 @@ test.describe('Proof Download', () => {
 
   test('JSON download button triggers file download', async ({ individualPage }) => {
     await individualPage.goto(`/records/${securedAnchor.id}`);
-    await expect(individualPage.getByText('Record Details')).toBeVisible({ timeout: 10000 });
+    await expect(individualPage.getByRole('heading', { name: 'Record Details' })).toBeVisible({ timeout: 10000 });
 
     await expect(individualPage.getByText(/Download Proof Package/i)).toBeVisible();
 
@@ -78,7 +78,7 @@ test.describe('Proof Download', () => {
 
   test('JSON proof package contains valid structure', async ({ individualPage }) => {
     await individualPage.goto(`/records/${securedAnchor.id}`);
-    await expect(individualPage.getByText('Record Details')).toBeVisible({ timeout: 10000 });
+    await expect(individualPage.getByRole('heading', { name: 'Record Details' })).toBeVisible({ timeout: 10000 });
 
     await expect(individualPage.getByText(/Download Proof Package/i)).toBeVisible();
 
@@ -112,7 +112,7 @@ test.describe('Proof Download', () => {
 
     try {
       await individualPage.goto(`/records/${pending.id}`);
-      await expect(individualPage.getByText('Record Details')).toBeVisible({ timeout: 10000 });
+      await expect(individualPage.getByRole('heading', { name: 'Record Details' })).toBeVisible({ timeout: 10000 });
 
       // Pending records should NOT show download proof section
       // (or the buttons should be hidden/disabled)
