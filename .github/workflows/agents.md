@@ -21,7 +21,7 @@
 - External downloads (e.g. `tla2tools.jar`) MUST verify SHA256. See ci.yml's `Pin TLA2TOOLS_JAR` step for the canonical pattern (SCRUM-1248 / R0-2).
 - `migration-drift.yml` is read-only — it never applies or modifies anything.
 - Exempt-list changes in `migration-drift.yml` require a code comment + Jira ticket.
-- Secrets: `SUPABASE_ACCESS_TOKEN` (read-only PAT), `SUPABASE_PROJECT_REF`, `SENTRY_DSN_OPS` (revision-drift Sentry alerts).
+- Secrets: `arkova1/supabase_access` in GCP Secret Manager for migration drift, `SUPABASE_PROJECT_REF`, `SENTRY_DSN_OPS` (revision-drift Sentry alerts).
 - Deploy gate ≡ CI lint job: deploy-worker.yml + ci.yml `Lint worker` step BOTH invoke `npm run lint` from `services/worker/`. Drift between them is enforced by `scripts/ci/check-deploy-lint-parity.ts`. Override label: `ci-config-change`.
 
 ## R0 anti-false-done CI jobs (SCRUM-1246 wave)
