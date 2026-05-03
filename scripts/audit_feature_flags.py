@@ -507,6 +507,8 @@ def write_outputs(flags: dict[str, Flag], registries: dict[str, set[str]]) -> No
     lines.append("")
     lines.append("## P0/P1 Drift Findings")
     lines.append("")
+    lines.append("Resolution of the drift findings in this section is tracked in SCRUM-1621 and is out of scope for this audit/register PR.")
+    lines.append("")
     lines.append("| Priority | Finding | Evidence | Required action |")
     lines.append("| --- | --- | --- | --- |")
     for f in top_findings:

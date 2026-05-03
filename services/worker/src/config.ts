@@ -177,15 +177,27 @@ const ConfigSchema = z.object({
    * (HANDOFF.md "Drive + DocuSign live in prod").
    */
   enableDriveOauth: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(false),
-  /** Drive webhook intake — when false, Drive push notifications return 503. Default false while folder delta processing is launch-gated. */
+  /**
+   * Drive webhook intake — when false, Drive push notifications return 503.
+   * Default false while folder delta processing is launch-gated. Cloud Run prod
+   * env sets this to true explicitly once the connector is launch-approved.
+   */
   enableDriveWebhook: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(false),
   /** Google OAuth client id (Drive). Required when ENABLE_DRIVE_OAUTH=true in production. */
   googleOauthClientId: z.string().optional(),
   /** Google OAuth client secret (Drive). Required when ENABLE_DRIVE_OAUTH=true in production. */
   googleOauthClientSecret: z.string().optional(),
-  /** DocuSign OAuth flow — when false, /api/v1/integrations/docusign routes 503. Default false pending org-scale validation. */
+  /**
+   * DocuSign OAuth flow — when false, /api/v1/integrations/docusign routes 503.
+   * Default false pending org-scale validation. Cloud Run prod env sets this to
+   * true explicitly once the connector is launch-approved.
+   */
   enableDocusignOauth: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(false),
-  /** DocuSign Connect webhook — when false, /webhooks/docusign returns 503. Default false pending org-scale validation. */
+  /**
+   * DocuSign Connect webhook — when false, /webhooks/docusign returns 503.
+   * Default false pending org-scale validation. Cloud Run prod env sets this to
+   * true explicitly once the connector is launch-approved.
+   */
   enableDocusignWebhook: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(false),
   /** DocuSign integration key. Required when DOCUSIGN_CONNECT_HMAC_SECRET is set. */
   docusignIntegrationKey: z.string().optional(),
@@ -193,7 +205,11 @@ const ConfigSchema = z.object({
   docusignClientSecret: z.string().optional(),
   /** DocuSign Connect raw-body HMAC secret. Worker rejects POST /webhooks/docusign without it. */
   docusignConnectHmacSecret: z.string().optional(),
-  /** ATS webhook intake — when false, ATS inbound webhooks return 503. Default false pending tenant-isolation validation. */
+  /**
+   * ATS webhook intake — when false, ATS inbound webhooks return 503.
+   * Default false pending tenant-isolation validation. Cloud Run prod env sets
+   * this to true explicitly once the connector is launch-approved.
+   */
   enableAtsWebhook: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(false),
   /** Adobe Sign OAuth client secret. Routes 503 when unset. */
   adobeSignClientSecret: z.string().optional(),

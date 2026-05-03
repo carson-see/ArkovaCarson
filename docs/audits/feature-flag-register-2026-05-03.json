@@ -66,8 +66,8 @@
         "worker-config": "false"
       },
       "examples": [
-        "services/worker/src/config.ts:242",
-        "services/worker/src/config.ts:581",
+        "services/worker/src/config.ts:258",
+        "services/worker/src/config.ts:597",
         "services/worker/src/middleware/adesFeatureGate.test.ts:4"
       ],
       "files": [
@@ -291,8 +291,8 @@
         "worker-config": "false"
       },
       "examples": [
-        "services/worker/src/config.ts:236",
-        "services/worker/src/config.ts:578",
+        "services/worker/src/config.ts:252",
+        "services/worker/src/config.ts:594",
         "services/worker/src/jobs/monthly-allocation-rollover.test.ts:32"
       ],
       "files": [
@@ -323,7 +323,7 @@
       },
       "examples": [
         "services/worker/src/config.test.ts:493",
-        "services/worker/src/config.ts:559",
+        "services/worker/src/config.ts:575",
         "services/worker/src/middleware/flagRegistry.ts:50"
       ],
       "files": [
@@ -414,8 +414,8 @@
         "worker-config": "false"
       },
       "examples": [
-        "services/worker/src/config.ts:252",
-        "services/worker/src/config.ts:586",
+        "services/worker/src/config.ts:268",
+        "services/worker/src/config.ts:602",
         "services/worker/src/jobs/cloud-logging-drain.ts:44"
       ],
       "files": [
@@ -621,7 +621,7 @@
       "examples": [
         "services/worker/src/api/v1/router.ts:318",
         "services/worker/src/config.test.ts:490",
-        "services/worker/src/config.ts:551"
+        "services/worker/src/config.ts:567"
       ],
       "files": [
         "docs/reference/ENV.md",
@@ -807,7 +807,7 @@
       "examples": [
         "services/worker/src/api/v1/router.ts:305",
         "services/worker/src/config.test.ts:489",
-        "services/worker/src/config.ts:240"
+        "services/worker/src/config.ts:256"
       ],
       "files": [
         "docs/reference/ENV.md",
@@ -1009,7 +1009,7 @@
       },
       "examples": [
         "services/worker/src/api/v1/anchor-submit.ts:106",
-        "services/worker/src/config.ts:524",
+        "services/worker/src/config.ts:540",
         "services/worker/src/middleware/flagRegistry.ts:29"
       ],
       "files": [
@@ -1115,7 +1115,7 @@
       },
       "examples": [
         ".env.example:104",
-        ".github/workflows/ci.yml:868",
+        ".github/workflows/ci.yml:874",
         ".github/workflows/deploy-worker.yml:140"
       ],
       "files": [
@@ -1319,8 +1319,8 @@
       },
       "examples": [
         "services/worker/agents.md:75",
-        "services/worker/src/config.ts:228",
-        "services/worker/src/config.ts:574"
+        "services/worker/src/config.ts:244",
+        "services/worker/src/config.ts:590"
       ],
       "files": [
         "docs/reference/ENV.md",
@@ -1383,8 +1383,8 @@
       },
       "examples": [
         "services/worker/agents.md:75",
-        "services/worker/src/config.ts:226",
-        "services/worker/src/config.ts:573"
+        "services/worker/src/config.ts:242",
+        "services/worker/src/config.ts:589"
       ],
       "files": [
         "docs/reference/ENV.md",
@@ -1414,8 +1414,8 @@
         "worker-config": "true"
       },
       "examples": [
-        "services/worker/src/config.ts:234",
-        "services/worker/src/config.ts:577",
+        "services/worker/src/config.ts:250",
+        "services/worker/src/config.ts:593",
         "services/worker/src/jobs/rule-action-dispatcher.test.ts:143"
       ],
       "files": [
@@ -1565,7 +1565,7 @@
       "examples": [
         "services/worker/agents.md:75",
         "services/worker/src/config.test.ts:555",
-        "services/worker/src/config.ts:230"
+        "services/worker/src/config.ts:246"
       ],
       "files": [
         "docs/reference/ENV.md",
@@ -1638,7 +1638,7 @@
       },
       "examples": [
         ".env.example:63",
-        ".github/workflows/ci.yml:867",
+        ".github/workflows/ci.yml:873",
         ".github/workflows/deploy-worker.yml:140"
       ],
       "files": [
@@ -1767,8 +1767,8 @@
       },
       "examples": [
         "services/worker/agents.md:75",
-        "services/worker/src/config.ts:232",
-        "services/worker/src/config.ts:576"
+        "services/worker/src/config.ts:248",
+        "services/worker/src/config.ts:592"
       ],
       "files": [
         "docs/reference/ENV.md",
@@ -1797,8 +1797,8 @@
         "worker-config": "false"
       },
       "examples": [
-        "services/worker/src/config.ts:254",
-        "services/worker/src/config.ts:587",
+        "services/worker/src/config.ts:270",
+        "services/worker/src/config.ts:603",
         "services/worker/src/jobs/workspace-subscription-renewal.test.ts:149"
       ],
       "files": [
@@ -1921,7 +1921,7 @@
       },
       "examples": [
         ".env.example:22",
-        ".github/workflows/ci.yml:866",
+        ".github/workflows/ci.yml:872",
         ".github/workflows/deploy-worker.yml:140"
       ],
       "files": [
