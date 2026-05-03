@@ -11,6 +11,7 @@ export { test } from './auth';
 export { expect } from '@playwright/test';
 export {
   getServiceClient,
+  getSeedUserOrgId,
   SEED_USERS,
   createTestAnchor,
   deleteTestAnchor,
