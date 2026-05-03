@@ -7,8 +7,9 @@
  *
  * Covers:
  *   - Happy path: no drift
+ *   - Supabase API response normalization
  *   - Missing migrations detected
- *   - Exempt patterns filtered (macOS duplicates, numbered gaps, deferred)
+ *   - Exempt patterns filtered (macOS duplicates, numbered gaps, verified successors)
  *   - Edge cases: empty local list, empty prod list
  *   - Sanity check: real migration files can be listed and sorted
  */
@@ -22,39 +23,85 @@ import * as path from 'node:path';
 // ---------------------------------------------------------------------------
 
 /**
- * Finds local migration names that are NOT present in the prod applied set,
- * filtering out names that match the exempt regex.
+ * Supabase Management API returns `version` and `name` separately, and `name`
+ * may appear as a full local basename, a description suffix, or an
+ * operator-applied Jira prefix. The workflow emits all supported identities and
+ * compares them against local basenames such as `0001_enums`.
+ */
+interface SupabaseMigration {
+  version: string | number;
+  name?: string | null;
+}
+
+export function normalizeProdMigrationKeys(migration: SupabaseMigration): string[] {
+  const version = String(migration.version);
+  const name = migration.name ? String(migration.name) : '';
+  if (!name || name === 'null') return [version];
+
+  const versionAndName = name.startsWith(`${version}_`) ? name : `${version}_${name}`;
+  const withoutScrumPrefix = name.replace(/^scrum_[0-9]+_/, '');
+
+  return [...new Set([name, versionAndName, withoutScrumPrefix])];
+}
+
+/**
+ * Finds local migration names that are NOT present in the normalized prod
+ * applied set, filtering out names that match the exempt regex.
  *
  * This is the TypeScript equivalent of:
  *   comm -23 <(local sorted) <(prod sorted) | grep -vE "$exempt_regex"
  *
  * @param localNames  - basenames (no .sql extension) from supabase/migrations/
- * @param prodNames   - names returned by Supabase Management API .[].name
+ * @param prodMigrations - rows returned by Supabase Management API
  * @param exemptRegex - pattern for migrations intentionally not in prod
  * @returns sorted array of non-exempt migration names missing from prod
  * @throws if localNames is empty (indicates a repo checkout or path error)
- * @throws if prodNames is empty  (indicates an API or auth error)
+ * @throws if prodMigrations is empty  (indicates an API or auth error)
  */
 export function findMissingMigrations(
   localNames: string[],
-  prodNames: string[],
+  prodMigrations: SupabaseMigration[],
   exemptRegex: RegExp,
 ): string[] {
   if (localNames.length === 0) {
     throw new Error('No local migrations found — check supabase/migrations/ path');
   }
-  if (prodNames.length === 0) {
+  if (prodMigrations.length === 0) {
     throw new Error('Prod returned no migrations — check Supabase Management API / token');
   }
 
-  const prodSet = new Set(prodNames);
+  const prodSet = new Set(prodMigrations.flatMap(normalizeProdMigrationKeys));
 
   const missing = localNames
-    .filter((name) => !prodSet.has(name))
+    .filter((name) => {
+      const localVersion = name.split('_')[0];
+      const canonicalSuffix = name.replace(/^[0-9]{4}[a-z]?_/, '');
+      return !prodSet.has(name) && !prodSet.has(localVersion) && !prodSet.has(canonicalSuffix);
+    })
     .filter((name) => !exemptRegex.test(name))
-    .sort();
+    .sort((a, b) => a.localeCompare(b));
 
   return missing;
+}
+
+export function migrationNameFromPath(filePath: string): string | null {
+  const prefix = 'supabase/migrations/';
+  if (!filePath.startsWith(prefix) || !filePath.endsWith('.sql')) return null;
+  return filePath.slice(prefix.length, -'.sql'.length);
+}
+
+export function findPrBlockingMissingMigrations(
+  missingMigrations: string[],
+  changedFiles: string[],
+): string[] {
+  const changedMigrationNames = new Set(
+    changedFiles
+      .map(migrationNameFromPath)
+      .filter((name): name is string => Boolean(name)),
+  );
+  return missingMigrations
+    .filter((name) => changedMigrationNames.has(name))
+    .sort((a, b) => a.localeCompare(b));
 }
 
 // ---------------------------------------------------------------------------
@@ -67,11 +114,17 @@ export function findMissingMigrations(
  * Categories:
  *   (a) 0033 / 0078 / 0162 — numbered gaps that never existed as files
  *   (b) " 2" suffix — macOS duplicate copies
- *   (c) 0186 / 0212..0216 — applied under different version strings in prod
- *   (d) 0190 / 0191 — intentionally held back for maintenance window
+ *   (c) verified historical ledger mismatches whose effects are present in prod
  */
 const EXEMPT_REGEX =
-  /^(0033|0078|0162|.* 2|0186_.*|0190_.*|0191_.*|0212_.*|0213_.*|0214_.*|0215_.*|0216_.*|0216b_.*)$/;
+  /^(0033|0078|0162|.* 2|0022_seed_schema_alignment|0023_is_public_profile|0024_fix_search_path_revoke_anchor|0068b_submitted_status_and_confirmations|0088b_cle_templates|0135_ats_integrations|0175_fix_pipeline_stats_timeout|0180_fix_public_issuer_perf|0258_ark112_queue_public_id)$/;
+
+function applied(...migrationNames: string[]): SupabaseMigration[] {
+  return migrationNames.map((migrationName) => {
+    const [version, ...nameParts] = migrationName.split('_');
+    return { version, name: nameParts.join('_') };
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -80,21 +133,56 @@ const EXEMPT_REGEX =
 describe('SCRUM-908: findMissingMigrations — core diff logic', () => {
   it('returns empty when all local names are in prod', () => {
     const local = ['0001_enums', '0002_organizations', '0003_profiles'];
-    const prod = ['0001_enums', '0002_organizations', '0003_profiles', '0004_anchors'];
+    const prod = applied('0001_enums', '0002_organizations', '0003_profiles', '0004_anchors');
+    const result = findMissingMigrations(local, prod, EXEMPT_REGEX);
+    expect(result).toEqual([]);
+  });
+
+  it('normalizes Supabase version and name before diffing', () => {
+    const local = [
+      '0000_ensure_http_extension',
+      '0001_enums',
+      '0279_x402_payments_org_scoping',
+      '0280_rls_auth_uid_subquery_wrap',
+    ];
+    const prod = [
+      { version: '0000', name: 'ensure_http_extension' },
+      { version: '0001', name: '0001_enums' },
+      { version: '20260429123456', name: 'x402_payments_org_scoping' },
+      { version: '0280', name: 'rls_auth_uid_subquery_wrap' },
+    ];
+    const result = findMissingMigrations(local, prod, EXEMPT_REGEX);
+    expect(result).toEqual([]);
+  });
+
+  it('normalizes null migration names to the version fallback identity', () => {
+    expect(normalizeProdMigrationKeys({ version: '0001', name: null })).toEqual(['0001']);
+  });
+
+  it('matches version-only prod rows against the local migration prefix', () => {
+    const local = ['0279_x402_payments_org_scoping'];
+    const prod = [{ version: '0279', name: null }];
+    const result = findMissingMigrations(local, prod, EXEMPT_REGEX);
+    expect(result).toEqual([]);
+  });
+
+  it('normalizes operator-applied SCRUM prefixes to canonical suffixes', () => {
+    const local = ['1170_org_credits_and_allocations'];
+    const prod = [{ version: '20260418120000', name: 'scrum_1170_org_credits_and_allocations' }];
     const result = findMissingMigrations(local, prod, EXEMPT_REGEX);
     expect(result).toEqual([]);
   });
 
   it('returns missing names when some are not in prod', () => {
     const local = ['0001_enums', '0002_organizations', '0217_nca03_compliance_audits', '0218_nca06_notifications'];
-    const prod = ['0001_enums', '0002_organizations'];
+    const prod = applied('0001_enums', '0002_organizations');
     const result = findMissingMigrations(local, prod, EXEMPT_REGEX);
     expect(result).toEqual(['0217_nca03_compliance_audits', '0218_nca06_notifications']);
   });
 
   it('returns results sorted alphabetically', () => {
     const local = ['0218_nca06_notifications', '0001_enums', '0217_nca03_compliance_audits'];
-    const prod = ['0001_enums'];
+    const prod = applied('0001_enums');
     const result = findMissingMigrations(local, prod, EXEMPT_REGEX);
     expect(result).toEqual(['0217_nca03_compliance_audits', '0218_nca06_notifications']);
   });
@@ -108,7 +196,7 @@ describe('SCRUM-908: findMissingMigrations — exempt pattern filtering', () => 
       '0101_another_migration',
       '0101_another_migration 2',
     ];
-    const prod = ['0100_some_migration', '0101_another_migration'];
+    const prod = applied('0100_some_migration', '0101_another_migration');
     const result = findMissingMigrations(local, prod, EXEMPT_REGEX);
     expect(result).toEqual([]);
   });
@@ -116,35 +204,25 @@ describe('SCRUM-908: findMissingMigrations — exempt pattern filtering', () => 
   it('filters out numbered gap migrations (0033, 0078, 0162)', () => {
     // These numbers never had files, but if they somehow appeared they should be exempt
     const local = ['0001_enums', '0033', '0078', '0162'];
-    const prod = ['0001_enums'];
+    const prod = applied('0001_enums');
     const result = findMissingMigrations(local, prod, EXEMPT_REGEX);
     expect(result).toEqual([]);
   });
 
-  it('filters out deferred migrations 0190 and 0191', () => {
+  it('filters out verified historical ledger exceptions', () => {
     const local = [
       '0001_enums',
-      '0190_rls_subquery_caching',
-      '0191_brin_indexes_timeseries',
-      '0192_enable_pg_stat_statements',
+      '0022_seed_schema_alignment',
+      '0023_is_public_profile',
+      '0024_fix_search_path_revoke_anchor',
+      '0068b_submitted_status_and_confirmations',
+      '0088b_cle_templates',
+      '0135_ats_integrations',
+      '0175_fix_pipeline_stats_timeout',
+      '0180_fix_public_issuer_perf',
+      '0258_ark112_queue_public_id',
     ];
-    const prod = ['0001_enums', '0192_enable_pg_stat_statements'];
-    const result = findMissingMigrations(local, prod, EXEMPT_REGEX);
-    expect(result).toEqual([]);
-  });
-
-  it('filters out version-string-mismatch migrations (0186, 0212-0216)', () => {
-    const local = [
-      '0001_enums',
-      '0186_some_migration',
-      '0212_nph01_accreditation_credential_type',
-      '0213_gre01_credential_sub_type',
-      '0214_drop_unused_indexes',
-      '0215_emergency_dashboard_performance',
-      '0216_nca01_jurisdiction_rules_expansion',
-      '0216b_some_variant',
-    ];
-    const prod = ['0001_enums'];
+    const prod = applied('0001_enums');
     const result = findMissingMigrations(local, prod, EXEMPT_REGEX);
     expect(result).toEqual([]);
   });
@@ -152,13 +230,17 @@ describe('SCRUM-908: findMissingMigrations — exempt pattern filtering', () => 
   it('does NOT filter non-exempt migrations that are missing', () => {
     const local = [
       '0001_enums',
-      '0190_rls_subquery_caching',  // exempt
+      '0190_rls_subquery_caching',  // NOT exempt
       '0219_nca_fu3_tier2_regulations',  // NOT exempt
       '0220_usage_widget_rpc',  // NOT exempt
     ];
-    const prod = ['0001_enums'];
+    const prod = applied('0001_enums');
     const result = findMissingMigrations(local, prod, EXEMPT_REGEX);
-    expect(result).toEqual(['0219_nca_fu3_tier2_regulations', '0220_usage_widget_rpc']);
+    expect(result).toEqual([
+      '0190_rls_subquery_caching',
+      '0219_nca_fu3_tier2_regulations',
+      '0220_usage_widget_rpc',
+    ]);
   });
 
   it('handles mix of exempt and non-exempt missing migrations', () => {
@@ -166,12 +248,11 @@ describe('SCRUM-908: findMissingMigrations — exempt pattern filtering', () => 
       '0001_enums',
       '0033',                           // exempt gap
       '0100_real_migration 2',          // exempt macOS dup
-      '0190_rls_subquery_caching',      // exempt deferred
-      '0212_nph01_accreditation_credential_type',  // exempt version mismatch
+      '0022_seed_schema_alignment',     // exempt verified successor
       '0217_nca03_compliance_audits',   // NOT exempt — real drift
       '0218_nca06_notifications',       // NOT exempt — real drift
     ];
-    const prod = ['0001_enums'];
+    const prod = applied('0001_enums');
     const result = findMissingMigrations(local, prod, EXEMPT_REGEX);
     expect(result).toEqual(['0217_nca03_compliance_audits', '0218_nca06_notifications']);
   });
@@ -180,7 +261,7 @@ describe('SCRUM-908: findMissingMigrations — exempt pattern filtering', () => 
 describe('SCRUM-908: findMissingMigrations — error cases', () => {
   it('throws when local list is empty', () => {
     expect(() =>
-      findMissingMigrations([], ['0001_enums'], EXEMPT_REGEX),
+      findMissingMigrations([], applied('0001_enums'), EXEMPT_REGEX),
     ).toThrow('No local migrations found');
   });
 
@@ -188,6 +269,29 @@ describe('SCRUM-908: findMissingMigrations — error cases', () => {
     expect(() =>
       findMissingMigrations(['0001_enums'], [], EXEMPT_REGEX),
     ).toThrow('Prod returned no migrations');
+  });
+});
+
+describe('SCRUM-908: PR drift blocking logic', () => {
+  it('does not block workflow-only PRs on baseline production drift', () => {
+    const missing = ['0279_x402_payments_org_scoping', '0280_rls_auth_uid_subquery_wrap'];
+    const changedFiles = ['.github/workflows/migration-drift.yml'];
+    expect(findPrBlockingMissingMigrations(missing, changedFiles)).toEqual([]);
+  });
+
+  it('blocks PRs that add or modify a missing migration', () => {
+    const missing = ['0279_x402_payments_org_scoping', '0280_rls_auth_uid_subquery_wrap'];
+    const changedFiles = [
+      'docs/runbooks/migration-drift-playbook.md',
+      'supabase/migrations/0280_rls_auth_uid_subquery_wrap.sql',
+    ];
+    expect(findPrBlockingMissingMigrations(missing, changedFiles)).toEqual(['0280_rls_auth_uid_subquery_wrap']);
+  });
+
+  it('ignores non-SQL files under the migrations directory', () => {
+    const missing = ['0280_rls_auth_uid_subquery_wrap'];
+    const changedFiles = ['supabase/migrations/README.md'];
+    expect(findPrBlockingMissingMigrations(missing, changedFiles)).toEqual([]);
   });
 });
 

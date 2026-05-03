@@ -14,10 +14,9 @@
 import { describe, it, expect, beforeAll } from 'vitest';
 import {
   createServiceClient,
-  DEMO_CREDENTIALS,
+  withIndividualUser,
   type TypedClient,
 } from '../../src/tests/rls/helpers';
-import { createAuthenticatedClient } from './rls.test';
 import { createClient } from '@supabase/supabase-js';
 
 const SUPABASE_URL = process.env.SUPABASE_URL!;
@@ -30,10 +29,7 @@ describe('RLS: x402_payments', () => {
 
   beforeAll(async () => {
     anonClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-    authClient = await createAuthenticatedClient(
-      DEMO_CREDENTIALS.userEmail,
-      DEMO_CREDENTIALS.userPassword,
-    );
+    authClient = await withIndividualUser();
     serviceClient = createServiceClient();
   });
 

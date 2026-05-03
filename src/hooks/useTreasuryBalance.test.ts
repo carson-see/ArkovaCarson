@@ -77,7 +77,8 @@ describe('useTreasuryBalance R1-6 hardening (SCRUM-1260)', () => {
   it('flips loading→false on worker failure (no 75s skeleton)', async () => {
     const { result } = renderHook(() => useTreasuryBalance());
     await waitFor(() => expect(result.current.loading).toBe(false), { timeout: 2000 });
-    expect(result.current.error).toBeTruthy();
+    expect(result.current.error).toBe('Balance unavailable');
+    expect(supabaseFromMock).toHaveBeenCalledWith('treasury_cache');
   });
 
   it('surfaces BALANCE_UNAVAILABLE when worker fails and no prior balance exists', async () => {

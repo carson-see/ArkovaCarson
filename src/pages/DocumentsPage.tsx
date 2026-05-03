@@ -115,6 +115,8 @@ export function DocumentsPage() {
   // Attestations (inline fetch like AttestationsPage)
   const [attestations, setAttestations] = useState<Attestation[]>([]);
   const [attestationsLoading, setAttestationsLoading] = useState(true);
+  const profileOrgId = profile?.org_id;
+  const userId = user?.id;
 
   // UI state
   const [secureDialogOpen, setSecureDialogOpen] = useState(false);
@@ -152,12 +154,23 @@ export function DocumentsPage() {
 
   // Fetch attestations
   const fetchAttestations = useCallback(async () => {
+    if (!userId || profileLoading) {
+      setAttestationsLoading(profileLoading);
+      return;
+    }
+
     setAttestationsLoading(true);
     try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data, error } = await (supabase as any)
-        .from('attestations')
-        .select('id, public_id, attestation_type, status, subject_type, subject_identifier, attester_name, attester_type, summary, created_at, expires_at')
+      const scopedQuery = profileOrgId
+        ? supabase
+            .from('attestations')
+            .select('id, public_id, attestation_type, status, subject_type, subject_identifier, attester_name, attester_type, summary, created_at, expires_at')
+            .eq('attester_org_id', profileOrgId)
+        : supabase
+            .from('attestations')
+            .select('id, public_id, attestation_type, status, subject_type, subject_identifier, attester_name, attester_type, summary, created_at, expires_at')
+            .eq('attester_user_id', userId);
+      const { data, error } = await scopedQuery
         .order('created_at', { ascending: false })
         .limit(100);
       if (!error && data) {
@@ -168,7 +181,7 @@ export function DocumentsPage() {
     } finally {
       setAttestationsLoading(false);
     }
-  }, []);
+  }, [profileOrgId, profileLoading, userId]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- async data fetch; setState is post-await
@@ -714,4 +727,3 @@ function AttestationsList({
     </div>
   );
 }
-
