@@ -1,7 +1,5 @@
 {
   "grandfathered": [
-    "payment_ledger",
-    "public_org_profiles",
     "v_slow_queries",
     "calibration_features"
   ]
