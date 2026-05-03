@@ -25,7 +25,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
-import { ROUTES } from '@/lib/routes';
+import { PUBLIC_ATTESTATION_VERIFY_LABELS } from '@/lib/copy';
+import { ROUTES, verifyPath } from '@/lib/routes';
 import { WORKER_URL } from '@/lib/workerClient';
 import { AnchorDisclaimerDark } from '@/components/anchor/AnchorDisclaimer';
 
@@ -388,7 +389,7 @@ export function PublicAttestationVerifyPage() {
                   {(attestation.evidence ?? []).length > 0 && (
                     <div>
                       <span className="text-[10px] uppercase tracking-wider text-[#bbc9cf] font-semibold">
-                        Evidence
+                        {PUBLIC_ATTESTATION_VERIFY_LABELS.EVIDENCE}
                       </span>
                       <div className="mt-2 space-y-2">
                         {attestation.evidence.map((item) => (
@@ -432,7 +433,9 @@ export function PublicAttestationVerifyPage() {
               {attestation.linked_credential && (
                 <Card className="border-[#00d4ff]/10 bg-[#192028]">
                   <CardContent className="py-4">
-                    <span className="text-[10px] uppercase tracking-wider text-[#bbc9cf] font-semibold">Linked Credential</span>
+                    <span className="text-[10px] uppercase tracking-wider text-[#bbc9cf] font-semibold">
+                      {PUBLIC_ATTESTATION_VERIFY_LABELS.LINKED_CREDENTIAL}
+                    </span>
                     <div className="flex items-center justify-between mt-2">
                       <div>
                         <code className="text-sm font-mono text-[#00d4ff]">{attestation.linked_credential.public_id}</code>
@@ -447,9 +450,9 @@ export function PublicAttestationVerifyPage() {
                           </Badge>
                         </div>
                       </div>
-                      <Link to={`/verify/${attestation.linked_credential.public_id}`}>
+                      <Link to={verifyPath(attestation.linked_credential.public_id)}>
                         <Button variant="outline" size="sm" className="border-[#00d4ff]/20 text-[#00d4ff]">
-                          Verify Credential
+                          {PUBLIC_ATTESTATION_VERIFY_LABELS.VERIFY_CREDENTIAL}
                         </Button>
                       </Link>
                     </div>
@@ -461,7 +464,7 @@ export function PublicAttestationVerifyPage() {
                 <Card className="border-[#00d4ff]/10 bg-[#192028]">
                   <CardContent className="py-4">
                     <span className="text-[10px] uppercase tracking-wider text-[#bbc9cf] font-semibold">
-                      Attestor Credential Chain
+                      {PUBLIC_ATTESTATION_VERIFY_LABELS.ATTESTOR_CREDENTIAL_CHAIN}
                     </span>
                     <div className="mt-2 space-y-2">
                       {(attestation.attestor_credentials ?? []).map((credential) => (
@@ -482,9 +485,9 @@ export function PublicAttestationVerifyPage() {
                               )}
                             </div>
                           </div>
-                          <Link to={`/verify/${credential.public_id}`}>
+                          <Link to={verifyPath(credential.public_id)}>
                             <Button variant="outline" size="sm" className="border-[#00d4ff]/20 text-[#00d4ff]">
-                              Verify
+                              {PUBLIC_ATTESTATION_VERIFY_LABELS.VERIFY}
                             </Button>
                           </Link>
                         </div>

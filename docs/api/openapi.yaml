@@ -1083,6 +1083,10 @@ components:
       type: object
       required: [attestation_type, attester_name, subject_identifier, claims]
       properties:
+        anchor_id:
+          type: string
+          format: uuid
+          description: Optional linked anchor UUID for owned credentials
         attestation_type:
           type: string
           enum: [VERIFICATION, ENDORSEMENT, AUDIT, APPROVAL, COMPLIANCE, SUPPLY_CHAIN, IDENTITY, WITNESS, CUSTOM]
@@ -1124,6 +1128,10 @@ components:
         jurisdiction:
           type: string
           description: Optional jurisdiction code (e.g., US-CA). Omitted when null.
+        evidence_fingerprint:
+          type: string
+          pattern: "^[a-fA-F0-9]{64}$"
+          description: SHA-256 fingerprint of the evidence artifact
         expires_at:
           type: string
           format: date-time
