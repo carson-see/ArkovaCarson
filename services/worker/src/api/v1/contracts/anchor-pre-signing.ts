@@ -150,11 +150,21 @@ export interface PreSigningAnchorReceipt {
 // Used both for the "fingerprint already anchored" idempotent return path
 // AND for the freshly-inserted return path. Keeping a single builder makes
 // the response shape provably identical between the two cases.
+//
+// `metadataSource` matters: for the freshly-inserted path we echo what the
+// caller sent (since the DB row contains exactly that). For the idempotent
+// path we MUST return what was persisted on the existing row, NOT the
+// retry's request body — otherwise a retry with different
+// contract_metadata or signing_workflow_metadata gets back a 200 receipt
+// containing values that were never persisted (CodeRabbit P1 on PR #680).
 function buildReceipt(
   publicId: string,
   fingerprint: string,
   createdAt: string,
-  body: PreSigningAnchorRequest,
+  metadataSource: {
+    contract_metadata: z.infer<typeof ContractMetadataSchema>;
+    signing_workflow_metadata: z.infer<typeof SigningWorkflowMetadataSchema>;
+  },
 ): PreSigningAnchorReceipt {
   return {
     public_id: publicId,
@@ -162,11 +172,35 @@ function buildReceipt(
     credential_type: 'CONTRACT_PRESIGNING',
     status: 'PENDING',
     parent_public_id: null,
-    contract_metadata: body.contract_metadata,
-    signing_workflow_metadata: body.signing_workflow_metadata,
+    contract_metadata: metadataSource.contract_metadata,
+    signing_workflow_metadata: metadataSource.signing_workflow_metadata,
     created_at: createdAt,
     record_uri: buildVerifyUrl(publicId),
   };
+}
+
+// ─── Stored metadata extraction ───────────────────────────────────────────
+//
+// On the idempotent path we re-parse the stored anchor's `metadata` jsonb
+// through the same Zod schemas the write path validated against. That way:
+//   1. The receipt reflects what was actually persisted (not the retry's
+//      request body)
+//   2. If the stored metadata is malformed (it shouldn't be — the write
+//      path is strict — but defense in depth) we surface a 500 rather than
+//      lying about the row
+//   3. Anchors with a different credential_type that happen to share the
+//      fingerprint (shouldn't happen post-org-scoping, but again defense
+//      in depth) get rejected from the idempotent return path
+function extractStoredContractMetadata(stored: unknown): {
+  contract_metadata: z.infer<typeof ContractMetadataSchema>;
+  signing_workflow_metadata: z.infer<typeof SigningWorkflowMetadataSchema>;
+} | null {
+  if (!stored || typeof stored !== 'object' || Array.isArray(stored)) return null;
+  const root = stored as Record<string, unknown>;
+  const cm = ContractMetadataSchema.safeParse(root.contract_metadata);
+  const sm = SigningWorkflowMetadataSchema.safeParse(root.signing_workflow_metadata);
+  if (!cm.success || !sm.success) return null;
+  return { contract_metadata: cm.data, signing_workflow_metadata: sm.data };
 }
 
 // ─── POST /api/v1/contracts/anchor-pre-signing ────────────────────────────
@@ -195,23 +229,53 @@ router.post('/anchor-pre-signing', async (req: Request, res: Response) => {
   const body: PreSigningAnchorRequest = parsed.data;
   const fingerprint = body.fingerprint; // already lowercased by the schema
 
+  const orgId = req.apiKey.orgId ?? null;
+
   try {
-    // Idempotency: if this fingerprint is already anchored (any credential
-    // type), return the existing receipt rather than spending another credit
-    // and inserting a duplicate row. Same convention as /api/v1/anchor.
-    const { data: existing } = await db
+    // Idempotency lookup, scoped by:
+    //   - fingerprint (same digest = same document)
+    //   - org_id (CodeRabbit critical on PR #680: without this, Org B can
+    //     probe whether Org A has anchored a document, AND would receive
+    //     Org A's anchor receipt verbatim — a cross-tenant data leak)
+    //   - credential_type='CONTRACT_PRESIGNING' (so a regular credential
+    //     anchor with the same fingerprint doesn't accidentally satisfy
+    //     a contract retry)
+    //   - deleted_at IS NULL (deleted rows shouldn't satisfy retries)
+    // The lookup also reads `metadata` so we can return what was actually
+    // persisted, not the retry's body (CodeRabbit P1).
+    let existingQuery = db
       .from('anchors')
-      .select('public_id, fingerprint, status, created_at')
+      .select('public_id, fingerprint, status, created_at, metadata')
       .eq('fingerprint', fingerprint)
-      .is('deleted_at', null)
-      .maybeSingle();
+      .eq('credential_type', 'CONTRACT_PRESIGNING')
+      .is('deleted_at', null);
+    if (orgId) {
+      existingQuery = existingQuery.eq('org_id', orgId);
+    } else {
+      // Anonymous-by-design API keys (no orgId) match only other rows
+      // with NULL org_id so they can't see tenant-scoped anchors.
+      existingQuery = existingQuery.is('org_id', null);
+    }
+    const { data: existing } = await existingQuery.maybeSingle();
 
     if (existing) {
+      const stored = extractStoredContractMetadata(existing.metadata);
+      if (!stored) {
+        // Should be unreachable — write path validates with the same
+        // schemas. But if a future migration corrupts a row, we surface
+        // 500 rather than fabricating a receipt.
+        logger.error(
+          { publicId: existing.public_id, fingerprint: fingerprint.slice(0, 12) },
+          'Idempotent hit but stored contract metadata failed Zod re-parse',
+        );
+        res.status(500).json({ error: 'stored_metadata_invalid' });
+        return;
+      }
       const receipt = buildReceipt(
         existing.public_id ?? '',
         existing.fingerprint,
         existing.created_at,
-        body,
+        stored,
       );
       res.status(200).json(receipt);
       return;
@@ -221,13 +285,21 @@ router.post('/anchor-pre-signing', async (req: Request, res: Response) => {
     const shortId = randomUUID().slice(0, 8).toUpperCase();
     const publicId = `ARK-${new Date().getFullYear()}-${shortId}`;
 
-    const orgId = req.apiKey.orgId ?? null;
-
+    // ATOMICITY NOTE (CodeRabbit critical on PR #680, "Heavy lift"):
+    // deduction → insert is not transactional. If the insert fails after
+    // the credit deducts, the credit is gone and no anchor exists. The
+    // same issue exists in /api/v1/anchor (anchor-submit.ts) — fixing it
+    // requires either a Postgres stored procedure that does both in one
+    // round-trip, or a compensating refund on insert failure. Both are
+    // broader than this [Build] subtask; tracked as a follow-up under
+    // the SCRUM-863 umbrella so it can be fixed for both endpoints in
+    // one consistent change.
+    //
     // SCRUM-1170-B — gate org-credit deduction. Helper short-circuits to
     // allowed=true when ENABLE_ORG_CREDIT_ENFORCEMENT is off (default), so
     // existing API-key paths without per-org credit setup are unaffected.
     // Same shared helper used by /api/v1/anchor (SCRUM-1631 PR #680
-    // extracted it to anchorCreditGate.ts to satisfy SonarCloud Quality Gate).
+    // extracted it to anchorCreditGate.ts to satisfy SonarCloud).
     if (orgId && !(await ensureAnchorCreditAvailable(db, orgId, res))) {
       return;
     }
@@ -269,6 +341,8 @@ router.post('/anchor-pre-signing', async (req: Request, res: Response) => {
       return;
     }
 
+    // Fresh-insert path: echo the request body's metadata since that's
+    // exactly what was just persisted.
     const receipt = buildReceipt(
       anchor.public_id ?? publicId,
       anchor.fingerprint,

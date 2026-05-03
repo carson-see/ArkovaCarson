@@ -86,10 +86,15 @@ describe('ensureAnchorCreditAvailable', () => {
     expect(res.json).toHaveBeenCalledWith({ error: 'credit_check_unavailable' });
   });
 
-  it('writes 402 org_credits_not_initialized for any other failure shape', async () => {
+  it('writes 402 org_credits_not_initialized for the org_not_initialized branch', async () => {
+    // Per CodeRabbit on PR #680: the real deductOrgCredit() contract emits
+    // `error: 'org_not_initialized'` for orgs without a credit ledger row.
+    // Pinning the actual error value (rather than just `allowed: false`)
+    // means a future helper change that tightens the switch on `error` —
+    // e.g., adding a separate code for "expired" — surfaces here.
     mockDeductOrgCredit.mockResolvedValue({
       allowed: false,
-      // No error field set — falls through to the "uninitialized" branch.
+      error: 'org_not_initialized',
     });
     const res = makeRes();
 

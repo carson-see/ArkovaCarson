@@ -148,6 +148,11 @@ export const CREDENTIAL_TYPE_DESCRIPTIONS = {
   MEDICAL: 'Medical record, lab result, or health document',
   MILITARY: 'Military service record or discharge document',
   IDENTITY: 'Government-issued ID, passport, or identity verification',
+  ACCREDITATION: 'Accreditation issued by a recognized accrediting body',
+  // SCRUM-863 / SCRUM-1623 — pre/post-signing contract anchors. Neutral
+  // language per CLAUDE.md §1.3.
+  CONTRACT_PRESIGNING: 'Contract pending signature',
+  CONTRACT_POSTSIGNING: 'Executed contract with signatures',
   OTHER: 'Unclassified document',
 } as const;
 
@@ -178,6 +183,9 @@ export const TEMPLATE_DESCRIPTIONS: Record<string, string> = {
   MEDICAL: 'Verified Health Record',
   MILITARY: 'Verified Service Record',
   IDENTITY: 'Verified Identity Document',
+  ACCREDITATION: 'Verified Accreditation Record',
+  CONTRACT_PRESIGNING: 'Verified Unsigned Contract Record',
+  CONTRACT_POSTSIGNING: 'Verified Signed Contract Record',
   OTHER: 'General Record',
 } as const;
 

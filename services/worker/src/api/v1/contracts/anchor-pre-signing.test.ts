@@ -24,10 +24,15 @@ import request from 'supertest';
 // assembled inside the vi.mock factory below — that keeps this file's
 // mock setup distinct from anchor-submit.test.ts (SonarCloud's New-Code
 // duplication detector flagged the prior verbatim-match shape on PR #680).
+//
+// `chainEq` + `chainIs` are exposed so cross-tenant tests can assert the
+// idempotency lookup filtered on org_id (CodeRabbit critical on PR #680).
 const {
   selectMaybeSingle,
   insertSingle,
   mockInsert,
+  chainEq,
+  chainIs,
   mockLogger,
   mockConfig,
   mockDeductOrgCredit,
@@ -37,10 +42,17 @@ const {
   const mockInsert = vi.fn((_value?: unknown) => ({
     select: vi.fn(() => ({ single: insertSingle })),
   }));
+  // Single shared spy per chain method — every chained `.eq()` / `.is()`
+  // appends to its `.mock.calls` so the test can assert the full set of
+  // filters applied.
+  const chainEq = vi.fn();
+  const chainIs = vi.fn();
   return {
     selectMaybeSingle,
     insertSingle,
     mockInsert,
+    chainEq,
+    chainIs,
     mockLogger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
     mockConfig: { enableOrgCreditEnforcement: false },
     mockDeductOrgCredit: vi.fn(),
@@ -56,14 +68,20 @@ vi.mock('../../../config.js', () => ({
 vi.mock('../../../utils/logger.js', () => ({ logger: mockLogger }));
 
 vi.mock('../../../utils/db.js', () => {
-  // Build the fluent chain inside the factory so each test gets a fresh
-  // chain object per vi.clearAllMocks(). The handle for the terminal
-  // `.maybeSingle()` is the hoisted `selectMaybeSingle` so tests can
-  // configure return values per-case.
+  // Build the fluent chain inside the factory. The chain methods are
+  // hoisted spies (chainEq, chainIs) so cross-tenant tests can assert
+  // the org_id filter was applied. Each spy returns the chain so further
+  // calls keep working.
   const buildSelectChain = () => {
     const chain: Record<string, unknown> = {};
-    chain.eq = vi.fn(() => chain);
-    chain.is = vi.fn(() => chain);
+    chain.eq = chainEq.mockReturnValue(undefined as unknown);
+    chain.is = chainIs.mockReturnValue(undefined as unknown);
+    // The spies need to actually return the chain object so the handler's
+    // fluent chaining (.eq(...).eq(...).is(...).maybeSingle()) keeps
+    // working. We re-bind here so the previous mockReturnValue is replaced
+    // with the proper chain reference.
+    chainEq.mockImplementation(() => chain);
+    chainIs.mockImplementation(() => chain);
     chain.maybeSingle = selectMaybeSingle;
     return chain;
   };
@@ -341,26 +359,119 @@ describe('POST /api/v1/contracts/anchor-pre-signing — idempotency', () => {
     mockDeductOrgCredit.mockResolvedValue({ allowed: true });
   });
 
-  it('200 + existing receipt when fingerprint already anchored', async () => {
+  it('200 + existing receipt when fingerprint already anchored (with persisted metadata)', async () => {
+    // The persisted metadata MUST come back unchanged on idempotent retry —
+    // even if the retry's request body has different counterparty_labels or
+    // a different envelope id. Otherwise integrators caching the receipt
+    // would see fabricated values.
+    const persistedContractMetadata = {
+      title: 'PERSISTED — Master Services Agreement',
+      counterparty_labels: ['PERSISTED Acme Corp', 'PERSISTED Arkova Inc'],
+    };
+    const persistedSigningMetadata = {
+      provider: 'docusign' as const,
+      external_envelope_id: 'PERSISTED-env-99',
+    };
     selectMaybeSingle.mockResolvedValue({
       data: {
         public_id: 'ARK-2026-EXISTING',
         fingerprint: VALID_FINGERPRINT,
         status: 'PENDING',
         created_at: '2026-04-01T00:00:00Z',
+        metadata: {
+          contract_metadata: persistedContractMetadata,
+          signing_workflow_metadata: persistedSigningMetadata,
+        },
       },
       error: null,
     });
 
+    // Send DIFFERENT metadata on the retry to prove the response uses the
+    // stored values, not the request body.
     const res = await request(makeApp())
       .post('/v1/contracts/anchor-pre-signing')
-      .send(VALID_BODY);
+      .send({
+        ...VALID_BODY,
+        contract_metadata: {
+          title: 'RETRY — Different Title',
+          counterparty_labels: ['RETRY Other Party'],
+        },
+        signing_workflow_metadata: {
+          provider: 'adobe_sign' as const,
+          external_envelope_id: 'RETRY-env-different',
+        },
+      });
     expect(res.status).toBe(200);
     expect(res.body.public_id).toBe('ARK-2026-EXISTING');
     expect(res.body.created_at).toBe('2026-04-01T00:00:00Z');
+    // CRITICAL: returned metadata reflects what was persisted, not the retry.
+    expect(res.body.contract_metadata).toEqual(persistedContractMetadata);
+    expect(res.body.signing_workflow_metadata).toEqual(persistedSigningMetadata);
     // No insert, no credit charge — idempotent return is the whole point.
     expect(mockInsert).not.toHaveBeenCalled();
     expect(mockDeductOrgCredit).not.toHaveBeenCalled();
+  });
+
+  it('idempotency lookup applies org_id, credential_type, deleted_at filters (no cross-tenant leak)', async () => {
+    // CodeRabbit critical on PR #680 — without org_id scoping, Org B can
+    // probe whether Org A has anchored a document by sending the SHA, and
+    // would receive Org A's anchor receipt verbatim. This test asserts the
+    // exact filter set the handler applies on the idempotency lookup.
+    selectMaybeSingle.mockResolvedValue({ data: null, error: null });
+    await request(makeApp({ orgId: 'org-1' }))
+      .post('/v1/contracts/anchor-pre-signing')
+      .send(VALID_BODY);
+
+    // The handler's lookup chain is:
+    //   .from('anchors')
+    //   .select(...)
+    //   .eq('fingerprint', fp)
+    //   .eq('credential_type', 'CONTRACT_PRESIGNING')
+    //   .is('deleted_at', null)
+    //   .eq('org_id', 'org-1')   ← critical filter
+    //   .maybeSingle()
+    const eqCalls = chainEq.mock.calls.map((c) => [c[0], c[1]]);
+    const isCalls = chainIs.mock.calls.map((c) => [c[0], c[1]]);
+    expect(eqCalls).toContainEqual(['fingerprint', VALID_FINGERPRINT]);
+    expect(eqCalls).toContainEqual(['credential_type', 'CONTRACT_PRESIGNING']);
+    expect(eqCalls).toContainEqual(['org_id', 'org-1']);
+    expect(isCalls).toContainEqual(['deleted_at', null]);
+  });
+
+  it('idempotency lookup uses .is(org_id, null) for keys without orgId (anonymous-by-design)', async () => {
+    // Anonymous-by-design API keys (no orgId) must scope to NULL-org
+    // rows so they can't see tenant-scoped anchors. Asserts the helper's
+    // null branch is reachable.
+    selectMaybeSingle.mockResolvedValue({ data: null, error: null });
+    await request(makeApp({ orgId: null }))
+      .post('/v1/contracts/anchor-pre-signing')
+      .send(VALID_BODY);
+    const isCalls = chainIs.mock.calls.map((c) => [c[0], c[1]]);
+    expect(isCalls).toContainEqual(['org_id', null]);
+  });
+
+  it('500 when stored metadata fails Zod re-parse (defense in depth)', async () => {
+    // Should be unreachable in practice (write path is strict-validated),
+    // but we surface 500 rather than fabricate a receipt if a future
+    // migration corrupts an anchor row's metadata jsonb.
+    selectMaybeSingle.mockResolvedValue({
+      data: {
+        public_id: 'ARK-2026-CORRUPT',
+        fingerprint: VALID_FINGERPRINT,
+        status: 'PENDING',
+        created_at: '2026-04-01T00:00:00Z',
+        metadata: {
+          contract_metadata: { title: '' }, // invalid: title min(1)
+          signing_workflow_metadata: { provider: 'docusign' },
+        },
+      },
+      error: null,
+    });
+    const res = await request(makeApp())
+      .post('/v1/contracts/anchor-pre-signing')
+      .send(VALID_BODY);
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe('stored_metadata_invalid');
   });
 });
 
