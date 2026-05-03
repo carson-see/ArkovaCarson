@@ -64,6 +64,7 @@ describe('MCP_TOOL_SCHEMAS registry', () => {
       ))
       .filter((name): name is McpToolName => typeof name === 'string');
 
+    expect(agentToolNames.length).toBeGreaterThan(0);
     expect(Object.keys(MCP_TOOL_SCHEMAS)).toEqual(expect.arrayContaining([...new Set(agentToolNames)]));
   });
 });
