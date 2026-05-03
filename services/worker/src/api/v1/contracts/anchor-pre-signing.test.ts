@@ -353,6 +353,21 @@ describe('POST /api/v1/contracts/anchor-pre-signing — real handler (SCRUM-1631
     expect(payload.filename).toBe('contract-pre/untitled');
   });
 
+  it('insertPayload passes the InsertPayloadSchema defensive validation', async () => {
+    // CodeRabbit major on PR #680: the constructed insert payload (not
+    // just the request body) goes through Zod before .insert(). This
+    // smoke test asserts the happy path produces a payload that satisfies
+    // the defensive schema — i.e. a 201 reaches the post-insert receipt,
+    // proving the .safeParse() didn't reject.
+    const res = await request(makeApp())
+      .post('/v1/contracts/anchor-pre-signing')
+      .send(VALID_BODY);
+    expect(res.status).toBe(201);
+    // If the defensive schema had rejected, status would be 500
+    // 'insert_payload_invalid' and mockInsert would not have been called.
+    expect(mockInsert).toHaveBeenCalledTimes(1);
+  });
+
   it('drops `description` on write (no free-text PII channel)', async () => {
     // CodeRabbit major on PR #680: writing arbitrary prose into
     // anchors.description on a contract endpoint opens a PII channel

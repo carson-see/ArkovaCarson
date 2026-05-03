@@ -179,6 +179,43 @@ function buildReceipt(
   };
 }
 
+// ─── Insert-payload defensive schema ─────────────────────────────────────
+//
+// CodeRabbit major on PR #680: Zod-validates the *constructed* insert
+// payload, not just the request body. Catches future regressions where a
+// transform (e.g. `safeTitle`) or a derived field (`public_id`,
+// `filename`) silently produces a DB-incompatible value AFTER credit
+// deduction. The schema is intentionally narrow — it pins the contract
+// pre-signing handler's specific insert shape, not the full anchors-row
+// surface.
+//
+// This is defense-in-depth, not user-facing validation: failure here
+// surfaces a 500 (`insert_payload_invalid`) rather than a 400, since
+// the request itself was already validated by PreSigningAnchorSchema.
+const InsertPayloadSchema = z
+  .object({
+    fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+    public_id: z.string().regex(/^ARK-\d{4}-[A-F0-9]{8}$/),
+    status: z.literal('PENDING'),
+    org_id: z.string().nullable(),
+    user_id: z.string(),
+    filename: z
+      .string()
+      .min(1)
+      .max(120)
+      // eslint-disable-next-line no-control-regex
+      .regex(/^contract-pre\/[^\x00-\x1f\x7f]*$/),
+    credential_type: z.literal('CONTRACT_PRESIGNING'),
+    description: z.null(),
+    metadata: z
+      .object({
+        contract_metadata: ContractMetadataSchema,
+        signing_workflow_metadata: SigningWorkflowMetadataSchema,
+      })
+      .strict(),
+  })
+  .strict();
+
 // ─── Stored metadata extraction ───────────────────────────────────────────
 //
 // On the idempotent path we re-parse the stored anchor's `metadata` jsonb
@@ -358,9 +395,33 @@ router.post('/anchor-pre-signing', async (req: Request, res: Response) => {
       },
     };
 
+    // Defense-in-depth Zod validation of the constructed insert payload
+    // (CodeRabbit major on PR #680). Catches future regressions where a
+    // derived field (filename, public_id, metadata structure) silently
+    // produces a DB-incompatible value AFTER credit deduction. Failure
+    // here is a 500 (`insert_payload_invalid`) since the request itself
+    // already passed PreSigningAnchorSchema — getting here means the
+    // handler's own construction is wrong.
+    const insertParse = InsertPayloadSchema.safeParse(insertPayload);
+    if (!insertParse.success) {
+      logger.error(
+        {
+          fingerprint: fingerprint.slice(0, 12),
+          issues: insertParse.error.issues.map((i) => ({
+            path: i.path.join('.'),
+            code: i.code,
+            message: i.message,
+          })),
+        },
+        'insert_payload_invalid',
+      );
+      res.status(500).json({ error: 'insert_payload_invalid' });
+      return;
+    }
+
     const { data: anchor, error: insertError } = await db
       .from('anchors')
-      .insert(insertPayload)
+      .insert(insertParse.data)
       .select('public_id, fingerprint, status, created_at')
       .single();
 
