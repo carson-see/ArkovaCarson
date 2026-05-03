@@ -63,12 +63,16 @@ describe('switchboard feature flags', () => {
   });
 
   describe('getAllFlags', () => {
+    // Mock data shape mirrors the runtime query: select('flag_key, enabled').
+    // Pre-fix code used `id, value` — those columns don't exist on the
+    // current `(id uuid, flag_key text, enabled boolean, ...)` schema.
+    // See SCRUM-1622.
     it('returns flags from database', async () => {
       mockFrom.mockReturnValue({
         select: vi.fn(() => ({
           data: [
-            { id: 'ENABLE_PROD_NETWORK_ANCHORING', value: true },
-            { id: 'MAINTENANCE_MODE', value: true },
+            { flag_key: 'ENABLE_PROD_NETWORK_ANCHORING', enabled: true },
+            { flag_key: 'MAINTENANCE_MODE', enabled: true },
           ],
           error: null,
         })),
@@ -110,17 +114,21 @@ describe('switchboard feature flags', () => {
       expect(mockChannel.subscribe).toHaveBeenCalled();
     });
 
-    it('calls callback with flag id and new value on UPDATE', () => {
+    // Realtime CDC payload shape mirrors the actual row:
+    // (id uuid, flag_key text, enabled boolean, ...). Pre-fix code keyed
+    // events by `id` (the uuid PK) and read `value` (which doesn't exist),
+    // so flag flips never propagated. See SCRUM-1622.
+    it('calls callback with flag key and new value on UPDATE', () => {
       const callback = vi.fn();
       subscribeFlagChanges(callback);
 
       // Get the callback function passed to .on()
       const onCallback = mockChannel.on.mock.calls[0][2];
 
-      // Simulate a realtime UPDATE event
+      // Simulate a realtime UPDATE event with the actual row shape.
       onCallback({
         eventType: 'UPDATE',
-        new: { id: 'MAINTENANCE_MODE', value: true },
+        new: { flag_key: 'MAINTENANCE_MODE', enabled: true },
       });
 
       expect(callback).toHaveBeenCalledWith('MAINTENANCE_MODE', true);
@@ -133,33 +141,33 @@ describe('switchboard feature flags', () => {
       const onCallback = mockChannel.on.mock.calls[0][2];
       onCallback({
         eventType: 'INSERT',
-        new: { id: 'ENABLE_REPORTS', value: false },
+        new: { flag_key: 'ENABLE_REPORTS', enabled: false },
       });
 
       expect(callback).toHaveBeenCalledWith('ENABLE_REPORTS', false);
     });
 
-    it('ignores events with unknown flag ids', () => {
+    it('ignores events with unknown flag_key', () => {
       const callback = vi.fn();
       subscribeFlagChanges(callback);
 
       const onCallback = mockChannel.on.mock.calls[0][2];
       onCallback({
         eventType: 'UPDATE',
-        new: { id: 'UNKNOWN_FLAG', value: true },
+        new: { flag_key: 'UNKNOWN_FLAG', enabled: true },
       });
 
       expect(callback).not.toHaveBeenCalled();
     });
 
-    it('ignores events without id field', () => {
+    it('ignores events without flag_key field', () => {
       const callback = vi.fn();
       subscribeFlagChanges(callback);
 
       const onCallback = mockChannel.on.mock.calls[0][2];
       onCallback({
         eventType: 'UPDATE',
-        new: { value: true },
+        new: { enabled: true },
       });
 
       expect(callback).not.toHaveBeenCalled();
