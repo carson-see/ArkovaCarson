@@ -354,11 +354,8 @@ router.use('/anchor', requireScope('anchor:write'), anchorSubmitRouter);
 router.use('/anchor/bulk', requireScope('anchor:write'), anchorBulkRouter);
 
 // ─── Attestations — Phase II ───
-// Batch attestation create — auth required, batch rate limit (10 req/min)
-router.post('/attestations/batch-create', batchRateLimiter);
-// Batch attestation verify — API key required, batch rate limit (10 req/min)
-router.post('/attestations/batch-verify', requireScope('verify:batch'), batchRateLimiter);
-// Create, verify, list, revoke attestations
+// Create, verify, list, revoke attestations. Batch route middleware lives
+// inside attestationsRouter so these paths cannot be middleware-only shadows.
 router.use('/attestations', attestationsRouter);
 
 // ─── Phase 1.5 Paid API endpoints ───

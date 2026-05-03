@@ -86,17 +86,14 @@ async function main(): Promise<number> {
   for (const r of results) {
     const icon = r.ok ? '✅' : '❌';
     const statusFragment = r.status ? `(HTTP ${r.status})` : '';
-    // eslint-disable-next-line no-console
     console.log(`[${r.provider}] ${icon} ${r.ok ? 'key accepted' : 'check failed'} ${statusFragment} — ${r.message}`);
   }
 
   const allOk = results.every((r) => r.ok);
   if (!allOk) {
-    // eslint-disable-next-line no-console
     console.error('\nOne or more keys failed verification. Do NOT deploy. See docs/runbooks/nph-16-deploy-api-keys.md §3.');
     return 1;
   }
-  // eslint-disable-next-line no-console
   console.log('\nAll three keys verified. Safe to deploy per docs/runbooks/nph-16-deploy-api-keys.md §4.');
   return 0;
 }
@@ -104,7 +101,6 @@ async function main(): Promise<number> {
 main().then(
   (code) => process.exit(code),
   (err) => {
-    // eslint-disable-next-line no-console
     console.error('verify-public-record-keys: unexpected error', err);
     process.exit(2);
   },

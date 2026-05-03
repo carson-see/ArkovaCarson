@@ -17,7 +17,6 @@ import { createClient } from '@supabase/supabase-js';
 import { writeFileSync, mkdirSync, appendFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { execSync } from 'node:child_process';
-import { EXTRACTION_SYSTEM_PROMPT } from '../src/ai/prompts/extraction.js';
 
 const OUTPUT_PATH = resolve(import.meta.dirname ?? '.', '../training-data/finetune-server-8b.jsonl');
 const PAGE_SIZE = 1000;
@@ -231,7 +230,8 @@ async function main(): Promise<void> {
 
   const supabase = createClient(supabaseUrl!, supabaseKey!);
 
-  // Count total records
+  // Count total records across the public-record training corpus.
+  // eslint-disable-next-line arkova/missing-org-filter -- Offline model training intentionally samples public records across organizations.
   const { count, error: countError } = await supabase
     .from('public_records')
     .select('*', { count: 'exact', head: true })
@@ -254,6 +254,7 @@ async function main(): Promise<void> {
   let page = 0;
 
   while (true) {
+    // eslint-disable-next-line arkova/missing-org-filter -- Offline model training intentionally samples public records across organizations.
     const { data, error } = await supabase
       .from('public_records')
       .select('id, source, record_type, title, metadata, content_hash')

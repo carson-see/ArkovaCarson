@@ -29,7 +29,7 @@
 import { config as dotenvConfig } from 'dotenv';
 import { resolve } from 'node:path';
 import { GEMINI_GENERATION_MODEL } from '../src/ai/gemini-config.js';
-import { readFileSync, writeFileSync, mkdirSync, existsSync, createReadStream, createWriteStream, appendFileSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdirSync, existsSync, createReadStream, appendFileSync } from 'node:fs';
 import { execSync } from 'node:child_process';
 import { createInterface } from 'node:readline';
 
@@ -187,11 +187,8 @@ async function stepConvert(): Promise<{ trainCount: number; valCount: number; st
   // without needing all lines in memory
   const reservoir: string[] = [];
   const useReservoir = MAX_EXAMPLES > 0;
-  let lineNum = 0;
-
   for await (const line of rl) {
     if (!line.trim()) continue;
-    lineNum++;
 
     try {
       const example = JSON.parse(line) as NessieExample;
