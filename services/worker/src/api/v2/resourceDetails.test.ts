@@ -20,6 +20,7 @@ const mockOr = vi.fn().mockReturnThis();
 const mockOrder = vi.fn().mockReturnThis();
 const mockLimit = vi.fn().mockReturnThis();
 const mockMaybeSingle = vi.fn();
+const TEST_ORG_ID = '00000000-0000-4000-8000-000000000001';
 
 function mockQueryResults(results: Array<{ data: Record<string, unknown> | null; error?: unknown }>) {
   for (const result of results) {
@@ -42,12 +43,12 @@ function mockQueryResult(data: Record<string, unknown> | null, error: unknown = 
   mockQueryResults([{ data, error }]);
 }
 
-function buildApp(scopes = ['read:records', 'read:orgs']) {
+function buildApp(scopes = ['read:records', 'read:orgs'], orgId = TEST_ORG_ID) {
   const app = express();
   app.use((req, _res, next) => {
     req.apiKey = {
       keyId: 'key-1',
-      orgId: 'org-1',
+      orgId,
       userId: 'user-1',
       scopes,
       rateLimitTier: 'paid',
@@ -63,7 +64,7 @@ function buildApp(scopes = ['read:records', 'read:orgs']) {
 function anchorRow(overrides: Record<string, unknown> = {}) {
   return {
     id: 'internal-anchor-id',
-    org_id: 'org-1',
+    org_id: TEST_ORG_ID,
     user_id: 'user-1',
     public_id: 'ARK-DOC-ABC',
     fingerprint: 'a'.repeat(64),
@@ -113,7 +114,7 @@ describe('resourceDetailsRouter', () => {
 
     expect(res.status).toBe(200);
     expect(mockSelect).toHaveBeenCalledWith('public_id, display_name, description, domain, website_url, verification_status, industry_tag, org_type, location, logo_url');
-    expect(mockEq).toHaveBeenCalledWith('id', 'org-1');
+    expect(mockEq).toHaveBeenCalledWith('id', TEST_ORG_ID);
     expect(mockEq).toHaveBeenCalledWith('public_id', 'org_acme');
     expect(res.body).toMatchObject({
       public_id: 'org_acme',
@@ -143,7 +144,7 @@ describe('resourceDetailsRouter', () => {
     expect(res.body).not.toHaveProperty('org_id');
     expect(res.body).not.toHaveProperty('user_id');
     expect(JSON.stringify(res.body)).not.toContain('internal-anchor-id');
-    expect(mockOr).toHaveBeenCalledWith('status.eq.SECURED,org_id.eq.org-1');
+    expect(mockOr).toHaveBeenCalledWith(`status.eq.SECURED,org_id.eq.${TEST_ORG_ID}`);
   });
 
   it('returns document detail with document metadata fields', async () => {
@@ -155,7 +156,7 @@ describe('resourceDetailsRouter', () => {
     expect(res.body.file_mime).toBe('application/pdf');
     expect(res.body.file_size).toBe(12345);
     expect(res.body.public_id).toBe('ARK-DOC-ABC');
-    expect(mockOr).toHaveBeenCalledWith('status.eq.SECURED,org_id.eq.org-1');
+    expect(mockOr).toHaveBeenCalledWith(`status.eq.SECURED,org_id.eq.${TEST_ORG_ID}`);
   });
 
   it('returns public secured fingerprint detail before same-org pending rows', async () => {
@@ -191,7 +192,7 @@ describe('resourceDetailsRouter', () => {
 
     expect(res.status).toBe(200);
     expect(mockIn).toHaveBeenCalledWith('status', ['SECURED', 'SUBMITTED', 'PENDING']);
-    expect(mockOr).toHaveBeenCalledWith('status.eq.SECURED,org_id.eq.org-1');
+    expect(mockOr).toHaveBeenCalledWith(`status.eq.SECURED,org_id.eq.${TEST_ORG_ID}`);
     expect(res.body).toMatchObject({
       verified: false,
       status: 'PENDING',
@@ -216,6 +217,17 @@ describe('resourceDetailsRouter', () => {
     expect(res.status).toBe(400);
     expect(res.type).toBe('application/problem+json');
     expect(res.body.type).toContain('/validation-error');
+  });
+
+  it('rejects malformed authenticated org ids before building visibility filters', async () => {
+    mockQueryResult(anchorRow());
+
+    const res = await request(buildApp(['read:records', 'read:orgs'], 'org-1'))
+      .get('/records/ARK-DOC-ABC');
+
+    expect(res.status).toBe(500);
+    expect(res.type).toBe('application/problem+json');
+    expect(mockOr).not.toHaveBeenCalled();
   });
 
   it('returns invalid-scope problem when detail scope is missing', async () => {

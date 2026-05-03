@@ -13,6 +13,19 @@ import {
 export const resourceDetailsRouter = Router();
 
 const VERIFY_BASE_URL = 'https://app.arkova.ai/verify';
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const ORGANIZATION_DETAIL_COLUMNS = [
+  'public_id',
+  'display_name',
+  'description',
+  'domain',
+  'website_url',
+  'verification_status',
+  'industry_tag',
+  'org_type',
+  'location',
+  'logo_url',
+].join(', ');
 
 interface V2QueryBuilder {
   select(columns: string): V2QueryBuilder;
@@ -36,16 +49,15 @@ const v2Db = db as unknown as {
   from(table: string): V2QueryBuilder;
 };
 
-function sanitizeFilterValue(v: string): string {
-  return v.replaceAll(/[%_\\,().]/g, (c) => `\\${c}`);
-}
-
 function visibleAnchorScope(orgId: string | null | undefined): string {
   // orgId must come from authenticated req.apiKey.orgId; the scope guard is
   // what prevents unauthenticated caller-supplied org filters from reaching DB.
-  return orgId
-    ? `status.eq.SECURED,org_id.eq.${sanitizeFilterValue(orgId)}`
-    : 'status.eq.SECURED';
+  if (!orgId) return 'status.eq.SECURED';
+  if (!UUID_RE.test(orgId)) {
+    throw new Error('Invariant violation: req.apiKey.orgId must be a UUID');
+  }
+
+  return `status.eq.SECURED,org_id.eq.${orgId.toLowerCase()}`;
 }
 
 function pathParam(value: string | string[] | undefined): string | null {
@@ -287,7 +299,8 @@ resourceDetailsRouter.get(
 
     try {
       const { data, error } = await v2Db.from('organizations')
-        .select('public_id, display_name, description, domain, website_url, verification_status, industry_tag, org_type, location, logo_url')
+        // Own-org profile metadata only; no user/contact/billing fields are exposed.
+        .select(ORGANIZATION_DETAIL_COLUMNS)
         .eq('id', req.apiKey.orgId)
         .eq('public_id', publicId)
         .maybeSingle();

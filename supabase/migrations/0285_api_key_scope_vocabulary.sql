@@ -127,9 +127,11 @@ BEGIN
       canonical_scopes
     );
 
+    -- Replay-safe: the UPDATE is deterministic, and the constraint is dropped
+    -- before re-adding it with the current canonical scope set.
     -- VALIDATE scans existing agent rows under a SHARE UPDATE EXCLUSIVE lock.
-    -- Expected to be brief for today's table size; schedule during a quiet
-    -- window if agent registrations grow materially.
+    -- Intended for launch-scale agents tables; if prod has more than roughly
+    -- 10k agent rows at deploy time, split validation into a quiet-window run.
     ALTER TABLE public.agents VALIDATE CONSTRAINT agents_allowed_scopes_known_values;
 
     COMMENT ON COLUMN public.agents.allowed_scopes IS

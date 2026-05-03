@@ -26,6 +26,7 @@ def test_search_returns_pydantic_models_and_auth_header() -> None:
             {
                 "results": [
                     {
+                        "id": "internal-search-id",
                         "type": "record",
                         "public_id": "ARK-DOC-ABC",
                         "score": 1.0,
@@ -50,6 +51,7 @@ def test_list_orgs_does_not_require_internal_id() -> None:
             {
                 "organizations": [
                     {
+                        "id": "internal-org-id",
                         "public_id": "org_acme",
                         "display_name": "Acme Corp",
                         "domain": "acme.com",
@@ -138,6 +140,9 @@ def test_verify_fingerprint_maps_rich_fields() -> None:
             {
                 "verified": True,
                 "status": "ACTIVE",
+                "id": "internal-anchor-id",
+                "org_id": "internal-org-id",
+                "user_id": "internal-user-id",
                 "fingerprint": "a" * 64,
                 "public_id": "ARK-DOC-RICH",
                 "issuer_name": "University of Michigan",
@@ -182,6 +187,9 @@ def test_verify_fingerprint_maps_rich_fields() -> None:
         "issuer_name": 0.99,
         "credential_type": 0.97,
     }
+    assert "id" not in result.model_dump()
+    assert "org_id" not in result.model_dump()
+    assert "user_id" not in result.model_dump()
 
 
 def test_get_anchor_maps_rich_fields() -> None:
@@ -191,6 +199,9 @@ def test_get_anchor_maps_rich_fields() -> None:
                 "public_id": "ARK-DOC-RICH",
                 "verified": True,
                 "status": "ACTIVE",
+                "id": "internal-anchor-id",
+                "org_id": "internal-org-id",
+                "user_id": "internal-user-id",
                 "record_uri": "https://app.arkova.ai/verify/ARK-DOC-RICH",
                 "issuer_name": "University of Michigan",
                 "credential_type": "DEGREE",
@@ -210,6 +221,9 @@ def test_get_anchor_maps_rich_fields() -> None:
     assert result.chain_confirmations == 6
     assert result.version_number == 2
     assert result.confidence_scores == {"issuer_name": 0.99}
+    assert "id" not in result.model_dump()
+    assert "org_id" not in result.model_dump()
+    assert "user_id" not in result.model_dump()
 
 
 def test_v2_resource_detail_methods_map_public_shapes() -> None:
@@ -220,6 +234,7 @@ def test_v2_resource_detail_methods_map_public_shapes() -> None:
         if request.url.path.endswith("/organizations/org_acme"):
             return json_response(
                 {
+                    "id": "internal-org-id",
                     "public_id": "org_acme",
                     "display_name": "Acme Corp",
                     "description": "Verified healthcare org",
@@ -235,6 +250,9 @@ def test_v2_resource_detail_methods_map_public_shapes() -> None:
         if request.url.path.endswith("/records/ARK-DOC-ABC"):
             return json_response(
                 {
+                    "id": "internal-anchor-id",
+                    "org_id": "internal-org-id",
+                    "user_id": "internal-user-id",
                     "public_id": "ARK-DOC-ABC",
                     "verified": True,
                     "status": "ACTIVE",
@@ -271,6 +289,9 @@ def test_v2_resource_detail_methods_map_public_shapes() -> None:
     assert record.public_id == "ARK-DOC-ABC"
     assert record.parent_public_id is None
     assert not hasattr(record, "id")
+    assert "id" not in record.model_dump()
+    assert "org_id" not in record.model_dump()
+    assert "user_id" not in record.model_dump()
 
 
 def test_v2_fingerprint_and_document_detail_methods() -> None:
@@ -282,6 +303,9 @@ def test_v2_fingerprint_and_document_detail_methods() -> None:
         if request.url.path.startswith("/v2/fingerprints/"):
             return json_response(
                 {
+                    "id": "internal-anchor-id",
+                    "org_id": "internal-org-id",
+                    "user_id": "internal-user-id",
                     "public_id": "ARK-DOC-FP",
                     "verified": True,
                     "status": "ACTIVE",
@@ -308,6 +332,9 @@ def test_v2_fingerprint_and_document_detail_methods() -> None:
             )
         return json_response(
             {
+                "id": "internal-anchor-id",
+                "org_id": "internal-org-id",
+                "user_id": "internal-user-id",
                 "public_id": "ARK-DOC-ABC",
                 "verified": True,
                 "status": "ACTIVE",
@@ -341,9 +368,15 @@ def test_v2_fingerprint_and_document_detail_methods() -> None:
     assert fingerprint_detail.fingerprint == fingerprint
     assert fingerprint_detail.public_id == "ARK-DOC-FP"
     assert fingerprint_detail.file_size is None
+    assert "id" not in fingerprint_detail.model_dump()
+    assert "org_id" not in fingerprint_detail.model_dump()
+    assert "user_id" not in fingerprint_detail.model_dump()
     assert document.public_id == "ARK-DOC-ABC"
     assert document.file_mime == "application/pdf"
     assert document.file_size == 12345
+    assert "id" not in document.model_dump()
+    assert "org_id" not in document.model_dump()
+    assert "user_id" not in document.model_dump()
 
 
 def test_async_client_get_anchor() -> None:

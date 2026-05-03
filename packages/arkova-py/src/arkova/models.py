@@ -10,10 +10,12 @@ SearchResultType = Literal["org", "record", "fingerprint", "document"]
 
 
 class ArkovaModel(BaseModel):
-    model_config = ConfigDict(extra="allow", populate_by_name=True)
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
 
 
 class ProblemDetail(ArkovaModel):
+    model_config = ConfigDict(extra="allow", populate_by_name=True)
+
     type: str
     title: str
     status: int
