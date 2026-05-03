@@ -41,7 +41,7 @@ v2 keys are scope-aware. Ask your Arkova admin for only the scopes your integrat
 
 | v1 pattern | v2 replacement | Notes |
 |---|---|---|
-| `GET /api/v1/verify/{publicId}` | `GET /api/v2/anchors/{public_id}` | Returns redacted public anchor metadata. |
+| `GET /api/v1/verify/{publicId}` | `GET /api/v2/anchors/{public_id}` | Returns redacted public anchor metadata. Use v1 `verify` while you still need the rich verification contract fields `confidence_scores`, `sub_type`, and `description`. |
 | Fingerprint lookup through v1 search flows | `GET /api/v2/verify/{fingerprint}` | Accepts a 64-character SHA-256 hex fingerprint. |
 | Search-oriented v1 endpoints | `GET /api/v2/search?q=...` | Cursor pagination and typed result rows with public IDs only. |
 | Resource-specific search views | `GET /api/v2/organizations?q=...`, `/records`, `/fingerprints`, `/documents` | Aliases for `/search?type=...`; useful for OpenAPI tool importers and agents. |
@@ -86,9 +86,16 @@ Clients should branch on `status` and `type`, not string-match `detail`.
 - TypeScript: `@arkova/sdk`
 - Python: `pip install arkova`
 
-The Python SDK currently exposes the v2 read-only surface: `search`, `verify_fingerprint`, `get_anchor`, `list_orgs`, `get_organization`, `get_record`, `get_fingerprint`, and `get_document`, with sync and async clients. It preserves RFC 7807 problem details, honors `Retry-After`, and maps nullable rich verification fields when returned.
-
-The TypeScript SDK remains the broader wrapper for anchoring, batch verification, webhooks, and v1/v2 migration support. Do not assume Python has v1 write/admin parity until the package reference lists those methods.
+Both SDKs expose v2 search, fingerprint verification, anchor lookup, organization
+listing, retry handling, and problem detail errors. The Python SDK also exposes
+`verify(public_id)` for the rich v1 verification response while teams migrate
+public-ID verification to the v2 anchor-detail flow, plus v2 detail helpers for
+organizations, records, fingerprints, and documents.
+REST responses use snake_case (`confidence_scores`, `sub_type`); SDK models expose
+the same data using each language's native style (`confidenceScores`/`subType` in
+TypeScript, `confidence_scores`/`sub_type` in Python).
+The TypeScript SDK remains the broader wrapper for anchoring, batch verification,
+webhooks, and x402 write workflows until equivalent v2 Python methods are published.
 
 ## Cutover Checklist
 

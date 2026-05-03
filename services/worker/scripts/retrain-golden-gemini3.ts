@@ -67,7 +67,7 @@ async function main() {
       if (existsSync(valFile)) {
         execSync(`gsutil cp ${valFile} ${gcsValPath}`, { stdio: 'inherit' });
       }
-    } catch (err) {
+    } catch {
       console.error('GCS upload failed. Check gcloud auth.');
       process.exit(1);
     }

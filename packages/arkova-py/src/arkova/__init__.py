@@ -12,6 +12,7 @@ from .models import (
     RecordDetail,
     SearchResponse,
     SearchResult,
+    VerificationResult,
 )
 
 __all__ = [
@@ -29,4 +30,5 @@ __all__ = [
     "RecordDetail",
     "SearchResponse",
     "SearchResult",
+    "VerificationResult",
 ]

@@ -1,244 +1,238 @@
-#!/usr/bin/env -S npx tsx
 /**
- * SCRUM-1586 — API contract drift guard.
+ * SCRUM-1586 - fail early when agent-facing API contracts drift.
  *
- * The API audit found duplicate SDK package bodies and generated planning
- * artifacts sitting in normal source paths. This check keeps those from
- * quietly returning in future PRs.
- *
- * Scope note: this guard catches duplicate SDK bodies and generated/stale
- * artifacts. Semantic API parity is covered by the route/OpenAPI/MCP/SDK tests,
- * not by this file-list guard.
+ * The v2 OpenAPI spec, MCP tool descriptions, and MCP argument validators are
+ * all developer-facing API contracts. If one changes without the others, agent
+ * builders receive one shape while runtime validation accepts another.
  */
 
-import { execFileSync } from 'node:child_process';
-import { accessSync, constants, existsSync, readFileSync } from 'node:fs';
-import { delimiter, join, resolve } from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { z } from 'zod';
 
-const DEFAULT_REPO = resolve(import.meta.dirname, '..', '..');
-const CANONICAL_PYTHON_SDK = 'packages/arkova-py/pyproject.toml';
-const GIT_BINARY_CANDIDATES = [
-  '/usr/bin/git',
-  '/opt/homebrew/bin/git',
-  '/usr/local/bin/git',
-];
-const PATH_GIT_DIRECTORY_ALLOWLIST = process.platform === 'win32'
-  ? [
-      'C:\\Program Files\\Git\\cmd',
-      'C:\\Program Files\\Git\\bin',
-      'C:\\Program Files (x86)\\Git\\cmd',
-    ]
-  : [
-      '/usr/bin',
-      '/bin',
-      '/usr/local/bin',
-      '/opt/homebrew/bin',
-    ];
-const PATH_GIT_BINARY_NAMES = process.platform === 'win32'
-  ? ['git.exe', 'git.cmd', 'git.bat']
-  : ['git'];
+export interface ContractDriftViolation {
+  source: string;
+  message: string;
+}
 
-const DEPRECATED_PYTHON_SDK_PATHS = [
-  'packages/python-sdk/.gitignore',
-  'packages/python-sdk/pyproject.toml',
-  'packages/python-sdk/src/',
-  'packages/python-sdk/tests/',
-  'sdks/python/arkova/',
-  'sdks/python/pyproject.toml',
-  'sdks/python/tests/',
-];
+export interface ToolDefinition {
+  name: string;
+  description?: string;
+  inputSchema: {
+    type: 'object';
+    properties: Record<string, unknown>;
+    required: string[];
+  };
+}
 
-const FORBIDDEN_GENERATED_ARTIFACTS = new Set([
-  'docs/prds/Arkova_Feature_Flag_Audit.docx',
-  'docs/prds/Arkova_Operational_Launch_Readiness_PRD_Packet.docx',
-  'docs/prds/Arkova_PRD_Story_Traceability_Audit.docx',
-  'scripts/generate_launch_audit_docx.py',
-  'scripts/generate_launch_prd_docx.py',
-]);
+interface OpenApiGetOperation {
+  operationId?: string;
+  'x-agent-usage'?: {
+    tool_name?: string;
+  };
+}
 
-const GENERATED_PATH_SEGMENTS = new Set([
-  '.pytest_cache',
-  '.ruff_cache',
-  '__pycache__',
-  'coverage',
-  'dist',
-  'output',
-]);
+interface OpenApiSpec {
+  paths: Record<string, { get?: OpenApiGetOperation } | undefined>;
+}
 
-export interface DriftFinding {
+type ZodObjectLike = z.ZodObject<z.ZodRawShape>;
+
+const byLocale = (a: string, b: string): number => a.localeCompare(b);
+
+interface OpenApiAgentOperation {
   path: string;
-  reason: string;
+  operation: OpenApiGetOperation;
 }
 
-export interface DriftInput {
-  trackedFiles: string[];
-  readFile: (path: string) => string;
+function schemaShape(schema: z.ZodTypeAny): z.ZodRawShape | null {
+  if (schema instanceof z.ZodObject) return (schema as ZodObjectLike).shape;
+
+  // The worker is pinned to Zod 3.25.76 today. Prefer public object/wrapper
+  // accessors where available, then keep the defensive Zod 3 fallbacks so this
+  // CI guard keeps working across strict/effects-wrapped schemas.
+  const candidate = schema as unknown as {
+    shape?: z.ZodRawShape;
+    unwrap?: () => z.ZodTypeAny;
+    innerType?: () => z.ZodTypeAny;
+    sourceType?: () => z.ZodTypeAny;
+    _def?: { shape?: z.ZodRawShape | (() => z.ZodRawShape) };
+  };
+
+  const wrappedSchema = candidate.unwrap?.() ?? candidate.innerType?.() ?? candidate.sourceType?.();
+  if (wrappedSchema && wrappedSchema !== schema) {
+    const wrappedShape = schemaShape(wrappedSchema);
+    if (wrappedShape) return wrappedShape;
+  }
+
+  if (candidate.shape) return candidate.shape;
+  if (typeof candidate._def?.shape === 'function') return candidate._def.shape();
+  if (candidate._def?.shape) return candidate._def.shape;
+  return null;
 }
 
-function normalizePath(path: string): string {
-  // Git emits forward slashes, but test fixtures may use Windows-style paths.
-  return path.replaceAll('\\', '/');
+export function zodObjectKeys(schema: z.ZodTypeAny): string[] {
+  return Object.keys(schemaShape(schema) ?? {}).sort(byLocale);
 }
 
-function isDeprecatedPythonSdkBody(path: string): boolean {
-  const normalized = normalizePath(path);
-  return DEPRECATED_PYTHON_SDK_PATHS.some((forbidden) =>
-    forbidden.endsWith('/')
-      ? normalized.startsWith(forbidden)
-      : normalized === forbidden,
-  );
+export function zodRequiredKeys(schema: z.ZodTypeAny): string[] {
+  const shape = schemaShape(schema);
+  if (!shape) return [];
+
+  return Object.entries(shape)
+    .filter(([, field]) => !field.safeParse(undefined).success)
+    .map(([key]) => key)
+    .sort(byLocale);
 }
 
-function isGeneratedPath(path: string): boolean {
-  return normalizePath(path)
-    .split('/')
-    .some((segment) => GENERATED_PATH_SEGMENTS.has(segment));
-}
+export function collectMcpContractDrift(
+  definitions: ToolDefinition[],
+  schemas: Record<string, z.ZodTypeAny>,
+): ContractDriftViolation[] {
+  const violations: ContractDriftViolation[] = [];
+  const definitionByName = new Map(definitions.map((definition) => [definition.name, definition]));
+  const definitionNames = [...definitionByName.keys()].sort(byLocale);
+  const schemaNames = Object.keys(schemas).sort(byLocale);
 
-function projectNameFromPyproject(content: string): string | undefined {
-  const lines = content.split(/\r?\n/);
-  let inProject = false;
+  const missingDefinitions = schemaNames.filter((name) => !definitionByName.has(name));
+  const missingSchemas = definitionNames.filter((name) => !schemas[name]);
 
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (/^\[project\]\s*$/.test(trimmed)) {
-      inProject = true;
-      continue;
+  for (const name of missingDefinitions) {
+    violations.push({ source: `mcp:${name}`, message: 'validator schema exists without a tool definition' });
+  }
+
+  for (const name of missingSchemas) {
+    violations.push({ source: `mcp:${name}`, message: 'tool definition exists without a validator schema' });
+  }
+
+  for (const name of definitionNames.filter((candidate) => schemas[candidate])) {
+    const definition = definitionByName.get(name)!;
+    const schema = schemas[name];
+    const definedProperties = Object.keys(definition.inputSchema.properties).sort(byLocale);
+    const schemaProperties = zodObjectKeys(schema);
+    const definedRequired = [...definition.inputSchema.required].sort(byLocale);
+    const schemaRequired = zodRequiredKeys(schema);
+
+    if (JSON.stringify(definedProperties) !== JSON.stringify(schemaProperties)) {
+      violations.push({
+        source: `mcp:${name}`,
+        message: `tool definition properties ${definedProperties.join(',') || '(none)'} differ from validator properties ${schemaProperties.join(',') || '(none)'}`,
+      });
     }
-    if (inProject && /^\[.+\]\s*$/.test(trimmed)) return undefined;
-    if (!inProject) continue;
 
-    const match = /^name\s*=\s*["']([^"']+)["'](?:\s+#.*)?$/.exec(trimmed);
-    if (match) return match[1];
-  }
-
-  return undefined;
-}
-
-function inspectTrackedPath(path: string): DriftFinding[] {
-  const findings: DriftFinding[] = [];
-  if (isDeprecatedPythonSdkBody(path)) {
-    findings.push({
-      path,
-      reason: 'stale duplicate Python SDK package body; only README redirects may remain',
-    });
-  }
-  if (FORBIDDEN_GENERATED_ARTIFACTS.has(path)) {
-    findings.push({
-      path,
-      reason: 'generated planning artifact belongs in the artifact archive, not a code PR',
-    });
-  }
-  if (isGeneratedPath(path)) {
-    findings.push({
-      path,
-      reason: 'tracked generated output/cache directory',
-    });
-  }
-  return findings;
-}
-
-function isArkovaPythonPackage(path: string, input: DriftInput): boolean {
-  return path.endsWith('pyproject.toml') && projectNameFromPyproject(input.readFile(path)) === 'arkova';
-}
-
-export function findApiContractDrift(input: DriftInput): DriftFinding[] {
-  const findings: DriftFinding[] = [];
-  const trackedFiles = input.trackedFiles.map(normalizePath).sort((a, b) => a.localeCompare(b));
-  const arkovaPythonPackages: string[] = [];
-
-  for (const path of trackedFiles) {
-    findings.push(...inspectTrackedPath(path));
-    if (isArkovaPythonPackage(path, input)) arkovaPythonPackages.push(path);
-  }
-
-  for (const path of arkovaPythonPackages) {
-    if (path !== CANONICAL_PYTHON_SDK) {
-      findings.push({
-        path,
-        reason: `duplicate Python package named "arkova"; canonical package is ${CANONICAL_PYTHON_SDK}`,
+    if (JSON.stringify(definedRequired) !== JSON.stringify(schemaRequired)) {
+      violations.push({
+        source: `mcp:${name}`,
+        message: `tool definition required args ${definedRequired.join(',') || '(none)'} differ from validator required args ${schemaRequired.join(',') || '(none)'}`,
       });
     }
   }
 
-  if (!arkovaPythonPackages.includes(CANONICAL_PYTHON_SDK)) {
-    findings.push({
-      path: CANONICAL_PYTHON_SDK,
-      reason: 'canonical Python SDK package is missing',
-    });
+  return violations;
+}
+
+export function collectOpenApiAgentOperations(spec: OpenApiSpec): OpenApiAgentOperation[] {
+  return Object.entries(spec.paths)
+    .flatMap(([path, pathItem]) => {
+      const operation = pathItem?.get;
+      return operation?.['x-agent-usage'] ? [{ path, operation }] : [];
+    })
+    .sort((a, b) => byLocale(a.path, b.path));
+}
+
+export function collectOpenApiAgentDrift(
+  spec: OpenApiSpec,
+  schemas: Record<string, z.ZodTypeAny>,
+): ContractDriftViolation[] {
+  const violations: ContractDriftViolation[] = [];
+
+  for (const { path, operation } of collectOpenApiAgentOperations(spec)) {
+    const operationId = operation?.operationId;
+    const toolName = operation?.['x-agent-usage']?.tool_name;
+
+    if (!operationId) {
+      violations.push({ source: `openapi:${path}`, message: 'missing operationId' });
+      continue;
+    }
+
+    if (toolName !== operationId) {
+      violations.push({
+        source: `openapi:${path}`,
+        message: `x-agent-usage.tool_name ${toolName ?? '(missing)'} does not match operationId ${operationId}`,
+      });
+    }
+
+    if (!schemas[operationId]) {
+      violations.push({
+        source: `openapi:${path}`,
+        message: `missing MCP schema for operationId ${operationId}`,
+      });
+    }
   }
 
-  return findings;
+  return violations;
 }
 
-function gitLsFiles(repo: string): string[] {
-  return execFileSync(resolveGitBinary(), ['ls-files'], { cwd: repo, encoding: 'utf8' })
-    .split('\n')
-    .map((line) => line.trim())
-    .filter(Boolean);
+function isMainModule(metaUrl: string, argvPath: string | undefined): boolean {
+  return argvPath !== undefined && resolve(fileURLToPath(metaUrl)) === resolve(argvPath);
 }
 
-function resolveGitBinary(): string {
-  const gitBinary = GIT_BINARY_CANDIDATES.find(isExecutableFile);
-  if (gitBinary) return gitBinary;
+async function loadRuntimeContracts(): Promise<{
+  definitions: ToolDefinition[];
+  schemas: Record<string, z.ZodTypeAny>;
+  openApiSpec: OpenApiSpec;
+}> {
+  const edgeToolsUrl = new URL('../../services/edge/src/mcp-tools.ts', import.meta.url).href;
+  const edgeSchemasUrl = new URL('../../services/edge/src/mcp-tool-schemas.ts', import.meta.url).href;
+  const openApiUrl = new URL('../../services/worker/src/api/v2/openapi.ts', import.meta.url).href;
 
-  const pathGit = resolveGitBinaryFromFixedPathDirs();
-  if (pathGit) return pathGit;
+  const [{ TOOL_DEFINITIONS }, { MCP_TOOL_SCHEMAS }, { openApiV2Spec }] = await Promise.all([
+    import(edgeToolsUrl) as Promise<{ TOOL_DEFINITIONS: ToolDefinition[] }>,
+    import(edgeSchemasUrl) as Promise<{ MCP_TOOL_SCHEMAS: Record<string, z.ZodTypeAny> }>,
+    import(openApiUrl) as Promise<{ openApiV2Spec: OpenApiSpec }>,
+  ]);
 
-  throw new Error(`git binary not found in fixed candidates: ${GIT_BINARY_CANDIDATES.join(', ')}`);
+  return {
+    definitions: TOOL_DEFINITIONS,
+    schemas: MCP_TOOL_SCHEMAS,
+    openApiSpec: openApiV2Spec,
+  };
 }
 
-function resolveGitBinaryFromFixedPathDirs(): string | null {
-  const allowedDirs = new Set(PATH_GIT_DIRECTORY_ALLOWLIST.map((path) => resolve(path)));
-  const pathEntries = (process.env.PATH ?? '').split(delimiter).filter(Boolean);
+export async function collectContractDrift(): Promise<ContractDriftViolation[]> {
+  const { definitions, schemas, openApiSpec } = await loadRuntimeContracts();
 
-  for (const entry of pathEntries) {
-    const directory = resolve(entry);
-    if (!allowedDirs.has(directory)) continue;
-
-    const gitBinary = PATH_GIT_BINARY_NAMES
-      .map((binaryName) => join(directory, binaryName))
-      .find(isExecutableFile);
-    if (gitBinary) return gitBinary;
-  }
-
-  return null;
+  return [
+    ...collectMcpContractDrift(
+      definitions,
+      schemas,
+    ),
+    ...collectOpenApiAgentDrift(
+      openApiSpec,
+      schemas,
+    ),
+  ];
 }
 
-function isExecutableFile(candidate: string): boolean {
-  try {
-    accessSync(candidate, constants.X_OK);
-    return true;
-  } catch {
-    return false;
-  }
-}
+async function main(): Promise<void> {
+  const violations = await collectContractDrift();
 
-function main(): void {
-  const repo = process.env.API_CONTRACT_DRIFT_REPO_ROOT ?? DEFAULT_REPO;
-  const findings = findApiContractDrift({
-    trackedFiles: gitLsFiles(repo),
-    readFile: (path) => {
-      const fullPath = resolve(repo, path);
-      return existsSync(fullPath) ? readFileSync(fullPath, 'utf8') : '';
-    },
-  });
-
-  if (findings.length === 0) {
-    console.log('✅ API contract drift guard passed.');
+  if (violations.length === 0) {
+    console.log('Agent-facing API contracts are aligned across v2 OpenAPI and MCP schemas.');
     return;
   }
 
-  console.error(`::error::SCRUM-1586: ${findings.length} API contract drift finding(s):`);
-  for (const finding of findings) {
-    console.error(`  ${finding.path}: ${finding.reason}`);
+  console.error(`::error::SCRUM-1586: ${violations.length} API contract drift issue(s) found:`);
+  for (const violation of violations) {
+    console.error(`  ${violation.source}: ${violation.message}`);
   }
-  console.error('');
-  console.error('Fix by keeping one canonical SDK/source path and moving generated artifacts outside the repo.');
   process.exit(1);
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  main();
+if (isMainModule(import.meta.url, process.argv[1])) {
+  main().catch((error) => {
+    console.error('::error::SCRUM-1586: API contract drift check failed to run.');
+    console.error(error instanceof Error ? error.stack ?? error.message : String(error));
+    process.exit(1);
+  });
 }

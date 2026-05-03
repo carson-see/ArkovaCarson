@@ -29,6 +29,7 @@ export { Arkova, ArkovaError } from './client';
 export type {
   ArkovaConfig,
   AnchorReceipt,
+  RichVerificationFields,
   VerificationResult,
   NessieQueryResult,
   NessieContextResult,

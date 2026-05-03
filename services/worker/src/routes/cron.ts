@@ -15,6 +15,7 @@
 import { Router, Request } from 'express';
 import crypto from 'node:crypto';
 import { createRemoteJWKSet, jwtVerify, type JWTVerifyGetKey } from 'jose';
+import { z } from 'zod';
 import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
 import { rateLimit } from '../utils/rateLimit.js';
@@ -1159,11 +1160,58 @@ cronRouter.post('/regulatory-change-scan', async (_req, res) => {
 // the legacy materialized views fresh so anything still pointing at
 // them keeps working. Each call is wrapped so a failure in one
 // pathway doesn't kill the other.
+const PipelineDashboardCacheRefreshResultSchema = z.object({
+  status: z.enum(['refreshed', 'skipped']),
+  reason: z.string().optional(),
+  succeeded: z.number().int().nonnegative().optional(),
+  errors: z.array(z.unknown()).optional(),
+  duration_ms: z.number().int().nonnegative().optional(),
+});
+
+type PipelineDashboardCacheRefreshResult = z.infer<typeof PipelineDashboardCacheRefreshResultSchema>;
+
+function formatDashboardCacheError(error: unknown): string {
+  if (typeof error === 'string') return error;
+  if (error && typeof error === 'object') {
+    const maybeMessage = (error as { message?: unknown }).message;
+    if (typeof maybeMessage === 'string') return maybeMessage;
+    try {
+      return JSON.stringify(error) ?? String(error);
+    } catch {
+      return String(error);
+    }
+  }
+  return String(error);
+}
+
+function hasRefreshError(
+  errors: Array<{ source: string; message: string }>,
+  source: string,
+): boolean {
+  return errors.some((error) => error.source === source || error.source.startsWith(`${source}.`));
+}
+
 cronRouter.post('/refresh-stats', async (_req, res) => {
   const errors: Array<{ source: string; message: string }> = [];
+  let pipelineDashboardResult: PipelineDashboardCacheRefreshResult | null = null;
 
   try {
-    await callRpc(db, 'refresh_pipeline_dashboard_cache');
+    const result = await callRpc<PipelineDashboardCacheRefreshResult>(db, 'refresh_pipeline_dashboard_cache');
+    if (result.error) throw new Error(result.error.message);
+    const parsed = PipelineDashboardCacheRefreshResultSchema.safeParse(result.data);
+    if (!parsed.success) {
+      throw new Error(`Invalid refresh_pipeline_dashboard_cache payload: ${parsed.error.message}`);
+    }
+    const partialErrors = parsed.data.errors ?? [];
+    if (partialErrors.length > 0) {
+      partialErrors.forEach((detail, index) => {
+        errors.push({
+          source: `pipeline_dashboard_cache.${index}`,
+          message: formatDashboardCacheError(detail),
+        });
+      });
+    }
+    pipelineDashboardResult = parsed.data;
   } catch (error) {
     logger.error({ error }, 'refresh_pipeline_dashboard_cache failed');
     errors.push({
@@ -1173,7 +1221,8 @@ cronRouter.post('/refresh-stats', async (_req, res) => {
   }
 
   try {
-    await callRpc(db, 'refresh_stats_materialized_views');
+    const result = await callRpc(db, 'refresh_stats_materialized_views');
+    if (result.error) throw new Error(result.error.message);
   } catch (error) {
     logger.warn({ error }, 'refresh_stats_materialized_views failed (non-fatal)');
     errors.push({
@@ -1184,15 +1233,49 @@ cronRouter.post('/refresh-stats', async (_req, res) => {
 
   if (errors.length === 2) {
     // Both failed — surface 500 so Cloud Scheduler retries.
-    res.status(500).json({ error: 'All refresh paths failed', errors });
+    res.status(500).json({
+      status: 'failed',
+      reason: 'all refresh paths failed',
+      refreshed: [],
+      succeeded: pipelineDashboardResult?.succeeded,
+      duration_ms: pipelineDashboardResult?.duration_ms,
+      errors,
+    });
+    return;
+  }
+
+  const refreshed = ['pipeline_dashboard_cache', 'stats_materialized_views'].filter(
+    (s) => !hasRefreshError(errors, s),
+  );
+
+  if (pipelineDashboardResult?.status === 'skipped') {
+    res.json({
+      status: 'skipped',
+      reason: pipelineDashboardResult.reason,
+      duration_ms: pipelineDashboardResult.duration_ms,
+      refreshed: refreshed.filter((s) => s !== 'pipeline_dashboard_cache'),
+      errors,
+    });
+    return;
+  }
+
+  if (hasRefreshError(errors, 'pipeline_dashboard_cache')) {
+    res.status(500).json({
+      status: 'failed',
+      reason: 'pipeline_dashboard_cache failed',
+      refreshed: refreshed.filter((s) => s !== 'pipeline_dashboard_cache'),
+      succeeded: pipelineDashboardResult?.succeeded,
+      duration_ms: pipelineDashboardResult?.duration_ms,
+      errors,
+    });
     return;
   }
 
   res.json({
     status: 'refreshed',
-    refreshed: ['pipeline_dashboard_cache', 'stats_materialized_views'].filter(
-      (s) => !errors.some((e) => e.source === s),
-    ),
+    refreshed,
+    succeeded: pipelineDashboardResult?.succeeded,
+    duration_ms: pipelineDashboardResult?.duration_ms,
     errors,
   });
 });
@@ -1287,6 +1370,7 @@ cronRouter.post('/smoke-test', async (_req, res) => {
       await db.from('audit_events').insert({
         event_type: 'smoke_test.completed',
         event_category: 'SYSTEM',
+        org_id: null,
         details: JSON.stringify({
           passed,
           failed,
@@ -1323,6 +1407,7 @@ cronRouter.get('/smoke-test/history', async (_req, res) => {
       .from('audit_events')
       .select('created_at, details')
       .eq('event_type', 'smoke_test.completed')
+      .is('org_id', null)
       .order('created_at', { ascending: false })
       .limit(20);
 

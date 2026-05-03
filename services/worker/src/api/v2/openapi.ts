@@ -1,4 +1,4 @@
-import { Request, Response } from 'express';
+import type { Request, Response } from 'express';
 import {
   ARKOVA_PUBLIC_ID_PATTERN,
   ORG_PUBLIC_ID_PATTERN,

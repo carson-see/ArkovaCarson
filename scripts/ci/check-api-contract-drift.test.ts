@@ -1,113 +1,129 @@
 import { describe, expect, it } from 'vitest';
+import { z } from 'zod';
+import {
+  collectMcpContractDrift,
+  collectOpenApiAgentDrift,
+  collectOpenApiAgentOperations,
+  zodObjectKeys,
+  zodRequiredKeys,
+} from './check-api-contract-drift.js';
+import type { ToolDefinition } from './check-api-contract-drift.js';
 
-import { findApiContractDrift } from './check-api-contract-drift.js';
+describe('check-api-contract-drift', () => {
+  it('extracts Zod object keys and required keys', () => {
+    const schema = z.object({
+      q: z.string(),
+      type: z.enum(['all', 'org']).optional(),
+    }).strict();
 
-const canonicalPyproject = `
-[project]
-name = "arkova"
-version = "0.1.0"
-`;
-
-function run(trackedFiles: string[], contents: Record<string, string> = {}) {
-  return findApiContractDrift({
-    trackedFiles,
-    readFile: (path) => contents[path] ?? '',
-  });
-}
-
-function runWithCanonical(trackedFiles: string[], contents: Record<string, string> = {}) {
-  return run(trackedFiles, {
-    'packages/arkova-py/pyproject.toml': canonicalPyproject,
-    ...contents,
-  });
-}
-
-function findingPaths(trackedFiles: string[]) {
-  return runWithCanonical(trackedFiles).map((finding) => finding.path);
-}
-
-describe('check-api-contract-drift (SCRUM-1586)', () => {
-  it('passes with one canonical Python SDK package and README-only deprecated paths', () => {
-    const findings = runWithCanonical([
-      'packages/arkova-py/pyproject.toml',
-      'packages/python-sdk/README.md',
-      'sdks/python/README.md',
-    ]);
-
-    expect(findings).toEqual([]);
+    expect(zodObjectKeys(schema)).toEqual(['q', 'type']);
+    expect(zodRequiredKeys(schema)).toEqual(['q']);
   });
 
-  it('flags duplicate Python packages named arkova', () => {
-    const findings = runWithCanonical(
-      ['packages/arkova-py/pyproject.toml', 'packages/other-python-sdk/pyproject.toml'],
-      { 'packages/other-python-sdk/pyproject.toml': canonicalPyproject },
-    );
-
-    expect(findings).toContainEqual({
-      path: 'packages/other-python-sdk/pyproject.toml',
-      reason: 'duplicate Python package named "arkova"; canonical package is packages/arkova-py/pyproject.toml',
-    });
-  });
-
-  it('flags the missing canonical Python SDK package even when another arkova package exists', () => {
-    const findings = runWithCanonical(
-      ['packages/other-python-sdk/pyproject.toml'],
-      { 'packages/other-python-sdk/pyproject.toml': canonicalPyproject },
-    );
-
-    expect(findings).toContainEqual({
-      path: 'packages/arkova-py/pyproject.toml',
-      reason: 'canonical Python SDK package is missing',
-    });
-  });
-
-  it('recognizes canonical Python package names with inline TOML comments', () => {
-    const findings = run(
-      ['packages/arkova-py/pyproject.toml'],
+  it('detects MCP definition/schema property drift', () => {
+    const definitions: ToolDefinition[] = [
       {
-        'packages/arkova-py/pyproject.toml': `
-[project]
-name = "arkova" # canonical SDK package
-version = "0.1.0"
-`,
+        name: 'search',
+        description: 'Search.',
+        inputSchema: {
+          type: 'object',
+          properties: {
+            q: { type: 'string', description: 'Query.' },
+            limit: { type: 'number', description: 'Limit.' },
+          },
+          required: ['q'],
+        },
       },
-    );
+    ];
 
-    expect(findings).toEqual([]);
-  });
+    const violations = collectMcpContractDrift(definitions, {
+      search: z.object({ q: z.string(), max_results: z.number().optional() }).strict(),
+    });
 
-  it('flags resurrected stale Python SDK source bodies', () => {
-    expect(findingPaths([
-      'packages/arkova-py/pyproject.toml',
-      'packages/python-sdk/src/arkova/client.py',
-      'sdks/python/arkova/client.py',
-    ])).toEqual([
-      'packages/python-sdk/src/arkova/client.py',
-      'sdks/python/arkova/client.py',
+    expect(violations).toEqual([
+      {
+        source: 'mcp:search',
+        message: 'tool definition properties limit,q differ from validator properties max_results,q',
+      },
     ]);
   });
 
-  it('flags known generated launch planning artifacts', () => {
-    expect(findingPaths([
-      'packages/arkova-py/pyproject.toml',
-      'docs/prds/Arkova_PRD_Story_Traceability_Audit.docx',
-      'scripts/generate_launch_audit_docx.py',
-    ])).toEqual([
-      'docs/prds/Arkova_PRD_Story_Traceability_Audit.docx',
-      'scripts/generate_launch_audit_docx.py',
+  it('requires every v2 OpenAPI agent operation to have a matching MCP schema', () => {
+    const spec = {
+      paths: {
+        '/search': { get: { operationId: 'search', 'x-agent-usage': { tool_name: 'search' } } },
+        '/verify/{fingerprint}': { get: { operationId: 'verify', 'x-agent-usage': { tool_name: 'verify' } } },
+        '/anchors/{public_id}': { get: { operationId: 'get_anchor', 'x-agent-usage': { tool_name: 'get_anchor' } } },
+        '/orgs': { get: { operationId: 'list_orgs', 'x-agent-usage': { tool_name: 'list_orgs' } } },
+        '/organizations/{public_id}': { get: { operationId: 'get_organization', 'x-agent-usage': { tool_name: 'get_organization' } } },
+        '/records/{public_id}': { get: { operationId: 'get_record', 'x-agent-usage': { tool_name: 'get_record' } } },
+        '/fingerprints/{fingerprint}': { get: { operationId: 'get_fingerprint', 'x-agent-usage': { tool_name: 'get_fingerprint' } } },
+        '/documents/{public_id}': { get: { operationId: 'get_document', 'x-agent-usage': { tool_name: 'get_document' } } },
+      },
+    };
+
+    const violations = collectOpenApiAgentDrift(spec, {
+      search: z.object({ q: z.string() }),
+      verify: z.object({ fingerprint: z.string() }),
+      get_anchor: z.object({ public_id: z.string() }),
+      list_orgs: z.object({}),
+      get_organization: z.object({ public_id: z.string() }),
+      get_record: z.object({ public_id: z.string() }),
+      get_fingerprint: z.object({ fingerprint: z.string() }),
+      get_document: z.object({ public_id: z.string() }),
+    });
+
+    expect(violations).toEqual([]);
+  });
+
+  it('discovers OpenAPI agent operations dynamically from x-agent-usage', () => {
+    const spec = {
+      paths: {
+        '/search': { get: { operationId: 'search', 'x-agent-usage': { tool_name: 'search' } } },
+        '/future-agent': { get: { operationId: 'future_agent', 'x-agent-usage': { tool_name: 'future_agent' } } },
+        '/openapi.json': { get: { operationId: 'get_openapi_v2_spec' } },
+      },
+    };
+
+    expect(collectOpenApiAgentOperations(spec).map((operation) => operation.path)).toEqual([
+      '/future-agent',
+      '/search',
+    ]);
+
+    expect(collectOpenApiAgentDrift(spec, {
+      search: z.object({ q: z.string() }),
+    })).toEqual([
+      {
+        source: 'openapi:/future-agent',
+        message: 'missing MCP schema for operationId future_agent',
+      },
     ]);
   });
 
-  it('flags tracked generated output and cache directories', () => {
-    expect(findingPaths([
-      'packages/arkova-py/pyproject.toml',
-      'services/worker/dist/index.js',
-      'coverage/lcov.info',
-      'packages/arkova-py/.pytest_cache/v/cache/nodeids',
-    ])).toEqual([
-      'coverage/lcov.info',
-      'packages/arkova-py/.pytest_cache/v/cache/nodeids',
-      'services/worker/dist/index.js',
-    ]);
+  it('reports explicit OpenAPI agent drift violation reasons', () => {
+    const spec = {
+      paths: {
+        '/missing-operation-id': { get: { 'x-agent-usage': { tool_name: 'search' } } },
+        '/mismatched-tool': { get: { operationId: 'search', 'x-agent-usage': { tool_name: 'find' } } },
+        '/missing-schema': { get: { operationId: 'future_agent', 'x-agent-usage': { tool_name: 'future_agent' } } },
+      },
+    };
+
+    const violations = collectOpenApiAgentDrift(spec, {
+      search: z.object({ q: z.string() }),
+    });
+
+    expect(violations).toContainEqual({
+      source: 'openapi:/missing-operation-id',
+      message: 'missing operationId',
+    });
+    expect(violations).toContainEqual({
+      source: 'openapi:/mismatched-tool',
+      message: 'x-agent-usage.tool_name find does not match operationId search',
+    });
+    expect(violations).toContainEqual({
+      source: 'openapi:/missing-schema',
+      message: 'missing MCP schema for operationId future_agent',
+    });
   });
 });

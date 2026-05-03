@@ -1,6 +1,6 @@
 # Arkova Python SDK
 
-Typed Python client for the Arkova Verification API v2 read-only surface.
+Typed Python client for the Arkova Verification APIs.
 
 ## Install
 
@@ -15,6 +15,7 @@ Python 3.10 or newer is supported.
 | Method | Sync client | Async client | Endpoint |
 | --- | --- | --- | --- |
 | Search records, organizations, fingerprints, and documents | `search()` | `search()` | `GET /search` |
+| Verify a public ID with the rich v1 verification response | `verify()` | `verify()` | `GET /v1/verify/{public_id}` |
 | Verify a SHA-256 fingerprint | `verify_fingerprint()` | `verify_fingerprint()` | `GET /verify/{fingerprint}` |
 | Fetch public anchor metadata | `get_anchor()` | `get_anchor()` | `GET /anchors/{public_id}` |
 | List organization context | `list_orgs()` | `list_orgs()` | `GET /orgs` |
@@ -56,6 +57,24 @@ Verification and anchor models include nullable rich fields when the API returns
 them, including `sub_type`, `description`, `confidence_scores`,
 `compliance_controls`, `chain_confirmations`, version lineage, revocation
 provenance, and file metadata.
+
+## Verify a public ID
+
+```python
+from arkova import Arkova
+
+with Arkova(api_key="ak_live_...") as arkova:
+    result = arkova.verify("ARK-2026-ABC")
+    print(result.verified, result.description, result.confidence_scores)
+```
+
+`verify()` returns the rich v1 verification shape, including API-RICH-01 fields
+such as `compliance_controls`, `chain_confirmations`, `parent_public_id`,
+`version_number`, `file_mime`, and `file_size`, plus API-RICH-02 fields
+`confidence_scores` and `sub_type` when the API response includes them.
+The same optional rich fields are typed on v2 `verify_fingerprint()` and
+`get_anchor()` responses, so newer API payloads are not silently hidden by the
+SDK model layer.
 
 ## Async client
 

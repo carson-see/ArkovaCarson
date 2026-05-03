@@ -15,7 +15,7 @@ The full machine-readable v1 API spec is at [`openapi.yaml`](./openapi.yaml). Th
 | What you want to do | Read this |
 |---|---|
 | Anchor + verify credentials from TypeScript / JavaScript | [`@arkova/sdk`](../../packages/sdk/README.md) |
-| Search, verify fingerprints, and inspect v2 resources from Python | [`arkova`](../../packages/arkova-py/README.md) |
+| Search, verify public IDs/fingerprints, and inspect v2 resources from Python | [`arkova`](../../packages/arkova-py/README.md) |
 | Follow the canonical agent workflow across REST, MCP, and SDKs | [Agent API workflows](./agent-workflows.md) |
 | Understand the canonical API source map and SDK contract strategy | [Canonical API sources](./canonical-sources.md) |
 | See supported API key scopes | [API key scope vocabulary](./api-scope-vocabulary.md) |
@@ -36,6 +36,7 @@ Arkova exposes its verification platform through five complementary surfaces. Pi
 ### 1. REST API — `https://arkova-worker-270018525501.us-central1.run.app/api/v1`
 
 The foundation. v1 is frozen and now publishes a 12-month deprecation calendar. Public endpoints (verify, batch verify) require no auth. Authenticated endpoints take an API key via `X-API-Key` or `Authorization: Bearer ak_live_...`.
+The rich v1 verification response includes shipped API-RICH-02 fields `description`, `confidence_scores`, and `sub_type` when present; `/ai/extract` returns the same concepts as `description`, `confidenceScores`, and `subType`.
 
 | Group | Endpoints | Auth | Docs |
 |---|---|---|---|
@@ -76,13 +77,17 @@ const result = await arkova.verify(receipt.publicId);
 
 ### 4. Python SDK — `arkova`
 
-Typed Python 3.10+ client for the API v2 read-only surface. Install with `pip install arkova`.
+Typed Python 3.10+ client with sync and async entry points. Install with `pip install arkova`.
+The canonical package supports `search`, rich v1 `verify`, v2 `verify_fingerprint`,
+`get_anchor`, `list_orgs`, `get_organization`, `get_record`, `get_fingerprint`, and
+`get_document`; write/anchoring workflows remain in the TypeScript SDK and REST API.
 
 ```python
 from arkova import Arkova
 
 with Arkova(api_key="ak_live_...") as arkova:
     results = arkova.search("registered nurse", type="record")
+    verification = arkova.verify("ARK-2026-ABCD1234")
 ```
 
 Current methods: `search`, `verify_fingerprint`, `get_anchor`, `list_orgs`, `get_organization`, `get_record`, `get_fingerprint`, and `get_document`, with matching async methods on `AsyncArkova`. The Python SDK preserves API v2 `application/problem+json` errors, honors `Retry-After` during retries, and maps nullable rich verification fields when the API returns them.
