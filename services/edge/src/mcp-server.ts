@@ -42,6 +42,7 @@ import {
   handleAgentVerify,
   handleAgentListOrgs,
   handleAgentGetAnchor,
+  handleAgentGetOrganization,
   supabaseFetch,
   type SupabaseConfig,
   type ToolResult,
@@ -84,6 +85,7 @@ import {
   validateToolArgs,
   validationErrorToToolResult,
   publicIdSchema,
+  orgPublicIdSchema,
   contentHashSchema,
   freeTextQuerySchema,
   type McpToolName,
@@ -292,11 +294,12 @@ function createMcpServer(config: ScopedConfig, telemetry: RequestTelemetryContex
     {
       q: freeTextQuerySchema.describe('Natural language query or exact SHA-256 fingerprint'),
       type: z.enum(['all', 'org', 'record', 'fingerprint', 'document']).optional().describe('Optional result filter (default: all)'),
-      max_results: z.number().int().min(1).max(50).optional().describe('Maximum results to return (default: 10, max: 50)'),
+      limit: z.number().int().min(1).max(50).optional().describe('Maximum results to return (default: 50, max: 50)'),
+      max_results: z.number().int().min(1).max(50).optional().describe('Deprecated alias for limit (default: 50, max: 50)'),
     },
     withTelemetry(
       'search',
-      async ({ q, type, max_results }) => handleAgentSearch({ q, type, max_results }, config),
+      async ({ q, type, limit, max_results }) => handleAgentSearch({ q, type, limit, max_results }, config),
       telemetry,
     ),
   );
@@ -329,6 +332,50 @@ function createMcpServer(config: ScopedConfig, telemetry: RequestTelemetryContex
     { public_id: publicIdSchema.describe('Arkova public identifier (e.g., ARK-DOC-ABCDEF)') },
     withTelemetry(
       'get_anchor',
+      async ({ public_id }) => handleAgentGetAnchor({ public_id }, config),
+      telemetry,
+    ),
+  );
+
+  tool(
+    'get_organization',
+    TOOL_DESC.get_organization,
+    { public_id: orgPublicIdSchema.describe('Organization public identifier returned by search') },
+    withTelemetry(
+      'get_organization',
+      async ({ public_id }) => handleAgentGetOrganization({ public_id }, config),
+      telemetry,
+    ),
+  );
+
+  tool(
+    'get_record',
+    TOOL_DESC.get_record,
+    { public_id: publicIdSchema.describe('Arkova public identifier returned by search') },
+    withTelemetry(
+      'get_record',
+      async ({ public_id }) => handleAgentGetAnchor({ public_id }, config),
+      telemetry,
+    ),
+  );
+
+  tool(
+    'get_fingerprint',
+    TOOL_DESC.get_fingerprint,
+    { fingerprint: contentHashSchema.describe('SHA-256 fingerprint returned by search') },
+    withTelemetry(
+      'get_fingerprint',
+      async ({ fingerprint }) => handleAgentVerify({ fingerprint }, config),
+      telemetry,
+    ),
+  );
+
+  tool(
+    'get_document',
+    TOOL_DESC.get_document,
+    { public_id: publicIdSchema.describe('Arkova public identifier returned by search') },
+    withTelemetry(
+      'get_document',
       async ({ public_id }) => handleAgentGetAnchor({ public_id }, config),
       telemetry,
     ),
@@ -538,6 +585,10 @@ function createMcpServer(config: ScopedConfig, telemetry: RequestTelemetryContex
           '  verify               — Verify a document fingerprint by SHA-256 hash',
           '  list_orgs            — List organizations available to the authenticated caller',
           '  get_anchor           — Fetch redacted public anchor metadata by Arkova public ID',
+          '  get_organization     — Fetch organization details by public ID',
+          '  get_record           — Fetch record details by Arkova public ID',
+          '  get_fingerprint      — Fetch record details by SHA-256 fingerprint',
+          '  get_document         — Fetch document details by Arkova public ID',
           '  verify_credential    — Verify a credential by its public ID (e.g., ARK-DEG-ABC123)',
           '  search_credentials   — Semantic search across the anchored records corpus',
           '  oracle_batch_verify  — Batch-verify up to 25 credentials with query-envelope metadata',

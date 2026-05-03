@@ -4,6 +4,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { openApiSpec } from './docs.js';
+import { API_KEY_SCOPES } from '../apiScopes.js';
 
 describe('OpenAPI spec', () => {
   it('has valid OpenAPI version', () => {
@@ -107,6 +108,28 @@ describe('OpenAPI spec', () => {
     const evidenceSchema = openApiSpec.components.schemas.AttestationEvidence;
     expect(evidenceSchema.properties.id.description).toContain('public_id');
     expect(evidenceSchema.properties.id.description).toContain('never an internal UUID');
+  });
+
+  it('publishes canonical API key scope metadata without narrowing v1 string arrays', () => {
+    const keysPath = openApiSpec.paths['/keys'];
+    const createScopes = keysPath.post.requestBody.content['application/json'].schema.properties.scopes;
+    const updateScopes = openApiSpec.paths['/keys/{keyId}'].patch
+      .requestBody.content['application/json'].schema.properties.scopes;
+    const maskedScopes = openApiSpec.components.schemas.ApiKeyMasked.properties.scopes;
+    const createdScopes = openApiSpec.components.schemas.ApiKeyCreated.properties.scopes;
+
+    expect(createScopes.items).toEqual({ type: 'string' });
+    expect(updateScopes.items).toEqual({ type: 'string' });
+    expect(maskedScopes.items).toEqual({ type: 'string' });
+    expect(createdScopes.items).toEqual({ type: 'string' });
+    expect(createScopes.items.enum).toBeUndefined();
+    expect(updateScopes.items.enum).toBeUndefined();
+    expect(maskedScopes.items.enum).toBeUndefined();
+    expect(createdScopes.items.enum).toBeUndefined();
+    expect(createScopes['x-arkova-canonical-scopes']).toEqual(API_KEY_SCOPES);
+    expect(updateScopes['x-arkova-canonical-scopes']).toEqual(API_KEY_SCOPES);
+    expect(maskedScopes['x-arkova-canonical-scopes']).toEqual(API_KEY_SCOPES);
+    expect(createdScopes['x-arkova-canonical-scopes']).toEqual(API_KEY_SCOPES);
   });
 
   it('has all four tags', () => {

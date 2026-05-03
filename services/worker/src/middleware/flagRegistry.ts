@@ -21,13 +21,39 @@ interface FlagState {
   lastChecked: number;
 }
 
-// All known flags and their sources
-// eslint-disable-next-line @typescript-eslint/no-unused-vars -- used in FlagName type
-const ENV_FLAGS = [
-  'USE_MOCKS',
-  'ENABLE_PROD_NETWORK_ANCHORING',
-  'ENABLE_AI_FALLBACK',
-] as const;
+// All known flags and their sources. Env-backed flags are process-level
+// controls; DB-backed flags are switchboard rollout controls.
+const ENV_FLAG_GETTERS = {
+  USE_MOCKS: () => config.useMocks,
+  ENABLE_PROD_NETWORK_ANCHORING: () => config.enableProdNetworkAnchoring,
+  ENABLE_ORG_CREDIT_ENFORCEMENT: () => config.enableOrgCreditEnforcement,
+  ENABLE_AI_FALLBACK: () => config.enableAiFallback,
+  ENABLE_VERTEX_AI: () => config.enableVertexAi,
+  ENABLE_RULES_ENGINE: () => config.enableRulesEngine,
+  ENABLE_QUEUE_REMINDERS: () => config.enableQueueReminders,
+  ENABLE_TREASURY_ALERTS: () => config.enableTreasuryAlerts,
+  ENABLE_WEBHOOK_HMAC: () => config.enableWebhookHmac,
+  ENABLE_RULE_ACTION_DISPATCHER: () => config.enableRuleActionDispatcher,
+  ENABLE_ALLOCATION_ROLLOVER: () => config.enableAllocationRollover,
+  ENABLE_VISUAL_FRAUD_DETECTION: () => config.enableVisualFraudDetection,
+  ENABLE_GRC_INTEGRATIONS: () => config.enableGrcIntegrations,
+  ENABLE_DEMO_INJECTOR: () => config.enableDemoInjector,
+  ENABLE_SYNTHETIC_DATA: () => config.enableSyntheticData,
+  ENABLE_NESSIE_RAG_RECOMMENDATIONS: () => config.enableNessieRagRecommendations,
+  ENABLE_MULTIMODAL_EMBEDDINGS: () => config.enableMultimodalEmbeddings,
+  ENABLE_CLOUD_LOGGING_SINK: () => config.enableCloudLoggingSink,
+  ENABLE_WORKSPACE_RENEWAL: () => config.enableWorkspaceRenewal,
+  ENABLE_DRIVE_OAUTH: () => config.enableDriveOauth,
+  ENABLE_DRIVE_WEBHOOK: () => config.enableDriveWebhook,
+  ENABLE_DOCUSIGN_OAUTH: () => config.enableDocusignOauth,
+  ENABLE_DOCUSIGN_WEBHOOK: () => config.enableDocusignWebhook,
+  ENABLE_ATS_WEBHOOK: () => config.enableAtsWebhook,
+  ENABLE_VEREMARK_WEBHOOK: () => config.enableVeremarkWebhook,
+} as const;
+
+type EnvFlagName = keyof typeof ENV_FLAG_GETTERS;
+
+const ENV_FLAGS = Object.keys(ENV_FLAG_GETTERS) as EnvFlagName[];
 
 const DB_FLAGS = [
   'ENABLE_VERIFICATION_API',
@@ -38,6 +64,16 @@ const DB_FLAGS = [
   'ENABLE_ADES_SIGNATURES',
   'ENABLE_EXPIRY_ALERTS',
   'ENABLE_COMPLIANCE_ENGINE',
+  'ENABLE_X402_PAYMENTS',
+  'ENABLE_PUBLIC_RECORDS_INGESTION',
+  'ENABLE_PUBLIC_RECORD_ANCHORING',
+  'ENABLE_PUBLIC_RECORD_EMBEDDINGS',
+  'ENABLE_ATTESTATION_ANCHORING',
+  'ENABLE_BATCH_ANCHORING',
+  'ENABLE_OUTBOUND_WEBHOOKS',
+  'ENABLE_NEW_CHECKOUTS',
+  'ENABLE_REPORTS',
+  'MAINTENANCE_MODE',
 ] as const;
 
 type FlagName = typeof ENV_FLAGS[number] | typeof DB_FLAGS[number];
@@ -51,16 +87,13 @@ class FeatureFlagRegistry {
    */
   async init(): Promise<void> {
     // Load env-based flags from config
-    this.flags.set('USE_MOCKS', {
-      value: config.useMocks,
-      source: 'env',
-      lastChecked: Date.now(),
-    });
-    this.flags.set('ENABLE_PROD_NETWORK_ANCHORING', {
-      value: config.enableProdNetworkAnchoring,
-      source: 'env',
-      lastChecked: Date.now(),
-    });
+    for (const key of ENV_FLAGS) {
+      this.flags.set(key, {
+        value: Boolean(ENV_FLAG_GETTERS[key]()),
+        source: 'env',
+        lastChecked: Date.now(),
+      });
+    }
 
     // Load DB-backed flags (with env var fallback for stability).
     // Schema: switchboard_flags(id uuid, flag_key text, enabled boolean, ...).

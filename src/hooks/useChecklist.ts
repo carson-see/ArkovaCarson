@@ -27,11 +27,24 @@ interface ChecklistData {
   attestationCount: number;
 }
 
+function countFromResult(result: unknown): number {
+  return (result as { count?: number } | null)?.count ?? 0;
+}
+
+function hasData(result: unknown): boolean {
+  return !!(result as { data?: unknown } | null)?.data;
+}
+
 async function fetchChecklistData(
   userId: string,
   orgId: string | null | undefined,
   role: string | null | undefined,
 ): Promise<ChecklistData> {
+  const scopedAttestationCountQuery = supabase
+    .from('attestations')
+    .select('id', { count: 'exact', head: true })
+    .match(orgId ? { attester_org_id: orgId } : { attester_user_id: userId });
+
   const results = await Promise.allSettled([
     // Templates check (only for ORG_ADMIN)
     orgId && role === 'ORG_ADMIN'
@@ -50,10 +63,7 @@ async function fetchChecklistData(
       .maybeSingle(),
 
     // Attestation count
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (supabase as any)
-      .from('attestations')
-      .select('id', { count: 'exact', head: true }),
+    scopedAttestationCountQuery,
   ]);
 
   const templateResult = results[0].status === 'fulfilled' ? results[0].value : null;
@@ -61,9 +71,9 @@ async function fetchChecklistData(
   const attestResult = results[2].status === 'fulfilled' ? results[2].value : null;
 
   return {
-    hasTemplates: ((templateResult as Record<string, unknown>)?.count as number ?? 0) > 0,
-    hasBillingPlan: !!(subResult as unknown as Record<string, unknown>)?.data,
-    attestationCount: (attestResult as Record<string, unknown>)?.count as number ?? 0,
+    hasTemplates: countFromResult(templateResult) > 0,
+    hasBillingPlan: hasData(subResult),
+    attestationCount: countFromResult(attestResult),
   };
 }
 

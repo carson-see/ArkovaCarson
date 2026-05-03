@@ -3,12 +3,13 @@ name: CI
 on:
   push:
     branches: [main, staging, develop]
-    # Skip docs-only changes — saves Actions minutes on public repo transition.
-    # NOTE: HANDOFF.md / CLAUDE.md are intentionally NOT in the ignore list.
+    # Skip low-risk metadata-only changes — saves Actions minutes on public repo transition.
+    # NOTE: docs/** is intentionally NOT ignored because API docs carry
+    # contract surfaces checked by SCRUM-1581 vocabulary drift CI.
+    # HANDOFF.md / CLAUDE.md are intentionally NOT in the ignore list.
     # The handoff-claims job (R0-6 / SCRUM-1252) lints HANDOFF.md edits and
     # CLAUDE.md changes carry rule contracts that need CI verification.
     paths-ignore:
-      - 'docs/**'
       - 'LICENSE'
       - '.gitignore'
       - 'README.md'
@@ -16,7 +17,6 @@ on:
   pull_request:
     branches: [main, staging, develop]
     paths-ignore:
-      - 'docs/**'
       - 'LICENSE'
       - '.gitignore'
       - 'README.md'
@@ -105,6 +105,9 @@ jobs:
 
       - name: Block migration prefix collisions (SCRUM-1287)
         run: npx tsx scripts/ci/check-migration-prefix-uniqueness.ts
+
+      - name: Block API scope vocabulary drift (SCRUM-1581)
+        run: npm run ci:api-scope-vocabulary
 
       - name: Block CREATE VIEW without security_invoker (SCRUM-1276)
         env:

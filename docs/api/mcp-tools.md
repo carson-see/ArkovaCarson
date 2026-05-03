@@ -73,12 +73,13 @@ Input:
 |---|---|:---:|---|
 | `q` | string | yes | Natural language query or exact SHA-256 fingerprint |
 | `type` | `all`, `org`, `record`, `fingerprint`, `document` | no | Default `all` |
-| `max_results` | number | no | Default 10, max 50 |
+| `limit` | number | no | Default 50, max 50. Matches the RPC-backed search ceiling |
+| `max_results` | number | no | Deprecated compatibility alias for older MCP prompts; prefer `limit` |
 
 Example:
 
 ```json
-{ "q": "Acme compliance certificate", "type": "document", "max_results": 5 }
+{ "q": "Acme compliance certificate", "type": "document", "limit": 5 }
 ```
 
 ### `verify`
@@ -264,6 +265,7 @@ Verify a document by its SHA-256 fingerprint. Returns the anchor proof if found.
 {
   "verified": true,
   "status": "ANCHORED",
+  "public_id": "ARK-DOC-...",
   "record_id": "uuid",
   "content_hash": "abc123...",
   "anchor_proof": {
@@ -274,6 +276,8 @@ Verify a document by its SHA-256 fingerprint. Returns the anchor proof if found.
   }
 }
 ```
+
+> **Note** — The agent-friendly `get_fingerprint` alias returns the same shape **without `record_id`** (it is the internal `public_records.id` UUID and never appears on the public-safe agent surface).
 
 ---
 

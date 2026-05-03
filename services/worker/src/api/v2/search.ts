@@ -5,6 +5,7 @@ import { logger } from '../../utils/logger.js';
 import { requireScopeV2 } from './scopeGuard.js';
 import { ProblemError } from './problem.js';
 import { createV2ScopeRateLimit } from './rateLimit.js';
+import { sanitizeFilterValue, visibleAnchorScope } from './resourceIdentifiers.js';
 
 export const searchRouter = Router();
 
@@ -16,7 +17,7 @@ const SearchQuerySchema = z.object({
   q: z.string().min(1).max(500),
   type: SearchTypeEnum.default('all'),
   cursor: z.string().optional(),
-  limit: z.coerce.number().int().min(1).max(100).default(50),
+  limit: z.coerce.number().int().min(1).max(50).default(50),
 });
 
 interface SearchResult {
@@ -51,17 +52,6 @@ function decodeCursor(cursor?: string): { offset: number } | null {
 
 function encodeCursor(offset: number): string {
   return Buffer.from(JSON.stringify({ offset })).toString('base64url');
-}
-
-// Escape characters that have special meaning in PostgREST filter grammar
-function sanitizeFilterValue(v: string): string {
-  return v.replace(/[%_\\,().]/g, c => `\\${c}`);
-}
-
-function visibleAnchorScope(orgId: string | null | undefined): string {
-  return orgId
-    ? `status.eq.SECURED,org_id.eq.${sanitizeFilterValue(orgId)}`
-    : 'status.eq.SECURED';
 }
 
 async function searchOrgs(

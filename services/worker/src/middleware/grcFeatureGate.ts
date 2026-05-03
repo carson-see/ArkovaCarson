@@ -23,11 +23,9 @@ async function isGrcEnabled(): Promise<boolean> {
 
   try {
     // Schema: switchboard_flags(id uuid, flag_key text, enabled boolean, ...).
-    // See SCRUM-1622. Note: /grc is also gated by `killSwitch('ENABLE_GRC_INTEGRATION')`
-    // (env-only, singular flag name) at the router level. That gate is the
-    // outer guard; this gate is the inner one. Fixing the bug here does not
-    // open /grc on its own — the env-only kill-switch still has to be flipped
-    // to "true" before the route accepts traffic.
+    // See SCRUM-1622. /grc is also gated by `killSwitch('ENABLE_GRC_INTEGRATIONS')`
+    // at the router level. That outer guard and this switchboard-backed inner
+    // guard must both allow traffic before the route accepts requests.
     const { data, error } = await db
       .from('switchboard_flags')
       .select('enabled')

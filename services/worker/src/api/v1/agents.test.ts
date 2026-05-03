@@ -2,32 +2,27 @@
  * Unit tests for Agent Identity & Delegation API (PH2-AGENT-05)
  */
 
-import { describe, it, expect } from 'vitest';
-import { z } from 'zod';
+import { describe, it, expect, vi } from 'vitest';
+import {
+  AGENT_ALLOWED_SCOPES,
+  CreateAgentSchema,
+  UpdateAgentSchema,
+  VALID_AGENT_TYPES,
+} from './agents.js';
+import { API_KEY_SCOPES } from '../apiScopes.js';
 
-const VALID_SCOPES = ['verify', 'verify:batch', 'usage:read', 'attest', 'oracle'] as const;
-const VALID_AGENT_TYPES = ['llm_agent', 'ats_integration', 'hr_platform', 'compliance_tool', 'custom'] as const;
+vi.mock('../../utils/db.js', () => ({
+  db: { from: vi.fn() },
+}));
 
-const CreateAgentSchema = z.object({
-  name: z.string().min(1).max(200),
-  description: z.string().max(1000).optional(),
-  agent_type: z.enum(VALID_AGENT_TYPES).default('custom'),
-  allowed_scopes: z.array(z.enum(VALID_SCOPES)).min(1).default(['verify']),
-  framework: z.string().max(100).optional(),
-  version: z.string().max(50).optional(),
-  callback_url: z.string().url().startsWith('https://').optional(),
-  metadata: z.record(z.unknown()).optional(),
-});
-
-const UpdateAgentSchema = z.object({
-  name: z.string().min(1).max(200).optional(),
-  description: z.string().max(1000).optional(),
-  allowed_scopes: z.array(z.enum(VALID_SCOPES)).min(1).optional(),
-  status: z.enum(['active', 'suspended']).optional(),
-  framework: z.string().max(100).optional(),
-  version: z.string().max(50).optional(),
-  callback_url: z.string().url().startsWith('https://').nullable().optional(),
-});
+vi.mock('../../utils/logger.js', () => ({
+  logger: {
+    warn: vi.fn(),
+    error: vi.fn(),
+    info: vi.fn(),
+    debug: vi.fn(),
+  },
+}));
 
 describe('Agent Identity schemas', () => {
   describe('CreateAgentSchema', () => {
@@ -36,14 +31,19 @@ describe('Agent Identity schemas', () => {
         name: 'HR Verification Bot',
         description: 'Automated credential verification for ATS',
         agent_type: 'ats_integration',
-        allowed_scopes: ['verify', 'verify:batch'],
+        allowed_scopes: ['verify', 'verify:batch', 'oracle:read', 'attestations:write'],
         framework: 'langchain',
         version: '1.0.0',
       });
       expect(result.success).toBe(true);
       if (result.success) {
         expect(result.data.name).toBe('HR Verification Bot');
-        expect(result.data.allowed_scopes).toEqual(['verify', 'verify:batch']);
+        expect(result.data.allowed_scopes).toEqual([
+          'verify',
+          'verify:batch',
+          'oracle:read',
+          'attestations:write',
+        ]);
       }
     });
 
@@ -72,6 +72,11 @@ describe('Agent Identity schemas', () => {
       expect(CreateAgentSchema.safeParse({ name: 'Test', allowed_scopes: ['admin'] }).success).toBe(false);
     });
 
+    it('rejects stale pre-canonical agent scope names', () => {
+      expect(CreateAgentSchema.safeParse({ name: 'Test', allowed_scopes: ['attest'] }).success).toBe(false);
+      expect(CreateAgentSchema.safeParse({ name: 'Test', allowed_scopes: ['oracle'] }).success).toBe(false);
+    });
+
     it('rejects empty scopes array', () => {
       expect(CreateAgentSchema.safeParse({ name: 'Test', allowed_scopes: [] }).success).toBe(false);
     });
@@ -91,8 +96,9 @@ describe('Agent Identity schemas', () => {
       }
     });
 
-    it('accepts all valid scopes', () => {
-      const result = CreateAgentSchema.safeParse({ name: 'Test', allowed_scopes: [...VALID_SCOPES] });
+    it('uses the canonical API key scope vocabulary', () => {
+      expect(AGENT_ALLOWED_SCOPES).toEqual(API_KEY_SCOPES);
+      const result = CreateAgentSchema.safeParse({ name: 'Test', allowed_scopes: [...API_KEY_SCOPES] });
       expect(result.success).toBe(true);
     });
   });

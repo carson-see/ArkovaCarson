@@ -63,6 +63,49 @@ export const MAX_ANCHOR_AGE_MS = 3 * 60 * 60 * 1000; // 3 hours
  */
 export const ABSOLUTE_FEE_CAP_SAT_PER_VB = 200;
 
+const CLAIM_PENDING_ANCHORS_MIGRATION_COMPAT_SUBSTRINGS = [
+  'function not found',
+  'could not find the function',
+  'does not exist',
+  'schema cache',
+  'no function matches',
+] as const;
+
+interface OrgPendingThresholdProbe {
+  pendingThresholdSentinel: number;
+  pendingThreshold: number;
+  thresholdCrossed: boolean;
+}
+
+function claimErrorSummary(error: unknown): string {
+  if (error == null) return '';
+  if (typeof error === 'string') return error.toLowerCase();
+  if (typeof error !== 'object') return String(error).toLowerCase();
+  const record = error as Record<string, unknown>;
+  return [record.code, record.message, record.details, record.hint]
+    .filter((value): value is string => typeof value === 'string')
+    .join(' ')
+    .toLowerCase();
+}
+
+function claimPendingAnchorsMigrationCompatMatch(error: unknown): string | null {
+  const summary = claimErrorSummary(error);
+  if (!summary) return null;
+
+  const code = typeof error === 'object' && error !== null
+    ? (error as Record<string, unknown>).code
+    : undefined;
+  const knownMissingFunctionCode = code === 'PGRST202' || code === '42883';
+  if (!knownMissingFunctionCode) return null;
+
+  const mentionsClaimRpc = summary.includes('claim_pending_anchors') || summary.includes('p_org_id');
+  if (!mentionsClaimRpc) return null;
+
+  return CLAIM_PENDING_ANCHORS_MIGRATION_COMPAT_SUBSTRINGS.find((substring) => (
+    summary.includes(substring)
+  )) ?? null;
+}
+
 // =============================================================================
 // ARK-102 (SCRUM-1012): Pinned Trigger A/B/C decision points
 // =============================================================================
@@ -138,6 +181,13 @@ export interface BatchAnchorResult {
   txId: string | null;
 }
 
+export interface ProcessBatchAnchorOptions {
+  /** Bypass economic age/size deferral. Used by daily flush + explicit org queue runs. */
+  force?: boolean;
+  /** Restrict pending-anchor discovery and claims to a single organization. */
+  orgId?: string;
+}
+
 /**
  * PostgREST row limit per response. Supabase caps RPC results at 1000 rows.
  * We claim in chunks of this size and accumulate up to BATCH_SIZE.
@@ -163,7 +213,7 @@ let batchProcessingRunning = false;
  * SCALE-2: Pre-claim fee check with dynamic ceiling based on backlog age
  * SCALE-3: In-process mutex prevents overlapping runs
  */
-export async function processBatchAnchors(opts: { force?: boolean } = {}): Promise<BatchAnchorResult> {
+export async function processBatchAnchors(opts: ProcessBatchAnchorOptions = {}): Promise<BatchAnchorResult> {
   const EMPTY: BatchAnchorResult = { processed: 0, batchId: null, merkleRoot: null, txId: null };
 
   // SCALE-3: Mutex — skip if already running
@@ -179,8 +229,13 @@ export async function processBatchAnchors(opts: { force?: boolean } = {}): Promi
   }
 }
 
-async function _processBatchAnchorsInner(opts: { force?: boolean } = {}): Promise<BatchAnchorResult> {
+async function _processBatchAnchorsInner(opts: ProcessBatchAnchorOptions = {}): Promise<BatchAnchorResult> {
   const EMPTY: BatchAnchorResult = { processed: 0, batchId: null, merkleRoot: null, txId: null };
+  const orgId = typeof opts.orgId === 'string' ? opts.orgId.trim() : null;
+  if (opts.orgId !== undefined && !orgId) {
+    logger.error({ orgId: opts.orgId }, 'Invalid empty orgId for org-scoped batch processing');
+    return EMPTY;
+  }
 
   // Phase 0a: Pre-flight UTXO check — skip immediately if treasury is empty.
   const chainClient = getChainClient();
@@ -203,16 +258,19 @@ async function _processBatchAnchorsInner(opts: { force?: boolean } = {}): Promis
     // Pending count via get_anchor_status_counts_fast (pg_class.reltuples +
     // 1s per-status budget); avoids the exact-count scan on the bloated
     // anchors table that timed out the prior implementation.
+    let oldestQuery = db
+      .from('anchors')
+      .select('created_at')
+      .eq('status', 'PENDING')
+      .is('deleted_at', null);
+    if (orgId) oldestQuery = oldestQuery.eq('org_id', orgId);
+
     const [oldestRes, countsRes] = await Promise.all([
-      db
-        .from('anchors')
-        .select('created_at')
-        .eq('status', 'PENDING')
-        .is('deleted_at', null)
+      oldestQuery
         .order('created_at', { ascending: true })
         .limit(1)
         .single(),
-      callRpc<FastCountsRpc>(db, 'get_anchor_status_counts_fast'),
+      orgId ? getOrgPendingThresholdProbe(orgId) : callRpc<FastCountsRpc>(db, 'get_anchor_status_counts_fast'),
     ]);
 
     const stats = oldestRes.data;
@@ -233,19 +291,32 @@ async function _processBatchAnchorsInner(opts: { force?: boolean } = {}): Promis
     // batch on every cron tick during exactly the RPC-degraded scenario
     // this hardening is for — silently breaking the
     // "no anchor waits more than MAX_ANCHOR_AGE_MS" SLA documented at L78-79.
-    const pendingCount = countsRes.data?.PENDING ?? 1;
+    const pendingCount = orgId
+      ? (countsRes.data as OrgPendingThresholdProbe | null)?.pendingThresholdSentinel ?? 1
+      : (countsRes.data as FastCountsRpc | null)?.PENDING ?? 1;
+    const pendingCountLogContext = orgId
+      ? {
+          pendingThresholdSentinel: pendingCount,
+          pendingCountSource: 'org_threshold_probe',
+          pendingThreshold: MIN_BATCH_THRESHOLD,
+          orgPendingThresholdCrossed: pendingCount >= MIN_BATCH_THRESHOLD,
+        }
+      : {
+          pendingCount,
+          pendingCountSource: 'fast_status_counts',
+        };
 
     // Trigger D: forced flush (daily 3am EST sweep) bypasses the age check
     // and broadcasts whatever is queued, even below MIN_BATCH_THRESHOLD.
     // Used by the daily-anchor-flush Cloud Scheduler job.
     if (opts.force) {
       logger.info(
-        { pendingCount, oldestAgeMs: oldestPendingAgeMs },
-        'Forced batch flush (daily 3am EST sweep)',
+        { ...pendingCountLogContext, oldestAgeMs: oldestPendingAgeMs, orgId },
+        orgId ? 'Forced org batch flush' : 'Forced batch flush (daily 3am EST sweep)',
       );
     } else if (!triggerB_shouldFireOnAge({ pendingCount, oldestPendingAgeMs })) {
       logger.debug(
-        { pendingCount, oldestAgeMs: oldestPendingAgeMs },
+        { ...pendingCountLogContext, oldestAgeMs: oldestPendingAgeMs, orgId },
         'Below batch threshold and oldest anchor is fresh — deferring',
       );
       return EMPTY;
@@ -290,6 +361,7 @@ async function _processBatchAnchorsInner(opts: { force?: boolean } = {}): Promis
         p_worker_id: `batch-${process.pid}`,
         p_limit: chunkSize,
         p_exclude_pipeline: false,
+        p_org_id: orgId,
       }), 30_000);
     } catch (timeoutErr) {
       logger.error({ error: timeoutErr, claimedSoFar: allClaimed.length }, 'claim_pending_anchors timed out in batch');
@@ -302,8 +374,16 @@ async function _processBatchAnchorsInner(opts: { force?: boolean } = {}): Promis
 
     if (claimError) {
       if (allClaimed.length === 0) {
-        logger.warn({ error: claimError }, 'claim_pending_anchors RPC failed — falling back to legacy batch');
-        return legacyProcessBatchAnchors();
+        const migrationCompatMatch = claimPendingAnchorsMigrationCompatMatch(claimError);
+        if (migrationCompatMatch) {
+          logger.warn(
+            { error: claimError, migrationCompatMatch },
+            'claim_pending_anchors RPC unavailable — falling back to legacy batch',
+          );
+          return legacyProcessBatchAnchors(orgId ?? undefined);
+        }
+        logger.error({ error: claimError }, 'claim_pending_anchors RPC failed — skipping batch without legacy fallback');
+        return EMPTY;
       }
       // Partial claim succeeded — proceed with what we have
       logger.warn({ error: claimError, claimedSoFar: allClaimed.length }, 'claim_pending_anchors chunk failed — proceeding with partial batch');
@@ -445,6 +525,35 @@ async function _processBatchAnchorsInner(opts: { force?: boolean } = {}): Promis
   };
 }
 
+async function getOrgPendingThresholdProbe(orgId: string): Promise<{ data: OrgPendingThresholdProbe | null; error: unknown }> {
+  try {
+    // We only need to know whether the org queue crossed Trigger B's
+    // threshold; avoid exact counts because they scan the hot anchors table.
+    // The returned PENDING value is a trigger sentinel, not a literal count.
+    const { data, error } = await db
+      .from('anchors')
+      .select('id')
+      .eq('status', 'PENDING')
+      .eq('org_id', orgId)
+      .is('deleted_at', null)
+      .order('created_at', { ascending: true })
+      .range(MIN_BATCH_THRESHOLD - 1, MIN_BATCH_THRESHOLD - 1)
+      .maybeSingle();
+    if (error) return { data: null, error };
+    const pendingThresholdSentinel = data ? MIN_BATCH_THRESHOLD : 1;
+    return {
+      data: {
+        pendingThresholdSentinel,
+        pendingThreshold: MIN_BATCH_THRESHOLD,
+        thresholdCrossed: pendingThresholdSentinel >= MIN_BATCH_THRESHOLD,
+      },
+      error: null,
+    };
+  } catch (error) {
+    return { data: null, error };
+  }
+}
+
 /** Revert a single batch anchor from BROADCASTING back to PENDING */
 async function revertBatchAnchorToPending(anchorId: string): Promise<void> {
   try {
@@ -559,12 +668,16 @@ async function bulkRevertToPending(anchorIds: string[]): Promise<void> {
  * Legacy fallback: batch processing without claim RPC.
  * Used when migration 0111 hasn't been applied yet.
  */
-async function legacyProcessBatchAnchors(): Promise<BatchAnchorResult> {
-  const { data: pendingAnchors, error: fetchError } = await db
+async function legacyProcessBatchAnchors(orgId?: string): Promise<BatchAnchorResult> {
+  let pendingQuery = db
     .from('anchors')
     .select('id, fingerprint, metadata, credential_type')
     .eq('status', 'PENDING')
-    .is('chain_tx_id', null)
+    .is('deleted_at', null)
+    .is('chain_tx_id', null);
+  if (orgId) pendingQuery = pendingQuery.eq('org_id', orgId);
+
+  const { data: pendingAnchors, error: fetchError } = await pendingQuery
     .order('created_at', { ascending: true })
     .limit(BATCH_SIZE);
 

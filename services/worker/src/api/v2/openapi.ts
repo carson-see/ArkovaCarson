@@ -1,4 +1,132 @@
 import type { Request, Response } from 'express';
+import { PUBLIC_ORG_ID_RE } from './resourceIdentifiers.js';
+
+const ANCHOR_PUBLIC_ID_PARAMETER = {
+  name: 'public_id',
+  in: 'path',
+  required: true,
+  schema: { type: 'string', pattern: '^ARK-[A-Z0-9-]{3,60}$' },
+  description: 'Arkova public ID.',
+} as const;
+
+const FINGERPRINT_PARAMETER = {
+  name: 'fingerprint',
+  in: 'path',
+  required: true,
+  schema: { type: 'string', pattern: '^[a-fA-F0-9]{64}$' },
+  description: 'SHA-256 document fingerprint.',
+} as const;
+
+const ORG_PUBLIC_ID_PARAMETER = {
+  name: 'public_id',
+  in: 'path',
+  required: true,
+  schema: { type: 'string', minLength: 2, maxLength: 128, pattern: PUBLIC_ORG_ID_RE.source },
+  description: 'Organization public ID.',
+} as const;
+
+const ERROR_RESPONSE_REFS = {
+  validation: ['400', '#/components/responses/ValidationError'],
+  authentication: ['401', '#/components/responses/AuthenticationRequired'],
+  invalidScope: ['403', '#/components/responses/InvalidScope'],
+  notFound: ['404', '#/components/responses/NotFound'],
+  rateLimited: ['429', '#/components/responses/RateLimited'],
+  internal: ['500', '#/components/responses/InternalError'],
+} as const;
+
+type ErrorResponseKey = keyof typeof ERROR_RESPONSE_REFS;
+
+const RESPONSE_GROUPS = {
+  scopedRead: ['authentication', 'invalidScope', 'rateLimited', 'internal'],
+  validatedScopedRead: ['validation', 'authentication', 'invalidScope', 'rateLimited', 'internal'],
+  detail: ['validation', 'authentication', 'invalidScope', 'notFound', 'rateLimited', 'internal'],
+} as const satisfies Record<string, readonly ErrorResponseKey[]>;
+
+function jsonResponse(description: string, schemaRef: string) {
+  return {
+    description,
+    content: { 'application/json': { schema: { $ref: schemaRef } } },
+  };
+}
+
+function errorResponses(keys: readonly ErrorResponseKey[]) {
+  return Object.fromEntries(
+    keys.map(key => {
+      const [status, ref] = ERROR_RESPONSE_REFS[key];
+      return [status, { $ref: ref }];
+    }),
+  );
+}
+
+function responsesWith(description: string, schemaRef: string, errors: readonly ErrorResponseKey[]) {
+  return {
+    '200': jsonResponse(description, schemaRef),
+    ...errorResponses(errors),
+  };
+}
+
+interface AgentToolGetConfig {
+  operationId: string;
+  summary: string;
+  description: string;
+  toolName: string;
+  whenToUse: string;
+  auth: string;
+  responseDescription: string;
+  schemaRef: string;
+  errors: readonly ErrorResponseKey[];
+  parameters?: readonly unknown[];
+  usageArgs?: Record<string, string>;
+}
+
+function agentToolGet(config: AgentToolGetConfig) {
+  return {
+    tags: ['Agent Tools'],
+    operationId: config.operationId,
+    summary: config.summary,
+    description: config.description,
+    'x-agent-usage': {
+      tool_name: config.toolName,
+      when_to_use: config.whenToUse,
+      arguments: config.usageArgs ?? {},
+      auth: config.auth,
+    },
+    ...(config.parameters ? { parameters: config.parameters } : {}),
+    responses: responsesWith(config.responseDescription, config.schemaRef, config.errors),
+  };
+}
+
+const SEARCH_PARAMETERS = [
+  { name: 'q', in: 'query', required: true, schema: { type: 'string', minLength: 1, maxLength: 500 }, description: 'Search query.' },
+  { name: 'type', in: 'query', required: false, schema: { $ref: '#/components/schemas/SearchType' }, description: 'Result type filter. Defaults to all.' },
+  { name: 'cursor', in: 'query', required: false, schema: { type: 'string' }, description: 'Opaque cursor from the previous response.' },
+  { name: 'limit', in: 'query', required: false, schema: { type: 'integer', minimum: 1, maximum: 50, default: 50 }, description: 'Maximum results.' },
+] as const;
+
+const SEARCH_ALIAS_PARAMETERS = SEARCH_PARAMETERS.filter((p) => p.name !== 'type');
+
+const SEARCH_RESPONSES = {
+  '200': { description: 'Search results.', content: { 'application/json': { schema: { $ref: '#/components/schemas/SearchResponse' } } } },
+  '400': { $ref: '#/components/responses/ValidationError' },
+  '401': { $ref: '#/components/responses/AuthenticationRequired' },
+  '403': { $ref: '#/components/responses/InvalidScope' },
+  '429': { $ref: '#/components/responses/RateLimited' },
+  '500': { $ref: '#/components/responses/InternalError' },
+} as const;
+
+function searchAliasPath(resourceType: 'org' | 'record' | 'fingerprint' | 'document', operationId: string, summary: string, description: string) {
+  return {
+    get: {
+      tags: ['Search'],
+      operationId,
+      summary,
+      description,
+      'x-arkova-alias-for': `/search?type=${resourceType}`,
+      parameters: SEARCH_ALIAS_PARAMETERS,
+      responses: SEARCH_RESPONSES,
+    },
+  } as const;
+}
 
 export const openApiV2Spec = {
   openapi: '3.1.0',
@@ -35,96 +163,136 @@ export const openApiV2Spec = {
           },
           auth: 'Bearer API key with read:search scope.',
         },
-        parameters: [
-          { name: 'q', in: 'query', required: true, schema: { type: 'string', minLength: 1, maxLength: 500 }, description: 'Search query.' },
-          { name: 'type', in: 'query', required: false, schema: { $ref: '#/components/schemas/SearchType' }, description: 'Result type filter. Defaults to all.' },
-          { name: 'cursor', in: 'query', required: false, schema: { type: 'string' }, description: 'Opaque cursor from the previous response.' },
-          { name: 'limit', in: 'query', required: false, schema: { type: 'integer', minimum: 1, maximum: 100, default: 50 }, description: 'Maximum results.' },
-        ],
-        responses: {
-          '200': { description: 'Search results.', content: { 'application/json': { schema: { $ref: '#/components/schemas/SearchResponse' } } } },
-          '400': { $ref: '#/components/responses/ValidationError' },
-          '401': { $ref: '#/components/responses/AuthenticationRequired' },
-          '403': { $ref: '#/components/responses/InvalidScope' },
-          '429': { $ref: '#/components/responses/RateLimited' },
-          '500': { $ref: '#/components/responses/InternalError' },
-        },
+        parameters: SEARCH_PARAMETERS,
+        responses: SEARCH_RESPONSES,
       },
     },
+    '/organizations': searchAliasPath(
+      'org',
+      'search_organizations',
+      'Search organizations',
+      'Search the authenticated API key organization context. This is a direct alias for /search?type=org.',
+    ),
+    '/records': searchAliasPath(
+      'record',
+      'search_records',
+      'Search records',
+      'Search anchored records visible to the API key. This is a direct alias for /search?type=record.',
+    ),
+    '/fingerprints': searchAliasPath(
+      'fingerprint',
+      'search_fingerprints',
+      'Search fingerprints',
+      'Search exact document fingerprints visible to the API key. This is a direct alias for /search?type=fingerprint.',
+    ),
+    '/documents': searchAliasPath(
+      'document',
+      'search_documents',
+      'Search documents',
+      'Search document metadata visible to the API key. This is a direct alias for /search?type=document.',
+    ),
     '/verify/{fingerprint}': {
-      get: {
-        tags: ['Agent Tools'],
+      get: agentToolGet({
         operationId: 'verify',
         summary: 'Verify a document fingerprint',
-        description:
-          'Verify whether a SHA-256 document fingerprint has been anchored in Arkova and return the public receipt metadata when present.',
-        'x-agent-usage': {
-          tool_name: 'verify',
-          when_to_use: 'Use when the user has a SHA-256 fingerprint and wants to know whether it is anchored.',
-          arguments: { fingerprint: '64-character lowercase or uppercase SHA-256 hex string.' },
-          auth: 'Bearer API key with read:records scope.',
-        },
-        parameters: [
-          { name: 'fingerprint', in: 'path', required: true, schema: { type: 'string', pattern: '^[a-fA-F0-9]{64}$' }, description: 'SHA-256 document fingerprint.' },
-        ],
-        responses: {
-          '200': { description: 'Verification result.', content: { 'application/json': { schema: { $ref: '#/components/schemas/FingerprintVerification' } } } },
-          '400': { $ref: '#/components/responses/ValidationError' },
-          '401': { $ref: '#/components/responses/AuthenticationRequired' },
-          '403': { $ref: '#/components/responses/InvalidScope' },
-          '429': { $ref: '#/components/responses/RateLimited' },
-          '500': { $ref: '#/components/responses/InternalError' },
-        },
-      },
+        description: 'Verify whether a SHA-256 document fingerprint has been anchored in Arkova and return the public receipt metadata when present.',
+        toolName: 'verify',
+        whenToUse: 'Use when the user has a SHA-256 fingerprint and wants to know whether it is anchored.',
+        usageArgs: { fingerprint: '64-character lowercase or uppercase SHA-256 hex string.' },
+        auth: 'Bearer API key with read:records scope.',
+        parameters: [FINGERPRINT_PARAMETER],
+        responseDescription: 'Verification result.',
+        schemaRef: '#/components/schemas/FingerprintVerification',
+        errors: RESPONSE_GROUPS.validatedScopedRead,
+      }),
     },
     '/anchors/{public_id}': {
-      get: {
-        tags: ['Agent Tools'],
+      get: agentToolGet({
         operationId: 'get_anchor',
         summary: 'Get a public anchor by Arkova ID',
-        description:
-          'Fetch redacted public anchor metadata by Arkova public ID. This is the follow-up call after search returns a public_id.',
-        'x-agent-usage': {
-          tool_name: 'get_anchor',
-          when_to_use: 'Use after search returns a public_id or when the user supplies an Arkova public ID.',
-          arguments: { public_id: 'Arkova public identifier, for example ARK-DEG-ABCDEF.' },
-          auth: 'Bearer API key with read:records scope.',
-        },
-        parameters: [
-          { name: 'public_id', in: 'path', required: true, schema: { type: 'string', pattern: '^ARK-[A-Z0-9-]{3,60}$' }, description: 'Arkova public ID.' },
-        ],
-        responses: {
-          '200': { description: 'Anchor metadata.', content: { 'application/json': { schema: { $ref: '#/components/schemas/Anchor' } } } },
-          '400': { $ref: '#/components/responses/ValidationError' },
-          '401': { $ref: '#/components/responses/AuthenticationRequired' },
-          '403': { $ref: '#/components/responses/InvalidScope' },
-          '404': { $ref: '#/components/responses/NotFound' },
-          '429': { $ref: '#/components/responses/RateLimited' },
-          '500': { $ref: '#/components/responses/InternalError' },
-        },
-      },
+        description: 'Fetch redacted public anchor metadata by Arkova public ID. This is the follow-up call after search returns a public_id.',
+        toolName: 'get_anchor',
+        whenToUse: 'Use after search returns a public_id or when the user supplies an Arkova public ID.',
+        usageArgs: { public_id: 'Arkova public identifier, for example ARK-DEG-ABCDEF.' },
+        auth: 'Bearer API key with read:records scope.',
+        parameters: [ANCHOR_PUBLIC_ID_PARAMETER],
+        responseDescription: 'Anchor metadata.',
+        schemaRef: '#/components/schemas/Anchor',
+        errors: RESPONSE_GROUPS.detail,
+      }),
     },
     '/orgs': {
-      get: {
-        tags: ['Agent Tools'],
+      get: agentToolGet({
         operationId: 'list_orgs',
         summary: 'List organizations available to the API key',
-        description:
-          'List the organization context attached to the authenticated API key. Agents use this before scoped searches or audit workflows.',
-        'x-agent-usage': {
-          tool_name: 'list_orgs',
-          when_to_use: 'Use at the start of an agent session to learn the caller organization context.',
-          arguments: {},
-          auth: 'Bearer API key with read:orgs scope.',
-        },
-        responses: {
-          '200': { description: 'Organization list.', content: { 'application/json': { schema: { $ref: '#/components/schemas/OrgList' } } } },
-          '401': { $ref: '#/components/responses/AuthenticationRequired' },
-          '403': { $ref: '#/components/responses/InvalidScope' },
-          '429': { $ref: '#/components/responses/RateLimited' },
-          '500': { $ref: '#/components/responses/InternalError' },
-        },
-      },
+        description: 'List the organization context attached to the authenticated API key. Agents use this before scoped searches or audit workflows.',
+        toolName: 'list_orgs',
+        whenToUse: 'Use at the start of an agent session to learn the caller organization context.',
+        auth: 'Bearer API key with read:orgs scope.',
+        responseDescription: 'Organization list.',
+        schemaRef: '#/components/schemas/OrgList',
+        errors: RESPONSE_GROUPS.scopedRead,
+      }),
+    },
+    '/organizations/{public_id}': {
+      get: agentToolGet({
+        operationId: 'get_organization',
+        summary: 'Get organization detail by public ID',
+        description: 'Fetch the organization profile visible to the authenticated API key by public_id. The response never exposes the internal organization UUID.',
+        toolName: 'get_organization',
+        whenToUse: 'Use after search returns an organization public_id and the agent needs organization profile details.',
+        usageArgs: { public_id: 'Organization public identifier returned by search, for example org_acme.' },
+        auth: 'Bearer API key with read:orgs scope.',
+        parameters: [ORG_PUBLIC_ID_PARAMETER],
+        responseDescription: 'Organization detail.',
+        schemaRef: '#/components/schemas/OrganizationDetail',
+        errors: RESPONSE_GROUPS.detail,
+      }),
+    },
+    '/records/{public_id}': {
+      get: agentToolGet({
+        operationId: 'get_record',
+        summary: 'Get record detail by public ID',
+        description: 'Fetch public-safe anchor record metadata by public_id. Same-org pending/submitted records are visible to the key owner; other tenants only expose secured records.',
+        toolName: 'get_record',
+        whenToUse: 'Use after search returns a record public_id and the agent needs metadata, fingerprint, and receipt fields.',
+        usageArgs: { public_id: 'Arkova public identifier, for example ARK-DOC-ABCDEF.' },
+        auth: 'Bearer API key with read:records scope.',
+        parameters: [ANCHOR_PUBLIC_ID_PARAMETER],
+        responseDescription: 'Record detail.',
+        schemaRef: '#/components/schemas/ResourceDetail',
+        errors: RESPONSE_GROUPS.detail,
+      }),
+    },
+    '/fingerprints/{fingerprint}': {
+      get: agentToolGet({
+        operationId: 'get_fingerprint',
+        summary: 'Get fingerprint detail',
+        description: 'Fetch the newest visible anchor record for a SHA-256 fingerprint. Returns problem+json when the fingerprint is malformed or absent.',
+        toolName: 'get_fingerprint',
+        whenToUse: 'Use after search returns a fingerprint hit or when the user supplies a SHA-256 fingerprint and wants the corresponding public record detail.',
+        usageArgs: { fingerprint: '64-character lowercase or uppercase SHA-256 hex string.' },
+        auth: 'Bearer API key with read:records scope.',
+        parameters: [FINGERPRINT_PARAMETER],
+        responseDescription: 'Fingerprint detail.',
+        schemaRef: '#/components/schemas/ResourceDetail',
+        errors: RESPONSE_GROUPS.detail,
+      }),
+    },
+    '/documents/{public_id}': {
+      get: agentToolGet({
+        operationId: 'get_document',
+        summary: 'Get document detail by public ID',
+        description: 'Fetch public-safe document metadata by public_id. Raw files, recipient email, org_id, user_id, and internal anchor ids are never returned.',
+        toolName: 'get_document',
+        whenToUse: 'Use after search returns a document public_id and the agent needs document metadata or public receipt details.',
+        usageArgs: { public_id: 'Arkova public identifier, for example ARK-DOC-ABCDEF.' },
+        auth: 'Bearer API key with read:records scope.',
+        parameters: [ANCHOR_PUBLIC_ID_PARAMETER],
+        responseDescription: 'Document detail.',
+        schemaRef: '#/components/schemas/ResourceDetail',
+        errors: RESPONSE_GROUPS.detail,
+      }),
     },
     '/openapi.json': {
       get: {
@@ -169,10 +337,9 @@ export const openApiV2Spec = {
       SearchType: { type: 'string', enum: ['all', 'org', 'record', 'fingerprint', 'document'], default: 'all' },
       SearchResult: {
         type: 'object',
-        required: ['type', 'id', 'public_id', 'score', 'snippet'],
+        required: ['type', 'public_id', 'score', 'snippet'],
         properties: {
           type: { $ref: '#/components/schemas/SearchType' },
-          id: { type: 'string' },
           public_id: { type: 'string' },
           score: { type: 'number' },
           snippet: { type: 'string' },
@@ -230,10 +397,48 @@ export const openApiV2Spec = {
           verification_status: { type: ['string', 'null'] },
         },
       },
+      OrganizationDetail: {
+        type: 'object',
+        required: ['public_id', 'display_name', 'description', 'domain', 'website_url', 'verification_status'],
+        properties: {
+          public_id: { type: 'string' },
+          display_name: { type: 'string' },
+          description: { type: ['string', 'null'] },
+          domain: { type: ['string', 'null'] },
+          website_url: { type: ['string', 'null'], format: 'uri' },
+          verification_status: { type: ['string', 'null'] },
+        },
+      },
       OrgList: {
         type: 'object',
         required: ['organizations'],
         properties: { organizations: { type: 'array', items: { $ref: '#/components/schemas/Org' } } },
+      },
+      ResourceDetail: {
+        type: 'object',
+        required: ['type', 'public_id', 'verified', 'status', 'record_uri'],
+        properties: {
+          type: { type: 'string', enum: ['record', 'fingerprint', 'document'] },
+          public_id: { type: ['string', 'null'] },
+          verified: { type: 'boolean' },
+          status: { type: 'string' },
+          title: { type: ['string', 'null'] },
+          description: { type: ['string', 'null'] },
+          credential_type: { type: ['string', 'null'] },
+          sub_type: { type: ['string', 'null'] },
+          fingerprint: { type: ['string', 'null'] },
+          issued_date: { type: ['string', 'null'] },
+          expiry_date: { type: ['string', 'null'] },
+          anchor_timestamp: { type: ['string', 'null'], format: 'date-time' },
+          network_receipt_id: { type: ['string', 'null'] },
+          record_uri: { type: ['string', 'null'], format: 'uri' },
+          metadata: {
+            type: 'object',
+            additionalProperties: {
+              type: ['string', 'number', 'boolean', 'null'],
+            },
+          },
+        },
       },
       ProblemDetail: {
         type: 'object',

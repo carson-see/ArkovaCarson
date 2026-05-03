@@ -86,6 +86,7 @@ describe('verifySupabaseJwt (SCRUM-926)', () => {
   it('rejects empty token', async () => {
     const r = await verifySupabaseJwt('', { secret: SECRET, supabaseUrl: SUPABASE_URL, nowSec: NOW });
     expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toBe('empty_token');
   });
 
   it('rejects when secret is unset (operator misconfig)', async () => {

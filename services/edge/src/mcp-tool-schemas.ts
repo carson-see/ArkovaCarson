@@ -25,12 +25,19 @@ import { SHA256_HEX_RE } from './mcp-tools';
  *  with mcp-server.ts's inline regex so both enforcement layers stay
  *  aligned. */
 export const PUBLIC_ID_RE = /^ARK-[A-Z0-9-]{3,60}$/;
+export const PUBLIC_ORG_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{1,127}$/;
 
 // ── Leaf validators (reusable across tools) ──────────────────────────────
 export const publicIdSchema = z
   .string()
   .regex(PUBLIC_ID_RE, 'public_id must match ARK-<TYPE>-<SUFFIX>')
   .max(64);
+
+export const orgPublicIdSchema = z
+  .string()
+  .regex(PUBLIC_ORG_ID_RE, 'organization public_id is invalid')
+  .min(2)
+  .max(128);
 
 export const contentHashSchema = z
   .string()
@@ -57,6 +64,7 @@ export const agentSearchSchema = z
   .object({
     q: freeTextQuerySchema,
     type: z.enum(['all', 'org', 'record', 'fingerprint', 'document']).optional(),
+    limit: z.number().int().min(1).max(50).optional(),
     max_results: z.number().int().min(1).max(50).optional(),
   })
   .strict();
@@ -113,6 +121,22 @@ export const agentGetAnchorSchema = z
   })
   .strict();
 
+export const agentGetOrganizationSchema = z
+  .object({
+    public_id: orgPublicIdSchema,
+  })
+  .strict();
+
+export const agentGetRecordSchema = agentGetAnchorSchema;
+
+export const agentGetFingerprintSchema = z
+  .object({
+    fingerprint: contentHashSchema,
+  })
+  .strict();
+
+export const agentGetDocumentSchema = agentGetAnchorSchema;
+
 // ── Registry ─────────────────────────────────────────────────────────────
 export const MCP_TOOL_SCHEMAS = {
   verify_credential: verifyCredentialSchema,
@@ -125,6 +149,10 @@ export const MCP_TOOL_SCHEMAS = {
   verify: agentVerifySchema,
   list_orgs: agentListOrgsSchema,
   get_anchor: agentGetAnchorSchema,
+  get_organization: agentGetOrganizationSchema,
+  get_record: agentGetRecordSchema,
+  get_fingerprint: agentGetFingerprintSchema,
+  get_document: agentGetDocumentSchema,
   oracle_batch_verify: oracleBatchVerifySchema,
   list_agents: listAgentsSchema,
 } as const;
