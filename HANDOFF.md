@@ -16,7 +16,7 @@
 
 ### 2026-05-04 — SCRUM-1135 epic closeout: 4 [Hygiene] subtasks driven to AC complete ([PR #695](https://github.com/carson-see/ArkovaCarson/pull/695))
 
-All four `[Hygiene]` subtasks under SCRUM-1135 (Compliance Inbox + Custom Rules Execution Loop) closed Done with code-shipped evidence, not deferral. This entry verifies via [GitHub Actions run 25322854447](https://github.com/carson-see/ArkovaCarson/actions/runs/25322854447) (initial CI on this PR), [.github/workflows/ci.yml](.github/workflows/ci.yml), and [.github/workflows/migration-drift.yml](.github/workflows/migration-drift.yml).
+All four `[Hygiene]` subtasks under SCRUM-1135 (Compliance Inbox + Custom Rules Execution Loop) closed Done with code-shipped evidence, not deferral. This entry verifies via [GitHub Actions run 25322854447](https://github.com/carson-see/ArkovaCarson/actions/runs/25322854447) (initial CI on this PR), [.github/workflows/ci.yml](.github/workflows/ci.yml), and [.github/workflows/migration-drift.yml](.github/workflows/migration-drift.yml). Closeout commits: 8fd94180, 98cb861e.
 
 **Subtasks closed and what shipped:**
 
