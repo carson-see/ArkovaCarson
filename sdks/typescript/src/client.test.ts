@@ -1,7 +1,7 @@
 /**
  * Tests for the Arkova TypeScript SDK client.
  *
- * Mirrors sdks/python/tests/test_client.py for the batch verification paths
+ * Mirrors packages/arkova-py/tests/test_client.py for the batch verification paths
  * (sync, async submit, job poll, wait helper) so the two SDKs stay in lock-step.
  */
 

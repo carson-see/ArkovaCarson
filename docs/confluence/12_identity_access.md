@@ -38,6 +38,6 @@ npm test -- --run services/worker/src/api/v1/attestations.test.ts services/worke
 npm run typecheck
 npm run lint
 npm run lint:copy
-python -m pytest packages/python-sdk/tests/test_client.py
+python -m pytest packages/arkova-py/tests/test_client.py
 git diff --check
 ```
