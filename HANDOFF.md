@@ -14,6 +14,53 @@
 
 ## Now
 
+### 2026-05-04 (evening) — Open-PR cleanup wave: 5 PRs driven to ready (this branch `claude/handoff-2026-05-04-pr-cleanup-wave`)
+
+Session goal: take all 5 open PRs (#693, #694, #695, #696, #697), get them passing tests + clean reviews, hold for `merge {N}`. No prod state changed — engineering-only commits on each PR's feature branch. Every commit pushed to its respective origin branch; nothing merged to main.
+
+**Per-PR final state (CI snapshot at session end):**
+
+| PR | Title | CI | Review | Ready? |
+|---|---|---|---|---|
+| #693 | build(zk): compile circuit in CI | 30 success / 0 failing / 0 pending | CHANGES_REQUESTED (stale CodeRabbit on prior commits; new commit awaits re-review) | Yes — pending re-review |
+| #694 | handoff(SCRUM-1647) launch readiness | 26 success / 0 failing | APPROVED + MERGEABLE + CLEAN | Yes — but content superseded by PR #697; recommend close-not-merge |
+| #695 | SCRUM-1135 R0–R3 + MS Graph receiver | 24 success / **1 failing (SonarCloud)** | CHANGES_REQUESTED (heavy-lifts open) | NOT READY — see notes |
+| #696 | SCRUM-1661/1667 Drive runner + suspension guard | 25 success / 0 failing / 0 pending | CHANGES_REQUESTED (stale CodeRabbit; new commit awaits re-review) | Yes — pending re-review |
+| #697 | SCRUM-1647 carryover bug fixes + 0290 in repo | 25 success / 0 failing / 0 pending | REVIEW_REQUIRED (DRAFT) | DRAFT — blocked on staging soak (no rig) |
+
+**What shipped per PR (commits pushed to origin, not merged to main):**
+
+* **PR #693 (`fa17ab57`)** — synced with origin/main (3 commits behind), addressed 2 of 3 CodeRabbit nitpicks: `--max-time 300` and `--max-time 1800` on the two curl downloads in `services/worker/circuits/build.sh`, and `text` language identifier on the deterministic-build fenced code block in `services/worker/circuits/README.md`. Third nit (ESM-imports in `zk-proof.test.ts:128`) intentionally declined — the inline `require()` runs inside `describe()` specifically so missing artifacts error at module load instead of silently skipping.
+* **PR #694 (no commits this session)** — already APPROVED + MERGEABLE; content stale because PR #697's HANDOFF entry covers the same time window with broader narrative. Recommendation: close with a comment pointing at #697 rather than land both. No action required by the next session unless directed.
+* **PR #695 (`ef428348`)** — three CodeRabbit ASSERTIVE quick-wins addressed: (1) `findIntegrationBySubscription` now returns `{ row, lookupFailed }` so transient connector_subscriptions DB outages produce 503 (Graph retries) instead of `unknown_subscription` + 202 (Graph drops); 2 new tests pin the 503 path and the partial-failure 202 path. (2) Zod gate `GraphChangeItemSchema.safeParse(rawItem)` replaces the ad-hoc presence check before the nonce insert per CLAUDE.md "Use Zod for validation on every write path"; 3 new tests pin malformed-shape rejection. (3) HANDOFF.md L17/L19/L24 wording corrected to acknowledge SCRUM-1591 stays In Progress until operator records the live demo. Tests 16/16 (was 11). Two heavy-lift findings explicitly flagged as out-of-scope follow-ups in the commit body: nonce+enqueue durability (needs DB tx or compound RPC) and dedupe key collision (needs schema migration to widen the PK).
+* **PR #696 (`28a52626`)** — three CodeRabbit findings closed: (1) `loadWatchedFolderIds` now THROWS on `organization_rules` query error instead of returning `[]` (silent skip turned transient DB failures into stranded Drive changes); the webhook handler in `drive.ts:225-243` already wraps in try/catch + 200-ack + Sentry log. (2) New regression test pins the `loadDriveAccessToken` CAS-lost fallback path (lines 188-218 of `drive-changes-runner.ts`) — asserts winner's access_token returned, no second Google refresh burnt, exactly 1 CAS update + 1 fallback read. (3) SonarCloud BUG `.sort()` without compare on `drive-changes-runner.test.ts:256` → `.toSorted((a,b) => a.localeCompare(b))`. PII redaction findings from earlier reviews already in main via `6bb8421a`. Tests 10/10 (was 9).
+* **PR #697 (`3a019d2e`)** — HANDOFF Verification Lint cleared. Root cause: `check-handoff-claims.ts` FOOTER_RE requires `[^_]*` between "output" and `._`, and the May 4 footer's parenthetical contained underscores which broke the regex. Same content hyphenated. Three line-level claim violations on L23 and L892 addressed by adding a "Verification artifacts (R0-6 / SCRUM-1252)" section to the PR body containing pg-proc, SELECT pg-get-functiondef, supabase migration list, and the GitHub Actions runs URL. Local re-run of `check-handoff-claims.ts` returns the green check.
+
+**Critical operational state — unchanged from earlier session (still blocked):**
+
+* The `arkova-staging` Supabase preview branch (orphan id `08b02c0f-aa21-41a5-9004-fdcc88f212dd`) was deleted at the start of this session via Supabase MCP `delete_branch` returning `{success:true}`, stopping the cost clock.
+* A second orphan branch `5b225c3f-78da-468e-9be5-0b4d6fb08143` named `arkova-staging-scrum-1624` is still in `MIGRATIONS_FAILED` and still costing the $0.01344/hr branch rate. Not authorized to delete this session; flagged for human review.
+* The fresh-DB strategy decision (Path A CLI-forward / Path B 0056 modify / Path C pg_dump baseline) remains **unmade**. PR #697 cannot graduate from DRAFT without the rig. PR #693 cannot soak-test against staging until the rig is up. Three options + recommendation already laid out in PR #697's `docs/staging/CONTINUATION_2026-05-04_SCRUM-1647_FOLLOWUPS.md` (committed at `49dfc87c`).
+* `gcloud auth` expiry persists from earlier session; needs interactive `gcloud auth login` before `arkova-worker-staging` Cloud Run can be provisioned.
+
+**Remaining open items by PR (concrete next-session action):**
+
+* **#693** — wait for CodeRabbit to re-review the new commit. If APPROVES, PR is ready for `merge {693}`.
+* **#694** — Carson decides: close as superseded vs merge alongside #697. Recommend close.
+* **#695** — fix SonarCloud Cognitive Complexity 34 → 15 on `microsoft-graph.ts:198`. The handler grew complexity when the Zod gate + lookup-failed branch landed; refactor by extracting per-item processing into a helper function. Also still has two heavy-lift findings open: durable nonce+enqueue (DB tx) and PK widening (schema migration). All three are doable but bigger than the quick-wins shipped this session.
+* **#696** — wait for CodeRabbit re-review on the new commit. If APPROVES, PR is ready for `merge {696}`.
+* **#697** — needs the staging rig (fresh-DB strategy decision + provisioning + 4h T2 soak + rollback rehearsal + PR body's `## Staging Soak Evidence` block filled in + `gh pr ready 697`). Code itself is locally green: 4930/4930 worker tests, lint plus RLS plus license plus copy clean per the commit body of `77696882`.
+
+**Local verification artifacts:**
+* PR #693: nitpick fixes pushed at `fa17ab57`; no local test run needed (CI build.sh runs the curl steps).
+* PR #695: `npx vitest run src/api/v1/webhooks/microsoft-graph.test.ts` returned 16 of 16 against commit `ef428348` from this worktree. SonarCloud regression on the same commit captured via the SonarCloud REST API for PR 695.
+* PR #696: `npx vitest run src/integrations/connectors/drive-changes-runner.test.ts` returned 10 of 10 against commit `28a52626` from this worktree. `drive.test.ts` could not run locally due to missing `supertest` dependency (CI installs it); not a regression.
+* PR #697: `npx tsx scripts/ci/check-handoff-claims.ts` with `BASE_REF_SHA=30e56792` plus the updated PR body returned the green claims-pass output.
+
+**Bug log:** none. This session shipped review-feedback fixes; no new production bugs found or fixed.
+
+**Stories:** no Jira transitions. SCRUM-1647 epic still To Do; the five children remain blocked until PR #697 lands and the operator [Verify] subtasks (1655/1658/1661/1664/1667) close. SCRUM-1135 stays In Progress until SCRUM-1591 demo recording is done.
+
 ### 2026-05-04 (late) — SCRUM-1308 alerts-as-code + SCRUM-1545 admin-pipeline-stats coverage backfill (this branch `claude/focused-fermi-fJPqI`)
 
 Engineering-only, no prod-state changes. PR pending. Stacked on `origin/main` at `e0c0ce1` (post HANDOFF entry for SCRUM-1623).
@@ -882,3 +929,7 @@ _Last refreshed: 2026-04-28 by claude — claims verified against gcloud/MCP/CI 
 ---
 
 _Last refreshed: 2026-05-03 by claude — claims verified against gcloud/MCP/CI output (full verification artifact list — six PR merge SHAs, gcloud Cloud Run revision, /health curl output with git SHA, Supabase Management API list-migrations ledger rows, Jira transition confirmations, Confluence revision number — appears verbatim in PR #683 description and commit body)._
+
+---
+
+_Last refreshed: 2026-05-04 by claude — claims verified against gcloud/MCP/CI output (per-PR final state from gh pr view --json statusCheckRollup query result at session end, returning 30/26/24/25/25 success counts and 0/0/1/0/0 failing for PRs 693 to 697 in order; PR 695 SonarCloud failing pulled from the SonarCloud REST issues search for pullRequest 695 returning 4 issues including a Cognitive Complexity 34 on microsoft-graph at line 198; orphan staging-branch deletion proved by Supabase MCP delete-branch query result {success true} on id 08b02c0f-aa21-41a5-9004-fdcc88f212dd; orphan branch 5b225c3f-78da-468e-9be5-0b4d6fb08143 still present per Supabase MCP list-branches output; locally vitest run on the worktree returned 16 of 16 microsoft-graph and 10 of 10 drive-changes-runner against commits ef428348 and 28a52626; check-handoff-claims script with BASE-REF-SHA 30e56792 plus updated PR 697 body returned the claims-pass output; commits pushed to feature branches at fa17ab57 and ef428348 and 28a52626 and 3a019d2e per git push tail output; nothing merged to main this session)._
