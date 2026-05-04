@@ -125,12 +125,25 @@ function computeAlerts(snapshot: Omit<DbHealthSnapshot, 'alerts'>): string[] {
 }
 
 // SCRUM-1308: Sentry alert rules in `infra/sentry/alert-rules.json` route on
-// `alert_type` so the three signal classes can have distinct fan-out
-// (dead-tuple needs continuous>1h, smoke-streak pages immediately). The
-// classifier runs on the alert string we already build in computeAlerts();
-// drift between the strings and the table below silently miscategorizes,
-// so the test suite pins both ends.
-export type DbHealthAlertType = 'pg_cron_failure' | 'dead_tuple_ratio' | 'smoke_fail_streak' | 'smoke_runtime' | 'unclassified';
+// `alert_type` so each signal class can have distinct fan-out (dead-tuple
+// needs continuous>1h, smoke-streak pages immediately). The classifier runs
+// on the alert string we already build in computeAlerts(); drift between
+// the strings and the table below silently miscategorizes, so the test
+// suite pins both ends.
+//
+// Codex P1 (PR #690): autovacuum-age and dead-tuple-ratio are emitted
+// independently by computeAlerts() and a single hot table can fire both in
+// the same 5-minute pass. Routing both to `dead_tuple_ratio` would let the
+// 12-events-in-1h Sentry rule trip in ~30 minutes (well below the >1h
+// continuous threshold the rule is meant to enforce). Give the autovacuum
+// signal its own type so each rule's frequency budget is honored.
+export type DbHealthAlertType =
+  | 'pg_cron_failure'
+  | 'dead_tuple_ratio'
+  | 'dead_tuple_autovacuum_age'
+  | 'smoke_fail_streak'
+  | 'smoke_runtime'
+  | 'unclassified';
 
 const ALERT_PREFIX_TABLE: ReadonlyArray<readonly [string, DbHealthAlertType]> = [
   ['pg_cron jobid=', 'pg_cron_failure'],
@@ -144,7 +157,7 @@ export function classifyAlert(alert: string): DbHealthAlertType {
     if (alert.startsWith(prefix)) return type;
   }
   // The autovacuum-age branch isn't a clean prefix — `<table>: …` varies.
-  if (alert.includes('dead tuples + autovacuum')) return 'dead_tuple_ratio';
+  if (alert.includes('dead tuples + autovacuum')) return 'dead_tuple_autovacuum_age';
   return 'unclassified';
 }
 

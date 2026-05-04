@@ -36,6 +36,23 @@
       "frequency": 60
     },
     {
+      "name": "SCRUM-1254 — Autovacuum age > 24h with dead-tuple bloat",
+      "comment": "PR #690 Codex P1: separated from dead_tuple_ratio so a hot table emitting both signals in one 5-min pass cannot double-count toward the 12-events-per-hour ratio rule.",
+      "actionMatch": "all",
+      "filterMatch": "all",
+      "conditions": [
+        { "id": "sentry.rules.conditions.event_frequency.EventFrequencyCondition", "value": 12, "interval": "1h" }
+      ],
+      "filters": [
+        { "id": "sentry.rules.filters.tagged_event.TaggedEventFilter", "key": "source", "match": "eq", "value": "db-health-monitor" },
+        { "id": "sentry.rules.filters.tagged_event.TaggedEventFilter", "key": "alert_type", "match": "eq", "value": "dead_tuple_autovacuum_age" }
+      ],
+      "actions": [
+        { "id": "sentry.integrations.slack.notify_action.SlackNotifyServiceAction", "channel": "#ops", "tags": "story,table_name" }
+      ],
+      "frequency": 60
+    },
+    {
       "name": "SCRUM-1254 — Smoke test fail-streak",
       "actionMatch": "all",
       "filterMatch": "all",
