@@ -13,6 +13,23 @@
 ---
 
 ## Now
+### 2026-05-04 (evening, post-cutover) — SCRUM-1668 Path C baseline LIVE in prod ([PR #700](https://github.com/carson-see/ArkovaCarson/pull/700) ready for review; cutover INSERT applied)
+
+**Cutover applied to prod 2026-05-04 via Supabase MCP `execute_sql` against project `vzwyaatejekddvltxyye`** (verified via `INSERT ... RETURNING` returning `{version: '00000000000000', name: 'baseline_at_main_HEAD', stmt_count: 4}`). Single-row metadata write to `supabase_migrations.schema_migrations`; zero DDL, zero data change, zero downtime. Schema is unchanged (the baseline IS prod's schema). Rollback is `DELETE FROM supabase_migrations.schema_migrations WHERE version = '00000000000000'`.
+
+**Repo-side change** ([PR #700](https://github.com/carson-see/ArkovaCarson/pull/700), 6 commits on `claude/scrum-1647-path-c-pg-dump-baseline`): baseline file `supabase/migrations/00000000000000_baseline_at_main_HEAD.sql` (544kb / 15,069 lines, byte-faithful pg_dump --schema-only output with the supabase CLI's idempotency sed pipeline applied), 285 historical migrations archived to `docs/migrations-archive/` via `git mv` (rename history preserved), `docs/staging/PATH_C_CUTOVER.md` cutover plan, drift-gate exempt entry removed in this PR (cutover happened — no longer needed). PR is READY (not DRAFT); held for Carson `merge {N}`.
+
+**PHASE 5 verification (PASSED).** Verified against branch project `aljheljcsrgbtgyshfss` (off staging `ujtlwnoqfhtitcmsnrpq` per Path A's persistent rig), wiped to empty, baseline applied via Management API `/database/query` endpoint. Schema-object diff vs prod: 8/8 categories match exactly (tables 94/94, extensions 13/13, enums 28/28, functions 328/328, policies 189/189, triggers 44/44, constraints 418/418). Indexes 393/390 — gap is 3 prod-side invalid indexes (`pg_index.indisvalid=false`, failed `CREATE INDEX CONCURRENTLY` runs); pg_dump correctly excludes them. Verification branch deleted post-verify (~$0.002 cost).
+
+**Now unblocked:** PR #695 + PR #697 T2 staging soaks were blocked on the rig + the lettered-suffix migration-builder bug. With Path C live, every fresh-DB stand-up replays only the baseline + 0291+, sidestepping the bug entirely. PR #695's 0291 already lands on top of the baseline cleanly.
+
+**Honest carry-over for next session:**
+
+* **PR #700 reviews still pending.** SonarCloud reported quality gate failure (need to investigate); CodeRabbit review in progress; no human review yet. Address bot findings as they come in.
+* **PR #700 is now MERGEABLE** (rebased against main this session to clear the HANDOFF.md conflict). Push --force-with-lease used to update the branch.
+* **Tiny follow-up still owed:** `docs/runbooks/gcp-max-setup.md` line 97 references `0235_cloud_logging_queue.sql` by name; needs to be updated to point at the baseline or the archived path. Not a blocker for the merge.
+* **Pre-baseline 0290** (PR #697) is captured in the baseline (since 0290 was already applied to prod when the dump was taken). PR #697's 0290 file is now a no-op idempotent — drop from #697's diff or keep as 0291 on top.
+
 
 ### 2026-05-04 (night) — `arkova-worker-staging` Cloud Run deployed (Path A rig phase 2 complete)
 
