@@ -69,6 +69,23 @@
       "frequency": 5
     },
     {
+      "name": "SCRUM-1254 — Smoke test runtime > 60s (PostgREST timeout risk)",
+      "comment": "PR #690 CodeRabbit follow-up: db-health-monitor classifies the runtime alert as `smoke_runtime` but the prior ruleset had no matching Sentry rule. Pages immediately on first occurrence — the 60s cap is the PostgREST gateway timeout, so a slow run is the same severity as a hard fail.",
+      "actionMatch": "all",
+      "filterMatch": "all",
+      "conditions": [
+        { "id": "sentry.rules.conditions.first_seen_event.FirstSeenEventCondition" }
+      ],
+      "filters": [
+        { "id": "sentry.rules.filters.tagged_event.TaggedEventFilter", "key": "source", "match": "eq", "value": "db-health-monitor" },
+        { "id": "sentry.rules.filters.tagged_event.TaggedEventFilter", "key": "alert_type", "match": "eq", "value": "smoke_runtime" }
+      ],
+      "actions": [
+        { "id": "sentry.integrations.slack.notify_action.SlackNotifyServiceAction", "channel": "#ops", "tags": "story" }
+      ],
+      "frequency": 5
+    },
+    {
       "name": "SCRUM-1254 — count:'exact' baseline drift (weekly trend)",
       "actionMatch": "all",
       "filterMatch": "all",
