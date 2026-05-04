@@ -38,8 +38,17 @@ Dev server up at 1280px and 375px. Screenshots in the PR. Regressions logged in 
 ### 7. Vertex endpoint hygiene
 Audit `gcloud ai endpoints list` before + after every tuning/eval/deploy run. Target 1–2 deployed in steady state. Never keep cold-spare endpoints deployed — model artifacts preserve redeploy path at no cost. See `memory/feedback_vertex_endpoint_hygiene.md`.
 
-### 8. Never work on `main`
-Feature branches only. Push as many commits as you want — GitHub Actions ignores all feature-branch pushes (every workflow in `.github/workflows/` triggers only on PR or on push to `main`/`develop`). CI runs **once** when the PR opens and on each update. Merges are human-gated per `memory/feedback_never_merge_without_ok.md`. This keeps Actions minutes near zero during iteration.
+### 8. Never work on `main` — code/migration changes only
+Feature branches only **for code, migrations, RLS policies, CI scripts, GitHub Actions workflows, and `CLAUDE.md` rule changes**. Push as many commits as you want — GitHub Actions ignores all feature-branch pushes (every workflow in `.github/workflows/` triggers only on PR or on push to `main`/`develop`). CI runs **once** when the PR opens and on each update. Merges are human-gated per `memory/feedback_never_merge_without_ok.md`. This keeps Actions minutes near zero during iteration.
+
+**Carve-out: pure documentation changes can land directly on `main`** without PR ceremony. The full PR + CI cycle (HANDOFF lint, staging-soak gate, Confluence coverage, etc.) for a HANDOFF.md edit or a docs/ tweak is process drag with no review value — Carson is the sole reviewer either way. Direct-commit (or fast-track tiny PR + `gh pr merge --admin`) is allowed when **all** of the following are true:
+
+* Touched paths are limited to: `HANDOFF.md`, `docs/**/*.md`, `**/agents.md`, repo-root `*.md` (e.g. `README.md`).
+* Zero `.ts`/`.tsx`/`.js`/`.sql`/`.yml`/`.toml`/`.json` changes.
+* No claims of new prod state — direct doc updates are for *describing* state, not creating it. (`HANDOFF.md` lint still runs on direct pushes via the push-to-main trigger; the carve-out is only the PR-cycle gating, not the verification rule itself.)
+* No `CLAUDE.md` rule changes (those go through PR review even though `CLAUDE.md` is a `.md` file — the constitution itself is the one doc that needs the second look).
+
+When the carve-out applies, the workflow is just `git commit` + `git push origin main` (or `gh pr merge --admin --merge --delete-branch` for branches that are already pushed). No multi-job CI wait, no review threads, no body-format dance.
 
 ### 9. Deploy gate ≡ CI lint job (R0-4 / SCRUM-1250)
 `deploy-worker.yml` worker-lint step and `ci.yml` `Lint worker (deploy-gate parity)` step BOTH invoke `npm run lint` from `services/worker/` — the script in `services/worker/package.json`. Drift between them caused the 2026-04-25 12-hour deploy blackout (deploy gate ran a stricter eslint than CI). `scripts/ci/check-deploy-lint-parity.ts` enforces this at PR time. Override via PR label `ci-config-change` only. Followup R4 story drives worker eslint warnings to zero so we can re-add `--max-warnings 0` everywhere.
