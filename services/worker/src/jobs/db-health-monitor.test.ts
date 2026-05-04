@@ -135,7 +135,10 @@ describe('classifyAlert (SCRUM-1308)', () => {
   it.each([
     ['pg_cron jobid=3 failed: statement timeout', 'pg_cron_failure'],
     ['Dead-tuple ratio on anchors: 0.92 (> 0.5)', 'dead_tuple_ratio'],
-    ['anchors: 200,000 dead tuples + autovacuum 36h ago (snapshot held?)', 'dead_tuple_ratio'],
+    // Codex P1 (PR #690): the autovacuum-age signal gets its own type so a
+    // single hot table can't fan-trigger the dead_tuple_ratio Sentry rule
+    // (which is bucketed at 12 events / 1h) twice in the same 5-minute pass.
+    ['anchors: 200,000 dead tuples + autovacuum 36h ago (snapshot held?)', 'dead_tuple_autovacuum_age'],
     ['Smoke test fail-streak: 3 consecutive failures', 'smoke_fail_streak'],
     ['Smoke test runtime 75000ms exceeds 60000ms (PostgREST timeout risk)', 'smoke_runtime'],
     ['Some unknown shape', 'unclassified'],
