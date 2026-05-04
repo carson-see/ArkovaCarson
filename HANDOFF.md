@@ -14,6 +14,35 @@
 
 ## Now
 
+### 2026-05-04 (late) — SCRUM-1308 alerts-as-code + SCRUM-1545 admin-pipeline-stats coverage backfill (this branch `claude/focused-fermi-fJPqI`)
+
+Engineering-only, no prod-state changes. PR pending. Stacked on `origin/main` at `e0c0ce1` (post HANDOFF entry for SCRUM-1623).
+
+**SCRUM-1308 (R0-8-FU2) — alerts-as-code + scheduler binding.** Sentry MCP cannot create issue alert rules from outside the UI, but the rule shape can live in repo and the scheduler binding is plain config-as-code. Three changes:
+
+* `infra/sentry/alert-rules.json` (new) — copy-pasteable filter spec for the 5 R0-8 alerts (pg_cron failures, dead-tuple ratio, smoke fail-streak, count:'exact' weekly trend, Cloud Run revision drift) plus the dashboard widget list. Source of truth for what an admin pastes into https://arkova.sentry.io/alerts/rules/. Rules filter on `alert_type` tag instead of message-substring matching, so each class can carry its own fan-out (e.g. dead-tuple needs continuous>1h, smoke-streak pages immediately on first event).
+* `services/worker/src/jobs/db-health-monitor.ts` — new `classifyAlert()` exports the alert-string → `alert_type` mapping (`pg_cron_failure` / `dead_tuple_ratio` / `smoke_fail_streak` / `smoke_runtime` / `unclassified`); `emitSentry()` now stamps each event with `tags.alert_type`. Drift between the alert text built by `computeAlerts()` and the classifier is pinned by 6 new `it.each` cases plus a multi-class run that asserts every Sentry call carries a defined `alert_type`. Total 13/13 tests green.
+* `scripts/gcp-setup/cloud-scheduler.sh` — adds the `db-health-monitor` job binding (`*/5 * * * *`, `POST /cron/db-health`, OIDC, retry policy 30s/120s/2 attempts). Existing `monthly-allocation-rollover` and `grace-expiry-sweep` jobs preserved; refactored the loop into an array-builder pattern so future jobs can opt into custom retry without breaking the simple form.
+* `docs/sentry/r0-8-drift-telemetry.md` — header note pointing at the new files.
+
+**Open DoD on SCRUM-1308:** the Sentry-UI rule creation, Slack #ops integration test, and intentional 3-fail / dead-tuple bloat triggers are operator-only steps. Code-side scaffolding is now complete; ticket can move to Needs Human once this PR lands.
+
+**SCRUM-1545 (R4-4-FU) — admin-pipeline-stats coverage.** New `services/worker/src/api/admin-pipeline-stats.test.ts` (9 cases): platform-admin gate (403 + no RPC fan-out), full RPC happy path field mapping, legacy field-name fallback (`anchored_records` / `pending_records`), source-breakdown RPC null/empty path, and three 503 fail-closed paths (data null, RPC error, transport-level Promise rejection). One case asserts the SCRUM-1259 invariant that the handler does NOT fan out exact-count fallback queries when the RPC fails.
+
+**Honest scope on SCRUM-1545 / SCRUM-1289:** stripe/handlers.ts already at 80/80/80/80 (PR #643). admin-pipeline-stats now has a test file. `chain/client.ts` (functions 60% vs 75% threshold) and `jobs/anchor.ts` (branches 56.75% vs 80% target) and `index.ts` (functions 21% vs 40% target) still owe new tests. Threshold raises stay deferred until the test files land — bumping thresholds without tests would only push the gate past current coverage. Threshold values in `vitest.config.ts` left unchanged in this PR.
+
+**Tests:** 22/22 across new + touched suites (`db-health-monitor` 13, `admin-pipeline-stats` 9). Worker `npx tsc --noEmit` clean. Worker `npm run lint` 0 errors / 319 pre-existing warnings (SCRUM-1208 baseline). No production state changes; Cloud Scheduler binding in `cloud-scheduler.sh` is opt-in run by operator.
+
+**Phase 2 Jira sweep (this session):**
+* SCRUM-1308 transitioned **To Do → In Progress** (allowed; not a Done transition).
+* SCRUM-1308 / SCRUM-1545 / SCRUM-1289: PR-evidence comments posted with PR #690 reference + ACs mapped + remaining-scope honest accounting.
+* SCRUM-1274 / SCRUM-1275: transition-owed comments posted (work merged via #647 + #645; blocked by Reporter ≠ Resolver — Carson can't flip).
+* SCRUM-1279 / SCRUM-1441: drift-correction comments posted documenting that the 2026-05-03 "code complete, branch awaiting push" claim was false (`git fetch origin <branch>` returns `couldn't find remote ref` for both). Stories stay Needs Human; future picker should redo.
+
+**PO Roadmap drift correction (Confluence v9, 2026-05-04):** [PO Roadmap](https://arkova.atlassian.net/wiki/spaces/A/pages/27591934) updated to mark 1279 + 1441 as "Needs Human, no branch on remote" and add **rule 11** to Conventions: every "code complete, awaiting push" claim must include `git ls-remote origin <branch>` evidence in the page edit's version-message. The 5 prior false claims (1279, 1441, 1545, 1276 follow-up, 1445) are now treated as actually-not-shipped beyond what's in main.
+
+**Bug log:** no functional bugs introduced or fixed this session — the false "code complete" claims were process drift, not engineering bugs, so logged via PO Roadmap rule 11 rather than Bug Tracker.
+
 ### 2026-05-04 — SCRUM-1623 [GME10.5-A] pre-signing contract anchor LIVE in prod ([PR #680](https://github.com/carson-see/ArkovaCarson/pull/680))
 
 **Implement subtask (SCRUM-1630) complete + deployed.** PR #680 squash-merged at sha `2528e8e7f5c660d8b76157aec3ce527d5c7dfd31` on 2026-05-04 00:23 UTC. deploy-worker.yml workflow [25295113742](https://github.com/carson-see/ArkovaCarson/actions/runs/25295113742) succeeded. Prod `/health` reports `git_sha=2528e8e7...`, network `mainnet`, all checks `ok` (verified via `curl https://arkova-worker-270018525501.us-central1.run.app/health` post-deploy). Endpoint `POST /api/v1/contracts/anchor-pre-signing` returns 401 without API key (auth gate live).
