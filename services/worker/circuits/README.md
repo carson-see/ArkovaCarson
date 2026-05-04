@@ -16,18 +16,35 @@ attestation evidence.
 | `artifacts/extraction-proof_final.zkey` | no (gitignored) | Proving key, ~27 MB |
 | `artifacts/verification_key.json` | no (gitignored) | Verification key, ~2 KB |
 | `artifacts/powersOfTau28_hez_final_14.ptau` | no (gitignored) | Universal trusted setup, ~18 MB |
+| `artifacts/.circomlib/` | no (gitignored) | circomlib source — build-time only, see License section |
 
 Artifacts are deliberately not checked in. They are deterministic outputs of
 `build.sh` from versioned inputs, so any developer or CI runner can reproduce
 them byte-for-byte. The build is cached in CI keyed on the hash of
 `extraction-proof.circom` + `build.sh` + `package-lock.json`.
 
+## License — circomlib is GPL-3.0, build-time only
+
+`circomlib` (the iden3 collection of circom templates that defines the
+Poseidon hash) is **GPL-3.0**. The project's license deny-list
+(`npm run security:license-denylist`) blocks GPL/AGPL/SSPL in the worker's
+shipped dependency graph. To stay compliant while still using the canonical
+Poseidon templates, `build.sh` fetches a SHA-pinned circomlib tarball at
+build time only — circomlib is **never** added to `package.json` or
+`package-lock.json` and **never** ships in any container image. The output
+wasm/zkey/vkey files are not GPL-encumbered, the same way a GCC-compiled
+binary is not GPL-encumbered just by being compiled with GCC.
+
+If you want to audit the GPL fetch, see Step 2 of `build.sh`:
+fetched from `github.com/iden3/circomlib/archive/refs/tags/v2.0.5.tar.gz`,
+verified against SHA-256 `6d72…1eff0`.
+
 ## Local build
 
 ```bash
 cd services/worker
-npm install               # ensures circomlib is in node_modules
-npm run build:circuit     # invokes circuits/build.sh
+npm install                  # standard worker install — circomlib NOT here
+npm run build:circuit        # build.sh fetches circomlib + ptau + compiles
 ```
 
 You need `circom >= 2.1.0` on `PATH`. Install from
@@ -64,7 +81,8 @@ If two developers' verification keys differ, exactly one of the four inputs
 above differs. Pin diagnostics in this order:
 
 1. `circom --version` — must match the version pinned in `build.sh` / CI.
-2. `cat services/worker/node_modules/circomlib/package.json | jq .version`
+2. `shasum -a 256 services/worker/circuits/artifacts/circomlib-v2.0.5.tar.gz`
+   — must equal `6d72a4ce…1eff0` (verified by `build.sh`).
 3. `shasum -a 256 services/worker/circuits/artifacts/powersOfTau28_hez_final_14.ptau`
    — must equal `489be9e5…7895d` (verified by `build.sh`).
 

@@ -4,7 +4,16 @@
 #
 # Inputs (versioned in git):
 #   - extraction-proof.circom      (this dir)
-#   - circomlib (npm devDep)        (services/worker/node_modules/circomlib)
+#
+# Build-time-only inputs (fetched + SHA-pinned, NEVER in package-lock.json):
+#   - circomlib v2.0.5              GPL-3.0 — used solely to compile the
+#                                   circuit. Output wasm/zkey/vkey ARE NOT
+#                                   GPL-encumbered, the same way a binary
+#                                   compiled with GCC isn't GPL-encumbered.
+#                                   Keeping circomlib out of the worker's
+#                                   shipped dependency graph is what
+#                                   security:license-denylist enforces.
+#   - powersOfTau28_hez_final_14    public hermez universal trusted setup
 #
 # Outputs (gitignored, regenerated):
 #   - artifacts/extraction-proof_js/extraction-proof.wasm
@@ -16,13 +25,12 @@
 #   - `snarkjs plonk setup` is deterministic from (r1cs, ptau) — no random
 #     contribution is needed for PLONK (unlike Groth16). Same r1cs + same
 #     ptau ⇒ same zkey ⇒ same verification_key.json on every machine.
-#   - The Powers of Tau file is downloaded from the hermez ceremony URL and
-#     verified against a pinned SHA-256 before use.
+#   - circomlib tarball + ptau file are SHA-256-pinned before use.
 #
 # Required tools:
 #   - circom >= 2.1.0  (https://github.com/iden3/circom/releases)
 #   - npx snarkjs       (already in services/worker/package.json)
-#   - curl, shasum
+#   - curl, shasum, tar
 #
 # Usage:
 #   bash services/worker/circuits/build.sh
@@ -32,44 +40,65 @@
 set -euo pipefail
 
 CIRCUITS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-WORKER_DIR="$(cd "$CIRCUITS_DIR/.." && pwd)"
 ARTIFACTS_DIR="$CIRCUITS_DIR/artifacts"
 CIRCUIT_NAME="extraction-proof"
 
 # Powers of Tau — circuit has ~500 constraints; 2^14 = 16384 is comfortable.
-# This file is the output of the public hermez universal trusted setup
-# ceremony and is not specific to our circuit.
 PTAU_NAME="powersOfTau28_hez_final_14.ptau"
 # Polygon zkEVM mirror of the public hermez ceremony ptau. The original
-# hermez S3 bucket has been periodically returning 403; the GCS mirror is
+# hermez S3 bucket has been periodically returning 403; this GCS mirror is
 # the documented stable mirror for the snarkjs ecosystem.
 PTAU_URL="https://storage.googleapis.com/zkevm/ptau/${PTAU_NAME}"
 PTAU_SHA256="489be9e5ac65d524f7b1685baac8a183c6e77924fdb73d2b8105e335f277895d"
 PTAU_PATH="$ARTIFACTS_DIR/$PTAU_NAME"
 
+# circomlib (Poseidon templates) — fetched build-time only and NEVER added
+# to package-lock.json. circomlib is GPL-3.0; the project's license deny-
+# list (npm run security:license-denylist) blocks GPL/AGPL/SSPL in the
+# shipped dependency graph. By fetching only at build time and producing
+# wasm/zkey/vkey artifacts, we keep the worker runtime free of GPL code
+# while still using the canonical Poseidon templates.
+CIRCOMLIB_VERSION="v2.0.5"
+CIRCOMLIB_TARBALL_URL="https://github.com/iden3/circomlib/archive/refs/tags/${CIRCOMLIB_VERSION}.tar.gz"
+CIRCOMLIB_SHA256="6d72a4ced486bcc1868a030fbc73d0943a6bd45cdf4c9e40afdf43bd9d61eff0"
+CIRCOMLIB_DIR="$ARTIFACTS_DIR/.circomlib"
+
 mkdir -p "$ARTIFACTS_DIR"
 
-echo "[build-circuit] Step 1/5: verify circom is installed"
+echo "[build-circuit] Step 1/6: verify circom is installed"
 if ! command -v circom >/dev/null 2>&1; then
   echo "[build-circuit] ERROR: circom is not installed. Install from https://github.com/iden3/circom/releases" >&2
   exit 1
 fi
 circom --version
 
-echo "[build-circuit] Step 2/5: ensure circomlib is available (in worker node_modules)"
-if [[ ! -d "$WORKER_DIR/node_modules/circomlib" ]]; then
-  echo "[build-circuit] ERROR: circomlib not found at $WORKER_DIR/node_modules/circomlib" >&2
-  echo "[build-circuit] Run 'npm install' in $WORKER_DIR first." >&2
-  exit 1
+echo "[build-circuit] Step 2/6: fetch circomlib tarball (build-time only, GPL-3.0)"
+if [[ ! -d "$CIRCOMLIB_DIR/circuits" ]]; then
+  TARBALL="$ARTIFACTS_DIR/circomlib-${CIRCOMLIB_VERSION}.tar.gz"
+  if [[ ! -f "$TARBALL" ]]; then
+    echo "[build-circuit] downloading circomlib ${CIRCOMLIB_VERSION} ..."
+    curl -fsSL --retry 5 --retry-delay 5 -o "$TARBALL" "$CIRCOMLIB_TARBALL_URL"
+  fi
+  ACTUAL_CL_SHA="$(shasum -a 256 "$TARBALL" | awk '{print $1}')"
+  if [[ "$ACTUAL_CL_SHA" != "$CIRCOMLIB_SHA256" ]]; then
+    echo "[build-circuit] ERROR: circomlib tarball SHA-256 mismatch" >&2
+    echo "[build-circuit]   expected: $CIRCOMLIB_SHA256" >&2
+    echo "[build-circuit]   actual:   $ACTUAL_CL_SHA" >&2
+    rm -f "$TARBALL"
+    exit 1
+  fi
+  echo "[build-circuit] circomlib SHA-256 OK ($ACTUAL_CL_SHA)"
+  mkdir -p "$CIRCOMLIB_DIR"
+  tar -xzf "$TARBALL" -C "$CIRCOMLIB_DIR" --strip-components=1
 fi
 
-echo "[build-circuit] Step 3/5: download Powers of Tau (if missing)"
+echo "[build-circuit] Step 3/6: download Powers of Tau (if missing)"
 if [[ ! -f "$PTAU_PATH" ]]; then
   echo "[build-circuit] downloading $PTAU_NAME (~35 MB) ..."
   curl -fsSL --retry 5 --retry-delay 5 -o "$PTAU_PATH" "$PTAU_URL"
 fi
 
-echo "[build-circuit] Step 4/5: verify Powers of Tau SHA-256"
+echo "[build-circuit] Step 4/6: verify Powers of Tau SHA-256"
 ACTUAL_SHA="$(shasum -a 256 "$PTAU_PATH" | awk '{print $1}')"
 if [[ "$ACTUAL_SHA" != "$PTAU_SHA256" ]]; then
   echo "[build-circuit] ERROR: Powers of Tau SHA-256 mismatch" >&2
@@ -80,14 +109,15 @@ if [[ "$ACTUAL_SHA" != "$PTAU_SHA256" ]]; then
 fi
 echo "[build-circuit] PTAU SHA-256 OK ($ACTUAL_SHA)"
 
-echo "[build-circuit] Step 5/5: compile circuit + run PLONK setup"
+echo "[build-circuit] Step 5/6: compile circuit + run PLONK setup"
 cd "$CIRCUITS_DIR"
 
-# Compile .circom -> r1cs + wasm. -l adds the circomlib include path.
+# Compile .circom -> r1cs + wasm. -l points circom at the SHA-pinned
+# circomlib copy under artifacts/.circomlib/circuits.
 circom "${CIRCUIT_NAME}.circom" \
   --r1cs --wasm \
   -o "$ARTIFACTS_DIR" \
-  -l "$WORKER_DIR/node_modules"
+  -l "$CIRCOMLIB_DIR/circuits"
 
 # PLONK setup: deterministic given (r1cs, ptau).
 cd "$ARTIFACTS_DIR"
@@ -101,7 +131,8 @@ npx --yes snarkjs zkey export verificationkey \
   "${CIRCUIT_NAME}_final.zkey" \
   verification_key.json
 
-echo "[build-circuit] Done. Artifacts:"
+echo "[build-circuit] Step 6/6: done"
+echo "[build-circuit] Artifacts:"
 ls -lh \
   "$ARTIFACTS_DIR/${CIRCUIT_NAME}_js/${CIRCUIT_NAME}.wasm" \
   "$ARTIFACTS_DIR/${CIRCUIT_NAME}_final.zkey" \
