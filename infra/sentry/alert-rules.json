@@ -1,0 +1,101 @@
+{
+  "$schema": "https://docs.sentry.io/api/alerts/issue-alert-rule/",
+  "comment": "Source of truth for the 5 Sentry alert rules in arkova-worker (SCRUM-1254 / R0-8 + SCRUM-1308 / R0-8-FU2). Sentry MCP cannot create issue alert rules; an admin opens https://arkova.sentry.io/alerts/rules/ and creates each rule below 1:1. Update this file alongside any UI change.",
+  "project": "arkova-worker",
+  "rules": [
+    {
+      "name": "SCRUM-1254 — pg_cron job failures",
+      "actionMatch": "all",
+      "filterMatch": "all",
+      "conditions": [
+        { "id": "sentry.rules.conditions.event_frequency.EventFrequencyCondition", "value": 3, "interval": "20m" }
+      ],
+      "filters": [
+        { "id": "sentry.rules.filters.tagged_event.TaggedEventFilter", "key": "source", "match": "eq", "value": "db-health-monitor" },
+        { "id": "sentry.rules.filters.tagged_event.TaggedEventFilter", "key": "alert_type", "match": "eq", "value": "pg_cron_failure" }
+      ],
+      "actions": [
+        { "id": "sentry.integrations.slack.notify_action.SlackNotifyServiceAction", "channel": "#ops", "tags": "story,job_name,jobid" }
+      ],
+      "frequency": 60
+    },
+    {
+      "name": "SCRUM-1254 — Dead-tuple ratio > threshold for > 1h",
+      "actionMatch": "all",
+      "filterMatch": "all",
+      "conditions": [
+        { "id": "sentry.rules.conditions.event_frequency.EventFrequencyCondition", "value": 12, "interval": "1h" }
+      ],
+      "filters": [
+        { "id": "sentry.rules.filters.tagged_event.TaggedEventFilter", "key": "source", "match": "eq", "value": "db-health-monitor" },
+        { "id": "sentry.rules.filters.tagged_event.TaggedEventFilter", "key": "alert_type", "match": "eq", "value": "dead_tuple_ratio" }
+      ],
+      "actions": [
+        { "id": "sentry.integrations.slack.notify_action.SlackNotifyServiceAction", "channel": "#ops", "tags": "story,table_name" }
+      ],
+      "frequency": 60
+    },
+    {
+      "name": "SCRUM-1254 — Smoke test fail-streak",
+      "actionMatch": "all",
+      "filterMatch": "all",
+      "conditions": [
+        { "id": "sentry.rules.conditions.first_seen_event.FirstSeenEventCondition" }
+      ],
+      "filters": [
+        { "id": "sentry.rules.filters.tagged_event.TaggedEventFilter", "key": "source", "match": "eq", "value": "db-health-monitor" },
+        { "id": "sentry.rules.filters.tagged_event.TaggedEventFilter", "key": "alert_type", "match": "eq", "value": "smoke_fail_streak" }
+      ],
+      "actions": [
+        { "id": "sentry.integrations.slack.notify_action.SlackNotifyServiceAction", "channel": "#ops", "tags": "story" }
+      ],
+      "frequency": 5
+    },
+    {
+      "name": "SCRUM-1254 — count:'exact' baseline drift (weekly trend)",
+      "actionMatch": "all",
+      "filterMatch": "all",
+      "conditions": [
+        { "id": "sentry.rules.conditions.first_seen_event.FirstSeenEventCondition" }
+      ],
+      "filters": [
+        { "id": "sentry.rules.filters.tagged_event.TaggedEventFilter", "key": "source", "match": "eq", "value": "count-exact-baseline" },
+        { "id": "sentry.rules.filters.level.LevelFilter", "match": "gte", "level": "30" }
+      ],
+      "actions": [
+        { "id": "sentry.integrations.slack.notify_action.SlackNotifyServiceAction", "channel": "#ops", "tags": "story" }
+      ],
+      "frequency": 1440,
+      "comment": "Block is enforced at PR time by check-count-exact-baseline.ts. This rule only surfaces the weekly trend metric for visibility."
+    },
+    {
+      "name": "SCRUM-1247 — Cloud Run revision drift",
+      "actionMatch": "all",
+      "filterMatch": "all",
+      "conditions": [
+        { "id": "sentry.rules.conditions.first_seen_event.FirstSeenEventCondition" }
+      ],
+      "filters": [
+        { "id": "sentry.rules.filters.tagged_event.TaggedEventFilter", "key": "source", "match": "eq", "value": "revision-drift" },
+        { "id": "sentry.rules.filters.level.LevelFilter", "match": "gte", "level": "40" }
+      ],
+      "actions": [
+        { "id": "sentry.integrations.slack.notify_action.SlackNotifyServiceAction", "channel": "#ops", "tags": "story,deployed_sha,head_sha" }
+      ],
+      "frequency": 30
+    }
+  ],
+  "dashboards": [
+    {
+      "name": "Arkova R0-8 Drift Telemetry",
+      "url_placeholder": "https://arkova.sentry.io/dashboard/<id>/ — populate after first deploy",
+      "widgets": [
+        { "title": "Cloud Run live SHA vs HEAD of main", "type": "table", "tag": "source:revision-drift" },
+        { "title": "Smoke test pass/fail (last 50)", "type": "line", "tag": "source:db-health-monitor alert_type:smoke_fail_streak" },
+        { "title": "Dead-tuple ratio trend (4 hot tables)", "type": "line", "tag": "source:db-health-monitor alert_type:dead_tuple_ratio" },
+        { "title": "pg_cron job_run_details failure count (24h)", "type": "bignumber", "tag": "source:db-health-monitor alert_type:pg_cron_failure" },
+        { "title": "count:'exact' callsite count over time", "type": "line", "tag": "source:count-exact-baseline" }
+      ]
+    }
+  ]
+}
