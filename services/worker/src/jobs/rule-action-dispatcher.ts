@@ -314,15 +314,20 @@ async function dispatchFastTrackAnchor(rule: RuleRow, exec: ExecutionRow): Promi
       },
     });
     if (!jobId) {
-      // Credit was deducted but the job didn't queue — this is an inconsistent
-      // state. Mark transient so a retry attempts the deduction again; the
-      // RPC's idempotency on (org_id, p_reference_id) will be enforced when
-      // SCRUM-1170-B lands. For now log loudly.
+      // Credit was deducted but the job didn't queue — fail CLOSED, not
+      // RETRY. A transient outcome here would re-call deduct_org_credit on
+      // the next pass and double-charge the org because migration 0278's
+      // RPC has no idempotency on p_reference_id (that lands in SCRUM-1170-B).
+      // Until then, the safer state is FAILED + a loud log so on-call can
+      // refund the consumed credit via audit log and manually re-issue.
       logger.error(
         { ruleId: rule.id, executionId: exec.id, orgId: rule.org_id },
-        'FAST_TRACK_ANCHOR: deducted credit but anchor job enqueue failed',
+        'FAST_TRACK_ANCHOR: deducted credit but anchor job enqueue failed — marking FAILED to avoid double-charge',
       );
-      return { kind: 'transient_failure', error: 'anchor.fast_track job enqueue failed after credit deduction' };
+      return {
+        kind: 'permanent_failure',
+        error: 'anchor.fast_track job enqueue failed AFTER credit deduction (credit consumed; manual refund + manual retry required)',
+      };
     }
     return {
       kind: 'success',

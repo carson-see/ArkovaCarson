@@ -420,6 +420,22 @@ describe('rule-action-dispatcher MVP (SCRUM-1142)', () => {
     expect(mockSubmitJob).not.toHaveBeenCalled();
   });
 
+  it('FAST_TRACK_ANCHOR (Codex P1): submitJob failure AFTER credit deduction is permanent (FAILED, not RETRYING) to avoid double-charge', async () => {
+    // deduct_org_credit succeeds (default mock) but the queue refuses the
+    // anchor job. A transient outcome would re-call deduct_org_credit on
+    // retry and consume a second credit; pin the FAILED-not-RETRYING
+    // contract until SCRUM-1170-B adds RPC idempotency on p_reference_id.
+    mockSubmitJob.mockResolvedValueOnce(null);
+    setScenario({
+      rule: { ...defaultRule, action_type: 'FAST_TRACK_ANCHOR', action_config: {} },
+    });
+    const result = await runRuleActionDispatcher();
+    expect(result.failed).toBe(1);
+    const final = dbState.finalUpdates.get(EXEC_ID);
+    expect(final?.status).toBe('FAILED');
+    expect(final?.error as string).toMatch(/AFTER credit deduction/);
+  });
+
   it('FAST_TRACK_ANCHOR (DS-06): org_not_initialized is permanent failure (not retryable)', async () => {
     mockDbRpc.mockResolvedValueOnce({
       data: { success: false, error: 'org_not_initialized' },
