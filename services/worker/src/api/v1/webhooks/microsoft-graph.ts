@@ -1,5 +1,6 @@
 /**
- * Microsoft Graph change-notifications webhook (SCRUM-1138 / R2 closeout).
+ * Microsoft Graph change-notifications webhook
+ * (SCRUM-1138 / R2 closeout — see Confluence page id 27328665).
  *
  * Microsoft Graph authenticates change notifications via a per-subscription
  * `clientState` shared secret in the body, NOT HMAC. The validation handshake
