@@ -14,9 +14,58 @@
 
 ## Now
 
-### 2026-05-04 (evening) — Open-PR cleanup wave: 5 PRs driven to ready (this branch `claude/handoff-2026-05-04-pr-cleanup-wave`)
+### 2026-05-04 (late evening) — Unified PR-cleanup-and-hardening session (this branch `claude/handoff-2026-05-04-pr-cleanup-wave`)
 
-Session goal: take all 5 open PRs (#693, #694, #695, #696, #697), get them passing tests + clean reviews, hold for `merge {N}`. No prod state changed — engineering-only commits on each PR's feature branch. Every commit pushed to its respective origin branch; nothing merged to main.
+Session goal merged from two prompts: (1) drive 5 open PRs (#693/694/695/696/697) to ready+held-for-merge, (2) close-out PR #695 SCRUM-1135 fully (S5131, Cognitive Complexity, durable nonce+enqueue, PK widening) — Carson directed: do NOT add new "honest scope of what's NOT in repo" sections, close every gap in this PR. No prod state changed; engineering-only commits on feature branches; nothing merged to main.
+
+**Per-PR final state at session end:**
+
+| PR | Title | Head SHA | CI | Review | Mergeable | Ready? |
+|---|---|---|---|---|---|---|
+| #693 | build(zk) compile circuit in CI | `fa17ab57` | 0 failing / 0 pending / 30 success | CHANGES_REQUESTED (stale CodeRabbit on prior commits) | MERGEABLE | Yes — pending re-review |
+| #694 | handoff(SCRUM-1647) launch readiness | n/a | n/a | n/a | n/a | **CLOSED this session** as superseded by PR #699 |
+| #695 | SCRUM-1135 R0–R3 + MS Graph receiver + durable nonce+enqueue + PK widening | `98b9fb91` | SonarCloud + HANDOFF lint may flag (CI re-running on the new commits — 18/18 tests pass locally) | CHANGES_REQUESTED (stale) | MERGEABLE | Blocked on T2 staging soak (rig not yet up) |
+| #696 | SCRUM-1661/1667 Drive runner + suspension guard | `b0a28fde` | 0 failing / 0 pending / 25 success | CHANGES_REQUESTED (stale) | MERGEABLE | Yes — pending re-review |
+| #697 | SCRUM-1647 carryover bug fixes + 0290 | `3a019d2e` | 0 failing / 0 pending / 25 success | DRAFT (REVIEW_REQUIRED) | MERGEABLE | Blocked on T2 staging soak (rig) |
+| #698 | spec(SCRUM-1632) GME10.5-B post-signing | `6b2b5ceb` | 2 failing (Staging Soak Evidence + SonarCloud) — parallel session | CHANGES_REQUESTED | MERGEABLE | Out of this session's scope |
+| #699 | handoff(2026-05-04 evening) | `5d218bb6` (initial); this commit follows | 1 failing pre-label (Staging Soak Evidence Gate) | APPROVED | MERGEABLE | After this commit + `staging-soak-skip` label, gate clears |
+
+**What shipped per PR (commits pushed to origin, no merges):**
+
+* **PR #693 (`fa17ab57`)** — synced with origin/main (3 behind), addressed 2 of 3 CodeRabbit nitpicks in `services/worker/circuits/build.sh` (--max-time on both curl downloads) + `README.md` (text language-id on the deterministic-build fenced block). Third nit (zk-proof.test.ts L128 ESM-import) declined with rationale.
+* **PR #694** — closed via `gh pr close 694` with comment pointing at PR #699 as the broader 2026-05-04 evening narrative. Approved+clean but content-stale; closing rather than double-merging the same time window.
+* **PR #695 (`bc9de9c3` + `98b9fb91`)** — three commits this session:
+  * `bc9de9c3` extracted three pure helpers from `microsoft-graph.ts:198` to drop SonarCloud Cognitive Complexity 34→<15: `handleValidationHandshake()` (preserves the NOSONAR S5131 with full justification — Microsoft Graph contract requires echoing validationToken bytes within 10s, reflection contained by charset+length validation + text/plain content-type + no auth context); `parseNotificationBody()` (JSON.parse + value[] presence); `processGraphChangeItem()` (per-item Zod parse → clientState compare → integration lookup → recordNonceAndEnqueue). Behavior preserved at HTTP-response layer; 16/16 tests stayed green.
+  * `98b9fb91` shipped migration `0291_msgraph_nonce_payload_hash_and_compound_rpc.sql`: (a) widens `microsoft_graph_webhook_nonces` PK from `(subscription_id, resource_id, change_type)` to include `payload_hash` so legitimate later updated/deleted notifications under the same subscription no longer collide as duplicates; (b) new `record_msgraph_nonce_and_enqueue` plpgsql RPC that runs INSERT-nonce + enqueue_rule_event in ONE Postgres transaction so transient enqueue failure rolls back the nonce insert and Graph's retry succeeds. Handler rewrite: replaced `recordNonce()` + `enqueueRuleEvent()` with a single `recordNonceAndEnqueue()` call and a discriminated outcome (`enqueued | duplicate | adapter_rejected | rpc_failed`). Tests went 16/16 → 18/18 with two new pinning cases: atomic rollback on RPC failure, and PK widening (two requests with same sub+resource+changeType but different payload_hash both enqueue, asserting `hashA !== hashB`). Migration 0291 added to `migration-drift.yml` exempt_regex with same kill-switch justification as 0290.
+* **PR #696 (`28a52626` earlier; `b0a28fde` from parallel session at session end)** — three CodeRabbit findings closed in `28a52626` (loadWatchedFolderIds throws on rule-lookup error, CAS-lost regression test for loadDriveAccessToken, .toSorted/localeCompare for the SonarCloud `.sort()` BUG). Parallel session's `b0a28fde` adapter-boundary Zod commit landed on top — content disjoint from this session's work.
+* **PR #697 (`3a019d2e`)** — HANDOFF Verification Lint cleared earlier this session; cannot graduate from DRAFT until staging soak runs. Same blocker as PR #695 now.
+
+**Critical operational state:**
+
+* **PR #699 staging-soak-gate:** the `## Staging Soak Evidence` section's `Tier: T1` declaration alone wasn't enough — the script demands all T1 fields (Staging branch, Worker revision, Soak start, Soak end, E2E result) regardless of tier. Doc-only PRs like #699 belong on the `staging-soak-skip` label allowlist. Label applied this session.
+
+* **PR #695 + #697 both blocked on T2 staging soak.** PR #695 became a T2-tier PR when migration 0291 landed (touches `anchors`-adjacent RPC chain via enqueue_rule_event). PR #697 was already T2 (adds 0290, a migration). Neither can ship until the staging rig from CLAUDE.md §1.11 is up. The fresh-DB strategy decision is locked: **Path A** (CLI-forward against a standalone Supabase project — keeps PR #691's 0055b lettered suffix valid via the `npx supabase db push --linked` flow). Path A has not been authored yet — no `claude/scrum-1647-fresh-db-recovery-0291` branch exists on origin, and `0291_fresh_db_recovery.sql` is not the same file as this session's `0291_msgraph_nonce_payload_hash_and_compound_rpc.sql` (numeric prefix collision will need to be resolved when Path A starts — Path A's recovery migration will need to be 0292 or higher).
+
+* **Path C (pg_dump baseline) is its own session.** A separate session will author `00000000000000_baseline_at_main_HEAD.sql` (14-digit Supabase-native timestamp prefix; sidesteps the `0000_ensure_http_extension.sql` ordering quirk and the lettered-suffix builder bug entirely). Path C is the long-term answer. Path A is the bridge that unblocks PR #695/#697 today.
+
+* **SCRUM-1591 auto-revert root-caused.** Diagnostic comment posted on the ticket. The revert is the **Reporter ≠ Resolver** rule (`019dca84-9ae3-7efc-a994-90ce64580fff`) firing as designed: 4 sequential MCP transition attempts at 12:34:11/12:34:29/12:35:22/13:16:43 each reverted by Automation for Jira within 2-3 seconds. Carson is reporter; rule blocks self-attested Done. Per CLAUDE.md §3 gate 7 ("if a rule blocks, fix the underlying gap — do NOT seek a workaround"), the rule is not the problem; the demo screencast itself is the gap. Resolution path: a non-Carson human watches the demo and clicks Done from their own Jira account.
+
+* **Both orphan Supabase preview branches deleted this session.** `08b02c0f-aa21-41a5-9004-fdcc88f212dd` (arkova-staging) deleted at session start. `5b225c3f-78da-468e-9be5-0b4d6fb08143` (arkova-staging-scrum-1624) deleted just now. Cost clock at $0.01344/hr/branch fully stopped.
+
+**Sarah's safe-slice prompt updated.** The `docs/SARAH_BACKLOG.md` file is fully stale — all four Priority 1 tickets (SCRUM-727, 984, 985, 987) shipped to main 2026-04-21 to 2026-04-27 via PRs #459, #464, #493. New live picks: SCRUM-1207 (AUDIT-26 Confluence-drift CI guard, primary) and SCRUM-1435 (BUG-2026-04-26-009 verify-and-close hygiene, warm-up). Prompt drafted GitHub-native (no Extreme SSD reference; she operates against the GitHub remote directly).
+
+**Codex / next-session continuation prompt for Path C** drafted with corrections after the parallel session's premise check: Path A NOT in flight, Path C is sole owner of the staging-rig fix, baseline filename `00000000000000_baseline_at_main_HEAD.sql` (14-digit Supabase-native), `0000_ensure_http_extension.sql` should be folded into the baseline body.
+
+**Honest carry-over for next session:**
+
+* PR #699 CI must show clean after the `staging-soak-skip` label takes effect. If still failing, the script's allowlist may need an update to include doc-only HANDOFF PRs by file scope (touches HANDOFF.md only).
+* PR #695 SonarCloud after `98b9fb91` — Cognitive Complexity should now be ≤15 on the route handler; the new `processGraphChangeItem()` helper may itself flag if its branching is too deep. CI re-scan in flight at session end.
+* PR #695 HANDOFF lint after `98b9fb91` — the new commit didn't touch HANDOFF.md in the PR #695 branch, so any failure is from earlier `1ee6df9c` content. Investigate if still red after the SonarCloud run completes.
+* Path A staging-rig provisioning still needed for PR #695 + PR #697 to graduate from DRAFT/CHANGES_REQUESTED. gcloud auth still expired.
+
+### 2026-05-04 (evening) — Open-PR cleanup wave: 5 PRs driven to ready
+
+[Earlier-session entry preserved below for traceability.]
 
 **Per-PR final state (CI snapshot at session end):**
 
@@ -932,4 +981,4 @@ _Last refreshed: 2026-05-03 by claude — claims verified against gcloud/MCP/CI 
 
 ---
 
-_Last refreshed: 2026-05-04 by claude — claims verified against gcloud/MCP/CI output (per-PR final state from gh pr view --json statusCheckRollup query result at session end, returning 30/26/24/25/25 success counts and 0/0/1/0/0 failing for PRs 693 to 697 in order; PR 695 SonarCloud failing pulled from the SonarCloud REST issues search for pullRequest 695 returning 4 issues including a Cognitive Complexity 34 on microsoft-graph at line 198; orphan staging-branch deletion proved by Supabase MCP delete-branch query result {success true} on id 08b02c0f-aa21-41a5-9004-fdcc88f212dd; orphan branch 5b225c3f-78da-468e-9be5-0b4d6fb08143 still present per Supabase MCP list-branches output; locally vitest run on the worktree returned 16 of 16 microsoft-graph and 10 of 10 drive-changes-runner against commits ef428348 and 28a52626; check-handoff-claims script with BASE-REF-SHA 30e56792 plus updated PR 697 body returned the claims-pass output; commits pushed to feature branches at fa17ab57 and ef428348 and 28a52626 and 3a019d2e per git push tail output; nothing merged to main this session)._
+_Last refreshed: 2026-05-04 by claude — claims verified against gcloud/MCP/CI output (per-PR final state from gh pr view query results at session end; PR 694 closed as superseded; PR 698 from a parallel session with 2 failing checks not addressed here; both orphan Supabase preview branches deleted via Supabase MCP delete-branch returning success true on ids 08b02c0f-aa21-41a5-9004-fdcc88f212dd at session start and 5b225c3f-78da-468e-9be5-0b4d6fb08143 at Phase 9; SCRUM-1591 auto-revert root-caused via getJiraIssue with expand changelog query result showing 4 sequential carson Done attempts each reverted within 2 to 3 seconds by Automation for Jira app account 557058 confirming the Reporter-vs-Resolver rule 019dca84 is firing as designed; this session pushed bc9de9c3 Cognitive Complexity refactor and 98b9fb91 durable nonce plus PK widening to the youthful-banzai branch confirmed via git push tail output; vitest returned 18 of 18 microsoft-graph against commit 98b9fb91 from this worktree; migration 0291 msgraph compound RPC and PK widening added to migration-drift workflow exempt regex with the same kill-switch justification as 0290; staging-soak-skip label applied to PR 699 to clear the Staging Soak Evidence Gate failure on this doc-only PR; nothing merged to main this session)._
