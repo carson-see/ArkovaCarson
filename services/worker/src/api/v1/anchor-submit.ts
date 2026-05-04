@@ -19,7 +19,7 @@ import {
 } from '../../lib/credential-evidence.js';
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
-import { deductOrgCredit } from '../../utils/orgCredits.js';
+import { ensureAnchorCreditAvailable } from '../../utils/anchorCreditGate.js';
 
 const router = Router();
 
@@ -43,36 +43,6 @@ interface AnchorReceipt {
   status: 'PENDING';
   created_at: string;
   record_uri: string;
-}
-
-async function ensureOrgCreditAvailable(orgId: string, res: Response): Promise<boolean> {
-  const deduction = await deductOrgCredit(db, orgId, 1, 'anchor.create');
-  if (deduction.allowed) return true;
-
-  if (deduction.error === 'insufficient_credits') {
-    res.status(402).json({
-      error: 'insufficient_credits',
-      message: 'Organization has insufficient anchor credits for this cycle.',
-      balance: deduction.balance,
-      required: deduction.required,
-    });
-    return false;
-  }
-
-  if (deduction.error === 'rpc_failure') {
-    logger.error({ err: deduction.message, orgId }, 'org_credit_deduct_rpc_failure');
-    res.status(503).json({ error: 'credit_check_unavailable' });
-    return false;
-  }
-
-  logger.warn({ orgId }, 'org_credit_deduct_blocked_uninitialized');
-  res.status(402).json({
-    error: 'org_credits_not_initialized',
-    message:
-      'This organization is not provisioned for credit-based billing. ' +
-      'An operator must seed org_credits before this API key can submit.',
-  });
-  return false;
 }
 
 /**
@@ -167,7 +137,7 @@ router.post('/', async (req: Request, res: Response) => {
     // SCRUM-1170-B — gate org-credit deduction. Helper short-circuits to
     // allowed=true when ENABLE_ORG_CREDIT_ENFORCEMENT is off (default), so
     // existing API-key paths without per-org credit setup are unaffected.
-    if (orgId && !(await ensureOrgCreditAvailable(orgId, res))) {
+    if (orgId && !(await ensureAnchorCreditAvailable(db, orgId, res))) {
       return;
     }
 

@@ -37,13 +37,14 @@ export const ANCHOR_CREDENTIAL_TYPES = [
   'MEDICAL',
   'MILITARY',
   'IDENTITY',
+  // SCRUM-863 / SCRUM-1623 + SCRUM-1624 — pre/post-signing contract anchors.
+  // Migration 0285 added these to the Postgres `credential_type` enum;
+  // SCRUM-1631 [Build] regenerated `database.types.ts` and folded them
+  // into this list so the rest of the worker recognises them.
+  'CONTRACT_PRESIGNING',
+  'CONTRACT_POSTSIGNING',
   'OTHER',
 ] as const;
-// SCRUM-863 / SCRUM-1623 + SCRUM-1624 — pre/post-signing contract anchor
-// enum values are defined locally in
-// `services/worker/src/api/v1/contracts/anchor-pre-signing.ts` until
-// migration 0285 ships and `database.types.ts` is regenerated. The
-// SCRUM-1631 [Build] subtask folds them into ANCHOR_CREDENTIAL_TYPES.
 
 export const CREDENTIAL_EVIDENCE_VERIFICATION_LEVELS = [
   'issuer_anchored',
