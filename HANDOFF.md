@@ -14,6 +14,7 @@
 
 ## Now
 
+<<<<<<< HEAD
 ### 2026-05-04 (late) — SCRUM-1308 alerts-as-code + SCRUM-1545 admin-pipeline-stats coverage backfill (this branch `claude/focused-fermi-fJPqI`)
 
 Engineering-only, no prod-state changes. PR pending. Stacked on `origin/main` at `e0c0ce1` (post HANDOFF entry for SCRUM-1623).
@@ -42,6 +43,36 @@ Engineering-only, no prod-state changes. PR pending. Stacked on `origin/main` at
 **PO Roadmap drift correction (Confluence v9, 2026-05-04):** [PO Roadmap](https://arkova.atlassian.net/wiki/spaces/A/pages/27591934) updated to mark 1279 + 1441 as "Needs Human, no branch on remote" and add **rule 11** to Conventions: every "code complete, awaiting push" claim must include `git ls-remote origin <branch>` evidence in the page edit's version-message. The 5 prior false claims (1279, 1441, 1545, 1276 follow-up, 1445) are now treated as actually-not-shipped beyond what's in main.
 
 **Bug log:** no functional bugs introduced or fixed this session — the false "code complete" claims were process drift, not engineering bugs, so logged via PO Roadmap rule 11 rather than Bug Tracker.
+=======
+### 2026-05-04 — SCRUM-1647 Operational Launch Readiness PRD wave: 5 stories shipped ([PR #689](https://github.com/carson-see/ArkovaCarson/pull/689))
+
+**[PR #689](https://github.com/carson-see/ArkovaCarson/pull/689) squash-merged at sha `90b4b9c72c0b0913997be9c071ce6669dd31e589`** (deploy-worker.yml run [25319091055](https://github.com/carson-see/ArkovaCarson/actions/runs/25319091055) auto-triggered). Closes the May 1 Operational Launch Readiness PRD gaps for DocuSign org-wide capture, DocuSign rule-action modes, Drive folder-watch processing, sub-org active context, and sub-org suspension under the new [SCRUM-1647](https://arkova.atlassian.net/browse/SCRUM-1647) Org Hierarchy epic + the existing [SCRUM-1048](https://arkova.atlassian.net/browse/SCRUM-1048) CONNECTORS-V2 epic.
+
+**Migrations 0288 + 0289 applied to prod** via Supabase MCP `apply_migration` against `vzwyaatejekddvltxyye`. 0288 (`drive_processing_loop`) added `org_integrations.last_page_token` + `last_token_advanced_at` + `watch_renewal_failure_count` and the `drive_revision_ledger` table with UNIQUE(integration_id, file_id, revision_id) + RLS. 0289 (`suborg_suspension`) added `organizations.suspended` + `suspended_at` + `suspended_by` + `suspended_reason` and three SECURITY DEFINER RPCs: `is_org_suspended(uuid)`, `suspend_suborg(parent, sub, reason)`, `unsuspend_suborg(parent, sub)`. Both verified via information_schema.columns + pg_proc lookups post-apply.
+
+**5 stories code-complete + 10 of 15 subtasks Done in Jira:**
+
+| Story | Behavior shipped | [Spec] | [Implement] | [Verify] |
+| --- | --- | --- | --- | --- |
+| [SCRUM-1648](https://arkova.atlassian.net/browse/SCRUM-1648) DS-AUTO-01 | Multi-sender DocuSign capture (DS-01); audit confirmed DS-02/03/04 already shipped via mig 0256 + SCRUM-1213 + SEC-01 | SCRUM-1653 ✅ | SCRUM-1654 ✅ | SCRUM-1655 In Progress |
+| [SCRUM-1649](https://arkova.atlassian.net/browse/SCRUM-1649) DS-AUTO-02 | `AUTO_ANCHOR` + `FAST_TRACK_ANCHOR` routing through dispatcher with `deduct_org_credit` fall-through (DS-06/07) | SCRUM-1656 ✅ | SCRUM-1657 ✅ | SCRUM-1658 In Progress |
+| [SCRUM-1650](https://arkova.atlassian.net/browse/SCRUM-1650) GD-AUTO-01 | `listChanges` Drive client + `processDriveChanges` orchestrator (page-token, folder match, revision dedupe, multi-user, burst) | SCRUM-1659 ✅ | SCRUM-1660 ✅ | SCRUM-1661 In Progress (webhook handler wiring) |
+| [SCRUM-1651](https://arkova.atlassian.net/browse/SCRUM-1651) ORG-HIER-01 | `useActiveOrg` resolver hook (URL → session → implicit_primary, all membership-checked) for ORG-02 | SCRUM-1662 ✅ | SCRUM-1663 ✅ | SCRUM-1664 In Progress (page migration) |
+| [SCRUM-1652](https://arkova.atlassian.net/browse/SCRUM-1652) ORG-HIER-02 | Suspension migration + RPCs + worker `orgSuspensionGuard`. ORG-07 delegation was already shipped via mig 0278 | SCRUM-1665 ✅ | SCRUM-1666 ✅ | SCRUM-1667 In Progress (per-handler guard wiring) |
+
+**Tests:** 27 new across the 5 stories. Worker full suite **4899 passed / 3 skipped**. Worker typecheck clean; lint 0 errors (319 pre-existing warnings); root `lint:copy` clean.
+
+**Audit-driven scope correction.** Comments 14281–14285 on the parent stories document where the original [Spec] subtask descriptions over-scoped vs. what was already shipped on `main`. Net result: three of the five stories needed materially less code than originally specified because dedupe (mig 0256), HMAC (SEC-01), action-type enum (mig 0224), and credit allocations (mig 0278) already exist. Posted before any redundant migration was written.
+
+**Pre-existing fresh-DB migration issue surfaced + fix in flight ([PR #691](https://github.com/carson-see/ArkovaCarson/pull/691)).** While creating Supabase staging branch `ojwfftwgyubkuvyjlapd` to verify the launch-readiness work, the branch hit `MIGRATIONS_FAILED` at migration 0056 with `ERROR: 42703: column a.issued_at does not exist`. Root cause is older than this PR: local file `0022_seed_schema_alignment.sql` was never applied to prod's ledger because that prefix was already claimed by `public_verification_revoked` (verified 2026-05-04 via `SELECT version, name FROM supabase_migrations.schema_migrations WHERE version = '0022'`). Prod has the columns the seed migration would have added (out-of-band ALTER during early dev), but a fresh DB does not. PR #691 ships `0055b_seed_alignment_idempotent.sql` (lettered-suffix sorts between 0055 and 0056) with idempotent `ADD COLUMN IF NOT EXISTS` for `label`, `issued_at`, `expires_at`, `revoked_at`, `revocation_reason` on `anchors` + `CREATE TABLE IF NOT EXISTS memberships` + 3 CHECK constraints in `DO` blocks. Drift-exempt comment block updated. Awaiting CI + bot review before any merge action.
+
+**Owed (mine, not waiting on anyone):**
+- SCRUM-1661 follow-up PR: wire `processDriveChanges` into `services/worker/src/api/v1/webhooks/drive.ts` (replacing the explicit STUB at line 194) + watched-folder computation from `organization_rules.trigger_config` + KMS-backed token refresh + GD-02 alert wiring in the renewal monitor.
+- SCRUM-1667 follow-up PR: wire `ensureOrgNotSuspended()` into anchor / queue / integration-trigger handlers (one-line addition each).
+- SCRUM-1664 follow-up PRs: page-by-page migration of the ~50 `profile.org_id` reads to `useActiveOrg`. Incremental.
+- SCRUM-1658 + SCRUM-1655: live E2E once DocuSign Connect (demo or prod) is configured for envelope-completed events.
+- Once #691 merges: delete branch `ojwfftwgyubkuvyjlapd` and recreate to verify the corrective migration unblocks fresh-DB builds.
+>>>>>>> 29ffed0e (handoff(SCRUM-1647): record launch-readiness wave shipped + 0288/0289 prod-applied + 0056 fix in flight)
 
 ### 2026-05-04 — SCRUM-1623 [GME10.5-A] pre-signing contract anchor LIVE in prod ([PR #680](https://github.com/carson-see/ArkovaCarson/pull/680))
 
