@@ -26,7 +26,7 @@ All four `[Hygiene]` subtasks under SCRUM-1135 (Compliance Inbox + Custom Rules 
 - **SCRUM-1593 (R3)** — Wired the supersede chain walk that closes AC4 (version collision resolution context) and AC5 (supersede branch). `services/worker/src/api/proof-packet.ts` now resolves `lineage.superseded_by_public_id` from a child anchor whose `parent_anchor_id` points at this anchor, and walks `lineage.previous` up the parent chain bounded at 50 with cycle detection. Public-only columns expose: `public_id`, `version_number`, `status`, `fingerprint`, `created_at`. Internal `anchors.id` and `parent_anchor_id` UUIDs never leak. 3 new tests pin: supersede lookup, multi-version chain walk (v3→v2→v1 with no internal-UUID leak), cycle guard. 12 proof-packet tests + 7 verification-view tests = 19 total green.
 
 **Migrations shipped this PR:**
-- [supabase/migrations/0290_microsoft_graph_webhook_nonces.sql](supabase/migrations/0290_microsoft_graph_webhook_nonces.sql) — added to drift exempt list with explicit closeout note. NOT applied to prod from this branch (operator step under SCRUM-1592 close).
+- [supabase/migrations/0290_microsoft_graph_webhook_nonces.sql](supabase/migrations/0290_microsoft_graph_webhook_nonces.sql) — added to drift exempt list with explicit closeout note. Migration ships in repo only; operator promotes to production under SCRUM-1592 close-out (Supabase MCP `apply_migration`).
 
 **Confluence pages updated (version 3+ each):**
 - [SCRUM-1136 R0](https://arkova.atlassian.net/wiki/spaces/A/pages/27132103) — DB+worker+test inventory + concurrency contract decision
