@@ -4,6 +4,14 @@
 > the Sentry UI; this file is the source of truth for what they should be.
 > Before/during R0-8 deployment, an admin opens
 > https://arkova.sentry.io/alerts/rules/ and creates each rule below 1:1.
+>
+> **SCRUM-1308 (R0-8-FU2) update (2026-05-04):** structured spec is now in
+> `infra/sentry/alert-rules.json` — copy-pasteable filter shapes per rule.
+> The db-health-monitor emits an `alert_type` tag (`pg_cron_failure` /
+> `dead_tuple_ratio` / `smoke_fail_streak` / `smoke_runtime`) so each rule
+> below filters on its own class instead of message-substring matching.
+> The Cloud Scheduler binding for `/cron/db-health` is now in
+> `scripts/gcp-setup/cloud-scheduler.sh` (every 5 min, OIDC, retry 30s/120s).
 
 ## Five alerts
 
