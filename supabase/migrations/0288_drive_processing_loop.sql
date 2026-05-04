@@ -1,5 +1,5 @@
 -- =============================================================================
--- Migration 0287: Drive folder-watch processing loop state
+-- Migration 0288: Drive folder-watch processing loop state
 -- Story: SCRUM-1650 GD-AUTO-01 — Drive folder-watch processing loop
 -- Covers PRD 3 ACs GD-02..07 (Operational Launch Readiness PRD Packet 2026-05-01)
 -- Date: 2026-05-04

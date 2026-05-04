@@ -1,5 +1,5 @@
 -- =============================================================================
--- Migration 0288: Sub-org suspension lifecycle (SCRUM-1652 ORG-HIER-02)
+-- Migration 0289: Sub-org suspension lifecycle (SCRUM-1652 ORG-HIER-02)
 -- Story: SCRUM-1652 / ORG-08 from PRD 6 (Operational Launch Readiness 2026-05-01)
 -- Date: 2026-05-04
 --
@@ -105,7 +105,7 @@ SECURITY DEFINER
 SET search_path = public
 AS $$
 DECLARE
-  v_caller        uuid := auth.uid();
+  v_caller        uuid := (SELECT auth.uid());
   v_actual_parent uuid;
   v_already       boolean;
 BEGIN
@@ -121,11 +121,16 @@ BEGIN
     RETURN jsonb_build_object('success', false, 'error', 'not_a_child_of_parent');
   END IF;
 
-  -- Caller must be an admin/owner of the parent org.
-  IF NOT EXISTS (
-    SELECT 1 FROM org_members
-    WHERE user_id = v_caller AND org_id = p_parent_org_id
-      AND role IN ('owner', 'admin', 'ORG_ADMIN')
+  -- Caller must be a parent-org admin/owner OR a platform admin (per PRD §ORG-08).
+  IF NOT (
+    EXISTS (
+      SELECT 1 FROM org_members
+      WHERE user_id = v_caller AND org_id = p_parent_org_id
+        AND role IN ('owner', 'admin', 'ORG_ADMIN')
+    )
+    OR EXISTS (
+      SELECT 1 FROM profiles WHERE id = v_caller AND is_platform_admin = true
+    )
   ) THEN
     RETURN jsonb_build_object('success', false, 'error', 'parent_admin_required');
   END IF;
@@ -191,7 +196,7 @@ SECURITY DEFINER
 SET search_path = public
 AS $$
 DECLARE
-  v_caller        uuid := auth.uid();
+  v_caller        uuid := (SELECT auth.uid());
   v_actual_parent uuid;
   v_currently     boolean;
 BEGIN
@@ -205,10 +210,15 @@ BEGIN
     RETURN jsonb_build_object('success', false, 'error', 'not_a_child_of_parent');
   END IF;
 
-  IF NOT EXISTS (
-    SELECT 1 FROM org_members
-    WHERE user_id = v_caller AND org_id = p_parent_org_id
-      AND role IN ('owner', 'admin', 'ORG_ADMIN')
+  IF NOT (
+    EXISTS (
+      SELECT 1 FROM org_members
+      WHERE user_id = v_caller AND org_id = p_parent_org_id
+        AND role IN ('owner', 'admin', 'ORG_ADMIN')
+    )
+    OR EXISTS (
+      SELECT 1 FROM profiles WHERE id = v_caller AND is_platform_admin = true
+    )
   ) THEN
     RETURN jsonb_build_object('success', false, 'error', 'parent_admin_required');
   END IF;
