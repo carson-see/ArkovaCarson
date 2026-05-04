@@ -76,6 +76,39 @@ arkova-product-demo/
 .claude/
 skills-lock.json
 
+# Other AI tool configs (may contain pre-approved commands with tokens — see Anthropic 2026-04 source-map leak)
+.cursor/
+.aider*
+.continue/
+.cody/
+.codex/
+
+# Private keys / certs (never commit — none currently tracked, this is preventative)
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.cer
+
+# Cloud / infra credentials (developer-local; treasury & service-account JSONs must never land in git)
+.aws/
+.azure/
+.gcloud/
+.ssh/
+.kube/
+.docker/config.json
+credentials.json
+service-account*.json
+gcp-key*.json
+
+# Terraform state (plaintext secrets — preventative; deployment/self-hosted/terraform/ uses tf)
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+
 # Nested repos (separate git projects)
 arkova-marketing/
 arkova-demo/
