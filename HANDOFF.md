@@ -34,7 +34,7 @@ All four `[Hygiene]` subtasks under SCRUM-1135 (Compliance Inbox + Custom Rules 
 - [SCRUM-1138 R2](https://arkova.atlassian.net/wiki/spaces/A/pages/27328665) — 8-vendor receiver table + credibility metadata flow
 - [SCRUM-1139 R3](https://arkova.atlassian.net/wiki/spaces/A/pages/27132126) — proof-packet+verify-API alignment + supersede chain walk + 19-test inventory + 6-AC mapping
 
-**Process notes:** Worker `npm run typecheck` clean, vitest 36/36 green across changed-area test suites. Pre-existing lint warnings on `rules-engine.ts` from SCRUM-1208 missing-org-filter rule (not introduced here).
+**Process notes:** Worker `npm run typecheck` clean, vitest 36/36 green across changed-area test suites. Pre-existing lint warnings on `rules-engine.ts` from SCRUM-1208 missing-org-filter rule (not introduced here). Coverage threshold for src/index.ts aligned 68→67 with `coverage-drop-allowed` label + Linked Jira SCRUM-1289 (R4-4 coverage restoration umbrella).
 
 ### 2026-05-04 (late) — SCRUM-1308 alerts-as-code + SCRUM-1545 admin-pipeline-stats coverage backfill (this branch `claude/focused-fermi-fJPqI`)
 
