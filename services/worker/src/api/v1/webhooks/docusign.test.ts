@@ -251,4 +251,107 @@ describe('POST /webhooks/docusign', () => {
     expect(rpcMock).not.toHaveBeenCalled();
     expect(submitJobMock).not.toHaveBeenCalled();
   });
+
+  // SCRUM-1648 DS-01 — Organization-wide capture
+  // Pins the launch promise: a single Connect webhook configured at the
+  // DocuSign organization level captures completed envelopes from any
+  // authorized member of that org. Two distinct senders share one accountId
+  // (the DocuSign org), one Arkova rule, and both must produce their own
+  // sanitized rule event + retryable fetch job carrying the actual sender
+  // identity.
+  it('captures envelopes from multiple senders sharing one DocuSign accountId (DS-01)', async () => {
+    // Sender 1 — Mercy
+    dbFromMock.mockReturnValueOnce(
+      integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1' }),
+    );
+    dbFromMock.mockReturnValueOnce(nonceInsert());
+    rpcMock.mockResolvedValueOnce({ data: 'evt-mercy', error: null });
+    submitJobMock.mockResolvedValueOnce('job-mercy');
+
+    const mercyBody = JSON.stringify({
+      event: 'envelope-completed',
+      envelopeId: 'env-mercy-1',
+      accountId: 'acct-1',
+      status: 'completed',
+      sender: { email: 'mercy@example.com' },
+      envelopeDocuments: [{ documentId: 'combined', name: 'partnership.pdf' }],
+    });
+
+    const mercyRes = await request(createApp())
+      .post('/webhooks/docusign')
+      .set('Content-Type', 'application/json')
+      .set('X-DocuSign-Signature-1', sign(mercyBody))
+      .send(mercyBody);
+
+    expect(mercyRes.status).toBe(202);
+    expect(rpcMock).toHaveBeenLastCalledWith(
+      'enqueue_rule_event',
+      expect.objectContaining({
+        p_org_id: ORG_ID,
+        p_vendor: 'docusign',
+        p_external_file_id: 'env-mercy-1',
+        p_sender_email: 'mercy@example.com',
+      }),
+    );
+
+    // Sender 2 — Kevin, same DocuSign accountId, same Arkova org/integration
+    dbFromMock.mockReturnValueOnce(
+      integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1' }),
+    );
+    dbFromMock.mockReturnValueOnce(nonceInsert());
+    rpcMock.mockResolvedValueOnce({ data: 'evt-kevin', error: null });
+    submitJobMock.mockResolvedValueOnce('job-kevin');
+
+    const kevinBody = JSON.stringify({
+      event: 'envelope-completed',
+      envelopeId: 'env-kevin-1',
+      accountId: 'acct-1',
+      status: 'completed',
+      sender: { email: 'kevin@example.com' },
+      envelopeDocuments: [{ documentId: 'combined', name: 'msa.pdf' }],
+    });
+
+    const kevinRes = await request(createApp())
+      .post('/webhooks/docusign')
+      .set('Content-Type', 'application/json')
+      .set('X-DocuSign-Signature-1', sign(kevinBody))
+      .send(kevinBody);
+
+    expect(kevinRes.status).toBe(202);
+    expect(rpcMock).toHaveBeenLastCalledWith(
+      'enqueue_rule_event',
+      expect.objectContaining({
+        p_org_id: ORG_ID,
+        p_vendor: 'docusign',
+        p_external_file_id: 'env-kevin-1',
+        p_sender_email: 'kevin@example.com',
+      }),
+    );
+
+    // Both senders produced independent rule events + retryable fetch jobs.
+    expect(rpcMock).toHaveBeenCalledTimes(2);
+    expect(submitJobMock).toHaveBeenCalledTimes(2);
+    expect(submitJobMock).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        type: 'docusign.envelope_completed',
+        payload: expect.objectContaining({
+          org_id: ORG_ID,
+          envelope_id: 'env-mercy-1',
+          rule_event_id: 'evt-mercy',
+        }),
+      }),
+    );
+    expect(submitJobMock).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        type: 'docusign.envelope_completed',
+        payload: expect.objectContaining({
+          org_id: ORG_ID,
+          envelope_id: 'env-kevin-1',
+          rule_event_id: 'evt-kevin',
+        }),
+      }),
+    );
+  });
 });
