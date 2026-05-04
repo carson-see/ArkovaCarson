@@ -77,7 +77,7 @@ if [[ ! -d "$CIRCOMLIB_DIR/circuits" ]]; then
   TARBALL="$ARTIFACTS_DIR/circomlib-${CIRCOMLIB_VERSION}.tar.gz"
   if [[ ! -f "$TARBALL" ]]; then
     echo "[build-circuit] downloading circomlib ${CIRCOMLIB_VERSION} ..."
-    curl -fsSL --retry 5 --retry-delay 5 -o "$TARBALL" "$CIRCOMLIB_TARBALL_URL"
+    curl -fsSL --retry 5 --retry-delay 5 --max-time 300 -o "$TARBALL" "$CIRCOMLIB_TARBALL_URL"
   fi
   ACTUAL_CL_SHA="$(shasum -a 256 "$TARBALL" | awk '{print $1}')"
   if [[ "$ACTUAL_CL_SHA" != "$CIRCOMLIB_SHA256" ]]; then
@@ -95,7 +95,7 @@ fi
 echo "[build-circuit] Step 3/6: download Powers of Tau (if missing)"
 if [[ ! -f "$PTAU_PATH" ]]; then
   echo "[build-circuit] downloading $PTAU_NAME (~35 MB) ..."
-  curl -fsSL --retry 5 --retry-delay 5 -o "$PTAU_PATH" "$PTAU_URL"
+  curl -fsSL --retry 5 --retry-delay 5 --max-time 1800 -o "$PTAU_PATH" "$PTAU_URL"
 fi
 
 echo "[build-circuit] Step 4/6: verify Powers of Tau SHA-256"

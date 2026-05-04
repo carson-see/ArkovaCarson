@@ -71,7 +71,7 @@ ptau download, circom compile, and PLONK phase 2 setup.
 PLONK setup is deterministic given a fixed `(r1cs, ptau)` pair — unlike
 Groth16, no per-circuit ceremony contribution is required. So:
 
-```
+```text
 same .circom + same circomlib + same circom binary + same ptau
    ⇒ identical extraction-proof_final.zkey
    ⇒ identical verification_key.json
