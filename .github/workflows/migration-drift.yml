@@ -218,7 +218,18 @@ jobs:
           # whose effects are present in prod via compensating/successor
           # migrations or operator-applied names. Do not add entries here
           # without object-level verification and a dated runbook note.
-          exempt_regex='^(0033|0078|0162|.* 2|0022_seed_schema_alignment|0023_is_public_profile|0024_fix_search_path_revoke_anchor|0068b_submitted_status_and_confirmations|0088b_cle_templates|0135_ats_integrations|0175_fix_pipeline_stats_timeout|0180_fix_public_issuer_perf|0258_ark112_queue_public_id)$'
+          #
+          # 0287_api_key_scope_vocabulary_canonical: file was applied to prod
+          # via Supabase MCP on 2026-05-03 19:26 under its original local name
+          # `0285_api_key_scope_vocabulary` (prod row version
+          # `20260503192636_0285_api_key_scope_vocabulary`). After application,
+          # PR #671/#682 reviews renumbered the local file 0285 → 0286 (collision
+          # with `0286_attestation_evidence_public_metadata`) → 0287 (this PR).
+          # The prod row name is immutable; verified via Supabase MCP
+          # `SELECT version, name FROM supabase_migrations.schema_migrations`.
+          # The schema effects (api_keys + agents CHECK constraints on the
+          # canonical scope vocabulary) ARE present in prod.
+          exempt_regex='^(0033|0078|0162|.* 2|0022_seed_schema_alignment|0023_is_public_profile|0024_fix_search_path_revoke_anchor|0068b_submitted_status_and_confirmations|0088b_cle_templates|0135_ats_integrations|0175_fix_pipeline_stats_timeout|0180_fix_public_issuer_perf|0258_ark112_queue_public_id|0287_api_key_scope_vocabulary_canonical)$'
           filtered_missing=$(echo "$missing" | grep -vE "$exempt_regex" || true)
 
           missing_count=$(echo "$filtered_missing" | grep -c . || true)
