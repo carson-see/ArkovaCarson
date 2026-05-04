@@ -14,6 +14,25 @@
 
 ## Now
 
+### 2026-05-04 — SCRUM-1623 [GME10.5-A] pre-signing contract anchor LIVE in prod ([PR #680](https://github.com/carson-see/ArkovaCarson/pull/680))
+
+**Implement subtask (SCRUM-1630) complete + deployed.** PR #680 squash-merged at sha `2528e8e7f5c660d8b76157aec3ce527d5c7dfd31` on 2026-05-04 00:23 UTC. deploy-worker.yml workflow [25295113742](https://github.com/carson-see/ArkovaCarson/actions/runs/25295113742) succeeded. Prod `/health` reports `git_sha=2528e8e7...`, network `mainnet`, all checks `ok` (verified via `curl https://arkova-worker-270018525501.us-central1.run.app/health` post-deploy). Endpoint `POST /api/v1/contracts/anchor-pre-signing` returns 401 without API key (auth gate live).
+
+**Migration 0285 applied to prod** via Supabase MCP `apply_migration` against project `vzwyaatejekddvltxyye`; verified via `pg_enum` SELECT — both `CONTRACT_PRESIGNING` and `CONTRACT_POSTSIGNING` are live in the `credential_type` enum.
+
+**Real handler** at `services/worker/src/api/v1/contracts/anchor-pre-signing.ts` does: idempotency lookup (org-scoped, fail-closed on lookup error, returns persisted metadata not the retry's body), org-credit deduction via shared `anchorCreditGate.ts` helper (also adopted by `/api/v1/anchor`), defensive `InsertPayloadSchema` Zod validation before `.insert()`, `description` dropped on write (no PII channel), filename control-character sanitization, returns the frozen `PreSigningAnchorReceipt` shape from PR #679's [Spec].
+
+**4 rounds of CodeRabbit feedback applied** (all addressed): cross-tenant scoping (org_id filter on idempotency lookup — was a real cross-tenant leak), idempotent metadata persistence, fail-closed on lookup errors, sanitize derived filename, drop description on write, defensive Zod schema before insert. CodeRabbit APPROVED at review 23:34:43Z. SonarCloud Quality Gate passed (4.0% → <3% duplication after the helper extraction + test mock refactor). Atomic credit+insert deferred to a SCRUM-863 follow-up — same issue exists in `/api/v1/anchor`; needs a consistent fix across both endpoints (CodeRabbit "Heavy lift").
+
+**Tests:** 36 in `anchor-pre-signing.test.ts` + 4 in `anchorCreditGate.test.ts`; full v1 suite 89 files / 828 tests green; worker `npm run typecheck` + `npm run lint` + root `lint:copy` clean.
+
+**Subtask state (parent SCRUM-1623):**
+- SCRUM-1629 [Spec] → Done (PR #679 merged 2026-05-03 22:00 UTC)
+- SCRUM-1630 [Implement] → Done (PR #680 merged 2026-05-04 00:23 UTC)
+- SCRUM-1631 [Verify] → In Progress (smoke test done, Confluence Anchor Lifecycle page update + this HANDOFF entry done in this session; full prod E2E anchor of a real contract PDF + Confluence sign-off still owed before final close)
+
+**Honest scope of what's still open under SCRUM-1623 [Verify]:** end-to-end smoke against the live endpoint with a real API key (this session smoked the auth gate + /health only, not the credit-deducting POST path), and final SCRUM-1623 parent close.
+
 ### 2026-05-03 (late) — Six-PR merge wave + worker deploy + Jira/Confluence sync
 
 Cleared the post-rate-limit backlog of Codex-owned PRs that needed merge prep. **Six PRs merged to main** in dependency-aware order, **worker auto-deployed** at SHA `3496ac4ba723bffa659101495bd2da3641e96df0` (Cloud Run revision `arkova-worker-00569-tik`, `/health` healthy: db / anchoring / kms ok), and **5 Jira stories + 4 subtasks** transitioned to Done with PR/SHA evidence. Two PRs held with explanatory comments (real blockers, not deferral).
