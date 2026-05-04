@@ -1,9 +1,9 @@
 # ZK Circuits
 
-The `extraction-proof` zero-knowledge circuit binds an AI extraction manifest
-to its source document without revealing document contents. It is consumed by
-`services/worker/src/ai/zk-proof.ts` to produce PLONK proofs that ship inside
-attestation evidence.
+The `extraction-proof` zero-knowledge circuit binds an AI extraction
+manifest to its source document without revealing document contents. It is
+consumed by `services/worker/src/ai/zk-proof.ts` to produce PLONK proofs
+that ship inside attestation evidence.
 
 ## Files
 
