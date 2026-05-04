@@ -161,6 +161,30 @@ export function classifyAlert(alert: string): DbHealthAlertType {
   return 'unclassified';
 }
 
+/**
+ * Pull contextual tags out of the alert string so the Sentry → Slack action
+ * can include them in the message. The alert-rules.json Slack actions reference
+ * `jobid` and `table_name` — without these tags, those references are no-ops.
+ *
+ * CodeRabbit P1 (PR #690): Slack actions referenced tags emitSentry never
+ * emitted. Either side could move; emitting wins because the values ARE in
+ * the alert text and showing "which jobid" / "which table" in the Slack
+ * payload saves an ops click.
+ */
+function extractContextTags(alert: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  // pg_cron jobid=N failed: ...
+  const jobidMatch = /^pg_cron jobid=(\d+)/.exec(alert);
+  if (jobidMatch) out.jobid = jobidMatch[1];
+  // Dead-tuple ratio on <table>: ...
+  const ratioMatch = /^Dead-tuple ratio on (\S+):/.exec(alert);
+  if (ratioMatch) out.table_name = ratioMatch[1];
+  // <table>: NNN dead tuples + autovacuum Xh ago ...
+  const autovacMatch = /^(\S+): [\d,]+ dead tuples \+ autovacuum/.exec(alert);
+  if (autovacMatch) out.table_name = autovacMatch[1];
+  return out;
+}
+
 function emitSentry(alerts: string[]): void {
   for (const a of alerts) {
     try {
@@ -170,6 +194,7 @@ function emitSentry(alerts: string[]): void {
           source: 'db-health-monitor',
           story: 'SCRUM-1254',
           alert_type: classifyAlert(a),
+          ...extractContextTags(a),
         },
       });
     } catch (err) {

@@ -178,4 +178,29 @@ describe('emitSentry tag emission (SCRUM-1308)', () => {
       expect(tags?.alert_type).toBeDefined();
     }
   });
+
+  // CodeRabbit P1 (PR #690): alert-rules.json Slack actions reference `jobid`
+  // and `table_name` tags. Without these on the captured event, the action
+  // can't render them. Pin the extraction so a future alert-text rewording
+  // surfaces here, not silently in #ops Slack messages.
+  it('extracts jobid + table_name from alert text into Sentry tags', async () => {
+    mockRpcs({
+      cronFailures: [{ jobid: 42, return_message: 'lock timeout', start_time: new Date().toISOString() }],
+      deadTuples: [
+        { schemaname: 'public', relname: 'anchors', n_live_tup: 1_000_000, n_dead_tup: 800_000, last_autovacuum: new Date().toISOString() },
+      ],
+    });
+    mockSmokeChain([]);
+
+    await runDbHealthMonitor();
+
+    const tagsByType: Record<string, Record<string, string>> = {};
+    for (const call of sentryCapture.mock.calls) {
+      const tags = getCallTags(call);
+      if (tags?.alert_type) tagsByType[tags.alert_type] = tags;
+    }
+
+    expect(tagsByType.pg_cron_failure?.jobid).toBe('42');
+    expect(tagsByType.dead_tuple_ratio?.table_name).toBe('anchors');
+  });
 });

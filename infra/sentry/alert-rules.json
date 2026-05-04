@@ -1,6 +1,6 @@
 {
   "$schema": "https://docs.sentry.io/api/alerts/issue-alert-rule/",
-  "comment": "Source of truth for the 5 Sentry alert rules in arkova-worker (SCRUM-1254 / R0-8 + SCRUM-1308 / R0-8-FU2). Sentry MCP cannot create issue alert rules; an admin opens https://arkova.sentry.io/alerts/rules/ and creates each rule below 1:1. Update this file alongside any UI change.",
+  "comment": "Source of truth for the 7 Sentry alert rules in arkova-worker (SCRUM-1254 / R0-8 + SCRUM-1308 / R0-8-FU2 + SCRUM-1247 / R0-1). Sentry MCP cannot create issue alert rules; an admin opens https://arkova.sentry.io/alerts/rules/ and creates each rule below 1:1. Update this file alongside any UI change.",
   "project": "arkova-worker",
   "rules": [
     {
@@ -15,7 +15,7 @@
         { "id": "sentry.rules.filters.tagged_event.TaggedEventFilter", "key": "alert_type", "match": "eq", "value": "pg_cron_failure" }
       ],
       "actions": [
-        { "id": "sentry.integrations.slack.notify_action.SlackNotifyServiceAction", "channel": "#ops", "tags": "story,job_name,jobid" }
+        { "id": "sentry.integrations.slack.notify_action.SlackNotifyServiceAction", "channel": "#ops", "tags": "story,jobid" }
       ],
       "frequency": 60
     },
