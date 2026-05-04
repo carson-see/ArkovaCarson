@@ -234,7 +234,12 @@ jobs:
           # applied via Supabase MCP under SCRUM-1661 / SCRUM-1667 [Verify]
           # subtasks once the pre-existing fresh-DB ordering issue at 0056 is
           # resolved (separate track). Remove from this list when applied.
-          exempt_regex='^(0033|0078|0162|.* 2|0022_seed_schema_alignment|0023_is_public_profile|0024_fix_search_path_revoke_anchor|0068b_submitted_status_and_confirmations|0088b_cle_templates|0135_ats_integrations|0175_fix_pipeline_stats_timeout|0180_fix_public_issuer_perf|0258_ark112_queue_public_id|0287_api_key_scope_vocabulary_canonical|0288_drive_processing_loop|0289_suborg_suspension)$'
+          # 0290_microsoft_graph_webhook_nonces: SCRUM-1138 R2 closeout (PR #695).
+          # Nonce table for the new Microsoft Graph webhook receiver. Worker reads
+          # MICROSOFT_GRAPH_CLIENT_STATE; receiver is gated OFF by default via
+          # ENABLE_MICROSOFT_GRAPH_WEBHOOK kill-switch, so the table can land before
+          # prod migration apply. Remove when applied to prod.
+          exempt_regex='^(0033|0078|0162|.* 2|0022_seed_schema_alignment|0023_is_public_profile|0024_fix_search_path_revoke_anchor|0068b_submitted_status_and_confirmations|0088b_cle_templates|0135_ats_integrations|0175_fix_pipeline_stats_timeout|0180_fix_public_issuer_perf|0258_ark112_queue_public_id|0287_api_key_scope_vocabulary_canonical|0288_drive_processing_loop|0289_suborg_suspension|0290_microsoft_graph_webhook_nonces)$'
           filtered_missing=$(echo "$missing" | grep -vE "$exempt_regex" || true)
 
           missing_count=$(echo "$filtered_missing" | grep -c . || true)

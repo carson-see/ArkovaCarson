@@ -61,6 +61,7 @@ interface RuleRow {
 }
 
 interface AnchorRow {
+  id: string;
   public_id: string | null;
   status: string;
   fingerprint: string;
@@ -68,7 +69,19 @@ interface AnchorRow {
   block_height: number | null;
   revoked_at: string | null;
   revocation_reason: string | null;
+  parent_anchor_id: string | null;
+  version_number: number;
 }
+
+interface LineagePreviousEntry {
+  public_id: string | null;
+  version_number: number;
+  status: string;
+  fingerprint: string;
+  created_at: string | null;
+}
+
+const LINEAGE_DEPTH_CAP = 50;
 
 async function loadExecution(executionId: string, orgId: string): Promise<ExecutionRow | null> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -127,7 +140,9 @@ async function loadAnchor(externalFileId: string | null, orgId: string): Promise
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data, error } = await (db as any)
     .from('anchors')
-    .select('public_id, status, fingerprint, bitcoin_tx_id, block_height, revoked_at, revocation_reason')
+    .select(
+      'id, public_id, status, fingerprint, bitcoin_tx_id, block_height, revoked_at, revocation_reason, parent_anchor_id, version_number',
+    )
     .eq('org_id', orgId)
     .eq('metadata->>external_file_id', externalFileId)
     .order('created_at', { ascending: false })
@@ -138,6 +153,73 @@ async function loadAnchor(externalFileId: string | null, orgId: string): Promise
     return null;
   }
   return (data as AnchorRow | null) ?? null;
+}
+
+// SCRUM-1593 AC4/AC5: surface the supersede chain. A child anchor that names
+// THIS anchor as its `parent_anchor_id` is the next version that replaces it.
+// Returns the child's `public_id` (org-scoped, never the internal UUID).
+async function loadSupersededByPublicId(anchorId: string, orgId: string): Promise<string | null> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data, error } = await (db as any)
+    .from('anchors')
+    .select('public_id')
+    .eq('org_id', orgId)
+    .eq('parent_anchor_id', anchorId)
+    .order('version_number', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) {
+    logger.warn({ error, anchorId }, 'proof-packet: supersede lookup failed');
+    return null;
+  }
+  return ((data as { public_id?: string | null } | null)?.public_id ?? null);
+}
+
+// SCRUM-1593 AC4/AC5: walk the parent_anchor_id chain to surface previous
+// versions. Each entry exposes ONLY the public-safe columns — the internal
+// UUIDs (`anchors.id`, `anchors.parent_anchor_id`) never reach the response.
+// Bounded by LINEAGE_DEPTH_CAP to prevent runaway recursion if a future
+// migration accidentally introduces a cycle (the immutability triggers in
+// migration 0032 should prevent it, but defense-in-depth).
+async function loadLineagePrevious(
+  startParentId: string | null,
+  orgId: string,
+): Promise<LineagePreviousEntry[]> {
+  const previous: LineagePreviousEntry[] = [];
+  let cursor: string | null = startParentId;
+  const seen = new Set<string>();
+  for (let depth = 0; cursor && depth < LINEAGE_DEPTH_CAP; depth += 1) {
+    if (seen.has(cursor)) break; // cycle guard
+    seen.add(cursor);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data, error } = await (db as any)
+      .from('anchors')
+      .select('public_id, status, fingerprint, parent_anchor_id, version_number, created_at')
+      .eq('org_id', orgId)
+      .eq('id', cursor)
+      .maybeSingle();
+    if (error || !data) {
+      if (error) logger.warn({ error, cursor }, 'proof-packet: lineage walk lookup failed');
+      break;
+    }
+    const row = data as {
+      public_id: string | null;
+      status: string;
+      fingerprint: string;
+      parent_anchor_id: string | null;
+      version_number: number;
+      created_at: string | null;
+    };
+    previous.push({
+      public_id: row.public_id,
+      version_number: row.version_number,
+      status: row.status,
+      fingerprint: row.fingerprint,
+      created_at: row.created_at,
+    });
+    cursor = row.parent_anchor_id;
+  }
+  return previous;
 }
 
 async function emitAudit(args: {
@@ -198,6 +280,15 @@ export async function handleProofPacketExport(
     ? `${VERIFICATION_BASE_URL}/${anchor.public_id}`
     : null;
 
+  // SCRUM-1593 AC4/AC5: walk the parent_anchor_id chain (previous versions)
+  // and look up the child that supersedes this anchor (next version).
+  const [previousLineage, supersededByPublicId] = anchor
+    ? await Promise.all([
+        loadLineagePrevious(anchor.parent_anchor_id, orgId),
+        loadSupersededByPublicId(anchor.id, orgId),
+      ])
+    : [[] as LineagePreviousEntry[], null as string | null];
+
   const packet = {
     schema_version: PROOF_PACKET_SCHEMA_VERSION,
     execution: {
@@ -256,10 +347,10 @@ export async function handleProofPacketExport(
           verification_uri: null,
         },
     lineage: {
-      previous: [],
+      previous: previousLineage,
       revoked_at: anchor?.revoked_at ?? null,
       revocation_reason: anchor?.revocation_reason ?? null,
-      superseded_by_public_id: null,
+      superseded_by_public_id: supersededByPublicId,
     },
     actor: { user_id: userId },
     generated_at: new Date().toISOString(),
