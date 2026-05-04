@@ -14,7 +14,6 @@
 
 ## Now
 
-<<<<<<< HEAD
 ### 2026-05-04 (late) — SCRUM-1308 alerts-as-code + SCRUM-1545 admin-pipeline-stats coverage backfill (this branch `claude/focused-fermi-fJPqI`)
 
 Engineering-only, no prod-state changes. PR pending. Stacked on `origin/main` at `e0c0ce1` (post HANDOFF entry for SCRUM-1623).
@@ -43,12 +42,12 @@ Engineering-only, no prod-state changes. PR pending. Stacked on `origin/main` at
 **PO Roadmap drift correction (Confluence v9, 2026-05-04):** [PO Roadmap](https://arkova.atlassian.net/wiki/spaces/A/pages/27591934) updated to mark 1279 + 1441 as "Needs Human, no branch on remote" and add **rule 11** to Conventions: every "code complete, awaiting push" claim must include `git ls-remote origin <branch>` evidence in the page edit's version-message. The 5 prior false claims (1279, 1441, 1545, 1276 follow-up, 1445) are now treated as actually-not-shipped beyond what's in main.
 
 **Bug log:** no functional bugs introduced or fixed this session — the false "code complete" claims were process drift, not engineering bugs, so logged via PO Roadmap rule 11 rather than Bug Tracker.
-=======
+
 ### 2026-05-04 — SCRUM-1647 Operational Launch Readiness PRD wave: 5 stories shipped ([PR #689](https://github.com/carson-see/ArkovaCarson/pull/689))
 
 **[PR #689](https://github.com/carson-see/ArkovaCarson/pull/689) squash-merged at sha `90b4b9c72c0b0913997be9c071ce6669dd31e589`** (deploy-worker.yml run [25319091055](https://github.com/carson-see/ArkovaCarson/actions/runs/25319091055) auto-triggered). Closes the May 1 Operational Launch Readiness PRD gaps for DocuSign org-wide capture, DocuSign rule-action modes, Drive folder-watch processing, sub-org active context, and sub-org suspension under the new [SCRUM-1647](https://arkova.atlassian.net/browse/SCRUM-1647) Org Hierarchy epic + the existing [SCRUM-1048](https://arkova.atlassian.net/browse/SCRUM-1048) CONNECTORS-V2 epic.
 
-**Migrations 0288 + 0289 applied to prod** via Supabase MCP `apply_migration` against `vzwyaatejekddvltxyye`. 0288 (`drive_processing_loop`) added `org_integrations.last_page_token` + `last_token_advanced_at` + `watch_renewal_failure_count` and the `drive_revision_ledger` table with UNIQUE(integration_id, file_id, revision_id) + RLS. 0289 (`suborg_suspension`) added `organizations.suspended` + `suspended_at` + `suspended_by` + `suspended_reason` and three SECURITY DEFINER RPCs: `is_org_suspended(uuid)`, `suspend_suborg(parent, sub, reason)`, `unsuspend_suborg(parent, sub)`. Both verified via information_schema.columns + pg_proc lookups post-apply.
+**Migrations 0288 + 0289 applied to prod** via Supabase MCP `apply_migration` against project_ref=`vzwyaatejekddvltxyye` on 2026-05-04 (apply_migration result `{"success":true}` for both). 0288 (`drive_processing_loop`) added `org_integrations.last_page_token` + `last_token_advanced_at` + `watch_renewal_failure_count` and the `drive_revision_ledger` table with UNIQUE(integration_id, file_id, revision_id) + RLS — verified via Supabase MCP `execute_sql` query against information_schema.columns and pg_class (returned `relrowsecurity=true` on `drive_revision_ledger`). 0289 (`suborg_suspension`) added `organizations.suspended` + `suspended_at` + `suspended_by` + `suspended_reason` and three SECURITY DEFINER RPCs (`is_org_suspended(uuid)`, `suspend_suborg(parent, sub, reason)`, `unsuspend_suborg(parent, sub)`) — verified via Supabase MCP `execute_sql` query against information_schema.columns + pg_proc. Deploy [run 25319091055](https://github.com/carson-see/ArkovaCarson/actions/runs/25319091055).
 
 **5 stories code-complete + 10 of 15 subtasks Done in Jira:**
 
@@ -72,7 +71,6 @@ Engineering-only, no prod-state changes. PR pending. Stacked on `origin/main` at
 - SCRUM-1664 follow-up PRs: page-by-page migration of the ~50 `profile.org_id` reads to `useActiveOrg`. Incremental.
 - SCRUM-1658 + SCRUM-1655: live E2E once DocuSign Connect (demo or prod) is configured for envelope-completed events.
 - Once #691 merges: delete branch `ojwfftwgyubkuvyjlapd` and recreate to verify the corrective migration unblocks fresh-DB builds.
->>>>>>> 29ffed0e (handoff(SCRUM-1647): record launch-readiness wave shipped + 0288/0289 prod-applied + 0056 fix in flight)
 
 ### 2026-05-04 — SCRUM-1623 [GME10.5-A] pre-signing contract anchor LIVE in prod ([PR #680](https://github.com/carson-see/ArkovaCarson/pull/680))
 
