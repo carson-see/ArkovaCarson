@@ -16,12 +16,24 @@ ATTEMPT_DEADLINE="${ATTEMPT_DEADLINE:-600s}"
 JOBS=(
   "monthly-allocation-rollover|0 0 1 * *|/jobs/monthly-allocation-rollover"
   "grace-expiry-sweep|*/15 * * * *|/jobs/grace-expiry-sweep"
+  # SCRUM-1308 (R0-8-FU2). Endpoint: services/worker/src/routes/cron.ts:1339
+  # Emits Sentry events on pg_cron failures, dead-tuple bloat, smoke fail-streaks.
+  # See docs/sentry/r0-8-drift-telemetry.md for the 5 alert rules to create
+  # in the Sentry UI (admin step — alert creation is not script-automatable).
+  "db-health-monitor|*/5 * * * *|/cron/db-health"
 )
 
 for JOB in "${JOBS[@]}"; do
   IFS='|' read -r NAME SCHEDULE ENDPOINT_PATH <<< "$JOB"
 
-  gcloud scheduler jobs create http "$NAME" \
+  # Idempotent — if the job already exists, update; else create.
+  if gcloud scheduler jobs describe "$NAME" --project="$PROJECT_ID" --location="$REGION" >/dev/null 2>&1; then
+    ACTION=update
+  else
+    ACTION=create
+  fi
+
+  gcloud scheduler jobs "$ACTION" http "$NAME" \
     --project="$PROJECT_ID" \
     --location="$REGION" \
     --schedule="$SCHEDULE" \
@@ -30,5 +42,8 @@ for JOB in "${JOBS[@]}"; do
     --http-method=POST \
     --oidc-service-account-email="$SCHEDULER_SERVICE_ACCOUNT" \
     --oidc-token-audience="$OIDC_AUDIENCE" \
-    --attempt-deadline="$ATTEMPT_DEADLINE"
+    --attempt-deadline="$ATTEMPT_DEADLINE" \
+    --max-retry-attempts=3 \
+    --min-backoff=10s \
+    --max-backoff=300s
 done
