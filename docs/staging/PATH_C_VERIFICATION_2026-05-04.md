@@ -1,8 +1,10 @@
 # Path C verification artifact — 2026-05-04
 
-> **Purpose:** durable record of the schema-object diff that gated [PR #700](https://github.com/carson-see/ArkovaCarson/pull/700). Per HANDOFF.md edit lint (R0-6 / SCRUM-1252), prod-state assertions in HANDOFF/PR descriptions need a concrete artifact link. This file is that artifact.
+> **Purpose:** durable record of the schema-equivalence check that gated [PR #700](https://github.com/carson-see/ArkovaCarson/pull/700). Per HANDOFF.md edit lint (R0-6 / SCRUM-1252), prod-state assertions in HANDOFF/PR descriptions need a concrete artifact link. This file is that artifact.
 >
 > Story: [SCRUM-1668](https://arkova.atlassian.net/browse/SCRUM-1668) (parent epic [SCRUM-1246](https://arkova.atlassian.net/browse/SCRUM-1246) RECOVERY). Confluence: https://arkova.atlassian.net/wiki/spaces/A/pages/37289985.
+
+> **What this is NOT:** this is **not** a §1.12 T2 soak. A real T2 soak runs the deploy worker (`arkova-worker-staging` Cloud Run service) against the staging DB under load (synthetic anchors, cron cycles, E2E flows). At the time of this artifact (2026-05-04) the deploy worker for staging was still being built by a parallel session. What is captured below is **schema equivalence only**: does applying the baseline to a fresh DB produce the same set of schema objects (tables, functions, policies, indexes, etc.) as prod? That answer is yes per §2 below. Whether the **application running on top of that schema behaves correctly** is a separate verification still owed once the staging worker is up.
 
 ## 1. Cutover INSERT against prod (`vzwyaatejekddvltxyye`)
 
