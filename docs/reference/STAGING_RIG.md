@@ -2,19 +2,52 @@
 
 > **Authoritative reference** for the `arkova-staging` rig. CLAUDE.md §1.11 points here. Every session should read this before touching `scripts/staging/*` or running a soak.
 
-## Live state (as of 2026-05-04)
+## Live state (as of 2026-05-04 evening)
 
+### Supabase project
 | Field | Value |
 |---|---|
-| Supabase project ref | `ujtlwnoqfhtitcmsnrpq` |
-| Project name | `arkova-staging` |
+| Project ref | `ujtlwnoqfhtitcmsnrpq` |
+| Name | `arkova-staging` |
 | Organization | `byhkazrpmivhcsuqjtva` (carson-see's Org) |
 | Region | `us-east-2` (matches prod for soak fidelity) |
 | URL | https://ujtlwnoqfhtitcmsnrpq.supabase.co |
-| Database host | `db.ujtlwnoqfhtitcmsnrpq.supabase.co` |
+| DB host | `db.ujtlwnoqfhtitcmsnrpq.supabase.co` |
 | Postgres version | 17.6.1.113 |
 | Cost | $10/month (Supabase Pro project; pause-when-idle if soaked rarely) |
-| Cloud Run worker | `arkova-worker-staging` (region `us-central1`, `--no-traffic` `--min-instances=0`) |
+| Schema state | 270 ledger rows, 101 public tables, 97 RLS-enabled, 279 functions, anchors 37 cols (replayed 2026-05-04) |
+
+### Cloud Run worker
+| Field | Value |
+|---|---|
+| Service name | `arkova-worker-staging` |
+| Region | `us-central1` |
+| Service URL | https://arkova-worker-staging-kvojbeutfa-uc.a.run.app |
+| Project-suffix URL | https://arkova-worker-staging-270018525501.us-central1.run.app |
+| Initial revision | `arkova-worker-staging-00002-xzq` (2026-05-04 — first revision after `NODE_ENV=production` fix) |
+| Image | reuses prod's pinned image `us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker:30e56792d1b1cdb8b2d658782d1e7d88994eaaa5` |
+| Service account | `270018525501-compute@developer.gserviceaccount.com` (default compute SA, same as prod) |
+| Auth | `--no-allow-unauthenticated` (IAM-protected; principals need `roles/run.invoker`) |
+| Scaling | `--min-instances=0 --max-instances=2` (cost-controlled; cold start acceptable for soak) |
+| Resources | `--memory=1Gi --cpu=1 --timeout=300` |
+
+### Staging-specific env-var deltas vs prod
+
+The staging worker reuses the prod Docker image but overrides env-vars + secrets:
+
+| Var | Prod | Staging | Why |
+|---|---|---|---|
+| `SUPABASE_URL` | `supabase-url` secret | `supabase-url-staging` secret | points at staging project URL |
+| `SUPABASE_SERVICE_ROLE_KEY` | `supabase-service-role-key` secret | `supabase-service-role-key-staging` secret | staging project's own key |
+| `SUPABASE_JWT_SECRET` | `supabase-jwt-secret` secret | (same as prod — Supabase Mgmt API doesn't expose the staging JWT secret) | acceptable; JWT-protected client paths aren't load-tested by the soak harness |
+| `NODE_ENV` | `production` | `production` (Zod rejects `staging`) | staging codepath = prod codepath, just different DB |
+| `USE_MOCKS` | `false` | **`true`** | chain client returns fake tx ids — zero real Bitcoin exposure from staging |
+| `ENABLE_PROD_NETWORK_ANCHORING` | `true` | **`false`** | belt-and-suspenders against the chain client |
+| `ENABLE_AI_FRAUD` | `true` | `false` | no need to burn Gemini budget on staging |
+| `ENABLE_AI_REPORTS` | `true` | `false` | same |
+| `BATCH_ANCHOR_MAX_SIZE` | `10000` | `100` | smaller batches make soak failures easier to diagnose |
+| `CORS_ALLOWED_ORIGINS` | full prod list | `https://app.arkova.ai` only | staging worker isn't called from any other origin during soak |
+| `CRON_OIDC_AUDIENCE` | prod URL | (not set; staging cron triggered manually during soak) | |
 
 ## Why a standalone project (not a Supabase preview branch)
 

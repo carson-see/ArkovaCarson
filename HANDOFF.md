@@ -14,6 +14,19 @@
 
 ## Now
 
+### 2026-05-04 (night) — `arkova-worker-staging` Cloud Run deployed (Path A rig phase 2 complete)
+
+After the rig DB came up earlier in the evening, Carson surfaced that the rig isn't actually usable until the Cloud Run worker is deployed against it. Built `arkova-worker-staging` as the second leg:
+
+* Service name `arkova-worker-staging`, region `us-central1`, image reusing prod's pinned tag `30e56792...d1e7d88994eaaa5`. URL: <https://arkova-worker-staging-kvojbeutfa-uc.a.run.app>. Active revision `arkova-worker-staging-00002-xzq`. Default compute service account (same as prod). `--no-allow-unauthenticated`, `--min-instances=0 --max-instances=2`, `1Gi` / `1 vCPU` / `timeout=300`.
+* New GCP Secret Manager entries (project `arkova1`): `supabase-url-staging` (https URL) + `supabase-service-role-key-staging` (219-char JWT). Both granted `roles/secretmanager.secretAccessor` to the compute SA.
+* Env-var deltas vs prod captured in [docs/reference/STAGING_RIG.md](./docs/reference/STAGING_RIG.md#staging-specific-env-var-deltas-vs-prod): `USE_MOCKS=true` (zero real Bitcoin exposure), `ENABLE_PROD_NETWORK_ANCHORING=false`, `ENABLE_AI_FRAUD=false`, `ENABLE_AI_REPORTS=false`, `BATCH_ANCHOR_MAX_SIZE=100` (smaller for diagnose-friendly soak failures), `NODE_ENV=production` (Zod schema in `services/worker/src/config.ts` rejects the literal value `staging` — using `production` is correct: staging is a prod-codepath environment with a different DB).
+* `SUPABASE_JWT_SECRET` reuses the prod secret because the Supabase Management API doesn't expose the staging project's JWT secret. Acceptable trade-off for soak — none of the soak harness paths are JWT-authenticated; JWT-protected client paths can be tested separately if/when needed.
+* First deploy attempt failed with `Container failed to start ... Invalid worker configuration: nodeEnv: Expected 'development' | 'test' | 'production', received 'staging'` because the worker's Zod env validation rejects `staging`. Re-deployed with `NODE_ENV=production` and the container came up clean — logs show `Worker service started`, `Upstash Redis idempotency store initialized`, `Sentry [Initialized for production]`, `Default STARTUP TCP probe succeeded`. All 5 readiness conditions report `True` per `gcloud run revisions describe`.
+* Health check from CLI returns 401 — that's the IAM gate at the Cloud Run frontend, not a worker problem (`--no-allow-unauthenticated` is correct posture; principals need `roles/run.invoker`). Granted `carson@arkova.ai` invoker; `gcloud auth print-identity-token --audiences=...` issuance for user accounts is the remaining wrinkle but irrelevant for the soak workflow (the worker's cron + webhook paths are internally triggered, not curl'd from outside).
+
+**Path A rig is now fully operational.** T2 soaks for PR #695 / #696 / #697 can run against this worker against the staging Supabase project. The next session can `claim.sh acquire` the rig + apply per-PR migrations via Supabase MCP `apply_migration` (NOT `db push --linked` per the prefix-collision gotcha documented in STAGING_RIG.md) + run the load harness for ≥4h + capture evidence.
+
 ### 2026-05-04 (late evening) — Unified PR-cleanup-and-hardening session (this branch `claude/handoff-2026-05-04-pr-cleanup-wave`)
 
 Session goal merged from two prompts: (1) drive 5 open PRs (#693/694/695/696/697) to ready+held-for-merge, (2) close-out PR #695 SCRUM-1135 fully (S5131, Cognitive Complexity, durable nonce+enqueue, PK widening) — Carson directed: do NOT add new "honest scope of what's NOT in repo" sections, close every gap in this PR. No prod state changed; engineering-only commits on feature branches; nothing merged to main.
