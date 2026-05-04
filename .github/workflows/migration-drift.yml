@@ -142,17 +142,42 @@ jobs:
           # ahead under timestamped Management API migrations.
           prod_migrations_jq_output=$(mktemp)
           prod_migrations_jq_error=$(mktemp)
+          # CodeRabbit Major from #674: harden the parser against
+          # malformed Management API rows. Without explicit checks,
+          # `(.version | tostring)` silently turns a missing/null
+          # `.version` into the literal string "null" and the gate
+          # happily produces garbage keys, then reports every local
+          # migration as missing.
+          #
+          # Row-level contract validation: payload must be an array;
+          # each row must have a non-empty string-or-number `version`.
+          # `-r` is preserved (not `-er`) so a legitimately empty array
+          # still produces empty output and is caught by the `-z`
+          # check below — that path is correct for fresh databases.
           if ! echo "$prod_response" | jq -r '
-            .[]
-            | (.version | tostring) as $version
-            | ((.name // "") | tostring) as $name
-            | if $name == "" or $name == "null" then
-                $version
-              else
-                $name,
-                (if $name | startswith($version + "_") then $name else "\($version)_\($name)" end),
-                ($name | sub("^scrum_[0-9]+_"; ""))
-              end
+            if type != "array" then
+              error("Supabase Management API returned non-array migrations payload")
+            else
+              .[]
+              | if type != "object" then
+                  error("migration row is not an object (got \(.))")
+                elif (.version | type) != "string" and (.version | type) != "number" then
+                  error("migration row missing required `version` (got \(.))")
+                elif (.version | tostring) == "" then
+                  error("migration row has empty `version` (row: \(.))")
+                elif has("name") and .name != null and (.name | type) != "string" then
+                  error("migration row `name` must be a string when present (got \(.))")
+                else . end
+              | (.version | tostring) as $version
+              | ((.name // "") | tostring) as $name
+              | if $name == "" or $name == "null" then
+                  $version
+                else
+                  $name,
+                  (if $name | startswith($version + "_") then $name else "\($version)_\($name)" end),
+                  ($name | sub("^scrum_[0-9]+_"; ""))
+                end
+            end
           ' > "$prod_migrations_jq_output" 2>"$prod_migrations_jq_error"; then
             echo "::error title=Migration drift check parse failure::Supabase Management API returned HTTP 200, but the migrations payload could not be parsed."
             echo "jq error preview:"
