@@ -71,6 +71,8 @@ import type { EvidenceItem } from '@/components/attestation/EvidenceUpload';
 import { BulkIssuanceWizard } from '@/components/attestation/BulkIssuanceWizard';
 import { Briefcase, GraduationCap, FileSpreadsheet } from 'lucide-react';
 import { CreatePortfolioDialog } from '@/components/portfolio';
+import { AttestationEvidencePayloadSchema } from '@/lib/validators';
+import { EVIDENCE_PAYLOAD_ERROR } from '@/lib/copy';
 
 const ATTESTATION_TYPES = [
   { value: 'VERIFICATION', label: 'Verification', desc: 'Verify a credential or document is authentic' },
@@ -124,6 +126,22 @@ interface Attestation {
 interface ClaimInput {
   claim: string;
   evidence: string;
+}
+
+function serializeEvidenceItems(items: EvidenceItem[]) {
+  const payload = items.map((item) => ({
+    evidence_type: item.evidenceType,
+    fingerprint: item.fingerprint,
+    mime: item.file.type || null,
+    size: item.file.size,
+    filename: item.filename,
+    description: item.description || null,
+  }));
+  const parsed = AttestationEvidencePayloadSchema.safeParse(payload);
+  if (!parsed.success) {
+    throw new Error(EVIDENCE_PAYLOAD_ERROR);
+  }
+  return parsed.data;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -298,6 +316,7 @@ export function AttestationsPage() {
       const workerUrl = WORKER_URL;
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) { setFormError('Authentication required'); setSubmitting(false); return; }
+      const evidencePayload = serializeEvidenceItems(evidenceItems);
 
       const response = await fetch(`${workerUrl}/api/v1/attestations`, {
         method: 'POST',
@@ -314,6 +333,7 @@ export function AttestationsPage() {
           claims: data.claims,
           summary: data.summary,
           evidence_fingerprint: evidenceItems.length > 0 ? evidenceItems[0].fingerprint : undefined,
+          evidence: evidencePayload,
         }),
       });
 
@@ -327,8 +347,8 @@ export function AttestationsPage() {
       resetForm();
       setShowForm(false);
       await fetchAttestations();
-    } catch {
-      setFormError('Network error');
+    } catch (error) {
+      setFormError(error instanceof Error && error.message === EVIDENCE_PAYLOAD_ERROR ? EVIDENCE_PAYLOAD_ERROR : 'Network error');
     } finally {
       setSubmitting(false);
     }
@@ -349,6 +369,7 @@ export function AttestationsPage() {
       const workerUrl = WORKER_URL;
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) { setFormError('Authentication required'); setSubmitting(false); return; }
+      const evidencePayload = serializeEvidenceItems(evidenceItems);
 
       const response = await fetch(`${workerUrl}/api/v1/attestations`, {
         method: 'POST',
@@ -369,6 +390,8 @@ export function AttestationsPage() {
           })),
           summary: summary.trim() || undefined,
           jurisdiction: jurisdiction.trim() || undefined,
+          evidence_fingerprint: evidenceItems.length > 0 ? evidenceItems[0].fingerprint : undefined,
+          evidence: evidencePayload,
           expires_at: expiresAt || undefined,
         }),
       });
@@ -383,8 +406,8 @@ export function AttestationsPage() {
       resetForm();
       setShowForm(false);
       await fetchAttestations();
-    } catch {
-      setFormError('Network error — please try again');
+    } catch (error) {
+      setFormError(error instanceof Error && error.message === EVIDENCE_PAYLOAD_ERROR ? EVIDENCE_PAYLOAD_ERROR : 'Network error — please try again');
     } finally {
       setSubmitting(false);
     }

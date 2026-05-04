@@ -22,6 +22,7 @@ import { z } from 'zod';
 
 // ─── Shared primitives ────────────────────────────────────────────────────
 const PublicId = z.string().min(3).max(120);
+const EvidencePublicId = z.string().regex(/^AEV-[A-F0-9]{32}$/, 'expected public evidence id');
 const Timestamp = z.string().datetime({ offset: true });
 
 // ─── /api/v1/keys — list / detail / create response shape ────────────────
@@ -52,16 +53,24 @@ export type KeyResponse = z.infer<typeof KeyResponseShape>;
 //
 // SCRUM-1271-B — drop internal `id` UUID. `attestation_id` is preserved
 // in v1 for back-compat but holds the same value as `public_id` (no UUID
-// surface). Evidence items also drop their internal id — the `fingerprint`
-// is the natural identifier.
+// surface). Evidence items keep a legacy `id` key, but it is the same public
+// evidence identifier as `public_id` and never the internal evidence UUID.
 export const AttestationEvidenceShape = z
   .object({
+    id: EvidencePublicId,
+    public_id: EvidencePublicId,
     evidence_type: z.string().max(60),
     description: z.string().nullable().optional(),
     fingerprint: z.string().regex(/^[a-fA-F0-9]{64}$/),
+    mime: z.string().nullable(),
+    size: z.number().int().nonnegative().nullable(),
     created_at: Timestamp,
   })
-  .strict();
+  .strict()
+  .refine((item) => item.id === item.public_id, {
+    message: 'evidence id must mirror public_id',
+    path: ['id'],
+  });
 
 export const AttestationCreateResponseShape = z
   .object({
@@ -72,6 +81,8 @@ export const AttestationCreateResponseShape = z
     fingerprint: z.string().regex(/^[a-fA-F0-9]{64}$/),
     created_at: Timestamp,
     verify_url: z.string().url(),
+    evidence_count: z.number().int().nonnegative().optional(),
+    warning: z.string().optional(),
   })
   .strict();
 

@@ -831,6 +831,21 @@ export const VERIFICATION_DISPLAY_LABELS = {
 } as const;
 
 // =============================================================================
+// PUBLIC ATTESTATION VERIFY
+// =============================================================================
+
+export const PUBLIC_ATTESTATION_VERIFY_LABELS = {
+  EVIDENCE: 'Evidence',
+  LINKED_CREDENTIAL: 'Linked Credential',
+  ATTESTOR_CREDENTIAL_CHAIN: 'Attestor Credential Chain',
+  VERIFY_CREDENTIAL: 'Verify Credential',
+  VERIFY: 'Verify',
+  BYTES_SUFFIX: ' bytes',
+} as const;
+
+export const EVIDENCE_PAYLOAD_ERROR = 'Evidence metadata is invalid. Check fingerprints, file names, and descriptions.';
+
+// =============================================================================
 // MY CREDENTIALS / RECIPIENT INBOX (UF-03)
 // =============================================================================
 

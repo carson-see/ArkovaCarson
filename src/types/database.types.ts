@@ -553,6 +553,9 @@ export type Database = {
           filename: string | null
           fingerprint: string
           id: string
+          mime_type: string | null
+          public_id: string
+          size_bytes: number | null
           uploaded_by: string
         }
         Insert: {
@@ -563,6 +566,9 @@ export type Database = {
           filename?: string | null
           fingerprint: string
           id?: string
+          mime_type?: string | null
+          public_id?: string
+          size_bytes?: number | null
           uploaded_by: string
         }
         Update: {
@@ -573,6 +579,9 @@ export type Database = {
           filename?: string | null
           fingerprint?: string
           id?: string
+          mime_type?: string | null
+          public_id?: string
+          size_bytes?: number | null
           uploaded_by?: string
         }
         Relationships: [

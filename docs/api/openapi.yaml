@@ -444,6 +444,13 @@ paths:
                 - claim: "GPA verified above 3.5 threshold"
               summary: "Degree conferral verified by issuing institution"
               jurisdiction: "US-CA"
+              evidence:
+                - evidence_type: "document"
+                  fingerprint: "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
+                  mime: "application/pdf"
+                  size: 48219
+                  filename: "registrar-record.pdf"
+                  description: "Registrar source record"
               expires_at: "2027-06-15T00:00:00Z"
       responses:
         "201":
@@ -453,11 +460,14 @@ paths:
               schema:
                 $ref: "#/components/schemas/CreateAttestationResponse"
               example:
-                public_id: "ATT-2026-VER-00042"
-                attestation_id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+                public_id: "ARK-ARKOVA-VER-00042"
+                attestation_id: "ARK-ARKOVA-VER-00042"
+                attestation_type: VERIFICATION
                 fingerprint: "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
                 status: "PENDING"
-                verify_url: "https://arkova-worker-270018525501.us-central1.run.app/api/v1/attestations/ATT-2026-VER-00042"
+                created_at: "2026-03-28T12:00:00Z"
+                verify_url: "https://arkova-worker-270018525501.us-central1.run.app/api/v1/attestations/ARK-ARKOVA-VER-00042"
+                evidence_count: 1
         "400":
           description: Validation error
           content:
@@ -531,7 +541,7 @@ paths:
                 $ref: "#/components/schemas/AttestationListResponse"
               example:
                 data:
-                  - public_id: "ATT-2026-VER-00042"
+                  - public_id: "ARK-ARKOVA-VER-00042"
                     attestation_type: VERIFICATION
                     status: SECURED
                     attester_name: "Acme University Registrar"
@@ -563,8 +573,19 @@ paths:
           required: true
           schema:
             type: string
-            example: ATT-2026-VER-00042
+            example: ARK-ARKOVA-VER-00042
           description: The attestation's public identifier
+        - name: include
+          in: query
+          required: false
+          style: form
+          explode: false
+          schema:
+            type: array
+            items:
+              type: string
+              enum: [credentials]
+          description: Optional comma-separated include list. Use credentials to include the attestor credential lineage, capped at the current credential plus two parent levels. Omit this parameter to receive the default response shape.
       responses:
         "200":
           description: Full attestation details
@@ -573,14 +594,11 @@ paths:
               schema:
                 $ref: "#/components/schemas/AttestationDetail"
               example:
-                public_id: "ATT-2026-VER-00042"
-                attestation_id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+                public_id: "ARK-ARKOVA-VER-00042"
                 attestation_type: VERIFICATION
                 status: SECURED
-                fingerprint: "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
-                subject:
-                  type: credential
-                  identifier: "ARK-2026-DEG-001"
+                subject_type: credential
+                subject_identifier: "ARK-2026-DEG-001"
                 attester:
                   name: "Acme University Registrar"
                   type: INSTITUTION
@@ -591,15 +609,48 @@ paths:
                   - claim: "GPA verified above 3.5 threshold"
                 summary: "Degree conferral verified by issuing institution"
                 jurisdiction: "US-CA"
+                fingerprint: "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
+                evidence_fingerprint: "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
+                evidence:
+                  - public_id: "AEV-ABCDEF1234567890ABCDEF1234567890"
+                    id: "AEV-ABCDEF1234567890ABCDEF1234567890"
+                    evidence_type: "document"
+                    description: "Registrar source record"
+                    fingerprint: "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
+                    mime: "application/pdf"
+                    size: 48219
+                    created_at: "2026-03-28T12:00:00Z"
+                evidence_count: 1
                 chain_proof:
                   tx_id: "abc123def456..."
                   block_height: 890123
-                  merkle_root: "f4a3b2c1..."
+                  timestamp: "2026-03-28T12:15:00Z"
                   explorer_url: "https://mempool.space/tx/abc123def456..."
-                created_at: "2026-03-28T12:00:00Z"
-                anchored_at: "2026-03-28T12:15:00Z"
+                linked_credential:
+                  public_id: "ARK-2026-DEG-001"
+                  credential_type: "DIPLOMA"
+                  verification_status: "VERIFIED"
+                  verify_url: "https://arkova-worker-270018525501.us-central1.run.app/api/v1/verify/ARK-2026-DEG-001"
+                attestor_credentials:
+                  - public_id: "ARK-2026-DEG-001"
+                    credential_type: "DIPLOMA"
+                    status: "SECURED"
+                    fingerprint: "f4a3b2c1f4a3b2c1f4a3b2c1f4a3b2c1f4a3b2c1f4a3b2c1f4a3b2c1f4a3b2c1"
+                    version_number: 3
+                    parent_public_id: "ARK-2025-DEG-001"
+                    is_current: true
+                    chain_proof:
+                      tx_id: "abc123def456..."
+                      block_height: 890123
+                      timestamp: "2026-03-28T12:15:00Z"
+                      explorer_url: "https://mempool.space/tx/abc123def456..."
+                    record_uri: "https://arkova-worker-270018525501.us-central1.run.app/api/v1/verify/ARK-2026-DEG-001"
+                issued_at: "2026-03-28T12:00:00Z"
                 expires_at: "2027-06-15T00:00:00Z"
                 revoked_at: null
+                revocation_reason: null
+                created_at: "2026-03-28T12:00:00Z"
+                verify_url: "https://arkova-worker-270018525501.us-central1.run.app/api/v1/attestations/ARK-ARKOVA-VER-00042"
         "404":
           description: Attestation not found
           content:
@@ -632,7 +683,7 @@ paths:
           required: true
           schema:
             type: string
-            example: ATT-2026-VER-00042
+            example: ARK-ARKOVA-VER-00042
           description: The attestation's public identifier
       requestBody:
         required: true
@@ -656,7 +707,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/RevokeAttestationResponse"
               example:
-                public_id: "ATT-2026-VER-00042"
+                public_id: "ARK-ARKOVA-VER-00042"
                 status: "REVOKED"
                 revoked_at: "2026-03-28T14:30:00Z"
         "400":
@@ -723,9 +774,9 @@ paths:
               $ref: "#/components/schemas/BatchVerifyAttestationsRequest"
             example:
               public_ids:
-                - "ATT-2026-VER-00042"
-                - "ATT-2026-END-00099"
-                - "ATT-2026-AUD-00007"
+                - "ARK-ARKOVA-VER-00042"
+                - "ARK-ARKOVA-END-00099"
+                - "ARK-ARKOVA-AUD-00007"
       responses:
         "200":
           description: Batch verification results
@@ -735,18 +786,18 @@ paths:
                 $ref: "#/components/schemas/BatchVerifyAttestationsResponse"
               example:
                 results:
-                  - public_id: "ATT-2026-VER-00042"
+                  - public_id: "ARK-ARKOVA-VER-00042"
                     status: SECURED
                     attestation_type: VERIFICATION
                     attester_name: "Acme University Registrar"
                     anchored_at: "2026-03-28T12:15:00Z"
-                  - public_id: "ATT-2026-END-00099"
+                  - public_id: "ARK-ARKOVA-END-00099"
                     status: EXPIRED
                     attestation_type: ENDORSEMENT
                     attester_name: "State Bar of California"
                     anchored_at: "2025-01-10T08:00:00Z"
                     expires_at: "2026-01-10T08:00:00Z"
-                  - public_id: "ATT-2026-AUD-00007"
+                  - public_id: "ARK-ARKOVA-AUD-00007"
                     error: "not_found"
                 summary:
                   total: 3
@@ -1099,8 +1150,12 @@ components:
 
     CreateAttestationRequest:
       type: object
-      required: [attestation_type, attester_name, attester_type, subject_type, subject_identifier, claims]
+      required: [attestation_type, attester_name, subject_identifier, claims]
       properties:
+        anchor_id:
+          type: string
+          format: uuid
+          description: Optional linked anchor UUID for owned credentials
         attestation_type:
           type: string
           enum: [VERIFICATION, ENDORSEMENT, AUDIT, APPROVAL, COMPLIANCE, SUPPLY_CHAIN, IDENTITY, WITNESS, CUSTOM]
@@ -1142,60 +1197,162 @@ components:
         jurisdiction:
           type: string
           description: Optional jurisdiction code (e.g., US-CA). Omitted when null.
+        evidence_fingerprint:
+          type: string
+          pattern: "^[a-fA-F0-9]{64}$"
+          description: SHA-256 fingerprint of the evidence artifact
         expires_at:
           type: string
           format: date-time
           description: Optional ISO 8601 expiration timestamp
+        evidence:
+          type: array
+          maxItems: 10
+          description: Optional public evidence metadata attached to the attestation. The API stores metadata and fingerprints only, not document bytes.
+          items:
+            type: object
+            additionalProperties: false
+            required: [evidence_type, fingerprint]
+            properties:
+              evidence_type:
+                type: string
+                maxLength: 60
+                default: document
+              fingerprint:
+                type: string
+                pattern: "^[a-fA-F0-9]{64}$"
+                description: SHA-256 fingerprint of the evidence artifact
+              mime:
+                type: string
+                nullable: true
+                description: MIME type of the evidence artifact, when known
+              size:
+                type: integer
+                nullable: true
+                minimum: 0
+                description: Evidence artifact size in bytes, when known
+              filename:
+                type: string
+                nullable: true
+                maxLength: 255
+                description: Public-safe evidence filename metadata only
+              description:
+                type: string
+                nullable: true
+                maxLength: 500
+                description: Public-safe evidence description metadata only
+        metadata:
+          $ref: "#/components/schemas/AttestationMetadataInput"
+
+    AttestationMetadataInput:
+      type: object
+      additionalProperties: false
+      description: Optional PII-stripped metadata. Accepted only when ENABLE_AI_EXTRACTION is enabled.
+      properties:
+        template:
+          type: string
+          maxLength: 80
+        credential_type:
+          type: string
+          maxLength: 100
+        credential_sub_type:
+          type: string
+          maxLength: 100
+        document_type:
+          type: string
+          maxLength: 100
+        issuer_name:
+          type: string
+          maxLength: 200
+        issuing_jurisdiction:
+          type: string
+          maxLength: 100
+        issued_date:
+          type: string
+          maxLength: 40
+        expiration_date:
+          type: string
+          maxLength: 40
+        extraction_provider:
+          type: string
+          maxLength: 80
+        extraction_confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+        metadata_fingerprint:
+          type: string
+          pattern: "^[a-fA-F0-9]{64}$"
 
     CreateAttestationResponse:
       type: object
-      required: [public_id, attestation_id, fingerprint, status, verify_url]
+      required: [public_id, attestation_id, attestation_type, fingerprint, status, created_at, verify_url]
       properties:
         public_id:
           type: string
           description: Public identifier for the attestation
         attestation_id:
           type: string
-          format: uuid
-          description: Internal attestation UUID
+          description: v1 back-compat alias for public_id; never an internal UUID
+        attestation_type:
+          type: string
+          enum: [VERIFICATION, ENDORSEMENT, AUDIT, APPROVAL, COMPLIANCE, SUPPLY_CHAIN, IDENTITY, WITNESS, CUSTOM]
         fingerprint:
           type: string
+          pattern: "^[a-fA-F0-9]{64}$"
           description: SHA-256 fingerprint of the attestation content
         status:
           type: string
           enum: [PENDING]
           description: Initial status (always PENDING)
+        created_at:
+          type: string
+          format: date-time
         verify_url:
           type: string
           format: uri
           description: Direct URL to verify this attestation
+        evidence_count:
+          type: integer
+          minimum: 0
+          description: Number of evidence metadata rows accepted with the request
+        warning:
+          type: string
+          description: Present only when the attestation was created but optional evidence metadata could not be attached
 
     AttestationDetail:
       type: object
-      required: [public_id, attestation_id, attestation_type, status, fingerprint, subject, attester, claims, created_at]
+      required: [public_id, attestation_type, status, subject_type, subject_identifier, attester, claims, evidence, evidence_count, created_at, verify_url]
       properties:
         public_id:
           type: string
-        attestation_id:
-          type: string
-          format: uuid
         attestation_type:
           type: string
           enum: [VERIFICATION, ENDORSEMENT, AUDIT, APPROVAL, COMPLIANCE, SUPPLY_CHAIN, IDENTITY, WITNESS, CUSTOM]
         status:
           type: string
           enum: [PENDING, SECURED, REVOKED, EXPIRED]
-        fingerprint:
+        subject_type:
+          type: string
+          enum: [credential, entity, process, asset]
+        subject_identifier:
           type: string
         subject:
           type: object
-          required: [type, identifier]
+          deprecated: true
+          description: Deprecated v1 compatibility object mirroring subject_type and subject_identifier.
           properties:
             type:
               type: string
               enum: [credential, entity, process, asset]
             identifier:
               type: string
+        fingerprint:
+          type: string
+          nullable: true
+        evidence_fingerprint:
+          type: string
+          nullable: true
         attester:
           type: object
           required: [name, type]
@@ -1222,6 +1379,13 @@ components:
         jurisdiction:
           type: string
           description: Omitted when null (frozen schema)
+        evidence:
+          type: array
+          items:
+            $ref: "#/components/schemas/AttestationEvidence"
+        evidence_count:
+          type: integer
+          minimum: 0
         chain_proof:
           type: object
           nullable: true
@@ -1231,18 +1395,50 @@ components:
               type: string
             block_height:
               type: integer
-            merkle_root:
+              nullable: true
+            timestamp:
               type: string
+              format: date-time
+              nullable: true
             explorer_url:
               type: string
               format: uri
-        created_at:
-          type: string
-          format: date-time
+              nullable: true
         anchored_at:
           type: string
           format: date-time
           nullable: true
+          description: Deprecated v1 alias for chain_proof.timestamp.
+        merkle_root:
+          type: string
+          nullable: true
+          description: Deprecated v1 alias for the chain Merkle root when available.
+        linked_credential:
+          type: object
+          nullable: true
+          properties:
+            public_id:
+              type: string
+            credential_type:
+              type: string
+              nullable: true
+            verification_status:
+              type: string
+            verify_url:
+              type: string
+              format: uri
+        attestor_credentials:
+          type: array
+          description: Present only when include=credentials is requested. Capped at the current linked credential plus two parent levels.
+          items:
+            $ref: "#/components/schemas/AttestorCredential"
+        issued_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
         expires_at:
           type: string
           format: date-time
@@ -1251,6 +1447,86 @@ components:
           type: string
           format: date-time
           nullable: true
+        revocation_reason:
+          type: string
+          nullable: true
+        verify_url:
+          type: string
+          format: uri
+
+    AttestationEvidence:
+      type: object
+      required: [id, public_id, evidence_type, fingerprint, created_at]
+      properties:
+        id:
+          type: string
+          pattern: "^AEV-[A-F0-9]{32}$"
+          description: v1 back-compat alias for public_id; never an internal UUID
+        public_id:
+          type: string
+          pattern: "^AEV-[A-F0-9]{32}$"
+          description: Public evidence metadata identifier
+        evidence_type:
+          type: string
+        description:
+          type: string
+          nullable: true
+        fingerprint:
+          type: string
+          pattern: "^[a-fA-F0-9]{64}$"
+        mime:
+          type: string
+          nullable: true
+        size:
+          type: integer
+          nullable: true
+          minimum: 0
+        created_at:
+          type: string
+          format: date-time
+
+    AttestorCredential:
+      type: object
+      required: [public_id, status, is_current, chain_proof, record_uri]
+      properties:
+        public_id:
+          type: string
+        credential_type:
+          type: string
+          nullable: true
+        status:
+          type: string
+        fingerprint:
+          type: string
+          nullable: true
+        version_number:
+          type: integer
+          nullable: true
+        parent_public_id:
+          type: string
+          nullable: true
+        is_current:
+          type: boolean
+        chain_proof:
+          type: object
+          nullable: true
+          properties:
+            tx_id:
+              type: string
+            block_height:
+              type: integer
+              nullable: true
+            timestamp:
+              type: string
+              format: date-time
+              nullable: true
+            explorer_url:
+              type: string
+              format: uri
+              nullable: true
+        record_uri:
+          type: string
+          format: uri
 
     AttestationListResponse:
       type: object

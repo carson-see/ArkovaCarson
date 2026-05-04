@@ -25,7 +25,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
-import { ROUTES } from '@/lib/routes';
+import { PUBLIC_ATTESTATION_VERIFY_LABELS } from '@/lib/copy';
+import { ROUTES, verifyPath } from '@/lib/routes';
 import { WORKER_URL } from '@/lib/workerClient';
 import { AnchorDisclaimerDark } from '@/components/anchor/AnchorDisclaimer';
 
@@ -45,6 +46,15 @@ interface AttestationVerifyData {
   jurisdiction: string | null;
   fingerprint: string | null;
   evidence_fingerprint: string | null;
+  evidence: Array<{
+    public_id: string;
+    evidence_type: string;
+    description: string | null;
+    fingerprint: string;
+    mime: string | null;
+    size: number | null;
+    created_at: string;
+  }>;
   evidence_count: number;
   chain_proof: {
     tx_id: string;
@@ -58,6 +68,22 @@ interface AttestationVerifyData {
     verification_status: string;
     verify_url: string;
   } | null;
+  attestor_credentials?: Array<{
+    public_id: string;
+    credential_type: string | null;
+    status: string;
+    fingerprint: string | null;
+    version_number: number | null;
+    parent_public_id: string | null;
+    is_current: boolean;
+    chain_proof: {
+      tx_id: string;
+      block_height: number | null;
+      timestamp: string | null;
+      explorer_url: string | null;
+    } | null;
+    record_uri: string;
+  }>;
   issued_at: string;
   expires_at: string | null;
   revoked_at: string | null;
@@ -89,7 +115,7 @@ export function PublicAttestationVerifyPage() {
      
     setError(null);
 
-    fetch(`${WORKER_URL}/api/v1/attestations/${encodeURIComponent(publicId)}`)
+    fetch(`${WORKER_URL}/api/v1/attestations/${encodeURIComponent(publicId)}?include=credentials`)
       .then(async (res) => {
         if (!res.ok) {
           const body = await res.json().catch(() => ({}));
@@ -360,6 +386,35 @@ export function PublicAttestationVerifyPage() {
                     </div>
                   )}
 
+                  {(attestation.evidence ?? []).length > 0 && (
+                    <div>
+                      <span className="text-[10px] uppercase tracking-wider text-[#bbc9cf] font-semibold">
+                        {PUBLIC_ATTESTATION_VERIFY_LABELS.EVIDENCE}
+                      </span>
+                      <div className="mt-2 space-y-2">
+                        {attestation.evidence.map((item) => (
+                          <div key={item.public_id} className="rounded border border-[#00d4ff]/10 bg-[#111820] p-3">
+                            <div className="flex items-center justify-between gap-3">
+                              <div className="min-w-0">
+                                <p className="text-sm text-[#dce3ed]">{item.evidence_type}</p>
+                                <code className="text-[10px] text-[#00d4ff] break-all">{item.fingerprint}</code>
+                              </div>
+                              <FileCheck className="h-4 w-4 shrink-0 text-emerald-400" />
+                            </div>
+                            <div className="mt-1 flex flex-wrap gap-2 text-[10px] text-[#bbc9cf]">
+                              <span>{item.public_id}</span>
+                              {item.mime && <span>{item.mime}</span>}
+                              {item.size !== null && <span>{item.size.toLocaleString()}{PUBLIC_ATTESTATION_VERIFY_LABELS.BYTES_SUFFIX}</span>}
+                            </div>
+                            {item.description && (
+                              <p className="mt-1 text-xs text-[#bbc9cf]">{item.description}</p>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
                   {/* Lifecycle */}
                   <Separator className="bg-[#bbc9cf]/10" />
                   <div className="text-xs text-[#bbc9cf] space-y-1">
@@ -378,14 +433,18 @@ export function PublicAttestationVerifyPage() {
               {attestation.linked_credential && (
                 <Card className="border-[#00d4ff]/10 bg-[#192028]">
                   <CardContent className="py-4">
-                    <span className="text-[10px] uppercase tracking-wider text-[#bbc9cf] font-semibold">Linked Credential</span>
+                    <span className="text-[10px] uppercase tracking-wider text-[#bbc9cf] font-semibold">
+                      {PUBLIC_ATTESTATION_VERIFY_LABELS.LINKED_CREDENTIAL}
+                    </span>
                     <div className="flex items-center justify-between mt-2">
                       <div>
                         <code className="text-sm font-mono text-[#00d4ff]">{attestation.linked_credential.public_id}</code>
                         <div className="flex items-center gap-2 mt-1">
-                          <Badge variant="secondary" className="text-[10px]">
-                            {attestation.linked_credential.credential_type}
-                          </Badge>
+                          {attestation.linked_credential.credential_type && (
+                            <Badge variant="secondary" className="text-[10px]">
+                              {attestation.linked_credential.credential_type}
+                            </Badge>
+                          )}
                           <Badge className={attestation.linked_credential.verification_status === 'VERIFIED'
                             ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
                             : 'bg-muted text-muted-foreground'}>
@@ -393,11 +452,48 @@ export function PublicAttestationVerifyPage() {
                           </Badge>
                         </div>
                       </div>
-                      <Link to={`/verify/${attestation.linked_credential.public_id}`}>
+                      <Link to={verifyPath(attestation.linked_credential.public_id)}>
                         <Button variant="outline" size="sm" className="border-[#00d4ff]/20 text-[#00d4ff]">
-                          Verify Credential
+                          {PUBLIC_ATTESTATION_VERIFY_LABELS.VERIFY_CREDENTIAL}
                         </Button>
                       </Link>
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+
+              {(attestation.attestor_credentials ?? []).length > 0 && (
+                <Card className="border-[#00d4ff]/10 bg-[#192028]">
+                  <CardContent className="py-4">
+                    <span className="text-[10px] uppercase tracking-wider text-[#bbc9cf] font-semibold">
+                      {PUBLIC_ATTESTATION_VERIFY_LABELS.ATTESTOR_CREDENTIAL_CHAIN}
+                    </span>
+                    <div className="mt-2 space-y-2">
+                      {(attestation.attestor_credentials ?? []).map((credential) => (
+                        <div key={credential.public_id} className="flex items-center justify-between gap-3 rounded border border-[#00d4ff]/10 bg-[#111820] p-3">
+                          <div className="min-w-0">
+                            <code className="text-xs font-mono text-[#00d4ff]">{credential.public_id}</code>
+                            <div className="mt-1 flex flex-wrap gap-2">
+                              {credential.credential_type && (
+                                <Badge variant="secondary" className="text-[10px]">{credential.credential_type}</Badge>
+                              )}
+                              <Badge className={credential.is_current
+                                ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+                                : 'bg-muted text-muted-foreground'}>
+                                {credential.status}
+                              </Badge>
+                              {credential.version_number !== null && (
+                                <Badge variant="outline" className="text-[10px]">v{credential.version_number}</Badge>
+                              )}
+                            </div>
+                          </div>
+                          <Link to={verifyPath(credential.public_id)}>
+                            <Button variant="outline" size="sm" className="border-[#00d4ff]/20 text-[#00d4ff]">
+                              {PUBLIC_ATTESTATION_VERIFY_LABELS.VERIFY}
+                            </Button>
+                          </Link>
+                        </div>
+                      ))}
                     </div>
                   </CardContent>
                 </Card>

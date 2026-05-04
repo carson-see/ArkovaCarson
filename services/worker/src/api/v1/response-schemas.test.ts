@@ -95,23 +95,42 @@ describe('SCRUM-1442 — v1 response schemas', () => {
     expect(result.success).toBe(false);
   });
 
-  it('AttestationEvidenceShape strips the internal id (no field for it)', () => {
+  it('AttestationEvidenceShape allows only a public id alias, never an internal id', () => {
     const ok = AttestationEvidenceShape.safeParse({
+      id: 'AEV-ABCDEF1234567890ABCDEF1234567890',
+      public_id: 'AEV-ABCDEF1234567890ABCDEF1234567890',
       evidence_type: 'photo',
       description: 'Selfie of credential',
       fingerprint: 'b'.repeat(64),
+      mime: 'image/png',
+      size: 1024,
       created_at: '2026-04-27T00:00:00Z',
     });
     expect(ok.success).toBe(true);
 
-    const withId = AttestationEvidenceShape.safeParse({
+    const withInternalId = AttestationEvidenceShape.safeParse({
       id: 'evidence-uuid',
+      public_id: 'AEV-ABCDEF1234567890ABCDEF1234567890',
       evidence_type: 'photo',
       description: 'Selfie',
       fingerprint: 'b'.repeat(64),
+      mime: null,
+      size: null,
       created_at: '2026-04-27T00:00:00Z',
     });
-    expect(withId.success).toBe(false);
+    expect(withInternalId.success).toBe(false);
+
+    const mirroredInternalId = AttestationEvidenceShape.safeParse({
+      id: 'evidence-uuid',
+      public_id: 'evidence-uuid',
+      evidence_type: 'photo',
+      description: 'Selfie',
+      fingerprint: 'b'.repeat(64),
+      mime: null,
+      size: null,
+      created_at: '2026-04-27T00:00:00Z',
+    });
+    expect(mirroredInternalId.success).toBe(false);
   });
 
   it('InsufficientCreditsShape pins the SCRUM-1170-B 402 body', () => {

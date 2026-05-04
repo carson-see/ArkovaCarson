@@ -1,10 +1,11 @@
 # agents.md — pages
-_Last updated: 2026-04-24_
+_Last updated: 2026-05-03_
 
 ## What This Folder Contains
 Top-level page components rendered by react-router-dom routes. Each page composes layout (AppShell) with domain-specific hooks and components.
 
 ## Recent Changes
+- 2026-05-03 SCRUM-897: `PublicAttestationVerifyPage.tsx` fetches `/api/v1/attestations/{publicId}?include=credentials` so public attestation verification can show evidence metadata and the bounded attestor credential chain. Evidence cards must use `public_id`, `fingerprint`, `mime`, and `size`; never render internal evidence UUIDs.
 - 2026-04-24 SCRUM-1102: `RulesPage.tsx` adds org-admin "Run now" and execution history actions for each rule. New user-visible strings live in `RULES_PAGE_COPY` (`src/lib/copy.ts`). Pattern: rule actions that enqueue work should show a queued toast with a history action rather than blocking for worker completion.
 - 2026-04-24 CONNECTORS-V2 ([SCRUM-1100](https://arkova.atlassian.net/browse/SCRUM-1100)): `RuleBuilderPage.tsx` — workspace file rules can now collect multiple Google Drive folder bindings into `trigger_config.drive_folders[]`. UI strings remain centralized in `src/lib/copy.ts`; frontend validation lives in `src/lib/ruleSchemas.ts` and the worker schema/evaluator remain authoritative.
 - 2026-04-23 CIBA-HARDEN-04 ([SCRUM-1117](https://arkova.atlassian.net/browse/SCRUM-1117)): `RuleBuilderPage.tsx` — extracted every user-visible string into `src/lib/copy.ts` (`RULE_TRIGGER_COPY`, `RULE_ACTION_COPY`, `RULE_WIZARD_LABELS`); added HMAC-handle field for the `FORWARD_TO_URL` action (worker schema requires `hmac_secret_handle: sm:...`); wired `nextStep()` + `handleSave()` to the new `src/lib/ruleSchemas.ts` frontend shadow so invalid cron / missing HMAC handle / empty NOTIFY channels fail client-side instead of POST-then-400. Pattern: any wizard POSTing to a Zod-validated worker endpoint should shadow the schema in `src/lib/` and pre-validate before advance.

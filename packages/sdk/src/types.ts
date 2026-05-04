@@ -238,6 +238,66 @@ export interface AnchorDetails extends RichVerificationFields {
   jurisdiction?: string | null;
 }
 
+export interface AttestationEvidence {
+  publicId: string;
+  evidenceType: string;
+  description: string | null;
+  fingerprint: string;
+  mime: string | null;
+  size: number | null;
+  createdAt: string;
+}
+
+export interface AttestorCredential {
+  publicId: string;
+  credentialType: string | null;
+  status: string;
+  fingerprint: string | null;
+  versionNumber: number | null;
+  parentPublicId: string | null;
+  isCurrent: boolean;
+  chainProof: {
+    txId: string;
+    blockHeight: number | null;
+    timestamp: string | null;
+    explorerUrl: string | null;
+  } | null;
+  recordUri: string;
+}
+
+export interface AttestationDetails {
+  publicId: string;
+  attestationType: string;
+  status: string;
+  subjectType: string;
+  subjectIdentifier: string;
+  attester: {
+    name: string;
+    type: string;
+    title: string | null;
+  };
+  claims: Array<{ claim: string; evidence?: string }>;
+  summary: string | null;
+  jurisdiction?: string | null;
+  fingerprint: string | null;
+  evidenceFingerprint: string | null;
+  evidence: AttestationEvidence[];
+  evidenceCount: number;
+  linkedCredential: {
+    publicId: string;
+    credentialType: string | null;
+    verificationStatus: string;
+    verifyUrl: string;
+  } | null;
+  attestorCredentials?: AttestorCredential[];
+  issuedAt: string;
+  expiresAt: string | null;
+  revokedAt: string | null;
+  revocationReason: string | null;
+  createdAt: string;
+  verifyUrl: string;
+}
+
 export interface OrganizationSummary {
   id: string;
   publicId: string;

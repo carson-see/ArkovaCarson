@@ -1,6 +1,6 @@
 # SCRUM-1597 Credential Evidence Migration Plan
 
-Status: draft for review  
+Status: draft for review
 Scope: schema, canonicalization, hash helper, public-safe metadata, and migration plan only.
 
 ## MVP Release Boundary

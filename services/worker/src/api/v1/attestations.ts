@@ -20,6 +20,7 @@ import { verifyAuthToken } from '../../auth.js';
 import { config } from '../../config.js';
 import { buildVerifyUrl, buildAttestationVerifyUrl } from '../../lib/urls.js';
 import { dispatchWebhookEvent } from '../../webhooks/delivery.js';
+import { isAIExtractionEnabled } from '../../middleware/aiFeatureGate.js';
 import { requireScope } from '../../middleware/apiKeyAuth.js';
 import { rateLimit } from '../../utils/rateLimit.js';
 import { toPublicAttestation } from './attestationResponse.js';
@@ -52,6 +53,29 @@ const ATTESTATION_TYPE_CODES: Record<string, string> = {
 
 // ─── Schemas ───────────────────────────────────────────────
 
+const EvidenceInputSchema = z.object({
+  evidence_type: z.string().trim().min(1).max(60).default('document'),
+  fingerprint: z.string().regex(/^[a-fA-F0-9]{64}$/),
+  mime: z.string().trim().max(255).nullable().optional(),
+  size: z.number().int().nonnegative().nullable().optional(),
+  filename: z.string().trim().max(255).nullable().optional(),
+  description: z.string().trim().max(500).nullable().optional(),
+});
+
+const AttestationMetadataSchema = z.object({
+  template: z.string().trim().max(80).optional(),
+  credential_type: z.string().trim().max(100).optional(),
+  credential_sub_type: z.string().trim().max(100).optional(),
+  document_type: z.string().trim().max(100).optional(),
+  issuer_name: z.string().trim().max(200).optional(),
+  issuing_jurisdiction: z.string().trim().max(100).optional(),
+  issued_date: z.string().trim().max(40).optional(),
+  expiration_date: z.string().trim().max(40).optional(),
+  extraction_provider: z.string().trim().max(80).optional(),
+  extraction_confidence: z.number().min(0).max(1).optional(),
+  metadata_fingerprint: z.string().regex(/^[a-fA-F0-9]{64}$/).optional(),
+}).strict();
+
 const CreateAttestationSchema = z.object({
   anchor_id: z.string().uuid().optional(),
   subject_type: z.enum(['credential', 'entity', 'process', 'asset']).default('credential'),
@@ -70,8 +94,9 @@ const CreateAttestationSchema = z.object({
   summary: z.string().max(2000).optional(),
   jurisdiction: z.string().max(100).optional(),
   evidence_fingerprint: z.string().regex(/^[a-fA-F0-9]{64}$/).optional(),
+  evidence: z.array(EvidenceInputSchema).max(10).optional(),
   expires_at: z.string().datetime().optional(),
-  metadata: z.record(z.unknown()).optional(),
+  metadata: AttestationMetadataSchema.optional(),
 });
 
 const ListAttestationsSchema = z.object({
@@ -84,6 +109,51 @@ const ListAttestationsSchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(25),
 });
+
+type EvidenceInput = z.infer<typeof EvidenceInputSchema>;
+type AttestationMetadata = z.infer<typeof AttestationMetadataSchema>;
+
+interface PublicEvidenceItem {
+  id: string;
+  public_id: string;
+  evidence_type: string;
+  description: string | null;
+  fingerprint: string;
+  mime: string | null;
+  size: number | null;
+  created_at: string;
+}
+
+interface AttachEvidenceResult {
+  error: unknown | null;
+  insertedCount: number;
+}
+
+interface AttestorCredential {
+  public_id: string;
+  credential_type: string | null;
+  status: string;
+  fingerprint: string | null;
+  version_number: number | null;
+  parent_public_id: string | null;
+  is_current: boolean;
+  chain_proof: {
+    tx_id: string;
+    block_height: number | null;
+    timestamp: string | null;
+    explorer_url: string | null;
+  } | null;
+  record_uri: string;
+}
+
+const MAX_ATTESTOR_CREDENTIAL_DEPTH = 2;
+const PUBLIC_ATTESTOR_CREDENTIAL_STATUSES = new Set([
+  'SECURED',
+  'CONFIRMED',
+  'REVOKED',
+  'EXPIRED',
+  'SUPERSEDED',
+]);
 
 // ─── Auth helper ───────────────────────────────────────────
 
@@ -106,6 +176,158 @@ async function requireAuth(req: Request, res: Response): Promise<string | null> 
   return userId;
 }
 
+export function parseAttestationIncludes(include: unknown): Set<string> {
+  const values = Array.isArray(include) ? include : [include];
+  return new Set(
+    values
+      .flatMap((value) => typeof value === 'string' ? value.split(',') : [])
+      .map((value) => value.trim().toLowerCase())
+      .filter(Boolean),
+  );
+}
+
+export function shouldIncludeAttestorCredentials(include: unknown): boolean {
+  return parseAttestationIncludes(include).has('credentials');
+}
+
+function evidencePublicId(): string {
+  return `AEV-${randomUUID().replace(/-/g, '').toUpperCase()}`;
+}
+
+function hasMetadataValues(metadata: AttestationMetadata | undefined): boolean {
+  return Boolean(metadata && Object.keys(metadata).length > 0);
+}
+
+async function attachEvidenceRows(
+  attestationId: string,
+  userId: string,
+  evidence: EvidenceInput[] | undefined,
+): Promise<AttachEvidenceResult> {
+  if (!evidence?.length) return { error: null, insertedCount: 0 };
+
+  const rows = evidence.map((item) => ({
+    public_id: evidencePublicId(),
+    attestation_id: attestationId,
+    evidence_type: item.evidence_type,
+    fingerprint: item.fingerprint,
+    filename: item.filename ?? null,
+    description: item.description ?? null,
+    mime_type: item.mime ?? null,
+    size_bytes: item.size ?? null,
+    uploaded_by: userId,
+  }));
+
+  const { error } = await dbAny.from('attestation_evidence').insert(rows);
+  return {
+    error: error ?? null,
+    insertedCount: error ? 0 : rows.length,
+  };
+}
+
+function numberOrNull(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function stringOrNull(value: unknown): string | null {
+  return typeof value === 'string' && value.length > 0 ? value : null;
+}
+
+function publicClaims(value: unknown): Array<{ claim: string; evidence?: string }> {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((item): item is Record<string, unknown> => (
+      typeof item === 'object'
+      && item !== null
+      && typeof (item as Record<string, unknown>).claim === 'string'
+    ))
+    .map((item) => ({
+      claim: item.claim as string,
+      ...(typeof item.evidence === 'string' ? { evidence: item.evidence } : {}),
+    }));
+}
+
+export function toPublicEvidenceItem(row: Record<string, unknown>): PublicEvidenceItem {
+  const publicId = String(row.public_id);
+  return {
+    id: publicId,
+    public_id: publicId,
+    evidence_type: String(row.evidence_type),
+    description: stringOrNull(row.description),
+    fingerprint: String(row.fingerprint),
+    mime: stringOrNull(row.mime_type),
+    size: numberOrNull(row.size_bytes),
+    created_at: String(row.created_at),
+  };
+}
+
+function explorerUrlForTx(txId: string | null): string | null {
+  if (!txId) return null;
+  const baseMap: Record<string, string> = {
+    signet: 'https://mempool.space/signet',
+    testnet: 'https://mempool.space/testnet',
+    mainnet: 'https://mempool.space',
+  };
+  return `${baseMap[config.bitcoinNetwork] ?? baseMap.signet}/tx/${txId}`;
+}
+
+export function capAttestorCredentialLineage(
+  lineage: Array<Record<string, unknown>>,
+  currentPublicId?: string,
+  maxDepth = MAX_ATTESTOR_CREDENTIAL_DEPTH,
+): AttestorCredential[] {
+  const shapedLineage = lineage.filter((item) => typeof item.public_id === 'string');
+  const currentRawIndex = currentPublicId
+    ? shapedLineage.findIndex((item) => item.public_id === currentPublicId)
+    : -1;
+  if (currentPublicId && currentRawIndex < 0) return [];
+  if (
+    currentRawIndex >= 0
+    && !PUBLIC_ATTESTOR_CREDENTIAL_STATUSES.has(String(shapedLineage[currentRawIndex].status))
+  ) {
+    return [];
+  }
+
+  const safeLineage = shapedLineage.filter((item) => (
+    typeof item.status === 'string'
+    && PUBLIC_ATTESTOR_CREDENTIAL_STATUSES.has(item.status)
+  ));
+  const currentIndex = currentPublicId
+    ? safeLineage.findIndex((item) => item.public_id === currentPublicId)
+    : -1;
+  const endExclusive = currentIndex >= 0 ? currentIndex + 1 : safeLineage.length;
+  const start = Math.max(0, endExclusive - (maxDepth + 1));
+  const capped = safeLineage.slice(start, endExclusive);
+  return capped.map((item) => {
+    const publicId = String(item.public_id);
+    const txId = stringOrNull(item.chain_tx_id);
+    return {
+      public_id: publicId,
+      credential_type: stringOrNull(item.credential_type),
+      status: String(item.status ?? 'UNKNOWN'),
+      fingerprint: stringOrNull(item.fingerprint),
+      version_number: numberOrNull(item.version_number),
+      parent_public_id: stringOrNull(item.parent_public_id),
+      is_current: Boolean(item.is_current),
+      chain_proof: txId ? {
+        tx_id: txId,
+        block_height: numberOrNull(item.chain_block_height),
+        timestamp: stringOrNull(item.chain_timestamp),
+        explorer_url: explorerUrlForTx(txId),
+      } : null,
+      record_uri: buildVerifyUrl(publicId),
+    };
+  });
+}
+
+async function loadAttestorCredentials(anchorPublicId: string): Promise<AttestorCredential[]> {
+  const { data, error } = await dbAny.rpc('get_anchor_lineage', { p_public_id: anchorPublicId });
+  if (error) {
+    logger.warn({ error, anchorPublicId }, 'Attestor credential lineage lookup failed');
+    return [];
+  }
+  return capAttestorCredentialLineage(Array.isArray(data) ? data : [], anchorPublicId);
+}
+
 // ─── POST /api/v1/attestations ─────────────────────────────
 
 router.post('/', async (req: Request, res: Response) => {
@@ -125,6 +347,14 @@ router.post('/', async (req: Request, res: Response) => {
   }
 
   const data = parsed.data;
+
+  if (hasMetadataValues(data.metadata) && !(await isAIExtractionEnabled())) {
+    res.status(503).json({
+      error: 'service_unavailable',
+      message: 'Attestation metadata is available only when ENABLE_AI_EXTRACTION is enabled',
+    });
+    return;
+  }
 
   try {
     // Look up attester's org + org_prefix
@@ -189,7 +419,7 @@ router.post('/', async (req: Request, res: Response) => {
           claims: data.claims,
           summary: data.summary ?? null,
           jurisdiction: data.jurisdiction ?? null,
-          evidence_fingerprint: data.evidence_fingerprint ?? null,
+          evidence_fingerprint: data.evidence_fingerprint ?? data.evidence?.[0]?.fingerprint ?? null,
           fingerprint,
           status: 'PENDING',
           expires_at: data.expires_at ?? null,
@@ -221,6 +451,12 @@ router.post('/', async (req: Request, res: Response) => {
       return;
     }
 
+    const evidenceResult = await attachEvidenceRows(attestation.id, userId, data.evidence);
+    const evidenceError = evidenceResult.error;
+    if (evidenceError) {
+      logger.error({ error: evidenceError, publicId: attestation.public_id }, 'Attestation evidence metadata insert failed');
+    }
+
     logger.info({ publicId: attestation.public_id, attestationType: data.attestation_type, attester: data.attester_name }, 'Attestation created');
 
     // PH2-AGENT-03: Dispatch webhook for attestation created — non-fatal
@@ -246,6 +482,8 @@ router.post('/', async (req: Request, res: Response) => {
       fingerprint: attestation.fingerprint,
       created_at: attestation.created_at,
       verify_url: buildAttestationVerifyUrl(attestation.public_id),
+      evidence_count: evidenceResult.insertedCount,
+      ...(evidenceError ? { warning: 'Attestation created, but evidence metadata could not be attached' } : {}),
     });
   } catch (error) {
     logger.error({ error }, 'Attestation creation failed');
@@ -257,6 +495,7 @@ router.post('/', async (req: Request, res: Response) => {
 
 router.get('/:publicId', async (req: Request, res: Response) => {
   const { publicId } = req.params;
+  const includeCredentials = shouldIncludeAttestorCredentials(req.query.include);
 
   if (!publicId || publicId.length < 3) {
     res.status(400).json({ error: 'Invalid attestation ID' });
@@ -293,22 +532,12 @@ router.get('/:publicId', async (req: Request, res: Response) => {
     const isExpired = attestation.expires_at && new Date(attestation.expires_at) < new Date();
     const effectiveStatus = isExpired && attestation.status === 'ACTIVE' ? 'EXPIRED' : attestation.status;
 
-    // Build explorer URL if anchored
-    let explorerUrl: string | null = null;
-    if (attestation.chain_tx_id) {
-      const network = config.bitcoinNetwork;
-      const baseMap: Record<string, string> = {
-        signet: 'https://mempool.space/signet',
-        testnet: 'https://mempool.space/testnet',
-        mainnet: 'https://mempool.space',
-      };
-      explorerUrl = `${baseMap[network] ?? baseMap.signet}/tx/${attestation.chain_tx_id}`;
-    }
+    const explorerUrl = explorerUrlForTx(attestation.chain_tx_id);
 
     // Fetch evidence items (limit 50)
     const { data: evidenceItems, count: evidenceCount } = await dbAny
       .from('attestation_evidence')
-      .select('id, evidence_type, description, fingerprint, created_at', { count: 'exact' })
+      .select('public_id, evidence_type, description, fingerprint, mime_type, size_bytes, created_at', { count: 'exact' })
       .eq('attestation_id', attestation.id)
       .order('created_at', { ascending: false })
       .limit(50);
@@ -331,6 +560,10 @@ router.get('/:publicId', async (req: Request, res: Response) => {
       }
     }
 
+    const attestorCredentials = includeCredentials && linkedCredential?.public_id
+      ? await loadAttestorCredentials(String(linkedCredential.public_id))
+      : undefined;
+
     res.json({
       public_id: attestation.public_id,
       attestation_type: attestation.attestation_type,
@@ -338,6 +571,10 @@ router.get('/:publicId', async (req: Request, res: Response) => {
       // Subject
       subject_type: attestation.subject_type,
       subject_identifier: attestation.subject_identifier,
+      subject: {
+        type: attestation.subject_type,
+        identifier: attestation.subject_identifier,
+      },
       // Attester
       attester: {
         name: attestation.attester_name,
@@ -345,20 +582,15 @@ router.get('/:publicId', async (req: Request, res: Response) => {
         title: attestation.attester_title,
       },
       // Claims
-      claims: attestation.claims,
+      claims: publicClaims(attestation.claims),
       summary: attestation.summary,
-      jurisdiction: attestation.jurisdiction,
+      ...(attestation.jurisdiction != null ? { jurisdiction: attestation.jurisdiction } : {}),
       // Proof
       fingerprint: attestation.fingerprint,
       evidence_fingerprint: attestation.evidence_fingerprint,
       // SCRUM-1271-B — drop the internal `id` UUID from evidence rows. The
       // fingerprint is the natural identifier for evidence items.
-      evidence: (evidenceItems ?? []).map((e: Record<string, unknown>) => ({
-        evidence_type: e.evidence_type,
-        description: e.description,
-        fingerprint: e.fingerprint,
-        created_at: e.created_at,
-      })),
+      evidence: (evidenceItems ?? []).map((e: Record<string, unknown>) => toPublicEvidenceItem(e)),
       evidence_count: evidenceCount ?? 0,
       // Chain proof
       chain_proof: attestation.chain_tx_id ? {
@@ -367,8 +599,11 @@ router.get('/:publicId', async (req: Request, res: Response) => {
         timestamp: attestation.chain_timestamp,
         explorer_url: explorerUrl,
       } : null,
+      anchored_at: attestation.chain_timestamp ?? null,
+      merkle_root: attestation.chain_merkle_root ?? null,
       // Linked credential
       linked_credential: linkedCredential,
+      ...(includeCredentials ? { attestor_credentials: attestorCredentials ?? [] } : {}),
       // Lifecycle
       issued_at: attestation.issued_at,
       expires_at: attestation.expires_at,
@@ -478,6 +713,14 @@ router.post('/batch-create', attestationBatchRateLimiter, async (req: Request, r
 
   const items = parsed.data.attestations;
 
+  if (items.some((item) => hasMetadataValues(item.metadata)) && !(await isAIExtractionEnabled())) {
+    res.status(503).json({
+      error: 'service_unavailable',
+      message: 'Attestation metadata is available only when ENABLE_AI_EXTRACTION is enabled',
+    });
+    return;
+  }
+
   try {
     // Look up attester's org + org_prefix (once for the whole batch)
     const { data: profile, error: profileError } = await db
@@ -507,6 +750,8 @@ router.post('/batch-create', attestationBatchRateLimiter, async (req: Request, r
       public_id?: string;
       status?: string;
       fingerprint?: string;
+      evidence_count?: number;
+      warning?: string;
       error?: string;
     }
 
@@ -553,7 +798,7 @@ router.post('/batch-create', attestationBatchRateLimiter, async (req: Request, r
             claims: data.claims,
             summary: data.summary ?? null,
             jurisdiction: data.jurisdiction ?? null,
-            evidence_fingerprint: data.evidence_fingerprint ?? null,
+            evidence_fingerprint: data.evidence_fingerprint ?? data.evidence?.[0]?.fingerprint ?? null,
             fingerprint,
             status: 'PENDING',
             expires_at: data.expires_at ?? null,
@@ -584,12 +829,19 @@ router.post('/batch-create', attestationBatchRateLimiter, async (req: Request, r
           error: insertError?.message ?? 'Failed to create attestation',
         });
       } else {
+        const evidenceResult = await attachEvidenceRows(attestation.id, userId, data.evidence);
+        const evidenceError = evidenceResult.error;
+        if (evidenceError) {
+          logger.error({ error: evidenceError, publicId: attestation.public_id }, 'Batch attestation evidence metadata insert failed');
+        }
         created++;
         results.push({
           index: idx,
           public_id: attestation.public_id,
           status: attestation.status,
           fingerprint: attestation.fingerprint,
+          ...(data.evidence?.length || evidenceResult.insertedCount ? { evidence_count: evidenceResult.insertedCount } : {}),
+          ...(evidenceError ? { warning: 'Attestation created, but evidence metadata could not be attached' } : {}),
         });
       }
     }
