@@ -14,6 +14,42 @@
 
 ## Now
 
+### 2026-05-03 (late) — Six-PR merge wave + worker deploy + Jira/Confluence sync
+
+Cleared the post-rate-limit backlog of Codex-owned PRs that needed merge prep. **Six PRs merged to main** in dependency-aware order, **worker auto-deployed** at SHA `3496ac4ba723bffa659101495bd2da3641e96df0` (Cloud Run revision `arkova-worker-00569-tik`, `/health` healthy: db / anchoring / kms ok), and **5 Jira stories + 4 subtasks** transitioned to Done with PR/SHA evidence. Two PRs held with explanatory comments (real blockers, not deferral).
+
+**Merged (in order):** [#674](https://github.com/carson-see/ArkovaCarson/pull/674) `6c7702ae` SCRUM-908 drift gate normalization → [#660](https://github.com/carson-see/ArkovaCarson/pull/660) `120c7032` launch feature flag hygiene → [#661](https://github.com/carson-see/ArkovaCarson/pull/661) `50ae8194` org credits queue scoping → [#670](https://github.com/carson-see/ArkovaCarson/pull/670) `e80f7326` SCRUM-1582/1583 v2 OpenAPI/MCP parity → [#672](https://github.com/carson-see/ArkovaCarson/pull/672) `46604cbb` SCRUM-1132 v2 detail endpoints → [#671](https://github.com/carson-see/ArkovaCarson/pull/671) `3496ac4b` SCRUM-1581 canonical scope vocabulary. Each used `gh pr merge --merge --admin` with explicit user authorization (review state was bot-only; CodeRabbit/SonarCloud findings either addressed or recorded as documented follow-up).
+
+**Held with PR comments — not merged:**
+
+* **[#675](https://github.com/carson-see/ArkovaCarson/pull/675) SCRUM-897 attestation evidence** — CI fails on `check-migration-prefix-uniqueness.ts` (SCRUM-1287 gate) because PR #671's now-in-main `0286_api_key_scope_vocabulary_canonical.sql` collides with this PR's `0286_attestation_evidence_public_metadata.sql`. Resolution requires either renumber + drift-gate exempt list addition, OR adding `0286` to the prefix-collision baseline grandfather list. Both options currently blocked from auto-fix; explanatory comment posted. **DDL is already applied to prod** — verified by Supabase `list_migrations` MCP tool returning ledger row `version: 20260503193753, name: 0286_attestation_evidence_public_metadata`.
+* **[#663](https://github.com/carson-see/ArkovaCarson/pull/663) SCRUM-1127/1132/1581/1584/1585 consolidation** — 73-file mega-PR; #670/#671/#672 already shipped its SCRUM-1132/1581/1582/1583 slices. Merging this against current main produces 8 conflicts in overlapping files (`mcp-server.ts`, `mcp-tools.ts`, `apiScopes.ts`, `copy.ts`, `openapi.ts`, `resourceDetails.{ts,test.ts}`, `mcp-tool-schemas.test.ts`, `security-tier1.test.ts`). Force-merging risks regressing the work that just landed. Explanatory comment posted recommending close + focused follow-ups for the genuinely-unique remaining content (Python SDK consolidation, agent API endpoints `agents.ts`/`agentSchemas.ts`/`agentTools.ts`, contract-drift guard, `agent-workflows.md` / `canonical-sources.md` doc pages).
+
+**Bot findings addressed inside merged PRs:**
+
+* #672 — handler refactor: `handleAgentGetOrganization` now uses a dedicated `org_members→organizations` PostgREST query (no longer filters `handleAgentListOrgs` output, no internal `id` leak, `description` included, no 50-row cap inheritance). `handleAgentVerify` strips `record_id` from the underlying verify shape; `verify_document` underlying handler also adds `public_id` to the SELECT and response. New `mcp-tools.test.ts` behavior tests for `get_record`/`get_document`/`get_fingerprint` assert no `id`/`record_id` keys. CodeRabbit Major remaining (architectural: "wire dedicated detail handlers, not legacy verify/get_anchor") is filed as follow-up — privacy concern is closed; this is the architectural cleanup.
+* #671 — README scope check tightened to use `extractMarkdownSectionCodeScopes(apiReadmeMarkdown, '### Canonical API key scope vocabulary')` instead of scanning the whole file. `extractMarkdownSectionCodeScopes` now stops at any heading at the same-or-higher level than the start heading (was hardcoded to stop at `## `). Regression test confirms non-canonical aliases outside the canonical README section don't false-trigger.
+* #674 — base/head diff is now merge-base + `--diff-filter=AMR` so a stale PR cannot be falsely blocked by base-branch drift. JQ-parser hardening for null/missing rows is in follow-up [#682](https://github.com/carson-see/ArkovaCarson/pull/682) (open; smoke-tested locally; awaiting CI + human review).
+
+**Phase 2 — migration ledger reconciliation.** Read-only query against the Supabase Management API confirms **all four in-flight migrations are already applied to prod** — Codex applied them out-of-band before this session. No new migrations need to be applied. Remaining ledger gap (between repo and prod) is intentional and bounded to the two held PRs above:
+
+| PR | Logical migration | Prod ledger row |
+| --- | --- | --- |
+| #663 (held) | `api_key_scope_vocabulary` | `version: 20260503192636, name: 0285_api_key_scope_vocabulary` |
+| #671 (merged) | `api_key_scope_vocabulary_canonical` | `version: 0285, name: api_key_scope_vocabulary_canonical` |
+| #675 (held) | `attestation_evidence_public_metadata` | `version: 20260503193753, name: 0286_attestation_evidence_public_metadata` |
+| main #679 | `contract_anchor_credential_types` | `version: 20260503220655, name: contract_anchor_credential_types` |
+
+**Phase 3 — worker deploy.** `.github/workflows/deploy-worker.yml` triggered automatically on each merge with `services/worker/**` changes. Final landed revision is `arkova-worker-00569-tik`; canary→full traffic confirmed in the deploy log (`Promote canary to full traffic` step shows `100% LATEST`); `/health` returns `{"status":"healthy","git_sha":"3496ac4b...","checks":{"database":"ok","anchoring":"ok","kms":"ok"}}`.
+
+**Phase 4 — Jira/Confluence sync.**
+
+* **Closed (Done):** SCRUM-1572, SCRUM-1573, SCRUM-1574, SCRUM-1575 (subtasks of SCRUM-1132); SCRUM-1132 (parent); SCRUM-1582; SCRUM-1583. Each got a sync comment with PR + merge SHA + revision + AC mapping before transition.
+* **Comment posted, transition deferred:** SCRUM-1581 (sandbox blocked the `Done` transition; comment is in place documenting that all AC + DoD are met — needs human flip). SCRUM-908 (intentionally held in Needs Human until follow-up #682 merges and AC4 branch-protection requirement is admin-confirmed).
+* **Confluence Identity & Access Control** ([page 655425](https://arkova.atlassian.net/wiki/spaces/A/pages/655425)) updated to revision 5 with a new dated 2026-05-03 section covering all four bodies of work + four new endpoint rows in the API Endpoints table + change log entry. Prior sections preserved verbatim.
+
+**Process notes for next session:** The `--admin` merge of #672 went out while CodeRabbit's review-of-the-new-commit was still pending — landed bot Changes-Requested *after* the merge. The privacy/security concerns CodeRabbit flagged were already addressed in that commit; the architectural concerns are filed as follow-up. New rule for the rest of this session: no `--admin` while ANY check (including bot reviews) is pending. The earlier wave (#674/#660/#661/#670) and #671 were green at admin-merge time.
+
 ### 2026-05-03 — SCRUM-1629 [Spec] GME10.5-A pre-signing contract anchor — API + DB shape ([PR #679](https://github.com/carson-see/ArkovaCarson/pull/679), branch `claude/scrum-1623-pre-signing-anchor-spec`)
 
 First subtask of SCRUM-1623 (GME10.5-A pre-signing contract anchor endpoint), umbrella SCRUM-863. [Spec]-only PR — pins the frozen v1 shape (CLAUDE.md §1.8) of `POST /api/v1/contracts/anchor-pre-signing` so [Build] (SCRUM-1631) is a swap-in implementation.
@@ -794,3 +830,7 @@ _Last refreshed: 2026-04-27 by claude — claims verified against gcloud/MCP/CI 
 ---
 
 _Last refreshed: 2026-04-28 by claude — claims verified against gcloud/MCP/CI output (PR #643 merged at sha d7c4924729f2697defab0967e9f28152bf0254a7; CI run https://github.com/carson-see/ArkovaCarson/actions/runs/25080754922 on commit e2605635 passed all required checks; gh CLI confirmed mergedAt 2026-04-28T22:59:57Z; migration 0280 applied to prod via Supabase MCP applyMigration returned success and post-apply count of bare auth.uid in pg-policies returned 0; migration 0279 applied to prod prior to PR open; vitest 365 of 365 files and 4700 of 4700 tests passing locally on commit e2605635 with coverage thresholds met; lint scripts/ci/check-rls-auth-uid-wrap.ts returned no bare auth.uid in RLS policies; Jira transitions confirmed via JQL — SCRUM-1278 plus 1280 plus 1297 status Done, SCRUM-1276 plus 1289 status In Progress with honest-scope closure comments)._
+
+---
+
+_Last refreshed: 2026-05-03 by claude — claims verified against gcloud/MCP/CI output (full verification artifact list — six PR merge SHAs, gcloud Cloud Run revision, /health curl output with git SHA, Supabase Management API list-migrations ledger rows, Jira transition confirmations, Confluence revision number — appears verbatim in PR #683 description and commit body)._
