@@ -83,6 +83,64 @@ CREATE TABLE IF NOT EXISTS memberships (
 CREATE INDEX IF NOT EXISTS idx_memberships_user_id ON memberships(user_id);
 CREATE INDEX IF NOT EXISTS idx_memberships_org_id ON memberships(org_id);
 
+-- 4a. RLS + FORCE on memberships per CLAUDE.md §1.4 — every multi-tenant
+--     table ships RLS-secured-by-default. Prod's existing memberships row
+--     already has relrowsecurity=true and relforcerowsecurity=true (verified
+--     2026-05-04 via pg_class lookup against vzwyaatejekddvltxyye), so these
+--     ALTERs are a no-op there. On a fresh DB, they enforce the same posture
+--     immediately after table creation. CodeRabbit ASSERTIVE flagged the
+--     original missing RLS on PR #691 review.
+ALTER TABLE memberships ENABLE ROW LEVEL SECURITY;
+ALTER TABLE memberships FORCE ROW LEVEL SECURITY;
+
+-- Policies — wrapped in DO blocks because CREATE POLICY has no native
+-- IF NOT EXISTS variant. Idempotent on prod (where named policies from
+-- later migrations may already exist) and correct for fresh DBs.
+DO $do$
+BEGIN
+  -- Self-read: a user can see their own membership rows.
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'memberships' AND policyname = 'memberships_select_self'
+  ) THEN
+    CREATE POLICY memberships_select_self ON memberships
+      FOR SELECT TO authenticated
+      USING (user_id = (SELECT auth.uid()));
+  END IF;
+
+  -- Org members can see other members of orgs they belong to. The subquery
+  -- form (SELECT auth.uid()) follows the migration 0280 RLS-cache idiom.
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'memberships' AND policyname = 'memberships_select_org_members'
+  ) THEN
+    CREATE POLICY memberships_select_org_members ON memberships
+      FOR SELECT TO authenticated
+      USING (
+        EXISTS (
+          SELECT 1 FROM memberships m_self
+          WHERE m_self.user_id = (SELECT auth.uid())
+            AND m_self.org_id = memberships.org_id
+        )
+      );
+  END IF;
+
+  -- Service role full access — worker writes here on signup auto-link
+  -- and admin invitation flows.
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = 'memberships' AND policyname = 'memberships_service_all'
+  ) THEN
+    CREATE POLICY memberships_service_all ON memberships
+      FOR ALL TO service_role
+      USING (true) WITH CHECK (true);
+  END IF;
+END
+$do$;
+
+GRANT SELECT ON memberships TO authenticated;
+GRANT ALL ON memberships TO service_role;
+
 -- 5. Constraints from 0022 — only added when columns exist (which they will
 --    after step 3). DO blocks let us add the CHECK constraint conditionally
 --    so a re-run on a DB where it already exists doesn't error.
