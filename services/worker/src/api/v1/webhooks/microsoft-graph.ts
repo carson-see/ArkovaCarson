@@ -195,6 +195,105 @@ async function enqueueRuleEvent(args: {
 const VALIDATION_TOKEN_MAX_LEN = 1024;
 const VALIDATION_TOKEN_SAFE_RE = /^[A-Za-z0-9_\-.~+/=]+$/;
 
+// Per-item processing extracted from the route handler so the handler
+// stays under SonarCloud's Cognitive Complexity 15 limit. Returns a
+// discriminated result; the handler accumulates outcomes and decides
+// the HTTP response from the aggregate.
+interface ProcessItemContext {
+  expectedClientState: string;
+  payloadHash: string;
+}
+type ProcessItemResult =
+  | { outcome: 'enqueued'; ruleEventId: string }
+  | { outcome: 'skipped'; reason: string; subscriptionId: string; lookupFailed?: boolean };
+
+async function processGraphChangeItem(
+  rawItem: unknown,
+  ctx: ProcessItemContext,
+): Promise<ProcessItemResult> {
+  const parsedItem = GraphChangeItemSchema.safeParse(rawItem);
+  if (!parsedItem.success) {
+    const subId =
+      typeof (rawItem as { subscriptionId?: unknown })?.subscriptionId === 'string'
+        ? ((rawItem as { subscriptionId: string }).subscriptionId)
+        : 'unknown';
+    return { outcome: 'skipped', reason: 'malformed_item', subscriptionId: subId };
+  }
+  const item = parsedItem.data;
+  if (!item.clientState || !constantTimeEqual(item.clientState, ctx.expectedClientState)) {
+    return { outcome: 'skipped', reason: 'invalid_client_state', subscriptionId: item.subscriptionId };
+  }
+  const lookup = await findIntegrationBySubscription(item.subscriptionId);
+  if (lookup.lookupFailed) {
+    return {
+      outcome: 'skipped',
+      reason: 'lookup_failed',
+      subscriptionId: item.subscriptionId,
+      lookupFailed: true,
+    };
+  }
+  if (!lookup.row) {
+    return { outcome: 'skipped', reason: 'unknown_subscription', subscriptionId: item.subscriptionId };
+  }
+  const nonce = await recordNonce({
+    subscriptionId: item.subscriptionId,
+    resourceId: item.resourceData.id,
+    changeType: item.changeType,
+  });
+  if (nonce.duplicate) {
+    return { outcome: 'skipped', reason: 'duplicate', subscriptionId: item.subscriptionId };
+  }
+  if (nonce.failed) {
+    return { outcome: 'skipped', reason: 'nonce_failed', subscriptionId: item.subscriptionId };
+  }
+  const ruleEventId = await enqueueRuleEvent({
+    integration: lookup.row,
+    item,
+    payloadHash: ctx.payloadHash,
+  });
+  if (!ruleEventId) {
+    return { outcome: 'skipped', reason: 'enqueue_failed', subscriptionId: item.subscriptionId };
+  }
+  return { outcome: 'enqueued', ruleEventId };
+}
+
+function handleValidationHandshake(rawToken: string, res: Response): void {
+  if (
+    rawToken.length === 0 ||
+    rawToken.length > VALIDATION_TOKEN_MAX_LEN ||
+    !VALIDATION_TOKEN_SAFE_RE.test(rawToken)
+  ) {
+    res.status(400).type('text/plain').send('invalid_validation_token');
+    return;
+  }
+  // NOSONAR S5131: Echo of validation token is REQUIRED by the Microsoft
+  // Graph subscription-create handshake contract — Graph rejects the
+  // subscription if we don't return the exact bytes within 10 seconds.
+  // The reflection surface is contained because (a) we already validated
+  // the token shape (URL-safe charset, ≤1024 chars) above, (b) the
+  // Content-Type is `text/plain` (browsers won't interpret as HTML/JS),
+  // and (c) this endpoint has no session cookies / auth context to
+  // exfiltrate. Spec: https://learn.microsoft.com/en-us/graph/webhooks#notification-endpoint-validation
+  res.status(200).type('text/plain').send(rawToken); // NOSONAR
+}
+
+function parseNotificationBody(rawBody: Buffer): { items: GraphChangeItem[] } | { error: string } {
+  try {
+    const parsed = JSON.parse(rawBody.toString('utf8')) as { value?: GraphChangeItem[] };
+    const items = Array.isArray(parsed.value) ? parsed.value : null;
+    if (!items || items.length === 0) {
+      return { error: 'value[] missing or empty' };
+    }
+    return { items };
+  } catch (err) {
+    logger.warn(
+      { err: err instanceof Error ? err.message : String(err) },
+      'MS Graph webhook: malformed body',
+    );
+    return { error: 'invalid_json' };
+  }
+}
+
 microsoftGraphWebhookRouter.post('/', async (req: Request, res: Response) => {
   // Validation handshake: Graph creates a subscription by POSTing a body-less
   // request whose only signal is `?validationToken=...`. Echo it back as
@@ -202,23 +301,7 @@ microsoftGraphWebhookRouter.post('/', async (req: Request, res: Response) => {
   const rawToken =
     typeof req.query.validationToken === 'string' ? req.query.validationToken : null;
   if (rawToken !== null) {
-    if (
-      rawToken.length === 0 ||
-      rawToken.length > VALIDATION_TOKEN_MAX_LEN ||
-      !VALIDATION_TOKEN_SAFE_RE.test(rawToken)
-    ) {
-      res.status(400).type('text/plain').send('invalid_validation_token');
-      return;
-    }
-    // NOSONAR S5131: Echo of validation token is REQUIRED by the Microsoft
-    // Graph subscription-create handshake contract — Graph rejects the
-    // subscription if we don't return the exact bytes within 10 seconds.
-    // The reflection surface is contained because (a) we already validated
-    // the token shape (URL-safe charset, ≤1024 chars) above, (b) the
-    // Content-Type is `text/plain` (browsers won't interpret as HTML/JS),
-    // and (c) this endpoint has no session cookies / auth context to
-    // exfiltrate. Spec: https://learn.microsoft.com/en-us/graph/webhooks#notification-endpoint-validation
-    res.status(200).type('text/plain').send(rawToken); // NOSONAR
+    handleValidationHandshake(rawToken, res);
     return;
   }
 
@@ -236,21 +319,14 @@ microsoftGraphWebhookRouter.post('/', async (req: Request, res: Response) => {
     return;
   }
 
-  let parsed: { value?: GraphChangeItem[] };
-  try {
-    parsed = JSON.parse(rawBody.toString('utf8'));
-  } catch (err) {
-    logger.warn(
-      { err: err instanceof Error ? err.message : String(err) },
-      'MS Graph webhook: malformed body',
-    );
-    res.status(400).json({ error: { code: 'invalid_body' } });
-    return;
-  }
-
-  const items = Array.isArray(parsed.value) ? parsed.value : null;
-  if (!items || items.length === 0) {
-    res.status(400).json({ error: { code: 'invalid_body', message: 'value[] missing or empty' } });
+  const parsedBody = parseNotificationBody(rawBody);
+  if ('error' in parsedBody) {
+    res.status(400).json({
+      error: {
+        code: 'invalid_body',
+        ...(parsedBody.error !== 'invalid_json' && { message: parsedBody.error }),
+      },
+    });
     return;
   }
 
@@ -259,62 +335,19 @@ microsoftGraphWebhookRouter.post('/', async (req: Request, res: Response) => {
   const skipped: { reason: string; subscriptionId: string }[] = [];
   let anyLookupFailed = false;
 
-  for (const rawItem of items) {
-    // Zod gate: malformed shape, wrong types, or out-of-bounds strings are
-    // dropped here BEFORE any DB writes. Replaces the previous ad-hoc
-    // presence check so e.g. a numeric `subscriptionId` or a 100KB resource
-    // string can't reach `recordNonce` / `enqueue_rule_event`.
-    const parsed = GraphChangeItemSchema.safeParse(rawItem);
-    if (!parsed.success) {
-      const subId =
-        typeof (rawItem as { subscriptionId?: unknown })?.subscriptionId === 'string'
-          ? ((rawItem as { subscriptionId: string }).subscriptionId)
-          : 'unknown';
-      skipped.push({ reason: 'malformed_item', subscriptionId: subId });
-      continue;
+  for (const rawItem of parsedBody.items) {
+    const result = await processGraphChangeItem(rawItem, { expectedClientState, payloadHash });
+    if (result.outcome === 'enqueued') {
+      enqueued.push(result.ruleEventId);
+    } else {
+      if (result.lookupFailed) anyLookupFailed = true;
+      skipped.push({ reason: result.reason, subscriptionId: result.subscriptionId });
     }
-    const item = parsed.data;
-    if (!item.clientState || !constantTimeEqual(item.clientState, expectedClientState)) {
-      skipped.push({ reason: 'invalid_client_state', subscriptionId: item.subscriptionId });
-      continue;
-    }
-    const lookup = await findIntegrationBySubscription(item.subscriptionId);
-    if (lookup.lookupFailed) {
-      // Don't ACK a transient DB outage as `unknown_subscription`. Mark for
-      // 503 escalation below so Graph keeps retrying.
-      anyLookupFailed = true;
-      skipped.push({ reason: 'lookup_failed', subscriptionId: item.subscriptionId });
-      continue;
-    }
-    const integration = lookup.row;
-    if (!integration) {
-      skipped.push({ reason: 'unknown_subscription', subscriptionId: item.subscriptionId });
-      continue;
-    }
-    const nonce = await recordNonce({
-      subscriptionId: item.subscriptionId,
-      resourceId: item.resourceData.id,
-      changeType: item.changeType,
-    });
-    if (nonce.duplicate) {
-      skipped.push({ reason: 'duplicate', subscriptionId: item.subscriptionId });
-      continue;
-    }
-    if (nonce.failed) {
-      skipped.push({ reason: 'nonce_failed', subscriptionId: item.subscriptionId });
-      continue;
-    }
-    const ruleEventId = await enqueueRuleEvent({ integration, item, payloadHash });
-    if (ruleEventId) enqueued.push(ruleEventId);
-    else skipped.push({ reason: 'enqueue_failed', subscriptionId: item.subscriptionId });
   }
 
-  // If at least one item was enqueued, return 202 — Graph treats 2xx as ack
-  // and stops retrying. If the entire batch failed authentication (clientState
-  // mismatch on every item), surface 401 so the caller knows it's not us
-  // silently dropping their notifications. If a transient DB lookup failed
-  // and nothing was enqueued, surface 503 so Graph retries the batch — nonce
-  // dedupe handles the double-delivery on retry.
+  // Response decision: 401 if every item failed clientState (auth signal),
+  // 503 if at least one transient DB lookup failed and nothing got through
+  // (so Graph retries; nonce dedupe handles double-delivery), otherwise 202.
   const allRejected =
     enqueued.length === 0 &&
     skipped.length > 0 &&
