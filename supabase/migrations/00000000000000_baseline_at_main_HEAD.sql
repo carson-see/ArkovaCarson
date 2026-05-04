@@ -89,135 +89,144 @@ COMMENT ON SCHEMA "public" IS 'standard public schema';
 
 
 
-CREATE TYPE "public"."agent_status" AS ENUM (
-    'active',
-    'suspended',
-    'revoked'
-);
-
-
+DO $do$ BEGIN
+    CREATE TYPE "public"."agent_status" AS ENUM (
+        'active',
+        'suspended',
+        'revoked'
+    );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $do$;
 ALTER TYPE "public"."agent_status" OWNER TO "postgres";
 
 
-CREATE TYPE "public"."agent_type" AS ENUM (
-    'llm_agent',
-    'ats_integration',
-    'hr_platform',
-    'compliance_tool',
-    'custom'
-);
-
-
+DO $do$ BEGIN
+    CREATE TYPE "public"."agent_type" AS ENUM (
+        'llm_agent',
+        'ats_integration',
+        'hr_platform',
+        'compliance_tool',
+        'custom'
+    );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $do$;
 ALTER TYPE "public"."agent_type" OWNER TO "postgres";
 
 
-CREATE TYPE "public"."ai_report_status" AS ENUM (
-    'QUEUED',
-    'GENERATING',
-    'COMPLETE',
-    'FAILED'
-);
-
-
+DO $do$ BEGIN
+    CREATE TYPE "public"."ai_report_status" AS ENUM (
+        'QUEUED',
+        'GENERATING',
+        'COMPLETE',
+        'FAILED'
+    );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $do$;
 ALTER TYPE "public"."ai_report_status" OWNER TO "postgres";
 
 
-CREATE TYPE "public"."anchor_status" AS ENUM (
-    'PENDING',
-    'SECURED',
-    'REVOKED',
-    'EXPIRED',
-    'SUBMITTED',
-    'BROADCASTING',
-    'SUPERSEDED',
-    'PENDING_RESOLUTION'
-);
-
-
+DO $do$ BEGIN
+    CREATE TYPE "public"."anchor_status" AS ENUM (
+        'PENDING',
+        'SECURED',
+        'REVOKED',
+        'EXPIRED',
+        'SUBMITTED',
+        'BROADCASTING',
+        'SUPERSEDED',
+        'PENDING_RESOLUTION'
+    );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $do$;
 ALTER TYPE "public"."anchor_status" OWNER TO "postgres";
 
 
-CREATE TYPE "public"."api_key_rate_limit_tier" AS ENUM (
-    'free',
-    'paid',
-    'custom'
-);
-
-
+DO $do$ BEGIN
+    CREATE TYPE "public"."api_key_rate_limit_tier" AS ENUM (
+        'free',
+        'paid',
+        'custom'
+    );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $do$;
 ALTER TYPE "public"."api_key_rate_limit_tier" OWNER TO "postgres";
 
 
-CREATE TYPE "public"."attestation_status" AS ENUM (
-    'DRAFT',
-    'PENDING',
-    'ACTIVE',
-    'REVOKED',
-    'EXPIRED',
-    'CHALLENGED'
-);
-
-
+DO $do$ BEGIN
+    CREATE TYPE "public"."attestation_status" AS ENUM (
+        'DRAFT',
+        'PENDING',
+        'ACTIVE',
+        'REVOKED',
+        'EXPIRED',
+        'CHALLENGED'
+    );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $do$;
 ALTER TYPE "public"."attestation_status" OWNER TO "postgres";
 
 
-CREATE TYPE "public"."attestation_type" AS ENUM (
-    'VERIFICATION',
-    'ENDORSEMENT',
-    'AUDIT',
-    'APPROVAL',
-    'WITNESS',
-    'COMPLIANCE',
-    'SUPPLY_CHAIN',
-    'IDENTITY',
-    'CUSTOM'
-);
-
-
+DO $do$ BEGIN
+    CREATE TYPE "public"."attestation_type" AS ENUM (
+        'VERIFICATION',
+        'ENDORSEMENT',
+        'AUDIT',
+        'APPROVAL',
+        'WITNESS',
+        'COMPLIANCE',
+        'SUPPLY_CHAIN',
+        'IDENTITY',
+        'CUSTOM'
+    );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $do$;
 ALTER TYPE "public"."attestation_type" OWNER TO "postgres";
 
 
-CREATE TYPE "public"."attester_type" AS ENUM (
-    'INSTITUTION',
-    'CORPORATION',
-    'INDIVIDUAL',
-    'REGULATORY',
-    'THIRD_PARTY'
-);
-
-
+DO $do$ BEGIN
+    CREATE TYPE "public"."attester_type" AS ENUM (
+        'INSTITUTION',
+        'CORPORATION',
+        'INDIVIDUAL',
+        'REGULATORY',
+        'THIRD_PARTY'
+    );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $do$;
 ALTER TYPE "public"."attester_type" OWNER TO "postgres";
 
 
-CREATE TYPE "public"."credential_type" AS ENUM (
-    'DEGREE',
-    'LICENSE',
-    'CERTIFICATE',
-    'TRANSCRIPT',
-    'PROFESSIONAL',
-    'OTHER',
-    'CLE',
-    'SEC_FILING',
-    'PATENT',
-    'REGULATION',
-    'PUBLICATION',
-    'BADGE',
-    'ATTESTATION',
-    'FINANCIAL',
-    'LEGAL',
-    'INSURANCE',
-    'CHARITY',
-    'FINANCIAL_ADVISOR',
-    'BUSINESS_ENTITY',
-    'RESUME',
-    'MEDICAL',
-    'MILITARY',
-    'IDENTITY',
-    'ACCREDITATION',
-    'CONTRACT_PRESIGNING',
-    'CONTRACT_POSTSIGNING'
-);
-
-
+DO $do$ BEGIN
+    CREATE TYPE "public"."credential_type" AS ENUM (
+        'DEGREE',
+        'LICENSE',
+        'CERTIFICATE',
+        'TRANSCRIPT',
+        'PROFESSIONAL',
+        'OTHER',
+        'CLE',
+        'SEC_FILING',
+        'PATENT',
+        'REGULATION',
+        'PUBLICATION',
+        'BADGE',
+        'ATTESTATION',
+        'FINANCIAL',
+        'LEGAL',
+        'INSURANCE',
+        'CHARITY',
+        'FINANCIAL_ADVISOR',
+        'BUSINESS_ENTITY',
+        'RESUME',
+        'MEDICAL',
+        'MILITARY',
+        'IDENTITY',
+        'ACCREDITATION',
+        'CONTRACT_PRESIGNING',
+        'CONTRACT_POSTSIGNING'
+    );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $do$;
 ALTER TYPE "public"."credential_type" OWNER TO "postgres";
 
 
@@ -225,107 +234,115 @@ COMMENT ON TYPE "public"."credential_type" IS 'Classification of anchored creden
 
 
 
-CREATE TYPE "public"."credit_transaction_type" AS ENUM (
-    'ALLOCATION',
-    'PURCHASE',
-    'DEDUCTION',
-    'EXPIRY',
-    'REFUND'
-);
-
-
+DO $do$ BEGIN
+    CREATE TYPE "public"."credit_transaction_type" AS ENUM (
+        'ALLOCATION',
+        'PURCHASE',
+        'DEDUCTION',
+        'EXPIRY',
+        'REFUND'
+    );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $do$;
 ALTER TYPE "public"."credit_transaction_type" OWNER TO "postgres";
 
 
-CREATE TYPE "public"."ferpa_exception_category" AS ENUM (
-    '99.31(a)(1)',
-    '99.31(a)(2)',
-    '99.31(a)(3)',
-    '99.31(a)(4)',
-    '99.31(a)(5)',
-    '99.31(a)(6)',
-    '99.31(a)(7)',
-    '99.31(a)(8)',
-    '99.31(a)(9)',
-    '99.31(a)(10)',
-    '99.31(a)(11)',
-    '99.31(a)(12)',
-    'other'
-);
-
-
+DO $do$ BEGIN
+    CREATE TYPE "public"."ferpa_exception_category" AS ENUM (
+        '99.31(a)(1)',
+        '99.31(a)(2)',
+        '99.31(a)(3)',
+        '99.31(a)(4)',
+        '99.31(a)(5)',
+        '99.31(a)(6)',
+        '99.31(a)(7)',
+        '99.31(a)(8)',
+        '99.31(a)(9)',
+        '99.31(a)(10)',
+        '99.31(a)(11)',
+        '99.31(a)(12)',
+        'other'
+    );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $do$;
 ALTER TYPE "public"."ferpa_exception_category" OWNER TO "postgres";
 
 
-CREATE TYPE "public"."ferpa_party_type" AS ENUM (
-    'school_official',
-    'employer',
-    'government',
-    'accreditor',
-    'financial_aid',
-    'research',
-    'health_safety',
-    'subpoena',
-    'directory_info',
-    'other'
-);
-
-
+DO $do$ BEGIN
+    CREATE TYPE "public"."ferpa_party_type" AS ENUM (
+        'school_official',
+        'employer',
+        'government',
+        'accreditor',
+        'financial_aid',
+        'research',
+        'health_safety',
+        'subpoena',
+        'directory_info',
+        'other'
+    );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $do$;
 ALTER TYPE "public"."ferpa_party_type" OWNER TO "postgres";
 
 
-CREATE TYPE "public"."grc_platform" AS ENUM (
-    'vanta',
-    'drata',
-    'anecdotes'
-);
-
-
+DO $do$ BEGIN
+    CREATE TYPE "public"."grc_platform" AS ENUM (
+        'vanta',
+        'drata',
+        'anecdotes'
+    );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $do$;
 ALTER TYPE "public"."grc_platform" OWNER TO "postgres";
 
 
-CREATE TYPE "public"."grc_sync_status" AS ENUM (
-    'pending',
-    'syncing',
-    'success',
-    'failed'
-);
-
-
+DO $do$ BEGIN
+    CREATE TYPE "public"."grc_sync_status" AS ENUM (
+        'pending',
+        'syncing',
+        'success',
+        'failed'
+    );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $do$;
 ALTER TYPE "public"."grc_sync_status" OWNER TO "postgres";
 
 
-CREATE TYPE "public"."integrity_level" AS ENUM (
-    'HIGH',
-    'MEDIUM',
-    'LOW',
-    'FLAGGED'
-);
-
-
+DO $do$ BEGIN
+    CREATE TYPE "public"."integrity_level" AS ENUM (
+        'HIGH',
+        'MEDIUM',
+        'LOW',
+        'FLAGGED'
+    );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $do$;
 ALTER TYPE "public"."integrity_level" OWNER TO "postgres";
 
 
-CREATE TYPE "public"."notification_type" AS ENUM (
-    'queue_run_completed',
-    'rule_fired',
-    'version_available_for_review',
-    'treasury_alert',
-    'anchor_revoked'
-);
-
-
+DO $do$ BEGIN
+    CREATE TYPE "public"."notification_type" AS ENUM (
+        'queue_run_completed',
+        'rule_fired',
+        'version_available_for_review',
+        'treasury_alert',
+        'anchor_revoked'
+    );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $do$;
 ALTER TYPE "public"."notification_type" OWNER TO "postgres";
 
 
-CREATE TYPE "public"."org_member_role" AS ENUM (
-    'owner',
-    'admin',
-    'member',
-    'compliance_officer'
-);
-
-
+DO $do$ BEGIN
+    CREATE TYPE "public"."org_member_role" AS ENUM (
+        'owner',
+        'admin',
+        'member',
+        'compliance_officer'
+    );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $do$;
 ALTER TYPE "public"."org_member_role" OWNER TO "postgres";
 
 
@@ -333,131 +350,142 @@ COMMENT ON TYPE "public"."org_member_role" IS 'owner = created the org, admin = 
 
 
 
-CREATE TYPE "public"."org_rule_action_type" AS ENUM (
-    'AUTO_ANCHOR',
-    'FAST_TRACK_ANCHOR',
-    'QUEUE_FOR_REVIEW',
-    'FLAG_COLLISION',
-    'NOTIFY',
-    'FORWARD_TO_URL'
-);
-
-
+DO $do$ BEGIN
+    CREATE TYPE "public"."org_rule_action_type" AS ENUM (
+        'AUTO_ANCHOR',
+        'FAST_TRACK_ANCHOR',
+        'QUEUE_FOR_REVIEW',
+        'FLAG_COLLISION',
+        'NOTIFY',
+        'FORWARD_TO_URL'
+    );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $do$;
 ALTER TYPE "public"."org_rule_action_type" OWNER TO "postgres";
 
 
-CREATE TYPE "public"."org_rule_event_status" AS ENUM (
-    'PENDING',
-    'CLAIMED',
-    'PROCESSED',
-    'FAILED'
-);
-
-
+DO $do$ BEGIN
+    CREATE TYPE "public"."org_rule_event_status" AS ENUM (
+        'PENDING',
+        'CLAIMED',
+        'PROCESSED',
+        'FAILED'
+    );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $do$;
 ALTER TYPE "public"."org_rule_event_status" OWNER TO "postgres";
 
 
-CREATE TYPE "public"."org_rule_execution_status" AS ENUM (
-    'PENDING',
-    'RUNNING',
-    'SUCCEEDED',
-    'FAILED',
-    'RETRYING',
-    'DLQ'
-);
-
-
+DO $do$ BEGIN
+    CREATE TYPE "public"."org_rule_execution_status" AS ENUM (
+        'PENDING',
+        'RUNNING',
+        'SUCCEEDED',
+        'FAILED',
+        'RETRYING',
+        'DLQ'
+    );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $do$;
 ALTER TYPE "public"."org_rule_execution_status" OWNER TO "postgres";
 
 
-CREATE TYPE "public"."org_rule_trigger_type" AS ENUM (
-    'ESIGN_COMPLETED',
-    'WORKSPACE_FILE_MODIFIED',
-    'CONNECTOR_DOCUMENT_RECEIVED',
-    'MANUAL_UPLOAD',
-    'SCHEDULED_CRON',
-    'QUEUE_DIGEST',
-    'EMAIL_INTAKE'
-);
-
-
+DO $do$ BEGIN
+    CREATE TYPE "public"."org_rule_trigger_type" AS ENUM (
+        'ESIGN_COMPLETED',
+        'WORKSPACE_FILE_MODIFIED',
+        'CONNECTOR_DOCUMENT_RECEIVED',
+        'MANUAL_UPLOAD',
+        'SCHEDULED_CRON',
+        'QUEUE_DIGEST',
+        'EMAIL_INTAKE'
+    );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $do$;
 ALTER TYPE "public"."org_rule_trigger_type" OWNER TO "postgres";
 
 
-CREATE TYPE "public"."org_tier" AS ENUM (
-    'FREE',
-    'PAID',
-    'ENTERPRISE',
-    'SMALL_BUSINESS',
-    'MEDIUM_BUSINESS'
-);
-
-
+DO $do$ BEGIN
+    CREATE TYPE "public"."org_tier" AS ENUM (
+        'FREE',
+        'PAID',
+        'ENTERPRISE',
+        'SMALL_BUSINESS',
+        'MEDIUM_BUSINESS'
+    );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $do$;
 ALTER TYPE "public"."org_tier" OWNER TO "postgres";
 
 
-CREATE TYPE "public"."profile_status" AS ENUM (
-    'ACTIVE',
-    'PENDING_ACTIVATION',
-    'DEACTIVATED'
-);
-
-
+DO $do$ BEGIN
+    CREATE TYPE "public"."profile_status" AS ENUM (
+        'ACTIVE',
+        'PENDING_ACTIVATION',
+        'DEACTIVATED'
+    );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $do$;
 ALTER TYPE "public"."profile_status" OWNER TO "postgres";
 
 
-CREATE TYPE "public"."report_status" AS ENUM (
-    'pending',
-    'generating',
-    'completed',
-    'failed'
-);
-
-
+DO $do$ BEGIN
+    CREATE TYPE "public"."report_status" AS ENUM (
+        'pending',
+        'generating',
+        'completed',
+        'failed'
+    );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $do$;
 ALTER TYPE "public"."report_status" OWNER TO "postgres";
 
 
-CREATE TYPE "public"."report_type" AS ENUM (
-    'anchor_summary',
-    'compliance_audit',
-    'activity_log',
-    'billing_history'
-);
-
-
+DO $do$ BEGIN
+    CREATE TYPE "public"."report_type" AS ENUM (
+        'anchor_summary',
+        'compliance_audit',
+        'activity_log',
+        'billing_history'
+    );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $do$;
 ALTER TYPE "public"."report_type" OWNER TO "postgres";
 
 
-CREATE TYPE "public"."review_action" AS ENUM (
-    'APPROVE',
-    'INVESTIGATE',
-    'ESCALATE',
-    'DISMISS'
-);
-
-
+DO $do$ BEGIN
+    CREATE TYPE "public"."review_action" AS ENUM (
+        'APPROVE',
+        'INVESTIGATE',
+        'ESCALATE',
+        'DISMISS'
+    );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $do$;
 ALTER TYPE "public"."review_action" OWNER TO "postgres";
 
 
-CREATE TYPE "public"."review_status" AS ENUM (
-    'PENDING',
-    'APPROVED',
-    'INVESTIGATING',
-    'ESCALATED',
-    'DISMISSED'
-);
-
-
+DO $do$ BEGIN
+    CREATE TYPE "public"."review_status" AS ENUM (
+        'PENDING',
+        'APPROVED',
+        'INVESTIGATING',
+        'ESCALATED',
+        'DISMISSED'
+    );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $do$;
 ALTER TYPE "public"."review_status" OWNER TO "postgres";
 
 
-CREATE TYPE "public"."user_role" AS ENUM (
-    'INDIVIDUAL',
-    'ORG_ADMIN',
-    'ORG_MEMBER'
-);
-
-
+DO $do$ BEGIN
+    CREATE TYPE "public"."user_role" AS ENUM (
+        'INDIVIDUAL',
+        'ORG_ADMIN',
+        'ORG_MEMBER'
+    );
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $do$;
 ALTER TYPE "public"."user_role" OWNER TO "postgres";
 
 
