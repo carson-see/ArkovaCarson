@@ -1,20 +1,39 @@
 /**
  * SCRUM-1661 [Verify] code-path tests for the Drive changes-feed runner.
  *
- * Pins the four behaviors the runner is responsible for:
+ * Pins the behaviors the runner is responsible for:
  *   1. Returns access_token from cache when stored tokens are still fresh.
  *   2. Refreshes + re-encrypts + persists when stored tokens are expired.
  *   3. loadWatchedFolderIds unions legacy folder_id + drive_folders[].
  *   4. createProcessorDbAdapter maps unique-violation to conflict=true.
+ *   5. runDriveChanges orchestrator: skip on no_page_token, skip on
+ *      no_watched_folders, happy-path handoff to processDriveChanges with
+ *      resolved access token + watched folder ids.
  *
- * Drive HTTP, KMS, and DB are all dependency-injected — no real network
- * or Postgres traffic.
+ * Drive HTTP, KMS, DB, and the processor are all dependency-injected /
+ * mocked — no real network or Postgres traffic.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+// Mock processDriveChanges so the happy-path runDriveChanges test can
+// assert the handoff arguments without exercising the real Drive
+// changes.list HTTP fetch or revision-ledger writes. The other suites
+// don't touch this import.
+const processDriveChangesMock = vi.fn();
+vi.mock('./drive-changes-processor.js', async () => {
+  const actual = await vi.importActual<typeof import('./drive-changes-processor.js')>(
+    './drive-changes-processor.js',
+  );
+  return {
+    ...actual,
+    processDriveChanges: (...args: unknown[]) => processDriveChangesMock(...args),
+  };
+});
 import {
   loadDriveAccessToken,
   loadWatchedFolderIds,
   createProcessorDbAdapter,
+  runDriveChanges,
   type DriveIntegrationRow,
 } from './drive-changes-runner.js';
 
@@ -50,7 +69,13 @@ function fakeKms() {
 }
 
 function makeFakeDb() {
-  const updates: Array<{ table: string; patch: Record<string, unknown>; eq: [string, unknown] }> = [];
+  // CodeRabbit ASSERTIVE on PR #696: previously the fake recorded only the
+  // first `.eq()` filter, so a refactor that drops the `encrypted_tokens`
+  // CAS predicate from loadDriveAccessToken would still pass these tests
+  // (re-opening the double-refresh race the predicate prevents). Capture
+  // the FULL chain in `eqs` and re-record on every chain advance so a
+  // single update emits one row per terminal observation.
+  const updates: Array<{ table: string; patch: Record<string, unknown>; eqs: Array<[string, unknown]> }> = [];
   const inserts: Array<{ table: string; row: Record<string, unknown> }> = [];
   const deletes: Array<{ table: string; eqs: Array<[string, unknown]> }> = [];
   let conflictKey: { file_id: string; revision_id: string } | null = null;
@@ -72,19 +97,23 @@ function makeFakeDb() {
           // Two callers exercise this path:
           //   (a) advancePageToken: .update(patch).eq('id', X) → awaited as Promise
           //   (b) loadDriveAccessToken CAS: .update(patch).eq('id', X).eq('encrypted_tokens', $prev).select('id').maybeSingle()
-          // Build a thenable that records the patch on the first .eq, but
-          // also exposes .eq and .select so the CAS chain extends from it.
+          // The fake builds a thenable that captures EVERY `.eq()` filter so
+          // tests can assert the CAS predicate is present.
           const eqs: Array<[string, unknown]> = [];
-          const recordOnFirstEq = () => {
-            if (eqs.length === 1) {
-              updates.push({ table, patch, eq: eqs[0] });
+          let recordedIndex = -1;
+          const recordOrUpdate = () => {
+            if (recordedIndex === -1) {
+              recordedIndex = updates.length;
+              updates.push({ table, patch, eqs: [...eqs] });
+            } else {
+              updates[recordedIndex] = { table, patch, eqs: [...eqs] };
             }
           };
           const makeThenable = (): Promise<{ error: null }> & { eq: (col: string, val: unknown) => unknown; select: (cols: string) => unknown } => {
             const p = Promise.resolve({ error: null }) as Promise<{ error: null }> & { eq?: unknown; select?: unknown };
             (p as { eq: (col: string, val: unknown) => unknown }).eq = (col: string, val: unknown) => {
               eqs.push([col, val]);
-              recordOnFirstEq();
+              recordOrUpdate();
               return makeThenable();
             };
             (p as { select: (cols: string) => unknown }).select = (_cols: string) => ({
@@ -221,6 +250,21 @@ describe('loadDriveAccessToken', () => {
     // Encrypted tokens are written as `\x...` hex bytea string
     expect(typeof fake.updates[0].patch.encrypted_tokens).toBe('string');
     expect((fake.updates[0].patch.encrypted_tokens as string).startsWith('\\x')).toBe(true);
+    // CodeRabbit ASSERTIVE on PR #696: assert the FULL CAS predicate chain.
+    // The refresh path MUST condition on (id == integration.id) AND
+    // (encrypted_tokens == previous ciphertext) so a concurrent refresher
+    // cannot clobber rotated refresh_tokens. Pin both filters here so a
+    // refactor that drops the encrypted_tokens predicate fails this test
+    // instead of silently re-opening the double-refresh race.
+    const eqColumns = fake.updates[0].eqs.map(([col]) => col);
+    expect(eqColumns).toContain('id');
+    expect(eqColumns).toContain('encrypted_tokens');
+    const idFilter = fake.updates[0].eqs.find(([col]) => col === 'id');
+    const encTokFilter = fake.updates[0].eqs.find(([col]) => col === 'encrypted_tokens');
+    expect(idFilter?.[1]).toBe(INT);
+    // The CAS guard value is the pre-refresh ciphertext rendered as `\x...` hex.
+    expect(typeof encTokFilter?.[1]).toBe('string');
+    expect((encTokFilter?.[1] as string).startsWith('\\x')).toBe(true);
   });
 
   it('throws no_encrypted_tokens when integration has never completed OAuth', async () => {
@@ -537,5 +581,149 @@ describe('createProcessorDbAdapter', () => {
     expect(allLogArgs).not.toContain('leaked@example.com');
     // No RPC was attempted.
     expect(fake.db.rpc).not.toHaveBeenCalled();
+  });
+});
+
+describe('runDriveChanges (orchestrator) — direct tests for skip + happy paths', () => {
+  // CodeRabbit ASSERTIVE on PR #696 (review at 19:42:06Z): the helper-only
+  // test suite left runDriveChanges itself unpinned. Add direct tests so a
+  // refactor of the orchestrator (skip ordering, handoff shape, page-token
+  // advance contract) can't regress while the helper tests stay green.
+  beforeEach(() => {
+    processDriveChangesMock.mockReset();
+  });
+
+  it('returns { skipped: "no_page_token" } when integration.last_page_token is null without touching DB or KMS', async () => {
+    const kms = fakeKms();
+    const fake = makeFakeDb();
+    const integration: DriveIntegrationRow = {
+      id: INT,
+      org_id: ORG,
+      encrypted_tokens: Buffer.from(`ct:${JSON.stringify(FRESH_TOKENS)}`, 'utf8'),
+      token_kms_key_id: KEY,
+      last_page_token: null,
+    };
+    const log = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    const result = await runDriveChanges(integration, {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      db: fake.db as any,
+      kms,
+      logger: log,
+    });
+    expect(result).toEqual({ skipped: 'no_page_token' });
+    // Bootstrap-guard short-circuit: no DB query, no KMS decrypt, no Drive
+    // fetch, no processor call.
+    expect(processDriveChangesMock).not.toHaveBeenCalled();
+    expect(kms.decrypt).not.toHaveBeenCalled();
+    expect(fake.updates).toHaveLength(0);
+    expect(log.warn).toHaveBeenCalled();
+  });
+
+  it('returns { skipped: "no_watched_folders" } when org has zero enabled WORKSPACE_FILE_MODIFIED rules; never refreshes the access token', async () => {
+    const kms = fakeKms();
+    const fakeFetch = vi.fn();
+    const db = {
+      from: (_t: string) => ({
+        select: (_c: string) => ({
+          eq: (_c1: string, _v1: unknown) => ({
+            eq: (_c2: string, _v2: unknown) => ({
+              eq: (_c3: string, _v3: unknown) => Promise.resolve({ data: [], error: null }),
+            }),
+          }),
+        }),
+      }),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      rpc: vi.fn(),
+    };
+    const integration: DriveIntegrationRow = {
+      id: INT,
+      org_id: ORG,
+      encrypted_tokens: Buffer.from(`ct:${JSON.stringify(FRESH_TOKENS)}`, 'utf8'),
+      token_kms_key_id: KEY,
+      last_page_token: 'pt-1',
+    };
+    const log = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    const result = await runDriveChanges(integration, {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      db: db as any,
+      kms,
+      drive: { fetchImpl: fakeFetch as unknown as typeof fetch },
+      logger: log,
+    });
+    expect(result).toEqual({ skipped: 'no_watched_folders' });
+    // Critical: the access-token refresh path MUST NOT run when there are
+    // no folders to scan — burning a Google refresh on a no-op is wasteful
+    // and rotates the refresh_token unnecessarily.
+    expect(fakeFetch).not.toHaveBeenCalled();
+    expect(processDriveChangesMock).not.toHaveBeenCalled();
+    expect(log.info).toHaveBeenCalled();
+  });
+
+  it('happy path: hands off to processDriveChanges with resolved accessToken + watched_folder_ids and returns the processor result', async () => {
+    const kms = fakeKms();
+    const fakeFetch = vi.fn();
+    // Org has one rule with a folder binding so loadWatchedFolderIds resolves
+    // a non-empty set.
+    const db = {
+      from: (_t: string) => ({
+        select: (_c: string) => ({
+          eq: (_c1: string, _v1: unknown) => ({
+            eq: (_c2: string, _v2: unknown) => ({
+              eq: (_c3: string, _v3: unknown) =>
+                Promise.resolve({
+                  data: [{ trigger_config: { folder_id: 'folder-Z' } }],
+                  error: null,
+                }),
+            }),
+          }),
+        }),
+      }),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      rpc: vi.fn(),
+    };
+    const integration: DriveIntegrationRow = {
+      id: INT,
+      org_id: ORG,
+      encrypted_tokens: Buffer.from(`ct:${JSON.stringify(FRESH_TOKENS)}`, 'utf8'),
+      token_kms_key_id: KEY,
+      last_page_token: 'pt-1',
+    };
+    const expectedProcessorResult = {
+      pages_processed: 1,
+      ledger_inserted: 0,
+      ledger_conflicts: 0,
+      enqueued: 0,
+      parent_mismatch: 0,
+      unrelated_change: 0,
+      next_page_token: 'pt-2',
+    };
+    processDriveChangesMock.mockResolvedValueOnce(expectedProcessorResult);
+    const result = await runDriveChanges(integration, {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      db: db as any,
+      kms,
+      drive: { fetchImpl: fakeFetch as unknown as typeof fetch },
+      logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    });
+    // The runner returns whatever processDriveChanges returns on the
+    // happy path — pin that pass-through.
+    expect(result).toEqual(expectedProcessorResult);
+    // processDriveChanges was called with the integration shape the
+    // processor expects: id, org_id, last_page_token, watched_folder_ids
+    // resolved from the rule layer (NOT from the integration layer).
+    expect(processDriveChangesMock).toHaveBeenCalledTimes(1);
+    const callArg = processDriveChangesMock.mock.calls[0]?.[0] as {
+      integration: { id: string; org_id: string; last_page_token: string; watched_folder_ids: string[] };
+      accessToken: string;
+      db: unknown;
+      deps: { logger: unknown };
+    };
+    expect(callArg.integration.id).toBe(INT);
+    expect(callArg.integration.org_id).toBe(ORG);
+    expect(callArg.integration.last_page_token).toBe('pt-1');
+    expect(callArg.integration.watched_folder_ids).toEqual(['folder-Z']);
+    expect(callArg.accessToken).toBe('access-fresh');
+    expect(callArg.db).toBeDefined(); // adapter was passed
+    expect(callArg.deps).toBeDefined();
   });
 });
