@@ -253,10 +253,15 @@ describe('loadWatchedFolderIds', () => {
       rpc: () => Promise.resolve({ data: null, error: null }) as any,
     };
     const ids = await loadWatchedFolderIds(ORG, { db });
-    expect(ids.sort()).toEqual(['folder-A', 'folder-B', 'folder-C']);
+    expect(ids.toSorted((a, b) => a.localeCompare(b))).toEqual(['folder-A', 'folder-B', 'folder-C']);
   });
 
-  it('returns [] on rule-lookup error and logs warn (does not throw)', async () => {
+  it('throws (not returns []) on rule-lookup error so transient DB failures do not silently skip processing', async () => {
+    // Regression for CodeRabbit ASSERTIVE on PR #696: the previous behavior
+    // collapsed `error: { message: 'boom' }` into `[]`, which the runDriveChanges
+    // caller then read as "no watched folders" and skipped — pending Drive
+    // changes stranded until the next webhook. Now we propagate; the webhook
+    // handler in drive.ts wraps in try/catch + 200-ack + Sentry log.
     const db = {
       from: (_t: string) => ({
         select: (_c: string) => ({
@@ -271,13 +276,101 @@ describe('loadWatchedFolderIds', () => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       rpc: () => Promise.resolve({ data: null, error: null }) as any,
     };
-    const warn = vi.fn();
-    const ids = await loadWatchedFolderIds(ORG, {
-      db,
-      logger: { info: () => undefined, warn, error: () => undefined },
+    const errorLog = vi.fn();
+    await expect(
+      loadWatchedFolderIds(ORG, {
+        db,
+        logger: { info: () => undefined, warn: () => undefined, error: errorLog },
+      }),
+    ).rejects.toThrow(/organization_rules query failed.*boom/);
+    expect(errorLog).toHaveBeenCalled();
+  });
+});
+
+describe('loadDriveAccessToken — CAS-lost regression', () => {
+  // Regression for CodeRabbit ASSERTIVE on PR #696 review at 17:32:01Z:
+  // the CAS-lost fallback path (lines 188-218 of drive-changes-runner.ts)
+  // was not exercised. This pins the "another concurrent refresh wrote
+  // first, we re-read and trust the winner" behavior so a future refactor
+  // cannot collapse it into an error path.
+  it('returns the winners access token when the CAS write loses to a concurrent refresher', async () => {
+    const kms = fakeKms();
+    // The "winner" wrote `access-winner` ciphertext; we simulate that by
+    // having the post-CAS read return its KMS-encrypted bytes.
+    const winnerTokens = {
+      access_token: 'access-winner',
+      refresh_token: 'refresh-winner',
+      expires_at: new Date(Date.now() + 60 * 60_000).toISOString(),
+    };
+    const winnerCiphertext = `\\x${Buffer.from(`ct:${JSON.stringify(winnerTokens)}`, 'utf8').toString('hex')}`;
+
+    const fakeFetch = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        access_token: 'access-loser',
+        refresh_token: 'refresh-loser',
+        expires_in: 3599,
+        token_type: 'Bearer',
+        scope: 'https://www.googleapis.com/auth/drive.file',
+      }),
     });
-    expect(ids).toEqual([]);
-    expect(warn).toHaveBeenCalled();
+
+    let casUpdateCalls = 0;
+    let casReadCalls = 0;
+    const db = {
+      from: (_table: string) => ({
+        update: (_patch: Record<string, unknown>) => {
+          // CAS path: .update(patch).eq('id', X).eq('encrypted_tokens', $prev).select('id').maybeSingle()
+          // Return data:null, error:null to simulate "row matched the .eq('id') filter
+          // but not the .eq('encrypted_tokens') filter — another writer mutated it first".
+          const chain = {
+            eq: (_c: string, _v: unknown) => chain,
+            select: (_c: string) => ({
+              maybeSingle: () => {
+                casUpdateCalls++;
+                return Promise.resolve({ data: null, error: null });
+              },
+            }),
+          };
+          return chain;
+        },
+        select: (_cols: string) => ({
+          eq: (_c: string, _v: unknown) => ({
+            maybeSingle: () => {
+              casReadCalls++;
+              return Promise.resolve({
+                data: { encrypted_tokens: winnerCiphertext, token_kms_key_id: KEY },
+                error: null,
+              });
+            },
+          }),
+        }),
+      }),
+      rpc: vi.fn(),
+    };
+
+    process.env.GOOGLE_OAUTH_CLIENT_ID = 'client-id';
+    process.env.GOOGLE_OAUTH_CLIENT_SECRET = 'client-secret';
+    const integration: DriveIntegrationRow = {
+      id: INT,
+      org_id: ORG,
+      encrypted_tokens: Buffer.from(`ct:${JSON.stringify(EXPIRED_TOKENS)}`, 'utf8'),
+      token_kms_key_id: KEY,
+      last_page_token: 'pt-1',
+    };
+    const result = await loadDriveAccessToken(integration, {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      db: db as any,
+      kms,
+      drive: { fetchImpl: fakeFetch as unknown as typeof fetch },
+    });
+    // Winner's token returned, NOT loser's "access-loser" — and no second
+    // refresh burnt against Google.
+    expect(result.accessToken).toBe('access-winner');
+    expect(result.refreshed).toBe(true);
+    expect(fakeFetch).toHaveBeenCalledTimes(1);
+    expect(casUpdateCalls).toBe(1);
+    expect(casReadCalls).toBe(1);
   });
 });
 

@@ -235,8 +235,15 @@ export async function loadWatchedFolderIds(
     .eq('trigger_type', 'WORKSPACE_FILE_MODIFIED')
     .eq('enabled', true);
   if (error) {
-    deps.logger?.warn?.({ error, orgId }, 'loadWatchedFolderIds: rule lookup failed');
-    return [];
+    // Fail loud — collapsing transient rule-lookup failures into the
+    // empty-array path turns a DB outage into "no watched folders" and
+    // silently skips processing, leaving pending Drive changes stranded
+    // until the next webhook happens to wake the runner. The caller in
+    // drive.ts already wraps runDriveChanges in try/catch + 200-ack +
+    // Sentry log, which is the correct escalation path. CodeRabbit
+    // ASSERTIVE on PR #696.
+    deps.logger?.error?.({ error, orgId }, 'loadWatchedFolderIds: rule lookup failed — propagating');
+    throw new Error(`loadWatchedFolderIds: organization_rules query failed for org ${orgId}: ${(error as { message?: string }).message ?? 'unknown error'}`);
   }
   const ids = new Set<string>();
   for (const row of (data ?? []) as Array<{ trigger_config?: Record<string, unknown> | null }>) {
