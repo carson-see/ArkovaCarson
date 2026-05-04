@@ -29,7 +29,12 @@
     "ci:dep-pinning": "tsx scripts/ci/check-dep-pinning.ts",
     "ci:duplicate-artifacts": "tsx scripts/ci/check-duplicate-artifacts.ts",
     "ci:retry-after-429": "tsx scripts/ci/check-retry-after-429.ts",
-    "security:license-denylist": "tsx scripts/security/license-denylist.ts package-lock.json services/worker/package-lock.json"
+    "security:license-denylist": "tsx scripts/security/license-denylist.ts package-lock.json services/worker/package-lock.json",
+    "ci:staging-evidence": "tsx scripts/ci/check-staging-evidence.ts",
+    "staging:seed": "tsx scripts/staging/seed.ts",
+    "staging:load": "tsx scripts/staging/load-harness.ts",
+    "staging:claim": "./scripts/staging/claim.sh",
+    "staging:teardown": "./scripts/staging/teardown-and-reset.sh"
   },
   "dependencies": {
     "@huggingface/transformers": "4.2.0",

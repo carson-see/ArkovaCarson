@@ -141,6 +141,18 @@ Verification API schema is frozen once published. No breaking changes without a 
 ### 1.10 Rate limits
 Anonymous: 100 req/min/IP. API key: 1,000 req/min. Batch: 10 req/min. `Retry-After` on 429. Headers on every response.
 
+### 1.11 Staging is mandatory for every prod-bound change
+No code, migration, RLS policy, cron, edge function, or env change reaches prod without first being applied to a Supabase preview branch + soaked under load against the staging worker. Standing rig: `arkova-staging` Supabase branch + `arkova-worker-staging` Cloud Run. CI gate `staging-evidence` blocks merge if PR body lacks the `## Staging Soak Evidence` block. Override label `staging-soak-skip` is for true CI-only / docs-only PRs (`scripts/ci/check-staging-evidence.ts` enumerates the allowlist).
+
+### 1.12 Soak tier matrix
+Every PR declares its tier in the body. The path-based detector in `scripts/ci/check-staging-evidence.ts` blocks under-declaration (touch `services/worker/src/chain/` → must be T3; touch `supabase/migrations/` → at least T2). Tier rules:
+
+| Tier | Touches | Min soak | Required evidence |
+|---|---|---|---|
+| **T1** Smoke | Pure additive code, no migration, no cron, no chain/treasury, no anchors/credits/audit writes | 30 min synthetic load + green E2E | Tier, Staging branch, Worker revision, Soak start/end, E2E result |
+| **T2** Standard | Any migration, RLS change, new index, new cron not on chain hot path, new webhook, new SDK method, public API surface | 4 h soak + rollback rehearsal | T1 fields + Migration applied, Rollback rehearsed |
+| **T3** Critical | `anchors` lifecycle, batch/queue logic, treasury signing, fee policy, entitlements/billing, any cron with cadence ≤10 min running against `anchors` | 48 h soak + multiple trigger cycles + ≥1 daily-flush observation + per-org isolation check | T2 fields + Trigger A fires, Trigger B fires, Daily flush observation, Per-org isolation check |
+
 ---
 
 ## 2. RECEIVING A TASK
