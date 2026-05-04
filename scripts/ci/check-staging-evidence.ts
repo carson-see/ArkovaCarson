@@ -215,6 +215,11 @@ export function isStagingToolingOnly(files: string[]): StagingFilesOnlyResult {
     /^scripts\/staging\//,
     /^scripts\/ci\/check-staging-evidence(\.test)?\.ts$/,
     /^scripts\/ci\/lib\//,
+    // Operator-setup tooling lives next to the rig conceptually — same
+    // category of meta-infra (script the operator runs once to wire up
+    // cloud resources). Edits here can't break the running worker; they
+    // only change what `bash scripts/gcp-setup/*` does on the next run.
+    /^scripts\/gcp-setup\//,
     /^docs\/staging\//,
     /^\.github\/workflows\/staging-evidence\.yml$/,
     /^CLAUDE\.md$/,

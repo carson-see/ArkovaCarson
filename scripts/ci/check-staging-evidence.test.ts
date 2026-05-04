@@ -132,6 +132,7 @@ describe('check-staging-evidence', () => {
           'CLAUDE.md',
           'docs/staging/README.md',
           '.github/workflows/staging-evidence.yml',
+          'scripts/gcp-setup/cloud-scheduler.sh',
         ]).pass,
       ).toBe(true);
     });
