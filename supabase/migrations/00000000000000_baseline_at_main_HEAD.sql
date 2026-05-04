@@ -26,9 +26,34 @@
 -- ledger INSERT in supabase_migrations.schema_migrations and restore the repo
 -- to 0000..0289 + 0290 + ... layout. Schema itself is unchanged through
 -- cutover (metadata-only operation on prod). See PATH_C_CUTOVER.md §4.
+--
+-- Verified 2026-05-04 against branch project_ref aljheljcsrgbtgyshfss (off
+-- staging ujtlwnoqfhtitcmsnrpq). Schema-object diff vs prod: 11/13 categories
+-- identical (94 tables, 5 views, 2 matviews, 28 enums, 1 sequence, 328
+-- functions, 189 policies, 94 RLS-enabled+forced, 44 triggers, 418
+-- constraints). Only diffs: 3 invalid indexes excluded by pg_dump (failed
+-- CREATE INDEX CONCURRENTLY on prod, pg_index.indisvalid=false — tech debt
+-- not load-bearing); pg_repack extension added explicitly below since the
+-- CLI dump pipeline strips CREATE EXTENSION (Supabase manages extensions
+-- per-project but for fresh stand-ups we install them ourselves).
 -- =============================================================================
 
 
+-- Extensions (the supabase db dump CLI strips CREATE EXTENSION; we restore
+-- them explicitly so a fresh DB stand-up via this baseline alone is functional).
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+CREATE EXTENSION IF NOT EXISTS moddatetime;
+CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
+CREATE EXTENSION IF NOT EXISTS pg_cron;
+CREATE EXTENSION IF NOT EXISTS pg_repack;
+CREATE EXTENSION IF NOT EXISTS http;
+CREATE EXTENSION IF NOT EXISTS hypopg;
+CREATE EXTENSION IF NOT EXISTS index_advisor;
+CREATE EXTENSION IF NOT EXISTS supabase_vault;
+CREATE EXTENSION IF NOT EXISTS vector;
+CREATE EXTENSION IF NOT EXISTS plpgsql;
 
 
 SET statement_timeout = 0;
