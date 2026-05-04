@@ -81,7 +81,11 @@ interface LineagePreviousEntry {
   created_at: string | null;
 }
 
-const LINEAGE_DEPTH_CAP = 50;
+// CodeRabbit ASSERTIVE on PR #695: the lineage RPC supports 100 hops; capping
+// the proof-packet endpoint at 50 silently drops versions 51-100 for long
+// chains, so this endpoint disagreed with the rest of the lineage surface.
+// Aligned with the RPC.
+const LINEAGE_DEPTH_CAP = 100;
 
 async function loadExecution(executionId: string, orgId: string): Promise<ExecutionRow | null> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -165,6 +169,11 @@ async function loadSupersededByPublicId(anchorId: string, orgId: string): Promis
     .select('public_id')
     .eq('org_id', orgId)
     .eq('parent_anchor_id', anchorId)
+    // CodeRabbit ASSERTIVE on PR #695: filter soft-deleted children. Without
+    // this, a deleted child anchor surfaced as `superseded_by_public_id`
+    // diverges from the existing lineage/supersede SQL behavior in
+    // 0004_anchors.sql (every selectable view filters deleted_at IS NULL).
+    .is('deleted_at', null)
     .order('version_number', { ascending: false })
     .limit(1)
     .maybeSingle();
@@ -197,6 +206,10 @@ async function loadLineagePrevious(
       .select('public_id, status, fingerprint, parent_anchor_id, version_number, created_at')
       .eq('org_id', orgId)
       .eq('id', cursor)
+      // CodeRabbit ASSERTIVE on PR #695: same soft-delete filter as the
+      // supersede lookup. Surfacing a deleted ancestor in `lineage.previous`
+      // diverges from the existing lineage SQL semantics.
+      .is('deleted_at', null)
       .maybeSingle();
     if (error || !data) {
       if (error) logger.warn({ error, cursor }, 'proof-packet: lineage walk lookup failed');

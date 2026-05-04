@@ -58,8 +58,11 @@ vi.mock('../utils/db.js', () => {
   // SCRUM-1149 + SCRUM-1593: the `anchors` table is queried for THREE distinct
   // shapes from proof-packet.ts. We dispatch by the eq-call args:
   //   1. loadAnchor:                .eq('org_id').eq('metadata->>external_file_id').order().limit(1).maybeSingle()
-  //   2. loadSupersededByPublicId:  .eq('org_id').eq('parent_anchor_id', <id>).order().limit(1).maybeSingle()
-  //   3. loadLineagePrevious:       .eq('org_id').eq('id', <parentId>).maybeSingle()
+  //   2. loadSupersededByPublicId:  .eq('org_id').eq('parent_anchor_id', <id>).is('deleted_at', null).order().limit(1).maybeSingle()
+  //   3. loadLineagePrevious:       .eq('org_id').eq('id', <parentId>).is('deleted_at', null).maybeSingle()
+  // CodeRabbit ASSERTIVE on PR #695: shapes 2 and 3 gained an `.is('deleted_at',
+  // null)` filter so soft-deleted anchors don't surface in lineage / supersede
+  // responses. Mock chain extended to support it.
   const anchorsChain = {
     select: () => ({
       eq: (_orgCol: string, _orgVal: string) => ({
@@ -73,14 +76,20 @@ vi.mock('../utils/db.js', () => {
           }
           if (col === 'parent_anchor_id') {
             return {
-              order: () => ({
-                limit: () => ({ maybeSingle: () => supersedeMaybeSingle() }),
+              is: (_deletedCol: string, _nullVal: null) => ({
+                order: () => ({
+                  limit: () => ({ maybeSingle: () => supersedeMaybeSingle() }),
+                }),
               }),
             };
           }
           if (col === 'id') {
             const fn = parentChainMaybeSingleByAnchorId.get(val);
-            return { maybeSingle: () => (fn ? fn() : Promise.resolve({ data: null, error: null })) };
+            return {
+              is: (_deletedCol: string, _nullVal: null) => ({
+                maybeSingle: () => (fn ? fn() : Promise.resolve({ data: null, error: null })),
+              }),
+            };
           }
           throw new Error(`unexpected anchors filter: ${col}`);
         },

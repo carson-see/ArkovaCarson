@@ -98,7 +98,13 @@ async function findIntegrationBySubscription(
     .select('integration_id, org_integrations:integration_id ( id, org_id )')
     .eq('provider', 'microsoft_graph')
     .eq('vendor_subscription_id', subscriptionId)
-    .is('revoked_at', null)
+    // CodeRabbit ASSERTIVE on PR #695: connector_subscriptions has NO
+    // `revoked_at` column (verified against migration 0260). Liveness is
+    // tracked via `status` text with values 'active' | 'degraded' | 'revoked'.
+    // The previous .is('revoked_at', null) filter would error at runtime on
+    // every webhook delivery once ENABLE_MICROSOFT_GRAPH_WEBHOOK flipped on.
+    // Replace with a status filter that excludes revoked subscriptions.
+    .neq('status', 'revoked')
     .maybeSingle();
   if (error) {
     // CodeRabbit ASSERTIVE on PR #695: distinguish "not found" (legitimately

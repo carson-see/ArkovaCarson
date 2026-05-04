@@ -20,11 +20,17 @@ vi.mock('../../../utils/logger.js', () => ({
 }));
 
 vi.mock('../../../utils/db.js', () => {
+  // Mirrors findIntegrationBySubscription's PostgREST chain after the
+  // PR #695 fix: connector_subscriptions has no `revoked_at` column;
+  // liveness is the `status` text field, so the chain ends with `.neq('status',
+  // 'revoked').maybeSingle()`. Pre-fix this was `.is('revoked_at', null)` —
+  // would have errored at runtime in prod the moment ENABLE_MICROSOFT_GRAPH_WEBHOOK
+  // flipped on. CodeRabbit ASSERTIVE on PR #695.
   const subscriptionsChain = {
     select: () => ({
       eq: () => ({
         eq: () => ({
-          is: () => ({ maybeSingle: () => integrationLookup() }),
+          neq: () => ({ maybeSingle: () => integrationLookup() }),
         }),
       }),
     }),
