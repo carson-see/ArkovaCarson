@@ -124,10 +124,79 @@ function computeAlerts(snapshot: Omit<DbHealthSnapshot, 'alerts'>): string[] {
   return alerts;
 }
 
+// SCRUM-1308: Sentry alert rules in `infra/sentry/alert-rules.json` route on
+// `alert_type` so each signal class can have distinct fan-out (dead-tuple
+// needs continuous>1h, smoke-streak pages immediately). The classifier runs
+// on the alert string we already build in computeAlerts(); drift between
+// the strings and the table below silently miscategorizes, so the test
+// suite pins both ends.
+//
+// Codex P1 (PR #690): autovacuum-age and dead-tuple-ratio are emitted
+// independently by computeAlerts() and a single hot table can fire both in
+// the same 5-minute pass. Routing both to `dead_tuple_ratio` would let the
+// 12-events-in-1h Sentry rule trip in ~30 minutes (well below the >1h
+// continuous threshold the rule is meant to enforce). Give the autovacuum
+// signal its own type so each rule's frequency budget is honored.
+export type DbHealthAlertType =
+  | 'pg_cron_failure'
+  | 'dead_tuple_ratio'
+  | 'dead_tuple_autovacuum_age'
+  | 'smoke_fail_streak'
+  | 'smoke_runtime'
+  | 'unclassified';
+
+const ALERT_PREFIX_TABLE: ReadonlyArray<readonly [string, DbHealthAlertType]> = [
+  ['pg_cron jobid=', 'pg_cron_failure'],
+  ['Dead-tuple ratio on ', 'dead_tuple_ratio'],
+  ['Smoke test fail-streak:', 'smoke_fail_streak'],
+  ['Smoke test runtime ', 'smoke_runtime'],
+];
+
+export function classifyAlert(alert: string): DbHealthAlertType {
+  for (const [prefix, type] of ALERT_PREFIX_TABLE) {
+    if (alert.startsWith(prefix)) return type;
+  }
+  // The autovacuum-age branch isn't a clean prefix — `<table>: …` varies.
+  if (alert.includes('dead tuples + autovacuum')) return 'dead_tuple_autovacuum_age';
+  return 'unclassified';
+}
+
+/**
+ * Pull contextual tags out of the alert string so the Sentry → Slack action
+ * can include them in the message. The alert-rules.json Slack actions reference
+ * `jobid` and `table_name` — without these tags, those references are no-ops.
+ *
+ * CodeRabbit P1 (PR #690): Slack actions referenced tags emitSentry never
+ * emitted. Either side could move; emitting wins because the values ARE in
+ * the alert text and showing "which jobid" / "which table" in the Slack
+ * payload saves an ops click.
+ */
+function extractContextTags(alert: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  // pg_cron jobid=N failed: ...
+  const jobidMatch = /^pg_cron jobid=(\d+)/.exec(alert);
+  if (jobidMatch) out.jobid = jobidMatch[1];
+  // Dead-tuple ratio on <table>: ...
+  const ratioMatch = /^Dead-tuple ratio on (\S+):/.exec(alert);
+  if (ratioMatch) out.table_name = ratioMatch[1];
+  // <table>: NNN dead tuples + autovacuum Xh ago ...
+  const autovacMatch = /^(\S+): [\d,]+ dead tuples \+ autovacuum/.exec(alert);
+  if (autovacMatch) out.table_name = autovacMatch[1];
+  return out;
+}
+
 function emitSentry(alerts: string[]): void {
   for (const a of alerts) {
     try {
-      Sentry.captureMessage(a, { level: 'error', tags: { source: 'db-health-monitor', story: 'SCRUM-1254' } });
+      Sentry.captureMessage(a, {
+        level: 'error',
+        tags: {
+          source: 'db-health-monitor',
+          story: 'SCRUM-1254',
+          alert_type: classifyAlert(a),
+          ...extractContextTags(a),
+        },
+      });
     } catch (err) {
       logger.warn({ err }, 'Failed to emit Sentry event');
     }

@@ -1,6 +1,6 @@
 {
-  "_comment": "SCRUM-1306 (R0-7-FU1): snapshot of prod public.* table list, fed to scripts/ci/feedback-rules/feedback_local_matches_prod.ts. Regenerate via Supabase MCP `list_tables` after a known-good prod schema window. Last refreshed: 2026-04-27 (PR #608).",
-  "_source": "supabase MCP list_tables(project_id=vzwyaatejekddvltxyye, schemas=[public]) on 2026-04-27 — 90 tables.",
+  "_comment": "SCRUM-1306 (R0-7-FU1): snapshot of prod public.* table list, fed to scripts/ci/feedback-rules/feedback_local_matches_prod.ts. Regenerate via Supabase MCP `list_tables` after a known-good prod schema window. Last refreshed: 2026-05-04 (PR #691) — added drive_revision_ledger (created via mig 0288 / SCRUM-1650, applied to prod 2026-05-04 via Supabase MCP after PR #689 merge at 90b4b9c7).",
+  "_source": "supabase MCP list_tables(project_id=vzwyaatejekddvltxyye, schemas=[public]) on 2026-04-27 + delta-verified 2026-05-04.",
   "tables": [
     { "name": "adobe_sign_webhook_nonces", "schema": "public" },
     { "name": "agents", "schema": "public" },
@@ -35,6 +35,7 @@
     { "name": "data_subject_requests", "schema": "public" },
     { "name": "docusign_webhook_nonces", "schema": "public" },
     { "name": "drive_folder_path_cache", "schema": "public" },
+    { "name": "drive_revision_ledger", "schema": "public" },
     { "name": "emergency_access_grants", "schema": "public" },
     { "name": "entitlements", "schema": "public" },
     { "name": "extraction_feedback", "schema": "public" },

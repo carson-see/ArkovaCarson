@@ -1009,7 +1009,11 @@ describe('cron routes', () => {
       const here = path.dirname(new URL(import.meta.url).pathname);
       const schedulerScript = path.resolve(here, '../../../../scripts/gcp-setup/cloud-scheduler.sh');
       const contents = fs.readFileSync(schedulerScript, 'utf8');
-      const match = contents.match(/"monthly-allocation-rollover\|[^|]+\|(\/jobs\/[^"]+)"/);
+      // SCRUM-1308 (R0-8-FU2): cloud-scheduler.sh job format gained a 4th
+      // pipe-delimited field for retry policy, so this regex must stop the
+      // ENDPOINT_PATH capture at the next pipe (`|`), not at the closing
+      // quote — otherwise `|NO_RETRY` leaks into the captured path.
+      const match = contents.match(/"monthly-allocation-rollover\|[^|]+\|(\/jobs\/[^|"]+)/);
       expect(match).not.toBeNull();
       const scheduledPath = match![1];
       expect(scheduledPath).toBe('/jobs/monthly-allocation-rollover');
