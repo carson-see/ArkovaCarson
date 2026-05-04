@@ -42,12 +42,18 @@ This is the verification layer for the agentic economy. Same infrastructure as t
 | 2 | **`verify`** | **Verify a SHA-256 document fingerprint** | **SCRUM-1107** |
 | 3 | **`list_orgs`** | **List org context for the authenticated caller** | **SCRUM-1107** |
 | 4 | **`get_anchor`** | **Fetch redacted public anchor metadata by public ID** | **SCRUM-1107** |
-| 5 | `verify_credential` | Verify a single credential by public ID | P8-S19 |
-| 6 | `search_credentials` | Semantic search across credentials | P8-S19 |
-| 7 | `nessie_query` | RAG query over verified public records | PH1-SDK-03 |
-| 8 | `anchor_document` | Submit a SHA-256 fingerprint for anchoring | PH1-SDK-03 |
-| 9 | `verify_document` | Verify a document by its fingerprint | PH1-SDK-03 |
-| 10 | **`verify_batch`** | **Verify up to 100 credentials in one call** | **INT-02** |
+| 5 | **`get_organization`** | **Public-safe organization detail by public_id** | **SCRUM-1132 / SCRUM-1584** |
+| 6 | **`get_record`** | **Public-safe record detail by public_id** | **SCRUM-1132 / SCRUM-1584** |
+| 7 | **`get_fingerprint`** | **Public-safe latest-anchor lookup by SHA-256 fingerprint** | **SCRUM-1132 / SCRUM-1584** |
+| 8 | **`get_document`** | **Public-safe document detail by public_id** | **SCRUM-1132 / SCRUM-1584** |
+| 9 | `verify_credential` | Verify a single credential by public ID | P8-S19 |
+| 10 | `search_credentials` | Semantic search across credentials | P8-S19 |
+| 11 | `nessie_query` | RAG query over verified public records | PH1-SDK-03 |
+| 12 | `anchor_document` | Submit a SHA-256 fingerprint for anchoring | PH1-SDK-03 |
+| 13 | `verify_document` | Verify a document by its fingerprint | PH1-SDK-03 |
+| 14 | **`verify_batch`** | **Verify up to 100 credentials in one call** | **INT-02** |
+| 15 | `oracle_batch_verify` | Batch-verify up to 25 credentials with signed query-envelope metadata | SCRUM-1107 |
+| 16 | `list_agents` | List AI agents registered to the caller's organization | SCRUM-1107 |
 
 > **CLE compliance tool deferred:** `cle_verify` was scoped for INT-02 but pulled before merge — the underlying `rpc/cle_verify` does not exist in the schema. The HTTP route at `/api/v1/cle/verify` is live and usable via the REST API or `@arkova/sdk`. Tracked as follow-up **INT-02b** (expose it through MCP by threading caller API keys through the edge handler context).
 

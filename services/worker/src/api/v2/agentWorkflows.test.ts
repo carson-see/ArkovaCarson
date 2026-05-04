@@ -14,7 +14,9 @@ const mcpServerManifest = JSON.parse(readRepoFile('services/edge/server.json')) 
   tools: Array<{ name: string }>;
 };
 const tsClientSource = readRepoFile('packages/sdk/src/client.ts');
+const tsTypesSource = readRepoFile('packages/sdk/src/types.ts');
 const pyClientSource = readRepoFile('packages/arkova-py/src/arkova/client.py');
+const pyModelsSource = readRepoFile('packages/arkova-py/src/arkova/models.py');
 
 const canonicalSurface = [
   ['/api/v2/search', '/search', 'search', 'search', 'search', 'search'],
@@ -39,8 +41,36 @@ describe('canonical agent workflow documentation', () => {
       expect(openApiV2Spec.paths[specPath].get.operationId).toBe(operationId);
       expect(mcpToolsSource).toContain(`name: '${mcpTool}'`);
       expect(tsClientSource).toMatch(new RegExp(String.raw`async ${tsMethod}\(`));
-      expect(pyClientSource).toMatch(new RegExp(String.raw`def\s+${pyMethod}\(`));
+      // Python SDK exposes both sync (`Arkova`) and async (`AsyncArkova`)
+      // surfaces. Both must define every detail method.
+      const pySyncMatches = pyClientSource.match(
+        new RegExp(String.raw`^    def\s+${pyMethod}\(`, 'mg'),
+      ) ?? [];
+      const pyAsyncMatches = pyClientSource.match(
+        new RegExp(String.raw`^    async def\s+${pyMethod}\(`, 'mg'),
+      ) ?? [];
+      expect(pySyncMatches.length).toBeGreaterThanOrEqual(1);
+      expect(pyAsyncMatches.length).toBeGreaterThanOrEqual(1);
     }
+  });
+
+  it('keeps SDK detail envelope types aligned with the v2 contract', () => {
+    // TS: detail interfaces must exist alongside the new methods.
+    for (const t of ['OrganizationDetails', 'RecordDetails', 'FingerprintDetails', 'DocumentDetails']) {
+      expect(tsTypesSource).toMatch(new RegExp(String.raw`(?:export\s+(?:interface|type))\s+${t}\b`));
+    }
+
+    // Python: matching Pydantic models in models.py.
+    for (const t of ['OrganizationDetail', 'RecordDetail', 'FingerprintDetail', 'DocumentDetail']) {
+      expect(pyModelsSource).toMatch(new RegExp(String.raw`class\s+${t}\b`));
+    }
+
+    // OrganizationDetails must NOT inherit from OrganizationSummary —
+    // doing so would re-introduce the required internal `id` field that
+    // the v2 detail endpoint never returns. Both the TS interface and
+    // the Py model must define a public-safe shape directly.
+    expect(tsTypesSource).not.toMatch(/OrganizationDetails\s+extends\s+OrganizationSummary/);
+    expect(pyModelsSource).not.toMatch(/class\s+OrganizationDetail\s*\(\s*Org\s*\)/);
   });
 
   it('documents the expected agent sequence and public-data guardrails', () => {
@@ -75,6 +105,11 @@ describe('canonical agent workflow documentation', () => {
   it('keeps the MCP search prompt on the canonical v2 workflow', () => {
     const start = mcpServerSource.indexOf("'search-and-verify'");
     const end = mcpServerSource.indexOf("'anchor-and-verify'");
+    // Fail loudly with diagnostic context if the markers move or vanish,
+    // rather than producing the cryptic "expected '' to contain ..." that
+    // a `slice(-1, -1)` would yield.
+    expect(start).toBeGreaterThanOrEqual(0);
+    expect(end).toBeGreaterThan(start);
     const promptBlock = mcpServerSource.slice(start, end);
 
     expect(promptBlock).toContain('Run search');

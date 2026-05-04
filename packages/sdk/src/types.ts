@@ -312,7 +312,18 @@ export interface OrganizationSummary {
  *  routes. Mirrors the worker's `mapAnchorDetail` shape; never carries the
  *  internal `id`, `org_id`, `user_id`, or `record_id` columns. */
 
-export interface OrganizationDetails extends OrganizationSummary {
+/**
+ * Public-safe org detail. We deliberately do NOT extend OrganizationSummary
+ * here: `OrganizationSummary.id` is a required internal UUID that the v2
+ * detail endpoint never returns. Modeling the v2 response shape directly
+ * keeps consumers from relying on a fabricated/empty `id`.
+ */
+export interface OrganizationDetails {
+  publicId: string;
+  displayName: string;
+  domain: string | null;
+  websiteUrl: string | null;
+  verificationStatus: string | null;
   description: string | null;
   industryTag: string | null;
   orgType: string | null;

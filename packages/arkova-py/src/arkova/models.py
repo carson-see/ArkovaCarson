@@ -112,7 +112,16 @@ class OrgList(ArkovaModel):
 # Mirrors the worker's mapAnchorDetail shape; never carries internal
 # id/org_id/user_id/record_id columns.
 
-class OrganizationDetail(Org):
+class OrganizationDetail(ArkovaModel):
+    # The v2 /api/v2/organizations/{public_id} response is intentionally
+    # public-safe: no internal `id` UUID. We do NOT inherit from Org here
+    # because `Org.id` is required, which would fail Pydantic validation
+    # on every successful response.
+    public_id: str
+    display_name: str
+    domain: str | None = None
+    website_url: str | None = None
+    verification_status: str | None = None
     description: str | None = None
     industry_tag: str | None = None
     org_type: str | None = None

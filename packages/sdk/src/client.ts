@@ -746,11 +746,10 @@ function mapOrganizationSummary(row: Record<string, unknown>): OrganizationSumma
 }
 
 function mapOrganizationDetails(row: Record<string, unknown>): OrganizationDetails {
+  // `OrganizationDetails` deliberately does not include an `id` field —
+  // the v2 endpoint never returns the internal UUID. Callers should
+  // use `publicId` as the stable identifier.
   return {
-    // The v2 detail endpoint never returns the internal `id` UUID; the field
-    // is kept as an empty string for OrganizationSummary compatibility and
-    // callers should use `publicId`.
-    id: '',
     publicId: row.public_id as string,
     displayName: row.display_name as string,
     domain: (row.domain as string | null) ?? null,

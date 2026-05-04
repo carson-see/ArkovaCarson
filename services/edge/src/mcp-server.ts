@@ -671,8 +671,10 @@ function createMcpServer(config: ScopedConfig, telemetry: RequestTelemetryContex
             'Run search with the query provided below. From the top result, ' +
             'inspect the appropriate v2 detail surface based on the result type: ' +
             'get_organization for orgs, get_record for records, get_fingerprint for ' +
-            'fingerprints, get_document for documents. Then call verify (or call get_anchor ' +
-            'for the lifecycle history) on the public_id to confirm. Summarize your findings.\n\n' +
+            'fingerprints, get_document for documents. Then call verify with the ' +
+            'fingerprint (the SHA-256 hash returned in the detail response) to ' +
+            'confirm cryptographic integrity, or call get_anchor with the public_id ' +
+            'for the lifecycle history. Summarize your findings.\n\n' +
             fenceUserInput(query, 'query'),
         },
       }],

@@ -1,6 +1,6 @@
 # Arkova Agent API Workflows
 
-> **Status:** Canonical | **Story:** SCRUM-1571 | **Audience:** API-key clients, MCP agents, and SDK consumers
+> **Status:** Canonical | **Story:** SCRUM-1584 | **Audience:** API-key clients, MCP agents, and SDK consumers
 
 This guide is the canonical playbook for agentic Arkova verification. It is intentionally narrower than the full API reference: agents should discover public resources, inspect the right detail endpoint, verify by fingerprint when available, and report public proof/lifecycle fields without exposing internal identifiers or document bytes.
 
