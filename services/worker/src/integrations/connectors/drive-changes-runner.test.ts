@@ -54,6 +54,7 @@ function makeFakeDb() {
   const inserts: Array<{ table: string; row: Record<string, unknown> }> = [];
   const deletes: Array<{ table: string; eqs: Array<[string, unknown]> }> = [];
   let conflictKey: { file_id: string; revision_id: string } | null = null;
+  let deleteErrorNext: { code?: string; message?: string } | null = null;
 
   return {
     updates,
@@ -61,6 +62,9 @@ function makeFakeDb() {
     deletes,
     setConflictOnNext(key: { file_id: string; revision_id: string }) {
       conflictKey = key;
+    },
+    setDeleteErrorOnNext(err: { code?: string; message?: string }) {
+      deleteErrorNext = err;
     },
     db: {
       from: (table: string) => ({
@@ -108,6 +112,11 @@ function makeFakeDb() {
               eqs.push([col, val]);
               if (eqs.length === 3) {
                 deletes.push({ table, eqs: [...eqs] });
+                if (deleteErrorNext) {
+                  const err = deleteErrorNext;
+                  deleteErrorNext = null;
+                  return Promise.resolve({ error: err });
+                }
                 return Promise.resolve({ error: null });
               }
               return chain;
@@ -253,7 +262,7 @@ describe('loadWatchedFolderIds', () => {
       rpc: () => Promise.resolve({ data: null, error: null }) as any,
     };
     const ids = await loadWatchedFolderIds(ORG, { db });
-    expect(ids.toSorted((a, b) => a.localeCompare(b))).toEqual(['folder-A', 'folder-B', 'folder-C']);
+    expect([...ids].sort((a, b) => a.localeCompare(b))).toEqual(['folder-A', 'folder-B', 'folder-C']);
   });
 
   it('throws (not returns []) on rule-lookup error so transient DB failures do not silently skip processing', async () => {
@@ -447,5 +456,86 @@ describe('createProcessorDbAdapter', () => {
         p_filename: 'msa.pdf',
       }),
     );
+  });
+
+  // CodeRabbit ASSERTIVE on PR #696: deleteRevisionLedgerEntry must throw on
+  // DB error so the processor's compensating-rollback contract holds. A
+  // silent-log fallback would leak the (integration, file, revision) ledger
+  // row past the failure window, and the next changes.list pass would skip
+  // the change as "already processed" via UNIQUE conflict — losing the
+  // revision permanently.
+  it('deleteRevisionLedgerEntry throws DriveRunnerError when the compensating delete fails', async () => {
+    const fake = makeFakeDb();
+    fake.setDeleteErrorOnNext({ code: 'XX000', message: 'connection lost' });
+    const log = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const adapter = createProcessorDbAdapter({ db: fake.db as any, logger: log });
+    await expect(
+      adapter.deleteRevisionLedgerEntry({
+        integration_id: INT,
+        file_id: 'f1',
+        revision_id: 'r1',
+      }),
+    ).rejects.toThrow(/revision_ledger_rollback_failed|deleteRevisionLedgerEntry failed/);
+    expect(log.error).toHaveBeenCalled();
+  });
+
+  // CodeRabbit ASSERTIVE on PR #696: Zod validation at adapter boundary.
+  // Malformed payloads must not reach Postgres / enqueue_rule_event RPC.
+  it('insertRevisionLedger rejects malformed rows via Zod (non-UUID integration_id)', async () => {
+    const fake = makeFakeDb();
+    const log = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const adapter = createProcessorDbAdapter({ db: fake.db as any, logger: log });
+    await expect(
+      adapter.insertRevisionLedger({
+        integration_id: 'not-a-uuid',
+        org_id: ORG,
+        file_id: 'f1',
+        revision_id: 'r1',
+        parent_ids: ['folder-A'],
+        modified_time: null,
+        actor_email: 'leaked@example.com',
+        outcome: 'queued',
+        rule_event_id: null,
+      }),
+    ).rejects.toThrow(/invalid_revision_ledger_row|integration_id/);
+    // PII scrub: actor_email must NOT appear in any logger arg.
+    const allLogArgs = JSON.stringify(log.error.mock.calls);
+    expect(allLogArgs).not.toContain('leaked@example.com');
+    // No Supabase write happened.
+    expect(fake.inserts).toHaveLength(0);
+  });
+
+  it('advancePageToken rejects malformed args via Zod (empty new_page_token)', async () => {
+    const fake = makeFakeDb();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const adapter = createProcessorDbAdapter({ db: fake.db as any });
+    await expect(
+      adapter.advancePageToken({ integration_id: INT, new_page_token: '' }),
+    ).rejects.toThrow(/invalid_advance_page_token_args|new_page_token/);
+    expect(fake.updates).toHaveLength(0);
+  });
+
+  it('enqueueRuleEvent returns null on Zod failure so the processor compensates via ledger rollback', async () => {
+    const fake = makeFakeDb();
+    const log = { info: vi.fn(), warn: vi.fn(), error: vi.fn() };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const adapter = createProcessorDbAdapter({ db: fake.db as any, logger: log });
+    const id = await adapter.enqueueRuleEvent({
+      org_id: 'not-a-uuid',
+      file_id: 'f1',
+      parent_ids: ['folder-A'],
+      actor_email: 'leaked@example.com',
+      revision_id: 'r1',
+      integration_id: INT,
+      filename: 'invoice.pdf',
+    });
+    expect(id).toBeNull();
+    // Zod failure logs a scrubbed payload.
+    const allLogArgs = JSON.stringify(log.error.mock.calls);
+    expect(allLogArgs).not.toContain('leaked@example.com');
+    // No RPC was attempted.
+    expect(fake.db.rpc).not.toHaveBeenCalled();
   });
 });

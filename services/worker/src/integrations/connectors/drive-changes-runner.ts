@@ -28,6 +28,7 @@
  * Pure orchestrator — every external dependency is injected so tests can
  * stub Drive HTTP, KMS, and the DB without touching production.
  */
+import { z } from 'zod';
 import {
   refreshAccessToken,
   type DriveClientDeps,
@@ -44,6 +45,40 @@ import {
   type DriveProcessorIntegration,
   type ProcessChangesResult,
 } from './drive-changes-processor.js';
+
+// Adapter-boundary Zod schemas (CodeRabbit ASSERTIVE on PR #696).
+// CLAUDE.md §1.4 mandates Zod on every write path; the processor → adapter
+// edge is the last line where a malformed value can be caught before it hits
+// Postgres / the enqueue_rule_event RPC. Schemas mirror DriveProcessorDb
+// types in drive-changes-processor.ts — kept loose on file/revision/parent
+// ids (Drive file ids are not UUIDs) and tight on (org_id, integration_id)
+// which are always Postgres UUIDs.
+const RevisionLedgerRowSchema = z.object({
+  integration_id: z.string().uuid(),
+  org_id: z.string().uuid(),
+  file_id: z.string().min(1),
+  revision_id: z.string().min(1),
+  parent_ids: z.array(z.string().min(1)),
+  modified_time: z.string().nullable(),
+  actor_email: z.string().nullable(),
+  outcome: z.enum(['queued', 'parent_mismatch', 'unrelated_change']),
+  rule_event_id: z.string().uuid().nullable(),
+});
+
+const AdvancePageTokenArgsSchema = z.object({
+  integration_id: z.string().uuid(),
+  new_page_token: z.string().min(1),
+});
+
+const EnqueueRuleEventPayloadSchema = z.object({
+  org_id: z.string().uuid(),
+  file_id: z.string().min(1),
+  parent_ids: z.array(z.string().min(1)),
+  actor_email: z.string().nullable(),
+  revision_id: z.string().min(1),
+  integration_id: z.string().uuid(),
+  filename: z.string().nullable(),
+});
 
 const ACCESS_TOKEN_REFRESH_WINDOW_MS = 5 * 60 * 1000;
 
@@ -271,12 +306,34 @@ export async function loadWatchedFolderIds(
  */
 export function createProcessorDbAdapter(deps: Pick<DriveChangesRunnerDeps, 'db' | 'logger'>): DriveProcessorDb {
   const log = deps.logger;
+
+  // Helper: log a Zod issue list with actor_email scrubbed (PII §1.4).
+  // Validation paths bypass the unused-var prefix convention because the
+  // destructured key is genuinely discarded — that's the whole point of
+  // the scrub.
+  function logScrubbedValidation(
+    rawRow: { actor_email?: unknown } & Record<string, unknown>,
+    issues: z.ZodIssue[],
+    label: string,
+  ) {
+    const { actor_email: _scrubbed, ...safe } = rawRow;
+    log?.error?.({ issues, row: safe }, label);
+  }
+
   return {
     async insertRevisionLedger(row) {
+      const parsed = RevisionLedgerRowSchema.safeParse(row);
+      if (!parsed.success) {
+        logScrubbedValidation(row, parsed.error.issues, 'drive_revision_ledger insert: schema validation failed');
+        throw new DriveRunnerError(
+          'invalid_revision_ledger_row',
+          `insertRevisionLedger payload failed Zod validation: ${parsed.error.issues.map((i) => i.path.join('.') + ':' + i.message).join('; ')}`,
+        );
+      }
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { error } = await (deps.db as any)
         .from('drive_revision_ledger')
-        .insert(row);
+        .insert(parsed.data);
       if (!error) return { inserted: true, conflict: false };
       // 23505 unique_violation = duplicate (integration, file, revision)
       if ((error as { code?: string }).code === '23505') {
@@ -299,41 +356,72 @@ export function createProcessorDbAdapter(deps: Pick<DriveChangesRunnerDeps, 'db'
         .eq('file_id', key.file_id)
         .eq('revision_id', key.revision_id);
       if (error) {
-        // Compensating delete — log but don't throw; the next pass will
-        // see this revision as already-processed (correct from a dedupe
-        // standpoint) and the queue will simply lack an event for it.
-        log?.warn?.({ error, key }, 'drive_revision_ledger compensating delete failed');
+        // CodeRabbit ASSERTIVE on PR #696: surface delete failures.
+        // Earlier revisions only logged a warning here, but the
+        // processor calls this as a *compensating* rollback after an
+        // enqueue_rule_event failure. If the delete silently fails the
+        // ledger row stays put, future passes treat the revision as
+        // already-processed (UNIQUE conflict on insert), and the change
+        // is lost forever. Throwing aborts the page so the caller's
+        // try/catch in webhooks/drive.ts escalates via Sentry; Drive
+        // will retry on the next push notification.
+        log?.error?.({ error, key }, 'drive_revision_ledger compensating delete failed — aborting page');
+        throw new DriveRunnerError(
+          'revision_ledger_rollback_failed',
+          `deleteRevisionLedgerEntry failed for (${key.integration_id}, ${key.file_id}, ${key.revision_id}): ${(error as { message?: string }).message ?? 'unknown'}`,
+        );
       }
     },
-    async advancePageToken({ integration_id, new_page_token }) {
+    async advancePageToken(args) {
+      const parsed = AdvancePageTokenArgsSchema.safeParse(args);
+      if (!parsed.success) {
+        log?.error?.(
+          { issues: parsed.error.issues, args },
+          'advancePageToken: schema validation failed',
+        );
+        throw new DriveRunnerError(
+          'invalid_advance_page_token_args',
+          `advancePageToken payload failed Zod validation: ${parsed.error.issues.map((i) => i.path.join('.') + ':' + i.message).join('; ')}`,
+        );
+      }
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { error } = await (deps.db as any)
         .from('org_integrations')
         .update({
-          last_page_token: new_page_token,
+          last_page_token: parsed.data.new_page_token,
           last_token_advanced_at: new Date().toISOString(),
         })
-        .eq('id', integration_id);
+        .eq('id', parsed.data.integration_id);
       if (error) throw error;
     },
     async enqueueRuleEvent(payload) {
+      const parsed = EnqueueRuleEventPayloadSchema.safeParse(payload);
+      if (!parsed.success) {
+        logScrubbedValidation(payload, parsed.error.issues, 'enqueue_rule_event: schema validation failed');
+        // Return null (rather than throw) to match the contract: the
+        // processor compensates a null return by rolling back the ledger
+        // and continuing to the next change — exactly what we want for a
+        // single malformed payload.
+        return null;
+      }
+      const validated = parsed.data;
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { data, error } = await (deps.db.rpc as any)('enqueue_rule_event', {
-        p_org_id: payload.org_id,
+        p_org_id: validated.org_id,
         p_trigger_type: 'WORKSPACE_FILE_MODIFIED',
         p_vendor: 'google_drive',
-        p_external_file_id: payload.file_id,
-        p_filename: payload.filename ?? null,
+        p_external_file_id: validated.file_id,
+        p_filename: validated.filename ?? null,
         p_folder_path: null,
-        p_sender_email: payload.actor_email,
+        p_sender_email: validated.actor_email,
         p_subject: null,
         p_payload: {
           source: 'google_drive',
-          file_id: payload.file_id,
-          parent_ids: payload.parent_ids,
-          revision_id: payload.revision_id,
-          integration_id: payload.integration_id,
-          actor_email: payload.actor_email,
+          file_id: validated.file_id,
+          parent_ids: validated.parent_ids,
+          revision_id: validated.revision_id,
+          integration_id: validated.integration_id,
+          actor_email: validated.actor_email,
         },
       });
       if (error) {
