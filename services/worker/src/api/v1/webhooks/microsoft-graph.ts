@@ -210,7 +210,15 @@ microsoftGraphWebhookRouter.post('/', async (req: Request, res: Response) => {
       res.status(400).type('text/plain').send('invalid_validation_token');
       return;
     }
-    res.status(200).type('text/plain').send(rawToken);
+    // NOSONAR S5131: Echo of validation token is REQUIRED by the Microsoft
+    // Graph subscription-create handshake contract — Graph rejects the
+    // subscription if we don't return the exact bytes within 10 seconds.
+    // The reflection surface is contained because (a) we already validated
+    // the token shape (URL-safe charset, ≤1024 chars) above, (b) the
+    // Content-Type is `text/plain` (browsers won't interpret as HTML/JS),
+    // and (c) this endpoint has no session cookies / auth context to
+    // exfiltrate. Spec: https://learn.microsoft.com/en-us/graph/webhooks#notification-endpoint-validation
+    res.status(200).type('text/plain').send(rawToken); // NOSONAR
     return;
   }
 
