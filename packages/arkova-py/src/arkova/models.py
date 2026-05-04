@@ -105,3 +105,50 @@ class Org(ArkovaModel):
 
 class OrgList(ArkovaModel):
     organizations: list[Org] = Field(default_factory=list)
+
+
+# SCRUM-1584 — public-safe v2 detail envelopes returned by the
+# /api/v2/{organizations|records|fingerprints|documents}/{id} routes.
+# Mirrors the worker's mapAnchorDetail shape; never carries internal
+# id/org_id/user_id/record_id columns.
+
+class OrganizationDetail(ArkovaModel):
+    # The v2 /api/v2/organizations/{public_id} response is intentionally
+    # public-safe: no internal `id` UUID. We do NOT inherit from Org here
+    # because `Org.id` is required, which would fail Pydantic validation
+    # on every successful response.
+    public_id: str
+    display_name: str
+    domain: str | None = None
+    website_url: str | None = None
+    verification_status: str | None = None
+    description: str | None = None
+    industry_tag: str | None = None
+    org_type: str | None = None
+    location: str | None = None
+    logo_url: str | None = None
+
+
+class RecordDetail(ArkovaModel):
+    public_id: str | None = None
+    verified: bool
+    status: str
+    fingerprint: str | None = None
+    title: str | None = None
+    description: str | None = None
+    issuer_name: str | None = None
+    credential_type: str | None = None
+    sub_type: str | None = None
+    issued_date: str | None = None
+    expiry_date: str | None = None
+    anchor_timestamp: str | None = None
+    network_receipt_id: str | None = None
+    record_uri: str | None = None
+
+
+class FingerprintDetail(RecordDetail):
+    fingerprint: str  # type: ignore[assignment]
+
+
+class DocumentDetail(RecordDetail):
+    pass

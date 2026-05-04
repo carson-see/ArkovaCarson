@@ -659,7 +659,7 @@ function createMcpServer(config: ScopedConfig, telemetry: RequestTelemetryContex
 
   prompt(
     'search-and-verify',
-    'Search for credentials matching a query and verify the top result',
+    'Run a v2 agent workflow: search → inspect detail → verify',
     { query: freeTextQuerySchema.describe('What to search for') },
     async ({ query }) => ({
       messages: [{
@@ -668,8 +668,13 @@ function createMcpServer(config: ScopedConfig, telemetry: RequestTelemetryContex
           type: 'text' as const,
           text:
             `${SAFETY_PREFIX}\n\n` +
-            `Run search_credentials with the query provided below, then verify the top result with verify_credential. ` +
-            'Summarize your findings.\n\n' +
+            'Run search with the query provided below. From the top result, ' +
+            'inspect the appropriate v2 detail surface based on the result type: ' +
+            'get_organization for orgs, get_record for records, get_fingerprint for ' +
+            'fingerprints, get_document for documents. Then call verify with the ' +
+            'fingerprint (the SHA-256 hash returned in the detail response) to ' +
+            'confirm cryptographic integrity, or call get_anchor with the public_id ' +
+            'for the lifecycle history. Summarize your findings.\n\n' +
             fenceUserInput(query, 'query'),
         },
       }],

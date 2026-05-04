@@ -2,7 +2,7 @@
 
 > **Status:** Production | **Story:** [INT-02 / SCRUM-643](https://arkova.atlassian.net/browse/SCRUM-643) | **Endpoint:** `https://edge.arkova.ai/mcp`
 
-The Arkova [Model Context Protocol](https://modelcontextprotocol.io) server exposes ten tools that let AI agents (Claude, LangChain, AutoGen, custom agents) verify credentials, anchor documents, and query verified public records — all without writing HTTP requests. SCRUM-1107 adds the v2 agent aliases (`search`, `verify`, `list_orgs`, `get_anchor`) that match the OpenAPI 3.1 operation IDs published at `https://api.arkova.ai/v2/openapi.json`.
+The Arkova [Model Context Protocol](https://modelcontextprotocol.io) server exposes sixteen tools that let AI agents (Claude, LangChain, AutoGen, custom agents) verify credentials, anchor documents, and query verified public records — all without writing HTTP requests. SCRUM-1107 + SCRUM-1132 + SCRUM-1584 add the v2 agent aliases (`search`, `verify`, `list_orgs`, `get_anchor`, `get_organization`, `get_record`, `get_fingerprint`, `get_document`) that match the OpenAPI 3.1 operation IDs published at `https://api.arkova.ai/v2/openapi.json`.
 
 This is the verification layer for the agentic economy. Same infrastructure as the REST API; just exposed through the MCP transport so any tool-using LLM can call it natively.
 
@@ -42,12 +42,18 @@ This is the verification layer for the agentic economy. Same infrastructure as t
 | 2 | **`verify`** | **Verify a SHA-256 document fingerprint** | **SCRUM-1107** |
 | 3 | **`list_orgs`** | **List org context for the authenticated caller** | **SCRUM-1107** |
 | 4 | **`get_anchor`** | **Fetch redacted public anchor metadata by public ID** | **SCRUM-1107** |
-| 5 | `verify_credential` | Verify a single credential by public ID | P8-S19 |
-| 6 | `search_credentials` | Semantic search across credentials | P8-S19 |
-| 7 | `nessie_query` | RAG query over verified public records | PH1-SDK-03 |
-| 8 | `anchor_document` | Submit a SHA-256 fingerprint for anchoring | PH1-SDK-03 |
-| 9 | `verify_document` | Verify a document by its fingerprint | PH1-SDK-03 |
-| 10 | **`verify_batch`** | **Verify up to 100 credentials in one call** | **INT-02** |
+| 5 | **`get_organization`** | **Public-safe organization detail by public_id** | **SCRUM-1132 / SCRUM-1584** |
+| 6 | **`get_record`** | **Public-safe record detail by public_id** | **SCRUM-1132 / SCRUM-1584** |
+| 7 | **`get_fingerprint`** | **Public-safe latest-anchor lookup by SHA-256 fingerprint** | **SCRUM-1132 / SCRUM-1584** |
+| 8 | **`get_document`** | **Public-safe document detail by public_id** | **SCRUM-1132 / SCRUM-1584** |
+| 9 | `verify_credential` | Verify a single credential by public ID | P8-S19 |
+| 10 | `search_credentials` | Semantic search across credentials | P8-S19 |
+| 11 | `nessie_query` | RAG query over verified public records | PH1-SDK-03 |
+| 12 | `anchor_document` | Submit a SHA-256 fingerprint for anchoring | PH1-SDK-03 |
+| 13 | `verify_document` | Verify a document by its fingerprint | PH1-SDK-03 |
+| 14 | **`verify_batch`** | **Verify up to 100 credentials in one call** | **INT-02** |
+| 15 | `oracle_batch_verify` | Batch-verify up to 25 credentials with signed query-envelope metadata | SCRUM-1107 |
+| 16 | `list_agents` | List AI agents registered to the caller's organization | SCRUM-1107 |
 
 > **CLE compliance tool deferred:** `cle_verify` was scoped for INT-02 but pulled before merge — the underlying `rpc/cle_verify` does not exist in the schema. The HTTP route at `/api/v1/cle/verify` is live and usable via the REST API or `@arkova/sdk`. Tracked as follow-up **INT-02b** (expose it through MCP by threading caller API keys through the edge handler context).
 
@@ -420,10 +426,17 @@ curl -X POST https://edge.arkova.ai/mcp \
 
 ---
 
+## Other registered tools
+
+`oracle_batch_verify` — batch-verify up to 25 credentials with signed query-envelope metadata. Use when the consuming surface (e.g., a programmatic oracle) needs cryptographic proof of which IDs were checked at what time. Mirrors the v1 oracle batch endpoint; not part of the canonical agent v2 workflow.
+
+`list_agents` — list AI agents registered to the authenticated caller's organization. Used by management surfaces, not part of the per-credential agent flow.
+
 ## Changelog
 
 | Version | Date | Story | Change |
 |---|---|---|---|
+| v1.2 | 2026-05-03 | SCRUM-1132 + SCRUM-1584 | Added v2 detail aliases `get_organization`, `get_record`, `get_fingerprint`, `get_document`, plus `oracle_batch_verify` and `list_agents`. Total tools: 16. |
 | v1.1 | 2026-04-11 | INT-02 (SCRUM-643) | Added `verify_batch` tool (cle_verify deferred to INT-02b) |
 | v1.0 | 2026-03-22 | PH1-SDK-03 | Added `nessie_query`, `anchor_document`, `verify_document` |
 | v0.9 | 2026-03-08 | P8-S19 | Initial release with `verify_credential` + `search_credentials` |

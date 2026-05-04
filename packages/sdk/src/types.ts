@@ -306,3 +306,50 @@ export interface OrganizationSummary {
   websiteUrl: string | null;
   verificationStatus: string | null;
 }
+
+/** SCRUM-1132 / SCRUM-1584 — public-safe v2 detail envelopes returned by the
+ *  agent-friendly `/api/v2/{organizations|records|fingerprints|documents}/{id}`
+ *  routes. Mirrors the worker's `mapAnchorDetail` shape; never carries the
+ *  internal `id`, `org_id`, `user_id`, or `record_id` columns. */
+
+/**
+ * Public-safe org detail. We deliberately do NOT extend OrganizationSummary
+ * here: `OrganizationSummary.id` is a required internal UUID that the v2
+ * detail endpoint never returns. Modeling the v2 response shape directly
+ * keeps consumers from relying on a fabricated/empty `id`.
+ */
+export interface OrganizationDetails {
+  publicId: string;
+  displayName: string;
+  domain: string | null;
+  websiteUrl: string | null;
+  verificationStatus: string | null;
+  description: string | null;
+  industryTag: string | null;
+  orgType: string | null;
+  location: string | null;
+  logoUrl: string | null;
+}
+
+export interface RecordDetails {
+  publicId: string | null;
+  verified: boolean;
+  status: string;
+  fingerprint: string | null;
+  title: string | null;
+  description: string | null;
+  issuerName: string | null;
+  credentialType: string | null;
+  subType: string | null;
+  issuedDate: string | null;
+  expiryDate: string | null;
+  anchorTimestamp: string | null;
+  networkReceiptId: string | null;
+  recordUri: string | null;
+}
+
+export interface FingerprintDetails extends Omit<RecordDetails, 'fingerprint'> {
+  fingerprint: string;
+}
+
+export type DocumentDetails = RecordDetails;
