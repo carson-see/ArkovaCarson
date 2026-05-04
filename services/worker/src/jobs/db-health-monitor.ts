@@ -124,10 +124,41 @@ function computeAlerts(snapshot: Omit<DbHealthSnapshot, 'alerts'>): string[] {
   return alerts;
 }
 
+// SCRUM-1308: Sentry alert rules in `infra/sentry/alert-rules.json` route on
+// `alert_type` so the three signal classes can have distinct fan-out
+// (dead-tuple needs continuous>1h, smoke-streak pages immediately). The
+// classifier runs on the alert string we already build in computeAlerts();
+// drift between the strings and the table below silently miscategorizes,
+// so the test suite pins both ends.
+export type DbHealthAlertType = 'pg_cron_failure' | 'dead_tuple_ratio' | 'smoke_fail_streak' | 'smoke_runtime' | 'unclassified';
+
+const ALERT_PREFIX_TABLE: ReadonlyArray<readonly [string, DbHealthAlertType]> = [
+  ['pg_cron jobid=', 'pg_cron_failure'],
+  ['Dead-tuple ratio on ', 'dead_tuple_ratio'],
+  ['Smoke test fail-streak:', 'smoke_fail_streak'],
+  ['Smoke test runtime ', 'smoke_runtime'],
+];
+
+export function classifyAlert(alert: string): DbHealthAlertType {
+  for (const [prefix, type] of ALERT_PREFIX_TABLE) {
+    if (alert.startsWith(prefix)) return type;
+  }
+  // The autovacuum-age branch isn't a clean prefix — `<table>: …` varies.
+  if (alert.includes('dead tuples + autovacuum')) return 'dead_tuple_ratio';
+  return 'unclassified';
+}
+
 function emitSentry(alerts: string[]): void {
   for (const a of alerts) {
     try {
-      Sentry.captureMessage(a, { level: 'error', tags: { source: 'db-health-monitor', story: 'SCRUM-1254' } });
+      Sentry.captureMessage(a, {
+        level: 'error',
+        tags: {
+          source: 'db-health-monitor',
+          story: 'SCRUM-1254',
+          alert_type: classifyAlert(a),
+        },
+      });
     } catch (err) {
       logger.warn({ err }, 'Failed to emit Sentry event');
     }
