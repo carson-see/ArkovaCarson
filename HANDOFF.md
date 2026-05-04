@@ -33,6 +33,16 @@ Engineering-only, no prod-state changes. PR pending. Stacked on `origin/main` at
 
 **Tests:** 22/22 across new + touched suites (`db-health-monitor` 13, `admin-pipeline-stats` 9). Worker `npx tsc --noEmit` clean. Worker `npm run lint` 0 errors / 319 pre-existing warnings (SCRUM-1208 baseline). No production state changes; Cloud Scheduler binding in `cloud-scheduler.sh` is opt-in run by operator.
 
+**Phase 2 Jira sweep (this session):**
+* SCRUM-1308 transitioned **To Do → In Progress** (allowed; not a Done transition).
+* SCRUM-1308 / SCRUM-1545 / SCRUM-1289: PR-evidence comments posted with PR #690 reference + ACs mapped + remaining-scope honest accounting.
+* SCRUM-1274 / SCRUM-1275: transition-owed comments posted (work merged via #647 + #645; blocked by Reporter ≠ Resolver — Carson can't flip).
+* SCRUM-1279 / SCRUM-1441: drift-correction comments posted documenting that the 2026-05-03 "code complete, branch awaiting push" claim was false (`git fetch origin <branch>` returns `couldn't find remote ref` for both). Stories stay Needs Human; future picker should redo.
+
+**PO Roadmap drift correction (Confluence v9, 2026-05-04):** [PO Roadmap](https://arkova.atlassian.net/wiki/spaces/A/pages/27591934) updated to mark 1279 + 1441 as "Needs Human, no branch on remote" and add **rule 11** to Conventions: every "code complete, awaiting push" claim must include `git ls-remote origin <branch>` evidence in the page edit's version-message. The 5 prior false claims (1279, 1441, 1545, 1276 follow-up, 1445) are now treated as actually-not-shipped beyond what's in main.
+
+**Bug log:** no functional bugs introduced or fixed this session — the false "code complete" claims were process drift, not engineering bugs, so logged via PO Roadmap rule 11 rather than Bug Tracker.
+
 ### 2026-05-04 — SCRUM-1623 [GME10.5-A] pre-signing contract anchor LIVE in prod ([PR #680](https://github.com/carson-see/ArkovaCarson/pull/680))
 
 **Implement subtask (SCRUM-1630) complete + deployed.** PR #680 squash-merged at sha `2528e8e7f5c660d8b76157aec3ce527d5c7dfd31` on 2026-05-04 00:23 UTC. deploy-worker.yml workflow [25295113742](https://github.com/carson-see/ArkovaCarson/actions/runs/25295113742) succeeded. Prod `/health` reports `git_sha=2528e8e7...`, network `mainnet`, all checks `ok` (verified via `curl https://arkova-worker-270018525501.us-central1.run.app/health` post-deploy). Endpoint `POST /api/v1/contracts/anchor-pre-signing` returns 401 without API key (auth gate live).
