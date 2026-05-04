@@ -14,6 +14,37 @@
 
 ## Now
 
+### 2026-05-04 (late, post-compact) — SCRUM-1661 + SCRUM-1667 [Verify] glue: drive-changes runner + sub-org suspension guard ([PR #696](https://github.com/carson-see/ArkovaCarson/pull/696), branch `claude/scrum-1661-1667-wire-drive-processor-and-suspension-guard`)
+
+PR #696 is **open, not merged** — this is a bench-state entry, no prod-state claims. PR #694 (parallel HANDOFF + handler-wiring branch) closed earlier in this session as superseded by [PR #697](https://github.com/carson-see/ArkovaCarson/pull/697) (also open, owned by a different session, contains overlapping carry-over bug fixes from the SCRUM-1647 launch-readiness wave that landed in [PR #689](https://github.com/carson-see/ArkovaCarson/pull/689)).
+
+**Scope of #696.** Wires two pieces of glue that the SCRUM-1647 wave deferred:
+
+* **SCRUM-1661** — `services/worker/src/integrations/connectors/drive-changes-runner.ts` (new) bridges `webhooks/drive.ts` and `drive-changes-processor.ts`. Resolves a fresh OAuth access token (KMS decrypt → conditional refresh → CAS write back to `org_integrations.encrypted_tokens` so concurrent webhooks don't clobber each other's rotated `refresh_token`), unions `organization_rules.trigger_config` `folder_id` + `drive_folders[].folder_id` per org, and adapts the processor's `DriveProcessorDb` interface onto real Supabase calls (insert / delete / advance / RPC). Webhook handler now calls `runDriveChanges` post-channel-token-verification, gated by `process.env.ENABLE_DRIVE_CHANGES_RUNNER === 'true'` (default off — prod integrations created before mig 0288 don't have `last_page_token` populated, so enabling before a watch-renewal pass back-fills tokens org-by-org would silently skip every change). Existing `drive_revision_ledger` UNIQUE(integration_id, file_id, revision_id) from mig 0288 remains the dedupe spine; the legacy stub-event-with-empty-parent_ids path was removed.
+* **SCRUM-1667** — shared `ensureOrgNotSuspended()` call wired into `anchor-submit.ts`, `anchor-bulk.ts`, and `contracts/anchor-pre-signing.ts`. Calls `is_org_suspended(uuid)` SECURITY DEFINER RPC from mig 0289. Status mapping pinned in `suspension-guard-wiring.test.ts` (5 tests): `org_suspended` → 403, `guard_lookup_failed` → 503. Gated by `process.env.ENABLE_ORG_SUSPENSION_GUARD === 'true'` (default off pending operator runbook).
+
+**This session's iteration on #696 (post-context-compact).** Three rounds of CodeRabbit ASSERTIVE feedback applied:
+
+* `8ea5dc40` — afterEach env restoration (no cross-test pollution); CAS write on `encrypted_tokens` to prevent token-rotation race on concurrent webhook deliveries.
+* `51a464f4` — distinguish `token_persist_failed` (DB error on CAS write) from `concurrent_refresh_race` (CAS lost) from `token_read_failed` (DB error on follow-up read). Earlier code masked persistence failures as silent CAS-loss.
+* `6bb8421a` — destructure-and-spread PII scrub: `actor_email` removed from `insertRevisionLedger` and `enqueueRuleEvent` failure logs (CLAUDE.md §1.4).
+* `28a52626` — `loadWatchedFolderIds` throws on `organization_rules` lookup error (was returning `[]`, which `runDriveChanges` read as "no watched folders" → silent skip + stranded changes); CAS-lost regression test added; `.sort()` → `.toSorted` on the dedup test (SonarCloud BUG fix).
+* `5ae3c919` (latest) — adapter-boundary Zod schemas (`RevisionLedgerRowSchema`, `AdvancePageTokenArgsSchema`, `EnqueueRuleEventPayloadSchema`); `deleteRevisionLedgerEntry` now throws on DB error instead of swallowing (compensating-rollback contract — silent fail leaves ledger row stale, future passes UNIQUE-conflict-skip the change forever); `[...ids].sort((a,b)=>...)` instead of `.toSorted` (toSorted is ES2023; worker `lib: ES2022` so the previous commit failed worker `tsc` locally — the repo-root tsconfig excludes `services/` so root CI's "TypeCheck & Lint" job never caught it; deploy-worker.yml runs the worker tsc on push to main and would have blocked the deploy gate).
+
+**Tests:** drive-changes-runner 14/14, drive-changes-processor 11/11, suspension-guard-wiring 5/5. Worker `npm run typecheck` clean. Worker `npm run lint` 0 errors / baseline warnings.
+
+**CI state on `5ae3c919`:** all checks SUCCESS (Tests, TypeCheck & Lint, Migration Drift, Staging Soak Evidence, SonarCloud, CodeQL, Sentry/Confluence/feedback-rules CI gates). `merge_state: BLOCKED` only because `review: CHANGES_REQUESTED` from CR's prior pass on `6bb8421a` — CR has not yet re-reviewed `28a52626` or `5ae3c919`. SonarCloud Quality Gate `OK` (5/5 conditions: new_reliability, new_security, new_maintainability, new_dup 0.7%, new_security_hotspots_reviewed 100%).
+
+**Open items on #696 (next session — Codex pickup point):**
+
+1. Re-request CodeRabbit review on `5ae3c919` (CR's last review was on `6bb8421a`).
+2. If CR raises new findings → fix, push, re-watch.
+3. If CR APPROVES + merge_state CLEAN → request explicit "merge 696" approval from Carson (CLAUDE.md §0 rule 1, `memory/feedback_never_merge_without_ok.md`).
+4. After merge: transition SCRUM-1661 + SCRUM-1667 `[Verify]` subtasks to Done in Jira with PR/SHA/revision evidence; deploy-worker.yml will exercise the worker tsc/lint gates that this session's `5ae3c919` fixed.
+5. Follow-up: SCRUM-1664 page-by-page `profile.org_id → useActiveOrg` rewire (paired with PR #697's PR-A2) is a separate PR.
+
+**Companion staging-rig note for SCRUM-1624 (different session).** Earlier this session a fresh isolated Supabase project was provisioned at `project_ref=athyljtoctluhuppchym` (host `db.athyljtoctluhuppchym.supabase.co`), `ACTIVE_HEALTHY`, $10/mo, after we discovered Supabase branches replay migrations in version-string order — timestamp-versioned migrations (e.g. `20260504142022`) sort *after* numeric ones (`0289`), so the corrective `0055b_seed_alignment_idempotent.sql` (PR #691, applied to prod) ran last on a fresh branch and the run still failed at `0056` with `column a.issued_at does not exist`. The isolated project sidesteps replay-order entirely. Continuation prompt for that session was already provided to Carson.
+
 ### 2026-05-04 (late) — SCRUM-1308 alerts-as-code + SCRUM-1545 admin-pipeline-stats coverage backfill (this branch `claude/focused-fermi-fJPqI`)
 
 Engineering-only, no prod-state changes. PR pending. Stacked on `origin/main` at `e0c0ce1` (post HANDOFF entry for SCRUM-1623).
