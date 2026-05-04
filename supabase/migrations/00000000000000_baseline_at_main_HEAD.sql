@@ -41,14 +41,25 @@
 
 -- Extensions (the supabase db dump CLI strips CREATE EXTENSION; we restore
 -- them explicitly so a fresh DB stand-up via this baseline alone is functional).
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
-CREATE EXTENSION IF NOT EXISTS pgcrypto;
+--
+-- Schema placement matches prod (verified via pg_extension JOIN pg_namespace):
+--   extensions schema  → pgcrypto, uuid-ossp, http, moddatetime, pg_stat_statements
+--   public schema      → pg_trgm, vector, hypopg, index_advisor, pg_repack
+--   vault schema       → supabase_vault
+--   pg_catalog         → pg_cron (system-managed)
+--
+-- pgcrypto MUST live in `extensions` because `get_public_anchor` calls
+-- `extensions.digest(...)` schema-qualified (baseline line ~3470). If pgcrypto
+-- lands in public on a fresh DB, that function raises 42883 at runtime.
+CREATE SCHEMA IF NOT EXISTS extensions;
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp" WITH SCHEMA extensions;
+CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA extensions;
+CREATE EXTENSION IF NOT EXISTS http WITH SCHEMA extensions;
+CREATE EXTENSION IF NOT EXISTS moddatetime WITH SCHEMA extensions;
+CREATE EXTENSION IF NOT EXISTS pg_stat_statements WITH SCHEMA extensions;
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
-CREATE EXTENSION IF NOT EXISTS moddatetime;
-CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
 CREATE EXTENSION IF NOT EXISTS pg_cron;
 CREATE EXTENSION IF NOT EXISTS pg_repack;
-CREATE EXTENSION IF NOT EXISTS http;
 CREATE EXTENSION IF NOT EXISTS hypopg;
 CREATE EXTENSION IF NOT EXISTS index_advisor;
 CREATE EXTENSION IF NOT EXISTS supabase_vault;

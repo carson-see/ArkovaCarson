@@ -13,7 +13,7 @@ Path C ships a single 14-digit-zero-timestamp baseline that lexicographically so
 ## Don't run these manually
 
 - These files are **historical**. The runtime schema came from these migrations being applied to prod between 2024 and 2026-05-04. The current schema state is captured in the baseline.
-- A fresh DB built today via the baseline + 0291+ should be functionally equivalent (same tables, columns, constraints, indexes, functions, triggers, policies, grants).
+- A fresh DB built today via the baseline + 0291+ should be functionally equivalent (same tables, columns, constraints, functions, triggers, policies, grants), with the known exception of 3 invalid prod indexes that `pg_dump` correctly omits because their `pg_index.indisvalid` is `false` (failed `CREATE INDEX CONCURRENTLY` runs left non-functional indexes — pre-existing prod tech debt, separate cleanup): `idx_anchors_pipeline_source_id`, `idx_anchors_pipeline_status`, `idx_public_records_source_id_trgm`.
 - If you need to understand WHY a particular column / constraint / index exists, `git log` on this directory will get you back to the commit that introduced the migration. The migration filenames preserve the sortable version prefix.
 
 ## Cutover
