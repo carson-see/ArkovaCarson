@@ -2,7 +2,7 @@
 
 > **Status:** Production | **Story:** [INT-02 / SCRUM-643](https://arkova.atlassian.net/browse/SCRUM-643) | **Endpoint:** `https://edge.arkova.ai/mcp`
 
-The Arkova [Model Context Protocol](https://modelcontextprotocol.io) server exposes ten tools that let AI agents (Claude, LangChain, AutoGen, custom agents) verify credentials, anchor documents, and query verified public records — all without writing HTTP requests. SCRUM-1107 adds the v2 agent aliases (`search`, `verify`, `list_orgs`, `get_anchor`) that match the OpenAPI 3.1 operation IDs published at `https://api.arkova.ai/v2/openapi.json`.
+The Arkova [Model Context Protocol](https://modelcontextprotocol.io) server exposes sixteen tools that let AI agents (Claude, LangChain, AutoGen, custom agents) verify credentials, anchor documents, and query verified public records — all without writing HTTP requests. SCRUM-1107 + SCRUM-1132 + SCRUM-1584 add the v2 agent aliases (`search`, `verify`, `list_orgs`, `get_anchor`, `get_organization`, `get_record`, `get_fingerprint`, `get_document`) that match the OpenAPI 3.1 operation IDs published at `https://api.arkova.ai/v2/openapi.json`.
 
 This is the verification layer for the agentic economy. Same infrastructure as the REST API; just exposed through the MCP transport so any tool-using LLM can call it natively.
 
@@ -420,10 +420,17 @@ curl -X POST https://edge.arkova.ai/mcp \
 
 ---
 
+## Other registered tools
+
+`oracle_batch_verify` — batch-verify up to 25 credentials with signed query-envelope metadata. Use when the consuming surface (e.g., a programmatic oracle) needs cryptographic proof of which IDs were checked at what time. Mirrors the v1 oracle batch endpoint; not part of the canonical agent v2 workflow.
+
+`list_agents` — list AI agents registered to the authenticated caller's organization. Used by management surfaces, not part of the per-credential agent flow.
+
 ## Changelog
 
 | Version | Date | Story | Change |
 |---|---|---|---|
+| v1.2 | 2026-05-03 | SCRUM-1132 + SCRUM-1584 | Added v2 detail aliases `get_organization`, `get_record`, `get_fingerprint`, `get_document`, plus `oracle_batch_verify` and `list_agents`. Total tools: 16. |
 | v1.1 | 2026-04-11 | INT-02 (SCRUM-643) | Added `verify_batch` tool (cle_verify deferred to INT-02b) |
 | v1.0 | 2026-03-22 | PH1-SDK-03 | Added `nessie_query`, `anchor_document`, `verify_document` |
 | v0.9 | 2026-03-08 | P8-S19 | Initial release with `verify_credential` + `search_credentials` |
