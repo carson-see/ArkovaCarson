@@ -144,14 +144,32 @@ async function enqueueRuleEvent(args: {
   return String(data);
 }
 
+// Microsoft Graph validation tokens are URL-safe random strings produced by
+// Graph itself. Real tokens fit comfortably under 1024 chars and only use
+// the characters in the regex below. We constrain the echo to that exact
+// shape so an attacker cannot use the handshake endpoint to reflect
+// arbitrary content (defense in depth — the response is already
+// `text/plain` so HTML/JS injection is moot, but bounding the echo keeps
+// the surface to documented Microsoft Graph contract).
+const VALIDATION_TOKEN_MAX_LEN = 1024;
+const VALIDATION_TOKEN_SAFE_RE = /^[A-Za-z0-9_\-.~+/=]+$/;
+
 microsoftGraphWebhookRouter.post('/', async (req: Request, res: Response) => {
   // Validation handshake: Graph creates a subscription by POSTing a body-less
   // request whose only signal is `?validationToken=...`. Echo it back as
   // text/plain within 10 seconds; otherwise the subscription create fails.
-  const validationToken =
+  const rawToken =
     typeof req.query.validationToken === 'string' ? req.query.validationToken : null;
-  if (validationToken) {
-    res.status(200).type('text/plain').send(validationToken);
+  if (rawToken !== null) {
+    if (
+      rawToken.length === 0 ||
+      rawToken.length > VALIDATION_TOKEN_MAX_LEN ||
+      !VALIDATION_TOKEN_SAFE_RE.test(rawToken)
+    ) {
+      res.status(400).type('text/plain').send('invalid_validation_token');
+      return;
+    }
+    res.status(200).type('text/plain').send(rawToken);
     return;
   }
 

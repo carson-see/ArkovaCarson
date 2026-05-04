@@ -118,6 +118,29 @@ describe('microsoft-graph webhook (SCRUM-1138 R2 closeout)', () => {
     expect(enqueueRpc).not.toHaveBeenCalled();
   });
 
+  it('validation handshake rejects 400 when token contains unsafe characters (XSS reflection guard)', async () => {
+    const ctx = buildRes();
+    const req = buildReq({ query: { validationToken: '<script>alert(1)</script>' } });
+    await callRouter(req, ctx.res);
+    expect(ctx.statusCode).toBe(400);
+    expect(ctx.send).toHaveBeenCalledWith('invalid_validation_token');
+  });
+
+  it('validation handshake rejects 400 when token exceeds max length', async () => {
+    const ctx = buildRes();
+    const req = buildReq({ query: { validationToken: 'a'.repeat(2000) } });
+    await callRouter(req, ctx.res);
+    expect(ctx.statusCode).toBe(400);
+  });
+
+  it('validation handshake rejects 400 when token is empty string', async () => {
+    const ctx = buildRes();
+    const req = buildReq({ query: { validationToken: '' } });
+    await callRouter(req, ctx.res);
+    // empty string ≠ null in our handler — treated as a present-but-empty token
+    expect(ctx.statusCode).toBe(400);
+  });
+
   it('rejects 503 when microsoftGraphClientState is unset', async () => {
     delete mockConfig.microsoftGraphClientState;
     const ctx = buildRes();
