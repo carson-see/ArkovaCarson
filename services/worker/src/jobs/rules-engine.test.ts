@@ -156,3 +156,102 @@ describe('runRulesEngine', () => {
     });
   });
 });
+
+describe('runRulesEngine concurrency + retry contract (SCRUM-1590)', () => {
+  it('claim is bounded — calls claim_pending_rule_events with p_limit=200', async () => {
+    await runRulesEngine();
+
+    expect(mockRpc).toHaveBeenCalledWith('claim_pending_rule_events', { p_limit: 200 });
+  });
+
+  it('empty claim — no complete/release calls when nothing pending', async () => {
+    mockClaim([]);
+
+    const result = await runRulesEngine();
+
+    expect(result).toMatchObject({
+      events_processed: 0,
+      matches_recorded: 0,
+      skipped: 0,
+      errors: 0,
+    });
+    expect(mockUpsert).not.toHaveBeenCalled();
+    expect(mockRpc).toHaveBeenCalledWith('claim_pending_rule_events', { p_limit: 200 });
+    expect(mockRpc).not.toHaveBeenCalledWith(
+      'complete_claimed_rule_events',
+      expect.anything(),
+    );
+    expect(mockRpc).not.toHaveBeenCalledWith(
+      'release_claimed_rule_events',
+      expect.anything(),
+    );
+  });
+
+  it('disabled engine — ENABLE_RULES_ENGINE=false skips claim entirely', async () => {
+    process.env.ENABLE_RULES_ENGINE = 'false';
+
+    const result = await runRulesEngine();
+
+    expect(result).toMatchObject({
+      events_processed: 0,
+      matches_recorded: 0,
+      errors: 0,
+    });
+    expect(mockRpc).not.toHaveBeenCalled();
+    expect(mockUpsert).not.toHaveBeenCalled();
+  });
+
+  it('multi-org tick — bulk-fetches rules via .in() across all org_ids, partitions matches per org', async () => {
+    const ORG_A = '22222222-2222-4222-8222-222222222222';
+    const ORG_B = '99999999-9999-4999-8999-999999999999';
+    const EVENT_A = { ...EVENT, id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', org_id: ORG_A };
+    const EVENT_B = { ...EVENT, id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', org_id: ORG_B };
+    const RULE_A = { ...MATCHING_RULE, id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaa1', org_id: ORG_A };
+    const RULE_B = { ...MATCHING_RULE, id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbb1', org_id: ORG_B };
+
+    mockClaim([EVENT_A, EVENT_B]);
+    mockRules([RULE_A, RULE_B]);
+
+    const result = await runRulesEngine();
+
+    expect(result.events_processed).toBe(2);
+    expect(result.matches_recorded).toBe(2);
+    expect(result.errors).toBe(0);
+    // Bulk fetch: a single .in([orgA, orgB]) call, not N round-trips.
+    expect(mockIn).toHaveBeenCalledTimes(1);
+    expect(mockIn).toHaveBeenCalledWith('org_id', expect.arrayContaining([ORG_A, ORG_B]));
+    // Each org's match is persisted under its own rule_id.
+    expect(mockUpsert).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({ rule_id: RULE_A.id, trigger_event_id: EVENT_A.id, org_id: ORG_A }),
+        expect.objectContaining({ rule_id: RULE_B.id, trigger_event_id: EVENT_B.id, org_id: ORG_B }),
+      ]),
+      expect.objectContaining({ onConflict: 'rule_id,trigger_event_id', ignoreDuplicates: true }),
+    );
+    // Both events flip to PROCESSED in a single complete call — not partial.
+    expect(mockRpc).toHaveBeenCalledWith('complete_claimed_rule_events', {
+      p_event_ids: expect.arrayContaining([EVENT_A.id, EVENT_B.id]),
+    });
+  });
+
+  it('release passes the full claimed batch (not a subset) so retry attempts stay accurate', async () => {
+    const EVENT_X = { ...EVENT, id: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc' };
+    mockClaim([EVENT, EVENT_X]);
+    mockUpsert.mockResolvedValueOnce({ error: { message: 'db down' } });
+
+    const result = await runRulesEngine();
+
+    expect(result.errors).toBe(1);
+    // Both event IDs flow to release — release RPC owns attempt_count >= 5 → FAILED
+    // demotion (migration 0247:275-289), so the worker MUST hand it the full
+    // claim batch or in-flight retries lose their attempt counter.
+    expect(mockRpc).toHaveBeenCalledWith('release_claimed_rule_events', {
+      p_event_ids: expect.arrayContaining([EVENT.id, EVENT_X.id]),
+      p_error: 'Rule execution persistence failed',
+    });
+    expect(mockRpc).not.toHaveBeenCalledWith(
+      'complete_claimed_rule_events',
+      expect.anything(),
+    );
+  });
+});

@@ -14,6 +14,25 @@
 
 ## Now
 
+### 2026-05-04 — SCRUM-1135 epic hygiene closeout: 4 [Hygiene] subtasks evidenced (this branch `claude/youthful-banzai-617d80`)
+
+Closed out the four open `[Hygiene]` subtasks under SCRUM-1135 (Compliance Inbox + Custom Rules Execution Loop) by linking concrete code/test/migration evidence into the per-release Confluence pages and pinning the rules-engine concurrency-and-retry contract with new tests.
+
+**Subtasks evidenced (all parent stories were already shipped in the R0–R3 wave; these were evidence-only closeouts):**
+
+- **SCRUM-1590 (under SCRUM-1136 R0)** — claim/complete/release rule-loop evidence. Added 5 new tests to `services/worker/src/jobs/rules-engine.test.ts` pinning the worker's concurrency-and-retry contract: `claim_pending_rule_events` called with `p_limit=200` (bounded claim), no-op when empty, ENABLE_RULES_ENGINE=false short-circuit, multi-org tick → single bulk-fetch + per-org match partitioning, release passes the FULL claimed batch on persistence failure (so the migration's `attempt_count >= 5 → FAILED` demotion sees an accurate counter). Total now 9/9 tests green. The two-worker race property is provided at the SQL level by `FOR UPDATE SKIP LOCKED` in migration 0247:208 — explicit decision documented on the Confluence page rather than re-proven at the worker test layer.
+- **SCRUM-1591 (under SCRUM-1137 R1)** — trust-the-loop demo evidence. Documented the create/test/enable/fire/inspect/explain trace with 44 unit tests across `rules-engine` (9), `rule-action-dispatcher` (18), and `demo-event-injector` (17). Demo-event-injector lets an org-admin fire any of 5 canonical trigger types end-to-end without a live connector account; production-gated by `ENABLE_DEMO_INJECTOR=true`. Honest scope: Playwright E2E for the demo flow is not in repo today.
+- **SCRUM-1592 (under SCRUM-1138 R2)** — real source credibility evidence. Documented 4 live HMAC-verified webhook receivers (Drive 230 LOC, DocuSign 204 LOC, Adobe Sign 221 LOC, Checkr 218 LOC) — all funnel through `ConnectorCanonicalEvent` Zod schema → `enqueue_rule_event` RPC. `vendor` is the canonical credibility column carried from receiver → queue → execution → proof packet. 34 receiver tests across 4 vendors. Honest scope: Microsoft Graph receiver and Veremark spike have schema definitions but no end-to-end receiver yet; AC1 ("≥2 sources") still met 2x by the 4 live ones.
+- **SCRUM-1593 (under SCRUM-1139 R3)** — auditor proof packet + verify-API alignment evidence. Documented 16 tests across `proof-packet.ts` (276 LOC, 9 tests) and `proof-packet-verification-view.ts` (149 LOC, 7 tests). Verify-API alignment is programmatically pinned by `PROOF_PACKET_VERIFICATION_VIEW_FIELDS` const tuple test. Privacy/redaction (no `anchor.id`/`org_id` leak) pinned by dedicated test. Honest scope: external verification helper script not yet in repo, Playwright audit-trail UI E2E missing, `superseded_by_public_id` chain walk wired but always returns `null` today.
+
+**Confluence pages updated (version 3 each):**
+- [SCRUM-1136 R0](https://arkova.atlassian.net/wiki/spaces/A/pages/27132103) — DB+worker+test inventory + concurrency contract decision
+- [SCRUM-1137 R1](https://arkova.atlassian.net/wiki/spaces/A/pages/27328642) — 6-step demo trace table + 44-test inventory
+- [SCRUM-1138 R2](https://arkova.atlassian.net/wiki/spaces/A/pages/27328665) — 4-vendor receiver table + credibility metadata flow (5 hops: ingest → queue → execution → packet → audit)
+- [SCRUM-1139 R3](https://arkova.atlassian.net/wiki/spaces/A/pages/27132126) — proof-packet+verify-API alignment + 16-test inventory + 6-AC mapping
+
+**Process notes:** No new migrations, no prod-state changes, no Supabase staging needed — every claim references code already merged to main. Worker `npx vitest run src/jobs/rules-engine.test.ts` 9/9 green, `npm run typecheck` clean, `npx eslint` clean on changed files (2 pre-existing lint warnings on `rules-engine.ts` from SCRUM-1208 missing-org-filter rule, not introduced here).
+
 ### 2026-05-04 — SCRUM-1623 [GME10.5-A] pre-signing contract anchor LIVE in prod ([PR #680](https://github.com/carson-see/ArkovaCarson/pull/680))
 
 **Implement subtask (SCRUM-1630) complete + deployed.** PR #680 squash-merged at sha `2528e8e7f5c660d8b76157aec3ce527d5c7dfd31` on 2026-05-04 00:23 UTC. deploy-worker.yml workflow [25295113742](https://github.com/carson-see/ArkovaCarson/actions/runs/25295113742) succeeded. Prod `/health` reports `git_sha=2528e8e7...`, network `mainnet`, all checks `ok` (verified via `curl https://arkova-worker-270018525501.us-central1.run.app/health` post-deploy). Endpoint `POST /api/v1/contracts/anchor-pre-signing` returns 401 without API key (auth gate live).
