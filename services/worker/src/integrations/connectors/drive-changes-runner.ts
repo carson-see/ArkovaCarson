@@ -155,10 +155,14 @@ export async function loadDriveAccessToken(
     env: deps.env,
   });
   // CAS write — only succeeds if no other concurrent refresh has
-  // already mutated `encrypted_tokens` since we read it. The
-  // `.select('id')` + maybeSingle returns null on no-row-matched.
+  // already mutated `encrypted_tokens` since we read it.
+  // CodeRabbit ASSERTIVE on PR #696 (8ea5dc40): distinguish DB error
+  // from CAS miss. A failed write that fell through to "another
+  // refresher won" would silently return the stale pre-refresh token
+  // as if the refresh succeeded, turning a persistence/read failure
+  // into a silent auth bug.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const writeResult = await (deps.db as any)
+  const { data: persistedRow, error: writeError } = await (deps.db as any)
     .from('org_integrations')
     .update({
       encrypted_tokens: `\\x${reencrypted.ciphertext.toString('hex')}`,
@@ -170,7 +174,14 @@ export async function loadDriveAccessToken(
     .select('id')
     .maybeSingle();
 
-  if (writeResult?.data) {
+  if (writeError) {
+    throw new DriveRunnerError(
+      'token_persist_failed',
+      `failed to persist refreshed Drive tokens for integration ${integration.id}: ${(writeError as { message?: string }).message ?? 'unknown'}`,
+    );
+  }
+
+  if (persistedRow) {
     return { accessToken: merged.access_token, refreshed: true };
   }
 
@@ -179,11 +190,17 @@ export async function loadDriveAccessToken(
   // second Google refresh (which would itself rotate the refresh_token
   // again and create a chain of races); we trust the winner.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data: latest } = await (deps.db as any)
+  const { data: latest, error: readError } = await (deps.db as any)
     .from('org_integrations')
     .select('encrypted_tokens, token_kms_key_id')
     .eq('id', integration.id)
     .maybeSingle();
+  if (readError) {
+    throw new DriveRunnerError(
+      'token_read_failed',
+      `CAS lost on integration ${integration.id} and follow-up read errored: ${(readError as { message?: string }).message ?? 'unknown'}`,
+    );
+  }
   if (!latest?.encrypted_tokens || !latest.token_kms_key_id) {
     throw new DriveRunnerError(
       'concurrent_refresh_race',
