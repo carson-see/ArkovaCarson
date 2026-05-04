@@ -106,10 +106,15 @@ SET search_path = public
 AS $$
 DECLARE
   v_caller        uuid := (SELECT auth.uid());
+  v_is_service    boolean := (current_setting('request.jwt.claim.role', true) = 'service_role'
+                              OR current_user IN ('service_role', 'postgres'));
   v_actual_parent uuid;
   v_already       boolean;
 BEGIN
-  IF v_caller IS NULL THEN
+  -- service_role bypass: trusted server-side callers (worker /admin endpoints,
+  -- migration backfills) skip the auth.uid + member-role gate. v_caller stays
+  -- NULL in that case; audit_events will record actor_id=NULL.
+  IF NOT v_is_service AND v_caller IS NULL THEN
     RETURN jsonb_build_object('success', false, 'error', 'unauthenticated');
   END IF;
 
@@ -122,7 +127,8 @@ BEGIN
   END IF;
 
   -- Caller must be a parent-org admin/owner OR a platform admin (per PRD §ORG-08).
-  IF NOT (
+  -- service_role bypasses the role gate (server-trusted call site).
+  IF NOT v_is_service AND NOT (
     EXISTS (
       SELECT 1 FROM org_members
       WHERE user_id = v_caller AND org_id = p_parent_org_id
@@ -151,18 +157,18 @@ BEGIN
 
   -- Audit event row (best-effort — failure does not roll back the
   -- suspension itself, but emits a NOTICE the operator will see).
+  -- Schema per migration 0006 + 0278's pattern: actor_id (uuid), details (text).
   BEGIN
-    INSERT INTO audit_events (org_id, event_type, actor_user_id, payload)
-    VALUES (
-      p_parent_org_id,
-      'org.suborg.suspended',
-      v_caller,
-      jsonb_build_object(
+    INSERT INTO audit_events (
+      event_type, event_category, actor_id, target_type, target_id, org_id, details
+    ) VALUES (
+      'org.suborg.suspended', 'ORG', v_caller, 'organization', p_sub_org_id::text, p_parent_org_id,
+      json_build_object(
         'parent_org_id', p_parent_org_id,
         'sub_org_id',    p_sub_org_id,
         'reason',        p_reason,
         'at',            now()
-      )
+      )::text
     );
   EXCEPTION WHEN OTHERS THEN
     RAISE NOTICE 'suspend_suborg: audit_events insert failed: %', SQLERRM;
@@ -197,10 +203,12 @@ SET search_path = public
 AS $$
 DECLARE
   v_caller        uuid := (SELECT auth.uid());
+  v_is_service    boolean := (current_setting('request.jwt.claim.role', true) = 'service_role'
+                              OR current_user IN ('service_role', 'postgres'));
   v_actual_parent uuid;
   v_currently     boolean;
 BEGIN
-  IF v_caller IS NULL THEN
+  IF NOT v_is_service AND v_caller IS NULL THEN
     RETURN jsonb_build_object('success', false, 'error', 'unauthenticated');
   END IF;
 
@@ -210,7 +218,7 @@ BEGIN
     RETURN jsonb_build_object('success', false, 'error', 'not_a_child_of_parent');
   END IF;
 
-  IF NOT (
+  IF NOT v_is_service AND NOT (
     EXISTS (
       SELECT 1 FROM org_members
       WHERE user_id = v_caller AND org_id = p_parent_org_id
@@ -236,16 +244,15 @@ BEGIN
     WHERE id = p_sub_org_id;
 
   BEGIN
-    INSERT INTO audit_events (org_id, event_type, actor_user_id, payload)
-    VALUES (
-      p_parent_org_id,
-      'org.suborg.unsuspended',
-      v_caller,
-      jsonb_build_object(
+    INSERT INTO audit_events (
+      event_type, event_category, actor_id, target_type, target_id, org_id, details
+    ) VALUES (
+      'org.suborg.unsuspended', 'ORG', v_caller, 'organization', p_sub_org_id::text, p_parent_org_id,
+      json_build_object(
         'parent_org_id', p_parent_org_id,
         'sub_org_id',    p_sub_org_id,
         'at',            now()
-      )
+      )::text
     );
   EXCEPTION WHEN OTHERS THEN
     RAISE NOTICE 'unsuspend_suborg: audit_events insert failed: %', SQLERRM;

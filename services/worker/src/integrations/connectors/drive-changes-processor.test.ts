@@ -380,6 +380,64 @@ describe('processDriveChanges (SCRUM-1650 GD-03..07)', () => {
     expect(db.duplicateKeys.has('file-throw::rev-throw')).toBe(false);
   });
 
+  it('CodeRabbit Critical (no-stuck-backlog): SAFE_PAGE_LIMIT cap-exit persists the page token', async () => {
+    // Drive's at-least-once delivery + nextPageToken chains: if the cap is
+    // hit because there's a backlog of >25 pages, we MUST still advance the
+    // persisted token. Otherwise the next invocation reads the unchanged
+    // token from the DB and replays the same 25 pages forever.
+    const db = makeFakeDb();
+    // Build a chain that always returns nextPageToken — never reaches a
+    // final page (no newStartPageToken). The processor will hit the
+    // SAFE_PAGE_LIMIT cap.
+    const listMock = vi.fn().mockImplementation(async ({ pageToken }: { pageToken: string }) => {
+      const next = `token-after-${pageToken}`;
+      return pageOf(
+        [{ file: { id: `file-${pageToken}`, parents: [WATCHED_FOLDER_A], headRevisionId: `rev-${pageToken}` } }],
+        { nextPageToken: next },
+      );
+    });
+
+    const result = await processDriveChanges({
+      integration: makeIntegration(),
+      accessToken: 'tok',
+      db,
+      deps: { listChanges: listMock },
+    });
+
+    // Hit the cap: 25 pages processed, token advanced past the starting token.
+    expect(result.pagesProcessed).toBe(25);
+    expect(db.advancedPageTokens.length).toBe(1);
+    expect(db.advancedPageTokens[0]).not.toBe('token-1');
+    expect(result.newPageToken).toBe(db.advancedPageTokens[0]);
+  });
+
+  it('CodeRabbit nit: parentMismatch counter excludes unrelated_change (parents.length === 0)', async () => {
+    // GD-04 telemetry: only true folder mismatches inflate the counter; a
+    // change with no parents at all is `unrelated_change` and should not be
+    // double-counted in mismatch metrics.
+    const db = makeFakeDb();
+    const listMock = vi.fn().mockResolvedValueOnce(
+      pageOf(
+        [
+          { file: { id: 'no-parents', headRevisionId: 'rev-np' } }, // unrelated_change
+          { file: { id: 'wrong-folder', parents: [UNWATCHED_FOLDER], headRevisionId: 'rev-wf' } }, // parent_mismatch
+        ],
+        { newStartPageToken: 'token-2' },
+      ),
+    );
+
+    const result = await processDriveChanges({
+      integration: makeIntegration(),
+      accessToken: 'tok',
+      db,
+      deps: { listChanges: listMock },
+    });
+
+    expect(result.parentMismatch).toBe(1);
+    expect(db.ledgerInserts.find((r) => r.file_id === 'no-parents')!.outcome).toBe('unrelated_change');
+    expect(db.ledgerInserts.find((r) => r.file_id === 'wrong-folder')!.outcome).toBe('parent_mismatch');
+  });
+
   it('throws when integration has no last_page_token (misconfiguration, fail loud)', async () => {
     const db = makeFakeDb();
     const listMock = vi.fn();

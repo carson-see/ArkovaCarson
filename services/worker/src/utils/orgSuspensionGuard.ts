@@ -26,12 +26,31 @@ export type OrgSuspensionGuardResult =
 /**
  * Returns ok=true if the org is active. ok=false with code='org_suspended'
  * if the parent admin has flipped the suspension flag. ok=false with
- * code='guard_lookup_failed' on transient DB errors — caller decides
- * whether to fail-closed (recommended for write paths) or fail-open.
+ * code='guard_lookup_failed' on ANY lookup anomaly — RPC error, RPC throw,
+ * or null/undefined response. Caller decides whether to fail-closed
+ * (recommended for write paths) or fail-open.
+ *
+ * Hardening per CodeRabbit (PR #689): a `db.rpc()` rejection used to bubble
+ * out as an unhandled promise, and `{ data: null, error: null }` was treated
+ * as ok=true, which would let a write proceed against a half-broken DB.
+ * Both are now treated as guard_lookup_failed.
  */
 export async function ensureOrgNotSuspended(orgId: string): Promise<OrgSuspensionGuardResult> {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data, error } = await (db.rpc as any)('is_org_suspended', { p_org_id: orgId });
+  let data: unknown;
+  let error: { message?: string } | null = null;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const result = await (db.rpc as any)('is_org_suspended', { p_org_id: orgId });
+    data = result.data;
+    error = result.error;
+  } catch (err) {
+    logger.error({ err, orgId }, 'orgSuspensionGuard: is_org_suspended RPC threw');
+    return {
+      ok: false,
+      code: 'guard_lookup_failed',
+      message: err instanceof Error ? err.message : 'guard rpc threw',
+    };
+  }
   if (error) {
     logger.error({ err: error, orgId }, 'orgSuspensionGuard: is_org_suspended RPC failed');
     return { ok: false, code: 'guard_lookup_failed', message: error.message ?? 'guard lookup failed' };
@@ -43,5 +62,8 @@ export async function ensureOrgNotSuspended(orgId: string): Promise<OrgSuspensio
       message: 'This organization is currently suspended by its parent admin. Contact your parent organization to restore access.',
     };
   }
-  return { ok: true };
+  if (data === false) return { ok: true };
+  // null/undefined/non-boolean — treat as lookup anomaly per CodeRabbit fail-closed guidance.
+  logger.error({ orgId, data }, 'orgSuspensionGuard: is_org_suspended returned non-boolean response');
+  return { ok: false, code: 'guard_lookup_failed', message: 'guard rpc returned non-boolean response' };
 }

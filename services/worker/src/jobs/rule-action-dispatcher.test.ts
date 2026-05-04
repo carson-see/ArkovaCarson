@@ -33,7 +33,11 @@ const dbState = {
   finalUpdates: new Map<string, Record<string, unknown>>(),
 };
 
-vi.mock('../config.js', () => ({ config: {} }));
+// Org-credit enforcement is OFF by default in production config; the
+// FAST_TRACK_ANCHOR path goes through the shared `deductOrgCredit` helper,
+// which short-circuits to allowed=true when the flag is off. The dispatcher
+// tests below pin the AC behavior on the gated path, so flip the flag on.
+vi.mock('../config.js', () => ({ config: { enableOrgCreditEnforcement: true } }));
 vi.mock('../utils/logger.js', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));

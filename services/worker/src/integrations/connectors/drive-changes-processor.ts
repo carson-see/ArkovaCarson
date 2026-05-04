@@ -226,7 +226,10 @@ export async function processDriveChanges(args: {
       }
 
       if (!matches) {
-        result.parentMismatch += 1;
+        // CodeRabbit nit (PR #689): only count true parent-mismatches; the
+        // `unrelated_change` ledger outcome (parents.length === 0) is a
+        // distinct telemetry class and would inflate the mismatch metric.
+        if (parents.length > 0) result.parentMismatch += 1;
         continue;
       }
 
@@ -282,7 +285,15 @@ export async function processDriveChanges(args: {
     return result;
   }
 
-  log?.warn?.({ integrationId: args.integration.id, pages: SAFE_PAGE_LIMIT }, 'drive changes.list page cap reached — partial drain');
+  // CodeRabbit Critical (PR #689): persist the checkpoint when the cap is
+  // hit — otherwise a backlog spanning >25 pages would replay the same 25
+  // pages forever because the next invocation reads the unchanged token
+  // from the DB.
+  log?.warn?.({ integrationId: args.integration.id, pages: SAFE_PAGE_LIMIT }, 'drive changes.list page cap reached — partial drain, advancing token');
+  await args.db.advancePageToken({
+    integration_id: args.integration.id,
+    new_page_token: pageToken,
+  });
   result.newPageToken = pageToken;
   return result;
 }

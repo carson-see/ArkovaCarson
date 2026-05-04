@@ -79,6 +79,22 @@ describe('resolveActiveOrg (SCRUM-1651 ORG-02)', () => {
     expect(r.source.kind).toBe('none');
   });
 
+  it('sessionOrgId pointing to a revoked membership falls through to profile.org_id', () => {
+    // CodeRabbit follow-up: pin the asymmetric session-vs-profile fallthrough.
+    // The session storage may carry an org id the user picked yesterday; if
+    // their membership to that org has since been revoked, the resolver must
+    // not honor the stale session value and must fall back to the implicit
+    // primary instead of producing a `session` source.
+    const r = resolveActiveOrg({
+      urlOrgId: null,
+      sessionOrgId: ORG_SUB,           // user picked the sub-org from the switcher
+      profileOrgId: ORG_PARENT,        // legacy primary
+      membershipOrgIds: [ORG_PARENT],  // ORG_SUB membership has been revoked since
+    });
+    expect(r.orgId).toBe(ORG_PARENT);
+    expect(r.source.kind).toBe('implicit_primary');
+  });
+
   it('individual-tier user with no memberships and no profile org returns none', () => {
     const r = resolveActiveOrg({
       urlOrgId: null,
