@@ -125,6 +125,16 @@ export async function loadDriveAccessToken(
       'token refresh required but stored tokens contain no refresh_token',
     );
   }
+  // Snapshot the pre-refresh ciphertext as a compare-and-swap guard.
+  // CodeRabbit ASSERTIVE flagged the original write as racy: two
+  // concurrent webhooks could both observe an expired access_token,
+  // both call refreshAccessToken (Google rotates the refresh_token in
+  // the response), and the loser's UPDATE would clobber the winner's
+  // new refresh_token — leaving the integration with a refresh_token
+  // Google has already invalidated. Avoid that by conditioning the
+  // UPDATE on `encrypted_tokens = $prevCiphertext`.
+  const prevCiphertextHex = `\\x${ciphertext.toString('hex')}`;
+
   const refreshed = await refreshAccessToken({
     refreshToken: tokens.refresh_token,
     deps: deps.drive,
@@ -144,16 +154,51 @@ export async function loadDriveAccessToken(
     keyName: integration.token_kms_key_id,
     env: deps.env,
   });
+  // CAS write — only succeeds if no other concurrent refresh has
+  // already mutated `encrypted_tokens` since we read it. The
+  // `.select('id')` + maybeSingle returns null on no-row-matched.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  await (deps.db as any)
+  const writeResult = await (deps.db as any)
     .from('org_integrations')
     .update({
       encrypted_tokens: `\\x${reencrypted.ciphertext.toString('hex')}`,
       token_kms_key_id: reencrypted.keyId,
       updated_at: now.toISOString(),
     })
-    .eq('id', integration.id);
-  return { accessToken: merged.access_token, refreshed: true };
+    .eq('id', integration.id)
+    .eq('encrypted_tokens', prevCiphertextHex)
+    .select('id')
+    .maybeSingle();
+
+  if (writeResult?.data) {
+    return { accessToken: merged.access_token, refreshed: true };
+  }
+
+  // CAS lost — another concurrent refresh wrote first. Re-decrypt the
+  // current row to get the winner's access token. We don't burn a
+  // second Google refresh (which would itself rotate the refresh_token
+  // again and create a chain of races); we trust the winner.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data: latest } = await (deps.db as any)
+    .from('org_integrations')
+    .select('encrypted_tokens, token_kms_key_id')
+    .eq('id', integration.id)
+    .maybeSingle();
+  if (!latest?.encrypted_tokens || !latest.token_kms_key_id) {
+    throw new DriveRunnerError(
+      'concurrent_refresh_race',
+      `CAS lost on integration ${integration.id} but follow-up read returned no encrypted_tokens — race + revoke?`,
+    );
+  }
+  const latestCiphertext = bytea(latest.encrypted_tokens);
+  if (!latestCiphertext) {
+    throw new DriveRunnerError('concurrent_refresh_race', 'follow-up read returned empty buffer');
+  }
+  const winner = await decryptTokens(latestCiphertext, {
+    kms: deps.kms,
+    keyName: latest.token_kms_key_id,
+  });
+  return { accessToken: winner.access_token, refreshed: true };
 }
 
 /**

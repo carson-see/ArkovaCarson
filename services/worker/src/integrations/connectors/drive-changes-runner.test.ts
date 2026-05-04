@@ -10,7 +10,7 @@
  * Drive HTTP, KMS, and DB are all dependency-injected — no real network
  * or Postgres traffic.
  */
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   loadDriveAccessToken,
   loadWatchedFolderIds,
@@ -64,12 +64,32 @@ function makeFakeDb() {
     },
     db: {
       from: (table: string) => ({
-        update: (patch: Record<string, unknown>) => ({
-          eq: (col: string, val: unknown) => {
-            updates.push({ table, patch, eq: [col, val] });
-            return Promise.resolve({ error: null });
-          },
-        }),
+        update: (patch: Record<string, unknown>) => {
+          // Two callers exercise this path:
+          //   (a) advancePageToken: .update(patch).eq('id', X) → awaited as Promise
+          //   (b) loadDriveAccessToken CAS: .update(patch).eq('id', X).eq('encrypted_tokens', $prev).select('id').maybeSingle()
+          // Build a thenable that records the patch on the first .eq, but
+          // also exposes .eq and .select so the CAS chain extends from it.
+          const eqs: Array<[string, unknown]> = [];
+          const recordOnFirstEq = () => {
+            if (eqs.length === 1) {
+              updates.push({ table, patch, eq: eqs[0] });
+            }
+          };
+          const makeThenable = (): Promise<{ error: null }> & { eq: (col: string, val: unknown) => unknown; select: (cols: string) => unknown } => {
+            const p = Promise.resolve({ error: null }) as Promise<{ error: null }> & { eq?: unknown; select?: unknown };
+            (p as { eq: (col: string, val: unknown) => unknown }).eq = (col: string, val: unknown) => {
+              eqs.push([col, val]);
+              recordOnFirstEq();
+              return makeThenable();
+            };
+            (p as { select: (cols: string) => unknown }).select = (_cols: string) => ({
+              maybeSingle: () => Promise.resolve({ data: { id: 'updated' }, error: null }),
+            });
+            return p as Promise<{ error: null }> & { eq: (col: string, val: unknown) => unknown; select: (cols: string) => unknown };
+          };
+          return makeThenable();
+        },
         insert: (row: Record<string, unknown>) => {
           if (
             conflictKey &&
@@ -108,8 +128,26 @@ function makeFakeDb() {
   };
 }
 
+// CodeRabbit ASSERTIVE on PR #696: prevent cross-test env pollution by
+// snapshotting then restoring each mutated process.env entry.
+let prevKmsKey: string | undefined;
+let prevClientId: string | undefined;
+let prevClientSecret: string | undefined;
+
 beforeEach(() => {
+  prevKmsKey = process.env.GCP_KMS_INTEGRATION_TOKEN_KEY;
+  prevClientId = process.env.GOOGLE_OAUTH_CLIENT_ID;
+  prevClientSecret = process.env.GOOGLE_OAUTH_CLIENT_SECRET;
   process.env.GCP_KMS_INTEGRATION_TOKEN_KEY = KEY;
+});
+
+afterEach(() => {
+  if (prevKmsKey === undefined) delete process.env.GCP_KMS_INTEGRATION_TOKEN_KEY;
+  else process.env.GCP_KMS_INTEGRATION_TOKEN_KEY = prevKmsKey;
+  if (prevClientId === undefined) delete process.env.GOOGLE_OAUTH_CLIENT_ID;
+  else process.env.GOOGLE_OAUTH_CLIENT_ID = prevClientId;
+  if (prevClientSecret === undefined) delete process.env.GOOGLE_OAUTH_CLIENT_SECRET;
+  else process.env.GOOGLE_OAUTH_CLIENT_SECRET = prevClientSecret;
 });
 
 describe('loadDriveAccessToken', () => {
