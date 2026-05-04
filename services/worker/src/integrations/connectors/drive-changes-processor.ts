@@ -226,7 +226,11 @@ export async function processDriveChanges(args: {
       }
 
       if (!matches) {
-        result.parentMismatch += 1;
+        // SCRUM-1647 follow-up: only count true parent-mismatches; the
+        // `unrelated_change` ledger outcome (parents.length === 0) is a
+        // distinct telemetry class and would inflate the mismatch metric
+        // if mixed in here.
+        if (parents.length > 0) result.parentMismatch += 1;
         continue;
       }
 
@@ -282,7 +286,17 @@ export async function processDriveChanges(args: {
     return result;
   }
 
-  log?.warn?.({ integrationId: args.integration.id, pages: SAFE_PAGE_LIMIT }, 'drive changes.list page cap reached — partial drain');
+  // SCRUM-1647 follow-up (CodeRabbit Critical): persist the checkpoint when
+  // the cap is hit. Otherwise a backlog of >SAFE_PAGE_LIMIT pages would
+  // replay the same window forever — every invocation reads the unchanged
+  // last_page_token from the DB, processes the same 25 pages, and exits
+  // without advancing. Persist the latest token we successfully consumed
+  // so the next pass picks up where this one left off.
+  log?.warn?.({ integrationId: args.integration.id, pages: SAFE_PAGE_LIMIT }, 'drive changes.list page cap reached — partial drain, advancing token');
+  await args.db.advancePageToken({
+    integration_id: args.integration.id,
+    new_page_token: pageToken,
+  });
   result.newPageToken = pageToken;
   return result;
 }
