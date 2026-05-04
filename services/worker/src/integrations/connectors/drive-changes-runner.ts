@@ -35,7 +35,6 @@ import {
 import {
   decryptTokens,
   encryptTokens,
-  getIntegrationTokenKeyName,
   type KmsClient,
   type OAuthTokens,
 } from '../oauth/crypto.js';

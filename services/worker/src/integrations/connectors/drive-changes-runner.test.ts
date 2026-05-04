@@ -34,17 +34,13 @@ const EXPIRED_TOKENS = {
   expires_at: new Date(Date.now() - 60_000).toISOString(),
 };
 
-function fakeKms(planForCalls: Array<{ plaintext: string } | { ciphertextHex: string }>) {
-  let calls = 0;
+function fakeKms() {
   return {
-    encrypt: vi.fn(async ({ plaintext }: { keyName: string; plaintext: Buffer }) => {
-      calls += 1;
-      return Buffer.from(`ct:${plaintext.toString('utf8')}`, 'utf8');
-    }),
+    encrypt: vi.fn(async ({ plaintext }: { keyName: string; plaintext: Buffer }) =>
+      Buffer.from(`ct:${plaintext.toString('utf8')}`, 'utf8'),
+    ),
     decrypt: vi.fn(async ({ ciphertext }: { keyName: string; ciphertext: Buffer }) => {
-      calls += 1;
       const text = ciphertext.toString('utf8');
-      void planForCalls;
       // Strip the `ct:` prefix our fakeEncrypt added; otherwise return the
       // raw text (used when test pre-seeds plaintext directly).
       const stripped = text.startsWith('ct:') ? text.slice(3) : text;
@@ -118,7 +114,7 @@ beforeEach(() => {
 
 describe('loadDriveAccessToken', () => {
   it('returns cached access token when stored tokens are still fresh', async () => {
-    const kms = fakeKms([]);
+    const kms = fakeKms();
     const fakeFetch = vi.fn();
     const fake = makeFakeDb();
     const integration: DriveIntegrationRow = {
@@ -140,7 +136,7 @@ describe('loadDriveAccessToken', () => {
   });
 
   it('refreshes via Drive OAuth + re-encrypts + persists when stored tokens are expired', async () => {
-    const kms = fakeKms([]);
+    const kms = fakeKms();
     const fakeFetch = vi.fn().mockResolvedValueOnce({
       ok: true,
       json: async () => ({
@@ -181,7 +177,7 @@ describe('loadDriveAccessToken', () => {
   });
 
   it('throws no_encrypted_tokens when integration has never completed OAuth', async () => {
-    const kms = fakeKms([]);
+    const kms = fakeKms();
     const fake = makeFakeDb();
     const integration: DriveIntegrationRow = {
       id: INT,
