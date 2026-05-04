@@ -117,35 +117,19 @@ async function findIntegrationBySubscription(
   };
 }
 
-async function recordNonce(args: {
-  subscriptionId: string;
-  resourceId: string;
-  changeType: string;
-}): Promise<{ duplicate: boolean; failed: boolean }> {
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { error } = await (db as any).from('microsoft_graph_webhook_nonces').insert({
-      subscription_id: args.subscriptionId,
-      resource_id: args.resourceId,
-      change_type: args.changeType,
-    });
-    if (error) {
-      if ((error as { code?: string }).code === '23505') return { duplicate: true, failed: false };
-      logger.warn({ error, ...args }, 'MS Graph webhook: nonce insert failed');
-      return { duplicate: false, failed: true };
-    }
-    return { duplicate: false, failed: false };
-  } catch (err) {
-    logger.warn({ error: err, ...args }, 'MS Graph webhook: nonce insert threw');
-    return { duplicate: false, failed: true };
-  }
-}
+type RecordAndEnqueueOutcome =
+  | { kind: 'enqueued'; ruleEventId: string }
+  | { kind: 'duplicate' }
+  | { kind: 'adapter_rejected' }
+  | { kind: 'rpc_failed' };
 
-async function enqueueRuleEvent(args: {
+async function recordNonceAndEnqueue(args: {
   integration: IntegrationRow;
   item: GraphChangeItem;
   payloadHash: string;
-}): Promise<string | null> {
+}): Promise<RecordAndEnqueueOutcome> {
+  // Adapter runs first so an unsupported resource shape never even hits the
+  // DB — if it throws, we have nothing to enqueue and no nonce to record.
   let canonical;
   try {
     canonical = adaptMicrosoftGraph(args.item, { org_id: args.integration.org_id });
@@ -154,10 +138,21 @@ async function enqueueRuleEvent(args: {
       { err: err instanceof Error ? err.message : String(err), subId: args.item.subscriptionId },
       'MS Graph webhook: adapter rejected item',
     );
-    return null;
+    return { kind: 'adapter_rejected' };
   }
+
+  // SCRUM-1135 (PR #695 follow-up to CodeRabbit ASSERTIVE):
+  // record_msgraph_nonce_and_enqueue is a single Postgres function — nonce
+  // INSERT and enqueue_rule_event run in the SAME transaction, so a transient
+  // enqueue failure rolls back the nonce insert and Graph's retry succeeds
+  // on the next attempt. Replaces the prior two-call sequence that could
+  // permanently drop a notification on the gap between the two RPCs.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data, error } = await (db.rpc as any)('enqueue_rule_event', {
+  const { data, error } = await (db.rpc as any)('record_msgraph_nonce_and_enqueue', {
+    p_subscription_id: args.item.subscriptionId,
+    p_resource_id: args.item.resourceData.id,
+    p_change_type: args.item.changeType,
+    p_payload_hash: args.payloadHash,
     p_org_id: canonical.org_id,
     p_trigger_type: canonical.trigger_type,
     p_vendor: canonical.vendor,
@@ -175,14 +170,32 @@ async function enqueueRuleEvent(args: {
       payload_hash: args.payloadHash,
     },
   });
-  if (error || !data) {
+  if (error) {
     logger.error(
-      { error, integrationId: args.integration.id },
-      'MS Graph webhook: enqueue_rule_event failed',
+      { error, integrationId: args.integration.id, subId: args.item.subscriptionId },
+      'MS Graph webhook: record_msgraph_nonce_and_enqueue failed — atomic rollback expected, retry will be served',
     );
-    return null;
+    return { kind: 'rpc_failed' };
   }
-  return String(data);
+  // Postgres `RETURNS TABLE(...)` surfaces as an array of rows via PostgREST;
+  // the function always returns exactly one row.
+  const row = Array.isArray(data) ? (data[0] as { rule_event_id: string | null; duplicate: boolean } | undefined) : null;
+  if (!row) {
+    logger.error(
+      { data, integrationId: args.integration.id },
+      'MS Graph webhook: record_msgraph_nonce_and_enqueue returned no row',
+    );
+    return { kind: 'rpc_failed' };
+  }
+  if (row.duplicate) return { kind: 'duplicate' };
+  if (!row.rule_event_id) {
+    logger.error(
+      { row, integrationId: args.integration.id },
+      'MS Graph webhook: record_msgraph_nonce_and_enqueue returned no rule_event_id on non-duplicate path',
+    );
+    return { kind: 'rpc_failed' };
+  }
+  return { kind: 'enqueued', ruleEventId: String(row.rule_event_id) };
 }
 
 // Microsoft Graph validation tokens are URL-safe random strings produced by
@@ -235,26 +248,24 @@ async function processGraphChangeItem(
   if (!lookup.row) {
     return { outcome: 'skipped', reason: 'unknown_subscription', subscriptionId: item.subscriptionId };
   }
-  const nonce = await recordNonce({
-    subscriptionId: item.subscriptionId,
-    resourceId: item.resourceData.id,
-    changeType: item.changeType,
-  });
-  if (nonce.duplicate) {
-    return { outcome: 'skipped', reason: 'duplicate', subscriptionId: item.subscriptionId };
-  }
-  if (nonce.failed) {
-    return { outcome: 'skipped', reason: 'nonce_failed', subscriptionId: item.subscriptionId };
-  }
-  const ruleEventId = await enqueueRuleEvent({
+  const result = await recordNonceAndEnqueue({
     integration: lookup.row,
     item,
     payloadHash: ctx.payloadHash,
   });
-  if (!ruleEventId) {
-    return { outcome: 'skipped', reason: 'enqueue_failed', subscriptionId: item.subscriptionId };
+  switch (result.kind) {
+    case 'enqueued':
+      return { outcome: 'enqueued', ruleEventId: result.ruleEventId };
+    case 'duplicate':
+      return { outcome: 'skipped', reason: 'duplicate', subscriptionId: item.subscriptionId };
+    case 'adapter_rejected':
+      return { outcome: 'skipped', reason: 'adapter_rejected', subscriptionId: item.subscriptionId };
+    case 'rpc_failed':
+      // Same-tx atomic guarantee from migration 0291: the nonce insert
+      // rolled back, so Graph's retry will succeed. Surface as enqueue_failed
+      // for telemetry continuity with the prior contract.
+      return { outcome: 'skipped', reason: 'enqueue_failed', subscriptionId: item.subscriptionId };
   }
-  return { outcome: 'enqueued', ruleEventId };
 }
 
 function handleValidationHandshake(rawToken: string, res: Response): void {

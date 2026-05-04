@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Request, Response } from 'express';
 
 const integrationLookup = vi.fn();
-const nonceInsert = vi.fn();
+const nonceInsert = vi.fn(); // legacy guard: should not be called after migration 0291
 const enqueueRpc = vi.fn();
 
 const mockConfig: { microsoftGraphClientState?: string } = {};
@@ -100,7 +100,13 @@ beforeEach(() => {
     error: null,
   });
   nonceInsert.mockResolvedValue({ error: null });
-  enqueueRpc.mockResolvedValue({ data: 'evt_msgraph_1', error: null });
+  // Migration 0291: record_msgraph_nonce_and_enqueue is the single compound
+  // RPC the handler calls. RETURNS TABLE(rule_event_id UUID, duplicate BOOL)
+  // surfaces as an array of rows via PostgREST.
+  enqueueRpc.mockResolvedValue({
+    data: [{ rule_event_id: 'evt_msgraph_1', duplicate: false }],
+    error: null,
+  });
 });
 
 afterEach(() => {
@@ -193,15 +199,25 @@ describe('microsoft-graph webhook (SCRUM-1138 R2 closeout)', () => {
     });
     await callRouter(req, ctx.res);
     expect(ctx.statusCode).toBe(202);
+    const rpcName = enqueueRpc.mock.calls[0]?.[0] as string;
+    expect(rpcName).toBe('record_msgraph_nonce_and_enqueue');
     const enqueueArgs = enqueueRpc.mock.calls[0]?.[1] as Record<string, unknown>;
     expect(enqueueArgs.p_org_id).toBe(ORG_ID);
     expect(enqueueArgs.p_trigger_type).toBe('WORKSPACE_FILE_MODIFIED');
     expect(enqueueArgs.p_vendor).toBe('sharepoint');
     expect(enqueueArgs.p_external_file_id).toBe(RESOURCE_ID);
+    expect(enqueueArgs.p_subscription_id).toBe(SUB_ID);
+    expect(enqueueArgs.p_resource_id).toBe(RESOURCE_ID);
+    expect(enqueueArgs.p_change_type).toBe('updated');
+    expect(typeof enqueueArgs.p_payload_hash).toBe('string');
+    expect((enqueueArgs.p_payload_hash as string).length).toBe(64); // sha256 hex
     const payload = enqueueArgs.p_payload as Record<string, unknown>;
     expect(payload.source).toBe('microsoft_graph');
     expect(payload.integration_id).toBe(INTEGRATION_ID);
     expect(payload.change_type).toBe('updated');
+    // Direct .from('microsoft_graph_webhook_nonces').insert() is no longer
+    // called; the compound RPC handles both the nonce row + enqueue atomically.
+    expect(nonceInsert).not.toHaveBeenCalled();
   });
 
   it('routes /me/drive/... resource to vendor=onedrive', async () => {
@@ -392,8 +408,16 @@ describe('microsoft-graph webhook (SCRUM-1138 R2 closeout)', () => {
     expect(body.skipped).toBe(1);
   });
 
-  it('treats Postgres unique-violation on nonce as duplicate (no enqueue, still 202)', async () => {
-    nonceInsert.mockResolvedValueOnce({ error: { code: '23505' } });
+  it('migration 0291 atomic rollback: compound RPC error → enqueue_failed skip, no permanent drop', async () => {
+    // Migration 0291: when the compound RPC raises (transient enqueue
+    // validation error, lock timeout, etc.) Postgres rolls back the nonce
+    // INSERT in the same transaction. So Graph's retry will not collide
+    // on the nonce PK and will attempt fresh. The handler must NOT 202-ack
+    // the failed item — surface it as `enqueue_failed` skipped reason.
+    enqueueRpc.mockResolvedValueOnce({
+      data: null,
+      error: { message: 'enqueue_rule_event raised: invalid_org_id', code: '23503' },
+    });
     const ctx = buildRes();
     const req = buildReq({
       body: {
@@ -413,6 +437,104 @@ describe('microsoft-graph webhook (SCRUM-1138 R2 closeout)', () => {
     const body = ctx.body as { enqueued: number; skipped: number };
     expect(body.enqueued).toBe(0);
     expect(body.skipped).toBe(1);
-    expect(enqueueRpc).not.toHaveBeenCalled();
+    // The atomic rollback property is what we're documenting in this test;
+    // we cannot directly assert "the nonce row was rolled back" from the
+    // unit-test layer (no real DB), but we CAN assert that nothing was
+    // marked enqueued and the RPC was the only DB call made.
+    expect(enqueueRpc).toHaveBeenCalledTimes(1);
+    expect(nonceInsert).not.toHaveBeenCalled();
+  });
+
+  it('migration 0291 PK widening: same sub+resource+changeType with different payload_hash both enqueue', async () => {
+    // Pre-0291 the PK was (subscription_id, resource_id, change_type) — every
+    // legitimate later `updated` for the same Graph resource collided on the
+    // nonce table and got dropped as `duplicate`. After 0291 the PK includes
+    // payload_hash, so two updates with different bodies both succeed.
+    integrationLookup.mockResolvedValue({
+      data: { org_integrations: { id: INTEGRATION_ID, org_id: ORG_ID } },
+      error: null,
+    });
+    enqueueRpc
+      .mockResolvedValueOnce({ data: [{ rule_event_id: 'evt_msgraph_a', duplicate: false }], error: null })
+      .mockResolvedValueOnce({ data: [{ rule_event_id: 'evt_msgraph_b', duplicate: false }], error: null });
+    // First request: same sub + same resource + same changeType, payload A.
+    // Note: tenantId omitted — MicrosoftGraphChange schema requires UUID
+    // shape and we don't need it for this test.
+    const reqA = buildReq({
+      body: {
+        value: [
+          {
+            subscriptionId: SUB_ID,
+            clientState: CLIENT_STATE,
+            resource: 'sites/x/drive/items/r1',
+            resourceData: { id: 'r1', name: 'doc.docx' },
+            changeType: 'updated',
+          },
+        ],
+      },
+    });
+    const ctxA = buildRes();
+    await callRouter(reqA, ctxA.res);
+    expect(ctxA.statusCode).toBe(202);
+
+    // Second request: same sub + same resource + same changeType, but later
+    // edit so the rawBody (and therefore payload_hash) differs. Pre-0291 this
+    // would collide and be `duplicate`; post-0291 it must enqueue.
+    const reqB = buildReq({
+      body: {
+        value: [
+          {
+            subscriptionId: SUB_ID,
+            clientState: CLIENT_STATE,
+            resource: 'sites/x/drive/items/r1',
+            resourceData: { id: 'r1', name: 'doc-revised.docx' }, // different name → different hash
+            changeType: 'updated',
+          },
+        ],
+      },
+    });
+    const ctxB = buildRes();
+    await callRouter(reqB, ctxB.res);
+    expect(ctxB.statusCode).toBe(202);
+
+    expect(enqueueRpc).toHaveBeenCalledTimes(2);
+    const hashA = (enqueueRpc.mock.calls[0]?.[1] as Record<string, unknown>).p_payload_hash;
+    const hashB = (enqueueRpc.mock.calls[1]?.[1] as Record<string, unknown>).p_payload_hash;
+    expect(hashA).not.toBe(hashB); // different rawBody → different sha256
+    expect((ctxB.body as { enqueued: number }).enqueued).toBe(1);
+  });
+
+  it('treats compound-RPC duplicate=true row as a replay (no rule_event_id, still 202)', async () => {
+    // Migration 0291: the wider PK (subscription_id, resource_id, change_type,
+    // payload_hash) collides only on a TRUE replay (same payload bytes).
+    // Compound RPC short-circuits and returns duplicate=true with no rule_event_id.
+    enqueueRpc.mockResolvedValueOnce({
+      data: [{ rule_event_id: null, duplicate: true }],
+      error: null,
+    });
+    const ctx = buildRes();
+    const req = buildReq({
+      body: {
+        value: [
+          {
+            subscriptionId: SUB_ID,
+            clientState: CLIENT_STATE,
+            resource: 'sites/x/drive/items/r1',
+            resourceData: { id: 'r1' },
+            changeType: 'updated',
+          },
+        ],
+      },
+    });
+    await callRouter(req, ctx.res);
+    expect(ctx.statusCode).toBe(202);
+    const body = ctx.body as { enqueued: number; skipped: number };
+    expect(body.enqueued).toBe(0);
+    expect(body.skipped).toBe(1);
+    // Compound RPC was called once and returned duplicate=true, which the
+    // handler maps to skipped reason 'duplicate'. The legacy `nonceInsert`
+    // direct-table call is no longer made.
+    expect(enqueueRpc).toHaveBeenCalledTimes(1);
+    expect(nonceInsert).not.toHaveBeenCalled();
   });
 });
