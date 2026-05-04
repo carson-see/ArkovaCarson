@@ -19,6 +19,7 @@
  */
 import crypto from 'node:crypto';
 import { Router, type Request, type Response } from 'express';
+import { config } from '../../../config.js';
 import { db } from '../../../utils/db.js';
 import { logger } from '../../../utils/logger.js';
 import { adaptMicrosoftGraph } from '../../../integrations/connectors/adapters.js';
@@ -154,7 +155,7 @@ microsoftGraphWebhookRouter.post('/', async (req: Request, res: Response) => {
     return;
   }
 
-  const expectedClientState = process.env.MICROSOFT_GRAPH_CLIENT_STATE;
+  const expectedClientState = config.microsoftGraphClientState;
   if (!expectedClientState) {
     logger.error('MS Graph webhook: MICROSOFT_GRAPH_CLIENT_STATE not set — rejecting');
     res.status(503).json({ error: { code: 'webhook_unconfigured' } });

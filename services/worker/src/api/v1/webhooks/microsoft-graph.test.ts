@@ -8,6 +8,13 @@ const integrationLookup = vi.fn();
 const nonceInsert = vi.fn();
 const enqueueRpc = vi.fn();
 
+const mockConfig: { microsoftGraphClientState?: string } = {};
+vi.mock('../../../config.js', () => ({
+  get config() {
+    return mockConfig;
+  },
+}));
+
 vi.mock('../../../utils/logger.js', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
@@ -87,7 +94,7 @@ async function callRouter(req: Request, res: Response): Promise<void> {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  process.env.MICROSOFT_GRAPH_CLIENT_STATE = CLIENT_STATE;
+  mockConfig.microsoftGraphClientState = CLIENT_STATE;
   integrationLookup.mockResolvedValue({
     data: { org_integrations: { id: INTEGRATION_ID, org_id: ORG_ID } },
     error: null,
@@ -97,7 +104,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  delete process.env.MICROSOFT_GRAPH_CLIENT_STATE;
+  delete mockConfig.microsoftGraphClientState;
 });
 
 describe('microsoft-graph webhook (SCRUM-1138 R2 closeout)', () => {
@@ -111,8 +118,8 @@ describe('microsoft-graph webhook (SCRUM-1138 R2 closeout)', () => {
     expect(enqueueRpc).not.toHaveBeenCalled();
   });
 
-  it('rejects 503 when MICROSOFT_GRAPH_CLIENT_STATE is unset', async () => {
-    delete process.env.MICROSOFT_GRAPH_CLIENT_STATE;
+  it('rejects 503 when microsoftGraphClientState is unset', async () => {
+    delete mockConfig.microsoftGraphClientState;
     const ctx = buildRes();
     const req = buildReq({ body: { value: [] } });
     await callRouter(req, ctx.res);
