@@ -47,9 +47,11 @@ npm install                  # standard worker install — circomlib NOT here
 npm run build:circuit        # build.sh fetches circomlib + ptau + compiles
 ```
 
-You need `circom >= 2.1.0` on `PATH`. Install from
-<https://github.com/iden3/circom/releases> (precompiled binaries) or build
-from source via `cargo install --git https://github.com/iden3/circom.git`.
+You need exactly `circom v2.1.9` on `PATH` (build.sh enforces the exact match
+to keep extraction-proof_final.zkey + verification_key.json byte-identical
+across builds). Install from
+<https://github.com/iden3/circom/releases/tag/v2.1.9> (precompiled binaries) or build
+from source by checking out the matching tag and running `cargo install --path circom`.
 
 ## CI
 

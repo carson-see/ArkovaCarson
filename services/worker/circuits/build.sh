@@ -65,14 +65,41 @@ CIRCOMLIB_DIR="$ARTIFACTS_DIR/.circomlib"
 
 mkdir -p "$ARTIFACTS_DIR"
 
-echo "[build-circuit] Step 1/6: verify circom is installed"
+# Pinned circom version. Must match the value in .github/workflows/ci.yml
+# (currently v2.1.9). Reproducibility of extraction-proof_final.zkey +
+# verification_key.json requires byte-identical inputs across every build —
+# that includes the circom binary version. Different circom versions will
+# produce different artifacts even with identical .circom source, so accept
+# only the exact pinned version. CodeRabbit ASSERTIVE on PR #693.
+EXPECTED_CIRCOM_VERSION="2.1.9"
+
+echo "[build-circuit] Step 1/6: verify circom is installed and at the pinned version"
 if ! command -v circom >/dev/null 2>&1; then
-  echo "[build-circuit] ERROR: circom is not installed. Install from https://github.com/iden3/circom/releases" >&2
+  echo "[build-circuit] ERROR: circom is not installed. Install v${EXPECTED_CIRCOM_VERSION} from https://github.com/iden3/circom/releases/tag/v${EXPECTED_CIRCOM_VERSION}" >&2
   exit 1
 fi
-circom --version
+# `circom --version` output: "circom compiler 2.1.9". Take the last whitespace-
+# separated field. Any deviation from EXPECTED_CIRCOM_VERSION is a hard error.
+INSTALLED_CIRCOM_VERSION="$(circom --version | awk '{print $NF}')"
+if [[ "$INSTALLED_CIRCOM_VERSION" != "$EXPECTED_CIRCOM_VERSION" ]]; then
+  echo "[build-circuit] ERROR: expected circom v${EXPECTED_CIRCOM_VERSION} (matches .github/workflows/ci.yml CIRCOM_VERSION pin), got v${INSTALLED_CIRCOM_VERSION}" >&2
+  echo "[build-circuit] Reproducibility requires the exact pinned version. Install from https://github.com/iden3/circom/releases/tag/v${EXPECTED_CIRCOM_VERSION}" >&2
+  exit 1
+fi
+echo "[build-circuit] circom version OK (v${INSTALLED_CIRCOM_VERSION})"
 
 echo "[build-circuit] Step 2/6: fetch circomlib tarball (build-time only, GPL-3.0)"
+# Invalidate the extracted circomlib dir if its recorded version doesn't match
+# CIRCOMLIB_VERSION. Without this, a stale .circomlib from an older
+# CIRCOMLIB_VERSION (different SHA-pinned tarball) would be silently reused
+# because line 76 only checks dir existence — same reproducibility failure
+# mode the circom version check above prevents. CodeRabbit ASSERTIVE on PR #693.
+CIRCOMLIB_VERSION_STAMP="$CIRCOMLIB_DIR/.version"
+if [[ -f "$CIRCOMLIB_VERSION_STAMP" ]] && [[ "$(cat "$CIRCOMLIB_VERSION_STAMP")" != "$CIRCOMLIB_VERSION" ]]; then
+  echo "[build-circuit] circomlib version drift detected ($(cat "$CIRCOMLIB_VERSION_STAMP") on disk vs $CIRCOMLIB_VERSION pinned) — invalidating $CIRCOMLIB_DIR"
+  rm -rf "$CIRCOMLIB_DIR"
+fi
+
 if [[ ! -d "$CIRCOMLIB_DIR/circuits" ]]; then
   TARBALL="$ARTIFACTS_DIR/circomlib-${CIRCOMLIB_VERSION}.tar.gz"
   if [[ ! -f "$TARBALL" ]]; then
@@ -90,6 +117,7 @@ if [[ ! -d "$CIRCOMLIB_DIR/circuits" ]]; then
   echo "[build-circuit] circomlib SHA-256 OK ($ACTUAL_CL_SHA)"
   mkdir -p "$CIRCOMLIB_DIR"
   tar -xzf "$TARBALL" -C "$CIRCOMLIB_DIR" --strip-components=1
+  printf '%s\n' "$CIRCOMLIB_VERSION" > "$CIRCOMLIB_VERSION_STAMP"
 fi
 
 echo "[build-circuit] Step 3/6: download Powers of Tau (if missing)"
