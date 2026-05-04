@@ -1,9 +1,9 @@
 # Path C — pg_dump baseline cutover plan
 
-> **Jira:** [SCRUM-1668](https://arkova.atlassian.net/browse/SCRUM-1668) (parent [SCRUM-1647](https://arkova.atlassian.net/browse/SCRUM-1647))
-> **PR:** *TBD-PR-NUMBER* (T3 per CLAUDE.md §1.12)
-> **Status:** PLAN — held for Carson signoff + maintenance window. Do not run any prod step until then.
-> **Cutover is a separate, gated operation.** Merging the PR ships the repo-side change. Cutover is what makes prod's ledger consistent with the new repo layout — it MUST run inside a maintenance window.
+> **Jira:** [SCRUM-1668](https://arkova.atlassian.net/browse/SCRUM-1668) (parent [SCRUM-1246](https://arkova.atlassian.net/browse/SCRUM-1246) RECOVERY)
+> **PR:** [#700](https://github.com/carson-see/ArkovaCarson/pull/700) (T2 per CLAUDE.md §1.12 path-detector)
+> **Status:** **CUTOVER APPLIED 2026-05-04** to prod project `vzwyaatejekddvltxyye` via Supabase MCP `execute_sql` (single ledger INSERT, RETURNING confirmed `version=00000000000000, name=baseline_at_main_HEAD`). PR #700 awaiting `merge {N}` for the repo-side change to land.
+> **Cutover IS the metadata write to prod's ledger.** Merging PR #700 ships the repo-side rename. Both halves are now reversible: revert the PR for repo-side, run `DELETE FROM supabase_migrations.schema_migrations WHERE version='00000000000000'` for prod-side. Schema itself is unchanged through both directions.
 
 ---
 
@@ -25,7 +25,7 @@ The 14-digit zero-timestamp prefix matches the Supabase preview-branch builder r
 | Change | File(s) |
 |---|---|
 | Add baseline | `supabase/migrations/00000000000000_baseline_at_main_HEAD.sql` |
-| Archive historical chain | `git mv supabase/migrations/000{0,1,...,289}_*.sql docs/migrations-archive/` |
+| Archive historical chain | `ls supabase/migrations/ \| grep -E '^0[0-9]{3}' \| while read f; do git mv "supabase/migrations/$f" "docs/migrations-archive/$f"; done` |
 | Archive index | `docs/migrations-archive/README.md` (per-version pointer to prod ledger row) |
 | CI drift gate exempt | `.github/workflows/migration-drift.yml` `exempt_regex` adds `00000000000000_baseline_at_main_HEAD` until cutover |
 | Cutover doc | `docs/staging/PATH_C_CUTOVER.md` (this file) |
