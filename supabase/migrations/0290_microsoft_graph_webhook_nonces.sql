@@ -23,8 +23,16 @@ CREATE TABLE IF NOT EXISTS public.microsoft_graph_webhook_nonces (
 ALTER TABLE public.microsoft_graph_webhook_nonces ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.microsoft_graph_webhook_nonces FORCE ROW LEVEL SECURITY;
 
--- No SELECT/UPDATE/DELETE policies — service_role bypasses RLS.
--- Authenticated users have no business reading webhook nonces.
+-- Explicit deny-all policy for authenticated callers — webhook nonces hold
+-- no user-readable data and must never be exposed via PostgREST. Service
+-- role bypasses RLS automatically; the policy below covers SCRUM-1275 lint
+-- (every RLS-enabled table needs at least one policy).
+CREATE POLICY ms_graph_nonces_deny_all
+  ON public.microsoft_graph_webhook_nonces
+  FOR ALL
+  TO authenticated
+  USING (false)
+  WITH CHECK (false);
 
 -- 90-day retention: nonces are duplicate-detection only, not audit. Older
 -- rows are pruned by the standard housekeeping cron (a follow-on operator
