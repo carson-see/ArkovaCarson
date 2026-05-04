@@ -258,6 +258,140 @@ describe('microsoft-graph webhook (SCRUM-1138 R2 closeout)', () => {
     expect(enqueueRpc).toHaveBeenCalledTimes(1);
   });
 
+  it('returns 503 when integration lookup fails transiently and nothing was enqueued', async () => {
+    // CodeRabbit ASSERTIVE on PR #695: a connector_subscriptions DB outage
+    // must NOT be ack'd as `unknown_subscription` + 202. Graph stops retrying
+    // on 2xx, so silent drop. New behavior: lookupFailed is tracked; if it
+    // fired and zero items enqueued, surface 503 so Graph retries the batch.
+    // The nonce dedupe table protects against double-delivery on retry.
+    integrationLookup.mockResolvedValue({
+      data: null,
+      error: { message: 'pg connection refused', code: 'ECONNREFUSED' },
+    });
+    const ctx = buildRes();
+    const req = buildReq({
+      body: {
+        value: [
+          {
+            subscriptionId: SUB_ID,
+            clientState: CLIENT_STATE,
+            resource: 'sites/x/drive/items/r1',
+            resourceData: { id: 'r1' },
+            changeType: 'updated',
+          },
+        ],
+      },
+    });
+    await callRouter(req, ctx.res);
+    expect(ctx.statusCode).toBe(503);
+    const body = ctx.body as { error: { code: string } };
+    expect(body.error.code).toBe('integration_lookup_failed');
+    expect(enqueueRpc).not.toHaveBeenCalled();
+  });
+
+  it('partial lookup failure: still 202 when at least one item enqueued (lookup-failed item just skipped)', async () => {
+    integrationLookup
+      .mockResolvedValueOnce({ data: null, error: { message: 'transient' } })
+      .mockResolvedValueOnce({ data: { org_integrations: { id: INTEGRATION_ID, org_id: ORG_ID } }, error: null });
+    const ctx = buildRes();
+    const req = buildReq({
+      body: {
+        value: [
+          {
+            subscriptionId: 'will-fail-lookup',
+            clientState: CLIENT_STATE,
+            resource: 'sites/x/drive/items/r1',
+            resourceData: { id: 'r1' },
+            changeType: 'updated',
+          },
+          {
+            subscriptionId: SUB_ID,
+            clientState: CLIENT_STATE,
+            resource: 'sites/y/drive/items/r2',
+            resourceData: { id: 'r2' },
+            changeType: 'updated',
+          },
+        ],
+      },
+    });
+    await callRouter(req, ctx.res);
+    expect(ctx.statusCode).toBe(202);
+    expect(enqueueRpc).toHaveBeenCalledTimes(1);
+  });
+
+  it('Zod gate: rejects items with non-string subscriptionId (was passed through ad-hoc check before)', async () => {
+    // CodeRabbit ASSERTIVE on PR #695: replace the ad-hoc field-presence
+    // check with a proper Zod parse so wrong types and out-of-bounds
+    // strings never reach the DB write paths.
+    const ctx = buildRes();
+    const req = buildReq({
+      body: {
+        value: [
+          {
+            subscriptionId: 12345, // wrong type
+            clientState: CLIENT_STATE,
+            resource: 'sites/x/drive/items/r1',
+            resourceData: { id: 'r1' },
+            changeType: 'updated',
+          },
+        ],
+      },
+    });
+    await callRouter(req, ctx.res);
+    // Single item, all malformed → falls through to 202 with skipped[]
+    // (Graph would retry-storm on 4xx for clearly-attacker-controllable shapes).
+    expect(ctx.statusCode).toBe(202);
+    const body = ctx.body as { enqueued: number; skipped: number };
+    expect(body.enqueued).toBe(0);
+    expect(body.skipped).toBe(1);
+    expect(enqueueRpc).not.toHaveBeenCalled();
+  });
+
+  it('Zod gate: rejects items with invalid changeType enum value', async () => {
+    const ctx = buildRes();
+    const req = buildReq({
+      body: {
+        value: [
+          {
+            subscriptionId: SUB_ID,
+            clientState: CLIENT_STATE,
+            resource: 'sites/x/drive/items/r1',
+            resourceData: { id: 'r1' },
+            changeType: 'restored', // not in [created, updated, deleted]
+          },
+        ],
+      },
+    });
+    await callRouter(req, ctx.res);
+    expect(ctx.statusCode).toBe(202);
+    const body = ctx.body as { enqueued: number; skipped: number };
+    expect(body.enqueued).toBe(0);
+    expect(body.skipped).toBe(1);
+    expect(enqueueRpc).not.toHaveBeenCalled();
+  });
+
+  it('Zod gate: rejects items with resourceData.id exceeding 512 chars', async () => {
+    const ctx = buildRes();
+    const req = buildReq({
+      body: {
+        value: [
+          {
+            subscriptionId: SUB_ID,
+            clientState: CLIENT_STATE,
+            resource: 'sites/x/drive/items/r1',
+            resourceData: { id: 'a'.repeat(513) },
+            changeType: 'updated',
+          },
+        ],
+      },
+    });
+    await callRouter(req, ctx.res);
+    expect(ctx.statusCode).toBe(202);
+    const body = ctx.body as { enqueued: number; skipped: number };
+    expect(body.enqueued).toBe(0);
+    expect(body.skipped).toBe(1);
+  });
+
   it('treats Postgres unique-violation on nonce as duplicate (no enqueue, still 202)', async () => {
     nonceInsert.mockResolvedValueOnce({ error: { code: '23505' } });
     const ctx = buildRes();

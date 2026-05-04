@@ -19,10 +19,38 @@
  */
 import crypto from 'node:crypto';
 import { Router, type Request, type Response } from 'express';
+import { z } from 'zod';
 import { config } from '../../../config.js';
 import { db } from '../../../utils/db.js';
 import { logger } from '../../../utils/logger.js';
 import { adaptMicrosoftGraph } from '../../../integrations/connectors/adapters.js';
+
+// Zod gate for nonce + write paths (CodeRabbit ASSERTIVE on PR #695):
+// Microsoft Graph items reach this handler as untyped JSON. The previous
+// ad-hoc presence check (`!item.subscriptionId || !item.resource || ...`)
+// caught missing fields but accepted wrong types and unbounded sizes.
+// Per CLAUDE.md "Use Zod for validation on every write path before
+// calling supabase.insert()" — parse defensively before recordNonce + the
+// subsequent enqueue_rule_event RPC.
+const GraphChangeItemSchema = z
+  .object({
+    subscriptionId: z.string().min(1).max(256),
+    clientState: z.string().min(1).max(256).optional(),
+    resource: z.string().min(1).max(2048),
+    resourceData: z
+      .object({
+        id: z.string().min(1).max(512),
+        name: z.string().max(1024).optional(),
+        parentReference: z
+          .object({ path: z.string().max(2048).optional() })
+          .passthrough()
+          .optional(),
+      })
+      .passthrough(),
+    changeType: z.enum(['created', 'updated', 'deleted']),
+    tenantId: z.string().max(256).optional(),
+  })
+  .passthrough();
 
 export const microsoftGraphWebhookRouter = Router();
 
@@ -56,9 +84,14 @@ function constantTimeEqual(a: string, b: string): boolean {
   return crypto.timingSafeEqual(aBuf, bBuf);
 }
 
+interface IntegrationLookup {
+  row: IntegrationRow | null;
+  lookupFailed: boolean;
+}
+
 async function findIntegrationBySubscription(
   subscriptionId: string,
-): Promise<IntegrationRow | null> {
+): Promise<IntegrationLookup> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data, error } = await (db as any)
     .from('connector_subscriptions')
@@ -68,12 +101,20 @@ async function findIntegrationBySubscription(
     .is('revoked_at', null)
     .maybeSingle();
   if (error) {
+    // CodeRabbit ASSERTIVE on PR #695: distinguish "not found" (legitimately
+    // unknown subscription) from "lookup failed" (transient DB outage). The
+    // previous behavior collapsed both to `null`, which the caller then
+    // treated as `unknown_subscription` + 202 ack. Graph stops retrying on
+    // 2xx, so a DB blip silently dropped notifications.
     logger.error({ error, subscriptionId }, 'MS Graph webhook: integration lookup failed');
-    return null;
+    return { row: null, lookupFailed: true };
   }
   const row = data as { org_integrations?: { id: string; org_id: string } } | null;
-  if (!row?.org_integrations) return null;
-  return { id: row.org_integrations.id, org_id: row.org_integrations.org_id };
+  if (!row?.org_integrations) return { row: null, lookupFailed: false };
+  return {
+    row: { id: row.org_integrations.id, org_id: row.org_integrations.org_id },
+    lookupFailed: false,
+  };
 }
 
 async function recordNonce(args: {
@@ -208,17 +249,36 @@ microsoftGraphWebhookRouter.post('/', async (req: Request, res: Response) => {
   const payloadHash = crypto.createHash('sha256').update(rawBody).digest('hex');
   const enqueued: string[] = [];
   const skipped: { reason: string; subscriptionId: string }[] = [];
+  let anyLookupFailed = false;
 
-  for (const item of items) {
-    if (!item.subscriptionId || !item.resource || !item.resourceData?.id || !item.changeType) {
-      skipped.push({ reason: 'malformed_item', subscriptionId: item.subscriptionId ?? 'unknown' });
+  for (const rawItem of items) {
+    // Zod gate: malformed shape, wrong types, or out-of-bounds strings are
+    // dropped here BEFORE any DB writes. Replaces the previous ad-hoc
+    // presence check so e.g. a numeric `subscriptionId` or a 100KB resource
+    // string can't reach `recordNonce` / `enqueue_rule_event`.
+    const parsed = GraphChangeItemSchema.safeParse(rawItem);
+    if (!parsed.success) {
+      const subId =
+        typeof (rawItem as { subscriptionId?: unknown })?.subscriptionId === 'string'
+          ? ((rawItem as { subscriptionId: string }).subscriptionId)
+          : 'unknown';
+      skipped.push({ reason: 'malformed_item', subscriptionId: subId });
       continue;
     }
+    const item = parsed.data;
     if (!item.clientState || !constantTimeEqual(item.clientState, expectedClientState)) {
       skipped.push({ reason: 'invalid_client_state', subscriptionId: item.subscriptionId });
       continue;
     }
-    const integration = await findIntegrationBySubscription(item.subscriptionId);
+    const lookup = await findIntegrationBySubscription(item.subscriptionId);
+    if (lookup.lookupFailed) {
+      // Don't ACK a transient DB outage as `unknown_subscription`. Mark for
+      // 503 escalation below so Graph keeps retrying.
+      anyLookupFailed = true;
+      skipped.push({ reason: 'lookup_failed', subscriptionId: item.subscriptionId });
+      continue;
+    }
+    const integration = lookup.row;
     if (!integration) {
       skipped.push({ reason: 'unknown_subscription', subscriptionId: item.subscriptionId });
       continue;
@@ -244,13 +304,24 @@ microsoftGraphWebhookRouter.post('/', async (req: Request, res: Response) => {
   // If at least one item was enqueued, return 202 — Graph treats 2xx as ack
   // and stops retrying. If the entire batch failed authentication (clientState
   // mismatch on every item), surface 401 so the caller knows it's not us
-  // silently dropping their notifications.
+  // silently dropping their notifications. If a transient DB lookup failed
+  // and nothing was enqueued, surface 503 so Graph retries the batch — nonce
+  // dedupe handles the double-delivery on retry.
   const allRejected =
     enqueued.length === 0 &&
     skipped.length > 0 &&
     skipped.every((s) => s.reason === 'invalid_client_state');
   if (allRejected) {
     res.status(401).json({ error: { code: 'invalid_client_state' } });
+    return;
+  }
+  if (anyLookupFailed && enqueued.length === 0) {
+    res.status(503).json({
+      error: {
+        code: 'integration_lookup_failed',
+        message: 'transient connector_subscriptions lookup failure; retry expected',
+      },
+    });
     return;
   }
 
