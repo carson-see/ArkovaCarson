@@ -280,6 +280,83 @@ export async function getFileMetadata(args: {
   };
 }
 
+// SCRUM-1650 GD-03: changes.list page response. Subset of fields actually
+// consumed by the processor — kept narrow so a Drive API change in unrelated
+// keys doesn't ripple into our Zod parse failures.
+const ChangesListEntry = z.object({
+  fileId: z.string().optional(),
+  removed: z.boolean().optional(),
+  changeType: z.string().optional(),
+  time: z.string().optional(),
+  file: z
+    .object({
+      id: z.string().optional(),
+      name: z.string().optional(),
+      parents: z.array(z.string()).optional(),
+      driveId: z.string().optional(),
+      modifiedTime: z.string().optional(),
+      headRevisionId: z.string().optional(),
+      lastModifyingUser: z
+        .object({ emailAddress: z.string().optional(), displayName: z.string().optional() })
+        .optional(),
+      mimeType: z.string().optional(),
+      trashed: z.boolean().optional(),
+    })
+    .optional(),
+});
+
+const ChangesListResponse = z.object({
+  changes: z.array(ChangesListEntry).default([]),
+  newStartPageToken: z.string().optional(),
+  nextPageToken: z.string().optional(),
+});
+
+export type DriveChangesListEntry = z.infer<typeof ChangesListEntry>;
+export type DriveChangesListResponseT = z.infer<typeof ChangesListResponse>;
+
+/**
+ * Walk the Drive changes feed from `pageToken` forward.
+ *
+ * Drive returns at most ~50 changes per page in our usage (we use the default
+ * `pageSize`). Caller iterates page tokens until `nextPageToken` is absent —
+ * the response then carries `newStartPageToken` which becomes the persisted
+ * cursor for the next webhook delivery. This is the canonical pattern from
+ * https://developers.google.com/drive/api/v3/reference/changes/list.
+ *
+ * The selected `fields` mask intentionally pulls only what the processor
+ * needs (file id/parents/revision/actor); body bytes never traverse this
+ * path per CLAUDE.md §1.6.
+ */
+export async function listChanges(args: {
+  accessToken: string;
+  pageToken: string;
+  deps?: DriveClientDeps;
+}): Promise<DriveChangesListResponseT> {
+  const fetchImpl = args.deps?.fetchImpl ?? fetch;
+  const params = new URLSearchParams({
+    pageToken: args.pageToken,
+    includeRemoved: 'true',
+    supportsAllDrives: 'true',
+    includeItemsFromAllDrives: 'true',
+    fields: [
+      'newStartPageToken',
+      'nextPageToken',
+      'changes(fileId,removed,changeType,time,',
+      'file(id,name,parents,driveId,modifiedTime,headRevisionId,trashed,mimeType,',
+      'lastModifyingUser(emailAddress,displayName)))',
+    ].join(''),
+  });
+  const url = `${DRIVE_API_BASE}/changes?${params.toString()}`;
+  const res = await fetchImpl(url, {
+    headers: { Authorization: `Bearer ${args.accessToken}` },
+  });
+  const json = await res.json().catch(() => null);
+  if (!res.ok) {
+    throw new DriveApiError('Drive changes.list failed', res.status, json);
+  }
+  return ChangesListResponse.parse(json);
+}
+
 /** Get a shared drive's display name. Falls back to the ID on failure. */
 export async function getSharedDriveName(args: {
   driveId: string;

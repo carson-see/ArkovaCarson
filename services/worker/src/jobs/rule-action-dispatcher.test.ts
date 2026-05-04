@@ -6,6 +6,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const mockEmitOrgAdminNotifications = vi.fn();
 const mockFetch = vi.fn();
 const mockGetSecret = vi.fn();
+const mockSubmitJob = vi.fn();
+const mockDbRpc = vi.fn();
 
 interface ExecutionRow {
   id: string;
@@ -40,6 +42,9 @@ vi.mock('../notifications/dispatcher.js', () => ({
 }));
 vi.mock('../utils/secrets.js', () => ({
   resolveSecretHandle: (...args: unknown[]) => mockGetSecret(...args),
+}));
+vi.mock('../utils/jobQueue.js', () => ({
+  submitJob: (...args: unknown[]) => mockSubmitJob(...args),
 }));
 
 vi.mock('../utils/db.js', () => {
@@ -96,6 +101,7 @@ vi.mock('../utils/db.js', () => {
         if (table === 'organization_rules') return buildRulesBuilder();
         throw new Error(`unexpected table: ${table}`);
       },
+      rpc: (...args: unknown[]) => mockDbRpc(...args),
     },
   };
 });
@@ -144,6 +150,10 @@ beforeEach(() => {
   mockGetSecret.mockResolvedValue('test-secret-bytes');
   globalThis.fetch = mockFetch as unknown as typeof globalThis.fetch;
   mockFetch.mockResolvedValue({ ok: true, status: 200, statusText: 'OK', text: async () => '' });
+  // Default: deduct_org_credit succeeds with balance 100→99. Tests that need
+  // insufficient_credits explicitly override per-test via mockDbRpc.
+  mockDbRpc.mockResolvedValue({ data: { success: true, balance: 99, deducted: 1 }, error: null });
+  mockSubmitJob.mockResolvedValue('job-fast-track-1');
 });
 
 describe('rule-action-dispatcher MVP (SCRUM-1142)', () => {
@@ -266,9 +276,12 @@ describe('rule-action-dispatcher MVP (SCRUM-1142)', () => {
     expect(final?.completed_at).toBeDefined();
   });
 
-  it('AUTO_ANCHOR / unknown action types fail closed and are visible in run history', async () => {
+  // Pre-SCRUM-1649: AUTO_ANCHOR was treated as unknown. Post-1649, AUTO_ANCHOR
+  // routes to the org anchor queue (DS-07). Truly-unknown action_types still
+  // fail closed — pinned with a synthetic action_type that will never be wired.
+  it('truly-unknown action types fail closed and are visible in run history', async () => {
     setScenario({
-      rule: { ...defaultRule, action_type: 'AUTO_ANCHOR', action_config: {} },
+      rule: { ...defaultRule, action_type: 'NEPTUNE_DRIFT', action_config: {} },
     });
     const result = await runRuleActionDispatcher();
     expect(result.failed).toBe(1);
@@ -276,7 +289,7 @@ describe('rule-action-dispatcher MVP (SCRUM-1142)', () => {
     const final = dbState.finalUpdates.get(EXEC_ID);
     expect(final?.status).toBe('FAILED');
     expect(typeof final?.error).toBe('string');
-    expect(final?.error as string).toContain('AUTO_ANCHOR');
+    expect(final?.error as string).toContain('NEPTUNE_DRIFT');
     expect(final?.completed_at).toBeDefined();
   });
 
@@ -310,5 +323,131 @@ describe('rule-action-dispatcher MVP (SCRUM-1142)', () => {
     const final = dbState.finalUpdates.get(EXEC_ID);
     expect(final?.status).toBe('FAILED');
     expect(final?.error as string).toMatch(/rule.*not.*found/i);
+  });
+
+  // ─── SCRUM-1649 DS-AUTO-02 — anchor action routing (DS-06 + DS-07) ─────
+  // Red baseline. These tests fail until [Implement] (SCRUM-1657) wires
+  // AUTO_ANCHOR + FAST_TRACK_ANCHOR through the dispatcher to the org
+  // anchor queue / anchor job pipeline with `deduct_org_credit` fall-through.
+
+  it('AUTO_ANCHOR (DS-07): SUCCEEDED with routed_to=anchor_queue and no credit movement', async () => {
+    setScenario({
+      rule: { ...defaultRule, action_type: 'AUTO_ANCHOR', action_config: {} },
+    });
+    const result = await runRuleActionDispatcher();
+    expect(result.succeeded).toBe(1);
+    expect(result.failed).toBe(0);
+    expect(mockDbRpc).not.toHaveBeenCalledWith('deduct_org_credit', expect.anything());
+    const final = dbState.finalUpdates.get(EXEC_ID);
+    expect(final?.status).toBe('SUCCEEDED');
+    const out = final?.output_payload as {
+      outcome: string;
+      routed_to: string;
+      credit_denial_reason: string | null;
+    };
+    expect(out.outcome).toBe('queued_for_anchor');
+    expect(out.routed_to).toBe('anchor_queue');
+    expect(out.credit_denial_reason).toBeNull();
+  });
+
+  it('FAST_TRACK_ANCHOR (DS-06) with credits: deducts via RPC and submits anchor job', async () => {
+    setScenario({
+      rule: { ...defaultRule, action_type: 'FAST_TRACK_ANCHOR', action_config: {} },
+    });
+    const result = await runRuleActionDispatcher();
+    expect(result.succeeded).toBe(1);
+    expect(mockDbRpc).toHaveBeenCalledWith(
+      'deduct_org_credit',
+      expect.objectContaining({
+        p_org_id: ORG_ID,
+        p_amount: 1,
+        p_reason: 'rule.fast_track_anchor',
+      }),
+    );
+    expect(mockSubmitJob).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'anchor.fast_track',
+        payload: expect.objectContaining({
+          org_id: ORG_ID,
+          rule_id: RULE_ID,
+          execution_id: EXEC_ID,
+          trigger_event_id: 'evt-1',
+        }),
+      }),
+    );
+    const final = dbState.finalUpdates.get(EXEC_ID);
+    expect(final?.status).toBe('SUCCEEDED');
+    const out = final?.output_payload as { outcome: string; routed_to: string };
+    expect(out.outcome).toBe('anchor_dispatched');
+    expect(out.routed_to).toBe('anchor_pipeline');
+  });
+
+  it('FAST_TRACK_ANCHOR (DS-06) without credits: falls through to anchor queue with credit_denial_reason', async () => {
+    mockDbRpc.mockResolvedValueOnce({
+      data: { success: false, error: 'insufficient_credits', balance: 0, required: 1 },
+      error: null,
+    });
+    setScenario({
+      rule: { ...defaultRule, action_type: 'FAST_TRACK_ANCHOR', action_config: {} },
+    });
+    const result = await runRuleActionDispatcher();
+    expect(result.succeeded).toBe(1);
+    expect(result.failed).toBe(0);
+    // RPC was called (and refused), no anchor job dispatched
+    expect(mockDbRpc).toHaveBeenCalledWith('deduct_org_credit', expect.anything());
+    expect(mockSubmitJob).not.toHaveBeenCalled();
+    const final = dbState.finalUpdates.get(EXEC_ID);
+    expect(final?.status).toBe('SUCCEEDED');
+    const out = final?.output_payload as {
+      outcome: string;
+      routed_to: string;
+      credit_denial_reason: string;
+    };
+    expect(out.outcome).toBe('queued_for_anchor');
+    expect(out.routed_to).toBe('anchor_queue');
+    expect(out.credit_denial_reason).toBe('insufficient_credits');
+  });
+
+  it('FAST_TRACK_ANCHOR (DS-06): credit RPC throw is transient — RETRYING under max attempts', async () => {
+    mockDbRpc.mockRejectedValueOnce(new Error('database connection lost'));
+    setScenario({
+      rule: { ...defaultRule, action_type: 'FAST_TRACK_ANCHOR', action_config: {} },
+    });
+    const result = await runRuleActionDispatcher();
+    expect(result.failed).toBe(1);
+    const final = dbState.finalUpdates.get(EXEC_ID);
+    expect(final?.status).toBe('RETRYING');
+    expect(mockSubmitJob).not.toHaveBeenCalled();
+  });
+
+  it('FAST_TRACK_ANCHOR (Codex P1): submitJob failure AFTER credit deduction is permanent (FAILED, not RETRYING) to avoid double-charge', async () => {
+    // deduct_org_credit succeeds (default mock) but the queue refuses the
+    // anchor job. A transient outcome would re-call deduct_org_credit on
+    // retry and consume a second credit; pin the FAILED-not-RETRYING
+    // contract until SCRUM-1170-B adds RPC idempotency on p_reference_id.
+    mockSubmitJob.mockResolvedValueOnce(null);
+    setScenario({
+      rule: { ...defaultRule, action_type: 'FAST_TRACK_ANCHOR', action_config: {} },
+    });
+    const result = await runRuleActionDispatcher();
+    expect(result.failed).toBe(1);
+    const final = dbState.finalUpdates.get(EXEC_ID);
+    expect(final?.status).toBe('FAILED');
+    expect(final?.error as string).toMatch(/AFTER credit deduction/);
+  });
+
+  it('FAST_TRACK_ANCHOR (DS-06): org_not_initialized is permanent failure (not retryable)', async () => {
+    mockDbRpc.mockResolvedValueOnce({
+      data: { success: false, error: 'org_not_initialized' },
+      error: null,
+    });
+    setScenario({
+      rule: { ...defaultRule, action_type: 'FAST_TRACK_ANCHOR', action_config: {} },
+    });
+    const result = await runRuleActionDispatcher();
+    expect(result.failed).toBe(1);
+    const final = dbState.finalUpdates.get(EXEC_ID);
+    expect(final?.status).toBe('FAILED');
+    expect(final?.error as string).toMatch(/org_not_initialized/i);
   });
 });
