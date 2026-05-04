@@ -29,6 +29,7 @@ import { db } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
 import { emitOrgAdminNotifications } from '../notifications/dispatcher.js';
 import { resolveSecretHandle } from '../utils/secrets.js';
+import { submitJob } from '../utils/jobQueue.js';
 import { RULE_DISPATCH_OUTCOME, RULE_ROUTED_TO } from '../rules/schemas.js';
 
 export const MAX_DISPATCH_ATTEMPTS = 5;
@@ -232,6 +233,126 @@ async function dispatchForwardToUrl(rule: RuleRow, exec: ExecutionRow): Promise<
   }
 }
 
+// SCRUM-1649 DS-AUTO-02 — Anchor action routing.
+// Two outcome shapes share `routed_to=anchor_queue`: (a) AUTO_ANCHOR (DS-07,
+// queue mode) emits one with credit_denial_reason=null, no credit movement;
+// (b) FAST_TRACK_ANCHOR (DS-06, instant secure) falls back here when
+// `deduct_org_credit` returns insufficient_credits, with an explicit reason.
+function buildAnchorQueueOutcome(opts: {
+  creditDenialReason: string | null;
+  balance?: number | null;
+  required?: number | null;
+}): Outcome {
+  return {
+    kind: 'success',
+    output: {
+      outcome: 'queued_for_anchor',
+      routed_to: 'anchor_queue',
+      credit_denial_reason: opts.creditDenialReason,
+      ...(opts.balance != null ? { balance: opts.balance } : {}),
+      ...(opts.required != null ? { required: opts.required } : {}),
+    },
+  };
+}
+
+function dispatchAutoAnchor(): Outcome {
+  // DS-07 queue mode: route to the org anchor queue without consuming credits.
+  // Downstream queue admin UI / scheduler reads `organization_rule_executions`
+  // rows where output_payload.outcome='queued_for_anchor' and dispatches the
+  // anchor at admin-approved cadence.
+  return buildAnchorQueueOutcome({ creditDenialReason: null });
+}
+
+interface DeductOrgCreditResult {
+  success?: boolean;
+  error?: string;
+  balance?: number;
+  required?: number;
+  deducted?: number;
+}
+
+async function dispatchFastTrackAnchor(rule: RuleRow, exec: ExecutionRow): Promise<Outcome> {
+  // DS-06 instant secure: atomically reserve one credit before dispatching the
+  // anchor job. `deduct_org_credit` (migration 0278) does FOR UPDATE so two
+  // FAST_TRACK rules sharing the last credit cannot both win.
+  let rpcResult: { data: DeductOrgCreditResult | null; error: { message?: string } | null };
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    rpcResult = (await (db.rpc as any)('deduct_org_credit', {
+      p_org_id: rule.org_id,
+      p_amount: 1,
+      p_reason: 'rule.fast_track_anchor',
+      p_reference_id: exec.id,
+    })) as { data: DeductOrgCreditResult | null; error: { message?: string } | null };
+  } catch (err) {
+    // RPC threw — DB connection lost / pooler timeout / etc. Retryable.
+    return {
+      kind: 'transient_failure',
+      error: err instanceof Error ? err.message : 'deduct_org_credit threw',
+    };
+  }
+
+  if (rpcResult.error) {
+    return {
+      kind: 'transient_failure',
+      error: `deduct_org_credit RPC error: ${rpcResult.error.message ?? 'unknown'}`,
+    };
+  }
+
+  const data = rpcResult.data;
+
+  if (data?.success === true) {
+    const jobId = await submitJob({
+      type: 'anchor.fast_track',
+      max_attempts: 5,
+      priority: 5,
+      payload: {
+        org_id: rule.org_id,
+        rule_id: rule.id,
+        execution_id: exec.id,
+        trigger_event_id: exec.trigger_event_id,
+      },
+    });
+    if (!jobId) {
+      // Credit was deducted but the job didn't queue — this is an inconsistent
+      // state. Mark transient so a retry attempts the deduction again; the
+      // RPC's idempotency on (org_id, p_reference_id) will be enforced when
+      // SCRUM-1170-B lands. For now log loudly.
+      logger.error(
+        { ruleId: rule.id, executionId: exec.id, orgId: rule.org_id },
+        'FAST_TRACK_ANCHOR: deducted credit but anchor job enqueue failed',
+      );
+      return { kind: 'transient_failure', error: 'anchor.fast_track job enqueue failed after credit deduction' };
+    }
+    return {
+      kind: 'success',
+      output: {
+        outcome: 'anchor_dispatched',
+        routed_to: 'anchor_pipeline',
+        ...(data.balance != null ? { balance: data.balance } : {}),
+      },
+    };
+  }
+
+  // Credit denial paths.
+  if (data?.error === 'insufficient_credits') {
+    // DS-06 fall-through: queue with explicit reason. NOT a failure — the
+    // promise of "queued, not anchored" is still kept for the user.
+    return buildAnchorQueueOutcome({
+      creditDenialReason: 'insufficient_credits',
+      balance: data.balance ?? null,
+      required: data.required ?? null,
+    });
+  }
+
+  // Other RPC-shaped errors: org_not_initialized, invalid_amount, etc. These
+  // are configuration problems that won't fix themselves with retries.
+  return {
+    kind: 'permanent_failure',
+    error: `deduct_org_credit refused: ${data?.error ?? 'unknown'}`,
+  };
+}
+
 async function dispatchOne(rule: RuleRow, exec: ExecutionRow): Promise<Outcome> {
   switch (rule.action_type) {
     case 'NOTIFY':
@@ -242,10 +363,14 @@ async function dispatchOne(rule: RuleRow, exec: ExecutionRow): Promise<Outcome> 
       return dispatchFlagCollision(rule);
     case 'FORWARD_TO_URL':
       return dispatchForwardToUrl(rule, exec);
+    case 'AUTO_ANCHOR':
+      // SCRUM-1649 DS-07
+      return dispatchAutoAnchor();
+    case 'FAST_TRACK_ANCHOR':
+      // SCRUM-1649 DS-06
+      return dispatchFastTrackAnchor(rule, exec);
     default:
-      // Per AC: unsupported action types fail closed and are visible. Anchor
-      // actions intentionally aren't dispatched here — they go via the
-      // existing `jobs/anchor.ts` pipeline.
+      // Truly unknown action types fail closed and are visible.
       return {
         kind: 'permanent_failure',
         error: `Action type "${rule.action_type}" is not supported by the MVP dispatcher`,
