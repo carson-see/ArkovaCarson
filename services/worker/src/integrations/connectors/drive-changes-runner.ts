@@ -275,7 +275,12 @@ export function createProcessorDbAdapter(deps: Pick<DriveChangesRunnerDeps, 'db'
       if ((error as { code?: string }).code === '23505') {
         return { inserted: false, conflict: true };
       }
-      log?.error?.({ error, row }, 'drive_revision_ledger insert failed');
+      // Scrub PII before logging — `row.actor_email` is the Google
+      // signed-in user's email and must not appear in worker logs /
+      // Sentry per CLAUDE.md §1.4 (PII scrubbing). CodeRabbit ASSERTIVE
+      // on PR #696 flagged this leak.
+      const { actor_email: _actorEmailIns, ...safeRow } = row;
+      log?.error?.({ error, row: safeRow }, 'drive_revision_ledger insert failed');
       throw error;
     },
     async deleteRevisionLedgerEntry(key) {
@@ -325,7 +330,13 @@ export function createProcessorDbAdapter(deps: Pick<DriveChangesRunnerDeps, 'db'
         },
       });
       if (error) {
-        log?.error?.({ error, payload }, 'enqueue_rule_event RPC failed');
+        // Scrub PII before logging — payload.actor_email is the Google
+        // signed-in user's email. CodeRabbit ASSERTIVE on PR #696
+        // flagged this as a CLAUDE.md §1.4 PII leak (and §1.4 +
+        // anchor-pre-signing.ts already follow the no-actor_email-in-logs
+        // pattern for audit_events).
+        const { actor_email: _actorEmailRpc, ...safePayload } = payload;
+        log?.error?.({ error, payload: safePayload }, 'enqueue_rule_event RPC failed');
         return null;
       }
       return data ? String(data) : null;
