@@ -159,10 +159,14 @@ jobs:
               error("Supabase Management API returned non-array migrations payload")
             else
               .[]
-              | if (.version | type) != "string" and (.version | type) != "number" then
+              | if type != "object" then
+                  error("migration row is not an object (got \(.))")
+                elif (.version | type) != "string" and (.version | type) != "number" then
                   error("migration row missing required `version` (got \(.))")
                 elif (.version | tostring) == "" then
                   error("migration row has empty `version` (row: \(.))")
+                elif has("name") and .name != null and (.name | type) != "string" then
+                  error("migration row `name` must be a string when present (got \(.))")
                 else . end
               | (.version | tostring) as $version
               | ((.name // "") | tostring) as $name
