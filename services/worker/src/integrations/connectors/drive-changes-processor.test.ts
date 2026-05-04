@@ -32,14 +32,20 @@ function makeIntegration(overrides: Partial<DriveProcessorIntegration> = {}): Dr
 
 interface FakeDb extends DriveProcessorDb {
   ledgerInserts: Array<{ file_id: string; revision_id: string; outcome: string; parent_ids: string[]; actor_email: string | null }>;
+  ledgerDeletes: Array<{ file_id: string; revision_id: string }>;
   enqueueCalls: Array<{ file_id: string; parent_ids: string[]; actor_email: string | null; revision_id: string }>;
   advancedPageTokens: string[];
   duplicateKeys: Set<string>;
   enqueueResult: string | null;
 }
 
-function makeFakeDb(opts: { duplicateKeys?: string[]; enqueueResult?: string | null } = {}): FakeDb {
+function makeFakeDb(opts: {
+  duplicateKeys?: string[];
+  enqueueResult?: string | null;
+  enqueueImpl?: (payload: { file_id: string; revision_id: string }) => Promise<string | null>;
+} = {}): FakeDb {
   const ledgerInserts: FakeDb['ledgerInserts'] = [];
+  const ledgerDeletes: FakeDb['ledgerDeletes'] = [];
   const enqueueCalls: FakeDb['enqueueCalls'] = [];
   const advancedPageTokens: string[] = [];
   const duplicateKeys = new Set(opts.duplicateKeys ?? []);
@@ -47,6 +53,7 @@ function makeFakeDb(opts: { duplicateKeys?: string[]; enqueueResult?: string | n
 
   return {
     ledgerInserts,
+    ledgerDeletes,
     enqueueCalls,
     advancedPageTokens,
     duplicateKeys,
@@ -66,6 +73,13 @@ function makeFakeDb(opts: { duplicateKeys?: string[]; enqueueResult?: string | n
       });
       return { inserted: true, conflict: false };
     }),
+    deleteRevisionLedgerEntry: vi.fn(async ({ file_id, revision_id }) => {
+      const key = `${file_id}::${revision_id}`;
+      duplicateKeys.delete(key);
+      const idx = ledgerInserts.findIndex((r) => r.file_id === file_id && r.revision_id === revision_id);
+      if (idx >= 0) ledgerInserts.splice(idx, 1);
+      ledgerDeletes.push({ file_id, revision_id });
+    }),
     advancePageToken: vi.fn(async ({ new_page_token }) => {
       advancedPageTokens.push(new_page_token);
     }),
@@ -76,6 +90,7 @@ function makeFakeDb(opts: { duplicateKeys?: string[]; enqueueResult?: string | n
         actor_email: payload.actor_email,
         revision_id: payload.revision_id,
       });
+      if (opts.enqueueImpl) return opts.enqueueImpl(payload);
       return enqueueResult;
     }),
   };
@@ -186,7 +201,9 @@ describe('processDriveChanges (SCRUM-1650 GD-03..07)', () => {
       deps: { listChanges: listMock },
     });
 
-    const actors = db.enqueueCalls.map((c) => c.actor_email).sort();
+    const actors = db.enqueueCalls
+      .map((c) => c.actor_email)
+      .sort((a, b) => (a ?? '').localeCompare(b ?? ''));
     expect(actors).toEqual(['kevin@example.com', 'mercy@example.com']);
   });
 
@@ -311,6 +328,56 @@ describe('processDriveChanges (SCRUM-1650 GD-03..07)', () => {
     });
 
     expect(db.ledgerInserts[0].revision_id).toBe('mtime:2026-05-04T01:23:00Z');
+  });
+
+  it('Codex P1 (no-drop): enqueue returning null rolls back the ledger reservation so retry is unblocked', async () => {
+    const db = makeFakeDb({ enqueueResult: null });
+    const listMock = vi.fn().mockResolvedValueOnce(
+      pageOf(
+        [{ file: { id: 'file-fail', parents: [WATCHED_FOLDER_A], headRevisionId: 'rev-fail' } }],
+        { newStartPageToken: 'token-2' },
+      ),
+    );
+
+    const result = await processDriveChanges({
+      integration: makeIntegration(),
+      accessToken: 'tok',
+      db,
+      deps: { listChanges: listMock },
+    });
+
+    expect(result.queued).toBe(0);
+    // Compensating delete fired so the (integration, file, revision) slot
+    // is free for the next pass to retry. Without this, the row would
+    // persist and dedupe-block all future attempts on this revision.
+    expect(db.ledgerDeletes).toEqual([{ file_id: 'file-fail', revision_id: 'rev-fail' }]);
+    expect(db.duplicateKeys.has('file-fail::rev-fail')).toBe(false);
+  });
+
+  it('Codex P1 (no-drop): enqueue throwing rolls back the ledger reservation and re-throws', async () => {
+    const db = makeFakeDb({
+      enqueueImpl: async () => {
+        throw new Error('queue offline');
+      },
+    });
+    const listMock = vi.fn().mockResolvedValueOnce(
+      pageOf(
+        [{ file: { id: 'file-throw', parents: [WATCHED_FOLDER_A], headRevisionId: 'rev-throw' } }],
+        { newStartPageToken: 'token-2' },
+      ),
+    );
+
+    await expect(
+      processDriveChanges({
+        integration: makeIntegration(),
+        accessToken: 'tok',
+        db,
+        deps: { listChanges: listMock },
+      }),
+    ).rejects.toThrow(/queue offline/);
+
+    expect(db.ledgerDeletes).toEqual([{ file_id: 'file-throw', revision_id: 'rev-throw' }]);
+    expect(db.duplicateKeys.has('file-throw::rev-throw')).toBe(false);
   });
 
   it('throws when integration has no last_page_token (misconfiguration, fail loud)', async () => {

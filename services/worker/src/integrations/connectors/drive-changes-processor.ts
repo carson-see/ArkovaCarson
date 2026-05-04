@@ -39,6 +39,18 @@ export interface DriveProcessorDb {
     outcome: 'queued' | 'parent_mismatch' | 'unrelated_change';
     rule_event_id: string | null;
   }): Promise<{ inserted: boolean; conflict: boolean }>;
+  /**
+   * Compensating delete on the (integration, file, revision) ledger row.
+   * Called when we reserved a dedupe slot via insertRevisionLedger but the
+   * follow-up enqueue failed — without this, the next pass would treat the
+   * revision as already-processed and the rule event would be permanently
+   * lost. Idempotent: must be safe when the row no longer exists.
+   */
+  deleteRevisionLedgerEntry(key: {
+    integration_id: string;
+    file_id: string;
+    revision_id: string;
+  }): Promise<void>;
   /** Atomically update the integration's last_page_token + last_token_advanced_at. */
   advancePageToken(args: {
     integration_id: string;
@@ -114,6 +126,14 @@ function parentMatches(parents: string[], watched: string[]): boolean {
   return false;
 }
 
+type LedgerOutcome = 'queued' | 'parent_mismatch' | 'unrelated_change';
+
+function classifyLedgerOutcome(matches: boolean, parentCount: number): LedgerOutcome {
+  if (matches) return 'queued';
+  if (parentCount > 0) return 'parent_mismatch';
+  return 'unrelated_change';
+}
+
 export async function processDriveChanges(args: {
   integration: DriveProcessorIntegration;
   accessToken: string;
@@ -180,18 +200,14 @@ export async function processDriveChanges(args: {
       // future operator can read the ledger and see "this revision was
       // queued / dropped because parents didn't match" without needing
       // engineering to replay logs.
-      const ledgerOutcome: 'queued' | 'parent_mismatch' | 'unrelated_change' = matches
-        ? 'queued'
-        : (parents.length > 0 ? 'parent_mismatch' : 'unrelated_change');
+      const ledgerOutcome = classifyLedgerOutcome(matches, parents.length);
 
-      // Optimistic enqueue ordering: insert ledger row BEFORE enqueue. If
-      // ledger insert returns conflict (duplicate revision), we never
-      // re-enqueue the same revision. If ledger inserts but enqueue fails,
-      // the next pass will see the revision as already-processed (correct)
-      // and the queue will simply not have an event for it (incorrect, but
-      // diagnosable from the ledger row's null rule_event_id). We choose
-      // this trade-off over the alternative because double-enqueue is
-      // worse for the rules engine than missing-enqueue is for an admin.
+      // Reserve-then-confirm ordering: insert ledger row BEFORE enqueue so the
+      // UNIQUE(integration, file, revision) constraint dedupes against an at-
+      // least-once Drive redelivery. If the matching path's enqueue then
+      // fails (returns null OR throws), we COMPENSATE by deleting the ledger
+      // row so the next pass can retry — without this, a transient queue
+      // failure would silently lose the rule event forever.
       const ledgerResult = await args.db.insertRevisionLedger({
         integration_id: args.integration.id,
         org_id: args.integration.org_id,
@@ -216,20 +232,38 @@ export async function processDriveChanges(args: {
 
       // GD-04 + GD-05 + GD-06: matching change → enqueue exactly one rule
       // event, attribution preserved where Google permits.
-      const ruleEventId = await args.db.enqueueRuleEvent({
-        org_id: args.integration.org_id,
-        file_id: fileId,
-        parent_ids: parents,
-        actor_email: actorEmail,
-        revision_id: revisionId,
-        integration_id: args.integration.id,
-        filename,
-      });
-      // (Optional follow-up: backfill ledger row's rule_event_id. Skipped
-      // here to keep the processor a single round-trip per change; an
-      // operator can join ledger.processed_at ↔ rule_event.created_at if
-      // they need the link.)
-      if (ruleEventId !== null) result.queued += 1;
+      let ruleEventId: string | null = null;
+      try {
+        ruleEventId = await args.db.enqueueRuleEvent({
+          org_id: args.integration.org_id,
+          file_id: fileId,
+          parent_ids: parents,
+          actor_email: actorEmail,
+          revision_id: revisionId,
+          integration_id: args.integration.id,
+          filename,
+        });
+      } catch (err) {
+        // Compensate: roll back the ledger reservation so retry isn't blocked.
+        await args.db.deleteRevisionLedgerEntry({
+          integration_id: args.integration.id,
+          file_id: fileId,
+          revision_id: revisionId,
+        });
+        log?.error?.({ err, integrationId: args.integration.id, fileId, revisionId }, 'drive enqueueRuleEvent threw — ledger rolled back, page abort');
+        throw err;
+      }
+      if (ruleEventId === null) {
+        // Same compensation for null-return failures.
+        await args.db.deleteRevisionLedgerEntry({
+          integration_id: args.integration.id,
+          file_id: fileId,
+          revision_id: revisionId,
+        });
+        log?.warn?.({ integrationId: args.integration.id, fileId, revisionId }, 'drive enqueueRuleEvent returned null — ledger rolled back');
+        continue;
+      }
+      result.queued += 1;
     }
 
     if (response.nextPageToken) {
