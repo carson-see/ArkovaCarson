@@ -34,19 +34,76 @@ A standalone Supabase project applies migrations via `npx supabase db push --lin
 
 ## How to populate / re-populate the schema
 
-From a CLI session with Supabase auth:
+The initial schema replay was done 2026-05-04 (evening). State as of that
+session: 270 ledger rows, 101 public tables, 97 RLS-enabled, 279 functions.
+For a clean rebuild from scratch, use this same procedure:
 
 ```bash
-supabase login
+export SUPABASE_ACCESS_TOKEN="$(gcloud secrets versions access latest --secret=supabase_access --project=arkova1)"
 supabase link --project-ref ujtlwnoqfhtitcmsnrpq
-supabase db push --linked
+# Bootstrap: ensure required extensions are present in `extensions` schema
+# and the database default search_path includes them. Without this, 0013
+# fails with "function uuid_generate_v4() does not exist".
+psql_cmd="CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\" WITH SCHEMA extensions; CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA extensions; CREATE EXTENSION IF NOT EXISTS pg_trgm WITH SCHEMA extensions; ALTER DATABASE postgres SET search_path TO public, extensions;"
+# Apply via Supabase MCP execute_sql (or the management API) before db push.
+
+# Pre-add the SUBMITTED + EXPIRED enum values; otherwise migration 0068
+# trips Postgres's "unsafe use of new enum value in same transaction" guard.
+ALTER TYPE anchor_status ADD VALUE IF NOT EXISTS 'SUBMITTED';
+ALTER TYPE anchor_status ADD VALUE IF NOT EXISTS 'EXPIRED';
+
+# Move the 11 prefix-colliding migration files out of supabase/migrations/
+# temporarily — db push parses leading numeric digits as `version` (PK in
+# supabase_migrations.schema_migrations) and bails with UNIQUE violation
+# when two files share the same prefix. The colliding pairs to set aside:
+#   0174_public_verification_revoked
+#   0175_fix_pipeline_stats_timeout
+#   0176_fix_anchors_rls_timeout
+#   0180_fix_public_issuer_perf
+#   0236_cleanup_anchor_backlog
+#   0258_ark112_queue_public_id
+#   0262_verify_anchors_rls_enabled
+#   0265_refresh_cache_pipeline_stats_fast
+#   0273_db_health_rpcs
+#   0274_restore_anchor_protections_and_get_flag
+#   0278_revoke_anon_authenticated_matviews
+# Same set listed in .github/workflows/migration-drift.yml exempt_regex
+# (with a few additions for older known collisions like 0033/0078/0162).
+
+mv supabase/migrations/{0174_public_verification_revoked,0175_fix_pipeline_stats_timeout,0176_fix_anchors_rls_timeout,0180_fix_public_issuer_perf,0236_cleanup_anchor_backlog,0258_ark112_queue_public_id,0262_verify_anchors_rls_enabled,0265_refresh_cache_pipeline_stats_fast,0273_db_health_rpcs,0274_restore_anchor_protections_and_get_flag,0278_revoke_anon_authenticated_matviews}.sql /tmp/colliding_migrations/
+
+supabase db push --linked  # applies the rest
+
+# Now apply the 11 set-aside files directly via the Supabase Management API
+# `/database/query` endpoint (the SQL itself is idempotent — CREATE OR REPLACE,
+# CREATE INDEX IF NOT EXISTS — so re-applying on a populated schema is safe).
+for f in /tmp/colliding_migrations/*.sql; do
+  jq -Rs --arg n "$(basename "$f" .sql)" '{name: $n, query: .}' < "$f" | \
+    curl -s -X POST "https://api.supabase.com/v1/projects/ujtlwnoqfhtitcmsnrpq/database/query" \
+      -H "Authorization: Bearer ${SUPABASE_ACCESS_TOKEN}" \
+      -H "Content-Type: application/json" -d @-
+done
+
+# Move them back so the worktree matches main.
+mv /tmp/colliding_migrations/*.sql supabase/migrations/
 ```
 
-Then apply migrations exempt from the drift check (those marked in `.github/workflows/migration-drift.yml` `exempt_regex`) via Supabase MCP `apply_migration` against `project_id=ujtlwnoqfhtitcmsnrpq`.
+## Soak workflow caveat for the prefix-collision files
 
-`db push --linked` will apply every file in `supabase/migrations/*.sql` in version order, including:
-* `0055b_seed_alignment_idempotent.sql` — the file that bit the preview branches.
-* All four-digit prefixes through current main HEAD.
+When a soak session needs to apply a NEW migration (e.g. PR #695's
+`0291_msgraph_nonce_payload_hash_and_compound_rpc.sql` or PR #697's
+`0290_suborg_suspension_audit_and_service_role_fix.sql`), it MUST use
+Supabase MCP `apply_migration` against `project_id=ujtlwnoqfhtitcmsnrpq`,
+NOT `supabase db push --linked`. Reason: `db push` re-parses
+`supabase/migrations/` and trips on the 11 prefix-collision pairs
+described above (the second of each pair has no ledger row matching its
+4-digit version — it was applied via the Management API in the initial
+setup, ledger entry exists with the file's name but a non-canonical
+version). `apply_migration` via MCP is collision-tolerant — it inserts
+with a fresh timestamp version regardless of the file's leading digits.
+
+This is the same pattern prod uses: `migration-drift.yml` `exempt_regex`
+allows the same set of files to coexist with non-canonical ledger entries.
 
 ## How to run a T2 soak (CLAUDE.md §1.12)
 
