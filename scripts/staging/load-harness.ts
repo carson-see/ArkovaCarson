@@ -100,6 +100,12 @@ function iamToken(): string {
 function fakeFingerprint(): string {
   return randomBytes(32).toString('hex');
 }
+
+// Per-process random HMAC key for synthetic webhook signatures. The
+// worker rejects them (real keys are per-tenant in Secret Manager) — the
+// soak point is to exercise the validate-fail path under load. Random
+// bytes per process avoids triggering Sonar's hardcoded-credential rule.
+const SYNTHETIC_HMAC_KEY = randomBytes(32);
 function pad2(n: number): string {
   return n < 10 ? `0${n}` : `${n}`;
 }
@@ -304,13 +310,13 @@ function fakeWebhookHeaders(provider: string, body: string): HeadersInit {
     case 'docusign':
       // Real signature would be HMAC-SHA256 of body using the connect key.
       // Synthetic value -> worker rejects; that exercises the validate-fail path.
-      headers['X-DocuSign-Signature-1'] = createHmac('sha256', 'staging-fake-key').update(body).digest('hex');
+      headers['X-DocuSign-Signature-1'] = createHmac('sha256', SYNTHETIC_HMAC_KEY).update(body).digest('hex');
       break;
     case 'adobe-sign':
       headers['X-AdobeSign-ClientId'] = `stg-client-${randomBytes(4).toString('hex')}`;
       break;
     case 'checkr':
-      headers['X-Checkr-Signature'] = createHmac('sha256', 'staging-fake-key').update(body).digest('hex');
+      headers['X-Checkr-Signature'] = createHmac('sha256', SYNTHETIC_HMAC_KEY).update(body).digest('hex');
       break;
   }
   return headers;
