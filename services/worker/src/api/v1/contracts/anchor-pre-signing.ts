@@ -59,6 +59,7 @@ import { ANCHOR_CREDENTIAL_TYPES } from '../../../lib/credential-evidence.js';
 import { db } from '../../../utils/db.js';
 import { logger } from '../../../utils/logger.js';
 import { ensureAnchorCreditAvailable } from '../../../utils/anchorCreditGate.js';
+import { ensureOrgNotSuspended } from '../../../utils/orgSuspensionGuard.js';
 
 const router = Router();
 
@@ -345,6 +346,20 @@ router.post('/anchor-pre-signing', async (req: Request, res: Response) => {
     // the SCRUM-863 umbrella so it can be fixed for both endpoints in
     // one consistent change.
     //
+    // SCRUM-1667 — sub-org suspension guard, gated by
+    // ENABLE_ORG_SUSPENSION_GUARD (default off). Mirrors anchor-submit.
+    if (process.env.ENABLE_ORG_SUSPENSION_GUARD === 'true' && orgId) {
+      const suspensionGuard = await ensureOrgNotSuspended(orgId);
+      if (!suspensionGuard.ok) {
+        const status = suspensionGuard.code === 'org_suspended' ? 403 : 503;
+        res.status(status).json({
+          error: suspensionGuard.code,
+          message: suspensionGuard.message,
+        });
+        return;
+      }
+    }
+
     // SCRUM-1170-B — gate org-credit deduction. Helper short-circuits to
     // allowed=true when ENABLE_ORG_CREDIT_ENFORCEMENT is off (default), so
     // existing API-key paths without per-org credit setup are unaffected.
