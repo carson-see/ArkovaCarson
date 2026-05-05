@@ -63,18 +63,23 @@ export default defineConfig({
           lines: 80,
           statements: 80,
         },
-        // Files below 80% — tracked for improvement
+        // SCRUM-1545 (R4-4-FU) raised both files to the 80%/80%/80%/80%
+        // critical-path floor on 2026-05-05 after the coverage-backfill
+        // suites landed (`anchor-coverage.test.ts` + the new chain/client
+        // describe blocks). Actual coverage at threshold-raise:
+        //   anchor.ts:        98.29 / 95.49 / 100  / 98.83
+        //   chain/client.ts:  97.70 / 97.10 / 100  / 97.64
         'src/jobs/anchor.ts': {
-          branches: 55,
-          functions: 60,
-          lines: 65,
-          statements: 65,
+          branches: 80,
+          functions: 80,
+          lines: 80,
+          statements: 80,
         },
         'src/chain/client.ts': {
-          branches: 70,
-          functions: 75,
-          lines: 75,
-          statements: 75,
+          branches: 80,
+          functions: 80,
+          lines: 80,
+          statements: 80,
         },
         'src/stripe/handlers.ts': {
           // SCRUM-1289 (R4-4): bumped 75/70/70/70 → 80 across the board.

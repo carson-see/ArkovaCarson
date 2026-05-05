@@ -14,6 +14,40 @@
 
 ## Now
 
+### 2026-05-05 — SCRUM-1545 (R4-4-FU) coverage backfill: anchor.ts + chain/client.ts to 80% floor (this branch `claude/focused-fermi-dZ2pj`)
+
+Engineering-only, test-only PR (no prod-state changes; no production source touched). Picks up the R4-4-FU coverage gap that PR #690 left open: `services/worker/src/jobs/anchor.ts` (was 64.2/55.85/87.5/64.32) and `services/worker/src/chain/client.ts` (was 73.56/71.01/60/75.29) were below the 80% critical-path floor that `stripe/handlers.ts`, `signing-provider.ts`, `webhooks/delivery.ts`, etc. already meet.
+
+**What shipped on the branch:**
+
+* **`services/worker/src/jobs/anchor-coverage.test.ts` (new, 696 lines, 36 cases).** Pins the branches `anchor.test.ts` didn't reach: GAP-6 confidence gate (low-confidence revert), RISK-1 payment guard reject + free-tier batch-window deferral, ECON-1 fee-ceiling defer, VAI-01 extraction-manifest hash linkage, RACE-1 count===0 guard, RACE-2 empty-receipt revert, isAnchoringEnabled dev/prod/fallback matrix (7 cases pinning whether `mockRpc` was/was not called to differentiate "skipped early" from "called claim RPC"), treasury hasFunds=false / throws, claim-RPC timeout, legacy fallback (no rows / pipeline filter / lost-claim race).
+* **`services/worker/src/chain/client.test.ts` (+148 lines, +12 cases).** DH-05 cache hit (no second DB read), `clearCache()` / `cacheSize` getter, WRK-03 stale eviction at capacity, LRU eviction at capacity. Mainnet signing variants: WIF when `bitcoinTreasuryWif` is set, GCP-KMS when `kmsProvider=gcp` + key resource present, fallback-to-mock when GCP key resource missing, `forceDynamicFeeEstimation=true` on signet → mempool estimator. `getChainClientAsync` happy path. Module-isolated `vi.resetModules()` tests for `getInitializedChainClient` / `getChainClient` / `getChainClientAsync` throwing before init.
+* **`services/worker/vitest.config.ts` thresholds raised** for both files from 55–75 across the four metrics to **80/80/80/80** (matches the existing critical-path floor). Comment block records actual coverage at raise time (anchor.ts 98.29/95.49/100/98.83; chain/client.ts 97.70/97.10/100/97.64) so the next reviewer knows the headroom.
+
+**/simplify pass strengthened the assertions** after a 3-agent review (code-reuse, code-quality, efficiency):
+* Manifest linkage test now asserts the SUBMITTED update payload carries `_extraction_manifest_hash` and that `extraction_manifests.update({ anchor_id })` was called (was: only checked boolean return).
+* "captures rawTxHex and feeSats" now asserts the exact metadata bag, not just the return value.
+* "processes a claimed anchor" now asserts `{ processed: 1, failed: 0 }` + `mockSubmitFingerprint` called (was: `result.processed + result.failed === 1`, passed regardless of branch).
+* Switchboard-flag matrix differentiates "skipped early" from "called claim RPC" via `mockRpc` call-count assertions (was: all 7 cases asserted `{0,0}`, indistinguishable).
+* Pipeline test renamed to `skips payment guard and free-tier check for pipeline_source records`.
+* Dropped the unused `small` instance in cache-eviction; tightened `toBeLessThanOrEqual(1)` → `toBe(1)`.
+
+**Tests + lint:** worker `npx vitest run` returns **4972 passed / 0 failed / 379 test files** on this branch. `npx tsc --noEmit` clean. `npm run lint` 0 errors / 319 warnings (SCRUM-1208 baseline, unchanged). Root `npm run lint:copy` clean.
+
+**Deferred (next session):** `services/worker/src/index.ts` is the third file SCRUM-1545 calls out (currently 42/20/68/68 vs the 80% target). The existing `index.test.ts` carries ~270 lines of hoisted-mock scaffolding before the first describe; adding raw-body webhook middleware tests + redirect-route tests + integrationsAuthGate is larger than this session's context budget. Filed as a follow-up under the same SCRUM-1545 ticket — the threshold for `index.ts` is left at its current floor (42/20/68/68) so the bump for the other two files isn't blocked.
+
+**Next session can:**
+1. Open the `services/worker/src/index.ts` follow-up: add tests for the raw-body middleware on `/webhooks/middesk`, `/webhooks/docusign`, `/webhooks/adobe-sign`, `/webhooks/checkr`, `/webhooks/veremark`, `/api/v1/webhooks/ats`, the `/api/openapi-ciba.json` handler, the OpenAPI redirects, and `integrationsAuthGate`.
+2. Refactor opportunity called out by the code-reuse review: 9 worker test files hand-roll their own Supabase select-chain mocks (`anchor.test.ts:43`, `check-confirmations.test.ts:112`, `chain-maintenance.test.ts:50`, etc.). Extract a shared `services/worker/src/tests/db-chain.ts` factory; out of scope for this PR.
+3. Fake-timers swap on the one `setTimeout(ttl + 5)` real wait in `client.test.ts` (the only real-time wait in the new tests; ~5ms; harmless but eligible for `vi.useFakeTimers()`).
+
+**Bug log:** none. This session was test-only coverage work; no production bugs found or fixed.
+
+**Stories:**
+* SCRUM-1545 (R4-4-FU) — primary target. anchor.ts + chain/client.ts now formally above the 80% floor; index.ts piece tracked as a sub-followup. PR-evidence comment to be posted after PR opens.
+* SCRUM-1289 (R4-4) — gates lifted on 2 of 3 remaining files (anchor.ts + chain/client.ts). Same evidence comment.
+* SCRUM-1208 — Integration Hardening epic close-out flagged in PO Roadmap; not touched this session (pure-Jira sweep, deferred to a separate hygiene pass).
+
 ### 2026-05-04 (overnight) — Synthetic load generator built (staging rig now has prod-shape data + 8-mode harness)
 
 Branch `claude/2026-05-04-staging-synthetic-load-generator`. Picks up where night session left off: rig was stood up (Supabase + Cloud Run both healthy), but soaks against an empty schema only proved "code runs," not "code runs at prod shape." This session built the seed + extended the harness so PRs #695/#696/#697 can soak against meaningful load.
