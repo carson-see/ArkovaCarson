@@ -87,6 +87,7 @@ export function SecureDocumentDialog({
   const [createdAnchor, setCreatedAnchor] = useState<CreatedAnchor | null>(null);
   const [linkCopied, setLinkCopied] = useState(false);
   const [description, setDescription] = useState('');
+  const [bulkFiles, setBulkFiles] = useState<File[]>([]);
 
   // AI extraction state
   const [aiEnabled, setAiEnabled] = useState(false);
@@ -109,7 +110,8 @@ export function SecureDocumentDialog({
     setFileData({ file, fingerprint });
   }, []);
 
-  const handleBulkDetected = useCallback((_files: File[]) => {
+  const handleBulkDetected = useCallback((files: File[]) => {
+    setBulkFiles(files);
     setStep('bulk');
   }, []);
 
@@ -447,6 +449,7 @@ export function SecureDocumentDialog({
     setExtractionProgress(null);
     setTemplateResult(null);
     setAttestationData(null);
+    setBulkFiles([]);
     onOpenChange(false);
   }, [onOpenChange]);
 
@@ -466,6 +469,7 @@ export function SecureDocumentDialog({
     setExtractedFields([]);
     setExtractionProgress(null);
     setTemplateResult(null);
+    setBulkFiles([]);
   }, []);
 
   const handleCopyLink = useCallback(async () => {
@@ -564,11 +568,13 @@ export function SecureDocumentDialog({
 
           {step === 'bulk' && (
             <BulkUploadWizard
+              initialFiles={bulkFiles}
               onComplete={() => {
                 handleClose();
                 onSuccess?.();
               }}
               onCancel={() => {
+                setBulkFiles([]);
                 setStep('upload');
               }}
             />

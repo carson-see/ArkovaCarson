@@ -10,15 +10,36 @@
 import type { Locator, Page } from '@playwright/test';
 import { test, expect } from './fixtures';
 
-async function openBulkUploadDialog(page: Page): Promise<Locator> {
+async function openSecureDocumentDialog(page: Page): Promise<Locator> {
   await page.goto('/organization');
 
-  const uploadButton = page.getByRole('button', { name: /^Bulk Upload$/i });
+  const uploadButton = page.getByRole('button', { name: /^Secure Document$/i });
   await expect(uploadButton).toBeVisible({ timeout: 15_000 });
   await uploadButton.click();
 
-  const dialog = page.getByRole('dialog', { name: /^Bulk Upload$/i });
+  const dialog = page.getByRole('dialog', { name: /^Secure Document$/i });
   await expect(dialog).toBeVisible({ timeout: 5_000 });
+  await expect(dialog.getByRole('heading', { name: /^Secure Document$/i })).toBeVisible();
+
+  return dialog;
+}
+
+async function openBulkUploadDialog(page: Page): Promise<Locator> {
+  const dialog = await openSecureDocumentDialog(page);
+
+  await dialog.locator('input[type="file"]').first().setInputFiles([
+    {
+      name: 'bulk-route-one.pdf',
+      mimeType: 'application/pdf',
+      buffer: Buffer.from('bulk route one'),
+    },
+    {
+      name: 'bulk-route-two.pdf',
+      mimeType: 'application/pdf',
+      buffer: Buffer.from('bulk route two'),
+    },
+  ]);
+
   await expect(dialog.getByRole('heading', { name: 'Bulk Upload Records' })).toBeVisible();
 
   return dialog;
@@ -32,12 +53,25 @@ async function expectUploadStep(dialog: Locator) {
   await expect(dialog.getByText(/Auto-detected columns/i)).toBeVisible();
 }
 
-async function uploadCsv(dialog: Locator, name: string, rows: string[]) {
-  await dialog.locator('input#csv-file-upload[type="file"]').setInputFiles({
+async function openBulkUploadReview(
+  page: Page,
+  name: string,
+  rows: string[],
+  validCount: number,
+  invalidCount: number
+): Promise<Locator> {
+  const dialog = await openSecureDocumentDialog(page);
+
+  await dialog.locator('input[type="file"]').first().setInputFiles({
     name,
     mimeType: 'text/csv',
     buffer: Buffer.from(rows.join('\n')),
   });
+
+  await expect(dialog.getByRole('heading', { name: 'Bulk Upload Records' })).toBeVisible();
+  await expectReviewStep(dialog, validCount, invalidCount);
+
+  return dialog;
 }
 
 async function expectReviewStep(dialog: Locator, validCount: number, invalidCount: number) {
@@ -66,30 +100,22 @@ test.describe('CSV Upload Wizard', () => {
     });
 
     test('CSV file upload parses and shows review step', async ({ orgAdminPage }) => {
-      const dialog = await openBulkUploadDialog(orgAdminPage);
-
-      await uploadCsv(dialog, 'e2e-bulk-test.csv', [
+      const dialog = await openBulkUploadReview(orgAdminPage, 'e2e-bulk-test.csv', [
         'fingerprint,filename,email',
         `${'a'.repeat(64)},test_doc_1.pdf,test1@example.com`,
         `${'b'.repeat(64)},test_doc_2.pdf,test2@example.com`,
-      ]);
-
-      await expectReviewStep(dialog, 2, 0);
+      ], 2, 0);
       await expect(dialog.getByRole('button', { name: /^Process 2 Records$/i })).toBeVisible();
     });
   });
 
   test.describe('Validation', () => {
     test('shows validation errors for invalid CSV rows', async ({ orgAdminPage }) => {
-      const dialog = await openBulkUploadDialog(orgAdminPage);
-
-      await uploadCsv(dialog, 'e2e-invalid-csv.csv', [
+      const dialog = await openBulkUploadReview(orgAdminPage, 'e2e-invalid-csv.csv', [
         'fingerprint,filename',
         'invalid-not-a-hash,bad_document.pdf',
         `${'c'.repeat(64)},good_document.pdf`,
-      ]);
-
-      await expectReviewStep(dialog, 1, 1);
+      ], 1, 1);
       await expect(dialog.getByText('Validation Errors')).toBeVisible();
       await expect(
         dialog.getByText('Invalid fingerprint format (expected 64-character hex)')
@@ -97,30 +123,22 @@ test.describe('CSV Upload Wizard', () => {
     });
 
     test('valid records count is displayed', async ({ orgAdminPage }) => {
-      const dialog = await openBulkUploadDialog(orgAdminPage);
-
-      await uploadCsv(dialog, 'e2e-valid-csv.csv', [
+      const dialog = await openBulkUploadReview(orgAdminPage, 'e2e-valid-csv.csv', [
         'fingerprint,filename',
         `${'d'.repeat(64)},valid_doc_1.pdf`,
         `${'e'.repeat(64)},valid_doc_2.pdf`,
         `${'f'.repeat(64)},valid_doc_3.pdf`,
-      ]);
-
-      await expectReviewStep(dialog, 3, 0);
+      ], 3, 0);
       await expect(dialog.getByRole('button', { name: /^Process 3 Records$/i })).toBeVisible();
     });
   });
 
   test.describe('Reset', () => {
     test('back button resets wizard to upload step', async ({ orgAdminPage }) => {
-      const dialog = await openBulkUploadDialog(orgAdminPage);
-
-      await uploadCsv(dialog, 'e2e-reset-csv.csv', [
+      const dialog = await openBulkUploadReview(orgAdminPage, 'e2e-reset-csv.csv', [
         'fingerprint,filename',
         `${'1'.repeat(64)},reset_doc_1.pdf`,
-      ]);
-
-      await expectReviewStep(dialog, 1, 0);
+      ], 1, 0);
       await dialog.getByRole('button', { name: /^Back$/i }).click();
 
       await expectUploadStep(dialog);

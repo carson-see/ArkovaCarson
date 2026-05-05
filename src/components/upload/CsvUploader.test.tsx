@@ -50,6 +50,40 @@ ${fingerprint},test.pdf,user@example.com`;
     expect(validation.valid).toHaveLength(1);
   });
 
+  it('should parse an initial CSV file exactly once', async () => {
+    const mockOnInitialFileConsumed = vi.fn();
+    const fingerprint = 'b'.repeat(64);
+    const file = new File(
+      [`fingerprint,filename\n${fingerprint},initial.pdf`],
+      'initial.csv',
+      { type: 'text/csv' }
+    );
+
+    const { rerender } = render(
+      <CsvUploader
+        onParsed={mockOnParsed}
+        initialFile={file}
+        onInitialFileConsumed={mockOnInitialFileConsumed}
+      />
+    );
+
+    await waitFor(() => {
+      expect(mockOnParsed).toHaveBeenCalledTimes(1);
+    });
+    expect(mockOnInitialFileConsumed).toHaveBeenCalledTimes(1);
+
+    rerender(
+      <CsvUploader
+        onParsed={mockOnParsed}
+        initialFile={file}
+        onInitialFileConsumed={mockOnInitialFileConsumed}
+      />
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(mockOnParsed).toHaveBeenCalledTimes(1);
+  });
+
   it('should detect invalid emails during validation', async () => {
     render(<CsvUploader onParsed={mockOnParsed} />);
 
