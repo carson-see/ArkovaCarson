@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { verifyGate, verifyNewCodeDefinition } from './check-sonar-quality-gate.js';
+import { shouldFailOnMissingToken, verifyGate, verifyNewCodeDefinition } from './check-sonar-quality-gate.js';
 
 const COMPLETE_GATE = {
   id: 'gate-1',
@@ -132,6 +132,16 @@ describe('verifyNewCodeDefinition (SCRUM-1681)', () => {
     expect(r.failures[0]).toContain('before reset floor 2026-05-05');
   });
 
+  it('fails when the baseline has an impossible calendar date', () => {
+    const r = verifyNewCodeDefinition({
+      'sonar.leak.period.type': 'date',
+      'sonar.leak.period': '2026-02-31',
+    }, '2026-05-05');
+
+    expect(r.ok).toBe(false);
+    expect(r.failures[0]).toContain('not a real calendar date');
+  });
+
   it('fails when a date baseline is set in the future', () => {
     const r = verifyNewCodeDefinition({
       'sonar.leak.period.type': 'date',
@@ -140,5 +150,16 @@ describe('verifyNewCodeDefinition (SCRUM-1681)', () => {
 
     expect(r.ok).toBe(false);
     expect(r.failures[0]).toContain('is in the future');
+  });
+});
+
+describe('shouldFailOnMissingToken (SCRUM-1681)', () => {
+  it('fails closed when token is missing in GitHub Actions', () => {
+    expect(shouldFailOnMissingToken({ GITHUB_ACTIONS: 'true' })).toBe(true);
+    expect(shouldFailOnMissingToken({ CI: 'true' })).toBe(true);
+  });
+
+  it('allows local tokenless runs to skip', () => {
+    expect(shouldFailOnMissingToken({})).toBe(false);
   });
 });

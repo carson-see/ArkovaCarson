@@ -196,6 +196,23 @@ function safeValue(value: string): string {
   return value.replaceAll(/[\r\n]+/g, ' ');
 }
 
+function isRealIsoDate(value: string): boolean {
+  const [yearText, monthText, dayText] = value.split('-');
+  const year = Number(yearText);
+  const month = Number(monthText);
+  const day = Number(dayText);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return (
+    date.getUTCFullYear() === year
+    && date.getUTCMonth() === month - 1
+    && date.getUTCDate() === day
+  );
+}
+
+export function shouldFailOnMissingToken(env: Partial<Pick<NodeJS.ProcessEnv, 'CI' | 'GITHUB_ACTIONS'>> = process.env): boolean {
+  return env.CI === 'true' || env.GITHUB_ACTIONS === 'true';
+}
+
 export function verifyNewCodeDefinition(
   settings: SonarSettings,
   today: string = utcToday(),
@@ -216,6 +233,8 @@ export function verifyNewCodeDefinition(
     failures.push(`${NEW_CODE_PERIOD_KEY} is previous_version; expected YYYY-MM-DD date >= ${NEW_CODE_RESET_FLOOR}`);
   } else if (!ISO_DATE.test(baselineValue)) {
     failures.push(`${NEW_CODE_PERIOD_KEY} is ${safeValue(baselineValue)}; expected YYYY-MM-DD date`);
+  } else if (!isRealIsoDate(baselineValue)) {
+    failures.push(`${NEW_CODE_PERIOD_KEY} ${baselineValue} is not a real calendar date`);
   } else if (baselineValue < NEW_CODE_RESET_FLOOR) {
     failures.push(`${NEW_CODE_PERIOD_KEY} ${baselineValue} is before reset floor ${NEW_CODE_RESET_FLOOR}`);
   } else if (baselineValue > today) {
@@ -233,6 +252,10 @@ export function verifyNewCodeDefinition(
 async function main(): Promise<void> {
   const token = readToken();
   if (!token) {
+    if (shouldFailOnMissingToken()) {
+      console.error('SCRUM-1304/SCRUM-1681: SONARCLOUD_TOKEN unset in CI — failing closed.');
+      process.exit(1);
+    }
     console.log('SCRUM-1304/SCRUM-1681: SONARCLOUD_TOKEN unset — skipping gate verification (local dev OK).');
     return;
   }
