@@ -78,7 +78,9 @@ export function SecureDocumentDialog({
 }: Readonly<SecureDocumentDialogProps>) {
   const { user } = useAuth();
   const { profile } = useProfile();
-  const secureOrgId = orgId === undefined ? profile?.org_id ?? null : orgId;
+  const profileOrgId = profile?.org_id ?? null;
+  const secureOrgId = orgId === undefined ? profileOrgId : orgId;
+  const usesProfileScopedOverride = Boolean(secureOrgId && secureOrgId !== profileOrgId);
 
   // VAI-04: Auditor mode — suppress dialog entirely
   const { isAuditorMode } = useAuditorMode();
@@ -114,18 +116,33 @@ export function SecureDocumentDialog({
     setFileData({ file, fingerprint });
   }, []);
 
+  const blockProfileScopedFlow = useCallback(() => {
+    setError(SECURE_DIALOG_LABELS.PROFILE_SCOPED_FLOW_UNAVAILABLE);
+    setStep('error');
+  }, []);
+
   const handleBulkDetected = useCallback((files: File[]) => {
+    if (usesProfileScopedOverride) {
+      blockProfileScopedFlow();
+      return;
+    }
+
     setBulkFiles(files);
     setStep('bulk');
-  }, []);
+  }, [blockProfileScopedFlow, usesProfileScopedOverride]);
 
   // Attestation upload state
   const [attestationData, setAttestationData] = useState<AttestationUpload | null>(null);
 
   const handleAttestationDetected = useCallback((data: AttestationUpload) => {
+    if (usesProfileScopedOverride) {
+      blockProfileScopedFlow();
+      return;
+    }
+
     setAttestationData(data);
     setStep('attestation-review');
-  }, []);
+  }, [blockProfileScopedFlow, usesProfileScopedOverride]);
 
   const handleAttestationSubmit = useCallback(async () => {
     if (!attestationData || !user) return;
@@ -153,6 +170,7 @@ export function SecureDocumentDialog({
           summary: attestationData.summary || undefined,
           jurisdiction: attestationData.jurisdiction || undefined,
           expires_at: attestationData.expires_at || undefined,
+          orgId: secureOrgId ?? undefined,
         }),
       });
 
@@ -172,7 +190,7 @@ export function SecureDocumentDialog({
       setError('Network error — please try again');
       setStep('error');
     }
-  }, [attestationData, user, onSuccess]);
+  }, [attestationData, user, secureOrgId, onSuccess]);
 
   // Auto-select template based on AI-detected credential type
   const autoSelectTemplate = useCallback(async (detectedType: string) => {
@@ -572,6 +590,7 @@ export function SecureDocumentDialog({
 
           {step === 'bulk' && (
             <BulkUploadWizard
+              orgId={secureOrgId}
               initialFiles={bulkFiles}
               onComplete={() => {
                 handleClose();

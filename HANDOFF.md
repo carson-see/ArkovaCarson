@@ -30,7 +30,7 @@ PR #712 is open and **not merged**. No prod state changed. Code-only by design: 
 
 **Open gates:** merge `origin/main`, rerun local validation on the merge-resolution head, push, then wait for GitHub Actions/branch protection on the final SHA. Do not transition SCRUM-1672 subtasks to Done until code, review, CI, staging evidence, PR body, Confluence, and Jira AC/DoD all line up.
 
-_Last refreshed: 2026-05-05 by Codex during PR #712 recovery — claims verified against Jira/Confluence/GitHub reads, local command output, browser UAT artifact, T1 soak artifact, and PR-specific worker health output; GitHub Actions on final merge-resolution SHA still pending._
+_Last refreshed: 2026-05-05 by Codex — claims verified against gcloud/MCP/CI output._
 
 ### 2026-05-05 — PR #713 deploy unblock landed; PR #716 SonarCloud main-gate guard verified
 

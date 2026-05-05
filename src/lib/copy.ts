@@ -654,6 +654,7 @@ export const SECURE_DIALOG_LABELS = {
   COPY_LINK_ARIA: 'Copy verification link',
   AI_FIELDS: 'AI Fields',
   SKIP_AI_ANALYSIS: 'Skip AI Analysis',
+  PROFILE_SCOPED_FLOW_UNAVAILABLE: 'This upload path is tied to your active organization. Use a single document here, or switch organizations before using bulk upload or attestation files.',
 } as const;
 
 // =============================================================================

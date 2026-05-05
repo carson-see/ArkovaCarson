@@ -72,6 +72,7 @@ interface BulkUploadWizardProps {
   onComplete?: (result: ProcessingResult) => void;
   onCancel?: () => void;
   initialFiles?: File[];
+  orgId?: string | null;
 }
 
 function isSpreadsheetUploadFile(file: File): boolean {
@@ -84,7 +85,7 @@ function isSpreadsheetUploadFile(file: File): boolean {
     || file.type === 'application/vnd.ms-excel';
 }
 
-export function BulkUploadWizard({ onComplete, onCancel, initialFiles = [] }: Readonly<BulkUploadWizardProps>) {
+export function BulkUploadWizard({ onComplete, onCancel, initialFiles = [], orgId = null }: Readonly<BulkUploadWizardProps>) {
   const [step, setStep] = useState<Step>('upload');
   const [parsedCsv, setParsedCsv] = useState<ParsedCsv | null>(null);
   const [columns, setColumns] = useState<CsvColumn[]>([]);
@@ -103,7 +104,7 @@ export function BulkUploadWizard({ onComplete, onCancel, initialFiles = [] }: Re
     processedCount,
     totalCount,
     error: bulkError,
-  } = useBulkAnchors();
+  } = useBulkAnchors({ orgId });
 
   // Sync hook error into component error state — derived inline instead of effect
   // to avoid cascading renders from synchronous setState in useEffect.

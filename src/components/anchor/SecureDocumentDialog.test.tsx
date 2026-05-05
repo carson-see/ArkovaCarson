@@ -13,9 +13,18 @@ import { SECURE_DIALOG_LABELS } from '@/lib/copy';
 
 type FileUploadMockProps = {
   onBulkDetected?: (files: File[]) => void;
+  onAttestationDetected?: (data: {
+    attestation_type: 'VERIFICATION';
+    attester_name: string;
+    attester_type: 'INSTITUTION';
+    subject_type: 'credential';
+    subject_identifier: string;
+    claims: Array<{ claim: string }>;
+  }) => void;
 };
 
 let lastFileUploadProps: FileUploadMockProps | null = null;
+const mockProfileOrgId = vi.hoisted(() => ({ current: null as string | null }));
 
 vi.mock('./FileUpload', () => ({
   FileUpload: (props: FileUploadMockProps) => {
@@ -60,7 +69,7 @@ vi.mock('@/hooks/useAuth', () => ({
 }));
 
 vi.mock('@/hooks/useProfile', () => ({
-  useProfile: () => ({ profile: { org_id: null } }),
+  useProfile: () => ({ profile: { org_id: mockProfileOrgId.current } }),
 }));
 
 vi.mock('@/hooks/useAuditorMode', () => ({
@@ -100,6 +109,7 @@ describe('SCRUM-949 SecureDocumentDialog — Continue disabled when no file', ()
   beforeEach(() => {
     vi.clearAllMocks();
     lastFileUploadProps = null;
+    mockProfileOrgId.current = null;
   });
 
   it('disables Continue (and reflects aria-disabled) on initial open with no file', () => {
@@ -128,5 +138,19 @@ describe('SCRUM-949 SecureDocumentDialog — Continue disabled when no file', ()
     expect(screen.getByTestId('bulk-wizard-stub')).toBeInTheDocument();
     const dialog = screen.getByRole('dialog', { name: new RegExp(SECURE_DIALOG_LABELS.TITLE, 'i') });
     expect(dialog).not.toHaveAccessibleName(/^Bulk Upload$/i);
+  });
+
+  it('blocks profile-scoped bulk paths when opened for a different viewed org', () => {
+    mockProfileOrgId.current = 'profile-org';
+    render(<SecureDocumentDialog open={true} onOpenChange={() => {}} orgId="viewed-org" />);
+
+    act(() => {
+      lastFileUploadProps?.onBulkDetected?.([
+        new File(['a,b\n1,2'], 'docs.csv', { type: 'text/csv' }),
+      ]);
+    });
+
+    expect(screen.queryByTestId('bulk-wizard-stub')).not.toBeInTheDocument();
+    expect(screen.getByText(SECURE_DIALOG_LABELS.PROFILE_SCOPED_FLOW_UNAVAILABLE)).toBeInTheDocument();
   });
 });
