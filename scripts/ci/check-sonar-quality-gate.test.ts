@@ -127,6 +127,8 @@ describe('verifyNewCodeDefinition (SCRUM-1681)', () => {
     ['pre-reset baseline', newCodeSettings('date', '2026-03-11'), ['before reset floor 2026-05-05']],
     ['impossible calendar date', newCodeSettings('date', '2026-02-31'), ['not a real calendar date']],
     ['future baseline', newCodeSettings('date', '2026-05-06'), ['is in the future']],
+    ['missing baseline type', { 'sonar.leak.period': BASELINE_TODAY }, ['sonar.leak.period.type missing']],
+    ['missing baseline date', { 'sonar.leak.period.type': 'date' }, ['sonar.leak.period missing']],
   ])('fails on %s', (_name, settings, expectedFailures) => {
     const r = verifyNewCodeDefinition(settings, BASELINE_TODAY);
 
