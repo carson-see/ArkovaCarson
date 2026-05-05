@@ -288,7 +288,8 @@ describe('POST /api/v1/contracts/anchor-post-signing — [Spec] auth + validatio
 
     it('rejects unknown field in signer entry', async () => {
       const body = validBody();
-      (body.validation_report.signers[0] as Record<string, unknown>).ip_address = '10.0.0.1';
+      // RFC 5737 reserved documentation/example IP — non-routable; satisfies Sonar S1313.
+      (body.validation_report.signers[0] as Record<string, unknown>).ip_address = '203.0.113.1';
       const res = await request(app).post('/api/v1/contracts/anchor-post-signing').send(body);
       expect(res.status).toBe(400);
     });
