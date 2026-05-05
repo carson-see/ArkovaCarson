@@ -1920,6 +1920,7 @@ export const SUB_ORG_LABELS = {
   REQUEST_DIALOG_DESCRIPTION: 'Search for a verified organization to request affiliation with.',
   SEARCH_PLACEHOLDER: 'Search verified organizations...',
   AFFILIATED_WITH: 'Affiliated with',
+  PARENT_ORGANIZATION: 'parent organization',
   PENDING_APPROVAL: 'Pending approval from',
   REVOKED_BY: 'Affiliation revoked by',
   APPROVE_SUCCESS: 'Organization approved as affiliate.',

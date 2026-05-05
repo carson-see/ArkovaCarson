@@ -221,4 +221,42 @@ describe('useCanIssueCredential wrapper (SCRUM-1755 viewed-org overrides)', () =
     expect(result.current).toMatchObject({ allowed: false, loading: true, reason: 'loading' });
     expect(mockUseQuery).toHaveBeenCalledWith(expect.objectContaining({ enabled: false }));
   });
+
+  it('does not fetch the parent row before the child affiliation is approved', () => {
+    const pendingSubOrg: OrgGateRow = {
+      ...verifiedApprovedSub,
+      parent_approval_status: 'PENDING',
+    };
+    mockUseQuery.mockImplementation(({ queryKey, enabled }: { queryKey: string[]; enabled?: boolean }) => ({
+      data: queryKey.includes('gate') && enabled ? pendingSubOrg : undefined,
+      isLoading: false,
+      isError: false,
+    }));
+
+    const { result } = renderHook(() => useCanIssueCredential({
+      orgId: SUB_ORG_ID,
+      role: 'ORG_ADMIN',
+      profileLoading: false,
+    }));
+
+    expect(result.current).toMatchObject({
+      allowed: false,
+      loading: false,
+      reason: 'parent_unapproved',
+    });
+    expect(mockUseQuery).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        enabled: true,
+        queryKey: ['organization', SUB_ORG_ID, 'gate'],
+      }),
+    );
+    expect(mockUseQuery).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        enabled: false,
+        queryKey: ['organization', '', 'gate-parent'],
+      }),
+    );
+  });
 });

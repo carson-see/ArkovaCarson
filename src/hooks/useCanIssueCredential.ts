@@ -209,7 +209,12 @@ export function useCanIssueCredential(options: UseCanIssueCredentialOptions = {}
     staleTime: 30_000,
   });
 
-  const parentId = org?.parent_org_id ?? null;
+  // Parent row state only matters after the child affiliation is approved. If
+  // the child is still pending/revoked, the resolver can deny from the child
+  // row alone; fetching the parent can also be blocked by RLS for pending
+  // child admins, creating noisy but non-actionable query errors.
+  const parentId =
+    org?.parent_approval_status === 'APPROVED' ? org.parent_org_id ?? null : null;
 
   const { data: parent, isLoading: parentLoading, isError: parentIsError } = useQuery({
     queryKey: [...queryKeys.organization(parentId ?? ''), 'gate-parent'],

@@ -172,10 +172,11 @@ export function OrgProfilePage() {
   const parentApprovalStatus = orgAny?.parent_approval_status as string | null;
   const isChildOrg = !!parentOrgId;
   const isVerifiedOrg = organization?.verification_status === 'VERIFIED';
+  const parentOrgDisplayName = parentOrgName ?? SUB_ORG_LABELS.PARENT_ORGANIZATION;
 
   useEffect(() => {
     async function fetchParentOrgName() {
-      if (!parentOrgId) {
+      if (!parentOrgId || parentApprovalStatus !== 'APPROVED') {
         setParentOrgName(null);
         return;
       }
@@ -188,7 +189,7 @@ export function OrgProfilePage() {
       setParentOrgName(data?.display_name ?? null);
     }
     fetchParentOrgName();
-  }, [parentOrgId]);
+  }, [parentOrgId, parentApprovalStatus]);
 
   // Initialize settings fields when org loads
   if (organization && !orgSettingsInit) {
@@ -791,22 +792,22 @@ export function OrgProfilePage() {
               {/* Child org view: show parent affiliation status */}
               {isChildOrg && (
                 <div className="mb-6 p-4 rounded-lg border border-border/50 bg-card">
-                  {parentApprovalStatus === 'APPROVED' && parentOrgName && (
+                  {parentApprovalStatus === 'APPROVED' && (
                     <div className="flex items-center gap-3">
-                      <AffiliatedBadge parentName={parentOrgName} />
+                      <AffiliatedBadge parentName={parentOrgDisplayName} />
                       <span className="text-sm text-muted-foreground">
-                        {SUB_ORG_LABELS.AFFILIATED_WITH} <strong className="text-foreground">{parentOrgName}</strong>
+                        {SUB_ORG_LABELS.AFFILIATED_WITH} <strong className="text-foreground">{parentOrgDisplayName}</strong>
                       </span>
                     </div>
                   )}
-                  {parentApprovalStatus === 'PENDING' && parentOrgName && (
+                  {parentApprovalStatus === 'PENDING' && (
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-3">
                         <Badge variant="outline" className="bg-amber-500/10 text-amber-400 border-amber-500/20 text-xs">
                           {SUB_ORG_LABELS.STATUS_PENDING}
                         </Badge>
                         <span className="text-sm text-muted-foreground">
-                          {SUB_ORG_LABELS.PENDING_APPROVAL} <strong className="text-foreground">{parentOrgName}</strong>
+                          {SUB_ORG_LABELS.PENDING_APPROVAL} <strong className="text-foreground">{parentOrgDisplayName}</strong>
                         </span>
                       </div>
                       <Button
@@ -837,13 +838,13 @@ export function OrgProfilePage() {
                       </Button>
                     </div>
                   )}
-                  {parentApprovalStatus === 'REVOKED' && parentOrgName && (
+                  {parentApprovalStatus === 'REVOKED' && (
                     <div className="flex items-center gap-3">
                       <Badge variant="outline" className="bg-red-500/10 text-red-400 border-red-500/20 text-xs">
                         {SUB_ORG_LABELS.STATUS_REVOKED}
                       </Badge>
                       <span className="text-sm text-muted-foreground">
-                        {SUB_ORG_LABELS.REVOKED_BY} <strong className="text-foreground">{parentOrgName}</strong>
+                        {SUB_ORG_LABELS.REVOKED_BY} <strong className="text-foreground">{parentOrgDisplayName}</strong>
                       </span>
                     </div>
                   )}
