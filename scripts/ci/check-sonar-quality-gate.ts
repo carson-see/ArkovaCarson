@@ -1,10 +1,11 @@
 #!/usr/bin/env tsx
 /**
- * SCRUM-1304 — SonarCloud quality-gate verification CI script.
+ * SCRUM-1304 / SCRUM-1681 — SonarCloud quality-gate verification CI script.
  *
  * The SonarCloud project quality gate is configured in the SonarCloud UI,
  * not in git. This script polls the SonarCloud API and asserts the gate
- * matches the contract documented in `sonar-project.properties`:
+ * matches the contract documented in `sonar-project.properties`, and that
+ * the project New Code Definition cannot drift back to `previous_version`:
  *
  *   - new_coverage ≥ 80
  *   - new_duplicated_lines_density ≤ 3
@@ -34,7 +35,12 @@ interface QualityGate {
 }
 
 const PROJECT_KEY = 'carson-see_ArkovaCarson';
+const ORGANIZATION = 'carson-see';
 const SONAR_BASE = 'https://sonarcloud.io';
+const NEW_CODE_TYPE_KEY = 'sonar.leak.period.type';
+const NEW_CODE_PERIOD_KEY = 'sonar.leak.period';
+const NEW_CODE_RESET_FLOOR = '2026-05-05';
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 interface RequiredCondition {
   metric: string;
@@ -42,6 +48,13 @@ interface RequiredCondition {
   threshold: string;
   description: string;
 }
+
+interface SonarSetting {
+  key: string;
+  value?: string;
+}
+
+type SonarSettings = Record<string, string | undefined>;
 
 const REQUIRED: RequiredCondition[] = [
   { metric: 'new_coverage', op: 'LT', threshold: '80', description: 'Coverage on New Code ≥ 80%' },
@@ -69,7 +82,7 @@ const ALLOWED_GATE_NAMES: readonly string[] = [
 async function fetchProjectGate(token: string): Promise<QualityGate> {
   const auth = `Basic ${Buffer.from(`${token}:`).toString('base64')}`;
   const projectRes = await fetch(
-    `${SONAR_BASE}/api/qualitygates/get_by_project?project=${encodeURIComponent(PROJECT_KEY)}`,
+    `${SONAR_BASE}/api/qualitygates/get_by_project?organization=${encodeURIComponent(ORGANIZATION)}&project=${encodeURIComponent(PROJECT_KEY)}`,
     { headers: { Authorization: auth } },
   );
   if (!projectRes.ok) {
@@ -92,7 +105,7 @@ async function fetchProjectGate(token: string): Promise<QualityGate> {
   }
 
   const showRes = await fetch(
-    `${SONAR_BASE}/api/qualitygates/show?name=${encodeURIComponent(allowedName)}`,
+    `${SONAR_BASE}/api/qualitygates/show?organization=${encodeURIComponent(ORGANIZATION)}&name=${encodeURIComponent(allowedName)}`,
     { headers: { Authorization: auth } },
   );
   if (!showRes.ok) {
@@ -114,11 +127,32 @@ async function fetchProjectGate(token: string): Promise<QualityGate> {
   };
 }
 
+async function fetchProjectSettings(token: string): Promise<SonarSettings> {
+  const auth = `Basic ${Buffer.from(`${token}:`).toString('base64')}`;
+  const keys = [NEW_CODE_TYPE_KEY, NEW_CODE_PERIOD_KEY].join(',');
+  const settingsRes = await fetch(
+    `${SONAR_BASE}/api/settings/values?component=${encodeURIComponent(PROJECT_KEY)}&keys=${encodeURIComponent(keys)}`,
+    { headers: { Authorization: auth } },
+  );
+  if (!settingsRes.ok) {
+    throw new Error(`SonarCloud settings ${settingsRes.status}: ${await settingsRes.text()}`);
+  }
+  const { settings } = (await settingsRes.json()) as { settings: SonarSetting[] };
+  return Object.fromEntries(settings.map((setting) => [setting.key, setting.value]));
+}
+
 export interface VerifyResult {
   ok: boolean;
   missing: string[];
   weak: string[];
   gateName: string;
+}
+
+export interface NewCodeDefinitionResult {
+  ok: boolean;
+  failures: string[];
+  baselineType: string;
+  baselineValue: string;
 }
 
 export function verifyGate(gate: QualityGate, required: RequiredCondition[] = REQUIRED): VerifyResult {
@@ -154,37 +188,91 @@ export function verifyGate(gate: QualityGate, required: RequiredCondition[] = RE
   };
 }
 
+function utcToday(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function safeValue(value: string): string {
+  return value.replaceAll(/[\r\n]+/g, ' ');
+}
+
+export function verifyNewCodeDefinition(
+  settings: SonarSettings,
+  today: string = utcToday(),
+): NewCodeDefinitionResult {
+  const baselineType = settings[NEW_CODE_TYPE_KEY] ?? '';
+  const baselineValue = settings[NEW_CODE_PERIOD_KEY] ?? '';
+  const failures: string[] = [];
+
+  if (!baselineType) {
+    failures.push(`${NEW_CODE_TYPE_KEY} missing; expected date`);
+  } else if (baselineType !== 'date') {
+    failures.push(`${NEW_CODE_TYPE_KEY} is ${safeValue(baselineType)}; expected date`);
+  }
+
+  if (!baselineValue) {
+    failures.push(`${NEW_CODE_PERIOD_KEY} missing; expected YYYY-MM-DD date >= ${NEW_CODE_RESET_FLOOR}`);
+  } else if (baselineValue === 'previous_version') {
+    failures.push(`${NEW_CODE_PERIOD_KEY} is previous_version; expected YYYY-MM-DD date >= ${NEW_CODE_RESET_FLOOR}`);
+  } else if (!ISO_DATE.test(baselineValue)) {
+    failures.push(`${NEW_CODE_PERIOD_KEY} is ${safeValue(baselineValue)}; expected YYYY-MM-DD date`);
+  } else if (baselineValue < NEW_CODE_RESET_FLOOR) {
+    failures.push(`${NEW_CODE_PERIOD_KEY} ${baselineValue} is before reset floor ${NEW_CODE_RESET_FLOOR}`);
+  } else if (baselineValue > today) {
+    failures.push(`${NEW_CODE_PERIOD_KEY} ${baselineValue} is in the future relative to ${today}`);
+  }
+
+  return {
+    ok: failures.length === 0,
+    failures,
+    baselineType,
+    baselineValue,
+  };
+}
+
 async function main(): Promise<void> {
   const token = readToken();
   if (!token) {
-    console.log('SCRUM-1304: SONARCLOUD_TOKEN unset — skipping gate verification (local dev OK).');
+    console.log('SCRUM-1304/SCRUM-1681: SONARCLOUD_TOKEN unset — skipping gate verification (local dev OK).');
     return;
   }
 
   let gate: QualityGate;
+  let settings: SonarSettings;
   try {
-    gate = await fetchProjectGate(token);
+    [gate, settings] = await Promise.all([
+      fetchProjectGate(token),
+      fetchProjectSettings(token),
+    ]);
   } catch (err) {
     // err.message is a synthetic string from our own throw sites; safe to log.
     const msg = String((err as Error).message).replaceAll(/[\r\n]+/g, ' ');
-    console.error(`SCRUM-1304: failed to fetch SonarCloud gate — ${msg}`);
+    console.error(`SCRUM-1304/SCRUM-1681: failed to fetch SonarCloud gate/settings — ${msg}`);
     process.exit(2);
   }
 
   const result = verifyGate(gate);
+  const ncdResult = verifyNewCodeDefinition(settings);
   // Strip newlines from gate name before logging (defense-in-depth — SonarCloud's
   // own API is trusted but log injection rules treat any external string as suspect).
   const safeGateName = result.gateName.replaceAll(/[\r\n]+/g, ' ');
-  if (result.ok) {
-    console.log(`SCRUM-1304 ✅ SonarCloud gate "${safeGateName}" satisfies all 5 required conditions.`);
+  if (result.ok && ncdResult.ok) {
+    console.log(
+      `SCRUM-1304/SCRUM-1681 ✅ SonarCloud gate "${safeGateName}" satisfies all 5 required conditions; ` +
+        `New Code Definition is ${ncdResult.baselineType}/${ncdResult.baselineValue}.`,
+    );
     return;
   }
 
-  console.error(`SCRUM-1304 ❌ SonarCloud gate "${safeGateName}" does NOT satisfy the contract documented in sonar-project.properties:`);
+  console.error(`SCRUM-1304/SCRUM-1681 ❌ SonarCloud project "${PROJECT_KEY}" does NOT satisfy the CI contract:`);
+  if (!result.ok) {
+    console.error(`Quality Gate "${safeGateName}" does NOT satisfy sonar-project.properties:`);
+  }
   for (const m of result.missing) console.error(`  missing condition: ${m}`);
   for (const w of result.weak) console.error(`  too weak:          ${w}`);
+  for (const failure of ncdResult.failures) console.error(`  new-code drift:   ${failure}`);
   console.error('');
-  console.error('Fix: update the SonarCloud project quality gate in https://sonarcloud.io/organizations/carson-see/quality_gates');
+  console.error('Fix: update SonarCloud Quality Gate / New Code Definition in https://sonarcloud.io/project/overview?id=carson-see_ArkovaCarson');
   process.exit(1);
 }
 

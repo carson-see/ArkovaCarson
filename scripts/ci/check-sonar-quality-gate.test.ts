@@ -1,12 +1,12 @@
 /**
- * SCRUM-1304 — Sonar gate verification logic tests.
+ * SCRUM-1304 / SCRUM-1681 — Sonar gate verification logic tests.
  *
  * The HTTP fetch + main() are not unit-tested (network-bound); the pure
  * `verifyGate` function is tested across the full pass/fail matrix.
  */
 
 import { describe, it, expect } from 'vitest';
-import { verifyGate } from './check-sonar-quality-gate.js';
+import { verifyGate, verifyNewCodeDefinition } from './check-sonar-quality-gate.js';
 
 const COMPLETE_GATE = {
   id: 'gate-1',
@@ -95,5 +95,50 @@ describe('verifyGate (SCRUM-1304)', () => {
     });
     expect(r.ok).toBe(false);
     expect(r.weak[0]).toContain('op');
+  });
+});
+
+describe('verifyNewCodeDefinition (SCRUM-1681)', () => {
+  it('passes on the 2026-05-05 manual baseline', () => {
+    const r = verifyNewCodeDefinition({
+      'sonar.leak.period.type': 'date',
+      'sonar.leak.period': '2026-05-05',
+    }, '2026-05-05');
+
+    expect(r.ok).toBe(true);
+    expect(r.failures).toEqual([]);
+  });
+
+  it('fails closed when SonarCloud drifts back to previous_version', () => {
+    const r = verifyNewCodeDefinition({
+      'sonar.leak.period.type': 'previous_version',
+      'sonar.leak.period': 'previous_version',
+    }, '2026-05-05');
+
+    expect(r.ok).toBe(false);
+    expect(r.failures).toEqual([
+      'sonar.leak.period.type is previous_version; expected date',
+      'sonar.leak.period is previous_version; expected YYYY-MM-DD date >= 2026-05-05',
+    ]);
+  });
+
+  it('fails when the baseline predates the 2026-05-05 reset', () => {
+    const r = verifyNewCodeDefinition({
+      'sonar.leak.period.type': 'date',
+      'sonar.leak.period': '2026-03-11',
+    }, '2026-05-05');
+
+    expect(r.ok).toBe(false);
+    expect(r.failures[0]).toContain('before reset floor 2026-05-05');
+  });
+
+  it('fails when a date baseline is set in the future', () => {
+    const r = verifyNewCodeDefinition({
+      'sonar.leak.period.type': 'date',
+      'sonar.leak.period': '2026-05-06',
+    }, '2026-05-05');
+
+    expect(r.ok).toBe(false);
+    expect(r.failures[0]).toContain('is in the future');
   });
 });
