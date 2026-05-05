@@ -1,0 +1,380 @@
+schema,table_name,column_name,data_type,is_nullable,row_count,classification,scrub_strategy,notes
+auth,users,id,uuid,NO,21,PII-INDIRECT,passthrough,FK linkage; uuid itself contains no PII
+auth,users,email,character varying,YES,21,PII-DIRECT,deterministic_email,md5(email||SALT)@staging.invalid.test — preserves FK shape; verifiable post-scrub
+auth,users,encrypted_password,character varying,YES,21,GENERATED,replace_with_known,bcrypt-of-known-test-string so staging logins work for known fixture users only
+auth,users,confirmation_token,character varying,YES,21,GENERATED,null,never replay
+auth,users,recovery_token,character varying,YES,21,GENERATED,null,never replay
+auth,users,email_change_token_new,character varying,YES,21,GENERATED,null,never replay
+auth,users,email_change_token_current,character varying,YES,21,GENERATED,null,never replay
+auth,users,phone_change_token,character varying,YES,21,GENERATED,null,never replay
+auth,users,reauthentication_token,character varying,YES,21,GENERATED,null,never replay
+auth,users,phone,text,YES,21,PII-DIRECT,replace_with_fake,faker.phone with deterministic seed
+auth,users,phone_change,text,YES,21,PII-DIRECT,null,
+auth,users,email_change,character varying,YES,21,PII-DIRECT,null,
+auth,users,raw_user_meta_data,jsonb,YES,21,PII-DIRECT,scrub_per_key,see jsonb-scrub-plan
+auth,users,raw_app_meta_data,jsonb,YES,21,OPERATIONAL,passthrough,role/provider info; no PII
+auth,users,banned_until,timestamp with time zone,YES,21,OPERATIONAL,passthrough,
+auth,users,deleted_at,timestamp with time zone,YES,21,OPERATIONAL,passthrough,
+auth,users,is_super_admin,boolean,YES,21,OPERATIONAL,force_false,never preserve super_admin into staging
+auth,identities,user_id,uuid,YES,N,PII-INDIRECT,passthrough,
+auth,identities,identity_data,jsonb,YES,N,PII-DIRECT,scrub_per_key,contains email + provider sub
+auth,identities,email,text,YES,N,PII-DIRECT,deterministic_email,same SALT as auth.users.email
+auth,identities,provider_id,text,YES,N,PII-DIRECT,deterministic_hash,OAuth subject identifier
+auth,identities,provider,text,NO,N,OPERATIONAL,passthrough,
+auth,sessions,user_id,uuid,YES,N,PII-INDIRECT,passthrough,
+auth,sessions,ip,inet,YES,N,PII-DIRECT,replace_with_fake,127.0.0.1 or random RFC1918
+auth,sessions,user_agent,text,YES,N,PII-INDIRECT,replace_static,"Mozilla/5.0 (staging-fixture)"
+auth,sessions,refresh_token_hmac_key,text,YES,N,GENERATED,regenerate,never replay session keys
+auth,sessions,tag,text,YES,N,OPERATIONAL,passthrough,
+auth,refresh_tokens,token,character varying,YES,N,GENERATED,null,never replay; staging has fresh sessions
+auth,refresh_tokens,parent,character varying,YES,N,GENERATED,null,
+auth,mfa_factors,user_id,uuid,YES,N,PII-INDIRECT,passthrough,
+auth,mfa_factors,secret,text,YES,N,GENERATED,null,never replay TOTP secrets
+auth,mfa_factors,phone,text,YES,N,PII-DIRECT,null,phone for SMS factor
+auth,mfa_factors,friendly_name,text,YES,N,PII-DIRECT,replace_static,"Staging Test Device"
+auth,mfa_factors,web_authn_credential,jsonb,YES,N,GENERATED,null,WebAuthn binding tied to real device
+auth,mfa_factors,last_webauthn_challenge_data,jsonb,YES,N,GENERATED,null,
+auth,one_time_tokens,token_hash,text,NO,N,GENERATED,null,never replay
+auth,one_time_tokens,relates_to,text,NO,N,PII-DIRECT,null,often contains email
+storage,objects,owner,uuid,YES,N,PII-INDIRECT,passthrough,
+storage,objects,name,text,YES,N,CUSTOMER-INFRA,replace_with_fake,object key; may reveal customer naming
+storage,objects,user_metadata,jsonb,YES,N,PII-DIRECT,null,user-supplied metadata; high risk
+storage,objects,metadata,jsonb,YES,N,OPERATIONAL,passthrough,system metadata (size, mimetype)
+storage,buckets,owner,uuid,YES,N,PII-INDIRECT,passthrough,
+public,profiles,id,uuid,NO,21,PII-INDIRECT,passthrough,FK to auth.users.id
+public,profiles,email,text,NO,21,PII-DIRECT,deterministic_email,must match auth.users.email scrub for FK referential consistency
+public,profiles,full_name,text,YES,21,PII-DIRECT,replace_with_fake,faker.name with deterministic seed
+public,profiles,avatar_url,text,YES,21,CUSTOMER-INFRA,null,storage URL may leak bucket structure
+public,profiles,phone_number,text,YES,21,PII-DIRECT,replace_with_fake,faker.phone
+public,profiles,bio,text,YES,21,PII-DIRECT,null,free-text
+public,profiles,social_links,jsonb,YES,21,PII-DIRECT,null,LinkedIn/Twitter URLs
+public,profiles,activation_token,text,YES,21,GENERATED,null,never replay
+public,profiles,identity_verification_session_id,text,YES,21,CUSTOMER-INFRA,null,Stripe Identity session id
+public,profiles,kyc_provider,text,YES,21,OPERATIONAL,passthrough,
+public,profiles,is_platform_admin,boolean,NO,21,OPERATIONAL,force_false,no platform admin in staging
+public,profiles,public_id,text,YES,21,OPERATIONAL,passthrough,already public-safe
+public,profiles,role,USER-DEFINED,YES,21,OPERATIONAL,passthrough,
+public,profiles,subscription_tier,text,NO,21,OPERATIONAL,passthrough,
+public,profiles,org_id,uuid,YES,21,PII-INDIRECT,passthrough,
+public,organizations,id,uuid,NO,1,PII-INDIRECT,passthrough,
+public,organizations,legal_name,text,NO,1,PII-DIRECT,replace_with_fake,faker.company
+public,organizations,display_name,text,NO,1,PII-DIRECT,replace_with_fake,faker.company
+public,organizations,domain,text,YES,1,PII-DIRECT,replace_static,staging-org-N.example.invalid
+public,organizations,description,text,YES,1,PII-DIRECT,null,free-text
+public,organizations,website_url,text,YES,1,CUSTOMER-INFRA,null,
+public,organizations,logo_url,text,YES,1,CUSTOMER-INFRA,null,storage URL
+public,organizations,banner_url,text,YES,1,CUSTOMER-INFRA,null,
+public,organizations,linkedin_url,text,YES,1,CUSTOMER-INFRA,null,
+public,organizations,twitter_url,text,YES,1,CUSTOMER-INFRA,null,
+public,organizations,location,text,YES,1,PII-DIRECT,null,
+public,organizations,ein_tax_id,text,YES,1,PII-DIRECT,null,US tax ID — high sensitivity
+public,organizations,domain_verification_token,text,YES,1,GENERATED,null,
+public,organizations,kyb_provider,text,YES,1,OPERATIONAL,passthrough,
+public,organizations,kyb_reference_id,text,YES,1,CUSTOMER-INFRA,null,Middesk reference
+public,organizations,suspended_reason,text,YES,1,PII-DIRECT,null,may contain free-text
+public,organizations,public_id,text,YES,1,OPERATIONAL,passthrough,
+public,organizations,org_prefix,text,YES,1,OPERATIONAL,passthrough,
+public,organizations,founded_date,date,YES,1,OPERATIONAL,passthrough,
+public,organizations,parent_org_id,uuid,YES,1,PII-INDIRECT,passthrough,
+public,organizations,verification_status,text,NO,1,OPERATIONAL,passthrough,
+public,organizations,tier,USER-DEFINED,NO,1,OPERATIONAL,passthrough,
+public,organizations,industry_tag,text,YES,1,OPERATIONAL,passthrough,
+public,organizations,org_type,text,YES,1,OPERATIONAL,passthrough,
+public,organizations,verified_badge_granted_at,timestamp with time zone,YES,1,OPERATIONAL,passthrough,
+public,organizations,suspended,boolean,NO,1,OPERATIONAL,passthrough,
+public,api_keys,id,uuid,NO,1,PII-INDIRECT,passthrough,
+public,api_keys,key_prefix,text,NO,1,OPERATIONAL,passthrough,public-safe
+public,api_keys,key_hash,text,NO,1,GENERATED,replace_with_known,HMAC of a known test secret so we can authenticate against staging
+public,api_keys,name,text,NO,1,PII-DIRECT,replace_static,"Staging API Key N"
+public,api_keys,scopes,ARRAY,NO,1,OPERATIONAL,passthrough,
+public,api_keys,access_purpose,text,YES,1,PII-DIRECT,null,free-text
+public,api_keys,institution_type,text,YES,1,OPERATIONAL,passthrough,
+public,api_keys,ferpa_exception_category,text,YES,1,OPERATIONAL,passthrough,
+public,api_keys,ferpa_verified,boolean,NO,1,OPERATIONAL,passthrough,
+public,api_keys,created_by,uuid,NO,1,PII-INDIRECT,passthrough,
+public,api_keys,revoked_at,timestamp with time zone,YES,1,OPERATIONAL,passthrough,
+public,api_keys,revocation_reason,text,YES,1,PII-DIRECT,null,free-text
+public,api_keys,agent_id,uuid,YES,1,PII-INDIRECT,passthrough,
+public,webhook_endpoints,url,text,NO,0,CUSTOMER-INFRA,replace_static,https://localhost/staging-webhook-N — table empty in prod but rule applies
+public,webhook_endpoints,secret_hash,text,NO,0,GENERATED,replace_with_known,HMAC of known test secret
+public,webhook_endpoints,description,text,YES,0,PII-DIRECT,null,
+public,webhook_endpoints,public_id,text,NO,0,OPERATIONAL,passthrough,
+public,webhook_endpoints,events,ARRAY,NO,0,OPERATIONAL,passthrough,
+public,credit_transactions,id,uuid,NO,122,PII-INDIRECT,passthrough,
+public,credit_transactions,user_id,uuid,NO,122,PII-INDIRECT,passthrough,
+public,credit_transactions,org_id,uuid,YES,122,PII-INDIRECT,passthrough,
+public,credit_transactions,reason,text,YES,122,PII-DIRECT,null,free-text may include filenames
+public,credit_transactions,reference_id,uuid,YES,122,PII-INDIRECT,passthrough,
+public,credit_transactions,transaction_type,USER-DEFINED,NO,122,OPERATIONAL,passthrough,
+public,credit_transactions,amount,integer,NO,122,OPERATIONAL,passthrough,
+public,credit_transactions,balance_after,integer,NO,122,OPERATIONAL,passthrough,
+public,credits,id,uuid,NO,18,PII-INDIRECT,passthrough,
+public,credits,user_id,uuid,NO,18,PII-INDIRECT,passthrough,
+public,credits,org_id,uuid,YES,18,PII-INDIRECT,passthrough,
+public,credits,balance,integer,NO,18,OPERATIONAL,passthrough,
+public,credits,monthly_allocation,integer,NO,18,OPERATIONAL,passthrough,
+public,credits,purchased,integer,NO,18,OPERATIONAL,passthrough,
+public,subscriptions,id,uuid,NO,1,PII-INDIRECT,passthrough,
+public,subscriptions,user_id,uuid,NO,1,PII-INDIRECT,passthrough,
+public,subscriptions,org_id,uuid,YES,1,PII-INDIRECT,passthrough,
+public,subscriptions,plan_id,text,NO,1,OPERATIONAL,passthrough,
+public,subscriptions,stripe_subscription_id,text,YES,1,CUSTOMER-INFRA,replace_static,sub_test_NNNN
+public,subscriptions,stripe_customer_id,text,YES,1,CUSTOMER-INFRA,replace_static,cus_test_NNNN
+public,subscriptions,status,text,NO,1,OPERATIONAL,passthrough,
+public,extraction_manifests,id,uuid,NO,23,PII-INDIRECT,passthrough,
+public,extraction_manifests,fingerprint,character,NO,23,PUBLIC-CHAIN,passthrough,already public on chain
+public,extraction_manifests,model_id,text,NO,23,OPERATIONAL,passthrough,
+public,extraction_manifests,model_version,text,NO,23,OPERATIONAL,passthrough,
+public,extraction_manifests,extracted_fields,jsonb,NO,23,PII-DIRECT,scrub_per_key,OCR'd doc fields — see jsonb plan; HIGHEST RISK in B-Hybrid scope
+public,extraction_manifests,confidence_scores,jsonb,NO,23,OPERATIONAL,passthrough,floats
+public,extraction_manifests,manifest_hash,character,NO,23,PUBLIC-CHAIN,passthrough,
+public,extraction_manifests,zk_proof,jsonb,YES,23,OPERATIONAL,passthrough,proof opaque to PII
+public,extraction_manifests,zk_public_signals,jsonb,YES,23,OPERATIONAL,passthrough,
+public,extraction_manifests,prompt_version,text,YES,23,OPERATIONAL,passthrough,
+public,extraction_manifests,anchor_id,uuid,YES,23,OUT-OF-SCOPE-OPTION-A,null,FK to anchors which is excluded from scrubbed clone — set NULL or set to synthetic anchor id
+public,extraction_manifests,user_id,uuid,YES,23,PII-INDIRECT,passthrough,
+public,extraction_manifests,org_id,uuid,YES,23,PII-INDIRECT,passthrough,
+public,extraction_manifests,usage_event_id,uuid,YES,23,PII-INDIRECT,passthrough,FK to ai_usage_events
+public,credential_templates,id,uuid,NO,26,PII-INDIRECT,passthrough,
+public,credential_templates,name,text,NO,26,OPERATIONAL,passthrough_if_system,system templates have generic names; org-owned may be sensitive
+public,credential_templates,description,text,YES,26,PII-DIRECT,null_if_org_owned,scrub if is_system=false
+public,credential_templates,credential_type,USER-DEFINED,NO,26,OPERATIONAL,passthrough,
+public,credential_templates,default_metadata,jsonb,YES,26,PII-DIRECT,scrub_per_key,see jsonb plan
+public,credential_templates,is_system,boolean,NO,26,OPERATIONAL,passthrough,
+public,credential_templates,is_active,boolean,NO,26,OPERATIONAL,passthrough,
+public,credential_templates,org_id,uuid,YES,26,PII-INDIRECT,passthrough,
+public,credential_templates,created_by,uuid,YES,26,PII-INDIRECT,passthrough,
+public,verification_events,id,uuid,NO,41,PII-INDIRECT,passthrough,
+public,verification_events,public_id,text,NO,41,OPERATIONAL,passthrough,
+public,verification_events,method,text,NO,41,OPERATIONAL,passthrough,
+public,verification_events,result,text,NO,41,OPERATIONAL,passthrough,
+public,verification_events,fingerprint_provided,boolean,NO,41,OPERATIONAL,passthrough,
+public,verification_events,ip_hash,text,YES,41,PII-DIRECT,replace_static,already hashed but the hash itself is per-IP linkable
+public,verification_events,user_agent,text,YES,41,PII-INDIRECT,replace_static,"Mozilla/5.0 (staging-fixture)"
+public,verification_events,referrer,text,YES,41,CUSTOMER-INFRA,null,may contain customer URL
+public,verification_events,country_code,character,YES,41,OPERATIONAL,passthrough,
+public,verification_events,anchor_id,uuid,YES,41,OUT-OF-SCOPE-OPTION-A,null,FK to anchors
+public,verification_events,org_id,uuid,YES,41,PII-INDIRECT,passthrough,
+public,ai_usage_events,id,uuid,NO,211,PII-INDIRECT,passthrough,
+public,ai_usage_events,event_type,text,NO,211,OPERATIONAL,passthrough,
+public,ai_usage_events,provider,text,NO,211,OPERATIONAL,passthrough,
+public,ai_usage_events,fingerprint,text,YES,211,PUBLIC-CHAIN,passthrough,doc fingerprint already non-reversible
+public,ai_usage_events,error_message,text,YES,211,PII-DIRECT,null,may contain raw input
+public,ai_usage_events,result_json,jsonb,YES,211,PII-DIRECT,null,extraction output — null entire column for staging
+public,ai_usage_events,prompt_version,text,YES,211,OPERATIONAL,passthrough,
+public,ai_usage_events,user_id,uuid,YES,211,PII-INDIRECT,passthrough,
+public,ai_usage_events,org_id,uuid,YES,211,PII-INDIRECT,passthrough,
+public,ai_usage_events,success,boolean,NO,211,OPERATIONAL,passthrough,
+public,ai_usage_events,confidence,numeric,YES,211,OPERATIONAL,passthrough,
+public,ai_usage_events,duration_ms,integer,YES,211,OPERATIONAL,passthrough,
+public,ai_usage_events,credits_consumed,integer,NO,211,OPERATIONAL,passthrough,
+public,ai_usage_events,tokens_used,integer,YES,211,OPERATIONAL,passthrough,
+public,switchboard_flags,id,uuid,NO,20,PII-INDIRECT,passthrough,
+public,switchboard_flags,flag_key,text,NO,20,OPERATIONAL,passthrough,
+public,switchboard_flags,enabled,boolean,NO,20,OPERATIONAL,override_for_staging,force ENABLE_PROD_NETWORK_ANCHORING=false; force USE_MOCKS=true
+public,switchboard_flags,description,text,YES,20,OPERATIONAL,passthrough,
+public,switchboard_flag_history,id,uuid,NO,16,PII-INDIRECT,passthrough,
+public,switchboard_flag_history,flag_key,text,NO,16,OPERATIONAL,passthrough,
+public,switchboard_flag_history,old_value,boolean,YES,16,OPERATIONAL,passthrough,
+public,switchboard_flag_history,new_value,boolean,NO,16,OPERATIONAL,passthrough,
+public,switchboard_flag_history,changed_by,uuid,YES,16,PII-INDIRECT,passthrough,
+public,plans,id,text,NO,10,OPERATIONAL,passthrough,
+public,plans,name,text,NO,10,OPERATIONAL,passthrough,
+public,plans,description,text,YES,10,OPERATIONAL,passthrough,
+public,plans,stripe_price_id,text,YES,10,CUSTOMER-INFRA,replace_static,price_test_NNNN
+public,plans,price_cents,integer,NO,10,OPERATIONAL,passthrough,
+public,plans,records_per_month,integer,NO,10,OPERATIONAL,passthrough,
+public,plans,billing_period,text,NO,10,OPERATIONAL,passthrough,
+public,plans,features,jsonb,NO,10,OPERATIONAL,passthrough,
+public,plans,is_active,boolean,NO,10,OPERATIONAL,passthrough,
+public,jurisdiction_rules,id,uuid,NO,98,OPERATIONAL,passthrough,system reference data
+public,jurisdiction_rules,jurisdiction_code,text,NO,98,OPERATIONAL,passthrough,
+public,jurisdiction_rules,industry_code,text,NO,98,OPERATIONAL,passthrough,
+public,jurisdiction_rules,rule_name,text,NO,98,OPERATIONAL,passthrough,
+public,jurisdiction_rules,details,jsonb,YES,98,OPERATIONAL,passthrough,system reference
+public,jurisdiction_rules,required_credential_types,ARRAY,NO,98,OPERATIONAL,passthrough,
+public,jurisdiction_rules,optional_credential_types,ARRAY,YES,98,OPERATIONAL,passthrough,
+public,jurisdiction_rules,regulatory_reference,text,YES,98,OPERATIONAL,passthrough,
+public,freemail_domains,domain,text,NO,46,OPERATIONAL,passthrough,system reference
+public,freemail_domains,added_at,timestamp with time zone,NO,46,OPERATIONAL,passthrough,
+public,org_tier_entitlements,tier_id,text,NO,4,OPERATIONAL,passthrough,system reference
+public,org_tier_entitlements,name,text,NO,4,OPERATIONAL,passthrough,
+public,org_tier_entitlements,price_cents,integer,YES,4,OPERATIONAL,passthrough,
+public,org_tier_entitlements,features,jsonb,NO,4,OPERATIONAL,passthrough,
+public,org_members,id,uuid,NO,2,PII-INDIRECT,passthrough,
+public,org_members,user_id,uuid,NO,2,PII-INDIRECT,passthrough,
+public,org_members,org_id,uuid,NO,2,PII-INDIRECT,passthrough,
+public,org_members,role,USER-DEFINED,NO,2,OPERATIONAL,passthrough,
+public,org_members,invited_by,uuid,YES,2,PII-INDIRECT,passthrough,
+public,user_notifications,id,uuid,NO,4,PII-INDIRECT,passthrough,
+public,user_notifications,user_id,uuid,NO,4,PII-INDIRECT,passthrough,
+public,user_notifications,organization_id,uuid,YES,4,PII-INDIRECT,passthrough,
+public,user_notifications,type,USER-DEFINED,NO,4,OPERATIONAL,passthrough,
+public,user_notifications,payload,jsonb,NO,4,OPERATIONAL,passthrough,observed keys: batchId/merkleRoot/processed/trigger/triggeredBy/txId — all chain-public
+public,compliance_audits,id,uuid,NO,9,PII-INDIRECT,passthrough,
+public,compliance_audits,org_id,uuid,NO,9,PII-INDIRECT,passthrough,
+public,compliance_audits,triggered_by,uuid,YES,9,PII-INDIRECT,passthrough,
+public,compliance_audits,per_jurisdiction,jsonb,NO,9,PII-DIRECT,scrub_per_key,may reference document fingerprints / titles
+public,compliance_audits,gaps,jsonb,NO,9,PII-DIRECT,scrub_per_key,
+public,compliance_audits,quarantines,jsonb,NO,9,PII-DIRECT,scrub_per_key,may reference anchor public_ids
+public,compliance_audits,metadata,jsonb,NO,9,OPERATIONAL,passthrough,
+public,compliance_audits,error_message,text,YES,9,PII-DIRECT,null,
+public,compliance_audits,jurisdiction_filter,ARRAY,YES,9,OPERATIONAL,passthrough,
+public,attestations,id,uuid,NO,1,PII-INDIRECT,passthrough,
+public,attestations,subject_identifier,text,NO,1,PII-DIRECT,deterministic_hash,subject of attestation — could be email/license number
+public,attestations,attester_name,text,NO,1,PII-DIRECT,replace_with_fake,faker.name
+public,attestations,attester_title,text,YES,1,PII-DIRECT,replace_static,"Staging Attester"
+public,attestations,attester_org_id,uuid,YES,1,PII-INDIRECT,passthrough,
+public,attestations,attester_user_id,uuid,NO,1,PII-INDIRECT,passthrough,
+public,attestations,subject_type,text,NO,1,OPERATIONAL,passthrough,
+public,attestations,attester_type,USER-DEFINED,NO,1,OPERATIONAL,passthrough,
+public,attestations,attestation_type,USER-DEFINED,NO,1,OPERATIONAL,passthrough,
+public,attestations,claims,jsonb,NO,1,PII-DIRECT,scrub_per_key,attestation content — full PII risk
+public,attestations,summary,text,YES,1,PII-DIRECT,null,
+public,attestations,jurisdiction,text,YES,1,OPERATIONAL,passthrough,
+public,attestations,evidence_fingerprint,text,YES,1,PUBLIC-CHAIN,passthrough,
+public,attestations,fingerprint,text,YES,1,PUBLIC-CHAIN,passthrough,
+public,attestations,chain_tx_id,text,YES,1,PUBLIC-CHAIN,passthrough,
+public,attestations,public_id,text,NO,1,OPERATIONAL,passthrough,
+public,attestations,anchor_id,uuid,YES,1,OUT-OF-SCOPE-OPTION-A,null,FK to anchors
+public,attestations,metadata,jsonb,YES,1,PII-DIRECT,scrub_per_key,
+public,attestations,status,USER-DEFINED,NO,1,OPERATIONAL,passthrough,
+public,attestations,revocation_reason,text,YES,1,PII-DIRECT,null,
+public,anchor_recipients,id,uuid,NO,1,PII-INDIRECT,passthrough,
+public,anchor_recipients,anchor_id,uuid,NO,1,OUT-OF-SCOPE-OPTION-A,null,FK to anchors
+public,anchor_recipients,recipient_email_hash,text,NO,1,PII-DIRECT,replace_with_known_hash,already hashed but is per-recipient linkable
+public,anchor_recipients,recipient_user_id,uuid,YES,1,PII-INDIRECT,passthrough,
+public,treasury_cache,id,integer,NO,1,OPERATIONAL,passthrough,operational cache
+public,treasury_cache,balance_confirmed_sats,bigint,NO,1,OPERATIONAL,passthrough,
+public,treasury_cache,utxo_count,integer,NO,1,OPERATIONAL,passthrough,
+public,treasury_cache,btc_price_usd,numeric,YES,1,OPERATIONAL,passthrough,
+public,treasury_cache,fee_fastest,integer,YES,1,OPERATIONAL,passthrough,
+public,stats_cache,key,text,NO,3,OPERATIONAL,passthrough,
+public,stats_cache,value,jsonb,NO,3,OPERATIONAL,passthrough,
+public,pipeline_dashboard_cache,cache_key,text,NO,6,OPERATIONAL,passthrough,
+public,pipeline_dashboard_cache,cache_value,jsonb,NO,6,OPERATIONAL,passthrough,
+public,cloud_logging_queue,id,bigint,NO,56,PII-INDIRECT,passthrough,
+public,cloud_logging_queue,audit_id,uuid,NO,56,OUT-OF-SCOPE-OPTION-A,null,FK to audit_events (excluded)
+public,cloud_logging_queue,enqueued_at,timestamp with time zone,NO,56,OPERATIONAL,passthrough,
+public,cloud_logging_queue,retry_count,smallint,NO,56,OPERATIONAL,passthrough,
+public,cloud_logging_queue,last_error,text,YES,56,PII-DIRECT,null,
+public,ai_reports,id,uuid,NO,1,PII-INDIRECT,passthrough,
+public,ai_reports,org_id,uuid,NO,1,PII-INDIRECT,passthrough,
+public,ai_reports,requested_by,uuid,NO,1,PII-INDIRECT,passthrough,
+public,ai_reports,parameters,jsonb,YES,1,PII-DIRECT,null,
+public,ai_reports,result,jsonb,YES,1,PII-DIRECT,null,
+public,ai_reports,file_url,text,YES,1,CUSTOMER-INFRA,null,
+public,ai_reports,error_message,text,YES,1,PII-DIRECT,null,
+public,ai_reports,title,text,NO,1,PII-DIRECT,replace_static,"Staging Report N"
+public,ai_reports,report_type,text,NO,1,OPERATIONAL,passthrough,
+public,ai_reports,status,USER-DEFINED,NO,1,OPERATIONAL,passthrough,
+public,org_integrations,id,uuid,NO,1,PII-INDIRECT,passthrough,
+public,org_integrations,org_id,uuid,NO,1,PII-INDIRECT,passthrough,
+public,org_integrations,provider,text,NO,1,OPERATIONAL,passthrough,
+public,org_integrations,account_id,text,YES,1,PII-DIRECT,replace_static,"staging-account-N"
+public,org_integrations,account_label,text,YES,1,PII-DIRECT,replace_static,"Staging Account N"
+public,org_integrations,encrypted_tokens,bytea,YES,1,GENERATED,null,never replay OAuth tokens
+public,org_integrations,token_kms_key_id,text,YES,1,GENERATED,null,
+public,org_integrations,scope,text,YES,1,OPERATIONAL,passthrough,
+public,org_integrations,subscription_id,text,YES,1,CUSTOMER-INFRA,null,vendor subscription id
+public,org_integrations,last_renewal_error,text,YES,1,PII-DIRECT,null,
+public,org_integrations,last_page_token,text,YES,1,CUSTOMER-INFRA,null,
+public,integration_events,id,uuid,NO,1,PII-INDIRECT,passthrough,
+public,integration_events,org_id,uuid,NO,1,PII-INDIRECT,passthrough,
+public,integration_events,integration_id,uuid,YES,1,PII-INDIRECT,passthrough,
+public,integration_events,provider,text,NO,1,OPERATIONAL,passthrough,
+public,integration_events,event_type,text,NO,1,OPERATIONAL,passthrough,
+public,integration_events,status,text,NO,1,OPERATIONAL,passthrough,
+public,integration_events,details,jsonb,NO,1,PII-DIRECT,scrub_per_key,
+public,organization_rules,id,uuid,NO,1,PII-INDIRECT,passthrough,
+public,organization_rules,org_id,uuid,NO,1,PII-INDIRECT,passthrough,
+public,organization_rules,name,text,NO,1,PII-DIRECT,replace_static,"Staging Rule N"
+public,organization_rules,description,text,YES,1,PII-DIRECT,null,
+public,organization_rules,trigger_type,USER-DEFINED,NO,1,OPERATIONAL,passthrough,
+public,organization_rules,trigger_config,jsonb,NO,1,PII-DIRECT,scrub_per_key,observed keys: drive_folders/folder_path_starts_with — folder paths reveal customer org structure
+public,organization_rules,action_type,USER-DEFINED,NO,1,OPERATIONAL,passthrough,
+public,organization_rules,action_config,jsonb,NO,1,PII-DIRECT,scrub_per_key,
+public,organization_rules,enabled,boolean,NO,1,OPERATIONAL,passthrough,
+public,organization_rule_executions,id,uuid,NO,1,PII-INDIRECT,passthrough,
+public,organization_rule_executions,rule_id,uuid,NO,1,PII-INDIRECT,passthrough,
+public,organization_rule_executions,org_id,uuid,NO,1,PII-INDIRECT,passthrough,
+public,organization_rule_executions,trigger_event_id,text,NO,1,CUSTOMER-INFRA,replace_with_fake,vendor event id
+public,organization_rule_executions,input_payload,jsonb,NO,1,OPERATIONAL,passthrough,observed keys: action_type/actor_user_id/queued_at/rule_name/source/trigger_type — operational only
+public,organization_rule_executions,output_payload,jsonb,YES,1,OPERATIONAL,passthrough,observed keys: label/outcome/priority/routed_to
+public,organization_rule_executions,error,text,YES,1,PII-DIRECT,null,
+public,organization_rule_executions,status,USER-DEFINED,NO,1,OPERATIONAL,passthrough,
+public,entitlements,id,uuid,NO,1,PII-INDIRECT,passthrough,
+public,entitlements,user_id,uuid,YES,1,PII-INDIRECT,passthrough,
+public,entitlements,org_id,uuid,YES,1,PII-INDIRECT,passthrough,
+public,entitlements,entitlement_type,text,NO,1,OPERATIONAL,passthrough,
+public,entitlements,value,jsonb,NO,1,OPERATIONAL,passthrough,small reference dataset
+public,entitlements,source,text,NO,1,OPERATIONAL,passthrough,
+public,anchors,*,*,*,2926196,OUT-OF-SCOPE-OPTION-A,skip_entirely,giant table — handled by Option A synthetic generator
+public,public_records,*,*,*,2954717,OUT-OF-SCOPE-OPTION-A,skip_entirely,giant table — handled by Option A synthetic generator
+public,public_record_embeddings,*,*,*,352555,OUT-OF-SCOPE-OPTION-A,skip_entirely,handled by Option A
+public,audit_events,*,*,*,382559,OUT-OF-SCOPE-OPTION-A,skip_entirely,handled by Option A
+public,audit_events_archive,*,*,*,0,OUT-OF-SCOPE-OPTION-A,skip_entirely,empty in prod anyway
+public,anchor_chain_index,*,*,*,174861,OUT-OF-SCOPE-OPTION-A,skip_entirely,derivative of anchors
+public,anchor_proofs,*,*,*,4110,OUT-OF-SCOPE-OPTION-A,skip_entirely,derivative of anchors
+public,memberships,*,*,*,0,SCHEMA-ONLY,empty,no rows in prod — schema-only suffices
+public,connector_subscriptions,*,*,*,0,SCHEMA-ONLY,empty,no rows in prod
+public,drive_revision_ledger,*,*,*,0,SCHEMA-ONLY,empty,no rows in prod
+public,drive_webhook_nonces,*,*,*,0,SCHEMA-ONLY,empty,no rows in prod
+public,docusign_webhook_nonces,*,*,*,0,SCHEMA-ONLY,empty,no rows in prod
+public,adobe_sign_webhook_nonces,*,*,*,0,SCHEMA-ONLY,empty,no rows in prod
+public,checkr_webhook_nonces,*,*,*,0,SCHEMA-ONLY,empty,no rows in prod
+public,kyb_webhook_nonces,*,*,*,0,SCHEMA-ONLY,empty,no rows in prod
+public,ats_webhook_nonces,*,*,*,0,SCHEMA-ONLY,empty,no rows in prod
+public,kyb_events,*,*,*,0,SCHEMA-ONLY,empty,no rows in prod
+public,billing_events,*,*,*,0,SCHEMA-ONLY,empty,no rows in prod
+public,webhook_dead_letter_queue,*,*,*,0,SCHEMA-ONLY,empty,no rows in prod
+public,webhook_delivery_logs,*,*,*,0,SCHEMA-ONLY,empty,no rows in prod
+public,webhook_dlq,*,*,*,0,SCHEMA-ONLY,empty,no rows in prod
+public,reports,*,*,*,0,SCHEMA-ONLY,empty,no rows in prod
+public,report_artifacts,*,*,*,0,SCHEMA-ONLY,empty,no rows in prod
+public,reconciliation_reports,*,*,*,0,SCHEMA-ONLY,empty,no rows in prod
+public,financial_reports,*,*,*,0,SCHEMA-ONLY,empty,no rows in prod
+public,signatures,*,*,*,0,SCHEMA-ONLY,empty,no rows in prod
+public,signing_certificates,*,*,*,0,SCHEMA-ONLY,empty,no rows in prod
+public,timestamp_tokens,*,*,*,0,SCHEMA-ONLY,empty,no rows in prod
+public,attestation_evidence,*,*,*,0,SCHEMA-ONLY,empty,no rows in prod
+public,credential_embeddings,*,*,*,0,SCHEMA-ONLY,empty,no rows in prod
+public,institution_ground_truth,*,*,*,0,SCHEMA-ONLY,empty,no rows in prod
+public,grc_connections,*,*,*,0,SCHEMA-ONLY,empty,no rows in prod
+public,grc_sync_logs,*,*,*,0,SCHEMA-ONLY,empty,no rows in prod
+public,ats_integrations,*,*,*,0,SCHEMA-ONLY,empty,no rows in prod
+public,agents,*,*,*,0,SCHEMA-ONLY,empty,no rows in prod
+public,api_key_usage,*,*,*,0,SCHEMA-ONLY,empty,no rows in prod
+public,ai_credits,*,*,*,0,SCHEMA-ONLY,empty,no rows in prod
+public,unified_credits,*,*,*,0,SCHEMA-ONLY,empty,no rows in prod
+public,org_credits,*,*,*,0,SCHEMA-ONLY,empty,no rows in prod
+public,org_credit_allocations,*,*,*,0,SCHEMA-ONLY,empty,no rows in prod
+public,org_monthly_allocation,*,*,*,0,SCHEMA-ONLY,empty,no rows in prod
+public,org_daily_usage,*,*,*,0,SCHEMA-ONLY,empty,no rows in prod
+public,parent_split_tokens,*,*,*,0,SCHEMA-ONLY,empty,no rows in prod
+public,invitations,*,*,*,0,SCHEMA-ONLY,empty,no rows in prod
+public,emergency_access_grants,*,*,*,0,SCHEMA-ONLY,empty,no rows in prod
+public,extraction_feedback,*,*,*,0,SCHEMA-ONLY,empty,no rows in prod
+public,review_queue_items,*,*,*,0,SCHEMA-ONLY,empty,no rows in prod
+public,integrity_scores,*,*,*,0,SCHEMA-ONLY,empty,no rows in prod
+public,batch_verification_jobs,*,*,*,0,SCHEMA-ONLY,empty,no rows in prod
+public,x402_payments,*,*,*,0,SCHEMA-ONLY,empty,no rows in prod
+public,credential_portfolios,*,*,*,0,SCHEMA-ONLY,empty,no rows in prod
+public,job_queue,*,*,*,0,SCHEMA-ONLY,empty,no rows in prod
+public,notifications,*,*,*,0,SCHEMA-ONLY,empty,no rows in prod
+public,organization_rule_events,*,*,*,0,SCHEMA-ONLY,empty,no rows in prod
+public,data_subject_requests,*,*,*,0,SCHEMA-ONLY,empty,no rows in prod
+public,ferpa_disclosure_log,*,*,*,0,SCHEMA-ONLY,empty,no rows in prod
+public,treasury_alert_state,*,*,*,0,SCHEMA-ONLY,empty,no rows in prod
+public,payment_grace_periods,*,*,*,0,SCHEMA-ONLY,empty,no rows in prod
+public,rule_embeddings,*,*,*,0,SCHEMA-ONLY,empty,no rows in prod
+public,drive_folder_path_cache,*,*,*,0,SCHEMA-ONLY,empty,no rows in prod
+public,webhook_endpoints,*,*,*,0,SCHEMA-ONLY,empty,no rows in prod
+public,public_org_profiles,*,*,*,view,VIEW,refresh_after_load,materialized view
+public,mv_anchor_status_counts,*,*,*,5,VIEW,refresh_after_load,materialized view of anchors — recompute against synthetic
+public,mv_public_records_source_counts,*,*,*,16,VIEW,refresh_after_load,materialized view of public_records — recompute against synthetic
+public,v_slow_queries,*,*,*,view,VIEW,no_data,view; recomputes on read
+public,hypopg_hidden_indexes,*,*,*,view,VIEW,no_data,extension view
+public,hypopg_list_indexes,*,*,*,view,VIEW,no_data,extension view
+public,anchor_queue_resolutions,*,*,*,0,SCHEMA-ONLY,empty,no rows in prod
+public,compliance_scores,*,*,*,0,SCHEMA-ONLY,empty,no rows in prod
