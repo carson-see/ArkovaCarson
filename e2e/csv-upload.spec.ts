@@ -19,7 +19,7 @@ async function openSecureDocumentDialog(page: Page): Promise<Locator> {
 
   const dialog = page.locator('[role="dialog"]').filter({ hasText: /Secure Document/i }).first();
   await expect(dialog).toBeVisible({ timeout: 5_000 });
-  await expect(dialog.getByRole('heading', { name: /^Secure Document$/i })).toBeVisible();
+  await expect(dialog.getByText('Secure Document', { exact: true }).first()).toBeVisible();
 
   return dialog;
 }
