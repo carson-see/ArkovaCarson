@@ -2,12 +2,12 @@
  * ManageSubOrgs Component (IDT-11)
  *
  * Displays and manages affiliated sub-organizations for a parent org.
- * Parent org admins can approve/revoke affiliation requests and set max affiliates.
+ * Parent org admins can create, approve, and revoke affiliate organizations.
  */
 
 import { useState, useEffect, useCallback } from 'react';
 import {
-  Building2, Check, X, Loader2, Link2, Settings2, Users2,
+  Building2, Check, X, Loader2, Link2, Plus, Users2,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -45,32 +45,73 @@ async function getAuthHeaders(): Promise<Record<string, string>> {
 
 export function ManageSubOrgs({ orgId }: ManageSubOrgsProps) {
   const [subOrgs, setSubOrgs] = useState<SubOrg[]>([]);
-  const [maxSubOrgs, setMaxSubOrgs] = useState<number | null>(null);
-  const [maxSubOrgsInput, setMaxSubOrgsInput] = useState('');
+  const [affiliateName, setAffiliateName] = useState('');
+  const [affiliateLegalName, setAffiliateLegalName] = useState('');
+  const [affiliateDomain, setAffiliateDomain] = useState('');
+  const [affiliateAdminEmail, setAffiliateAdminEmail] = useState('');
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
-  const [maxSaving, setMaxSaving] = useState(false);
+  const [creating, setCreating] = useState(false);
 
   const fetchSubOrgs = useCallback(async () => {
     try {
       const headers = await getAuthHeaders();
-      const response = await fetch(`${WORKER_URL}/api/v1/org/sub-orgs`, { headers });
+      const url = `${WORKER_URL}/api/v1/org/sub-orgs?orgId=${encodeURIComponent(orgId)}`;
+      const response = await fetch(url, { headers });
       if (!response.ok) return;
-      const data = await response.json() as { subOrgs: SubOrg[]; maxSubOrgs: number | null };
+      const data = await response.json() as { subOrgs: SubOrg[] };
       setSubOrgs(data.subOrgs);
-      setMaxSubOrgs(data.maxSubOrgs);
-      setMaxSubOrgsInput(data.maxSubOrgs?.toString() ?? '');
     } catch {
       // Silently handle fetch errors on load
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [orgId]);
 
   useEffect(() => {
     async function run() { await fetchSubOrgs(); }
     void run();
-  }, [fetchSubOrgs, orgId]);
+  }, [fetchSubOrgs]);
+
+  const handleCreateAffiliate = useCallback(async () => {
+    const displayName = affiliateName.trim();
+    const adminEmail = affiliateAdminEmail.trim().toLowerCase();
+    if (!displayName || !adminEmail) {
+      toast.error(SUB_ORG_LABELS.CREATE_MISSING_FIELDS);
+      return;
+    }
+
+    setCreating(true);
+    try {
+      const headers = await getAuthHeaders();
+      const response = await fetch(`${WORKER_URL}/api/v1/org/sub-orgs/create`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          parentOrgId: orgId,
+          displayName,
+          legalName: affiliateLegalName.trim() || undefined,
+          domain: affiliateDomain.trim().toLowerCase() || undefined,
+          adminEmail,
+        }),
+      });
+      const data = await response.json() as { error?: string };
+      if (!response.ok) {
+        toast.error(data.error ?? SUB_ORG_LABELS.CREATE_FAILED);
+        return;
+      }
+      toast.success(SUB_ORG_LABELS.CREATE_SUCCESS);
+      setAffiliateName('');
+      setAffiliateLegalName('');
+      setAffiliateDomain('');
+      setAffiliateAdminEmail('');
+      await fetchSubOrgs();
+    } catch {
+      toast.error(SUB_ORG_LABELS.CREATE_FAILED);
+    } finally {
+      setCreating(false);
+    }
+  }, [affiliateAdminEmail, affiliateDomain, affiliateLegalName, affiliateName, fetchSubOrgs, orgId]);
 
   const handleApprove = useCallback(async (childOrgId: string) => {
     setActionLoading(childOrgId);
@@ -79,7 +120,7 @@ export function ManageSubOrgs({ orgId }: ManageSubOrgsProps) {
       const response = await fetch(`${WORKER_URL}/api/v1/org/sub-orgs/approve`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ childOrgId }),
+        body: JSON.stringify({ childOrgId, parentOrgId: orgId }),
       });
       const data = await response.json() as { error?: string };
       if (!response.ok) {
@@ -93,7 +134,7 @@ export function ManageSubOrgs({ orgId }: ManageSubOrgsProps) {
     } finally {
       setActionLoading(null);
     }
-  }, [fetchSubOrgs]);
+  }, [fetchSubOrgs, orgId]);
 
   const handleRevoke = useCallback(async (childOrgId: string) => {
     setActionLoading(childOrgId);
@@ -102,7 +143,7 @@ export function ManageSubOrgs({ orgId }: ManageSubOrgsProps) {
       const response = await fetch(`${WORKER_URL}/api/v1/org/sub-orgs/revoke`, {
         method: 'POST',
         headers,
-        body: JSON.stringify({ childOrgId }),
+        body: JSON.stringify({ childOrgId, parentOrgId: orgId }),
       });
       const data = await response.json() as { error?: string };
       if (!response.ok) {
@@ -116,34 +157,7 @@ export function ManageSubOrgs({ orgId }: ManageSubOrgsProps) {
     } finally {
       setActionLoading(null);
     }
-  }, [fetchSubOrgs]);
-
-  const handleSaveMax = useCallback(async () => {
-    setMaxSaving(true);
-    try {
-      const headers = await getAuthHeaders();
-      const value = maxSubOrgsInput.trim() === '' ? null : parseInt(maxSubOrgsInput, 10);
-      if (value !== null && (isNaN(value) || value < 0)) {
-        toast.error('Please enter a valid number or leave empty for no limit.');
-        return;
-      }
-      const response = await fetch(`${WORKER_URL}/api/v1/org/sub-orgs/max`, {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({ maxSubOrgs: value }),
-      });
-      if (!response.ok) {
-        toast.error('Failed to update setting.');
-        return;
-      }
-      setMaxSubOrgs(value);
-      toast.success('Maximum affiliates updated.');
-    } catch {
-      toast.error('Failed to update setting.');
-    } finally {
-      setMaxSaving(false);
-    }
-  }, [maxSubOrgsInput]);
+  }, [fetchSubOrgs, orgId]);
 
   const approvedCount = subOrgs.filter((s) => s.parent_approval_status === 'APPROVED').length;
 
@@ -186,34 +200,63 @@ export function ManageSubOrgs({ orgId }: ManageSubOrgsProps) {
           <Link2 className="h-4 w-4" />
           <span>
             <strong className="text-foreground">{approvedCount}</strong>
-            {maxSubOrgs ? `/${maxSubOrgs}` : ''} {SUB_ORG_LABELS.COUNT_LABEL}
+            {' '}{SUB_ORG_LABELS.COUNT_LABEL}
           </span>
         </div>
 
-        {/* Max sub-orgs setting */}
-        <div className="space-y-2">
-          <Label htmlFor="max-sub-orgs" className="flex items-center gap-2 text-sm">
-            <Settings2 className="h-3.5 w-3.5" />
-            {SUB_ORG_LABELS.MAX_SUB_ORGS_LABEL}
-          </Label>
-          <p className="text-xs text-muted-foreground">{SUB_ORG_LABELS.MAX_SUB_ORGS_HINT}</p>
-          <div className="flex gap-2 max-w-xs">
-            <Input
-              id="max-sub-orgs"
-              type="number"
-              min="0"
-              value={maxSubOrgsInput}
-              onChange={(e) => setMaxSubOrgsInput(e.target.value)}
-              placeholder="No limit"
-              className="w-32"
-            />
+        {/* Affiliate create form */}
+        <div className="space-y-3">
+          <div className="grid gap-3 md:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label htmlFor="affiliate-name">{SUB_ORG_LABELS.AFFILIATE_NAME_LABEL}</Label>
+              <Input
+                id="affiliate-name"
+                value={affiliateName}
+                onChange={(e) => setAffiliateName(e.target.value)}
+                maxLength={255}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="affiliate-admin-email">{SUB_ORG_LABELS.AFFILIATE_ADMIN_EMAIL_LABEL}</Label>
+              <Input
+                id="affiliate-admin-email"
+                type="email"
+                value={affiliateAdminEmail}
+                onChange={(e) => setAffiliateAdminEmail(e.target.value)}
+                autoComplete="email"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="affiliate-legal-name">{SUB_ORG_LABELS.AFFILIATE_LEGAL_NAME_LABEL}</Label>
+              <Input
+                id="affiliate-legal-name"
+                value={affiliateLegalName}
+                onChange={(e) => setAffiliateLegalName(e.target.value)}
+                maxLength={255}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="affiliate-domain">{SUB_ORG_LABELS.AFFILIATE_DOMAIN_LABEL}</Label>
+              <Input
+                id="affiliate-domain"
+                value={affiliateDomain}
+                onChange={(e) => setAffiliateDomain(e.target.value)}
+                autoComplete="off"
+              />
+            </div>
+          </div>
+          <div>
             <Button
               size="sm"
-              variant="outline"
-              onClick={handleSaveMax}
-              disabled={maxSaving}
+              onClick={handleCreateAffiliate}
+              disabled={creating}
             >
-              {maxSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Save'}
+              {creating ? (
+                <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+              ) : (
+                <Plus className="mr-1 h-4 w-4" />
+              )}
+              {SUB_ORG_LABELS.CREATE_AFFILIATE}
             </Button>
           </div>
         </div>
