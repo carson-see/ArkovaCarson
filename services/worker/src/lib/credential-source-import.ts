@@ -29,6 +29,7 @@ const TEXT_CONTENT_TYPES = new Set(['text/plain']);
 const DATE_ONLY_RE = /\b(?:19|20)\d{2}-\d{2}-\d{2}\b/;
 const SOURCE_ID_RE = /^[A-Za-z0-9._:/#@+-]{1,256}$/;
 const SHA_256_HEX_RE = /^[a-fA-F0-9]{64}$/;
+const FILENAME_UNSAFE_CHARACTERS = String.raw`/\?%*:|"<>`;
 
 export const CredentialSourceImportRequestSchema = z
   .object({
@@ -115,6 +116,10 @@ interface ExtractedCredentialMetadata {
 
 function sha256Hex(value: Buffer | string): string {
   return createHash('sha256').update(value).digest('hex');
+}
+
+function collapseWhitespace(value: string): string {
+  return value.replaceAll(/\s+/g, ' ').trim();
 }
 
 function normalizeContentType(value: string | null): string {
@@ -208,6 +213,70 @@ async function readResponseBytes(response: Response): Promise<Buffer> {
   return Buffer.concat(chunks, received);
 }
 
+async function fetchCredentialSourceResponse(
+  url: string,
+  fetchFn: CredentialSourceImportDeps['fetchFn'],
+): Promise<Response> {
+  try {
+    return await fetchFn(url, {
+      method: 'GET',
+      headers: {
+        Accept: 'text/html,application/xhtml+xml,application/ld+json,application/json,text/plain;q=0.9',
+        'User-Agent': 'ArkovaCredentialSourceImporter/1.0',
+      },
+      redirect: 'manual',
+      signal: AbortSignal.timeout(CREDENTIAL_SOURCE_IMPORT_FETCH_TIMEOUT_MS),
+    });
+  } catch (error) {
+    if (isAbortError(error)) {
+      throw new CredentialSourceImportError('source_fetch_timeout', 'Credential source fetch timed out', 504);
+    }
+    throw new CredentialSourceImportError('source_fetch_failed', 'Credential source could not be fetched', 422);
+  }
+}
+
+function redirectTargetFromResponse(response: Response, currentUrl: string): string {
+  const location = response.headers.get('location');
+  if (!location) {
+    throw new CredentialSourceImportError(
+      'source_redirect_invalid',
+      'Credential source redirect did not include a location',
+      400,
+    );
+  }
+
+  try {
+    return normalizeCredentialSourceUrl(new URL(location, currentUrl).toString());
+  } catch (error) {
+    throw new CredentialSourceImportError(
+      'source_redirect_invalid',
+      error instanceof Error ? error.message : 'Credential source redirect is invalid',
+      400,
+    );
+  }
+}
+
+async function fetchedSourceFromResponse(response: Response, currentUrl: string): Promise<FetchedCredentialSource> {
+  if (!response.ok) {
+    throw new CredentialSourceImportError(
+      'source_fetch_failed',
+      `Credential source returned HTTP ${response.status}`,
+      422,
+    );
+  }
+
+  const contentType = normalizeContentType(response.headers.get('content-type'));
+  ensureSupportedContentType(contentType);
+  const bytes = await readResponseBytes(response);
+
+  return {
+    url: currentUrl,
+    contentType,
+    bytes,
+    text: bytes.toString('utf8'),
+  };
+}
+
 async function fetchPublicCredentialSource(
   rawUrl: string,
   deps: CredentialSourceImportDeps,
@@ -226,23 +295,7 @@ async function fetchPublicCredentialSource(
   for (let redirects = 0; redirects <= CREDENTIAL_SOURCE_IMPORT_MAX_REDIRECTS; redirects += 1) {
     await assertPublicFetchTarget(currentUrl, deps.urlGuard);
 
-    let response: Response;
-    try {
-      response = await deps.fetchFn(currentUrl, {
-        method: 'GET',
-        headers: {
-          Accept: 'text/html,application/xhtml+xml,application/ld+json,application/json,text/plain;q=0.9',
-          'User-Agent': 'ArkovaCredentialSourceImporter/1.0',
-        },
-        redirect: 'manual',
-        signal: AbortSignal.timeout(CREDENTIAL_SOURCE_IMPORT_FETCH_TIMEOUT_MS),
-      });
-    } catch (error) {
-      if (isAbortError(error)) {
-        throw new CredentialSourceImportError('source_fetch_timeout', 'Credential source fetch timed out', 504);
-      }
-      throw new CredentialSourceImportError('source_fetch_failed', 'Credential source could not be fetched', 422);
-    }
+    const response = await fetchCredentialSourceResponse(currentUrl, deps.fetchFn);
 
     if (isRedirect(response.status)) {
       if (redirects === CREDENTIAL_SOURCE_IMPORT_MAX_REDIRECTS) {
@@ -252,46 +305,11 @@ async function fetchPublicCredentialSource(
           400,
         );
       }
-
-      const location = response.headers.get('location');
-      if (!location) {
-        throw new CredentialSourceImportError(
-          'source_redirect_invalid',
-          'Credential source redirect did not include a location',
-          400,
-        );
-      }
-
-      try {
-        currentUrl = normalizeCredentialSourceUrl(new URL(location, currentUrl).toString());
-      } catch (error) {
-        throw new CredentialSourceImportError(
-          'source_redirect_invalid',
-          error instanceof Error ? error.message : 'Credential source redirect is invalid',
-          400,
-        );
-      }
+      currentUrl = redirectTargetFromResponse(response, currentUrl);
       continue;
     }
 
-    if (!response.ok) {
-      throw new CredentialSourceImportError(
-        'source_fetch_failed',
-        `Credential source returned HTTP ${response.status}`,
-        422,
-      );
-    }
-
-    const contentType = normalizeContentType(response.headers.get('content-type'));
-    ensureSupportedContentType(contentType);
-    const bytes = await readResponseBytes(response);
-
-    return {
-      url: currentUrl,
-      contentType,
-      bytes,
-      text: bytes.toString('utf8'),
-    };
+    return fetchedSourceFromResponse(response, currentUrl);
   }
 
   throw new CredentialSourceImportError('source_redirect_limit', 'Credential source redirected too many times', 400);
@@ -299,10 +317,11 @@ async function fetchPublicCredentialSource(
 
 function cleanText(value: unknown, maxLength = 500): string | undefined {
   if (typeof value !== 'string') return undefined;
-  const cleaned = Array.from(value, (character) => {
+  const sanitized = Array.from(value, (character) => {
     const codePoint = character.codePointAt(0) ?? 0;
     return codePoint <= 0x1f || codePoint === 0x7f ? ' ' : character;
-  }).join('').replace(/\s+/g, ' ').trim();
+  }).join('');
+  const cleaned = collapseWhitespace(sanitized);
   if (!cleaned) return undefined;
   return cleaned.length > maxLength ? cleaned.slice(0, maxLength).trim() : cleaned;
 }
@@ -316,8 +335,8 @@ function normalizeEvidenceDate(value: unknown): string | undefined {
   const cleaned = cleanText(value, 80);
   if (!cleaned) return undefined;
 
-  const dateOnly = DATE_ONLY_RE.exec(cleaned)?.[0];
-  if (dateOnly) return dateOnly;
+  const dateOnly = cleaned.match(DATE_ONLY_RE)?.[0];
+  if (dateOnly && isValidDateOnly(dateOnly)) return dateOnly;
 
   const parsed = Date.parse(cleaned);
   if (Number.isNaN(parsed)) return undefined;
@@ -429,7 +448,7 @@ function extractJsonLd($: cheerio.CheerioAPI): Partial<ExtractedCredentialMetada
     .map((_, element) => $(element).text())
     .get()
     .map(parseJsonMaybe)
-    .filter(Boolean);
+    .filter((script): script is NonNullable<unknown> => Boolean(script));
 
   for (const script of scripts) {
     const extracted = extractStructuredMetadata(script);
@@ -450,8 +469,12 @@ function inferProvider(url: string): string {
 
 function sourceIdFromUrl(url: string): string | undefined {
   const parsed = new URL(url);
-  const segment = parsed.pathname.split('/').filter(Boolean).at(-1);
-  return safeSourceId(segment);
+  const segments = parsed.pathname.split('/');
+  for (let index = segments.length - 1; index >= 0; index -= 1) {
+    const segment = segments[index];
+    if (segment) return safeSourceId(segment);
+  }
+  return undefined;
 }
 
 function inferCredentialType(
@@ -563,8 +586,27 @@ function extractPlainTextMetadata(
     credentialType: inferCredentialType(requestedType, url, title, issuerName),
     sourceId: sourceIdFromUrl(url),
     confidence: scoreExtraction(firstLine, issuerName, undefined),
-    extractionMethod: 'html_metadata',
+    extractionMethod: 'manual',
   };
+}
+
+function isValidDateOnly(value: string): boolean {
+  const [year, month, day] = value.split('-').map(Number);
+  if (!year || !month || !day || month < 1 || month > 12 || day < 1 || day > 31) return false;
+
+  const date = new Date(0);
+  date.setUTCHours(0, 0, 0, 0);
+  date.setUTCFullYear(year, month - 1, day);
+
+  return date.getUTCFullYear() === year &&
+    date.getUTCMonth() === month - 1 &&
+    date.getUTCDate() === day;
+}
+
+export function buildCredentialSourceAnchorFingerprint(
+  preview: Pick<CredentialSourceImportPreview, 'normalized_source_url' | 'source_payload_hash'>,
+): string {
+  return sha256Hex(`${preview.normalized_source_url}\n${preview.source_payload_hash}`);
 }
 
 function extractCredentialMetadata(
@@ -613,6 +655,10 @@ export async function buildCredentialSourceImportPreview(
     },
   });
   const publicMetadata = toPublicSafeCredentialEvidenceMetadata(evidencePackage);
+  const anchorFingerprint = buildCredentialSourceAnchorFingerprint({
+    normalized_source_url: evidencePackage.source.url,
+    source_payload_hash: evidencePackage.source.payloadHash,
+  });
 
   return {
     evidencePackage,
@@ -633,7 +679,7 @@ export async function buildCredentialSourceImportPreview(
       extraction_method: evidencePackage.evidence.extractionMethod,
       extraction_confidence: evidencePackage.evidence.confidence ?? 0,
       evidence_package_hash: evidencePackage.evidencePackageHash,
-      anchor_fingerprint: evidencePackage.evidencePackageHash,
+      anchor_fingerprint: anchorFingerprint,
       public_metadata: publicMetadata,
     },
   };
@@ -653,8 +699,9 @@ export function buildSourceImportFilename(preview: CredentialSourceImportPreview
   const host = new URL(preview.normalized_source_url).hostname;
   const title = Array.from(preview.credential_title, (character) => {
     const codePoint = character.codePointAt(0) ?? 0;
-    return codePoint <= 0x1f || codePoint === 0x7f || '/\\?%*:|"<>'.includes(character) ? ' ' : character;
-  }).join('').replace(/\s+/g, ' ').trim();
-  const base = title || `Credential source ${host}`;
+    return codePoint <= 0x1f || codePoint === 0x7f || FILENAME_UNSAFE_CHARACTERS.includes(character) ? ' ' : character;
+  }).join('');
+  const titleForFilename = collapseWhitespace(title);
+  const base = titleForFilename || `Credential source ${host}`;
   return `${base.slice(0, 180)}.url`;
 }

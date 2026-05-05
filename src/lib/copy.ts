@@ -865,6 +865,28 @@ export const MY_CREDENTIALS_LABELS = {
   CREDENTIAL_COUNT: '{count} credentials',
 } as const;
 
+export const CREDENTIAL_SOURCE_IMPORT_LABELS = {
+  TITLE: 'Add Credential Source',
+  DESCRIPTION: 'Import a public credential source URL.',
+  URL_LABEL: 'Credential source URL',
+  URL_PLACEHOLDER: 'https://',
+  TYPE_LABEL: 'Credential type',
+  ISSUER_LABEL: 'Issuer',
+  ISSUED_FIELD: 'Issued',
+  SOURCE_FIELD: 'Source',
+  CONFIDENCE_FIELD: 'Confidence',
+  EVIDENCE_FIELD: 'Evidence',
+  PAYLOAD_FIELD: 'Payload',
+  NOT_DETECTED: 'Not detected',
+  CANCEL: 'Cancel',
+  PREVIEW: 'Preview',
+  ADD: 'Add',
+  PREVIEW_FAILED: 'Preview failed',
+  IMPORT_FAILED: 'Import failed',
+  TOAST_ADDED: 'Credential source added',
+  TOAST_DUPLICATE: 'Credential source already added',
+} as const;
+
 // =============================================================================
 // SHARE FLOW (UF-08)
 // =============================================================================

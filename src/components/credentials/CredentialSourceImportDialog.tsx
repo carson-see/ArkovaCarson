@@ -22,7 +22,11 @@ import {
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { workerFetch } from '@/lib/workerClient';
-import { CREDENTIAL_TYPE_LABELS, formatCredentialType } from '@/lib/copy';
+import {
+  CREDENTIAL_SOURCE_IMPORT_LABELS as LABELS,
+  CREDENTIAL_TYPE_LABELS,
+  formatCredentialType,
+} from '@/lib/copy';
 
 const IMPORT_CREDENTIAL_TYPES = [
   'BADGE',
@@ -150,7 +154,7 @@ export function CredentialSourceImportDialog({
       });
       setPreview(await parseWorkerResponse<CredentialSourcePreview>(response));
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Preview failed');
+      setError(err instanceof Error ? err.message : LABELS.PREVIEW_FAILED);
     } finally {
       setLoadingPreview(false);
     }
@@ -167,11 +171,11 @@ export function CredentialSourceImportDialog({
         body: requestBody(preview.source_payload_hash),
       });
       const result = await parseWorkerResponse<CredentialSourceConfirmResponse>(response);
-      toast.success(result.duplicate ? 'Credential source already added' : 'Credential source added');
+      toast.success(result.duplicate ? LABELS.TOAST_DUPLICATE : LABELS.TOAST_ADDED);
       await onImported?.();
       handleOpenChange(false);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Import failed');
+      setError(err instanceof Error ? err.message : LABELS.IMPORT_FAILED);
     } finally {
       setConfirming(false);
     }
@@ -188,14 +192,14 @@ export function CredentialSourceImportDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Link2 className="h-5 w-5 text-primary" />
-            Add Credential Source
+            {LABELS.TITLE}
           </DialogTitle>
-          <DialogDescription>Import a public credential source URL.</DialogDescription>
+          <DialogDescription>{LABELS.DESCRIPTION}</DialogDescription>
         </DialogHeader>
 
         <form className="space-y-4" onSubmit={handlePreview}>
           <div className="space-y-2">
-            <Label htmlFor="credential-source-url">Credential source URL</Label>
+            <Label htmlFor="credential-source-url">{LABELS.URL_LABEL}</Label>
             <Input
               id="credential-source-url"
               type="url"
@@ -204,7 +208,7 @@ export function CredentialSourceImportDialog({
                 setSourceUrl(event.target.value);
                 resetPreview();
               }}
-              placeholder="https://"
+              placeholder={LABELS.URL_PLACEHOLDER}
               disabled={loadingPreview || confirming}
               required
             />
@@ -212,7 +216,7 @@ export function CredentialSourceImportDialog({
 
           <div className="grid gap-4 sm:grid-cols-[1fr_1fr]">
             <div className="space-y-2">
-              <Label>Credential type</Label>
+              <Label>{LABELS.TYPE_LABEL}</Label>
               <Select
                 value={credentialType}
                 onValueChange={(value) => {
@@ -235,7 +239,7 @@ export function CredentialSourceImportDialog({
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="credential-source-issuer">Issuer</Label>
+              <Label htmlFor="credential-source-issuer">{LABELS.ISSUER_LABEL}</Label>
               <Input
                 id="credential-source-issuer"
                 value={issuerHint}
@@ -269,9 +273,9 @@ export function CredentialSourceImportDialog({
               </div>
 
               <dl className="grid grid-cols-[7rem_1fr] gap-x-3 gap-y-2 text-sm">
-                <dt className="text-muted-foreground">Issued</dt>
-                <dd>{preview.credential_issued_at ?? 'Not detected'}</dd>
-                <dt className="text-muted-foreground">Source</dt>
+                <dt className="text-muted-foreground">{LABELS.ISSUED_FIELD}</dt>
+                <dd>{preview.credential_issued_at ?? LABELS.NOT_DETECTED}</dd>
+                <dt className="text-muted-foreground">{LABELS.SOURCE_FIELD}</dt>
                 <dd className="min-w-0">
                   <a
                     href={preview.normalized_source_url}
@@ -283,11 +287,11 @@ export function CredentialSourceImportDialog({
                     <ExternalLink className="h-3 w-3 shrink-0" />
                   </a>
                 </dd>
-                <dt className="text-muted-foreground">Confidence</dt>
+                <dt className="text-muted-foreground">{LABELS.CONFIDENCE_FIELD}</dt>
                 <dd>{Math.round(preview.extraction_confidence * 100)}%</dd>
-                <dt className="text-muted-foreground">Evidence</dt>
+                <dt className="text-muted-foreground">{LABELS.EVIDENCE_FIELD}</dt>
                 <dd className="font-mono text-xs">{compactHash(preview.evidence_package_hash)}</dd>
-                <dt className="text-muted-foreground">Payload</dt>
+                <dt className="text-muted-foreground">{LABELS.PAYLOAD_FIELD}</dt>
                 <dd>{formatBytes(preview.source_payload_byte_length)}</dd>
               </dl>
             </div>
@@ -300,15 +304,15 @@ export function CredentialSourceImportDialog({
               onClick={() => handleOpenChange(false)}
               disabled={loadingPreview || confirming}
             >
-              Cancel
+              {LABELS.CANCEL}
             </Button>
             <Button type="submit" disabled={!canPreview}>
               {loadingPreview ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Link2 className="mr-2 h-4 w-4" />}
-              Preview
+              {LABELS.PREVIEW}
             </Button>
             <Button type="button" onClick={handleConfirm} disabled={!canConfirm}>
               {confirming ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CheckCircle2 className="mr-2 h-4 w-4" />}
-              Add
+              {LABELS.ADD}
             </Button>
           </DialogFooter>
         </form>

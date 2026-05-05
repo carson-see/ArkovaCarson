@@ -9,6 +9,8 @@ const {
   mockAnchorsMaybeSingle,
   mockAnchorInsert,
   mockAnchorInsertSingle,
+  mockAnchorUpdate,
+  mockAnchorUpdateIs,
   mockRecipientInsert,
   mockAuditInsert,
   mockEnsureAnchorCreditAvailable,
@@ -17,6 +19,8 @@ const {
   const mockAnchorsMaybeSingle = vi.fn();
   const mockAnchorInsertSingle = vi.fn();
   const mockAnchorInsert = vi.fn();
+  const mockAnchorUpdate = vi.fn();
+  const mockAnchorUpdateIs = vi.fn();
   const mockRecipientInsert = vi.fn();
   const mockAuditInsert = vi.fn();
   const mockEnsureAnchorCreditAvailable = vi.fn();
@@ -41,9 +45,14 @@ const {
     }
     if (table === 'anchors') {
       const selectChain = chain({ maybeSingle: mockAnchorsMaybeSingle });
+      const updateChain: Record<string, unknown> = {
+        eq: vi.fn(() => updateChain),
+        is: mockAnchorUpdateIs,
+      };
       return {
         select: vi.fn(() => selectChain),
         insert: mockAnchorInsert,
+        update: mockAnchorUpdate.mockReturnValue(updateChain),
       };
     }
     if (table === 'anchor_recipients') {
@@ -61,6 +70,8 @@ const {
     mockAnchorsMaybeSingle,
     mockAnchorInsert,
     mockAnchorInsertSingle,
+    mockAnchorUpdate,
+    mockAnchorUpdateIs,
     mockRecipientInsert,
     mockAuditInsert,
     mockEnsureAnchorCreditAvailable,
@@ -113,6 +124,7 @@ describe('credentialSourcesRouter', () => {
     mockProfileSingle.mockResolvedValue({ data: { org_id: 'org-1' }, error: null });
     mockAnchorsMaybeSingle.mockResolvedValue({ data: null, error: null });
     mockEnsureAnchorCreditAvailable.mockResolvedValue(true);
+    mockAnchorUpdateIs.mockResolvedValue({ error: null });
     mockAnchorInsert.mockImplementation((payload: unknown) => ({
       select: vi.fn(() => ({
         single: mockAnchorInsertSingle.mockResolvedValue({
@@ -178,7 +190,9 @@ describe('credentialSourcesRouter', () => {
       org_id: 'org-1',
       credential_type: 'CERTIFICATE',
     });
-    expect(anchorPayload.fingerprint).toBe(anchorPayload.metadata.evidence_package_hash);
+    expect(anchorPayload.fingerprint).toMatch(/^[a-f0-9]{64}$/);
+    expect(anchorPayload.fingerprint).toBe(anchorPayload.metadata.source_anchor_fingerprint);
+    expect(anchorPayload.fingerprint).not.toBe(anchorPayload.metadata.evidence_package_hash);
     expect(anchorPayload.metadata).toMatchObject({
       source_url: 'https://credentials.example.com/abc',
       credential_title: 'Example Credential',
@@ -196,6 +210,61 @@ describe('credentialSourcesRouter', () => {
       actor_id: 'user-1',
       target_id: 'anchor-1',
     }));
+  });
+
+  it('returns the existing anchor when concurrent confirms hit the unique fingerprint guard', async () => {
+    mockAnchorsMaybeSingle
+      .mockResolvedValueOnce({ data: null, error: null })
+      .mockResolvedValueOnce({
+        data: {
+          id: 'anchor-existing',
+          public_id: 'ARK-2026-EXISTING',
+          fingerprint: 'f'.repeat(64),
+          status: 'PENDING',
+          created_at: '2026-05-05T18:00:00Z',
+        },
+        error: null,
+      });
+    mockAnchorInsert.mockImplementation(() => ({
+      select: vi.fn(() => ({
+        single: mockAnchorInsertSingle.mockResolvedValue({
+          data: null,
+          error: { code: '23505', message: 'duplicate key value violates unique constraint' },
+        }),
+      })),
+    }));
+
+    const res = await request(makeApp())
+      .post('/api/v1/credential-sources/import-url/confirm')
+      .send({ source_url: 'https://credentials.example.com/abc', credential_type: 'CERTIFICATE' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.duplicate).toBe(true);
+    expect(res.body.anchor.public_id).toBe('ARK-2026-EXISTING');
+    expect(mockEnsureAnchorCreditAvailable).not.toHaveBeenCalled();
+    expect(mockRecipientInsert).toHaveBeenCalledWith(expect.objectContaining({
+      anchor_id: 'anchor-existing',
+      recipient_user_id: 'user-1',
+    }));
+    expect(mockAuditInsert).not.toHaveBeenCalled();
+  });
+
+  it('rolls back the reserved anchor if the organization lacks credits', async () => {
+    mockEnsureAnchorCreditAvailable.mockImplementation(async (_database, _orgId, res) => {
+      res.status(402).json({ error: 'insufficient_credits' });
+      return false;
+    });
+
+    const res = await request(makeApp())
+      .post('/api/v1/credential-sources/import-url/confirm')
+      .send({ source_url: 'https://credentials.example.com/abc', credential_type: 'CERTIFICATE' });
+
+    expect(res.status).toBe(402);
+    expect(mockAnchorInsert).toHaveBeenCalledTimes(1);
+    expect(mockAnchorUpdate).toHaveBeenCalledWith(expect.objectContaining({ deleted_at: expect.any(String) }));
+    expect(mockAnchorUpdateIs).toHaveBeenCalledWith('deleted_at', null);
+    expect(mockRecipientInsert).not.toHaveBeenCalled();
+    expect(mockAuditInsert).not.toHaveBeenCalled();
   });
 
   it('rejects confirmation when the source payload changed after preview', async () => {

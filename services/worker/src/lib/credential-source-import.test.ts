@@ -52,9 +52,43 @@ describe('credential-source-import', () => {
       extraction_method: 'json_ld',
     });
     expect(result.preview.evidence_package_hash).toMatch(/^[a-f0-9]{64}$/);
-    expect(result.preview.anchor_fingerprint).toBe(result.preview.evidence_package_hash);
+    expect(result.preview.anchor_fingerprint).toMatch(/^[a-f0-9]{64}$/);
+    expect(result.preview.anchor_fingerprint).not.toBe(result.preview.evidence_package_hash);
     expect(result.preview.public_metadata).not.toHaveProperty('token');
     expect(result.preview.public_metadata).not.toHaveProperty('recipient_display_name');
+  });
+
+  it('ignores invalid date-shaped metadata instead of building invalid evidence', async () => {
+    const result = await buildCredentialSourceImportPreview({
+      source_url: 'https://credentials.example.com/invalid-date',
+    }, {
+      fetchFn: vi.fn().mockResolvedValue(response(JSON.stringify({
+        name: 'Malformed Date Credential',
+        issuer: { name: 'Example Issuer' },
+        issuedOn: '2026-13-40',
+      }), { headers: { 'content-type': 'application/json' } })),
+      urlGuard: vi.fn().mockResolvedValue(false),
+      now: () => FIXED_NOW,
+    });
+
+    expect(result.preview.credential_title).toBe('Malformed Date Credential');
+    expect(result.preview.credential_issued_at).toBeNull();
+  });
+
+  it('marks plain text sources as manually extracted evidence', async () => {
+    const result = await buildCredentialSourceImportPreview({
+      source_url: 'https://credentials.example.com/manual.txt',
+      issuer_hint: 'Example Issuer',
+    }, {
+      fetchFn: vi.fn().mockResolvedValue(response('Plain text certificate\nIssued by Example Issuer', {
+        headers: { 'content-type': 'text/plain' },
+      })),
+      urlGuard: vi.fn().mockResolvedValue(false),
+      now: () => FIXED_NOW,
+    });
+
+    expect(result.preview.credential_title).toBe('Plain text certificate');
+    expect(result.preview.extraction_method).toBe('manual');
   });
 
   it('blocks private or internal targets before fetching', async () => {

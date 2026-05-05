@@ -26,6 +26,11 @@ interface AnchorReceipt {
   record_uri: string;
 }
 
+interface DbErrorLike {
+  code?: string;
+  message?: string;
+}
+
 function credentialSourceErrorStatus(error: CredentialSourceImportError): number {
   return error.status;
 }
@@ -65,6 +70,10 @@ async function loadUserOrgId(userId: string): Promise<string | null> {
   const { data, error } = await db.from('profiles').select('org_id').eq('id', userId).single();
   if (error) throw error;
   return data?.org_id ?? null;
+}
+
+function isUniqueViolation(error: DbErrorLike | null | undefined): boolean {
+  return error?.code === '23505';
 }
 
 async function findExistingImport(userId: string, preview: CredentialSourceImportPreview): Promise<AnchorReceipt | null> {
@@ -108,8 +117,8 @@ async function linkSelfRecipient(anchorId: string, userId: string): Promise<void
   if (error && error.code !== '23505') throw error;
 }
 
-function logImportAudit(userId: string, orgId: string | null, anchorId: string, preview: CredentialSourceImportPreview): void {
-  void (async () => {
+async function logImportAudit(userId: string, orgId: string | null, anchorId: string, preview: CredentialSourceImportPreview): Promise<void> {
+  try {
     const { error } = await db.from('audit_events').insert({
       event_type: 'CREDENTIAL_SOURCE_IMPORTED',
       event_category: 'ANCHOR',
@@ -125,9 +134,24 @@ function logImportAudit(userId: string, orgId: string | null, anchorId: string, 
       }),
     });
     if (error) logger.warn({ error, anchorId }, 'Failed to audit credential source import');
-  })().catch((error: unknown) => {
+  } catch (error) {
     logger.warn({ error, anchorId }, 'Failed to audit credential source import');
-  });
+  }
+}
+
+async function markAnchorDeleted(anchorId: string, userId: string): Promise<void> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const dbAny = db as any;
+  const { error } = await dbAny
+    .from('anchors')
+    .update({ deleted_at: new Date().toISOString() })
+    .eq('id', anchorId)
+    .eq('user_id', userId)
+    .is('deleted_at', null);
+
+  if (error) {
+    logger.error({ error, anchorId, userId }, 'Failed to roll back credential source anchor after credit rejection');
+  }
 }
 
 function toReceipt(anchor: {
@@ -204,10 +228,6 @@ router.post('/import-url/confirm', async (req: Request, res: Response) => {
       return;
     }
 
-    if (orgId && !(await ensureAnchorCreditAvailable(db, orgId, res))) {
-      return;
-    }
-
     const publicId = `ARK-${new Date().getFullYear()}-${randomUUID().slice(0, 8).toUpperCase()}`;
     const insertPayload = {
       fingerprint: preview.anchor_fingerprint,
@@ -225,7 +245,10 @@ router.post('/import-url/confirm', async (req: Request, res: Response) => {
         : preview.credential_title,
       issued_at: evidenceDateToTimestamp(preview.credential_issued_at),
       expires_at: evidenceDateToTimestamp(preview.credential_expires_at, true),
-      metadata: preview.public_metadata,
+      metadata: {
+        ...preview.public_metadata,
+        source_anchor_fingerprint: preview.anchor_fingerprint,
+      },
     };
 
     const { data: anchor, error: insertError } = await db
@@ -235,13 +258,38 @@ router.post('/import-url/confirm', async (req: Request, res: Response) => {
       .single();
 
     if (insertError || !anchor) {
+      if (isUniqueViolation(insertError)) {
+        const duplicate = await findExistingImport(userId, preview);
+        if (duplicate) {
+          await linkSelfRecipient(duplicate.id, userId);
+          res.status(200).json({
+            duplicate: true,
+            anchor: duplicate,
+            preview,
+          });
+          return;
+        }
+
+        logger.warn({ error: insertError, userId }, 'Credential source duplicate conflict was not readable');
+        res.status(409).json({
+          error: 'source_import_conflict',
+          message: 'Credential source import is already in progress. Try again in a moment.',
+        });
+        return;
+      }
+
       logger.error({ error: insertError, userId }, 'Failed to create credential source anchor');
       res.status(500).json({ error: 'anchor_create_failed', message: 'Failed to create credential record' });
       return;
     }
 
+    if (orgId && !(await ensureAnchorCreditAvailable(db, orgId, res))) {
+      await markAnchorDeleted(anchor.id, userId);
+      return;
+    }
+
     await linkSelfRecipient(anchor.id, userId);
-    logImportAudit(userId, orgId, anchor.id, preview);
+    await logImportAudit(userId, orgId, anchor.id, preview);
 
     res.status(201).json({
       duplicate: false,
