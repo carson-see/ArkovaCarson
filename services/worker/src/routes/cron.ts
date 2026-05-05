@@ -73,6 +73,7 @@ import { refreshTreasuryCache } from '../jobs/treasury-cache.js';
 import { runTreasuryAlertCheck } from '../jobs/treasury-alert.js';
 import { buildTreasuryAlertDispatcher } from '../jobs/treasury-alert-dispatcher.js';
 import { runQueueReminderJob } from '../jobs/queue-reminders.js';
+import { runOrgQueueScheduler } from '../jobs/org-queue-scheduler.js';
 import { runRulesEngine } from '../jobs/rules-engine.js';
 import { runRuleActionDispatcher } from '../jobs/rule-action-dispatcher.js';
 import { runDbHealthMonitor } from '../jobs/db-health-monitor.js';
@@ -313,6 +314,21 @@ cronRouter.post('/queue-reminders', async (_req, res) => {
     res.json(result);
   } catch (error) {
     logger.error({ error }, 'Queue reminder job failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+// ─── SCRUM-1130: Durable 24-hour Organization Queue Scheduler ───
+cronRouter.post('/org-queue-scheduler', async (req, res) => {
+  try {
+    const rawLimit = req.query.limit ?? req.body?.limit;
+    const parsedLimit = rawLimit === undefined ? undefined : Number.parseInt(String(rawLimit), 10);
+    const result = await runOrgQueueScheduler({
+      limit: Number.isFinite(parsedLimit) ? parsedLimit : undefined,
+    });
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'Org queue scheduler pass failed');
     res.status(500).json({ error: 'Processing failed' });
   }
 });
