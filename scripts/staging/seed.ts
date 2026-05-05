@@ -148,8 +148,12 @@ const FULL: Volume = {
   checkrNonces: 5_000,
 };
 
-const tier: Volume = args.full ? FULL : args.smoke ? SMOKE : STANDARD;
-const tierName = args.full ? 'full' : args.smoke ? 'smoke' : 'standard';
+function selectTier(): { volume: Volume; name: string } {
+  if (args.full) return { volume: FULL, name: 'full' };
+  if (args.smoke) return { volume: SMOKE, name: 'smoke' };
+  return { volume: STANDARD, name: 'standard' };
+}
+const { volume: tier, name: tierName } = selectTier();
 
 // --- Helpers ---
 type LooseClient = SupabaseClient<unknown, never, never, never, never>;
@@ -174,7 +178,9 @@ function fakeEmail(): string {
   return `${randomUUID()}@${STAGING_EMAIL_DOMAIN}`;
 }
 function fakeApiKeyHash(): string {
-  // HMAC-SHA256 shape (matches src/lib/api-keys.ts hashing) — not a real key.
+  // 64-char SHA-256 hex shape so the column passes its CHECK
+  // (length > 0). Real prod keys are HMAC-SHA256 with API_KEY_HMAC_SECRET;
+  // these are non-functional fakes that will never authenticate.
   return createHash('sha256').update(`stg-${randomUUID()}`).digest('hex');
 }
 function publicId(prefix: string): string {
@@ -458,11 +464,16 @@ async function seedConnectorSubscriptions(client: LooseClient, integrations: See
     // CHECK constraint: only google_drive + microsoft_graph allowed here.
     if (!SUBSCRIPTION_PROVIDERS.includes(intg.provider as typeof SUBSCRIPTION_PROVIDERS[number])) continue;
     if (rng() > tier.connectorSubsPerOrg) continue;
+    // 85% active, 7.5% degraded, 7.5% revoked (single rng() draw so
+    // distribution is exactly the documented split, not 85% / 7.5% / 7.5%
+    // chained from two independent draws).
+    const r = rng();
+    const status = r < 0.85 ? 'active' : r < 0.925 ? 'degraded' : 'revoked';
     rows.push({
       org_id: intg.org_id,
       provider: intg.provider,
       vendor_subscription_id: `stg-sub-${randomBytes(6).toString('hex')}`,
-      status: rng() < 0.85 ? 'active' : rng() < 0.5 ? 'degraded' : 'revoked',
+      status,
       expires_at: isoDaysAgo(-7),
     });
   }
@@ -703,6 +714,33 @@ interface SeededAnchor {
   org_id: string;
 }
 
+function buildAnchorRow(profile: SeededProfile, idx: number): { row: Row; id: string } {
+  const id = randomUUID();
+  const status = weightedPick(ANCHOR_STATUS_WEIGHTS, rng());
+  const anchored = status === 'SECURED' || status === 'SUBMITTED' || status === 'BROADCASTING';
+  const onChainAt = anchored ? isoDaysAgo(rngInt(0, 90)) : null;
+  return {
+    id,
+    row: {
+      id,
+      user_id: profile.id,
+      org_id: profile.org_id,
+      public_id: publicId('ANC'),
+      fingerprint: fakeFingerprint(),
+      filename: `staging-doc-${idx}.pdf`,
+      status,
+      credential_type: pick(CREDENTIAL_TYPES, idx),
+      chain_tx_id: anchored ? `mock_test_${randomBytes(16).toString('hex')}` : null,
+      chain_block_height: status === 'SECURED' ? rngInt(820_000, 880_000) : null,
+      chain_confirmations: status === 'SECURED' ? rngInt(6, 144) : 0,
+      chain_timestamp: onChainAt,
+      issued_at: onChainAt,
+      version_number: 1,
+      created_at: isoDaysAgo(rngInt(0, 90)),
+    },
+  };
+}
+
 async function seedAnchors(client: LooseClient, profiles: SeededProfile[]): Promise<SeededAnchor[]> {
   const total = profiles.length * tier.anchorsPerUserAvg;
   console.log(`▶ Seeding ~${total} anchors with realistic status distribution...`);
@@ -710,26 +748,8 @@ async function seedAnchors(client: LooseClient, profiles: SeededProfile[]): Prom
   const anchors: SeededAnchor[] = [];
   for (const p of profiles) {
     for (let i = 0; i < tier.anchorsPerUserAvg; i++) {
-      const id = randomUUID();
-      const status = weightedPick(ANCHOR_STATUS_WEIGHTS, rng());
-      const anchored = status === 'SECURED' || status === 'SUBMITTED' || status === 'BROADCASTING';
-      rows.push({
-        id,
-        user_id: p.id,
-        org_id: p.org_id,
-        public_id: publicId('ANC'),
-        fingerprint: fakeFingerprint(),
-        filename: `staging-doc-${i}.pdf`,
-        status,
-        credential_type: pick(CREDENTIAL_TYPES, i),
-        chain_tx_id: anchored ? `mock_test_${randomBytes(16).toString('hex')}` : null,
-        chain_block_height: status === 'SECURED' ? rngInt(820_000, 880_000) : null,
-        chain_confirmations: status === 'SECURED' ? rngInt(6, 144) : 0,
-        chain_timestamp: anchored ? isoDaysAgo(rngInt(0, 90)) : null,
-        issued_at: anchored ? isoDaysAgo(rngInt(0, 90)) : null,
-        version_number: 1,
-        created_at: isoDaysAgo(rngInt(0, 90)),
-      });
+      const { id, row } = buildAnchorRow(p, i);
+      rows.push(row);
       anchors.push({ id, user_id: p.id, org_id: p.org_id });
     }
   }

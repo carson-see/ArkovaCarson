@@ -104,9 +104,28 @@ DECLARE
   v_orgs integer;
   v_users integer;
   v_records integer;
+  v_audit integer;
+  v_attestations integer;
 BEGIN
-  -- Public records aren't FK'd off organizations. Wipe synthetic ones
-  -- by their source signature.
+  -- audit_events has BEFORE DELETE + BEFORE UPDATE immutability triggers
+  -- (reject_audit_modification). Disable for the duration of the synthetic
+  -- purge — STAGING-RIG ONLY. Re-enabled before any other operations.
+  ALTER TABLE audit_events DISABLE TRIGGER reject_audit_delete;
+  ALTER TABLE audit_events DISABLE TRIGGER reject_audit_update;
+
+  DELETE FROM audit_events
+   WHERE org_id IN (SELECT id FROM organizations WHERE org_prefix LIKE 'STG%');
+  GET DIAGNOSTICS v_audit = ROW_COUNT;
+
+  ALTER TABLE audit_events ENABLE TRIGGER reject_audit_delete;
+  ALTER TABLE audit_events ENABLE TRIGGER reject_audit_update;
+
+  -- attestations.attester_org_id is NO ACTION FK; must be deleted before
+  -- the org delete. attestation_evidence cascades from attestations.
+  DELETE FROM attestations
+   WHERE attester_org_id IN (SELECT id FROM organizations WHERE org_prefix LIKE 'STG%');
+  GET DIAGNOSTICS v_attestations = ROW_COUNT;
+
   DELETE FROM public_record_embeddings
    WHERE public_record_id IN (
      SELECT id FROM public_records
@@ -116,18 +135,13 @@ BEGIN
    WHERE source IN ('sec_iapd','openstates','sam_gov','fbi_npsbn','state_bar','court_records');
   GET DIAGNOSTICS v_records = ROW_COUNT;
 
-  -- Webhook-nonce tables don't FK off organizations.
   DELETE FROM docusign_webhook_nonces WHERE envelope_id LIKE 'stg-env-%';
   DELETE FROM checkr_webhook_nonces  WHERE report_id LIKE 'stg-rpt-%';
 
-  -- Synthetic orgs cascade-delete almost everything (memberships,
-  -- api_keys, integrations, rules, executions, anchors, etc.).
   DELETE FROM organizations
    WHERE org_prefix LIKE 'STG%';
   GET DIAGNOSTICS v_orgs = ROW_COUNT;
 
-  -- auth.users rows we created (the on-delete-cascade from profiles
-  -- handles profile cleanup).
   DELETE FROM auth.users
    WHERE raw_app_meta_data->>'provider' = 'staging-synthetic';
   GET DIAGNOSTICS v_users = ROW_COUNT;
@@ -135,7 +149,9 @@ BEGIN
   RETURN jsonb_build_object(
     'organizations_deleted', v_orgs,
     'auth_users_deleted', v_users,
-    'public_records_deleted', v_records
+    'public_records_deleted', v_records,
+    'audit_events_deleted', v_audit,
+    'attestations_deleted', v_attestations
   );
 END;
 $$;

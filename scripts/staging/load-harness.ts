@@ -404,22 +404,23 @@ async function runCronMode(opts: ModeOpts, intervalSec: number): Promise<void> {
   }
 }
 
+// Mix of verify (public) and admin pipeline stats (auth-gated; will 401
+// without admin token, which is fine soak data — exercises the auth path).
+const READ_PATHS = [
+  '/api/admin/pipeline-stats',
+  '/api/v1/verify/STG-ANC-DEADBEEF',
+  '/api/v1/anchors/STG-ANC-DEADBEEF',
+] as const;
+
 async function runReadsMode(opts: ModeOpts, ratePerMin: number): Promise<void> {
   const intervalMs = 60_000 / Math.max(ratePerMin, 1);
   let i = 0;
   while (Date.now() < opts.endAt) {
-    // Mix of verify (public) and admin pipeline stats (auth-gated; will 401
-    // without admin token, which is fine soak data).
-    const path = i % 3 === 0
-      ? '/api/admin/pipeline-stats'
-      : i % 3 === 1
-        ? '/api/v1/verify/STG-ANC-DEADBEEF'
-        : '/api/v1/anchors/STG-ANC-DEADBEEF';
+    const path = READ_PATHS[i % READ_PATHS.length];
+    const apiKey = process.env.STAGING_API_KEY ?? `ak_synthetic_${randomBytes(4).toString('hex')}`;
     void fire(opts.stats, 'reads', path, {
       method: 'GET',
-      headers: process.env.STAGING_API_KEY
-        ? { 'X-API-Key': process.env.STAGING_API_KEY }
-        : { 'X-API-Key': `ak_synthetic_${randomBytes(4).toString('hex')}` },
+      headers: { 'X-API-Key': apiKey },
     });
     i++;
     await boundedSleep(intervalMs, opts.endAt);
@@ -503,10 +504,19 @@ function writeEvidence(path: string, evidence: EvidenceFile): void {
 
 // --- main ---
 
+function parsePositiveInt(raw: string | undefined, fallback: number, name: string): number {
+  const n = Number.parseInt(raw ?? String(fallback), 10);
+  if (!Number.isFinite(n) || n <= 0) {
+    console.error(`::error::--${name}=${raw} must be a positive integer.`);
+    process.exit(2);
+  }
+  return n;
+}
+
 async function main(): Promise<void> {
   const mode = args.mode ?? 'mixed';
-  const durationMin = Number.parseInt(args.duration ?? '15', 10);
-  const concurrency = Number.parseInt(args.concurrency ?? '10', 10);
+  const durationMin = parsePositiveInt(args.duration, 15, 'duration');
+  const concurrency = parsePositiveInt(args.concurrency, 10, 'concurrency');
   const evidencePath = args['evidence-out'];
 
   const stats = newStats();
@@ -530,10 +540,10 @@ async function main(): Promise<void> {
     const opts: ModeOpts = { endAt, stats, concurrency };
     switch (mode) {
       case 'anchor':
-        await runAnchorMode(opts, Number.parseInt(args.rate ?? '100', 10));
+        await runAnchorMode(opts, parsePositiveInt(args.rate, 100, 'rate'));
         break;
       case 'burst':
-        await runBurstMode(opts, Number.parseInt(args.count ?? '1000', 10));
+        await runBurstMode(opts, parsePositiveInt(args.count, 1000, 'count'));
         break;
       case 'oscillate':
         await runOscillateMode(opts);
