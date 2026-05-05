@@ -59,14 +59,13 @@ SET search_path = public
 AS $$
 DECLARE
   v_caller        uuid := (SELECT auth.uid());
-  v_is_service    boolean := (current_setting('request.jwt.claim.role', true) = 'service_role'
-                              OR current_user IN ('service_role', 'postgres'));
+  v_is_service    boolean := (get_caller_role() = 'service_role');
   v_actual_parent uuid;
   v_already       boolean;
 BEGIN
-  -- service_role bypass: trusted server-side callers (worker, admin endpoints,
-  -- migration backfills) skip the auth.uid + member-role gates. v_caller stays
-  -- NULL in that case; audit_events will record actor_id=NULL.
+  -- service_role bypass: trusted server-side callers (worker, admin endpoints)
+  -- skip the auth.uid + member-role gates. Use only invoker-derived JWT role
+  -- state here; SECURITY DEFINER current_user is the function owner.
   IF NOT v_is_service AND v_caller IS NULL THEN
     RETURN jsonb_build_object('success', false, 'error', 'unauthenticated');
   END IF;
@@ -155,8 +154,7 @@ SET search_path = public
 AS $$
 DECLARE
   v_caller        uuid := (SELECT auth.uid());
-  v_is_service    boolean := (current_setting('request.jwt.claim.role', true) = 'service_role'
-                              OR current_user IN ('service_role', 'postgres'));
+  v_is_service    boolean := (get_caller_role() = 'service_role');
   v_actual_parent uuid;
   v_currently     boolean;
 BEGIN

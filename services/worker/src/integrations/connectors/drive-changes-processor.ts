@@ -264,8 +264,8 @@ export async function processDriveChanges(args: {
           file_id: fileId,
           revision_id: revisionId,
         });
-        log?.warn?.({ integrationId: args.integration.id, fileId, revisionId }, 'drive enqueueRuleEvent returned null — ledger rolled back');
-        continue;
+        log?.warn?.({ integrationId: args.integration.id, fileId, revisionId }, 'drive enqueueRuleEvent returned null — ledger rolled back, page abort');
+        throw new Error('drive enqueueRuleEvent returned null');
       }
       result.queued += 1;
     }

@@ -114,10 +114,10 @@ YOUR JOB IN THIS SESSION (in order, no deferring)
      --source=services/worker --region=us-central1 --no-traffic
      --min-instances=0 --service-account=<TBD> --set-env-vars
      SUPABASE_URL=<staging-branch-url>,SUPABASE_SERVICE_ROLE_KEY=<staging-key>,...`.
-     Pull the staging branch URL + service-role key from Supabase MCP
-     `get_project_url` + `get_publishable_keys` against
-     `rathfqiqyfuomkfnbkzu` (or whatever the new branch's project_ref
-     is).
+     Pull the staging branch URL from Supabase MCP `get_project_url`.
+     Pull `SUPABASE_SERVICE_ROLE_KEY` only from the approved service-role
+     secret/key source for that project_ref; do not use publishable/anon
+     key helpers for the worker service-role env var.
 
 6. Run the T2 soak per CLAUDE.md §1.12.
    * `bash scripts/staging/claim.sh "PR #697 — SCRUM-1647 followups"`

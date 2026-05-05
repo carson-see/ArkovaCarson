@@ -330,7 +330,7 @@ describe('processDriveChanges (SCRUM-1650 GD-03..07)', () => {
     expect(db.ledgerInserts[0].revision_id).toBe('mtime:2026-05-04T01:23:00Z');
   });
 
-  it('Codex P1 (no-drop): enqueue returning null rolls back the ledger reservation so retry is unblocked', async () => {
+  it('Codex P1 (no-drop): enqueue returning null rolls back the ledger reservation and aborts the page', async () => {
     const db = makeFakeDb({ enqueueResult: null });
     const listMock = vi.fn().mockResolvedValueOnce(
       pageOf(
@@ -339,19 +339,21 @@ describe('processDriveChanges (SCRUM-1650 GD-03..07)', () => {
       ),
     );
 
-    const result = await processDriveChanges({
-      integration: makeIntegration(),
-      accessToken: 'tok',
-      db,
-      deps: { listChanges: listMock },
-    });
+    await expect(
+      processDriveChanges({
+        integration: makeIntegration(),
+        accessToken: 'tok',
+        db,
+        deps: { listChanges: listMock },
+      }),
+    ).rejects.toThrow(/enqueueRuleEvent returned null/);
 
-    expect(result.queued).toBe(0);
     // Compensating delete fired so the (integration, file, revision) slot
     // is free for the next pass to retry. Without this, the row would
     // persist and dedupe-block all future attempts on this revision.
     expect(db.ledgerDeletes).toEqual([{ file_id: 'file-fail', revision_id: 'rev-fail' }]);
     expect(db.duplicateKeys.has('file-fail::rev-fail')).toBe(false);
+    expect(db.advancedPageTokens).toEqual([]);
   });
 
   it('Codex P1 (no-drop): enqueue throwing rolls back the ledger reservation and re-throws', async () => {
