@@ -1,9 +1,16 @@
 # agents.md — services/worker
-_Last updated: 2026-04-27 (SCRUM-792 fraud-seed 100+ + R2 batch 3 SCRUM-1270 / 1272 / 1271-A)_
+_Last updated: 2026-05-05 (SCRUM-1130 org queue scheduler)_
 
 ## What This Folder Contains
 
 Express-based worker service handling privileged server-side operations: anchor processing (PENDING → SECURED), Stripe webhook verification, outbound webhook delivery, cron job scheduling, rules engine, and org tier/quota enforcement. Uses Supabase service_role key — never the anon key.
+
+## SCRUM-1130 — durable 24-hour organization queue scheduler (2026-05-05)
+
+- `src/jobs/org-queue-scheduler.ts` claims due organizations through `claim_due_org_queue_runs`, then runs the existing org-scoped `processBatchAnchors({ force: true, orgId })` path. Keep direct anchoring logic out of the scheduler; `batch-anchor.ts` remains the worker-owned execution path.
+- Manual `/api/queue/run` records into the same `organization_queue_runs` history and updates `organization_queue_run_state`, so admin-triggered runs reset the 24-hour due timer.
+- `POST /cron/org-queue-scheduler` is the scheduled entrypoint. `ENABLE_ORG_QUEUE_SCHEDULER=false` is the fail-closed kill switch for the scheduler pass.
+- Migration `0294_org_queue_scheduler.sql` owns `organization_queue_run_state`, `organization_queue_runs`, and the service-role claim RPC. Do not change older migrations; add compensating migrations.
 
 ## SCRUM-792 — Gemini fraud detection seed dataset 100+ (2026-04-27, GME2-01)
 
