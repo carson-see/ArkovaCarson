@@ -115,35 +115,25 @@ describe('verifyNewCodeDefinition (SCRUM-1681)', () => {
     expect(r.failures).toEqual([]);
   });
 
-  it('fails closed when SonarCloud drifts back to previous_version', () => {
-    const r = verifyNewCodeDefinition(newCodeSettings('previous_version', 'previous_version'), BASELINE_TODAY);
+  it.each([
+    [
+      'previous_version drift',
+      newCodeSettings('previous_version', 'previous_version'),
+      [
+        'sonar.leak.period.type is previous_version; expected date',
+        'sonar.leak.period is previous_version; expected YYYY-MM-DD date >= 2026-05-05',
+      ],
+    ],
+    ['pre-reset baseline', newCodeSettings('date', '2026-03-11'), ['before reset floor 2026-05-05']],
+    ['impossible calendar date', newCodeSettings('date', '2026-02-31'), ['not a real calendar date']],
+    ['future baseline', newCodeSettings('date', '2026-05-06'), ['is in the future']],
+  ])('fails on %s', (_name, settings, expectedFailures) => {
+    const r = verifyNewCodeDefinition(settings, BASELINE_TODAY);
 
     expect(r.ok).toBe(false);
-    expect(r.failures).toEqual([
-      'sonar.leak.period.type is previous_version; expected date',
-      'sonar.leak.period is previous_version; expected YYYY-MM-DD date >= 2026-05-05',
-    ]);
-  });
-
-  it('fails when the baseline predates the 2026-05-05 reset', () => {
-    const r = verifyNewCodeDefinition(newCodeSettings('date', '2026-03-11'), BASELINE_TODAY);
-
-    expect(r.ok).toBe(false);
-    expect(r.failures[0]).toContain('before reset floor 2026-05-05');
-  });
-
-  it('fails when the baseline has an impossible calendar date', () => {
-    const r = verifyNewCodeDefinition(newCodeSettings('date', '2026-02-31'), BASELINE_TODAY);
-
-    expect(r.ok).toBe(false);
-    expect(r.failures[0]).toContain('not a real calendar date');
-  });
-
-  it('fails when a date baseline is set in the future', () => {
-    const r = verifyNewCodeDefinition(newCodeSettings('date', '2026-05-06'), BASELINE_TODAY);
-
-    expect(r.ok).toBe(false);
-    expect(r.failures[0]).toContain('is in the future');
+    for (const expected of expectedFailures) {
+      expect(r.failures.join('\n')).toContain(expected);
+    }
   });
 });
 
