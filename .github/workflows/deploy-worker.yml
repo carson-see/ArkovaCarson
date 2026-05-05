@@ -56,6 +56,38 @@ jobs:
         # Followup R4 story tracks driving the warning count to zero.
         run: npm run lint
 
+      # Keep deploy-worker in lockstep with ci.yml after PR #693 made
+      # zk-proof tests fail loudly when compiled circuit artifacts are absent.
+      - name: Cache zk circuit artifacts
+        id: cache-zk-artifacts
+        uses: actions/cache@v4
+        with:
+          path: services/worker/circuits/artifacts
+          key: zk-artifacts-${{ runner.os }}-circom2.1.9-${{ hashFiles('services/worker/circuits/extraction-proof.circom', 'services/worker/circuits/build.sh', 'services/worker/package-lock.json') }}
+
+      - name: Install circom (cache miss only)
+        if: steps.cache-zk-artifacts.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          CIRCOM_VERSION=v2.1.9
+          mkdir -p "$HOME/.local/bin"
+          curl -fsSL --retry 5 -o "$HOME/.local/bin/circom" \
+            "https://github.com/iden3/circom/releases/download/${CIRCOM_VERSION}/circom-linux-amd64"
+          echo "e5575829252d763b7818049df9de2ef9304df834697de77fa63ce7babc23c967  $HOME/.local/bin/circom" | sha256sum -c -
+          chmod +x "$HOME/.local/bin/circom"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Build zk circuit artifacts (cache miss only)
+        if: steps.cache-zk-artifacts.outputs.cache-hit != 'true'
+        working-directory: services/worker
+        run: npm run build:circuit
+
+      - name: Verify zk circuit artifacts present
+        run: |
+          ls -lh services/worker/circuits/artifacts/extraction-proof_js/extraction-proof.wasm
+          ls -lh services/worker/circuits/artifacts/extraction-proof_final.zkey
+          ls -lh services/worker/circuits/artifacts/verification_key.json
+
       - name: Test
         working-directory: services/worker
         run: npm test
