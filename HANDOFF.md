@@ -14,6 +14,48 @@
 
 ## Now
 
+### 2026-05-04 (overnight) — Synthetic load generator built (staging rig now has prod-shape data + 8-mode harness)
+
+Branch `claude/2026-05-04-staging-synthetic-load-generator`. Picks up where night session left off: rig was stood up (Supabase + Cloud Run both healthy), but soaks against an empty schema only proved "code runs," not "code runs at prod shape." This session built the seed + extended the harness so PRs #695/#696/#697 can soak against meaningful load.
+
+**What shipped to the rig:**
+
+* **Migration `staging_only_seed_helpers`** applied to project_ref `ujtlwnoqfhtitcmsnrpq` only via Supabase MCP `apply_migration` (NEVER run on prod `vzwyaatejekddvltxyye`). Three SECURITY DEFINER RPCs, all `EXECUTE` granted to `service_role` only:
+  * `staging_seed_auth_users(p_users jsonb)` — bulk-insert `auth.users` rows so the synthetic seed can satisfy the `profiles.id → auth.users.id` FK. Uses `email_confirmed_at = NULL` to keep the `zz_auth_user_auto_associate_org` trigger as a no-op (we control org assignments separately).
+  * `staging_seed_assign_profile_orgs(p_pairs jsonb)` — bulk-update `profiles.org_id` (the trigger-created profile rows have no org assignment).
+  * `staging_purge_synthetic_data()` — one-shot purge: cascades through synthetic orgs (`org_prefix LIKE 'STG%'`), purges synthetic public records by source allowlist + nonces, deletes the `auth.users` rows we created (provider tag `staging-synthetic`).
+
+**What shipped on the branch (no prod state changed):**
+
+* **`scripts/staging/seed.ts` rewritten from scratch.** The pre-existing scaffold inserted into `organizations.name`, but the column doesn't exist (only `legal_name` + `display_name`) — meaning it had never run successfully against this schema. Discovery + 8 schema-mismatch fixes documented in code:
+  * Right column names (`organizations.legal_name/display_name`, `anchors.chain_block_height/chain_tx_id/issued_at`, `audit_events.details`, `drive_revision_ledger.processed_at`).
+  * CHECK constraints respected (provider allowlist, audit-category UPPERCASE, drive outcomes 3-only, api-key scopes vocabulary, webhook URLs `https://` only, rule-event claim consistency).
+  * Three volume tiers: `--smoke` (~10K rows / <1 min / ~10 MB), `--standard` (~250K rows / ~25 min / ~500 MB, default), `--full` (~2M rows / ~90 min / ~3 GB, fits Pro tier 8 GB headroom).
+  * Embeddings cap: `--full` caps `public_record_embeddings` at 100K (NOT spec's 700K) — vector(768) at ~3 KB/row × 700K = ~2 GB just for embeddings; spec's volumes were designed against assumed 1536 dims. Code comment captures the rationale.
+  * Smoke seed verified end-to-end against the live rig: 50 orgs / 148 profiles / 592 anchors / 5K public_records / 500 embeddings / 9.5K rows total in **16s**. Anchor status distribution matches weights (SECURED 88.9% / PENDING 4.7% / SUBMITTED 2.9% / SUPERSEDED 0.7%).
+  * Safety rails: every email is `<uuid>@staging.invalid.test` (RFC 6761 reserved TLD), every URL is `https://staging-localhost.invalid/dev-null`, every fingerprint/hash/token is random bytes, no real PII anywhere. URL guard refuses to run unless `STAGING_SUPABASE_URL` contains `ujtlwnoqfhtitcmsnrpq`.
+
+* **`scripts/staging/load-harness.ts` extended with 5 new modes + IAM auth + evidence file.** Existing `anchor`/`burst`/`oscillate` modes preserved verbatim. New modes:
+  * `webhooks` — POST to `/webhooks/{drive,docusign,adobe-sign,checkr}` with synthetic HMAC headers, 10/min sustained.
+  * `events` — POST to `/api/rules/demo-event`, 100/min (admin-gated → 401 without user JWT, which is valid soak data).
+  * `cron` — POST to `/jobs/{process-anchors,batch-anchors,check-confirmations,process-revocations,rules-engine,rule-action-dispatcher}` every 5 min (with `X-Cron-Secret` header → 200 when `STAGING_CRON_SECRET` is set).
+  * `reads` — GET `/api/admin/pipeline-stats` + `/api/v1/verify/...` + `/api/v1/anchors/...`, 50/min.
+  * `mixed` (default) — runs webhooks + events + cron + reads concurrently.
+
+  Cloud Run is `--no-allow-unauthenticated`, so EVERY request now carries an IAM bearer token (`gcloud auth print-identity-token`, refreshed every 30 min). App-layer secrets ride in dedicated headers (`X-Cron-Secret`, `X-API-Key`). Per-minute summary loop emits `total / rate / per-mode ok/fail/p50/p95/p99 + status histogram`. `--evidence-out path.json` writes a structured JSON summary the PR's `## Staging Soak Evidence` block can reference.
+
+  `boundedSleep(ms, endAt)` helper added to fix a bug where the cron mode's 5-min inter-iteration sleep could block `Promise.all` past the requested duration — `--duration 1` was actually running 5 min before the fix.
+
+* **Dry-run validation:** 1-min mixed run against the live rig produced clean evidence file. Cron mode hit 100% success (200) with `STAGING_CRON_SECRET` set; events/webhook/reads modes hit a mix of 401/429/503 (auth + rate-limit + feature-flag-gated paths) — all valid soak coverage. Final 15-min dry run in flight at HANDOFF write time; evidence file committed to `docs/staging/dryrun-<timestamp>.json` for the PR body. Verified via gcloud `Ready=True` on revision `arkova-worker-staging-00002-xzq` and Supabase `ACTIVE_HEALTHY` on `ujtlwnoqfhtitcmsnrpq`.
+
+* **`scripts/staging/agents.md` updated** with the seed tier matrix, helper RPC inventory, harness mode table, and the corrected workflow steps.
+
+**Path forward (next session, after this PR merges):**
+
+1. For each of #695/#696/#697: `claim.sh acquire` → apply PR migrations to staging via Supabase MCP `apply_migration` → `seed.ts --reset --standard` → `load-harness.ts --mode mixed --duration 240 --evidence-out docs/staging/soak-pr-<N>.json` → rollback rehearsal → fill PR body's `## Staging Soak Evidence` block → `claim.sh release` → `gh pr ready 697` (only #697 is DRAFT).
+2. PR #695 still has 0290 prefix collision with #697's already-prod 0290 — must be renumbered to 0292/0293 before merge (this PR doesn't touch that — it's tooling only).
+3. `STAGING_API_KEY` provisioning is the remaining gap to make `anchor` / `reads` modes hit the happy path instead of 401. Until then, soaks exercise the auth-fail + rate-limit codepaths, which is still meaningful coverage.
+
 ### 2026-05-04 (night) — `arkova-worker-staging` Cloud Run deployed (Path A rig phase 2 complete)
 
 After the rig DB came up earlier in the evening, Carson surfaced that the rig isn't actually usable until the Cloud Run worker is deployed against it. Built `arkova-worker-staging` as the second leg:
