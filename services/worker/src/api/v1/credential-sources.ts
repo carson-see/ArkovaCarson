@@ -60,7 +60,6 @@ const softDeleteUpdateSchema = z.object({
 });
 
 interface AnchorReceipt {
-  id: string;
   public_id: string;
   fingerprint: string;
   status: string;
@@ -73,7 +72,7 @@ interface DbErrorLike {
   message?: string;
 }
 
-interface AnchorInsertRow {
+interface AnchorRecord {
   id: string;
   public_id: string | null;
   fingerprint: string;
@@ -82,9 +81,9 @@ interface AnchorInsertRow {
 }
 
 interface AnchorCreateResult {
-  anchor: AnchorInsertRow | null;
+  anchor: AnchorRecord | null;
   error: DbErrorLike | null;
-  duplicate?: AnchorReceipt;
+  duplicate?: AnchorRecord;
 }
 
 type AnchorInsertPayload = z.infer<typeof anchorSchema>;
@@ -161,10 +160,10 @@ function sendSourceChanged(res: Response, expectedHash: string, actualHash: stri
   });
 }
 
-function sendDuplicateImport(res: Response, anchor: AnchorReceipt, preview: CredentialSourceImportPreview): void {
+function sendDuplicateImport(res: Response, anchor: AnchorRecord, preview: CredentialSourceImportPreview): void {
   res.status(200).json({
     duplicate: true,
-    anchor,
+    anchor: toReceipt(anchor),
     preview,
   });
 }
@@ -228,7 +227,7 @@ function buildAnchorInsertPayload(
   });
 }
 
-async function findExistingImport(userId: string, preview: CredentialSourceImportPreview): Promise<AnchorReceipt | null> {
+async function findExistingImport(userId: string, preview: CredentialSourceImportPreview): Promise<AnchorRecord | null> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const dbAny = db as any;
   const { data, error } = await dbAny
@@ -244,14 +243,12 @@ async function findExistingImport(userId: string, preview: CredentialSourceImpor
   if (error) throw error;
   if (!data) return null;
 
-  const publicId = data.public_id ?? '';
   return {
     id: data.id,
-    public_id: publicId,
+    public_id: data.public_id,
     fingerprint: data.fingerprint,
     status: data.status,
     created_at: data.created_at,
-    record_uri: buildVerifyUrl(publicId),
   };
 }
 
@@ -275,7 +272,7 @@ async function shouldRetryPublicIdCollision(
   userId: string,
   preview: CredentialSourceImportPreview,
   publicId: string,
-): Promise<{ retry: boolean; duplicate?: AnchorReceipt }> {
+): Promise<{ retry: boolean; duplicate?: AnchorRecord }> {
   const duplicate = await findExistingImport(userId, preview);
   if (duplicate) return { retry: false, duplicate };
 
@@ -342,9 +339,10 @@ async function logImportAudit(userId: string, orgId: string | null, anchorId: st
       details: JSON.stringify(buildAuditDetails(preview)),
     });
     const { error } = await db.from('audit_events').insert(payload);
-    if (error) logger.warn({ error, anchorId }, 'Failed to audit credential source import');
+    if (error) throw error;
   } catch (error) {
-    logger.warn({ error, anchorId }, 'Failed to audit credential source import');
+    logger.error({ error, anchorId }, 'Failed to audit credential source import');
+    throw error;
   }
 }
 
@@ -415,10 +413,9 @@ async function handleAnchorCreateFailure(
   });
 }
 
-function toReceipt(anchor: AnchorInsertRow): AnchorReceipt {
+function toReceipt(anchor: AnchorRecord): AnchorReceipt {
   const publicId = anchor.public_id ?? '';
   return {
-    id: anchor.id,
     public_id: publicId,
     fingerprint: anchor.fingerprint,
     status: anchor.status,

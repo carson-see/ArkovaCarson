@@ -126,6 +126,14 @@ function mockHtmlFetch() {
   )));
 }
 
+function mockPlainTextFetch() {
+  vi.stubGlobal('fetch', vi.fn().mockImplementation(() => Promise.resolve(
+    new Response('Plain Text Compliance Certificate\nIssued 2026-05-05', {
+      headers: { 'content-type': 'text/plain; charset=utf-8' },
+    }),
+  )));
+}
+
 describe('credentialSourcesRouter', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -168,6 +176,29 @@ describe('credentialSourcesRouter', () => {
     expect(res.body.evidence_package_hash).toMatch(/^[a-f0-9]{64}$/);
   });
 
+  it('uses the plain-text extraction fallback for text credential sources', async () => {
+    mockPlainTextFetch();
+
+    const res = await request(makeApp())
+      .post('/api/v1/credential-sources/import-url/preview')
+      .send({
+        source_url: 'https://credentials.example.com/plain.txt',
+        credential_type: 'CERTIFICATE',
+        issuer_hint: 'Plaintext Issuer',
+      });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({
+      normalized_source_url: 'https://credentials.example.com/plain.txt',
+      source_payload_content_type: 'text/plain',
+      credential_title: 'Plain Text Compliance Certificate',
+      credential_issuer: 'Plaintext Issuer',
+      credential_type: 'CERTIFICATE',
+      extraction_method: 'manual',
+      verification_level: 'captured_url',
+    });
+  });
+
   it('creates a pending anchor and links it to the importing user on confirm', async () => {
     const preview = await request(makeApp())
       .post('/api/v1/credential-sources/import-url/preview')
@@ -184,6 +215,7 @@ describe('credentialSourcesRouter', () => {
     expect(res.status).toBe(201);
     expect(res.body.duplicate).toBe(false);
     expect(res.body.anchor.public_id).toBe('ARK-2026-ABC12345');
+    expect(res.body.anchor).not.toHaveProperty('id');
     expect(mockDeductOrgCredit).toHaveBeenCalledWith(expect.anything(), 'org-1', 1, 'anchor.create', 'anchor-1');
 
     const anchorPayload = mockAnchorInsert.mock.calls[0][0] as {
@@ -262,6 +294,7 @@ describe('credentialSourcesRouter', () => {
     expect(res.status).toBe(200);
     expect(res.body.duplicate).toBe(true);
     expect(res.body.anchor.public_id).toBe('ARK-2026-EXISTING');
+    expect(res.body.anchor).not.toHaveProperty('id');
     expect(mockDeductOrgCredit).not.toHaveBeenCalled();
     expect(mockRecipientInsert).toHaveBeenCalledWith(expect.objectContaining({
       anchor_id: 'anchor-existing',
@@ -305,10 +338,12 @@ describe('credentialSourcesRouter', () => {
 
     expect(res.status).toBe(201);
     expect(res.body.duplicate).toBe(false);
-    expect(res.body.anchor.id).toBe('anchor-retry');
     expect(mockAnchorInsert).toHaveBeenCalledTimes(2);
     expect((mockAnchorInsert.mock.calls[0][0] as { public_id: string }).public_id).toMatch(/^ARK-2026-[A-F0-9]{8}$/);
-    expect((mockAnchorInsert.mock.calls[1][0] as { public_id: string }).public_id).toMatch(/^ARK-2026-[A-F0-9]{8}$/);
+    const retryPublicId = (mockAnchorInsert.mock.calls[1][0] as { public_id: string }).public_id;
+    expect(retryPublicId).toMatch(/^ARK-2026-[A-F0-9]{8}$/);
+    expect(res.body.anchor.public_id).toBe(retryPublicId);
+    expect(res.body.anchor).not.toHaveProperty('id');
     expect(mockDeductOrgCredit).toHaveBeenCalledWith(expect.anything(), 'org-1', 1, 'anchor.create', 'anchor-retry');
     expect(mockRecipientInsert).toHaveBeenCalledWith(expect.objectContaining({
       anchor_id: 'anchor-retry',
@@ -362,6 +397,26 @@ describe('credentialSourcesRouter', () => {
     expect(mockAuditInsert).not.toHaveBeenCalled();
   });
 
+  it('fails the import when the audit event cannot be written', async () => {
+    mockAuditInsert.mockResolvedValue({ error: { message: 'audit unavailable' } });
+
+    const res = await request(makeApp())
+      .post('/api/v1/credential-sources/import-url/confirm')
+      .send({ source_url: 'https://credentials.example.com/abc', credential_type: 'CERTIFICATE' });
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe('import_failed');
+    expect(mockDeductOrgCredit).toHaveBeenCalledWith(expect.anything(), 'org-1', 1, 'anchor.create', 'anchor-1');
+    expect(mockRecipientInsert).toHaveBeenCalledWith(expect.objectContaining({
+      anchor_id: 'anchor-1',
+      recipient_user_id: 'user-1',
+    }));
+    expect(mockAuditInsert).toHaveBeenCalledWith(expect.objectContaining({
+      event_type: 'CREDENTIAL_SOURCE_IMPORTED',
+      target_id: 'anchor-1',
+    }));
+  });
+
   it('rejects confirmation when the source payload changed after preview', async () => {
     const res = await request(makeApp())
       .post('/api/v1/credential-sources/import-url/confirm')
@@ -396,6 +451,7 @@ describe('credentialSourcesRouter', () => {
     expect(res.status).toBe(200);
     expect(res.body.duplicate).toBe(true);
     expect(res.body.anchor.public_id).toBe('ARK-2026-EXISTING');
+    expect(res.body.anchor).not.toHaveProperty('id');
     expect(mockDeductOrgCredit).not.toHaveBeenCalled();
     expect(mockAnchorInsert).not.toHaveBeenCalled();
     expect(mockRecipientInsert).toHaveBeenCalledWith(expect.objectContaining({
