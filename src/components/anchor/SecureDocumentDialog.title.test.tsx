@@ -10,9 +10,25 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, act } from '@testing-library/react';
 import { SecureDocumentDialog } from './SecureDocumentDialog';
 import { SECURE_DIALOG_LABELS } from '@/lib/copy';
+
+// Capture the FileUpload props so the test can drive `onBulkDetected` and
+// flip the dialog into bulk mode — the regression we care about is that the
+// title stayed stable AFTER the bulk transition.
+let lastFileUploadProps: { onBulkDetected?: (files: File[]) => void } | null = null;
+vi.mock('./FileUpload', () => ({
+  FileUpload: (props: { onBulkDetected?: (files: File[]) => void }) => {
+    lastFileUploadProps = props;
+    return <div data-testid="file-upload-stub" />;
+  },
+}));
+
+// Bulk wizard pulls in heavy deps we don't need here; stub it.
+vi.mock('@/components/upload', () => ({
+  BulkUploadWizard: () => <div data-testid="bulk-wizard-stub" />,
+}));
 
 vi.mock('react-router-dom', () => ({
   useNavigate: () => vi.fn(),
@@ -77,13 +93,23 @@ describe('SCRUM-1755 SecureDocumentDialog title is stable across paths', () => {
     expect(screen.getByRole('dialog', { name: new RegExp(SECURE_DIALOG_LABELS.TITLE, 'i') })).toBeInTheDocument();
   });
 
-  it('never renders the legacy "Bulk Upload" text as the dialog title', () => {
+  it('keeps the title stable AFTER bulk detection (regression: pre-1755 swapped to "Bulk Upload")', () => {
     render(<SecureDocumentDialog open={true} onOpenChange={() => {}} />);
-    // Pre-1755 swap shipped a heading "Bulk Upload" once the bulk step opened. The
-    // dialog title is now stable and should not contain that legacy phrase as a
-    // primary heading. (BulkUploadWizard internals may still reference the bulk
-    // tag elsewhere; this test only asserts the dialog *title* is unified.)
+
+    // Drive bulk detection via the FileUpload mock so the dialog enters
+    // step==='bulk'. Before the fix, this transition caused the title to flip
+    // to "Bulk Upload"; this assertion catches any future regression.
+    expect(lastFileUploadProps?.onBulkDetected).toBeTypeOf('function');
+    act(() => {
+      lastFileUploadProps!.onBulkDetected!([
+        new File(['a,b\n1,2'], 'docs.csv', { type: 'text/csv' }),
+      ]);
+    });
+
+    // Dialog should still be open and the title should still be the stable one.
+    expect(screen.getByTestId('bulk-wizard-stub')).toBeInTheDocument();
     const dialogTitle = screen.getByRole('dialog').querySelector('h2');
     expect(dialogTitle?.textContent ?? '').not.toMatch(/^Bulk Upload$/i);
+    expect(dialogTitle?.textContent ?? '').toContain(SECURE_DIALOG_LABELS.TITLE);
   });
 });

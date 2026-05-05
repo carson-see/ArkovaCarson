@@ -694,6 +694,7 @@ export const ISSUE_CREDENTIAL_LABELS = {
   HINT_PROOF_URL_INVALID: 'Proof URL must be a valid https:// link.',
   GATE_BLOCKED_TITLE: 'Issue Credential is unavailable',
   GATE_LOADING: 'Checking your organization’s authorization to issue credentials…',
+  GATE_QUERY_ERROR: 'We could not verify your organization’s authorization right now. Please retry in a few seconds; if the issue persists, contact support.',
   GATE_NOT_VERIFIED: 'Your organization is not yet verified. Verified organizations can issue credentials. Contact support to start verification.',
   GATE_SUSPENDED: 'Your organization is currently suspended. Issue Credential is unavailable until the suspension is resolved.',
   GATE_PARENT_UNAPPROVED: 'Your sub-organization affiliation has not been approved by the parent organization. Ask a parent-org admin to approve your affiliation before issuing credentials.',
@@ -1023,7 +1024,9 @@ export const ORG_PAGE_LABELS = {
   // bulk-vs-single chooser is exposed. The legacy BULK_UPLOAD / BULK_UPLOAD_DIALOG_TITLE
   // strings are retained for any out-of-tree usage but should not be wired into new UI.
   SECURE_DOCUMENT: 'Secure Document',
+  SECURE_DOCUMENT_MOBILE: 'Secure',
   ISSUE_CREDENTIAL: 'Issue Credential',
+  ISSUE_CREDENTIAL_MOBILE: 'Issue',
   /** @deprecated SCRUM-1755 — Secure Document auto-detects bulk; do not render a separate Bulk Upload button. */
   BULK_UPLOAD: 'Bulk Upload',
   /** @deprecated SCRUM-1755 — Secure Document auto-detects bulk; do not render a separate Bulk Upload dialog. */

@@ -13,7 +13,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, cleanup } from '@testing-library/react';
+import { render, screen, cleanup, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { IssueCredentialForm } from './IssueCredentialForm';
 import { ISSUE_CREDENTIAL_LABELS } from '@/lib/copy';
@@ -152,9 +152,12 @@ describe('SCRUM-1755 IssueCredentialForm split + proof_url', () => {
   it('does NOT render the gate-blocked banner when ENABLE_ISSUE_CREDENTIAL_SPLIT is off', async () => {
     mockSplitEnabled.mockResolvedValue(false);
     renderForm();
-    // Wait long enough for any async flag fetch to settle without a banner.
-    await new Promise((r) => setTimeout(r, 50));
-    expect(screen.queryByTestId('issue-credential-gate-blocked')).not.toBeInTheDocument();
+    // Wait on the actual condition rather than a timer — flag/gate state must
+    // settle before the banner check is meaningful, but the settle time can
+    // vary on CI.
+    await waitFor(() => {
+      expect(screen.queryByTestId('issue-credential-gate-blocked')).not.toBeInTheDocument();
+    });
   });
 
   it('renders the gate-blocked banner when split flag is on and the org is UNVERIFIED', async () => {

@@ -49,6 +49,8 @@ describe('resolveIssueGate (SCRUM-1755 ORG-08)', () => {
       orgLoading: false,
       parent: undefined,
       parentLoading: false,
+      orgError: false,
+      parentError: false,
     });
     expect(r.allowed).toBe(true);
   });
@@ -62,6 +64,8 @@ describe('resolveIssueGate (SCRUM-1755 ORG-08)', () => {
       orgLoading: false,
       parent: verifiedParent,
       parentLoading: false,
+      orgError: false,
+      parentError: false,
     });
     expect(r.allowed).toBe(true);
   });
@@ -75,6 +79,8 @@ describe('resolveIssueGate (SCRUM-1755 ORG-08)', () => {
       orgLoading: false,
       parent: undefined,
       parentLoading: false,
+      orgError: false,
+      parentError: false,
     })).toMatchObject({ allowed: false, loading: true, reason: 'loading' });
 
     expect(resolveIssueGate({
@@ -85,6 +91,8 @@ describe('resolveIssueGate (SCRUM-1755 ORG-08)', () => {
       orgLoading: true,
       parent: undefined,
       parentLoading: false,
+      orgError: false,
+      parentError: false,
     })).toMatchObject({ allowed: false, loading: true, reason: 'loading' });
   });
 
@@ -97,6 +105,8 @@ describe('resolveIssueGate (SCRUM-1755 ORG-08)', () => {
       orgLoading: false,
       parent: undefined,
       parentLoading: false,
+      orgError: false,
+      parentError: false,
     });
     expect(r).toMatchObject({ allowed: false, reason: 'not_admin' });
   });
@@ -110,6 +120,8 @@ describe('resolveIssueGate (SCRUM-1755 ORG-08)', () => {
       orgLoading: false,
       parent: undefined,
       parentLoading: false,
+      orgError: false,
+      parentError: false,
     });
     expect(r).toMatchObject({ allowed: false, reason: 'no_org' });
   });
@@ -123,6 +135,8 @@ describe('resolveIssueGate (SCRUM-1755 ORG-08)', () => {
       orgLoading: false,
       parent: undefined,
       parentLoading: false,
+      orgError: false,
+      parentError: false,
     });
     expect(r).toMatchObject({ allowed: false, reason: 'org_unverified' });
   });
@@ -136,6 +150,8 @@ describe('resolveIssueGate (SCRUM-1755 ORG-08)', () => {
       orgLoading: false,
       parent: undefined,
       parentLoading: false,
+      orgError: false,
+      parentError: false,
     });
     expect(r).toMatchObject({ allowed: false, reason: 'org_unverified' });
   });
@@ -149,6 +165,8 @@ describe('resolveIssueGate (SCRUM-1755 ORG-08)', () => {
       orgLoading: false,
       parent: undefined,
       parentLoading: false,
+      orgError: false,
+      parentError: false,
     });
     expect(r).toMatchObject({ allowed: false, reason: 'org_suspended' });
   });
@@ -162,6 +180,8 @@ describe('resolveIssueGate (SCRUM-1755 ORG-08)', () => {
       orgLoading: false,
       parent: verifiedParent,
       parentLoading: false,
+      orgError: false,
+      parentError: false,
     });
     expect(r).toMatchObject({ allowed: false, reason: 'parent_unapproved' });
   });
@@ -175,6 +195,8 @@ describe('resolveIssueGate (SCRUM-1755 ORG-08)', () => {
       orgLoading: false,
       parent: verifiedParent,
       parentLoading: false,
+      orgError: false,
+      parentError: false,
     });
     expect(r).toMatchObject({ allowed: false, reason: 'parent_unapproved' });
   });
@@ -188,6 +210,8 @@ describe('resolveIssueGate (SCRUM-1755 ORG-08)', () => {
       orgLoading: false,
       parent: verifiedParent,
       parentLoading: false,
+      orgError: false,
+      parentError: false,
     });
     expect(r).toMatchObject({ allowed: false, reason: 'parent_unapproved' });
   });
@@ -201,6 +225,8 @@ describe('resolveIssueGate (SCRUM-1755 ORG-08)', () => {
       orgLoading: false,
       parent: { ...verifiedParent, verification_status: 'UNVERIFIED' },
       parentLoading: false,
+      orgError: false,
+      parentError: false,
     });
     expect(r).toMatchObject({ allowed: false, reason: 'parent_unverified' });
   });
@@ -214,6 +240,8 @@ describe('resolveIssueGate (SCRUM-1755 ORG-08)', () => {
       orgLoading: false,
       parent: { ...verifiedParent, suspended: true },
       parentLoading: false,
+      orgError: false,
+      parentError: false,
     });
     expect(r).toMatchObject({ allowed: false, reason: 'parent_suspended' });
   });
@@ -227,8 +255,40 @@ describe('resolveIssueGate (SCRUM-1755 ORG-08)', () => {
       orgLoading: false,
       parent: undefined,
       parentLoading: true,
+      orgError: false,
+      parentError: false,
     });
     expect(r).toMatchObject({ allowed: false, loading: true, reason: 'loading' });
+  });
+
+  it('returns query_error when the org fetch failed (does NOT collapse to no_org)', () => {
+    const r = resolveIssueGate({
+      profileLoading: false,
+      role: 'ORG_ADMIN',
+      orgId: ROOT_ORG_ID,
+      org: undefined, // useQuery left data undefined because the fetch errored
+      orgLoading: false,
+      orgError: true,
+      parent: undefined,
+      parentLoading: false,
+      parentError: false,
+    });
+    expect(r).toMatchObject({ allowed: false, reason: 'query_error' });
+  });
+
+  it('returns query_error when the parent fetch failed (does NOT collapse to parent_unverified)', () => {
+    const r = resolveIssueGate({
+      profileLoading: false,
+      role: 'ORG_ADMIN',
+      orgId: SUB_ORG_ID,
+      org: verifiedApprovedSub,
+      orgLoading: false,
+      orgError: false,
+      parent: undefined,
+      parentLoading: false,
+      parentError: true,
+    });
+    expect(r).toMatchObject({ allowed: false, reason: 'query_error' });
   });
 
   it('treats null/undefined `suspended` as not-suspended (legacy rows pre-0289)', () => {
@@ -240,6 +300,8 @@ describe('resolveIssueGate (SCRUM-1755 ORG-08)', () => {
       orgLoading: false,
       parent: undefined,
       parentLoading: false,
+      orgError: false,
+      parentError: false,
     });
     expect(r.allowed).toBe(true);
   });

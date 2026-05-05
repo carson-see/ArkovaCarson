@@ -525,7 +525,7 @@ export function OrgProfilePage() {
                 <Button size="sm" onClick={() => setSecureDialogOpen(true)} className="bg-[#00d4ff] text-[#0a0f14] hover:bg-[#00a3cc]">
                   <Plus className="mr-2 h-4 w-4 shrink-0" />
                   <span className="hidden sm:inline">{ORG_PAGE_LABELS.SECURE_DOCUMENT}</span>
-                  <span className="sm:hidden">Secure</span>
+                  <span className="sm:hidden">{ORG_PAGE_LABELS.SECURE_DOCUMENT_MOBILE}</span>
                 </Button>
                 {/* SCRUM-1755 — Issue Credential is a distinct, gated action. Pre-flag
                     behavior preserved for any admin (legacy). Post-flag (or while the
@@ -535,7 +535,7 @@ export function OrgProfilePage() {
                   <Button size="sm" variant="outline" onClick={() => setIssueDialogOpen(true)}>
                     <Plus className="mr-2 h-4 w-4 shrink-0" />
                     <span className="hidden sm:inline">{ORG_PAGE_LABELS.ISSUE_CREDENTIAL}</span>
-                    <span className="sm:hidden">Issue</span>
+                    <span className="sm:hidden">{ORG_PAGE_LABELS.ISSUE_CREDENTIAL_MOBILE}</span>
                   </Button>
                 )}
               </div>

@@ -145,6 +145,7 @@ export function IssueCredentialForm({
     if (!gateBlocked) return null;
     switch (issueGate.reason) {
       case 'loading':           return ISSUE_CREDENTIAL_LABELS.GATE_LOADING;
+      case 'query_error':       return ISSUE_CREDENTIAL_LABELS.GATE_QUERY_ERROR;
       case 'org_unverified':    return ISSUE_CREDENTIAL_LABELS.GATE_NOT_VERIFIED;
       case 'org_suspended':     return ISSUE_CREDENTIAL_LABELS.GATE_SUSPENDED;
       case 'parent_unapproved': return ISSUE_CREDENTIAL_LABELS.GATE_PARENT_UNAPPROVED;
