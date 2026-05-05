@@ -134,6 +134,22 @@ describe('POST /api/v1/contracts/anchor-post-signing — [Spec] auth + validatio
       expect(res.status).toBe(400);
     });
 
+    it('rejects parent containing both explicit and implicit lookup fields', async () => {
+      // CodeRabbit on PR #698: the discriminated-union design intends
+      // exactly-one. Both .strict() schemas fail on the other's fields, so
+      // the union as a whole rejects mixed payloads.
+      const body = {
+        ...validBody(),
+        parent: {
+          parent_public_id: 'ARK-2026-CAFE0123',
+          provider: 'docusign' as const,
+          external_envelope_id: 'env-12345',
+        },
+      };
+      const res = await request(app).post('/api/v1/contracts/anchor-post-signing').send(body);
+      expect(res.status).toBe(400);
+    });
+
     it('rejects malformed parent_public_id', async () => {
       const body = { ...validBody(), parent: { parent_public_id: 'not-a-public-id' } };
       const res = await request(app).post('/api/v1/contracts/anchor-post-signing').send(body);
@@ -243,6 +259,16 @@ describe('POST /api/v1/contracts/anchor-post-signing — [Spec] auth + validatio
       expect(res.status).toBe(400);
     });
 
+    it('rejects non-HTTPS provider_audit_certificate_url', async () => {
+      // CodeRabbit on PR #698: signed-audit references must use TLS so a
+      // network attacker cannot tamper with the certificate in transit.
+      const body = validBody();
+      (body.validation_report as Record<string, unknown>).provider_audit_certificate_url =
+        'http://example.com/cert.pem';
+      const res = await request(app).post('/api/v1/contracts/anchor-post-signing').send(body);
+      expect(res.status).toBe(400);
+    });
+
     it('accepts provider_audit_certificate_url omitted (optional)', async () => {
       const res = await request(app).post('/api/v1/contracts/anchor-post-signing').send(validBody());
       expect(res.status).toBe(501);
@@ -304,6 +330,16 @@ describe('POST /api/v1/contracts/anchor-post-signing — [Spec] auth + validatio
     it('rejects email field in signer entry (PII guard)', async () => {
       const body = validBody();
       (body.validation_report.signers[0] as Record<string, unknown>).email = 'a@example.com';
+      const res = await request(app).post('/api/v1/contracts/anchor-post-signing').send(body);
+      expect(res.status).toBe(400);
+    });
+
+    it('rejects email-shaped value in signer label (PII guard)', async () => {
+      // CodeRabbit on PR #698: the doc says "an opaque label (NEVER an
+      // email)" but length-only validation let an email-shaped string pass.
+      // Schema now refines label to refuse email-shape.
+      const body = validBody();
+      (body.validation_report.signers[0] as Record<string, unknown>).label = 'a@example.com';
       const res = await request(app).post('/api/v1/contracts/anchor-post-signing').send(body);
       expect(res.status).toBe(400);
     });

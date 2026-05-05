@@ -100,7 +100,16 @@ const router = Router();
 // (NOT IP — IP would be PII at the precision level §1.6 forbids).
 const SignerAuditSchema = z
   .object({
-    label: z.string().min(1).max(120),
+    // The doc above this schema says "an opaque label (NEVER an email)" — enforce
+    // it. CodeRabbit on PR #698: a label that LOOKS like an email round-trips
+    // PII through the audit trail just as effectively as a literal `email` field.
+    label: z
+      .string()
+      .min(1)
+      .max(120)
+      .refine((v) => !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v), {
+        message: 'label must not be an email address (PII guard per §1.6)',
+      }),
     signed_at: z.string().datetime({ offset: true }),
     signing_method: z.enum(['email', 'sso', 'id_verification', 'click_to_sign', 'other']),
     country_iso2: z
@@ -124,7 +133,16 @@ const ValidationReportSchema = z
       .string()
       .regex(/^[a-fA-F0-9]{64}$/, 'must be a 64-character hex SHA-256 hash')
       .transform((s) => s.toLowerCase()),
-    provider_audit_certificate_url: z.string().url().max(500).optional(),
+    // CodeRabbit on PR #698: enforce https-only at the schema layer so an
+    // attacker can't smuggle a plain-http reference into a signed audit trail.
+    provider_audit_certificate_url: z
+      .string()
+      .url()
+      .max(500)
+      .refine((u) => u.startsWith('https://'), {
+        message: 'provider_audit_certificate_url must use https://',
+      })
+      .optional(),
   })
   .strict();
 
