@@ -577,7 +577,7 @@ jobs:
           SUPABASE_SERVICE_ROLE_KEY: ${{ steps.supabase-keys.outputs.service_role_key }}
           RLS_TEST_PASSWORD: Arkova2026!
 
-      - name: Run worker tests with coverage
+      - name: Install worker dependencies
         working-directory: services/worker
         run: |
           for attempt in 1 2 3; do
@@ -595,7 +595,48 @@ jobs:
             npm cache verify || true
             sleep $((attempt * 15))
           done
-          npm run test:coverage
+
+      # Cache the compiled zk circuit artifacts (~30 MB) keyed on circuit
+      # source + circomlib version + build script. Cache hit skips the
+      # ~30s circom compile + plonk setup; cache miss rebuilds from source.
+      - name: Cache zk circuit artifacts
+        id: cache-zk-artifacts
+        uses: actions/cache@v4
+        with:
+          path: services/worker/circuits/artifacts
+          key: zk-artifacts-${{ runner.os }}-circom2.1.9-${{ hashFiles('services/worker/circuits/extraction-proof.circom', 'services/worker/circuits/build.sh', 'services/worker/package-lock.json') }}
+
+      - name: Install circom (cache miss only)
+        if: steps.cache-zk-artifacts.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          CIRCOM_VERSION=v2.1.9
+          mkdir -p "$HOME/.local/bin"
+          curl -fsSL --retry 5 -o "$HOME/.local/bin/circom" \
+            "https://github.com/iden3/circom/releases/download/${CIRCOM_VERSION}/circom-linux-amd64"
+          # Pin the binary by SHA-256 — supply chain integrity for the toolchain.
+          echo "e5575829252d763b7818049df9de2ef9304df834697de77fa63ce7babc23c967  $HOME/.local/bin/circom" | sha256sum -c -
+          chmod +x "$HOME/.local/bin/circom"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Build zk circuit artifacts (cache miss only)
+        if: steps.cache-zk-artifacts.outputs.cache-hit != 'true'
+        working-directory: services/worker
+        run: npm run build:circuit
+
+      - name: Verify zk circuit artifacts present
+        # Belt-and-braces: fail the job loudly if the cache step succeeded
+        # but the artifacts somehow aren't on disk. Without this, the
+        # zk-proof integration tests would error at module load (which is
+        # also fine — but earlier failure = clearer signal).
+        run: |
+          ls -lh services/worker/circuits/artifacts/extraction-proof_js/extraction-proof.wasm
+          ls -lh services/worker/circuits/artifacts/extraction-proof_final.zkey
+          ls -lh services/worker/circuits/artifacts/verification_key.json
+
+      - name: Run worker tests with coverage
+        working-directory: services/worker
+        run: npm run test:coverage
 
   # AI eval regression gate (GAP-1) — catches prompt quality regressions before deploy
   ai-eval-gate:
