@@ -59,6 +59,10 @@ interface IntegrationRow {
   org_id: string;
 }
 
+interface SubscriptionRow {
+  org_id: string;
+}
+
 interface GraphChangeItem {
   subscriptionId: string;
   clientState?: string;
@@ -92,33 +96,48 @@ interface IntegrationLookup {
 async function findIntegrationBySubscription(
   subscriptionId: string,
 ): Promise<IntegrationLookup> {
+  // connector_subscriptions intentionally stores the subscription's org_id,
+  // not an org_integrations FK. Resolve in two schema-accurate steps so the
+  // handler does not query a nonexistent integration_id column at runtime.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data, error } = await (db as any)
+  const { data: subData, error: subError } = await (db as any)
     .from('connector_subscriptions')
-    .select('integration_id, org_integrations:integration_id ( id, org_id )')
+    .select('org_id')
     .eq('provider', 'microsoft_graph')
     .eq('vendor_subscription_id', subscriptionId)
-    // CodeRabbit ASSERTIVE on PR #695: connector_subscriptions has NO
-    // `revoked_at` column (verified against migration 0260). Liveness is
-    // tracked via `status` text with values 'active' | 'degraded' | 'revoked'.
-    // The previous .is('revoked_at', null) filter would error at runtime on
-    // every webhook delivery once ENABLE_MICROSOFT_GRAPH_WEBHOOK flipped on.
-    // Replace with a status filter that excludes revoked subscriptions.
     .neq('status', 'revoked')
     .maybeSingle();
-  if (error) {
+  if (subError) {
     // CodeRabbit ASSERTIVE on PR #695: distinguish "not found" (legitimately
     // unknown subscription) from "lookup failed" (transient DB outage). The
     // previous behavior collapsed both to `null`, which the caller then
     // treated as `unknown_subscription` + 202 ack. Graph stops retrying on
     // 2xx, so a DB blip silently dropped notifications.
-    logger.error({ error, subscriptionId }, 'MS Graph webhook: integration lookup failed');
+    logger.error({ error: subError, subscriptionId }, 'MS Graph webhook: subscription lookup failed');
     return { row: null, lookupFailed: true };
   }
-  const row = data as { org_integrations?: { id: string; org_id: string } } | null;
-  if (!row?.org_integrations) return { row: null, lookupFailed: false };
+  const subscription = subData as SubscriptionRow | null;
+  if (!subscription?.org_id) return { row: null, lookupFailed: false };
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data: integrationData, error: integrationError } = await (db as any)
+    .from('org_integrations')
+    .select('id, org_id')
+    .eq('org_id', subscription.org_id)
+    .eq('provider', 'microsoft_graph')
+    .is('revoked_at', null)
+    .maybeSingle();
+  if (integrationError) {
+    logger.error(
+      { error: integrationError, subscriptionId, orgId: subscription.org_id },
+      'MS Graph webhook: integration lookup failed',
+    );
+    return { row: null, lookupFailed: true };
+  }
+  const integration = integrationData as IntegrationRow | null;
+  if (!integration) return { row: null, lookupFailed: false };
   return {
-    row: { id: row.org_integrations.id, org_id: row.org_integrations.org_id },
+    row: { id: integration.id, org_id: integration.org_id },
     lookupFailed: false,
   };
 }

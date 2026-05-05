@@ -38,6 +38,10 @@
  *   STAGING_API_BASE       default https://arkova-worker-staging-kvojbeutfa-uc.a.run.app
  *   STAGING_CRON_SECRET    optional; without it, cron mode returns 401
  *   STAGING_API_KEY        optional; without it, anchor/reads return 401
+ *   STAGING_WEBHOOK_PROVIDERS optional comma-list (drive,docusign,adobe-sign,
+ *                       checkr,microsoft-graph) to focus webhook pressure
+ *   STAGING_MS_GRAPH_CLIENT_STATE optional; must match worker env for 202s
+ *   STAGING_MS_GRAPH_SUBSCRIPTION_ID optional; use a seeded active subscription
  *   STAGING_GCP_IDENTITY   optional pre-fetched IAM token (skip gcloud)
  *
  * Usage:
@@ -293,6 +297,7 @@ const WEBHOOK_PROVIDERS = [
   { provider: 'docusign',    path: '/webhooks/docusign' },
   { provider: 'adobe-sign',  path: '/webhooks/adobe-sign' },
   { provider: 'checkr',      path: '/webhooks/checkr' },
+  { provider: 'microsoft-graph', path: '/webhooks/microsoft-graph' },
 ] as const;
 
 function fakeWebhookBody(provider: string): string {
@@ -316,6 +321,19 @@ function fakeWebhookBody(provider: string): string {
       return JSON.stringify({
         type: 'report.completed',
         data: { object: { id: `stg-rpt-${id}`, status: 'clear' } },
+      });
+    case 'microsoft-graph':
+      return JSON.stringify({
+        value: [
+          {
+            subscriptionId: process.env.STAGING_MS_GRAPH_SUBSCRIPTION_ID ?? `stg-sub-${randomBytes(6).toString('hex')}`,
+            clientState: process.env.STAGING_MS_GRAPH_CLIENT_STATE ?? 'staging-msgraph-client-state',
+            resource: `sites/staging/drive/items/stg-file-${id}`,
+            resourceData: { id: `stg-file-${id}`, name: 'synthetic-msgraph.docx' },
+            changeType: 'updated',
+            tenantId: '00000000-0000-0000-0000-000000000000',
+          },
+        ],
       });
     default:
       return '{}';
@@ -346,11 +364,24 @@ function fakeWebhookHeaders(provider: string, body: string): HeadersInit {
   return headers;
 }
 
+type WebhookProvider = (typeof WEBHOOK_PROVIDERS)[number];
+
+function selectedWebhookProviders(): ReadonlyArray<WebhookProvider> {
+  const raw = process.env.STAGING_WEBHOOK_PROVIDERS;
+  if (!raw) return WEBHOOK_PROVIDERS;
+  const requested = new Set(raw.split(',').map((p) => p.trim()).filter(Boolean));
+  const selected = WEBHOOK_PROVIDERS.filter((p) => requested.has(p.provider));
+  if (selected.length > 0) return selected;
+  console.error(`::error::STAGING_WEBHOOK_PROVIDERS did not match any known providers: ${raw}`);
+  process.exit(1);
+}
+
 async function runWebhooksMode(opts: ModeOpts, ratePerMin: number): Promise<void> {
   const intervalMs = 60_000 / Math.max(ratePerMin, 1);
   let i = 0;
+  const providers = selectedWebhookProviders();
   while (Date.now() < opts.endAt) {
-    const target = WEBHOOK_PROVIDERS[i % WEBHOOK_PROVIDERS.length];
+    const target = providers[i % providers.length];
     const body = fakeWebhookBody(target.provider);
     void fire(opts.stats, 'webhook', target.path, {
       method: 'POST',

@@ -4,6 +4,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Request, Response } from 'express';
 
+const subscriptionLookup = vi.fn();
 const integrationLookup = vi.fn();
 const nonceInsert = vi.fn(); // legacy guard: should not be called after migration 0291
 const enqueueRpc = vi.fn();
@@ -21,16 +22,23 @@ vi.mock('../../../utils/logger.js', () => ({
 
 vi.mock('../../../utils/db.js', () => {
   // Mirrors findIntegrationBySubscription's PostgREST chain after the
-  // PR #695 fix: connector_subscriptions has no `revoked_at` column;
-  // liveness is the `status` text field, so the chain ends with `.neq('status',
-  // 'revoked').maybeSingle()`. Pre-fix this was `.is('revoked_at', null)` —
-  // would have errored at runtime in prod the moment ENABLE_MICROSOFT_GRAPH_WEBHOOK
-  // flipped on. CodeRabbit ASSERTIVE on PR #695.
+  // PR #695 fix: connector_subscriptions has no `revoked_at` column and no
+  // `integration_id` FK. Resolve the subscription's org_id first, then look up
+  // the active org_integrations row for that org/provider.
   const subscriptionsChain = {
     select: () => ({
       eq: () => ({
         eq: () => ({
-          neq: () => ({ maybeSingle: () => integrationLookup() }),
+          neq: () => ({ maybeSingle: () => subscriptionLookup() }),
+        }),
+      }),
+    }),
+  };
+  const integrationsChain = {
+    select: () => ({
+      eq: () => ({
+        eq: () => ({
+          is: () => ({ maybeSingle: () => integrationLookup() }),
         }),
       }),
     }),
@@ -42,6 +50,7 @@ vi.mock('../../../utils/db.js', () => {
     db: {
       from: (table: string) => {
         if (table === 'connector_subscriptions') return subscriptionsChain;
+        if (table === 'org_integrations') return integrationsChain;
         if (table === 'microsoft_graph_webhook_nonces') return noncesChain;
         throw new Error(`unexpected table ${table}`);
       },
@@ -122,8 +131,12 @@ async function callRouter(req: Request, res: Response): Promise<void> {
 beforeEach(() => {
   vi.clearAllMocks();
   mockConfig.microsoftGraphClientState = CLIENT_STATE;
+  subscriptionLookup.mockResolvedValue({
+    data: { org_id: ORG_ID },
+    error: null,
+  });
   integrationLookup.mockResolvedValue({
-    data: { org_integrations: { id: INTEGRATION_ID, org_id: ORG_ID } },
+    data: { id: INTEGRATION_ID, org_id: ORG_ID },
     error: null,
   });
   nonceInsert.mockResolvedValue({ error: null });
@@ -244,9 +257,9 @@ describe('microsoft-graph webhook (SCRUM-1138 R2 closeout)', () => {
   });
 
   it('skips items for unknown subscriptions without affecting valid ones in the same batch', async () => {
-    integrationLookup
+    subscriptionLookup
       .mockResolvedValueOnce({ data: null, error: null }) // unknown sub
-      .mockResolvedValueOnce({ data: { org_integrations: { id: INTEGRATION_ID, org_id: ORG_ID } }, error: null });
+      .mockResolvedValueOnce({ data: { org_id: ORG_ID }, error: null });
     const ctx = buildRes();
     const req = buildGraphReq([
       buildGraphChangeItem({ subscriptionId: 'unknown-sub' }),
@@ -260,13 +273,13 @@ describe('microsoft-graph webhook (SCRUM-1138 R2 closeout)', () => {
     expect(enqueueRpc).toHaveBeenCalledTimes(1);
   });
 
-  it('returns 503 when integration lookup fails transiently and nothing was enqueued', async () => {
+  it('returns 503 when subscription lookup fails transiently and nothing was enqueued', async () => {
     // CodeRabbit ASSERTIVE on PR #695: a connector_subscriptions DB outage
     // must NOT be ack'd as `unknown_subscription` + 202. Graph stops retrying
     // on 2xx, so silent drop. New behavior: lookupFailed is tracked; if it
     // fired and zero items enqueued, surface 503 so Graph retries the batch.
     // The nonce dedupe table protects against double-delivery on retry.
-    integrationLookup.mockResolvedValue({
+    subscriptionLookup.mockResolvedValue({
       data: null,
       error: { message: 'pg connection refused', code: 'ECONNREFUSED' },
     });
@@ -280,9 +293,9 @@ describe('microsoft-graph webhook (SCRUM-1138 R2 closeout)', () => {
   });
 
   it('partial lookup failure: still 202 when at least one item enqueued (lookup-failed item just skipped)', async () => {
-    integrationLookup
+    subscriptionLookup
       .mockResolvedValueOnce({ data: null, error: { message: 'transient' } })
-      .mockResolvedValueOnce({ data: { org_integrations: { id: INTEGRATION_ID, org_id: ORG_ID } }, error: null });
+      .mockResolvedValueOnce({ data: { org_id: ORG_ID }, error: null });
     const ctx = buildRes();
     const req = buildGraphReq([
       buildGraphChangeItem({ subscriptionId: 'will-fail-lookup' }),
@@ -371,7 +384,7 @@ describe('microsoft-graph webhook (SCRUM-1138 R2 closeout)', () => {
     // nonce table and got dropped as `duplicate`. After 0291 the PK includes
     // payload_hash, so two updates with different bodies both succeed.
     integrationLookup.mockResolvedValue({
-      data: { org_integrations: { id: INTEGRATION_ID, org_id: ORG_ID } },
+      data: { id: INTEGRATION_ID, org_id: ORG_ID },
       error: null,
     });
     enqueueRpc
