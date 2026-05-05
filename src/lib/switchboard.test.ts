@@ -73,6 +73,15 @@ describe('switchboard feature flags', () => {
       mockRpc.mockRejectedValue(new Error('network'));
       await expect(isIssueCredentialSplitEnabled()).rejects.toThrow('network');
     });
+
+    it('reuses a fresh cached value instead of re-hitting RPC', async () => {
+      mockRpc.mockResolvedValueOnce({ data: true, error: null });
+
+      await expect(isIssueCredentialSplitEnabled()).resolves.toBe(true);
+      await expect(isIssueCredentialSplitEnabled()).resolves.toBe(true);
+
+      expect(mockRpc).toHaveBeenCalledTimes(1);
+    });
   });
 
   describe('getAllFlags', () => {

@@ -9,7 +9,32 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { resolveIssueGate, type OrgGateRow, type ResolveIssueGateInput } from './useCanIssueCredential';
+import { renderHook } from '@testing-library/react';
+import { beforeEach, vi } from 'vitest';
+
+const mockUseProfile = vi.hoisted(() => vi.fn());
+const mockUseQuery = vi.hoisted(() => vi.fn());
+
+vi.mock('@/hooks/useProfile', () => ({
+  useProfile: mockUseProfile,
+}));
+
+vi.mock('@tanstack/react-query', () => ({
+  useQuery: mockUseQuery,
+}));
+
+vi.mock('@/lib/queryClient', () => ({
+  queryKeys: {
+    organization: (id: string) => ['organization', id],
+  },
+}));
+
+import {
+  resolveIssueGate,
+  useCanIssueCredential,
+  type OrgGateRow,
+  type ResolveIssueGateInput,
+} from './useCanIssueCredential';
 
 const ROOT_ORG_ID = '11111111-1111-4111-8111-111111111111';
 const SUB_ORG_ID = '22222222-2222-4222-8222-222222222222';
@@ -65,6 +90,23 @@ function rootGate(overrides: Partial<ResolveIssueGateInput> = {}) {
 function subGate(overrides: Partial<ResolveIssueGateInput> = {}) {
   return resolveIssueGate({ ...subGateInput, ...overrides });
 }
+
+function mockQueryResults(org: OrgGateRow | null | undefined = undefined) {
+  mockUseQuery.mockImplementation(({ enabled }: { enabled?: boolean }) => ({
+    data: enabled ? org : undefined,
+    isLoading: false,
+    isError: false,
+  }));
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  mockUseProfile.mockReturnValue({
+    profile: { org_id: ROOT_ORG_ID, role: 'ORG_ADMIN' },
+    loading: false,
+  });
+  mockQueryResults(verifiedRoot);
+});
 
 describe('resolveIssueGate (SCRUM-1755 ORG-08)', () => {
   it('allows verified root-org admin to issue credentials', () => {
@@ -143,5 +185,41 @@ describe('resolveIssueGate (SCRUM-1755 ORG-08)', () => {
 
   it('treats null/undefined `suspended` as not-suspended (legacy rows pre-0289)', () => {
     expect(rootGate({ org: { ...verifiedRoot, suspended: null } }).allowed).toBe(true);
+  });
+});
+
+describe('useCanIssueCredential wrapper (SCRUM-1755 viewed-org overrides)', () => {
+  it('honors an explicit null role override instead of falling back to profile.role', () => {
+    const { result } = renderHook(() => useCanIssueCredential({
+      orgId: ROOT_ORG_ID,
+      role: null,
+      profileLoading: false,
+    }));
+
+    expect(result.current).toMatchObject({ allowed: false, loading: false, reason: 'not_admin' });
+    expect(mockUseQuery).toHaveBeenCalledWith(expect.objectContaining({ enabled: false }));
+  });
+
+  it('does not wait on profile loading when orgId and role overrides are already resolved', () => {
+    mockUseProfile.mockReturnValue({ profile: null, loading: true });
+    mockQueryResults(verifiedRoot);
+
+    const { result } = renderHook(() => useCanIssueCredential({
+      orgId: ROOT_ORG_ID,
+      role: 'ORG_ADMIN',
+      profileLoading: false,
+    }));
+
+    expect(result.current).toEqual({ allowed: true, loading: false, reason: null });
+    expect(mockUseQuery).toHaveBeenCalledWith(expect.objectContaining({ enabled: true }));
+  });
+
+  it('keeps waiting on profile loading when callers do not provide overrides', () => {
+    mockUseProfile.mockReturnValue({ profile: null, loading: true });
+
+    const { result } = renderHook(() => useCanIssueCredential());
+
+    expect(result.current).toMatchObject({ allowed: false, loading: true, reason: 'loading' });
+    expect(mockUseQuery).toHaveBeenCalledWith(expect.objectContaining({ enabled: false }));
   });
 });

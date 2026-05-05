@@ -96,6 +96,11 @@ async function fetchFlagFromRpc(flagId: FlagId): Promise<boolean> {
  * defaulting behavior in `getFlag`.
  */
 export async function getFlagStrict(flagId: FlagId): Promise<boolean> {
+  const cached = _flagCache.get(flagId);
+  if (cached && Date.now() < cached.expires) {
+    return cached.value;
+  }
+
   const val = await fetchFlagFromRpc(flagId);
   _flagErrorLogged.delete(flagId);
   _flagCache.set(flagId, { value: val, expires: Date.now() + FLAG_CACHE_TTL_MS });
