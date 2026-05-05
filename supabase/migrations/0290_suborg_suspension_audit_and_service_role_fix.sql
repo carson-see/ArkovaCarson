@@ -25,8 +25,7 @@
 --    the `GRANT EXECUTE ... TO service_role` statements at the bottom of
 --    0289 dead code. This migration adds a `v_is_service` check that
 --    bypasses both the auth.uid gate and the parent-admin role check
---    when the caller is service_role / postgres or the JWT role claim
---    is service_role.
+--    when the caller's JWT role claim is service_role.
 --
 -- This migration was applied to prod on 2026-05-04 via Supabase MCP
 -- before the file landed in the repo, due to PR #689 being squash-merged
@@ -109,21 +108,17 @@ BEGIN
 
   -- Audit row using the canonical audit_events schema (matches migration
   -- 0278's allocate_credits_to_sub_org pattern).
-  BEGIN
-    INSERT INTO audit_events (
-      event_type, event_category, actor_id, target_type, target_id, org_id, details
-    ) VALUES (
-      'org.suborg.suspended', 'ORG', v_caller, 'organization', p_sub_org_id::text, p_parent_org_id,
-      json_build_object(
-        'parent_org_id', p_parent_org_id,
-        'sub_org_id',    p_sub_org_id,
-        'reason',        p_reason,
-        'at',            now()
-      )::text
-    );
-  EXCEPTION WHEN OTHERS THEN
-    RAISE NOTICE 'suspend_suborg: audit_events insert failed: %', SQLERRM;
-  END;
+  INSERT INTO audit_events (
+    event_type, event_category, actor_id, target_type, target_id, org_id, details
+  ) VALUES (
+    'org.suborg.suspended', 'ORG', v_caller, 'organization', p_sub_org_id::text, p_parent_org_id,
+    json_build_object(
+      'parent_org_id', p_parent_org_id,
+      'sub_org_id',    p_sub_org_id,
+      'reason',        p_reason,
+      'at',            now()
+    )::text
+  );
 
   RETURN jsonb_build_object(
     'success',         true,
@@ -193,20 +188,16 @@ BEGIN
         suspended_reason = null
     WHERE id = p_sub_org_id;
 
-  BEGIN
-    INSERT INTO audit_events (
-      event_type, event_category, actor_id, target_type, target_id, org_id, details
-    ) VALUES (
-      'org.suborg.unsuspended', 'ORG', v_caller, 'organization', p_sub_org_id::text, p_parent_org_id,
-      json_build_object(
-        'parent_org_id', p_parent_org_id,
-        'sub_org_id',    p_sub_org_id,
-        'at',            now()
-      )::text
-    );
-  EXCEPTION WHEN OTHERS THEN
-    RAISE NOTICE 'unsuspend_suborg: audit_events insert failed: %', SQLERRM;
-  END;
+  INSERT INTO audit_events (
+    event_type, event_category, actor_id, target_type, target_id, org_id, details
+  ) VALUES (
+    'org.suborg.unsuspended', 'ORG', v_caller, 'organization', p_sub_org_id::text, p_parent_org_id,
+    json_build_object(
+      'parent_org_id', p_parent_org_id,
+      'sub_org_id',    p_sub_org_id,
+      'at',            now()
+    )::text
+  );
 
   RETURN jsonb_build_object('success', true, 'sub_org_id', p_sub_org_id, 'unsuspended_at', now());
 END;

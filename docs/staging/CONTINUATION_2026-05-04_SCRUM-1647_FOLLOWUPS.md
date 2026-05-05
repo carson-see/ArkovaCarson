@@ -4,7 +4,7 @@ Copy the block below into the next session verbatim. It is self-contained.
 
 ---
 
-```
+```text
 You are picking up SCRUM-1647 carryover follow-ups + a staging-rig 0055b
 hotfix. Read CLAUDE.md, HANDOFF.md (the top "Now" entry titled "2026-05-04
 (afternoon) — SCRUM-1647 carryover follow-ups"), and any agents.md in
@@ -169,9 +169,11 @@ CONSTRAINTS
 
 **Reference context that may help (read for understanding, do not paste):**
 
-* PR #697 — https://github.com/carson-see/ArkovaCarson/pull/697
-* PR #696 (in flight, parallel) — https://github.com/carson-see/ArkovaCarson/pull/696
-* PR #693 (zk-proof, blocked on rig) — https://github.com/carson-see/ArkovaCarson/pull/693
-* PR #692 (rig scaffolding) — https://github.com/carson-see/ArkovaCarson/pull/692
-* PR #691 (0055b that didn't survive) — https://github.com/carson-see/ArkovaCarson/pull/691
-* SCRUM-1647 epic — https://arkova.atlassian.net/browse/SCRUM-1647
+* [PR #697](https://github.com/carson-see/ArkovaCarson/pull/697)
+* [PR #696](https://github.com/carson-see/ArkovaCarson/pull/696) (in flight, parallel)
+* [PR #693](https://github.com/carson-see/ArkovaCarson/pull/693)
+  (zk-proof, blocked on rig)
+* [PR #692](https://github.com/carson-see/ArkovaCarson/pull/692) (rig scaffolding)
+* [PR #691](https://github.com/carson-see/ArkovaCarson/pull/691)
+  (0055b that didn't survive)
+* [SCRUM-1647 epic](https://arkova.atlassian.net/browse/SCRUM-1647)

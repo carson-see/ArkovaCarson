@@ -407,11 +407,15 @@ describe('processDriveChanges (SCRUM-1650 GD-03..07)', () => {
       deps: { listChanges: listMock },
     });
 
-    // Hit the cap, advanced past the starting token.
+    let expectedToken = 'token-1';
+    for (let i = 0; i < 25; i += 1) {
+      expectedToken = `token-after-${expectedToken}`;
+    }
+
+    // Hit the cap and persist the exact token for the next unread page.
     expect(result.pagesProcessed).toBe(25);
-    expect(db.advancedPageTokens.length).toBe(1);
-    expect(db.advancedPageTokens[0]).not.toBe('token-1');
-    expect(result.newPageToken).toBe(db.advancedPageTokens[0]);
+    expect(db.advancedPageTokens).toEqual([expectedToken]);
+    expect(result.newPageToken).toBe(expectedToken);
   });
 
   it('SCRUM-1647 follow-up (telemetry hygiene): parentMismatch counter excludes unrelated_change rows', async () => {
