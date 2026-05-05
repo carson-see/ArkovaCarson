@@ -50,6 +50,86 @@ ${fingerprint},test.pdf,user@example.com`;
     expect(validation.valid).toHaveLength(1);
   });
 
+  it('should parse an initial CSV file exactly once', async () => {
+    const mockOnInitialFileConsumed = vi.fn();
+    const fingerprint = 'b'.repeat(64);
+    const file = new File(
+      [`fingerprint,filename\n${fingerprint},initial.pdf`],
+      'initial.csv',
+      { type: 'text/csv' }
+    );
+
+    const { rerender } = render(
+      <CsvUploader
+        onParsed={mockOnParsed}
+        initialFile={file}
+        onInitialFileConsumed={mockOnInitialFileConsumed}
+      />
+    );
+
+    await waitFor(() => {
+      expect(mockOnParsed).toHaveBeenCalledTimes(1);
+    });
+    await waitFor(() => {
+      expect(mockOnInitialFileConsumed).toHaveBeenCalledTimes(1);
+    });
+
+    rerender(
+      <CsvUploader
+        onParsed={mockOnParsed}
+        initialFile={file}
+        onInitialFileConsumed={mockOnInitialFileConsumed}
+      />
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(mockOnParsed).toHaveBeenCalledTimes(1);
+  });
+
+  it('can process the same initial CSV file after the parent clears it', async () => {
+    const mockOnInitialFileConsumed = vi.fn();
+    const fingerprint = 'c'.repeat(64);
+    const file = new File(
+      [`fingerprint,filename\n${fingerprint},retry.pdf`],
+      'retry.csv',
+      { type: 'text/csv' }
+    );
+
+    const { rerender } = render(
+      <CsvUploader
+        onParsed={mockOnParsed}
+        initialFile={file}
+        onInitialFileConsumed={mockOnInitialFileConsumed}
+      />
+    );
+
+    await waitFor(() => {
+      expect(mockOnParsed).toHaveBeenCalledTimes(1);
+    });
+
+    rerender(
+      <CsvUploader
+        onParsed={mockOnParsed}
+        initialFile={null}
+        onInitialFileConsumed={mockOnInitialFileConsumed}
+      />
+    );
+    rerender(
+      <CsvUploader
+        onParsed={mockOnParsed}
+        initialFile={file}
+        onInitialFileConsumed={mockOnInitialFileConsumed}
+      />
+    );
+
+    await waitFor(() => {
+      expect(mockOnParsed).toHaveBeenCalledTimes(2);
+    });
+    await waitFor(() => {
+      expect(mockOnInitialFileConsumed).toHaveBeenCalledTimes(2);
+    });
+  });
+
   it('should detect invalid emails during validation', async () => {
     render(<CsvUploader onParsed={mockOnParsed} />);
 

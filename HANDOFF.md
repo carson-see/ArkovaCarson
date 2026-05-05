@@ -14,6 +14,24 @@
 
 ## Now
 
+### 2026-05-05 — SCRUM-1672 / PR #712 Secure Document vs Issue Credential split (branch `claude/secure-document-issue-credential-split`)
+
+PR #712 is open and **not merged**. No prod state changed. Code-only by design: the new `proof_url` value stays in `anchors.metadata.proof_url`; no migration or `anchors.proof_url` column in this PR.
+
+**Why this branch exists.** Carson reported that an org admin clicking a button labelled "Secure Document" could land in the restricted credential issuance flow. The root causes were the legacy `ISSUE_CREDENTIAL_LABELS = SECURE_DOCUMENT_LABELS` alias, `ORG_PAGE_LABELS.ISSUE_CREDENTIAL` rendering as "Secure Document", and Dashboard empty-state role branching that opened `IssueCredentialForm` under a Secure Document label. The branch also removes the visible bulk/single chooser because `FileUpload` already auto-detects multi-file and CSV/XLSX inputs inside `SecureDocumentDialog`.
+
+**Current branch scope:** distinct `ISSUE_CREDENTIAL_LABELS`, `ENABLE_ISSUE_CREDENTIAL_SPLIT`, `useIssueCredentialSplit`, `useCanIssueCredential`, Dashboard/OrgProfile CTA rewiring, stable `SecureDocumentDialog` title, optional Public Proof URL on `IssueCredentialForm`, Secure Document bulk spreadsheet handoff into `BulkUploadWizard`, verified-profile tooltip-provider hardening, pending-child parent-query noise cleanup, and agent/HANDOFF notes.
+
+**Jira/Confluence state:** exact `SCRUM-1755` is not present in the connected Jira project. Created and now using [SCRUM-1672](https://arkova.atlassian.net/browse/SCRUM-1672) as the source-of-truth story with subtasks SCRUM-1673/SCRUM-1674/SCRUM-1675 and Confluence page <https://arkova.atlassian.net/wiki/spaces/A/pages/37584929>. Conflict ledger is recorded there and linked/commented against SCRUM-1092, SCRUM-1039, SCRUM-1047, SCRUM-1125, and SCRUM-500: the old global "Issue Credential" rename still applies to the universal action, but PR #712 creates the narrow restricted-flow exception.
+
+**Current engineering state:** latest pushed evidence commit is `b23ffec4` (`fix(SCRUM-1672): harden secure split staging findings`); this merge-resolution commit is reconciling `origin/main` before the next push. CodeRabbit latest status on `b23ffec4` is green; active review threads query returned no unresolved non-outdated threads, though GitHub reviewDecision still shows historical CHANGES_REQUESTED from old CodeRabbit reviews. SonarCloud Code Analysis passed on `b23ffec4`. Local checks after the staging fixes: focused Vitest 48/48, `npm run lint`, `npx tsc --noEmit -p tsconfig.json`, `npm run lint:copy`, and `git diff --check` all clean.
+
+**Staging evidence:** PR-specific isolated staging used because the standing `arkova-staging` rig remains leased by PR #695. Isolated Supabase project_ref `athyljtoctluhuppchym`; active worker `arkova-worker-pr712-staging-00003-kll` using prod-pinned image git_sha `a2ea638af0cc8751540adc560390ad13ffb597df`; post-soak `/health` healthy (database/anchoring/kms ok). Browser UAT artifact `docs/staging/pr712/20260505T190223Z-ui-uat.json`: 26 checks, 7 screenshots, 0 console/page/failed responses. T1 mixed soak `docs/staging/soak-pr-712-20260505T1904Z.json`: 2026-05-05T19:04:27.954Z to 2026-05-05T19:34:27.960Z, 4,826 requests, cron 36/36 200, no 5xx/503 classes in summary. PR body `## Staging Soak Evidence` block updated with these links and timestamps.
+
+**Open gates:** merge `origin/main`, rerun local validation on the merge-resolution head, push, then wait for GitHub Actions/branch protection on the final SHA. Do not transition SCRUM-1672 subtasks to Done until code, review, CI, staging evidence, PR body, Confluence, and Jira AC/DoD all line up.
+
+_Last refreshed: 2026-05-05 by Codex — claims verified against gcloud/MCP/CI output._
+
 ### 2026-05-05 — PR #713 deploy unblock landed; PR #716 SonarCloud main-gate guard verified
 
 PR [#713](https://github.com/carson-see/ArkovaCarson/pull/713) merged as `920ea73209a28b6e40962fae2f9f0960caaa1f6e` and the post-merge worker deploy succeeded: [Deploy Worker run 25379033971](https://github.com/carson-see/ArkovaCarson/actions/runs/25379033971). Prod `/health` reports `git_sha=920ea73209a28b6e40962fae2f9f0960caaa1f6e`; Cloud Run latest ready revision is `arkova-worker-00590-piz`.

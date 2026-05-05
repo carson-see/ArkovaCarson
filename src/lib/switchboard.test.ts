@@ -29,6 +29,7 @@ vi.mock('./supabase', () => ({
 
 import {
   getFlag,
+  isIssueCredentialSplitEnabled,
   getAllFlags,
   FLAGS,
   subscribeFlagChanges,
@@ -59,6 +60,27 @@ describe('switchboard feature flags', () => {
       mockRpc.mockRejectedValue(new Error('network'));
       const result = await getFlag('MAINTENANCE_MODE');
       expect(result).toBe(FLAGS.MAINTENANCE_MODE);
+    });
+  });
+
+  describe('isIssueCredentialSplitEnabled', () => {
+    it('rejects on lookup error so callers can fail closed', async () => {
+      mockRpc.mockResolvedValue({ data: null, error: { message: 'fail' } });
+      await expect(isIssueCredentialSplitEnabled()).rejects.toMatchObject({ message: 'fail' });
+    });
+
+    it('rejects on lookup exception so callers can fail closed', async () => {
+      mockRpc.mockRejectedValue(new Error('network'));
+      await expect(isIssueCredentialSplitEnabled()).rejects.toThrow('network');
+    });
+
+    it('reuses a fresh cached value instead of re-hitting RPC', async () => {
+      mockRpc.mockResolvedValueOnce({ data: true, error: null });
+
+      await expect(isIssueCredentialSplitEnabled()).resolves.toBe(true);
+      await expect(isIssueCredentialSplitEnabled()).resolves.toBe(true);
+
+      expect(mockRpc).toHaveBeenCalledTimes(1);
     });
   });
 
