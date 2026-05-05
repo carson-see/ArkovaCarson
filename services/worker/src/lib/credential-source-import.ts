@@ -336,7 +336,7 @@ function normalizeEvidenceDate(value: unknown): string | undefined {
   if (!cleaned) return undefined;
 
   const dateOnly = cleaned.match(DATE_ONLY_RE)?.[0];
-  if (dateOnly && isValidDateOnly(dateOnly)) return dateOnly;
+  if (dateOnly) return isValidDateOnly(dateOnly) ? dateOnly : undefined;
 
   const parsed = Date.parse(cleaned);
   if (Number.isNaN(parsed)) return undefined;

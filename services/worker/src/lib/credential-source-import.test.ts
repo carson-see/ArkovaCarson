@@ -65,7 +65,7 @@ describe('credential-source-import', () => {
       fetchFn: vi.fn().mockResolvedValue(response(JSON.stringify({
         name: 'Malformed Date Credential',
         issuer: { name: 'Example Issuer' },
-        issuedOn: '2026-13-40',
+        issuedOn: '2026-02-31',
       }), { headers: { 'content-type': 'application/json' } })),
       urlGuard: vi.fn().mockResolvedValue(false),
       now: () => FIXED_NOW,
