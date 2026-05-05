@@ -36,7 +36,7 @@ import {
 } from '@/components/ui/select';
 import { ROUTES, recordDetailPath } from '@/lib/routes';
 import { isPlatformAdmin } from '@/lib/platform';
-import { RECORDS_LIST_LABELS, ONBOARDING_GUIDANCE_LABELS, SECURE_DIALOG_LABELS, DISCLAIMER_LABELS } from '@/lib/copy';
+import { RECORDS_LIST_LABELS, ONBOARDING_GUIDANCE_LABELS, SECURE_DIALOG_LABELS, DISCLAIMER_LABELS, ISSUE_CREDENTIAL_LABELS } from '@/lib/copy';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { CreditUsageWidget } from '@/components/dashboard/CreditUsageWidget';
 import { ComplianceScoreCard } from '@/components/compliance/ComplianceScoreCard';
@@ -45,6 +45,8 @@ import { UsageWidget } from '@/components/billing/UsageWidget';
 import { CleCreditWidget } from '@/components/dashboard/CleCreditWidget';
 import { GettingStartedChecklist } from '@/components/onboarding/GettingStartedChecklist';
 import { useOrganization } from '@/hooks/useOrganization';
+import { useCanIssueCredential } from '@/hooks/useCanIssueCredential';
+import { isIssueCredentialSplitEnabled } from '@/lib/switchboard';
 import { supabase } from '@/lib/supabase';
 
 const PAGE_SIZES = [10, 25, 50] as const;
@@ -59,6 +61,16 @@ export function DashboardPage() {
   const { organization } = useOrganization(profile?.org_id);
   const [secureDialogOpen, setSecureDialogOpen] = useState(false);
   const [issueDialogOpen, setIssueDialogOpen] = useState(false);
+  // SCRUM-1755 — once enabled, Issue Credential becomes a distinct action gated
+  // on org verification + sub-org parent approval (see useCanIssueCredential).
+  // Until the flag flips on, behavior matches pre-1755 (legacy ORG_ADMIN button).
+  const [splitEnabled, setSplitEnabled] = useState(false);
+  useEffect(() => {
+    isIssueCredentialSplitEnabled().then(setSplitEnabled).catch(() => setSplitEnabled(false));
+  }, []);
+  const issueGate = useCanIssueCredential();
+  const canIssueCredential = splitEnabled && issueGate.allowed;
+  const showLegacyIssueButton = !splitEnabled && profile?.role === 'ORG_ADMIN' && !!profile.org_id;
   const [disclaimerAccepting, setDisclaimerAccepting] = useState(false);
   const [disclaimerDismissed, setDisclaimerDismissed] = useState(false);
   const [recordsExpanded, setRecordsExpanded] = useState(true);
@@ -348,10 +360,11 @@ export function DashboardPage() {
                 <Plus className="mr-2 h-4 w-4" />
                 {SECURE_DIALOG_LABELS.TITLE}
               </Button>
-              {profile?.role === 'ORG_ADMIN' && profile.org_id && (
+              {/* SCRUM-1755 — Issue Credential is its own gated action, not a relabeled Secure Document. */}
+              {(canIssueCredential || showLegacyIssueButton) && (
                 <Button onClick={() => setIssueDialogOpen(true)} variant="outline" className="font-medium text-[13px]">
                   <Plus className="mr-2 h-4 w-4" />
-                  {ONBOARDING_GUIDANCE_LABELS.EMPTY_ORG_RECORDS_CTA}
+                  {ISSUE_CREDENTIAL_LABELS.ISSUE_BUTTON}
                 </Button>
               )}
             </div>
@@ -391,6 +404,10 @@ export function DashboardPage() {
               <Separator />
               <CardContent className="pt-0">
                 {!loading && !hasRecords ? (
+                  // SCRUM-1755 — empty state always opens Secure Document. Pre-1755 the
+                  // ORG_ADMIN branch opened IssueCredentialForm under a "Secure Document"
+                  // label; that conflated the two flows. Issue Credential is now a distinct
+                  // CTA in the header (above) and on the verified-org card (below).
                   <EmptyState
                     title={profile?.role === 'ORG_ADMIN'
                       ? ONBOARDING_GUIDANCE_LABELS.EMPTY_ORG_RECORDS
@@ -398,16 +415,8 @@ export function DashboardPage() {
                     description={profile?.role === 'ORG_ADMIN'
                       ? ONBOARDING_GUIDANCE_LABELS.EMPTY_ORG_RECORDS_DESC
                       : ONBOARDING_GUIDANCE_LABELS.EMPTY_INDIVIDUAL_RECORDS_DESC}
-                    actionLabel={profile?.role === 'ORG_ADMIN'
-                      ? ONBOARDING_GUIDANCE_LABELS.EMPTY_ORG_RECORDS_CTA
-                      : ONBOARDING_GUIDANCE_LABELS.EMPTY_INDIVIDUAL_RECORDS_CTA}
-                    onAction={() => {
-                      if (profile?.role === 'ORG_ADMIN' && profile.org_id) {
-                        setIssueDialogOpen(true);
-                      } else {
-                        setSecureDialogOpen(true);
-                      }
-                    }}
+                    actionLabel={SECURE_DIALOG_LABELS.TITLE}
+                    onAction={() => setSecureDialogOpen(true)}
                   />
                 ) : !loading && isFiltering && !hasFilteredResults ? (
                   <div className="py-12 text-center">

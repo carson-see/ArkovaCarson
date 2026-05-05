@@ -41,7 +41,8 @@ import { FileUpload } from '@/components/anchor/FileUpload';
 import { AIFieldSuggestions } from '@/components/anchor/AIFieldSuggestions';
 import { MetadataFieldRenderer } from '@/components/credentials/MetadataFieldRenderer';
 import { runExtraction, type ExtractionField, type ExtractionProgress } from '@/lib/aiExtraction';
-import { isAIExtractionEnabled } from '@/lib/switchboard';
+import { isAIExtractionEnabled, isIssueCredentialSplitEnabled } from '@/lib/switchboard';
+import { useCanIssueCredential } from '@/hooks/useCanIssueCredential';
 import { supabase } from '@/lib/supabase';
 import { validateAnchorCreate, CREDENTIAL_TYPES } from '@/lib/validators';
 import { logAuditEvent } from '@/lib/auditLog';
@@ -100,6 +101,10 @@ export function IssueCredentialForm({
   const [issuedAt, setIssuedAt] = useState('');
   const [expiresAt, setExpiresAt] = useState('');
   const [recipientEmail, setRecipientEmail] = useState('');
+  // SCRUM-1755 — public proof URL (Udemy / Accredible / LinkedIn / own site).
+  // Optional; persisted into anchors.metadata.proof_url. Validated as https:// when present.
+  const [proofUrl, setProofUrl] = useState('');
+  const [proofUrlError, setProofUrlError] = useState<string | null>(null);
   const [metadataValues, setMetadataValues] = useState<Record<string, string>>({});
   const [metadataErrors, setMetadataErrors] = useState<Record<string, string>>({});
   const [creating, setCreating] = useState(false);
@@ -123,6 +128,31 @@ export function IssueCredentialForm({
     });
     return () => { cancelled = true; };
   }, []);
+
+  // SCRUM-1755 — when ENABLE_ISSUE_CREDENTIAL_SPLIT is on, only verified orgs
+  // (and APPROVED sub-orgs of verified parents) may submit. Until then we
+  // preserve pre-1755 behavior: any org admin can use the form.
+  const [splitEnabled, setSplitEnabled] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    isIssueCredentialSplitEnabled().then((enabled) => {
+      if (!cancelled) setSplitEnabled(enabled);
+    }).catch(() => { if (!cancelled) setSplitEnabled(false); });
+    return () => { cancelled = true; };
+  }, []);
+  const issueGate = useCanIssueCredential();
+  const gateBlocked = splitEnabled && !issueGate.allowed && !issueGate.loading;
+  const gateBlockedMessage = (() => {
+    if (!gateBlocked) return null;
+    switch (issueGate.reason) {
+      case 'org_unverified':    return ISSUE_CREDENTIAL_LABELS.GATE_NOT_VERIFIED;
+      case 'org_suspended':     return ISSUE_CREDENTIAL_LABELS.GATE_SUSPENDED;
+      case 'parent_unapproved': return ISSUE_CREDENTIAL_LABELS.GATE_PARENT_UNVERIFIED;
+      case 'parent_unverified': return ISSUE_CREDENTIAL_LABELS.GATE_PARENT_UNVERIFIED;
+      case 'parent_suspended':  return ISSUE_CREDENTIAL_LABELS.GATE_PARENT_SUSPENDED;
+      default:                  return ISSUE_CREDENTIAL_LABELS.GATE_NOT_VERIFIED;
+    }
+  })();
 
   // Fetch template when credential type is selected (UF-05)
   const { template, loading: templateLoading } = useCredentialTemplate(
@@ -219,6 +249,8 @@ export function IssueCredentialForm({
     setIssuedAt('');
     setExpiresAt('');
     setRecipientEmail('');
+    setProofUrl('');
+    setProofUrlError(null);
     setMetadataValues({});
     setMetadataErrors({});
     setCreating(false);
@@ -252,8 +284,25 @@ export function IssueCredentialForm({
       errors._recipient_email = 'Invalid email format';
     }
     setMetadataErrors(errors);
-    return Object.keys(errors).length === 0;
-  }, [templateFields, metadataValues, recipientEmail]);
+    // SCRUM-1755 — proof_url is optional but must be a valid https:// URL when present.
+    setProofUrlError(null);
+    const proofTrimmed = proofUrl.trim();
+    let proofValid = true;
+    if (proofTrimmed) {
+      try {
+        const parsed = new URL(proofTrimmed);
+        if (parsed.protocol !== 'https:') {
+          proofValid = false;
+        }
+      } catch {
+        proofValid = false;
+      }
+      if (!proofValid) {
+        setProofUrlError(ISSUE_CREDENTIAL_LABELS.HINT_PROOF_URL_INVALID);
+      }
+    }
+    return Object.keys(errors).length === 0 && proofValid;
+  }, [templateFields, metadataValues, recipientEmail, proofUrl]);
 
   const buildMetadata = useCallback((): Record<string, unknown> | null => {
     const entries: Record<string, unknown> = {};
@@ -281,11 +330,25 @@ export function IssueCredentialForm({
       entries._recipient_email = recipientEmail.trim();
     }
 
+    // SCRUM-1755 — public proof URL (Udemy / Accredible / LinkedIn / own site).
+    // Validation happens in validateMetadata; this stores the trimmed value.
+    if (proofUrl.trim()) {
+      entries.proof_url = proofUrl.trim();
+    }
+
     return Object.keys(entries).length > 0 ? entries : null;
-  }, [issuedAt, templateFields, metadataValues, recipientEmail]);
+  }, [issuedAt, templateFields, metadataValues, recipientEmail, proofUrl]);
 
   const handleSubmit = useCallback(async () => {
     if (!file || !fingerprint || !user || !credentialType) return;
+
+    // SCRUM-1755 — refuse submit when the org is not authorized to issue.
+    // Worker-side enforcement still runs via RLS / suspension checks; this
+    // is the UI guardrail so the user sees the reason instead of a 403.
+    if (gateBlocked) {
+      setError(gateBlockedMessage ?? ISSUE_CREDENTIAL_LABELS.GATE_BLOCKED_TITLE);
+      return;
+    }
 
     // Validate required metadata fields
     if (!validateMetadata()) return;
@@ -373,6 +436,8 @@ export function IssueCredentialForm({
     expiresAt,
     recipientEmail,
     onSuccess,
+    gateBlocked,
+    gateBlockedMessage,
     validateMetadata,
     buildMetadata,
   ]);
@@ -416,8 +481,20 @@ export function IssueCredentialForm({
         {step === 'form' && (
           <>
             <div className="space-y-4 py-2">
+              {/* SCRUM-1755 — gate-blocked banner: shown when ENABLE_ISSUE_CREDENTIAL_SPLIT
+                  is on AND the org is not authorized to issue (unverified, suspended, or
+                  sub-org without parent approval). */}
+              {gateBlocked && gateBlockedMessage && (
+                <Alert variant="destructive" role="alert" data-testid="issue-credential-gate-blocked">
+                  <AlertDescription className="space-y-1">
+                    <p className="font-medium">{ISSUE_CREDENTIAL_LABELS.GATE_BLOCKED_TITLE}</p>
+                    <p className="text-sm">{gateBlockedMessage}</p>
+                  </AlertDescription>
+                </Alert>
+              )}
+
               {/* File upload */}
-              <FileUpload onFileSelect={handleFileSelect} disabled={creating} />
+              <FileUpload onFileSelect={handleFileSelect} disabled={creating || gateBlocked} />
 
               {/* File preview (UF-05) */}
               {file && fingerprint && (
@@ -574,6 +651,37 @@ export function IssueCredentialForm({
                 <p className="text-xs text-muted-foreground">
                   {METADATA_FIELD_LABELS.RECIPIENT_EMAIL_DESCRIPTION}
                 </p>
+              </div>
+
+              {/* SCRUM-1755 — Public Proof URL (Udemy / Accredible / LinkedIn / own site).
+                  Optional but strongly recommended. Persisted into anchors.metadata.proof_url. */}
+              <div className="space-y-2">
+                <Label htmlFor="proof-url">
+                  {ISSUE_CREDENTIAL_LABELS.PROOF_URL_LABEL}
+                  <span className="text-muted-foreground text-xs ml-1">
+                    {METADATA_FIELD_LABELS.OPTIONAL}
+                  </span>
+                </Label>
+                <Input
+                  id="proof-url"
+                  type="url"
+                  inputMode="url"
+                  value={proofUrl}
+                  onChange={(e) => {
+                    setProofUrl(e.target.value);
+                    if (proofUrlError) setProofUrlError(null);
+                  }}
+                  placeholder={ISSUE_CREDENTIAL_LABELS.PROOF_URL_PLACEHOLDER}
+                  disabled={creating}
+                  aria-invalid={!!proofUrlError}
+                  aria-describedby="proof-url-help"
+                />
+                <p id="proof-url-help" className="text-xs text-muted-foreground">
+                  {ISSUE_CREDENTIAL_LABELS.PROOF_URL_HELP}
+                </p>
+                {proofUrlError && (
+                  <p className="text-xs text-destructive" role="alert">{proofUrlError}</p>
+                )}
               </div>
 
               {/* Status notice */}

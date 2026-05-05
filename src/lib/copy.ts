@@ -672,8 +672,36 @@ export const SECURE_DOCUMENT_LABELS = {
   HINT_SELECT_TYPE: 'Select a credential type to continue.',
 } as const;
 
-/** @deprecated Use SECURE_DOCUMENT_LABELS — renamed per SCRUM-1092 */
-export const ISSUE_CREDENTIAL_LABELS = SECURE_DOCUMENT_LABELS;
+// =============================================================================
+// ISSUE CREDENTIAL DIALOG (SCRUM-1755)
+// =============================================================================
+// Distinct from SECURE_DOCUMENT_LABELS. Issue Credential is a restricted
+// flow (verified orgs + approved sub-orgs only); Secure Document is the
+// universal anchor flow available to everyone. Prior to SCRUM-1755 these
+// were aliased, which conflated the two flows in the org-admin view.
+
+export const ISSUE_CREDENTIAL_LABELS = {
+  TITLE: 'Issue Credential',
+  DESCRIPTION: 'Issue a verifiable credential to a recipient. Only verified organizations may issue credentials.',
+  PENDING_NOTICE: 'The credential will be issued with Pending status and assigned a unique verification ID immediately.',
+  ISSUING_LOADING: 'Issuing credential...',
+  ISSUE_BUTTON: 'Issue Credential',
+  ISSUE_ANOTHER: 'Issue another credential',
+  VERIFICATION_LINK: 'Verification Link',
+  COPY_LINK_ARIA: 'Copy verification link',
+  HINT_UPLOAD_DOCUMENT: 'Upload a document to continue.',
+  HINT_SELECT_TYPE: 'Select a credential type to continue.',
+  HINT_PROOF_URL_INVALID: 'Proof URL must be a valid https:// link.',
+  GATE_BLOCKED_TITLE: 'Issue Credential is unavailable',
+  GATE_NOT_VERIFIED: 'Your organization is not yet verified. Verified organizations can issue credentials. Contact support to start verification.',
+  GATE_SUSPENDED: 'Your organization is currently suspended. Issue Credential is unavailable until the suspension is resolved.',
+  GATE_PARENT_UNVERIFIED: 'Your parent organization is not verified. Sub-organizations can only issue credentials when the parent organization is verified.',
+  GATE_PARENT_SUSPENDED: 'Your parent organization is currently suspended. Issue Credential is unavailable until the parent organization is reinstated.',
+  PROOF_URL_LABEL: 'Public Proof URL',
+  PROOF_URL_HELP: 'If this credential is also published online (Udemy, Accredible, LinkedIn Learning, your own website, etc.), paste the public link here. Recipients and verifiers can cross-check the credential against the public record.',
+  PROOF_URL_PLACEHOLDER: 'https://www.udemy.com/certificate/UC-…',
+  PROOF_URL_OPTIONAL: 'Optional, but strongly recommended when available.',
+} as const;
 
 // =============================================================================
 // PUBLIC VERIFICATION DISPLAY
@@ -988,8 +1016,15 @@ export const ONBOARDING_GUIDANCE_LABELS = {
 
 export const ORG_PAGE_LABELS = {
   INVITE_MEMBER: 'Invite Member',
+  // SCRUM-1755 — primary CTA on the org page is the universal "Secure Document"
+  // button. Bulk upload is auto-detected inside Secure Document; no separate
+  // bulk-vs-single chooser is exposed. The legacy BULK_UPLOAD / BULK_UPLOAD_DIALOG_TITLE
+  // strings are retained for any out-of-tree usage but should not be wired into new UI.
+  SECURE_DOCUMENT: 'Secure Document',
+  ISSUE_CREDENTIAL: 'Issue Credential',
+  /** @deprecated SCRUM-1755 — Secure Document auto-detects bulk; do not render a separate Bulk Upload button. */
   BULK_UPLOAD: 'Bulk Upload',
-  ISSUE_CREDENTIAL: 'Secure Document',
+  /** @deprecated SCRUM-1755 — Secure Document auto-detects bulk; do not render a separate Bulk Upload dialog. */
   BULK_UPLOAD_DIALOG_TITLE: 'Bulk Upload',
   PROMOTE_TO_ADMIN: 'Promote to Admin',
   DEMOTE_TO_MEMBER: 'Demote to Member',

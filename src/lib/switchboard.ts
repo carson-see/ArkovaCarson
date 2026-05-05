@@ -31,6 +31,7 @@ export const FLAGS = {
   ENABLE_PUBLIC_RECORD_EMBEDDINGS: true,
   ENABLE_VERIFICATION_API: true,
   ENABLE_X402_PAYMENTS: true,
+  ENABLE_ISSUE_CREDENTIAL_SPLIT: false,
 } as const;
 
 export type FlagId = keyof typeof FLAGS;
@@ -187,6 +188,15 @@ export async function isSemanticSearchEnabled(): Promise<boolean> {
  */
 export async function isAIFraudEnabled(): Promise<boolean> {
   return getFlag('ENABLE_AI_FRAUD');
+}
+
+/**
+ * SCRUM-1755 — split "Secure Document" (universal) and "Issue Credential"
+ * (verified-org admins only) into distinct UI surfaces, removing the
+ * conflation in DashboardPage / OrgProfilePage / copy.ts.
+ */
+export async function isIssueCredentialSplitEnabled(): Promise<boolean> {
+  return getFlag('ENABLE_ISSUE_CREDENTIAL_SPLIT');
 }
 
 // =============================================================================

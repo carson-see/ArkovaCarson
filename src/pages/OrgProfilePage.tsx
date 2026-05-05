@@ -9,7 +9,7 @@
 import { useState, useCallback, useEffect } from 'react';
 import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { Bell, Building2, ListChecks, Settings, Plus, Upload, UserPlus, Users, ArrowLeft, Crown, User, Loader2, Check, ExternalLink, Globe, MapPin, Calendar, Camera, Link2, ScrollText } from 'lucide-react';
+import { Bell, Building2, ListChecks, Settings, Plus, UserPlus, Users, ArrowLeft, Crown, User, Loader2, Check, ExternalLink, Globe, MapPin, Calendar, Camera, Link2, ScrollText } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
@@ -20,19 +20,15 @@ import { useInviteMember } from '@/hooks/useInviteMember';
 import { supabase } from '@/lib/supabase';
 import { AppShell } from '@/components/layout';
 import { OrgRegistryTable, MembersTable, IssueCredentialForm, RevokeDialog, InviteMemberModal, AddExistingMemberModal } from '@/components/organization';
-import { BulkUploadWizard } from '@/components/upload';
+import { SecureDocumentDialog } from '@/components/anchor';
+import { useCanIssueCredential } from '@/hooks/useCanIssueCredential';
+import { isIssueCredentialSplitEnabled } from '@/lib/switchboard';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
 import { ROUTES, issuerRegistryPath } from '@/lib/routes';
 import { ORG_PAGE_LABELS, ORG_LOGO_LABELS, SUB_ORG_LABELS, INDUSTRY_TAG_OPTIONS, CONNECTIONS_LABELS } from '@/lib/copy';
 import { isPlatformAdmin } from '@/lib/platform';
@@ -66,7 +62,14 @@ export function OrgProfilePage() {
 
   // Dialog state
   const [issueDialogOpen, setIssueDialogOpen] = useState(false);
-  const [bulkUploadOpen, setBulkUploadOpen] = useState(false);
+  // SCRUM-1755 — universal "Secure Document" replaces the legacy bulk-only chooser.
+  // Bulk auto-detection (multiple files OR CSV/XLSX) lives inside SecureDocumentDialog.
+  const [secureDialogOpen, setSecureDialogOpen] = useState(false);
+  const [splitEnabled, setSplitEnabled] = useState(false);
+  useEffect(() => {
+    isIssueCredentialSplitEnabled().then(setSplitEnabled).catch(() => setSplitEnabled(false));
+  }, []);
+  const issueGate = useCanIssueCredential();
   const [inviteOpen, setInviteOpen] = useState(false);
   const [addMemberOpen, setAddMemberOpen] = useState(false);
   const [revokeTarget, setRevokeTarget] = useState<Anchor | null>(null);
@@ -513,15 +516,24 @@ export function OrgProfilePage() {
             <h2 className="text-lg font-semibold">Records</h2>
             {isAdmin && (
               <div className="flex gap-2">
-                <Button variant="outline" size="sm" onClick={() => setBulkUploadOpen(true)}>
-                  <Upload className="mr-2 h-4 w-4" />
-                  {ORG_PAGE_LABELS.BULK_UPLOAD}
-                </Button>
-                <Button size="sm" onClick={() => setIssueDialogOpen(true)}>
+                {/* SCRUM-1755 — single Secure Document button. Auto-detects bulk
+                    (multiple files OR a CSV/XLSX) inside SecureDocumentDialog;
+                    no separate "Bulk Upload" chooser. */}
+                <Button size="sm" onClick={() => setSecureDialogOpen(true)} className="bg-[#00d4ff] text-[#0a0f14] hover:bg-[#00a3cc]">
                   <Plus className="mr-2 h-4 w-4 shrink-0" />
-                  <span className="hidden sm:inline">{ORG_PAGE_LABELS.ISSUE_CREDENTIAL}</span>
+                  <span className="hidden sm:inline">{ORG_PAGE_LABELS.SECURE_DOCUMENT}</span>
                   <span className="sm:hidden">Secure</span>
                 </Button>
+                {/* SCRUM-1755 — Issue Credential is a distinct, gated action. Pre-flag
+                    behavior preserved for any admin (legacy). Post-flag, only verified
+                    orgs (and APPROVED sub-orgs of verified parents) see this button. */}
+                {(!splitEnabled || issueGate.allowed) && (
+                  <Button size="sm" variant="outline" onClick={() => setIssueDialogOpen(true)}>
+                    <Plus className="mr-2 h-4 w-4 shrink-0" />
+                    <span className="hidden sm:inline">{ORG_PAGE_LABELS.ISSUE_CREDENTIAL}</span>
+                    <span className="sm:hidden">Issue</span>
+                  </Button>
+                )}
               </div>
             )}
           </div>
@@ -862,20 +874,15 @@ export function OrgProfilePage() {
         }}
       />
 
-      <Dialog open={bulkUploadOpen} onOpenChange={setBulkUploadOpen}>
-        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>{ORG_PAGE_LABELS.BULK_UPLOAD_DIALOG_TITLE}</DialogTitle>
-          </DialogHeader>
-          <BulkUploadWizard
-            onComplete={() => {
-              setBulkUploadOpen(false);
-              setRefreshKey((k) => k + 1);
-            }}
-            onCancel={() => setBulkUploadOpen(false)}
-          />
-        </DialogContent>
-      </Dialog>
+      {/* SCRUM-1755 — universal Secure Document dialog. Bulk auto-detected. */}
+      <SecureDocumentDialog
+        open={secureDialogOpen}
+        onOpenChange={(open) => {
+          setSecureDialogOpen(open);
+          if (!open) setRefreshKey((k) => k + 1);
+        }}
+        onSuccess={() => setRefreshKey((k) => k + 1)}
+      />
 
       <InviteMemberModal
         open={inviteOpen}

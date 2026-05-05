@@ -14,6 +14,36 @@
 
 ## Now
 
+### 2026-05-05 — SCRUM-1755 Secure Document vs Issue Credential split (this branch `claude/secure-document-issue-credential-split`)
+
+Engineering-only PR; no prod state changed. Code-only (no migration) per Carson's Q1 decision (proof_url stored in `anchors.metadata.proof_url`; column promotion deferred to a follow-up ticket).
+
+**Why this branch exists.** Two different actions were collapsed into one UI surface, so an org admin clicking "Secure Document" was being shown the credential issuance template — Carson's bug report. Root cause was a label alias plus a role-branched empty-state CTA:
+* `src/lib/copy.ts:676` aliased `ISSUE_CREDENTIAL_LABELS = SECURE_DOCUMENT_LABELS` (legacy SCRUM-1092 rename), so every label inside `IssueCredentialForm.tsx` rendered as "Secure Document."
+* `src/lib/copy.ts:992` set `ORG_PAGE_LABELS.ISSUE_CREDENTIAL = 'Secure Document'`, so the org-page Issue Credential button was visibly indistinguishable from the universal one.
+* `src/pages/DashboardPage.tsx:404-410` empty-state CTA opened `setIssueDialogOpen(true)` for `ORG_ADMIN` while still labelled `EMPTY_ORG_RECORDS_CTA = 'Secure Document'`. Click "Secure Document" → Issue Credential dialog opened. The bug.
+
+Plus the bulk-vs-single chooser ("Bulk Upload" button on `OrgProfilePage` and a "Bulk Upload" dialog title swap inside `SecureDocumentDialog`) was unnecessary friction since `FileUpload.tsx` already auto-detects multi-file / CSV / XLSX inputs (Carson's "boomer shit" callout).
+
+**What shipped on the branch:**
+
+* **Switchboard flag** `ENABLE_ISSUE_CREDENTIAL_SPLIT` (default off) added to `src/lib/switchboard.ts` plus `isIssueCredentialSplitEnabled()` helper. Pre-flag: behavior matches pre-1755 except the conflated label is fixed (Issue Credential button now actually says "Issue Credential"). Post-flag: only verified, non-suspended, parent-approved orgs see the button at all.
+* **Distinct `ISSUE_CREDENTIAL_LABELS`** restored as its own object in `src/lib/copy.ts` — drops the alias to `SECURE_DOCUMENT_LABELS`. Adds the gate-blocked copy (`GATE_BLOCKED_TITLE`, `GATE_NOT_VERIFIED`, `GATE_SUSPENDED`, `GATE_PARENT_UNVERIFIED`, `GATE_PARENT_SUSPENDED`) and the proof-url copy (`PROOF_URL_LABEL`, `PROOF_URL_HELP`, `PROOF_URL_PLACEHOLDER`, `HINT_PROOF_URL_INVALID`). `ORG_PAGE_LABELS.ISSUE_CREDENTIAL` corrected to `'Issue Credential'`. `ORG_PAGE_LABELS.SECURE_DOCUMENT` added; `BULK_UPLOAD` / `BULK_UPLOAD_DIALOG_TITLE` retained as `@deprecated`.
+* **Gate hook** `src/hooks/useCanIssueCredential.ts` (PR-quality TDD: 15-case unit test on the pure resolver). Combines `profile.role`, `organizations.verification_status`, `organizations.suspended` (col added by migration 0289), `organizations.parent_org_id`, `organizations.parent_approval_status` (cols added by migration 0128) plus the parent org row when present. Returns a discriminated `IssueGate` with explicit `loading` / `not_admin` / `no_org` / `org_unverified` / `org_suspended` / `parent_unapproved` / `parent_unverified` / `parent_suspended` reasons that map 1:1 to the GATE_* copy strings.
+* **`DashboardPage.tsx` rewire** — empty-state `EmptyState` CTA now always opens `SecureDocumentDialog` (was: ORG_ADMIN branch opened `IssueCredentialForm` under the "Secure Document" label). Header still shows both actions, but Issue Credential button is gated on `splitEnabled ? canIssueCredential : showLegacyIssueButton` so the verification check kicks in once the flag is on.
+* **`OrgProfilePage.tsx` rewire** — replaced "Bulk Upload" outline button + "Issue Credential" button (mislabelled as "Secure Document") with a single primary `SECURE_DOCUMENT` button + a gated outline `ISSUE_CREDENTIAL` button. Dropped the bulk-only `<Dialog>` wrapper that fronted `BulkUploadWizard`; the universal `SecureDocumentDialog` handles every input shape (single, multi-file, CSV/XLSX) via the existing `FileUpload.isBulkUploadFile` auto-detection. Imports for `BulkUploadWizard`, `Dialog*`, `Upload` icon dropped.
+* **`SecureDocumentDialog.tsx`** — title is now stable as `SECURE_DIALOG_LABELS.TITLE` across single + bulk paths (was: swapped to `'Bulk Upload'` when `step === 'bulk'`). Test added at `SecureDocumentDialog.title.test.tsx`.
+* **`IssueCredentialForm.tsx`** — adds the new `proof_url` field (Public Proof URL — Udemy / Accredible / LinkedIn / own site). Optional but validates as `https://` when present (`URL` constructor + protocol check); persists into `anchors.metadata.proof_url`. Adds the gate-blocked banner that renders when the flag is on AND the resolver says the org cannot issue. Submit refuses to fire when gated. Test added at `IssueCredentialForm.test.tsx`.
+* **`vercel.json`** — CSP `connect-src` extended to allowlist both staging worker URLs (`arkova-worker-staging-kvojbeutfa-uc.a.run.app` + the project-suffix variant). `git.deploymentEnabled` flips this branch on so Carson can demo the preview. Frontend already calls `WORKER_URL` (driven by `VITE_WORKER_URL` env), so the rewrite is fallback-only — full per-environment wiring is operator work.
+* **`docs/reference/VERCEL_PREVIEW_ENV.md`** — copy-paste env-var values + step-by-step instructions for Carson to flip Vercel Preview scope at `https://ujtlwnoqfhtitcmsnrpq.supabase.co` + `https://arkova-worker-staging-kvojbeutfa-uc.a.run.app`.
+
+**Tests:** 22 new (15 resolver + 4 IssueCredentialForm + 2 SecureDocumentDialog title + 1 inherited area regression coverage); component sweep across `src/components/{anchor,organization,upload,credentials,vault}`, `src/hooks`, `src/lib/copy*` returns 392/392 green. `typecheck`, `lint` (0 errors / 0 warnings on touched files), `lint:copy` (no forbidden terms) all clean.
+
+**Open (operator-side, not blocking PR):**
+* Carson sets the four Vercel Preview env vars per `docs/reference/VERCEL_PREVIEW_ENV.md`.
+* Carson decides when to flip `ENABLE_ISSUE_CREDENTIAL_SPLIT` to `true` in `switchboard_flags`. Until then, the conflated label is fixed and behavior is otherwise unchanged.
+* Follow-up ticket: promote `proof_url` from `anchors.metadata` JSONB into a real column (T2 migration). Adds queryability + index for the "credentials with online proof" filter.
+
 ### 2026-05-04 (overnight) — Synthetic load generator built (staging rig now has prod-shape data + 8-mode harness)
 
 Branch `claude/2026-05-04-staging-synthetic-load-generator`. Picks up where night session left off: rig was stood up (Supabase + Cloud Run both healthy), but soaks against an empty schema only proved "code runs," not "code runs at prod shape." This session built the seed + extended the harness so PRs #695/#696/#697 can soak against meaningful load.

@@ -490,14 +490,15 @@ export function SecureDocumentDialog({
     <Dialog open={open} onOpenChange={handleDialogOpenChange}>
       <DialogContent className={step === 'bulk' ? 'max-w-3xl max-h-[90vh] overflow-y-auto' : 'sm:max-w-lg max-h-[90vh] overflow-y-auto'}>
         <DialogHeader>
+          {/* SCRUM-1755 — title is stable across single + bulk paths. The user
+              clicked "Secure Document" and is securing one or many; the system
+              detects the shape, no separate "Bulk Upload" affordance. */}
           <DialogTitle className="flex items-center gap-2">
             <ArkovaIcon className="h-5 w-5 text-primary" />
-            {step === 'bulk' ? 'Bulk Upload' : SECURE_DIALOG_LABELS.TITLE}
+            {SECURE_DIALOG_LABELS.TITLE}
           </DialogTitle>
           <DialogDescription>
-            {step === 'bulk'
-              ? 'Upload a CSV or XLSX file to secure multiple documents at once'
-              : SECURE_DIALOG_LABELS.DESCRIPTION}
+            {SECURE_DIALOG_LABELS.DESCRIPTION}
           </DialogDescription>
         </DialogHeader>
 
