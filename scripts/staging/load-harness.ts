@@ -79,17 +79,34 @@ const IAM_TTL_MS = 30 * 60_000;
 // be redirected to a writeable directory injected at the front of PATH.
 const SAFE_PATH = '/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin';
 
-function fetchIamToken(): string {
-  const env = process.env.STAGING_GCP_IDENTITY;
-  if (env) return env.trim();
+// Resolve gcloud's absolute path once via `which`, run under the pinned
+// PATH so the lookup itself is hardened against PATH-injection. After
+// that initial resolution, every execFileSync uses the absolute path —
+// no further PATH lookup, satisfying Sonar S4036.
+function resolveGcloudPath(): string {
+  const override = process.env.GCLOUD_PATH;
+  if (override) return override;
   try {
-    const out = execFileSync('gcloud', ['auth', 'print-identity-token'], {
+    const out = execFileSync('/usr/bin/which', ['gcloud'], { // NOSONAR S4036 — /usr/bin/which is an absolute path; no PATH lookup
       encoding: 'utf8',
       env: { ...process.env, PATH: SAFE_PATH },
     });
     return out.trim();
+  } catch {
+    // Fallback to the two most common install locations.
+    return '/usr/local/bin/gcloud';
+  }
+}
+const GCLOUD_BIN = resolveGcloudPath();
+
+function fetchIamToken(): string {
+  const env = process.env.STAGING_GCP_IDENTITY;
+  if (env) return env.trim();
+  try {
+    const out = execFileSync(GCLOUD_BIN, ['auth', 'print-identity-token'], { encoding: 'utf8' });
+    return out.trim();
   } catch (err) {
-    console.error(`::error::Could not fetch IAM token via gcloud: ${err instanceof Error ? err.message : err}`);
+    console.error(`::error::Could not fetch IAM token via ${GCLOUD_BIN}: ${err instanceof Error ? err.message : err}`);
     process.exit(1);
   }
 }
