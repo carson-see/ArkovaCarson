@@ -226,6 +226,25 @@ Any leak detector hit = HARD FAIL. Fix scrubber, re-run from Phase 3 fixture. Re
 
 ## PHASE 5 — Prod snapshot extraction (≤30 min total; READ-ONLY against prod)
 
+### 5.0 Re-verify row-count classification (≤5 min) ⚠️ CRITICAL
+
+The classification in [`prod-column-inventory-2026-05-04.csv`](../audits/prod-column-inventory-2026-05-04.csv) is a snapshot from `pg_stat_user_tables.n_live_tup` at plan-write time. `n_live_tup` is an estimate that lags real writes; customer onboarding between plan-write and execute can change the picture.
+
+Re-run against prod via Supabase MCP `execute_sql`:
+```sql
+SELECT relname AS table_name, n_live_tup
+FROM pg_stat_user_tables
+WHERE schemaname = 'public'
+ORDER BY n_live_tup DESC;
+```
+
+HARD STOP if any of:
+- A table classified `SCHEMA-ONLY` (n_live_tup=0 at plan-write) now has rows. Reclassify it before extracting; treat unknown rows as PII-DIRECT until proven otherwise.
+- A table in the active-scrub set now has >2x the row count at plan-write (signals significant customer activity since plan; existing scrubbers may not handle the new shape).
+- Any new table appears in `public` that wasn't in the inventory CSV. Stop and reconcile.
+
+Record the re-verification output in the execution log.
+
 ### 5.1 Pull schema-only dump (≤5 min)
 Skip — staging schema is already replayed via prior STAGING_RIG.md procedure. We only need data.
 
