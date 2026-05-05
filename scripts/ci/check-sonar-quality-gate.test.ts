@@ -20,6 +20,15 @@ const COMPLETE_GATE = {
   ],
 };
 
+const BASELINE_TODAY = '2026-05-05';
+
+function newCodeSettings(type: string, period: string) {
+  return {
+    'sonar.leak.period.type': type,
+    'sonar.leak.period': period,
+  };
+}
+
 describe('verifyGate (SCRUM-1304)', () => {
   it('passes on a complete Sonar way gate', () => {
     const r = verifyGate(COMPLETE_GATE);
@@ -100,20 +109,14 @@ describe('verifyGate (SCRUM-1304)', () => {
 
 describe('verifyNewCodeDefinition (SCRUM-1681)', () => {
   it('passes on the 2026-05-05 manual baseline', () => {
-    const r = verifyNewCodeDefinition({
-      'sonar.leak.period.type': 'date',
-      'sonar.leak.period': '2026-05-05',
-    }, '2026-05-05');
+    const r = verifyNewCodeDefinition(newCodeSettings('date', BASELINE_TODAY), BASELINE_TODAY);
 
     expect(r.ok).toBe(true);
     expect(r.failures).toEqual([]);
   });
 
   it('fails closed when SonarCloud drifts back to previous_version', () => {
-    const r = verifyNewCodeDefinition({
-      'sonar.leak.period.type': 'previous_version',
-      'sonar.leak.period': 'previous_version',
-    }, '2026-05-05');
+    const r = verifyNewCodeDefinition(newCodeSettings('previous_version', 'previous_version'), BASELINE_TODAY);
 
     expect(r.ok).toBe(false);
     expect(r.failures).toEqual([
@@ -123,30 +126,21 @@ describe('verifyNewCodeDefinition (SCRUM-1681)', () => {
   });
 
   it('fails when the baseline predates the 2026-05-05 reset', () => {
-    const r = verifyNewCodeDefinition({
-      'sonar.leak.period.type': 'date',
-      'sonar.leak.period': '2026-03-11',
-    }, '2026-05-05');
+    const r = verifyNewCodeDefinition(newCodeSettings('date', '2026-03-11'), BASELINE_TODAY);
 
     expect(r.ok).toBe(false);
     expect(r.failures[0]).toContain('before reset floor 2026-05-05');
   });
 
   it('fails when the baseline has an impossible calendar date', () => {
-    const r = verifyNewCodeDefinition({
-      'sonar.leak.period.type': 'date',
-      'sonar.leak.period': '2026-02-31',
-    }, '2026-05-05');
+    const r = verifyNewCodeDefinition(newCodeSettings('date', '2026-02-31'), BASELINE_TODAY);
 
     expect(r.ok).toBe(false);
     expect(r.failures[0]).toContain('not a real calendar date');
   });
 
   it('fails when a date baseline is set in the future', () => {
-    const r = verifyNewCodeDefinition({
-      'sonar.leak.period.type': 'date',
-      'sonar.leak.period': '2026-05-06',
-    }, '2026-05-05');
+    const r = verifyNewCodeDefinition(newCodeSettings('date', '2026-05-06'), BASELINE_TODAY);
 
     expect(r.ok).toBe(false);
     expect(r.failures[0]).toContain('is in the future');

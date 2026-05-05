@@ -68,6 +68,12 @@ function readToken(): string | null {
   return process.env.SONARCLOUD_TOKEN ?? process.env.SONAR_TOKEN ?? null;
 }
 
+function authHeader(token: string): string {
+  const tokenWithDelimiter = `${token}:`;
+  const encoded = Buffer.from(tokenWithDelimiter).toString('base64');
+  return `Basic ${encoded}`;
+}
+
 // Allow-list of acceptable SonarCloud gate names. The repo's gate is
 // "Sonar way" (project-default); a fork could be named "Sonar way (Built-in)".
 // We never let an arbitrary string from the API reach a fetch URL — the API
@@ -80,7 +86,7 @@ const ALLOWED_GATE_NAMES: readonly string[] = [
 ] as const;
 
 async function fetchProjectGate(token: string): Promise<QualityGate> {
-  const auth = `Basic ${Buffer.from(`${token}:`).toString('base64')}`;
+  const auth = authHeader(token);
   const projectRes = await fetch(
     `${SONAR_BASE}/api/qualitygates/get_by_project?organization=${encodeURIComponent(ORGANIZATION)}&project=${encodeURIComponent(PROJECT_KEY)}`,
     { headers: { Authorization: auth } },
@@ -128,7 +134,7 @@ async function fetchProjectGate(token: string): Promise<QualityGate> {
 }
 
 async function fetchProjectSettings(token: string): Promise<SonarSettings> {
-  const auth = `Basic ${Buffer.from(`${token}:`).toString('base64')}`;
+  const auth = authHeader(token);
   const keys = [NEW_CODE_TYPE_KEY, NEW_CODE_PERIOD_KEY].join(',');
   const settingsRes = await fetch(
     `${SONAR_BASE}/api/settings/values?component=${encodeURIComponent(PROJECT_KEY)}&keys=${encodeURIComponent(keys)}`,
