@@ -270,6 +270,56 @@ describe('credentialSourcesRouter', () => {
     expect(mockAuditInsert).not.toHaveBeenCalled();
   });
 
+  it('retries when a generated public id collides with an unrelated anchor', async () => {
+    mockAnchorsMaybeSingle
+      .mockResolvedValueOnce({ data: null, error: null })
+      .mockResolvedValueOnce({ data: null, error: null })
+      .mockResolvedValueOnce({
+        data: { fingerprint: '0'.repeat(64) },
+        error: null,
+      });
+    mockAnchorInsert.mockImplementation((payload: unknown) => ({
+      select: vi.fn(() => ({
+        single: () => mockAnchorInsertSingle(payload),
+      })),
+    }));
+    mockAnchorInsertSingle
+      .mockResolvedValueOnce({
+        data: null,
+        error: { code: '23505', message: 'duplicate key value violates unique constraint' },
+      })
+      .mockImplementationOnce((payload: unknown) => Promise.resolve({
+        data: {
+          id: 'anchor-retry',
+          public_id: (payload as { public_id: string }).public_id,
+          fingerprint: (payload as { fingerprint: string }).fingerprint,
+          status: 'PENDING',
+          created_at: '2026-05-05T19:30:00Z',
+        },
+        error: null,
+      }));
+
+    const res = await request(makeApp())
+      .post('/api/v1/credential-sources/import-url/confirm')
+      .send({ source_url: 'https://credentials.example.com/abc', credential_type: 'CERTIFICATE' });
+
+    expect(res.status).toBe(201);
+    expect(res.body.duplicate).toBe(false);
+    expect(res.body.anchor.id).toBe('anchor-retry');
+    expect(mockAnchorInsert).toHaveBeenCalledTimes(2);
+    expect((mockAnchorInsert.mock.calls[0][0] as { public_id: string }).public_id).toMatch(/^ARK-2026-[A-F0-9]{8}$/);
+    expect((mockAnchorInsert.mock.calls[1][0] as { public_id: string }).public_id).toMatch(/^ARK-2026-[A-F0-9]{8}$/);
+    expect(mockDeductOrgCredit).toHaveBeenCalledWith(expect.anything(), 'org-1', 1, 'anchor.create', 'anchor-retry');
+    expect(mockRecipientInsert).toHaveBeenCalledWith(expect.objectContaining({
+      anchor_id: 'anchor-retry',
+      recipient_user_id: 'user-1',
+    }));
+    expect(mockAuditInsert).toHaveBeenCalledWith(expect.objectContaining({
+      event_type: 'CREDENTIAL_SOURCE_IMPORTED',
+      target_id: 'anchor-retry',
+    }));
+  });
+
   it('rolls back the reserved anchor if the organization lacks credits', async () => {
     mockDeductOrgCredit.mockResolvedValue({
       allowed: false,

@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { Router, Request, Response } from 'express';
+import { z } from 'zod';
 import { buildVerifyUrl } from '../../lib/urls.js';
+import { ANCHOR_CREDENTIAL_TYPES } from '../../lib/credential-evidence.js';
 import {
   CredentialSourceImportError,
   CredentialSourceImportRequestSchema,
@@ -16,6 +18,46 @@ import { logger } from '../../utils/logger.js';
 import { deductOrgCredit, type DeductionResult } from '../../utils/orgCredits.js';
 
 const router = Router();
+const MAX_PUBLIC_ID_INSERT_ATTEMPTS = 5;
+
+const anchorRecipientSchema = z.object({
+  anchor_id: z.string().min(1),
+  recipient_email_hash: z.string().min(1),
+  recipient_user_id: z.string().min(1),
+});
+
+const auditEventSchema = z.object({
+  event_type: z.literal('CREDENTIAL_SOURCE_IMPORTED'),
+  event_category: z.literal('ANCHOR'),
+  actor_id: z.string().min(1),
+  org_id: z.string().min(1).nullable(),
+  target_type: z.literal('anchor'),
+  target_id: z.string().min(1),
+  details: z.string().min(1),
+});
+
+const publicMetadataSchema = z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()]));
+
+const anchorSchema = z.object({
+  fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+  public_id: z.string().regex(/^ARK-\d{4}-[A-F0-9]{8}$/),
+  status: z.literal('PENDING'),
+  org_id: z.string().min(1).nullable(),
+  user_id: z.string().min(1),
+  filename: z.string().min(1),
+  file_size: z.number().int().nonnegative(),
+  file_mime: z.string().min(1),
+  credential_type: z.enum(ANCHOR_CREDENTIAL_TYPES),
+  label: z.string().min(1),
+  description: z.string().min(1),
+  issued_at: z.string().nullable(),
+  expires_at: z.string().nullable(),
+  metadata: publicMetadataSchema,
+});
+
+const softDeleteUpdateSchema = z.object({
+  deleted_at: z.literal('now'),
+});
 
 interface AnchorReceipt {
   id: string;
@@ -38,6 +80,14 @@ interface AnchorInsertRow {
   status: string;
   created_at: string;
 }
+
+interface AnchorCreateResult {
+  anchor: AnchorInsertRow | null;
+  error: DbErrorLike | null;
+  duplicate?: AnchorReceipt;
+}
+
+type AnchorInsertPayload = z.infer<typeof anchorSchema>;
 
 function credentialSourceErrorStatus(error: CredentialSourceImportError): number {
   return error.status;
@@ -145,6 +195,39 @@ function sendCreditFailure(res: Response, orgId: string, deduction: DeductionRes
   });
 }
 
+function buildAnchorPublicId(): string {
+  return `ARK-${new Date().getFullYear()}-${randomUUID().slice(0, 8).toUpperCase()}`;
+}
+
+function buildAnchorInsertPayload(
+  userId: string,
+  orgId: string | null,
+  preview: CredentialSourceImportPreview,
+  publicId: string,
+): AnchorInsertPayload {
+  return anchorSchema.parse({
+    fingerprint: preview.anchor_fingerprint,
+    public_id: publicId,
+    status: 'PENDING' as const,
+    org_id: orgId,
+    user_id: userId,
+    filename: buildSourceImportFilename(preview),
+    file_size: preview.source_payload_byte_length,
+    file_mime: preview.source_payload_content_type,
+    credential_type: preview.credential_type,
+    label: preview.credential_title,
+    description: preview.credential_issuer
+      ? `${preview.credential_title} from ${preview.credential_issuer}`
+      : preview.credential_title,
+    issued_at: evidenceDateToTimestamp(preview.credential_issued_at),
+    expires_at: evidenceDateToTimestamp(preview.credential_expires_at, true),
+    metadata: {
+      ...preview.public_metadata,
+      source_anchor_fingerprint: preview.anchor_fingerprint,
+    },
+  });
+}
+
 async function findExistingImport(userId: string, preview: CredentialSourceImportPreview): Promise<AnchorReceipt | null> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const dbAny = db as any;
@@ -172,21 +255,84 @@ async function findExistingImport(userId: string, preview: CredentialSourceImpor
   };
 }
 
+async function findAnchorByPublicId(userId: string, publicId: string): Promise<{ fingerprint: string } | null> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const dbAny = db as any;
+  const { data, error } = await dbAny
+    .from('anchors')
+    .select('fingerprint')
+    .eq('user_id', userId)
+    .eq('public_id', publicId)
+    .is('deleted_at', null)
+    .maybeSingle();
+
+  if (error) throw error;
+  if (!data) return null;
+  return { fingerprint: data.fingerprint };
+}
+
+async function shouldRetryPublicIdCollision(
+  userId: string,
+  preview: CredentialSourceImportPreview,
+  publicId: string,
+): Promise<{ retry: boolean; duplicate?: AnchorReceipt }> {
+  const duplicate = await findExistingImport(userId, preview);
+  if (duplicate) return { retry: false, duplicate };
+
+  const publicIdConflict = await findAnchorByPublicId(userId, publicId);
+  if (!publicIdConflict) return { retry: true };
+
+  return {
+    retry: publicIdConflict.fingerprint !== preview.anchor_fingerprint,
+  };
+}
+
+async function insertAnchorWithPublicIdRetry(
+  userId: string,
+  orgId: string | null,
+  preview: CredentialSourceImportPreview,
+): Promise<AnchorCreateResult> {
+  let lastError: DbErrorLike | null = null;
+
+  for (let attempt = 0; attempt < MAX_PUBLIC_ID_INSERT_ATTEMPTS; attempt += 1) {
+    const publicId = buildAnchorPublicId();
+    const insertPayload = buildAnchorInsertPayload(userId, orgId, preview, publicId);
+    const { data: anchor, error: insertError } = await db
+      .from('anchors')
+      .insert(insertPayload)
+      .select('id, public_id, fingerprint, status, created_at')
+      .single();
+
+    if (!insertError && anchor) return { anchor, error: null };
+    lastError = insertError;
+    if (!isUniqueViolation(insertError)) return { anchor: null, error: insertError };
+
+    const collision = await shouldRetryPublicIdCollision(userId, preview, publicId);
+    if (collision.duplicate) return { anchor: null, error: insertError, duplicate: collision.duplicate };
+    if (!collision.retry || attempt === MAX_PUBLIC_ID_INSERT_ATTEMPTS - 1) {
+      return { anchor: null, error: insertError };
+    }
+  }
+
+  return { anchor: null, error: lastError };
+}
+
 async function linkSelfRecipient(anchorId: string, userId: string): Promise<void> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const dbAny = db as any;
-  const { error } = await dbAny.from('anchor_recipients').insert({
+  const payload = anchorRecipientSchema.parse({
     anchor_id: anchorId,
     recipient_email_hash: buildSelfImportRecipientHash(userId),
     recipient_user_id: userId,
   });
+  const { error } = await dbAny.from('anchor_recipients').insert(payload);
 
   if (error && error.code !== '23505') throw error;
 }
 
 async function logImportAudit(userId: string, orgId: string | null, anchorId: string, preview: CredentialSourceImportPreview): Promise<void> {
   try {
-    const { error } = await db.from('audit_events').insert({
+    const payload = auditEventSchema.parse({
       event_type: 'CREDENTIAL_SOURCE_IMPORTED',
       event_category: 'ANCHOR',
       actor_id: userId,
@@ -195,6 +341,7 @@ async function logImportAudit(userId: string, orgId: string | null, anchorId: st
       target_id: anchorId,
       details: JSON.stringify(buildAuditDetails(preview)),
     });
+    const { error } = await db.from('audit_events').insert(payload);
     if (error) logger.warn({ error, anchorId }, 'Failed to audit credential source import');
   } catch (error) {
     logger.warn({ error, anchorId }, 'Failed to audit credential source import');
@@ -204,9 +351,10 @@ async function logImportAudit(userId: string, orgId: string | null, anchorId: st
 async function markAnchorDeleted(anchorId: string, userId: string): Promise<void> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const dbAny = db as any;
+  const updatePayload = softDeleteUpdateSchema.parse({ deleted_at: 'now' });
   const { data, error } = await dbAny
     .from('anchors')
-    .update({ deleted_at: 'now' })
+    .update(updatePayload)
     .eq('id', anchorId)
     .eq('user_id', userId)
     .is('deleted_at', null)
@@ -326,37 +474,16 @@ router.post('/import-url/confirm', async (req: Request, res: Response) => {
       return;
     }
 
-    const publicId = `ARK-${new Date().getFullYear()}-${randomUUID().slice(0, 8).toUpperCase()}`;
-    const insertPayload = {
-      fingerprint: preview.anchor_fingerprint,
-      public_id: publicId,
-      status: 'PENDING' as const,
-      org_id: orgId,
-      user_id: userId,
-      filename: buildSourceImportFilename(preview),
-      file_size: preview.source_payload_byte_length,
-      file_mime: preview.source_payload_content_type,
-      credential_type: preview.credential_type,
-      label: preview.credential_title,
-      description: preview.credential_issuer
-        ? `${preview.credential_title} from ${preview.credential_issuer}`
-        : preview.credential_title,
-      issued_at: evidenceDateToTimestamp(preview.credential_issued_at),
-      expires_at: evidenceDateToTimestamp(preview.credential_expires_at, true),
-      metadata: {
-        ...preview.public_metadata,
-        source_anchor_fingerprint: preview.anchor_fingerprint,
-      },
-    };
+    const createResult = await insertAnchorWithPublicIdRetry(userId, orgId, preview);
+    if (createResult.duplicate) {
+      await linkSelfRecipient(createResult.duplicate.id, userId);
+      sendDuplicateImport(res, createResult.duplicate, preview);
+      return;
+    }
 
-    const { data: anchor, error: insertError } = await db
-      .from('anchors')
-      .insert(insertPayload)
-      .select('id, public_id, fingerprint, status, created_at')
-      .single();
-
-    if (insertError || !anchor) {
-      await handleAnchorCreateFailure(userId, preview, insertError, res);
+    const { anchor } = createResult;
+    if (!anchor) {
+      await handleAnchorCreateFailure(userId, preview, createResult.error, res);
       return;
     }
 
