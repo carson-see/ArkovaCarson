@@ -111,6 +111,21 @@ describe('resolveIssueGate (SCRUM-1755 ORG-08)', () => {
     expect(r).toMatchObject({ allowed: false, reason: 'not_admin' });
   });
 
+  it('returns not_admin before org loading for non-admin users', () => {
+    const r = resolveIssueGate({
+      profileLoading: false,
+      role: 'INDIVIDUAL',
+      orgId: ROOT_ORG_ID,
+      org: undefined,
+      orgLoading: true,
+      parent: undefined,
+      parentLoading: false,
+      orgError: false,
+      parentError: false,
+    });
+    expect(r).toMatchObject({ allowed: false, loading: false, reason: 'not_admin' });
+  });
+
   it('blocks ORG_ADMIN with no org_id (orphaned profile)', () => {
     const r = resolveIssueGate({
       profileLoading: false,

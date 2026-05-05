@@ -68,6 +68,15 @@ export interface ResolveIssueGateInput {
   parentError: boolean;
 }
 
+export interface UseCanIssueCredentialOptions {
+  /** Override the org being checked. Defaults to `profile.org_id`. */
+  orgId?: string | null;
+  /** Override the caller role. Defaults to `profile.role`. */
+  role?: string | null;
+  /** Extra loading state for role/org membership resolution. */
+  profileLoading?: boolean;
+}
+
 /**
  * Pure resolver for the Issue Credential gate. Has no IO; every input is
  * a primitive or a row already-fetched. Called by the hook below and by
@@ -86,11 +95,14 @@ export function resolveIssueGate(input: ResolveIssueGateInput): IssueGate {
     parentError,
   } = input;
 
-  if (profileLoading || (!!orgId && orgLoading)) {
+  if (profileLoading) {
     return { allowed: false, loading: true, reason: 'loading' };
   }
   if (role !== 'ORG_ADMIN') {
     return { allowed: false, loading: false, reason: 'not_admin' };
+  }
+  if (!!orgId && orgLoading) {
+    return { allowed: false, loading: true, reason: 'loading' };
   }
   // Distinguish "fetch failed" from "row missing" — a transient Supabase /
   // RLS error must NOT silently downgrade a real ORG_ADMIN to `no_org`.
@@ -107,25 +119,35 @@ export function resolveIssueGate(input: ResolveIssueGateInput): IssueGate {
     return { allowed: false, loading: false, reason: 'org_suspended' };
   }
 
-  if (org.parent_org_id) {
-    if ((org.parent_approval_status ?? null) !== 'APPROVED') {
-      return { allowed: false, loading: false, reason: 'parent_unapproved' };
-    }
-    if (parentLoading) {
-      return { allowed: false, loading: true, reason: 'loading' };
-    }
-    if (parentError) {
-      return { allowed: false, loading: false, reason: 'query_error' };
-    }
-    if (!parent || parent.verification_status !== 'VERIFIED') {
-      return { allowed: false, loading: false, reason: 'parent_unverified' };
-    }
-    if (parent.suspended === true) {
-      return { allowed: false, loading: false, reason: 'parent_suspended' };
-    }
-  }
+  const parentGate = resolveParentIssueGate(org, parent, parentLoading, parentError);
+  if (parentGate) return parentGate;
 
   return { allowed: true, loading: false, reason: null };
+}
+
+function resolveParentIssueGate(
+  org: OrgGateRow,
+  parent: OrgGateRow | null | undefined,
+  parentLoading: boolean,
+  parentError: boolean,
+): IssueGate | null {
+  if (!org.parent_org_id) return null;
+  if ((org.parent_approval_status ?? null) !== 'APPROVED') {
+    return { allowed: false, loading: false, reason: 'parent_unapproved' };
+  }
+  if (parentLoading) {
+    return { allowed: false, loading: true, reason: 'loading' };
+  }
+  if (parentError) {
+    return { allowed: false, loading: false, reason: 'query_error' };
+  }
+  if (!parent || parent.verification_status !== 'VERIFIED') {
+    return { allowed: false, loading: false, reason: 'parent_unverified' };
+  }
+  if (parent.suspended === true) {
+    return { allowed: false, loading: false, reason: 'parent_suspended' };
+  }
+  return null;
 }
 
 /**
@@ -147,14 +169,17 @@ async function fetchOrgGateRow(orgId: string): Promise<OrgGateRow | null> {
   return data as unknown as OrgGateRow;
 }
 
-export function useCanIssueCredential(): IssueGate {
+export function useCanIssueCredential(options: UseCanIssueCredentialOptions = {}): IssueGate {
   const { profile, loading: profileLoading } = useProfile();
-  const orgId = profile?.org_id ?? null;
+  const orgId = options.orgId !== undefined ? options.orgId : profile?.org_id ?? null;
+  const role = options.role ?? profile?.role;
+  const loading = profileLoading || options.profileLoading === true;
+  const shouldFetchOrg = !!orgId && role === 'ORG_ADMIN' && !loading;
 
   const { data: org, isLoading: orgLoading, isError: orgIsError } = useQuery({
     queryKey: [...queryKeys.organization(orgId ?? ''), 'gate'] as const,
     queryFn: () => fetchOrgGateRow(orgId!),
-    enabled: !!orgId,
+    enabled: shouldFetchOrg,
     staleTime: 30_000,
   });
 
@@ -168,8 +193,8 @@ export function useCanIssueCredential(): IssueGate {
   });
 
   return resolveIssueGate({
-    profileLoading,
-    role: profile?.role,
+    profileLoading: loading,
+    role,
     orgId,
     org,
     orgLoading,

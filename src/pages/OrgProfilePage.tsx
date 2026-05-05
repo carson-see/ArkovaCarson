@@ -59,6 +59,8 @@ export function OrgProfilePage() {
   // User's role in this org
   const [userRole, setUserRole] = useState<OrgMemberRole | null>(null);
   const [roleLoading, setRoleLoading] = useState(true);
+  const isAdmin = userRole === 'owner' || userRole === 'admin' || isPlatformAdmin(user?.email);
+  const issueCredentialRole = isAdmin ? 'ORG_ADMIN' : 'INDIVIDUAL';
 
   // Dialog state
   const [issueDialogOpen, setIssueDialogOpen] = useState(false);
@@ -70,9 +72,13 @@ export function OrgProfilePage() {
   // before the flag resolves. (Pre-1755 behavior is preserved once we know the
   // flag is OFF.)
   const split = useIssueCredentialSplit();
-  const issueGate = useCanIssueCredential();
+  const issueGate = useCanIssueCredential({
+    orgId: orgId ?? null,
+    role: issueCredentialRole,
+    profileLoading: profileLoading || roleLoading,
+  });
   const splitEnforced = split.loading || split.enabled;
-  const showIssueButton = !splitEnforced || issueGate.allowed;
+  const showIssueButton = isAdmin && (!splitEnforced || issueGate.allowed);
   const [inviteOpen, setInviteOpen] = useState(false);
   const [addMemberOpen, setAddMemberOpen] = useState(false);
   const [revokeTarget, setRevokeTarget] = useState<Anchor | null>(null);
@@ -249,7 +255,6 @@ export function OrgProfilePage() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const orgPrefix = (organization as any)?.org_prefix as string | null;
   const orgLogoUrl = (organization as Record<string, unknown>)?.logo_url as string | null;
-  const isAdmin = userRole === 'owner' || userRole === 'admin' || isPlatformAdmin(user?.email);
   const _isOwner = userRole === 'owner' || isPlatformAdmin(user?.email);
 
   useEffect(() => {
@@ -876,6 +881,9 @@ export function OrgProfilePage() {
           setIssueDialogOpen(open);
           if (!open) setRefreshKey((k) => k + 1);
         }}
+        orgId={orgId}
+        role={issueCredentialRole}
+        profileLoading={profileLoading || roleLoading}
       />
 
       {/* SCRUM-1755 — universal Secure Document dialog. Bulk auto-detected. */}

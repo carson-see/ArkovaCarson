@@ -69,6 +69,12 @@ interface IssueCredentialFormProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSuccess?: () => void;
+  /** Org to issue against. Defaults to the signed-in profile org. */
+  orgId?: string | null;
+  /** Caller role for the target org. Defaults to the signed-in profile role. */
+  role?: string | null;
+  /** Extra loading state for route/membership role resolution. */
+  profileLoading?: boolean;
 }
 
 type Step = 'form' | 'success';
@@ -89,10 +95,16 @@ export function IssueCredentialForm({
   open,
   onOpenChange,
   onSuccess,
+  orgId,
+  role,
+  profileLoading: roleContextLoading,
 }: Readonly<IssueCredentialFormProps>) {
   const { user } = useAuth();
-  const { profile } = useProfile();
+  const { profile, loading: profileLoading } = useProfile();
   const navigate = useNavigate();
+  const issueOrgId = orgId !== undefined ? orgId : profile?.org_id ?? null;
+  const issueRole = role ?? profile?.role;
+  const issueProfileLoading = profileLoading || roleContextLoading === true;
 
   const [step, setStep] = useState<Step>('form');
   const [file, setFile] = useState<File | null>(null);
@@ -138,7 +150,11 @@ export function IssueCredentialForm({
   // exposes a `loading` state we treat as "split enforced" so an org admin
   // can't slip a submission in before the flag resolves.
   const split = useIssueCredentialSplit();
-  const issueGate = useCanIssueCredential();
+  const issueGate = useCanIssueCredential({
+    orgId: issueOrgId,
+    role: issueRole,
+    profileLoading: issueProfileLoading,
+  });
   const splitEnforced = split.loading || split.enabled;
   const gateBlocked = splitEnforced && (!issueGate.allowed || issueGate.loading);
   const gateBlockedMessage = useMemo(() => {
@@ -162,7 +178,7 @@ export function IssueCredentialForm({
   // Fetch template when credential type is selected (UF-05)
   const { template, loading: templateLoading } = useCredentialTemplate(
     credentialType || null,
-    profile?.org_id || null,
+    issueOrgId,
   );
 
   const templateFields = useMemo(() => template?.fields ?? [], [template]);
@@ -369,7 +385,7 @@ export function IssueCredentialForm({
         filename: file.name,
         file_size: file.size,
         file_mime: file.type || null,
-        org_id: profile?.org_id || null,
+        org_id: issueOrgId,
         credential_type: credentialType,
         label: label.trim() || null,
         metadata,
@@ -411,7 +427,7 @@ export function IssueCredentialForm({
         eventCategory: 'ANCHOR',
         targetType: 'anchor',
         targetId: inserted.id,
-        orgId: profile?.org_id,
+        orgId: issueOrgId,
         details: `Issued ${credentialType} credential for "${file.name}"`,
       });
 
@@ -435,7 +451,7 @@ export function IssueCredentialForm({
     file,
     fingerprint,
     user,
-    profile,
+    issueOrgId,
     credentialType,
     label,
     expiresAt,
@@ -466,7 +482,7 @@ export function IssueCredentialForm({
     resetForm();
   }, [resetForm]);
 
-  const canSubmit = !!file && !!fingerprint && !!credentialType && !creating && !templateLoading;
+  const canSubmit = !!file && !!fingerprint && !!credentialType && !creating && !templateLoading && !gateBlocked;
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
@@ -679,13 +695,13 @@ export function IssueCredentialForm({
                   placeholder={ISSUE_CREDENTIAL_LABELS.PROOF_URL_PLACEHOLDER}
                   disabled={creating}
                   aria-invalid={!!proofUrlError}
-                  aria-describedby="proof-url-help"
+                  aria-describedby={proofUrlError ? 'proof-url-help proof-url-error' : 'proof-url-help'}
                 />
                 <p id="proof-url-help" className="text-xs text-muted-foreground">
                   {ISSUE_CREDENTIAL_LABELS.PROOF_URL_HELP}
                 </p>
                 {proofUrlError && (
-                  <p className="text-xs text-destructive" role="alert">{proofUrlError}</p>
+                  <p id="proof-url-error" className="text-xs text-destructive" role="alert">{proofUrlError}</p>
                 )}
               </div>
 
@@ -732,7 +748,7 @@ export function IssueCredentialForm({
                   }
                   void handleSubmit();
                 }}
-                disabled={creating}
+                disabled={creating || gateBlocked}
                 aria-disabled={!canSubmit}
               >
                 {creating ? (

@@ -9,7 +9,7 @@
  * detects shape and produces N anchors silently.
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { beforeEach, describe, it, expect, vi } from 'vitest';
 import { render, screen, act } from '@testing-library/react';
 import { SecureDocumentDialog } from './SecureDocumentDialog';
 import { SECURE_DIALOG_LABELS } from '@/lib/copy';
@@ -19,11 +19,34 @@ import { SECURE_DIALOG_LABELS } from '@/lib/copy';
 // title stayed stable AFTER the bulk transition.
 let lastFileUploadProps: { onBulkDetected?: (files: File[]) => void } | null = null;
 vi.mock('./FileUpload', () => ({
-  FileUpload: (props: { onBulkDetected?: (files: File[]) => void }) => {
-    lastFileUploadProps = props;
+  FileUpload: ({ onBulkDetected }: { onBulkDetected?: (files: File[]) => void }) => {
+    lastFileUploadProps = { onBulkDetected };
     return <div data-testid="file-upload-stub" />;
   },
 }));
+
+function resolveEmptySelect() {
+  return Promise.resolve({ data: [] });
+}
+
+function createLimitChain() {
+  return { limit: vi.fn(resolveEmptySelect) };
+}
+
+function createEqChain() {
+  return { eq: vi.fn(createLimitChain) };
+}
+
+function createInsertChain() {
+  return { select: vi.fn(() => ({ single: vi.fn() })) };
+}
+
+function createSupabaseTableMock() {
+  return {
+    insert: vi.fn(createInsertChain),
+    select: vi.fn(createEqChain),
+  };
+}
 
 // Bulk wizard pulls in heavy deps we don't need here; stub it.
 vi.mock('@/components/upload', () => ({
@@ -36,10 +59,7 @@ vi.mock('react-router-dom', () => ({
 
 vi.mock('@/lib/supabase', () => ({
   supabase: {
-    from: vi.fn(() => ({
-      insert: vi.fn(() => ({ select: vi.fn(() => ({ single: vi.fn() })) })),
-      select: vi.fn(() => ({ eq: vi.fn(() => ({ limit: vi.fn(() => Promise.resolve({ data: [] })) })) })),
-    })),
+    from: vi.fn(createSupabaseTableMock),
     auth: {
       getSession: vi.fn(async () => ({ data: { session: null }, error: null })),
     },
@@ -88,6 +108,10 @@ vi.mock('sonner', () => ({
 }));
 
 describe('SCRUM-1755 SecureDocumentDialog title is stable across paths', () => {
+  beforeEach(() => {
+    lastFileUploadProps = null;
+  });
+
   it('renders "Secure Document" as the dialog title on open', () => {
     render(<SecureDocumentDialog open={true} onOpenChange={() => {}} />);
     expect(screen.getByRole('dialog', { name: new RegExp(SECURE_DIALOG_LABELS.TITLE, 'i') })).toBeInTheDocument();

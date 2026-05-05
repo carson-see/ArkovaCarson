@@ -2,6 +2,7 @@
 _Last updated: 2026-05-05_
 
 ## What This Folder Contains
+
 React hooks for data fetching and mutations against Supabase. Each hook encapsulates a single concern (auth, profile, anchors, revocation, export, etc.).
 
 ## Recent Changes
