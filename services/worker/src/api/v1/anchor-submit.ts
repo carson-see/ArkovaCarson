@@ -20,6 +20,7 @@ import {
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 import { ensureAnchorCreditAvailable } from '../../utils/anchorCreditGate.js';
+import { ensureOrgNotSuspended } from '../../utils/orgSuspensionGuard.js';
 
 const router = Router();
 
@@ -133,6 +134,25 @@ router.post('/', async (req: Request, res: Response) => {
 
     // Get org_id from API key
     const orgId = req.apiKey.orgId ?? null;
+
+    // SCRUM-1667 — sub-org suspension guard, gated by
+    // ENABLE_ORG_SUSPENSION_GUARD (default off). Off → no-op so existing
+    // contract tests don't need to mock the is_org_suspended RPC. On →
+    // 403 fail-closed when the parent admin has suspended this sub-org
+    // via suspend_suborg (mig 0289). Read paths intentionally skip this
+    // check; suspended orgs retain read access to existing evidence per
+    // PRD 6 ORG-08. Same default-off rollout pattern as the credit gate.
+    if (process.env.ENABLE_ORG_SUSPENSION_GUARD === 'true' && orgId) {
+      const suspensionGuard = await ensureOrgNotSuspended(orgId);
+      if (!suspensionGuard.ok) {
+        const status = suspensionGuard.code === 'org_suspended' ? 403 : 503;
+        res.status(status).json({
+          error: suspensionGuard.code,
+          message: suspensionGuard.message,
+        });
+        return;
+      }
+    }
 
     // SCRUM-1170-B — gate org-credit deduction. Helper short-circuits to
     // allowed=true when ENABLE_ORG_CREDIT_ENFORCEMENT is off (default), so
