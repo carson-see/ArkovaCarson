@@ -14,6 +14,11 @@
 -- role RPC that atomically claims due orgs with row locks. The worker then
 -- calls processBatchAnchors({ force: true, orgId }) for each returned org, so
 -- scheduled runs use the same org-scoped anchoring safety rails as manual runs.
+--
+-- ROLLBACK:
+--   DROP FUNCTION IF EXISTS claim_due_org_queue_runs(timestamptz, text, integer);
+--   DROP TABLE IF EXISTS organization_queue_runs;
+--   DROP TABLE IF EXISTS organization_queue_run_state;
 -- =============================================================================
 
 BEGIN;
