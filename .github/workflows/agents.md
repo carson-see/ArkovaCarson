@@ -18,7 +18,7 @@
 ## Patterns
 
 - Workflows use pinned action SHAs (not `@v4` tags) for supply-chain safety.
-- External downloads (e.g. `tla2tools.jar`) MUST verify SHA256. See ci.yml's `Pin TLA2TOOLS_JAR` step for the canonical pattern (SCRUM-1248 / R0-2).
+- External downloads (e.g. `tla2tools.jar`) MUST verify SHA256. See ci.yml's `Pin TLA2TOOLS_JAR` step for the canonical pattern (SCRUM-1248 / R0-2); when the upstream release binary changes, refresh the pin with a local `curl -fsSL <release-url> | shasum -a 256` check and update the inline date.
 - `migration-drift.yml` is read-only — it never applies or modifies anything.
 - Exempt-list changes in `migration-drift.yml` require a code comment + Jira ticket.
 - Secrets: `arkova1/supabase_access` in GCP Secret Manager for migration drift, `SUPABASE_PROJECT_REF`, `SENTRY_DSN_OPS` (revision-drift Sentry alerts).

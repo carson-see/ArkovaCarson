@@ -34,6 +34,11 @@ const { mockConfig, mockDbFrom } = vi.hoisted(() => {
     bitcoinFallbackFeeRate: undefined as number | undefined,
     bitcoinKmsKeyId: undefined as string | undefined,
     bitcoinKmsRegion: undefined as string | undefined,
+    kmsProvider: undefined as string | undefined,
+    gcpKmsKeyResourceName: undefined as string | undefined,
+    gcpKmsProjectId: undefined as string | undefined,
+    forceDynamicFeeEstimation: false,
+    bitcoinMaxFeeRate: undefined as number | undefined,
     enableProdNetworkAnchoring: false,
     logLevel: 'info',
   };
@@ -127,6 +132,10 @@ describe('createChainClient', () => {
     mockConfig.bitcoinFallbackFeeRate = undefined;
     mockConfig.bitcoinKmsKeyId = undefined;
     mockConfig.bitcoinKmsRegion = undefined;
+    mockConfig.kmsProvider = undefined;
+    mockConfig.gcpKmsKeyResourceName = undefined;
+    mockConfig.gcpKmsProjectId = undefined;
+    mockConfig.forceDynamicFeeEstimation = false;
   });
 
   it('returns MockChainClient when useMocks is true', async () => {
@@ -525,5 +534,144 @@ describe('SupabaseChainIndexLookup', () => {
       confirmations: null,
       anchorId: null,
     });
+  });
+
+  // ── DH-05 + WRK-03 cache (SCRUM-1545 coverage backfill) ──
+
+  it('returns cached entry on second lookup without DB hit', async () => {
+    mockMaybeSingle.mockResolvedValue({
+      data: { chain_tx_id: 'tx_cached', chain_block_height: 1, chain_block_timestamp: null, confirmations: null, anchor_id: 'a1' },
+      error: null,
+    });
+
+    const first = await lookup.lookupFingerprint('fp_cache');
+    expect(first?.chainTxId).toBe('tx_cached');
+    expect(mockDbFrom).toHaveBeenCalledTimes(1);
+
+    const second = await lookup.lookupFingerprint('fp_cache');
+    expect(second?.chainTxId).toBe('tx_cached');
+    // Second call serves from cache → no extra DB read
+    expect(mockDbFrom).toHaveBeenCalledTimes(1);
+  });
+
+  it('clearCache() empties the cache so next lookup hits DB again', async () => {
+    mockMaybeSingle.mockResolvedValue({ data: null, error: null });
+    await lookup.lookupFingerprint('fp_clr');
+    expect(lookup.cacheSize).toBe(1);
+
+    lookup.clearCache();
+    expect(lookup.cacheSize).toBe(0);
+
+    await lookup.lookupFingerprint('fp_clr');
+    expect(mockDbFrom).toHaveBeenCalledTimes(2);
+  });
+
+  it('evicts stale entries when capacity hit and a prior entry has expired', async () => {
+    const ttl = 5;
+    const tiny = new SupabaseChainIndexLookup(ttl, 1);
+    mockMaybeSingle.mockResolvedValue({ data: null, error: null });
+    await tiny.lookupFingerprint('fp_x');
+    expect(tiny.cacheSize).toBe(1);
+    await new Promise((r) => setTimeout(r, ttl + 5));
+    await tiny.lookupFingerprint('fp_y');
+    // Stale fp_x evicted via _evictStale, fp_y inserted → still 1 entry
+    expect(tiny.cacheSize).toBe(1);
+  });
+
+  it('evicts oldest entry (LRU) when at capacity with no expirations', async () => {
+    const small = new SupabaseChainIndexLookup(60_000, 2);
+    mockMaybeSingle.mockResolvedValue({ data: null, error: null });
+    await small.lookupFingerprint('fp_1');
+    await small.lookupFingerprint('fp_2');
+    expect(small.cacheSize).toBe(2);
+    await small.lookupFingerprint('fp_3');
+    // At capacity: expired-eviction is no-op (TTL 60s); oldest deleted via Map.keys().next()
+    expect(small.cacheSize).toBe(2);
+  });
+});
+
+// ─── createChainClient mainnet variants (SCRUM-1545 coverage) ──────
+
+describe('createChainClient mainnet signing variants', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockConfig.useMocks = false;
+    mockConfig.nodeEnv = 'production';
+    mockConfig.enableProdNetworkAnchoring = true;
+    mockConfig.bitcoinNetwork = 'mainnet';
+    mockConfig.bitcoinTreasuryWif = undefined;
+    mockConfig.bitcoinKmsKeyId = undefined;
+    mockConfig.kmsProvider = undefined;
+    mockConfig.gcpKmsKeyResourceName = undefined;
+    mockConfig.bitcoinUtxoProvider = 'mempool';
+  });
+
+  it('uses WIF signing for mainnet when bitcoinTreasuryWif is set', async () => {
+    mockConfig.bitcoinTreasuryWif = 'L1aW4aubDFB7yfras2S1mN3bqg9NV1nMM3PYQzJBN4Pc8t6n5w8m';
+    await createChainClient();
+    expect(createSigningProvider).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'wif', wif: expect.any(String) }),
+    );
+  });
+
+  it('falls back to MockChainClient on mainnet GCP KMS path when gcpKmsKeyResourceName missing', async () => {
+    mockConfig.kmsProvider = 'gcp';
+    mockConfig.gcpKmsKeyResourceName = undefined;
+    const client = await createChainClient();
+    expect(client).toBeInstanceOf(MockChainClient);
+  });
+
+  it('uses GCP KMS signing for mainnet when kmsProvider=gcp + key resource present', async () => {
+    mockConfig.kmsProvider = 'gcp';
+    mockConfig.gcpKmsKeyResourceName = 'projects/p/locations/l/keyRings/r/cryptoKeys/k/cryptoKeyVersions/1';
+    mockConfig.gcpKmsProjectId = 'p';
+    await createChainClient();
+    expect(createSigningProvider).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'gcp-kms' }),
+    );
+  });
+
+  it('uses dynamic mempool fee estimator on signet when forceDynamicFeeEstimation=true', async () => {
+    mockConfig.bitcoinNetwork = 'signet';
+    mockConfig.bitcoinTreasuryWif = 'cVt4o7BGAig1UXywgGSmARhxMdzP5qvQsxKkSsc1XEkw3tDTQFpy';
+    mockConfig.forceDynamicFeeEstimation = true;
+    await createChainClient();
+    expect(createFeeEstimator).toHaveBeenCalledWith(
+      expect.objectContaining({ strategy: 'mempool' }),
+    );
+  });
+});
+
+// ─── getChainClientAsync paths (SCRUM-1545 coverage) ──────────────
+
+describe('getChainClientAsync', () => {
+  it('returns the initialized client when present', async () => {
+    await initChainClient();
+    const { getChainClientAsync } = await import('./client.js');
+    const c = await getChainClientAsync();
+    expect(c).toBeDefined();
+    expect(typeof c.submitFingerprint).toBe('function');
+  });
+});
+
+// ─── module-isolated throws (SCRUM-1545 coverage) ─────────────────
+
+describe('chain client singleton throws when uninitialized', () => {
+  it('getInitializedChainClient throws before init in a fresh module instance', async () => {
+    vi.resetModules();
+    const fresh = await import('./client.js');
+    expect(() => fresh.getInitializedChainClient()).toThrow(/not initialized/);
+  });
+
+  it('getChainClient throws before init in a fresh module instance', async () => {
+    vi.resetModules();
+    const fresh = await import('./client.js');
+    expect(() => fresh.getChainClient()).toThrow(/before initChainClient/);
+  });
+
+  it('getChainClientAsync throws before init in a fresh module instance', async () => {
+    vi.resetModules();
+    const fresh = await import('./client.js');
+    await expect(fresh.getChainClientAsync()).rejects.toThrow(/not initialized/);
   });
 });
