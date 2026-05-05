@@ -95,9 +95,18 @@ echo "[build-circuit] Step 2/6: fetch circomlib tarball (build-time only, GPL-3.
 # because line 76 only checks dir existence — same reproducibility failure
 # mode the circom version check above prevents. CodeRabbit ASSERTIVE on PR #693.
 CIRCOMLIB_VERSION_STAMP="$CIRCOMLIB_DIR/.version"
-if [[ -f "$CIRCOMLIB_VERSION_STAMP" ]] && [[ "$(cat "$CIRCOMLIB_VERSION_STAMP")" != "$CIRCOMLIB_VERSION" ]]; then
-  echo "[build-circuit] circomlib version drift detected ($(cat "$CIRCOMLIB_VERSION_STAMP") on disk vs $CIRCOMLIB_VERSION pinned) — invalidating $CIRCOMLIB_DIR"
-  rm -rf "$CIRCOMLIB_DIR"
+# CodeRabbit on PR #693: a legacy CIRCOMLIB_DIR/circuits without the
+# version stamp (created before the stamp logic landed) would bypass
+# validation and be silently reused. Treat missing-stamp as drift too.
+if [[ -d "$CIRCOMLIB_DIR/circuits" ]]; then
+  if [[ ! -f "$CIRCOMLIB_VERSION_STAMP" ]] || [[ "$(cat "$CIRCOMLIB_VERSION_STAMP")" != "$CIRCOMLIB_VERSION" ]]; then
+    if [[ -f "$CIRCOMLIB_VERSION_STAMP" ]]; then
+      echo "[build-circuit] circomlib version drift detected ($(cat "$CIRCOMLIB_VERSION_STAMP") on disk vs $CIRCOMLIB_VERSION pinned) — invalidating $CIRCOMLIB_DIR"
+    else
+      echo "[build-circuit] circomlib has no version stamp (legacy cache) — invalidating $CIRCOMLIB_DIR for safety"
+    fi
+    rm -rf "$CIRCOMLIB_DIR"
+  fi
 fi
 
 if [[ ! -d "$CIRCOMLIB_DIR/circuits" ]]; then
