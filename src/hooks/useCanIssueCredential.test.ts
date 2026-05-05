@@ -8,9 +8,8 @@
  * Every gate branch and every multi-input boundary is pinned here.
  */
 
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderHook } from '@testing-library/react';
-import { beforeEach, vi } from 'vitest';
 
 const mockUseProfile = vi.hoisted(() => vi.fn());
 const mockUseQuery = vi.hoisted(() => vi.fn());

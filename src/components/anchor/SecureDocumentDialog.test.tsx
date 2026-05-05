@@ -11,14 +11,27 @@ import { act, render, screen } from '@testing-library/react';
 import { SecureDocumentDialog } from './SecureDocumentDialog';
 import { SECURE_DIALOG_LABELS } from '@/lib/copy';
 
-type FileUploadMockProps = { onBulkDetected?: (files: File[]) => void };
+type FileUploadMockProps = {
+  onBulkDetected?: (files: File[]) => void;
+};
 
 let lastFileUploadProps: FileUploadMockProps | null = null;
 
 vi.mock('./FileUpload', () => ({
   FileUpload: (props: FileUploadMockProps) => {
     lastFileUploadProps = props;
-    return <div data-testid="file-upload-stub" />;
+    return (
+      <div data-testid="file-upload-stub">
+        <button
+          type="button"
+          onClick={() =>
+            props.onBulkDetected?.([new File(['bulk'], 'bulk.csv', { type: 'text/csv' })])
+          }
+        >
+          Drive bulk path
+        </button>
+      </div>
+    );
   },
 }));
 

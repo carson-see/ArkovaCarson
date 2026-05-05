@@ -113,7 +113,9 @@ export function CsvUploader({
     }
 
     processedInitialFileKey.current = initialFileKey;
-    void processFile(initialFile).finally(() => onInitialFileConsumed?.());
+    processFile(initialFile).finally(() => {
+      onInitialFileConsumed?.();
+    });
   }, [initialFile, initialFileKey, onInitialFileConsumed, processFile]);
 
   const handleFileChange = useCallback(
