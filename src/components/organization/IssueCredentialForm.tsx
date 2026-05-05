@@ -102,7 +102,7 @@ export function IssueCredentialForm({
   const { user } = useAuth();
   const { profile, loading: profileLoading } = useProfile();
   const navigate = useNavigate();
-  const issueOrgId = orgId !== undefined ? orgId : profile?.org_id ?? null;
+  const issueOrgId = orgId === undefined ? profile?.org_id ?? null : orgId;
   const issueRole = role ?? profile?.role;
   const issueProfileLoading = profileLoading || roleContextLoading === true;
 

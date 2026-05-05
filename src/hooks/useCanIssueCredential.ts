@@ -196,7 +196,7 @@ function requireQueryId(id: string | null | undefined, label: string): string {
 
 export function useCanIssueCredential(options: UseCanIssueCredentialOptions = {}): IssueGate {
   const { profile, loading: profileLoading } = useProfile();
-  const orgId = options.orgId !== undefined ? options.orgId : profile?.org_id ?? null;
+  const orgId = options.orgId === undefined ? profile?.org_id ?? null : options.orgId;
   const role = options.role ?? profile?.role;
   const loading = profileLoading || options.profileLoading === true;
   const shouldFetchOrg = !!orgId && role === 'ORG_ADMIN' && !loading;

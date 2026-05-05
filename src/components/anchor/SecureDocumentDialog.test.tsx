@@ -7,8 +7,24 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { act, render, screen } from '@testing-library/react';
 import { SecureDocumentDialog } from './SecureDocumentDialog';
+import { SECURE_DIALOG_LABELS } from '@/lib/copy';
+
+type FileUploadMockProps = { onBulkDetected?: (files: File[]) => void };
+
+let lastFileUploadProps: FileUploadMockProps | null = null;
+
+vi.mock('./FileUpload', () => ({
+  FileUpload: (props: FileUploadMockProps) => {
+    lastFileUploadProps = props;
+    return <div data-testid="file-upload-stub" />;
+  },
+}));
+
+vi.mock('@/components/upload', () => ({
+  BulkUploadWizard: () => <div data-testid="bulk-wizard-stub" />,
+}));
 
 vi.mock('react-router-dom', () => ({
   useNavigate: () => vi.fn(),
@@ -68,7 +84,10 @@ vi.mock('sonner', () => ({
 }));
 
 describe('SCRUM-949 SecureDocumentDialog — Continue disabled when no file', () => {
-  beforeEach(() => vi.clearAllMocks());
+  beforeEach(() => {
+    vi.clearAllMocks();
+    lastFileUploadProps = null;
+  });
 
   it('disables Continue (and reflects aria-disabled) on initial open with no file', () => {
     render(<SecureDocumentDialog open={true} onOpenChange={() => {}} />);
@@ -76,5 +95,26 @@ describe('SCRUM-949 SecureDocumentDialog — Continue disabled when no file', ()
     const continueBtn = screen.getByTestId('secure-document-continue');
     expect(continueBtn).toHaveProperty('disabled', true);
     expect(continueBtn.getAttribute('aria-disabled')).toBe('true');
+  });
+
+  it('renders "Secure Document" as the dialog title on open', () => {
+    render(<SecureDocumentDialog open={true} onOpenChange={() => {}} />);
+    expect(screen.getByRole('dialog', { name: new RegExp(SECURE_DIALOG_LABELS.TITLE, 'i') })).toBeInTheDocument();
+  });
+
+  it('keeps the title stable after bulk detection', () => {
+    render(<SecureDocumentDialog open={true} onOpenChange={() => {}} />);
+
+    expect(lastFileUploadProps?.onBulkDetected).toBeTypeOf('function');
+    act(() => {
+      lastFileUploadProps?.onBulkDetected?.([
+        new File(['a,b\n1,2'], 'docs.csv', { type: 'text/csv' }),
+      ]);
+    });
+
+    expect(screen.getByTestId('bulk-wizard-stub')).toBeInTheDocument();
+    const dialogTitle = screen.getByRole('dialog').querySelector('h2');
+    expect(dialogTitle?.textContent ?? '').not.toMatch(/^Bulk Upload$/i);
+    expect(dialogTitle?.textContent ?? '').toContain(SECURE_DIALOG_LABELS.TITLE);
   });
 });

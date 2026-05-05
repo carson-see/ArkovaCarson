@@ -197,6 +197,31 @@ function renderForm(props: Partial<ComponentProps<typeof IssueCredentialForm>> =
   );
 }
 
+async function waitForUploadReady(assertNoGate = false) {
+  await waitFor(() => {
+    if (assertNoGate) {
+      expect(screen.queryByTestId('issue-credential-gate-blocked')).not.toBeInTheDocument();
+    }
+    expect(screen.getByTestId('mock-file-upload')).not.toBeDisabled();
+  });
+}
+
+async function chooseCertificate(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByTestId('mock-file-upload'));
+  await user.click(screen.getByRole('button', { name: CREDENTIAL_TYPE_LABELS.CERTIFICATE }));
+}
+
+async function submitCertificate(user: ReturnType<typeof userEvent.setup>, proofUrl?: string) {
+  await chooseCertificate(user);
+  if (proofUrl) {
+    await user.type(
+      screen.getByLabelText(new RegExp(ISSUE_CREDENTIAL_LABELS.PROOF_URL_LABEL, 'i')),
+      proofUrl,
+    );
+  }
+  await user.click(screen.getByRole('button', { name: ISSUE_CREDENTIAL_LABELS.ISSUE_BUTTON }));
+}
+
 describe('SCRUM-1755 IssueCredentialForm split + proof_url', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -279,18 +304,8 @@ describe('SCRUM-1755 IssueCredentialForm split + proof_url', () => {
     mockSplitEnabled.mockResolvedValue(false);
     renderForm();
 
-    await waitFor(() => {
-      expect(screen.queryByTestId('issue-credential-gate-blocked')).not.toBeInTheDocument();
-      expect(screen.getByTestId('mock-file-upload')).not.toBeDisabled();
-    });
-
-    await user.click(screen.getByTestId('mock-file-upload'));
-    await user.click(screen.getByRole('button', { name: CREDENTIAL_TYPE_LABELS.CERTIFICATE }));
-    await user.type(
-      screen.getByLabelText(new RegExp(ISSUE_CREDENTIAL_LABELS.PROOF_URL_LABEL, 'i')),
-      'https://example.test/proof/credential-1',
-    );
-    await user.click(screen.getByRole('button', { name: ISSUE_CREDENTIAL_LABELS.ISSUE_BUTTON }));
+    await waitForUploadReady(true);
+    await submitCertificate(user, 'https://example.test/proof/credential-1');
 
     await waitFor(() => expect(mockAnchorInsert).toHaveBeenCalledTimes(1));
     expect(anchorInsertPayloads[0]).toMatchObject({
@@ -305,13 +320,8 @@ describe('SCRUM-1755 IssueCredentialForm split + proof_url', () => {
     mockSplitEnabled.mockResolvedValue(false);
     renderForm({ orgId: 'viewed-org', role: 'ORG_ADMIN' });
 
-    await waitFor(() => {
-      expect(screen.getByTestId('mock-file-upload')).not.toBeDisabled();
-    });
-
-    await user.click(screen.getByTestId('mock-file-upload'));
-    await user.click(screen.getByRole('button', { name: CREDENTIAL_TYPE_LABELS.CERTIFICATE }));
-    await user.click(screen.getByRole('button', { name: ISSUE_CREDENTIAL_LABELS.ISSUE_BUTTON }));
+    await waitForUploadReady();
+    await submitCertificate(user);
 
     await waitFor(() => expect(mockAnchorInsert).toHaveBeenCalledTimes(1));
     expect(anchorInsertPayloads[0]).toMatchObject({ org_id: 'viewed-org' });
@@ -322,14 +332,10 @@ describe('SCRUM-1755 IssueCredentialForm split + proof_url', () => {
     mockSplitEnabled.mockResolvedValue(false);
     renderForm();
 
-    await waitFor(() => {
-      expect(screen.queryByTestId('issue-credential-gate-blocked')).not.toBeInTheDocument();
-      expect(screen.getByTestId('mock-file-upload')).not.toBeDisabled();
-    });
+    await waitForUploadReady(true);
 
-    await user.click(screen.getByTestId('mock-file-upload'));
-    await user.click(screen.getByRole('button', { name: CREDENTIAL_TYPE_LABELS.CERTIFICATE }));
     const proofInput = screen.getByLabelText(new RegExp(ISSUE_CREDENTIAL_LABELS.PROOF_URL_LABEL, 'i'));
+    await chooseCertificate(user);
     await user.type(proofInput, 'http://example.test/proof');
     await user.click(screen.getByRole('button', { name: ISSUE_CREDENTIAL_LABELS.ISSUE_BUTTON }));
 
