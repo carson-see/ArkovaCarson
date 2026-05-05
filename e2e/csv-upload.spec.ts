@@ -17,7 +17,7 @@ async function openSecureDocumentDialog(page: Page): Promise<Locator> {
   await expect(uploadButton).toBeVisible({ timeout: 15_000 });
   await uploadButton.click();
 
-  const dialog = page.getByRole('dialog', { name: /^Secure Document$/i });
+  const dialog = page.locator('[role="dialog"]').filter({ hasText: /Secure Document/i }).first();
   await expect(dialog).toBeVisible({ timeout: 5_000 });
   await expect(dialog.getByRole('heading', { name: /^Secure Document$/i })).toBeVisible();
 
