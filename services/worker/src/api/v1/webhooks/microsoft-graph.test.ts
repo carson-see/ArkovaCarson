@@ -71,6 +71,27 @@ function buildReq(overrides: Partial<{ body: unknown; query: Record<string, stri
   } as unknown as Request;
 }
 
+// Shared GraphChangeItem fixture builder. Every test in this file constructs
+// the same five-field shape (subscriptionId/clientState/resource/resourceData/changeType);
+// extracting it here clears Sonar's duplicated-lines gate and makes intent clearer.
+function buildGraphChangeItem(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    subscriptionId: SUB_ID,
+    clientState: CLIENT_STATE,
+    resource: 'sites/x/drive/items/r1',
+    resourceData: { id: 'r1' },
+    changeType: 'updated',
+    ...overrides,
+  };
+}
+
+// Wraps a single item or list into the `{ value: [...] }` body Graph sends.
+function buildGraphReq(items: Array<Record<string, unknown>> | Record<string, unknown>): Request {
+  return buildReq({
+    body: { value: Array.isArray(items) ? items : [items] },
+  });
+}
+
 function buildRes() {
   let statusCode: number | undefined;
   let body: unknown;
@@ -169,19 +190,11 @@ describe('microsoft-graph webhook (SCRUM-1138 R2 closeout)', () => {
 
   it('rejects 401 when ALL items fail clientState constant-time compare', async () => {
     const ctx = buildRes();
-    const req = buildReq({
-      body: {
-        value: [
-          {
-            subscriptionId: SUB_ID,
-            clientState: 'attacker-supplied',
-            resource: 'sites/site-1/drive/items/' + RESOURCE_ID,
-            resourceData: { id: RESOURCE_ID, name: 'doc.docx' },
-            changeType: 'updated',
-          },
-        ],
-      },
-    });
+    const req = buildGraphReq(buildGraphChangeItem({
+      clientState: 'attacker-supplied',
+      resource: 'sites/site-1/drive/items/' + RESOURCE_ID,
+      resourceData: { id: RESOURCE_ID, name: 'doc.docx' },
+    }));
     await callRouter(req, ctx.res);
     expect(ctx.statusCode).toBe(401);
     expect(enqueueRpc).not.toHaveBeenCalled();
@@ -189,20 +202,11 @@ describe('microsoft-graph webhook (SCRUM-1138 R2 closeout)', () => {
 
   it('enqueues a sharepoint event when clientState matches and resource is /sites/...', async () => {
     const ctx = buildRes();
-    const req = buildReq({
-      body: {
-        value: [
-          {
-            subscriptionId: SUB_ID,
-            clientState: CLIENT_STATE,
-            resource: 'sites/site-1/drive/items/' + RESOURCE_ID,
-            resourceData: { id: RESOURCE_ID, name: 'msa.docx' },
-            changeType: 'updated',
-            tenantId: '00000000-0000-0000-0000-000000000000',
-          },
-        ],
-      },
-    });
+    const req = buildGraphReq(buildGraphChangeItem({
+      resource: 'sites/site-1/drive/items/' + RESOURCE_ID,
+      resourceData: { id: RESOURCE_ID, name: 'msa.docx' },
+      tenantId: '00000000-0000-0000-0000-000000000000',
+    }));
     await callRouter(req, ctx.res);
     expect(ctx.statusCode).toBe(202);
     const rpcName = enqueueRpc.mock.calls[0]?.[0] as string;
@@ -228,19 +232,11 @@ describe('microsoft-graph webhook (SCRUM-1138 R2 closeout)', () => {
 
   it('routes /me/drive/... resource to vendor=onedrive', async () => {
     const ctx = buildRes();
-    const req = buildReq({
-      body: {
-        value: [
-          {
-            subscriptionId: SUB_ID,
-            clientState: CLIENT_STATE,
-            resource: '/me/drive/items/' + RESOURCE_ID,
-            resourceData: { id: RESOURCE_ID, name: 'personal.docx' },
-            changeType: 'created',
-          },
-        ],
-      },
-    });
+    const req = buildGraphReq(buildGraphChangeItem({
+      resource: '/me/drive/items/' + RESOURCE_ID,
+      resourceData: { id: RESOURCE_ID, name: 'personal.docx' },
+      changeType: 'created',
+    }));
     await callRouter(req, ctx.res);
     expect(ctx.statusCode).toBe(202);
     const enqueueArgs = enqueueRpc.mock.calls[0]?.[1] as Record<string, unknown>;
@@ -252,26 +248,10 @@ describe('microsoft-graph webhook (SCRUM-1138 R2 closeout)', () => {
       .mockResolvedValueOnce({ data: null, error: null }) // unknown sub
       .mockResolvedValueOnce({ data: { org_integrations: { id: INTEGRATION_ID, org_id: ORG_ID } }, error: null });
     const ctx = buildRes();
-    const req = buildReq({
-      body: {
-        value: [
-          {
-            subscriptionId: 'unknown-sub',
-            clientState: CLIENT_STATE,
-            resource: 'sites/x/drive/items/r1',
-            resourceData: { id: 'r1' },
-            changeType: 'updated',
-          },
-          {
-            subscriptionId: SUB_ID,
-            clientState: CLIENT_STATE,
-            resource: 'sites/y/drive/items/r2',
-            resourceData: { id: 'r2' },
-            changeType: 'updated',
-          },
-        ],
-      },
-    });
+    const req = buildGraphReq([
+      buildGraphChangeItem({ subscriptionId: 'unknown-sub' }),
+      buildGraphChangeItem({ resource: 'sites/y/drive/items/r2', resourceData: { id: 'r2' } }),
+    ]);
     await callRouter(req, ctx.res);
     expect(ctx.statusCode).toBe(202);
     const body = ctx.body as { enqueued: number; skipped: number };
@@ -291,19 +271,7 @@ describe('microsoft-graph webhook (SCRUM-1138 R2 closeout)', () => {
       error: { message: 'pg connection refused', code: 'ECONNREFUSED' },
     });
     const ctx = buildRes();
-    const req = buildReq({
-      body: {
-        value: [
-          {
-            subscriptionId: SUB_ID,
-            clientState: CLIENT_STATE,
-            resource: 'sites/x/drive/items/r1',
-            resourceData: { id: 'r1' },
-            changeType: 'updated',
-          },
-        ],
-      },
-    });
+    const req = buildGraphReq(buildGraphChangeItem());
     await callRouter(req, ctx.res);
     expect(ctx.statusCode).toBe(503);
     const body = ctx.body as { error: { code: string } };
@@ -316,26 +284,10 @@ describe('microsoft-graph webhook (SCRUM-1138 R2 closeout)', () => {
       .mockResolvedValueOnce({ data: null, error: { message: 'transient' } })
       .mockResolvedValueOnce({ data: { org_integrations: { id: INTEGRATION_ID, org_id: ORG_ID } }, error: null });
     const ctx = buildRes();
-    const req = buildReq({
-      body: {
-        value: [
-          {
-            subscriptionId: 'will-fail-lookup',
-            clientState: CLIENT_STATE,
-            resource: 'sites/x/drive/items/r1',
-            resourceData: { id: 'r1' },
-            changeType: 'updated',
-          },
-          {
-            subscriptionId: SUB_ID,
-            clientState: CLIENT_STATE,
-            resource: 'sites/y/drive/items/r2',
-            resourceData: { id: 'r2' },
-            changeType: 'updated',
-          },
-        ],
-      },
-    });
+    const req = buildGraphReq([
+      buildGraphChangeItem({ subscriptionId: 'will-fail-lookup' }),
+      buildGraphChangeItem({ resource: 'sites/y/drive/items/r2', resourceData: { id: 'r2' } }),
+    ]);
     await callRouter(req, ctx.res);
     expect(ctx.statusCode).toBe(202);
     expect(enqueueRpc).toHaveBeenCalledTimes(1);
@@ -346,19 +298,7 @@ describe('microsoft-graph webhook (SCRUM-1138 R2 closeout)', () => {
     // check with a proper Zod parse so wrong types and out-of-bounds
     // strings never reach the DB write paths.
     const ctx = buildRes();
-    const req = buildReq({
-      body: {
-        value: [
-          {
-            subscriptionId: 12345, // wrong type
-            clientState: CLIENT_STATE,
-            resource: 'sites/x/drive/items/r1',
-            resourceData: { id: 'r1' },
-            changeType: 'updated',
-          },
-        ],
-      },
-    });
+    const req = buildGraphReq(buildGraphChangeItem({ subscriptionId: 12345 }));
     await callRouter(req, ctx.res);
     // Single item, all malformed → falls through to 202 with skipped[]
     // (Graph would retry-storm on 4xx for clearly-attacker-controllable shapes).
@@ -371,19 +311,7 @@ describe('microsoft-graph webhook (SCRUM-1138 R2 closeout)', () => {
 
   it('Zod gate: rejects items with invalid changeType enum value', async () => {
     const ctx = buildRes();
-    const req = buildReq({
-      body: {
-        value: [
-          {
-            subscriptionId: SUB_ID,
-            clientState: CLIENT_STATE,
-            resource: 'sites/x/drive/items/r1',
-            resourceData: { id: 'r1' },
-            changeType: 'restored', // not in [created, updated, deleted]
-          },
-        ],
-      },
-    });
+    const req = buildGraphReq(buildGraphChangeItem({ changeType: 'restored' /* not in [created, updated, deleted] */ }));
     await callRouter(req, ctx.res);
     expect(ctx.statusCode).toBe(202);
     const body = ctx.body as { enqueued: number; skipped: number };
@@ -425,28 +353,14 @@ describe('microsoft-graph webhook (SCRUM-1138 R2 closeout)', () => {
       error: { message: 'enqueue_rule_event raised: invalid_org_id', code: '23503' },
     });
     const ctx = buildRes();
-    const req = buildReq({
-      body: {
-        value: [
-          {
-            subscriptionId: SUB_ID,
-            clientState: CLIENT_STATE,
-            resource: 'sites/x/drive/items/r1',
-            resourceData: { id: 'r1' },
-            changeType: 'updated',
-          },
-        ],
-      },
-    });
+    const req = buildGraphReq(buildGraphChangeItem());
     await callRouter(req, ctx.res);
     expect(ctx.statusCode).toBe(202);
     const body = ctx.body as { enqueued: number; skipped: number };
     expect(body.enqueued).toBe(0);
     expect(body.skipped).toBe(1);
-    // The atomic rollback property is what we're documenting in this test;
-    // we cannot directly assert "the nonce row was rolled back" from the
-    // unit-test layer (no real DB), but we CAN assert that nothing was
-    // marked enqueued and the RPC was the only DB call made.
+    // Atomic rollback property documented: nothing marked enqueued, and the
+    // RPC was the only DB call made (no direct nonceInsert).
     expect(enqueueRpc).toHaveBeenCalledTimes(1);
     expect(nonceInsert).not.toHaveBeenCalled();
   });
@@ -464,21 +378,7 @@ describe('microsoft-graph webhook (SCRUM-1138 R2 closeout)', () => {
       .mockResolvedValueOnce({ data: [{ rule_event_id: 'evt_msgraph_a', duplicate: false }], error: null })
       .mockResolvedValueOnce({ data: [{ rule_event_id: 'evt_msgraph_b', duplicate: false }], error: null });
     // First request: same sub + same resource + same changeType, payload A.
-    // Note: tenantId omitted — MicrosoftGraphChange schema requires UUID
-    // shape and we don't need it for this test.
-    const reqA = buildReq({
-      body: {
-        value: [
-          {
-            subscriptionId: SUB_ID,
-            clientState: CLIENT_STATE,
-            resource: 'sites/x/drive/items/r1',
-            resourceData: { id: 'r1', name: 'doc.docx' },
-            changeType: 'updated',
-          },
-        ],
-      },
-    });
+    const reqA = buildGraphReq(buildGraphChangeItem({ resourceData: { id: 'r1', name: 'doc.docx' } }));
     const ctxA = buildRes();
     await callRouter(reqA, ctxA.res);
     expect(ctxA.statusCode).toBe(202);
@@ -486,19 +386,7 @@ describe('microsoft-graph webhook (SCRUM-1138 R2 closeout)', () => {
     // Second request: same sub + same resource + same changeType, but later
     // edit so the rawBody (and therefore payload_hash) differs. Pre-0291 this
     // would collide and be `duplicate`; post-0291 it must enqueue.
-    const reqB = buildReq({
-      body: {
-        value: [
-          {
-            subscriptionId: SUB_ID,
-            clientState: CLIENT_STATE,
-            resource: 'sites/x/drive/items/r1',
-            resourceData: { id: 'r1', name: 'doc-revised.docx' }, // different name → different hash
-            changeType: 'updated',
-          },
-        ],
-      },
-    });
+    const reqB = buildGraphReq(buildGraphChangeItem({ resourceData: { id: 'r1', name: 'doc-revised.docx' } }));
     const ctxB = buildRes();
     await callRouter(reqB, ctxB.res);
     expect(ctxB.statusCode).toBe(202);
@@ -519,19 +407,7 @@ describe('microsoft-graph webhook (SCRUM-1138 R2 closeout)', () => {
       error: null,
     });
     const ctx = buildRes();
-    const req = buildReq({
-      body: {
-        value: [
-          {
-            subscriptionId: SUB_ID,
-            clientState: CLIENT_STATE,
-            resource: 'sites/x/drive/items/r1',
-            resourceData: { id: 'r1' },
-            changeType: 'updated',
-          },
-        ],
-      },
-    });
+    const req = buildGraphReq(buildGraphChangeItem());
     await callRouter(req, ctx.res);
     expect(ctx.statusCode).toBe(202);
     const body = ctx.body as { enqueued: number; skipped: number };
