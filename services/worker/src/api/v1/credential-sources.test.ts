@@ -11,9 +11,10 @@ const {
   mockAnchorInsertSingle,
   mockAnchorUpdate,
   mockAnchorUpdateIs,
+  mockAnchorUpdateMaybeSingle,
   mockRecipientInsert,
   mockAuditInsert,
-  mockEnsureAnchorCreditAvailable,
+  mockDeductOrgCredit,
 } = vi.hoisted(() => {
   const mockProfileSingle = vi.fn();
   const mockAnchorsMaybeSingle = vi.fn();
@@ -21,9 +22,10 @@ const {
   const mockAnchorInsert = vi.fn();
   const mockAnchorUpdate = vi.fn();
   const mockAnchorUpdateIs = vi.fn();
+  const mockAnchorUpdateMaybeSingle = vi.fn();
   const mockRecipientInsert = vi.fn();
   const mockAuditInsert = vi.fn();
-  const mockEnsureAnchorCreditAvailable = vi.fn();
+  const mockDeductOrgCredit = vi.fn();
 
   function chain(overrides: Record<string, unknown> = {}) {
     const builder: Record<string, unknown> = {
@@ -45,10 +47,16 @@ const {
     }
     if (table === 'anchors') {
       const selectChain = chain({ maybeSingle: mockAnchorsMaybeSingle });
-      const updateChain: Record<string, unknown> = {
+      const updateChain: Record<string, unknown> = {};
+      Object.assign(updateChain, {
         eq: vi.fn(() => updateChain),
-        is: mockAnchorUpdateIs,
-      };
+        is: vi.fn((...args: unknown[]) => {
+          mockAnchorUpdateIs(...args);
+          return updateChain;
+        }),
+        select: vi.fn(() => updateChain),
+        maybeSingle: mockAnchorUpdateMaybeSingle,
+      });
       return {
         select: vi.fn(() => selectChain),
         insert: mockAnchorInsert,
@@ -72,9 +80,10 @@ const {
     mockAnchorInsertSingle,
     mockAnchorUpdate,
     mockAnchorUpdateIs,
+    mockAnchorUpdateMaybeSingle,
     mockRecipientInsert,
     mockAuditInsert,
-    mockEnsureAnchorCreditAvailable,
+    mockDeductOrgCredit,
   };
 });
 
@@ -86,8 +95,8 @@ vi.mock('../../utils/logger.js', () => ({
   logger: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }));
 
-vi.mock('../../utils/anchorCreditGate.js', () => ({
-  ensureAnchorCreditAvailable: mockEnsureAnchorCreditAvailable,
+vi.mock('../../utils/orgCredits.js', () => ({
+  deductOrgCredit: mockDeductOrgCredit,
 }));
 
 vi.mock('../../webhooks/delivery.js', () => ({
@@ -123,8 +132,8 @@ describe('credentialSourcesRouter', () => {
     mockHtmlFetch();
     mockProfileSingle.mockResolvedValue({ data: { org_id: 'org-1' }, error: null });
     mockAnchorsMaybeSingle.mockResolvedValue({ data: null, error: null });
-    mockEnsureAnchorCreditAvailable.mockResolvedValue(true);
-    mockAnchorUpdateIs.mockResolvedValue({ error: null });
+    mockDeductOrgCredit.mockResolvedValue({ allowed: true });
+    mockAnchorUpdateMaybeSingle.mockResolvedValue({ data: { id: 'anchor-1' }, error: null });
     mockAnchorInsert.mockImplementation((payload: unknown) => ({
       select: vi.fn(() => ({
         single: mockAnchorInsertSingle.mockResolvedValue({
@@ -175,7 +184,7 @@ describe('credentialSourcesRouter', () => {
     expect(res.status).toBe(201);
     expect(res.body.duplicate).toBe(false);
     expect(res.body.anchor.public_id).toBe('ARK-2026-ABC12345');
-    expect(mockEnsureAnchorCreditAvailable).toHaveBeenCalledWith(expect.anything(), 'org-1', expect.anything());
+    expect(mockDeductOrgCredit).toHaveBeenCalledWith(expect.anything(), 'org-1', 1, 'anchor.create', 'anchor-1');
 
     const anchorPayload = mockAnchorInsert.mock.calls[0][0] as {
       fingerprint: string;
@@ -200,11 +209,23 @@ describe('credentialSourcesRouter', () => {
       verification_level: 'captured_url',
     });
 
-    expect(mockRecipientInsert).toHaveBeenCalledWith(expect.objectContaining({
+    const recipientPayload = mockRecipientInsert.mock.calls[0][0] as Record<string, unknown>;
+    expect(recipientPayload).toEqual(expect.objectContaining({
       anchor_id: 'anchor-1',
       recipient_user_id: 'user-1',
-      claimed_at: expect.any(String),
     }));
+    expect(recipientPayload).not.toHaveProperty('claimed_at');
+
+    const auditPayload = mockAuditInsert.mock.calls[0][0] as { details: string };
+    const auditDetails = JSON.parse(auditPayload.details) as Record<string, unknown>;
+    expect(auditDetails).toMatchObject({
+      source_provider: 'generic',
+      source_host: 'credentials.example.com',
+      evidence_package_hash: expect.any(String),
+      source_payload_hash: expect.any(String),
+    });
+    expect(auditDetails).not.toHaveProperty('source_url');
+    expect(auditPayload.details).not.toContain('https://credentials.example.com/abc');
     expect(mockAuditInsert).toHaveBeenCalledWith(expect.objectContaining({
       event_type: 'CREDENTIAL_SOURCE_IMPORTED',
       actor_id: 'user-1',
@@ -241,7 +262,7 @@ describe('credentialSourcesRouter', () => {
     expect(res.status).toBe(200);
     expect(res.body.duplicate).toBe(true);
     expect(res.body.anchor.public_id).toBe('ARK-2026-EXISTING');
-    expect(mockEnsureAnchorCreditAvailable).not.toHaveBeenCalled();
+    expect(mockDeductOrgCredit).not.toHaveBeenCalled();
     expect(mockRecipientInsert).toHaveBeenCalledWith(expect.objectContaining({
       anchor_id: 'anchor-existing',
       recipient_user_id: 'user-1',
@@ -250,9 +271,11 @@ describe('credentialSourcesRouter', () => {
   });
 
   it('rolls back the reserved anchor if the organization lacks credits', async () => {
-    mockEnsureAnchorCreditAvailable.mockImplementation(async (_database, _orgId, res) => {
-      res.status(402).json({ error: 'insufficient_credits' });
-      return false;
+    mockDeductOrgCredit.mockResolvedValue({
+      allowed: false,
+      error: 'insufficient_credits',
+      balance: 0,
+      required: 1,
     });
 
     const res = await request(makeApp())
@@ -261,8 +284,30 @@ describe('credentialSourcesRouter', () => {
 
     expect(res.status).toBe(402);
     expect(mockAnchorInsert).toHaveBeenCalledTimes(1);
-    expect(mockAnchorUpdate).toHaveBeenCalledWith(expect.objectContaining({ deleted_at: expect.any(String) }));
+    expect(mockAnchorUpdate).toHaveBeenCalledWith({ deleted_at: 'now' });
     expect(mockAnchorUpdateIs).toHaveBeenCalledWith('deleted_at', null);
+    expect(mockRecipientInsert).not.toHaveBeenCalled();
+    expect(mockAuditInsert).not.toHaveBeenCalled();
+  });
+
+  it('fails closed if rollback cannot soft-delete a credit-rejected anchor', async () => {
+    mockDeductOrgCredit.mockResolvedValue({
+      allowed: false,
+      error: 'insufficient_credits',
+      balance: 0,
+      required: 1,
+    });
+    mockAnchorUpdateMaybeSingle.mockResolvedValue({
+      data: null,
+      error: { message: 'update failed' },
+    });
+
+    const res = await request(makeApp())
+      .post('/api/v1/credential-sources/import-url/confirm')
+      .send({ source_url: 'https://credentials.example.com/abc', credential_type: 'CERTIFICATE' });
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe('import_failed');
     expect(mockRecipientInsert).not.toHaveBeenCalled();
     expect(mockAuditInsert).not.toHaveBeenCalled();
   });
@@ -278,7 +323,7 @@ describe('credentialSourcesRouter', () => {
 
     expect(res.status).toBe(409);
     expect(res.body.error).toBe('source_changed');
-    expect(mockEnsureAnchorCreditAvailable).not.toHaveBeenCalled();
+    expect(mockDeductOrgCredit).not.toHaveBeenCalled();
     expect(mockAnchorInsert).not.toHaveBeenCalled();
   });
 
@@ -301,7 +346,7 @@ describe('credentialSourcesRouter', () => {
     expect(res.status).toBe(200);
     expect(res.body.duplicate).toBe(true);
     expect(res.body.anchor.public_id).toBe('ARK-2026-EXISTING');
-    expect(mockEnsureAnchorCreditAvailable).not.toHaveBeenCalled();
+    expect(mockDeductOrgCredit).not.toHaveBeenCalled();
     expect(mockAnchorInsert).not.toHaveBeenCalled();
     expect(mockRecipientInsert).toHaveBeenCalledWith(expect.objectContaining({
       anchor_id: 'anchor-existing',

@@ -13,7 +13,7 @@ import {
 import { isPrivateUrlResolved } from '../../webhooks/delivery.js';
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
-import { ensureAnchorCreditAvailable } from '../../utils/anchorCreditGate.js';
+import { deductOrgCredit, type DeductionResult } from '../../utils/orgCredits.js';
 
 const router = Router();
 
@@ -29,6 +29,14 @@ interface AnchorReceipt {
 interface DbErrorLike {
   code?: string;
   message?: string;
+}
+
+interface AnchorInsertRow {
+  id: string;
+  public_id: string | null;
+  fingerprint: string;
+  status: string;
+  created_at: string;
 }
 
 function credentialSourceErrorStatus(error: CredentialSourceImportError): number {
@@ -76,6 +84,67 @@ function isUniqueViolation(error: DbErrorLike | null | undefined): boolean {
   return error?.code === '23505';
 }
 
+function sourceHostFromUrl(sourceUrl: string): string | null {
+  try {
+    return new URL(sourceUrl).hostname;
+  } catch {
+    return null;
+  }
+}
+
+function buildAuditDetails(preview: CredentialSourceImportPreview): Record<string, string | null> {
+  return {
+    source_provider: preview.source_provider,
+    source_host: sourceHostFromUrl(preview.normalized_source_url),
+    evidence_package_hash: preview.evidence_package_hash,
+    source_payload_hash: preview.source_payload_hash,
+    verification_level: preview.verification_level,
+  };
+}
+
+function sendSourceChanged(res: Response, expectedHash: string, actualHash: string): void {
+  res.status(409).json({
+    error: 'source_changed',
+    message: 'Credential source changed after preview. Preview it again before importing.',
+    expected_source_payload_hash: expectedHash,
+    actual_source_payload_hash: actualHash,
+  });
+}
+
+function sendDuplicateImport(res: Response, anchor: AnchorReceipt, preview: CredentialSourceImportPreview): void {
+  res.status(200).json({
+    duplicate: true,
+    anchor,
+    preview,
+  });
+}
+
+function sendCreditFailure(res: Response, orgId: string, deduction: DeductionResult): void {
+  if (deduction.error === 'insufficient_credits') {
+    res.status(402).json({
+      error: 'insufficient_credits',
+      message: 'Organization has insufficient anchor credits for this cycle.',
+      balance: deduction.balance,
+      required: deduction.required,
+    });
+    return;
+  }
+
+  if (deduction.error === 'rpc_failure') {
+    logger.error({ err: deduction.message, orgId }, 'org_credit_deduct_rpc_failure');
+    res.status(503).json({ error: 'credit_check_unavailable' });
+    return;
+  }
+
+  logger.warn({ orgId }, 'org_credit_deduct_blocked_uninitialized');
+  res.status(402).json({
+    error: 'org_credits_not_initialized',
+    message:
+      'This organization is not provisioned for credit-based billing. ' +
+      'An operator must seed org_credits before this API key can submit.',
+  });
+}
+
 async function findExistingImport(userId: string, preview: CredentialSourceImportPreview): Promise<AnchorReceipt | null> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const dbAny = db as any;
@@ -110,7 +179,6 @@ async function linkSelfRecipient(anchorId: string, userId: string): Promise<void
     anchor_id: anchorId,
     recipient_email_hash: buildSelfImportRecipientHash(userId),
     recipient_user_id: userId,
-    claimed_at: new Date().toISOString(),
   });
 
   if (error && error.code !== '23505') throw error;
@@ -125,12 +193,7 @@ async function logImportAudit(userId: string, orgId: string | null, anchorId: st
       org_id: orgId,
       target_type: 'anchor',
       target_id: anchorId,
-      details: JSON.stringify({
-        source_provider: preview.source_provider,
-        source_url: preview.normalized_source_url,
-        evidence_package_hash: preview.evidence_package_hash,
-        source_payload_hash: preview.source_payload_hash,
-      }),
+      details: JSON.stringify(buildAuditDetails(preview)),
     });
     if (error) logger.warn({ error, anchorId }, 'Failed to audit credential source import');
   } catch (error) {
@@ -141,25 +204,70 @@ async function logImportAudit(userId: string, orgId: string | null, anchorId: st
 async function markAnchorDeleted(anchorId: string, userId: string): Promise<void> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const dbAny = db as any;
-  const { error } = await dbAny
+  const { data, error } = await dbAny
     .from('anchors')
-    .update({ deleted_at: new Date().toISOString() })
+    .update({ deleted_at: 'now' })
     .eq('id', anchorId)
     .eq('user_id', userId)
-    .is('deleted_at', null);
+    .is('deleted_at', null)
+    .select('id')
+    .maybeSingle();
 
   if (error) {
     logger.error({ error, anchorId, userId }, 'Failed to roll back credential source anchor after credit rejection');
+    throw error;
+  }
+
+  if (!data) {
+    const error = new Error('Credential source rollback did not update an anchor');
+    logger.error({ anchorId, userId }, 'Failed to roll back credential source anchor after credit rejection');
+    throw error;
   }
 }
 
-function toReceipt(anchor: {
-  id: string;
-  public_id: string | null;
-  fingerprint: string;
-  status: string;
-  created_at: string;
-}): AnchorReceipt {
+async function ensureImportCreditOrRollback(
+  orgId: string | null,
+  anchorId: string,
+  userId: string,
+  res: Response,
+): Promise<boolean> {
+  if (!orgId) return true;
+
+  const deduction = await deductOrgCredit(db, orgId, 1, 'anchor.create', anchorId);
+  if (deduction.allowed) return true;
+
+  await markAnchorDeleted(anchorId, userId);
+  sendCreditFailure(res, orgId, deduction);
+  return false;
+}
+
+async function handleAnchorCreateFailure(
+  userId: string,
+  preview: CredentialSourceImportPreview,
+  insertError: DbErrorLike | null,
+  res: Response,
+): Promise<void> {
+  if (!isUniqueViolation(insertError)) {
+    logger.error({ error: insertError, userId }, 'Failed to create credential source anchor');
+    res.status(500).json({ error: 'anchor_create_failed', message: 'Failed to create credential record' });
+    return;
+  }
+
+  const duplicate = await findExistingImport(userId, preview);
+  if (duplicate) {
+    await linkSelfRecipient(duplicate.id, userId);
+    sendDuplicateImport(res, duplicate, preview);
+    return;
+  }
+
+  logger.warn({ error: insertError, userId }, 'Credential source duplicate conflict was not readable');
+  res.status(409).json({
+    error: 'source_import_conflict',
+    message: 'Credential source import is already in progress. Try again in a moment.',
+  });
+}
+
+function toReceipt(anchor: AnchorInsertRow): AnchorReceipt {
   const publicId = anchor.public_id ?? '';
   return {
     id: anchor.id,
@@ -206,12 +314,7 @@ router.post('/import-url/confirm', async (req: Request, res: Response) => {
     const { preview } = result.result;
     const expectedHash = input.expected_source_payload_hash?.toLowerCase();
     if (expectedHash && expectedHash !== preview.source_payload_hash) {
-      res.status(409).json({
-        error: 'source_changed',
-        message: 'Credential source changed after preview. Preview it again before importing.',
-        expected_source_payload_hash: expectedHash,
-        actual_source_payload_hash: preview.source_payload_hash,
-      });
+      sendSourceChanged(res, expectedHash, preview.source_payload_hash);
       return;
     }
 
@@ -219,11 +322,7 @@ router.post('/import-url/confirm', async (req: Request, res: Response) => {
     const existing = await findExistingImport(userId, preview);
     if (existing) {
       await linkSelfRecipient(existing.id, userId);
-      res.status(200).json({
-        duplicate: true,
-        anchor: existing,
-        preview,
-      });
+      sendDuplicateImport(res, existing, preview);
       return;
     }
 
@@ -257,33 +356,11 @@ router.post('/import-url/confirm', async (req: Request, res: Response) => {
       .single();
 
     if (insertError || !anchor) {
-      if (isUniqueViolation(insertError)) {
-        const duplicate = await findExistingImport(userId, preview);
-        if (duplicate) {
-          await linkSelfRecipient(duplicate.id, userId);
-          res.status(200).json({
-            duplicate: true,
-            anchor: duplicate,
-            preview,
-          });
-          return;
-        }
-
-        logger.warn({ error: insertError, userId }, 'Credential source duplicate conflict was not readable');
-        res.status(409).json({
-          error: 'source_import_conflict',
-          message: 'Credential source import is already in progress. Try again in a moment.',
-        });
-        return;
-      }
-
-      logger.error({ error: insertError, userId }, 'Failed to create credential source anchor');
-      res.status(500).json({ error: 'anchor_create_failed', message: 'Failed to create credential record' });
+      await handleAnchorCreateFailure(userId, preview, insertError, res);
       return;
     }
 
-    if (orgId && !(await ensureAnchorCreditAvailable(db, orgId, res))) {
-      await markAnchorDeleted(anchor.id, userId);
+    if (!(await ensureImportCreditOrRollback(orgId, anchor.id, userId, res))) {
       return;
     }
 
