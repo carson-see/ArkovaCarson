@@ -23,8 +23,9 @@
  *
  *   App-layer secrets ride in dedicated headers:
  *     X-Cron-Secret  for /jobs/* requests
- *     X-API-Key      for /api/v1/* requests (synthetic; returns 401 unless
- *                    STAGING_API_KEY is set to a real provisioned key)
+ *     X-API-Key      for /api/v1 write requests (synthetic; returns 401 unless
+ *                    STAGING_API_KEY is set to a real provisioned key).
+ *                    Read-path probes stay anonymous unless STAGING_API_KEY is set.
  *
  *   401 / 403 from app-layer auth IS valid soak data — it exercises the
  *   middleware chain, rate limiter, and structured-logging path under load.
@@ -37,7 +38,10 @@
  * Env:
  *   STAGING_API_BASE       default https://arkova-worker-staging-kvojbeutfa-uc.a.run.app
  *   STAGING_CRON_SECRET    optional; without it, cron mode returns 401
- *   STAGING_API_KEY        optional; without it, anchor/reads return 401
+ *   STAGING_API_KEY        optional; without it, anchor returns 401 and reads
+ *                          use anonymous public probes plus auth-gated admin probes
+ *   STAGING_READ_PATHS     optional comma-list of GET paths for reads mode;
+ *                          useful when a focused soak should avoid disabled gates
  *   STAGING_WEBHOOK_PROVIDERS optional comma-list (drive,docusign,adobe-sign,
  *                       checkr,microsoft-graph) to focus webhook pressure
  *   STAGING_MS_GRAPH_CLIENT_STATE optional; must match worker env for 202s
@@ -443,15 +447,28 @@ const READ_PATHS = [
   '/api/v1/anchors/STG-ANC-DEADBEEF',
 ] as const;
 
+function selectedReadPaths(): ReadonlyArray<string> {
+  const raw = process.env.STAGING_READ_PATHS;
+  if (!raw) return READ_PATHS;
+  const paths = raw.split(',').map((p) => p.trim()).filter(Boolean);
+  if (paths.length === 0 || paths.some((p) => !p.startsWith('/'))) {
+    console.error(`::error::STAGING_READ_PATHS must be a comma-list of absolute paths: ${raw}`);
+    process.exit(1);
+  }
+  return paths;
+}
+
 async function runReadsMode(opts: ModeOpts, ratePerMin: number): Promise<void> {
   const intervalMs = 60_000 / Math.max(ratePerMin, 1);
   let i = 0;
+  const readPaths = selectedReadPaths();
   while (Date.now() < opts.endAt) {
-    const path = READ_PATHS[i % READ_PATHS.length];
-    const apiKey = process.env.STAGING_API_KEY ?? `ak_synthetic_${randomBytes(4).toString('hex')}`;
+    const path = readPaths[i % readPaths.length];
+    const headers: Record<string, string> = {};
+    if (process.env.STAGING_API_KEY) headers['X-API-Key'] = process.env.STAGING_API_KEY;
     void fire(opts.stats, 'reads', path, {
       method: 'GET',
-      headers: { 'X-API-Key': apiKey },
+      headers,
     });
     i++;
     await boundedSleep(intervalMs, opts.endAt);
@@ -556,7 +573,7 @@ async function main(): Promise<void> {
 
   console.log(`▶ load-harness ${mode} mode at ${startedHuman}`);
   console.log(`  api_base=${API_BASE}  duration=${durationMin}min  endAt=${new Date(endAt).toISOString()}`);
-  console.log(`  cron_secret=${process.env.STAGING_CRON_SECRET ? 'set' : 'unset (cron 401)'}  api_key=${process.env.STAGING_API_KEY ? 'set' : 'synthetic (401)'}`);
+  console.log(`  cron_secret=${process.env.STAGING_CRON_SECRET ? 'set' : 'unset (cron 401)'}  api_key=${process.env.STAGING_API_KEY ? 'set' : 'unset (anchor synthetic; reads anonymous)'}`);
   if (args['dry-run']) {
     console.log('  --dry-run: exiting without firing.');
     return;
