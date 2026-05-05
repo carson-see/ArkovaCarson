@@ -299,7 +299,7 @@ function fakeWebhookHeaders(provider: string, body: string): HeadersInit {
       headers['X-Goog-Channel-ID'] = `stg-channel-${randomUUID()}`;
       headers['X-Goog-Resource-ID'] = `stg-res-${randomBytes(6).toString('hex')}`;
       headers['X-Goog-Resource-State'] = 'change';
-      headers['X-Goog-Message-Number'] = String(Math.floor(Math.random() * 1_000_000));
+      headers['X-Goog-Message-Number'] = String(randomBytes(4).readUInt32BE(0) % 1_000_000);
       break;
     case 'docusign':
       // Real signature would be HMAC-SHA256 of body using the connect key.

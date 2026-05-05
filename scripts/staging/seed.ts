@@ -197,8 +197,14 @@ function weightedPick<T extends string>(weights: Record<T, number>, r: number): 
   }
   return entries[entries.length - 1][0];
 }
+// Crypto-backed pseudorandom in [0, 1). Synthetic data only — we don't
+// need CSPRNG strength here, but SonarCloud flags the JS standard PRNG
+// as a Security Hotspot in any context, so route through randomBytes.
+function rng(): number {
+  return randomBytes(4).readUInt32BE(0) / 0x1_0000_0000;
+}
 function rngInt(min: number, max: number): number {
-  return min + Math.floor(Math.random() * (max - min + 1));
+  return min + Math.floor(rng() * (max - min + 1));
 }
 
 // --- Bulk insert helper ---
@@ -298,7 +304,7 @@ async function seedOrganizations(client: LooseClient): Promise<SeededOrg[]> {
   for (let i = 0; i < tier.organizations; i++) {
     const id = randomUUID();
     const prefix = `STG${String(i).padStart(5, '0')}`;
-    const t = weightedPick(TIER_WEIGHTS, Math.random());
+    const t = weightedPick(TIER_WEIGHTS, rng());
     rows.push({
       id,
       legal_name: `Staging Org ${i} LLC`,
@@ -335,7 +341,7 @@ async function seedProfiles(client: LooseClient, orgs: SeededOrg[]): Promise<See
   const profiles: SeededProfile[] = [];
   const authUsers: Array<{ id: string; email: string }> = [];
   for (const org of orgs) {
-    const n = Math.max(1, tier.profilesPerOrgAvg + (Math.random() < 0.5 ? -1 : 1) * (Math.random() < 0.3 ? 1 : 0));
+    const n = Math.max(1, tier.profilesPerOrgAvg + (rng() < 0.5 ? -1 : 1) * (rng() < 0.3 ? 1 : 0));
     for (let u = 0; u < n; u++) {
       const id = randomUUID();
       const email = fakeEmail();
@@ -451,12 +457,12 @@ async function seedConnectorSubscriptions(client: LooseClient, integrations: See
   for (const intg of integrations) {
     // CHECK constraint: only google_drive + microsoft_graph allowed here.
     if (!SUBSCRIPTION_PROVIDERS.includes(intg.provider as typeof SUBSCRIPTION_PROVIDERS[number])) continue;
-    if (Math.random() > tier.connectorSubsPerOrg) continue;
+    if (rng() > tier.connectorSubsPerOrg) continue;
     rows.push({
       org_id: intg.org_id,
       provider: intg.provider,
       vendor_subscription_id: `stg-sub-${randomBytes(6).toString('hex')}`,
-      status: Math.random() < 0.85 ? 'active' : Math.random() < 0.5 ? 'degraded' : 'revoked',
+      status: rng() < 0.85 ? 'active' : rng() < 0.5 ? 'degraded' : 'revoked',
       expires_at: isoDaysAgo(-7),
     });
   }
@@ -567,7 +573,7 @@ async function seedOrganizationRules(client: LooseClient, orgs: SeededOrg[]): Pr
         action_type: act,
         trigger_config: trig === 'WORKSPACE_FILE_MODIFIED' ? { folder_id: `stg-folder-${randomBytes(4).toString('hex')}` } : {},
         action_config: act === 'FORWARD_TO_URL' ? { url: STAGING_WEBHOOK_URL } : {},
-        enabled: Math.random() < 0.9,
+        enabled: rng() < 0.9,
         schema_version: 1,
       });
       rules.push({ id, org_id: org.id, trigger_type: trig, action_type: act });
@@ -588,7 +594,7 @@ async function seedRuleEvents(client: LooseClient, orgs: SeededOrg[]): Promise<v
   const rows: Row[] = [];
   for (const org of orgs) {
     for (let i = 0; i < tier.ruleEventsPerOrgAvg; i++) {
-      const status = weightedPick(RULE_EVENT_STATUS_WEIGHTS, Math.random());
+      const status = weightedPick(RULE_EVENT_STATUS_WEIGHTS, rng());
       // CHECK organization_rule_events_claim_consistency: when status=CLAIMED,
       // claim_id and claimed_at must both be non-null.
       const claimed = status === 'CLAIMED';
@@ -621,7 +627,7 @@ async function seedRuleExecutions(client: LooseClient, rules: SeededRule[]): Pro
         rule_id: rule.id,
         org_id: rule.org_id,
         trigger_event_id: `stg-evt-${randomBytes(6).toString('hex')}`,
-        status: weightedPick(RULE_EXEC_STATUS_WEIGHTS, Math.random()),
+        status: weightedPick(RULE_EXEC_STATUS_WEIGHTS, rng()),
         created_at: isoDaysAgo(rngInt(0, 60)),
       });
     }
@@ -646,7 +652,7 @@ async function seedDriveLedger(client: LooseClient, integrations: SeededIntegrat
         org_id: intg.org_id,
         file_id: `stg-file-${randomBytes(6).toString('hex')}`,
         revision_id: `stg-rev-${randomBytes(4).toString('hex')}`,
-        outcome: weightedPick(DRIVE_OUTCOME_WEIGHTS, Math.random()),
+        outcome: weightedPick(DRIVE_OUTCOME_WEIGHTS, rng()),
         processed_at: isoDaysAgo(rngInt(0, 30)),
       });
     }
@@ -705,7 +711,7 @@ async function seedAnchors(client: LooseClient, profiles: SeededProfile[]): Prom
   for (const p of profiles) {
     for (let i = 0; i < tier.anchorsPerUserAvg; i++) {
       const id = randomUUID();
-      const status = weightedPick(ANCHOR_STATUS_WEIGHTS, Math.random());
+      const status = weightedPick(ANCHOR_STATUS_WEIGHTS, rng());
       const anchored = status === 'SECURED' || status === 'SUBMITTED' || status === 'BROADCASTING';
       rows.push({
         id,
@@ -810,10 +816,10 @@ async function seedPublicRecords(client: LooseClient, anchors: SeededAnchor[]): 
     const rows: Row[] = [];
     for (let i = 0; i < limit; i++) {
       const id = randomUUID();
-      const source = weightedPick(PUBLIC_RECORD_SOURCE_WEIGHTS, Math.random());
+      const source = weightedPick(PUBLIC_RECORD_SOURCE_WEIGHTS, rng());
       // 70% anchored, 30% pending — anchor_id may be null.
-      const anchorId = anchors.length > 0 && Math.random() < 0.7
-        ? anchors[Math.floor(Math.random() * anchors.length)].id
+      const anchorId = anchors.length > 0 && rng() < 0.7
+        ? anchors[Math.floor(rng() * anchors.length)].id
         : null;
       rows.push({
         id,
@@ -844,7 +850,7 @@ function fakeVector(dims: number): string {
   // shrink wire size; values in [-1, 1] approximate a unit-normalized embedding.
   const parts: string[] = new Array(dims);
   for (let i = 0; i < dims; i++) {
-    parts[i] = (Math.random() * 2 - 1).toFixed(4);
+    parts[i] = (rng() * 2 - 1).toFixed(4);
   }
   return `[${parts.join(',')}]`;
 }
