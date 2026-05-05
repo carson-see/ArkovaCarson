@@ -108,7 +108,12 @@ export function CsvUploader({
     : null;
 
   useEffect(() => {
-    if (!initialFile || !initialFileKey || processedInitialFileKey.current === initialFileKey) {
+    if (!initialFile || !initialFileKey) {
+      processedInitialFileKey.current = null;
+      return;
+    }
+
+    if (processedInitialFileKey.current === initialFileKey) {
       return;
     }
 

@@ -126,8 +126,7 @@ describe('SCRUM-949 SecureDocumentDialog — Continue disabled when no file', ()
     });
 
     expect(screen.getByTestId('bulk-wizard-stub')).toBeInTheDocument();
-    const dialogTitle = screen.getByRole('dialog').querySelector('h2');
-    expect(dialogTitle?.textContent ?? '').not.toMatch(/^Bulk Upload$/i);
-    expect(dialogTitle?.textContent ?? '').toContain(SECURE_DIALOG_LABELS.TITLE);
+    const dialog = screen.getByRole('dialog', { name: new RegExp(SECURE_DIALOG_LABELS.TITLE, 'i') });
+    expect(dialog).not.toHaveAccessibleName(/^Bulk Upload$/i);
   });
 });

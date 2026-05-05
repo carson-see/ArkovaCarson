@@ -894,6 +894,7 @@ export function OrgProfilePage() {
           if (!open) setRefreshKey((k) => k + 1);
         }}
         onSuccess={() => setRefreshKey((k) => k + 1)}
+        orgId={orgId ?? null}
       />
 
       <InviteMemberModal

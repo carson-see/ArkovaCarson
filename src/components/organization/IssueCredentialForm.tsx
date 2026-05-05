@@ -103,8 +103,9 @@ export function IssueCredentialForm({
   const { profile, loading: profileLoading } = useProfile();
   const navigate = useNavigate();
   const issueOrgId = orgId === undefined ? profile?.org_id ?? null : orgId;
-  const issueRole = role ?? profile?.role;
-  const issueProfileLoading = profileLoading || roleContextLoading === true;
+  const issueRole = role === undefined ? profile?.role : role;
+  const needsProfile = orgId === undefined || role === undefined;
+  const issueProfileLoading = (needsProfile && profileLoading) || roleContextLoading === true;
 
   const [step, setStep] = useState<Step>('form');
   const [file, setFile] = useState<File | null>(null);

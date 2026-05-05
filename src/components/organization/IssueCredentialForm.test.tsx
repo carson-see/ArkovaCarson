@@ -327,6 +327,23 @@ describe('SCRUM-1755 IssueCredentialForm split + proof_url', () => {
     expect(anchorInsertPayloads[0]).toMatchObject({ org_id: 'viewed-org' });
   });
 
+  it('honors an explicit null role instead of falling back to the profile role', async () => {
+    mockSplitEnabled.mockResolvedValue(true);
+    mockOrgGateResult.data = {
+      id: 'verified-org',
+      verification_status: 'VERIFIED',
+      suspended: false,
+      parent_org_id: null,
+      parent_approval_status: null,
+    };
+    renderForm({ orgId: 'verified-org', role: null, profileLoading: false });
+
+    const banner = await screen.findByTestId('issue-credential-gate-blocked', {}, { timeout: 2000 });
+    expect(banner).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: ISSUE_CREDENTIAL_LABELS.ISSUE_BUTTON })).toBeDisabled();
+    expect(mockAnchorInsert).not.toHaveBeenCalled();
+  });
+
   it('rejects non-https proof_url values and wires the error into aria-describedby', async () => {
     const user = userEvent.setup();
     mockSplitEnabled.mockResolvedValue(false);

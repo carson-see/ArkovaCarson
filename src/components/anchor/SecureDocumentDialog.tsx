@@ -50,6 +50,8 @@ interface SecureDocumentDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSuccess?: () => void;
+  /** Org to secure the document against. Defaults to the signed-in profile org. */
+  orgId?: string | null;
   initialCredentialType?: string;
   initialJurisdiction?: string;
 }
@@ -70,11 +72,13 @@ export function SecureDocumentDialog({
   open,
   onOpenChange,
   onSuccess,
+  orgId,
   initialCredentialType,
   initialJurisdiction,
 }: Readonly<SecureDocumentDialogProps>) {
   const { user } = useAuth();
   const { profile } = useProfile();
+  const secureOrgId = orgId === undefined ? profile?.org_id ?? null : orgId;
 
   // VAI-04: Auditor mode — suppress dialog entirely
   const { isAuditorMode } = useAuditorMode();
@@ -257,7 +261,7 @@ export function SecureDocumentDialog({
         filename: fileData.file.name,
         file_size: fileData.file.size,
         file_mime: fileData.file.type || null,
-        org_id: profile?.org_id || null,
+        org_id: secureOrgId,
         ...(selectedTemplate ? { credential_type: selectedTemplate.credential_type } : {}),
         ...(description.trim() ? { description: description.trim() } : {}),
       });
@@ -300,7 +304,7 @@ export function SecureDocumentDialog({
         eventCategory: 'ANCHOR',
         targetType: 'anchor',
         targetId: inserted.id,
-        orgId: profile?.org_id,
+        orgId: secureOrgId ?? undefined,
         details: `Secured document "${fileData.file.name}"`,
       });
 
@@ -329,7 +333,7 @@ export function SecureDocumentDialog({
       toast.error(TOAST.ANCHOR_FAILED);
       setStep('error');
     }
-  }, [fileData, user, profile, selectedTemplate, description, extractedFields, templateResult, onSuccess, initialJurisdiction]);
+  }, [fileData, user, secureOrgId, selectedTemplate, description, extractedFields, templateResult, onSuccess, initialJurisdiction]);
 
   // Run AI extraction after file upload
   const handleStartExtraction = useCallback(async () => {
@@ -369,7 +373,7 @@ export function SecureDocumentDialog({
       const tmplResult = await applyTemplate(
         result.fields,
         detectedType,
-        profile?.org_id,
+        secureOrgId,
       );
 
       // Merge mapped + unmapped fields (template-ordered first, extras after)
@@ -394,7 +398,7 @@ export function SecureDocumentDialog({
       handleConfirm([]);
       return;
     }
-  }, [fileData, selectedTemplate, autoSelectTemplate, handleConfirm, profile?.org_id]);
+  }, [fileData, selectedTemplate, autoSelectTemplate, handleConfirm, secureOrgId]);
 
   // Handle proceeding from upload step — always run AI extraction
   const handleUploadContinue = useCallback(async () => {
@@ -684,7 +688,7 @@ export function SecureDocumentDialog({
               </p>
               <div className="max-h-[50vh] overflow-y-auto -mx-1 px-1">
                 <TemplateSelector
-                  orgId={profile?.org_id}
+                  orgId={secureOrgId}
                   onSelect={setSelectedTemplate}
                   selectedId={selectedTemplate?.id}
                 />
