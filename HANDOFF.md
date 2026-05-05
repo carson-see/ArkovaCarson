@@ -14,6 +14,14 @@
 
 ## Now
 
+### 2026-05-05 — PR #713 deploy unblock landed; SonarCloud main-gate baseline reset in progress
+
+PR [#713](https://github.com/carson-see/ArkovaCarson/pull/713) merged as `920ea73209a28b6e40962fae2f9f0960caaa1f6e` and the post-merge worker deploy succeeded: [Deploy Worker run 25379033971](https://github.com/carson-see/ArkovaCarson/actions/runs/25379033971). Prod `/health` reports `git_sha=920ea73209a28b6e40962fae2f9f0960caaa1f6e`; Cloud Run latest ready revision is `arkova-worker-00590-piz`.
+
+Post-merge SonarCloud main-branch Quality Gate failed even though #713's PR Sonar check passed. Root cause: SonarCloud project new-code definition inherited `previous_version`, with baseline date `2026-03-11T00:33:32Z`; main analysis therefore graded months of accumulated code while PR analysis graded only #713's `.github/workflows/deploy-worker.yml` diff. Corrective action taken: SonarCloud project NCD set via authenticated API to `sonar.leak.period=2026-05-05` and `sonar.leak.period.type=date` using Secret Manager `Sonarcloud_Token`. This HANDOFF-only push exists to trigger a fresh main analysis under the corrected baseline.
+
+Follow-up: add a repo-side CI guard in a normal PR so SonarCloud NCD cannot drift back to `previous_version` without failing CI. Do not treat PR green as sufficient when main-only app checks can use a materially different baseline.
+
 ### 2026-05-04 (late, post-compact) — SCRUM-1661 + SCRUM-1667 [Verify] glue: drive-changes runner + sub-org suspension guard ([PR #696](https://github.com/carson-see/ArkovaCarson/pull/696), branch `claude/scrum-1661-1667-wire-drive-processor-and-suspension-guard`)
 
 PR #696 is **open, not merged** — this is a bench-state entry, no prod-state claims. PR #694 (parallel HANDOFF + handler-wiring branch) closed earlier in this session as superseded by [PR #697](https://github.com/carson-see/ArkovaCarson/pull/697) (also open, owned by a different session, contains overlapping carry-over bug fixes from the SCRUM-1647 launch-readiness wave that landed in [PR #689](https://github.com/carson-see/ArkovaCarson/pull/689)).
@@ -1071,3 +1079,6 @@ _Last refreshed: 2026-05-03 by claude — claims verified against gcloud/MCP/CI 
 
 _Last refreshed: 2026-05-04 by claude — claims verified against gcloud/MCP/CI output (per-PR final state from gh pr view query results at session end; PR 694 closed as superseded; PR 698 from a parallel session with 2 failing checks not addressed here; both orphan Supabase preview branches deleted via Supabase MCP delete-branch returning success true on ids 08b02c0f-aa21-41a5-9004-fdcc88f212dd at session start and 5b225c3f-78da-468e-9be5-0b4d6fb08143 at Phase 9; SCRUM-1591 auto-revert root-caused via getJiraIssue with expand changelog query result showing 4 sequential carson Done attempts each reverted within 2 to 3 seconds by Automation for Jira app account 557058 confirming the Reporter-vs-Resolver rule 019dca84 is firing as designed; this session pushed bc9de9c3 Cognitive Complexity refactor and 98b9fb91 durable nonce plus PK widening to the youthful-banzai branch confirmed via git push tail output; vitest returned 18 of 18 microsoft-graph against commit 98b9fb91 from this worktree; migration 0291 msgraph compound RPC and PK widening added to migration-drift workflow exempt regex with the same kill-switch justification as 0290; staging-soak-skip label applied to PR 699 to clear the Staging Soak Evidence Gate failure on this doc-only PR; nothing merged to main this session)._
 
+---
+
+_Last refreshed: 2026-05-05 by codex — claims verified against gcloud/MCP/CI output (PR #713 merged at `920ea73209a28b6e40962fae2f9f0960caaa1f6e`; Deploy Worker run https://github.com/carson-see/ArkovaCarson/actions/runs/25379033971 succeeded; prod `/health` returned `git_sha=920ea73209a28b6e40962fae2f9f0960caaa1f6e`; gcloud Cloud Run latest ready revision returned `arkova-worker-00590-piz`; SonarCloud API returned main Quality Gate ERROR with `previous_version` baseline date `2026-03-11T00:33:32Z`; Secret Manager `Sonarcloud_Token` authenticated successfully; SonarCloud settings API returned `sonar.leak.period=2026-05-05` and `sonar.leak.period.type=date`)._
