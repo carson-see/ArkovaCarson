@@ -1,0 +1,252 @@
+import express from 'express';
+import request from 'supertest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { credentialSourcesRouter } from './credential-sources.js';
+
+const {
+  mockFrom,
+  mockProfileSingle,
+  mockAnchorsMaybeSingle,
+  mockAnchorInsert,
+  mockAnchorInsertSingle,
+  mockRecipientInsert,
+  mockAuditInsert,
+  mockEnsureAnchorCreditAvailable,
+} = vi.hoisted(() => {
+  const mockProfileSingle = vi.fn();
+  const mockAnchorsMaybeSingle = vi.fn();
+  const mockAnchorInsertSingle = vi.fn();
+  const mockAnchorInsert = vi.fn();
+  const mockRecipientInsert = vi.fn();
+  const mockAuditInsert = vi.fn();
+  const mockEnsureAnchorCreditAvailable = vi.fn();
+
+  function chain(overrides: Record<string, unknown> = {}) {
+    const builder: Record<string, unknown> = {
+      select: vi.fn(() => builder),
+      eq: vi.fn(() => builder),
+      is: vi.fn(() => builder),
+      order: vi.fn(() => builder),
+      limit: vi.fn(() => builder),
+      maybeSingle: mockAnchorsMaybeSingle,
+      single: mockProfileSingle,
+      ...overrides,
+    };
+    return builder;
+  }
+
+  const mockFrom = vi.fn((table: string) => {
+    if (table === 'profiles') {
+      return chain({ single: mockProfileSingle });
+    }
+    if (table === 'anchors') {
+      const selectChain = chain({ maybeSingle: mockAnchorsMaybeSingle });
+      return {
+        select: vi.fn(() => selectChain),
+        insert: mockAnchorInsert,
+      };
+    }
+    if (table === 'anchor_recipients') {
+      return { insert: mockRecipientInsert };
+    }
+    if (table === 'audit_events') {
+      return { insert: mockAuditInsert };
+    }
+    return chain();
+  });
+
+  return {
+    mockFrom,
+    mockProfileSingle,
+    mockAnchorsMaybeSingle,
+    mockAnchorInsert,
+    mockAnchorInsertSingle,
+    mockRecipientInsert,
+    mockAuditInsert,
+    mockEnsureAnchorCreditAvailable,
+  };
+});
+
+vi.mock('../../utils/db.js', () => ({
+  db: { from: mockFrom },
+}));
+
+vi.mock('../../utils/logger.js', () => ({
+  logger: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
+}));
+
+vi.mock('../../utils/anchorCreditGate.js', () => ({
+  ensureAnchorCreditAvailable: mockEnsureAnchorCreditAvailable,
+}));
+
+vi.mock('../../webhooks/delivery.js', () => ({
+  isPrivateUrlResolved: vi.fn().mockResolvedValue(false),
+}));
+
+vi.mock('../../lib/urls.js', () => ({
+  buildVerifyUrl: (publicId: string) => `https://app.test/verify/${publicId}`,
+}));
+
+function makeApp(userId = 'user-1') {
+  const app = express();
+  app.use(express.json());
+  app.use((req, _res, next) => {
+    req.authUserId = userId;
+    next();
+  });
+  app.use('/api/v1/credential-sources', credentialSourcesRouter);
+  return app;
+}
+
+function mockHtmlFetch() {
+  vi.stubGlobal('fetch', vi.fn().mockImplementation(() => Promise.resolve(
+    new Response('<title>Example Credential</title><meta name="issuer" content="Example Issuer">', {
+      headers: { 'content-type': 'text/html' },
+    }),
+  )));
+}
+
+describe('credentialSourcesRouter', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockHtmlFetch();
+    mockProfileSingle.mockResolvedValue({ data: { org_id: 'org-1' }, error: null });
+    mockAnchorsMaybeSingle.mockResolvedValue({ data: null, error: null });
+    mockEnsureAnchorCreditAvailable.mockResolvedValue(true);
+    mockAnchorInsert.mockImplementation((payload: unknown) => ({
+      select: vi.fn(() => ({
+        single: mockAnchorInsertSingle.mockResolvedValue({
+          data: {
+            id: 'anchor-1',
+            public_id: 'ARK-2026-ABC12345',
+            fingerprint: (payload as { fingerprint: string }).fingerprint,
+            status: 'PENDING',
+            created_at: '2026-05-05T18:50:00Z',
+          },
+          error: null,
+        }),
+      })),
+    }));
+    mockRecipientInsert.mockResolvedValue({ error: null });
+    mockAuditInsert.mockResolvedValue({ error: null });
+  });
+
+  it('returns a preview for authenticated users', async () => {
+    const res = await request(makeApp())
+      .post('/api/v1/credential-sources/import-url/preview')
+      .send({ source_url: 'https://credentials.example.com/abc?token=secret', credential_type: 'CERTIFICATE' });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({
+      normalized_source_url: 'https://credentials.example.com/abc',
+      credential_title: 'Example Credential',
+      credential_issuer: 'Example Issuer',
+      credential_type: 'CERTIFICATE',
+      verification_level: 'captured_url',
+    });
+    expect(res.body.evidence_package_hash).toMatch(/^[a-f0-9]{64}$/);
+  });
+
+  it('creates a pending anchor and links it to the importing user on confirm', async () => {
+    const preview = await request(makeApp())
+      .post('/api/v1/credential-sources/import-url/preview')
+      .send({ source_url: 'https://credentials.example.com/abc', credential_type: 'CERTIFICATE' });
+
+    const res = await request(makeApp())
+      .post('/api/v1/credential-sources/import-url/confirm')
+      .send({
+        source_url: 'https://credentials.example.com/abc',
+        credential_type: 'CERTIFICATE',
+        expected_source_payload_hash: preview.body.source_payload_hash,
+      });
+
+    expect(res.status).toBe(201);
+    expect(res.body.duplicate).toBe(false);
+    expect(res.body.anchor.public_id).toBe('ARK-2026-ABC12345');
+    expect(mockEnsureAnchorCreditAvailable).toHaveBeenCalledWith(expect.anything(), 'org-1', expect.anything());
+
+    const anchorPayload = mockAnchorInsert.mock.calls[0][0] as {
+      fingerprint: string;
+      status: string;
+      metadata: Record<string, unknown>;
+      user_id: string;
+      org_id: string;
+    };
+    expect(anchorPayload).toMatchObject({
+      status: 'PENDING',
+      user_id: 'user-1',
+      org_id: 'org-1',
+      credential_type: 'CERTIFICATE',
+    });
+    expect(anchorPayload.fingerprint).toBe(anchorPayload.metadata.evidence_package_hash);
+    expect(anchorPayload.metadata).toMatchObject({
+      source_url: 'https://credentials.example.com/abc',
+      credential_title: 'Example Credential',
+      credential_issuer: 'Example Issuer',
+      verification_level: 'captured_url',
+    });
+
+    expect(mockRecipientInsert).toHaveBeenCalledWith(expect.objectContaining({
+      anchor_id: 'anchor-1',
+      recipient_user_id: 'user-1',
+      claimed_at: expect.any(String),
+    }));
+    expect(mockAuditInsert).toHaveBeenCalledWith(expect.objectContaining({
+      event_type: 'CREDENTIAL_SOURCE_IMPORTED',
+      actor_id: 'user-1',
+      target_id: 'anchor-1',
+    }));
+  });
+
+  it('rejects confirmation when the source payload changed after preview', async () => {
+    const res = await request(makeApp())
+      .post('/api/v1/credential-sources/import-url/confirm')
+      .send({
+        source_url: 'https://credentials.example.com/abc',
+        credential_type: 'CERTIFICATE',
+        expected_source_payload_hash: '0'.repeat(64),
+      });
+
+    expect(res.status).toBe(409);
+    expect(res.body.error).toBe('source_changed');
+    expect(mockEnsureAnchorCreditAvailable).not.toHaveBeenCalled();
+    expect(mockAnchorInsert).not.toHaveBeenCalled();
+  });
+
+  it('returns the existing anchor for duplicate source payloads without deducting credit again', async () => {
+    mockAnchorsMaybeSingle.mockResolvedValue({
+      data: {
+        id: 'anchor-existing',
+        public_id: 'ARK-2026-EXISTING',
+        fingerprint: 'f'.repeat(64),
+        status: 'PENDING',
+        created_at: '2026-05-05T18:00:00Z',
+      },
+      error: null,
+    });
+
+    const res = await request(makeApp())
+      .post('/api/v1/credential-sources/import-url/confirm')
+      .send({ source_url: 'https://credentials.example.com/abc', credential_type: 'CERTIFICATE' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.duplicate).toBe(true);
+    expect(res.body.anchor.public_id).toBe('ARK-2026-EXISTING');
+    expect(mockEnsureAnchorCreditAvailable).not.toHaveBeenCalled();
+    expect(mockAnchorInsert).not.toHaveBeenCalled();
+    expect(mockRecipientInsert).toHaveBeenCalledWith(expect.objectContaining({
+      anchor_id: 'anchor-existing',
+      recipient_user_id: 'user-1',
+    }));
+  });
+
+  it('rejects malformed requests before fetching', async () => {
+    const res = await request(makeApp())
+      .post('/api/v1/credential-sources/import-url/preview')
+      .send({ source_url: '' });
+
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBe('invalid_request');
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+});

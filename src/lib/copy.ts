@@ -851,7 +851,7 @@ export const EVIDENCE_PAYLOAD_ERROR = 'Evidence metadata is invalid. Check finge
 
 export const MY_CREDENTIALS_LABELS = {
   PAGE_TITLE: 'My Credentials',
-  PAGE_SUBTITLE: 'Credentials issued to you by organizations.',
+  PAGE_SUBTITLE: 'Credentials issued to you or imported from public sources.',
   NAV_LABEL: 'My Credentials',
   EMPTY_TITLE: 'No credentials yet',
   EMPTY_DESC: 'When organizations issue credentials to your email address, they will appear here.',
@@ -859,6 +859,7 @@ export const MY_CREDENTIALS_LABELS = {
   RECEIVED_ON: 'Received',
   VIEW_CREDENTIAL: 'View',
   VERIFY_CREDENTIAL: 'Verify',
+  ADD_SOURCE: 'Add Source',
   CLAIMED: 'Claimed',
   UNCLAIMED: 'Pending',
   CREDENTIAL_COUNT: '{count} credentials',
