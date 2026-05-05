@@ -75,11 +75,18 @@ let cachedIamToken = '';
 let iamFetchedAt = 0;
 const IAM_TTL_MS = 30 * 60_000;
 
+// Sonar S4036: pin PATH to fixed system dirs so the gcloud lookup can't
+// be redirected to a writeable directory injected at the front of PATH.
+const SAFE_PATH = '/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin';
+
 function fetchIamToken(): string {
   const env = process.env.STAGING_GCP_IDENTITY;
   if (env) return env.trim();
   try {
-    const out = execFileSync('gcloud', ['auth', 'print-identity-token'], { encoding: 'utf8' });
+    const out = execFileSync('gcloud', ['auth', 'print-identity-token'], {
+      encoding: 'utf8',
+      env: { ...process.env, PATH: SAFE_PATH },
+    });
     return out.trim();
   } catch (err) {
     console.error(`::error::Could not fetch IAM token via gcloud: ${err instanceof Error ? err.message : err}`);
