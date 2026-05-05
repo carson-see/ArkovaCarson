@@ -83,46 +83,65 @@ export interface UseCanIssueCredentialOptions {
  * the unit tests.
  */
 export function resolveIssueGate(input: ResolveIssueGateInput): IssueGate {
-  const {
-    profileLoading,
-    role,
-    orgId,
-    org,
-    orgLoading,
-    orgError,
-    parent,
-    parentLoading,
-    parentError,
-  } = input;
+  const profileGate = resolveProfileIssueGate(input.profileLoading, input.role);
+  if (profileGate) return profileGate;
 
+  const orgLookup = resolveOrgLookup(input);
+  if (orgLookup.gate) return orgLookup.gate;
+
+  const orgGate = resolveOrgEligibilityGate(orgLookup.org);
+  if (orgGate) return orgGate;
+
+  const parentGate = resolveParentIssueGate(
+    orgLookup.org,
+    input.parent,
+    input.parentLoading,
+    input.parentError,
+  );
+  if (parentGate) return parentGate;
+
+  return { allowed: true, loading: false, reason: null };
+}
+
+function resolveProfileIssueGate(profileLoading: boolean, role: string | null | undefined): IssueGate | null {
   if (profileLoading) {
     return { allowed: false, loading: true, reason: 'loading' };
   }
   if (role !== 'ORG_ADMIN') {
     return { allowed: false, loading: false, reason: 'not_admin' };
   }
-  if (!!orgId && orgLoading) {
-    return { allowed: false, loading: true, reason: 'loading' };
+  return null;
+}
+
+type OrgLookup =
+  | { gate: IssueGate; org?: never }
+  | { gate: null; org: OrgGateRow };
+
+function resolveOrgLookup(input: ResolveIssueGateInput): OrgLookup {
+  const { orgId, org, orgLoading, orgError } = input;
+
+  if (orgId && orgLoading) {
+    return { gate: { allowed: false, loading: true, reason: 'loading' } };
   }
   // Distinguish "fetch failed" from "row missing" — a transient Supabase /
   // RLS error must NOT silently downgrade a real ORG_ADMIN to `no_org`.
-  if (!!orgId && orgError) {
-    return { allowed: false, loading: false, reason: 'query_error' };
+  if (orgId && orgError) {
+    return { gate: { allowed: false, loading: false, reason: 'query_error' } };
   }
   if (!orgId || !org) {
-    return { allowed: false, loading: false, reason: 'no_org' };
+    return { gate: { allowed: false, loading: false, reason: 'no_org' } };
   }
+  return { gate: null, org };
+}
+
+function resolveOrgEligibilityGate(org: OrgGateRow): IssueGate | null {
   if (org.verification_status !== 'VERIFIED') {
     return { allowed: false, loading: false, reason: 'org_unverified' };
   }
   if (org.suspended === true) {
     return { allowed: false, loading: false, reason: 'org_suspended' };
   }
-
-  const parentGate = resolveParentIssueGate(org, parent, parentLoading, parentError);
-  if (parentGate) return parentGate;
-
-  return { allowed: true, loading: false, reason: null };
+  return null;
 }
 
 function resolveParentIssueGate(
@@ -141,7 +160,7 @@ function resolveParentIssueGate(
   if (parentError) {
     return { allowed: false, loading: false, reason: 'query_error' };
   }
-  if (!parent || parent.verification_status !== 'VERIFIED') {
+  if (parent?.verification_status !== 'VERIFIED') {
     return { allowed: false, loading: false, reason: 'parent_unverified' };
   }
   if (parent.suspended === true) {
@@ -158,8 +177,7 @@ function resolveParentIssueGate(
 async function fetchOrgGateRow(orgId: string): Promise<OrgGateRow | null> {
   const { data, error } = await supabase
     .from('organizations')
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- generated types lag migration 0289 `suspended`; runtime shape pinned by OrgGateRow.
-    .select('id, verification_status, suspended, parent_org_id, parent_approval_status' as any)
+    .select('id, verification_status, suspended, parent_org_id, parent_approval_status')
     .eq('id', orgId)
     .single();
   if (error) {
@@ -167,6 +185,13 @@ async function fetchOrgGateRow(orgId: string): Promise<OrgGateRow | null> {
     throw error;
   }
   return data as unknown as OrgGateRow;
+}
+
+function requireQueryId(id: string | null | undefined, label: string): string {
+  if (!id) {
+    throw new Error(`Missing ${label} id for Issue Credential gate query`);
+  }
+  return id;
 }
 
 export function useCanIssueCredential(options: UseCanIssueCredentialOptions = {}): IssueGate {
@@ -177,8 +202,8 @@ export function useCanIssueCredential(options: UseCanIssueCredentialOptions = {}
   const shouldFetchOrg = !!orgId && role === 'ORG_ADMIN' && !loading;
 
   const { data: org, isLoading: orgLoading, isError: orgIsError } = useQuery({
-    queryKey: [...queryKeys.organization(orgId ?? ''), 'gate'] as const,
-    queryFn: () => fetchOrgGateRow(orgId!),
+    queryKey: [...queryKeys.organization(orgId ?? ''), 'gate'],
+    queryFn: () => fetchOrgGateRow(requireQueryId(orgId, 'organization')),
     enabled: shouldFetchOrg,
     staleTime: 30_000,
   });
@@ -186,8 +211,8 @@ export function useCanIssueCredential(options: UseCanIssueCredentialOptions = {}
   const parentId = org?.parent_org_id ?? null;
 
   const { data: parent, isLoading: parentLoading, isError: parentIsError } = useQuery({
-    queryKey: [...queryKeys.organization(parentId ?? ''), 'gate-parent'] as const,
-    queryFn: () => fetchOrgGateRow(parentId!),
+    queryKey: [...queryKeys.organization(parentId ?? ''), 'gate-parent'],
+    queryFn: () => fetchOrgGateRow(requireQueryId(parentId, 'parent organization')),
     enabled: !!parentId,
     staleTime: 30_000,
   });

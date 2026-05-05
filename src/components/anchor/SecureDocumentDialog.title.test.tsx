@@ -17,11 +17,19 @@ import { SECURE_DIALOG_LABELS } from '@/lib/copy';
 // Capture the FileUpload props so the test can drive `onBulkDetected` and
 // flip the dialog into bulk mode — the regression we care about is that the
 // title stayed stable AFTER the bulk transition.
-let lastFileUploadProps: { onBulkDetected?: (files: File[]) => void } | null = null;
+type FileUploadMockProps = { onBulkDetected?: (files: File[]) => void };
+
+let lastFileUploadProps: FileUploadMockProps | null = null;
+
 vi.mock('./FileUpload', () => ({
-  FileUpload: ({ onBulkDetected }: { onBulkDetected?: (files: File[]) => void }) => {
-    lastFileUploadProps = { onBulkDetected };
-    return <div data-testid="file-upload-stub" />;
+  FileUpload: (props: FileUploadMockProps) => {
+    lastFileUploadProps = props;
+    return (
+      <div
+        data-testid="file-upload-stub"
+        data-has-bulk-handler={String(Boolean(props.onBulkDetected))}
+      />
+    );
   },
 }));
 
@@ -37,8 +45,12 @@ function createEqChain() {
   return { eq: vi.fn(createLimitChain) };
 }
 
+function createSingleChain() {
+  return { single: vi.fn() };
+}
+
 function createInsertChain() {
-  return { select: vi.fn(() => ({ single: vi.fn() })) };
+  return { select: vi.fn(createSingleChain) };
 }
 
 function createSupabaseTableMock() {
