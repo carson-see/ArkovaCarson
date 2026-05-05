@@ -441,6 +441,7 @@ describe('processDriveChanges (SCRUM-1650 GD-03..07)', () => {
     });
 
     expect(result.parentMismatch).toBe(1);
+    expect(db.enqueueCalls).toHaveLength(0);
     expect(db.ledgerInserts.find((r) => r.file_id === 'no-parents')!.outcome).toBe('unrelated_change');
     expect(db.ledgerInserts.find((r) => r.file_id === 'wrong-folder')!.outcome).toBe('parent_mismatch');
   });

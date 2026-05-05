@@ -13,14 +13,19 @@ merge any PR to main without explicit `merge {N}` from Carson.
 
 CONTEXT (verified at end of previous session)
 
-* PR #697 is OPEN AS DRAFT on branch `claude/scrum-1647-followups` head
-  `77696882`. It closes 7 of 12 carryover bugs from PR #689's squash race
+* PR #697 is open on branch `claude/scrum-1647-followups` head
+  `95d2a2d`. It closes 7 of 12 carryover bugs from PR #689's squash race
   + commits `supabase/migrations/0290_suborg_suspension_audit_and_service_role_fix.sql`
-  to repo. 0290 was already applied to prod via Supabase MCP earlier in
-  the day (re-apply is no-op via CREATE OR REPLACE). Local verification
-  is in the commit body of `77696882`: 4930 / 4930 worker tests pass,
-  10/10 frontend useActiveOrg, lint + RLS auth.uid + license deny-list
-  + lint:copy + migration prefix uniqueness all clean.
+  to repo. 0290 was applied to staging during the earlier rehearsal and
+  is idempotent via `CREATE OR REPLACE`, but the previous 4h soak artifact
+  was captured against older PR head `7d1c8c14`; do not treat that soak as
+  current merge evidence for `95d2a2d`.
+* Verification attached to current head `95d2a2d`: targeted Drive processor
+  tests passed locally after the review-blocker fixes, targeted eslint on
+  `drive-changes-processor.test.ts` passed, `markdownlint-cli2` passed for
+  this continuation file, `git diff --check` passed, CI worker tests/E2E
+  passed, and the staging-evidence gate is intentionally failing until fresh
+  T2 soak + rollback evidence is recorded for the current head.
 * Bug #10 (orgSuspensionGuard wired into anchor write paths) is in flight
   in PR #696, separate session, separate branch, disjoint file set.
 * Bug #12 (~50 callsites of profile.org_id → useActiveOrg, SCRUM-1651
