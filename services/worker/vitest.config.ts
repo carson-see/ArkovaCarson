@@ -99,19 +99,13 @@ export default defineConfig({
           statements: 80,
         },
         'src/index.ts': {
-          // Same align-with-reality pattern as the functions threshold
-          // below: route mounts grew faster than smoke tests. Branches
-          // 50 → 42 / lines 70 → 68 / statements 70 → 68 reflect actual
-          // coverage on 2026-04-27 (PR #583 batch — anchor evidence +
-          // bug-bounty fixes added a few new mounts without the smoke
-          // tests landing yet). Raise these back when mount-level
-          // smoke tests cover the new routes (Adobe Sign, Checkr,
-          // Veremark, OpenAPI CIBA, connector-health, plus the
-          // recently-mounted HAKI and audit-evidence routes).
-          branches: 42,
-          functions: 20,
-          lines: 68,
-          statements: 68,
+          // SCRUM-1545: mount-level sweep restored index.ts above the
+          // SCRUM-1289 target for the slim compositor. Actual focused
+          // coverage at threshold-raise: 93.85 / 64.28 / 100 / 93.80.
+          branches: 60,
+          functions: 40,
+          lines: 80,
+          statements: 80,
         },
       },
     },
