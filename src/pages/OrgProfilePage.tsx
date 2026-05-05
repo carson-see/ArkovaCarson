@@ -22,7 +22,7 @@ import { AppShell } from '@/components/layout';
 import { OrgRegistryTable, MembersTable, IssueCredentialForm, RevokeDialog, InviteMemberModal, AddExistingMemberModal } from '@/components/organization';
 import { SecureDocumentDialog } from '@/components/anchor';
 import { useCanIssueCredential } from '@/hooks/useCanIssueCredential';
-import { isIssueCredentialSplitEnabled } from '@/lib/switchboard';
+import { useIssueCredentialSplit } from '@/hooks/useIssueCredentialSplit';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -65,11 +65,14 @@ export function OrgProfilePage() {
   // SCRUM-1755 — universal "Secure Document" replaces the legacy bulk-only chooser.
   // Bulk auto-detection (multiple files OR CSV/XLSX) lives inside SecureDocumentDialog.
   const [secureDialogOpen, setSecureDialogOpen] = useState(false);
-  const [splitEnabled, setSplitEnabled] = useState(false);
-  useEffect(() => {
-    isIssueCredentialSplitEnabled().then(setSplitEnabled).catch(() => setSplitEnabled(false));
-  }, []);
+  // Fail-closed during the flag-fetch window: while loading, treat the flag as
+  // ON so unauthorized org admins can't see the Issue Credential CTA briefly
+  // before the flag resolves. (Pre-1755 behavior is preserved once we know the
+  // flag is OFF.)
+  const split = useIssueCredentialSplit();
   const issueGate = useCanIssueCredential();
+  const splitEnforced = split.loading || split.enabled;
+  const showIssueButton = !splitEnforced || issueGate.allowed;
   const [inviteOpen, setInviteOpen] = useState(false);
   const [addMemberOpen, setAddMemberOpen] = useState(false);
   const [revokeTarget, setRevokeTarget] = useState<Anchor | null>(null);
@@ -525,9 +528,10 @@ export function OrgProfilePage() {
                   <span className="sm:hidden">Secure</span>
                 </Button>
                 {/* SCRUM-1755 — Issue Credential is a distinct, gated action. Pre-flag
-                    behavior preserved for any admin (legacy). Post-flag, only verified
-                    orgs (and APPROVED sub-orgs of verified parents) see this button. */}
-                {(!splitEnabled || issueGate.allowed) && (
+                    behavior preserved for any admin (legacy). Post-flag (or while the
+                    flag fetch is in flight — fail-closed), only verified orgs (and
+                    APPROVED sub-orgs of verified parents) see this button. */}
+                {showIssueButton && (
                   <Button size="sm" variant="outline" onClick={() => setIssueDialogOpen(true)}>
                     <Plus className="mr-2 h-4 w-4 shrink-0" />
                     <span className="hidden sm:inline">{ORG_PAGE_LABELS.ISSUE_CREDENTIAL}</span>

@@ -12,7 +12,7 @@
  *      (preserves pre-1755 behavior).
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, cleanup } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { IssueCredentialForm } from './IssueCredentialForm';
@@ -108,6 +108,35 @@ describe('SCRUM-1755 IssueCredentialForm split + proof_url', () => {
     });
   });
 
+  it('fails closed during the flag-fetch window (Codex P1)', async () => {
+    // Flag fetch never resolves — simulates "still loading" forever.
+    mockSplitEnabled.mockReturnValue(new Promise<boolean>(() => {}));
+    renderForm();
+    // Banner must render immediately because `loading` is treated as gate-on.
+    const banner = await screen.findByTestId('issue-credential-gate-blocked', {}, { timeout: 200 });
+    expect(banner).toBeInTheDocument();
+  });
+
+  it('renders distinct GATE_PARENT_UNAPPROVED copy for sub-orgs without parent approval (Codex P2)', async () => {
+    mockSplitEnabled.mockResolvedValue(true);
+    mockSelectSingle.mockResolvedValue({
+      data: {
+        id: 'sub-org',
+        verification_status: 'VERIFIED',
+        suspended: false,
+        parent_org_id: 'parent-org',
+        parent_approval_status: 'PENDING',
+      },
+      error: null,
+    });
+    renderForm();
+    await screen.findByText(ISSUE_CREDENTIAL_LABELS.GATE_PARENT_UNAPPROVED, {}, { timeout: 2000 });
+    const banner = screen.getByTestId('issue-credential-gate-blocked');
+    expect(banner.textContent).toContain(ISSUE_CREDENTIAL_LABELS.GATE_PARENT_UNAPPROVED);
+    // And specifically NOT the parent-unverified copy — the conditions are different.
+    expect(banner.textContent).not.toContain(ISSUE_CREDENTIAL_LABELS.GATE_PARENT_UNVERIFIED);
+  });
+
   it('renders the distinct "Issue Credential" title (not the conflated label)', () => {
     renderForm();
     const title = screen.getByRole('dialog').querySelector('h2');
@@ -131,12 +160,12 @@ describe('SCRUM-1755 IssueCredentialForm split + proof_url', () => {
   it('renders the gate-blocked banner when split flag is on and the org is UNVERIFIED', async () => {
     mockSplitEnabled.mockResolvedValue(true);
     renderForm();
-    const banner = await screen.findByTestId('issue-credential-gate-blocked', {}, { timeout: 2000 });
-    expect(banner).toBeInTheDocument();
+    // Wait for the resolved (post-fetch) copy — pre-resolution the banner
+    // shows GATE_LOADING; we want to assert the final reason matches.
+    await screen.findByText(ISSUE_CREDENTIAL_LABELS.GATE_NOT_VERIFIED, {}, { timeout: 2000 });
+    const banner = screen.getByTestId('issue-credential-gate-blocked');
     expect(banner.textContent).toContain(ISSUE_CREDENTIAL_LABELS.GATE_NOT_VERIFIED);
   });
 
   afterEach(() => cleanup());
 });
-
-import { afterEach } from 'vitest';

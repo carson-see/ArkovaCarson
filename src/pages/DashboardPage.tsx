@@ -46,7 +46,7 @@ import { CleCreditWidget } from '@/components/dashboard/CleCreditWidget';
 import { GettingStartedChecklist } from '@/components/onboarding/GettingStartedChecklist';
 import { useOrganization } from '@/hooks/useOrganization';
 import { useCanIssueCredential } from '@/hooks/useCanIssueCredential';
-import { isIssueCredentialSplitEnabled } from '@/lib/switchboard';
+import { useIssueCredentialSplit } from '@/hooks/useIssueCredentialSplit';
 import { supabase } from '@/lib/supabase';
 
 const PAGE_SIZES = [10, 25, 50] as const;
@@ -64,13 +64,14 @@ export function DashboardPage() {
   // SCRUM-1755 — once enabled, Issue Credential becomes a distinct action gated
   // on org verification + sub-org parent approval (see useCanIssueCredential).
   // Until the flag flips on, behavior matches pre-1755 (legacy ORG_ADMIN button).
-  const [splitEnabled, setSplitEnabled] = useState(false);
-  useEffect(() => {
-    isIssueCredentialSplitEnabled().then(setSplitEnabled).catch(() => setSplitEnabled(false));
-  }, []);
+  // Fail-closed during the flag-fetch window: hide both the gated CTA AND the
+  // legacy CTA so an unauthorized org admin can't open the dialog before the
+  // flag resolves.
+  const split = useIssueCredentialSplit();
   const issueGate = useCanIssueCredential();
-  const canIssueCredential = splitEnabled && issueGate.allowed;
-  const showLegacyIssueButton = !splitEnabled && profile?.role === 'ORG_ADMIN' && !!profile.org_id;
+  const canIssueCredential = !split.loading && split.enabled && issueGate.allowed;
+  const showLegacyIssueButton =
+    !split.loading && !split.enabled && profile?.role === 'ORG_ADMIN' && !!profile.org_id;
   const [disclaimerAccepting, setDisclaimerAccepting] = useState(false);
   const [disclaimerDismissed, setDisclaimerDismissed] = useState(false);
   const [recordsExpanded, setRecordsExpanded] = useState(true);

@@ -41,8 +41,9 @@ import { FileUpload } from '@/components/anchor/FileUpload';
 import { AIFieldSuggestions } from '@/components/anchor/AIFieldSuggestions';
 import { MetadataFieldRenderer } from '@/components/credentials/MetadataFieldRenderer';
 import { runExtraction, type ExtractionField, type ExtractionProgress } from '@/lib/aiExtraction';
-import { isAIExtractionEnabled, isIssueCredentialSplitEnabled } from '@/lib/switchboard';
+import { isAIExtractionEnabled } from '@/lib/switchboard';
 import { useCanIssueCredential } from '@/hooks/useCanIssueCredential';
+import { useIssueCredentialSplit } from '@/hooks/useIssueCredentialSplit';
 import { supabase } from '@/lib/supabase';
 import { validateAnchorCreate, CREDENTIAL_TYPES } from '@/lib/validators';
 import { logAuditEvent } from '@/lib/auditLog';
@@ -132,27 +133,30 @@ export function IssueCredentialForm({
   // SCRUM-1755 — when ENABLE_ISSUE_CREDENTIAL_SPLIT is on, only verified orgs
   // (and APPROVED sub-orgs of verified parents) may submit. Until then we
   // preserve pre-1755 behavior: any org admin can use the form.
-  const [splitEnabled, setSplitEnabled] = useState(false);
-  useEffect(() => {
-    let cancelled = false;
-    isIssueCredentialSplitEnabled().then((enabled) => {
-      if (!cancelled) setSplitEnabled(enabled);
-    }).catch(() => { if (!cancelled) setSplitEnabled(false); });
-    return () => { cancelled = true; };
-  }, []);
+  //
+  // Codex P1: fail-closed during the flag-fetch window. `useIssueCredentialSplit`
+  // exposes a `loading` state we treat as "split enforced" so an org admin
+  // can't slip a submission in before the flag resolves.
+  const split = useIssueCredentialSplit();
   const issueGate = useCanIssueCredential();
-  const gateBlocked = splitEnabled && !issueGate.allowed && !issueGate.loading;
-  const gateBlockedMessage = (() => {
+  const splitEnforced = split.loading || split.enabled;
+  const gateBlocked = splitEnforced && (!issueGate.allowed || issueGate.loading);
+  const gateBlockedMessage = useMemo(() => {
     if (!gateBlocked) return null;
     switch (issueGate.reason) {
+      case 'loading':           return ISSUE_CREDENTIAL_LABELS.GATE_LOADING;
       case 'org_unverified':    return ISSUE_CREDENTIAL_LABELS.GATE_NOT_VERIFIED;
       case 'org_suspended':     return ISSUE_CREDENTIAL_LABELS.GATE_SUSPENDED;
-      case 'parent_unapproved': return ISSUE_CREDENTIAL_LABELS.GATE_PARENT_UNVERIFIED;
+      case 'parent_unapproved': return ISSUE_CREDENTIAL_LABELS.GATE_PARENT_UNAPPROVED;
       case 'parent_unverified': return ISSUE_CREDENTIAL_LABELS.GATE_PARENT_UNVERIFIED;
       case 'parent_suspended':  return ISSUE_CREDENTIAL_LABELS.GATE_PARENT_SUSPENDED;
+      // not_admin / no_org / null fall through to a neutral message — these
+      // shouldn't happen if the parent screens hide the entry point, but if
+      // someone deep-links here we still refuse rather than render a confusing
+      // blank dialog.
       default:                  return ISSUE_CREDENTIAL_LABELS.GATE_NOT_VERIFIED;
     }
-  })();
+  }, [gateBlocked, issueGate.reason]);
 
   // Fetch template when credential type is selected (UF-05)
   const { template, loading: templateLoading } = useCredentialTemplate(
