@@ -91,12 +91,12 @@ test.describe('Org Admin', () => {
 
         // Credential type dropdown should be present
         await expect(
-          orgAdminPage.getByText(/Credential Type/i)
+          orgAdminPage.getByRole('combobox', { name: /Credential Type/i })
         ).toBeVisible();
 
         // Label field
         await expect(
-          orgAdminPage.getByText(/Label/i)
+          orgAdminPage.getByLabel(/Label/i)
         ).toBeVisible();
 
         // Cancel button

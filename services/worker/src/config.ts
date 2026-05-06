@@ -218,6 +218,9 @@ const ConfigSchema = z.object({
   /** Veremark webhook HMAC. Required when ENABLE_VEREMARK_WEBHOOK=true. */
   veremarkWebhookSecret: z.string().optional(),
   enableVeremarkWebhook: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(false),
+  /** Microsoft Graph subscription clientState. Required when ENABLE_MICROSOFT_GRAPH_WEBHOOK=true. */
+  microsoftGraphClientState: z.string().optional(),
+  enableMicrosoftGraphWebhook: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(false),
   /** Middesk KYB API key. Routes 503 when unset. */
   middeskApiKey: z.string().optional(),
   /** Middesk webhook HMAC. Routes 503 when unset. */
@@ -577,6 +580,8 @@ function loadConfig(): Config {
     checkrWebhookSecret: process.env.CHECKR_WEBHOOK_SECRET,
     veremarkWebhookSecret: process.env.VEREMARK_WEBHOOK_SECRET,
     enableVeremarkWebhook: process.env.ENABLE_VEREMARK_WEBHOOK,
+    microsoftGraphClientState: process.env.MICROSOFT_GRAPH_CLIENT_STATE,
+    enableMicrosoftGraphWebhook: process.env.ENABLE_MICROSOFT_GRAPH_WEBHOOK,
     middeskApiKey: process.env.MIDDESK_API_KEY,
     middeskWebhookSecret: process.env.MIDDESK_WEBHOOK_SECRET,
     middeskSandbox: process.env.MIDDESK_SANDBOX,

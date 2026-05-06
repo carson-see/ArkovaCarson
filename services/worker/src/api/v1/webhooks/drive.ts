@@ -33,11 +33,12 @@ import { Router, type Request, type Response } from 'express';
 
 import { db } from '../../../utils/db.js';
 import { logger } from '../../../utils/logger.js';
-import {
-  buildGoogleDriveRuleEvent,
-  type GoogleDriveRuleEvent,
-} from '../../../integrations/connectors/googleDrive.js';
 import { GOOGLE_DRIVE_VENDOR } from '../../../constants/connectors.js';
+import {
+  runDriveChanges,
+  type DriveIntegrationRow,
+} from '../../../integrations/connectors/drive-changes-runner.js';
+import { createDefaultKmsClient } from '../../../integrations/oauth/crypto.js';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const dbAny = db as any;
@@ -63,6 +64,12 @@ interface DriveChannelLookup {
   org_id: string;
   integration_id: string;
   channel_token: string | null;
+  // SCRUM-1661: fields the changes-feed runner needs to call changes.list
+  // on this integration. Keeping them on the same lookup so we make one
+  // round-trip per webhook delivery instead of two.
+  encrypted_tokens: Buffer | string | null;
+  token_kms_key_id: string | null;
+  last_page_token: string | null;
 }
 
 /**
@@ -77,7 +84,7 @@ interface DriveChannelLookup {
 async function resolveDriveChannel(channelId: string): Promise<DriveChannelLookup | null> {
   const { data, error } = await dbAny
     .from('org_integrations')
-    .select('org_id, id, account_label')
+    .select('org_id, id, account_label, encrypted_tokens, token_kms_key_id, last_page_token')
     .eq('provider', GOOGLE_DRIVE_VENDOR)
     .eq('subscription_id', channelId)
     .is('revoked_at', null)
@@ -96,6 +103,9 @@ async function resolveDriveChannel(channelId: string): Promise<DriveChannelLooku
     org_id: data.org_id,
     integration_id: data.id,
     channel_token: storedToken,
+    encrypted_tokens: data.encrypted_tokens ?? null,
+    token_kms_key_id: data.token_kms_key_id ?? null,
+    last_page_token: data.last_page_token ?? null,
   };
 }
 
@@ -190,37 +200,46 @@ router.post('/', async (req: Request, res: Response) => {
     );
   }
 
-  // STUB: full implementation would call changes.list (with the stored
-  // pageToken) here, walk each change to resolve file_id + parent_ids, and
-  // enqueue one rule event per change. Until SCRUM-1099 follow-up lands, we
-  // build a single canonical event with empty parent_ids — folder-bound
-  // rules will not fire (drive_folder_filter_rejected) but plain
-  // WORKSPACE_FILE_MODIFIED rules without a folder binding still match.
-  const event: GoogleDriveRuleEvent = buildGoogleDriveRuleEvent({
-    orgId: lookup.org_id,
-    fileId: '',
-    parentIds: [],
-    changeResourceId: req.headers['x-goog-resource-id'] as string | undefined,
-  });
-
+  // SCRUM-1661: real changes.list processing. The webhook is headers-only;
+  // the runner uses the stored page token + KMS-decrypted OAuth credentials
+  // to call Drive's changes.list, dedupes on (integration, file, revision)
+  // via drive_revision_ledger (mig 0288), folder-matches against rule
+  // bindings, and enqueues exactly one rule event per matching revision.
+  //
+  // Default-disabled rollout: existing prod integrations don't have
+  // last_page_token populated (column shipped in mig 0288 today; a
+  // watch-renewal pass populates it on next renewal). Enabling the runner
+  // before that bootstrap completes would skip every change. Operators flip
+  // ENABLE_DRIVE_CHANGES_RUNNER=true once renewals have populated tokens
+  // org-by-org; until then the webhook is a header-only no-op (200 OK).
+  if (process.env.ENABLE_DRIVE_CHANGES_RUNNER !== 'true') {
+    return res.status(200).end();
+  }
+  const integrationRow: DriveIntegrationRow = {
+    id: lookup.integration_id,
+    org_id: lookup.org_id,
+    encrypted_tokens: lookup.encrypted_tokens,
+    token_kms_key_id: lookup.token_kms_key_id,
+    last_page_token: lookup.last_page_token,
+  };
   try {
-    await dbAny.rpc('enqueue_rule_event', {
-      p_org_id: event.org_id,
-      p_trigger_type: event.trigger_type,
-      p_vendor: event.vendor,
-      p_external_file_id: event.external_file_id,
-      p_filename: event.filename,
-      p_folder_path: event.folder_path,
-      p_sender_email: event.sender_email,
-      p_subject: event.subject,
-      p_payload: event.payload,
+    const kms = await createDefaultKmsClient();
+    const result = await runDriveChanges(integrationRow, {
+      db: dbAny,
+      kms,
+      logger,
     });
+    logger.info(
+      { channelId, orgId: lookup.org_id, integrationId: lookup.integration_id, result },
+      'drive webhook: changes processed',
+    );
   } catch (err) {
     logger.error(
-      { error: err, channelId, orgId: lookup.org_id },
-      'drive webhook enqueue_rule_event failed',
+      { error: err, channelId, orgId: lookup.org_id, integrationId: lookup.integration_id },
+      'drive webhook: runDriveChanges failed — 200 ack so Drive does not retry-storm',
     );
-    // 200 ack anyway — retries from Drive don't help; surface via Sentry.
+    // 200 ack anyway — Drive's retry would just repeat the same failure;
+    // operator alert via Sentry is the appropriate escalation path.
   }
 
   return res.status(200).end();

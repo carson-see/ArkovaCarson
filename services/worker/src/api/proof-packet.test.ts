@@ -18,7 +18,11 @@ const executionsMaybeSingle = vi.fn();
 const ruleEventMaybeSingle = vi.fn();
 const ruleMaybeSingle = vi.fn();
 const anchorMaybeSingle = vi.fn();
-const lineageList = vi.fn();
+// SCRUM-1593 AC4/AC5: supersede chain walk + parent walk.
+// Both query the `anchors` table with different `.eq('id'|'parent_anchor_id', ...)` filters.
+// We dispatch by inspecting the eq-call args to keep one mock per query type.
+const supersedeMaybeSingle = vi.fn();
+const parentChainMaybeSingleByAnchorId = new Map<string, () => Promise<{ data: unknown; error: unknown }>>();
 const auditInsert = vi.fn();
 
 vi.mock('../config.js', () => ({ config: {} }));
@@ -51,25 +55,44 @@ vi.mock('../utils/db.js', () => {
       }),
     }),
   };
-  // SCRUM-1149: anchor lookup filters by `metadata->>external_file_id`,
-  // ordered desc, limit 1 — multiple versions can share an external_file_id
-  // (collisions) so we always pick the latest. Mock chain reflects:
-  //   .select().eq('org_id').eq('metadata->>external_file_id').order().limit(1).maybeSingle()
+  // SCRUM-1149 + SCRUM-1593: the `anchors` table is queried for THREE distinct
+  // shapes from proof-packet.ts. We dispatch by the eq-call args:
+  //   1. loadAnchor:                .eq('org_id').eq('metadata->>external_file_id').order().limit(1).maybeSingle()
+  //   2. loadSupersededByPublicId:  .eq('org_id').eq('parent_anchor_id', <id>).is('deleted_at', null).order().limit(1).maybeSingle()
+  //   3. loadLineagePrevious:       .eq('org_id').eq('id', <parentId>).is('deleted_at', null).maybeSingle()
+  // CodeRabbit ASSERTIVE on PR #695: shapes 2 and 3 gained an `.is('deleted_at',
+  // null)` filter so soft-deleted anchors don't surface in lineage / supersede
+  // responses. Mock chain extended to support it.
   const anchorsChain = {
     select: () => ({
-      eq: () => ({
-        eq: () => ({
-          order: () => ({
-            limit: () => ({ maybeSingle: () => anchorMaybeSingle() }),
-          }),
-        }),
-      }),
-    }),
-  };
-  const lineageChain = {
-    select: () => ({
-      eq: () => ({
-        eq: () => ({ order: () => ({ limit: () => lineageList() }) }),
+      eq: (_orgCol: string, _orgVal: string) => ({
+        eq: (col: string, val: string) => {
+          if (col === 'metadata->>external_file_id') {
+            return {
+              order: () => ({
+                limit: () => ({ maybeSingle: () => anchorMaybeSingle() }),
+              }),
+            };
+          }
+          if (col === 'parent_anchor_id') {
+            return {
+              is: (_deletedCol: string, _nullVal: null) => ({
+                order: () => ({
+                  limit: () => ({ maybeSingle: () => supersedeMaybeSingle() }),
+                }),
+              }),
+            };
+          }
+          if (col === 'id') {
+            const fn = parentChainMaybeSingleByAnchorId.get(val);
+            return {
+              is: (_deletedCol: string, _nullVal: null) => ({
+                maybeSingle: () => (fn ? fn() : Promise.resolve({ data: null, error: null })),
+              }),
+            };
+          }
+          throw new Error(`unexpected anchors filter: ${col}`);
+        },
       }),
     }),
   };
@@ -84,7 +107,6 @@ vi.mock('../utils/db.js', () => {
         if (table === 'organization_rule_events') return ruleEventsChain;
         if (table === 'organization_rules') return rulesChain;
         if (table === 'anchors') return anchorsChain;
-        if (table === 'anchor_supersedes') return lineageChain;
         if (table === 'audit_events') return auditChain;
         throw new Error(`unexpected table: ${table}`);
       },
@@ -169,6 +191,7 @@ beforeEach(() => {
   });
   anchorMaybeSingle.mockResolvedValue({
     data: {
+      id: 'aid_main',
       public_id: 'pid_acmemsa1',
       status: 'SECURED',
       fingerprint: 'sha256:abc',
@@ -176,10 +199,13 @@ beforeEach(() => {
       block_height: 800001,
       revoked_at: null,
       revocation_reason: null,
+      parent_anchor_id: null,
+      version_number: 1,
     },
     error: null,
   });
-  lineageList.mockResolvedValue({ data: [], error: null });
+  supersedeMaybeSingle.mockResolvedValue({ data: null, error: null });
+  parentChainMaybeSingleByAnchorId.clear();
   auditInsert.mockResolvedValue({ error: null });
 });
 
@@ -250,6 +276,7 @@ describe('handleProofPacketExport (SCRUM-1149)', () => {
   it('reports revocation status when the anchor was revoked', async () => {
     anchorMaybeSingle.mockResolvedValueOnce({
       data: {
+        id: 'aid_main',
         public_id: 'pid_acmemsa1',
         status: 'REVOKED',
         fingerprint: 'sha256:abc',
@@ -257,6 +284,8 @@ describe('handleProofPacketExport (SCRUM-1149)', () => {
         block_height: 800001,
         revoked_at: '2026-04-25T00:00:00Z',
         revocation_reason: 'Replaced by terminal version',
+        parent_anchor_id: null,
+        version_number: 1,
       },
       error: null,
     });
@@ -289,5 +318,131 @@ describe('handleProofPacketExport (SCRUM-1149)', () => {
     // and the top-level org_id are clean.
     expect(body.org_id).toBeUndefined();
     expect(Object.keys(body.anchor_receipt)).not.toContain('id');
+  });
+
+  // SCRUM-1593 AC4 / AC5 — supersede chain walk
+  it('lineage.superseded_by_public_id is set when a child anchor names this anchor as parent', async () => {
+    supersedeMaybeSingle.mockResolvedValueOnce({
+      data: { public_id: 'pid_acmemsa2' },
+      error: null,
+    });
+    const ctx = buildRes();
+    await handleProofPacketExport(USER_ID, buildReq({ executionId: EXEC_ID }), ctx.res);
+    const packet = ctx.body as { lineage: { superseded_by_public_id: string | null } };
+    expect(packet.lineage.superseded_by_public_id).toBe('pid_acmemsa2');
+  });
+
+  it('lineage.previous walks the parent_anchor_id chain and exposes only public-safe columns', async () => {
+    // Current anchor v3 → parent v2 → grandparent v1.
+    anchorMaybeSingle.mockResolvedValueOnce({
+      data: {
+        id: 'aid_v3',
+        public_id: 'pid_v3',
+        status: 'SECURED',
+        fingerprint: 'sha256:v3',
+        bitcoin_tx_id: 'txid_v3',
+        block_height: 800003,
+        revoked_at: null,
+        revocation_reason: null,
+        parent_anchor_id: 'aid_v2',
+        version_number: 3,
+      },
+      error: null,
+    });
+    parentChainMaybeSingleByAnchorId.set('aid_v2', () => Promise.resolve({
+      data: {
+        public_id: 'pid_v2',
+        status: 'SUPERSEDED',
+        fingerprint: 'sha256:v2',
+        parent_anchor_id: 'aid_v1',
+        version_number: 2,
+        created_at: '2026-04-23T00:00:00Z',
+      },
+      error: null,
+    }));
+    parentChainMaybeSingleByAnchorId.set('aid_v1', () => Promise.resolve({
+      data: {
+        public_id: 'pid_v1',
+        status: 'SUPERSEDED',
+        fingerprint: 'sha256:v1',
+        parent_anchor_id: null,
+        version_number: 1,
+        created_at: '2026-04-22T00:00:00Z',
+      },
+      error: null,
+    }));
+    const ctx = buildRes();
+    await handleProofPacketExport(USER_ID, buildReq({ executionId: EXEC_ID }), ctx.res);
+    const packet = ctx.body as {
+      lineage: {
+        previous: Array<Record<string, unknown>>;
+      };
+    };
+    expect(packet.lineage.previous).toHaveLength(2);
+    expect(packet.lineage.previous[0]).toEqual({
+      public_id: 'pid_v2',
+      version_number: 2,
+      status: 'SUPERSEDED',
+      fingerprint: 'sha256:v2',
+      created_at: '2026-04-23T00:00:00Z',
+    });
+    expect(packet.lineage.previous[1]).toEqual({
+      public_id: 'pid_v1',
+      version_number: 1,
+      status: 'SUPERSEDED',
+      fingerprint: 'sha256:v1',
+      created_at: '2026-04-22T00:00:00Z',
+    });
+    // Internal UUIDs MUST NOT leak through the chain walk.
+    for (const entry of packet.lineage.previous) {
+      expect(Object.keys(entry)).not.toContain('id');
+      expect(Object.keys(entry)).not.toContain('parent_anchor_id');
+    }
+  });
+
+  it('lineage.previous bounded by depth cap — cycle in parent_anchor_id does not hang', async () => {
+    // Adversarial: A → B → A. Should stop at the duplicate visit, not loop.
+    anchorMaybeSingle.mockResolvedValueOnce({
+      data: {
+        id: 'aid_A',
+        public_id: 'pid_A',
+        status: 'SECURED',
+        fingerprint: 'sha256:A',
+        bitcoin_tx_id: null,
+        block_height: null,
+        revoked_at: null,
+        revocation_reason: null,
+        parent_anchor_id: 'aid_B',
+        version_number: 2,
+      },
+      error: null,
+    });
+    parentChainMaybeSingleByAnchorId.set('aid_B', () => Promise.resolve({
+      data: {
+        public_id: 'pid_B',
+        status: 'SUPERSEDED',
+        fingerprint: 'sha256:B',
+        parent_anchor_id: 'aid_A',
+        version_number: 1,
+        created_at: '2026-04-21T00:00:00Z',
+      },
+      error: null,
+    }));
+    parentChainMaybeSingleByAnchorId.set('aid_A', () => Promise.resolve({
+      data: {
+        public_id: 'pid_A',
+        status: 'SECURED',
+        fingerprint: 'sha256:A',
+        parent_anchor_id: 'aid_B',
+        version_number: 2,
+        created_at: '2026-04-22T00:00:00Z',
+      },
+      error: null,
+    }));
+    const ctx = buildRes();
+    await handleProofPacketExport(USER_ID, buildReq({ executionId: EXEC_ID }), ctx.res);
+    const packet = ctx.body as { lineage: { previous: unknown[] } };
+    // Cycle guard — at most 2 unique entries (B, A) before the cycle is detected.
+    expect(packet.lineage.previous.length).toBeLessThanOrEqual(2);
   });
 });
