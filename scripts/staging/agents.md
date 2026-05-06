@@ -23,6 +23,7 @@ Tooling for the standing `arkova-staging` Supabase rig + `arkova-worker-staging`
 - `STAGING_CRON_SECRET` — load-harness `cron` / `mixed` modes. `gcloud secrets versions access latest --secret=cron-secret --project=arkova1`. Without it, cron POSTs return 401 from app-layer auth (still useful soak data — exercises the middleware chain).
 - `STAGING_API_KEY` — load-harness `anchor` / `burst` / `reads` modes. A real provisioned API key. Without it, those requests return 401 from auth-key validation (still exercises the auth middleware + rate limiter under load).
 - `STAGING_GCP_IDENTITY` — pre-fetched IAM bearer token. Without it, the harness shells out to `gcloud auth print-identity-token` at startup and refreshes every 30 min.
+- `STAGING_SUPABASE_PROJECT_REF` — seed-only safety override for explicitly approved isolated staging projects. Default is `ujtlwnoqfhtitcmsnrpq`; prod `vzwyaatejekddvltxyye` is always refused.
 - `STAGING_READ_PATHS` — comma-separated override for load-harness `reads`
   mode. Use this when a branch deliberately disables a read endpoint in
   staging; keep the override visible in the PR evidence block so reviewers know

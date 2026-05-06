@@ -43,13 +43,20 @@ const { values: args } = parseArgs({
   },
 });
 
+const DEFAULT_STAGING_PROJECT_REF = 'ujtlwnoqfhtitcmsnrpq';
+const PROD_PROJECT_REF = 'vzwyaatejekddvltxyye';
+const STAGING_PROJECT_REF = process.env.STAGING_SUPABASE_PROJECT_REF ?? DEFAULT_STAGING_PROJECT_REF;
 const STAGING_URL = requireEnv('STAGING_SUPABASE_URL');
 const STAGING_KEY = requireEnv('STAGING_SUPABASE_SERVICE_ROLE_KEY');
 
-// Refuse to run against anything that doesn't look like the staging rig.
-// Belt-and-suspenders against an env-var copy-paste pointing at prod.
-if (!STAGING_URL.includes('ujtlwnoqfhtitcmsnrpq')) {
-  console.error(`::error::STAGING_SUPABASE_URL does not point at the arkova-staging rig (ujtlwnoqfhtitcmsnrpq). Refusing to run.`);
+// Refuse to run against anything that doesn't look like the intended staging
+// project. Belt-and-suspenders against an env-var copy-paste pointing at prod.
+if (STAGING_PROJECT_REF === PROD_PROJECT_REF || STAGING_URL.includes(PROD_PROJECT_REF)) {
+  console.error(`::error::Refusing to run staging seed against prod project ${PROD_PROJECT_REF}.`);
+  process.exit(1);
+}
+if (!/^[a-z]{20}$/.test(STAGING_PROJECT_REF) || !STAGING_URL.includes(STAGING_PROJECT_REF)) {
+  console.error(`::error::STAGING_SUPABASE_URL does not point at expected staging project ${STAGING_PROJECT_REF}. Refusing to run.`);
   process.exit(1);
 }
 
@@ -935,7 +942,7 @@ async function seedNonces(client: LooseClient): Promise<void> {
 // ============================================================
 
 async function main(): Promise<void> {
-  console.log(`▶ Staging seed — tier=${tierName} project=ujtlwnoqfhtitcmsnrpq`);
+  console.log(`▶ Staging seed — tier=${tierName} project=${STAGING_PROJECT_REF}`);
   console.log(`  organizations=${tier.organizations}  profiles~=${tier.organizations * tier.profilesPerOrgAvg}  anchors~=${tier.organizations * tier.profilesPerOrgAvg * tier.anchorsPerUserAvg}  public_records=${tier.publicRecordsTotal}  embeddings=${tier.publicRecordEmbeddingsTotal}`);
   if (args['dry-run']) {
     console.log('  --dry-run: exiting without writing.');
