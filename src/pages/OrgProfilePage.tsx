@@ -9,7 +9,7 @@
 import { useState, useCallback, useEffect } from 'react';
 import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
-import { Bell, Building2, ListChecks, Settings, Plus, Upload, UserPlus, Users, ArrowLeft, Crown, User, Loader2, Check, ExternalLink, Globe, MapPin, Calendar, Camera, Link2, ScrollText } from 'lucide-react';
+import { Bell, Building2, ListChecks, Settings, Plus, UserPlus, Users, ArrowLeft, Crown, User, Loader2, Check, ExternalLink, Globe, MapPin, Calendar, Camera, Link2, ScrollText } from 'lucide-react';
 import { toast } from 'sonner';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
@@ -20,19 +20,15 @@ import { useInviteMember } from '@/hooks/useInviteMember';
 import { supabase } from '@/lib/supabase';
 import { AppShell } from '@/components/layout';
 import { OrgRegistryTable, MembersTable, IssueCredentialForm, RevokeDialog, InviteMemberModal, AddExistingMemberModal } from '@/components/organization';
-import { BulkUploadWizard } from '@/components/upload';
+import { SecureDocumentDialog } from '@/components/anchor';
+import { useCanIssueCredential } from '@/hooks/useCanIssueCredential';
+import { useIssueCredentialSplit } from '@/hooks/useIssueCredentialSplit';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
 import { ROUTES, issuerRegistryPath } from '@/lib/routes';
 import { ORG_PAGE_LABELS, ORG_LOGO_LABELS, SUB_ORG_LABELS, INDUSTRY_TAG_OPTIONS, CONNECTIONS_LABELS } from '@/lib/copy';
 import { isPlatformAdmin } from '@/lib/platform';
@@ -63,10 +59,26 @@ export function OrgProfilePage() {
   // User's role in this org
   const [userRole, setUserRole] = useState<OrgMemberRole | null>(null);
   const [roleLoading, setRoleLoading] = useState(true);
+  const isAdmin = userRole === 'owner' || userRole === 'admin' || isPlatformAdmin(user?.email);
+  const issueCredentialRole = isAdmin ? 'ORG_ADMIN' : 'INDIVIDUAL';
 
   // Dialog state
   const [issueDialogOpen, setIssueDialogOpen] = useState(false);
-  const [bulkUploadOpen, setBulkUploadOpen] = useState(false);
+  // SCRUM-1755 — universal "Secure Document" replaces the legacy bulk-only chooser.
+  // Bulk auto-detection (multiple files OR CSV/XLSX) lives inside SecureDocumentDialog.
+  const [secureDialogOpen, setSecureDialogOpen] = useState(false);
+  // Fail-closed during the flag-fetch window: while loading, treat the flag as
+  // ON so unauthorized org admins can't see the Issue Credential CTA briefly
+  // before the flag resolves. (Pre-1755 behavior is preserved once we know the
+  // flag is OFF.)
+  const split = useIssueCredentialSplit();
+  const issueGate = useCanIssueCredential({
+    orgId: orgId ?? null,
+    role: issueCredentialRole,
+    profileLoading: profileLoading || roleLoading,
+  });
+  const splitEnforced = split.loading || split.enabled;
+  const showIssueButton = isAdmin && (!splitEnforced || issueGate.allowed);
   const [inviteOpen, setInviteOpen] = useState(false);
   const [addMemberOpen, setAddMemberOpen] = useState(false);
   const [revokeTarget, setRevokeTarget] = useState<Anchor | null>(null);
@@ -160,10 +172,11 @@ export function OrgProfilePage() {
   const parentApprovalStatus = orgAny?.parent_approval_status as string | null;
   const isChildOrg = !!parentOrgId;
   const isVerifiedOrg = organization?.verification_status === 'VERIFIED';
+  const parentOrgDisplayName = parentOrgName ?? SUB_ORG_LABELS.PARENT_ORGANIZATION;
 
   useEffect(() => {
     async function fetchParentOrgName() {
-      if (!parentOrgId) {
+      if (!parentOrgId || parentApprovalStatus !== 'APPROVED') {
         setParentOrgName(null);
         return;
       }
@@ -176,7 +189,7 @@ export function OrgProfilePage() {
       setParentOrgName(data?.display_name ?? null);
     }
     fetchParentOrgName();
-  }, [parentOrgId]);
+  }, [parentOrgId, parentApprovalStatus]);
 
   // Initialize settings fields when org loads
   if (organization && !orgSettingsInit) {
@@ -243,7 +256,6 @@ export function OrgProfilePage() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const orgPrefix = (organization as any)?.org_prefix as string | null;
   const orgLogoUrl = (organization as Record<string, unknown>)?.logo_url as string | null;
-  const isAdmin = userRole === 'owner' || userRole === 'admin' || isPlatformAdmin(user?.email);
   const _isOwner = userRole === 'owner' || isPlatformAdmin(user?.email);
 
   useEffect(() => {
@@ -513,15 +525,25 @@ export function OrgProfilePage() {
             <h2 className="text-lg font-semibold">Records</h2>
             {isAdmin && (
               <div className="flex gap-2">
-                <Button variant="outline" size="sm" onClick={() => setBulkUploadOpen(true)}>
-                  <Upload className="mr-2 h-4 w-4" />
-                  {ORG_PAGE_LABELS.BULK_UPLOAD}
-                </Button>
-                <Button size="sm" onClick={() => setIssueDialogOpen(true)}>
+                {/* SCRUM-1755 — single Secure Document button. Auto-detects bulk
+                    (multiple files OR a CSV/XLSX) inside SecureDocumentDialog;
+                    no separate "Bulk Upload" chooser. */}
+                <Button size="sm" onClick={() => setSecureDialogOpen(true)} className="bg-[#00d4ff] text-[#0a0f14] hover:bg-[#00a3cc]">
                   <Plus className="mr-2 h-4 w-4 shrink-0" />
-                  <span className="hidden sm:inline">{ORG_PAGE_LABELS.ISSUE_CREDENTIAL}</span>
-                  <span className="sm:hidden">Secure</span>
+                  <span className="hidden sm:inline">{ORG_PAGE_LABELS.SECURE_DOCUMENT}</span>
+                  <span className="sm:hidden">{ORG_PAGE_LABELS.SECURE_DOCUMENT_MOBILE}</span>
                 </Button>
+                {/* SCRUM-1755 — Issue Credential is a distinct, gated action. Pre-flag
+                    behavior preserved for any admin (legacy). Post-flag (or while the
+                    flag fetch is in flight — fail-closed), only verified orgs (and
+                    APPROVED sub-orgs of verified parents) see this button. */}
+                {showIssueButton && (
+                  <Button size="sm" variant="outline" onClick={() => setIssueDialogOpen(true)}>
+                    <Plus className="mr-2 h-4 w-4 shrink-0" />
+                    <span className="hidden sm:inline">{ORG_PAGE_LABELS.ISSUE_CREDENTIAL}</span>
+                    <span className="sm:hidden">{ORG_PAGE_LABELS.ISSUE_CREDENTIAL_MOBILE}</span>
+                  </Button>
+                )}
               </div>
             )}
           </div>
@@ -770,22 +792,22 @@ export function OrgProfilePage() {
               {/* Child org view: show parent affiliation status */}
               {isChildOrg && (
                 <div className="mb-6 p-4 rounded-lg border border-border/50 bg-card">
-                  {parentApprovalStatus === 'APPROVED' && parentOrgName && (
+                  {parentApprovalStatus === 'APPROVED' && (
                     <div className="flex items-center gap-3">
-                      <AffiliatedBadge parentName={parentOrgName} />
+                      <AffiliatedBadge parentName={parentOrgDisplayName} />
                       <span className="text-sm text-muted-foreground">
-                        {SUB_ORG_LABELS.AFFILIATED_WITH} <strong className="text-foreground">{parentOrgName}</strong>
+                        {SUB_ORG_LABELS.AFFILIATED_WITH} <strong className="text-foreground">{parentOrgDisplayName}</strong>
                       </span>
                     </div>
                   )}
-                  {parentApprovalStatus === 'PENDING' && parentOrgName && (
+                  {parentApprovalStatus === 'PENDING' && (
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-3">
                         <Badge variant="outline" className="bg-amber-500/10 text-amber-400 border-amber-500/20 text-xs">
                           {SUB_ORG_LABELS.STATUS_PENDING}
                         </Badge>
                         <span className="text-sm text-muted-foreground">
-                          {SUB_ORG_LABELS.PENDING_APPROVAL} <strong className="text-foreground">{parentOrgName}</strong>
+                          {SUB_ORG_LABELS.PENDING_APPROVAL} <strong className="text-foreground">{parentOrgDisplayName}</strong>
                         </span>
                       </div>
                       <Button
@@ -816,13 +838,13 @@ export function OrgProfilePage() {
                       </Button>
                     </div>
                   )}
-                  {parentApprovalStatus === 'REVOKED' && parentOrgName && (
+                  {parentApprovalStatus === 'REVOKED' && (
                     <div className="flex items-center gap-3">
                       <Badge variant="outline" className="bg-red-500/10 text-red-400 border-red-500/20 text-xs">
                         {SUB_ORG_LABELS.STATUS_REVOKED}
                       </Badge>
                       <span className="text-sm text-muted-foreground">
-                        {SUB_ORG_LABELS.REVOKED_BY} <strong className="text-foreground">{parentOrgName}</strong>
+                        {SUB_ORG_LABELS.REVOKED_BY} <strong className="text-foreground">{parentOrgDisplayName}</strong>
                       </span>
                     </div>
                   )}
@@ -860,22 +882,21 @@ export function OrgProfilePage() {
           setIssueDialogOpen(open);
           if (!open) setRefreshKey((k) => k + 1);
         }}
+        orgId={orgId}
+        role={issueCredentialRole}
+        profileLoading={profileLoading || roleLoading}
       />
 
-      <Dialog open={bulkUploadOpen} onOpenChange={setBulkUploadOpen}>
-        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
-            <DialogTitle>{ORG_PAGE_LABELS.BULK_UPLOAD_DIALOG_TITLE}</DialogTitle>
-          </DialogHeader>
-          <BulkUploadWizard
-            onComplete={() => {
-              setBulkUploadOpen(false);
-              setRefreshKey((k) => k + 1);
-            }}
-            onCancel={() => setBulkUploadOpen(false)}
-          />
-        </DialogContent>
-      </Dialog>
+      {/* SCRUM-1755 — universal Secure Document dialog. Bulk auto-detected. */}
+      <SecureDocumentDialog
+        open={secureDialogOpen}
+        onOpenChange={(open) => {
+          setSecureDialogOpen(open);
+          if (!open) setRefreshKey((k) => k + 1);
+        }}
+        onSuccess={() => setRefreshKey((k) => k + 1)}
+        orgId={orgId ?? null}
+      />
 
       <InviteMemberModal
         open={inviteOpen}

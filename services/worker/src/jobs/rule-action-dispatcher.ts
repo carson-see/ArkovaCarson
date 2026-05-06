@@ -30,6 +30,7 @@ import { logger } from '../utils/logger.js';
 import { emitOrgAdminNotifications } from '../notifications/dispatcher.js';
 import { resolveSecretHandle } from '../utils/secrets.js';
 import { submitJob } from '../utils/jobQueue.js';
+import { deductOrgCredit } from '../utils/orgCredits.js';
 import { RULE_DISPATCH_OUTCOME, RULE_ROUTED_TO } from '../rules/schemas.js';
 
 export const MAX_DISPATCH_ATTEMPTS = 5;
@@ -246,8 +247,8 @@ function buildAnchorQueueOutcome(opts: {
   return {
     kind: 'success',
     output: {
-      outcome: 'queued_for_anchor',
-      routed_to: 'anchor_queue',
+      outcome: RULE_DISPATCH_OUTCOME.QUEUED_FOR_ANCHOR,
+      routed_to: RULE_ROUTED_TO.ANCHOR_QUEUE,
       credit_denial_reason: opts.creditDenialReason,
       ...(opts.balance != null ? { balance: opts.balance } : {}),
       ...(opts.required != null ? { required: opts.required } : {}),
@@ -263,45 +264,15 @@ function dispatchAutoAnchor(): Outcome {
   return buildAnchorQueueOutcome({ creditDenialReason: null });
 }
 
-interface DeductOrgCreditResult {
-  success?: boolean;
-  error?: string;
-  balance?: number;
-  required?: number;
-  deducted?: number;
-}
-
 async function dispatchFastTrackAnchor(rule: RuleRow, exec: ExecutionRow): Promise<Outcome> {
-  // DS-06 instant secure: atomically reserve one credit before dispatching the
-  // anchor job. `deduct_org_credit` (migration 0278) does FOR UPDATE so two
-  // FAST_TRACK rules sharing the last credit cannot both win.
-  let rpcResult: { data: DeductOrgCreditResult | null; error: { message?: string } | null };
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    rpcResult = (await (db.rpc as any)('deduct_org_credit', {
-      p_org_id: rule.org_id,
-      p_amount: 1,
-      p_reason: 'rule.fast_track_anchor',
-      p_reference_id: exec.id,
-    })) as { data: DeductOrgCreditResult | null; error: { message?: string } | null };
-  } catch (err) {
-    // RPC threw — DB connection lost / pooler timeout / etc. Retryable.
-    return {
-      kind: 'transient_failure',
-      error: err instanceof Error ? err.message : 'deduct_org_credit threw',
-    };
-  }
+  // DS-06 instant secure: atomically reserve one credit, then dispatch the
+  // anchor job. Uses the shared `deductOrgCredit` helper (SCRUM-1170-B) so
+  // `config.enableOrgCreditEnforcement=false` short-circuits cleanly in
+  // environments without org-credit setup, and so RPC-shape errors are
+  // normalized identically to the existing /api/v1/anchor route.
+  const result = await deductOrgCredit(db, rule.org_id, 1, 'rule.fast_track_anchor', exec.id);
 
-  if (rpcResult.error) {
-    return {
-      kind: 'transient_failure',
-      error: `deduct_org_credit RPC error: ${rpcResult.error.message ?? 'unknown'}`,
-    };
-  }
-
-  const data = rpcResult.data;
-
-  if (data?.success === true) {
+  if (result.allowed) {
     const jobId = await submitJob({
       type: 'anchor.fast_track',
       max_attempts: 5,
@@ -314,12 +285,12 @@ async function dispatchFastTrackAnchor(rule: RuleRow, exec: ExecutionRow): Promi
       },
     });
     if (!jobId) {
-      // Credit was deducted but the job didn't queue — fail CLOSED, not
-      // RETRY. A transient outcome here would re-call deduct_org_credit on
-      // the next pass and double-charge the org because migration 0278's
-      // RPC has no idempotency on p_reference_id (that lands in SCRUM-1170-B).
-      // Until then, the safer state is FAILED + a loud log so on-call can
-      // refund the consumed credit via audit log and manually re-issue.
+      // Codex P1 (PR #689): credit was deducted but the queue refused the
+      // job. A transient outcome would re-call deduct_org_credit on the
+      // next pass and double-charge the org until migration 0278's RPC
+      // gains idempotency on p_reference_id (SCRUM-1170-B). Until then,
+      // permanent_failure routes to FAILED — the credit is consumed once
+      // and on-call refunds it via audit log + manually re-issues.
       logger.error(
         { ruleId: rule.id, executionId: exec.id, orgId: rule.org_id },
         'FAST_TRACK_ANCHOR: deducted credit but anchor job enqueue failed — marking FAILED to avoid double-charge',
@@ -332,29 +303,37 @@ async function dispatchFastTrackAnchor(rule: RuleRow, exec: ExecutionRow): Promi
     return {
       kind: 'success',
       output: {
-        outcome: 'anchor_dispatched',
-        routed_to: 'anchor_pipeline',
-        ...(data.balance != null ? { balance: data.balance } : {}),
+        outcome: RULE_DISPATCH_OUTCOME.ANCHOR_DISPATCHED,
+        routed_to: RULE_ROUTED_TO.ANCHOR_PIPELINE,
+        ...(result.balance != null ? { balance: result.balance } : {}),
       },
     };
   }
 
-  // Credit denial paths.
-  if (data?.error === 'insufficient_credits') {
+  // Credit denial paths — helper normalizes the RPC-shaped errors.
+  if (result.error === 'insufficient_credits') {
     // DS-06 fall-through: queue with explicit reason. NOT a failure — the
     // promise of "queued, not anchored" is still kept for the user.
     return buildAnchorQueueOutcome({
       creditDenialReason: 'insufficient_credits',
-      balance: data.balance ?? null,
-      required: data.required ?? null,
+      balance: result.balance ?? null,
+      required: result.required ?? null,
     });
   }
 
-  // Other RPC-shaped errors: org_not_initialized, invalid_amount, etc. These
-  // are configuration problems that won't fix themselves with retries.
+  if (result.error === 'rpc_failure') {
+    // RPC threw / network error — retryable.
+    return {
+      kind: 'transient_failure',
+      error: `deduct_org_credit RPC error: ${result.message ?? 'unknown'}`,
+    };
+  }
+
+  // org_not_initialized and any other refusal shape — configuration
+  // problem, won't fix itself on retry.
   return {
     kind: 'permanent_failure',
-    error: `deduct_org_credit refused: ${data?.error ?? 'unknown'}`,
+    error: `deduct_org_credit refused: ${result.error ?? 'unknown'}`,
   };
 }
 

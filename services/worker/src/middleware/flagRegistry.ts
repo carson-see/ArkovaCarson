@@ -49,6 +49,7 @@ const ENV_FLAG_GETTERS = {
   ENABLE_DOCUSIGN_WEBHOOK: () => config.enableDocusignWebhook,
   ENABLE_ATS_WEBHOOK: () => config.enableAtsWebhook,
   ENABLE_VEREMARK_WEBHOOK: () => config.enableVeremarkWebhook,
+  ENABLE_MICROSOFT_GRAPH_WEBHOOK: () => config.enableMicrosoftGraphWebhook,
 } as const;
 
 type EnvFlagName = keyof typeof ENV_FLAG_GETTERS;

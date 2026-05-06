@@ -42,6 +42,7 @@ import { docusignWebhookRouter } from './api/v1/webhooks/docusign.js';
 import { adobeSignWebhookRouter } from './api/v1/webhooks/adobe-sign.js';
 import { checkrWebhookRouter } from './api/v1/webhooks/checkr.js';
 import { veremarkWebhookRouter } from './api/v1/webhooks/veremark.js';
+import { microsoftGraphWebhookRouter } from './api/v1/webhooks/microsoft-graph.js';
 import { cibaOpenApiSpec } from './api/v1/openapi-ciba.js';
 import { atsWebhookRouter } from './api/v1/webhooks/ats.js';
 import { corsMiddleware, requireAuth as requireAuthMw } from './routes/middleware.js';
@@ -260,6 +261,25 @@ app.use(
     next();
   },
   veremarkWebhookRouter,
+);
+
+// ─── Microsoft Graph webhook (SCRUM-1138 R2) — clientState + handshake auth ───
+// MS Graph notifications carry no HMAC; auth is via per-subscription
+// `clientState` shared secret in the body, plus the validation handshake on
+// subscription creation. The router parses + verifies internally.
+app.use(
+  '/webhooks/microsoft-graph',
+  killSwitch('ENABLE_MICROSOFT_GRAPH_WEBHOOK'),
+  rateLimiters.stripeWebhook,
+  ruleEventBackpressure,
+  express.raw({ type: 'application/json' }),
+  (req, _res, next) => {
+    (req as unknown as { rawBody: Buffer }).rawBody = req.body as Buffer;
+    // The handler also accepts validation-handshake GETs/POSTs that have no
+    // body — JSON-parse downstream, NOT here.
+    next();
+  },
+  microsoftGraphWebhookRouter,
 );
 
 // ─── SCRUM-1122: CIBA OpenAPI spec (no auth, no rate limit — public docs) ───
