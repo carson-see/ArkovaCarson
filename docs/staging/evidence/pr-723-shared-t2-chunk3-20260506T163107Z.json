@@ -1,0 +1,59 @@
+{
+  "startedAt": "2026-05-06T16:31:08.825Z",
+  "endedAt": "2026-05-06T17:31:08.847Z",
+  "durationSec": 3600.022,
+  "apiBase": "https://arkova-worker-staging-kvojbeutfa-uc.a.run.app",
+  "mode": "mixed",
+  "totalRequests": 9642,
+  "byMode": {
+    "reads": {
+      "ok": 1652,
+      "fail": 1342,
+      "errorRate": 0.4482297929191717,
+      "p50Ms": 109,
+      "p95Ms": 357,
+      "p99Ms": 526,
+      "byStatus": {
+        "200": 1652,
+        "401": 2,
+        "429": 1340
+      }
+    },
+    "webhook": {
+      "ok": 0,
+      "fail": 600,
+      "errorRate": 1,
+      "p50Ms": 72,
+      "p95Ms": 235,
+      "p99Ms": 536,
+      "byStatus": {
+        "429": 114,
+        "503": 486
+      }
+    },
+    "cron": {
+      "ok": 72,
+      "fail": 0,
+      "errorRate": 0,
+      "p50Ms": 302,
+      "p95Ms": 1345,
+      "p99Ms": 7791,
+      "byStatus": {
+        "200": 72
+      }
+    },
+    "events": {
+      "ok": 0,
+      "fail": 5976,
+      "errorRate": 1,
+      "p50Ms": 71,
+      "p95Ms": 226,
+      "p99Ms": 401,
+      "byStatus": {
+        "401": 547,
+        "429": 5427,
+        "503": 2
+      }
+    }
+  }
+}
