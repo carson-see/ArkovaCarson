@@ -35,7 +35,7 @@ Runtime prerequisites:
 * `ENABLE_X402_PAYMENTS` switchboard flag controls whether payment-required responses are enforced.
 * `X402_FACILITATOR_URL` points the worker at the facilitator.
 * `ARKOVA_USDC_ADDRESS` is required; if missing while x402 is enabled, unauthenticated requests fail closed with 401.
-* `X402_NETWORK` identifies Base Sepolia or Base mainnet.
+* `X402_NETWORK` identifies the Base network. Current worker-side on-chain validation is launch-scoped to Base Sepolia; Base mainnet must not be enabled until the validator selects the mainnet USDC contract for `eip155:8453`.
 * `BASE_RPC_URL` is required for on-chain verification when RPC validation is enabled.
 
 ### The Flow (Happy Path)
@@ -169,7 +169,7 @@ payment_ledger (view: union of all payment types)
 
 #### Step 2: Configure RPC Access
 - Sign up for Base RPC provider (Alchemy, Infura, or Coinbase Cloud)
-- Get RPC URL for Base Sepolia (testnet) and Base mainnet
+- Get RPC URL for Base Sepolia (testnet) for the current launch validation path
 - Set `BASE_RPC_URL` env var on Cloud Run worker
 
 #### Step 3: Deploy Facilitator
@@ -186,7 +186,7 @@ Set these env vars on Cloud Run:
 ```
 ARKOVA_USDC_ADDRESS=0x...     # From Step 1
 X402_FACILITATOR_URL=https://edge.arkova.ai/x402/verify
-X402_NETWORK=eip155:84532     # Base Sepolia (change to eip155:8453 for mainnet)
+X402_NETWORK=eip155:84532     # Base Sepolia for current launch validation
 BASE_RPC_URL=https://...      # From Step 2
 ```
 
@@ -208,9 +208,9 @@ WHERE flag_name = 'ENABLE_X402_PAYMENTS';
 
 | Config | Testnet (current) | Mainnet |
 |--------|-------------------|---------|
-| `X402_NETWORK` | `eip155:84532` | `eip155:8453` |
-| USDC Contract | `0x036cbd53842c5426634e7929541ec2318f3dcf7e` | `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913` |
-| RPC URL | Base Sepolia RPC | Base mainnet RPC |
+| `X402_NETWORK` | `eip155:84532` | Planned: `eip155:8453` after validator contract selection lands |
+| USDC Contract | `0x036cbd53842c5426634e7929541ec2318f3dcf7e` | Planned: `0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913` |
+| RPC URL | Base Sepolia RPC | Planned Base mainnet RPC |
 | Faucet | bridge.base.org/deposit (Sepolia) | N/A |
 
 ---

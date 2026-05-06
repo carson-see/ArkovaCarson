@@ -232,6 +232,50 @@ describe('agent v2 MCP aliases', () => {
     expect(mockFetch.mock.calls[0][0]).not.toContain('select=id');
   });
 
+  it('search(q,type=org,limit) pages memberships until it finds matching organizations', async () => {
+    const firstPage = Array.from({ length: 50 }, (_, index) => ({
+      role: 'viewer',
+      organizations: {
+        public_id: `org_other_${index}`,
+        display_name: `Other Org ${index}`,
+        description: 'No matching text',
+        domain: `other-${index}.example`,
+        website_url: null,
+      },
+    }));
+
+    mockFetch
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => firstPage,
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ([{
+          role: 'admin',
+          organizations: {
+            id: 'internal-org-uuid',
+            public_id: 'org_acme',
+            display_name: 'Acme Corp',
+            description: 'Acme description',
+            domain: 'acme.com',
+            website_url: 'https://acme.com',
+          },
+        }]),
+      });
+
+    const result = await handleAgentSearch({ q: 'acme', type: 'org', limit: 1 }, CONFIG);
+
+    expect(result.isError).toBeUndefined();
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.results).toHaveLength(1);
+    expect(parsed.results[0].public_id).toBe('org_acme');
+    expect(JSON.stringify(parsed)).not.toContain('internal-org-uuid');
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(mockFetch.mock.calls[0][0]).toContain('offset=0');
+    expect(mockFetch.mock.calls[1][0]).toContain('offset=50');
+  });
+
   it('search(q,type=record,limit) caps the REST v2 limit parameter at the search RPC ceiling', async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,

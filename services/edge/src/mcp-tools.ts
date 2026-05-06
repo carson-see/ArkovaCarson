@@ -593,28 +593,48 @@ async function searchAgentOrgs(
   config: SupabaseConfig,
   limit = 50,
 ): Promise<Array<Record<string, unknown>>> {
-  const params = new URLSearchParams({
-    user_id: `eq.${config.userId}`,
-    select: 'role,organizations(public_id,display_name,description,domain,website_url,verification_status)',
-    limit: '50',
-  });
-
-  const response = await supabaseFetch(config, `/rest/v1/org_members?${params.toString()}`);
-  if (!response.ok) return [];
-
-  const memberships = await response.json() as Array<Record<string, unknown>>;
   const normalizedQuery = query.trim().toLowerCase();
-  return (Array.isArray(memberships) ? memberships : [])
-    .map((membership) => membership.organizations as Record<string, unknown> | null | undefined)
-    .filter((org): org is Record<string, unknown> => Boolean(org?.public_id))
-    .filter((org) => [
-      org.display_name,
-      org.description,
-      org.domain,
-      org.website_url,
-    ].some((value) => typeof value === 'string' && value.toLowerCase().includes(normalizedQuery)))
-    .slice(0, limit)
-    .map((org) => ({
+  const pageSize = 50;
+  const matches: Array<Record<string, unknown>> = [];
+  const seenPublicIds = new Set<string>();
+
+  for (let offset = 0; matches.length < limit; offset += pageSize) {
+    const params = new URLSearchParams({
+      user_id: `eq.${config.userId}`,
+      select: 'role,organizations(public_id,display_name,description,domain,website_url,verification_status)',
+      limit: String(pageSize),
+      offset: String(offset),
+    });
+
+    const response = await supabaseFetch(config, `/rest/v1/org_members?${params.toString()}`);
+    if (!response.ok) return matches;
+
+    const memberships = await response.json() as Array<Record<string, unknown>>;
+    if (!Array.isArray(memberships) || memberships.length === 0) break;
+
+    for (const membership of memberships) {
+      const org = membership.organizations as Record<string, unknown> | null | undefined;
+      const publicId = typeof org?.public_id === 'string' ? org.public_id : null;
+      if (!publicId || seenPublicIds.has(publicId)) continue;
+
+      const isMatch = [
+        org.display_name,
+        org.description,
+        org.domain,
+        org.website_url,
+      ].some((value) => typeof value === 'string' && value.toLowerCase().includes(normalizedQuery));
+
+      if (!isMatch) continue;
+
+      seenPublicIds.add(publicId);
+      matches.push(org);
+      if (matches.length >= limit) break;
+    }
+
+    if (memberships.length < pageSize) break;
+  }
+
+  return matches.map((org) => ({
       type: 'org',
       public_id: org.public_id,
       score: 1,
