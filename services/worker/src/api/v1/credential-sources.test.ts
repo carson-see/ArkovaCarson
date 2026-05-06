@@ -147,9 +147,12 @@ function makeApp(userId = 'user-1') {
 
 function mockHtmlFetch() {
   vi.stubGlobal('fetch', vi.fn().mockImplementation(() => Promise.resolve(
-    new Response('<title>Example Credential</title><meta name="issuer" content="Example Issuer">', {
+    new Response(
+      '<title>Example Credential</title><meta name="issuer" content="Example Issuer"><meta name="recipient" content="Ada Recipient">',
+      {
       headers: { 'content-type': 'text/html' },
-    }),
+      },
+    ),
   )));
 }
 
@@ -204,10 +207,12 @@ describe('credentialSourcesRouter', () => {
       normalized_source_url: 'https://credentials.example.com/abc',
       credential_title: 'Example Credential',
       credential_issuer: 'Example Issuer',
+      credential_recipient_display: 'Ada Recipient',
       credential_type: 'CERTIFICATE',
       verification_level: 'captured_url',
     });
     expect(res.body.evidence_package_hash).toMatch(/^[a-f0-9]{64}$/);
+    expect(res.body.credential_recipient_hash).toMatch(/^[a-f0-9]{64}$/);
   });
 
   it('uses the plain-text extraction fallback for text credential sources', async () => {
@@ -250,6 +255,10 @@ describe('credentialSourcesRouter', () => {
     expect(res.body.duplicate).toBe(false);
     expect(res.body.anchor.public_id).toBe('ARK-2026-ABC12345');
     expect(res.body.anchor).not.toHaveProperty('id');
+    expect(res.body.preview).toMatchObject({
+      credential_recipient_display: 'Ada Recipient',
+      credential_recipient_hash: expect.stringMatching(/^[a-f0-9]{64}$/),
+    });
     expect(mockDeductOrgCredit).toHaveBeenCalledWith(expect.anything(), 'org-1', 1, 'anchor.create', 'anchor-1');
 
     const anchorPayload = mockAnchorInsert.mock.calls[0][0] as {
@@ -274,6 +283,9 @@ describe('credentialSourcesRouter', () => {
       credential_issuer: 'Example Issuer',
       verification_level: 'captured_url',
     });
+    expect(anchorPayload.metadata).not.toHaveProperty('credential_recipient_display');
+    expect(anchorPayload.metadata).not.toHaveProperty('recipient_display_name');
+    expect(anchorPayload.metadata.recipient_identifier_hash).toMatch(/^[a-f0-9]{64}$/);
 
     const recipientPayload = mockRecipientInsert.mock.calls[0][0] as Record<string, unknown>;
     expect(recipientPayload).toEqual(expect.objectContaining({

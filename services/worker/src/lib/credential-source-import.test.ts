@@ -21,6 +21,7 @@ describe('credential-source-import', () => {
             {
               "name": "Cloud Architecture Fundamentals",
               "issuer": { "name": "Example Cloud" },
+              "credentialSubject": { "name": "Ada Lovelace", "id": "did:example:ada" },
               "issuedOn": "2026-04-15",
               "id": "badge-123"
             }
@@ -47,15 +48,21 @@ describe('credential-source-import', () => {
       credential_type: 'BADGE',
       credential_title: 'Cloud Architecture Fundamentals',
       credential_issuer: 'Example Cloud',
+      credential_recipient_display: 'Ada Lovelace',
       credential_issued_at: '2026-04-15',
       verification_level: 'captured_url',
       extraction_method: 'json_ld',
     });
+    expect(result.preview.credential_recipient_hash).toMatch(/^[a-f0-9]{64}$/);
     expect(result.preview.evidence_package_hash).toMatch(/^[a-f0-9]{64}$/);
     expect(result.preview.anchor_fingerprint).toMatch(/^[a-f0-9]{64}$/);
     expect(result.preview.anchor_fingerprint).not.toBe(result.preview.evidence_package_hash);
     expect(result.preview.public_metadata).not.toHaveProperty('token');
     expect(result.preview.public_metadata).not.toHaveProperty('recipient_display_name');
+    expect(result.preview.public_metadata).not.toHaveProperty('credential_recipient_display');
+    expect(result.preview.public_metadata).toMatchObject({
+      recipient_identifier_hash: result.preview.credential_recipient_hash,
+    });
   });
 
   it('prefers issuer metadata extracted from HTML over the caller hint', async () => {
@@ -86,12 +93,15 @@ describe('credential-source-import', () => {
       fetchFn: vi.fn().mockResolvedValue(response(JSON.stringify({
         name: 'Compliance Certificate',
         issuer: { name: 'Structured Issuer' },
+        recipientName: 'Source Recipient',
       }), { headers: { 'content-type': 'application/json' } })),
       urlGuard: vi.fn().mockResolvedValue(false),
       now: () => FIXED_NOW,
     });
 
     expect(result.preview.credential_issuer).toBe('Structured Issuer');
+    expect(result.preview.credential_recipient_display).toBe('Source Recipient');
+    expect(result.preview.credential_recipient_hash).toMatch(/^[a-f0-9]{64}$/);
   });
 
   it('ignores invalid date-shaped metadata instead of building invalid evidence', async () => {

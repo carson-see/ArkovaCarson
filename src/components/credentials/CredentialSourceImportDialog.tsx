@@ -53,7 +53,10 @@ interface CredentialSourcePreview {
   credential_type: string;
   credential_title: string;
   credential_issuer: string | null;
+  credential_recipient_display: string | null;
+  credential_recipient_hash: string | null;
   credential_issued_at: string | null;
+  credential_expires_at: string | null;
   verification_level: string;
   extraction_method: string;
   extraction_confidence: number;
@@ -93,6 +96,13 @@ function compactHash(value: string): string {
 function formatBytes(value: number): string {
   if (value < 1024) return `${value} B`;
   return `${(value / 1024).toFixed(1)} KB`;
+}
+
+function formatProvider(value: string): string {
+  return value
+    .split('_')
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
 }
 
 export function CredentialSourceImportDialog({
@@ -273,8 +283,18 @@ export function CredentialSourceImportDialog({
               </div>
 
               <dl className="grid grid-cols-[7rem_1fr] gap-x-3 gap-y-2 text-sm">
+                <dt className="text-muted-foreground">{LABELS.PROVIDER_FIELD}</dt>
+                <dd>{formatProvider(preview.source_provider)}</dd>
+                <dt className="text-muted-foreground">{LABELS.RECIPIENT_FIELD}</dt>
+                <dd>{preview.credential_recipient_display ?? LABELS.NOT_DETECTED}</dd>
+                <dt className="text-muted-foreground">{LABELS.RECIPIENT_PROOF_FIELD}</dt>
+                <dd className="font-mono text-xs">
+                  {preview.credential_recipient_hash ? compactHash(preview.credential_recipient_hash) : LABELS.NOT_DETECTED}
+                </dd>
                 <dt className="text-muted-foreground">{LABELS.ISSUED_FIELD}</dt>
                 <dd>{preview.credential_issued_at ?? LABELS.NOT_DETECTED}</dd>
+                <dt className="text-muted-foreground">{LABELS.EXPIRES_FIELD}</dt>
+                <dd>{preview.credential_expires_at ?? LABELS.NOT_DETECTED}</dd>
                 <dt className="text-muted-foreground">{LABELS.SOURCE_FIELD}</dt>
                 <dd className="min-w-0">
                   <a

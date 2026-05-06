@@ -75,6 +75,8 @@ export interface CredentialSourceImportPreview {
   credential_type: AnchorCredentialType;
   credential_title: string;
   credential_issuer: string | null;
+  credential_recipient_display: string | null;
+  credential_recipient_hash: string | null;
   credential_issued_at: string | null;
   credential_expires_at: string | null;
   verification_level: 'captured_url';
@@ -106,6 +108,8 @@ interface FetchedCredentialSource {
 interface ExtractedCredentialMetadata {
   title: string;
   issuerName?: string;
+  recipientDisplayName?: string;
+  recipientIdentifierHash?: string;
   issuedAt?: string;
   expiresAt?: string;
   credentialType: AnchorCredentialType;
@@ -116,6 +120,11 @@ interface ExtractedCredentialMetadata {
 
 function sha256Hex(value: Buffer | string): string {
   return createHash('sha256').update(value).digest('hex');
+}
+
+function hashRecipientIdentifier(value: string | undefined): string | undefined {
+  const normalized = cleanText(value, 500)?.toLowerCase();
+  return normalized ? sha256Hex(normalized) : undefined;
 }
 
 function collapseWhitespace(value: string): string {
@@ -417,10 +426,38 @@ function parseJsonMaybe(text: string): unknown {
 function extractStructuredMetadata(value: unknown): Partial<ExtractedCredentialMetadata> {
   if (!value) return {};
 
+  const recipientDisplayName = firstJsonObjectName(value, [
+    'credentialSubject',
+    'recipient',
+    'recipientProfile',
+    'subject',
+    'learner',
+    'earner',
+  ]) ?? firstJsonString(value, [
+    'recipientName',
+    'recipient_name',
+    'recipientDisplayName',
+    'recipient_display_name',
+    'holderName',
+    'holder_name',
+  ]);
+  const recipientIdentifier = firstJsonString(value, [
+    'recipientIdentifier',
+    'recipient_identifier',
+    'recipientEmail',
+    'recipient_email',
+    'recipientId',
+    'recipient_id',
+    'subjectId',
+    'subject_id',
+  ]) ?? recipientDisplayName;
+
   return {
     title: firstJsonString(value, ['name', 'title', 'credentialName', 'achievementName']),
     issuerName: firstJsonObjectName(value, ['issuer', 'issuedBy', 'provider', 'organization']) ??
       firstJsonString(value, ['issuerName', 'issuer_name', 'authority', 'providerName']),
+    recipientDisplayName,
+    recipientIdentifierHash: hashRecipientIdentifier(recipientIdentifier),
     issuedAt: firstJsonDate(value, ['issuedOn', 'issuanceDate', 'dateIssued', 'validFrom', 'startDate', 'issuedAt']),
     expiresAt: firstJsonDate(value, ['expires', 'expirationDate', 'validUntil', 'endDate', 'expiresAt']),
     sourceId: safeSourceId(firstJsonString(value, ['id', '@id', 'identifier', 'credentialId'])),
@@ -522,6 +559,15 @@ function extractHtmlMetadata(
       'meta[name="application-name"]',
     ]) ??
     cleanText(issuerHint);
+  const recipientDisplayName = structured.recipientDisplayName ??
+    metaContent($, [
+      'meta[name="recipient"]',
+      'meta[name="recipient_name"]',
+      'meta[name="recipient-display-name"]',
+      'meta[name="student"]',
+      'meta[name="holder"]',
+      'meta[property="credential:recipient"]',
+    ]);
   const issuedAt = structured.issuedAt ??
     normalizeEvidenceDate(metaContent($, [
       'meta[name="date"]',
@@ -535,6 +581,8 @@ function extractHtmlMetadata(
   return {
     title: finalTitle,
     issuerName,
+    recipientDisplayName,
+    recipientIdentifierHash: structured.recipientIdentifierHash ?? hashRecipientIdentifier(recipientDisplayName),
     issuedAt,
     expiresAt: structured.expiresAt,
     credentialType: inferCredentialType(requestedType, url, finalTitle, issuerName),
@@ -558,6 +606,8 @@ function extractJsonMetadata(
   return {
     title,
     issuerName,
+    recipientDisplayName: structured.recipientDisplayName,
+    recipientIdentifierHash: structured.recipientIdentifierHash,
     issuedAt: structured.issuedAt,
     expiresAt: structured.expiresAt,
     credentialType: inferCredentialType(requestedType, url, title, issuerName),
@@ -645,6 +695,7 @@ export async function buildCredentialSourceImportPreview(
       type: extracted.credentialType,
       title: extracted.title,
       issuerName: extracted.issuerName,
+      recipientIdentifierHash: extracted.recipientIdentifierHash,
       issuedAt: extracted.issuedAt,
       expiresAt: extracted.expiresAt,
     },
@@ -673,6 +724,8 @@ export async function buildCredentialSourceImportPreview(
       credential_type: evidencePackage.credential.type,
       credential_title: evidencePackage.credential.title,
       credential_issuer: evidencePackage.credential.issuerName ?? null,
+      credential_recipient_display: extracted.recipientDisplayName ?? null,
+      credential_recipient_hash: evidencePackage.credential.recipientIdentifierHash ?? null,
       credential_issued_at: evidencePackage.credential.issuedAt ?? null,
       credential_expires_at: evidencePackage.credential.expiresAt ?? null,
       verification_level: 'captured_url',

@@ -22,7 +22,10 @@ const PREVIEW = {
   credential_type: 'BADGE',
   credential_title: 'Cloud Architecture Fundamentals',
   credential_issuer: 'Example Cloud',
+  credential_recipient_display: 'Ada Recipient',
+  credential_recipient_hash: 'c'.repeat(64),
   credential_issued_at: '2026-04-15',
+  credential_expires_at: '2028-04-15',
   verification_level: 'captured_url',
   extraction_method: 'html_metadata',
   extraction_confidence: 0.72,
@@ -74,6 +77,9 @@ describe('CredentialSourceImportDialog', () => {
 
     expect(await screen.findByText('Cloud Architecture Fundamentals')).toBeInTheDocument();
     expect(screen.getByText('Example Cloud')).toBeInTheDocument();
+    expect(screen.getByText('Credly')).toBeInTheDocument();
+    expect(screen.getByText('Ada Recipient')).toBeInTheDocument();
+    expect(screen.getByText('2028-04-15')).toBeInTheDocument();
     expect(screen.getByText('72%')).toBeInTheDocument();
 
     const [previewEndpoint, previewInit] = workerFetchMock.mock.calls[0] as [string, RequestInit];
