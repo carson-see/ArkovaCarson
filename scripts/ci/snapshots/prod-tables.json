@@ -103,6 +103,7 @@
       { "name": "ats_webhook_nonces", "reason": "created in 0135, not present in prod — likely never deployed" },
       { "name": "drive_webhook_nonces", "reason": "created in 0258 family, not present in prod — likely never deployed" },
       { "name": "merkle_batches", "reason": "created in 0113, dropped out-of-band — needs investigation" },
+      { "name": "microsoft_graph_webhook_nonces", "reason": "created by 0292 for PR #695; Microsoft Graph webhook is kill-switch gated off until prod migration apply" },
       { "name": "training_metrics", "reason": "created in 0114, dropped out-of-band — needs investigation" },
       { "name": "webhook_idempotency", "reason": "created in 0116, dropped out-of-band — needs investigation" }
     ],
