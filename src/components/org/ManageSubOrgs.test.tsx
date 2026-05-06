@@ -56,13 +56,15 @@ function jsonResponse(body: unknown, status = 200): Response {
   });
 }
 
+function requestUrl(input: RequestInfo | URL): string {
+  if (typeof input === 'string') return input;
+  if (input instanceof URL) return input.toString();
+  return input.url;
+}
+
 function setupFetch() {
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-    const url = typeof input === 'string'
-      ? input
-      : input instanceof URL
-        ? input.toString()
-        : input.url;
+    const url = requestUrl(input);
     const method = init?.method ?? 'GET';
 
     if (url === 'https://worker.test/api/v1/org/sub-orgs?orgId=org-parent' && method === 'GET') {

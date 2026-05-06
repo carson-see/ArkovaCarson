@@ -54,6 +54,35 @@ function buildApp(userId?: string) {
 const actionParentOrgId = '22222222-2222-4222-8222-222222222222';
 const actionChildOrgId = '44444444-4444-4444-8444-444444444444';
 
+function setupActionRouteDb(options: {
+  role: 'owner' | 'admin' | 'member';
+  childStatus: 'PENDING' | 'APPROVED' | 'REVOKED';
+}) {
+  const membership = makeBuilder({
+    maybeSingleData: { org_id: actionParentOrgId, role: options.role },
+  });
+  const childFetch = makeBuilder({
+    singleData: {
+      id: actionChildOrgId,
+      parent_org_id: actionParentOrgId,
+      parent_approval_status: options.childStatus,
+      display_name: 'Child A',
+    },
+  });
+  const statusUpdate = makeBuilder();
+  const auditInsert = makeBuilder();
+  const orgBuilders = [childFetch, statusUpdate];
+
+  vi.mocked(db.from).mockImplementation((table: string): never => {
+    if (table === 'org_members') return membership as unknown as never;
+    if (table === 'organizations') return orgBuilders.shift() as unknown as never;
+    if (table === 'audit_events') return auditInsert as unknown as never;
+    return makeBuilder() as unknown as never;
+  });
+
+  return { membership, orgBuilders, statusUpdate };
+}
+
 describe('GET /api/v1/org/sub-orgs (HAKI-REQ-01)', () => {
   beforeEach(() => { vi.clearAllMocks(); });
 
@@ -138,26 +167,9 @@ describe('POST /api/v1/org/sub-orgs/approve (HAKI-REQ-01)', () => {
   });
 
   it('approves a pending affiliate without enforcing historical max_sub_orgs caps', async () => {
-    const membership = makeBuilder({
-      maybeSingleData: { org_id: actionParentOrgId, role: 'owner' },
-    });
-    const childFetch = makeBuilder({
-      singleData: {
-        id: actionChildOrgId,
-        parent_org_id: actionParentOrgId,
-        parent_approval_status: 'PENDING',
-        display_name: 'Child A',
-      },
-    });
-    const approveUpdate = makeBuilder();
-    const auditInsert = makeBuilder();
-    const orgBuilders = [childFetch, approveUpdate];
-
-    vi.mocked(db.from).mockImplementation((table: string): never => {
-      if (table === 'org_members') return membership as unknown as never;
-      if (table === 'organizations') return orgBuilders.shift() as unknown as never;
-      if (table === 'audit_events') return auditInsert as unknown as never;
-      return makeBuilder() as unknown as never;
+    const { membership, orgBuilders, statusUpdate } = setupActionRouteDb({
+      role: 'owner',
+      childStatus: 'PENDING',
     });
 
     const app = buildApp('user-1');
@@ -168,7 +180,7 @@ describe('POST /api/v1/org/sub-orgs/approve (HAKI-REQ-01)', () => {
 
     expect(res.body).toEqual({ status: 'APPROVED', childOrgId: actionChildOrgId });
     expect(membership.eq).toHaveBeenCalledWith('org_id', actionParentOrgId);
-    expect(approveUpdate.update).toHaveBeenCalledWith(expect.objectContaining({
+    expect(statusUpdate.update).toHaveBeenCalledWith(expect.objectContaining({
       parent_approval_status: 'APPROVED',
     }));
     expect(orgBuilders).toHaveLength(0);
@@ -190,26 +202,9 @@ describe('POST /api/v1/org/sub-orgs/revoke (HAKI-REQ-01)', () => {
   });
 
   it('revokes an approved affiliate with explicit parent org scope', async () => {
-    const membership = makeBuilder({
-      maybeSingleData: { org_id: actionParentOrgId, role: 'admin' },
-    });
-    const childFetch = makeBuilder({
-      singleData: {
-        id: actionChildOrgId,
-        parent_org_id: actionParentOrgId,
-        parent_approval_status: 'APPROVED',
-        display_name: 'Child A',
-      },
-    });
-    const revokeUpdate = makeBuilder();
-    const auditInsert = makeBuilder();
-    const orgBuilders = [childFetch, revokeUpdate];
-
-    vi.mocked(db.from).mockImplementation((table: string): never => {
-      if (table === 'org_members') return membership as unknown as never;
-      if (table === 'organizations') return orgBuilders.shift() as unknown as never;
-      if (table === 'audit_events') return auditInsert as unknown as never;
-      return makeBuilder() as unknown as never;
+    const { membership, orgBuilders, statusUpdate } = setupActionRouteDb({
+      role: 'admin',
+      childStatus: 'APPROVED',
     });
 
     const app = buildApp('user-1');
@@ -220,7 +215,7 @@ describe('POST /api/v1/org/sub-orgs/revoke (HAKI-REQ-01)', () => {
 
     expect(res.body).toEqual({ status: 'REVOKED', childOrgId: actionChildOrgId });
     expect(membership.eq).toHaveBeenCalledWith('org_id', actionParentOrgId);
-    expect(revokeUpdate.update).toHaveBeenCalledWith(expect.objectContaining({
+    expect(statusUpdate.update).toHaveBeenCalledWith(expect.objectContaining({
       parent_approval_status: 'REVOKED',
     }));
     expect(orgBuilders).toHaveLength(0);

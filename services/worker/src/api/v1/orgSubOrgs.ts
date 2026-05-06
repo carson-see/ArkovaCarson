@@ -87,6 +87,30 @@ interface ChildOrg {
   logo_url: string | null;
 }
 
+interface AffiliateActionChildOrg {
+  id: string;
+  parent_org_id: string | null;
+  parent_approval_status: string | null;
+  display_name: string;
+}
+
+interface AffiliateActionContext {
+  userId: string;
+  orgId: string;
+  childOrgId: string;
+  childOrg: AffiliateActionChildOrg;
+}
+
+interface AffiliateActionSpec {
+  targetStatus: 'APPROVED' | 'REVOKED';
+  alreadyStatusError: string;
+  updateFailureError: string;
+  auditEventType: 'SUB_ORG_APPROVED' | 'SUB_ORG_REVOKED';
+  auditVerb: 'Approved' | 'Revoked';
+  successLog: string;
+  failureLog: string;
+}
+
 function routeSuccess<T>(value: T): RouteSuccess<T> {
   return { ok: true, value };
 }
@@ -375,6 +399,147 @@ async function cleanupAndSendFailure(
   res.status(failure.status).json({ error: failure.error });
 }
 
+async function resolveAffiliateActionContext(
+  userId: string,
+  body: unknown,
+): Promise<RouteResult<AffiliateActionContext>> {
+  const parsed = AffiliateActionSchema.safeParse(body);
+  if (!parsed.success) {
+    return routeFailure(400, 'Invalid sub-organization action details');
+  }
+
+  const { childOrgId, parentOrgId } = parsed.data;
+  const { orgId, role } = await getUserOrgInfo(userId, parentOrgId);
+  if (!orgId) {
+    return routeFailure(
+      parentOrgId ? 403 : 400,
+      parentOrgId
+        ? 'You are not a member of the selected parent organization'
+        : 'You must belong to an organization',
+    );
+  }
+
+  if (!isOrgAdmin(role)) {
+    return routeFailure(403, 'Admin permissions required');
+  }
+
+  const { data: childOrg, error: fetchError } = await db
+    .from('organizations')
+    .select('id, parent_org_id, parent_approval_status, display_name')
+    .eq('id', childOrgId)
+    .single();
+
+  if (fetchError || !childOrg) {
+    return routeFailure(404, 'Organization not found');
+  }
+
+  if (childOrg.parent_org_id !== orgId) {
+    return routeFailure(403, 'This organization is not affiliated with yours');
+  }
+
+  return routeSuccess({ userId, orgId, childOrgId, childOrg });
+}
+
+function buildAffiliateStatusUpdate(status: AffiliateActionSpec['targetStatus']) {
+  if (status === 'APPROVED') {
+    return {
+      parent_approval_status: status,
+      parent_approved_at: new Date().toISOString(),
+    };
+  }
+
+  return { parent_approval_status: status };
+}
+
+async function updateAffiliateStatus(
+  context: AffiliateActionContext,
+  action: AffiliateActionSpec,
+): Promise<RouteResult<void>> {
+  if (context.childOrg.parent_approval_status === action.targetStatus) {
+    return routeFailure(400, action.alreadyStatusError);
+  }
+
+  const { error: updateError } = await db
+    .from('organizations')
+    .update(buildAffiliateStatusUpdate(action.targetStatus))
+    .eq('id', context.childOrgId);
+
+  if (updateError) {
+    logger.error({ error: updateError }, action.failureLog);
+    return routeFailure(500, action.updateFailureError);
+  }
+
+  return routeSuccess(undefined);
+}
+
+async function auditAffiliateStatus(
+  context: AffiliateActionContext,
+  action: AffiliateActionSpec,
+): Promise<void> {
+  await db.from('audit_events').insert({
+    actor_id: context.userId,
+    event_type: action.auditEventType,
+    event_category: 'ORG',
+    target_type: 'organization',
+    target_id: context.childOrgId,
+    org_id: context.orgId,
+    details: `${action.auditVerb} sub-org affiliation: ${context.childOrg.display_name}`,
+  });
+}
+
+async function handleAffiliateStatusAction(
+  req: Request,
+  res: Response,
+  action: AffiliateActionSpec,
+): Promise<void> {
+  try {
+    const userId = getUserId(req);
+    if (!userId) {
+      res.status(401).json({ error: 'Authentication required' });
+      return;
+    }
+
+    const context = await resolveAffiliateActionContext(userId, req.body);
+    if (!context.ok) {
+      res.status(context.status).json({ error: context.error });
+      return;
+    }
+
+    const updateResult = await updateAffiliateStatus(context.value, action);
+    if (!updateResult.ok) {
+      res.status(updateResult.status).json({ error: updateResult.error });
+      return;
+    }
+
+    await auditAffiliateStatus(context.value, action);
+    logger.info({ orgId: context.value.orgId, childOrgId: context.value.childOrgId }, action.successLog);
+    res.json({ status: action.targetStatus, childOrgId: context.value.childOrgId });
+  } catch (error) {
+    logger.error({ error }, action.failureLog);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+}
+
+const APPROVE_AFFILIATE_ACTION: AffiliateActionSpec = {
+  targetStatus: 'APPROVED',
+  alreadyStatusError: 'Organization is already approved',
+  updateFailureError: 'Failed to approve organization',
+  auditEventType: 'SUB_ORG_APPROVED',
+  auditVerb: 'Approved',
+  successLog: 'Sub-org approved',
+  failureLog: 'Failed to approve sub-org',
+};
+
+const REVOKE_AFFILIATE_ACTION: AffiliateActionSpec = {
+  targetStatus: 'REVOKED',
+  alreadyStatusError: 'Affiliation is already revoked',
+  updateFailureError: 'Failed to revoke affiliation',
+  auditEventType: 'SUB_ORG_REVOKED',
+  auditVerb: 'Revoked',
+  successLog: 'Sub-org revoked',
+  failureLog: 'Failed to revoke sub-org',
+};
+
 /**
  * GET /api/v1/org/sub-orgs
  *
@@ -535,90 +700,7 @@ orgSubOrgsRouter.post('/create', async (req: Request, res: Response) => {
  * Body: { childOrgId: string, parentOrgId?: string }
  */
 orgSubOrgsRouter.post('/approve', async (req: Request, res: Response) => {
-  try {
-    const userId = getUserId(req);
-    if (!userId) {
-      res.status(401).json({ error: 'Authentication required' });
-      return;
-    }
-
-    const parsed = AffiliateActionSchema.safeParse(req.body);
-    if (!parsed.success) {
-      res.status(400).json({ error: 'Invalid sub-organization action details' });
-      return;
-    }
-
-    const { childOrgId, parentOrgId } = parsed.data;
-    const { orgId, role } = await getUserOrgInfo(userId, parentOrgId);
-    if (!orgId) {
-      res.status(parentOrgId ? 403 : 400).json({
-        error: parentOrgId
-          ? 'You are not a member of the selected parent organization'
-          : 'You must belong to an organization',
-      });
-      return;
-    }
-
-    if (!isOrgAdmin(role)) {
-      res.status(403).json({ error: 'Admin permissions required' });
-      return;
-    }
-
-    // Verify the child org exists and is pending approval for THIS parent
-    const { data: childOrg, error: fetchError } = await db
-      .from('organizations')
-      .select('id, parent_org_id, parent_approval_status, display_name')
-      .eq('id', childOrgId)
-      .single();
-
-    if (fetchError || !childOrg) {
-      res.status(404).json({ error: 'Organization not found' });
-      return;
-    }
-
-    if (childOrg.parent_org_id !== orgId) {
-      res.status(403).json({ error: 'This organization is not affiliated with yours' });
-      return;
-    }
-
-    if (childOrg.parent_approval_status === 'APPROVED') {
-      res.status(400).json({ error: 'Organization is already approved' });
-      return;
-    }
-
-    // Approve the sub-org (service_role via worker — bypasses RLS)
-    const { error: updateError } = await db
-      .from('organizations')
-      .update({
-        parent_approval_status: 'APPROVED',
-        parent_approved_at: new Date().toISOString(),
-      })
-      .eq('id', childOrgId);
-
-    if (updateError) {
-      logger.error({ error: updateError }, 'Failed to approve sub-org');
-      res.status(500).json({ error: 'Failed to approve organization' });
-      return;
-    }
-
-    // Audit
-    await db.from('audit_events').insert({
-      actor_id: userId,
-      event_type: 'SUB_ORG_APPROVED',
-      event_category: 'ORG',
-      target_type: 'organization',
-      target_id: childOrgId,
-      org_id: orgId,
-      details: `Approved sub-org affiliation: ${childOrg.display_name}`,
-    });
-
-    logger.info({ orgId, childOrgId }, 'Sub-org approved');
-
-    res.json({ status: 'APPROVED', childOrgId });
-  } catch (error) {
-    logger.error({ error }, 'Failed to approve sub-org');
-    res.status(500).json({ error: 'Internal server error' });
-  }
+  await handleAffiliateStatusAction(req, res, APPROVE_AFFILIATE_ACTION);
 });
 
 /**
@@ -628,89 +710,7 @@ orgSubOrgsRouter.post('/approve', async (req: Request, res: Response) => {
  * Body: { childOrgId: string, parentOrgId?: string }
  */
 orgSubOrgsRouter.post('/revoke', async (req: Request, res: Response) => {
-  try {
-    const userId = getUserId(req);
-    if (!userId) {
-      res.status(401).json({ error: 'Authentication required' });
-      return;
-    }
-
-    const parsed = AffiliateActionSchema.safeParse(req.body);
-    if (!parsed.success) {
-      res.status(400).json({ error: 'Invalid sub-organization action details' });
-      return;
-    }
-
-    const { childOrgId, parentOrgId } = parsed.data;
-    const { orgId, role } = await getUserOrgInfo(userId, parentOrgId);
-    if (!orgId) {
-      res.status(parentOrgId ? 403 : 400).json({
-        error: parentOrgId
-          ? 'You are not a member of the selected parent organization'
-          : 'You must belong to an organization',
-      });
-      return;
-    }
-
-    if (!isOrgAdmin(role)) {
-      res.status(403).json({ error: 'Admin permissions required' });
-      return;
-    }
-
-    // Verify the child org exists and belongs to this parent
-    const { data: childOrg, error: fetchError } = await db
-      .from('organizations')
-      .select('id, parent_org_id, parent_approval_status, display_name')
-      .eq('id', childOrgId)
-      .single();
-
-    if (fetchError || !childOrg) {
-      res.status(404).json({ error: 'Organization not found' });
-      return;
-    }
-
-    if (childOrg.parent_org_id !== orgId) {
-      res.status(403).json({ error: 'This organization is not affiliated with yours' });
-      return;
-    }
-
-    if (childOrg.parent_approval_status === 'REVOKED') {
-      res.status(400).json({ error: 'Affiliation is already revoked' });
-      return;
-    }
-
-    // Revoke the sub-org
-    const { error: updateError } = await db
-      .from('organizations')
-      .update({
-        parent_approval_status: 'REVOKED',
-      })
-      .eq('id', childOrgId);
-
-    if (updateError) {
-      logger.error({ error: updateError }, 'Failed to revoke sub-org');
-      res.status(500).json({ error: 'Failed to revoke affiliation' });
-      return;
-    }
-
-    // Audit
-    await db.from('audit_events').insert({
-      actor_id: userId,
-      event_type: 'SUB_ORG_REVOKED',
-      event_category: 'ORG',
-      target_type: 'organization',
-      target_id: childOrgId,
-      org_id: orgId,
-      details: `Revoked sub-org affiliation: ${childOrg.display_name}`,
-    });
-
-    logger.info({ orgId, childOrgId }, 'Sub-org revoked');
-
-    res.json({ status: 'REVOKED', childOrgId });
-  } catch (error) {
-    logger.error({ error }, 'Failed to revoke sub-org');
-    res.status(500).json({ error: 'Internal server error' });
-  }
+  await handleAffiliateStatusAction(req, res, REVOKE_AFFILIATE_ACTION);
 });
 
 /**
