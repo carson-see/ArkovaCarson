@@ -8,14 +8,10 @@
 import { describe, it, expect } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-
-const MIGRATION_PATH = path.join(
-  process.cwd(),
-  'supabase/migrations/0152_fix_critical_rls_performance.sql',
-);
+import { readMigration } from './utils/migrations.js';
 
 describe('SCRUM-348/349/352: RLS performance migration', () => {
-  const content = fs.readFileSync(MIGRATION_PATH, 'utf8');
+  const content = readMigration('0152_fix_critical_rls_performance.sql');
 
   it('creates is_current_user_platform_admin() SECURITY DEFINER helper', () => {
     expect(content).toContain('CREATE OR REPLACE FUNCTION is_current_user_platform_admin()');

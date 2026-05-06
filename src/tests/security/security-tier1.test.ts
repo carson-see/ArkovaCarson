@@ -12,6 +12,11 @@
 import { describe, it, expect } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { readMigration } from '../utils/migrations.js';
+
+const gdprMigration = readMigration('0061_gdpr_pii_erasure.sql');
+const securityHardeningMigration = readMigration('0062_security_hardening_high.sql');
+const accountDeletionMigration = readMigration('0065_account_deletion.sql');
 
 // ===========================================================================
 // PII-01: Verify audit_events PII protection
@@ -19,28 +24,16 @@ import * as path from 'node:path';
 
 describe('PII-01: audit_events PII protection', () => {
   it('migration 0061 creates null_audit_pii_fields trigger', () => {
-    const migrationPath = path.join(
-      process.cwd(),
-      'supabase/migrations/0061_gdpr_pii_erasure.sql',
-    );
-    const content = fs.readFileSync(migrationPath, 'utf8');
-
-    expect(content).toContain('CREATE OR REPLACE FUNCTION null_audit_actor_email()');
-    expect(content).toContain('NEW.actor_email := NULL');
-    expect(content).toContain('NEW.actor_ip := NULL');
-    expect(content).toContain('NEW.actor_user_agent := NULL');
-    expect(content).toContain('CREATE TRIGGER null_audit_pii_fields');
+    expect(gdprMigration).toContain('CREATE OR REPLACE FUNCTION null_audit_actor_email()');
+    expect(gdprMigration).toContain('NEW.actor_email := NULL');
+    expect(gdprMigration).toContain('NEW.actor_ip := NULL');
+    expect(gdprMigration).toContain('NEW.actor_user_agent := NULL');
+    expect(gdprMigration).toContain('CREATE TRIGGER null_audit_pii_fields');
   });
 
   it('migration 0061 anonymizes all existing actor_email values', () => {
-    const migrationPath = path.join(
-      process.cwd(),
-      'supabase/migrations/0061_gdpr_pii_erasure.sql',
-    );
-    const content = fs.readFileSync(migrationPath, 'utf8');
-
-    expect(content).toContain('UPDATE audit_events');
-    expect(content).toContain('SET actor_email = NULL');
+    expect(gdprMigration).toContain('UPDATE audit_events');
+    expect(gdprMigration).toContain('SET actor_email = NULL');
   });
 
   it('client-side auditLog.ts never sends actor_email', () => {
@@ -64,45 +57,29 @@ describe('PII-01: audit_events PII protection', () => {
 
 describe('PII-02: Right-to-erasure infrastructure', () => {
   it('migration 0061 creates anonymize_user_data() SECURITY DEFINER RPC', () => {
-    const migrationPath = path.join(
-      process.cwd(),
-      'supabase/migrations/0061_gdpr_pii_erasure.sql',
-    );
-    const content = fs.readFileSync(migrationPath, 'utf8');
-
-    expect(content).toContain('CREATE OR REPLACE FUNCTION anonymize_user_data(p_user_id uuid)');
-    expect(content).toContain('SECURITY DEFINER');
-    expect(content).toContain('SET search_path = public');
+    expect(gdprMigration).toContain('CREATE OR REPLACE FUNCTION anonymize_user_data(p_user_id uuid)');
+    expect(gdprMigration).toContain('SECURITY DEFINER');
+    expect(gdprMigration).toContain('SET search_path = public');
     // Must be service_role only
-    expect(content).toContain("auth.role() != 'service_role'");
-    expect(content).toContain('REVOKE ALL ON FUNCTION anonymize_user_data(uuid) FROM authenticated');
+    expect(gdprMigration).toContain("auth.role() != 'service_role'");
+    expect(gdprMigration).toContain(
+      'REVOKE ALL ON FUNCTION anonymize_user_data(uuid) FROM authenticated',
+    );
   });
 
   it('migration 0065 adds deleted_at to profiles', () => {
-    const migrationPath = path.join(
-      process.cwd(),
-      'supabase/migrations/0065_account_deletion.sql',
-    );
-    const content = fs.readFileSync(migrationPath, 'utf8');
-
-    expect(content).toContain('ALTER TABLE profiles');
-    expect(content).toContain('deleted_at timestamptz');
-    expect(content).toContain('profiles_hide_deleted');
-    expect(content).toContain('AS RESTRICTIVE');
-    expect(content).toContain('deleted_at IS NULL');
+    expect(accountDeletionMigration).toContain('ALTER TABLE profiles');
+    expect(accountDeletionMigration).toContain('deleted_at timestamptz');
+    expect(accountDeletionMigration).toContain('profiles_hide_deleted');
+    expect(accountDeletionMigration).toContain('AS RESTRICTIVE');
+    expect(accountDeletionMigration).toContain('deleted_at IS NULL');
   });
 
   it('migration 0065 creates delete_own_account() RPC', () => {
-    const migrationPath = path.join(
-      process.cwd(),
-      'supabase/migrations/0065_account_deletion.sql',
-    );
-    const content = fs.readFileSync(migrationPath, 'utf8');
-
-    expect(content).toContain('CREATE OR REPLACE FUNCTION delete_own_account()');
-    expect(content).toContain('SECURITY DEFINER');
-    expect(content).toContain("'ACCOUNT_DELETED'");
-    expect(content).toContain("'gdpr_article', '17'");
+    expect(accountDeletionMigration).toContain('CREATE OR REPLACE FUNCTION delete_own_account()');
+    expect(accountDeletionMigration).toContain('SECURITY DEFINER');
+    expect(accountDeletionMigration).toContain("'ACCOUNT_DELETED'");
+    expect(accountDeletionMigration).toContain("'gdpr_article', '17'");
   });
 
   it('account-delete worker endpoint exists', () => {
@@ -138,20 +115,14 @@ describe('PII-02: Right-to-erasure infrastructure', () => {
 
 describe('INJ-01: PostgREST injection prevention', () => {
   it('migration 0062 creates search_public_credentials() with parameterized query', () => {
-    const migrationPath = path.join(
-      process.cwd(),
-      'supabase/migrations/0062_security_hardening_high.sql',
-    );
-    const content = fs.readFileSync(migrationPath, 'utf8');
-
-    expect(content).toContain('CREATE OR REPLACE FUNCTION search_public_credentials');
-    expect(content).toContain('p_query text');
-    expect(content).toContain('SECURITY DEFINER');
-    expect(content).toContain('SET search_path = public');
+    expect(securityHardeningMigration).toContain('CREATE OR REPLACE FUNCTION search_public_credentials');
+    expect(securityHardeningMigration).toContain('p_query text');
+    expect(securityHardeningMigration).toContain('SECURITY DEFINER');
+    expect(securityHardeningMigration).toContain('SET search_path = public');
     // Uses ILIKE with parameter binding, not string interpolation
-    expect(content).toContain('ILIKE v_pattern');
+    expect(securityHardeningMigration).toContain('ILIKE v_pattern');
     // Clamps limit
-    expect(content).toContain('LEAST(GREATEST');
+    expect(securityHardeningMigration).toContain('LEAST(GREATEST');
   });
 
   it('mcp-tools.ts uses RPC instead of raw URL interpolation', () => {
@@ -178,12 +149,6 @@ describe('INJ-01: PostgREST injection prevention', () => {
 
 describe('RLS-01: GRANT to authenticated on 13 tables', () => {
   it('migration 0062 grants access to all 13 tables', () => {
-    const migrationPath = path.join(
-      process.cwd(),
-      'supabase/migrations/0062_security_hardening_high.sql',
-    );
-    const content = fs.readFileSync(migrationPath, 'utf8');
-
     const expectedTables = [
       'credential_templates',
       'memberships',
@@ -201,7 +166,7 @@ describe('RLS-01: GRANT to authenticated on 13 tables', () => {
     ];
 
     for (const table of expectedTables) {
-      expect(content).toContain(`ON ${table} TO authenticated`);
+      expect(securityHardeningMigration).toContain(`ON ${table} TO authenticated`);
     }
   });
 });
@@ -212,26 +177,18 @@ describe('RLS-01: GRANT to authenticated on 13 tables', () => {
 
 describe('RLS-02: api_keys admin-only access', () => {
   it('migration 0062 restricts api_keys SELECT to ORG_ADMIN', () => {
-    const migrationPath = path.join(
-      process.cwd(),
-      'supabase/migrations/0062_security_hardening_high.sql',
-    );
-    const content = fs.readFileSync(migrationPath, 'utf8');
-
-    expect(content).toContain('DROP POLICY IF EXISTS api_keys_select ON api_keys');
-    expect(content).toContain('CREATE POLICY api_keys_select ON api_keys');
-    expect(content).toContain("'ORG_ADMIN'");
+    expect(securityHardeningMigration).toContain('DROP POLICY IF EXISTS api_keys_select ON api_keys');
+    expect(securityHardeningMigration).toContain('CREATE POLICY api_keys_select ON api_keys');
+    expect(securityHardeningMigration).toContain("'ORG_ADMIN'");
   });
 
   it('migration 0062 restricts api_key_usage SELECT to ORG_ADMIN', () => {
-    const migrationPath = path.join(
-      process.cwd(),
-      'supabase/migrations/0062_security_hardening_high.sql',
+    expect(securityHardeningMigration).toContain(
+      'DROP POLICY IF EXISTS api_key_usage_select ON api_key_usage',
     );
-    const content = fs.readFileSync(migrationPath, 'utf8');
-
-    expect(content).toContain('DROP POLICY IF EXISTS api_key_usage_select ON api_key_usage');
-    expect(content).toContain('CREATE POLICY api_key_usage_select ON api_key_usage');
+    expect(securityHardeningMigration).toContain(
+      'CREATE POLICY api_key_usage_select ON api_key_usage',
+    );
   });
 });
 
@@ -241,23 +198,19 @@ describe('RLS-02: api_keys admin-only access', () => {
 
 describe('PII-03: Data retention policy', () => {
   it('migration 0062 creates cleanup_expired_data() with retention windows', () => {
-    const migrationPath = path.join(
-      process.cwd(),
-      'supabase/migrations/0062_security_hardening_high.sql',
-    );
-    const content = fs.readFileSync(migrationPath, 'utf8');
-
-    expect(content).toContain('CREATE OR REPLACE FUNCTION cleanup_expired_data()');
-    expect(content).toContain('SECURITY DEFINER');
+    expect(securityHardeningMigration).toContain('CREATE OR REPLACE FUNCTION cleanup_expired_data()');
+    expect(securityHardeningMigration).toContain('SECURITY DEFINER');
     // Retention windows
-    expect(content).toContain("'90 days'");
-    expect(content).toContain("'1 year'");
-    expect(content).toContain("'2 years'");
+    expect(securityHardeningMigration).toContain("'90 days'");
+    expect(securityHardeningMigration).toContain("'1 year'");
+    expect(securityHardeningMigration).toContain("'2 years'");
     // Legal hold protection
-    expect(content).toContain('legal_hold = true');
+    expect(securityHardeningMigration).toContain('legal_hold = true');
     // Service-role only
-    expect(content).toContain("auth.role() != 'service_role'");
-    expect(content).toContain('REVOKE ALL ON FUNCTION cleanup_expired_data() FROM authenticated');
+    expect(securityHardeningMigration).toContain("auth.role() != 'service_role'");
+    expect(securityHardeningMigration).toContain(
+      'REVOKE ALL ON FUNCTION cleanup_expired_data() FROM authenticated',
+    );
   });
 
   it('worker cron job is configured for daily retention cleanup', () => {

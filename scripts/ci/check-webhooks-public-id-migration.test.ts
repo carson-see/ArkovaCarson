@@ -1,11 +1,7 @@
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { readMigration } from '../../src/tests/utils/migrations.js';
 
-const migration = readFileSync(
-  resolve(import.meta.dirname, '..', '..', 'supabase/migrations/0284_webhooks_public_id.sql'),
-  'utf8',
-);
+const migration = readMigration('0284_webhooks_public_id.sql');
 
 describe('SCRUM-1445 webhook public-id migration', () => {
   it('fails fast on lock contention before backfill and NOT NULL enforcement', () => {

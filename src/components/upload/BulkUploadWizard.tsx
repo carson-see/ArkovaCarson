@@ -71,9 +71,21 @@ const STEPS: { key: Step; label: string }[] = [
 interface BulkUploadWizardProps {
   onComplete?: (result: ProcessingResult) => void;
   onCancel?: () => void;
+  initialFiles?: File[];
+  orgId?: string | null;
 }
 
-export function BulkUploadWizard({ onComplete, onCancel }: Readonly<BulkUploadWizardProps>) {
+function isSpreadsheetUploadFile(file: File): boolean {
+  const lowerName = file.name.toLowerCase();
+  return lowerName.endsWith('.csv')
+    || lowerName.endsWith('.xlsx')
+    || lowerName.endsWith('.xls')
+    || file.type === 'text/csv'
+    || file.type === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    || file.type === 'application/vnd.ms-excel';
+}
+
+export function BulkUploadWizard({ onComplete, onCancel, initialFiles = [], orgId = null }: Readonly<BulkUploadWizardProps>) {
   const [step, setStep] = useState<Step>('upload');
   const [parsedCsv, setParsedCsv] = useState<ParsedCsv | null>(null);
   const [columns, setColumns] = useState<CsvColumn[]>([]);
@@ -82,6 +94,9 @@ export function BulkUploadWizard({ onComplete, onCancel }: Readonly<BulkUploadWi
   const [result, setResult] = useState<ProcessingResult | null>(null);
   const [_extractionResults, setExtractionResults] = useState<BatchExtractionResult[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [queuedInitialFile, setQueuedInitialFile] = useState<File | null>(
+    () => initialFiles.find(isSpreadsheetUploadFile) ?? null
+  );
 
   const {
     createBulkAnchors,
@@ -89,7 +104,7 @@ export function BulkUploadWizard({ onComplete, onCancel }: Readonly<BulkUploadWi
     processedCount,
     totalCount,
     error: bulkError,
-  } = useBulkAnchors();
+  } = useBulkAnchors({ orgId });
 
   // Sync hook error into component error state — derived inline instead of effect
   // to avoid cascading renders from synchronous setState in useEffect.
@@ -199,6 +214,7 @@ export function BulkUploadWizard({ onComplete, onCancel }: Readonly<BulkUploadWi
     setResult(null);
     setExtractionResults(null);
     setError(null);
+    setQueuedInitialFile(null);
   }, []);
 
   const handleUpdateMapping = useCallback(
@@ -289,7 +305,13 @@ export function BulkUploadWizard({ onComplete, onCancel }: Readonly<BulkUploadWi
         )}
 
         {/* Step: Upload */}
-        {step === 'upload' && <CsvUploader onParsed={handleCsvParsed} />}
+        {step === 'upload' && (
+          <CsvUploader
+            onParsed={handleCsvParsed}
+            initialFile={queuedInitialFile}
+            onInitialFileConsumed={() => setQueuedInitialFile(null)}
+          />
+        )}
 
         {/* Step: Review */}
         {step === 'review' && validation && mapping && (

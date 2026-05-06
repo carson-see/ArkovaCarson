@@ -22,6 +22,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import {
   Tooltip,
   TooltipContent,
+  TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
 import { orgProfilePath, ROUTES } from '@/lib/routes';
@@ -118,15 +119,17 @@ export function ProfileCard({ profile, organization, loading, onTogglePrivacy }:
                 {profile.full_name ?? 'User'}
               </h2>
               {profile.is_verified && (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#00d4ff]/[0.08] text-[#00d4ff] text-xs font-medium">
-                      <BadgeCheck className="h-3.5 w-3.5" />
-                      Verified
-                    </span>
-                  </TooltipTrigger>
-                  <TooltipContent>Identity verified on Arkova</TooltipContent>
-                </Tooltip>
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#00d4ff]/[0.08] text-[#00d4ff] text-xs font-medium">
+                        <BadgeCheck className="h-3.5 w-3.5" />
+                        Verified
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent>Identity verified on Arkova</TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
               )}
             </div>
 

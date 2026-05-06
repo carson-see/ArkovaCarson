@@ -86,6 +86,23 @@ ${fingerprint},test.pdf,user@example.com`;
     expect(screen.getByText('1')).toBeInTheDocument();
   });
 
+  it('should auto-parse an initial spreadsheet from Secure Document detection', async () => {
+    const fingerprint = 'c'.repeat(64);
+    const file = new File(
+      [`fingerprint,filename,email\n${fingerprint},initial.pdf,user@example.com`],
+      'initial.csv',
+      { type: 'text/csv' }
+    );
+
+    render(<BulkUploadWizard initialFiles={[file]} />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Valid records')).toBeInTheDocument();
+    });
+
+    expect(screen.getByRole('button', { name: /^Process 1 Records$/i })).toBeInTheDocument();
+  });
+
   it('should auto-detect and show credential_type and metadata mapping', async () => {
     render(<BulkUploadWizard />);
 

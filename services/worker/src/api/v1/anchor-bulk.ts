@@ -24,6 +24,7 @@ import { z } from 'zod';
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 import { deductOrgCredit } from '../../utils/orgCredits.js';
+import { ensureOrgNotSuspended } from '../../utils/orgSuspensionGuard.js';
 
 const router = Router();
 
@@ -101,6 +102,21 @@ router.post('/', async (req: Request, res: Response) => {
     return;
   }
   const orgId = req.apiKey.orgId;
+
+  // SCRUM-1667 — sub-org suspension guard, gated by
+  // ENABLE_ORG_SUSPENSION_GUARD (default off). Same default-off
+  // rollout as anchor-submit + anchor-pre-signing.
+  if (process.env.ENABLE_ORG_SUSPENSION_GUARD === 'true' && orgId) {
+    const suspensionGuard = await ensureOrgNotSuspended(orgId);
+    if (!suspensionGuard.ok) {
+      const status = suspensionGuard.code === 'org_suspended' ? 403 : 503;
+      res.status(status).json({
+        error: suspensionGuard.code,
+        message: suspensionGuard.message,
+      });
+      return;
+    }
+  }
 
   const parsed = BulkAnchorRequestSchema.safeParse(req.body);
   if (!parsed.success) {

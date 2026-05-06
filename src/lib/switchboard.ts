@@ -31,6 +31,7 @@ export const FLAGS = {
   ENABLE_PUBLIC_RECORD_EMBEDDINGS: true,
   ENABLE_VERIFICATION_API: true,
   ENABLE_X402_PAYMENTS: true,
+  ENABLE_ISSUE_CREDENTIAL_SPLIT: false,
 } as const;
 
 export type FlagId = keyof typeof FLAGS;
@@ -63,32 +64,47 @@ export async function getFlag(flagId: FlagId): Promise<boolean> {
   }
 
   try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data, error } = await (supabase as any).rpc('get_flag', {
-      p_flag_key: flagId,
-    });
-
-    if (error) {
-      // Log each flag error only once to avoid console spam when DB lacks the RPC
-      if (!_flagErrorLogged.has(flagId)) {
-        _flagErrorLogged.add(flagId);
-        console.warn(`Switchboard: flag ${flagId} unavailable, using default (${FLAGS[flagId]})`);
-      }
-      const defaultVal = FLAGS[flagId];
-      _flagCache.set(flagId, { value: defaultVal, expires: Date.now() + FLAG_CACHE_TTL_MS });
-      return defaultVal;
-    }
-
+    const val = await fetchFlagFromRpc(flagId);
     // Clear error state on success (flag became available)
     _flagErrorLogged.delete(flagId);
-    const val = data as boolean;
     _flagCache.set(flagId, { value: val, expires: Date.now() + FLAG_CACHE_TTL_MS });
     return val;
   } catch {
     const defaultVal = FLAGS[flagId];
+    // Log each flag error only once to avoid console spam when DB lacks the RPC
+    if (!_flagErrorLogged.has(flagId)) {
+      _flagErrorLogged.add(flagId);
+      console.warn(`Switchboard: flag ${flagId} unavailable, using default (${defaultVal})`);
+    }
     _flagCache.set(flagId, { value: defaultVal, expires: Date.now() + FLAG_CACHE_TTL_MS });
     return defaultVal;
   }
+}
+
+async function fetchFlagFromRpc(flagId: FlagId): Promise<boolean> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data, error } = await (supabase as any).rpc('get_flag', {
+    p_flag_key: flagId,
+  });
+  if (error) throw error;
+  return data as boolean;
+}
+
+/**
+ * Get a flag value and reject on lookup failure. Use this only when a caller
+ * has a product-specific fail-closed fallback; most flags should keep the
+ * defaulting behavior in `getFlag`.
+ */
+export async function getFlagStrict(flagId: FlagId): Promise<boolean> {
+  const cached = _flagCache.get(flagId);
+  if (cached && Date.now() < cached.expires) {
+    return cached.value;
+  }
+
+  const val = await fetchFlagFromRpc(flagId);
+  _flagErrorLogged.delete(flagId);
+  _flagCache.set(flagId, { value: val, expires: Date.now() + FLAG_CACHE_TTL_MS });
+  return val;
 }
 
 /**
@@ -187,6 +203,15 @@ export async function isSemanticSearchEnabled(): Promise<boolean> {
  */
 export async function isAIFraudEnabled(): Promise<boolean> {
   return getFlag('ENABLE_AI_FRAUD');
+}
+
+/**
+ * SCRUM-1755 — split "Secure Document" (universal) and "Issue Credential"
+ * (verified-org admins only) into distinct UI surfaces, removing the
+ * conflation in DashboardPage / OrgProfilePage / copy.ts.
+ */
+export async function isIssueCredentialSplitEnabled(): Promise<boolean> {
+  return getFlagStrict('ENABLE_ISSUE_CREDENTIAL_SPLIT');
 }
 
 // =============================================================================

@@ -111,27 +111,35 @@ describe('zk-proof', () => {
     });
   });
 
-  // Integration tests — these require circuit artifacts (WASM + zkey)
-  // They are skipped if artifacts are not available (e.g., in CI without setup)
+  // Integration tests — exercise generateZkProof + verifyZkProof against the
+  // real snarkjs runtime + compiled circuit artifacts. CI builds the
+  // artifacts via services/worker/circuits/build.sh before running this
+  // suite (see .github/workflows/ci.yml "Build zk circuit artifacts" step).
+  // For local dev: run `npm run build:circuit` from services/worker once.
+  // The fail-loud existence check below is the canary — if artifacts are
+  // missing the suite errors at module load, NOT silently skips, so a
+  // broken build pipeline can never look like 'passing tests'.
   describe('generateZkProof + verifyZkProof (integration)', () => {
-    const hasArtifacts = (() => {
-      try {
-        const { existsSync } = require('fs');
-        const { resolve } = require('path');
-        const artifactsDir = resolve(__dirname, '../../circuits/artifacts');
-        return (
-          existsSync(resolve(artifactsDir, 'extraction-proof_js/extraction-proof.wasm')) &&
-          existsSync(resolve(artifactsDir, 'extraction-proof_final.zkey')) &&
-          existsSync(resolve(artifactsDir, 'verification_key.json'))
+    {
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { existsSync } = require('fs');
+      // eslint-disable-next-line @typescript-eslint/no-require-imports
+      const { resolve } = require('path');
+      const artifactsDir = resolve(__dirname, '../../circuits/artifacts');
+      const required = [
+        resolve(artifactsDir, 'extraction-proof_js/extraction-proof.wasm'),
+        resolve(artifactsDir, 'extraction-proof_final.zkey'),
+        resolve(artifactsDir, 'verification_key.json'),
+      ];
+      const missing = required.filter((p: string) => !existsSync(p));
+      if (missing.length > 0) {
+        throw new Error(
+          `zk-proof integration tests require compiled circuit artifacts. Missing:\n  ${missing.join('\n  ')}\nRun: cd services/worker && npm run build:circuit`,
         );
-      } catch {
-        return false;
       }
-    })();
+    }
 
-    const itIfArtifacts = hasArtifacts ? it : it.skip;
-
-    itIfArtifacts('generates a valid proof that verifies', async () => {
+    it('generates a valid proof that verifies', async () => {
       const documentChunks = [42n, 1337n, 999n, 777n];
       const manifestHash = 'a1b2c3d4e5f6'.padEnd(64, '0');
 
@@ -154,7 +162,7 @@ describe('zk-proof', () => {
       expect(verified).toBe(true);
     }, 30_000); // 30s timeout for proof generation
 
-    itIfArtifacts('rejects tampered public signals', async () => {
+    it('rejects tampered public signals', async () => {
       const documentChunks = [10n, 20n, 30n, 40n];
       const manifestHash = 'deadbeef'.repeat(8);
 
@@ -171,7 +179,7 @@ describe('zk-proof', () => {
       expect(verified).toBe(false);
     }, 30_000);
 
-    itIfArtifacts('different documents produce different proofs', async () => {
+    it('different documents produce different proofs', async () => {
       const manifestHash = 'cafe'.repeat(16);
 
       const result1 = await generateZkProof({

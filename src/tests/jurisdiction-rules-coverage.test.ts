@@ -10,10 +10,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import * as fs from 'node:fs';
-import * as path from 'node:path';
-
-const MIGRATIONS_DIR = path.join(process.cwd(), 'supabase/migrations');
+import { readMigration } from './utils/migrations.js';
 
 const MIGRATION_FILES = [
   '0194_jurisdiction_rules.sql',
@@ -50,9 +47,7 @@ describe('jurisdiction_rules coverage (NCA-FU3)', () => {
   const allRules: Array<{ jurisdiction: string; industry: string }> = [];
 
   for (const file of MIGRATION_FILES) {
-    const filePath = path.join(MIGRATIONS_DIR, file);
-    const sql = fs.readFileSync(filePath, 'utf8');
-    allRules.push(...parseRules(sql));
+    allRules.push(...parseRules(readMigration(file)));
   }
 
   const distinctJurisdictions = new Set(allRules.map((r) => r.jurisdiction));
