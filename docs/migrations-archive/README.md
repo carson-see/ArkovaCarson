@@ -8,17 +8,17 @@ Replaying 0000..0289 from zero on every preview-branch / `npx supabase db reset`
 - **Slow:** minutes per fresh DB
 - **Fragile:** the 0055/0056 ordering bug and the lettered-suffix `0055b_*` preview-branch incompatibility blocked the §1.11 staging rig entirely
 
-Path C ships a single 14-digit-zero-timestamp baseline that lexicographically sorts before all real migrations and matches the Supabase preview-branch builder regex `^(\d{14}|\d{1,4})_` natively. Migrations 0291+ continue to apply on top.
+Path C ships a single 14-digit-zero-timestamp baseline that lexicographically sorts before all real migrations and matches the Supabase preview-branch builder regex `^(\d{14}|\d{1,4})_` natively. Active post-baseline migrations continue to apply on top.
 
 ## Don't run these manually
 
 - These files are **historical**. The runtime schema came from these migrations being applied to prod between 2024 and 2026-05-04. The current schema state is captured in the baseline.
-- A fresh DB built today via the baseline + 0291+ should be functionally equivalent (same tables, columns, constraints, functions, triggers, policies, grants), with the known exception of 3 invalid prod indexes that `pg_dump` correctly omits because their `pg_index.indisvalid` is `false` (failed `CREATE INDEX CONCURRENTLY` runs left non-functional indexes — pre-existing prod tech debt, separate cleanup): `idx_anchors_pipeline_source_id`, `idx_anchors_pipeline_status`, `idx_public_records_source_id_trgm`.
+- A fresh DB built today via the baseline plus active post-baseline migrations should be functionally equivalent (same tables, columns, constraints, functions, triggers, policies, grants), with the known exception of 3 invalid prod indexes that `pg_dump` correctly omits because their `pg_index.indisvalid` is `false` (failed `CREATE INDEX CONCURRENTLY` runs left non-functional indexes — pre-existing prod tech debt, separate cleanup): `idx_anchors_pipeline_source_id`, `idx_anchors_pipeline_status`, `idx_public_records_source_id_trgm`.
 - If you need to understand WHY a particular column / constraint / index exists, `git log` on this directory will get you back to the commit that introduced the migration. The migration filenames preserve the sortable version prefix.
 
 ## Cutover
 
-This archive landed at the same time as the baseline. The prod ledger (`supabase_migrations.schema_migrations`) still has all 0000..0289 rows — they're the immutable audit history of what was applied when. Cutover (a separate gated op) inserts a new ledger row for `00000000000000` so the drift gate accepts the new repo layout. See [`docs/staging/PATH_C_CUTOVER.md`](../staging/PATH_C_CUTOVER.md).
+This archive landed at the same time as the baseline. The prod ledger (`supabase_migrations.schema_migrations`) still has the historical rows — they're the immutable audit history of what was applied when. The baseline cutover inserted a new ledger row for `00000000000000` on 2026-05-04 so the drift gate accepts the new repo layout. PR #700 still has a separate prod gate for `0295_pr700_rls_baseline_reconciliation.sql`; see [`docs/staging/PATH_C_CUTOVER.md`](../staging/PATH_C_CUTOVER.md).
 
 ## Index
 

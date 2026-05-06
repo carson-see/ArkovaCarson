@@ -2,21 +2,21 @@
 
 > **Jira:** [SCRUM-1668](https://arkova.atlassian.net/browse/SCRUM-1668) (parent [SCRUM-1246](https://arkova.atlassian.net/browse/SCRUM-1246) RECOVERY)
 > **PR:** [#700](https://github.com/carson-see/ArkovaCarson/pull/700) (migration baseline; T2-class staging evidence still owed before Done)
-> **Status:** **PROD LEDGER ROW RECORDED 2026-05-04** in project `vzwyaatejekddvltxyye` via Supabase MCP `execute_sql` (single ledger INSERT, RETURNING confirmed `version=00000000000000, name=baseline_at_main_HEAD`). PR #700 is not merge-ready until CI/review are green and worker/staging validation evidence is captured.
-> **Cutover IS the metadata write to prod's ledger.** Merging PR #700 ships the repo-side rename. Both halves are now reversible: revert the PR for repo-side, run `DELETE FROM supabase_migrations.schema_migrations WHERE version='00000000000000'` for prod-side. Schema itself is unchanged through both directions.
+> **Status:** **BASELINE PROD LEDGER ROW RECORDED 2026-05-04** in project `vzwyaatejekddvltxyye` via Supabase MCP `execute_sql` (single ledger INSERT, RETURNING confirmed `version=00000000000000, name=baseline_at_main_HEAD`). PR #700 is not merge-ready until CI/review are green, `0295_pr700_rls_baseline_reconciliation.sql` is applied to prod by a human with ledger/schema evidence captured, and worker/staging validation evidence is captured.
+> **Cutover IS the metadata write to prod's ledger plus the repo-side baseline/archive move.** Merging PR #700 ships the repo-side rename. Both baseline halves are reversible: revert the PR for repo-side, run `DELETE FROM supabase_migrations.schema_migrations WHERE version='00000000000000'` for prod-side. The separate post-baseline `0295` reconciliation is a forward prod migration and must be tracked as prod schema state, not treated as part of the metadata-only cutover.
 
 ---
 
 ## 1. Why Path C exists
 
-Fresh Supabase DBs (preview branches via `mcp__supabase__create_branch`, or local `npx supabase db reset`, or a brand-new project via `npx supabase db push`) replay **all** migrations from version `0000` in numeric order. As of 2026-05-04 the chain is **285 files spanning prefixes 0000..0289** (290 ledger rows in prod, with two 0278 collisions and several lettered/timestamp variants). PR #697 is in flight to add 0290.
+Fresh Supabase DBs (preview branches via `mcp__supabase__create_branch`, or local `npx supabase db reset`, or a brand-new project via `npx supabase db push`) replay **all** migrations from version `0000` in numeric order. At Path C creation on 2026-05-04, the historical chain was **285 files spanning prefixes 0000..0289** (290 ledger rows in prod, with two 0278 collisions and several lettered/timestamp variants). PR #700 archives that historical replay chain and leaves only the baseline plus active post-baseline migrations in `supabase/migrations/`.
 
 This has caused two production incidents:
 
 1. **Pre-existing fresh-DB ordering bug at migration 0056** — `0022_seed_schema_alignment.sql` was never applied to prod's ledger because its prefix was claimed by `public_verification_revoked`. Prod has the columns the seed migration would have added (out-of-band ALTER during early dev), but a fresh DB does not, so 0056 fails with `column a.issued_at does not exist`. PR #691 ships `0055b_seed_alignment_idempotent.sql` as a CLI bridge.
 2. **Lettered-suffix incompatibility** — Supabase preview-branch builders parse `^(\d{14}|\d{1,4})_`. They skip `0055b_*` outright, so PR #691 only fixes the CLI path, not preview branches. The `arkova-staging` branch from CLAUDE.md §1.11 cannot be provisioned via preview-branch path until this is resolved.
 
-Path C is the structural fix: stop replaying 0000..0289 on every fresh DB. Snapshot the prod schema at main HEAD, store it as a single `00000000000000_baseline_at_main_HEAD.sql`, apply 0291+ on top.
+Path C is the structural fix: stop replaying 0000..0289 on every fresh DB. Snapshot the prod schema at main HEAD, store it as a single `00000000000000_baseline_at_main_HEAD.sql`, then apply active post-baseline migrations on top. On the current #700 head, those live migrations are `0292_microsoft_graph_webhook_nonces.sql`, `0293_msgraph_nonce_payload_hash_and_compound_rpc.sql`, and `0295_pr700_rls_baseline_reconciliation.sql`.
 
 The 14-digit zero-timestamp prefix matches the Supabase preview-branch builder regex natively, sorts before all real migrations, and avoids the lettered-suffix incompatibility entirely.
 
@@ -32,9 +32,9 @@ The 14-digit zero-timestamp prefix matches the Supabase preview-branch builder r
 | HANDOFF entry | `HANDOFF.md` |
 
 After the PR merges:
-- Repo `supabase/migrations/` contains only `{00000000000000_baseline_at_main_HEAD.sql, 0291+}`.
+- Repo `supabase/migrations/` contains only `00000000000000_baseline_at_main_HEAD.sql` plus active post-baseline migrations.
 - Prod ledger keeps all historical rows plus the new `00000000000000` baseline row. The historical rows remain audit history; the drift gate accepts the baseline row directly.
-- `npx supabase db reset` and any new preview branch will replay only the baseline + 0291+, reaching `MIGRATIONS_DEPLOYED` in seconds.
+- `npx supabase db reset` and any new preview branch replay only the baseline plus active post-baseline migrations, reaching `MIGRATIONS_DEPLOYED` without the historical 0000..0289 ordering trap.
 
 ## 3. Cutover Record
 
@@ -61,13 +61,14 @@ This is **not** a §1.12 worker soak.
 ### 3.3 Still Owed Before Done
 
 - CI must be green on PR #700.
-- Docker/local fresh DB replay must handle the baseline in the CI Postgres image.
+- A human must apply `0295_pr700_rls_baseline_reconciliation.sql` to prod `vzwyaatejekddvltxyye`, capture the resulting `supabase_migrations.schema_migrations` row plus schema/RLS evidence, and let the migration drift gate confirm prod/repo reconciliation. Codex must not apply this prod migration.
+- Fresh-DB/RLS CI must remain green with the baseline plus active post-baseline migrations.
 - A worker validation path must run against an approved staging environment: either wait for the shared #695/#697 staging lease to release or explicitly approve an isolated environment. Do not create paid Supabase resources without cost/org confirmation.
 - PR body and evidence must clearly say schema-only equivalence until real worker/staging evidence exists.
 
 ### 3.4 Historical Ledger Decision
 
-Keep the historical 0000..0289 ledger rows. The rows are immutable audit history of what was applied when. Retiring them would lose that history (we'd have to manually map row to archived file). Keeping them costs nothing; `supabase_migrations.schema_migrations` is small. The drift gate does not fail on extra prod rows that aren't in repo.
+Keep the historical ledger rows. The rows are immutable audit history of what was applied when. Retiring them would lose that history (we'd have to manually map row to archived file). Keeping them costs nothing; `supabase_migrations.schema_migrations` is small. The drift gate does not fail on extra prod rows that aren't in repo.
 
 ## 4. Rollback
 
@@ -77,34 +78,28 @@ The cutover itself is metadata-only on prod. Rollback is symmetric:
    ```sql
    DELETE FROM supabase_migrations.schema_migrations WHERE version = '00000000000000';
    ```
-2. **Revert the repo-side PR.** `git revert <merge-sha>` and merge the revert PR. Repo `supabase/migrations/` returns to the 0000..0289 + 0291+ state.
+2. **Revert the repo-side PR.** `git revert <merge-sha>` and merge the revert PR. Repo `supabase/migrations/` returns to the historical chain plus whatever active main migrations are present outside #700.
 3. **Restore the drift-gate exempt entry.**
 
-Rollback complete. The schema is unchanged through both directions — only the ledger row + repo file layout move.
+Rollback complete for the baseline cutover. The baseline rollback path does not undo post-baseline forward migrations such as `0295`; those need their own reviewed rollback if prod application has already happened.
 
 ## 5. PR #697 interaction
 
 PR #697 ("close 7 carry-over bugs from #689 squash race + 0290 migration") ships `supabase/migrations/0290_suborg_suspension_audit_and_service_role_fix.sql`. 0290 is **already present in prod** (per HANDOFF; verified via Supabase MCP).
 
-Two scenarios:
-
-- **PR #697 merges before Path C** — 0290 enters main as a normal post-baseline migration. Path C archives it alongside 0000..0289 because it pre-dates the cutover. The baseline pg_dump captures the 0290 schema state because 0290 was already present in prod when the dump was taken. PR #697's T2 soak still has to happen against the shared staging rig, whose lease is active in parallel work.
-- **PR #697 merges after Path C** — 0290 has already been folded into the baseline. PR #697 either (a) drops the migration file from its diff and ships only the worker fixes, or (b) keeps 0290 as a no-op idempotent re-apply. Either way, the migration runner is fine.
-
-The cleaner of the two is "Path C ships first, PR #697 drops 0290 from its diff or ships it as 0291." Carson's call.
+The current #700 baseline already reflects the prod schema that includes 0290. PR #697 remains active in another session and owns its own migration-file decision (drop, renumber, or make idempotent/no-op). PR #700 should not mutate #697 or acquire the shared staging rig while #697/#695 work is active.
 
 ## 6. What the cutover does NOT do
 
 - **Does not delete 0000..0289 prod ledger rows.** They remain in `supabase_migrations.schema_migrations` for audit history.
 - **Does not change any schema object.** The pg_dump captures prod-as-it-is; the baseline file is a structural snapshot, not a refactor.
 - **Does not change worker behavior.** The worker doesn't read `schema_migrations`. It reads the actual schema, which is unchanged.
-- **Does not change the staging-rig provisioning UX.** `mcp__supabase__create_branch` still returns a preview branch with a `MIGRATIONS_DEPLOYED` status — just sooner. `scripts/staging/seed.ts`, `claim.sh`, `teardown-and-reset.sh` are unaffected.
+- **Does not claim the shared staging rig.** #700 still needs real worker/staging evidence, but that must wait for the #695/#697 lease to release or use an explicitly approved isolated environment.
 
 ## 7. References
 
 - [CLAUDE.md](../../CLAUDE.md) §1.2 (never modify an existing migration), §1.11 (staging mandatory), §1.12 (soak tier matrix)
 - [HANDOFF.md](../../HANDOFF.md) `2026-05-04` block on the fresh-DB ordering issue + PR #691
 - PR #691: `0055b_seed_alignment_idempotent.sql` — the CLI-only bridge that Path C subsumes
-- PR #697: `0290_suborg_suspension_audit_and_service_role_fix.sql` — the bug-fix migration whose T2 soak waits on Path C
-- PR #692: staging-rig scaffolding (`scripts/staging/`, `docs/staging/`, `staging-evidence.yml`) — the rig itself, which Path C unblocks
-- Path A authorized 2026-05-04 but never started (CLI-forward against standalone Supabase project). Continuation prompt at `docs/staging/CONTINUATION_2026-05-04_SCRUM-1647_FOLLOWUPS.md` in PR #697. Obsolete once Path C lands.
+- PR #697: `0290_suborg_suspension_audit_and_service_role_fix.sql` — active in another session; #700 treats its migration state as folded into the prod-derived baseline
+- PR #692/#699 staging scaffolding (`scripts/staging/`, `docs/staging/`, `staging-evidence.yml`) — use the lease workflow before any #700 soak
