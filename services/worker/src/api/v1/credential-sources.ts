@@ -338,6 +338,7 @@ async function logImportAudit(userId: string, orgId: string | null, anchorId: st
       target_id: anchorId,
       details: JSON.stringify(buildAuditDetails(preview)),
     });
+    // eslint-disable-next-line arkova/missing-org-filter -- Insert-only audit write; tenant scope is carried in the validated org_id payload.
     const { error } = await db.from('audit_events').insert(payload);
     if (error) throw error;
   } catch (error) {
