@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
+  type CliOptions,
   PIPELINE_DASHBOARD_CACHE_COMMAND,
   PIPELINE_DASHBOARD_CACHE_JOB_NAME,
   PIPELINE_DASHBOARD_CACHE_SCHEDULE,
@@ -17,6 +18,8 @@ import {
   buildResetSupportIndexRebuildTimeoutBypassSql,
   buildRollbackPipelineDashboardCacheCronSql,
   buildSchedulePipelineDashboardSupportIndexSql,
+  parseArgs,
+  runQuery,
 } from './ensure-pipeline-dashboard-cache-cron';
 
 describe('pipeline dashboard cache cron SQL', () => {
@@ -29,7 +32,8 @@ describe('pipeline dashboard cache cron SQL', () => {
     expect(sql).toContain(PIPELINE_DASHBOARD_CACHE_COMMAND);
     expect(sql).toContain(PIPELINE_DASHBOARD_SUPPORT_INDEX_NAME);
     expect(sql).toContain('is missing or invalid');
-    expect(sql).toContain(PIPELINE_DASHBOARD_FAST_STATS_FUNCTION_COMMENT);
+    expect(sql).toContain('run --rebuild-support-index before scheduling');
+    expect(sql).not.toContain(PIPELINE_DASHBOARD_FAST_STATS_FUNCTION_COMMENT);
     expect(sql).not.toContain('vacuum-anchors');
     expect(sql).not.toContain('batch-anchors');
   });
@@ -61,6 +65,7 @@ describe('pipeline dashboard cache cron SQL', () => {
     expect(sql).toContain('latest_job_runs');
     expect(sql).toContain('support_index_job_runs');
     expect(sql).toContain('stats_function');
+    expect(sql).toContain("jsonb_build_object('proconfig', NULL, 'function_md5', NULL, 'comment', NULL)");
   });
 
   it('builds concurrent support-index rebuild SQL for production repair', () => {
@@ -91,13 +96,55 @@ describe('pipeline dashboard cache cron SQL', () => {
     expect(scheduleSql).toContain(`CREATE INDEX CONCURRENTLY ${PIPELINE_DASHBOARD_SUPPORT_INDEX_NAME}`);
   });
 
-  it('builds a fast stats function that removes the invalid support-index dependency', () => {
+  it('builds production-scale cache writers that preserve pipeline-only stats semantics', () => {
     const sql = buildInstallFastPipelineStatsFunctionSql();
 
     expect(sql).toContain('CREATE OR REPLACE FUNCTION public.refresh_cache_pipeline_stats()');
     expect(sql).toContain("SET statement_timeout TO '20s'");
     expect(sql).toContain('scrum_1708_fast_stats');
     expect(sql).toContain(PIPELINE_DASHBOARD_FAST_STATS_FUNCTION_COMMENT);
-    expect(sql).not.toContain("metadata ? 'pipeline_source'");
+    expect(sql).toContain("metadata ? 'pipeline_source'");
+    expect(sql).toContain("status = 'SUBMITTED'");
+    expect(sql).toContain("status = 'SECURED'");
+    expect(sql).toContain('chain_tx_id IS NOT NULL');
+    expect(sql).toContain('CREATE OR REPLACE FUNCTION public.refresh_cache_anchor_status_counts()');
+    expect(sql).toContain('CREATE OR REPLACE FUNCTION public.refresh_cache_by_source()');
+    expect(sql).toContain('CREATE OR REPLACE FUNCTION public.refresh_cache_anchor_type_counts()');
+    expect(sql).toContain('CREATE OR REPLACE FUNCTION public.refresh_cache_record_types()');
+    expect(sql).toContain('pg_stats');
+    expect(sql).toContain('bounded cache writer');
+    expect(sql).not.toContain('v_total_anchors - v_pending_anchor');
+  });
+
+  it('defaults the CLI to status and rejects conflicting write modes', () => {
+    const env = { SUPABASE_PROJECT_REF: 'project-ref', SUPABASE_ACCESS_TOKEN: 'token' };
+
+    expect(parseArgs([], env)).toEqual({
+      projectRef: 'project-ref',
+      accessToken: 'token',
+      mode: 'status',
+    });
+    expect(() => parseArgs(['--apply', '--rollback'], env)).toThrow(
+      'Choose exactly one mode flag, received: apply, rollback',
+    );
+  });
+
+  it('resets the rebuild timeout bypass when setup fails before scheduling the rebuild job', async () => {
+    const options: CliOptions = {
+      projectRef: 'project-ref',
+      accessToken: 'token',
+      mode: 'rebuild-support-index',
+    };
+    const calls: string[] = [];
+    const executor = vi.fn(async (_options: CliOptions, query: string) => {
+      calls.push(query);
+      if (query.includes(`DROP INDEX CONCURRENTLY IF EXISTS public.${PIPELINE_DASHBOARD_SUPPORT_INDEX_NAME}`)) {
+        throw new Error('drop failed');
+      }
+      return { ok: true };
+    });
+
+    await expect(runQuery(options, executor)).rejects.toThrow('drop failed');
+    expect(calls).toContain(buildResetSupportIndexRebuildTimeoutBypassSql());
   });
 });

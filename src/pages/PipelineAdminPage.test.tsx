@@ -4,7 +4,7 @@
  */
 
 import { beforeEach, describe, it, expect, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 
 vi.mock('@/hooks/useAuth', () => ({
@@ -174,5 +174,76 @@ describe('PipelineAdminPage', () => {
       'title',
       expect.stringContaining('size, age, and fee triggers'),
     );
+  });
+
+  it('clears stale completion timers when the same pipeline control is run again', async () => {
+    let continuingEducationCalls = 0;
+    vi.mocked(workerFetch).mockImplementation(async (path) => {
+      if (path === '/jobs/fetch-continuing-education') {
+        continuingEducationCalls += 1;
+        if (continuingEducationCalls === 1) {
+          return {
+            ok: true,
+            json: vi.fn().mockResolvedValue({ processed: 1 }),
+          } as unknown as Response;
+        }
+        return new Promise<Response>(() => undefined);
+      }
+
+      return {
+        ok: true,
+        json: vi.fn().mockResolvedValue({
+          totalRecords: 10000,
+          anchoredRecords: 9000,
+          pendingRecords: 1000,
+          embeddedRecords: 8000,
+          anchorLinkedRecords: 9500,
+          pendingRecordLinks: 500,
+          pendingAnchorRecords: 450,
+          broadcastingRecords: 50,
+          submittedRecords: 7000,
+          securedRecords: 2000,
+          cacheUpdatedAt: '2026-04-24T12:00:00Z',
+          bySource: {},
+        }),
+      } as unknown as Response;
+    });
+
+    render(
+      <MemoryRouter>
+        <PipelineAdminPage />
+      </MemoryRouter>,
+    );
+    await screen.findByText('Records Anchored');
+
+    fireEvent.click(screen.getByText('Pipeline Controls'));
+    const control = await screen.findByTestId('pipeline-job-fetch-continuing-education');
+
+    vi.useFakeTimers();
+    try {
+      await act(async () => {
+        fireEvent.click(control);
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(control).not.toBeDisabled();
+
+      await act(async () => {
+        vi.advanceTimersByTime(4000);
+      });
+
+      await act(async () => {
+        fireEvent.click(control);
+        await Promise.resolve();
+      });
+      expect(control).toBeDisabled();
+
+      await act(async () => {
+        vi.advanceTimersByTime(5000);
+      });
+      expect(control).toBeDisabled();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

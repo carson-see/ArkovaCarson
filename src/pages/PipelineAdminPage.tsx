@@ -130,6 +130,16 @@ const BATCH_ANCHORS_CONTROL_DESCRIPTION =
   'Runs the normal batch path; it may no-op unless size, age, and fee triggers allow a batch.';
 const WORKER_ROUTE_NOT_WIRED = 'Worker route is not wired in this release.';
 
+function formatJobCompletionMessage(processed: number | null): string {
+  if (processed === null) {
+    return 'Completed';
+  }
+  if (processed === 0) {
+    return 'Completed; no records processed';
+  }
+  return `Completed; processed ${processed.toLocaleString()} records`;
+}
+
 const INTERNATIONAL_JOB_GROUPS: Array<{ heading: string; jobs: PipelineJobControl[] }> = [
   { heading: '🇦🇺 Australia', jobs: [
     { path: 'fetch-australia', label: 'AU Compliance (AHPRA/TEQSA/ASIC)', icon: <Globe className={ICON_4} /> },
@@ -317,22 +327,40 @@ export function PipelineAdminPage() {
 
   const [triggerStatus, setTriggerStatus] = useState<Record<string, JobRunStatus>>({});
   const [triggerMessages, setTriggerMessages] = useState<Record<string, string>>({});
-  const triggerTimersRef = useRef<Array<ReturnType<typeof setTimeout>>>([]);
+  const triggerTimersRef = useRef<Record<string, Array<ReturnType<typeof setTimeout>>>>({});
 
-  useEffect(() => () => {
-    triggerTimersRef.current.forEach((timer) => clearTimeout(timer));
-    triggerTimersRef.current = [];
+  const clearTriggerTimers = useCallback((jobPath?: string) => {
+    if (jobPath) {
+      triggerTimersRef.current[jobPath]?.forEach((timer) => clearTimeout(timer));
+      delete triggerTimersRef.current[jobPath];
+      return;
+    }
+
+    Object.values(triggerTimersRef.current).forEach((timers) => {
+      timers.forEach((timer) => clearTimeout(timer));
+    });
+    triggerTimersRef.current = {};
   }, []);
 
-  const scheduleTriggerUpdate = useCallback((fn: () => void, delayMs: number) => {
+  useEffect(() => () => {
+    clearTriggerTimers();
+  }, [clearTriggerTimers]);
+
+  const scheduleTriggerUpdate = useCallback((jobPath: string, fn: () => void, delayMs: number) => {
     const timer = setTimeout(() => {
-      triggerTimersRef.current = triggerTimersRef.current.filter((t) => t !== timer);
+      const remaining = triggerTimersRef.current[jobPath]?.filter((t) => t !== timer) ?? [];
+      if (remaining.length > 0) {
+        triggerTimersRef.current[jobPath] = remaining;
+      } else {
+        delete triggerTimersRef.current[jobPath];
+      }
       fn();
     }, delayMs);
-    triggerTimersRef.current.push(timer);
+    triggerTimersRef.current[jobPath] = [...(triggerTimersRef.current[jobPath] ?? []), timer];
   }, []);
 
   const triggerJob = useCallback(async (jobPath: string) => {
+    clearTriggerTimers(jobPath);
     setTriggerStatus((prev) => ({ ...prev, [jobPath]: 'running' }));
     setTriggerMessages((prev) => ({ ...prev, [jobPath]: 'Running' }));
     try {
@@ -342,17 +370,13 @@ export function PipelineAdminPage() {
       if (response.ok) {
         const payload = await response.json().catch(() => null);
         const processed = typeof payload?.processed === 'number' ? payload.processed : null;
-        const message = processed === null
-          ? 'Completed'
-          : processed === 0
-            ? 'Completed; no records processed'
-            : `Completed; processed ${processed.toLocaleString()} records`;
+        const message = formatJobCompletionMessage(processed);
         setTriggerStatus((prev) => ({ ...prev, [jobPath]: 'done' }));
         setTriggerMessages((prev) => ({ ...prev, [jobPath]: message }));
         // Refresh stats after a job completes — immediate, 3s, and 8s for DB propagation
         fetchStats();
-        scheduleTriggerUpdate(() => fetchStats(), 3000);
-        scheduleTriggerUpdate(() => {
+        scheduleTriggerUpdate(jobPath, () => fetchStats(), 3000);
+        scheduleTriggerUpdate(jobPath, () => {
           fetchStats();
           setTriggerStatus((prev) => ({ ...prev, [jobPath]: 'idle' }));
           setTriggerMessages((prev) => {
@@ -368,7 +392,7 @@ export function PipelineAdminPage() {
           : `Worker returned ${response.status}`;
         setTriggerStatus((prev) => ({ ...prev, [jobPath]: 'error' }));
         setTriggerMessages((prev) => ({ ...prev, [jobPath]: message }));
-        scheduleTriggerUpdate(() => {
+        scheduleTriggerUpdate(jobPath, () => {
           setTriggerStatus((prev) => ({ ...prev, [jobPath]: 'idle' }));
           setTriggerMessages((prev) => {
             const next = { ...prev };
@@ -381,7 +405,7 @@ export function PipelineAdminPage() {
       const message = error instanceof Error ? error.message : 'Worker request failed';
       setTriggerStatus((prev) => ({ ...prev, [jobPath]: 'error' }));
       setTriggerMessages((prev) => ({ ...prev, [jobPath]: message }));
-      scheduleTriggerUpdate(() => {
+      scheduleTriggerUpdate(jobPath, () => {
         setTriggerStatus((prev) => ({ ...prev, [jobPath]: 'idle' }));
         setTriggerMessages((prev) => {
           const next = { ...prev };
@@ -390,7 +414,7 @@ export function PipelineAdminPage() {
         });
       }, 5000);
     }
-  }, [fetchStats, scheduleTriggerUpdate]);
+  }, [clearTriggerTimers, fetchStats, scheduleTriggerUpdate]);
 
   // ─── Records Browser State ────────────────────────
   const [records, setRecords] = useState<PublicRecord[]>([]);
@@ -1511,6 +1535,17 @@ function QualityMetric({ label, value, width, color, detail }: {
   );
 }
 
+interface JobButtonProps {
+  readonly path: string;
+  readonly label: string;
+  readonly icon: React.ReactNode;
+  readonly status: Readonly<Record<string, JobRunStatus>>;
+  readonly messages: Readonly<Record<string, string>>;
+  readonly description?: string;
+  readonly disabledReason?: string;
+  readonly onTrigger: (path: string) => void;
+}
+
 function JobButton({
   path,
   label,
@@ -1520,19 +1555,11 @@ function JobButton({
   description,
   disabledReason,
   onTrigger,
-}: {
-  path: string;
-  label: string;
-  icon: React.ReactNode;
-  status: Record<string, JobRunStatus>;
-  messages: Record<string, string>;
-  description?: string;
-  disabledReason?: string;
-  onTrigger: (path: string) => void;
-}) {
+}: Readonly<JobButtonProps>) {
   const s = status[path] ?? 'idle';
   const disabled = Boolean(disabledReason) || s === 'running';
   const title = disabledReason ?? messages[path] ?? description;
+  const ariaLabel = title ? `${label}: ${title}` : label;
   return (
     <Button
       variant="outline"
@@ -1541,7 +1568,7 @@ function JobButton({
       disabled={disabled}
       onClick={() => onTrigger(path)}
       title={title}
-      aria-label={`${label}${title ? `: ${title}` : ''}`}
+      aria-label={ariaLabel}
       data-testid={`pipeline-job-${path}`}
     >
       {s === 'running' ? (

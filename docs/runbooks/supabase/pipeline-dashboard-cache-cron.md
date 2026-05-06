@@ -9,8 +9,7 @@ the active migration-ledger stop flag is being reconciled.
 - Unschedules every existing pg_cron job named `refresh-pipeline-dashboard-cache`.
 - Creates exactly one active job with schedule `* * * * *`.
 - Refuses to schedule the cron job unless the supporting
-  `idx_anchors_pipeline_status` index is present, valid, and ready, or the
-  SCRUM-1708 fast stats function is installed.
+  `idx_anchors_pipeline_status` index is present, valid, and ready.
 - Uses the required command:
 
 ```sql
@@ -20,7 +19,7 @@ SET statement_timeout = '50s'; SELECT refresh_pipeline_dashboard_cache();
 It does not touch `vacuum-anchors`, `batch-anchors`, Cloud Scheduler jobs, or
 any migration ledger rows.
 
-The SCRUM-1708 fast stats function and optional supporting-index rebuild are
+The SCRUM-1708 fast stats function and supporting-index rebuild are
 operational changes captured here instead of new migrations because the
 production migration ledger has an active STOP-class numbering collision. Do not
 add a migration for this slice until that ledger is reconciled.
@@ -42,18 +41,20 @@ Also record `support_indexes`:
 - `idx_anchors_pipeline_status` must have `indisvalid=true`,
   `indisready=true`, and `indislive=true`.
 - `index_progress` must be empty before applying the cron.
-- If the support index is not valid, `stats_function.comment` must be
-  `SCRUM-1708 fast cache refresh: avoids idx_anchors_pipeline_status dependency while the production support index is invalid.`
+- If the support index is not valid, stop and run the support-index rebuild
+  before applying the cron.
 - After applying the cron, `latest_job_runs[0].status` must show the latest
   pg_cron result and `cache_rows[*].updated_at` must advance without a manual
   refresh.
 
 ## Install Fast Stats Function
 
-Use this when production has no valid `idx_anchors_pipeline_status` and a
-concurrent rebuild would take too long for the incident. This replaces only
-`public.refresh_cache_pipeline_stats()` with a cache writer that avoids the
-invalid support index dependency:
+This replaces `public.refresh_cache_pipeline_stats()` with a pipeline-only cache
+writer which uses the `idx_anchors_pipeline_status` support index for hot
+anchor-status buckets. It also replaces the broad distribution cache writers
+(`anchor_status_counts`, `by_source`, `anchor_type_counts`, and `record_types`)
+with bounded pg_stats-backed writers so the master refresh does not time out on
+full-table grouping queries.
 
 ```bash
 SUPABASE_PROJECT_REF="vzwyaatejekddvltxyye" \
@@ -69,17 +70,18 @@ SELECT refresh_pipeline_dashboard_cache();
 
 Expected result: JSON with `status: refreshed`, `succeeded: 6`, and an empty
 `errors` array. Then run status and confirm `stats_function.comment` matches
-the SCRUM-1708 fast stats comment and cache rows advanced.
+the SCRUM-1708 pipeline-only fast stats comment and cache rows advanced.
 
 ## Rebuild Supporting Index
 
-Only use this when there is enough operational room to wait for a full
-concurrent rebuild. It drops only that index name, then schedules a one-time
-pg_cron job to recreate it concurrently. The create runs through pg_cron because
-the Supabase Management API can time out long concurrent index builds before
-they finish. The script also temporarily sets `postgres` in database `postgres`
-to `statement_timeout=0`, because pg_cron sessions otherwise inherit Supabase's
-120s database default and cancel the concurrent index build before completion.
+Run this before applying the refresh cron when `idx_anchors_pipeline_status` is
+missing, invalid, or not ready. It drops only that index name, then schedules a
+one-time pg_cron job to recreate it concurrently. The create runs through
+pg_cron because the Supabase Management API can time out long concurrent index
+builds before they finish. The script also temporarily sets `postgres` in
+database `postgres` to `statement_timeout=0`, because pg_cron sessions otherwise
+inherit Supabase's 120s database default and cancel the concurrent index build
+before completion.
 
 ```bash
 SUPABASE_PROJECT_REF="vzwyaatejekddvltxyye" \
@@ -125,7 +127,7 @@ Wait at least two minutes, then run the status command again. The
 ## Apply on Production
 
 Only apply after staging evidence has been captured and production preflight
-shows either a valid supporting index or the SCRUM-1708 fast stats function.
+shows a valid supporting index.
 
 ```bash
 SUPABASE_PROJECT_REF="vzwyaatejekddvltxyye" \
@@ -144,9 +146,9 @@ npx tsx scripts/ops/ensure-pipeline-dashboard-cache-cron.ts
 Expected result:
 
 - `cron_jobs` contains exactly one row.
-- `jobname` is `refresh-pipeline-dashboard-cache`.
-- `active` is `true`.
-- `command` is `SET statement_timeout = '50s'; SELECT refresh_pipeline_dashboard_cache();`.
+- The single job is named `refresh-pipeline-dashboard-cache`.
+- The job is active.
+- The job command is `SET statement_timeout = '50s'; SELECT refresh_pipeline_dashboard_cache();`.
 - `pipeline_stats.updated_at` advances within two cron ticks.
 
 ## Rollback
