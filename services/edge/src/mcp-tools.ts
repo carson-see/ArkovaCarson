@@ -614,7 +614,9 @@ async function searchAgentOrgs(
 
     for (const membership of memberships) {
       const org = membership.organizations as Record<string, unknown> | null | undefined;
-      const publicId = typeof org?.public_id === 'string' ? org.public_id : null;
+      if (!org) continue;
+
+      const publicId = typeof org.public_id === 'string' ? org.public_id : null;
       if (!publicId || seenPublicIds.has(publicId)) continue;
 
       const isMatch = [
