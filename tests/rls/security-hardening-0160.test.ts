@@ -42,7 +42,7 @@ describe('SEC-RECON: Security Hardening (Migrations 0160 + 0161)', () => {
   describe('SEC-RECON-1: organizations anon access blocked', () => {
     it('anon cannot SELECT from organizations table directly', async () => {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data, error } = await (anonClient as any)
+      const { data } = await (anonClient as any)
         .from('organizations')
         .select('id, legal_name, ein_tax_id')
         .limit(1);
@@ -185,7 +185,7 @@ describe('SEC-RECON: Security Hardening (Migrations 0160 + 0161)', () => {
   });
 
   // =========================================================================
-  // SEC-RECON-7: get_anchor_tx_stats — requires platform admin
+  // SEC-RECON-7: get_anchor_tx_stats — service_role-only
   // =========================================================================
 
   describe('SEC-RECON-7: anchor tx stats restricted', () => {

@@ -28,6 +28,8 @@
 
 **A real §1.12 worker/staging validation path is still owed before #700 is Done.** It requires a Docker worker build/run and/or the `arkova-worker-staging` Cloud Run service running against an approved staging DB under synthetic load — anchors, cron cycles, E2E flows — to verify the schema works under application behavior, not just object existence. Shared staging ownership is active in parallel work (#695/#697), so #700 must either wait for that lease or use an explicitly approved isolated environment. Until then, this entry is honest: **schema check only, not behavior check.**
 
+**Fresh-DB RLS reconciliation now in flight:** the first post-#722 CI run exposed real fresh-baseline/security mismatches in `npm run test:rls`: recursive `memberships_select_org_members`, stale browser-direct `audit_events_insert_own`, and unguarded `get_anchor_tx_stats`, plus stale switchboard test expectations from the old `id/value/is_dangerous` schema. Forward migration `0295_pr700_rls_baseline_reconciliation.sql` fixes the real prod-bound policy/RPC issues without rewriting the baseline; RLS tests now target the current `flag_key/enabled` switchboard shape. Because repo migration rules say Codex must not apply prod migrations, #700 is **not Done** until a human applies `0295` to prod `vzwyaatejekddvltxyye`, captures ledger/schema evidence, and the migration drift gate confirms it.
+
 **Now unblocked:** PR #697 (carryover bug fixes + 0290) and PR #695 (SCRUM-1135 + 0291) T2 staging soaks were blocked on the rig + the lettered-suffix migration-builder bug. With Path C live, every fresh-DB stand-up replays only the baseline + 0291+, sidestepping the bug entirely. **NOTE:** PR #695 and PR #697 already collide on 0290 with each other (different content, same prefix) regardless of Path C — that pre-existing renumber must happen before either lands; not Path C's problem to solve. The over-inclusive list of conflicting PRs in earlier session messages was corrected: only #691 (0055b), #695 (0290+0291), and #697 (0290) actually touch `supabase/migrations/`; #693 (zk circuit) and #696 (Drive runner) do not.
 
 **Honest carry-over for next session:**
@@ -36,6 +38,8 @@
 * **Tiny follow-up still owed:** `docs/runbooks/gcp-max-setup.md` line 97 references `0235_cloud_logging_queue.sql` by name; needs to be updated to point at the baseline or the archived path. Not a blocker for the merge.
 * **Pre-baseline 0290** (PR #697) is captured in the baseline (since 0290 was already present in prod when the dump was taken). PR #697's 0290 file is a no-op idempotent re-apply on top of the baseline — drop from #697's diff or keep as 0291 on top after PR #695's 0291 lands.
 * **Stories still in `To Do`** (SCRUM-1668/1669/1670/1671). Carson is reporter on all four → Reporter ≠ Resolver Atlassian rule means transition to Done requires a non-Carson resolver.
+
+**Still required before #700 is Done/merge-ready:** final branch-protection checks green, review approval, and real #700 worker/staging behavior evidence. Shared staging is active in parallel work, so #700 should not acquire or mutate it without coordination; use an explicitly approved isolated environment or wait for the staging lease. Until that evidence is captured, #700 remains honest as schema-equivalence only.
 
 
 ### 2026-05-06 — PR #711 SCRUM-1545 coverage backfill merge-resolution pass

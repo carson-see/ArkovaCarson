@@ -21,7 +21,7 @@ import {
 describe('SCRUM-1284 — matview anon/authenticated revoke (migration 0278)', () => {
   let anonClient: TypedClient;
   let authClient: TypedClient;
-  const deniedCodes = ['42501', '42P01', 'PGRST205'];
+  const deniedCodes = ['42501', '42P01', 'PGRST205', '55000'];
 
   beforeAll(async () => {
     anonClient = createAnonClient();
@@ -39,7 +39,8 @@ describe('SCRUM-1284 — matview anon/authenticated revoke (migration 0278)', ()
         const { error } = await (anonClient as any).from(matview).select('*').limit(1);
         expect(error).not.toBeNull();
         // 42501 = revoke worked; 42P01 = matview absent; PGRST205 = matview is
-        // not exposed through PostgREST's schema cache. All three deny reads.
+        // not exposed through PostgREST's schema cache; 55000 = fresh local
+        // materialized view is unpopulated. All four deny a data-bearing read.
         expect(deniedCodes).toContain(error!.code);
       });
 
@@ -48,7 +49,8 @@ describe('SCRUM-1284 — matview anon/authenticated revoke (migration 0278)', ()
         const { error } = await (authClient as any).from(matview).select('*').limit(1);
         expect(error).not.toBeNull();
         // 42501 = revoke worked; 42P01 = matview absent; PGRST205 = matview is
-        // not exposed through PostgREST's schema cache. All three deny reads.
+        // not exposed through PostgREST's schema cache; 55000 = fresh local
+        // materialized view is unpopulated. All four deny a data-bearing read.
         expect(deniedCodes).toContain(error!.code);
       });
     });
