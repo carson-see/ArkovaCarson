@@ -53,6 +53,7 @@ export interface Builder {
   select: ReturnType<typeof vi.fn>;
   insert: ReturnType<typeof vi.fn>;
   update: ReturnType<typeof vi.fn>;
+  delete: ReturnType<typeof vi.fn>;
   eq: ReturnType<typeof vi.fn>;
   in: ReturnType<typeof vi.fn>;
   gte: ReturnType<typeof vi.fn>;
@@ -121,6 +122,7 @@ export function makeBuilder(state: BuilderState = {}): Builder {
   builder.select = vi.fn(chain);
   builder.insert = vi.fn(chain);
   builder.update = vi.fn(chain);
+  builder.delete = vi.fn(chain);
   builder.eq = vi.fn(chain);
   builder.in = vi.fn(chain);
   builder.gte = vi.fn(chain);

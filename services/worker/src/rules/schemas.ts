@@ -306,6 +306,12 @@ export const RULE_DISPATCH_OUTCOME = {
   QUEUED_FOR_REVIEW: 'queued_for_review',
   FLAGGED_COLLISION: 'flagged_collision',
   WEBHOOK_DELIVERED: 'webhook_delivered',
+  // SCRUM-1649 DS-AUTO-02 — anchor action routing (DS-06 / DS-07).
+  // QUEUED_FOR_ANCHOR covers AUTO_ANCHOR's queue mode and the
+  // FAST_TRACK_ANCHOR insufficient-credits fall-through. ANCHOR_DISPATCHED
+  // is the FAST_TRACK_ANCHOR happy-path after submitJob succeeds.
+  QUEUED_FOR_ANCHOR: 'queued_for_anchor',
+  ANCHOR_DISPATCHED: 'anchor_dispatched',
 } as const;
 
 export type RuleDispatchOutcome =
@@ -318,6 +324,9 @@ export const RULE_ROUTED_TO = {
   AUTO_ANCHOR: 'auto_anchor',
   REVIEW_QUEUE: 'review_queue',
   COLLISION: 'collision',
+  // SCRUM-1649 DS-AUTO-02 — anchor action routing.
+  ANCHOR_QUEUE: 'anchor_queue',
+  ANCHOR_PIPELINE: 'anchor_pipeline',
 } as const;
 
 export type RuleRoutedTo = (typeof RULE_ROUTED_TO)[keyof typeof RULE_ROUTED_TO];
