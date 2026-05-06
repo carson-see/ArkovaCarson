@@ -7,7 +7,7 @@
 -- IF NOT EXISTS, CREATE FUNCTION → CREATE OR REPLACE FUNCTION, etc.). NOT a
 -- reconstruction — this is byte-faithful pg_dump output of the live schema.
 --
--- Purpose: replaces the historical 0001..0289 migration replay-from-zero on
+-- Purpose: replaces the historical 0000..0289 migration replay-from-zero on
 -- every fresh DB stand-up (preview branches, CLI bootstrap, npx supabase db
 -- reset). Migrations 0291+ continue to apply on top exactly as today.
 --
@@ -22,10 +22,10 @@
 --   - 0290_suborg_suspension_audit_and_service_role_fix.sql (folded in;
 --     coordinate with PR #697 to drop or rebase as 0291).
 --
--- ROLLBACK: this baseline is destructive on cutover. Recovery is to revert the
+-- ROLLBACK: the prod cutover is metadata-only. Recovery is to revert the
 -- ledger INSERT in supabase_migrations.schema_migrations and restore the repo
 -- to 0000..0289 + 0290 + ... layout. Schema itself is unchanged through
--- cutover (metadata-only operation on prod). See PATH_C_CUTOVER.md §4.
+-- cutover. See PATH_C_CUTOVER.md §4.
 --
 -- Verified 2026-05-04 against branch project_ref aljheljcsrgbtgyshfss (off
 -- staging ujtlwnoqfhtitcmsnrpq). Schema-object diff vs prod: 11/13 categories
@@ -61,7 +61,13 @@ CREATE EXTENSION IF NOT EXISTS pg_trgm;
 CREATE EXTENSION IF NOT EXISTS pg_cron;
 CREATE EXTENSION IF NOT EXISTS pg_repack;
 CREATE EXTENSION IF NOT EXISTS hypopg;
-CREATE EXTENSION IF NOT EXISTS index_advisor;
+DO $$
+BEGIN
+  CREATE EXTENSION IF NOT EXISTS index_advisor;
+EXCEPTION
+  WHEN feature_not_supported OR undefined_file THEN
+    RAISE NOTICE 'Skipping index_advisor extension; unavailable in this Postgres image.';
+END $$;
 CREATE EXTENSION IF NOT EXISTS supabase_vault;
 CREATE EXTENSION IF NOT EXISTS vector;
 CREATE EXTENSION IF NOT EXISTS plpgsql;
@@ -15101,8 +15107,8 @@ ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON TAB
 ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON TABLES TO "service_role";
 
 
-
-
-
-
+-- pg_dump sets search_path to empty at the top of the file. Supabase db reset
+-- runs seed.sql in the same session, and the local seed uses unqualified public
+-- table names, so restore the normal search path after the baseline applies.
+RESET search_path;
 
