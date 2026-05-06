@@ -14,6 +14,14 @@
 
 ## Now
 
+### 2026-05-06 — PR #711 SCRUM-1545 coverage backfill merge-resolution pass
+
+PR [#711](https://github.com/carson-see/ArkovaCarson/pull/711) remains test-only and exists to close the R4-4-FU coverage gap for `services/worker/src/jobs/anchor.ts`, `services/worker/src/chain/client.ts`, and `services/worker/src/index.ts`. It adds `anchor-coverage.test.ts`, strengthens chain/index tests, and raises worker coverage thresholds for the targeted files. `services/worker/src/api/admin-pipeline-stats.ts` coverage was handled in PR [#690](https://github.com/carson-see/ArkovaCarson/pull/690); it is not an unmerged follow-up hidden inside #711.
+
+Verification artifacts already linked in the PR: [CI run 25379732724](https://github.com/carson-see/ArkovaCarson/actions/runs/25379732724), [Tests job 74424835510](https://github.com/carson-see/ArkovaCarson/actions/runs/25379732724/job/74424835510), [E2E job 74426076319](https://github.com/carson-see/ArkovaCarson/actions/runs/25379732724/job/74426076319), [Staging Soak Evidence run 25379936240](https://github.com/carson-see/ArkovaCarson/actions/runs/25379936240), and local worker commands captured in the PR body. This merge-resolution pass keeps the branch current with `origin/main` and addresses the remaining review comments before final push.
+
+_Last refreshed: 2026-05-06 by Codex — claims verified against gcloud/MCP/CI output._
+
 ### 2026-05-05 — SCRUM-1672 / PR #712 Secure Document vs Issue Credential split (branch `claude/secure-document-issue-credential-split`)
 
 PR #712 is open and **not merged**. No prod state changed. Code-only by design: the new `proof_url` value stays in `anchors.metadata.proof_url`; no migration or `anchors.proof_url` column in this PR.

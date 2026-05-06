@@ -1,6 +1,6 @@
 {
-  "_comment": "SCRUM-1306 (R0-7-FU1): snapshot of prod public.* table list, fed to scripts/ci/feedback-rules/feedback_local_matches_prod.ts. Regenerate via Supabase MCP `list_tables` after a known-good prod schema window. Last refreshed: 2026-05-06 (PR #695 post-merge) — added microsoft_graph_webhook_nonces after applying migrations 0292/0293 to prod and repairing the Supabase migration ledger.",
-  "_source": "supabase MCP list_tables(project_id=vzwyaatejekddvltxyye, schemas=[public]) on 2026-04-27 + delta-verified 2026-05-04; microsoft_graph_webhook_nonces verified via Supabase Management API read-only SQL on 2026-05-06.",
+  "_comment": "SCRUM-1306 (R0-7-FU1): snapshot of prod public.* table list, fed to scripts/ci/feedback-rules/feedback_local_matches_prod.ts. Regenerate via Supabase MCP `list_tables` after a known-good prod schema window. Last refreshed: 2026-05-06 (PR #719) - added organization_queue_run_state and organization_queue_runs after applying 0294_org_queue_scheduler to prod.",
+  "_source": "supabase MCP list_tables(project_id=vzwyaatejekddvltxyye, schemas=[public]) on 2026-04-27 + delta-verified 2026-05-04; microsoft_graph_webhook_nonces verified via Supabase Management API read-only SQL on 2026-05-06; organization_queue_run_state and organization_queue_runs verified via Supabase Management API read-only SQL on 2026-05-06.",
   "tables": [
     { "name": "adobe_sign_webhook_nonces", "schema": "public" },
     { "name": "agents", "schema": "public" },
@@ -63,6 +63,8 @@
     { "name": "org_members", "schema": "public" },
     { "name": "org_monthly_allocation", "schema": "public" },
     { "name": "org_tier_entitlements", "schema": "public" },
+    { "name": "organization_queue_run_state", "schema": "public" },
+    { "name": "organization_queue_runs", "schema": "public" },
     { "name": "organization_rule_events", "schema": "public" },
     { "name": "organization_rule_executions", "schema": "public" },
     { "name": "organization_rules", "schema": "public" },

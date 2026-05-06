@@ -16,6 +16,7 @@ import { logger } from '../utils/logger.js';
 import { callRpc } from '../utils/rpc.js';
 import { emitOrgAdminNotifications } from '../notifications/dispatcher.js';
 import { processBatchAnchors } from '../jobs/batch-anchor.js';
+import { recordOrgQueueRunResult } from '../jobs/org-queue-scheduler.js';
 import { mapRpcErrorToStatus } from './rpc-error-status.js';
 
 export { mapRpcErrorToStatus } from './rpc-error-status.js';
@@ -233,8 +234,22 @@ export async function handleRunOrgAnchorQueue(
     return;
   }
 
+  const startedAt = new Date();
   try {
     const result = await processBatchAnchors({ force: true, orgId });
+    const finishedAt = new Date();
+    await recordOrgQueueRunResult({
+      orgId,
+      trigger: 'manual',
+      status: 'succeeded',
+      startedAt,
+      finishedAt,
+      processed: result.processed,
+      batchId: result.batchId,
+      merkleRoot: result.merkleRoot,
+      txId: result.txId,
+      triggeredBy: userId,
+    });
 
     res.json({ ok: true, ...result });
     void emitOrgAdminNotifications({
@@ -250,6 +265,20 @@ export async function handleRunOrgAnchorQueue(
       },
     });
   } catch (err) {
+    const finishedAt = new Date();
+    await recordOrgQueueRunResult({
+      orgId,
+      trigger: 'manual',
+      status: 'failed',
+      startedAt,
+      finishedAt,
+      processed: 0,
+      batchId: null,
+      merkleRoot: null,
+      txId: null,
+      triggeredBy: userId,
+      error: err instanceof Error ? err.message : 'manual org queue run failed',
+    });
     logger.error({ error: err, orgId, userId }, 'manual org queue run failed');
     res.status(500).json({ error: { code: 'internal', message: 'Internal server error' } });
   }

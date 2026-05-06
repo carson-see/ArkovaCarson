@@ -263,6 +263,16 @@ vi.mock('../jobs/monthly-allocation-rollover.js', () => ({
   runAllocationRollover: (...args: unknown[]) => mockRunAllocationRollover(...args),
 }));
 
+const mockRunOrgQueueScheduler = vi.fn().mockResolvedValue({
+  claimed: 2,
+  succeeded: 2,
+  failed: 0,
+  processed: 6,
+});
+vi.mock('../jobs/org-queue-scheduler.js', () => ({
+  runOrgQueueScheduler: (...args: unknown[]) => mockRunOrgQueueScheduler(...args),
+}));
+
 // ─── Import after mocks ───
 import { cronRouter } from './cron.js';
 import { config } from '../config.js';
@@ -492,6 +502,31 @@ describe('cron routes', () => {
       const app = createApp();
       const res = await request(app).post('/cron/batch-anchors');
       expect(res.status).toBe(500);
+    });
+  });
+
+  describe('POST /org-queue-scheduler', () => {
+    it('returns scheduler result and forwards the optional limit', async () => {
+      const app = createApp();
+      const res = await request(app).post('/cron/org-queue-scheduler?limit=10');
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ claimed: 2, succeeded: 2, failed: 0, processed: 6 });
+      expect(mockRunOrgQueueScheduler).toHaveBeenCalledWith({ limit: 10 });
+    });
+
+    it('omits invalid limit values', async () => {
+      const app = createApp();
+      const res = await request(app).post('/cron/org-queue-scheduler?limit=not-a-number');
+      expect(res.status).toBe(200);
+      expect(mockRunOrgQueueScheduler).toHaveBeenCalledWith({ limit: undefined });
+    });
+
+    it('returns 500 on scheduler failure', async () => {
+      mockRunOrgQueueScheduler.mockRejectedValueOnce(new Error('scheduler failed'));
+      const app = createApp();
+      const res = await request(app).post('/cron/org-queue-scheduler');
+      expect(res.status).toBe(500);
+      expect(res.body.error).toBe('Processing failed');
     });
   });
 
