@@ -27,10 +27,11 @@ def test_search_returns_pydantic_models_and_auth_header() -> None:
                 "results": [
                     {
                         "type": "record",
-                        "id": "rec_1",
+                        "id": "internal-record-uuid",
                         "public_id": "ARK-DOC-ABC",
                         "score": 1.0,
                         "snippet": "Nursing license",
+                        "future_field": "kept",
                     }
                 ],
                 "next_cursor": None,
@@ -42,6 +43,9 @@ def test_search_returns_pydantic_models_and_auth_header() -> None:
 
     assert seen_headers == ["Bearer ak_test"]
     assert result.results[0].public_id == "ARK-DOC-ABC"
+    assert "id" not in result.results[0].model_fields_set
+    assert not hasattr(result.results[0], "id")
+    assert result.results[0].future_field == "kept"
 
 
 def test_problem_json_errors_preserve_retry_after() -> None:
@@ -66,6 +70,33 @@ def test_problem_json_errors_preserve_retry_after() -> None:
     assert exc_info.value.retry_after == 42
     assert exc_info.value.problem is not None
     assert exc_info.value.problem.type.endswith("/rate-limited")
+
+
+def test_list_orgs_does_not_expose_internal_id() -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return json_response(
+            {
+                "organizations": [
+                    {
+                        "id": "internal-org-uuid",
+                        "public_id": "org_acme",
+                        "display_name": "Acme Corp",
+                        "domain": "acme.com",
+                        "website_url": "https://acme.com",
+                        "verification_status": "VERIFIED",
+                        "future_field": "kept",
+                    }
+                ]
+            }
+        )
+
+    with Arkova(api_key="ak_test", transport=httpx.MockTransport(handler)) as client:
+        result = client.list_orgs()
+
+    assert result.organizations[0].public_id == "org_acme"
+    assert "id" not in result.organizations[0].model_fields_set
+    assert not hasattr(result.organizations[0], "id")
+    assert result.organizations[0].future_field == "kept"
 
 
 def test_retries_429_before_success() -> None:

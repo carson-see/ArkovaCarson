@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 SearchType = Literal["all", "org", "record", "fingerprint", "document"]
@@ -23,11 +23,18 @@ class ProblemDetail(ArkovaModel):
 
 class SearchResult(ArkovaModel):
     type: SearchResultType
-    id: str
     public_id: str
     score: float
     snippet: str
     metadata: dict[str, Any] | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def strip_internal_id(cls, values: Any) -> Any:
+        if isinstance(values, dict):
+            values = dict(values)
+            values.pop("id", None)
+        return values
 
 
 class SearchResponse(ArkovaModel):
@@ -95,12 +102,19 @@ class Anchor(RichVerificationFields):
 
 
 class Org(ArkovaModel):
-    id: str
     public_id: str
     display_name: str
     domain: str | None = None
     website_url: str | None = None
     verification_status: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def strip_internal_id(cls, values: Any) -> Any:
+        if isinstance(values, dict):
+            values = dict(values)
+            values.pop("id", None)
+        return values
 
 
 class OrgList(ArkovaModel):

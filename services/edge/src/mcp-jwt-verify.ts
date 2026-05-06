@@ -15,7 +15,7 @@
  */
 
 export type JwtVerifyResult =
-  | { ok: true; userId: string; tier: string }
+  | { ok: true; userId: string; tier: string; scopes: string[] }
   | { ok: false; reason: string };
 
 interface JwtHeader {
@@ -31,6 +31,9 @@ interface JwtPayload {
   iat?: number;
   role?: string;
   email?: string;
+  scope?: unknown;
+  scopes?: unknown;
+  app_metadata?: { scopes?: unknown };
 }
 
 const ALLOWED_ALG = 'HS256';
@@ -98,6 +101,20 @@ function audMatches(claim: string | string[] | undefined, expected: string): boo
   return false;
 }
 
+function coerceScopes(value: unknown): string[] {
+  if (typeof value === 'string') return value.split(/\s+/).filter(Boolean);
+  if (Array.isArray(value)) return value.filter((item): item is string => typeof item === 'string');
+  return [];
+}
+
+function scopesFromPayload(payload: JwtPayload): string[] {
+  return [...new Set([
+    ...coerceScopes(payload.scope),
+    ...coerceScopes(payload.scopes),
+    ...coerceScopes(payload.app_metadata?.scopes),
+  ])];
+}
+
 /**
  * Verify a Supabase HS256 JWT locally.
  *
@@ -156,5 +173,10 @@ export async function verifySupabaseJwt(
     return { ok: false, reason: 'no_sub' };
   }
 
-  return { ok: true, userId: payload.sub, tier: payload.role || 'authenticated' };
+  return {
+    ok: true,
+    userId: payload.sub,
+    tier: payload.role || 'authenticated',
+    scopes: scopesFromPayload(payload),
+  };
 }

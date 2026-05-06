@@ -1,0 +1,21 @@
+{
+  "startedAt": "2026-05-06T11:44:01.390Z",
+  "endedAt": "2026-05-06T11:45:01.394Z",
+  "durationSec": 60.004,
+  "apiBase": "http://127.0.0.1:3002",
+  "mode": "anchor",
+  "totalRequests": 10,
+  "byMode": {
+    "anchor": {
+      "ok": 0,
+      "fail": 10,
+      "errorRate": 1,
+      "p50Ms": 17,
+      "p95Ms": 113,
+      "p99Ms": 113,
+      "byStatus": {
+        "503": 10
+      }
+    }
+  }
+}

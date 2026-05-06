@@ -1,0 +1,56 @@
+{
+  "startedAt": "2026-05-06T11:38:48.382Z",
+  "endedAt": "2026-05-06T11:43:48.385Z",
+  "durationSec": 300.003,
+  "apiBase": "http://127.0.0.1:3002",
+  "mode": "mixed",
+  "totalRequests": 805,
+  "byMode": {
+    "webhook": {
+      "ok": 0,
+      "fail": 50,
+      "errorRate": 1,
+      "p50Ms": 7,
+      "p95Ms": 11,
+      "p99Ms": 221,
+      "byStatus": {
+        "429": 9,
+        "503": 41
+      }
+    },
+    "cron": {
+      "ok": 6,
+      "fail": 0,
+      "errorRate": 0,
+      "p50Ms": 315,
+      "p95Ms": 741,
+      "p99Ms": 741,
+      "byStatus": {
+        "200": 6
+      }
+    },
+    "events": {
+      "ok": 0,
+      "fail": 499,
+      "errorRate": 1,
+      "p50Ms": 7,
+      "p95Ms": 75,
+      "p99Ms": 98,
+      "byStatus": {
+        "401": 49,
+        "429": 450
+      }
+    },
+    "reads": {
+      "ok": 250,
+      "fail": 0,
+      "errorRate": 0,
+      "p50Ms": 69,
+      "p95Ms": 273,
+      "p99Ms": 313,
+      "byStatus": {
+        "200": 250
+      }
+    }
+  }
+}
