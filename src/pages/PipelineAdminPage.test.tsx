@@ -3,8 +3,8 @@
  * Pipeline Admin Page Tests (PH1-DATA-05)
  */
 
-import { describe, it, expect, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { beforeEach, describe, it, expect, vi } from 'vitest';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 
 vi.mock('@/hooks/useAuth', () => ({
@@ -69,8 +69,21 @@ vi.mock('@/lib/workerClient', () => ({
 }));
 
 import { PipelineAdminPage } from './PipelineAdminPage';
+import { workerFetch } from '@/lib/workerClient';
 
 describe('PipelineAdminPage', () => {
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    const { useAuth } = await import('@/hooks/useAuth');
+    vi.mocked(useAuth).mockReturnValue({
+      user: { email: 'carson@arkova.ai', id: 'user-1' },
+      signOut: vi.fn(),
+      session: null,
+      loading: false,
+      error: null,
+    } as unknown as ReturnType<typeof useAuth>);
+  });
+
   it('renders page title for admin user', () => {
     render(
       <MemoryRouter>
@@ -115,5 +128,51 @@ describe('PipelineAdminPage', () => {
       </MemoryRouter>,
     );
     expect(screen.getByText('Access Restricted')).toBeInTheDocument();
+  });
+
+  it('wires the continuing education control to a real worker route', async () => {
+    render(
+      <MemoryRouter>
+        <PipelineAdminPage />
+      </MemoryRouter>,
+    );
+    await screen.findByText('Records Anchored');
+    vi.mocked(workerFetch).mockClear();
+
+    fireEvent.click(screen.getByText('Pipeline Controls'));
+    fireEvent.click(await screen.findByTestId('pipeline-job-fetch-continuing-education'));
+
+    await waitFor(() => {
+      expect(workerFetch).toHaveBeenCalledWith('/jobs/fetch-continuing-education', { method: 'POST' });
+    });
+  });
+
+  it('keeps unavailable controls disabled instead of calling missing worker routes', async () => {
+    render(
+      <MemoryRouter>
+        <PipelineAdminPage />
+      </MemoryRouter>,
+    );
+    await screen.findByText('Records Anchored');
+
+    fireEvent.click(screen.getByText('Pipeline Controls'));
+    const eurlexControl = await screen.findByTestId('pipeline-job-fetch-eurlex');
+    expect(eurlexControl).toBeDisabled();
+    expect(eurlexControl).toHaveAttribute('title', 'Worker route is not wired in this release.');
+  });
+
+  it('documents that the batch anchoring control uses normal trigger rules', async () => {
+    render(
+      <MemoryRouter>
+        <PipelineAdminPage />
+      </MemoryRouter>,
+    );
+    await screen.findByText('Records Anchored');
+
+    fireEvent.click(screen.getByText('Pipeline Controls'));
+    expect(await screen.findByTestId('pipeline-job-batch-anchors')).toHaveAttribute(
+      'title',
+      expect.stringContaining('size, age, and fee triggers'),
+    );
   });
 });
