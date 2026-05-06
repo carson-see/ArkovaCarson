@@ -1,6 +1,6 @@
 {
-  "_comment": "SCRUM-1306 (R0-7-FU1): snapshot of prod public.* table list, fed to scripts/ci/feedback-rules/feedback_local_matches_prod.ts. Regenerate via Supabase MCP `list_tables` after a known-good prod schema window. Last refreshed: 2026-05-04 (PR #691) — added drive_revision_ledger (created via mig 0288 / SCRUM-1650, applied to prod 2026-05-04 via Supabase MCP after PR #689 merge at 90b4b9c7).",
-  "_source": "supabase MCP list_tables(project_id=vzwyaatejekddvltxyye, schemas=[public]) on 2026-04-27 + delta-verified 2026-05-04.",
+  "_comment": "SCRUM-1306 (R0-7-FU1): snapshot of prod public.* table list, fed to scripts/ci/feedback-rules/feedback_local_matches_prod.ts. Regenerate via Supabase MCP `list_tables` after a known-good prod schema window. Last refreshed: 2026-05-06 (PR #695 post-merge) — added microsoft_graph_webhook_nonces after applying migrations 0292/0293 to prod and repairing the Supabase migration ledger.",
+  "_source": "supabase MCP list_tables(project_id=vzwyaatejekddvltxyye, schemas=[public]) on 2026-04-27 + delta-verified 2026-05-04; microsoft_graph_webhook_nonces verified via Supabase Management API read-only SQL on 2026-05-06.",
   "tables": [
     { "name": "adobe_sign_webhook_nonces", "schema": "public" },
     { "name": "agents", "schema": "public" },
@@ -54,6 +54,7 @@
     { "name": "kyb_events", "schema": "public" },
     { "name": "kyb_webhook_nonces", "schema": "public" },
     { "name": "memberships", "schema": "public" },
+    { "name": "microsoft_graph_webhook_nonces", "schema": "public" },
     { "name": "notifications", "schema": "public" },
     { "name": "org_credit_allocations", "schema": "public" },
     { "name": "org_credits", "schema": "public" },

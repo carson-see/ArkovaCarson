@@ -242,21 +242,7 @@ jobs:
           # since the columns already exist; required for fresh-DB / staging-
           # branch builds to succeed past 0056. Stays exempt because applying
           # it to prod is a no-op that doesn't generate a new ledger row.
-          # 0292_microsoft_graph_webhook_nonces (was 0290; renumbered to clear
-          # collision with PR #697's 0290_suborg_suspension): SCRUM-1138 R2 closeout
-          # (PR #695). Nonce table for the new Microsoft Graph webhook receiver.
-          # Worker reads MICROSOFT_GRAPH_CLIENT_STATE; receiver is gated OFF by
-          # default via ENABLE_MICROSOFT_GRAPH_WEBHOOK kill-switch, so the table
-          # can land before prod migration apply. Remove when applied to prod.
-          # 0293_msgraph_nonce_payload_hash_and_compound_rpc (was 0291): SCRUM-1135
-          # follow-up (PR #695). Widens the nonce PK with payload_hash so legitimate
-          # later updated/deleted notifications under the same subscription are not
-          # collapsed as duplicates, and adds the record_msgraph_nonce_and_enqueue
-          # compound RPC so nonce+enqueue run in one atomic transaction (transient
-          # enqueue failure rolls back the nonce so Graph's retry succeeds). Same
-          # kill-switch gate as 0292 — feature is OFF by default. Remove when
-          # applied to prod.
-          exempt_regex='^(0033|0078|0162|.* 2|0022_seed_schema_alignment|0023_is_public_profile|0024_fix_search_path_revoke_anchor|0055b_seed_alignment_idempotent|0068b_submitted_status_and_confirmations|0088b_cle_templates|0135_ats_integrations|0175_fix_pipeline_stats_timeout|0180_fix_public_issuer_perf|0258_ark112_queue_public_id|0287_api_key_scope_vocabulary_canonical|0288_drive_processing_loop|0289_suborg_suspension|0292_microsoft_graph_webhook_nonces|0293_msgraph_nonce_payload_hash_and_compound_rpc)$'
+          exempt_regex='^(0033|0078|0162|.* 2|0022_seed_schema_alignment|0023_is_public_profile|0024_fix_search_path_revoke_anchor|0055b_seed_alignment_idempotent|0068b_submitted_status_and_confirmations|0088b_cle_templates|0135_ats_integrations|0175_fix_pipeline_stats_timeout|0180_fix_public_issuer_perf|0258_ark112_queue_public_id|0287_api_key_scope_vocabulary_canonical|0288_drive_processing_loop|0289_suborg_suspension)$'
           filtered_missing=$(echo "$missing" | grep -vE "$exempt_regex" || true)
 
           missing_count=$(echo "$filtered_missing" | grep -c . || true)
