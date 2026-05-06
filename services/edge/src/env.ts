@@ -85,6 +85,10 @@ export interface Env {
   USDC_CONTRACT_ADDRESS?: string;
   ARKOVA_USDC_ADDRESS?: string;
   X402_NETWORK?: string;
+  // API/MCP launch safety: keep MCP write anchoring out of the default
+  // launch surface unless operators intentionally enable it and auth
+  // returns a write-capable scope for the caller.
+  MCP_ENABLE_ANCHOR_DOCUMENT?: string;
   // F-2 (edge bug-bounty 2026-04-26): kill-switch for /x402/verify so
   // the unauthenticated RPC-fanout endpoint stays disabled until the
   // paywall is actually pointed at it.

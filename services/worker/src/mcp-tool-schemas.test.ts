@@ -20,6 +20,7 @@ import { openApiV2Spec } from './api/v2/openapi.js';
 
 const VALID_PUBLIC_ID = 'ARK-DEG-ABCDEF';
 const VALID_HASH = 'a'.repeat(64);
+const VALID_IDEMPOTENCY_KEY = '550e8400-e29b-41d4-a716-446655440000';
 const OPENAPI_OPERATION_METHODS = ['get', 'post', 'put', 'delete', 'patch', 'options', 'head'] as const;
 const searchLimitMax = (() => {
   const parameters = openApiV2Spec.paths?.['/search']?.get?.parameters as ReadonlyArray<{
@@ -205,6 +206,39 @@ describe('validateToolArgs — anchor_document', () => {
   it('accepts content_hash only', () => {
     const result = validateToolArgs('anchor_document', { content_hash: VALID_HASH });
     expect(result.ok).toBe(true);
+  });
+
+  it('accepts the advertised idempotency_key field', () => {
+    const result = validateToolArgs('anchor_document', {
+      content_hash: VALID_HASH,
+      idempotency_key: VALID_IDEMPOTENCY_KEY,
+    });
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.data.idempotency_key).toBe(VALID_IDEMPOTENCY_KEY);
+    }
+  });
+
+  it('rejects malformed idempotency_key values', () => {
+    const result = validateToolArgs('anchor_document', {
+      content_hash: VALID_HASH,
+      idempotency_key: 'retry-1',
+    });
+
+    expect(result.ok).toBe(false);
+  });
+
+  it('still rejects unknown fields', () => {
+    const result = validateToolArgs('anchor_document', {
+      content_hash: VALID_HASH,
+      retry_token: VALID_IDEMPOTENCY_KEY,
+    });
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error.issues.some((issue) => issue.message.includes('retry_token'))).toBe(true);
+    }
   });
 
   it('rejects a too-short hash', () => {

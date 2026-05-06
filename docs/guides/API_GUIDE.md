@@ -1,5 +1,6 @@
 # Arkova API — Complete Setup & Usage Guide
 
+> **Historical guide — not the current API/MCP launch contract.** This March 2026 guide is retained for archival context only. Current developer-facing API docs live in [`docs/api/README.md`](../api/README.md), current v2 migration guidance lives in [`docs/api/v2-migration.md`](../api/v2-migration.md), and the current MCP launch surface is read-only by default. Do not use the agent examples below to infer that `anchor_document` is exposed in the default public MCP launch manifest; that tool is now gated by `MCP_ENABLE_ANCHOR_DOCUMENT=true` plus a write-capable scope.
 > **Last updated:** 2026-03-28
 > **Production API:** `https://arkova-worker-270018525501.us-central1.run.app`
 > **App:** `https://arkova-26.vercel.app`

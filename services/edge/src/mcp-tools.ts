@@ -42,6 +42,7 @@ export interface ToolDefinition {
 export interface ToolInputSchemaProperty {
   type: string;
   description: string;
+  format?: string;
   items?: ToolInputSchemaProperty;
   minItems?: number;
   maxItems?: number;
@@ -77,6 +78,7 @@ export interface AnchorDocumentInput {
   source?: string;
   title?: string;
   source_url?: string;
+  idempotency_key?: string;
 }
 
 export interface VerifyDocumentInput {
@@ -268,6 +270,11 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
         source_url: {
           type: 'string',
           description: 'URL of the original document',
+        },
+        idempotency_key: {
+          type: 'string',
+          format: 'uuid',
+          description: 'Client-supplied UUID for retry deduplication',
         },
       },
       required: ['content_hash'],
@@ -584,24 +591,40 @@ function parseToolJson(result: ToolResult): Record<string, unknown> | null {
 async function searchAgentOrgs(
   query: string,
   config: SupabaseConfig,
+  limit = 50,
 ): Promise<Array<Record<string, unknown>>> {
-  const response = await supabaseFetch(config, '/rest/v1/rpc/search_organizations_public', {
-    method: 'POST',
-    body: JSON.stringify({ p_query: query }),
+  const params = new URLSearchParams({
+    user_id: `eq.${config.userId}`,
+    select: 'role,organizations(public_id,display_name,description,domain,website_url,verification_status)',
+    limit: '50',
   });
+
+  const response = await supabaseFetch(config, `/rest/v1/org_members?${params.toString()}`);
   if (!response.ok) return [];
 
-  const rows = await response.json() as Array<Record<string, unknown>>;
-  return (Array.isArray(rows) ? rows : []).map((org, index) => ({
-    type: 'org',
-    rank: index + 1,
-    id: org.id,
-    public_id: org.id,
-    snippet: org.display_name ?? org.domain ?? '',
-    metadata: {
-      domain: org.domain ?? null,
-    },
-  }));
+  const memberships = await response.json() as Array<Record<string, unknown>>;
+  const normalizedQuery = query.trim().toLowerCase();
+  return (Array.isArray(memberships) ? memberships : [])
+    .map((membership) => membership.organizations as Record<string, unknown> | null | undefined)
+    .filter((org): org is Record<string, unknown> => Boolean(org?.public_id))
+    .filter((org) => [
+      org.display_name,
+      org.description,
+      org.domain,
+      org.website_url,
+    ].some((value) => typeof value === 'string' && value.toLowerCase().includes(normalizedQuery)))
+    .slice(0, limit)
+    .map((org) => ({
+      type: 'org',
+      public_id: org.public_id,
+      score: 1,
+      snippet: org.display_name ?? org.description ?? org.domain ?? '',
+      metadata: {
+        description: org.description ?? null,
+        domain: org.domain ?? null,
+        website_url: org.website_url ?? null,
+      },
+    }));
 }
 
 async function searchAgentRecords(
@@ -621,15 +644,15 @@ async function searchAgentRecords(
   if (!Array.isArray(records)) return [];
 
   const resultType = input.type === 'document' ? 'document' : 'record';
-  return records.map((record, index) => ({
+  return records.filter((record) => record.public_id != null).map((record) => ({
     type: resultType,
-    rank: index + 1,
     public_id: record.public_id,
-    title: record.title,
-    credential_type: record.credential_type,
-    status: mapStatus(record.status as string),
-    anchor_timestamp: record.created_at,
-    record_uri: `https://app.arkova.ai/verify/${record.public_id}`,
+    score: 1,
+    snippet: record.title ?? record.description ?? record.credential_type ?? '',
+    metadata: {
+      credential_type: record.credential_type ?? null,
+      status: record.status ?? null,
+    },
   }));
 }
 
@@ -658,28 +681,33 @@ export async function handleAgentSearch(
       const parsed = parseToolJson(result);
       const found = parsed && !(parsed.verified === false && typeof parsed.message === 'string');
       return textResult({
-        query: input.q,
-        total: found ? 1 : 0,
-        results: found && parsed ? [{ type: 'fingerprint', rank: 1, ...parsed }] : [],
+        results: found && parsed?.public_id ? [{
+          type: 'fingerprint',
+          public_id: parsed.public_id,
+          score: 1,
+          snippet: parsed.title ?? parsed.content_hash ?? '',
+          metadata: { status: parsed.status ?? null },
+        }] : [],
+        next_cursor: null,
       });
     }
 
     if (type === 'org') {
-      const orgs = await searchAgentOrgs(input.q, config);
-      return textResult({ query: input.q, total: orgs.length, results: orgs.slice(0, maxResults) });
+      const orgs = await searchAgentOrgs(input.q, config, maxResults);
+      return textResult({ results: orgs.slice(0, maxResults), next_cursor: null });
     }
 
     if (type === 'record' || type === 'document') {
       const records = await searchAgentRecords({ ...input, max_results: maxResults }, config);
-      return textResult({ query: input.q, total: records.length, results: records });
+      return textResult({ results: records, next_cursor: null });
     }
 
     const [orgs, records] = await Promise.all([
-      searchAgentOrgs(input.q, config),
+      searchAgentOrgs(input.q, config, maxResults),
       searchAgentRecords({ ...input, max_results: maxResults }, config),
     ]);
     const results = [...orgs, ...records].slice(0, maxResults);
-    return textResult({ query: input.q, total: results.length, results });
+    return textResult({ results, next_cursor: null });
   } catch (error) {
     const msg = error instanceof Error && error.name === 'AbortError'
       ? 'Agent search timed out'
@@ -730,6 +758,91 @@ export async function handleNessieQuery(
  *
  * Submits the fingerprint to public_records for batch anchoring.
  */
+function anchorSubmittedResult(record: Record<string, unknown> | undefined, contentHash: string): ToolResult {
+  return textResult({
+    status: 'submitted',
+    public_id: record?.public_id,
+    content_hash: contentHash,
+    message: 'Document fingerprint submitted for batch anchoring. Check status with verify_document.',
+  });
+}
+
+async function findRecentAnchorSubmission(
+  config: SupabaseConfig,
+  contentHash: string,
+): Promise<ToolResult | null> {
+  const fiveMinAgo = new Date(Date.now() - 5 * 60_000).toISOString();
+  const lookupResp = await supabaseFetch(
+    config,
+    `/rest/v1/public_records?content_hash=eq.${contentHash}&created_at=gte.${fiveMinAgo}&order=created_at.desc&limit=1`,
+  );
+  if (!lookupResp.ok) return null;
+
+  const existing = await lookupResp.json() as Array<Record<string, unknown>>;
+  if (!Array.isArray(existing) || existing.length === 0) return null;
+
+  return textResult({
+    status: 'already_submitted',
+    public_id: existing[0].public_id,
+    content_hash: contentHash,
+    message: 'Document was already submitted within the last 5 minutes. Returning existing record.',
+  });
+}
+
+async function submitAnchorViaRpc(
+  input: AnchorDocumentInput,
+  config: SupabaseConfig,
+): Promise<ToolResult | undefined> {
+  const rpcResponse = await supabaseFetch(config, '/rest/v1/rpc/mcp_anchor_document', {
+    method: 'POST',
+    body: JSON.stringify({
+      p_user_id: config.userId,
+      p_content_hash: input.content_hash,
+      p_record_type: input.record_type ?? 'document',
+      p_source: input.source ?? 'mcp',
+      p_title: input.title ?? null,
+      p_source_url: input.source_url ?? null,
+    }),
+  });
+  if (!rpcResponse.ok) {
+    if (rpcResponse.status === 404) return undefined;
+    const errorText = await rpcResponse.text();
+    return errorResult(`Anchor submission failed: ${errorText}`);
+  }
+
+  const records = await rpcResponse.json() as Array<Record<string, unknown>>;
+  const record = Array.isArray(records) ? records[0] : records;
+  return anchorSubmittedResult(record, input.content_hash);
+}
+
+async function submitAnchorDirect(
+  input: AnchorDocumentInput,
+  config: SupabaseConfig,
+): Promise<ToolResult> {
+  const response = await supabaseFetch(config, '/rest/v1/public_records', {
+    method: 'POST',
+    headers: { Prefer: 'return=representation' },
+    body: JSON.stringify({
+      content_hash: input.content_hash,
+      record_type: input.record_type ?? 'document',
+      source: input.source ?? 'mcp',
+      title: input.title ?? null,
+      source_url: input.source_url ?? null,
+      source_id: input.content_hash,
+      metadata: {},
+    }),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    return errorResult(`Anchor submission failed: ${errorText}`);
+  }
+
+  const records = await response.json() as Array<Record<string, unknown>>;
+  const record = Array.isArray(records) ? records[0] : records;
+  return anchorSubmittedResult(record, input.content_hash);
+}
+
 export async function handleAnchorDocument(
   input: AnchorDocumentInput,
   config: SupabaseConfig,
@@ -743,62 +856,18 @@ export async function handleAnchorDocument(
   }
 
   try {
+    if (input.idempotency_key) {
+      const duplicate = await findRecentAnchorSubmission(config, input.content_hash);
+      if (duplicate) return duplicate;
+    }
+
     // MCP-SEC-03: Use scoped RPC instead of direct service-role INSERT.
     // Falls back to direct INSERT if the RPC doesn't exist yet (pre-0223).
-    const rpcResponse = await supabaseFetch(config, '/rest/v1/rpc/mcp_anchor_document', {
-      method: 'POST',
-      body: JSON.stringify({
-        p_user_id: config.userId,
-        p_content_hash: input.content_hash,
-        p_record_type: input.record_type ?? 'document',
-        p_source: input.source ?? 'mcp',
-        p_title: input.title ?? null,
-        p_source_url: input.source_url ?? null,
-      }),
-    });
-
-    if (rpcResponse.ok) {
-      const records = await rpcResponse.json() as Array<Record<string, unknown>>;
-      const record = Array.isArray(records) ? records[0] : records;
-      return textResult({
-        status: 'submitted',
-        record_id: record?.id,
-        public_id: record?.public_id,
-        content_hash: input.content_hash,
-        message: 'Document fingerprint submitted for batch anchoring. Check status with verify_document.',
-      });
-    }
+    const rpcResult = await submitAnchorViaRpc(input, config);
+    if (rpcResult) return rpcResult;
 
     // Fallback: direct INSERT (pre-migration-0223 compat)
-    const response = await supabaseFetch(config, '/rest/v1/public_records', {
-      method: 'POST',
-      headers: { Prefer: 'return=representation' },
-      body: JSON.stringify({
-        content_hash: input.content_hash,
-        record_type: input.record_type ?? 'document',
-        source: input.source ?? 'mcp',
-        title: input.title ?? null,
-        source_url: input.source_url ?? null,
-        source_id: input.content_hash,
-        metadata: {},
-      }),
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      return errorResult(`Anchor submission failed: ${errorText}`);
-    }
-
-    const records = await response.json() as Array<Record<string, unknown>>;
-    const record = Array.isArray(records) ? records[0] : records;
-
-    return textResult({
-      status: 'submitted',
-      record_id: record?.id,
-      public_id: record?.public_id,
-      content_hash: input.content_hash,
-      message: 'Document fingerprint submitted for batch anchoring. Check status with verify_document.',
-    });
+    return submitAnchorDirect(input, config);
   } catch (error) {
     const msg = error instanceof Error && error.name === 'AbortError'
       ? 'Anchor submission timed out'
@@ -971,7 +1040,7 @@ export async function handleAgentGetOrganization(
 export async function handleAgentListOrgs(config: SupabaseConfig): Promise<ToolResult> {
   const params = new URLSearchParams({
     user_id: `eq.${config.userId}`,
-    select: 'role,organizations(id,public_id,display_name,domain,website_url,verification_status)',
+    select: 'role,organizations(public_id,display_name,domain,website_url,verification_status)',
     limit: '50',
   });
 
@@ -985,15 +1054,14 @@ export async function handleAgentListOrgs(config: SupabaseConfig): Promise<ToolR
     const organizations = (Array.isArray(memberships) ? memberships : []).map((membership) => {
       const org = membership.organizations as Record<string, unknown> | null | undefined;
       return {
-        id: org?.id,
-        public_id: org?.public_id ?? org?.id,
+        public_id: org?.public_id,
         display_name: org?.display_name,
         domain: org?.domain ?? null,
         website_url: org?.website_url ?? null,
         verification_status: org?.verification_status ?? null,
         role: membership.role,
       };
-    }).filter((org) => org.id);
+    }).filter((org) => org.public_id);
 
     return textResult({ organizations });
   } catch (error) {

@@ -109,6 +109,16 @@ describe('TOOL_DEFINITIONS', () => {
       items: { type: 'string', pattern: '^ARK-[A-Z0-9-]{3,60}$', maxLength: 64 },
     });
   });
+
+  it('publishes anchor_document idempotency_key in the advertised tool schema', () => {
+    const anchorDocument = TOOL_DEFINITIONS.find((tool) => tool.name === 'anchor_document');
+
+    expect(anchorDocument?.inputSchema.properties.idempotency_key).toMatchObject({
+      type: 'string',
+      format: 'uuid',
+    });
+    expect(anchorDocument?.inputSchema.required).toEqual(['content_hash']);
+  });
 });
 
 // ── handleVerifyCredential ────────────────────────────────────────────
@@ -183,17 +193,43 @@ describe('handleSearchCredentials', () => {
 // ── Agent v2 aliases (SCRUM-1107) ─────────────────────────────────────
 
 describe('agent v2 MCP aliases', () => {
-  it('search(q,type=org,limit) calls the public org search RPC', async () => {
+  it('search(q,type=org,limit) searches the caller-scoped organization memberships', async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
-      json: async () => ([{ id: 'org-1', display_name: 'Acme Corp', domain: 'acme.com' }]),
+      json: async () => ([{
+        role: 'admin',
+        organizations: {
+          id: 'internal-org-uuid',
+          public_id: 'org_acme',
+          display_name: 'Acme Corp',
+          description: 'Acme description',
+          domain: 'acme.com',
+          website_url: 'https://acme.com',
+        },
+      }]),
     });
 
     const result = await handleAgentSearch({ q: 'acme', type: 'org', limit: 5 }, CONFIG);
     expect(result.isError).toBeUndefined();
     const parsed = JSON.parse(result.content[0].text);
-    expect(parsed.results[0]).toMatchObject({ type: 'org', id: 'org-1' });
-    expect(mockFetch.mock.calls[0][0]).toContain('/rest/v1/rpc/search_organizations_public');
+    expect(parsed).toEqual({
+      results: [{
+        type: 'org',
+        public_id: 'org_acme',
+        score: 1,
+        snippet: 'Acme Corp',
+        metadata: {
+          description: 'Acme description',
+          domain: 'acme.com',
+          website_url: 'https://acme.com',
+        },
+      }],
+      next_cursor: null,
+    });
+    expect(JSON.stringify(parsed)).not.toContain('internal-org-uuid');
+    expect(mockFetch.mock.calls[0][0]).toContain('/rest/v1/org_members');
+    expect(mockFetch.mock.calls[0][0]).toContain('user_id=eq.test-user-id');
+    expect(mockFetch.mock.calls[0][0]).not.toContain('select=id');
   });
 
   it('search(q,type=record,limit) caps the REST v2 limit parameter at the search RPC ceiling', async () => {
@@ -211,8 +247,53 @@ describe('agent v2 MCP aliases', () => {
     const result = await handleAgentSearch({ q: 'license', type: 'record', limit: 75 }, CONFIG);
     expect(result.isError).toBeUndefined();
     const parsed = JSON.parse(result.content[0].text);
-    expect(parsed.results[0]).toMatchObject({ type: 'record', public_id: 'ARK-REC-ABC' });
+    expect(parsed).toEqual({
+      results: [{
+        type: 'record',
+        public_id: 'ARK-REC-ABC',
+        score: 1,
+        snippet: 'Test record',
+        metadata: {
+          credential_type: 'LICENSE',
+          status: 'SECURED',
+        },
+      }],
+      next_cursor: null,
+    });
     expect(JSON.parse(mockFetch.mock.calls[0][1].body)).toMatchObject({ p_limit: 50 });
+  });
+
+  it('search(q,type=fingerprint) returns the REST v2 SearchResponse shape', async () => {
+    const fingerprint = 'd'.repeat(64);
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ([{
+        id: 'internal-record-id',
+        public_id: 'ARK-FP-ABC',
+        anchor_id: 'anchor-internal-id',
+        source: 'mcp',
+        source_url: null,
+        record_type: 'document',
+        title: 'Fingerprint.pdf',
+        content_hash: fingerprint,
+        metadata: {},
+      }]),
+    });
+
+    const result = await handleAgentSearch({ q: fingerprint, type: 'fingerprint' }, CONFIG);
+    expect(result.isError).toBeUndefined();
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed).toEqual({
+      results: [{
+        type: 'fingerprint',
+        public_id: 'ARK-FP-ABC',
+        score: 1,
+        snippet: 'Fingerprint.pdf',
+        metadata: { status: 'ANCHORED' },
+      }],
+      next_cursor: null,
+    });
+    expect(JSON.stringify(parsed)).not.toContain('internal-record-id');
   });
 
   it('verify(fingerprint) delegates to document verification', async () => {
@@ -309,8 +390,12 @@ describe('agent v2 MCP aliases', () => {
 
     const result = await handleAgentListOrgs(CONFIG);
     const parsed = JSON.parse(result.content[0].text);
-    expect(parsed.organizations[0]).toMatchObject({ id: 'org-1', role: 'ORG_ADMIN' });
-    expect(mockFetch.mock.calls[0][0]).toContain('user_id=eq.test-user-id');
+    expect(parsed.organizations[0]).toMatchObject({ public_id: 'org_acme', role: 'ORG_ADMIN' });
+    expect(parsed.organizations[0]).not.toHaveProperty('id');
+    expect(JSON.stringify(parsed)).not.toContain('org-1');
+    const requestUrl = String(mockFetch.mock.calls[0][0]);
+    expect(requestUrl).toContain('user_id=eq.test-user-id');
+    expect(decodeURIComponent(requestUrl)).not.toContain('organizations(id,');
   });
 
   it('get_organization(public_id) uses a dedicated query, scopes by caller, and never leaks internal id', async () => {
@@ -472,6 +557,32 @@ describe('handleAnchorDocument (PH1-SDK-03)', () => {
     expect(parsed.status).toBe('submitted');
     expect(parsed.content_hash).toBe(validHash);
     expect(parsed.public_id).toBe('ARK-2026-999');
+    expect(parsed).not.toHaveProperty('record_id');
+  });
+
+  it('uses idempotency_key for 5-minute retry dedupe without leaking internal ids', async () => {
+    const retryKey = ['123e4567', 'e89b', '12d3', 'a456', '426614174000'].join('-');
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ([{ id: 'internal-rec-1', public_id: 'ARK-2026-999' }]),
+    });
+
+    const result = await handleAnchorDocument(
+      {
+        content_hash: validHash,
+        idempotency_key: retryKey,
+      },
+      CONFIG,
+    );
+
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.status).toBe('already_submitted');
+    expect(parsed.public_id).toBe('ARK-2026-999');
+    expect(parsed).not.toHaveProperty('record_id');
+    expect(JSON.stringify(parsed)).not.toContain('internal-rec-1');
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(mockFetch.mock.calls[0][0]).toContain('/rest/v1/public_records');
   });
 
   it('handles API error', async () => {

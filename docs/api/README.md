@@ -40,7 +40,7 @@ The rich v1 verification response includes shipped API-RICH-02 fields `descripti
 | Webhooks | `POST/GET/PATCH/DELETE /webhooks`, `POST /webhooks/test`, `GET /webhooks/deliveries` | API key | [Webhooks guide](./webhooks.md) |
 | API key management | `POST/GET/PATCH/DELETE /keys` | Supabase JWT | [OpenAPI](./openapi.yaml) |
 | Nessie RAG | `POST /nessie/query` | API key + x402 | [OpenAPI](./openapi.yaml) |
-| CLE compliance | `GET /cle/verify`, `GET /cle/credits`, `POST /cle/record` | API key + x402 | [OpenAPI](./openapi.yaml) |
+| CLE compliance | `GET /cle/verify`, `GET /cle/credits`, `POST /cle/submit` | API key + x402 gate at `/api/v1/cle` | [OpenAPI](./openapi.yaml) |
 | Attestations | `POST/GET/PATCH /attestations` | Supabase JWT | [OpenAPI](./openapi.yaml) |
 
 ### 2. API v2 — `https://api.arkova.ai/v2`
@@ -111,7 +111,7 @@ A vanilla-JS, zero-dependency, CSP-safe `<script>` tag that drops a verification
 
 ### 6. MCP server — `https://edge.arkova.ai/mcp`
 
-Model Context Protocol endpoint for AI agents. New integrations should prefer the v2 aliases `search`, `verify`, `list_orgs`, and `get_anchor`; legacy tools remain available as `verify_credential`, `search_credentials`, `nessie_query`, `anchor_document`, `verify_document`, and `verify_batch`. (A `cle_verify` tool was scoped for INT-02 but deferred — the HTTP CLE route remains available via the REST API and the SDK. Tracked as INT-02b.)
+Model Context Protocol endpoint for AI agents. New integrations should prefer the v2 aliases `search`, `verify`, `list_orgs`, and `get_anchor`; legacy read tools remain available as `verify_credential`, `search_credentials`, `nessie_query`, `verify_document`, and `verify_batch`. MCP launch is read-only by default: `anchor_document` is registered only when `MCP_ENABLE_ANCHOR_DOCUMENT=true` and the authenticated caller has a canonical write scope, either `write:anchors` or `anchor:write`. `mcp:anchor` is not a public API-key scope and is not mintable for launch keys. (A `cle_verify` tool was scoped for INT-02 but deferred — the HTTP CLE route remains available via the REST API and the SDK. Tracked as INT-02b.)
 
 ```json
 {
@@ -240,4 +240,5 @@ External:
 | 2026-04-11 | INT-09 (SCRUM-645) | Webhook CRUD via API — register, list, update, delete webhooks programmatically. Closes the API-only loop. |
 | 2026-04-11 | INT-01 (SCRUM-642) | TypeScript SDK extended with `verifyBatch` + full `webhooks` namespace + enriched `ArkovaError`. |
 | 2026-04-11 | INT-03 (SCRUM-644) | Embeddable verification bundle (`@arkova/embed`) — vanilla JS, single script tag. |
-| 2026-04-11 | INT-02 (SCRUM-643) | MCP server tool added: `verify_batch`. Total: 6 tools. (`cle_verify` deferred to INT-02b.) |
+| 2026-05-05 | SCRUM-1704 / SCRUM-1705 | MCP launch manifest documented as fifteen read-oriented tools; `anchor_document` is gated by `MCP_ENABLE_ANCHOR_DOCUMENT=true` plus write scope. x402 launch scope documented for paid API v1 endpoints. |
+| 2026-04-11 | INT-02 (SCRUM-643) | MCP server tool added: `verify_batch`. Historical total at that point: 6 tools. (`cle_verify` deferred to INT-02b.) |
