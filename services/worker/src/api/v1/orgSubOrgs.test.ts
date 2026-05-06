@@ -83,6 +83,23 @@ function setupActionRouteDb(options: {
   return { membership, orgBuilders, statusUpdate };
 }
 
+const affiliateStatusCases = [
+  {
+    label: 'approves a pending affiliate without enforcing historical max_sub_orgs caps',
+    path: '/api/v1/org/sub-orgs/approve',
+    role: 'owner',
+    childStatus: 'PENDING',
+    resultStatus: 'APPROVED',
+  },
+  {
+    label: 'revokes an approved affiliate with explicit parent org scope',
+    path: '/api/v1/org/sub-orgs/revoke',
+    role: 'admin',
+    childStatus: 'APPROVED',
+    resultStatus: 'REVOKED',
+  },
+] as const;
+
 describe('GET /api/v1/org/sub-orgs (HAKI-REQ-01)', () => {
   beforeEach(() => { vi.clearAllMocks(); });
 
@@ -165,26 +182,6 @@ describe('POST /api/v1/org/sub-orgs/approve (HAKI-REQ-01)', () => {
       .expect(403);
     expect(res.body.error).toBeDefined();
   });
-
-  it('approves a pending affiliate without enforcing historical max_sub_orgs caps', async () => {
-    const { membership, orgBuilders, statusUpdate } = setupActionRouteDb({
-      role: 'owner',
-      childStatus: 'PENDING',
-    });
-
-    const app = buildApp('user-1');
-    const res = await request(app)
-      .post('/api/v1/org/sub-orgs/approve')
-      .send({ childOrgId: actionChildOrgId, parentOrgId: actionParentOrgId })
-      .expect(200);
-
-    expect(res.body).toEqual({ status: 'APPROVED', childOrgId: actionChildOrgId });
-    expect(membership.eq).toHaveBeenCalledWith('org_id', actionParentOrgId);
-    expect(statusUpdate.update).toHaveBeenCalledWith(expect.objectContaining({
-      parent_approval_status: 'APPROVED',
-    }));
-    expect(orgBuilders).toHaveLength(0);
-  });
 });
 
 describe('POST /api/v1/org/sub-orgs/revoke (HAKI-REQ-01)', () => {
@@ -200,23 +197,27 @@ describe('POST /api/v1/org/sub-orgs/revoke (HAKI-REQ-01)', () => {
     expect(res.body.error).toContain('Invalid');
     expect(db.from).not.toHaveBeenCalled();
   });
+});
 
-  it('revokes an approved affiliate with explicit parent org scope', async () => {
+describe('parent-scoped affiliate status actions (HAKI-REQ-01)', () => {
+  beforeEach(() => { vi.clearAllMocks(); });
+
+  it.each(affiliateStatusCases)('$label', async ({ path, role, childStatus, resultStatus }) => {
     const { membership, orgBuilders, statusUpdate } = setupActionRouteDb({
-      role: 'admin',
-      childStatus: 'APPROVED',
+      role,
+      childStatus,
     });
 
     const app = buildApp('user-1');
     const res = await request(app)
-      .post('/api/v1/org/sub-orgs/revoke')
+      .post(path)
       .send({ childOrgId: actionChildOrgId, parentOrgId: actionParentOrgId })
       .expect(200);
 
-    expect(res.body).toEqual({ status: 'REVOKED', childOrgId: actionChildOrgId });
+    expect(res.body).toEqual({ status: resultStatus, childOrgId: actionChildOrgId });
     expect(membership.eq).toHaveBeenCalledWith('org_id', actionParentOrgId);
     expect(statusUpdate.update).toHaveBeenCalledWith(expect.objectContaining({
-      parent_approval_status: 'REVOKED',
+      parent_approval_status: resultStatus,
     }));
     expect(orgBuilders).toHaveLength(0);
   });
