@@ -9,6 +9,7 @@ const rpcMock = vi.fn();
 const fromMock = vi.fn();
 const emitOrgAdminNotificationsMock = vi.fn();
 const processBatchAnchorsMock = vi.fn();
+const recordOrgQueueRunResultMock = vi.fn();
 
 vi.mock('../utils/db.js', () => ({
   db: {
@@ -27,6 +28,10 @@ vi.mock('../notifications/dispatcher.js', () => ({
 
 vi.mock('../jobs/batch-anchor.js', () => ({
   processBatchAnchors: (...args: unknown[]) => processBatchAnchorsMock(...args),
+}));
+
+vi.mock('../jobs/org-queue-scheduler.js', () => ({
+  recordOrgQueueRunResult: (...args: unknown[]) => recordOrgQueueRunResultMock(...args),
 }));
 
 import {
@@ -326,6 +331,7 @@ describe('handleRunOrgAnchorQueue', () => {
   beforeEach(() => {
     fromMock.mockReset();
     processBatchAnchorsMock.mockReset();
+    recordOrgQueueRunResultMock.mockReset();
     emitOrgAdminNotificationsMock.mockReset();
   });
   afterEach(() => vi.restoreAllMocks());
@@ -381,6 +387,18 @@ describe('handleRunOrgAnchorQueue', () => {
       merkleRoot: 'a'.repeat(64),
       txId: 'tx-1',
     });
+    expect(recordOrgQueueRunResultMock).toHaveBeenCalledWith(expect.objectContaining({
+      orgId: 'org-1',
+      trigger: 'manual',
+      status: 'succeeded',
+      startedAt: expect.any(Date),
+      finishedAt: expect.any(Date),
+      processed: 42,
+      batchId: 'batch-1',
+      merkleRoot: 'a'.repeat(64),
+      txId: 'tx-1',
+      triggeredBy: 'user-1',
+    }));
     expect(emitOrgAdminNotificationsMock).toHaveBeenCalledWith({
       type: 'queue_run_completed',
       organizationId: 'org-1',
@@ -406,6 +424,19 @@ describe('handleRunOrgAnchorQueue', () => {
     expect(json).toHaveBeenCalledWith({
       error: { code: 'internal', message: 'Internal server error' },
     });
+    expect(recordOrgQueueRunResultMock).toHaveBeenCalledWith(expect.objectContaining({
+      orgId: 'org-1',
+      trigger: 'manual',
+      status: 'failed',
+      startedAt: expect.any(Date),
+      finishedAt: expect.any(Date),
+      processed: 0,
+      batchId: null,
+      merkleRoot: null,
+      txId: null,
+      triggeredBy: 'user-1',
+      error: 'chain submit blew up',
+    }));
     expect(emitOrgAdminNotificationsMock).not.toHaveBeenCalled();
   });
 });
