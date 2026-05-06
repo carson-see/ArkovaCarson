@@ -33,7 +33,13 @@ const dbState = {
   finalUpdates: new Map<string, Record<string, unknown>>(),
 };
 
-vi.mock('../config.js', () => ({ config: {} }));
+// Org-credit enforcement is OFF by default in production config. The
+// FAST_TRACK_ANCHOR path now goes through the shared `deductOrgCredit`
+// helper (SCRUM-1647 follow-up: bug #6), which short-circuits to allowed=true
+// when the flag is off. The dispatcher tests below pin the AC behavior on
+// the gated path (the 1649 PRD ACs are written against credit enforcement
+// being live), so flip the flag on in the per-test config mock.
+vi.mock('../config.js', () => ({ config: { enableOrgCreditEnforcement: true } }));
 vi.mock('../utils/logger.js', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
