@@ -18,7 +18,7 @@ Path C ships a single 14-digit-zero-timestamp baseline that lexicographically so
 
 ## Cutover
 
-This archive landed at the same time as the baseline. The prod ledger (`supabase_migrations.schema_migrations`) still has the historical rows — they're the immutable audit history of what was applied when. The baseline cutover inserted a new ledger row for `00000000000000` on 2026-05-04 so the drift gate accepts the new repo layout. PR #700 still has a separate prod gate for `0295_pr700_rls_baseline_reconciliation.sql`; see [`docs/staging/PATH_C_CUTOVER.md`](../staging/PATH_C_CUTOVER.md).
+This archive landed at the same time as the baseline. The prod ledger (`supabase_migrations.schema_migrations`) still has the historical rows — they're the immutable audit history of what was applied when. The baseline cutover inserted a new ledger row for `00000000000000` on 2026-05-04 so the drift gate accepts the new repo layout. PR #700's separate prod gate for `0295_pr700_rls_baseline_reconciliation.sql` was applied on 2026-05-06 and verified in [`docs/staging/PR700_PROD_0295_VERIFICATION_2026-05-06.md`](../staging/PR700_PROD_0295_VERIFICATION_2026-05-06.md); see [`docs/staging/PATH_C_CUTOVER.md`](../staging/PATH_C_CUTOVER.md).
 
 ## Index
 
