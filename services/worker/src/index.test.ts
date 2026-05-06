@@ -9,8 +9,9 @@
  * are captured during the first import and tested separately from route tests.
  */
 
-import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vitest';
 import type { Express } from 'express';
+import supertest from 'supertest';
 
 // ---- Hoisted mocks ----
 
@@ -27,6 +28,8 @@ const {
   mockConfig,
   mockDbFrom,
   mockSupabaseGetUser,
+  mockCallRpc,
+  mockEstimateFee,
 } = vi.hoisted(() => {
   const mockProcessPendingAnchors = vi.fn().mockResolvedValue({ processed: 0, failed: 0 });
   const mockCheckSubmittedConfirmations = vi.fn().mockResolvedValue({ checked: 0, confirmed: 0 });
@@ -61,6 +64,8 @@ const {
   };
   const mockDbFrom = vi.fn();
   const mockSupabaseGetUser = vi.fn();
+  const mockCallRpc = vi.fn();
+  const mockEstimateFee = vi.fn();
 
   return {
     mockProcessPendingAnchors,
@@ -75,6 +80,8 @@ const {
     mockConfig,
     mockDbFrom,
     mockSupabaseGetUser,
+    mockCallRpc,
+    mockEstimateFee,
   };
 });
 
@@ -137,6 +144,16 @@ vi.mock('./utils/db.js', () => ({
   getDbCircuitState: () => ({ healthy: true, consecutiveFailures: 0, lastError: null }),
   getConnectionInfo: () => ({ mode: 'direct', url: 'https://test.supabase.co' }),
   resetDbCircuit: vi.fn(),
+}));
+
+vi.mock('./utils/rpc.js', () => ({
+  callRpc: mockCallRpc,
+}));
+
+vi.mock('./chain/fee-estimator.js', () => ({
+  createFeeEstimator: () => ({
+    estimateFee: mockEstimateFee,
+  }),
 }));
 
 vi.mock('@supabase/supabase-js', () => ({
@@ -286,6 +303,8 @@ function mockDbChain(result: { data: unknown; error: unknown }) {
     select: vi.fn().mockReturnThis(),
     eq: vi.fn().mockReturnThis(),
     in: vi.fn().mockReturnThis(),
+    is: vi.fn().mockReturnThis(),
+    order: vi.fn().mockReturnThis(),
     limit: vi.fn().mockResolvedValue(result),
     single: vi.fn().mockResolvedValue(result),
     maybeSingle: vi.fn().mockResolvedValue(result),
@@ -293,7 +312,17 @@ function mockDbChain(result: { data: unknown; error: unknown }) {
   chain.select.mockReturnValue(chain);
   chain.eq.mockReturnValue(chain);
   chain.in.mockReturnValue(chain);
+  chain.is.mockReturnValue(chain);
+  chain.order.mockReturnValue(chain);
   return chain;
+}
+
+function restoreEnv(key: string, value: string | undefined): void {
+  if (value === undefined) {
+    delete process.env[key];
+    return;
+  }
+  process.env[key] = value;
 }
 
 // Import module once — side effects (listen, cron, shutdown) run at import time
@@ -947,6 +976,115 @@ describe('worker server', () => {
       });
 
       expect(res.status).toBe(401);
+    });
+  });
+
+  describe('mount-level route sweep for src/index.ts coverage', () => {
+    const webhookEnvSnapshot: Record<string, string | undefined> = {};
+
+    beforeEach(() => {
+      webhookEnvSnapshot.MIDDESK_WEBHOOK_SECRET = process.env.MIDDESK_WEBHOOK_SECRET;
+      webhookEnvSnapshot.CHECKR_WEBHOOK_SECRET = process.env.CHECKR_WEBHOOK_SECRET;
+      webhookEnvSnapshot.ENABLE_VEREMARK_WEBHOOK = process.env.ENABLE_VEREMARK_WEBHOOK;
+      webhookEnvSnapshot.VEREMARK_WEBHOOK_SECRET = process.env.VEREMARK_WEBHOOK_SECRET;
+
+      mockDbFrom.mockReset();
+      mockCallRpc.mockReset();
+      mockEstimateFee.mockReset();
+      delete process.env.MIDDESK_WEBHOOK_SECRET;
+      delete process.env.CHECKR_WEBHOOK_SECRET;
+      delete process.env.ENABLE_VEREMARK_WEBHOOK;
+      delete process.env.VEREMARK_WEBHOOK_SECRET;
+    });
+
+    afterEach(() => {
+      restoreEnv('MIDDESK_WEBHOOK_SECRET', webhookEnvSnapshot.MIDDESK_WEBHOOK_SECRET);
+      restoreEnv('CHECKR_WEBHOOK_SECRET', webhookEnvSnapshot.CHECKR_WEBHOOK_SECRET);
+      restoreEnv('ENABLE_VEREMARK_WEBHOOK', webhookEnvSnapshot.ENABLE_VEREMARK_WEBHOOK);
+      restoreEnv('VEREMARK_WEBHOOK_SECRET', webhookEnvSnapshot.VEREMARK_WEBHOOK_SECRET);
+    });
+
+    it('hydrates detailed health with anchoring enrichments', async () => {
+      mockDbFrom.mockImplementation((table: string) => {
+        if (table === 'plans') {
+          return mockDbChain({ data: [{ id: 'plan-1' }], error: null });
+        }
+        return mockDbChain({
+          data: [
+            {
+              created_at: '2026-05-05T00:00:00Z',
+              updated_at: '2026-05-05T00:05:00Z',
+            },
+          ],
+          error: null,
+        });
+      });
+      mockCallRpc.mockResolvedValue({ data: { PENDING: 7 }, error: null });
+      mockEstimateFee.mockResolvedValue(12);
+
+      const res = await supertest(app).get('/health?detailed=true');
+
+      expect(res.status).toBe(200);
+      expect(res.body.checks.anchoring).toMatchObject({
+        lastSecuredAt: '2026-05-05T00:00:00Z',
+        lastBatchAt: '2026-05-05T00:05:00Z',
+        pendingCount: 7,
+        feeRateSatVb: 12,
+      });
+      expect(res.body.connection).toMatchObject({ mode: 'direct' });
+      expect(mockCallRpc).toHaveBeenCalledWith(expect.anything(), 'get_anchor_status_counts_fast');
+      expect(mockEstimateFee).toHaveBeenCalledOnce();
+    });
+
+    it('serves public specs, redirects conventional OpenAPI paths, and returns JSON 404s', async () => {
+      const ciba = await supertest(app).get('/api/openapi-ciba.json');
+      expect(ciba.status).toBe(200);
+      expect(ciba.headers['cache-control']).toBe('public, max-age=300');
+
+      const wellKnown = await supertest(app).get('/.well-known/openapi.json');
+      expect(wellKnown.status).toBe(301);
+      expect(wellKnown.headers.location).toBe('/api/docs/spec.json');
+
+      const v1Openapi = await supertest(app).get('/api/v1/openapi.json');
+      expect(v1Openapi.status).toBe(301);
+      expect(v1Openapi.headers.location).toBe('/api/docs/spec.json');
+
+      const missing = await supertest(app).get('/definitely-not-mounted');
+      expect(missing.status).toBe(404);
+      expect(missing.body).toMatchObject({ error: 'not_found' });
+    });
+
+    it('runs raw-body handoff middleware for mounted vendor webhooks', async () => {
+      const endpoints = [
+        '/webhooks/middesk',
+        '/webhooks/docusign',
+        '/webhooks/adobe-sign',
+        '/api/v1/webhooks/ats/greenhouse/integration-1',
+        '/webhooks/checkr',
+        '/webhooks/veremark',
+      ];
+
+      for (const endpoint of endpoints) {
+        const res = await supertest(app)
+          .post(endpoint)
+          .set('Content-Type', 'application/json')
+          .send({ ok: true });
+
+        expect([400, 401, 403, 501, 503]).toContain(res.status);
+      }
+    });
+
+    it('bypasses auth only for integration OAuth callbacks', async () => {
+      const callback = await supertest(app).get('/api/v1/integrations/docusign/oauth/callback?state=bad');
+      // The downstream OAuth router can fail if test env secrets are absent;
+      // this assertion pins the index.ts auth gate behavior, not DocuSign config.
+      expect(callback.status).not.toBe(401);
+      expect(callback.status).not.toBe(404);
+
+      const start = await supertest(app)
+        .post('/api/v1/integrations/docusign/oauth/start')
+        .send({ org_id: 'org-1' });
+      expect(start.status).toBe(401);
     });
   });
 });
