@@ -9,6 +9,18 @@
 - Applied via: Supabase Management API `POST /v1/projects/vzwyaatejekddvltxyye/database/migrations`
 - Authorization: Carson explicitly authorized Codex to apply `0295` in the PR #700 continuation thread on 2026-05-06.
 
+## Ledger Drift Blocker
+
+After the 2026-05-06 Arkova migration-rule clarification, this migration is
+**not Done** because prod recorded the applied migration under timestamp version
+`20260506113532` instead of numeric version `0295`.
+
+The schema effects below are real and verified, but the ledger is not reconciled
+to the required numeric convention. Stop before merging #700 or deploying the
+prod worker until Carson/operator explicitly reconciles the prod Supabase
+migration ledger. Do not run `migration repair`, prod `db push --linked`, or any
+other ledger mutation from Codex without explicit sign-off.
+
 ## Preflight
 
 Read-only Management API migration list before apply:
@@ -101,8 +113,14 @@ Result:
 All local migrations are applied in prod.
 ```
 
+This result came from the older drift gate, which accepted matching migration
+names even when prod used a timestamp ledger version. PR #700 now adds a stricter
+PR-owned numeric migration check so this exact `0295` state is surfaced as a
+blocking ledger drift finding.
+
 ## Remaining #700 Gates
 
+- Prod migration ledger reconciliation for `0295` is required before Done.
 - Real #700 worker/staging T2 behavior validation is still owed. Shared staging remains coordinated with active #695/#697 work unless explicitly released or an isolated environment is approved.
 - Review approval is still required before merge.
 - Do not merge #700 without explicit user approval.

@@ -260,28 +260,76 @@ jobs:
           echo "- Prod applied keys: $(echo "$prod_applied_keys" | wc -l | tr -d ' ')"
           echo "- Missing in prod: $missing_count"
 
+          changed_migrations=""
+          if [ "${GITHUB_EVENT_NAME}" = "pull_request" ]; then
+            base_sha=$(jq -r '.pull_request.base.sha // empty' "$GITHUB_EVENT_PATH")
+            head_sha=$(jq -r '.pull_request.head.sha // empty' "$GITHUB_EVENT_PATH")
+            if [ -z "$base_sha" ] || [ -z "$head_sha" ]; then
+              echo "::error title=Migration drift check event parse failure::Could not read pull request base/head SHAs from GITHUB_EVENT_PATH."
+              exit 1
+            fi
+            if ! merge_base=$(git merge-base "$base_sha" "$head_sha"); then
+              echo "::error title=Migration drift check merge-base failure::Could not find a merge base between PR base $base_sha and head $head_sha."
+              exit 1
+            fi
+            changed_migrations=$(
+              git diff --name-only --diff-filter=AMR "$merge_base" "$head_sha" -- 'supabase/migrations/*.sql' \
+                | sed 's#^supabase/migrations/##' \
+                | sed 's/\.sql$//' \
+                | sort -u
+            )
+
+            # Arkova numeric migration rule: PR-owned numeric migration files
+            # must land in prod's ledger under their numeric prefix. A
+            # timestamp-versioned Management API row with the same name is
+            # schema-applied, but it is still ledger drift and must be
+            # reconciled by an operator before the migration can be Done.
+            changed_version_drift=$(
+              while IFS= read -r local_name; do
+                [ -n "$local_name" ] || continue
+                if ! [[ "$local_name" =~ ^[0-9]{4}_ || "$local_name" =~ ^[0-9]{14}_ ]]; then
+                  continue
+                fi
+                local_version="${local_name%%_*}"
+                canonical_suffix=$(echo "$local_name" | sed -E 's/^[0-9]{4}[a-z]?_//; s/^[0-9]{14}_//')
+                exact_version_count=$(echo "$prod_response" | jq --arg version "$local_version" '[.[] | select((.version | tostring) == $version)] | length')
+                if [ "$exact_version_count" -gt 0 ]; then
+                  continue
+                fi
+                matching_rows=$(
+                  echo "$prod_response" | jq -r \
+                    --arg local_name "$local_name" \
+                    --arg suffix "$canonical_suffix" \
+                    '.[]
+                    | ((.name // "") | tostring) as $name
+                    | select($name == $local_name or $name == $suffix)
+                    | "\(.version):\($name)"' \
+                    | paste -sd ', ' -
+                )
+                if [ -z "$matching_rows" ]; then
+                  matching_rows="none"
+                fi
+                echo "${local_name} (expected ledger version ${local_version}; matching prod rows: ${matching_rows})"
+              done < <(echo "$changed_migrations")
+            )
+            changed_version_drift_count=$(echo "$changed_version_drift" | grep -c . || true)
+            echo "- PR numeric ledger drift: $changed_version_drift_count"
+
+            if [ "$changed_version_drift_count" -gt 0 ]; then
+              echo "::error title=PR numeric migration ledger drift::The following PR-owned numeric migrations are applied under non-numeric or missing prod ledger versions:"
+              echo "$changed_version_drift" | sed 's/^/  - /'
+              echo ""
+              echo "Resolution: stop and reconcile the prod Supabase migration ledger with Carson/operator sign-off. Do not run migration repair or prod db push from CI."
+              exit 1
+            fi
+          fi
+
           if [ "$missing_count" -gt 0 ]; then
             echo ""
             # Dependabot exits in the earlier skip step; non-Dependabot PRs
             # reach this branch with Supabase credentials and run the full
             # drift check before deciding whether the missing set is PR-owned.
             if [ "${GITHUB_EVENT_NAME}" = "pull_request" ]; then
-              base_sha=$(jq -r '.pull_request.base.sha // empty' "$GITHUB_EVENT_PATH")
-              head_sha=$(jq -r '.pull_request.head.sha // empty' "$GITHUB_EVENT_PATH")
-              if [ -z "$base_sha" ] || [ -z "$head_sha" ]; then
-                echo "::error title=Migration drift check event parse failure::Could not read pull request base/head SHAs from GITHUB_EVENT_PATH."
-                exit 1
-              fi
-              if ! merge_base=$(git merge-base "$base_sha" "$head_sha"); then
-                echo "::error title=Migration drift check merge-base failure::Could not find a merge base between PR base $base_sha and head $head_sha."
-                exit 1
-              fi
-              changed_migrations=$(
-                git diff --name-only --diff-filter=AMR "$merge_base" "$head_sha" -- 'supabase/migrations/*.sql' \
-                  | sed 's#^supabase/migrations/##' \
-                  | sed 's/\.sql$//' \
-                  | sort -u
-              )
               changed_missing=$(comm -12 <(echo "$filtered_missing" | sort -u) <(echo "$changed_migrations" | sort -u))
               changed_missing_count=$(echo "$changed_missing" | grep -c . || true)
 
