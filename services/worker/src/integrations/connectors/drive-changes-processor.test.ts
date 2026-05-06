@@ -330,7 +330,7 @@ describe('processDriveChanges (SCRUM-1650 GD-03..07)', () => {
     expect(db.ledgerInserts[0].revision_id).toBe('mtime:2026-05-04T01:23:00Z');
   });
 
-  it('Codex P1 (no-drop): enqueue returning null rolls back the ledger reservation so retry is unblocked', async () => {
+  it('Codex P1 (no-drop): enqueue returning null rolls back the ledger reservation and aborts the page', async () => {
     const db = makeFakeDb({ enqueueResult: null });
     const listMock = vi.fn().mockResolvedValueOnce(
       pageOf(
@@ -339,19 +339,21 @@ describe('processDriveChanges (SCRUM-1650 GD-03..07)', () => {
       ),
     );
 
-    const result = await processDriveChanges({
-      integration: makeIntegration(),
-      accessToken: 'tok',
-      db,
-      deps: { listChanges: listMock },
-    });
+    await expect(
+      processDriveChanges({
+        integration: makeIntegration(),
+        accessToken: 'tok',
+        db,
+        deps: { listChanges: listMock },
+      }),
+    ).rejects.toThrow(/enqueueRuleEvent returned null/);
 
-    expect(result.queued).toBe(0);
     // Compensating delete fired so the (integration, file, revision) slot
     // is free for the next pass to retry. Without this, the row would
     // persist and dedupe-block all future attempts on this revision.
     expect(db.ledgerDeletes).toEqual([{ file_id: 'file-fail', revision_id: 'rev-fail' }]);
     expect(db.duplicateKeys.has('file-fail::rev-fail')).toBe(false);
+    expect(db.advancedPageTokens).toEqual([]);
   });
 
   it('Codex P1 (no-drop): enqueue throwing rolls back the ledger reservation and re-throws', async () => {
@@ -378,6 +380,70 @@ describe('processDriveChanges (SCRUM-1650 GD-03..07)', () => {
 
     expect(db.ledgerDeletes).toEqual([{ file_id: 'file-throw', revision_id: 'rev-throw' }]);
     expect(db.duplicateKeys.has('file-throw::rev-throw')).toBe(false);
+  });
+
+  it('SCRUM-1647 follow-up (no-stuck-backlog): SAFE_PAGE_LIMIT cap-exit persists the page token', async () => {
+    // Drive's at-least-once delivery + nextPageToken chains: if the cap is
+    // hit because there's a backlog of >SAFE_PAGE_LIMIT pages, we MUST
+    // still advance the persisted token. Otherwise the next invocation
+    // reads the unchanged token from the DB and replays the same window
+    // forever.
+    const db = makeFakeDb();
+    // Build a chain that always returns nextPageToken — never reaches a
+    // final page (no newStartPageToken). The processor will hit
+    // SAFE_PAGE_LIMIT.
+    const listMock = vi.fn().mockImplementation(async ({ pageToken }: { pageToken: string }) => {
+      const next = `token-after-${pageToken}`;
+      return pageOf(
+        [{ file: { id: `file-${pageToken}`, parents: [WATCHED_FOLDER_A], headRevisionId: `rev-${pageToken}` } }],
+        { nextPageToken: next },
+      );
+    });
+
+    const result = await processDriveChanges({
+      integration: makeIntegration(),
+      accessToken: 'tok',
+      db,
+      deps: { listChanges: listMock },
+    });
+
+    let expectedToken = 'token-1';
+    for (let i = 0; i < 25; i += 1) {
+      expectedToken = `token-after-${expectedToken}`;
+    }
+
+    // Hit the cap and persist the exact token for the next unread page.
+    expect(result.pagesProcessed).toBe(25);
+    expect(db.advancedPageTokens).toEqual([expectedToken]);
+    expect(result.newPageToken).toBe(expectedToken);
+  });
+
+  it('SCRUM-1647 follow-up (telemetry hygiene): parentMismatch counter excludes unrelated_change rows', async () => {
+    // GD-04 telemetry: only true folder mismatches inflate the counter.
+    // A change with no parents at all is `unrelated_change` and is its
+    // own ledger outcome — it must not be double-counted as a mismatch.
+    const db = makeFakeDb();
+    const listMock = vi.fn().mockResolvedValueOnce(
+      pageOf(
+        [
+          { file: { id: 'no-parents', headRevisionId: 'rev-np' } }, // unrelated_change
+          { file: { id: 'wrong-folder', parents: [UNWATCHED_FOLDER], headRevisionId: 'rev-wf' } }, // parent_mismatch
+        ],
+        { newStartPageToken: 'token-2' },
+      ),
+    );
+
+    const result = await processDriveChanges({
+      integration: makeIntegration(),
+      accessToken: 'tok',
+      db,
+      deps: { listChanges: listMock },
+    });
+
+    expect(result.parentMismatch).toBe(1);
+    expect(db.enqueueCalls).toHaveLength(0);
+    expect(db.ledgerInserts.find((r) => r.file_id === 'no-parents')!.outcome).toBe('unrelated_change');
+    expect(db.ledgerInserts.find((r) => r.file_id === 'wrong-folder')!.outcome).toBe('parent_mismatch');
   });
 
   it('throws when integration has no last_page_token (misconfiguration, fail loud)', async () => {
