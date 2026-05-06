@@ -67,7 +67,10 @@ function parseCreateTableTarget(rawTarget: string): { schema: string; table: str
 }
 
 function unquoteIdentifier(identifier: string): string {
-  return identifier.replace(/^"|"$/g, '').toLowerCase();
+  if (identifier.startsWith('"') && identifier.endsWith('"')) {
+    return identifier.slice(1, -1).toLowerCase();
+  }
+  return identifier.toLowerCase();
 }
 
 interface SnapshotShape {
