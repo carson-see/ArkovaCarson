@@ -63,18 +63,23 @@ export default defineConfig({
           lines: 80,
           statements: 80,
         },
-        // Files below 80% — tracked for improvement
+        // SCRUM-1545 (R4-4-FU) raised both files to the 80%/80%/80%/80%
+        // critical-path floor on 2026-05-05 after the coverage-backfill
+        // suites landed (`anchor-coverage.test.ts` + the new chain/client
+        // describe blocks). Actual coverage at threshold-raise:
+        //   anchor.ts:        98.29 / 95.49 / 100  / 98.83
+        //   chain/client.ts:  97.70 / 97.10 / 100  / 97.64
         'src/jobs/anchor.ts': {
-          branches: 55,
-          functions: 60,
-          lines: 65,
-          statements: 65,
+          branches: 80,
+          functions: 80,
+          lines: 80,
+          statements: 80,
         },
         'src/chain/client.ts': {
-          branches: 70,
-          functions: 75,
-          lines: 75,
-          statements: 75,
+          branches: 80,
+          functions: 80,
+          lines: 80,
+          statements: 80,
         },
         'src/stripe/handlers.ts': {
           // SCRUM-1289 (R4-4): bumped 75/70/70/70 → 80 across the board.
@@ -94,19 +99,13 @@ export default defineConfig({
           statements: 80,
         },
         'src/index.ts': {
-          // Same align-with-reality pattern as the functions threshold
-          // below: route mounts grew faster than smoke tests. Branches
-          // 50 → 42 / lines 70 → 68 / statements 70 → 68 reflect actual
-          // coverage on 2026-04-27 (PR #583 batch — anchor evidence +
-          // bug-bounty fixes added a few new mounts without the smoke
-          // tests landing yet). Raise these back when mount-level
-          // smoke tests cover the new routes (Adobe Sign, Checkr,
-          // Veremark, OpenAPI CIBA, connector-health, plus the
-          // recently-mounted HAKI and audit-evidence routes).
-          branches: 42,
-          functions: 20,
-          lines: 68,
-          statements: 68,
+          // SCRUM-1545: mount-level sweep restored index.ts above the
+          // SCRUM-1289 target for the slim compositor. Actual focused
+          // coverage at threshold-raise: 93.85 / 64.28 / 100 / 93.80.
+          branches: 60,
+          functions: 40,
+          lines: 80,
+          statements: 80,
         },
       },
     },
