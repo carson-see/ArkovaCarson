@@ -39,7 +39,7 @@ BEGIN
 END;
 $$;
 
-REVOKE ALL ON FUNCTION refund_org_credit(uuid, integer, text, uuid) FROM PUBLIC;
+REVOKE ALL ON FUNCTION refund_org_credit(uuid, integer, text, uuid) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION refund_org_credit(uuid, integer, text, uuid) TO service_role;
 
 NOTIFY pgrst, 'reload schema';
