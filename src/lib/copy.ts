@@ -919,6 +919,7 @@ export const CREDENTIAL_SOURCE_IMPORT_LABELS = {
   ADD: 'Add',
   PREVIEW_FAILED: 'Preview failed',
   IMPORT_FAILED: 'Import failed',
+  REQUEST_FAILED: 'Request failed',
   TOAST_ADDED: 'Credential source added',
   TOAST_DUPLICATE: 'Credential source already added',
 } as const;

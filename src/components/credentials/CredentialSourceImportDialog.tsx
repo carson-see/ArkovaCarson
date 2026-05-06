@@ -83,7 +83,7 @@ async function parseWorkerResponse<T>(response: Response): Promise<T> {
   if (!response.ok) {
     const message = (body as { message?: string; error?: string }).message
       ?? (body as { error?: string }).error
-      ?? `Request failed (${response.status})`;
+      ?? `${LABELS.REQUEST_FAILED} (${response.status})`;
     throw new Error(message);
   }
   return body as T;
