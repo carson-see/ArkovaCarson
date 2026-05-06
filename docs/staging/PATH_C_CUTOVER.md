@@ -2,7 +2,7 @@
 
 > **Jira:** [SCRUM-1668](https://arkova.atlassian.net/browse/SCRUM-1668) (parent [SCRUM-1246](https://arkova.atlassian.net/browse/SCRUM-1246) RECOVERY)
 > **PR:** [#700](https://github.com/carson-see/ArkovaCarson/pull/700) (migration baseline; T2-class staging evidence still owed before Done)
-> **Status:** **BASELINE PROD LEDGER ROW RECORDED 2026-05-04** in project `vzwyaatejekddvltxyye` via Supabase MCP `execute_sql` (single ledger INSERT, RETURNING confirmed `version=00000000000000, name=baseline_at_main_HEAD`). PR #700 is not merge-ready until CI/review are green, `0295_pr700_rls_baseline_reconciliation.sql` is applied to prod by a human with ledger/schema evidence captured, and worker/staging validation evidence is captured.
+> **Status:** **BASELINE PROD LEDGER ROW RECORDED 2026-05-04** in project `vzwyaatejekddvltxyye` via Supabase MCP `execute_sql` (single ledger INSERT, RETURNING confirmed `version=00000000000000, name=baseline_at_main_HEAD`). `0295_pr700_rls_baseline_reconciliation.sql` was applied to prod on 2026-05-06 after explicit operator authorization; ledger/schema evidence is captured in [`PR700_PROD_0295_VERIFICATION_2026-05-06.md`](./PR700_PROD_0295_VERIFICATION_2026-05-06.md). PR #700 is not merge-ready until CI/review are green and worker/staging validation evidence is captured.
 > **Cutover IS the metadata write to prod's ledger plus the repo-side baseline/archive move.** Merging PR #700 ships the repo-side rename. Both baseline halves are reversible: revert the PR for repo-side, run `DELETE FROM supabase_migrations.schema_migrations WHERE version='00000000000000'` for prod-side. The separate post-baseline `0295` reconciliation is a forward prod migration and must be tracked as prod schema state, not treated as part of the metadata-only cutover.
 
 ---
@@ -61,7 +61,7 @@ This is **not** a §1.12 worker soak.
 ### 3.3 Still Owed Before Done
 
 - CI must be green on PR #700.
-- A human must apply `0295_pr700_rls_baseline_reconciliation.sql` to prod `vzwyaatejekddvltxyye`, capture the resulting `supabase_migrations.schema_migrations` row plus schema/RLS evidence, and let the migration drift gate confirm prod/repo reconciliation. Codex must not apply this prod migration.
+- `0295_pr700_rls_baseline_reconciliation.sql` is applied to prod `vzwyaatejekddvltxyye`; ledger row `20260506113532 / 0295_pr700_rls_baseline_reconciliation` plus schema/RLS evidence is captured in [`PR700_PROD_0295_VERIFICATION_2026-05-06.md`](./PR700_PROD_0295_VERIFICATION_2026-05-06.md), and Migration Drift rerun [25429502352 / 74603343923](https://github.com/carson-see/ArkovaCarson/actions/runs/25429502352/job/74603343923) passed.
 - Fresh-DB/RLS CI must remain green with the baseline plus active post-baseline migrations.
 - A worker validation path must run against an approved staging environment: either wait for the shared #695/#697 staging lease to release or explicitly approve an isolated environment. Do not create paid Supabase resources without cost/org confirmation.
 - PR body and evidence must clearly say schema-only equivalence until real worker/staging evidence exists.
