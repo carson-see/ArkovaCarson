@@ -48,16 +48,26 @@ function localTableSet(): Set<string> {
     // other than `public` (or absent), skip — this rule scans the public.* set.
     // Without splitting these out, `CREATE TABLE auth.foo` would otherwise
     // match `auth` as the table name and false-flag a non-existent drift.
-    const createRe =
-      /(?:^|;)\s*create\s+table\s+(?:if\s+not\s+exists\s+)?(?:"?([a-z_][a-z0-9_]*)"?\.)?"?([a-z_][a-z0-9_]*)"?/gim;
+    const createRe = /(?:^|;)\s*create\s+table\s+(?:if\s+not\s+exists\s+)?([^\s(]+)\s*\(/gim;
     let m: RegExpExecArray | null;
     while ((m = createRe.exec(sql)) !== null) {
-      const schema = (m[1] ?? 'public').toLowerCase();
+      const { schema, table } = parseCreateTableTarget(m[1]);
       if (schema !== 'public') continue;
-      tables.add(m[2].toLowerCase());
+      tables.add(table);
     }
   }
   return tables;
+}
+
+function parseCreateTableTarget(rawTarget: string): { schema: string; table: string } {
+  const parts = rawTarget.split('.');
+  const table = unquoteIdentifier(parts.at(-1) ?? rawTarget);
+  const schema = parts.length > 1 ? unquoteIdentifier(parts.at(-2) ?? 'public') : 'public';
+  return { schema, table };
+}
+
+function unquoteIdentifier(identifier: string): string {
+  return identifier.replace(/^"|"$/g, '').toLowerCase();
 }
 
 interface SnapshotShape {
