@@ -193,20 +193,20 @@ ON CONFLICT (user_id, org_id) DO NOTHING;
 -- (via updated_by FK). Re-insert to ensure flags exist.
 -- =============================================================================
 
-INSERT INTO switchboard_flags (id, value, default_value, description, is_dangerous) VALUES
-  ('ENABLE_PROD_NETWORK_ANCHORING', false, false, 'Enable production network anchoring (real network fees)', true),
-  ('ENABLE_OUTBOUND_WEBHOOKS', false, false, 'Enable outbound webhook delivery', false),
-  ('ENABLE_NEW_CHECKOUTS', true, true, 'Allow new checkout sessions', false),
-  ('ENABLE_REPORTS', true, true, 'Enable report generation', false),
-  ('MAINTENANCE_MODE', false, false, 'Put the app in maintenance mode', true),
-  ('ENABLE_AI_EXTRACTION', true, false, 'Enable AI-powered credential metadata extraction (P8)', false),
-  ('ENABLE_SEMANTIC_SEARCH', true, false, 'Enable semantic search with vector embeddings (P8)', false),
-  ('ENABLE_AI_FRAUD', true, false, 'Enable AI-powered fraud detection (P8)', false),
-  ('ENABLE_VERIFICATION_API', true, false, 'Enable Verification API v1 endpoints (P4.5)', false),
-  ('ENABLE_AI_REPORTS', true, false, 'Enable AI-powered report generation (P8)', false),
-  ('ENABLE_X402_PAYMENTS', false, false, 'Enable x402 USDC pay-per-request on Base L2', false),
-  ('ENABLE_GRC_INTEGRATIONS', false, false, 'Enable GRC platform integrations (Vanta, Drata, Anecdotes) — CML-05', false)
-ON CONFLICT (id) DO UPDATE SET value = EXCLUDED.value, description = EXCLUDED.description;
+INSERT INTO switchboard_flags (flag_key, enabled, description) VALUES
+  ('ENABLE_PROD_NETWORK_ANCHORING', false, 'Enable production network anchoring (real network fees)'),
+  ('ENABLE_OUTBOUND_WEBHOOKS', false, 'Enable outbound webhook delivery'),
+  ('ENABLE_NEW_CHECKOUTS', true, 'Allow new checkout sessions'),
+  ('ENABLE_REPORTS', true, 'Enable report generation'),
+  ('MAINTENANCE_MODE', false, 'Put the app in maintenance mode'),
+  ('ENABLE_AI_EXTRACTION', true, 'Enable AI-powered credential metadata extraction (P8)'),
+  ('ENABLE_SEMANTIC_SEARCH', true, 'Enable semantic search with vector embeddings (P8)'),
+  ('ENABLE_AI_FRAUD', true, 'Enable AI-powered fraud detection (P8)'),
+  ('ENABLE_VERIFICATION_API', true, 'Enable Verification API v1 endpoints (P4.5)'),
+  ('ENABLE_AI_REPORTS', true, 'Enable AI-powered report generation (P8)'),
+  ('ENABLE_X402_PAYMENTS', false, 'Enable x402 USDC pay-per-request on Base L2'),
+  ('ENABLE_GRC_INTEGRATIONS', false, 'Enable GRC platform integrations (Vanta, Drata, Anecdotes) — CML-05')
+ON CONFLICT (flag_key) DO UPDATE SET enabled = EXCLUDED.enabled, description = EXCLUDED.description;
 
 
 -- =============================================================================

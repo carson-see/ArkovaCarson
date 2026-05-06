@@ -49,7 +49,7 @@ function localTableSet(): Set<string> {
     // Without splitting these out, `CREATE TABLE auth.foo` would otherwise
     // match `auth` as the table name and false-flag a non-existent drift.
     const createRe =
-      /create\s+table\s+(?:if\s+not\s+exists\s+)?(?:([a-z_][a-z0-9_]*)\.)?"?([a-z_][a-z0-9_]*)"?/gi;
+      /(?:^|;)\s*create\s+table\s+(?:if\s+not\s+exists\s+)?(?:"?([a-z_][a-z0-9_]*)"?\.)?"?([a-z_][a-z0-9_]*)"?/gim;
     let m: RegExpExecArray | null;
     while ((m = createRe.exec(sql)) !== null) {
       const schema = (m[1] ?? 'public').toLowerCase();

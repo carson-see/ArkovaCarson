@@ -1,8 +1,8 @@
 # Path C — pg_dump baseline cutover plan
 
 > **Jira:** [SCRUM-1668](https://arkova.atlassian.net/browse/SCRUM-1668) (parent [SCRUM-1246](https://arkova.atlassian.net/browse/SCRUM-1246) RECOVERY)
-> **PR:** [#700](https://github.com/carson-see/ArkovaCarson/pull/700) (T2 per CLAUDE.md §1.12 path-detector)
-> **Status:** **CUTOVER APPLIED 2026-05-04** to prod project `vzwyaatejekddvltxyye` via Supabase MCP `execute_sql` (single ledger INSERT, RETURNING confirmed `version=00000000000000, name=baseline_at_main_HEAD`). PR #700 awaiting `merge {N}` for the repo-side change to land.
+> **PR:** [#700](https://github.com/carson-see/ArkovaCarson/pull/700) (migration baseline; T2-class staging evidence still owed before Done)
+> **Status:** **PROD LEDGER ROW RECORDED 2026-05-04** in project `vzwyaatejekddvltxyye` via Supabase MCP `execute_sql` (single ledger INSERT, RETURNING confirmed `version=00000000000000, name=baseline_at_main_HEAD`). PR #700 is not merge-ready until CI/review are green and worker/staging validation evidence is captured.
 > **Cutover IS the metadata write to prod's ledger.** Merging PR #700 ships the repo-side rename. Both halves are now reversible: revert the PR for repo-side, run `DELETE FROM supabase_migrations.schema_migrations WHERE version='00000000000000'` for prod-side. Schema itself is unchanged through both directions.
 
 ---
@@ -20,60 +20,54 @@ Path C is the structural fix: stop replaying 0000..0289 on every fresh DB. Snaps
 
 The 14-digit zero-timestamp prefix matches the Supabase preview-branch builder regex natively, sorts before all real migrations, and avoids the lettered-suffix incompatibility entirely.
 
-## 2. Repo-side change (lands with the PR — already mergeable independent of cutover)
+## 2. Repo-side change (lands with the PR)
 
 | Change | File(s) |
 |---|---|
 | Add baseline | `supabase/migrations/00000000000000_baseline_at_main_HEAD.sql` |
 | Archive historical chain | `ls supabase/migrations/ \| grep -E '^0[0-9]{3}' \| while read f; do git mv "supabase/migrations/$f" "docs/migrations-archive/$f"; done` |
 | Archive index | `docs/migrations-archive/README.md` (per-version pointer to prod ledger row) |
-| CI drift gate exempt | `.github/workflows/migration-drift.yml` `exempt_regex` adds `00000000000000_baseline_at_main_HEAD` until cutover |
-| Cutover doc | `docs/staging/PATH_C_CUTOVER.md` (this file) |
+| Drift gate | `.github/workflows/migration-drift.yml` no longer exempts `00000000000000_baseline_at_main_HEAD`; it matches the prod ledger row directly |
+| Cutover record | `docs/staging/PATH_C_CUTOVER.md` (this file) |
 | HANDOFF entry | `HANDOFF.md` |
 
 After the PR merges:
 - Repo `supabase/migrations/` contains only `{00000000000000_baseline_at_main_HEAD.sql, 0291+}`.
-- Prod ledger still has all 290 historical rows. Repo and prod are deliberately mismatched at the file level until cutover; the drift gate's exempt entry covers exactly this.
+- Prod ledger keeps all historical rows plus the new `00000000000000` baseline row. The historical rows remain audit history; the drift gate accepts the baseline row directly.
 - `npx supabase db reset` and any new preview branch will replay only the baseline + 0291+, reaching `MIGRATIONS_DEPLOYED` in seconds.
 
-## 3. Cutover (separate operation — Carson runs)
+## 3. Cutover Record
 
-### 3.1 When
+### 3.1 What Happened
 
-- Maintenance window during low-traffic hour (suggest a Sunday 04:00 UTC, but Carson's call).
-- After Path A (CLI-forward) has been used as a fallback rehearsal at least once. Path A was authorized 2026-05-04 but never started — if the staging rig becomes urgent before this PR lands, Path A can still bridge; once Path C lands, Path A becomes obsolete.
-- ≥ 1 week after this PR merges to give the repo-side change a soak before touching the prod ledger.
+On 2026-05-04, the baseline ledger row was inserted into prod project `vzwyaatejekddvltxyye` via Supabase MCP `execute_sql`. The operation wrote one metadata row to `supabase_migrations.schema_migrations`; it did not run DDL and did not change application data.
 
-### 3.2 Pre-cutover verification (TBD-PHASE-5 evidence; will be filled in once the throwaway-project test runs)
+```sql
+INSERT INTO supabase_migrations.schema_migrations (version, name, statements)
+VALUES ('00000000000000', 'baseline_at_main_HEAD', ARRAY[...]::text[])
+ON CONFLICT (version) DO NOTHING
+RETURNING version, name, array_length(statements, 1) AS stmt_count;
+-- {"version":"00000000000000","name":"baseline_at_main_HEAD","stmt_count":4}
+```
 
-- [ ] Wall-clock comparison: replay-from-zero (current main) vs. baseline + 0291+ (this PR) on a fresh Supabase project.
-- [ ] Byte-identical schema diff: pg_dump of the test project vs. the original prod export, modulo database/owner names. Must be empty.
-- [ ] Smoke test under `scripts/staging/load-harness.ts` for ≥ 30 min with no errors.
+Evidence is captured in [`PATH_C_VERIFICATION_2026-05-04.md`](./PATH_C_VERIFICATION_2026-05-04.md).
 
-### 3.3 Cutover steps
+### 3.2 Completed Schema Verification
 
-1. **Confirm test-project diff is byte-identical.** The pg_dump output of the project that came up via `baseline + 0291+` MUST equal the original prod export. If not, regenerate the baseline.
-2. **Insert the baseline ledger row in prod.** Carson runs via Supabase MCP `apply_migration`:
-   ```sql
-   INSERT INTO supabase_migrations.schema_migrations (version, name, statements)
-   VALUES (
-     '00000000000000',
-     'baseline_at_main_HEAD',
-     ARRAY['-- baseline subsumed in repo file 00000000000000_baseline_at_main_HEAD.sql; no statements re-applied']
-   )
-   ON CONFLICT (version) DO NOTHING;
-   ```
-   This is the **only** prod state change the cutover makes. The schema itself is unchanged — prod already has every object the baseline would create.
-3. **Remove the drift-gate exempt entry** for `00000000000000_baseline_at_main_HEAD` in a follow-up tiny PR. The drift check now passes naturally because the baseline file exists in prod's ledger.
-4. **Decision: keep the historical 0000..0289 ledger rows OR retire them.** RECOMMENDED: **keep**. The rows are immutable audit history of what was applied when. Retiring them would lose that history (we'd have to manually map row → archived file). Keeping them costs nothing — `supabase_migrations.schema_migrations` is small. The drift gate doesn't fail on extra prod rows that aren't in repo.
-5. **Cutover complete.** Future preview branches and CLI resets will only see the baseline + 0291+.
+The PHASE 5 check was schema equivalence only. A branch project `aljheljcsrgbtgyshfss` was wiped to empty, the baseline was applied, and schema-object counts were compared against prod: tables, extensions, enums, functions, policies, triggers, and constraints matched. Indexes differed by three known invalid prod indexes (`pg_index.indisvalid=false`) that `pg_dump` correctly omits.
 
-### 3.4 Post-cutover smoke
+This is **not** a §1.12 worker soak.
 
-After cutover, immediately:
-- Provision a brand-new preview branch via `mcp__supabase__create_branch` against `vzwyaatejekddvltxyye`. It MUST reach `MIGRATIONS_DEPLOYED` in <60 seconds (vs. minutes today).
-- Run `npx supabase db reset` locally. It MUST complete with the same schema as prod.
-- Run the worker test suite against the preview branch. Must be all green.
+### 3.3 Still Owed Before Done
+
+- CI must be green on PR #700.
+- Docker/local fresh DB replay must handle the baseline in the CI Postgres image.
+- A worker validation path must run against an approved staging environment: either wait for the shared #695/#697 staging lease to release or explicitly approve an isolated environment. Do not create paid Supabase resources without cost/org confirmation.
+- PR body and evidence must clearly say schema-only equivalence until real worker/staging evidence exists.
+
+### 3.4 Historical Ledger Decision
+
+Keep the historical 0000..0289 ledger rows. The rows are immutable audit history of what was applied when. Retiring them would lose that history (we'd have to manually map row to archived file). Keeping them costs nothing; `supabase_migrations.schema_migrations` is small. The drift gate does not fail on extra prod rows that aren't in repo.
 
 ## 4. Rollback
 
@@ -90,11 +84,11 @@ Rollback complete. The schema is unchanged through both directions — only the 
 
 ## 5. PR #697 interaction
 
-PR #697 ("close 7 carry-over bugs from #689 squash race + 0290 migration") ships `supabase/migrations/0290_suborg_suspension_audit_and_service_role_fix.sql`. 0290 is **already applied to prod** (per HANDOFF; verified via Supabase MCP).
+PR #697 ("close 7 carry-over bugs from #689 squash race + 0290 migration") ships `supabase/migrations/0290_suborg_suspension_audit_and_service_role_fix.sql`. 0290 is **already present in prod** (per HANDOFF; verified via Supabase MCP).
 
 Two scenarios:
 
-- **PR #697 merges before Path C** — 0290 enters main as a normal post-baseline migration. Path C archives it alongside 0001..0289 because it pre-dates the cutover. The baseline pg_dump captures the 0290 schema state because 0290 was already applied to prod when the dump was taken. PR #697's T2 soak still has to happen against a real staging rig (currently TBD-AWAITING-RIG), which is the very thing Path C unblocks.
+- **PR #697 merges before Path C** — 0290 enters main as a normal post-baseline migration. Path C archives it alongside 0000..0289 because it pre-dates the cutover. The baseline pg_dump captures the 0290 schema state because 0290 was already present in prod when the dump was taken. PR #697's T2 soak still has to happen against the shared staging rig, whose lease is active in parallel work.
 - **PR #697 merges after Path C** — 0290 has already been folded into the baseline. PR #697 either (a) drops the migration file from its diff and ships only the worker fixes, or (b) keeps 0290 as a no-op idempotent re-apply. Either way, the migration runner is fine.
 
 The cleaner of the two is "Path C ships first, PR #697 drops 0290 from its diff or ships it as 0291." Carson's call.
