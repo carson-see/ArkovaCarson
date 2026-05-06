@@ -418,7 +418,6 @@ async function runEventsMode(opts: ModeOpts, ratePerMin: number): Promise<void> 
 }
 
 const CRON_ENDPOINTS = [
-  '/jobs/process-anchors',
   '/jobs/batch-anchors',
   '/jobs/check-confirmations',
   '/jobs/process-revocations',

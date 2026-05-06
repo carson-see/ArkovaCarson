@@ -59,7 +59,7 @@ All three are `SECURITY DEFINER`, granted `EXECUTE` to `service_role` only, revo
 | `oscillate`  | `POST /api/v1/anchor`       | sawtooth across 3k threshold (Trigger B) | IAM + `X-API-Key` |
 | `webhooks`   | `POST /webhooks/{drive,docusign,adobe-sign,checkr}` | 10/min | IAM + provider HMAC headers |
 | `events`     | `POST /api/admin/inject-demo-event` | 100/min | IAM |
-| `cron`       | `POST /jobs/{process-anchors,batch-anchors,...}` | every 5 min | IAM + `X-Cron-Secret` |
+| `cron`       | `POST /jobs/{batch-anchors,check-confirmations,...}` | every 5 min | IAM + `X-Cron-Secret` |
 | `reads`      | `GET /api/v1/verify/...` + `/api/admin/pipeline-stats` | 50/min | IAM + `X-API-Key` |
 | `mixed` (default) | webhooks + events + cron + reads concurrently | per above | per above |
 

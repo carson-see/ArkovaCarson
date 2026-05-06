@@ -53,7 +53,7 @@ describe('setupScheduledJobs', () => {
 
     setupScheduledJobs(true);
 
-    expect(mockCronSchedule).toHaveBeenCalledTimes(13);
+    expect(mockCronSchedule).toHaveBeenCalledTimes(12);
     expect(mockLogger.warn).not.toHaveBeenCalled();
   });
 
@@ -63,7 +63,7 @@ describe('setupScheduledJobs', () => {
 
     setupScheduledJobs(true);
 
-    expect(mockCronSchedule).toHaveBeenCalledTimes(13);
+    expect(mockCronSchedule).toHaveBeenCalledTimes(12);
     expect(mockLogger.warn).not.toHaveBeenCalled();
   });
 
@@ -75,9 +75,9 @@ describe('setupScheduledJobs', () => {
     setupScheduledJobs(true);
 
     expect(mockCronSchedule).toHaveBeenCalledTimes(5);
-    expect(mockLogger.warn).toHaveBeenCalledTimes(8);
+    expect(mockLogger.warn).toHaveBeenCalledTimes(7);
     expect(mockLogger.warn).toHaveBeenCalledWith(
-      { jobName: 'process-pending-anchors', expression: '* * * * *' },
+      { jobName: 'process-batch-anchors', expression: '*/10 * * * *' },
       'Skipping in-process anchor cron in production because DISABLE_IN_PROCESS_ANCHOR_CRON=true',
     );
   });

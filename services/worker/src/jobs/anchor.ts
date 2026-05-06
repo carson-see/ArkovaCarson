@@ -1,11 +1,13 @@
 /**
  * Anchor Processing Job
  *
- * Processes PENDING anchors and submits them to the chain.
- * Uses a two-phase "claim before broadcast" pattern to prevent
- * double-broadcast on worker crash/restart.
+ * Submits an already-claimed anchor to the chain.
  *
- * Flow: PENDING → (claim RPC) → BROADCASTING → (chain submit) → SUBMITTED
+ * Ordinary PENDING anchors are not claimed or broadcast here. They remain in
+ * the batch queue and are processed by jobs/batch-anchor.ts under the
+ * size/age/forced-flush policy.
+ *
+ * Flow handled here: BROADCASTING → (chain submit) → SUBMITTED
  *
  * Constitution refs:
  *   - 1.4: Treasury keys never logged
@@ -14,10 +16,9 @@
  * Stories: CRIT-2, P7-TS-05, P7-TS-13, BETA-01, RACE-1
  */
 
-import { db, withDbTimeout } from '../utils/db.js';
+import { db } from '../utils/db.js';
 import type { TablesUpdate } from '../types/database.types.js';
 import { logger, createRpcLogger } from '../utils/logger.js';
-import { callRpc } from '../utils/rpc.js';
 import { getChainClientAsync } from '../chain/client.js';
 import { getNetworkDisplayName, config } from '../config.js';
 import { dispatchWebhookEvent } from '../webhooks/delivery.js';
@@ -336,207 +337,15 @@ async function revertToPending(anchorId: string, metadata: Record<string, unknow
 }
 
 /**
- * Check if anchoring is enabled.
+ * Legacy route kept for scheduler/API compatibility.
  *
- * In production: DB switchboard flag is authoritative (runtime kill switch).
- * In non-production: env var ENABLE_PROD_NETWORK_ANCHORING is authoritative,
- * with DB flag as override-only (prevents dev seed data mismatch from blocking anchoring).
- *
- * Fails closed (returns false) on errors — prevents unintended chain submissions
- * when the control plane is unreachable.
- */
-async function isAnchoringEnabled(): Promise<boolean> {
-  if (config.nodeEnv !== 'production') {
-    if (config.enableProdNetworkAnchoring) {
-      return true;
-    }
-    try {
-      const { data } = await callRpc<boolean>(db, 'get_flag', {
-        p_flag_key: 'ENABLE_PROD_NETWORK_ANCHORING',
-      });
-      if (data === true) return true;
-    } catch {
-      // Non-fatal in dev
-    }
-    return false;
-  }
-
-  // Production: DB switchboard flag is authoritative (runtime kill switch)
-  try {
-    const { data, error } = await callRpc<boolean>(db, 'get_flag', {
-      p_flag_key: 'ENABLE_PROD_NETWORK_ANCHORING',
-    });
-
-    if (error || typeof data !== 'boolean') {
-      if (config.enableProdNetworkAnchoring) {
-        logger.warn(
-          { error, dataType: typeof data },
-          'DB get_flag failed — using env ENABLE_PROD_NETWORK_ANCHORING=true as fallback',
-        );
-        return true;
-      }
-      logger.warn(
-        { error, dataType: typeof data },
-        'Failed to read ENABLE_PROD_NETWORK_ANCHORING flag — defaulting to disabled',
-      );
-      return false;
-    }
-
-    return data;
-  } catch (err) {
-    if (config.enableProdNetworkAnchoring) {
-      logger.warn({ error: err }, 'get_flag threw — using env ENABLE_PROD_NETWORK_ANCHORING=true as fallback');
-      return true;
-    }
-    logger.warn({ error: err }, 'ENABLE_PROD_NETWORK_ANCHORING flag lookup threw — defaulting to disabled');
-    return false;
-  }
-}
-
-/**
- * Process all pending anchors using the claim-before-broadcast pattern.
- *
- * 1. Atomically claim PENDING → BROADCASTING via RPC (FOR UPDATE SKIP LOCKED)
- * 2. Process each claimed anchor (already safe from double-broadcast)
- * 3. On failure, revert BROADCASTING → PENDING (or let recovery cron handle it)
+ * Ordinary PENDING anchors must stay queued for Merkle batch anchoring. This
+ * function intentionally does not call claim_pending_anchors(), does not move
+ * anchors to BROADCASTING, and does not submit single-fingerprint chain txs.
  */
 export async function processPendingAnchors(): Promise<{ processed: number; failed: number }> {
-  logger.info('Starting pending anchor processing');
-
-  // Runtime kill switch: check switchboard_flags before processing
-  const enabled = await isAnchoringEnabled();
-  if (!enabled) {
-    logger.info('Anchor processing disabled via switchboard flag');
-    return { processed: 0, failed: 0 };
-  }
-
-  // Pre-flight: check treasury has funds before claiming anchors
-  try {
-    const chainClient = await getChainClientAsync();
-    if (chainClient.hasFunds) {
-      const funded = await chainClient.hasFunds();
-      if (!funded) {
-        logger.warn('Treasury empty — skipping anchor processing until funded');
-        return { processed: 0, failed: 0 };
-      }
-    }
-  } catch (err) {
-    logger.warn({ error: err }, 'Pre-flight UTXO check failed — proceeding cautiously');
-  }
-
-  // Phase 1: Atomically claim anchors via RPC (PENDING → BROADCASTING)
-  // Wrapped in 30s timeout to prevent cron job from hanging if PostgREST is slow
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let claimResult: { data: any; error: any };
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    claimResult = await withDbTimeout(() => (db.rpc as any)('claim_pending_anchors', {
-      p_worker_id: `worker-${process.pid}`,
-      p_limit: 100, // M3: increased from 50 to clear backlogs faster (6K/hr vs 3K/hr)
-      p_exclude_pipeline: true,
-    }), 30_000);
-  } catch (timeoutErr) {
-    logger.error({ error: timeoutErr }, 'claim_pending_anchors timed out after 30s');
-    return { processed: 0, failed: 0 };
-  }
-  const { data: claimedAnchors, error: claimError } = claimResult;
-
-  if (claimError) {
-    // Fallback: if RPC doesn't exist yet (pre-migration), use legacy path
-    logger.warn({ error: claimError }, 'claim_pending_anchors RPC failed — falling back to legacy claim');
-    return legacyProcessPendingAnchors();
-  }
-
-  if (!claimedAnchors || !Array.isArray(claimedAnchors) || claimedAnchors.length === 0) {
-    logger.debug('No pending anchors claimed');
-    return { processed: 0, failed: 0 };
-  }
-
-  logger.info({ count: claimedAnchors.length }, 'Claimed pending anchors for processing');
-
-  // Phase 2: Process each claimed anchor
-  let processed = 0;
-  let failed = 0;
-
-  for (const anchor of claimedAnchors) {
-    const success = await processAnchor({
-      id: anchor.id,
-      user_id: anchor.user_id,
-      org_id: anchor.org_id,
-      fingerprint: anchor.fingerprint,
-      public_id: anchor.public_id,
-      metadata: anchor.metadata,
-      credential_type: anchor.credential_type,
-    });
-    if (success) {
-      processed++;
-    } else {
-      failed++;
-    }
-  }
-
-  logger.info({ processed, failed }, 'Finished processing pending anchors');
-  return { processed, failed };
-}
-
-/**
- * Legacy fallback: process pending anchors without the claim RPC.
- * Used when migration 0111 hasn't been applied yet.
- * This preserves the old SELECT-then-process pattern with RACE-1 status guard.
- */
-async function legacyProcessPendingAnchors(): Promise<{ processed: number; failed: number }> {
-  const { data: allPending, error: fallbackError } = await db
-    .from('anchors')
-    .select('id, user_id, org_id, fingerprint, public_id, metadata, credential_type')
-    .eq('status', 'PENDING')
-    .is('deleted_at', null)
-    .order('created_at', { ascending: true })
-    .limit(50);
-
-  if (fallbackError || !allPending || allPending.length === 0) {
-    if (fallbackError) logger.error({ error: fallbackError }, 'Legacy anchor query failed');
-    return { processed: 0, failed: 0 };
-  }
-
-  // Filter out pipeline records
-  const filtered = allPending.filter((a) => {
-    const meta = a.metadata as Record<string, unknown> | null;
-    return !meta?.pipeline_source;
-  });
-
-  if (filtered.length === 0) {
-    return { processed: 0, failed: 0 };
-  }
-
-  logger.info({ count: filtered.length }, 'Found pending user anchors (legacy fallback)');
-
-  let processed = 0;
-  let failed = 0;
-
-  for (const anchor of filtered) {
-    // Legacy: claim individually by updating status inline
-    const { count: claimed } = await db
-      .from('anchors')
-      .update({ status: 'BROADCASTING' })
-      .eq('id', anchor.id)
-      .eq('status', 'PENDING');
-
-    if (claimed === 0) {
-      logger.debug({ anchorId: anchor.id }, 'Anchor already claimed by another worker (legacy)');
-      continue;
-    }
-
-    const success = await processAnchor({
-      id: anchor.id,
-      user_id: anchor.user_id,
-      org_id: anchor.org_id,
-      fingerprint: anchor.fingerprint,
-      public_id: anchor.public_id,
-      metadata: anchor.metadata as Record<string, unknown> | null,
-      credential_type: (anchor as Record<string, unknown>).credential_type as string | null,
-    });
-    if (success) processed++; else failed++;
-  }
-
-  return { processed, failed };
+  logger.info(
+    'Individual pending-anchor processing is disabled; batch-anchor owns ordinary PENDING anchors',
+  );
+  return { processed: 0, failed: 0 };
 }

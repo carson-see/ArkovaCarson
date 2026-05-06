@@ -87,8 +87,8 @@ gcloud iam service-accounts keys delete OLD_KEY_ID \
 ```bash
 # Verify Cloud Scheduler OIDC still works
 gcloud scheduler jobs list --project=arkova1 --location=us-central1
-# Trigger a test job
-gcloud scheduler jobs run process-pending-anchors --project=arkova1 --location=us-central1
+# Trigger a batch-path test job
+gcloud scheduler jobs run process-batch-anchors --project=arkova1 --location=us-central1
 ```
 
 ### 90-Day Rotation Schedule

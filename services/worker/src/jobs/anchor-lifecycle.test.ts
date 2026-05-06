@@ -1,11 +1,11 @@
 /**
  * Anchor Lifecycle Integration Test
  *
- * HARDENING-4: Tests the full anchor lifecycle flow:
- * PENDING → (claim) → BROADCASTING → chain submit → SUBMITTED → audit logged → webhook dispatched
+ * HARDENING-4: Tests the anchor lifecycle flow:
+ * BROADCASTING → chain submit → SUBMITTED → audit logged → webhook dispatched
  *
- * This is a higher-level integration test that verifies the components
- * work together correctly, complementing the unit tests in anchor.test.ts.
+ * Ordinary PENDING anchors stay queued for Merkle batch anchoring. The legacy
+ * processPendingAnchors() entrypoint is kept as a no-op compatibility route.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -271,25 +271,20 @@ describe('anchor lifecycle: PENDING → BROADCASTING → SUBMITTED → webhook',
     );
   });
 
-  it('processes multiple anchors through the claim-then-broadcast flow', async () => {
+  it('leaves ordinary PENDING anchors queued for batch anchoring', async () => {
     seedAnchor('anc-001');
     seedAnchor('anc-002');
     seedAnchor('anc-003');
 
     const result = await processPendingAnchors();
 
-    expect(result).toEqual({ processed: 3, failed: 0 });
-
-    // All three anchors submitted
-    expect(dbState.anchors.get('anc-001')?.status).toBe('SUBMITTED');
-    expect(dbState.anchors.get('anc-002')?.status).toBe('SUBMITTED');
-    expect(dbState.anchors.get('anc-003')?.status).toBe('SUBMITTED');
-
-    // All three audit events logged
-    expect(dbState.auditEvents).toHaveLength(3);
-
-    // All three webhooks dispatched
-    expect(mockDispatchWebhookEvent).toHaveBeenCalledTimes(3);
+    expect(result).toEqual({ processed: 0, failed: 0 });
+    expect(dbState.anchors.get('anc-001')?.status).toBe('PENDING');
+    expect(dbState.anchors.get('anc-002')?.status).toBe('PENDING');
+    expect(dbState.anchors.get('anc-003')?.status).toBe('PENDING');
+    expect(dbState.auditEvents).toHaveLength(0);
+    expect(mockSubmitFingerprint).not.toHaveBeenCalled();
+    expect(mockDispatchWebhookEvent).not.toHaveBeenCalled();
   });
 
   it('does not process already-SECURED anchors', async () => {
@@ -303,40 +298,31 @@ describe('anchor lifecycle: PENDING → BROADCASTING → SUBMITTED → webhook',
     expect(mockDispatchWebhookEvent).not.toHaveBeenCalled();
   });
 
-  it('skips soft-deleted anchors in batch processing', async () => {
+  it('does not claim live or soft-deleted anchors from the pending queue', async () => {
     seedAnchor('anc-live');
     seedAnchor('anc-deleted', { deleted_at: '2026-03-10T11:00:00Z' });
 
     const result = await processPendingAnchors();
 
-    // Only the live anchor should be processed
-    expect(result).toEqual({ processed: 1, failed: 0 });
-    expect(dbState.anchors.get('anc-live')?.status).toBe('SUBMITTED');
+    expect(result).toEqual({ processed: 0, failed: 0 });
+    expect(dbState.anchors.get('anc-live')?.status).toBe('PENDING');
     expect(dbState.anchors.get('anc-deleted')?.status).toBe('PENDING');
+    expect(mockSubmitFingerprint).not.toHaveBeenCalled();
   });
 
-  it('isolates failures: one chain failure does not block others', async () => {
+  it('does not attempt individual broadcasts even when chain client would fail', async () => {
     seedAnchor('anc-001');
     seedAnchor('anc-fail');
     seedAnchor('anc-003');
-
-    // Fail on second call only
-    mockSubmitFingerprint
-      .mockResolvedValueOnce(RECEIPT)
-      .mockRejectedValueOnce(new Error('chain timeout'))
-      .mockResolvedValueOnce(RECEIPT);
+    mockSubmitFingerprint.mockRejectedValue(new Error('chain timeout'));
 
     const result = await processPendingAnchors();
 
-    expect(result).toEqual({ processed: 2, failed: 1 });
-
-    // First and third submitted, second reverted to PENDING
-    expect(dbState.anchors.get('anc-001')?.status).toBe('SUBMITTED');
+    expect(result).toEqual({ processed: 0, failed: 0 });
+    expect(dbState.anchors.get('anc-001')?.status).toBe('PENDING');
     expect(dbState.anchors.get('anc-fail')?.status).toBe('PENDING');
-    expect(dbState.anchors.get('anc-003')?.status).toBe('SUBMITTED');
-
-    // Only 2 webhooks dispatched
-    expect(mockDispatchWebhookEvent).toHaveBeenCalledTimes(2);
+    expect(dbState.anchors.get('anc-003')?.status).toBe('PENDING');
+    expect(mockSubmitFingerprint).not.toHaveBeenCalled();
   });
 
   it('webhook failure does not affect anchor SUBMITTED status', async () => {
