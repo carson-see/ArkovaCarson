@@ -86,6 +86,16 @@ vi.mock('./utils/logger.js', () => ({
   logger: mockLogger,
 }));
 
+vi.mock('./utils/sentry.js', () => ({
+  initSentry: vi.fn(),
+  withCronMonitoring: vi.fn((_name: string, _schedule: string, fn: () => unknown) => fn),
+  Sentry: {
+    setupExpressErrorHandler: vi.fn(),
+    captureException: vi.fn(),
+    captureMessage: vi.fn(),
+  },
+}));
+
 vi.mock('./jobs/anchor.js', () => ({
   processPendingAnchors: mockProcessPendingAnchors,
 }));
@@ -149,6 +159,10 @@ vi.mock('./auth.js', () => ({
 }));
 
 vi.mock('dotenv/config', () => ({}));
+
+vi.mock('compression', () => ({
+  default: () => (_req: unknown, _res: unknown, next: () => void) => next(),
+}));
 
 vi.mock('./middleware/idempotency.js', () => ({
   idempotencyMiddleware: () => (_req: unknown, _res: unknown, next: () => void) => next(),
@@ -477,6 +491,19 @@ describe('worker server', () => {
 
       expect(res.status).toBe(400);
       expect(res.body).toEqual({ error: 'Webhook processing failed' });
+    });
+  });
+
+  describe('POST /webhooks/microsoft-graph', () => {
+    it('mounts the Microsoft Graph receiver and reaches the route config guard', async () => {
+      const res = await request(app, 'POST', '/webhooks/microsoft-graph', {}, {
+        'content-type': 'application/json',
+      });
+
+      expect(res.status).toBe(503);
+      expect(res.body).toMatchObject({
+        error: { code: 'webhook_unconfigured' },
+      });
     });
   });
 

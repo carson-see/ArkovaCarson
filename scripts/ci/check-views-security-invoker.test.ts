@@ -49,12 +49,27 @@ describe('check-views-security-invoker scanFiles', () => {
     expect(fixedAfter.has('public_org_profiles')).toBe(true);
   });
 
+  it('accepts pg_dump reloptions spelling for inline security_invoker', () => {
+    const { bareCreates, fixedAfter } = scanFiles([
+      file(
+        'supabase/migrations/00000000000000_baseline.sql',
+        'CREATE OR REPLACE VIEW "public"."payment_ledger" WITH ("security_invoker"=\'true\') AS SELECT 1;',
+      ),
+    ]);
+    expect(bareCreates).toEqual([]);
+    expect(fixedAfter.has('payment_ledger')).toBe(true);
+  });
+
   it.each([
     ['single security_invoker option', 'ALTER VIEW public.payment_ledger SET (security_invoker = true);'],
     ['security_invoker = on', 'ALTER VIEW public.payment_ledger SET (security_invoker = on);'],
     [
       'security_invoker among other options',
       'ALTER VIEW public.payment_ledger SET (check_option = local, security_invoker = true);',
+    ],
+    [
+      'pg_dump quoted reloption spelling',
+      'ALTER VIEW public.payment_ledger SET ("security_invoker" = \'true\');',
     ],
   ])('treats a later ALTER VIEW SET as resolving an earlier bare CREATE: %s', (_caseName, alterSql) => {
     const { bareCreates, fixedAfter } = scanFiles([

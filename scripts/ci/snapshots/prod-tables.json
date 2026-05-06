@@ -1,6 +1,6 @@
 {
-  "_comment": "SCRUM-1306 (R0-7-FU1): snapshot of prod public.* table list, fed to scripts/ci/feedback-rules/feedback_local_matches_prod.ts. Regenerate via Supabase MCP `list_tables` after a known-good prod schema window. Last refreshed: 2026-05-05 (PR #700) — reconciled to the Path C pg_dump baseline and PATH_C_VERIFICATION_2026-05-04 schema-object evidence.",
-  "_source": "supabase MCP list_tables(project_id=vzwyaatejekddvltxyye, schemas=[public]) on 2026-04-27 + delta-verified 2026-05-04; reconciled to pg_dump baseline on 2026-05-05.",
+  "_comment": "SCRUM-1306 (R0-7-FU1): snapshot of prod public.* table list, fed to scripts/ci/feedback-rules/feedback_local_matches_prod.ts. Regenerate via Supabase MCP `list_tables` after a known-good prod schema window. Last refreshed: 2026-05-06 (PR #700 after PR #722/#695 post-merge) — reconciled to Path C pg_dump baseline evidence plus microsoft_graph_webhook_nonces prod verification.",
+  "_source": "supabase MCP list_tables(project_id=vzwyaatejekddvltxyye, schemas=[public]) on 2026-04-27 + delta-verified 2026-05-04; reconciled to pg_dump baseline on 2026-05-05; microsoft_graph_webhook_nonces verified via Supabase Management API read-only SQL on 2026-05-06.",
   "tables": [
     { "name": "adobe_sign_webhook_nonces", "schema": "public" },
     { "name": "agents", "schema": "public" },
@@ -55,6 +55,7 @@
     { "name": "kyb_events", "schema": "public" },
     { "name": "kyb_webhook_nonces", "schema": "public" },
     { "name": "memberships", "schema": "public" },
+    { "name": "microsoft_graph_webhook_nonces", "schema": "public" },
     { "name": "notifications", "schema": "public" },
     { "name": "org_credit_allocations", "schema": "public" },
     { "name": "org_credits", "schema": "public" },
@@ -100,8 +101,6 @@
   "_known_drift": {
     "in_migrations_only": [
       { "name": "activation_tokens", "reason": "created in 0023, evidently dropped out-of-band — needs investigation" },
-      { "name": "ats_webhook_nonces", "reason": "created in 0135, not present in prod — likely never deployed" },
-      { "name": "drive_webhook_nonces", "reason": "created in 0258 family, not present in prod — likely never deployed" },
       { "name": "merkle_batches", "reason": "created in 0113, dropped out-of-band — needs investigation" },
       { "name": "training_metrics", "reason": "created in 0114, dropped out-of-band — needs investigation" },
       { "name": "webhook_idempotency", "reason": "created in 0116, dropped out-of-band — needs investigation" }

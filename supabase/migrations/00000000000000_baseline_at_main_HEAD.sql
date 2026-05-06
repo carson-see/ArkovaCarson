@@ -5,7 +5,9 @@
 -- (project_ref vzwyaatejekddvltxyye), executed via local pg_dump 17 with the
 -- Supabase CLI's idempotency sed pipeline applied (CREATE TABLE → CREATE TABLE
 -- IF NOT EXISTS, CREATE FUNCTION → CREATE OR REPLACE FUNCTION, etc.). NOT a
--- reconstruction — this is byte-faithful pg_dump output of the live schema.
+-- reconstruction — this is schema-faithful pg_dump output of the live schema,
+-- with local-replay compatibility normalization for Postgres 15 images
+-- (unsupported GRANT MAINTAIN privileges omitted from three GRANT statements).
 --
 -- Purpose: replaces the historical 0000..0289 migration replay-from-zero on
 -- every fresh DB stand-up (preview branches, CLI bootstrap, npx supabase db
@@ -13928,7 +13930,7 @@ GRANT ALL ON TABLE "public"."x402_payments" TO "service_role";
 
 
 GRANT ALL ON TABLE "public"."payment_ledger" TO "anon";
-GRANT INSERT,REFERENCES,DELETE,TRIGGER,TRUNCATE,MAINTAIN,UPDATE ON TABLE "public"."payment_ledger" TO "authenticated";
+GRANT INSERT,REFERENCES,DELETE,TRIGGER,TRUNCATE,UPDATE ON TABLE "public"."payment_ledger" TO "authenticated";
 GRANT ALL ON TABLE "public"."payment_ledger" TO "service_role";
 
 
@@ -14607,8 +14609,8 @@ GRANT ALL ON TABLE "public"."attestations" TO "service_role";
 
 
 
-GRANT SELECT,REFERENCES,TRIGGER,TRUNCATE,MAINTAIN ON TABLE "public"."audit_events" TO "anon";
-GRANT SELECT,REFERENCES,TRIGGER,TRUNCATE,MAINTAIN ON TABLE "public"."audit_events" TO "authenticated";
+GRANT SELECT,REFERENCES,TRIGGER,TRUNCATE ON TABLE "public"."audit_events" TO "anon";
+GRANT SELECT,REFERENCES,TRIGGER,TRUNCATE ON TABLE "public"."audit_events" TO "authenticated";
 GRANT ALL ON TABLE "public"."audit_events" TO "service_role";
 
 
@@ -15111,4 +15113,3 @@ ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON TAB
 -- runs seed.sql in the same session, and the local seed uses unqualified public
 -- table names, so restore the normal search path after the baseline applies.
 RESET search_path;
-

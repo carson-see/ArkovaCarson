@@ -9,10 +9,13 @@ import { describe, it, expect } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
-const MIGRATION_PATH = path.join(
-  process.cwd(),
-  'supabase/migrations/0112_security_view_invoker_ssrf.sql',
-);
+function migrationPath(name: string): string {
+  const livePath = path.join(process.cwd(), 'supabase/migrations', name);
+  if (fs.existsSync(livePath)) return livePath;
+  return path.join(process.cwd(), 'docs/migrations-archive', name);
+}
+
+const MIGRATION_PATH = migrationPath('0112_security_view_invoker_ssrf.sql');
 
 describe('SEC-009: View SECURITY INVOKER', () => {
   it('migration 0112 recreates views with security_invoker = true', () => {

@@ -139,7 +139,13 @@ describe('POST /webhooks/drive (SCRUM-1211 fail-closed channel-token)', () => {
     expect(rpcMock).not.toHaveBeenCalled();
   });
 
-  it('200s and enqueues a rule event when channel-token matches', async () => {
+  // SCRUM-1661: post-runner-wiring, the webhook is a 200-only ack at-rest
+  // (ENABLE_DRIVE_CHANGES_RUNNER defaults to disabled). The runner's
+  // changes.list → enqueue_rule_event flow is exercised separately in
+  // drive-changes-runner.test.ts. This test only verifies that a valid
+  // channel-token + nonce write produces 200 without touching the
+  // legacy stub-event enqueue.
+  it('200s on valid channel-token + nonce write (runner disabled at rest)', async () => {
     dbFromMock.mockReturnValueOnce(lookupChain({
       org_id: 'org-1',
       integration_id: 'int-1',
@@ -153,9 +159,9 @@ describe('POST /webhooks/drive (SCRUM-1211 fail-closed channel-token)', () => {
       .set('X-Goog-Channel-Token', 'expected-token')
       .set('X-Goog-Message-Number', '42');
     expect(res.status).toBe(200);
-    expect(rpcMock).toHaveBeenCalledWith('enqueue_rule_event', expect.objectContaining({
-      p_org_id: 'org-1',
-    }));
+    // Legacy stub event no longer fires from the handler — the runner
+    // (when enabled) is the only path that calls enqueue_rule_event.
+    expect(rpcMock).not.toHaveBeenCalledWith('enqueue_rule_event', expect.anything());
   });
 
   // SCRUM-1242 (AUDIT-0424-26): Drive replay protection. Drive doesn't carry

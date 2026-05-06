@@ -108,9 +108,9 @@ Banned in user-visible strings: Wallet, Gas, Hash, Block, Transaction, Crypto, B
 | Transaction | Network Receipt / Anchor Receipt |
 | Hash | Fingerprint |
 | Testnet / Mainnet | Test Environment / Production Network |
-| Issue Credential | Secure Document |
+| Issue Credential (generic document action) | Secure Document |
 
-All UI copy in `src/lib/copy.ts`. CI enforced: `npm run lint:copy`. Internal code may use technical names.
+SCRUM-1672 exception: "Issue Credential" is allowed only for the restricted verified-organization credential issuance flow. Do not use it for the universal document-securing action, button, or empty state. All UI copy in `src/lib/copy.ts`. CI enforced: `npm run lint:copy`. Internal code may use technical names.
 
 ### 1.4 Security (mandatory)
 - RLS + `FORCE ROW LEVEL SECURITY` on every table.

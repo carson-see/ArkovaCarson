@@ -44,14 +44,8 @@ function localTableSet(): Set<string> {
       .filter((line) => !/^\s*--/.test(line))
       .join('\n')
       .replace(/\/\*[\s\S]*?\*\//g, '');
-    // Captures schema (group 1) + table (group 2). When schema is anything
-    // other than `public` (or absent), skip — this rule scans the public.* set.
-    // Without splitting these out, `CREATE TABLE auth.foo` would otherwise
-    // match `auth` as the table name and false-flag a non-existent drift.
-    const createRe = /(?:^|;)\s*create\s+table\s+(?:if\s+not\s+exists\s+)?([^\s(]+)\s*\(/gim;
-    let m: RegExpExecArray | null;
-    while ((m = createRe.exec(sql)) !== null) {
-      const { schema, table } = parseCreateTableTarget(m[1]);
+    for (const rawTarget of createTableTargets(sql)) {
+      const { schema, table } = parseCreateTableTarget(rawTarget);
       if (schema !== 'public') continue;
       tables.add(table);
     }
@@ -59,10 +53,111 @@ function localTableSet(): Set<string> {
   return tables;
 }
 
+function createTableTargets(sql: string): string[] {
+  const targets: string[] = [];
+  let cursor = 0;
+
+  while (cursor < sql.length) {
+    const createAt = findKeyword(sql, 'create', cursor);
+    if (createAt < 0) break;
+    cursor = createAt + 'create'.length;
+
+    if (!hasStatementBoundaryBefore(sql, createAt)) continue;
+
+    let next = skipWhitespace(sql, cursor);
+    if (!isKeywordAt(sql, next, 'table')) continue;
+    next = skipWhitespace(sql, next + 'table'.length);
+    next = skipOptionalIfNotExists(sql, next);
+
+    const target = readCreateTableTarget(sql, next);
+    if (target) targets.push(target);
+    cursor = next + target.length;
+  }
+
+  return targets;
+}
+
+function findKeyword(sql: string, keyword: string, start: number): number {
+  const lowerSql = sql.toLowerCase();
+  let cursor = lowerSql.indexOf(keyword, start);
+  while (cursor >= 0) {
+    if (isKeywordAt(sql, cursor, keyword)) return cursor;
+    cursor = lowerSql.indexOf(keyword, cursor + keyword.length);
+  }
+  return -1;
+}
+
+function hasStatementBoundaryBefore(sql: string, keywordAt: number): boolean {
+  let cursor = keywordAt - 1;
+  while (cursor >= 0 && isWhitespace(sql[cursor])) cursor -= 1;
+  return cursor < 0 || sql[cursor] === ';';
+}
+
+function skipOptionalIfNotExists(sql: string, start: number): number {
+  if (!isKeywordAt(sql, start, 'if')) return start;
+  let cursor = skipWhitespace(sql, start + 'if'.length);
+  if (!isKeywordAt(sql, cursor, 'not')) return start;
+  cursor = skipWhitespace(sql, cursor + 'not'.length);
+  if (!isKeywordAt(sql, cursor, 'exists')) return start;
+  return skipWhitespace(sql, cursor + 'exists'.length);
+}
+
+function readCreateTableTarget(sql: string, start: number): string {
+  let cursor = skipWhitespace(sql, start);
+  const targetStart = cursor;
+  let inQuotedIdentifier = false;
+
+  while (cursor < sql.length) {
+    const char = sql[cursor];
+    if (char === '"') {
+      if (inQuotedIdentifier && sql[cursor + 1] === '"') {
+        cursor += 2;
+        continue;
+      }
+      inQuotedIdentifier = !inQuotedIdentifier;
+      cursor += 1;
+      continue;
+    }
+    if (!inQuotedIdentifier && (char === '(' || isWhitespace(char))) break;
+    cursor += 1;
+  }
+
+  return sql.slice(targetStart, cursor);
+}
+
+function skipWhitespace(sql: string, start: number): number {
+  let cursor = start;
+  while (cursor < sql.length && isWhitespace(sql[cursor])) cursor += 1;
+  return cursor;
+}
+
+function isKeywordAt(sql: string, start: number, keyword: string): boolean {
+  const end = start + keyword.length;
+  if (start < 0 || end > sql.length) return false;
+  if (sql.slice(start, end).toLowerCase() !== keyword) return false;
+  return !isIdentifierChar(sql[start - 1]) && !isIdentifierChar(sql[end]);
+}
+
+function isWhitespace(char: string | undefined): boolean {
+  return char === ' ' || char === '\n' || char === '\r' || char === '\t' || char === '\f';
+}
+
+function isIdentifierChar(char: string | undefined): boolean {
+  if (!char) return false;
+  const code = char.charCodeAt(0);
+  return (
+    (code >= 48 && code <= 57) ||
+    (code >= 65 && code <= 90) ||
+    (code >= 97 && code <= 122) ||
+    char === '_' ||
+    char === '$'
+  );
+}
+
 function parseCreateTableTarget(rawTarget: string): { schema: string; table: string } {
   const parts = rawTarget.split('.');
-  const table = unquoteIdentifier(parts.at(-1) ?? rawTarget);
-  const schema = parts.length > 1 ? unquoteIdentifier(parts.at(-2) ?? 'public') : 'public';
+  const table = unquoteIdentifier(parts[parts.length - 1] ?? rawTarget);
+  const schema = parts.length > 1 ? unquoteIdentifier(parts[parts.length - 2] ?? 'public') : 'public';
   return { schema, table };
 }
 

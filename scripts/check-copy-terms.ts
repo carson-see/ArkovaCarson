@@ -49,7 +49,9 @@ export const FORBIDDEN_TERMS = [
   // (there's nothing English starting with "postgrest") don't false-positive.
   String.raw`(?<![A-Za-z0-9])postgrest`,
 
-  // SCRUM-1092: "Issue Credential" renamed to "Secure Document"
+  // SCRUM-1092 / SCRUM-1672: the generic document action is "Secure Document".
+  // "Issue Credential" is allowed only in src/lib/copy.ts for the restricted
+  // verified-org issuance flow; component/page literals remain banned.
   String.raw`(?<![-\w])issue credential(?![-\w])`,
 ];
 

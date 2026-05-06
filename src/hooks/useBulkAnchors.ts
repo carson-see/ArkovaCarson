@@ -40,11 +40,16 @@ interface UseBulkAnchorsReturn {
   cancel: () => void;
 }
 
+interface UseBulkAnchorsOptions {
+  orgId?: string | null;
+}
+
 // Process in batches of 10 to prevent browser/server timeouts
 // and provide fine-grained progress updates (SCRUM-IDT-TASK2)
 const BATCH_SIZE = 10;
 
-export function useBulkAnchors(): UseBulkAnchorsReturn {
+export function useBulkAnchors(options: UseBulkAnchorsOptions = {}): UseBulkAnchorsReturn {
+  const targetOrgId = options.orgId ?? null;
   const { canCreateCount, remaining, loading: entitlementsLoading, refresh: refreshEntitlements } = useEntitlements();
   const [loading, setLoading] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -108,6 +113,7 @@ export function useBulkAnchors(): UseBulkAnchorsReturn {
             fileSize: r.fileSize || null,
             credentialType: r.credentialType || null,
             metadata: r.metadata || null,
+            ...(targetOrgId ? { orgId: targetOrgId } : {}),
           }));
 
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -157,13 +163,16 @@ export function useBulkAnchors(): UseBulkAnchorsReturn {
           const workerUrl = WORKER_URL;
           const { data: { session } } = await supabase.auth.getSession();
           if (session) {
-            // Fetch org_id from user's profile — required by /api/recipients endpoint
-            const { data: userProfile } = await supabase
-              .from('profiles')
-              .select('org_id')
-              .eq('id', session.user.id)
-              .single();
-            const orgId = userProfile?.org_id;
+            let orgId = targetOrgId;
+            if (!orgId) {
+              // Fetch org_id from user's profile — required by /api/recipients endpoint
+              const { data: userProfile } = await supabase
+                .from('profiles')
+                .select('org_id')
+                .eq('id', session.user.id)
+                .single();
+              orgId = userProfile?.org_id ?? null;
+            }
 
             if (orgId) {
               // Fire-and-forget — don't block on recipient creation
@@ -213,7 +222,7 @@ export function useBulkAnchors(): UseBulkAnchorsReturn {
         setLoading(false);
       }
     },
-    [canCreateCount, remaining, entitlementsLoading, refreshEntitlements]
+    [canCreateCount, remaining, entitlementsLoading, refreshEntitlements, targetOrgId]
   );
 
   return {
