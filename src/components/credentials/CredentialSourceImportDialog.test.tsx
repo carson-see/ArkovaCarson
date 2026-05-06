@@ -107,6 +107,39 @@ describe('CredentialSourceImportDialog', () => {
     });
   });
 
+  it('does not show import failure when refresh callback rejects after confirm', async () => {
+    const user = userEvent.setup();
+    const onImported = vi.fn().mockRejectedValue(new Error('refresh failed'));
+    const onOpenChange = vi.fn();
+    workerFetchMock
+      .mockResolvedValueOnce(new Response(JSON.stringify(PREVIEW), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        duplicate: false,
+        anchor: { public_id: 'ARK-2026-ABC12345', record_uri: 'https://app.test/verify/ARK-2026-ABC12345' },
+        preview: PREVIEW,
+      }), { status: 201 }));
+
+    render(
+      <CredentialSourceImportDialog
+        open
+        onOpenChange={onOpenChange}
+        onImported={onImported}
+      />,
+    );
+
+    await user.type(screen.getByLabelText(/credential source url/i), 'https://www.credly.example/badges/abc');
+    await user.click(screen.getByRole('button', { name: /preview/i }));
+    expect(await screen.findByText('Cloud Architecture Fundamentals')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /^add$/i }));
+
+    await waitFor(() => {
+      expect(onOpenChange).toHaveBeenCalledWith(false);
+      expect(onImported).toHaveBeenCalledTimes(1);
+    });
+    expect(screen.queryByText(/refresh failed/i)).not.toBeInTheDocument();
+  });
+
   it('shows worker validation errors without confirming', async () => {
     const user = userEvent.setup();
     workerFetchMock.mockResolvedValueOnce(

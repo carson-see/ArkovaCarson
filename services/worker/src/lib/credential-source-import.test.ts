@@ -174,6 +174,27 @@ describe('credential-source-import', () => {
     expect(result.preview.normalized_source_url).toBe('https://final.example/credential/abc?view=public');
   });
 
+  it('uses one fetch timeout budget across redirect hops', async () => {
+    const fetchFn = vi.fn().mockResolvedValueOnce(response('', {
+      status: 302,
+      headers: { location: 'https://final.example/credential/abc' },
+    }));
+    const urlGuard = vi.fn().mockResolvedValue(false);
+    const nowSpy = vi.spyOn(Date, 'now')
+      .mockReturnValueOnce(0)
+      .mockReturnValueOnce(0)
+      .mockReturnValueOnce(5001);
+
+    await expect(buildCredentialSourceImportPreview({
+      source_url: 'https://start.example/credential/abc',
+    }, { fetchFn, urlGuard, now: () => FIXED_NOW })).rejects.toMatchObject({
+      code: 'source_fetch_timeout',
+    });
+
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+    nowSpy.mockRestore();
+  });
+
   it('blocks a redirect target when DNS guard rejects the final URL', async () => {
     const fetchFn = vi.fn().mockResolvedValueOnce(response('', {
       status: 302,

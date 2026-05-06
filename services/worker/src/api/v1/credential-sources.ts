@@ -59,17 +59,10 @@ const softDeleteUpdateSchema = z.object({
   deleted_at: z.literal('now'),
 });
 
-const orgCreditBalanceSchema = z.object({
-  balance: z.number().int().nonnegative(),
-});
-
-const orgCreditRefundUpdateSchema = z.object({
-  balance: z.number().int().nonnegative(),
-  updated_at: z.string().datetime(),
-});
-
-const orgCreditRefundResultSchema = z.object({
-  org_id: z.string().min(1),
+const orgCreditRefundRpcResultSchema = z.object({
+  success: z.literal(true),
+  balance: z.number().int().nonnegative().optional(),
+  refunded: z.number().int().positive().optional(),
 });
 
 interface AnchorReceipt {
@@ -412,28 +405,15 @@ async function markAnchorDeleted(anchorId: string, userId: string): Promise<void
 async function rollbackImportCredit(orgId: string, anchorId: string, userId: string): Promise<void> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const dbAny = db as any;
-  const { data, error } = await dbAny
-    .from('org_credits')
-    .select('balance')
-    .eq('org_id', orgId)
-    .single();
+  const { data, error } = await dbAny.rpc('refund_org_credit', {
+    p_org_id: orgId,
+    p_amount: 1,
+    p_reason: 'credential_source_import_compensation',
+    p_reference_id: anchorId,
+  });
 
   if (error) throw error;
-
-  const { balance } = orgCreditBalanceSchema.parse(data);
-  const updatePayload = orgCreditRefundUpdateSchema.parse({
-    balance: balance + 1,
-    updated_at: new Date().toISOString(),
-  });
-  const { data: updatedCredit, error: updateError } = await dbAny
-    .from('org_credits')
-    .update(updatePayload)
-    .eq('org_id', orgId)
-    .select('org_id')
-    .single();
-
-  if (updateError) throw updateError;
-  orgCreditRefundResultSchema.parse(updatedCredit);
+  orgCreditRefundRpcResultSchema.parse(data);
 
   logger.warn({ orgId, anchorId, userId }, 'Rolled back credential source import credit after post-create failure');
 }
@@ -528,7 +508,10 @@ async function handleAnchorCreateFailure(
 }
 
 function toReceipt(anchor: AnchorRecord): AnchorReceipt {
-  const publicId = anchor.public_id ?? '';
+  if (!anchor.public_id) {
+    throw new Error('Credential source anchor is missing public_id');
+  }
+  const publicId = anchor.public_id;
   return {
     public_id: publicId,
     fingerprint: anchor.fingerprint,

@@ -174,18 +174,27 @@ export function CredentialSourceImportDialog({
     if (!preview) return;
     setConfirming(true);
     setError(null);
+    let result: CredentialSourceConfirmResponse;
 
     try {
       const response = await workerFetch('/api/v1/credential-sources/import-url/confirm', {
         method: 'POST',
         body: requestBody(preview.source_payload_hash),
       });
-      const result = await parseWorkerResponse<CredentialSourceConfirmResponse>(response);
-      toast.success(result.duplicate ? LABELS.TOAST_DUPLICATE : LABELS.TOAST_ADDED);
-      await onImported?.();
-      handleOpenChange(false);
+      result = await parseWorkerResponse<CredentialSourceConfirmResponse>(response);
     } catch (err) {
       setError(err instanceof Error ? err.message : LABELS.IMPORT_FAILED);
+      setConfirming(false);
+      return;
+    }
+
+    toast.success(result.duplicate ? LABELS.TOAST_DUPLICATE : LABELS.TOAST_ADDED);
+    handleOpenChange(false);
+
+    try {
+      await onImported?.();
+    } catch {
+      // The import already succeeded; a list refresh failure should not be shown as an import failure.
     } finally {
       setConfirming(false);
     }

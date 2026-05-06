@@ -21,6 +21,7 @@ const {
   mockOrgCreditUpdateEq,
   mockOrgCreditUpdateSelect,
   mockOrgCreditUpdateSingle,
+  mockRpc,
   mockDeductOrgCredit,
 } = vi.hoisted(() => {
   const mockProfileSingle = vi.fn();
@@ -39,6 +40,7 @@ const {
   const mockOrgCreditUpdateEq = vi.fn();
   const mockOrgCreditUpdateSelect = vi.fn();
   const mockOrgCreditUpdateSingle = vi.fn();
+  const mockRpc = vi.fn();
   const mockDeductOrgCredit = vi.fn();
 
   function chain(overrides: Record<string, unknown> = {}) {
@@ -110,12 +112,13 @@ const {
     mockOrgCreditUpdateEq,
     mockOrgCreditUpdateSelect,
     mockOrgCreditUpdateSingle,
+    mockRpc,
     mockDeductOrgCredit,
   };
 });
 
 vi.mock('../../utils/db.js', () => ({
-  db: { from: mockFrom },
+  db: { from: mockFrom, rpc: mockRpc },
 }));
 
 vi.mock('../../utils/logger.js', () => ({
@@ -195,6 +198,10 @@ describe('credentialSourcesRouter', () => {
     mockOrgCreditUpdateEq.mockReturnValue({ select: mockOrgCreditUpdateSelect });
     mockOrgCreditUpdateSelect.mockReturnValue({ single: mockOrgCreditUpdateSingle });
     mockOrgCreditUpdateSingle.mockResolvedValue({ data: { org_id: 'org-1' }, error: null });
+    mockRpc.mockResolvedValue({
+      data: { success: true, balance: 10, refunded: 1 },
+      error: null,
+    });
   });
 
   it('returns a preview for authenticated users', async () => {
@@ -468,14 +475,14 @@ describe('credentialSourcesRouter', () => {
     });
     expect(mockAnchorUpdate).toHaveBeenCalledWith({ deleted_at: 'now' });
     expect(mockAnchorUpdateIs).toHaveBeenCalledWith('deleted_at', null);
-    expect(mockOrgCreditSingle).toHaveBeenCalledTimes(1);
-    expect(mockOrgCreditUpdate).toHaveBeenCalledWith(expect.objectContaining({
-      balance: 10,
-      updated_at: expect.any(String),
-    }));
-    expect(mockOrgCreditUpdateEq).toHaveBeenCalledWith('org_id', 'org-1');
-    expect(mockOrgCreditUpdateSelect).toHaveBeenCalledWith('org_id');
-    expect(mockOrgCreditUpdateSingle).toHaveBeenCalledTimes(1);
+    expect(mockRpc).toHaveBeenCalledWith('refund_org_credit', {
+      p_org_id: 'org-1',
+      p_amount: 1,
+      p_reason: 'credential_source_import_compensation',
+      p_reference_id: 'anchor-1',
+    });
+    expect(mockOrgCreditSingle).not.toHaveBeenCalled();
+    expect(mockOrgCreditUpdate).not.toHaveBeenCalled();
   });
 
   it('rejects confirmation when the source payload changed after preview', async () => {
@@ -519,6 +526,28 @@ describe('credentialSourcesRouter', () => {
       anchor_id: 'anchor-existing',
       recipient_user_id: 'user-1',
     }));
+  });
+
+  it('fails duplicate receipts closed when a legacy anchor has no public id', async () => {
+    mockAnchorsMaybeSingle.mockResolvedValue({
+      data: {
+        id: 'anchor-existing',
+        public_id: null,
+        fingerprint: 'f'.repeat(64),
+        status: 'PENDING',
+        created_at: '2026-05-05T18:00:00Z',
+      },
+      error: null,
+    });
+
+    const res = await request(makeApp())
+      .post('/api/v1/credential-sources/import-url/confirm')
+      .send({ source_url: 'https://credentials.example.com/abc', credential_type: 'CERTIFICATE' });
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe('import_failed');
+    expect(mockDeductOrgCredit).not.toHaveBeenCalled();
+    expect(mockAnchorInsert).not.toHaveBeenCalled();
   });
 
   it('rejects malformed requests before fetching', async () => {

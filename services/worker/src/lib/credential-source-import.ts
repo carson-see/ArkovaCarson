@@ -225,6 +225,7 @@ async function readResponseBytes(response: Response): Promise<Buffer> {
 async function fetchCredentialSourceResponse(
   url: string,
   fetchFn: CredentialSourceImportDeps['fetchFn'],
+  timeoutMs: number,
 ): Promise<Response> {
   try {
     return await fetchFn(url, {
@@ -234,7 +235,7 @@ async function fetchCredentialSourceResponse(
         'User-Agent': 'ArkovaCredentialSourceImporter/1.0',
       },
       redirect: 'manual',
-      signal: AbortSignal.timeout(CREDENTIAL_SOURCE_IMPORT_FETCH_TIMEOUT_MS),
+      signal: AbortSignal.timeout(timeoutMs),
     });
   } catch (error) {
     if (isAbortError(error)) {
@@ -242,6 +243,14 @@ async function fetchCredentialSourceResponse(
     }
     throw new CredentialSourceImportError('source_fetch_failed', 'Credential source could not be fetched', 422);
   }
+}
+
+function remainingFetchTimeoutMs(deadlineMs: number): number {
+  const remainingMs = deadlineMs - Date.now();
+  if (remainingMs <= 0) {
+    throw new CredentialSourceImportError('source_fetch_timeout', 'Credential source fetch timed out', 504);
+  }
+  return remainingMs;
 }
 
 function redirectTargetFromResponse(response: Response, currentUrl: string): string {
@@ -301,10 +310,16 @@ async function fetchPublicCredentialSource(
     );
   }
 
+  const fetchDeadlineMs = Date.now() + CREDENTIAL_SOURCE_IMPORT_FETCH_TIMEOUT_MS;
+
   for (let redirects = 0; redirects <= CREDENTIAL_SOURCE_IMPORT_MAX_REDIRECTS; redirects += 1) {
     await assertPublicFetchTarget(currentUrl, deps.urlGuard);
 
-    const response = await fetchCredentialSourceResponse(currentUrl, deps.fetchFn);
+    const response = await fetchCredentialSourceResponse(
+      currentUrl,
+      deps.fetchFn,
+      remainingFetchTimeoutMs(fetchDeadlineMs),
+    );
 
     if (isRedirect(response.status)) {
       if (redirects === CREDENTIAL_SOURCE_IMPORT_MAX_REDIRECTS) {
