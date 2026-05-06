@@ -33,8 +33,7 @@
 -- the file now closes the prod-vs-repo drift; re-applying via supabase
 -- migration list is a no-op because both functions use `CREATE OR REPLACE`.
 --
--- ROLLBACK
--- --------
+-- ROLLBACK:
 --   Re-run the original 0289 bodies for both functions
 --   (see supabase/migrations/0289_suborg_suspension.sql, lines 97-260).
 -- =============================================================================
