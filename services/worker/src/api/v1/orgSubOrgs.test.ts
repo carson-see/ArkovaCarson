@@ -9,6 +9,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import request from 'supertest';
+import { readFileSync } from 'node:fs';
 
 vi.mock('../../utils/db.js', () => ({
   db: { from: vi.fn() },
@@ -49,6 +50,9 @@ function buildApp(userId?: string) {
     },
   });
 }
+
+const actionParentOrgId = '22222222-2222-4222-8222-222222222222';
+const actionChildOrgId = '44444444-4444-4444-8444-444444444444';
 
 describe('GET /api/v1/org/sub-orgs (HAKI-REQ-01)', () => {
   beforeEach(() => { vi.clearAllMocks(); });
@@ -104,32 +108,43 @@ describe('POST /api/v1/org/sub-orgs/approve (HAKI-REQ-01)', () => {
     const app = buildApp();
     await request(app)
       .post('/api/v1/org/sub-orgs/approve')
-      .send({ childOrgId: 'child-1' })
+      .send({ childOrgId: actionChildOrgId })
       .expect(401);
+  });
+
+  it('400s when approve request identifiers are malformed', async () => {
+    const app = buildApp('user-1');
+    const res = await request(app)
+      .post('/api/v1/org/sub-orgs/approve')
+      .send({ childOrgId: 'child-1', parentOrgId: 'parent-1' })
+      .expect(400);
+
+    expect(res.body.error).toContain('Invalid');
+    expect(db.from).not.toHaveBeenCalled();
   });
 
   it('403s when caller is not org admin', async () => {
     vi.mocked(db.from).mockImplementation((): never =>
       makeBuilder({
-        maybeSingleData: { org_id: 'parent-1', role: 'member' },
+        maybeSingleData: { org_id: actionParentOrgId, role: 'member' },
       }) as unknown as never,
     );
     const app = buildApp('user-1');
     const res = await request(app)
       .post('/api/v1/org/sub-orgs/approve')
-      .send({ childOrgId: 'child-1' })
+      .send({ childOrgId: actionChildOrgId })
       .expect(403);
     expect(res.body.error).toBeDefined();
   });
 
   it('approves a pending affiliate without enforcing historical max_sub_orgs caps', async () => {
     const membership = makeBuilder({
-      maybeSingleData: { org_id: 'parent-1', role: 'owner' },
+      maybeSingleData: { org_id: actionParentOrgId, role: 'owner' },
     });
     const childFetch = makeBuilder({
       singleData: {
-        id: 'child-1',
-        parent_org_id: 'parent-1',
+        id: actionChildOrgId,
+        parent_org_id: actionParentOrgId,
         parent_approval_status: 'PENDING',
         display_name: 'Child A',
       },
@@ -148,12 +163,65 @@ describe('POST /api/v1/org/sub-orgs/approve (HAKI-REQ-01)', () => {
     const app = buildApp('user-1');
     const res = await request(app)
       .post('/api/v1/org/sub-orgs/approve')
-      .send({ childOrgId: 'child-1' })
+      .send({ childOrgId: actionChildOrgId, parentOrgId: actionParentOrgId })
       .expect(200);
 
-    expect(res.body).toEqual({ status: 'APPROVED', childOrgId: 'child-1' });
+    expect(res.body).toEqual({ status: 'APPROVED', childOrgId: actionChildOrgId });
+    expect(membership.eq).toHaveBeenCalledWith('org_id', actionParentOrgId);
     expect(approveUpdate.update).toHaveBeenCalledWith(expect.objectContaining({
       parent_approval_status: 'APPROVED',
+    }));
+    expect(orgBuilders).toHaveLength(0);
+  });
+});
+
+describe('POST /api/v1/org/sub-orgs/revoke (HAKI-REQ-01)', () => {
+  beforeEach(() => { vi.clearAllMocks(); });
+
+  it('400s when revoke request identifiers are malformed', async () => {
+    const app = buildApp('user-1');
+    const res = await request(app)
+      .post('/api/v1/org/sub-orgs/revoke')
+      .send({ childOrgId: 'child-1', parentOrgId: 'parent-1' })
+      .expect(400);
+
+    expect(res.body.error).toContain('Invalid');
+    expect(db.from).not.toHaveBeenCalled();
+  });
+
+  it('revokes an approved affiliate with explicit parent org scope', async () => {
+    const membership = makeBuilder({
+      maybeSingleData: { org_id: actionParentOrgId, role: 'admin' },
+    });
+    const childFetch = makeBuilder({
+      singleData: {
+        id: actionChildOrgId,
+        parent_org_id: actionParentOrgId,
+        parent_approval_status: 'APPROVED',
+        display_name: 'Child A',
+      },
+    });
+    const revokeUpdate = makeBuilder();
+    const auditInsert = makeBuilder();
+    const orgBuilders = [childFetch, revokeUpdate];
+
+    vi.mocked(db.from).mockImplementation((table: string): never => {
+      if (table === 'org_members') return membership as unknown as never;
+      if (table === 'organizations') return orgBuilders.shift() as unknown as never;
+      if (table === 'audit_events') return auditInsert as unknown as never;
+      return makeBuilder() as unknown as never;
+    });
+
+    const app = buildApp('user-1');
+    const res = await request(app)
+      .post('/api/v1/org/sub-orgs/revoke')
+      .send({ childOrgId: actionChildOrgId, parentOrgId: actionParentOrgId })
+      .expect(200);
+
+    expect(res.body).toEqual({ status: 'REVOKED', childOrgId: actionChildOrgId });
+    expect(membership.eq).toHaveBeenCalledWith('org_id', actionParentOrgId);
+    expect(revokeUpdate.update).toHaveBeenCalledWith(expect.objectContaining({
+      parent_approval_status: 'REVOKED',
     }));
     expect(orgBuilders).toHaveLength(0);
   });
@@ -395,12 +463,17 @@ describe('POST /api/v1/org/sub-orgs/create (HAKI-REQ-01)', () => {
     }));
   });
 
-  it('500s and cleans up the child org when creation audit fails', async () => {
+  it('500s and cleans up the child org when creation audit fails after dependent rows are inserted', async () => {
     const auditInsert = {
       ...makeBuilder(),
       insert: vi.fn(async () => ({ data: null, error: { message: 'audit unavailable' } })),
     };
-    const { cleanupDelete } = setupCreateRouteDb({ auditInsert });
+    const {
+      cleanupDelete,
+      memberInsert,
+      creditInsert,
+      inviteInsert,
+    } = setupCreateRouteDb({ auditInsert, adminProfile: null });
 
     const app = buildApp(userId);
     const res = await request(app)
@@ -409,7 +482,35 @@ describe('POST /api/v1/org/sub-orgs/create (HAKI-REQ-01)', () => {
       .expect(500);
 
     expect(res.body.error).toContain('audit');
+    expect(memberInsert.insert).toHaveBeenCalled();
+    expect(creditInsert.insert).toHaveBeenCalled();
+    expect(inviteInsert.insert).toHaveBeenCalled();
     expect(cleanupDelete.delete).toHaveBeenCalled();
     expect(cleanupDelete.eq).toHaveBeenCalledWith('id', childOrgId);
+  });
+
+  it('documents organization-delete cascades for affiliate cleanup dependencies', () => {
+    const orgMembersMigration = readFileSync(
+      new URL('../../../../../supabase/migrations/0087_org_members.sql', import.meta.url),
+      'utf8',
+    );
+    const orgCreditsMigration = readFileSync(
+      new URL('../../../../../supabase/migrations/0278_org_credits_and_allocations.sql', import.meta.url),
+      'utf8',
+    );
+    const invitationsMigration = readFileSync(
+      new URL('../../../../../supabase/migrations/0013_invite_member_function.sql', import.meta.url),
+      'utf8',
+    );
+
+    expect(orgMembersMigration).toMatch(
+      /org_id\s+uuid\s+NOT NULL REFERENCES organizations\(id\) ON DELETE CASCADE/i,
+    );
+    expect(orgCreditsMigration).toMatch(
+      /org_id\s+uuid\s+PRIMARY KEY REFERENCES organizations\(id\) ON DELETE CASCADE/i,
+    );
+    expect(invitationsMigration).toMatch(
+      /org_id\s+uuid\s+NOT NULL REFERENCES organizations\(id\) ON DELETE CASCADE/i,
+    );
   });
 });

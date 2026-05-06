@@ -47,6 +47,11 @@ const CreateAffiliateOrgSchema = z.object({
   adminEmail: z.string().trim().toLowerCase().email(),
 });
 
+const AffiliateActionSchema = z.object({
+  childOrgId: z.string().uuid(),
+  parentOrgId: z.string().uuid().optional(),
+});
+
 type CreateAffiliateOrgInput = z.infer<typeof CreateAffiliateOrgSchema>;
 
 interface RouteFailure {
@@ -527,7 +532,7 @@ orgSubOrgsRouter.post('/create', async (req: Request, res: Response) => {
  * POST /api/v1/org/sub-orgs/approve
  *
  * Parent org admin approves a pending sub-org affiliation.
- * Body: { childOrgId: string }
+ * Body: { childOrgId: string, parentOrgId?: string }
  */
 orgSubOrgsRouter.post('/approve', async (req: Request, res: Response) => {
   try {
@@ -537,7 +542,13 @@ orgSubOrgsRouter.post('/approve', async (req: Request, res: Response) => {
       return;
     }
 
-    const { childOrgId, parentOrgId } = req.body as { childOrgId?: string; parentOrgId?: string };
+    const parsed = AffiliateActionSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: 'Invalid sub-organization action details' });
+      return;
+    }
+
+    const { childOrgId, parentOrgId } = parsed.data;
     const { orgId, role } = await getUserOrgInfo(userId, parentOrgId);
     if (!orgId) {
       res.status(parentOrgId ? 403 : 400).json({
@@ -550,11 +561,6 @@ orgSubOrgsRouter.post('/approve', async (req: Request, res: Response) => {
 
     if (!isOrgAdmin(role)) {
       res.status(403).json({ error: 'Admin permissions required' });
-      return;
-    }
-
-    if (!childOrgId) {
-      res.status(400).json({ error: 'childOrgId is required' });
       return;
     }
 
@@ -619,7 +625,7 @@ orgSubOrgsRouter.post('/approve', async (req: Request, res: Response) => {
  * POST /api/v1/org/sub-orgs/revoke
  *
  * Parent org admin revokes an approved sub-org affiliation.
- * Body: { childOrgId: string }
+ * Body: { childOrgId: string, parentOrgId?: string }
  */
 orgSubOrgsRouter.post('/revoke', async (req: Request, res: Response) => {
   try {
@@ -629,7 +635,13 @@ orgSubOrgsRouter.post('/revoke', async (req: Request, res: Response) => {
       return;
     }
 
-    const { childOrgId, parentOrgId } = req.body as { childOrgId?: string; parentOrgId?: string };
+    const parsed = AffiliateActionSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: 'Invalid sub-organization action details' });
+      return;
+    }
+
+    const { childOrgId, parentOrgId } = parsed.data;
     const { orgId, role } = await getUserOrgInfo(userId, parentOrgId);
     if (!orgId) {
       res.status(parentOrgId ? 403 : 400).json({
@@ -642,11 +654,6 @@ orgSubOrgsRouter.post('/revoke', async (req: Request, res: Response) => {
 
     if (!isOrgAdmin(role)) {
       res.status(403).json({ error: 'Admin permissions required' });
-      return;
-    }
-
-    if (!childOrgId) {
-      res.status(400).json({ error: 'childOrgId is required' });
       return;
     }
 
