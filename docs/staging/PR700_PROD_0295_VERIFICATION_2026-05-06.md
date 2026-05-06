@@ -9,17 +9,41 @@
 - Applied via: Supabase Management API `POST /v1/projects/vzwyaatejekddvltxyye/database/migrations`
 - Authorization: Carson explicitly authorized Codex to apply `0295` in the PR #700 continuation thread on 2026-05-06.
 
-## Ledger Drift Blocker
+## Ledger Reconciliation
 
-After the 2026-05-06 Arkova migration-rule clarification, this migration is
-**not Done** because prod recorded the applied migration under timestamp version
-`20260506113532` instead of numeric version `0295`.
+After the 2026-05-06 Arkova migration-rule clarification, the original prod
+ledger row was identified as drift because prod recorded the applied migration
+under timestamp version `20260506113532` instead of numeric version `0295`.
 
-The schema effects below are real and verified, but the ledger is not reconciled
-to the required numeric convention. Stop before merging #700 or deploying the
-prod worker until Carson/operator explicitly reconciles the prod Supabase
-migration ledger. Do not run `migration repair`, prod `db push --linked`, or any
-other ledger mutation from Codex without explicit sign-off.
+Carson explicitly authorized the `0295` ledger repair on 2026-05-06. Codex then
+ran a guarded, metadata-only Supabase Management API `/database/query`
+transaction that:
+
+- locked only `supabase_migrations.schema_migrations`;
+- verified exactly one timestamp row existed;
+- verified no numeric `0295` row existed;
+- rechecked the schema hardening effects before writing;
+- updated only the existing ledger row's `version` and `name`;
+- preserved the ledger row's `statements` payload.
+
+Post-repair prod ledger state:
+
+```json
+{
+  "ledger_rows": [
+    {
+      "version": "0295",
+      "name": "pr700_rls_baseline_reconciliation",
+      "stmt_count": 1,
+      "statements_md5": "20bf23aef9e1b1e1ea7ad65897814216"
+    }
+  ],
+  "ledger_0295_count": 1,
+  "ledger_timestamp_count": 0
+}
+```
+
+No DDL or application-table data was changed by the repair.
 
 ## Preflight
 
@@ -73,6 +97,9 @@ Management API migration list after apply:
 }
 ```
 
+This was the pre-repair ledger state. It was reconciled after explicit sign-off;
+see **Ledger Reconciliation** above.
+
 Read-only SQL postflight at `2026-05-06T11:36:07.542572+00:00`:
 
 ```json
@@ -115,12 +142,11 @@ All local migrations are applied in prod.
 
 This result came from the older drift gate, which accepted matching migration
 names even when prod used a timestamp ledger version. PR #700 now adds a stricter
-PR-owned numeric migration check so this exact `0295` state is surfaced as a
-blocking ledger drift finding.
+PR-owned numeric migration check so timestamped rows cannot hide numeric ledger
+drift again. After the repair, that stricter check is expected to pass.
 
 ## Remaining #700 Gates
 
-- Prod migration ledger reconciliation for `0295` is required before Done.
 - Real #700 worker/staging T2 behavior validation is still owed. Shared staging remains coordinated with active #695/#697 work unless explicitly released or an isolated environment is approved.
 - Review approval is still required before merge.
 - Do not merge #700 without explicit user approval.
