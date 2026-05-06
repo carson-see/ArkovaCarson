@@ -14,7 +14,7 @@ the active migration-ledger stop flag is being reconciled.
 - Uses the required command:
 
 ```sql
-SET statement_timeout = '20s'; SELECT refresh_pipeline_dashboard_cache();
+SET statement_timeout = '50s'; SELECT refresh_pipeline_dashboard_cache();
 ```
 
 It does not touch `vacuum-anchors`, `batch-anchors`, Cloud Scheduler jobs, or
@@ -146,7 +146,7 @@ Expected result:
 - `cron_jobs` contains exactly one row.
 - `jobname` is `refresh-pipeline-dashboard-cache`.
 - `active` is `true`.
-- `command` is `SET statement_timeout = '20s'; SELECT refresh_pipeline_dashboard_cache();`.
+- `command` is `SET statement_timeout = '50s'; SELECT refresh_pipeline_dashboard_cache();`.
 - `pipeline_stats.updated_at` advances within two cron ticks.
 
 ## Rollback

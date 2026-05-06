@@ -36,7 +36,7 @@ describe('pipeline dashboard cache cron SQL', () => {
 
   it('uses the SET-prefixed command required by the cache refresh runbook', () => {
     expect(PIPELINE_DASHBOARD_CACHE_COMMAND).toBe(
-      "SET statement_timeout = '20s'; SELECT refresh_pipeline_dashboard_cache();",
+      "SET statement_timeout = '50s'; SELECT refresh_pipeline_dashboard_cache();",
     );
   });
 

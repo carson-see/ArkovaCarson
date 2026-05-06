@@ -3,7 +3,7 @@ import { pathToFileURL } from 'node:url';
 export const PIPELINE_DASHBOARD_CACHE_JOB_NAME = 'refresh-pipeline-dashboard-cache';
 export const PIPELINE_DASHBOARD_CACHE_SCHEDULE = '* * * * *';
 export const PIPELINE_DASHBOARD_CACHE_COMMAND =
-  "SET statement_timeout = '20s'; SELECT refresh_pipeline_dashboard_cache();";
+  "SET statement_timeout = '50s'; SELECT refresh_pipeline_dashboard_cache();";
 export const PIPELINE_DASHBOARD_SUPPORT_INDEX_NAME = 'idx_anchors_pipeline_status';
 export const PIPELINE_DASHBOARD_SUPPORT_INDEX_SQL = `
 CREATE INDEX CONCURRENTLY ${PIPELINE_DASHBOARD_SUPPORT_INDEX_NAME}
