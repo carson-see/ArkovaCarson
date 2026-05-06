@@ -608,6 +608,9 @@ describe('createChainClient mainnet signing variants', () => {
     mockConfig.bitcoinKmsKeyId = undefined;
     mockConfig.kmsProvider = undefined;
     mockConfig.gcpKmsKeyResourceName = undefined;
+    mockConfig.gcpKmsProjectId = undefined;
+    mockConfig.forceDynamicFeeEstimation = false;
+    mockConfig.bitcoinMaxFeeRate = undefined;
     mockConfig.bitcoinUtxoProvider = 'mempool';
   });
 

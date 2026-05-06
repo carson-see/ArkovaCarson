@@ -60,18 +60,18 @@ const {
   const legacyAllPendingLimit = vi.fn().mockResolvedValue({ data: [], error: null });
 
   // anchors.update().eq().eq() — chained, thenable
-  let anchorUpdateResult: Record<string, unknown> = { error: null, count: 1 };
+  let anchorUpdateResults: Array<Record<string, unknown>> = [];
   const anchorUpdateChain: Record<string, unknown> = {};
   anchorUpdateChain.eq = vi.fn(() => anchorUpdateChain);
   anchorUpdateChain.then = (
     resolve?: (v: unknown) => unknown,
     reject?: (e: unknown) => unknown,
-  ) => Promise.resolve(anchorUpdateResult).then(resolve, reject);
-  const setAnchorUpdateResult = (r: Record<string, unknown>) => {
-    anchorUpdateResult = r;
+  ) => Promise.resolve(anchorUpdateResults.shift() ?? { error: null, count: 1 }).then(resolve, reject);
+  const setAnchorUpdateResult = (...results: Array<Record<string, unknown>>) => {
+    anchorUpdateResults = [...results];
   };
   const resetAnchorUpdateResult = () => {
-    anchorUpdateResult = { error: null, count: 1 };
+    anchorUpdateResults = [];
   };
 
   // extraction_manifests.update().eq() — used to link manifest to anchor.
@@ -384,6 +384,12 @@ describe('processAnchor fee ceiling (ECON-1)', () => {
 
     const result = await processAnchor(BASE_ANCHOR);
     expect(result).toBe(true);
+    expect(mockEstimateFee).toHaveBeenCalledOnce();
+    expect(mockSubmitFingerprint).toHaveBeenCalledOnce();
+    expect(manifestLimit).toHaveBeenCalledOnce();
+    expect(mockAnchorsUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'SUBMITTED' }),
+    );
   });
 });
 
@@ -412,12 +418,21 @@ describe('processAnchor extraction manifest linkage (VAI-01)', () => {
 
     const result = await processAnchor(BASE_ANCHOR);
     expect(result).toBe(true);
+    expect(manifestLimit).toHaveBeenCalledOnce();
+    expect(mockSubmitFingerprint).toHaveBeenCalledOnce();
+    expect(mockManifestUpdate).not.toHaveBeenCalled();
+    expect(mockAnchorsUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'SUBMITTED' }),
+    );
   });
 });
 
 describe('processAnchor RACE-1 count guard', () => {
   it('returns false when SUBMITTED update affected zero rows', async () => {
-    setAnchorUpdateResult({ error: null, count: 0 });
+    setAnchorUpdateResult(
+      { error: null, count: 1 },
+      { error: null, count: 0 },
+    );
 
     const result = await processAnchor(BASE_ANCHOR);
     expect(result).toBe(false);

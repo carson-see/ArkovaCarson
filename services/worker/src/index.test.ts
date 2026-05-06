@@ -1070,7 +1070,7 @@ describe('worker server', () => {
           .set('Content-Type', 'application/json')
           .send({ ok: true });
 
-        expect([400, 401, 403, 500, 501, 503]).toContain(res.status);
+        expect([400, 401, 403, 501, 503]).toContain(res.status);
       }
     });
 
