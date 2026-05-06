@@ -587,6 +587,10 @@ describe('processPendingAnchors treasury pre-flight', () => {
     mockRpc.mockResolvedValueOnce({ data: [], error: null });
     const result = await processPendingAnchors();
     expect(result).toEqual({ processed: 0, failed: 0 });
+    expect(mockRpc).toHaveBeenCalledWith('claim_pending_anchors', expect.objectContaining({
+      p_exclude_pipeline: true,
+      p_limit: 100,
+    }));
   });
 });
 
@@ -601,6 +605,8 @@ describe('processPendingAnchors claim RPC', () => {
     mockWithDbTimeout.mockRejectedValueOnce(new Error('timed out'));
     const result = await processPendingAnchors();
     expect(result).toEqual({ processed: 0, failed: 0 });
+    expect(mockWithDbTimeout).toHaveBeenCalledWith(expect.any(Function), 30_000);
+    expect(mockRpc).not.toHaveBeenCalled();
   });
 
   it('falls back to legacy path when claim RPC errors', async () => {
@@ -608,6 +614,8 @@ describe('processPendingAnchors claim RPC', () => {
     legacyAllPendingLimit.mockResolvedValueOnce({ data: [], error: null });
     const result = await processPendingAnchors();
     expect(result).toEqual({ processed: 0, failed: 0 });
+    expect(mockRpc).toHaveBeenCalledWith('claim_pending_anchors', expect.any(Object));
+    expect(legacyAllPendingLimit).toHaveBeenCalledOnce();
   });
 
   it('returns 0/0 when claim RPC returns no rows', async () => {
@@ -649,6 +657,7 @@ describe('processPendingAnchors legacy fallback', () => {
     legacyAllPendingLimit.mockResolvedValueOnce({ data: null, error: { message: 'select failed' } });
     const result = await processPendingAnchors();
     expect(result).toEqual({ processed: 0, failed: 0 });
+    expect(legacyAllPendingLimit).toHaveBeenCalledOnce();
   });
 
   it('skips pipeline anchors in legacy fallback', async () => {
@@ -668,6 +677,8 @@ describe('processPendingAnchors legacy fallback', () => {
     });
     const result = await processPendingAnchors();
     expect(result).toEqual({ processed: 0, failed: 0 });
+    expect(legacyAllPendingLimit).toHaveBeenCalledOnce();
+    expect(mockAnchorsUpdate).not.toHaveBeenCalled();
   });
 
   it('skips anchors that lose the BROADCASTING claim race', async () => {
@@ -688,5 +699,8 @@ describe('processPendingAnchors legacy fallback', () => {
     setAnchorUpdateResult({ error: null, count: 0 });
     const result = await processPendingAnchors();
     expect(result).toEqual({ processed: 0, failed: 0 });
+    expect(legacyAllPendingLimit).toHaveBeenCalledOnce();
+    expect(mockAnchorsUpdate).toHaveBeenCalledWith({ status: 'BROADCASTING' });
+    expect(mockSubmitFingerprint).not.toHaveBeenCalled();
   });
 });

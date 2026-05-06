@@ -567,15 +567,20 @@ describe('SupabaseChainIndexLookup', () => {
   });
 
   it('evicts stale entries when capacity hit and a prior entry has expired', async () => {
-    const ttl = 5;
-    const tiny = new SupabaseChainIndexLookup(ttl, 1);
-    mockMaybeSingle.mockResolvedValue({ data: null, error: null });
-    await tiny.lookupFingerprint('fp_x');
-    expect(tiny.cacheSize).toBe(1);
-    await new Promise((r) => setTimeout(r, ttl + 5));
-    await tiny.lookupFingerprint('fp_y');
-    // Stale fp_x evicted via _evictStale, fp_y inserted → still 1 entry
-    expect(tiny.cacheSize).toBe(1);
+    vi.useFakeTimers();
+    try {
+      const ttl = 5;
+      const tiny = new SupabaseChainIndexLookup(ttl, 1);
+      mockMaybeSingle.mockResolvedValue({ data: null, error: null });
+      await tiny.lookupFingerprint('fp_x');
+      expect(tiny.cacheSize).toBe(1);
+      vi.advanceTimersByTime(ttl + 5);
+      await tiny.lookupFingerprint('fp_y');
+      // Stale fp_x evicted via _evictStale, fp_y inserted → still 1 entry
+      expect(tiny.cacheSize).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('evicts oldest entry (LRU) when at capacity with no expirations', async () => {

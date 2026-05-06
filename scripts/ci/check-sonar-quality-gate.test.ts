@@ -1,12 +1,12 @@
 /**
- * SCRUM-1304 — Sonar gate verification logic tests.
+ * SCRUM-1304 / SCRUM-1681 — Sonar gate verification logic tests.
  *
  * The HTTP fetch + main() are not unit-tested (network-bound); the pure
  * `verifyGate` function is tested across the full pass/fail matrix.
  */
 
 import { describe, it, expect } from 'vitest';
-import { verifyGate } from './check-sonar-quality-gate.js';
+import { shouldFailOnMissingToken, verifyGate, verifyNewCodeDefinition } from './check-sonar-quality-gate.js';
 
 const COMPLETE_GATE = {
   id: 'gate-1',
@@ -19,6 +19,15 @@ const COMPLETE_GATE = {
     { metric: 'new_maintainability_rating', op: 'GT' as const, error: '1' },
   ],
 };
+
+const BASELINE_TODAY = '2026-05-05';
+
+function newCodeSettings(type: string, period: string) {
+  return {
+    'sonar.leak.period.type': type,
+    'sonar.leak.period': period,
+  };
+}
 
 describe('verifyGate (SCRUM-1304)', () => {
   it('passes on a complete Sonar way gate', () => {
@@ -95,5 +104,48 @@ describe('verifyGate (SCRUM-1304)', () => {
     });
     expect(r.ok).toBe(false);
     expect(r.weak[0]).toContain('op');
+  });
+});
+
+describe('verifyNewCodeDefinition (SCRUM-1681)', () => {
+  it('passes on the 2026-05-05 manual baseline', () => {
+    const r = verifyNewCodeDefinition(newCodeSettings('date', BASELINE_TODAY), BASELINE_TODAY);
+
+    expect(r.ok).toBe(true);
+    expect(r.failures).toEqual([]);
+  });
+
+  it.each([
+    [
+      'previous_version drift',
+      newCodeSettings('previous_version', 'previous_version'),
+      [
+        'sonar.leak.period.type is previous_version; expected date',
+        'sonar.leak.period is previous_version; expected YYYY-MM-DD date >= 2026-05-05',
+      ],
+    ],
+    ['pre-reset baseline', newCodeSettings('date', '2026-03-11'), ['before reset floor 2026-05-05']],
+    ['impossible calendar date', newCodeSettings('date', '2026-02-31'), ['not a real calendar date']],
+    ['future baseline', newCodeSettings('date', '2026-05-06'), ['is in the future']],
+    ['missing baseline type', { 'sonar.leak.period': BASELINE_TODAY }, ['sonar.leak.period.type missing']],
+    ['missing baseline date', { 'sonar.leak.period.type': 'date' }, ['sonar.leak.period missing']],
+  ])('fails on %s', (_name, settings, expectedFailures) => {
+    const r = verifyNewCodeDefinition(settings, BASELINE_TODAY);
+
+    expect(r.ok).toBe(false);
+    for (const expected of expectedFailures) {
+      expect(r.failures.join('\n')).toContain(expected);
+    }
+  });
+});
+
+describe('shouldFailOnMissingToken (SCRUM-1681)', () => {
+  it('fails closed when token is missing in GitHub Actions', () => {
+    expect(shouldFailOnMissingToken({ GITHUB_ACTIONS: 'true' })).toBe(true);
+    expect(shouldFailOnMissingToken({ CI: 'true' })).toBe(true);
+  });
+
+  it('allows local tokenless runs to skip', () => {
+    expect(shouldFailOnMissingToken({})).toBe(false);
   });
 });

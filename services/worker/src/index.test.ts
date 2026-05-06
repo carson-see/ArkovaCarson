@@ -9,7 +9,7 @@
  * are captured during the first import and tested separately from route tests.
  */
 
-import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vitest';
 import type { Express } from 'express';
 import supertest from 'supertest';
 
@@ -93,6 +93,16 @@ vi.mock('./utils/logger.js', () => ({
   logger: mockLogger,
 }));
 
+vi.mock('./utils/sentry.js', () => ({
+  initSentry: vi.fn(),
+  withCronMonitoring: vi.fn((_name: string, _schedule: string, fn: () => unknown) => fn),
+  Sentry: {
+    setupExpressErrorHandler: vi.fn(),
+    captureException: vi.fn(),
+    captureMessage: vi.fn(),
+  },
+}));
+
 vi.mock('./jobs/anchor.js', () => ({
   processPendingAnchors: mockProcessPendingAnchors,
 }));
@@ -166,6 +176,10 @@ vi.mock('./auth.js', () => ({
 }));
 
 vi.mock('dotenv/config', () => ({}));
+
+vi.mock('compression', () => ({
+  default: () => (_req: unknown, _res: unknown, next: () => void) => next(),
+}));
 
 vi.mock('./middleware/idempotency.js', () => ({
   idempotencyMiddleware: () => (_req: unknown, _res: unknown, next: () => void) => next(),
@@ -301,6 +315,14 @@ function mockDbChain(result: { data: unknown; error: unknown }) {
   chain.is.mockReturnValue(chain);
   chain.order.mockReturnValue(chain);
   return chain;
+}
+
+function restoreEnv(key: string, value: string | undefined): void {
+  if (value === undefined) {
+    delete process.env[key];
+    return;
+  }
+  process.env[key] = value;
 }
 
 // Import module once — side effects (listen, cron, shutdown) run at import time
@@ -498,6 +520,19 @@ describe('worker server', () => {
 
       expect(res.status).toBe(400);
       expect(res.body).toEqual({ error: 'Webhook processing failed' });
+    });
+  });
+
+  describe('POST /webhooks/microsoft-graph', () => {
+    it('mounts the Microsoft Graph receiver and reaches the route config guard', async () => {
+      const res = await request(app, 'POST', '/webhooks/microsoft-graph', {}, {
+        'content-type': 'application/json',
+      });
+
+      expect(res.status).toBe(503);
+      expect(res.body).toMatchObject({
+        error: { code: 'webhook_unconfigured' },
+      });
     });
   });
 
@@ -945,7 +980,14 @@ describe('worker server', () => {
   });
 
   describe('mount-level route sweep for src/index.ts coverage', () => {
+    const webhookEnvSnapshot: Record<string, string | undefined> = {};
+
     beforeEach(() => {
+      webhookEnvSnapshot.MIDDESK_WEBHOOK_SECRET = process.env.MIDDESK_WEBHOOK_SECRET;
+      webhookEnvSnapshot.CHECKR_WEBHOOK_SECRET = process.env.CHECKR_WEBHOOK_SECRET;
+      webhookEnvSnapshot.ENABLE_VEREMARK_WEBHOOK = process.env.ENABLE_VEREMARK_WEBHOOK;
+      webhookEnvSnapshot.VEREMARK_WEBHOOK_SECRET = process.env.VEREMARK_WEBHOOK_SECRET;
+
       mockDbFrom.mockReset();
       mockCallRpc.mockReset();
       mockEstimateFee.mockReset();
@@ -953,6 +995,13 @@ describe('worker server', () => {
       delete process.env.CHECKR_WEBHOOK_SECRET;
       delete process.env.ENABLE_VEREMARK_WEBHOOK;
       delete process.env.VEREMARK_WEBHOOK_SECRET;
+    });
+
+    afterEach(() => {
+      restoreEnv('MIDDESK_WEBHOOK_SECRET', webhookEnvSnapshot.MIDDESK_WEBHOOK_SECRET);
+      restoreEnv('CHECKR_WEBHOOK_SECRET', webhookEnvSnapshot.CHECKR_WEBHOOK_SECRET);
+      restoreEnv('ENABLE_VEREMARK_WEBHOOK', webhookEnvSnapshot.ENABLE_VEREMARK_WEBHOOK);
+      restoreEnv('VEREMARK_WEBHOOK_SECRET', webhookEnvSnapshot.VEREMARK_WEBHOOK_SECRET);
     });
 
     it('hydrates detailed health with anchoring enrichments', async () => {

@@ -52,13 +52,26 @@ describe('ensureOrgNotSuspended (SCRUM-1652 ORG-08)', () => {
     expect(result.message).toContain('connection lost');
   });
 
-  it('treats data=null (org row missing) as ok — not suspended (defensive default)', async () => {
-    // is_org_suspended is `coalesce(.., false)` so data=null only happens
-    // if the RPC itself returns null without error. Per the SQL, this
-    // shouldn't occur, but the worker contract should fail-open here so
-    // an RPC quirk doesn't break the entire write path of a valid org.
+  it('returns ok=false code=guard_lookup_failed on data=null without error (CodeRabbit fail-closed)', async () => {
+    // is_org_suspended is `coalesce(..., false)` so the SQL itself never
+    // returns null. An RPC giving back data=null AND error=null is an
+    // anomaly — a half-broken pooler, a serialized payload that didn't
+    // round-trip, etc. CodeRabbit (PR #689 follow-up) flagged the prior
+    // fail-open here as letting a write path proceed against a degraded
+    // DB. The guard now reports the anomaly so the caller's existing
+    // `guard_lookup_failed` handling (fail-closed on write paths) fires.
     rpcMock.mockResolvedValueOnce({ data: null, error: null });
     const result = await ensureOrgNotSuspended(ORG_ID);
-    expect(result).toEqual({ ok: true });
+    if (result.ok) throw new Error('expected guard_lookup_failed');
+    expect(result.code).toBe('guard_lookup_failed');
+    expect(result.message).toContain('non-boolean');
+  });
+
+  it('returns ok=false code=guard_lookup_failed when the RPC promise rejects (CodeRabbit fail-closed)', async () => {
+    rpcMock.mockRejectedValueOnce(new Error('socket hang up'));
+    const result = await ensureOrgNotSuspended(ORG_ID);
+    if (result.ok) throw new Error('expected guard_lookup_failed');
+    expect(result.code).toBe('guard_lookup_failed');
+    expect(result.message).toContain('socket hang up');
   });
 });
