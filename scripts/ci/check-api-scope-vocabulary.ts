@@ -300,7 +300,9 @@ export function extractSqlConstraintScopes(sql: string, constraintName = 'api_ke
     .filter((line) => !line.trimStart().startsWith('--'))
     .join('\n');
   const escapedName = constraintName.replaceAll(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
-  const constraintStart = uncommentedSql.search(new RegExp(String.raw`ADD\s+CONSTRAINT\s+${escapedName}`, 'i'));
+  const constraintStart = uncommentedSql.search(
+    new RegExp(String.raw`(?:ADD\s+)?CONSTRAINT\s+"?${escapedName}"?`, 'i'),
+  );
   if (constraintStart === -1) return [];
 
   const afterConstraint = uncommentedSql.slice(constraintStart);
@@ -308,10 +310,10 @@ export function extractSqlConstraintScopes(sql: string, constraintName = 'api_ke
   if (arrayStart === -1) return [];
 
   const afterArray = afterConstraint.slice(arrayStart);
-  const arrayEnd = afterArray.search(/\]\s*::\s*text\s*\[\]/i);
+  const arrayEnd = afterArray.indexOf(']');
   if (arrayEnd === -1) return [];
 
-  return extractQuotedValues(afterArray.slice(0, arrayEnd));
+  return extractQuotedValues(afterArray.slice(0, arrayEnd + 1)).filter((value) => value !== 'text');
 }
 
 export function extractMarkdownCodeScopes(markdown: string): string[] {
@@ -432,7 +434,7 @@ export function collectScopeVocabularyViolations(surfaces: ScopeVocabularySurfac
 export function latestConstraintMigration(repo: string, constraintName: string): string {
   const migrationsDir = join(repo, 'supabase', 'migrations');
   const escapedName = constraintName.replaceAll(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
-  const matcher = new RegExp(String.raw`ADD\s+CONSTRAINT\s+${escapedName}`, 'i');
+  const matcher = new RegExp(String.raw`(?:ADD\s+)?CONSTRAINT\s+"?${escapedName}"?`, 'i');
   const candidates = readdirSync(migrationsDir)
     .filter((file) => file.endsWith('.sql'))
     .sort()

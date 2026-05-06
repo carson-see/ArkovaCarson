@@ -50,18 +50,24 @@ const CREATE_VIEW_REGEX = new RegExp(
   `CREATE\\s+(?:OR\\s+REPLACE\\s+)?(?!MATERIALIZED\\s+)VIEW\\s+${SCHEMA_PREFIX}(${VIEW_NAME})`,
   'gi',
 );
+const SECURITY_INVOKER_KEY = `(?:"security_invoker"|\\bsecurity_invoker\\b)`;
+const SECURITY_INVOKER_TRUE_VALUE = `(?:'?(?:true|on)'?)`;
+const SECURITY_INVOKER_FALSE_VALUE = `(?:'?(?:false|off)'?)`;
 
 // Match `ALTER VIEW <name> SET (security_invoker = true|on)`. The optional
 // `IF EXISTS` and schema-qualifier mirror Postgres' actual ALTER VIEW grammar.
 const ALTER_FIX_REGEX = new RegExp(
-  `ALTER\\s+VIEW\\s+(?:IF\\s+EXISTS\\s+)?${SCHEMA_PREFIX}(${VIEW_NAME})\\s+SET\\s*\\([^)]*\\bsecurity_invoker\\s*=\\s*(?:true|on)\\b[^)]*\\)`,
+  `ALTER\\s+VIEW\\s+(?:IF\\s+EXISTS\\s+)?${SCHEMA_PREFIX}(${VIEW_NAME})\\s+SET\\s*\\([^)]*${SECURITY_INVOKER_KEY}\\s*=\\s*${SECURITY_INVOKER_TRUE_VALUE}[^)]*\\)`,
   'gi',
 );
 const ALTER_UNFIX_REGEX = new RegExp(
-  `ALTER\\s+VIEW\\s+(?:IF\\s+EXISTS\\s+)?${SCHEMA_PREFIX}(${VIEW_NAME})\\s+(?:SET\\s*\\([^)]*\\bsecurity_invoker\\s*=\\s*(?:false|off)\\b[^)]*\\)|RESET\\s*\\([^)]*\\bsecurity_invoker\\b[^)]*\\))`,
+  `ALTER\\s+VIEW\\s+(?:IF\\s+EXISTS\\s+)?${SCHEMA_PREFIX}(${VIEW_NAME})\\s+(?:SET\\s*\\([^)]*${SECURITY_INVOKER_KEY}\\s*=\\s*${SECURITY_INVOKER_FALSE_VALUE}[^)]*\\)|RESET\\s*\\([^)]*${SECURITY_INVOKER_KEY}[^)]*\\))`,
   'gi',
 );
-const SECURITY_INVOKER_WITH_REGEX = /\bWITH\s*\([^)]*\bsecurity_invoker\s*=\s*(?:true|on)\b[^)]*\)/i;
+const SECURITY_INVOKER_WITH_REGEX = new RegExp(
+  `\\bWITH\\s*\\([^)]*${SECURITY_INVOKER_KEY}\\s*=\\s*${SECURITY_INVOKER_TRUE_VALUE}[^)]*\\)`,
+  'i',
+);
 
 // Postgres treats `"foo"` and `foo` as the same identifier when the inner
 // text is lower-case alphanumeric. Strip surrounding quotes so the Map key

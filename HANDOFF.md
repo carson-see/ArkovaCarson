@@ -14,6 +14,16 @@
 
 ## Now
 
+### 2026-05-06 — SCRUM-1668 / PR #700 Path C baseline resync after #722 prod reconciliation
+
+PR [#700](https://github.com/carson-see/ArkovaCarson/pull/700) remains the Path C pg_dump baseline branch. The baseline file and archived historical migrations are atomic: do not split one without the other. The branch is being reconciled onto `main` after PR #722 landed as `cb1d279fe4d7fb4f6aaffcf7a7489f24d6722574`.
+
+**Prod evidence already captured:** baseline ledger row `00000000000000 / baseline_at_main_HEAD` was recorded against prod project `vzwyaatejekddvltxyye` on 2026-05-04 with zero DDL/data change. Schema-object equivalence evidence lives in [`docs/staging/PATH_C_VERIFICATION_2026-05-04.md`](./docs/staging/PATH_C_VERIFICATION_2026-05-04.md) and includes `pg_class`, `pg_indexes`, `pg_proc`, and `information_schema` checks. This is schema-only evidence, not a behavioral T2 soak.
+
+**Post-#722 state:** PR #722 merged the Microsoft Graph prod snapshot reconciliation and the approved worker deploy completed in [Deploy Worker run 25410264702](https://github.com/carson-see/ArkovaCarson/actions/runs/25410264702). Prod worker revision `arkova-worker-00603-dox` is serving `cb1d279fe4d7fb4f6aaffcf7a7489f24d6722574`; final health was healthy with database/anchoring/kms all `ok`. PR #700's prod table snapshot must keep that `microsoft_graph_webhook_nonces` state while also keeping the Path C baseline reconciliation (`ats_webhook_nonces` and `drive_webhook_nonces`, no stale `anchoring_jobs`).
+
+**Still required before #700 is Done/merge-ready:** final branch-protection checks green, review approval, and real #700 worker/staging behavior evidence. Shared staging is active in parallel work, so #700 should not acquire or mutate it without coordination; use an explicitly approved isolated environment or wait for the staging lease. Until that evidence is captured, #700 remains honest as schema-equivalence only.
+
 ### 2026-05-05 — SCRUM-1672 / PR #712 Secure Document vs Issue Credential split (branch `claude/secure-document-issue-credential-split`)
 
 PR #712 is open and **not merged**. No prod state changed. Code-only by design: the new `proof_url` value stays in `anchors.metadata.proof_url`; no migration or `anchors.proof_url` column in this PR.

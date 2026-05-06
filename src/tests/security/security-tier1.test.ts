@@ -13,17 +13,20 @@ import { describe, it, expect } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
+function readMigration(name: string): string {
+  const livePath = path.join(process.cwd(), 'supabase/migrations', name);
+  const archivePath = path.join(process.cwd(), 'docs/migrations-archive', name);
+  const migrationPath = fs.existsSync(livePath) ? livePath : archivePath;
+  return fs.readFileSync(migrationPath, 'utf8');
+}
+
 // ===========================================================================
 // PII-01: Verify audit_events PII protection
 // ===========================================================================
 
 describe('PII-01: audit_events PII protection', () => {
   it('migration 0061 creates null_audit_pii_fields trigger', () => {
-    const migrationPath = path.join(
-      process.cwd(),
-      'supabase/migrations/0061_gdpr_pii_erasure.sql',
-    );
-    const content = fs.readFileSync(migrationPath, 'utf8');
+    const content = readMigration('0061_gdpr_pii_erasure.sql');
 
     expect(content).toContain('CREATE OR REPLACE FUNCTION null_audit_actor_email()');
     expect(content).toContain('NEW.actor_email := NULL');
@@ -33,11 +36,7 @@ describe('PII-01: audit_events PII protection', () => {
   });
 
   it('migration 0061 anonymizes all existing actor_email values', () => {
-    const migrationPath = path.join(
-      process.cwd(),
-      'supabase/migrations/0061_gdpr_pii_erasure.sql',
-    );
-    const content = fs.readFileSync(migrationPath, 'utf8');
+    const content = readMigration('0061_gdpr_pii_erasure.sql');
 
     expect(content).toContain('UPDATE audit_events');
     expect(content).toContain('SET actor_email = NULL');
@@ -64,11 +63,7 @@ describe('PII-01: audit_events PII protection', () => {
 
 describe('PII-02: Right-to-erasure infrastructure', () => {
   it('migration 0061 creates anonymize_user_data() SECURITY DEFINER RPC', () => {
-    const migrationPath = path.join(
-      process.cwd(),
-      'supabase/migrations/0061_gdpr_pii_erasure.sql',
-    );
-    const content = fs.readFileSync(migrationPath, 'utf8');
+    const content = readMigration('0061_gdpr_pii_erasure.sql');
 
     expect(content).toContain('CREATE OR REPLACE FUNCTION anonymize_user_data(p_user_id uuid)');
     expect(content).toContain('SECURITY DEFINER');
@@ -79,11 +74,7 @@ describe('PII-02: Right-to-erasure infrastructure', () => {
   });
 
   it('migration 0065 adds deleted_at to profiles', () => {
-    const migrationPath = path.join(
-      process.cwd(),
-      'supabase/migrations/0065_account_deletion.sql',
-    );
-    const content = fs.readFileSync(migrationPath, 'utf8');
+    const content = readMigration('0065_account_deletion.sql');
 
     expect(content).toContain('ALTER TABLE profiles');
     expect(content).toContain('deleted_at timestamptz');
@@ -93,11 +84,7 @@ describe('PII-02: Right-to-erasure infrastructure', () => {
   });
 
   it('migration 0065 creates delete_own_account() RPC', () => {
-    const migrationPath = path.join(
-      process.cwd(),
-      'supabase/migrations/0065_account_deletion.sql',
-    );
-    const content = fs.readFileSync(migrationPath, 'utf8');
+    const content = readMigration('0065_account_deletion.sql');
 
     expect(content).toContain('CREATE OR REPLACE FUNCTION delete_own_account()');
     expect(content).toContain('SECURITY DEFINER');
@@ -138,11 +125,7 @@ describe('PII-02: Right-to-erasure infrastructure', () => {
 
 describe('INJ-01: PostgREST injection prevention', () => {
   it('migration 0062 creates search_public_credentials() with parameterized query', () => {
-    const migrationPath = path.join(
-      process.cwd(),
-      'supabase/migrations/0062_security_hardening_high.sql',
-    );
-    const content = fs.readFileSync(migrationPath, 'utf8');
+    const content = readMigration('0062_security_hardening_high.sql');
 
     expect(content).toContain('CREATE OR REPLACE FUNCTION search_public_credentials');
     expect(content).toContain('p_query text');
@@ -178,11 +161,7 @@ describe('INJ-01: PostgREST injection prevention', () => {
 
 describe('RLS-01: GRANT to authenticated on 13 tables', () => {
   it('migration 0062 grants access to all 13 tables', () => {
-    const migrationPath = path.join(
-      process.cwd(),
-      'supabase/migrations/0062_security_hardening_high.sql',
-    );
-    const content = fs.readFileSync(migrationPath, 'utf8');
+    const content = readMigration('0062_security_hardening_high.sql');
 
     const expectedTables = [
       'credential_templates',
@@ -212,11 +191,7 @@ describe('RLS-01: GRANT to authenticated on 13 tables', () => {
 
 describe('RLS-02: api_keys admin-only access', () => {
   it('migration 0062 restricts api_keys SELECT to ORG_ADMIN', () => {
-    const migrationPath = path.join(
-      process.cwd(),
-      'supabase/migrations/0062_security_hardening_high.sql',
-    );
-    const content = fs.readFileSync(migrationPath, 'utf8');
+    const content = readMigration('0062_security_hardening_high.sql');
 
     expect(content).toContain('DROP POLICY IF EXISTS api_keys_select ON api_keys');
     expect(content).toContain('CREATE POLICY api_keys_select ON api_keys');
@@ -224,11 +199,7 @@ describe('RLS-02: api_keys admin-only access', () => {
   });
 
   it('migration 0062 restricts api_key_usage SELECT to ORG_ADMIN', () => {
-    const migrationPath = path.join(
-      process.cwd(),
-      'supabase/migrations/0062_security_hardening_high.sql',
-    );
-    const content = fs.readFileSync(migrationPath, 'utf8');
+    const content = readMigration('0062_security_hardening_high.sql');
 
     expect(content).toContain('DROP POLICY IF EXISTS api_key_usage_select ON api_key_usage');
     expect(content).toContain('CREATE POLICY api_key_usage_select ON api_key_usage');
@@ -241,11 +212,7 @@ describe('RLS-02: api_keys admin-only access', () => {
 
 describe('PII-03: Data retention policy', () => {
   it('migration 0062 creates cleanup_expired_data() with retention windows', () => {
-    const migrationPath = path.join(
-      process.cwd(),
-      'supabase/migrations/0062_security_hardening_high.sql',
-    );
-    const content = fs.readFileSync(migrationPath, 'utf8');
+    const content = readMigration('0062_security_hardening_high.sql');
 
     expect(content).toContain('CREATE OR REPLACE FUNCTION cleanup_expired_data()');
     expect(content).toContain('SECURITY DEFINER');

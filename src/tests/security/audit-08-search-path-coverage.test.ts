@@ -43,11 +43,15 @@ function readAllMigrations(): string {
     .join('\n');
 }
 
-const SEARCH_PATH_RE = /SET\s+search_path\s*=\s*public/i;
+const SEARCH_PATH_RE = /SET\s+(?:"search_path"|search_path)\s*(?:=|TO)\s*'?public'?(?:\s*,\s*pg_temp)?/i;
+
+function functionRef(fnName: string): string {
+  return `(?:(?:"public"|public)\\.)?(?:"${fnName}"|${fnName})`;
+}
 
 function hasInlineSearchPath(allSql: string, fnName: string): boolean {
   const pattern = new RegExp(
-    `CREATE\\s+OR\\s+REPLACE\\s+FUNCTION\\s+(?:public\\.)?${fnName}\\s*\\([^)]*\\)[\\s\\S]*?AS\\s*\\$`,
+    `CREATE\\s+OR\\s+REPLACE\\s+FUNCTION\\s+${functionRef(fnName)}\\s*\\([^)]*\\)[\\s\\S]*?AS\\s*\\$`,
     'gi',
   );
   let m: RegExpExecArray | null;
@@ -59,7 +63,7 @@ function hasInlineSearchPath(allSql: string, fnName: string): boolean {
 
 function hasAlterSearchPath(allSql: string, fnName: string): boolean {
   const pattern = new RegExp(
-    `ALTER\\s+FUNCTION\\s+(?:public\\.)?${fnName}\\s*\\([^)]*\\)[\\s\\S]*?SET\\s+search_path\\s*=\\s*public`,
+    `ALTER\\s+FUNCTION\\s+${functionRef(fnName)}\\s*\\([^)]*\\)[\\s\\S]*?${SEARCH_PATH_RE.source}`,
     'i',
   );
   return pattern.test(allSql);

@@ -1,6 +1,6 @@
 {
-  "_comment": "SCRUM-1306 (R0-7-FU1): snapshot of prod public.* table list, fed to scripts/ci/feedback-rules/feedback_local_matches_prod.ts. Regenerate via Supabase MCP `list_tables` after a known-good prod schema window. Last refreshed: 2026-05-06 (PR #695 post-merge) — added microsoft_graph_webhook_nonces after applying migrations 0292/0293 to prod and repairing the Supabase migration ledger.",
-  "_source": "supabase MCP list_tables(project_id=vzwyaatejekddvltxyye, schemas=[public]) on 2026-04-27 + delta-verified 2026-05-04; microsoft_graph_webhook_nonces verified via Supabase Management API read-only SQL on 2026-05-06.",
+  "_comment": "SCRUM-1306 (R0-7-FU1): snapshot of prod public.* table list, fed to scripts/ci/feedback-rules/feedback_local_matches_prod.ts. Regenerate via Supabase MCP `list_tables` after a known-good prod schema window. Last refreshed: 2026-05-06 (PR #700 after PR #722/#695 post-merge) — reconciled to Path C pg_dump baseline evidence plus microsoft_graph_webhook_nonces prod verification.",
+  "_source": "supabase MCP list_tables(project_id=vzwyaatejekddvltxyye, schemas=[public]) on 2026-04-27 + delta-verified 2026-05-04; reconciled to pg_dump baseline on 2026-05-05; microsoft_graph_webhook_nonces verified via Supabase Management API read-only SQL on 2026-05-06.",
   "tables": [
     { "name": "adobe_sign_webhook_nonces", "schema": "public" },
     { "name": "agents", "schema": "public" },
@@ -11,13 +11,13 @@
     { "name": "anchor_proofs", "schema": "public" },
     { "name": "anchor_queue_resolutions", "schema": "public" },
     { "name": "anchor_recipients", "schema": "public" },
-    { "name": "anchoring_jobs", "schema": "public" },
     { "name": "anchors", "schema": "public" },
     { "name": "api_key_usage", "schema": "public" },
     { "name": "api_keys", "schema": "public" },
     { "name": "attestation_evidence", "schema": "public" },
     { "name": "attestations", "schema": "public" },
     { "name": "ats_integrations", "schema": "public" },
+    { "name": "ats_webhook_nonces", "schema": "public" },
     { "name": "audit_events", "schema": "public" },
     { "name": "audit_events_archive", "schema": "public" },
     { "name": "batch_verification_jobs", "schema": "public" },
@@ -36,6 +36,7 @@
     { "name": "docusign_webhook_nonces", "schema": "public" },
     { "name": "drive_folder_path_cache", "schema": "public" },
     { "name": "drive_revision_ledger", "schema": "public" },
+    { "name": "drive_webhook_nonces", "schema": "public" },
     { "name": "emergency_access_grants", "schema": "public" },
     { "name": "entitlements", "schema": "public" },
     { "name": "extraction_feedback", "schema": "public" },
@@ -100,8 +101,6 @@
   "_known_drift": {
     "in_migrations_only": [
       { "name": "activation_tokens", "reason": "created in 0023, evidently dropped out-of-band — needs investigation" },
-      { "name": "ats_webhook_nonces", "reason": "created in 0135, not present in prod — likely never deployed" },
-      { "name": "drive_webhook_nonces", "reason": "created in 0258 family, not present in prod — likely never deployed" },
       { "name": "merkle_batches", "reason": "created in 0113, dropped out-of-band — needs investigation" },
       { "name": "training_metrics", "reason": "created in 0114, dropped out-of-band — needs investigation" },
       { "name": "webhook_idempotency", "reason": "created in 0116, dropped out-of-band — needs investigation" }
