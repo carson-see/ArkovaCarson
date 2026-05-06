@@ -654,11 +654,10 @@ describe('createChainClient mainnet signing variants', () => {
 
 describe('getChainClientAsync', () => {
   it('returns the initialized client when present', async () => {
-    await initChainClient();
+    const initialized = await initChainClient();
     const { getChainClientAsync } = await import('./client.js');
     const c = await getChainClientAsync();
-    expect(c).toBeDefined();
-    expect(typeof c.submitFingerprint).toBe('function');
+    expect(c).toBe(initialized);
   });
 });
 

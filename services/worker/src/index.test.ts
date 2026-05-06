@@ -1079,6 +1079,7 @@ describe('worker server', () => {
       // The downstream OAuth router can fail if test env secrets are absent;
       // this assertion pins the index.ts auth gate behavior, not DocuSign config.
       expect(callback.status).not.toBe(401);
+      expect(callback.status).not.toBe(404);
 
       const start = await supertest(app)
         .post('/api/v1/integrations/docusign/oauth/start')
