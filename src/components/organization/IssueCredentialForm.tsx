@@ -42,6 +42,8 @@ import { AIFieldSuggestions } from '@/components/anchor/AIFieldSuggestions';
 import { MetadataFieldRenderer } from '@/components/credentials/MetadataFieldRenderer';
 import { runExtraction, type ExtractionField, type ExtractionProgress } from '@/lib/aiExtraction';
 import { isAIExtractionEnabled } from '@/lib/switchboard';
+import { useCanIssueCredential } from '@/hooks/useCanIssueCredential';
+import { useIssueCredentialSplit } from '@/hooks/useIssueCredentialSplit';
 import { supabase } from '@/lib/supabase';
 import { validateAnchorCreate, CREDENTIAL_TYPES } from '@/lib/validators';
 import { logAuditEvent } from '@/lib/auditLog';
@@ -67,6 +69,12 @@ interface IssueCredentialFormProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSuccess?: () => void;
+  /** Org to issue against. Defaults to the signed-in profile org. */
+  orgId?: string | null;
+  /** Caller role for the target org. Defaults to the signed-in profile role. */
+  role?: string | null;
+  /** Extra loading state for route/membership role resolution. */
+  profileLoading?: boolean;
 }
 
 type Step = 'form' | 'success';
@@ -87,10 +95,17 @@ export function IssueCredentialForm({
   open,
   onOpenChange,
   onSuccess,
+  orgId,
+  role,
+  profileLoading: roleContextLoading,
 }: Readonly<IssueCredentialFormProps>) {
   const { user } = useAuth();
-  const { profile } = useProfile();
+  const { profile, loading: profileLoading } = useProfile();
   const navigate = useNavigate();
+  const issueOrgId = orgId === undefined ? profile?.org_id ?? null : orgId;
+  const issueRole = role === undefined ? profile?.role : role;
+  const needsProfile = orgId === undefined || role === undefined;
+  const issueProfileLoading = (needsProfile && profileLoading) || roleContextLoading === true;
 
   const [step, setStep] = useState<Step>('form');
   const [file, setFile] = useState<File | null>(null);
@@ -100,6 +115,10 @@ export function IssueCredentialForm({
   const [issuedAt, setIssuedAt] = useState('');
   const [expiresAt, setExpiresAt] = useState('');
   const [recipientEmail, setRecipientEmail] = useState('');
+  // SCRUM-1755 — public proof URL (Udemy / Accredible / LinkedIn / own site).
+  // Optional; persisted into anchors.metadata.proof_url. Validated as https:// when present.
+  const [proofUrl, setProofUrl] = useState('');
+  const [proofUrlError, setProofUrlError] = useState<string | null>(null);
   const [metadataValues, setMetadataValues] = useState<Record<string, string>>({});
   const [metadataErrors, setMetadataErrors] = useState<Record<string, string>>({});
   const [creating, setCreating] = useState(false);
@@ -124,10 +143,43 @@ export function IssueCredentialForm({
     return () => { cancelled = true; };
   }, []);
 
+  // SCRUM-1755 — when ENABLE_ISSUE_CREDENTIAL_SPLIT is on, only verified orgs
+  // (and APPROVED sub-orgs of verified parents) may submit. Until then we
+  // preserve pre-1755 behavior: any org admin can use the form.
+  //
+  // Codex P1: fail-closed during the flag-fetch window. `useIssueCredentialSplit`
+  // exposes a `loading` state we treat as "split enforced" so an org admin
+  // can't slip a submission in before the flag resolves.
+  const split = useIssueCredentialSplit();
+  const issueGate = useCanIssueCredential({
+    orgId: issueOrgId,
+    role: issueRole,
+    profileLoading: issueProfileLoading,
+  });
+  const splitEnforced = split.loading || split.enabled;
+  const gateBlocked = splitEnforced && (!issueGate.allowed || issueGate.loading);
+  const gateBlockedMessage = useMemo(() => {
+    if (!gateBlocked) return null;
+    switch (issueGate.reason) {
+      case 'loading':           return ISSUE_CREDENTIAL_LABELS.GATE_LOADING;
+      case 'query_error':       return ISSUE_CREDENTIAL_LABELS.GATE_QUERY_ERROR;
+      case 'org_unverified':    return ISSUE_CREDENTIAL_LABELS.GATE_NOT_VERIFIED;
+      case 'org_suspended':     return ISSUE_CREDENTIAL_LABELS.GATE_SUSPENDED;
+      case 'parent_unapproved': return ISSUE_CREDENTIAL_LABELS.GATE_PARENT_UNAPPROVED;
+      case 'parent_unverified': return ISSUE_CREDENTIAL_LABELS.GATE_PARENT_UNVERIFIED;
+      case 'parent_suspended':  return ISSUE_CREDENTIAL_LABELS.GATE_PARENT_SUSPENDED;
+      // not_admin / no_org / null fall through to a neutral message — these
+      // shouldn't happen if the parent screens hide the entry point, but if
+      // someone deep-links here we still refuse rather than render a confusing
+      // blank dialog.
+      default:                  return ISSUE_CREDENTIAL_LABELS.GATE_NOT_VERIFIED;
+    }
+  }, [gateBlocked, issueGate.reason]);
+
   // Fetch template when credential type is selected (UF-05)
   const { template, loading: templateLoading } = useCredentialTemplate(
     credentialType || null,
-    profile?.org_id || null,
+    issueOrgId,
   );
 
   const templateFields = useMemo(() => template?.fields ?? [], [template]);
@@ -219,6 +271,8 @@ export function IssueCredentialForm({
     setIssuedAt('');
     setExpiresAt('');
     setRecipientEmail('');
+    setProofUrl('');
+    setProofUrlError(null);
     setMetadataValues({});
     setMetadataErrors({});
     setCreating(false);
@@ -252,8 +306,25 @@ export function IssueCredentialForm({
       errors._recipient_email = 'Invalid email format';
     }
     setMetadataErrors(errors);
-    return Object.keys(errors).length === 0;
-  }, [templateFields, metadataValues, recipientEmail]);
+    // SCRUM-1755 — proof_url is optional but must be a valid https:// URL when present.
+    setProofUrlError(null);
+    const proofTrimmed = proofUrl.trim();
+    let proofValid = true;
+    if (proofTrimmed) {
+      try {
+        const parsed = new URL(proofTrimmed);
+        if (parsed.protocol !== 'https:') {
+          proofValid = false;
+        }
+      } catch {
+        proofValid = false;
+      }
+      if (!proofValid) {
+        setProofUrlError(ISSUE_CREDENTIAL_LABELS.HINT_PROOF_URL_INVALID);
+      }
+    }
+    return Object.keys(errors).length === 0 && proofValid;
+  }, [templateFields, metadataValues, recipientEmail, proofUrl]);
 
   const buildMetadata = useCallback((): Record<string, unknown> | null => {
     const entries: Record<string, unknown> = {};
@@ -281,11 +352,25 @@ export function IssueCredentialForm({
       entries._recipient_email = recipientEmail.trim();
     }
 
+    // SCRUM-1755 — public proof URL (Udemy / Accredible / LinkedIn / own site).
+    // Validation happens in validateMetadata; this stores the trimmed value.
+    if (proofUrl.trim()) {
+      entries.proof_url = proofUrl.trim();
+    }
+
     return Object.keys(entries).length > 0 ? entries : null;
-  }, [issuedAt, templateFields, metadataValues, recipientEmail]);
+  }, [issuedAt, templateFields, metadataValues, recipientEmail, proofUrl]);
 
   const handleSubmit = useCallback(async () => {
     if (!file || !fingerprint || !user || !credentialType) return;
+
+    // SCRUM-1755 — refuse submit when the org is not authorized to issue.
+    // Worker-side enforcement still runs via RLS / suspension checks; this
+    // is the UI guardrail so the user sees the reason instead of a 403.
+    if (gateBlocked) {
+      setError(gateBlockedMessage ?? ISSUE_CREDENTIAL_LABELS.GATE_BLOCKED_TITLE);
+      return;
+    }
 
     // Validate required metadata fields
     if (!validateMetadata()) return;
@@ -301,7 +386,7 @@ export function IssueCredentialForm({
         filename: file.name,
         file_size: file.size,
         file_mime: file.type || null,
-        org_id: profile?.org_id || null,
+        org_id: issueOrgId,
         credential_type: credentialType,
         label: label.trim() || null,
         metadata,
@@ -343,7 +428,7 @@ export function IssueCredentialForm({
         eventCategory: 'ANCHOR',
         targetType: 'anchor',
         targetId: inserted.id,
-        orgId: profile?.org_id,
+        orgId: issueOrgId,
         details: `Issued ${credentialType} credential for "${file.name}"`,
       });
 
@@ -367,12 +452,14 @@ export function IssueCredentialForm({
     file,
     fingerprint,
     user,
-    profile,
+    issueOrgId,
     credentialType,
     label,
     expiresAt,
     recipientEmail,
     onSuccess,
+    gateBlocked,
+    gateBlockedMessage,
     validateMetadata,
     buildMetadata,
   ]);
@@ -396,7 +483,7 @@ export function IssueCredentialForm({
     resetForm();
   }, [resetForm]);
 
-  const canSubmit = !!file && !!fingerprint && !!credentialType && !creating && !templateLoading;
+  const canSubmit = !!file && !!fingerprint && !!credentialType && !creating && !templateLoading && !gateBlocked;
 
   return (
     <Dialog open={open} onOpenChange={handleClose}>
@@ -416,8 +503,20 @@ export function IssueCredentialForm({
         {step === 'form' && (
           <>
             <div className="space-y-4 py-2">
+              {/* SCRUM-1755 — gate-blocked banner: shown when ENABLE_ISSUE_CREDENTIAL_SPLIT
+                  is on AND the org is not authorized to issue (unverified, suspended, or
+                  sub-org without parent approval). */}
+              {gateBlocked && gateBlockedMessage && (
+                <Alert variant="destructive" role="alert" data-testid="issue-credential-gate-blocked">
+                  <AlertDescription className="space-y-1">
+                    <p className="font-medium">{ISSUE_CREDENTIAL_LABELS.GATE_BLOCKED_TITLE}</p>
+                    <p className="text-sm">{gateBlockedMessage}</p>
+                  </AlertDescription>
+                </Alert>
+              )}
+
               {/* File upload */}
-              <FileUpload onFileSelect={handleFileSelect} disabled={creating} />
+              <FileUpload onFileSelect={handleFileSelect} disabled={creating || gateBlocked} />
 
               {/* File preview (UF-05) */}
               {file && fingerprint && (
@@ -576,6 +675,37 @@ export function IssueCredentialForm({
                 </p>
               </div>
 
+              {/* SCRUM-1755 — Public Proof URL (Udemy / Accredible / LinkedIn / own site).
+                  Optional but strongly recommended. Persisted into anchors.metadata.proof_url. */}
+              <div className="space-y-2">
+                <Label htmlFor="proof-url">
+                  {ISSUE_CREDENTIAL_LABELS.PROOF_URL_LABEL}
+                  <span className="text-muted-foreground text-xs ml-1">
+                    {METADATA_FIELD_LABELS.OPTIONAL}
+                  </span>
+                </Label>
+                <Input
+                  id="proof-url"
+                  type="url"
+                  inputMode="url"
+                  value={proofUrl}
+                  onChange={(e) => {
+                    setProofUrl(e.target.value);
+                    if (proofUrlError) setProofUrlError(null);
+                  }}
+                  placeholder={ISSUE_CREDENTIAL_LABELS.PROOF_URL_PLACEHOLDER}
+                  disabled={creating}
+                  aria-invalid={!!proofUrlError}
+                  aria-describedby={proofUrlError ? 'proof-url-help proof-url-error' : 'proof-url-help'}
+                />
+                <p id="proof-url-help" className="text-xs text-muted-foreground">
+                  {ISSUE_CREDENTIAL_LABELS.PROOF_URL_HELP}
+                </p>
+                {proofUrlError && (
+                  <p id="proof-url-error" className="text-xs text-destructive" role="alert">{proofUrlError}</p>
+                )}
+              </div>
+
               {/* Status notice */}
               {file && fingerprint && (
                 <Alert>
@@ -619,7 +749,7 @@ export function IssueCredentialForm({
                   }
                   void handleSubmit();
                 }}
-                disabled={creating}
+                disabled={creating || gateBlocked}
                 aria-disabled={!canSubmit}
               >
                 {creating ? (

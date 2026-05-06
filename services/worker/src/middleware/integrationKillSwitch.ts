@@ -11,12 +11,13 @@
 import type { Request, Response, NextFunction } from 'express';
 
 type FlagName =
-  | 'ENABLE_DRIVE_OAUTH'         // C1-C4: webhook URL mismatch, falls-open auth, dead disconnect
-  | 'ENABLE_DRIVE_WEBHOOK'       // same stack
-  | 'ENABLE_DOCUSIGN_OAUTH'      // pre-emptive while we audit token-storage path
-  | 'ENABLE_DOCUSIGN_WEBHOOK'    // cross-org lookup with no org_id filter
-  | 'ENABLE_ATS_WEBHOOK'         // multi-secret iteration = tenant isolation bypass
-  | 'ENABLE_GRC_INTEGRATIONS';   // OAuth tokens stored cleartext
+  | 'ENABLE_DRIVE_OAUTH'              // C1-C4: webhook URL mismatch, falls-open auth, dead disconnect
+  | 'ENABLE_DRIVE_WEBHOOK'            // same stack
+  | 'ENABLE_DOCUSIGN_OAUTH'           // pre-emptive while we audit token-storage path
+  | 'ENABLE_DOCUSIGN_WEBHOOK'         // cross-org lookup with no org_id filter
+  | 'ENABLE_ATS_WEBHOOK'              // multi-secret iteration = tenant isolation bypass
+  | 'ENABLE_GRC_INTEGRATIONS'         // OAuth tokens stored cleartext
+  | 'ENABLE_MICROSOFT_GRAPH_WEBHOOK'; // SCRUM-1138 R2 closeout — clientState shared secret + handshake
 
 // Cloud Run replaces containers on env edits; env vars never mutate at
 // runtime. Resolve the gate value once at module factory time instead of

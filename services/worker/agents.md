@@ -1,5 +1,6 @@
 # agents.md — services/worker
-_Last updated: 2026-05-05 (SCRUM-1130 org queue scheduler)_
+
+_Last updated: 2026-05-06 (SCRUM-1130 org queue scheduler + SCRUM-1135 R0-R3 closeout)._
 
 ## What This Folder Contains
 
@@ -11,6 +12,31 @@ Express-based worker service handling privileged server-side operations: anchor 
 - Manual `/api/queue/run` records into the same `organization_queue_runs` history and updates `organization_queue_run_state`, so admin-triggered runs reset the 24-hour due timer.
 - `POST /cron/org-queue-scheduler` is the scheduled entrypoint. `ENABLE_ORG_QUEUE_SCHEDULER=false` is the fail-closed kill switch for the scheduler pass.
 - Migration `0294_org_queue_scheduler.sql` owns `organization_queue_run_state`, `organization_queue_runs`, and the service-role claim RPC. Do not change older migrations; add compensating migrations.
+
+## SCRUM-1135 R0-R3 closeout (2026-05-05, PR #695)
+
+- **`src/api/v1/webhooks/microsoft-graph.ts`** ([SCRUM-1592](https://arkova.atlassian.net/browse/SCRUM-1592)):
+  Microsoft Graph change-notification receiver. Validation-token handshake is
+  public-safe; delivery is default-off behind `ENABLE_MICROSOFT_GRAPH_WEBHOOK`
+  and validates `clientState` with a constant-time compare. Subscription lookup
+  is by `connector_subscriptions.external_subscription_id`; malformed Graph
+  items are Zod-gated before any nonce/write path. Transient DB lookup failure
+  returns 503 so Graph retries instead of dropping the event.
+- **`0292_microsoft_graph_webhook_nonces.sql`** and
+  **`0293_msgraph_nonce_payload_hash_and_compound_rpc.sql`**: replay protection
+  for Graph notifications. Dedupe key includes `payload_hash`, and
+  `record_msgraph_nonce_and_enqueue(...)` records the nonce plus rule event in
+  one Postgres function so enqueue failure rolls back the nonce.
+- **`src/api/proof-packet.ts`** ([SCRUM-1593](https://arkova.atlassian.net/browse/SCRUM-1593)):
+  proof-packet export walks supersede lineage with a 100-hop cap and cycle
+  guard. Public responses expose public identifiers only and filter
+  soft-deleted anchors with `deleted_at IS NULL`.
+- **SCRUM-1590 / SCRUM-1591 closeout tests**: `rules-engine`,
+  `demo-event-injector`, and `rule-action-dispatcher` coverage pins
+  claim/complete/release behavior, disabled-rule behavior, demo event injection,
+  action dispatch, and explainability traces. SCRUM-1591 engineering evidence is
+  linked from the SCRUM-1137 Confluence page; Jira remains In Progress until an
+  allowed non-reporter verifier closes it.
 
 ## SCRUM-792 — Gemini fraud detection seed dataset 100+ (2026-04-27, GME2-01)
 

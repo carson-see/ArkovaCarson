@@ -50,6 +50,8 @@ interface SecureDocumentDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onSuccess?: () => void;
+  /** Org to secure the document against. Defaults to the signed-in profile org. */
+  orgId?: string | null;
   initialCredentialType?: string;
   initialJurisdiction?: string;
 }
@@ -70,11 +72,15 @@ export function SecureDocumentDialog({
   open,
   onOpenChange,
   onSuccess,
+  orgId,
   initialCredentialType,
   initialJurisdiction,
 }: Readonly<SecureDocumentDialogProps>) {
   const { user } = useAuth();
   const { profile } = useProfile();
+  const profileOrgId = profile?.org_id ?? null;
+  const secureOrgId = orgId === undefined ? profileOrgId : orgId;
+  const usesProfileScopedOverride = Boolean(secureOrgId && secureOrgId !== profileOrgId);
 
   // VAI-04: Auditor mode — suppress dialog entirely
   const { isAuditorMode } = useAuditorMode();
@@ -87,6 +93,7 @@ export function SecureDocumentDialog({
   const [createdAnchor, setCreatedAnchor] = useState<CreatedAnchor | null>(null);
   const [linkCopied, setLinkCopied] = useState(false);
   const [description, setDescription] = useState('');
+  const [bulkFiles, setBulkFiles] = useState<File[]>([]);
 
   // AI extraction state
   const [aiEnabled, setAiEnabled] = useState(false);
@@ -109,17 +116,33 @@ export function SecureDocumentDialog({
     setFileData({ file, fingerprint });
   }, []);
 
-  const handleBulkDetected = useCallback((_files: File[]) => {
-    setStep('bulk');
+  const blockProfileScopedFlow = useCallback(() => {
+    setError(SECURE_DIALOG_LABELS.PROFILE_SCOPED_FLOW_UNAVAILABLE);
+    setStep('error');
   }, []);
+
+  const handleBulkDetected = useCallback((files: File[]) => {
+    if (usesProfileScopedOverride) {
+      blockProfileScopedFlow();
+      return;
+    }
+
+    setBulkFiles(files);
+    setStep('bulk');
+  }, [blockProfileScopedFlow, usesProfileScopedOverride]);
 
   // Attestation upload state
   const [attestationData, setAttestationData] = useState<AttestationUpload | null>(null);
 
   const handleAttestationDetected = useCallback((data: AttestationUpload) => {
+    if (usesProfileScopedOverride) {
+      blockProfileScopedFlow();
+      return;
+    }
+
     setAttestationData(data);
     setStep('attestation-review');
-  }, []);
+  }, [blockProfileScopedFlow, usesProfileScopedOverride]);
 
   const handleAttestationSubmit = useCallback(async () => {
     if (!attestationData || !user) return;
@@ -147,6 +170,7 @@ export function SecureDocumentDialog({
           summary: attestationData.summary || undefined,
           jurisdiction: attestationData.jurisdiction || undefined,
           expires_at: attestationData.expires_at || undefined,
+          orgId: secureOrgId ?? undefined,
         }),
       });
 
@@ -166,7 +190,7 @@ export function SecureDocumentDialog({
       setError('Network error — please try again');
       setStep('error');
     }
-  }, [attestationData, user, onSuccess]);
+  }, [attestationData, user, secureOrgId, onSuccess]);
 
   // Auto-select template based on AI-detected credential type
   const autoSelectTemplate = useCallback(async (detectedType: string) => {
@@ -255,7 +279,7 @@ export function SecureDocumentDialog({
         filename: fileData.file.name,
         file_size: fileData.file.size,
         file_mime: fileData.file.type || null,
-        org_id: profile?.org_id || null,
+        org_id: secureOrgId,
         ...(selectedTemplate ? { credential_type: selectedTemplate.credential_type } : {}),
         ...(description.trim() ? { description: description.trim() } : {}),
       });
@@ -298,7 +322,7 @@ export function SecureDocumentDialog({
         eventCategory: 'ANCHOR',
         targetType: 'anchor',
         targetId: inserted.id,
-        orgId: profile?.org_id,
+        orgId: secureOrgId ?? undefined,
         details: `Secured document "${fileData.file.name}"`,
       });
 
@@ -327,7 +351,7 @@ export function SecureDocumentDialog({
       toast.error(TOAST.ANCHOR_FAILED);
       setStep('error');
     }
-  }, [fileData, user, profile, selectedTemplate, description, extractedFields, templateResult, onSuccess, initialJurisdiction]);
+  }, [fileData, user, secureOrgId, selectedTemplate, description, extractedFields, templateResult, onSuccess, initialJurisdiction]);
 
   // Run AI extraction after file upload
   const handleStartExtraction = useCallback(async () => {
@@ -367,7 +391,7 @@ export function SecureDocumentDialog({
       const tmplResult = await applyTemplate(
         result.fields,
         detectedType,
-        profile?.org_id,
+        secureOrgId,
       );
 
       // Merge mapped + unmapped fields (template-ordered first, extras after)
@@ -392,7 +416,7 @@ export function SecureDocumentDialog({
       handleConfirm([]);
       return;
     }
-  }, [fileData, selectedTemplate, autoSelectTemplate, handleConfirm, profile?.org_id]);
+  }, [fileData, selectedTemplate, autoSelectTemplate, handleConfirm, secureOrgId]);
 
   // Handle proceeding from upload step — always run AI extraction
   const handleUploadContinue = useCallback(async () => {
@@ -447,6 +471,7 @@ export function SecureDocumentDialog({
     setExtractionProgress(null);
     setTemplateResult(null);
     setAttestationData(null);
+    setBulkFiles([]);
     onOpenChange(false);
   }, [onOpenChange]);
 
@@ -466,6 +491,7 @@ export function SecureDocumentDialog({
     setExtractedFields([]);
     setExtractionProgress(null);
     setTemplateResult(null);
+    setBulkFiles([]);
   }, []);
 
   const handleCopyLink = useCallback(async () => {
@@ -490,14 +516,15 @@ export function SecureDocumentDialog({
     <Dialog open={open} onOpenChange={handleDialogOpenChange}>
       <DialogContent className={step === 'bulk' ? 'max-w-3xl max-h-[90vh] overflow-y-auto' : 'sm:max-w-lg max-h-[90vh] overflow-y-auto'}>
         <DialogHeader>
+          {/* SCRUM-1755 — title is stable across single + bulk paths. The user
+              clicked "Secure Document" and is securing one or many; the system
+              detects the shape, no separate "Bulk Upload" affordance. */}
           <DialogTitle className="flex items-center gap-2">
             <ArkovaIcon className="h-5 w-5 text-primary" />
-            {step === 'bulk' ? 'Bulk Upload' : SECURE_DIALOG_LABELS.TITLE}
+            {SECURE_DIALOG_LABELS.TITLE}
           </DialogTitle>
           <DialogDescription>
-            {step === 'bulk'
-              ? 'Upload a CSV or XLSX file to secure multiple documents at once'
-              : SECURE_DIALOG_LABELS.DESCRIPTION}
+            {SECURE_DIALOG_LABELS.DESCRIPTION}
           </DialogDescription>
         </DialogHeader>
 
@@ -563,11 +590,14 @@ export function SecureDocumentDialog({
 
           {step === 'bulk' && (
             <BulkUploadWizard
+              orgId={secureOrgId}
+              initialFiles={bulkFiles}
               onComplete={() => {
                 handleClose();
                 onSuccess?.();
               }}
               onCancel={() => {
+                setBulkFiles([]);
                 setStep('upload');
               }}
             />
@@ -677,7 +707,7 @@ export function SecureDocumentDialog({
               </p>
               <div className="max-h-[50vh] overflow-y-auto -mx-1 px-1">
                 <TemplateSelector
-                  orgId={profile?.org_id}
+                  orgId={secureOrgId}
                   onSelect={setSelectedTemplate}
                   selectedId={selectedTemplate?.id}
                 />

@@ -79,6 +79,39 @@ describe('useBulkAnchors', () => {
     expect(result.current.error).toBeNull();
   });
 
+  it('threads the target org id into the bulk RPC payload', async () => {
+    mockRpc.mockResolvedValue({
+      data: {
+        total: 3,
+        created: 3,
+        skipped: 0,
+        failed: 0,
+        results: [],
+      },
+      error: null,
+    });
+
+    const { result } = renderHook(() => useBulkAnchors({ orgId: 'viewed-org-id' }));
+
+    await act(async () => {
+      await result.current.createBulkAnchors(mockRecords);
+    });
+
+    expect(mockRpc).toHaveBeenCalledWith(
+      'bulk_create_anchors',
+      {
+        anchors_data: mockRecords.map(r => ({
+          fingerprint: r.fingerprint,
+          filename: r.filename,
+          fileSize: null,
+          credentialType: null,
+          metadata: null,
+          orgId: 'viewed-org-id',
+        })),
+      }
+    );
+  });
+
   it('should handle idempotent duplicate skipping', async () => {
     // First call creates
     mockRpc.mockResolvedValueOnce({

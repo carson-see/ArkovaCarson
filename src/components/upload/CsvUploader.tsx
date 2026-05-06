@@ -7,7 +7,7 @@
  * BETA-05: Added Excel support via SheetJS.
  */
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect, useRef } from 'react';
 import { Upload, FileSpreadsheet, AlertCircle, Loader2 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -27,18 +27,23 @@ interface CsvUploaderProps {
     mapping: ColumnMapping,
     validation: ValidationResult
   ) => void;
+  initialFile?: File | null;
+  onInitialFileConsumed?: () => void;
   maxRows?: number;
   className?: string;
 }
 
 export function CsvUploader({
   onParsed,
+  initialFile = null,
+  onInitialFileConsumed,
   maxRows = 10000,
   className,
 }: Readonly<CsvUploaderProps>) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [dragActive, setDragActive] = useState(false);
+  const processedInitialFileKey = useRef<string | null>(null);
 
   const processFile = useCallback(
     async (file: File) => {
@@ -97,6 +102,26 @@ export function CsvUploader({
     },
     [maxRows, onParsed]
   );
+
+  const initialFileKey = initialFile
+    ? `${initialFile.name}:${initialFile.size}:${initialFile.lastModified}`
+    : null;
+
+  useEffect(() => {
+    if (!initialFile || !initialFileKey) {
+      processedInitialFileKey.current = null;
+      return;
+    }
+
+    if (processedInitialFileKey.current === initialFileKey) {
+      return;
+    }
+
+    processedInitialFileKey.current = initialFileKey;
+    processFile(initialFile).finally(() => {
+      onInitialFileConsumed?.();
+    });
+  }, [initialFile, initialFileKey, onInitialFileConsumed, processFile]);
 
   const handleFileChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
