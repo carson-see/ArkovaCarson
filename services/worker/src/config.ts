@@ -141,6 +141,8 @@ const ConfigSchema = z.object({
   arkovaUsdcAddress: z.string().optional(),
   /** x402 network identifier (default: Base Sepolia testnet) */
   x402Network: z.string().default('eip155:84532'),
+  /** Base JSON-RPC URL used for x402 on-chain validation */
+  baseRpcUrl: z.string().url().optional(),
 
   // Batch Anchoring (BTC-001)
   /** Batch anchor processing interval in minutes (default: 10) */
@@ -554,6 +556,7 @@ function loadConfig(): Config {
     x402FacilitatorUrl: process.env.X402_FACILITATOR_URL,
     arkovaUsdcAddress: process.env.ARKOVA_USDC_ADDRESS,
     x402Network: process.env.X402_NETWORK,
+    baseRpcUrl: process.env.BASE_RPC_URL,
     batchAnchorIntervalMinutes: process.env.BATCH_ANCHOR_INTERVAL_MINUTES,
     batchAnchorMaxSize: process.env.BATCH_ANCHOR_MAX_SIZE,
     maxFeeThresholdSatPerVbyte: process.env.MAX_FEE_THRESHOLD_SAT_PER_VBYTE,

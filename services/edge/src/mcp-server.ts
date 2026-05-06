@@ -43,7 +43,6 @@ import {
   handleAgentListOrgs,
   handleAgentGetAnchor,
   handleAgentGetOrganization,
-  supabaseFetch,
   type SupabaseConfig,
   type ToolResult,
 } from './mcp-tools';
@@ -119,6 +118,7 @@ interface RequestTelemetryContext {
   execCtx: ExecutionContext;
   apiKeyId: string | null;
   userId: string;
+  anchorDocumentEnabled: boolean;
   clientIp: string | null;
 }
 
@@ -396,43 +396,30 @@ function createMcpServer(config: ScopedConfig, telemetry: RequestTelemetryContex
     ),
   );
 
-  tool(
-    'anchor_document',
-    TOOL_DESC['anchor_document'],
-    {
-      content_hash: contentHashSchema.describe('SHA-256 fingerprint of the document'),
-      record_type: z.string().max(50).optional().describe('Record type (e.g., patent_grant, 10-K)'),
-      source: z.string().max(50).optional().describe('Source (e.g., edgar, uspto)'),
-      title: z.string().max(500).optional().describe('Document title'),
-      source_url: z.string().url().max(2048).optional().describe('Original document URL'),
-      idempotency_key: z.string().uuid().optional().describe('Client-supplied UUID for retry deduplication'),
-    },
-    withTelemetry(
+  if (telemetry.anchorDocumentEnabled) {
+    tool(
       'anchor_document',
-      async ({ content_hash, record_type, source, title, source_url, idempotency_key }) => {
-        // MCP-SEC-04: dedupe on content_hash within 5-minute window (only when client supplies idempotency_key)
-        if (idempotency_key) {
-          const fiveMinAgo = new Date(Date.now() - 5 * 60_000).toISOString();
-          const lookupResp = await supabaseFetch(config, `/rest/v1/public_records?content_hash=eq.${content_hash}&created_at=gte.${fiveMinAgo}&order=created_at.desc&limit=1`);
-          if (lookupResp.ok) {
-            const existing = await lookupResp.json() as Array<Record<string, unknown>>;
-            if (Array.isArray(existing) && existing.length > 0) {
-              const rec = existing[0];
-              return { content: [{ type: 'text' as const, text: JSON.stringify({
-                status: 'already_submitted',
-                record_id: rec.id,
-                public_id: rec.public_id,
-                content_hash,
-                message: 'Document was already submitted within the last 5 minutes. Returning existing record.',
-              }, null, 2) }] };
-            }
-          }
-        }
-        return handleAnchorDocument({ content_hash, record_type, source, title, source_url }, config);
+      TOOL_DESC['anchor_document'],
+      {
+        content_hash: contentHashSchema.describe('SHA-256 fingerprint of the document'),
+        record_type: z.string().max(50).optional().describe('Record type (e.g., patent_grant, 10-K)'),
+        source: z.string().max(50).optional().describe('Source (e.g., edgar, uspto)'),
+        title: z.string().max(500).optional().describe('Document title'),
+        source_url: z.string().url().max(2048).optional().describe('Original document URL'),
+        idempotency_key: z.string().uuid().optional().describe('Client-supplied UUID for retry deduplication'),
       },
-      telemetry,
-    ),
-  );
+      withTelemetry(
+        'anchor_document',
+        async ({ content_hash, record_type, source, title, source_url, idempotency_key }) => {
+          return handleAnchorDocument(
+            { content_hash, record_type, source, title, source_url, idempotency_key },
+            config,
+          );
+        },
+        telemetry,
+      ),
+    );
+  }
 
   tool(
     'verify_document',
@@ -593,7 +580,9 @@ function createMcpServer(config: ScopedConfig, telemetry: RequestTelemetryContex
           '  search_credentials   — Semantic search across the anchored records corpus',
           '  oracle_batch_verify  — Batch-verify up to 25 credentials with query-envelope metadata',
           '  nessie_query         — RAG search over SEC filings, patents, and regulatory docs',
-          '  anchor_document      — Submit a SHA-256 fingerprint for batch anchoring',
+          ...(telemetry.anchorDocumentEnabled
+            ? ['  anchor_document      — Submit a SHA-256 fingerprint for batch anchoring']
+            : ['  anchor_document      — Disabled for read-only launch unless MCP_ENABLE_ANCHOR_DOCUMENT=true and caller has write:anchors or anchor:write']),
           '  verify_document      — Check if a document fingerprint has been anchored',
           '  list_agents          — List registered AI agents for the organization',
           '',
@@ -681,27 +670,29 @@ function createMcpServer(config: ScopedConfig, telemetry: RequestTelemetryContex
     }),
   );
 
-  prompt(
-    'anchor-and-verify',
-    'Anchor a document fingerprint and confirm it was submitted',
-    {
-      content_hash: contentHashSchema.describe('SHA-256 fingerprint of the document'),
-      title: z.string().max(500).optional().describe('Document title'),
-    },
-    async ({ content_hash, title }) => ({
-      messages: [{
-        role: 'user' as const,
-        content: {
-          type: 'text' as const,
-          text:
-            `${SAFETY_PREFIX}\n\n` +
-            `Anchor the document described below using anchor_document, then verify it was submitted using verify_document.\n\n` +
-            fenceUserInput(title ?? 'Untitled', 'title') + '\n' +
-            fenceUserInput(content_hash, 'content_hash'),
-        },
-      }],
-    }),
-  );
+  if (telemetry.anchorDocumentEnabled) {
+    prompt(
+      'anchor-and-verify',
+      'Anchor a document fingerprint and confirm it was submitted',
+      {
+        content_hash: contentHashSchema.describe('SHA-256 fingerprint of the document'),
+        title: z.string().max(500).optional().describe('Document title'),
+      },
+      async ({ content_hash, title }) => ({
+        messages: [{
+          role: 'user' as const,
+          content: {
+            type: 'text' as const,
+            text:
+              `${SAFETY_PREFIX}\n\n` +
+              `Anchor the document described below using anchor_document, then verify it was submitted using verify_document.\n\n` +
+              fenceUserInput(title ?? 'Untitled', 'title') + '\n' +
+              fenceUserInput(content_hash, 'content_hash'),
+          },
+        }],
+      }),
+    );
+  }
 
   prompt(
     'research-topic',
@@ -743,6 +734,14 @@ interface AuthResult {
   userId: string;
   tier: string;
   apiKeyId: string | null;
+  scopes: string[];
+}
+
+const MCP_ANCHOR_WRITE_SCOPES = new Set(['write:anchors', 'anchor:write']);
+
+export function isMcpAnchorDocumentAllowed(auth: Pick<AuthResult, 'scopes'>, env: Pick<Env, 'MCP_ENABLE_ANCHOR_DOCUMENT'>): boolean {
+  return env.MCP_ENABLE_ANCHOR_DOCUMENT === 'true'
+    && auth.scopes.some(scope => MCP_ANCHOR_WRITE_SCOPES.has(scope));
 }
 
 async function validateAuth(
@@ -786,13 +785,14 @@ async function validateApiKey(
       // When absent the rate limiter degrades to per-user bucketing via
       // userId (still accurate for per-caller counting).
       const data = await response.json() as
-        | { user_id: string; tier: string; api_key_id?: string; id?: string }
+        | { user_id: string; tier: string; api_key_id?: string; id?: string; scopes?: string[] }
         | null;
       if (data) {
         return {
           userId: data.user_id,
           tier: data.tier,
           apiKeyId: data.api_key_id ?? data.id ?? null,
+          scopes: Array.isArray(data.scopes) ? data.scopes : [],
         };
       }
     }
@@ -847,7 +847,7 @@ export async function validateBearer(
       // Defence-in-depth: refuse if Supabase returns a different sub than
       // the JWT carried. Either side disagreeing is a hard fail.
       if (user.id !== local.userId) return null;
-      return { userId: user.id, tier: local.tier, apiKeyId: null };
+      return { userId: user.id, tier: local.tier, apiKeyId: null, scopes: local.scopes };
     }
   } catch {
     // Fall through
@@ -861,11 +861,14 @@ export async function validateBearer(
  * OAuth Protected Resource Metadata (RFC 9728).
  * Required for MCP connector discovery.
  */
-function handleProtectedResourceMetadata(baseUrl: string): Response {
+function handleProtectedResourceMetadata(baseUrl: string, env: Env): Response {
+  const scopesSupported = env.MCP_ENABLE_ANCHOR_DOCUMENT === 'true'
+    ? ['mcp:verify', 'mcp:search', 'write:anchors', 'anchor:write']
+    : ['mcp:verify', 'mcp:search'];
   return new Response(JSON.stringify({
     resource: `${baseUrl}/mcp`,
     authorization_servers: [`${baseUrl}/auth`],
-    scopes_supported: ['mcp:verify', 'mcp:search', 'mcp:anchor'],
+    scopes_supported: scopesSupported,
     bearer_methods_supported: ['header'],
     resource_documentation: 'https://app.arkova.ai/docs/mcp',
   }), {
@@ -912,7 +915,7 @@ export async function handleMcpRequest(
   // still discover how to re-auth after the kill switch flips back.
   if (url.pathname === '/mcp/.well-known/oauth-protected-resource') {
     const baseUrl = `${url.protocol}//${url.host}`;
-    return handleProtectedResourceMetadata(baseUrl);
+    return handleProtectedResourceMetadata(baseUrl, env);
   }
 
   // CORS preflight — always allowed.
@@ -1011,6 +1014,7 @@ export async function handleMcpRequest(
     execCtx: ctx,
     apiKeyId: auth.apiKeyId,
     userId: auth.userId,
+    anchorDocumentEnabled: isMcpAnchorDocumentAllowed(auth, env),
     clientIp,
   };
 
@@ -1028,7 +1032,13 @@ export async function handleMcpRequest(
       authInfo: {
         token: auth.userId,
         clientId: auth.tier,
-        scopes: ['mcp:verify', 'mcp:search', 'mcp:anchor'],
+        scopes: telemetry.anchorDocumentEnabled
+          ? [
+              'mcp:verify',
+              'mcp:search',
+              ...auth.scopes.filter(scope => MCP_ANCHOR_WRITE_SCOPES.has(scope)),
+            ]
+          : ['mcp:verify', 'mcp:search'],
       },
     });
 

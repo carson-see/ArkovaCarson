@@ -67,10 +67,6 @@
       "description": "Query Arkova's verified intelligence engine over SEC filings, patents, and regulatory documents."
     },
     {
-      "name": "anchor_document",
-      "description": "Submit a document SHA-256 fingerprint for anchoring to the public ledger."
-    },
-    {
       "name": "verify_document",
       "description": "Verify a document by its SHA-256 fingerprint and get anchor proof."
     },
@@ -107,10 +103,6 @@
     {
       "name": "search-and-verify",
       "description": "Search with v2 aliases, inspect detail, and verify the top result."
-    },
-    {
-      "name": "anchor-and-verify",
-      "description": "Anchor a document fingerprint and confirm submission."
     },
     {
       "name": "research-topic",

@@ -387,9 +387,8 @@ export const openApiV2Spec = {
       },
       Org: {
         type: 'object',
-        required: ['id', 'public_id', 'display_name'],
+        required: ['public_id', 'display_name'],
         properties: {
-          id: { type: 'string' },
           public_id: { type: 'string' },
           display_name: { type: 'string' },
           domain: { type: ['string', 'null'] },

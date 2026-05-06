@@ -201,7 +201,7 @@ export interface SearchOptions {
 
 export interface SearchResult {
   type: Exclude<SearchType, 'all'>;
-  id: string;
+  /** Stable public identifier returned by API v2 search. */
   publicId: string;
   score: number;
   snippet: string;
@@ -299,7 +299,6 @@ export interface AttestationDetails {
 }
 
 export interface OrganizationSummary {
-  id: string;
   publicId: string;
   displayName: string;
   domain: string | null;
@@ -313,10 +312,9 @@ export interface OrganizationSummary {
  *  internal `id`, `org_id`, `user_id`, or `record_id` columns. */
 
 /**
- * Public-safe org detail. We deliberately do NOT extend OrganizationSummary
- * here: `OrganizationSummary.id` is a required internal UUID that the v2
- * detail endpoint never returns. Modeling the v2 response shape directly
- * keeps consumers from relying on a fabricated/empty `id`.
+ * Public-safe org detail. Kept separate from OrganizationSummary so each
+ * response can evolve independently while preserving the no-internal-id
+ * public API contract.
  */
 export interface OrganizationDetails {
   publicId: string;

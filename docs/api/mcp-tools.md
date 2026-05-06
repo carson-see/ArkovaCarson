@@ -2,7 +2,9 @@
 
 > **Status:** Production | **Story:** [INT-02 / SCRUM-643](https://arkova.atlassian.net/browse/SCRUM-643) | **Endpoint:** `https://edge.arkova.ai/mcp`
 
-The Arkova [Model Context Protocol](https://modelcontextprotocol.io) server exposes sixteen tools that let AI agents (Claude, LangChain, AutoGen, custom agents) verify credentials, anchor documents, and query verified public records — all without writing HTTP requests. SCRUM-1107 + SCRUM-1132 + SCRUM-1584 add the v2 agent aliases (`search`, `verify`, `list_orgs`, `get_anchor`, `get_organization`, `get_record`, `get_fingerprint`, `get_document`) that match the OpenAPI 3.1 operation IDs published at `https://api.arkova.ai/v2/openapi.json`.
+The Arkova [Model Context Protocol](https://modelcontextprotocol.io) server exposes fifteen read-oriented launch tools that let AI agents (Claude, LangChain, AutoGen, custom agents) verify credentials and query verified public records — all without writing HTTP requests. SCRUM-1107 + SCRUM-1132 + SCRUM-1584 add the v2 agent aliases (`search`, `verify`, `list_orgs`, `get_anchor`, `get_organization`, `get_record`, `get_fingerprint`, `get_document`) that match the OpenAPI 3.1 operation IDs published at `https://api.arkova.ai/v2/openapi.json`.
+
+`anchor_document` is intentionally outside the default MCP launch surface. It is registered only when `MCP_ENABLE_ANCHOR_DOCUMENT=true` and the authenticated caller has a canonical write-capable scope (`write:anchors` or `anchor:write`). `mcp:anchor` is not a public API-key scope and is not mintable for launch keys. Until that evidence is attached, public MCP launch is read-only.
 
 This is the verification layer for the agentic economy. Same infrastructure as the REST API; just exposed through the MCP transport so any tool-using LLM can call it natively.
 
@@ -49,11 +51,10 @@ This is the verification layer for the agentic economy. Same infrastructure as t
 | 9 | `verify_credential` | Verify a single credential by public ID | P8-S19 |
 | 10 | `search_credentials` | Semantic search across credentials | P8-S19 |
 | 11 | `nessie_query` | RAG query over verified public records | PH1-SDK-03 |
-| 12 | `anchor_document` | Submit a SHA-256 fingerprint for anchoring | PH1-SDK-03 |
-| 13 | `verify_document` | Verify a document by its fingerprint | PH1-SDK-03 |
-| 14 | **`verify_batch`** | **Verify up to 100 credentials in one call** | **INT-02** |
-| 15 | `oracle_batch_verify` | Batch-verify up to 25 credentials with signed query-envelope metadata | SCRUM-1107 |
-| 16 | `list_agents` | List AI agents registered to the caller's organization | SCRUM-1107 |
+| 12 | `verify_document` | Verify a document by its fingerprint | PH1-SDK-03 |
+| 13 | **`verify_batch`** | **Verify up to 100 credentials in one call** | **INT-02** |
+| 14 | `oracle_batch_verify` | Batch-verify up to 25 credentials with signed query-envelope metadata | SCRUM-1107 |
+| 15 | `list_agents` | List AI agents registered to the caller's organization | SCRUM-1107 |
 
 > **CLE compliance tool deferred:** `cle_verify` was scoped for INT-02 but pulled before merge — the underlying `rpc/cle_verify` does not exist in the schema. The HTTP route at `/api/v1/cle/verify` is live and usable via the REST API or `@arkova/sdk`. Tracked as follow-up **INT-02b** (expose it through MCP by threading caller API keys through the edge handler context).
 
@@ -227,9 +228,11 @@ Query Arkova's verified intelligence engine — semantic search over 1.4M+ ancho
 
 ---
 
-## 4. `anchor_document`
+## 4. `anchor_document` — gated write tool
 
-Submit a document's SHA-256 fingerprint to the public ledger. The document itself is never sent — only its fingerprint.
+`anchor_document` is not exposed by the default public MCP launch manifest. It is a gated write tool for controlled deployments only. To expose it, operators must set `MCP_ENABLE_ANCHOR_DOCUMENT=true` and authenticate with a caller whose auth result includes `write:anchors` or `anchor:write`.
+
+When enabled, it submits a document's SHA-256 fingerprint to the public ledger. The document itself is never sent — only its fingerprint.
 
 ### Input
 
@@ -240,6 +243,7 @@ Submit a document's SHA-256 fingerprint to the public ledger. The document itsel
 | `source` | string | ❌ | E.g. `edgar`, `uspto`, `federal_register` |
 | `title` | string | ❌ | Document title |
 | `source_url` | string | ❌ | URL of the original document |
+| `idempotency_key` | UUID string | ❌ | Client-supplied retry key for 5-minute dedupe |
 
 ### Output
 
@@ -372,7 +376,8 @@ Tool calls share the per-API-key rate limits with the REST API:
 
 | Tool | Limit |
 |---|---|
-| `verify_credential`, `verify_document`, `anchor_document` | 1,000 req/min |
+| `verify_credential`, `verify_document` | 1,000 req/min |
+| `anchor_document` | Gated write tool; not exposed in default launch manifest |
 | `search_credentials`, `nessie_query` | 30 req/min (AI-rate-limited) |
 | `verify_batch` | 10 req/min (batch tier) |
 

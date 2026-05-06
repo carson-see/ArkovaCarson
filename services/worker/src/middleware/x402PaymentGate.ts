@@ -136,6 +136,12 @@ interface OnChainValidationResult {
   recipient?: string;
 }
 
+const X402_VALIDATION_SERVICE_FAILURE_REASONS = new Set([
+  'rpc_not_configured',
+  'rpc_unavailable',
+  'validation_error',
+]);
+
 /**
  * Validate a transaction on-chain via BASE RPC.
  * Verifies: (1) TX exists, (2) TX is confirmed, (3) USDC transfer amount and recipient match.
@@ -147,11 +153,10 @@ async function validateOnChain(
   expectedAmount: number,
   expectedRecipient: string,
 ): Promise<OnChainValidationResult> {
-  const rpcUrl = process.env.BASE_RPC_URL;
+  const rpcUrl = config.baseRpcUrl;
   if (!rpcUrl) {
-    // No RPC configured — log warning and allow (graceful degradation)
-    logger.warn('BASE_RPC_URL not configured — skipping on-chain validation');
-    return { valid: true, reason: 'rpc_not_configured' };
+    logger.error('BASE_RPC_URL not configured — rejecting x402 payment validation');
+    return { valid: false, reason: 'rpc_not_configured' };
   }
 
   try {
@@ -167,6 +172,11 @@ async function validateOnChain(
       }),
       signal: AbortSignal.timeout(5000),
     });
+
+    if (!receiptResponse.ok) {
+      logger.warn({ status: receiptResponse.status }, 'Base RPC receipt lookup failed');
+      return { valid: false, reason: 'rpc_unavailable' };
+    }
 
     const receiptData = await receiptResponse.json() as {
       result?: {
@@ -230,8 +240,8 @@ async function validateOnChain(
 
     return { valid: true, confirmed: true, amount: transferAmount, recipient };
   } catch (error) {
-    logger.warn({ error, txHash }, 'On-chain validation failed — allowing with warning');
-    return { valid: true, reason: 'validation_error_graceful' };
+    logger.warn({ error, txHash }, 'On-chain validation failed — rejecting payment');
+    return { valid: false, reason: 'validation_error' };
   }
 }
 
@@ -482,6 +492,15 @@ export function x402PaymentGate(endpoint: string) {
     const validation = await validateOnChain(payment.txHash, price, payeeAddress);
 
     if (!validation.valid) {
+      if (validation.reason && X402_VALIDATION_SERVICE_FAILURE_REASONS.has(validation.reason)) {
+        res.status(503).json({
+          error: 'payment_validation_unavailable',
+          reason: validation.reason,
+          message: 'Payment validation is temporarily unavailable. Retry later or use API key authentication.',
+        });
+        return;
+      }
+
       res.status(402).json({
         error: 'payment_validation_failed',
         reason: validation.reason,

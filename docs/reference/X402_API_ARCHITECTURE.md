@@ -17,6 +17,27 @@ Both paths hit the same endpoints. The x402 gate is transparent: if a valid API 
 
 ## How x402 Works with Arkova
 
+## API/MCP Launch Scope
+
+API/MCP read-only launch surfaces use scoped API keys, not x402. The launch MCP surface is read-only by default, and REST v2 agent endpoints require scoped API keys. x402 enforcement remains mandatory for the paid API surfaces listed below.
+
+| Endpoint | Payment scope | Runtime gate | Price source | Launch evidence |
+|---|---|---|---|---|
+| `/api/v1/verify` | Authenticated/non-GET verification calls | `x402PaymentGate('/api/v1/verify')` | `X402_PRICING['/api/v1/verify']` | Unpaid 402, paid settlement, replay, disabled flag tests |
+| `/api/v1/verify/entity` | Entity verification | `x402PaymentGate('/api/v1/verify/entity')` | `X402_PRICING['/api/v1/verify/entity']` | Unpaid 402, paid settlement, replay, disabled flag tests |
+| `/api/v1/compliance/check` | Compliance check | `x402PaymentGate('/api/v1/compliance/check')` | `X402_PRICING['/api/v1/compliance/check']` | Unpaid 402, paid settlement, replay, disabled flag tests |
+| `/api/v1/regulatory/lookup` | Regulatory lookup | `x402PaymentGate('/api/v1/regulatory/lookup')` | `X402_PRICING['/api/v1/regulatory/lookup']` | Unpaid 402, paid settlement, replay, disabled flag tests |
+| `/api/v1/cle` | CLE verification/records | `x402PaymentGate('/api/v1/cle')` | `X402_PRICING['/api/v1/cle']` | Unpaid 402, paid settlement, replay, disabled flag tests |
+| `/api/v1/nessie/query` | Nessie RAG query | `x402PaymentGate('/api/v1/nessie/query')` | `X402_PRICING['/api/v1/nessie/query']` | Unpaid 402, paid settlement, replay, disabled flag tests |
+
+Runtime prerequisites:
+
+* `ENABLE_X402_PAYMENTS` switchboard flag controls whether payment-required responses are enforced.
+* `X402_FACILITATOR_URL` points the worker at the facilitator.
+* `ARKOVA_USDC_ADDRESS` is required; if missing while x402 is enabled, unauthenticated requests fail closed with 401.
+* `X402_NETWORK` identifies Base Sepolia or Base mainnet.
+* `BASE_RPC_URL` is required for on-chain verification when RPC validation is enabled.
+
 ### The Flow (Happy Path)
 
 ```

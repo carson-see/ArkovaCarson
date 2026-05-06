@@ -45,6 +45,7 @@ export const contentHashSchema = z
   .length(64);
 
 export const freeTextQuerySchema = z.string().min(1).max(500);
+export const idempotencyKeySchema = z.string().uuid();
 
 // ── Per-tool schemas ─────────────────────────────────────────────────────
 export const verifyCredentialSchema = z
@@ -84,6 +85,7 @@ export const anchorDocumentSchema = z
     source: z.string().max(50).optional(),
     title: z.string().max(500).optional(),
     source_url: z.string().url().max(2048).optional(),
+    idempotency_key: idempotencyKeySchema.optional(),
   })
   .strict();
 

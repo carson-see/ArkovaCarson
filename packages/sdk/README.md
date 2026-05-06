@@ -235,6 +235,8 @@ Retries are built in for `429`, `500`, `502`, `503`, and `504`. For rate limits,
 
 The `arkova.webhooks` namespace has six methods:
 
+> Webhook CRUD is a legacy v1 management surface. Its `id` values are webhook endpoint identifiers scoped to the authenticated org, not API v2 public resource identifiers. API v2 agent/search/detail surfaces use `public_id`/`publicId` and do not expose internal database UUIDs.
+
 ```typescript
 arkova.webhooks.create(input)    // Register a new endpoint, returns the secret ONCE
 arkova.webhooks.list(options?)   // Paginated list of org endpoints
@@ -402,7 +404,7 @@ try {
 
 ## x402 micropayments
 
-Arkova supports the [x402 protocol](https://x402.org) for machine-to-machine billing. Some endpoints (e.g., `/api/v1/cle/verify`) accept either an API key or a signed x402 payment header.
+Arkova supports the [x402 protocol](https://x402.org) for machine-to-machine billing. x402 is enforced for paid API v1 launch scopes such as `/api/v1/verify`, `/api/v1/verify/entity`, `/api/v1/compliance/check`, `/api/v1/regulatory/lookup`, `/api/v1/cle`, and `/api/v1/nessie/query`. API v2 agent/read surfaces use scoped API keys, not x402.
 
 ```typescript
 const arkova = new Arkova({
