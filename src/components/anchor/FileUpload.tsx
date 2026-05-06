@@ -204,6 +204,7 @@ export function FileUpload({ onFileSelect, onBulkDetected, onAttestationDetected
         <input
           ref={inputRef}
           type="file"
+          multiple
           className="absolute inset-0 cursor-pointer opacity-0"
           onChange={handleChange}
           disabled={disabled || !!selectedFile}
