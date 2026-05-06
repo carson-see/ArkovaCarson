@@ -3,8 +3,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { readMigration } from '../../test-utils/migrations.js';
 
 // ---- Hoisted mocks ----
 const {
@@ -339,10 +338,7 @@ describe('publicRecordAnchor', () => {
   });
 
   it('keeps duplicate record links eligible after the shared anchor is finalized', () => {
-    const sql = readFileSync(
-      resolve(process.cwd(), '../../supabase/migrations/0248_finalize_public_record_anchor_duplicates.sql'),
-      'utf8',
-    );
+    const sql = readMigration('0248_finalize_public_record_anchor_duplicates.sql');
 
     expect(sql).toContain("a.status IN ('SUBMITTED', 'SECURED')");
     expect(sql).toContain('a.chain_tx_id = p_tx_id');
