@@ -53,9 +53,10 @@ YOUR JOB IN THIS SESSION (in order, no deferring)
      `delete_branch` against branch id
      `08b02c0f-aa21-41a5-9004-fdcc88f212dd`. This stops the cost clock.
 
-2. Author Path A — `supabase/migrations/0291_fresh_db_recovery.sql` —
-   on a NEW branch `claude/scrum-1647-fresh-db-recovery-0291`. The
-   migration must:
+2. Author the forward-only fresh-DB repair as a NEW additive migration,
+   `supabase/migrations/0057_seed_alignment_recovery.sql`, on the
+   carryover branch. Do not replace or rewrite the already-applied
+   `0056_anchor_recipients.sql`. The migration must:
    * Use a 4-digit numeric prefix (the Supabase preview-branch builder
      parses `^(\d{14}|\d{1,4})_`; 4-digit is what works for both the
      CLI and the branch builder).
@@ -69,39 +70,22 @@ YOUR JOB IN THIS SESSION (in order, no deferring)
      `anchors_revocation_reason_length` constraints, and a defensive
      `CREATE OR REPLACE FUNCTION get_my_credentials` that matches what
      0056 expects.
-   * Note: 0291 alone DOES NOT fix 0056's failure on a fresh build,
-     because 0056 runs before 0291 in version order. The actual fix
-     for fresh-DB compatibility is harder than just adding 0291. See
-     step 3.
+   * Backfill safely for existing rows where the new columns are null or
+     absent, without assuming seed data shape.
+   * If the lettered `0055b_seed_alignment_idempotent.sql` file remains
+     incompatible with a chosen replay tool, make `0055b` a no-op tombstone
+     only after confirming the additive `0057_*` migration carries the
+     effective guards/backfill. Keep 0056 untouched.
 
-3. Pick the fresh-DB fix STRATEGY. The hard constraint: Supabase preview
-   branches re-apply ALL migrations from version 0000 in numeric order,
-   so anything that runs after 0056 cannot help. There is NO 4-digit
-   prefix between 0055 and 0056 — they are consecutive integers. Three
-   options. PICK ONE WITH CARSON BEFORE WRITING CODE:
+3. Fresh-DB fix strategy: use a forward-only additive migration plus the
+   CLI-forward standalone staging project. Do not recommend replacing 0056
+   or moving 0055b content into 0056; 0056 has already been applied and
+   remains immutable. The standalone `arkova-staging` project is populated
+   via `npx supabase db push --linked`, whose parser recognizes `0055b_*`;
+   `0057_*` exists as the idempotent forward repair/backfill for any
+   environment where the seed-alignment schema is missing or partial.
 
-   A. CLI-FORWARD WORKFLOW: change the `arkova-staging` provisioning
-      strategy to use `npx supabase db push --linked` against a fresh
-      Supabase project (not a preview branch). The CLI flow recognizes
-      `0055b_*` lettered suffixes. PR-B's scripts/staging/seed.ts +
-      claim.sh would be re-pointed at this kind of branch. Pro: keeps
-      PR #691's 0055b in place. Con: changes the rig design.
-
-   B. MOVE `0055b` CONTENT INTO `0056`: write a NEW
-      `0056_anchor_recipients.sql` (replacing the existing one)
-      that begins with all the IF NOT EXISTS guards from 0055b before
-      doing 0056's original work. Migrate the existing `0055b` file
-      to a no-op tombstone so the historical entry stays. CLAUDE.md
-      "never modify an existing migration" applies to migrations that
-      are APPLIED to prod; 0056 IS in prod. Carson must explicitly
-      waive the constitution rule.
-
-   C. NEW BASELINE: stop replaying 0001..0290 on every staging branch
-      build. Generate a single `00000_baseline_at_main_HEAD.sql`
-      pg_dump of the prod schema; subsequent migrations 0291+ apply
-      on top. Best long-term. Largest scope.
-
-4. Once strategy chosen, implement + run end-to-end:
+4. Once `0057_*` is authored, implement + run end-to-end:
    * Re-create `arkova-staging` Supabase branch via MCP `create_branch`
      (cost was confirmed in previous session: $0.01344/hr — recheck
      via `get_cost`/`confirm_cost` per MCP requirements).
