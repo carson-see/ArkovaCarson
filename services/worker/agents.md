@@ -1,10 +1,17 @@
 # agents.md — services/worker
 
-_Last updated: 2026-05-06 (SCRUM-1130 org queue scheduler + SCRUM-1135 R0-R3 closeout)._
+_Last updated: 2026-05-08 (SCRUM-1668 anchor batch policy fix + SCRUM-1130 org queue scheduler + SCRUM-1135 R0-R3 closeout)._
 
 ## What This Folder Contains
 
-Express-based worker service handling privileged server-side operations: anchor processing (PENDING → SECURED), Stripe webhook verification, outbound webhook delivery, cron job scheduling, rules engine, and org tier/quota enforcement. Uses Supabase service_role key — never the anon key.
+Express-based worker service handling privileged server-side operations: Merkle batch anchoring, Stripe webhook verification, outbound webhook delivery, cron job scheduling, rules engine, and org tier/quota enforcement. Uses Supabase service_role key — never the anon key.
+
+## SCRUM-1668 anchor batch policy fix (2026-05-06, PR #700)
+
+- **`src/jobs/anchor.ts`**: `processPendingAnchors()` is now a compatibility no-op. It does not call `claim_pending_anchors`, does not move ordinary anchors to `BROADCASTING`, and does not submit one-anchor Bitcoin transactions. Ordinary `PENDING` anchors remain in the Merkle batch queue owned by `jobs/batch-anchor.ts`.
+- **`src/jobs/batch-anchor.ts`**: the smart-skip gate now probes the indexed 3,000th and 10,000th pending rows instead of depending on exact/fast status counts. This pins the operator rule directly: 10,000 fires immediately; 3,000 starts the age clock; stale count probes cannot collapse to `-1` and defer forever.
+- **`src/routes/scheduled.ts`**: removed the in-process one-minute `process-pending-anchors` schedule. The batch policy check remains on `BATCH_ANCHOR_INTERVAL_MINUTES` (default 10 minutes) and only broadcasts when the batch size/age/forced-flush rules fire.
+- **Tests**: `anchor.test.ts`, `anchor-lifecycle.test.ts`, `batch-anchor.test.ts`, `batch-anchor.audit.test.ts`, `scheduled.test.ts`, and `index.test.ts` pin that pending anchors are not individually claimed or broadcast and that batch triggers fire on the 10,000-size / 3,000+age rules.
 
 ## SCRUM-1130 — durable 24-hour organization queue scheduler (2026-05-05)
 

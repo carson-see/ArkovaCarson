@@ -1,8 +1,8 @@
 # Path C — pg_dump baseline cutover plan
 
 > **Jira:** [SCRUM-1668](https://arkova.atlassian.net/browse/SCRUM-1668) (parent [SCRUM-1246](https://arkova.atlassian.net/browse/SCRUM-1246) RECOVERY)
-> **PR:** [#700](https://github.com/carson-see/ArkovaCarson/pull/700) (migration baseline; T2-class staging evidence still owed before Done)
-> **Status:** **BASELINE PROD LEDGER ROW RECORDED 2026-05-04** in project `vzwyaatejekddvltxyye` via Supabase MCP `execute_sql` (single ledger INSERT, RETURNING confirmed `version=00000000000000, name=baseline_at_main_HEAD`). `0295_pr700_rls_baseline_reconciliation.sql` was applied to prod on 2026-05-06 after explicit operator authorization; ledger/schema evidence is captured in [`PR700_PROD_0295_VERIFICATION_2026-05-06.md`](./PR700_PROD_0295_VERIFICATION_2026-05-06.md). PR #700 is not merge-ready until CI/review are green and worker/staging validation evidence is captured.
+> **PR:** [#700](https://github.com/carson-see/ArkovaCarson/pull/700) (migration baseline; T3-class worker/staging evidence now owed before Done because anchor scheduler/batch code changed)
+> **Status:** **BASELINE PROD LEDGER ROW RECORDED 2026-05-04** in project `vzwyaatejekddvltxyye` via Supabase MCP `execute_sql` (single ledger INSERT, RETURNING confirmed `version=00000000000000, name=baseline_at_main_HEAD`). `0295_pr700_rls_baseline_reconciliation.sql` was applied to prod on 2026-05-06 after explicit operator authorization; ledger/schema evidence is captured in [`PR700_PROD_0295_VERIFICATION_2026-05-06.md`](./PR700_PROD_0295_VERIFICATION_2026-05-06.md). Anchor batch-policy evidence is captured in [`PR700_ANCHOR_POLICY_VERIFICATION_2026-05-06.md`](./PR700_ANCHOR_POLICY_VERIFICATION_2026-05-06.md). PR #700 is not merge-ready until CI/review are green and worker/staging validation evidence is captured.
 > **Cutover IS the metadata write to prod's ledger plus the repo-side baseline/archive move.** Merging PR #700 ships the repo-side rename. Both baseline halves are reversible: revert the PR for repo-side, run `DELETE FROM supabase_migrations.schema_migrations WHERE version='00000000000000'` for prod-side. The separate post-baseline `0295` reconciliation is a forward prod migration and must be tracked as prod schema state, not treated as part of the metadata-only cutover.
 
 ---
@@ -63,7 +63,8 @@ This is **not** a §1.12 worker soak.
 - CI must be green on PR #700.
 - `0295_pr700_rls_baseline_reconciliation.sql` is applied to prod `vzwyaatejekddvltxyye`; ledger row `20260506113532 / 0295_pr700_rls_baseline_reconciliation` plus schema/RLS evidence is captured in [`PR700_PROD_0295_VERIFICATION_2026-05-06.md`](./PR700_PROD_0295_VERIFICATION_2026-05-06.md), and Migration Drift rerun [25429502352 / 74603343923](https://github.com/carson-see/ArkovaCarson/actions/runs/25429502352/job/74603343923) passed.
 - Fresh-DB/RLS CI must remain green with the baseline plus active post-baseline migrations.
-- A worker validation path must run against an approved staging environment: either wait for the shared #695/#697 staging lease to release or explicitly approve an isolated environment. Do not create paid Supabase resources without cost/org confirmation.
+- A worker validation path must run against an approved staging environment: either wait for the shared staging lease to release or use the explicitly approved isolated environment path. Because #700 now touches anchor scheduler/batch code, treat this as T3-class worker/staging evidence unless the source-of-truth DoD is explicitly changed.
+- Anchor batch-policy evidence must include the fixed behavior: ordinary `PENDING` anchors are not individually broadcast; the 10,000 pending threshold fires immediately; the 3,000 pending threshold fires only once the oldest pending age reaches 3 hours; the forced flush path still works.
 - PR body and evidence must clearly say schema-only equivalence until real worker/staging evidence exists.
 
 ### 3.4 Historical Ledger Decision

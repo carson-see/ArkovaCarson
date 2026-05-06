@@ -16,7 +16,6 @@
 
 import { db, withDbTimeout } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
-import { callRpc, type FastCountsRpc } from '../utils/rpc.js';
 import { getChainClient } from '../chain/client.js';
 import { buildMerkleTree } from '../utils/merkle.js';
 import { getComplianceControlIds } from '../utils/complianceMapping.js';
@@ -42,8 +41,8 @@ export const MIN_BATCH_SIZE = 1;
 /**
  * Pipeline rule (operator-defined):
  *   • Below MIN_BATCH_THRESHOLD pending: cron is mostly a no-op, no TX fires.
- *   • At/above MIN_BATCH_THRESHOLD: cron polls more frequently (every 30min)
- *     to evaluate the age clock; size threshold by itself does NOT fire a TX.
+ *   • At/above MIN_BATCH_THRESHOLD: cron polls on the configured interval
+ *     to evaluate the age clock; the 3,000 threshold by itself does NOT fire a TX.
  *   • Hit BATCH_SIZE → fire immediately (Trigger A).
  *   • Oldest pending age ≥ MAX_ANCHOR_AGE_MS → fire whatever is queued
  *     (Trigger B). Even 4,500 anchors at the 3-hour mark broadcasts.
@@ -71,10 +70,12 @@ const CLAIM_PENDING_ANCHORS_MIGRATION_COMPAT_SUBSTRINGS = [
   'no function matches',
 ] as const;
 
-interface OrgPendingThresholdProbe {
-  pendingThresholdSentinel: number;
+interface PendingTriggerProbe {
+  pendingCountSentinel: number;
   pendingThreshold: number;
+  batchSize: number;
   thresholdCrossed: boolean;
+  batchSizeCrossed: boolean;
 }
 
 function claimErrorSummary(error: unknown): string {
@@ -254,10 +255,8 @@ async function _processBatchAnchorsInner(opts: ProcessBatchAnchorOptions = {}): 
   // Phase 0b: SCALE-1 — Smart batch skip + backlog age check
   let oldestPendingAgeMs = 0;
   try {
-    // Both reads are independent and run on the 5-min cron — parallelize.
-    // Pending count via get_anchor_status_counts_fast (pg_class.reltuples +
-    // 1s per-status budget); avoids the exact-count scan on the bloated
-    // anchors table that timed out the prior implementation.
+    // These reads are independent; keep them bounded to indexed threshold
+    // probes rather than exact counts on the hot anchors table.
     let oldestQuery = db
       .from('anchors')
       .select('created_at')
@@ -270,7 +269,7 @@ async function _processBatchAnchorsInner(opts: ProcessBatchAnchorOptions = {}): 
         .order('created_at', { ascending: true })
         .limit(1)
         .single(),
-      orgId ? getOrgPendingThresholdProbe(orgId) : callRpc<FastCountsRpc>(db, 'get_anchor_status_counts_fast'),
+      getPendingTriggerProbe(orgId ?? undefined),
     ]);
 
     const stats = oldestRes.data;
@@ -282,29 +281,24 @@ async function _processBatchAnchorsInner(opts: ProcessBatchAnchorOptions = {}): 
     oldestPendingAgeMs = Date.now() - new Date(stats.created_at).getTime();
 
     if (countsRes.error) {
-      logger.warn({ error: countsRes.error }, 'get_anchor_status_counts_fast failed');
+      logger.warn({ error: countsRes.error }, 'Pending threshold probe failed');
     }
-    // On RPC failure we still know there is ≥ 1 PENDING anchor (oldestRes
-    // returned a row at L193-197), so fall back to 1 instead of 0. A 0
-    // fallback collides with triggerB_shouldFireOnAge's first guard
-    // (`if (input.pendingCount === 0) return false;`) and would defer the
-    // batch on every cron tick during exactly the RPC-degraded scenario
-    // this hardening is for — silently breaking the
-    // "no anchor waits more than MAX_ANCHOR_AGE_MS" SLA documented at L78-79.
-    const pendingCount = orgId
-      ? (countsRes.data as OrgPendingThresholdProbe | null)?.pendingThresholdSentinel ?? 1
-      : (countsRes.data as FastCountsRpc | null)?.PENDING ?? 1;
-    const pendingCountLogContext = orgId
-      ? {
-          pendingThresholdSentinel: pendingCount,
-          pendingCountSource: 'org_threshold_probe',
-          pendingThreshold: MIN_BATCH_THRESHOLD,
-          orgPendingThresholdCrossed: pendingCount >= MIN_BATCH_THRESHOLD,
-        }
-      : {
-          pendingCount,
-          pendingCountSource: 'fast_status_counts',
-        };
+    const pendingProbe = countsRes.data ?? {
+      pendingCountSentinel: 1,
+      pendingThreshold: MIN_BATCH_THRESHOLD,
+      batchSize: BATCH_SIZE,
+      thresholdCrossed: false,
+      batchSizeCrossed: false,
+    };
+    const pendingCount = pendingProbe.pendingCountSentinel;
+    const pendingCountLogContext = {
+      pendingCountSentinel: pendingCount,
+      pendingCountSource: orgId ? 'org_threshold_probe' : 'global_threshold_probe',
+      pendingThreshold: MIN_BATCH_THRESHOLD,
+      batchSize: BATCH_SIZE,
+      pendingThresholdCrossed: pendingProbe.thresholdCrossed,
+      batchSizeCrossed: pendingProbe.batchSizeCrossed,
+    };
 
     // Trigger D: forced flush (daily 3am EST sweep) bypasses the age check
     // and broadcasts whatever is queued, even below MIN_BATCH_THRESHOLD.
@@ -314,10 +308,15 @@ async function _processBatchAnchorsInner(opts: ProcessBatchAnchorOptions = {}): 
         { ...pendingCountLogContext, oldestAgeMs: oldestPendingAgeMs, orgId },
         orgId ? 'Forced org batch flush' : 'Forced batch flush (daily 3am EST sweep)',
       );
+    } else if (triggerA_shouldFireOnSize(pendingCount)) {
+      logger.info(
+        { ...pendingCountLogContext, oldestAgeMs: oldestPendingAgeMs, orgId },
+        orgId ? 'Org batch size trigger fired' : 'Batch size trigger fired',
+      );
     } else if (!triggerB_shouldFireOnAge({ pendingCount, oldestPendingAgeMs })) {
       logger.debug(
         { ...pendingCountLogContext, oldestAgeMs: oldestPendingAgeMs, orgId },
-        'Below batch threshold and oldest anchor is fresh — deferring',
+        'Batch trigger not met — deferring',
       );
       return EMPTY;
     }
@@ -525,27 +524,45 @@ async function _processBatchAnchorsInner(opts: ProcessBatchAnchorOptions = {}): 
   };
 }
 
-async function getOrgPendingThresholdProbe(orgId: string): Promise<{ data: OrgPendingThresholdProbe | null; error: unknown }> {
+async function getPendingTriggerProbe(orgId?: string): Promise<{ data: PendingTriggerProbe | null; error: unknown }> {
   try {
-    // We only need to know whether the org queue crossed Trigger B's
-    // threshold; avoid exact counts because they scan the hot anchors table.
-    // The returned PENDING value is a trigger sentinel, not a literal count.
-    const { data, error } = await db
-      .from('anchors')
-      .select('id')
-      .eq('status', 'PENDING')
-      .eq('org_id', orgId)
-      .is('deleted_at', null)
-      .order('created_at', { ascending: true })
-      .range(MIN_BATCH_THRESHOLD - 1, MIN_BATCH_THRESHOLD - 1)
-      .maybeSingle();
-    if (error) return { data: null, error };
-    const pendingThresholdSentinel = data ? MIN_BATCH_THRESHOLD : 1;
+    // We only need to know whether the queue crossed Trigger A/B thresholds;
+    // avoid exact counts because they scan the hot anchors table. The returned
+    // pending value is a trigger sentinel, not a literal count.
+    const probeAt = (offset: number) => {
+      let query = db
+        .from('anchors')
+        .select('id')
+        .eq('status', 'PENDING')
+        .is('deleted_at', null);
+      if (orgId) query = query.eq('org_id', orgId);
+      return query
+        .order('created_at', { ascending: true })
+        .range(offset, offset)
+        .maybeSingle();
+    };
+
+    const [thresholdRes, batchSizeRes] = await Promise.all([
+      probeAt(MIN_BATCH_THRESHOLD - 1),
+      probeAt(BATCH_SIZE - 1),
+    ]);
+    if (thresholdRes.error) return { data: null, error: thresholdRes.error };
+    if (batchSizeRes.error) return { data: null, error: batchSizeRes.error };
+
+    const batchSizeCrossed = !!batchSizeRes.data;
+    const thresholdCrossed = batchSizeCrossed || !!thresholdRes.data;
+    const pendingCountSentinel = batchSizeCrossed
+      ? BATCH_SIZE
+      : thresholdCrossed
+        ? MIN_BATCH_THRESHOLD
+        : 1;
     return {
       data: {
-        pendingThresholdSentinel,
+        pendingCountSentinel,
         pendingThreshold: MIN_BATCH_THRESHOLD,
-        thresholdCrossed: pendingThresholdSentinel >= MIN_BATCH_THRESHOLD,
+        batchSize: BATCH_SIZE,
+        thresholdCrossed,
+        batchSizeCrossed,
       },
       error: null,
     };

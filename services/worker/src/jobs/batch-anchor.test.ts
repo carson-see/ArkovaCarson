@@ -157,10 +157,9 @@ function mockPendingBacklogReady(): void {
     data: { created_at: '2026-01-01T00:00:00Z' },
     error: null,
   });
-  mockSelectMaybeSingle.mockResolvedValue({
-    data: { id: 'threshold-anchor' },
-    error: null,
-  });
+  mockSelectMaybeSingle
+    .mockResolvedValueOnce({ data: { id: 'threshold-anchor' }, error: null })
+    .mockResolvedValueOnce({ data: null, error: null });
 }
 
 // ================================================================
@@ -275,10 +274,12 @@ describe('processBatchAnchors', () => {
       ['org_id', 'org-1'],
       ['org_id', 'org-1'],
       ['org_id', 'org-1'],
+      ['org_id', 'org-1'],
     ]);
     expect(mockSelectRange).toHaveBeenCalledWith(MIN_BATCH_THRESHOLD - 1, MIN_BATCH_THRESHOLD - 1);
+    expect(mockSelectRange).toHaveBeenCalledWith(BATCH_SIZE - 1, BATCH_SIZE - 1);
     expect(mockSelectMaybeSingle).toHaveBeenCalled();
-    expect(mockSelectIs.mock.calls.filter((call) => call[0] === 'deleted_at')).toHaveLength(3);
+    expect(mockSelectIs.mock.calls.filter((call) => call[0] === 'deleted_at')).toHaveLength(4);
   });
 
   it('fails closed for blank orgId instead of running a global forced flush', async () => {
@@ -308,6 +309,7 @@ describe('processBatchAnchors', () => {
     expect(orgScopeCalls).toEqual([
       ['org_id', 'org-1'],
       ['org_id', 'org-1'],
+      ['org_id', 'org-1'],
     ]);
     expect(mockLogger.error).toHaveBeenCalledWith(
       expect.objectContaining({ error: expect.any(Object) }),
@@ -330,6 +332,7 @@ describe('processBatchAnchors', () => {
     expect(result).toEqual({ processed: 0, batchId: null, merkleRoot: null, txId: null });
     const orgScopeCalls = mockSelectEq.mock.calls.filter((call) => call[0] === 'org_id');
     expect(orgScopeCalls).toEqual([
+      ['org_id', 'org-1'],
       ['org_id', 'org-1'],
       ['org_id', 'org-1'],
     ]);
@@ -373,6 +376,31 @@ describe('processBatchAnchors', () => {
     expect(result.txId).toBe(MOCK_RECEIPT.receiptId);
   });
 
+  it('fires immediately when the 10k batch-size threshold is crossed, even at fresh age', async () => {
+    mockSelectSingle.mockResolvedValue({
+      data: { created_at: new Date().toISOString() },
+      error: null,
+    });
+    mockSelectMaybeSingle
+      .mockResolvedValueOnce({ data: { id: 'threshold-anchor' }, error: null })
+      .mockResolvedValueOnce({ data: { id: 'batch-size-anchor' }, error: null });
+    mockDbRpc
+      .mockResolvedValueOnce({ data: [ANCHOR_A, ANCHOR_B, ANCHOR_C], error: null }) // claim
+      .mockResolvedValueOnce({ data: 3, error: null }); // submit_batch_anchors
+
+    const result = await processBatchAnchors();
+
+    expect(result.processed).toBe(3);
+    expect(mockLogger.info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        pendingCountSentinel: BATCH_SIZE,
+        pendingThresholdCrossed: true,
+        batchSizeCrossed: true,
+      }),
+      'Batch size trigger fired',
+    );
+  });
+
   it('passes orgId through to claim_pending_anchors for manual org queue runs', async () => {
     mockPendingBacklogReady();
     mockDbRpc
@@ -386,10 +414,12 @@ describe('processBatchAnchors', () => {
     }));
     expect(mockLogger.info).toHaveBeenCalledWith(
       expect.objectContaining({
-        pendingThresholdSentinel: MIN_BATCH_THRESHOLD,
+        pendingCountSentinel: MIN_BATCH_THRESHOLD,
         pendingCountSource: 'org_threshold_probe',
         pendingThreshold: MIN_BATCH_THRESHOLD,
-        orgPendingThresholdCrossed: true,
+        batchSize: BATCH_SIZE,
+        pendingThresholdCrossed: true,
+        batchSizeCrossed: false,
         orgId: 'org-1',
       }),
       'Forced org batch flush',
