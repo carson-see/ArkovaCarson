@@ -58,6 +58,42 @@ describe('credential-source-import', () => {
     expect(result.preview.public_metadata).not.toHaveProperty('recipient_display_name');
   });
 
+  it('prefers issuer metadata extracted from HTML over the caller hint', async () => {
+    const result = await buildCredentialSourceImportPreview({
+      source_url: 'https://credentials.example.com/certificate',
+      issuer_hint: 'Caller Supplied Issuer',
+    }, {
+      fetchFn: vi.fn().mockResolvedValue(response(`
+        <html>
+          <head>
+            <title>Compliance Certificate</title>
+            <meta name="issuer" content="Source Metadata Issuer" />
+          </head>
+        </html>
+      `, { headers: { 'content-type': 'text/html' } })),
+      urlGuard: vi.fn().mockResolvedValue(false),
+      now: () => FIXED_NOW,
+    });
+
+    expect(result.preview.credential_issuer).toBe('Source Metadata Issuer');
+  });
+
+  it('prefers structured JSON issuer metadata over the caller hint', async () => {
+    const result = await buildCredentialSourceImportPreview({
+      source_url: 'https://credentials.example.com/certificate.json',
+      issuer_hint: 'Caller Supplied Issuer',
+    }, {
+      fetchFn: vi.fn().mockResolvedValue(response(JSON.stringify({
+        name: 'Compliance Certificate',
+        issuer: { name: 'Structured Issuer' },
+      }), { headers: { 'content-type': 'application/json' } })),
+      urlGuard: vi.fn().mockResolvedValue(false),
+      now: () => FIXED_NOW,
+    });
+
+    expect(result.preview.credential_issuer).toBe('Structured Issuer');
+  });
+
   it('ignores invalid date-shaped metadata instead of building invalid evidence', async () => {
     const result = await buildCredentialSourceImportPreview({
       source_url: 'https://credentials.example.com/invalid-date',

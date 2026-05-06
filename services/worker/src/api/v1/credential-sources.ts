@@ -59,6 +59,19 @@ const softDeleteUpdateSchema = z.object({
   deleted_at: z.literal('now'),
 });
 
+const orgCreditBalanceSchema = z.object({
+  balance: z.number().int().nonnegative(),
+});
+
+const orgCreditRefundUpdateSchema = z.object({
+  balance: z.number().int().nonnegative(),
+  updated_at: z.string().datetime(),
+});
+
+const orgCreditRefundResultSchema = z.object({
+  org_id: z.string().min(1),
+});
+
 interface AnchorReceipt {
   public_id: string;
   fingerprint: string;
@@ -84,6 +97,19 @@ interface AnchorCreateResult {
   anchor: AnchorRecord | null;
   error: DbErrorLike | null;
   duplicate?: AnchorRecord;
+}
+
+interface ImportCreditGateResult {
+  ok: boolean;
+  deducted: boolean;
+}
+
+interface ImportCompensationOptions {
+  anchorId: string;
+  userId: string;
+  orgId: string | null;
+  creditDeducted: boolean;
+  recipientLinked: boolean;
 }
 
 type AnchorInsertPayload = z.infer<typeof anchorSchema>;
@@ -327,6 +353,17 @@ async function linkSelfRecipient(anchorId: string, userId: string): Promise<void
   if (error && error.code !== '23505') throw error;
 }
 
+async function unlinkSelfRecipient(anchorId: string, userId: string): Promise<void> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const dbAny = db as any;
+  const { error } = await dbAny
+    .from('anchor_recipients')
+    .delete()
+    .match({ anchor_id: anchorId, recipient_user_id: userId });
+
+  if (error) throw error;
+}
+
 async function logImportAudit(userId: string, orgId: string | null, anchorId: string, preview: CredentialSourceImportPreview): Promise<void> {
   try {
     const payload = auditEventSchema.parse({
@@ -361,14 +398,90 @@ async function markAnchorDeleted(anchorId: string, userId: string): Promise<void
     .maybeSingle();
 
   if (error) {
-    logger.error({ error, anchorId, userId }, 'Failed to roll back credential source anchor after credit rejection');
+    logger.error({ error, anchorId, userId }, 'Failed to roll back credential source anchor after import failure');
     throw error;
   }
 
   if (!data) {
     const error = new Error('Credential source rollback did not update an anchor');
-    logger.error({ anchorId, userId }, 'Failed to roll back credential source anchor after credit rejection');
+    logger.error({ anchorId, userId }, 'Failed to roll back credential source anchor after import failure');
     throw error;
+  }
+}
+
+async function rollbackImportCredit(orgId: string, anchorId: string, userId: string): Promise<void> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const dbAny = db as any;
+  const { data, error } = await dbAny
+    .from('org_credits')
+    .select('balance')
+    .eq('org_id', orgId)
+    .single();
+
+  if (error) throw error;
+
+  const { balance } = orgCreditBalanceSchema.parse(data);
+  const updatePayload = orgCreditRefundUpdateSchema.parse({
+    balance: balance + 1,
+    updated_at: new Date().toISOString(),
+  });
+  const { data: updatedCredit, error: updateError } = await dbAny
+    .from('org_credits')
+    .update(updatePayload)
+    .eq('org_id', orgId)
+    .select('org_id')
+    .single();
+
+  if (updateError) throw updateError;
+  orgCreditRefundResultSchema.parse(updatedCredit);
+
+  logger.warn({ orgId, anchorId, userId }, 'Rolled back credential source import credit after post-create failure');
+}
+
+async function compensateCreatedImportFailure(options: ImportCompensationOptions): Promise<void> {
+  const errors: unknown[] = [];
+  let anchorDeleted = false;
+
+  if (options.recipientLinked) {
+    try {
+      await unlinkSelfRecipient(options.anchorId, options.userId);
+    } catch (error) {
+      errors.push(error);
+      logger.error(
+        { error, anchorId: options.anchorId, userId: options.userId },
+        'Failed to unlink credential source self-recipient during compensation',
+      );
+    }
+  }
+
+  try {
+    await markAnchorDeleted(options.anchorId, options.userId);
+    anchorDeleted = true;
+  } catch (error) {
+    errors.push(error);
+  }
+
+  if (options.creditDeducted && options.orgId && anchorDeleted) {
+    try {
+      await rollbackImportCredit(options.orgId, options.anchorId, options.userId);
+    } catch (error) {
+      errors.push(error);
+      logger.error(
+        { error, orgId: options.orgId, anchorId: options.anchorId },
+        'Failed to refund credential source import credit during compensation',
+      );
+    }
+  }
+
+  if (options.creditDeducted && options.orgId && !anchorDeleted) {
+    logger.error(
+      { orgId: options.orgId, anchorId: options.anchorId, userId: options.userId },
+      'Skipped credential source import credit refund because anchor rollback failed',
+    );
+  }
+
+  if (errors.length > 0) {
+    throw new AggregateError(errors, 'Credential source import compensation failed');
   }
 }
 
@@ -377,15 +490,15 @@ async function ensureImportCreditOrRollback(
   anchorId: string,
   userId: string,
   res: Response,
-): Promise<boolean> {
-  if (!orgId) return true;
+): Promise<ImportCreditGateResult> {
+  if (!orgId) return { ok: true, deducted: false };
 
   const deduction = await deductOrgCredit(db, orgId, 1, 'anchor.create', anchorId);
-  if (deduction.allowed) return true;
+  if (deduction.allowed) return { ok: true, deducted: deduction.reason !== 'feature_disabled' };
 
   await markAnchorDeleted(anchorId, userId);
   sendCreditFailure(res, orgId, deduction);
-  return false;
+  return { ok: false, deducted: false };
 }
 
 async function handleAnchorCreateFailure(
@@ -485,12 +598,33 @@ router.post('/import-url/confirm', async (req: Request, res: Response) => {
       return;
     }
 
-    if (!(await ensureImportCreditOrRollback(orgId, anchor.id, userId, res))) {
+    const creditGate = await ensureImportCreditOrRollback(orgId, anchor.id, userId, res);
+    if (!creditGate.ok) {
       return;
     }
 
-    await linkSelfRecipient(anchor.id, userId);
-    await logImportAudit(userId, orgId, anchor.id, preview);
+    let recipientLinked = false;
+    try {
+      await linkSelfRecipient(anchor.id, userId);
+      recipientLinked = true;
+      await logImportAudit(userId, orgId, anchor.id, preview);
+    } catch (postCreateError) {
+      try {
+        await compensateCreatedImportFailure({
+          anchorId: anchor.id,
+          userId,
+          orgId,
+          creditDeducted: creditGate.deducted,
+          recipientLinked,
+        });
+      } catch (compensationError) {
+        logger.error(
+          { compensationError, postCreateError, anchorId: anchor.id, userId },
+          'Failed to compensate credential source import after post-create failure',
+        );
+      }
+      throw postCreateError;
+    }
 
     res.status(201).json({
       duplicate: false,

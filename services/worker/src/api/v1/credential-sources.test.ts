@@ -13,7 +13,14 @@ const {
   mockAnchorUpdateIs,
   mockAnchorUpdateMaybeSingle,
   mockRecipientInsert,
+  mockRecipientDelete,
+  mockRecipientDeleteMatch,
   mockAuditInsert,
+  mockOrgCreditSingle,
+  mockOrgCreditUpdate,
+  mockOrgCreditUpdateEq,
+  mockOrgCreditUpdateSelect,
+  mockOrgCreditUpdateSingle,
   mockDeductOrgCredit,
 } = vi.hoisted(() => {
   const mockProfileSingle = vi.fn();
@@ -24,7 +31,14 @@ const {
   const mockAnchorUpdateIs = vi.fn();
   const mockAnchorUpdateMaybeSingle = vi.fn();
   const mockRecipientInsert = vi.fn();
+  const mockRecipientDelete = vi.fn();
+  const mockRecipientDeleteMatch = vi.fn();
   const mockAuditInsert = vi.fn();
+  const mockOrgCreditSingle = vi.fn();
+  const mockOrgCreditUpdate = vi.fn();
+  const mockOrgCreditUpdateEq = vi.fn();
+  const mockOrgCreditUpdateSelect = vi.fn();
+  const mockOrgCreditUpdateSingle = vi.fn();
   const mockDeductOrgCredit = vi.fn();
 
   function chain(overrides: Record<string, unknown> = {}) {
@@ -64,10 +78,16 @@ const {
       };
     }
     if (table === 'anchor_recipients') {
-      return { insert: mockRecipientInsert };
+      return { insert: mockRecipientInsert, delete: mockRecipientDelete };
     }
     if (table === 'audit_events') {
       return { insert: mockAuditInsert };
+    }
+    if (table === 'org_credits') {
+      return {
+        select: vi.fn(() => chain({ single: mockOrgCreditSingle })),
+        update: mockOrgCreditUpdate,
+      };
     }
     return chain();
   });
@@ -82,7 +102,14 @@ const {
     mockAnchorUpdateIs,
     mockAnchorUpdateMaybeSingle,
     mockRecipientInsert,
+    mockRecipientDelete,
+    mockRecipientDeleteMatch,
     mockAuditInsert,
+    mockOrgCreditSingle,
+    mockOrgCreditUpdate,
+    mockOrgCreditUpdateEq,
+    mockOrgCreditUpdateSelect,
+    mockOrgCreditUpdateSingle,
     mockDeductOrgCredit,
   };
 });
@@ -157,7 +184,14 @@ describe('credentialSourcesRouter', () => {
       })),
     }));
     mockRecipientInsert.mockResolvedValue({ error: null });
+    mockRecipientDelete.mockReturnValue({ match: mockRecipientDeleteMatch });
+    mockRecipientDeleteMatch.mockResolvedValue({ error: null });
     mockAuditInsert.mockResolvedValue({ error: null });
+    mockOrgCreditSingle.mockResolvedValue({ data: { balance: 9 }, error: null });
+    mockOrgCreditUpdate.mockReturnValue({ eq: mockOrgCreditUpdateEq });
+    mockOrgCreditUpdateEq.mockReturnValue({ select: mockOrgCreditUpdateSelect });
+    mockOrgCreditUpdateSelect.mockReturnValue({ single: mockOrgCreditUpdateSingle });
+    mockOrgCreditUpdateSingle.mockResolvedValue({ data: { org_id: 'org-1' }, error: null });
   });
 
   it('returns a preview for authenticated users', async () => {
@@ -415,6 +449,21 @@ describe('credentialSourcesRouter', () => {
       event_type: 'CREDENTIAL_SOURCE_IMPORTED',
       target_id: 'anchor-1',
     }));
+    expect(mockRecipientDelete).toHaveBeenCalledTimes(1);
+    expect(mockRecipientDeleteMatch).toHaveBeenCalledWith({
+      anchor_id: 'anchor-1',
+      recipient_user_id: 'user-1',
+    });
+    expect(mockAnchorUpdate).toHaveBeenCalledWith({ deleted_at: 'now' });
+    expect(mockAnchorUpdateIs).toHaveBeenCalledWith('deleted_at', null);
+    expect(mockOrgCreditSingle).toHaveBeenCalledTimes(1);
+    expect(mockOrgCreditUpdate).toHaveBeenCalledWith(expect.objectContaining({
+      balance: 10,
+      updated_at: expect.any(String),
+    }));
+    expect(mockOrgCreditUpdateEq).toHaveBeenCalledWith('org_id', 'org-1');
+    expect(mockOrgCreditUpdateSelect).toHaveBeenCalledWith('org_id');
+    expect(mockOrgCreditUpdateSingle).toHaveBeenCalledTimes(1);
   });
 
   it('rejects confirmation when the source payload changed after preview', async () => {

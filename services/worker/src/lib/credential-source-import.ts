@@ -513,15 +513,15 @@ function extractHtmlMetadata(
   const title = structured.title ??
     metaContent($, ['meta[property="og:title"]', 'meta[name="twitter:title"]', 'meta[name="title"]']) ??
     firstElementText($, ['title', 'h1']);
-  const issuerName = cleanText(issuerHint) ??
-    structured.issuerName ??
+  const issuerName = structured.issuerName ??
     metaContent($, [
       'meta[name="issuer"]',
       'meta[name="author"]',
       'meta[property="article:author"]',
       'meta[property="og:site_name"]',
       'meta[name="application-name"]',
-    ]);
+    ]) ??
+    cleanText(issuerHint);
   const issuedAt = structured.issuedAt ??
     normalizeEvidenceDate(metaContent($, [
       'meta[name="date"]',
@@ -553,7 +553,7 @@ function extractJsonMetadata(
   const parsed = parseJsonMaybe(text);
   const structured = extractStructuredMetadata(parsed);
   const title = structured.title ?? `Imported credential from ${new URL(url).hostname}`;
-  const issuerName = cleanText(issuerHint) ?? structured.issuerName;
+  const issuerName = structured.issuerName ?? cleanText(issuerHint);
 
   return {
     title,
