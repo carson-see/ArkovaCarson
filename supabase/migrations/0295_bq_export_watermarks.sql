@@ -59,16 +59,19 @@ CREATE TRIGGER bq_export_watermarks_updated_at
   FOR EACH ROW
   EXECUTE FUNCTION public.bq_export_watermarks_set_updated_at();
 
--- Seed rows for the 5 mirrored tables. Initial last_synced_at = epoch so the
--- one-shot backfill (SCRUM-1727) starts from "everything since project
--- inception"; the 5-min incremental cron (SCRUM-1723) advances from there.
-INSERT INTO public.bq_export_watermarks (table_name, last_synced_at, last_run_status)
+-- Seed rows for the 5 mirrored tables. last_synced_at + last_run_status are
+-- omitted from the INSERT so the column DEFAULTs apply (epoch + 'pending'),
+-- which means the one-shot backfill (SCRUM-1727) starts from "everything
+-- since project inception" and the 5-min incremental cron (SCRUM-1723)
+-- advances from there. Defining defaults at the column level rather than
+-- repeating literals here keeps the seed list a single-source-of-truth.
+INSERT INTO public.bq_export_watermarks (table_name)
 VALUES
-  ('anchors',       '1970-01-01T00:00:00Z'::timestamptz, 'pending'),
-  ('verifications', '1970-01-01T00:00:00Z'::timestamptz, 'pending'),
-  ('audit_events',  '1970-01-01T00:00:00Z'::timestamptz, 'pending'),
-  ('organizations', '1970-01-01T00:00:00Z'::timestamptz, 'pending'),
-  ('api_keys',      '1970-01-01T00:00:00Z'::timestamptz, 'pending')
+  ('anchors'),
+  ('verifications'),
+  ('audit_events'),
+  ('organizations'),
+  ('api_keys')
 ON CONFLICT (table_name) DO NOTHING;
 
 NOTIFY pgrst, 'reload schema';

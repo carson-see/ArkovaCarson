@@ -50,7 +50,8 @@ describe('bq-export-schemas: 5 expected tables', () => {
   });
 
   it('declares no other tables (prevents accidental scope creep)', () => {
-    expect(Object.keys(BQ_TABLES).sort()).toEqual([...expected].sort());
+    const byLocale = (a: string, b: string): number => a.localeCompare(b);
+    expect([...Object.keys(BQ_TABLES)].sort(byLocale)).toEqual([...expected].sort(byLocale));
   });
 
   it('every table has a tableId matching its key', () => {
@@ -165,11 +166,11 @@ describe('bq-export-schemas: api_keys PII guards (CLAUDE.md §1.4 + SOC 2)', () 
   });
 });
 
-describe('bq-export-schemas: required-field invariants', () => {
-  function flatFields(t: BqTableTarget): readonly BqField[] {
-    return t.schema.fields;
-  }
+function flatFields(t: BqTableTarget): readonly BqField[] {
+  return t.schema.fields;
+}
 
+describe('bq-export-schemas: required-field invariants', () => {
   it('every table has an id field of type STRING', () => {
     for (const [name, table] of Object.entries(BQ_TABLES)) {
       const id = flatFields(table).find((f) => f.name === 'id');

@@ -106,7 +106,8 @@
       { "name": "drive_webhook_nonces", "reason": "created in 0258 family, not present in prod — likely never deployed" },
       { "name": "merkle_batches", "reason": "created in 0113, dropped out-of-band — needs investigation" },
       { "name": "training_metrics", "reason": "created in 0114, dropped out-of-band — needs investigation" },
-      { "name": "webhook_idempotency", "reason": "created in 0116, dropped out-of-band — needs investigation" }
+      { "name": "webhook_idempotency", "reason": "created in 0116, dropped out-of-band — needs investigation" },
+      { "name": "bq_export_watermarks", "reason": "created in 0295 (SCRUM-1721 / SCRUM-1062 GCP-MAX-02). Migration is in PR #728 awaiting merge; will be applied to prod under SCRUM-1725 verify subtask after T2 staging soak. Remove from this allowlist + refresh snapshot when that lands." }
     ],
     "in_prod_only": [
       { "name": "org_credits", "reason": "created in prod via timestamp-prefixed migration 20260427150859_scrum_1170_org_credits_and_allocations; corresponding numbered migration ships in PR #603" },
