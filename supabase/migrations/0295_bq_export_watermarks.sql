@@ -14,7 +14,19 @@
 --   UPDATE/DELETE via FORCE-RLS deny-all policies (CLAUDE.md §1.4).
 
 CREATE TABLE IF NOT EXISTS public.bq_export_watermarks (
-  table_name      text PRIMARY KEY,
+  table_name      text PRIMARY KEY
+    -- Constrain to the 5 mirrored tables. A typo in the worker write path
+    -- would otherwise create a new watermark row instead of failing fast,
+    -- silently leaving the real table's watermark stale. To add a new
+    -- mirrored table here, write a follow-up migration that drops + reads
+    -- this constraint with the expanded set.
+    CHECK (table_name IN (
+      'anchors',
+      'verifications',
+      'audit_events',
+      'organizations',
+      'api_keys'
+    )),
   last_synced_at  timestamptz NOT NULL DEFAULT '1970-01-01T00:00:00Z'::timestamptz,
   last_synced_id  uuid,
   last_run_status text NOT NULL DEFAULT 'pending'

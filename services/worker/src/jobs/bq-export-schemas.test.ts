@@ -18,6 +18,8 @@ import { describe, it, expect } from 'vitest';
 import {
   API_KEYS_COLUMN_ALLOWLIST,
   API_KEYS_FORBIDDEN_COLUMNS,
+  AUDIT_EVENTS_COLUMN_ALLOWLIST,
+  AUDIT_EVENTS_FORBIDDEN_COLUMNS,
   BQ_TABLES,
   DATASET_ID,
   DATASET_LOCATION,
@@ -102,12 +104,24 @@ describe('bq-export-schemas: partition + cluster strategy', () => {
     expect(BQ_TABLES.anchors.clustering!.fields).toEqual(['org_id', 'status']);
   });
 
-  it('audit_events clusters on org_id + actor_type + category', () => {
+  it('verifications clusters on org_id + anchor_id', () => {
+    expect(BQ_TABLES.verifications.clustering!.fields).toEqual(['org_id', 'anchor_id']);
+  });
+
+  it('audit_events clusters on org_id + event_category + event_type', () => {
     expect(BQ_TABLES.audit_events.clustering!.fields).toEqual([
       'org_id',
-      'actor_type',
-      'category',
+      'event_category',
+      'event_type',
     ]);
+  });
+
+  it('organizations clusters on id', () => {
+    expect(BQ_TABLES.organizations.clustering!.fields).toEqual(['id']);
+  });
+
+  it('api_keys clusters on org_id', () => {
+    expect(BQ_TABLES.api_keys.clustering!.fields).toEqual(['org_id']);
   });
 });
 
@@ -158,9 +172,67 @@ describe('bq-export-schemas: api_keys PII guards (CLAUDE.md §1.4 + SOC 2)', () 
     }
   });
 
+  it('api_keys allowlist references the source column key_hash (not hashed_key)', () => {
+    expect(API_KEYS_COLUMN_ALLOWLIST).toContain('key_hash');
+    expect(API_KEYS_COLUMN_ALLOWLIST).not.toContain('hashed_key');
+  });
+
   it('forbidden columns and allowlist are disjoint', () => {
     const intersection = API_KEYS_COLUMN_ALLOWLIST.filter((c) =>
       API_KEYS_FORBIDDEN_COLUMNS.includes(c),
+    );
+    expect(intersection).toEqual([]);
+  });
+});
+
+describe('bq-export-schemas: audit_events PII guards (CLAUDE.md §1.4 + SOC 2 DC 200)', () => {
+  const auditEventsFieldNames = BQ_TABLES.audit_events.schema.fields.map((f) => f.name);
+
+  it.each([...AUDIT_EVENTS_FORBIDDEN_COLUMNS])(
+    'audit_events schema does NOT contain forbidden PII column "%s"',
+    (forbidden) => {
+      expect(auditEventsFieldNames).not.toContain(forbidden);
+    },
+  );
+
+  it.each([...AUDIT_EVENTS_FORBIDDEN_COLUMNS])(
+    'AUDIT_EVENTS_COLUMN_ALLOWLIST does NOT contain forbidden PII column "%s"',
+    (forbidden) => {
+      expect(AUDIT_EVENTS_COLUMN_ALLOWLIST).not.toContain(forbidden);
+    },
+  );
+
+  it('every audit_events schema field is either bq_synced_at or in the source allowlist', () => {
+    const exportColumns = new Set([...AUDIT_EVENTS_COLUMN_ALLOWLIST, 'bq_synced_at']);
+    const stray = auditEventsFieldNames.filter((name) => !exportColumns.has(name));
+    expect(stray, `audit_events schema has fields not in allowlist: ${stray.join(', ')}`).toEqual([]);
+  });
+
+  it('every AUDIT_EVENTS_COLUMN_ALLOWLIST entry has a corresponding audit_events schema field', () => {
+    for (const allowed of AUDIT_EVENTS_COLUMN_ALLOWLIST) {
+      expect(
+        auditEventsFieldNames,
+        `audit_events schema missing allowlisted column "${allowed}"`,
+      ).toContain(allowed);
+    }
+  });
+
+  it('audit_events uses event_type + event_category (matching source migration 0006), not the older actor_type/category/action names', () => {
+    expect(auditEventsFieldNames).toContain('event_type');
+    expect(auditEventsFieldNames).toContain('event_category');
+    expect(auditEventsFieldNames).not.toContain('actor_type');
+    expect(auditEventsFieldNames).not.toContain('category');
+    expect(auditEventsFieldNames).not.toContain('action');
+  });
+
+  it('audit_events.details is STRING (matches source text type), not JSON', () => {
+    const details = BQ_TABLES.audit_events.schema.fields.find((f) => f.name === 'details');
+    expect(details?.type).toBe('STRING');
+  });
+
+  it('audit_events forbidden columns and allowlist are disjoint', () => {
+    const intersection = AUDIT_EVENTS_COLUMN_ALLOWLIST.filter((c) =>
+      AUDIT_EVENTS_FORBIDDEN_COLUMNS.includes(c),
     );
     expect(intersection).toEqual([]);
   });

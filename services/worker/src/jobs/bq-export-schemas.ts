@@ -141,22 +141,35 @@ const VERIFICATIONS: BqTableTarget = {
   clustering: { fields: ['org_id', 'anchor_id'] },
 };
 
+/**
+ * audit_events mirror.
+ *
+ * Source columns per supabase/migrations/0006_audit_events.sql:
+ *   id, event_type, event_category, actor_id, actor_email (PII), actor_ip
+ *   (PII), actor_user_agent (semi-PII), target_type, target_id, org_id,
+ *   details (text), created_at.
+ *
+ * BQ mirror EXCLUDES actor_email, actor_ip, and actor_user_agent — these
+ * are PII and the SOC 2 evidence trail does not require them at the
+ * warehouse layer (the operational Postgres still has them under RLS).
+ * `details` is a text column in source; mirror as STRING (not JSON) to
+ * match source typing exactly.
+ */
 const AUDIT_EVENTS: BqTableTarget = {
   tableId: 'audit_events',
   mode: 'append',
   description:
-    'Append-only mirror of public.audit_events. 7-year partition expiration for SOC 2 evidence retention (DC 200 Criterion #5 Control Environment).',
+    'Append-only mirror of public.audit_events. PII columns (actor_email, actor_ip, actor_user_agent) deliberately excluded — see source-of-truth allowlist AUDIT_EVENTS_COLUMN_ALLOWLIST. 7-year partition expiration for SOC 2 evidence retention (DC 200 Criterion #5 Control Environment).',
   schema: {
     fields: [
       { name: 'id', type: 'STRING', mode: 'REQUIRED' },
-      { name: 'org_id', type: 'STRING', mode: 'NULLABLE' },
-      { name: 'actor_id', type: 'STRING', mode: 'NULLABLE' },
-      { name: 'actor_type', type: 'STRING', mode: 'NULLABLE', description: 'system/user/service_role/api_key/cron' },
-      { name: 'category', type: 'STRING', mode: 'NULLABLE', description: 'UPPERCASE per check constraint' },
-      { name: 'action', type: 'STRING', mode: 'NULLABLE' },
+      { name: 'event_type', type: 'STRING', mode: 'REQUIRED', description: 'Source NOT NULL; e.g. "anchor.created"' },
+      { name: 'event_category', type: 'STRING', mode: 'REQUIRED', description: 'CHECK constraint: AUTH/ANCHOR/PROFILE/ORG/ADMIN/SYSTEM' },
+      { name: 'actor_id', type: 'STRING', mode: 'NULLABLE', description: 'uuid only; actor_email/actor_ip excluded as PII' },
       { name: 'target_type', type: 'STRING', mode: 'NULLABLE' },
       { name: 'target_id', type: 'STRING', mode: 'NULLABLE' },
-      { name: 'details', type: 'JSON', mode: 'NULLABLE' },
+      { name: 'org_id', type: 'STRING', mode: 'NULLABLE' },
+      { name: 'details', type: 'STRING', mode: 'NULLABLE', description: 'Source is text, not JSON' },
       { name: 'created_at', type: 'TIMESTAMP', mode: 'REQUIRED' },
       { name: 'bq_synced_at', type: 'TIMESTAMP', mode: 'REQUIRED' },
     ],
@@ -166,7 +179,7 @@ const AUDIT_EVENTS: BqTableTarget = {
     field: 'created_at',
     expirationMs: SOC2_AUDIT_RETENTION_MS,
   },
-  clustering: { fields: ['org_id', 'actor_type', 'category'] },
+  clustering: { fields: ['org_id', 'event_category', 'event_type'] },
 };
 
 // ---------------------------------------------------------------------------
@@ -201,28 +214,36 @@ const ORGANIZATIONS: BqTableTarget = {
 /**
  * api_keys snapshot.
  *
- * CRITICAL — this schema MUST NOT include any field that could carry the raw
- * key value. Allowed columns are enumerated in API_KEYS_COLUMN_ALLOWLIST below.
- * The snapshot job (SCRUM-1724) MUST source rows via that allowlist; the test
- * `api_keys schema only contains allowlisted columns` enforces this at build
- * time.
+ * Source column per supabase/migrations/0057_verification_api_foundation.sql:
+ *   key_hash (NOT hashed_key) — HMAC-SHA256 with API_KEY_HMAC_SECRET, raw
+ *   key never persisted (CLAUDE.md §1.4).
+ *
+ * CRITICAL — this schema MUST NOT include any field that could carry the
+ * raw key value. Allowed columns are enumerated in API_KEYS_COLUMN_ALLOWLIST
+ * below. `name` is also excluded because operators sometimes embed PII-ish
+ * labels there ("Carson's prod key"). The snapshot job (SCRUM-1724) MUST
+ * source rows via this allowlist; the build-time test enforces it.
  */
 const API_KEYS: BqTableTarget = {
   tableId: 'api_keys',
   mode: 'snapshot',
   description:
-    'Daily snapshot of public.api_keys with raw key values stripped. Hashed key + key_prefix + scopes only — see API_KEYS_COLUMN_ALLOWLIST.',
+    'Daily snapshot of public.api_keys with raw key values stripped. key_hash (HMAC-SHA256) + key_prefix + scopes only — see API_KEYS_COLUMN_ALLOWLIST. `name` excluded (potential PII).',
   schema: {
     fields: [
       { name: 'snapshot_date', type: 'DATE', mode: 'REQUIRED' },
       { name: 'id', type: 'STRING', mode: 'REQUIRED' },
       { name: 'org_id', type: 'STRING', mode: 'NULLABLE' },
-      { name: 'key_prefix', type: 'STRING', mode: 'NULLABLE', description: 'Public key prefix (ARK-...) — safe to mirror' },
-      { name: 'hashed_key', type: 'STRING', mode: 'NULLABLE', description: 'SHA-256 hash of the raw key — never the raw key itself' },
+      { name: 'key_prefix', type: 'STRING', mode: 'NULLABLE', description: 'Public key prefix (e.g. "ak_live_") — safe to mirror' },
+      { name: 'key_hash', type: 'STRING', mode: 'NULLABLE', description: 'HMAC-SHA256 hash with API_KEY_HMAC_SECRET — never the raw key' },
       { name: 'scopes', type: 'STRING', mode: 'REPEATED' },
+      { name: 'rate_limit_tier', type: 'STRING', mode: 'NULLABLE' },
+      { name: 'is_active', type: 'BOOLEAN', mode: 'NULLABLE' },
       { name: 'created_at', type: 'TIMESTAMP', mode: 'NULLABLE' },
-      { name: 'revoked_at', type: 'TIMESTAMP', mode: 'NULLABLE' },
+      { name: 'expires_at', type: 'TIMESTAMP', mode: 'NULLABLE' },
       { name: 'last_used_at', type: 'TIMESTAMP', mode: 'NULLABLE' },
+      { name: 'revoked_at', type: 'TIMESTAMP', mode: 'NULLABLE' },
+      { name: 'revocation_reason', type: 'STRING', mode: 'NULLABLE' },
       { name: 'bq_synced_at', type: 'TIMESTAMP', mode: 'REQUIRED' },
     ],
   },
@@ -257,11 +278,43 @@ export const API_KEYS_COLUMN_ALLOWLIST: readonly string[] = Object.freeze([
   'id',
   'org_id',
   'key_prefix',
-  'hashed_key',
+  'key_hash',
   'scopes',
+  'rate_limit_tier',
+  'is_active',
   'created_at',
-  'revoked_at',
+  'expires_at',
   'last_used_at',
+  'revoked_at',
+  'revocation_reason',
+]);
+
+/**
+ * Allowlist of public.audit_events columns the incremental sync may source.
+ *
+ * EXCLUDES actor_email, actor_ip, actor_user_agent (PII per CLAUDE.md §1.4).
+ * The incremental sync job (SCRUM-1723) MUST source through this allowlist;
+ * the build-time test enforces it.
+ */
+export const AUDIT_EVENTS_COLUMN_ALLOWLIST: readonly string[] = Object.freeze([
+  'id',
+  'event_type',
+  'event_category',
+  'actor_id',
+  'target_type',
+  'target_id',
+  'org_id',
+  'details',
+  'created_at',
+]);
+
+/**
+ * audit_events PII columns that must NEVER appear in BQ. Asserted in tests.
+ */
+export const AUDIT_EVENTS_FORBIDDEN_COLUMNS: readonly string[] = Object.freeze([
+  'actor_email',
+  'actor_ip',
+  'actor_user_agent',
 ]);
 
 /**
@@ -270,10 +323,11 @@ export const API_KEYS_COLUMN_ALLOWLIST: readonly string[] = Object.freeze([
  * api_keys BQ schema field names is empty.
  */
 export const API_KEYS_FORBIDDEN_COLUMNS: readonly string[] = Object.freeze([
-  'key', // the raw key — explicit deny
+  'key', // the raw key — explicit deny (no such column in source, but defense-in-depth)
   'secret',
   'private_key',
   'token',
   'password',
   'plain_text_key',
+  'name', // operators sometimes embed PII-ish labels; safer to exclude
 ]);
