@@ -78,6 +78,15 @@ type SubmittedTxCandidateFetchResult = {
   error: unknown | null;
 };
 
+interface SubmittedTxCandidateScanState {
+  rows: SubmittedTxCandidateRow[];
+  uniqueTxIds: Set<string>;
+  scannedRows: number;
+  wrapped: boolean;
+  cursor: SubmittedTxScanCursor | null;
+  canContinue: boolean;
+}
+
 let submittedTxScanCursor: SubmittedTxScanCursor | null = null;
 
 export function resetSubmittedTxScanCursorForTests(): void {
@@ -308,93 +317,103 @@ async function fetchSubmittedTxCandidatePage(
   return { data: (data ?? null) as SubmittedTxCandidateRow[] | null, error };
 }
 
-async function fetchSubmittedTxCandidates(): Promise<SubmittedTxCandidateFetchResult> {
-  const rows: SubmittedTxCandidateRow[] = [];
-  const uniqueTxIds = new Set<string>();
-  let scannedRows = 0;
-  let wrapped = false;
-  let cursor = submittedTxScanCursor;
-  let canContinue = true;
+function hasSubmittedTxCandidateCapacity(state: SubmittedTxCandidateScanState): boolean {
+  return (
+    state.scannedRows < MAX_SUBMITTED_TX_CANDIDATE_ROWS_PER_RUN
+    && state.uniqueTxIds.size < MAX_TX_CHECKS_PER_RUN
+  );
+}
 
-  while (
-    canContinue
-    && scannedRows < MAX_SUBMITTED_TX_CANDIDATE_ROWS_PER_RUN
-    && uniqueTxIds.size < MAX_TX_CHECKS_PER_RUN
-  ) {
-    const remaining = MAX_SUBMITTED_TX_CANDIDATE_ROWS_PER_RUN - scannedRows;
+function buildSubmittedTxCandidateResult(
+  state: SubmittedTxCandidateScanState,
+  error: unknown | null,
+): SubmittedTxCandidateFetchResult {
+  return {
+    rows: state.rows,
+    scannedRows: state.scannedRows,
+    uniqueTxIds: state.uniqueTxIds.size,
+    wrapped: state.wrapped,
+    cursorCreatedAt: state.cursor?.createdAt ?? null,
+    cursorId: state.cursor?.id ?? null,
+    error,
+  };
+}
+
+function processSubmittedTxCandidateRow(
+  state: SubmittedTxCandidateScanState,
+  row: SubmittedTxCandidateRow,
+): void {
+  state.rows.push(row);
+  state.scannedRows++;
+  if (row.chain_tx_id) state.uniqueTxIds.add(row.chain_tx_id);
+
+  const rowCreatedAt = row.created_at ?? null;
+  const rowId = row.id ?? null;
+  if (!rowCreatedAt || !rowId) {
+    logger.warn(
+      { scannedRows: state.scannedRows, uniqueTxIds: state.uniqueTxIds.size },
+      'Confirmation candidate scan could not advance cursor because submitted rows lacked id or created_at',
+    );
+    state.canContinue = false;
+    return;
+  }
+
+  state.cursor = { createdAt: rowCreatedAt, id: rowId };
+  state.canContinue = hasSubmittedTxCandidateCapacity(state);
+}
+
+function maybeWrapSubmittedTxCandidateScan(
+  state: SubmittedTxCandidateScanState,
+  pageStartedAfterCursor: boolean,
+): boolean {
+  if (pageStartedAfterCursor && !state.wrapped) {
+    state.cursor = null;
+    state.wrapped = true;
+    return true;
+  }
+
+  state.canContinue = false;
+  return false;
+}
+
+async function fetchSubmittedTxCandidates(): Promise<SubmittedTxCandidateFetchResult> {
+  const state: SubmittedTxCandidateScanState = {
+    rows: [],
+    uniqueTxIds: new Set<string>(),
+    scannedRows: 0,
+    wrapped: false,
+    cursor: submittedTxScanCursor,
+    canContinue: true,
+  };
+
+  while (state.canContinue && hasSubmittedTxCandidateCapacity(state)) {
+    const remaining = MAX_SUBMITTED_TX_CANDIDATE_ROWS_PER_RUN - state.scannedRows;
     const limit = Math.min(SUBMITTED_TX_CANDIDATE_PAGE_SIZE, remaining);
-    const pageStartedAfterCursor = Boolean(cursor);
-    const { data, error } = await fetchSubmittedTxCandidatePage(cursor, limit);
+    const pageStartedAfterCursor = Boolean(state.cursor);
+    const { data, error } = await fetchSubmittedTxCandidatePage(state.cursor, limit);
 
     if (error) {
-      return {
-        rows,
-        scannedRows,
-        uniqueTxIds: uniqueTxIds.size,
-        wrapped,
-        cursorCreatedAt: cursor?.createdAt ?? null,
-        cursorId: cursor?.id ?? null,
-        error,
-      };
+      return buildSubmittedTxCandidateResult(state, error);
     }
 
     if (!data || data.length === 0) {
-      if (pageStartedAfterCursor && !wrapped) {
-        cursor = null;
-        wrapped = true;
-        continue;
-      }
+      if (maybeWrapSubmittedTxCandidateScan(state, pageStartedAfterCursor)) continue;
       break;
     }
 
     for (const row of data) {
-      rows.push(row);
-      scannedRows++;
-      if (row.chain_tx_id) uniqueTxIds.add(row.chain_tx_id);
-
-      const rowCreatedAt = row.created_at ?? null;
-      const rowId = row.id ?? null;
-      if (!rowCreatedAt || !rowId) {
-        logger.warn(
-          { scannedRows, uniqueTxIds: uniqueTxIds.size },
-          'Confirmation candidate scan could not advance cursor because submitted rows lacked id or created_at',
-        );
-        canContinue = false;
-        break;
-      }
-
-      cursor = { createdAt: rowCreatedAt, id: rowId };
-
-      if (
-        scannedRows >= MAX_SUBMITTED_TX_CANDIDATE_ROWS_PER_RUN
-        || uniqueTxIds.size >= MAX_TX_CHECKS_PER_RUN
-      ) {
-        canContinue = false;
-        break;
-      }
+      processSubmittedTxCandidateRow(state, row);
+      if (!state.canContinue) break;
     }
 
-    if (canContinue && data.length < limit) {
-      if (pageStartedAfterCursor && !wrapped) {
-        cursor = null;
-        wrapped = true;
-        continue;
-      }
+    if (state.canContinue && data.length < limit) {
+      if (maybeWrapSubmittedTxCandidateScan(state, pageStartedAfterCursor)) continue;
       break;
     }
   }
 
-  submittedTxScanCursor = cursor;
-
-  return {
-    rows,
-    scannedRows,
-    uniqueTxIds: uniqueTxIds.size,
-    wrapped,
-    cursorCreatedAt: submittedTxScanCursor?.createdAt ?? null,
-    cursorId: submittedTxScanCursor?.id ?? null,
-    error: null,
-  };
+  submittedTxScanCursor = state.cursor;
+  return buildSubmittedTxCandidateResult(state, null);
 }
 
 /**
