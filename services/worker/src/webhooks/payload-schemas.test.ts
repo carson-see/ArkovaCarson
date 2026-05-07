@@ -17,6 +17,7 @@ import {
   AnchorSubmittedPayloadSchema,
   AnchorSecuredPayloadSchema,
   AnchorRevokedPayloadSchema,
+  AnchorExpiredPayloadSchema,
   AnchorBatchSecuredPayloadSchema,
   validateWebhookPayload,
   WebhookPayloadValidationError,
@@ -145,6 +146,99 @@ describe('AnchorRevokedPayloadSchema', () => {
   it('rejects a REVOKED payload with internal fields', () => {
     expect(AnchorRevokedPayloadSchema.safeParse({ ...valid, anchor_id: 'uuid' }).success).toBe(false);
     expect(AnchorRevokedPayloadSchema.safeParse({ ...valid, fingerprint: 'a'.repeat(64) }).success).toBe(false);
+  });
+});
+
+describe('AnchorExpiredPayloadSchema (SCRUM-1735)', () => {
+  // anchor.expired fires when a SECURED anchor crosses anchors.expires_at (lifecycle
+  // transition SECURED → EXPIRED, sourced from anchorExpirySweep cron). Same
+  // public-only contract as anchor.revoked; on-chain fields stay populated since
+  // the anchor was secured before expiring.
+  const valid = {
+    public_id: 'abc123',
+    chain_tx_id: 'fake-tx-id',
+    chain_block_height: 850000,
+    expired_at: '2026-04-26T00:00:00Z',
+    expires_at: '2026-04-26T00:00:00Z',
+    status: 'EXPIRED' as const,
+  };
+
+  it('accepts an EXPIRED payload with public-only fields', () => {
+    expect(AnchorExpiredPayloadSchema.safeParse(valid).success).toBe(true);
+  });
+
+  it('accepts org_public_id when provided', () => {
+    expect(AnchorExpiredPayloadSchema.safeParse({ ...valid, org_public_id: 'pub_org_xyz' }).success).toBe(true);
+  });
+
+  it('rejects an EXPIRED payload that includes the internal anchor_id UUID (CLAUDE.md §6)', () => {
+    expect(AnchorExpiredPayloadSchema.safeParse({ ...valid, anchor_id: '550e8400-e29b-41d4-a716-446655440000' }).success).toBe(false);
+  });
+
+  it('rejects an EXPIRED payload that includes the raw fingerprint (CLAUDE.md §1.6)', () => {
+    expect(AnchorExpiredPayloadSchema.safeParse({ ...valid, fingerprint: 'a'.repeat(64) }).success).toBe(false);
+  });
+
+  it('rejects an EXPIRED payload that includes user_id', () => {
+    expect(AnchorExpiredPayloadSchema.safeParse({ ...valid, user_id: '550e8400-e29b-41d4-a716-446655440001' }).success).toBe(false);
+  });
+
+  it('rejects an EXPIRED payload that includes the internal org_id UUID', () => {
+    expect(AnchorExpiredPayloadSchema.safeParse({ ...valid, org_id: '550e8400-e29b-41d4-a716-446655440002' }).success).toBe(false);
+  });
+
+  it('rejects status other than EXPIRED', () => {
+    expect(AnchorExpiredPayloadSchema.safeParse({ ...valid, status: 'REVOKED' }).success).toBe(false);
+  });
+
+  it('rejects non-ISO expired_at', () => {
+    expect(AnchorExpiredPayloadSchema.safeParse({ ...valid, expired_at: '2026-04-26 00:00:00' }).success).toBe(false);
+  });
+
+  it('rejects non-ISO expires_at', () => {
+    expect(AnchorExpiredPayloadSchema.safeParse({ ...valid, expires_at: 'not-a-date' }).success).toBe(false);
+  });
+
+  // Same on-chain invariant as SECURED: an anchor can only expire after being
+  // secured on-chain, so chain_tx_id and chain_block_height must be populated.
+  it('rejects null chain_tx_id (on-chain invariant — EXPIRED can only follow SECURED)', () => {
+    expect(AnchorExpiredPayloadSchema.safeParse({ ...valid, chain_tx_id: null }).success).toBe(false);
+  });
+
+  it('rejects null chain_block_height (on-chain invariant)', () => {
+    expect(AnchorExpiredPayloadSchema.safeParse({ ...valid, chain_block_height: null }).success).toBe(false);
+  });
+});
+
+describe('validateWebhookPayload helper — anchor.expired (SCRUM-1735)', () => {
+  it('routes anchor.expired through AnchorExpiredPayloadSchema (NOT bypassed)', () => {
+    const result = validateWebhookPayload('anchor.expired', {
+      public_id: 'abc123',
+      chain_tx_id: 'fake-tx-id',
+      chain_block_height: 850000,
+      expired_at: '2026-04-26T00:00:00Z',
+      expires_at: '2026-04-26T00:00:00Z',
+      status: 'EXPIRED',
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.bypassed).toBeUndefined();
+  });
+
+  it('rejects anchor.expired with anchor_id leak via the helper', () => {
+    const result = validateWebhookPayload('anchor.expired', {
+      public_id: 'abc123',
+      chain_tx_id: 'fake-tx-id',
+      chain_block_height: 850000,
+      expired_at: '2026-04-26T00:00:00Z',
+      expires_at: '2026-04-26T00:00:00Z',
+      status: 'EXPIRED',
+      anchor_id: '550e8400-e29b-41d4-a716-446655440000',
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toBeInstanceOf(WebhookPayloadValidationError);
+      expect(result.error.eventType).toBe('anchor.expired');
+    }
   });
 });
 

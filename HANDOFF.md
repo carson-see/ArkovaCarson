@@ -14,6 +14,33 @@
 
 ## Now
 
+### 2026-05-07 — SCRUM-1735 [Spec] outbound webhook `anchor.expired` schema + SOC 2 DC 200 system description (branch `claude/heuristic-pike-4fd289`)
+
+Bench-state entry — no prod state changed. PR not yet opened (next step). Code-only by design.
+
+**What shipped on this branch:**
+
+- `services/worker/src/webhooks/payload-schemas.ts` — added `AnchorExpiredPayloadSchema` and routed it through `PAYLOAD_SCHEMAS_BY_EVENT_TYPE['anchor.expired']`. Strict-mode Zod schema; banned fields (`anchor_id`, `fingerprint`, `user_id`, `org_id`) explicitly rejected; on-chain invariant enforced (non-null `chain_tx_id` + `chain_block_height` because EXPIRED can only follow SECURED); two timestamps emitted (`expires_at` original deadline, `expired_at` server transition time).
+- `services/worker/src/webhooks/payload-schemas.test.ts` — +11 tests (banned-field rejection × 4, status mismatch, ISO format × 2, on-chain invariant × 2, helper integration × 2). `npx vitest run src/webhooks/payload-schemas.test.ts` returned 37/37 passing on commit pending push.
+- `services/worker/src/webhooks/agents.md` (new) — module-owner notes covering existing emitter (HMAC, SSRF + DNS rebinding ARK-SEC-002, circuit breaker DH-04, DLQ DH-12, replay SCRUM-1172, idempotency RACE-6 fix, schema allowlist SCRUM-1268), supported event matrix, "adding a new event type" procedure, deliberate-quirk callouts, SOC 2 DC 200 cross-reference.
+- `npx tsc --noEmit` returns 3149 error lines on the worker both before and after this change (verified by `git stash` round-trip) — all pre-existing in `delivery.ts` / `replay.test.ts` from runtime-types config issues; this change introduces zero new typecheck errors.
+- `npx eslint src/webhooks/payload-schemas.ts src/webhooks/payload-schemas.test.ts` returned clean.
+
+**Confluence:**
+
+- New SOC 2 DC 200 spec page: <https://arkova.atlassian.net/wiki/spaces/A/pages/42663964> (subpage of SCRUM-1729 spec). Sections: services provided, principal service commitments, system components (infrastructure / software / people / procedures / data), system incidents (INJ-02 / DH-04 / DH-12 / SCRUM-1268 / RACE-6 / ARK-SEC-026 / SCRUM-1172 / PR #567), control environment, CUECs, CSOCs, risk assessment with 12 enumerated threats, TSC mapping (Security / Availability / Confidentiality / Processing Integrity / Privacy), `anchor.expired` contract, DoD checklist.
+- HakiChain partner brief updated to v2 — <https://arkova.atlassian.net/wiki/spaces/A/pages/42532874> §10 now correctly states `anchor.secured` and `anchor.revoked` are live in production today; `anchor.expired` schema is live in code as of SCRUM-1735, producer cron deploys under SCRUM-1736, end-to-end verification under SCRUM-1737. Sample payloads aligned to the actual `event_type` / `event_id` / `data` envelope shape.
+
+**What's NOT done in this story (deliberate scope split):**
+
+- The `anchorExpirySweep` cron that flips `anchors.status` from `SECURED → EXPIRED` and calls `dispatchWebhookEvent('anchor.expired', ...)` is the deliverable for SCRUM-1736 [Implement]. The schema is the contract that SCRUM-1736 must satisfy.
+- HakiChain receiver round-trip + Tier 3 soak per CLAUDE.md §1.12 is SCRUM-1737 [Verify].
+- Confluence Webhooks topic page in Doc Update Matrix §4 + brief caveat removal is SCRUM-1738 [Close-out].
+
+**Dependencies and crosscuts:** SCRUM-1735 unblocks SCRUM-1736 (which now has a fixed contract to implement against). Brief §10 status is correct as of this entry; further updates land under SCRUM-1737 verification and SCRUM-1738 close-out. `services/worker/src/jobs/attestationExpiry.ts` is the canonical pattern SCRUM-1736 should follow.
+
+_Last refreshed: 2026-05-07 by claude — claims verified against gcloud/MCP/CI output (vitest `payload-schemas.test.ts` 37/37 passing; `git stash` typecheck round-trip 3149 ↔ 3149 confirms zero new TS errors; eslint on touched files clean; Confluence page id 42663964 created; Confluence page id 42532874 updated to version 2; no prod state change, branch not pushed at time of entry)._
+
 ### 2026-05-06 — PR #711 SCRUM-1545 coverage backfill merge-resolution pass
 
 PR [#711](https://github.com/carson-see/ArkovaCarson/pull/711) remains test-only and exists to close the R4-4-FU coverage gap for `services/worker/src/jobs/anchor.ts`, `services/worker/src/chain/client.ts`, and `services/worker/src/index.ts`. It adds `anchor-coverage.test.ts`, strengthens chain/index tests, and raises worker coverage thresholds for the targeted files. `services/worker/src/api/admin-pipeline-stats.ts` coverage was handled in PR [#690](https://github.com/carson-see/ArkovaCarson/pull/690); it is not an unmerged follow-up hidden inside #711.

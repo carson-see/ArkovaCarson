@@ -89,6 +89,25 @@ export const AnchorRevokedPayloadSchema = z
   })
   .strict();
 
+// SCRUM-1735: anchor.expired fires when a SECURED anchor crosses
+// `anchors.expires_at` and is transitioned to status=EXPIRED by the
+// anchorExpirySweep cron (spec'd in this story; implementation is SCRUM-1736).
+// Same on-chain invariant as SECURED — chain_tx_id and chain_block_height
+// must be populated because EXPIRED can only follow SECURED. Two timestamps
+// are emitted: `expires_at` (the original anchor expiry the cron crossed —
+// from `anchors.expires_at`) and `expired_at` (server timestamp of the
+// EXPIRED transition itself, for partner reconciliation against deliveries).
+export const AnchorExpiredPayloadSchema = z
+  .object({
+    ...ANCHOR_BASE_FIELDS,
+    chain_tx_id: z.string().min(1),
+    chain_block_height: z.number().int().nonnegative(),
+    status: z.literal('EXPIRED'),
+    expires_at: isoTimestamp,
+    expired_at: isoTimestamp,
+  })
+  .strict();
+
 /**
  * Aggregate event for the merkle-batch path. Fires once per merkle TX.
  * Per-anchor `anchor.secured` events still fan out alongside this for
@@ -113,6 +132,7 @@ export const PAYLOAD_SCHEMAS_BY_EVENT_TYPE = {
   'anchor.submitted': AnchorSubmittedPayloadSchema,
   'anchor.secured': AnchorSecuredPayloadSchema,
   'anchor.revoked': AnchorRevokedPayloadSchema,
+  'anchor.expired': AnchorExpiredPayloadSchema,
   'anchor.batch_secured': AnchorBatchSecuredPayloadSchema,
 } as const;
 
@@ -120,6 +140,7 @@ export type WebhookEventType = keyof typeof PAYLOAD_SCHEMAS_BY_EVENT_TYPE;
 export type AnchorSubmittedPayload = z.infer<typeof AnchorSubmittedPayloadSchema>;
 export type AnchorSecuredPayload = z.infer<typeof AnchorSecuredPayloadSchema>;
 export type AnchorRevokedPayload = z.infer<typeof AnchorRevokedPayloadSchema>;
+export type AnchorExpiredPayload = z.infer<typeof AnchorExpiredPayloadSchema>;
 export type AnchorBatchSecuredPayload = z.infer<typeof AnchorBatchSecuredPayloadSchema>;
 
 export class WebhookPayloadValidationError extends Error {
