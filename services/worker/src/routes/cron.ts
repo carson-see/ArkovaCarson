@@ -1444,6 +1444,56 @@ cronRouter.get('/smoke-test/history', async (_req, res) => {
   }
 });
 
+// ────────────────────────────────────────────────────────────────────────────
+// BigQuery export jobs (SCRUM-1062 GCP-MAX-02 / SCRUM-1723 / SCRUM-1724 /
+// SCRUM-1727). Lazily-imported so the worker boot path doesn't pay the cost
+// when these routes are never hit.
+// ────────────────────────────────────────────────────────────────────────────
+
+cronRouter.post('/bq-export-incremental', async (_req, res) => {
+  try {
+    const { runIncremental } = await import('../jobs/bq-export-incremental.js');
+    const results = await runIncremental();
+    res.json({ results });
+  } catch (error) {
+    logger.error({ error }, 'BQ export incremental run failed');
+    res.status(500).json({ error: 'BQ incremental sync failed' });
+  }
+});
+
+cronRouter.post('/bq-export-snapshot', async (_req, res) => {
+  try {
+    const { runSnapshot } = await import('../jobs/bq-export-snapshot.js');
+    const results = await runSnapshot();
+    res.json({ results });
+  } catch (error) {
+    logger.error({ error }, 'BQ export snapshot run failed');
+    res.status(500).json({ error: 'BQ snapshot sync failed' });
+  }
+});
+
+cronRouter.post('/bq-export-backfill', async (req, res) => {
+  // Manual one-shot endpoint. Caller specifies ?table=<name>; only the 3
+  // append-only tables are accepted (organizations / api_keys are snapshot
+  // tables and use a different write-mode contract).
+  const tableParam = typeof req.query.table === 'string' ? req.query.table : '';
+  if (!tableParam) {
+    res.status(400).json({ error: 'missing query parameter "table" (anchors / verifications / audit_events)' });
+    return;
+  }
+  try {
+    const { runBackfill } = await import('../jobs/bq-export-backfill.js');
+    const result = await runBackfill(tableParam);
+    res.json(result);
+  } catch (error) {
+    logger.error({ error, table: tableParam }, 'BQ export backfill failed');
+    const msg = error instanceof Error ? error.message : 'BQ backfill failed';
+    // Return 400 for the "not a backfillable table" guard; 500 for everything else
+    const status = msg.includes('not a backfillable table') ? 400 : 500;
+    res.status(status).json({ error: msg });
+  }
+});
+
 interface SmokeCheckResult {
   name: string;
   status: 'pass' | 'fail';
