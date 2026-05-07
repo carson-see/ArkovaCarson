@@ -43,16 +43,7 @@ vi.mock('./bq-export-watermark.js', async (importActual) => {
 });
 
 import { runBackfill } from './bq-export-backfill.js';
-
-function chainSelect(result: { data: unknown; error: unknown }) {
-  const thenable: { then: (cb: (v: unknown) => unknown) => Promise<unknown> } & Record<string, unknown> = {
-    then: (cb) => Promise.resolve(result).then(cb),
-  };
-  thenable.gt = vi.fn().mockReturnValue(thenable);
-  thenable.order = vi.fn().mockReturnValue(thenable);
-  thenable.limit = vi.fn().mockReturnValue(thenable);
-  return thenable;
-}
+import { chainSelect } from './bq-export-test-helpers.js';
 
 beforeEach(() => {
   fromMock.mockReset();

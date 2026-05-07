@@ -43,21 +43,7 @@ vi.mock('./bq-export-watermark.js', async (importActual) => {
 });
 
 import { runIncremental, __testing } from './bq-export-incremental.js';
-
-// ---- Helpers ----
-
-function chainSelect(result: { data: unknown; error: unknown }) {
-  // .select(...).gt(...).order(...).limit(...) is awaited.
-  // Each call returns a thenable that resolves to `result` and is also
-  // chainable (so the chain doesn't break before the await).
-  const thenable: { then: (cb: (v: unknown) => unknown) => Promise<unknown> } & Record<string, unknown> = {
-    then: (cb) => Promise.resolve(result).then(cb),
-  };
-  thenable.gt = vi.fn().mockReturnValue(thenable);
-  thenable.order = vi.fn().mockReturnValue(thenable);
-  thenable.limit = vi.fn().mockReturnValue(thenable);
-  return thenable;
-}
+import { chainSelect } from './bq-export-test-helpers.js';
 
 beforeEach(() => {
   fromMock.mockReset();
