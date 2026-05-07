@@ -1,9 +1,9 @@
 import { pathToFileURL } from 'node:url';
 
 export const PIPELINE_DASHBOARD_CACHE_JOB_NAME = 'refresh-pipeline-dashboard-cache';
-export const PIPELINE_DASHBOARD_CACHE_SCHEDULE = '* * * * *';
+export const PIPELINE_DASHBOARD_CACHE_SCHEDULE = '*/2 * * * *';
 export const PIPELINE_DASHBOARD_CACHE_COMMAND =
-  "SET statement_timeout = '50s'; SELECT refresh_pipeline_dashboard_cache();";
+  "SET statement_timeout = '120s'; SELECT refresh_pipeline_dashboard_cache();";
 export const PIPELINE_DASHBOARD_SUPPORT_INDEX_NAME = 'idx_anchors_pipeline_status';
 export const PIPELINE_DASHBOARD_SUPPORT_INDEX_SQL = `
 CREATE INDEX CONCURRENTLY ${PIPELINE_DASHBOARD_SUPPORT_INDEX_NAME}
@@ -15,6 +15,8 @@ export const PIPELINE_DASHBOARD_SUPPORT_INDEX_REBUILD_JOB_PREFIX =
   'scrum1708-rebuild-pipeline-status-index';
 export const PIPELINE_DASHBOARD_FAST_STATS_FUNCTION_COMMENT =
   'SCRUM-1708 pipeline-only fast cache refresh using idx_anchors_pipeline_status.';
+export const PIPELINE_DASHBOARD_REFRESH_FUNCTION_COMMENT =
+  'SCRUM-1708 non-overlapping dashboard cache refresh wrapper.';
 
 /** Builds a read-only evidence query for cron, cache, support-index, and stats-function state. */
 export function buildPipelineDashboardCacheCronStatusSql(): string {
@@ -93,6 +95,26 @@ stats_function AS (
     jsonb_build_object('proconfig', NULL, 'function_md5', NULL, 'comment', NULL)
   ) AS row
 ),
+refresh_function AS (
+  SELECT COALESCE(
+    (
+      SELECT to_jsonb(f)
+      FROM (
+        SELECT
+          p.proconfig,
+          md5(pg_get_functiondef(p.oid)) AS function_md5,
+          d.description AS comment
+        FROM pg_proc p
+        JOIN pg_namespace n ON n.oid = p.pronamespace
+        LEFT JOIN pg_description d ON d.objoid = p.oid AND d.objsubid = 0
+        WHERE n.nspname = 'public'
+          AND p.proname = 'refresh_pipeline_dashboard_cache'
+        LIMIT 1
+      ) f
+    ),
+    jsonb_build_object('proconfig', NULL, 'function_md5', NULL, 'comment', NULL)
+  ) AS row
+),
 latest_job_runs AS (
   SELECT COALESCE(jsonb_agg(to_jsonb(r) ORDER BY r.start_time DESC), '[]'::jsonb) AS rows
   FROM (
@@ -143,9 +165,10 @@ SELECT
   support_indexes.rows AS support_indexes,
   index_progress.rows AS index_progress,
   stats_function.row AS stats_function,
+  refresh_function.row AS refresh_function,
   latest_job_runs.rows AS latest_job_runs,
   support_index_job_runs.rows AS support_index_job_runs
-FROM jobs, cache, support_indexes, index_progress, stats_function, latest_job_runs, support_index_job_runs;
+FROM jobs, cache, support_indexes, index_progress, stats_function, refresh_function, latest_job_runs, support_index_job_runs;
 `.trim();
 }
 
@@ -203,6 +226,7 @@ SET statement_timeout TO '20s'
 AS $function$
 DECLARE
   v_total_records bigint := 0;
+  v_anchor_id_null_frac float := 0;
   v_unlinked_records bigint := -1;
   v_linked_records bigint := -1;
   v_embedded_records bigint := 0;
@@ -223,14 +247,15 @@ BEGIN
   FROM pg_class c
   WHERE c.oid = 'public.public_record_embeddings'::regclass;
 
-  BEGIN
-    SELECT count(*) INTO v_unlinked_records
-    FROM public.public_records
-    WHERE anchor_id IS NULL;
-  EXCEPTION
-    WHEN query_canceled THEN v_unlinked_records := -1;
-    WHEN OTHERS THEN v_unlinked_records := -1;
-  END;
+  SELECT COALESCE(s.null_frac, 0)
+  INTO v_anchor_id_null_frac
+  FROM pg_stats s
+  WHERE s.schemaname = 'public'
+    AND s.tablename = 'public_records'
+    AND s.attname = 'anchor_id';
+
+  v_anchor_id_null_frac := COALESCE(v_anchor_id_null_frac, 0);
+  v_unlinked_records := GREATEST(round(v_total_records * v_anchor_id_null_frac)::bigint, 0);
 
   IF v_unlinked_records >= 0 THEN
     v_linked_records := GREATEST(v_total_records - v_unlinked_records, 0);
@@ -302,6 +327,7 @@ BEGIN
     'submitted_records', v_submitted_anchor,
     'secured_records', v_secured_anchor,
     'embedded_records', v_embedded_records,
+    'pending_record_links_approximate', true,
     'source', 'scrum_1708_fast_stats'
   ), now())
   ON CONFLICT (cache_key) DO UPDATE
@@ -550,6 +576,63 @@ REVOKE ALL ON FUNCTION public.refresh_cache_record_types() FROM PUBLIC;
 REVOKE ALL ON FUNCTION public.refresh_cache_record_types() FROM anon;
 REVOKE ALL ON FUNCTION public.refresh_cache_record_types() FROM authenticated;
 GRANT EXECUTE ON FUNCTION public.refresh_cache_record_types() TO service_role;
+
+CREATE OR REPLACE FUNCTION public.refresh_pipeline_dashboard_cache()
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path TO 'public'
+SET statement_timeout TO '110s'
+AS $function$
+DECLARE
+  v_started_at timestamptz := clock_timestamp();
+  v_errors jsonb := '[]'::jsonb;
+  v_succeeded int := 0;
+  v_got_lock boolean;
+BEGIN
+  SELECT pg_try_advisory_xact_lock(8675309, 1) INTO v_got_lock;
+  IF NOT v_got_lock THEN
+    RETURN jsonb_build_object(
+      'status', 'skipped',
+      'reason', 'another refresh in progress',
+      'duration_ms', (extract(epoch from clock_timestamp() - v_started_at) * 1000)::int
+    );
+  END IF;
+
+  BEGIN PERFORM refresh_cache_pipeline_stats(); v_succeeded := v_succeeded + 1;
+  EXCEPTION WHEN OTHERS THEN v_errors := v_errors || jsonb_build_object('pipeline_stats', SQLERRM); END;
+
+  BEGIN PERFORM refresh_cache_anchor_status_counts(); v_succeeded := v_succeeded + 1;
+  EXCEPTION WHEN OTHERS THEN v_errors := v_errors || jsonb_build_object('anchor_status_counts', SQLERRM); END;
+
+  BEGIN PERFORM refresh_cache_by_source(); v_succeeded := v_succeeded + 1;
+  EXCEPTION WHEN OTHERS THEN v_errors := v_errors || jsonb_build_object('by_source', SQLERRM); END;
+
+  BEGIN PERFORM refresh_cache_anchor_type_counts(); v_succeeded := v_succeeded + 1;
+  EXCEPTION WHEN OTHERS THEN v_errors := v_errors || jsonb_build_object('anchor_type_counts', SQLERRM); END;
+
+  BEGIN PERFORM refresh_cache_record_types(); v_succeeded := v_succeeded + 1;
+  EXCEPTION WHEN OTHERS THEN v_errors := v_errors || jsonb_build_object('record_types', SQLERRM); END;
+
+  BEGIN PERFORM refresh_cache_anchor_tx_stats(); v_succeeded := v_succeeded + 1;
+  EXCEPTION WHEN OTHERS THEN v_errors := v_errors || jsonb_build_object('anchor_tx_stats', SQLERRM); END;
+
+  RETURN jsonb_build_object(
+    'status', 'refreshed',
+    'succeeded', v_succeeded,
+    'errors', v_errors,
+    'duration_ms', (extract(epoch from clock_timestamp() - v_started_at) * 1000)::int
+  );
+END;
+$function$;
+
+COMMENT ON FUNCTION public.refresh_pipeline_dashboard_cache() IS
+  '${PIPELINE_DASHBOARD_REFRESH_FUNCTION_COMMENT}';
+
+REVOKE ALL ON FUNCTION public.refresh_pipeline_dashboard_cache() FROM PUBLIC;
+REVOKE ALL ON FUNCTION public.refresh_pipeline_dashboard_cache() FROM anon;
+REVOKE ALL ON FUNCTION public.refresh_pipeline_dashboard_cache() FROM authenticated;
+GRANT EXECUTE ON FUNCTION public.refresh_pipeline_dashboard_cache() TO service_role;
 `.trim();
 }
 

@@ -7,13 +7,13 @@ the active migration-ledger stop flag is being reconciled.
 ## What This Does
 
 - Unschedules every existing pg_cron job named `refresh-pipeline-dashboard-cache`.
-- Creates exactly one active job with schedule `* * * * *`.
+- Creates exactly one active job with schedule `*/2 * * * *`.
 - Refuses to schedule the cron job unless the supporting
   `idx_anchors_pipeline_status` index is present, valid, and ready.
 - Uses the required command:
 
 ```sql
-SET statement_timeout = '50s'; SELECT refresh_pipeline_dashboard_cache();
+SET statement_timeout = '120s'; SELECT refresh_pipeline_dashboard_cache();
 ```
 
 It does not touch `vacuum-anchors`, `batch-anchors`, Cloud Scheduler jobs, or
@@ -51,7 +51,18 @@ Also record `support_indexes`:
 
 This replaces `public.refresh_cache_pipeline_stats()` with a pipeline-only cache
 writer which uses the `idx_anchors_pipeline_status` support index for hot
-anchor-status buckets. It also replaces the broad distribution cache writers
+anchor-status buckets. `pending_record_links` is estimated from `pg_stats`
+`public_records.anchor_id` null fraction and marked with
+`pending_record_links_approximate=true`; the prior exact count remained a hot
+path that could consume roughly 10 seconds on production-scale data.
+
+This step also installs `public.refresh_pipeline_dashboard_cache()` as a
+non-overlapping wrapper using `pg_try_advisory_xact_lock(8675309, 1)` and
+`statement_timeout=110s`. The wrapper keeps each cache-key refresh isolated in
+its own exception block and returns `status: skipped` if a manual/worker refresh
+is already in progress.
+
+It also replaces the broad distribution cache writers
 (`anchor_status_counts`, `by_source`, `anchor_type_counts`, and `record_types`)
 with bounded pg_stats-backed writers so the master refresh does not time out on
 full-table grouping queries.
@@ -69,8 +80,14 @@ SELECT refresh_pipeline_dashboard_cache();
 ```
 
 Expected result: JSON with `status: refreshed`, `succeeded: 6`, and an empty
-`errors` array. Then run status and confirm `stats_function.comment` matches
-the SCRUM-1708 pipeline-only fast stats comment and cache rows advanced.
+`errors` array. Then run status and confirm:
+
+- `stats_function.comment` matches the SCRUM-1708 pipeline-only fast stats
+  comment.
+- `refresh_function.comment` matches the SCRUM-1708 non-overlapping wrapper
+  comment.
+- `pipeline_stats.cache_value.pending_record_links_approximate=true`.
+- Cache rows advanced.
 
 ## Rebuild Supporting Index
 
@@ -148,8 +165,13 @@ Expected result:
 - `cron_jobs` contains exactly one row.
 - The single job is named `refresh-pipeline-dashboard-cache`.
 - The job is active.
-- The job command is `SET statement_timeout = '50s'; SELECT refresh_pipeline_dashboard_cache();`.
+- The job schedule is `*/2 * * * *`.
+- The job command is `SET statement_timeout = '120s'; SELECT refresh_pipeline_dashboard_cache();`.
 - `pipeline_stats.updated_at` advances within two cron ticks.
+- Extended soak evidence must cover at least two hours after the final schedule
+  and function configuration, with zero failed runs in `cron.job_run_details`.
+  `job startup timeout` is a failed soak gate and must be investigated or the
+  acceptance window must be explicitly reset before owner merge.
 
 ## Rollback
 

@@ -5,6 +5,7 @@ import {
   PIPELINE_DASHBOARD_CACHE_JOB_NAME,
   PIPELINE_DASHBOARD_CACHE_SCHEDULE,
   PIPELINE_DASHBOARD_FAST_STATS_FUNCTION_COMMENT,
+  PIPELINE_DASHBOARD_REFRESH_FUNCTION_COMMENT,
   PIPELINE_DASHBOARD_SUPPORT_INDEX_NAME,
   PIPELINE_DASHBOARD_SUPPORT_INDEX_REBUILD_JOB_PREFIX,
   buildCleanupPipelineDashboardSupportIndexJobsSql,
@@ -39,8 +40,9 @@ describe('pipeline dashboard cache cron SQL', () => {
   });
 
   it('uses the SET-prefixed command required by the cache refresh runbook', () => {
+    expect(PIPELINE_DASHBOARD_CACHE_SCHEDULE).toBe('*/2 * * * *');
     expect(PIPELINE_DASHBOARD_CACHE_COMMAND).toBe(
-      "SET statement_timeout = '50s'; SELECT refresh_pipeline_dashboard_cache();",
+      "SET statement_timeout = '120s'; SELECT refresh_pipeline_dashboard_cache();",
     );
   });
 
@@ -65,6 +67,8 @@ describe('pipeline dashboard cache cron SQL', () => {
     expect(sql).toContain('latest_job_runs');
     expect(sql).toContain('support_index_job_runs');
     expect(sql).toContain('stats_function');
+    expect(sql).toContain('refresh_function');
+    expect(sql).toContain("p.proname = 'refresh_pipeline_dashboard_cache'");
     expect(sql).toContain("jsonb_build_object('proconfig', NULL, 'function_md5', NULL, 'comment', NULL)");
   });
 
@@ -103,10 +107,18 @@ describe('pipeline dashboard cache cron SQL', () => {
     expect(sql).toContain("SET statement_timeout TO '20s'");
     expect(sql).toContain('scrum_1708_fast_stats');
     expect(sql).toContain(PIPELINE_DASHBOARD_FAST_STATS_FUNCTION_COMMENT);
+    expect(sql).toContain(PIPELINE_DASHBOARD_REFRESH_FUNCTION_COMMENT);
+    expect(sql).toContain('CREATE OR REPLACE FUNCTION public.refresh_pipeline_dashboard_cache()');
+    expect(sql).toContain("SET statement_timeout TO '110s'");
+    expect(sql).toContain('pg_try_advisory_xact_lock(8675309, 1)');
+    expect(sql).toContain('v_anchor_id_null_frac := COALESCE(v_anchor_id_null_frac, 0);');
+    expect(sql).toContain('extract(epoch from clock_timestamp() - v_started_at) * 1000');
     expect(sql).toContain("metadata ? 'pipeline_source'");
     expect(sql).toContain("status = 'SUBMITTED'");
     expect(sql).toContain("status = 'SECURED'");
     expect(sql).toContain('chain_tx_id IS NOT NULL');
+    expect(sql).toContain("s.attname = 'anchor_id'");
+    expect(sql).toContain('pending_record_links_approximate');
     expect(sql).toContain('CREATE OR REPLACE FUNCTION public.refresh_cache_anchor_status_counts()');
     expect(sql).toContain('CREATE OR REPLACE FUNCTION public.refresh_cache_by_source()');
     expect(sql).toContain('CREATE OR REPLACE FUNCTION public.refresh_cache_anchor_type_counts()');
