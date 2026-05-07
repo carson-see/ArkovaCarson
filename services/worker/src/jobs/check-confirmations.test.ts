@@ -235,6 +235,44 @@ function submittedCandidate(index: number, chainTxId: string) {
   };
 }
 
+interface CursorRotationScenario {
+  frontTxidPrefix: string;
+  confirmedTxid: string;
+  unconfirmedFetchResponse: () => Promise<unknown>;
+}
+
+function setupCursorRotationScenario(opts: CursorRotationScenario) {
+  const firstPage = Array.from({ length: 101 }, (_, index) =>
+    submittedCandidate(index, `${opts.frontTxidPrefix}-${index}`),
+  );
+  const secondPage = [firstPage[100], submittedCandidate(101, opts.confirmedTxid)];
+  mockAnchorsSelectPages.splice(
+    0,
+    mockAnchorsSelectPages.length,
+    { data: firstPage, error: null },
+    { data: secondPage, error: null },
+  );
+
+  mockFetch.mockImplementation((input: unknown) => {
+    const url = String(input);
+    if (url.endsWith('/api/blocks/tip/height')) {
+      return Promise.resolve({ ok: true, text: () => Promise.resolve('200200') });
+    }
+    if (url.includes(opts.confirmedTxid)) {
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({
+          txid: opts.confirmedTxid,
+          status: { confirmed: true, block_height: 200100, block_time: 1700000000 },
+        }),
+      });
+    }
+    return opts.unconfirmedFetchResponse();
+  });
+
+  return { firstPage, secondPage };
+}
+
 // ================================================================
 
 describe('checkSubmittedConfirmations', () => {
@@ -322,42 +360,13 @@ describe('checkSubmittedConfirmations', () => {
   });
 
   it('rotates past old unconfirmed tx candidates so later confirmed tx groups can drain', async () => {
-    const firstPage = Array.from({ length: 101 }, (_, index) =>
-      submittedCandidate(index, `unconfirmed-front-${index}`),
-    );
-    const secondPage = [firstPage[100], submittedCandidate(101, 'confirmed-after-cursor')];
-    mockAnchorsSelectPages.splice(
-      0,
-      mockAnchorsSelectPages.length,
-      { data: firstPage, error: null },
-      { data: secondPage, error: null },
-    );
-
-    mockFetch.mockImplementation((input: unknown) => {
-      const url = String(input);
-      if (url.endsWith('/api/blocks/tip/height')) {
-        return Promise.resolve({ ok: true, text: () => Promise.resolve('200200') });
-      }
-      if (url.includes('confirmed-after-cursor')) {
-        return Promise.resolve({
-          ok: true,
-          json: () => Promise.resolve({
-            txid: 'confirmed-after-cursor',
-            status: {
-              confirmed: true,
-              block_height: 200100,
-              block_time: 1700000000,
-            },
-          }),
-        });
-      }
-      return Promise.resolve({
+    const { firstPage } = setupCursorRotationScenario({
+      frontTxidPrefix: 'unconfirmed-front',
+      confirmedTxid: 'confirmed-after-cursor',
+      unconfirmedFetchResponse: () => Promise.resolve({
         ok: true,
-        json: () => Promise.resolve({
-          txid: 'unconfirmed',
-          status: { confirmed: false },
-        }),
-      });
+        json: () => Promise.resolve({ txid: 'unconfirmed', status: { confirmed: false } }),
+      }),
     });
 
     const firstRun = await checkSubmittedConfirmations();
@@ -379,36 +388,10 @@ describe('checkSubmittedConfirmations', () => {
   });
 
   it('rotates past old missing tx candidates so later confirmed tx groups can drain', async () => {
-    const firstPage = Array.from({ length: 101 }, (_, index) =>
-      submittedCandidate(index, `missing-front-${index}`),
-    );
-    const secondPage = [firstPage[100], submittedCandidate(101, 'confirmed-behind-missing-front')];
-    mockAnchorsSelectPages.splice(
-      0,
-      mockAnchorsSelectPages.length,
-      { data: firstPage, error: null },
-      { data: secondPage, error: null },
-    );
-
-    mockFetch.mockImplementation((input: unknown) => {
-      const url = String(input);
-      if (url.endsWith('/api/blocks/tip/height')) {
-        return Promise.resolve({ ok: true, text: () => Promise.resolve('200200') });
-      }
-      if (url.includes('confirmed-behind-missing-front')) {
-        return Promise.resolve({
-          ok: true,
-          json: () => Promise.resolve({
-            txid: 'confirmed-behind-missing-front',
-            status: {
-              confirmed: true,
-              block_height: 200100,
-              block_time: 1700000000,
-            },
-          }),
-        });
-      }
-      return Promise.resolve({ ok: false, status: 404 });
+    setupCursorRotationScenario({
+      frontTxidPrefix: 'missing-front',
+      confirmedTxid: 'confirmed-behind-missing-front',
+      unconfirmedFetchResponse: () => Promise.resolve({ ok: false, status: 404 }),
     });
 
     const firstRun = await checkSubmittedConfirmations();
