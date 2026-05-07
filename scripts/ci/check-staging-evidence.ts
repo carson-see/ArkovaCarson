@@ -15,24 +15,20 @@
  * The detector for tier requirements is path-based and intentionally
  * conservative — when in doubt it pushes you up a tier rather than down.
  *
- * Override label: `staging-soak-skip` — for true CI-only / docs-only
- * changes that do not run on the worker (README updates, .github/
- * workflows that touch nothing else, agents.md edits, memory/ edits).
- *
- * The override label is itself audited by the feedback-rules orchestrator
- * (see scripts/ci/feedback-rules/) so abuse is visible.
+ * No override label exists. The previous `staging-soak-skip` override
+ * was removed on 2026-05-07 — every prod-bound PR must produce real
+ * staging evidence per CLAUDE.md §1.11. The only remaining "skip" is
+ * the `isStagingToolingOnly` allowlist below for PRs that exclusively
+ * touch staging-tooling files (which by definition can't affect prod).
  */
 
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import {
   REPO,
-  hasLabel,
   prBody,
   changedFiles,
 } from './lib/ciContext.js';
-
-export const OVERRIDE_LABEL = 'staging-soak-skip';
 
 export type Tier = 'T1' | 'T2' | 'T3';
 
@@ -241,14 +237,9 @@ interface CheckResult {
   notes: string[];
 }
 
-export function check(opts: { body: string; files: string[]; overridden: boolean }): CheckResult {
-  const { body, files, overridden } = opts;
+export function check(opts: { body: string; files: string[] }): CheckResult {
+  const { body, files } = opts;
   const result: CheckResult = { ok: true, errors: [], notes: [] };
-
-  if (overridden) {
-    result.notes.push(`Override label \`${OVERRIDE_LABEL}\` present — skipping.`);
-    return result;
-  }
 
   const tooling = isStagingToolingOnly(files);
   if (tooling.pass) {
@@ -299,8 +290,7 @@ export function check(opts: { body: string; files: string[]; overridden: boolean
 
 function main(): void {
   const files = changedFiles();
-  const overridden = hasLabel(OVERRIDE_LABEL);
-  const result = check({ body: prBody, files, overridden });
+  const result = check({ body: prBody, files });
 
   for (const note of result.notes) console.log(`ℹ️  ${note}`);
   if (result.ok) {

@@ -148,16 +148,10 @@ describe('check-staging-evidence', () => {
   });
 
   describe('check (integration)', () => {
-    it('passes when override label is set', () => {
-      const r = check({ body: '', files: ['services/worker/src/chain/client.ts'], overridden: true });
-      expect(r.ok).toBe(true);
-    });
-
     it('passes for staging-tooling-only PR with no body', () => {
       const r = check({
         body: '',
         files: ['scripts/staging/seed.ts', 'docs/staging/README.md'],
-        overridden: false,
       });
       expect(r.ok).toBe(true);
     });
@@ -166,7 +160,6 @@ describe('check-staging-evidence', () => {
       const r = check({
         body: '## Summary\nfix bug',
         files: ['services/worker/src/chain/client.ts'],
-        overridden: false,
       });
       expect(r.ok).toBe(false);
       expect(r.errors.join(' ')).toMatch(/missing a tier declaration/i);
@@ -177,7 +170,6 @@ describe('check-staging-evidence', () => {
       const r = check({
         body,
         files: ['services/worker/src/chain/client.ts'],
-        overridden: false,
       });
       expect(r.ok).toBe(false);
       expect(r.errors.join(' ')).toMatch(/below required tier T3/);
@@ -187,7 +179,6 @@ describe('check-staging-evidence', () => {
       const r = check({
         body: T3_BODY,
         files: ['services/worker/src/jobs/batch-anchor.ts'],
-        overridden: false,
       });
       expect(r.ok).toBe(true);
     });
@@ -197,10 +188,21 @@ describe('check-staging-evidence', () => {
       const r = check({
         body: incomplete,
         files: ['services/worker/src/jobs/batch-anchor.ts'],
-        overridden: false,
       });
       expect(r.ok).toBe(false);
       expect(r.errors.join(' ')).toMatch(/missing required fields/i);
+    });
+
+    it('does NOT honor a removed staging-soak-skip override', () => {
+      // The override path was removed 2026-05-07. PRs that touch
+      // prod-affecting paths must produce real evidence regardless of
+      // any historical label state.
+      const r = check({
+        body: '## Summary\njust a fix',
+        files: ['services/worker/src/chain/client.ts'],
+      });
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/missing a tier declaration/i);
     });
   });
 });
