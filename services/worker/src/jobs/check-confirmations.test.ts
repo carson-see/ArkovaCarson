@@ -18,6 +18,8 @@ const {
   mockDispatchWebhookEvent,
   mockFetch,
   mockAnchorsSelectResult,
+  mockAnchorsSelectPages,
+  mockAnchorsCursorFilters,
   mockAnchorsUpdateResult,
   mockSendEmail,
   mockBuildAnchorSecuredEmail,
@@ -41,6 +43,8 @@ const {
 
   // Configurable results per test
   const mockAnchorsSelectResult: { data: unknown; error: unknown } = { data: [], error: null };
+  const mockAnchorsSelectPages: Array<{ data: unknown; error: unknown }> = [];
+  const mockAnchorsCursorFilters: string[] = [];
   const mockAnchorsUpdateResult: { error: unknown } = { error: null };
   const mockDrainResults: Array<{
     data: {
@@ -58,6 +62,8 @@ const {
     mockDispatchWebhookEvent,
     mockFetch,
     mockAnchorsSelectResult,
+    mockAnchorsSelectPages,
+    mockAnchorsCursorFilters,
     mockAnchorsUpdateResult,
     mockSendEmail,
     mockBuildAnchorSecuredEmail,
@@ -114,8 +120,12 @@ vi.mock('../utils/db.js', () => {
     chain.eq = vi.fn(() => chain);
     chain.not = vi.fn(() => chain);
     chain.is = vi.fn(() => chain);
+    chain.or = vi.fn((value: string) => {
+      mockAnchorsCursorFilters.push(value);
+      return chain;
+    });
     chain.order = vi.fn(() => chain);
-    chain.limit = vi.fn(() => mockAnchorsSelectResult);
+    chain.limit = vi.fn(() => mockAnchorsSelectPages.shift() ?? mockAnchorsSelectResult);
     chain.single = vi.fn(() => ({
       data: { credential_type: 'DEGREE', metadata: { issuerName: 'Test Uni' } },
       error: null,
@@ -186,13 +196,14 @@ vi.mock('../utils/db.js', () => {
 
 // ---- System under test ----
 
-import { checkSubmittedConfirmations } from './check-confirmations.js';
+import { checkSubmittedConfirmations, resetSubmittedTxScanCursorForTests } from './check-confirmations.js';
 
 // ---- Fixtures ----
 
 const MOCK_SUBMITTED_ANCHOR = {
   id: 'anchor-001',
   chain_tx_id: 'abc123def456',
+  created_at: '2026-05-07T12:00:00.000Z',
   user_id: 'user-001',
   org_id: 'org-001',
   fingerprint: 'a'.repeat(64),
@@ -216,6 +227,14 @@ const MOCK_UNCONFIRMED_TX = {
   },
 };
 
+function submittedCandidate(index: number, chainTxId: string) {
+  return {
+    id: `candidate-${String(index).padStart(4, '0')}`,
+    chain_tx_id: chainTxId,
+    created_at: new Date(Date.UTC(2026, 4, 7, 12, 0, index)).toISOString(),
+  };
+}
+
 // ================================================================
 
 describe('checkSubmittedConfirmations', () => {
@@ -229,6 +248,8 @@ describe('checkSubmittedConfirmations', () => {
     // Defaults
     mockAnchorsSelectResult.data = [];
     mockAnchorsSelectResult.error = null;
+    mockAnchorsSelectPages.splice(0, mockAnchorsSelectPages.length);
+    mockAnchorsCursorFilters.splice(0, mockAnchorsCursorFilters.length);
     (mockAnchorsUpdateResult as Record<string, unknown>).error = null;
     (mockAnchorsUpdateResult as Record<string, unknown>).count = 1;
     mockAuditInsert.mockResolvedValue({ error: null });
@@ -245,6 +266,7 @@ describe('checkSubmittedConfirmations', () => {
       },
       error: null,
     });
+    resetSubmittedTxScanCursorForTests();
   });
 
   afterEach(() => {
@@ -297,6 +319,63 @@ describe('checkSubmittedConfirmations', () => {
 
     const result = await checkSubmittedConfirmations();
     expect(result).toEqual({ checked: 1, confirmed: 0 });
+  });
+
+  it('rotates past old unconfirmed tx candidates so later confirmed tx groups can drain', async () => {
+    const firstPage = Array.from({ length: 101 }, (_, index) =>
+      submittedCandidate(index, `unconfirmed-front-${index}`),
+    );
+    const secondPage = [firstPage[100], submittedCandidate(101, 'confirmed-after-cursor')];
+    mockAnchorsSelectPages.splice(
+      0,
+      mockAnchorsSelectPages.length,
+      { data: firstPage, error: null },
+      { data: secondPage, error: null },
+    );
+
+    mockFetch.mockImplementation((input: unknown) => {
+      const url = String(input);
+      if (url.endsWith('/api/blocks/tip/height')) {
+        return Promise.resolve({ ok: true, text: () => Promise.resolve('200200') });
+      }
+      if (url.includes('confirmed-after-cursor')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            txid: 'confirmed-after-cursor',
+            status: {
+              confirmed: true,
+              block_height: 200100,
+              block_time: 1700000000,
+            },
+          }),
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({
+          txid: 'unconfirmed',
+          status: { confirmed: false },
+        }),
+      });
+    });
+
+    const firstRun = await checkSubmittedConfirmations();
+    expect(firstRun).toEqual({ checked: 100, confirmed: 0 });
+
+    const secondRun = await checkSubmittedConfirmations();
+    expect(secondRun).toEqual({ checked: 2, confirmed: 1 });
+    expect(mockAnchorsCursorFilters).toContain(
+      `created_at.gt.${firstPage[99].created_at},and(created_at.eq.${firstPage[99].created_at},id.gt.${firstPage[99].id})`,
+    );
+    expect(mockLogger.info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        txId: 'confirmed-after-cursor',
+        confirmed: 1,
+        blockHeight: 200100,
+      }),
+      expect.stringContaining('Bulk confirmed'),
+    );
   });
 
   // ---- Confirmed (happy path) ----
@@ -526,7 +605,12 @@ describe('checkSubmittedConfirmations', () => {
   // ---- Multiple anchors ----
 
   it('processes multiple anchors and counts correctly', async () => {
-    const anchor2 = { ...MOCK_SUBMITTED_ANCHOR, id: 'anchor-002', chain_tx_id: 'tx-002' };
+    const anchor2 = {
+      ...MOCK_SUBMITTED_ANCHOR,
+      id: 'anchor-002',
+      chain_tx_id: 'tx-002',
+      created_at: '2026-05-07T12:00:01.000Z',
+    };
     mockAnchorsSelectResult.data = [MOCK_SUBMITTED_ANCHOR, anchor2];
 
     // First call: tip height. Second call: confirmed. Third call: unconfirmed.
