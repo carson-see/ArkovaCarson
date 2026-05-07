@@ -24,6 +24,13 @@ set -euo pipefail
 
 PROJECT_ID="${GCP_PROJECT_ID:-arkova1}"
 REGION="${GCP_REGION:-us-central1}"
+# BigQuery uses a separate location knob from REGION because BQ datasets in
+# the multi-region "US" location are more resilient than single-region
+# "us-central1" and match the SCRUM-1062 AC ("US-only region pin"). The
+# actual provisioned dataset (created 2026-05-07 under SCRUM-1720) is in
+# the "US" multi-region; mirroring that here so re-running the script is a
+# no-op rather than a region-conflict.
+BQ_LOCATION="${GCP_BQ_LOCATION:-US}"
 LOGGING_LOG_NAME="arkova-audit-events"
 BQ_DATASET="arkova_analytics"
 VERTEX_SA_NAME="gemini-golden-sa"
@@ -148,7 +155,7 @@ echo ""
 echo "--- GCP-MAX-02: BigQuery dataset + starter tables ---"
 
 if ! bq --project_id="$PROJECT_ID" ls --format=prettyjson "$BQ_DATASET" 2>/dev/null; then
-  bq --project_id="$PROJECT_ID" --location="$REGION" \
+  bq --project_id="$PROJECT_ID" --location="$BQ_LOCATION" \
     mk --dataset \
     --description="Arkova analytics warehouse (SCRUM-1062). US-only, CMEK on enterprise tier." \
     --default_table_expiration 0 \
@@ -160,7 +167,7 @@ fi
 # Starter tables. Schemas intentionally narrow — add columns in follow-up
 # migrations as analytical needs emerge. Every table has an `updated_at`
 # partition key so BQ prunes old partitions efficiently.
-bq --project_id="$PROJECT_ID" --location="$REGION" \
+bq --project_id="$PROJECT_ID" --location="$BQ_LOCATION" \
   mk --table --force \
   --time_partitioning_field=created_at \
   --time_partitioning_type=DAY \
@@ -168,7 +175,7 @@ bq --project_id="$PROJECT_ID" --location="$REGION" \
   "${PROJECT_ID}:${BQ_DATASET}.anchors" \
   "$(dirname "$0")/schemas/anchors.json"
 
-bq --project_id="$PROJECT_ID" --location="$REGION" \
+bq --project_id="$PROJECT_ID" --location="$BQ_LOCATION" \
   mk --table --force \
   --time_partitioning_field=created_at \
   --time_partitioning_type=DAY \
@@ -176,7 +183,7 @@ bq --project_id="$PROJECT_ID" --location="$REGION" \
   "${PROJECT_ID}:${BQ_DATASET}.verifications" \
   "$(dirname "$0")/schemas/verifications.json"
 
-bq --project_id="$PROJECT_ID" --location="$REGION" \
+bq --project_id="$PROJECT_ID" --location="$BQ_LOCATION" \
   mk --table --force \
   --time_partitioning_field=created_at \
   --time_partitioning_type=DAY \
