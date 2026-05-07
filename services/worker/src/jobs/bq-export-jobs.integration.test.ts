@@ -71,24 +71,43 @@ beforeEach(() => {
   markRunFailedMock.mockResolvedValue(undefined);
 });
 
+// Tiny helper for "the happy path of an append-only sync run" used by both
+// runIncremental and runBackfill — collapses the watermark + fromMock +
+// insertRowsMock setup into one call so SonarCloud's duplicate-line
+// detector doesn't trip on the same shape repeated twice.
+function setupAppendHappyPath(opts: {
+  tableName: 'anchors' | 'verifications' | 'audit_events';
+  watermark: string;
+  sourceRows: ReadonlyArray<Record<string, unknown>>;
+}): void {
+  readWatermarkMock.mockResolvedValue({
+    tableName: opts.tableName,
+    lastSyncedAt: opts.watermark,
+    lastSyncedId: null,
+    lastRunStatus: 'pending',
+    lastRunError: null,
+  });
+  fromMock.mockReturnValue({
+    select: vi.fn().mockReturnValue(chainSelect({ data: opts.sourceRows, error: null })),
+  });
+  insertRowsMock.mockResolvedValue({ insertedCount: opts.sourceRows.length, errors: [] });
+}
+
 // ============================================================================
 // SCRUM-1723: runIncremental
 // ============================================================================
 
 describe('runIncremental — happy path', () => {
   it('inserts rows and advances watermark to MAX(created_at)', async () => {
-    readWatermarkMock.mockResolvedValue({
-      tableName: 'anchors', lastSyncedAt: '2026-05-01T00:00:00Z',
-      lastSyncedId: null, lastRunStatus: 'pending', lastRunError: null,
+    setupAppendHappyPath({
+      tableName: 'anchors',
+      watermark: '2026-05-01T00:00:00Z',
+      sourceRows: [
+        { id: 'uuid-1', org_id: 'o1', created_at: '2026-05-07T10:00:00Z' },
+        { id: 'uuid-2', org_id: 'o1', created_at: '2026-05-07T10:05:00Z' },
+        { id: 'uuid-3', org_id: 'o2', created_at: '2026-05-07T10:10:00Z' },
+      ],
     });
-
-    const sourceRows = [
-      { id: 'uuid-1', org_id: 'o1', created_at: '2026-05-07T10:00:00Z' },
-      { id: 'uuid-2', org_id: 'o1', created_at: '2026-05-07T10:05:00Z' },
-      { id: 'uuid-3', org_id: 'o2', created_at: '2026-05-07T10:10:00Z' },
-    ];
-    fromMock.mockReturnValue({ select: vi.fn().mockReturnValue(chainSelect({ data: sourceRows, error: null })) });
-    insertRowsMock.mockResolvedValue({ insertedCount: 3, errors: [] });
 
     const results = await runIncremental();
     const anchorsResult = results.find((r) => r.table === 'anchors');
@@ -345,18 +364,15 @@ describe('runSnapshot — assertNoApiKeysPiiLeak runtime defense', () => {
 
 describe('runBackfill — happy path', () => {
   it('loops in batches; advances watermark per batch; returns total inserted', async () => {
-    readWatermarkMock.mockResolvedValue({
-      tableName: 'anchors', lastSyncedAt: '1970-01-01T00:00:00Z',
-      lastSyncedId: null, lastRunStatus: 'pending', lastRunError: null,
+    setupAppendHappyPath({
+      tableName: 'anchors',
+      watermark: '1970-01-01T00:00:00Z',
+      sourceRows: [
+        { id: 'u-1', org_id: 'o', created_at: '2025-01-01T00:00:00Z' },
+        { id: 'u-2', org_id: 'o', created_at: '2025-06-01T00:00:00Z' },
+        { id: 'u-3', org_id: 'o', created_at: '2026-01-01T00:00:00Z' },
+      ],
     });
-
-    const sourceRows = [
-      { id: 'u-1', org_id: 'o', created_at: '2025-01-01T00:00:00Z' },
-      { id: 'u-2', org_id: 'o', created_at: '2025-06-01T00:00:00Z' },
-      { id: 'u-3', org_id: 'o', created_at: '2026-01-01T00:00:00Z' },
-    ];
-    fromMock.mockReturnValue({ select: vi.fn().mockReturnValue(chainSelect({ data: sourceRows, error: null })) });
-    insertRowsMock.mockResolvedValue({ insertedCount: 3, errors: [] });
 
     const result = await runBackfill('anchors');
 
