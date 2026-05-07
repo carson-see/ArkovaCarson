@@ -1,0 +1,25 @@
+{
+  "startedAt": "2026-05-06T11:55:32.288Z",
+  "endedAt": "2026-05-06T15:55:32.300Z",
+  "durationSec": 14400.012,
+  "apiBase": "http://127.0.0.1:3002",
+  "mode": "v1-verify-lowrate",
+  "target": "/api/v1/verify/ARK-2026-5142701C",
+  "ratePerMin": 6,
+  "totalRequests": 1440,
+  "byMode": {
+    "reads": {
+      "ok": 244,
+      "fail": 1196,
+      "errorRate": 0.8305555555555556,
+      "p50Ms": 4,
+      "p95Ms": 767,
+      "p99Ms": 1208,
+      "byStatus": {
+        "0": 1161,
+        "200": 244,
+        "401": 35
+      }
+    }
+  }
+}
