@@ -53,7 +53,8 @@ describe('bq-export-schemas: 5 expected tables', () => {
 
   it('declares no other tables (prevents accidental scope creep)', () => {
     const byLocale = (a: string, b: string): number => a.localeCompare(b);
-    expect([...Object.keys(BQ_TABLES)].sort(byLocale)).toEqual([...expected].sort(byLocale));
+    // Object.keys returns a fresh array, so .sort() is non-mutating to BQ_TABLES.
+    expect(Object.keys(BQ_TABLES).sort(byLocale)).toEqual([...expected].sort(byLocale));
   });
 
   it('every table has a tableId matching its key', () => {

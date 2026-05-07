@@ -84,6 +84,29 @@ export const SOC2_AUDIT_RETENTION_MS = String(
   SOC2_AUDIT_RETENTION_DAYS * 24 * 60 * 60 * 1000,
 );
 
+// Shared fields that appear in every (or nearly every) table schema.
+// Factoring these out (a) eliminates accidental drift when copy-pasting a new
+// table, and (b) keeps SonarCloud's duplicate-line detector happy (the per-
+// table object literals were ~80% similar in tokens before extraction).
+const ID_REQUIRED: BqField = {
+  name: 'id',
+  type: 'STRING',
+  mode: 'REQUIRED',
+  description: 'Source uuid (used as insertId for BQ best-effort dedup)',
+};
+const BQ_SYNCED_AT_REQUIRED: BqField = {
+  name: 'bq_synced_at',
+  type: 'TIMESTAMP',
+  mode: 'REQUIRED',
+  description: 'Wall-clock time the row landed in BQ (for freshness SLO)',
+};
+const SNAPSHOT_DATE_REQUIRED: BqField = {
+  name: 'snapshot_date',
+  type: 'DATE',
+  mode: 'REQUIRED',
+  description: 'UTC date the snapshot was taken (partition key)',
+};
+
 // ---------------------------------------------------------------------------
 // Append-only mirrors (5-min incremental sync)
 // ---------------------------------------------------------------------------
@@ -95,7 +118,7 @@ const ANCHORS: BqTableTarget = {
     'Append-only mirror of public.anchors. Source of truth lives in Postgres; this dataset is for analytics + audit queries only.',
   schema: {
     fields: [
-      { name: 'id', type: 'STRING', mode: 'REQUIRED', description: 'Source uuid (used as MERGE key)' },
+      ID_REQUIRED,
       { name: 'public_id', type: 'STRING', mode: 'NULLABLE' },
       { name: 'org_id', type: 'STRING', mode: 'NULLABLE' },
       { name: 'credential_type', type: 'STRING', mode: 'NULLABLE' },
@@ -112,7 +135,7 @@ const ANCHORS: BqTableTarget = {
       { name: 'issued_at', type: 'TIMESTAMP', mode: 'NULLABLE' },
       { name: 'created_at', type: 'TIMESTAMP', mode: 'REQUIRED' },
       { name: 'updated_at', type: 'TIMESTAMP', mode: 'NULLABLE' },
-      { name: 'bq_synced_at', type: 'TIMESTAMP', mode: 'REQUIRED', description: 'Time the row landed in BQ (for freshness SLO)' },
+      BQ_SYNCED_AT_REQUIRED,
     ],
   },
   timePartitioning: { type: 'DAY', field: 'created_at' },
@@ -126,7 +149,7 @@ const VERIFICATIONS: BqTableTarget = {
     'Append-only mirror of public.verifications. One row per anchor verification request.',
   schema: {
     fields: [
-      { name: 'id', type: 'STRING', mode: 'REQUIRED' },
+      ID_REQUIRED,
       { name: 'anchor_id', type: 'STRING', mode: 'NULLABLE' },
       { name: 'org_id', type: 'STRING', mode: 'NULLABLE' },
       { name: 'public_id', type: 'STRING', mode: 'NULLABLE' },
@@ -134,7 +157,7 @@ const VERIFICATIONS: BqTableTarget = {
       { name: 'verified_via', type: 'STRING', mode: 'NULLABLE', description: 'api/web/mcp/sdk' },
       { name: 'verifier_ip_hash', type: 'STRING', mode: 'NULLABLE', description: 'Hashed only — no raw IP per CLAUDE.md §1.4' },
       { name: 'created_at', type: 'TIMESTAMP', mode: 'REQUIRED' },
-      { name: 'bq_synced_at', type: 'TIMESTAMP', mode: 'REQUIRED' },
+      BQ_SYNCED_AT_REQUIRED,
     ],
   },
   timePartitioning: { type: 'DAY', field: 'created_at' },
@@ -162,7 +185,7 @@ const AUDIT_EVENTS: BqTableTarget = {
     'Append-only mirror of public.audit_events. PII columns (actor_email, actor_ip, actor_user_agent) deliberately excluded — see source-of-truth allowlist AUDIT_EVENTS_COLUMN_ALLOWLIST. 7-year partition expiration for SOC 2 evidence retention (DC 200 Criterion #5 Control Environment).',
   schema: {
     fields: [
-      { name: 'id', type: 'STRING', mode: 'REQUIRED' },
+      ID_REQUIRED,
       { name: 'event_type', type: 'STRING', mode: 'REQUIRED', description: 'Source NOT NULL; e.g. "anchor.created"' },
       { name: 'event_category', type: 'STRING', mode: 'REQUIRED', description: 'CHECK constraint: AUTH/ANCHOR/PROFILE/ORG/ADMIN/SYSTEM' },
       { name: 'actor_id', type: 'STRING', mode: 'NULLABLE', description: 'uuid only; actor_email/actor_ip excluded as PII' },
@@ -171,7 +194,7 @@ const AUDIT_EVENTS: BqTableTarget = {
       { name: 'org_id', type: 'STRING', mode: 'NULLABLE' },
       { name: 'details', type: 'STRING', mode: 'NULLABLE', description: 'Source is text, not JSON' },
       { name: 'created_at', type: 'TIMESTAMP', mode: 'REQUIRED' },
-      { name: 'bq_synced_at', type: 'TIMESTAMP', mode: 'REQUIRED' },
+      BQ_SYNCED_AT_REQUIRED,
     ],
   },
   timePartitioning: {
@@ -193,8 +216,8 @@ const ORGANIZATIONS: BqTableTarget = {
     'Daily snapshot of public.organizations. Partitioned by snapshot_date for point-in-time queries (e.g. "what was this org\'s tier on 2025-08-01?").',
   schema: {
     fields: [
-      { name: 'snapshot_date', type: 'DATE', mode: 'REQUIRED', description: 'UTC date the snapshot was taken' },
-      { name: 'id', type: 'STRING', mode: 'REQUIRED' },
+      SNAPSHOT_DATE_REQUIRED,
+      ID_REQUIRED,
       { name: 'legal_name', type: 'STRING', mode: 'NULLABLE' },
       { name: 'display_name', type: 'STRING', mode: 'NULLABLE' },
       { name: 'org_prefix', type: 'STRING', mode: 'NULLABLE' },
@@ -204,7 +227,7 @@ const ORGANIZATIONS: BqTableTarget = {
       { name: 'verified_badge_granted_at', type: 'TIMESTAMP', mode: 'NULLABLE' },
       { name: 'created_at', type: 'TIMESTAMP', mode: 'NULLABLE' },
       { name: 'updated_at', type: 'TIMESTAMP', mode: 'NULLABLE' },
-      { name: 'bq_synced_at', type: 'TIMESTAMP', mode: 'REQUIRED' },
+      BQ_SYNCED_AT_REQUIRED,
     ],
   },
   timePartitioning: { type: 'DAY', field: 'snapshot_date' },
@@ -231,8 +254,8 @@ const API_KEYS: BqTableTarget = {
     'Daily snapshot of public.api_keys with raw key values stripped. key_hash (HMAC-SHA256) + key_prefix + scopes only — see API_KEYS_COLUMN_ALLOWLIST. `name` excluded (potential PII).',
   schema: {
     fields: [
-      { name: 'snapshot_date', type: 'DATE', mode: 'REQUIRED' },
-      { name: 'id', type: 'STRING', mode: 'REQUIRED' },
+      SNAPSHOT_DATE_REQUIRED,
+      ID_REQUIRED,
       { name: 'org_id', type: 'STRING', mode: 'NULLABLE' },
       { name: 'key_prefix', type: 'STRING', mode: 'NULLABLE', description: 'Public key prefix (e.g. "ak_live_") — safe to mirror' },
       { name: 'key_hash', type: 'STRING', mode: 'NULLABLE', description: 'HMAC-SHA256 hash with API_KEY_HMAC_SECRET — never the raw key' },
@@ -244,7 +267,7 @@ const API_KEYS: BqTableTarget = {
       { name: 'last_used_at', type: 'TIMESTAMP', mode: 'NULLABLE' },
       { name: 'revoked_at', type: 'TIMESTAMP', mode: 'NULLABLE' },
       { name: 'revocation_reason', type: 'STRING', mode: 'NULLABLE' },
-      { name: 'bq_synced_at', type: 'TIMESTAMP', mode: 'REQUIRED' },
+      BQ_SYNCED_AT_REQUIRED,
     ],
   },
   timePartitioning: { type: 'DAY', field: 'snapshot_date' },
