@@ -378,6 +378,58 @@ describe('checkSubmittedConfirmations', () => {
     );
   });
 
+  it('rotates past old missing tx candidates so later confirmed tx groups can drain', async () => {
+    const firstPage = Array.from({ length: 101 }, (_, index) =>
+      submittedCandidate(index, `missing-front-${index}`),
+    );
+    const secondPage = [firstPage[100], submittedCandidate(101, 'confirmed-behind-missing-front')];
+    mockAnchorsSelectPages.splice(
+      0,
+      mockAnchorsSelectPages.length,
+      { data: firstPage, error: null },
+      { data: secondPage, error: null },
+    );
+
+    mockFetch.mockImplementation((input: unknown) => {
+      const url = String(input);
+      if (url.endsWith('/api/blocks/tip/height')) {
+        return Promise.resolve({ ok: true, text: () => Promise.resolve('200200') });
+      }
+      if (url.includes('confirmed-behind-missing-front')) {
+        return Promise.resolve({
+          ok: true,
+          json: () => Promise.resolve({
+            txid: 'confirmed-behind-missing-front',
+            status: {
+              confirmed: true,
+              block_height: 200100,
+              block_time: 1700000000,
+            },
+          }),
+        });
+      }
+      return Promise.resolve({ ok: false, status: 404 });
+    });
+
+    const firstRun = await checkSubmittedConfirmations();
+    expect(firstRun).toEqual({ checked: 100, confirmed: 0 });
+
+    const secondRun = await checkSubmittedConfirmations();
+    expect(secondRun).toEqual({ checked: 2, confirmed: 1 });
+    expect(mockLogger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ txid: expect.stringMatching(/^missing-front-/) }),
+      'Transaction not found on mempool.space — may not have propagated yet',
+    );
+    expect(mockLogger.info).toHaveBeenCalledWith(
+      expect.objectContaining({
+        txId: 'confirmed-behind-missing-front',
+        confirmed: 1,
+        blockHeight: 200100,
+      }),
+      expect.stringContaining('Bulk confirmed'),
+    );
+  });
+
   // ---- Confirmed (happy path) ----
 
   it('promotes SUBMITTED → SECURED when tx is confirmed', async () => {
