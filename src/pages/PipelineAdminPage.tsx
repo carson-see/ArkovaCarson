@@ -7,7 +7,7 @@
  * Platform admin only (carson@arkova.ai, sarah@arkova.ai).
  */
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
 import { useNavigate } from 'react-router-dom';
 import { RefreshCw, Database, Cpu, AlertCircle, FileText, Scale, BookOpen, GraduationCap, Loader2, Search, ExternalLink, ChevronLeft, ChevronRight, ChevronDown, X, Copy, Check, Link2, Layers, Building2, Heart, Landmark, Stethoscope, TrendingUp, Radio, ShieldCheck, AlertTriangle, BarChart3, Globe, MapPin, Gavel, Award, Briefcase, ScrollText, Shield } from 'lucide-react';
@@ -95,6 +95,16 @@ interface RecordFilters {
   search: string;
 }
 
+type JobRunStatus = 'idle' | 'running' | 'done' | 'error';
+
+interface PipelineJobControl {
+  path: string;
+  label: string;
+  icon: React.ReactNode;
+  description?: string;
+  disabledReason?: string;
+}
+
 const PAGE_SIZE = 25;
 
 // ─── Pipeline Region + Source Config (module-scope to avoid re-allocation per render) ───
@@ -116,7 +126,21 @@ const REGION_LABELS: Record<PipelineRegion, string> = {
 const REGION_ORDER: PipelineRegion[] = ['us', 'au', 'ke', 'eu', 'uk', 'latam', 'sea', 'global', 'intl'];
 
 const ICON_4 = 'h-4 w-4';
-const INTERNATIONAL_JOB_GROUPS: Array<{ heading: string; jobs: Array<{ path: string; label: string; icon: React.ReactNode }> }> = [
+const BATCH_ANCHORS_CONTROL_DESCRIPTION =
+  'Runs the normal batch path; it may no-op unless size, age, and fee triggers allow a batch.';
+const WORKER_ROUTE_NOT_WIRED = 'Worker route is not wired in this release.';
+
+function formatJobCompletionMessage(processed: number | null): string {
+  if (processed === null) {
+    return 'Completed';
+  }
+  if (processed === 0) {
+    return 'Completed; no records processed';
+  }
+  return `Completed; processed ${processed.toLocaleString()} records`;
+}
+
+const INTERNATIONAL_JOB_GROUPS: Array<{ heading: string; jobs: PipelineJobControl[] }> = [
   { heading: '🇦🇺 Australia', jobs: [
     { path: 'fetch-australia', label: 'AU Compliance (AHPRA/TEQSA/ASIC)', icon: <Globe className={ICON_4} /> },
     { path: 'fetch-acnc', label: 'ACNC Charities', icon: <Heart className={ICON_4} /> },
@@ -125,11 +149,11 @@ const INTERNATIONAL_JOB_GROUPS: Array<{ heading: string; jobs: Array<{ path: str
     { path: 'fetch-kenya', label: 'KE Compliance (KNEC/LSK/ODPC)', icon: <Globe className={ICON_4} /> },
   ]},
   { heading: '🇪🇺 European Union', jobs: [
-    { path: 'fetch-eurlex', label: 'EUR-Lex Legislation (needs key)', icon: <ScrollText className={ICON_4} /> },
+    { path: 'fetch-eurlex', label: 'EUR-Lex Legislation (needs key)', icon: <ScrollText className={ICON_4} />, disabledReason: WORKER_ROUTE_NOT_WIRED },
   ]},
   { heading: '🇬🇧 United Kingdom', jobs: [
-    { path: 'fetch-fca-uk', label: 'FCA Register (needs key)', icon: <TrendingUp className={ICON_4} /> },
-    { path: 'fetch-companies-house', label: 'Companies House (needs key)', icon: <Building2 className={ICON_4} /> },
+    { path: 'fetch-fca-uk', label: 'FCA Register (needs key)', icon: <TrendingUp className={ICON_4} />, disabledReason: WORKER_ROUTE_NOT_WIRED },
+    { path: 'fetch-companies-house', label: 'Companies House (needs key)', icon: <Building2 className={ICON_4} />, disabledReason: WORKER_ROUTE_NOT_WIRED },
   ]},
   { heading: '🇸🇬 Southeast Asia', jobs: [
     { path: 'fetch-acra-sg', label: 'ACRA Singapore Companies', icon: <Building2 className={ICON_4} /> },
@@ -301,32 +325,96 @@ export function PipelineAdminPage() {
     fetchStats().finally(() => setRefreshing(false));
   }, [fetchStats]);
 
-  const [triggerStatus, setTriggerStatus] = useState<Record<string, 'idle' | 'running' | 'done' | 'error'>>({});
+  const [triggerStatus, setTriggerStatus] = useState<Record<string, JobRunStatus>>({});
+  const [triggerMessages, setTriggerMessages] = useState<Record<string, string>>({});
+  const triggerTimersRef = useRef<Record<string, Array<ReturnType<typeof setTimeout>>>>({});
+
+  const clearTriggerTimers = useCallback((jobPath?: string) => {
+    if (jobPath) {
+      triggerTimersRef.current[jobPath]?.forEach((timer) => clearTimeout(timer));
+      delete triggerTimersRef.current[jobPath];
+      return;
+    }
+
+    Object.values(triggerTimersRef.current).forEach((timers) => {
+      timers.forEach((timer) => clearTimeout(timer));
+    });
+    triggerTimersRef.current = {};
+  }, []);
+
+  useEffect(() => () => {
+    clearTriggerTimers();
+  }, [clearTriggerTimers]);
+
+  const scheduleTriggerUpdate = useCallback((jobPath: string, fn: () => void, delayMs: number) => {
+    const timer = setTimeout(() => {
+      const remaining = triggerTimersRef.current[jobPath]?.filter((t) => t !== timer) ?? [];
+      if (remaining.length > 0) {
+        triggerTimersRef.current[jobPath] = remaining;
+      } else {
+        delete triggerTimersRef.current[jobPath];
+      }
+      fn();
+    }, delayMs);
+    triggerTimersRef.current[jobPath] = [...(triggerTimersRef.current[jobPath] ?? []), timer];
+  }, []);
 
   const triggerJob = useCallback(async (jobPath: string) => {
+    clearTriggerTimers(jobPath);
     setTriggerStatus((prev) => ({ ...prev, [jobPath]: 'running' }));
+    setTriggerMessages((prev) => ({ ...prev, [jobPath]: 'Running' }));
     try {
       const response = await workerFetch(`/jobs/${jobPath}`, {
         method: 'POST',
       });
       if (response.ok) {
+        const payload = await response.json().catch(() => null);
+        const processed = typeof payload?.processed === 'number' ? payload.processed : null;
+        const message = formatJobCompletionMessage(processed);
         setTriggerStatus((prev) => ({ ...prev, [jobPath]: 'done' }));
+        setTriggerMessages((prev) => ({ ...prev, [jobPath]: message }));
         // Refresh stats after a job completes — immediate, 3s, and 8s for DB propagation
         fetchStats();
-        setTimeout(() => fetchStats(), 3000);
-        setTimeout(() => {
+        scheduleTriggerUpdate(jobPath, () => fetchStats(), 3000);
+        scheduleTriggerUpdate(jobPath, () => {
           fetchStats();
           setTriggerStatus((prev) => ({ ...prev, [jobPath]: 'idle' }));
+          setTriggerMessages((prev) => {
+            const next = { ...prev };
+            delete next[jobPath];
+            return next;
+          });
         }, 8000);
       } else {
+        const detail = await response.json().catch(() => null);
+        const message = typeof detail?.error === 'string'
+          ? detail.error
+          : `Worker returned ${response.status}`;
         setTriggerStatus((prev) => ({ ...prev, [jobPath]: 'error' }));
-        setTimeout(() => setTriggerStatus((prev) => ({ ...prev, [jobPath]: 'idle' })), 5000);
+        setTriggerMessages((prev) => ({ ...prev, [jobPath]: message }));
+        scheduleTriggerUpdate(jobPath, () => {
+          setTriggerStatus((prev) => ({ ...prev, [jobPath]: 'idle' }));
+          setTriggerMessages((prev) => {
+            const next = { ...prev };
+            delete next[jobPath];
+            return next;
+          });
+        }, 5000);
       }
-    } catch {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Worker request failed';
       setTriggerStatus((prev) => ({ ...prev, [jobPath]: 'error' }));
-      setTimeout(() => setTriggerStatus((prev) => ({ ...prev, [jobPath]: 'idle' })), 5000);
+      setTriggerMessages((prev) => ({ ...prev, [jobPath]: message }));
+      scheduleTriggerUpdate(jobPath, () => {
+        setTriggerStatus((prev) => ({ ...prev, [jobPath]: 'idle' }));
+        setTriggerMessages((prev) => {
+          const next = { ...prev };
+          delete next[jobPath];
+          return next;
+        });
+      }, 5000);
     }
-  }, [fetchStats]);
+  }, [clearTriggerTimers, fetchStats, scheduleTriggerUpdate]);
 
   // ─── Records Browser State ────────────────────────
   const [records, setRecords] = useState<PublicRecord[]>([]);
@@ -770,9 +858,9 @@ export function PipelineAdminPage() {
             <div>
               <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">Processing</h4>
               <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                <JobButton path="embed-public-records" label="Run Embedder" icon={<Cpu className="h-4 w-4" />} status={triggerStatus} onTrigger={triggerJob} />
-                <JobButton path="anchor-public-records" label="Run Anchoring" icon={<ArkovaIcon className="h-4 w-4" />} status={triggerStatus} onTrigger={triggerJob} />
-                <JobButton path="batch-anchors" label="Run Batch Anchoring" icon={<Layers className="h-4 w-4" />} status={triggerStatus} onTrigger={triggerJob} />
+                <JobButton path="embed-public-records" label="Run Embedder" icon={<Cpu className="h-4 w-4" />} status={triggerStatus} messages={triggerMessages} onTrigger={triggerJob} />
+                <JobButton path="anchor-public-records" label="Run Anchoring" icon={<ArkovaIcon className="h-4 w-4" />} status={triggerStatus} messages={triggerMessages} onTrigger={triggerJob} />
+                <JobButton path="batch-anchors" label="Run Batch Anchoring" icon={<Layers className="h-4 w-4" />} status={triggerStatus} messages={triggerMessages} description={BATCH_ANCHORS_CONTROL_DESCRIPTION} onTrigger={triggerJob} />
               </div>
             </div>
 
@@ -780,14 +868,14 @@ export function PipelineAdminPage() {
             <div>
               <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">🇺🇸 Federal &amp; Compliance</h4>
               <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                <JobButton path="fetch-edgar" label="SEC EDGAR" icon={<FileText className="h-4 w-4" />} status={triggerStatus} onTrigger={triggerJob} />
-                <JobButton path="fetch-federal-register" label="Federal Register" icon={<BookOpen className="h-4 w-4" />} status={triggerStatus} onTrigger={triggerJob} />
-                <JobButton path="fetch-courtlistener" label="CourtListener" icon={<Gavel className="h-4 w-4" />} status={triggerStatus} onTrigger={triggerJob} />
-                <JobButton path="fetch-all-state-bills" label="State Bills (CA/NY/TX)" icon={<FileText className="h-4 w-4" />} status={triggerStatus} onTrigger={triggerJob} />
-                <JobButton path="fetch-sam-entities" label="SAM.gov" icon={<ShieldCheck className="h-4 w-4" />} status={triggerStatus} onTrigger={triggerJob} />
-                <JobButton path="fetch-ecfr" label="eCFR Regulations" icon={<ScrollText className="h-4 w-4" />} status={triggerStatus} onTrigger={triggerJob} />
-                <JobButton path="fetch-enforcement" label="HHS Enforcement" icon={<Shield className="h-4 w-4" />} status={triggerStatus} onTrigger={triggerJob} />
-                <JobButton path="fetch-ce" label="NASBA/ACCME CE" icon={<Award className="h-4 w-4" />} status={triggerStatus} onTrigger={triggerJob} />
+                <JobButton path="fetch-edgar" label="SEC EDGAR" icon={<FileText className="h-4 w-4" />} status={triggerStatus} messages={triggerMessages} onTrigger={triggerJob} />
+                <JobButton path="fetch-federal-register" label="Federal Register" icon={<BookOpen className="h-4 w-4" />} status={triggerStatus} messages={triggerMessages} onTrigger={triggerJob} />
+                <JobButton path="fetch-courtlistener" label="CourtListener" icon={<Gavel className="h-4 w-4" />} status={triggerStatus} messages={triggerMessages} onTrigger={triggerJob} />
+                <JobButton path="fetch-all-state-bills" label="State Bills (CA/NY/TX)" icon={<FileText className="h-4 w-4" />} status={triggerStatus} messages={triggerMessages} onTrigger={triggerJob} />
+                <JobButton path="fetch-sam-entities" label="SAM.gov" icon={<ShieldCheck className="h-4 w-4" />} status={triggerStatus} messages={triggerMessages} onTrigger={triggerJob} />
+                <JobButton path="fetch-ecfr" label="eCFR Regulations" icon={<ScrollText className="h-4 w-4" />} status={triggerStatus} messages={triggerMessages} onTrigger={triggerJob} />
+                <JobButton path="fetch-enforcement" label="HHS Enforcement" icon={<Shield className="h-4 w-4" />} status={triggerStatus} messages={triggerMessages} onTrigger={triggerJob} />
+                <JobButton path="fetch-continuing-education" label="NASBA/ACCME CE" icon={<Award className="h-4 w-4" />} status={triggerStatus} messages={triggerMessages} onTrigger={triggerJob} />
               </div>
             </div>
 
@@ -795,15 +883,15 @@ export function PipelineAdminPage() {
             <div>
               <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">Professional Licensing</h4>
               <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                <JobButton path="fetch-npi" label="NPI Medical" icon={<Stethoscope className="h-4 w-4" />} status={triggerStatus} onTrigger={triggerJob} />
-                <JobButton path="fetch-finra" label="FINRA BrokerCheck" icon={<TrendingUp className="h-4 w-4" />} status={triggerStatus} onTrigger={triggerJob} />
-                <JobButton path="fetch-calbar" label="CA State Bar" icon={<Scale className="h-4 w-4" />} status={triggerStatus} onTrigger={triggerJob} />
-                <JobButton path="fetch-sec-iapd" label="SEC IAPD" icon={<TrendingUp className="h-4 w-4" />} status={triggerStatus} onTrigger={triggerJob} />
-                <JobButton path="fetch-fcc" label="FCC Licenses" icon={<Radio className="h-4 w-4" />} status={triggerStatus} onTrigger={triggerJob} />
-                <JobButton path="fetch-licensing-board" label="Licensing Boards" icon={<Stethoscope className="h-4 w-4" />} status={triggerStatus} onTrigger={triggerJob} />
-                <JobButton path="fetch-insurance-licenses" label="Insurance (CDI)" icon={<ShieldCheck className="h-4 w-4" />} status={triggerStatus} onTrigger={triggerJob} />
-                <JobButton path="fetch-cle" label="CLE Credits" icon={<Scale className="h-4 w-4" />} status={triggerStatus} onTrigger={triggerJob} />
-                <JobButton path="fetch-certifications" label="Certifications" icon={<TrendingUp className="h-4 w-4" />} status={triggerStatus} onTrigger={triggerJob} />
+                <JobButton path="fetch-npi" label="NPI Medical" icon={<Stethoscope className="h-4 w-4" />} status={triggerStatus} messages={triggerMessages} onTrigger={triggerJob} />
+                <JobButton path="fetch-finra" label="FINRA BrokerCheck" icon={<TrendingUp className="h-4 w-4" />} status={triggerStatus} messages={triggerMessages} onTrigger={triggerJob} />
+                <JobButton path="fetch-calbar" label="CA State Bar" icon={<Scale className="h-4 w-4" />} status={triggerStatus} messages={triggerMessages} onTrigger={triggerJob} />
+                <JobButton path="fetch-sec-iapd" label="SEC IAPD" icon={<TrendingUp className="h-4 w-4" />} status={triggerStatus} messages={triggerMessages} onTrigger={triggerJob} />
+                <JobButton path="fetch-fcc" label="FCC Licenses" icon={<Radio className="h-4 w-4" />} status={triggerStatus} messages={triggerMessages} onTrigger={triggerJob} />
+                <JobButton path="fetch-licensing-board" label="Licensing Boards" icon={<Stethoscope className="h-4 w-4" />} status={triggerStatus} messages={triggerMessages} onTrigger={triggerJob} />
+                <JobButton path="fetch-insurance-licenses" label="Insurance (CDI)" icon={<ShieldCheck className="h-4 w-4" />} status={triggerStatus} messages={triggerMessages} onTrigger={triggerJob} />
+                <JobButton path="fetch-cle" label="CLE Credits" icon={<Scale className="h-4 w-4" />} status={triggerStatus} messages={triggerMessages} onTrigger={triggerJob} />
+                <JobButton path="fetch-certifications" label="Certifications" icon={<TrendingUp className="h-4 w-4" />} status={triggerStatus} messages={triggerMessages} onTrigger={triggerJob} />
               </div>
             </div>
 
@@ -811,10 +899,10 @@ export function PipelineAdminPage() {
             <div>
               <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">Academic &amp; Education</h4>
               <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                <JobButton path="fetch-openalex" label="OpenAlex" icon={<GraduationCap className="h-4 w-4" />} status={triggerStatus} onTrigger={triggerJob} />
-                <JobButton path="fetch-uspto" label="USPTO Patents" icon={<Scale className="h-4 w-4" />} status={triggerStatus} onTrigger={triggerJob} />
-                <JobButton path="fetch-dapip" label="DAPIP Accreditation" icon={<Building2 className="h-4 w-4" />} status={triggerStatus} onTrigger={triggerJob} />
-                <JobButton path="fetch-ipeds" label="IPEDS Education" icon={<GraduationCap className="h-4 w-4" />} status={triggerStatus} onTrigger={triggerJob} />
+                <JobButton path="fetch-openalex" label="OpenAlex" icon={<GraduationCap className="h-4 w-4" />} status={triggerStatus} messages={triggerMessages} onTrigger={triggerJob} />
+                <JobButton path="fetch-uspto" label="USPTO Patents" icon={<Scale className="h-4 w-4" />} status={triggerStatus} messages={triggerMessages} onTrigger={triggerJob} />
+                <JobButton path="fetch-dapip" label="DAPIP Accreditation" icon={<Building2 className="h-4 w-4" />} status={triggerStatus} messages={triggerMessages} onTrigger={triggerJob} />
+                <JobButton path="fetch-ipeds" label="IPEDS Education" icon={<GraduationCap className="h-4 w-4" />} status={triggerStatus} messages={triggerMessages} onTrigger={triggerJob} />
               </div>
             </div>
 
@@ -822,7 +910,7 @@ export function PipelineAdminPage() {
             <div>
               <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">🏢 Business Entities</h4>
               <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                <JobButton path="fetch-sos" label="State SOS Entities" icon={<Building2 className="h-4 w-4" />} status={triggerStatus} onTrigger={triggerJob} />
+                <JobButton path="fetch-sos" label="State SOS Entities" icon={<Building2 className="h-4 w-4" />} status={triggerStatus} messages={triggerMessages} onTrigger={triggerJob} />
               </div>
             </div>
 
@@ -832,7 +920,7 @@ export function PipelineAdminPage() {
                 <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">{heading}</h4>
                 <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
                   {jobs.map(j => (
-                    <JobButton key={j.path} path={j.path} label={j.label} icon={j.icon} status={triggerStatus} onTrigger={triggerJob} />
+                    <JobButton key={j.path} path={j.path} label={j.label} icon={j.icon} status={triggerStatus} messages={triggerMessages} description={j.description} disabledReason={j.disabledReason} onTrigger={triggerJob} />
                   ))}
                 </div>
               </div>
@@ -1447,21 +1535,41 @@ function QualityMetric({ label, value, width, color, detail }: {
   );
 }
 
-function JobButton({ path, label, icon, status, onTrigger }: {
-  path: string;
-  label: string;
-  icon: React.ReactNode;
-  status: Record<string, 'idle' | 'running' | 'done' | 'error'>;
-  onTrigger: (path: string) => void;
-}) {
+interface JobButtonProps {
+  readonly path: string;
+  readonly label: string;
+  readonly icon: React.ReactNode;
+  readonly status: Readonly<Record<string, JobRunStatus>>;
+  readonly messages: Readonly<Record<string, string>>;
+  readonly description?: string;
+  readonly disabledReason?: string;
+  readonly onTrigger: (path: string) => void;
+}
+
+function JobButton({
+  path,
+  label,
+  icon,
+  status,
+  messages,
+  description,
+  disabledReason,
+  onTrigger,
+}: Readonly<JobButtonProps>) {
   const s = status[path] ?? 'idle';
+  const disabled = Boolean(disabledReason) || s === 'running';
+  const title = disabledReason ?? messages[path] ?? description;
+  const ariaLabel = title ? `${label}: ${title}` : label;
   return (
     <Button
       variant="outline"
       size="sm"
       className="justify-start border-[#00d4ff]/20 hover:bg-[#00d4ff]/5 text-xs"
-      disabled={s === 'running'}
+      disabled={disabled}
       onClick={() => onTrigger(path)}
+      title={title}
+      aria-label={ariaLabel}
+      data-testid={`pipeline-job-${path}`}
     >
       {s === 'running' ? (
         <Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />
@@ -1469,6 +1577,7 @@ function JobButton({ path, label, icon, status, onTrigger }: {
         <span className="mr-2">{icon}</span>
       )}
       {label}
+      {disabledReason && <Badge variant="outline" className="ml-auto text-[10px]">Disabled</Badge>}
       {s === 'done' && <Badge variant="secondary" className="ml-auto text-emerald-400 text-[10px]">Done</Badge>}
       {s === 'error' && <Badge variant="destructive" className="ml-auto text-[10px]">Error</Badge>}
     </Button>
