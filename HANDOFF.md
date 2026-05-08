@@ -14,6 +14,30 @@
 
 ## Now
 
+### 2026-05-08 — SCRUM-1786 Treasury cache sentinel fix (PR #739, T3 soak in progress)
+
+PR [#739](https://github.com/carson-see/ArkovaCarson/pull/739) is **open, not merged**. Branch `claude/quirky-meitner-338bda`. No prod state changed.
+
+**Problem:** `fetchAnchorStats()` called `get_anchor_status_counts_fast` RPC whose 1-second per-status `SET LOCAL statement_timeout` timed out on the 2.9M-row `anchors` table, caching -1 sentinels into `treasury_cache` singleton → UI showed -1.
+
+**Fix (two layers):**
+1. **Primary:** `anchor-stats.ts` now reads from `pipeline_dashboard_cache` (refreshed every 2 min via `pg_class.reltuples` — instant, no timeout) instead of the RPC.
+2. **Defense-in-depth:** `treasury-cache.ts` sentinel guard — before upserting, if any of `total_secured`/`total_pending`/`last_24h_count` is -1, read existing cache row and preserve last-good values.
+
+**Tests:** 12 green (6 anchor-stats + 6 treasury-cache), TDD red-green-refactor. `typecheck` + `lint` + `test` + `lint:copy` all green.
+
+**Staging verified:** `arkova-worker-staging` rev `00022-8pk`. Pre-fix: `total_secured=0, total_pending=0`. Post-fix: `total_secured=17585, total_pending=1025, last_secured_at=2026-05-07T13:18:00` — exact match with `pipeline_dashboard_cache`.
+
+**Soak tier:** T3 Critical (treasury cron ≤10 min against anchors-adjacent data). Started 2026-05-08T14:34Z, ends ~2026-05-10T14:34Z.
+
+**Deferred:** 4 other callers of `get_anchor_status_counts_fast` (health check, admin-stats, batch-anchor, mainnet-migration) still hit the 1s timeout. Treasury cache was highest-impact.
+
+**DoD gates met:** Tests (gate 1), Jira updated with Confluence URL (gate 2), Confluence page [43876353](https://arkova.atlassian.net/wiki/spaces/A/pages/43876353) (gate 3), Bug logged as BUG-2026-05-08-001 (gate 4), agents.md created in `services/worker/src/utils/` + `services/worker/src/jobs/` (gate 5), HANDOFF.md updated (gate 6). Gate 7 (workflow validators) pending CI on this commit.
+
+**Jira:** [SCRUM-1786](https://arkova.atlassian.net/browse/SCRUM-1786) — In Progress (stays In Progress until T3 48h soak completes).
+
+_Last refreshed: 2026-05-08 by Claude — claims verified against staging MCP queries and CI output._
+
 ### 2026-05-06 — PR #711 SCRUM-1545 coverage backfill merge-resolution pass
 
 PR [#711](https://github.com/carson-see/ArkovaCarson/pull/711) remains test-only and exists to close the R4-4-FU coverage gap for `services/worker/src/jobs/anchor.ts`, `services/worker/src/chain/client.ts`, and `services/worker/src/index.ts`. It adds `anchor-coverage.test.ts`, strengthens chain/index tests, and raises worker coverage thresholds for the targeted files. `services/worker/src/api/admin-pipeline-stats.ts` coverage was handled in PR [#690](https://github.com/carson-see/ArkovaCarson/pull/690); it is not an unmerged follow-up hidden inside #711.
