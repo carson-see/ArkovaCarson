@@ -168,7 +168,11 @@ export function assertNoBannedFields(obj: Record<string, unknown>, where: string
   visit(obj, '');
 
   if (offenders.length > 0) {
-    const fields = offenders.sort().join(', ');
+    // SonarCloud typescript:S2871: pass an explicit locale-aware compare
+    // function so the field order in the error message is stable across
+    // Node versions / unicode collations rather than relying on the
+    // implementation-defined default `Array.prototype.sort` order.
+    const fields = offenders.slice().sort((a, b) => a.localeCompare(b)).join(', ');
     throw new Error(
       `[SCRUM-1733 parity] response shape from ${where} contains banned field(s): ${fields}. ` +
       `See services/worker/src/api/v2/mcpParity.ts BANNED_RESPONSE_FIELDS.`,
