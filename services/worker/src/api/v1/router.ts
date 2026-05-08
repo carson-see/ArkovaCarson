@@ -41,6 +41,7 @@ import { aiIntegrityRouter } from './ai-integrity.js';
 import { aiFraudVisualRouter } from './ai-fraud-visual.js';
 import { aiReviewRouter } from './ai-review.js';
 import { aiReportsRouter } from './ai-reports.js';
+import { credentialSourcesRouter } from './credential-sources.js';
 import { verifyAuthToken } from '../../auth.js';
 import { config } from '../../config.js';
 import { logger } from '../../utils/logger.js';
@@ -253,6 +254,12 @@ const aiRateLimiter = rateLimit({
   keyGenerator: (req) => `ai:${req.authUserId ?? req.ip ?? 'unknown'}`,
 });
 
+const credentialSourceImportRateLimiter = rateLimit({
+  windowMs: 60_000,
+  maxRequests: 10,
+  keyGenerator: (req) => `credential-source-import:${req.authUserId ?? req.ip ?? 'unknown'}`,
+});
+
 // AI endpoints — behind ENABLE_AI_EXTRACTION flag + JWT auth (P8-S4)
 router.use('/ai/extract-batch', aiExtractionGate(), requireAuth, aiRateLimiter, aiBatchExtractRouter);
 router.use('/ai/extract', aiExtractionGate(), requireAuth, aiRateLimiter, aiExtractRouter);
@@ -289,6 +296,11 @@ router.use(
 
 // AI reports — behind ENABLE_AI_REPORTS flag + JWT auth (P8-S16)
 router.use('/ai/reports', aiReportsGate(), requireAuth, aiRateLimiter, aiReportsRouter);
+
+// SCRUM-1598: Existing users can import public credential source URLs into
+// their own credential list. The handler does live outbound fetches, so keep a
+// tighter per-user bucket than read-only dashboard endpoints.
+router.use('/credential-sources', requireAuth, credentialSourceImportRateLimiter, credentialSourcesRouter);
 
 // VAI-01: AI provenance query — queryable Source → AI → Anchor chain
 router.use('/ai/provenance', requireAuth, aiRateLimiter, aiProvenanceRouter);

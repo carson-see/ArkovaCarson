@@ -15,11 +15,14 @@ import {
   ExternalLink,
   Loader2,
   Inbox,
+  Plus,
 } from 'lucide-react';
+import { useState } from 'react';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
 import { useMyCredentials, type ReceivedCredential } from '@/hooks/useMyCredentials';
 import { AppShell } from '@/components/layout';
+import { CredentialSourceImportDialog } from '@/components/credentials';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -102,9 +105,10 @@ function CredentialCard({ credential }: Readonly<{ credential: ReceivedCredentia
 
 export function MyCredentialsPage() {
   const navigate = useNavigate();
+  const [importDialogOpen, setImportDialogOpen] = useState(false);
   const { user, signOut } = useAuth();
   const { profile, loading: profileLoading } = useProfile();
-  const { credentials, loading } = useMyCredentials();
+  const { credentials, loading, refreshCredentials } = useMyCredentials();
 
   const handleSignOut = async () => {
     await signOut();
@@ -118,14 +122,20 @@ export function MyCredentialsPage() {
       profileLoading={profileLoading}
       onSignOut={handleSignOut}
     >
-      <div className="mb-6">
-        <h1 className="text-2xl font-semibold tracking-tight flex items-center gap-2">
-          <Inbox className="h-6 w-6 text-primary" />
-          {MY_CREDENTIALS_LABELS.PAGE_TITLE}
-        </h1>
-        <p className="text-muted-foreground mt-1">
-          {MY_CREDENTIALS_LABELS.PAGE_SUBTITLE}
-        </p>
+      <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h1 className="text-2xl font-semibold tracking-tight flex items-center gap-2">
+            <Inbox className="h-6 w-6 text-primary" />
+            {MY_CREDENTIALS_LABELS.PAGE_TITLE}
+          </h1>
+          <p className="text-muted-foreground mt-1">
+            {MY_CREDENTIALS_LABELS.PAGE_SUBTITLE}
+          </p>
+        </div>
+        <Button onClick={() => setImportDialogOpen(true)} className="shrink-0">
+          <Plus className="mr-2 h-4 w-4" />
+          {MY_CREDENTIALS_LABELS.ADD_SOURCE}
+        </Button>
       </div>
 
       {loading ? (
@@ -155,6 +165,12 @@ export function MyCredentialsPage() {
           ))}
         </div>
       )}
+
+      <CredentialSourceImportDialog
+        open={importDialogOpen}
+        onOpenChange={setImportDialogOpen}
+        onImported={refreshCredentials}
+      />
     </AppShell>
   );
 }
