@@ -1,16 +1,16 @@
 /**
  * Tests for Sidebar component
  *
- * Session 10: Updated for simplified sidebar (Documents replaces
- * Records/Credentials/Attestations, Help/Billing/Developers moved to dropdown).
- *
- * @see GAP-02, GAP-04 — Logo clickable link to /search
+ * SCRUM-1787: Logo navigates to role-aware home route via useProfile destination.
+ * Previous behavior (GAP-04): Logo linked to /search for all users.
+ * New behavior: Logo links to /dashboard for authenticated users with roles.
  */
 
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { Sidebar } from './Sidebar';
+import type { RouteDestination } from '@/hooks/useProfile';
 
 // Mock ArkovaLogo
 vi.mock('@/components/layout/ArkovaLogo', () => ({
@@ -20,6 +20,20 @@ vi.mock('@/components/layout/ArkovaLogo', () => ({
   ArkovaIcon: ({ className }: { className?: string }) => (
     <svg data-testid="arkova-icon" className={className} />
   ),
+}));
+
+// Mock useProfile — controls the logo destination
+const mockDestination = vi.fn<() => RouteDestination>(() => '/dashboard');
+vi.mock('@/hooks/useProfile', () => ({
+  useProfile: () => ({
+    profile: { role: 'INDIVIDUAL', org_id: null },
+    loading: false,
+    updating: false,
+    error: null,
+    destination: mockDestination(),
+    refreshProfile: vi.fn(),
+    updateProfile: vi.fn(),
+  }),
 }));
 
 function renderSidebar(props = {}) {
@@ -41,23 +55,50 @@ describe('Sidebar', () => {
     expect(screen.getAllByText('Arkova').length).toBeGreaterThanOrEqual(1);
   });
 
-  it('logo links to /search (GAP-04)', () => {
+  it('SCRUM-1787: logo links to /dashboard for authenticated users', () => {
+    mockDestination.mockReturnValue('/dashboard');
     renderSidebar();
-    const logoLink = screen.getAllByRole('link', { name: /arkova.*search/i });
+    const logoLink = screen.getAllByRole('link', { name: /arkova/i });
     expect(logoLink.length).toBeGreaterThanOrEqual(1);
-    expect(logoLink[0]).toHaveAttribute('href', '/search');
+    expect(logoLink[0]).toHaveAttribute('href', '/dashboard');
+  });
+
+  it('SCRUM-1787: logo links to /dashboard for INDIVIDUAL users (vault destination)', () => {
+    mockDestination.mockReturnValue('/vault');
+    renderSidebar();
+    const logoLink = screen.getAllByRole('link', { name: /arkova/i });
+    expect(logoLink[0]).toHaveAttribute('href', '/dashboard');
+  });
+
+  it('SCRUM-1787: logo links to /onboarding/role when user has no role', () => {
+    mockDestination.mockReturnValue('/onboarding/role');
+    renderSidebar();
+    const logoLink = screen.getAllByRole('link', { name: /arkova/i });
+    expect(logoLink[0]).toHaveAttribute('href', '/onboarding/role');
+  });
+
+  it('SCRUM-1787: logo links to /onboarding/org when ORG_ADMIN missing org', () => {
+    mockDestination.mockReturnValue('/onboarding/org');
+    renderSidebar();
+    const logoLink = screen.getAllByRole('link', { name: /arkova/i });
+    expect(logoLink[0]).toHaveAttribute('href', '/onboarding/org');
+  });
+
+  it('SCRUM-1787: logo links to /review-pending when user requires review', () => {
+    mockDestination.mockReturnValue('/review-pending');
+    renderSidebar();
+    const logoLink = screen.getAllByRole('link', { name: /arkova/i });
+    expect(logoLink[0]).toHaveAttribute('href', '/review-pending');
   });
 
   it('renders simplified main navigation (UAT Session 40 redesign)', () => {
     renderSidebar();
     expect(screen.getAllByText('Dashboard').length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText('Search').length).toBeGreaterThanOrEqual(1);
-    // Documents, Directory, Settings, Developers removed in simplified sidebar
     expect(screen.queryByText('Documents')).toBeNull();
     expect(screen.queryByText('Settings')).toBeNull();
     expect(screen.queryByText('Developers')).toBeNull();
   });
-
 
   it('does not render Help or Billing in sidebar (moved to dropdown)', () => {
     renderSidebar();
@@ -78,7 +119,6 @@ describe('Sidebar', () => {
   });
 
   it('shows admin section only for platform admin emails', () => {
-    // Non-admin: no admin items
     renderSidebar({ userEmail: 'user@example.com' });
     expect(screen.queryByText('Overview')).toBeNull();
     expect(screen.queryByText('Treasury')).toBeNull();
