@@ -15,8 +15,9 @@ import { callRpc } from '../utils/rpc.js';
 import { processBatchAnchors } from '../jobs/batch-anchor.js';
 import { checkSubmittedConfirmations } from '../jobs/check-confirmations.js';
 import { processRevokedAnchors } from '../jobs/revocation.js';
-import { processWebhookRetries } from '../webhooks/delivery.js';
+import { processWebhookRetries, dispatchWebhookEvent } from '../webhooks/delivery.js';
 import { processMonthlyCredits } from '../jobs/credit-expiry.js';
+import { sweepExpiredAnchors, makeAnchorExpirySweepDb } from '../jobs/anchorExpirySweep.js';
 import { detectReorgs, monitorStuckTransactions, rebroadcastDroppedTransactions, consolidateUtxos, monitorFeeRates } from '../jobs/chain-maintenance.js';
 import { recoverStuckBroadcasts } from '../jobs/broadcast-recovery.js';
 import { trackOperation } from './lifecycle.js';
@@ -142,6 +143,21 @@ export function setupScheduledJobs(chainInitialized: boolean): void {
       logger.info({ processed }, 'Monthly credit allocation complete');
     } catch (error) {
       logger.error({ error }, 'Monthly credit allocation failed');
+    }
+  });
+
+  // SCRUM-1736: anchor expiry sweep — daily at 03:00 UTC. Transitions
+  // SECURED anchors past expires_at to EXPIRED + fires anchor.expired
+  // webhook. In-process backup; prod runs via Cloud Scheduler hitting
+  // /jobs/anchor-expiry-sweep.
+  scheduleInProcess('anchor-expiry-sweep', '0 3 * * *', async () => {
+    logger.info('Running anchor expiry sweep');
+    try {
+      const adapter = makeAnchorExpirySweepDb({ db, dispatchWebhookEvent });
+      const result = await sweepExpiredAnchors(adapter);
+      logger.info(result, 'Anchor expiry sweep complete');
+    } catch (error) {
+      logger.error({ error }, 'Anchor expiry sweep failed');
     }
   });
 

@@ -26,8 +26,9 @@ import { isPlatformAdmin } from '../utils/platformAdmin.js';
 import { processPendingAnchors } from '../jobs/anchor.js';
 import { checkSubmittedConfirmations } from '../jobs/check-confirmations.js';
 import { processRevokedAnchors } from '../jobs/revocation.js';
-import { processWebhookRetries } from '../webhooks/delivery.js';
+import { processWebhookRetries, dispatchWebhookEvent } from '../webhooks/delivery.js';
 import { processMonthlyCredits } from '../jobs/credit-expiry.js';
+import { sweepExpiredAnchors, makeAnchorExpirySweepDb } from '../jobs/anchorExpirySweep.js';
 import { fetchEdgarFilings, fetchEdgarHistoricalBackfill, fetchEdgarBulk } from '../jobs/edgarFetcher.js';
 import { fetchUsptoPAtents } from '../jobs/usptoFetcher.js';
 import { fetchFederalRegisterDocuments } from '../jobs/federalRegisterFetcher.js';
@@ -275,6 +276,21 @@ cronRouter.post('/credit-expiry', async (_req, res) => {
     res.json({ processed });
   } catch (error) {
     logger.error({ error }, 'Credit expiry processing failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+// SCRUM-1736: anchor expiry sweep — transitions SECURED anchors past
+// `expires_at` to EXPIRED and dispatches anchor.expired webhook
+// (schema: services/worker/src/webhooks/payload-schemas.ts → SCRUM-1735).
+// Cloud Scheduler triggers daily; in-process backup wired in scheduled.ts.
+cronRouter.post('/anchor-expiry-sweep', async (_req, res) => {
+  try {
+    const adapter = makeAnchorExpirySweepDb({ db, dispatchWebhookEvent });
+    const result = await sweepExpiredAnchors(adapter);
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'Anchor expiry sweep failed');
     res.status(500).json({ error: 'Processing failed' });
   }
 });
