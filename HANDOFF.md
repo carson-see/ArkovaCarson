@@ -14,6 +14,22 @@
 
 ## Now
 
+### 2026-05-08 — SCRUM-1790 Login/signup verification (PR #739, T1)
+
+Same PR as SCRUM-1786/1787/1788/1789. Branch `claude/quirky-meitner-338bda`.
+
+**Problem:** Feature 8 (Login/Signup) in the retroactive staging plan lacked LoginForm component tests despite 1,633 lines of auth coverage across 9 other files.
+
+**Fix:** Added 15 tests for LoginForm covering email/password submission, Google/LinkedIn OAuth button wiring, forgot password flow (resetPasswordForEmail with redirectTo, success message, back navigation), conditional signup link rendering, and onSuccess callback. Fixed vi.mock hoisting issue with vi.hoisted(). Documented 5 auth surfaces with product expectations.
+
+**Tests:** 1,921 total (15 new LoginForm tests). `typecheck` + `lint` + `test` + `lint:copy` all green.
+
+**Soak tier:** T1 Smoke (pure additive tests, no migration/cron/chain).
+
+**DoD gates met:** Tests (gate 1), Jira SCRUM-1790 updated with Confluence URL (gate 2), Confluence page [43974658](https://arkova.atlassian.net/wiki/spaces/A/pages/43974658) (gate 3), Bug log N/A (gate 4), agents.md updated in `src/` (gate 5), HANDOFF.md updated (gate 6). Gate 7 pending CI.
+
+**Jira:** [SCRUM-1790](https://arkova.atlassian.net/browse/SCRUM-1790)
+
 ### 2026-05-08 — SCRUM-1789 Upload flow verification (PR #739, T1)
 
 Same PR as SCRUM-1786/1787/1788. Branch `claude/quirky-meitner-338bda`.
