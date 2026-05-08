@@ -38,10 +38,44 @@ describe('CreateWebhookSchema', () => {
     }
   });
 
-  it('accepts all three anchor event types', () => {
+  it('accepts all three terminal-state anchor event types', () => {
     const result = CreateWebhookSchema.safeParse({
       url: 'https://example.com/hooks',
       events: ['anchor.secured', 'anchor.revoked', 'anchor.expired'],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  // SCRUM-1794: pre-existing drift bug. The worker emits these events from
+  // services/worker/src/jobs/anchor.ts and check-confirmations.ts, but the
+  // CRUD allowlist only covered the terminal-state events, so customers
+  // could not subscribe to them via POST /webhooks.
+  it('SCRUM-1794: accepts anchor.submitted (per-anchor lifecycle)', () => {
+    const result = CreateWebhookSchema.safeParse({
+      url: 'https://example.com/hooks',
+      events: ['anchor.submitted'],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('SCRUM-1794: accepts anchor.batch_secured (merkle-batch aggregate)', () => {
+    const result = CreateWebhookSchema.safeParse({
+      url: 'https://example.com/hooks',
+      events: ['anchor.batch_secured'],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('SCRUM-1794: accepts the full anchor.* event set in one subscription', () => {
+    const result = CreateWebhookSchema.safeParse({
+      url: 'https://example.com/hooks',
+      events: [
+        'anchor.submitted',
+        'anchor.secured',
+        'anchor.revoked',
+        'anchor.expired',
+        'anchor.batch_secured',
+      ],
     });
     expect(result.success).toBe(true);
   });

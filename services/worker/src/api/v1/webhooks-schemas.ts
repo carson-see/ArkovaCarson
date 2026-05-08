@@ -7,15 +7,22 @@
 import { z } from 'zod';
 
 export const VALID_WEBHOOK_EVENTS = [
-  // Anchor lifecycle (chain-level state of the cryptographic proof) — stable.
+  // Per-anchor lifecycle (chain-level state of the cryptographic proof).
+  // `anchor.submitted` fires from services/worker/src/jobs/anchor.ts after
+  // tx broadcast; `anchor.secured` fires from check-confirmations.ts on the
+  // per-anchor fan-out; `anchor.revoked` / `anchor.expired` fire from the
+  // corresponding state transitions. Schemas live in
+  // services/worker/src/webhooks/payload-schemas.ts.
+  'anchor.submitted',
   'anchor.secured',
   'anchor.revoked',
   'anchor.expired',
-  // Credential lifecycle (issuer-and-recipient-level state) — SCRUM-1743 Phase 1.
-  // Schemas are defined in services/worker/src/webhooks/payload-schemas.ts and
-  // dispatch validation accepts them today. Per-event emit-point wiring lands
-  // in Phase-2 follow-ups; subscriptions registered now will receive deliveries
-  // automatically as each emit point goes live.
+  // Aggregate event for the merkle-batch path. Fires once per merkle TX
+  // alongside the per-anchor `anchor.secured` fan-out (SCRUM-1264 / R2-1).
+  'anchor.batch_secured',
+  // Credential lifecycle (issuer-and-recipient-level state) — SCRUM-1743
+  // Phase 1. Schemas defined in payload-schemas.ts; per-event emit-point
+  // wiring lands in Phase-2 follow-ups.
   'credential.issued',
   'credential.verified',
   'credential.status_changed',
