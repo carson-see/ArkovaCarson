@@ -53,15 +53,27 @@ const CREATE_VIEW_REGEX = new RegExp(
 
 // Match `ALTER VIEW <name> SET (security_invoker = true|on)`. The optional
 // `IF EXISTS` and schema-qualifier mirror Postgres' actual ALTER VIEW grammar.
+//
+// Both the option name and the boolean value can be quoted in pg_dump output:
+//   ALTER VIEW "public"."foo" SET ("security_invoker"='true');
+// vs hand-written:
+//   ALTER VIEW public.foo SET (security_invoker = true);
+// We accept either, with optional quotes around `security_invoker` and the
+// `true|on|false|off` literal.
+const SECURITY_INVOKER_TRUE = `"?security_invoker"?\\s*=\\s*'?(?:true|on)'?`;
+const SECURITY_INVOKER_FALSE = `"?security_invoker"?\\s*=\\s*'?(?:false|off)'?`;
 const ALTER_FIX_REGEX = new RegExp(
-  `ALTER\\s+VIEW\\s+(?:IF\\s+EXISTS\\s+)?${SCHEMA_PREFIX}(${VIEW_NAME})\\s+SET\\s*\\([^)]*\\bsecurity_invoker\\s*=\\s*(?:true|on)\\b[^)]*\\)`,
+  `ALTER\\s+VIEW\\s+(?:IF\\s+EXISTS\\s+)?${SCHEMA_PREFIX}(${VIEW_NAME})\\s+SET\\s*\\([^)]*${SECURITY_INVOKER_TRUE}[^)]*\\)`,
   'gi',
 );
 const ALTER_UNFIX_REGEX = new RegExp(
-  `ALTER\\s+VIEW\\s+(?:IF\\s+EXISTS\\s+)?${SCHEMA_PREFIX}(${VIEW_NAME})\\s+(?:SET\\s*\\([^)]*\\bsecurity_invoker\\s*=\\s*(?:false|off)\\b[^)]*\\)|RESET\\s*\\([^)]*\\bsecurity_invoker\\b[^)]*\\))`,
+  `ALTER\\s+VIEW\\s+(?:IF\\s+EXISTS\\s+)?${SCHEMA_PREFIX}(${VIEW_NAME})\\s+(?:SET\\s*\\([^)]*${SECURITY_INVOKER_FALSE}[^)]*\\)|RESET\\s*\\([^)]*"?security_invoker"?[^)]*\\))`,
   'gi',
 );
-const SECURITY_INVOKER_WITH_REGEX = /\bWITH\s*\([^)]*\bsecurity_invoker\s*=\s*(?:true|on)\b[^)]*\)/i;
+const SECURITY_INVOKER_WITH_REGEX = new RegExp(
+  `\\bWITH\\s*\\([^)]*${SECURITY_INVOKER_TRUE}[^)]*\\)`,
+  'i',
+);
 
 // Postgres treats `"foo"` and `foo` as the same identifier when the inner
 // text is lower-case alphanumeric. Strip surrounding quotes so the Map key
