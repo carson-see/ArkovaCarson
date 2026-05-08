@@ -13928,7 +13928,7 @@ GRANT ALL ON TABLE "public"."x402_payments" TO "service_role";
 
 
 GRANT ALL ON TABLE "public"."payment_ledger" TO "anon";
-GRANT INSERT,REFERENCES,DELETE,TRIGGER,TRUNCATE,MAINTAIN,UPDATE ON TABLE "public"."payment_ledger" TO "authenticated";
+GRANT INSERT,REFERENCES,DELETE,TRIGGER,TRUNCATE,UPDATE ON TABLE "public"."payment_ledger" TO "authenticated";
 GRANT ALL ON TABLE "public"."payment_ledger" TO "service_role";
 
 
@@ -14607,8 +14607,8 @@ GRANT ALL ON TABLE "public"."attestations" TO "service_role";
 
 
 
-GRANT SELECT,REFERENCES,TRIGGER,TRUNCATE,MAINTAIN ON TABLE "public"."audit_events" TO "anon";
-GRANT SELECT,REFERENCES,TRIGGER,TRUNCATE,MAINTAIN ON TABLE "public"."audit_events" TO "authenticated";
+GRANT SELECT,REFERENCES,TRIGGER,TRUNCATE ON TABLE "public"."audit_events" TO "anon";
+GRANT SELECT,REFERENCES,TRIGGER,TRUNCATE ON TABLE "public"."audit_events" TO "authenticated";
 GRANT ALL ON TABLE "public"."audit_events" TO "service_role";
 
 

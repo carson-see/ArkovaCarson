@@ -48,9 +48,11 @@ function localTableSet(): Set<string> {
     // other than `public` (or absent), skip — this rule scans the public.* set.
     // Without splitting these out, `CREATE TABLE auth.foo` would otherwise
     // match `auth` as the table name and false-flag a non-existent drift.
-    // NOSONAR — internal CI tooling running over repo-owned migration SQL,
-    // not user input; super-linear-backtracking risk is not exploitable here.
-    const createRe = /(?:^|;)\s*create\s+table\s+(?:if\s+not\s+exists\s+)?([^\s(]+)\s*\(/gim;
+    // Identifier-only capture group + lookahead for `(` removes the
+    // backtracking ambiguity Sonar flagged on the previous `[^\s(]+` form.
+    // Postgres identifiers (and the schema.table form we accept) are limited
+    // to alphanumerics, underscores, dots, and double-quote characters.
+    const createRe = /(?:^|;)\s*create\s+table\s+(?:if\s+not\s+exists\s+)?([A-Za-z0-9_."]+)\s*(?=\()/gim;
     let m: RegExpExecArray | null;
     while ((m = createRe.exec(sql)) !== null) {
       const { schema, table } = parseCreateTableTarget(m[1]);
