@@ -55,40 +55,32 @@ describe('Sidebar', () => {
     expect(screen.getAllByText('Arkova').length).toBeGreaterThanOrEqual(1);
   });
 
-  it('SCRUM-1787: logo links to /dashboard for authenticated users', () => {
-    mockDestination.mockReturnValue('/dashboard');
+  function expectLogoHref(destination: RouteDestination, expectedHref: string) {
+    mockDestination.mockReturnValue(destination);
     renderSidebar();
     const logoLink = screen.getAllByRole('link', { name: /arkova/i });
     expect(logoLink.length).toBeGreaterThanOrEqual(1);
-    expect(logoLink[0]).toHaveAttribute('href', '/dashboard');
+    expect(logoLink[0]).toHaveAttribute('href', expectedHref);
+  }
+
+  it('SCRUM-1787: logo links to /dashboard for authenticated users', () => {
+    expectLogoHref('/dashboard', '/dashboard');
   });
 
   it('SCRUM-1787: logo links to /dashboard for INDIVIDUAL users (vault destination)', () => {
-    mockDestination.mockReturnValue('/vault');
-    renderSidebar();
-    const logoLink = screen.getAllByRole('link', { name: /arkova/i });
-    expect(logoLink[0]).toHaveAttribute('href', '/dashboard');
+    expectLogoHref('/vault', '/dashboard');
   });
 
   it('SCRUM-1787: logo links to /onboarding/role when user has no role', () => {
-    mockDestination.mockReturnValue('/onboarding/role');
-    renderSidebar();
-    const logoLink = screen.getAllByRole('link', { name: /arkova/i });
-    expect(logoLink[0]).toHaveAttribute('href', '/onboarding/role');
+    expectLogoHref('/onboarding/role', '/onboarding/role');
   });
 
   it('SCRUM-1787: logo links to /onboarding/org when ORG_ADMIN missing org', () => {
-    mockDestination.mockReturnValue('/onboarding/org');
-    renderSidebar();
-    const logoLink = screen.getAllByRole('link', { name: /arkova/i });
-    expect(logoLink[0]).toHaveAttribute('href', '/onboarding/org');
+    expectLogoHref('/onboarding/org', '/onboarding/org');
   });
 
   it('SCRUM-1787: logo links to /review-pending when user requires review', () => {
-    mockDestination.mockReturnValue('/review-pending');
-    renderSidebar();
-    const logoLink = screen.getAllByRole('link', { name: /arkova/i });
-    expect(logoLink[0]).toHaveAttribute('href', '/review-pending');
+    expectLogoHref('/review-pending', '/review-pending');
   });
 
   it('renders simplified main navigation (UAT Session 40 redesign)', () => {

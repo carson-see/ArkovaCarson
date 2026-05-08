@@ -20,58 +20,44 @@ vi.mock('@/components/layout/ArkovaLogo', () => ({
   ),
 }));
 
+function renderUpload(props: Partial<Parameters<typeof FileUpload>[0]> = {}) {
+  const onFileSelect = vi.fn();
+  const onBulkDetected = vi.fn();
+  const result = render(
+    <FileUpload onFileSelect={onFileSelect} onBulkDetected={onBulkDetected} {...props} />
+  );
+  const input = result.container.querySelector('input[type="file"]') as HTMLInputElement;
+  return { input, onFileSelect, onBulkDetected };
+}
+
+function changeFiles(input: HTMLInputElement, files: File | File[]) {
+  fireEvent.change(input, { target: { files: Array.isArray(files) ? files : [files] } });
+}
+
 describe('FileUpload', () => {
   it('does not process files when disabled', () => {
-    const onFileSelect = vi.fn();
-    const onBulkDetected = vi.fn();
-
-    const { container } = render(
-      <FileUpload onFileSelect={onFileSelect} onBulkDetected={onBulkDetected} disabled />
-    );
-
-    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
-    const file = new File(['x'], 'document.pdf', { type: 'application/pdf' });
-    fireEvent.change(input, { target: { files: [file] } });
-
+    const { input, onFileSelect, onBulkDetected } = renderUpload({ disabled: true });
+    changeFiles(input, new File(['x'], 'document.pdf', { type: 'application/pdf' }));
     expect(onFileSelect).not.toHaveBeenCalled();
     expect(onBulkDetected).not.toHaveBeenCalled();
   });
 
   it('routes multiple files to bulk mode via onBulkDetected', () => {
-    const onFileSelect = vi.fn();
-    const onBulkDetected = vi.fn();
-
-    const { container } = render(
-      <FileUpload onFileSelect={onFileSelect} onBulkDetected={onBulkDetected} />
-    );
-
-    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    const { input, onFileSelect, onBulkDetected } = renderUpload();
     expect(input.multiple).toBe(true);
-
     const files = [
       new File(['one'], 'bulk-one.pdf', { type: 'application/pdf' }),
       new File(['two'], 'bulk-two.pdf', { type: 'application/pdf' }),
     ];
-
-    fireEvent.change(input, { target: { files } });
-
+    changeFiles(input, files);
     expect(onBulkDetected).toHaveBeenCalledWith(files);
     expect(onFileSelect).not.toHaveBeenCalled();
   });
 
   it('routes single file to onFileSelect with fingerprint', async () => {
-    const onFileSelect = vi.fn();
-    const onBulkDetected = vi.fn();
-
-    const { container } = render(
-      <FileUpload onFileSelect={onFileSelect} onBulkDetected={onBulkDetected} />
-    );
-
-    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    const { input, onFileSelect, onBulkDetected } = renderUpload();
     const file = new File(['single doc'], 'document.pdf', { type: 'application/pdf' });
-
-    fireEvent.change(input, { target: { files: [file] } });
-
+    changeFiles(input, file);
     await vi.waitFor(() => {
       expect(onFileSelect).toHaveBeenCalledWith(file, 'a'.repeat(64));
     });
@@ -79,37 +65,19 @@ describe('FileUpload', () => {
   });
 
   it('routes CSV file to bulk mode', () => {
-    const onFileSelect = vi.fn();
-    const onBulkDetected = vi.fn();
-
-    const { container } = render(
-      <FileUpload onFileSelect={onFileSelect} onBulkDetected={onBulkDetected} />
-    );
-
-    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    const { input, onFileSelect, onBulkDetected } = renderUpload();
     const csvFile = new File(['col1,col2\nval1,val2'], 'records.csv', { type: 'text/csv' });
-
-    fireEvent.change(input, { target: { files: [csvFile] } });
-
+    changeFiles(input, csvFile);
     expect(onBulkDetected).toHaveBeenCalledWith([csvFile]);
     expect(onFileSelect).not.toHaveBeenCalled();
   });
 
   it('routes XLSX file to bulk mode', () => {
-    const onFileSelect = vi.fn();
-    const onBulkDetected = vi.fn();
-
-    const { container } = render(
-      <FileUpload onFileSelect={onFileSelect} onBulkDetected={onBulkDetected} />
-    );
-
-    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    const { input, onFileSelect, onBulkDetected } = renderUpload();
     const xlsxFile = new File(['xlsx-data'], 'records.xlsx', {
       type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     });
-
-    fireEvent.change(input, { target: { files: [xlsxFile] } });
-
+    changeFiles(input, xlsxFile);
     expect(onBulkDetected).toHaveBeenCalledWith([xlsxFile]);
     expect(onFileSelect).not.toHaveBeenCalled();
   });

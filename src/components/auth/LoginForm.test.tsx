@@ -43,6 +43,18 @@ vi.mock('@/lib/supabase', () => ({
   },
 }));
 
+function fillLoginForm(email: string, password: string) {
+  fireEvent.change(screen.getByLabelText(/email address/i), { target: { value: email } });
+  fireEvent.change(screen.getByLabelText(/password/i), { target: { value: password } });
+  fireEvent.click(screen.getByRole('button', { name: /sign in/i }));
+}
+
+function submitForgotPassword(email: string) {
+  fireEvent.click(screen.getByText(/forgot password/i));
+  fireEvent.change(screen.getByLabelText(/email address/i), { target: { value: email } });
+  fireEvent.click(screen.getByRole('button', { name: /send reset link/i }));
+}
+
 describe('LoginForm', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -59,18 +71,10 @@ describe('LoginForm', () => {
     expect(screen.getByRole('button', { name: /sign in/i })).toBeInTheDocument();
   });
 
-  it('renders Google OAuth button', () => {
+  it('renders OAuth buttons and forgot password link', () => {
     render(<LoginForm />);
     expect(screen.getByRole('button', { name: /google/i })).toBeInTheDocument();
-  });
-
-  it('renders LinkedIn OAuth button', () => {
-    render(<LoginForm />);
     expect(screen.getByRole('button', { name: /linkedin/i })).toBeInTheDocument();
-  });
-
-  it('renders forgot password link', () => {
-    render(<LoginForm />);
     expect(screen.getByText(/forgot password/i)).toBeInTheDocument();
   });
 
@@ -86,14 +90,7 @@ describe('LoginForm', () => {
 
   it('calls signIn on form submit', async () => {
     render(<LoginForm />);
-
-    fireEvent.change(screen.getByLabelText(/email address/i), {
-      target: { value: 'test@example.com' },
-    });
-    fireEvent.change(screen.getByLabelText(/password/i), {
-      target: { value: 'password123' },
-    });
-    fireEvent.click(screen.getByRole('button', { name: /sign in/i }));
+    fillLoginForm('test@example.com', 'password123');
 
     await vi.waitFor(() => {
       expect(mockSignIn).toHaveBeenCalledWith('test@example.com', 'password123');
@@ -104,14 +101,7 @@ describe('LoginForm', () => {
     mockSignIn.mockResolvedValueOnce({ error: { message: 'invalid credentials' } });
     const onSuccess = vi.fn();
     render(<LoginForm onSuccess={onSuccess} />);
-
-    fireEvent.change(screen.getByLabelText(/email address/i), {
-      target: { value: 'test@example.com' },
-    });
-    fireEvent.change(screen.getByLabelText(/password/i), {
-      target: { value: 'wrong-password' },
-    });
-    fireEvent.click(screen.getByRole('button', { name: /sign in/i }));
+    fillLoginForm('test@example.com', 'wrong-password');
 
     await vi.waitFor(() => {
       expect(mockSignIn).toHaveBeenCalled();
@@ -122,14 +112,7 @@ describe('LoginForm', () => {
   it('calls onSuccess after successful login', async () => {
     const onSuccess = vi.fn();
     render(<LoginForm onSuccess={onSuccess} />);
-
-    fireEvent.change(screen.getByLabelText(/email address/i), {
-      target: { value: 'test@example.com' },
-    });
-    fireEvent.change(screen.getByLabelText(/password/i), {
-      target: { value: 'password123' },
-    });
-    fireEvent.click(screen.getByRole('button', { name: /sign in/i }));
+    fillLoginForm('test@example.com', 'password123');
 
     await vi.waitFor(() => {
       expect(onSuccess).toHaveBeenCalled();
@@ -146,12 +129,7 @@ describe('LoginForm', () => {
 
   it('calls resetPasswordForEmail on forgot password submit', async () => {
     render(<LoginForm />);
-    fireEvent.click(screen.getByText(/forgot password/i));
-
-    fireEvent.change(screen.getByLabelText(/email address/i), {
-      target: { value: 'forgot@example.com' },
-    });
-    fireEvent.click(screen.getByRole('button', { name: /send reset link/i }));
+    submitForgotPassword('forgot@example.com');
 
     await vi.waitFor(() => {
       expect(mockResetPasswordForEmail).toHaveBeenCalledWith('forgot@example.com', {
@@ -162,12 +140,7 @@ describe('LoginForm', () => {
 
   it('shows success message after password reset email sent', async () => {
     render(<LoginForm />);
-    fireEvent.click(screen.getByText(/forgot password/i));
-
-    fireEvent.change(screen.getByLabelText(/email address/i), {
-      target: { value: 'forgot@example.com' },
-    });
-    fireEvent.click(screen.getByRole('button', { name: /send reset link/i }));
+    submitForgotPassword('forgot@example.com');
 
     await vi.waitFor(() => {
       expect(screen.getByText(/check your email/i)).toBeInTheDocument();
