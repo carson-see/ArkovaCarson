@@ -56,10 +56,14 @@ if [[ "$tool" != "Bash" ]] || [[ -z "$cmd" ]]; then
   exit 0
 fi
 
-# Match `gh pr ready` (without `--undo`) or `gh pr merge`.
-# Folded into a single condition per SonarCloud / CodeRabbit review on PR #733.
+# Match `gh pr ready` (without `--undo`) or `gh pr merge`. CodeRabbit
+# 2026-05-08 review: the `--undo` guard must match `--undo` as a flag
+# token, not as a raw substring. Otherwise a legitimate branch/URL that
+# happens to contain "--undo" (e.g. `gh pr ready feature--undo-test`)
+# falsely escapes the hook.
 is_target=false
-if [[ "$cmd" =~ (^|[[:space:]]|;|&&|\|\|)gh[[:space:]]+pr[[:space:]]+ready([[:space:]]|$) ]] && [[ "$cmd" != *"--undo"* ]]; then
+if [[ "$cmd" =~ (^|[[:space:]]|;|&&|\|\|)gh[[:space:]]+pr[[:space:]]+ready([[:space:]]|$) ]] \
+   && [[ ! "$cmd" =~ (^|[[:space:]])--undo([[:space:]]|$) ]]; then
   is_target=true
 elif [[ "$cmd" =~ (^|[[:space:]]|;|&&|\|\|)gh[[:space:]]+pr[[:space:]]+merge([[:space:]]|$) ]]; then
   is_target=true
@@ -69,13 +73,25 @@ if [[ "$is_target" != "true" ]]; then
   exit 0
 fi
 
-# Extract PR number if present (`gh pr ready 731` or `gh pr merge 731 ...`).
-# Tolerate `gh pr ready` with no number — gh defaults to current branch.
-pr_num=$(printf '%s' "$cmd" | grep -oE 'gh[[:space:]]+pr[[:space:]]+(ready|merge)[[:space:]]+[0-9]+' | grep -oE '[0-9]+$' || true)
+# Extract the PR selector if one is present. `gh pr ready` and
+# `gh pr merge` both accept `[<number> | <url> | <branch>]` per the
+# GitHub CLI manual. CodeRabbit 2026-05-08 review: previously this
+# only captured numeric IDs, so `gh pr merge feature/foo` or a PR URL
+# fell through to "no selector" and the hook inspected the wrong PR.
+# Capture the first explicit selector token (not a flag) after
+# `gh pr (ready|merge)`. A flag starts with `-` so we exclude that.
+pr_selector=$(
+  printf '%s' "$cmd" \
+    | grep -oE 'gh[[:space:]]+pr[[:space:]]+(ready|merge)([[:space:]]+[^[:space:]-][^[:space:]]*)?' \
+    | head -n1 \
+    | awk '{print $4}'
+)
 
-# Fetch PR body. If no PR number, gh resolves the current branch's PR.
-if [[ -n "$pr_num" ]]; then
-  body=$(gh pr view "$pr_num" --json body --jq '.body' 2>/dev/null || true)
+# Fetch PR body. With an explicit selector pass it through; without
+# one, gh resolves the current branch's PR (only safe when the
+# command itself omitted a selector).
+if [[ -n "${pr_selector:-}" ]]; then
+  body=$(gh pr view "$pr_selector" --json body --jq '.body' 2>/dev/null || true)
 else
   body=$(gh pr view --json body --jq '.body' 2>/dev/null || true)
 fi
