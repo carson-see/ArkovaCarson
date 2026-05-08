@@ -486,27 +486,29 @@ describe('POST /api/v1/org/sub-orgs/create (HAKI-REQ-01)', () => {
   });
 
   it('documents organization-delete cascades for affiliate cleanup dependencies', () => {
-    const orgMembersMigration = readFileSync(
-      new URL('../../../../../supabase/migrations/0087_org_members.sql', import.meta.url),
-      'utf8',
-    );
-    const orgCreditsMigration = readFileSync(
-      new URL('../../../../../supabase/migrations/0278_org_credits_and_allocations.sql', import.meta.url),
-      'utf8',
-    );
-    const invitationsMigration = readFileSync(
-      new URL('../../../../../supabase/migrations/0013_invite_member_function.sql', import.meta.url),
+    // After SCRUM-1668 Path C, individual migrations 0013/0087/0278 are
+    // collapsed into the byte-faithful pg_dump baseline. The CASCADE
+    // constraints survive in the dump but are emitted as `ALTER TABLE …
+    // ADD CONSTRAINT … FOREIGN KEY … ON DELETE CASCADE` rather than as
+    // an inline column-level REFERENCES clause. Match either form.
+    const baseline = readFileSync(
+      new URL('../../../../../supabase/migrations/00000000000000_baseline_at_main_HEAD.sql', import.meta.url),
       'utf8',
     );
 
-    expect(orgMembersMigration).toMatch(
-      /org_id\s+uuid\s+NOT NULL REFERENCES organizations\(id\) ON DELETE CASCADE/i,
-    );
-    expect(orgCreditsMigration).toMatch(
-      /org_id\s+uuid\s+PRIMARY KEY REFERENCES organizations\(id\) ON DELETE CASCADE/i,
-    );
-    expect(invitationsMigration).toMatch(
-      /org_id\s+uuid\s+NOT NULL REFERENCES organizations\(id\) ON DELETE CASCADE/i,
-    );
+    // Inline form (hand-written CREATE TABLE column): `org_id uuid ... REFERENCES organizations(id) ON DELETE CASCADE`
+    // pg_dump form: `ALTER TABLE ONLY "public"."<tbl>" ADD CONSTRAINT … FOREIGN KEY ("org_id") REFERENCES "public"."organizations"("id") ON DELETE CASCADE`
+    const cascadeOnOrgIdFor = (table: string): RegExp =>
+      new RegExp(
+        // Either inline column REFERENCES on the right table, or the pg_dump
+        // ALTER TABLE on this specific table referencing organizations(id).
+        `(?:org_id\\s+uuid\\b[^,]*REFERENCES\\s+(?:"?public"?\\.)?"?organizations"?\\("?id"?\\)\\s+ON\\s+DELETE\\s+CASCADE` +
+          `|ALTER\\s+TABLE\\s+(?:ONLY\\s+)?"public"\\."${table}"[\\s\\S]*?FOREIGN\\s+KEY\\s*\\(\\s*"?org_id"?\\s*\\)[\\s\\S]*?REFERENCES\\s+"public"\\."organizations"\\s*\\(\\s*"?id"?\\s*\\)[\\s\\S]*?ON\\s+DELETE\\s+CASCADE)`,
+        'i',
+      );
+
+    expect(baseline).toMatch(cascadeOnOrgIdFor('org_members'));
+    expect(baseline).toMatch(cascadeOnOrgIdFor('org_credits'));
+    expect(baseline).toMatch(cascadeOnOrgIdFor('invitations'));
   });
 });
