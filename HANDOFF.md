@@ -14,6 +14,22 @@
 
 ## Now
 
+### 2026-05-08 — SCRUM-1787 Role-aware home navigation shortcut (PR #739, T1)
+
+Same PR as SCRUM-1786. Branch `claude/quirky-meitner-338bda`.
+
+**Problem:** Sidebar logo hardcoded to `/search` for all users. Should route to role-appropriate destination (`/dashboard`, `/onboarding/role`, `/onboarding/org`, `/review-pending`).
+
+**Fix:** Sidebar.tsx now calls `useProfile().destination` + `destinationToRoute()` to compute the logo's `to` prop. Pure frontend — no migration, no cron, no chain.
+
+**Tests:** 15 green (5 new destination-mapping tests + 10 existing). TDD red-green-refactor. `typecheck` + `lint` + `test` + `lint:copy` all green.
+
+**Soak tier:** T1 Smoke (pure additive frontend, no migration/cron/chain).
+
+**DoD gates met:** Tests (gate 1), Jira updated with Confluence URL (gate 2), Confluence page [44072961](https://arkova.atlassian.net/wiki/spaces/A/pages/44072961) (gate 3), Bug log N/A — no bug, existing gap (gate 4), agents.md updated in `src/` (gate 5), HANDOFF.md updated (gate 6). Gate 7 pending CI.
+
+**Jira:** [SCRUM-1787](https://arkova.atlassian.net/browse/SCRUM-1787) — To Do (transitions to In Progress when PR opens / CI runs).
+
 ### 2026-05-08 — SCRUM-1786 Treasury cache sentinel fix (PR #739, T3 soak in progress)
 
 PR [#739](https://github.com/carson-see/ArkovaCarson/pull/739) is **open, not merged**. Branch `claude/quirky-meitner-338bda`. No prod state changed.

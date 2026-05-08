@@ -33,6 +33,10 @@ React 18 frontend application — TypeScript + Tailwind CSS + shadcn/ui + Vite b
 - **DON'T** set `anchor.status = 'SECURED'` from client code — worker-only
 - **DON'T** expose `user_id`, `org_id`, or `anchors.id` publicly — use `public_id`
 
+## Recent Changes
+
+- **SCRUM-1787 — Role-aware home navigation** (2026-05-08): Sidebar logo uses `useProfile().destination` + `destinationToRoute()` for role-aware home routing. Previously hardcoded to `/search`. Now routes to `/dashboard`, `/onboarding/role`, `/onboarding/org`, or `/review-pending` based on user state. Implementation in `src/components/layout/Sidebar.tsx`.
+
 ## Testing
 
 - Vitest for unit/integration tests
