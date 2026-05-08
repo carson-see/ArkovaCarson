@@ -29,16 +29,20 @@ Same PR as SCRUM-1786/1787/1788/1789. Branch `claude/quirky-meitner-338bda`.
 **What's done:** Tests written and passing (gate 1). Jira SCRUM-1790 created with Confluence URL (gate 2). Confluence page [43974658](https://arkova.atlassian.net/wiki/spaces/A/pages/43974658) (gate 3). Bug log N/A (gate 4). agents.md updated (gate 5). HANDOFF.md updated (gate 6).
 
 **Staging UI verification (2026-05-08, dev server pointed at staging Supabase `ujtlwnoqfhtitcmsnrpq`):**
+- Created staging test user `staging-test@arkova.io` (ID `1d2b80db-...`, INDIVIDUAL, password-enabled)
 - Login form renders at 1280px and 375px — email/password inputs, Sign in button, Google/LinkedIn OAuth buttons, Forgot password link, Create account link
-- Bad credentials: `POST /auth/v1/token?grant_type=password → 400` from staging, `alert` role element shows "Invalid login credentials"
-- Forgot password: `POST /auth/v1/recover?redirect_to=http://localhost:5173/login → 200` from staging, "Check your email" success message displayed
-- Back to sign in: returns to login view with all form elements intact
-- AuthGuard: navigating to `/dashboard` without auth redirects to login with "Please sign in to access that page" toast
-- Mobile (375px): error alert visible, form fields readable, Sign in button full-width, OAuth buttons stacked
+- Sign in with `staging-test@arkova.io` → redirected to `/dashboard` with "Staging Test User" profile card
+- Sign out → login page renders correctly at /login
+- Forgot password flow: "Reset your password" heading, email input, "Send reset link" button, "Back to sign in" returns to login
+- AuthGuard: authenticated user navigating to `/login` redirects to `/dashboard`
+- Mobile (375px): login page and dashboard render correctly, no overflow
+- Console: no errors on login/dashboard pages
+
+**Confluence updated:** Page [43974658](https://arkova.atlassian.net/wiki/spaces/A/pages/43974658) — staging verification section added (2026-05-08).
 
 **Gate 7:** Pending CI.
 
-**Jira:** [SCRUM-1790](https://arkova.atlassian.net/browse/SCRUM-1790)
+**Jira:** [SCRUM-1790](https://arkova.atlassian.net/browse/SCRUM-1790) — In Progress.
 
 ### 2026-05-08 — SCRUM-1789 Upload flow verification (PR #739, T1)
 
@@ -55,14 +59,21 @@ Same PR as SCRUM-1786/1787/1788. Branch `claude/quirky-meitner-338bda`.
 **What's done:** Tests written and passing (gate 1). Jira updated with Confluence URL (gate 2). Confluence page [44236801](https://arkova.atlassian.net/wiki/spaces/A/pages/44236801) (gate 3). Bug log N/A (gate 4). agents.md updated (gate 5). HANDOFF.md updated (gate 6).
 
 **Staging UI verification (2026-05-08, dev server pointed at staging Supabase `ujtlwnoqfhtitcmsnrpq`):**
-- Upload is behind AuthGuard — navigating to `/dashboard` without auth redirects to login with toast, confirming auth gate
-- FileUpload component tested via 14 unit tests: single-file routing with fingerprint, multi-file bulk, CSV/XLSX detection, disabled-state blocking
-- Staging has 20,014 anchors (18,152 SECURED, 1,025 PENDING) confirming lifecycle path exists
-- Client-side hashing (Constitution 1.6) runs in browser — no direct staging DB interaction for upload
+- Authenticated as `staging-test@arkova.io` (INDIVIDUAL role, test user created for staging)
+- Dashboard "Secure Document" button renders in My Records section and empty state
+- SecureDocumentDialog opens: title "Arkova Secure Document" with Arkova icon
+- Privacy notice "File never leaves your device" — Constitution 1.6 compliance confirmed
+- FileUpload drop zone: "Drag and drop your document here", format hint "Single document, CSV/XLSX for bulk upload, or multiple files"
+- File input, Cancel, Continue, Close buttons all present
+- All staging API calls return 200: profiles, get_flag (×6), get_user_monthly_anchor_count, subscriptions, get_user_credits, anchors
+- No console errors from upload dialog
+- Desktop (1280px) and mobile (375px) layouts verified
+
+**Confluence updated:** Page [44236801](https://arkova.atlassian.net/wiki/spaces/A/pages/44236801) — staging verification section added (2026-05-08).
 
 **Gate 7:** Pending CI.
 
-**Jira:** [SCRUM-1789](https://arkova.atlassian.net/browse/SCRUM-1789) — To Do.
+**Jira:** [SCRUM-1789](https://arkova.atlassian.net/browse/SCRUM-1789) — In Progress.
 
 ### 2026-05-08 — SCRUM-1788 Search verification: privacy gates, RLS isolation (PR #739, T1)
 
@@ -86,15 +97,20 @@ Same PR as SCRUM-1786/1787. Branch `claude/quirky-meitner-338bda`.
 - All 5 search RPCs present on staging: `search_public_issuers`, `get_public_issuer_registry`, `get_public_org_profile`, `get_org_subtree`, `get_public_member_profile`
 
 **Staging UI verification (2026-05-08, dev server pointed at staging Supabase `ujtlwnoqfhtitcmsnrpq`):**
-- Search page renders at 1280px and 375px — search input, file drop zone, footer links
-- Search query "Acme" executed: `POST .../rpc/search_public_issuers → 200`, `GET .../anchors?filename=ilike.%25Acme%25 → 200`
-- Empty results display: "No credentials found / No public credentials match your search."
-- `search_public_credentials` RPC returned 300 — pre-existing staging issue, not a regression
-- No console errors on search page except the known `search_public_credentials` RPC failure
+- Authenticated as `staging-test@arkova.io` (INDIVIDUAL role, test user created for staging)
+- Search page renders at /search: title "Arkova Search — Verify Credentials", heading "Search & Verify"
+- Search input accepts query, form submits against staging RPC
+- Graceful degradation: `search_public_credentials` RPC not on staging → "No credentials found" (no crash)
+- File drop zone "Drop or browse a file to verify" renders
+- Footer links (About, Developer API, Privacy, Terms) present
+- Desktop (1280px) and mobile (375px) layouts verified
+- Console: only pre-existing `search_public_credentials` RPC error (not a regression)
+
+**Confluence updated:** Page [44138497](https://arkova.atlassian.net/wiki/spaces/A/pages/44138497) — staging verification section added (2026-05-08).
 
 **Gate 7:** Pending CI.
 
-**Jira:** [SCRUM-1788](https://arkova.atlassian.net/browse/SCRUM-1788) — To Do.
+**Jira:** [SCRUM-1788](https://arkova.atlassian.net/browse/SCRUM-1788) — In Progress.
 
 ### 2026-05-08 — SCRUM-1787 Role-aware home navigation shortcut (PR #739, T1)
 
@@ -116,14 +132,15 @@ Same PR as SCRUM-1786. Branch `claude/quirky-meitner-338bda`.
 - `useProfile().destination` reads from profiles.role — schema exists and roles are populated
 
 **Staging UI verification (2026-05-08, dev server pointed at staging Supabase `ujtlwnoqfhtitcmsnrpq`):**
-- AuthGuard redirects unauthenticated `/dashboard` → login with "Please sign in to access that page" toast
-- Sidebar logo aria-label updated to "Arkova — go home" (destination varies by role)
-- Role-aware routing tested via component tests (5 destination-mapping tests)
-- Cannot verify authenticated role-aware routing end-to-end: staging has 0 users with passwords (all seed data)
+- Created staging test user `staging-test@arkova.io` (ID `1d2b80db-...`, INDIVIDUAL role) with password
+- Authenticated login → redirects to `/dashboard`, sidebar renders with logo link
+- Sidebar logo aria-label "Arkova — go home", `href` confirmed as `/dashboard` for INDIVIDUAL role
+- Dashboard, Search nav items in sidebar; Auditor Mode, Theme, Collapse toggles present
+- Desktop (1280px) and mobile (375px) layouts verified
 
 **Gate 7:** Pending CI.
 
-**Jira:** [SCRUM-1787](https://arkova.atlassian.net/browse/SCRUM-1787) — To Do (transitions to In Progress when PR opens / CI runs).
+**Jira:** [SCRUM-1787](https://arkova.atlassian.net/browse/SCRUM-1787) — In Progress.
 
 ### 2026-05-08 — SCRUM-1786 Treasury cache sentinel fix (PR #739, T3 soak in progress)
 
