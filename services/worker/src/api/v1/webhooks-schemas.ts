@@ -8,9 +8,16 @@ import { z } from 'zod';
 
 export const VALID_WEBHOOK_EVENTS = [
   // Anchor lifecycle (chain-level state of the cryptographic proof) — stable.
+  // SCRUM-1795: anchor.submitted + anchor.batch_secured added to close the
+  // asymmetric "subscribe vs emit" drift surfaced during the SCRUM-1743 audit
+  // — the worker emits these (services/worker/src/jobs/anchor.ts emits
+  // anchor.submitted; the merkle-batch path emits anchor.batch_secured) but
+  // customers couldn't register subscriptions via POST /webhooks until now.
+  'anchor.submitted',
   'anchor.secured',
   'anchor.revoked',
   'anchor.expired',
+  'anchor.batch_secured',
   // Credential lifecycle (issuer-and-recipient-level state) — SCRUM-1743 Phase 1.
   // Schemas are defined in services/worker/src/webhooks/payload-schemas.ts and
   // dispatch validation accepts them today. Per-event emit-point wiring lands

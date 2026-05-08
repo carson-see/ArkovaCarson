@@ -762,7 +762,7 @@ export const openApiSpec: Record<string, any> = {
                   url: { type: 'string', format: 'uri', example: 'https://api.example.com/webhooks/arkova' },
                   events: {
                     type: 'array',
-                    items: { type: 'string', enum: ['anchor.secured', 'anchor.revoked', 'anchor.expired', 'credential.issued', 'credential.verified', 'credential.status_changed'] },
+                    items: { type: 'string', enum: ['anchor.submitted', 'anchor.secured', 'anchor.revoked', 'anchor.expired', 'anchor.batch_secured', 'credential.issued', 'credential.verified', 'credential.status_changed'] },
                     default: ['anchor.secured', 'anchor.revoked'],
                   },
                   description: { type: 'string', maxLength: 500, example: 'Production HR system' },
@@ -851,7 +851,7 @@ export const openApiSpec: Record<string, any> = {
                   url: { type: 'string', format: 'uri' },
                   events: {
                     type: 'array',
-                    items: { type: 'string', enum: ['anchor.secured', 'anchor.revoked', 'anchor.expired', 'credential.issued', 'credential.verified', 'credential.status_changed'] },
+                    items: { type: 'string', enum: ['anchor.submitted', 'anchor.secured', 'anchor.revoked', 'anchor.expired', 'anchor.batch_secured', 'credential.issued', 'credential.verified', 'credential.status_changed'] },
                   },
                   description: { type: 'string', maxLength: 500, nullable: true },
                   is_active: { type: 'boolean' },
@@ -1315,7 +1315,7 @@ export const openApiSpec: Record<string, any> = {
           url: { type: 'string', format: 'uri' },
           events: {
             type: 'array',
-            items: { type: 'string', enum: ['anchor.secured', 'anchor.revoked', 'anchor.expired', 'credential.issued', 'credential.verified', 'credential.status_changed'] },
+            items: { type: 'string', enum: ['anchor.submitted', 'anchor.secured', 'anchor.revoked', 'anchor.expired', 'anchor.batch_secured', 'credential.issued', 'credential.verified', 'credential.status_changed'] },
           },
           is_active: { type: 'boolean' },
           description: { type: 'string', nullable: true },

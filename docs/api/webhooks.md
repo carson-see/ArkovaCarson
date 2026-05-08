@@ -62,9 +62,11 @@ Arkova emits two families of events: the **anchor lifecycle** (chain-level state
 
 | Event | Fired When | Status |
 |---|---|---|
+| `anchor.submitted` | Anchor transitions from `PENDING` → `SUBMITTED` (transaction broadcast to chain). Subscribable since SCRUM-1795. | Stable |
 | `anchor.secured` | Anchor transitions from `PENDING`/`SUBMITTED` → `SECURED` after network confirmation | Stable |
 | `anchor.revoked` | Anchor is revoked by an org admin (revocation receipt published on-chain) | Stable |
-| `anchor.expired` | Anchor's `expires_at` timestamp passes | Stable |
+| `anchor.expired` | Anchor's `expires_at` timestamp passes. Schema enforced since SCRUM-1796 (previously bypassed validation). | Stable |
+| `anchor.batch_secured` | Aggregate event for the merkle-batch path (fires once per merkle TX; per-anchor `anchor.secured` events still fan out alongside). Subscribable since SCRUM-1795. | Stable |
 
 ### Credential Lifecycle (SCRUM-1743)
 

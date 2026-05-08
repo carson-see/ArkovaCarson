@@ -65,6 +65,33 @@ describe('CreateWebhookSchema', () => {
     expect(result.success).toBe(true);
   });
 
+  // SCRUM-1795: anchor.submitted + anchor.batch_secured were previously
+  // emitted by the worker but missing from VALID_WEBHOOK_EVENTS — customers
+  // could not subscribe to them. Closes the asymmetric drift.
+  it('SCRUM-1795: accepts anchor.submitted subscriptions', () => {
+    const result = CreateWebhookSchema.safeParse({
+      url: 'https://example.com/hooks',
+      events: ['anchor.submitted'],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('SCRUM-1795: accepts anchor.batch_secured subscriptions', () => {
+    const result = CreateWebhookSchema.safeParse({
+      url: 'https://example.com/hooks',
+      events: ['anchor.batch_secured'],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('SCRUM-1795: accepts the full anchor.* family at once', () => {
+    const result = CreateWebhookSchema.safeParse({
+      url: 'https://example.com/hooks',
+      events: ['anchor.submitted', 'anchor.secured', 'anchor.revoked', 'anchor.expired', 'anchor.batch_secured'],
+    });
+    expect(result.success).toBe(true);
+  });
+
   it('rejects HTTP URL (must be HTTPS)', () => {
     const result = CreateWebhookSchema.safeParse({
       url: 'http://example.com/hooks',
