@@ -65,6 +65,30 @@
 
 _Last refreshed: 2026-05-08 by claude — claims verified against gcloud/MCP/CI output (Supabase MCP apply_migration returned success on 0297/0298/0299; SELECT verifications captured; live MCP initialize handshake screenshot in PR #741; gcloud secrets access for HMAC secret value via arkova1 secret manager; gh pr view confirms PR open state and commit SHAs)._
 
+### 2026-05-08 — SCRUM-1743 Phase 1: credential.* webhook event contracts ([PR #740](https://github.com/carson-see/ArkovaCarson/pull/740), branch `claude/scrum-1743-credential-webhooks`)
+
+PR #740 is **open, not merged** — bench-state entry. Closes the marketing-vs-reality gap discovered while editing `arkova-marketing` (separate repo, `https://arkova.ai`): the marketing site advertised webhook events for "credential issuance, verification, and status-change" but the worker only emitted `anchor.secured` / `anchor.revoked` / `anchor.expired`. This PR ships the **contract layer** for three new `credential.*` event types so customers can subscribe today; per-event emit-point wiring is split into Phase-2 follow-up tickets.
+
+**What lands:**
+* `services/worker/src/webhooks/payload-schemas.ts` — three new Zod schemas (`CredentialIssuedPayloadSchema`, `CredentialVerifiedPayloadSchema`, `CredentialStatusChangedPayloadSchema`) added to `PAYLOAD_SCHEMAS_BY_EVENT_TYPE` map. Strict allowlist: `public_id` only (incl. new `recipient_public_id`), no internal UUIDs, no fingerprint, RFC 3339 timestamps. `credential.verified` accepts terminal states only (SECURED / REVOKED / EXPIRED). `credential.status_changed` rejects no-op transitions via `.refine()`.
+* `services/worker/src/api/v1/webhooks-schemas.ts` — `VALID_WEBHOOK_EVENTS` extended so `POST /webhooks` accepts subscriptions to the new types. Without this, the docs claim "subscribe today" was false; CRUD would 400.
+* `services/worker/src/api/v1/docs.ts` — three OpenAPI enum sites (lines 765, 854, 1318) updated.
+* `services/worker/src/webhooks/payload-schemas.test.ts` + `webhooks-crud.test.ts` — 39 new tests. Total 85/85 passing.
+* `docs/api/webhooks.md` — Event Types section split into Anchor Lifecycle (stable) + Credential Lifecycle (contract defined, emit-point pending).
+
+**Code review:** independent review found 1 BLOCKER (the `VALID_WEBHOOK_EVENTS` gap) + 3 MAJORs (no-op transition refine, semantically-bogus PENDING in `credential.verified`, missing `recipient_public_id`) + 4 MINORs. All addressed in commit `9aecec18`.
+
+**Local verification on branch tip `9aecec18`:** `npm run typecheck` clean, `vitest run payload-schemas.test.ts webhooks-crud.test.ts` 85/85 passing, `npm run lint` 0 errors (323 pre-existing warnings, none in changed files).
+
+**Staging deploy verified.** Tier T2 (public API surface). Image `us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker:scrum1743-9aecec18` (digest `sha256:a2f60bc3e0e90a17dfada058dcf443afee0e29a75c1c6907c0f6744e3f075b35`) built locally, pushed via compute SA, deployed to `arkova-worker-staging` as revision `arkova-worker-staging-00024-6w8` serving 100% traffic. Smoke checks against `https://arkova-worker-staging-270018525501.us-central1.run.app`: `/health` returns `{status:healthy, git_sha:"9aecec18f341ad8f00f9e1ffc1eedac4871e97fe", checks:{database:ok,anchoring:ok,kms:ok}}` (HTTP 200 with audience-bound ID token). `/api/v1/openapi.json` exposes all three credential.* event types in the served spec. Worker boots cleanly with the staging env-var matrix (USE_MOCKS=true, ENABLE_PROD_NETWORK_ANCHORING=false, BATCH_ANCHOR_MAX_SIZE=100).
+
+**Staging soak status.** Smoke test passed; full 4h soak harness not yet run for this PR — the runtime change in this PR is contract-only (new schemas + dispatch-map entries dormant until Phase-2 emit points wire), so the soak surface is bounded to "worker still boots and validates anchor.* payloads identically." Carson to decide whether the standard T2 4h soak applies or a smoke-only window is sufficient given the dormant-contract scope.
+
+**Phase 2 follow-ups (not in this PR):** emit-point wiring at credential creation (`credential.issued`), `/api/v1/verify/*` (`credential.verified`), and the anchor state machine (`credential.status_changed`). Each will be a separate ticket so the staging soak surface is bounded per-emit-point. Marketing copy on arkova.ai already softened to "anchor lifecycle today; credential-lifecycle on the roadmap" in commit `df29bcd` of `arkova-marketing` — that copy stays accurate until Phase 2 lands.
+
+_Last refreshed: 2026-05-08 by Claude — claims verified against vitest output (85/85 passing), `gh pr view 740` (open, not merged), `gcloud run revisions describe arkova-worker-staging-00024-6w8` (Ready=True, traffic=100%), and live `/health` + `/api/v1/openapi.json` curls against the staging worker URL._
+
+
 ### 2026-05-04 (evening, post-cutover) — SCRUM-1668 Path C baseline prod ledger row recorded ([PR #700](https://github.com/carson-see/ArkovaCarson/pull/700) not merge-ready)
 
 > **This entry supersedes Path C references in the late-evening entry below** (which was written when Path C was a separate session and PR #700 hadn't been opened yet). Where the two conflict, this entry is current.
@@ -95,7 +119,6 @@ PR [#700](https://github.com/carson-see/ArkovaCarson/pull/700) remains the Path 
 * **Stories still in `To Do`** (SCRUM-1668/1669/1670/1671). Carson is reporter on all four → Reporter ≠ Resolver Atlassian rule means transition to Done requires a non-Carson resolver.
 
 **Still required before #700 is Done/merge-ready:** final branch-protection checks green on the latest pushed head, review approval, and real #700 worker/staging behavior evidence. Shared staging is active in parallel work, so #700 should not acquire or mutate it without coordination; use an explicitly approved isolated environment or wait for the staging lease. Until that evidence is captured, #700 remains honest as schema-equivalence plus CI/fresh-DB/prod-schema validation, not a completed T2/T3 behavior soak.
-
 
 ### 2026-05-06 — PR #711 SCRUM-1545 coverage backfill merge-resolution pass
 
