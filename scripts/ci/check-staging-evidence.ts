@@ -219,6 +219,14 @@ export function isStagingToolingOnly(files: string[]): StagingFilesOnlyResult {
     /^docs\/staging\//,
     /^\.github\/workflows\/staging-evidence\.yml$/,
     /^CLAUDE\.md$/,
+    /^HANDOFF\.md$/,
+    /^\.gitignore$/,
+    // Claude Code harness config + hook scripts. These run in the
+    // operator's local agent process, not in the worker. Same category
+    // of meta-infra as scripts/staging/* — edits can't break the
+    // running worker, they only change how the agent behaves locally.
+    /^\.claude\/settings\.json$/,
+    /^\.claude\/hooks\//,
     /^package\.json$/,
     /^package-lock\.json$/,
     /agents\.md$/,

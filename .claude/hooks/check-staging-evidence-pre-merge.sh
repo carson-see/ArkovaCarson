@@ -25,6 +25,25 @@
 
 set -uo pipefail
 
+# Hard requirement: jq must be installed. Without it, the parsing below
+# silently produces empty strings (because of the 2>/dev/null redirect),
+# the early-exit at the tool/command check fires, and EVERY command is
+# allowed through. That's fail-open on an enforcement hook — exactly
+# the failure mode this hook exists to prevent. CodeRabbit flagged this
+# in PR #733 review.
+if ! command -v jq >/dev/null 2>&1; then
+  cat <<'EOF'
+{
+  "hookSpecificOutput": {
+    "hookEventName": "PreToolUse",
+    "permissionDecision": "deny",
+    "permissionDecisionReason": "Staging-evidence pre-merge hook requires jq. Install jq (brew install jq) so the hook can parse tool input and enforce CLAUDE.md sec 1.11 staging-soak evidence on gh pr ready / gh pr merge."
+  }
+}
+EOF
+  exit 0
+fi
+
 # Read full hook input
 input=$(cat)
 
@@ -37,20 +56,16 @@ if [[ "$tool" != "Bash" ]] || [[ -z "$cmd" ]]; then
   exit 0
 fi
 
-# Match `gh pr ready` (NOT followed by --undo anywhere in the same command)
-# or `gh pr merge`.
-is_ready_no_undo=false
-is_merge=false
-if [[ "$cmd" =~ (^|[[:space:]]|;|&&|\|\|)gh[[:space:]]+pr[[:space:]]+ready([[:space:]]|$) ]]; then
-  if [[ "$cmd" != *"--undo"* ]]; then
-    is_ready_no_undo=true
-  fi
-fi
-if [[ "$cmd" =~ (^|[[:space:]]|;|&&|\|\|)gh[[:space:]]+pr[[:space:]]+merge([[:space:]]|$) ]]; then
-  is_merge=true
+# Match `gh pr ready` (without `--undo`) or `gh pr merge`.
+# Folded into a single condition per SonarCloud / CodeRabbit review on PR #733.
+is_target=false
+if [[ "$cmd" =~ (^|[[:space:]]|;|&&|\|\|)gh[[:space:]]+pr[[:space:]]+ready([[:space:]]|$) ]] && [[ "$cmd" != *"--undo"* ]]; then
+  is_target=true
+elif [[ "$cmd" =~ (^|[[:space:]]|;|&&|\|\|)gh[[:space:]]+pr[[:space:]]+merge([[:space:]]|$) ]]; then
+  is_target=true
 fi
 
-if [[ "$is_ready_no_undo" != "true" ]] && [[ "$is_merge" != "true" ]]; then
+if [[ "$is_target" != "true" ]]; then
   exit 0
 fi
 
