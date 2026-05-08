@@ -20,6 +20,7 @@ import {
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 import { ensureAnchorCreditAvailable } from '../../utils/anchorCreditGate.js';
+import { ensureAnchorQuotaAvailable } from '../../utils/anchorQuotaGate.js';
 import { ensureOrgNotSuspended } from '../../utils/orgSuspensionGuard.js';
 
 const router = Router();
@@ -152,6 +153,16 @@ router.post('/', async (req: Request, res: Response) => {
         });
         return;
       }
+    }
+
+    // SCRUM-1740 — sandbox anchor quota gate. No-op for prod orgs
+    // (anchor_quota is NULL). Sandbox orgs with is_test=true and a
+    // configured cap get a 402 quota_exhausted problem+json response when
+    // they hit their limit. Re-submissions of an existing fingerprint
+    // already short-circuited at the dedup-check above, so partners can
+    // re-anchor without consuming quota.
+    if (orgId && !(await ensureAnchorQuotaAvailable(db, orgId, res))) {
+      return;
     }
 
     // SCRUM-1170-B — gate org-credit deduction. Helper short-circuits to
