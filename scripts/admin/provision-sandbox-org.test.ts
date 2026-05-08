@@ -37,35 +37,49 @@ describe('SCRUM-1740 — sandbox provisioning script', () => {
    */
   describe('parseCliArgs (Zod validation)', () => {
     const ok = ['node', 'script', '--partner=hakichain', '--anchors=10', '--credits=5'];
+    // SonarCloud duplication: lift the repeated `argv` builder into a
+    // helper so the per-case test bodies don't repeat the
+    // `[...ok.slice(0, 2), '--partner=p', '--anchors=X', '--credits=Y']`
+    // shape verbatim.
+    const argv = (overrides: Record<string, string>): string[] => {
+      const merged = { partner: 'p', anchors: '10', credits: '5', ...overrides };
+      return [
+        'node',
+        'script',
+        `--partner=${merged.partner}`,
+        `--anchors=${merged.anchors}`,
+        `--credits=${merged.credits}`,
+      ];
+    };
 
     it('accepts a valid invocation', () => {
       expect(parseCliArgs(ok)).toEqual({ partner: 'hakichain', anchors: 10, credits: 5 });
     });
 
     it('coerces numeric strings to integers', () => {
-      const r = parseCliArgs(['node', 'script', '--partner=p', '--anchors=10', '--credits=5']);
+      const r = parseCliArgs(argv({}));
       expect(typeof r.anchors).toBe('number');
       expect(typeof r.credits).toBe('number');
     });
 
     it('rejects partner slugs with whitespace, uppercase, or HTML metacharacters', () => {
-      expect(() => parseCliArgs([...ok.slice(0, 2), '--partner=Haki Chain', '--anchors=10', '--credits=5'])).toThrow();
-      expect(() => parseCliArgs([...ok.slice(0, 2), '--partner=HakiChain', '--anchors=10', '--credits=5'])).toThrow();
-      expect(() => parseCliArgs([...ok.slice(0, 2), '--partner=<script>', '--anchors=10', '--credits=5'])).toThrow();
+      expect(() => parseCliArgs(argv({ partner: 'Haki Chain' }))).toThrow();
+      expect(() => parseCliArgs(argv({ partner: 'HakiChain' }))).toThrow();
+      expect(() => parseCliArgs(argv({ partner: '<script>' }))).toThrow();
     });
 
     it('rejects non-numeric anchors / credits (no truncation of "10foo")', () => {
-      expect(() => parseCliArgs([...ok.slice(0, 2), '--partner=p', '--anchors=10foo', '--credits=5'])).toThrow();
-      expect(() => parseCliArgs([...ok.slice(0, 2), '--partner=p', '--anchors=10', '--credits=NaN'])).toThrow();
+      expect(() => parseCliArgs(argv({ anchors: '10foo' }))).toThrow();
+      expect(() => parseCliArgs(argv({ credits: 'NaN' }))).toThrow();
     });
 
     it('rejects negative or zero anchors', () => {
-      expect(() => parseCliArgs([...ok.slice(0, 2), '--partner=p', '--anchors=0', '--credits=5'])).toThrow();
-      expect(() => parseCliArgs([...ok.slice(0, 2), '--partner=p', '--anchors=-1', '--credits=5'])).toThrow();
+      expect(() => parseCliArgs(argv({ anchors: '0' }))).toThrow();
+      expect(() => parseCliArgs(argv({ anchors: '-1' }))).toThrow();
     });
 
     it('accepts credits=0', () => {
-      const r = parseCliArgs([...ok.slice(0, 2), '--partner=p', '--anchors=10', '--credits=0']);
+      const r = parseCliArgs(argv({ credits: '0' }));
       expect(r.credits).toBe(0);
     });
 
