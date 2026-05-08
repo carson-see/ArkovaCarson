@@ -48,6 +48,8 @@ function localTableSet(): Set<string> {
     // other than `public` (or absent), skip — this rule scans the public.* set.
     // Without splitting these out, `CREATE TABLE auth.foo` would otherwise
     // match `auth` as the table name and false-flag a non-existent drift.
+    // NOSONAR — internal CI tooling running over repo-owned migration SQL,
+    // not user input; super-linear-backtracking risk is not exploitable here.
     const createRe = /(?:^|;)\s*create\s+table\s+(?:if\s+not\s+exists\s+)?([^\s(]+)\s*\(/gim;
     let m: RegExpExecArray | null;
     while ((m = createRe.exec(sql)) !== null) {
@@ -61,8 +63,8 @@ function localTableSet(): Set<string> {
 
 function parseCreateTableTarget(rawTarget: string): { schema: string; table: string } {
   const parts = rawTarget.split('.');
-  const table = unquoteIdentifier(parts.at(-1) ?? rawTarget);
-  const schema = parts.length > 1 ? unquoteIdentifier(parts.at(-2) ?? 'public') : 'public';
+  const table = unquoteIdentifier(parts[parts.length - 1] ?? rawTarget);
+  const schema = parts.length > 1 ? unquoteIdentifier(parts[parts.length - 2] ?? 'public') : 'public';
   return { schema, table };
 }
 
