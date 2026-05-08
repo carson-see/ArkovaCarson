@@ -22,11 +22,13 @@ Same PR as SCRUM-1786/1787/1788/1789. Branch `claude/quirky-meitner-338bda`.
 
 **Fix:** Added 15 tests for LoginForm covering email/password submission, Google/LinkedIn OAuth button wiring, forgot password flow (resetPasswordForEmail with redirectTo, success message, back navigation), conditional signup link rendering, and onSuccess callback. Fixed vi.mock hoisting issue with vi.hoisted(). Documented 5 auth surfaces with product expectations.
 
-**Tests:** 1,921 total (15 new LoginForm tests). `typecheck` + `lint` + `test` + `lint:copy` all green.
+**Tests:** 1,923 total (17 new LoginForm tests incl. failure-path). `typecheck` + `lint` + `test` + `lint:copy` all green.
 
 **Soak tier:** T1 Smoke (pure additive tests, no migration/cron/chain).
 
-**DoD gates met:** Tests (gate 1), Jira SCRUM-1790 updated with Confluence URL (gate 2), Confluence page [43974658](https://arkova.atlassian.net/wiki/spaces/A/pages/43974658) (gate 3), Bug log N/A (gate 4), agents.md updated in `src/` (gate 5), HANDOFF.md updated (gate 6). Gate 7 pending CI.
+**What's done:** Tests written and passing (gate 1). Jira SCRUM-1790 created with Confluence URL (gate 2). Confluence page [43974658](https://arkova.atlassian.net/wiki/spaces/A/pages/43974658) (gate 3). Bug log N/A (gate 4). agents.md updated (gate 5). HANDOFF.md updated (gate 6).
+
+**What's NOT done:** No staging sandbox verification. The retroactive staging plan requires auth flows pass on staging with screenshots/logs, OAuth redirect URL verification, and role-aware navigation after auth. These are frontend-only changes riding on the T3 soak from the earlier worker commits in PR #739. No independent staging deploy was done for features 5-8. Gate 7 pending CI.
 
 **Jira:** [SCRUM-1790](https://arkova.atlassian.net/browse/SCRUM-1790)
 
@@ -38,11 +40,13 @@ Same PR as SCRUM-1786/1787/1788. Branch `claude/quirky-meitner-338bda`.
 
 **Fix:** Added 14 tests for FileUpload component (single file routing with fingerprint, multi-file bulk routing, CSV/XLSX detection, disabled-state blocking, isBulkUploadFile/isJsonFile helpers). Documented 7 upload surfaces with mode detection, auth requirements, and test evidence pointers.
 
-**Tests:** 1,921+ total (14 new FileUpload tests). `typecheck` + `lint` + `test` + `lint:copy` all green.
+**Tests:** 1,923 total (15 new FileUpload tests incl. disabled-state). `typecheck` + `lint` + `test` + `lint:copy` all green.
 
 **Soak tier:** T1 Smoke (pure additive tests, no migration/cron/chain).
 
-**DoD gates met:** Tests (gate 1), Jira updated with Confluence URL (gate 2), Confluence page [44236801](https://arkova.atlassian.net/wiki/spaces/A/pages/44236801) (gate 3), Bug log N/A (gate 4), agents.md updated in `src/` (gate 5), HANDOFF.md updated (gate 6). Gate 7 pending CI.
+**What's done:** Tests written and passing (gate 1). Jira updated with Confluence URL (gate 2). Confluence page [44236801](https://arkova.atlassian.net/wiki/spaces/A/pages/44236801) (gate 3). Bug log N/A (gate 4). agents.md updated (gate 5). HANDOFF.md updated (gate 6).
+
+**What's NOT done:** No staging sandbox verification. The retroactive staging plan requires every upload entrypoint to succeed with evidence or be explicitly out-of-scope. No staging fixtures, no before/after data, no screenshots. Gate 7 pending CI.
 
 **Jira:** [SCRUM-1789](https://arkova.atlassian.net/browse/SCRUM-1789) — To Do.
 
@@ -58,9 +62,11 @@ Same PR as SCRUM-1786/1787. Branch `claude/quirky-meitner-338bda`.
 
 **Soak tier:** T1 Smoke (pure additive tests, no migration/cron/chain).
 
-**DoD gates met:** Tests (gate 1), Jira updated with Confluence URL (gate 2), Confluence page [44138497](https://arkova.atlassian.net/wiki/spaces/A/pages/44138497) (gate 3), Bug log N/A (gate 4), agents.md updated in `src/` (gate 5), HANDOFF.md updated (gate 6). Gate 7 pending CI.
+**What's done:** Tests written and passing (gate 1). Jira updated with Confluence URL (gate 2). Confluence page [44138497](https://arkova.atlassian.net/wiki/spaces/A/pages/44138497) (gate 3). Bug log N/A (gate 4). agents.md updated (gate 5). HANDOFF.md updated (gate 6).
 
-**Jira:** [SCRUM-1788](https://arkova.atlassian.net/browse/SCRUM-1788) — To Do (transitions when PR opens / CI runs).
+**What's NOT done:** No staging sandbox verification. The retroactive staging plan requires search fixtures, pass/fail evidence, RLS isolation evidence against staging DB, and response-time thresholds against seeded data. No staging deploy or queries were run. Gate 7 pending CI.
+
+**Jira:** [SCRUM-1788](https://arkova.atlassian.net/browse/SCRUM-1788) — To Do.
 
 ### 2026-05-08 — SCRUM-1787 Role-aware home navigation shortcut (PR #739, T1)
 
@@ -74,7 +80,9 @@ Same PR as SCRUM-1786. Branch `claude/quirky-meitner-338bda`.
 
 **Soak tier:** T1 Smoke (pure additive frontend, no migration/cron/chain).
 
-**DoD gates met:** Tests (gate 1), Jira updated with Confluence URL (gate 2), Confluence page [44072961](https://arkova.atlassian.net/wiki/spaces/A/pages/44072961) (gate 3), Bug log N/A — no bug, existing gap (gate 4), agents.md updated in `src/` (gate 5), HANDOFF.md updated (gate 6). Gate 7 pending CI.
+**What's done:** Tests written and passing (gate 1). Jira updated with Confluence URL (gate 2). Confluence page [44072961](https://arkova.atlassian.net/wiki/spaces/A/pages/44072961) (gate 3). Bug log N/A (gate 4). agents.md updated (gate 5). HANDOFF.md updated (gate 6).
+
+**What's NOT done:** No staging sandbox verification. The retroactive staging plan requires staging role-aware navigation across individual, org member, org admin, and no-role users, tested from multiple pages, with keyboard and mobile behavior. No staging deploy was done for this feature. Gate 7 pending CI.
 
 **Jira:** [SCRUM-1787](https://arkova.atlassian.net/browse/SCRUM-1787) — To Do (transitions to In Progress when PR opens / CI runs).
 
