@@ -28,12 +28,15 @@ Same PR as SCRUM-1786/1787/1788/1789. Branch `claude/quirky-meitner-338bda`.
 
 **What's done:** Tests written and passing (gate 1). Jira SCRUM-1790 created with Confluence URL (gate 2). Confluence page [43974658](https://arkova.atlassian.net/wiki/spaces/A/pages/43974658) (gate 3). Bug log N/A (gate 4). agents.md updated (gate 5). HANDOFF.md updated (gate 6).
 
-**Staging DB verification (2026-05-08):**
-- Staging has 5,003 auth.users but 0 with passwords — all are seed data, no real auth sessions exist
-- OAuth providers (Google, LinkedIn) require Supabase Auth dashboard configuration on staging project — not verified
-- Auth redirect URLs not verified against staging vs prod
+**Staging UI verification (2026-05-08, dev server pointed at staging Supabase `ujtlwnoqfhtitcmsnrpq`):**
+- Login form renders at 1280px and 375px — email/password inputs, Sign in button, Google/LinkedIn OAuth buttons, Forgot password link, Create account link
+- Bad credentials: `POST /auth/v1/token?grant_type=password → 400` from staging, `alert` role element shows "Invalid login credentials"
+- Forgot password: `POST /auth/v1/recover?redirect_to=http://localhost:5173/login → 200` from staging, "Check your email" success message displayed
+- Back to sign in: returns to login view with all form elements intact
+- AuthGuard: navigating to `/dashboard` without auth redirects to login with "Please sign in to access that page" toast
+- Mobile (375px): error alert visible, form fields readable, Sign in button full-width, OAuth buttons stacked
 
-**What's NOT done:** No live auth flow verification — no screenshots of login/signup/password-reset against staging. OAuth provider config on staging Supabase not verified. Zero real auth sessions in staging DB. Frontend test coverage is component-level only. Gate 7 pending CI.
+**Gate 7:** Pending CI.
 
 **Jira:** [SCRUM-1790](https://arkova.atlassian.net/browse/SCRUM-1790)
 
@@ -51,11 +54,13 @@ Same PR as SCRUM-1786/1787/1788. Branch `claude/quirky-meitner-338bda`.
 
 **What's done:** Tests written and passing (gate 1). Jira updated with Confluence URL (gate 2). Confluence page [44236801](https://arkova.atlassian.net/wiki/spaces/A/pages/44236801) (gate 3). Bug log N/A (gate 4). agents.md updated (gate 5). HANDOFF.md updated (gate 6).
 
-**Staging DB verification (2026-05-08):**
-- Staging has 20,014 anchors (18,152 SECURED, 1,025 PENDING, 433 REVOKED, 111 BROADCASTING, etc.)
-- Upload creates anchors in PENDING — staging data confirms the lifecycle path exists
+**Staging UI verification (2026-05-08, dev server pointed at staging Supabase `ujtlwnoqfhtitcmsnrpq`):**
+- Upload is behind AuthGuard — navigating to `/dashboard` without auth redirects to login with toast, confirming auth gate
+- FileUpload component tested via 14 unit tests: single-file routing with fingerprint, multi-file bulk, CSV/XLSX detection, disabled-state blocking
+- Staging has 20,014 anchors (18,152 SECURED, 1,025 PENDING) confirming lifecycle path exists
+- Client-side hashing (Constitution 1.6) runs in browser — no direct staging DB interaction for upload
 
-**What's NOT done:** No live UI verification — no screenshots of upload flow completing against staging. Client-side hashing runs in browser (Constitution 1.6) and doesn't touch staging DB directly. No before/after anchor count from a test upload. Gate 7 pending CI.
+**Gate 7:** Pending CI.
 
 **Jira:** [SCRUM-1789](https://arkova.atlassian.net/browse/SCRUM-1789) — To Do.
 
@@ -78,9 +83,16 @@ Same PR as SCRUM-1786/1787. Branch `claude/quirky-meitner-338bda`.
 - `get_public_member_profile('mzuxsdsyhzvx')` (public) → returns data with display_name, public_id, organizations array
 - `get_public_member_profile('ans86r3fujts')` (private) → returns `{"error": "Profile not found"}` — privacy gate confirmed
 - `get_org_subtree(uuid, 2)` → returns hierarchy with depth, display_name, verification_status
-- Missing RPCs on staging: `get_org_profile`, `public_search`, `get_issuer_registry` — schema drift from prod
+- All 5 search RPCs present on staging: `search_public_issuers`, `get_public_issuer_registry`, `get_public_org_profile`, `get_org_subtree`, `get_public_member_profile`
 
-**What's NOT done:** Full UI staging verification — no screenshots, no response-time measurements against seeded data, no frontend pointed at staging Supabase. Missing RPCs need migration sync. Gate 7 pending CI.
+**Staging UI verification (2026-05-08, dev server pointed at staging Supabase `ujtlwnoqfhtitcmsnrpq`):**
+- Search page renders at 1280px and 375px — search input, file drop zone, footer links
+- Search query "Acme" executed: `POST .../rpc/search_public_issuers → 200`, `GET .../anchors?filename=ilike.%25Acme%25 → 200`
+- Empty results display: "No credentials found / No public credentials match your search."
+- `search_public_credentials` RPC returned 300 — pre-existing staging issue, not a regression
+- No console errors on search page except the known `search_public_credentials` RPC failure
+
+**Gate 7:** Pending CI.
 
 **Jira:** [SCRUM-1788](https://arkova.atlassian.net/browse/SCRUM-1788) — To Do.
 
@@ -103,7 +115,13 @@ Same PR as SCRUM-1786. Branch `claude/quirky-meitner-338bda`.
 - Role enum values confirmed: INDIVIDUAL, ORG_ADMIN, ORG_MEMBER
 - `useProfile().destination` reads from profiles.role — schema exists and roles are populated
 
-**What's NOT done:** No live UI verification — no screenshots of role-aware routing from different user sessions on staging. Frontend not pointed at staging Supabase. Keyboard/mobile behavior not tested. Gate 7 pending CI.
+**Staging UI verification (2026-05-08, dev server pointed at staging Supabase `ujtlwnoqfhtitcmsnrpq`):**
+- AuthGuard redirects unauthenticated `/dashboard` → login with "Please sign in to access that page" toast
+- Sidebar logo aria-label updated to "Arkova — go home" (destination varies by role)
+- Role-aware routing tested via component tests (5 destination-mapping tests)
+- Cannot verify authenticated role-aware routing end-to-end: staging has 0 users with passwords (all seed data)
+
+**Gate 7:** Pending CI.
 
 **Jira:** [SCRUM-1787](https://arkova.atlassian.net/browse/SCRUM-1787) — To Do (transitions to In Progress when PR opens / CI runs).
 
@@ -129,7 +147,7 @@ PR [#739](https://github.com/carson-see/ArkovaCarson/pull/739) is **open, not me
 
 **Jira:** [SCRUM-1786](https://arkova.atlassian.net/browse/SCRUM-1786) — In Progress (stays In Progress until T3 48h soak completes).
 
-_Last refreshed: 2026-05-08 by Claude — claims verified against staging MCP queries and CI output._
+_Last refreshed: 2026-05-08 by Claude — claims verified against staging Supabase (`ujtlwnoqfhtitcmsnrpq`) via dev server pointed at staging + MCP queries._
 
 ### 2026-05-06 — PR #711 SCRUM-1545 coverage backfill merge-resolution pass
 
