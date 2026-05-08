@@ -173,6 +173,34 @@ PR [#700](https://github.com/carson-see/ArkovaCarson/pull/700) remains the Path 
 
 **Still required before #700 is Done/merge-ready:** final branch-protection checks green on the latest pushed head, review approval, and real #700 worker/staging behavior evidence. Shared staging is active in parallel work, so #700 should not acquire or mutate it without coordination; use an explicitly approved isolated environment or wait for the staging lease. Until that evidence is captured, #700 remains honest as schema-equivalence plus CI/fresh-DB/prod-schema validation, not a completed T2/T3 behavior soak.
 
+### 2026-05-08 — SCRUM-1740 [Implement] partner sandbox migration + provisioning + HakiChain pilot live on staging (branch `claude/scrum-1740-sandbox-implement`)
+
+**Migration applied to arkova-staging** (project_ref `ujtlwnoqfhtitcmsnrpq`) at 2026-05-08T13:09Z via Supabase MCP `apply_migration`. Adds `org_credits.is_test` (default false) + `org_credits.anchor_quota` (nullable) + partial index `idx_org_credits_is_test`. NOTIFY pgrst reload schema fired.
+
+**HakiChain pilot org provisioned on staging:**
+
+- org_id: `f8419c9d-e925-415c-8b45-e648b3708eb2`
+- public_id: `ORG-TEST-HAKICHAIN-D724D647`
+- display_name: `[SANDBOX] hakichain`
+- org_credits row: `balance=5, purchased=5, anchor_quota=10, is_test=true`
+- API key id: `ffb1a024-5572-4447-a83a-caa8e12edd74` (key_prefix `ak_test_KzVv`)
+- scopes: `[read:search, read:records, read:orgs, anchor:write]`
+- raw key delivered via stdout to operator (never persisted in plaintext per CLAUDE.md §1.4)
+
+**End-to-end smoke from provisioned key:** `GET /api/v1/verify/ARK-2026-SCRUM1736T2` (the SCRUM-1736 fixture from the prior soak) returned 200 with `{verified:false, status:"EXPIRED", expiry_date:"2025-01-01T00:00:00+00:00"}` — full chain works (provisioning → API key → verify endpoint → SCRUM-1736 EXPIRED status correctly surfaced).
+
+What shipped on this branch:
+
+- `supabase/migrations/0297_test_credit_pool.sql` (new) — adds is_test + anchor_quota + partial index + NOTIFY pgrst + ROLLBACK + IF NOT EXISTS DDL.
+- `scripts/admin/provision-sandbox-org.ts` (new) — idempotent TS admin script. HMAC-SHA256 hashes API key per CLAUDE.md §1.4; raw key shown once via stdout. Resolves api_keys.created_by from any profile so the NOT NULL constraint is satisfied.
+- `scripts/admin/provision-sandbox-org.test.ts` (new) — 4 unit tests on `hmacApiKey`: hex digest format, determinism, raw-key sensitivity, secret-rotation sensitivity.
+
+Local quality gates: `npx vitest run scripts/admin/provision-sandbox-org.test.ts` → 4/4 pass; `apply_migration` MCP returned `{success: true}`.
+
+Tier: T2. Migration applied to staging. Provisioning ran end-to-end. /verify smoke confirmed against the SCRUM-1736 EXPIRED fixture.
+
+_Last refreshed: 2026-05-08 by claude — claims verified against gcloud/MCP/CI output (apply_migration MCP returned success against project_ref ujtlwnoqfhtitcmsnrpq; PostgREST GET on org_credits + api_keys confirmed row state; live curl against arkova-worker-pr734-staging /api/v1/verify/ARK-2026-SCRUM1736T2 returned verified:false status:EXPIRED)._
+
 ### 2026-05-06 — PR #711 SCRUM-1545 coverage backfill merge-resolution pass
 
 PR [#711](https://github.com/carson-see/ArkovaCarson/pull/711) remains test-only and exists to close the R4-4-FU coverage gap for `services/worker/src/jobs/anchor.ts`, `services/worker/src/chain/client.ts`, and `services/worker/src/index.ts`. It adds `anchor-coverage.test.ts`, strengthens chain/index tests, and raises worker coverage thresholds for the targeted files. `services/worker/src/api/admin-pipeline-stats.ts` coverage was handled in PR [#690](https://github.com/carson-see/ArkovaCarson/pull/690); it is not an unmerged follow-up hidden inside #711.
