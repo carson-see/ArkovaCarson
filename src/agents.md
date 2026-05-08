@@ -36,6 +36,7 @@ React 18 frontend application — TypeScript + Tailwind CSS + shadcn/ui + Vite b
 ## Recent Changes
 
 - **SCRUM-1787 — Role-aware home navigation** (2026-05-08): Sidebar logo uses `useProfile().destination` + `destinationToRoute()` for role-aware home routing. Previously hardcoded to `/search`. Now routes to `/dashboard`, `/onboarding/role`, `/onboarding/org`, or `/review-pending` based on user state. Implementation in `src/components/layout/Sidebar.tsx`.
+- **SCRUM-1788 — Search verification** (2026-05-08): Added privacy gate tests for `useOrgProfile`, `usePublicMemberProfile`, and `useOrgSubtree` hooks. Verifies `is_public_profile` anonymization in org profiles and 404 behavior for non-public member profiles. 8 search surfaces documented with RLS isolation evidence and p95 < 200ms response-time threshold.
 
 ## Testing
 

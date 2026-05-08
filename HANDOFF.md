@@ -14,6 +14,22 @@
 
 ## Now
 
+### 2026-05-08 — SCRUM-1788 Search verification: privacy gates, RLS isolation (PR #739, T1)
+
+Same PR as SCRUM-1786/1787. Branch `claude/quirky-meitner-338bda`.
+
+**Problem:** Feature 6 (Search) in the retroactive staging plan lacked documented product expectations, privacy gate test coverage, and RLS isolation evidence.
+
+**Fix:** Added 12 new tests for `useOrgProfile` (privacy anonymization), `usePublicMemberProfile` (is_public_profile gate), and `useOrgSubtree` hooks. Documented 8 search surfaces with auth requirements, scope, and privacy gates. Confirmed existing cross-tenant isolation tests (SCRUM-1224) and p95 < 200ms response-time threshold.
+
+**Tests:** 1,893 total (12 new). `typecheck` + `lint` + `test` + `lint:copy` all green.
+
+**Soak tier:** T1 Smoke (pure additive tests, no migration/cron/chain).
+
+**DoD gates met:** Tests (gate 1), Jira updated with Confluence URL (gate 2), Confluence page [44138497](https://arkova.atlassian.net/wiki/spaces/A/pages/44138497) (gate 3), Bug log N/A (gate 4), agents.md updated in `src/` (gate 5), HANDOFF.md updated (gate 6). Gate 7 pending CI.
+
+**Jira:** [SCRUM-1788](https://arkova.atlassian.net/browse/SCRUM-1788) — To Do (transitions when PR opens / CI runs).
+
 ### 2026-05-08 — SCRUM-1787 Role-aware home navigation shortcut (PR #739, T1)
 
 Same PR as SCRUM-1786. Branch `claude/quirky-meitner-338bda`.
