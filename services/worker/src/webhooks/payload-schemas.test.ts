@@ -17,6 +17,7 @@ import {
   AnchorSubmittedPayloadSchema,
   AnchorSecuredPayloadSchema,
   AnchorRevokedPayloadSchema,
+  AnchorExpiredPayloadSchema,
   AnchorBatchSecuredPayloadSchema,
   validateWebhookPayload,
   WebhookPayloadValidationError,
@@ -148,6 +149,50 @@ describe('AnchorRevokedPayloadSchema', () => {
   });
 });
 
+describe('AnchorExpiredPayloadSchema', () => {
+  const valid = {
+    public_id: 'abc123',
+    chain_tx_id: 'fake-tx-id',
+    chain_block_height: 850000,
+    expired_at: '2026-04-26T00:00:00Z',
+    status: 'EXPIRED' as const,
+  };
+
+  it('accepts an EXPIRED payload with only public-allowed fields', () => {
+    expect(AnchorExpiredPayloadSchema.safeParse(valid).success).toBe(true);
+  });
+
+  it('accepts an EXPIRED payload with optional expiry_reason', () => {
+    expect(AnchorExpiredPayloadSchema.safeParse({ ...valid, expiry_reason: 'expires_at_passed' }).success).toBe(true);
+    expect(AnchorExpiredPayloadSchema.safeParse({ ...valid, expiry_reason: null }).success).toBe(true);
+  });
+
+  it('rejects an EXPIRED payload that includes anchor_id (CLAUDE.md §6)', () => {
+    expect(AnchorExpiredPayloadSchema.safeParse({ ...valid, anchor_id: 'uuid' }).success).toBe(false);
+  });
+
+  it('rejects an EXPIRED payload that includes the raw fingerprint (CLAUDE.md §1.6)', () => {
+    expect(AnchorExpiredPayloadSchema.safeParse({ ...valid, fingerprint: 'a'.repeat(64) }).success).toBe(false);
+  });
+
+  it('rejects an EXPIRED payload that includes user_id', () => {
+    expect(AnchorExpiredPayloadSchema.safeParse({ ...valid, user_id: '550e8400-e29b-41d4-a716-446655440001' }).success).toBe(false);
+  });
+
+  it('rejects an EXPIRED payload that includes org_id', () => {
+    expect(AnchorExpiredPayloadSchema.safeParse({ ...valid, org_id: '550e8400-e29b-41d4-a716-446655440002' }).success).toBe(false);
+  });
+
+  it('rejects non-ISO expired_at timestamps', () => {
+    expect(AnchorExpiredPayloadSchema.safeParse({ ...valid, expired_at: '2026-04-26 00:00:00' }).success).toBe(false);
+  });
+
+  it('rejects status other than EXPIRED', () => {
+    expect(AnchorExpiredPayloadSchema.safeParse({ ...valid, status: 'REVOKED' }).success).toBe(false);
+    expect(AnchorExpiredPayloadSchema.safeParse({ ...valid, status: 'SECURED' }).success).toBe(false);
+  });
+});
+
 describe('AnchorBatchSecuredPayloadSchema', () => {
   const valid = {
     chain_tx_id: 'fake-tx-id',
@@ -201,6 +246,34 @@ describe('validateWebhookPayload helper', () => {
     if (!result.ok) {
       expect(result.error).toBeInstanceOf(WebhookPayloadValidationError);
       expect(result.error.eventType).toBe('anchor.secured');
+    }
+  });
+
+  it('returns ok:true for a clean anchor.expired payload (closes pre-fix bypass gap)', () => {
+    const result = validateWebhookPayload('anchor.expired', {
+      public_id: 'abc123',
+      chain_tx_id: 'fake-tx-id',
+      chain_block_height: 850000,
+      expired_at: '2026-04-26T00:00:00Z',
+      status: 'EXPIRED',
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.bypassed).toBeUndefined();
+  });
+
+  it('returns ok:false when anchor_id leaks into anchor.expired (regression: pre-fix this silently bypassed validation)', () => {
+    const result = validateWebhookPayload('anchor.expired', {
+      public_id: 'abc123',
+      chain_tx_id: 'fake-tx-id',
+      chain_block_height: 850000,
+      expired_at: '2026-04-26T00:00:00Z',
+      status: 'EXPIRED',
+      anchor_id: '550e8400-e29b-41d4-a716-446655440000',
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.error).toBeInstanceOf(WebhookPayloadValidationError);
+      expect(result.error.eventType).toBe('anchor.expired');
     }
   });
 

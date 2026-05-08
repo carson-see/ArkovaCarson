@@ -56,13 +56,15 @@ API keys are scoped to a single organization. All webhook operations are automat
 
 ## Event Types
 
-| Event | Fired When |
-|---|---|
-| `anchor.secured` | Anchor transitions from `PENDING`/`SUBMITTED` → `SECURED` after network confirmation |
-| `anchor.revoked` | Anchor is revoked by an org admin (revocation receipt published on-chain) |
-| `anchor.expired` | Anchor's `expires_at` timestamp passes |
+| Event | Fired When | Payload Schema |
+|---|---|---|
+| `anchor.secured` | Anchor transitions from `PENDING`/`SUBMITTED` → `SECURED` after network confirmation | Strict — `public_id`, `chain_tx_id`, `chain_block_height`, `chain_timestamp`, `secured_at`, `status: "SECURED"`, optional `org_public_id` |
+| `anchor.revoked` | Anchor is revoked by an org admin (revocation receipt published on-chain) | Strict — `public_id`, `chain_tx_id`, `chain_block_height`, `revoked_at`, `status: "REVOKED"`, optional `revocation_reason`, optional `org_public_id` |
+| `anchor.expired` | Anchor's `expires_at` timestamp passes | Strict — `public_id`, `chain_tx_id`, `chain_block_height`, `expired_at`, `status: "EXPIRED"`, optional `expiry_reason`, optional `org_public_id` |
 
 You can subscribe to any subset of these events per endpoint. The default at registration time is `['anchor.secured', 'anchor.revoked']`.
+
+All payload schemas are strict (`.strict()`): unknown keys are rejected before signing. Internal identifiers (`anchor_id`, `user_id`, `org_id`) and `fingerprint` will never appear in delivered payloads — see `services/worker/src/webhooks/payload-schemas.ts`.
 
 ### Backfill Behavior
 

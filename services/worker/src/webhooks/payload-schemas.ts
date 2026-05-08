@@ -89,6 +89,22 @@ export const AnchorRevokedPayloadSchema = z
   })
   .strict();
 
+// `anchor.expired` is a customer-subscribable event (see VALID_WEBHOOK_EVENTS
+// in services/worker/src/api/v1/webhooks-schemas.ts). Without this schema,
+// `validateWebhookPayload` falls through the unknown-event-type branch and
+// returns `{ ok: true, bypassed: true }` — silently shipping any payload to
+// the customer endpoint, including ones with banned `anchor_id` / `fingerprint`
+// fields. CLAUDE.md §6 (no internal UUIDs) + §1.6 (fingerprint client-side)
+// were therefore unenforced for this event type until this schema landed.
+export const AnchorExpiredPayloadSchema = z
+  .object({
+    ...ANCHOR_BASE_FIELDS,
+    status: z.literal('EXPIRED'),
+    expired_at: isoTimestamp,
+    expiry_reason: z.string().nullable().optional(),
+  })
+  .strict();
+
 /**
  * Aggregate event for the merkle-batch path. Fires once per merkle TX.
  * Per-anchor `anchor.secured` events still fan out alongside this for
@@ -113,6 +129,7 @@ export const PAYLOAD_SCHEMAS_BY_EVENT_TYPE = {
   'anchor.submitted': AnchorSubmittedPayloadSchema,
   'anchor.secured': AnchorSecuredPayloadSchema,
   'anchor.revoked': AnchorRevokedPayloadSchema,
+  'anchor.expired': AnchorExpiredPayloadSchema,
   'anchor.batch_secured': AnchorBatchSecuredPayloadSchema,
 } as const;
 
@@ -120,6 +137,7 @@ export type WebhookEventType = keyof typeof PAYLOAD_SCHEMAS_BY_EVENT_TYPE;
 export type AnchorSubmittedPayload = z.infer<typeof AnchorSubmittedPayloadSchema>;
 export type AnchorSecuredPayload = z.infer<typeof AnchorSecuredPayloadSchema>;
 export type AnchorRevokedPayload = z.infer<typeof AnchorRevokedPayloadSchema>;
+export type AnchorExpiredPayload = z.infer<typeof AnchorExpiredPayloadSchema>;
 export type AnchorBatchSecuredPayload = z.infer<typeof AnchorBatchSecuredPayloadSchema>;
 
 export class WebhookPayloadValidationError extends Error {
