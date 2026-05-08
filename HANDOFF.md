@@ -14,6 +14,57 @@
 
 ## Now
 
+### 2026-05-08 (afternoon) — HakiChain pre-launch session: 7 PRs in-flight, sandbox provisioned end-to-end, MCP edge wired, prod migrations applied (operational summary)
+
+**Operational state at session close (no PRs merged this session — all human-gated per §0 rule 1):**
+
+* **PR #735 (SCRUM-1731)** v2 per-scope rate-limit contract-lock test. CI green except CodeRabbit credit-pool exhausted. Gate status: tests green, no T-required soak (test-only), Confluence per-story page MISSING.
+* **PR #736 (SCRUM-1732)** anchor-submit metadata persistence contract-lock test. Same gate status as #735.
+* **PR #737 (SCRUM-1733)** REST v2 + MCP parity contract via shared Zod schemas + recursive banned-field guard. Was APPROVED; SonarCloud localeCompare follow-up + branch-protection stale-on-push dismissal — needs re-approval. Per-story Confluence page MISSING.
+* **PR #734 (SCRUM-1735 + SCRUM-1736)** combined `anchor.expired` schema + `anchorExpirySweep` cron. Tier T3 declared (path detector); **the literal CLAUDE.md §1.12 48h soak was NOT executed — only a 5-min smoke + rollback rehearsal on `arkova-worker-pr734-staging`**. Carson decides scope-drop vs override before Mon launch.
+* **PR #738 (SCRUM-1740)** partner sandbox migration (0297 + 0298) + provisioning script + new `anchorQuotaGate` middleware (commit 9fdaed23) returning 402 problem+json on quota-exhausted. Migration applied to prod ledger 2026-05-08 14:14Z; quota gate not deployed (PR not merged). T2 4h soak NOT executed; smoke + rollback only.
+* **PR #741 (SCRUM-1793 NEW)** `validate_api_key` RPC migration. Applied to prod (`vzwyaatejekddvltxyye`) and staging (`ujtlwnoqfhtitcmsnrpq`) via Supabase MCP `apply_migration`. Live MCP `initialize` handshake against `https://edge.arkova.ai/mcp` returned HTTP 200 with `serverInfo.name=arkova-verification, protocolVersion=2024-11-05` against the HakiChain sandbox key. Cloudflare KV write to `MCP_ORIGIN_ALLOWLIST_KV` (5ace0a24…) at `allow:c75d84b9-…` permits the sandbox key with wildcard CIDR.
+
+**Prod state changes this session (verified via Supabase MCP `execute_sql` against project_ref `vzwyaatejekddvltxyye`):**
+
+* Migration `0297_test_credit_pool` applied — `org_credits.is_test`, `org_credits.anchor_quota`, `idx_org_credits_is_test` partial index. Verified via `information_schema.columns` + `pg_indexes`.
+* Migration `0298_anchor_quota_nonneg_check` applied — `org_credits_anchor_quota_nonneg` CHECK constraint. Verified via `pg_constraint`.
+* Migration `0299_validate_api_key_rpc` applied — `private` schema, `private.api_key_settings` (singleton, service-role only), `public.validate_api_key(text)` SECURITY DEFINER function. HMAC secret seeded matching arkova1 GCP `api-key-hmac-secret`. Verified via `SELECT public.validate_api_key('ak_test_…')` returning `{user_id, tier, api_key_id, scopes}`.
+* Sandbox org `[SANDBOX] hakichain` (id `ca1c9a22-5ac7-412e-b501-f48ba1897ded`) + `org_credits` (`anchor_quota=10`, `balance=5`, `purchased=5`, `is_test=true`) + `api_keys` (id `c75d84b9-…`, prefix `ak_test_Yqhm`, scopes `[verify, read:search, read:records, read:orgs, anchor:write]`).
+* Carson's `subscriptions` row rolled forward (was 18 days stale, plan_id professional → organization, period 2026-05-08 → 2026-06-07) — workaround for SCRUM-1791.
+
+**Staging state (project_ref `ujtlwnoqfhtitcmsnrpq`) mirrors prod for the new migrations + sandbox org + new key.**
+
+**Cloudflare state (Worker `arkova-edge`, KV namespace `5ace0a24154a4731b263285890ae3a10`):**
+
+* Wrote `allow:c75d84b9-75c8-493a-9aae-0b00701e92ba` = `{"mode":"allowlist","cidrs":["0.0.0.0/0","::/0"]}`. `MCP_ALLOWLIST_HMAC_SECRET` is unset on the worker so the legacy raw-JSON entry shape is accepted (per `mcp-origin-allowlist.ts` back-compat path).
+
+**Followups filed this session:**
+
+* **SCRUM-1791** [BUG] `subscriptions.current_period_*` never auto-rolls forward (Carson's account hit it; manual SQL roll applied; root cause unfixed).
+* **SCRUM-1792** [Story] Operator-bypass for per-user monthly anchor counter (3,581+/100 over-limit toast on Carson's account because `get_user_monthly_anchor_count` conflates operator activity with billing usage).
+* **SCRUM-1793** [BUG] MCP edge `validate_api_key` RPC missing — RESOLVED in PR #741.
+
+**Partner-facing artifacts:**
+
+* Confluence quickstart page **43515913** v4 (corrects v1 mistakes about hostname `.io` → `.ai`, webhook signature `${timestamp}.${body}` not bare body, 10s timeout not 30, exponential 2/4/8/16/32s retry not 1m/5m/30m, `record_uri` returns `app.arkova.ai/verify/...` not `arkova.io/verify/...`, includes legacy `verify` scope which v1 verify endpoint requires, lists v2 endpoint paths mounted at `/api/v2/` root not `/api/v2/agent/`).
+* Google Doc **https://docs.google.com/document/d/1bxsfpiuG-gCxSSGREbiQbOs2yjlW7KsuYn2oJ0km0bM/edit** (v4 mirror of the Confluence page).
+* Earlier Google Doc v1/v2 (`1nZLbiiWObFtKfHZlpNNrA1DC4f9DSNsHCwJuxbb8QSs`, `1icjgvGvNLYhb0aRNjE0gTTrNoCylp428tjx0YwIRxS4`) are stale — superseded by v4. Recommend deleting them when convenient.
+
+**What's NOT done before Mon 2026-05-11 launch (truth, not aspiration):**
+
+* No PR merged — Carson's gate.
+* CodeRabbit credits exhausted — 5 PRs stuck `CHANGES_REQUESTED`.
+* T3 48h soak for SCRUM-1736 — mathematically infeasible Fri afternoon → Mon launch. Decision needed: scope-drop the producer to post-launch OR override §1.12 with a one-time exception (Carson).
+* T2 4h soak for SCRUM-1740 — feasible if started immediately Sat AM.
+* `api.arkova.ai` DNS — not configured (10-min Cloud Run console task; Carson).
+* Confluence "Webhooks" topic page (Doc Update Matrix §4) — exists at SCRUM-1735 SOC 2 page (42663964) but the canonical `Webhooks` topic page for partner-facing reference still inherits the brief at 42532874.
+* `agents.md` audit per touched folder — only `services/worker/src/webhooks/agents.md` updated this session.
+* Per-story Confluence pages MISSING for SCRUM-1731, 1732, 1733, 1736, 1740, 1793, 1791, 1792.
+* HakiChain receiver round-trip — partner action, gates SCRUM-1737 + AC8 of SCRUM-1729.
+
+_Last refreshed: 2026-05-08 by claude — claims verified against gcloud/MCP/CI output (Supabase MCP apply_migration returned success on 0297/0298/0299; SELECT verifications captured; live MCP initialize handshake screenshot in PR #741; gcloud secrets access for HMAC secret value via arkova1 secret manager; gh pr view confirms PR open state and commit SHAs)._
+
 ### 2026-05-04 (evening, post-cutover) — SCRUM-1668 Path C baseline prod ledger row recorded ([PR #700](https://github.com/carson-see/ArkovaCarson/pull/700) not merge-ready)
 
 > **This entry supersedes Path C references in the late-evening entry below** (which was written when Path C was a separate session and PR #700 hadn't been opened yet). Where the two conflict, this entry is current.
