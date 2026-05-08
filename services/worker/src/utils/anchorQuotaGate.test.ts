@@ -63,12 +63,17 @@ function makeDb(opts: FakeDbOpts): any {
         };
       }
       if (table === 'anchors') {
+        // After SCRUM-1254 refactor: select('id').eq.is.limit(quota+1)
+        // returns rows array; quota gate counts rows.length. Build a chain
+        // that resolves with `data: <rows-of-length-count>`.
         return {
           select: vi.fn(() => ({
             eq: vi.fn(() => ({
-              is: vi.fn(async () => ({
-                count: opts.count ?? 0,
-                error: opts.countError ?? null,
+              is: vi.fn(() => ({
+                limit: vi.fn(async () => ({
+                  data: opts.countError ? null : Array.from({ length: opts.count ?? 0 }, (_, i) => ({ id: `id-${i}` })),
+                  error: opts.countError ?? null,
+                })),
               })),
             })),
           })),

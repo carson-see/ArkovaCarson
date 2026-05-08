@@ -61,22 +61,26 @@ export async function ensureAnchorQuotaAvailable(
   // No row, or non-sandbox org, or no cap configured → no gating.
   if (!row || row.is_test !== true || row.anchor_quota == null) return true;
 
-  // Count this org's existing non-deleted anchors. `head: true, count: 'exact'`
-  // returns just the count without rows, which is what the org_credits
-  // count baseline test enforces project-wide.
-  const { count, error: countError } = await db
+  // We only need to know if usage is >= quota — exact count is unnecessary.
+  // SELECT 1 LIMIT (quota+1) on the (org_id, deleted_at) index returns at
+  // most quota+1 rows; if rows.length > quota the cap is hit. This avoids
+  // `count: 'exact'` which forces a full COUNT(*) scan and fails the
+  // SCRUM-1254 (R0-8) repo-wide baseline check (count: 'exact' on the 2.9M-
+  // row anchors table caused the 60-second PostgREST timeouts in prod).
+  const quota = row.anchor_quota;
+  const { data: rows, error: countError } = await db
     .from('anchors')
-    .select('id', { count: 'exact', head: true })
+    .select('id')
     .eq('org_id', orgId)
-    .is('deleted_at', null);
+    .is('deleted_at', null)
+    .limit(quota + 1);
 
   if (countError) {
     logger.error({ err: countError.message ?? String(countError), orgId }, 'anchor_quota_gate_count_failed');
     return true;
   }
 
-  const used = count ?? 0;
-  const quota = row.anchor_quota;
+  const used = rows?.length ?? 0;
 
   if (used < quota) return true;
 
