@@ -1,48 +1,32 @@
 /**
- * SEC-009: View SECURITY INVOKER Audit
- * SEC-010: SSRF via HTTP Extension Prevention
+ * SEC-009 / SEC-010 — retired by SCRUM-1668 Path C.
  *
- * Static tests verifying migration 0112 includes the required security fixes.
+ * Original test asserted that migration 0112 contained specific SQL
+ * (REVOKE on http_*, security_invoker=true on views). After Path C
+ * collapsed 0000..0289 into the baseline pg_dump, the migration file no
+ * longer exists on disk and pg_dump does not preserve negative privilege
+ * state (REVOKEs are inferred from absence, not asserted).
+ *
+ * The two underlying invariants are now enforced elsewhere:
+ *   - SEC-009 (view security_invoker): scripts/ci/check-views-security-invoker.ts
+ *     runs in the Dependency Scanning CI job and blocks any new view
+ *     without `security_invoker = true` (or the
+ *     `view-security-definer-intentional` PR label for known exceptions).
+ *   - SEC-010 (http extension exposure): the property is "http_*
+ *     functions are not granted to anon/authenticated." Any future
+ *     migration that re-grants them lands in supabase/migrations/ and
+ *     would be caught at review (search for `GRANT EXECUTE ON FUNCTION
+ *     http_`). No static SQL test can prove a negative on the pg_dump
+ *     baseline; runtime RLS tests (tests/rls/) cover the live state
+ *     against staging.
+ *
+ * Leaving this file intentionally as a no-op test so the path stays
+ * grep-discoverable for any future hand-back of the SEC-009/010 IDs.
  */
+import { describe, it } from 'vitest';
 
-import { describe, it, expect } from 'vitest';
-import * as fs from 'node:fs';
-import * as path from 'node:path';
-
-const MIGRATION_PATH = path.join(
-  process.cwd(),
-  'supabase/migrations/0112_security_view_invoker_ssrf.sql',
-);
-
-describe('SEC-009: View SECURITY INVOKER', () => {
-  it('migration 0112 recreates views with security_invoker = true', () => {
-    const content = fs.readFileSync(MIGRATION_PATH, 'utf8');
-    expect(content).toContain('security_invoker = true');
-    expect(content).toContain('pg_views');
-    expect(content).toContain("schemaname = 'public'");
-  });
-});
-
-describe('SEC-010: SSRF via HTTP Extension', () => {
-  it('migration 0112 revokes http_get from anon and authenticated', () => {
-    const content = fs.readFileSync(MIGRATION_PATH, 'utf8');
-    expect(content).toContain('REVOKE ALL ON FUNCTION http_get(text) FROM anon, authenticated');
-  });
-
-  it('migration 0112 revokes http_post from anon and authenticated', () => {
-    const content = fs.readFileSync(MIGRATION_PATH, 'utf8');
-    expect(content).toContain('REVOKE ALL ON FUNCTION http_post(text, text) FROM anon, authenticated');
-  });
-
-  it('migration 0112 revokes http_delete, http_put, http_head', () => {
-    const content = fs.readFileSync(MIGRATION_PATH, 'utf8');
-    expect(content).toContain('http_delete');
-    expect(content).toContain('http_put');
-    expect(content).toContain('http_head');
-  });
-
-  it('migration 0112 has rollback instructions', () => {
-    const content = fs.readFileSync(MIGRATION_PATH, 'utf8');
-    expect(content).toContain('ROLLBACK');
+describe('SEC-009 / SEC-010 — retired (see file header)', () => {
+  it.skip('migration-0112 static checks retired — replaced by CI gate + RLS tests', () => {
+    // No-op: see file header for the migration trail.
   });
 });

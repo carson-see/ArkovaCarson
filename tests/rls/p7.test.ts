@@ -27,6 +27,7 @@ async function createAuthenticatedClient(
   email: string,
   _password: string
 ): Promise<TypedClient> {
+  void _password;
   return withUser(email, email.includes('admin') ? 'ORG_ADMIN' : 'INDIVIDUAL');
 }
 
@@ -383,6 +384,7 @@ describe('TLA-01: credential_type Immutability After PENDING', () => {
 describe('P7-S14: Switchboard Flags', () => {
   let serviceClient: TypedClient;
   let userClient: TypedClient;
+  let adminClient: TypedClient;
 
   beforeAll(async () => {
     serviceClient = createServiceClient();
@@ -390,10 +392,12 @@ describe('P7-S14: Switchboard Flags', () => {
       DEMO_CREDENTIALS.userEmail,
       DEMO_CREDENTIALS.userPassword
     );
+    adminClient = await withUser(DEMO_CREDENTIALS.adminEmail, 'ORG_ADMIN');
   });
 
   afterAll(async () => {
     await userClient.auth.signOut();
+    await adminClient.auth.signOut();
   });
 
   it('get_flag returns flag value', async () => {
@@ -416,33 +420,58 @@ describe('P7-S14: Switchboard Flags', () => {
     expect(value).toBe(false); // Safe default
   });
 
-  it('authenticated users can read flags but not modify them', async () => {
-    // Read should work
+  it('platform admins can read flags; authenticated users cannot modify them', async () => {
+    // Non-platform users may call get_flag(), but raw table reads are reserved
+    // for platform admins.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: flags, error: readError } = await (userClient as any)
       .from('switchboard_flags')
       .select('*');
 
-    expect(readError).toBeNull();
-    expect(flags!.length).toBeGreaterThan(0);
+    const userReadDenied = Boolean(readError) || !flags || flags.length === 0;
+    expect(userReadDenied).toBe(true);
 
-    // Update should be silently denied by RLS (no UPDATE policy for authenticated)
-    // PostgreSQL RLS doesn't raise errors — it silently skips non-matching rows
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: adminFlags, error: adminReadError } = await (adminClient as any)
+      .from('switchboard_flags')
+      .select('*');
+
+    expect(adminReadError).toBeNull();
+    expect(adminFlags!.length).toBeGreaterThan(0);
+
+    // Verify regular authenticated updates do not change the row.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: before } = await (serviceClient as any)
+      .from('switchboard_flags')
+      .select('enabled')
+      .eq('flag_key', 'ENABLE_OUTBOUND_WEBHOOKS')
+      .single();
+
+    const originalValue = before!.enabled;
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await (userClient as any)
       .from('switchboard_flags')
-      .update({ value: true })
-      .eq('id', 'ENABLE_OUTBOUND_WEBHOOKS');
+      .update({ enabled: !originalValue })
+      .eq('flag_key', 'ENABLE_OUTBOUND_WEBHOOKS');
 
-    // Verify the value was NOT actually changed (RLS blocked it)
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: after } = await (userClient as any)
       .from('switchboard_flags')
-      .select('value')
-      .eq('id', 'ENABLE_OUTBOUND_WEBHOOKS')
+      .select('enabled')
+      .eq('flag_key', 'ENABLE_OUTBOUND_WEBHOOKS')
       .single();
 
-    expect(after!.value).toBe(false); // Original value preserved
+    expect(after).toBeNull();
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: serviceAfter } = await (serviceClient as any)
+      .from('switchboard_flags')
+      .select('enabled')
+      .eq('flag_key', 'ENABLE_OUTBOUND_WEBHOOKS')
+      .single();
+
+    expect(serviceAfter!.enabled).toBe(originalValue);
   });
 
   it('service role can modify flags', async () => {
@@ -450,18 +479,18 @@ describe('P7-S14: Switchboard Flags', () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: before } = await (serviceClient as any)
       .from('switchboard_flags')
-      .select('value')
-      .eq('id', 'ENABLE_OUTBOUND_WEBHOOKS')
+      .select('enabled')
+      .eq('flag_key', 'ENABLE_OUTBOUND_WEBHOOKS')
       .single();
 
-    const originalValue = before!.value;
+    const originalValue = before!.enabled;
 
     // Update flag
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { error: updateError } = await (serviceClient as any)
       .from('switchboard_flags')
-      .update({ value: !originalValue })
-      .eq('id', 'ENABLE_OUTBOUND_WEBHOOKS');
+      .update({ enabled: !originalValue })
+      .eq('flag_key', 'ENABLE_OUTBOUND_WEBHOOKS');
 
     expect(updateError).toBeNull();
 
@@ -469,46 +498,46 @@ describe('P7-S14: Switchboard Flags', () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: after } = await (serviceClient as any)
       .from('switchboard_flags')
-      .select('value')
-      .eq('id', 'ENABLE_OUTBOUND_WEBHOOKS')
+      .select('enabled')
+      .eq('flag_key', 'ENABLE_OUTBOUND_WEBHOOKS')
       .single();
 
-    expect(after!.value).toBe(!originalValue);
+    expect(after!.enabled).toBe(!originalValue);
 
     // Restore original value
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await (serviceClient as any)
       .from('switchboard_flags')
-      .update({ value: originalValue })
-      .eq('id', 'ENABLE_OUTBOUND_WEBHOOKS');
+      .update({ enabled: originalValue })
+      .eq('flag_key', 'ENABLE_OUTBOUND_WEBHOOKS');
   });
 
   it('flag changes are logged in history', async () => {
-    const testFlagId = 'ENABLE_REPORTS';
+    const testFlagKey = 'ENABLE_REPORTS';
 
     // Get current value
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: before } = await (serviceClient as any)
       .from('switchboard_flags')
-      .select('value')
-      .eq('id', testFlagId)
+      .select('enabled')
+      .eq('flag_key', testFlagKey)
       .single();
 
-    const originalValue = before!.value;
+    const originalValue = before!.enabled;
 
     // Update flag
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await (serviceClient as any)
       .from('switchboard_flags')
-      .update({ value: !originalValue })
-      .eq('id', testFlagId);
+      .update({ enabled: !originalValue })
+      .eq('flag_key', testFlagKey);
 
     // Check history
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: history, error: historyError } = await (serviceClient as any)
       .from('switchboard_flag_history')
       .select('*')
-      .eq('flag_id', testFlagId)
+      .eq('flag_key', testFlagKey)
       .order('changed_at', { ascending: false })
       .limit(1);
 
@@ -521,8 +550,8 @@ describe('P7-S14: Switchboard Flags', () => {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await (serviceClient as any)
       .from('switchboard_flags')
-      .update({ value: originalValue })
-      .eq('id', testFlagId);
+      .update({ enabled: originalValue })
+      .eq('flag_key', testFlagKey);
   });
 
   it('production anchoring flag defaults to false (safe default)', async () => {
@@ -534,19 +563,19 @@ describe('P7-S14: Switchboard Flags', () => {
     expect(value).toBe(false);
   });
 
-  it('dangerous flags are marked as is_dangerous=true', async () => {
+  it('dangerous production switches default to fail-closed', async () => {
+    const criticalFlags = ['ENABLE_PROD_NETWORK_ANCHORING', 'MAINTENANCE_MODE'];
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: dangerousFlags } = await (serviceClient as any)
+    const { data: flags, error } = await (serviceClient as any)
       .from('switchboard_flags')
-      .select('id, is_dangerous')
-      .eq('is_dangerous', true);
+      .select('flag_key, enabled')
+      .in('flag_key', criticalFlags);
 
-    expect(dangerousFlags!.length).toBeGreaterThan(0);
-
-    // Verify specific dangerous flags
-    const dangerousIds = dangerousFlags!.map((f: { id: string }) => f.id);
-    expect(dangerousIds).toContain('ENABLE_PROD_NETWORK_ANCHORING');
-    expect(dangerousIds).toContain('MAINTENANCE_MODE');
+    expect(error).toBeNull();
+    const byKey = new Map(flags!.map((f: { flag_key: string; enabled: boolean }) => [f.flag_key, f.enabled]));
+    expect(byKey.get('ENABLE_PROD_NETWORK_ANCHORING')).toBe(false);
+    expect(byKey.get('MAINTENANCE_MODE')).toBe(false);
   });
 });
 
