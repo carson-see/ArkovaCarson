@@ -118,12 +118,12 @@ Bench-state. Audit recalibration: SCRUM-1731 was already substantially complete 
 
 This PR adds a **contract-lock regression test** so the published brief and the code can never silently drift:
 
-- `src/api/v2/rateLimit.test.ts` (modified) — 2 new tests under "SCRUM-1731 — published-brief contract lock". One pins `DEFAULT_V2_SCOPE_RATE_LIMITS` to the exact values in Confluence A/42532874 §6. Other guarantees no scope can be unlimited.
+- `services/worker/src/api/v2/rateLimit.test.ts` (modified) — 2 new tests under "SCRUM-1731 — published-brief contract lock". One pins `DEFAULT_V2_SCOPE_RATE_LIMITS` to the exact values in Confluence A/42532874 §6. Other guarantees no scope can be unlimited.
 
 Local quality gates:
 
-- `npx vitest run src/api/v2/rateLimit.test.ts` → 14/14 pass (12 pre-existing + 2 new)
-- `npx eslint src/api/v2/rateLimit.test.ts` → clean
+- `npx vitest run services/worker/src/api/v2/rateLimit.test.ts` → suite green locally (12 pre-existing + 2 new contract-lock tests)
+- `npx eslint services/worker/src/api/v2/rateLimit.test.ts` → clean
 
 Tier: T1 by code-touched scope (test file only). Staging-tooling allowlist does not cover `services/worker/src/api/v2/`; will declare T2 in PR body with rationale (contract-lock test only, no runtime change, no migration).
 
