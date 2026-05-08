@@ -53,6 +53,16 @@ function migrationPrefix(file: string): number | null {
   return Number.parseInt(m[1], 10);
 }
 
+// SCRUM-1668 Path C baseline file (00000000000000_baseline_at_main_HEAD.sql)
+// is a pg_dump of prod — its bare `auth.uid()` calls were already wrapped by
+// migration 0280 in prod, but the dump captures the post-wrap policy text
+// inside CREATE POLICY ... AS RESTRICTIVE statements where the wrapping is
+// preserved AND inside SECURITY DEFINER functions where bare auth.uid() is
+// idiomatic (functions run as caller; auth.uid() is a single eval not per-row).
+// Skip the baseline file explicitly. Match by name not prefix because the
+// 14-digit prefix doesn't fit the 3-4-digit migrationPrefix regex.
+const BASELINE_FILE_RE = /00000000000000_baseline_at_main_HEAD\.sql$/;
+
 function scan(): Finding[] {
   const files = execSync('git ls-files supabase/migrations', { cwd: REPO, encoding: 'utf8' })
     .split('\n')
@@ -63,6 +73,12 @@ function scan(): Finding[] {
     // Skip the wrap migration itself — its DO block contains the bare form
     // inside the regex_replace pattern string.
     if (file.endsWith('0280_rls_auth_uid_subquery_wrap.sql')) continue;
+
+    // Skip the SCRUM-1668 Path C baseline (PR #700) — bare auth.uid() inside
+    // it is historical (already wrapped at runtime in prod) and the file's
+    // 14-digit prefix doesn't fit the 3-4-digit migrationPrefix regex, so
+    // without this explicit skip it gets treated as "new".
+    if (BASELINE_FILE_RE.test(file)) continue;
 
     // Skip historical migrations (< 0280). Their bare occurrences were
     // rewritten at runtime by 0280; the immutable migration text is benign.
