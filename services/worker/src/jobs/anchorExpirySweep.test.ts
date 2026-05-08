@@ -180,10 +180,32 @@ describe('sweepExpiredAnchors (SCRUM-1736)', () => {
     expect(result.checked).toBe(2);
     expect(result.newly_expired).toBe(2);
     expect(result.webhooks_dispatched).toBe(1);
+    // CodeRabbit PR #734: dispatch failure also writes a sentinel
+    // anchor.expired_dispatch_failed audit event so manual recovery
+    // through SCRUM-1738 retry path is possible. The dispatch error
+    // itself stays in errors[].
     expect(result.errors).toHaveLength(1);
     expect(result.errors[0]).toMatch(/ARK-2026-A1/);
     expect(updated).toEqual(['a1', 'a3']);
     expect(dispatched.map((d) => d.data.public_id)).toEqual(['ARK-2026-A3']);
+  });
+
+  it('writes anchor.expired_dispatch_failed sentinel audit when dispatch throws (CodeRabbit PR #734)', async () => {
+    const { db, audits } = makeDb({
+      candidates: [EXPIRED_SECURED],
+      webhookThrows: new Set(['ARK-2026-A1']),
+    });
+    await sweepExpiredAnchors(db);
+    // Two audit rows: the success-path anchor.expired (written first)
+    // and the dispatch-failure sentinel anchor.expired_dispatch_failed.
+    const eventTypes = audits.map((a) => a.event_type);
+    expect(eventTypes).toContain('anchor.expired');
+    expect(eventTypes).toContain('anchor.expired_dispatch_failed');
+    const sentinel = audits.find((a) => a.event_type === 'anchor.expired_dispatch_failed');
+    expect(sentinel).toBeDefined();
+    const details = JSON.parse(String(sentinel?.details ?? '{}'));
+    expect(details.event_id).toBe('expired-a1');
+    expect(details.recovery).toMatch(/SCRUM-1738/);
   });
 
   it('does not transition anchors with null org_id (skips silently with audit-only)', async () => {

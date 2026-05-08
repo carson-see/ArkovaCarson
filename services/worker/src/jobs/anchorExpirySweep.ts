@@ -32,7 +32,7 @@ import { logger } from '../utils/logger.js';
 const AnchorIdSchema = z.string().uuid();
 
 const AuditEventRowSchema = z.object({
-  event_type: z.literal('anchor.expired'),
+  event_type: z.enum(['anchor.expired', 'anchor.expired_dispatch_failed']),
   event_category: z.literal('ANCHOR'),
   target_type: z.literal('anchor'),
   target_id: z.string().uuid(),
@@ -161,9 +161,10 @@ export async function sweepExpiredAnchors(db: AnchorExpirySweepDb): Promise<Anch
     // anchor.expired event because the next sweep only sees status=SECURED.
     // Use a deterministic event_id derived from anchor.id so a future retry
     // path can dedupe via the (endpoint_id, event_id) UNIQUE constraint on
-    // webhook_delivery_logs. Failures surface in errors[] for ops visibility;
-    // CodeRabbit's full retry-table refactor is tracked under SCRUM-1738
-    // close-out.
+    // webhook_delivery_logs. On failure we write a sentinel
+    // `anchor.expired_dispatch_failed` audit event so operators can manually
+    // re-dispatch through the SCRUM-1738 retry path; the failure also surfaces
+    // in errors[] so the cron's structured error counter trips alerting.
     const eventId = `expired-${anchor.id}`;
     try {
       await db.dispatchWebhookEvent(anchor.org_id, 'anchor.expired', eventId, data);
@@ -172,6 +173,28 @@ export async function sweepExpiredAnchors(db: AnchorExpirySweepDb): Promise<Anch
       const msg = err instanceof Error ? err.message : 'unknown';
       logger.error({ error: err, anchorId: anchor.id, publicId: anchor.public_id, eventId }, 'sweepExpiredAnchors: dispatch failed');
       result.errors.push(`dispatch failed for ${anchor.public_id}: ${msg}`);
+      // Sentinel audit event so the dropped dispatch is recoverable. Failure
+      // here is also non-fatal — we keep draining the candidate list.
+      try {
+        await db.insertAuditEvent({
+          event_type: 'anchor.expired_dispatch_failed',
+          event_category: 'ANCHOR',
+          target_type: 'anchor',
+          target_id: anchor.id,
+          org_id: anchor.org_id,
+          details: JSON.stringify({
+            public_id: anchor.public_id,
+            event_id: eventId,
+            error: msg,
+            failed_at: nowIso,
+            recovery: 'manual re-dispatch via SCRUM-1738 retry path; (endpoint_id, event_id) UNIQUE on webhook_delivery_logs prevents duplicate delivery',
+          }),
+        });
+      } catch (auditErr) {
+        const auditMsg = auditErr instanceof Error ? auditErr.message : 'unknown';
+        logger.error({ error: auditErr, anchorId: anchor.id }, 'sweepExpiredAnchors: dispatch-failure sentinel audit insert also failed');
+        result.errors.push(`dispatch-failure sentinel audit insert failed for ${anchor.public_id}: ${auditMsg}`);
+      }
     }
   }
 
