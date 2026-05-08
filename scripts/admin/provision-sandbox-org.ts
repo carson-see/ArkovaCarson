@@ -24,13 +24,24 @@
 
 import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { parseArgs } from 'node:util';
+import { z } from 'zod';
 
-interface ProvisionArgs {
-  partner: string;
-  anchors: number;
-  credits: number;
-  ownerEmail?: string;
-}
+/**
+ * CodeRabbit PR #738: validate every write path with Zod before DB
+ * insertion. `partner` is interpolated into display_name / org_prefix /
+ * public_id; constrain it to a slug shape so a malformed CLI value can't
+ * inject HTML or whitespace into those columns. anchors/credits as
+ * actual integers (z.coerce.number().int()) so "10foo" rejects rather
+ * than truncating to 10.
+ */
+const ProvisionArgsSchema = z.object({
+  partner: z.string().regex(/^[a-z0-9][a-z0-9_-]{0,30}$/, 'partner must be a lowercase alphanumeric slug (1–31 chars, _ and - allowed)'),
+  anchors: z.coerce.number().int().positive(),
+  credits: z.coerce.number().int().nonnegative(),
+  ownerEmail: z.string().email().optional(),
+});
+
+export type ProvisionArgs = z.infer<typeof ProvisionArgsSchema>;
 
 interface ProvisionResult {
   org_id: string;
@@ -38,6 +49,7 @@ interface ProvisionResult {
   org_slug: string;
   api_key: string;
   api_key_id: string;
+  api_key_reused: boolean;
   anchor_quota: number;
   credits_balance: number;
   is_test: true;
@@ -50,7 +62,7 @@ interface SupabaseConfig {
   apiKeyHmacSecret: string;
 }
 
-function parseCliArgs(argv: string[]): ProvisionArgs {
+export function parseCliArgs(argv: string[]): ProvisionArgs {
   const { values } = parseArgs({
     args: argv.slice(2),
     options: {
@@ -60,27 +72,49 @@ function parseCliArgs(argv: string[]): ProvisionArgs {
       'owner-email': { type: 'string' },
     },
   });
-  if (!values.partner || !values.anchors || !values.credits) {
-    throw new Error('Required: --partner=<slug> --anchors=<N> --credits=<N>');
-  }
-  const anchors = Number.parseInt(values.anchors, 10);
-  const credits = Number.parseInt(values.credits, 10);
-  if (!Number.isFinite(anchors) || anchors <= 0) throw new Error('--anchors must be a positive integer');
-  if (!Number.isFinite(credits) || credits < 0) throw new Error('--credits must be a non-negative integer');
-  return {
+  // Zod validates + coerces in one shot. "10foo" → fail; "10" → 10.
+  return ProvisionArgsSchema.parse({
     partner: values.partner,
-    anchors,
-    credits,
+    anchors: values.anchors,
+    credits: values.credits,
     ownerEmail: values['owner-email'],
-  };
+  });
 }
 
-function loadConfig(): SupabaseConfig {
-  const url = process.env.SUPABASE_URL ?? process.env.STAGING_SUPABASE_URL;
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.STAGING_SUPABASE_SERVICE_ROLE_KEY;
-  const apiKeyHmacSecret = process.env.API_KEY_HMAC_SECRET;
-  if (!url || !serviceRoleKey || !apiKeyHmacSecret) {
-    throw new Error('Required env: SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, API_KEY_HMAC_SECRET (staging-prefixed variants also accepted)');
+/**
+ * CodeRabbit PR #738 CRITICAL: fail closed unless the target is explicitly
+ * staging. Prefer `STAGING_SUPABASE_*` env vars. Allow non-staging only
+ * if `ALLOW_PROD_PROVISIONING=true` is explicitly set — never via accident
+ * of a shell that happens to have prod credentials in scope.
+ */
+export function loadConfig(env: NodeJS.ProcessEnv = process.env): SupabaseConfig {
+  const stagingUrl = env.STAGING_SUPABASE_URL;
+  const stagingKey = env.STAGING_SUPABASE_SERVICE_ROLE_KEY;
+  const apiKeyHmacSecret = env.API_KEY_HMAC_SECRET;
+
+  if (apiKeyHmacSecret == null || apiKeyHmacSecret === '') {
+    throw new Error('Required env: API_KEY_HMAC_SECRET');
+  }
+
+  if (stagingUrl && stagingKey) {
+    return { url: stagingUrl, serviceRoleKey: stagingKey, apiKeyHmacSecret };
+  }
+
+  // Non-staging fallback. Locked behind explicit opt-in to prevent the
+  // failure mode where a developer's shell has prod creds loaded and
+  // `npx tsx provision-sandbox-org.ts ...` quietly creates sandbox orgs
+  // in production. ALLOW_PROD_PROVISIONING=true is the kill-switch.
+  if (env.ALLOW_PROD_PROVISIONING !== 'true') {
+    throw new Error(
+      'STAGING_SUPABASE_URL + STAGING_SUPABASE_SERVICE_ROLE_KEY are required by default. ' +
+      'Set both, or set ALLOW_PROD_PROVISIONING=true if you intentionally want to provision against prod.',
+    );
+  }
+
+  const url = env.SUPABASE_URL;
+  const serviceRoleKey = env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !serviceRoleKey) {
+    throw new Error('ALLOW_PROD_PROVISIONING=true requires SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY');
   }
   return { url, serviceRoleKey, apiKeyHmacSecret };
 }
@@ -160,39 +194,98 @@ export async function provisionSandboxOrg(args: ProvisionArgs, cfg: SupabaseConf
     orgPublicId = created[0].public_id;
   }
 
-  // 2. Upsert org_credits with is_test=true, anchor_quota, balance
-  await pgrest(cfg, 'POST', '/org_credits', {
-    org_id: orgId,
-    is_test: true,
-    anchor_quota: args.anchors,
-    balance: args.credits,
-    monthly_allocation: 0,
-    purchased: args.credits,
-  }, 'return=representation,resolution=merge-duplicates');
+  // 2. Top-up org_credits — CodeRabbit CRITICAL: previously used
+  // resolution=merge-duplicates which OVERWROTE anchor_quota/balance
+  // rather than adding. Now we read the existing row first and sum.
+  const existingCredits = await pgrest(
+    cfg,
+    'GET',
+    `/org_credits?org_id=eq.${orgId}&select=anchor_quota,balance,purchased,is_test&limit=1`,
+  ) as Array<{ anchor_quota: number | null; balance: number; purchased: number; is_test: boolean }>;
 
-  // 3. Mint scoped API key
-  const { raw, keyId } = generateApiKey('ak_test_');
-  const hash = hmacApiKey(raw, cfg.apiKeyHmacSecret);
+  const prevQuota = existingCredits[0]?.anchor_quota ?? 0;
+  const prevBalance = existingCredits[0]?.balance ?? 0;
+  const prevPurchased = existingCredits[0]?.purchased ?? 0;
 
-  // api_keys.created_by is NOT NULL — pick a profile from the org or fall
-  // back to any profile (sandbox provisioning is an admin op; the audit row
-  // attributes the key creation to whichever profile actually executes).
-  const profiles = await pgrest(cfg, 'GET', '/profiles?select=id&limit=1') as Array<{ id: string }>;
-  const createdBy = profiles[0]?.id;
-  if (!createdBy) throw new Error('No profile rows in DB; cannot satisfy api_keys.created_by NOT NULL.');
+  if (existingCredits.length > 0) {
+    await pgrest(cfg, 'PATCH', `/org_credits?org_id=eq.${orgId}`, {
+      is_test: true,
+      anchor_quota: prevQuota + args.anchors,
+      balance: prevBalance + args.credits,
+      purchased: prevPurchased + args.credits,
+    });
+  } else {
+    await pgrest(cfg, 'POST', '/org_credits', {
+      org_id: orgId,
+      is_test: true,
+      anchor_quota: args.anchors,
+      balance: args.credits,
+      monthly_allocation: 0,
+      purchased: args.credits,
+    });
+  }
 
-  await pgrest(cfg, 'POST', '/api_keys', {
-    id: keyId,
-    org_id: orgId,
-    key_hash: hash,
-    key_prefix: raw.slice(0, 12),
-    name: `${args.partner} sandbox pilot`,
-    scopes: ['read:search', 'read:records', 'read:orgs', 'anchor:write'],
-    rate_limit_tier: 'paid',
-    is_active: true,
-    created_by: createdBy,
-    ferpa_verified: false,
-  });
+  // 3. Mint scoped API key — CodeRabbit MAJOR: previously inserted a
+  // fresh active key on every run AND attributed to an arbitrary profile.
+  // Now: prefer ownerEmail for created_by; if an active key already
+  // exists with this label, reuse rather than accumulate.
+  const existingKeys = await pgrest(
+    cfg,
+    'GET',
+    `/api_keys?org_id=eq.${orgId}&name=eq.${encodeURIComponent(`${args.partner} sandbox pilot`)}&is_active=eq.true&select=id,key_prefix&limit=1`,
+  ) as Array<{ id: string; key_prefix: string }>;
+
+  let keyId: string;
+  let raw: string;
+  let keyReused = false;
+
+  if (existingKeys.length > 0) {
+    keyId = existingKeys[0].id;
+    raw = `<existing key — re-fetch from your records; not re-derivable from key_prefix=${existingKeys[0].key_prefix}>`;
+    keyReused = true;
+  } else {
+    const minted = generateApiKey('ak_test_');
+    keyId = minted.keyId;
+    raw = minted.raw;
+    const hash = hmacApiKey(raw, cfg.apiKeyHmacSecret);
+
+    // Prefer the partner contact email for created_by attribution. If
+    // ownerEmail is provided, find that profile; otherwise fall back to
+    // the script-runner's profile via SUPABASE_RUNNER_USER_ID env, then
+    // any-profile as last resort (admin context).
+    let createdBy: string | undefined;
+    if (args.ownerEmail) {
+      const byEmail = await pgrest(
+        cfg,
+        'GET',
+        `/profiles?email=eq.${encodeURIComponent(args.ownerEmail)}&select=id&limit=1`,
+      ) as Array<{ id: string }>;
+      createdBy = byEmail[0]?.id;
+    }
+    if (!createdBy && process.env.SUPABASE_RUNNER_USER_ID) {
+      createdBy = process.env.SUPABASE_RUNNER_USER_ID;
+    }
+    if (!createdBy) {
+      const profiles = await pgrest(cfg, 'GET', '/profiles?select=id&limit=1') as Array<{ id: string }>;
+      createdBy = profiles[0]?.id;
+    }
+    if (!createdBy) {
+      throw new Error('No profile rows in DB; cannot satisfy api_keys.created_by NOT NULL.');
+    }
+
+    await pgrest(cfg, 'POST', '/api_keys', {
+      id: keyId,
+      org_id: orgId,
+      key_hash: hash,
+      key_prefix: raw.slice(0, 12),
+      name: `${args.partner} sandbox pilot`,
+      scopes: ['read:search', 'read:records', 'read:orgs', 'anchor:write'],
+      rate_limit_tier: 'paid',
+      is_active: true,
+      created_by: createdBy,
+      ferpa_verified: false,
+    });
+  }
 
   return {
     org_id: orgId,
@@ -200,8 +293,9 @@ export async function provisionSandboxOrg(args: ProvisionArgs, cfg: SupabaseConf
     org_slug: slug,
     api_key: raw,
     api_key_id: keyId,
-    anchor_quota: args.anchors,
-    credits_balance: args.credits,
+    api_key_reused: keyReused,
+    anchor_quota: prevQuota + args.anchors,
+    credits_balance: prevBalance + args.credits,
     is_test: true,
     topped_up: existing !== null,
   };

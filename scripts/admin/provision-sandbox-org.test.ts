@@ -3,7 +3,7 @@
  * Pure-function tests around HMAC computation + arg parsing.
  */
 import { describe, it, expect } from 'vitest';
-import { hmacApiKey } from './provision-sandbox-org.js';
+import { hmacApiKey, parseCliArgs, loadConfig } from './provision-sandbox-org.js';
 
 describe('SCRUM-1740 — sandbox provisioning script', () => {
   describe('hmacApiKey', () => {
@@ -28,6 +28,106 @@ describe('SCRUM-1740 — sandbox provisioning script', () => {
       const a = hmacApiKey('ak_test_xyz', 'secret-1');
       const b = hmacApiKey('ak_test_xyz', 'secret-2');
       expect(a).not.toBe(b);
+    });
+  });
+
+  /**
+   * CodeRabbit PR #738 review: cover parseCliArgs (Zod-validated CLI
+   * surface) and loadConfig (fail-closed staging guard).
+   */
+  describe('parseCliArgs (Zod validation)', () => {
+    const ok = ['node', 'script', '--partner=hakichain', '--anchors=10', '--credits=5'];
+
+    it('accepts a valid invocation', () => {
+      expect(parseCliArgs(ok)).toEqual({ partner: 'hakichain', anchors: 10, credits: 5 });
+    });
+
+    it('coerces numeric strings to integers', () => {
+      const r = parseCliArgs(['node', 'script', '--partner=p', '--anchors=10', '--credits=5']);
+      expect(typeof r.anchors).toBe('number');
+      expect(typeof r.credits).toBe('number');
+    });
+
+    it('rejects partner slugs with whitespace, uppercase, or HTML metacharacters', () => {
+      expect(() => parseCliArgs([...ok.slice(0, 2), '--partner=Haki Chain', '--anchors=10', '--credits=5'])).toThrow();
+      expect(() => parseCliArgs([...ok.slice(0, 2), '--partner=HakiChain', '--anchors=10', '--credits=5'])).toThrow();
+      expect(() => parseCliArgs([...ok.slice(0, 2), '--partner=<script>', '--anchors=10', '--credits=5'])).toThrow();
+    });
+
+    it('rejects non-numeric anchors / credits (no truncation of "10foo")', () => {
+      expect(() => parseCliArgs([...ok.slice(0, 2), '--partner=p', '--anchors=10foo', '--credits=5'])).toThrow();
+      expect(() => parseCliArgs([...ok.slice(0, 2), '--partner=p', '--anchors=10', '--credits=NaN'])).toThrow();
+    });
+
+    it('rejects negative or zero anchors', () => {
+      expect(() => parseCliArgs([...ok.slice(0, 2), '--partner=p', '--anchors=0', '--credits=5'])).toThrow();
+      expect(() => parseCliArgs([...ok.slice(0, 2), '--partner=p', '--anchors=-1', '--credits=5'])).toThrow();
+    });
+
+    it('accepts credits=0', () => {
+      const r = parseCliArgs([...ok.slice(0, 2), '--partner=p', '--anchors=10', '--credits=0']);
+      expect(r.credits).toBe(0);
+    });
+
+    it('accepts a valid owner-email and rejects malformed', () => {
+      expect(parseCliArgs([...ok, '--owner-email=ops@hakichain.com']).ownerEmail).toBe('ops@hakichain.com');
+      expect(() => parseCliArgs([...ok, '--owner-email=not-an-email'])).toThrow();
+    });
+  });
+
+  describe('loadConfig (CRITICAL: fail-closed staging guard)', () => {
+    it('returns staging config when both STAGING_* vars are set', () => {
+      const cfg = loadConfig({
+        STAGING_SUPABASE_URL: 'https://staging.example.com',
+        STAGING_SUPABASE_SERVICE_ROLE_KEY: 'srk',
+        API_KEY_HMAC_SECRET: 'hmac',
+      });
+      expect(cfg.url).toBe('https://staging.example.com');
+      expect(cfg.serviceRoleKey).toBe('srk');
+    });
+
+    it('throws when staging vars are missing AND ALLOW_PROD_PROVISIONING is not set', () => {
+      expect(() => loadConfig({
+        SUPABASE_URL: 'https://prod.example.com',
+        SUPABASE_SERVICE_ROLE_KEY: 'srk-prod',
+        API_KEY_HMAC_SECRET: 'hmac',
+      })).toThrow(/STAGING_SUPABASE_URL.*required/i);
+    });
+
+    it('throws when ALLOW_PROD_PROVISIONING=false (any non-"true" value)', () => {
+      expect(() => loadConfig({
+        SUPABASE_URL: 'https://prod.example.com',
+        SUPABASE_SERVICE_ROLE_KEY: 'srk-prod',
+        API_KEY_HMAC_SECRET: 'hmac',
+        ALLOW_PROD_PROVISIONING: 'false',
+      })).toThrow(/STAGING_SUPABASE_URL.*required/i);
+    });
+
+    it('returns prod config when ALLOW_PROD_PROVISIONING is exactly "true"', () => {
+      const cfg = loadConfig({
+        SUPABASE_URL: 'https://prod.example.com',
+        SUPABASE_SERVICE_ROLE_KEY: 'srk-prod',
+        API_KEY_HMAC_SECRET: 'hmac',
+        ALLOW_PROD_PROVISIONING: 'true',
+      });
+      expect(cfg.url).toBe('https://prod.example.com');
+    });
+
+    it('throws when API_KEY_HMAC_SECRET is missing regardless of other vars', () => {
+      expect(() => loadConfig({
+        STAGING_SUPABASE_URL: 'https://staging.example.com',
+        STAGING_SUPABASE_SERVICE_ROLE_KEY: 'srk',
+      })).toThrow(/API_KEY_HMAC_SECRET/);
+    });
+
+    it('does NOT silently fall through to non-staging when partial staging vars are set', () => {
+      // Only STAGING_SUPABASE_URL set without the key — must NOT use staging URL with prod key
+      expect(() => loadConfig({
+        STAGING_SUPABASE_URL: 'https://staging.example.com',
+        SUPABASE_URL: 'https://prod.example.com',
+        SUPABASE_SERVICE_ROLE_KEY: 'srk-prod',
+        API_KEY_HMAC_SECRET: 'hmac',
+      })).toThrow(/STAGING_SUPABASE_URL.*required/i);
     });
   });
 });
