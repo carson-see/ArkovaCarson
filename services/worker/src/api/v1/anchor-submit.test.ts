@@ -53,6 +53,12 @@ vi.mock('../../lib/urls.js', () => ({
 import { anchorSubmitRouter } from './anchor-submit.js';
 import { requireScope } from '../../middleware/apiKeyAuth.js';
 
+// CodeRabbit PR #736 nit: prefer interface for object-shape type assertions
+// per repository TypeScript conventions.
+interface InsertCallArg {
+  metadata?: Record<string, unknown>;
+}
+
 function makeApp(scopes = ['anchor:write']) {
   const app = express();
   app.use(express.json());
@@ -221,7 +227,9 @@ describe('POST /api/v1/anchor — Zod validation', () => {
    */
   describe('SCRUM-1732 metadata persistence contract', () => {
     it('persists every public-safe key from a fully-populated BADGE evidence payload', async () => {
-      const res = await postBadgeMetadata({
+      // CodeRabbit PR #736: pin every key explicitly. The previous "exists +
+      // is object" check would pass even if some keys were dropped silently.
+      const payload = {
         evidence_schema_version: 'credential_evidence_v1',
         evidence_package_hash: 'a'.repeat(64),
         source_url: 'https://credentials.example.com/x',
@@ -232,13 +240,20 @@ describe('POST /api/v1/anchor — Zod validation', () => {
         credential_title: 'Cloud Architecture',
         credential_type: 'BADGE',
         credential_issuer: 'Example',
-      });
+      };
+      const res = await postBadgeMetadata(payload);
       expect(res.status).toBe(201);
-      const insertArg = mockInsert.mock.calls[0]?.[0] as { metadata?: Record<string, unknown> };
+      const insertArg = mockInsert.mock.calls[0]?.[0] as InsertCallArg;
       // Contract: metadata column is present and structured-typed (not stringified JSON).
       expect(insertArg).toHaveProperty('metadata');
       expect(typeof insertArg.metadata).toBe('object');
       expect(insertArg.metadata).not.toBeNull();
+      // Each public-safe key persists with its exact value (not just present).
+      const persisted = insertArg.metadata as Record<string, unknown>;
+      for (const key of Object.keys(payload)) {
+        expect(persisted).toHaveProperty(key);
+        expect(persisted[key]).toBe((payload as Record<string, unknown>)[key]);
+      }
     });
 
     it('omits the metadata column when no metadata is provided (Postgres default null)', async () => {
