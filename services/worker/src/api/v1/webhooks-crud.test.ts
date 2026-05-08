@@ -38,10 +38,29 @@ describe('CreateWebhookSchema', () => {
     }
   });
 
-  it('accepts all three event types', () => {
+  it('accepts all three anchor event types', () => {
     const result = CreateWebhookSchema.safeParse({
       url: 'https://example.com/hooks',
       events: ['anchor.secured', 'anchor.revoked', 'anchor.expired'],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  // SCRUM-1743: credential.* lifecycle events are accepted at the CRUD layer
+  // even though emit-point wiring is Phase-2. Customers can register
+  // subscriptions today; deliveries begin as each emit point goes live.
+  it('SCRUM-1743: accepts credential.* lifecycle event types', () => {
+    const result = CreateWebhookSchema.safeParse({
+      url: 'https://example.com/hooks',
+      events: ['credential.issued', 'credential.verified', 'credential.status_changed'],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('SCRUM-1743: accepts a mixed subscription (anchor + credential)', () => {
+    const result = CreateWebhookSchema.safeParse({
+      url: 'https://example.com/hooks',
+      events: ['anchor.secured', 'credential.issued'],
     });
     expect(result.success).toBe(true);
   });

@@ -2,8 +2,21 @@
  * SDK Types (PH1-SDK-01 + INT-01)
  */
 
-/** Webhook event types (INT-09) */
-export type WebhookEventType = 'anchor.secured' | 'anchor.revoked' | 'anchor.expired';
+/**
+ * Webhook event types (INT-09 + SCRUM-1743).
+ *
+ * Anchor lifecycle (stable): chain-level state of the cryptographic proof.
+ * Credential lifecycle (SCRUM-1743): issuer/recipient-level state. Contract
+ * defined in this release; per-event emit-points wire in Phase-2 follow-ups.
+ * SDK consumers can register subscriptions today via `client.webhooks.create`.
+ */
+export type WebhookEventType =
+  | 'anchor.secured'
+  | 'anchor.revoked'
+  | 'anchor.expired'
+  | 'credential.issued'
+  | 'credential.verified'
+  | 'credential.status_changed';
 
 /** Webhook endpoint metadata (INT-09) */
 export interface WebhookEndpoint {
