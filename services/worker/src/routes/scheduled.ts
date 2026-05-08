@@ -30,6 +30,7 @@ const ANCHOR_TABLE_IN_PROCESS_JOBS = new Set([
   'process-batch-anchors',
   'check-submitted-confirmations',
   'process-revoked-anchors',
+  'anchor-expiry-sweep',
   'detect-reorgs',
   'monitor-stuck-transactions',
   'rebroadcast-dropped-transactions',

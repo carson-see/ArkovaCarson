@@ -22,8 +22,23 @@
  * the candidate list so one bad row doesn't starve the rest.
  */
 
-import { randomUUID } from 'node:crypto';
+import { z } from 'zod';
 import { logger } from '../utils/logger.js';
+
+/**
+ * CodeRabbit PR #734: schema-validate every write path before issuing
+ * DB operations.
+ */
+const AnchorIdSchema = z.string().uuid();
+
+const AuditEventRowSchema = z.object({
+  event_type: z.literal('anchor.expired'),
+  event_category: z.literal('ANCHOR'),
+  target_type: z.literal('anchor'),
+  target_id: z.string().uuid(),
+  org_id: z.string().uuid().nullable(),
+  details: z.string(),
+}).strict();
 
 export interface ExpiringSecuredAnchor {
   id: string;
@@ -80,9 +95,13 @@ export async function sweepExpiredAnchors(db: AnchorExpirySweepDb): Promise<Anch
   const nowIso = now.toISOString();
 
   for (const anchor of candidates) {
-    if (!anchor.expires_at || new Date(anchor.expires_at).getTime() >= now.getTime()) {
+    // CodeRabbit PR #734: also catch malformed timestamps (NaN). Without
+    // Number.isFinite, `new Date('garbage').getTime()` returns NaN and
+    // `NaN >= now` is false, so the row would still transition.
+    const expiresAtMs = anchor.expires_at ? new Date(anchor.expires_at).getTime() : Number.NaN;
+    if (!Number.isFinite(expiresAtMs) || expiresAtMs >= now.getTime()) {
       result.errors.push(
-        `anchor ${anchor.public_id} (id=${anchor.id}) returned by selectExpiringSecured has future or null expires_at; refusing to dispatch`,
+        `anchor ${anchor.public_id} (id=${anchor.id}) returned by selectExpiringSecured has invalid, future, or null expires_at; refusing to dispatch`,
       );
       continue;
     }
@@ -138,12 +157,20 @@ export async function sweepExpiredAnchors(db: AnchorExpirySweepDb): Promise<Anch
     };
     if (anchor.org_public_id) data.org_public_id = anchor.org_public_id;
 
+    // CodeRabbit PR #734 review: dispatch failures previously orphaned the
+    // anchor.expired event because the next sweep only sees status=SECURED.
+    // Use a deterministic event_id derived from anchor.id so a future retry
+    // path can dedupe via the (endpoint_id, event_id) UNIQUE constraint on
+    // webhook_delivery_logs. Failures surface in errors[] for ops visibility;
+    // CodeRabbit's full retry-table refactor is tracked under SCRUM-1738
+    // close-out.
+    const eventId = `expired-${anchor.id}`;
     try {
-      await db.dispatchWebhookEvent(anchor.org_id, 'anchor.expired', randomUUID(), data);
+      await db.dispatchWebhookEvent(anchor.org_id, 'anchor.expired', eventId, data);
       result.webhooks_dispatched++;
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'unknown';
-      logger.error({ error: err, anchorId: anchor.id, publicId: anchor.public_id }, 'sweepExpiredAnchors: dispatch failed');
+      logger.error({ error: err, anchorId: anchor.id, publicId: anchor.public_id, eventId }, 'sweepExpiredAnchors: dispatch failed');
       result.errors.push(`dispatch failed for ${anchor.public_id}: ${msg}`);
     }
   }
@@ -179,14 +206,21 @@ export function makeAnchorExpirySweepDb(deps: {
   return {
     async selectExpiringSecured(): Promise<ExpiringSecuredAnchor[]> {
       const nowIso = new Date().toISOString();
+      // CodeRabbit + Codex P2: filter `deleted_at IS NULL` so soft-deleted
+      // anchors don't transition. ORDER BY expires_at asc, id asc so a
+      // backlog larger than the page size drains deterministically (no
+      // row starvation on continued inflow).
       const { data, error } = await dbAny
         .from('anchors')
         .select(
           'id, public_id, org_id, status, chain_tx_id, chain_block_height, expires_at, organizations(public_id)',
         )
         .eq('status', 'SECURED')
+        .is('deleted_at', null)
         .not('expires_at', 'is', null)
         .lt('expires_at', nowIso)
+        .order('expires_at', { ascending: true })
+        .order('id', { ascending: true })
         .limit(500);
       if (error) throw new Error(error.message ?? String(error));
       return (data ?? []).map((row: Record<string, unknown>) => ({
@@ -201,18 +235,23 @@ export function makeAnchorExpirySweepDb(deps: {
       }));
     },
     async casUpdateToExpired(anchorId: string, _expiredAtIso: string): Promise<boolean> {
+      // CodeRabbit PR #734: schema-validate before write.
+      AnchorIdSchema.parse(anchorId);
       const { data, error } = await dbAny
         .from('anchors')
         .update({ status: 'EXPIRED' })
         .eq('id', anchorId)
         .eq('status', 'SECURED')
+        .is('deleted_at', null)
         .select('id');
       if (error) throw new Error(error.message ?? String(error));
       return Array.isArray(data) && data.length > 0;
     },
     async insertAuditEvent(row: Record<string, unknown>): Promise<void> {
+      // CodeRabbit PR #734: schema-validate audit row before insert.
+      const validated = AuditEventRowSchema.parse(row);
       // eslint-disable-next-line arkova/missing-org-filter -- audit insert carries org_id in the row payload (SCRUM-1208 pre-existing pattern)
-      const { error } = await dbAny.from('audit_events').insert(row);
+      const { error } = await dbAny.from('audit_events').insert(validated);
       if (error) throw new Error(error.message ?? String(error));
     },
     dispatchWebhookEvent: deps.dispatchWebhookEvent,

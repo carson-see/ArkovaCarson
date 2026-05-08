@@ -219,6 +219,33 @@ describe('sweepExpiredAnchors (SCRUM-1736)', () => {
     expect(result.errors.join(' ')).toMatch(/audit/i);
   });
 
+  it('rejects anchors with malformed expires_at strings (CodeRabbit PR #734)', async () => {
+    const malformed: FakeAnchor = { ...EXPIRED_SECURED, id: 'a-bad-ts', public_id: 'ARK-2026-BADTS', expires_at: 'not-a-real-date' };
+    const { db, dispatched, updated } = makeDb({ candidates: [malformed] });
+    const result = await sweepExpiredAnchors(db);
+    expect(result.checked).toBe(1);
+    expect(result.newly_expired).toBe(0);
+    expect(result.webhooks_dispatched).toBe(0);
+    expect(updated).toHaveLength(0);
+    expect(dispatched).toHaveLength(0);
+    expect(result.errors.length).toBe(1);
+    expect(result.errors[0]).toMatch(/invalid, future, or null expires_at/i);
+  });
+
+  it('uses deterministic event_id "expired-${anchor.id}" so retries dedupe (CodeRabbit PR #734)', async () => {
+    let capturedEventId: string | undefined;
+    const db: AnchorExpirySweepDb = {
+      selectExpiringSecured: vi.fn(async () => [EXPIRED_SECURED]),
+      casUpdateToExpired: vi.fn(async () => true),
+      insertAuditEvent: vi.fn(async () => undefined),
+      dispatchWebhookEvent: vi.fn(async (_orgId, _eventType, eventId) => {
+        capturedEventId = eventId;
+      }),
+    };
+    await sweepExpiredAnchors(db);
+    expect(capturedEventId).toBe(`expired-${EXPIRED_SECURED.id}`);
+  });
+
   it('only considers anchors where expires_at is in the past (DB filter contract)', async () => {
     const { db } = makeDb({ candidates: [NOT_YET_EXPIRED] });
     const result = await sweepExpiredAnchors(db);
