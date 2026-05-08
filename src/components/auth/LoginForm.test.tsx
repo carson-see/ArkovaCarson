@@ -100,6 +100,25 @@ describe('LoginForm', () => {
     });
   });
 
+  it('does not call onSuccess when login fails', async () => {
+    mockSignIn.mockResolvedValueOnce({ error: { message: 'invalid credentials' } });
+    const onSuccess = vi.fn();
+    render(<LoginForm onSuccess={onSuccess} />);
+
+    fireEvent.change(screen.getByLabelText(/email address/i), {
+      target: { value: 'test@example.com' },
+    });
+    fireEvent.change(screen.getByLabelText(/password/i), {
+      target: { value: 'wrong-password' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /sign in/i }));
+
+    await vi.waitFor(() => {
+      expect(mockSignIn).toHaveBeenCalled();
+    });
+    expect(onSuccess).not.toHaveBeenCalled();
+  });
+
   it('calls onSuccess after successful login', async () => {
     const onSuccess = vi.fn();
     render(<LoginForm onSuccess={onSuccess} />);

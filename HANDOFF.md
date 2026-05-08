@@ -36,9 +36,9 @@ Same PR as SCRUM-1786/1787/1788. Branch `claude/quirky-meitner-338bda`.
 
 **Problem:** Feature 7 (Upload) in the retroactive staging plan lacked documented upload surfaces, FileUpload routing test coverage, and product expectations evidence.
 
-**Fix:** Added 14 tests for FileUpload component (single file routing with fingerprint, multi-file bulk routing, CSV/XLSX detection, isBulkUploadFile/isJsonFile helpers). Documented 7 upload surfaces with mode detection, auth requirements, and test evidence pointers.
+**Fix:** Added 14 tests for FileUpload component (single file routing with fingerprint, multi-file bulk routing, CSV/XLSX detection, disabled-state blocking, isBulkUploadFile/isJsonFile helpers). Documented 7 upload surfaces with mode detection, auth requirements, and test evidence pointers.
 
-**Tests:** 1,906 total (13 new FileUpload tests). `typecheck` + `lint` + `test` + `lint:copy` all green.
+**Tests:** 1,921+ total (14 new FileUpload tests). `typecheck` + `lint` + `test` + `lint:copy` all green.
 
 **Soak tier:** T1 Smoke (pure additive tests, no migration/cron/chain).
 

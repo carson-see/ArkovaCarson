@@ -21,6 +21,22 @@ vi.mock('@/components/layout/ArkovaLogo', () => ({
 }));
 
 describe('FileUpload', () => {
+  it('does not process files when disabled', () => {
+    const onFileSelect = vi.fn();
+    const onBulkDetected = vi.fn();
+
+    const { container } = render(
+      <FileUpload onFileSelect={onFileSelect} onBulkDetected={onBulkDetected} disabled />
+    );
+
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    const file = new File(['x'], 'document.pdf', { type: 'application/pdf' });
+    fireEvent.change(input, { target: { files: [file] } });
+
+    expect(onFileSelect).not.toHaveBeenCalled();
+    expect(onBulkDetected).not.toHaveBeenCalled();
+  });
+
   it('routes multiple files to bulk mode via onBulkDetected', () => {
     const onFileSelect = vi.fn();
     const onBulkDetected = vi.fn();

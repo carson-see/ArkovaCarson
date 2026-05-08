@@ -227,7 +227,7 @@ export function Sidebar({ className, mobileOpen, onMobileClose, orgName, userEma
             'flex items-center rounded-lg transition-colors hover:opacity-80',
             !collapsed && 'gap-3'
           )}
-          aria-label="Arkova — go to dashboard"
+          aria-label="Arkova — go home"
         >
           <ArkovaLogo size={36} />
           {!collapsed && (
