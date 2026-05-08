@@ -14,6 +14,22 @@
 
 ## Now
 
+### 2026-05-08 — SCRUM-1789 Upload flow verification (PR #739, T1)
+
+Same PR as SCRUM-1786/1787/1788. Branch `claude/quirky-meitner-338bda`.
+
+**Problem:** Feature 7 (Upload) in the retroactive staging plan lacked documented upload surfaces, FileUpload routing test coverage, and product expectations evidence.
+
+**Fix:** Added 14 tests for FileUpload component (single file routing with fingerprint, multi-file bulk routing, CSV/XLSX detection, isBulkUploadFile/isJsonFile helpers). Documented 7 upload surfaces with mode detection, auth requirements, and test evidence pointers.
+
+**Tests:** 1,906 total (13 new FileUpload tests). `typecheck` + `lint` + `test` + `lint:copy` all green.
+
+**Soak tier:** T1 Smoke (pure additive tests, no migration/cron/chain).
+
+**DoD gates met:** Tests (gate 1), Jira updated with Confluence URL (gate 2), Confluence page [44236801](https://arkova.atlassian.net/wiki/spaces/A/pages/44236801) (gate 3), Bug log N/A (gate 4), agents.md updated in `src/` (gate 5), HANDOFF.md updated (gate 6). Gate 7 pending CI.
+
+**Jira:** [SCRUM-1789](https://arkova.atlassian.net/browse/SCRUM-1789) — To Do.
+
 ### 2026-05-08 — SCRUM-1788 Search verification: privacy gates, RLS isolation (PR #739, T1)
 
 Same PR as SCRUM-1786/1787. Branch `claude/quirky-meitner-338bda`.
