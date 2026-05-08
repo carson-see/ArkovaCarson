@@ -247,10 +247,12 @@ jobs:
           # execute_sql INSERT ... RETURNING). The drift gate now matches the
           # baseline file directly against that ledger row, so no exempt is
           # needed for the baseline filename.
-          # 0295_bq_export_watermarks: SCRUM-1721 watermark table (PR #728);
-          # awaiting renumber to 0297 once Path C cutover frees slot 0295 for
-          # the prod-applied pr700_rls_baseline_reconciliation file.
-          exempt_regex='^(0033|0078|0162|.* 2|0022_seed_schema_alignment|0023_is_public_profile|0024_fix_search_path_revoke_anchor|0055b_seed_alignment_idempotent|0068b_submitted_status_and_confirmations|0088b_cle_templates|0135_ats_integrations|0175_fix_pipeline_stats_timeout|0180_fix_public_issuer_perf|0258_ark112_queue_public_id|0287_api_key_scope_vocabulary_canonical|0288_drive_processing_loop|0289_suborg_suspension|0295_bq_export_watermarks)$'
+          # 0297_bq_export_watermarks: SCRUM-1721 watermark table — applied to
+          # prod 2026-05-08 via Supabase MCP under explicit Carson sign-off,
+          # ledger row reconciled to version='0297' to match the local file
+          # prefix. Stays in the exempt regex only for the post-merge interval
+          # before snapshot refresh; remove on follow-up.
+          exempt_regex='^(0033|0078|0162|.* 2|0022_seed_schema_alignment|0023_is_public_profile|0024_fix_search_path_revoke_anchor|0055b_seed_alignment_idempotent|0068b_submitted_status_and_confirmations|0088b_cle_templates|0135_ats_integrations|0175_fix_pipeline_stats_timeout|0180_fix_public_issuer_perf|0258_ark112_queue_public_id|0287_api_key_scope_vocabulary_canonical|0288_drive_processing_loop|0289_suborg_suspension|0297_bq_export_watermarks)$'
           filtered_missing=$(echo "$missing" | grep -vE "$exempt_regex" || true)
 
           missing_count=$(echo "$filtered_missing" | grep -c . || true)
