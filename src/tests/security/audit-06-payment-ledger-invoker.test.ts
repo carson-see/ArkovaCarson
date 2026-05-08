@@ -26,9 +26,19 @@ describe('SCRUM-1187 (AUDIT-06): payment_ledger view is SECURITY INVOKER', () =>
     .join('\n');
 
   it('payment_ledger view has security_invoker = true', () => {
-    const alter = /ALTER\s+VIEW\s+(?:public\.)?payment_ledger\s+SET\s*\(\s*security_invoker\s*=\s*true\s*\)/i;
-    const createWith =
-      /CREATE\s+(?:OR\s+REPLACE\s+)?VIEW\s+(?:public\.)?payment_ledger\s+WITH\s*\(\s*security_invoker\s*=\s*true\s*\)/i;
+    // Accepts hand-written form `(security_invoker = true)` and the pg_dump
+    // baseline form `("security_invoker"='true')`. Quoting is optional on
+    // both the option name and the boolean literal.
+    const tableAlt = '(?:public\\.)?"?payment_ledger"?|"public"\\."payment_ledger"';
+    const optionAlt = '"?security_invoker"?\\s*=\\s*\'?true\'?';
+    const alter = new RegExp(
+      `ALTER\\s+VIEW\\s+(?:${tableAlt})\\s+SET\\s*\\(\\s*${optionAlt}\\s*\\)`,
+      'i',
+    );
+    const createWith = new RegExp(
+      `CREATE\\s+(?:OR\\s+REPLACE\\s+)?VIEW\\s+(?:${tableAlt})\\s+WITH\\s*\\(\\s*${optionAlt}\\s*\\)`,
+      'i',
+    );
     expect(
       alter.test(allSql) || createWith.test(allSql),
       'payment_ledger view must be made SECURITY INVOKER (Supabase advisor security_definer_view, ERROR)',

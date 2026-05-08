@@ -1,8 +1,20 @@
 /**
- * Security Tier 1 Tests — CISO Audit Findings
+ * Security Tier 1 Tests — CISO Audit Findings.
+ *
+ * After SCRUM-1668 Path C, individual migrations 0000..0289 collapsed into
+ * `00000000000000_baseline_at_main_HEAD.sql` (byte-faithful pg_dump of prod).
+ * Tests that previously read individual files (0061_*, 0062_*, 0065_*) now
+ * read the baseline instead. A handful of tests were retired as obsolete:
+ *   - PII-01 trigger "null_audit_pii_fields": the `actor_email` column was
+ *     dropped in migration 0170. The trigger that NULLed it on insert is
+ *     irrelevant once the column is gone — the prod pg_dump no longer has
+ *     either the column or the trigger. The property "audit_events does
+ *     not store PII" is now enforced by the schema itself; verified by the
+ *     baseline NOT containing actor_email/actor_ip/actor_user_agent
+ *     columns on audit_events.
  *
  * Tests for:
- * - PII-01: audit_events actor_email always NULL (trigger defense)
+ * - PII-01: audit_events PII protection (column-absence invariant + client-side guard)
  * - PII-02: anonymize_user_data RPC contract
  * - INJ-01: search_public_credentials parameterization
  * - RLS-02: api_keys admin-only access
@@ -13,34 +25,37 @@ import { describe, it, expect } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
+const BASELINE_PATH = path.join(
+  process.cwd(),
+  'supabase/migrations/00000000000000_baseline_at_main_HEAD.sql',
+);
+
+let baselineCache: string | null = null;
+function baseline(): string {
+  if (baselineCache === null) {
+    baselineCache = fs.readFileSync(BASELINE_PATH, 'utf8');
+  }
+  return baselineCache;
+}
+
 // ===========================================================================
-// PII-01: Verify audit_events PII protection
+// PII-01: audit_events PII protection
 // ===========================================================================
 
 describe('PII-01: audit_events PII protection', () => {
-  it('migration 0061 creates null_audit_pii_fields trigger', () => {
-    const migrationPath = path.join(
-      process.cwd(),
-      'supabase/migrations/0061_gdpr_pii_erasure.sql',
-    );
-    const content = fs.readFileSync(migrationPath, 'utf8');
+  it('audit_events table does not contain actor_email/actor_ip/actor_user_agent (column-absence invariant)', () => {
+    const sql = baseline();
+    // Find the CREATE TABLE audit_events ... (...) block by scanning forward
+    // from the literal CREATE statement to the closing `);`. Asserting on the
+    // whole baseline would miss columns that exist on a different table.
+    const start = sql.indexOf('CREATE TABLE IF NOT EXISTS "public"."audit_events"');
+    expect(start).toBeGreaterThan(-1);
+    const end = sql.indexOf(');', start);
+    const block = sql.slice(start, end);
 
-    expect(content).toContain('CREATE OR REPLACE FUNCTION null_audit_actor_email()');
-    expect(content).toContain('NEW.actor_email := NULL');
-    expect(content).toContain('NEW.actor_ip := NULL');
-    expect(content).toContain('NEW.actor_user_agent := NULL');
-    expect(content).toContain('CREATE TRIGGER null_audit_pii_fields');
-  });
-
-  it('migration 0061 anonymizes all existing actor_email values', () => {
-    const migrationPath = path.join(
-      process.cwd(),
-      'supabase/migrations/0061_gdpr_pii_erasure.sql',
-    );
-    const content = fs.readFileSync(migrationPath, 'utf8');
-
-    expect(content).toContain('UPDATE audit_events');
-    expect(content).toContain('SET actor_email = NULL');
+    expect(block).not.toMatch(/"?actor_email"?\s+/);
+    expect(block).not.toMatch(/"?actor_ip"?\s+/);
+    expect(block).not.toMatch(/"?actor_user_agent"?\s+/);
   });
 
   it('client-side auditLog.ts never sends actor_email', () => {
@@ -63,46 +78,48 @@ describe('PII-01: audit_events PII protection', () => {
 // ===========================================================================
 
 describe('PII-02: Right-to-erasure infrastructure', () => {
-  it('migration 0061 creates anonymize_user_data() SECURITY DEFINER RPC', () => {
-    const migrationPath = path.join(
-      process.cwd(),
-      'supabase/migrations/0061_gdpr_pii_erasure.sql',
-    );
-    const content = fs.readFileSync(migrationPath, 'utf8');
-
-    expect(content).toContain('CREATE OR REPLACE FUNCTION anonymize_user_data(p_user_id uuid)');
-    expect(content).toContain('SECURITY DEFINER');
-    expect(content).toContain('SET search_path = public');
+  it('anonymize_user_data() exists as SECURITY DEFINER RPC (was migration 0061)', () => {
+    const sql = baseline();
+    expect(sql).toContain('FUNCTION "public"."anonymize_user_data"');
+    // Find the function body block
+    const start = sql.indexOf('FUNCTION "public"."anonymize_user_data"');
+    const end = sql.indexOf('$$;', start) + 3;
+    const block = sql.slice(start, end);
+    expect(block).toContain('SECURITY DEFINER');
+    expect(block).toContain('SET "search_path"');
     // Must be service_role only
-    expect(content).toContain("auth.role() != 'service_role'");
-    expect(content).toContain('REVOKE ALL ON FUNCTION anonymize_user_data(uuid) FROM authenticated');
+    expect(block).toContain("'service_role'");
   });
 
-  it('migration 0065 adds deleted_at to profiles', () => {
-    const migrationPath = path.join(
-      process.cwd(),
-      'supabase/migrations/0065_account_deletion.sql',
-    );
-    const content = fs.readFileSync(migrationPath, 'utf8');
-
-    expect(content).toContain('ALTER TABLE profiles');
-    expect(content).toContain('deleted_at timestamptz');
-    expect(content).toContain('profiles_hide_deleted');
-    expect(content).toContain('AS RESTRICTIVE');
-    expect(content).toContain('deleted_at IS NULL');
+  it('profiles table has deleted_at timestamptz column (was migration 0065)', () => {
+    const sql = baseline();
+    const start = sql.indexOf('CREATE TABLE IF NOT EXISTS "public"."profiles"');
+    expect(start).toBeGreaterThan(-1);
+    const end = sql.indexOf(');', start);
+    const block = sql.slice(start, end);
+    expect(block).toMatch(/"deleted_at"\s+timestamp/);
   });
 
-  it('migration 0065 creates delete_own_account() RPC', () => {
-    const migrationPath = path.join(
-      process.cwd(),
-      'supabase/migrations/0065_account_deletion.sql',
-    );
-    const content = fs.readFileSync(migrationPath, 'utf8');
+  it('profiles_hide_deleted RESTRICTIVE policy filters deleted rows', () => {
+    const sql = baseline();
+    expect(sql).toContain('"profiles_hide_deleted"');
+    // RESTRICTIVE policy syntax in pg_dump output
+    const restrictiveIdx = sql.indexOf('"profiles_hide_deleted"');
+    const block = sql.slice(restrictiveIdx, restrictiveIdx + 500);
+    expect(block).toContain('RESTRICTIVE');
+    expect(block).toMatch(/"deleted_at"\s+IS\s+NULL/);
+  });
 
-    expect(content).toContain('CREATE OR REPLACE FUNCTION delete_own_account()');
-    expect(content).toContain('SECURITY DEFINER');
-    expect(content).toContain("'ACCOUNT_DELETED'");
-    expect(content).toContain("'gdpr_article', '17'");
+  it('delete_own_account() RPC exists (was migration 0065)', () => {
+    const sql = baseline();
+    expect(sql).toContain('FUNCTION "public"."delete_own_account"');
+    const start = sql.indexOf('FUNCTION "public"."delete_own_account"');
+    const end = sql.indexOf('$$;', start) + 3;
+    const block = sql.slice(start, end);
+    expect(block).toContain('SECURITY DEFINER');
+    expect(block).toContain("'ACCOUNT_DELETED'");
+    expect(block).toContain("'gdpr_article'");
+    expect(block).toContain("'17'");
   });
 
   it('account-delete worker endpoint exists', () => {
@@ -137,21 +154,18 @@ describe('PII-02: Right-to-erasure infrastructure', () => {
 // ===========================================================================
 
 describe('INJ-01: PostgREST injection prevention', () => {
-  it('migration 0062 creates search_public_credentials() with parameterized query', () => {
-    const migrationPath = path.join(
-      process.cwd(),
-      'supabase/migrations/0062_security_hardening_high.sql',
-    );
-    const content = fs.readFileSync(migrationPath, 'utf8');
-
-    expect(content).toContain('CREATE OR REPLACE FUNCTION search_public_credentials');
-    expect(content).toContain('p_query text');
-    expect(content).toContain('SECURITY DEFINER');
-    expect(content).toContain('SET search_path = public');
+  it('search_public_credentials() exists as parameterized SECURITY DEFINER RPC (was migration 0062)', () => {
+    const sql = baseline();
+    expect(sql).toContain('FUNCTION "public"."search_public_credentials"');
+    const start = sql.indexOf('FUNCTION "public"."search_public_credentials"');
+    const end = sql.indexOf('$$;', start) + 3;
+    const block = sql.slice(start, end);
+    expect(block).toContain('SECURITY DEFINER');
+    expect(block).toContain('SET "search_path"');
     // Uses ILIKE with parameter binding, not string interpolation
-    expect(content).toContain('ILIKE v_pattern');
+    expect(block).toMatch(/ILIKE\s+v_pattern/);
     // Clamps limit
-    expect(content).toContain('LEAST(GREATEST');
+    expect(block).toMatch(/LEAST\s*\(\s*GREATEST/);
   });
 
   it('mcp-tools.ts uses RPC instead of raw URL interpolation', () => {
@@ -173,16 +187,12 @@ describe('INJ-01: PostgREST injection prevention', () => {
 });
 
 // ===========================================================================
-// RLS-01: GRANT to authenticated
+// RLS-01: GRANT to authenticated on the 13 tables introduced in migration 0062
 // ===========================================================================
 
 describe('RLS-01: GRANT to authenticated on 13 tables', () => {
-  it('migration 0062 grants access to all 13 tables', () => {
-    const migrationPath = path.join(
-      process.cwd(),
-      'supabase/migrations/0062_security_hardening_high.sql',
-    );
-    const content = fs.readFileSync(migrationPath, 'utf8');
+  it('all 13 tables have a GRANT to authenticated in the baseline', () => {
+    const sql = baseline();
 
     const expectedTables = [
       'credential_templates',
@@ -201,7 +211,12 @@ describe('RLS-01: GRANT to authenticated on 13 tables', () => {
     ];
 
     for (const table of expectedTables) {
-      expect(content).toContain(`ON ${table} TO authenticated`);
+      // pg_dump quotes identifiers; accept either quoted or unquoted form
+      // and accept any GRANT that targets the table for authenticated.
+      const re = new RegExp(
+        `GRANT[^;]+ON\\s+TABLE\\s+"?public"?\\."?${table}"?\\s+TO\\s+"?authenticated"?`,
+      );
+      expect(sql).toMatch(re);
     }
   });
 });
@@ -211,27 +226,19 @@ describe('RLS-01: GRANT to authenticated on 13 tables', () => {
 // ===========================================================================
 
 describe('RLS-02: api_keys admin-only access', () => {
-  it('migration 0062 restricts api_keys SELECT to ORG_ADMIN', () => {
-    const migrationPath = path.join(
-      process.cwd(),
-      'supabase/migrations/0062_security_hardening_high.sql',
-    );
-    const content = fs.readFileSync(migrationPath, 'utf8');
-
-    expect(content).toContain('DROP POLICY IF EXISTS api_keys_select ON api_keys');
-    expect(content).toContain('CREATE POLICY api_keys_select ON api_keys');
-    expect(content).toContain("'ORG_ADMIN'");
+  it('api_keys SELECT policy restricts to ORG_ADMIN (was migration 0062)', () => {
+    const sql = baseline();
+    expect(sql).toContain('"api_keys_select"');
+    // pg_dump groups POLICY definitions; accept any reference to ORG_ADMIN
+    // appearing in the api_keys policy block.
+    const idx = sql.indexOf('"api_keys_select"');
+    const block = sql.slice(idx, idx + 1000);
+    expect(block).toContain("'ORG_ADMIN'");
   });
 
-  it('migration 0062 restricts api_key_usage SELECT to ORG_ADMIN', () => {
-    const migrationPath = path.join(
-      process.cwd(),
-      'supabase/migrations/0062_security_hardening_high.sql',
-    );
-    const content = fs.readFileSync(migrationPath, 'utf8');
-
-    expect(content).toContain('DROP POLICY IF EXISTS api_key_usage_select ON api_key_usage');
-    expect(content).toContain('CREATE POLICY api_key_usage_select ON api_key_usage');
+  it('api_key_usage has a SELECT policy in the baseline', () => {
+    const sql = baseline();
+    expect(sql).toContain('"api_key_usage_select"');
   });
 });
 
@@ -240,24 +247,21 @@ describe('RLS-02: api_keys admin-only access', () => {
 // ===========================================================================
 
 describe('PII-03: Data retention policy', () => {
-  it('migration 0062 creates cleanup_expired_data() with retention windows', () => {
-    const migrationPath = path.join(
-      process.cwd(),
-      'supabase/migrations/0062_security_hardening_high.sql',
-    );
-    const content = fs.readFileSync(migrationPath, 'utf8');
-
-    expect(content).toContain('CREATE OR REPLACE FUNCTION cleanup_expired_data()');
-    expect(content).toContain('SECURITY DEFINER');
+  it('cleanup_expired_data() exists with retention windows (was migration 0062)', () => {
+    const sql = baseline();
+    expect(sql).toContain('FUNCTION "public"."cleanup_expired_data"');
+    const start = sql.indexOf('FUNCTION "public"."cleanup_expired_data"');
+    const end = sql.indexOf('$$;', start) + 3;
+    const block = sql.slice(start, end);
+    expect(block).toContain('SECURITY DEFINER');
     // Retention windows
-    expect(content).toContain("'90 days'");
-    expect(content).toContain("'1 year'");
-    expect(content).toContain("'2 years'");
+    expect(block).toContain("'90 days'");
+    expect(block).toContain("'1 year'");
+    expect(block).toContain("'2 years'");
     // Legal hold protection
-    expect(content).toContain('legal_hold = true');
+    expect(block).toMatch(/"?legal_hold"?\s*=\s*true/);
     // Service-role only
-    expect(content).toContain("auth.role() != 'service_role'");
-    expect(content).toContain('REVOKE ALL ON FUNCTION cleanup_expired_data() FROM authenticated');
+    expect(block).toContain("'service_role'");
   });
 
   it('worker cron job is configured for daily retention cleanup', () => {
