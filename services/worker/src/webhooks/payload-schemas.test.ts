@@ -189,6 +189,7 @@ describe('CredentialIssuedPayloadSchema (SCRUM-1743)', () => {
   const valid = {
     public_id: 'cred_abc123',
     org_public_id: 'pub_org_xyz',
+    recipient_public_id: 'pub_user_def456',
     credential_type: 'DEGREE',
     status: 'ISSUED' as const,
     issued_at: '2026-05-08T00:00:00Z',
@@ -203,8 +204,9 @@ describe('CredentialIssuedPayloadSchema (SCRUM-1743)', () => {
     expect(result.success).toBe(true);
   });
 
-  it('accepts a null org_public_id (org-less issuance)', () => {
+  it('accepts a null org_public_id (org-less issuance) and null recipient_public_id (org-level attestations)', () => {
     expect(CredentialIssuedPayloadSchema.safeParse({ ...valid, org_public_id: null }).success).toBe(true);
+    expect(CredentialIssuedPayloadSchema.safeParse({ ...valid, recipient_public_id: null }).success).toBe(true);
   });
 
   it('rejects a payload that includes anchor_id UUID (CLAUDE.md §6)', () => {
@@ -217,9 +219,10 @@ describe('CredentialIssuedPayloadSchema (SCRUM-1743)', () => {
     expect(result.success).toBe(false);
   });
 
-  it('rejects user_id and org_id leaks', () => {
+  it('rejects user_id, org_id, and recipient_user_id leaks', () => {
     expect(CredentialIssuedPayloadSchema.safeParse({ ...valid, user_id: 'u' }).success).toBe(false);
     expect(CredentialIssuedPayloadSchema.safeParse({ ...valid, org_id: 'o' }).success).toBe(false);
+    expect(CredentialIssuedPayloadSchema.safeParse({ ...valid, recipient_user_id: 'r' }).success).toBe(false);
   });
 
   it('rejects status other than ISSUED', () => {
@@ -228,6 +231,15 @@ describe('CredentialIssuedPayloadSchema (SCRUM-1743)', () => {
 
   it('rejects non-ISO timestamps', () => {
     expect(CredentialIssuedPayloadSchema.safeParse({ ...valid, issued_at: '2026-05-08 00:00:00' }).success).toBe(false);
+  });
+
+  // SCRUM-1743 review feedback: boundary tests for credential_type.
+  it('rejects empty credential_type', () => {
+    expect(CredentialIssuedPayloadSchema.safeParse({ ...valid, credential_type: '' }).success).toBe(false);
+  });
+
+  it('rejects credential_type longer than 64 chars', () => {
+    expect(CredentialIssuedPayloadSchema.safeParse({ ...valid, credential_type: 'a'.repeat(65) }).success).toBe(false);
   });
 });
 
@@ -243,19 +255,29 @@ describe('CredentialVerifiedPayloadSchema (SCRUM-1743)', () => {
     expect(CredentialVerifiedPayloadSchema.safeParse(valid).success).toBe(true);
   });
 
-  it('accepts each verified status (SECURED/PENDING/REVOKED/EXPIRED)', () => {
-    for (const status of ['SECURED', 'PENDING', 'REVOKED', 'EXPIRED'] as const) {
+  // SCRUM-1743 review feedback: terminal-only outcomes. PENDING / SUBMITTED
+  // are non-terminal; emitting credential.verified for them is incoherent.
+  it('accepts each terminal verified status (SECURED/REVOKED/EXPIRED)', () => {
+    for (const status of ['SECURED', 'REVOKED', 'EXPIRED'] as const) {
       expect(CredentialVerifiedPayloadSchema.safeParse({ ...valid, status }).success).toBe(true);
     }
   });
 
-  it('accepts an optional verifier_country (ISO 3166-1 alpha-2)', () => {
-    expect(CredentialVerifiedPayloadSchema.safeParse({ ...valid, verifier_country: 'US' }).success).toBe(true);
+  it('rejects non-terminal statuses (PENDING, SUBMITTED) — verification implies a final answer', () => {
+    expect(CredentialVerifiedPayloadSchema.safeParse({ ...valid, status: 'PENDING' }).success).toBe(false);
+    expect(CredentialVerifiedPayloadSchema.safeParse({ ...valid, status: 'SUBMITTED' }).success).toBe(false);
   });
 
-  it('rejects a verifier_country longer than 2 chars (no IPs, no full country names)', () => {
-    expect(CredentialVerifiedPayloadSchema.safeParse({ ...valid, verifier_country: 'USA' }).success).toBe(false);
-    expect(CredentialVerifiedPayloadSchema.safeParse({ ...valid, verifier_country: '192.168.1.1' }).success).toBe(false);
+  it('accepts an optional verifier_country (ISO 3166-1 alpha-2)', () => {
+    expect(CredentialVerifiedPayloadSchema.safeParse({ ...valid, verifier_country: 'US' }).success).toBe(true);
+    expect(CredentialVerifiedPayloadSchema.safeParse({ ...valid, verifier_country: 'GB' }).success).toBe(true);
+  });
+
+  it('rejects malformed verifier_country (lowercase, digits, length, IP)', () => {
+    for (const bad of ['us', 'USA', 'U1', '!!', '', '192.168.1.1']) {
+      const result = CredentialVerifiedPayloadSchema.safeParse({ ...valid, verifier_country: bad });
+      expect(result.success).toBe(false);
+    }
   });
 
   it('rejects banned fields (anchor_id, fingerprint, user_id, org_id, verifier_ip)', () => {
@@ -303,6 +325,18 @@ describe('CredentialStatusChangedPayloadSchema (SCRUM-1743)', () => {
 
   it('rejects non-ISO changed_at', () => {
     expect(CredentialStatusChangedPayloadSchema.safeParse({ ...valid, changed_at: 'yesterday' }).success).toBe(false);
+  });
+
+  // SCRUM-1743 review feedback: a status_changed event with same previous/new
+  // is a no-op and should never be emitted.
+  it('rejects when previous_status === new_status (no-op transition)', () => {
+    const noop = { ...valid, previous_status: 'SECURED' as const, new_status: 'SECURED' as const };
+    const result = CredentialStatusChangedPayloadSchema.safeParse(noop);
+    expect(result.success).toBe(false);
+  });
+
+  it('accepts a recipient_public_id (re-issuance / inherited status case)', () => {
+    expect(CredentialStatusChangedPayloadSchema.safeParse({ ...valid, recipient_public_id: 'pub_user_def' }).success).toBe(true);
   });
 });
 

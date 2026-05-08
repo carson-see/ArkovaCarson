@@ -132,8 +132,16 @@ export const AnchorBatchSecuredPayloadSchema = z
 const CREDENTIAL_BASE_FIELDS = {
   public_id: z.string().min(1).max(64),
   org_public_id: z.string().min(1).max(64).nullable().optional(),
+  // Recipient (who the credential is issued TO) — distinct from the issuer
+  // org. HRIS / SIS integrations key off this for recipient-side fan-out.
+  // Optional + nullable because not every credential has a single recipient
+  // (org-level attestations, SEC filings, etc).
+  recipient_public_id: z.string().min(1).max(64).nullable().optional(),
   credential_type: z.string().min(1).max(64),
 } as const;
+
+// ISO 3166-1 alpha-2 country code: exactly two uppercase letters.
+const ISO_COUNTRY_CODE_RE = /^[A-Z]{2}$/;
 
 export const CredentialIssuedPayloadSchema = z
   .object({
@@ -144,13 +152,23 @@ export const CredentialIssuedPayloadSchema = z
   })
   .strict();
 
+// SCRUM-1743 review feedback: `credential.verified` only fires on a TERMINAL
+// resolution. PENDING means "no answer yet, retry later" — emitting a
+// verification event in that case is semantically incoherent and would
+// confuse downstream HRIS integrations. Allowed: SECURED / REVOKED /
+// EXPIRED. PENDING / SUBMITTED do not fire `credential.verified`.
 export const CredentialVerifiedPayloadSchema = z
   .object({
     ...CREDENTIAL_BASE_FIELDS,
-    status: z.enum(['SECURED', 'PENDING', 'REVOKED', 'EXPIRED']),
+    status: z.enum(['SECURED', 'REVOKED', 'EXPIRED']),
     verified_at: isoTimestamp,
-    // Country code only — never the verifier's IP. ISO 3166-1 alpha-2.
-    verifier_country: z.string().length(2).nullable().optional(),
+    // Country code only — never the verifier's IP. ISO 3166-1 alpha-2,
+    // shape enforced by regex (length-2 alone would let `'!!'` through).
+    verifier_country: z
+      .string()
+      .regex(ISO_COUNTRY_CODE_RE, 'must be ISO 3166-1 alpha-2 (e.g. US, GB)')
+      .nullable()
+      .optional(),
   })
   .strict();
 
@@ -165,7 +183,15 @@ export const CredentialStatusChangedPayloadSchema = z
     // soft reminder for the field contents).
     reason: z.string().max(500).nullable().optional(),
   })
-  .strict();
+  .strict()
+  // SCRUM-1743 review feedback: a status_changed event with the same
+  // previous and new status is a no-op and should never be emitted.
+  // Reject at schema level so future emit code can't accidentally
+  // ship one.
+  .refine((d) => d.previous_status !== d.new_status, {
+    message: 'previous_status and new_status must differ',
+    path: ['new_status'],
+  });
 
 /**
  * Map event_type → matching schema. Used by `dispatchWebhookEvent` to validate
