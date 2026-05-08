@@ -1,5 +1,5 @@
 # agents.md — src/
-_Last updated: 2026-05-08_
+_Last updated: 2026-05-08 (staging evidence verified)_
 
 ## What This Folder Contains
 
