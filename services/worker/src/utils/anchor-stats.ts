@@ -74,3 +74,4 @@ export async function fetchAnchorStats(): Promise<AnchorStats> {
 
   return { total_secured, total_pending, last_secured_at, last_24h_count };
 }
+
