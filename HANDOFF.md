@@ -203,17 +203,16 @@ _Last refreshed: 2026-05-07 by claude — claims verified against gcloud/MCP/CI 
 
 ### 2026-05-08 — SCRUM-1740 [Implement] partner sandbox migration + provisioning + HakiChain pilot live on staging (branch `claude/scrum-1740-sandbox-implement`)
 
-**Migration applied to arkova-staging** (project_ref `ujtlwnoqfhtitcmsnrpq`) at 2026-05-08T13:09Z via Supabase MCP `apply_migration`. Adds `org_credits.is_test` (default false) + `org_credits.anchor_quota` (nullable) + partial index `idx_org_credits_is_test`. NOTIFY pgrst reload schema fired.
+**Migration applied to arkova-staging** (project_ref `ujtlwnoqfhtitcmsnrpq`) at 2026-05-08T13:09Z via Supabase MCP `apply_migration` (single-file lettered-suffix migration; same schema effect as `npx supabase db push --linked` because there is no in-flight migration ahead of it on staging). For full multi-migration replay or fresh-DB rebuilds, use the documented `db push --linked` path per CLAUDE.md §1.11. Adds `org_credits.is_test` (default false) + `org_credits.anchor_quota` (nullable) + partial index `idx_org_credits_is_test`. NOTIFY pgrst reload schema fired. Production application is Carson-only — the migration drift CI check is expected to fail until Carson applies via Supabase MCP / `db push --linked` against project_ref `vzwyaatejekddvltxyye`.
 
 **HakiChain pilot org provisioned on staging:**
 
-- org_id: `f8419c9d-e925-415c-8b45-e648b3708eb2`
+- org_id (row id): redacted in HANDOFF; available via Supabase MCP
 - public_id: `ORG-TEST-HAKICHAIN-D724D647`
 - display_name: `[SANDBOX] hakichain`
 - org_credits row: `balance=5, purchased=5, anchor_quota=10, is_test=true`
-- API key id: `ffb1a024-5572-4447-a83a-caa8e12edd74` (key_prefix `ak_test_KzVv`)
+- api_key key_prefix: `ak_test_KzVv` (raw key delivered once via stdout to operator; never persisted in plaintext per CLAUDE.md §1.4)
 - scopes: `[read:search, read:records, read:orgs, anchor:write]`
-- raw key delivered via stdout to operator (never persisted in plaintext per CLAUDE.md §1.4)
 
 **End-to-end smoke from provisioned key:** `GET /api/v1/verify/ARK-2026-SCRUM1736T2` (the SCRUM-1736 fixture from the prior soak) returned 200 with `{verified:false, status:"EXPIRED", expiry_date:"2025-01-01T00:00:00+00:00"}` — full chain works (provisioning → API key → verify endpoint → SCRUM-1736 EXPIRED status correctly surfaced).
 
@@ -223,9 +222,9 @@ What shipped on this branch:
 - `scripts/admin/provision-sandbox-org.ts` (new) — idempotent TS admin script. HMAC-SHA256 hashes API key per CLAUDE.md §1.4; raw key shown once via stdout. Resolves api_keys.created_by from any profile so the NOT NULL constraint is satisfied.
 - `scripts/admin/provision-sandbox-org.test.ts` (new) — 4 unit tests on `hmacApiKey`: hex digest format, determinism, raw-key sensitivity, secret-rotation sensitivity.
 
-Local quality gates: `npx vitest run scripts/admin/provision-sandbox-org.test.ts` → 4/4 pass; `apply_migration` MCP returned `{success: true}`.
+Local quality gates: `npx vitest run scripts/admin/provision-sandbox-org.test.ts` → suite green locally (parseCliArgs + loadConfig + hmacApiKey coverage); `apply_migration` MCP returned `{success: true}`.
 
-Tier: T2. Migration applied to staging. Provisioning ran end-to-end. /verify smoke confirmed against the SCRUM-1736 EXPIRED fixture.
+Tier: T2 (migration + new public-API-surface admin script). Migration applied to staging. Provisioning ran end-to-end. /verify smoke confirmed against the SCRUM-1736 EXPIRED fixture. Migration drift check vs prod is expected red until Carson applies 0297+0298 to prod.
 
 _Last refreshed: 2026-05-08 by claude — claims verified against gcloud/MCP/CI output (apply_migration MCP returned success against project_ref ujtlwnoqfhtitcmsnrpq; PostgREST GET on org_credits + api_keys confirmed row state; live curl against arkova-worker-pr734-staging /api/v1/verify/ARK-2026-SCRUM1736T2 returned verified:false status:EXPIRED)._
 
