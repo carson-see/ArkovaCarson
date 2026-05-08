@@ -28,7 +28,12 @@ Same PR as SCRUM-1786/1787/1788/1789. Branch `claude/quirky-meitner-338bda`.
 
 **What's done:** Tests written and passing (gate 1). Jira SCRUM-1790 created with Confluence URL (gate 2). Confluence page [43974658](https://arkova.atlassian.net/wiki/spaces/A/pages/43974658) (gate 3). Bug log N/A (gate 4). agents.md updated (gate 5). HANDOFF.md updated (gate 6).
 
-**What's NOT done:** No staging sandbox verification. The retroactive staging plan requires auth flows pass on staging with screenshots/logs, OAuth redirect URL verification, and role-aware navigation after auth. These are frontend-only changes riding on the T3 soak from the earlier worker commits in PR #739. No independent staging deploy was done for features 5-8. Gate 7 pending CI.
+**Staging DB verification (2026-05-08):**
+- Staging has 5,003 auth.users but 0 with passwords — all are seed data, no real auth sessions exist
+- OAuth providers (Google, LinkedIn) require Supabase Auth dashboard configuration on staging project — not verified
+- Auth redirect URLs not verified against staging vs prod
+
+**What's NOT done:** No live auth flow verification — no screenshots of login/signup/password-reset against staging. OAuth provider config on staging Supabase not verified. Zero real auth sessions in staging DB. Frontend test coverage is component-level only. Gate 7 pending CI.
 
 **Jira:** [SCRUM-1790](https://arkova.atlassian.net/browse/SCRUM-1790)
 
@@ -46,7 +51,11 @@ Same PR as SCRUM-1786/1787/1788. Branch `claude/quirky-meitner-338bda`.
 
 **What's done:** Tests written and passing (gate 1). Jira updated with Confluence URL (gate 2). Confluence page [44236801](https://arkova.atlassian.net/wiki/spaces/A/pages/44236801) (gate 3). Bug log N/A (gate 4). agents.md updated (gate 5). HANDOFF.md updated (gate 6).
 
-**What's NOT done:** No staging sandbox verification. The retroactive staging plan requires every upload entrypoint to succeed with evidence or be explicitly out-of-scope. No staging fixtures, no before/after data, no screenshots. Gate 7 pending CI.
+**Staging DB verification (2026-05-08):**
+- Staging has 20,014 anchors (18,152 SECURED, 1,025 PENDING, 433 REVOKED, 111 BROADCASTING, etc.)
+- Upload creates anchors in PENDING — staging data confirms the lifecycle path exists
+
+**What's NOT done:** No live UI verification — no screenshots of upload flow completing against staging. Client-side hashing runs in browser (Constitution 1.6) and doesn't touch staging DB directly. No before/after anchor count from a test upload. Gate 7 pending CI.
 
 **Jira:** [SCRUM-1789](https://arkova.atlassian.net/browse/SCRUM-1789) — To Do.
 
@@ -64,7 +73,14 @@ Same PR as SCRUM-1786/1787. Branch `claude/quirky-meitner-338bda`.
 
 **What's done:** Tests written and passing (gate 1). Jira updated with Confluence URL (gate 2). Confluence page [44138497](https://arkova.atlassian.net/wiki/spaces/A/pages/44138497) (gate 3). Bug log N/A (gate 4). agents.md updated (gate 5). HANDOFF.md updated (gate 6).
 
-**What's NOT done:** No staging sandbox verification. The retroactive staging plan requires search fixtures, pass/fail evidence, RLS isolation evidence against staging DB, and response-time thresholds against seeded data. No staging deploy or queries were run. Gate 7 pending CI.
+**Staging DB verification (2026-05-08):**
+- Created 5 public profiles + 6 role-assigned profiles (2 INDIVIDUAL, 2 ORG_ADMIN, 2 ORG_MEMBER) as staging fixtures
+- `get_public_member_profile('mzuxsdsyhzvx')` (public) → returns data with display_name, public_id, organizations array
+- `get_public_member_profile('ans86r3fujts')` (private) → returns `{"error": "Profile not found"}` — privacy gate confirmed
+- `get_org_subtree(uuid, 2)` → returns hierarchy with depth, display_name, verification_status
+- Missing RPCs on staging: `get_org_profile`, `public_search`, `get_issuer_registry` — schema drift from prod
+
+**What's NOT done:** Full UI staging verification — no screenshots, no response-time measurements against seeded data, no frontend pointed at staging Supabase. Missing RPCs need migration sync. Gate 7 pending CI.
 
 **Jira:** [SCRUM-1788](https://arkova.atlassian.net/browse/SCRUM-1788) — To Do.
 
@@ -82,7 +98,12 @@ Same PR as SCRUM-1786. Branch `claude/quirky-meitner-338bda`.
 
 **What's done:** Tests written and passing (gate 1). Jira updated with Confluence URL (gate 2). Confluence page [44072961](https://arkova.atlassian.net/wiki/spaces/A/pages/44072961) (gate 3). Bug log N/A (gate 4). agents.md updated (gate 5). HANDOFF.md updated (gate 6).
 
-**What's NOT done:** No staging sandbox verification. The retroactive staging plan requires staging role-aware navigation across individual, org member, org admin, and no-role users, tested from multiple pages, with keyboard and mobile behavior. No staging deploy was done for this feature. Gate 7 pending CI.
+**Staging DB verification (2026-05-08):**
+- Staging has 6 profiles with roles (2 INDIVIDUAL, 2 ORG_ADMIN, 2 ORG_MEMBER) — fixtures created this session
+- Role enum values confirmed: INDIVIDUAL, ORG_ADMIN, ORG_MEMBER
+- `useProfile().destination` reads from profiles.role — schema exists and roles are populated
+
+**What's NOT done:** No live UI verification — no screenshots of role-aware routing from different user sessions on staging. Frontend not pointed at staging Supabase. Keyboard/mobile behavior not tested. Gate 7 pending CI.
 
 **Jira:** [SCRUM-1787](https://arkova.atlassian.net/browse/SCRUM-1787) — To Do (transitions to In Progress when PR opens / CI runs).
 
