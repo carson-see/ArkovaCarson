@@ -17,7 +17,6 @@ import {
   AnchorSubmittedPayloadSchema,
   AnchorSecuredPayloadSchema,
   AnchorRevokedPayloadSchema,
-  AnchorExpiredPayloadSchema,
   AnchorBatchSecuredPayloadSchema,
   CredentialIssuedPayloadSchema,
   CredentialVerifiedPayloadSchema,
@@ -149,62 +148,6 @@ describe('AnchorRevokedPayloadSchema', () => {
   it('rejects a REVOKED payload with internal fields', () => {
     expect(AnchorRevokedPayloadSchema.safeParse({ ...valid, anchor_id: 'uuid' }).success).toBe(false);
     expect(AnchorRevokedPayloadSchema.safeParse({ ...valid, fingerprint: 'a'.repeat(64) }).success).toBe(false);
-  });
-});
-
-// SCRUM-1796: anchor.expired schema closes a pre-existing validation-bypass
-// gap surfaced during the SCRUM-1743 audit.
-describe('AnchorExpiredPayloadSchema (SCRUM-1796)', () => {
-  const valid = {
-    public_id: 'abc123',
-    chain_tx_id: 'fake-tx-id',
-    chain_block_height: 850000,
-    expired_at: '2026-05-08T00:00:00Z',
-    status: 'EXPIRED' as const,
-  };
-
-  it('accepts an EXPIRED payload with only public-allowed fields', () => {
-    expect(AnchorExpiredPayloadSchema.safeParse(valid).success).toBe(true);
-  });
-
-  it('accepts an optional expiry_reason', () => {
-    expect(AnchorExpiredPayloadSchema.safeParse({ ...valid, expiry_reason: 'auto-expiry per issuer policy' }).success).toBe(true);
-  });
-
-  it('rejects expiry_reason longer than 500 chars', () => {
-    expect(AnchorExpiredPayloadSchema.safeParse({ ...valid, expiry_reason: 'a'.repeat(501) }).success).toBe(false);
-  });
-
-  it('rejects banned fields (anchor_id, fingerprint, user_id, org_id) — CLAUDE.md §6 + §1.6', () => {
-    for (const banned of ['anchor_id', 'fingerprint', 'user_id', 'org_id'] as const) {
-      const result = AnchorExpiredPayloadSchema.safeParse({ ...valid, [banned]: 'leak' });
-      expect(result.success).toBe(false);
-    }
-  });
-
-  it('rejects status other than EXPIRED', () => {
-    expect(AnchorExpiredPayloadSchema.safeParse({ ...valid, status: 'SECURED' }).success).toBe(false);
-    expect(AnchorExpiredPayloadSchema.safeParse({ ...valid, status: 'REVOKED' }).success).toBe(false);
-  });
-
-  it('rejects null chain_tx_id (expiry fires post-confirmation)', () => {
-    expect(AnchorExpiredPayloadSchema.safeParse({ ...valid, chain_tx_id: null }).success).toBe(false);
-  });
-
-  it('rejects null chain_block_height (expiry fires post-confirmation)', () => {
-    expect(AnchorExpiredPayloadSchema.safeParse({ ...valid, chain_block_height: null }).success).toBe(false);
-  });
-
-  it('rejects empty chain_tx_id', () => {
-    expect(AnchorExpiredPayloadSchema.safeParse({ ...valid, chain_tx_id: '' }).success).toBe(false);
-  });
-
-  it('rejects non-ISO expired_at', () => {
-    expect(AnchorExpiredPayloadSchema.safeParse({ ...valid, expired_at: '2026-05-08 00:00:00' }).success).toBe(false);
-  });
-
-  it('accepts org_public_id when provided', () => {
-    expect(AnchorExpiredPayloadSchema.safeParse({ ...valid, org_public_id: 'pub_org_xyz' }).success).toBe(true);
   });
 });
 
@@ -493,36 +436,5 @@ describe('validateWebhookPayload helper', () => {
       reason: 'Issuer revocation',
     });
     expect(result.ok).toBe(true);
-  });
-
-  // SCRUM-1796: prior to this PR, anchor.expired payloads bypassed validation
-  // (no entry in PAYLOAD_SCHEMAS_BY_EVENT_TYPE). Now the dispatcher enforces
-  // the same allowlist as the rest of the anchor.* family.
-  it('SCRUM-1796: anchor.expired now validates instead of bypassing', () => {
-    const result = validateWebhookPayload('anchor.expired', {
-      public_id: 'abc123',
-      chain_tx_id: 'fake-tx-id',
-      chain_block_height: 850000,
-      expired_at: '2026-05-08T00:00:00Z',
-      status: 'EXPIRED',
-    });
-    expect(result.ok).toBe(true);
-    if (result.ok) expect(result.bypassed).toBeUndefined();
-  });
-
-  it('SCRUM-1796: anchor.expired rejects banned fields end-to-end', () => {
-    const result = validateWebhookPayload('anchor.expired', {
-      public_id: 'abc123',
-      chain_tx_id: 'fake-tx-id',
-      chain_block_height: 850000,
-      expired_at: '2026-05-08T00:00:00Z',
-      status: 'EXPIRED',
-      anchor_id: '550e8400-e29b-41d4-a716-446655440000',
-    });
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.error).toBeInstanceOf(WebhookPayloadValidationError);
-      expect(result.error.eventType).toBe('anchor.expired');
-    }
   });
 });

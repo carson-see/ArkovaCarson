@@ -89,25 +89,6 @@ export const AnchorRevokedPayloadSchema = z
   })
   .strict();
 
-// SCRUM-1796: anchor.expired schema. Closes a pre-existing validation-bypass
-// gap surfaced during the SCRUM-1743 audit — anchor.expired was accepted by
-// the CRUD allowlist (VALID_WEBHOOK_EVENTS) but PAYLOAD_SCHEMAS_BY_EVENT_TYPE
-// had no entry, so any anchor.expired dispatch hit validateWebhookPayload's
-// `bypassed:true` branch and shipped UNVALIDATED — CLAUDE.md §6 / §1.6
-// banned-field enforcement was silently disabled. Mirrors AnchorRevokedPayload
-// shape: requires non-null chain_tx_id + chain_block_height because expiry
-// fires post-confirmation (an anchor that never secured can't expire).
-export const AnchorExpiredPayloadSchema = z
-  .object({
-    ...ANCHOR_BASE_FIELDS,
-    chain_tx_id: z.string().min(1),
-    chain_block_height: z.number().int().nonnegative(),
-    status: z.literal('EXPIRED'),
-    expired_at: isoTimestamp,
-    expiry_reason: z.string().max(500).nullable().optional(),
-  })
-  .strict();
-
 /**
  * Aggregate event for the merkle-batch path. Fires once per merkle TX.
  * Per-anchor `anchor.secured` events still fan out alongside this for
@@ -220,7 +201,6 @@ export const PAYLOAD_SCHEMAS_BY_EVENT_TYPE = {
   'anchor.submitted': AnchorSubmittedPayloadSchema,
   'anchor.secured': AnchorSecuredPayloadSchema,
   'anchor.revoked': AnchorRevokedPayloadSchema,
-  'anchor.expired': AnchorExpiredPayloadSchema,
   'anchor.batch_secured': AnchorBatchSecuredPayloadSchema,
   'credential.issued': CredentialIssuedPayloadSchema,
   'credential.verified': CredentialVerifiedPayloadSchema,
@@ -231,7 +211,6 @@ export type WebhookEventType = keyof typeof PAYLOAD_SCHEMAS_BY_EVENT_TYPE;
 export type AnchorSubmittedPayload = z.infer<typeof AnchorSubmittedPayloadSchema>;
 export type AnchorSecuredPayload = z.infer<typeof AnchorSecuredPayloadSchema>;
 export type AnchorRevokedPayload = z.infer<typeof AnchorRevokedPayloadSchema>;
-export type AnchorExpiredPayload = z.infer<typeof AnchorExpiredPayloadSchema>;
 export type AnchorBatchSecuredPayload = z.infer<typeof AnchorBatchSecuredPayloadSchema>;
 export type CredentialIssuedPayload = z.infer<typeof CredentialIssuedPayloadSchema>;
 export type CredentialVerifiedPayload = z.infer<typeof CredentialVerifiedPayloadSchema>;

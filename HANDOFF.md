@@ -14,21 +14,19 @@
 
 ## Now
 
-### 2026-05-08 (late) — SCRUM-1795 + SCRUM-1796: webhook subscribe-vs-emit drift + AnchorExpired validation gap ([PR #747](https://github.com/carson-see/ArkovaCarson/pull/747), branch `claude/scrum-1795-1796-webhook-drift-fix`)
+### 2026-05-08 (late) — SCRUM-1795: webhook subscribe-vs-emit drift fix ([PR #747](https://github.com/carson-see/ArkovaCarson/pull/747), branch `claude/scrum-1795-1796-webhook-drift-fix`)
 
-PR #747 is **open, not merged**. Closes two pre-existing webhook contract drift bugs surfaced during the SCRUM-1743 cross-repo audit (BUG-2026-05-08-002 + 003 in the [Bug Tracker](https://arkova.atlassian.net/wiki/spaces/A/pages/28115270)).
+PR #747 is **open, not merged**. Originally scoped as SCRUM-1795 + SCRUM-1796 combined, but mid-flight discovered PR [#734](https://github.com/carson-see/ArkovaCarson/pull/734) (SCRUM-1735+1736) already ships `AnchorExpiredPayloadSchema` AND the producer cron — strict superset of SCRUM-1796. PR #747 narrowed to SCRUM-1795 only to avoid duplicate work / merge conflict; SCRUM-1796 to be closed as duplicate of SCRUM-1735.
 
-**SCRUM-1795 (asymmetric subscribe vs emit):** the worker emits `anchor.submitted` and `anchor.batch_secured` and validates them via `PAYLOAD_SCHEMAS_BY_EVENT_TYPE`, but `VALID_WEBHOOK_EVENTS` (CRUD allowlist) was missing both — customers couldn't subscribe via `POST /webhooks`. **SCRUM-1796 (validation bypass):** `anchor.expired` was accepted by `VALID_WEBHOOK_EVENTS` but had no payload schema, so dispatches hit `validateWebhookPayload`'s `bypassed:true` branch and shipped UNVALIDATED — CLAUDE.md §6 / §1.6 banned-field enforcement was silently disabled. Earlier work in [PR #731](https://github.com/carson-see/ArkovaCarson/pull/731) was closed without merging.
+**SCRUM-1795 (asymmetric subscribe vs emit):** the worker emits `anchor.submitted` and `anchor.batch_secured` and validates them via `PAYLOAD_SCHEMAS_BY_EVENT_TYPE`, but `VALID_WEBHOOK_EVENTS` (CRUD allowlist) was missing both — customers couldn't subscribe via `POST /webhooks`. Surfaced during SCRUM-1743 cross-repo audit. BUG-2026-05-08-002 in the [Bug Tracker](https://arkova.atlassian.net/wiki/spaces/A/pages/28115270).
 
-**What lands:** `VALID_WEBHOOK_EVENTS` extended; new `AnchorExpiredPayloadSchema` (mirrors `AnchorRevokedPayloadSchema` with non-null `chain_tx_id`/`chain_block_height` invariant); 3 OpenAPI enum sites (lines 765, 854, 1318), UI dropdown (`AVAILABLE_EVENTS`), SDK `WebhookEventType` union, Zapier `VALID_EVENTS`, public docs `webhooks.md`, and `services/worker/agents.md` all extended in lockstep. 14 new tests. 11 files changed, +195/-28.
+**What lands:** `VALID_WEBHOOK_EVENTS` extended with `anchor.submitted` + `anchor.batch_secured`; 3 OpenAPI enum sites (lines 765, 854, 1318), UI dropdown (`AVAILABLE_EVENTS`), SDK `WebhookEventType` union, Zapier `VALID_EVENTS`, public docs `webhooks.md`, and `services/worker/agents.md` all extended in lockstep. 3 new CRUD tests confirm the new event types are accepted by `POST /webhooks`.
 
-**Local verification on tip `d1fd442c`:** worker `npm run typecheck` clean, frontend `npx tsc --noEmit` clean, `vitest run payload-schemas.test.ts webhooks-crud.test.ts` **100/100 passing**, `vitest run WebhookSettings.test.tsx` **23/23 passing**, `npm run lint:copy` clean.
+**Local verification post-revert (`f4c51598`-ish):** worker `npm run typecheck` clean, frontend `npx tsc --noEmit` clean, `vitest run payload-schemas.test.ts webhooks-crud.test.ts` **88/88 passing**, `vitest run WebhookSettings.test.tsx` **23/23 passing**, `npm run lint:copy` clean. CI runs same vitest in `.github/workflows/ci.yml` Tests + TypeCheck & Lint jobs.
 
-**Confluence:** [SCRUM-1795 + SCRUM-1796 page 44564512](https://arkova.atlassian.net/wiki/spaces/A/pages/44564512). Topic page [Webhooks 655405](https://arkova.atlassian.net/wiki/spaces/A/pages/655405/Webhooks) update + Bug Tracker row updates in flight at write time.
+**Staging:** runtime change is purely additive — CRUD now accepts new event names; existing subscribers and dispatcher behavior unchanged. No migration, no DB change.
 
-**Staging:** runtime change is dispatcher-validation-only. SCRUM-1795 is purely additive (CRUD now accepts new event names; existing subscribers unaffected). SCRUM-1796 switches `anchor.expired` from bypass to strict validation — any in-flight payload with banned fields would now fail loudly in worker logs (by design). No migration, no DB change, no infrastructure work. Smoke verification deferred to post-merge prod deploy.
-
-_Last refreshed: 2026-05-08 by Claude — claims verified against vitest output (100/100 worker + 23/23 UI passing on `d1fd442c`), `gh pr view 747` (open, not merged), and `gh pr create` returning the URL above._
+_Last refreshed: 2026-05-08 by Claude — claims verified against vitest output (88/88 worker + 23/23 UI passing post-revert), `gh pr view 747` (open, not merged), `gh pr view 734` (open, CONFLICTING — confirms PR #734 still has the AnchorExpired work pending)._
 
 ### 2026-05-08 (afternoon) — HakiChain pre-launch session: 7 PRs in-flight, sandbox provisioned end-to-end, MCP edge wired, prod migrations applied (operational summary)
 
