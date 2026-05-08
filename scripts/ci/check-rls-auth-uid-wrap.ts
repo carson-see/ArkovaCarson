@@ -64,6 +64,15 @@ function scan(): Finding[] {
     // inside the regex_replace pattern string.
     if (file.endsWith('0280_rls_auth_uid_subquery_wrap.sql')) continue;
 
+    // Skip the SCRUM-1668 Path C baseline (`00000000000000_baseline_at_main_HEAD.sql`).
+    // The pg_dump captures historical CREATE POLICY text that still uses bare
+    // auth.uid(); those policies were rewritten in-place by migration 0280's
+    // DO block when the wrap landed in prod. Same rationale as the < 0280
+    // historical-prefix skip — the live prod state is wrapped, only the
+    // dump's textual representation is bare. Without this skip, every PR
+    // post-Path-C trips the gate on 57 grandfathered occurrences.
+    if (file.endsWith('00000000000000_baseline_at_main_HEAD.sql')) continue;
+
     // Skip historical migrations (< 0280). Their bare occurrences were
     // rewritten at runtime by 0280; the immutable migration text is benign.
     const prefix = migrationPrefix(file);
