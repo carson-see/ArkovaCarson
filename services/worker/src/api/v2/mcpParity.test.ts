@@ -82,13 +82,33 @@ describe('SCRUM-1733 — REST v2 ↔ MCP parity contract', () => {
       expect(VerifyAnchorResultSchema.safeParse({ verified: false, error: 'not_found' }).success).toBe(true);
     });
 
-    it('rejects banned UUID fields on the verify response', () => {
+    it('accepts public-safe verify responses with the handler-emitted public_id/fingerprint/title fields', () => {
+      // Codex P2 PR #737: schema must accept the actual /api/v2/verify
+      // response shape. Banned-field protection moves to assertNoBannedFields
+      // (covered separately) so the schema can stay non-strict.
+      expect(VerifyAnchorResultSchema.safeParse({
+        verified: true,
+        status: 'ACTIVE',
+        public_id: 'ARK-2026-A1',
+        fingerprint: 'a'.repeat(64),
+        title: 'A credential',
+        network_receipt_id: null,
+        record_uri: null,
+      }).success).toBe(true);
+    });
+
+    it('runtime guard (NOT the schema) rejects banned UUID fields on the verify response', () => {
+      // Schema is intentionally non-strict so it accepts public-safe success
+      // shapes. The no-internal-UUID guarantee is enforced by
+      // assertNoBannedFields, which runs at the response-serialization
+      // boundary in the actual handlers.
       for (const banned of BANNED_RESPONSE_FIELDS) {
-        expect(VerifyAnchorResultSchema.safeParse({
-          verified: true,
-          status: 'ACTIVE',
-          [banned]: 'uuid',
-        }).success).toBe(false);
+        const tainted = { verified: true, status: 'ACTIVE' as const, [banned]: 'uuid' };
+        // Schema accepts (no strict) — that's by design.
+        expect(VerifyAnchorResultSchema.safeParse(tainted).success).toBe(true);
+        // Runtime guard catches it — the real protection.
+        expect(() => assertNoBannedFields(tainted as Record<string, unknown>, 'verify-test'))
+          .toThrow(new RegExp(`banned field\\(s\\): ${banned}`));
       }
     });
 
@@ -139,11 +159,53 @@ describe('SCRUM-1733 — REST v2 ↔ MCP parity contract', () => {
       expect(() => assertNoBannedFields({ public_id: 'x', status: 'ACTIVE' }, 'test')).not.toThrow();
     });
 
-    it('throws with a clear message when a banned field is present', () => {
+    it('throws with a clear message naming each top-level banned field', () => {
       for (const banned of BANNED_RESPONSE_FIELDS) {
         expect(() => assertNoBannedFields({ public_id: 'x', [banned]: 'uuid' }, 'test'))
-          .toThrow(new RegExp(`banned field "${banned}"`));
+          .toThrow(new RegExp(`banned field\\(s\\): ${banned}`));
       }
+    });
+
+    // CodeRabbit PR #737 Major: nested-field regression. The original
+    // top-level-only check let `{ metadata: { user_id: '...' } }` slip
+    // through and undermined the no-internal-UUID guarantee.
+    it('throws when a banned field is nested inside a metadata object', () => {
+      expect(() =>
+        assertNoBannedFields({ public_id: 'x', metadata: { user_id: 'uuid' } }, 'test'),
+      ).toThrow(/banned field\(s\): metadata\.user_id/);
+    });
+
+    it('throws when a banned field is nested inside an array of objects', () => {
+      expect(() =>
+        assertNoBannedFields({ results: [{ public_id: 'x' }, { org_id: 'uuid' }] }, 'test'),
+      ).toThrow(/banned field\(s\): results\[1\]\.org_id/);
+    });
+
+    it('throws when a banned field is deeply nested', () => {
+      expect(() =>
+        assertNoBannedFields({ a: { b: { c: { anchor_id: 'uuid' } } } }, 'test'),
+      ).toThrow(/banned field\(s\): a\.b\.c\.anchor_id/);
+    });
+
+    it('reports every offender in a single throw, sorted by path', () => {
+      try {
+        assertNoBannedFields({
+          id: 'top',
+          metadata: { user_id: 'leak1', sub: { org_id: 'leak2' } },
+        }, 'test');
+        throw new Error('expected throw');
+      } catch (err) {
+        const msg = (err as Error).message;
+        expect(msg).toContain('id');
+        expect(msg).toContain('metadata.sub.org_id');
+        expect(msg).toContain('metadata.user_id');
+      }
+    });
+
+    it('does not infinite-loop on cyclic objects', () => {
+      const cyclic: Record<string, unknown> = { public_id: 'x' };
+      cyclic.self = cyclic;
+      expect(() => assertNoBannedFields(cyclic, 'test')).not.toThrow();
     });
   });
 });

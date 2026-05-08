@@ -56,17 +56,33 @@ export const VerifyAnchorStatusSchema = z.enum([
 ]);
 export type VerifyAnchorStatus = z.infer<typeof VerifyAnchorStatusSchema>;
 
+// Codex P2 PR #737: the existing /api/v2/verify handler returns
+// network_receipt_id: null and record_uri: null on the not-found path,
+// AND returns public success-path fields (fingerprint, public_id, title)
+// that aren't internal UUID leaks. The schema must accept those without
+// rejecting valid responses, so:
+//   1. Optional fields are nullable so handler-emitted null doesn't reject
+//   2. Schema is NOT .strict() — the no-internal-UUID rule is enforced at
+//      the runtime guard layer (assertNoBannedFields below) which performs
+//      a banned-field scan on any depth, rather than via Zod stripping. A
+//      strict schema would reject every legitimate verify response.
 export const VerifyAnchorResultSchema = z.object({
   verified: z.boolean(),
   status: VerifyAnchorStatusSchema.optional(),
-  network_receipt_id: z.string().optional(),
-  anchor_timestamp: z.string().optional(),
-  record_uri: z.string().optional(),
-  credential_type: z.string().optional(),
-  issuer_name: z.string().optional(),
-  jurisdiction: z.string().optional(),
+  network_receipt_id: z.string().nullable().optional(),
+  anchor_timestamp: z.string().nullable().optional(),
+  record_uri: z.string().nullable().optional(),
+  credential_type: z.string().nullable().optional(),
+  issuer_name: z.string().nullable().optional(),
+  jurisdiction: z.string().nullable().optional(),
   error: z.string().optional(),
-}).strict();
+  // Public-safe fields the v2 verify handler emits on the success path.
+  // Listed here so the schema accepts the shape; banned-field protection
+  // is via assertNoBannedFields, not via strict.
+  public_id: z.string().nullable().optional(),
+  fingerprint: z.string().nullable().optional(),
+  title: z.string().nullable().optional(),
+});
 
 export type VerifyAnchorResult = z.infer<typeof VerifyAnchorResultSchema>;
 
@@ -115,17 +131,47 @@ export const MCP_PARITY_SCHEMAS = {
 } as const;
 
 /**
- * Helper: assert no banned field is present in the response. Both
- * the REST and MCP code paths can call this before returning to make
- * the no-internal-UUID rule a runtime guarantee, not just a hope.
+ * Helper: assert no banned field is present anywhere in the response —
+ * top level OR nested in objects/arrays at any depth. Both the REST
+ * and MCP code paths can call this before returning to make the
+ * no-internal-UUID rule a runtime guarantee, not just a hope.
+ *
+ * CodeRabbit PR #737 review: the original implementation only checked
+ * top-level keys, so `{ metadata: { user_id: "..." } }` slipped through.
+ * Now walks the full payload graph with cycle protection. Reports the
+ * full nested path of every offender in the error.
  */
 export function assertNoBannedFields(obj: Record<string, unknown>, where: string): void {
-  for (const banned of BANNED_RESPONSE_FIELDS) {
-    if (banned in obj) {
-      throw new Error(
-        `[SCRUM-1733 parity] response shape from ${where} contains banned field "${banned}". ` +
-        `See services/worker/src/api/v2/mcpParity.ts BANNED_RESPONSE_FIELDS.`,
-      );
+  const bannedSet = new Set<string>(BANNED_RESPONSE_FIELDS);
+  const offenders: string[] = [];
+  const seen = new WeakSet<object>();
+
+  const visit = (value: unknown, path: string): void => {
+    if (!value || typeof value !== 'object') return;
+    if (seen.has(value as object)) return;
+    seen.add(value as object);
+
+    if (Array.isArray(value)) {
+      for (let i = 0; i < value.length; i++) {
+        visit(value[i], `${path}[${i}]`);
+      }
+      return;
     }
+
+    for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
+      const nextPath = path ? `${path}.${key}` : key;
+      if (bannedSet.has(key)) offenders.push(nextPath);
+      visit(nested, nextPath);
+    }
+  };
+
+  visit(obj, '');
+
+  if (offenders.length > 0) {
+    const fields = offenders.sort().join(', ');
+    throw new Error(
+      `[SCRUM-1733 parity] response shape from ${where} contains banned field(s): ${fields}. ` +
+      `See services/worker/src/api/v2/mcpParity.ts BANNED_RESPONSE_FIELDS.`,
+    );
   }
 }
