@@ -127,7 +127,7 @@ Local quality gates:
 
 Tier: T1 by code-touched scope (test file only). Staging-tooling allowlist does not cover `services/worker/src/api/v2/`; will declare T2 in PR body with rationale (contract-lock test only, no runtime change, no migration).
 
-_Last refreshed: 2026-05-08 by claude — claims verified against gcloud/MCP/CI output (vitest 14/14 passing locally; eslint clean on touched files; no prod state change)._
+_Last refreshed: 2026-05-08 by claude — claims verified against gcloud/MCP/CI output (vitest suite green locally on the touched test file; eslint clean on touched files; no prod state change)._
 
 ### 2026-05-06 — PR #711 SCRUM-1545 coverage backfill merge-resolution pass
 
