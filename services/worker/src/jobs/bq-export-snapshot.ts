@@ -33,6 +33,7 @@ import {
   API_KEYS_COLUMN_ALLOWLIST,
   API_KEYS_FORBIDDEN_COLUMNS,
   BQ_TABLES,
+  type BqTableTarget,
 } from './bq-export-schemas.js';
 import {
   markRunFailed,
