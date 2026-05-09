@@ -64,6 +64,13 @@ function scan(): Finding[] {
     // inside the regex_replace pattern string.
     if (file.endsWith('0280_rls_auth_uid_subquery_wrap.sql')) continue;
 
+    // Skip the SCRUM-1668 Path C baseline file. It's a byte-faithful pg_dump
+    // of prod's schema-as-of-cutover (literal historical state), not a new
+    // policy. The bare auth.uid() occurrences inside it were rewritten in
+    // prod by migration 0280's DO block at runtime; the immutable file text
+    // remains historical artifact. Filename is 00000000000000_baseline_at_main_HEAD.sql.
+    if (file.endsWith('00000000000000_baseline_at_main_HEAD.sql')) continue;
+
     // Skip historical migrations (< 0280). Their bare occurrences were
     // rewritten at runtime by 0280; the immutable migration text is benign.
     const prefix = migrationPrefix(file);
