@@ -30,6 +30,47 @@ vi.mock('../utils/logger.js', () => ({
 import { db } from '../utils/db.js';
 import { recordMeteredUsage, getMeteredUsage, reportMeteredUsageToStripe } from './meteredBilling.js';
 
+interface SubRow { id: string; user_id: string; org_id: string; stripe_subscription_id: string; plan_id: string }
+interface CreditRow { org_id: string; is_test: boolean }
+interface UsageRow { payload: { quantity: number } }
+
+function mockSelectIn<T>(data: T[] | null, error: { message: string } | null = null) {
+  return { select: vi.fn().mockReturnValue({ in: vi.fn().mockResolvedValue({ data, error }) }) };
+}
+
+function mockBillingEventsChain(data: UsageRow[] | null, error: { message: string } | null = null, eqAssert?: (col: string, val: string) => void) {
+  return {
+    select: vi.fn().mockReturnValue({
+      eq: vi.fn((col: string, val: string) => {
+        eqAssert?.(col, val);
+        return {
+          eq: vi.fn().mockReturnValue({
+            gte: vi.fn().mockReturnValue({
+              lte: vi.fn().mockResolvedValue({ data, error }),
+            }),
+          }),
+        };
+      }),
+    }),
+  };
+}
+
+function mockReportDb(opts: {
+  subs: SubRow[];
+  credits: CreditRow[] | null;
+  creditsError?: { message: string } | null;
+  usage?: UsageRow[];
+  usageEqAssert?: (col: string, val: string) => void;
+  throwOnBillingEvents?: boolean;
+}) {
+  (db.from as ReturnType<typeof vi.fn>).mockImplementation((table: string) => {
+    if (table === 'subscriptions') return mockSelectIn(opts.subs);
+    if (table === 'org_credits') return mockSelectIn(opts.credits, opts.creditsError ?? null);
+    if (opts.throwOnBillingEvents) throw new Error(`unexpected table query: ${table}`);
+    return mockBillingEventsChain(opts.usage ?? [], null, opts.usageEqAssert);
+  });
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
 });
@@ -125,44 +166,10 @@ describe('reportMeteredUsageToStripe', () => {
   });
 
   it('reports usage for dev mode (no Stripe key)', async () => {
-    // Subscriptions query (no plan_type filter — uses plan_id instead) +
-    // org_credits is_test check (SCRUM-1740 AC4) + billing_events for usage.
-    (db.from as any).mockImplementation((table: string) => {
-      if (table === 'subscriptions') {
-        return {
-          select: vi.fn().mockReturnValue({
-            in: vi.fn().mockResolvedValue({
-              data: [{ id: 's-1', user_id: 'u-1', org_id: 'org-1', stripe_subscription_id: 'sub_1', plan_id: 'plan-metered' }],
-              error: null,
-            }),
-          }),
-        };
-      }
-      if (table === 'org_credits') {
-        return {
-          select: vi.fn().mockReturnValue({
-            in: vi.fn().mockResolvedValue({
-              data: [{ org_id: 'org-1', is_test: false }],
-              error: null,
-            }),
-          }),
-        };
-      }
-      // billing_events query for usage (uses payload + processed_at columns)
-      return {
-        select: vi.fn().mockReturnValue({
-          eq: vi.fn().mockReturnValue({
-            eq: vi.fn().mockReturnValue({
-              gte: vi.fn().mockReturnValue({
-                lte: vi.fn().mockResolvedValue({
-                  data: [{ payload: { quantity: 42 } }],
-                  error: null,
-                }),
-              }),
-            }),
-          }),
-        }),
-      };
+    mockReportDb({
+      subs: [{ id: 's-1', user_id: 'u-1', org_id: 'org-1', stripe_subscription_id: 'sub_1', plan_id: 'plan-metered' }],
+      credits: [{ org_id: 'org-1', is_test: false }],
+      usage: [{ payload: { quantity: 42 } }],
     });
 
     const results = await reportMeteredUsageToStripe();
@@ -177,30 +184,10 @@ describe('reportMeteredUsageToStripe', () => {
   // 43483138; the runtime gate is in meteredBilling.ts loop.
   describe('SCRUM-1740 AC4: sandbox meter-event exclusion', () => {
     it('skips orgs with org_credits.is_test=true and emits sandbox_excluded marker', async () => {
-      (db.from as any).mockImplementation((table: string) => {
-        if (table === 'subscriptions') {
-          return {
-            select: vi.fn().mockReturnValue({
-              in: vi.fn().mockResolvedValue({
-                data: [{ id: 's-1', user_id: 'u-1', org_id: 'sandbox-org-1', stripe_subscription_id: 'sub_sandbox', plan_id: 'plan-metered' }],
-                error: null,
-              }),
-            }),
-          };
-        }
-        if (table === 'org_credits') {
-          return {
-            select: vi.fn().mockReturnValue({
-              in: vi.fn().mockResolvedValue({
-                data: [{ org_id: 'sandbox-org-1', is_test: true }],
-                error: null,
-              }),
-            }),
-          };
-        }
-        // If billing_events is queried we throw — the test asserts the
-        // sandbox path SHORT-CIRCUITS before this query fires.
-        throw new Error(`unexpected table query: ${table}`);
+      mockReportDb({
+        subs: [{ id: 's-1', user_id: 'u-1', org_id: 'sandbox-org-1', stripe_subscription_id: 'sub_sandbox', plan_id: 'plan-metered' }],
+        credits: [{ org_id: 'sandbox-org-1', is_test: true }],
+        throwOnBillingEvents: true,
       });
 
       const results = await reportMeteredUsageToStripe();
@@ -212,51 +199,17 @@ describe('reportMeteredUsageToStripe', () => {
     });
 
     it('still meters orgs with is_test=false alongside sandbox orgs', async () => {
-      (db.from as any).mockImplementation((table: string) => {
-        if (table === 'subscriptions') {
-          return {
-            select: vi.fn().mockReturnValue({
-              in: vi.fn().mockResolvedValue({
-                data: [
-                  { id: 's-prod', user_id: 'u-prod', org_id: 'prod-org', stripe_subscription_id: 'sub_prod', plan_id: 'plan-metered' },
-                  { id: 's-sand', user_id: 'u-sand', org_id: 'sandbox-org-1', stripe_subscription_id: 'sub_sandbox', plan_id: 'plan-metered' },
-                ],
-                error: null,
-              }),
-            }),
-          };
-        }
-        if (table === 'org_credits') {
-          return {
-            select: vi.fn().mockReturnValue({
-              in: vi.fn().mockResolvedValue({
-                data: [
-                  { org_id: 'prod-org', is_test: false },
-                  { org_id: 'sandbox-org-1', is_test: true },
-                ],
-                error: null,
-              }),
-            }),
-          };
-        }
-        // billing_events — only prod-org should reach here.
-        return {
-          select: vi.fn().mockReturnValue({
-            eq: vi.fn((col: string, val: string) => {
-              expect(val).toBe('prod-org'); // sandbox short-circuited
-              return {
-                eq: vi.fn().mockReturnValue({
-                  gte: vi.fn().mockReturnValue({
-                    lte: vi.fn().mockResolvedValue({
-                      data: [{ payload: { quantity: 17 } }],
-                      error: null,
-                    }),
-                  }),
-                }),
-              };
-            }),
-          }),
-        };
+      mockReportDb({
+        subs: [
+          { id: 's-prod', user_id: 'u-prod', org_id: 'prod-org', stripe_subscription_id: 'sub_prod', plan_id: 'plan-metered' },
+          { id: 's-sand', user_id: 'u-sand', org_id: 'sandbox-org-1', stripe_subscription_id: 'sub_sandbox', plan_id: 'plan-metered' },
+        ],
+        credits: [
+          { org_id: 'prod-org', is_test: false },
+          { org_id: 'sandbox-org-1', is_test: true },
+        ],
+        usage: [{ payload: { quantity: 17 } }],
+        usageEqAssert: (_col, val) => { expect(val).toBe('prod-org'); },
       });
 
       const results = await reportMeteredUsageToStripe();
@@ -269,33 +222,14 @@ describe('reportMeteredUsageToStripe', () => {
     });
 
     it('fails CLOSED when org_credits read errors — refuses to bill any org rather than risk billing a sandbox', async () => {
-      (db.from as any).mockImplementation((table: string) => {
-        if (table === 'subscriptions') {
-          return {
-            select: vi.fn().mockReturnValue({
-              in: vi.fn().mockResolvedValue({
-                data: [{ id: 's-1', user_id: 'u-1', org_id: 'org-1', stripe_subscription_id: 'sub_1', plan_id: 'plan-metered' }],
-                error: null,
-              }),
-            }),
-          };
-        }
-        if (table === 'org_credits') {
-          return {
-            select: vi.fn().mockReturnValue({
-              in: vi.fn().mockResolvedValue({
-                data: null,
-                error: { message: 'connection reset' },
-              }),
-            }),
-          };
-        }
-        throw new Error(`unexpected table query on fail-closed path: ${table}`);
+      mockReportDb({
+        subs: [{ id: 's-1', user_id: 'u-1', org_id: 'org-1', stripe_subscription_id: 'sub_1', plan_id: 'plan-metered' }],
+        credits: null,
+        creditsError: { message: 'connection reset' },
+        throwOnBillingEvents: true,
       });
 
       const results = await reportMeteredUsageToStripe();
-      // Fail-closed contract: no rows returned, no Stripe calls, will retry
-      // next cycle.
       expect(results).toEqual([]);
     });
   });
