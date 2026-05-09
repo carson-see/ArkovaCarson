@@ -148,16 +148,10 @@ describe('check-staging-evidence', () => {
   });
 
   describe('check (integration)', () => {
-    it('passes when override label is set', () => {
-      const r = check({ body: '', files: ['services/worker/src/chain/client.ts'], overridden: true });
-      expect(r.ok).toBe(true);
-    });
-
     it('passes for staging-tooling-only PR with no body', () => {
       const r = check({
         body: '',
         files: ['scripts/staging/seed.ts', 'docs/staging/README.md'],
-        overridden: false,
       });
       expect(r.ok).toBe(true);
     });
@@ -166,7 +160,6 @@ describe('check-staging-evidence', () => {
       const r = check({
         body: '## Summary\nfix bug',
         files: ['services/worker/src/chain/client.ts'],
-        overridden: false,
       });
       expect(r.ok).toBe(false);
       expect(r.errors.join(' ')).toMatch(/missing a tier declaration/i);
@@ -177,7 +170,6 @@ describe('check-staging-evidence', () => {
       const r = check({
         body,
         files: ['services/worker/src/chain/client.ts'],
-        overridden: false,
       });
       expect(r.ok).toBe(false);
       expect(r.errors.join(' ')).toMatch(/below required tier T3/);
@@ -187,7 +179,6 @@ describe('check-staging-evidence', () => {
       const r = check({
         body: T3_BODY,
         files: ['services/worker/src/jobs/batch-anchor.ts'],
-        overridden: false,
       });
       expect(r.ok).toBe(true);
     });
@@ -197,10 +188,23 @@ describe('check-staging-evidence', () => {
       const r = check({
         body: incomplete,
         files: ['services/worker/src/jobs/batch-anchor.ts'],
-        overridden: false,
       });
       expect(r.ok).toBe(false);
       expect(r.errors.join(' ')).toMatch(/missing required fields/i);
+    });
+
+    it('SCRUM-1208: HANDOFF.md and .gitignore are now in the staging-tooling allowlist (PR #733 follow-up)', () => {
+      // Codex review on PR #733 flagged these as missing from the allowlist
+      // even though the PR's own diff included them. Without them, the PR
+      // that REMOVED the staging-soak-skip override couldn't itself self-skip,
+      // forcing a circular evidence requirement. Adding them here keeps the
+      // self-skip honest for the meta-PR pattern (CI/agent config + state docs).
+      const r = check({
+        body: '',
+        files: ['HANDOFF.md', '.gitignore', '.claude/settings.json', '.claude/hooks/check-staging-evidence-pre-merge.sh'],
+      });
+      expect(r.ok).toBe(true);
+      expect(r.notes.join(' ')).toMatch(/staging-tooling-only/i);
     });
   });
 });

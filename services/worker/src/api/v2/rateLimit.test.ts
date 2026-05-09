@@ -12,6 +12,32 @@ import {
 } from './rateLimit.js';
 import { v2ErrorHandler } from './problem.js';
 
+/**
+ * SCRUM-1731 contract lock: the published HakiChain partner brief
+ * (Confluence A/42532874 §6) and the OpenAPI spec rely on these exact
+ * per-minute limits. If a future change here drifts from the brief,
+ * partners get unexpected 429s. This test pins the contract so drift
+ * fails at PR time.
+ */
+describe('SCRUM-1731 — published-brief contract lock', () => {
+  it('matches the HakiChain brief §6 per-minute scope limits exactly', () => {
+    expect(DEFAULT_V2_SCOPE_RATE_LIMITS).toEqual({
+      'read:search': 1_000,
+      'read:records': 500,
+      'read:orgs': 500,
+      'write:anchors': 100,
+      'admin:rules': 50,
+    });
+  });
+
+  it('every API_V2_SCOPES entry has a default limit (no scope can be unlimited)', () => {
+    for (const scope of API_V2_SCOPES) {
+      expect(DEFAULT_V2_SCOPE_RATE_LIMITS).toHaveProperty(scope);
+      expect(DEFAULT_V2_SCOPE_RATE_LIMITS[scope]).toBeGreaterThan(0);
+    }
+  });
+});
+
 vi.mock('../../config.js', () => ({
   config: { nodeEnv: 'test' },
 }));

@@ -15,6 +15,13 @@
 
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import type { Database } from '@/types/database.types';
+import ws from 'ws';
+
+// Cast ws to satisfy Supabase's WebSocketLikeConstructor interface.
+// The ws package is runtime-compatible but its TypeScript constructor
+// signature includes extra options that don't match the narrower interface.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const WebSocketTransport = ws as any;
 
 // Counter to generate unique storage keys per client instance.
 // Without this, multiple GoTrueClient instances share the same storage key
@@ -91,6 +98,7 @@ export async function withUser(email: string, role: UserRole): Promise<TypedClie
 
   const client = createClient<Database>(SUPABASE_URL, SUPABASE_ANON_KEY, {
     auth: { storageKey: `test-user-${email}-${++clientCounter}` },
+    realtime: { transport: WebSocketTransport },
   });
   const { error } = await client.auth.signInWithPassword({ email, password });
 
@@ -108,6 +116,7 @@ export async function withUser(email: string, role: UserRole): Promise<TypedClie
 export function createServiceClient(): TypedClient {
   return createClient<Database>(SUPABASE_URL, SUPABASE_SERVICE_KEY, {
     auth: { storageKey: `test-service-${++clientCounter}` },
+    realtime: { transport: WebSocketTransport },
   });
 }
 
@@ -118,6 +127,7 @@ export function createServiceClient(): TypedClient {
 export function createAnonClient(): TypedClient {
   return createClient<Database>(SUPABASE_URL, SUPABASE_ANON_KEY, {
     auth: { storageKey: `test-anon-${++clientCounter}` },
+    realtime: { transport: WebSocketTransport },
   });
 }
 
