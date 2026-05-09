@@ -11,7 +11,7 @@ import {
   adaptVeremark,
 } from './adapters.js';
 
-const ORG = '11111111-1111-1111-1111-111111111111';
+const ORG = '11111111-1111-4111-8111-111111111111';
 const ctx = { org_id: ORG };
 
 describe('INT-12 — DocuSign adapter', () => {

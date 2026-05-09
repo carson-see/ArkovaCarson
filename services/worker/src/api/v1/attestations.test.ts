@@ -243,7 +243,7 @@ describe('Attestation Validation', () => {
     jurisdiction: z.string().max(100).optional(),
     evidence_fingerprint: z.string().regex(/^[a-fA-F0-9]{64}$/).optional(),
     expires_at: z.string().datetime().optional(),
-    metadata: z.record(z.unknown()).optional(),
+    metadata: z.record(z.string(), z.unknown()).optional(),
   });
 
   it('accepts valid attestation input', () => {

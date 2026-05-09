@@ -11,7 +11,7 @@ import { IssuerCard } from './IssuerCard';
 import type { IssuerResult } from '@/hooks/usePublicSearch';
 
 const MOCK_ISSUER: IssuerResult = {
-  org_id: 'aaaaaaaa-0000-0000-0000-000000000001',
+  org_id: 'aaaaaaaa-0000-4000-8000-000000000001',
   org_name: 'University of Michigan',
   org_domain: 'umich.edu',
   credential_count: 42,

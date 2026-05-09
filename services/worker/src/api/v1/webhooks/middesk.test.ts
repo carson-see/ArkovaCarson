@@ -57,7 +57,7 @@ const VALID_EVENT = {
   data: {
     object: {
       id: 'biz_999',
-      external_id: '00000000-0000-0000-0000-000000000001',
+      external_id: '10000000-1000-4000-8000-000000000001',
       status: 'pending',
     },
   },

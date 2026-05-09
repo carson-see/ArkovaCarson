@@ -33,7 +33,7 @@ vi.mock('../../../utils/logger.js', () => ({
 import { docusignWebhookRouter } from './docusign.js';
 
 const TEST_HMAC_KEY = 'fixture-key-not-a-secret-aaaa';
-const ORG_ID = '11111111-1111-1111-1111-111111111111';
+const ORG_ID = '11111111-1111-4111-8111-111111111111';
 
 function createApp() {
   const app = express();
@@ -132,7 +132,7 @@ describe('POST /webhooks/docusign', () => {
       integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1' }),
     );
     dbFromMock.mockReturnValueOnce(nonceInsert());
-    rpcMock.mockResolvedValueOnce({ data: '22222222-2222-2222-2222-222222222222', error: null });
+    rpcMock.mockResolvedValueOnce({ data: '22222222-2222-4222-8222-222222222222', error: null });
     submitJobMock.mockResolvedValueOnce('job-1');
     const body = validBody();
 
@@ -165,7 +165,7 @@ describe('POST /webhooks/docusign', () => {
         org_id: ORG_ID,
         integration_id: 'int-1',
         envelope_id: 'env-1',
-        rule_event_id: '22222222-2222-2222-2222-222222222222',
+        rule_event_id: '22222222-2222-4222-8222-222222222222',
       }),
     }));
   });
@@ -216,7 +216,7 @@ describe('POST /webhooks/docusign', () => {
     dbFromMock.mockReturnValueOnce(
       integrationLookup([
         { id: 'int-1', org_id: ORG_ID, account_id: 'acct-1' },
-        { id: 'int-2', org_id: '33333333-3333-3333-3333-333333333333', account_id: 'acct-1' },
+        { id: 'int-2', org_id: '33333333-3333-4333-8333-333333333333', account_id: 'acct-1' },
       ]),
     );
     const body = validBody();

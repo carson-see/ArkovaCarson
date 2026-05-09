@@ -33,10 +33,10 @@ vi.mock('../../config.js', () => ({
 import { aiAccountabilityReportRouter } from './ai-accountability-report.js';
 import { db } from '../../utils/db.js';
 
-const TEST_USER_ID = '00000000-0000-0000-0000-000000000001';
-const TEST_ORG_ID = '00000000-0000-0000-0000-000000000099';
+const TEST_USER_ID = '10000000-1000-4000-8000-000000000001';
+const TEST_ORG_ID = '10000000-1000-4000-8000-000000000099';
 const VALID_FINGERPRINT = 'a'.repeat(64);
-const TEST_ANCHOR_ID = '00000000-0000-0000-0000-000000000042';
+const TEST_ANCHOR_ID = '10000000-1000-4000-8000-000000000042';
 
 function createApp() {
   const app = express();
@@ -66,7 +66,7 @@ function mockChain(data: unknown, error: unknown = null) {
 }
 
 const MOCK_MANIFEST = {
-  id: '00000000-0000-0000-0000-000000000010',
+  id: '10000000-1000-4000-8000-000000000010',
   fingerprint: VALID_FINGERPRINT,
   model_id: 'gemini',
   model_version: 'gemini-3-flash-preview',

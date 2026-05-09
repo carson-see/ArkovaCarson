@@ -23,7 +23,7 @@ describe('Sentry PII Verification — Simulated Error Scenarios', () => {
       },
       extra: {
         user_id: '550e8400-e29b-41d4-a716-446655440000',
-        org_id: 'b2c3d4e5-f6a7-8901-2345-678901234567',
+        org_id: 'b2c3d4e5-f6a7-4901-8345-678901234567',
         fingerprint: 'a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2',
       },
       request: {
