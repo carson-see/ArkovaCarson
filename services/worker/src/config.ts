@@ -11,6 +11,10 @@
 
 import { z } from 'zod';
 
+const boolEnv = (v: unknown) => v === 'true' || v === true;
+const boolEnvInverse = (v: unknown) => v !== 'false';
+const boolFlag = (def: boolean) => z.preprocess(boolEnv, z.boolean()).default(def);
+
 const ConfigSchema = z.object({
   // Server
   port: z.coerce.number().default(3001),
@@ -48,7 +52,7 @@ const ConfigSchema = z.object({
   /** PERF-7: Maximum fee rate in sat/vB — anchor is queued if live rate exceeds this */
   bitcoinMaxFeeRate: z.coerce.number().positive().optional(),
   /** INEFF-5: Force dynamic fee estimation on signet/testnet to validate full fee path pre-mainnet */
-  forceDynamicFeeEstimation: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(false),
+  forceDynamicFeeEstimation: boolFlag(false),
 
   // Bitcoin mainnet KMS signing (Constitution 1.1)
   /**
@@ -85,9 +89,9 @@ const ConfigSchema = z.object({
   sentryDsn: z.string().url().optional(),
 
   // Feature flags (z.coerce.boolean treats "false" as true — use preprocess)
-  useMocks: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(false),
+  useMocks: boolFlag(false),
   /** Gates real Bitcoin chain calls (Constitution 1.9) */
-  enableProdNetworkAnchoring: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(false),
+  enableProdNetworkAnchoring: boolFlag(false),
   /**
    * SCRUM-1170-B — gate org-level credit enforcement on anchor submit.
    * Default false: existing per-user credit path runs unchanged. Flip to true
@@ -96,13 +100,13 @@ const ConfigSchema = z.object({
    * skips the deduct call. When true, anchor submit calls `deduct_org_credit`
    * RPC and returns a structured `insufficient_credits` 402 on shortfall.
    */
-  enableOrgCreditEnforcement: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(false),
+  enableOrgCreditEnforcement: boolFlag(false),
   /**
    * DISABLE_IN_PROCESS_ANCHOR_CRON — production maintenance switch used only
    * while Cloud Scheduler is paused for anchor-table migrations. Default false:
    * normal worker cadence is unchanged unless ops explicitly flips it.
    */
-  disableInProcessAnchorCron: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(false),
+  disableInProcessAnchorCron: boolFlag(false),
 
   // AI Intelligence (P8)
   /** Gemini API key for AI extraction (Constitution 4A: PII-stripped metadata only) */
@@ -154,7 +158,7 @@ const ConfigSchema = z.object({
 
   // Nessie Constrained Decoding (NVI-16)
   /** When true, vLLM intelligence queries use guided JSON with per-regulation ID whitelists */
-  enableConstrainedDecoding: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(false),
+  enableConstrainedDecoding: boolFlag(false),
 
   // Nessie Training Pipeline (PH1-DATA)
   /** SEC EDGAR User-Agent (required by SEC) */
@@ -178,13 +182,13 @@ const ConfigSchema = z.object({
    * Default false (fail closed). Cloud Run prod env sets this to true explicitly
    * (HANDOFF.md "Drive + DocuSign live in prod").
    */
-  enableDriveOauth: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(false),
+  enableDriveOauth: boolFlag(false),
   /**
    * Drive webhook intake — when false, Drive push notifications return 503.
    * Default false while folder delta processing is launch-gated. Cloud Run prod
    * env sets this to true explicitly once the connector is launch-approved.
    */
-  enableDriveWebhook: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(false),
+  enableDriveWebhook: boolFlag(false),
   /** Google OAuth client id (Drive). Required when ENABLE_DRIVE_OAUTH=true in production. */
   googleOauthClientId: z.string().optional(),
   /** Google OAuth client secret (Drive). Required when ENABLE_DRIVE_OAUTH=true in production. */
@@ -194,13 +198,13 @@ const ConfigSchema = z.object({
    * Default false pending org-scale validation. Cloud Run prod env sets this to
    * true explicitly once the connector is launch-approved.
    */
-  enableDocusignOauth: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(false),
+  enableDocusignOauth: boolFlag(false),
   /**
    * DocuSign Connect webhook — when false, /webhooks/docusign returns 503.
    * Default false pending org-scale validation. Cloud Run prod env sets this to
    * true explicitly once the connector is launch-approved.
    */
-  enableDocusignWebhook: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(false),
+  enableDocusignWebhook: boolFlag(false),
   /** DocuSign integration key. Required when DOCUSIGN_CONNECT_HMAC_SECRET is set. */
   docusignIntegrationKey: z.string().optional(),
   /** DocuSign client secret. Required when DOCUSIGN_INTEGRATION_KEY is set. */
@@ -212,23 +216,23 @@ const ConfigSchema = z.object({
    * Default false pending tenant-isolation validation. Cloud Run prod env sets
    * this to true explicitly once the connector is launch-approved.
    */
-  enableAtsWebhook: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(false),
+  enableAtsWebhook: boolFlag(false),
   /** Adobe Sign OAuth client secret. Routes 503 when unset. */
   adobeSignClientSecret: z.string().optional(),
   /** Checkr Connect webhook HMAC. Routes 503 when unset. */
   checkrWebhookSecret: z.string().optional(),
   /** Veremark webhook HMAC. Required when ENABLE_VEREMARK_WEBHOOK=true. */
   veremarkWebhookSecret: z.string().optional(),
-  enableVeremarkWebhook: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(false),
+  enableVeremarkWebhook: boolFlag(false),
   /** Microsoft Graph subscription clientState. Required when ENABLE_MICROSOFT_GRAPH_WEBHOOK=true. */
   microsoftGraphClientState: z.string().optional(),
-  enableMicrosoftGraphWebhook: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(false),
+  enableMicrosoftGraphWebhook: boolFlag(false),
   /** Middesk KYB API key. Routes 503 when unset. */
   middeskApiKey: z.string().optional(),
   /** Middesk webhook HMAC. Routes 503 when unset. */
   middeskWebhookSecret: z.string().optional(),
   /** Middesk sandbox flag — only literal "false" flips to prod (safer default). */
-  middeskSandbox: z.preprocess((v) => v !== 'false', z.boolean()).default(true),
+  middeskSandbox: z.preprocess(boolEnvInverse, z.boolean()).default(true),
   /** Slack ops webhook (separate channel from treasury alerts). */
   slackOpsWebhookUrl: z.string().url().optional(),
 
@@ -239,47 +243,47 @@ const ConfigSchema = z.object({
   // ──────────────────────────────────────────────────────────────────────
 
   /** ENABLE_AI_FALLBACK — toggles Cloudflare AI fallback when Gemini fails. CLAUDE.md §1.1. Default false. */
-  enableAiFallback: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(false),
+  enableAiFallback: boolFlag(false),
   /** ENABLE_VERIFICATION_API — gates /api/v1/* surface. CLAUDE.md §1.9. Default true so customer keys work. */
-  enableVerificationApi: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(true),
+  enableVerificationApi: boolFlag(true),
   /** ENABLE_VERTEX_AI — Gemini calls go through Vertex AI when true; Google AI Studio when false. */
-  enableVertexAi: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(false),
+  enableVertexAi: boolFlag(false),
   /** ENABLE_RULES_ENGINE — claim + run pending rule events. Default true. */
-  enableRulesEngine: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(true),
+  enableRulesEngine: boolFlag(true),
   /** ENABLE_QUEUE_REMINDERS — 15-min cron on org rule queues. Default true. */
-  enableQueueReminders: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(true),
+  enableQueueReminders: boolFlag(true),
   /** ENABLE_TREASURY_ALERTS — fan-out treasury low-balance to Slack/email. Default true. */
-  enableTreasuryAlerts: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(true),
+  enableTreasuryAlerts: boolFlag(true),
   /** ENABLE_WEBHOOK_HMAC — verify HMAC on inbound vendor webhooks. CLAUDE.md SEC-01. Default true. */
-  enableWebhookHmac: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(true),
+  enableWebhookHmac: boolFlag(true),
   /** ENABLE_RULE_ACTION_DISPATCHER — claim-loop driver for rule actions. Default true. */
-  enableRuleActionDispatcher: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(true),
+  enableRuleActionDispatcher: boolFlag(true),
   /** ENABLE_ALLOCATION_ROLLOVER — monthly credit rollover cron. Default false (PAY work). */
-  enableAllocationRollover: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(false),
+  enableAllocationRollover: boolFlag(false),
   /** ENABLE_VISUAL_FRAUD_DETECTION — gates /ai/fraud/visual (off-device image bytes per §1.6 carve-out). SCRUM-1269 default false. */
-  enableVisualFraudDetection: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(false),
+  enableVisualFraudDetection: boolFlag(false),
   /** ENABLE_GRC_INTEGRATIONS — Vanta/Drata/Anecdotes oauth + push. Default false. */
-  enableGrcIntegrations: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(false),
+  enableGrcIntegrations: boolFlag(false),
   /** ENABLE_ADES_SIGNATURES — Phase III electronic signature (eIDAS). Default false. */
-  enableAdesSignatures: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(false),
+  enableAdesSignatures: boolFlag(false),
   /** ENABLE_DEMO_INJECTOR — synthetic event injector for demos. NEVER true in prod. */
-  enableDemoInjector: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(false),
+  enableDemoInjector: boolFlag(false),
   /** ENABLE_SYNTHETIC_DATA — gate for synthetic/seeded fixtures. NEVER true in prod. */
-  enableSyntheticData: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(false),
+  enableSyntheticData: boolFlag(false),
   /** ENABLE_NESSIE_RAG_RECOMMENDATIONS — Nessie post-extraction recommendation surfaces. */
-  enableNessieRagRecommendations: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(false),
+  enableNessieRagRecommendations: boolFlag(false),
   /** ENABLE_MULTIMODAL_EMBEDDINGS — opt-in path for image-aware embeddings. Default false. */
-  enableMultimodalEmbeddings: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(false),
+  enableMultimodalEmbeddings: boolFlag(false),
   /** ENABLE_CLOUD_LOGGING_SINK — mirror logs into Cloud Logging. Default false outside prod. */
-  enableCloudLoggingSink: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(false),
+  enableCloudLoggingSink: boolFlag(false),
   /** ENABLE_WORKSPACE_RENEWAL — Drive watch channel renewal cron. Default true when Drive is on. */
-  enableWorkspaceRenewal: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(false),
+  enableWorkspaceRenewal: boolFlag(false),
 
   // Arize observability (SCRUM-1067)
   /** ARIZE_TRACING_ENABLED — initialize OTLP exporter when true and creds present. */
-  arizeTracingEnabled: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(false),
+  arizeTracingEnabled: boolFlag(false),
   /** ARIZE_TRACING_CONSOLE — debug console exporter. Never in prod. */
-  arizeTracingConsole: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(false),
+  arizeTracingConsole: boolFlag(false),
   /** ARIZE_API_KEY — required when arizeTracingEnabled. */
   arizeApiKey: z.string().optional(),
   /** ARIZE_SPACE_ID — required when arizeTracingEnabled. */

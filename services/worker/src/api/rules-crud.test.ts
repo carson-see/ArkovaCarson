@@ -114,10 +114,10 @@ import {
 
 // -- Fixtures ------------------------------------------------------------
 
-const USER_ID = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
-const ORG_ID = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
-const OTHER_ORG_ID = 'cccccccc-cccc-cccc-cccc-cccccccccccc';
-const RULE_ID = 'dddddddd-dddd-dddd-dddd-dddddddddddd';
+const USER_ID = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+const ORG_ID = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+const OTHER_ORG_ID = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+const RULE_ID = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
 
 function mockRes(): {
   res: Response;
@@ -293,7 +293,7 @@ describe('handleListRuleExecutions', () => {
       select: {
         data: [
           {
-            id: 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee',
+            id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
             rule_id: RULE_ID,
             trigger_event_id: 'evt-1',
             status: 'COMPLETED',
@@ -369,7 +369,7 @@ function executionInsert(capture?: (row: Record<string, unknown>) => void, error
       return {
         select: vi.fn().mockReturnThis(),
         single: vi.fn().mockResolvedValue({
-          data: error ? null : { id: 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee' },
+          data: error ? null : { id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee' },
           error,
         }),
       };
@@ -416,7 +416,7 @@ describe('handleRunRuleNow', () => {
     expect(json).toHaveBeenCalledWith(expect.objectContaining({
       ok: true,
       queued: true,
-      execution_id: 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee',
+      execution_id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
       trigger_event_id: expect.stringMatching(/^manual:/),
     }));
     expect(insertedExecution).toMatchObject({

@@ -47,7 +47,7 @@ const mockDb = db as any;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const mockSubmit = submitBusiness as any;
 
-const VALID_ORG_ID = '00000000-0000-0000-0000-000000000001';
+const VALID_ORG_ID = '10000000-1000-4000-8000-000000000001';
 const VALID_PAYLOAD = {
   legal_name: 'Arkova Inc',
   ein: '123456789',
