@@ -27,6 +27,10 @@ export default tseslint.config(
       '@typescript-eslint/ban-ts-comment': 'warn',
       // SCRUM-1208 — tenant isolation on multi-tenant Supabase tables.
       'arkova/missing-org-filter': 'warn',
+      // eslint 10 promoted these to errors in recommended; keep as warnings
+      // to preserve pre-upgrade behavior. Follow-up story to fix and promote.
+      'no-useless-assignment': 'warn',
+      'preserve-caught-error': 'warn',
     },
   },
   // SCRUM-1250 (R0-4): test-file overrides. Tests legitimately use `_` prefixed
@@ -46,6 +50,8 @@ export default tseslint.config(
       '@typescript-eslint/no-explicit-any': 'warn',
       '@typescript-eslint/no-require-imports': 'warn',
       '@typescript-eslint/ban-ts-comment': 'warn',
+      'no-useless-assignment': 'warn',
+      'preserve-caught-error': 'warn',
     },
   },
 );
