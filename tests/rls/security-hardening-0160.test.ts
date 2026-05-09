@@ -206,7 +206,7 @@ describe('SEC-RECON: Security Hardening (Migrations 0160 + 0161)', () => {
       const { error } = await (authClient as any).rpc('invite_member', {
         invitee_email: 'test-sec-recon-8@test.invalid',
         invitee_role: 'ORG_ADMIN',
-        target_org_id: 'aaaaaaaa-0000-4000-8000-000000000001',
+        target_org_id: 'aaaaaaaa-0000-0000-0000-000000000001',
       });
 
       expect(error).toBeTruthy();

@@ -41,28 +41,28 @@ export function getServiceClient(): SupabaseClient {
 export const SEED_USERS = {
   /** Demo org admin at Acme Corp — used for ordinary org-admin E2E flows */
   orgAdmin: {
-    id: '55555555-0000-4000-8000-000000000001',
+    id: '55555555-0000-0000-0000-000000000001',
     email: 'demo-admin@arkova.local',
     password: SEED_PASSWORD,
     role: 'ORG_ADMIN' as const,
   },
   /** Platform admin / ORG_ADMIN at Arkova org — Sarah */
   registrar: {
-    id: '44444444-0000-4000-8000-000000000002',
+    id: '44444444-0000-0000-0000-000000000002',
     email: 'sarah@arkova.ai',
     password: SEED_PASSWORD,
     role: 'ORG_ADMIN' as const,
   },
   /** Alias for backward compat — points to Sarah */
   orgBAdmin: {
-    id: '44444444-0000-4000-8000-000000000002',
+    id: '44444444-0000-0000-0000-000000000002',
     email: 'sarah@arkova.ai',
     password: SEED_PASSWORD,
     role: 'ORG_ADMIN' as const,
   },
   /** Demo individual user — used for personal vault / records E2E flows */
   individual: {
-    id: '55555555-0000-4000-8000-000000000002',
+    id: '55555555-0000-0000-0000-000000000002',
     email: 'demo-user@arkova.local',
     password: SEED_PASSWORD,
     role: 'INDIVIDUAL' as const,

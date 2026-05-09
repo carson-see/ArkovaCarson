@@ -19,7 +19,7 @@
  */
 import { test, expect } from './fixtures';
 
-const ARKOVA_ORG_ID = 'aaaaaaaa-0000-4000-8000-000000000001';
+const ARKOVA_ORG_ID = 'aaaaaaaa-0000-0000-0000-000000000001';
 
 const VIEWPORTS = {
   desktop: { width: 1280, height: 900 },

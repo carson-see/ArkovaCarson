@@ -15,6 +15,13 @@
 
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import type { Database } from '@/types/database.types';
+import ws from 'ws';
+
+// Cast ws to satisfy Supabase's WebSocketLikeConstructor interface.
+// The ws package is runtime-compatible but its TypeScript constructor
+// signature includes extra options that don't match the narrower interface.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const WebSocketTransport = ws as any;
 
 // Counter to generate unique storage keys per client instance.
 // Without this, multiple GoTrueClient instances share the same storage key
@@ -49,25 +56,25 @@ export const DEMO_CREDENTIALS = {
   // Platform admin / ORG_ADMIN (Arkova org) — Carson
   adminEmail: 'carson@arkova.ai',
   adminPassword: RLS_TEST_PASSWORD,
-  adminId: '44444444-0000-4000-8000-000000000001',
+  adminId: '44444444-0000-0000-0000-000000000001',
 
   // INDIVIDUAL user (no org) — Jamie Demo-User
   userEmail: 'demo-user@arkova.local',
   userPassword: RLS_TEST_PASSWORD,
-  userId: '55555555-0000-4000-8000-000000000002',
+  userId: '55555555-0000-0000-0000-000000000002',
 
   // ORG_ADMIN (Acme Corp) — Alex Demo-Admin (second org for cross-tenant tests)
   betaAdminEmail: 'demo-admin@arkova.local',
   betaAdminPassword: RLS_TEST_PASSWORD,
-  betaAdminId: '55555555-0000-4000-8000-000000000001',
+  betaAdminId: '55555555-0000-0000-0000-000000000001',
 };
 
 /**
  * Organization IDs — must match supabase/seed.sql
  */
 export const ORG_IDS = {
-  arkova: 'aaaaaaaa-0000-4000-8000-000000000001',
-  betaCorp: 'bbbbbbbb-0000-4000-8000-000000000001',
+  arkova: 'aaaaaaaa-0000-0000-0000-000000000001',
+  betaCorp: 'bbbbbbbb-0000-0000-0000-000000000001',
 };
 
 /**
@@ -91,6 +98,7 @@ export async function withUser(email: string, role: UserRole): Promise<TypedClie
 
   const client = createClient<Database>(SUPABASE_URL, SUPABASE_ANON_KEY, {
     auth: { storageKey: `test-user-${email}-${++clientCounter}` },
+    realtime: { transport: WebSocketTransport },
   });
   const { error } = await client.auth.signInWithPassword({ email, password });
 
@@ -108,6 +116,7 @@ export async function withUser(email: string, role: UserRole): Promise<TypedClie
 export function createServiceClient(): TypedClient {
   return createClient<Database>(SUPABASE_URL, SUPABASE_SERVICE_KEY, {
     auth: { storageKey: `test-service-${++clientCounter}` },
+    realtime: { transport: WebSocketTransport },
   });
 }
 
@@ -118,6 +127,7 @@ export function createServiceClient(): TypedClient {
 export function createAnonClient(): TypedClient {
   return createClient<Database>(SUPABASE_URL, SUPABASE_ANON_KEY, {
     auth: { storageKey: `test-anon-${++clientCounter}` },
+    realtime: { transport: WebSocketTransport },
   });
 }
 
