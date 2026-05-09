@@ -170,7 +170,11 @@ export function toBqRow(
   table: string,
   row: Record<string, unknown>,
 ): BqInsertRow {
-  const id = String(row.id);
+  const rawId = row.id;
+  if (rawId === null || rawId === undefined || rawId === '') {
+    throw new Error(`bq-export: missing id while shaping row for table=${table}`);
+  }
+  const id = String(rawId);
   const json: Record<string, unknown> = { ...row, bq_synced_at: new Date().toISOString() };
   for (const field of target.schema.fields) {
     if (field.type !== 'JSON') continue;

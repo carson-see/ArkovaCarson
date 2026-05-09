@@ -318,6 +318,21 @@ describe('toBqRow JSON-type stringification (live-prod-defect SCRUM-1723 2026-05
     expect(out.json.metadata).toBeNull();
   });
 
+  it('throws when row.id is missing (null, undefined, or empty string)', () => {
+    const target = BQ_TABLES.anchors;
+    expect(() =>
+      toBqRow(target, 'anchors', { created_at: '2026-05-09T00:00:00Z' }),
+    ).toThrow('bq-export: missing id while shaping row for table=anchors');
+
+    expect(() =>
+      toBqRow(target, 'anchors', { id: null, created_at: '2026-05-09T00:00:00Z' }),
+    ).toThrow('bq-export: missing id while shaping row for table=anchors');
+
+    expect(() =>
+      toBqRow(target, 'anchors', { id: '', created_at: '2026-05-09T00:00:00Z' }),
+    ).toThrow('bq-export: missing id while shaping row for table=anchors');
+  });
+
   it('injects bq_synced_at at insertion time', () => {
     const target = BQ_TABLES.anchors;
     const out = toBqRow(target, 'anchors', {
