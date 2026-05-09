@@ -277,4 +277,115 @@ describe('sweepExpiredAnchors (SCRUM-1736)', () => {
     expect(result.errors).toHaveLength(1);
     expect(result.errors.join(' ')).toMatch(/future/i);
   });
+
+  // ---- SCRUM-1800 (SCRUM-1743 Phase 2c): credential.status_changed on SECURED → EXPIRED ----
+
+  it('dispatches credential.status_changed alongside anchor.expired for credential anchors', async () => {
+    const credAnchor: FakeAnchor & { credential_type: string } = {
+      ...EXPIRED_SECURED,
+      id: '11111111-2222-3333-4444-555555555555',
+      public_id: 'ARK-2026-CRED-1',
+      credential_type: 'DEGREE',
+    };
+    const { db, dispatched, audits } = makeDb({ candidates: [credAnchor] });
+    const result = await sweepExpiredAnchors(db);
+
+    expect(result.errors).toEqual([]);
+    expect(result.newly_expired).toBe(1);
+    // Both anchor.expired AND credential.status_changed dispatched
+    expect(result.webhooks_dispatched).toBe(1); // counter currently tracks anchor.expired only
+    expect(dispatched).toHaveLength(2);
+
+    const credEvent = dispatched.find((d) => d.eventType === 'credential.status_changed');
+    expect(credEvent).toBeDefined();
+    expect(credEvent!.orgId).toBe('org-uuid-1');
+    expect(credEvent!.data).toMatchObject({
+      public_id: 'ARK-2026-CRED-1',
+      credential_type: 'DEGREE',
+      previous_status: 'SECURED',
+      new_status: 'EXPIRED',
+    });
+
+    // Audit row written for credential.status_changed
+    const credAudit = audits.find((a) => a.event_type === 'credential.status_changed');
+    expect(credAudit).toBeDefined();
+    const details = JSON.parse(String(credAudit!.details));
+    expect(details.dispatched).toBe(true);
+    expect(details.previous_status).toBe('SECURED');
+    expect(details.new_status).toBe('EXPIRED');
+  });
+
+  it('uses deterministic event_id "cred-status-expired-${public_id}" for credential.status_changed', async () => {
+    const credAnchor: FakeAnchor & { credential_type: string } = {
+      ...EXPIRED_SECURED,
+      id: '11111111-2222-3333-4444-666666666666',
+      public_id: 'ARK-2026-CRED-2',
+      credential_type: 'TRANSCRIPT',
+    };
+    let capturedEventId: string | undefined;
+    const db: AnchorExpirySweepDb = {
+      selectExpiringSecured: vi.fn(async () => [credAnchor]),
+      casUpdateToExpired: vi.fn(async () => true),
+      insertAuditEvent: vi.fn(async () => undefined),
+      dispatchWebhookEvent: vi.fn(async (_orgId, eventType, eventId) => {
+        if (eventType === 'credential.status_changed') {
+          capturedEventId = eventId;
+        }
+      }),
+    };
+    await sweepExpiredAnchors(db);
+    expect(capturedEventId).toBe('cred-status-expired-ARK-2026-CRED-2');
+  });
+
+  it('writes credential.status_changed_dispatch_failed sentinel audit when credential dispatch throws', async () => {
+    const credAnchor: FakeAnchor & { credential_type: string } = {
+      ...EXPIRED_SECURED,
+      id: '11111111-2222-3333-4444-777777777777',
+      public_id: 'ARK-2026-CRED-3',
+      credential_type: 'CERTIFICATE',
+    };
+    const dispatched: Array<{ orgId: string; eventType: string; data: Record<string, unknown> }> = [];
+    const audits: Array<Record<string, unknown>> = [];
+    const db: AnchorExpirySweepDb = {
+      selectExpiringSecured: vi.fn(async () => [credAnchor]),
+      casUpdateToExpired: vi.fn(async () => true),
+      insertAuditEvent: vi.fn(async (row) => {
+        audits.push(row);
+      }),
+      dispatchWebhookEvent: vi.fn(async (orgId, eventType, _eventId, data) => {
+        if (eventType === 'credential.status_changed') {
+          throw new Error('credential webhook system down');
+        }
+        dispatched.push({ orgId, eventType, data });
+      }),
+    };
+
+    const result = await sweepExpiredAnchors(db);
+
+    // anchor.expired dispatched OK; credential.status_changed failed
+    expect(dispatched).toHaveLength(1);
+    expect(dispatched[0].eventType).toBe('anchor.expired');
+    expect(result.errors.join(' ')).toMatch(/credential\.status_changed dispatch failed/);
+
+    const sentinel = audits.find(
+      (a) => a.event_type === 'credential.status_changed_dispatch_failed',
+    );
+    expect(sentinel).toBeDefined();
+    const details = JSON.parse(String(sentinel!.details));
+    expect(details.error).toBe('credential webhook system down');
+    expect(details.recovery).toMatch(/SCRUM-1738/);
+  });
+
+  it('skips credential.status_changed dispatch for non-credential anchors (credential_type null)', async () => {
+    // EXPIRED_SECURED has no credential_type set → behaves as null
+    const { db, dispatched, audits } = makeDb({ candidates: [EXPIRED_SECURED] });
+    await sweepExpiredAnchors(db);
+
+    const credEvents = dispatched.filter((d) => d.eventType === 'credential.status_changed');
+    expect(credEvents).toHaveLength(0);
+    const credAudits = audits.filter((a) =>
+      String(a.event_type).startsWith('credential.status_changed'),
+    );
+    expect(credAudits).toHaveLength(0);
+  });
 });

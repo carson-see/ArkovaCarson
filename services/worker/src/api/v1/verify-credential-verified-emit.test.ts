@@ -293,9 +293,9 @@ describe('GET /api/v1/verify/:publicId — credential.verified emit', () => {
     const calls = mockAuditInsert.mock.calls.map((c: unknown[]) => c[0]);
     const queryRow = calls.find(
       (row: any) => row?.event_type === 'VERIFICATION_QUERIED',
-    );
+    ) as { details: string } | undefined;
     expect(queryRow).toBeDefined();
-    const details = JSON.parse(queryRow.details);
+    const details = JSON.parse(queryRow!.details);
     expect(details.credential_verified_dispatched).toBe(true);
   });
 
@@ -312,9 +312,9 @@ describe('GET /api/v1/verify/:publicId — credential.verified emit', () => {
     const calls = mockAuditInsert.mock.calls.map((c: unknown[]) => c[0]);
     const queryRow = calls.find(
       (row: any) => row?.event_type === 'VERIFICATION_QUERIED',
-    );
+    ) as { details: string } | undefined;
     expect(queryRow).toBeDefined();
-    const details = JSON.parse(queryRow.details);
+    const details = JSON.parse(queryRow!.details);
     expect(details.credential_verified_dispatched).toBe(false);
     expect(details.credential_verified_dispatch_error).toBe('endpoint timeout');
   });
@@ -329,9 +329,9 @@ describe('GET /api/v1/verify/:publicId — credential.verified emit', () => {
     const calls = mockAuditInsert.mock.calls.map((c: unknown[]) => c[0]);
     const queryRow = calls.find(
       (row: any) => row?.event_type === 'VERIFICATION_QUERIED',
-    );
+    ) as { details: string } | undefined;
     expect(queryRow).toBeDefined();
-    const details = JSON.parse(queryRow.details);
+    const details = JSON.parse(queryRow!.details);
     expect(details.credential_verified_dispatched).toBeUndefined();
   });
 });

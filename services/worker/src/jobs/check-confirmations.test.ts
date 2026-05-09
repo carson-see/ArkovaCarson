@@ -630,6 +630,68 @@ describe('checkSubmittedConfirmations', () => {
     );
   });
 
+  it('captures per-emit failure outcomes in credential.status_changed.batch audit row', async () => {
+    mockAnchorsSelectResult.data = [MOCK_SUBMITTED_ANCHOR];
+    mockDrainResults.splice(0, mockDrainResults.length, {
+      data: {
+        updated: 3,
+        capped: false,
+        anchors: [
+          { public_id: 'pub-001', org_id: 'org-001' },
+          { public_id: 'pub-002', org_id: 'org-001' },
+          { public_id: 'pub-003', org_id: 'org-001' },
+        ],
+      },
+      error: null,
+    });
+    mockCredentialTypeSelectResult.data = [
+      { public_id: 'pub-001', credential_type: 'DEGREE' },
+      { public_id: 'pub-002', credential_type: 'TRANSCRIPT' },
+      { public_id: 'pub-003', credential_type: 'CERTIFICATE' },
+    ];
+
+    // Make the credential.status_changed dispatch fail for pub-002 only.
+    // anchor.secured calls succeed; credential.status_changed for pub-001 +
+    // pub-003 succeed; pub-002 throws.
+    mockDispatchWebhookEvent.mockImplementation(
+      async (_orgId: string, eventType: string, eventId: string) => {
+        if (eventType === 'credential.status_changed' && eventId === 'pub-002') {
+          throw new Error('endpoint pub-002 timeout');
+        }
+        return undefined;
+      },
+    );
+
+    mockFetch
+      .mockResolvedValueOnce({ ok: true, text: () => Promise.resolve('200200') })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () => Promise.resolve(MOCK_CONFIRMED_TX),
+      });
+
+    await checkSubmittedConfirmations();
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+
+    const allCalls = mockAuditInsert.mock.calls;
+    const flatRows: any[] = [];
+    for (const call of allCalls) {
+      const arg = call[0];
+      if (Array.isArray(arg)) flatRows.push(...arg);
+      else flatRows.push(arg);
+    }
+    const credBatch = flatRows.find(
+      (r: any) => r?.event_type === 'credential.status_changed.batch',
+    );
+    expect(credBatch).toBeDefined();
+    const details = JSON.parse(credBatch.details);
+    expect(details.credentials_dispatched_attempted).toBe(3);
+    expect(details.credentials_dispatched_succeeded).toBe(2);
+    expect(details.credentials_dispatched_failed).toBe(1);
+    expect(details.sample_failures).toHaveLength(1);
+    expect(details.sample_failures[0].public_id).toBe('pub-002');
+    expect(details.sample_failures[0].error).toBe('endpoint pub-002 timeout');
+  });
+
   it('does not write credential.status_changed.batch audit row when no anchors have credential_type', async () => {
     mockAnchorsSelectResult.data = [MOCK_SUBMITTED_ANCHOR];
     mockDrainResults.splice(0, mockDrainResults.length, {

@@ -164,6 +164,29 @@ export async function fanOutSecuredAnchorWebhooks(
     logger.warn({ txId, error: lookupError }, 'credential_type lookup threw — skipping credential.* events for this batch');
   }
 
+  // SCRUM-1800 (SCRUM-1743 Phase 2c): track per-org credential.status_changed
+  // dispatch outcomes so the per-batch audit row records dispatched/failed
+  // counts plus a sample of failure reasons. Avoids the previous "first error
+  // only" reporting which lost 99 out of 100 failure causes on bad batches.
+  const credentialOutcomes = new Map<string, {
+    dispatched: number;
+    failed: number;
+    sample_failures: Array<{ public_id: string; error: string }>;
+  }>();
+  const recordCredentialOutcome = (orgId: string, publicId: string, error: unknown | null) => {
+    const slot = credentialOutcomes.get(orgId) ?? { dispatched: 0, failed: 0, sample_failures: [] };
+    if (error) {
+      slot.failed++;
+      if (slot.sample_failures.length < 5) {
+        const msg = error instanceof Error ? error.message : String(error);
+        slot.sample_failures.push({ public_id: publicId, error: msg });
+      }
+    } else {
+      slot.dispatched++;
+    }
+    credentialOutcomes.set(orgId, slot);
+  };
+
   const tasks = eligible.flatMap((anchor) => {
     const baseTask = async () => {
       await dispatchWebhookEvent(anchor.org_id, 'anchor.secured', anchor.public_id, {
@@ -182,13 +205,21 @@ export async function fanOutSecuredAnchorWebhooks(
     // bulk-confirm path (PENDING anchors flow through SUBMITTED before
     // SECURED via the merkle-batch broadcast in jobs/batch-anchor.ts).
     const credentialTask = async () => {
-      await dispatchWebhookEvent(anchor.org_id, 'credential.status_changed', anchor.public_id, {
-        public_id: anchor.public_id,
-        credential_type: credentialType,
-        previous_status: 'SUBMITTED',
-        new_status: 'SECURED',
-        changed_at: blockTimestamp,
-      });
+      try {
+        await dispatchWebhookEvent(anchor.org_id, 'credential.status_changed', anchor.public_id, {
+          public_id: anchor.public_id,
+          credential_type: credentialType,
+          previous_status: 'SUBMITTED',
+          new_status: 'SECURED',
+          changed_at: blockTimestamp,
+        });
+        recordCredentialOutcome(anchor.org_id, anchor.public_id, null);
+      } catch (emitErr) {
+        recordCredentialOutcome(anchor.org_id, anchor.public_id, emitErr);
+        // Re-throw so runWithConcurrency.rejected still surfaces the failure
+        // for the existing logger.warn aggregate at line ~280.
+        throw emitErr;
+      }
     };
     return [baseTask, credentialTask];
   });
@@ -218,22 +249,36 @@ export async function fanOutSecuredAnchorWebhooks(
   // event in this batch — keeps audit volume bounded while preserving the
   // tamper-evident link to the underlying merkle tx.
   if (credentialOrgCounts.size > 0) {
-    const credAuditRows = Array.from(credentialOrgCounts.entries()).map(([orgId, count]) => ({
-      event_type: 'credential.status_changed.batch',
-      event_category: 'WEBHOOK',
-      actor_id: '00000000-0000-0000-0000-000000000000',
-      target_type: 'anchor',
-      target_id: txId,
-      org_id: orgId,
-      details: JSON.stringify({
-        chain_tx_id: txId,
-        block_height: blockHeight,
-        previous_status: 'SUBMITTED',
-        new_status: 'SECURED',
-        credentials_dispatched_attempted: count,
-        sample_public_ids: credentialPublicIdsByOrg.get(orgId) ?? [],
-      }),
-    }));
+    const credAuditRows = Array.from(credentialOrgCounts.entries()).map(([orgId, count]) => {
+      const outcome = credentialOutcomes.get(orgId) ?? {
+        dispatched: 0,
+        failed: 0,
+        sample_failures: [],
+      };
+      return {
+        event_type: 'credential.status_changed.batch',
+        event_category: 'WEBHOOK',
+        actor_id: '00000000-0000-0000-0000-000000000000',
+        target_type: 'anchor',
+        target_id: txId,
+        org_id: orgId,
+        details: JSON.stringify({
+          chain_tx_id: txId,
+          block_height: blockHeight,
+          previous_status: 'SUBMITTED',
+          new_status: 'SECURED',
+          credentials_dispatched_attempted: count,
+          // SCRUM-1800: per-emit outcome counters + first 5 failure samples.
+          // Lets operators answer "did anything in this batch fail?" without
+          // joining webhook_delivery_logs, and recover dropped events via
+          // SCRUM-1738 retry path using the captured public_ids.
+          credentials_dispatched_succeeded: outcome.dispatched,
+          credentials_dispatched_failed: outcome.failed,
+          sample_failures: outcome.sample_failures,
+          sample_public_ids: credentialPublicIdsByOrg.get(orgId) ?? [],
+        }),
+      };
+    });
     try {
       const { error: credAuditErr } =
         credAuditRows.length === 1

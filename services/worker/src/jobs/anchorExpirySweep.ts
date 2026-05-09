@@ -32,7 +32,17 @@ import { logger } from '../utils/logger.js';
 const AnchorIdSchema = z.string().uuid();
 
 const AuditEventRowSchema = z.object({
-  event_type: z.enum(['anchor.expired', 'anchor.expired_dispatch_failed']),
+  // SCRUM-1800 (SCRUM-1743 Phase 2c): allow credential.status_changed +
+  // credential.status_changed_dispatch_failed alongside the anchor.* event
+  // types so the sweep can emit credential lifecycle audit rows when a
+  // credential expires. event_category remains 'ANCHOR' for both — the
+  // anchor row is the persistent target, credential is a derived projection.
+  event_type: z.enum([
+    'anchor.expired',
+    'anchor.expired_dispatch_failed',
+    'credential.status_changed',
+    'credential.status_changed_dispatch_failed',
+  ]),
   event_category: z.literal('ANCHOR'),
   target_type: z.literal('anchor'),
   target_id: z.string().uuid(),
@@ -49,6 +59,12 @@ export interface ExpiringSecuredAnchor {
   chain_tx_id: string | null;
   chain_block_height: number | null;
   expires_at: string | null;
+  // SCRUM-1800 (SCRUM-1743 Phase 2c): added so the sweep can dispatch
+  // credential.status_changed (SECURED → EXPIRED) alongside anchor.expired.
+  // Optional + nullable — non-credential anchors skip the credential.*
+  // dispatch, and existing test fixtures that predate this field still
+  // type-check (undefined behaves identically to null at runtime).
+  credential_type?: string | null;
 }
 
 export interface AnchorExpirySweepDb {
@@ -203,6 +219,86 @@ export async function sweepExpiredAnchors(db: AnchorExpirySweepDb): Promise<Anch
         result.errors.push(`dispatch-failure sentinel audit insert failed for ${anchor.public_id}: ${auditMsg}`);
       }
     }
+
+    // SCRUM-1800 (SCRUM-1743 Phase 2c): credential.status_changed emit on
+    // SECURED → EXPIRED. Independent of the anchor.expired dispatch — both
+    // events should be observable. credential_type is required by the schema;
+    // anchors without it (non-credentials) skip the credential.* dispatch.
+    if (anchor.credential_type) {
+      const credEventId = `cred-status-expired-${anchor.public_id}`;
+      const credData = {
+        public_id: anchor.public_id,
+        credential_type: anchor.credential_type,
+        previous_status: 'SECURED',
+        new_status: 'EXPIRED',
+        changed_at: nowIso,
+      };
+      try {
+        await db.dispatchWebhookEvent(
+          anchor.org_id,
+          'credential.status_changed',
+          credEventId,
+          credData,
+        );
+        try {
+          await db.insertAuditEvent({
+            event_type: 'credential.status_changed',
+            event_category: 'ANCHOR',
+            target_type: 'anchor',
+            target_id: anchor.id,
+            org_id: anchor.org_id,
+            details: JSON.stringify({
+              ...credData,
+              event_id: credEventId,
+              dispatched: true,
+            }),
+          });
+        } catch (auditErr) {
+          const auditMsg = auditErr instanceof Error ? auditErr.message : 'unknown';
+          logger.error(
+            { error: auditErr, anchorId: anchor.id },
+            'sweepExpiredAnchors: credential.status_changed audit insert failed',
+          );
+          result.errors.push(
+            `credential.status_changed audit insert failed for ${anchor.public_id}: ${auditMsg}`,
+          );
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : 'unknown';
+        logger.error(
+          { error: err, anchorId: anchor.id, publicId: anchor.public_id, eventId: credEventId },
+          'sweepExpiredAnchors: credential.status_changed dispatch failed',
+        );
+        result.errors.push(
+          `credential.status_changed dispatch failed for ${anchor.public_id}: ${msg}`,
+        );
+        try {
+          await db.insertAuditEvent({
+            event_type: 'credential.status_changed_dispatch_failed',
+            event_category: 'ANCHOR',
+            target_type: 'anchor',
+            target_id: anchor.id,
+            org_id: anchor.org_id,
+            details: JSON.stringify({
+              ...credData,
+              event_id: credEventId,
+              error: msg,
+              failed_at: nowIso,
+              recovery: 'manual re-dispatch via SCRUM-1738 retry path',
+            }),
+          });
+        } catch (auditErr) {
+          const auditMsg = auditErr instanceof Error ? auditErr.message : 'unknown';
+          logger.error(
+            { error: auditErr, anchorId: anchor.id },
+            'sweepExpiredAnchors: credential.status_changed dispatch-failure sentinel audit insert failed',
+          );
+          result.errors.push(
+            `credential.status_changed sentinel audit insert failed for ${anchor.public_id}: ${auditMsg}`,
+          );
+        }
+      }
+    }
   }
 
   logger.info(
@@ -248,7 +344,7 @@ export function makeAnchorExpirySweepDb(deps: {
       const { data, error } = await dbAny
         .from('anchors')
         .select(
-          'id, public_id, org_id, status, chain_tx_id, chain_block_height, expires_at, organizations(public_id)',
+          'id, public_id, org_id, status, chain_tx_id, chain_block_height, expires_at, credential_type, organizations(public_id)',
         )
         .eq('status', 'SECURED')
         .is('deleted_at', null)
@@ -267,6 +363,7 @@ export function makeAnchorExpirySweepDb(deps: {
         chain_tx_id: (row.chain_tx_id as string | null) ?? null,
         chain_block_height: (row.chain_block_height as number | null) ?? null,
         expires_at: (row.expires_at as string | null) ?? null,
+        credential_type: (row.credential_type as string | null) ?? null,
       }));
     },
     async casUpdateToExpired(anchorId: string, _expiredAtIso: string): Promise<boolean> {

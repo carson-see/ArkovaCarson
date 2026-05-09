@@ -639,11 +639,11 @@ describe('credentialSourcesRouter', () => {
       const auditCalls = mockAuditInsert.mock.calls.map((c: unknown[]) => c[0]);
       const issuedRow = auditCalls.find(
         (row: any) => row?.event_type === 'credential.issued',
-      );
+      ) as { event_category: string; org_id: string; details: string } | undefined;
       expect(issuedRow).toBeDefined();
-      expect(issuedRow.event_category).toBe('WEBHOOK');
-      expect(issuedRow.org_id).toBe('org-1');
-      const details = JSON.parse(issuedRow.details);
+      expect(issuedRow!.event_category).toBe('WEBHOOK');
+      expect(issuedRow!.org_id).toBe('org-1');
+      const details = JSON.parse(issuedRow!.details);
       expect(details.dispatched).toBe(true);
       expect(details.credential_type).toBe('INSURANCE');
     });
@@ -665,9 +665,9 @@ describe('credentialSourcesRouter', () => {
       const auditCalls = mockAuditInsert.mock.calls.map((c: unknown[]) => c[0]);
       const issuedRow = auditCalls.find(
         (row: any) => row?.event_type === 'credential.issued',
-      );
+      ) as { event_category: string; org_id: string; details: string } | undefined;
       expect(issuedRow).toBeDefined();
-      const details = JSON.parse(issuedRow.details);
+      const details = JSON.parse(issuedRow!.details);
       expect(details.dispatched).toBe(false);
       expect(details.dispatch_error).toBe('endpoint offline');
     });
