@@ -22,7 +22,7 @@ Owner of the **outbound** webhook system. Inbound receivers (DocuSign, Adobe Sig
 | `anchor.expired` | `AnchorExpiredPayloadSchema` (SCRUM-1735) | `services/worker/src/jobs/anchorExpirySweep.ts` (SCRUM-1736 daily cron at 03:00 UTC; also `POST /jobs/anchor-expiry-sweep` for Cloud Scheduler) | Live |
 | `anchor.batch_secured` | `AnchorBatchSecuredPayloadSchema` | merkle-batch path (per-anchor `anchor.secured` events also fan out — SCRUM-1264) | Live |
 
-`anchor.expired` schema and producer are both live. The `anchorExpirySweep` cron transitions SECURED anchors past `expires_at` (filtering `deleted_at IS NULL`) to EXPIRED in deterministic `expires_at asc, id asc` order, writes a corresponding `audit_events` row, and dispatches `anchor.expired` with deterministic `event_id = "expired-${anchor.id}"` so retries dedupe via `webhook_delivery_logs.idempotency_key`.
+`anchor.expired` schema and producer are both live. The `anchorExpirySweep` cron transitions SECURED anchors past `expires_at` (filtering `deleted_at IS NULL`) to EXPIRED in deterministic `expires_at asc, id asc` order, writes a corresponding `audit_events` row, and dispatches `anchor.expired` with deterministic `event_id = "expired-${anchor.public_id}"` (uses public_id, not internal id, per CLAUDE.md §6) so retries dedupe via `webhook_delivery_logs.idempotency_key`. Dispatch failures write a sentinel `anchor.expired_dispatch_failed` audit event for manual recovery via the SCRUM-1738 retry path.
 
 ## Adding a new event type
 

@@ -165,7 +165,14 @@ export async function sweepExpiredAnchors(db: AnchorExpirySweepDb): Promise<Anch
     // `anchor.expired_dispatch_failed` audit event so operators can manually
     // re-dispatch through the SCRUM-1738 retry path; the failure also surfaces
     // in errors[] so the cron's structured error counter trips alerting.
-    const eventId = `expired-${anchor.id}`;
+    // CodeRabbit PR #734: use public_id, not internal anchor.id, so
+    // outbound event metadata never leaks internal UUIDs (CLAUDE.md §6).
+    const eventId = `expired-${anchor.public_id}`;
+    // TODO: SCRUM-XXXX — dispatch failure should not prevent retry; needs retry/dead-letter mechanism.
+    // Currently, once the CAS flips status to EXPIRED, the next sweep won't revisit this anchor
+    // (it only selects status='SECURED'). If dispatch throws below, the webhook is permanently
+    // dropped. A proper fix requires either a separate outbox/retry table or re-enqueueing
+    // failed dispatches for the SCRUM-1738 retry path.
     try {
       await db.dispatchWebhookEvent(anchor.org_id, 'anchor.expired', eventId, data);
       result.webhooks_dispatched++;
@@ -233,6 +240,11 @@ export function makeAnchorExpirySweepDb(deps: {
       // anchors don't transition. ORDER BY expires_at asc, id asc so a
       // backlog larger than the page size drains deterministically (no
       // row starvation on continued inflow).
+      // TODO: SCRUM-XXXX — add cursor-based pagination for large backlogs.
+      // Currently capped at 500 rows per sweep. If the backlog exceeds 500,
+      // remaining rows wait for the next cron tick. A keyset cursor
+      // (WHERE (expires_at, id) > (:last_expires_at, :last_id)) would let
+      // a single sweep drain an arbitrarily large backlog in pages.
       const { data, error } = await dbAny
         .from('anchors')
         .select(

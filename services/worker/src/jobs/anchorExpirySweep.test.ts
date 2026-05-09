@@ -204,11 +204,11 @@ describe('sweepExpiredAnchors (SCRUM-1736)', () => {
     const sentinel = audits.find((a) => a.event_type === 'anchor.expired_dispatch_failed');
     expect(sentinel).toBeDefined();
     const details = JSON.parse(String(sentinel?.details ?? '{}'));
-    expect(details.event_id).toBe('expired-a1');
+    expect(details.event_id).toBe('expired-ARK-2026-A1');
     expect(details.recovery).toMatch(/SCRUM-1738/);
   });
 
-  it('does not transition anchors with null org_id (skips silently with audit-only)', async () => {
+  it('transitions anchors with null org_id but skips webhook dispatch (audit-only)', async () => {
     const a4: FakeAnchor = { ...EXPIRED_SECURED, id: 'a4', public_id: 'ARK-2026-A4', org_id: null, org_public_id: null };
     const { db, dispatched, audits, updated } = makeDb({ candidates: [a4] });
     const result = await sweepExpiredAnchors(db);
@@ -254,7 +254,7 @@ describe('sweepExpiredAnchors (SCRUM-1736)', () => {
     expect(result.errors[0]).toMatch(/invalid, future, or null expires_at/i);
   });
 
-  it('uses deterministic event_id "expired-${anchor.id}" so retries dedupe (CodeRabbit PR #734)', async () => {
+  it('uses deterministic event_id "expired-${anchor.public_id}" so retries dedupe without leaking internal id (CodeRabbit PR #734)', async () => {
     let capturedEventId: string | undefined;
     const db: AnchorExpirySweepDb = {
       selectExpiringSecured: vi.fn(async () => [EXPIRED_SECURED]),
@@ -265,7 +265,7 @@ describe('sweepExpiredAnchors (SCRUM-1736)', () => {
       }),
     };
     await sweepExpiredAnchors(db);
-    expect(capturedEventId).toBe(`expired-${EXPIRED_SECURED.id}`);
+    expect(capturedEventId).toBe(`expired-${EXPIRED_SECURED.public_id}`);
   });
 
   it('only considers anchors where expires_at is in the past (DB filter contract)', async () => {
