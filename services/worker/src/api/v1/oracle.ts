@@ -118,6 +118,7 @@ router.post('/verify', async (req: Request, res: Response) => {
         public_id: raw.public_id as string,
         fingerprint: raw.fingerprint as string,
         status: raw.status as string,
+        org_id: (raw.org_id as string | null) ?? null, // SCRUM-1799 internal-only
         chain_tx_id: (raw.chain_tx_id as string) ?? null,
         chain_block_height: (raw.chain_block_height as number) ?? null,
         chain_timestamp: (raw.chain_timestamp as string) ?? null,

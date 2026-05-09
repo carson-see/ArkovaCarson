@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { db } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
 import { emitNotification } from '../notifications/dispatcher.js';
+import { dispatchWebhookEvent } from '../webhooks/delivery.js';
 
 export const anchorRevokeRouter = Router();
 
@@ -46,7 +47,10 @@ anchorRevokeRouter.post('/:id/revoke', async (req: Request<{ id: string }>, res:
 
   try {
     const { data: anchor, error: fetchError } = await db.from('anchors')
-      .select('id, status, org_id, user_id')
+      // SCRUM-1800: also fetch public_id + credential_type + chain_tx_id +
+      // chain_block_height for the credential.status_changed and anchor.revoked
+      // webhook payloads.
+      .select('id, public_id, status, org_id, user_id, credential_type, chain_tx_id, chain_block_height')
       .eq('id', anchorId)
       .single();
 
@@ -111,6 +115,43 @@ anchorRevokeRouter.post('/:id/revoke', async (req: Request<{ id: string }>, res:
       organizationId: anchor.org_id ?? undefined,
       payload: { anchorId, reason },
     });
+
+    // SCRUM-1800 (SCRUM-1743 Phase 2c): emit credential.status_changed on
+    // SECURED → REVOKED transition. Best-effort (best-effort dispatch in a
+    // try/catch; failure logs warn but does NOT abort the response).
+    //
+    // Companion: emit anchor.revoked too — its schema lives in
+    // PAYLOAD_SCHEMAS_BY_EVENT_TYPE but no producer was wired, so subscribed
+    // customers never received deliveries. SCRUM-1800 adds the producer.
+    if (anchor.public_id && anchor.org_id) {
+      const changedAt = new Date().toISOString();
+      try {
+        await dispatchWebhookEvent(anchor.org_id, 'anchor.revoked', anchor.public_id, {
+          public_id: anchor.public_id,
+          status: 'REVOKED',
+          chain_tx_id: anchor.chain_tx_id ?? null,
+          chain_block_height: anchor.chain_block_height ?? null,
+          revoked_at: changedAt,
+          revocation_reason: reason,
+        });
+      } catch (webhookError) {
+        logger.warn({ anchorId, error: webhookError }, 'Failed to dispatch anchor.revoked webhook');
+      }
+      if (anchor.credential_type) {
+        try {
+          await dispatchWebhookEvent(anchor.org_id, 'credential.status_changed', anchor.public_id, {
+            public_id: anchor.public_id,
+            credential_type: anchor.credential_type,
+            previous_status: 'SECURED',
+            new_status: 'REVOKED',
+            changed_at: changedAt,
+            reason,
+          });
+        } catch (webhookError) {
+          logger.warn({ anchorId, error: webhookError }, 'Failed to dispatch credential.status_changed webhook');
+        }
+      }
+    }
 
     logger.info({ anchorId, reason }, 'Anchor revoked');
     res.json({ success: true, anchorId, status: 'REVOKED' });
