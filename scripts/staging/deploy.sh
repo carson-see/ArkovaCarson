@@ -111,11 +111,16 @@ OWNER="${USER:-unknown}@$(hostname -s 2>/dev/null || echo host)"
 info() { echo -e "[deploy.sh] $*" >&2; }
 
 # Best-effort Slack post; never fails the deploy if Slack hiccups.
+# CodeRabbit MAJOR (2026-05-09): use jq to escape user-supplied content
+# (FORCE_REASON can contain quotes/newlines that break raw JSON building),
+# and add curl timeouts so a stalled webhook can't hang the deploy.
 post_slack() {
   local msg="$1"
   if [ -n "${SLACK_WEBHOOK_URL:-}" ]; then
-    curl -sS -X POST -H "Content-Type: application/json" \
-      -d "{\"text\":\"${msg}\"}" "${SLACK_WEBHOOK_URL}" >/dev/null 2>&1 || true
+    jq -nc --arg text "$msg" '{text: $text}' \
+      | curl -sS --connect-timeout 5 --max-time 15 \
+        -X POST -H "Content-Type: application/json" \
+        --data-binary @- "${SLACK_WEBHOOK_URL}" >/dev/null 2>&1 || true
   fi
 }
 
@@ -136,10 +141,25 @@ AUTH=( -H "apikey: ${STAGING_SUPABASE_SERVICE_ROLE_KEY}"
 
 check_lease() {
   local pr="$1"
-  local body
-  body=$(curl -sS "${AUTH[@]}" \
-    "${PG_REST}/staging_lease?pr_number=eq.${pr}&select=pr_number,acquired_by,acquired_at")
-  if [ "$body" = "[]" ] || [ -z "$body" ]; then
+  # Codex P1 + CodeRabbit CRITICAL (2026-05-09): the previous `body != "[]"`
+  # check accepted ANY non-empty PostgREST response — including 401 / 403 /
+  # 5xx error JSON — as a valid lease, defeating the whole point of this
+  # wrapper. Now: require HTTP 200 AND a JSON array with at least one row.
+  # On any other condition, return failure so deploy.sh refuses to proceed
+  # (or audits the bypass via --force).
+  local resp body code
+  resp=$(curl -sS --connect-timeout 5 --max-time 15 \
+    -w $'\n__HTTP__%{http_code}' \
+    "${AUTH[@]}" \
+    "${PG_REST}/staging_lease?pr_number=eq.${pr}&select=pr_number,acquired_by,acquired_at" \
+    2>/dev/null) || return 1
+  body="${resp%$'\n'__HTTP__*}"
+  code="${resp##*__HTTP__}"
+  if [ "$code" != "200" ]; then
+    info "WARN: lease lookup returned HTTP $code — treating as no lease."
+    return 1
+  fi
+  if ! jq -e 'type == "array" and length > 0' >/dev/null 2>&1 <<<"$body"; then
     return 1
   fi
   echo "$body"
@@ -148,9 +168,14 @@ check_lease() {
 
 record_deploy() {
   # Calls the public.record_staging_deploy RPC (added by
-  # staging_only_deploy_log_and_lease_pk migration). If the table doesn't
-  # exist yet (migration not applied), warn but don't fail the deploy —
-  # the deploy itself is still recorded by Cloud Run revision history.
+  # staging_only_deploy_log_and_lease_pk migration). On success, prints
+  # `Staging deploy log id: <N>` so operators can paste it into the PR's
+  # `## Staging Soak Evidence` block (required by check-staging-evidence
+  # for T2/T3 tiers). If the migration isn't applied, warn and continue —
+  # the deploy itself is still recorded in Cloud Run revision history.
+  #
+  # CodeRabbit MAJOR (2026-05-09): the previous version captured only the
+  # HTTP code and discarded the response body, so the row id was unreachable.
   local revision="$1" lease_ok="$2"
   local payload
   payload=$(jq -n \
@@ -170,19 +195,38 @@ record_deploy() {
       p_force_reason: (if $reason == "" then null else $reason end),
       p_lease_ok: $lease_ok}')
 
-  local resp
-  resp=$(curl -sS -w "\n__HTTP__%{http_code}" \
+  local resp body code deploy_log_id
+  resp=$(curl -sS --connect-timeout 5 --max-time 15 \
+    -w $'\n__HTTP__%{http_code}' \
     -X POST "${PG_REST}/rpc/record_staging_deploy" \
     "${AUTH[@]}" \
     -H "Content-Type: application/json" \
-    -d "$payload" || true)
+    -d "$payload" 2>/dev/null) || true
 
-  local code
-  code=$(echo "$resp" | grep "__HTTP__" | sed 's/.*__HTTP__//')
+  body="${resp%$'\n'__HTTP__*}"
+  code="${resp##*__HTTP__}"
+
   if [ "$code" != "200" ] && [ "$code" != "201" ]; then
     info "WARN: staging_deploy_log RPC returned HTTP $code — audit row NOT written."
     info "      Apply scripts/staging/migrations/staging_only_deploy_log_and_lease_pk.sql"
     info "      via Supabase MCP to enable audit. Continuing with deploy."
+    return 0
+  fi
+
+  # PostgREST returns the scalar bigint either as a bare number `42` or
+  # wrapped in a one-row array `[{"record_staging_deploy":42}]` depending
+  # on the Accept header. Cover both so we always pull the id when present.
+  deploy_log_id=$(jq -r '
+    if type == "number" then tostring
+    elif type == "array" and length > 0 then
+      (.[0] | if type == "number" then tostring else (to_entries[0].value | tostring) end)
+    else "" end' <<<"$body" 2>/dev/null)
+
+  if [ -n "$deploy_log_id" ] && [ "$deploy_log_id" != "null" ]; then
+    info "staging_deploy_log id: $deploy_log_id"
+    # Echo a machine-parseable line on stdout so the soak harness/operator
+    # can grep it for the PR evidence block.
+    echo "STAGING_DEPLOY_LOG_ID=$deploy_log_id"
   fi
 }
 

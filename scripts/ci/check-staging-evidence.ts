@@ -221,6 +221,9 @@ export function isStagingToolingOnly(files: string[]): StagingFilesOnlyResult {
     // only change what `bash scripts/gcp-setup/*` does on the next run.
     /^scripts\/gcp-setup\//,
     /^docs\/staging\//,
+    // SCRUM-1803: STAGING_RIG.md lives at docs/reference/, not docs/staging/.
+    // Same operational category — workflow doc for the staging rig.
+    /^docs\/reference\/STAGING_RIG\.md$/,
     /^\.github\/workflows\/staging-evidence\.yml$/,
     /^CLAUDE\.md$/,
     /^HANDOFF\.md$/,

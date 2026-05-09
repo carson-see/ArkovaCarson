@@ -39,15 +39,6 @@ assert_match() {
   fi
 }
 
-run() {
-  # Run deploy.sh, capture combined stdout+stderr and exit code.
-  out=$(STAGING_SUPABASE_URL=https://invalid.example \
-        STAGING_SUPABASE_SERVICE_ROLE_KEY=invalid \
-        "$@" 2>&1)
-  echo "$out"
-  return $?
-}
-
 echo "─── arg validation ─────────────────────────────────────────"
 
 out=$($DEPLOY 2>&1); rc=$?

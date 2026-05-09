@@ -143,31 +143,38 @@ allows the same set of files to coexist with non-canonical ledger entries.
 **Updated 2026-05-09 — SCRUM-1803.** Multiple PRs can soak in parallel; each PR gets its own tag-routed Cloud Run revision URL via `scripts/staging/deploy.sh`. The lease is now per-PR (PRIMARY KEY on `pr_number`); deploys are gated by lease presence.
 
 1. **Acquire your lease** — multiple PRs may hold leases simultaneously, but only one per PR:
+
    ```bash
    export STAGING_SUPABASE_URL="https://ujtlwnoqfhtitcmsnrpq.supabase.co"
    export STAGING_SUPABASE_SERVICE_ROLE_KEY="$(gcloud secrets versions access latest --secret=supabase-service-role-key-staging --project=arkova1)"
    ./scripts/staging/claim.sh acquire <pr-number> "<short reason>"
    ```
+
    `claim.sh` prints any other PRs currently soaking — that's expected; the tag URL pattern keeps them isolated.
 
 2. **Build your image** — `gcloud builds submit --tag us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker:scrum-N-<sha>` from `services/worker/`.
 
 3. **Deploy via the lease-enforced wrapper** — refuses to deploy without a lease (override with `--force "<reason>"` for audited bypass):
+
    ```bash
    ./scripts/staging/deploy.sh --pr <N> --image <image-ref>
    # prints:
    #   STAGING_API_BASE=https://pr-<N>---arkova-worker-staging-270018525501.us-central1.run.app
+   #   STAGING_DEPLOY_LOG_ID=<row id for the PR evidence block>
    ```
+
    The `--no-traffic` flag is implicit; the main URL is undisturbed unless you pass `--promote`. Each deploy writes a row to `staging_deploy_log` (append-only, audit-grade).
 
 4. **Seed** — `npx tsx scripts/staging/seed.ts` against the staging Supabase project. Synthetic data only, namespaced by `org_prefix LIKE 'STG%'`.
 
 5. **Run the load harness against your tag URL**:
+
    ```bash
    STAGING_API_BASE="https://pr-<N>---arkova-worker-staging-270018525501.us-central1.run.app" \
      npx tsx scripts/staging/load-harness.ts --mode mixed --duration 240 \
        --evidence-out docs/staging/soak-pr-<N>.json
    ```
+
    Other PRs' soaks hit their own tag URLs; your traffic is isolated to your revision.
 
 6. **Rollback rehearsal** — for any new migration in the PR, apply its `-- ROLLBACK:` block and confirm `/health` on your tag URL stays green, then re-apply.
