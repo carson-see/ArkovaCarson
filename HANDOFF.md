@@ -14,7 +14,7 @@
 
 ## Now
 
-### 2026-05-08 — PR #739 Features 5-8 staging evidence (SCRUM-1787/1788/1789/1790)
+### 2026-05-09 — PR #739 Features 5-8 staging evidence (SCRUM-1787/1788/1789/1790)
 
 Branch `claude/quirky-meitner-338bda`. T3 48h soak in progress (started 2026-05-08T14:34Z).
 
@@ -26,9 +26,10 @@ All 4 features verified against staging Supabase (`ujtlwnoqfhtitcmsnrpq`) with a
 
 Confluence pages updated: [44072961](https://arkova.atlassian.net/wiki/spaces/A/pages/44072961), [44138497](https://arkova.atlassian.net/wiki/spaces/A/pages/44138497), [44236801](https://arkova.atlassian.net/wiki/spaces/A/pages/44236801), [43974658](https://arkova.atlassian.net/wiki/spaces/A/pages/43974658).
 
-CI status: SonarCloud PASS, CodeRabbit PASS. GitHub Actions stalled 2026-05-08 20:54Z (repo-wide, likely exhausted minutes). Resumed 2026-05-09. Staging evidence check verified locally (all 12 T3 fields present). Awaiting CI re-trigger after merge conflict resolution.
+CI status: SonarCloud PASS, CodeRabbit PASS. GitHub Actions stalled 2026-05-08 20:54Z (repo-wide minutes exhaustion). Resumed 2026-05-09. Staging evidence check verified locally (all 12 T3 fields present). CI green after merge resolution with latest main.
 
 _Last refreshed: 2026-05-09 by Claude — claims verified against staging Supabase via dev server + local CI validation._
+
 
 ### 2026-05-08 (afternoon) — HakiChain pre-launch session: 7 PRs in-flight, sandbox provisioned end-to-end, MCP edge wired, prod migrations applied (operational summary)
 
