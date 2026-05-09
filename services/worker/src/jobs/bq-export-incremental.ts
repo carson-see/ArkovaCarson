@@ -22,6 +22,7 @@
 
 import { db } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
+import { Sentry } from '../utils/sentry.js';
 
 import { ensureTable, insertRows, toBqRow } from './bq-export-client.js';
 import {
@@ -166,6 +167,17 @@ export async function runIncremental(): Promise<IncrementalRunResult[]> {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       logger.error({ table, err: msg }, 'BQ export: incremental sync failed for table');
+      // SCRUM-1062 AC: emit Sentry events on BQ export failures so the
+      // "N consecutive failures" alert rule (per-table) can fire. Tags
+      // let the rule scope to bq-export-{table} and exclude unrelated
+      // worker errors.
+      Sentry.captureException(err instanceof Error ? err : new Error(msg), {
+        tags: {
+          job: 'bq-export-incremental',
+          table,
+          subsystem: 'bq-export',
+        },
+      });
       results.push({ table, rowsScanned: 0, rowsInserted: 0, newWatermark: null, errors: 1 });
     }
   }

@@ -20,6 +20,7 @@
 
 import { db } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
+import { Sentry } from '../utils/sentry.js';
 
 import { ensureTable, insertRows, runQuery, type BqInsertRow } from './bq-export-client.js';
 import {
@@ -182,6 +183,12 @@ export async function runSnapshot(snapshotDate: string = utcDateToday()): Promis
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       logger.error({ table, snapshotDate, err: msg }, 'BQ export: snapshot sync failed');
+      // SCRUM-1062 AC: emit Sentry events on snapshot failures so the
+      // alert rule can fire on consecutive-failures.
+      Sentry.captureException(err instanceof Error ? err : new Error(msg), {
+        tags: { job: 'bq-export-snapshot', table, subsystem: 'bq-export' },
+        extra: { snapshotDate },
+      });
       results.push({ table, snapshotDate, rowsInserted: 0, errors: 1 });
     }
   }

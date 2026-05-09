@@ -25,6 +25,7 @@
 
 import { db } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
+import { Sentry } from '../utils/sentry.js';
 
 import { ensureTable, insertRows, toBqRow } from './bq-export-client.js';
 import { BQ_TABLES, type BqTableTarget } from './bq-export-schemas.js';
@@ -87,6 +88,11 @@ export async function runBackfill(rawTable: string): Promise<BackfillRunResult> 
 
     if (error) {
       await markRunFailed(table, `backfill source query failed at cursor=${cursor}: ${error.message}`);
+      // SCRUM-1062 AC: Sentry capture so consecutive-failures alert can fire.
+      Sentry.captureException(new Error(`backfill: ${table} source query failed: ${error.message}`), {
+        tags: { job: 'bq-export-backfill', table, subsystem: 'bq-export', stage: 'source-query' },
+        extra: { cursor },
+      });
       throw new Error(`backfill: ${table} source query failed: ${error.message}`);
     }
 
@@ -99,6 +105,11 @@ export async function runBackfill(rawTable: string): Promise<BackfillRunResult> 
     if (insertResult.errors.length > 0) {
       const reasons = insertResult.errors.slice(0, 5).map((e) => `idx=${e.index}: ${e.reason}`).join(' | ');
       await markRunFailed(table, `backfill BQ insertAll errors at cursor=${cursor}: ${insertResult.errors.length}; first: ${reasons}`);
+      // SCRUM-1062 AC: Sentry capture so consecutive-failures alert can fire.
+      Sentry.captureException(new Error(`backfill ${table}: ${insertResult.errors.length} insert errors; first: ${reasons}`), {
+        tags: { job: 'bq-export-backfill', table, subsystem: 'bq-export', stage: 'insertAll' },
+        extra: { cursor, errorCount: insertResult.errors.length },
+      });
       throw new Error(`backfill ${table}: ${insertResult.errors.length} insert errors; first: ${reasons}`);
     }
 
