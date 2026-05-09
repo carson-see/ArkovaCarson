@@ -129,8 +129,12 @@ vi.mock('../../utils/orgCredits.js', () => ({
   deductOrgCredit: mockDeductOrgCredit,
 }));
 
+const { mockDispatchWebhookEvent } = vi.hoisted(() => ({
+  mockDispatchWebhookEvent: vi.fn().mockResolvedValue(undefined),
+}));
 vi.mock('../../webhooks/delivery.js', () => ({
   isPrivateUrlResolved: vi.fn().mockResolvedValue(false),
+  dispatchWebhookEvent: mockDispatchWebhookEvent,
 }));
 
 vi.mock('../../lib/urls.js', () => ({
@@ -558,5 +562,65 @@ describe('credentialSourcesRouter', () => {
     expect(res.status).toBe(400);
     expect(res.body.error).toBe('invalid_request');
     expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+
+  // SCRUM-1798 (Phase 2a of SCRUM-1743): credential.issued webhook emission
+  // tests. Verifies the dispatcher is called with a schema-compliant payload
+  // after a successful credential creation, and that emit failures do not
+  // abort the response (best-effort dispatch).
+  describe('credential.issued webhook emission (SCRUM-1798)', () => {
+    it('dispatches credential.issued after successful import + recipient link + audit', async () => {
+      await request(makeApp())
+        .post('/api/v1/credential-sources/import-url/preview')
+        .send({ source_url: 'https://credentials.example.com/abc', credential_type: 'CERTIFICATE' });
+
+      const res = await request(makeApp())
+        .post('/api/v1/credential-sources/import-url/confirm')
+        .send({ source_url: 'https://credentials.example.com/abc', credential_type: 'CERTIFICATE' });
+
+      expect(res.status).toBe(201);
+      expect(mockDispatchWebhookEvent).toHaveBeenCalledWith(
+        'org-1',
+        'credential.issued',
+        expect.stringMatching(/^ARK-\d{4}-[A-F0-9]{8}$/),
+        expect.objectContaining({
+          public_id: expect.stringMatching(/^ARK-\d{4}-[A-F0-9]{8}$/),
+          credential_type: 'CERTIFICATE',
+          status: 'ISSUED',
+          issued_at: expect.any(String),
+        }),
+      );
+    });
+
+    it('does NOT abort the response if dispatch fails (best-effort)', async () => {
+      mockDispatchWebhookEvent.mockRejectedValueOnce(new Error('webhook endpoint down'));
+
+      await request(makeApp())
+        .post('/api/v1/credential-sources/import-url/preview')
+        .send({ source_url: 'https://credentials.example.com/xyz', credential_type: 'DEGREE' });
+
+      const res = await request(makeApp())
+        .post('/api/v1/credential-sources/import-url/confirm')
+        .send({ source_url: 'https://credentials.example.com/xyz', credential_type: 'DEGREE' });
+
+      expect(res.status).toBe(201);
+      expect(res.body.duplicate).toBe(false);
+      expect(mockDispatchWebhookEvent).toHaveBeenCalled();
+    });
+
+    it('skips dispatch when org_id is null (org-less import)', async () => {
+      mockProfileSingle.mockResolvedValue({ data: { org_id: null }, error: null });
+
+      await request(makeApp())
+        .post('/api/v1/credential-sources/import-url/preview')
+        .send({ source_url: 'https://credentials.example.com/orgless', credential_type: 'BADGE' });
+
+      const res = await request(makeApp())
+        .post('/api/v1/credential-sources/import-url/confirm')
+        .send({ source_url: 'https://credentials.example.com/orgless', credential_type: 'BADGE' });
+
+      expect(res.status).toBe(201);
+      expect(mockDispatchWebhookEvent).not.toHaveBeenCalled();
+    });
   });
 });

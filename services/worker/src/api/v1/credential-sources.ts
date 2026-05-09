@@ -12,7 +12,7 @@ import {
   evidenceDateToTimestamp,
   type CredentialSourceImportPreview,
 } from '../../lib/credential-source-import.js';
-import { isPrivateUrlResolved } from '../../webhooks/delivery.js';
+import { dispatchWebhookEvent, isPrivateUrlResolved } from '../../webhooks/delivery.js';
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 import { deductOrgCredit, type DeductionResult } from '../../utils/orgCredits.js';
@@ -607,6 +607,37 @@ router.post('/import-url/confirm', async (req: Request, res: Response) => {
         );
       }
       throw postCreateError;
+    }
+
+    // SCRUM-1798 (SCRUM-1743 Phase 2a): emit `credential.issued` webhook after
+    // the credential row is committed + recipient linked + audit logged.
+    // Best-effort dispatch — failure does NOT abort the response. The anchor
+    // row is already authoritative; customers reconcile via
+    // `/api/v1/anchors/:public_id` if they miss a delivery. Pattern mirrors
+    // `anchor.submitted` emit in services/worker/src/jobs/anchor.ts.
+    //
+    // org_public_id + recipient_public_id are optional+nullable in the schema
+    // (services/worker/src/webhooks/payload-schemas.ts CREDENTIAL_BASE_FIELDS)
+    // — joining to orgs.public_id / profiles.public_id is a follow-up; schema
+    // accepts null today.
+    if (orgId && anchor.public_id) {
+      try {
+        const issuedAt =
+          evidenceDateToTimestamp(preview.credential_issued_at) ?? anchor.created_at;
+        const expiresAt = evidenceDateToTimestamp(preview.credential_expires_at, true);
+        await dispatchWebhookEvent(orgId, 'credential.issued', anchor.public_id, {
+          public_id: anchor.public_id,
+          credential_type: preview.credential_type,
+          status: 'ISSUED',
+          issued_at: issuedAt,
+          expires_at: expiresAt,
+        });
+      } catch (webhookError) {
+        logger.warn(
+          { anchorId: anchor.id, publicId: anchor.public_id, error: webhookError },
+          'Failed to dispatch credential.issued webhook (response NOT aborted)',
+        );
+      }
     }
 
     res.status(201).json({
