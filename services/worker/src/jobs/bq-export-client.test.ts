@@ -18,7 +18,7 @@ vi.mock('../utils/logger.js', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
-import { ensureTable, insertRows, runQuery, toBqRow } from './bq-export-client.js';
+import { ensureTable, insertRows, runQuery, toBqRow, serializeJsonForBigQuery } from './bq-export-client.js';
 import { BQ_TABLES } from './bq-export-schemas.js';
 
 // Set global fetch mock per-test
@@ -244,6 +244,39 @@ describe('toBqRow JSON-type stringification (live-prod-defect SCRUM-1723 2026-05
     expect(JSON.parse(out.json.metadata as string)).toEqual({ foo: 'bar', n: 1 });
   });
 
+  it('stringifies scalar JSON values (string, number, boolean) — CodeRabbit fix', () => {
+    // Postgres jsonb can hold bare scalars (e.g. `"active"`, `42`, `true`).
+    // The original code only stringified objects/arrays, missing scalars.
+    const target = BQ_TABLES.anchors;
+
+    const strOut = toBqRow(target, 'anchors', {
+      id: 'scalar-str', created_at: '2026-05-09T00:00:00Z', metadata: 'active',
+    });
+    expect(typeof strOut.json.metadata).toBe('string');
+    expect(strOut.json.metadata).toBe('"active"'); // JSON-encoded string
+
+    const numOut = toBqRow(target, 'anchors', {
+      id: 'scalar-num', created_at: '2026-05-09T00:00:00Z', metadata: 42,
+    });
+    expect(typeof numOut.json.metadata).toBe('string');
+    expect(numOut.json.metadata).toBe('42');
+
+    const boolOut = toBqRow(target, 'anchors', {
+      id: 'scalar-bool', created_at: '2026-05-09T00:00:00Z', metadata: true,
+    });
+    expect(typeof boolOut.json.metadata).toBe('string');
+    expect(boolOut.json.metadata).toBe('true');
+  });
+
+  it('stringifies array JSON values', () => {
+    const target = BQ_TABLES.anchors;
+    const out = toBqRow(target, 'anchors', {
+      id: 'arr', created_at: '2026-05-09T00:00:00Z', metadata: [1, 2, 3],
+    });
+    expect(typeof out.json.metadata).toBe('string');
+    expect(JSON.parse(out.json.metadata as string)).toEqual([1, 2, 3]);
+  });
+
   it('leaves null metadata as null (no string "null")', () => {
     const target = BQ_TABLES.anchors;
     const out = toBqRow(target, 'anchors', {
@@ -276,6 +309,15 @@ describe('toBqRow JSON-type stringification (live-prod-defect SCRUM-1723 2026-05
     expect(out.insertId).toBe('audit_events-evt-123');
   });
 
+  it('handles undefined metadata the same as null', () => {
+    const target = BQ_TABLES.anchors;
+    const out = toBqRow(target, 'anchors', {
+      id: 'undef', created_at: '2026-05-09T00:00:00Z',
+      // metadata not set at all — undefined
+    });
+    expect(out.json.metadata).toBeNull();
+  });
+
   it('injects bq_synced_at at insertion time', () => {
     const target = BQ_TABLES.anchors;
     const out = toBqRow(target, 'anchors', {
@@ -284,5 +326,33 @@ describe('toBqRow JSON-type stringification (live-prod-defect SCRUM-1723 2026-05
     });
     expect(typeof out.json.bq_synced_at).toBe('string');
     expect(out.json.bq_synced_at as string).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+  });
+});
+
+describe('serializeJsonForBigQuery', () => {
+  it('returns null for null and undefined', () => {
+    expect(serializeJsonForBigQuery(null)).toBeNull();
+    expect(serializeJsonForBigQuery(undefined)).toBeNull();
+  });
+
+  it('stringifies objects', () => {
+    expect(serializeJsonForBigQuery({ a: 1 })).toBe('{"a":1}');
+  });
+
+  it('stringifies arrays', () => {
+    expect(serializeJsonForBigQuery([1, 2])).toBe('[1,2]');
+  });
+
+  it('stringifies scalar string (wraps in quotes)', () => {
+    expect(serializeJsonForBigQuery('hello')).toBe('"hello"');
+  });
+
+  it('stringifies scalar number', () => {
+    expect(serializeJsonForBigQuery(42)).toBe('42');
+  });
+
+  it('stringifies scalar boolean', () => {
+    expect(serializeJsonForBigQuery(true)).toBe('true');
+    expect(serializeJsonForBigQuery(false)).toBe('false');
   });
 });

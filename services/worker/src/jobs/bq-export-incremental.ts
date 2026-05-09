@@ -113,6 +113,15 @@ async function runOneTable(table: BqExportTableName): Promise<IncrementalRunResu
   }
 
   const bqRows = rows.map((r) => toBqRow(target, table, r));
+
+  // Design note: no per-table Zod validation before insertRows.
+  // BigQuery itself IS the schema validator — insertAll with
+  // skipInvalidRows=false + ignoreUnknownValues=false rejects malformed
+  // rows with clear per-field error messages. On failure the watermark
+  // does NOT advance, so the next cron tick re-attempts the same window.
+  // Adding a Zod layer would duplicate the BQ schema definitions with
+  // significant maintenance cost and no additional safety, since BQ
+  // already enforces the exact target schema.
   const insertResult = await insertRows(target, bqRows);
 
   if (insertResult.errors.length > 0) {

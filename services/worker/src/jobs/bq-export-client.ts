@@ -131,18 +131,35 @@ export interface BqInsertRow {
 }
 
 /**
+ * Serialize a value for a BQ JSON-type column.
+ *
+ * BigQuery's streaming `insertAll` API requires JSON-typed columns to be
+ * sent as JSON-encoded *strings*, not raw values. Postgres returns jsonb
+ * as deserialized JS values — objects, arrays, but also scalar strings,
+ * numbers, and booleans (all valid jsonb). Every non-null value must be
+ * stringified, not just objects/arrays.
+ *
+ * Shared helper so both the incremental sync and backfill jobs stay in
+ * sync (SCRUM-1723 live-prod fix, CodeRabbit review 2026-05-09).
+ */
+export function serializeJsonForBigQuery(value: unknown): string | null {
+  if (value == null) return null;
+  return JSON.stringify(value);
+}
+
+/**
  * Convert a Postgres row into the BQ `tabledata.insertAll` wire shape.
  *
  * Two invariants this enforces:
  *   1. `insertId = "<table>-<id>"` for at-least-once + best-effort dedup
  *      across the BQ ~1-minute window.
- *   2. Any field whose BQ schema declares `type === 'JSON'` is
- *      `JSON.stringify`-ed before insertAll. BigQuery's streaming API
- *      requires JSON-type columns to be sent as JSON-encoded strings,
- *      not nested objects; Postgres returns jsonb as deserialized
- *      objects, so without this re-stringify the API rejects every row
- *      with `This field: <name> is not a record.` (SCRUM-1723 live-prod
- *      defect 2026-05-09).
+ *   2. Any field whose BQ schema declares `type === 'JSON'` is serialized
+ *      via {@link serializeJsonForBigQuery} before insertAll. BigQuery's
+ *      streaming API requires JSON-type columns to be sent as JSON-encoded
+ *      strings, not nested objects or bare scalars; Postgres returns jsonb
+ *      as deserialized JS values, so without this re-stringify the API
+ *      rejects rows with `This field: <name> is not a record.`
+ *      (SCRUM-1723 live-prod defect 2026-05-09).
  *
  * Lives here in bq-export-client.ts so both the incremental sync job
  * and the one-shot backfill job share the same wire-shaping; SonarCloud
@@ -157,10 +174,7 @@ export function toBqRow(
   const json: Record<string, unknown> = { ...row, bq_synced_at: new Date().toISOString() };
   for (const field of target.schema.fields) {
     if (field.type !== 'JSON') continue;
-    const v = json[field.name];
-    if (v != null && typeof v === 'object') {
-      json[field.name] = JSON.stringify(v);
-    }
+    json[field.name] = serializeJsonForBigQuery(json[field.name]);
   }
   return { insertId: `${table}-${id}`, json };
 }
