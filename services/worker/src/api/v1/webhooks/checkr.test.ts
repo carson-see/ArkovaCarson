@@ -26,8 +26,8 @@ vi.mock('../../../utils/logger.js', () => ({
 import { checkrWebhookRouter } from './checkr.js';
 
 const TEST_SECRET = 'checkr-fixture-secret-aaaa';
-const ORG_ID = '11111111-1111-4111-8111-111111111111';
-const INTEGRATION_ID = '22222222-2222-4222-8222-222222222222';
+const ORG_ID = 'c0c0c0c0-c0c0-4c0c-8c0c-c0c0c0c0c0c0';
+const INTEGRATION_ID = 'd1d1d1d1-d1d1-4d1d-8d1d-d1d1d1d1d1d1';
 const REPORT_ID = 'a8e4b5c6-7777-4888-9aaa-bbbbccccdddd';
 
 function createApp() {
