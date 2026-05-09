@@ -26,8 +26,9 @@ import { isPlatformAdmin } from '../utils/platformAdmin.js';
 import { processPendingAnchors } from '../jobs/anchor.js';
 import { checkSubmittedConfirmations } from '../jobs/check-confirmations.js';
 import { processRevokedAnchors } from '../jobs/revocation.js';
-import { processWebhookRetries } from '../webhooks/delivery.js';
+import { processWebhookRetries, dispatchWebhookEvent } from '../webhooks/delivery.js';
 import { processMonthlyCredits } from '../jobs/credit-expiry.js';
+import { sweepExpiredAnchors, makeAnchorExpirySweepDb } from '../jobs/anchorExpirySweep.js';
 import { fetchEdgarFilings, fetchEdgarHistoricalBackfill, fetchEdgarBulk } from '../jobs/edgarFetcher.js';
 import { fetchUsptoPAtents } from '../jobs/usptoFetcher.js';
 import { fetchFederalRegisterDocuments } from '../jobs/federalRegisterFetcher.js';
@@ -275,6 +276,21 @@ cronRouter.post('/credit-expiry', async (_req, res) => {
     res.json({ processed });
   } catch (error) {
     logger.error({ error }, 'Credit expiry processing failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+// SCRUM-1736: anchor expiry sweep — transitions SECURED anchors past
+// `expires_at` to EXPIRED and dispatches anchor.expired webhook
+// (schema: services/worker/src/webhooks/payload-schemas.ts → SCRUM-1735).
+// Cloud Scheduler triggers daily; in-process backup wired in scheduled.ts.
+cronRouter.post('/anchor-expiry-sweep', async (_req, res) => {
+  try {
+    const adapter = makeAnchorExpirySweepDb({ db, dispatchWebhookEvent });
+    const result = await sweepExpiredAnchors(adapter);
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'Anchor expiry sweep failed');
     res.status(500).json({ error: 'Processing failed' });
   }
 });
@@ -1453,7 +1469,18 @@ cronRouter.get('/smoke-test/history', async (_req, res) => {
 cronRouter.post('/bq-export-incremental', async (_req, res) => {
   try {
     const { runIncremental } = await import('../jobs/bq-export-incremental.js');
-    const results = await runIncremental();
+    // Sentry Crons monitor — the freshness SLO for append-only mirrors is
+    // 5 min (SCRUM-1062 AC). Wrapping the run with withCronMonitoring gives
+    // Sentry a heartbeat each tick; if 2 ticks miss the monitor fires.
+    // Combined with the consecutive-failures issue alert, this catches both
+    // "cron stops firing" (this monitor) and "cron fires but errors" (issue
+    // alert from the captureException calls in runIncremental).
+    const monitored = withCronMonitoring(
+      'bq-export-incremental',
+      '*/5 * * * *',
+      runIncremental,
+    );
+    const results = await monitored();
     res.json({ results });
   } catch (error) {
     logger.error({ error }, 'BQ export incremental run failed');
@@ -1464,7 +1491,14 @@ cronRouter.post('/bq-export-incremental', async (_req, res) => {
 cronRouter.post('/bq-export-snapshot', async (_req, res) => {
   try {
     const { runSnapshot } = await import('../jobs/bq-export-snapshot.js');
-    const results = await runSnapshot();
+    // Sentry Crons monitor — daily 02:00 UTC freshness SLO (SCRUM-1062 AC,
+    // 24h for snapshot tables).
+    const monitored = withCronMonitoring(
+      'bq-export-snapshot',
+      '0 2 * * *',
+      runSnapshot,
+    );
+    const results = await monitored();
     res.json({ results });
   } catch (error) {
     logger.error({ error }, 'BQ export snapshot run failed');

@@ -93,3 +93,38 @@ describe('bq-export-incremental: batch size sanity', () => {
     expect(BATCH_SIZE).toBeLessThanOrEqual(100_000);
   });
 });
+
+describe('bq-export-incremental: verifications source-table mapping (live-prod-defect 2026-05-09)', () => {
+  it('VERIFICATIONS BQ target declares Postgres source `verification_events`', () => {
+    // Live-prod first cron tick (2026-05-09 13:50 UTC) errored with
+    // "Could not find the table 'public.verifications' in the schema cache"
+    // because `verifications` is the BQ-side mirror name; the Postgres
+    // source is `verification_events` (per migration 0042). The fix maps
+    // sourceTableName so the SELECT runs against the right Postgres table.
+    expect(BQ_TABLES.verifications.sourceTableName).toBe('verification_events');
+  });
+
+  it('verifications selectColumns aliases method → verified_via and ip_hash → verifier_ip_hash', () => {
+    // PostgREST select aliasing: `<alias>:<source_column>`. Without these
+    // aliases, the worker would SELECT verified_via + verifier_ip_hash
+    // which don't exist on verification_events (the live columns are
+    // `method` and `ip_hash`).
+    const cols = selectColumns('verifications');
+    expect(cols).toContain('verified_via:method');
+    expect(cols).toContain('verifier_ip_hash:ip_hash');
+  });
+
+  it('verifications selectColumns does NOT contain user_agent, referrer, or country_code (PII / out-of-scope)', () => {
+    // verification_events has user_agent (semi-PII), referrer, country_code.
+    // The BQ mirror schema deliberately excludes them. Pin that here so a
+    // future "make it richer" patch can't quietly leak them.
+    const cols = selectColumns('verifications');
+    expect(cols).not.toContain('user_agent');
+    expect(cols).not.toContain('referrer');
+    expect(cols).not.toContain('country_code');
+  });
+});
+
+// toBqRow JSON-type stringification tests moved to bq-export-client.test.ts —
+// the helper now lives in bq-export-client.ts (shared with backfill) so
+// SonarCloud doesn't flag the duplicated wire-shaping logic.

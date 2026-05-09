@@ -18,7 +18,7 @@ vi.mock('../utils/logger.js', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
-import { ensureTable, insertRows, runQuery } from './bq-export-client.js';
+import { ensureTable, insertRows, runQuery, toBqRow, serializeJsonForBigQuery } from './bq-export-client.js';
 import { BQ_TABLES } from './bq-export-schemas.js';
 
 // Set global fetch mock per-test
@@ -170,6 +170,37 @@ describe('insertRows', () => {
 
     await expect(insertRows(BQ_TABLES.anchors, [{ insertId: 'a-1', json: { id: '1' } }])).rejects.toThrow(/BigQuery API error: 401/);
   });
+
+  it('retries on transient 503 then succeeds (SCRUM-1062 operational hardening)', async () => {
+    fetchMock
+      .mockResolvedValueOnce(mockFetchResponse({ status: 503, body: { error: 'unavailable' } }))
+      .mockResolvedValueOnce(mockFetchResponse({ status: 503, body: { error: 'unavailable' } }))
+      .mockResolvedValueOnce(mockFetchResponse({ status: 200, body: { kind: 'bigquery#tableDataInsertAllResponse' } }));
+
+    const result = await insertRows(BQ_TABLES.anchors, [{ insertId: 'a-1', json: { id: '1' } }]);
+    expect(result.insertedCount).toBe(1);
+    expect(result.errors).toEqual([]);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  }, 10_000);
+
+  it('retries on 429 then surfaces error if all attempts fail', async () => {
+    fetchMock
+      .mockResolvedValueOnce(mockFetchResponse({ status: 429, body: { error: 'quota' } }))
+      .mockResolvedValueOnce(mockFetchResponse({ status: 429, body: { error: 'quota' } }))
+      .mockResolvedValueOnce(mockFetchResponse({ status: 429, body: { error: 'quota' } }));
+
+    await expect(insertRows(BQ_TABLES.anchors, [{ insertId: 'a-1', json: { id: '1' } }]))
+      .rejects.toThrow(/BigQuery API error: 429/);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  }, 10_000);
+
+  it('does NOT retry on permanent 4xx (fails fast)', async () => {
+    fetchMock.mockResolvedValueOnce(mockFetchResponse({ status: 400, body: { error: 'invalid' } }));
+
+    await expect(insertRows(BQ_TABLES.anchors, [{ insertId: 'a-1', json: { id: '1' } }]))
+      .rejects.toThrow(/BigQuery API error: 400/);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('runQuery', () => {
@@ -223,5 +254,151 @@ describe('runQuery', () => {
     fetchMock.mockResolvedValueOnce(mockFetchResponse({ status: 400, body: { error: { message: 'bad query' } } }));
 
     await expect(runQuery('not valid sql')).rejects.toThrow(/BigQuery API error: 400/);
+  });
+});
+
+describe('toBqRow JSON-type stringification (live-prod-defect SCRUM-1723 2026-05-09)', () => {
+  it('stringifies anchors.metadata before insertAll (BQ JSON-type wire format)', () => {
+    // First Cloud Scheduler tick of bq-export-incremental against prod
+    // (2026-05-09 13:50 UTC) rejected 1000 rows with "metadata is not a
+    // record" because tabledata.insertAll requires JSON-type columns to
+    // be sent as JSON-encoded strings, not nested objects. Postgres
+    // returns jsonb as deserialized objects, so we re-stringify
+    // schema-aware.
+    const target = BQ_TABLES.anchors;
+    const out = toBqRow(target, 'anchors', {
+      id: 'aaa',
+      created_at: '2026-05-09T00:00:00Z',
+      metadata: { foo: 'bar', n: 1 },
+    });
+    expect(typeof out.json.metadata).toBe('string');
+    expect(JSON.parse(out.json.metadata as string)).toEqual({ foo: 'bar', n: 1 });
+  });
+
+  it('stringifies scalar JSON values (string, number, boolean) — CodeRabbit fix', () => {
+    // Postgres jsonb can hold bare scalars (e.g. `"active"`, `42`, `true`).
+    // The original code only stringified objects/arrays, missing scalars.
+    const target = BQ_TABLES.anchors;
+
+    const strOut = toBqRow(target, 'anchors', {
+      id: 'scalar-str', created_at: '2026-05-09T00:00:00Z', metadata: 'active',
+    });
+    expect(typeof strOut.json.metadata).toBe('string');
+    expect(strOut.json.metadata).toBe('"active"'); // JSON-encoded string
+
+    const numOut = toBqRow(target, 'anchors', {
+      id: 'scalar-num', created_at: '2026-05-09T00:00:00Z', metadata: 42,
+    });
+    expect(typeof numOut.json.metadata).toBe('string');
+    expect(numOut.json.metadata).toBe('42');
+
+    const boolOut = toBqRow(target, 'anchors', {
+      id: 'scalar-bool', created_at: '2026-05-09T00:00:00Z', metadata: true,
+    });
+    expect(typeof boolOut.json.metadata).toBe('string');
+    expect(boolOut.json.metadata).toBe('true');
+  });
+
+  it('stringifies array JSON values', () => {
+    const target = BQ_TABLES.anchors;
+    const out = toBqRow(target, 'anchors', {
+      id: 'arr', created_at: '2026-05-09T00:00:00Z', metadata: [1, 2, 3],
+    });
+    expect(typeof out.json.metadata).toBe('string');
+    expect(JSON.parse(out.json.metadata as string)).toEqual([1, 2, 3]);
+  });
+
+  it('leaves null metadata as null (no string "null")', () => {
+    const target = BQ_TABLES.anchors;
+    const out = toBqRow(target, 'anchors', {
+      id: 'bbb',
+      created_at: '2026-05-09T00:00:00Z',
+      metadata: null,
+    });
+    expect(out.json.metadata).toBeNull();
+  });
+
+  it('does NOT touch non-JSON fields (regression guard)', () => {
+    const target = BQ_TABLES.anchors;
+    const out = toBqRow(target, 'anchors', {
+      id: 'ccc',
+      created_at: '2026-05-09T00:00:00Z',
+      org_id: 'org-1',
+      status: 'SECURED',
+    });
+    expect(out.json.id).toBe('ccc');
+    expect(out.json.org_id).toBe('org-1');
+    expect(out.json.status).toBe('SECURED');
+  });
+
+  it('insertId follows the table-id template', () => {
+    const target = BQ_TABLES.audit_events;
+    const out = toBqRow(target, 'audit_events', {
+      id: 'evt-123',
+      created_at: '2026-05-09T00:00:00Z',
+    });
+    expect(out.insertId).toBe('audit_events-evt-123');
+  });
+
+  it('handles undefined metadata the same as null', () => {
+    const target = BQ_TABLES.anchors;
+    const out = toBqRow(target, 'anchors', {
+      id: 'undef', created_at: '2026-05-09T00:00:00Z',
+      // metadata not set at all — undefined
+    });
+    expect(out.json.metadata).toBeNull();
+  });
+
+  it('throws when row.id is missing (null, undefined, or empty string)', () => {
+    const target = BQ_TABLES.anchors;
+    expect(() =>
+      toBqRow(target, 'anchors', { created_at: '2026-05-09T00:00:00Z' }),
+    ).toThrow('bq-export: missing id while shaping row for table=anchors');
+
+    expect(() =>
+      toBqRow(target, 'anchors', { id: null, created_at: '2026-05-09T00:00:00Z' }),
+    ).toThrow('bq-export: missing id while shaping row for table=anchors');
+
+    expect(() =>
+      toBqRow(target, 'anchors', { id: '', created_at: '2026-05-09T00:00:00Z' }),
+    ).toThrow('bq-export: missing id while shaping row for table=anchors');
+  });
+
+  it('injects bq_synced_at at insertion time', () => {
+    const target = BQ_TABLES.anchors;
+    const out = toBqRow(target, 'anchors', {
+      id: 'ddd',
+      created_at: '2026-05-09T00:00:00Z',
+    });
+    expect(typeof out.json.bq_synced_at).toBe('string');
+    expect(out.json.bq_synced_at as string).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+  });
+});
+
+describe('serializeJsonForBigQuery', () => {
+  it('returns null for null and undefined', () => {
+    expect(serializeJsonForBigQuery(null)).toBeNull();
+    expect(serializeJsonForBigQuery(undefined)).toBeNull();
+  });
+
+  it('stringifies objects', () => {
+    expect(serializeJsonForBigQuery({ a: 1 })).toBe('{"a":1}');
+  });
+
+  it('stringifies arrays', () => {
+    expect(serializeJsonForBigQuery([1, 2])).toBe('[1,2]');
+  });
+
+  it('stringifies scalar string (wraps in quotes)', () => {
+    expect(serializeJsonForBigQuery('hello')).toBe('"hello"');
+  });
+
+  it('stringifies scalar number', () => {
+    expect(serializeJsonForBigQuery(42)).toBe('42');
+  });
+
+  it('stringifies scalar boolean', () => {
+    expect(serializeJsonForBigQuery(true)).toBe('true');
+    expect(serializeJsonForBigQuery(false)).toBe('false');
   });
 });

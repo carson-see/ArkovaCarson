@@ -22,8 +22,9 @@
 
 import { db } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
+import { Sentry } from '../utils/sentry.js';
 
-import { ensureTable, insertRows, type BqInsertRow } from './bq-export-client.js';
+import { ensureTable, insertRows, toBqRow } from './bq-export-client.js';
 import {
   AUDIT_EVENTS_COLUMN_ALLOWLIST,
   BQ_TABLES,
@@ -63,21 +64,20 @@ function selectColumns(table: BqExportTableName): string {
     ].join(', ');
   }
   if (table === 'verifications') {
+    // PostgREST aliasing `<alias>:<source>` — the live source table is
+    // public.verification_events whose columns are method + ip_hash; the BQ
+    // mirror schema uses verified_via + verifier_ip_hash. Aliasing here keeps
+    // the BQ-side wire shape unchanged while pointing at the correct source.
     return [
-      'id', 'anchor_id', 'org_id', 'public_id', 'result', 'verified_via',
-      'verifier_ip_hash', 'created_at',
+      'id', 'anchor_id', 'org_id', 'public_id', 'result',
+      'verified_via:method', 'verifier_ip_hash:ip_hash', 'created_at',
     ].join(', ');
   }
   return '*'; // unreachable; types prevent it
 }
 
-function toBqRow(table: BqExportTableName, row: Record<string, unknown>): BqInsertRow {
-  const id = String(row.id);
-  return {
-    insertId: `${table}-${id}`,
-    json: { ...row, bq_synced_at: new Date().toISOString() },
-  };
-}
+// `toBqRow` is shared with bq-export-backfill.ts — see bq-export-client.ts
+// for the schema-aware JSON-stringify invariant (SCRUM-1723 live-prod fix).
 
 async function runOneTable(table: BqExportTableName): Promise<IncrementalRunResult> {
   const target: BqTableTarget = BQ_TABLES[table];
@@ -90,7 +90,7 @@ async function runOneTable(table: BqExportTableName): Promise<IncrementalRunResu
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const queryRes = await (db as any)
-    .from(table)
+    .from(target.sourceTableName ?? table)
     .select(selectColumns(table))
     .gt('created_at', watermark.lastSyncedAt)
     .order('created_at', { ascending: true })
@@ -113,7 +113,16 @@ async function runOneTable(table: BqExportTableName): Promise<IncrementalRunResu
     return { table, rowsScanned: 0, rowsInserted: 0, newWatermark: null, errors: 0 };
   }
 
-  const bqRows = rows.map((r) => toBqRow(table, r));
+  const bqRows = rows.map((r) => toBqRow(target, table, r));
+
+  // Design note: no per-table Zod validation before insertRows.
+  // BigQuery itself IS the schema validator — insertAll with
+  // skipInvalidRows=false + ignoreUnknownValues=false rejects malformed
+  // rows with clear per-field error messages. On failure the watermark
+  // does NOT advance, so the next cron tick re-attempts the same window.
+  // Adding a Zod layer would duplicate the BQ schema definitions with
+  // significant maintenance cost and no additional safety, since BQ
+  // already enforces the exact target schema.
   const insertResult = await insertRows(target, bqRows);
 
   if (insertResult.errors.length > 0) {
@@ -158,6 +167,17 @@ export async function runIncremental(): Promise<IncrementalRunResult[]> {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       logger.error({ table, err: msg }, 'BQ export: incremental sync failed for table');
+      // SCRUM-1062 AC: emit Sentry events on BQ export failures so the
+      // "N consecutive failures" alert rule (per-table) can fire. Tags
+      // let the rule scope to bq-export-{table} and exclude unrelated
+      // worker errors.
+      Sentry.captureException(err instanceof Error ? err : new Error(msg), {
+        tags: {
+          job: 'bq-export-incremental',
+          table,
+          subsystem: 'bq-export',
+        },
+      });
       results.push({ table, rowsScanned: 0, rowsInserted: 0, newWatermark: null, errors: 1 });
     }
   }
@@ -165,4 +185,4 @@ export async function runIncremental(): Promise<IncrementalRunResult[]> {
 }
 
 /** Exported for tests only. */
-export const __testing = { runOneTable, BATCH_SIZE, APPEND_TABLES, selectColumns };
+export const __testing = { runOneTable, BATCH_SIZE, APPEND_TABLES, selectColumns, toBqRow };
