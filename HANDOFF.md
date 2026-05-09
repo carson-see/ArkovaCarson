@@ -220,14 +220,14 @@ PR [#700](https://github.com/carson-see/ArkovaCarson/pull/700) remains the Path 
 
 Bench-state, paired with SCRUM-1731. Audit recalibration: SCRUM-1732 was already implemented in code (the `?...metadata` conditional spread on `services/worker/src/api/v1/anchor-submit.ts` correctly persists validated `metadata` to `anchors.metadata`); the original audit's claim that the spread was dropping the field was stale.
 
-This PR adds **two metadata-persistence contract-lock tests** under the existing describe block in `services/worker/src/api/v1/anchor-submit.test.ts` (PR title: `test(SCRUM-1732): anchor-submit metadata persistence contract-lock tests`):
+This PR adds **two metadata-persistence contract-lock tests** under a new `SCRUM-1732 metadata persistence contract` describe block in `services/worker/src/api/v1/anchor-submit.test.ts` (PR title: `test(SCRUM-1732): anchor-submit metadata persistence contract-lock tests`):
 
 - "persists every public-safe key from the request" — iterates the request payload's keys and verifies each landed in the `db.from('anchors').insert(...)` call with the exact value, so a future silent key drop fails loud.
 - Strengthened existing checks via the `InsertCallArg` interface to assert key-by-key, replacing the prior loose `expect.objectContaining(...)` shape match.
 
 Local quality gates:
 
-- `npx vitest run services/worker/src/api/v1/anchor-submit.test.ts` → suite green locally (11 tests including the contract-lock additions)
+- `npx vitest run services/worker/src/api/v1/anchor-submit.test.ts` → suite green locally (13 tests including the contract-lock additions)
 - `npx eslint services/worker/src/api/v1/anchor-submit.ts services/worker/src/api/v1/anchor-submit.test.ts` → clean
 
 Tier: T1 by code-touched scope (test file + minor type-safety helper). No runtime change, no migration. Staging-evidence gate satisfied via the PR body block declaring T1 + linking back to this entry.
