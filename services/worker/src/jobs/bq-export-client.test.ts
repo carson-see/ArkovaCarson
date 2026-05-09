@@ -170,6 +170,37 @@ describe('insertRows', () => {
 
     await expect(insertRows(BQ_TABLES.anchors, [{ insertId: 'a-1', json: { id: '1' } }])).rejects.toThrow(/BigQuery API error: 401/);
   });
+
+  it('retries on transient 503 then succeeds (SCRUM-1062 operational hardening)', async () => {
+    fetchMock
+      .mockResolvedValueOnce(mockFetchResponse({ status: 503, body: { error: 'unavailable' } }))
+      .mockResolvedValueOnce(mockFetchResponse({ status: 503, body: { error: 'unavailable' } }))
+      .mockResolvedValueOnce(mockFetchResponse({ status: 200, body: { kind: 'bigquery#tableDataInsertAllResponse' } }));
+
+    const result = await insertRows(BQ_TABLES.anchors, [{ insertId: 'a-1', json: { id: '1' } }]);
+    expect(result.insertedCount).toBe(1);
+    expect(result.errors).toEqual([]);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  }, 10_000);
+
+  it('retries on 429 then surfaces error if all attempts fail', async () => {
+    fetchMock
+      .mockResolvedValueOnce(mockFetchResponse({ status: 429, body: { error: 'quota' } }))
+      .mockResolvedValueOnce(mockFetchResponse({ status: 429, body: { error: 'quota' } }))
+      .mockResolvedValueOnce(mockFetchResponse({ status: 429, body: { error: 'quota' } }));
+
+    await expect(insertRows(BQ_TABLES.anchors, [{ insertId: 'a-1', json: { id: '1' } }]))
+      .rejects.toThrow(/BigQuery API error: 429/);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  }, 10_000);
+
+  it('does NOT retry on permanent 4xx (fails fast)', async () => {
+    fetchMock.mockResolvedValueOnce(mockFetchResponse({ status: 400, body: { error: 'invalid' } }));
+
+    await expect(insertRows(BQ_TABLES.anchors, [{ insertId: 'a-1', json: { id: '1' } }]))
+      .rejects.toThrow(/BigQuery API error: 400/);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('runQuery', () => {

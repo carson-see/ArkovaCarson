@@ -22,7 +22,13 @@ import { db } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
 import { Sentry } from '../utils/sentry.js';
 
-import { ensureTable, insertRows, runQuery, type BqInsertRow } from './bq-export-client.js';
+import {
+  ensureTable,
+  insertRows,
+  runQuery,
+  serializeJsonForBigQuery,
+  type BqInsertRow,
+} from './bq-export-client.js';
 import {
   API_KEYS_COLUMN_ALLOWLIST,
   API_KEYS_FORBIDDEN_COLUMNS,
@@ -99,10 +105,7 @@ async function runOrganizations(snapshotDate: string): Promise<SnapshotRunResult
   }
 
   const rows = (data as Record<string, unknown>[] | null) ?? [];
-  const bqRows: BqInsertRow[] = rows.map((r) => ({
-    insertId: `org-${snapshotDate}-${String(r.id)}`,
-    json: { ...r, snapshot_date: snapshotDate, bq_synced_at: new Date().toISOString() },
-  }));
+  const bqRows: BqInsertRow[] = rows.map((r) => buildSnapshotRow(target, 'org', snapshotDate, r));
 
   const insertResult = await insertRows(target, bqRows);
 
@@ -116,6 +119,35 @@ async function runOrganizations(snapshotDate: string): Promise<SnapshotRunResult
   await markRunSucceeded({ tableName: 'organizations', newWatermark, newLastId: null });
 
   return { table: 'organizations', snapshotDate, rowsInserted: insertResult.insertedCount, errors: 0 };
+}
+
+/**
+ * Snapshot-shaped wire row. Different from the shared `toBqRow` because:
+ *   - Snapshot tables use `<prefix>-<snapshotDate>-<id>` for insertId so a
+ *     re-run within the same day deduplicates per row (vs prefix-id only).
+ *   - Snapshot tables inject `snapshot_date` into the json payload.
+ *
+ * Schema-aware: JSON-typed fields are stringified via the shared
+ * `serializeJsonForBigQuery` helper (SCRUM-1723 live-prod fix). Currently no
+ * snapshot table declares a JSON-type field, but this guard keeps the
+ * snapshot path safe if one is ever added.
+ */
+function buildSnapshotRow(
+  target: BqTableTarget,
+  insertIdPrefix: 'org' | 'key',
+  snapshotDate: string,
+  row: Record<string, unknown>,
+): BqInsertRow {
+  const json: Record<string, unknown> = {
+    ...row,
+    snapshot_date: snapshotDate,
+    bq_synced_at: new Date().toISOString(),
+  };
+  for (const field of target.schema.fields) {
+    if (field.type !== 'JSON') continue;
+    json[field.name] = serializeJsonForBigQuery(json[field.name]);
+  }
+  return { insertId: `${insertIdPrefix}-${snapshotDate}-${String(row.id)}`, json };
 }
 
 async function runApiKeys(snapshotDate: string): Promise<SnapshotRunResult> {
@@ -146,10 +178,7 @@ async function runApiKeys(snapshotDate: string): Promise<SnapshotRunResult> {
   }
 
   const rows = (data as Record<string, unknown>[] | null) ?? [];
-  const bqRows: BqInsertRow[] = rows.map((r) => ({
-    insertId: `key-${snapshotDate}-${String(r.id)}`,
-    json: { ...r, snapshot_date: snapshotDate, bq_synced_at: new Date().toISOString() },
-  }));
+  const bqRows: BqInsertRow[] = rows.map((r) => buildSnapshotRow(target, 'key', snapshotDate, r));
 
   const insertResult = await insertRows(target, bqRows);
 
