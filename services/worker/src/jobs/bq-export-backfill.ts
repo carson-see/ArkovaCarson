@@ -53,12 +53,23 @@ function isBackfillable(table: string): table is BqExportTableName {
   return (BACKFILLABLE as readonly string[]).includes(table);
 }
 
-function toBqRow(table: BqExportTableName, row: Record<string, unknown>): BqInsertRow {
+/**
+ * Same JSON-stringify behavior as bq-export-incremental.ts — BigQuery's
+ * tabledata.insertAll requires JSON-type columns to be passed as
+ * stringified JSON, not nested objects, otherwise insertAll rejects with
+ * `This field: <name> is not a record.`
+ */
+function toBqRow(target: BqTableTarget, table: BqExportTableName, row: Record<string, unknown>): BqInsertRow {
   const id = String(row.id);
-  return {
-    insertId: `${table}-${id}`,
-    json: { ...row, bq_synced_at: new Date().toISOString() },
-  };
+  const json: Record<string, unknown> = { ...row, bq_synced_at: new Date().toISOString() };
+  for (const field of target.schema.fields) {
+    if (field.type !== 'JSON') continue;
+    const v = json[field.name];
+    if (v != null && typeof v === 'object') {
+      json[field.name] = JSON.stringify(v);
+    }
+  }
+  return { insertId: `${table}-${id}`, json };
 }
 
 export async function runBackfill(rawTable: string): Promise<BackfillRunResult> {
@@ -83,7 +94,7 @@ export async function runBackfill(rawTable: string): Promise<BackfillRunResult> 
   for (;;) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data, error } = await (db as any)
-      .from(table)
+      .from(target.sourceTableName ?? table)
       .select(selectCols)
       .gt('created_at', cursor)
       .order('created_at', { ascending: true })
@@ -97,7 +108,7 @@ export async function runBackfill(rawTable: string): Promise<BackfillRunResult> 
     const rows = (data as Record<string, unknown>[] | null) ?? [];
     if (rows.length === 0) break; // exhausted
 
-    const bqRows = rows.map((r) => toBqRow(table, r));
+    const bqRows = rows.map((r) => toBqRow(target, table, r));
     const insertResult = await insertRows(target, bqRows);
 
     if (insertResult.errors.length > 0) {

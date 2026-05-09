@@ -62,6 +62,12 @@ export type BqWriteMode = 'append' | 'snapshot';
 
 export interface BqTableTarget {
   readonly tableId: string;
+  /**
+   * Postgres source table name. Defaults to {@link tableId} when omitted —
+   * use this when the BQ-side mirror name differs from the live Postgres
+   * table (e.g. BQ `verifications` mirrors Postgres `verification_events`).
+   */
+  readonly sourceTableName?: string;
   readonly mode: BqWriteMode;
   readonly description: string;
   readonly schema: { readonly fields: readonly BqField[] };
@@ -144,9 +150,14 @@ const ANCHORS: BqTableTarget = {
 
 const VERIFICATIONS: BqTableTarget = {
   tableId: 'verifications',
+  // Postgres source is `public.verification_events` (per migration 0042). The
+  // BQ-side keeps the friendlier `verifications` name. Source-column mapping
+  // (method → verified_via, ip_hash → verifier_ip_hash) is applied via
+  // PostgREST select aliasing in services/worker/src/jobs/bq-export-incremental.ts.
+  sourceTableName: 'verification_events',
   mode: 'append',
   description:
-    'Append-only mirror of public.verifications. One row per anchor verification request.',
+    'Append-only mirror of public.verification_events (renamed in BQ to verifications). One row per anchor verification request.',
   schema: {
     fields: [
       ID_REQUIRED,

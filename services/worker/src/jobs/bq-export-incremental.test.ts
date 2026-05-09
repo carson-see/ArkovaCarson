@@ -93,3 +93,75 @@ describe('bq-export-incremental: batch size sanity', () => {
     expect(BATCH_SIZE).toBeLessThanOrEqual(100_000);
   });
 });
+
+describe('bq-export-incremental: verifications source-table mapping (live-prod-defect 2026-05-09)', () => {
+  it('VERIFICATIONS BQ target declares Postgres source `verification_events`', () => {
+    // Live-prod first cron tick (2026-05-09 13:50 UTC) errored with
+    // "Could not find the table 'public.verifications' in the schema cache"
+    // because `verifications` is the BQ-side mirror name; the Postgres
+    // source is `verification_events` (per migration 0042). The fix maps
+    // sourceTableName so the SELECT runs against the right Postgres table.
+    expect(BQ_TABLES.verifications.sourceTableName).toBe('verification_events');
+  });
+
+  it('verifications selectColumns aliases method → verified_via and ip_hash → verifier_ip_hash', () => {
+    // PostgREST select aliasing: `<alias>:<source_column>`. Without these
+    // aliases, the worker would SELECT verified_via + verifier_ip_hash
+    // which don't exist on verification_events (the live columns are
+    // `method` and `ip_hash`).
+    const cols = selectColumns('verifications');
+    expect(cols).toContain('verified_via:method');
+    expect(cols).toContain('verifier_ip_hash:ip_hash');
+  });
+
+  it('verifications selectColumns does NOT contain user_agent, referrer, or country_code (PII / out-of-scope)', () => {
+    // verification_events has user_agent (semi-PII), referrer, country_code.
+    // The BQ mirror schema deliberately excludes them. Pin that here so a
+    // future "make it richer" patch can't quietly leak them.
+    const cols = selectColumns('verifications');
+    expect(cols).not.toContain('user_agent');
+    expect(cols).not.toContain('referrer');
+    expect(cols).not.toContain('country_code');
+  });
+});
+
+describe('bq-export-incremental: toBqRow JSON-type stringification (live-prod-defect 2026-05-09)', () => {
+  it('stringifies anchors.metadata before insertAll (BQ JSON-type wire format)', () => {
+    // Live-prod first cron tick rejected 1000 rows with "metadata is not a
+    // record" because tabledata.insertAll requires JSON-type columns to be
+    // sent as JSON-encoded strings, not nested objects. Postgres returns
+    // jsonb as deserialized objects, so we have to re-stringify.
+    const target = BQ_TABLES.anchors;
+    const row = {
+      id: 'aaa',
+      created_at: '2026-05-09T00:00:00Z',
+      metadata: { foo: 'bar', n: 1 },
+    };
+    const out = __testing.toBqRow(target, 'anchors', row);
+    expect(typeof out.json.metadata).toBe('string');
+    expect(JSON.parse(out.json.metadata as string)).toEqual({ foo: 'bar', n: 1 });
+  });
+
+  it('leaves null metadata as null (no string "null")', () => {
+    const target = BQ_TABLES.anchors;
+    const out = __testing.toBqRow(target, 'anchors', {
+      id: 'bbb',
+      created_at: '2026-05-09T00:00:00Z',
+      metadata: null,
+    });
+    expect(out.json.metadata).toBeNull();
+  });
+
+  it('does NOT touch non-JSON fields (regression guard)', () => {
+    const target = BQ_TABLES.anchors;
+    const out = __testing.toBqRow(target, 'anchors', {
+      id: 'ccc',
+      created_at: '2026-05-09T00:00:00Z',
+      org_id: 'org-1',
+      status: 'SECURED',
+    });
+    expect(out.json.id).toBe('ccc');
+    expect(out.json.org_id).toBe('org-1');
+    expect(out.json.status).toBe('SECURED');
+  });
+});

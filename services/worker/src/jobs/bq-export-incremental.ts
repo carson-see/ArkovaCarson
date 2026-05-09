@@ -63,20 +63,37 @@ function selectColumns(table: BqExportTableName): string {
     ].join(', ');
   }
   if (table === 'verifications') {
+    // PostgREST aliasing `<alias>:<source>` — the live source table is
+    // public.verification_events whose columns are method + ip_hash; the BQ
+    // mirror schema uses verified_via + verifier_ip_hash. Aliasing here keeps
+    // the BQ-side wire shape unchanged while pointing at the correct source.
     return [
-      'id', 'anchor_id', 'org_id', 'public_id', 'result', 'verified_via',
-      'verifier_ip_hash', 'created_at',
+      'id', 'anchor_id', 'org_id', 'public_id', 'result',
+      'verified_via:method', 'verifier_ip_hash:ip_hash', 'created_at',
     ].join(', ');
   }
   return '*'; // unreachable; types prevent it
 }
 
-function toBqRow(table: BqExportTableName, row: Record<string, unknown>): BqInsertRow {
+/**
+ * BigQuery `tabledata.insertAll` requires fields declared as JSON in the BQ
+ * schema to be passed as a JSON-encoded *string* in the wire payload, not as a
+ * nested object. Postgres returns JSONB columns as deserialized JS objects, so
+ * we have to re-stringify them schema-aware before insertAll. Without this,
+ * BigQuery errors with `This field: <name> is not a record.` and rejects the
+ * batch.
+ */
+function toBqRow(target: BqTableTarget, table: BqExportTableName, row: Record<string, unknown>): BqInsertRow {
   const id = String(row.id);
-  return {
-    insertId: `${table}-${id}`,
-    json: { ...row, bq_synced_at: new Date().toISOString() },
-  };
+  const json: Record<string, unknown> = { ...row, bq_synced_at: new Date().toISOString() };
+  for (const field of target.schema.fields) {
+    if (field.type !== 'JSON') continue;
+    const v = json[field.name];
+    if (v != null && typeof v === 'object') {
+      json[field.name] = JSON.stringify(v);
+    }
+  }
+  return { insertId: `${table}-${id}`, json };
 }
 
 async function runOneTable(table: BqExportTableName): Promise<IncrementalRunResult> {
@@ -90,7 +107,7 @@ async function runOneTable(table: BqExportTableName): Promise<IncrementalRunResu
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const queryRes = await (db as any)
-    .from(table)
+    .from(target.sourceTableName ?? table)
     .select(selectColumns(table))
     .gt('created_at', watermark.lastSyncedAt)
     .order('created_at', { ascending: true })
@@ -113,7 +130,7 @@ async function runOneTable(table: BqExportTableName): Promise<IncrementalRunResu
     return { table, rowsScanned: 0, rowsInserted: 0, newWatermark: null, errors: 0 };
   }
 
-  const bqRows = rows.map((r) => toBqRow(table, r));
+  const bqRows = rows.map((r) => toBqRow(target, table, r));
   const insertResult = await insertRows(target, bqRows);
 
   if (insertResult.errors.length > 0) {
@@ -165,4 +182,4 @@ export async function runIncremental(): Promise<IncrementalRunResult[]> {
 }
 
 /** Exported for tests only. */
-export const __testing = { runOneTable, BATCH_SIZE, APPEND_TABLES, selectColumns };
+export const __testing = { runOneTable, BATCH_SIZE, APPEND_TABLES, selectColumns, toBqRow };
