@@ -49,25 +49,25 @@ export const DEMO_CREDENTIALS = {
   // Platform admin / ORG_ADMIN (Arkova org) — Carson
   adminEmail: 'carson@arkova.ai',
   adminPassword: RLS_TEST_PASSWORD,
-  adminId: '44444444-0000-0000-0000-000000000001',
+  adminId: '44444444-0000-4000-8000-000000000001',
 
   // INDIVIDUAL user (no org) — Jamie Demo-User
   userEmail: 'demo-user@arkova.local',
   userPassword: RLS_TEST_PASSWORD,
-  userId: '55555555-0000-0000-0000-000000000002',
+  userId: '55555555-0000-4000-8000-000000000002',
 
   // ORG_ADMIN (Acme Corp) — Alex Demo-Admin (second org for cross-tenant tests)
   betaAdminEmail: 'demo-admin@arkova.local',
   betaAdminPassword: RLS_TEST_PASSWORD,
-  betaAdminId: '55555555-0000-0000-0000-000000000001',
+  betaAdminId: '55555555-0000-4000-8000-000000000001',
 };
 
 /**
  * Organization IDs — must match supabase/seed.sql
  */
 export const ORG_IDS = {
-  arkova: 'aaaaaaaa-0000-0000-0000-000000000001',
-  betaCorp: 'bbbbbbbb-0000-0000-0000-000000000001',
+  arkova: 'aaaaaaaa-0000-4000-8000-000000000001',
+  betaCorp: 'bbbbbbbb-0000-4000-8000-000000000001',
 };
 
 /**

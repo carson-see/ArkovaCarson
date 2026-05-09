@@ -46,7 +46,7 @@ describe('BatchAIDashboard', () => {
     mockResolvedData = {
       data: [
         {
-          id: '00000000-0000-0000-0000-000000000001',
+          id: '10000000-1000-4000-8000-000000000001',
           status: 'complete',
           total_items: 10,
           processed_items: 10,
@@ -55,7 +55,7 @@ describe('BatchAIDashboard', () => {
           updated_at: '2025-01-01T00:01:00Z',
         },
         {
-          id: '00000000-0000-0000-0000-000000000002',
+          id: '10000000-1000-4000-8000-000000000002',
           status: 'processing',
           total_items: 5,
           processed_items: 3,
@@ -78,7 +78,7 @@ describe('BatchAIDashboard', () => {
     mockResolvedData = {
       data: [
         {
-          id: '00000000-0000-0000-0000-000000000001',
+          id: '10000000-1000-4000-8000-000000000001',
           status: 'partial_failure',
           total_items: 10,
           processed_items: 10,
@@ -99,7 +99,7 @@ describe('BatchAIDashboard', () => {
     mockResolvedData = {
       data: [
         {
-          id: '00000000-0000-0000-0000-000000000001',
+          id: '10000000-1000-4000-8000-000000000001',
           status: 'complete',
           total_items: 10,
           processed_items: 10,

@@ -30,10 +30,10 @@ BEGIN;
 DO $$
 DECLARE
   demo_user_ids uuid[] := ARRAY[
-    '11111111-0000-0000-0000-000000000001'::uuid, -- admin@umich-demo.arkova.io
-    '11111111-0000-0000-0000-000000000002'::uuid, -- registrar@umich-demo.arkova.io
-    '22222222-0000-0000-0000-000000000001'::uuid, -- admin@midwest-medical.arkova.io
-    '33333333-0000-0000-0000-000000000001'::uuid  -- individual@demo.arkova.io
+    '11111111-0000-4000-8000-000000000001'::uuid, -- admin@umich-demo.arkova.io
+    '11111111-0000-4000-8000-000000000002'::uuid, -- registrar@umich-demo.arkova.io
+    '22222222-0000-4000-8000-000000000001'::uuid, -- admin@midwest-medical.arkova.io
+    '33333333-0000-4000-8000-000000000001'::uuid  -- individual@demo.arkova.io
   ];
   demo_org_ids uuid[];
 BEGIN

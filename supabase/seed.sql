@@ -30,8 +30,8 @@
 -- ORG_ARKOVA: Arkova (platform org)
 
 -- Users
--- USER_CARSON:  44444444-0000-0000-0000-000000000001  carson@arkova.ai  ORG_ADMIN (platform admin)
--- USER_SARAH:   44444444-0000-0000-0000-000000000002  sarah@arkova.ai   ORG_ADMIN (platform admin)
+-- USER_CARSON:  44444444-0000-4000-8000-000000000001  carson@arkova.ai  ORG_ADMIN (platform admin)
+-- USER_SARAH:   44444444-0000-4000-8000-000000000002  sarah@arkova.ai   ORG_ADMIN (platform admin)
 
 
 -- =============================================================================
@@ -47,12 +47,12 @@ TRUNCATE TABLE organizations   RESTART IDENTITY CASCADE;
 
 -- Delete seeded auth users so re-inserts work cleanly
 DELETE FROM auth.identities WHERE user_id IN (
-  '44444444-0000-0000-0000-000000000001',
-  '44444444-0000-0000-0000-000000000002'
+  '44444444-0000-4000-8000-000000000001',
+  '44444444-0000-4000-8000-000000000002'
 );
 DELETE FROM auth.users WHERE id IN (
-  '44444444-0000-0000-0000-000000000001',
-  '44444444-0000-0000-0000-000000000002'
+  '44444444-0000-4000-8000-000000000001',
+  '44444444-0000-4000-8000-000000000002'
 );
 
 
@@ -73,7 +73,7 @@ INSERT INTO auth.users (
 ) VALUES
   (
     '00000000-0000-0000-0000-000000000000',
-    '44444444-0000-0000-0000-000000000001',
+    '44444444-0000-4000-8000-000000000001',
     'authenticated', 'authenticated',
     'carson@arkova.ai',
     '$2a$10$bliuc8RqEzfNHpNdY0HIaeMjGaU1hGtiSYaKErxCOSSbsBe2o4K3q',
@@ -85,7 +85,7 @@ INSERT INTO auth.users (
   ),
   (
     '00000000-0000-0000-0000-000000000000',
-    '44444444-0000-0000-0000-000000000002',
+    '44444444-0000-4000-8000-000000000002',
     'authenticated', 'authenticated',
     'sarah@arkova.ai',
     '$2a$10$bliuc8RqEzfNHpNdY0HIaeMjGaU1hGtiSYaKErxCOSSbsBe2o4K3q',
@@ -104,18 +104,18 @@ INSERT INTO auth.users (
 INSERT INTO auth.identities (id, user_id, identity_data, provider, provider_id, last_sign_in_at, created_at, updated_at) VALUES
   (
     gen_random_uuid(),
-    '44444444-0000-0000-0000-000000000001',
-    '{"sub": "44444444-0000-0000-0000-000000000001", "email": "carson@arkova.ai"}',
+    '44444444-0000-4000-8000-000000000001',
+    '{"sub": "44444444-0000-4000-8000-000000000001", "email": "carson@arkova.ai"}',
     'email',
-    '44444444-0000-0000-0000-000000000001',
+    '44444444-0000-4000-8000-000000000001',
     NOW(), NOW(), NOW()
   ),
   (
     gen_random_uuid(),
-    '44444444-0000-0000-0000-000000000002',
-    '{"sub": "44444444-0000-0000-0000-000000000002", "email": "sarah@arkova.ai"}',
+    '44444444-0000-4000-8000-000000000002',
+    '{"sub": "44444444-0000-4000-8000-000000000002", "email": "sarah@arkova.ai"}',
     'email',
-    '44444444-0000-0000-0000-000000000002',
+    '44444444-0000-4000-8000-000000000002',
     NOW(), NOW(), NOW()
   );
 
@@ -126,7 +126,7 @@ INSERT INTO auth.identities (id, user_id, identity_data, provider, provider_id, 
 
 INSERT INTO organizations (id, legal_name, display_name, domain, verification_status)
 VALUES (
-  'aaaaaaaa-0000-0000-0000-000000000001',
+  'aaaaaaaa-0000-4000-8000-000000000001',
   'Arkova Inc.',
   'Arkova',
   'arkova.ai',
@@ -141,28 +141,28 @@ VALUES (
 -- Delete auto-created profiles (from trigger 0072) so we can insert with full seed data.
 -- The trigger creates minimal profiles; we need full data with org_id, role, etc.
 DELETE FROM profiles WHERE id IN (
-  '44444444-0000-0000-0000-000000000001',
-  '44444444-0000-0000-0000-000000000002'
+  '44444444-0000-4000-8000-000000000001',
+  '44444444-0000-4000-8000-000000000002'
 );
 
 INSERT INTO profiles (id, email, full_name, role, org_id, avatar_url, is_public_profile, is_platform_admin)
 VALUES
   (
-    '44444444-0000-0000-0000-000000000001',
+    '44444444-0000-4000-8000-000000000001',
     'carson@arkova.ai',
     'Carson Seeger',
     'ORG_ADMIN',
-    'aaaaaaaa-0000-0000-0000-000000000001',
+    'aaaaaaaa-0000-4000-8000-000000000001',
     NULL,
     true,
     true
   ),
   (
-    '44444444-0000-0000-0000-000000000002',
+    '44444444-0000-4000-8000-000000000002',
     'sarah@arkova.ai',
     'Sarah Rushton',
     'ORG_ADMIN',
-    'aaaaaaaa-0000-0000-0000-000000000001',
+    'aaaaaaaa-0000-4000-8000-000000000001',
     NULL,
     true,
     true
@@ -175,15 +175,15 @@ VALUES
 
 INSERT INTO org_members (user_id, org_id, role)
 VALUES
-  ('44444444-0000-0000-0000-000000000001', 'aaaaaaaa-0000-0000-0000-000000000001', 'owner'),
-  ('44444444-0000-0000-0000-000000000002', 'aaaaaaaa-0000-0000-0000-000000000001', 'admin')
+  ('44444444-0000-4000-8000-000000000001', 'aaaaaaaa-0000-4000-8000-000000000001', 'owner'),
+  ('44444444-0000-4000-8000-000000000002', 'aaaaaaaa-0000-4000-8000-000000000001', 'admin')
 ON CONFLICT (user_id, org_id) DO NOTHING;
 
 -- Memberships (legacy junction table, used by RLS policies)
 INSERT INTO memberships (user_id, org_id, role)
 VALUES
-  ('44444444-0000-0000-0000-000000000001', 'aaaaaaaa-0000-0000-0000-000000000001', 'ORG_ADMIN'),
-  ('44444444-0000-0000-0000-000000000002', 'aaaaaaaa-0000-0000-0000-000000000001', 'ORG_ADMIN')
+  ('44444444-0000-4000-8000-000000000001', 'aaaaaaaa-0000-4000-8000-000000000001', 'ORG_ADMIN'),
+  ('44444444-0000-4000-8000-000000000002', 'aaaaaaaa-0000-4000-8000-000000000001', 'ORG_ADMIN')
 ON CONFLICT (user_id, org_id) DO NOTHING;
 
 
@@ -226,9 +226,9 @@ ON CONFLICT (id) DO NOTHING;
 INSERT INTO subscriptions (id, user_id, org_id, plan_id, status, current_period_start, current_period_end)
 VALUES
   (
-    'dddddddd-0000-0000-0000-000000000001',
-    '44444444-0000-0000-0000-000000000001',
-    'aaaaaaaa-0000-0000-0000-000000000001',
+    'dddddddd-0000-4000-8000-000000000001',
+    '44444444-0000-4000-8000-000000000001',
+    'aaaaaaaa-0000-4000-8000-000000000001',
     'professional',
     'active',
     NOW() - INTERVAL '15 days',
@@ -243,9 +243,9 @@ ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO anchors (id, user_id, org_id, filename, fingerprint, status, file_size, file_mime, credential_type, public_id, description, metadata, chain_tx_id, chain_block_height, chain_timestamp, legal_hold, created_at)
 VALUES (
-  'aaaaaaaa-0000-0000-0000-000000000010',
-  '44444444-0000-0000-0000-000000000001',
-  'aaaaaaaa-0000-0000-0000-000000000001',
+  'aaaaaaaa-0000-4000-8000-000000000010',
+  '44444444-0000-4000-8000-000000000001',
+  'aaaaaaaa-0000-4000-8000-000000000001',
   'Arkova_Incorporation.pdf',
   'a9b9c9d9e9f9a9b9c9d9e9f9a9b9c9d9e9f9a9b9c9d9e9f9a9b9c9d9e9f9a9b9',
   'SECURED',
@@ -272,7 +272,7 @@ VALUES (
 -- Demo org: Acme Corporation
 INSERT INTO organizations (id, legal_name, display_name, domain, verification_status, description, website_url, org_type, location, linkedin_url)
 VALUES (
-  'bbbbbbbb-0000-0000-0000-000000000001',
+  'bbbbbbbb-0000-4000-8000-000000000001',
   'Acme Corporation',
   'Acme Corp',
   'acme.example.com',
@@ -287,12 +287,12 @@ ON CONFLICT (id) DO NOTHING;
 
 -- Demo auth users
 DELETE FROM auth.identities WHERE user_id IN (
-  '55555555-0000-0000-0000-000000000001',
-  '55555555-0000-0000-0000-000000000002'
+  '55555555-0000-4000-8000-000000000001',
+  '55555555-0000-4000-8000-000000000002'
 );
 DELETE FROM auth.users WHERE id IN (
-  '55555555-0000-0000-0000-000000000001',
-  '55555555-0000-0000-0000-000000000002'
+  '55555555-0000-4000-8000-000000000001',
+  '55555555-0000-4000-8000-000000000002'
 );
 
 INSERT INTO auth.users (
@@ -306,7 +306,7 @@ INSERT INTO auth.users (
 ) VALUES
   (
     '00000000-0000-0000-0000-000000000000',
-    '55555555-0000-0000-0000-000000000001',
+    '55555555-0000-4000-8000-000000000001',
     'authenticated', 'authenticated',
     'demo-admin@arkova.local',
     '$2a$10$bliuc8RqEzfNHpNdY0HIaeMjGaU1hGtiSYaKErxCOSSbsBe2o4K3q',
@@ -318,7 +318,7 @@ INSERT INTO auth.users (
   ),
   (
     '00000000-0000-0000-0000-000000000000',
-    '55555555-0000-0000-0000-000000000002',
+    '55555555-0000-4000-8000-000000000002',
     'authenticated', 'authenticated',
     'demo-user@arkova.local',
     '$2a$10$bliuc8RqEzfNHpNdY0HIaeMjGaU1hGtiSYaKErxCOSSbsBe2o4K3q',
@@ -332,40 +332,40 @@ INSERT INTO auth.users (
 INSERT INTO auth.identities (id, user_id, identity_data, provider, provider_id, last_sign_in_at, created_at, updated_at) VALUES
   (
     gen_random_uuid(),
-    '55555555-0000-0000-0000-000000000001',
-    '{"sub": "55555555-0000-0000-0000-000000000001", "email": "demo-admin@arkova.local"}',
+    '55555555-0000-4000-8000-000000000001',
+    '{"sub": "55555555-0000-4000-8000-000000000001", "email": "demo-admin@arkova.local"}',
     'email',
-    '55555555-0000-0000-0000-000000000001',
+    '55555555-0000-4000-8000-000000000001',
     NOW(), NOW(), NOW()
   ),
   (
     gen_random_uuid(),
-    '55555555-0000-0000-0000-000000000002',
-    '{"sub": "55555555-0000-0000-0000-000000000002", "email": "demo-user@arkova.local"}',
+    '55555555-0000-4000-8000-000000000002',
+    '{"sub": "55555555-0000-4000-8000-000000000002", "email": "demo-user@arkova.local"}',
     'email',
-    '55555555-0000-0000-0000-000000000002',
+    '55555555-0000-4000-8000-000000000002',
     NOW(), NOW(), NOW()
   );
 
 -- Demo profiles
 DELETE FROM profiles WHERE id IN (
-  '55555555-0000-0000-0000-000000000001',
-  '55555555-0000-0000-0000-000000000002'
+  '55555555-0000-4000-8000-000000000001',
+  '55555555-0000-4000-8000-000000000002'
 );
 
 INSERT INTO profiles (id, email, full_name, role, org_id, is_public_profile, is_platform_admin)
 VALUES
   (
-    '55555555-0000-0000-0000-000000000001',
+    '55555555-0000-4000-8000-000000000001',
     'demo-admin@arkova.local',
     'Alex Demo-Admin',
     'ORG_ADMIN',
-    'bbbbbbbb-0000-0000-0000-000000000001',
+    'bbbbbbbb-0000-4000-8000-000000000001',
     true,
     false
   ),
   (
-    '55555555-0000-0000-0000-000000000002',
+    '55555555-0000-4000-8000-000000000002',
     'demo-user@arkova.local',
     'Jamie Demo-User',
     'INDIVIDUAL',
@@ -377,20 +377,20 @@ VALUES
 -- Demo org membership
 INSERT INTO org_members (user_id, org_id, role)
 VALUES
-  ('55555555-0000-0000-0000-000000000001', 'bbbbbbbb-0000-0000-0000-000000000001', 'owner')
+  ('55555555-0000-4000-8000-000000000001', 'bbbbbbbb-0000-4000-8000-000000000001', 'owner')
 ON CONFLICT (user_id, org_id) DO NOTHING;
 
 INSERT INTO memberships (user_id, org_id, role)
 VALUES
-  ('55555555-0000-0000-0000-000000000001', 'bbbbbbbb-0000-0000-0000-000000000001', 'ORG_ADMIN')
+  ('55555555-0000-4000-8000-000000000001', 'bbbbbbbb-0000-4000-8000-000000000001', 'ORG_ADMIN')
 ON CONFLICT (user_id, org_id) DO NOTHING;
 
 -- Demo subscription (individual plan for demo-user)
 INSERT INTO subscriptions (id, user_id, plan_id, status, current_period_start, current_period_end)
 VALUES
   (
-    'dddddddd-0000-0000-0000-000000000002',
-    '55555555-0000-0000-0000-000000000002',
+    'dddddddd-0000-4000-8000-000000000002',
+    '55555555-0000-4000-8000-000000000002',
     'individual',
     'active',
     NOW() - INTERVAL '10 days',
@@ -405,14 +405,14 @@ ON CONFLICT (id) DO NOTHING;
 -- =============================================================================
 
 DELETE FROM credential_templates WHERE org_id IN (
-  'aaaaaaaa-0000-0000-0000-000000000001',
-  'bbbbbbbb-0000-0000-0000-000000000001'
+  'aaaaaaaa-0000-4000-8000-000000000001',
+  'bbbbbbbb-0000-4000-8000-000000000001'
 );
 
 INSERT INTO credential_templates (org_id, name, credential_type, default_metadata, is_active, created_by)
 VALUES
-  ('aaaaaaaa-0000-0000-0000-000000000001', 'Arkova Standard Certificate', 'CERTIFICATE', '{"fields": ["issuer", "date"]}', true, '44444444-0000-0000-0000-000000000001'),
-  ('bbbbbbbb-0000-0000-0000-000000000001', 'Acme Compliance Report', 'CERTIFICATE', '{"fields": ["auditor", "period"]}', true, '55555555-0000-0000-0000-000000000001');
+  ('aaaaaaaa-0000-4000-8000-000000000001', 'Arkova Standard Certificate', 'CERTIFICATE', '{"fields": ["issuer", "date"]}', true, '44444444-0000-4000-8000-000000000001'),
+  ('bbbbbbbb-0000-4000-8000-000000000001', 'Acme Compliance Report', 'CERTIFICATE', '{"fields": ["auditor", "period"]}', true, '55555555-0000-4000-8000-000000000001');
 
 
 -- =============================================================================
@@ -424,8 +424,8 @@ VALUES
 -- Record 1: SECURED with rich metadata (contract)
 INSERT INTO anchors (id, user_id, filename, fingerprint, status, file_size, file_mime, credential_type, public_id, description, metadata, chain_tx_id, chain_block_height, chain_timestamp, created_at)
 VALUES (
-  'cccccccc-0000-0000-0000-000000000001',
-  '55555555-0000-0000-0000-000000000002',
+  'cccccccc-0000-4000-8000-000000000001',
+  '55555555-0000-4000-8000-000000000002',
   'Employment_Agreement_2026.pdf',
   'a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2',
   'SECURED',
@@ -444,8 +444,8 @@ VALUES (
 -- Record 2: SECURED with certificate metadata
 INSERT INTO anchors (id, user_id, filename, fingerprint, status, file_size, file_mime, credential_type, public_id, description, metadata, chain_tx_id, chain_block_height, chain_timestamp, created_at)
 VALUES (
-  'cccccccc-0000-0000-0000-000000000002',
-  '55555555-0000-0000-0000-000000000002',
+  'cccccccc-0000-4000-8000-000000000002',
+  '55555555-0000-4000-8000-000000000002',
   'AWS_Solutions_Architect_Cert.pdf',
   'b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3',
   'SECURED',
@@ -464,8 +464,8 @@ VALUES (
 -- Record 3: PENDING (just uploaded, no chain data yet)
 INSERT INTO anchors (id, user_id, filename, fingerprint, status, file_size, file_mime, credential_type, description, metadata, created_at)
 VALUES (
-  'cccccccc-0000-0000-0000-000000000003',
-  '55555555-0000-0000-0000-000000000002',
+  'cccccccc-0000-4000-8000-000000000003',
+  '55555555-0000-4000-8000-000000000002',
   'Q1_2026_Tax_Return.pdf',
   'c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4',
   'PENDING',
@@ -480,8 +480,8 @@ VALUES (
 -- Record 4: SECURED — NDA with metadata
 INSERT INTO anchors (id, user_id, filename, fingerprint, status, file_size, file_mime, credential_type, public_id, metadata, chain_tx_id, chain_block_height, chain_timestamp, created_at)
 VALUES (
-  'cccccccc-0000-0000-0000-000000000004',
-  '55555555-0000-0000-0000-000000000002',
+  'cccccccc-0000-4000-8000-000000000004',
+  '55555555-0000-4000-8000-000000000002',
   'Mutual_NDA_Acme_TechCo.pdf',
   'd4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5',
   'SECURED',
@@ -499,8 +499,8 @@ VALUES (
 -- Record 5: SECURED — License
 INSERT INTO anchors (id, user_id, filename, fingerprint, status, file_size, file_mime, credential_type, public_id, metadata, chain_tx_id, chain_block_height, chain_timestamp, created_at, issued_at, expires_at)
 VALUES (
-  'cccccccc-0000-0000-0000-000000000005',
-  '55555555-0000-0000-0000-000000000002',
+  'cccccccc-0000-4000-8000-000000000005',
+  '55555555-0000-4000-8000-000000000002',
   'CA_Bar_License_2026.pdf',
   'e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6',
   'SECURED',
@@ -521,11 +521,11 @@ VALUES (
 -- NOTE: SUBMITTED status can't be used in seed because ALTER TYPE ADD VALUE
 -- doesn't work inside the transaction that `supabase db reset` uses.
 -- After db reset, run the post-reset SUBMITTED fix from CLAUDE.md, then:
---   UPDATE anchors SET status = 'SUBMITTED' WHERE id = 'cccccccc-0000-0000-0000-000000000006';
+--   UPDATE anchors SET status = 'SUBMITTED' WHERE id = 'cccccccc-0000-4000-8000-000000000006';
 INSERT INTO anchors (id, user_id, filename, fingerprint, status, file_size, file_mime, credential_type, metadata, chain_tx_id, created_at)
 VALUES (
-  'cccccccc-0000-0000-0000-000000000006',
-  '55555555-0000-0000-0000-000000000002',
+  'cccccccc-0000-4000-8000-000000000006',
+  '55555555-0000-4000-8000-000000000002',
   'Patent_Application_AI_Method.pdf',
   'f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1',
   'PENDING',
@@ -541,8 +541,8 @@ VALUES (
 
 INSERT INTO anchors (id, user_id, filename, fingerprint, status, file_size, file_mime, credential_type, public_id, parent_anchor_id, metadata, chain_tx_id, chain_block_height, chain_timestamp, created_at, issued_at, expires_at)
 VALUES (
-  'cccccccc-0000-0000-0000-000000000007',
-  '55555555-0000-0000-0000-000000000002',
+  'cccccccc-0000-4000-8000-000000000007',
+  '55555555-0000-4000-8000-000000000002',
   'CA_Bar_License_2027_Renewal.pdf',
   'a7b7c7d7e7f7a7b7c7d7e7f7a7b7c7d7e7f7a7b7c7d7e7f7a7b7c7d7e7f7a7b7',
   'SECURED',
@@ -550,7 +550,7 @@ VALUES (
   'application/pdf',
   'LICENSE',
   'ARK-DEMO-007',
-  'cccccccc-0000-0000-0000-000000000005',
+  'cccccccc-0000-4000-8000-000000000005',
   '{"entity_name": "State Bar of California", "recipient_name": "Jamie Demo-User", "credential_type": "Attorney License (Renewed)", "license_number": "SBN-320145", "issued_date": "2027-01-01", "expiry_date": "2028-01-01", "jurisdiction": "California", "_confidence": 0.97, "_prompt_version": "v3"}',
   'pqr678abc123pqr678abc123pqr678abc123pqr678abc123pqr678abc1230a',
   211200,
@@ -565,9 +565,9 @@ VALUES (
 
 INSERT INTO anchors (id, user_id, org_id, filename, fingerprint, status, file_size, file_mime, credential_type, public_id, description, metadata, chain_tx_id, chain_block_height, chain_timestamp, created_at)
 VALUES (
-  'cccccccc-0000-0000-0000-000000000010',
-  '55555555-0000-0000-0000-000000000001',
-  'bbbbbbbb-0000-0000-0000-000000000001',
+  'cccccccc-0000-4000-8000-000000000010',
+  '55555555-0000-4000-8000-000000000001',
+  'bbbbbbbb-0000-4000-8000-000000000001',
   'Acme_SOC2_Type2_Report.pdf',
   'a10b10c10d10e10f10a10b10c10d10e10f10a10b10c10d10e10f10a10b10cd10',
   'SECURED',
@@ -583,9 +583,9 @@ VALUES (
   NOW() - INTERVAL '10 days'
 ),
 (
-  'cccccccc-0000-0000-0000-000000000011',
-  '55555555-0000-0000-0000-000000000001',
-  'bbbbbbbb-0000-0000-0000-000000000001',
+  'cccccccc-0000-4000-8000-000000000011',
+  '55555555-0000-4000-8000-000000000001',
+  'bbbbbbbb-0000-4000-8000-000000000001',
   'Acme_Articles_of_Incorporation.pdf',
   'b11c11d11e11f11a11b11c11d11e11f11a11b11c11d11e11f11a11b11c11dab0',
   'SECURED',
@@ -601,9 +601,9 @@ VALUES (
   NOW() - INTERVAL '60 days'
 ),
 (
-  'cccccccc-0000-0000-0000-000000000012',
-  '55555555-0000-0000-0000-000000000001',
-  'bbbbbbbb-0000-0000-0000-000000000001',
+  'cccccccc-0000-4000-8000-000000000012',
+  '55555555-0000-4000-8000-000000000001',
+  'bbbbbbbb-0000-4000-8000-000000000001',
   'Employee_Handbook_v4.pdf',
   'c12d12e12f12a12b12c12d12e12f12a12b12c12d12e12f12a12b12c12d12eab0',
   'PENDING',

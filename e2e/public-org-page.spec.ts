@@ -12,7 +12,7 @@
 
 import { test, expect } from './fixtures';
 
-const ARKOVA_ORG_ID = 'aaaaaaaa-0000-0000-0000-000000000001';
+const ARKOVA_ORG_ID = 'aaaaaaaa-0000-4000-8000-000000000001';
 const ORG_PAGE_PATH = `/issuer/${ARKOVA_ORG_ID}`;
 // Assert the specific seeded org, not just the issuer route family.
 const ORG_PAGE_URL_RE = new RegExp(`/issuer/${ARKOVA_ORG_ID}(?:$|[/?#])`);
@@ -101,7 +101,7 @@ test.describe('Public org page — anonymous visitor', () => {
   });
 
   test('unknown org shows a not-found state, not a 500', async ({ page }) => {
-    const response = await page.goto('/issuer/00000000-0000-0000-0000-00000000bad0');
+    const response = await page.goto('/issuer/10000000-1000-4000-8000-00000000bad0');
     expect(response?.status()).toBeLessThan(500);
     await expect(
       page
