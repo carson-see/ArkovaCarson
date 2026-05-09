@@ -71,30 +71,16 @@ INSERT INTO auth.users (
   recovery_token, email_change, email_change_token_new,
   email_change_token_current, reauthentication_token, phone_change, phone_change_token
 ) VALUES
-  (
-    '00000000-0000-0000-0000-000000000000',
-    '44444444-0000-4000-8000-000000000001',
-    'authenticated', 'authenticated',
-    'carson@arkova.ai',
+  ( '00000000-0000-0000-0000-000000000000', '44444444-0000-4000-8000-000000000001',
+    'authenticated', 'authenticated', 'carson@arkova.ai',
     '$2a$10$bliuc8RqEzfNHpNdY0HIaeMjGaU1hGtiSYaKErxCOSSbsBe2o4K3q',
-    NOW(), NOW(), NOW(),
-    '{"provider": "email", "providers": ["email"]}',
-    '{"full_name": "Carson Seeger"}',
-    false, '',
-    '', '', '', '', '', '', ''
-  ),
-  (
-    '00000000-0000-0000-0000-000000000000',
-    '44444444-0000-4000-8000-000000000002',
-    'authenticated', 'authenticated',
-    'sarah@arkova.ai',
+    NOW(), NOW(), NOW(), '{"provider": "email", "providers": ["email"]}',
+    '{"full_name": "Carson Seeger"}', false, '', '', '', '', '', '', '', '' ),
+  ( '00000000-0000-0000-0000-000000000000', '44444444-0000-4000-8000-000000000002',
+    'authenticated', 'authenticated', 'sarah@arkova.ai',
     '$2a$10$bliuc8RqEzfNHpNdY0HIaeMjGaU1hGtiSYaKErxCOSSbsBe2o4K3q',
-    NOW(), NOW(), NOW(),
-    '{"provider": "email", "providers": ["email"]}',
-    '{"full_name": "Sarah Rushton"}',
-    false, '',
-    '', '', '', '', '', '', ''
-  );
+    NOW(), NOW(), NOW(), '{"provider": "email", "providers": ["email"]}',
+    '{"full_name": "Sarah Rushton"}', false, '', '', '', '', '', '', '', '' );
 
 
 -- =============================================================================
@@ -102,22 +88,12 @@ INSERT INTO auth.users (
 -- =============================================================================
 
 INSERT INTO auth.identities (id, user_id, identity_data, provider, provider_id, last_sign_in_at, created_at, updated_at) VALUES
-  (
-    gen_random_uuid(),
-    '44444444-0000-4000-8000-000000000001',
+  ( gen_random_uuid(), '44444444-0000-4000-8000-000000000001',
     '{"sub": "44444444-0000-4000-8000-000000000001", "email": "carson@arkova.ai"}',
-    'email',
-    '44444444-0000-4000-8000-000000000001',
-    NOW(), NOW(), NOW()
-  ),
-  (
-    gen_random_uuid(),
-    '44444444-0000-4000-8000-000000000002',
+    'email', '44444444-0000-4000-8000-000000000001', NOW(), NOW(), NOW() ),
+  ( gen_random_uuid(), '44444444-0000-4000-8000-000000000002',
     '{"sub": "44444444-0000-4000-8000-000000000002", "email": "sarah@arkova.ai"}',
-    'email',
-    '44444444-0000-4000-8000-000000000002',
-    NOW(), NOW(), NOW()
-  );
+    'email', '44444444-0000-4000-8000-000000000002', NOW(), NOW(), NOW() );
 
 
 -- =============================================================================
@@ -147,26 +123,10 @@ DELETE FROM profiles WHERE id IN (
 
 INSERT INTO profiles (id, email, full_name, role, org_id, avatar_url, is_public_profile, is_platform_admin)
 VALUES
-  (
-    '44444444-0000-4000-8000-000000000001',
-    'carson@arkova.ai',
-    'Carson Seeger',
-    'ORG_ADMIN',
-    'aaaaaaaa-0000-4000-8000-000000000001',
-    NULL,
-    true,
-    true
-  ),
-  (
-    '44444444-0000-4000-8000-000000000002',
-    'sarah@arkova.ai',
-    'Sarah Rushton',
-    'ORG_ADMIN',
-    'aaaaaaaa-0000-4000-8000-000000000001',
-    NULL,
-    true,
-    true
-  );
+  ( '44444444-0000-4000-8000-000000000001', 'carson@arkova.ai', 'Carson Seeger',
+    'ORG_ADMIN', 'aaaaaaaa-0000-4000-8000-000000000001', NULL, true, true ),
+  ( '44444444-0000-4000-8000-000000000002', 'sarah@arkova.ai', 'Sarah Rushton',
+    'ORG_ADMIN', 'aaaaaaaa-0000-4000-8000-000000000001', NULL, true, true );
 
 
 -- =============================================================================
@@ -304,48 +264,24 @@ INSERT INTO auth.users (
   recovery_token, email_change, email_change_token_new,
   email_change_token_current, reauthentication_token, phone_change, phone_change_token
 ) VALUES
-  (
-    '00000000-0000-0000-0000-000000000000',
-    '55555555-0000-4000-8000-000000000001',
-    'authenticated', 'authenticated',
-    'demo-admin@arkova.local',
+  ( '00000000-0000-0000-0000-000000000000', '55555555-0000-4000-8000-000000000001',
+    'authenticated', 'authenticated', 'demo-admin@arkova.local',
     '$2a$10$bliuc8RqEzfNHpNdY0HIaeMjGaU1hGtiSYaKErxCOSSbsBe2o4K3q',
-    NOW(), NOW(), NOW(),
-    '{"provider": "email", "providers": ["email"]}',
-    '{"full_name": "Alex Demo-Admin"}',
-    false, '',
-    '', '', '', '', '', '', ''
-  ),
-  (
-    '00000000-0000-0000-0000-000000000000',
-    '55555555-0000-4000-8000-000000000002',
-    'authenticated', 'authenticated',
-    'demo-user@arkova.local',
+    NOW(), NOW(), NOW(), '{"provider": "email", "providers": ["email"]}',
+    '{"full_name": "Alex Demo-Admin"}', false, '', '', '', '', '', '', '', '' ),
+  ( '00000000-0000-0000-0000-000000000000', '55555555-0000-4000-8000-000000000002',
+    'authenticated', 'authenticated', 'demo-user@arkova.local',
     '$2a$10$bliuc8RqEzfNHpNdY0HIaeMjGaU1hGtiSYaKErxCOSSbsBe2o4K3q',
-    NOW(), NOW(), NOW(),
-    '{"provider": "email", "providers": ["email"]}',
-    '{"full_name": "Jamie Demo-User"}',
-    false, '',
-    '', '', '', '', '', '', ''
-  );
+    NOW(), NOW(), NOW(), '{"provider": "email", "providers": ["email"]}',
+    '{"full_name": "Jamie Demo-User"}', false, '', '', '', '', '', '', '', '' );
 
 INSERT INTO auth.identities (id, user_id, identity_data, provider, provider_id, last_sign_in_at, created_at, updated_at) VALUES
-  (
-    gen_random_uuid(),
-    '55555555-0000-4000-8000-000000000001',
+  ( gen_random_uuid(), '55555555-0000-4000-8000-000000000001',
     '{"sub": "55555555-0000-4000-8000-000000000001", "email": "demo-admin@arkova.local"}',
-    'email',
-    '55555555-0000-4000-8000-000000000001',
-    NOW(), NOW(), NOW()
-  ),
-  (
-    gen_random_uuid(),
-    '55555555-0000-4000-8000-000000000002',
+    'email', '55555555-0000-4000-8000-000000000001', NOW(), NOW(), NOW() ),
+  ( gen_random_uuid(), '55555555-0000-4000-8000-000000000002',
     '{"sub": "55555555-0000-4000-8000-000000000002", "email": "demo-user@arkova.local"}',
-    'email',
-    '55555555-0000-4000-8000-000000000002',
-    NOW(), NOW(), NOW()
-  );
+    'email', '55555555-0000-4000-8000-000000000002', NOW(), NOW(), NOW() );
 
 -- Demo profiles
 DELETE FROM profiles WHERE id IN (
@@ -355,24 +291,10 @@ DELETE FROM profiles WHERE id IN (
 
 INSERT INTO profiles (id, email, full_name, role, org_id, is_public_profile, is_platform_admin)
 VALUES
-  (
-    '55555555-0000-4000-8000-000000000001',
-    'demo-admin@arkova.local',
-    'Alex Demo-Admin',
-    'ORG_ADMIN',
-    'bbbbbbbb-0000-4000-8000-000000000001',
-    true,
-    false
-  ),
-  (
-    '55555555-0000-4000-8000-000000000002',
-    'demo-user@arkova.local',
-    'Jamie Demo-User',
-    'INDIVIDUAL',
-    NULL,
-    true,
-    false
-  );
+  ( '55555555-0000-4000-8000-000000000001', 'demo-admin@arkova.local', 'Alex Demo-Admin',
+    'ORG_ADMIN', 'bbbbbbbb-0000-4000-8000-000000000001', true, false ),
+  ( '55555555-0000-4000-8000-000000000002', 'demo-user@arkova.local', 'Jamie Demo-User',
+    'INDIVIDUAL', NULL, true, false );
 
 -- Demo org membership
 INSERT INTO org_members (user_id, org_id, role)
