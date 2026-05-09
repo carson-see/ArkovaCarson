@@ -53,6 +53,12 @@ vi.mock('../../lib/urls.js', () => ({
 import { anchorSubmitRouter } from './anchor-submit.js';
 import { requireScope } from '../../middleware/apiKeyAuth.js';
 
+// CodeRabbit PR #736 nit: prefer interface for object-shape type assertions
+// per repository TypeScript conventions.
+interface InsertCallArg {
+  metadata?: Record<string, unknown>;
+}
+
 function makeApp(scopes = ['anchor:write']) {
   const app = express();
   app.use(express.json());
@@ -199,6 +205,70 @@ describe('POST /api/v1/anchor — Zod validation', () => {
     const insertArg = mockInsert.mock.calls[0]?.[0] as { metadata: Record<string, unknown> };
     expect(insertArg.metadata).not.toHaveProperty('recipient_display_name');
     expect(insertArg.metadata).not.toHaveProperty('access_token');
+  });
+
+  /**
+   * SCRUM-1732 — Anchor metadata persistence contract lock.
+   *
+   * The 2026-05-01 audit row "anchor-submit insert omits metadata"
+   * read the conditional spread `...(publicSafe ? { metadata } : {})`
+   * as a silent-drop bug. It isn't — the path correctly:
+   *   - 400s when `metadata` carries public-credential keys but fails
+   *     validation (verified by the BADGE rejection test above)
+   *   - persists the public-safe subset when valid (verified above)
+   *   - omits the column when no metadata is provided so Postgres
+   *     applies its column default of NULL (verified by line 164)
+   *
+   * These regression tests pin those behaviors so future drift fails
+   * loud at PR time. SCRUM-1174 (legal taxonomy) cross-reference: when
+   * legal credential subtypes ship under HAKI-REQ-05, the existing
+   * `parsePublicCredentialEvidenceMetadataResult` is the validation
+   * surface — additions go there, never around it.
+   */
+  describe('SCRUM-1732 metadata persistence contract', () => {
+    it('persists every public-safe key from a fully-populated BADGE evidence payload', async () => {
+      // CodeRabbit PR #736: pin every key explicitly. The previous "exists +
+      // is object" check would pass even if some keys were dropped silently.
+      const payload = {
+        evidence_schema_version: 'credential_evidence_v1',
+        evidence_package_hash: 'a'.repeat(64),
+        source_url: 'https://credentials.example.com/x',
+        source_provider: 'credly',
+        source_payload_hash: 'b'.repeat(64),
+        verification_level: 'captured_url',
+        extraction_method: 'html_metadata',
+        credential_title: 'Cloud Architecture',
+        credential_type: 'BADGE',
+        credential_issuer: 'Example',
+      };
+      const res = await postBadgeMetadata(payload);
+      expect(res.status).toBe(201);
+      const insertArg = mockInsert.mock.calls[0]?.[0] as InsertCallArg;
+      // Contract: metadata column is present and structured-typed (not stringified JSON).
+      expect(insertArg).toHaveProperty('metadata');
+      expect(typeof insertArg.metadata).toBe('object');
+      expect(insertArg.metadata).not.toBeNull();
+      // Each public-safe key persists with its exact value (not just present).
+      const persisted = insertArg.metadata as Record<string, unknown>;
+      for (const key of Object.keys(payload)) {
+        expect(persisted).toHaveProperty(key);
+        expect(persisted[key]).toBe((payload as Record<string, unknown>)[key]);
+      }
+    });
+
+    it('omits the metadata column when no metadata is provided (Postgres default null)', async () => {
+      const res = await request(makeApp()).post('/v1/anchor').send({
+        fingerprint: VALID_FINGERPRINT,
+        credential_type: 'OTHER',
+      });
+      expect(res.status).toBe(201);
+      // Pinned: when caller sends no metadata, the insert payload does NOT
+      // include the column. The DB applies its own NULL default. Changing
+      // this to `metadata: null` would also work but breaks downstream
+      // Postgres-defaults-aware tooling (e.g. row-level-security policies
+      // that distinguish "explicitly null" from "not provided").
+      expect(mockInsert.mock.calls[0]?.[0]).not.toHaveProperty('metadata');
+    });
   });
 
   it('rejects invalid credential evidence metadata instead of persisting unsafe source URLs', async () => {

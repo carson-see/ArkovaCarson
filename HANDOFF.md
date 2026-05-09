@@ -129,6 +129,27 @@ Tier: T1 by code-touched scope (test file only). Staging-tooling allowlist does 
 
 _Last refreshed: 2026-05-08 by claude — claims verified against gcloud/MCP/CI output (vitest suite green locally on the touched test file; eslint clean on touched files; no prod state change)._
 
+### 2026-05-08 — SCRUM-1732 anchor-submit metadata persistence — contract-lock regression test (branch `claude/scrum-1732-anchor-metadata-persist`)
+
+Bench-state, paired with SCRUM-1731. Audit recalibration: SCRUM-1732 was already implemented in code (the `?...metadata` conditional spread on `services/worker/src/api/v1/anchor-submit.ts` correctly persists validated `metadata` to `anchors.metadata`); the original audit's claim that the spread was dropping the field was stale.
+
+This PR adds **two metadata-persistence contract-lock tests** under a new `SCRUM-1732 metadata persistence contract` describe block in `services/worker/src/api/v1/anchor-submit.test.ts` (PR title: `test(SCRUM-1732): anchor-submit metadata persistence contract-lock tests`):
+
+1. **"persists every public-safe key from a fully-populated BADGE evidence payload"** — iterates the request payload's keys and verifies each landed in the `db.from('anchors').insert(...)` call with the exact value, so a future silent key drop fails loud.
+2. **"omits the metadata column when no metadata is provided (Postgres default null)"** — ensures the INSERT omits the `metadata` column entirely so Postgres applies its NULL default (preserving RLS semantics that distinguish omitted vs explicit null).
+
+Also strengthened existing type assertions via the `InsertCallArg` interface, replacing inline object-shape casts per repo TypeScript conventions.
+
+Local quality gates (verified locally):
+
+- `npx vitest run services/worker/src/api/v1/anchor-submit.test.ts` → 13/13 pass (verified locally)
+- `npx eslint services/worker/src/api/v1/anchor-submit.ts services/worker/src/api/v1/anchor-submit.test.ts` → clean (verified locally)
+- CI Tests job green: [run 25602908073](https://github.com/carson-see/ArkovaCarson/actions/runs/25602908073/job/75160335774)
+
+Tier: T1 by code-touched scope (test file + minor type-safety helper). No runtime change, no migration. Staging-evidence gate satisfied via the PR body block declaring T1 + linking back to this entry.
+
+_Last refreshed: 2026-05-09 by claude — claims verified against CI run 25602908073; no prod state change._
+
 ### 2026-05-06 — PR #711 SCRUM-1545 coverage backfill merge-resolution pass
 
 PR [#711](https://github.com/carson-see/ArkovaCarson/pull/711) remains test-only and exists to close the R4-4-FU coverage gap for `services/worker/src/jobs/anchor.ts`, `services/worker/src/chain/client.ts`, and `services/worker/src/index.ts`. It adds `anchor-coverage.test.ts`, strengthens chain/index tests, and raises worker coverage thresholds for the targeted files. `services/worker/src/api/admin-pipeline-stats.ts` coverage was handled in PR [#690](https://github.com/carson-see/ArkovaCarson/pull/690); it is not an unmerged follow-up hidden inside #711.
