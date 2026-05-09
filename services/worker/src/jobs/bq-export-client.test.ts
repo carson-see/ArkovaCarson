@@ -18,7 +18,7 @@ vi.mock('../utils/logger.js', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
 
-import { ensureTable, insertRows, runQuery } from './bq-export-client.js';
+import { ensureTable, insertRows, runQuery, toBqRow } from './bq-export-client.js';
 import { BQ_TABLES } from './bq-export-schemas.js';
 
 // Set global fetch mock per-test
@@ -223,5 +223,66 @@ describe('runQuery', () => {
     fetchMock.mockResolvedValueOnce(mockFetchResponse({ status: 400, body: { error: { message: 'bad query' } } }));
 
     await expect(runQuery('not valid sql')).rejects.toThrow(/BigQuery API error: 400/);
+  });
+});
+
+describe('toBqRow JSON-type stringification (live-prod-defect SCRUM-1723 2026-05-09)', () => {
+  it('stringifies anchors.metadata before insertAll (BQ JSON-type wire format)', () => {
+    // First Cloud Scheduler tick of bq-export-incremental against prod
+    // (2026-05-09 13:50 UTC) rejected 1000 rows with "metadata is not a
+    // record" because tabledata.insertAll requires JSON-type columns to
+    // be sent as JSON-encoded strings, not nested objects. Postgres
+    // returns jsonb as deserialized objects, so we re-stringify
+    // schema-aware.
+    const target = BQ_TABLES.anchors;
+    const out = toBqRow(target, 'anchors', {
+      id: 'aaa',
+      created_at: '2026-05-09T00:00:00Z',
+      metadata: { foo: 'bar', n: 1 },
+    });
+    expect(typeof out.json.metadata).toBe('string');
+    expect(JSON.parse(out.json.metadata as string)).toEqual({ foo: 'bar', n: 1 });
+  });
+
+  it('leaves null metadata as null (no string "null")', () => {
+    const target = BQ_TABLES.anchors;
+    const out = toBqRow(target, 'anchors', {
+      id: 'bbb',
+      created_at: '2026-05-09T00:00:00Z',
+      metadata: null,
+    });
+    expect(out.json.metadata).toBeNull();
+  });
+
+  it('does NOT touch non-JSON fields (regression guard)', () => {
+    const target = BQ_TABLES.anchors;
+    const out = toBqRow(target, 'anchors', {
+      id: 'ccc',
+      created_at: '2026-05-09T00:00:00Z',
+      org_id: 'org-1',
+      status: 'SECURED',
+    });
+    expect(out.json.id).toBe('ccc');
+    expect(out.json.org_id).toBe('org-1');
+    expect(out.json.status).toBe('SECURED');
+  });
+
+  it('insertId follows the table-id template', () => {
+    const target = BQ_TABLES.audit_events;
+    const out = toBqRow(target, 'audit_events', {
+      id: 'evt-123',
+      created_at: '2026-05-09T00:00:00Z',
+    });
+    expect(out.insertId).toBe('audit_events-evt-123');
+  });
+
+  it('injects bq_synced_at at insertion time', () => {
+    const target = BQ_TABLES.anchors;
+    const out = toBqRow(target, 'anchors', {
+      id: 'ddd',
+      created_at: '2026-05-09T00:00:00Z',
+    });
+    expect(typeof out.json.bq_synced_at).toBe('string');
+    expect(out.json.bq_synced_at as string).toMatch(/^\d{4}-\d{2}-\d{2}T/);
   });
 });

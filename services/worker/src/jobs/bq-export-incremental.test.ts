@@ -125,43 +125,6 @@ describe('bq-export-incremental: verifications source-table mapping (live-prod-d
   });
 });
 
-describe('bq-export-incremental: toBqRow JSON-type stringification (live-prod-defect 2026-05-09)', () => {
-  it('stringifies anchors.metadata before insertAll (BQ JSON-type wire format)', () => {
-    // Live-prod first cron tick rejected 1000 rows with "metadata is not a
-    // record" because tabledata.insertAll requires JSON-type columns to be
-    // sent as JSON-encoded strings, not nested objects. Postgres returns
-    // jsonb as deserialized objects, so we have to re-stringify.
-    const target = BQ_TABLES.anchors;
-    const row = {
-      id: 'aaa',
-      created_at: '2026-05-09T00:00:00Z',
-      metadata: { foo: 'bar', n: 1 },
-    };
-    const out = __testing.toBqRow(target, 'anchors', row);
-    expect(typeof out.json.metadata).toBe('string');
-    expect(JSON.parse(out.json.metadata as string)).toEqual({ foo: 'bar', n: 1 });
-  });
-
-  it('leaves null metadata as null (no string "null")', () => {
-    const target = BQ_TABLES.anchors;
-    const out = __testing.toBqRow(target, 'anchors', {
-      id: 'bbb',
-      created_at: '2026-05-09T00:00:00Z',
-      metadata: null,
-    });
-    expect(out.json.metadata).toBeNull();
-  });
-
-  it('does NOT touch non-JSON fields (regression guard)', () => {
-    const target = BQ_TABLES.anchors;
-    const out = __testing.toBqRow(target, 'anchors', {
-      id: 'ccc',
-      created_at: '2026-05-09T00:00:00Z',
-      org_id: 'org-1',
-      status: 'SECURED',
-    });
-    expect(out.json.id).toBe('ccc');
-    expect(out.json.org_id).toBe('org-1');
-    expect(out.json.status).toBe('SECURED');
-  });
-});
+// toBqRow JSON-type stringification tests moved to bq-export-client.test.ts —
+// the helper now lives in bq-export-client.ts (shared with backfill) so
+// SonarCloud doesn't flag the duplicated wire-shaping logic.

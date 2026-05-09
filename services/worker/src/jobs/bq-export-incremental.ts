@@ -23,7 +23,7 @@
 import { db } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
 
-import { ensureTable, insertRows, type BqInsertRow } from './bq-export-client.js';
+import { ensureTable, insertRows, toBqRow } from './bq-export-client.js';
 import {
   AUDIT_EVENTS_COLUMN_ALLOWLIST,
   BQ_TABLES,
@@ -75,26 +75,8 @@ function selectColumns(table: BqExportTableName): string {
   return '*'; // unreachable; types prevent it
 }
 
-/**
- * BigQuery `tabledata.insertAll` requires fields declared as JSON in the BQ
- * schema to be passed as a JSON-encoded *string* in the wire payload, not as a
- * nested object. Postgres returns JSONB columns as deserialized JS objects, so
- * we have to re-stringify them schema-aware before insertAll. Without this,
- * BigQuery errors with `This field: <name> is not a record.` and rejects the
- * batch.
- */
-function toBqRow(target: BqTableTarget, table: BqExportTableName, row: Record<string, unknown>): BqInsertRow {
-  const id = String(row.id);
-  const json: Record<string, unknown> = { ...row, bq_synced_at: new Date().toISOString() };
-  for (const field of target.schema.fields) {
-    if (field.type !== 'JSON') continue;
-    const v = json[field.name];
-    if (v != null && typeof v === 'object') {
-      json[field.name] = JSON.stringify(v);
-    }
-  }
-  return { insertId: `${table}-${id}`, json };
-}
+// `toBqRow` is shared with bq-export-backfill.ts — see bq-export-client.ts
+// for the schema-aware JSON-stringify invariant (SCRUM-1723 live-prod fix).
 
 async function runOneTable(table: BqExportTableName): Promise<IncrementalRunResult> {
   const target: BqTableTarget = BQ_TABLES[table];

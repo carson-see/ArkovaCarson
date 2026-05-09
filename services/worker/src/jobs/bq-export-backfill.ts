@@ -26,7 +26,7 @@
 import { db } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
 
-import { ensureTable, insertRows, type BqInsertRow } from './bq-export-client.js';
+import { ensureTable, insertRows, toBqRow } from './bq-export-client.js';
 import { BQ_TABLES, type BqTableTarget } from './bq-export-schemas.js';
 import {
   markRunFailed,
@@ -53,24 +53,9 @@ function isBackfillable(table: string): table is BqExportTableName {
   return (BACKFILLABLE as readonly string[]).includes(table);
 }
 
-/**
- * Same JSON-stringify behavior as bq-export-incremental.ts — BigQuery's
- * tabledata.insertAll requires JSON-type columns to be passed as
- * stringified JSON, not nested objects, otherwise insertAll rejects with
- * `This field: <name> is not a record.`
- */
-function toBqRow(target: BqTableTarget, table: BqExportTableName, row: Record<string, unknown>): BqInsertRow {
-  const id = String(row.id);
-  const json: Record<string, unknown> = { ...row, bq_synced_at: new Date().toISOString() };
-  for (const field of target.schema.fields) {
-    if (field.type !== 'JSON') continue;
-    const v = json[field.name];
-    if (v != null && typeof v === 'object') {
-      json[field.name] = JSON.stringify(v);
-    }
-  }
-  return { insertId: `${table}-${id}`, json };
-}
+// `toBqRow` lives in bq-export-client.ts (shared with bq-export-incremental.ts).
+// See SCRUM-1723 live-prod fix 2026-05-09: schema-aware JSON.stringify of
+// JSON-type fields before tabledata.insertAll.
 
 export async function runBackfill(rawTable: string): Promise<BackfillRunResult> {
   if (!isBackfillable(rawTable)) {

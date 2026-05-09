@@ -130,6 +130,41 @@ export interface BqInsertRow {
   json: Record<string, unknown>;
 }
 
+/**
+ * Convert a Postgres row into the BQ `tabledata.insertAll` wire shape.
+ *
+ * Two invariants this enforces:
+ *   1. `insertId = "<table>-<id>"` for at-least-once + best-effort dedup
+ *      across the BQ ~1-minute window.
+ *   2. Any field whose BQ schema declares `type === 'JSON'` is
+ *      `JSON.stringify`-ed before insertAll. BigQuery's streaming API
+ *      requires JSON-type columns to be sent as JSON-encoded strings,
+ *      not nested objects; Postgres returns jsonb as deserialized
+ *      objects, so without this re-stringify the API rejects every row
+ *      with `This field: <name> is not a record.` (SCRUM-1723 live-prod
+ *      defect 2026-05-09).
+ *
+ * Lives here in bq-export-client.ts so both the incremental sync job
+ * and the one-shot backfill job share the same wire-shaping; SonarCloud
+ * was flagging the otherwise-duplicated copies as 45.7% dup density.
+ */
+export function toBqRow(
+  target: BqTableTarget,
+  table: string,
+  row: Record<string, unknown>,
+): BqInsertRow {
+  const id = String(row.id);
+  const json: Record<string, unknown> = { ...row, bq_synced_at: new Date().toISOString() };
+  for (const field of target.schema.fields) {
+    if (field.type !== 'JSON') continue;
+    const v = json[field.name];
+    if (v != null && typeof v === 'object') {
+      json[field.name] = JSON.stringify(v);
+    }
+  }
+  return { insertId: `${table}-${id}`, json };
+}
+
 export interface BqInsertResult {
   insertedCount: number;
   errors: Array<{ index: number; reason: string }>;
