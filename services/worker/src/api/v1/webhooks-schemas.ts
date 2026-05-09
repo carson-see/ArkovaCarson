@@ -7,9 +7,18 @@
 import { z } from 'zod';
 
 export const VALID_WEBHOOK_EVENTS = [
+  // Anchor lifecycle (chain-level state of the cryptographic proof) — stable.
   'anchor.secured',
   'anchor.revoked',
   'anchor.expired',
+  // Credential lifecycle (issuer-and-recipient-level state) — SCRUM-1743 Phase 1.
+  // Schemas are defined in services/worker/src/webhooks/payload-schemas.ts and
+  // dispatch validation accepts them today. Per-event emit-point wiring lands
+  // in Phase-2 follow-ups; subscriptions registered now will receive deliveries
+  // automatically as each emit point goes live.
+  'credential.issued',
+  'credential.verified',
+  'credential.status_changed',
 ] as const;
 
 const DEFAULT_EVENTS: Array<(typeof VALID_WEBHOOK_EVENTS)[number]> = [

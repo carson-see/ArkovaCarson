@@ -141,11 +141,12 @@ URL=$(gcloud run services describe arkova-worker --region=us-central1 --project=
 curl -sf "${URL}/health" | jq .
 ```
 
-### Step 6: Test Single Anchor
+### Step 6: Test Batch Anchor Path
 
 ```bash
-# Trigger single anchor processing
-curl -H "X-Cron-Secret: $CRON_SECRET" "${URL}/jobs/process-anchors"
+# Trigger the batch path. The non-forced route only broadcasts when the
+# size/age policy fires; force=true is the daily forced-flush path.
+curl -H "X-Cron-Secret: $CRON_SECRET" "${URL}/jobs/batch-anchors?force=true"
 
 # Verify tx on mempool.space mainnet
 ```

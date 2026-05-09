@@ -45,9 +45,16 @@ function readAllMigrations(): string {
 
 const SEARCH_PATH_RE = /SET\s+search_path\s*=\s*public/i;
 
+// Matches either bare or quoted forms produced by hand-written migrations
+// (`CREATE OR REPLACE FUNCTION public.foo(...)`) and the pg_dump baseline
+// (`CREATE OR REPLACE FUNCTION "public"."foo"(...)`).
+function fnNameAlt(fnName: string): string {
+  return `(?:public\\.)?"?${fnName}"?|"public"\\."${fnName}"`;
+}
+
 function hasInlineSearchPath(allSql: string, fnName: string): boolean {
   const pattern = new RegExp(
-    `CREATE\\s+OR\\s+REPLACE\\s+FUNCTION\\s+(?:public\\.)?${fnName}\\s*\\([^)]*\\)[\\s\\S]*?AS\\s*\\$`,
+    `CREATE\\s+OR\\s+REPLACE\\s+FUNCTION\\s+(?:${fnNameAlt(fnName)})\\s*\\([^)]*\\)[\\s\\S]*?AS\\s*\\$`,
     'gi',
   );
   let m: RegExpExecArray | null;
@@ -59,7 +66,7 @@ function hasInlineSearchPath(allSql: string, fnName: string): boolean {
 
 function hasAlterSearchPath(allSql: string, fnName: string): boolean {
   const pattern = new RegExp(
-    `ALTER\\s+FUNCTION\\s+(?:public\\.)?${fnName}\\s*\\([^)]*\\)[\\s\\S]*?SET\\s+search_path\\s*=\\s*public`,
+    `ALTER\\s+FUNCTION\\s+(?:${fnNameAlt(fnName)})\\s*\\([^)]*\\)[\\s\\S]*?SET\\s+search_path\\s*=\\s*public`,
     'i',
   );
   return pattern.test(allSql);

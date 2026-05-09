@@ -17,9 +17,11 @@ import { describe, it, expect } from 'vitest';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
+// `anchoring_jobs` was retired from prod (not present in the Path C
+// baseline or any current migration). Removed from this list — the
+// advisor warning it covered no longer fires because the table is gone.
 const SERVICE_ROLE_ONLY_TABLES = [
   'anchor_chain_index',
-  'anchoring_jobs',
   'audit_events_archive',
   'job_queue',
   'rule_embeddings',
@@ -39,13 +41,21 @@ function readAllSql(): string {
 describe('SCRUM-1188 (AUDIT-07): explicit service-role-only RLS policies', () => {
   const allSql = readAllSql();
 
+  // Accepts hand-written form (`ON public.foo` or `ON foo`) and the
+  // pg_dump baseline (`ON "public"."foo"`).
+  const tableAlt = (tbl: string) => `(?:public\\.)?"?${tbl}"?|"public"\\."${tbl}"`;
+  // Optional `"` around the role keywords to match pg_dump quoting.
+  const role = '"?(?:authenticated|anon)"?';
+
   for (const tbl of SERVICE_ROLE_ONLY_TABLES) {
     it(`${tbl} has an explicit deny-all-users policy`, () => {
       // Find a CREATE POLICY on this table that targets authenticated/anon
       // and uses USING (false) — the documented "service-role-only" pattern
       // (matches the cloud_logging_queue policy from migration 0235).
+      // pg_dump omits the default `FOR ALL` clause; hand-written migrations
+      // include it. Make `FOR ALL` optional and accept either ordering.
       const re = new RegExp(
-        `CREATE\\s+POLICY\\s+\\w+\\s+ON\\s+(?:public\\.)?${tbl}\\s+FOR\\s+ALL\\s+TO\\s+(?:authenticated\\s*,\\s*anon|anon\\s*,\\s*authenticated)\\s+USING\\s*\\(\\s*false\\s*\\)\\s+WITH\\s+CHECK\\s*\\(\\s*false\\s*\\)`,
+        `CREATE\\s+POLICY\\s+"?\\w+"?\\s+ON\\s+(?:${tableAlt(tbl)})\\s+(?:AS\\s+(?:PERMISSIVE|RESTRICTIVE)\\s+)?(?:FOR\\s+ALL\\s+)?TO\\s+(?:${role}\\s*,\\s*${role})\\s+USING\\s*\\(\\s*false\\s*\\)\\s+WITH\\s+CHECK\\s*\\(\\s*false\\s*\\)`,
         'i',
       );
       expect(re.test(allSql), `${tbl} is missing the explicit deny-all policy`).toBe(true);
@@ -58,7 +68,7 @@ describe('SCRUM-1188 (AUDIT-07): explicit service-role-only RLS policies', () =>
       // policy locks INSERT/UPDATE/DELETE to service_role; without it the
       // advisor rls_enabled_no_policy fires for the missing DML coverage.
       const re = new RegExp(
-        `CREATE\\s+POLICY\\s+\\w+\\s+ON\\s+(?:public\\.)?${tbl}\\s+FOR\\s+(?:INSERT|UPDATE|DELETE|ALL)\\s+TO\\s+(?:authenticated\\s*,\\s*anon|anon\\s*,\\s*authenticated|authenticated|anon)[\\s\\S]*?WITH\\s+CHECK\\s*\\(\\s*false\\s*\\)`,
+        `CREATE\\s+POLICY\\s+"?\\w+"?\\s+ON\\s+(?:${tableAlt(tbl)})\\s+(?:AS\\s+(?:PERMISSIVE|RESTRICTIVE)\\s+)?(?:FOR\\s+(?:INSERT|UPDATE|DELETE|ALL)\\s+)?TO\\s+(?:${role}\\s*,\\s*${role}|${role})[\\s\\S]*?WITH\\s+CHECK\\s*\\(\\s*false\\s*\\)`,
         'i',
       );
       expect(re.test(allSql), `${tbl} is missing the deny-write policy`).toBe(true);

@@ -12,7 +12,6 @@ import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
 import { db } from '../utils/db.js';
 import { callRpc } from '../utils/rpc.js';
-import { processPendingAnchors } from '../jobs/anchor.js';
 import { processBatchAnchors } from '../jobs/batch-anchor.js';
 import { checkSubmittedConfirmations } from '../jobs/check-confirmations.js';
 import { processRevokedAnchors } from '../jobs/revocation.js';
@@ -27,7 +26,6 @@ type CronTask = Parameters<typeof cron.schedule>[1];
 
 const ANCHOR_TABLE_IN_PROCESS_JOBS = new Set([
   'recover-stuck-broadcasts',
-  'process-pending-anchors',
   'process-batch-anchors',
   'check-submitted-confirmations',
   'process-revoked-anchors',
@@ -81,18 +79,9 @@ export function setupScheduledJobs(chainInitialized: boolean): void {
     }
   });
 
-  // Process pending anchors every minute (all environments including production)
   if (chainInitialized) {
-    scheduleInProcess('process-pending-anchors', '* * * * *', async () => {
-      logger.debug('Running scheduled anchor processing (in-process cron)');
-      try {
-        await trackOperation(processPendingAnchors());
-      } catch (error) {
-        logger.error({ error }, 'Scheduled anchor processing failed');
-      }
-    });
-
-    // Batch anchor processing every 10 minutes
+    // Batch policy check every 10 minutes. The job only broadcasts when the
+    // batch size/age/forced-flush rules in jobs/batch-anchor.ts are satisfied.
     const batchInterval = config.batchAnchorIntervalMinutes ?? 10;
     scheduleInProcess('process-batch-anchors', `*/${batchInterval} * * * *`, async () => {
       logger.debug('Running scheduled batch anchor processing (in-process cron)');

@@ -106,6 +106,94 @@ export const AnchorBatchSecuredPayloadSchema = z
   .strict();
 
 /**
+ * Credential lifecycle events (SCRUM-1743). The `anchor.*` family describes
+ * on-chain anchoring lifecycle (submitted/secured/revoked/expired); the
+ * `credential.*` family describes the recipient-facing credential lifecycle
+ * (issued / verified / status_changed). They are intentionally distinct
+ * because consumers care about different transitions:
+ *
+ *   - HRIS / SIS / verification webhooks key off `credential.issued` to fan
+ *     out to recipient inboxes the moment an issuer creates a credential —
+ *     this fires BEFORE chain confirmation (anchor.secured).
+ *   - Background-check / verifier integrations key off `credential.verified`
+ *     when an /api/v1/verify call resolves a credential as SECURED.
+ *   - Issuer-side reconciliation keys off `credential.status_changed` for
+ *     any state transition (revocation, expiry, re-issuance).
+ *
+ * Fields obey the same allowlist as anchor events — `public_id`-only,
+ * never internal UUIDs, never `fingerprint`. CLAUDE.md §6 + §1.6.
+ *
+ * **Emit points are tracked separately** — the schemas and dispatch
+ * map entries land in this PR so the contract is locked + customers can
+ * subscribe via the existing webhook CRUD; per-event emit-point wiring
+ * is split into follow-up Phase-2 tickets so this PR stays reviewable
+ * and the staging-soak surface is bounded to schema validation.
+ */
+const CREDENTIAL_BASE_FIELDS = {
+  public_id: z.string().min(1).max(64),
+  org_public_id: z.string().min(1).max(64).nullable().optional(),
+  // Recipient (who the credential is issued TO) — distinct from the issuer
+  // org. HRIS / SIS integrations key off this for recipient-side fan-out.
+  // Optional + nullable because not every credential has a single recipient
+  // (org-level attestations, SEC filings, etc).
+  recipient_public_id: z.string().min(1).max(64).nullable().optional(),
+  credential_type: z.string().min(1).max(64),
+} as const;
+
+// ISO 3166-1 alpha-2 country code: exactly two uppercase letters.
+const ISO_COUNTRY_CODE_RE = /^[A-Z]{2}$/;
+
+export const CredentialIssuedPayloadSchema = z
+  .object({
+    ...CREDENTIAL_BASE_FIELDS,
+    status: z.literal('ISSUED'),
+    issued_at: isoTimestamp,
+    expires_at: isoTimestamp.nullable().optional(),
+  })
+  .strict();
+
+// SCRUM-1743 review feedback: `credential.verified` only fires on a TERMINAL
+// resolution. PENDING means "no answer yet, retry later" — emitting a
+// verification event in that case is semantically incoherent and would
+// confuse downstream HRIS integrations. Allowed: SECURED / REVOKED /
+// EXPIRED. PENDING / SUBMITTED do not fire `credential.verified`.
+export const CredentialVerifiedPayloadSchema = z
+  .object({
+    ...CREDENTIAL_BASE_FIELDS,
+    status: z.enum(['SECURED', 'REVOKED', 'EXPIRED']),
+    verified_at: isoTimestamp,
+    // Country code only — never the verifier's IP. ISO 3166-1 alpha-2,
+    // shape enforced by regex (length-2 alone would let `'!!'` through).
+    verifier_country: z
+      .string()
+      .regex(ISO_COUNTRY_CODE_RE, 'must be ISO 3166-1 alpha-2 (e.g. US, GB)')
+      .nullable()
+      .optional(),
+  })
+  .strict();
+
+export const CredentialStatusChangedPayloadSchema = z
+  .object({
+    ...CREDENTIAL_BASE_FIELDS,
+    previous_status: z.enum(['PENDING', 'SUBMITTED', 'SECURED', 'REVOKED', 'EXPIRED']),
+    new_status: z.enum(['PENDING', 'SUBMITTED', 'SECURED', 'REVOKED', 'EXPIRED']),
+    changed_at: isoTimestamp,
+    // Free-form reason capped at 500 chars. Banned: PII, document text,
+    // any internal UUIDs (the .strict() rejects unknown keys, this is a
+    // soft reminder for the field contents).
+    reason: z.string().max(500).nullable().optional(),
+  })
+  .strict()
+  // SCRUM-1743 review feedback: a status_changed event with the same
+  // previous and new status is a no-op and should never be emitted.
+  // Reject at schema level so future emit code can't accidentally
+  // ship one.
+  .refine((d) => d.previous_status !== d.new_status, {
+    message: 'previous_status and new_status must differ',
+    path: ['new_status'],
+  });
+
+/**
  * Map event_type → matching schema. Used by `dispatchWebhookEvent` to validate
  * outbound payloads against the canonical contract before signing.
  */
@@ -114,6 +202,9 @@ export const PAYLOAD_SCHEMAS_BY_EVENT_TYPE = {
   'anchor.secured': AnchorSecuredPayloadSchema,
   'anchor.revoked': AnchorRevokedPayloadSchema,
   'anchor.batch_secured': AnchorBatchSecuredPayloadSchema,
+  'credential.issued': CredentialIssuedPayloadSchema,
+  'credential.verified': CredentialVerifiedPayloadSchema,
+  'credential.status_changed': CredentialStatusChangedPayloadSchema,
 } as const;
 
 export type WebhookEventType = keyof typeof PAYLOAD_SCHEMAS_BY_EVENT_TYPE;
@@ -121,6 +212,9 @@ export type AnchorSubmittedPayload = z.infer<typeof AnchorSubmittedPayloadSchema
 export type AnchorSecuredPayload = z.infer<typeof AnchorSecuredPayloadSchema>;
 export type AnchorRevokedPayload = z.infer<typeof AnchorRevokedPayloadSchema>;
 export type AnchorBatchSecuredPayload = z.infer<typeof AnchorBatchSecuredPayloadSchema>;
+export type CredentialIssuedPayload = z.infer<typeof CredentialIssuedPayloadSchema>;
+export type CredentialVerifiedPayload = z.infer<typeof CredentialVerifiedPayloadSchema>;
+export type CredentialStatusChangedPayload = z.infer<typeof CredentialStatusChangedPayloadSchema>;
 
 export class WebhookPayloadValidationError extends Error {
   constructor(

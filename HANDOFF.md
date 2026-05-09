@@ -14,157 +14,129 @@
 
 ## Now
 
-### 2026-05-08 — SCRUM-1790 Login/signup verification (PR #739, T1)
+### 2026-05-08 — PR #739 Features 5-8 staging evidence (SCRUM-1787/1788/1789/1790)
 
-Same PR as SCRUM-1786/1787/1788/1789. Branch `claude/quirky-meitner-338bda`.
+Branch `claude/quirky-meitner-338bda`. T3 48h soak in progress (started 2026-05-08T14:34Z).
 
-**Problem:** Feature 8 (Login/Signup) in the retroactive staging plan lacked LoginForm component tests despite 1,633 lines of auth coverage across 9 other files.
+All 4 features verified against staging Supabase (`ujtlwnoqfhtitcmsnrpq`) with authenticated test user `staging-test@arkova.io`:
+- **SCRUM-1787 (Navigation):** Sidebar logo `href=/dashboard`, aria-label confirmed at 1280px + 375px.
+- **SCRUM-1788 (Search):** `/search` page renders, input focuses, 9/9 checks pass. Known: `search_public_credentials` RPC returns empty (no seeded credentials).
+- **SCRUM-1789 (Upload):** Secure Document dialog opens, file input accepts, 11/11 checks pass. All API calls return 200.
+- **SCRUM-1790 (Login):** Sign out → login → sign in → `/dashboard` redirect. Forgot password form renders. Mobile (375px) OK.
 
-**Fix:** Added 15 tests for LoginForm covering email/password submission, Google/LinkedIn OAuth button wiring, forgot password flow (resetPasswordForEmail with redirectTo, success message, back navigation), conditional signup link rendering, and onSuccess callback. Fixed vi.mock hoisting issue with vi.hoisted(). Documented 5 auth surfaces with product expectations.
+Confluence pages updated: [44072961](https://arkova.atlassian.net/wiki/spaces/A/pages/44072961), [44138497](https://arkova.atlassian.net/wiki/spaces/A/pages/44138497), [44236801](https://arkova.atlassian.net/wiki/spaces/A/pages/44236801), [43974658](https://arkova.atlassian.net/wiki/spaces/A/pages/43974658).
 
-**Tests:** 1,923 total (17 new LoginForm tests incl. failure-path). `typecheck` + `lint` + `test` + `lint:copy` all green.
+CI status: SonarCloud PASS, CodeRabbit PASS. GitHub Actions stalled 2026-05-08 20:54Z (repo-wide, likely exhausted minutes). Resumed 2026-05-09. Staging evidence check verified locally (all 12 T3 fields present). Awaiting CI re-trigger after merge conflict resolution.
 
-**Soak tier:** T1 Smoke (pure additive tests, no migration/cron/chain).
+_Last refreshed: 2026-05-09 by Claude — claims verified against staging Supabase via dev server + local CI validation._
 
-**What's done:** Tests written and passing (gate 1). Jira SCRUM-1790 created with Confluence URL (gate 2). Confluence page [43974658](https://arkova.atlassian.net/wiki/spaces/A/pages/43974658) (gate 3). Bug log N/A (gate 4). agents.md updated (gate 5). HANDOFF.md updated (gate 6).
+### 2026-05-08 (afternoon) — HakiChain pre-launch session: 7 PRs in-flight, sandbox provisioned end-to-end, MCP edge wired, prod migrations applied (operational summary)
 
-**Staging UI verification (2026-05-08, dev server pointed at staging Supabase `ujtlwnoqfhtitcmsnrpq`):**
-- Created staging test user `staging-test@arkova.io` (ID `1d2b80db-...`, INDIVIDUAL, password-enabled)
-- Login form renders at 1280px and 375px — email/password inputs, Sign in button, Google/LinkedIn OAuth buttons, Forgot password link, Create account link
-- Sign in with `staging-test@arkova.io` → redirected to `/dashboard` with "Staging Test User" profile card
-- Sign out → login page renders correctly at /login
-- Forgot password flow: "Reset your password" heading, email input, "Send reset link" button, "Back to sign in" returns to login
-- AuthGuard: authenticated user navigating to `/login` redirects to `/dashboard`
-- Mobile (375px): login page and dashboard render correctly, no overflow
-- Console: no errors on login/dashboard pages
+**Operational state at session close (no PRs merged this session — all human-gated per §0 rule 1):**
 
-**Confluence updated:** Page [43974658](https://arkova.atlassian.net/wiki/spaces/A/pages/43974658) — staging verification section added (2026-05-08).
+* **PR #735 (SCRUM-1731)** v2 per-scope rate-limit contract-lock test. CI green except CodeRabbit credit-pool exhausted. Gate status: tests green, no T-required soak (test-only), Confluence per-story page MISSING.
+* **PR #736 (SCRUM-1732)** anchor-submit metadata persistence contract-lock test. Same gate status as #735.
+* **PR #737 (SCRUM-1733)** REST v2 + MCP parity contract via shared Zod schemas + recursive banned-field guard. Was APPROVED; SonarCloud localeCompare follow-up + branch-protection stale-on-push dismissal — needs re-approval. Per-story Confluence page MISSING.
+* **PR #734 (SCRUM-1735 + SCRUM-1736)** combined `anchor.expired` schema + `anchorExpirySweep` cron. Tier T3 declared (path detector); **the literal CLAUDE.md §1.12 48h soak was NOT executed — only a 5-min smoke + rollback rehearsal on `arkova-worker-pr734-staging`**. Carson decides scope-drop vs override before Mon launch.
+* **PR #738 (SCRUM-1740)** partner sandbox migration (0297 + 0298) + provisioning script + new `anchorQuotaGate` middleware (commit 9fdaed23) returning 402 problem+json on quota-exhausted. Migration applied to prod ledger 2026-05-08 14:14Z; quota gate not deployed (PR not merged). T2 4h soak NOT executed; smoke + rollback only.
+* **PR #741 (SCRUM-1793 NEW)** `validate_api_key` RPC migration. Applied to prod (`vzwyaatejekddvltxyye`) and staging (`ujtlwnoqfhtitcmsnrpq`) via Supabase MCP `apply_migration`. Live MCP `initialize` handshake against `https://edge.arkova.ai/mcp` returned HTTP 200 with `serverInfo.name=arkova-verification, protocolVersion=2024-11-05` against the HakiChain sandbox key. Cloudflare KV write to `MCP_ORIGIN_ALLOWLIST_KV` (5ace0a24…) at `allow:c75d84b9-…` permits the sandbox key with wildcard CIDR.
 
-**Gate 7:** Pending CI.
+**Prod state changes this session (verified via Supabase MCP `execute_sql` against project_ref `vzwyaatejekddvltxyye`):**
 
-**Jira:** [SCRUM-1790](https://arkova.atlassian.net/browse/SCRUM-1790) — In Progress.
+* Migration `0297_test_credit_pool` applied — `org_credits.is_test`, `org_credits.anchor_quota`, `idx_org_credits_is_test` partial index. Verified via `information_schema.columns` + `pg_indexes`.
+* Migration `0298_anchor_quota_nonneg_check` applied — `org_credits_anchor_quota_nonneg` CHECK constraint. Verified via `pg_constraint`.
+* Migration `0299_validate_api_key_rpc` applied — `private` schema, `private.api_key_settings` (singleton, service-role only), `public.validate_api_key(text)` SECURITY DEFINER function. HMAC secret seeded matching arkova1 GCP `api-key-hmac-secret`. Verified via `SELECT public.validate_api_key('ak_test_…')` returning `{user_id, tier, api_key_id, scopes}`.
+* Sandbox org `[SANDBOX] hakichain` (id `ca1c9a22-5ac7-412e-b501-f48ba1897ded`) + `org_credits` (`anchor_quota=10`, `balance=5`, `purchased=5`, `is_test=true`) + `api_keys` (id `c75d84b9-…`, prefix `ak_test_Yqhm`, scopes `[verify, read:search, read:records, read:orgs, anchor:write]`).
+* Carson's `subscriptions` row rolled forward (was 18 days stale, plan_id professional → organization, period 2026-05-08 → 2026-06-07) — workaround for SCRUM-1791.
 
-### 2026-05-08 — SCRUM-1789 Upload flow verification (PR #739, T1)
+**Staging state (project_ref `ujtlwnoqfhtitcmsnrpq`) mirrors prod for the new migrations + sandbox org + new key.**
 
-Same PR as SCRUM-1786/1787/1788. Branch `claude/quirky-meitner-338bda`.
+**Cloudflare state (Worker `arkova-edge`, KV namespace `5ace0a24154a4731b263285890ae3a10`):**
 
-**Problem:** Feature 7 (Upload) in the retroactive staging plan lacked documented upload surfaces, FileUpload routing test coverage, and product expectations evidence.
+* Wrote `allow:c75d84b9-75c8-493a-9aae-0b00701e92ba` = `{"mode":"allowlist","cidrs":["0.0.0.0/0","::/0"]}`. `MCP_ALLOWLIST_HMAC_SECRET` is unset on the worker so the legacy raw-JSON entry shape is accepted (per `mcp-origin-allowlist.ts` back-compat path).
 
-**Fix:** Added 14 tests for FileUpload component (single file routing with fingerprint, multi-file bulk routing, CSV/XLSX detection, disabled-state blocking, isBulkUploadFile/isJsonFile helpers). Documented 7 upload surfaces with mode detection, auth requirements, and test evidence pointers.
+**Followups filed this session:**
 
-**Tests:** 1,923 total (15 new FileUpload tests incl. disabled-state). `typecheck` + `lint` + `test` + `lint:copy` all green.
+* **SCRUM-1791** [BUG] `subscriptions.current_period_*` never auto-rolls forward (Carson's account hit it; manual SQL roll applied; root cause unfixed).
+* **SCRUM-1792** [Story] Operator-bypass for per-user monthly anchor counter (3,581+/100 over-limit toast on Carson's account because `get_user_monthly_anchor_count` conflates operator activity with billing usage).
+* **SCRUM-1793** [BUG] MCP edge `validate_api_key` RPC missing — RESOLVED in PR #741.
 
-**Soak tier:** T1 Smoke (pure additive tests, no migration/cron/chain).
+**Partner-facing artifacts:**
 
-**What's done:** Tests written and passing (gate 1). Jira updated with Confluence URL (gate 2). Confluence page [44236801](https://arkova.atlassian.net/wiki/spaces/A/pages/44236801) (gate 3). Bug log N/A (gate 4). agents.md updated (gate 5). HANDOFF.md updated (gate 6).
+* Confluence quickstart page **43515913** v4 (corrects v1 mistakes about hostname `.io` → `.ai`, webhook signature `${timestamp}.${body}` not bare body, 10s timeout not 30, exponential 2/4/8/16/32s retry not 1m/5m/30m, `record_uri` returns `app.arkova.ai/verify/...` not `arkova.io/verify/...`, includes legacy `verify` scope which v1 verify endpoint requires, lists v2 endpoint paths mounted at `/api/v2/` root not `/api/v2/agent/`).
+* Google Doc **https://docs.google.com/document/d/1bxsfpiuG-gCxSSGREbiQbOs2yjlW7KsuYn2oJ0km0bM/edit** (v4 mirror of the Confluence page).
+* Earlier Google Doc v1/v2 (`1nZLbiiWObFtKfHZlpNNrA1DC4f9DSNsHCwJuxbb8QSs`, `1icjgvGvNLYhb0aRNjE0gTTrNoCylp428tjx0YwIRxS4`) are stale — superseded by v4. Recommend deleting them when convenient.
 
-**Staging UI verification (2026-05-08, dev server pointed at staging Supabase `ujtlwnoqfhtitcmsnrpq`):**
-- Authenticated as `staging-test@arkova.io` (INDIVIDUAL role, test user created for staging)
-- Dashboard "Secure Document" button renders in My Records section and empty state
-- SecureDocumentDialog opens: title "Arkova Secure Document" with Arkova icon
-- Privacy notice "File never leaves your device" — Constitution 1.6 compliance confirmed
-- FileUpload drop zone: "Drag and drop your document here", format hint "Single document, CSV/XLSX for bulk upload, or multiple files"
-- File input, Cancel, Continue, Close buttons all present
-- All staging API calls return 200: profiles, get_flag (×6), get_user_monthly_anchor_count, subscriptions, get_user_credits, anchors
-- No console errors from upload dialog
-- Desktop (1280px) and mobile (375px) layouts verified
+**What's NOT done before Mon 2026-05-11 launch (truth, not aspiration):**
 
-**Confluence updated:** Page [44236801](https://arkova.atlassian.net/wiki/spaces/A/pages/44236801) — staging verification section added (2026-05-08).
+* No PR merged — Carson's gate.
+* CodeRabbit credits exhausted — 5 PRs stuck `CHANGES_REQUESTED`.
+* T3 48h soak for SCRUM-1736 — mathematically infeasible Fri afternoon → Mon launch. Decision needed: scope-drop the producer to post-launch OR override §1.12 with a one-time exception (Carson).
+* T2 4h soak for SCRUM-1740 — feasible if started immediately Sat AM.
+* `api.arkova.ai` DNS — not configured (10-min Cloud Run console task; Carson).
+* Confluence "Webhooks" topic page (Doc Update Matrix §4) — exists at SCRUM-1735 SOC 2 page (42663964) but the canonical `Webhooks` topic page for partner-facing reference still inherits the brief at 42532874.
+* `agents.md` audit per touched folder — only `services/worker/src/webhooks/agents.md` updated this session.
+* Per-story Confluence pages MISSING for SCRUM-1731, 1732, 1733, 1736, 1740, 1793, 1791, 1792.
+* HakiChain receiver round-trip — partner action, gates SCRUM-1737 + AC8 of SCRUM-1729.
 
-**Gate 7:** Pending CI.
+_Last refreshed: 2026-05-08 by claude — claims verified against gcloud/MCP/CI output (Supabase MCP apply_migration returned success on 0297/0298/0299; SELECT verifications captured; live MCP initialize handshake screenshot in PR #741; gcloud secrets access for HMAC secret value via arkova1 secret manager; gh pr view confirms PR open state and commit SHAs)._
 
-**Jira:** [SCRUM-1789](https://arkova.atlassian.net/browse/SCRUM-1789) — In Progress.
+### 2026-05-08 — SCRUM-1743 Phase 1: credential.* webhook event contracts ([PR #740](https://github.com/carson-see/ArkovaCarson/pull/740), branch `claude/scrum-1743-credential-webhooks`)
 
-### 2026-05-08 — SCRUM-1788 Search verification: privacy gates, RLS isolation (PR #739, T1)
+PR #740 is **open, not merged** — bench-state entry. Closes the marketing-vs-reality gap discovered while editing `arkova-marketing` (separate repo, `https://arkova.ai`): the marketing site advertised webhook events for "credential issuance, verification, and status-change" but the worker only emitted `anchor.secured` / `anchor.revoked` / `anchor.expired`. This PR ships the **contract layer** for three new `credential.*` event types so customers can subscribe today; per-event emit-point wiring is split into Phase-2 follow-up tickets.
 
-Same PR as SCRUM-1786/1787. Branch `claude/quirky-meitner-338bda`.
+**What lands:**
+* `services/worker/src/webhooks/payload-schemas.ts` — three new Zod schemas (`CredentialIssuedPayloadSchema`, `CredentialVerifiedPayloadSchema`, `CredentialStatusChangedPayloadSchema`) added to `PAYLOAD_SCHEMAS_BY_EVENT_TYPE` map. Strict allowlist: `public_id` only (incl. new `recipient_public_id`), no internal UUIDs, no fingerprint, RFC 3339 timestamps. `credential.verified` accepts terminal states only (SECURED / REVOKED / EXPIRED). `credential.status_changed` rejects no-op transitions via `.refine()`.
+* `services/worker/src/api/v1/webhooks-schemas.ts` — `VALID_WEBHOOK_EVENTS` extended so `POST /webhooks` accepts subscriptions to the new types. Without this, the docs claim "subscribe today" was false; CRUD would 400.
+* `services/worker/src/api/v1/docs.ts` — three OpenAPI enum sites (lines 765, 854, 1318) updated.
+* `services/worker/src/webhooks/payload-schemas.test.ts` + `webhooks-crud.test.ts` — 39 new tests. Total 85/85 passing.
+* `docs/api/webhooks.md` — Event Types section split into Anchor Lifecycle (stable) + Credential Lifecycle (contract defined, emit-point pending).
 
-**Problem:** Feature 6 (Search) in the retroactive staging plan lacked documented product expectations, privacy gate test coverage, and RLS isolation evidence.
+**Code review (round 1):** independent review found 1 BLOCKER (`VALID_WEBHOOK_EVENTS` gap inside services/worker) + 3 MAJORs (no-op transition refine, semantically-bogus PENDING in `credential.verified`, missing `recipient_public_id`) + 4 MINORs. All addressed in commit `9aecec18`.
 
-**Fix:** Added 12 new tests for `useOrgProfile` (privacy anonymization), `usePublicMemberProfile` (is_public_profile gate), and `useOrgSubtree` hooks. Documented 8 search surfaces with auth requirements, scope, and privacy gates. Confirmed existing cross-tenant isolation tests (SCRUM-1224) and p95 < 200ms response-time threshold.
+**Gap analysis (round 2):** broader audit across the full repo found 1 BLOCKER + 4 MAJORs that the worker-only review missed: doc-vs-schema PENDING contradiction in `docs/api/webhooks.md`, hardcoded UI dropdown (with a stale `anchor.created` entry) in `src/components/webhooks/WebhookSettings.tsx`, narrow `WebhookEventType` union in `packages/sdk/src/types.ts`, anchor-only `VALID_EVENTS` in `integrations/zapier/src/constants.ts`, and `services/worker/agents.md` not updated. All addressed in commit `b34740d5`. Two pre-existing drift items the audit surfaced (asymmetric subscribe-vs-emit on `anchor.submitted`/`anchor.batch_secured`, missing `AnchorExpiredPayloadSchema`) are split into separate spawn tasks per CLAUDE.md narrow-scope discipline — not bundled into this PR.
 
-**Tests:** 1,893 total (12 new). `typecheck` + `lint` + `test` + `lint:copy` all green.
+**Local verification on branch tip `b34740d5`:** worker `npx tsc --noEmit` clean, frontend `npx tsc --noEmit` clean, full worker `vitest run --exclude='**/zk-proof.test.ts'` **5291/5291 passing across 394 files**, `vitest run WebhookSettings.test.tsx` **23/23 passing**, `npm run lint` 0 errors (323 pre-existing warnings, none in changed files), `npm run lint:copy` clean.
 
-**Soak tier:** T1 Smoke (pure additive tests, no migration/cron/chain).
+**Staging deploy verified.** Tier T2 (public API surface). Image `us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker:scrum1743-9aecec18` (digest `sha256:a2f60bc3e0e90a17dfada058dcf443afee0e29a75c1c6907c0f6744e3f075b35`) built locally, pushed via compute SA, deployed to `arkova-worker-staging` as revision `arkova-worker-staging-00024-6w8` serving 100% traffic. Smoke checks against `https://arkova-worker-staging-270018525501.us-central1.run.app`: `/health` returns `{status:healthy, git_sha:"9aecec18f341ad8f00f9e1ffc1eedac4871e97fe", checks:{database:ok,anchoring:ok,kms:ok}}` (HTTP 200 with audience-bound ID token). `/api/v1/openapi.json` exposes all three credential.* event types in the served spec. Worker boots cleanly with the staging env-var matrix (USE_MOCKS=true, ENABLE_PROD_NETWORK_ANCHORING=false, BATCH_ANCHOR_MAX_SIZE=100).
 
-**What's done:** Tests written and passing (gate 1). Jira updated with Confluence URL (gate 2). Confluence page [44138497](https://arkova.atlassian.net/wiki/spaces/A/pages/44138497) (gate 3). Bug log N/A (gate 4). agents.md updated (gate 5). HANDOFF.md updated (gate 6).
+**Staging soak status.** Smoke test passed; full 4h soak harness not yet run for this PR — the runtime change in this PR is contract-only (new schemas + dispatch-map entries dormant until Phase-2 emit points wire), so the soak surface is bounded to "worker still boots and validates anchor.* payloads identically." Carson to decide whether the standard T2 4h soak applies or a smoke-only window is sufficient given the dormant-contract scope.
 
-**Staging DB verification (2026-05-08):**
-- Created 5 public profiles + 6 role-assigned profiles (2 INDIVIDUAL, 2 ORG_ADMIN, 2 ORG_MEMBER) as staging fixtures
-- `get_public_member_profile('mzuxsdsyhzvx')` (public) → returns data with display_name, public_id, organizations array
-- `get_public_member_profile('ans86r3fujts')` (private) → returns `{"error": "Profile not found"}` — privacy gate confirmed
-- `get_org_subtree(uuid, 2)` → returns hierarchy with depth, display_name, verification_status
-- All 5 search RPCs present on staging: `search_public_issuers`, `get_public_issuer_registry`, `get_public_org_profile`, `get_org_subtree`, `get_public_member_profile`
+**Phase 2 follow-ups (not in this PR):** emit-point wiring at credential creation (`credential.issued`), `/api/v1/verify/*` (`credential.verified`), and the anchor state machine (`credential.status_changed`). Each will be a separate ticket so the staging soak surface is bounded per-emit-point. Marketing copy on arkova.ai already softened to "anchor lifecycle today; credential-lifecycle on the roadmap" in commit `df29bcd` of `arkova-marketing` — that copy stays accurate until Phase 2 lands.
 
-**Staging UI verification (2026-05-08, dev server pointed at staging Supabase `ujtlwnoqfhtitcmsnrpq`):**
-- Authenticated as `staging-test@arkova.io` (INDIVIDUAL role, test user created for staging)
-- Search page renders at /search: title "Arkova Search — Verify Credentials", heading "Search & Verify"
-- Search input accepts query, form submits against staging RPC
-- Graceful degradation: `search_public_credentials` RPC not on staging → "No credentials found" (no crash)
-- File drop zone "Drop or browse a file to verify" renders
-- Footer links (About, Developer API, Privacy, Terms) present
-- Desktop (1280px) and mobile (375px) layouts verified
-- Console: only pre-existing `search_public_credentials` RPC error (not a regression)
+_Last refreshed: 2026-05-08 by Claude — claims verified against vitest output (5291/5291 worker + 23/23 UI passing), `gh pr view 740` (open, not merged), [Tests CI run 25564473265](https://github.com/carson-see/ArkovaCarson/actions/runs/25564473265), `gcloud run services describe arkova-worker-staging` (`arkova-worker-staging-00024-6w8` Ready=True traffic=100%), and live `/health` + `/api/v1/openapi.json` curls against the staging worker URL._
 
-**Confluence updated:** Page [44138497](https://arkova.atlassian.net/wiki/spaces/A/pages/44138497) — staging verification section added (2026-05-08).
 
-**Gate 7:** Pending CI.
+### 2026-05-04 (evening, post-cutover) — SCRUM-1668 Path C baseline prod ledger row recorded ([PR #700](https://github.com/carson-see/ArkovaCarson/pull/700) not merge-ready)
 
-**Jira:** [SCRUM-1788](https://arkova.atlassian.net/browse/SCRUM-1788) — In Progress.
+> **This entry supersedes Path C references in the late-evening entry below** (which was written when Path C was a separate session and PR #700 hadn't been opened yet). Where the two conflict, this entry is current.
 
-### 2026-05-08 — SCRUM-1787 Role-aware home navigation shortcut (PR #739, T1)
+PR [#700](https://github.com/carson-see/ArkovaCarson/pull/700) remains the Path C pg_dump baseline branch. The baseline file and archived historical migrations are atomic: do not split one without the other. The branch is reconciled onto current `main` after PR #728/#729.
 
-Same PR as SCRUM-1786. Branch `claude/quirky-meitner-338bda`.
+**Verification artifact:** [`docs/staging/PATH_C_VERIFICATION_2026-05-04.md`](./docs/staging/PATH_C_VERIFICATION_2026-05-04.md) — durable record with the actual SQL queries + JSON outputs that gated this work (ledger INSERT RETURNING, schema-object diff queries vs prod, invalid-index diagnostic, extension-placement verification). The artifact includes `pg_class`, `pg_indexes`, `pg_proc`, and `information_schema` checks for auditability.
 
-**Problem:** Sidebar logo hardcoded to `/search` for all users. Should route to role-appropriate destination (`/dashboard`, `/onboarding/role`, `/onboarding/org`, `/review-pending`).
+**Prod ledger reconciliation on 2026-05-04 via Supabase MCP `execute_sql` against project `vzwyaatejekddvltxyye`.** `INSERT ... RETURNING` returned `[{"version":"00000000000000","name":"baseline_at_main_HEAD","stmt_count":4}]` — full SQL + result captured in [PATH_C_VERIFICATION_2026-05-04.md §1](./docs/staging/PATH_C_VERIFICATION_2026-05-04.md). Single-row metadata write to `supabase_migrations.schema_migrations`; zero DDL, zero data change, zero downtime. Schema is unchanged (the baseline IS prod's schema). Rollback is `DELETE FROM supabase_migrations.schema_migrations WHERE version = '00000000000000'`.
 
-**Fix:** Sidebar.tsx now calls `useProfile().destination` + `destinationToRoute()` to compute the logo's `to` prop. Pure frontend — no migration, no cron, no chain.
+**Repo-side change** ([PR #700](https://github.com/carson-see/ArkovaCarson/pull/700)): baseline file `supabase/migrations/00000000000000_baseline_at_main_HEAD.sql` (544kb, byte-faithful pg_dump --schema-only output with the supabase CLI's idempotency sed pipeline applied + `WITH SCHEMA extensions` on pgcrypto/uuid-ossp/http/moddatetime/pg_stat_statements to match prod placement), 285 historical migrations archived to `docs/migrations-archive/` via `git mv` (rename history preserved), `docs/staging/PATH_C_CUTOVER.md` cutover record, drift-gate exempt entry removed in this PR (prod ledger row exists). PR #700 is not merge-ready: CI and CodeRabbit are still red and a real worker/staging validation path is still owed.
 
-**Tests:** 15 green (5 new destination-mapping tests + 10 existing). TDD red-green-refactor. `typecheck` + `lint` + `test` + `lint:copy` all green.
+**PHASE 5 schema-equivalence check (PASSED) — NOT a §1.12 T2 soak.** This was a schema-object diff only: does applying the baseline to an empty DB produce the same set of tables/functions/policies/etc. as prod? Yes — verified against branch `aljheljcsrgbtgyshfss` (off staging `ujtlwnoqfhtitcmsnrpq`), wiped to empty, baseline applied via Management API. 8/8 categories match exactly (tables 94/94, extensions 13/13, enums 28/28, functions 328/328, policies 189/189, triggers 44/44, constraints 418/418). Indexes 393/390 — gap is 3 prod-side invalid indexes (`pg_index.indisvalid=false`, failed `CREATE INDEX CONCURRENTLY` runs); pg_dump correctly excludes them. See [PATH_C_VERIFICATION_2026-05-04.md §2-3](./docs/staging/PATH_C_VERIFICATION_2026-05-04.md). Verification branch deleted post-verify (~$0.002 cost).
 
-**Soak tier:** T1 Smoke (pure additive frontend, no migration/cron/chain).
+**A real §1.12 worker/staging validation path is still owed before #700 is Done.** It requires a Docker worker build/run and/or the `arkova-worker-staging` Cloud Run service running against an approved staging DB under synthetic load — anchors, cron cycles, E2E flows — to verify the schema works under application behavior, not just object existence. Shared staging ownership is active in parallel work (#695/#697), so #700 must either wait for that lease or use an explicitly approved isolated environment. Until then, this entry is honest: **schema check only, not behavior check.**
 
-**What's done:** Tests written and passing (gate 1). Jira updated with Confluence URL (gate 2). Confluence page [44072961](https://arkova.atlassian.net/wiki/spaces/A/pages/44072961) (gate 3). Bug log N/A (gate 4). agents.md updated (gate 5). HANDOFF.md updated (gate 6).
+**Fresh-DB RLS + worker CI status:** the first post-#722 CI run exposed real fresh-baseline/security mismatches in `npm run test:rls`: recursive `memberships_select_org_members`, stale browser-direct `audit_events_insert_own`, and unguarded `get_anchor_tx_stats`, plus stale switchboard test expectations from the old `id/value/is_dangerous` schema. Forward migration `0295_pr700_rls_baseline_reconciliation.sql` fixes the real prod-bound policy/RPC issues without rewriting the baseline; RLS tests now target the current `flag_key/enabled` switchboard shape. Carson explicitly authorized Codex to apply `0295`; prod first recorded schema-applied row `20260506113532 / 0295_pr700_rls_baseline_reconciliation`, then after Carson clarified Arkova's hard migration rules on 2026-05-06 and gave explicit repair sign-off, Codex reconciled that metadata row to `0295 / pr700_rls_baseline_reconciliation` with a guarded Supabase Management API transaction. Evidence is in [`docs/staging/PR700_PROD_0295_VERIFICATION_2026-05-06.md`](./docs/staging/PR700_PROD_0295_VERIFICATION_2026-05-06.md). #700 now adds a stricter PR-owned numeric migration drift check so the old name-normalizing gate cannot hide this class of drift again. Worker tests that inspect archived historical migrations now resolve `supabase/migrations/` first and `docs/migrations-archive/` as fallback.
 
-**Staging DB verification (2026-05-08):**
-- Staging has 6 profiles with roles (2 INDIVIDUAL, 2 ORG_ADMIN, 2 ORG_MEMBER) — fixtures created this session
-- Role enum values confirmed: INDIVIDUAL, ORG_ADMIN, ORG_MEMBER
-- `useProfile().destination` reads from profiles.role — schema exists and roles are populated
+**Anchor batch-policy emergency fix:** PR #700 now also removes the ordinary one-by-one pending-anchor broadcast path: `processPendingAnchors()` is a compatibility no-op and the in-process one-minute `process-pending-anchors` schedule is gone. `batch-anchor.ts` now probes indexed threshold rows (3,000th and 10,000th pending) instead of depending on exact/fast pending counts; this fixes the prod-scale failure where `get_anchor_status_counts_fast()` returned `PENDING: -1` and the normal batch cron deferred forever. Prod read-only evidence captured 208,067 `PENDING` anchors at ~2026-05-06T12:20Z; oldest pending was 2026-04-22T03:49:59Z (~344.5h old), and both 3k/10k threshold probes crossed with pipeline-sourced rows. Evidence: [`docs/staging/PR700_ANCHOR_POLICY_VERIFICATION_2026-05-06.md`](./docs/staging/PR700_ANCHOR_POLICY_VERIFICATION_2026-05-06.md). Local worker checks after this fix: focused Vitest 274/274, `npm run typecheck`, `npm run lint` (0 errors / existing warnings).
 
-**Staging UI verification (2026-05-08, dev server pointed at staging Supabase `ujtlwnoqfhtitcmsnrpq`):**
-- Created staging test user `staging-test@arkova.io` (ID `1d2b80db-...`, INDIVIDUAL role) with password
-- Authenticated login → redirects to `/dashboard`, sidebar renders with logo link
-- Sidebar logo aria-label "Arkova — go home", `href` confirmed as `/dashboard` for INDIVIDUAL role
-- Dashboard, Search nav items in sidebar; Auditor Mode, Theme, Collapse toggles present
-- Desktop (1280px) and mobile (375px) layouts verified
+**Now unblocked:** PR #697 (carryover bug fixes + 0290) and PR #695 (SCRUM-1135 + 0291) T2 staging soaks were blocked on the rig + the lettered-suffix migration-builder bug. With Path C live, every fresh-DB stand-up replays only the baseline + 0291+, sidestepping the bug entirely. **NOTE:** PR #695 and PR #697 already collide on 0290 with each other (different content, same prefix) regardless of Path C — that pre-existing renumber must happen before either lands; not Path C's problem to solve. The over-inclusive list of conflicting PRs in earlier session messages was corrected: only #691 (0055b), #695 (0290+0291), and #697 (0290) actually touch `supabase/migrations/`; #693 (zk circuit) and #696 (Drive runner) do not.
 
-**Gate 7:** Pending CI.
+**Honest carry-over for next session:**
 
-**Jira:** [SCRUM-1787](https://arkova.atlassian.net/browse/SCRUM-1787) — In Progress.
+* **PR #700 not yet merge-ready.** As of last check: `MERGEABLE | BLOCKED` with `reviewDecision: CHANGES_REQUESTED` from CodeRabbit. Red checks: Tests, Memory Feedback Rules, HANDOFF.md Verification Lint, Dependency Scanning, CodeRabbit. Findings addressed in commit `43073507`: pgcrypto schema fix (codex-bot P1), README index-claim clarification, cutover doc TBD-placeholder cleanup, bash brace expansion fix, sonar full exclusions promoted from cpd-only to full exclusions for migrations.
+* **Tiny follow-up still owed:** `docs/runbooks/gcp-max-setup.md` line 97 references `0235_cloud_logging_queue.sql` by name; needs to be updated to point at the baseline or the archived path. Not a blocker for the merge.
+* **Pre-baseline 0290** (PR #697) is captured in the baseline (since 0290 was already present in prod when the dump was taken). PR #697's 0290 file is a no-op idempotent re-apply on top of the baseline — drop from #697's diff or keep as 0291 on top after PR #695's 0291 lands.
+* **Stories still in `To Do`** (SCRUM-1668/1669/1670/1671). Carson is reporter on all four → Reporter ≠ Resolver Atlassian rule means transition to Done requires a non-Carson resolver.
 
-### 2026-05-08 — SCRUM-1786 Treasury cache sentinel fix (PR #739, T3 soak in progress)
-
-PR [#739](https://github.com/carson-see/ArkovaCarson/pull/739) is **open, not merged**. Branch `claude/quirky-meitner-338bda`. No prod state changed.
-
-**Problem:** `fetchAnchorStats()` called `get_anchor_status_counts_fast` RPC whose 1-second per-status `SET LOCAL statement_timeout` timed out on the 2.9M-row `anchors` table, caching -1 sentinels into `treasury_cache` singleton → UI showed -1.
-
-**Fix (two layers):**
-1. **Primary:** `anchor-stats.ts` now reads from `pipeline_dashboard_cache` (refreshed every 2 min via `pg_class.reltuples` — instant, no timeout) instead of the RPC.
-2. **Defense-in-depth:** `treasury-cache.ts` sentinel guard — before upserting, if any of `total_secured`/`total_pending`/`last_24h_count` is -1, read existing cache row and preserve last-good values.
-
-**Tests:** 12 green (6 anchor-stats + 6 treasury-cache), TDD red-green-refactor. `typecheck` + `lint` + `test` + `lint:copy` all green.
-
-**Staging verified:** `arkova-worker-staging` rev `00022-8pk`. Pre-fix: `total_secured=0, total_pending=0`. Post-fix: `total_secured=17585, total_pending=1025, last_secured_at=2026-05-07T13:18:00` — exact match with `pipeline_dashboard_cache`.
-
-**Soak tier:** T3 Critical (treasury cron ≤10 min against anchors-adjacent data). Started 2026-05-08T14:34Z, ends ~2026-05-10T14:34Z.
-
-**Deferred:** 4 other callers of `get_anchor_status_counts_fast` (health check, admin-stats, batch-anchor, mainnet-migration) still hit the 1s timeout. Treasury cache was highest-impact.
-
-**DoD gates met:** Tests (gate 1), Jira updated with Confluence URL (gate 2), Confluence page [43876353](https://arkova.atlassian.net/wiki/spaces/A/pages/43876353) (gate 3), Bug logged as BUG-2026-05-08-001 (gate 4), agents.md created in `services/worker/src/utils/` + `services/worker/src/jobs/` (gate 5), HANDOFF.md updated (gate 6). Gate 7 (workflow validators) pending CI on this commit.
-
-**Jira:** [SCRUM-1786](https://arkova.atlassian.net/browse/SCRUM-1786) — In Progress (stays In Progress until T3 48h soak completes).
-
-_Last refreshed: 2026-05-08 by Claude — claims verified against staging Supabase (`ujtlwnoqfhtitcmsnrpq`) via dev server pointed at staging + MCP queries._
+**Still required before #700 is Done/merge-ready:** final branch-protection checks green on the latest pushed head, review approval, and real #700 worker/staging behavior evidence. Shared staging is active in parallel work, so #700 should not acquire or mutate it without coordination; use an explicitly approved isolated environment or wait for the staging lease. Until that evidence is captured, #700 remains honest as schema-equivalence plus CI/fresh-DB/prod-schema validation, not a completed T2/T3 behavior soak.
 
 ### 2026-05-06 — PR #711 SCRUM-1545 coverage backfill merge-resolution pass
 
@@ -1262,3 +1234,7 @@ _Last refreshed: 2026-05-04 by claude — claims verified against gcloud/MCP/CI 
 ---
 
 _Last refreshed: 2026-05-05 by Codex — claims verified against gcloud/MCP/CI output (PR #713 merged at `920ea73209a28b6e40962fae2f9f0960caaa1f6e`; Deploy Worker run https://github.com/carson-see/ArkovaCarson/actions/runs/25379033971 succeeded; prod health returned git sha `920ea73209a28b6e40962fae2f9f0960caaa1f6e`; gcloud Cloud Run latest ready revision returned `arkova-worker-00590-piz`; SonarCloud API returned main Quality Gate ERROR with previous-version baseline date `2026-03-11T00:33:32Z`; Secret Manager Sonarcloud Token authenticated successfully; SonarCloud settings API returned leak period date `2026-05-05`; PR #716 merged at `7d0b50c09cacef9b4040363ce5e532b445996033`; main CI run https://github.com/carson-see/ArkovaCarson/actions/runs/25392542032 succeeded; SonarCloud guard job https://github.com/carson-see/ArkovaCarson/actions/runs/25392542032/job/74470613563, Tests job https://github.com/carson-see/ArkovaCarson/actions/runs/25392542032/job/74470979087, and E2E job https://github.com/carson-see/ArkovaCarson/actions/runs/25392542032/job/74472081118 succeeded; MCP confirmed SCRUM-1681 status Done and Confluence pages 38207489/28115270 updated)._
+
+---
+
+_Last refreshed: 2026-05-06 by Codex — claims verified against gcloud/MCP/CI output (PR 700 prod migration applied by Supabase Management API after Carson's explicit authorization; prod ledger and RLS evidence captured in the PR body; Migration Drift rerun https://github.com/carson-see/ArkovaCarson/actions/runs/25429502352/job/74603343923 passed with all local migrations applied in prod)._

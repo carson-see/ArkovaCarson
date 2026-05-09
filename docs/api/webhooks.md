@@ -56,11 +56,25 @@ API keys are scoped to a single organization. All webhook operations are automat
 
 ## Event Types
 
-| Event | Fired When |
-|---|---|
-| `anchor.secured` | Anchor transitions from `PENDING`/`SUBMITTED` → `SECURED` after network confirmation |
-| `anchor.revoked` | Anchor is revoked by an org admin (revocation receipt published on-chain) |
-| `anchor.expired` | Anchor's `expires_at` timestamp passes |
+Arkova emits two families of events: the **anchor lifecycle** (chain-level state of the cryptographic proof) and the **credential lifecycle** (issuer-and-recipient-level state of the credential itself). Most integrations only need the anchor family — the credential family is for systems that care about issuance and verification activity per-credential, separately from on-chain confirmation timing.
+
+### Anchor Lifecycle
+
+| Event | Fired When | Status |
+|---|---|---|
+| `anchor.secured` | Anchor transitions from `PENDING`/`SUBMITTED` → `SECURED` after network confirmation | Stable |
+| `anchor.revoked` | Anchor is revoked by an org admin (revocation receipt published on-chain) | Stable |
+| `anchor.expired` | Anchor's `expires_at` timestamp passes | Stable |
+
+### Credential Lifecycle (SCRUM-1743)
+
+| Event | Fired When | Status |
+|---|---|---|
+| `credential.issued` | An organization issues a credential to a recipient (fires before chain confirmation; pair with `anchor.secured` for the on-chain finality signal) | Contract defined; emit-point implementation in active development |
+| `credential.verified` | An `/api/v1/verify/*` call resolves a credential to a terminal status — `SECURED` / `REVOKED` / `EXPIRED`. (Non-terminal `PENDING`/`SUBMITTED` lookups don't fire this event; verification implies a final answer.) | Contract defined; emit-point implementation in active development |
+| `credential.status_changed` | Any credential status transition (revocation, expiry, re-issuance) — emits the `previous_status` and `new_status` for reconciliation | Contract defined; emit-point implementation in active development |
+
+**Contract-defined, emit-point pending:** the payload schemas, dispatch validation, HMAC signing, and webhook CRUD acceptance for `credential.*` events are live in this release. You can register webhook subscriptions for them today via `POST /webhooks` (or update an existing subscription); deliveries begin once the per-event emit points land in follow-up Phase-2 stories. The schemas obey the same allowlist rules as anchor events: `public_id`-only (including `recipient_public_id`), no internal UUIDs, no fingerprint, RFC 3339 timestamps with explicit timezone (`Z` or `±HH:MM`). See `services/worker/src/webhooks/payload-schemas.ts` for the canonical contract.
 
 You can subscribe to any subset of these events per endpoint. The default at registration time is `['anchor.secured', 'anchor.revoked']`.
 

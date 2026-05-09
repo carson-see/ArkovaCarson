@@ -30,7 +30,7 @@ const mockEndpoints = [
   {
     id: 'ep-2',
     url: 'https://other.com/hooks',
-    events: ['anchor.created'],
+    events: ['anchor.expired'],
     is_active: false,
     created_at: '2026-03-09T12:00:00Z',
   },
@@ -61,7 +61,7 @@ describe('WebhookSettings', () => {
       expect(screen.getByText('https://other.com/hooks')).toBeInTheDocument();
       expect(screen.getByText('anchor.secured')).toBeInTheDocument();
       expect(screen.getByText('anchor.revoked')).toBeInTheDocument();
-      expect(screen.getByText('anchor.created')).toBeInTheDocument();
+      expect(screen.getByText('anchor.expired')).toBeInTheDocument();
     });
 
     it('shows active/inactive status icons', () => {
@@ -120,7 +120,11 @@ describe('WebhookSettings', () => {
       // anchor.secured and anchor.revoked should be checked by default
       expect(checkboxes[0]).toBeChecked(); // anchor.secured
       expect(checkboxes[1]).toBeChecked(); // anchor.revoked
-      expect(checkboxes[2]).not.toBeChecked(); // anchor.created
+      expect(checkboxes[2]).not.toBeChecked(); // anchor.expired
+      // SCRUM-1743: credential.* events available but not default-checked
+      expect(checkboxes[3]).not.toBeChecked(); // credential.issued
+      expect(checkboxes[4]).not.toBeChecked(); // credential.verified
+      expect(checkboxes[5]).not.toBeChecked(); // credential.status_changed
     });
 
     it('validates URL must start with https://', async () => {
@@ -168,13 +172,17 @@ describe('WebhookSettings', () => {
 
       const checkboxes = screen.getAllByRole('checkbox');
 
-      // Toggle anchor.created on
+      // Toggle anchor.expired on
       await userEvent.click(checkboxes[2]);
       expect(checkboxes[2]).toBeChecked();
 
       // Toggle anchor.secured off
       await userEvent.click(checkboxes[0]);
       expect(checkboxes[0]).not.toBeChecked();
+
+      // SCRUM-1743: credential.* opt-in works the same way
+      await userEvent.click(checkboxes[3]); // credential.issued
+      expect(checkboxes[3]).toBeChecked();
     });
 
     it('calls onAdd with URL and events on valid submission', async () => {

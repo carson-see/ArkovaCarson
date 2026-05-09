@@ -1,26 +1,30 @@
-# agents.md — services/worker/src/jobs/
-_Last updated: 2026-05-08_
+# services/worker/src/jobs/agents.md
 
-## What This Folder Contains
+Background workers for anchor lifecycle, billing reconciliation, drive ingestion, and chain maintenance.
 
-Cron job handlers invoked by Cloud Scheduler. Each export is registered in `src/index.ts` as a `/jobs/<name>` POST route, authenticated via `X-Cron-Secret` header.
+## Files
+- `anchor.ts` — `processPendingAnchors()` mints fingerprint Bitcoin txs.
+- `batch-anchor.ts` — `processBatchAnchors()` aggregates submitted-but-not-yet-broadcast anchors.
+- `check-confirmations.ts` — promotes SUBMITTED anchors to SECURED once block confirmations land.
+- `revocation.ts` — `processRevokedAnchors()` mints revocation receipts.
+- `chain-maintenance.ts` — reorg detection, stuck-tx monitor, fee-rate monitoring, UTXO consolidation, dropped-tx rebroadcast.
+- `broadcast-recovery.ts` — RACE-1 recovery: stuck BROADCASTING anchors → reset to PENDING.
+- `credit-expiry.ts` — `processMonthlyCredits()`.
+- **`anchorExpirySweep.ts` (SCRUM-1736)** — daily 03:00 UTC sweep that flips `anchors.status` from SECURED to EXPIRED past `expires_at` and dispatches `anchor.expired` outbound webhook. Compare-and-set on UPDATE guards against concurrent revocation. Sentinel `anchor.expired_dispatch_failed` audit row written if dispatch throws so manual recovery is possible (per CodeRabbit PR #734 review). Adapter validates every write via Zod (`AnchorIdSchema`, `AuditEventRowSchema`).
+- **`treasury-cache.ts`** — `refreshTreasuryCache()`. Fetches treasury balance, BTC price, fee rates, UTXO count, network info, and anchor stats (via `../utils/anchor-stats.ts`), then upserts into `treasury_cache` singleton. SCRUM-1786: sentinel guard prevents -1 from overwriting last-good cached values.
 
-## Key Files
-
-- **treasury-cache.ts** — `refreshTreasuryCache()`. Fetches treasury balance (mempool.space), BTC price, fee rates, UTXO count, network info, and anchor stats, then upserts into `treasury_cache` singleton (id=1). Called every 10 min. SCRUM-1786: sentinel guard prevents -1 from overwriting last-good cached values.
-- **anchor.ts** — `processAnchors()`. Core anchoring lifecycle — picks SUBMITTED anchors, broadcasts to Bitcoin, confirms on-chain.
-- **batch-anchor.ts** — `batchAnchors()`. Batch processing for high-volume anchor submission.
-- **check-confirmations.ts** — Polls Bitcoin for confirmation of previously-broadcast transactions.
-- **process-revocations.ts** — Processes anchor revocation requests.
+## Conventions
+- Every job exports a single `process<Domain>()` function returning `{processed, failed, errors}`.
+- Errors are logged + pushed to `errors[]` but never abort the loop — one bad row never starves the rest.
+- Audit failure is non-fatal; transition is the source of truth.
+- Service-role DB access only (no anon/authenticated path).
 
 ## Architecture Decisions
 
-- **Treasury cache sentinel guard** (SCRUM-1786): Before upserting, if any of `total_secured`, `total_pending`, `last_24h_count` is -1, read existing cache row and preserve last-good values. Defense-in-depth against upstream failures (pipeline_dashboard_cache unavailable, anchors query timeout).
-- **Anchor stats from pipeline_dashboard_cache** (SCRUM-1786): `fetchAnchorStats()` (in `../utils/anchor-stats.ts`) reads from `pipeline_dashboard_cache` instead of the `get_anchor_status_counts_fast` RPC. The RPC's 1s per-status timeouts produced -1 sentinels on the 2.9M-row anchors table.
+- **Treasury cache sentinel guard** (SCRUM-1786): Before upserting, if any of `total_secured`, `total_pending`, `last_24h_count` is -1, read existing cache row and preserve last-good values. Defense-in-depth against upstream failures.
+- **Anchor stats from pipeline_dashboard_cache** (SCRUM-1786): `fetchAnchorStats()` reads from `pipeline_dashboard_cache` instead of the `get_anchor_status_counts_fast` RPC. The RPC's 1s per-status timeouts produced -1 sentinels on the 2.9M-row anchors table.
 
-## Do / Don't Rules
-
-- **DO** authenticate all job routes with `X-Cron-Secret` — never expose jobs unauthenticated.
-- **DO** use `Promise.allSettled` for parallel external calls — one failure must not crash the job.
-- **DON'T** call real Bitcoin or Stripe APIs in tests — mock interfaces only (CLAUDE.md §1.7).
-- **DON'T** set `anchor.status = 'SECURED'` from client code — worker-only via service_role (CLAUDE.md §1.4).
+## Open work
+- SCRUM-1736 (PR #734) — anchorExpirySweep producer; awaiting Carson merge + Mon 2026-05-11 deploy.
+- SCRUM-1737 [Verify] — HakiChain receiver round-trip + Tier 3 48h soak post-merge.
+- SCRUM-1738 [Close-out] — Confluence Webhooks topic page update post-merge.

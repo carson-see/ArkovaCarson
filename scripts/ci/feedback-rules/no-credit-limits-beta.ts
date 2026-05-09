@@ -23,6 +23,8 @@ const VIOLATION_RES = [
   /raise\s+exception\s+using\s+errcode\s*=\s*['"]P0002['"]/i,
 ];
 
+const BASELINE_MIGRATION = 'supabase/migrations/00000000000000_baseline_at_main_HEAD.sql';
+
 interface Violation {
   file: string;
   line: number;
@@ -48,7 +50,7 @@ function checkFile(file: string): Violation[] {
 
 export function run(): { ok: boolean; message: string } {
   const overridden = hasLabel(LABELS.postBetaQuotaRollout);
-  const files = changedFiles('supabase/migrations/*.sql');
+  const files = changedFiles('supabase/migrations/*.sql').filter((file) => file !== BASELINE_MIGRATION);
   const violations = files.flatMap(checkFile);
 
   if (violations.length === 0) {

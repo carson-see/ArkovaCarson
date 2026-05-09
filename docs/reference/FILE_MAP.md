@@ -57,7 +57,7 @@ services/worker/
     chain/fee-estimator.ts                   <- StaticFeeEstimator (fixed rate) + MempoolFeeEstimator (live API)
     chain/utxo-provider.ts                   <- RpcUtxoProvider (Bitcoin Core RPC) + MempoolUtxoProvider (Mempool.space REST) + factory
     chain/wallet.ts                          <- Treasury wallet utilities (keypair generation, address derivation, WIF validation)
-    jobs/anchor.ts                           <- Process pending anchors
+    jobs/anchor.ts                           <- Submit already-claimed anchors; pending route is batch-policy no-op
     jobs/report.ts                           <- Report generation job
     jobs/webhook.ts                          <- Webhook dispatch job (stub)
     stripe/client.ts                         <- Stripe SDK + webhook signature verification

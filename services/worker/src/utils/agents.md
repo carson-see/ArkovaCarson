@@ -1,25 +1,23 @@
-# agents.md — services/worker/src/utils/
-_Last updated: 2026-05-08_
+# services/worker/src/utils/agents.md
 
-## What This Folder Contains
+Shared utilities consumed across the worker. Each file is small and single-purpose. Test colocated as `<name>.test.ts`.
 
-Shared utility modules for the worker service: database client, logger, RPC helpers, anchor stats fetcher, and other cross-cutting concerns.
+## Files
+- `db.ts` — Supabase service-role client. Lazy-initialized; throws if env not set.
+- `logger.ts` — pino logger with PII scrubbing (CLAUDE.md §1 Sentry rule).
+- `rpc.ts` — typed `callRpc()` wrapper over `db.rpc()` with consistent error logging.
+- **`anchor-stats.ts`** — `fetchAnchorStats()` shared by treasury-cache cron and treasury status API. SCRUM-1786: reads per-status counts from `pipeline_dashboard_cache` (refreshed every 2 min via `pg_class.reltuples`) instead of the `get_anchor_status_counts_fast` RPC (1s timeouts on 2.9M-row anchors table). Sentinel -1 convention preserved for callers.
+- `apiKeys.ts` — HMAC-SHA256 hash of raw API keys. Keep in sync with `services/edge/` and the `validate_api_key` RPC (migration 0299) which uses the same secret.
+- `orgCredits.ts` — `deductOrgCredit()` wraps the `deduct_org_credit` RPC. Returns `{allowed, error?, balance?, required?}` shape that v1 anchor-submit consumes.
+- `anchorCreditGate.ts` (SCRUM-1631 PR #680) — shared 402/503 response helper around `deductOrgCredit`. Returns `false` when a response has been written; caller early-returns.
+- **`anchorQuotaGate.ts` (SCRUM-1740, PR #738)** — sandbox quota gate. Reads `org_credits.{is_test, anchor_quota}` and counts non-deleted anchors for the org. Returns 402 problem+json (`type=https://arkova.ai/errors/quota-exhausted`) when at/over cap. No-op for prod orgs (anchor_quota IS NULL). **Fails OPEN** on transient DB read errors — sandbox quota is a soft cap, not a security boundary; 8 unit tests cover every branch including fail-open.
+- `orgSuspensionGuard.ts` (SCRUM-1667) — sub-org suspension check.
+- Various: `sentry.ts`, `telemetry.ts`, `correlationId.ts`, `cors.ts`, `rateLimit.ts` (legacy v1), `validation.ts`, `urls.ts`, etc.
 
-## Key Files
+## Conventions
+- Every utility that touches the DB takes the `SupabaseClient` as a parameter (not imported) so tests don't need to `vi.mock('./db.js')` on every file.
+- Fail-closed for security gates (auth, scope). Fail-open for soft business gates (sandbox quota, soft rate limits) with loud logging.
+- Zod validation at the helper boundary so callers don't need to repeat schema parsing.
 
-- **db.ts** — Supabase client (service_role). All worker DB access flows through this.
-- **logger.ts** — Pino logger with PII scrubbing. Every log call must avoid user emails, document fingerprints, API keys (CLAUDE.md §1.4).
-- **anchor-stats.ts** — `fetchAnchorStats()` shared by treasury-cache cron and treasury status API. SCRUM-1786: reads per-status counts from `pipeline_dashboard_cache` (refreshed every 2 min via `pg_class.reltuples`) instead of the `get_anchor_status_counts_fast` RPC (1s timeouts on 2.9M-row anchors).
-- **rpc.ts** — Typed RPC caller (`callRpc<T>`). Still used by health check, admin-stats, batch-anchor, mainnet-migration for `get_anchor_status_counts_fast`.
-
-## Architecture Decisions
-
-- **anchor-stats reads pipeline_dashboard_cache** (SCRUM-1786): The `get_anchor_status_counts_fast` RPC's per-status `SET LOCAL statement_timeout = '1000'` routinely timed out on the bloated anchors table (2.9M rows). `pipeline_dashboard_cache` already has the answer via `pg_class.reltuples` — instant, no timeout. The -1 sentinel convention is preserved for callers that can't reach the cache.
-- **Sentinel -1 contract**: When a stats value can't be measured this round, return -1. Callers (treasury-cache.ts) must check for -1 and preserve last-good values.
-
-## Do / Don't Rules
-
-- **DO** use `db` from this folder for all Supabase access — never construct a new client.
-- **DO** use `logger` — never `console.log`.
-- **DON'T** import browser-only modules (`generateFingerprint`, `piiStripper`) — worker boundary (CLAUDE.md §1.6).
-- **DON'T** log PII (emails, fingerprints, API keys) — Sentry scrubbing is last resort, not first line.
+## Open work
+- SCRUM-1740 (PR #738) — quota gate awaits merge.

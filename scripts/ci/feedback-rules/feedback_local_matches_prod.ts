@@ -44,20 +44,56 @@ function localTableSet(): Set<string> {
       .filter((line) => !/^\s*--/.test(line))
       .join('\n')
       .replace(/\/\*[\s\S]*?\*\//g, '');
-    // Captures schema (group 1) + table (group 2). When schema is anything
-    // other than `public` (or absent), skip — this rule scans the public.* set.
-    // Without splitting these out, `CREATE TABLE auth.foo` would otherwise
-    // match `auth` as the table name and false-flag a non-existent drift.
-    const createRe =
-      /create\s+table\s+(?:if\s+not\s+exists\s+)?(?:([a-z_][a-z0-9_]*)\.)?"?([a-z_][a-z0-9_]*)"?/gi;
-    let m: RegExpExecArray | null;
-    while ((m = createRe.exec(sql)) !== null) {
-      const schema = (m[1] ?? 'public').toLowerCase();
-      if (schema !== 'public') continue;
-      tables.add(m[2].toLowerCase());
+    // Token-walk the squashed SQL. We deliberately don't use a regex here —
+    // earlier attempts triggered Sonar's super-linear-runtime detector on
+    // anything with multiple \s+/\s* metacharacters, even when the actual
+    // backtracking risk was negligible (input is repo-owned migration SQL,
+    // not user input). Walking tokens with no regex matcher avoids the
+    // hotspot entirely and stays transparent about what we're parsing.
+    const flat = sql.replace(/\s+/g, ' ').toLowerCase();
+    let cursor = 0;
+    while (cursor < flat.length) {
+      const idx = flat.indexOf('create table', cursor);
+      if (idx < 0) break;
+      const prevCh = idx === 0 ? ';' : flat[idx - 1];
+      // Statement boundary: must be at start, after `;`, or after whitespace
+      // following a `;`. Anything else is mid-statement noise (e.g. inside
+      // a string literal we missed) and should be ignored.
+      if (prevCh !== ';' && prevCh !== ' ' && prevCh !== '\n') {
+        cursor = idx + 'create table'.length;
+        continue;
+      }
+      let pos = idx + 'create table'.length;
+      while (pos < flat.length && flat[pos] === ' ') pos += 1;
+      if (flat.slice(pos, pos + 'if not exists'.length) === 'if not exists') {
+        pos += 'if not exists'.length;
+        while (pos < flat.length && flat[pos] === ' ') pos += 1;
+      }
+      const start = pos;
+      while (pos < flat.length && flat[pos] !== ' ' && flat[pos] !== '(') pos += 1;
+      const target = flat.slice(start, pos);
+      if (target.length > 0) {
+        const { schema, table } = parseCreateTableTarget(target);
+        if (schema === 'public') tables.add(table);
+      }
+      cursor = pos;
     }
   }
   return tables;
+}
+
+function parseCreateTableTarget(rawTarget: string): { schema: string; table: string } {
+  const parts = rawTarget.split('.');
+  const table = unquoteIdentifier(parts[parts.length - 1] ?? rawTarget);
+  const schema = parts.length > 1 ? unquoteIdentifier(parts[parts.length - 2] ?? 'public') : 'public';
+  return { schema, table };
+}
+
+function unquoteIdentifier(identifier: string): string {
+  if (identifier.startsWith('"') && identifier.endsWith('"')) {
+    return identifier.slice(1, -1).toLowerCase();
+  }
+  return identifier.toLowerCase();
 }
 
 interface SnapshotShape {
