@@ -1,70 +1,44 @@
-# webhooks/ — Outbound Webhook Delivery
+# Outbound webhooks — agents.md
 
-## Purpose
-Sign, validate, deliver, and replay outbound webhook events to customer endpoints. CLAUDE.md §6 (no internal UUIDs) + §1.6 (no fingerprint) + §1.8 (frozen API) are enforced here, not at the call sites.
+Owner of the **outbound** webhook system. Inbound receivers (DocuSign, Adobe Sign, Microsoft Graph, Drive, Checkr, ATS) live elsewhere — see `services/worker/src/api/v1/webhooks/` for those.
 
-## Architecture
-```
-webhooks/
-  payload-schemas.ts        — Zod schemas per event_type. Single authority for what data may ship.
-  payload-schemas.test.ts   — banned-field + ISO-timestamp + status-literal coverage
-  delivery.ts               — dispatchWebhookEvent: validate → sign (HMAC) → POST → record
-  delivery.test.ts
-  circuit-breaker.test.ts   — per-endpoint failure isolation
-  ssrf-protection.test.ts   — block private/metadata/loopback IPs
-  replay.test.ts            — admin replay path
-  compliance.ts             — webhook-side audit trail
-  compliance.test.ts
-```
+## Files
 
-## Key Rules
-- **`PAYLOAD_SCHEMAS_BY_EVENT_TYPE` is the only authority for outbound payload shape.** Drift = test failure at PR time.
-- **Every event_type customers can subscribe to (`VALID_WEBHOOK_EVENTS` in `../api/v1/webhooks-schemas.ts`) MUST have a matching schema entry here.** Without a schema, `validateWebhookPayload` returns `{ ok: true, bypassed: true }` and ships the payload UNVALIDATED — silently disabling §6 + §1.6 enforcement for that event type. Audit this invariant whenever editing either file.
-- **All schemas are `.strict()`.** Unknown keys reject — that's how the §6 "no internal UUIDs" rule is enforced. Any new field is additive + nullable per CLAUDE.md §1.8.
-- **Banned fields** (rejected by every schema): `anchor_id`, `fingerprint`, `user_id`, `org_id`, anything starting with `_`.
-- **SECURED ⇒ on-chain invariant** — `chain_tx_id` and `chain_block_height` MUST be non-null on `AnchorSecuredPayloadSchema` (PR #567 CodeRabbit P1 fix). Submitted/Revoked allow null because the on-chain ref may not yet exist.
-- **HMAC-SHA256 with the per-endpoint secret** (created at registration, shown once, never re-fetchable). Worker never logs the secret.
-- **SSRF protection** runs before delivery — private/loopback/metadata IPs are rejected at lookup time.
-- **`anchor.status = 'SECURED'`** writes are worker-only via service_role (CLAUDE.md §1.4).
-- **Verification API contract** — schemas are frozen per CLAUDE.md §1.8. New fields must be nullable + additive; removing a field requires a v2 prefix.
+| File | Role |
+|---|---|
+| `payload-schemas.ts` | Zod allowlist for outbound payload `data` blocks. The only authority on what fields may leave Arkova on a given event type. Strict mode rejects unknown keys at runtime. CLAUDE.md §6 (no internal UUIDs) + §1.6 (no fingerprints) enforced here. |
+| `payload-schemas.test.ts` | Locks the contract for every emitted event type. Banned fields (`anchor_id`, `fingerprint`, `user_id`, `org_id`) are explicitly rejected per schema. New event types MUST land with their own banned-field rejection cases. |
+| `delivery.ts` | Delivery engine. HMAC-SHA256 signing (`X-Arkova-Signature`, `X-Arkova-Timestamp`, `X-Arkova-Event` headers), exponential backoff (5 max attempts, 1s base), idempotency keys, circuit breaker (DH-04, 5 consecutive failures → open, 60s half-open), DLQ (DH-12), SSRF protection with DNS rebinding mitigation (ARK-SEC-002, INJ-02), replay (SCRUM-1172). Gated by `ENABLE_OUTBOUND_WEBHOOKS` flag. |
+| `compliance.ts` | Compliance metadata + tagging hooks for outbound events used in audit reporting. |
+| `*.test.ts` | Unit + integration coverage for each module. |
 
-## Event Types and Schemas (current main)
+## Supported event types
 
-### Anchor Lifecycle
-| Event | Schema | Required fields | Notes |
+| Event | Schema | Producer | Status |
 |---|---|---|---|
-| `anchor.submitted` | `AnchorSubmittedPayloadSchema` | `public_id`, `chain_tx_id?`, `chain_block_height?`, `submitted_at`, `status:'SUBMITTED'` | chain refs may be null pre-mining |
-| `anchor.secured` | `AnchorSecuredPayloadSchema` | `public_id`, `chain_tx_id`, `chain_block_height`, `chain_timestamp`, `secured_at`, `status:'SECURED'` | strict non-null on-chain refs |
-| `anchor.revoked` | `AnchorRevokedPayloadSchema` | `public_id`, `chain_tx_id`, `chain_block_height`, `revoked_at`, `status:'REVOKED'` | optional `revocation_reason` |
-| `anchor.batch_secured` | `AnchorBatchSecuredPayloadSchema` | `chain_tx_id`, `chain_block_height`, `chain_timestamp`, `secured_at`, `anchor_count`, `public_ids[]` (max 20K) | aggregate event for merkle batches |
+| `anchor.submitted` | `AnchorSubmittedPayloadSchema` | `services/worker/src/jobs/anchor.ts` | Live |
+| `anchor.secured` | `AnchorSecuredPayloadSchema` | `services/worker/src/jobs/check-confirmations.ts` | Live |
+| `anchor.revoked` | `AnchorRevokedPayloadSchema` | `services/worker/src/api/anchor-revoke.ts` (RPC `revoke_anchor`) | Live |
+| `anchor.expired` | `AnchorExpiredPayloadSchema` (SCRUM-1735) | `services/worker/src/jobs/anchorExpirySweep.ts` (SCRUM-1736 daily cron at 03:00 UTC; also `POST /jobs/anchor-expiry-sweep` for Cloud Scheduler) | Live |
+| `anchor.batch_secured` | `AnchorBatchSecuredPayloadSchema` | merkle-batch path (per-anchor `anchor.secured` events also fan out — SCRUM-1264) | Live |
 
-### Credential Lifecycle (SCRUM-1743 — contract on main; emit-points pending Phase-2)
-| Event | Schema | Required fields | Notes |
-|---|---|---|---|
-| `credential.issued` | `CredentialIssuedPayloadSchema` | `public_id`, `credential_type`, `issued_at`, `status:'ISSUED'` | optional `expires_at`, `recipient_public_id`, `org_public_id` |
-| `credential.verified` | `CredentialVerifiedPayloadSchema` | `public_id`, `credential_type`, `verified_at`, `status: SECURED \| REVOKED \| EXPIRED` | terminal-only — non-terminal `PENDING/SUBMITTED` does NOT fire this; optional `verifier_country` (ISO 3166-1 alpha-2 only, never IPs) |
-| `credential.status_changed` | `CredentialStatusChangedPayloadSchema` | `public_id`, `credential_type`, `previous_status`, `new_status`, `changed_at` | for issuer-side reconciliation |
+`anchor.expired` schema and producer are both live. The `anchorExpirySweep` cron transitions SECURED anchors past `expires_at` (filtering `deleted_at IS NULL`) to EXPIRED in deterministic `expires_at asc, id asc` order, writes a corresponding `audit_events` row, and dispatches `anchor.expired` with deterministic `event_id = "expired-${anchor.public_id}"` (uses public_id, not internal id, per CLAUDE.md §6) so retries dedupe via `webhook_delivery_logs.idempotency_key`. Dispatch failures write a sentinel `anchor.expired_dispatch_failed` audit event for manual recovery via the SCRUM-1738 retry path.
 
-### Pending in-flight
-- `anchor.expired` — schema + emitter in [PR #734](https://github.com/carson-see/ArkovaCarson/pull/734) (SCRUM-1735 schema + SCRUM-1736 emitter). `VALID_WEBHOOK_EVENTS` already lists it (subscribable), but no `PAYLOAD_SCHEMAS_BY_EVENT_TYPE['anchor.expired']` entry exists on main yet — `validateWebhookPayload` returns `bypassed: true` for this event until #734 merges. Bug Tracker row `BUG-2026-05-08-003` tracks the gap. Defense-in-depth: no emit-side wiring exists on main, so no payload ever ships.
+## Adding a new event type
 
-## Adding a New Event Type — Checklist
-1. Add to `VALID_WEBHOOK_EVENTS` in `../api/v1/webhooks-schemas.ts`.
-2. Add Zod schema here (`.strict()`, allowlist fields only). Reuse `ANCHOR_BASE_FIELDS` or `CREDENTIAL_BASE_FIELDS` where shape matches.
-3. Wire into `PAYLOAD_SCHEMAS_BY_EVENT_TYPE`.
-4. Export `<Name>Payload` type.
-5. Cover in `payload-schemas.test.ts`: happy path, all 4 banned-field rejections, ISO-timestamp rejection, status-literal rejection, `validateWebhookPayload` round-trip.
-6. Update `docs/api/webhooks.md` event-types table.
-7. Update this `agents.md`.
+1. Add a `…PayloadSchema` in `payload-schemas.ts`, `.strict()`-mode, with a base extending `ANCHOR_BASE_FIELDS` where applicable.
+2. Add it to `PAYLOAD_SCHEMAS_BY_EVENT_TYPE` so `validateWebhookPayload` routes through it (NOT `bypassed: true`).
+3. Add tests in `payload-schemas.test.ts` covering: valid payload accepted, banned fields (`anchor_id`, `fingerprint`, `user_id`, `org_id`) rejected, status literal mismatch rejected, non-ISO timestamps rejected.
+4. Wire the dispatch site (call `dispatchWebhookEvent(orgId, eventType, eventId, data)`) at the lifecycle transition.
+5. If the event is partner-public, update the HakiChain integration brief (Confluence A/42532874 §10) and any partner onboarding pack.
 
-## Stories
-- SCRUM-1268 — original anchor.* payload contract (Done).
-- SCRUM-1735 — credential.* + anchor.expired schema spec (Done; ships in PR #734 along with SCRUM-1736 emitter).
-- SCRUM-1736 — anchor.expired emitter cron (In Progress, PR #734).
-- SCRUM-1743 — credential.* lifecycle webhook events parent (In Progress).
-- SCRUM-1796 — `anchor.expired` schema-bypass bug (To Do; fix shipping via PR #734).
+## Things that look risky but are intentional
 
-## References
-- CLAUDE.md §6 (no internal UUIDs publicly), §1.6 (fingerprint stays client-side), §1.8 (frozen API).
-- `docs/api/webhooks.md` — public-facing webhook docs.
-- Bug Tracker — Master Log: <https://arkova.atlassian.net/wiki/spaces/A/pages/28115270>.
+- `validateWebhookPayload` returns `{ ok: true, bypassed: true }` for unknown event types — non-anchor events (`payment.*`, `org.*`) ride a separate dispatch path until they get their own schemas. The `bypassed` flag is logged at debug level so a typo (`anchor.SUBMITTED` in caps) is detectable, not silent. Don't remove the bypass without first making the allowlist exhaustive.
+- `secret_hash` column on `webhook_endpoints` IS the raw HMAC key — naming is historical (migration 0046). Consumers receive this exact value at endpoint creation. Don't second-guess and try to hash it again.
+- Delivery idempotency key is `${endpoint.id}-${payload.event_id}` (no attempt number) — RACE-6 fix prevents duplicate deliveries across retry attempts after worker restart.
+- Replay deliveries (`replayDelivery`) intentionally always create a new `webhook_delivery_logs` row keyed by `replay-${deliveryId}-${ms}-${randomHex}` so the original is preserved for audit and the existing-row idempotency check can't short-circuit the resend.
+
+## SOC 2 DC 200
+
+System description for this module is documented in Confluence under SCRUM-1735. When changing this module, re-verify the description (services, commitments, components, risk assessment, control environment, CUECs) is still accurate.
