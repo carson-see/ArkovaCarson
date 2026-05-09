@@ -273,6 +273,24 @@ async function deliverToEndpoint(
   // duplicate deliveries across retry attempts after worker restart
   const idempotencyKey = `${endpoint.id}-${payload.event_id}`;
 
+  // SCRUM-1800 (post-PR #734 hotfix): `webhook_delivery_logs.event_id` is
+  // typed `uuid NOT NULL`, but every existing producer (anchor.ts,
+  // anchorExpirySweep.ts, credential-sources.ts, anchor-revoke.ts,
+  // check-confirmations.ts, oracle.ts, verify.ts) passes a string event_id
+  // (`public_id`, `expired-${public_id}`, etc.) — so the insert at line ~289
+  // throws PG 22P02 "invalid input syntax for type uuid" and the delivery is
+  // silently dropped (deliverToEndpoint returns false; dispatchWebhookEvent
+  // doesn't observe it). This was found during PR #753 staging soak; the
+  // bug pre-dates PR #753 and affects anchor.submitted / anchor.expired in
+  // prod too. Fix at the dispatcher: assign a fresh UUID for the column,
+  // keep the original string in the JSONB payload so customers see the
+  // semantically meaningful `event_id` field, and keep the idempotency_key
+  // based on the supplied string so retries dedupe deterministically.
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+    payload.event_id,
+  );
+  const dbEventId = isUuid ? payload.event_id : crypto.randomUUID();
+
   // Check if already delivered
   const { data: existing } = await db
     .from('webhook_delivery_logs')
@@ -291,7 +309,7 @@ async function deliverToEndpoint(
     .insert({
       endpoint_id: endpoint.id,
       event_type: payload.event_type,
-      event_id: payload.event_id,
+      event_id: dbEventId,
       payload: payload as unknown as Json,
       attempt_number: attempt,
       status: 'pending',

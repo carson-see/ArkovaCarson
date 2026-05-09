@@ -567,6 +567,50 @@ describe('deliverToEndpoint', () => {
     );
   });
 
+  // SCRUM-1800: Bug found during PR #753 staging soak. webhook_delivery_logs.event_id
+  // is uuid NOT NULL, but every existing producer passes a string event_id (public_id,
+  // 'expired-${public_id}', etc.). Pre-fix: insert threw 22P02, log failed to create,
+  // delivery silently dropped. Fix: dispatcher coerces non-UUID event_ids to a fresh
+  // UUID for the column while the original string still appears in the JSONB payload.
+  it('coerces non-UUID event_id to a UUID for the webhook_delivery_logs.event_id column', async () => {
+    deliveryLogSelect.single.mockResolvedValue({ data: null, error: null });
+    deliveryLogInsert.single.mockResolvedValue({ data: { id: 'log-001' }, error: null });
+    mockFetch.mockResolvedValue({ ok: true, status: 200, text: () => Promise.resolve('OK') });
+    deliveryLogUpdate.eq.mockResolvedValue({ error: null });
+
+    await dispatchWebhookEvent(
+      'org-001',
+      'anchor.secured',
+      'ARK-2026-NOT-A-UUID',
+      MOCK_PAYLOAD_DATA,
+    );
+
+    const insertCall = deliveryLogInsert.insert.mock.calls.at(-1);
+    expect(insertCall).toBeDefined();
+    const insertedRow = insertCall![0] as { event_id: string; payload: { event_id: string }; idempotency_key: string };
+    // event_id (column) is a UUID
+    expect(insertedRow.event_id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+    expect(insertedRow.event_id).not.toBe('ARK-2026-NOT-A-UUID');
+    // Payload still carries the semantically meaningful string event_id for the customer
+    expect(insertedRow.payload.event_id).toBe('ARK-2026-NOT-A-UUID');
+    // Idempotency key uses the supplied string so retries dedupe deterministically
+    expect(insertedRow.idempotency_key).toBe('ep-001-ARK-2026-NOT-A-UUID');
+  });
+
+  it('preserves UUID event_id when caller supplies one', async () => {
+    deliveryLogSelect.single.mockResolvedValue({ data: null, error: null });
+    deliveryLogInsert.single.mockResolvedValue({ data: { id: 'log-001' }, error: null });
+    mockFetch.mockResolvedValue({ ok: true, status: 200, text: () => Promise.resolve('OK') });
+    deliveryLogUpdate.eq.mockResolvedValue({ error: null });
+
+    const realUuid = 'a1b2c3d4-e5f6-4789-9abc-def012345678';
+    await dispatchWebhookEvent('org-001', 'anchor.secured', realUuid, MOCK_PAYLOAD_DATA);
+
+    const insertCall = deliveryLogInsert.insert.mock.calls.at(-1);
+    const insertedRow = insertCall![0] as { event_id: string };
+    expect(insertedRow.event_id).toBe(realUuid);
+  });
+
   it('updates log to success on HTTP 200', async () => {
     deliveryLogSelect.single.mockResolvedValue({ data: null, error: null });
     deliveryLogInsert.single.mockResolvedValue({ data: { id: 'log-001' }, error: null });
@@ -694,7 +738,10 @@ describe('deliverToEndpoint', () => {
       expect.objectContaining({
         endpoint_id: 'ep-001',
         event_type: 'anchor.secured',
-        event_id: 'evt-001',
+        // SCRUM-1800: 'evt-001' is not a UUID, so the dispatcher mints a fresh
+        // UUID for the column. The original string still appears in the JSONB
+        // payload's event_id field (see UUID-coercion test above).
+        event_id: expect.stringMatching(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i),
         attempt_number: 1,
         status: 'pending',
         idempotency_key: expect.stringContaining('ep-001'),
