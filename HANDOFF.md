@@ -222,17 +222,20 @@ Bench-state, paired with SCRUM-1731. Audit recalibration: SCRUM-1732 was already
 
 This PR adds **two metadata-persistence contract-lock tests** under a new `SCRUM-1732 metadata persistence contract` describe block in `services/worker/src/api/v1/anchor-submit.test.ts` (PR title: `test(SCRUM-1732): anchor-submit metadata persistence contract-lock tests`):
 
-- "persists every public-safe key from the request" — iterates the request payload's keys and verifies each landed in the `db.from('anchors').insert(...)` call with the exact value, so a future silent key drop fails loud.
-- Strengthened existing checks via the `InsertCallArg` interface to assert key-by-key, replacing the prior loose `expect.objectContaining(...)` shape match.
+1. **"persists every public-safe key from a fully-populated BADGE evidence payload"** — iterates the request payload's keys and verifies each landed in the `db.from('anchors').insert(...)` call with the exact value, so a future silent key drop fails loud.
+2. **"omits the metadata column when no metadata is provided (Postgres default null)"** — ensures the INSERT omits the `metadata` column entirely so Postgres applies its NULL default (preserving RLS semantics that distinguish omitted vs explicit null).
 
-Local quality gates:
+Also strengthened existing type assertions via the `InsertCallArg` interface, replacing inline object-shape casts per repo TypeScript conventions.
 
-- `npx vitest run services/worker/src/api/v1/anchor-submit.test.ts` → suite green locally (13 tests including the contract-lock additions)
-- `npx eslint services/worker/src/api/v1/anchor-submit.ts services/worker/src/api/v1/anchor-submit.test.ts` → clean
+Local quality gates (verified locally):
+
+- `npx vitest run services/worker/src/api/v1/anchor-submit.test.ts` → 13/13 pass (verified locally)
+- `npx eslint services/worker/src/api/v1/anchor-submit.ts services/worker/src/api/v1/anchor-submit.test.ts` → clean (verified locally)
+- CI Tests job green: [run 25602908073](https://github.com/carson-see/ArkovaCarson/actions/runs/25602908073/job/75160335774)
 
 Tier: T1 by code-touched scope (test file + minor type-safety helper). No runtime change, no migration. Staging-evidence gate satisfied via the PR body block declaring T1 + linking back to this entry.
 
-_Last refreshed: 2026-05-08 by claude — vitest suite green locally; eslint clean on touched files; no prod state change._
+_Last refreshed: 2026-05-09 by claude — claims verified against CI run 25602908073; no prod state change._
 
 ### 2026-05-06 — PR #711 SCRUM-1545 coverage backfill merge-resolution pass
 
