@@ -137,15 +137,60 @@ export async function fanOutSecuredAnchorWebhooks(
     return;
   }
 
-  const tasks = eligible.map((anchor) => async () => {
-    await dispatchWebhookEvent(anchor.org_id, 'anchor.secured', anchor.public_id, {
-      public_id: anchor.public_id,
-      status: 'SECURED',
-      chain_tx_id: txId,
-      chain_block_height: blockHeight,
-      chain_timestamp: blockTimestamp,
-      secured_at: blockTimestamp,
-    });
+  // SCRUM-1800 (SCRUM-1743 Phase 2c): fetch credential_type for the drained
+  // anchors so we can also dispatch credential.status_changed alongside
+  // anchor.secured. The drain RPC (drain_submitted_to_secured_for_tx) only
+  // returns public_id + org_id; credential_type comes from a single bulk
+  // SELECT here. credential.status_changed schema requires credential_type;
+  // anchors missing it skip the credential.* dispatch (anchor.* still fires).
+  const credentialTypeByPublicId = new Map<string, string>();
+  try {
+    const publicIds = eligible.map((a) => a.public_id);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: credRows, error: credErr } = await (db as any)
+      .from('anchors')
+      .select('public_id, credential_type')
+      .in('public_id', publicIds);
+    if (credErr) {
+      logger.warn({ txId, error: credErr }, 'Failed to fetch credential_type for credential.status_changed fan-out — skipping credential.* events for this batch');
+    } else if (Array.isArray(credRows)) {
+      for (const row of credRows) {
+        if (row && typeof row.public_id === 'string' && typeof row.credential_type === 'string') {
+          credentialTypeByPublicId.set(row.public_id, row.credential_type);
+        }
+      }
+    }
+  } catch (lookupError) {
+    logger.warn({ txId, error: lookupError }, 'credential_type lookup threw — skipping credential.* events for this batch');
+  }
+
+  const tasks = eligible.flatMap((anchor) => {
+    const baseTask = async () => {
+      await dispatchWebhookEvent(anchor.org_id, 'anchor.secured', anchor.public_id, {
+        public_id: anchor.public_id,
+        status: 'SECURED',
+        chain_tx_id: txId,
+        chain_block_height: blockHeight,
+        chain_timestamp: blockTimestamp,
+        secured_at: blockTimestamp,
+      });
+    };
+    const credentialType = credentialTypeByPublicId.get(anchor.public_id);
+    if (!credentialType) return [baseTask];
+    // SCRUM-1800: credential.status_changed alongside anchor.secured.
+    // previous_status: 'SUBMITTED' is the most accurate label for the
+    // bulk-confirm path (PENDING anchors flow through SUBMITTED before
+    // SECURED via the merkle-batch broadcast in jobs/batch-anchor.ts).
+    const credentialTask = async () => {
+      await dispatchWebhookEvent(anchor.org_id, 'credential.status_changed', anchor.public_id, {
+        public_id: anchor.public_id,
+        credential_type: credentialType,
+        previous_status: 'SUBMITTED',
+        new_status: 'SECURED',
+        changed_at: blockTimestamp,
+      });
+    };
+    return [baseTask, credentialTask];
   });
 
   const result = await runWithConcurrency(tasks, BULK_WEBHOOK_FAN_OUT_CONCURRENCY);
