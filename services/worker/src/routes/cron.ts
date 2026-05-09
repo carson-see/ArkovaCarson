@@ -1469,7 +1469,18 @@ cronRouter.get('/smoke-test/history', async (_req, res) => {
 cronRouter.post('/bq-export-incremental', async (_req, res) => {
   try {
     const { runIncremental } = await import('../jobs/bq-export-incremental.js');
-    const results = await runIncremental();
+    // Sentry Crons monitor — the freshness SLO for append-only mirrors is
+    // 5 min (SCRUM-1062 AC). Wrapping the run with withCronMonitoring gives
+    // Sentry a heartbeat each tick; if 2 ticks miss the monitor fires.
+    // Combined with the consecutive-failures issue alert, this catches both
+    // "cron stops firing" (this monitor) and "cron fires but errors" (issue
+    // alert from the captureException calls in runIncremental).
+    const monitored = withCronMonitoring(
+      'bq-export-incremental',
+      '*/5 * * * *',
+      runIncremental,
+    );
+    const results = await monitored();
     res.json({ results });
   } catch (error) {
     logger.error({ error }, 'BQ export incremental run failed');
@@ -1480,7 +1491,14 @@ cronRouter.post('/bq-export-incremental', async (_req, res) => {
 cronRouter.post('/bq-export-snapshot', async (_req, res) => {
   try {
     const { runSnapshot } = await import('../jobs/bq-export-snapshot.js');
-    const results = await runSnapshot();
+    // Sentry Crons monitor — daily 02:00 UTC freshness SLO (SCRUM-1062 AC,
+    // 24h for snapshot tables).
+    const monitored = withCronMonitoring(
+      'bq-export-snapshot',
+      '0 2 * * *',
+      runSnapshot,
+    );
+    const results = await monitored();
     res.json({ results });
   } catch (error) {
     logger.error({ error }, 'BQ export snapshot run failed');
