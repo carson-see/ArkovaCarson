@@ -58,22 +58,24 @@ const ALLOWED_STAGING_PROJECT_REFS: readonly string[] = (
   .split(',')
   .map((s) => s.trim())
   .filter(Boolean);
-// Strict subdomain match: Supabase project URLs are `https://<ref>.supabase.co`,
-// so the leftmost hostname label IS the project ref. Substring match would let
-// `STAGING_SUPABASE_URL` containing the ref anywhere (e.g. embedded in a query
-// param or a path) bypass the guard — strict equality on the subdomain label
-// closes that off. Falls through to refuse if URL parsing fails.
-const STAGING_PROJECT_REF: string = (() => {
+// Strict full-hostname match: Supabase project URLs are `https://<ref>.supabase.co`,
+// so the FULL hostname must equal `<ref>.supabase.co`. Earlier iterations matched
+// only the leftmost hostname label, which would accept `<ref>.attacker.tld` —
+// closed off here by also requiring the trailing `.supabase.co` suffix.
+// Falls through to refuse if URL parsing fails.
+const STAGING_HOSTNAME: string = (() => {
   try {
-    return new URL(STAGING_URL).hostname.split('.')[0];
+    return new URL(STAGING_URL).hostname;
   } catch {
     return '';
   }
 })();
-const ACTIVE_STAGING_REF = ALLOWED_STAGING_PROJECT_REFS.find((ref) => STAGING_PROJECT_REF === ref);
+const ACTIVE_STAGING_REF = STAGING_HOSTNAME.endsWith('.supabase.co')
+  ? ALLOWED_STAGING_PROJECT_REFS.find((ref) => STAGING_HOSTNAME === `${ref}.supabase.co`)
+  : undefined;
 if (!ACTIVE_STAGING_REF) {
   console.error(
-    `::error::STAGING_SUPABASE_URL hostname label '${STAGING_PROJECT_REF}' does not match any allowed staging ref (${ALLOWED_STAGING_PROJECT_REFS.join(', ')}). Refusing to run.`,
+    `::error::STAGING_SUPABASE_URL hostname '${STAGING_HOSTNAME}' does not match any allowed staging ref as '<ref>.supabase.co' (allowed refs: ${ALLOWED_STAGING_PROJECT_REFS.join(', ')}). Refusing to run.`,
   );
   process.exit(1);
 }
