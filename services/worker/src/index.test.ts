@@ -413,7 +413,7 @@ describe('worker server', () => {
       expect(countPattern('*/10 * * * *')).toBe(4);
 
       // Unique patterns
-      expect(patterns).toContain('* * * * *');   // anchor processing
+      expect(patterns).not.toContain('* * * * *'); // legacy individual anchor processing is not scheduled
       expect(patterns).toContain('*/5 * * * *'); // revocation (BETA-02)
       expect(patterns).toContain('0 0 1 * *');   // monthly credit allocation
       expect(patterns).toContain('0 2 * * *');   // GDPR cleanup (PII-03)
@@ -445,18 +445,6 @@ describe('worker server', () => {
       }
       throw new Error(`No '${pattern}' cron invokes the given mock`);
     };
-
-    it('anchor processing cron catches and logs errors', async () => {
-      const anchorCallback = await findCronByMock('* * * * *', mockProcessPendingAnchors);
-      mockProcessPendingAnchors.mockRejectedValue(new Error('cron fail'));
-
-      await anchorCallback();
-
-      expect(mockLogger.error).toHaveBeenCalledWith(
-        expect.objectContaining({ error: expect.any(Error) }),
-        'Scheduled anchor processing failed'
-      );
-    });
 
     it('webhook retry cron catches and logs errors', async () => {
       const webhookCallback = await findCronByMock('*/2 * * * *', mockProcessWebhookRetries);

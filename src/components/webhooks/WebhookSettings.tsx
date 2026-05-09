@@ -46,10 +46,23 @@ interface WebhookSettingsProps {
   loading?: boolean;
 }
 
+// SCRUM-1743: source of truth is `services/worker/src/api/v1/webhooks-schemas.ts`
+// `VALID_WEBHOOK_EVENTS`. This array is the UI-facing list — keep it in sync
+// when new event types ship there. The previous `anchor.created` entry was
+// stale (never accepted by the CRUD allowlist) and was removed.
+//
+// Credential.* events are contract-defined today; per-event emit points
+// land in Phase-2 follow-ups, so the UI shows them with a "Coming soon"
+// hint to set the right expectation.
 const AVAILABLE_EVENTS = [
+  // Anchor lifecycle — stable
   { id: 'anchor.secured', label: 'Anchor Secured' },
   { id: 'anchor.revoked', label: 'Anchor Revoked' },
-  { id: 'anchor.created', label: 'Anchor Created' },
+  { id: 'anchor.expired', label: 'Anchor Expired' },
+  // Credential lifecycle (SCRUM-1743) — contract defined; emit-points pending
+  { id: 'credential.issued', label: 'Credential Issued (coming soon)' },
+  { id: 'credential.verified', label: 'Credential Verified (coming soon)' },
+  { id: 'credential.status_changed', label: 'Credential Status Changed (coming soon)' },
 ];
 
 export function WebhookSettings({

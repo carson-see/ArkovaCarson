@@ -27,7 +27,23 @@ JOBS=(
   # creation is not script-automatable). Tight retry policy so a transient
   # error doesn't suppress the next 5-min slot.
   "db-health-monitor|*/5 * * * *|/cron/db-health|30s,120s,2"
+  # SCRUM-1723: BigQuery export — incremental sync every 5 min for the three
+  # append-only tables (anchors, verifications, audit_events). Endpoint at
+  # services/worker/src/routes/cron.ts. Watermark-driven; failure does not
+  # advance, so the next slot retries the same window. Tight retry — a
+  # transient BQ outage should not stack delays beyond a few minutes.
+  "bq-export-incremental|*/5 * * * *|/jobs/bq-export-incremental|30s,120s,2"
+  # SCRUM-1724: BigQuery export — daily snapshot of organizations + api_keys
+  # at 02:00 UTC. Idempotent partition replace (DELETE WHERE snapshot_date=
+  # today, then INSERT). NO_RETRY because re-running same day repeats the
+  # delete-then-insert and double-pays the BQ DML cost; manual re-trigger
+  # via /jobs/bq-export-snapshot if a run fails.
+  "bq-export-snapshot|0 2 * * *|/jobs/bq-export-snapshot|NO_RETRY"
 )
+# SCRUM-1727 (one-shot historical backfill) is INTENTIONALLY NOT in JOBS.
+# It's a manual operator endpoint at /jobs/bq-export-backfill?table=<name>.
+# Run once per backfillable table; the next 5-min incremental cron picks
+# up new rows from the watermark the backfill leaves behind.
 
 for JOB in "${JOBS[@]}"; do
   IFS='|' read -r NAME SCHEDULE ENDPOINT_PATH RETRY <<< "$JOB"

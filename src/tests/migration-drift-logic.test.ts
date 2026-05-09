@@ -302,8 +302,14 @@ describe('SCRUM-908: migration files sanity check', () => {
     const exists = fs.existsSync(migrationsDir);
     expect(exists).toBe(true);
 
+    // Post-SCRUM-1668 Path C: 0000..0289 are collapsed into the baseline
+    // pg_dump (`00000000000000_baseline_at_main_HEAD.sql`), so the file
+    // count is small (baseline + post-baseline numbered + lettered-suffix
+    // splits). Just assert the baseline is present and at least one
+    // post-baseline migration exists.
     const files = fs.readdirSync(migrationsDir).filter((f) => f.endsWith('.sql'));
-    expect(files.length).toBeGreaterThan(100);
+    expect(files).toContain('00000000000000_baseline_at_main_HEAD.sql');
+    expect(files.length).toBeGreaterThan(1);
   });
 
   it('migration filenames can be listed and sorted deterministically', () => {
@@ -313,9 +319,13 @@ describe('SCRUM-908: migration files sanity check', () => {
       .map((f) => f.replace(/\.sql$/, ''))
       .sort();
 
-    // Sorted list should start with 0000 and end with a high number
-    expect(files[0]).toMatch(/^0000/);
-    expect(files[files.length - 1]).toMatch(/^0[12]\d\d/);
+    // Path C baseline sorts to the front (14 zeros < any 4-digit prefix).
+    expect(files[0]).toBe('00000000000000_baseline_at_main_HEAD');
+    // Last entry is a numbered post-baseline migration (>= 0290).
+    const last = files[files.length - 1];
+    const prefix = Number(last.slice(0, 4));
+    expect(Number.isNaN(prefix)).toBe(false);
+    expect(prefix).toBeGreaterThanOrEqual(290);
 
     // No duplicates after sort (each basename is unique)
     const unique = [...new Set(files)];
@@ -328,12 +338,14 @@ describe('SCRUM-908: migration files sanity check', () => {
       .filter((f) => f.endsWith('.sql'))
       .map((f) => f.replace(/\.sql$/, ''));
 
-    // Every file should start with a 4-digit number, with possible 'a'/'b'
-    // suffix for splits like 0068a/0088b. scripts/ci-supabase-start.sh
-    // renames a handful of files to a 5-digit form (e.g. 0068a -> 00680,
-    // 0088 -> 00880) so they sort before the `_`-prefixed siblings in the
-    // Supabase CLI's migration order; accept those as a second valid shape.
-    const pattern = /^(\d{4}[a-z]?|\d{5})_/;
+    // Three valid shapes:
+    //   - The Path C baseline (14 zeros + `_baseline_...`).
+    //   - `\d{4}[a-z]?_` for the standard hand-written form (and lettered
+    //     splits like 0068a / 0088b).
+    //   - `\d{5}_` for the 5-digit form scripts/ci-supabase-start.sh rewrites
+    //     a handful of files to (e.g. 0068a -> 00680) so they sort before
+    //     the `_`-prefixed siblings in the Supabase CLI's migration order.
+    const pattern = /^(00000000000000|\d{4}[a-z]?|\d{5})_/;
     for (const name of files) {
       expect(name, `"${name}" does not match migration naming pattern`).toMatch(pattern);
     }

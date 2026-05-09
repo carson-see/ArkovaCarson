@@ -26,8 +26,9 @@ import { isPlatformAdmin } from '../utils/platformAdmin.js';
 import { processPendingAnchors } from '../jobs/anchor.js';
 import { checkSubmittedConfirmations } from '../jobs/check-confirmations.js';
 import { processRevokedAnchors } from '../jobs/revocation.js';
-import { processWebhookRetries } from '../webhooks/delivery.js';
+import { processWebhookRetries, dispatchWebhookEvent } from '../webhooks/delivery.js';
 import { processMonthlyCredits } from '../jobs/credit-expiry.js';
+import { sweepExpiredAnchors, makeAnchorExpirySweepDb } from '../jobs/anchorExpirySweep.js';
 import { fetchEdgarFilings, fetchEdgarHistoricalBackfill, fetchEdgarBulk } from '../jobs/edgarFetcher.js';
 import { fetchUsptoPAtents } from '../jobs/usptoFetcher.js';
 import { fetchFederalRegisterDocuments } from '../jobs/federalRegisterFetcher.js';
@@ -275,6 +276,21 @@ cronRouter.post('/credit-expiry', async (_req, res) => {
     res.json({ processed });
   } catch (error) {
     logger.error({ error }, 'Credit expiry processing failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+// SCRUM-1736: anchor expiry sweep — transitions SECURED anchors past
+// `expires_at` to EXPIRED and dispatches anchor.expired webhook
+// (schema: services/worker/src/webhooks/payload-schemas.ts → SCRUM-1735).
+// Cloud Scheduler triggers daily; in-process backup wired in scheduled.ts.
+cronRouter.post('/anchor-expiry-sweep', async (_req, res) => {
+  try {
+    const adapter = makeAnchorExpirySweepDb({ db, dispatchWebhookEvent });
+    const result = await sweepExpiredAnchors(adapter);
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'Anchor expiry sweep failed');
     res.status(500).json({ error: 'Processing failed' });
   }
 });
@@ -1441,6 +1457,56 @@ cronRouter.get('/smoke-test/history', async (_req, res) => {
   } catch (error) {
     logger.error({ error }, 'Smoke test history fetch failed');
     res.status(500).json({ error: 'Failed to fetch history' });
+  }
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// BigQuery export jobs (SCRUM-1062 GCP-MAX-02 / SCRUM-1723 / SCRUM-1724 /
+// SCRUM-1727). Lazily-imported so the worker boot path doesn't pay the cost
+// when these routes are never hit.
+// ────────────────────────────────────────────────────────────────────────────
+
+cronRouter.post('/bq-export-incremental', async (_req, res) => {
+  try {
+    const { runIncremental } = await import('../jobs/bq-export-incremental.js');
+    const results = await runIncremental();
+    res.json({ results });
+  } catch (error) {
+    logger.error({ error }, 'BQ export incremental run failed');
+    res.status(500).json({ error: 'BQ incremental sync failed' });
+  }
+});
+
+cronRouter.post('/bq-export-snapshot', async (_req, res) => {
+  try {
+    const { runSnapshot } = await import('../jobs/bq-export-snapshot.js');
+    const results = await runSnapshot();
+    res.json({ results });
+  } catch (error) {
+    logger.error({ error }, 'BQ export snapshot run failed');
+    res.status(500).json({ error: 'BQ snapshot sync failed' });
+  }
+});
+
+cronRouter.post('/bq-export-backfill', async (req, res) => {
+  // Manual one-shot endpoint. Caller specifies ?table=<name>; only the 3
+  // append-only tables are accepted (organizations / api_keys are snapshot
+  // tables and use a different write-mode contract).
+  const tableParam = typeof req.query.table === 'string' ? req.query.table : '';
+  if (!tableParam) {
+    res.status(400).json({ error: 'missing query parameter "table" (anchors / verifications / audit_events)' });
+    return;
+  }
+  try {
+    const { runBackfill } = await import('../jobs/bq-export-backfill.js');
+    const result = await runBackfill(tableParam);
+    res.json(result);
+  } catch (error) {
+    logger.error({ error, table: tableParam }, 'BQ export backfill failed');
+    const msg = error instanceof Error ? error.message : 'BQ backfill failed';
+    // Return 400 for the "not a backfillable table" guard; 500 for everything else
+    const status = msg.includes('not a backfillable table') ? 400 : 500;
+    res.status(status).json({ error: msg });
   }
 });
 

@@ -74,6 +74,17 @@ describe('check-api-scope-vocabulary', () => {
     expect(scopes).toEqual(['read:records', 'verify']);
   });
 
+  it('extracts pg_dump inline quoted DB CHECK constraint scope arrays', () => {
+    const scopes = extractSqlConstraintScopes(`
+      CREATE TABLE IF NOT EXISTS "public"."api_keys" (
+        "scopes" "text"[] NOT NULL,
+        CONSTRAINT "api_keys_scopes_known_values" CHECK (("scopes" <@ ARRAY['read:records'::"text", 'verify'::"text"]))
+      );
+    `);
+
+    expect(scopes).toEqual(['read:records', 'verify']);
+  });
+
   it('extracts backticked scope names from markdown', () => {
     expect(extractMarkdownCodeScopes('Scopes: `read:records`, `verify`, and `not a scope`.')).toEqual([
       'read:records',
@@ -254,9 +265,15 @@ describe('check-api-scope-vocabulary', () => {
           ADD CONSTRAINT agents_allowed_scopes_known_values
           CHECK (allowed_scopes <@ ARRAY['verify', 'oracle:read']::text[]);
       `);
+      writeFileSync(join(migrationsDir, '00000000000000_baseline.sql'), `
+        CREATE TABLE IF NOT EXISTS "public"."inline_api_keys" (
+          CONSTRAINT "inline_constraint" CHECK (scopes <@ ARRAY['verify'::"text"])
+        );
+      `);
 
       expect(latestConstraintMigration(root, 'api_keys_scopes_known_values')).toContain('0285_both.sql');
       expect(latestConstraintMigration(root, 'agents_allowed_scopes_known_values')).toContain('0286_agents_only.sql');
+      expect(latestConstraintMigration(root, 'inline_constraint')).toContain('00000000000000_baseline.sql');
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

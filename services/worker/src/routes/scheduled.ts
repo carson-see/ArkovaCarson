@@ -12,12 +12,12 @@ import { config } from '../config.js';
 import { logger } from '../utils/logger.js';
 import { db } from '../utils/db.js';
 import { callRpc } from '../utils/rpc.js';
-import { processPendingAnchors } from '../jobs/anchor.js';
 import { processBatchAnchors } from '../jobs/batch-anchor.js';
 import { checkSubmittedConfirmations } from '../jobs/check-confirmations.js';
 import { processRevokedAnchors } from '../jobs/revocation.js';
-import { processWebhookRetries } from '../webhooks/delivery.js';
+import { processWebhookRetries, dispatchWebhookEvent } from '../webhooks/delivery.js';
 import { processMonthlyCredits } from '../jobs/credit-expiry.js';
+import { sweepExpiredAnchors, makeAnchorExpirySweepDb } from '../jobs/anchorExpirySweep.js';
 import { detectReorgs, monitorStuckTransactions, rebroadcastDroppedTransactions, consolidateUtxos, monitorFeeRates } from '../jobs/chain-maintenance.js';
 import { recoverStuckBroadcasts } from '../jobs/broadcast-recovery.js';
 import { trackOperation } from './lifecycle.js';
@@ -27,10 +27,10 @@ type CronTask = Parameters<typeof cron.schedule>[1];
 
 const ANCHOR_TABLE_IN_PROCESS_JOBS = new Set([
   'recover-stuck-broadcasts',
-  'process-pending-anchors',
   'process-batch-anchors',
   'check-submitted-confirmations',
   'process-revoked-anchors',
+  'anchor-expiry-sweep',
   'detect-reorgs',
   'monitor-stuck-transactions',
   'rebroadcast-dropped-transactions',
@@ -81,18 +81,9 @@ export function setupScheduledJobs(chainInitialized: boolean): void {
     }
   });
 
-  // Process pending anchors every minute (all environments including production)
   if (chainInitialized) {
-    scheduleInProcess('process-pending-anchors', '* * * * *', async () => {
-      logger.debug('Running scheduled anchor processing (in-process cron)');
-      try {
-        await trackOperation(processPendingAnchors());
-      } catch (error) {
-        logger.error({ error }, 'Scheduled anchor processing failed');
-      }
-    });
-
-    // Batch anchor processing every 10 minutes
+    // Batch policy check every 10 minutes. The job only broadcasts when the
+    // batch size/age/forced-flush rules in jobs/batch-anchor.ts are satisfied.
     const batchInterval = config.batchAnchorIntervalMinutes ?? 10;
     scheduleInProcess('process-batch-anchors', `*/${batchInterval} * * * *`, async () => {
       logger.debug('Running scheduled batch anchor processing (in-process cron)');
@@ -153,6 +144,21 @@ export function setupScheduledJobs(chainInitialized: boolean): void {
       logger.info({ processed }, 'Monthly credit allocation complete');
     } catch (error) {
       logger.error({ error }, 'Monthly credit allocation failed');
+    }
+  });
+
+  // SCRUM-1736: anchor expiry sweep — daily at 03:00 UTC. Transitions
+  // SECURED anchors past expires_at to EXPIRED + fires anchor.expired
+  // webhook. In-process backup; prod runs via Cloud Scheduler hitting
+  // /jobs/anchor-expiry-sweep.
+  scheduleInProcess('anchor-expiry-sweep', '0 3 * * *', async () => {
+    logger.info('Running anchor expiry sweep');
+    try {
+      const adapter = makeAnchorExpirySweepDb({ db, dispatchWebhookEvent });
+      const result = await sweepExpiredAnchors(adapter);
+      logger.info(result, 'Anchor expiry sweep complete');
+    } catch (error) {
+      logger.error({ error }, 'Anchor expiry sweep failed');
     }
   });
 

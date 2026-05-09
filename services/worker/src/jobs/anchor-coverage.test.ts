@@ -507,215 +507,28 @@ describe('processAnchor receipt extras', () => {
 });
 
 // ---------------------------------------------------------------
-// processPendingAnchors — pre-flight + claim RPC + legacy fallback
+// processPendingAnchors — retired by SCRUM-1668.
+// Ordinary PENDING anchors are no longer claimed/broadcast by this
+// path; they stay queued for batch-anchor.ts (Merkle batch policy:
+// size/age/forced-flush). The legacy switchboard-flag, treasury-
+// pre-flight, claim-RPC, and legacy-fallback branches are GONE from
+// the production function — see services/worker/src/jobs/anchor.ts
+// processPendingAnchors() body, which now logs and returns
+// {processed: 0, failed: 0} unconditionally.
+//
+// The runtime equivalents now live (and are tested) in
+// services/worker/src/jobs/batch-anchor.test.ts. The single test
+// below pins the intentional no-op contract so a future regression
+// that re-introduces single-fingerprint broadcast here would fail.
 // ---------------------------------------------------------------
 
-describe('processPendingAnchors switchboard flag', () => {
-  it('skips claim RPC in dev when flag is false and env is unset', async () => {
-    mockConfig.nodeEnv = 'development';
-    mockConfig.enableProdNetworkAnchoring = false;
-    mockCallRpc.mockResolvedValueOnce({ data: false, error: null });
-
+describe('processPendingAnchors — retired (no-op shim)', () => {
+  it('returns {0,0} without calling any RPC, db, chain, or treasury helper', async () => {
     const result = await processPendingAnchors();
     expect(result).toEqual({ processed: 0, failed: 0 });
     expect(mockRpc).not.toHaveBeenCalled();
-  });
-
-  it('calls claim RPC in dev when env override is true', async () => {
-    mockConfig.nodeEnv = 'development';
-    mockConfig.enableProdNetworkAnchoring = true;
-    mockHasFunds.mockResolvedValueOnce(true);
-    mockRpc.mockResolvedValueOnce({ data: [], error: null });
-
-    await processPendingAnchors();
-    expect(mockRpc).toHaveBeenCalledWith('claim_pending_anchors', expect.any(Object));
-  });
-
-  it('calls claim RPC in prod when DB flag returns true', async () => {
-    mockConfig.nodeEnv = 'production';
-    mockCallRpc.mockResolvedValueOnce({ data: true, error: null });
-    mockHasFunds.mockResolvedValueOnce(true);
-    mockRpc.mockResolvedValueOnce({ data: [], error: null });
-
-    await processPendingAnchors();
-    expect(mockRpc).toHaveBeenCalled();
-  });
-
-  it('falls back to env override in prod when DB flag errors', async () => {
-    mockConfig.nodeEnv = 'production';
-    mockConfig.enableProdNetworkAnchoring = true;
-    mockCallRpc.mockResolvedValueOnce({ data: null, error: { message: 'rpc bad' } });
-    mockHasFunds.mockResolvedValueOnce(true);
-    mockRpc.mockResolvedValueOnce({ data: [], error: null });
-
-    await processPendingAnchors();
-    expect(mockRpc).toHaveBeenCalled();
-  });
-
-  it('skips claim RPC in prod when DB flag errors and env override is false', async () => {
-    mockConfig.nodeEnv = 'production';
-    mockConfig.enableProdNetworkAnchoring = false;
-    mockCallRpc.mockResolvedValueOnce({ data: null, error: { message: 'rpc bad' } });
-
-    const result = await processPendingAnchors();
-    expect(result).toEqual({ processed: 0, failed: 0 });
-    expect(mockRpc).not.toHaveBeenCalled();
-  });
-
-  it('skips claim RPC in prod when get_flag throws and env override is false', async () => {
-    mockConfig.nodeEnv = 'production';
-    mockConfig.enableProdNetworkAnchoring = false;
-    mockCallRpc.mockRejectedValueOnce(new Error('throw'));
-
-    const result = await processPendingAnchors();
-    expect(result).toEqual({ processed: 0, failed: 0 });
-    expect(mockRpc).not.toHaveBeenCalled();
-  });
-
-  it('calls claim RPC in prod when get_flag throws and env override is true', async () => {
-    mockConfig.nodeEnv = 'production';
-    mockConfig.enableProdNetworkAnchoring = true;
-    mockCallRpc.mockRejectedValueOnce(new Error('throw'));
-    mockHasFunds.mockResolvedValueOnce(true);
-    mockRpc.mockResolvedValueOnce({ data: [], error: null });
-
-    await processPendingAnchors();
-    expect(mockRpc).toHaveBeenCalled();
-  });
-});
-
-describe('processPendingAnchors treasury pre-flight', () => {
-  beforeEach(() => {
-    mockConfig.nodeEnv = 'development';
-    mockConfig.enableProdNetworkAnchoring = true;
-  });
-
-  it('skips claim when treasury empty', async () => {
-    mockHasFunds.mockResolvedValueOnce(false);
-    const result = await processPendingAnchors();
-    expect(result).toEqual({ processed: 0, failed: 0 });
-    expect(mockRpc).not.toHaveBeenCalled();
-  });
-
-  it('proceeds when hasFunds throws (non-fatal)', async () => {
-    mockHasFunds.mockRejectedValueOnce(new Error('utxo provider down'));
-    mockRpc.mockResolvedValueOnce({ data: [], error: null });
-    const result = await processPendingAnchors();
-    expect(result).toEqual({ processed: 0, failed: 0 });
-    expect(mockRpc).toHaveBeenCalledWith('claim_pending_anchors', expect.objectContaining({
-      p_exclude_pipeline: true,
-      p_limit: 100,
-    }));
-  });
-});
-
-describe('processPendingAnchors claim RPC', () => {
-  beforeEach(() => {
-    mockConfig.nodeEnv = 'development';
-    mockConfig.enableProdNetworkAnchoring = true;
-    mockHasFunds.mockResolvedValue(true);
-  });
-
-  it('returns 0/0 when claim RPC times out', async () => {
-    mockWithDbTimeout.mockRejectedValueOnce(new Error('timed out'));
-    const result = await processPendingAnchors();
-    expect(result).toEqual({ processed: 0, failed: 0 });
-    expect(mockWithDbTimeout).toHaveBeenCalledWith(expect.any(Function), 30_000);
-    expect(mockRpc).not.toHaveBeenCalled();
-  });
-
-  it('falls back to legacy path when claim RPC errors', async () => {
-    mockRpc.mockResolvedValueOnce({ data: null, error: { message: 'rpc missing' } });
-    legacyAllPendingLimit.mockResolvedValueOnce({ data: [], error: null });
-    const result = await processPendingAnchors();
-    expect(result).toEqual({ processed: 0, failed: 0 });
-    expect(mockRpc).toHaveBeenCalledWith('claim_pending_anchors', expect.any(Object));
-    expect(legacyAllPendingLimit).toHaveBeenCalledOnce();
-  });
-
-  it('returns 0/0 when claim RPC returns no rows', async () => {
-    mockRpc.mockResolvedValueOnce({ data: [], error: null });
-    const result = await processPendingAnchors();
-    expect(result).toEqual({ processed: 0, failed: 0 });
-  });
-
-  it('processes a claimed anchor end-to-end (success path)', async () => {
-    mockRpc.mockResolvedValueOnce({
-      data: [
-        {
-          id: 'a1',
-          user_id: 'u1',
-          org_id: 'o1',
-          fingerprint: VALID_FP,
-          public_id: 'pub-a1',
-          metadata: null,
-          credential_type: null,
-        },
-      ],
-      error: null,
-    });
-    const result = await processPendingAnchors();
-    expect(result).toEqual({ processed: 1, failed: 0 });
-    expect(mockSubmitFingerprint).toHaveBeenCalledOnce();
-  });
-});
-
-describe('processPendingAnchors legacy fallback', () => {
-  beforeEach(() => {
-    mockConfig.nodeEnv = 'development';
-    mockConfig.enableProdNetworkAnchoring = true;
-    mockHasFunds.mockResolvedValue(true);
-    mockRpc.mockResolvedValue({ data: null, error: { message: 'rpc missing' } });
-  });
-
-  it('returns 0/0 when legacy query fails', async () => {
-    legacyAllPendingLimit.mockResolvedValueOnce({ data: null, error: { message: 'select failed' } });
-    const result = await processPendingAnchors();
-    expect(result).toEqual({ processed: 0, failed: 0 });
-    expect(legacyAllPendingLimit).toHaveBeenCalledOnce();
-  });
-
-  it('skips pipeline anchors in legacy fallback', async () => {
-    legacyAllPendingLimit.mockResolvedValueOnce({
-      data: [
-        {
-          id: 'a-pipe',
-          user_id: 'u1',
-          org_id: 'o1',
-          fingerprint: VALID_FP,
-          public_id: 'pub',
-          metadata: { pipeline_source: 'x' },
-          credential_type: null,
-        },
-      ],
-      error: null,
-    });
-    const result = await processPendingAnchors();
-    expect(result).toEqual({ processed: 0, failed: 0 });
-    expect(legacyAllPendingLimit).toHaveBeenCalledOnce();
-    expect(mockAnchorsUpdate).not.toHaveBeenCalled();
-  });
-
-  it('skips anchors that lose the BROADCASTING claim race', async () => {
-    legacyAllPendingLimit.mockResolvedValueOnce({
-      data: [
-        {
-          id: 'a-lost',
-          user_id: 'u1',
-          org_id: 'o1',
-          fingerprint: VALID_FP,
-          public_id: 'pub',
-          metadata: null,
-          credential_type: null,
-        },
-      ],
-      error: null,
-    });
-    setAnchorUpdateResult({ error: null, count: 0 });
-    const result = await processPendingAnchors();
-    expect(result).toEqual({ processed: 0, failed: 0 });
-    expect(legacyAllPendingLimit).toHaveBeenCalledOnce();
-    expect(mockAnchorsUpdate).toHaveBeenCalledWith({ status: 'BROADCASTING' });
+    expect(mockCallRpc).not.toHaveBeenCalled();
+    expect(mockHasFunds).not.toHaveBeenCalled();
     expect(mockSubmitFingerprint).not.toHaveBeenCalled();
   });
 });
