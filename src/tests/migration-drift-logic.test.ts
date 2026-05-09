@@ -321,9 +321,11 @@ describe('SCRUM-908: migration files sanity check', () => {
 
     // Path C baseline sorts to the front (14 zeros < any 4-digit prefix).
     expect(files[0]).toBe('00000000000000_baseline_at_main_HEAD');
-    // Last entry is a numbered post-baseline migration in the 0290..0299 range
-    // (where new migrations land after the baseline cutover).
-    expect(files[files.length - 1]).toMatch(/^0[12]\d\d/);
+    // Last entry is a numbered post-baseline migration (>= 0290).
+    const last = files[files.length - 1];
+    const prefix = Number(last.slice(0, 4));
+    expect(Number.isNaN(prefix)).toBe(false);
+    expect(prefix).toBeGreaterThanOrEqual(290);
 
     // No duplicates after sort (each basename is unique)
     const unique = [...new Set(files)];
