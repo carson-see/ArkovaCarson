@@ -266,7 +266,14 @@ export const EMPTY_API_RICH_FIELDS = {
 
 /** Fire-and-forget audit log for verification queries */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function logVerificationAudit(req: any, publicId: string, result: VerificationResult, cacheHit: boolean): void {
+function logVerificationAudit(
+  req: any,
+  publicId: string,
+  result: VerificationResult,
+  cacheHit: boolean,
+  credentialVerifiedDispatched: boolean | null = null,
+  credentialVerifiedDispatchError: string | null = null,
+): void {
   void db.from('audit_events').insert({
     event_type: 'VERIFICATION_QUERIED',
     event_category: 'ANCHOR',
@@ -280,6 +287,16 @@ function logVerificationAudit(req: any, publicId: string, result: VerificationRe
       querying_agent: req.headers?.['user-agent']?.substring(0, 200) ?? null,
       api_key_id: (req as unknown as Record<string, unknown>).apiKeyId ?? null,
       ...(cacheHit && { cache_hit: true }),
+      // SCRUM-1799 (SCRUM-1743 Phase 2b): record whether the credential.verified
+      // webhook was dispatched on this verify call. `null` means the emit code
+      // path was not exercised (cache hit, flag off, or non-terminal status);
+      // `true`/`false` mean the dispatch was attempted with the recorded outcome.
+      ...(credentialVerifiedDispatched !== null && {
+        credential_verified_dispatched: credentialVerifiedDispatched,
+      }),
+      ...(credentialVerifiedDispatchError && {
+        credential_verified_dispatch_error: credentialVerifiedDispatchError,
+      }),
     }),
   });
 }
@@ -393,8 +410,6 @@ router.get('/:publicId', async (req, res) => {
     // PERF-12: Cache the result (fire-and-forget)
     void setCachedVerification(publicId, result);
 
-    logVerificationAudit(req, anchor.public_id, result, false);
-
     // SCRUM-1799 (SCRUM-1743 Phase 2b): emit `credential.verified` on cache miss
     // when the anchor has resolved to a terminal status. Best-effort — never
     // aborts the response (the verification answer is already authoritative).
@@ -407,6 +422,8 @@ router.get('/:publicId', async (req, res) => {
     // ramp up the producer in staging before exposing customer endpoints to
     // verify-call traffic. Schema accepts SECURED / REVOKED / EXPIRED only;
     // ACTIVE maps to SECURED (anchor.status === 'ACTIVE' is the v1 alias).
+    let credentialVerifiedDispatched: boolean | null = null;
+    let credentialVerifiedDispatchError: string | null = null;
     if (
       process.env.ENABLE_CREDENTIAL_VERIFIED_WEBHOOK === 'true'
       && anchor.org_id
@@ -427,7 +444,12 @@ router.get('/:publicId', async (req, res) => {
             // verifier_country requires a GEO provider; not yet wired.
             // Schema accepts null/missing; revisit when GEO lookup lands.
           });
+          credentialVerifiedDispatched = true;
         } catch (webhookError) {
+          credentialVerifiedDispatched = false;
+          credentialVerifiedDispatchError = webhookError instanceof Error
+            ? webhookError.message
+            : String(webhookError);
           logger.warn(
             { publicId: anchor.public_id, error: webhookError },
             'Failed to dispatch credential.verified webhook (response NOT aborted)',
@@ -435,6 +457,19 @@ router.get('/:publicId', async (req, res) => {
         }
       }
     }
+
+    // SCRUM-1799: enrich the existing VERIFICATION_QUERIED audit row with the
+    // credential.verified dispatch outcome. We log the audit AFTER the emit so
+    // the row records the actual dispatch result, not just the decision to
+    // emit. Fire-and-forget — never blocks the response.
+    logVerificationAudit(
+      req,
+      anchor.public_id,
+      result,
+      false,
+      credentialVerifiedDispatched,
+      credentialVerifiedDispatchError,
+    );
 
     res.json(result);
   } catch (err) {

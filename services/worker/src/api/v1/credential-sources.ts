@@ -621,10 +621,12 @@ router.post('/import-url/confirm', async (req: Request, res: Response) => {
     // — joining to orgs.public_id / profiles.public_id is a follow-up; schema
     // accepts null today.
     if (orgId && anchor.public_id) {
+      const issuedAt =
+        evidenceDateToTimestamp(preview.credential_issued_at) ?? anchor.created_at;
+      const expiresAt = evidenceDateToTimestamp(preview.credential_expires_at, true);
+      let webhookDispatched = false;
+      let webhookErrorMessage: string | null = null;
       try {
-        const issuedAt =
-          evidenceDateToTimestamp(preview.credential_issued_at) ?? anchor.created_at;
-        const expiresAt = evidenceDateToTimestamp(preview.credential_expires_at, true);
         await dispatchWebhookEvent(orgId, 'credential.issued', anchor.public_id, {
           public_id: anchor.public_id,
           credential_type: preview.credential_type,
@@ -632,12 +634,47 @@ router.post('/import-url/confirm', async (req: Request, res: Response) => {
           issued_at: issuedAt,
           expires_at: expiresAt,
         });
+        webhookDispatched = true;
       } catch (webhookError) {
+        webhookErrorMessage = webhookError instanceof Error
+          ? webhookError.message
+          : String(webhookError);
         logger.warn(
           { anchorId: anchor.id, publicId: anchor.public_id, error: webhookError },
           'Failed to dispatch credential.issued webhook (response NOT aborted)',
         );
       }
+
+      // SCRUM-1800 (SCRUM-1743 Phase 2c): tamper-evident audit row tied to the
+      // webhook emit decision. The existing CREDENTIAL_SOURCE_IMPORTED row
+      // captures the import action; this `credential.issued` row captures the
+      // outbound webhook fan-out specifically so auditors can answer "was a
+      // credential.issued event emitted for anchor X?" without joining
+      // webhook_delivery_logs (which is operational, not audit-grade).
+      // eslint-disable-next-line arkova/missing-org-filter -- Insert-only audit write; tenant scope is carried in the validated org_id field.
+      void db.from('audit_events').insert({
+        event_type: 'credential.issued',
+        event_category: 'WEBHOOK',
+        actor_id: userId,
+        org_id: orgId,
+        target_type: 'anchor',
+        target_id: anchor.id,
+        details: JSON.stringify({
+          public_id: anchor.public_id,
+          credential_type: preview.credential_type,
+          dispatched: webhookDispatched,
+          dispatch_error: webhookErrorMessage,
+          issued_at: issuedAt,
+          expires_at: expiresAt,
+        }),
+      }).then(({ error }: { error: unknown }) => {
+        if (error) {
+          logger.error(
+            { error, anchorId: anchor.id },
+            'Failed to write credential.issued audit row',
+          );
+        }
+      });
     }
 
     res.status(201).json({

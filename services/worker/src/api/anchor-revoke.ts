@@ -125,6 +125,8 @@ anchorRevokeRouter.post('/:id/revoke', async (req: Request<{ id: string }>, res:
     // customers never received deliveries. SCRUM-1800 adds the producer.
     if (anchor.public_id && anchor.org_id) {
       const changedAt = new Date().toISOString();
+      let anchorRevokedDispatched = false;
+      let anchorRevokedError: string | null = null;
       try {
         await dispatchWebhookEvent(anchor.org_id, 'anchor.revoked', anchor.public_id, {
           public_id: anchor.public_id,
@@ -134,10 +136,17 @@ anchorRevokeRouter.post('/:id/revoke', async (req: Request<{ id: string }>, res:
           revoked_at: changedAt,
           revocation_reason: reason,
         });
+        anchorRevokedDispatched = true;
       } catch (webhookError) {
+        anchorRevokedError = webhookError instanceof Error
+          ? webhookError.message
+          : String(webhookError);
         logger.warn({ anchorId, error: webhookError }, 'Failed to dispatch anchor.revoked webhook');
       }
+
       if (anchor.credential_type) {
+        let credStatusDispatched = false;
+        let credStatusError: string | null = null;
         try {
           await dispatchWebhookEvent(anchor.org_id, 'credential.status_changed', anchor.public_id, {
             public_id: anchor.public_id,
@@ -147,10 +156,62 @@ anchorRevokeRouter.post('/:id/revoke', async (req: Request<{ id: string }>, res:
             changed_at: changedAt,
             reason,
           });
+          credStatusDispatched = true;
         } catch (webhookError) {
+          credStatusError = webhookError instanceof Error
+            ? webhookError.message
+            : String(webhookError);
           logger.warn({ anchorId, error: webhookError }, 'Failed to dispatch credential.status_changed webhook');
         }
+
+        // SCRUM-1800: emit-decision audit row for credential.status_changed.
+        // Companion to the existing anchor.revoked audit row (line ~100). Lets
+        // auditors filter `event_type='credential.status_changed'` directly
+        // without joining webhook_delivery_logs.
+        db.from('audit_events').insert({
+          event_type: 'credential.status_changed',
+          event_category: 'WEBHOOK',
+          actor_id: userId,
+          org_id: anchor.org_id,
+          target_type: 'anchor',
+          target_id: anchorId,
+          details: JSON.stringify({
+            public_id: anchor.public_id,
+            credential_type: anchor.credential_type,
+            previous_status: 'SECURED',
+            new_status: 'REVOKED',
+            dispatched: credStatusDispatched,
+            dispatch_error: credStatusError,
+            reason,
+          }),
+        }).then(({ error }) => {
+          if (error) {
+            logger.error({ error, anchorId }, 'Failed to write credential.status_changed audit row');
+          }
+        });
       }
+
+      // SCRUM-1800: emit-decision audit row for anchor.revoked. The existing
+      // `anchor.revoked` audit row at line ~100 captures the actor revocation
+      // action; this row separately captures the webhook dispatch outcome so a
+      // delivery failure surfaces in the audit feed too.
+      db.from('audit_events').insert({
+        event_type: 'anchor.revoked.dispatched',
+        event_category: 'WEBHOOK',
+        actor_id: userId,
+        org_id: anchor.org_id,
+        target_type: 'anchor',
+        target_id: anchorId,
+        details: JSON.stringify({
+          public_id: anchor.public_id,
+          dispatched: anchorRevokedDispatched,
+          dispatch_error: anchorRevokedError,
+        }),
+      }).then(({ error }) => {
+        if (error) {
+          logger.error({ error, anchorId }, 'Failed to write anchor.revoked.dispatched audit row');
+        }
+      });
     }
 
     logger.info({ anchorId, reason }, 'Anchor revoked');

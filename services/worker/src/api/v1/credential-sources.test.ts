@@ -622,5 +622,54 @@ describe('credentialSourcesRouter', () => {
       expect(res.status).toBe(201);
       expect(mockDispatchWebhookEvent).not.toHaveBeenCalled();
     });
+
+    it('writes a credential.issued audit row capturing dispatch outcome', async () => {
+      await request(makeApp())
+        .post('/api/v1/credential-sources/import-url/preview')
+        .send({ source_url: 'https://credentials.example.com/auditable', credential_type: 'INSURANCE' });
+
+      const res = await request(makeApp())
+        .post('/api/v1/credential-sources/import-url/confirm')
+        .send({ source_url: 'https://credentials.example.com/auditable', credential_type: 'INSURANCE' });
+
+      expect(res.status).toBe(201);
+      // Audit insert is fire-and-forget — drain microtasks before asserting.
+      for (let i = 0; i < 10; i++) await Promise.resolve();
+
+      const auditCalls = mockAuditInsert.mock.calls.map((c: unknown[]) => c[0]);
+      const issuedRow = auditCalls.find(
+        (row: any) => row?.event_type === 'credential.issued',
+      );
+      expect(issuedRow).toBeDefined();
+      expect(issuedRow.event_category).toBe('WEBHOOK');
+      expect(issuedRow.org_id).toBe('org-1');
+      const details = JSON.parse(issuedRow.details);
+      expect(details.dispatched).toBe(true);
+      expect(details.credential_type).toBe('INSURANCE');
+    });
+
+    it('writes a credential.issued audit row with dispatched=false when dispatch fails', async () => {
+      mockDispatchWebhookEvent.mockRejectedValueOnce(new Error('endpoint offline'));
+
+      await request(makeApp())
+        .post('/api/v1/credential-sources/import-url/preview')
+        .send({ source_url: 'https://credentials.example.com/dispatchfail', credential_type: 'TRANSCRIPT' });
+
+      const res = await request(makeApp())
+        .post('/api/v1/credential-sources/import-url/confirm')
+        .send({ source_url: 'https://credentials.example.com/dispatchfail', credential_type: 'TRANSCRIPT' });
+
+      expect(res.status).toBe(201);
+      for (let i = 0; i < 10; i++) await Promise.resolve();
+
+      const auditCalls = mockAuditInsert.mock.calls.map((c: unknown[]) => c[0]);
+      const issuedRow = auditCalls.find(
+        (row: any) => row?.event_type === 'credential.issued',
+      );
+      expect(issuedRow).toBeDefined();
+      const details = JSON.parse(issuedRow.details);
+      expect(details.dispatched).toBe(false);
+      expect(details.dispatch_error).toBe('endpoint offline');
+    });
   });
 });

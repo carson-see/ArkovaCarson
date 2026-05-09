@@ -193,7 +193,65 @@ export async function fanOutSecuredAnchorWebhooks(
     return [baseTask, credentialTask];
   });
 
+  // SCRUM-1800: tally planned credential.status_changed dispatches per org.
+  // Used to write a single per-org audit row at the end of the batch (vs.
+  // per-anchor — which would multiply audit volume by ~10K on a typical merkle
+  // batch). Counts the number of credential events we *attempted* to dispatch;
+  // the webhook_delivery_logs table records per-attempt outcome.
+  const credentialOrgCounts = new Map<string, number>();
+  const credentialPublicIdsByOrg = new Map<string, string[]>();
+  for (const anchor of eligible) {
+    if (credentialTypeByPublicId.has(anchor.public_id)) {
+      credentialOrgCounts.set(anchor.org_id, (credentialOrgCounts.get(anchor.org_id) ?? 0) + 1);
+      const existing = credentialPublicIdsByOrg.get(anchor.org_id) ?? [];
+      // Cap stored IDs per org to keep audit row size bounded — a 10K-credential
+      // merkle batch should not produce a 1MB JSON details column.
+      if (existing.length < 100) existing.push(anchor.public_id);
+      credentialPublicIdsByOrg.set(anchor.org_id, existing);
+    }
+  }
+
   const result = await runWithConcurrency(tasks, BULK_WEBHOOK_FAN_OUT_CONCURRENCY);
+
+  // SCRUM-1800: write per-org credential.status_changed.batch audit row(s)
+  // after the fan-out completes. One row per org with at least one credential
+  // event in this batch — keeps audit volume bounded while preserving the
+  // tamper-evident link to the underlying merkle tx.
+  if (credentialOrgCounts.size > 0) {
+    const credAuditRows = Array.from(credentialOrgCounts.entries()).map(([orgId, count]) => ({
+      event_type: 'credential.status_changed.batch',
+      event_category: 'WEBHOOK',
+      actor_id: '00000000-0000-0000-0000-000000000000',
+      target_type: 'anchor',
+      target_id: txId,
+      org_id: orgId,
+      details: JSON.stringify({
+        chain_tx_id: txId,
+        block_height: blockHeight,
+        previous_status: 'SUBMITTED',
+        new_status: 'SECURED',
+        credentials_dispatched_attempted: count,
+        sample_public_ids: credentialPublicIdsByOrg.get(orgId) ?? [],
+      }),
+    }));
+    try {
+      const { error: credAuditErr } =
+        credAuditRows.length === 1
+          ? await db.from('audit_events').insert(credAuditRows[0])
+          : await db.from('audit_events').insert(credAuditRows);
+      if (credAuditErr) {
+        logger.warn(
+          { txId, error: credAuditErr },
+          'Failed to insert credential.status_changed.batch audit rows',
+        );
+      }
+    } catch (auditError) {
+      logger.warn(
+        { txId, error: auditError },
+        'credential.status_changed.batch audit insert threw',
+      );
+    }
+  }
 
   if (result.rejected.length > 0) {
     const firstReason = result.rejected[0]?.reason;
