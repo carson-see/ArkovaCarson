@@ -216,6 +216,24 @@ PR [#700](https://github.com/carson-see/ArkovaCarson/pull/700) remains the Path 
 
 **Still required before #700 is Done/merge-ready:** final branch-protection checks green on the latest pushed head, review approval, and real #700 worker/staging behavior evidence. Shared staging is active in parallel work, so #700 should not acquire or mutate it without coordination; use an explicitly approved isolated environment or wait for the staging lease. Until that evidence is captured, #700 remains honest as schema-equivalence plus CI/fresh-DB/prod-schema validation, not a completed T2/T3 behavior soak.
 
+### 2026-05-08 — SCRUM-1732 anchor-submit metadata persistence — contract-lock regression test (branch `claude/scrum-1732-anchor-metadata-persist`)
+
+Bench-state, paired with SCRUM-1731. Audit recalibration: SCRUM-1732 was already implemented in code (the `?...metadata` conditional spread on `services/worker/src/api/v1/anchor-submit.ts` correctly persists validated `metadata` to `anchors.metadata`); the original audit's claim that the spread was dropping the field was stale.
+
+This PR adds **two metadata-persistence contract-lock tests** under the existing describe block in `services/worker/src/api/v1/anchor-submit.test.ts` (PR title: `test(SCRUM-1732): anchor-submit metadata persistence contract-lock tests`):
+
+- "persists every public-safe key from the request" — iterates the request payload's keys and verifies each landed in the `db.from('anchors').insert(...)` call with the exact value, so a future silent key drop fails loud.
+- Strengthened existing checks via the `InsertCallArg` interface to assert key-by-key, replacing the prior loose `expect.objectContaining(...)` shape match.
+
+Local quality gates:
+
+- `npx vitest run services/worker/src/api/v1/anchor-submit.test.ts` → suite green locally (11 tests including the contract-lock additions)
+- `npx eslint services/worker/src/api/v1/anchor-submit.ts services/worker/src/api/v1/anchor-submit.test.ts` → clean
+
+Tier: T1 by code-touched scope (test file + minor type-safety helper). No runtime change, no migration. Staging-evidence gate satisfied via the PR body block declaring T1 + linking back to this entry.
+
+_Last refreshed: 2026-05-08 by claude — vitest suite green locally; eslint clean on touched files; no prod state change._
+
 ### 2026-05-06 — PR #711 SCRUM-1545 coverage backfill merge-resolution pass
 
 PR [#711](https://github.com/carson-see/ArkovaCarson/pull/711) remains test-only and exists to close the R4-4-FU coverage gap for `services/worker/src/jobs/anchor.ts`, `services/worker/src/chain/client.ts`, and `services/worker/src/index.ts`. It adds `anchor-coverage.test.ts`, strengthens chain/index tests, and raises worker coverage thresholds for the targeted files. `services/worker/src/api/admin-pipeline-stats.ts` coverage was handled in PR [#690](https://github.com/carson-see/ArkovaCarson/pull/690); it is not an unmerged follow-up hidden inside #711.
