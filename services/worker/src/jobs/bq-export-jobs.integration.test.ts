@@ -33,11 +33,17 @@ vi.mock('../utils/db.js', () => ({ db: { from: (...a: unknown[]) => fromMock(...
 vi.mock('../utils/logger.js', () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }));
-vi.mock('./bq-export-client.js', () => ({
-  ensureTable: (...a: unknown[]) => ensureTableMock(...a),
-  insertRows: (...a: unknown[]) => insertRowsMock(...a),
-  runQuery: (...a: unknown[]) => runQueryMock(...a),
-}));
+vi.mock('./bq-export-client.js', async (importActual) => {
+  // Real toBqRow needs to flow through — it's the wire-shaper used by both
+  // incremental and backfill. Only the network-touching helpers are mocked.
+  const actual = await importActual<typeof import('./bq-export-client.js')>();
+  return {
+    ...actual,
+    ensureTable: (...a: unknown[]) => ensureTableMock(...a),
+    insertRows: (...a: unknown[]) => insertRowsMock(...a),
+    runQuery: (...a: unknown[]) => runQueryMock(...a),
+  };
+});
 vi.mock('./bq-export-watermark.js', async (importActual) => {
   const actual = await importActual<typeof import('./bq-export-watermark.js')>();
   return {
