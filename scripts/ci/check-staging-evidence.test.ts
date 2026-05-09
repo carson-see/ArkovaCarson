@@ -22,6 +22,7 @@ Queue rewrite.
 - E2E result: 312/312 green
 - Migration applied: 0288_priority_anchor_credits.sql
 - Rollback rehearsed: yes — applied + rolled back + re-applied
+- Staging deploy log id: 142 (from public.staging_deploy_log via scripts/staging/deploy.sh)
 - Trigger A fires: 4 (10k threshold reached at T+04:32, T+10:11, T+22:04, T+38:51)
 - Trigger B fires: 2 (clock fired at T+09:14 and T+34:01)
 - Daily flush observation: fired 2026-05-05 08:00 UTC, drained 4,217 anchors across 18 orgs
@@ -120,6 +121,30 @@ describe('check-staging-evidence', () => {
       const missing = missingFields(partial, 'T3');
       expect(missing).toContain('Trigger A fires:');
       expect(missing).toContain('Trigger B fires:');
+    });
+
+    // SCRUM-1803: every T2/T3 deploy must reference its staging_deploy_log row,
+    // proving the lease-enforced wrapper was used. A free-typed evidence
+    // block without that id wouldn't catch raw-gcloud bypasses.
+    it('SCRUM-1803: T2 fails when Staging deploy log id is missing', () => {
+      const t2Body = `## Staging Soak Evidence
+- Tier: T2
+- Staging branch: arkova-staging
+- Worker revision: arkova-worker-staging-00099-xyz
+- Soak start: 2026-05-09 14:00 UTC
+- Soak end: 2026-05-09 18:00 UTC
+- E2E result: 50/50 green
+- Migration applied: none
+- Rollback rehearsed: n/a
+`;
+      const missing = missingFields(t2Body, 'T2');
+      expect(missing).toContain('Staging deploy log id:');
+    });
+
+    it('SCRUM-1803: T3 fails when Staging deploy log id is missing', () => {
+      const partial = T3_BODY.replace(/Staging deploy log id:.*\n/, '');
+      const missing = missingFields(partial, 'T3');
+      expect(missing).toContain('Staging deploy log id:');
     });
   });
 

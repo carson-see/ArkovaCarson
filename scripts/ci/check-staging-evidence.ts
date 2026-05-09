@@ -65,6 +65,9 @@ export const TIER_SPECS: Record<Tier, TierSpec> = {
       'E2E result:',
       'Migration applied:',
       'Rollback rehearsed:',
+      // SCRUM-1803: every T2/T3 deploy MUST go through scripts/staging/deploy.sh,
+      // which writes to public.staging_deploy_log. The PR body cites the row id.
+      'Staging deploy log id:',
     ],
   },
   T3: {
@@ -79,6 +82,7 @@ export const TIER_SPECS: Record<Tier, TierSpec> = {
       'E2E result:',
       'Migration applied:',
       'Rollback rehearsed:',
+      'Staging deploy log id:',
       'Trigger A fires:',
       'Trigger B fires:',
       'Daily flush observation:',

@@ -140,18 +140,53 @@ allows the same set of files to coexist with non-canonical ledger entries.
 
 ## How to run a T2 soak (CLAUDE.md §1.12)
 
-1. **Acquire the lease** — only one soak runs at a time:
+**Updated 2026-05-09 — SCRUM-1803.** Multiple PRs can soak in parallel; each PR gets its own tag-routed Cloud Run revision URL via `scripts/staging/deploy.sh`. The lease is now per-PR (PRIMARY KEY on `pr_number`); deploys are gated by lease presence.
+
+1. **Acquire your lease** — multiple PRs may hold leases simultaneously, but only one per PR:
    ```bash
-   STAGING_SUPABASE_URL="https://ujtlwnoqfhtitcmsnrpq.supabase.co" \
-   STAGING_SUPABASE_SERVICE_ROLE_KEY="<service_role>" \
+   export STAGING_SUPABASE_URL="https://ujtlwnoqfhtitcmsnrpq.supabase.co"
+   export STAGING_SUPABASE_SERVICE_ROLE_KEY="$(gcloud secrets versions access latest --secret=supabase-service-role-key-staging --project=arkova1)"
    ./scripts/staging/claim.sh acquire <pr-number> "<short reason>"
    ```
-2. **Seed** — `npx tsx scripts/staging/seed.ts` against the staging URL.
-3. **Run the load harness** — `npx tsx scripts/staging/load-harness.ts` for ≥4h.
-4. **Rollback rehearsal** — for any new migration in the PR, apply its `-- ROLLBACK:` block and confirm the worker still passes /health, then re-apply.
-5. **Capture evidence** — fill PR body's `## Staging Soak Evidence` block with: Tier, Staging branch (= project ref), Worker revision, Soak start/end, E2E result, Migration applied, Rollback rehearsed.
-6. **Release the lease** — `./scripts/staging/claim.sh release <pr-number>`.
-7. **Mark PR ready** — `gh pr ready <N>` (only after the evidence block is complete).
+   `claim.sh` prints any other PRs currently soaking — that's expected; the tag URL pattern keeps them isolated.
+
+2. **Build your image** — `gcloud builds submit --tag us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker:scrum-N-<sha>` from `services/worker/`.
+
+3. **Deploy via the lease-enforced wrapper** — refuses to deploy without a lease (override with `--force "<reason>"` for audited bypass):
+   ```bash
+   ./scripts/staging/deploy.sh --pr <N> --image <image-ref>
+   # prints:
+   #   STAGING_API_BASE=https://pr-<N>---arkova-worker-staging-270018525501.us-central1.run.app
+   ```
+   The `--no-traffic` flag is implicit; the main URL is undisturbed unless you pass `--promote`. Each deploy writes a row to `staging_deploy_log` (append-only, audit-grade).
+
+4. **Seed** — `npx tsx scripts/staging/seed.ts` against the staging Supabase project. Synthetic data only, namespaced by `org_prefix LIKE 'STG%'`.
+
+5. **Run the load harness against your tag URL**:
+   ```bash
+   STAGING_API_BASE="https://pr-<N>---arkova-worker-staging-270018525501.us-central1.run.app" \
+     npx tsx scripts/staging/load-harness.ts --mode mixed --duration 240 \
+       --evidence-out docs/staging/soak-pr-<N>.json
+   ```
+   Other PRs' soaks hit their own tag URLs; your traffic is isolated to your revision.
+
+6. **Rollback rehearsal** — for any new migration in the PR, apply its `-- ROLLBACK:` block and confirm `/health` on your tag URL stays green, then re-apply.
+
+7. **Capture evidence** — fill PR body's `## Staging Soak Evidence` block: Tier, Staging branch (project ref), Worker revision, Soak start/end, E2E result, Migration applied, Rollback rehearsed. Reference the `staging_deploy_log` rows for your PR via `select * from staging_deploy_log where pr_number = <N>`.
+
+8. **Release the lease** — `./scripts/staging/claim.sh release <pr-number>`.
+
+9. **Mark PR ready** — `gh pr ready <N>` (only after the evidence block is complete).
+
+### Why tag-routed instead of "one soak at a time"
+
+Pre-SCRUM-1803, the rig was single-tenant and the lease was advisory. `gcloud run services update` with no tag rewrites the main URL traffic for everybody. PR #742↔#743 collided on 2026-05-08; PR #742↔#755 contaminated a 4h SOC 2 T2 soak ~12 min in on 2026-05-09. Both happened despite a held lease, because nothing checked it before deploy.
+
+The tag URL pattern is Cloud Run's native isolation: `--tag pr-N --no-traffic` creates a revision reachable only at `https://pr-N---<service>-...run.app` while leaving the main URL untouched. Multiple PRs can hold revisions; load-harness traffic on each tag URL routes to that revision only. The lease scopes which PR is the legitimate author of deploys to a given tag; `deploy.sh` enforces it.
+
+### Force-deploy bypass
+
+`deploy.sh --force "<reason>"` skips the lease check but writes `forced=true` and the reason to `staging_deploy_log`. Use ONLY for genuine emergencies (recovering a contaminated soak from a different session, urgent prod hotfix needing same-session staging). Audit log is queryable by anyone reviewing soak evidence.
 
 ## Cost discipline
 
