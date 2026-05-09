@@ -35,7 +35,7 @@ function mockReq(opts: { params?: Record<string, string>; body?: unknown } = {})
   } as unknown as Request;
 }
 
-const VALID_UUID = '11111111-1111-1111-1111-111111111111';
+const VALID_UUID = '11111111-1111-4111-8111-111111111111';
 const VALID_PUBLIC_ID = 'pub-anchor-abc123';
 const VALID_HASH = 'a'.repeat(64);
 

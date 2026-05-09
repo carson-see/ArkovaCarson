@@ -90,7 +90,7 @@ describe('POST /api/v1/ai/embed', () => {
     const handler = getHandler('post', '/');
     const { req, res } = createMockReqRes(
       {
-        anchorId: '00000000-0000-0000-0000-000000000001',
+        anchorId: '10000000-1000-4000-8000-000000000001',
         metadata: { credentialType: 'DEGREE', issuerName: 'Test University' },
       },
       'user-123',
@@ -119,7 +119,7 @@ describe('POST /api/v1/ai/embed', () => {
   it('returns 401 without auth', async () => {
     const handler = getHandler('post', '/');
     const { req, res } = createMockReqRes({
-      anchorId: '00000000-0000-0000-0000-000000000001',
+      anchorId: '10000000-1000-4000-8000-000000000001',
       metadata: {},
     });
 
@@ -137,7 +137,7 @@ describe('POST /api/v1/ai/embed', () => {
     const handler = getHandler('post', '/');
     const { req, res } = createMockReqRes(
       {
-        anchorId: '00000000-0000-0000-0000-000000000001',
+        anchorId: '10000000-1000-4000-8000-000000000001',
         metadata: { credentialType: 'DEGREE' },
       },
       'user-123',

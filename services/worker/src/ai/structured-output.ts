@@ -34,15 +34,15 @@ export interface GeminiSchema {
 /**
  * Map a Zod type to a Gemini schema type.
  */
-function zodTypeToGemini(zodType: z.ZodTypeAny): GeminiSchemaProperty {
+function zodTypeToGemini(zodType: z.ZodType): GeminiSchemaProperty {
   // Unwrap optionals
   if (zodType instanceof z.ZodOptional) {
-    return zodTypeToGemini(zodType.unwrap());
+    return zodTypeToGemini(zodType.unwrap() as z.ZodType);
   }
 
   // Unwrap defaults
   if (zodType instanceof z.ZodDefault) {
-    return zodTypeToGemini(zodType._def.innerType);
+    return zodTypeToGemini(zodType._def.innerType as z.ZodType);
   }
 
   if (zodType instanceof z.ZodString) {
@@ -60,7 +60,7 @@ function zodTypeToGemini(zodType: z.ZodTypeAny): GeminiSchemaProperty {
   if (zodType instanceof z.ZodArray) {
     return {
       type: 'ARRAY',
-      items: zodTypeToGemini(zodType.element),
+      items: zodTypeToGemini(zodType.element as z.ZodType),
     };
   }
 
@@ -69,7 +69,7 @@ function zodTypeToGemini(zodType: z.ZodTypeAny): GeminiSchemaProperty {
   }
 
   if (zodType instanceof z.ZodEnum) {
-    return { type: 'STRING', enum: zodType._def.values };
+    return { type: 'STRING', enum: zodType.options as string[] };
   }
 
   // Fallback: treat as string
@@ -88,7 +88,7 @@ export function zodToGeminiSchema(schema: z.ZodObject<z.ZodRawShape>): GeminiSch
   const required: string[] = [];
 
   for (const [key, value] of Object.entries(shape)) {
-    const zodValue = value as z.ZodTypeAny;
+    const zodValue = value as z.ZodType;
     properties[key] = zodTypeToGemini(zodValue);
 
     // Check if the field is required (not optional)

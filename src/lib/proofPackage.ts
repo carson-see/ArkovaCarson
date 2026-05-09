@@ -58,7 +58,7 @@ export const ProofPackageSchema = z.object({
   }),
 
   // Human-readable glossary (Design Audit #10)
-  proof_glossary: z.record(z.string()).optional(),
+  proof_glossary: z.record(z.string(), z.string()).optional(),
 });
 
 export type ProofPackage = z.infer<typeof ProofPackageSchema>;

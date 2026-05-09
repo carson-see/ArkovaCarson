@@ -23,8 +23,8 @@ vi.mock('../../../utils/logger.js', () => ({
 import { adobeSignWebhookRouter } from './adobe-sign.js';
 
 const TEST_SECRET = 'adobe-fixture-secret-aaaa';
-const ORG_ID = '11111111-1111-1111-1111-111111111111';
-const INTEGRATION_ID = '22222222-2222-2222-2222-222222222222';
+const ORG_ID = '11111111-1111-4111-8111-111111111111';
+const INTEGRATION_ID = '22222222-2222-4222-8222-222222222222';
 const WEBHOOK_ID = 'webhook-abc-123';
 const AGREEMENT_ID = 'CBSCTBAAA-agreement-xyz';
 

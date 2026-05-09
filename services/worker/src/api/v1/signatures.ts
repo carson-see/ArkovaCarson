@@ -44,7 +44,7 @@ const signRequestSchema = z.object({
   jurisdiction: z.enum(['EU', 'US', 'UK', 'CH', 'INTL']).optional(),
   reason: z.string().max(500).optional(),
   location: z.string().max(200).optional(),
-  metadata: z.record(z.unknown()).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
 }).refine(
   (d) => d.anchor_id || d.attestation_id,
   { message: 'Either anchor_id or attestation_id required' },
