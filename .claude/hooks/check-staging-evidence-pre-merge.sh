@@ -62,10 +62,10 @@ fi
 # happens to contain "--undo" (e.g. `gh pr ready feature--undo-test`)
 # falsely escapes the hook.
 is_target=false
-if [[ "$cmd" =~ (^|[[:space:]]|;|&&|\|\|)gh[[:space:]]+pr[[:space:]]+ready([[:space:]]|$) ]] \
-   && [[ ! "$cmd" =~ (^|[[:space:]])--undo([[:space:]]|$) ]]; then
+if [[ "$cmd" =~ (^|[[:space:]]|;|&&|\|\|)gh[[:space:]]+pr[[:space:]]+ready([[:space:]]|;|&&|\|\||$) ]] \
+   && [[ ! "$cmd" =~ (^|[[:space:]])--undo([[:space:]]|;|&&|\|\||$) ]]; then
   is_target=true
-elif [[ "$cmd" =~ (^|[[:space:]]|;|&&|\|\|)gh[[:space:]]+pr[[:space:]]+merge([[:space:]]|$) ]]; then
+elif [[ "$cmd" =~ (^|[[:space:]]|;|&&|\|\|)gh[[:space:]]+pr[[:space:]]+merge([[:space:]]|;|&&|\|\||$) ]]; then
   is_target=true
 fi
 
@@ -73,13 +73,28 @@ if [[ "$is_target" != "true" ]]; then
   exit 0
 fi
 
+# Reject compound commands containing multiple `gh pr (ready|merge)`.
+# Only extracting the first match would let subsequent ones slip through
+# unvalidated.
+target_match_count=$(
+  printf '%s' "$cmd" \
+    | grep -coE 'gh[[:space:]]+pr[[:space:]]+(ready|merge)' \
+    || true
+)
+if [[ "$target_match_count" -gt 1 ]]; then
+  jq -n --arg msg 'Compound commands with multiple gh pr ready/merge invocations are not allowed. Run each PR operation separately so staging evidence can be validated per-PR.' '{
+    hookSpecificOutput: {
+      hookEventName: "PreToolUse",
+      permissionDecision: "deny",
+      permissionDecisionReason: $msg
+    }
+  }'
+  exit 0
+fi
+
 # Extract the PR selector if one is present. `gh pr ready` and
 # `gh pr merge` both accept `[<number> | <url> | <branch>]` per the
-# GitHub CLI manual. CodeRabbit 2026-05-08 review: previously this
-# only captured numeric IDs, so `gh pr merge feature/foo` or a PR URL
-# fell through to "no selector" and the hook inspected the wrong PR.
-# Capture the first explicit selector token (not a flag) after
-# `gh pr (ready|merge)`. A flag starts with `-` so we exclude that.
+# GitHub CLI manual.
 pr_selector=$(
   printf '%s' "$cmd" \
     | grep -oE 'gh[[:space:]]+pr[[:space:]]+(ready|merge)([[:space:]]+[^[:space:]-][^[:space:]]*)?' \
