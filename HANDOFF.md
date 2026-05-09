@@ -150,6 +150,31 @@ Tier: T1 by code-touched scope (test file + minor type-safety helper). No runtim
 
 _Last refreshed: 2026-05-09 by claude — claims verified against CI run 25602908073; no prod state change._
 
+### 2026-05-07 — staging-soak-skip label destroyed + sandbox enforcement hook (branch `claude/destroy-staging-soak-skip`)
+
+Bench-state entry — PR not yet opened at time of writing. No prod state changed.
+
+**Why now:** SCRUM-1735 / PR #731 used `staging-soak-skip` with a defensible-but-precedent-setting "no producer dispatches yet" rationale. Carson called the gap on 2026-05-07 and required (a) destruction of the override label, (b) policy update so the override no longer exists, (c) a Claude-harness hook that prevents the agent from re-introducing the same gap.
+
+**What shipped on this branch:**
+
+* **GitHub label `staging-soak-skip` deleted** via `gh api -X DELETE /repos/carson-see/ArkovaCarson/labels/staging-soak-skip` (returns 204; verified by querying the labels list).
+* **`scripts/ci/check-staging-evidence.ts`** — `OVERRIDE_LABEL` constant removed; `check()` signature drops `overridden`; `main()` drops `hasLabel(OVERRIDE_LABEL)`; module header rewritten to state no override exists. Tests (`scripts/ci/check-staging-evidence.test.ts`) updated: removed the "passes when override label is set" case, dropped `overridden: false` from remaining 5 cases, added regression test "does NOT honor a removed staging-soak-skip override". `npx vitest run scripts/ci/check-staging-evidence.test.ts` → 25/25 pass.
+* **`CLAUDE.md` §1.11** — replaced the override-label sentence with an explicit "no override label exists" notice + reference to the new harness hook.
+* **`.github/workflows/staging-evidence.yml`** — header comment updated to match.
+* **`.claude/settings.json`** (new file, project-level) — registers a `PreToolUse` hook on `Bash` matcher that runs the local script.
+* **`.claude/hooks/check-staging-evidence-pre-merge.sh`** (new, executable) — the hook script. Reads PreToolUse JSON from stdin; matches `gh pr ready` (without `--undo`) or `gh pr merge`; pulls the PR body via `gh pr view`; emits a `permissionDecision: deny` JSON to block when the body lacks both `## Staging Soak Evidence` and `Tier: T[123]`. Permissive on `gh pr ready --undo` (Ready → Draft is fine). Pipe-tested with 5 synthesized stdin payloads — all behaviors match.
+* **Memory:** `feedback_always_develop_in_staging_sandbox.md` saved 2026-05-07 (no skip-label default); `feedback_arkova_migration_rules.md` saved 2026-05-07 (5 hard migration rules including no `supabase migration new`, no `db push --linked` against prod, mandatory header/rollback/RLS, ledger drift = STOP, post-merge ledger verification).
+
+**What's NOT done in this branch (deliberate):**
+
+* SCRUM-1735 / PR #731 stays Draft awaiting SCRUM-1736 (combined T2 soak path).
+* Migration-rules enforcement hook is not in this PR; only the staging-evidence hook lands here. Migration rules currently live as durable feedback memory only.
+
+**Soak tier for THIS branch:** T1 / staging-tooling-only — every touched path is on the allowlist (`scripts/ci/check-staging-evidence(.test)?.ts`, `CLAUDE.md`, `.claude/**`, `.github/workflows/staging-evidence.yml`, `HANDOFF.md`). The script's `isStagingToolingOnly` self-skip applies; no soak block required by the gate itself.
+
+_Last refreshed: 2026-05-07 by claude — claims verified against gcloud/MCP/CI output (`gh api -X DELETE /repos/carson-see/ArkovaCarson/labels/staging-soak-skip` returned no body / 204; `gh api /repos/carson-see/ArkovaCarson/labels/staging-soak-skip` now returns 404; `npx vitest run scripts/ci/check-staging-evidence.test.ts` returned 25/25 passing on this branch; hook pipe-test ran 5 synthesized payloads and exit codes + JSON outputs match the spec; jq schema check on `.claude/settings.json` confirms hook command path resolves to `$CLAUDE_PROJECT_DIR/.claude/hooks/check-staging-evidence-pre-merge.sh`)._
+
 ### 2026-05-06 — PR #711 SCRUM-1545 coverage backfill merge-resolution pass
 
 PR [#711](https://github.com/carson-see/ArkovaCarson/pull/711) remains test-only and exists to close the R4-4-FU coverage gap for `services/worker/src/jobs/anchor.ts`, `services/worker/src/chain/client.ts`, and `services/worker/src/index.ts`. It adds `anchor-coverage.test.ts`, strengthens chain/index tests, and raises worker coverage thresholds for the targeted files. `services/worker/src/api/admin-pipeline-stats.ts` coverage was handled in PR [#690](https://github.com/carson-see/ArkovaCarson/pull/690); it is not an unmerged follow-up hidden inside #711.

@@ -71,9 +71,14 @@ arkova-product-demo/
 # Test files at root
 /test_*.pdf
 
-# Claude agent skills
+# Claude agent skills — per-user / per-machine state ignored, project-level
+# config tracked. settings.json + hooks/ are checked in so the team-wide
+# enforcement (e.g. staging-evidence pre-merge hook) ships with the repo.
 .agents/
-.claude/
+.claude/*
+!.claude/settings.json
+!.claude/hooks
+!.claude/hooks/**
 skills-lock.json
 
 # Other AI tool configs (may contain pre-approved commands with tokens — see Anthropic 2026-04 source-map leak)
