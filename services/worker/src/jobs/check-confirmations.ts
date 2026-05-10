@@ -44,7 +44,9 @@ type SecuredWebhookAnchor = {
 type BatchSecuredAuditRow = {
   event_type: string;
   event_category: string;
-  actor_id: string;
+  // null = system-driven event (cron / queue worker), not user-attributable.
+  // Pre-PR-#753 used a zero-UUID literal which violated audit_events_actor_id_fkey.
+  actor_id: string | null;
   target_type: string;
   target_id: string;
   org_id: string | null;
@@ -96,7 +98,12 @@ function buildBatchSecuredAuditRows(
   const rows = orgCounts.map(({ orgId, count }) => ({
     event_type: 'anchor.batch_secured',
     event_category: 'ANCHOR',
-    actor_id: '00000000-0000-0000-0000-000000000000',
+    // System-driven event; audit_events.actor_id is nullable for system rows
+    // (see e.g. user.data_anonymized in the prod migrations). The pre-PR-#753
+    // hardcoded zero-UUID violated the audit_events_actor_id_fkey constraint
+    // in every environment that didn't seed a zero-UUID profile — silently
+    // failing every batch audit insert.
+    actor_id: null,
     target_type: 'anchor',
     target_id: txId,
     org_id: orgId,
@@ -107,7 +114,12 @@ function buildBatchSecuredAuditRows(
     rows.push({
       event_type: 'anchor.batch_secured',
       event_category: 'ANCHOR',
-      actor_id: '00000000-0000-0000-0000-000000000000',
+      // System-driven event; audit_events.actor_id is nullable for system rows
+    // (see e.g. user.data_anonymized in the prod migrations). The pre-PR-#753
+    // hardcoded zero-UUID violated the audit_events_actor_id_fkey constraint
+    // in every environment that didn't seed a zero-UUID profile — silently
+    // failing every batch audit insert.
+    actor_id: null,
       target_type: 'anchor',
       target_id: txId,
       org_id: null,
@@ -278,7 +290,12 @@ export async function fanOutSecuredAnchorWebhooks(
       return {
         event_type: 'credential.status_changed.batch',
         event_category: 'WEBHOOK',
-        actor_id: '00000000-0000-0000-0000-000000000000',
+        // System-driven event; audit_events.actor_id is nullable for system rows
+    // (see e.g. user.data_anonymized in the prod migrations). The pre-PR-#753
+    // hardcoded zero-UUID violated the audit_events_actor_id_fkey constraint
+    // in every environment that didn't seed a zero-UUID profile — silently
+    // failing every batch audit insert.
+    actor_id: null,
         target_type: 'anchor',
         target_id: txId,
         org_id: orgId,
