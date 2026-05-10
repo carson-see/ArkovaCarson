@@ -801,7 +801,7 @@ async function autoConfirmMockAnchors(): Promise<{ checked: number; confirmed: n
   // signature as fanOutSecuredAnchorWebhooks expects.
   const { data: anchors, error } = await db
     .from('anchors')
-    .select('id, public_id, org_id')
+    .select('id, public_id, org_id, chain_tx_id')
     .eq('status', 'SUBMITTED')
     .is('deleted_at', null)
     .limit(100);
@@ -810,11 +810,38 @@ async function autoConfirmMockAnchors(): Promise<{ checked: number; confirmed: n
     return { checked: 0, confirmed: 0 };
   }
 
-  const ids = anchors.map((a) => a.id as string);
   const blockHeight = 100000;
   const blockTimestamp = new Date().toISOString();
   const txId = `mock-batch-${Date.now()}`;
 
+  // SCRUM-1800 (PR #753): the `anchors_chain_data_consistency` constraint
+  // requires `chain_tx_id IS NOT NULL` whenever status='SECURED'. Some
+  // synthetic SUBMITTED rows in the staging seed lack chain_tx_id, which
+  // would fail the bulk UPDATE transactionally. Pre-update those rows with
+  // a synthetic mock-batch tx_id so the transition can proceed (also
+  // ensures fanOutSecuredAnchorWebhooks has a tx_id to attribute the
+  // anchor.secured payload to). Mock-mode only — real path doesn't need
+  // this because chain submission always sets chain_tx_id before
+  // status='SUBMITTED'.
+  const idsMissingTxId = anchors
+    .filter((a) => !a.chain_tx_id)
+    .map((a) => a.id as string);
+  if (idsMissingTxId.length > 0) {
+    const { error: backfillErr } = await db
+      .from('anchors')
+      .update({ chain_tx_id: txId })
+      .in('id', idsMissingTxId)
+      .eq('status', 'SUBMITTED');
+    if (backfillErr) {
+      logger.error(
+        { error: backfillErr, count: idsMissingTxId.length },
+        'Failed to backfill chain_tx_id on synthetic mock anchors',
+      );
+      return { checked: anchors.length, confirmed: 0 };
+    }
+  }
+
+  const ids = anchors.map((a) => a.id as string);
   const { error: updateError } = await db
     .from('anchors')
     .update({
