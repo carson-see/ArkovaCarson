@@ -49,14 +49,50 @@ const STAGING_PROJECT_REF = process.env.STAGING_SUPABASE_PROJECT_REF ?? DEFAULT_
 const STAGING_URL = requireEnv('STAGING_SUPABASE_URL');
 const STAGING_KEY = requireEnv('STAGING_SUPABASE_SERVICE_ROLE_KEY');
 
-// Refuse to run against anything that doesn't look like the intended staging
-// project. Belt-and-suspenders against an env-var copy-paste pointing at prod.
-if (STAGING_PROJECT_REF === PROD_PROJECT_REF || STAGING_URL.includes(PROD_PROJECT_REF)) {
-  console.error(`::error::Refusing to run staging seed against prod project ${PROD_PROJECT_REF}.`);
+// Allow-list of staging project refs this seed is permitted to run against.
+// Default preserves the shared `arkova-staging` rig only. To run against a
+// dedicated PR-specific staging project (e.g. SOC 2 Type 2 evidence runs),
+// set `ALLOWED_STAGING_PROJECT_REFS` to a comma-separated list, e.g.
+//   ALLOWED_STAGING_PROJECT_REFS=ujtlwnoqfhtitcmsnrpq,hrwtkyijupbqmyzthxlv
+// Belt-and-suspenders, layered:
+//   1. Hard-block: prod project ref MUST NEVER appear anywhere in the URL or
+//      the allow-list. Even if env-var copy-paste lands prod values here.
+//   2. Format validation: each allowed ref must look like a Supabase ref
+//      (20 lowercase letters), so a typo can't open up an attacker subdomain.
+//   3. Strict full-hostname match: hostname must equal `<ref>.supabase.co`.
+//      Substring or leftmost-label match would accept `<ref>.attacker.tld`
+//      where the attacker controls a DNS zone; full-hostname check closes that.
+const PROD_REF_REGEX = new RegExp(PROD_PROJECT_REF, 'i');
+if (PROD_REF_REGEX.test(STAGING_URL)) {
+  console.error(`::error::STAGING_SUPABASE_URL contains prod project ref ${PROD_PROJECT_REF}. Refusing to run.`);
   process.exit(1);
 }
-if (!/^[a-z]{20}$/.test(STAGING_PROJECT_REF) || !STAGING_URL.includes(STAGING_PROJECT_REF)) {
-  console.error(`::error::STAGING_SUPABASE_URL does not point at expected staging project ${STAGING_PROJECT_REF}. Refusing to run.`);
+const ALLOWED_STAGING_PROJECT_REFS: readonly string[] = (
+  process.env.ALLOWED_STAGING_PROJECT_REFS || STAGING_PROJECT_REF
+)
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
+for (const ref of ALLOWED_STAGING_PROJECT_REFS) {
+  if (ref === PROD_PROJECT_REF || !/^[a-z]{20}$/.test(ref)) {
+    console.error(`::error::Allowed staging project ref '${ref}' is invalid (must be 20 lowercase letters and not the prod ref). Refusing to run.`);
+    process.exit(1);
+  }
+}
+const STAGING_HOSTNAME: string = (() => {
+  try {
+    return new URL(STAGING_URL).hostname;
+  } catch {
+    return '';
+  }
+})();
+const ACTIVE_STAGING_REF = STAGING_HOSTNAME.endsWith('.supabase.co')
+  ? ALLOWED_STAGING_PROJECT_REFS.find((ref) => STAGING_HOSTNAME === `${ref}.supabase.co`)
+  : undefined;
+if (!ACTIVE_STAGING_REF) {
+  console.error(
+    `::error::STAGING_SUPABASE_URL hostname '${STAGING_HOSTNAME}' does not match any allowed staging ref as '<ref>.supabase.co' (allowed refs: ${ALLOWED_STAGING_PROJECT_REFS.join(', ')}). Refusing to run.`,
+  );
   process.exit(1);
 }
 
@@ -974,7 +1010,7 @@ async function seedNonces(client: LooseClient): Promise<void> {
 // ============================================================
 
 async function main(): Promise<void> {
-  console.log(`▶ Staging seed — tier=${tierName} project=${STAGING_PROJECT_REF}`);
+  console.log(`▶ Staging seed — tier=${tierName} project=${ACTIVE_STAGING_REF}`);
   console.log(`  organizations=${tier.organizations}  profiles~=${tier.organizations * tier.profilesPerOrgAvg}  anchors~=${tier.organizations * tier.profilesPerOrgAvg * tier.anchorsPerUserAvg}  public_records=${tier.publicRecordsTotal}  embeddings=${tier.publicRecordEmbeddingsTotal}`);
   if (args['dry-run']) {
     console.log('  --dry-run: exiting without writing.');

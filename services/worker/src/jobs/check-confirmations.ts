@@ -22,6 +22,12 @@ import { runWithConcurrency } from '../utils/concurrency.js';
 /** Maximum unique transactions to check per cron run (rate limit mempool.space) */
 const MAX_TX_CHECKS_PER_RUN = 100;
 
+/** Rows fetched per submitted-anchor candidate page. */
+const SUBMITTED_TX_CANDIDATE_PAGE_SIZE = 500;
+
+/** Maximum submitted-anchor rows to scan while building a tx candidate set. */
+const MAX_SUBMITTED_TX_CANDIDATE_ROWS_PER_RUN = 5_000;
+
 /** Concurrency for parallel mempool.space API calls */
 const MEMPOOL_CONCURRENCY = 10;
 
@@ -50,6 +56,42 @@ type BatchSecuredAuditRow = {
   org_id: string | null;
   details: string;
 };
+
+type SubmittedTxCandidateRow = {
+  id?: string | null;
+  chain_tx_id: string | null;
+  created_at?: string | null;
+};
+
+type SubmittedTxScanCursor = {
+  createdAt: string;
+  id: string;
+};
+
+type SubmittedTxCandidateFetchResult = {
+  rows: SubmittedTxCandidateRow[];
+  scannedRows: number;
+  uniqueTxIds: number;
+  wrapped: boolean;
+  cursorCreatedAt: string | null;
+  cursorId: string | null;
+  error: unknown | null;
+};
+
+interface SubmittedTxCandidateScanState {
+  rows: SubmittedTxCandidateRow[];
+  uniqueTxIds: Set<string>;
+  scannedRows: number;
+  wrapped: boolean;
+  cursor: SubmittedTxScanCursor | null;
+  canContinue: boolean;
+}
+
+let submittedTxScanCursor: SubmittedTxScanCursor | null = null;
+
+export function resetSubmittedTxScanCursorForTests(): void {
+  submittedTxScanCursor = null;
+}
 
 function normalizeDrainedAnchors(value: unknown): SecuredWebhookAnchor[] {
   if (!Array.isArray(value)) return [];
@@ -251,6 +293,129 @@ function getMinConfirmations(): number {
   return config.bitcoinNetwork === 'mainnet' ? 6 : 1;
 }
 
+async function fetchSubmittedTxCandidatePage(
+  afterCursor: SubmittedTxScanCursor | null,
+  limit: number,
+): Promise<{ data: SubmittedTxCandidateRow[] | null; error: unknown | null }> {
+  let query = db
+    .from('anchors')
+    .select('id, chain_tx_id, created_at')
+    .eq('status', 'SUBMITTED')
+    .not('chain_tx_id', 'is', null)
+    .is('deleted_at', null);
+
+  if (afterCursor) {
+    query = query.or(
+      `created_at.gt.${afterCursor.createdAt},and(created_at.eq.${afterCursor.createdAt},id.gt.${afterCursor.id})`,
+    );
+  }
+
+  const { data, error } = await query
+    .order('created_at', { ascending: true })
+    .order('id', { ascending: true })
+    .limit(limit);
+  return { data: (data ?? null) as SubmittedTxCandidateRow[] | null, error };
+}
+
+function hasSubmittedTxCandidateCapacity(state: SubmittedTxCandidateScanState): boolean {
+  return (
+    state.scannedRows < MAX_SUBMITTED_TX_CANDIDATE_ROWS_PER_RUN
+    && state.uniqueTxIds.size < MAX_TX_CHECKS_PER_RUN
+  );
+}
+
+function buildSubmittedTxCandidateResult(
+  state: SubmittedTxCandidateScanState,
+  error: unknown | null,
+): SubmittedTxCandidateFetchResult {
+  return {
+    rows: state.rows,
+    scannedRows: state.scannedRows,
+    uniqueTxIds: state.uniqueTxIds.size,
+    wrapped: state.wrapped,
+    cursorCreatedAt: state.cursor?.createdAt ?? null,
+    cursorId: state.cursor?.id ?? null,
+    error,
+  };
+}
+
+function processSubmittedTxCandidateRow(
+  state: SubmittedTxCandidateScanState,
+  row: SubmittedTxCandidateRow,
+): void {
+  state.rows.push(row);
+  state.scannedRows++;
+  if (row.chain_tx_id) state.uniqueTxIds.add(row.chain_tx_id);
+
+  const rowCreatedAt = row.created_at ?? null;
+  const rowId = row.id ?? null;
+  if (!rowCreatedAt || !rowId) {
+    logger.warn(
+      { scannedRows: state.scannedRows, uniqueTxIds: state.uniqueTxIds.size },
+      'Confirmation candidate scan could not advance cursor because submitted rows lacked id or created_at',
+    );
+    state.canContinue = false;
+    return;
+  }
+
+  state.cursor = { createdAt: rowCreatedAt, id: rowId };
+  state.canContinue = hasSubmittedTxCandidateCapacity(state);
+}
+
+function maybeWrapSubmittedTxCandidateScan(
+  state: SubmittedTxCandidateScanState,
+  pageStartedAfterCursor: boolean,
+): boolean {
+  if (pageStartedAfterCursor && !state.wrapped) {
+    state.cursor = null;
+    state.wrapped = true;
+    return true;
+  }
+
+  state.canContinue = false;
+  return false;
+}
+
+async function fetchSubmittedTxCandidates(): Promise<SubmittedTxCandidateFetchResult> {
+  const state: SubmittedTxCandidateScanState = {
+    rows: [],
+    uniqueTxIds: new Set<string>(),
+    scannedRows: 0,
+    wrapped: false,
+    cursor: submittedTxScanCursor,
+    canContinue: true,
+  };
+
+  while (state.canContinue && hasSubmittedTxCandidateCapacity(state)) {
+    const remaining = MAX_SUBMITTED_TX_CANDIDATE_ROWS_PER_RUN - state.scannedRows;
+    const limit = Math.min(SUBMITTED_TX_CANDIDATE_PAGE_SIZE, remaining);
+    const pageStartedAfterCursor = Boolean(state.cursor);
+    const { data, error } = await fetchSubmittedTxCandidatePage(state.cursor, limit);
+
+    if (error) {
+      return buildSubmittedTxCandidateResult(state, error);
+    }
+
+    if (!data || data.length === 0) {
+      if (maybeWrapSubmittedTxCandidateScan(state, pageStartedAfterCursor)) continue;
+      break;
+    }
+
+    for (const row of data) {
+      processSubmittedTxCandidateRow(state, row);
+      if (!state.canContinue) break;
+    }
+
+    if (state.canContinue && data.length < limit) {
+      if (maybeWrapSubmittedTxCandidateScan(state, pageStartedAfterCursor)) continue;
+      break;
+    }
+  }
+
+  submittedTxScanCursor = state.cursor;
+  return buildSubmittedTxCandidateResult(state, null);
+}
+
 /**
  * Mempool.space transaction status response shape
  */
@@ -404,18 +569,13 @@ export async function checkSubmittedConfirmations(): Promise<{ checked: number; 
 }
 
 async function checkSubmittedConfirmationsUnlocked(): Promise<{ checked: number; confirmed: number }> {
-  // PERF/C5: Fetch chain_tx_id column only, capped at 500 rows.
-  // With ~1K records/TX from Merkle batching, 500 rows covers plenty of unique tx_ids.
-  // We only need MAX_TX_CHECKS_PER_RUN (100) unique tx_ids per run.
-  // Previous: fetched 5000 rows into memory just to find ~100 unique tx_ids.
-  const { data: txRows, error: txError } = await db
-    .from('anchors')
-    .select('chain_tx_id')
-    .eq('status', 'SUBMITTED')
-    .not('chain_tx_id', 'is', null)
-    .is('deleted_at', null)
-    .order('created_at', { ascending: true })
-    .limit(500);
+  // PERF/C5 + SCRUM-1707: build a bounded unique-tx candidate set from the
+  // SUBMITTED backlog, then advance a cursor. A fixed "oldest 500 rows"
+  // query can get pinned forever behind old unconfirmed/missing tx groups,
+  // preventing later confirmed groups from reaching the drain RPC.
+  const candidateResult = await fetchSubmittedTxCandidates();
+  const txRows = candidateResult.rows;
+  const txError = candidateResult.error;
 
   if (txError) {
     logger.error({ error: txError }, 'Failed to fetch SUBMITTED anchor tx_ids');
@@ -449,7 +609,15 @@ async function checkSubmittedConfirmationsUnlocked(): Promise<{ checked: number;
 
   const minConf = getMinConfirmations();
   logger.info(
-    { uniqueTxIds: txIds.length, currentTipHeight, minConfirmations: minConf },
+    {
+      uniqueTxIds: txIds.length,
+      scannedRows: candidateResult.scannedRows,
+      cursorCreatedAt: candidateResult.cursorCreatedAt,
+      cursorId: candidateResult.cursorId,
+      wrapped: candidateResult.wrapped,
+      currentTipHeight,
+      minConfirmations: minConf,
+    },
     'Checking SUBMITTED anchors grouped by tx_id',
   );
 
@@ -611,7 +779,14 @@ async function checkSubmittedConfirmationsUnlocked(): Promise<{ checked: number;
   }
 
   logger.info(
-    { txChecked: checked, anchorsConfirmed: confirmed, totalSubmitted: txRows.length },
+    {
+      txChecked: checked,
+      anchorsConfirmed: confirmed,
+      candidateRows: txRows.length,
+      scannedRows: candidateResult.scannedRows,
+      cursorCreatedAt: candidateResult.cursorCreatedAt,
+      wrapped: candidateResult.wrapped,
+    },
     'Confirmation check complete',
   );
   return { checked, confirmed };
