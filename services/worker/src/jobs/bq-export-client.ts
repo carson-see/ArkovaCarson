@@ -196,6 +196,46 @@ export interface BqInsertResult {
  * row aborts the batch — better to surface the issue than silently lose
  * a row. `ignoreUnknownValues: false` for the same reason.
  */
+/**
+ * Retry on transient BQ failures (5xx, 429). Per BigQuery docs the streaming
+ * insert path can return 503 during backend rebalancing; client-side retries
+ * with backoff are recommended. Permanent failures (4xx other than 429) are
+ * not retried — they're real schema/auth/quota errors that need surfacing.
+ *
+ * SCRUM-1062 operational hardening: without this, every transient 5xx blip
+ * would advance no watermark + emit a Sentry event, noising the consecutive-
+ * failure alert on infrastructure flakes that resolve on their own.
+ */
+const INSERT_ALL_MAX_ATTEMPTS = 3;
+const INSERT_ALL_BASE_BACKOFF_MS = 500;
+
+function isTransientStatus(status: number): boolean {
+  return status === 429 || (status >= 500 && status < 600);
+}
+
+async function bqFetchWithRetry(
+  path: string,
+  init: FetchInit,
+  attempts: number = INSERT_ALL_MAX_ATTEMPTS,
+): Promise<{ ok: boolean; status: number; body: unknown }> {
+  let lastRes: { ok: boolean; status: number; body: unknown } | null = null;
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    const res = await bqFetch(path, init);
+    lastRes = res;
+    if (res.ok || !isTransientStatus(res.status)) return res;
+    if (attempt < attempts - 1) {
+      // Exponential backoff with jitter: 500ms, 1s, 2s (+ up to 250ms jitter).
+      const backoff = INSERT_ALL_BASE_BACKOFF_MS * 2 ** attempt + Math.floor(Math.random() * 250);
+      logger.warn(
+        { path, status: res.status, attempt: attempt + 1, backoffMs: backoff },
+        'BQ transient failure — retrying',
+      );
+      await new Promise((resolve) => setTimeout(resolve, backoff));
+    }
+  }
+  return lastRes ?? { ok: false, status: 0, body: 'no response' };
+}
+
 export async function insertRows(
   target: BqTableTarget,
   rows: readonly BqInsertRow[],
@@ -210,7 +250,7 @@ export async function insertRows(
     rows: rows.map((r) => ({ insertId: r.insertId, json: r.json })),
   };
 
-  const res = await bqFetch(path, {
+  const res = await bqFetchWithRetry(path, {
     method: 'POST',
     body: JSON.stringify(payload),
   });

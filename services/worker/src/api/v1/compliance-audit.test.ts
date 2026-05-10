@@ -45,7 +45,7 @@ describe('POST /api/v1/compliance/audit', () => {
     vi.mocked(getCallerOrgId).mockResolvedValue('org-1');
 
     const inserted = {
-      id: '11111111-1111-1111-1111-111111111111',
+      id: '11111111-1111-4111-8111-111111111111',
       org_id: 'org-1',
       overall_score: 67,
       overall_grade: 'D',
@@ -132,7 +132,7 @@ describe('POST /api/v1/compliance/audit', () => {
     const insertCalls: Array<Record<string, unknown>> = [];
 
     const inserted = {
-      id: '22222222-2222-2222-2222-222222222222',
+      id: '22222222-2222-4222-8222-222222222222',
       org_id: 'org-1',
       overall_score: 60,
       overall_grade: 'D',
@@ -221,7 +221,7 @@ describe('POST /api/v1/compliance/audit', () => {
   const scrum954Cases: Scrum954Case[] = [
     {
       label: 'derives default-scope per_jurisdiction from jurisdiction_rules for orgs with no configured jurisdictions',
-      insertedId: '99999999-9999-9999-9999-999999999999',
+      insertedId: '99999999-9999-4999-8999-999999999999',
       insertedScore: 0,
       insertedGrade: 'F',
       duration: 50,
@@ -238,7 +238,7 @@ describe('POST /api/v1/compliance/audit', () => {
     },
     {
       label: 'leaves per_jurisdiction empty when the org has no configured jurisdictions AND no rules apply',
-      insertedId: '88888888-8888-8888-8888-888888888888',
+      insertedId: '88888888-8888-4888-8888-888888888888',
       insertedScore: 100,
       insertedGrade: 'A',
       duration: 10,
@@ -371,7 +371,7 @@ describe('GET /api/v1/compliance/audit/:id', () => {
     );
     const app = buildApp('user-1');
     await request(app)
-      .get('/api/v1/compliance/audit/11111111-1111-1111-1111-111111111111')
+      .get('/api/v1/compliance/audit/11111111-1111-4111-8111-111111111111')
       .expect(404);
   });
 
@@ -380,7 +380,7 @@ describe('GET /api/v1/compliance/audit/:id', () => {
     vi.mocked(db.from).mockImplementation((): never =>
       makeBuilder({
         singleData: {
-          id: '11111111-1111-1111-1111-111111111111',
+          id: '11111111-1111-4111-8111-111111111111',
           org_id: 'org-1',
           overall_score: 77,
           overall_grade: 'C',
@@ -394,7 +394,7 @@ describe('GET /api/v1/compliance/audit/:id', () => {
     );
     const app = buildApp('user-1');
     const res = await request(app)
-      .get('/api/v1/compliance/audit/11111111-1111-1111-1111-111111111111')
+      .get('/api/v1/compliance/audit/11111111-1111-4111-8111-111111111111')
       .expect(200);
     expect(res.body.overall_score).toBe(77);
   });
@@ -429,7 +429,7 @@ describe('loadOrgAnchors with integrity_scores + review_queue_items JOIN (NCA-FU
     vi.mocked(getCallerOrgId).mockResolvedValue('org-1');
 
     const inserted = {
-      id: '22222222-2222-2222-2222-222222222222',
+      id: '22222222-2222-4222-8222-222222222222',
       org_id: 'org-1', overall_score: 100, overall_grade: 'A',
       per_jurisdiction: [], gaps: [], quarantines: [],
       status: 'COMPLETED', started_at: '', completed_at: '', duration_ms: 50,
@@ -499,7 +499,7 @@ describe('loadOrgAnchors with integrity_scores + review_queue_items JOIN (NCA-FU
     vi.mocked(getCallerOrgId).mockResolvedValue('org-1');
 
     const inserted = {
-      id: '33333333-3333-3333-3333-333333333333',
+      id: '33333333-3333-4333-8333-333333333333',
       org_id: 'org-1', overall_score: 100, overall_grade: 'A',
       per_jurisdiction: [], gaps: [], quarantines: [],
       status: 'COMPLETED', started_at: '', completed_at: '', duration_ms: 50,

@@ -17,7 +17,7 @@ vi.mock('../../utils/logger.js', () => ({
 import { buildLifecycleEntry, type AuditEventRow } from './anchor-lifecycle.js';
 
 describe('SCRUM-1271-F — anchor-lifecycle never leaks actor_id', () => {
-  const SOME_ACTOR_UUID = '11111111-1111-1111-1111-111111111111';
+  const SOME_ACTOR_UUID = '11111111-1111-4111-8111-111111111111';
 
   function event(actor: string | null = SOME_ACTOR_UUID): AuditEventRow {
     return {

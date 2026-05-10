@@ -208,7 +208,7 @@ describe('ActionConfig discriminator', () => {
 describe('CreateOrgRuleInput + validateRuleConfigs', () => {
   it('accepts a valid input end-to-end', () => {
     const input = CreateOrgRuleInput.parse({
-      org_id: '00000000-0000-0000-0000-000000000001',
+      org_id: '10000000-1000-4000-8000-000000000001',
       name: 'Anchor every DocuSign contract',
       description: 'Anchor DocuSign envelopes where the filename contains "contract"',
       trigger_type: 'ESIGN_COMPLETED',
@@ -223,7 +223,7 @@ describe('CreateOrgRuleInput + validateRuleConfigs', () => {
   it('rejects a rule with a 101-char name', () => {
     expect(() =>
       CreateOrgRuleInput.parse({
-        org_id: '00000000-0000-0000-0000-000000000001',
+        org_id: '10000000-1000-4000-8000-000000000001',
         name: 'x'.repeat(101),
         trigger_type: 'MANUAL_UPLOAD',
         trigger_config: {},
@@ -235,7 +235,7 @@ describe('CreateOrgRuleInput + validateRuleConfigs', () => {
 
   it('catches mismatched trigger_type / trigger_config in validateRuleConfigs', () => {
     const input = CreateOrgRuleInput.parse({
-      org_id: '00000000-0000-0000-0000-000000000001',
+      org_id: '10000000-1000-4000-8000-000000000001',
       name: 'Mismatched rule',
       trigger_type: 'QUEUE_DIGEST', // needs cron + timezone
       trigger_config: {}, // missing required fields

@@ -1,20 +1,32 @@
 #!/usr/bin/env bash
-# scripts/staging/claim.sh — lease the staging rig so two engineers
-# (or two agents) don't soak conflicting changes simultaneously.
+# scripts/staging/claim.sh — staging-rig leases.
 #
-# The lease is a row in the `staging_lease` table on the staging
-# Supabase branch. Acquiring writes the row; releasing deletes it.
-# Stale leases (>72h) are auto-evicted by the lease check.
+# SCRUM-1803 (2026-05-09): leases are now PER-PR with a primary key on
+# pr_number, so multiple PRs can hold leases simultaneously. Each PR's
+# soak gets its own tag-routed Cloud Run revision URL via
+# scripts/staging/deploy.sh; the lease scopes which PR is the legitimate
+# author of deploys for its tag.
+#
+# Pre-1803 behavior was "one lease at a time" — that became a bottleneck
+# and didn't actually prevent collisions because nothing checked the
+# lease before `gcloud run deploy`. The new contract is:
+#
+#   1. claim.sh writes/deletes a row in `staging_lease` keyed by pr_number.
+#   2. deploy.sh refuses to deploy without a row for the PR (or --force
+#      with audited reason).
+#   3. Multiple PRs may have rows simultaneously; each owns its tag URL.
+#
+# Stale leases (>72h) are auto-evicted on `acquire`.
 #
 # Usage:
 #   ./scripts/staging/claim.sh acquire <pr-number> "<short reason>"
 #   ./scripts/staging/claim.sh release <pr-number>
-#   ./scripts/staging/claim.sh status
+#   ./scripts/staging/claim.sh status [--all|--pr <N>]
 #
 # Env required:
 #   STAGING_SUPABASE_URL
 #   STAGING_SUPABASE_SERVICE_ROLE_KEY
-#   SLACK_WEBHOOK_URL  (optional — posts to #eng-staging if set)
+#   SLACK_WEBHOOK_URL  (optional)
 
 set -euo pipefail
 
@@ -26,7 +38,14 @@ REASON="${3:-}"
 : "${STAGING_SUPABASE_SERVICE_ROLE_KEY:?STAGING_SUPABASE_SERVICE_ROLE_KEY is required}"
 
 PG_REST="${STAGING_SUPABASE_URL}/rest/v1/staging_lease"
-AUTH=( -H "apikey: ${STAGING_SUPABASE_SERVICE_ROLE_KEY}" -H "Authorization: Bearer ${STAGING_SUPABASE_SERVICE_ROLE_KEY}" )
+AUTH=( -H "apikey: ${STAGING_SUPABASE_SERVICE_ROLE_KEY}"
+       -H "Authorization: Bearer ${STAGING_SUPABASE_SERVICE_ROLE_KEY}" )
+
+# 72 hours in the past, portable across BSD date (macOS) and GNU date (Linux).
+stale_cutoff() {
+  date -u -v-72H +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
+    || date -u -d '-72 hours' +%Y-%m-%dT%H:%M:%SZ
+}
 
 post_slack() {
   local msg="$1"
@@ -37,27 +56,52 @@ post_slack() {
   echo "${msg}"
 }
 
+# Best-effort cleanup of leases older than 72h. Idempotent; not fatal if it fails.
+evict_stale() {
+  local cutoff
+  cutoff=$(stale_cutoff)
+  curl -sS -X DELETE "${AUTH[@]}" \
+    "${PG_REST}?acquired_at=lt.${cutoff}" >/dev/null || true
+}
+
 case "${ACTION}" in
   acquire)
     if [ -z "${PR_NUM}" ] || [ -z "${REASON}" ]; then
       echo "Usage: $0 acquire <pr-number> \"<short reason>\"" >&2
       exit 2
     fi
-    # Stale check: any lease older than 72h is treated as released.
+    evict_stale
+
+    # Reject if THIS PR already holds a lease.
     EXISTING=$(curl -sS "${AUTH[@]}" \
-      "${PG_REST}?select=pr_number,reason,acquired_at,acquired_by&acquired_at=gte.$(date -u -v-72H +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d '-72 hours' +%Y-%m-%dT%H:%M:%SZ)")
-    if [ "${EXISTING}" != "[]" ]; then
-      echo "::error::Staging rig is currently leased:" >&2
+      "${PG_REST}?pr_number=eq.${PR_NUM}&select=pr_number,reason,acquired_at,acquired_by")
+    if [ "${EXISTING}" != "[]" ] && [ -n "${EXISTING}" ]; then
+      echo "::error::PR #${PR_NUM} already holds a staging lease:" >&2
       echo "${EXISTING}" | jq . >&2 || echo "${EXISTING}" >&2
+      echo "Run \`$0 release ${PR_NUM}\` first if this is stale." >&2
       exit 1
     fi
+
+    # Soft-warn if other PRs hold leases — informational, not blocking.
+    OTHERS=$(curl -sS "${AUTH[@]}" "${PG_REST}?select=pr_number,acquired_by,reason")
+    if [ "${OTHERS}" != "[]" ] && [ -n "${OTHERS}" ]; then
+      echo "::notice::Other PRs currently soaking on the staging rig:" >&2
+      echo "${OTHERS}" | jq -r '.[] | "  PR #\(.pr_number) — \(.acquired_by): \(.reason)"' >&2 \
+        || echo "${OTHERS}" >&2
+      echo "::notice::This is OK — each PR uses its own tag URL via scripts/staging/deploy.sh." >&2
+    fi
+
     OWNER="${USER:-unknown}@$(hostname -s 2>/dev/null || echo host)"
     PAYLOAD=$(jq -n --arg pr "${PR_NUM}" --arg r "${REASON}" --arg o "${OWNER}" \
       '{pr_number: ($pr|tonumber), reason: $r, acquired_by: $o, acquired_at: now|todate}')
     curl -sS -X POST "${AUTH[@]}" -H "Content-Type: application/json" \
       -H "Prefer: return=representation" \
       -d "${PAYLOAD}" "${PG_REST}" | jq .
-    post_slack ":lock: Staging rig acquired by ${OWNER} for PR #${PR_NUM}: ${REASON}"
+    post_slack ":lock: Staging rig lease acquired by ${OWNER} for PR #${PR_NUM}: ${REASON}"
+    echo
+    echo "Next: deploy with"
+    echo "  ./scripts/staging/deploy.sh --pr ${PR_NUM} --image <ref>"
+    echo "and run the soak harness against the tag URL it prints."
     ;;
 
   release)
@@ -66,11 +110,25 @@ case "${ACTION}" in
       exit 2
     fi
     curl -sS -X DELETE "${AUTH[@]}" "${PG_REST}?pr_number=eq.${PR_NUM}" >/dev/null
-    post_slack ":unlock: Staging rig released for PR #${PR_NUM}."
+    post_slack ":unlock: Staging rig lease released for PR #${PR_NUM}."
     ;;
 
   status)
-    curl -sS "${AUTH[@]}" "${PG_REST}?select=*&order=acquired_at.desc" | jq .
+    # `claim.sh status` lists all current leases.
+    # `claim.sh status --pr <N>` filters to a single PR.
+    # Note: positional arg parsing at the top of this script reads $2 as
+    # PR_NUM. For `status` we ignore PR_NUM and parse the optional --pr flag
+    # from the original command line ourselves so `status --pr N` and
+    # `status` both work without confusing the acquire/release cases.
+    if [ "${PR_NUM}" = "--pr" ] && [ -n "${REASON}" ]; then
+      curl -sS "${AUTH[@]}" "${PG_REST}?pr_number=eq.${REASON}&select=*" | jq .
+    elif [ -z "${PR_NUM}" ]; then
+      # Default: all current leases, newest first.
+      curl -sS "${AUTH[@]}" "${PG_REST}?select=*&order=acquired_at.desc" | jq .
+    else
+      echo "Usage: $0 status [--pr <pr-number>]" >&2
+      exit 2
+    fi
     ;;
 
   *)

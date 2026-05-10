@@ -26,7 +26,7 @@ vi.mock('../utils/logger.js', () => ({
 describe('FeedbackItemSchema', () => {
   it('validates a valid feedback item', () => {
     const result = FeedbackItemSchema.safeParse({
-      anchorId: '00000000-0000-0000-0000-000000000001',
+      anchorId: '10000000-1000-4000-8000-000000000001',
       fingerprint: 'a'.repeat(64),
       credentialType: 'DEGREE',
       fieldKey: 'issuerName',
@@ -41,7 +41,7 @@ describe('FeedbackItemSchema', () => {
 
   it('rejects invalid action', () => {
     const result = FeedbackItemSchema.safeParse({
-      anchorId: '00000000-0000-0000-0000-000000000001',
+      anchorId: '10000000-1000-4000-8000-000000000001',
       fingerprint: 'a'.repeat(64),
       credentialType: 'DEGREE',
       fieldKey: 'issuerName',
@@ -63,7 +63,7 @@ describe('FeedbackItemSchema', () => {
 
   it('rejects wrong fingerprint length', () => {
     const result = FeedbackItemSchema.safeParse({
-      anchorId: '00000000-0000-0000-0000-000000000001',
+      anchorId: '10000000-1000-4000-8000-000000000001',
       fingerprint: 'short',
       credentialType: 'DEGREE',
       fieldKey: 'issuerName',
@@ -75,7 +75,7 @@ describe('FeedbackItemSchema', () => {
   it('accepts all three actions', () => {
     for (const action of ['accepted', 'rejected', 'edited'] as const) {
       const result = FeedbackItemSchema.safeParse({
-        anchorId: '00000000-0000-0000-0000-000000000001',
+        anchorId: '10000000-1000-4000-8000-000000000001',
         fingerprint: 'a'.repeat(64),
         credentialType: 'DEGREE',
         fieldKey: 'issuerName',
@@ -87,7 +87,7 @@ describe('FeedbackItemSchema', () => {
 
   it('accepts optional fields as undefined', () => {
     const result = FeedbackItemSchema.safeParse({
-      anchorId: '00000000-0000-0000-0000-000000000001',
+      anchorId: '10000000-1000-4000-8000-000000000001',
       fingerprint: 'a'.repeat(64),
       credentialType: 'DEGREE',
       fieldKey: 'issuerName',
@@ -102,7 +102,7 @@ describe('FeedbackBatchSchema', () => {
     const result = FeedbackBatchSchema.safeParse({
       items: [
         {
-          anchorId: '00000000-0000-0000-0000-000000000001',
+          anchorId: '10000000-1000-4000-8000-000000000001',
           fingerprint: 'a'.repeat(64),
           credentialType: 'DEGREE',
           fieldKey: 'issuerName',
@@ -120,7 +120,7 @@ describe('FeedbackBatchSchema', () => {
 
   it('rejects batch exceeding 50 items', () => {
     const items = Array.from({ length: 51 }, () => ({
-      anchorId: '00000000-0000-0000-0000-000000000001',
+      anchorId: '10000000-1000-4000-8000-000000000001',
       fingerprint: 'a'.repeat(64),
       credentialType: 'DEGREE',
       fieldKey: 'issuerName',
@@ -140,7 +140,7 @@ describe('storeExtractionFeedback', () => {
     const { storeExtractionFeedback } = await import('./feedback.js');
     const result = await storeExtractionFeedback('org-1', 'user-1', [
       {
-        anchorId: '00000000-0000-0000-0000-000000000001',
+        anchorId: '10000000-1000-4000-8000-000000000001',
         fingerprint: 'a'.repeat(64),
         credentialType: 'DEGREE',
         fieldKey: 'issuerName',

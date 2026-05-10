@@ -22,12 +22,12 @@ const router = Router();
 // ─── Schemas ───
 
 const TemplateRequestSchema = z.object({
-  fields: z.record(z.unknown()),
+  fields: z.record(z.string(), z.unknown()),
   confidence: z.number().min(0).max(1),
 });
 
 const TagsRequestSchema = z.object({
-  fields: z.record(z.unknown()),
+  fields: z.record(z.string(), z.unknown()),
 });
 
 // ─── POST /template — Full template reconstruction ───

@@ -222,7 +222,7 @@ export const CreateOrgRuleInput = z.object({
     'QUEUE_DIGEST',
     'EMAIL_INTAKE',
   ]),
-  trigger_config: z.record(z.unknown()),
+  trigger_config: z.record(z.string(), z.unknown()),
   action_type: z.enum([
     'AUTO_ANCHOR',
     'FAST_TRACK_ANCHOR',
@@ -231,7 +231,7 @@ export const CreateOrgRuleInput = z.object({
     'NOTIFY',
     'FORWARD_TO_URL',
   ]),
-  action_config: z.record(z.unknown()),
+  action_config: z.record(z.string(), z.unknown()),
   enabled: z.boolean().default(false),
 });
 

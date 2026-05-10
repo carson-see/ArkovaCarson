@@ -25,7 +25,7 @@ vi.mock('../utils/db.js', () => ({
 
 import { auditEventRouter, auditEventBodySchema } from './audit-event.js';
 
-const SUBJECT_USER_ID = '11111111-1111-1111-1111-111111111111';
+const SUBJECT_USER_ID = '11111111-1111-4111-8111-111111111111';
 
 interface MockResponse {
   statusCode: number;
@@ -85,7 +85,7 @@ describe('POST /api/audit/event', () => {
       return { insert: mockInsert };
     });
     mockInsert.mockReset().mockResolvedValue({ error: null });
-    mockMaybeSingle.mockReset().mockResolvedValue({ data: { org_id: '33333333-3333-3333-3333-333333333333' }, error: null });
+    mockMaybeSingle.mockReset().mockResolvedValue({ data: { org_id: '33333333-3333-4333-8333-333333333333' }, error: null });
     mockLogger.warn.mockReset();
     mockLogger.error.mockReset();
   });
@@ -115,7 +115,7 @@ describe('POST /api/audit/event', () => {
     const res = await invoke({
       event_type: 'PROFILE_UPDATED',
       event_category: 'PROFILE',
-      actor_id: '22222222-2222-2222-2222-222222222222',
+      actor_id: '22222222-2222-4222-8222-222222222222',
     });
 
     expect(res.statusCode).toBe(400);
@@ -124,7 +124,7 @@ describe('POST /api/audit/event', () => {
   });
 
   it('accepts org_id only when the JWT subject is an org member', async () => {
-    const orgId = '33333333-3333-3333-3333-333333333333';
+    const orgId = '33333333-3333-4333-8333-333333333333';
     const res = await invoke({
       event_type: 'ORG_UPDATED',
       event_category: 'ORG',
@@ -141,7 +141,7 @@ describe('POST /api/audit/event', () => {
     const res = await invoke({
       event_type: 'ORG_UPDATED',
       event_category: 'ORG',
-      org_id: '44444444-4444-4444-4444-444444444444',
+      org_id: '44444444-4444-4444-8444-444444444444',
     });
 
     expect(res.statusCode).toBe(403);
