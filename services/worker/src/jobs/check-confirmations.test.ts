@@ -230,6 +230,53 @@ const MOCK_UNCONFIRMED_TX = {
   },
 };
 
+// ---- SCRUM-1800 (Phase 2c) bulk-drain test helpers ----
+// Extracted to break SonarCloud new-code duplication on the bulk-drain emit
+// suite (SonarCloud sees the same setup pattern across 5+ tests).
+
+type DrainAnchor = { public_id: string; org_id: string };
+type CredentialTypeRow = { public_id: string; credential_type: string };
+
+function setupBulkDrainTest(opts: {
+  anchors: DrainAnchor[];
+  credentialTypes?: CredentialTypeRow[];
+  capped?: boolean;
+}): void {
+  mockAnchorsSelectResult.data = [MOCK_SUBMITTED_ANCHOR];
+  mockDrainResults.splice(0, mockDrainResults.length, {
+    data: {
+      updated: opts.anchors.length,
+      capped: opts.capped ?? false,
+      anchors: opts.anchors,
+    },
+    error: null,
+  });
+  mockCredentialTypeSelectResult.data = opts.credentialTypes ?? [];
+  mockFetch
+    .mockResolvedValueOnce({ ok: true, text: () => Promise.resolve('200200') })
+    .mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve(MOCK_CONFIRMED_TX),
+    });
+}
+
+function flattenAuditRows(): Array<Record<string, unknown>> {
+  const flat: Array<Record<string, unknown>> = [];
+  for (const call of mockAuditInsert.mock.calls) {
+    const arg = call[0];
+    if (Array.isArray(arg)) flat.push(...(arg as Array<Record<string, unknown>>));
+    else flat.push(arg as Record<string, unknown>);
+  }
+  return flat;
+}
+
+// fanOutSecuredAnchorWebhooks is fire-and-forget (line ~690 in
+// check-confirmations.ts). Drain microtasks so the credential audit insert
+// at the end of the detached promise lands before assertions.
+async function drainMicrotasks(): Promise<void> {
+  for (let i = 0; i < 10; i++) await Promise.resolve();
+}
+
 // ================================================================
 
 describe('checkSubmittedConfirmations', () => {
@@ -470,29 +517,16 @@ describe('checkSubmittedConfirmations', () => {
   // ---- SCRUM-1800 (SCRUM-1743 Phase 2c): credential.status_changed fan-out ----
 
   it('dispatches credential.status_changed alongside anchor.secured for anchors with credential_type', async () => {
-    mockAnchorsSelectResult.data = [MOCK_SUBMITTED_ANCHOR];
-    mockDrainResults.splice(0, mockDrainResults.length, {
-      data: {
-        updated: 2,
-        capped: false,
-        anchors: [
-          { public_id: 'pub-001', org_id: 'org-001' },
-          { public_id: 'pub-002', org_id: 'org-001' },
-        ],
-      },
-      error: null,
+    setupBulkDrainTest({
+      anchors: [
+        { public_id: 'pub-001', org_id: 'org-001' },
+        { public_id: 'pub-002', org_id: 'org-001' },
+      ],
+      credentialTypes: [
+        { public_id: 'pub-001', credential_type: 'DEGREE' },
+        { public_id: 'pub-002', credential_type: 'TRANSCRIPT' },
+      ],
     });
-    mockCredentialTypeSelectResult.data = [
-      { public_id: 'pub-001', credential_type: 'DEGREE' },
-      { public_id: 'pub-002', credential_type: 'TRANSCRIPT' },
-    ];
-
-    mockFetch
-      .mockResolvedValueOnce({ ok: true, text: () => Promise.resolve('200200') })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve(MOCK_CONFIRMED_TX),
-      });
 
     await checkSubmittedConfirmations();
 
@@ -529,29 +563,14 @@ describe('checkSubmittedConfirmations', () => {
   });
 
   it('skips credential.status_changed for anchors without credential_type but still emits anchor.secured', async () => {
-    mockAnchorsSelectResult.data = [MOCK_SUBMITTED_ANCHOR];
-    mockDrainResults.splice(0, mockDrainResults.length, {
-      data: {
-        updated: 2,
-        capped: false,
-        anchors: [
-          { public_id: 'pub-001', org_id: 'org-001' },
-          { public_id: 'pub-002', org_id: 'org-001' },
-        ],
-      },
-      error: null,
-    });
-    mockCredentialTypeSelectResult.data = [
-      { public_id: 'pub-001', credential_type: 'DEGREE' },
+    setupBulkDrainTest({
+      anchors: [
+        { public_id: 'pub-001', org_id: 'org-001' },
+        { public_id: 'pub-002', org_id: 'org-001' },
+      ],
       // pub-002 deliberately omitted — non-credential anchor
-    ];
-
-    mockFetch
-      .mockResolvedValueOnce({ ok: true, text: () => Promise.resolve('200200') })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve(MOCK_CONFIRMED_TX),
-      });
+      credentialTypes: [{ public_id: 'pub-001', credential_type: 'DEGREE' }],
+    });
 
     await checkSubmittedConfirmations();
 
@@ -572,50 +591,24 @@ describe('checkSubmittedConfirmations', () => {
   });
 
   it('writes a credential.status_changed.batch audit row per org with sample public_ids', async () => {
-    mockAnchorsSelectResult.data = [MOCK_SUBMITTED_ANCHOR];
-    mockDrainResults.splice(0, mockDrainResults.length, {
-      data: {
-        updated: 3,
-        capped: false,
-        anchors: [
-          { public_id: 'pub-001', org_id: 'org-001' },
-          { public_id: 'pub-002', org_id: 'org-001' },
-          { public_id: 'pub-003', org_id: 'org-002' },
-        ],
-      },
-      error: null,
+    setupBulkDrainTest({
+      anchors: [
+        { public_id: 'pub-001', org_id: 'org-001' },
+        { public_id: 'pub-002', org_id: 'org-001' },
+        { public_id: 'pub-003', org_id: 'org-002' },
+      ],
+      credentialTypes: [
+        { public_id: 'pub-001', credential_type: 'DEGREE' },
+        { public_id: 'pub-002', credential_type: 'TRANSCRIPT' },
+        { public_id: 'pub-003', credential_type: 'CERTIFICATE' },
+      ],
     });
-    mockCredentialTypeSelectResult.data = [
-      { public_id: 'pub-001', credential_type: 'DEGREE' },
-      { public_id: 'pub-002', credential_type: 'TRANSCRIPT' },
-      { public_id: 'pub-003', credential_type: 'CERTIFICATE' },
-    ];
-
-    mockFetch
-      .mockResolvedValueOnce({ ok: true, text: () => Promise.resolve('200200') })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve(MOCK_CONFIRMED_TX),
-      });
 
     await checkSubmittedConfirmations();
+    await drainMicrotasks();
 
-    // fanOutSecuredAnchorWebhooks is fire-and-forget (line ~690 in
-    // check-confirmations.ts). Drain microtasks so the credential audit
-    // insert at the end of the detached promise lands before assertions.
-    for (let i = 0; i < 10; i++) await Promise.resolve();
-
-    // mockAuditInsert is the audit_events insert. Look for a per-org
-    // credential.status_changed.batch row from this test's anchors.
-    const allCalls = mockAuditInsert.mock.calls;
-    const flatRows: any[] = [];
-    for (const call of allCalls) {
-      const arg = call[0];
-      if (Array.isArray(arg)) flatRows.push(...arg);
-      else flatRows.push(arg);
-    }
-    const credBatchRows = flatRows.filter(
-      (r: any) => r?.event_type === 'credential.status_changed.batch',
+    const credBatchRows = flattenAuditRows().filter(
+      (r) => (r as { event_type?: string }).event_type === 'credential.status_changed.batch',
     );
     // 2 orgs → 2 batch audit rows
     expect(credBatchRows.length).toBe(2);
@@ -631,24 +624,18 @@ describe('checkSubmittedConfirmations', () => {
   });
 
   it('captures per-emit failure outcomes in credential.status_changed.batch audit row', async () => {
-    mockAnchorsSelectResult.data = [MOCK_SUBMITTED_ANCHOR];
-    mockDrainResults.splice(0, mockDrainResults.length, {
-      data: {
-        updated: 3,
-        capped: false,
-        anchors: [
-          { public_id: 'pub-001', org_id: 'org-001' },
-          { public_id: 'pub-002', org_id: 'org-001' },
-          { public_id: 'pub-003', org_id: 'org-001' },
-        ],
-      },
-      error: null,
+    setupBulkDrainTest({
+      anchors: [
+        { public_id: 'pub-001', org_id: 'org-001' },
+        { public_id: 'pub-002', org_id: 'org-001' },
+        { public_id: 'pub-003', org_id: 'org-001' },
+      ],
+      credentialTypes: [
+        { public_id: 'pub-001', credential_type: 'DEGREE' },
+        { public_id: 'pub-002', credential_type: 'TRANSCRIPT' },
+        { public_id: 'pub-003', credential_type: 'CERTIFICATE' },
+      ],
     });
-    mockCredentialTypeSelectResult.data = [
-      { public_id: 'pub-001', credential_type: 'DEGREE' },
-      { public_id: 'pub-002', credential_type: 'TRANSCRIPT' },
-      { public_id: 'pub-003', credential_type: 'CERTIFICATE' },
-    ];
 
     // Make the credential.status_changed dispatch fail for pub-002 only.
     // anchor.secured calls succeed; credential.status_changed for pub-001 +
@@ -662,28 +649,14 @@ describe('checkSubmittedConfirmations', () => {
       },
     );
 
-    mockFetch
-      .mockResolvedValueOnce({ ok: true, text: () => Promise.resolve('200200') })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve(MOCK_CONFIRMED_TX),
-      });
-
     await checkSubmittedConfirmations();
-    for (let i = 0; i < 10; i++) await Promise.resolve();
+    await drainMicrotasks();
 
-    const allCalls = mockAuditInsert.mock.calls;
-    const flatRows: any[] = [];
-    for (const call of allCalls) {
-      const arg = call[0];
-      if (Array.isArray(arg)) flatRows.push(...arg);
-      else flatRows.push(arg);
-    }
-    const credBatch = flatRows.find(
-      (r: any) => r?.event_type === 'credential.status_changed.batch',
-    );
+    const credBatch = flattenAuditRows().find(
+      (r) => (r as { event_type?: string }).event_type === 'credential.status_changed.batch',
+    ) as { details: string } | undefined;
     expect(credBatch).toBeDefined();
-    const details = JSON.parse(credBatch.details);
+    const details = JSON.parse(credBatch!.details);
     expect(details.credentials_dispatched_attempted).toBe(3);
     expect(details.credentials_dispatched_succeeded).toBe(2);
     expect(details.credentials_dispatched_failed).toBe(1);
@@ -693,60 +666,27 @@ describe('checkSubmittedConfirmations', () => {
   });
 
   it('does not write credential.status_changed.batch audit row when no anchors have credential_type', async () => {
-    mockAnchorsSelectResult.data = [MOCK_SUBMITTED_ANCHOR];
-    mockDrainResults.splice(0, mockDrainResults.length, {
-      data: {
-        updated: 1,
-        capped: false,
-        anchors: [{ public_id: 'pub-001', org_id: 'org-001' }],
-      },
-      error: null,
+    setupBulkDrainTest({
+      anchors: [{ public_id: 'pub-001', org_id: 'org-001' }],
+      // No credential_type → no credential audit
+      credentialTypes: [],
     });
-    // No credential_type → no credential audit
-    mockCredentialTypeSelectResult.data = [];
-
-    mockFetch
-      .mockResolvedValueOnce({ ok: true, text: () => Promise.resolve('200200') })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve(MOCK_CONFIRMED_TX),
-      });
 
     await checkSubmittedConfirmations();
-    for (let i = 0; i < 10; i++) await Promise.resolve();
+    await drainMicrotasks();
 
-    const allCalls = mockAuditInsert.mock.calls;
-    const flatRows: any[] = [];
-    for (const call of allCalls) {
-      const arg = call[0];
-      if (Array.isArray(arg)) flatRows.push(...arg);
-      else flatRows.push(arg);
-    }
-    const credBatchRows = flatRows.filter(
-      (r: any) => r?.event_type === 'credential.status_changed.batch',
+    const credBatchRows = flattenAuditRows().filter(
+      (r) => (r as { event_type?: string }).event_type === 'credential.status_changed.batch',
     );
     expect(credBatchRows.length).toBe(0);
   });
 
   it('continues anchor.secured fan-out when credential_type lookup fails', async () => {
-    mockAnchorsSelectResult.data = [MOCK_SUBMITTED_ANCHOR];
-    mockDrainResults.splice(0, mockDrainResults.length, {
-      data: {
-        updated: 1,
-        capped: false,
-        anchors: [{ public_id: 'pub-001', org_id: 'org-001' }],
-      },
-      error: null,
+    setupBulkDrainTest({
+      anchors: [{ public_id: 'pub-001', org_id: 'org-001' }],
     });
     mockCredentialTypeSelectResult.data = null;
     mockCredentialTypeSelectResult.error = { message: 'simulated DB outage' };
-
-    mockFetch
-      .mockResolvedValueOnce({ ok: true, text: () => Promise.resolve('200200') })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: () => Promise.resolve(MOCK_CONFIRMED_TX),
-      });
 
     await checkSubmittedConfirmations();
 
