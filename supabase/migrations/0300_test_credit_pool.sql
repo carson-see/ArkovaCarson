@@ -1,4 +1,4 @@
--- 0297_test_credit_pool.sql
+-- 0300_test_credit_pool.sql
 -- Jira: SCRUM-1740 (parent SCRUM-1734 partner sandbox playbook)
 -- Purpose: Distinguish partner-sandbox test credits from production billing.
 --          Adds `is_test` flag + `anchor_quota` cap to org_credits so the

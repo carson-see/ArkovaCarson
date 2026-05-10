@@ -23,6 +23,7 @@
  */
 
 import { createHmac, randomBytes, randomUUID } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { z } from 'zod';
 
@@ -100,6 +101,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): SupabaseConfig
     return { url: stagingUrl, serviceRoleKey: stagingKey, apiKeyHmacSecret };
   }
 
+  if (stagingUrl && !stagingKey) {
+    throw new Error('STAGING_SUPABASE_URL is set but STAGING_SUPABASE_SERVICE_ROLE_KEY is missing — set both or neither.');
+  }
+  if (!stagingUrl && stagingKey) {
+    throw new Error('STAGING_SUPABASE_SERVICE_ROLE_KEY is set but STAGING_SUPABASE_URL is missing — set both or neither.');
+  }
+
   // Non-staging fallback. Locked behind explicit opt-in to prevent the
   // failure mode where a developer's shell has prod creds loaded and
   // `npx tsx provision-sandbox-org.ts ...` quietly creates sandbox orgs
@@ -126,21 +134,28 @@ async function pgrest(
   body?: Record<string, unknown> | Record<string, unknown>[],
   prefer = 'return=representation',
 ): Promise<unknown> {
-  const res = await fetch(`${cfg.url}/rest/v1${path}`, {
-    method,
-    headers: {
-      apikey: cfg.serviceRoleKey,
-      Authorization: `Bearer ${cfg.serviceRoleKey}`,
-      'Content-Type': 'application/json',
-      Prefer: prefer,
-    },
-    body: body !== undefined ? JSON.stringify(body) : undefined,
-  });
-  const text = await res.text();
-  if (!res.ok) {
-    throw new Error(`Supabase ${method} ${path} → HTTP ${res.status}: ${text.slice(0, 500)}`);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 30_000);
+  try {
+    const res = await fetch(`${cfg.url}/rest/v1${path}`, {
+      method,
+      headers: {
+        apikey: cfg.serviceRoleKey,
+        Authorization: `Bearer ${cfg.serviceRoleKey}`,
+        'Content-Type': 'application/json',
+        Prefer: prefer,
+      },
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+      signal: controller.signal,
+    });
+    const text = await res.text();
+    if (!res.ok) {
+      throw new Error(`Supabase ${method} ${path} → HTTP ${res.status}: ${text.slice(0, 500)}`);
+    }
+    return text ? JSON.parse(text) : null;
+  } finally {
+    clearTimeout(timeout);
   }
-  return text ? JSON.parse(text) : null;
 }
 
 function generateApiKey(prefix = 'ak_test_'): { raw: string; hmac: string; keyId: string } {
@@ -311,7 +326,7 @@ async function main(): Promise<void> {
   console.log(JSON.stringify(result, null, 2));
 }
 
-if (import.meta.url.endsWith(process.argv[1] ?? '')) {
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   main().catch((err: unknown) => {
     // eslint-disable-next-line no-console
     console.error(err instanceof Error ? err.message : String(err));

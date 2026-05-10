@@ -141,7 +141,16 @@ describe('SCRUM-1740 — sandbox provisioning script', () => {
         SUPABASE_URL: 'https://prod.example.com',
         SUPABASE_SERVICE_ROLE_KEY: 'srk-prod',
         API_KEY_HMAC_SECRET: 'hmac',
-      })).toThrow(/STAGING_SUPABASE_URL.*required/i);
+      })).toThrow(/STAGING_SUPABASE_SERVICE_ROLE_KEY.*missing/i);
+    });
+
+    it('throws when only STAGING_SUPABASE_SERVICE_ROLE_KEY is set without URL', () => {
+      expect(() => loadConfig({
+        STAGING_SUPABASE_SERVICE_ROLE_KEY: 'srk',
+        SUPABASE_URL: 'https://prod.example.com',
+        SUPABASE_SERVICE_ROLE_KEY: 'srk-prod',
+        API_KEY_HMAC_SECRET: 'hmac',
+      })).toThrow(/STAGING_SUPABASE_URL.*missing/i);
     });
   });
 });

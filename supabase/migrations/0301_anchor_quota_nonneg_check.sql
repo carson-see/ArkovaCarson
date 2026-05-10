@@ -1,6 +1,6 @@
--- 0298_anchor_quota_nonneg_check.sql
+-- 0301_anchor_quota_nonneg_check.sql
 -- Jira: SCRUM-1740 (compensating migration for PR #738 CodeRabbit review)
--- Purpose: Enforce non-negative anchor_quota at the DB layer. The 0297
+-- Purpose: Enforce non-negative anchor_quota at the DB layer. The 0300
 --          migration added the column without a CHECK; reviewers flagged
 --          that a malformed admin script or bad SQL write could make a
 --          sandbox org immediately quota-exhausted. NULL stays valid
