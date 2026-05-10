@@ -14,6 +14,15 @@
 
 ## Now
 
+### 2026-05-10 (session 2) — Drop broken search_public_credentials 3-arg overload (PR #761, SCRUM-1804)
+
+* PR #761: migration `0304_drop_broken_search_public_credentials_overload.sql` — drops broken 3-arg overload that referenced nonexistent columns.
+* Staging applied + verified + ledger reconciled. Prod applied (no-op). T2 soak elapsed.
+* Jira SCRUM-1804, BUG-2026-05-09-001 in Confluence bug tracker.
+* Follow-up: `npm run gen:types` post-merge to remove stale 3-arg types.
+
+_Last refreshed: 2026-05-10 by claude — verified against Supabase MCP execute_sql, gh pr checks 761 ([run 25632059562](https://github.com/carson-see/ArkovaCarson/actions/runs/25632059562)), Jira MCP SCRUM-1804._
+
 ### 2026-05-10 — Merge sprint: 8 PRs merged, all original 7 HakiChain PRs closed, SCRUM-1742 close-out shipped
 
 **PRs merged this session (by Carson):**
