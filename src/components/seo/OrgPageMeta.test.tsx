@@ -11,7 +11,7 @@ const PROFILE = {
   logo_url: 'https://cdn.example/demo.png',
 };
 
-const PAGE_URL = 'https://arkova.ai/issuer/00000000-0000-0000-0000-000000000001';
+const PAGE_URL = 'https://arkova.ai/issuer/10000000-1000-4000-8000-000000000001';
 
 function getMeta(property: string): string | null {
   return document.head.querySelector(`meta[property="${property}"]`)?.getAttribute('content') ?? null;

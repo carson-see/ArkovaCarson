@@ -102,7 +102,7 @@ describe('ResolveQueueInput', () => {
     // closed rather than silently accept the spurious internal-uuid field.
     const result = ResolveQueueInput.safeParse({
       external_file_id: 'drive-123',
-      selected_anchor_id: '11111111-1111-1111-1111-111111111111',
+      selected_anchor_id: '11111111-1111-4111-8111-111111111111',
     });
     expect(result.success).toBe(false);
   });

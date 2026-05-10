@@ -12,7 +12,7 @@ vi.mock('../utils/logger.js', () => ({
 
 import { buildDraftRule, type RuleDraftProvider } from './rules-draft.js';
 
-const ORG_ID = '11111111-1111-1111-1111-111111111111';
+const ORG_ID = '11111111-1111-4111-8111-111111111111';
 
 function mockProvider(
   proposal: {
@@ -163,7 +163,7 @@ describe('buildDraftRule — org_id forced from caller', () => {
     const provider = mockProvider({
       candidate: {
         name: 'test',
-        org_id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', // NOT the caller's org
+        org_id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', // NOT the caller's org
         trigger_type: 'MANUAL_UPLOAD',
         trigger_config: {},
         action_type: 'QUEUE_FOR_REVIEW',

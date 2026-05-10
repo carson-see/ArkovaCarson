@@ -102,8 +102,8 @@ export const UpdateOrgRuleInput = z
     name: z.string().trim().min(1).max(100).optional(),
     description: z.string().trim().max(1000).optional(),
     enabled: z.boolean().optional(),
-    trigger_config: z.record(z.unknown()).optional(),
-    action_config: z.record(z.unknown()).optional(),
+    trigger_config: z.record(z.string(), z.unknown()).optional(),
+    action_config: z.record(z.string(), z.unknown()).optional(),
   })
   .refine((d) => Object.keys(d).length > 0, 'At least one field required');
 
