@@ -15,6 +15,7 @@ const {
   mockLogger,
   mockDbFrom,
   mockFetch,
+  mockSentry,
   // Delivery log query chains
   deliveryLogSelect,
   deliveryLogInsert,
@@ -31,6 +32,12 @@ const {
     warn: vi.fn(),
     error: vi.fn(),
     debug: vi.fn(),
+  };
+
+  // SCRUM-1805: dispatcher captures delivery_log insert failures to Sentry.
+  const mockSentry = {
+    captureException: vi.fn(),
+    captureMessage: vi.fn(),
   };
 
   // Delivery log chains
@@ -88,6 +95,7 @@ const {
     mockLogger,
     mockDbFrom,
     mockFetch,
+    mockSentry,
     deliveryLogSelect,
     deliveryLogInsert,
     deliveryLogUpdate,
@@ -100,6 +108,7 @@ const {
 // ---- Module mocks ----
 
 vi.mock('../utils/logger.js', () => ({ logger: mockLogger }));
+vi.mock('../utils/sentry.js', () => ({ Sentry: mockSentry }));
 
 vi.mock('../utils/db.js', () => ({
   db: {
@@ -564,6 +573,20 @@ describe('deliverToEndpoint', () => {
     expect(mockLogger.error).toHaveBeenCalledWith(
       expect.objectContaining({ error: expect.objectContaining({ message: 'constraint violation' }) }),
       'Failed to create delivery log',
+    );
+    // SCRUM-1805: delivery_log insert failure must surface to Sentry. The
+    // pre-PR-#753 22P02 UUID-coercion bug ran undetected because nobody was
+    // watching for this `logger.error`. Sentry capture lets a SCRUM-1805
+    // alert rule trip on the first occurrence.
+    expect(mockSentry.captureException).toHaveBeenCalledWith(
+      expect.any(Error),
+      expect.objectContaining({
+        tags: expect.objectContaining({
+          subsystem: 'webhooks',
+          stage: 'delivery_log_insert',
+          event_type: 'anchor.secured',
+        }),
+      }),
     );
   });
 

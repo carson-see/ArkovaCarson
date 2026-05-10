@@ -8,6 +8,7 @@ import crypto from 'node:crypto';
 import type { Json } from '../types/database.types.js';
 import { db } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
+import { Sentry } from '../utils/sentry.js';
 import { validateWebhookPayload } from './payload-schemas.js';
 
 const MAX_RETRIES = 5;
@@ -326,6 +327,29 @@ async function deliverToEndpoint(
     .single();
 
   if (logError) {
+    // SCRUM-1805: surface delivery-log insert failures to Sentry so an outage
+    // (DB unreachable, schema mismatch, RLS regression, etc.) doesn't silently
+    // drop customer webhook events. The pre-PR-#753 22P02 UUID-coercion bug
+    // ran undetected for the lifetime of PR #734 because nobody was watching
+    // for this `logger.error`. Using captureException with structured tags so
+    // it groups by endpoint + event_type for triage.
+    Sentry.captureException(
+      logError instanceof Error ? logError : new Error(`webhook delivery_log insert failed: ${(logError as { message?: string })?.message ?? 'unknown'}`),
+      {
+        tags: {
+          subsystem: 'webhooks',
+          stage: 'delivery_log_insert',
+          event_type: payload.event_type,
+          endpoint_id: endpoint.id,
+        },
+        extra: {
+          event_id: payload.event_id,
+          db_event_id: dbEventId,
+          idempotency_key: idempotencyKey,
+          org_id: endpoint.org_id,
+        },
+      },
+    );
     logger.error({ error: logError }, 'Failed to create delivery log');
     return false;
   }
