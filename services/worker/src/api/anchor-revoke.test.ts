@@ -15,7 +15,7 @@ vi.mock('../utils/db.js', () => {
             single: _mockAnchorSingle,
           };
         }
-        if (table === 'org_memberships') {
+        if (table === 'memberships') {
           return {
             select: vi.fn().mockReturnThis(),
             eq: vi.fn().mockReturnThis(),

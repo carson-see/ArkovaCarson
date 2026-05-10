@@ -67,7 +67,14 @@ anchorRevokeRouter.post('/:id/revoke', async (req: Request<{ id: string }>, res:
       return;
     }
 
-    const { data: membership } = await (db as any).from('org_memberships')
+    // PR #753 (no-shortcuts directive): the table is named `memberships`,
+    // not `org_memberships`. The worker code had `org_memberships` which
+    // returns PGRST205 "table not found" → data: undefined → !membership →
+    // 404 for every revoke attempt. Pre-existing prod bug surfaced while
+    // exercising Trigger B during the T3 staging soak. The unit tests
+    // passed because they mock the query, so neither CI nor the previous
+    // T2 soak (which only exercised Trigger A / expiry sweep) caught it.
+    const { data: membership } = await (db as any).from('memberships')
       .select('role')
       .eq('user_id', userId)
       .eq('org_id', anchor.org_id)
