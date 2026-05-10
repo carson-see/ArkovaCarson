@@ -55,10 +55,14 @@ interface WebhookSettingsProps {
 // land in Phase-2 follow-ups, so the UI shows them with a "Coming soon"
 // hint to set the right expectation.
 const AVAILABLE_EVENTS = [
-  // Anchor lifecycle — stable
+  // Anchor lifecycle — stable. SCRUM-1795 added anchor.submitted +
+  // anchor.batch_secured: the worker emits both but they were missing
+  // from the CRUD allowlist + this UI list until now.
+  { id: 'anchor.submitted', label: 'Anchor Submitted' },
   { id: 'anchor.secured', label: 'Anchor Secured' },
   { id: 'anchor.revoked', label: 'Anchor Revoked' },
   { id: 'anchor.expired', label: 'Anchor Expired' },
+  { id: 'anchor.batch_secured', label: 'Anchor Batch Secured' },
   // Credential lifecycle (SCRUM-1743) — contract defined; emit-points pending
   { id: 'credential.issued', label: 'Credential Issued (coming soon)' },
   { id: 'credential.verified', label: 'Credential Verified (coming soon)' },
