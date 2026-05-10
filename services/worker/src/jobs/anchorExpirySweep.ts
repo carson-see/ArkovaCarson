@@ -150,23 +150,62 @@ export async function sweepExpiredAnchors(db: AnchorExpirySweepDb): Promise<Anch
 
     result.pages++;
     if (pageCandidates.length === 0) break;
-    candidates = candidates.concat(pageCandidates);
+    candidates.push(...pageCandidates);
 
-    // Advance the cursor to the last row of this page so the next iteration
-    // picks up where we left off. Even if a row's CAS fails (concurrent
-    // revocation) or its timestamp is malformed, we still advance past it
-    // — the row's status is no longer SECURED OR the DB filter is broken
-    // and we shouldn't re-fetch the same garbage.
-    const lastRow = pageCandidates[pageCandidates.length - 1];
-    if (lastRow.expires_at) {
-      cursor = { last_expires_at: lastRow.expires_at, last_id: lastRow.id };
-    } else {
-      // Defensive: the DB filter requires expires_at IS NOT NULL but if a
-      // row slips through, terminate the loop rather than re-fetch it
-      // forever.
+    // PR #753 audit fix A4: advance the cursor only to the last row whose
+    // expires_at is STRUCTURALLY valid AND in the past per the worker clock.
+    // The previous "advance to lastRow regardless" pattern silently dropped
+    // future-dated rows in a clock-skew window: a row whose expires_at is
+    // ~50ms in the past per the DB clock (so the SQL filter `lt(expires_at,
+    // nowIso)` accepts it) but ~50ms in the future per the worker clock would
+    // fail the runtime guard at line ~190 AND advance the cursor past it —
+    // and the next cron tick (daily cadence) would never see it again.
+    // Now: walk the page in reverse, find the last row with finite-and-past
+    // expires_at, advance the cursor to that. Structurally-invalid rows
+    // (null/NaN expires_at) DO advance the cursor since re-fetching garbage
+    // would loop forever. Future-dated rows leave the cursor where it is so
+    // the next tick re-evaluates them.
+    let safeAdvanceRow: ExpiringSecuredAnchor | undefined;
+    let sawStructurallyInvalid = false;
+    for (let j = pageCandidates.length - 1; j >= 0; j--) {
+      const row = pageCandidates[j];
+      const expiresMs = row.expires_at ? new Date(row.expires_at).getTime() : Number.NaN;
+      if (!Number.isFinite(expiresMs)) {
+        sawStructurallyInvalid = true;
+        // If the LAST row is structurally invalid, fall through to advance
+        // past it (we'd loop on garbage otherwise). Captured separately so
+        // we know to advance past it even if no clean row exists in this page.
+        if (j === pageCandidates.length - 1 && safeAdvanceRow === undefined && row.expires_at) {
+          safeAdvanceRow = row;
+        }
+        continue;
+      }
+      if (expiresMs < now.getTime()) {
+        safeAdvanceRow = row;
+        break;
+      }
+      // expiresMs >= now → clock skew / DB-filter inconsistency. Don't
+      // advance past it; next tick will re-fetch from the prior cursor.
+    }
+
+    if (safeAdvanceRow && safeAdvanceRow.expires_at) {
+      cursor = { last_expires_at: safeAdvanceRow.expires_at, last_id: safeAdvanceRow.id };
+    } else if (sawStructurallyInvalid) {
+      // Whole page is structural garbage — terminate the loop rather than
+      // re-fetch the same garbage forever. Operators get a logger.warn +
+      // errors[] entry from the per-anchor guard at line ~190.
       logger.warn(
-        { anchorId: lastRow.id, page },
-        'sweepExpiredAnchors: last row has null expires_at — terminating cursor loop to avoid replay',
+        { page, pageSize: pageCandidates.length },
+        'sweepExpiredAnchors: page contains only structurally-invalid expires_at rows — terminating cursor loop',
+      );
+      break;
+    } else {
+      // Whole page is future-dated (clock skew). Don't advance; let next
+      // tick try again — but break out of THIS sweep's loop to avoid
+      // re-fetching the same page repeatedly.
+      logger.warn(
+        { page, pageSize: pageCandidates.length, now: nowIso },
+        'sweepExpiredAnchors: page contains only future-dated rows (clock skew?) — terminating this sweep without cursor advance',
       );
       break;
     }

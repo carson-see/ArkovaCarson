@@ -169,7 +169,15 @@ export async function fanOutSecuredAnchorWebhooks(
   for (let i = 0; i < publicIdsForLookup.length; i += CRED_LOOKUP_CHUNK) {
     const chunk = publicIdsForLookup.slice(i, i + CRED_LOOKUP_CHUNK);
     try {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // PR #753 audit fix C1: org-blind query is intentional and safe here.
+      // The `eligible` array (built upstream from the drain RPC's per-tx
+      // anchor list) carries each anchor's `org_id`, and every downstream
+      // dispatch uses `dispatchWebhookEvent(anchor.org_id, …)` which scopes
+      // the webhook_endpoints SELECT by org_id. The credential_type lookup
+      // is read-only metadata enrichment; cross-org leakage at this step
+      // would require a downstream caller to bypass the per-anchor org_id
+      // routing, which doesn't happen in the fan-out task closures below.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any, arkova/missing-org-filter
       const { data: credRows, error: credErr } = await (db as any)
         .from('anchors')
         .select('public_id, credential_type')
@@ -563,16 +571,12 @@ async function fetchTxStatus(txid: string): Promise<MempoolTxResponse | null> {
 export async function checkSubmittedConfirmations(): Promise<{ checked: number; confirmed: number }> {
   logger.info('Starting confirmation check for SUBMITTED anchors');
 
-  // In mock mode, auto-confirm all SUBMITTED anchors
-  if (config.useMocks || config.nodeEnv === 'test') {
-    return autoConfirmMockAnchors();
-  }
-
-  // RACE-3: In-process mutex — prevent concurrent cron runs from overlapping.
-  // NOTE: Advisory locks (pg_try_advisory_lock) don't work with Supabase connection
-  // pooling (Supavisor/PgBouncer in transaction mode) because each RPC call may
-  // use a different PG backend, and advisory locks are per-backend.
-  // Since we run a single worker process, an in-memory flag is sufficient.
+  // PR #753 audit fix A3: serialize BOTH the mock-mode and real-mode paths
+  // through the same in-process mutex. Pre-fix, the mock-mode early-return
+  // bypassed the mutex check, so two concurrent cron-handler invocations
+  // could each generate distinct `txId = mock-batch-${Date.now()}` strings
+  // and race the chain_tx_id backfill UPDATE — the loser's webhook payload
+  // would carry a tx_id that doesn't match what's in the DB.
   if (confirmationCheckRunning) {
     logger.info('Confirmation check skipped — already in progress');
     return { checked: 0, confirmed: 0 };
@@ -580,6 +584,9 @@ export async function checkSubmittedConfirmations(): Promise<{ checked: number; 
   confirmationCheckRunning = true;
 
   try {
+    if (config.useMocks || config.nodeEnv === 'test') {
+      return await autoConfirmMockAnchors();
+    }
     return await checkSubmittedConfirmationsUnlocked();
   } finally {
     // RACE-3: Always release the in-process mutex, even if an unexpected
@@ -844,11 +851,17 @@ async function autoConfirmMockAnchors(): Promise<{ checked: number; confirmed: n
     .filter((a) => !a.chain_tx_id)
     .map((a) => a.id as string);
   if (idsMissingTxId.length > 0) {
+    // PR #753 audit fix A3: guard the backfill with `chain_tx_id IS NULL` so
+    // a cross-instance race (two worker pods both running this in mock mode)
+    // can't overwrite each other's synthetic tx_id. The loser's UPDATE
+    // matches zero rows; both proceed to SECURED with their own tx_id in
+    // their per-anchor map, but the DB carries the FIRST tick's value.
     const { error: backfillErr } = await db
       .from('anchors')
       .update({ chain_tx_id: txId })
       .in('id', idsMissingTxId)
-      .eq('status', 'SUBMITTED');
+      .eq('status', 'SUBMITTED')
+      .is('chain_tx_id', null);
     if (backfillErr) {
       logger.error(
         { error: backfillErr, count: idsMissingTxId.length },

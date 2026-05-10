@@ -56,10 +56,33 @@ const {
     select: deliveryLogInsertSelect,
   };
 
-  const deliveryLogUpdateEq = vi.fn();
+  // PR #753 audit fix A1: the retry path uses .update().eq().select().single()
+  // (PostgREST's UPDATE...RETURNING). The original existing-row .update().eq()
+  // chain (no .select()) is still used elsewhere. Mock .eq() to return BOTH
+  // a thenable (so `await .eq(...)` works) AND a select() chain (so
+  // `await .eq(...).select().single()` works), via a thenable-with-methods
+  // object.
+  const deliveryLogUpdateSingle = vi.fn();
+  const deliveryLogUpdateEqResult: { resolved: unknown } = { resolved: { error: null } };
+  const deliveryLogUpdateEq = vi.fn(() => {
+    const chain: Record<string, unknown> = {
+      then: (onFulfilled: (v: unknown) => unknown, onRejected?: (e: unknown) => unknown) =>
+        Promise.resolve(deliveryLogUpdateEqResult.resolved).then(onFulfilled, onRejected),
+      select: () => ({ single: deliveryLogUpdateSingle }),
+    };
+    return chain;
+  }) as unknown as ReturnType<typeof vi.fn> & {
+    mockResolvedValue: (val: unknown) => void;
+  };
+  // Bridge legacy tests' deliveryLogUpdate.eq.mockResolvedValue(...) onto the
+  // new chain's resolved-value slot.
+  deliveryLogUpdateEq.mockResolvedValue = (val: unknown) => {
+    deliveryLogUpdateEqResult.resolved = val;
+  };
   const deliveryLogUpdate = {
     update: vi.fn(() => ({ eq: deliveryLogUpdateEq })),
     eq: deliveryLogUpdateEq,
+    single: deliveryLogUpdateSingle,
   };
 
   // Webhook endpoints query chain
@@ -184,8 +207,11 @@ function setupDbRouting(overrides: Record<string, unknown> = {}) {
           select: deliveryLogSelect.eq === undefined
             ? vi.fn()
             : (selectArg: string) => {
-                // Distinguish between idempotency check (select('id')) and retry query (select('*, ...'))
-                if (selectArg === 'id') {
+                // Distinguish between idempotency check (select('id...')) and retry query (select('*, ...'))
+                // PR #753 audit fix A1+A2: idempotency check now selects
+                // 'id, status, attempt_number' so it can short-circuit on
+                // 'success' but UPDATE in place on 'retrying'/'pending'.
+                if (selectArg === 'id' || selectArg === 'id, status, attempt_number') {
                   return { eq: vi.fn(() => ({ single: deliveryLogSelect.single })) };
                 }
                 // Retry query with join
@@ -547,9 +573,14 @@ describe('deliverToEndpoint', () => {
     vi.useRealTimers();
   });
 
-  it('skips delivery when idempotency check finds existing record', async () => {
-    // Already delivered
-    deliveryLogSelect.single.mockResolvedValue({ data: { id: 'existing-log' }, error: null });
+  it('skips delivery when idempotency check finds existing SUCCESS record', async () => {
+    // PR #753 audit fix A1: only short-circuit when the prior delivery
+    // succeeded. 'retrying'/'pending'/'failed' rows must re-fire so
+    // processWebhookRetries actually retries (was previously a no-op).
+    deliveryLogSelect.single.mockResolvedValue({
+      data: { id: 'existing-log', status: 'success', attempt_number: 1 },
+      error: null,
+    });
 
     await dispatchWebhookEvent('org-001', 'anchor.secured', 'evt-001', MOCK_PAYLOAD_DATA);
 
@@ -557,6 +588,53 @@ describe('deliverToEndpoint', () => {
     expect(mockLogger.debug).toHaveBeenCalledWith(
       expect.objectContaining({ endpointId: 'ep-001', eventId: 'evt-001' }),
       'Webhook already delivered',
+    );
+  });
+
+  it('PR #753 audit A1: re-fires HTTP when existing row is in retrying status (retry path)', async () => {
+    // Pre-fix: idempotency check returned true for ANY existing row, so
+    // processWebhookRetries was a silent no-op for every retry. Post-fix:
+    // existing row with status='retrying' should UPDATE in place + proceed
+    // to fire fetch.
+    deliveryLogSelect.single.mockResolvedValue({
+      data: { id: 'existing-log', status: 'retrying', attempt_number: 1 },
+      error: null,
+    });
+    // The retry path's .update().eq().select().single() chain — configure the
+    // single() return.
+    deliveryLogUpdate.single.mockResolvedValue({ data: { id: 'existing-log' }, error: null });
+    // Subsequent status-update calls (from fetch result) use .update().eq()
+    // directly — leave that on the legacy-style resolution.
+    deliveryLogUpdate.eq.mockResolvedValue({ error: null });
+    mockFetch.mockResolvedValue({ ok: true, status: 200, text: () => Promise.resolve('OK') });
+
+    await dispatchWebhookEvent('org-001', 'anchor.secured', 'evt-001', MOCK_PAYLOAD_DATA);
+
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(deliveryLogUpdate.update).toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'pending' }),
+    );
+  });
+
+  it('PR #753 audit A2: surfaces idempotency lookup error to Sentry instead of swallowing', async () => {
+    deliveryLogSelect.single.mockResolvedValue({
+      data: null,
+      // Not PGRST116 (no-row) — a transient DB / RLS error
+      error: { code: '08006', message: 'connection terminated' },
+    });
+
+    const result = await dispatchWebhookEvent('org-001', 'anchor.secured', 'evt-001', MOCK_PAYLOAD_DATA);
+
+    expect(mockFetch).not.toHaveBeenCalled();
+    expect(mockSentry.captureException).toHaveBeenCalledWith(
+      expect.any(Error),
+      expect.objectContaining({
+        tags: expect.objectContaining({ stage: 'idempotency_lookup' }),
+      }),
+    );
+    expect(mockLogger.error).toHaveBeenCalledWith(
+      expect.objectContaining({ error: expect.objectContaining({ code: '08006' }) }),
+      'Idempotency lookup failed',
     );
   });
 

@@ -299,32 +299,81 @@ async function deliverToEndpoint(
   );
   const dbEventId = isUuid ? payload.event_id : crypto.randomUUID();
 
-  // Check if already delivered
-  const { data: existing } = await db
+  // PR #753 audit-fix (A1+A2): the previous "if (existing) return true" pattern
+  // short-circuited every retry attempt because processWebhookRetries
+  // re-enters deliverToEndpoint with the SAME payload (read from log.payload),
+  // which produces the same idempotency_key, so the original 'retrying' row
+  // was found and the HTTP fetch was skipped entirely. Net effect: every
+  // webhook retry was a silent no-op. Fix: only short-circuit on 'success'
+  // (the row represents a completed delivery — the customer has already
+  // received this event). For 'retrying'/'pending'/'failed' rows, UPDATE in
+  // place with the new attempt_number and proceed to re-fire the HTTP call.
+  // Also propagate the SELECT error: PGRST116 = no row (happy path), anything
+  // else (RLS regression, transient DB) should fail loud, not be swallowed.
+  const { data: existing, error: lookupError } = await db
     .from('webhook_delivery_logs')
-    .select('id')
+    .select('id, status, attempt_number')
     .eq('idempotency_key', idempotencyKey)
     .single();
 
-  if (existing) {
+  // PGRST116 = "JSON object requested, multiple (or no) rows returned" — for
+  // .single() this means zero rows matched (the happy path for first attempt).
+  // Anything else (RLS regression, transient DB) should fail loud.
+  const isNoRowError = (err: unknown): boolean => {
+    const code = (err as { code?: string })?.code;
+    return code === 'PGRST116';
+  };
+  if (lookupError && !isNoRowError(lookupError)) {
+    logger.error({ error: lookupError, endpointId: endpoint.id }, 'Idempotency lookup failed');
+    Sentry.captureException(
+      lookupError instanceof Error ? lookupError : new Error('idempotency lookup failed'),
+      {
+        tags: { subsystem: 'webhooks', stage: 'idempotency_lookup', event_type: payload.event_type },
+        extra: { idempotency_key: idempotencyKey, endpoint_id: endpoint.id },
+      },
+    );
+    return false;
+  }
+
+  if (existing && existing.status === 'success') {
     logger.debug({ endpointId: endpoint.id, eventId: payload.event_id }, 'Webhook already delivered');
     return true;
   }
 
-  // Log the attempt
-  const { data: logEntry, error: logError } = await db
-    .from('webhook_delivery_logs')
-    .insert({
-      endpoint_id: endpoint.id,
-      event_type: payload.event_type,
-      event_id: dbEventId,
-      payload: payload as unknown as Json,
-      attempt_number: attempt,
-      status: 'pending',
-      idempotency_key: idempotencyKey,
-    })
-    .select()
-    .single();
+  // Either insert a new row (first attempt) or update the existing
+  // pending/retrying/failed row in place (retry attempt).
+  let logEntry: { id: string } | null = null;
+  let logError: { message?: string } | null = null;
+
+  if (existing) {
+    const { data, error } = await db
+      .from('webhook_delivery_logs')
+      .update({
+        attempt_number: attempt,
+        status: 'pending',
+      })
+      .eq('id', existing.id)
+      .select()
+      .single();
+    logEntry = data;
+    logError = error;
+  } else {
+    const { data, error } = await db
+      .from('webhook_delivery_logs')
+      .insert({
+        endpoint_id: endpoint.id,
+        event_type: payload.event_type,
+        event_id: dbEventId,
+        payload: payload as unknown as Json,
+        attempt_number: attempt,
+        status: 'pending',
+        idempotency_key: idempotencyKey,
+      })
+      .select()
+      .single();
+    logEntry = data;
+    logError = error;
+  }
 
   if (logError) {
     // SCRUM-1805: surface delivery-log insert failures to Sentry so an outage
@@ -351,6 +400,15 @@ async function deliverToEndpoint(
       },
     );
     logger.error({ error: logError }, 'Failed to create delivery log');
+    return false;
+  }
+
+  // PR #753 audit fix: even on the no-error path, narrow `logEntry` to
+  // non-null before downstream `logEntry.id` accesses below. The DB happy
+  // path always returns the inserted/updated row, but TypeScript can't see
+  // that and would let a future regression silently dereference null.
+  if (!logEntry) {
+    logger.error({ endpointId: endpoint.id }, 'delivery_log insert/update returned no row but no error — bailing');
     return false;
   }
 

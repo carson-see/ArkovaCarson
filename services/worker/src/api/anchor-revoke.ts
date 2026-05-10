@@ -74,11 +74,30 @@ anchorRevokeRouter.post('/:id/revoke', async (req: Request<{ id: string }>, res:
     // exercising Trigger B during the T3 staging soak. The unit tests
     // passed because they mock the query, so neither CI nor the previous
     // T2 soak (which only exercised Trigger A / expiry sweep) caught it.
-    const { data: membership } = await (db as any).from('memberships')
+    const { data: membership, error: membershipError } = await (db as any).from('memberships')
       .select('role')
       .eq('user_id', userId)
       .eq('org_id', anchor.org_id)
       .single();
+
+    // PR #753 audit fix A5: distinguish "no row" (legit 404) from "error"
+    // (DB outage / RLS regression / >1 row from missing UNIQUE constraint).
+    // The pre-fix `if (!membership)` collapsed all of these into 404, so a
+    // user with a duplicate-membership row would see "Anchor not found"
+    // instead of a 500 — silently misleading.
+    if (membershipError) {
+      const code = (membershipError as { code?: string }).code;
+      if (code !== 'PGRST116') {
+        // Real error (not "no row matched"). 500, log, surface to operator.
+        logger.error(
+          { error: membershipError, userId, orgId: anchor.org_id },
+          'Membership lookup failed (not no-row)',
+        );
+        res.status(500).json({ error: 'membership_lookup_failed', message: 'Membership lookup failed.' });
+        return;
+      }
+      // PGRST116 = no row matched, fall through to !membership 404 below.
+    }
 
     if (!membership) {
       res.status(404).json(NOT_FOUND_RESPONSE);
