@@ -11,7 +11,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { WebhookSettings } from './WebhookSettings';
+import { WebhookSettings, AVAILABLE_EVENTS } from './WebhookSettings';
 
 // Mock navigator.clipboard
 const mockClipboard = {
@@ -419,6 +419,30 @@ describe('WebhookSettings', () => {
 
       const addButton = screen.getByText('Add Endpoint');
       expect(addButton).toBeInTheDocument();
+    });
+  });
+
+  // Drift guard: when a new event type is added to the worker's
+  // PAYLOAD_SCHEMAS_BY_EVENT_TYPE (and therefore VALID_WEBHOOK_EVENTS,
+  // and therefore the SDK WebhookEventType union), the UI dropdown must
+  // be extended in lockstep. The UI lives in a separate workspace and
+  // can't direct-import the worker constant, so the next-best guard is
+  // pinning the expected set here. A new event type fails this test
+  // until AVAILABLE_EVENTS is updated.
+  describe('AVAILABLE_EVENTS drift guard', () => {
+    it('matches the worker VALID_WEBHOOK_EVENTS allowlist', () => {
+      const EXPECTED_EVENT_IDS = [
+        'anchor.submitted',
+        'anchor.secured',
+        'anchor.revoked',
+        'anchor.expired',
+        'anchor.batch_secured',
+        'credential.issued',
+        'credential.verified',
+        'credential.status_changed',
+      ];
+      const actualIds = AVAILABLE_EVENTS.map((e) => e.id);
+      expect(actualIds).toEqual(EXPECTED_EVENT_IDS);
     });
   });
 });

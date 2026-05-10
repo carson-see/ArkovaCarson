@@ -54,7 +54,7 @@ interface WebhookSettingsProps {
 // Credential.* events are contract-defined today; per-event emit points
 // land in Phase-2 follow-ups, so the UI shows them with a "Coming soon"
 // hint to set the right expectation.
-const AVAILABLE_EVENTS = [
+export const AVAILABLE_EVENTS = [
   { id: 'anchor.submitted', label: 'Anchor Submitted' },
   { id: 'anchor.secured', label: 'Anchor Secured' },
   { id: 'anchor.revoked', label: 'Anchor Revoked' },
