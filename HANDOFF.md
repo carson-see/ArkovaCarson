@@ -14,6 +14,49 @@
 
 ## Now
 
+### 2026-05-10 — PR #753 (SCRUM-1798/1799/1800) Phase 2 emit-points + dispatcher UUID-coercion fix
+
+**Status:** PR #753 `MERGEABLE` at tip `d90ac158`, T2 staging soak complete, awaiting Carson + reviewer sign-off.
+
+**What shipped on the branch (no prod state changed):**
+
+* **Phase 2 emit-points** for credential.* webhook events whose schemas shipped in PR #740 (Phase 1):
+  * `credential.issued` — `services/worker/src/api/v1/credential-sources.ts` (POST `/import-url/confirm`)
+  * `credential.verified` (single + batch) — `services/worker/src/api/v1/{verify,oracle}.ts`, flag-gated `ENABLE_CREDENTIAL_VERIFIED_WEBHOOK` default-OFF
+  * `credential.status_changed` (REVOKED/SECURED/EXPIRED) — `anchor-revoke.ts` + `check-confirmations.ts` bulk drain + `anchorExpirySweep.ts`
+  * `anchor.revoked` (was a missing producer despite shipped schema) — wired here
+* **Per-emit `audit_events` rows** with `dispatched`/`dispatch_error` so the SCRUM-1738 retry path can recover failed dispatches.
+* **+23 emit tests across 7 suites + 2 dispatcher fix tests; 130/130 across touched suites; 5389/5389 worker-wide** (one zk-proof environmental skip).
+
+**Bug found during the staging soak (and fixed in this PR):**
+
+`webhook_delivery_logs.event_id` is `uuid NOT NULL`, but every existing producer (`anchor.ts`, `anchorExpirySweep.ts` from PR #734, plus all six new emit sites) was passing string event_ids (`public_id`, `expired-${public_id}`, `cred-status-expired-${public_id}`). PostgreSQL rejected the insert with `22P02`; `deliverToEndpoint` returned `false`; `dispatchWebhookEvent` did not observe (Promise.all sees no rejection). Net effect: every webhook event from these sites was silently dropped at the storage layer.
+
+Fixed at the dispatcher (commit `11a2a3e3`): coerce non-UUID event_id to a fresh UUID for the column, keep the original string in the JSONB payload (what customers see) and the idempotency key (deterministic retry dedup).
+
+**Prod blast radius: ZERO.** Verified 2026-05-10 by querying prod Supabase: `webhook_endpoints` returns 0 rows. No customer subscribed; no deliveries attempted; nothing dropped. The fix is preventative — would have load-borne the moment any customer registered for `anchor.expired`, `anchor.submitted`, or any of the new `credential.*` event types.
+
+**T2 staging soak (2026-05-09 16:48–20:48 UTC, 4h exactly):**
+
+* Worker: `arkova-worker-staging-00043-hk8` (image `scrum1798-11a2a3e3`, full SHA `11a2a3e38ffa5622e376337876f51df460d82126`)
+* 38,522 requests, 2.7/s sustained, **zero worker-level errors** over the 4h window
+* Latency p50 44–47ms / p95 139–531ms / p99 230–959ms (stable)
+* Rollback rehearsed: 18s rollback (00041 → 00042) + 18s roll-forward (00042 → 00043), `/health: status:healthy` on both transitions
+* End-to-end credential.status_changed delivery confirmed via `webhook_delivery_logs` (`event_id=9efd3f50-3c9a-480c-9d75-786b5b36f344`, `status=success`, `response_status=200`)
+* Migration applied: **none** (PR is code-only — zero schema changes)
+* Evidence: [`docs/staging/scrum-1798-soak-evidence.md`](./docs/staging/scrum-1798-soak-evidence.md)
+
+**Follow-up tickets filed:**
+
+* SCRUM-1805 — Sentry alert on `Failed to create delivery log` worker errors (the dispatcher coercion eliminates the 22P02 case, but DB-outage and other failure modes remain)
+* SCRUM-1806 — Flip `ENABLE_CREDENTIAL_VERIFIED_WEBHOOK` on in prod after PR #753 merges + deploys
+* SCRUM-1807 — Cursor-based pagination for `anchorExpirySweep` (currently capped at 500/sweep)
+* SCRUM-1808 — Staging cron-secret drift: harness `STAGING_CRON_SECRET` != worker `CRON_SECRET` binding (every PR's soak hits 100% 401 on cron mode)
+
+**Confluence:** [SCRUM-1743 page](https://arkova.atlassian.net/wiki/spaces/A/pages/44204033) updated with the full producers table, recovery model, and deliberate-behavior documentation (cache-HIT skip, default-OFF flag, EXPIRED dependency).
+
+---
+
 ### 2026-05-09 (session 2) — DoD gate completion across 9 open PRs + 4 new PRs from prior session (#755–#759)
 
 **What this session did (no new PRs opened — completing existing ones):**
