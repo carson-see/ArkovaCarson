@@ -7,8 +7,10 @@ Tooling for the standing `arkova-staging` Supabase rig + `arkova-worker-staging`
 | File | Purpose |
 |---|---|
 | `seed.ts` | Synthesize prod-shape data on the staging rig. Tier flag (`--smoke` / `--standard` / `--full`) controls volume. Goes through the `staging_seed_auth_users` RPC (staging-only) so profiles satisfy the `auth.users` FK. Synthetic data only — never copies real customer rows. |
-| `load-harness.ts` | Drive sustained synthetic load against the worker. Modes: `anchor`, `burst`, `oscillate`, `webhooks`, `events`, `cron`, `reads`, `mixed` (default). Mixed runs all four pressure types concurrently. |
-| `claim.sh` | Acquire / release / status the staging-rig lease. Posts to `#eng-staging` if `SLACK_WEBHOOK_URL` is set. |
+| `load-harness.ts` | Drive sustained synthetic load against the worker. Modes: `anchor`, `burst`, `oscillate`, `webhooks`, `events`, `cron`, `reads`, `mixed` (default). Mixed runs all four pressure types concurrently. Set `STAGING_API_BASE` to the per-PR tag URL printed by `deploy.sh` so parallel soaks don't contaminate each other (SCRUM-1803). |
+| `claim.sh` | Per-PR lease (multi-tenant after SCRUM-1803). Acquire / release / status the staging-rig lease. Posts to `#eng-staging` if `SLACK_WEBHOOK_URL` is set. |
+| `deploy.sh` | **Lease-enforced, tag-routed worker deploys (SCRUM-1803).** Refuses to deploy without a `staging_lease` row for the PR (override with `--force "<reason>"`). Each deploy gets `--tag pr-N --no-traffic`, reachable at `https://pr-N---arkova-worker-staging-...run.app`. Writes an audit row to `staging_deploy_log`. Replaces ad-hoc `gcloud run services update` calls. |
+| `migrations/staging_only_deploy_log_and_lease_pk.sql` | **Staging-only schema migration (SCRUM-1803).** Adds PRIMARY KEY to `staging_lease` (one row per PR), creates append-only `staging_deploy_log` audit table, ships `record_staging_deploy` SECURITY DEFINER RPC. Apply via Supabase MCP `apply_migration` to `ujtlwnoqfhtitcmsnrpq` only. Never to prod. |
 | `teardown-and-reset.sh` | Lease-aware truncate + migration sync + reseed. Run between PRs. Note: superseded by `seed.ts --reset` (which uses the new `staging_purge_synthetic_data` RPC); keep this script around only for the migration-sync step. |
 
 ## Required env

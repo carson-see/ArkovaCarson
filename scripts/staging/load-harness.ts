@@ -37,6 +37,13 @@
  *
  * Env:
  *   STAGING_API_BASE       default https://arkova-worker-staging-kvojbeutfa-uc.a.run.app
+ *                          (the *main* URL — soaks ALL revisions in lockstep,
+ *                          which is what caused the PR #742↔#755 collision on
+ *                          2026-05-09). Per SCRUM-1803, prefer the per-PR
+ *                          tag URL printed by `scripts/staging/deploy.sh`:
+ *                          https://pr-N---arkova-worker-staging-...run.app
+ *                          That URL routes to your tagged revision only,
+ *                          so parallel soaks don't contaminate each other.
  *   STAGING_CRON_SECRET    optional; without it, cron mode returns 401
  *   STAGING_API_KEY        optional; without it, anchor returns 401 and reads
  *                          use anonymous public probes plus auth-gated admin probes
