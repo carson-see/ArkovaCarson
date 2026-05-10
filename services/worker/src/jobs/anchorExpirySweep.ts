@@ -67,8 +67,20 @@ export interface ExpiringSecuredAnchor {
   credential_type?: string | null;
 }
 
+/**
+ * SCRUM-1807: keyset cursor for paginating large expiry backlogs. The DB
+ * adapter orders by (expires_at ASC, id ASC) with a 500-row page; the sweep
+ * loop passes the previous page's last (expires_at, id) on each subsequent
+ * call. Implementations without a cursor argument behave like the original
+ * single-page selectExpiringSecured.
+ */
+export interface ExpiringAnchorCursor {
+  last_expires_at: string;
+  last_id: string;
+}
+
 export interface AnchorExpirySweepDb {
-  selectExpiringSecured(): Promise<ExpiringSecuredAnchor[]>;
+  selectExpiringSecured(cursor?: ExpiringAnchorCursor): Promise<ExpiringSecuredAnchor[]>;
   casUpdateToExpired(anchorId: string, expiredAtIso: string): Promise<boolean>;
   insertAuditEvent(row: Record<string, unknown>): Promise<void>;
   dispatchWebhookEvent(
@@ -84,7 +96,18 @@ export interface AnchorExpirySweepResult {
   newly_expired: number;
   webhooks_dispatched: number;
   errors: string[];
+  /** SCRUM-1807: number of pages fetched via the keyset cursor (>=1). */
+  pages: number;
 }
+
+/**
+ * SCRUM-1807: page size for the keyset cursor + a safety cap on total pages
+ * per cron tick. 500 × 50 = 25,000 anchors per sweep. A backlog larger than
+ * that is itself an alerting condition and the next cron tick picks up the
+ * remainder. The cap prevents a runaway loop if the cursor logic regresses.
+ */
+const EXPIRY_SWEEP_PAGE_SIZE = 500;
+const EXPIRY_SWEEP_MAX_PAGES = 50;
 
 export async function sweepExpiredAnchors(db: AnchorExpirySweepDb): Promise<AnchorExpirySweepResult> {
   const result: AnchorExpirySweepResult = {
@@ -92,23 +115,78 @@ export async function sweepExpiredAnchors(db: AnchorExpirySweepDb): Promise<Anch
     newly_expired: 0,
     webhooks_dispatched: 0,
     errors: [],
+    pages: 0,
   };
 
-  let candidates: ExpiringSecuredAnchor[];
-  try {
-    candidates = await db.selectExpiringSecured();
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : 'unknown';
-    logger.error({ error: err }, 'sweepExpiredAnchors: selectExpiringSecured failed');
-    result.errors.push(`selectExpiringSecured failed: ${msg}`);
-    return result;
+  // SCRUM-1807: drain the expiring-anchors backlog via a keyset cursor
+  // instead of capping at a single 500-row page. Each iteration fetches up
+  // to EXPIRY_SWEEP_PAGE_SIZE rows ordered by (expires_at ASC, id ASC),
+  // processes them in-order, and uses the last fetched row's
+  // (expires_at, id) as the cursor for the next page. The loop terminates
+  // when the page is short (last partial page) or when EXPIRY_SWEEP_MAX_PAGES
+  // is reached (defensive cap; backlog beyond that is the next cron tick's
+  // problem). Per-anchor processing semantics are unchanged from PR #734.
+  result.pages = 0;
+  const now = new Date();
+  const nowIso = now.toISOString();
+  let cursor: ExpiringAnchorCursor | undefined;
+  let candidates: ExpiringSecuredAnchor[] = [];
+
+  for (let page = 0; page < EXPIRY_SWEEP_MAX_PAGES; page++) {
+    let pageCandidates: ExpiringSecuredAnchor[];
+    try {
+      pageCandidates = await db.selectExpiringSecured(cursor);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'unknown';
+      logger.error(
+        { error: err, page, cursor },
+        'sweepExpiredAnchors: selectExpiringSecured failed',
+      );
+      result.errors.push(`selectExpiringSecured page ${page} failed: ${msg}`);
+      // Don't return early — partial pages already processed should still
+      // contribute their counters to the result. Just stop fetching more.
+      break;
+    }
+
+    result.pages++;
+    if (pageCandidates.length === 0) break;
+    candidates = candidates.concat(pageCandidates);
+
+    // Advance the cursor to the last row of this page so the next iteration
+    // picks up where we left off. Even if a row's CAS fails (concurrent
+    // revocation) or its timestamp is malformed, we still advance past it
+    // — the row's status is no longer SECURED OR the DB filter is broken
+    // and we shouldn't re-fetch the same garbage.
+    const lastRow = pageCandidates[pageCandidates.length - 1];
+    if (lastRow.expires_at) {
+      cursor = { last_expires_at: lastRow.expires_at, last_id: lastRow.id };
+    } else {
+      // Defensive: the DB filter requires expires_at IS NOT NULL but if a
+      // row slips through, terminate the loop rather than re-fetch it
+      // forever.
+      logger.warn(
+        { anchorId: lastRow.id, page },
+        'sweepExpiredAnchors: last row has null expires_at — terminating cursor loop to avoid replay',
+      );
+      break;
+    }
+
+    // Last partial page → no more rows after this.
+    if (pageCandidates.length < EXPIRY_SWEEP_PAGE_SIZE) break;
+  }
+
+  if (result.pages >= EXPIRY_SWEEP_MAX_PAGES) {
+    logger.warn(
+      { pages: result.pages, candidates_so_far: candidates.length },
+      'sweepExpiredAnchors: hit page cap; remaining backlog deferred to next cron tick',
+    );
+    result.errors.push(
+      `hit page cap (${EXPIRY_SWEEP_MAX_PAGES} × ${EXPIRY_SWEEP_PAGE_SIZE}); backlog deferred to next cron tick`,
+    );
   }
 
   result.checked = candidates.length;
   if (candidates.length === 0) return result;
-
-  const now = new Date();
-  const nowIso = now.toISOString();
 
   for (const anchor of candidates) {
     // CodeRabbit PR #734: also catch malformed timestamps (NaN). Without
@@ -334,18 +412,23 @@ export function makeAnchorExpirySweepDb(deps: {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const dbAny = deps.db as any;
   return {
-    async selectExpiringSecured(): Promise<ExpiringSecuredAnchor[]> {
+    async selectExpiringSecured(cursor?: ExpiringAnchorCursor): Promise<ExpiringSecuredAnchor[]> {
       const nowIso = new Date().toISOString();
       // CodeRabbit + Codex P2: filter `deleted_at IS NULL` so soft-deleted
       // anchors don't transition. ORDER BY expires_at asc, id asc so a
       // backlog larger than the page size drains deterministically (no
       // row starvation on continued inflow).
-      // TODO: SCRUM-1807 — add cursor-based pagination for large backlogs.
-      // Currently capped at 500 rows per sweep. If the backlog exceeds 500,
-      // remaining rows wait for the next cron tick. A keyset cursor
-      // (WHERE (expires_at, id) > (:last_expires_at, :last_id)) would let
-      // a single sweep drain an arbitrarily large backlog in pages.
-      const { data, error } = await dbAny
+      //
+      // SCRUM-1807: keyset-cursor pagination. Each call returns one page of
+      // up to EXPIRY_SWEEP_PAGE_SIZE rows; when a `cursor` is supplied,
+      // results are filtered to rows strictly after the cursor's
+      // (expires_at, id). Lexicographic comparison on the (expires_at, id)
+      // composite is expressed via PostgREST's `or(...)` because supabase-js
+      // doesn't expose row-value comparison directly:
+      //   expires_at > C  OR  (expires_at = C AND id > I)
+      // This is a standard keyset technique and it requires the matching
+      // ascending sort order on (expires_at, id) for correctness.
+      let query = dbAny
         .from('anchors')
         .select(
           'id, public_id, org_id, status, chain_tx_id, chain_block_height, expires_at, credential_type, organizations(public_id)',
@@ -353,10 +436,19 @@ export function makeAnchorExpirySweepDb(deps: {
         .eq('status', 'SECURED')
         .is('deleted_at', null)
         .not('expires_at', 'is', null)
-        .lt('expires_at', nowIso)
+        .lt('expires_at', nowIso);
+      if (cursor) {
+        // PostgREST `.or()` filter — note: PostgREST .or() expects
+        // `field.op.value` syntax, not SQL. The `and(...)` nested form lets
+        // us combine the strict equal-and-greater-id case.
+        query = query.or(
+          `expires_at.gt.${cursor.last_expires_at},and(expires_at.eq.${cursor.last_expires_at},id.gt.${cursor.last_id})`,
+        );
+      }
+      const { data, error } = await query
         .order('expires_at', { ascending: true })
         .order('id', { ascending: true })
-        .limit(500);
+        .limit(EXPIRY_SWEEP_PAGE_SIZE);
       if (error) throw new Error(error.message ?? String(error));
       return (data ?? []).map((row: Record<string, unknown>) => ({
         id: row.id as string,
