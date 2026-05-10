@@ -579,6 +579,10 @@ describe('credentialSourcesRouter', () => {
         .send({ source_url: 'https://credentials.example.com/abc', credential_type: 'CERTIFICATE' });
 
       expect(res.status).toBe(201);
+      // Dispatch is now fire-and-forget (Codex P2 PR #753); drain microtasks
+      // so the awaited Promise.all inside dispatchWebhookEvent settles before
+      // we assert.
+      for (let i = 0; i < 10; i++) await Promise.resolve();
       expect(mockDispatchWebhookEvent).toHaveBeenCalledWith(
         'org-1',
         'credential.issued',
@@ -590,6 +594,17 @@ describe('credentialSourcesRouter', () => {
           issued_at: expect.any(String),
         }),
       );
+      // CodeRabbit PR #753: ensure routing event_id arg matches the
+      // payload's public_id (and the response body's anchor.public_id) so
+      // event identity can't drift across the dispatch envelope.
+      const [, , eventPublicId, payload] = mockDispatchWebhookEvent.mock.calls[0] as [
+        string,
+        string,
+        string,
+        { public_id: string },
+      ];
+      expect(payload.public_id).toBe(eventPublicId);
+      expect(eventPublicId).toBe(res.body.anchor.public_id);
     });
 
     it('does NOT abort the response if dispatch fails (best-effort)', async () => {

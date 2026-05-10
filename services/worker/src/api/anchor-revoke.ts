@@ -97,6 +97,34 @@ anchorRevokeRouter.post('/:id/revoke', async (req: Request<{ id: string }>, res:
       return;
     }
 
+    // CodeRabbit PR #753 (SCRUM-1800): use the DB-committed `revoked_at`
+    // timestamp rather than `new Date().toISOString()` so the audit row,
+    // anchor.revoked webhook, and credential.status_changed webhook all
+    // agree on the same authoritative moment-of-revocation. Per CLAUDE.md
+    // §1.5 (server timestamps in Postgres timestamptz, UTC). Falls back to
+    // the app clock if the re-read fails (rare; the row was just updated).
+    let revokedAtIso = new Date().toISOString();
+    try {
+      const { data: revokedRow, error: rereadErr } = await db
+        .from('anchors')
+        .select('revoked_at')
+        .eq('id', anchorId)
+        .single();
+      if (!rereadErr && revokedRow?.revoked_at) {
+        revokedAtIso = revokedRow.revoked_at as string;
+      } else if (rereadErr) {
+        logger.warn(
+          { anchorId, error: rereadErr },
+          'Re-read of anchors.revoked_at failed after revoke_anchor RPC; falling back to app clock for audit + webhook timestamps',
+        );
+      }
+    } catch (rereadErr) {
+      logger.warn(
+        { anchorId, error: rereadErr },
+        'Re-read of anchors.revoked_at threw after revoke_anchor RPC; falling back to app clock',
+      );
+    }
+
     db.from('audit_events').insert({
       event_type: 'anchor.revoked',
       event_category: 'ANCHOR',
@@ -104,7 +132,7 @@ anchorRevokeRouter.post('/:id/revoke', async (req: Request<{ id: string }>, res:
       org_id: anchor.org_id,
       target_type: 'anchor',
       target_id: anchorId,
-      details: JSON.stringify({ reason, revoked_at: new Date().toISOString() }),
+      details: JSON.stringify({ reason, revoked_at: revokedAtIso }),
     }).then(({ error }) => {
       if (error) logger.error({ error, anchorId }, 'Failed to write revocation audit event');
     });
@@ -124,7 +152,10 @@ anchorRevokeRouter.post('/:id/revoke', async (req: Request<{ id: string }>, res:
     // PAYLOAD_SCHEMAS_BY_EVENT_TYPE but no producer was wired, so subscribed
     // customers never received deliveries. SCRUM-1800 adds the producer.
     if (anchor.public_id && anchor.org_id) {
-      const changedAt = new Date().toISOString();
+      // Reuse the DB-committed timestamp from the audit row above so the
+      // anchor.revoked + credential.status_changed webhook payloads agree
+      // with the audit trail (CodeRabbit PR #753).
+      const changedAt = revokedAtIso;
       let anchorRevokedDispatched = false;
       let anchorRevokedError: string | null = null;
       try {

@@ -54,7 +54,13 @@ vi.mock('../../utils/logger.js', () => ({
 }));
 
 vi.mock('../../config.js', () => ({
-  config: { bitcoinNetwork: 'signet', frontendUrl: 'https://app.arkova.ai' },
+  config: {
+    bitcoinNetwork: 'signet',
+    frontendUrl: 'https://app.arkova.ai',
+    get enableCredentialVerifiedWebhook() {
+      return process.env.ENABLE_CREDENTIAL_VERIFIED_WEBHOOK === 'true';
+    },
+  },
 }));
 
 vi.mock('../../webhooks/delivery.js', () => ({

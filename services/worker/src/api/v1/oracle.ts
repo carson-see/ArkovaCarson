@@ -21,6 +21,7 @@ import { createHmac, randomUUID } from 'crypto';
 import { z } from 'zod';
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
+import { config } from '../../config.js';
 import { buildVerificationResult, EMPTY_API_RICH_FIELDS } from './verify.js';
 import type { AnchorByPublicId } from './verify.js';
 import { dispatchWebhookEvent } from '../../webhooks/delivery.js';
@@ -191,7 +192,7 @@ router.post('/verify', async (req: Request, res: Response) => {
     // accurate even though the fan-out itself is detached.
     let credentialVerifiedPlanned = 0;
     let credentialVerifiedSkipped = 0;
-    if (process.env.ENABLE_CREDENTIAL_VERIFIED_WEBHOOK === 'true') {
+    if (config.enableCredentialVerifiedWebhook) {
       type EmitCandidate = {
         publicId: string;
         orgId: string;

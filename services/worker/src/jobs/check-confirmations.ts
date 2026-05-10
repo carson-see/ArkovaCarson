@@ -140,28 +140,48 @@ export async function fanOutSecuredAnchorWebhooks(
   // SCRUM-1800 (SCRUM-1743 Phase 2c): fetch credential_type for the drained
   // anchors so we can also dispatch credential.status_changed alongside
   // anchor.secured. The drain RPC (drain_submitted_to_secured_for_tx) only
-  // returns public_id + org_id; credential_type comes from a single bulk
-  // SELECT here. credential.status_changed schema requires credential_type;
+  // returns public_id + org_id; credential_type comes from chunked bulk
+  // SELECTs here. credential.status_changed schema requires credential_type;
   // anchors missing it skip the credential.* dispatch (anchor.* still fires).
+  //
+  // CodeRabbit PR #753: chunk the `.in()` lookup to 500 entries. Supabase-js
+  // serializes `.in()` as a URL query param; 10K-anchor merkle batches
+  // exceed PostgREST's URI length and trigger HTTP 414, dropping all
+  // credential.* events for that batch. Same chunk size as PROOF_UPSERT_CHUNK
+  // in anchorProofs.ts. Per-chunk failures are logged but other chunks still
+  // populate the map, so a partial outage doesn't silently drop the whole
+  // batch's credential events.
+  const CRED_LOOKUP_CHUNK = 500;
   const credentialTypeByPublicId = new Map<string, string>();
-  try {
-    const publicIds = eligible.map((a) => a.public_id);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: credRows, error: credErr } = await (db as any)
-      .from('anchors')
-      .select('public_id, credential_type')
-      .in('public_id', publicIds);
-    if (credErr) {
-      logger.warn({ txId, error: credErr }, 'Failed to fetch credential_type for credential.status_changed fan-out — skipping credential.* events for this batch');
-    } else if (Array.isArray(credRows)) {
-      for (const row of credRows) {
-        if (row && typeof row.public_id === 'string' && typeof row.credential_type === 'string') {
-          credentialTypeByPublicId.set(row.public_id, row.credential_type);
+  const publicIdsForLookup = eligible.map((a) => a.public_id);
+  for (let i = 0; i < publicIdsForLookup.length; i += CRED_LOOKUP_CHUNK) {
+    const chunk = publicIdsForLookup.slice(i, i + CRED_LOOKUP_CHUNK);
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: credRows, error: credErr } = await (db as any)
+        .from('anchors')
+        .select('public_id, credential_type')
+        .in('public_id', chunk);
+      if (credErr) {
+        logger.warn(
+          { txId, error: credErr, chunkStart: i, chunkSize: chunk.length },
+          'Failed to fetch credential_type chunk for credential.status_changed fan-out — chunk skipped, others continue',
+        );
+        continue;
+      }
+      if (Array.isArray(credRows)) {
+        for (const row of credRows) {
+          if (row && typeof row.public_id === 'string' && typeof row.credential_type === 'string') {
+            credentialTypeByPublicId.set(row.public_id, row.credential_type);
+          }
         }
       }
+    } catch (lookupError) {
+      logger.warn(
+        { txId, error: lookupError, chunkStart: i, chunkSize: chunk.length },
+        'credential_type chunked lookup threw — chunk skipped, others continue',
+      );
     }
-  } catch (lookupError) {
-    logger.warn({ txId, error: lookupError }, 'credential_type lookup threw — skipping credential.* events for this batch');
   }
 
   // SCRUM-1800 (SCRUM-1743 Phase 2c): track per-org credential.status_changed

@@ -585,16 +585,18 @@ describe('deliverToEndpoint', () => {
       MOCK_PAYLOAD_DATA,
     );
 
-    const insertCall = deliveryLogInsert.insert.mock.calls.at(-1);
+    const insertCall = deliveryLogInsert.insert.mock.calls.at(-1) as unknown[] | undefined;
     expect(insertCall).toBeDefined();
-    const insertedRow = insertCall![0] as { event_id: string; payload: { event_id: string }; idempotency_key: string };
+    const insertedRow = (insertCall as unknown[])[0] as { event_id: string; payload: { event_id: string }; idempotency_key: string };
     // event_id (column) is a UUID
     expect(insertedRow.event_id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
     expect(insertedRow.event_id).not.toBe('ARK-2026-NOT-A-UUID');
     // Payload still carries the semantically meaningful string event_id for the customer
     expect(insertedRow.payload.event_id).toBe('ARK-2026-NOT-A-UUID');
     // Idempotency key uses the supplied string so retries dedupe deterministically
-    expect(insertedRow.idempotency_key).toBe('ep-001-ARK-2026-NOT-A-UUID');
+    // Idempotency key now includes event_type to avoid cross-event-type
+    // collisions (CodeRabbit PR #753).
+    expect(insertedRow.idempotency_key).toBe('ep-001-anchor.secured-ARK-2026-NOT-A-UUID');
   });
 
   it('preserves UUID event_id when caller supplies one', async () => {
@@ -606,8 +608,9 @@ describe('deliverToEndpoint', () => {
     const realUuid = 'a1b2c3d4-e5f6-4789-9abc-def012345678';
     await dispatchWebhookEvent('org-001', 'anchor.secured', realUuid, MOCK_PAYLOAD_DATA);
 
-    const insertCall = deliveryLogInsert.insert.mock.calls.at(-1);
-    const insertedRow = insertCall![0] as { event_id: string };
+    const insertCall = deliveryLogInsert.insert.mock.calls.at(-1) as unknown[] | undefined;
+    expect(insertCall).toBeDefined();
+    const insertedRow = (insertCall as unknown[])[0] as { event_id: string };
     expect(insertedRow.event_id).toBe(realUuid);
   });
 
@@ -760,11 +763,13 @@ describe('deliverToEndpoint', () => {
     const insertCall = (deliveryLogInsert.insert.mock.calls[0] as unknown[])?.[0] as Record<string, unknown>;
     const key = insertCall.idempotency_key as string;
 
-    // Key should be endpoint_id-event_id (no attempt suffix)
-    // Old format was "ep-001-evt-001-1" (with attempt), new is "ep-001-evt-001"
-    expect(key).toBe('ep-001-evt-001');
-    // Confirm it's exactly endpoint_id + event_id, no extra segments
-    expect(key).not.toContain('-1-'); // No embedded attempt number
+    // Key should be endpoint_id-event_type-event_id (no attempt suffix).
+    // Old format was "ep-001-evt-001-1" (with attempt). RACE-6 dropped the
+    // attempt number; CodeRabbit PR #753 added event_type to avoid
+    // cross-event-type idempotency collisions.
+    expect(key).toBe('ep-001-anchor.secured-evt-001');
+    // Confirm there is no embedded attempt number suffix
+    expect(key).not.toMatch(/-1$/);
   });
 });
 

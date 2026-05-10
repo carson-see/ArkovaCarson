@@ -425,7 +425,7 @@ router.get('/:publicId', async (req, res) => {
     let credentialVerifiedDispatched: boolean | null = null;
     let credentialVerifiedDispatchError: string | null = null;
     if (
-      process.env.ENABLE_CREDENTIAL_VERIFIED_WEBHOOK === 'true'
+      config.enableCredentialVerifiedWebhook
       && anchor.org_id
       && anchor.public_id
     ) {

@@ -240,6 +240,10 @@ export async function sweepExpiredAnchors(db: AnchorExpirySweepDb): Promise<Anch
           credEventId,
           credData,
         );
+        // CodeRabbit PR #753: count credential.status_changed in
+        // webhooks_dispatched alongside anchor.expired so rollout/alerting
+        // signals don't undercount the new emit path.
+        result.webhooks_dispatched++;
         try {
           await db.insertAuditEvent({
             event_type: 'credential.status_changed',

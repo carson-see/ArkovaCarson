@@ -292,8 +292,11 @@ describe('sweepExpiredAnchors (SCRUM-1736)', () => {
 
     expect(result.errors).toEqual([]);
     expect(result.newly_expired).toBe(1);
-    // Both anchor.expired AND credential.status_changed dispatched
-    expect(result.webhooks_dispatched).toBe(1); // counter currently tracks anchor.expired only
+    // Both anchor.expired AND credential.status_changed dispatched.
+    // CodeRabbit PR #753: counter now includes credential.status_changed
+    // successes (was: anchor.expired only) so rollout/alerting signals
+    // don't undercount the new emit path.
+    expect(result.webhooks_dispatched).toBe(2);
     expect(dispatched).toHaveLength(2);
 
     const credEvent = dispatched.find((d) => d.eventType === 'credential.status_changed');

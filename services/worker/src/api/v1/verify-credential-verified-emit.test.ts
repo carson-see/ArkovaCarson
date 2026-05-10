@@ -39,7 +39,17 @@ vi.mock('../../utils/logger.js', () => ({
 }));
 
 vi.mock('../../config.js', () => ({
-  config: { bitcoinNetwork: 'signet', frontendUrl: 'https://app.arkova.ai' },
+  // SCRUM-1258 baseline compliance: production code reads
+  // config.enableCredentialVerifiedWebhook (not process.env directly). This
+  // getter forwards to process.env so existing tests that toggle the env var
+  // continue to drive the gate. CI's ad-hoc-env scan stays clean.
+  config: {
+    bitcoinNetwork: 'signet',
+    frontendUrl: 'https://app.arkova.ai',
+    get enableCredentialVerifiedWebhook() {
+      return process.env.ENABLE_CREDENTIAL_VERIFIED_WEBHOOK === 'true';
+    },
+  },
 }));
 
 vi.mock('../../utils/verifyCache.js', () => ({

@@ -270,8 +270,15 @@ async function deliverToEndpoint(
   const signature = signPayload(`${timestamp}.${payloadString}`, endpoint.secret_hash);
 
   // RACE-6 fix: Remove attempt number from idempotency key to prevent
-  // duplicate deliveries across retry attempts after worker restart
-  const idempotencyKey = `${endpoint.id}-${payload.event_id}`;
+  // duplicate deliveries across retry attempts after worker restart.
+  //
+  // CodeRabbit PR #753: include event_type in the dedup key so two distinct
+  // lifecycle events that happen to share an event_id string (e.g. a future
+  // caller passing `anchor.public_id` for both anchor.expired and
+  // credential.status_changed for the same anchor) don't collide and
+  // silently drop the second event. The webhook_delivery_logs table's
+  // idempotency_key column is text + UNIQUE (no schema change required).
+  const idempotencyKey = `${endpoint.id}-${payload.event_type}-${payload.event_id}`;
 
   // SCRUM-1800 (post-PR #734 hotfix): `webhook_delivery_logs.event_id` is
   // typed `uuid NOT NULL`, but every existing producer (anchor.ts,
