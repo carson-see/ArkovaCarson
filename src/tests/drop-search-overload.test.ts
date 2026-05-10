@@ -12,28 +12,38 @@ const BASELINE_PATH = path.join(
   'supabase/migrations/00000000000000_baseline_at_main_HEAD.sql',
 );
 
+const migrationSql = fs.readFileSync(MIGRATION_PATH, 'utf8');
+
+let baselineCache: string | null = null;
+function baseline(): string {
+  if (baselineCache === null) {
+    baselineCache = fs.readFileSync(BASELINE_PATH, 'utf8');
+  }
+  return baselineCache;
+}
+
 describe('0304: drop broken search_public_credentials(text,int,int) overload', () => {
   it('migration file exists and drops the 3-arg overload', () => {
-    const sql = fs.readFileSync(MIGRATION_PATH, 'utf8');
-    expect(sql).toContain(
+    expect(migrationSql).toContain(
       'DROP FUNCTION IF EXISTS public.search_public_credentials(text, integer, integer)',
     );
   });
 
   it('migration does NOT drop the working 2-arg overload', () => {
-    const sql = fs.readFileSync(MIGRATION_PATH, 'utf8');
-    expect(sql).not.toMatch(
-      /DROP\s+FUNCTION.*search_public_credentials\s*\(\s*text\s*,\s*integer\s*\)/,
+    // Negative lookahead ensures we match only the exact 2-arg signature, not a prefix of the 3-arg
+    expect(migrationSql).not.toMatch(
+      /DROP\s+FUNCTION.*search_public_credentials\s*\(\s*text\s*,\s*integer\s*\)(?!\s*,)/,
     );
   });
 
   it('baseline only defines the 2-arg overload — no 3-arg with offset', () => {
-    const sql = fs.readFileSync(BASELINE_PATH, 'utf8');
+    const sql = baseline();
     const createMatches = [
       ...sql.matchAll(/CREATE\s+OR\s+REPLACE\s+FUNCTION\s+"public"\."search_public_credentials"\s*\(/g),
     ];
     expect(createMatches.length).toBe(1);
-    const snippet = sql.slice(createMatches[0].index!, createMatches[0].index! + 300);
+    const idx = createMatches[0].index!;
+    const snippet = sql.slice(idx, idx + 300);
     expect(snippet).toContain('"p_query"');
     expect(snippet).toContain('"p_limit"');
     expect(snippet).not.toContain('p_offset');
