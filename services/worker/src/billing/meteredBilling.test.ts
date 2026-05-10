@@ -12,9 +12,21 @@ vi.mock('../utils/db.js', () => ({
   },
 }));
 
+const mockMeterEventsCreate = vi.fn();
+const mockSubscriptionItemsList = vi.fn();
+const mockSubscriptionsRetrieve = vi.fn();
+
 vi.mock('../config.js', () => ({
   config: {
     stripeSecretKey: '',
+  },
+}));
+
+vi.mock('stripe', () => ({
+  default: class StripeMock {
+    subscriptions = { retrieve: mockSubscriptionsRetrieve };
+    subscriptionItems = { list: mockSubscriptionItemsList };
+    billing = { meterEvents: { create: mockMeterEventsCreate } };
   },
 }));
 
@@ -28,6 +40,7 @@ vi.mock('../utils/logger.js', () => ({
 }));
 
 import { db } from '../utils/db.js';
+import { config } from '../config.js';
 import { recordMeteredUsage, getMeteredUsage, reportMeteredUsageToStripe } from './meteredBilling.js';
 
 interface SubRow { id: string; user_id: string; org_id: string; stripe_subscription_id: string; plan_id: string }
@@ -231,6 +244,52 @@ describe('reportMeteredUsageToStripe', () => {
 
       const results = await reportMeteredUsageToStripe();
       expect(results).toEqual([]);
+    });
+
+    it('never calls Stripe SDK for sandbox orgs even when stripeSecretKey is configured', async () => {
+      (config as { stripeSecretKey: string }).stripeSecretKey = 'sk_test_fake_key';
+
+      mockSubscriptionsRetrieve.mockResolvedValue({ customer: 'cus_prod_123' });
+      mockSubscriptionItemsList.mockResolvedValue({
+        data: [{ id: 'si_prod_1', price: { recurring: { usage_type: 'metered' } } }],
+      });
+      mockMeterEventsCreate.mockResolvedValue({ identifier: 'evt_1' });
+
+      mockReportDb({
+        subs: [
+          { id: 's-prod', user_id: 'u-prod', org_id: 'prod-org', stripe_subscription_id: 'sub_prod', plan_id: 'plan-metered' },
+          { id: 's-sand', user_id: 'u-sand', org_id: 'sandbox-org-1', stripe_subscription_id: 'sub_sandbox', plan_id: 'plan-metered' },
+        ],
+        credits: [
+          { org_id: 'prod-org', is_test: false },
+          { org_id: 'sandbox-org-1', is_test: true },
+        ],
+        usage: [{ payload: { quantity: 25 } }],
+      });
+
+      const results = await reportMeteredUsageToStripe();
+
+      const sandbox = results.find((r) => r.org_id === 'sandbox-org-1');
+      const prod = results.find((r) => r.org_id === 'prod-org');
+
+      expect(sandbox?.error).toBe('sandbox_excluded');
+      expect(sandbox?.reported_to_stripe).toBe(false);
+      expect(prod?.total_usage).toBe(25);
+      expect(prod?.error).toBeUndefined();
+      expect(prod?.reported_to_stripe).toBe(true);
+
+      expect(mockMeterEventsCreate).toHaveBeenCalledTimes(1);
+      expect(mockMeterEventsCreate).toHaveBeenCalledWith(
+        expect.objectContaining({
+          event_name: 'credential_verification',
+          payload: expect.objectContaining({ stripe_customer_id: 'cus_prod_123' }),
+        }),
+      );
+
+      expect(mockSubscriptionsRetrieve).toHaveBeenCalledWith('sub_prod');
+      expect(mockSubscriptionsRetrieve).not.toHaveBeenCalledWith('sub_sandbox');
+
+      (config as { stripeSecretKey: string }).stripeSecretKey = '';
     });
   });
 });
