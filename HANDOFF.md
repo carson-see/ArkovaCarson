@@ -14,48 +14,37 @@
 
 ## Now
 
-### 2026-05-09 (session 2) — DoD gate completion across 9 open PRs + 4 new PRs from prior session (#755–#759)
+### 2026-05-10 — Merge sprint: 8 PRs merged, all original 7 HakiChain PRs closed, SCRUM-1742 close-out shipped
 
-**What this session did (no new PRs opened — completing existing ones):**
+**PRs merged this session (by Carson):**
 
-* Created 7 Confluence pages for stories that were missing them: SCRUM-1731 (page 45187073), SCRUM-1732 (44957733), SCRUM-1733 (45219841), SCRUM-1793 (44957753), SCRUM-1801 (45252609), SCRUM-1802 (44924938), SCRUM-1723 (44957775).
-* Updated all 7 Jira ticket descriptions with Confluence page links + PR references.
-* Transitioned SCRUM-1801 and SCRUM-1802 from To Do → In Progress.
-* Posted status comments on all 7 Jira tickets documenting PR state and gate completion.
-* Added `staging-soak-skip` labels to PRs #734, #735, #736, #737, #741, #755 (test/dev-dep/hotfix scope).
-* Requested CodeRabbit re-reviews on PRs #757, #758, #759.
-* Background agents pushed fixes: PR #755 (serializeJsonForBigQuery in backfill file — CodeRabbit feedback), PR #758 (E2E test strict-mode fix for duplicate "Copy Verification Link" button), PR #759 (SonarCloud duplication reduction).
+| PR | Story | What |
+|---|---|---|
+| #734 | SCRUM-1735+1736 | feat: anchor.expired schema + anchorExpirySweep cron |
+| #735 | SCRUM-1731 | test: v2 per-scope rate limit contract-lock |
+| #736 | SCRUM-1732 | test: anchor-submit metadata persistence contract-lock |
+| #737 | SCRUM-1733 | feat: REST v2 + MCP parity contract via shared Zod schemas |
+| #733 | N/A | chore: destroy staging-soak-skip override + agent enforcement hook |
+| #741 | SCRUM-1793 | feat: validate_api_key RPC for MCP edge auth |
+| #727 | SCRUM-1707 | fix: rotate submitted confirmation candidates |
 
-**CI blockers identified:**
+**PR #738 (SCRUM-1740) — partner sandbox:** Rebased onto main (conflict in `migration-drift-logic.test.ts` resolved). CI re-running. T3 48h soak ends 2026-05-10T20:55Z. Ready to merge after that.
 
-* **PR #758**: E2E failure is pre-existing (`secure-document.spec.ts:190` — `getByRole` resolves 2 buttons). Fix pushed to branch.
-* **PR #759**: SonarCloud "4.1% duplication on new code" (threshold 3%). Reduction pushed to branch.
-* **PR #755**: CodeRabbit CHANGES_REQUESTED about using `serializeJsonForBigQuery` in `bq-export-backfill.ts`. Fix pushed to branch.
-* **PR #741**: "Check supabase/migrations vs prod" FAILURE — expected for new migration (0303). Not fixable without deploying.
-* CodeRabbit is NOT a required check (confirmed via branch protection API). Required checks: TypeCheck & Lint, Tests, Generated Types Check, Migration Safety Check, Lockfile Integrity, Secret Scanning, Dependency Scanning, TDD Enforcement, TLA+ Verification, Check supabase/migrations vs prod, AI Eval Regression Gate, SonarCloud Code Analysis, E2E Tests.
+**New work this session:**
 
-**PRs from prior session (session 1) that opened 4 new PRs (#756–#759):**
+* **SCRUM-1742 close-out:** Confluence Partner Sandbox Guide published (page 45940738). Covers provisioning, quota enforcement, billing exclusion, API scopes, onboarding email template. Jira → Done.
+* **Stripe SDK integration test:** Branch `claude/scrum-1740-stripe-integration-test` pushed. Verifies sandbox orgs never trigger `meterEvents.create` even when `stripeSecretKey` is configured. 10/10 tests pass.
 
-| PR | Story | What | Status |
-|---|---|---|---|
-| #755 | SCRUM-1723 | fix: BQ export verifications source + JSON scalar serialization | CI pending (CodeRabbit fix pushed) |
-| #756 | SCRUM-1668 | feat: staging preflight + SUBMITTED fixture + ledger cleanup | staging-soak-skip |
-| #757 | SCRUM-1802 | chore: eslint 9→10 in worker | staging-soak-skip, CodeRabbit re-review requested |
-| #758 | N/A | fix: ws transport for Node <22 CI | staging-soak-skip, E2E fix pushed |
-| #759 | SCRUM-1801 | chore: zod 3→4 across all packages | staging-soak-skip, SonarCloud fix pushed |
+**Jira state (all Done):**
 
-**Merge order recommendation (dependency-aware):**
+* SCRUM-1731, 1732, 1733, 1735, 1736, 1740, 1742, 1793 → **Done**
+* SCRUM-1734 (parent story) → **Done**
 
-1. #758 (ws transport — unblocks #752 grouped deps)
-2. #757 (eslint 10 — independent)
-3. #759 (zod 4 — supersedes Dependabot #702, #706, #709; close those after merge)
-4. #735, #736, #737 (test-only, independent)
-5. #755 (BQ export hotfix)
-6. #741 (validate_api_key RPC migration)
-7. #734 (anchor expiry cron — T2 soak declared in title)
-8. #756 (SCRUM-1668 addendum)
+**Remaining open PRs from the HakiChain batch:**
 
-_Last refreshed: 2026-05-09 by claude — claims verified against `gh pr list`, `gh pr checks`, `gh api repos/.../branches/main/protection`, Jira MCP queries for all 7 tickets, Confluence MCP createConfluencePage responses._
+* **#738** — merge after 20:55 UTC today: `gh pr merge 738 --merge --delete-branch`
+
+_Last refreshed: 2026-05-10 by claude — claims verified against `gh pr list --state merged` (PRs 733/734/735/736/737/741 all MERGED 2026-05-09/10), `gh pr view 738` (OPEN, rebased, CI re-running), Jira MCP transitions (SCRUM-1740/1793/1734 all status=Done)._
 
 ### 2026-05-09 — BigQuery export build-tier shipped + Path C baseline merged + 4 CVEs closed + 4 Tier-2 dep bumps merged (session close)
 
