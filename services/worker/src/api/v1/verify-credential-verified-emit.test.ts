@@ -144,10 +144,17 @@ describe('GET /api/v1/verify/:publicId — credential.verified emit', () => {
     );
   });
 
-  it('maps anchor.status ACTIVE → "SECURED" in the credential.verified payload', async () => {
+  // Status mapping table — ACTIVE/SECURED both map to 'SECURED'; REVOKED and
+  // EXPIRED pass through. Table-driven to avoid 4× near-identical test bodies
+  // that SonarCloud flags as duplication.
+  it.each([
+    { anchorStatus: 'ACTIVE',  emitStatus: 'SECURED' },
+    { anchorStatus: 'REVOKED', emitStatus: 'REVOKED' },
+    { anchorStatus: 'EXPIRED', emitStatus: 'EXPIRED' },
+  ])('maps anchor.status $anchorStatus → "$emitStatus" in the credential.verified payload', async ({ anchorStatus, emitStatus }) => {
     process.env.ENABLE_CREDENTIAL_VERIFIED_WEBHOOK = 'true';
 
-    const app = buildApp(buildAnchor({ status: 'ACTIVE' }));
+    const app = buildApp(buildAnchor({ status: anchorStatus }));
     const res = await request(app).get('/api/v1/verify/ARK-2026-VRF-001');
 
     expect(res.status).toBe(200);
@@ -155,59 +162,22 @@ describe('GET /api/v1/verify/:publicId — credential.verified emit', () => {
       'org-1',
       'credential.verified',
       'ARK-2026-VRF-001',
-      expect.objectContaining({ status: 'SECURED' }),
+      expect.objectContaining({ status: emitStatus }),
     );
   });
 
-  it('maps anchor.status REVOKED → "REVOKED"', async () => {
-    process.env.ENABLE_CREDENTIAL_VERIFIED_WEBHOOK = 'true';
+  it.each(['PENDING', 'SUBMITTED'])(
+    'skips dispatch for non-terminal status (%s)',
+    async (status) => {
+      process.env.ENABLE_CREDENTIAL_VERIFIED_WEBHOOK = 'true';
 
-    const app = buildApp(buildAnchor({ status: 'REVOKED' }));
-    const res = await request(app).get('/api/v1/verify/ARK-2026-VRF-001');
+      const app = buildApp(buildAnchor({ status }));
+      const res = await request(app).get('/api/v1/verify/ARK-2026-VRF-001');
 
-    expect(res.status).toBe(200);
-    expect(mockDispatchWebhookEvent).toHaveBeenCalledWith(
-      'org-1',
-      'credential.verified',
-      'ARK-2026-VRF-001',
-      expect.objectContaining({ status: 'REVOKED' }),
-    );
-  });
-
-  it('maps anchor.status EXPIRED → "EXPIRED"', async () => {
-    process.env.ENABLE_CREDENTIAL_VERIFIED_WEBHOOK = 'true';
-
-    const app = buildApp(buildAnchor({ status: 'EXPIRED' }));
-    const res = await request(app).get('/api/v1/verify/ARK-2026-VRF-001');
-
-    expect(res.status).toBe(200);
-    expect(mockDispatchWebhookEvent).toHaveBeenCalledWith(
-      'org-1',
-      'credential.verified',
-      'ARK-2026-VRF-001',
-      expect.objectContaining({ status: 'EXPIRED' }),
-    );
-  });
-
-  it('skips dispatch for non-terminal status (PENDING)', async () => {
-    process.env.ENABLE_CREDENTIAL_VERIFIED_WEBHOOK = 'true';
-
-    const app = buildApp(buildAnchor({ status: 'PENDING' }));
-    const res = await request(app).get('/api/v1/verify/ARK-2026-VRF-001');
-
-    expect(res.status).toBe(200);
-    expect(mockDispatchWebhookEvent).not.toHaveBeenCalled();
-  });
-
-  it('skips dispatch for non-terminal status (SUBMITTED)', async () => {
-    process.env.ENABLE_CREDENTIAL_VERIFIED_WEBHOOK = 'true';
-
-    const app = buildApp(buildAnchor({ status: 'SUBMITTED' }));
-    const res = await request(app).get('/api/v1/verify/ARK-2026-VRF-001');
-
-    expect(res.status).toBe(200);
-    expect(mockDispatchWebhookEvent).not.toHaveBeenCalled();
-  });
+      expect(res.status).toBe(200);
+      expect(mockDispatchWebhookEvent).not.toHaveBeenCalled();
+    },
+  );
 
   it('skips dispatch on cache HIT (sampling by cache TTL)', async () => {
     process.env.ENABLE_CREDENTIAL_VERIFIED_WEBHOOK = 'true';

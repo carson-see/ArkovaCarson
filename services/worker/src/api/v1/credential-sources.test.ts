@@ -638,51 +638,41 @@ describe('credentialSourcesRouter', () => {
       expect(mockDispatchWebhookEvent).not.toHaveBeenCalled();
     });
 
-    it('writes a credential.issued audit row capturing dispatch outcome', async () => {
+    // Helper: import a credential then return the credential.issued audit
+    // row's parsed details. Drains microtasks because both the dispatch and
+    // the audit insert are fire-and-forget.
+    async function importAndReadIssuedAudit(sourceSlug: string, credentialType: string) {
       await request(makeApp())
         .post('/api/v1/credential-sources/import-url/preview')
-        .send({ source_url: 'https://credentials.example.com/auditable', credential_type: 'INSURANCE' });
+        .send({ source_url: `https://credentials.example.com/${sourceSlug}`, credential_type: credentialType });
 
       const res = await request(makeApp())
         .post('/api/v1/credential-sources/import-url/confirm')
-        .send({ source_url: 'https://credentials.example.com/auditable', credential_type: 'INSURANCE' });
+        .send({ source_url: `https://credentials.example.com/${sourceSlug}`, credential_type: credentialType });
 
       expect(res.status).toBe(201);
-      // Audit insert is fire-and-forget — drain microtasks before asserting.
       for (let i = 0; i < 10; i++) await Promise.resolve();
 
-      const auditCalls = mockAuditInsert.mock.calls.map((c: unknown[]) => c[0]);
-      const issuedRow = auditCalls.find(
-        (row: any) => row?.event_type === 'credential.issued',
-      ) as { event_category: string; org_id: string; details: string } | undefined;
+      const issuedRow = mockAuditInsert.mock.calls
+        .map((c: unknown[]) => c[0])
+        .find((row: any) => row?.event_type === 'credential.issued') as
+        | { event_category: string; org_id: string; details: string }
+        | undefined;
       expect(issuedRow).toBeDefined();
-      expect(issuedRow!.event_category).toBe('WEBHOOK');
-      expect(issuedRow!.org_id).toBe('org-1');
-      const details = JSON.parse(issuedRow!.details);
+      return { row: issuedRow!, details: JSON.parse(issuedRow!.details) };
+    }
+
+    it('writes a credential.issued audit row capturing dispatch outcome', async () => {
+      const { row, details } = await importAndReadIssuedAudit('auditable', 'INSURANCE');
+      expect(row.event_category).toBe('WEBHOOK');
+      expect(row.org_id).toBe('org-1');
       expect(details.dispatched).toBe(true);
       expect(details.credential_type).toBe('INSURANCE');
     });
 
     it('writes a credential.issued audit row with dispatched=false when dispatch fails', async () => {
       mockDispatchWebhookEvent.mockRejectedValueOnce(new Error('endpoint offline'));
-
-      await request(makeApp())
-        .post('/api/v1/credential-sources/import-url/preview')
-        .send({ source_url: 'https://credentials.example.com/dispatchfail', credential_type: 'TRANSCRIPT' });
-
-      const res = await request(makeApp())
-        .post('/api/v1/credential-sources/import-url/confirm')
-        .send({ source_url: 'https://credentials.example.com/dispatchfail', credential_type: 'TRANSCRIPT' });
-
-      expect(res.status).toBe(201);
-      for (let i = 0; i < 10; i++) await Promise.resolve();
-
-      const auditCalls = mockAuditInsert.mock.calls.map((c: unknown[]) => c[0]);
-      const issuedRow = auditCalls.find(
-        (row: any) => row?.event_type === 'credential.issued',
-      ) as { event_category: string; org_id: string; details: string } | undefined;
-      expect(issuedRow).toBeDefined();
-      const details = JSON.parse(issuedRow!.details);
+      const { details } = await importAndReadIssuedAudit('dispatchfail', 'TRANSCRIPT');
       expect(details.dispatched).toBe(false);
       expect(details.dispatch_error).toBe('endpoint offline');
     });
