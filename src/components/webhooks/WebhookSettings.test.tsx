@@ -116,18 +116,14 @@ describe('WebhookSettings', () => {
 
       await userEvent.click(screen.getByText('Add Endpoint'));
 
-      const checkboxes = screen.getAllByRole('checkbox');
-      // SCRUM-1795 reordered checkboxes: anchor.submitted at index 0,
-      // anchor.batch_secured at index 4. Defaults (anchor.secured +
-      // anchor.revoked) are now at indexes 1 and 2.
-      expect(checkboxes[0]).not.toBeChecked(); // anchor.submitted
-      expect(checkboxes[1]).toBeChecked();     // anchor.secured (default)
-      expect(checkboxes[2]).toBeChecked();     // anchor.revoked (default)
-      expect(checkboxes[3]).not.toBeChecked(); // anchor.expired
-      expect(checkboxes[4]).not.toBeChecked(); // anchor.batch_secured
-      expect(checkboxes[5]).not.toBeChecked(); // credential.issued
-      expect(checkboxes[6]).not.toBeChecked(); // credential.verified
-      expect(checkboxes[7]).not.toBeChecked(); // credential.status_changed
+      expect(screen.getByLabelText(/Anchor Submitted/i)).not.toBeChecked();
+      expect(screen.getByLabelText(/Anchor Secured/i)).toBeChecked();
+      expect(screen.getByLabelText(/Anchor Revoked/i)).toBeChecked();
+      expect(screen.getByLabelText(/Anchor Expired/i)).not.toBeChecked();
+      expect(screen.getByLabelText(/Anchor Batch Secured/i)).not.toBeChecked();
+      expect(screen.getByLabelText(/Credential Issued/i)).not.toBeChecked();
+      expect(screen.getByLabelText(/Credential Verified/i)).not.toBeChecked();
+      expect(screen.getByLabelText(/Credential Status Changed/i)).not.toBeChecked();
     });
 
     it('validates URL must start with https://', async () => {
@@ -155,10 +151,8 @@ describe('WebhookSettings', () => {
       const urlInput = screen.getByPlaceholderText('https://your-server.com/webhooks');
       await userEvent.type(urlInput, 'https://valid.com/hooks');
 
-      // Uncheck default events (anchor.secured at idx 1, anchor.revoked at idx 2 post-SCRUM-1795)
-      const checkboxes = screen.getAllByRole('checkbox');
-      await userEvent.click(checkboxes[1]); // uncheck anchor.secured
-      await userEvent.click(checkboxes[2]); // uncheck anchor.revoked
+      await userEvent.click(screen.getByLabelText(/Anchor Secured/i));
+      await userEvent.click(screen.getByLabelText(/Anchor Revoked/i));
 
       const submitButtons = screen.getAllByText('Add Endpoint');
       const submitButton = submitButtons[submitButtons.length - 1];
@@ -173,27 +167,21 @@ describe('WebhookSettings', () => {
 
       await userEvent.click(screen.getByText('Add Endpoint'));
 
-      const checkboxes = screen.getAllByRole('checkbox');
+      const expired = screen.getByLabelText(/Anchor Expired/i);
+      await userEvent.click(expired);
+      expect(expired).toBeChecked();
 
-      // SCRUM-1795 indexes: anchor.submitted=0, anchor.secured=1,
-      // anchor.revoked=2, anchor.expired=3, anchor.batch_secured=4,
-      // credential.issued=5
+      const secured = screen.getByLabelText(/Anchor Secured/i);
+      await userEvent.click(secured);
+      expect(secured).not.toBeChecked();
 
-      // Toggle anchor.expired on (idx 3)
-      await userEvent.click(checkboxes[3]);
-      expect(checkboxes[3]).toBeChecked();
+      const submitted = screen.getByLabelText(/Anchor Submitted/i);
+      await userEvent.click(submitted);
+      expect(submitted).toBeChecked();
 
-      // Toggle anchor.secured off (idx 1, default-checked)
-      await userEvent.click(checkboxes[1]);
-      expect(checkboxes[1]).not.toBeChecked();
-
-      // SCRUM-1795: anchor.submitted opt-in (idx 0, was missing before)
-      await userEvent.click(checkboxes[0]);
-      expect(checkboxes[0]).toBeChecked();
-
-      // SCRUM-1743: credential.* opt-in (idx 5)
-      await userEvent.click(checkboxes[5]);
-      expect(checkboxes[5]).toBeChecked();
+      const credIssued = screen.getByLabelText(/Credential Issued/i);
+      await userEvent.click(credIssued);
+      expect(credIssued).toBeChecked();
     });
 
     it('calls onAdd with URL and events on valid submission', async () => {

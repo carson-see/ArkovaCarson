@@ -46,27 +46,18 @@ describe('CreateWebhookSchema', () => {
     expect(result.success).toBe(true);
   });
 
-  // SCRUM-1794: pre-existing drift bug. The worker emits these events from
-  // services/worker/src/jobs/anchor.ts and check-confirmations.ts, but the
-  // CRUD allowlist only covered the terminal-state events, so customers
-  // could not subscribe to them via POST /webhooks.
-  it('SCRUM-1794: accepts anchor.submitted (per-anchor lifecycle)', () => {
+  it.each([
+    ['anchor.submitted'],
+    ['anchor.batch_secured'],
+  ])('accepts %s subscription', (eventType) => {
     const result = CreateWebhookSchema.safeParse({
       url: 'https://example.com/hooks',
-      events: ['anchor.submitted'],
+      events: [eventType],
     });
     expect(result.success).toBe(true);
   });
 
-  it('SCRUM-1794: accepts anchor.batch_secured (merkle-batch aggregate)', () => {
-    const result = CreateWebhookSchema.safeParse({
-      url: 'https://example.com/hooks',
-      events: ['anchor.batch_secured'],
-    });
-    expect(result.success).toBe(true);
-  });
-
-  it('SCRUM-1794: accepts the full anchor.* event set in one subscription', () => {
+  it('accepts the full anchor.* event set in one subscription', () => {
     const result = CreateWebhookSchema.safeParse({
       url: 'https://example.com/hooks',
       events: [
@@ -80,10 +71,7 @@ describe('CreateWebhookSchema', () => {
     expect(result.success).toBe(true);
   });
 
-  // SCRUM-1743: credential.* lifecycle events are accepted at the CRUD layer
-  // even though emit-point wiring is Phase-2. Customers can register
-  // subscriptions today; deliveries begin as each emit point goes live.
-  it('SCRUM-1743: accepts credential.* lifecycle event types', () => {
+  it('accepts credential.* lifecycle event types', () => {
     const result = CreateWebhookSchema.safeParse({
       url: 'https://example.com/hooks',
       events: ['credential.issued', 'credential.verified', 'credential.status_changed'],
@@ -91,7 +79,7 @@ describe('CreateWebhookSchema', () => {
     expect(result.success).toBe(true);
   });
 
-  it('SCRUM-1743: accepts a mixed subscription (anchor + credential)', () => {
+  it('accepts a mixed subscription (anchor + credential)', () => {
     const result = CreateWebhookSchema.safeParse({
       url: 'https://example.com/hooks',
       events: ['anchor.secured', 'credential.issued'],

@@ -3,13 +3,8 @@
  */
 
 /**
- * Webhook event types (INT-09 + SCRUM-1743 + SCRUM-1795).
- *
- * Anchor lifecycle (stable): chain-level state of the cryptographic proof.
- * Credential lifecycle (SCRUM-1743): issuer/recipient-level state. Contract
- * defined; per-event emit-points wire in Phase-2 follow-ups.
- * SCRUM-1795: anchor.submitted + anchor.batch_secured added — were emitted by
- * the worker but not subscribable via CRUD until now.
+ * Webhook event types. Credential.* contract is defined but per-event emit
+ * points wire in Phase-2 follow-ups (SCRUM-1743).
  */
 export type WebhookEventType =
   | 'anchor.submitted'

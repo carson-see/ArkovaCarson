@@ -2,36 +2,28 @@
  * Webhook CRUD Zod schemas — extracted from webhooks.ts so tests can import
  * them without pulling the db/config module graph. Pure validation, no side
  * effects, no Express, no runtime db access.
+ *
+ * Single source of truth: `PAYLOAD_SCHEMAS_BY_EVENT_TYPE` keys in
+ * `services/worker/src/webhooks/payload-schemas.ts`. The CRUD allowlist
+ * (this file) and the dispatch validator (that file) must never diverge —
+ * a previous divergence (the worker emitted `anchor.submitted` /
+ * `anchor.batch_secured` for months while the CRUD allowlist rejected
+ * subscriptions to them) is what SCRUM-1794 was filed to fix.
  */
 
 import { z } from 'zod';
+import { PAYLOAD_SCHEMAS_BY_EVENT_TYPE, type WebhookEventType } from '../../webhooks/payload-schemas.js';
 
-export const VALID_WEBHOOK_EVENTS = [
-  // Per-anchor lifecycle (chain-level state of the cryptographic proof).
-  // `anchor.submitted` fires from services/worker/src/jobs/anchor.ts after
-  // tx broadcast; `anchor.secured` fires from check-confirmations.ts on the
-  // per-anchor fan-out; `anchor.revoked` / `anchor.expired` fire from the
-  // corresponding state transitions. Schemas live in
-  // services/worker/src/webhooks/payload-schemas.ts.
-  'anchor.submitted',
-  'anchor.secured',
-  'anchor.revoked',
-  'anchor.expired',
-  // Aggregate event for the merkle-batch path. Fires once per merkle TX
-  // alongside the per-anchor `anchor.secured` fan-out (SCRUM-1264 / R2-1).
-  'anchor.batch_secured',
-  // Credential lifecycle (issuer-and-recipient-level state) — SCRUM-1743
-  // Phase 1. Schemas defined in payload-schemas.ts; per-event emit-point
-  // wiring lands in Phase-2 follow-ups.
-  'credential.issued',
-  'credential.verified',
-  'credential.status_changed',
-] as const;
+// Derived from the dispatch validator's key set so the two cannot drift.
+// `as [string, ...string[]]` is needed because `z.enum` wants a non-empty
+// tuple type, not a generic string[]. Object.keys preserves insertion order
+// for non-integer string keys (ES2015+), so the array order matches the
+// declaration order in payload-schemas.ts.
+export const VALID_WEBHOOK_EVENTS = Object.keys(
+  PAYLOAD_SCHEMAS_BY_EVENT_TYPE,
+) as [WebhookEventType, ...WebhookEventType[]];
 
-const DEFAULT_EVENTS: Array<(typeof VALID_WEBHOOK_EVENTS)[number]> = [
-  'anchor.secured',
-  'anchor.revoked',
-];
+const DEFAULT_EVENTS: WebhookEventType[] = ['anchor.secured', 'anchor.revoked'];
 
 export const CreateWebhookSchema = z.object({
   url: z

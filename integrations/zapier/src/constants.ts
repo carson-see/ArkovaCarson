@@ -14,8 +14,6 @@ export const DEFAULT_EVENTS = ['anchor.secured', 'anchor.revoked'];
  * wiring lands in Phase-2 follow-ups.
  */
 export const VALID_EVENTS = [
-  // SCRUM-1795: anchor.submitted + anchor.batch_secured added — were emitted
-  // but not subscribable until now.
   'anchor.submitted',
   'anchor.secured',
   'anchor.revoked',
