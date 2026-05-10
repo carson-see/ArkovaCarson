@@ -790,9 +790,18 @@ async function checkSubmittedConfirmationsUnlocked(): Promise<{ checked: number;
  * No mempool.space calls — just promotes all SUBMITTED → SECURED instantly.
  */
 async function autoConfirmMockAnchors(): Promise<{ checked: number; confirmed: number }> {
+  // SCRUM-1800 (PR #753): the mock path needs to fan out anchor.secured +
+  // credential.status_changed webhooks alongside the SUBMITTED→SECURED
+  // transition, otherwise staging soaks (which run with USE_MOCKS=true)
+  // can't exercise the real-path's bulk-drain webhook code. This kept
+  // PR #1264's anchor.secured fan-out and PR #753's credential.status_changed
+  // fan-out invisible to every staging soak prior to this fix.
+  //
+  // Select public_id + org_id alongside id so we can dispatch with the same
+  // signature as fanOutSecuredAnchorWebhooks expects.
   const { data: anchors, error } = await db
     .from('anchors')
-    .select('id')
+    .select('id, public_id, org_id')
     .eq('status', 'SUBMITTED')
     .is('deleted_at', null)
     .limit(100);
@@ -801,15 +810,18 @@ async function autoConfirmMockAnchors(): Promise<{ checked: number; confirmed: n
     return { checked: 0, confirmed: 0 };
   }
 
-  const ids = anchors.map((a) => a.id);
+  const ids = anchors.map((a) => a.id as string);
+  const blockHeight = 100000;
+  const blockTimestamp = new Date().toISOString();
+  const txId = `mock-batch-${Date.now()}`;
 
   const { error: updateError } = await db
     .from('anchors')
     .update({
       status: 'SECURED',
       // chain_confirmations: 1, — column pending migration 0068b
-      chain_block_height: 100000,
-      chain_timestamp: new Date().toISOString(),
+      chain_block_height: blockHeight,
+      chain_timestamp: blockTimestamp,
     })
     .in('id', ids)
     .eq('status', 'SUBMITTED');
@@ -820,5 +832,27 @@ async function autoConfirmMockAnchors(): Promise<{ checked: number; confirmed: n
   }
 
   logger.info({ count: anchors.length }, 'Auto-confirmed SUBMITTED anchors (mock mode)');
+
+  // Fan out webhooks — same path as the real chain-confirmation route.
+  // anchors fetched above carry the public_id + org_id needed by
+  // fanOutSecuredAnchorWebhooks; rows with either field null are filtered
+  // inside that helper (existing behavior).
+  const securedAnchors = anchors.map((a) => ({
+    public_id: (a.public_id as string | null) ?? null,
+    org_id: (a.org_id as string | null) ?? null,
+  }));
+  const fanOutPromise = fanOutSecuredAnchorWebhooks(
+    securedAnchors,
+    txId,
+    blockHeight,
+    blockTimestamp,
+  );
+  void fanOutPromise.catch((fanOutErr) => {
+    logger.error(
+      { txId, error: fanOutErr },
+      'Mock-mode webhook fan-out unexpectedly threw — should never happen (helper catches internally)',
+    );
+  });
+
   return { checked: anchors.length, confirmed: anchors.length };
 }
