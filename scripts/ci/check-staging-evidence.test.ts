@@ -22,6 +22,7 @@ Queue rewrite.
 - E2E result: 312/312 green
 - Migration applied: 0288_priority_anchor_credits.sql
 - Rollback rehearsed: yes — applied + rolled back + re-applied
+- Staging deploy log id: 142 (from public.staging_deploy_log via scripts/staging/deploy.sh)
 - Trigger A fires: 4 (10k threshold reached at T+04:32, T+10:11, T+22:04, T+38:51)
 - Trigger B fires: 2 (clock fired at T+09:14 and T+34:01)
 - Daily flush observation: fired 2026-05-05 08:00 UTC, drained 4,217 anchors across 18 orgs
@@ -121,6 +122,30 @@ describe('check-staging-evidence', () => {
       expect(missing).toContain('Trigger A fires:');
       expect(missing).toContain('Trigger B fires:');
     });
+
+    // SCRUM-1803: every T2/T3 deploy must reference its staging_deploy_log row,
+    // proving the lease-enforced wrapper was used. A free-typed evidence
+    // block without that id wouldn't catch raw-gcloud bypasses.
+    it('SCRUM-1803: T2 fails when Staging deploy log id is missing', () => {
+      const t2Body = `## Staging Soak Evidence
+- Tier: T2
+- Staging branch: arkova-staging
+- Worker revision: arkova-worker-staging-00099-xyz
+- Soak start: 2026-05-09 14:00 UTC
+- Soak end: 2026-05-09 18:00 UTC
+- E2E result: 50/50 green
+- Migration applied: none
+- Rollback rehearsed: n/a
+`;
+      const missing = missingFields(t2Body, 'T2');
+      expect(missing).toContain('Staging deploy log id:');
+    });
+
+    it('SCRUM-1803: T3 fails when Staging deploy log id is missing', () => {
+      const partial = T3_BODY.replace(/Staging deploy log id:.*\n/, '');
+      const missing = missingFields(partial, 'T3');
+      expect(missing).toContain('Staging deploy log id:');
+    });
   });
 
   describe('isStagingToolingOnly', () => {
@@ -148,16 +173,10 @@ describe('check-staging-evidence', () => {
   });
 
   describe('check (integration)', () => {
-    it('passes when override label is set', () => {
-      const r = check({ body: '', files: ['services/worker/src/chain/client.ts'], overridden: true });
-      expect(r.ok).toBe(true);
-    });
-
     it('passes for staging-tooling-only PR with no body', () => {
       const r = check({
         body: '',
         files: ['scripts/staging/seed.ts', 'docs/staging/README.md'],
-        overridden: false,
       });
       expect(r.ok).toBe(true);
     });
@@ -166,7 +185,6 @@ describe('check-staging-evidence', () => {
       const r = check({
         body: '## Summary\nfix bug',
         files: ['services/worker/src/chain/client.ts'],
-        overridden: false,
       });
       expect(r.ok).toBe(false);
       expect(r.errors.join(' ')).toMatch(/missing a tier declaration/i);
@@ -177,7 +195,6 @@ describe('check-staging-evidence', () => {
       const r = check({
         body,
         files: ['services/worker/src/chain/client.ts'],
-        overridden: false,
       });
       expect(r.ok).toBe(false);
       expect(r.errors.join(' ')).toMatch(/below required tier T3/);
@@ -187,7 +204,6 @@ describe('check-staging-evidence', () => {
       const r = check({
         body: T3_BODY,
         files: ['services/worker/src/jobs/batch-anchor.ts'],
-        overridden: false,
       });
       expect(r.ok).toBe(true);
     });
@@ -197,10 +213,23 @@ describe('check-staging-evidence', () => {
       const r = check({
         body: incomplete,
         files: ['services/worker/src/jobs/batch-anchor.ts'],
-        overridden: false,
       });
       expect(r.ok).toBe(false);
       expect(r.errors.join(' ')).toMatch(/missing required fields/i);
+    });
+
+    it('SCRUM-1208: HANDOFF.md and .gitignore are now in the staging-tooling allowlist (PR #733 follow-up)', () => {
+      // Codex review on PR #733 flagged these as missing from the allowlist
+      // even though the PR's own diff included them. Without them, the PR
+      // that REMOVED the staging-soak-skip override couldn't itself self-skip,
+      // forcing a circular evidence requirement. Adding them here keeps the
+      // self-skip honest for the meta-PR pattern (CI/agent config + state docs).
+      const r = check({
+        body: '',
+        files: ['HANDOFF.md', '.gitignore', '.claude/settings.json', '.claude/hooks/check-staging-evidence-pre-merge.sh'],
+      });
+      expect(r.ok).toBe(true);
+      expect(r.notes.join(' ')).toMatch(/staging-tooling-only/i);
     });
   });
 });

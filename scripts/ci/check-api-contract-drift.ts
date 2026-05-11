@@ -80,7 +80,7 @@ export function zodRequiredKeys(schema: z.ZodTypeAny): string[] {
   if (!shape) return [];
 
   return Object.entries(shape)
-    .filter(([, field]) => !field.safeParse(undefined).success)
+    .filter(([, field]) => !(field as z.ZodType).safeParse(undefined).success)
     .map(([key]) => key)
     .sort(byLocale);
 }

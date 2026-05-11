@@ -18,7 +18,7 @@ const BASE_PROFILE = {
   founded_date: '2024-01-15',
 } as const;
 
-const ORG_PAGE_URL = 'https://arkova.ai/issuer/00000000-0000-0000-0000-000000000001';
+const ORG_PAGE_URL = 'https://arkova.ai/issuer/10000000-1000-4000-8000-000000000001';
 
 describe('buildOrganizationSchema', () => {
   it('emits required schema.org Organization fields', () => {

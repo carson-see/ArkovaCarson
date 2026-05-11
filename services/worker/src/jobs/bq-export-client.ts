@@ -130,6 +130,59 @@ export interface BqInsertRow {
   json: Record<string, unknown>;
 }
 
+/**
+ * Serialize a value for a BQ JSON-type column.
+ *
+ * BigQuery's streaming `insertAll` API requires JSON-typed columns to be
+ * sent as JSON-encoded *strings*, not raw values. Postgres returns jsonb
+ * as deserialized JS values — objects, arrays, but also scalar strings,
+ * numbers, and booleans (all valid jsonb). Every non-null value must be
+ * stringified, not just objects/arrays.
+ *
+ * Shared helper so both the incremental sync and backfill jobs stay in
+ * sync (SCRUM-1723 live-prod fix, CodeRabbit review 2026-05-09).
+ */
+export function serializeJsonForBigQuery(value: unknown): string | null {
+  if (value == null) return null;
+  return JSON.stringify(value);
+}
+
+/**
+ * Convert a Postgres row into the BQ `tabledata.insertAll` wire shape.
+ *
+ * Two invariants this enforces:
+ *   1. `insertId = "<table>-<id>"` for at-least-once + best-effort dedup
+ *      across the BQ ~1-minute window.
+ *   2. Any field whose BQ schema declares `type === 'JSON'` is serialized
+ *      via {@link serializeJsonForBigQuery} before insertAll. BigQuery's
+ *      streaming API requires JSON-type columns to be sent as JSON-encoded
+ *      strings, not nested objects or bare scalars; Postgres returns jsonb
+ *      as deserialized JS values, so without this re-stringify the API
+ *      rejects rows with `This field: <name> is not a record.`
+ *      (SCRUM-1723 live-prod defect 2026-05-09).
+ *
+ * Lives here in bq-export-client.ts so both the incremental sync job
+ * and the one-shot backfill job share the same wire-shaping; SonarCloud
+ * was flagging the otherwise-duplicated copies as 45.7% dup density.
+ */
+export function toBqRow(
+  target: BqTableTarget,
+  table: string,
+  row: Record<string, unknown>,
+): BqInsertRow {
+  const rawId = row.id;
+  if (rawId === null || rawId === undefined || rawId === '') {
+    throw new Error(`bq-export: missing id while shaping row for table=${table}`);
+  }
+  const id = String(rawId);
+  const json: Record<string, unknown> = { ...row, bq_synced_at: new Date().toISOString() };
+  for (const field of target.schema.fields) {
+    if (field.type !== 'JSON') continue;
+    json[field.name] = serializeJsonForBigQuery(json[field.name]);
+  }
+  return { insertId: `${table}-${id}`, json };
+}
+
 export interface BqInsertResult {
   insertedCount: number;
   errors: Array<{ index: number; reason: string }>;
@@ -143,6 +196,46 @@ export interface BqInsertResult {
  * row aborts the batch — better to surface the issue than silently lose
  * a row. `ignoreUnknownValues: false` for the same reason.
  */
+/**
+ * Retry on transient BQ failures (5xx, 429). Per BigQuery docs the streaming
+ * insert path can return 503 during backend rebalancing; client-side retries
+ * with backoff are recommended. Permanent failures (4xx other than 429) are
+ * not retried — they're real schema/auth/quota errors that need surfacing.
+ *
+ * SCRUM-1062 operational hardening: without this, every transient 5xx blip
+ * would advance no watermark + emit a Sentry event, noising the consecutive-
+ * failure alert on infrastructure flakes that resolve on their own.
+ */
+const INSERT_ALL_MAX_ATTEMPTS = 3;
+const INSERT_ALL_BASE_BACKOFF_MS = 500;
+
+function isTransientStatus(status: number): boolean {
+  return status === 429 || (status >= 500 && status < 600);
+}
+
+async function bqFetchWithRetry(
+  path: string,
+  init: FetchInit,
+  attempts: number = INSERT_ALL_MAX_ATTEMPTS,
+): Promise<{ ok: boolean; status: number; body: unknown }> {
+  let lastRes: { ok: boolean; status: number; body: unknown } | null = null;
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    const res = await bqFetch(path, init);
+    lastRes = res;
+    if (res.ok || !isTransientStatus(res.status)) return res;
+    if (attempt < attempts - 1) {
+      // Exponential backoff with jitter: 500ms, 1s, 2s (+ up to 250ms jitter).
+      const backoff = INSERT_ALL_BASE_BACKOFF_MS * 2 ** attempt + Math.floor(Math.random() * 250);
+      logger.warn(
+        { path, status: res.status, attempt: attempt + 1, backoffMs: backoff },
+        'BQ transient failure — retrying',
+      );
+      await new Promise((resolve) => setTimeout(resolve, backoff));
+    }
+  }
+  return lastRes ?? { ok: false, status: 0, body: 'no response' };
+}
+
 export async function insertRows(
   target: BqTableTarget,
   rows: readonly BqInsertRow[],
@@ -157,7 +250,7 @@ export async function insertRows(
     rows: rows.map((r) => ({ insertId: r.insertId, json: r.json })),
   };
 
-  const res = await bqFetch(path, {
+  const res = await bqFetchWithRetry(path, {
     method: 'POST',
     body: JSON.stringify(payload),
   });

@@ -158,9 +158,7 @@ const labelField = z
 /** Credential type: one of the CREDENTIAL_TYPES enum values, optional + nullable */
 const credentialTypeField = z
   .enum(CREDENTIAL_TYPES, {
-    errorMap: () => ({
-      message: `Credential type must be one of: ${CREDENTIAL_TYPES.join(', ')}`,
-    }),
+    error: `Credential type must be one of: ${CREDENTIAL_TYPES.join(', ')}`,
   })
   .optional()
   .nullable();
@@ -252,7 +250,7 @@ export const AnchorUpdateSchema = z.object({
   credential_type: credentialTypeField,
 
   metadata: z
-    .record(z.unknown())
+    .record(z.string(), z.unknown())
     .optional()
     .nullable(),
 
@@ -327,9 +325,7 @@ export const AuditEventCreateSchema = z.object({
     .max(100, 'Event type must be 100 characters or less'),
 
   event_category: z.enum(AUDIT_EVENT_CATEGORIES, {
-    errorMap: () => ({
-      message: `Event category must be one of: ${AUDIT_EVENT_CATEGORIES.join(', ')}`,
-    }),
+    error: `Event category must be one of: ${AUDIT_EVENT_CATEGORIES.join(', ')}`,
   }),
 
   target_type: z

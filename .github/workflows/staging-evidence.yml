@@ -7,8 +7,10 @@ name: Staging Soak Evidence
 # blocks under-declaration (e.g. PR touches services/worker/src/chain/
 # but declares T1).
 #
-# Override label: staging-soak-skip — for true CI-only / docs-only
-# changes that do not run on the worker.
+# No override label — the `staging-soak-skip` label was destroyed 2026-05-07.
+# The only remaining self-skip path is the staging-tooling allowlist inside
+# scripts/ci/check-staging-evidence.ts (PRs whose every touched file is staging
+# tooling). Every other prod-bound PR must produce real evidence.
 
 on:
   pull_request:

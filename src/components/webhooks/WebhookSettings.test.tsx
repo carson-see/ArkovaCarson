@@ -11,7 +11,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { WebhookSettings } from './WebhookSettings';
+import { WebhookSettings, AVAILABLE_EVENTS } from './WebhookSettings';
 
 // Mock navigator.clipboard
 const mockClipboard = {
@@ -116,15 +116,14 @@ describe('WebhookSettings', () => {
 
       await userEvent.click(screen.getByText('Add Endpoint'));
 
-      const checkboxes = screen.getAllByRole('checkbox');
-      // anchor.secured and anchor.revoked should be checked by default
-      expect(checkboxes[0]).toBeChecked(); // anchor.secured
-      expect(checkboxes[1]).toBeChecked(); // anchor.revoked
-      expect(checkboxes[2]).not.toBeChecked(); // anchor.expired
-      // SCRUM-1743: credential.* events available but not default-checked
-      expect(checkboxes[3]).not.toBeChecked(); // credential.issued
-      expect(checkboxes[4]).not.toBeChecked(); // credential.verified
-      expect(checkboxes[5]).not.toBeChecked(); // credential.status_changed
+      expect(screen.getByLabelText(/Anchor Submitted/i)).not.toBeChecked();
+      expect(screen.getByLabelText(/Anchor Secured/i)).toBeChecked();
+      expect(screen.getByLabelText(/Anchor Revoked/i)).toBeChecked();
+      expect(screen.getByLabelText(/Anchor Expired/i)).not.toBeChecked();
+      expect(screen.getByLabelText(/Anchor Batch Secured/i)).not.toBeChecked();
+      expect(screen.getByLabelText(/Credential Issued/i)).not.toBeChecked();
+      expect(screen.getByLabelText(/Credential Verified/i)).not.toBeChecked();
+      expect(screen.getByLabelText(/Credential Status Changed/i)).not.toBeChecked();
     });
 
     it('validates URL must start with https://', async () => {
@@ -152,10 +151,8 @@ describe('WebhookSettings', () => {
       const urlInput = screen.getByPlaceholderText('https://your-server.com/webhooks');
       await userEvent.type(urlInput, 'https://valid.com/hooks');
 
-      // Uncheck default events
-      const checkboxes = screen.getAllByRole('checkbox');
-      await userEvent.click(checkboxes[0]); // uncheck anchor.secured
-      await userEvent.click(checkboxes[1]); // uncheck anchor.revoked
+      await userEvent.click(screen.getByLabelText(/Anchor Secured/i));
+      await userEvent.click(screen.getByLabelText(/Anchor Revoked/i));
 
       const submitButtons = screen.getAllByText('Add Endpoint');
       const submitButton = submitButtons[submitButtons.length - 1];
@@ -170,19 +167,21 @@ describe('WebhookSettings', () => {
 
       await userEvent.click(screen.getByText('Add Endpoint'));
 
-      const checkboxes = screen.getAllByRole('checkbox');
+      const expired = screen.getByLabelText(/Anchor Expired/i);
+      await userEvent.click(expired);
+      expect(expired).toBeChecked();
 
-      // Toggle anchor.expired on
-      await userEvent.click(checkboxes[2]);
-      expect(checkboxes[2]).toBeChecked();
+      const secured = screen.getByLabelText(/Anchor Secured/i);
+      await userEvent.click(secured);
+      expect(secured).not.toBeChecked();
 
-      // Toggle anchor.secured off
-      await userEvent.click(checkboxes[0]);
-      expect(checkboxes[0]).not.toBeChecked();
+      const submitted = screen.getByLabelText(/Anchor Submitted/i);
+      await userEvent.click(submitted);
+      expect(submitted).toBeChecked();
 
-      // SCRUM-1743: credential.* opt-in works the same way
-      await userEvent.click(checkboxes[3]); // credential.issued
-      expect(checkboxes[3]).toBeChecked();
+      const credIssued = screen.getByLabelText(/Credential Issued/i);
+      await userEvent.click(credIssued);
+      expect(credIssued).toBeChecked();
     });
 
     it('calls onAdd with URL and events on valid submission', async () => {
@@ -420,6 +419,30 @@ describe('WebhookSettings', () => {
 
       const addButton = screen.getByText('Add Endpoint');
       expect(addButton).toBeInTheDocument();
+    });
+  });
+
+  // Drift guard: when a new event type is added to the worker's
+  // PAYLOAD_SCHEMAS_BY_EVENT_TYPE (and therefore VALID_WEBHOOK_EVENTS,
+  // and therefore the SDK WebhookEventType union), the UI dropdown must
+  // be extended in lockstep. The UI lives in a separate workspace and
+  // can't direct-import the worker constant, so the next-best guard is
+  // pinning the expected set here. A new event type fails this test
+  // until AVAILABLE_EVENTS is updated.
+  describe('AVAILABLE_EVENTS drift guard', () => {
+    it('matches the worker VALID_WEBHOOK_EVENTS allowlist', () => {
+      const EXPECTED_EVENT_IDS = [
+        'anchor.submitted',
+        'anchor.secured',
+        'anchor.revoked',
+        'anchor.expired',
+        'anchor.batch_secured',
+        'credential.issued',
+        'credential.verified',
+        'credential.status_changed',
+      ];
+      const actualIds = AVAILABLE_EVENTS.map((e) => e.id);
+      expect(actualIds).toEqual(EXPECTED_EVENT_IDS);
     });
   });
 });

@@ -186,8 +186,8 @@ test.describe('Secure Document Flow', () => {
       // If we got success, verify the success elements
       const success = individualPage.getByText('Document Submitted');
       if (await success.isVisible().catch(() => false)) {
-        // Copy Verification Link button
-        await expect(individualPage.getByRole('button', { name: /Copy Verification Link/i })).toBeVisible();
+        // Copy Verification Link button (exact match avoids the icon-only copy button with lowercase aria-label)
+        await expect(individualPage.getByRole('button', { name: 'Copy Verification Link', exact: true })).toBeVisible();
 
         // View Record button
         await expect(individualPage.getByRole('button', { name: /View Record/i })).toBeVisible();

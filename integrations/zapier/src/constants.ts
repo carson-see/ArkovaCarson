@@ -14,9 +14,11 @@ export const DEFAULT_EVENTS = ['anchor.secured', 'anchor.revoked'];
  * wiring lands in Phase-2 follow-ups.
  */
 export const VALID_EVENTS = [
+  'anchor.submitted',
   'anchor.secured',
   'anchor.revoked',
   'anchor.expired',
+  'anchor.batch_secured',
   'credential.issued',
   'credential.verified',
   'credential.status_changed',

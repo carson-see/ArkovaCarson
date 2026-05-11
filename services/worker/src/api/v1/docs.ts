@@ -8,8 +8,15 @@
 import { Router } from 'express';
 import swaggerUi from 'swagger-ui-express';
 import { API_KEY_SCOPES } from '../apiScopes.js';
+import { VALID_WEBHOOK_EVENTS } from './webhooks-schemas.js';
 
 const router = Router();
+
+// OpenAPI enum that mirrors the runtime CRUD allowlist. Referenced three
+// times below (POST /webhooks request body, PATCH /webhooks/{id} request
+// body, WebhookEndpoint response schema). Inlining the literal three times
+// is exactly the drift pattern SCRUM-1794 was filed to clean up.
+const WEBHOOK_EVENT_ENUM = [...VALID_WEBHOOK_EVENTS];
 
 /** OpenAPI 3.0 specification for the Verification API */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -762,7 +769,7 @@ export const openApiSpec: Record<string, any> = {
                   url: { type: 'string', format: 'uri', example: 'https://api.example.com/webhooks/arkova' },
                   events: {
                     type: 'array',
-                    items: { type: 'string', enum: ['anchor.secured', 'anchor.revoked', 'anchor.expired', 'credential.issued', 'credential.verified', 'credential.status_changed'] },
+                    items: { type: 'string', enum: WEBHOOK_EVENT_ENUM },
                     default: ['anchor.secured', 'anchor.revoked'],
                   },
                   description: { type: 'string', maxLength: 500, example: 'Production HR system' },
@@ -851,7 +858,7 @@ export const openApiSpec: Record<string, any> = {
                   url: { type: 'string', format: 'uri' },
                   events: {
                     type: 'array',
-                    items: { type: 'string', enum: ['anchor.secured', 'anchor.revoked', 'anchor.expired', 'credential.issued', 'credential.verified', 'credential.status_changed'] },
+                    items: { type: 'string', enum: WEBHOOK_EVENT_ENUM },
                   },
                   description: { type: 'string', maxLength: 500, nullable: true },
                   is_active: { type: 'boolean' },
@@ -1315,7 +1322,7 @@ export const openApiSpec: Record<string, any> = {
           url: { type: 'string', format: 'uri' },
           events: {
             type: 'array',
-            items: { type: 'string', enum: ['anchor.secured', 'anchor.revoked', 'anchor.expired', 'credential.issued', 'credential.verified', 'credential.status_changed'] },
+            items: { type: 'string', enum: WEBHOOK_EVENT_ENUM },
           },
           is_active: { type: 'boolean' },
           description: { type: 'string', nullable: true },

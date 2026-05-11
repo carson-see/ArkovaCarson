@@ -7,6 +7,14 @@
 
 import { z } from 'zod';
 
+// Zod v4 enforces RFC 4122 version+variant bits in z.string().uuid().
+// Seed/test UUIDs (e.g. 44444444-0000-0000-0000-000000000001) use zeroed
+// version/variant fields. Accept any 8-4-4-4-12 hex UUID here so proof
+// packages validate in both production (proper v4 UUIDs) and local dev.
+const uuidLenient = z.string().regex(
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+);
+
 // =============================================================================
 // PROOF PACKAGE SCHEMA
 // =============================================================================
@@ -53,12 +61,12 @@ export const ProofPackageSchema = z.object({
   // Metadata
   metadata: z.object({
     created_at: z.string().datetime(),
-    user_id: z.string().uuid(),
-    org_id: z.string().uuid().nullable(),
+    user_id: uuidLenient,
+    org_id: uuidLenient.nullable(),
   }),
 
   // Human-readable glossary (Design Audit #10)
-  proof_glossary: z.record(z.string()).optional(),
+  proof_glossary: z.record(z.string(), z.string()).optional(),
 });
 
 export type ProofPackage = z.infer<typeof ProofPackageSchema>;

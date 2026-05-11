@@ -16,8 +16,9 @@ import { Link, useLocation } from 'react-router-dom';
 import { LayoutDashboard, Building2, ChevronLeft, ChevronRight, X, Search, Landmark, Moon, Sun, Monitor, BarChart3, Activity, Database, DollarSign, ChevronDown, ChevronUp, Users, FileCheck, ToggleRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { ArkovaLogo } from '@/components/layout/ArkovaLogo';
-import { ROUTES } from '@/lib/routes';
+import { ROUTES, destinationToRoute } from '@/lib/routes';
 import { NAV_LABELS, NAV_POLISH_LABELS } from '@/lib/copy';
+import { useProfile } from '@/hooks/useProfile';
 import { Button } from '@/components/ui/button';
 import { useTheme, type Theme } from '@/hooks/useTheme';
 import { useAuditorMode } from '@/hooks/useAuditorMode';
@@ -167,6 +168,8 @@ interface SidebarProps {
 
 export function Sidebar({ className, mobileOpen, onMobileClose, orgName, userEmail }: Readonly<SidebarProps>) {
   const isPlatformAdmin = checkPlatformAdmin(userEmail);
+  const { destination } = useProfile();
+  const homeRoute = destinationToRoute(destination);
   const [collapsed, setCollapsed] = useState(false);
   const [adminExpanded, setAdminExpanded] = useState(false);
   const location = useLocation();
@@ -219,12 +222,12 @@ export function Sidebar({ className, mobileOpen, onMobileClose, orgName, userEma
         collapsed ? 'justify-center' : 'justify-between'
       )}>
         <Link
-          to={ROUTES.SEARCH}
+          to={homeRoute}
           className={cn(
             'flex items-center rounded-lg transition-colors hover:opacity-80',
             !collapsed && 'gap-3'
           )}
-          aria-label="Arkova — go to search"
+          aria-label="Arkova — go home"
         >
           <ArkovaLogo size={36} />
           {!collapsed && (

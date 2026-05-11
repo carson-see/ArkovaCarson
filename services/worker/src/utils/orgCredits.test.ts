@@ -24,7 +24,7 @@ vi.mock('./db.js', () => ({ db: { rpc: mockRpc } }));
 import { deductOrgCredit } from './orgCredits.js';
 import { db } from './db.js';
 
-const ORG = '00000000-0000-0000-0000-000000000001';
+const ORG = '10000000-1000-4000-8000-000000000001';
 
 describe('deductOrgCredit (SCRUM-1170-B)', () => {
   beforeEach(() => {

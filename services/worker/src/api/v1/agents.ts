@@ -78,7 +78,7 @@ export const CreateAgentSchema = z.object({
   framework: z.string().max(100).optional(),
   version: z.string().max(50).optional(),
   callback_url: z.string().url().startsWith('https://').optional(),
-  metadata: z.record(z.unknown()).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
 });
 
 export const UpdateAgentSchema = z.object({

@@ -397,7 +397,7 @@ export const bulkAnchorSchema = z.object({
   fileSize: z.number().int().positive().optional(),
   email: z.string().email().optional(),
   credentialType: z.enum(VALID_CREDENTIAL_TYPES).optional(),
-  metadata: z.record(z.unknown()).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
 });
 
 export type BulkAnchorRecord = z.infer<typeof bulkAnchorSchema>;

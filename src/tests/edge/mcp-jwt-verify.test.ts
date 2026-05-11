@@ -45,7 +45,7 @@ function makeJwt(
 ): string {
   const header = { alg: opts.alg ?? 'HS256', typ: 'JWT' };
   const payload = {
-    sub: '00000000-0000-0000-0000-000000000001',
+    sub: '10000000-1000-4000-8000-000000000001',
     aud: AUD,
     iss: ISS,
     role: 'authenticated',
@@ -65,7 +65,7 @@ describe('verifySupabaseJwt (SCRUM-926)', () => {
     const r = await verifySupabaseJwt(token, { secret: SECRET, supabaseUrl: SUPABASE_URL, nowSec: NOW });
     expect(r.ok).toBe(true);
     if (r.ok) {
-      expect(r.userId).toBe('00000000-0000-0000-0000-000000000001');
+      expect(r.userId).toBe('10000000-1000-4000-8000-000000000001');
       expect(r.tier).toBe('authenticated');
     }
   });
