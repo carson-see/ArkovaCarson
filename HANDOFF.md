@@ -14,7 +14,44 @@
 
 ## Now
 
-### 2026-05-10 — Merge sprint: 8 PRs merged, all original 7 HakiChain PRs closed, SCRUM-1742 close-out shipped
+### 2026-05-10 (evening) — SCRUM-1794 + SCRUM-1803 ready for merge; multi-tenant staging rig live in prod tooling
+
+**PR #760 (SCRUM-1803) — multi-tenant staging rig: MERGED 12:28 UTC.**
+Lease-enforced, tag-routed staging-worker deploys (`scripts/staging/deploy.sh`). Single shared `arkova-worker-staging` Cloud Run service, but each PR's soak now lives on its own tag URL (`https://pr-N---arkova-worker-staging-...run.app`). Append-only `staging_deploy_log` table on staging Supabase (`ujtlwnoqfhtitcmsnrpq`) — every deploy writes an audit row. CI gate `Staging deploy log id:` required for T2/T3 evidence blocks. Migration applied to staging only; verified prod (`vzwyaatejekddvltxyye`) has zero `staging_*` tables. Confluence: [45318197](https://arkova.atlassian.net/wiki/spaces/A/pages/45318197). Phase-2 backlog (8 items: lint rule blocking raw `gcloud`, pre-deploy collision detection, image-existence pre-check, tag URL listing, orphan janitor, structured `--force` reason, `--promote` extra gate, IAM rotation) deferred to a follow-up bundled PR.
+
+**PR #742 (SCRUM-1794) — webhook event subscribe↔emit parity: READY FOR REVIEW at `9a8774c1`.**
+Closes the asymmetric subscribe-vs-emit gap surfaced during the SCRUM-1743 audit. Worker emitted `anchor.submitted` + `anchor.batch_secured` for months but the CRUD allowlist (`VALID_WEBHOOK_EVENTS`) rejected subscriptions. PR ships end-to-end consistency: worker schema + 3 OpenAPI sites + UI dropdown + SDK type union + Zapier integration + `docs/api/webhooks.md` + `services/worker/agents.md`. Structural fix in `2f3e0b82`: `VALID_WEBHOOK_EVENTS` now derives from `PAYLOAD_SCHEMAS_BY_EVENT_TYPE` keys (single source of truth) — the *exact bug class* this story was filed to fix, not just the symptom. Drift-guard test in `9a8774c1` pins UI ↔ worker event-set match.
+
+- Two staging soak attempts on 2026-05-08 / 2026-05-09 destroyed by parallel-PR deploy collisions; PR #760 unblocked clean parallel testing. SCRUM-1795 / PR #747 (parallel session) closed as duplicate; broader UI/SDK/Zapier/docs scope cherry-picked into PR #742. Consolidated Confluence at [44564512](https://arkova.atlassian.net/wiki/spaces/A/pages/44564512).
+- **First soak** (`b76ecc5e`, schema-only) 2026-05-10T12:36:02Z → 16:36:05Z: 1681/1685 PASS (4 startup-burst 429s). After completion, `/simplify` review found structural gaps (literal allowlist duplicating PAYLOAD_SCHEMAS keys — the bug class SCRUM-1794 itself targets); cleanup commits `2f3e0b82` + `9a8774c1` followed.
+- **Re-soak** (`9a8774c1`, refactored) 2026-05-10T18:19:48Z → 22:19:54Z: **1688/1688 PASS = 100%, ZERO failures.** `staging_deploy_log` row id 10 captures the deploy. Pre-soak smoke gated at 3/3 with 7s pacing + 60s settle window (the startup-burst that produced 429s in the first soak was avoided).
+
+**Memory rules added this session:**
+- `feedback_claim_sh_before_staging_deploy.md` — always `claim.sh acquire` before staging deploys
+- `feedback_do_not_open_new_prs.md` (rescinded → `feedback_sensible_pr_bundling.md`) — group related changes into one PR, not one per file
+
+**Jira state (this session):**
+- SCRUM-1794 → Needs Human (PR #742 ready, awaiting human review + merge)
+- SCRUM-1795 → Done as Duplicate of SCRUM-1794
+- SCRUM-1803 → Phase 1 Done (PR #760 merged); Phase 2 backlog tracked in ticket comments
+
+**What's NOT done — explicit gaps:**
+- PR #742 needs a human review + merge.
+- SCRUM-1803 Phase 2 (8 follow-up items) not started.
+
+_Last refreshed: 2026-05-10 (evening) by claude — claims verified against `gh pr view 760` (MERGED 12:28 UTC), `gh pr view 742` (OPEN, tip `9a8774c1`), Supabase MCP `select * from public.staging_deploy_log where id in (3, 10)` (both rows present, lease_ok=true, forced=false), local soak harness logs at /tmp/scrum1794_soak.{log,sh,counts.txt} (1688 PASS / 0 FAIL final line)._
+
+### 2026-05-10 (session 2) — Drop broken search_public_credentials 3-arg overload (PR #761, SCRUM-1804) ✅ CLOSED
+
+* PR #761 **merged** 2026-05-11. Migration `0304_drop_broken_search_public_credentials_overload.sql` — drops broken 3-arg overload that referenced nonexistent columns.
+* Prod confirmed: only working 2-arg overload `(p_query text, p_limit integer)` exists on prod (`vzwyaatejekddvltxyye`).
+* Staging applied + verified + ledger reconciled. Prod applied (no-op). T2 soak elapsed. 24/24 CI green.
+* Jira SCRUM-1804 → Done. BUG-2026-05-09-001 closed in Confluence bug tracker.
+* Follow-up: `npm run gen:types` post-merge to remove stale 3-arg types from `database.types.ts`.
+
+_Last refreshed: 2026-05-11 by claude — verified against Supabase MCP `pg_proc` query on prod (1 overload, 2-arg only), `gh pr view 761` (MERGED), Jira MCP SCRUM-1804 (Done)._
+
+### 2026-05-10 (morning) — Merge sprint: 8 PRs merged, all original 7 HakiChain PRs closed, SCRUM-1742 close-out shipped
 
 **PRs merged this session (by Carson):**
 
