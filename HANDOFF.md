@@ -14,6 +14,24 @@
 
 ## Now
 
+### 2026-05-11 — PR #756 + PR #763 ready for review
+
+**PR #756 (SCRUM-1668 addendum) — staging-honesty preflight + SUBMITTED fixture + ledger cleanup: READY FOR REVIEW at `9da4d2bd`.**
+8-check staging preflight script (`scripts/ci/staging-honesty-preflight.ts`): PR-only rows, duplicate names/versions, known artifacts, SUBMITTED anchors, prod divergence, org topology (single-tenant vs multi-org seeds), prod facts (pg_cron vacuum-anchors + refresh_pipeline_dashboard_cache). 53 unit tests. Seed.sql adds SUBMITTED anchor fixture. Staging ledger cleanup doc at `docs/staging/STAGING_LEDGER_CLEANUP_2026-05-09.md`. T1 soak passed (30 min, zero 500s). CI: 24/24 green. Supersedes no other PRs.
+
+**PR #763 (bundled dep bumps) — 38 package bumps + ws transport fix: READY FOR REVIEW at `118c67a6`.**
+Bundles dependabot PRs #752 (root) and #754 (worker). Key bumps: supabase-js 2.105.0→2.105.4, sentry 10.50→10.52, stripe 22.1.0→22.1.1, vite 8.0.10→8.0.11. Root cause fix: supabase-js 2.105.4's realtime-js requires explicit `ws` transport on Node 20 — added `ws` dep to worker, passed `realtime: { transport: ws }` in db.ts/auth.ts/fraud-audit.ts, switched RLS tests to `createAnonClient()` helper. T1 soak passed (30 min, zero 500s). CI: all GH Actions green (SonarCloud + Vercel are pre-existing systemic failures). Supersedes #752 and #754 — close after merge.
+
+**Bug found + fixed in PR #763:** supabase-js 2.105.4 breaks Node 20 environments without native WebSocket — `realtime-js` throws "Node.js 20 detected without native WebSocket support." Fix: explicit `ws` transport parameter. Not yet logged in Confluence bug tracker (gap — Carson to log or delegate).
+
+**Jira state:**
+- SCRUM-1668 → In Progress (PR #756 awaits review)
+
+**What's NOT done — explicit gaps:**
+- Confluence bug tracker entry for ws transport breakage (PR #763)
+- SCRUM-1668 Confluence page not verified as reflecting checks 7+8 (PR #756)
+- Both PRs await human review + merge
+
 ### 2026-05-10 (evening) — SCRUM-1794 + SCRUM-1803 ready for merge; multi-tenant staging rig live in prod tooling
 
 **PR #760 (SCRUM-1803) — multi-tenant staging rig: MERGED 12:28 UTC.**
@@ -200,6 +218,33 @@ Bench-state entry — PR not yet opened at time of writing. No prod state change
 **Soak tier for THIS branch:** T1 / staging-tooling-only — every touched path is on the allowlist (`scripts/ci/check-staging-evidence(.test)?.ts`, `CLAUDE.md`, `.claude/**`, `.github/workflows/staging-evidence.yml`, `HANDOFF.md`). The script's `isStagingToolingOnly` self-skip applies; no soak block required by the gate itself.
 
 _Last refreshed: 2026-05-07 by claude — claims verified against gcloud/MCP/CI output (`gh api -X DELETE /repos/carson-see/ArkovaCarson/labels/staging-soak-skip` returned no body / 204; `gh api /repos/carson-see/ArkovaCarson/labels/staging-soak-skip` now returns 404; `npx vitest run scripts/ci/check-staging-evidence.test.ts` returned 25/25 passing on this branch; hook pipe-test ran 5 synthesized payloads and exit codes + JSON outputs match the spec; jq schema check on `.claude/settings.json` confirms hook command path resolves to `$CLAUDE_PROJECT_DIR/.claude/hooks/check-staging-evidence-pre-merge.sh`)._
+
+### 2026-05-08 — SCRUM-1740 [Implement] partner sandbox migration + provisioning + HakiChain pilot live on staging (branch `claude/scrum-1740-sandbox-implement`)
+
+**Migration applied to arkova-staging** (project_ref `ujtlwnoqfhtitcmsnrpq`) at 2026-05-08T13:09Z via Supabase MCP `apply_migration` (single-file lettered-suffix migration; same schema effect as `npx supabase db push --linked` because there is no in-flight migration ahead of it on staging). For full multi-migration replay or fresh-DB rebuilds, use the documented `db push --linked` path per CLAUDE.md §1.11. Adds `org_credits.is_test` (default false) + `org_credits.anchor_quota` (nullable) + partial index `idx_org_credits_is_test`. NOTIFY pgrst reload schema fired. Production application is Carson-only — the migration drift CI check is expected to fail until Carson applies via Supabase MCP / `db push --linked` against project_ref `vzwyaatejekddvltxyye`.
+
+**HakiChain pilot org provisioned on staging:**
+
+- org_id (row id): redacted in HANDOFF; available via Supabase MCP
+- public_id: `ORG-TEST-HAKICHAIN-D724D647`
+- display_name: `[SANDBOX] hakichain`
+- org_credits row: `balance=5, purchased=5, anchor_quota=10, is_test=true`
+- api_key key_prefix: `ak_test_KzVv` (raw key delivered once via stdout to operator; never persisted in plaintext per CLAUDE.md §1.4)
+- scopes: `[read:search, read:records, read:orgs, anchor:write]`
+
+**End-to-end smoke from provisioned key:** `GET /api/v1/verify/ARK-2026-SCRUM1736T2` (the SCRUM-1736 fixture from the prior soak) returned 200 with `{verified:false, status:"EXPIRED", expiry_date:"2025-01-01T00:00:00+00:00"}` — full chain works (provisioning → API key → verify endpoint → SCRUM-1736 EXPIRED status correctly surfaced).
+
+What shipped on this branch:
+
+- `supabase/migrations/0297_test_credit_pool.sql` (new) — adds is_test + anchor_quota + partial index + NOTIFY pgrst + ROLLBACK + IF NOT EXISTS DDL.
+- `scripts/admin/provision-sandbox-org.ts` (new) — idempotent TS admin script. HMAC-SHA256 hashes API key per CLAUDE.md §1.4; raw key shown once via stdout. Resolves api_keys.created_by from any profile so the NOT NULL constraint is satisfied.
+- `scripts/admin/provision-sandbox-org.test.ts` (new) — 4 unit tests on `hmacApiKey`: hex digest format, determinism, raw-key sensitivity, secret-rotation sensitivity.
+
+Local quality gates: `npx vitest run scripts/admin/provision-sandbox-org.test.ts` → suite green locally (parseCliArgs + loadConfig + hmacApiKey coverage); `apply_migration` MCP returned `{success: true}`.
+
+Tier: T2 (migration + new public-API-surface admin script). Migration applied to staging. Provisioning ran end-to-end. /verify smoke confirmed against the SCRUM-1736 EXPIRED fixture. Migration drift check vs prod is expected red until Carson applies 0297+0298 to prod.
+
+_Last refreshed: 2026-05-08 by claude — claims verified against gcloud/MCP/CI output (apply_migration MCP returned success against project_ref ujtlwnoqfhtitcmsnrpq; PostgREST GET on org_credits + api_keys confirmed row state; live curl against arkova-worker-pr734-staging /api/v1/verify/ARK-2026-SCRUM1736T2 returned verified:false status:EXPIRED)._
 
 ### 2026-05-06 — PR #711 SCRUM-1545 coverage backfill merge-resolution pass
 

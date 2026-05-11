@@ -103,9 +103,42 @@ export async function reportMeteredUsageToStripe(): Promise<UsageReportResult[]>
     return results;
   }
 
+  // SCRUM-1740 AC4: load org_credits.is_test for every org with an active
+  // subscription so we can skip sandbox orgs at meter-event time. Sandbox
+  // orgs (is_test=true) must NEVER have a Stripe meter event fired against
+  // them — they're partner test pools, not billable usage. The
+  // SCRUM-1739 spec contract pins this.
+  const orgIds = Array.from(new Set(subs.map((s) => s.org_id).filter((id): id is string => Boolean(id))));
+  const testOrgIds = new Set<string>();
+  if (orgIds.length > 0) {
+    const { data: creditRows, error: creditErr } = await db
+      .from('org_credits')
+      .select('org_id, is_test')
+      .in('org_id', orgIds);
+    if (creditErr) {
+      // Fail-CLOSED: if we can't tell which orgs are test, skip the whole
+      // report rather than risk billing a partner sandbox. The cron will
+      // retry next cycle.
+      logger.error({ err: creditErr.message ?? String(creditErr) }, 'Failed to load org_credits.is_test for meter-exclusion check; aborting reportMeteredUsageToStripe to avoid billing sandbox orgs');
+      return results;
+    }
+    for (const row of (creditRows ?? []) as Array<{ org_id: string; is_test: boolean | null }>) {
+      if (row.is_test === true) testOrgIds.add(row.org_id);
+    }
+  }
+
   for (const sub of subs) {
     const orgId = sub.org_id;
     if (!orgId) continue;
+
+    // SCRUM-1740 AC4: skip sandbox orgs entirely — record the skip in
+    // results so callers / observability can verify the meter-exclusion
+    // path fired.
+    if (testOrgIds.has(orgId)) {
+      logger.info({ orgId, planId: sub.plan_id }, 'metered_usage_excluded_test_org');
+      results.push({ org_id: orgId, total_usage: 0, reported_to_stripe: false, error: 'sandbox_excluded' });
+      continue;
+    }
 
     // Get usage since last report
     const now = new Date();
