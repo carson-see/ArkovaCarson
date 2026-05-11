@@ -1,5 +1,5 @@
 # agents.md — src/
-_Last updated: 2026-04-24_
+_Last updated: 2026-05-08 (staging evidence verified)_
 
 ## What This Folder Contains
 
@@ -32,6 +32,13 @@ React 18 frontend application — TypeScript + Tailwind CSS + shadcn/ui + Vite b
 - **DON'T** import `generateFingerprint` outside `src/` (client-side only)
 - **DON'T** set `anchor.status = 'SECURED'` from client code — worker-only
 - **DON'T** expose `user_id`, `org_id`, or `anchors.id` publicly — use `public_id`
+
+## Recent Changes
+
+- **SCRUM-1787 — Role-aware home navigation** (2026-05-08): Sidebar logo uses `useProfile().destination` + `destinationToRoute()` for role-aware home routing. Previously hardcoded to `/search`. Now routes to `/dashboard`, `/onboarding/role`, `/onboarding/org`, or `/review-pending` based on user state. Implementation in `src/components/layout/Sidebar.tsx`.
+- **SCRUM-1788 — Search verification** (2026-05-08): Added privacy gate tests for `useOrgProfile`, `usePublicMemberProfile`, and `useOrgSubtree` hooks. Verifies `is_public_profile` anonymization in org profiles and 404 behavior for non-public member profiles. 8 search surfaces documented with RLS isolation evidence and p95 < 200ms response-time threshold.
+- **SCRUM-1789 — Upload flow verification** (2026-05-08): Added 14 tests for FileUpload routing (single, multi, CSV, XLSX, helper functions). 7 upload surfaces documented. Client-side SHA-256 fingerprinting (Constitution 1.6), bulk BATCH_SIZE=10 processing, credential issuance three-layer gating all verified.
+- **SCRUM-1790 — Login/signup verification** (2026-05-08): Added 15 tests for LoginForm component covering email/password login, Google/LinkedIn OAuth button wiring, forgot password flow (resetPasswordForEmail with redirectTo, success message, back navigation), conditional signup link, and onSuccess callback. 5 auth surfaces documented.
 
 ## Testing
 

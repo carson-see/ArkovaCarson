@@ -6,6 +6,7 @@ Shared utilities consumed across the worker. Each file is small and single-purpo
 - `db.ts` — Supabase service-role client. Lazy-initialized; throws if env not set.
 - `logger.ts` — pino logger with PII scrubbing (CLAUDE.md §1 Sentry rule).
 - `rpc.ts` — typed `callRpc()` wrapper over `db.rpc()` with consistent error logging.
+- **`anchor-stats.ts`** — `fetchAnchorStats()` shared by treasury-cache cron and treasury status API. SCRUM-1786: reads per-status counts from `pipeline_dashboard_cache` (refreshed every 2 min via `pg_class.reltuples`) instead of the `get_anchor_status_counts_fast` RPC (1s timeouts on 2.9M-row anchors table). Sentinel -1 convention preserved for callers.
 - `apiKeys.ts` — HMAC-SHA256 hash of raw API keys. Keep in sync with `services/edge/` and the `validate_api_key` RPC (migration 0299) which uses the same secret.
 - `orgCredits.ts` — `deductOrgCredit()` wraps the `deduct_org_credit` RPC. Returns `{allowed, error?, balance?, required?}` shape that v1 anchor-submit consumes.
 - `anchorCreditGate.ts` (SCRUM-1631 PR #680) — shared 402/503 response helper around `deductOrgCredit`. Returns `false` when a response has been written; caller early-returns.
