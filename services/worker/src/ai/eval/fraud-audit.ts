@@ -12,6 +12,8 @@
 
 import { writeFileSync, mkdirSync } from 'fs';
 import { resolve } from 'path';
+import { createClient } from '@supabase/supabase-js';
+import ws from 'ws';
 
 interface FlaggedItem {
   id: string;
@@ -50,8 +52,6 @@ export async function runFraudAudit(
   serviceRoleKey: string,
   sampleSize = 100,
 ): Promise<AuditResult> {
-  const { createClient } = await import('@supabase/supabase-js');
-  const ws = (await import('ws')).default;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const db = createClient(supabaseUrl, serviceRoleKey, {
     realtime: { transport: ws as any },

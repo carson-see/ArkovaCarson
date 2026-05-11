@@ -11,6 +11,9 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { createHash } from 'node:crypto';
 import ws from 'ws';
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export const WS_CLIENT_OPTIONS = { realtime: { transport: ws as any } } as const;
+
 // Require credentials via environment variables — never hardcode secrets
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -34,9 +37,7 @@ const SHA256_HEX_RE = /^[a-f0-9]{64}$/i;
  * Bypasses RLS — use only for test data management, never in app code.
  */
 export function getServiceClient(): SupabaseClient {
-  return createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY, {
-    realtime: { transport: ws as any }, // eslint-disable-line @typescript-eslint/no-explicit-any
-  });
+  return createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY, WS_CLIENT_OPTIONS);
 }
 
 // ── Seed User Constants ─────────────────────────────────────────────────────
