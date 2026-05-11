@@ -3,7 +3,7 @@
 Shared utilities consumed across the worker. Each file is small and single-purpose. Test colocated as `<name>.test.ts`.
 
 ## Files
-- `db.ts` — Supabase service-role client. Lazy-initialized; throws if env not set.
+- `db.ts` — Supabase service-role client. Lazy-initialized; throws if env not set. Passes `realtime: { transport: ws }` for Node 20 compat (supabase-js ≥2.105.4 requires explicit WebSocket implementation on Node <22).
 - `logger.ts` — pino logger with PII scrubbing (CLAUDE.md §1 Sentry rule).
 - `rpc.ts` — typed `callRpc()` wrapper over `db.rpc()` with consistent error logging.
 - **`anchor-stats.ts`** — `fetchAnchorStats()` shared by treasury-cache cron and treasury status API. SCRUM-1786: reads per-status counts from `pipeline_dashboard_cache` (refreshed every 2 min via `pg_class.reltuples`) instead of the `get_anchor_status_counts_fast` RPC (1s timeouts on 2.9M-row anchors table). Sentinel -1 convention preserved for callers.
