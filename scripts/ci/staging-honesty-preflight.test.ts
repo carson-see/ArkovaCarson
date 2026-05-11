@@ -162,7 +162,7 @@ describe('computeProdDivergence', () => {
 
   it('returns no divergence for matching sets', () => {
     const result = computeProdDivergence(CLEAN_ROWS, DEFAULT_PROD);
-    expect(result.missingFromProd).toEqual([]);
+    expect(result.missingFromStaging).toEqual([]);
     expect(result.extraVsProd).toEqual([]);
   });
 
@@ -173,9 +173,9 @@ describe('computeProdDivergence', () => {
       // missing 0295, 0296, 0297
     ];
     const result = computeProdDivergence(stagingRows, DEFAULT_PROD);
-    expect(result.missingFromProd).toContain('0295');
-    expect(result.missingFromProd).toContain('0296');
-    expect(result.missingFromProd).toContain('0297');
+    expect(result.missingFromStaging).toContain('0295');
+    expect(result.missingFromStaging).toContain('0296');
+    expect(result.missingFromStaging).toContain('0297');
   });
 
   it('finds versions in staging but not in prod', () => {
@@ -236,8 +236,7 @@ describe('buildReport', () => {
       submittedAnchorCount: 0,
       prodVersions: ['00000000000000', '0294', '0295', '0296', '0297'],
     });
-    // Zero SUBMITTED anchors alone flags the check but environment type
-    // depends on the combination of failures.
+    expect(report.environment_type).toBe('fixture_seeded');
     const anchorCheck = report.checks.find((c) => c.name === 'submitted_anchors');
     expect(anchorCheck).toBeDefined();
     expect(anchorCheck!.passed).toBe(false);

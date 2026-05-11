@@ -62,7 +62,7 @@ export interface PreflightReport {
   timestamp: string;
   checks: CheckResult[];
   artifact_rows: MigrationRow[];
-  missing_from_prod: string[];
+  missing_from_staging: string[];
   extra_vs_prod: string[];
 }
 
@@ -138,25 +138,29 @@ export function classifyMigrationRow(row: MigrationRow): ArtifactClassification 
 }
 
 /**
+ * Generic duplicate finder — returns values of `field` that appear more than once.
+ */
+function findDuplicates(rows: MigrationRow[], field: keyof MigrationRow): string[] {
+  const counts = new Map<string, number>();
+  for (const row of rows) {
+    const val = row[field];
+    counts.set(val, (counts.get(val) ?? 0) + 1);
+  }
+  return [...counts.entries()].filter(([, count]) => count > 1).map(([val]) => val);
+}
+
+/**
  * Find migration names that appear more than once.
  */
 export function findDuplicateNames(rows: MigrationRow[]): string[] {
-  const counts = new Map<string, number>();
-  for (const row of rows) {
-    counts.set(row.name, (counts.get(row.name) ?? 0) + 1);
-  }
-  return [...counts.entries()].filter(([, count]) => count > 1).map(([name]) => name);
+  return findDuplicates(rows, 'name');
 }
 
 /**
  * Find migration versions that appear more than once.
  */
 export function findDuplicateVersions(rows: MigrationRow[]): string[] {
-  const counts = new Map<string, number>();
-  for (const row of rows) {
-    counts.set(row.version, (counts.get(row.version) ?? 0) + 1);
-  }
-  return [...counts.entries()].filter(([, count]) => count > 1).map(([version]) => version);
+  return findDuplicates(rows, 'version');
 }
 
 /**
@@ -168,7 +172,6 @@ export function detectKnownArtifacts(rows: MigrationRow[]): MigrationRow[] {
 
   // Track how many times the known-duplicate name appears.
   let duplicateNameCount = 0;
-  let firstDuplicateSeen = false;
 
   for (const row of rows) {
     if (KNOWN_ARTIFACT_NAMES.has(row.name)) {
@@ -177,10 +180,9 @@ export function detectKnownArtifacts(rows: MigrationRow[]): MigrationRow[] {
     }
     if (row.name === KNOWN_DUPLICATE_NAME) {
       duplicateNameCount++;
-      if (duplicateNameCount > 1 && !firstDuplicateSeen) {
+      if (duplicateNameCount > 1) {
         // Flag the second (and subsequent) occurrence.
         artifacts.push(row);
-        firstDuplicateSeen = true;
       }
     }
   }
@@ -194,14 +196,14 @@ export function detectKnownArtifacts(rows: MigrationRow[]): MigrationRow[] {
 export function computeProdDivergence(
   rows: MigrationRow[],
   prodVersions: string[],
-): { missingFromProd: string[]; extraVsProd: string[] } {
+): { missingFromStaging: string[]; extraVsProd: string[] } {
   const stagingVersions = new Set(rows.map((r) => r.version));
   const prodSet = new Set(prodVersions);
 
-  const missingFromProd = prodVersions.filter((v) => !stagingVersions.has(v));
+  const missingFromStaging = prodVersions.filter((v) => !stagingVersions.has(v));
   const extraVsProd = [...stagingVersions].filter((v) => !prodSet.has(v));
 
-  return { missingFromProd, extraVsProd };
+  return { missingFromStaging, extraVsProd };
 }
 
 // ---------------------------------------------------------------------------
@@ -272,12 +274,12 @@ export function buildReport(opts: {
 
   // Check 6: Prod divergence
   const divergence = computeProdDivergence(migrationRows, prodVersions);
-  const prodDiverged = divergence.missingFromProd.length > 0 || divergence.extraVsProd.length > 0;
+  const prodDiverged = divergence.missingFromStaging.length > 0 || divergence.extraVsProd.length > 0;
   checks.push({
     name: 'prod_divergence',
     passed: !prodDiverged,
     details: prodDiverged
-      ? `Missing from prod: [${divergence.missingFromProd.join(', ')}]; Extra vs prod: [${divergence.extraVsProd.join(', ')}]`
+      ? `Missing from staging: [${divergence.missingFromStaging.join(', ')}]; Extra vs prod: [${divergence.extraVsProd.join(', ')}]`
       : 'Staging versions match prod ledger.',
   });
 
@@ -319,7 +321,7 @@ export function buildReport(opts: {
     timestamp: new Date().toISOString(),
     checks,
     artifact_rows: allArtifactRows,
-    missing_from_prod: divergence.missingFromProd,
+    missing_from_staging: divergence.missingFromStaging,
     extra_vs_prod: divergence.extraVsProd,
   };
 }
@@ -392,9 +394,9 @@ function formatText(report: PreflightReport): string {
     }
   }
 
-  if (report.missing_from_prod.length > 0) {
+  if (report.missing_from_staging.length > 0) {
     lines.push('');
-    lines.push(`Missing from prod: ${report.missing_from_prod.join(', ')}`);
+    lines.push(`Missing from staging: ${report.missing_from_staging.join(', ')}`);
   }
   if (report.extra_vs_prod.length > 0) {
     lines.push('');
