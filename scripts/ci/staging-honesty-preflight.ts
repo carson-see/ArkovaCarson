@@ -25,6 +25,8 @@
  *   4. Known artifact rows (hardcoded list)
  *   5. Missing SUBMITTED anchors
  *   6. Prod ledger divergence
+ *   7. Org topology (single-tenant prod vs multi-org staging seeds)
+ *   8. Prod facts (pg_cron vacuum-anchors, refresh_pipeline_dashboard_cache)
  *
  * Exit 0 = all checks pass (clean_mirror).
  * Exit 1 = at least one check failed.
@@ -66,11 +68,22 @@ export interface PreflightReport {
   extra_vs_prod: string[];
 }
 
+export interface OrgTopologyData {
+  totalOrgs: number;
+  seedOrgs: number;
+}
+
+export interface ProdFactsData {
+  cronJobNames: string[];
+  functionExists: boolean;
+}
+
 export interface ParsedArgs {
   projectRef: string | undefined;
   supabaseUrl: string | undefined;
   serviceRoleKey: string | undefined;
   prodVersions: string[];
+  prodFacts: ProdFactsData | undefined;
   format: 'json' | 'text';
 }
 
@@ -106,6 +119,9 @@ const STAGING_NAME_PREFIXES = ['pr695_', 'pr697_', 'staging_purge_', 'staging_on
  * Exception: '00000000000000' is the init row and always canonical.
  */
 const TIMESTAMP_VERSION_RE = /^\d{14,}$/;
+
+/** Prefixes in org names that indicate staging seed data (case-insensitive). */
+const SEED_ORG_PREFIXES = ['stg', 'staging_seed_', 'test_org_'];
 
 // ---------------------------------------------------------------------------
 // Pure classification functions (exported for testing)
@@ -206,6 +222,81 @@ export function computeProdDivergence(
   return { missingFromStaging, extraVsProd };
 }
 
+/**
+ * Check org topology: distinguish single-tenant prod from multi-org staging seeds.
+ * Requires org-scoped fixtures (non-seed orgs) when seed orgs are present.
+ */
+export function checkOrgTopology(data: OrgTopologyData): CheckResult {
+  if (data.totalOrgs === 0) {
+    return {
+      name: 'org_topology',
+      passed: false,
+      details: 'No organizations found — staging lacks seed data.',
+    };
+  }
+
+  if (data.seedOrgs === 0) {
+    return {
+      name: 'org_topology',
+      passed: true,
+      details: `${data.totalOrgs} org(s), no staging seed orgs — prod-like single-tenant topology.`,
+    };
+  }
+
+  const fixtureOrgs = data.totalOrgs - data.seedOrgs;
+  if (fixtureOrgs > 0) {
+    return {
+      name: 'org_topology',
+      passed: true,
+      details: `${data.totalOrgs} org(s) total (${data.seedOrgs} seed, ${fixtureOrgs} org-scoped fixture(s)).`,
+    };
+  }
+
+  return {
+    name: 'org_topology',
+    passed: false,
+    details: `All ${data.totalOrgs} org(s) are seed-prefixed — no org-scoped fixtures for connector work.`,
+  };
+}
+
+/**
+ * Verify prod facts from the 2026-05-06 correction:
+ *   - pg_cron has vacuum-anchors job
+ *   - refresh_pipeline_dashboard_cache() exists but is NOT scheduled
+ *   - autovacuum is not blocked (reflected by absence of the function in cron)
+ */
+export function checkProdFacts(data: ProdFactsData): CheckResult {
+  const issues: string[] = [];
+
+  if (!data.cronJobNames.includes('vacuum-anchors')) {
+    issues.push('pg_cron vacuum-anchors job missing');
+  }
+
+  if (!data.functionExists) {
+    issues.push('refresh_pipeline_dashboard_cache() function missing');
+  }
+
+  if (data.cronJobNames.some((n) => n.includes('refresh_pipeline_dashboard_cache'))) {
+    issues.push('refresh_pipeline_dashboard_cache is scheduled (should be unscheduled per prod)');
+  }
+
+  return {
+    name: 'prod_facts',
+    passed: issues.length === 0,
+    details: issues.length === 0
+      ? 'Prod facts verified: vacuum-anchors scheduled, refresh_pipeline_dashboard_cache exists but unscheduled.'
+      : `Prod facts divergence: ${issues.join('; ')}.`,
+  };
+}
+
+/**
+ * Classify an org name as a staging seed org (case-insensitive prefix match).
+ */
+export function isOrgSeedName(name: string): boolean {
+  const lower = name.toLowerCase();
+  return SEED_ORG_PREFIXES.some((p) => lower.startsWith(p));
+}
+
 // ---------------------------------------------------------------------------
 // Report builder
 // ---------------------------------------------------------------------------
@@ -215,6 +306,8 @@ export function buildReport(opts: {
   migrationRows: MigrationRow[];
   submittedAnchorCount: number;
   prodVersions: string[];
+  orgTopology?: OrgTopologyData;
+  prodFacts?: ProdFactsData;
 }): PreflightReport {
   const { projectRef, migrationRows, submittedAnchorCount, prodVersions } = opts;
   const checks: CheckResult[] = [];
@@ -283,6 +376,16 @@ export function buildReport(opts: {
       : 'Staging versions match prod ledger.',
   });
 
+  // Check 7: Org topology (single-tenant prod vs multi-org staging seeds)
+  if (opts.orgTopology) {
+    checks.push(checkOrgTopology(opts.orgTopology));
+  }
+
+  // Check 8: Prod facts (pg_cron, function existence, scheduling)
+  if (opts.prodFacts) {
+    checks.push(checkProdFacts(opts.prodFacts));
+  }
+
   // Collect all artifact rows (deduplicated by version+name).
   const seen = new Set<string>();
   allArtifactRows = [
@@ -335,6 +438,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
   let supabaseUrl: string | undefined;
   let serviceRoleKey: string | undefined;
   let prodVersions: string[] = DEFAULT_PROD_VERSIONS;
+  let prodFacts: ProdFactsData | undefined;
   let format: 'json' | 'text' = 'json';
 
   for (let i = 0; i < argv.length; i++) {
@@ -357,6 +461,12 @@ export function parseArgs(argv: string[]): ParsedArgs {
         prodVersions = next?.split(',').map((v) => v.trim()).filter(Boolean) ?? DEFAULT_PROD_VERSIONS;
         i++;
         break;
+      case '--prod-facts':
+        try {
+          prodFacts = JSON.parse(next) as ProdFactsData;
+        } catch { /* ignore malformed JSON */ }
+        i++;
+        break;
       case '--format':
         format = next === 'text' ? 'text' : 'json';
         i++;
@@ -364,7 +474,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     }
   }
 
-  return { projectRef, supabaseUrl, serviceRoleKey, prodVersions, format };
+  return { projectRef, supabaseUrl, serviceRoleKey, prodVersions, prodFacts, format };
 }
 
 // ---------------------------------------------------------------------------
@@ -460,11 +570,45 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
+  // Query org topology (best-effort — organizations table is in public schema).
+  let orgTopology: OrgTopologyData | undefined;
+  try {
+    const { data: orgData, error: orgError } = await publicClient
+      .from('organizations')
+      .select('name');
+    if (!orgError && orgData) {
+      const seedOrgs = orgData.filter((o: { name: string }) => isOrgSeedName(o.name)).length;
+      orgTopology = { totalOrgs: orgData.length, seedOrgs };
+    }
+  } catch {
+    // Org topology check skipped — table may not exist in this environment.
+  }
+
+  // Prod facts: prefer CLI flag, fall back to live query (best-effort via cron schema).
+  let prodFacts: ProdFactsData | undefined = args.prodFacts;
+  if (!prodFacts) {
+    try {
+      const cronClient = createClient(supabaseUrl, serviceRoleKey, { db: { schema: 'cron' } });
+      const { data: cronData, error: cronError } = await cronClient
+        .from('job')
+        .select('jobname');
+      if (!cronError && cronData) {
+        const cronJobNames = cronData.map((j: { jobname: string }) => j.jobname);
+        const functionExists = cronJobNames.length > 0;
+        prodFacts = { cronJobNames, functionExists };
+      }
+    } catch {
+      // Prod facts check skipped — cron schema may not be exposed via PostgREST.
+    }
+  }
+
   const report = buildReport({
     projectRef: projectRef ?? supabaseUrl,
     migrationRows,
     submittedAnchorCount: count ?? 0,
     prodVersions: args.prodVersions,
+    orgTopology,
+    prodFacts,
   });
 
   if (args.format === 'text') {

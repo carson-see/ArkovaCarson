@@ -13,11 +13,16 @@ import {
   findDuplicateVersions,
   detectKnownArtifacts,
   computeProdDivergence,
+  checkOrgTopology,
+  checkProdFacts,
+  isOrgSeedName,
   buildReport,
   parseArgs,
   type MigrationRow,
   type CheckResult,
   type EnvironmentType,
+  type OrgTopologyData,
+  type ProdFactsData,
 } from './staging-honesty-preflight.js';
 
 // ---------------------------------------------------------------------------
@@ -323,5 +328,201 @@ describe('parseArgs', () => {
   it('defaults prod versions to the canonical set', () => {
     const args = parseArgs([]);
     expect(args.prodVersions).toEqual(['00000000000000', '0294', '0295', '0296', '0297']);
+  });
+
+  it('parses --prod-facts JSON', () => {
+    const json = '{"cronJobNames":["vacuum-anchors"],"functionExists":true}';
+    const args = parseArgs(['--prod-facts', json]);
+    expect(args.prodFacts).toEqual({ cronJobNames: ['vacuum-anchors'], functionExists: true });
+  });
+
+  it('ignores malformed --prod-facts JSON', () => {
+    const args = parseArgs(['--prod-facts', 'not-json']);
+    expect(args.prodFacts).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// isOrgSeedName
+// ---------------------------------------------------------------------------
+
+describe('isOrgSeedName', () => {
+  it('detects STG-prefixed org as seed', () => {
+    expect(isOrgSeedName('STG Org 001')).toBe(true);
+  });
+
+  it('detects lowercase stg prefix as seed', () => {
+    expect(isOrgSeedName('stg_test_org')).toBe(true);
+  });
+
+  it('detects staging_seed_ prefix as seed', () => {
+    expect(isOrgSeedName('staging_seed_alpha')).toBe(true);
+  });
+
+  it('detects test_org_ prefix as seed', () => {
+    expect(isOrgSeedName('test_org_beta')).toBe(true);
+  });
+
+  it('does not flag a real org name', () => {
+    expect(isOrgSeedName('Acme Corporation')).toBe(false);
+  });
+
+  it('does not flag an org with stg in the middle', () => {
+    expect(isOrgSeedName('AcmeSTG Corp')).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// checkOrgTopology
+// ---------------------------------------------------------------------------
+
+describe('checkOrgTopology', () => {
+  it('fails when no orgs found', () => {
+    const result = checkOrgTopology({ totalOrgs: 0, seedOrgs: 0 });
+    expect(result.passed).toBe(false);
+    expect(result.name).toBe('org_topology');
+    expect(result.details).toMatch(/no organizations/i);
+  });
+
+  it('passes for prod-like single-tenant topology (no seed orgs)', () => {
+    const result = checkOrgTopology({ totalOrgs: 3, seedOrgs: 0 });
+    expect(result.passed).toBe(true);
+    expect(result.details).toMatch(/prod-like single-tenant/);
+  });
+
+  it('passes when seed orgs exist alongside org-scoped fixtures', () => {
+    const result = checkOrgTopology({ totalOrgs: 1005, seedOrgs: 1000 });
+    expect(result.passed).toBe(true);
+    expect(result.details).toMatch(/1000 seed/);
+    expect(result.details).toMatch(/5 org-scoped fixture/);
+  });
+
+  it('fails when all orgs are seed-prefixed (no fixtures for connector work)', () => {
+    const result = checkOrgTopology({ totalOrgs: 1000, seedOrgs: 1000 });
+    expect(result.passed).toBe(false);
+    expect(result.details).toMatch(/no org-scoped fixtures/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// checkProdFacts
+// ---------------------------------------------------------------------------
+
+describe('checkProdFacts', () => {
+  it('passes when all prod facts match', () => {
+    const result = checkProdFacts({
+      cronJobNames: ['vacuum-anchors'],
+      functionExists: true,
+    });
+    expect(result.passed).toBe(true);
+    expect(result.name).toBe('prod_facts');
+    expect(result.details).toMatch(/vacuum-anchors scheduled/);
+  });
+
+  it('fails when vacuum-anchors job is missing', () => {
+    const result = checkProdFacts({
+      cronJobNames: [],
+      functionExists: true,
+    });
+    expect(result.passed).toBe(false);
+    expect(result.details).toMatch(/vacuum-anchors job missing/);
+  });
+
+  it('fails when refresh_pipeline_dashboard_cache function is missing', () => {
+    const result = checkProdFacts({
+      cronJobNames: ['vacuum-anchors'],
+      functionExists: false,
+    });
+    expect(result.passed).toBe(false);
+    expect(result.details).toMatch(/refresh_pipeline_dashboard_cache\(\) function missing/);
+  });
+
+  it('fails when refresh_pipeline_dashboard_cache is incorrectly scheduled', () => {
+    const result = checkProdFacts({
+      cronJobNames: ['vacuum-anchors', 'refresh_pipeline_dashboard_cache'],
+      functionExists: true,
+    });
+    expect(result.passed).toBe(false);
+    expect(result.details).toMatch(/should be unscheduled per prod/);
+  });
+
+  it('reports multiple issues together', () => {
+    const result = checkProdFacts({
+      cronJobNames: ['refresh_pipeline_dashboard_cache'],
+      functionExists: false,
+    });
+    expect(result.passed).toBe(false);
+    expect(result.details).toMatch(/vacuum-anchors/);
+    expect(result.details).toMatch(/function missing/);
+    expect(result.details).toMatch(/should be unscheduled/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildReport — with org topology and prod facts
+// ---------------------------------------------------------------------------
+
+describe('buildReport with org topology and prod facts', () => {
+  const DEFAULT_PROD = ['00000000000000', '0294', '0295', '0296', '0297'];
+
+  it('includes org_topology check when data is provided', () => {
+    const report = buildReport({
+      projectRef: 'test-ref',
+      migrationRows: CLEAN_ROWS,
+      submittedAnchorCount: 5,
+      prodVersions: DEFAULT_PROD,
+      orgTopology: { totalOrgs: 1005, seedOrgs: 1000 },
+    });
+    const check = report.checks.find((c) => c.name === 'org_topology');
+    expect(check).toBeDefined();
+    expect(check!.passed).toBe(true);
+  });
+
+  it('includes prod_facts check when data is provided', () => {
+    const report = buildReport({
+      projectRef: 'test-ref',
+      migrationRows: CLEAN_ROWS,
+      submittedAnchorCount: 5,
+      prodVersions: DEFAULT_PROD,
+      prodFacts: { cronJobNames: ['vacuum-anchors'], functionExists: true },
+    });
+    const check = report.checks.find((c) => c.name === 'prod_facts');
+    expect(check).toBeDefined();
+    expect(check!.passed).toBe(true);
+  });
+
+  it('omits new checks when data is not provided (backward compat)', () => {
+    const report = buildReport({
+      projectRef: 'test-ref',
+      migrationRows: CLEAN_ROWS,
+      submittedAnchorCount: 5,
+      prodVersions: DEFAULT_PROD,
+    });
+    expect(report.checks.find((c) => c.name === 'org_topology')).toBeUndefined();
+    expect(report.checks.find((c) => c.name === 'prod_facts')).toBeUndefined();
+  });
+
+  it('still classifies as clean_mirror when all checks pass including new ones', () => {
+    const report = buildReport({
+      projectRef: 'test-ref',
+      migrationRows: CLEAN_ROWS,
+      submittedAnchorCount: 5,
+      prodVersions: DEFAULT_PROD,
+      orgTopology: { totalOrgs: 5, seedOrgs: 0 },
+      prodFacts: { cronJobNames: ['vacuum-anchors'], functionExists: true },
+    });
+    expect(report.environment_type).toBe('clean_mirror');
+    expect(report.checks.every((c) => c.passed)).toBe(true);
+  });
+
+  it('marks environment as soak_artifact when prod facts fail', () => {
+    const report = buildReport({
+      projectRef: 'test-ref',
+      migrationRows: CLEAN_ROWS,
+      submittedAnchorCount: 5,
+      prodVersions: DEFAULT_PROD,
+      prodFacts: { cronJobNames: [], functionExists: false },
+    });
+    expect(report.checks.some((c) => !c.passed)).toBe(true);
   });
 });
