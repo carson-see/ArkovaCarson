@@ -11,27 +11,14 @@
  * - Database reset with seed data (supabase db reset)
  */
 
-import { describe, it, expect, beforeAll } from 'vitest';
-import {
-  createAnonClient,
-  createServiceClient,
-  withIndividualUser,
-  type TypedClient,
-} from '../../src/tests/rls/helpers';
+import { describe, it, expect } from 'vitest';
+import { setupRlsClients } from '../../src/tests/rls/helpers';
 
 describe('RLS: public_records', () => {
-  let anonClient: TypedClient;
-  let authClient: TypedClient;
-  let serviceClient: TypedClient;
-
-  beforeAll(async () => {
-    anonClient = createAnonClient();
-    authClient = await withIndividualUser();
-    serviceClient = createServiceClient();
-  });
+  const c = setupRlsClients();
 
   it('anon client CANNOT select from public_records', async () => {
-    const { data, error } = await anonClient
+    const { data, error } = await c.anonClient
       .from('public_records')
       .select('id')
       .limit(1);
@@ -46,7 +33,7 @@ describe('RLS: public_records', () => {
 
   it('authenticated client CAN select from public_records (read-only)', async () => {
     // Authenticated users have SELECT via policy
-    const { error } = await authClient
+    const { error } = await c.authClient
       .from('public_records')
       .select('id')
       .limit(1);
@@ -55,7 +42,7 @@ describe('RLS: public_records', () => {
   });
 
   it('authenticated client CANNOT insert into public_records', async () => {
-    const { error } = await authClient.from('public_records').insert({
+    const { error } = await c.authClient.from('public_records').insert({
       source: 'test',
       source_id: 'rls-test-001',
       source_url: 'https://example.com',
@@ -69,7 +56,7 @@ describe('RLS: public_records', () => {
   it('service_role client CAN insert and select from public_records', async () => {
     const testSourceId = `rls-test-${Date.now()}`;
 
-    const { error: insertError } = await serviceClient
+    const { error: insertError } = await c.serviceClient
       .from('public_records')
       .insert({
         source: 'test',
@@ -82,7 +69,7 @@ describe('RLS: public_records', () => {
 
     expect(insertError).toBeNull();
 
-    const { data, error: selectError } = await serviceClient
+    const { data, error: selectError } = await c.serviceClient
       .from('public_records')
       .select('id, source_id')
       .eq('source_id', testSourceId)
@@ -93,7 +80,7 @@ describe('RLS: public_records', () => {
     expect(data![0].source_id).toBe(testSourceId);
 
     // Cleanup
-    await serviceClient
+    await c.serviceClient
       .from('public_records')
       .delete()
       .eq('source_id', testSourceId);

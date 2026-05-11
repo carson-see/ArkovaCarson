@@ -15,6 +15,7 @@
 
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import type { Database } from '@/types/database.types';
+import { beforeAll } from 'vitest';
 import ws from 'ws';
 
 // Cast ws to satisfy Supabase's WebSocketLikeConstructor interface.
@@ -165,6 +166,16 @@ export const withArkovaAdmin = () =>
 
 export const withIndividualUser = () =>
   withUser(DEMO_CREDENTIALS.userEmail, 'INDIVIDUAL');
+
+export function setupRlsClients() {
+  const c = {} as { anonClient: TypedClient; authClient: TypedClient; serviceClient: TypedClient };
+  beforeAll(async () => {
+    c.anonClient = createAnonClient();
+    c.authClient = await withIndividualUser();
+    c.serviceClient = createServiceClient();
+  });
+  return c;
+}
 
 export const withBetaAdmin = () =>
   withUser(DEMO_CREDENTIALS.betaAdminEmail, 'ORG_ADMIN');
