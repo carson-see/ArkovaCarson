@@ -41,14 +41,15 @@ Closes the asymmetric subscribe-vs-emit gap surfaced during the SCRUM-1743 audit
 
 _Last refreshed: 2026-05-10 (evening) by claude — claims verified against `gh pr view 760` (MERGED 12:28 UTC), `gh pr view 742` (OPEN, tip `9a8774c1`), Supabase MCP `select * from public.staging_deploy_log where id in (3, 10)` (both rows present, lease_ok=true, forced=false), local soak harness logs at /tmp/scrum1794_soak.{log,sh,counts.txt} (1688 PASS / 0 FAIL final line)._
 
-### 2026-05-10 (session 2) — Drop broken search_public_credentials 3-arg overload (PR #761, SCRUM-1804)
+### 2026-05-10 (session 2) — Drop broken search_public_credentials 3-arg overload (PR #761, SCRUM-1804) ✅ CLOSED
 
-* PR #761: migration `0304_drop_broken_search_public_credentials_overload.sql` — drops broken 3-arg overload that referenced nonexistent columns.
-* Staging applied + verified + ledger reconciled. Prod applied (no-op). T2 soak elapsed.
-* Jira SCRUM-1804, BUG-2026-05-09-001 in Confluence bug tracker.
-* Follow-up: `npm run gen:types` post-merge to remove stale 3-arg types.
+* PR #761 **merged** 2026-05-11. Migration `0304_drop_broken_search_public_credentials_overload.sql` — drops broken 3-arg overload that referenced nonexistent columns.
+* Prod confirmed: only working 2-arg overload `(p_query text, p_limit integer)` exists on prod (`vzwyaatejekddvltxyye`).
+* Staging applied + verified + ledger reconciled. Prod applied (no-op). T2 soak elapsed. 24/24 CI green.
+* Jira SCRUM-1804 → Done. BUG-2026-05-09-001 closed in Confluence bug tracker.
+* Follow-up: `npm run gen:types` post-merge to remove stale 3-arg types from `database.types.ts`.
 
-_Last refreshed: 2026-05-10 by claude — verified against Supabase MCP execute_sql, gh pr checks 761 ([run 25632059562](https://github.com/carson-see/ArkovaCarson/actions/runs/25632059562)), Jira MCP SCRUM-1804._
+_Last refreshed: 2026-05-11 by claude — verified against Supabase MCP `pg_proc` query on prod (1 overload, 2-arg only), `gh pr view 761` (MERGED), Jira MCP SCRUM-1804 (Done)._
 
 ### 2026-05-10 (morning) — Merge sprint: 8 PRs merged, all original 7 HakiChain PRs closed, SCRUM-1742 close-out shipped
 
