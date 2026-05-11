@@ -23,6 +23,7 @@ import { logger } from '../utils/logger.js';
 import { getChainClientAsync } from '../chain/client.js';
 import { buildMerkleTree } from '../utils/merkle.js';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import type { Json } from '../types/database.types.js';
 import { callRpc } from '../utils/rpc.js';
 import { dispatchWebhookEvent } from '../webhooks/delivery.js';
 
@@ -125,10 +126,10 @@ export async function processAttestationAnchoring(
         chain_tx_id: txId,
         chain_timestamp: now,
         metadata: {
-          merkle_proof: proof ?? [],
+          merkle_proof: (proof ?? []) as unknown as Json[],
           merkle_root: tree.root,
           batch_id: batchId,
-        },
+        } satisfies Record<string, Json | undefined>,
       })
       .eq('id', att.id)
       .eq('status', 'PENDING') // Optimistic lock — only update if still PENDING

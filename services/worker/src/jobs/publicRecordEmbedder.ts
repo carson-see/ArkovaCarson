@@ -45,7 +45,7 @@ function buildPublicRecordEmbeddingText(record: {
   title: string | null;
   source: string;
   record_type: string;
-  metadata: Record<string, unknown>;
+  metadata: unknown;
 }): string {
   const parts: string[] = [];
 
@@ -53,7 +53,7 @@ function buildPublicRecordEmbeddingText(record: {
   parts.push(`Source: ${record.source}`);
   parts.push(`Type: ${record.record_type}`);
 
-  const meta = record.metadata ?? {};
+  const meta = (record.metadata ?? {}) as Record<string, unknown>;
   if (meta.abstract) parts.push(`Abstract: ${String(meta.abstract)}`);
   if (meta.patent_type) parts.push(`Patent type: ${String(meta.patent_type)}`);
   if (meta.agencies) {
@@ -110,7 +110,7 @@ export async function embedPublicRecords(
   };
 
   // Process records with bounded concurrency and retry on rate limits
-  const processRecord = async (record: { id: string; title: string | null; source: string; record_type: string; metadata: Record<string, unknown> }) => {
+  const processRecord = async (record: { id: string; title: string; source: string; record_type: string; metadata: unknown }) => {
     const text = buildPublicRecordEmbeddingText(record);
 
     for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
@@ -126,7 +126,7 @@ export async function embedPublicRecords(
           .from('public_record_embeddings')
           .insert({
             public_record_id: record.id,
-            embedding: embeddingResult.embedding,
+            embedding: JSON.stringify(embeddingResult.embedding),
             model_version: GEMINI_EMBEDDING_MODEL,
           });
 
@@ -156,7 +156,7 @@ export async function embedPublicRecords(
   // Process in chunks of EMBED_CONCURRENCY for bounded parallelism
   for (let i = 0; i < records.length; i += EMBED_CONCURRENCY) {
     const chunk = records.slice(i, i + EMBED_CONCURRENCY);
-    await Promise.all(chunk.map((r: { id: string; title: string | null; source: string; record_type: string; metadata: Record<string, unknown> }) => processRecord(r)));
+    await Promise.all(chunk.map((r) => processRecord(r)));
   }
 
   logger.info(
