@@ -11,16 +11,9 @@
 # SCRUM-946: vendored Transformers.js runtime false positive (`this.vocab=new`),
 # not a credential. Keep scoped to the exact PR commit/path/rule fingerprint.
 66f4737e5549612d083ce0c1dc0fcccb7c78dd7a:public/vendor/transformers.web.min.js:generic-api-key:2
-# SCRUM-1740 (PR #738): historical commits 5ee939c9 + 65b1f098 + 8a1cb360
-# captured the staging sandbox provisioning run-log in HANDOFF.md. The
-# generic-api-key rule flagged the api_keys.id UUID + key_prefix combo
-# because the colon-uuid pattern matches the rule, but the value is a
-# database row id (not a secret) and the raw key was never stored in
-# plaintext (CLAUDE.md §1.4). Follow-up commits redact the row id from
-# HANDOFF.md going forward; these fingerprints cover the scan of the
-# historical commits in first-parent mode.
-5ee939c924453228fc8e3597b2e9239581629616:HANDOFF.md:generic-api-key:27
-65b1f098c9059a681313e30470249a5fef0d92db:HANDOFF.md:generic-api-key:27
-8a1cb36020a74a1bbbf3baa5156bd80534472565:HANDOFF.md:generic-api-key:27
-fd68c07c2e053d8345df1a81d52cd7a1830328f2:HANDOFF.md:generic-api-key:186
-cb044cf1b2c55391a4c3cf64719e75e06120344e:HANDOFF.md:generic-api-key:188
+# SCRUM-1740 (PR #738): rebased commit a13572d8 contains the staging
+# sandbox provisioning run-log in HANDOFF.md. The generic-api-key rule
+# flags the api_keys.id UUID + key_prefix combo because the colon-uuid
+# pattern matches, but the value is a database row id (not a secret)
+# and the raw key was never stored in plaintext (CLAUDE.md §1.4).
+a13572d8a18bf9c3075578bdc5e6bf3cd19ee292:HANDOFF.md:generic-api-key:214
