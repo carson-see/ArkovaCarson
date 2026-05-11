@@ -13,22 +13,19 @@
 
 import { describe, it, expect, beforeAll } from 'vitest';
 import {
+  createAnonClient,
   createServiceClient,
   withIndividualUser,
   type TypedClient,
 } from '../../src/tests/rls/helpers';
-import { createClient } from '@supabase/supabase-js';
-
-const SUPABASE_URL = process.env.SUPABASE_URL!;
-const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY!;
 
 describe('RLS: public_records', () => {
-  let anonClient: ReturnType<typeof createClient>;
+  let anonClient: TypedClient;
   let authClient: TypedClient;
   let serviceClient: TypedClient;
 
   beforeAll(async () => {
-    anonClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    anonClient = createAnonClient();
     authClient = await withIndividualUser();
     serviceClient = createServiceClient();
   });

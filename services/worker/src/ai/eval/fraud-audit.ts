@@ -51,7 +51,11 @@ export async function runFraudAudit(
   sampleSize = 100,
 ): Promise<AuditResult> {
   const { createClient } = await import('@supabase/supabase-js');
-  const db = createClient(supabaseUrl, serviceRoleKey);
+  const ws = (await import('ws')).default;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const db = createClient(supabaseUrl, serviceRoleKey, {
+    realtime: { transport: ws as any },
+  });
 
   // Count all integrity scores by level
   const { data: levelCounts } = await db

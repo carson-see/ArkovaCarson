@@ -84,7 +84,11 @@ async function verifyJwtViaSupabase(
 ): Promise<string | null> {
   try {
     const { createClient } = await import('@supabase/supabase-js');
-    const supabaseClient = createClient(config.supabaseUrl!, config.supabaseServiceKey!);
+    const ws = (await import('ws')).default;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const supabaseClient = createClient(config.supabaseUrl!, config.supabaseServiceKey!, {
+      realtime: { transport: ws as any },
+    });
     const { data: { user }, error } = await supabaseClient.auth.getUser(token);
 
     if (error || !user) {
