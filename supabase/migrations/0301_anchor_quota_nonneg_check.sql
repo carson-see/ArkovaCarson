@@ -15,15 +15,19 @@ BEGIN
   IF NOT EXISTS (
     SELECT 1 FROM pg_constraint
     WHERE conname = 'org_credits_anchor_quota_nonneg'
-      AND conrelid = 'org_credits'::regclass
+      AND conrelid = 'public.org_credits'::regclass
   ) THEN
+    -- CodeRabbit: lock the table so no concurrent session can insert a
+    -- negative anchor_quota between the clamp UPDATE and ADD CONSTRAINT.
+    LOCK TABLE public.org_credits IN SHARE ROW EXCLUSIVE MODE;
+
     -- Defensive: any rows that already snuck in negative get clamped to 0
     -- before the constraint lands so ADD CONSTRAINT doesn't fail on bad
     -- existing data.
-    UPDATE org_credits SET anchor_quota = 0
+    UPDATE public.org_credits SET anchor_quota = 0
     WHERE anchor_quota IS NOT NULL AND anchor_quota < 0;
 
-    ALTER TABLE org_credits
+    ALTER TABLE public.org_credits
       ADD CONSTRAINT org_credits_anchor_quota_nonneg
         CHECK (anchor_quota IS NULL OR anchor_quota >= 0);
   END IF;

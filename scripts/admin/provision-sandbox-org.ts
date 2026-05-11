@@ -150,7 +150,9 @@ async function pgrest(
     });
     const text = await res.text();
     if (!res.ok) {
-      throw new Error(`Supabase ${method} ${path} → HTTP ${res.status}: ${text.slice(0, 500)}`);
+      // CodeRabbit: strip query params from error to avoid leaking PII (e.g. ownerEmail)
+      const safePath = path.split('?')[0];
+      throw new Error(`Supabase ${method} ${safePath} → HTTP ${res.status}: ${text.slice(0, 500)}`);
     }
     return text ? JSON.parse(text) : null;
   } finally {
@@ -276,6 +278,11 @@ export async function provisionSandboxOrg(args: ProvisionArgs, cfg: SupabaseConf
         `/profiles?email=eq.${encodeURIComponent(args.ownerEmail)}&select=id&limit=1`,
       ) as Array<{ id: string }>;
       createdBy = byEmail[0]?.id;
+      // CodeRabbit: fail loudly when an explicit --owner-email doesn't resolve
+      // rather than silently falling back to an unrelated profile.
+      if (!createdBy) {
+        throw new Error(`--owner-email ${args.ownerEmail} not found in profiles table. Create the account first.`);
+      }
     }
     if (!createdBy && process.env.SUPABASE_RUNNER_USER_ID) {
       createdBy = process.env.SUPABASE_RUNNER_USER_ID;
