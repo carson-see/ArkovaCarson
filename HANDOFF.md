@@ -14,6 +14,24 @@
 
 ## Now
 
+### 2026-05-11 — PR #756 + PR #763 ready for review
+
+**PR #756 (SCRUM-1668 addendum) — staging-honesty preflight + SUBMITTED fixture + ledger cleanup: READY FOR REVIEW at `9da4d2bd`.**
+8-check staging preflight script (`scripts/ci/staging-honesty-preflight.ts`): PR-only rows, duplicate names/versions, known artifacts, SUBMITTED anchors, prod divergence, org topology (single-tenant vs multi-org seeds), prod facts (pg_cron vacuum-anchors + refresh_pipeline_dashboard_cache). 53 unit tests. Seed.sql adds SUBMITTED anchor fixture. Staging ledger cleanup doc at `docs/staging/STAGING_LEDGER_CLEANUP_2026-05-09.md`. T1 soak passed (30 min, zero 500s). CI: 24/24 green. Supersedes no other PRs.
+
+**PR #763 (bundled dep bumps) — 38 package bumps + ws transport fix: READY FOR REVIEW at `118c67a6`.**
+Bundles dependabot PRs #752 (root) and #754 (worker). Key bumps: supabase-js 2.105.0→2.105.4, sentry 10.50→10.52, stripe 22.1.0→22.1.1, vite 8.0.10→8.0.11. Root cause fix: supabase-js 2.105.4's realtime-js requires explicit `ws` transport on Node 20 — added `ws` dep to worker, passed `realtime: { transport: ws }` in db.ts/auth.ts/fraud-audit.ts, switched RLS tests to `createAnonClient()` helper. T1 soak passed (30 min, zero 500s). CI: all GH Actions green (SonarCloud + Vercel are pre-existing systemic failures). Supersedes #752 and #754 — close after merge.
+
+**Bug found + fixed in PR #763:** supabase-js 2.105.4 breaks Node 20 environments without native WebSocket — `realtime-js` throws "Node.js 20 detected without native WebSocket support." Fix: explicit `ws` transport parameter. Not yet logged in Confluence bug tracker (gap — Carson to log or delegate).
+
+**Jira state:**
+- SCRUM-1668 → In Progress (PR #756 awaits review)
+
+**What's NOT done — explicit gaps:**
+- Confluence bug tracker entry for ws transport breakage (PR #763)
+- SCRUM-1668 Confluence page not verified as reflecting checks 7+8 (PR #756)
+- Both PRs await human review + merge
+
 ### 2026-05-10 (evening) — SCRUM-1794 + SCRUM-1803 ready for merge; multi-tenant staging rig live in prod tooling
 
 **PR #760 (SCRUM-1803) — multi-tenant staging rig: MERGED 12:28 UTC.**
