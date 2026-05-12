@@ -5,7 +5,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { Request, Response } from 'express';
-import { handleTreasuryStatus, handleTreasuryHealth } from './treasury.js';
+import { handleTreasuryStatus, handleTreasuryHealth, handleTreasuryX402Stats } from './treasury.js';
 
 // Mock dependencies
 vi.mock('../utils/db.js', () => ({
@@ -129,6 +129,72 @@ describe('handleTreasuryStatus', () => {
     const response = vi.mocked(res.json).mock.calls[0][0] as Record<string, unknown>;
     expect(response.wallet).toBeNull();
     expect(response.error).toContain('not configured');
+  });
+});
+
+describe('handleTreasuryX402Stats', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('coerces valid numeric RPC fields before responding', async () => {
+    const { db } = await import('../utils/db.js');
+    vi.mocked(db.rpc).mockResolvedValueOnce({
+      data: {
+        total_payments: '2',
+        total_revenue_usd: '12.5',
+        recent_payments: [
+          {
+            tx_hash: '0xabc123',
+            amount_usd: '1.25',
+            created_at: '2026-05-12T10:00:00Z',
+          },
+        ],
+      },
+      error: null,
+    } as never);
+
+    const res = createMockRes();
+    await handleTreasuryX402Stats('admin-123', {} as Request, res);
+
+    expect(res.status).not.toHaveBeenCalledWith(502);
+    expect(res.json).toHaveBeenCalledWith({
+      total: 2,
+      revenue: 12.5,
+      recent: [
+        {
+          tx_hash: '0xabc123',
+          amount_usd: 1.25,
+          created_at: '2026-05-12T10:00:00Z',
+        },
+      ],
+    });
+  });
+
+  it('returns 502 for invalid RPC payloads instead of emitting misleading zeros', async () => {
+    const { db } = await import('../utils/db.js');
+    vi.mocked(db.rpc).mockResolvedValueOnce({
+      data: {
+        total_payments: 1,
+        total_revenue_usd: 5,
+        recent_payments: [
+          {
+            tx_hash: '',
+            amount_usd: 'not-a-number',
+            created_at: 'not-a-date',
+          },
+        ],
+      },
+      error: null,
+    } as never);
+
+    const res = createMockRes();
+    await handleTreasuryX402Stats('admin-123', {} as Request, res);
+
+    expect(res.status).toHaveBeenCalledWith(502);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({ error: 'Treasury x402 stats returned invalid payload' }),
+    );
   });
 });
 

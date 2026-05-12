@@ -98,6 +98,10 @@ describe('useTreasuryBalance R1-6 hardening (SCRUM-1260)', () => {
         totalPending: 2,
         lastSecuredAt: '2026-05-12T09:00:00Z',
         last24hCount: 3,
+        distinctTxIds: 4,
+        avgAnchorsPerTx: 3,
+        lastAnchorAt: '2026-05-12T09:30:00Z',
+        lastTxAt: '2026-05-12T09:45:00Z',
       },
     })));
 
@@ -106,6 +110,45 @@ describe('useTreasuryBalance R1-6 hardening (SCRUM-1260)', () => {
     await waitFor(() => expect(result.current.balance?.total).toBe(12345));
     expect(result.current.sourceState.cacheUpdatedAt).toBe('2026-05-12T10:00:00Z');
     expect(result.current.anchorStats?.byStatus.SECURED).toBe(10);
+    expect(result.current.anchorStats?.distinctTxIds).toBe(4);
+    expect(result.current.anchorStats?.avgAnchorsPerTx).toBe(3);
+    expect(result.current.anchorStats?.lastTxTime).toBe('2026-05-12T09:45:00Z');
+  });
+
+  it('does not synthesize transaction aggregates when the worker marks them unavailable', async () => {
+    mockWorkerDefaults(() => Promise.resolve(jsonResponse({
+      wallet: { balanceSats: 12345 },
+      recentAnchors: {
+        totalSecured: 10,
+        totalPending: 2,
+        lastSecuredAt: '2026-05-12T09:00:00Z',
+        last24hCount: 3,
+        distinctTxIds: -1,
+        avgAnchorsPerTx: -1,
+      },
+    })));
+
+    const { result } = renderHook(() => useTreasuryBalance());
+
+    await waitFor(() => expect(result.current.anchorStats?.byStatus.SECURED).toBe(10));
+    expect(result.current.anchorStats?.distinctTxIds).toBeNull();
+    expect(result.current.anchorStats?.avgAnchorsPerTx).toBeNull();
+  });
+
+  it('ignores expected AbortError failures from cancelled worker response parsing', async () => {
+    const abortError = Object.assign(new Error('aborted'), { name: 'AbortError' });
+    expect(abortError.name).toBe('AbortError');
+    expect(abortError.message).toContain('aborted');
+    mockWorkerDefaults(() => Promise.resolve({
+      ok: true,
+      status: 200,
+      json: async () => { throw abortError; },
+    } as unknown as Response));
+
+    const { result } = renderHook(() => useTreasuryBalance());
+
+    await waitFor(() => expect(result.current.loading).toBe(false));
+    expect(result.current.error ?? 'none').toBe('none');
   });
 
   it('passes a signal to workerFetch (cycle is cancellable)', async () => {

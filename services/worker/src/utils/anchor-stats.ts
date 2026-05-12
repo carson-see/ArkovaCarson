@@ -20,8 +20,47 @@ export interface AnchorStats {
   total_revoked: number;
   by_status: Record<string, number>;
   last_secured_at: string | null;
+  /** -1 sentinel = unavailable or approximate-only this round. Caller renders "—". */
+  distinct_tx_count: number;
+  /** -1 sentinel = unavailable this round. */
+  anchors_with_tx: number;
+  /** -1 sentinel = unavailable or distinct tx count is approximate-only this round. */
+  avg_anchors_per_tx: number;
+  last_anchor_time: string | null;
+  last_tx_time: string | null;
+  distinct_tx_approximate: boolean;
   /** -1 sentinel = unavailable this round (24h count timed out). Caller renders "—". */
   last_24h_count: number;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/** Parse RPC data that PostgREST may return as a JSON string or object. */
+function parseRpcData(data: unknown): Record<string, unknown> {
+  if (typeof data === 'string') {
+    try {
+      const parsed = JSON.parse(data) as unknown;
+      return isRecord(parsed) ? parsed : {};
+    } catch {
+      return {};
+    }
+  }
+  return isRecord(data) ? data : {};
+}
+
+function toFiniteNumber(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string' && value.trim() !== '') {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function toNullableString(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() !== '' ? value : null;
 }
 
 /**
@@ -37,10 +76,16 @@ export async function fetchAnchorStats(): Promise<AnchorStats> {
   let total_revoked = -1;
   let last_secured_at: string | null = null;
   let last_24h_count = -1;
+  let distinct_tx_count = -1;
+  let anchors_with_tx = -1;
+  let avg_anchors_per_tx = -1;
+  let last_anchor_time: string | null = null;
+  let last_tx_time: string | null = null;
+  let distinct_tx_approximate = false;
   let by_status: Record<string, number> = {};
 
   try {
-    const [counts, lastSeen, last24] = await Promise.allSettled([
+    const [counts, lastSeen, last24, txStats] = await Promise.allSettled([
       // SCRUM-1786: read from pipeline_dashboard_cache instead of the RPC.
       db.from('pipeline_dashboard_cache')
         .select('cache_value')
@@ -58,6 +103,7 @@ export async function fetchAnchorStats(): Promise<AnchorStats> {
         .gte('created_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())
         .order('created_at', { ascending: false })
         .limit(1000),
+      db.rpc('get_anchor_tx_stats'),
     ]);
 
     if (counts.status === 'fulfilled' && counts.value.data && !counts.value.error) {
@@ -86,6 +132,29 @@ export async function fetchAnchorStats(): Promise<AnchorStats> {
     if (last24.status === 'fulfilled' && Array.isArray(last24.value.data)) {
       last_24h_count = last24.value.data.length;
     }
+
+    if (txStats.status === 'fulfilled' && txStats.value.data && !txStats.value.error) {
+      const txData = parseRpcData(txStats.value.data);
+      const cacheMiss = txData.cache_miss === true;
+      distinct_tx_approximate = txData.distinct_tx_approximate === true;
+
+      const distinct = toFiniteNumber(txData.distinct_tx_count);
+      const withTx = toFiniteNumber(txData.anchors_with_tx);
+      anchors_with_tx = cacheMiss || withTx === null || withTx < 0 ? -1 : withTx;
+      if (!cacheMiss && !distinct_tx_approximate && distinct !== null && distinct >= 0) {
+        distinct_tx_count = distinct;
+        if (distinct === 0) {
+          avg_anchors_per_tx = 0;
+        } else if (anchors_with_tx >= 0) {
+          avg_anchors_per_tx = Math.round(anchors_with_tx / distinct);
+        }
+      }
+      last_anchor_time = toNullableString(txData.last_anchor_time);
+      last_tx_time = toNullableString(txData.last_tx_time);
+    } else {
+      const err = txStats.status === 'fulfilled' ? txStats.value.error : txStats.reason;
+      logger.warn({ error: err }, 'fetchAnchorStats: get_anchor_tx_stats read failed');
+    }
   } catch (err) {
     logger.warn({ error: err }, 'fetchAnchorStats: unexpected failure, returning sentinels');
   }
@@ -98,6 +167,12 @@ export async function fetchAnchorStats(): Promise<AnchorStats> {
     total_revoked,
     by_status,
     last_secured_at,
+    distinct_tx_count,
+    anchors_with_tx,
+    avg_anchors_per_tx,
+    last_anchor_time,
+    last_tx_time,
+    distinct_tx_approximate,
     last_24h_count,
   };
 }

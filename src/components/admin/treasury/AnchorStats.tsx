@@ -29,6 +29,10 @@ const STATUS_CONFIG: Record<string, { label: string; icon: React.ElementType; co
   REVOKED: { label: 'Revoked', icon: Ban, color: 'text-red-600' },
 };
 
+function formatMaybeCount(value: number | null): string {
+  return value === null ? '—' : value.toLocaleString();
+}
+
 export function AnchorStats({ stats, loading }: Readonly<AnchorStatsProps>) {
   const anchored = stats?.byStatus['SECURED'] ?? 0;
 
@@ -87,11 +91,11 @@ export function AnchorStats({ stats, loading }: Readonly<AnchorStatsProps>) {
                   <Hash className="h-3.5 w-3.5" />
                   Network Transactions
                 </span>
-                <span className="font-mono">{stats.distinctTxIds.toLocaleString()}</span>
+                <span className="font-mono">{formatMaybeCount(stats.distinctTxIds)}</span>
               </div>
               <div className="flex items-center justify-between text-sm">
                 <span className="text-muted-foreground">Avg Records/TX</span>
-                <span className="font-mono">{stats.avgAnchorsPerTx.toLocaleString()}</span>
+                <span className="font-mono">{formatMaybeCount(stats.avgAnchorsPerTx)}</span>
               </div>
               {stats.lastAnchorTime && (
                 <div className="flex items-center justify-between text-sm">
