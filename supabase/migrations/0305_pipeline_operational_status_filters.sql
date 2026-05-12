@@ -4,6 +4,10 @@
 -- records browser must expose lifecycle statuses directly so operators can
 -- filter PENDING, BROADCASTING, SUBMITTED/In Mempool, SECURED/Confirmed,
 -- EXPIRED, and REVOKED without collapsing SUBMITTED into "anchored".
+--
+-- ROLLBACK: Restore the previous get_public_records_page definition from the
+-- production migration ledger before this migration, then NOTIFY pgrst,
+-- 'reload schema'.
 
 CREATE OR REPLACE FUNCTION get_public_records_page(
   p_page integer DEFAULT 1,
@@ -28,7 +32,7 @@ DECLARE
 BEGIN
   IF NOT (
     current_setting('request.jwt.claims', true)::json->>'role' = 'service_role'
-    OR EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND is_platform_admin = true)
+    OR EXISTS (SELECT 1 FROM profiles WHERE id = (SELECT auth.uid()) AND is_platform_admin = true)
   ) THEN
     RAISE EXCEPTION 'Access denied: platform admin required';
   END IF;
