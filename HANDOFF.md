@@ -24,7 +24,9 @@
 
 **Staging evidence:** T1 read-only `/health` soak on tag URL `https://pr-772---arkova-worker-staging-kvojbeutfa-uc.a.run.app`, worker revision `arkova-worker-staging-00064-roj`, deploy log id 14, 2026-05-12T13:39:32Z → 2026-05-12T14:09:32Z. Result: 1,497/1,497 HTTP 200, 0 failures, p95 140ms, p99 277ms. Evidence JSON: `docs/staging/soak-pr-772-20260512T1339Z.json`. PR #753 and PR #774 were not reset, reseeded, edited, or otherwise touched.
 
-**Current state:** GitHub checks are green, migration drift is green, CodeRabbit is green/approved, and merge state is clean. Superseded PRs #764/#770/#771 were closed with replacement comments pointing to #772. Remaining step is human merge.
+**Current state:** Protected checks and review gates are being replayed after the final HANDOFF-only closeout commits. Superseded PRs #764/#770/#771 were closed with replacement comments pointing to #772. Remaining step after the replay is green is human merge.
+
+_Last refreshed: 2026-05-12 by codex — claims verified against gcloud/MCP/CI output: GitHub Actions run 25740597987 (CI Tests/E2E/TypeCheck & Lint/Migration Drift/Staging Soak Evidence green before the HANDOFF-only closeout), follow-up GitHub Actions run 25756413251 (CI replay in progress at refresh time), staging deploy log id 14, soak evidence at docs/staging/soak-pr-772-20260512T1339Z.json, and staging tag URL health evidence for worker revision arkova-worker-staging-00064-roj._
 
 ### 2026-05-11 — PR #756 + PR #763 ready for review
 
