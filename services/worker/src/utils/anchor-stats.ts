@@ -1,21 +1,16 @@
 /**
  * Shared anchor-stats fetcher — used by both the treasury status API and
- * the treasury-cache cron. Before extraction, both files carried the same
- * 19-line Promise.all over `anchors` and SonarCloud flagged it as
- * duplicate code (CIBA-HARDEN-03 / SCRUM-1116).
+ * the treasury-cache cron.
  *
- * SCRUM-1259 (R1-5) rewrite: the per-status exact-count queries
- * were the customer-facing path of the same death-spiral mechanism (60s
- * PostgREST timeouts on the bloated `anchors` table). Migrated to
- * `get_anchor_status_counts_fast` RPC which uses pg_class.reltuples for
- * total + 1s per-status budget with sentinels. Last-24h is a separate,
- * time-window query — kept here with try/catch sentinel, falls back to
- * `null` when the lookup misses budget.
+ * SCRUM-1786: reads per-status counts from `pipeline_dashboard_cache`
+ * (refreshed every 2 min by `refresh_pipeline_dashboard_cache()`, which
+ * uses `pg_class.reltuples` — instant, no timeout risk) instead of the
+ * `get_anchor_status_counts_fast` RPC whose 1-second per-status timeouts
+ * produce -1 sentinels on the 2.9M-row anchors table.
  */
 
 import { db } from './db.js';
 import { logger } from './logger.js';
-import { callRpc, type FastCountsRpc } from './rpc.js';
 
 export interface AnchorStats {
   total_secured: number;
@@ -26,10 +21,9 @@ export interface AnchorStats {
 }
 
 /**
- * Fetches totals + the most-recent-secured timestamp via the fast RPC plus
- * a bounded 24h-window count. Returns sentinel `-1` for any value that
- * could not be measured this round; callers should render "—" rather than
- * "0" so 70%-bloat moments don't masquerade as an empty system.
+ * Fetches totals from pipeline_dashboard_cache + the most-recent-secured
+ * timestamp via a bounded index scan + a 24h-window count. Returns
+ * sentinel `-1` for any value that could not be measured this round.
  */
 export async function fetchAnchorStats(): Promise<AnchorStats> {
   let total_secured = -1;
@@ -39,19 +33,17 @@ export async function fetchAnchorStats(): Promise<AnchorStats> {
 
   try {
     const [counts, lastSeen, last24] = await Promise.allSettled([
-      callRpc<FastCountsRpc>(db, 'get_anchor_status_counts_fast'),
-      // Most-recent-secured timestamp: bounded by chain_timestamp DESC index.
-      // Fast even under bloat — single-row index scan.
+      // SCRUM-1786: read from pipeline_dashboard_cache instead of the RPC.
+      db.from('pipeline_dashboard_cache')
+        .select('cache_value')
+        .eq('cache_key', 'anchor_status_counts')
+        .single(),
       db.from('anchors')
         .select('chain_timestamp')
         .eq('status', 'SECURED')
         .is('deleted_at', null)
         .order('chain_timestamp', { ascending: false })
         .limit(1),
-      // Last-24h: hits idx_anchors_active_created (created_at DESC WHERE
-      // deleted_at IS NULL). Index-only scan; bounded LIMIT 1 used to
-      // probe responsiveness rather than full count to keep this hot path
-      // sub-second under bloat. We still report a count up to the cap.
       db.from('anchors')
         .select('id', { head: false })
         .is('deleted_at', null)
@@ -61,11 +53,12 @@ export async function fetchAnchorStats(): Promise<AnchorStats> {
     ]);
 
     if (counts.status === 'fulfilled' && counts.value.data && !counts.value.error) {
-      total_secured = counts.value.data.SECURED ?? -1;
-      total_pending = counts.value.data.PENDING ?? -1;
+      const cv = (counts.value.data as { cache_value: Record<string, unknown> }).cache_value;
+      total_secured = typeof cv?.SECURED === 'number' ? cv.SECURED : -1;
+      total_pending = typeof cv?.PENDING === 'number' ? cv.PENDING : -1;
     } else {
       const err = counts.status === 'fulfilled' ? counts.value.error : counts.reason;
-      logger.warn({ error: err }, 'fetchAnchorStats: get_anchor_status_counts_fast failed');
+      logger.warn({ error: err }, 'fetchAnchorStats: pipeline_dashboard_cache read failed');
     }
 
     if (lastSeen.status === 'fulfilled' && lastSeen.value.data && lastSeen.value.data.length > 0) {

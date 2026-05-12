@@ -10,6 +10,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { createClient } from '@supabase/supabase-js';
+import ws from 'ws';
 
 /**
  * Parse major.minor from a Postgres version string like:
@@ -82,7 +83,8 @@ describe('SEC-001: PostgreSQL RLS Bypass CVE-2025-8713', () => {
       return;
     }
 
-    const supabase = createClient(url, key);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const supabase = createClient(url, key, { realtime: { transport: ws as any } });
     const { data, error } = await supabase.rpc('get_postgres_version').single();
 
     if (error) {

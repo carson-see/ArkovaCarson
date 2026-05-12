@@ -1,11 +1,10 @@
 /**
- * Treasury Cache Refresh Tests (SCRUM-546)
+ * Treasury Cache Refresh Tests (SCRUM-546 + SCRUM-1786 sentinel guard)
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { refreshTreasuryCache } from './treasury-cache.js';
 
-// Mock all external dependencies
 vi.mock('../config.js', () => ({
   config: {
     bitcoinTreasuryWif: 'cNYfRxoekiUbYn4NiSVbSB2MRFkJMRhdkhGEZjHlkeCg2HqPDi4j',
@@ -40,18 +39,24 @@ vi.mock('../utils/logger.js', () => ({
 }));
 
 const mockUpsert = vi.fn().mockResolvedValue({ error: null });
-const mockSelect = vi.fn();
-// Wide return type so `.mockImplementation(...)` can return the mockChain builder
-// below for the anchors table path without narrow-union incompatibility.
-const mockFrom = vi.fn((table: string): Record<string, unknown> => {
-  if (table === 'treasury_cache') {
-    return { upsert: mockUpsert };
-  }
-  // anchors table mock
-  return {
-    select: mockSelect,
+const mockTreasuryCacheSelect = vi.fn();
+const mockPipelineCacheSelect = vi.fn();
+
+const mockChain = (terminal: string, result: unknown) => {
+  const chain: Record<string, ReturnType<typeof vi.fn>> = {
+    select: vi.fn().mockReturnThis(),
+    eq: vi.fn().mockReturnThis(),
+    is: vi.fn().mockReturnThis(),
+    gte: vi.fn().mockReturnThis(),
+    order: vi.fn().mockReturnThis(),
+    limit: vi.fn().mockReturnThis(),
+    single: vi.fn().mockReturnThis(),
   };
-});
+  chain[terminal] = vi.fn().mockResolvedValue(result);
+  return chain;
+};
+
+const mockFrom = vi.fn();
 
 vi.mock('../utils/db.js', () => ({
   db: {
@@ -59,7 +64,6 @@ vi.mock('../utils/db.js', () => ({
   },
 }));
 
-// Mock fetch globally
 const mockFetch = vi.fn();
 globalThis.fetch = mockFetch;
 
@@ -67,7 +71,6 @@ describe('refreshTreasuryCache', () => {
   beforeEach(() => {
     vi.clearAllMocks();
 
-    // Default fetch responses
     mockFetch.mockImplementation(async (url: string) => {
       if (url.includes('/address/')) {
         return {
@@ -79,71 +82,62 @@ describe('refreshTreasuryCache', () => {
         };
       }
       if (url.includes('/v1/prices')) {
-        return {
-          ok: true,
-          json: async () => ({ USD: 65000 }),
-        };
+        return { ok: true, json: async () => ({ USD: 65000 }) };
       }
       if (url.includes('/v1/fees/recommended')) {
         return {
           ok: true,
           json: async () => ({
-            fastestFee: 15,
-            halfHourFee: 10,
-            hourFee: 5,
-            economyFee: 3,
-            minimumFee: 1,
+            fastestFee: 15, halfHourFee: 10, hourFee: 5, economyFee: 3, minimumFee: 1,
           }),
         };
       }
       return { ok: false };
     });
 
-    // Mock anchor stats queries.
-    //
-    // Supabase's query builder is thenable in production (`await db.from(...).select(...).eq(...)`
-    // resolves via PostgrestFilterBuilder's own `.then`). Tests must not reproduce that
-    // pattern by putting a `then` on a plain object — SonarCloud typescript:S7739 flags
-    // it because bespoke thenables are a common footgun. Instead, make the TERMINAL method
-    // of each chain return a Promise via `mockResolvedValue`. The chain's intermediate
-    // methods are `mockReturnThis` for composition.
-    //
-    // Terminals per query (see refreshTreasuryCache):
-    //   1. secured  count: `.eq().is()`          — terminal is `is`
-    //   2. pending  count: `.eq().is()`          — terminal is `is`
-    //   3. lastSecured row: `.eq().is().order().limit(1)` — terminal is `limit`
-    //   4. last24h  count: `.is().gte()`         — terminal is `gte`
-    const mockChain = (terminal: 'is' | 'limit' | 'gte', result: unknown) => {
-      const chain: Record<string, ReturnType<typeof vi.fn>> = {
-        select: vi.fn().mockReturnThis(),
-        eq: vi.fn().mockReturnThis(),
-        is: vi.fn().mockReturnThis(),
-        gte: vi.fn().mockReturnThis(),
-        order: vi.fn().mockReturnThis(),
-        limit: vi.fn().mockReturnThis(),
-      };
-      chain[terminal] = vi.fn().mockResolvedValue(result);
-      return chain;
-    };
+    mockPipelineCacheSelect.mockResolvedValue({
+      data: { cache_value: { SECURED: 1_412_000, PENDING: 200, total: 1_412_200 } },
+      error: null,
+    });
+    mockTreasuryCacheSelect.mockResolvedValue({ data: null, error: null });
 
-    let callCount = 0;
+    let anchorsCallCount = 0;
     mockFrom.mockImplementation((table: string) => {
       if (table === 'treasury_cache') {
-        return { upsert: mockUpsert };
+        return {
+          upsert: mockUpsert,
+          select: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              single: vi.fn(() => mockTreasuryCacheSelect()),
+            })),
+          })),
+        };
       }
-      // anchors table — returns different results for each call
-      callCount++;
-      if (callCount === 1) return mockChain('is', { count: 1412000, data: null, error: null });
-      if (callCount === 2) return mockChain('is', { count: 0, data: null, error: null });
-      if (callCount === 3) return mockChain('limit', { data: [{ chain_timestamp: '2026-04-09T12:00:00Z' }], error: null });
-      return mockChain('gte', { count: 150, data: null, error: null });
+      if (table === 'pipeline_dashboard_cache') {
+        return {
+          select: vi.fn(() => ({
+            eq: vi.fn(() => ({
+              single: vi.fn(() => mockPipelineCacheSelect()),
+            })),
+          })),
+        };
+      }
+      // anchors table — two calls: lastSeen then last24
+      anchorsCallCount++;
+      if (anchorsCallCount === 1) {
+        return mockChain('limit', {
+          data: [{ chain_timestamp: '2026-04-09T12:00:00Z' }],
+          error: null,
+        });
+      }
+      return mockChain('limit', { data: [], error: null });
     });
   });
 
   it('fetches balance from mempool.space and writes to cache', async () => {
     const result = await refreshTreasuryCache();
 
-    expect(result.balance_confirmed_sats).toBe(80000); // 100000 - 20000
+    expect(result.balance_confirmed_sats).toBe(80000);
     expect(result.balance_unconfirmed_sats).toBe(5000);
     expect(result.btc_price_usd).toBe(65000);
     expect(result.fee_fastest).toBe(15);
@@ -151,6 +145,14 @@ describe('refreshTreasuryCache', () => {
     expect(result.error).toBeNull();
     expect(result.updated_at).toBeDefined();
     expect(mockUpsert).toHaveBeenCalled();
+  });
+
+  it('reads anchor counts from pipeline_dashboard_cache', async () => {
+    const result = await refreshTreasuryCache();
+
+    expect(result.total_secured).toBe(1_412_000);
+    expect(result.total_pending).toBe(200);
+    expect(result.last_secured_at).toBe('2026-04-09T12:00:00Z');
   });
 
   it('handles mempool.space balance fetch failure gracefully', async () => {
@@ -174,11 +176,8 @@ describe('refreshTreasuryCache', () => {
 
     const result = await refreshTreasuryCache();
 
-    // Balance should be 0 (default) since fetch failed
     expect(result.balance_confirmed_sats).toBe(0);
-    // But fee rates should still be populated
     expect(result.fee_fastest).toBe(15);
-    // And BTC price should still work
     expect(result.btc_price_usd).toBe(65000);
   });
 
@@ -192,5 +191,36 @@ describe('refreshTreasuryCache', () => {
         updated_at: expect.any(String),
       }),
     );
+  });
+
+  it('SCRUM-1786: sentinel guard preserves last-good values when anchor stats return -1', async () => {
+    mockPipelineCacheSelect.mockResolvedValue({
+      data: null,
+      error: { message: 'relation does not exist' },
+    });
+    mockTreasuryCacheSelect.mockResolvedValue({
+      data: { total_secured: 1_500_000, total_pending: 42, last_24h_count: 150 },
+      error: null,
+    });
+
+    const result = await refreshTreasuryCache();
+
+    expect(result.total_secured).toBe(1_500_000);
+    expect(result.total_pending).toBe(42);
+    // last_24h_count is 0 (not -1) because its anchors query succeeded independently
+    expect(result.last_24h_count).toBe(0);
+  });
+
+  it('SCRUM-1786: sentinel guard skips when no existing cache row', async () => {
+    mockPipelineCacheSelect.mockResolvedValue({
+      data: null,
+      error: { message: 'timeout' },
+    });
+    mockTreasuryCacheSelect.mockResolvedValue({ data: null, error: null });
+
+    const result = await refreshTreasuryCache();
+
+    expect(result.total_secured).toBe(-1);
+    expect(result.total_pending).toBe(-1);
   });
 });

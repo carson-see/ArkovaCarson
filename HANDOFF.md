@@ -14,91 +14,127 @@
 
 ## Now
 
-### 2026-05-10 — PR #753 (SCRUM-1798/1799/1800) Phase 2 emit-points + dispatcher UUID-coercion fix
+### 2026-05-12 — PR #753 (SCRUM-1798/1799/1800) merged main → T3 48h re-soak underway
 
-**Status:** PR #753 `MERGEABLE` at tip `d90ac158`, T2 staging soak complete, awaiting Carson + reviewer sign-off.
+**Status:** PR #753 `MERGEABLE` at tip `<post-merge-sha>` (was `a55b30f9` pre-merge), main merged in to resolve 87-commit drift, T3 48h re-soak running. **Not yet eligible to merge** — awaiting fresh soak completion.
 
-**What shipped on the branch (no prod state changed):**
+**What changed in this update:**
 
-* **Phase 2 emit-points** for credential.* webhook events whose schemas shipped in PR #740 (Phase 1):
-  * `credential.issued` — `services/worker/src/api/v1/credential-sources.ts` (POST `/import-url/confirm`)
-  * `credential.verified` (single + batch) — `services/worker/src/api/v1/{verify,oracle}.ts`, flag-gated `ENABLE_CREDENTIAL_VERIFIED_WEBHOOK` default-OFF
-  * `credential.status_changed` (REVOKED/SECURED/EXPIRED) — `anchor-revoke.ts` + `check-confirmations.ts` bulk drain + `anchorExpirySweep.ts`
-  * `anchor.revoked` (was a missing producer despite shipped schema) — wired here
-* **Per-emit `audit_events` rows** with `dispatched`/`dispatch_error` so the SCRUM-1738 retry path can recover failed dispatches.
-* **+23 emit tests across 7 suites + 2 dispatcher fix tests; 130/130 across touched suites; 5389/5389 worker-wide** (one zk-proof environmental skip).
+* Discovered post-T3-soak that CI had stopped firing on the branch after `614c40fe` because the PR was in `CONFLICTING` state (87 commits behind main, including 3 new migrations: `0300_test_credit_pool`, `0301_anchor_quota_nonneg_check`, `0304_drop_broken_search_public_credentials_overload`).
+* Merged `origin/main` into the branch. Two conflicts resolved cleanly:
+  * `HANDOFF.md` — kept both narratives (5-11 main entry + 5-10 PR #753 entry side by side).
+  * `services/worker/src/jobs/check-confirmations.test.ts` — both sides added different test helper functions (PR #753: `setupBulkDrainTest` / `flattenAuditRows` / `drainMicrotasks` for SCRUM-1800 bulk-drain emit suite; main: `submittedCandidate` / `setupCursorRotationScenario` for cursor-rotation tests). Combined both sets — no semantic conflict.
+* SonarCloud `typescript:S7739` MAJOR (HIGH reliability) on `delivery.test.ts:69`, plus two pre-existing lint errors (`prefer-const` in `anchorExpirySweep.ts`, `no-unused-vars` in `delivery.test.ts`) all fixed in commit `b2feaac2`.
+* T3 soak result on `a55b30f9` (2026-05-10T15:11:33Z → 2026-05-12T15:11:33Z, 48h, 462,110 reqs, 0 worker errors) is **no longer transferable** because the merged-in 87 commits include treasury-cache + anchor-quota + billing + auth + 3 migrations — those are unsoaked under §1.12 strict. Hence fresh T3.
 
-**Bug found during the staging soak (and fixed in this PR):**
+**Audit-fix history preserved on the branch (T3 originally triggered by these):**
 
-`webhook_delivery_logs.event_id` is `uuid NOT NULL`, but every existing producer (`anchor.ts`, `anchorExpirySweep.ts` from PR #734, plus all six new emit sites) was passing string event_ids (`public_id`, `expired-${public_id}`, `cred-status-expired-${public_id}`). PostgreSQL rejected the insert with `22P02`; `deliverToEndpoint` returned `false`; `dispatchWebhookEvent` did not observe (Promise.all sees no rejection). Net effect: every webhook event from these sites was silently dropped at the storage layer.
+| # | Severity | Surface | Fix |
+|---|---|---|---|
+| A1 | HIGH | `services/worker/src/webhooks/delivery.ts` | Retry-path idempotency re-fires when `status !== 'success'` (was unconditional early-return). Uses `.update().eq().select().single()` UPDATE…RETURNING. |
+| A2 | HIGH | `services/worker/src/webhooks/delivery.ts` | Distinguish PGRST116 from real DB/RLS errors at idempotency lookup. Real errors → `Sentry.captureException(stage='idempotency_lookup')` + return false (was silent swallow). |
+| A3 | HIGH | `services/worker/src/jobs/check-confirmations.ts` | Mutex moved above mock-path branch + `WHERE chain_tx_id IS NULL` guard prevents double-fan-out under concurrency. |
+| A4 | HIGH | `services/worker/src/jobs/anchorExpirySweep.ts` | Cursor advancement walks page in reverse, advances only past finite-and-expired rows; future-dated rows do NOT advance. |
+| A5 | HIGH | `services/worker/src/api/anchor-revoke.ts` | Membership lookup propagates non-PGRST116 as 500 (was collapsing every error to 404). |
+| C1 | MEDIUM | `services/worker/src/jobs/check-confirmations.ts` | `audit_events.actor_id = null` for system events (was zero-UUID FK violation). |
 
-Fixed at the dispatcher (commit `11a2a3e3`): coerce non-UUID event_id to a fresh UUID for the column, keep the original string in the JSONB payload (what customers see) and the idempotency key (deterministic retry dedup).
+**Follow-up tickets (carried from 2026-05-10):**
 
-**Prod blast radius: ZERO.** Verified 2026-05-10 by querying prod Supabase: `webhook_endpoints` returns 0 rows. No customer subscribed; no deliveries attempted; nothing dropped. The fix is preventative — would have load-borne the moment any customer registered for `anchor.expired`, `anchor.submitted`, or any of the new `credential.*` event types.
+* SCRUM-1805 — Sentry alert on `Failed to create delivery log` worker errors (Sentry capture wired in `b1c6e1f2`; alert rule spec at `infra/sentry/alert-rules.json`).
+* SCRUM-1806 — Flip `ENABLE_CREDENTIAL_VERIFIED_WEBHOOK` on in prod after PR #753 merges + deploys.
+* SCRUM-1807 — Cursor-based pagination for `anchorExpirySweep` (shipped in this PR at commit `4c7e3b51`).
+* SCRUM-1808 — Staging cron-secret drift (every PR's soak hits 100% 401 on cron mode; unblocked by PR #760's claim.sh rig).
 
-**T2 staging soak (2026-05-09 16:48–20:48 UTC, 4h exactly):**
-
-* Worker: `arkova-worker-staging-00043-hk8` (image `scrum1798-11a2a3e3`, full SHA `11a2a3e38ffa5622e376337876f51df460d82126`)
-* 38,522 requests, 2.7/s sustained, **zero worker-level errors** over the 4h window
-* Latency p50 44–47ms / p95 139–531ms / p99 230–959ms (stable)
-* Rollback rehearsed: 18s rollback (00041 → 00042) + 18s roll-forward (00042 → 00043), `/health: status:healthy` on both transitions
-* End-to-end credential.status_changed delivery confirmed via `webhook_delivery_logs` (`event_id=9efd3f50-3c9a-480c-9d75-786b5b36f344`, `status=success`, `response_status=200`)
-* Migration applied: **none** (PR is code-only — zero schema changes)
-* Evidence: [`docs/staging/scrum-1798-soak-evidence.md`](./docs/staging/scrum-1798-soak-evidence.md)
-
-**Follow-up tickets filed:**
-
-* SCRUM-1805 — Sentry alert on `Failed to create delivery log` worker errors (the dispatcher coercion eliminates the 22P02 case, but DB-outage and other failure modes remain)
-* SCRUM-1806 — Flip `ENABLE_CREDENTIAL_VERIFIED_WEBHOOK` on in prod after PR #753 merges + deploys
-* SCRUM-1807 — Cursor-based pagination for `anchorExpirySweep` (currently capped at 500/sweep)
-* SCRUM-1808 — Staging cron-secret drift: harness `STAGING_CRON_SECRET` != worker `CRON_SECRET` binding (every PR's soak hits 100% 401 on cron mode)
-
-**Confluence:** [SCRUM-1743 page](https://arkova.atlassian.net/wiki/spaces/A/pages/44204033) updated with the full producers table, recovery model, and deliberate-behavior documentation (cache-HIT skip, default-OFF flag, EXPIRED dependency).
+**Confluence:** [SCRUM-1743 page](https://arkova.atlassian.net/wiki/spaces/A/pages/44204033).
 
 ---
 
-### 2026-05-09 (session 2) — DoD gate completion across 9 open PRs + 4 new PRs from prior session (#755–#759)
+### 2026-05-11 — PR #756 + PR #763 ready for review
 
-**What this session did (no new PRs opened — completing existing ones):**
+**PR #756 (SCRUM-1668 addendum) — staging-honesty preflight + SUBMITTED fixture + ledger cleanup: READY FOR REVIEW at `9da4d2bd`.**
+8-check staging preflight script (`scripts/ci/staging-honesty-preflight.ts`): PR-only rows, duplicate names/versions, known artifacts, SUBMITTED anchors, prod divergence, org topology (single-tenant vs multi-org seeds), prod facts (pg_cron vacuum-anchors + refresh_pipeline_dashboard_cache). 53 unit tests. Seed.sql adds SUBMITTED anchor fixture. Staging ledger cleanup doc at `docs/staging/STAGING_LEDGER_CLEANUP_2026-05-09.md`. T1 soak passed (30 min, zero 500s). CI: 24/24 green. Supersedes no other PRs.
 
-* Created 7 Confluence pages for stories that were missing them: SCRUM-1731 (page 45187073), SCRUM-1732 (44957733), SCRUM-1733 (45219841), SCRUM-1793 (44957753), SCRUM-1801 (45252609), SCRUM-1802 (44924938), SCRUM-1723 (44957775).
-* Updated all 7 Jira ticket descriptions with Confluence page links + PR references.
-* Transitioned SCRUM-1801 and SCRUM-1802 from To Do → In Progress.
-* Posted status comments on all 7 Jira tickets documenting PR state and gate completion.
-* Added `staging-soak-skip` labels to PRs #734, #735, #736, #737, #741, #755 (test/dev-dep/hotfix scope).
-* Requested CodeRabbit re-reviews on PRs #757, #758, #759.
-* Background agents pushed fixes: PR #755 (serializeJsonForBigQuery in backfill file — CodeRabbit feedback), PR #758 (E2E test strict-mode fix for duplicate "Copy Verification Link" button), PR #759 (SonarCloud duplication reduction).
+**PR #763 (bundled dep bumps) — 38 package bumps + ws transport fix: READY FOR REVIEW at `118c67a6`.**
+Bundles dependabot PRs #752 (root) and #754 (worker). Key bumps: supabase-js 2.105.0→2.105.4, sentry 10.50→10.52, stripe 22.1.0→22.1.1, vite 8.0.10→8.0.11. Root cause fix: supabase-js 2.105.4's realtime-js requires explicit `ws` transport on Node 20 — added `ws` dep to worker, passed `realtime: { transport: ws }` in db.ts/auth.ts/fraud-audit.ts, switched RLS tests to `createAnonClient()` helper. T1 soak passed (30 min, zero 500s). CI: all GH Actions green (SonarCloud + Vercel are pre-existing systemic failures). Supersedes #752 and #754 — close after merge.
 
-**CI blockers identified:**
+**Bug found + fixed in PR #763:** supabase-js 2.105.4 breaks Node 20 environments without native WebSocket — `realtime-js` throws "Node.js 20 detected without native WebSocket support." Fix: explicit `ws` transport parameter. Not yet logged in Confluence bug tracker (gap — Carson to log or delegate).
 
-* **PR #758**: E2E failure is pre-existing (`secure-document.spec.ts:190` — `getByRole` resolves 2 buttons). Fix pushed to branch.
-* **PR #759**: SonarCloud "4.1% duplication on new code" (threshold 3%). Reduction pushed to branch.
-* **PR #755**: CodeRabbit CHANGES_REQUESTED about using `serializeJsonForBigQuery` in `bq-export-backfill.ts`. Fix pushed to branch.
-* **PR #741**: "Check supabase/migrations vs prod" FAILURE — expected for new migration (0303). Not fixable without deploying.
-* CodeRabbit is NOT a required check (confirmed via branch protection API). Required checks: TypeCheck & Lint, Tests, Generated Types Check, Migration Safety Check, Lockfile Integrity, Secret Scanning, Dependency Scanning, TDD Enforcement, TLA+ Verification, Check supabase/migrations vs prod, AI Eval Regression Gate, SonarCloud Code Analysis, E2E Tests.
+**Jira state:**
+- SCRUM-1668 → In Progress (PR #756 awaits review)
 
-**PRs from prior session (session 1) that opened 4 new PRs (#756–#759):**
+**What's NOT done — explicit gaps:**
+- Confluence bug tracker entry for ws transport breakage (PR #763)
+- SCRUM-1668 Confluence page not verified as reflecting checks 7+8 (PR #756)
+- Both PRs await human review + merge
 
-| PR | Story | What | Status |
-|---|---|---|---|
-| #755 | SCRUM-1723 | fix: BQ export verifications source + JSON scalar serialization | CI pending (CodeRabbit fix pushed) |
-| #756 | SCRUM-1668 | feat: staging preflight + SUBMITTED fixture + ledger cleanup | staging-soak-skip |
-| #757 | SCRUM-1802 | chore: eslint 9→10 in worker | staging-soak-skip, CodeRabbit re-review requested |
-| #758 | N/A | fix: ws transport for Node <22 CI | staging-soak-skip, E2E fix pushed |
-| #759 | SCRUM-1801 | chore: zod 3→4 across all packages | staging-soak-skip, SonarCloud fix pushed |
+### 2026-05-10 (evening) — SCRUM-1794 + SCRUM-1803 ready for merge; multi-tenant staging rig live in prod tooling
 
-**Merge order recommendation (dependency-aware):**
+**PR #760 (SCRUM-1803) — multi-tenant staging rig: MERGED 12:28 UTC.**
+Lease-enforced, tag-routed staging-worker deploys (`scripts/staging/deploy.sh`). Single shared `arkova-worker-staging` Cloud Run service, but each PR's soak now lives on its own tag URL (`https://pr-N---arkova-worker-staging-...run.app`). Append-only `staging_deploy_log` table on staging Supabase (`ujtlwnoqfhtitcmsnrpq`) — every deploy writes an audit row. CI gate `Staging deploy log id:` required for T2/T3 evidence blocks. Migration applied to staging only; verified prod (`vzwyaatejekddvltxyye`) has zero `staging_*` tables. Confluence: [45318197](https://arkova.atlassian.net/wiki/spaces/A/pages/45318197). Phase-2 backlog (8 items: lint rule blocking raw `gcloud`, pre-deploy collision detection, image-existence pre-check, tag URL listing, orphan janitor, structured `--force` reason, `--promote` extra gate, IAM rotation) deferred to a follow-up bundled PR.
 
-1. #758 (ws transport — unblocks #752 grouped deps)
-2. #757 (eslint 10 — independent)
-3. #759 (zod 4 — supersedes Dependabot #702, #706, #709; close those after merge)
-4. #735, #736, #737 (test-only, independent)
-5. #755 (BQ export hotfix)
-6. #741 (validate_api_key RPC migration)
-7. #734 (anchor expiry cron — T2 soak declared in title)
-8. #756 (SCRUM-1668 addendum)
+**PR #742 (SCRUM-1794) — webhook event subscribe↔emit parity: READY FOR REVIEW at `9a8774c1`.**
+Closes the asymmetric subscribe-vs-emit gap surfaced during the SCRUM-1743 audit. Worker emitted `anchor.submitted` + `anchor.batch_secured` for months but the CRUD allowlist (`VALID_WEBHOOK_EVENTS`) rejected subscriptions. PR ships end-to-end consistency: worker schema + 3 OpenAPI sites + UI dropdown + SDK type union + Zapier integration + `docs/api/webhooks.md` + `services/worker/agents.md`. Structural fix in `2f3e0b82`: `VALID_WEBHOOK_EVENTS` now derives from `PAYLOAD_SCHEMAS_BY_EVENT_TYPE` keys (single source of truth) — the *exact bug class* this story was filed to fix, not just the symptom. Drift-guard test in `9a8774c1` pins UI ↔ worker event-set match.
 
-_Last refreshed: 2026-05-09 by claude — claims verified against `gh pr list`, `gh pr checks`, `gh api repos/.../branches/main/protection`, Jira MCP queries for all 7 tickets, Confluence MCP createConfluencePage responses._
+- Two staging soak attempts on 2026-05-08 / 2026-05-09 destroyed by parallel-PR deploy collisions; PR #760 unblocked clean parallel testing. SCRUM-1795 / PR #747 (parallel session) closed as duplicate; broader UI/SDK/Zapier/docs scope cherry-picked into PR #742. Consolidated Confluence at [44564512](https://arkova.atlassian.net/wiki/spaces/A/pages/44564512).
+- **First soak** (`b76ecc5e`, schema-only) 2026-05-10T12:36:02Z → 16:36:05Z: 1681/1685 PASS (4 startup-burst 429s). After completion, `/simplify` review found structural gaps (literal allowlist duplicating PAYLOAD_SCHEMAS keys — the bug class SCRUM-1794 itself targets); cleanup commits `2f3e0b82` + `9a8774c1` followed.
+- **Re-soak** (`9a8774c1`, refactored) 2026-05-10T18:19:48Z → 22:19:54Z: **1688/1688 PASS = 100%, ZERO failures.** `staging_deploy_log` row id 10 captures the deploy. Pre-soak smoke gated at 3/3 with 7s pacing + 60s settle window (the startup-burst that produced 429s in the first soak was avoided).
+
+**Memory rules added this session:**
+- `feedback_claim_sh_before_staging_deploy.md` — always `claim.sh acquire` before staging deploys
+- `feedback_do_not_open_new_prs.md` (rescinded → `feedback_sensible_pr_bundling.md`) — group related changes into one PR, not one per file
+
+**Jira state (this session):**
+- SCRUM-1794 → Needs Human (PR #742 ready, awaiting human review + merge)
+- SCRUM-1795 → Done as Duplicate of SCRUM-1794
+- SCRUM-1803 → Phase 1 Done (PR #760 merged); Phase 2 backlog tracked in ticket comments
+
+**What's NOT done — explicit gaps:**
+- PR #742 needs a human review + merge.
+- SCRUM-1803 Phase 2 (8 follow-up items) not started.
+
+_Last refreshed: 2026-05-10 (evening) by claude — claims verified against `gh pr view 760` (MERGED 12:28 UTC), `gh pr view 742` (OPEN, tip `9a8774c1`), Supabase MCP `select * from public.staging_deploy_log where id in (3, 10)` (both rows present, lease_ok=true, forced=false), local soak harness logs at /tmp/scrum1794_soak.{log,sh,counts.txt} (1688 PASS / 0 FAIL final line)._
+
+### 2026-05-10 (session 2) — Drop broken search_public_credentials 3-arg overload (PR #761, SCRUM-1804) ✅ CLOSED
+
+* PR #761 **merged** 2026-05-11. Migration `0304_drop_broken_search_public_credentials_overload.sql` — drops broken 3-arg overload that referenced nonexistent columns.
+* Prod confirmed: only working 2-arg overload `(p_query text, p_limit integer)` exists on prod (`vzwyaatejekddvltxyye`).
+* Staging applied + verified + ledger reconciled. Prod applied (no-op). T2 soak elapsed. 24/24 CI green.
+* Jira SCRUM-1804 → Done. BUG-2026-05-09-001 closed in Confluence bug tracker.
+* Follow-up: `npm run gen:types` post-merge to remove stale 3-arg types from `database.types.ts`.
+
+_Last refreshed: 2026-05-11 by claude — verified against Supabase MCP `pg_proc` query on prod (1 overload, 2-arg only), `gh pr view 761` (MERGED), Jira MCP SCRUM-1804 (Done)._
+
+### 2026-05-10 (morning) — Merge sprint: 8 PRs merged, all original 7 HakiChain PRs closed, SCRUM-1742 close-out shipped
+
+**PRs merged this session (by Carson):**
+
+| PR | Story | What |
+|---|---|---|
+| #734 | SCRUM-1735+1736 | feat: anchor.expired schema + anchorExpirySweep cron |
+| #735 | SCRUM-1731 | test: v2 per-scope rate limit contract-lock |
+| #736 | SCRUM-1732 | test: anchor-submit metadata persistence contract-lock |
+| #737 | SCRUM-1733 | feat: REST v2 + MCP parity contract via shared Zod schemas |
+| #733 | N/A | chore: destroy staging-soak-skip override + agent enforcement hook |
+| #741 | SCRUM-1793 | feat: validate_api_key RPC for MCP edge auth |
+| #727 | SCRUM-1707 | fix: rotate submitted confirmation candidates |
+
+**PR #738 (SCRUM-1740) — partner sandbox:** Rebased onto main (conflict in `migration-drift-logic.test.ts` resolved). CI re-running. T3 48h soak ends 2026-05-10T20:55Z. Ready to merge after that.
+
+**New work this session:**
+
+* **SCRUM-1742 close-out:** Confluence Partner Sandbox Guide published (page 45940738). Covers provisioning, quota enforcement, billing exclusion, API scopes, onboarding email template. Jira → Done.
+* **Stripe SDK integration test:** Branch `claude/scrum-1740-stripe-integration-test` pushed. Verifies sandbox orgs never trigger `meterEvents.create` even when `stripeSecretKey` is configured. 10/10 tests pass.
+
+**Jira state (all Done):**
+
+* SCRUM-1731, 1732, 1733, 1735, 1736, 1740, 1742, 1793 → **Done**
+* SCRUM-1734 (parent story) → **Done**
+
+**Remaining open PRs from the HakiChain batch:**
+
+* **#738** — merge after 20:55 UTC today: `gh pr merge 738 --merge --delete-branch`
+
+_Last refreshed: 2026-05-10 by claude — claims verified against `gh pr list --state merged` (PRs 733/734/735/736/737/741 all MERGED 2026-05-09/10), `gh pr view 738` (OPEN, rebased, CI re-running), Jira MCP transitions (SCRUM-1740/1793/1734 all status=Done)._
 
 ### 2026-05-09 — BigQuery export build-tier shipped + Path C baseline merged + 4 CVEs closed + 4 Tier-2 dep bumps merged (session close)
 
@@ -217,6 +253,33 @@ Bench-state entry — PR not yet opened at time of writing. No prod state change
 **Soak tier for THIS branch:** T1 / staging-tooling-only — every touched path is on the allowlist (`scripts/ci/check-staging-evidence(.test)?.ts`, `CLAUDE.md`, `.claude/**`, `.github/workflows/staging-evidence.yml`, `HANDOFF.md`). The script's `isStagingToolingOnly` self-skip applies; no soak block required by the gate itself.
 
 _Last refreshed: 2026-05-07 by claude — claims verified against gcloud/MCP/CI output (`gh api -X DELETE /repos/carson-see/ArkovaCarson/labels/staging-soak-skip` returned no body / 204; `gh api /repos/carson-see/ArkovaCarson/labels/staging-soak-skip` now returns 404; `npx vitest run scripts/ci/check-staging-evidence.test.ts` returned 25/25 passing on this branch; hook pipe-test ran 5 synthesized payloads and exit codes + JSON outputs match the spec; jq schema check on `.claude/settings.json` confirms hook command path resolves to `$CLAUDE_PROJECT_DIR/.claude/hooks/check-staging-evidence-pre-merge.sh`)._
+
+### 2026-05-08 — SCRUM-1740 [Implement] partner sandbox migration + provisioning + HakiChain pilot live on staging (branch `claude/scrum-1740-sandbox-implement`)
+
+**Migration applied to arkova-staging** (project_ref `ujtlwnoqfhtitcmsnrpq`) at 2026-05-08T13:09Z via Supabase MCP `apply_migration` (single-file lettered-suffix migration; same schema effect as `npx supabase db push --linked` because there is no in-flight migration ahead of it on staging). For full multi-migration replay or fresh-DB rebuilds, use the documented `db push --linked` path per CLAUDE.md §1.11. Adds `org_credits.is_test` (default false) + `org_credits.anchor_quota` (nullable) + partial index `idx_org_credits_is_test`. NOTIFY pgrst reload schema fired. Production application is Carson-only — the migration drift CI check is expected to fail until Carson applies via Supabase MCP / `db push --linked` against project_ref `vzwyaatejekddvltxyye`.
+
+**HakiChain pilot org provisioned on staging:**
+
+- org_id (row id): redacted in HANDOFF; available via Supabase MCP
+- public_id: `ORG-TEST-HAKICHAIN-D724D647`
+- display_name: `[SANDBOX] hakichain`
+- org_credits row: `balance=5, purchased=5, anchor_quota=10, is_test=true`
+- api_key key_prefix: `ak_test_KzVv` (raw key delivered once via stdout to operator; never persisted in plaintext per CLAUDE.md §1.4)
+- scopes: `[read:search, read:records, read:orgs, anchor:write]`
+
+**End-to-end smoke from provisioned key:** `GET /api/v1/verify/ARK-2026-SCRUM1736T2` (the SCRUM-1736 fixture from the prior soak) returned 200 with `{verified:false, status:"EXPIRED", expiry_date:"2025-01-01T00:00:00+00:00"}` — full chain works (provisioning → API key → verify endpoint → SCRUM-1736 EXPIRED status correctly surfaced).
+
+What shipped on this branch:
+
+- `supabase/migrations/0297_test_credit_pool.sql` (new) — adds is_test + anchor_quota + partial index + NOTIFY pgrst + ROLLBACK + IF NOT EXISTS DDL.
+- `scripts/admin/provision-sandbox-org.ts` (new) — idempotent TS admin script. HMAC-SHA256 hashes API key per CLAUDE.md §1.4; raw key shown once via stdout. Resolves api_keys.created_by from any profile so the NOT NULL constraint is satisfied.
+- `scripts/admin/provision-sandbox-org.test.ts` (new) — 4 unit tests on `hmacApiKey`: hex digest format, determinism, raw-key sensitivity, secret-rotation sensitivity.
+
+Local quality gates: `npx vitest run scripts/admin/provision-sandbox-org.test.ts` → suite green locally (parseCliArgs + loadConfig + hmacApiKey coverage); `apply_migration` MCP returned `{success: true}`.
+
+Tier: T2 (migration + new public-API-surface admin script). Migration applied to staging. Provisioning ran end-to-end. /verify smoke confirmed against the SCRUM-1736 EXPIRED fixture. Migration drift check vs prod is expected red until Carson applies 0297+0298 to prod.
+
+_Last refreshed: 2026-05-08 by claude — claims verified against gcloud/MCP/CI output (apply_migration MCP returned success against project_ref ujtlwnoqfhtitcmsnrpq; PostgREST GET on org_credits + api_keys confirmed row state; live curl against arkova-worker-pr734-staging /api/v1/verify/ARK-2026-SCRUM1736T2 returned verified:false status:EXPIRED)._
 
 ### 2026-05-06 — PR #711 SCRUM-1545 coverage backfill merge-resolution pass
 

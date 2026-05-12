@@ -42,7 +42,7 @@ export async function verifyAuthToken(
   }
 
   // Fallback: network call to Supabase auth API
-  return verifyJwtViaSupabase(token, config, logger);
+  return verifyJwtViaSupabase(token, logger);
 }
 
 /**
@@ -76,16 +76,20 @@ async function verifyJwtLocally(
 /**
  * Fallback: verify JWT by calling Supabase auth.getUser().
  * Used when SUPABASE_JWT_SECRET is not configured.
+ * Reuses the shared singleton DB client (getDb) instead of creating
+ * a throwaway client on every invocation.
+ *
+ * Dynamic import of db.ts defers config validation to call time,
+ * keeping auth.ts importable in test environments without all worker
+ * env vars present.
  */
 async function verifyJwtViaSupabase(
   token: string,
-  config: AuthConfig,
   logger: Pick<Logger, 'warn' | 'error'>,
 ): Promise<string | null> {
   try {
-    const { createClient } = await import('@supabase/supabase-js');
-    const supabaseClient = createClient(config.supabaseUrl!, config.supabaseServiceKey!);
-    const { data: { user }, error } = await supabaseClient.auth.getUser(token);
+    const { getDb } = await import('./utils/db.js');
+    const { data: { user }, error } = await getDb().auth.getUser(token);
 
     if (error || !user) {
       logger.warn({ error }, 'Invalid or expired auth token');

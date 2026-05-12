@@ -517,18 +517,16 @@ VALUES (
   '2027-01-01T00:00:00Z'
 );
 
--- Record 6: PENDING (recently uploaded, awaiting anchoring)
--- NOTE: SUBMITTED status can't be used in seed because ALTER TYPE ADD VALUE
--- doesn't work inside the transaction that `supabase db reset` uses.
--- After db reset, run the post-reset SUBMITTED fix from CLAUDE.md, then:
---   UPDATE anchors SET status = 'SUBMITTED' WHERE id = 'cccccccc-0000-0000-0000-000000000006';
+-- Record 6: SUBMITTED (submitted to chain, awaiting confirmation)
+-- Path C baseline includes SUBMITTED in the initial CREATE TYPE, so this works
+-- directly in supabase db reset (no ALTER TYPE ADD VALUE transaction issue).
 INSERT INTO anchors (id, user_id, filename, fingerprint, status, file_size, file_mime, credential_type, metadata, chain_tx_id, created_at)
 VALUES (
   'cccccccc-0000-0000-0000-000000000006',
   '55555555-0000-0000-0000-000000000002',
   'Patent_Application_AI_Method.pdf',
   'f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1',
-  'PENDING',
+  'SUBMITTED',
   5200000,
   'application/pdf',
   'PATENT',

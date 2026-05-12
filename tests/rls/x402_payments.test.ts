@@ -11,30 +11,14 @@
  * - Database reset with seed data (supabase db reset)
  */
 
-import { describe, it, expect, beforeAll } from 'vitest';
-import {
-  createServiceClient,
-  withIndividualUser,
-  type TypedClient,
-} from '../../src/tests/rls/helpers';
-import { createClient } from '@supabase/supabase-js';
-
-const SUPABASE_URL = process.env.SUPABASE_URL!;
-const SUPABASE_ANON_KEY = process.env.SUPABASE_ANON_KEY!;
+import { describe, it, expect } from 'vitest';
+import { setupRlsClients } from '../../src/tests/rls/helpers';
 
 describe('RLS: x402_payments', () => {
-  let anonClient: ReturnType<typeof createClient>;
-  let authClient: TypedClient;
-  let serviceClient: TypedClient;
-
-  beforeAll(async () => {
-    anonClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-    authClient = await withIndividualUser();
-    serviceClient = createServiceClient();
-  });
+  const c = setupRlsClients();
 
   it('anon client CANNOT select from x402_payments', async () => {
-    const { data, error } = await anonClient
+    const { data, error } = await c.anonClient
       .from('x402_payments')
       .select('id')
       .limit(1);
@@ -48,7 +32,7 @@ describe('RLS: x402_payments', () => {
   });
 
   it('authenticated client CANNOT select from x402_payments', async () => {
-    const { data, error } = await authClient
+    const { data, error } = await c.authClient
       .from('x402_payments')
       .select('id')
       .limit(1);
@@ -62,7 +46,7 @@ describe('RLS: x402_payments', () => {
   });
 
   it('authenticated client CANNOT insert into x402_payments', async () => {
-    const { error } = await authClient.from('x402_payments').insert({
+    const { error } = await c.authClient.from('x402_payments').insert({
       tx_hash: 'rls-test-hash',
       network: 'eip155:84532',
       amount_usd: 0.01,
@@ -77,7 +61,7 @@ describe('RLS: x402_payments', () => {
   it('service_role client CAN insert and select from x402_payments', async () => {
     const testTxHash = `rls-test-${Date.now()}`;
 
-    const { error: insertError } = await serviceClient
+    const { error: insertError } = await c.serviceClient
       .from('x402_payments')
       .insert({
         tx_hash: testTxHash,
@@ -90,7 +74,7 @@ describe('RLS: x402_payments', () => {
 
     expect(insertError).toBeNull();
 
-    const { data, error: selectError } = await serviceClient
+    const { data, error: selectError } = await c.serviceClient
       .from('x402_payments')
       .select('id, tx_hash')
       .eq('tx_hash', testTxHash)
@@ -101,7 +85,7 @@ describe('RLS: x402_payments', () => {
     expect(data![0].tx_hash).toBe(testTxHash);
 
     // Cleanup
-    await serviceClient
+    await c.serviceClient
       .from('x402_payments')
       .delete()
       .eq('tx_hash', testTxHash);

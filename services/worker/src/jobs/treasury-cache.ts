@@ -160,6 +160,25 @@ export async function refreshTreasuryCache(): Promise<TreasuryCacheData> {
   // Anchor stats from Supabase (extracted for complexity budget)
   Object.assign(data, await fetchAnchorStats());
 
+  // SCRUM-1786: sentinel guard — never overwrite good cached values with -1.
+  const sentinelFields = ['total_secured', 'total_pending', 'last_24h_count'] as const;
+  if (sentinelFields.some(f => data[f] === -1)) {
+    const { data: existing } = await db
+      .from('treasury_cache')
+      .select('total_secured, total_pending, last_24h_count')
+      .eq('id', 1)
+      .single();
+
+    if (existing) {
+      for (const f of sentinelFields) {
+        const prev = (existing as Record<string, unknown>)[f];
+        if (data[f] === -1 && typeof prev === 'number' && prev !== -1) {
+          (data as unknown as Record<string, number>)[f] = prev;
+        }
+      }
+    }
+  }
+
   // Upsert into treasury_cache (singleton, id=1)
   const { error: upsertError } = await db
     .from('treasury_cache')

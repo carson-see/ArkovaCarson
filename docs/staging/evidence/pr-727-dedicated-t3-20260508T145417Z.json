@@ -1,0 +1,62 @@
+{
+  "startedAt": "2026-05-08T14:54:19.187Z",
+  "endedAt": "2026-05-10T14:54:19.409Z",
+  "durationSec": 172800.222,
+  "apiBase": "https://arkova-worker-pr727-staging-270018525501.us-central1.run.app",
+  "mode": "mixed",
+  "totalRequests": 462338,
+  "byMode": {
+    "events": {
+      "ok": 0,
+      "fail": 286519,
+      "errorRate": 1,
+      "p50Ms": 53,
+      "p95Ms": 214,
+      "p99Ms": 442,
+      "byStatus": {
+        "0": 12,
+        "401": 21115,
+        "429": 265392
+      }
+    },
+    "reads": {
+      "ok": 0,
+      "fail": 143588,
+      "errorRate": 1,
+      "p50Ms": 52,
+      "p95Ms": 216,
+      "p99Ms": 444,
+      "byStatus": {
+        "0": 6,
+        "401": 4204,
+        "429": 131100,
+        "503": 8278
+      }
+    },
+    "webhook": {
+      "ok": 0,
+      "fail": 28775,
+      "errorRate": 1,
+      "p50Ms": 54,
+      "p95Ms": 348,
+      "p99Ms": 573,
+      "byStatus": {
+        "0": 2,
+        "429": 5069,
+        "503": 23704
+      }
+    },
+    "cron": {
+      "ok": 3455,
+      "fail": 1,
+      "errorRate": 0.00028935185185185184,
+      "p50Ms": 478,
+      "p95Ms": 3121,
+      "p99Ms": 4628,
+      "byStatus": {
+        "0": 1,
+        "200": 3455
+      }
+    }
+  }
+}

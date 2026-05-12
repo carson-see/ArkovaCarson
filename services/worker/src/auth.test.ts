@@ -97,9 +97,9 @@ describe('verifyAuthToken', () => {
     };
 
     it('returns user ID from Supabase getUser', async () => {
-      // Mock the dynamic import of @supabase/supabase-js
-      vi.doMock('@supabase/supabase-js', () => ({
-        createClient: () => ({
+      // Mock the shared getDb() singleton so verifyJwtViaSupabase uses it
+      vi.doMock('./utils/db.js', () => ({
+        getDb: () => ({
           auth: {
             getUser: vi.fn().mockResolvedValue({
               data: { user: { id: TEST_USER_ID } },
@@ -112,12 +112,12 @@ describe('verifyAuthToken', () => {
       const result = await verifyAuthToken('some-token', config, mockLogger);
       expect(result).toBe(TEST_USER_ID);
 
-      vi.doUnmock('@supabase/supabase-js');
+      vi.doUnmock('./utils/db.js');
     });
 
     it('returns null when getUser returns error', async () => {
-      vi.doMock('@supabase/supabase-js', () => ({
-        createClient: () => ({
+      vi.doMock('./utils/db.js', () => ({
+        getDb: () => ({
           auth: {
             getUser: vi.fn().mockResolvedValue({
               data: { user: null },
@@ -130,7 +130,7 @@ describe('verifyAuthToken', () => {
       const result = await verifyAuthToken('bad-token', config, mockLogger);
       expect(result).toBeNull();
 
-      vi.doUnmock('@supabase/supabase-js');
+      vi.doUnmock('./utils/db.js');
     });
   });
 });

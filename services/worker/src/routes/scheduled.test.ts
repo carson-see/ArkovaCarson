@@ -68,7 +68,7 @@ describe('setupScheduledJobs', () => {
     setupScheduledJobs(true);
 
     // Explicitly verify anchor-expiry-sweep is registered with its cron expression.
-    const expressions = mockCronSchedule.mock.calls.map(([expr]: [string]) => expr);
+    const expressions = mockCronSchedule.mock.calls.map((call) => call[0] as string);
     expect(expressions).toContain('0 3 * * *');
   });
 
@@ -113,8 +113,8 @@ describe('setupScheduledJobs', () => {
 
     // Extract the set of skipped job names from the warn calls.
     const skippedJobNames = mockLogger.warn.mock.calls
-      .filter(([meta]: [{ jobName?: string }]) => typeof meta?.jobName === 'string')
-      .map(([meta]: [{ jobName: string }]) => meta.jobName);
+      .filter((call) => typeof (call[0] as { jobName?: string } | undefined)?.jobName === 'string')
+      .map((call) => (call[0] as { jobName: string }).jobName);
 
     expect(skippedJobNames).toContain('anchor-expiry-sweep');
   });
