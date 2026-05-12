@@ -13,6 +13,33 @@ import { TreasuryAdminPage } from './TreasuryAdminPage';
 // Mock hooks
 const mockUser = { email: 'carson@arkova.ai' };
 const mockProfile = { full_name: 'Admin', role: 'ORG_ADMIN', org_id: null, public_id: 'admin-1', is_public_profile: false, avatar_url: null };
+const mockTreasuryBalanceState: {
+  balance: null;
+  receipts: [];
+  feeRates: null;
+  anchorStats: null;
+  sourceState: {
+    cacheUpdatedAt: string | null;
+    cacheStale: boolean;
+    healthError: string | null;
+  };
+  loading: boolean;
+  error: string | null;
+  refresh: ReturnType<typeof vi.fn>;
+} = {
+  balance: null,
+  receipts: [],
+  feeRates: null,
+  anchorStats: null,
+  sourceState: {
+    cacheUpdatedAt: '2026-05-12T10:00:00Z',
+    cacheStale: false,
+    healthError: null as string | null,
+  },
+  loading: false,
+  error: null as string | null,
+  refresh: vi.fn(),
+};
 
 vi.mock('@/hooks/useAuth', () => ({
   useAuth: () => ({
@@ -40,21 +67,13 @@ vi.mock('@/hooks/useOrganization', () => ({
 }));
 
 vi.mock('@/hooks/useTreasuryBalance', () => ({
-  useTreasuryBalance: () => ({
-    balance: null,
-    receipts: [],
-    feeRates: null,
-    loading: false,
-    error: null,
-    refresh: vi.fn(),
-  }),
+  useTreasuryBalance: () => mockTreasuryBalanceState,
 }));
 
-vi.mock('@/hooks/useAnchorStats', () => ({
-  useAnchorStats: () => ({
-    stats: null,
-    loading: false,
-    refresh: vi.fn(),
+vi.mock('@/lib/workerClient', () => ({
+  workerFetch: vi.fn().mockResolvedValue({
+    ok: true,
+    json: vi.fn().mockResolvedValue({ total: 0, revenue: 0, recent: [] }),
   }),
 }));
 
@@ -105,6 +124,12 @@ describe('TreasuryAdminPage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockUser.email = 'carson@arkova.ai';
+    mockTreasuryBalanceState.sourceState = {
+      cacheUpdatedAt: '2026-05-12T10:00:00Z',
+      cacheStale: false,
+      healthError: null,
+    };
+    mockTreasuryBalanceState.error = null;
   });
 
   it('renders the page title for admin users', () => {
@@ -146,5 +171,24 @@ describe('TreasuryAdminPage', () => {
   it('renders x402 payment section', () => {
     renderPage();
     expect(screen.getByText('x402 Payment Revenue')).toBeInTheDocument();
+  });
+
+  it('surfaces worker cache freshness from the treasury source state', () => {
+    renderPage();
+    expect(screen.getByTestId('treasury-cache-freshness')).toHaveTextContent('Worker source');
+    expect(screen.getByTestId('treasury-cache-freshness')).toHaveTextContent('Treasury cache refreshed');
+  });
+
+  it('surfaces stale/error state when worker cache freshness is unavailable', () => {
+    mockTreasuryBalanceState.sourceState = {
+      cacheUpdatedAt: null,
+      cacheStale: true,
+      healthError: 'Worker health returned 503',
+    };
+
+    renderPage();
+
+    expect(screen.getByTestId('treasury-cache-error')).toHaveTextContent('Worker/cache freshness unavailable');
+    expect(screen.getByTestId('treasury-cache-freshness')).toHaveTextContent('Stale');
   });
 });

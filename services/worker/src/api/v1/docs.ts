@@ -975,7 +975,7 @@ export const openApiSpec: Record<string, any> = {
         required: ['verified'],
         properties: {
           verified: { type: 'boolean' },
-          status: { type: 'string', enum: ['ACTIVE', 'REVOKED', 'SUPERSEDED', 'EXPIRED', 'PENDING'] },
+          status: { type: 'string', enum: ['ACTIVE', 'REVOKED', 'SUPERSEDED', 'EXPIRED', 'PENDING', 'SUBMITTED'] },
           issuer_name: { type: 'string' },
           recipient_identifier: { type: 'string', description: 'Hashed identifier, never raw PII' },
           credential_type: { type: 'string' },

@@ -21,7 +21,7 @@ const router = Router();
 /** Full frozen schema result per CLAUDE.md Section 10 */
 export interface VerificationResult {
   verified: boolean;
-  status?: 'ACTIVE' | 'REVOKED' | 'SUPERSEDED' | 'EXPIRED' | 'PENDING';
+  status?: 'ACTIVE' | 'REVOKED' | 'SUPERSEDED' | 'EXPIRED' | 'PENDING' | 'SUBMITTED';
   issuer_name?: string;
   recipient_identifier?: string;
   credential_type?: string;
@@ -81,6 +81,8 @@ function mapStatus(status: string): VerificationResult['status'] {
       return 'EXPIRED';
     case 'PENDING':
       return 'PENDING';
+    case 'SUBMITTED':
+      return 'SUBMITTED';
     default:
       return undefined;
   }

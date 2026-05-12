@@ -2,8 +2,8 @@
  * Treasury Admin Dashboard
  *
  * Internal-only ops page for Arkova platform administrators.
- * Shows live BTC balance from mempool.space, anchor stats from Supabase,
- * recent network receipts, fee rates + averages, and cost estimates.
+ * Shows worker-sourced treasury balance/cache freshness, recent network
+ * receipts, fee rates + averages, and cost estimates.
  *
  * CRITICAL: This page is ONLY accessible to select Arkova organization members.
  * Third-party org admins and external users must NEVER see treasury data.
@@ -18,7 +18,6 @@ import { RefreshCw, AlertTriangle } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
 import { useTreasuryBalance } from '@/hooks/useTreasuryBalance';
-import { useAnchorStats } from '@/hooks/useAnchorStats';
 import { AppShell } from '@/components/layout';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -27,16 +26,25 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { ROUTES } from '@/lib/routes';
 import { TREASURY_LABELS, DATA_ERROR_LABELS } from '@/lib/copy';
 import { isPlatformAdmin } from '@/lib/platform';
-import { supabase } from '@/lib/supabase';
+import { workerFetch } from '@/lib/workerClient';
 import { BalanceCard, AnchorStats as AnchorStatsPanel, ReceiptTable, NetworkInfo } from '@/components/admin/treasury';
 import { DataErrorBanner } from '@/components/DataErrorBanner';
+
+function formatTreasuryFreshness(updatedAt: string | null): string {
+  if (!updatedAt) return 'No treasury cache timestamp returned';
+  const updatedMs = new Date(updatedAt).getTime();
+  if (!Number.isFinite(updatedMs)) return 'Treasury cache timestamp unavailable';
+  const ageMinutes = Math.floor(Math.max(Date.now() - updatedMs, 0) / 60_000);
+  if (ageMinutes < 1) return 'Treasury cache refreshed less than a minute ago';
+  if (ageMinutes === 1) return 'Treasury cache refreshed 1 minute ago';
+  return `Treasury cache refreshed ${ageMinutes.toLocaleString()} minutes ago`;
+}
 
 export function TreasuryAdminPage() {
   const navigate = useNavigate();
   const { user, signOut } = useAuth();
   const { profile, loading: profileLoading } = useProfile();
-  const { balance, receipts, feeRates, loading: balanceLoading, error: balanceError, refresh: refreshBalance } = useTreasuryBalance();
-  const { stats: anchorStats, loading: statsLoading, error: _statsError, refresh: refreshStats } = useAnchorStats();
+  const { balance, receipts, feeRates, anchorStats, sourceState, loading, error: balanceError, refresh: refreshBalance } = useTreasuryBalance();
 
   const [refreshing, setRefreshing] = useState(false);
 
@@ -44,10 +52,10 @@ export function TreasuryAdminPage() {
 
   const handleRefresh = useCallback(() => {
     setRefreshing(true);
-    Promise.all([refreshBalance(), refreshStats()]).finally(() => {
+    refreshBalance().finally(() => {
       setRefreshing(false);
     });
-  }, [refreshBalance, refreshStats]);
+  }, [refreshBalance]);
 
   const handleSignOut = async () => {
     await signOut();
@@ -70,8 +78,6 @@ export function TreasuryAdminPage() {
       </AppShell>
     );
   }
-
-  const loading = balanceLoading || statsLoading;
 
   return (
     <AppShell user={user} profile={profile} profileLoading={profileLoading} onSignOut={handleSignOut}>
@@ -108,6 +114,28 @@ export function TreasuryAdminPage() {
         />
       )}
 
+      {sourceState.healthError && (
+        <DataErrorBanner
+          data-testid="treasury-cache-error"
+          title={DATA_ERROR_LABELS.TREASURY_UNAVAILABLE_TITLE}
+          message={`Worker/cache freshness unavailable: ${sourceState.healthError}`}
+          spacing="mb-3"
+          onRetry={handleRefresh}
+          retrying={refreshing}
+        />
+      )}
+
+      <div
+        data-testid="treasury-cache-freshness"
+        className="mb-3 flex flex-wrap items-center gap-2 rounded-md border border-border/50 bg-muted/20 px-3 py-2 text-xs text-muted-foreground"
+      >
+        <Badge variant="outline" className="font-mono text-[10px]">Worker source</Badge>
+        <span>{formatTreasuryFreshness(sourceState.cacheUpdatedAt)}</span>
+        {sourceState.cacheStale && (
+          <Badge className="bg-amber-500/10 text-amber-400 border-amber-500/20 text-[10px]">Stale</Badge>
+        )}
+      </div>
+
       {/* Balance + Anchor Stats */}
       <div className="grid gap-4 grid-cols-1 lg:grid-cols-2 mb-8">
         <BalanceCard balance={balance} loading={loading} />
@@ -136,7 +164,7 @@ export function TreasuryAdminPage() {
   );
 }
 
-/** x402 payment stats from x402_payments table */
+/** x402 payment stats from the worker treasury endpoint */
 function X402PaymentStats() {
   const [stats, setStats] = useState<{ total: number; revenue: number; recent: Array<{ tx_hash: string; amount_usd: number; created_at: string }> } | null>(null);
   const [loading, setLoading] = useState(true);
@@ -147,24 +175,20 @@ function X402PaymentStats() {
 
   useEffect(() => {
     let cancelled = false;
-    // Single RPC replaces 3 separate x402_payments queries
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const dbAny = supabase as any;
-    dbAny.rpc('get_treasury_stats').then(({ data, error: rpcErr }: { data: { total_payments: number; total_revenue_usd: number; recent_payments: Array<{ tx_hash: string; amount_usd: number; created_at: string }> } | null; error: { message?: string } | null }) => {
+    workerFetch('/api/treasury/x402-stats', { method: 'GET' }).then(async (response) => {
       if (cancelled) return;
-      if (rpcErr) {
-        setError(rpcErr.message ?? 'RPC failed');
-        return;
+      if (!response.ok) {
+        const detail = await response.json().catch(() => null);
+        throw new Error(typeof detail?.error === 'string' ? detail.error : `Worker returned ${response.status}`);
       }
+      return response.json() as Promise<{ total: number; revenue: number; recent: Array<{ tx_hash: string; amount_usd: number; created_at: string }> }>;
+    }).then((data) => {
+      if (cancelled) return;
       if (!data) {
         setError('No data returned');
         return;
       }
-      setStats({
-        total: data.total_payments ?? 0,
-        revenue: data.total_revenue_usd ?? 0,
-        recent: data.recent_payments ?? [],
-      });
+      setStats(data);
     }).catch((err: unknown) => {
       if (cancelled) return;
       setError(err instanceof Error ? err.message : 'Failed to load x402 stats');

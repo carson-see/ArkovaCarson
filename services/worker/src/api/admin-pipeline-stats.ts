@@ -17,9 +17,9 @@ import { isPlatformAdmin } from '../utils/platformAdmin.js';
 
 export interface PipelineStatsResponse {
   totalRecords: number;
-  /** Records with a Bitcoin tx id (SUBMITTED or SECURED), not merely an internal anchor row. */
+  /** Records confirmed on-chain (SECURED), not merely submitted to mempool. */
   anchoredRecords: number;
-  /** Records still missing a Bitcoin tx (unlinked, PENDING, or BROADCASTING). */
+  /** Records not yet confirmed (unlinked, PENDING, BROADCASTING, or SUBMITTED). */
   pendingRecords: number;
   embeddedRecords: number;
   anchorLinkedRecords: number;
@@ -77,16 +77,18 @@ export async function handlePipelineStats(
         broadcastingRecords = Number(rpcResp.data.broadcasting_records ?? 0);
         submittedRecords = Number(rpcResp.data.submitted_records ?? 0);
         securedRecords = Number(rpcResp.data.secured_records ?? 0);
-        anchoredRecords = Number(
-          rpcResp.data.bitcoin_anchored_records ??
-          rpcResp.data.anchored_records ??
-          0,
-        );
+        anchoredRecords = rpcResp.data.secured_records != null
+          ? securedRecords
+          : Number(
+              rpcResp.data.bitcoin_anchored_records ??
+              rpcResp.data.anchored_records ??
+              0,
+            );
         pendingRecords = Number(
           rpcResp.data.pending_bitcoin_records ??
           rpcResp.data.pending_records ??
           0,
-        );
+        ) + submittedRecords;
         embeddedRecords = Number(rpcResp.data.embedded_records ?? 0);
         cacheUpdatedAt = typeof rpcResp.data.cache_updated_at === 'string'
           ? rpcResp.data.cache_updated_at

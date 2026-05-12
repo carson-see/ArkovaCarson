@@ -157,8 +157,13 @@ export async function refreshTreasuryCache(): Promise<TreasuryCacheData> {
     data.network_name = info.chain;
   }, 'failed to fetch network info');
 
-  // Anchor stats from Supabase (extracted for complexity budget)
-  Object.assign(data, await fetchAnchorStats());
+  // Anchor stats from Supabase (extracted for complexity budget). Keep the
+  // treasury_cache write shape limited to actual treasury_cache columns.
+  const anchorStats = await fetchAnchorStats();
+  data.total_secured = anchorStats.total_secured;
+  data.total_pending = anchorStats.total_pending;
+  data.last_secured_at = anchorStats.last_secured_at;
+  data.last_24h_count = anchorStats.last_24h_count;
 
   // SCRUM-1786: sentinel guard — never overwrite good cached values with -1.
   const sentinelFields = ['total_secured', 'total_pending', 'last_24h_count'] as const;

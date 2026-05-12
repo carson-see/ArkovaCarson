@@ -99,8 +99,8 @@ describe('handlePipelineStats — RPC happy path', () => {
     expect(res.status).not.toHaveBeenCalled();
     const payload = (res.json as ReturnType<typeof vi.fn>).mock.calls[0][0];
     expect(payload.totalRecords).toBe(2_950_000);
-    expect(payload.anchoredRecords).toBe(1_200_000);
-    expect(payload.pendingRecords).toBe(1_700_000);
+    expect(payload.anchoredRecords).toBe(1_000_000);
+    expect(payload.pendingRecords).toBe(1_700_200);
     expect(payload.embeddedRecords).toBe(2_500_000);
     expect(payload.anchorLinkedRecords).toBe(1_200_000);
     expect(payload.pendingRecordLinks).toBe(50_000);

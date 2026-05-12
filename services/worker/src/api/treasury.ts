@@ -41,6 +41,10 @@ export interface TreasuryStatusResponse {
   recentAnchors: {
     totalSecured: number;
     totalPending: number;
+    totalBroadcasting?: number;
+    totalSubmitted?: number;
+    totalRevoked?: number;
+    byStatus?: Record<string, number>;
     lastSecuredAt: string | null;
     last24hCount: number;
   };
@@ -134,11 +138,61 @@ export async function handleTreasuryStatus(
   result.recentAnchors = {
     totalSecured: stats.total_secured,
     totalPending: stats.total_pending,
+    totalBroadcasting: stats.total_broadcasting,
+    totalSubmitted: stats.total_submitted,
+    totalRevoked: stats.total_revoked,
+    byStatus: stats.by_status,
     lastSecuredAt: stats.last_secured_at,
     last24hCount: stats.last_24h_count,
   };
 
   res.json(result);
+}
+
+export interface TreasuryX402StatsResponse {
+  total: number;
+  revenue: number;
+  recent: Array<{ tx_hash: string; amount_usd: number; created_at: string }>;
+}
+
+export async function handleTreasuryX402Stats(
+  userId: string,
+  _req: Request,
+  res: Response,
+): Promise<void> {
+  const isAdmin = await isPlatformAdmin(userId);
+  if (!isAdmin) {
+    res.status(403).json({ error: 'Forbidden — platform admin access required' });
+    return;
+  }
+
+  try {
+    const { data, error } = await db.rpc('get_treasury_stats');
+    if (error) {
+      logger.error({ error }, 'Treasury x402 stats RPC failed');
+      res.status(503).json({ error: 'Treasury x402 stats temporarily unavailable' });
+      return;
+    }
+    if (!data) {
+      res.status(503).json({ error: 'Treasury x402 stats returned no data' });
+      return;
+    }
+
+    const row = data as {
+      total_payments?: number;
+      total_revenue_usd?: number;
+      recent_payments?: Array<{ tx_hash: string; amount_usd: number; created_at: string }>;
+    };
+
+    res.json({
+      total: row.total_payments ?? 0,
+      revenue: row.total_revenue_usd ?? 0,
+      recent: row.recent_payments ?? [],
+    } satisfies TreasuryX402StatsResponse);
+  } catch (err) {
+    logger.error({ error: err }, 'handleTreasuryX402Stats failed');
+    res.status(500).json({ error: 'Internal server error' });
+  }
 }
 
 // =============================================================================

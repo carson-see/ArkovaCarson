@@ -11,7 +11,7 @@ import { logger } from '../utils/logger.js';
 import { rateLimiters } from '../utils/rateLimit.js';
 import { corsMiddleware, extractAuthUserId } from './middleware.js';
 // DEBT-3: Static imports — circular dependency resolved by router extraction
-import { handleTreasuryStatus } from '../api/treasury.js';
+import { handleTreasuryHealth, handleTreasuryStatus, handleTreasuryX402Stats } from '../api/treasury.js';
 import { handlePlatformStats } from '../api/admin-stats.js';
 import { handlePipelineStats } from '../api/admin-pipeline-stats.js';
 import { handleSystemHealth } from '../api/admin-health.js';
@@ -22,7 +22,6 @@ import { handleSupersedeAnchor, handleAnchorLineage } from '../api/anchor-lineag
 import { handleConnectorHealth } from '../api/connector-health.js';
 import { handleProofPacketExport } from '../api/proof-packet.js';
 import { handleCollisionContext } from '../api/collision-context.js';
-import { handleTreasuryHealth } from '../api/treasury.js';
 import { handleListRules, handleGetRule, handleListRuleExecutions, handleRunRuleNow, handleTestRule, handleCreateRule, handleUpdateRule, handleDeleteRule } from '../api/rules-crud.js';
 import { handleInjectDemoEvent } from '../api/demo-event-injector.js';
 import { handleComplianceInboxSummary } from '../api/compliance-inbox-summary.js';
@@ -45,6 +44,18 @@ adminRouter.get('/treasury/status', async (req, res) => {
     await handleTreasuryStatus(userId, req, res);
   } catch (error) {
     logger.error({ error }, 'Treasury status request failed');
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+adminRouter.get('/treasury/x402-stats', async (req, res) => {
+  const userId = await extractAuthUserId(req);
+  if (!userId) { res.status(401).json({ error: 'Authentication required' }); return; }
+
+  try {
+    await handleTreasuryX402Stats(userId, req, res);
+  } catch (error) {
+    logger.error({ error }, 'Treasury x402 stats request failed');
     res.status(500).json({ error: 'Internal server error' });
   }
 });

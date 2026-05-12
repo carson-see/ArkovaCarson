@@ -15,6 +15,10 @@ import { logger } from './logger.js';
 export interface AnchorStats {
   total_secured: number;
   total_pending: number;
+  total_broadcasting: number;
+  total_submitted: number;
+  total_revoked: number;
+  by_status: Record<string, number>;
   last_secured_at: string | null;
   /** -1 sentinel = unavailable this round (24h count timed out). Caller renders "—". */
   last_24h_count: number;
@@ -28,8 +32,12 @@ export interface AnchorStats {
 export async function fetchAnchorStats(): Promise<AnchorStats> {
   let total_secured = -1;
   let total_pending = -1;
+  let total_broadcasting = -1;
+  let total_submitted = -1;
+  let total_revoked = -1;
   let last_secured_at: string | null = null;
   let last_24h_count = -1;
+  let by_status: Record<string, number> = {};
 
   try {
     const [counts, lastSeen, last24] = await Promise.allSettled([
@@ -56,6 +64,16 @@ export async function fetchAnchorStats(): Promise<AnchorStats> {
       const cv = (counts.value.data as { cache_value: Record<string, unknown> }).cache_value;
       total_secured = typeof cv?.SECURED === 'number' ? cv.SECURED : -1;
       total_pending = typeof cv?.PENDING === 'number' ? cv.PENDING : -1;
+      total_broadcasting = typeof cv?.BROADCASTING === 'number' ? cv.BROADCASTING : -1;
+      total_submitted = typeof cv?.SUBMITTED === 'number' ? cv.SUBMITTED : -1;
+      total_revoked = typeof cv?.REVOKED === 'number' ? cv.REVOKED : -1;
+      by_status = {
+        PENDING: Math.max(total_pending, 0),
+        BROADCASTING: Math.max(total_broadcasting, 0),
+        SUBMITTED: Math.max(total_submitted, 0),
+        SECURED: Math.max(total_secured, 0),
+        REVOKED: Math.max(total_revoked, 0),
+      };
     } else {
       const err = counts.status === 'fulfilled' ? counts.value.error : counts.reason;
       logger.warn({ error: err }, 'fetchAnchorStats: pipeline_dashboard_cache read failed');
@@ -72,5 +90,14 @@ export async function fetchAnchorStats(): Promise<AnchorStats> {
     logger.warn({ error: err }, 'fetchAnchorStats: unexpected failure, returning sentinels');
   }
 
-  return { total_secured, total_pending, last_secured_at, last_24h_count };
+  return {
+    total_secured,
+    total_pending,
+    total_broadcasting,
+    total_submitted,
+    total_revoked,
+    by_status,
+    last_secured_at,
+    last_24h_count,
+  };
 }
