@@ -322,16 +322,18 @@ export function useTreasuryBalance() {
           balanceResolved = true;
         }
         const nextAnchorStats = toAnchorStats(data.recentAnchors);
-        if (nextAnchorStats) setAnchorStats(nextAnchorStats);
+        setAnchorStats(nextAnchorStats);
         if (data.fees) {
           const rate = data.fees.currentRateSatPerVbyte;
           setFeeRatesIfChanged({ fastest: rate, halfHour: rate, hour: rate, economy: rate, minimum: rate });
         }
         workerError = data.error ?? null;
       } else if (workerSettled.ok) {
-        workerError = `Worker returned ${workerSettled.response.status}`;
+        workerError = TREASURY_LABELS.WORKER_RETURNED_STATUS(workerSettled.response.status);
       } else {
-        workerError = workerSettled.error instanceof Error ? workerSettled.error.message : 'Worker request failed';
+        workerError = workerSettled.error instanceof Error
+          ? workerSettled.error.message
+          : TREASURY_LABELS.WORKER_REQUEST_FAILED;
       }
 
       // ─── Worker cache freshness leg ─────────────────────────────────
@@ -346,10 +348,12 @@ export function useTreasuryBalance() {
         setSourceState((prev) => ({
           ...prev,
           cacheStale: true,
-          healthError: `Worker health returned ${healthSettled.response.status}`,
+          healthError: TREASURY_LABELS.WORKER_HEALTH_RETURNED_STATUS(healthSettled.response.status),
         }));
       } else {
-        const healthError = healthSettled.error instanceof Error ? healthSettled.error.message : 'Worker health request failed';
+        const healthError = healthSettled.error instanceof Error
+          ? healthSettled.error.message
+          : TREASURY_LABELS.WORKER_HEALTH_REQUEST_FAILED;
         setSourceState((prev) => ({ ...prev, cacheStale: true, healthError }));
       }
 
@@ -430,7 +434,7 @@ export function useTreasuryBalance() {
     } catch (err) {
       if (signal.aborted || isAbortError(err)) return;
       if (isMountedRef.current) {
-        setError(err instanceof Error ? err.message : 'Failed to fetch treasury data');
+        setError(err instanceof Error ? err.message : TREASURY_LABELS.FETCH_FAILED);
       }
     } finally {
       if (isMountedRef.current) {

@@ -36,6 +36,11 @@ vi.mock('@/lib/copy', () => ({
   TREASURY_LABELS: {
     BALANCE_STALE: 'Balance is stale',
     BALANCE_UNAVAILABLE: 'Balance unavailable',
+    WORKER_RETURNED_STATUS: (status: number) => `Worker returned ${status}`,
+    WORKER_REQUEST_FAILED: 'Worker request failed',
+    WORKER_HEALTH_RETURNED_STATUS: (status: number) => `Worker health returned ${status}`,
+    WORKER_HEALTH_REQUEST_FAILED: 'Worker health request failed',
+    FETCH_FAILED: 'Failed to fetch treasury data',
   },
 }));
 
@@ -172,6 +177,43 @@ describe('useTreasuryBalance R1-6 hardening (SCRUM-1260)', () => {
     expect(result.current.anchorStats?.byStatus.PENDING).toBeUndefined();
     expect(result.current.anchorStats?.byStatus.SUBMITTED).toBeUndefined();
     expect(result.current.anchorStats?.totalAnchors).toBe(10);
+  });
+
+  it('clears stale anchor stats when the worker marks status totals unavailable', async () => {
+    let statusPayload: unknown = {
+      wallet: { balanceSats: 12345 },
+      recentAnchors: {
+        totalSecured: 10,
+        totalPending: 2,
+        lastSecuredAt: '2026-05-12T09:00:00Z',
+        last24hCount: 3,
+      },
+    };
+
+    mockWorkerDefaults(() => Promise.resolve(jsonResponse(statusPayload)));
+
+    const { result } = renderHook(() => useTreasuryBalance());
+    await waitFor(() => expect(result.current.anchorStats?.byStatus.SECURED).toBe(10));
+
+    statusPayload = {
+      wallet: { balanceSats: 12345 },
+      recentAnchors: {
+        totalSecured: -1,
+        totalPending: -1,
+        totalBroadcasting: -1,
+        totalSubmitted: -1,
+        totalRevoked: -1,
+        byStatus: {},
+        lastSecuredAt: null,
+        last24hCount: -1,
+      },
+    };
+
+    await act(async () => {
+      await result.current.refresh();
+    });
+
+    await waitFor(() => expect(result.current.anchorStats).toBeNull());
   });
 
   it('ignores expected AbortError failures from cancelled worker response parsing', async () => {
