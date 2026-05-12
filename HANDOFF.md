@@ -14,9 +14,9 @@
 
 ## Now
 
-### 2026-05-12 — routine dependency consolidation ready for human merge (PR #772 replaces #764/#770/#771)
+### 2026-05-12 — routine dependency consolidation ready for human merge (PR #772 replaces #764/#770/#771/#775)
 
-**PR #772 / branch `codex/deps-routine-20260512` consolidates the open routine dependency PRs #764, #770, and #771.** Scope: root production/dev dependency bumps, worker Sentry/Vite/Vitest/TypeScript-ESLint/dev type bumps, and edge `@cloudflare/workers-types`.
+**PR #772 / branch `codex/deps-routine-20260512` consolidates the open routine dependency PRs #764, #770, #771, and #775.** Scope: root production/dev dependency bumps, worker Sentry/Vite/Vitest/TypeScript-ESLint/dev type bumps, worker transitive `@protobufjs/utf8` lockfile bump, and edge `@cloudflare/workers-types`.
 
 **Validation completed locally:** root `typecheck`, `lint`, `lint:copy`, `security:license-denylist`, `build`, `test`; worker `typecheck`, `lint`, `build:circuit`, `test`, `build`; edge `typecheck`. Worker test total after circuit build: 398 files / 5,378 tests. Root test total after worker build artifacts existed: 205 files passed / 1 skipped, 1,988 tests passed / 2 skipped.
 
@@ -24,7 +24,7 @@
 
 **Staging evidence:** T1 read-only `/health` soak on tag URL `https://pr-772---arkova-worker-staging-kvojbeutfa-uc.a.run.app`, worker revision `arkova-worker-staging-00064-roj`, deploy log id 14, 2026-05-12T13:39:32Z → 2026-05-12T14:09:32Z. Result: 1,497/1,497 HTTP 200, 0 failures, p95 140ms, p99 277ms. Evidence JSON: `docs/staging/soak-pr-772-20260512T1339Z.json`. PR #753 and PR #774 were not reset, reseeded, edited, or otherwise touched.
 
-**Current state:** Protected checks and review gates are being replayed after the final HANDOFF-only closeout commits. Superseded PRs #764/#770/#771 were closed with replacement comments pointing to #772. Remaining step after the replay is green is human merge.
+**Current state:** Protected checks and review gates are being replayed after the final #775 lockfile consolidation commit. Superseded PRs #764/#770/#771 were closed with replacement comments pointing to #772; #775 is now folded into this branch. Remaining step after the replay is green is human merge.
 
 _Last refreshed: 2026-05-12 by carson-see — claims verified against gcloud/MCP/CI output._ Evidence: GitHub Actions run 25740597987 (CI Tests/E2E/TypeCheck & Lint/Migration Drift/Staging Soak Evidence green before the HANDOFF-only closeout), follow-up GitHub Actions run 25756413251 (CI replay in progress at refresh time), staging deploy log id 14, soak evidence at docs/staging/soak-pr-772-20260512T1339Z.json, and staging tag URL health evidence for worker revision arkova-worker-staging-00064-roj.
 
