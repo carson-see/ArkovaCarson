@@ -35,6 +35,30 @@ export interface UsageReportResult {
   error?: string;
 }
 
+interface OrgCreditMeteringRow {
+  org_id: string;
+  is_test: boolean | null;
+}
+
+interface OrgCreditMeteringError {
+  message?: string;
+}
+
+interface OrgCreditMeteringQuery {
+  select(columns: 'org_id, is_test'): {
+    in(column: 'org_id', values: string[]): Promise<{
+      data: OrgCreditMeteringRow[] | null;
+      error: OrgCreditMeteringError | null;
+    }>;
+  };
+}
+
+function orgCreditsForMetering(): OrgCreditMeteringQuery {
+  // The live schema includes org_credits, but the generated worker DB types
+  // lag it. Keep the cast local so sandbox billing remains fail-closed.
+  return (db.from as unknown as (relation: 'org_credits') => OrgCreditMeteringQuery)('org_credits');
+}
+
 /**
  * Record metered API usage for an organization.
  * Stores in billing_events for aggregation + Stripe reporting.
@@ -111,8 +135,7 @@ export async function reportMeteredUsageToStripe(): Promise<UsageReportResult[]>
   const orgIds = Array.from(new Set(subs.map((s) => s.org_id).filter((id): id is string => Boolean(id))));
   const testOrgIds = new Set<string>();
   if (orgIds.length > 0) {
-    const { data: creditRows, error: creditErr } = await db
-      .from('org_credits')
+    const { data: creditRows, error: creditErr } = await orgCreditsForMetering()
       .select('org_id, is_test')
       .in('org_id', orgIds);
     if (creditErr) {
@@ -122,7 +145,7 @@ export async function reportMeteredUsageToStripe(): Promise<UsageReportResult[]>
       logger.error({ err: creditErr.message ?? String(creditErr) }, 'Failed to load org_credits.is_test for meter-exclusion check; aborting reportMeteredUsageToStripe to avoid billing sandbox orgs');
       return results;
     }
-    for (const row of (creditRows ?? []) as Array<{ org_id: string; is_test: boolean | null }>) {
+    for (const row of creditRows ?? []) {
       if (row.is_test === true) testOrgIds.add(row.org_id);
     }
   }
