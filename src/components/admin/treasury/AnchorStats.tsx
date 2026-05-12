@@ -34,7 +34,7 @@ function formatMaybeCount(value: number | null): string {
 }
 
 export function AnchorStats({ stats, loading }: Readonly<AnchorStatsProps>) {
-  const anchored = stats?.byStatus['SECURED'] ?? 0;
+  const anchored = stats?.byStatus['SECURED'] ?? null;
 
   return (
     <Card>
@@ -77,7 +77,7 @@ export function AnchorStats({ stats, loading }: Readonly<AnchorStatsProps>) {
                   <CheckCircle className="h-3.5 w-3.5 text-green-600" />
                   Anchored on Network
                 </span>
-                <span className="font-mono font-semibold text-green-600">{anchored.toLocaleString()}</span>
+                <span className="font-mono font-semibold text-green-600">{formatMaybeCount(anchored)}</span>
               </div>
               <div className="flex items-center justify-between text-sm">
                 <span className="flex items-center gap-2 text-muted-foreground">

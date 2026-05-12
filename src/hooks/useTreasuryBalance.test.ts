@@ -156,6 +156,24 @@ describe('useTreasuryBalance R1-6 hardening (SCRUM-1260)', () => {
     expect(result.current.anchorStats).toBeNull();
   });
 
+  it('preserves unknown anchor status counts instead of filling absent statuses with zero', async () => {
+    mockWorkerDefaults(() => Promise.resolve(jsonResponse({
+      wallet: { balanceSats: 12345 },
+      recentAnchors: {
+        totalSecured: 10,
+        lastSecuredAt: '2026-05-12T09:00:00Z',
+        last24hCount: 3,
+      },
+    })));
+
+    const { result } = renderHook(() => useTreasuryBalance());
+
+    await waitFor(() => expect(result.current.anchorStats?.byStatus.SECURED).toBe(10));
+    expect(result.current.anchorStats?.byStatus.PENDING).toBeUndefined();
+    expect(result.current.anchorStats?.byStatus.SUBMITTED).toBeUndefined();
+    expect(result.current.anchorStats?.totalAnchors).toBe(10);
+  });
+
   it('ignores expected AbortError failures from cancelled worker response parsing', async () => {
     const abortError = Object.assign(new Error('aborted'), { name: 'AbortError' });
     expect(abortError.name).toBe('AbortError');

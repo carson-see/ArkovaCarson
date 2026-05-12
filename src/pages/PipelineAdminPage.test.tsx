@@ -189,6 +189,31 @@ describe('PipelineAdminPage', () => {
     expect(screen.getByTestId('pipeline-cache-freshness')).toHaveTextContent('Direct RPC fallback');
   });
 
+  it('surfaces hard stats failure without coercing missing stat cards to zero', async () => {
+    vi.mocked(workerFetch).mockRejectedValueOnce(new Error('worker unavailable'));
+    (supabase.rpc as unknown as ReturnType<typeof vi.fn>).mockImplementation((name: string) => {
+      if (name === 'get_pipeline_stats') {
+        return Promise.resolve({ data: null, error: { message: 'RLS denied' } });
+      }
+      if (name === 'get_public_records_page') {
+        return Promise.resolve({ data: defaultRecordPage, error: null });
+      }
+      return Promise.resolve({ data: [], error: null });
+    });
+
+    render(
+      <MemoryRouter>
+        <PipelineAdminPage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByTestId('pipeline-stats-error')).toHaveTextContent('fallback failed: RLS denied');
+    expect(screen.queryByTestId('pipeline-cache-freshness')).not.toBeInTheDocument();
+    expect(screen.queryByText('0 submitted / 0 confirmed')).not.toBeInTheDocument();
+    expect(screen.queryByText('0 unlinked / 0 queued / 0 broadcasting')).not.toBeInTheDocument();
+    expect(screen.getAllByText('—')).toHaveLength(4);
+  });
+
   it('shows access restricted for non-admin', async () => {
     const { useAuth } = await import('@/hooks/useAuth');
     vi.mocked(useAuth).mockReturnValue({

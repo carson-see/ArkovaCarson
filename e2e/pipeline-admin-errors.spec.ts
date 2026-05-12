@@ -29,7 +29,9 @@ test.describe('SCRUM-1260 R1-6 — Pipeline error banner', () => {
     // Page must NOT silently mask the worker/cache failure. When the direct RPC
     // fallback succeeds in local CI, the dashboard should show a fallback banner
     // instead of the hard-error banner.
-    await expect(orgBAdminPage.getByTestId('pipeline-stats-fallback')).toBeVisible({ timeout: 15_000 });
-    await expect(orgBAdminPage.getByTestId('pipeline-stats-fallback')).toContainText('Worker/cache source failed');
+    const fallbackBanner = orgBAdminPage.getByTestId('pipeline-stats-fallback');
+    await expect(fallbackBanner).toBeVisible({ timeout: 15_000 });
+    await expect(fallbackBanner).toHaveAttribute('role', 'alert');
+    await expect(fallbackBanner).toContainText('Worker/cache source failed');
   });
 });

@@ -816,14 +816,18 @@ export function PipelineAdminPage() {
             value={stats?.anchoredRecords}
             icon={<ArkovaIcon className="h-5 w-5 text-emerald-400" />}
             loading={loading}
-            subtitle={`${(stats?.submittedRecords ?? 0).toLocaleString()} submitted / ${(stats?.securedRecords ?? 0).toLocaleString()} confirmed`}
+            subtitle={stats
+              ? `${stats.submittedRecords.toLocaleString()} submitted / ${stats.securedRecords.toLocaleString()} confirmed`
+              : undefined}
           />
           <StatCard
             label={PIPELINE_LABELS.RECORDS_PENDING}
             value={stats?.pendingRecords}
             icon={<AlertCircle className="h-5 w-5 text-amber-400" />}
             loading={loading}
-            subtitle={`${(stats?.pendingRecordLinks ?? 0).toLocaleString()} unlinked / ${(stats?.pendingAnchorRecords ?? 0).toLocaleString()} queued / ${(stats?.broadcastingRecords ?? 0).toLocaleString()} broadcasting`}
+            subtitle={stats
+              ? `${stats.pendingRecordLinks.toLocaleString()} unlinked / ${stats.pendingAnchorRecords.toLocaleString()} queued / ${stats.broadcastingRecords.toLocaleString()} broadcasting`
+              : undefined}
           />
           <StatCard
             label={PIPELINE_LABELS.RECORDS_EMBEDDED}
@@ -1572,7 +1576,7 @@ function StatCard({
         ) : (
           <>
             <p className="text-2xl font-bold font-mono">
-              {(value ?? 0).toLocaleString()}
+              {typeof value === 'number' ? value.toLocaleString() : '—'}
             </p>
             {subtitle && (
               <p className="text-xs text-muted-foreground/60 mt-1">{subtitle}</p>
