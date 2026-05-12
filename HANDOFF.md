@@ -14,7 +14,7 @@
 
 ## Now
 
-### 2026-05-12 — routine dependency consolidation ready for review (PR #772 replaces #764/#770/#771)
+### 2026-05-12 — routine dependency consolidation ready for human merge (PR #772 replaces #764/#770/#771)
 
 **PR #772 / branch `codex/deps-routine-20260512` consolidates the open routine dependency PRs #764, #770, and #771.** Scope: root production/dev dependency bumps, worker Sentry/Vite/Vitest/TypeScript-ESLint/dev type bumps, and edge `@cloudflare/workers-types`.
 
@@ -22,9 +22,9 @@
 
 **Gate repairs included:** generated Supabase types now include `org_credits` in both root and worker type maps, matching the existing baseline + 0300/0301 migrations used by worker billing/quota code. `drop-search-overload.test.ts` now ignores generated `dist/` output so the root suite is order-independent after worker builds.
 
-**Staging evidence:** T1 read-only `/health` soak on tag URL `https://pr-772---arkova-worker-staging-kvojbeutfa-uc.a.run.app`, worker revision `arkova-worker-staging-00064-roj`, deploy log id 14, 2026-05-12T13:39:32Z → 2026-05-12T14:09:32Z. Result: 1,497/1,497 HTTP 200, 0 failures, p95 140ms, p99 277ms. Evidence JSON: `docs/staging/soak-pr-772-20260512T1339Z.json`. PR #753 was not reset, reseeded, or otherwise touched.
+**Staging evidence:** T1 read-only `/health` soak on tag URL `https://pr-772---arkova-worker-staging-kvojbeutfa-uc.a.run.app`, worker revision `arkova-worker-staging-00064-roj`, deploy log id 14, 2026-05-12T13:39:32Z → 2026-05-12T14:09:32Z. Result: 1,497/1,497 HTTP 200, 0 failures, p95 140ms, p99 277ms. Evidence JSON: `docs/staging/soak-pr-772-20260512T1339Z.json`. PR #753 and PR #774 were not reset, reseeded, edited, or otherwise touched.
 
-**Open next step:** close/comment superseded #764/#770/#771 after #772 is ready and checks settle. PR #753 remains untouched.
+**Current state:** GitHub checks are green, migration drift is green, CodeRabbit is green/approved, and merge state is clean. Superseded PRs #764/#770/#771 were closed with replacement comments pointing to #772. Remaining step is human merge.
 
 ### 2026-05-11 — PR #756 + PR #763 ready for review
 
