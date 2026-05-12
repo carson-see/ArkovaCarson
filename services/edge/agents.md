@@ -1,5 +1,9 @@
 # agents.md — services/edge
-_Last updated: 2026-04-27_
+_Last updated: 2026-05-12 (routine dependency consolidation)._
+
+## Routine dependency consolidation (2026-05-12)
+
+PR replacement branch `codex/deps-routine-20260512` bundles the edge `@cloudflare/workers-types` bump from #764 into the root/worker/edge routine dependency PR. Edge validation for this batch: `npm run typecheck`.
 
 ## SCRUM-926 — Local JWT verification on `validateBearer` (2026-04-27)
 

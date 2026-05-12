@@ -1,5 +1,5 @@
 # agents.md — src/
-_Last updated: 2026-05-08 (staging evidence verified)_
+_Last updated: 2026-05-12 (routine dependency consolidation)._
 
 ## What This Folder Contains
 
@@ -35,6 +35,7 @@ React 18 frontend application — TypeScript + Tailwind CSS + shadcn/ui + Vite b
 
 ## Recent Changes
 
+- **Routine dependency consolidation** (2026-05-12): Root dependency batch from PRs #770/#771 updated Sentry React, React Query, Tailwind Merge, Playwright, Sentry Vite plugin, Workers types, TypeScript-ESLint, Vite, Vitest, Wrangler, and Node/V8 coverage types. `src/types/database.types.ts` now includes `org_credits`, matching the committed schema used by billing/quota code. `src/tests/drop-search-overload.test.ts` ignores generated `dist/` output so the root test suite stays green after worker builds.
 - **SCRUM-1787 — Role-aware home navigation** (2026-05-08): Sidebar logo uses `useProfile().destination` + `destinationToRoute()` for role-aware home routing. Previously hardcoded to `/search`. Now routes to `/dashboard`, `/onboarding/role`, `/onboarding/org`, or `/review-pending` based on user state. Implementation in `src/components/layout/Sidebar.tsx`.
 - **SCRUM-1788 — Search verification** (2026-05-08): Added privacy gate tests for `useOrgProfile`, `usePublicMemberProfile`, and `useOrgSubtree` hooks. Verifies `is_public_profile` anonymization in org profiles and 404 behavior for non-public member profiles. 8 search surfaces documented with RLS isolation evidence and p95 < 200ms response-time threshold.
 - **SCRUM-1789 — Upload flow verification** (2026-05-08): Added 14 tests for FileUpload routing (single, multi, CSV, XLSX, helper functions). 7 upload surfaces documented. Client-side SHA-256 fingerprinting (Constitution 1.6), bulk BATCH_SIZE=10 processing, credential issuance three-layer gating all verified.
