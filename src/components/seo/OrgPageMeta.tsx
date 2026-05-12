@@ -1,13 +1,9 @@
 /**
  * OrgPageMeta — Open Graph + Twitter Card meta tags for public org pages.
  *
- * Imperatively appends meta tags to <head> via useEffect so this SPA keeps
- * explicit ownership of cleanup for dynamically generated public org pages.
- *
- * Tracks its own appended nodes via a ref so cleanup-on-unmount and
- * effect-re-run never touch tags appended by a sibling instance.
+ * React 19 hoists these document metadata tags into <head> and cleans them up
+ * with the component tree.
  */
-import { useEffect, useRef } from 'react';
 import type { OrgProfile } from '@/hooks/usePublicSearch';
 
 type OrgProfileForMeta = Pick<OrgProfile, 'display_name' | 'description' | 'logo_url'>;
@@ -18,61 +14,32 @@ export interface OrgPageMetaProps {
 }
 
 export function OrgPageMeta({ profile, pageUrl }: OrgPageMetaProps) {
-  const createdMetas = useRef<HTMLMetaElement[]>([]);
-  const createdLinks = useRef<HTMLLinkElement[]>([]);
+  const title = `${profile.display_name} — Verified Issuer on Arkova`;
+  const description =
+    profile.description ??
+    `Verified issuer profile for ${profile.display_name} on Arkova. View credentials, audit history, and connected organizations.`;
 
-  useEffect(() => {
-    const setMeta = (attr: 'property' | 'name', key: string, value: string): void => {
-      const el = document.createElement('meta');
-      el.setAttribute(attr, key);
-      el.setAttribute('content', value);
-      document.head.appendChild(el);
-      createdMetas.current.push(el);
-    };
-
-    const setLink = (rel: string, href: string): void => {
-      const el = document.createElement('link');
-      el.setAttribute('rel', rel);
-      el.setAttribute('href', href);
-      document.head.appendChild(el);
-      createdLinks.current.push(el);
-    };
-
-    const title = `${profile.display_name} — Verified Issuer on Arkova`;
-    document.title = title;
-    const description =
-      profile.description ??
-      `Verified issuer profile for ${profile.display_name} on Arkova. View credentials, audit history, and connected organizations.`;
-
-    // Canonical link prevents Google from indexing the same org page under
-    // multiple hosts (search.arkova.ai vs app.arkova.ai). Pageviews under
-    // alternate hosts roll up into the canonical URL's authority.
-    setLink('canonical', pageUrl);
-
-    setMeta('property', 'og:type', 'profile');
-    setMeta('property', 'og:site_name', 'Arkova');
-    setMeta('property', 'og:title', title);
-    setMeta('property', 'og:description', description);
-    setMeta('property', 'og:url', pageUrl);
-    setMeta('name', 'twitter:title', title);
-    setMeta('name', 'twitter:description', description);
-
-    if (profile.logo_url) {
-      setMeta('property', 'og:image', profile.logo_url);
-      setMeta('property', 'og:image:alt', `${profile.display_name} logo`);
-      setMeta('name', 'twitter:card', 'summary_large_image');
-      setMeta('name', 'twitter:image', profile.logo_url);
-    } else {
-      setMeta('name', 'twitter:card', 'summary');
-    }
-
-    return () => {
-      for (const node of createdMetas.current) node.remove();
-      createdMetas.current = [];
-      for (const node of createdLinks.current) node.remove();
-      createdLinks.current = [];
-    };
-  }, [profile.display_name, profile.description, profile.logo_url, pageUrl]);
-
-  return null;
+  return (
+    <>
+      <title>{title}</title>
+      <link rel="canonical" href={pageUrl} />
+      <meta property="og:type" content="profile" />
+      <meta property="og:site_name" content="Arkova" />
+      <meta property="og:title" content={title} />
+      <meta property="og:description" content={description} />
+      <meta property="og:url" content={pageUrl} />
+      <meta name="twitter:title" content={title} />
+      <meta name="twitter:description" content={description} />
+      {profile.logo_url ? (
+        <>
+          <meta property="og:image" content={profile.logo_url} />
+          <meta property="og:image:alt" content={`${profile.display_name} logo`} />
+          <meta name="twitter:card" content="summary_large_image" />
+          <meta name="twitter:image" content={profile.logo_url} />
+        </>
+      ) : (
+        <meta name="twitter:card" content="summary" />
+      )}
+    </>
+  );
 }

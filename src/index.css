@@ -74,7 +74,7 @@
   --radius-sm: calc(var(--radius) - 4px);
 
   --font-sans: "DM Sans", ui-sans-serif, system-ui, sans-serif;
-  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  --font-mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", monospace;
 
   --text-display-lg: 3rem;
   --text-display-lg--line-height: 1.1;
