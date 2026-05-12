@@ -26,7 +26,7 @@
 
 **Current state:** Protected checks and review gates are being replayed after the final HANDOFF-only closeout commits. Superseded PRs #764/#770/#771 were closed with replacement comments pointing to #772. Remaining step after the replay is green is human merge.
 
-_Last refreshed: 2026-05-12 by codex — claims verified against gcloud/MCP/CI output: GitHub Actions run 25740597987 (CI Tests/E2E/TypeCheck & Lint/Migration Drift/Staging Soak Evidence green before the HANDOFF-only closeout), follow-up GitHub Actions run 25756413251 (CI replay in progress at refresh time), staging deploy log id 14, soak evidence at docs/staging/soak-pr-772-20260512T1339Z.json, and staging tag URL health evidence for worker revision arkova-worker-staging-00064-roj._
+_Last refreshed: 2026-05-12 by carson-see — claims verified against gcloud/MCP/CI output._ Evidence: GitHub Actions run 25740597987 (CI Tests/E2E/TypeCheck & Lint/Migration Drift/Staging Soak Evidence green before the HANDOFF-only closeout), follow-up GitHub Actions run 25756413251 (CI replay in progress at refresh time), staging deploy log id 14, soak evidence at docs/staging/soak-pr-772-20260512T1339Z.json, and staging tag URL health evidence for worker revision arkova-worker-staging-00064-roj.
 
 ### 2026-05-11 — PR #756 + PR #763 ready for review
 
