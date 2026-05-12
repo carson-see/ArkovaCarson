@@ -130,7 +130,7 @@ export async function sweepExpiredAnchors(db: AnchorExpirySweepDb): Promise<Anch
   const now = new Date();
   const nowIso = now.toISOString();
   let cursor: ExpiringAnchorCursor | undefined;
-  let candidates: ExpiringSecuredAnchor[] = [];
+  const candidates: ExpiringSecuredAnchor[] = [];
 
   for (let page = 0; page < EXPIRY_SWEEP_MAX_PAGES; page++) {
     let pageCandidates: ExpiringSecuredAnchor[];

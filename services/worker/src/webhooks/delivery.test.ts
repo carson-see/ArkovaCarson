@@ -58,27 +58,29 @@ const {
 
   // PR #753 audit fix A1: the retry path uses .update().eq().select().single()
   // (PostgREST's UPDATE...RETURNING). The original existing-row .update().eq()
-  // chain (no .select()) is still used elsewhere. Mock .eq() to return BOTH
-  // a thenable (so `await .eq(...)` works) AND a select() chain (so
-  // `await .eq(...).select().single()` works), via a thenable-with-methods
-  // object.
+  // chain (no .select()) is still used elsewhere. Mock .eq() to return a real
+  // Promise (so `await .eq(...)` works via inherited Promise.prototype.then)
+  // with a `.select()` method attached (so `await .eq(...).select().single()`
+  // works too). SonarCloud S7739 forbids hand-rolling a `then` property on a
+  // plain object; using a real Promise sidesteps that — the `then` comes from
+  // Promise.prototype, not from a property added to the object.
   const deliveryLogUpdateSingle = vi.fn();
   const deliveryLogUpdateEqResult: { resolved: unknown } = { resolved: { error: null } };
+  type EqChain = Promise<unknown> & { select: () => { single: typeof deliveryLogUpdateSingle } };
   const deliveryLogUpdateEq = vi.fn(() => {
-    const chain: Record<string, unknown> = {
-      then: (onFulfilled: (v: unknown) => unknown, onRejected?: (e: unknown) => unknown) =>
-        Promise.resolve(deliveryLogUpdateEqResult.resolved).then(onFulfilled, onRejected),
-      select: () => ({ single: deliveryLogUpdateSingle }),
-    };
-    return chain;
-  }) as unknown as ReturnType<typeof vi.fn> & {
-    mockResolvedValue: (val: unknown) => void;
-  };
+    const promise = Promise.resolve(deliveryLogUpdateEqResult.resolved) as EqChain;
+    promise.select = () => ({ single: deliveryLogUpdateSingle });
+    return promise;
+  });
   // Bridge legacy tests' deliveryLogUpdate.eq.mockResolvedValue(...) onto the
-  // new chain's resolved-value slot.
-  deliveryLogUpdateEq.mockResolvedValue = (val: unknown) => {
-    deliveryLogUpdateEqResult.resolved = val;
-  };
+  // new chain's resolved-value slot. Use Object.assign to override the
+  // vitest-supplied mockResolvedValue without colliding on its strict
+  // intersection-typed signature (which expects a MockInstance return).
+  Object.assign(deliveryLogUpdateEq, {
+    mockResolvedValue: (val: unknown) => {
+      deliveryLogUpdateEqResult.resolved = val;
+    },
+  });
   const deliveryLogUpdate = {
     update: vi.fn(() => ({ eq: deliveryLogUpdateEq })),
     eq: deliveryLogUpdateEq,
@@ -623,7 +625,10 @@ describe('deliverToEndpoint', () => {
       error: { code: '08006', message: 'connection terminated' },
     });
 
-    const result = await dispatchWebhookEvent('org-001', 'anchor.secured', 'evt-001', MOCK_PAYLOAD_DATA);
+    // dispatchWebhookEvent returns Promise<void>; the `return false` from
+    // A2's audit fix lives inside deliverToEndpoint and is not surfaced to
+    // callers. Observable A2 contract: no HTTP fan-out + Sentry breadcrumb.
+    await dispatchWebhookEvent('org-001', 'anchor.secured', 'evt-001', MOCK_PAYLOAD_DATA);
 
     expect(mockFetch).not.toHaveBeenCalled();
     expect(mockSentry.captureException).toHaveBeenCalledWith(

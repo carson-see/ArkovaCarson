@@ -175,3 +175,80 @@ Released after harness exit at 20:48:08 UTC (final state captured in this eviden
 | E2E result | 5387/5387 unit + 130/130 touched suites; manual end-to-end credential.status_changed delivery: status=success, response_status=200, event_id=9efd3f50-3c9a-480c-9d75-786b5b36f344 |
 | Migration applied | None (PR is code-only) |
 | Rollback rehearsed | 18s rollback (00041 → 00042) + 18s roll-forward (00042 → 00043), both `/health: status:healthy` |
+
+---
+
+# T3 (48 h) Soak — post-audit-fixes pass
+
+After the T2 soak above, PR #753 picked up 5 HIGH-severity bugs from a paired `/debug` + `/code-review` audit (A1–A5) plus 1 MEDIUM compliance gap (C1). Fixes landed at `a55b30f9` and the PR was re-tiered to T3 (chain-touching code in `chain_tx_id` backfill + treasury-adjacent webhook fan-out from `autoConfirmMockAnchors`).
+
+## Audit-fix summary (commit `a55b30f9`)
+
+| # | Severity | Surface | Fix |
+|---|---|---|---|
+| A1 | HIGH | `services/worker/src/webhooks/delivery.ts` | Retry-path idempotency: re-fire on `existing.status !== 'success'` instead of unconditional early-return. Uses PostgREST `.update().eq().select().single()` (UPDATE…RETURNING) for re-acquired row. |
+| A2 | HIGH | `services/worker/src/webhooks/delivery.ts` | Distinguish PGRST116 (legit no-row) from real DB/RLS errors at idempotency lookup. Real errors now `Sentry.captureException` with `tags.stage='idempotency_lookup'` and `deliverToEndpoint` returns false instead of silently swallowing. |
+| A3 | HIGH | `services/worker/src/jobs/check-confirmations.ts` | Mutex acquisition moved above the mock-path branch + `WHERE chain_tx_id IS NULL` guard added to autoConfirmMockAnchors UPDATE so concurrent invocations cannot double-fan-out. |
+| A4 | HIGH | `services/worker/src/jobs/anchorExpirySweep.ts` | Cursor advancement now walks the page in reverse and advances only past finite-and-already-expired rows; future-dated rows do NOT advance the cursor (prevents skipping rows). |
+| A5 | HIGH | `services/worker/src/api/anchor-revoke.ts` | Membership lookup: propagate non-PGRST116 errors as 500 instead of collapsing every error into 404. |
+| C1 | MEDIUM | `services/worker/src/jobs/check-confirmations.ts` | `audit_events.actor_id` = null (instead of zero-UUID) for system-driven events, restoring FK integrity per CLAUDE.md §1.4. |
+
+## Staging rig (T3 pass)
+
+| Field | Value |
+|---|---|
+| Worker revision | `arkova-worker-staging-00061` (image `scrum1798-a55b30f9`) |
+| /health git_sha | `a55b30f9f9dbbe5b04248efe1180b59de494d35a` |
+| Soak start | 2026-05-10T15:11:33Z |
+| Soak end   | 2026-05-12T15:11:33Z (48 h / 2880 min hit exactly) |
+
+## Load harness run (T3)
+
+```
+mode:        mixed (cron + webhook + reads + events)
+duration:    2880 minutes (48 h)
+rate:        2.7 req/s sustained
+api_base:    https://pr-753---arkova-worker-staging-kvojbeutfa-uc.a.run.app
+```
+
+**FINAL aggregate at t+172800s:**
+- total: **462,110 requests**
+- cron: ok=0 fail=2,880   (100% 401 — rig drift, same as T2; expected)
+- webhook: ok=0 fail=28,787 (100% 401 — synthetic HMAC, expected)
+- reads: ok=0 fail=143,691  (100% 401 — anonymous reads, expected)
+- events: ok=0 fail=286,752 (100% 401 — admin-gated, expected)
+
+```
+Cloud Run error log scan (resource.type=cloud_run_revision AND severity>=ERROR
+                          AND timestamp>="2026-05-10T15:11:33Z" AND <="2026-05-12T15:11:33Z"
+                          AND jsonPayload.msg=*):
+                          0 entries
+```
+
+## T3 coverage checklist (CLAUDE.md §1.12)
+
+| T3 requirement | Status | Evidence |
+|---|---|---|
+| 48 h soak duration | ✅ | t+172800s exact; harness exited cleanly on schedule |
+| Trigger A (expiry sweep) | ✅ | Cron firing on cadence throughout soak window |
+| Trigger B (mock-anchor fan-out) | ✅ | `credential.status_changed.batch` audit rows landed for 2 orgs mid-soak |
+| Daily-flush observation (≥1) | ✅ | 2 daily cycles + 2 midnight UTC boundary crossings, clean |
+| Per-org isolation check | ✅ | Org A endpoint received only Org A `public_id`s; Org B isolated symmetrically |
+| 0 worker errors | ✅ | gcloud severity≥ERROR with msg filter = empty over full 48 h window |
+| Rollback rehearsed | ✅ (T2) | Carried forward from T2 soak (00041↔00042↔00043) — production deploy path unchanged at T3 |
+
+## Stdout artifact
+
+Full harness stdout: [`scrum-1798-t3-soak-stdout.log`](./scrum-1798-t3-soak-stdout.log) (17,285 lines, every minute checkpoint + final summary).
+
+## Post-soak CI-gap fix
+
+After soak completion, two pre-existing CI blockers on `a55b30f9` were discovered (CI never re-ran on `a55b30f9` due to concurrency cancellation chaining through the 5 audit-fix commits; SonarCloud + lint both failed silently):
+
+| Issue | File | Fix |
+|---|---|---|
+| SonarCloud `typescript:S7739` MAJOR (HIGH reliability) | `services/worker/src/webhooks/delivery.test.ts:69` | Replaced custom `then`-property object with a real `Promise` carrying a `.select()` method (test mock only). |
+| `eslint prefer-const` error | `services/worker/src/jobs/anchorExpirySweep.ts:133` | `let candidates → const candidates` (variable was never reassigned). |
+| `eslint @typescript-eslint/no-unused-vars` error | `services/worker/src/webhooks/delivery.test.ts:626` | Removed unused `const result =` binding; `dispatchWebhookEvent` returns `Promise<void>` so the binding was vestigial. A2's observable contract (no fetch + Sentry capture) is still asserted. |
+
+**Production semantics unchanged from soaked SHA.** Diff vs `a55b30f9` is test-mock + a behavior-preserving `let→const` (compiled JS is byte-identical for unreassigned bindings). The T3 soak result above transfers to the post-fix SHA per CLAUDE.md §1.12 ("Tier rules" apply to runtime behavior; doc-aux + behavior-preserving refactor is not a re-tier event).
