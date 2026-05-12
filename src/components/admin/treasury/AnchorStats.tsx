@@ -29,6 +29,14 @@ const STATUS_CONFIG: Record<string, { label: string; icon: React.ElementType; co
   REVOKED: { label: 'Revoked', icon: Ban, color: 'text-red-600' },
 };
 
+function orderedStatusKeys(byStatus: Record<string, number | null>): string[] {
+  const configuredStatuses = Object.keys(STATUS_CONFIG);
+  const extraStatuses = Object.keys(byStatus).filter(
+    (status) => !Object.prototype.hasOwnProperty.call(STATUS_CONFIG, status),
+  );
+  return [...configuredStatuses, ...extraStatuses];
+}
+
 function formatMaybeCount(value: number | null): string {
   return value === null ? '—' : value.toLocaleString();
 }
@@ -53,7 +61,12 @@ export function AnchorStats({ stats, loading }: Readonly<AnchorStatsProps>) {
           <div className="space-y-4">
             {/* Status breakdown */}
             <div className="space-y-2">
-              {Object.entries(STATUS_CONFIG).map(([status, cfg]) => {
+              {orderedStatusKeys(stats.byStatus).map((status) => {
+                const cfg = STATUS_CONFIG[status] ?? {
+                  label: status,
+                  icon: FileText,
+                  color: 'text-muted-foreground',
+                };
                 const count = stats.byStatus[status] ?? null;
                 const Icon = cfg.icon;
                 return (
