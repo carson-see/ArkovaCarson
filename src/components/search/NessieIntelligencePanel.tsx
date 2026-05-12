@@ -203,7 +203,7 @@ export function NessieIntelligencePanel() {
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={handleKeyDown}
               placeholder={NESSIE_LABELS.INPUT_PLACEHOLDER}
-              className="w-full h-10 pl-10 pr-3 rounded-md border border-border bg-background text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-[#00d4ff]/40"
+              className="w-full h-10 pl-10 pr-3 rounded-md border border-border bg-background text-sm text-foreground placeholder:text-muted-foreground focus:outline-hidden focus:ring-2 focus:ring-[#00d4ff]/40"
               disabled={loading}
             />
           </div>

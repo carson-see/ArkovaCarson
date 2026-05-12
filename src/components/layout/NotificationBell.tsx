@@ -61,7 +61,7 @@ function NotificationRow({ notification, onSelect }: Readonly<RowProps>) {
     <button
       type="button"
       onClick={() => onSelect(notification)}
-      className={`w-full text-left px-3 py-2 hover:bg-muted/50 focus:bg-muted/50 focus:outline-none border-b border-border/50 last:border-b-0 ${
+      className={`w-full text-left px-3 py-2 hover:bg-muted/50 focus:bg-muted/50 focus:outline-hidden border-b border-border/50 last:border-b-0 ${
         unread ? 'bg-primary/5' : ''
       }`}
       aria-label={`${heading} — ${unread ? 'unread' : 'read'}`}

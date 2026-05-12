@@ -78,7 +78,7 @@ Do NOT read `docs/archive/MEMORY_deprecated.md`, `ARCHIVE_memory.md`, or pre-202
 
 | Layer | Technology |
 |---|---|
-| Frontend | React 18 + TypeScript + Tailwind + shadcn/ui + Lucide. Vite bundler. |
+| Frontend | React 19 + TypeScript + Tailwind CSS 4 (CSS-first `@theme`) + shadcn/ui + Lucide. Vite bundler. |
 | Database | Supabase (Postgres + Auth). RLS mandatory on all tables. |
 | Validation | Zod. Every write path. |
 | Routing | react-router-dom v6. Named routes in `src/lib/routes.ts`. |

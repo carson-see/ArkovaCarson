@@ -128,7 +128,7 @@ export function NessieChat() {
 
   return (
     <Card className="flex flex-col h-[600px]">
-      <CardHeader className="flex-shrink-0 pb-3">
+      <CardHeader className="shrink-0 pb-3">
         <CardTitle className="text-base flex items-center gap-2">
           <Shield className="h-4 w-4 text-[#00d4ff]" />
           Ask Nessie
@@ -146,7 +146,7 @@ export function NessieChat() {
         {messages.map((msg) => (
           <div key={msg.id} className={`flex gap-3 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
             {msg.role === 'assistant' && (
-              <div className="flex-shrink-0 w-7 h-7 rounded-full bg-[#00d4ff]/10 flex items-center justify-center">
+              <div className="shrink-0 w-7 h-7 rounded-full bg-[#00d4ff]/10 flex items-center justify-center">
                 <Bot className="h-4 w-4 text-[#00d4ff]" />
               </div>
             )}
@@ -201,7 +201,7 @@ export function NessieChat() {
               )}
             </div>
             {msg.role === 'user' && (
-              <div className="flex-shrink-0 w-7 h-7 rounded-full bg-primary/10 flex items-center justify-center">
+              <div className="shrink-0 w-7 h-7 rounded-full bg-primary/10 flex items-center justify-center">
                 <User className="h-4 w-4 text-primary" />
               </div>
             )}
@@ -210,7 +210,7 @@ export function NessieChat() {
       </div>
 
       {/* Input */}
-      <div className="flex-shrink-0 p-4 border-t space-y-2">
+      <div className="shrink-0 p-4 border-t space-y-2">
         {/* Task selector */}
         <div className="flex gap-1">
           {TASK_OPTIONS.map(opt => (
@@ -235,7 +235,7 @@ export function NessieChat() {
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && handleSend()}
             placeholder="Ask Nessie about compliance..."
-            className="flex-1 text-sm border rounded-lg px-3 py-2 bg-background focus:outline-none focus:ring-2 focus:ring-[#00d4ff]/50"
+            className="flex-1 text-sm border rounded-lg px-3 py-2 bg-background focus:outline-hidden focus:ring-2 focus:ring-[#00d4ff]/50"
             disabled={sending}
           />
           <Button

@@ -23,14 +23,14 @@ interface CitationCardProps {
 export function CitationCard({ index, citation }: CitationCardProps) {
   return (
     <div className="flex items-start gap-2 text-xs p-2 rounded bg-background/50 border border-border/50">
-      <span className="flex-shrink-0 w-5 h-5 rounded-full bg-[#00d4ff]/10 text-[#00d4ff] text-[10px] flex items-center justify-center font-medium">
+      <span className="shrink-0 w-5 h-5 rounded-full bg-[#00d4ff]/10 text-[#00d4ff] text-[10px] flex items-center justify-center font-medium">
         {index}
       </span>
       <div className="flex-1 min-w-0">
         <p className="font-medium truncate">{citation.title}</p>
         <p className="text-muted-foreground">{citation.source}</p>
       </div>
-      <div className="flex items-center gap-1 flex-shrink-0">
+      <div className="flex items-center gap-1 shrink-0">
         {citation.anchor_status === 'SECURED' ? (
           <ShieldCheck className="h-3 w-3 text-emerald-500" />
         ) : (

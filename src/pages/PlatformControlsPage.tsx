@@ -321,7 +321,7 @@ export function PlatformControlsPage() {
                         <button
                           onClick={() => toggleFlag(flag)}
                           disabled={toggling === flag.flag_key}
-                          className="ml-4 flex-shrink-0"
+                          className="ml-4 shrink-0"
                           aria-label={`Toggle ${flag.flag_key}`}
                         >
                           {toggling === flag.flag_key ? (

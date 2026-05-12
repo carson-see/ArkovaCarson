@@ -278,7 +278,7 @@ function StepTemplates({
               type="button"
               onClick={() => onSelect(t.id)}
               aria-pressed={active}
-              className={`text-left rounded-lg border p-4 transition-colors focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 ${
+              className={`text-left rounded-lg border p-4 transition-colors focus:outline-hidden focus:ring-2 focus:ring-primary focus:ring-offset-2 ${
                 active
                   ? 'border-primary bg-primary/5'
                   : 'border-border hover:border-primary/60'

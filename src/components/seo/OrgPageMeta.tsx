@@ -1,9 +1,8 @@
 /**
  * OrgPageMeta — Open Graph + Twitter Card meta tags for public org pages.
  *
- * Imperatively appends meta tags to <head> via useEffect because React 18
- * doesn't render <meta> tags inside the component tree into <head> (a fix
- * landed in React 19; switch to inline rendering once we upgrade).
+ * Imperatively appends meta tags to <head> via useEffect so this SPA keeps
+ * explicit ownership of cleanup for dynamically generated public org pages.
  *
  * Tracks its own appended nodes via a ref so cleanup-on-unmount and
  * effect-re-run never touch tags appended by a sibling instance.

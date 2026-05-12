@@ -14,6 +14,14 @@
 
 ## Now
 
+### 2026-05-12 — dependency PR consolidation in progress
+
+**Routine dependency batch — PR #772 (`codex/deps-routine-20260512`) replaces #764, #770, and #771.**
+Root/worker/edge routine bumps are bundled into one PR with the generated `org_credits` type-map repair and a drop-search overload test cleanup required by the stricter lint/type surface. Local gates passed: root typecheck/lint/lint:copy/license/build/test, worker typecheck/lint/build:circuit/test/build, edge typecheck. Staging T1 evidence is captured at `docs/staging/soak-pr-772-20260512T1339Z.json`: Cloud Run tag URL `https://pr-772---arkova-worker-staging-kvojbeutfa-uc.a.run.app`, deploy log id 14, 30-minute read-only soak 1497/1497 ok, p95 140ms, 0 failures. CI is green except the rerun of a transient E2E dependency-install network failure, which is currently in progress.
+
+**Frontend major dependency batch — PR #773 (`codex/deps-frontend-major-20260512`) replaces #767, #768, and #769.**
+React/React DOM and type packages are upgraded to 19.x, Tailwind is migrated from v3 config to v4 CSS-first `@theme` tokens plus `@tailwindcss/postcss`, and deprecated v3 utilities are migrated. Local gates passed: `npm run typecheck`, `npm run lint`, `npm run lint:copy`, `npm run security:license-denylist`, `npm run build`, and full `npm run test` (205 files, 1988 tests). Local browser smoke covered `/login` and `/verify` at desktop/mobile widths on the Vite dev server; no local Supabase reset was run so the parallel audit session and PR #753 soak were not disturbed.
+
 ### 2026-05-11 — PR #756 + PR #763 ready for review
 
 **PR #756 (SCRUM-1668 addendum) — staging-honesty preflight + SUBMITTED fixture + ledger cleanup: READY FOR REVIEW at `9da4d2bd`.**

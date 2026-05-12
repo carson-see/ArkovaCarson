@@ -52,7 +52,7 @@ export function RecommendationsCard({ missingRequired, missingRecommended, summa
             to={buildUploadUrl(item)}
             className="flex items-start gap-3 p-3 rounded-lg bg-muted/50 hover:bg-muted/80 transition-colors group"
           >
-            <span className="flex-shrink-0 w-6 h-6 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-300 text-xs flex items-center justify-center font-medium">
+            <span className="shrink-0 w-6 h-6 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-300 text-xs flex items-center justify-center font-medium">
               {i + 1}
             </span>
             <div className="space-y-1 flex-1">
@@ -76,7 +76,7 @@ export function RecommendationsCard({ missingRequired, missingRecommended, summa
                 )}
               </div>
             </div>
-            <Upload className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0 mt-1" />
+            <Upload className="h-4 w-4 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity shrink-0 mt-1" />
           </Link>
         ))}
       </CardContent>
