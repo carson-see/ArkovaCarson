@@ -12,6 +12,8 @@ CI gate scripts. Each one fails the build with a structured exit code + actionab
 - `check-views-security-invoker.ts` — every Postgres view must use `WITH (security_invoker=true)` to prevent RLS bypass.
 - `feedback-rules/` — orchestrator + per-rule scripts (R0-7 / SCRUM-1253) for `memory/feedback_*.md` rules.
 
+- **`staging-honesty-preflight.ts`** (SCRUM-1668) — queries a Supabase staging database and reports whether the environment is a clean mirror, has soak artifacts, or is fixture-seeded. 8 checks: (1) PR-only / staging-only migration rows, (2) duplicate names, (3) duplicate versions, (4) known artifact rows, (5) missing SUBMITTED anchors, (6) prod ledger divergence, (7) org topology — single-tenant prod vs multi-org staging seeds, (8) prod facts — pg_cron vacuum-anchors exists, refresh_pipeline_dashboard_cache exists but unscheduled. Checks 7–8 are optional (backward-compatible); live-queried from organizations table and cron schema, with `--prod-facts` CLI fallback. 53 tests in `staging-honesty-preflight.test.ts`.
+
 ## Conventions
 - Exit 0 = pass; exit 1 = fail with actionable error to stderr.
 - Tests colocate as `<name>.test.ts` and run in the main worker vitest config.
