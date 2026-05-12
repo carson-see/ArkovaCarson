@@ -14,7 +14,7 @@ import { FileText, CheckCircle, Clock, Radio, Ban, Hash, TrendingUp, Anchor } fr
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
-import type { AnchorStats as AnchorStatsType } from '@/hooks/useAnchorStats';
+import type { TreasuryAnchorStats as AnchorStatsType } from '@/hooks/useTreasuryBalance';
 
 interface AnchorStatsProps {
   stats: AnchorStatsType | null;

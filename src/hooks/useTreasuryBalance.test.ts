@@ -1,13 +1,15 @@
 /**
  * Unit tests for useTreasuryBalance R1-6 hardening (SCRUM-1260).
  *
- * Locks the new behaviors that kill silent 0/0/0:
+ * Locks the behaviors that kill silent 0/0/0:
  *   1. Worker timeout cut from 60s default → 8s (no 75s skeleton)
  *   2. AbortController cancels in-flight cycle when next poll starts
  *   3. document.hidden skips the polling cycle (no backgrounded-tab hammering)
  *   4. visibilitychange refreshes immediately on tab focus
  *   5. Worker timeout → keep last balance + flag stale; do NOT fall back to
  *      direct mempool.space balance polling (forensic 1/8 leak)
+ *   6. Browser never reads treasury_cache directly; worker health supplies
+ *      freshness and worker status supplies balance/stat truth.
  *
  * Full Playwright admin-auth spec deferred to R1-6 followup pending an
  * admin-page fixture in e2e/fixtures/auth.ts (currently only individual
@@ -17,14 +19,8 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { renderHook, waitFor, act } from '@testing-library/react';
 
-// Hoisted mocks so they run before the hook-under-test imports them.
-const { supabaseFromMock, workerFetchMock } = vi.hoisted(() => ({
-  supabaseFromMock: vi.fn(),
+const { workerFetchMock } = vi.hoisted(() => ({
   workerFetchMock: vi.fn(),
-}));
-
-vi.mock('@/lib/supabase', () => ({
-  supabase: { from: supabaseFromMock },
 }));
 
 vi.mock('@/lib/workerClient', () => ({
@@ -45,22 +41,28 @@ vi.mock('@/lib/copy', () => ({
 
 import { useTreasuryBalance } from './useTreasuryBalance';
 
-function makeCacheMissChain() {
+function jsonResponse(body: unknown, status = 200): Response {
   return {
-    select: vi.fn().mockReturnValue({
-      eq: vi.fn().mockReturnValue({
-        single: vi.fn().mockResolvedValue({ data: null, error: { message: 'PGRST116' } }),
-      }),
-    }),
-  };
+    ok: status >= 200 && status < 300,
+    status,
+    json: async () => body,
+  } as Response;
+}
+
+function mockWorkerDefaults(statusImpl: () => Promise<Response> = () => Promise.reject(new Error('worker timed out'))) {
+  workerFetchMock.mockImplementation((path: string) => {
+    if (path === '/api/treasury/status') return statusImpl();
+    if (path === '/api/treasury/health') {
+      return Promise.resolve(jsonResponse({ last_updated_at: '2026-05-12T10:00:00Z' }));
+    }
+    return Promise.reject(new Error(`unexpected worker path ${path}`));
+  });
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
-  // Default: cache miss so we exercise the worker + mempool paths.
-  supabaseFromMock.mockReturnValue(makeCacheMissChain());
   // Default: worker fails so error path is exercised.
-  workerFetchMock.mockRejectedValue(new Error('worker timed out'));
+  mockWorkerDefaults();
   // Stub global fetch for mempool calls — return empty arrays so the parse
   // paths short-circuit cleanly. Each test can override.
   vi.stubGlobal(
@@ -77,14 +79,33 @@ describe('useTreasuryBalance R1-6 hardening (SCRUM-1260)', () => {
   it('flips loading→false on worker failure (no 75s skeleton)', async () => {
     const { result } = renderHook(() => useTreasuryBalance());
     await waitFor(() => expect(result.current.loading).toBe(false), { timeout: 2000 });
-    expect(result.current.error).toBe('Balance unavailable');
-    expect(supabaseFromMock).toHaveBeenCalledWith('treasury_cache');
+    expect(result.current.error).toContain('Balance unavailable');
+    expect(result.current.error).toContain('worker timed out');
   });
 
   it('surfaces BALANCE_UNAVAILABLE when worker fails and no prior balance exists', async () => {
     const { result } = renderHook(() => useTreasuryBalance());
-    await waitFor(() => expect(result.current.error).toBe('Balance unavailable'));
+    await waitFor(() => expect(result.current.error).toContain('Balance unavailable'));
     expect(result.current.balance).toBeNull();
+  });
+
+  it('uses worker health for treasury cache freshness', async () => {
+    mockWorkerDefaults(() => Promise.resolve(jsonResponse({
+      wallet: { balanceSats: 12345 },
+      fees: { currentRateSatPerVbyte: 5 },
+      recentAnchors: {
+        totalSecured: 10,
+        totalPending: 2,
+        lastSecuredAt: '2026-05-12T09:00:00Z',
+        last24hCount: 3,
+      },
+    })));
+
+    const { result } = renderHook(() => useTreasuryBalance());
+
+    await waitFor(() => expect(result.current.balance?.total).toBe(12345));
+    expect(result.current.sourceState.cacheUpdatedAt).toBe('2026-05-12T10:00:00Z');
+    expect(result.current.anchorStats?.byStatus.SECURED).toBe(10);
   });
 
   it('passes a signal to workerFetch (cycle is cancellable)', async () => {
