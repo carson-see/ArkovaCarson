@@ -54,7 +54,7 @@ export function AnchorStats({ stats, loading }: Readonly<AnchorStatsProps>) {
             {/* Status breakdown */}
             <div className="space-y-2">
               {Object.entries(STATUS_CONFIG).map(([status, cfg]) => {
-                const count = stats.byStatus[status] ?? 0;
+                const count = stats.byStatus[status] ?? null;
                 const Icon = cfg.icon;
                 return (
                   <div key={status} className="flex items-center justify-between text-sm">
@@ -63,7 +63,7 @@ export function AnchorStats({ stats, loading }: Readonly<AnchorStatsProps>) {
                       {cfg.label}
                     </span>
                     <Badge variant="secondary" className="font-mono text-xs">
-                      {count.toLocaleString()}
+                      {formatMaybeCount(count)}
                     </Badge>
                   </div>
                 );

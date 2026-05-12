@@ -59,7 +59,7 @@ export interface MempoolFeeRates {
 }
 
 export interface TreasuryAnchorStats {
-  byStatus: Record<string, number>;
+  byStatus: Record<string, number | null>;
   totalAnchors: number;
   distinctTxIds: number | null;
   avgAnchorsPerTx: number | null;
@@ -82,8 +82,8 @@ interface WorkerTreasuryStatus {
   } | null;
   fees?: { currentRateSatPerVbyte: number } | null;
   recentAnchors?: {
-    totalSecured: number;
-    totalPending: number;
+    totalSecured?: number;
+    totalPending?: number;
     totalBroadcasting?: number;
     totalSubmitted?: number;
     totalRevoked?: number;
@@ -173,17 +173,31 @@ function isAbortError(error: unknown): boolean {
 
 function toAnchorStats(recentAnchors: WorkerTreasuryStatus['recentAnchors']): TreasuryAnchorStats | null {
   if (!recentAnchors) return null;
-  const byStatus = recentAnchors.byStatus ?? {
-    PENDING: recentAnchors.totalPending,
-    BROADCASTING: recentAnchors.totalBroadcasting ?? 0,
-    SUBMITTED: recentAnchors.totalSubmitted ?? 0,
-    SECURED: recentAnchors.totalSecured,
-    REVOKED: recentAnchors.totalRevoked ?? 0,
+
+  const byStatus: Record<string, number | null> = {};
+  const addStatus = (status: string, rawValue: unknown) => {
+    const value = nonNegativeNumberOrNull(rawValue);
+    if (value !== null) byStatus[status] = value;
   };
+
+  if (recentAnchors.byStatus && Object.keys(recentAnchors.byStatus).length > 0) {
+    for (const [status, count] of Object.entries(recentAnchors.byStatus)) {
+      addStatus(status, count);
+    }
+  } else {
+    addStatus('PENDING', recentAnchors.totalPending);
+    addStatus('BROADCASTING', recentAnchors.totalBroadcasting);
+    addStatus('SUBMITTED', recentAnchors.totalSubmitted);
+    addStatus('SECURED', recentAnchors.totalSecured);
+    addStatus('REVOKED', recentAnchors.totalRevoked);
+  }
+
+  if (Object.keys(byStatus).length === 0) return null;
+
   const distinctTxIds = nonNegativeNumberOrNull(recentAnchors.distinctTxIds);
   return {
     byStatus,
-    totalAnchors: Object.values(byStatus).reduce((sum, count) => sum + Math.max(Number(count) || 0, 0), 0),
+    totalAnchors: Object.values(byStatus).reduce<number>((sum, count) => sum + (count ?? 0), 0),
     distinctTxIds,
     avgAnchorsPerTx: distinctTxIds === null ? null : nonNegativeNumberOrNull(recentAnchors.avgAnchorsPerTx),
     lastAnchorTime: recentAnchors.lastAnchorAt ?? recentAnchors.lastSecuredAt,
