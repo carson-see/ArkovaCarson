@@ -1,6 +1,6 @@
 import type { Browser, BrowserContext, Page } from '@playwright/test';
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
-import { SEED_USERS } from '../fixtures/supabase';
+import { SEED_USERS, WS_CLIENT_OPTIONS } from '../fixtures/supabase';
 import { uniqueTestId } from './unique';
 
 export interface TestProfileOptions {
@@ -60,6 +60,7 @@ export async function createProfileSession(
   const userClient = createClient(
     process.env.E2E_SUPABASE_URL || 'http://127.0.0.1:54321',
     process.env.VITE_SUPABASE_ANON_KEY || '',
+    WS_CLIENT_OPTIONS,
   );
   const { data: sessionData, error: signInError } = await userClient.auth.signInWithPassword({
     email,

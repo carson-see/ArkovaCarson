@@ -13,6 +13,7 @@
  */
 
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
+import ws from 'ws';
 import { config } from '../config.js';
 import { logger } from './logger.js';
 import type { Database } from '../types/database.types.js';
@@ -59,6 +60,10 @@ export function getDb(): SupabaseClient<Database> {
       db: {
         schema: 'public',
       },
+      // Node 20 lacks native WebSocket; supabase-js 2.105.4+ requires
+      // an explicit ws transport on Node < 22 for @supabase/realtime-js.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      realtime: { transport: ws as any },
     });
   }
   return client;
