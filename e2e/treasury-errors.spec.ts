@@ -14,7 +14,8 @@
 
 import { test, expect, getServiceClient } from './fixtures';
 
-const WORKER_TREASURY_PATTERN = /\/api\/treasury\/(balance|stats|status|health|x402-stats)/;
+const WORKER_TREASURY_PATTERN =
+  /\/api\/treasury\/(?:balance|stats|status|health|x402-stats)(?:[?#].*)?$/;
 const serviceClient = getServiceClient();
 
 test.describe('SCRUM-1260 R1-6 — Treasury error / stale state', () => {

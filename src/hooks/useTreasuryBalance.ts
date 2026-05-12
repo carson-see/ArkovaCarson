@@ -61,8 +61,8 @@ export interface MempoolFeeRates {
 export interface TreasuryAnchorStats {
   byStatus: Record<string, number>;
   totalAnchors: number;
-  distinctTxIds: number;
-  avgAnchorsPerTx: number;
+  distinctTxIds: number | null;
+  avgAnchorsPerTx: number | null;
   lastAnchorTime: string | null;
   lastTxTime: string | null;
 }
@@ -90,6 +90,10 @@ interface WorkerTreasuryStatus {
     lastSecuredAt: string | null;
     last24hCount: number;
     byStatus?: Record<string, number>;
+    distinctTxIds?: number;
+    avgAnchorsPerTx?: number;
+    lastAnchorAt?: string | null;
+    lastTxAt?: string | null;
   };
   error?: string;
 }
@@ -154,6 +158,19 @@ function isFreshnessStale(updatedAt: string | null): boolean {
   return !Number.isFinite(updatedMs) || Date.now() - updatedMs > TREASURY_CACHE_STALE_MS;
 }
 
+function nonNegativeNumberOrNull(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
+}
+
+function isAbortError(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'name' in error &&
+    (error as { name?: unknown }).name === 'AbortError'
+  );
+}
+
 function toAnchorStats(recentAnchors: WorkerTreasuryStatus['recentAnchors']): TreasuryAnchorStats | null {
   if (!recentAnchors) return null;
   const byStatus = recentAnchors.byStatus ?? {
@@ -163,13 +180,14 @@ function toAnchorStats(recentAnchors: WorkerTreasuryStatus['recentAnchors']): Tr
     SECURED: recentAnchors.totalSecured,
     REVOKED: recentAnchors.totalRevoked ?? 0,
   };
+  const distinctTxIds = nonNegativeNumberOrNull(recentAnchors.distinctTxIds);
   return {
     byStatus,
     totalAnchors: Object.values(byStatus).reduce((sum, count) => sum + Math.max(Number(count) || 0, 0), 0),
-    distinctTxIds: 0,
-    avgAnchorsPerTx: 0,
-    lastAnchorTime: recentAnchors.lastSecuredAt,
-    lastTxTime: recentAnchors.lastSecuredAt,
+    distinctTxIds,
+    avgAnchorsPerTx: distinctTxIds === null ? null : nonNegativeNumberOrNull(recentAnchors.avgAnchorsPerTx),
+    lastAnchorTime: recentAnchors.lastAnchorAt ?? recentAnchors.lastSecuredAt,
+    lastTxTime: recentAnchors.lastTxAt ?? recentAnchors.lastAnchorAt ?? recentAnchors.lastSecuredAt,
   };
 }
 
@@ -396,6 +414,7 @@ export function useTreasuryBalance() {
         setError(workerError);
       }
     } catch (err) {
+      if (signal.aborted || isAbortError(err)) return;
       if (isMountedRef.current) {
         setError(err instanceof Error ? err.message : 'Failed to fetch treasury data');
       }

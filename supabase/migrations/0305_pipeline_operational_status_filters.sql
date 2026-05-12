@@ -46,7 +46,8 @@ BEGIN
   v_offset := (v_page - 1) * v_page_size;
 
   IF p_source IS NULL AND p_record_type IS NULL AND v_status IS NULL AND v_search IS NULL THEN
-    v_total := (SELECT reltuples::bigint FROM pg_class WHERE relname = 'public_records');
+    SELECT count(*) INTO v_total
+    FROM public_records;
   ELSE
     SELECT count(*) INTO v_total
     FROM public_records pr
@@ -128,7 +129,7 @@ BEGIN
         OR pr.source_id ILIKE '%' || v_search || '%'
         OR pr.content_hash ILIKE v_search || '%'
       )
-    ORDER BY pr.created_at DESC
+    ORDER BY pr.created_at DESC, pr.id DESC
     LIMIT v_page_size
     OFFSET v_offset
   ) t;

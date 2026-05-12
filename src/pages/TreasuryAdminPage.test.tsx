@@ -6,9 +6,10 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { TreasuryAdminPage } from './TreasuryAdminPage';
+import { workerFetch } from '@/lib/workerClient';
 
 // Mock hooks
 const mockUser = { email: 'carson@arkova.ai' };
@@ -168,9 +169,12 @@ describe('TreasuryAdminPage', () => {
     expect(screen.getByText(/access denied/i)).toBeInTheDocument();
   });
 
-  it('renders x402 payment section', () => {
+  it('renders x402 payment section', async () => {
     renderPage();
     expect(screen.getByText('x402 Payment Revenue')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(workerFetch).toHaveBeenCalledWith('/api/treasury/x402-stats', { method: 'GET' });
+    });
   });
 
   it('surfaces worker cache freshness from the treasury source state', () => {

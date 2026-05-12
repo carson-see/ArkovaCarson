@@ -111,13 +111,13 @@ const PAGE_SIZE = 25;
 const PIPELINE_CACHE_STALE_MS = 10 * 60 * 1000;
 
 const OPERATIONAL_STATUS_FILTERS: Array<{ value: AnchorOperationalStatus | 'unlinked'; label: string }> = [
-  { value: 'PENDING', label: 'Pending' },
-  { value: 'BROADCASTING', label: 'Broadcasting' },
-  { value: 'SUBMITTED', label: 'Submitted / In Mempool' },
-  { value: 'SECURED', label: 'Secured / Confirmed' },
-  { value: 'EXPIRED', label: 'Expired' },
-  { value: 'REVOKED', label: 'Revoked' },
-  { value: 'unlinked', label: 'Unlinked' },
+  { value: 'PENDING', label: PIPELINE_LABELS.STATUS_PENDING },
+  { value: 'BROADCASTING', label: PIPELINE_LABELS.STATUS_BROADCASTING },
+  { value: 'SUBMITTED', label: PIPELINE_LABELS.STATUS_SUBMITTED_MEMPOOL },
+  { value: 'SECURED', label: PIPELINE_LABELS.STATUS_SECURED_CONFIRMED },
+  { value: 'EXPIRED', label: PIPELINE_LABELS.STATUS_EXPIRED },
+  { value: 'REVOKED', label: PIPELINE_LABELS.STATUS_REVOKED },
+  { value: 'unlinked', label: PIPELINE_LABELS.STATUS_UNLINKED },
 ];
 
 const STATUS_BADGE_CLASS: Record<AnchorOperationalStatus, string> = {
@@ -130,12 +130,12 @@ const STATUS_BADGE_CLASS: Record<AnchorOperationalStatus, string> = {
 };
 
 const STATUS_BADGE_LABEL: Record<AnchorOperationalStatus, string> = {
-  PENDING: 'Pending',
-  BROADCASTING: 'Broadcasting',
-  SUBMITTED: 'Submitted / In Mempool',
-  SECURED: 'Secured / Confirmed',
-  EXPIRED: 'Expired',
-  REVOKED: 'Revoked',
+  PENDING: PIPELINE_LABELS.STATUS_PENDING,
+  BROADCASTING: PIPELINE_LABELS.STATUS_BROADCASTING,
+  SUBMITTED: PIPELINE_LABELS.STATUS_SUBMITTED,
+  SECURED: PIPELINE_LABELS.STATUS_SECURED_CONFIRMED,
+  EXPIRED: PIPELINE_LABELS.STATUS_EXPIRED,
+  REVOKED: PIPELINE_LABELS.STATUS_REVOKED,
 };
 
 function isAnchorOperationalStatus(status: string | null | undefined): status is AnchorOperationalStatus {
@@ -148,14 +148,14 @@ function isAnchorOperationalStatus(status: string | null | undefined): status is
 }
 
 function formatCacheFreshness(updatedAt: string | null | undefined): string {
-  if (!updatedAt) return 'No cache timestamp returned';
+  if (!updatedAt) return PIPELINE_LABELS.CACHE_NO_TIMESTAMP;
   const updatedMs = new Date(updatedAt).getTime();
-  if (!Number.isFinite(updatedMs)) return 'Cache timestamp unavailable';
+  if (!Number.isFinite(updatedMs)) return PIPELINE_LABELS.CACHE_TIMESTAMP_UNAVAILABLE;
   const ageMs = Math.max(Date.now() - updatedMs, 0);
   const ageMinutes = Math.floor(ageMs / 60_000);
-  if (ageMinutes < 1) return 'Last refreshed less than a minute ago';
-  if (ageMinutes === 1) return 'Last refreshed 1 minute ago';
-  return `Last refreshed ${ageMinutes.toLocaleString()} minutes ago`;
+  if (ageMinutes < 1) return PIPELINE_LABELS.CACHE_REFRESHED_LESS_THAN_MINUTE;
+  if (ageMinutes === 1) return PIPELINE_LABELS.CACHE_REFRESHED_ONE_MINUTE;
+  return PIPELINE_LABELS.CACHE_REFRESHED_MINUTES(ageMinutes.toLocaleString());
 }
 
 function isCacheStale(updatedAt: string | null | undefined): boolean {
@@ -168,7 +168,7 @@ function renderOperationalStatusBadge(status: string | null | undefined, chainTx
   if (!isAnchorOperationalStatus(status)) {
     return (
       <Badge variant="outline" className="text-muted-foreground border-border/50 text-[10px]">
-        {status ?? 'Unknown'}
+        {PIPELINE_LABELS.STATUS_UNKNOWN}
       </Badge>
     );
   }
@@ -176,15 +176,19 @@ function renderOperationalStatusBadge(status: string | null | undefined, chainTx
   if (status === 'SECURED' && !chainTxId) {
     return (
       <Badge className="bg-red-500/10 text-red-400 border-red-500/20 text-[10px]">
-        Secured / Missing Receipt
+        {PIPELINE_LABELS.STATUS_SECURED_MISSING_RECEIPT}
       </Badge>
     );
   }
 
+  const label = status === 'SUBMITTED' && chainTxId
+    ? PIPELINE_LABELS.STATUS_SUBMITTED_MEMPOOL
+    : STATUS_BADGE_LABEL[status];
+
   return (
     <Badge className={`${STATUS_BADGE_CLASS[status]} text-[10px]`}>
       {status === 'SECURED' && <ArkovaIcon className="h-3 w-3 mr-1" />}
-      {STATUS_BADGE_LABEL[status]}
+      {label}
     </Badge>
   );
 }
@@ -318,7 +322,9 @@ export function PipelineAdminPage() {
         // Fallback: direct Supabase RPC (may fail due to RLS)
         const { data: pipelineStats, error: rpcError } = await dbAny.rpc('get_pipeline_stats');
         if (rpcError || !pipelineStats) {
-          const fallbackMessage = typeof rpcError?.message === 'string' ? rpcError.message : 'Direct RPC fallback returned no data';
+          const fallbackMessage = typeof rpcError?.message === 'string'
+            ? rpcError.message
+            : PIPELINE_LABELS.DIRECT_RPC_FALLBACK_NO_DATA;
           throw new Error(`${workerErrorMessage}; fallback failed: ${fallbackMessage}`);
         }
 
@@ -379,7 +385,7 @@ export function PipelineAdminPage() {
       // banner disappears once the worker recovers.
       setStatsError(null);
       setStatsWarning(workerErrorMessage
-        ? `Worker/cache source failed (${workerErrorMessage}); showing direct RPC fallback values.`
+        ? PIPELINE_LABELS.WORKER_CACHE_FALLBACK_WARNING(workerErrorMessage)
         : null);
       setStatsSource(source);
     } catch (err) {
@@ -717,12 +723,12 @@ export function PipelineAdminPage() {
   const sourceLabel = (source: string) => SOURCE_CONFIG[source]?.label ?? source;
   const renderAnchorStatusBadge = (record: PublicRecord) => {
     if (record.anchor_id) {
-      return renderOperationalStatusBadge(record.anchor_status ?? 'PENDING', record.chain_tx_id);
+      return renderOperationalStatusBadge(record.anchor_status, record.chain_tx_id);
     }
 
     return (
       <Badge variant="outline" className="text-muted-foreground border-border/50 text-[10px]">
-        Unlinked
+        {PIPELINE_LABELS.STATUS_UNLINKED}
       </Badge>
     );
   };
@@ -784,12 +790,14 @@ export function PipelineAdminPage() {
             className="flex flex-wrap items-center gap-2 rounded-md border border-border/50 bg-muted/20 px-3 py-2 text-xs text-muted-foreground"
           >
             <Badge variant="outline" className="font-mono text-[10px]">
-              {statsSource === 'client-rpc-fallback' ? 'Direct RPC fallback' : 'Worker cache'}
+              {statsSource === 'client-rpc-fallback'
+                ? PIPELINE_LABELS.DIRECT_RPC_FALLBACK_SOURCE
+                : PIPELINE_LABELS.WORKER_CACHE_SOURCE}
             </Badge>
             <span>{formatCacheFreshness(stats.cacheUpdatedAt)}</span>
             {isCacheStale(stats.cacheUpdatedAt) && (
               <Badge className="bg-amber-500/10 text-amber-400 border-amber-500/20 text-[10px]">
-                Stale
+                {PIPELINE_LABELS.STALE}
               </Badge>
             )}
           </div>
@@ -902,7 +910,8 @@ export function PipelineAdminPage() {
                 {Object.entries(stats?.byCredentialType ?? {})
                   .sort(([, a], [, b]) => b.total - a.total)
                   .map(([ct, counts]) => {
-                    const label = PIPELINE_LABELS[`TYPE_${ct}` as keyof typeof PIPELINE_LABELS] ?? formatCredentialType(ct);
+                    const labelCandidate = PIPELINE_LABELS[`TYPE_${ct}` as keyof typeof PIPELINE_LABELS];
+                    const label = typeof labelCandidate === 'string' ? labelCandidate : formatCredentialType(ct);
                     const securedPct = counts.total > 0 ? Math.round((counts.secured / counts.total) * 100) : 0;
                     return (
                       <div
