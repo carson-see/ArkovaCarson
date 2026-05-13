@@ -340,8 +340,9 @@ export async function monitorStuckTransactions(): Promise<StuckTxResult> {
     ) => {
       const metadata = anchor.metadata as Record<string, unknown> | null;
       const attempts = ((metadata?._rebroadcast_attempts as number) ?? 0);
-      const pendingMetadata = metadata ? { ...metadata } : {};
-      delete pendingMetadata._rebroadcast_attempts;
+      const pendingMetadata = metadata
+        ? Object.fromEntries(Object.entries(metadata).filter(([key]) => key !== '_rebroadcast_attempts'))
+        : undefined;
       const updatePayload = AbandonedSubmittedAnchorUpdateSchema.safeParse({
         status: 'PENDING',
         chain_tx_id: null,
@@ -543,10 +544,14 @@ export async function rebroadcastDroppedTransactions(): Promise<RebroadcastResul
           // Update rebroadcast count in metadata
           const affectedAnchors = oldAnchors.filter((a) => a.chain_tx_id === txId);
           for (const affected of affectedAnchors) {
-            const affMeta = (affected.metadata as Record<string, unknown>) ?? {};
+            const affMeta = affected.metadata as Record<string, unknown> | null;
             await db.from('anchors')
               .update({
-                metadata: { ...affMeta, _rebroadcast_attempts: attempts, _last_rebroadcast: new Date().toISOString() },
+                metadata: {
+                  ...(affMeta ?? undefined),
+                  _rebroadcast_attempts: attempts,
+                  _last_rebroadcast: new Date().toISOString(),
+                },
                 updated_at: new Date().toISOString(),
               })
               .eq('id', affected.id);
