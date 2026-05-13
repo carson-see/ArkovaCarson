@@ -168,6 +168,37 @@ describe('Chain Maintenance Jobs', () => {
   // ─── NET-1: Stuck TX Monitor ──────────────────────────────────────
 
   describe('monitorStuckTransactions (NET-1)', () => {
+    async function runStaleSubmittedAbandonmentRace(txId: string, updateChain: ReturnType<typeof mockDbChain>) {
+      const abandonCutoff = new Date(Date.now() - 73 * 60 * 60 * 1000).toISOString();
+      const stuckAnchor = {
+        id: 'a1',
+        chain_tx_id: txId,
+        metadata: { pipeline_source: 'public_records' },
+        created_at: abandonCutoff,
+        updated_at: abandonCutoff,
+      };
+
+      let fromCallCount = 0;
+      mockDb.from.mockImplementation(() => {
+        fromCallCount++;
+        return fromCallCount === 1 ? mockDbChain([stuckAnchor], null) : updateChain;
+      });
+
+      const chainClient = new MockChainClient();
+      vi.spyOn(chainClient, 'getReceipt').mockResolvedValue({
+        receiptId: stuckAnchor.chain_tx_id,
+        blockHeight: 0,
+        blockTimestamp: abandonCutoff,
+        confirmations: 0,
+      } satisfies ChainReceipt);
+      mockGetChainClientAsync.mockResolvedValue(chainClient);
+
+      return {
+        result: await monitorStuckTransactions(),
+        stuckAnchor,
+      };
+    }
+
     it('skips in mock/test mode', async () => {
       mockConfig.useMocks = true;
       const result = await monitorStuckTransactions();
@@ -374,33 +405,11 @@ describe('Chain Maintenance Jobs', () => {
     });
 
     it('does not count recovery when stale submitted abandonment update fails', async () => {
-      const abandonCutoff = new Date(Date.now() - 73 * 60 * 60 * 1000).toISOString();
-      const stuckAnchor = {
-        id: 'a1',
-        chain_tx_id: 'tx_visible_but_update_fails',
-        metadata: { pipeline_source: 'public_records' },
-        created_at: abandonCutoff,
-        updated_at: abandonCutoff,
-      };
-
       const updateError = { message: 'db unavailable' };
-      const updateChain = mockDbChain(null, updateError);
-      let fromCallCount = 0;
-      mockDb.from.mockImplementation(() => {
-        fromCallCount++;
-        return fromCallCount === 1 ? mockDbChain([stuckAnchor], null) : updateChain;
-      });
-
-      const chainClient = new MockChainClient();
-      vi.spyOn(chainClient, 'getReceipt').mockResolvedValue({
-        receiptId: stuckAnchor.chain_tx_id,
-        blockHeight: 0,
-        blockTimestamp: abandonCutoff,
-        confirmations: 0,
-      } satisfies ChainReceipt);
-      mockGetChainClientAsync.mockResolvedValue(chainClient);
-
-      const result = await monitorStuckTransactions();
+      const { result, stuckAnchor } = await runStaleSubmittedAbandonmentRace(
+        'tx_visible_but_update_fails',
+        mockDbChain(null, updateError),
+      );
 
       expect(result.recovered).toBe(0);
       expect(mockLogger.error).toHaveBeenCalledWith(
@@ -410,32 +419,10 @@ describe('Chain Maintenance Jobs', () => {
     });
 
     it('treats stale submitted abandonment compare-and-set misses as races, not hard failures', async () => {
-      const abandonCutoff = new Date(Date.now() - 73 * 60 * 60 * 1000).toISOString();
-      const stuckAnchor = {
-        id: 'a1',
-        chain_tx_id: 'tx_visible_but_already_changed',
-        metadata: { pipeline_source: 'public_records' },
-        created_at: abandonCutoff,
-        updated_at: abandonCutoff,
-      };
-
-      const updateChain = mockDbChain(null, null);
-      let fromCallCount = 0;
-      mockDb.from.mockImplementation(() => {
-        fromCallCount++;
-        return fromCallCount === 1 ? mockDbChain([stuckAnchor], null) : updateChain;
-      });
-
-      const chainClient = new MockChainClient();
-      vi.spyOn(chainClient, 'getReceipt').mockResolvedValue({
-        receiptId: stuckAnchor.chain_tx_id,
-        blockHeight: 0,
-        blockTimestamp: abandonCutoff,
-        confirmations: 0,
-      } satisfies ChainReceipt);
-      mockGetChainClientAsync.mockResolvedValue(chainClient);
-
-      const result = await monitorStuckTransactions();
+      const { result, stuckAnchor } = await runStaleSubmittedAbandonmentRace(
+        'tx_visible_but_already_changed',
+        mockDbChain(null, null),
+      );
 
       expect(result.recovered).toBe(0);
       expect(mockLogger.error).not.toHaveBeenCalledWith(
