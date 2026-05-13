@@ -2,24 +2,27 @@
   "name": "arkova-zapier",
   "version": "1.0.0",
   "description": "Arkova integration for Zapier — anchor, verify, and receive webhook events for credential verification",
-  "main": "src/index.ts",
+  "main": "dist/index.js",
+  "exports": "./dist/index.js",
   "scripts": {
-    "build": "tsc",
+    "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
+    "build": "npm run clean && tsc",
     "test": "vitest run",
     "test:watch": "vitest",
-    "validate": "zapier validate",
-    "push": "zapier push"
+    "validate": "zapier-platform validate --without-style",
+    "push": "zapier-platform push",
+    "_zapier-build": "npm run build"
   },
   "dependencies": {
-    "zapier-platform-core": "15.19.0"
+    "zapier-platform-core": "18.6.0"
   },
   "devDependencies": {
     "typescript": "5.9.3",
-    "vitest": "1.6.1",
-    "zapier-platform-cli": "15.19.0"
+    "vitest": "4.1.6",
+    "zapier-platform-cli": "18.6.0"
   },
   "engines": {
     "node": ">=18",
-    "zapier-platform-core": "15.x"
+    "zapier-platform-core": "18.x"
   }
 }

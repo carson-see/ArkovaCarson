@@ -15,7 +15,7 @@ import { batchVerifyAction } from './actions/batchVerify';
 
 const App = {
   version: '1.0.0',
-  platformVersion: '15.0.0',
+  platformVersion: '18.6.0',
 
   authentication,
 
@@ -24,7 +24,7 @@ const App = {
     [anchorRevokedTrigger.key]: anchorRevokedTrigger,
   },
 
-  actions: {
+  creates: {
     [anchorDocumentAction.key]: anchorDocumentAction,
     [verifyCredentialAction.key]: verifyCredentialAction,
     [batchVerifyAction.key]: batchVerifyAction,

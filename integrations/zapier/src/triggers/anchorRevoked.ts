@@ -73,7 +73,6 @@ export const anchorRevokedTrigger = {
   display: {
     label: 'Anchor Revoked',
     description: 'Triggers when a previously secured anchor is revoked.',
-    important: true,
   },
   operation: {
     type: 'hook' as const,
