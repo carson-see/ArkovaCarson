@@ -78,7 +78,7 @@ describe('Chain Maintenance Jobs', () => {
   const originalFetch = global.fetch;
 
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
     // Default: advisory lock acquired successfully
     mockDb.rpc.mockResolvedValue({ data: true });
     // Reset config
@@ -295,6 +295,50 @@ describe('Chain Maintenance Jobs', () => {
           _abandon_reason: 'TX remained unconfirmed in mempool after 72h timeout',
         }),
       }));
+    });
+
+    it('checks shared submitted tx state once for multiple stale anchors', async () => {
+      const abandonCutoff = new Date(Date.now() - 73 * 60 * 60 * 1000).toISOString();
+      const chainTxId = 'tx_shared_unconfirmed';
+      const stuckAnchors = [
+        {
+          id: 'a1',
+          chain_tx_id: chainTxId,
+          metadata: { pipeline_source: 'public_records' },
+          created_at: abandonCutoff,
+          updated_at: abandonCutoff,
+        },
+        {
+          id: 'a2',
+          chain_tx_id: chainTxId,
+          metadata: { pipeline_source: 'public_records' },
+          created_at: abandonCutoff,
+          updated_at: abandonCutoff,
+        },
+      ];
+
+      const updateChain = mockDbChain({ id: 'updated' }, null);
+      let fromCallCount = 0;
+      mockDb.from.mockImplementation(() => {
+        fromCallCount++;
+        return fromCallCount === 1 ? mockDbChain(stuckAnchors, null) : updateChain;
+      });
+
+      const chainClient = new MockChainClient();
+      const getReceipt = vi.spyOn(chainClient, 'getReceipt').mockResolvedValue({
+        receiptId: chainTxId,
+        blockHeight: 0,
+        blockTimestamp: abandonCutoff,
+        confirmations: 0,
+      } satisfies ChainReceipt);
+      mockGetChainClientAsync.mockResolvedValue(chainClient);
+
+      const result = await monitorStuckTransactions();
+
+      expect(result.recovered).toBe(2);
+      expect(getReceipt).toHaveBeenCalledTimes(1);
+      expect(getReceipt).toHaveBeenCalledWith(chainTxId);
+      expect(updateChain.update).toHaveBeenCalledTimes(2);
     });
 
     it('does not count recovery when stale submitted abandonment update fails', async () => {
