@@ -266,7 +266,7 @@ describe('handleTreasuryX402Stats', () => {
         ],
       },
       error: null,
-    } as never);
+    });
 
     const res = createMockRes();
     await handleTreasuryX402Stats('admin-123', {} as Request, res);
