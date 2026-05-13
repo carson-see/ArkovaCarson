@@ -7,23 +7,9 @@ import { beforeEach, describe, it, expect, vi } from 'vitest';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 
-vi.mock('@/hooks/useAuth', () => ({
-  useAuth: vi.fn().mockReturnValue({
-    user: { email: 'carson@arkova.ai', id: 'user-1' },
-    signOut: vi.fn(),
-    session: null,
-    loading: false,
-    error: null,
-  }),
-}));
+vi.mock('@/hooks/useAuth', () => ({ useAuth: vi.fn().mockReturnValue({ user: { email: 'carson@arkova.ai', id: 'user-1' }, signOut: vi.fn(), session: null, loading: false, error: null }) }));
 
-vi.mock('@/hooks/useProfile', () => ({
-  useProfile: vi.fn().mockReturnValue({
-    profile: { org_id: 'org-1', role: 'ORG_ADMIN', full_name: 'Carson' },
-    loading: false,
-    destination: '/dashboard',
-  }),
-}));
+vi.mock('@/hooks/useProfile', () => ({ useProfile: vi.fn().mockReturnValue({ profile: { org_id: 'org-1', role: 'ORG_ADMIN', full_name: 'Carson' }, loading: false, destination: '/dashboard' }) }));
 
 vi.mock('@/hooks/useTheme', () => ({
   useTheme: vi.fn().mockReturnValue({ theme: 'dark', setTheme: vi.fn() }),
@@ -73,6 +59,24 @@ import { workerFetch } from '@/lib/workerClient';
 import { supabase } from '@/lib/supabase';
 
 const defaultRecordPage = { data: [], total: 0 };
+const submittedRecordPage = {
+  total: 1,
+  data: [{
+    id: 'record-1',
+    source: 'edgar',
+    source_id: 'SRC-1',
+    source_url: null,
+    record_type: 'filing',
+    title: 'Submitted filing',
+    content_hash: 'a'.repeat(64),
+    anchor_id: 'anchor-1',
+    metadata: {},
+    created_at: '2026-05-12T10:00:00Z',
+    updated_at: '2026-05-12T10:00:00Z',
+    anchor_status: 'SUBMITTED',
+    chain_tx_id: 'b'.repeat(64),
+  }],
+};
 
 function mockSupabaseRpc(overrides?: Record<string, unknown>) {
   (supabase.rpc as unknown as ReturnType<typeof vi.fn>).mockImplementation((name: string) => {
@@ -146,24 +150,7 @@ describe('PipelineAdminPage', () => {
 
   it('renders SUBMITTED records as in mempool, not anchored', async () => {
     mockSupabaseRpc({
-      recordPage: {
-        total: 1,
-        data: [{
-          id: 'record-1',
-          source: 'edgar',
-          source_id: 'SRC-1',
-          source_url: null,
-          record_type: 'filing',
-          title: 'Submitted filing',
-          content_hash: 'a'.repeat(64),
-          anchor_id: 'anchor-1',
-          metadata: {},
-          created_at: '2026-05-12T10:00:00Z',
-          updated_at: '2026-05-12T10:00:00Z',
-          anchor_status: 'SUBMITTED',
-          chain_tx_id: 'b'.repeat(64),
-        }],
-      },
+      recordPage: submittedRecordPage,
     });
 
     render(
@@ -187,6 +174,43 @@ describe('PipelineAdminPage', () => {
 
     expect(await screen.findByTestId('pipeline-stats-fallback')).toHaveTextContent('Worker/cache source failed');
     expect(screen.getByTestId('pipeline-cache-freshness')).toHaveTextContent('Direct RPC fallback');
+  });
+
+  it('surfaces unavailable lifecycle counts instead of rendering cache-miss zeros as truth', async () => {
+    vi.mocked(workerFetch).mockResolvedValueOnce({
+      ok: true,
+      json: vi.fn().mockResolvedValue({
+        totalRecords: 10000,
+        anchoredRecords: null,
+        pendingRecords: null,
+        embeddedRecords: 8000,
+        anchorLinkedRecords: null,
+        pendingRecordLinks: null,
+        pendingAnchorRecords: null,
+        broadcastingRecords: null,
+        submittedRecords: null,
+        securedRecords: null,
+        cacheUpdatedAt: '2026-05-12T12:00:00Z',
+        bySource: {},
+        statusCountsAvailable: false,
+        statusCountsWarning: 'Pipeline lifecycle counts unavailable: cache miss',
+      }),
+    } as unknown as Response);
+    mockSupabaseRpc({
+      recordPage: submittedRecordPage,
+    });
+
+    render(
+      <MemoryRouter>
+        <PipelineAdminPage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByTestId('pipeline-status-counts-warning')).toHaveTextContent('cache miss');
+    expect(screen.getByText('— submitted / — confirmed')).toBeInTheDocument();
+    expect(screen.getByText('— unlinked / — queued / — submitting to network')).toBeInTheDocument();
+    expect(screen.queryByText('0 submitted / 0 confirmed')).not.toBeInTheDocument();
+    expect(await screen.findByText('Submitted / In Mempool')).toBeInTheDocument();
   });
 
   it('surfaces hard stats failure without coercing missing stat cards to zero', async () => {

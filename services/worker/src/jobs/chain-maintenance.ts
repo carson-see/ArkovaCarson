@@ -21,6 +21,8 @@
 import { db } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
 import { config } from '../config.js';
+import { z } from 'zod';
+import type { Json } from '../types/database.types.js';
 
 // ─── Constants ──────────────────────────────────────────────────────────
 
@@ -51,6 +53,18 @@ const LOCK_STUCK_TX_MONITOR = 42011;
 const LOCK_REBROADCAST = 42012;
 const LOCK_CONSOLIDATION = 42013;
 const LOCK_FEE_MONITOR = 42014;
+
+const AbandonedSubmittedAnchorUpdateSchema = z.object({
+  status: z.literal('PENDING'),
+  chain_tx_id: z.null(),
+  chain_block_height: z.null(),
+  chain_timestamp: z.null(),
+  metadata: z.object({
+    _abandoned_tx_id: z.string().min(1),
+    _abandoned_at: z.string().datetime(),
+    _abandon_reason: z.string().min(1),
+  }).catchall(z.unknown()),
+}).strict();
 
 // ─── Helpers ────────────────────────────────────────────────────────────
 
@@ -285,6 +299,55 @@ export async function monitorStuckTransactions(): Promise<StuckTxResult> {
     let stuck = 0;
     let recovered = 0;
     const baseUrl = getMempoolBaseUrl();
+    const abandonSubmittedAnchor = async (
+      anchor: (typeof stuckAnchors)[number],
+      reason: string,
+      logMessage: string,
+    ) => {
+      const metadata = anchor.metadata as Record<string, unknown> | null;
+      const attempts = ((metadata?._rebroadcast_attempts as number) ?? 0);
+      const updatePayload = AbandonedSubmittedAnchorUpdateSchema.safeParse({
+        status: 'PENDING',
+        chain_tx_id: null,
+        chain_block_height: null,
+        chain_timestamp: null,
+        metadata: {
+          ...(metadata ?? {}),
+          _abandoned_tx_id: anchor.chain_tx_id,
+          _abandoned_at: new Date().toISOString(),
+          _abandon_reason: reason,
+        },
+      });
+
+      if (!updatePayload.success) {
+        logger.error(
+          { anchorId: anchor.id, txId: anchor.chain_tx_id, error: updatePayload.error },
+          'Invalid stale submitted anchor abandonment payload',
+        );
+        return;
+      }
+
+      const { data: updatedAnchor, error: updateError } = await db.from('anchors')
+        .update({
+          ...updatePayload.data,
+          metadata: updatePayload.data.metadata as Json,
+        })
+        .eq('id', anchor.id)
+        .eq('status', 'SUBMITTED')
+        .select('id')
+        .maybeSingle();
+
+      if (updateError || !updatedAnchor) {
+        logger.error(
+          { anchorId: anchor.id, txId: anchor.chain_tx_id, error: updateError },
+          'Failed to abandon stale submitted anchor',
+        );
+        return;
+      }
+
+      recovered++;
+      logger.warn({ anchorId: anchor.id, txId: anchor.chain_tx_id, attempts }, logMessage);
+    };
 
     for (const anchor of stuckAnchors) {
       // Check if TX is actually still unconfirmed
@@ -299,6 +362,19 @@ export async function monitorStuckTransactions(): Promise<StuckTxResult> {
             // TX actually confirmed — the check-confirmations job will handle promotion
             continue;
           }
+
+          const metadata = anchor.metadata as Record<string, unknown> | null;
+          const attempts = ((metadata?._rebroadcast_attempts as number) ?? 0);
+          if (attempts >= MAX_REBROADCAST_ATTEMPTS || anchor.updated_at < abandonCutoff) {
+            const reason = attempts >= MAX_REBROADCAST_ATTEMPTS
+              ? 'TX remained unconfirmed in mempool after max rebroadcast attempts'
+              : 'TX remained unconfirmed in mempool after 72h timeout';
+            await abandonSubmittedAnchor(
+              anchor,
+              reason,
+              'Abandoned stale unconfirmed TX — reverted SUBMITTED → PENDING for resubmission',
+            );
+          }
         }
 
         if (resp.status === 404) {
@@ -307,26 +383,13 @@ export async function monitorStuckTransactions(): Promise<StuckTxResult> {
           const attempts = ((metadata?._rebroadcast_attempts as number) ?? 0);
 
           if (attempts >= MAX_REBROADCAST_ATTEMPTS || anchor.updated_at < abandonCutoff) {
+            const reason = attempts >= MAX_REBROADCAST_ATTEMPTS
+              ? 'TX dropped from mempool after max rebroadcast attempts'
+              : 'TX dropped from mempool after 72h timeout';
             // Abandon: revert to PENDING for resubmission with fresh fee
-            await db.from('anchors')
-              .update({
-                status: 'PENDING',
-                chain_tx_id: null,
-                chain_block_height: null,
-                chain_timestamp: null,
-                metadata: {
-                  ...(metadata ?? {}),
-                  _abandoned_tx_id: anchor.chain_tx_id,
-                  _abandoned_at: new Date().toISOString(),
-                  _abandon_reason: 'TX dropped from mempool after max rebroadcast attempts',
-                },
-              })
-              .eq('id', anchor.id)
-              .eq('status', 'SUBMITTED');
-
-            recovered++;
-            logger.warn(
-              { anchorId: anchor.id, txId: anchor.chain_tx_id, attempts },
+            await abandonSubmittedAnchor(
+              anchor,
+              reason,
               'Abandoned stuck TX — reverted SUBMITTED → PENDING for resubmission',
             );
           }
