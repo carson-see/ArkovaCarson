@@ -376,6 +376,13 @@ export function PipelineAdminPage() {
         if (pipelineStats.cache_miss === true) {
           anchoredRecords = null;
           pendingRecords = null;
+          anchorLinkedRecords = null;
+          pendingRecordLinks = null;
+          pendingAnchorRecords = null;
+          broadcastingRecords = null;
+          submittedRecords = null;
+          securedRecords = null;
+          embeddedRecords = null;
         } else {
           anchoredRecords = toCountOrNull(pipelineStats.secured_records ?? pipelineStats.anchored_records);
           const pendingBase = toCountOrNull(pipelineStats.pending_bitcoin_records ?? pipelineStats.pending_records);
@@ -384,8 +391,8 @@ export function PipelineAdminPage() {
             submittedCountForPending = submittedRecords;
           }
           pendingRecords = addCounts(pendingBase, submittedCountForPending);
+          embeddedRecords = toCountOrNull(pipelineStats.embedded_records);
         }
-        embeddedRecords = toCountOrNull(pipelineStats.embedded_records);
         cacheUpdatedAt = typeof pipelineStats.cache_updated_at === 'string' ? pipelineStats.cache_updated_at : null;
 
         const { data: sourceCounts } = await dbAny.rpc('count_public_records_by_source');

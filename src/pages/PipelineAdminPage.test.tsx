@@ -233,6 +233,39 @@ describe('PipelineAdminPage', () => {
     expect(await screen.findByText('Submitted / In Mempool')).toBeInTheDocument();
   });
 
+  it('nulls all lifecycle sub-counts when direct RPC fallback reports a cache miss', async () => {
+    vi.mocked(workerFetch).mockRejectedValueOnce(new Error('worker unavailable'));
+    mockSupabaseRpc({
+      recordPage: submittedRecordPage,
+      pipelineStats: {
+        total_records: 10000,
+        anchored_records: 0,
+        pending_records: 0,
+        embedded_records: 0,
+        anchor_linked_records: 0,
+        pending_record_links: 0,
+        pending_anchor_records: 0,
+        broadcasting_records: 0,
+        submitted_records: 0,
+        secured_records: 0,
+        cache_miss: true,
+        cache_updated_at: null,
+      },
+    });
+
+    render(
+      <MemoryRouter>
+        <PipelineAdminPage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByTestId('pipeline-status-counts-warning')).toHaveTextContent('unavailable');
+    expect(screen.getByText('— submitted / — confirmed')).toBeInTheDocument();
+    expect(screen.getByText('— unlinked / — queued / — submitting to network')).toBeInTheDocument();
+    expect(screen.queryByText('0 submitted / 0 confirmed')).not.toBeInTheDocument();
+    expect(screen.queryByText('0 unlinked / 0 queued / 0 submitting to network')).not.toBeInTheDocument();
+  });
+
   it('surfaces hard stats failure without coercing missing stat cards to zero', async () => {
     vi.mocked(workerFetch).mockRejectedValueOnce(new Error('worker unavailable'));
     (supabase.rpc as unknown as ReturnType<typeof vi.fn>).mockImplementation((name: string) => {

@@ -74,6 +74,37 @@ function mockDbChain(data: unknown = null, error: unknown = null) {
   return chain;
 }
 
+async function runStaleSubmittedAbandonmentRace(txId: string, updateChain: ReturnType<typeof mockDbChain>) {
+  const abandonCutoff = new Date(Date.now() - 73 * 60 * 60 * 1000).toISOString();
+  const stuckAnchor = {
+    id: 'a1',
+    chain_tx_id: txId,
+    metadata: { pipeline_source: 'public_records' },
+    created_at: abandonCutoff,
+    updated_at: abandonCutoff,
+  };
+
+  let fromCallCount = 0;
+  mockDb.from.mockImplementation(() => {
+    fromCallCount++;
+    return fromCallCount === 1 ? mockDbChain([stuckAnchor], null) : updateChain;
+  });
+
+  const chainClient = new MockChainClient();
+  vi.spyOn(chainClient, 'getReceipt').mockResolvedValue({
+    receiptId: stuckAnchor.chain_tx_id,
+    blockHeight: 0,
+    blockTimestamp: abandonCutoff,
+    confirmations: 0,
+  } satisfies ChainReceipt);
+  mockGetChainClientAsync.mockResolvedValue(chainClient);
+
+  return {
+    result: await monitorStuckTransactions(),
+    stuckAnchor,
+  };
+}
+
 describe('Chain Maintenance Jobs', () => {
   const originalFetch = global.fetch;
 
@@ -91,6 +122,7 @@ describe('Chain Maintenance Jobs', () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.useRealTimers();
     global.fetch = originalFetch;
   });
 
@@ -168,37 +200,6 @@ describe('Chain Maintenance Jobs', () => {
   // ─── NET-1: Stuck TX Monitor ──────────────────────────────────────
 
   describe('monitorStuckTransactions (NET-1)', () => {
-    async function runStaleSubmittedAbandonmentRace(txId: string, updateChain: ReturnType<typeof mockDbChain>) {
-      const abandonCutoff = new Date(Date.now() - 73 * 60 * 60 * 1000).toISOString();
-      const stuckAnchor = {
-        id: 'a1',
-        chain_tx_id: txId,
-        metadata: { pipeline_source: 'public_records' },
-        created_at: abandonCutoff,
-        updated_at: abandonCutoff,
-      };
-
-      let fromCallCount = 0;
-      mockDb.from.mockImplementation(() => {
-        fromCallCount++;
-        return fromCallCount === 1 ? mockDbChain([stuckAnchor], null) : updateChain;
-      });
-
-      const chainClient = new MockChainClient();
-      vi.spyOn(chainClient, 'getReceipt').mockResolvedValue({
-        receiptId: stuckAnchor.chain_tx_id,
-        blockHeight: 0,
-        blockTimestamp: abandonCutoff,
-        confirmations: 0,
-      } satisfies ChainReceipt);
-      mockGetChainClientAsync.mockResolvedValue(chainClient);
-
-      return {
-        result: await monitorStuckTransactions(),
-        stuckAnchor,
-      };
-    }
-
     it('skips in mock/test mode', async () => {
       mockConfig.useMocks = true;
       const result = await monitorStuckTransactions();
@@ -360,6 +361,43 @@ describe('Chain Maintenance Jobs', () => {
       expect(updateChain.update).not.toHaveBeenCalled();
     });
 
+    it('uses parsed timestamps when deciding whether unconfirmed TXs crossed the 72h abandon cutoff', async () => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date('2026-05-13T17:00:00.000Z'));
+      const offsetTimestampBeforeCutoff = '2026-05-10T23:00:00+09:00';
+      const stuckAnchor = {
+        id: 'a1',
+        chain_tx_id: 'tx_offset_visible',
+        metadata: { pipeline_source: 'public_records' },
+        created_at: offsetTimestampBeforeCutoff,
+        updated_at: offsetTimestampBeforeCutoff,
+      };
+
+      const updateChain = mockDbChain({ id: stuckAnchor.id }, null);
+      let fromCallCount = 0;
+      mockDb.from.mockImplementation(() => {
+        fromCallCount++;
+        return fromCallCount === 1 ? mockDbChain([stuckAnchor], null) : updateChain;
+      });
+
+      const chainClient = new MockChainClient();
+      vi.spyOn(chainClient, 'getReceipt').mockResolvedValue({
+        receiptId: stuckAnchor.chain_tx_id,
+        blockHeight: 0,
+        blockTimestamp: offsetTimestampBeforeCutoff,
+        confirmations: 0,
+      } satisfies ChainReceipt);
+      mockGetChainClientAsync.mockResolvedValue(chainClient);
+
+      const result = await monitorStuckTransactions();
+
+      expect(result.recovered).toBe(1);
+      expect(updateChain.update).toHaveBeenCalledWith(expect.objectContaining({
+        status: 'PENDING',
+        chain_tx_id: null,
+      }));
+    });
+
     it('checks shared submitted tx state once for multiple stale anchors', async () => {
       const abandonCutoff = new Date(Date.now() - 73 * 60 * 60 * 1000).toISOString();
       const chainTxId = 'tx_shared_unconfirmed';
@@ -472,6 +510,34 @@ describe('Chain Maintenance Jobs', () => {
 
       const result = await rebroadcastDroppedTransactions();
       expect(result.rebroadcast).toBe(1);
+    });
+
+    it('does not persist rebroadcast metadata when the stored attempt counter is invalid', async () => {
+      const anchor = {
+        id: 'a1',
+        chain_tx_id: 'tx_invalid_rebroadcast_attempts',
+        metadata: { _raw_tx_hex: '0200000001abcdef...', _rebroadcast_attempts: 'not-a-number' },
+      };
+
+      const updateChain = mockDbChain(null, null);
+      let fromCallCount = 0;
+      mockDb.from.mockImplementation(() => {
+        fromCallCount++;
+        return fromCallCount === 1 ? mockDbChain([anchor], null) : updateChain;
+      });
+
+      global.fetch = vi.fn()
+        .mockResolvedValueOnce({ ok: false, status: 404 } as Response)
+        .mockResolvedValueOnce({ ok: true, text: async () => 'tx_invalid_rebroadcast_attempts' } as Response);
+
+      const result = await rebroadcastDroppedTransactions();
+
+      expect(result.failed).toBe(1);
+      expect(updateChain.update).not.toHaveBeenCalled();
+      expect(mockLogger.error).toHaveBeenCalledWith(
+        expect.objectContaining({ txId: anchor.chain_tx_id }),
+        'Invalid rebroadcast metadata payload',
+      );
     });
 
     it('fails when no raw TX hex stored', async () => {
