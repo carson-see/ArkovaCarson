@@ -181,7 +181,7 @@ const TIER_DECLARATION_RE = /^\s*[-*]?\s*Tier:\s*(T[123])\b/im;
 const UTC_TIMESTAMP_RE = /^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2})(?::(\d{2}))?\s*(?:UTC|Z)\b/i;
 
 function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return value.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
 }
 
 export function extractDeclaredTier(body: string): Tier | null {
@@ -198,14 +198,14 @@ export function missingFields(body: string, tier: Tier): string[] {
   const missing: string[] = [];
   for (const field of spec.requiredFields) {
     // Field labels are line-anchored to avoid matching prose mentions.
-    const re = new RegExp(`^[\\s\\-*]*${escapeRegExp(field)}`, 'im');
+    const re = new RegExp(String.raw`^[\s\-*]*${escapeRegExp(field)}`, 'im');
     if (!re.test(body)) missing.push(field);
   }
   return missing;
 }
 
 function extractEvidenceFieldValue(body: string, field: string): string | null {
-  const re = new RegExp(`^[\\s\\-*]*${escapeRegExp(field)}\\s*(.*)$`, 'im');
+  const re = new RegExp(String.raw`^[\s\-*]*${escapeRegExp(field)}\s*(.*)$`, 'im');
   const m = re.exec(body);
   return m ? m[1].trim() : null;
 }
