@@ -19,6 +19,12 @@ describe('check-npm-install-policy', () => {
     expect(hits[0]).toMatchObject({ file: 'workflow.yml', line: 1 });
   });
 
+  it('flags quoted YAML run commands', () => {
+    const hits = scanTextForUnsafeNpmInstalls('workflow.yml', 'run: "npm ci"');
+    expect(hits).toHaveLength(1);
+    expect(hits[0]).toMatchObject({ file: 'workflow.yml', line: 1 });
+  });
+
   it('flags explicit lifecycle-script opt-in without a justification marker', () => {
     const hits = scanTextForUnsafeNpmInstalls('Dockerfile', 'RUN npm install --ignore-scripts=false');
     expect(hits).toHaveLength(1);
@@ -49,5 +55,10 @@ describe('check-npm-install-policy', () => {
       ].join('\n'),
     );
     expect(hits).toEqual([]);
+  });
+
+  it('does not let echo commands hide a follow-on install command', () => {
+    const hits = scanTextForUnsafeNpmInstalls('workflow.yml', 'run: echo "installing" && npm ci');
+    expect(hits).toHaveLength(1);
   });
 });

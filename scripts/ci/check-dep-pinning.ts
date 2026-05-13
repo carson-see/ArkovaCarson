@@ -2,9 +2,8 @@
 /**
  * SCRUM-1005 (DEP-15) — Dependency pinning enforcement.
  *
- * Scans tracked package.json files in the repo and fails if any dependency,
- * devDependency, or peerDependency version starts with `^` or `~` (caret or
- * tilde ranges).
+ * Scans tracked package.json files in the repo and fails if any dependency
+ * field or override value starts with `^` or `~` (caret or tilde ranges).
  *
  * Why: unpinned dependencies cause non-reproducible builds and introduce
  * supply-chain risk. Lockfiles pin *resolved* versions, but caret/tilde
@@ -21,8 +20,12 @@ import { resolve, sep, join, relative } from 'node:path';
 import { tmpdir } from 'node:os';
 
 const OVERRIDE_LABEL = 'dep-range-intentional';
-const GIT_BINARY = '/usr/bin/git';
-const DEPENDENCY_SECTIONS = ['dependencies', 'devDependencies', 'peerDependencies'] as const;
+const DEPENDENCY_SECTIONS = [
+  'dependencies',
+  'devDependencies',
+  'optionalDependencies',
+  'peerDependencies',
+] as const;
 const SKIPPED_DIRS = new Set([
   '.git',
   '.next',
@@ -35,6 +38,7 @@ const SKIPPED_DIRS = new Set([
   'out',
   'playwright-report',
 ]);
+const GIT_EXECUTABLE = '/usr/bin/git';
 
 /**
  * Resolve the repo root, validating any user-supplied DEP_PINNING_REPO_ROOT
@@ -88,16 +92,18 @@ export function resolveRepoRoot(): string {
 
 interface Violation {
   file: string;
-  section: (typeof DEPENDENCY_SECTIONS)[number];
+  section: string;
   name: string;
   version: string;
+}
+
+function isRangeVersion(version: string): boolean {
+  return version.startsWith('^') || version.startsWith('~');
 }
 
 function normalizeRelPath(path: string): string {
   return path.split(sep).join('/');
 }
-
-const comparePath = (a: string, b: string): number => a.localeCompare(b);
 
 function discoverPackageJsons(repo: string): string[] {
   const discovered: string[] = [];
@@ -116,12 +122,12 @@ function discoverPackageJsons(repo: string): string[] {
   }
 
   walk(repo);
-  return discovered.sort(comparePath);
+  return discovered.sort((a, b) => a.localeCompare(b));
 }
 
 export function listPackageJsons(repo: string): string[] {
   try {
-    const output = execFileSync(GIT_BINARY, ['-C', repo, 'ls-files', '*package.json'], {
+    const output = execFileSync(GIT_EXECUTABLE, ['-C', repo, 'ls-files', '*package.json'], {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
     });
@@ -131,7 +137,7 @@ export function listPackageJsons(repo: string): string[] {
       .filter(Boolean)
       .filter((path) => path === 'package.json' || path.endsWith('/package.json'))
       .filter((path) => !path.split('/').some((part) => SKIPPED_DIRS.has(part)))
-      .sort(comparePath);
+      .sort((a, b) => a.localeCompare(b));
 
     if (tracked.length > 0) return tracked;
   } catch {
@@ -153,9 +159,42 @@ function scanPackageJson(repo: string, relPath: string): Violation[] {
     if (!deps) continue;
     for (const [name, version] of Object.entries(deps)) {
       if (typeof version !== 'string') continue;
-      if (version.startsWith('^') || version.startsWith('~')) {
+      if (isRangeVersion(version)) {
         violations.push({ file: relPath, section, name, version });
       }
+    }
+  }
+
+  if (pkg.overrides && typeof pkg.overrides === 'object' && !Array.isArray(pkg.overrides)) {
+    violations.push(...scanOverrideValues(relPath, pkg.overrides));
+  }
+
+  return violations;
+}
+
+function scanOverrideValues(
+  relPath: string,
+  overrides: Record<string, unknown>,
+  path: string[] = [],
+): Violation[] {
+  const violations: Violation[] = [];
+
+  for (const [name, value] of Object.entries(overrides)) {
+    const overridePath = [...path, name];
+    if (typeof value === 'string') {
+      if (isRangeVersion(value)) {
+        violations.push({
+          file: relPath,
+          section: 'overrides',
+          name: overridePath.join(' → '),
+          version: value,
+        });
+      }
+      continue;
+    }
+
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      violations.push(...scanOverrideValues(relPath, value as Record<string, unknown>, overridePath));
     }
   }
 
@@ -191,7 +230,7 @@ function main(): void {
     console.error(`  ${v.file} → ${v.section} → ${v.name}: ${v.version}`);
   }
   console.error('');
-  console.error('Fix: remove the ^ or ~ prefix from dependency, devDependency, or peerDependency versions to pin them exactly.');
+  console.error('Fix: remove the ^ or ~ prefix from dependency fields or override values to pin them exactly.');
   console.error(`If intentional, label the PR with \`${OVERRIDE_LABEL}\`.`);
   process.exit(1);
 }

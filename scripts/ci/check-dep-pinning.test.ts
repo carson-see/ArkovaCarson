@@ -111,6 +111,34 @@ describe('check-dep-pinning (SCRUM-1005)', () => {
     expect(r.stderr).toContain('^18.2.0');
   });
 
+  it('exits 1 on caret ranges in optionalDependencies', () => {
+    seedFixture({
+      name: 'fixture-root',
+      optionalDependencies: { fsevents: '^2.3.3' },
+    });
+    const r = runScript(tmp);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('fsevents');
+    expect(r.stderr).toContain('optionalDependencies');
+    expect(r.stderr).toContain('^2.3.3');
+  });
+
+  it('exits 1 on override values that are ranges', () => {
+    seedFixture({
+      name: 'fixture-root',
+      overrides: {
+        'selector@<2.0.0': '2.0.0',
+        'range-override': '^1.0.0',
+      },
+    });
+    const r = runScript(tmp);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('range-override');
+    expect(r.stderr).toContain('overrides');
+    expect(r.stderr).toContain('^1.0.0');
+    expect(r.stderr).not.toContain('selector@<2.0.0:');
+  });
+
   it('finds nested package.json files beyond the historical fixed paths', () => {
     seedFixture({
       name: 'fixture-root',

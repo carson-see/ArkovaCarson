@@ -15,7 +15,6 @@ const CHECKED_DIRS = [
   'scripts',
 ];
 const CHECKED_EXTENSIONS = new Set(['.sh', '.yml', '.yaml']);
-const comparePath = (a: string, b: string): number => a.localeCompare(b);
 
 export interface Violation {
   file: string;
@@ -53,7 +52,7 @@ function collectFiles(repo: string): string[] {
     walk(join(repo, dir));
   }
 
-  return files.sort(comparePath);
+  return files.sort((a, b) => a.localeCompare(b));
 }
 
 function isCommentOnly(line: string): boolean {
@@ -69,6 +68,20 @@ function stripQuotedStrings(line: string): string {
   return line
     .replace(/"([^"\\]|\\.)*"/g, '""')
     .replace(/'([^'\\]|\\.)*'/g, "''");
+}
+
+function commandTextForLine(line: string): string {
+  const trimmedStart = line.trimStart();
+  if (!trimmedStart.startsWith('run:')) return line;
+  return trimmedStart.slice('run:'.length).trimStart();
+}
+
+function isEchoOnlyMention(line: string): boolean {
+  const commandText = commandTextForLine(line).trim();
+  if (!/^\s*echo\b/.test(commandText)) return false;
+
+  const withoutQuotedStrings = stripQuotedStrings(commandText);
+  return !/(?:&&|\|\||;|\|)/.test(withoutQuotedStrings);
 }
 
 function hasNpmInstall(line: string): boolean {
@@ -96,8 +109,9 @@ export function scanTextForUnsafeNpmInstalls(file: string, text: string): Violat
 
   lines.forEach((line, index) => {
     if (isCommentOnly(line) || isYamlNameLine(line)) return;
+    if (isEchoOnlyMention(line)) return;
 
-    const commandText = stripQuotedStrings(line);
+    const commandText = commandTextForLine(line);
     if (!hasNpmInstall(commandText)) return;
     if (hasSafeIgnoreScripts(commandText)) return;
     if (hasAllowMarker(lines, index)) return;

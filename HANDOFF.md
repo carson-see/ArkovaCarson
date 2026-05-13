@@ -14,6 +14,14 @@
 
 ## Now
 
+### 2026-05-13 — SCRUM-1834 supply-chain install policy sandbox
+
+**PR #779 / branch `codex/supply-chain-install-policy-20260513` packages the previously orphaned local-only supply-chain commits into one tracked PR lane under SCRUM-1834.** Scope: recursive dependency pinning across every tracked `package.json`, npm install-script policy guard for CI/deploy scripts, default `npm ci --ignore-scripts` in GitHub Actions and deploy helpers, exact nested package pins/lockfiles for integrations and packages, Zapier Platform 18 compatibility cleanup, and the worker OpenTelemetry/protobufjs audit fix discovered while expanding the guard to override values.
+
+**Jira hierarchy is explicit:** SCRUM-1834 parent is SCRUM-550, with Spec/Implement/Verify subtasks SCRUM-1835, SCRUM-1836, and SCRUM-1837. Protected scopes were not edited: PR #774/P0 dashboard truth, SCRUM-908 migration drift including `0305_pipeline_operational_status_filters.sql`, SCRUM-1803 staging lease work, PR #753 soak/runtime files, P0 dashboard lane files, and logo assets.
+
+**Validation completed locally with lifecycle scripts disabled for installs:** root `npm ci --ignore-scripts`; root `ci:dep-pinning`; root `ci:install-script-policy`; CI guard Vitest suite; root `typecheck`; root `lint`; worker `npm ci --ignore-scripts`, `typecheck`, `lint` (warnings-only existing backlog), `build`, and audit with 0 vulnerabilities; `git diff --check`; nested clean installs/builds/tests for Bullhorn, Clio, Zapier, Embed, and SDK; Zapier structural validate. Residual risk: Zapier CLI 18.6.0 still carries non-critical high dev-tool transitive audit findings; npm's force fix points to a breaking downgrade to Zapier CLI 8.2.1, so follow-up SCRUM-1838 (subtasks SCRUM-1839, SCRUM-1840, SCRUM-1841) tracks the vendor/compensating-control path.
+
 ### 2026-05-12 — dependency consolidation merge follow-up (#772 merged; #773 rebased)
 
 **PR #772 / branch `codex/deps-routine-20260512` merged to `main` as merge commit `12ab7848d9f5f293e7193e386a1273dd1ea41b74`.** It consolidates #764, #770, #771, and #775. Scope: root production/dev dependency bumps, worker Sentry/Vite/Vitest/TypeScript-ESLint/dev type bumps, worker transitive `@protobufjs/utf8` lockfile bump, and edge `@cloudflare/workers-types`.

@@ -82,7 +82,6 @@ export const anchorSecuredTrigger = {
   display: {
     label: 'New Anchor Secured',
     description: 'Triggers when a document is anchored to Bitcoin and reaches SECURED status.',
-    important: true,
   },
   operation: {
     type: 'hook' as const,
