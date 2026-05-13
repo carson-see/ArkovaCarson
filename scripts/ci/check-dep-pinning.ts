@@ -21,6 +21,7 @@ import { resolve, sep, join, relative } from 'node:path';
 import { tmpdir } from 'node:os';
 
 const OVERRIDE_LABEL = 'dep-range-intentional';
+const GIT_BINARY = '/usr/bin/git';
 const DEPENDENCY_SECTIONS = ['dependencies', 'devDependencies', 'peerDependencies'] as const;
 const SKIPPED_DIRS = new Set([
   '.git',
@@ -120,7 +121,7 @@ function discoverPackageJsons(repo: string): string[] {
 
 export function listPackageJsons(repo: string): string[] {
   try {
-    const output = execFileSync('git', ['-C', repo, 'ls-files', '*package.json'], {
+    const output = execFileSync(GIT_BINARY, ['-C', repo, 'ls-files', '*package.json'], {
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'ignore'],
     });
