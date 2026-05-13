@@ -60,7 +60,7 @@ export interface MempoolFeeRates {
 
 export interface TreasuryAnchorStats {
   byStatus: Record<string, number | null>;
-  totalAnchors: number;
+  totalAnchors: number | null;
   distinctTxIds: number | null;
   avgAnchorsPerTx: number | null;
   lastAnchorTime: string | null;
@@ -176,8 +176,9 @@ function toAnchorStats(recentAnchors: WorkerTreasuryStatus['recentAnchors']): Tr
 
   const byStatus: Record<string, number | null> = {};
   const addStatus = (status: string, rawValue: unknown) => {
-    const value = nonNegativeNumberOrNull(rawValue);
-    if (value !== null) byStatus[status] = value;
+    if (rawValue !== undefined) {
+      byStatus[status] = nonNegativeNumberOrNull(rawValue);
+    }
   };
 
   if (recentAnchors.byStatus && Object.keys(recentAnchors.byStatus).length > 0) {
@@ -192,12 +193,16 @@ function toAnchorStats(recentAnchors: WorkerTreasuryStatus['recentAnchors']): Tr
     addStatus('REVOKED', recentAnchors.totalRevoked);
   }
 
-  if (Object.keys(byStatus).length === 0) return null;
+  const statusCounts = Object.values(byStatus);
+  if (statusCounts.length === 0 || !statusCounts.some((count) => count !== null)) return null;
 
   const distinctTxIds = nonNegativeNumberOrNull(recentAnchors.distinctTxIds);
+  const totalAnchors = statusCounts.some((count) => count === null)
+    ? null
+    : statusCounts.reduce<number>((sum, count) => sum + (count ?? 0), 0);
   return {
     byStatus,
-    totalAnchors: Object.values(byStatus).reduce<number>((sum, count) => sum + (count ?? 0), 0),
+    totalAnchors,
     distinctTxIds,
     avgAnchorsPerTx: distinctTxIds === null ? null : nonNegativeNumberOrNull(recentAnchors.avgAnchorsPerTx),
     lastAnchorTime: recentAnchors.lastAnchorAt ?? recentAnchors.lastSecuredAt,

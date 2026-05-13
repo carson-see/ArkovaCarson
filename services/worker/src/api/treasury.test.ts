@@ -194,6 +194,22 @@ describe('handleTreasuryStatus', () => {
       SECURED: null,
     });
   });
+
+  it('does not throw when anchor by_status is unavailable', async () => {
+    mockFetchAnchorStats.mockResolvedValueOnce({
+      ...baseAnchorStats,
+      by_status: null,
+    });
+
+    const res = createMockRes();
+    await handleTreasuryStatus('admin-123', {} as Request, res);
+
+    const response = vi.mocked(res.json).mock.calls[0][0] as {
+      recentAnchors: Record<string, unknown>;
+    };
+    expect(response.recentAnchors.byStatus).toEqual({});
+    expect(res.status).not.toHaveBeenCalledWith(500);
+  });
 });
 
 describe('handleTreasuryX402Stats', () => {

@@ -79,6 +79,36 @@ function getMempoolBaseUrl(): string {
   return paths[config.bitcoinNetwork] ?? 'https://mempool.space/signet';
 }
 
+type SubmittedTxChainState = 'confirmed' | 'unconfirmed' | 'not_found' | 'unknown';
+
+async function getSubmittedTxChainState(txId: string, baseUrl: string): Promise<SubmittedTxChainState> {
+  try {
+    const { getChainClientAsync } = await import('../chain/client.js');
+    const chainClient = await getChainClientAsync();
+    const receipt = await chainClient.getReceipt(txId);
+    if (receipt) {
+      return receipt.confirmations > 0 ? 'confirmed' : 'unconfirmed';
+    }
+  } catch (err) {
+    logger.debug({ txId, error: err }, 'Chain client receipt lookup unavailable for submitted TX monitor');
+  }
+
+  try {
+    const resp = await fetch(`${baseUrl}/api/tx/${txId}`, {
+      signal: AbortSignal.timeout(10000),
+    });
+
+    if (resp.ok) {
+      const txData = await resp.json() as { status: { confirmed: boolean } };
+      return txData.status.confirmed ? 'confirmed' : 'unconfirmed';
+    }
+
+    return resp.status === 404 ? 'not_found' : 'unknown';
+  } catch {
+    return 'unknown';
+  }
+}
+
 async function acquireLock(_lockId: number): Promise<boolean> {
   // Advisory locks don't work with Supabase connection pooling.
   // Single-worker process — always proceed.
@@ -351,55 +381,43 @@ export async function monitorStuckTransactions(): Promise<StuckTxResult> {
 
     for (const anchor of stuckAnchors) {
       // Check if TX is actually still unconfirmed
-      try {
-        const resp = await fetch(`${baseUrl}/api/tx/${anchor.chain_tx_id}`, {
-          signal: AbortSignal.timeout(10000),
-        });
-
-        if (resp.ok) {
-          const txData = await resp.json() as { status: { confirmed: boolean } };
-          if (txData.status.confirmed) {
-            // TX actually confirmed — the check-confirmations job will handle promotion
-            continue;
-          }
-
-          const metadata = anchor.metadata as Record<string, unknown> | null;
-          const attempts = ((metadata?._rebroadcast_attempts as number) ?? 0);
-          if (attempts >= MAX_REBROADCAST_ATTEMPTS || anchor.updated_at < abandonCutoff) {
-            const reason = attempts >= MAX_REBROADCAST_ATTEMPTS
-              ? 'TX remained unconfirmed in mempool after max rebroadcast attempts'
-              : 'TX remained unconfirmed in mempool after 72h timeout';
-            await abandonSubmittedAnchor(
-              anchor,
-              reason,
-              'Abandoned stale unconfirmed TX — reverted SUBMITTED → PENDING for resubmission',
-            );
-          }
-        }
-
-        if (resp.status === 404) {
-          // TX dropped from mempool — count rebroadcast attempts
-          const metadata = anchor.metadata as Record<string, unknown> | null;
-          const attempts = ((metadata?._rebroadcast_attempts as number) ?? 0);
-
-          if (attempts >= MAX_REBROADCAST_ATTEMPTS || anchor.updated_at < abandonCutoff) {
-            const reason = attempts >= MAX_REBROADCAST_ATTEMPTS
-              ? 'TX dropped from mempool after max rebroadcast attempts'
-              : 'TX dropped from mempool after 72h timeout';
-            // Abandon: revert to PENDING for resubmission with fresh fee
-            await abandonSubmittedAnchor(
-              anchor,
-              reason,
-              'Abandoned stuck TX — reverted SUBMITTED → PENDING for resubmission',
-            );
-          }
-        }
-
-        stuck++;
-      } catch {
-        // Network error checking TX — will retry next run
-        stuck++;
+      const txState = await getSubmittedTxChainState(anchor.chain_tx_id, baseUrl);
+      if (txState === 'confirmed') {
+        // TX actually confirmed — the check-confirmations job will handle promotion
+        continue;
       }
+
+      const metadata = anchor.metadata as Record<string, unknown> | null;
+      const attempts = ((metadata?._rebroadcast_attempts as number) ?? 0);
+
+      if (txState === 'unconfirmed') {
+        if (attempts >= MAX_REBROADCAST_ATTEMPTS || anchor.updated_at < abandonCutoff) {
+          const reason = attempts >= MAX_REBROADCAST_ATTEMPTS
+            ? 'TX remained unconfirmed in mempool after max rebroadcast attempts'
+            : 'TX remained unconfirmed in mempool after 72h timeout';
+          await abandonSubmittedAnchor(
+            anchor,
+            reason,
+            'Abandoned stale unconfirmed TX — reverted SUBMITTED → PENDING for resubmission',
+          );
+        }
+      }
+
+      if (txState === 'not_found') {
+        if (attempts >= MAX_REBROADCAST_ATTEMPTS || anchor.updated_at < abandonCutoff) {
+          const reason = attempts >= MAX_REBROADCAST_ATTEMPTS
+            ? 'TX dropped from mempool after max rebroadcast attempts'
+            : 'TX dropped from mempool after 72h timeout';
+          // Abandon: revert to PENDING for resubmission with fresh fee
+          await abandonSubmittedAnchor(
+            anchor,
+            reason,
+            'Abandoned stuck TX — reverted SUBMITTED → PENDING for resubmission',
+          );
+        }
+      }
+
+      stuck++;
     }
 
     if (stuck > 0) {

@@ -196,6 +196,26 @@ describe('useTreasuryBalance R1-6 hardening (SCRUM-1260)', () => {
     expect(result.current.anchorStats?.totalAnchors).toBe(10);
   });
 
+  it('does not collapse partially unavailable status buckets into a smaller total', async () => {
+    mockWorkerDefaults(() => Promise.resolve(jsonResponse({
+      wallet: { balanceSats: 12345 },
+      recentAnchors: {
+        byStatus: {
+          SECURED: 10,
+          PENDING: null,
+        },
+        lastSecuredAt: '2026-05-12T09:00:00Z',
+        last24hCount: 3,
+      },
+    })));
+
+    const { result } = renderHook(() => useTreasuryBalance());
+
+    await waitFor(() => expect(result.current.anchorStats?.byStatus.SECURED).toBe(10));
+    expect(result.current.anchorStats?.byStatus.PENDING).toBeNull();
+    expect(result.current.anchorStats?.totalAnchors).toBeNull();
+  });
+
   it('clears stale anchor stats when the worker marks status totals unavailable', async () => {
     let statusPayload: unknown = {
       wallet: { balanceSats: 12345 },

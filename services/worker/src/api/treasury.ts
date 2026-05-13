@@ -59,7 +59,10 @@ function nonNegativeNumberOrNull(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
 }
 
-function sanitizeStatusCounts(counts: Record<string, number>): Record<string, number | null> {
+function sanitizeStatusCounts(counts: Record<string, unknown> | null | undefined): Record<string, number | null> {
+  if (!counts || typeof counts !== 'object' || Array.isArray(counts)) {
+    return {};
+  }
   return Object.fromEntries(
     Object.entries(counts).map(([status, count]) => [status, nonNegativeNumberOrNull(count)]),
   );
