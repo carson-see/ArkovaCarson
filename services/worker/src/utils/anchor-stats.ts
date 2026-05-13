@@ -18,7 +18,7 @@ export interface AnchorStats {
   total_broadcasting: number;
   total_submitted: number;
   total_revoked: number;
-  by_status: Record<string, number>;
+  by_status: Record<string, number | null>;
   last_secured_at: string | null;
   /** -1 sentinel = unavailable or approximate-only this round. Caller renders "—". */
   distinct_tx_count: number;
@@ -63,6 +63,10 @@ function toNullableString(value: unknown): string | null {
   return typeof value === 'string' && value.trim() !== '' ? value : null;
 }
 
+function statusBucketOrNull(value: number): number | null {
+  return Number.isFinite(value) && value >= 0 ? value : null;
+}
+
 /**
  * Fetches totals from pipeline_dashboard_cache + the most-recent-secured
  * timestamp via a bounded index scan + a 24h-window count. Returns
@@ -82,7 +86,7 @@ export async function fetchAnchorStats(): Promise<AnchorStats> {
   let last_anchor_time: string | null = null;
   let last_tx_time: string | null = null;
   let distinct_tx_approximate = false;
-  let by_status: Record<string, number> = {};
+  let by_status: Record<string, number | null> = {};
 
   try {
     const [counts, lastSeen, last24, txStats] = await Promise.allSettled([
@@ -114,11 +118,11 @@ export async function fetchAnchorStats(): Promise<AnchorStats> {
       total_submitted = typeof cv?.SUBMITTED === 'number' ? cv.SUBMITTED : -1;
       total_revoked = typeof cv?.REVOKED === 'number' ? cv.REVOKED : -1;
       by_status = {
-        PENDING: Math.max(total_pending, 0),
-        BROADCASTING: Math.max(total_broadcasting, 0),
-        SUBMITTED: Math.max(total_submitted, 0),
-        SECURED: Math.max(total_secured, 0),
-        REVOKED: Math.max(total_revoked, 0),
+        PENDING: statusBucketOrNull(total_pending),
+        BROADCASTING: statusBucketOrNull(total_broadcasting),
+        SUBMITTED: statusBucketOrNull(total_submitted),
+        SECURED: statusBucketOrNull(total_secured),
+        REVOKED: statusBucketOrNull(total_revoked),
       };
     } else {
       const err = counts.status === 'fulfilled' ? counts.value.error : counts.reason;
