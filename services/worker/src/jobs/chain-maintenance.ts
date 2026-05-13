@@ -385,9 +385,15 @@ export async function monitorStuckTransactions(): Promise<StuckTxResult> {
       logger.warn({ anchorId: anchor.id, txId: anchor.chain_tx_id, attempts }, logMessage);
     };
 
+    const txStateById = new Map<string, Awaited<ReturnType<typeof getSubmittedTxChainState>>>();
+
     for (const anchor of stuckAnchors) {
       // Check if TX is actually still unconfirmed
-      const txState = await getSubmittedTxChainState(anchor.chain_tx_id, baseUrl);
+      let txState = txStateById.get(anchor.chain_tx_id);
+      if (!txState) {
+        txState = await getSubmittedTxChainState(anchor.chain_tx_id, baseUrl);
+        txStateById.set(anchor.chain_tx_id, txState);
+      }
       if (txState === 'confirmed') {
         // TX actually confirmed — the check-confirmations job will handle promotion
         continue;
