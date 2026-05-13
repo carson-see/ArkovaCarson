@@ -66,6 +66,14 @@ const AbandonedSubmittedAnchorUpdateSchema = z.object({
   }).catchall(z.unknown()),
 }).strict();
 
+const RebroadcastSubmittedAnchorUpdateSchema = z.object({
+  metadata: z.object({
+    _rebroadcast_attempts: z.number().int().nonnegative(),
+    _last_rebroadcast: z.string().datetime(),
+  }).catchall(z.unknown()),
+  updated_at: z.string().datetime(),
+}).strict();
+
 // ─── Helpers ────────────────────────────────────────────────────────────
 
 function getMempoolBaseUrl(): string {
@@ -111,6 +119,18 @@ async function getSubmittedTxChainState(txId: string, baseUrl: string): Promise<
   } catch {
     return 'unknown';
   }
+}
+
+function isTimestampBefore(timestamp: string | null | undefined, cutoff: string): boolean {
+  const timestampMs = Date.parse(timestamp ?? '');
+  const cutoffMs = Date.parse(cutoff);
+  return Number.isFinite(timestampMs) && Number.isFinite(cutoffMs) && timestampMs < cutoffMs;
+}
+
+function getStoredRebroadcastAttempts(metadata: Record<string, unknown> | null): number | null {
+  const attempts = metadata?._rebroadcast_attempts;
+  if (attempts == null) return 0;
+  return typeof attempts === 'number' && Number.isInteger(attempts) && attempts >= 0 ? attempts : null;
 }
 
 async function acquireLock(_lockId: number): Promise<boolean> {
@@ -409,9 +429,10 @@ export async function monitorStuckTransactions(): Promise<StuckTxResult> {
 
       const metadata = anchor.metadata as Record<string, unknown> | null;
       const attempts = ((metadata?._rebroadcast_attempts as number) ?? 0);
+      const crossedAbandonCutoff = isTimestampBefore(anchor.updated_at, abandonCutoff);
 
       if (txState === 'unconfirmed') {
-        if (anchor.updated_at < abandonCutoff) {
+        if (crossedAbandonCutoff) {
           const reason = attempts >= MAX_REBROADCAST_ATTEMPTS
             ? 'TX remained unconfirmed in mempool after max rebroadcast attempts'
             : 'TX remained unconfirmed in mempool after 72h timeout';
@@ -424,7 +445,7 @@ export async function monitorStuckTransactions(): Promise<StuckTxResult> {
       }
 
       if (txState === 'not_found') {
-        if (attempts >= MAX_REBROADCAST_ATTEMPTS || anchor.updated_at < abandonCutoff) {
+        if (attempts >= MAX_REBROADCAST_ATTEMPTS || crossedAbandonCutoff) {
           const reason = attempts >= MAX_REBROADCAST_ATTEMPTS
             ? 'TX dropped from mempool after max rebroadcast attempts'
             : 'TX dropped from mempool after 72h timeout';
@@ -528,6 +549,15 @@ export async function rebroadcastDroppedTransactions(): Promise<RebroadcastResul
           failed++;
           continue;
         }
+        const currentAttempts = getStoredRebroadcastAttempts(metadata);
+        if (currentAttempts === null) {
+          logger.error(
+            { txId, attempts: metadata?._rebroadcast_attempts },
+            'Invalid rebroadcast metadata payload',
+          );
+          failed++;
+          continue;
+        }
 
         // Rebroadcast
         const broadcastResp = await fetch(`${baseUrl}/api/tx`, {
@@ -539,20 +569,33 @@ export async function rebroadcastDroppedTransactions(): Promise<RebroadcastResul
 
         if (broadcastResp.ok) {
           rebroadcast++;
-          const attempts = ((metadata?._rebroadcast_attempts as number) ?? 0) + 1;
+          const attempts = currentAttempts + 1;
+          const rebroadcastedAt = new Date().toISOString();
 
           // Update rebroadcast count in metadata
           const affectedAnchors = oldAnchors.filter((a) => a.chain_tx_id === txId);
           for (const affected of affectedAnchors) {
             const affMeta = affected.metadata as Record<string, unknown> | null;
+            const updatePayload = RebroadcastSubmittedAnchorUpdateSchema.safeParse({
+              metadata: {
+                ...(affMeta ?? {}),
+                _rebroadcast_attempts: attempts,
+                _last_rebroadcast: rebroadcastedAt,
+              },
+              updated_at: rebroadcastedAt,
+            });
+            if (!updatePayload.success) {
+              logger.error(
+                { anchorId: affected.id, txId, error: updatePayload.error },
+                'Invalid rebroadcast metadata payload',
+              );
+              failed++;
+              continue;
+            }
             await db.from('anchors')
               .update({
-                metadata: {
-                  ...(affMeta ?? undefined),
-                  _rebroadcast_attempts: attempts,
-                  _last_rebroadcast: new Date().toISOString(),
-                },
-                updated_at: new Date().toISOString(),
+                ...updatePayload.data,
+                metadata: updatePayload.data.metadata as Json,
               })
               .eq('id', affected.id);
           }
