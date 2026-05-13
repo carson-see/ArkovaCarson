@@ -43,7 +43,7 @@ interface TierSpec {
 export const TIER_SPECS: Record<Tier, TierSpec> = {
   T1: {
     tier: 'T1',
-    soakHours: 0.5,
+    soakHours: 2,
     requiredFields: [
       'Tier:',
       'Staging branch:',
@@ -55,7 +55,7 @@ export const TIER_SPECS: Record<Tier, TierSpec> = {
   },
   T2: {
     tier: 'T2',
-    soakHours: 4,
+    soakHours: 12,
     requiredFields: [
       'Tier:',
       'Staging branch:',

@@ -171,7 +171,7 @@ allows the same set of files to coexist with non-canonical ledger entries.
 
    ```bash
    STAGING_API_BASE="https://pr-<N>---arkova-worker-staging-270018525501.us-central1.run.app" \
-     npx tsx scripts/staging/load-harness.ts --mode mixed --duration 240 \
+     npx tsx scripts/staging/load-harness.ts --mode mixed --duration 720 \
        --evidence-out docs/staging/soak-pr-<N>.json
    ```
 

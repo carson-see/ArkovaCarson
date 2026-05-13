@@ -30,6 +30,14 @@ Queue rewrite.
 `;
 
 describe('check-staging-evidence', () => {
+  describe('TIER_SPECS', () => {
+    it('pins the current minimum soak windows', () => {
+      expect(TIER_SPECS.T1.soakHours).toBe(2);
+      expect(TIER_SPECS.T2.soakHours).toBe(12);
+      expect(TIER_SPECS.T3.soakHours).toBe(48);
+    });
+  });
+
   describe('requiredTierFor', () => {
     it('returns T1 for plain frontend file', () => {
       expect(requiredTierFor(['src/components/Foo.tsx']).tier).toBe('T1');
@@ -132,7 +140,7 @@ describe('check-staging-evidence', () => {
 - Staging branch: arkova-staging
 - Worker revision: arkova-worker-staging-00099-xyz
 - Soak start: 2026-05-09 14:00 UTC
-- Soak end: 2026-05-09 18:00 UTC
+- Soak end: 2026-05-10 02:00 UTC
 - E2E result: 50/50 green
 - Migration applied: none
 - Rollback rehearsed: n/a

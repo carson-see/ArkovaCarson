@@ -85,9 +85,9 @@ npm run staging:seed -- --standard --reset
 # (NOT supabase db push — see STAGING_RIG.md for the prefix-collision
 # rationale).
 
-# Drive load — 4-hour T2 soak with evidence file
+# Drive load — 12-hour T2 soak with evidence file
 export STAGING_CRON_SECRET="$(gcloud secrets versions access latest --secret=cron-secret --project=arkova1)"
-npm run staging:load -- --mode mixed --duration 240 \
+npm run staging:load -- --mode mixed --duration 720 \
   --evidence-out docs/staging/soak-pr-<N>-$(date +%Y%m%dT%H%M).json
 
 # When done
