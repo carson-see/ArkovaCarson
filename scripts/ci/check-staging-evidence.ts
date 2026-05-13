@@ -226,7 +226,11 @@ function parseEvidenceTimestamp(value: string): number | null {
 }
 
 function formatHours(hours: number): string {
-  return Number.isInteger(hours) ? String(hours) : hours.toFixed(2).replace(/\.?0+$/, '');
+  if (Number.isInteger(hours)) return String(hours);
+  const fixed = hours.toFixed(2);
+  if (fixed.endsWith('00')) return fixed.slice(0, -3);
+  if (fixed.endsWith('0')) return fixed.slice(0, -1);
+  return fixed;
 }
 
 export function soakDurationErrors(body: string, tier: Tier): string[] {
