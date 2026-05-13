@@ -76,8 +76,46 @@ function commandTextForLine(line: string): string {
   return trimmedStart.slice('run:'.length).trimStart();
 }
 
+function startsInlineComment(text: string, index: number): boolean {
+  if (index > 0 && !/\s/.test(text[index - 1])) return false;
+  return text[index] === '#' || (text[index] === '/' && text[index + 1] === '/');
+}
+
+function stripInlineComments(text: string): string {
+  let quote: '"' | "'" | undefined;
+
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+
+    if (quote) {
+      if (char === '\\') {
+        index += 1;
+        continue;
+      }
+      if (char === quote) quote = undefined;
+      continue;
+    }
+
+    if (char === '"' || char === "'") {
+      quote = char;
+      continue;
+    }
+
+    if (char === '\\') {
+      index += 1;
+      continue;
+    }
+
+    if (startsInlineComment(text, index)) {
+      return text.slice(0, index).trimEnd();
+    }
+  }
+
+  return text;
+}
+
 function isEchoOnlyMention(line: string): boolean {
-  const commandText = commandTextForLine(line).trim();
+  const commandText = stripInlineComments(commandTextForLine(line)).trim();
   if (!/^\s*echo\b/.test(commandText)) return false;
 
   const withoutQuotedStrings = stripQuotedStrings(commandText);
@@ -111,7 +149,7 @@ export function scanTextForUnsafeNpmInstalls(file: string, text: string): Violat
     if (isCommentOnly(line) || isYamlNameLine(line)) return;
     if (isEchoOnlyMention(line)) return;
 
-    const commandText = commandTextForLine(line);
+    const commandText = stripInlineComments(commandTextForLine(line));
     if (!hasNpmInstall(commandText)) return;
     if (hasSafeIgnoreScripts(commandText)) return;
     if (hasAllowMarker(lines, index)) return;

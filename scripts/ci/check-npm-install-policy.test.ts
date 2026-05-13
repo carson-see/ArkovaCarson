@@ -2,32 +2,43 @@ import { describe, expect, it } from 'vitest';
 
 import { scanTextForUnsafeNpmInstalls } from './check-npm-install-policy.js';
 
+function expectNoViolations(file: string, text: string): void {
+  expect(scanTextForUnsafeNpmInstalls(file, text)).toEqual([]);
+}
+
+function expectOneViolation(file: string, text: string): void {
+  const hits = scanTextForUnsafeNpmInstalls(file, text);
+  expect(hits).toHaveLength(1);
+  expect(hits[0]).toMatchObject({ file, line: 1 });
+}
+
 describe('check-npm-install-policy', () => {
   it('allows npm ci when lifecycle scripts are suppressed', () => {
-    const hits = scanTextForUnsafeNpmInstalls('workflow.yml', 'run: npm ci --ignore-scripts');
-    expect(hits).toEqual([]);
+    expectNoViolations('workflow.yml', 'run: npm ci --ignore-scripts');
   });
 
   it('allows npm install when lifecycle scripts are explicitly suppressed', () => {
-    const hits = scanTextForUnsafeNpmInstalls('deploy.sh', 'npm install --silent --ignore-scripts=true');
-    expect(hits).toEqual([]);
+    expectNoViolations('deploy.sh', 'npm install --silent --ignore-scripts=true');
   });
 
-  it('flags plain npm ci', () => {
-    const hits = scanTextForUnsafeNpmInstalls('workflow.yml', 'run: npm ci');
-    expect(hits).toHaveLength(1);
-    expect(hits[0]).toMatchObject({ file: 'workflow.yml', line: 1 });
+  it.each([
+    ['plain npm ci', 'run: npm ci'],
+    ['quoted YAML run command', 'run: "npm ci"'],
+    ['hash-commented ignore-scripts flag', 'run: npm ci # --ignore-scripts'],
+    ['slash-commented ignore-scripts flag', 'run: npm install // --ignore-scripts'],
+  ])('flags %s', (_name, command) => {
+    expectOneViolation('workflow.yml', command);
   });
 
-  it('flags quoted YAML run commands', () => {
-    const hits = scanTextForUnsafeNpmInstalls('workflow.yml', 'run: "npm ci"');
-    expect(hits).toHaveLength(1);
-    expect(hits[0]).toMatchObject({ file: 'workflow.yml', line: 1 });
+  it('does not treat URL slashes as inline comments', () => {
+    expectNoViolations(
+      'workflow.yml',
+      'run: npm ci --registry=https://registry.npmjs.org --ignore-scripts',
+    );
   });
 
   it('flags explicit lifecycle-script opt-in without a justification marker', () => {
-    const hits = scanTextForUnsafeNpmInstalls('Dockerfile', 'RUN npm install --ignore-scripts=false');
-    expect(hits).toHaveLength(1);
+    expectOneViolation('Dockerfile', 'RUN npm install --ignore-scripts=false');
   });
 
   it('allows explicit exceptions with a nearby reason', () => {
@@ -42,8 +53,7 @@ describe('check-npm-install-policy', () => {
   });
 
   it('ignores commented examples', () => {
-    const hits = scanTextForUnsafeNpmInstalls('README.sh', '# run npm install before hacking');
-    expect(hits).toEqual([]);
+    expectNoViolations('README.sh', '# run npm install before hacking');
   });
 
   it('ignores workflow names and warning text that merely mention npm install commands', () => {
@@ -58,7 +68,6 @@ describe('check-npm-install-policy', () => {
   });
 
   it('does not let echo commands hide a follow-on install command', () => {
-    const hits = scanTextForUnsafeNpmInstalls('workflow.yml', 'run: echo "installing" && npm ci');
-    expect(hits).toHaveLength(1);
+    expectOneViolation('workflow.yml', 'run: echo "installing" && npm ci');
   });
 });
