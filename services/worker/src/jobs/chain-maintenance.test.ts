@@ -26,6 +26,7 @@ const { mockDb, mockLogger, mockConfig, mockGetChainClientAsync } = vi.hoisted((
     bitcoinNetwork: 'signet',
     mempoolApiUrl: undefined as string | undefined,
     bitcoinMaxFeeRate: 100,
+    enableProdNetworkAnchoring: true,
   };
 
   return { mockDb, mockLogger, mockConfig, mockGetChainClientAsync: vi.fn() };
@@ -84,6 +85,7 @@ describe('Chain Maintenance Jobs', () => {
     mockConfig.useMocks = false;
     mockConfig.nodeEnv = 'development';
     mockConfig.bitcoinNetwork = 'signet';
+    mockConfig.enableProdNetworkAnchoring = true;
     mockGetChainClientAsync.mockRejectedValue(new Error('chain client not configured for test'));
   });
 
@@ -211,10 +213,11 @@ describe('Chain Maintenance Jobs', () => {
         updated_at: abandonCutoff,
       };
 
+      const updateChain = mockDbChain({ id: stuckAnchor.id }, null);
       let fromCallCount = 0;
       mockDb.from.mockImplementation(() => {
         fromCallCount++;
-        return mockDbChain(fromCallCount === 1 ? [stuckAnchor] : { id: stuckAnchor.id }, null);
+        return fromCallCount === 1 ? mockDbChain([stuckAnchor], null) : updateChain;
       });
 
       global.fetch = vi.fn().mockResolvedValue({
@@ -223,6 +226,32 @@ describe('Chain Maintenance Jobs', () => {
 
       const result = await monitorStuckTransactions();
       expect(result.recovered).toBe(1);
+      expect(updateChain.update).toHaveBeenCalledWith(expect.objectContaining({
+        metadata: expect.not.objectContaining({
+          _rebroadcast_attempts: expect.anything(),
+        }),
+      }));
+    });
+
+    it('does not call chain clients when prod network anchoring is disabled', async () => {
+      mockConfig.enableProdNetworkAnchoring = false;
+      const abandonCutoff = new Date(Date.now() - 73 * 60 * 60 * 1000).toISOString();
+      const stuckAnchor = {
+        id: 'a1',
+        chain_tx_id: 'tx_disabled_gate',
+        metadata: { _rebroadcast_attempts: MAX_REBROADCAST_ATTEMPTS },
+        created_at: abandonCutoff,
+        updated_at: abandonCutoff,
+      };
+
+      mockDb.from.mockReturnValue(mockDbChain([stuckAnchor], null));
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('network call should be gated'));
+
+      const result = await monitorStuckTransactions();
+
+      expect(result).toEqual({ checked: 1, stuck: 1, recovered: 0 });
+      expect(mockGetChainClientAsync).not.toHaveBeenCalled();
+      expect(fetchSpy).not.toHaveBeenCalled();
     });
 
     it('abandons 72h-old unconfirmed mempool-visible TXs so they can be resubmitted with fresh fees', async () => {

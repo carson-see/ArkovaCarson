@@ -82,6 +82,10 @@ function getMempoolBaseUrl(): string {
 type SubmittedTxChainState = 'confirmed' | 'unconfirmed' | 'not_found' | 'unknown';
 
 async function getSubmittedTxChainState(txId: string, baseUrl: string): Promise<SubmittedTxChainState> {
+  if (!config.enableProdNetworkAnchoring) {
+    return 'unknown';
+  }
+
   try {
     const { getChainClientAsync } = await import('../chain/client.js');
     const chainClient = await getChainClientAsync();
@@ -336,13 +340,15 @@ export async function monitorStuckTransactions(): Promise<StuckTxResult> {
     ) => {
       const metadata = anchor.metadata as Record<string, unknown> | null;
       const attempts = ((metadata?._rebroadcast_attempts as number) ?? 0);
+      const pendingMetadata = { ...(metadata ?? {}) };
+      delete pendingMetadata._rebroadcast_attempts;
       const updatePayload = AbandonedSubmittedAnchorUpdateSchema.safeParse({
         status: 'PENDING',
         chain_tx_id: null,
         chain_block_height: null,
         chain_timestamp: null,
         metadata: {
-          ...(metadata ?? {}),
+          ...pendingMetadata,
           _abandoned_tx_id: anchor.chain_tx_id,
           _abandoned_at: new Date().toISOString(),
           _abandon_reason: reason,
