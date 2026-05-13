@@ -216,6 +216,15 @@ describe('check-staging-evidence', () => {
       expect(r.ok).toBe(true);
     });
 
+    it('passes a T1 PR when the soak is one minute above 2 hours', () => {
+      const r = check({
+        body: completeT1Body('2026-05-09 14:00 UTC', '2026-05-09 16:01 UTC'),
+        files: ['src/components/Foo.tsx'],
+      });
+
+      expect(r.ok).toBe(true);
+    });
+
     it('fails a T2 PR when the soak is one minute below 12 hours', () => {
       const r = check({
         body: completeT2Body('2026-05-09 14:00 UTC', '2026-05-10 01:59 UTC'),
