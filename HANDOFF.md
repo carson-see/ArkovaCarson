@@ -14,9 +14,9 @@
 
 ## Now
 
-### 2026-05-12 — routine dependency consolidation ready for human merge (PR #772 replaces #764/#770/#771/#775)
+### 2026-05-12 — dependency consolidation merge follow-up (#772 merged; #773 rebased)
 
-**PR #772 / branch `codex/deps-routine-20260512` consolidates the open routine dependency PRs #764, #770, #771, and #775.** Scope: root production/dev dependency bumps, worker Sentry/Vite/Vitest/TypeScript-ESLint/dev type bumps, worker transitive `@protobufjs/utf8` lockfile bump, and edge `@cloudflare/workers-types`.
+**PR #772 / branch `codex/deps-routine-20260512` merged to `main` as merge commit `12ab7848d9f5f293e7193e386a1273dd1ea41b74`.** It consolidates #764, #770, #771, and #775. Scope: root production/dev dependency bumps, worker Sentry/Vite/Vitest/TypeScript-ESLint/dev type bumps, worker transitive `@protobufjs/utf8` lockfile bump, and edge `@cloudflare/workers-types`.
 
 **Validation completed locally:** root `typecheck`, `lint`, `lint:copy`, `security:license-denylist`, `build`, `test`; worker `typecheck`, `lint`, `build:circuit`, `test`, `build`; edge `typecheck`. Worker test total after circuit build: 398 files / 5,378 tests. Root test total after worker build artifacts existed: 205 files passed / 1 skipped, 1,988 tests passed / 2 skipped. Latest `#775` fold-in validation: worker package-lock-only install, worker `typecheck`, worker `lint` (0 errors, existing warning backlog), worker `test` (398 files / 5,378 tests), root `lint:copy`, `git diff --check`.
 
@@ -24,7 +24,7 @@
 
 **Staging evidence:** Fresh T1 read-only `/health` soak on tag URL `https://pr-772---arkova-worker-staging-kvojbeutfa-uc.a.run.app`, worker revision `arkova-worker-staging-00067-wor`, image `us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker:pr772-f7409a1d6bdd`, deploy log id 16, 2026-05-12T20:06:19Z → 2026-05-12T20:36:19Z. Result: 1,496/1,496 HTTP 200, 0 failures, p95 178ms, p99 877ms. Evidence JSON: `docs/staging/soak-pr-772-20260512T2006Z.json`. PR #753 and PR #774 were not reset, reseeded, edited, or otherwise touched.
 
-**Current state:** PR `#772` includes `#775`; protected checks were green on the `#775` fold-in head before this evidence-file commit. Superseded PRs #764/#770/#771 were closed with replacement comments pointing to #772; #775 is folded into this branch. Remaining step after the final evidence replay is green is human merge.
+**PR #773 / branch `codex/deps-frontend-major-20260512` remains the frontend major dependency batch replacing #767, #768, and #769.** React/React DOM and type packages are upgraded to 19.x, Tailwind is migrated from v3 config to v4 CSS-first `@theme` tokens plus `@tailwindcss/postcss`, `tw-animate-css`, and deprecated v3 utilities are migrated. After #772 merged, this branch was rebased/merged forward against `origin/main` and its conflicts were resolved by keeping both dependency batches.
 
 _Last refreshed: 2026-05-12 by carson-see — claims verified against gcloud/MCP/CI output._ Evidence: GitHub Actions run 25758795157 (CI Tests/E2E/TypeCheck & Lint/Migration Drift/Staging Soak Evidence green on the `#775` fold-in head), Cloud Build 70c4fd38-618a-4b2a-92b1-6f6076d991a5, staging deploy log id 16, soak evidence at docs/staging/soak-pr-772-20260512T2006Z.json, and staging tag URL health evidence for worker revision arkova-worker-staging-00067-wor.
 

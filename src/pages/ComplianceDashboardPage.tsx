@@ -405,7 +405,7 @@ export function ComplianceDashboardPage() {
           <CardContent className="pt-6">
             <div className="flex flex-col md:flex-row items-start md:items-center gap-6">
               {/* Score gauge */}
-              <div className="flex-shrink-0">
+              <div className="shrink-0">
                 {scoreLoading ? (
                   <Skeleton className="h-[120px] w-[120px] rounded-full" />
                 ) : scoreData ? (

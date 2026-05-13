@@ -11,6 +11,7 @@
 import { cn } from '@/lib/utils';
 import { sanitizeHref } from '@/lib/urlValidator';
 import type { TemplateFieldDefinition } from '@/components/credentials/TemplateSchemaBuilder';
+import type { ReactElement } from 'react';
 
 interface MetadataDisplayProps {
   metadata: Record<string, string | number | boolean | null>;
@@ -104,7 +105,7 @@ function getFieldType(
 function renderValue(
   value: string | number | boolean | null,
   fieldType: TemplateFieldDefinition['type'] | null
-): JSX.Element {
+): ReactElement {
   if (value === null || value === undefined || value === '') {
     return (
       <span className="text-muted-foreground/60 italic text-sm">

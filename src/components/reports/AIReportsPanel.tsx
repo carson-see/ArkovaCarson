@@ -307,7 +307,7 @@ export function AIReportsPanel() {
                 >
                   <div className="flex items-center gap-3 min-w-0">
                     <StatusIcon
-                      className={`h-4 w-4 flex-shrink-0 ${statusConfig.color} ${
+                      className={`h-4 w-4 shrink-0 ${statusConfig.color} ${
                         report.status === 'GENERATING' ? 'animate-spin' : ''
                       }`}
                     />

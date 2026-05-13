@@ -109,7 +109,7 @@ export function SemanticSearch() {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             placeholder="Search credentials with natural language..."
-            className="flex-1 bg-transparent text-sm text-foreground placeholder:text-muted-foreground outline-none"
+            className="flex-1 bg-transparent text-sm text-foreground placeholder:text-muted-foreground outline-hidden"
           />
           <button
             type="submit"
