@@ -14,6 +14,12 @@
 
 ## Now
 
+### 2026-05-13 — SCRUM-1649 DocuSign connector action modes in sandbox
+
+**Draft PR #783 / branch `codex/scrum-1649-docusign-action-modes` in worktree `/Volumes/Extreme/Arkova/worktrees/scrum-1649-docusign-action-modes` is packaging the DocuSign connector story under parent epic SCRUM-1048.** Scope so far: DocuSign webhook now carries single-document SHA-256 into sanitized rule-event payloads; rules-engine executions preserve connector metadata while hashing sender email; rule-action dispatcher materializes real org-scoped `anchors.status=PENDING` rows for `AUTO_ANCHOR`, credit-denied `FAST_TRACK_ANCHOR`, and paid `FAST_TRACK_ANCHOR` before job handoff. Anchor metadata stores hashed sender/account identifiers only and omits raw email, raw DocuSign account ID, rule ID, and execution ID.
+
+**TDD evidence in this branch:** Red->green cycles were run for webhook document hashes, fast-track anchor materialization, deterministic-vs-retryable dispatch failures, refund compensation, sanitized validation logging, and sender hash validation. Current targeted verification: worker `npm run test -- src/jobs/rules-engine.test.ts src/jobs/rule-action-dispatcher.test.ts src/api/v1/webhooks/docusign.test.ts` = 3 files / 41 tests passing; full worker suite = 398 files / 5,389 tests passing. Evidence URL: https://github.com/carson-see/ArkovaCarson/pull/783/checks. Remaining gates before claiming story Done: GitHub checks on latest push, Jira/Confluence closeout, and staging/live verification for SCRUM-1658.
+
 ### 2026-05-13 — SCRUM-1834 supply-chain install policy sandbox
 
 **PR #779 / branch `codex/supply-chain-install-policy-20260513` packages the previously orphaned local-only supply-chain commits into one tracked PR lane under SCRUM-1834.** Scope: recursive dependency pinning across every tracked `package.json`, npm install-script policy guard for CI/deploy scripts and Dockerfiles, default `npm ci --ignore-scripts` in GitHub Actions/deploy helpers/worker image builds, exact nested package pins/lockfiles for integrations and packages, Zapier Platform 18 compatibility cleanup, and the worker OpenTelemetry/protobufjs audit fix discovered while expanding the guard to override values.

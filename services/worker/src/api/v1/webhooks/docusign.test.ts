@@ -34,6 +34,7 @@ import { docusignWebhookRouter } from './docusign.js';
 
 const TEST_HMAC_KEY = 'fixture-key-not-a-secret-aaaa';
 const ORG_ID = '11111111-1111-4111-8111-111111111111';
+const VALID_DOC_SHA256 = 'b'.repeat(64);
 
 function createApp() {
   const app = express();
@@ -60,7 +61,7 @@ function validBody(): string {
     accountId: 'acct-1',
     status: 'completed',
     sender: { email: 'legal@example.com' },
-    envelopeDocuments: [{ documentId: 'combined', name: 'msa.pdf' }],
+    envelopeDocuments: [{ documentId: 'combined', name: 'msa.pdf', sha256: VALID_DOC_SHA256 }],
   });
 }
 
@@ -155,6 +156,8 @@ describe('POST /webhooks/docusign', () => {
         integration_id: 'int-1',
         envelope_id: 'env-1',
         document_ids: ['combined'],
+        document_hashes: [VALID_DOC_SHA256],
+        document_sha256: VALID_DOC_SHA256,
         payload_hash: expect.stringMatching(/^[a-f0-9]{64}$/),
       }),
     }));
@@ -166,6 +169,41 @@ describe('POST /webhooks/docusign', () => {
         integration_id: 'int-1',
         envelope_id: 'env-1',
         rule_event_id: '22222222-2222-4222-8222-222222222222',
+      }),
+    }));
+  });
+
+  it('deduplicates repeated DocuSign document hashes before deriving document_sha256', async () => {
+    dbFromMock.mockReturnValueOnce(
+      integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1' }),
+    );
+    dbFromMock.mockReturnValueOnce(nonceInsert());
+    rpcMock.mockResolvedValueOnce({ data: '33333333-3333-4333-8333-333333333333', error: null });
+    submitJobMock.mockResolvedValueOnce('job-dup-hash');
+    const body = JSON.stringify({
+      event: 'envelope-completed',
+      envelopeId: 'env-dup-hash',
+      accountId: 'acct-1',
+      status: 'completed',
+      sender: { email: 'legal@example.com' },
+      envelopeDocuments: [
+        { documentId: '1', name: 'msa.pdf', sha256: VALID_DOC_SHA256.toUpperCase() },
+        { documentId: 'combined', name: 'combined.pdf', sha256: VALID_DOC_SHA256 },
+      ],
+    });
+
+    const res = await request(createApp())
+      .post('/webhooks/docusign')
+      .set('Content-Type', 'application/json')
+      .set('X-DocuSign-Signature-1', sign(body))
+      .send(body);
+
+    expect(res.status).toBe(202);
+    expect(rpcMock).toHaveBeenCalledWith('enqueue_rule_event', expect.objectContaining({
+      p_external_file_id: 'env-dup-hash',
+      p_payload: expect.objectContaining({
+        document_hashes: [VALID_DOC_SHA256],
+        document_sha256: VALID_DOC_SHA256,
       }),
     }));
   });
