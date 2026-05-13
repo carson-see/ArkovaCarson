@@ -11,12 +11,12 @@
     "push": "zapier push"
   },
   "dependencies": {
-    "zapier-platform-core": "^15.0.0"
+    "zapier-platform-core": "15.19.0"
   },
   "devDependencies": {
-    "typescript": "^5.4.0",
-    "vitest": "^1.6.0",
-    "zapier-platform-cli": "^15.0.0"
+    "typescript": "5.9.3",
+    "vitest": "1.6.1",
+    "zapier-platform-cli": "15.19.0"
   },
   "engines": {
     "node": ">=18",
