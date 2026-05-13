@@ -15,6 +15,7 @@ const CHECKED_DIRS = [
   'scripts',
 ];
 const CHECKED_EXTENSIONS = new Set(['.sh', '.yml', '.yaml']);
+const comparePath = (a: string, b: string): number => a.localeCompare(b);
 
 export interface Violation {
   file: string;
@@ -52,7 +53,7 @@ function collectFiles(repo: string): string[] {
     walk(join(repo, dir));
   }
 
-  return files.sort();
+  return files.sort(comparePath);
 }
 
 function isCommentOnly(line: string): boolean {

@@ -96,6 +96,8 @@ function normalizeRelPath(path: string): string {
   return path.split(sep).join('/');
 }
 
+const comparePath = (a: string, b: string): number => a.localeCompare(b);
+
 function discoverPackageJsons(repo: string): string[] {
   const discovered: string[] = [];
 
@@ -113,7 +115,7 @@ function discoverPackageJsons(repo: string): string[] {
   }
 
   walk(repo);
-  return discovered.sort();
+  return discovered.sort(comparePath);
 }
 
 export function listPackageJsons(repo: string): string[] {
@@ -128,7 +130,7 @@ export function listPackageJsons(repo: string): string[] {
       .filter(Boolean)
       .filter((path) => path === 'package.json' || path.endsWith('/package.json'))
       .filter((path) => !path.split('/').some((part) => SKIPPED_DIRS.has(part)))
-      .sort();
+      .sort(comparePath);
 
     if (tracked.length > 0) return tracked;
   } catch {
