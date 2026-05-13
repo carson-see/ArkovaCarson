@@ -169,6 +169,23 @@ describe('fetchAnchorStats — pipeline dashboard cache path (SCRUM-1786)', () =
     expect(stats.total_pending).toBe(42);
   });
 
+  it('keeps missing status buckets unknown in by_status instead of collapsing them to zero', async () => {
+    mockPipelineCacheSelect.mockResolvedValue({
+      data: { cache_value: { PENDING: 42, SECURED: 100, total: 142 } },
+      error: null,
+    });
+
+    const stats = await fetchAnchorStats();
+
+    expect(stats.by_status).toMatchObject({
+      PENDING: 42,
+      BROADCASTING: null,
+      SUBMITTED: null,
+      SECURED: 100,
+      REVOKED: null,
+    });
+  });
+
   it('last_24h_count reports number of rows up to LIMIT cap', async () => {
     mockPipelineCacheSelect.mockResolvedValue({
       data: { cache_value: { SECURED: 0, PENDING: 0, total: 0 } },
