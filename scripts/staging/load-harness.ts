@@ -59,8 +59,8 @@
  *   # 15-min mixed dry run with evidence file
  *   npm run staging:load -- --mode mixed --duration 15 --evidence-out docs/staging/dryrun.json
  *
- *   # 4-hour T2 soak
- *   npm run staging:load -- --mode mixed --duration 240 --evidence-out docs/staging/soak-pr-695.json
+ *   # 12-hour T2 soak
+ *   npm run staging:load -- --mode mixed --duration 720 --evidence-out docs/staging/soak-pr-695.json
  */
 
 import { execFileSync } from 'node:child_process';

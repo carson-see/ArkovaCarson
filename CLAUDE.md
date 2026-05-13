@@ -158,8 +158,8 @@ Every PR declares its tier in the body. The path-based detector in `scripts/ci/c
 
 | Tier | Touches | Min soak | Required evidence |
 |---|---|---|---|
-| **T1** Smoke | Pure additive code, no migration, no cron, no chain/treasury, no anchors/credits/audit writes | 30 min synthetic load + green E2E | Tier, Staging branch, Worker revision, Soak start/end, E2E result |
-| **T2** Standard | Any migration, RLS change, new index, new cron not on chain hot path, new webhook, new SDK method, public API surface | 4 h soak + rollback rehearsal | T1 fields + Migration applied, Rollback rehearsed |
+| **T1** Smoke | Pure additive code, no migration, no cron, no chain/treasury, no anchors/credits/audit writes | 2 h synthetic load + green E2E | Tier, Staging branch, Worker revision, Soak start/end, E2E result |
+| **T2** Standard | Any migration, RLS change, new index, new cron not on chain hot path, new webhook, new SDK method, public API surface | 12 h soak + rollback rehearsal | T1 fields + Migration applied, Rollback rehearsed |
 | **T3** Critical | `anchors` lifecycle, batch/queue logic, treasury signing, fee policy, entitlements/billing, any cron with cadence ≤10 min running against `anchors` | 48 h soak + multiple trigger cycles + ≥1 daily-flush observation + per-org isolation check | T2 fields + Trigger A fires, Trigger B fires, Daily flush observation, Per-org isolation check |
 
 ---

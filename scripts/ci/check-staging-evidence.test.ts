@@ -30,6 +30,14 @@ Queue rewrite.
 `;
 
 describe('check-staging-evidence', () => {
+  describe('TIER_SPECS', () => {
+    it('pins the current minimum soak windows', () => {
+      expect(TIER_SPECS.T1.soakHours).toBe(2);
+      expect(TIER_SPECS.T2.soakHours).toBe(12);
+      expect(TIER_SPECS.T3.soakHours).toBe(48);
+    });
+  });
+
   describe('requiredTierFor', () => {
     it('returns T1 for plain frontend file', () => {
       expect(requiredTierFor(['src/components/Foo.tsx']).tier).toBe('T1');
@@ -132,7 +140,7 @@ describe('check-staging-evidence', () => {
 - Staging branch: arkova-staging
 - Worker revision: arkova-worker-staging-00099-xyz
 - Soak start: 2026-05-09 14:00 UTC
-- Soak end: 2026-05-09 18:00 UTC
+- Soak end: 2026-05-10 02:00 UTC
 - E2E result: 50/50 green
 - Migration applied: none
 - Rollback rehearsed: n/a
@@ -148,12 +156,143 @@ describe('check-staging-evidence', () => {
     });
   });
 
+  describe('minimum soak duration enforcement', () => {
+    const t1Files = ['src/components/Foo.tsx'];
+    const t2Files = ['supabase/migrations/0300_example.sql'];
+
+    const completeT2Body = (start: string, end: string) => `## Staging Soak Evidence
+- Tier: T2
+- Staging branch: arkova-staging
+- Worker revision: arkova-worker-staging-00099-xyz
+- Soak start: ${start}
+- Soak end: ${end}
+- E2E result: 50/50 green
+- Migration applied: 0300_example.sql
+- Rollback rehearsed: yes
+- Staging deploy log id: 142
+`;
+
+    const completeT1Body = (start: string, end: string) => `## Staging Soak Evidence
+- Tier: T1
+- Staging branch: arkova-staging
+- Worker revision: arkova-worker-staging-00099-xyz
+- Soak start: ${start}
+- Soak end: ${end}
+- E2E result: green
+`;
+
+    const expectEvidencePasses = (body: string, files: string[]) => {
+      expect(check({ body, files }).ok).toBe(true);
+    };
+
+    const expectEvidenceFails = (body: string, files: string[], pattern: RegExp) => {
+      const r = check({ body, files });
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(pattern);
+    };
+
+    it.each([
+      [
+        'complete T2 at exactly 12 hours',
+        completeT2Body('2026-05-09 14:00 UTC', '2026-05-10 02:00 UTC'),
+        t2Files,
+      ],
+      [
+        'T2 ISO 8601 timestamps',
+        completeT2Body('2026-05-09T14:00:00Z', '2026-05-10T02:00:00Z'),
+        t2Files,
+      ],
+      [
+        'T2 one minute above 12 hours',
+        completeT2Body('2026-05-09 14:00 UTC', '2026-05-10 02:01 UTC'),
+        t2Files,
+      ],
+      [
+        'T1 at exactly 2 hours',
+        completeT1Body('2026-05-09 14:00 UTC', '2026-05-09 16:00 UTC'),
+        t1Files,
+      ],
+      [
+        'T1 ISO 8601 timestamps',
+        completeT1Body('2026-05-09T14:00:00Z', '2026-05-09T16:00:00Z'),
+        t1Files,
+      ],
+      [
+        'T1 one minute above 2 hours',
+        completeT1Body('2026-05-09 14:00 UTC', '2026-05-09 16:01 UTC'),
+        t1Files,
+      ],
+    ])('passes %s', (_label, body, files) => {
+      expectEvidencePasses(body, files);
+    });
+
+    it.each([
+      [
+        'T2 shorter than 12 hours',
+        completeT2Body('2026-05-09 14:00 UTC', '2026-05-09 18:00 UTC'),
+        t2Files,
+        /below the 12h minimum/,
+      ],
+      [
+        'T2 one minute below 12 hours',
+        completeT2Body('2026-05-09 14:00 UTC', '2026-05-10 01:59 UTC'),
+        t2Files,
+        /below the 12h minimum/,
+      ],
+      [
+        'T1 shorter than 2 hours',
+        completeT1Body('2026-05-09 14:00 UTC', '2026-05-09 15:00 UTC'),
+        t1Files,
+        /below the 2h minimum/,
+      ],
+      [
+        'T1 one minute below 2 hours',
+        completeT1Body('2026-05-09 14:00 UTC', '2026-05-09 15:59 UTC'),
+        t1Files,
+        /below the 2h minimum/,
+      ],
+      [
+        'non-parseable prod-affecting timestamps',
+        completeT2Body('N/A', 'N/A'),
+        t2Files,
+        /could not parse/i,
+      ],
+      [
+        'T2 end equal to start',
+        completeT2Body('2026-05-09 14:00 UTC', '2026-05-09 14:00 UTC'),
+        t2Files,
+        /Soak end must be after Soak start/,
+      ],
+      [
+        'T2 end before start',
+        completeT2Body('2026-05-09 14:00 UTC', '2026-05-09 13:59 UTC'),
+        t2Files,
+        /Soak end must be after Soak start/,
+      ],
+      [
+        'T1 end equal to start',
+        completeT1Body('2026-05-09 14:00 UTC', '2026-05-09 14:00 UTC'),
+        t1Files,
+        /Soak end must be after Soak start/,
+      ],
+      [
+        'T1 end before start',
+        completeT1Body('2026-05-09 14:00 UTC', '2026-05-09 13:59 UTC'),
+        t1Files,
+        /Soak end must be after Soak start/,
+      ],
+    ])('fails %s', (_label, body, files, pattern) => {
+      expectEvidenceFails(body, files, pattern);
+    });
+  });
+
   describe('isStagingToolingOnly', () => {
     it('passes when all files are in the allowlist', () => {
       expect(
         isStagingToolingOnly([
           'scripts/staging/seed.ts',
           'scripts/ci/check-staging-evidence.ts',
+          '.github/workflows/ci.yml',
           'CLAUDE.md',
           'docs/staging/README.md',
           '.github/workflows/staging-evidence.yml',
