@@ -156,12 +156,74 @@ describe('check-staging-evidence', () => {
     });
   });
 
+  describe('minimum soak duration enforcement', () => {
+    const completeT2Body = (start: string, end: string) => `## Staging Soak Evidence
+- Tier: T2
+- Staging branch: arkova-staging
+- Worker revision: arkova-worker-staging-00099-xyz
+- Soak start: ${start}
+- Soak end: ${end}
+- E2E result: 50/50 green
+- Migration applied: 0300_example.sql
+- Rollback rehearsed: yes
+- Staging deploy log id: 142
+`;
+
+    it('fails a T2 PR when the soak is shorter than 12 hours', () => {
+      const r = check({
+        body: completeT2Body('2026-05-09 14:00 UTC', '2026-05-09 18:00 UTC'),
+        files: ['supabase/migrations/0300_example.sql'],
+      });
+
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/below the 12h minimum/);
+    });
+
+    it('fails a prod-affecting PR when soak timestamps are not parseable', () => {
+      const r = check({
+        body: completeT2Body('N/A', 'N/A'),
+        files: ['supabase/migrations/0300_example.sql'],
+      });
+
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/could not parse/i);
+    });
+
+    it('passes a complete T2 PR when the soak lasts at least 12 hours', () => {
+      const r = check({
+        body: completeT2Body('2026-05-09 14:00 UTC', '2026-05-10 02:00 UTC'),
+        files: ['supabase/migrations/0300_example.sql'],
+      });
+
+      expect(r.ok).toBe(true);
+    });
+
+    it('fails a T1 PR when the soak is shorter than 2 hours', () => {
+      const body = `## Staging Soak Evidence
+- Tier: T1
+- Staging branch: arkova-staging
+- Worker revision: arkova-worker-staging-00099-xyz
+- Soak start: 2026-05-09 14:00 UTC
+- Soak end: 2026-05-09 15:00 UTC
+- E2E result: green
+`;
+      const r = check({
+        body,
+        files: ['src/components/Foo.tsx'],
+      });
+
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/below the 2h minimum/);
+    });
+  });
+
   describe('isStagingToolingOnly', () => {
     it('passes when all files are in the allowlist', () => {
       expect(
         isStagingToolingOnly([
           'scripts/staging/seed.ts',
           'scripts/ci/check-staging-evidence.ts',
+          '.github/workflows/ci.yml',
           'CLAUDE.md',
           'docs/staging/README.md',
           '.github/workflows/staging-evidence.yml',
