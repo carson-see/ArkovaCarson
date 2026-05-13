@@ -8,6 +8,7 @@ const mockFetch = vi.fn();
 const mockGetSecret = vi.fn();
 const mockSubmitJob = vi.fn();
 const mockDbRpc = vi.fn();
+const mockLoggerWarn = vi.fn();
 
 interface ExecutionRow {
   id: string;
@@ -27,10 +28,23 @@ interface RuleRow {
   action_config: Record<string, unknown>;
 }
 
+interface AnchorInsert {
+  fingerprint: string;
+  status: string;
+  org_id: string;
+  user_id: string;
+  filename: string;
+  credential_type: string;
+  metadata: Record<string, unknown>;
+}
+
 const dbState = {
   executions: [] as ExecutionRow[],
   rules: new Map<string, RuleRow>(),
   finalUpdates: new Map<string, Record<string, unknown>>(),
+  anchorInserts: [] as AnchorInsert[],
+  anchorInsertError: null as { message: string; code?: string } | null,
+  orgMembers: [{ user_id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', role: 'owner' }],
 };
 
 // Org-credit enforcement is OFF by default in production config. The
@@ -41,7 +55,7 @@ const dbState = {
 // being live), so flip the flag on in the per-test config mock.
 vi.mock('../config.js', () => ({ config: { enableOrgCreditEnforcement: true } }));
 vi.mock('../utils/logger.js', () => ({
-  logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+  logger: { info: vi.fn(), warn: (...args: unknown[]) => mockLoggerWarn(...args), error: vi.fn(), debug: vi.fn() },
 }));
 vi.mock('../notifications/dispatcher.js', () => ({
   emitOrgAdminNotifications: (...args: unknown[]) => mockEmitOrgAdminNotifications(...args),
@@ -100,11 +114,48 @@ vi.mock('../utils/db.js', () => {
     }),
   });
 
+  const buildAnchorsBuilder = () => ({
+    insert: (payload: AnchorInsert) => ({
+      select: () => ({
+        single: async () => {
+          if (dbState.anchorInsertError) {
+            return { data: null, error: dbState.anchorInsertError };
+          }
+          dbState.anchorInserts.push(payload);
+          return {
+            data: {
+              id: 'eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee',
+              public_id: 'ARK-2026-ABCD1234',
+              fingerprint: payload.fingerprint,
+              status: payload.status,
+              created_at: '2026-05-13T12:00:00.000Z',
+            },
+            error: null,
+          };
+        },
+      }),
+    }),
+  });
+
+  const buildOrgMembersBuilder = () => {
+    const chain = {
+      select: () => chain,
+      eq: () => chain,
+      in: () => chain,
+      order: () => chain,
+      limit: () => chain,
+      maybeSingle: async () => ({ data: dbState.orgMembers[0] ?? null, error: null }),
+    };
+    return chain;
+  };
+
   return {
     db: {
       from: (table: string) => {
         if (table === 'organization_rule_executions') return buildExecutionsBuilder();
         if (table === 'organization_rules') return buildRulesBuilder();
+        if (table === 'anchors') return buildAnchorsBuilder();
+        if (table === 'org_members') return buildOrgMembersBuilder();
         throw new Error(`unexpected table: ${table}`);
       },
       rpc: (...args: unknown[]) => mockDbRpc(...args),
@@ -125,7 +176,21 @@ const defaultExec: ExecutionRow = {
   trigger_event_id: 'evt-1',
   status: 'PENDING',
   attempt_count: 0,
-  input_payload: { match_reason: 'matched', vendor: 'docusign' },
+  input_payload: {
+    match_reason: 'matched',
+    trigger_type: 'ESIGN_COMPLETED',
+    vendor: 'docusign',
+    external_file_id: 'env-1',
+    filename: 'signed-msa.pdf',
+    sender_email: 'sender@example.com',
+    payload: {
+      source: 'docusign_connect',
+      integration_id: 'int-1',
+      account_id: 'acct-1',
+      envelope_id: 'env-1',
+      document_sha256: 'a'.repeat(64),
+    },
+  },
 };
 
 const defaultRule: RuleRow = {
@@ -148,6 +213,9 @@ function setScenario(opts: { executions?: ExecutionRow[]; rule?: RuleRow | null 
     dbState.rules.set(r.id, r);
   }
   dbState.finalUpdates = new Map();
+  dbState.anchorInserts = [];
+  dbState.anchorInsertError = null;
+  dbState.orgMembers = [{ user_id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', role: 'owner' }];
 }
 
 beforeEach(() => {
@@ -356,12 +424,80 @@ describe('rule-action-dispatcher MVP (SCRUM-1142)', () => {
     expect(out.credit_denial_reason).toBeNull();
   });
 
+  it('AUTO_ANCHOR (DS-07): materializes a PENDING DocuSign anchor row for the org queue', async () => {
+    setScenario({
+      executions: [
+        {
+          ...defaultExec,
+          input_payload: {
+            match_reason: 'esign_completed:docusign',
+            trigger_type: 'ESIGN_COMPLETED',
+            vendor: 'docusign',
+            external_file_id: 'env-1',
+            filename: 'signed-msa.pdf',
+            sender_email: 'sender@example.com',
+            payload: {
+              source: 'docusign_connect',
+              integration_id: 'int-1',
+              account_id: 'acct-1',
+              envelope_id: 'env-1',
+              document_sha256: 'a'.repeat(64),
+            },
+          },
+        },
+      ],
+      rule: { ...defaultRule, action_type: 'AUTO_ANCHOR', action_config: { tag: 'signed-contract' } },
+    });
+
+    const result = await runRuleActionDispatcher();
+
+    expect(result.succeeded).toBe(1);
+    expect(dbState.anchorInserts).toHaveLength(1);
+    expect(dbState.anchorInserts[0]).toMatchObject({
+      fingerprint: 'a'.repeat(64),
+      status: 'PENDING',
+      org_id: ORG_ID,
+      user_id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+      filename: 'docusign/signed-msa.pdf',
+      credential_type: 'CONTRACT_POSTSIGNING',
+      metadata: expect.objectContaining({
+        connector_source: 'docusign',
+        external_file_id: 'env-1',
+        source_envelope_id: 'env-1',
+        rule_action_type: 'AUTO_ANCHOR',
+        rule_tag: 'signed-contract',
+        credit_denial_reason: null,
+        account_id_sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+        sender_email_sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+      }),
+    });
+    expect(JSON.stringify(dbState.anchorInserts[0].metadata)).not.toContain('sender@example.com');
+    expect(JSON.stringify(dbState.anchorInserts[0].metadata)).not.toContain('acct-1');
+    expect(JSON.stringify(dbState.anchorInserts[0].metadata)).not.toContain(RULE_ID);
+    expect(JSON.stringify(dbState.anchorInserts[0].metadata)).not.toContain(EXEC_ID);
+    const final = dbState.finalUpdates.get(EXEC_ID);
+    const out = final?.output_payload as { anchor_public_id?: string; anchor_materialized?: boolean };
+    expect(out.anchor_materialized).toBe(true);
+    expect(out.anchor_public_id).toBe('ARK-2026-ABCD1234');
+  });
+
   it('FAST_TRACK_ANCHOR (DS-06) with credits: deducts via RPC and submits anchor job', async () => {
     setScenario({
       rule: { ...defaultRule, action_type: 'FAST_TRACK_ANCHOR', action_config: {} },
     });
     const result = await runRuleActionDispatcher();
     expect(result.succeeded).toBe(1);
+    expect(dbState.anchorInserts).toHaveLength(1);
+    expect(dbState.anchorInserts[0]).toMatchObject({
+      fingerprint: 'a'.repeat(64),
+      status: 'PENDING',
+      org_id: ORG_ID,
+      credential_type: 'CONTRACT_POSTSIGNING',
+      metadata: expect.objectContaining({
+        connector_source: 'docusign',
+        rule_action_type: 'FAST_TRACK_ANCHOR',
+      }),
+    });
     expect(mockDbRpc).toHaveBeenCalledWith(
       'deduct_org_credit',
       expect.objectContaining({
@@ -378,14 +514,140 @@ describe('rule-action-dispatcher MVP (SCRUM-1142)', () => {
           rule_id: RULE_ID,
           execution_id: EXEC_ID,
           trigger_event_id: 'evt-1',
+          anchor_public_id: 'ARK-2026-ABCD1234',
         }),
       }),
     );
     const final = dbState.finalUpdates.get(EXEC_ID);
     expect(final?.status).toBe('SUCCEEDED');
-    const out = final?.output_payload as { outcome: string; routed_to: string };
+    const out = final?.output_payload as {
+      outcome: string;
+      routed_to: string;
+      anchor_materialized?: boolean;
+      anchor_public_id?: string;
+    };
     expect(out.outcome).toBe('anchor_dispatched');
     expect(out.routed_to).toBe('anchor_pipeline');
+    expect(out.anchor_materialized).toBe(true);
+    expect(out.anchor_public_id).toBe('ARK-2026-ABCD1234');
+  });
+
+  it('FAST_TRACK_ANCHOR (DS-06): recomputes invalid sender_email_sha256 input before anchor metadata', async () => {
+    setScenario({
+      executions: [
+        {
+          ...defaultExec,
+          input_payload: {
+            ...defaultExec.input_payload,
+            sender_email: 'Sender@Example.com ',
+            sender_email_sha256: 'not-a-sha256',
+          },
+        },
+      ],
+      rule: { ...defaultRule, action_type: 'FAST_TRACK_ANCHOR', action_config: {} },
+    });
+
+    const result = await runRuleActionDispatcher();
+
+    expect(result.succeeded).toBe(1);
+    expect(dbState.anchorInserts).toHaveLength(1);
+    expect(dbState.anchorInserts[0].metadata.sender_email_sha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(dbState.anchorInserts[0].metadata.sender_email_sha256).not.toBe('not-a-sha256');
+  });
+
+  it('FAST_TRACK_ANCHOR (DS-06): deterministic payload errors fail without deducting credit', async () => {
+    setScenario({
+      executions: [
+        {
+          ...defaultExec,
+          input_payload: {
+            ...defaultExec.input_payload,
+            payload: {
+              source: 'docusign_connect',
+              integration_id: 'int-1',
+              account_id: 'acct-1',
+              envelope_id: 'env-1',
+            },
+          },
+        },
+      ],
+      rule: { ...defaultRule, action_type: 'FAST_TRACK_ANCHOR', action_config: {} },
+    });
+
+    const result = await runRuleActionDispatcher();
+
+    expect(result.failed).toBe(1);
+    expect(mockDbRpc).not.toHaveBeenCalledWith('deduct_org_credit', expect.anything());
+    expect(mockSubmitJob).not.toHaveBeenCalled();
+    expect(dbState.anchorInserts).toHaveLength(0);
+    const final = dbState.finalUpdates.get(EXEC_ID);
+    expect(final?.status).toBe('FAILED');
+    expect(final?.error as string).toMatch(/document SHA-256 fingerprint/i);
+  });
+
+  it('FAST_TRACK_ANCHOR (DS-06): sanitizes anchor payload validation issue logs', async () => {
+    setScenario({
+      rule: { ...defaultRule, action_type: 'FAST_TRACK_ANCHOR', action_config: {} },
+    });
+    dbState.orgMembers = [{ user_id: 'not-a-uuid', role: 'owner' }];
+
+    const result = await runRuleActionDispatcher();
+
+    expect(result.failed).toBe(1);
+    expect(mockDbRpc).not.toHaveBeenCalledWith('deduct_org_credit', expect.anything());
+    const validationLog = mockLoggerWarn.mock.calls.find(
+      ([, message]) => message === 'anchor queue materialization payload failed validation',
+    );
+    expect(validationLog).toBeDefined();
+    const [fields] = validationLog as [Record<string, unknown>, string];
+    expect(fields.issues).toEqual([
+      expect.objectContaining({ code: expect.any(String), path: ['user_id'] }),
+    ]);
+    const serializedIssues = JSON.stringify(fields.issues);
+    expect(serializedIssues).not.toContain('message');
+    expect(serializedIssues).not.toContain('not-a-uuid');
+  });
+
+  it('FAST_TRACK_ANCHOR (DS-06): paid anchor insert failure after credit deduction refunds and retries', async () => {
+    setScenario({
+      rule: { ...defaultRule, action_type: 'FAST_TRACK_ANCHOR', action_config: {} },
+    });
+    dbState.anchorInsertError = { message: 'database unavailable' };
+
+    const result = await runRuleActionDispatcher();
+
+    expect(result.failed).toBe(1);
+    expect(mockDbRpc).toHaveBeenCalledWith('deduct_org_credit', expect.anything());
+    expect(mockDbRpc).toHaveBeenCalledWith('refund_org_credit', {
+      p_org_id: ORG_ID,
+      p_amount: 1,
+      p_reason: 'rule.fast_track_anchor_compensation',
+      p_reference_id: EXEC_ID,
+    });
+    expect(mockSubmitJob).not.toHaveBeenCalled();
+    const final = dbState.finalUpdates.get(EXEC_ID);
+    expect(final?.status).toBe('RETRYING');
+    expect(final?.error as string).toMatch(/credit refunded/i);
+  });
+
+  it('FAST_TRACK_ANCHOR (DS-06): insufficient-credit anchor insert failure is retryable', async () => {
+    mockDbRpc.mockResolvedValueOnce({
+      data: { success: false, error: 'insufficient_credits', balance: 0, required: 1 },
+      error: null,
+    });
+    setScenario({
+      rule: { ...defaultRule, action_type: 'FAST_TRACK_ANCHOR', action_config: {} },
+    });
+    dbState.anchorInsertError = { message: 'database unavailable' };
+
+    const result = await runRuleActionDispatcher();
+
+    expect(result.failed).toBe(1);
+    expect(mockDbRpc).toHaveBeenCalledWith('deduct_org_credit', expect.anything());
+    expect(mockSubmitJob).not.toHaveBeenCalled();
+    const final = dbState.finalUpdates.get(EXEC_ID);
+    expect(final?.status).toBe('RETRYING');
+    expect(final?.error as string).toMatch(/anchor queue materialization insert failed/i);
   });
 
   it('FAST_TRACK_ANCHOR (DS-06) without credits: falls through to anchor queue with credit_denial_reason', async () => {
@@ -402,16 +664,32 @@ describe('rule-action-dispatcher MVP (SCRUM-1142)', () => {
     // RPC was called (and refused), no anchor job dispatched
     expect(mockDbRpc).toHaveBeenCalledWith('deduct_org_credit', expect.anything());
     expect(mockSubmitJob).not.toHaveBeenCalled();
+    expect(dbState.anchorInserts).toHaveLength(1);
+    expect(dbState.anchorInserts[0]).toMatchObject({
+      fingerprint: 'a'.repeat(64),
+      status: 'PENDING',
+      org_id: ORG_ID,
+      credential_type: 'CONTRACT_POSTSIGNING',
+      metadata: expect.objectContaining({
+        connector_source: 'docusign',
+        rule_action_type: 'FAST_TRACK_ANCHOR',
+        credit_denial_reason: 'insufficient_credits',
+      }),
+    });
     const final = dbState.finalUpdates.get(EXEC_ID);
     expect(final?.status).toBe('SUCCEEDED');
     const out = final?.output_payload as {
       outcome: string;
       routed_to: string;
       credit_denial_reason: string;
+      anchor_materialized?: boolean;
+      anchor_public_id?: string;
     };
     expect(out.outcome).toBe('queued_for_anchor');
     expect(out.routed_to).toBe('anchor_queue');
     expect(out.credit_denial_reason).toBe('insufficient_credits');
+    expect(out.anchor_materialized).toBe(true);
+    expect(out.anchor_public_id).toBe('ARK-2026-ABCD1234');
   });
 
   it('FAST_TRACK_ANCHOR (DS-06): credit RPC throw is transient — RETRYING under max attempts', async () => {
@@ -421,25 +699,31 @@ describe('rule-action-dispatcher MVP (SCRUM-1142)', () => {
     });
     const result = await runRuleActionDispatcher();
     expect(result.failed).toBe(1);
+    expect(dbState.anchorInserts).toHaveLength(0);
     const final = dbState.finalUpdates.get(EXEC_ID);
     expect(final?.status).toBe('RETRYING');
     expect(mockSubmitJob).not.toHaveBeenCalled();
   });
 
-  it('FAST_TRACK_ANCHOR (Codex P1): submitJob failure AFTER credit deduction is permanent (FAILED, not RETRYING) to avoid double-charge', async () => {
+  it('FAST_TRACK_ANCHOR (Codex P1): submitJob failure AFTER credit deduction refunds and retries', async () => {
     // deduct_org_credit succeeds (default mock) but the queue refuses the
-    // anchor job. A transient outcome would re-call deduct_org_credit on
-    // retry and consume a second credit; pin the FAILED-not-RETRYING
-    // contract until SCRUM-1170-B adds RPC idempotency on p_reference_id.
+    // anchor job. The dispatcher compensates with refund_org_credit before
+    // retrying so the retry loop cannot double-charge the org.
     mockSubmitJob.mockResolvedValueOnce(null);
     setScenario({
       rule: { ...defaultRule, action_type: 'FAST_TRACK_ANCHOR', action_config: {} },
     });
     const result = await runRuleActionDispatcher();
     expect(result.failed).toBe(1);
+    expect(mockDbRpc).toHaveBeenCalledWith('refund_org_credit', {
+      p_org_id: ORG_ID,
+      p_amount: 1,
+      p_reason: 'rule.fast_track_anchor_compensation',
+      p_reference_id: EXEC_ID,
+    });
     const final = dbState.finalUpdates.get(EXEC_ID);
-    expect(final?.status).toBe('FAILED');
-    expect(final?.error as string).toMatch(/AFTER credit deduction/);
+    expect(final?.status).toBe('RETRYING');
+    expect(final?.error as string).toMatch(/credit refunded/i);
   });
 
   it('FAST_TRACK_ANCHOR (DS-06): org_not_initialized is permanent failure (not retryable)', async () => {
@@ -452,6 +736,7 @@ describe('rule-action-dispatcher MVP (SCRUM-1142)', () => {
     });
     const result = await runRuleActionDispatcher();
     expect(result.failed).toBe(1);
+    expect(dbState.anchorInserts).toHaveLength(0);
     const final = dbState.finalUpdates.get(EXEC_ID);
     expect(final?.status).toBe('FAILED');
     expect(final?.error as string).toMatch(/org_not_initialized/i);

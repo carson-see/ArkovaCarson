@@ -25,12 +25,13 @@
  * Feature gate: `ENABLE_RULE_ACTION_DISPATCHER=false` makes this a no-op.
  */
 import crypto from 'node:crypto';
+import { z } from 'zod';
 import { db } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
 import { emitOrgAdminNotifications } from '../notifications/dispatcher.js';
 import { resolveSecretHandle } from '../utils/secrets.js';
 import { submitJob } from '../utils/jobQueue.js';
-import { deductOrgCredit } from '../utils/orgCredits.js';
+import { deductOrgCredit, type DeductionResult } from '../utils/orgCredits.js';
 import { RULE_DISPATCH_OUTCOME, RULE_ROUTED_TO } from '../rules/schemas.js';
 
 export const MAX_DISPATCH_ATTEMPTS = 5;
@@ -66,10 +67,60 @@ interface RuleRow {
   action_config: Record<string, unknown>;
 }
 
+interface AnchorQueueMaterialization {
+  anchorPublicId: string | null;
+  materialized: boolean;
+  duplicate: boolean;
+}
+
+interface AnchorQueueSource {
+  fingerprint: string;
+  filename: string;
+  externalFileId: string;
+  connectorSource: string;
+  sourceEnvelopeId: string | null;
+  senderEmailSha256: string | null;
+  accountIdSha256: string | null;
+  fingerprintSource: string;
+}
+
+function hasControlChars(value: string): boolean {
+  return [...value].some((char) => {
+    const code = char.charCodeAt(0);
+    return code < 32 || code === 127;
+  });
+}
+
+const AnchorInsertSchema = z.object({
+  fingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+  status: z.literal('PENDING'),
+  org_id: z.string().uuid(),
+  user_id: z.string().uuid(),
+  filename: z.string().min(1).max(255).refine(
+    (value) => !hasControlChars(value),
+    'filename cannot contain control characters',
+  ),
+  credential_type: z.literal('CONTRACT_POSTSIGNING'),
+  metadata: z.record(z.string(), z.unknown()),
+});
+
+type AnchorInsertPayload = z.infer<typeof AnchorInsertSchema>;
+
 type Outcome =
   | { kind: 'success'; output: Record<string, unknown> }
   | { kind: 'transient_failure'; error: string }
   | { kind: 'permanent_failure'; error: string };
+
+class DeterministicDispatchError extends Error {
+  name = 'DeterministicDispatchError';
+}
+
+function sanitizedZodIssues(issues: z.ZodIssue[]): Array<{ code: string; path: string[] }> {
+  return issues.map((issue) => ({
+    code: issue.code,
+    path: issue.path.map(String),
+  }));
+}
 
 async function fetchPendingExecutions(): Promise<ExecutionRow[]> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -234,6 +285,236 @@ async function dispatchForwardToUrl(rule: RuleRow, exec: ExecutionRow): Promise<
   }
 }
 
+function readString(value: unknown): string | null {
+  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
+}
+
+function readRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function sha256Lower(value: string): string {
+  return crypto.createHash('sha256').update(value.trim().toLowerCase(), 'utf8').digest('hex');
+}
+
+function normalizeHex64(value: unknown): string | null {
+  const candidate = readString(value);
+  return candidate && /^[a-f0-9]{64}$/i.test(candidate) ? candidate.toLowerCase() : null;
+}
+
+function firstDocumentHash(payload: Record<string, unknown>): string | null {
+  const hashes = payload.document_hashes;
+  if (!Array.isArray(hashes) || hashes.length !== 1) return null;
+  return normalizeHex64(hashes[0]);
+}
+
+function extractAnchorFingerprint(
+  input: Record<string, unknown>,
+  payload: Record<string, unknown>,
+): { fingerprint: string; source: string } | null {
+  const candidates: Array<[unknown, string]> = [
+    [payload.document_sha256, 'payload.document_sha256'],
+    [payload.combined_document_sha256, 'payload.combined_document_sha256'],
+    [payload.sha256, 'payload.sha256'],
+    [input.fingerprint, 'input_payload.fingerprint'],
+    [firstDocumentHash(payload), 'payload.document_hashes[0]'],
+  ];
+  for (const [value, source] of candidates) {
+    const fingerprint = normalizeHex64(value);
+    if (fingerprint) return { fingerprint, source };
+  }
+  return null;
+}
+
+function sanitizeAnchorFilename(filename: string | null, fallback: string): string {
+  const safe = (filename ?? fallback)
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\x00-\x1f\x7f]/g, ' ')
+    .replace(/[\\/]+/g, '-')
+    .trim()
+    .slice(0, 220);
+  return `docusign/${safe || 'completed-envelope'}`.slice(0, 255);
+}
+
+function extractAnchorQueueSource(exec: ExecutionRow): AnchorQueueSource | null {
+  const input = readRecord(exec.input_payload);
+  const payload = readRecord(input.payload);
+  const fingerprint = extractAnchorFingerprint(input, payload);
+  if (!fingerprint) return null;
+
+  const vendor = readString(input.vendor) ?? readString(payload.source) ?? 'connector';
+  const externalFileId =
+    readString(input.external_file_id) ??
+    readString(payload.envelope_id) ??
+    readString(payload.file_id) ??
+    exec.trigger_event_id;
+  const filename = sanitizeAnchorFilename(readString(input.filename), externalFileId);
+  const rawSenderEmail = readString(input.sender_email);
+  const senderEmailCandidate = normalizeHex64(input.sender_email_sha256);
+  const senderEmailSha256 =
+    senderEmailCandidate ?? (rawSenderEmail ? sha256Lower(rawSenderEmail) : null);
+  const accountId = readString(payload.account_id);
+
+  return {
+    fingerprint: fingerprint.fingerprint,
+    filename,
+    externalFileId,
+    connectorSource: vendor,
+    sourceEnvelopeId: readString(payload.envelope_id),
+    senderEmailSha256,
+    accountIdSha256: accountId ? sha256Lower(accountId) : null,
+    fingerprintSource: fingerprint.source,
+  };
+}
+
+async function resolveAnchorActorUserId(rule: RuleRow, exec: ExecutionRow): Promise<string | null> {
+  const actorUserId = readString(readRecord(exec.input_payload).actor_user_id);
+  if (actorUserId) return actorUserId;
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data, error } = await (db as any)
+    .from('org_members')
+    .select('user_id, role')
+    .eq('org_id', rule.org_id)
+    .in('role', ['owner', 'admin'])
+    .order('role', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`anchor actor lookup failed: ${(error as { message?: string }).message ?? 'unknown'}`);
+  }
+  return readString((data as { user_id?: unknown } | null)?.user_id);
+}
+
+async function findExistingAnchor(args: {
+  orgId: string;
+  userId: string;
+  fingerprint: string;
+}): Promise<AnchorQueueMaterialization | null> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data, error } = await (db as any)
+    .from('anchors')
+    .select('public_id, status')
+    .eq('org_id', args.orgId)
+    .eq('user_id', args.userId)
+    .eq('fingerprint', args.fingerprint)
+    .is('deleted_at', null)
+    .neq('status', 'REVOKED')
+    .maybeSingle();
+  if (error) throw new Error(`anchor duplicate lookup failed: ${(error as { message?: string }).message ?? 'unknown'}`);
+  if (!data) return null;
+  return {
+    anchorPublicId: readString((data as { public_id?: unknown }).public_id),
+    materialized: true,
+    duplicate: true,
+  };
+}
+
+async function buildAnchorInsertPayload(args: {
+  rule: RuleRow;
+  exec: ExecutionRow;
+  creditDenialReason: string | null;
+}): Promise<AnchorInsertPayload> {
+  if (args.rule.org_id !== args.exec.org_id) {
+    throw new DeterministicDispatchError('rule org_id does not match execution org_id');
+  }
+
+  const source = extractAnchorQueueSource(args.exec);
+  if (!source) {
+    throw new DeterministicDispatchError('anchor queue materialization requires a document SHA-256 fingerprint');
+  }
+
+  const userId = await resolveAnchorActorUserId(args.rule, args.exec);
+  if (!userId) {
+    throw new DeterministicDispatchError('anchor queue materialization requires an org owner/admin actor');
+  }
+
+  const tag = readString(args.rule.action_config?.tag);
+  const metadata: Record<string, unknown> = {
+    connector_source: source.connectorSource,
+    external_file_id: source.externalFileId,
+    source_envelope_id: source.sourceEnvelopeId,
+    rule_action_type: args.rule.action_type,
+    rule_tag: tag,
+    credit_denial_reason: args.creditDenialReason,
+    fingerprint_source: source.fingerprintSource,
+    sender_email_sha256: source.senderEmailSha256,
+    account_id_sha256: source.accountIdSha256,
+  };
+
+  const insertPayload = {
+    fingerprint: source.fingerprint,
+    status: 'PENDING' as const,
+    org_id: args.rule.org_id,
+    user_id: userId,
+    filename: source.filename,
+    credential_type: 'CONTRACT_POSTSIGNING' as const,
+    metadata,
+  };
+
+  const parsed = AnchorInsertSchema.safeParse(insertPayload);
+  if (!parsed.success) {
+    logger.warn(
+      { issues: sanitizedZodIssues(parsed.error.issues), ruleId: args.rule.id, executionId: args.exec.id },
+      'anchor queue materialization payload failed validation',
+    );
+    throw new DeterministicDispatchError('anchor queue materialization payload failed validation');
+  }
+
+  return parsed.data;
+}
+
+function withCreditDenialReason(
+  insertPayload: AnchorInsertPayload,
+  creditDenialReason: string,
+): AnchorInsertPayload {
+  return AnchorInsertSchema.parse({
+    ...insertPayload,
+    metadata: {
+      ...insertPayload.metadata,
+      credit_denial_reason: creditDenialReason,
+    },
+  });
+}
+
+async function insertAnchorQueueItem(insertPayload: AnchorInsertPayload): Promise<AnchorQueueMaterialization> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data, error } = await (db as any)
+    .from('anchors')
+    .insert(insertPayload)
+    .select('public_id, fingerprint, status, created_at')
+    .single();
+
+  if (error) {
+    if ((error as { code?: string }).code === '23505') {
+      const existing = await findExistingAnchor({
+        orgId: insertPayload.org_id,
+        userId: insertPayload.user_id,
+        fingerprint: insertPayload.fingerprint,
+      });
+      if (existing) return existing;
+    }
+    throw new Error(`anchor queue materialization insert failed: ${(error as { message?: string }).message ?? 'unknown'}`);
+  }
+
+  return {
+    anchorPublicId: readString((data as { public_id?: unknown } | null)?.public_id),
+    materialized: true,
+    duplicate: false,
+  };
+}
+
+async function materializeAnchorQueueItem(args: {
+  rule: RuleRow;
+  exec: ExecutionRow;
+  creditDenialReason: string | null;
+}): Promise<AnchorQueueMaterialization> {
+  return insertAnchorQueueItem(await buildAnchorInsertPayload(args));
+}
+
 // SCRUM-1649 DS-AUTO-02 — Anchor action routing.
 // Two outcome shapes share `routed_to=anchor_queue`: (a) AUTO_ANCHOR (DS-07,
 // queue mode) emits one with credit_denial_reason=null, no credit movement;
@@ -243,6 +524,7 @@ function buildAnchorQueueOutcome(opts: {
   creditDenialReason: string | null;
   balance?: number | null;
   required?: number | null;
+  materialization?: AnchorQueueMaterialization;
 }): Outcome {
   return {
     kind: 'success',
@@ -250,29 +532,112 @@ function buildAnchorQueueOutcome(opts: {
       outcome: RULE_DISPATCH_OUTCOME.QUEUED_FOR_ANCHOR,
       routed_to: RULE_ROUTED_TO.ANCHOR_QUEUE,
       credit_denial_reason: opts.creditDenialReason,
+      anchor_materialized: opts.materialization?.materialized ?? false,
+      anchor_public_id: opts.materialization?.anchorPublicId ?? null,
+      duplicate_anchor: opts.materialization?.duplicate ?? false,
       ...(opts.balance != null ? { balance: opts.balance } : {}),
       ...(opts.required != null ? { required: opts.required } : {}),
     },
   };
 }
 
-function dispatchAutoAnchor(): Outcome {
+async function dispatchAutoAnchor(rule: RuleRow, exec: ExecutionRow): Promise<Outcome> {
   // DS-07 queue mode: route to the org anchor queue without consuming credits.
-  // Downstream queue admin UI / scheduler reads `organization_rule_executions`
-  // rows where output_payload.outcome='queued_for_anchor' and dispatches the
-  // anchor at admin-approved cadence.
-  return buildAnchorQueueOutcome({ creditDenialReason: null });
+  const materialization = await materializeAnchorQueueItem({
+    rule,
+    exec,
+    creditDenialReason: null,
+  });
+  return buildAnchorQueueOutcome({ creditDenialReason: null, materialization });
+}
+
+async function compensateFastTrackCreditFailure(args: {
+  rule: RuleRow;
+  exec: ExecutionRow;
+  deduction: DeductionResult;
+  failure: string;
+  error?: unknown;
+}): Promise<Outcome> {
+  const logContext = {
+    error: args.error,
+    ruleId: args.rule.id,
+    executionId: args.exec.id,
+    orgId: args.rule.org_id,
+  };
+
+  if (args.deduction.reason === 'feature_disabled') {
+    logger.error(logContext, `FAST_TRACK_ANCHOR: ${args.failure} — retrying without credit compensation`);
+    return {
+      kind: 'transient_failure',
+      error: `${args.failure}; credit enforcement disabled, retrying`,
+    };
+  }
+
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data, error } = await (db as any).rpc('refund_org_credit', {
+      p_org_id: args.rule.org_id,
+      p_amount: 1,
+      p_reason: 'rule.fast_track_anchor_compensation',
+      p_reference_id: args.exec.id,
+    });
+    const refunded = !error && (data as { success?: unknown } | null)?.success === true;
+    if (refunded) {
+      logger.warn(logContext, `FAST_TRACK_ANCHOR: ${args.failure} after credit deduction — refunded and retrying`);
+      return {
+        kind: 'transient_failure',
+        error: `${args.failure} AFTER credit deduction; credit refunded; retrying`,
+      };
+    }
+    logger.error(
+      {
+        ...logContext,
+        refundError: error,
+        refundResult: (data as { error?: unknown } | null)?.error ?? 'unexpected_refund_shape',
+      },
+      `FAST_TRACK_ANCHOR: ${args.failure} after credit deduction and refund failed — marking FAILED`,
+    );
+  } catch (refundErr) {
+    logger.error(
+      { ...logContext, refundError: refundErr },
+      `FAST_TRACK_ANCHOR: ${args.failure} after credit deduction and refund threw — marking FAILED`,
+    );
+  }
+
+  return {
+    kind: 'permanent_failure',
+    error: `${args.failure} AFTER credit deduction; refund failed (manual refund + manual retry required)`,
+  };
 }
 
 async function dispatchFastTrackAnchor(rule: RuleRow, exec: ExecutionRow): Promise<Outcome> {
-  // DS-06 instant secure: atomically reserve one credit, then dispatch the
-  // anchor job. Uses the shared `deductOrgCredit` helper (SCRUM-1170-B) so
+  // DS-06 instant secure: validate the future queue row before reserving
+  // credit, then insert only for allowed or explicitly queued denial paths.
+  // Uses the shared `deductOrgCredit` helper (SCRUM-1170-B) so
   // `config.enableOrgCreditEnforcement=false` short-circuits cleanly in
   // environments without org-credit setup, and so RPC-shape errors are
   // normalized identically to the existing /api/v1/anchor route.
+  const preparedAnchor = await buildAnchorInsertPayload({
+    rule,
+    exec,
+    creditDenialReason: null,
+  });
+
   const result = await deductOrgCredit(db, rule.org_id, 1, 'rule.fast_track_anchor', exec.id);
 
   if (result.allowed) {
+    let materialization: AnchorQueueMaterialization;
+    try {
+      materialization = await insertAnchorQueueItem(preparedAnchor);
+    } catch (err) {
+      return compensateFastTrackCreditFailure({
+        rule,
+        exec,
+        deduction: result,
+        failure: `anchor queue materialization insert failed: ${err instanceof Error ? err.message : 'unknown'}`,
+        error: err,
+      });
+    }
     const jobId = await submitJob({
       type: 'anchor.fast_track',
       max_attempts: 5,
@@ -282,29 +647,26 @@ async function dispatchFastTrackAnchor(rule: RuleRow, exec: ExecutionRow): Promi
         rule_id: rule.id,
         execution_id: exec.id,
         trigger_event_id: exec.trigger_event_id,
+        anchor_public_id: materialization.anchorPublicId,
+        duplicate_anchor: materialization.duplicate,
       },
     });
     if (!jobId) {
-      // Codex P1 (PR #689): credit was deducted but the queue refused the
-      // job. A transient outcome would re-call deduct_org_credit on the
-      // next pass and double-charge the org until migration 0278's RPC
-      // gains idempotency on p_reference_id (SCRUM-1170-B). Until then,
-      // permanent_failure routes to FAILED — the credit is consumed once
-      // and on-call refunds it via audit log + manually re-issues.
-      logger.error(
-        { ruleId: rule.id, executionId: exec.id, orgId: rule.org_id },
-        'FAST_TRACK_ANCHOR: deducted credit but anchor job enqueue failed — marking FAILED to avoid double-charge',
-      );
-      return {
-        kind: 'permanent_failure',
-        error: 'anchor.fast_track job enqueue failed AFTER credit deduction (credit consumed; manual refund + manual retry required)',
-      };
+      return compensateFastTrackCreditFailure({
+        rule,
+        exec,
+        deduction: result,
+        failure: 'anchor.fast_track job enqueue failed',
+      });
     }
     return {
       kind: 'success',
       output: {
         outcome: RULE_DISPATCH_OUTCOME.ANCHOR_DISPATCHED,
         routed_to: RULE_ROUTED_TO.ANCHOR_PIPELINE,
+        anchor_materialized: materialization.materialized,
+        anchor_public_id: materialization.anchorPublicId,
+        duplicate_anchor: materialization.duplicate,
         ...(result.balance != null ? { balance: result.balance } : {}),
       },
     };
@@ -318,6 +680,10 @@ async function dispatchFastTrackAnchor(rule: RuleRow, exec: ExecutionRow): Promi
       creditDenialReason: 'insufficient_credits',
       balance: result.balance ?? null,
       required: result.required ?? null,
+      materialization: await insertAnchorQueueItem(withCreditDenialReason(
+        preparedAnchor,
+        'insufficient_credits',
+      )),
     });
   }
 
@@ -349,7 +715,7 @@ async function dispatchOne(rule: RuleRow, exec: ExecutionRow): Promise<Outcome> 
       return dispatchForwardToUrl(rule, exec);
     case 'AUTO_ANCHOR':
       // SCRUM-1649 DS-07
-      return dispatchAutoAnchor();
+      return dispatchAutoAnchor(rule, exec);
     case 'FAST_TRACK_ANCHOR':
       // SCRUM-1649 DS-06
       return dispatchFastTrackAnchor(rule, exec);
@@ -446,7 +812,7 @@ export async function runRuleActionDispatcher(): Promise<DispatcherPassResult> {
         outcome = await dispatchOne(rule, exec);
       } catch (err) {
         outcome = {
-          kind: 'transient_failure',
+          kind: err instanceof DeterministicDispatchError ? 'permanent_failure' : 'transient_failure',
           error: err instanceof Error ? err.message : 'dispatcher threw',
         };
       }

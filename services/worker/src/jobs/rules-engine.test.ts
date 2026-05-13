@@ -32,10 +32,18 @@ const EVENT = {
   org_id: '22222222-2222-4222-8222-222222222222',
   trigger_type: 'ESIGN_COMPLETED',
   vendor: 'docusign',
+  external_file_id: 'env-1',
   filename: 'msa.pdf',
   folder_path: null,
   sender_email: 'sender@example.com',
   subject: null,
+  payload: {
+    source: 'docusign_connect',
+    integration_id: 'int-1',
+    account_id: 'acct-1',
+    envelope_id: 'env-1',
+    document_sha256: 'a'.repeat(64),
+  },
 };
 
 const MATCHING_RULE = {
@@ -97,6 +105,17 @@ describe('runRulesEngine', () => {
           trigger_event_id: EVENT.id,
           org_id: EVENT.org_id,
           status: 'PENDING',
+          input_payload: expect.objectContaining({
+            match_reason: 'matched',
+            trigger_type: 'ESIGN_COMPLETED',
+            vendor: 'docusign',
+            external_file_id: 'env-1',
+            filename: 'msa.pdf',
+            payload: expect.objectContaining({
+              integration_id: 'int-1',
+              document_sha256: 'a'.repeat(64),
+            }),
+          }),
         }),
       ],
       { onConflict: 'rule_id,trigger_event_id', ignoreDuplicates: true },
