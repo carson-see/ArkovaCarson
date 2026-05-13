@@ -366,7 +366,7 @@ export function PipelineAdminPage() {
         statusCountsAvailable = lifecycleCountsAvailable(pipelineStats);
         statusCountsWarning = statusCountsAvailable
           ? null
-          : 'Pipeline lifecycle counts unavailable: direct RPC returned cache-miss placeholders or timeout sentinels.';
+          : PIPELINE_LABELS.LIFECYCLE_COUNTS_UNAVAILABLE_WARNING;
         anchorLinkedRecords = toCountOrNull(pipelineStats.anchor_linked_records ?? pipelineStats.anchored_records);
         pendingRecordLinks = toCountOrNull(pipelineStats.pending_record_links);
         pendingAnchorRecords = toCountOrNull(pipelineStats.pending_anchor_records);

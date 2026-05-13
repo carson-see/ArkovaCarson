@@ -7,7 +7,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // ---- Hoisted mocks (available before vi.mock factories run) ----
-const { mockDb, mockLogger, mockConfig } = vi.hoisted(() => {
+const { mockDb, mockLogger, mockConfig, mockGetChainClientAsync } = vi.hoisted(() => {
   const mockDb = {
     from: vi.fn(),
     rpc: vi.fn(),
@@ -28,12 +28,13 @@ const { mockDb, mockLogger, mockConfig } = vi.hoisted(() => {
     bitcoinMaxFeeRate: 100,
   };
 
-  return { mockDb, mockLogger, mockConfig };
+  return { mockDb, mockLogger, mockConfig, mockGetChainClientAsync: vi.fn() };
 });
 
 vi.mock('../utils/db.js', () => ({ db: mockDb }));
 vi.mock('../utils/logger.js', () => ({ logger: mockLogger }));
 vi.mock('../config.js', () => ({ config: mockConfig }));
+vi.mock('../chain/client.js', () => ({ getChainClientAsync: mockGetChainClientAsync }));
 
 import {
   detectReorgs,
@@ -45,6 +46,8 @@ import {
   MAX_REBROADCAST_ATTEMPTS,
   FEE_SPIKE_MULTIPLIER,
 } from './chain-maintenance.js';
+import { MockChainClient } from '../chain/mock.js';
+import type { ChainReceipt } from '../chain/types.js';
 
 // Helper to create mock DB chain (thenable)
 function mockDbChain(data: unknown = null, error: unknown = null) {
@@ -81,9 +84,11 @@ describe('Chain Maintenance Jobs', () => {
     mockConfig.useMocks = false;
     mockConfig.nodeEnv = 'development';
     mockConfig.bitcoinNetwork = 'signet';
+    mockGetChainClientAsync.mockRejectedValue(new Error('chain client not configured for test'));
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     global.fetch = originalFetch;
   });
 
@@ -237,10 +242,14 @@ describe('Chain Maintenance Jobs', () => {
         return fromCallCount === 1 ? mockDbChain([stuckAnchor], null) : updateChain;
       });
 
-      vi.spyOn(globalThis, 'fetch').mockResolvedValue({
-        ok: true,
-        json: async () => ({ status: { confirmed: false } }),
-      } as Response);
+      const chainClient = new MockChainClient();
+      vi.spyOn(chainClient, 'getReceipt').mockResolvedValue({
+        receiptId: stuckAnchor.chain_tx_id,
+        blockHeight: 0,
+        blockTimestamp: abandonCutoff,
+        confirmations: 0,
+      } satisfies ChainReceipt);
+      mockGetChainClientAsync.mockResolvedValue(chainClient);
 
       const result = await monitorStuckTransactions();
 
@@ -277,10 +286,14 @@ describe('Chain Maintenance Jobs', () => {
         return fromCallCount === 1 ? mockDbChain([stuckAnchor], null) : updateChain;
       });
 
-      vi.spyOn(globalThis, 'fetch').mockResolvedValue({
-        ok: true,
-        json: async () => ({ status: { confirmed: false } }),
-      } as Response);
+      const chainClient = new MockChainClient();
+      vi.spyOn(chainClient, 'getReceipt').mockResolvedValue({
+        receiptId: stuckAnchor.chain_tx_id,
+        blockHeight: 0,
+        blockTimestamp: abandonCutoff,
+        confirmations: 0,
+      } satisfies ChainReceipt);
+      mockGetChainClientAsync.mockResolvedValue(chainClient);
 
       const result = await monitorStuckTransactions();
 
