@@ -16,7 +16,7 @@
   "devDependencies": {
     "typescript": "5.9.3",
     "vitest": "1.6.1",
-    "zapier-platform-cli": "15.19.0"
+    "zapier-platform-cli": "18.6.0"
   },
   "engines": {
     "node": ">=18",
