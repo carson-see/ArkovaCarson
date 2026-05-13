@@ -2,11 +2,10 @@
  * SCRUM-1005 (DEP-15) — regression tests for the dependency pinning
  * enforcement script.
  *
- * The script under test scans package.json files at fixed relative paths
- * from the repo root, so we can't easily inject mock files. Instead we
- * spawn the script as a child process with a controlled cwd that
- * contains a synthesized package.json fixture, then assert on exit code
- * + stderr.
+ * The script under test scans tracked package.json files in real repos and
+ * falls back to filesystem discovery for /tmp fixtures. We spawn it as a
+ * child process against synthesized package.json trees, then assert on exit
+ * code + output.
  */
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach } from 'vitest';
@@ -15,7 +14,7 @@ import { tmpdir, homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
-import { resolveRepoRoot } from './check-dep-pinning.js';
+import { listPackageJsons, resolveRepoRoot } from './check-dep-pinning.js';
 
 const SCRIPT = resolve(import.meta.dirname, 'check-dep-pinning.ts');
 
@@ -31,6 +30,10 @@ describe('check-dep-pinning (SCRUM-1005)', () => {
 
   beforeAll(() => {
     tmp = mkdtempSync(join(tmpdir(), 'dep-pinning-test-'));
+  });
+
+  beforeEach(() => {
+    rmSync(tmp, { recursive: true, force: true });
     mkdirSync(join(tmp, 'services', 'worker'), { recursive: true });
     mkdirSync(join(tmp, 'services', 'edge'), { recursive: true });
   });
@@ -52,7 +55,7 @@ describe('check-dep-pinning (SCRUM-1005)', () => {
     );
   }
 
-  it('exits 0 when all production deps are pinned exactly', () => {
+  it('exits 0 when all discovered deps are pinned exactly', () => {
     seedFixture({
       name: 'fixture-root',
       dependencies: { lodash: '4.17.21' },
@@ -62,6 +65,11 @@ describe('check-dep-pinning (SCRUM-1005)', () => {
     writeFileSync(join(tmp, 'services', 'worker', 'package.json'), JSON.stringify({
       name: 'fixture-worker',
       dependencies: { axios: '1.15.0' },
+    }));
+    mkdirSync(join(tmp, 'packages', 'sdk'), { recursive: true });
+    writeFileSync(join(tmp, 'packages', 'sdk', 'package.json'), JSON.stringify({
+      name: 'fixture-sdk',
+      peerDependencies: { react: '18.2.0' },
     }));
     const r = runScript(tmp);
     expect(r.status).toBe(0);
@@ -91,37 +99,91 @@ describe('check-dep-pinning (SCRUM-1005)', () => {
     expect(r.stderr).toContain('~3.4.0');
   });
 
-  it('honours the dep-range-intentional override label across all 3 package.json paths', () => {
+  it('exits 1 on caret ranges in peerDependencies', () => {
+    seedFixture({
+      name: 'fixture-root',
+      peerDependencies: { react: '^18.2.0' },
+    });
+    const r = runScript(tmp);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('react');
+    expect(r.stderr).toContain('peerDependencies');
+    expect(r.stderr).toContain('^18.2.0');
+  });
+
+  it('finds nested package.json files beyond the historical fixed paths', () => {
+    seedFixture({
+      name: 'fixture-root',
+      dependencies: { lodash: '4.17.21' },
+    });
+    mkdirSync(join(tmp, 'integrations', 'zapier'), { recursive: true });
+    writeFileSync(join(tmp, 'integrations', 'zapier', 'package.json'), JSON.stringify({
+      name: 'fixture-zapier',
+      dependencies: { 'zapier-platform-core': '^15.0.0' },
+    }));
+    const r = runScript(tmp);
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('integrations/zapier/package.json');
+    expect(r.stderr).toContain('zapier-platform-core');
+  });
+
+  it('does not scan package.json files under node_modules in filesystem fallback mode', () => {
+    seedFixture({
+      name: 'fixture-root',
+      dependencies: { lodash: '4.17.21' },
+    });
+    mkdirSync(join(tmp, 'node_modules', 'bad-package'), { recursive: true });
+    writeFileSync(join(tmp, 'node_modules', 'bad-package', 'package.json'), JSON.stringify({
+      name: 'bad-package',
+      dependencies: { 'range-leak': '^1.0.0' },
+    }));
+    const r = runScript(tmp);
+    expect(r.status).toBe(0);
+  });
+
+  it('honours the dep-range-intentional override label across all discovered package.json files', () => {
     seedFixture({
       name: 'fixture-root',
       dependencies: { 'root-range': '^1.0.0' },
     });
-    // Cover all three scanned paths so a future regression that scopes the
-    // override to root only fails this test loudly.
     writeFileSync(join(tmp, 'services', 'worker', 'package.json'), JSON.stringify({
       name: 'fixture-worker',
       dependencies: { 'worker-range': '~2.0.0' },
     }));
-    writeFileSync(join(tmp, 'services', 'edge', 'package.json'), JSON.stringify({
-      name: 'fixture-edge',
-      devDependencies: { 'edge-range': '^3.0.0' },
+    mkdirSync(join(tmp, 'packages', 'embed'), { recursive: true });
+    writeFileSync(join(tmp, 'packages', 'embed', 'package.json'), JSON.stringify({
+      name: 'fixture-embed',
+      peerDependencies: { 'embed-range': '^3.0.0' },
     }));
     const r = runScript(tmp, { PR_LABELS: 'dep-range-intentional' });
     expect(r.status).toBe(0);
     expect(r.stdout).toContain('PR labeled');
     expect(r.stdout).toContain('root-range');
     expect(r.stdout).toContain('worker-range');
-    expect(r.stdout).toContain('edge-range');
+    expect(r.stdout).toContain('embed-range');
   });
 
-  it('skips package.json files that do not exist (e.g. services/edge missing)', () => {
+  it('does not require historical optional paths to exist', () => {
     seedFixture({
       name: 'fixture-root',
       dependencies: { lodash: '4.17.21' },
     });
+    rmSync(join(tmp, 'services', 'worker', 'package.json'), { force: true });
     rmSync(join(tmp, 'services', 'edge', 'package.json'), { force: true });
     const r = runScript(tmp);
     expect(r.status).toBe(0);
+  });
+
+  it('lists package.json files using the filesystem fallback outside git repos', () => {
+    seedFixture({
+      name: 'fixture-root',
+      dependencies: {},
+    });
+    mkdirSync(join(tmp, 'packages', 'sdk'), { recursive: true });
+    writeFileSync(join(tmp, 'packages', 'sdk', 'package.json'), JSON.stringify({
+      name: 'fixture-sdk',
+    }));
+    expect(listPackageJsons(tmp)).toContain('packages/sdk/package.json');
   });
 });
 

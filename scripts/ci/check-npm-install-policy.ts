@@ -1,0 +1,138 @@
+#!/usr/bin/env -S npx tsx
+/**
+ * Supply-chain guardrail: CI and deploy helper installs must suppress npm
+ * lifecycle scripts unless a line carries an explicit install-scripts-ok
+ * justification. Install hooks are a common malware execution path.
+ */
+
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { join, resolve, relative, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const ALLOW_MARKER = 'install-scripts-ok:';
+const CHECKED_DIRS = [
+  '.github/workflows',
+  'scripts',
+];
+const CHECKED_EXTENSIONS = new Set(['.sh', '.yml', '.yaml']);
+
+export interface Violation {
+  file: string;
+  line: number;
+  text: string;
+}
+
+function normalizeRelPath(path: string): string {
+  return path.split(sep).join('/');
+}
+
+function hasCheckedExtension(path: string): boolean {
+  return [...CHECKED_EXTENSIONS].some((ext) => path.endsWith(ext));
+}
+
+function collectFiles(repo: string): string[] {
+  const files: string[] = [];
+
+  function walk(absDir: string): void {
+    if (!existsSync(absDir)) return;
+
+    for (const entry of readdirSync(absDir, { withFileTypes: true })) {
+      const absPath = join(absDir, entry.name);
+      if (entry.isDirectory()) {
+        walk(absPath);
+        continue;
+      }
+
+      if (!entry.isFile() || !hasCheckedExtension(entry.name)) continue;
+      files.push(normalizeRelPath(relative(repo, absPath)));
+    }
+  }
+
+  for (const dir of CHECKED_DIRS) {
+    walk(join(repo, dir));
+  }
+
+  return files.sort();
+}
+
+function isCommentOnly(line: string): boolean {
+  const trimmed = line.trim();
+  return trimmed.startsWith('#') || trimmed.startsWith('//');
+}
+
+function isYamlNameLine(line: string): boolean {
+  return /^\s*-\s*name:/.test(line) || /^\s*name:/.test(line);
+}
+
+function stripQuotedStrings(line: string): string {
+  return line
+    .replace(/"([^"\\]|\\.)*"/g, '""')
+    .replace(/'([^'\\]|\\.)*'/g, "''");
+}
+
+function hasNpmInstall(line: string): boolean {
+  return /\bnpm\s+(ci|install)\b/.test(line);
+}
+
+function hasSafeIgnoreScripts(line: string): boolean {
+  if (/--ignore-scripts=false\b/.test(line)) return false;
+  return /--ignore-scripts(?:=true)?\b/.test(line);
+}
+
+function hasAllowMarker(lines: string[], index: number): boolean {
+  for (const nearby of [index, index - 1, index - 2]) {
+    if (nearby < 0) continue;
+    const markerAt = lines[nearby].indexOf(ALLOW_MARKER);
+    if (markerAt === -1) continue;
+    return lines[nearby].slice(markerAt + ALLOW_MARKER.length).trim().length > 0;
+  }
+  return false;
+}
+
+export function scanTextForUnsafeNpmInstalls(file: string, text: string): Violation[] {
+  const lines = text.split(/\r?\n/);
+  const violations: Violation[] = [];
+
+  lines.forEach((line, index) => {
+    if (isCommentOnly(line) || isYamlNameLine(line)) return;
+
+    const commandText = stripQuotedStrings(line);
+    if (!hasNpmInstall(commandText)) return;
+    if (hasSafeIgnoreScripts(commandText)) return;
+    if (hasAllowMarker(lines, index)) return;
+
+    violations.push({
+      file,
+      line: index + 1,
+      text: line.trim(),
+    });
+  });
+
+  return violations;
+}
+
+function main(): void {
+  const repo = resolve(import.meta.dirname, '..', '..');
+  const files = collectFiles(repo);
+  const violations = files.flatMap((file) =>
+    scanTextForUnsafeNpmInstalls(file, readFileSync(join(repo, file), 'utf8')),
+  );
+
+  if (violations.length === 0) {
+    console.log(`✅ npm install policy passed (${files.length} file(s) scanned).`);
+    return;
+  }
+
+  console.error(`::error::Found ${violations.length} npm install command(s) that can run lifecycle scripts.`);
+  for (const violation of violations) {
+    console.error(`  ${violation.file}:${violation.line} → ${violation.text}`);
+  }
+  console.error('');
+  console.error('Fix: add --ignore-scripts to npm ci/install commands.');
+  console.error(`If lifecycle scripts are truly required, add a nearby comment containing "${ALLOW_MARKER} <reason>".`);
+  process.exit(1);
+}
+
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main();
+}

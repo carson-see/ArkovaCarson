@@ -34,7 +34,7 @@ SIZE_BUDGET_GZIPPED=15360  # 15 KB
 cd "$PKG_DIR"
 
 echo "== Building @arkova/embed"
-npm install --silent
+npm ci --ignore-scripts --silent
 npx vite build
 
 echo "== Verifying bundle sizes (budget: ${SIZE_BUDGET_GZIPPED} bytes gzipped)"
