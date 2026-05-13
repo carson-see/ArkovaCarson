@@ -309,12 +309,15 @@ export function useTreasuryBalance() {
         const data = (await workerSettled.response.json()) as WorkerTreasuryStatus;
         if (!isMountedRef.current) return;
         if (data.wallet) {
-          const confirmed = data.wallet.confirmedBalanceSats ?? data.wallet.balanceSats;
           const unconfirmed = data.wallet.unconfirmedBalanceSats ?? 0;
+          const confirmed = data.wallet.confirmedBalanceSats
+            ?? (data.wallet.unconfirmedBalanceSats !== undefined
+              ? data.wallet.balanceSats - data.wallet.unconfirmedBalanceSats
+              : data.wallet.balanceSats);
           const bal: TreasuryBalance = {
             confirmed,
             unconfirmed,
-            total: confirmed + unconfirmed,
+            total: data.wallet.balanceSats,
             btcPrice: null,
             totalUsd: null,
           };

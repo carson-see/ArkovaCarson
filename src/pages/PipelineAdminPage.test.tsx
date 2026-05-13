@@ -210,7 +210,7 @@ describe('PipelineAdminPage', () => {
     expect(await screen.findByTestId('pipeline-stats-error')).toHaveTextContent('fallback failed: RLS denied');
     expect(screen.queryByTestId('pipeline-cache-freshness')).not.toBeInTheDocument();
     expect(screen.queryByText('0 submitted / 0 confirmed')).not.toBeInTheDocument();
-    expect(screen.queryByText('0 unlinked / 0 queued / 0 broadcasting')).not.toBeInTheDocument();
+    expect(screen.queryByText('0 unlinked / 0 queued / 0 submitting to network')).not.toBeInTheDocument();
     expect(screen.getAllByText('—')).toHaveLength(4);
   });
 

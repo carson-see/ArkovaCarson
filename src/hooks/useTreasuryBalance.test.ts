@@ -120,6 +120,23 @@ describe('useTreasuryBalance R1-6 hardening (SCRUM-1260)', () => {
     expect(result.current.anchorStats?.lastTxTime).toBe('2026-05-12T09:45:00Z');
   });
 
+  it('does not double-count unconfirmed balance when worker balance is already total', async () => {
+    mockWorkerDefaults(() => Promise.resolve(jsonResponse({
+      wallet: { balanceSats: 150, unconfirmedBalanceSats: 25 },
+      recentAnchors: {
+        totalSecured: 1,
+        lastSecuredAt: '2026-05-12T09:00:00Z',
+        last24hCount: 1,
+      },
+    })));
+
+    const { result } = renderHook(() => useTreasuryBalance());
+
+    await waitFor(() => expect(result.current.balance?.total).toBe(150));
+    expect(result.current.balance?.confirmed).toBe(125);
+    expect(result.current.balance?.unconfirmed).toBe(25);
+  });
+
   it('does not synthesize transaction aggregates when the worker marks them unavailable', async () => {
     mockWorkerDefaults(() => Promise.resolve(jsonResponse({
       wallet: { balanceSats: 12345 },

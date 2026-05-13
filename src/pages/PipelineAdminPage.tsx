@@ -113,7 +113,7 @@ const PIPELINE_CACHE_STALE_MS = 10 * 60 * 1000;
 const OPERATIONAL_STATUS_FILTERS: Array<{ value: AnchorOperationalStatus | 'unlinked'; label: string }> = [
   { value: 'PENDING', label: PIPELINE_LABELS.STATUS_PENDING },
   { value: 'BROADCASTING', label: PIPELINE_LABELS.STATUS_BROADCASTING },
-  { value: 'SUBMITTED', label: PIPELINE_LABELS.STATUS_SUBMITTED_MEMPOOL },
+  { value: 'SUBMITTED', label: PIPELINE_LABELS.STATUS_SUBMITTED },
   { value: 'SECURED', label: PIPELINE_LABELS.STATUS_SECURED_CONFIRMED },
   { value: 'EXPIRED', label: PIPELINE_LABELS.STATUS_EXPIRED },
   { value: 'REVOKED', label: PIPELINE_LABELS.STATUS_REVOKED },
@@ -817,7 +817,10 @@ export function PipelineAdminPage() {
             icon={<ArkovaIcon className="h-5 w-5 text-emerald-400" />}
             loading={loading}
             subtitle={stats
-              ? `${stats.submittedRecords.toLocaleString()} submitted / ${stats.securedRecords.toLocaleString()} confirmed`
+              ? PIPELINE_LABELS.RECORDS_ANCHORED_SUBTITLE(
+                stats.submittedRecords.toLocaleString(),
+                stats.securedRecords.toLocaleString(),
+              )
               : undefined}
           />
           <StatCard
@@ -826,7 +829,11 @@ export function PipelineAdminPage() {
             icon={<AlertCircle className="h-5 w-5 text-amber-400" />}
             loading={loading}
             subtitle={stats
-              ? `${stats.pendingRecordLinks.toLocaleString()} unlinked / ${stats.pendingAnchorRecords.toLocaleString()} queued / ${stats.broadcastingRecords.toLocaleString()} broadcasting`
+              ? PIPELINE_LABELS.RECORDS_PENDING_SUBTITLE(
+                stats.pendingRecordLinks.toLocaleString(),
+                stats.pendingAnchorRecords.toLocaleString(),
+                stats.broadcastingRecords.toLocaleString(),
+              )
               : undefined}
           />
           <StatCard
@@ -834,7 +841,7 @@ export function PipelineAdminPage() {
             value={stats?.embeddedRecords}
             icon={<Cpu className="h-5 w-5 text-purple-400" />}
             loading={loading}
-            subtitle="Vector embeddings enable AI search and cross-reference matching across all pipeline records"
+            subtitle={PIPELINE_LABELS.RECORDS_EMBEDDED_SUBTITLE}
           />
         </div>
 
@@ -936,7 +943,7 @@ export function PipelineAdminPage() {
                               {counts.secured.toLocaleString()}
                             </Badge>
                             {counts.broadcasting > 0 && (
-                              <Badge className="bg-blue-500/10 text-blue-400 border-blue-500/20 text-[10px] font-mono" title="Broadcasting">
+                              <Badge className="bg-blue-500/10 text-blue-400 border-blue-500/20 text-[10px] font-mono" title={PIPELINE_LABELS.STATUS_BROADCASTING}>
                                 {counts.broadcasting.toLocaleString()}
                               </Badge>
                             )}
@@ -1373,7 +1380,7 @@ export function PipelineAdminPage() {
 
                             <div>
                               <span className="text-[10px] text-muted-foreground">
-                                {anchorDetails.chain_tx_id ? 'Network Receipt (Mempool)' : 'Mempool'}
+                                {anchorDetails.chain_tx_id ? PIPELINE_LABELS.ANCHOR_DETAIL_RECEIPT_MEMPOOL : PIPELINE_LABELS.ANCHOR_DETAIL_MEMPOOL}
                               </span>
                               <div className="flex items-center gap-2 mt-0.5">
                                 {anchorDetails.chain_tx_id ? (
