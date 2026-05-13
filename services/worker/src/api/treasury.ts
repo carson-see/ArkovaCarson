@@ -39,20 +39,30 @@ export interface TreasuryStatusResponse {
     currentRateSatPerVbyte: number;
   } | null;
   recentAnchors: {
-    totalSecured: number;
-    totalPending: number;
-    totalBroadcasting?: number;
-    totalSubmitted?: number;
-    totalRevoked?: number;
-    byStatus?: Record<string, number>;
+    totalSecured: number | null;
+    totalPending: number | null;
+    totalBroadcasting?: number | null;
+    totalSubmitted?: number | null;
+    totalRevoked?: number | null;
+    byStatus?: Record<string, number | null>;
     lastSecuredAt: string | null;
-    distinctTxIds?: number;
-    avgAnchorsPerTx?: number;
+    distinctTxIds?: number | null;
+    avgAnchorsPerTx?: number | null;
     lastAnchorAt?: string | null;
     lastTxAt?: string | null;
-    last24hCount: number;
+    last24hCount: number | null;
   };
   error?: string;
+}
+
+function nonNegativeNumberOrNull(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
+}
+
+function sanitizeStatusCounts(counts: Record<string, number>): Record<string, number | null> {
+  return Object.fromEntries(
+    Object.entries(counts).map(([status, count]) => [status, nonNegativeNumberOrNull(count)]),
+  );
 }
 
 export async function handleTreasuryStatus(
@@ -140,18 +150,18 @@ export async function handleTreasuryStatus(
   //    doesn't flag duplicate-lines density).
   const stats = await fetchAnchorStats();
   result.recentAnchors = {
-    totalSecured: stats.total_secured,
-    totalPending: stats.total_pending,
-    totalBroadcasting: stats.total_broadcasting,
-    totalSubmitted: stats.total_submitted,
-    totalRevoked: stats.total_revoked,
-    byStatus: stats.by_status,
+    totalSecured: nonNegativeNumberOrNull(stats.total_secured),
+    totalPending: nonNegativeNumberOrNull(stats.total_pending),
+    totalBroadcasting: nonNegativeNumberOrNull(stats.total_broadcasting),
+    totalSubmitted: nonNegativeNumberOrNull(stats.total_submitted),
+    totalRevoked: nonNegativeNumberOrNull(stats.total_revoked),
+    byStatus: sanitizeStatusCounts(stats.by_status),
     lastSecuredAt: stats.last_secured_at,
-    distinctTxIds: stats.distinct_tx_count,
-    avgAnchorsPerTx: stats.avg_anchors_per_tx,
+    distinctTxIds: nonNegativeNumberOrNull(stats.distinct_tx_count),
+    avgAnchorsPerTx: nonNegativeNumberOrNull(stats.avg_anchors_per_tx),
     lastAnchorAt: stats.last_anchor_time,
     lastTxAt: stats.last_tx_time,
-    last24hCount: stats.last_24h_count,
+    last24hCount: nonNegativeNumberOrNull(stats.last_24h_count),
   };
 
   res.json(result);

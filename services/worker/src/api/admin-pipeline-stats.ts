@@ -18,18 +18,44 @@ import { isPlatformAdmin } from '../utils/platformAdmin.js';
 export interface PipelineStatsResponse {
   totalRecords: number;
   /** Records confirmed on-chain (SECURED), not merely submitted to mempool. */
-  anchoredRecords: number;
+  anchoredRecords: number | null;
   /** Records not yet confirmed (unlinked, PENDING, BROADCASTING, or SUBMITTED). */
-  pendingRecords: number;
-  embeddedRecords: number;
-  anchorLinkedRecords: number;
-  pendingRecordLinks: number;
-  pendingAnchorRecords: number;
-  broadcastingRecords: number;
-  submittedRecords: number;
-  securedRecords: number;
+  pendingRecords: number | null;
+  embeddedRecords: number | null;
+  anchorLinkedRecords: number | null;
+  pendingRecordLinks: number | null;
+  pendingAnchorRecords: number | null;
+  broadcastingRecords: number | null;
+  submittedRecords: number | null;
+  securedRecords: number | null;
   cacheUpdatedAt: string | null;
+  statusCountsAvailable: boolean;
+  statusCountsWarning: string | null;
   bySource: Record<string, number>;
+}
+
+type NullableCount = number | null;
+
+function toNonNegativeCount(value: unknown): NullableCount {
+  const parsed = typeof value === 'number'
+    ? value
+    : typeof value === 'string' && value.trim() !== ''
+      ? Number(value)
+      : NaN;
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+}
+
+function addCounts(...counts: NullableCount[]): NullableCount {
+  let sum = 0;
+  for (const count of counts) {
+    if (count === null) return null;
+    sum += count;
+  }
+  return sum;
+}
+
+function hasAnyUnavailableCount(...counts: NullableCount[]): boolean {
+  return counts.some((count) => count === null);
 }
 
 export async function handlePipelineStats(
@@ -48,16 +74,18 @@ export async function handlePipelineStats(
     // for fast aggregation on the 1.4M+ row public_records table (migration 0175).
     // Falls back to direct count queries only if the RPC is unavailable.
     let totalRecords = 0;
-    let anchoredRecords = 0;
-    let pendingRecords = 0;
-    let embeddedRecords = 0;
-    let anchorLinkedRecords = 0;
-    let pendingRecordLinks = 0;
-    let pendingAnchorRecords = 0;
-    let broadcastingRecords = 0;
-    let submittedRecords = 0;
-    let securedRecords = 0;
+    let anchoredRecords: NullableCount = 0;
+    let pendingRecords: NullableCount = 0;
+    let embeddedRecords: NullableCount = 0;
+    let anchorLinkedRecords: NullableCount = 0;
+    let pendingRecordLinks: NullableCount = 0;
+    let pendingAnchorRecords: NullableCount = 0;
+    let broadcastingRecords: NullableCount = 0;
+    let submittedRecords: NullableCount = 0;
+    let securedRecords: NullableCount = 0;
     let cacheUpdatedAt: string | null = null;
+    let statusCountsAvailable = true;
+    let statusCountsWarning: string | null = null;
     let usedPipelineRpc = false;
     const bySource: Record<string, number> = {};
 
@@ -70,26 +98,53 @@ export async function handlePipelineStats(
     if (pipelineResult.status === 'fulfilled') {
       const rpcResp = pipelineResult.value as { data: Record<string, unknown> | null; error: unknown };
       if (rpcResp.data && !rpcResp.error) {
-        totalRecords = Number(rpcResp.data.total_records ?? 0);
-        anchorLinkedRecords = Number(rpcResp.data.anchor_linked_records ?? rpcResp.data.anchored_records ?? 0);
-        pendingRecordLinks = Number(rpcResp.data.pending_record_links ?? 0);
-        pendingAnchorRecords = Number(rpcResp.data.pending_anchor_records ?? 0);
-        broadcastingRecords = Number(rpcResp.data.broadcasting_records ?? 0);
-        submittedRecords = Number(rpcResp.data.submitted_records ?? 0);
-        securedRecords = Number(rpcResp.data.secured_records ?? 0);
-        anchoredRecords = rpcResp.data.secured_records != null
-          ? securedRecords
-          : Number(
-              rpcResp.data.bitcoin_anchored_records ??
-              rpcResp.data.anchored_records ??
-              0,
-            );
-        pendingRecords = Number(
+        const cacheMiss = rpcResp.data.cache_miss === true;
+        totalRecords = toNonNegativeCount(rpcResp.data.total_records) ?? 0;
+        anchorLinkedRecords = toNonNegativeCount(rpcResp.data.anchor_linked_records ?? rpcResp.data.anchored_records);
+        pendingRecordLinks = toNonNegativeCount(rpcResp.data.pending_record_links);
+        pendingAnchorRecords = toNonNegativeCount(rpcResp.data.pending_anchor_records);
+        broadcastingRecords = toNonNegativeCount(rpcResp.data.broadcasting_records);
+        submittedRecords = toNonNegativeCount(rpcResp.data.submitted_records);
+        securedRecords = toNonNegativeCount(rpcResp.data.secured_records);
+        embeddedRecords = toNonNegativeCount(rpcResp.data.embedded_records);
+
+        const pendingBase = toNonNegativeCount(
           rpcResp.data.pending_bitcoin_records ??
-          rpcResp.data.pending_records ??
-          0,
-        ) + submittedRecords;
-        embeddedRecords = Number(rpcResp.data.embedded_records ?? 0);
+          rpcResp.data.pending_records,
+        );
+        const legacyAnchored = toNonNegativeCount(
+          rpcResp.data.bitcoin_anchored_records ??
+          rpcResp.data.anchored_records,
+        );
+
+        const lifecycleUnavailable = cacheMiss ||
+          hasAnyUnavailableCount(
+            pendingRecordLinks,
+            pendingAnchorRecords,
+            broadcastingRecords,
+            submittedRecords,
+            securedRecords,
+          );
+
+        statusCountsAvailable = !lifecycleUnavailable;
+        if (cacheMiss) {
+          statusCountsWarning = 'Pipeline lifecycle counts unavailable: cache miss returned approximate placeholders.';
+          anchorLinkedRecords = null;
+          pendingRecordLinks = null;
+          pendingAnchorRecords = null;
+          broadcastingRecords = null;
+          submittedRecords = null;
+          securedRecords = null;
+        } else if (lifecycleUnavailable) {
+          statusCountsWarning = 'Pipeline lifecycle counts unavailable: cache returned timeout sentinels or missing buckets.';
+        }
+
+        anchoredRecords = cacheMiss
+          ? null
+          : (rpcResp.data.secured_records != null ? securedRecords : legacyAnchored);
+        pendingRecords = cacheMiss
+          ? null
+          : addCounts(pendingBase, rpcResp.data.pending_bitcoin_records != null ? submittedRecords : 0);
         cacheUpdatedAt = typeof rpcResp.data.cache_updated_at === 'string'
           ? rpcResp.data.cache_updated_at
           : null;
@@ -141,6 +196,8 @@ export async function handlePipelineStats(
       submittedRecords,
       securedRecords,
       cacheUpdatedAt,
+      statusCountsAvailable,
+      statusCountsWarning,
       bySource,
     } satisfies PipelineStatsResponse);
   } catch (error) {

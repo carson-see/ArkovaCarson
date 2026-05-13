@@ -45,16 +45,18 @@ import { isPlatformAdmin, mempoolTxUrl, mempoolAddressUrl } from '@/lib/platform
 
 interface PipelineStats {
   totalRecords: number;
-  anchoredRecords: number;
-  pendingRecords: number;
-  embeddedRecords: number;
-  anchorLinkedRecords: number;
-  pendingRecordLinks: number;
-  pendingAnchorRecords: number;
-  broadcastingRecords: number;
-  submittedRecords: number;
-  securedRecords: number;
+  anchoredRecords: number | null;
+  pendingRecords: number | null;
+  embeddedRecords: number | null;
+  anchorLinkedRecords: number | null;
+  pendingRecordLinks: number | null;
+  pendingAnchorRecords: number | null;
+  broadcastingRecords: number | null;
+  submittedRecords: number | null;
+  securedRecords: number | null;
   cacheUpdatedAt: string | null;
+  statusCountsAvailable: boolean;
+  statusCountsWarning: string | null;
   bySource: Record<string, number>;
   byCredentialType: Record<string, { total: number; secured: number; submitted: number; pending: number; broadcasting: number }>;
   recentErrors: number;
@@ -162,6 +164,32 @@ function isCacheStale(updatedAt: string | null | undefined): boolean {
   if (!updatedAt) return true;
   const updatedMs = new Date(updatedAt).getTime();
   return !Number.isFinite(updatedMs) || Date.now() - updatedMs > PIPELINE_CACHE_STALE_MS;
+}
+
+function toCountOrNull(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
+}
+
+function addCounts(...counts: Array<number | null>): number | null {
+  let sum = 0;
+  for (const count of counts) {
+    if (count === null) return null;
+    sum += count;
+  }
+  return sum;
+}
+
+function formatCount(value: number | null | undefined): string {
+  return typeof value === 'number' ? value.toLocaleString() : '—';
+}
+
+function lifecycleCountsAvailable(data: Record<string, unknown>): boolean {
+  return data.cache_miss !== true &&
+    toCountOrNull(data.pending_record_links) !== null &&
+    toCountOrNull(data.pending_anchor_records) !== null &&
+    toCountOrNull(data.broadcasting_records) !== null &&
+    toCountOrNull(data.submitted_records) !== null &&
+    toCountOrNull(data.secured_records) !== null;
 }
 
 function renderOperationalStatusBadge(status: string | null | undefined, chainTxId: string | null | undefined) {
@@ -275,16 +303,18 @@ export function PipelineAdminPage() {
     try {
       // Use worker endpoint (service_role, bypasses RLS) as primary source
       let totalRecords = 0;
-      let anchoredRecords = 0;
-      let pendingRecords = 0;
-      let embeddedRecords = 0;
-      let anchorLinkedRecords = 0;
-      let pendingRecordLinks = 0;
-      let pendingAnchorRecords = 0;
-      let broadcastingRecords = 0;
-      let submittedRecords = 0;
-      let securedRecords = 0;
+      let anchoredRecords: number | null = 0;
+      let pendingRecords: number | null = 0;
+      let embeddedRecords: number | null = 0;
+      let anchorLinkedRecords: number | null = 0;
+      let pendingRecordLinks: number | null = 0;
+      let pendingAnchorRecords: number | null = 0;
+      let broadcastingRecords: number | null = 0;
+      let submittedRecords: number | null = 0;
+      let securedRecords: number | null = 0;
       let cacheUpdatedAt: string | null = null;
+      let statusCountsAvailable = true;
+      let statusCountsWarning: string | null = null;
       const bySource: Record<string, number> = {};
       let workerErrorMessage: string | null = null;
       let source: PipelineStatsSource = 'worker-cache';
@@ -293,24 +323,28 @@ export function PipelineAdminPage() {
         const response = await workerFetch('/api/admin/pipeline-stats', { method: 'GET' });
         if (response.ok) {
           const data = await response.json() as {
-            totalRecords: number; anchoredRecords: number;
-            pendingRecords: number; embeddedRecords: number;
-            anchorLinkedRecords?: number; pendingRecordLinks?: number;
-            pendingAnchorRecords?: number; broadcastingRecords?: number;
-            submittedRecords?: number; securedRecords?: number;
+            totalRecords: number; anchoredRecords: number | null;
+            pendingRecords: number | null; embeddedRecords: number | null;
+            anchorLinkedRecords?: number | null; pendingRecordLinks?: number | null;
+            pendingAnchorRecords?: number | null; broadcastingRecords?: number | null;
+            submittedRecords?: number | null; securedRecords?: number | null;
             cacheUpdatedAt?: string | null;
+            statusCountsAvailable?: boolean;
+            statusCountsWarning?: string | null;
             bySource: Record<string, number>;
           };
           totalRecords = data.totalRecords;
-          securedRecords = data.securedRecords ?? 0;
-          submittedRecords = data.submittedRecords ?? 0;
-          anchoredRecords = data.securedRecords ?? data.anchoredRecords;
-          pendingRecords = data.pendingRecords;
-          embeddedRecords = data.embeddedRecords;
-          anchorLinkedRecords = data.anchorLinkedRecords ?? data.anchoredRecords;
-          pendingRecordLinks = data.pendingRecordLinks ?? 0;
-          pendingAnchorRecords = data.pendingAnchorRecords ?? 0;
-          broadcastingRecords = data.broadcastingRecords ?? 0;
+          statusCountsAvailable = data.statusCountsAvailable ?? true;
+          statusCountsWarning = data.statusCountsWarning ?? null;
+          securedRecords = toCountOrNull(data.securedRecords);
+          submittedRecords = toCountOrNull(data.submittedRecords);
+          anchoredRecords = toCountOrNull(data.anchoredRecords);
+          pendingRecords = toCountOrNull(data.pendingRecords);
+          embeddedRecords = toCountOrNull(data.embeddedRecords);
+          anchorLinkedRecords = toCountOrNull(data.anchorLinkedRecords ?? data.anchoredRecords);
+          pendingRecordLinks = toCountOrNull(data.pendingRecordLinks);
+          pendingAnchorRecords = toCountOrNull(data.pendingAnchorRecords);
+          broadcastingRecords = toCountOrNull(data.broadcastingRecords);
           cacheUpdatedAt = data.cacheUpdatedAt ?? null;
           Object.assign(bySource, data.bySource);
         } else {
@@ -328,16 +362,24 @@ export function PipelineAdminPage() {
           throw new Error(`${workerErrorMessage}; fallback failed: ${fallbackMessage}`);
         }
 
-        totalRecords = pipelineStats.total_records ?? 0;
-        anchorLinkedRecords = pipelineStats.anchor_linked_records ?? pipelineStats.anchored_records ?? 0;
-        pendingRecordLinks = pipelineStats.pending_record_links ?? 0;
-        pendingAnchorRecords = pipelineStats.pending_anchor_records ?? 0;
-        broadcastingRecords = pipelineStats.broadcasting_records ?? 0;
-        submittedRecords = pipelineStats.submitted_records ?? 0;
-        securedRecords = pipelineStats.secured_records ?? 0;
-        anchoredRecords = pipelineStats.secured_records ?? pipelineStats.anchored_records ?? 0;
-        pendingRecords = (pipelineStats.pending_bitcoin_records ?? pipelineStats.pending_records ?? 0) + submittedRecords;
-        embeddedRecords = pipelineStats.embedded_records ?? 0;
+        totalRecords = toCountOrNull(pipelineStats.total_records) ?? 0;
+        statusCountsAvailable = lifecycleCountsAvailable(pipelineStats);
+        statusCountsWarning = statusCountsAvailable
+          ? null
+          : 'Pipeline lifecycle counts unavailable: direct RPC returned cache-miss placeholders or timeout sentinels.';
+        anchorLinkedRecords = toCountOrNull(pipelineStats.anchor_linked_records ?? pipelineStats.anchored_records);
+        pendingRecordLinks = toCountOrNull(pipelineStats.pending_record_links);
+        pendingAnchorRecords = toCountOrNull(pipelineStats.pending_anchor_records);
+        broadcastingRecords = toCountOrNull(pipelineStats.broadcasting_records);
+        submittedRecords = toCountOrNull(pipelineStats.submitted_records);
+        securedRecords = toCountOrNull(pipelineStats.secured_records);
+        anchoredRecords = pipelineStats.cache_miss === true
+          ? null
+          : toCountOrNull(pipelineStats.secured_records ?? pipelineStats.anchored_records);
+        pendingRecords = pipelineStats.cache_miss === true
+          ? null
+          : addCounts(toCountOrNull(pipelineStats.pending_bitcoin_records ?? pipelineStats.pending_records), pipelineStats.pending_bitcoin_records != null ? submittedRecords : 0);
+        embeddedRecords = toCountOrNull(pipelineStats.embedded_records);
         cacheUpdatedAt = typeof pipelineStats.cache_updated_at === 'string' ? pipelineStats.cache_updated_at : null;
 
         const { data: sourceCounts } = await dbAny.rpc('count_public_records_by_source');
@@ -367,15 +409,17 @@ export function PipelineAdminPage() {
 
       setStats({
         totalRecords: totalRecords ?? 0,
-        anchoredRecords: anchoredRecords ?? 0,
-        pendingRecords: pendingRecords ?? 0,
-        embeddedRecords: embeddedRecords ?? 0,
-        anchorLinkedRecords: anchorLinkedRecords ?? anchoredRecords ?? 0,
-        pendingRecordLinks: pendingRecordLinks ?? 0,
-        pendingAnchorRecords: pendingAnchorRecords ?? 0,
-        broadcastingRecords: broadcastingRecords ?? 0,
-        submittedRecords: submittedRecords ?? 0,
-        securedRecords: securedRecords ?? 0,
+        anchoredRecords,
+        pendingRecords,
+        embeddedRecords,
+        anchorLinkedRecords: anchorLinkedRecords ?? anchoredRecords,
+        pendingRecordLinks,
+        pendingAnchorRecords,
+        broadcastingRecords,
+        submittedRecords,
+        securedRecords,
+        statusCountsAvailable,
+        statusCountsWarning,
         cacheUpdatedAt,
         bySource,
         byCredentialType,
@@ -784,6 +828,17 @@ export function PipelineAdminPage() {
           />
         )}
 
+        {stats?.statusCountsWarning && (
+          <DataErrorBanner
+            data-testid="pipeline-status-counts-warning"
+            title={DATA_ERROR_LABELS.STATS_UNAVAILABLE_TITLE}
+            message={stats.statusCountsWarning}
+            spacing="mb-3"
+            onRetry={handleRefresh}
+            retrying={refreshing}
+          />
+        )}
+
         {stats && (
           <div
             data-testid="pipeline-cache-freshness"
@@ -818,8 +873,8 @@ export function PipelineAdminPage() {
             loading={loading}
             subtitle={stats
               ? PIPELINE_LABELS.RECORDS_ANCHORED_SUBTITLE(
-                stats.submittedRecords.toLocaleString(),
-                stats.securedRecords.toLocaleString(),
+                formatCount(stats.submittedRecords),
+                formatCount(stats.securedRecords),
               )
               : undefined}
           />
@@ -830,9 +885,9 @@ export function PipelineAdminPage() {
             loading={loading}
             subtitle={stats
               ? PIPELINE_LABELS.RECORDS_PENDING_SUBTITLE(
-                stats.pendingRecordLinks.toLocaleString(),
-                stats.pendingAnchorRecords.toLocaleString(),
-                stats.broadcastingRecords.toLocaleString(),
+                formatCount(stats.pendingRecordLinks),
+                formatCount(stats.pendingAnchorRecords),
+                formatCount(stats.broadcastingRecords),
               )
               : undefined}
           />
@@ -1074,28 +1129,28 @@ export function PipelineAdminPage() {
                 <div className="flex justify-between text-sm">
                   <span className="text-muted-foreground">Anchored / Total</span>
                   <span className="font-mono">
-                    {(stats?.anchoredRecords ?? 0).toLocaleString()} / {(stats?.totalRecords ?? 0).toLocaleString()}
+                    {formatCount(stats?.anchoredRecords)} / {(stats?.totalRecords ?? 0).toLocaleString()}
                   </span>
                 </div>
                 <div className="w-full bg-muted rounded-full h-2">
                   <div
                     className="bg-[#00d4ff] h-2 rounded-full transition-all"
                     style={{
-                      width: `${stats?.totalRecords ? Math.round(((stats?.anchoredRecords ?? 0) / stats.totalRecords) * 100) : 0}%`,
+                      width: `${stats?.totalRecords && typeof stats.anchoredRecords === 'number' ? Math.round((stats.anchoredRecords / stats.totalRecords) * 100) : 0}%`,
                     }}
                   />
                 </div>
                 <div className="flex justify-between text-sm">
                   <span className="text-muted-foreground">Embedded / Total</span>
                   <span className="font-mono">
-                    {(stats?.embeddedRecords ?? 0).toLocaleString()} / {(stats?.totalRecords ?? 0).toLocaleString()}
+                    {formatCount(stats?.embeddedRecords)} / {(stats?.totalRecords ?? 0).toLocaleString()}
                   </span>
                 </div>
                 <div className="w-full bg-muted rounded-full h-2">
                   <div
                     className="bg-purple-400 h-2 rounded-full transition-all"
                     style={{
-                      width: `${stats?.totalRecords ? Math.round(((stats?.embeddedRecords ?? 0) / stats.totalRecords) * 100) : 0}%`,
+                      width: `${stats?.totalRecords && typeof stats.embeddedRecords === 'number' ? Math.round((stats.embeddedRecords / stats.totalRecords) * 100) : 0}%`,
                     }}
                   />
                 </div>
@@ -1566,7 +1621,7 @@ function StatCard({
   subtitle,
 }: {
   label: string;
-  value: number | undefined;
+  value: number | null | undefined;
   icon: React.ReactNode;
   loading: boolean;
   subtitle?: string;
@@ -1598,10 +1653,13 @@ function StatCard({
 function DataQualityCard({ stats, sourceConfigCount }: { stats: PipelineStats; sourceConfigCount: number }) {
   const metrics = useMemo(() => {
     const total = stats.totalRecords || 1; // avoid division by zero
-    const embeddingPct = ((stats.embeddedRecords / total) * 100).toFixed(1);
-    const embeddingWidth = Math.round((stats.embeddedRecords / total) * 100);
-    const anchorPct = ((stats.anchoredRecords / total) * 100).toFixed(1);
-    const anchorWidth = Math.round((stats.anchoredRecords / total) * 100);
+    const embeddedRecords = stats.embeddedRecords ?? 0;
+    const anchoredRecords = stats.anchoredRecords ?? 0;
+    const pendingRecords = stats.pendingRecords;
+    const embeddingPct = stats.embeddedRecords === null ? '—' : ((embeddedRecords / total) * 100).toFixed(1);
+    const embeddingWidth = Math.round((embeddedRecords / total) * 100);
+    const anchorPct = stats.anchoredRecords === null ? '—' : ((anchoredRecords / total) * 100).toFixed(1);
+    const anchorWidth = Math.round((anchoredRecords / total) * 100);
 
     const otherCount = stats.byCredentialType['OTHER']?.total ?? 0;
     const totalAnchored = Object.values(stats.byCredentialType).reduce((sum, c) => sum + c.total, 0);
@@ -1619,7 +1677,8 @@ function DataQualityCard({ stats, sourceConfigCount }: { stats: PipelineStats; s
       embeddingPct, embeddingWidth, anchorPct, anchorWidth,
       classifiedPct, classifiedWidth, otherCount,
       activeSources, sourcePct,
-      unembedded: stats.totalRecords - stats.embeddedRecords,
+      unembedded: stats.embeddedRecords === null ? null : stats.totalRecords - embeddedRecords,
+      pendingRecords,
       inactiveSources: sourceConfigCount - activeSources,
     };
   }, [stats, sourceConfigCount]);
@@ -1634,8 +1693,8 @@ function DataQualityCard({ stats, sourceConfigCount }: { stats: PipelineStats; s
       </CardHeader>
       <CardContent>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <QualityMetric label="Embedding Coverage" value={`${metrics.embeddingPct}%`} width={metrics.embeddingWidth} color="bg-purple-400" detail={`${metrics.unembedded.toLocaleString()} unembedded`} />
-          <QualityMetric label="Anchoring Coverage" value={`${metrics.anchorPct}%`} width={metrics.anchorWidth} color="bg-emerald-400" detail={`${stats.pendingRecords.toLocaleString()} pending anchoring`} />
+          <QualityMetric label="Embedding Coverage" value={metrics.embeddingPct === '—' ? '—' : `${metrics.embeddingPct}%`} width={metrics.embeddingWidth} color="bg-purple-400" detail={`${formatCount(metrics.unembedded)} unembedded`} />
+          <QualityMetric label="Anchoring Coverage" value={metrics.anchorPct === '—' ? '—' : `${metrics.anchorPct}%`} width={metrics.anchorWidth} color="bg-emerald-400" detail={`${formatCount(metrics.pendingRecords)} pending anchoring`} />
           <QualityMetric label="Type Classification" value={`${metrics.classifiedPct}%`} width={metrics.classifiedWidth} color="bg-[#00d4ff]" detail={`${metrics.otherCount.toLocaleString()} unclassified (OTHER)`} />
           <QualityMetric label="Data Sources Active" value={`${metrics.activeSources} / ${sourceConfigCount}`} width={metrics.sourcePct} color="bg-amber-400" detail={`${metrics.inactiveSources} sources not yet ingested`} />
         </div>

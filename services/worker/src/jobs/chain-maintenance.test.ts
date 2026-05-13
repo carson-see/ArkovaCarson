@@ -209,7 +209,7 @@ describe('Chain Maintenance Jobs', () => {
       let fromCallCount = 0;
       mockDb.from.mockImplementation(() => {
         fromCallCount++;
-        return mockDbChain(fromCallCount === 1 ? [stuckAnchor] : null, null);
+        return mockDbChain(fromCallCount === 1 ? [stuckAnchor] : { id: stuckAnchor.id }, null);
       });
 
       global.fetch = vi.fn().mockResolvedValue({
@@ -218,6 +218,77 @@ describe('Chain Maintenance Jobs', () => {
 
       const result = await monitorStuckTransactions();
       expect(result.recovered).toBe(1);
+    });
+
+    it('abandons 72h-old unconfirmed mempool-visible TXs so they can be resubmitted with fresh fees', async () => {
+      const abandonCutoff = new Date(Date.now() - 73 * 60 * 60 * 1000).toISOString();
+      const stuckAnchor = {
+        id: 'a1',
+        chain_tx_id: 'tx_visible_but_never_confirms',
+        metadata: { pipeline_source: 'public_records' },
+        created_at: abandonCutoff,
+        updated_at: abandonCutoff,
+      };
+
+      const updateChain = mockDbChain({ id: stuckAnchor.id }, null);
+      let fromCallCount = 0;
+      mockDb.from.mockImplementation(() => {
+        fromCallCount++;
+        return fromCallCount === 1 ? mockDbChain([stuckAnchor], null) : updateChain;
+      });
+
+      vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+        ok: true,
+        json: async () => ({ status: { confirmed: false } }),
+      } as Response);
+
+      const result = await monitorStuckTransactions();
+
+      expect(result.recovered).toBe(1);
+      expect(updateChain.update).toHaveBeenCalledWith(expect.objectContaining({
+        status: 'PENDING',
+        chain_tx_id: null,
+        chain_block_height: null,
+        chain_timestamp: null,
+      }));
+      expect(updateChain.update).toHaveBeenCalledWith(expect.objectContaining({
+        metadata: expect.objectContaining({
+          _abandoned_tx_id: stuckAnchor.chain_tx_id,
+          _abandon_reason: 'TX remained unconfirmed in mempool after 72h timeout',
+        }),
+      }));
+    });
+
+    it('does not count recovery when stale submitted abandonment update fails', async () => {
+      const abandonCutoff = new Date(Date.now() - 73 * 60 * 60 * 1000).toISOString();
+      const stuckAnchor = {
+        id: 'a1',
+        chain_tx_id: 'tx_visible_but_update_fails',
+        metadata: { pipeline_source: 'public_records' },
+        created_at: abandonCutoff,
+        updated_at: abandonCutoff,
+      };
+
+      const updateError = { message: 'db unavailable' };
+      const updateChain = mockDbChain(null, updateError);
+      let fromCallCount = 0;
+      mockDb.from.mockImplementation(() => {
+        fromCallCount++;
+        return fromCallCount === 1 ? mockDbChain([stuckAnchor], null) : updateChain;
+      });
+
+      vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+        ok: true,
+        json: async () => ({ status: { confirmed: false } }),
+      } as Response);
+
+      const result = await monitorStuckTransactions();
+
+      expect(result.recovered).toBe(0);
+      expect(mockLogger.error).toHaveBeenCalledWith(
+        expect.objectContaining({ anchorId: stuckAnchor.id, txId: stuckAnchor.chain_tx_id, error: updateError }),
+        'Failed to abandon stale submitted anchor',
+      );
     });
   });
 

@@ -82,16 +82,16 @@ interface WorkerTreasuryStatus {
   } | null;
   fees?: { currentRateSatPerVbyte: number } | null;
   recentAnchors?: {
-    totalSecured?: number;
-    totalPending?: number;
-    totalBroadcasting?: number;
-    totalSubmitted?: number;
-    totalRevoked?: number;
+    totalSecured?: number | null;
+    totalPending?: number | null;
+    totalBroadcasting?: number | null;
+    totalSubmitted?: number | null;
+    totalRevoked?: number | null;
     lastSecuredAt: string | null;
-    last24hCount: number;
-    byStatus?: Record<string, number>;
-    distinctTxIds?: number;
-    avgAnchorsPerTx?: number;
+    last24hCount: number | null;
+    byStatus?: Record<string, number | null>;
+    distinctTxIds?: number | null;
+    avgAnchorsPerTx?: number | null;
     lastAnchorAt?: string | null;
     lastTxAt?: string | null;
   };
