@@ -6,8 +6,8 @@
 FROM node:20-alpine AS builder
 RUN apk add --no-cache python3 make g++
 WORKDIR /app
-COPY package.json package-lock.json ./
-RUN npm install --ignore-scripts=false
+COPY package.json package-lock.json .npmrc ./
+RUN npm ci --ignore-scripts
 COPY tsconfig.json tsconfig.build.json ./
 COPY src/ ./src/
 RUN npm run build
@@ -16,8 +16,8 @@ RUN npm run build
 FROM node:20-alpine
 RUN apk add --no-cache python3 make g++
 WORKDIR /app
-COPY package.json package-lock.json ./
-RUN npm install --omit=dev && npm cache clean --force && apk del python3 make g++
+COPY package.json package-lock.json .npmrc ./
+RUN npm ci --omit=dev --ignore-scripts && rm -f .npmrc && npm cache clean --force && apk del python3 make g++
 COPY --from=builder /app/dist ./dist
 
 # SEC-014: Non-root user
