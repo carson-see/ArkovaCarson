@@ -27,6 +27,7 @@
     "audit:secrets": "tsx scripts/secrets/audit-env.ts",
     "ci:api-scope-vocabulary": "tsx scripts/ci/check-api-scope-vocabulary.ts",
     "ci:dep-pinning": "tsx scripts/ci/check-dep-pinning.ts",
+    "ci:install-script-policy": "tsx scripts/ci/check-npm-install-policy.ts",
     "ci:duplicate-artifacts": "tsx scripts/ci/check-duplicate-artifacts.ts",
     "ci:retry-after-429": "tsx scripts/ci/check-retry-after-429.ts",
     "ci:sonar-quality-gate": "tsx scripts/ci/check-sonar-quality-gate.ts",

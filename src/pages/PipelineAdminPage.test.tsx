@@ -70,10 +70,42 @@ vi.mock('@/lib/workerClient', () => ({
 
 import { PipelineAdminPage } from './PipelineAdminPage';
 import { workerFetch } from '@/lib/workerClient';
+import { supabase } from '@/lib/supabase';
+
+const defaultRecordPage = { data: [], total: 0 };
+
+function mockSupabaseRpc(overrides?: Record<string, unknown>) {
+  (supabase.rpc as unknown as ReturnType<typeof vi.fn>).mockImplementation((name: string) => {
+    if (name === 'get_public_records_page') {
+      return Promise.resolve({ data: overrides?.recordPage ?? defaultRecordPage, error: null });
+    }
+    if (name === 'get_pipeline_stats') {
+      return Promise.resolve({
+        data: overrides?.pipelineStats ?? {
+          total_records: 10000,
+          pending_bitcoin_records: 1000,
+          embedded_records: 8000,
+          pending_record_links: 500,
+          pending_anchor_records: 450,
+          broadcasting_records: 50,
+          submitted_records: 7000,
+          secured_records: 2000,
+          cache_updated_at: '2026-04-24T12:00:00Z',
+        },
+        error: null,
+      });
+    }
+    if (name === 'count_public_records_by_source') {
+      return Promise.resolve({ data: [], error: null });
+    }
+    return Promise.resolve({ data: [], error: null });
+  });
+}
 
 describe('PipelineAdminPage', () => {
   beforeEach(async () => {
     vi.clearAllMocks();
+    mockSupabaseRpc();
     const { useAuth } = await import('@/hooks/useAuth');
     vi.mocked(useAuth).mockReturnValue({
       user: { email: 'carson@arkova.ai', id: 'user-1' },
@@ -110,6 +142,76 @@ describe('PipelineAdminPage', () => {
     );
     expect(await screen.findByText('Records Anchored')).toBeInTheDocument();
     expect(await screen.findByText('Pending Anchoring')).toBeInTheDocument();
+  });
+
+  it('renders SUBMITTED records as in mempool, not anchored', async () => {
+    mockSupabaseRpc({
+      recordPage: {
+        total: 1,
+        data: [{
+          id: 'record-1',
+          source: 'edgar',
+          source_id: 'SRC-1',
+          source_url: null,
+          record_type: 'filing',
+          title: 'Submitted filing',
+          content_hash: 'a'.repeat(64),
+          anchor_id: 'anchor-1',
+          metadata: {},
+          created_at: '2026-05-12T10:00:00Z',
+          updated_at: '2026-05-12T10:00:00Z',
+          anchor_status: 'SUBMITTED',
+          chain_tx_id: 'b'.repeat(64),
+        }],
+      },
+    });
+
+    render(
+      <MemoryRouter>
+        <PipelineAdminPage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByText('Submitted / In Mempool')).toBeInTheDocument();
+    expect(screen.queryByText('Secured / Confirmed')).not.toBeInTheDocument();
+  });
+
+  it('surfaces worker/cache failure when direct RPC fallback is used', async () => {
+    vi.mocked(workerFetch).mockRejectedValueOnce(new Error('worker unavailable'));
+
+    render(
+      <MemoryRouter>
+        <PipelineAdminPage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByTestId('pipeline-stats-fallback')).toHaveTextContent('Worker/cache source failed');
+    expect(screen.getByTestId('pipeline-cache-freshness')).toHaveTextContent('Direct RPC fallback');
+  });
+
+  it('surfaces hard stats failure without coercing missing stat cards to zero', async () => {
+    vi.mocked(workerFetch).mockRejectedValueOnce(new Error('worker unavailable'));
+    (supabase.rpc as unknown as ReturnType<typeof vi.fn>).mockImplementation((name: string) => {
+      if (name === 'get_pipeline_stats') {
+        return Promise.resolve({ data: null, error: { message: 'RLS denied' } });
+      }
+      if (name === 'get_public_records_page') {
+        return Promise.resolve({ data: defaultRecordPage, error: null });
+      }
+      return Promise.resolve({ data: [], error: null });
+    });
+
+    render(
+      <MemoryRouter>
+        <PipelineAdminPage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByTestId('pipeline-stats-error')).toHaveTextContent('fallback failed: RLS denied');
+    expect(screen.queryByTestId('pipeline-cache-freshness')).not.toBeInTheDocument();
+    expect(screen.queryByText('0 submitted / 0 confirmed')).not.toBeInTheDocument();
+    expect(screen.queryByText('0 unlinked / 0 queued / 0 submitting to network')).not.toBeInTheDocument();
+    expect(screen.getAllByText('—')).toHaveLength(4);
   });
 
   it('shows access restricted for non-admin', async () => {

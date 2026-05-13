@@ -11,10 +11,10 @@
 
 import { test, expect } from './fixtures';
 
-const WORKER_PIPELINE_STATS_PATTERN = /\/api\/admin\/pipeline-stats/;
+const WORKER_PIPELINE_STATS_PATTERN = /\/api\/admin\/pipeline-stats(?:[?#].*)?$/;
 
 test.describe('SCRUM-1260 R1-6 — Pipeline error banner', () => {
-  test('renders explicit error banner when worker /api/admin/pipeline-stats fails', async ({ orgBAdminPage }) => {
+  test('renders explicit fallback banner when worker /api/admin/pipeline-stats fails', async ({ orgBAdminPage }) => {
     // Intercept BEFORE navigating so the very first stats fetch hits the mock.
     await orgBAdminPage.route(WORKER_PIPELINE_STATS_PATTERN, async (route) => {
       await route.fulfill({
@@ -26,9 +26,12 @@ test.describe('SCRUM-1260 R1-6 — Pipeline error banner', () => {
 
     await orgBAdminPage.goto('/admin/pipeline');
 
-    // Page must NOT silently render a "0 records / 0 anchored / 0 embedded"
-    // tile grid. It must surface the failure in a banner — match a banner-
-    // style assertion (role=alert) so we don't false-positive on stray copy.
-    await expect(orgBAdminPage.getByTestId('pipeline-stats-error')).toBeVisible({ timeout: 15_000 });
+    // Page must NOT silently mask the worker/cache failure. When the direct RPC
+    // fallback succeeds in local CI, the dashboard should show a fallback banner
+    // instead of the hard-error banner.
+    const fallbackBanner = orgBAdminPage.getByTestId('pipeline-stats-fallback');
+    await expect(fallbackBanner).toBeVisible({ timeout: 15_000 });
+    await expect(fallbackBanner).toHaveAttribute('role', 'alert');
+    await expect(fallbackBanner).toContainText('Worker/cache source failed');
   });
 });

@@ -50,7 +50,7 @@ jobs:
           node-version: '20'
 
       - name: Install root dependencies (typescript + tsx + supabase-js)
-        run: npm ci --no-audit --no-fund --prefer-offline
+        run: npm ci --ignore-scripts --no-audit --no-fund --prefer-offline
 
       - name: Run staging-evidence check
         run: npx tsx scripts/ci/check-staging-evidence.ts

@@ -45,7 +45,7 @@ publish_one() {
   echo "== Preparing $pkg_name ($pkg_dir)"
   cd "$pkg_dir"
 
-  npm install --silent
+  npm ci --ignore-scripts --silent
   if [[ -f package.json && $(node -p "require('./package.json').scripts?.build || ''") ]]; then
     npm run build
   fi

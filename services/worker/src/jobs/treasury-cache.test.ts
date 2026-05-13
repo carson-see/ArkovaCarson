@@ -41,6 +41,7 @@ vi.mock('../utils/logger.js', () => ({
 const mockUpsert = vi.fn().mockResolvedValue({ error: null });
 const mockTreasuryCacheSelect = vi.fn();
 const mockPipelineCacheSelect = vi.fn();
+const mockRpc = vi.fn();
 
 const mockChain = (terminal: string, result: unknown) => {
   const chain: Record<string, ReturnType<typeof vi.fn>> = {
@@ -61,6 +62,7 @@ const mockFrom = vi.fn();
 vi.mock('../utils/db.js', () => ({
   db: {
     from: (...args: unknown[]) => mockFrom(...(args as [string])),
+    rpc: (...args: unknown[]) => mockRpc(...args),
   },
 }));
 
@@ -97,6 +99,15 @@ describe('refreshTreasuryCache', () => {
 
     mockPipelineCacheSelect.mockResolvedValue({
       data: { cache_value: { SECURED: 1_412_000, PENDING: 200, total: 1_412_200 } },
+      error: null,
+    });
+    mockRpc.mockResolvedValue({
+      data: {
+        distinct_tx_count: 8,
+        anchors_with_tx: 24,
+        last_anchor_time: '2026-04-09T12:00:00Z',
+        last_tx_time: '2026-04-09T12:00:00Z',
+      },
       error: null,
     });
     mockTreasuryCacheSelect.mockResolvedValue({ data: null, error: null });

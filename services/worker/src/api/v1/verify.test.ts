@@ -97,6 +97,19 @@ describe('buildVerificationResult', () => {
     expect(result.bitcoin_block).toBeNull();
   });
 
+  it('returns verified=false for SUBMITTED anchor without calling it active', () => {
+    const anchor = createAnchor({
+      status: 'SUBMITTED',
+      chain_block_height: null,
+    });
+    const result = buildVerificationResult(anchor);
+
+    expect(result.verified).toBe(false);
+    expect(result.status).toBe('SUBMITTED');
+    expect(result.network_receipt_id).toBe(anchor.chain_tx_id);
+    expect(result.bitcoin_block).toBeNull();
+  });
+
   it('returns verified=false for EXPIRED anchor', () => {
     const anchor = createAnchor({ status: 'EXPIRED' });
     const result = buildVerificationResult(anchor);
