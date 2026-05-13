@@ -207,6 +207,15 @@ describe('check-staging-evidence', () => {
       expect(r.ok).toBe(true);
     });
 
+    it('accepts ISO 8601 timestamps for a complete T2 PR', () => {
+      const r = check({
+        body: completeT2Body('2026-05-09T14:00:00Z', '2026-05-10T02:00:00Z'),
+        files: ['supabase/migrations/0300_example.sql'],
+      });
+
+      expect(r.ok).toBe(true);
+    });
+
     it('passes a T1 PR when the soak is exactly 2 hours', () => {
       const r = check({
         body: completeT1Body('2026-05-09 14:00 UTC', '2026-05-09 16:00 UTC'),
@@ -219,6 +228,15 @@ describe('check-staging-evidence', () => {
     it('passes a T1 PR when the soak is one minute above 2 hours', () => {
       const r = check({
         body: completeT1Body('2026-05-09 14:00 UTC', '2026-05-09 16:01 UTC'),
+        files: ['src/components/Foo.tsx'],
+      });
+
+      expect(r.ok).toBe(true);
+    });
+
+    it('accepts ISO 8601 timestamps for a complete T1 PR', () => {
+      const r = check({
+        body: completeT1Body('2026-05-09T14:00:00Z', '2026-05-09T16:00:00Z'),
         files: ['src/components/Foo.tsx'],
       });
 
@@ -262,6 +280,46 @@ describe('check-staging-evidence', () => {
 
       expect(r.ok).toBe(false);
       expect(r.errors.join(' ')).toMatch(/below the 2h minimum/);
+    });
+
+    it('fails a T2 PR when soak end equals soak start', () => {
+      const r = check({
+        body: completeT2Body('2026-05-09 14:00 UTC', '2026-05-09 14:00 UTC'),
+        files: ['supabase/migrations/0300_example.sql'],
+      });
+
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/Soak end must be after Soak start/);
+    });
+
+    it('fails a T2 PR when soak end is before soak start', () => {
+      const r = check({
+        body: completeT2Body('2026-05-09 14:00 UTC', '2026-05-09 13:59 UTC'),
+        files: ['supabase/migrations/0300_example.sql'],
+      });
+
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/Soak end must be after Soak start/);
+    });
+
+    it('fails a T1 PR when soak end equals soak start', () => {
+      const r = check({
+        body: completeT1Body('2026-05-09 14:00 UTC', '2026-05-09 14:00 UTC'),
+        files: ['src/components/Foo.tsx'],
+      });
+
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/Soak end must be after Soak start/);
+    });
+
+    it('fails a T1 PR when soak end is before soak start', () => {
+      const r = check({
+        body: completeT1Body('2026-05-09 14:00 UTC', '2026-05-09 13:59 UTC'),
+        files: ['src/components/Foo.tsx'],
+      });
+
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/Soak end must be after Soak start/);
     });
   });
 
