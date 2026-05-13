@@ -169,6 +169,15 @@ describe('check-staging-evidence', () => {
 - Staging deploy log id: 142
 `;
 
+    const completeT1Body = (start: string, end: string) => `## Staging Soak Evidence
+- Tier: T1
+- Staging branch: arkova-staging
+- Worker revision: arkova-worker-staging-00099-xyz
+- Soak start: ${start}
+- Soak end: ${end}
+- E2E result: green
+`;
+
     it('fails a T2 PR when the soak is shorter than 12 hours', () => {
       const r = check({
         body: completeT2Body('2026-05-09 14:00 UTC', '2026-05-09 18:00 UTC'),
@@ -198,17 +207,47 @@ describe('check-staging-evidence', () => {
       expect(r.ok).toBe(true);
     });
 
-    it('fails a T1 PR when the soak is shorter than 2 hours', () => {
-      const body = `## Staging Soak Evidence
-- Tier: T1
-- Staging branch: arkova-staging
-- Worker revision: arkova-worker-staging-00099-xyz
-- Soak start: 2026-05-09 14:00 UTC
-- Soak end: 2026-05-09 15:00 UTC
-- E2E result: green
-`;
+    it('passes a T1 PR when the soak is exactly 2 hours', () => {
       const r = check({
-        body,
+        body: completeT1Body('2026-05-09 14:00 UTC', '2026-05-09 16:00 UTC'),
+        files: ['src/components/Foo.tsx'],
+      });
+
+      expect(r.ok).toBe(true);
+    });
+
+    it('fails a T2 PR when the soak is one minute below 12 hours', () => {
+      const r = check({
+        body: completeT2Body('2026-05-09 14:00 UTC', '2026-05-10 01:59 UTC'),
+        files: ['supabase/migrations/0300_example.sql'],
+      });
+
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/below the 12h minimum/);
+    });
+
+    it('passes a T2 PR when the soak is one minute above 12 hours', () => {
+      const r = check({
+        body: completeT2Body('2026-05-09 14:00 UTC', '2026-05-10 02:01 UTC'),
+        files: ['supabase/migrations/0300_example.sql'],
+      });
+
+      expect(r.ok).toBe(true);
+    });
+
+    it('fails a T1 PR when the soak is shorter than 2 hours', () => {
+      const r = check({
+        body: completeT1Body('2026-05-09 14:00 UTC', '2026-05-09 15:00 UTC'),
+        files: ['src/components/Foo.tsx'],
+      });
+
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/below the 2h minimum/);
+    });
+
+    it('fails a T1 PR when the soak is one minute below 2 hours', () => {
+      const r = check({
+        body: completeT1Body('2026-05-09 14:00 UTC', '2026-05-09 15:59 UTC'),
         files: ['src/components/Foo.tsx'],
       });
 
