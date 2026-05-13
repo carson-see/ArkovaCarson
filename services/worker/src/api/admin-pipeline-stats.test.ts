@@ -97,7 +97,7 @@ describe('handlePipelineStats — RPC happy path', () => {
     const res = mockRes();
     await handlePipelineStats('admin-1', {} as Request, res);
     expect(res.status).not.toHaveBeenCalled();
-    const payload = (res.json as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    const payload = res.json.mock.calls[0][0];
     expect(payload.totalRecords).toBe(2_950_000);
     expect(payload.anchoredRecords).toBe(1_000_000);
     expect(payload.pendingRecords).toBe(1_700_200);
@@ -126,7 +126,7 @@ describe('handlePipelineStats — RPC happy path', () => {
     });
     const res = mockRes();
     await handlePipelineStats('admin-1', {} as Request, res);
-    const payload = (res.json as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    const payload = res.json.mock.calls[0][0];
     expect(payload.anchoredRecords).toBe(60);
     expect(payload.pendingRecords).toBe(40);
     expect(payload.anchorLinkedRecords).toBe(60);

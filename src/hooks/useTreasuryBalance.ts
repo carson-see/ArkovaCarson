@@ -197,7 +197,7 @@ function toAnchorStats(recentAnchors: WorkerTreasuryStatus['recentAnchors']): Tr
   if (statusCounts.length === 0 || !statusCounts.some((count) => count !== null)) return null;
 
   const distinctTxIds = nonNegativeNumberOrNull(recentAnchors.distinctTxIds);
-  const totalAnchors = statusCounts.some((count) => count === null)
+  const totalAnchors = statusCounts.includes(null)
     ? null
     : statusCounts.reduce<number>((sum, count) => sum + (count ?? 0), 0);
   return {
@@ -315,10 +315,13 @@ export function useTreasuryBalance() {
         if (!isMountedRef.current) return;
         if (data.wallet) {
           const unconfirmed = data.wallet.unconfirmedBalanceSats ?? 0;
-          const confirmed = data.wallet.confirmedBalanceSats
-            ?? (data.wallet.unconfirmedBalanceSats !== undefined
-              ? data.wallet.balanceSats - data.wallet.unconfirmedBalanceSats
-              : data.wallet.balanceSats);
+          let confirmed = data.wallet.confirmedBalanceSats;
+          if (confirmed === undefined) {
+            confirmed = data.wallet.balanceSats;
+            if (data.wallet.unconfirmedBalanceSats !== undefined) {
+              confirmed = data.wallet.balanceSats - data.wallet.unconfirmedBalanceSats;
+            }
+          }
           const bal: TreasuryBalance = {
             confirmed,
             unconfirmed,

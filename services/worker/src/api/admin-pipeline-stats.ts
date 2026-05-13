@@ -37,11 +37,12 @@ export interface PipelineStatsResponse {
 type NullableCount = number | null;
 
 function toNonNegativeCount(value: unknown): NullableCount {
-  const parsed = typeof value === 'number'
-    ? value
-    : typeof value === 'string' && value.trim() !== ''
-      ? Number(value)
-      : NaN;
+  let parsed = Number.NaN;
+  if (typeof value === 'number') {
+    parsed = value;
+  } else if (typeof value === 'string' && value.trim() !== '') {
+    parsed = Number(value);
+  }
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
 }
 
@@ -55,7 +56,7 @@ function addCounts(...counts: NullableCount[]): NullableCount {
 }
 
 function hasAnyUnavailableCount(...counts: NullableCount[]): boolean {
-  return counts.some((count) => count === null);
+  return counts.includes(null);
 }
 
 export async function handlePipelineStats(
@@ -139,12 +140,21 @@ export async function handlePipelineStats(
           statusCountsWarning = 'Pipeline lifecycle counts unavailable: cache returned timeout sentinels or missing buckets.';
         }
 
-        anchoredRecords = cacheMiss
-          ? null
-          : (rpcResp.data.secured_records != null ? securedRecords : legacyAnchored);
-        pendingRecords = cacheMiss
-          ? null
-          : addCounts(pendingBase, rpcResp.data.pending_bitcoin_records != null ? submittedRecords : 0);
+        if (cacheMiss) {
+          anchoredRecords = null;
+          pendingRecords = null;
+        } else {
+          anchoredRecords = legacyAnchored;
+          if (rpcResp.data.secured_records != null) {
+            anchoredRecords = securedRecords;
+          }
+
+          let submittedCountForPending: NullableCount = 0;
+          if (rpcResp.data.pending_bitcoin_records != null) {
+            submittedCountForPending = submittedRecords;
+          }
+          pendingRecords = addCounts(pendingBase, submittedCountForPending);
+        }
         cacheUpdatedAt = typeof rpcResp.data.cache_updated_at === 'string'
           ? rpcResp.data.cache_updated_at
           : null;

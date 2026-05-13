@@ -58,6 +58,32 @@ import { PipelineAdminPage } from './PipelineAdminPage';
 import { workerFetch } from '@/lib/workerClient';
 import { supabase } from '@/lib/supabase';
 
+function mockAuthUser(email: string, id: string) {
+  return {
+    id,
+    email,
+    app_metadata: {},
+    user_metadata: {},
+    aud: 'authenticated',
+    created_at: '2026-01-01T00:00:00.000Z',
+  };
+}
+
+function mockAuthState(email: string, id: string) {
+  return {
+    user: mockAuthUser(email, id),
+    signOut: vi.fn(),
+    signIn: vi.fn(),
+    signUp: vi.fn(),
+    signInWithGoogle: vi.fn(),
+    signInWithLinkedIn: vi.fn(),
+    clearError: vi.fn(),
+    session: null,
+    loading: false,
+    error: null,
+  };
+}
+
 const defaultRecordPage = { data: [], total: 0 };
 const submittedRecordPage = {
   total: 1,
@@ -111,13 +137,7 @@ describe('PipelineAdminPage', () => {
     vi.clearAllMocks();
     mockSupabaseRpc();
     const { useAuth } = await import('@/hooks/useAuth');
-    vi.mocked(useAuth).mockReturnValue({
-      user: { email: 'carson@arkova.ai', id: 'user-1' },
-      signOut: vi.fn(),
-      session: null,
-      loading: false,
-      error: null,
-    } as unknown as ReturnType<typeof useAuth>);
+    vi.mocked(useAuth).mockReturnValue(mockAuthState('carson@arkova.ai', 'user-1'));
   });
 
   it('renders page title for admin user', () => {
@@ -177,9 +197,8 @@ describe('PipelineAdminPage', () => {
   });
 
   it('surfaces unavailable lifecycle counts instead of rendering cache-miss zeros as truth', async () => {
-    vi.mocked(workerFetch).mockResolvedValueOnce({
-      ok: true,
-      json: vi.fn().mockResolvedValue({
+    vi.mocked(workerFetch).mockResolvedValueOnce(new Response(
+      JSON.stringify({
         totalRecords: 10000,
         anchoredRecords: null,
         pendingRecords: null,
@@ -195,7 +214,8 @@ describe('PipelineAdminPage', () => {
         statusCountsAvailable: false,
         statusCountsWarning: 'Pipeline lifecycle counts unavailable: cache miss',
       }),
-    } as unknown as Response);
+      { status: 200, headers: { 'Content-Type': 'application/json' } },
+    ));
     mockSupabaseRpc({
       recordPage: submittedRecordPage,
     });
@@ -240,13 +260,7 @@ describe('PipelineAdminPage', () => {
 
   it('shows access restricted for non-admin', async () => {
     const { useAuth } = await import('@/hooks/useAuth');
-    vi.mocked(useAuth).mockReturnValue({
-      user: { email: 'regular@test.com', id: 'user-2' },
-      signOut: vi.fn(),
-      session: null,
-      loading: false,
-      error: null,
-    } as unknown as ReturnType<typeof useAuth>);
+    vi.mocked(useAuth).mockReturnValue(mockAuthState('regular@test.com', 'user-2'));
 
     render(
       <MemoryRouter>
