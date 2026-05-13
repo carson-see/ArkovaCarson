@@ -1,10 +1,16 @@
 # agents.md — services/worker
 
-_Last updated: 2026-05-08 (SCRUM-1668 anchor batch policy fix + SCRUM-1130 org queue scheduler + SCRUM-1135 R0-R3 closeout)._
+_Last updated: 2026-05-12 (routine dependency consolidation)._
 
 ## What This Folder Contains
 
 Express-based worker service handling privileged server-side operations: Merkle batch anchoring, Stripe webhook verification, outbound webhook delivery, cron job scheduling, rules engine, and org tier/quota enforcement. Uses Supabase service_role key — never the anon key.
+
+## Routine dependency consolidation (2026-05-12)
+
+PR replacement branch `codex/deps-routine-20260512` bundles the worker dependency updates from #770 into the root/edge routine dependency batch. Worker bumps: `@sentry/node` and `@sentry/profiling-node` 10.53.0, `@types/node` 25.7.0, `@vitest/coverage-v8` and `vitest` 4.1.6, `typescript-eslint` 8.59.3, and `vite` 8.0.12.
+
+Validation for this batch: `npm run typecheck`, `npm run lint`, `npm run build:circuit`, `npm run test` (398 files / 5,378 tests), and `npm run build`. `src/types/database.types.ts` now includes `org_credits`, matching the existing baseline + 0300/0301 migrations used by billing/quota code.
 
 ## SCRUM-1668 anchor batch policy fix (2026-05-06, PR #700)
 

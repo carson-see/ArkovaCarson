@@ -1777,6 +1777,53 @@ export type Database = {
           },
         ]
       }
+      org_credits: {
+        Row: {
+          anchor_quota: number | null
+          balance: number
+          created_at: string
+          cycle_end: string
+          cycle_start: string
+          is_test: boolean
+          monthly_allocation: number
+          org_id: string
+          purchased: number
+          updated_at: string
+        }
+        Insert: {
+          anchor_quota?: number | null
+          balance?: number
+          created_at?: string
+          cycle_end?: string
+          cycle_start?: string
+          is_test?: boolean
+          monthly_allocation?: number
+          org_id: string
+          purchased?: number
+          updated_at?: string
+        }
+        Update: {
+          anchor_quota?: number | null
+          balance?: number
+          created_at?: string
+          cycle_end?: string
+          cycle_start?: string
+          is_test?: boolean
+          monthly_allocation?: number
+          org_id?: string
+          purchased?: number
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "org_credits_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: true
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       organizations: {
         Row: {
           affiliation_fee_status: string | null
