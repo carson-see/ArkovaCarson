@@ -153,7 +153,7 @@ describe('Chain Maintenance Jobs', () => {
       chain.limit = vi.fn(() =>
         Promise.resolve({ data: [], error: null }),
       );
-      mockDb.from.mockReturnValue(chain as never);
+      mockDb.from.mockReturnValue(chain);
 
       await detectReorgs();
       expect(eqCalls).toEqual(

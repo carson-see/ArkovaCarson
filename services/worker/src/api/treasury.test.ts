@@ -117,7 +117,7 @@ describe('handleTreasuryStatus', () => {
           single: vi.fn().mockResolvedValue({ data: { email: 'user@example.com' }, error: null }),
         }),
       }),
-    } as never);
+    });
 
     const res = createMockRes();
     await handleTreasuryStatus('user-123', {} as Request, res);
@@ -232,7 +232,7 @@ describe('handleTreasuryX402Stats', () => {
         ],
       },
       error: null,
-    } as never);
+    });
 
     const res = createMockRes();
     await handleTreasuryX402Stats('admin-123', {} as Request, res);
@@ -334,22 +334,22 @@ async function runHealthWithTableErrors({
       return buildChain('select.eq.single', {
         data: { is_platform_admin: true },
         error: null,
-      }) as never;
+      });
     }
     if (table === 'treasury_cache') {
       return buildChain('select.limit.maybeSingle', {
         data: null,
         error: cacheError ?? null,
-      }) as never;
+      });
     }
     if (table === 'treasury_alert_state') {
       return buildChain('select.eq.maybeSingle', {
         data: null,
         error: alertError ?? null,
-      }) as never;
+      });
     }
     throw new Error(`Unexpected db.from('${table}')`);
-  }) as never);
+  }));
   const res = createMockRes();
   await handleTreasuryHealth('admin-123', {} as Request, res);
   return res;
