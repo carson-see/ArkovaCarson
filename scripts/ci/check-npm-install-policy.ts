@@ -15,6 +15,21 @@ const CHECKED_DIRS = [
   'scripts',
 ];
 const CHECKED_EXTENSIONS = new Set(['.sh', '.yml', '.yaml']);
+const CHECKED_DOCKERFILE_NAMES = new Set(['Dockerfile']);
+const SKIPPED_DIRS = new Set([
+  '.git',
+  '.next',
+  '.turbo',
+  '.vercel',
+  'build',
+  'coverage',
+  'dist',
+  'node_modules',
+  'out',
+  'output',
+  'playwright-report',
+]);
+const comparePath = (a: string, b: string): number => a.localeCompare(b);
 
 export interface Violation {
   file: string;
@@ -30,29 +45,54 @@ function hasCheckedExtension(path: string): boolean {
   return [...CHECKED_EXTENSIONS].some((ext) => path.endsWith(ext));
 }
 
-function collectFiles(repo: string): string[] {
-  const files: string[] = [];
+function isDockerfileName(name: string): boolean {
+  return CHECKED_DOCKERFILE_NAMES.has(name) || name.endsWith('.Dockerfile');
+}
 
-  function walk(absDir: string): void {
+export function collectInstallPolicyFiles(repo: string): string[] {
+  const files = new Set<string>();
+
+  function addFile(absPath: string): void {
+    files.add(normalizeRelPath(relative(repo, absPath)));
+  }
+
+  function walkCheckedDir(absDir: string): void {
     if (!existsSync(absDir)) return;
 
     for (const entry of readdirSync(absDir, { withFileTypes: true })) {
       const absPath = join(absDir, entry.name);
       if (entry.isDirectory()) {
-        walk(absPath);
+        walkCheckedDir(absPath);
         continue;
       }
 
       if (!entry.isFile() || !hasCheckedExtension(entry.name)) continue;
-      files.push(normalizeRelPath(relative(repo, absPath)));
+      addFile(absPath);
+    }
+  }
+
+  function walkDockerfiles(absDir: string): void {
+    if (!existsSync(absDir)) return;
+
+    for (const entry of readdirSync(absDir, { withFileTypes: true })) {
+      const absPath = join(absDir, entry.name);
+      if (entry.isDirectory()) {
+        if (SKIPPED_DIRS.has(entry.name)) continue;
+        walkDockerfiles(absPath);
+        continue;
+      }
+
+      if (!entry.isFile() || !isDockerfileName(entry.name)) continue;
+      addFile(absPath);
     }
   }
 
   for (const dir of CHECKED_DIRS) {
-    walk(join(repo, dir));
+    walkCheckedDir(join(repo, dir));
   }
+  walkDockerfiles(repo);
 
-  return files.sort((a, b) => a.localeCompare(b));
+  return [...files].sort(comparePath);
 }
 
 function isCommentOnly(line: string): boolean {
@@ -116,7 +156,7 @@ function stripInlineComments(text: string): string {
 
 function isEchoOnlyMention(line: string): boolean {
   const commandText = stripInlineComments(commandTextForLine(line)).trim();
-  if (!/^\s*echo\b/.test(commandText)) return false;
+  if (!/^echo\b/.test(commandText)) return false;
 
   const withoutQuotedStrings = stripQuotedStrings(commandText);
   return !/(?:&&|\|\||;|\|)/.test(withoutQuotedStrings);
@@ -166,7 +206,7 @@ export function scanTextForUnsafeNpmInstalls(file: string, text: string): Violat
 
 function main(): void {
   const repo = resolve(import.meta.dirname, '..', '..');
-  const files = collectFiles(repo);
+  const files = collectInstallPolicyFiles(repo);
   const violations = files.flatMap((file) =>
     scanTextForUnsafeNpmInstalls(file, readFileSync(join(repo, file), 'utf8')),
   );

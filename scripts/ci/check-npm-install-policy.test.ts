@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
-import { scanTextForUnsafeNpmInstalls } from './check-npm-install-policy.js';
+import { collectInstallPolicyFiles, scanTextForUnsafeNpmInstalls } from './check-npm-install-policy.js';
 
 function expectNoViolations(file: string, text: string): void {
   expect(scanTextForUnsafeNpmInstalls(file, text)).toEqual([]);
@@ -69,5 +72,25 @@ describe('check-npm-install-policy', () => {
 
   it('does not let echo commands hide a follow-on install command', () => {
     expectOneViolation('workflow.yml', 'run: echo "installing" && npm ci');
+  });
+
+  it('scans Dockerfiles alongside workflows and shell deploy helpers', () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'npm-install-policy-'));
+    try {
+      mkdirSync(join(tmp, '.github', 'workflows'), { recursive: true });
+      mkdirSync(join(tmp, 'scripts'), { recursive: true });
+      mkdirSync(join(tmp, 'services', 'worker'), { recursive: true });
+      writeFileSync(join(tmp, '.github', 'workflows', 'ci.yml'), 'run: npm ci --ignore-scripts\n');
+      writeFileSync(join(tmp, 'scripts', 'deploy.sh'), 'npm ci --ignore-scripts\n');
+      writeFileSync(join(tmp, 'services', 'worker', 'Dockerfile'), 'RUN npm ci\n');
+
+      expect(collectInstallPolicyFiles(tmp)).toEqual([
+        '.github/workflows/ci.yml',
+        'scripts/deploy.sh',
+        'services/worker/Dockerfile',
+      ]);
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
   });
 });
