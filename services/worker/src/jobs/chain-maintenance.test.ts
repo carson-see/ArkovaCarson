@@ -297,6 +297,38 @@ describe('Chain Maintenance Jobs', () => {
       }));
     });
 
+    it('does not abandon mempool-visible unconfirmed TXs solely because max attempts were reached', async () => {
+      const notYetAbandoned = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+      const stuckAnchor = {
+        id: 'a1',
+        chain_tx_id: 'tx_visible_max_attempts',
+        metadata: { _rebroadcast_attempts: MAX_REBROADCAST_ATTEMPTS },
+        created_at: notYetAbandoned,
+        updated_at: notYetAbandoned,
+      };
+
+      const updateChain = mockDbChain({ id: stuckAnchor.id }, null);
+      let fromCallCount = 0;
+      mockDb.from.mockImplementation(() => {
+        fromCallCount++;
+        return fromCallCount === 1 ? mockDbChain([stuckAnchor], null) : updateChain;
+      });
+
+      const chainClient = new MockChainClient();
+      vi.spyOn(chainClient, 'getReceipt').mockResolvedValue({
+        receiptId: stuckAnchor.chain_tx_id,
+        blockHeight: 0,
+        blockTimestamp: notYetAbandoned,
+        confirmations: 0,
+      } satisfies ChainReceipt);
+      mockGetChainClientAsync.mockResolvedValue(chainClient);
+
+      const result = await monitorStuckTransactions();
+
+      expect(result.recovered).toBe(0);
+      expect(updateChain.update).not.toHaveBeenCalled();
+    });
+
     it('checks shared submitted tx state once for multiple stale anchors', async () => {
       const abandonCutoff = new Date(Date.now() - 73 * 60 * 60 * 1000).toISOString();
       const chainTxId = 'tx_shared_unconfirmed';
@@ -374,6 +406,45 @@ describe('Chain Maintenance Jobs', () => {
       expect(mockLogger.error).toHaveBeenCalledWith(
         expect.objectContaining({ anchorId: stuckAnchor.id, txId: stuckAnchor.chain_tx_id, error: updateError }),
         'Failed to abandon stale submitted anchor',
+      );
+    });
+
+    it('treats stale submitted abandonment compare-and-set misses as races, not hard failures', async () => {
+      const abandonCutoff = new Date(Date.now() - 73 * 60 * 60 * 1000).toISOString();
+      const stuckAnchor = {
+        id: 'a1',
+        chain_tx_id: 'tx_visible_but_already_changed',
+        metadata: { pipeline_source: 'public_records' },
+        created_at: abandonCutoff,
+        updated_at: abandonCutoff,
+      };
+
+      const updateChain = mockDbChain(null, null);
+      let fromCallCount = 0;
+      mockDb.from.mockImplementation(() => {
+        fromCallCount++;
+        return fromCallCount === 1 ? mockDbChain([stuckAnchor], null) : updateChain;
+      });
+
+      const chainClient = new MockChainClient();
+      vi.spyOn(chainClient, 'getReceipt').mockResolvedValue({
+        receiptId: stuckAnchor.chain_tx_id,
+        blockHeight: 0,
+        blockTimestamp: abandonCutoff,
+        confirmations: 0,
+      } satisfies ChainReceipt);
+      mockGetChainClientAsync.mockResolvedValue(chainClient);
+
+      const result = await monitorStuckTransactions();
+
+      expect(result.recovered).toBe(0);
+      expect(mockLogger.error).not.toHaveBeenCalledWith(
+        expect.objectContaining({ anchorId: stuckAnchor.id, txId: stuckAnchor.chain_tx_id }),
+        'Failed to abandon stale submitted anchor',
+      );
+      expect(mockLogger.debug).toHaveBeenCalledWith(
+        expect.objectContaining({ anchorId: stuckAnchor.id, txId: stuckAnchor.chain_tx_id }),
+        'Stale submitted anchor changed before abandonment update',
       );
     });
   });

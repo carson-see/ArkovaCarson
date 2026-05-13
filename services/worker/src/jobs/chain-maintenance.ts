@@ -340,7 +340,7 @@ export async function monitorStuckTransactions(): Promise<StuckTxResult> {
     ) => {
       const metadata = anchor.metadata as Record<string, unknown> | null;
       const attempts = ((metadata?._rebroadcast_attempts as number) ?? 0);
-      const pendingMetadata = { ...(metadata ?? {}) };
+      const pendingMetadata = metadata ? { ...metadata } : {};
       delete pendingMetadata._rebroadcast_attempts;
       const updatePayload = AbandonedSubmittedAnchorUpdateSchema.safeParse({
         status: 'PENDING',
@@ -373,10 +373,17 @@ export async function monitorStuckTransactions(): Promise<StuckTxResult> {
         .select('id')
         .maybeSingle();
 
-      if (updateError || !updatedAnchor) {
+      if (updateError) {
         logger.error(
           { anchorId: anchor.id, txId: anchor.chain_tx_id, error: updateError },
           'Failed to abandon stale submitted anchor',
+        );
+        return;
+      }
+      if (!updatedAnchor) {
+        logger.debug(
+          { anchorId: anchor.id, txId: anchor.chain_tx_id },
+          'Stale submitted anchor changed before abandonment update',
         );
         return;
       }
@@ -403,7 +410,7 @@ export async function monitorStuckTransactions(): Promise<StuckTxResult> {
       const attempts = ((metadata?._rebroadcast_attempts as number) ?? 0);
 
       if (txState === 'unconfirmed') {
-        if (attempts >= MAX_REBROADCAST_ATTEMPTS || anchor.updated_at < abandonCutoff) {
+        if (anchor.updated_at < abandonCutoff) {
           const reason = attempts >= MAX_REBROADCAST_ATTEMPTS
             ? 'TX remained unconfirmed in mempool after max rebroadcast attempts'
             : 'TX remained unconfirmed in mempool after 72h timeout';
