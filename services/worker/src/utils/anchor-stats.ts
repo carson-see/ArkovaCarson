@@ -33,6 +33,18 @@ export interface AnchorStats {
   last_24h_count: number;
 }
 
+const ANCHOR_STATUS_BUCKETS = [
+  'PENDING',
+  'BROADCASTING',
+  'SUBMITTED',
+  'SECURED',
+  'REVOKED',
+] as const;
+
+function unknownStatusBuckets(): Record<string, number | null> {
+  return Object.fromEntries(ANCHOR_STATUS_BUCKETS.map((status) => [status, null])) as Record<string, number | null>;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -86,7 +98,7 @@ export async function fetchAnchorStats(): Promise<AnchorStats> {
   let last_anchor_time: string | null = null;
   let last_tx_time: string | null = null;
   let distinct_tx_approximate = false;
-  let by_status: Record<string, number | null> = {};
+  let by_status: Record<string, number | null> = unknownStatusBuckets();
 
   try {
     const [counts, lastSeen, last24, txStats] = await Promise.allSettled([
@@ -118,6 +130,7 @@ export async function fetchAnchorStats(): Promise<AnchorStats> {
       total_submitted = typeof cv?.SUBMITTED === 'number' ? cv.SUBMITTED : -1;
       total_revoked = typeof cv?.REVOKED === 'number' ? cv.REVOKED : -1;
       by_status = {
+        ...unknownStatusBuckets(),
         PENDING: statusBucketOrNull(total_pending),
         BROADCASTING: statusBucketOrNull(total_broadcasting),
         SUBMITTED: statusBucketOrNull(total_submitted),

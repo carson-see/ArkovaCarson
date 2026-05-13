@@ -134,6 +134,23 @@ describe('fetchAnchorStats — pipeline dashboard cache path (SCRUM-1786)', () =
     expect(mockLogger.warn).toHaveBeenCalled();
   });
 
+  it('pipeline cache error keeps explicit unknown status buckets', async () => {
+    mockPipelineCacheSelect.mockResolvedValue({
+      data: null,
+      error: { message: 'relation does not exist' },
+    });
+
+    const stats = await fetchAnchorStats();
+
+    expect(stats.by_status).toMatchObject({
+      PENDING: null,
+      BROADCASTING: null,
+      SUBMITTED: null,
+      SECURED: null,
+      REVOKED: null,
+    });
+  });
+
   it('pipeline cache throws → sentinels, parallel queries unaffected', async () => {
     mockPipelineCacheSelect.mockRejectedValue(new Error('network down'));
 
