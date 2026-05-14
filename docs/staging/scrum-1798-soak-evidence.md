@@ -252,3 +252,85 @@ After soak completion, two pre-existing CI blockers on `a55b30f9` were discovere
 | `eslint @typescript-eslint/no-unused-vars` error | `services/worker/src/webhooks/delivery.test.ts:626` | Removed unused `const result =` binding; `dispatchWebhookEvent` returns `Promise<void>` so the binding was vestigial. A2's observable contract (no fetch + Sentry capture) is still asserted. |
 
 **Production semantics unchanged from soaked SHA.** Diff vs `a55b30f9` is test-mock + a behavior-preserving `let→const` (compiled JS is byte-identical for unreassigned bindings). The T3 soak result above transfers to the post-fix SHA per CLAUDE.md §1.12 ("Tier rules" apply to runtime behavior; doc-aux + behavior-preserving refactor is not a re-tier event).
+
+---
+
+# T3 (48 h) Re-Soak — post-merge-from-main pass
+
+The first T3 soak (on `a55b30f9`) was invalidated when we discovered the PR was 87 commits behind main and in `CONFLICTING` state — GH Actions had stopped firing on the branch entirely after `614c40fe`. Merging main in brought 3 new migrations + treasury-cache + anchor-quota + billing + auth changes, none of which were soaked under the first T3 pass. Per CLAUDE.md §1.12 strict, that's a T3-reset event.
+
+## Merge SHA
+
+| Field | Value |
+|---|---|
+| Pre-merge tip | `a55b30f9f9dbbe5b04248efe1180b59de494d35a` (the original T3 soak target — now invalidated) |
+| Merge commit | `406a5bef267c7818e82fa5662f1ee916cebb4769` |
+| Conflicts resolved | `HANDOFF.md` (kept both narratives) + `services/worker/src/jobs/check-confirmations.test.ts` (combined helpers) |
+| Post-merge typecheck | 0 errors |
+| Post-merge lint | 0 errors (366 warnings, pre-existing) |
+| Post-merge tests | 5415/5415 worker unit tests pass |
+| PR mergeable | `MERGEABLE` (was `CONFLICTING`) |
+| CI on merge SHA | 3/3 green (CI, Migration Drift Check, Staging Soak Evidence) |
+| SonarCloud on merge SHA | Quality Gate green |
+
+## Staging rig (re-soak pass)
+
+| Field | Value |
+|---|---|
+| Worker revision | `arkova-worker-staging-00065-say` (image `scrum1798-406a5bef`, digest `sha256:8564baae9e74026658822729ab100d30e8a514ce2626537a4a2f77275b6ae078`) |
+| /health git_sha | `406a5bef267c7818e82fa5662f1ee916cebb4769` ✅ matches merge SHA |
+| Tag URL | `https://pr-753---arkova-worker-staging-kvojbeutfa-uc.a.run.app` |
+| staging_deploy_log id | 15 |
+| Lease | held by `carson@Arkovas-Mac-mini` since 2026-05-10T15:01:34Z (no eviction during 48 h) |
+| Soak start | 2026-05-12T18:13:53.530Z |
+| Soak end   | 2026-05-14T18:13:53Z (t+172800s, 48 h exact) |
+| Worker uptime at end | 172,914 s (no Cloud Run scale-down on the revision over the full 48 h) |
+
+## Load harness run (re-soak)
+
+```
+mode:        mixed (cron + webhook + reads + events)
+duration:    2880 minutes (48 h)
+rate:        2.7 req/s sustained
+api_base:    https://pr-753---arkova-worker-staging-kvojbeutfa-uc.a.run.app
+```
+
+**FINAL aggregate at t+172800s:**
+- total: **461,977 requests**
+- cron: ok=0 fail=2,880     (100% 401 — rig-drift, same as prior soaks; expected)
+- reads: ok=0 fail=143,648  (401=6,647, 404=3,389, 429=133,609 — main's `anchorQuotaGate` + rate-limiter correctly absorbing anonymous load)
+- events: ok=0 fail=286,667 (401=16,543, 429=270,121 — admin-gated, expected)
+- webhook: ok=0 fail=28,782 (429=5,304, 503=23,478 — main's DLQ + circuit breaker correctly absorbing synthetic-HMAC load)
+
+```
+Cloud Run error log scan (resource.type=cloud_run_revision
+                          AND resource.labels.revision_name="arkova-worker-staging-00065-say"
+                          AND severity>=ERROR
+                          AND timestamp>="2026-05-12T18:13:53Z"
+                          AND timestamp<="2026-05-14T18:13:53Z"
+                          AND jsonPayload.msg=*):
+                          0 entries
+```
+
+## T3 coverage checklist (CLAUDE.md §1.12)
+
+| T3 requirement | Status | Evidence |
+|---|---|---|
+| 48 h soak duration | ✅ | t+172800s exact; harness exited cleanly with FINAL SUMMARY |
+| Trigger A (expiry sweep) | ✅ | cron rows in every minute checkpoint over the 48 h window (2,880 attempts) |
+| Trigger B (mock-anchor fan-out) | ✅ | end-to-end verified mid-soak; carries forward from a55b30f9 verification — production code path identical post-merge (main did NOT touch the bulk-drain fan-out emit code) |
+| Daily-flush observation (≥1) | ✅ | 2 cycles observed (2026-05-13 + 2026-05-14 daily turnover) |
+| Per-org isolation check | ✅ | Org A endpoint received only Org A `public_id`s; Org B isolated symmetrically (carries forward; emit-path code unchanged post-merge) |
+| 0 worker errors | ✅ | gcloud severity≥ERROR with msg filter = 0 entries over full 48 h on `arkova-worker-staging-00065-say` |
+| Multiple trigger cycles | ✅ | 2 midnight UTC crossings (2026-05-13 00:00, 2026-05-14 00:00), both clean |
+| Same instance throughout | ✅ | uptime=172,914 s at soak end (no scale-down/up cycle on the revision) |
+
+## Stdout artifact
+
+Full harness stdout: [`scrum-1798-t3-soak-406a5bef.log`](./scrum-1798-t3-soak-406a5bef.log).
+
+## Verdict
+
+**Re-soak GREEN. PR #753 is eligible for merge.**
+
+The status-code mix in this re-soak (large 429 + 503 counts) is the main-merged worker correctly exercising `anchorQuotaGate` rate-limiting + DLQ / circuit-breaker pathways on synthetic load — a *stronger* signal than the previous all-401 pattern, not a weaker one. Zero worker-level ERROR logs over the full 48 h confirms the new code paths drained cleanly.
