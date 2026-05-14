@@ -104,9 +104,13 @@ function envFlag(value: string | undefined): boolean {
 
 export function parseArgs(argv: string[], env: NodeJS.ProcessEnv = process.env): DocusignSmokeOptions {
   const { values, flags } = parseArgTokens(argv);
-  const hmacSecret = (values.get('hmac-secret') ?? env.DOCUSIGN_CONNECT_HMAC_SECRET ?? '').trim();
+  if (values.has('hmac-secret')) {
+    throw new Error('Do not pass --hmac-secret on the command line; use DOCUSIGN_CONNECT_HMAC_SECRET env instead.');
+  }
+
+  const hmacSecret = (env.DOCUSIGN_CONNECT_HMAC_SECRET ?? '').trim();
   if (!hmacSecret) {
-    throw new Error('DOCUSIGN_CONNECT_HMAC_SECRET is required; pass it via env or --hmac-secret.');
+    throw new Error('DOCUSIGN_CONNECT_HMAC_SECRET is required.');
   }
 
   const mode = (values.get('mode') ?? env.DOCUSIGN_SMOKE_MODE ?? 'orphan') as DocusignSmokeMode;

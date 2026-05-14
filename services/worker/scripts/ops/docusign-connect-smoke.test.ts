@@ -66,6 +66,10 @@ describe('docusign-connect-smoke', () => {
     expect(() => parseArgs([], { WORKER_URL: 'https://worker.example.test' })).toThrow(
       'DOCUSIGN_CONNECT_HMAC_SECRET is required',
     );
+    expect(() => parseArgs(['--hmac-secret=do-not-do-this'], {
+      WORKER_URL: 'https://worker.example.test',
+      DOCUSIGN_CONNECT_HMAC_SECRET: SECRET,
+    })).toThrow('Do not pass --hmac-secret');
   });
 
   it('requires an explicit account id and allow-processing flag for accepted duplicate smoke', () => {
