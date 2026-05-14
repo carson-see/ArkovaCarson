@@ -20,6 +20,7 @@ import { getChainClient } from '../chain/client.js';
 import { buildMerkleTree } from '../utils/merkle.js';
 import { getComplianceControlIds } from '../utils/complianceMapping.js';
 import { config } from '../config.js';
+import { deductOrgCredit, type DeductionResult } from '../utils/orgCredits.js';
 
 /**
  * Max anchors per batch transaction (BTC-001).
@@ -78,6 +79,21 @@ interface PendingTriggerProbe {
   batchSizeCrossed: boolean;
 }
 
+interface ClaimedAnchor {
+  id: string;
+  fingerprint: string;
+  metadata: unknown;
+  user_id?: string;
+  org_id?: string;
+  public_id?: string;
+  credential_type?: string;
+}
+
+interface ChargedQueueAnchor {
+  id: string;
+  orgId: string;
+}
+
 function claimErrorSummary(error: unknown): string {
   if (error == null) return '';
   if (typeof error === 'string') return error.toLowerCase();
@@ -105,6 +121,184 @@ function claimPendingAnchorsMigrationCompatMatch(error: unknown): string | null 
   return CLAIM_PENDING_ANCHORS_MIGRATION_COMPAT_SUBSTRINGS.find((substring) => (
     summary.includes(substring)
   )) ?? null;
+}
+
+function readMetadata(value: unknown): Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  return { ...(value as Record<string, unknown>) };
+}
+
+function clearClaimMetadata(metadata: Record<string, unknown>): Record<string, unknown> {
+  const next = { ...metadata };
+  delete next._claimed_by;
+  delete next._claimed_at;
+  return next;
+}
+
+function queueRunCreditReason(anchor: ClaimedAnchor): string | null {
+  if (anchor.credential_type !== 'CONTRACT_POSTSIGNING') return null;
+  const metadata = readMetadata(anchor.metadata);
+  const ruleActionType = typeof metadata.rule_action_type === 'string'
+    ? metadata.rule_action_type
+    : null;
+
+  if (ruleActionType === 'AUTO_ANCHOR') {
+    return 'rule.auto_anchor_queue_run';
+  }
+
+  if (
+    ruleActionType === 'FAST_TRACK_ANCHOR' &&
+    metadata.credit_denial_reason === 'insufficient_credits'
+  ) {
+    return 'rule.fast_track_anchor_queue_run';
+  }
+
+  return null;
+}
+
+async function refundQueueRunCredits(charged: ChargedQueueAnchor[], failure: string): Promise<void> {
+  await Promise.all(charged.map(async (item) => {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data, error } = await (db.rpc as any)('refund_org_credit', {
+        p_org_id: item.orgId,
+        p_amount: 1,
+        p_reason: 'rule.queue_anchor_run_compensation',
+        p_reference_id: item.id,
+      });
+      const refunded = !error && (data as { success?: unknown } | null)?.success === true;
+      if (!refunded) {
+        logger.error(
+          { error, result: data, anchorId: item.id, orgId: item.orgId, failure },
+          'Queue-run credit refund failed after pre-broadcast failure',
+        );
+      }
+    } catch (err) {
+      logger.error(
+        { error: err, anchorId: item.id, orgId: item.orgId, failure },
+        'Queue-run credit refund threw after pre-broadcast failure',
+      );
+    }
+  }));
+}
+
+async function markQueueCreditCharged(
+  anchor: ClaimedAnchor,
+  reason: string,
+  deduction: DeductionResult,
+): Promise<boolean> {
+  const metadata = readMetadata(anchor.metadata);
+  const nextMetadata = {
+    ...metadata,
+    credit_denial_reason: null,
+    queue_credit_source: 'org_credits',
+    queue_credit_reason: reason,
+    queue_credit_charged_at: new Date().toISOString(),
+    queue_credit_balance_after: deduction.balance ?? null,
+  };
+
+  const { error } = await db
+    .from('anchors')
+    .update({ metadata: nextMetadata })
+    .eq('id', anchor.id)
+    .eq('status', 'BROADCASTING');
+
+  if (error) {
+    logger.error(
+      { error, anchorId: anchor.id, orgId: anchor.org_id },
+      'Queue-run credit metadata update failed after deduction',
+    );
+    return false;
+  }
+  return true;
+}
+
+async function releaseQueueCreditDeniedAnchor(
+  anchor: ClaimedAnchor,
+  reason: string,
+  deduction?: DeductionResult,
+): Promise<void> {
+  const metadata = clearClaimMetadata(readMetadata(anchor.metadata));
+  const nextMetadata = {
+    ...metadata,
+    credit_denial_reason: reason,
+    queue_credit_denied_at: new Date().toISOString(),
+    queue_credit_required: deduction?.required ?? 1,
+    queue_credit_balance: deduction?.balance ?? null,
+  };
+
+  const { error } = await db
+    .from('anchors')
+    .update({
+      status: 'PENDING' as const,
+      metadata: nextMetadata,
+    })
+    .eq('id', anchor.id)
+    .eq('status', 'BROADCASTING');
+
+  if (error) {
+    logger.error(
+      { error, anchorId: anchor.id, orgId: anchor.org_id, reason },
+      'Queue-run credit denial release failed',
+    );
+  }
+}
+
+async function applyQueueRunCreditGate(
+  claimedAnchors: ClaimedAnchor[],
+): Promise<{ eligibleAnchors: ClaimedAnchor[]; chargedAnchors: ChargedQueueAnchor[] }> {
+  const eligibleAnchors: ClaimedAnchor[] = [];
+  const chargedAnchors: ChargedQueueAnchor[] = [];
+
+  for (const anchor of claimedAnchors) {
+    const reason = queueRunCreditReason(anchor);
+    if (!reason) {
+      eligibleAnchors.push(anchor);
+      continue;
+    }
+
+    if (!anchor.org_id) {
+      await releaseQueueCreditDeniedAnchor(anchor, 'missing_org_id');
+      continue;
+    }
+
+    let deduction: DeductionResult;
+    try {
+      deduction = await deductOrgCredit(db, anchor.org_id, 1, reason, anchor.id);
+    } catch (err) {
+      logger.error(
+        { error: err, anchorId: anchor.id, orgId: anchor.org_id, reason },
+        'Queue-run credit deduction threw',
+      );
+      await releaseQueueCreditDeniedAnchor(anchor, 'credit_rpc_failure');
+      continue;
+    }
+
+    if (!deduction.allowed) {
+      await releaseQueueCreditDeniedAnchor(
+        anchor,
+        deduction.error === 'insufficient_credits'
+          ? 'insufficient_credits'
+          : deduction.error ?? 'credit_denied',
+        deduction,
+      );
+      continue;
+    }
+
+    if (deduction.reason !== 'feature_disabled') {
+      const marked = await markQueueCreditCharged(anchor, reason, deduction);
+      if (!marked) {
+        await refundQueueRunCredits([{ id: anchor.id, orgId: anchor.org_id }], 'queue credit metadata update failed');
+        await releaseQueueCreditDeniedAnchor(anchor, 'credit_metadata_update_failed');
+        continue;
+      }
+      chargedAnchors.push({ id: anchor.id, orgId: anchor.org_id });
+    }
+
+    eligibleAnchors.push(anchor);
+  }
+
+  return { eligibleAnchors, chargedAnchors };
 }
 
 // =============================================================================
@@ -346,7 +540,7 @@ async function _processBatchAnchorsInner(opts: ProcessBatchAnchorOptions = {}): 
   }
 
   // Phase 1: Claim anchors in chunks (PostgREST caps RPC responses at 1000 rows)
-  const allClaimed: Array<{ id: string; fingerprint: string; metadata: unknown; user_id?: string; org_id?: string; public_id?: string; credential_type?: string }> = [];
+  const allClaimed: ClaimedAnchor[] = [];
   let remaining = BATCH_SIZE;
 
   while (remaining > 0) {
@@ -398,14 +592,22 @@ async function _processBatchAnchorsInner(opts: ProcessBatchAnchorOptions = {}): 
   }
 
   const claimedAnchors = allClaimed;
+  const { eligibleAnchors: broadcastAnchors, chargedAnchors } = await applyQueueRunCreditGate(claimedAnchors);
 
-  if (claimedAnchors.length < MIN_BATCH_SIZE) {
+  if (broadcastAnchors.length < MIN_BATCH_SIZE) {
+    if (broadcastAnchors.length > 0) {
+      await bulkRevertToPending(broadcastAnchors.map(a => a.id));
+      await refundQueueRunCredits(chargedAnchors, 'below minimum batch size after queue credit gate');
+    }
     return { processed: 0, batchId: null, merkleRoot: null, txId: null };
   }
 
-  logger.info({ claimed: claimedAnchors.length, target: BATCH_SIZE }, 'Claimed anchors for batch processing');
+  logger.info(
+    { claimed: claimedAnchors.length, eligible: broadcastAnchors.length, target: BATCH_SIZE },
+    'Claimed anchors for batch processing',
+  );
 
-  const fingerprints = claimedAnchors.map((a: { fingerprint: string }) => a.fingerprint);
+  const fingerprints = broadcastAnchors.map((a: { fingerprint: string }) => a.fingerprint);
 
   // Phase 2: Build Merkle tree
   const tree = buildMerkleTree(fingerprints);
@@ -419,21 +621,23 @@ async function _processBatchAnchorsInner(opts: ProcessBatchAnchorOptions = {}): 
       timestamp: new Date().toISOString(),
     });
   } catch (error) {
-    logger.error({ error, merkleRoot: tree.root, count: claimedAnchors.length }, 'Batch anchor chain submission failed — bulk reverting claims');
-    await bulkRevertToPending(claimedAnchors.map(a => a.id));
+    logger.error({ error, merkleRoot: tree.root, count: broadcastAnchors.length }, 'Batch anchor chain submission failed — bulk reverting claims');
+    await bulkRevertToPending(broadcastAnchors.map(a => a.id));
+    await refundQueueRunCredits(chargedAnchors, 'chain submission failed');
     return { processed: 0, batchId: null, merkleRoot: tree.root, txId: null };
   }
 
   if (!receipt || !receipt.receiptId) {
     logger.error({ merkleRoot: tree.root }, 'Batch chain broadcast returned empty receipt — bulk reverting claims');
-    await bulkRevertToPending(claimedAnchors.map(a => a.id));
+    await bulkRevertToPending(broadcastAnchors.map(a => a.id));
+    await refundQueueRunCredits(chargedAnchors, 'chain submission returned empty receipt');
     return { processed: 0, batchId: null, merkleRoot: tree.root, txId: null };
   }
 
   // Phase 4: Bulk update all claimed anchors BROADCASTING → SUBMITTED in one RPC call
   // (Individual PostgREST updates timeout under load — use DB-side bulk function)
-  const batchId = `batch_${Date.now()}_${claimedAnchors.length}`;
-  const anchorIds = claimedAnchors.map((a: { id: string }) => a.id);
+  const batchId = `batch_${Date.now()}_${broadcastAnchors.length}`;
+  const anchorIds = broadcastAnchors.map((a: { id: string }) => a.id);
 
   const submitParams = {
     p_anchor_ids: anchorIds,
@@ -462,19 +666,19 @@ async function _processBatchAnchorsInner(opts: ProcessBatchAnchorOptions = {}): 
     //      accepts slight metadata staleness in exchange for never
     //      double-broadcasting.
     logger.warn(
-      { error: bulkError, txId: receipt.receiptId, count: claimedAnchors.length },
+      { error: bulkError, txId: receipt.receiptId, count: broadcastAnchors.length },
       'submit_batch_anchors RPC failed — retrying before fallback (prevents double-broadcast)',
     );
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const retry = await (db.rpc as any)('submit_batch_anchors', submitParams);
     if (!retry.error) {
-      const count = typeof retry.data === 'number' ? retry.data : claimedAnchors.length;
+      const count = typeof retry.data === 'number' ? retry.data : broadcastAnchors.length;
       logger.info({ txId: receipt.receiptId, count }, 'submit_batch_anchors succeeded on retry');
       updatedCount = count;
     } else {
       logger.error(
-        { error: retry.error, txId: receipt.receiptId, count: claimedAnchors.length },
+        { error: retry.error, txId: receipt.receiptId, count: broadcastAnchors.length },
         'submit_batch_anchors failed twice — falling back to direct SUBMITTED updates (do NOT revert to PENDING)',
       );
       updatedCount = await bulkMarkSubmittedFallback(
@@ -486,12 +690,12 @@ async function _processBatchAnchorsInner(opts: ProcessBatchAnchorOptions = {}): 
     }
   }
 
-  const processed = typeof updatedCount === 'number' ? updatedCount : claimedAnchors.length;
+  const processed = typeof updatedCount === 'number' ? updatedCount : broadcastAnchors.length;
 
   // CML-02: Populate compliance_controls per credential type (non-fatal post-processing)
   try {
     const byType = new Map<string | null, string[]>();
-    for (const anchor of claimedAnchors) {
+    for (const anchor of broadcastAnchors) {
       const ct = (anchor as { credential_type?: string | null }).credential_type ?? null;
       if (!byType.has(ct)) byType.set(ct, []);
       byType.get(ct)!.push(anchor.id);
@@ -509,7 +713,7 @@ async function _processBatchAnchorsInner(opts: ProcessBatchAnchorOptions = {}): 
     {
       batchId,
       count: processed,
-      total: claimedAnchors.length,
+      total: broadcastAnchors.length,
       merkleRoot: tree.root,
       txId: receipt.receiptId,
     },
