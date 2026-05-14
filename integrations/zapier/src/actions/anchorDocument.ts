@@ -43,7 +43,6 @@ export const anchorDocumentAction = {
   display: {
     label: 'Anchor Document',
     description: 'Submit a document fingerprint (SHA-256) for Bitcoin anchoring.',
-    important: true,
   },
   operation: {
     perform,

@@ -39,7 +39,7 @@ jobs:
 
       - name: Install worker dependencies
         working-directory: services/worker
-        run: npm ci
+        run: npm ci --ignore-scripts
 
       - name: Typecheck
         working-directory: services/worker
@@ -105,7 +105,7 @@ jobs:
         # Mirrors ci.yml which installs root deps before invoking the
         # same script. Drift between the two caused every push to main
         # since 2026-04-26 11:45 UTC to fail the deploy gate.
-        run: npm ci --no-audit --no-fund
+        run: npm ci --ignore-scripts --no-audit --no-fund
 
       - name: Copy lint
         run: npm run lint:copy

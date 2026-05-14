@@ -372,8 +372,8 @@ All records are embedded (9,300+ embeddings) and indexed for sub-second semantic
 
 | Layer | Technology | Purpose |
 |-------|-----------|---------|
-| **Frontend** | React 18 + TypeScript | Single-page application |
-| **Styling** | Tailwind CSS + shadcn/ui | Component library and design system |
+| **Frontend** | React 19 + TypeScript | Single-page application |
+| **Styling** | Tailwind CSS 4 + shadcn/ui | Component library and design system |
 | **Icons** | Lucide React | Consistent icon set |
 | **Bundler** | Vite | Development and production builds |
 | **Routing** | react-router-dom v6 | Client-side routing with named routes |

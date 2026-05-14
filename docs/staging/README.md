@@ -54,11 +54,11 @@ gcloud run deploy arkova-worker-staging \
   --region us-central1
 
 # 4. Drive load for the soak window.
-npm run staging:load -- --mode oscillate --duration 240   # T3
+npm run staging:load -- --mode oscillate --duration 2880  # T3
 # or
 npm run staging:load -- --mode burst --count 12000        # T3 trigger A
 # or
-npm run staging:load -- --mode steady --rate 50 --duration 30   # T1 smoke
+npm run staging:load -- --mode steady --rate 50 --duration 120  # T1 smoke
 
 # 5. Capture evidence in PR body under `## Staging Soak Evidence`.
 #    See PR_TEMPLATE.md.

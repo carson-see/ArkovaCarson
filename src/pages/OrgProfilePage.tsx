@@ -616,7 +616,7 @@ export function OrgProfilePage() {
                   placeholder="Brief description of your organization..."
                   disabled={orgUpdating}
                   rows={3}
-                  className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
                 />
               </div>
               <div className="space-y-2">
@@ -626,7 +626,7 @@ export function OrgProfilePage() {
                   value={orgType}
                   onChange={(e) => { setOrgType(e.target.value); setOrgSaved(false); }}
                   disabled={orgUpdating}
-                  className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                  className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   <option value="">Select type...</option>
                   <option value="corporation">Corporation</option>
@@ -703,7 +703,7 @@ export function OrgProfilePage() {
                     value={orgIndustryTag}
                     onChange={(e) => { setOrgIndustryTag(e.target.value); setOrgSaved(false); }}
                     disabled={orgUpdating}
-                    className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                    className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-hidden focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
                   >
                     <option value="">Select industry...</option>
                     {INDUSTRY_TAG_OPTIONS.map(opt => (

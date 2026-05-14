@@ -43,7 +43,7 @@ interface TierSpec {
 export const TIER_SPECS: Record<Tier, TierSpec> = {
   T1: {
     tier: 'T1',
-    soakHours: 0.5,
+    soakHours: 2,
     requiredFields: [
       'Tier:',
       'Staging branch:',
@@ -55,7 +55,7 @@ export const TIER_SPECS: Record<Tier, TierSpec> = {
   },
   T2: {
     tier: 'T2',
-    soakHours: 4,
+    soakHours: 12,
     requiredFields: [
       'Tier:',
       'Staging branch:',
@@ -178,6 +178,11 @@ export function requiredTierFor(files: string[]): { tier: Tier; reason: string }
 
 const EVIDENCE_HEADER_RE = /^##\s+Staging\s+Soak\s+Evidence\s*$/im;
 const TIER_DECLARATION_RE = /^\s*[-*]?\s*Tier:\s*(T[123])\b/im;
+const UTC_TIMESTAMP_RE = /^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2})(?::(\d{2}))?\s*(?:UTC|Z)\b/i;
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
+}
 
 export function extractDeclaredTier(body: string): Tier | null {
   const m = TIER_DECLARATION_RE.exec(body);
@@ -193,10 +198,75 @@ export function missingFields(body: string, tier: Tier): string[] {
   const missing: string[] = [];
   for (const field of spec.requiredFields) {
     // Field labels are line-anchored to avoid matching prose mentions.
-    const re = new RegExp(`^[\\s\\-*]*${field.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')}`, 'im');
+    const re = new RegExp(String.raw`^[\s\-*]*${escapeRegExp(field)}`, 'im');
     if (!re.test(body)) missing.push(field);
   }
   return missing;
+}
+
+function extractEvidenceFieldValue(body: string, field: string): string | null {
+  const re = new RegExp(String.raw`^[\s\-*]*${escapeRegExp(field)}\s*(.*)$`, 'im');
+  const m = re.exec(body);
+  return m ? m[1].trim() : null;
+}
+
+function parseEvidenceTimestamp(value: string): number | null {
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return null;
+
+  const direct = Date.parse(trimmed);
+  if (Number.isFinite(direct)) return direct;
+
+  const utc = UTC_TIMESTAMP_RE.exec(trimmed);
+  if (!utc) return null;
+
+  const [, date, time, seconds] = utc;
+  const ms = Date.parse(`${date}T${time}:${seconds ?? '00'}Z`);
+  return Number.isFinite(ms) ? ms : null;
+}
+
+function formatHours(hours: number): string {
+  if (Number.isInteger(hours)) return String(hours);
+  const fixed = hours.toFixed(2);
+  if (fixed.endsWith('00')) return fixed.slice(0, -3);
+  if (fixed.endsWith('0')) return fixed.slice(0, -1);
+  return fixed;
+}
+
+export function soakDurationErrors(body: string, tier: Tier): string[] {
+  const startValue = extractEvidenceFieldValue(body, 'Soak start:');
+  const endValue = extractEvidenceFieldValue(body, 'Soak end:');
+  const errors: string[] = [];
+
+  if (startValue === null || endValue === null) return errors;
+
+  const startMs = parseEvidenceTimestamp(startValue);
+  const endMs = parseEvidenceTimestamp(endValue);
+
+  if (startMs === null || endMs === null) {
+    if (startMs === null) {
+      errors.push(`Soak start could not parse as a timestamp: \`${startValue}\`.`);
+    }
+    if (endMs === null) {
+      errors.push(`Soak end could not parse as a timestamp: \`${endValue}\`.`);
+    }
+    return errors;
+  }
+
+  if (endMs <= startMs) {
+    return ['Soak end must be after Soak start.'];
+  }
+
+  const spec = TIER_SPECS[tier];
+  const elapsedHours = (endMs - startMs) / 3_600_000;
+  if (elapsedHours < spec.soakHours) {
+    return [
+      `${tier} soak duration (${formatHours(elapsedHours)}h) is below the `
+      + `${spec.soakHours}h minimum. Soak start: \`${startValue}\`; Soak end: \`${endValue}\`.`,
+    ];
+  }
+
+  return errors;
 }
 
 interface StagingFilesOnlyResult {
@@ -224,6 +294,7 @@ export function isStagingToolingOnly(files: string[]): StagingFilesOnlyResult {
     // SCRUM-1803: STAGING_RIG.md lives at docs/reference/, not docs/staging/.
     // Same operational category — workflow doc for the staging rig.
     /^docs\/reference\/STAGING_RIG\.md$/,
+    /^\.github\/workflows\/ci\.yml$/,
     /^\.github\/workflows\/staging-evidence\.yml$/,
     /^CLAUDE\.md$/,
     /^HANDOFF\.md$/,
@@ -298,6 +369,12 @@ export function check(opts: { body: string; files: string[] }): CheckResult {
       `\`## Staging Soak Evidence\` section is missing required fields for ${declared}: `
       + missing.map((f) => `\`${f}\``).join(', ') + '.',
     );
+  }
+
+  const durationErrors = soakDurationErrors(body, declared);
+  if (durationErrors.length > 0) {
+    result.ok = false;
+    result.errors.push(...durationErrors);
   }
 
   return result;

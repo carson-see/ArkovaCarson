@@ -2,9 +2,8 @@
 /**
  * SCRUM-1005 (DEP-15) — Dependency pinning enforcement.
  *
- * Scans all package.json files in the repo (root, services/worker/,
- * services/edge/ if present) and fails if any dependency or devDependency
- * version starts with `^` or `~` (caret or tilde ranges).
+ * Scans tracked package.json files in the repo and fails if any dependency
+ * field or override value starts with `^` or `~` (caret or tilde ranges).
  *
  * Why: unpinned dependencies cause non-reproducible builds and introduce
  * supply-chain risk. Lockfiles pin *resolved* versions, but caret/tilde
@@ -15,11 +14,31 @@
  * Override: PR labeled `dep-range-intentional`.
  */
 
-import { readFileSync, existsSync, statSync, realpathSync } from 'node:fs';
-import { resolve, sep, join } from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { readFileSync, existsSync, statSync, realpathSync, readdirSync } from 'node:fs';
+import { resolve, sep, join, relative } from 'node:path';
 import { tmpdir } from 'node:os';
 
 const OVERRIDE_LABEL = 'dep-range-intentional';
+const DEPENDENCY_SECTIONS = [
+  'dependencies',
+  'devDependencies',
+  'optionalDependencies',
+  'peerDependencies',
+] as const;
+const SKIPPED_DIRS = new Set([
+  '.git',
+  '.next',
+  '.turbo',
+  '.vercel',
+  'build',
+  'coverage',
+  'dist',
+  'node_modules',
+  'out',
+  'playwright-report',
+]);
+const GIT_EXECUTABLE = '/usr/bin/git';
 
 /**
  * Resolve the repo root, validating any user-supplied DEP_PINNING_REPO_ROOT
@@ -78,12 +97,55 @@ interface Violation {
   version: string;
 }
 
-/** Package.json paths to scan, relative to repo root. */
-const PACKAGE_JSONS = [
-  'package.json',
-  'services/worker/package.json',
-  'services/edge/package.json',
-];
+function isRangeVersion(version: string): boolean {
+  return version.startsWith('^') || version.startsWith('~');
+}
+
+function normalizeRelPath(path: string): string {
+  return path.split(sep).join('/');
+}
+
+function discoverPackageJsons(repo: string): string[] {
+  const discovered: string[] = [];
+
+  function walk(absDir: string): void {
+    for (const entry of readdirSync(absDir, { withFileTypes: true })) {
+      if (entry.isDirectory()) {
+        if (SKIPPED_DIRS.has(entry.name)) continue;
+        walk(join(absDir, entry.name));
+        continue;
+      }
+
+      if (!entry.isFile() || entry.name !== 'package.json') continue;
+      discovered.push(normalizeRelPath(relative(repo, join(absDir, entry.name))));
+    }
+  }
+
+  walk(repo);
+  return discovered.sort((a, b) => a.localeCompare(b));
+}
+
+export function listPackageJsons(repo: string): string[] {
+  try {
+    const output = execFileSync(GIT_EXECUTABLE, ['-C', repo, 'ls-files', '*package.json'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    });
+    const tracked = output
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .filter((path) => path === 'package.json' || path.endsWith('/package.json'))
+      .filter((path) => !path.split('/').some((part) => SKIPPED_DIRS.has(part)))
+      .sort((a, b) => a.localeCompare(b));
+
+    if (tracked.length > 0) return tracked;
+  } catch {
+    // Temp fixtures used by tests are not git repos; fall back to filesystem discovery.
+  }
+
+  return discoverPackageJsons(repo);
+}
 
 function scanPackageJson(repo: string, relPath: string): Violation[] {
   const absPath = resolve(repo, relPath);
@@ -92,14 +154,47 @@ function scanPackageJson(repo: string, relPath: string): Violation[] {
   const pkg = JSON.parse(readFileSync(absPath, 'utf8'));
   const violations: Violation[] = [];
 
-  for (const section of ['dependencies', 'devDependencies'] as const) {
+  for (const section of DEPENDENCY_SECTIONS) {
     const deps: Record<string, string> | undefined = pkg[section];
     if (!deps) continue;
     for (const [name, version] of Object.entries(deps)) {
       if (typeof version !== 'string') continue;
-      if (version.startsWith('^') || version.startsWith('~')) {
+      if (isRangeVersion(version)) {
         violations.push({ file: relPath, section, name, version });
       }
+    }
+  }
+
+  if (pkg.overrides && typeof pkg.overrides === 'object' && !Array.isArray(pkg.overrides)) {
+    violations.push(...scanOverrideValues(relPath, pkg.overrides));
+  }
+
+  return violations;
+}
+
+function scanOverrideValues(
+  relPath: string,
+  overrides: Record<string, unknown>,
+  path: string[] = [],
+): Violation[] {
+  const violations: Violation[] = [];
+
+  for (const [name, value] of Object.entries(overrides)) {
+    const overridePath = [...path, name];
+    if (typeof value === 'string') {
+      if (isRangeVersion(value)) {
+        violations.push({
+          file: relPath,
+          section: 'overrides',
+          name: overridePath.join(' → '),
+          version: value,
+        });
+      }
+      continue;
+    }
+
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      violations.push(...scanOverrideValues(relPath, value as Record<string, unknown>, overridePath));
     }
   }
 
@@ -109,14 +204,15 @@ function scanPackageJson(repo: string, relPath: string): Violation[] {
 function main(): void {
   const repo = resolveRepoRoot();
   const prLabels = (process.env.PR_LABELS ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+  const packageJsons = listPackageJsons(repo);
 
   const allViolations: Violation[] = [];
-  for (const rel of PACKAGE_JSONS) {
+  for (const rel of packageJsons) {
     allViolations.push(...scanPackageJson(repo, rel));
   }
 
   if (allViolations.length === 0) {
-    console.log('✅ All dependency versions are pinned (no ^ or ~ ranges).');
+    console.log(`✅ All dependency versions are pinned (${packageJsons.length} package.json file(s), no ^ or ~ ranges).`);
     return;
   }
 
@@ -134,7 +230,7 @@ function main(): void {
     console.error(`  ${v.file} → ${v.section} → ${v.name}: ${v.version}`);
   }
   console.error('');
-  console.error('Fix: remove the ^ or ~ prefix from each version to pin it exactly.');
+  console.error('Fix: remove the ^ or ~ prefix from dependency fields or override values to pin them exactly.');
   console.error(`If intentional, label the PR with \`${OVERRIDE_LABEL}\`.`);
   process.exit(1);
 }

@@ -375,7 +375,7 @@ export function ApiSandbox() {
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
               placeholder="API key (e.g. ark_live_...)"
-              className="w-full bg-[#080f16] border border-[#3c494e]/30 rounded-lg px-4 py-2.5 font-mono text-sm text-[#dce3ed] placeholder:text-[#3c494e] focus:outline-none focus:border-[#00d4ff]/50 transition-colors"
+              className="w-full bg-[#080f16] border border-[#3c494e]/30 rounded-lg px-4 py-2.5 font-mono text-sm text-[#dce3ed] placeholder:text-[#3c494e] focus:outline-hidden focus:border-[#00d4ff]/50 transition-colors"
             />
             {!apiKey && (
               <p className="mt-2 text-xs text-[#bbc9cf]">
@@ -412,7 +412,7 @@ export function ApiSandbox() {
                   <select
                     value={paramValues[param.name] || ''}
                     onChange={(e) => setParam(param.name, e.target.value)}
-                    className="w-full bg-[#080f16] border border-[#3c494e]/30 rounded-lg px-4 py-2.5 font-mono text-sm text-[#dce3ed] focus:outline-none focus:border-[#00d4ff]/50 transition-colors"
+                    className="w-full bg-[#080f16] border border-[#3c494e]/30 rounded-lg px-4 py-2.5 font-mono text-sm text-[#dce3ed] focus:outline-hidden focus:border-[#00d4ff]/50 transition-colors"
                   >
                     <option value="">Select...</option>
                     {param.options?.map((opt) => (
@@ -425,7 +425,7 @@ export function ApiSandbox() {
                     value={paramValues[param.name] || ''}
                     onChange={(e) => setParam(param.name, e.target.value)}
                     placeholder={param.placeholder}
-                    className="w-full bg-[#080f16] border border-[#3c494e]/30 rounded-lg px-4 py-2.5 font-mono text-sm text-[#dce3ed] placeholder:text-[#3c494e] focus:outline-none focus:border-[#00d4ff]/50 transition-colors"
+                    className="w-full bg-[#080f16] border border-[#3c494e]/30 rounded-lg px-4 py-2.5 font-mono text-sm text-[#dce3ed] placeholder:text-[#3c494e] focus:outline-hidden focus:border-[#00d4ff]/50 transition-colors"
                   />
                 )}
               </div>

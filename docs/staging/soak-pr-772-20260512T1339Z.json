@@ -1,0 +1,21 @@
+{
+  "startedAt": "2026-05-12T13:39:32.912Z",
+  "endedAt": "2026-05-12T14:09:32.921Z",
+  "durationSec": 1800.009,
+  "apiBase": "https://pr-772---arkova-worker-staging-kvojbeutfa-uc.a.run.app",
+  "mode": "reads",
+  "totalRequests": 1497,
+  "byMode": {
+    "reads": {
+      "ok": 1497,
+      "fail": 0,
+      "errorRate": 0,
+      "p50Ms": 98,
+      "p95Ms": 140,
+      "p99Ms": 277,
+      "byStatus": {
+        "200": 1497
+      }
+    }
+  }
+}

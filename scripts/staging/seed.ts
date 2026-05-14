@@ -5,7 +5,7 @@
  *
  * Volume tier (default --standard):
  *   --smoke     ~30K total rows, ~3 min, for fast dry-run validation
- *   --standard  ~250K total rows, ~25 min, sized for a 4h T2 soak
+ *   --standard  ~250K total rows, ~25 min, sized for a 12h T2 soak
  *   --full      ~2M total rows, ~90 min, ~3GB DB (within Pro tier 8GB)
  *
  * Idempotency:

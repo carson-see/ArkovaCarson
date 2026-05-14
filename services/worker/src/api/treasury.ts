@@ -41,7 +41,15 @@ export interface TreasuryStatusResponse {
   recentAnchors: {
     totalSecured: number;
     totalPending: number;
+    totalBroadcasting?: number;
+    totalSubmitted?: number;
+    totalRevoked?: number;
+    byStatus?: Record<string, number>;
     lastSecuredAt: string | null;
+    distinctTxIds?: number;
+    avgAnchorsPerTx?: number;
+    lastAnchorAt?: string | null;
+    lastTxAt?: string | null;
     last24hCount: number;
   };
   error?: string;
@@ -134,11 +142,104 @@ export async function handleTreasuryStatus(
   result.recentAnchors = {
     totalSecured: stats.total_secured,
     totalPending: stats.total_pending,
+    totalBroadcasting: stats.total_broadcasting,
+    totalSubmitted: stats.total_submitted,
+    totalRevoked: stats.total_revoked,
+    byStatus: stats.by_status,
     lastSecuredAt: stats.last_secured_at,
+    distinctTxIds: stats.distinct_tx_count,
+    avgAnchorsPerTx: stats.avg_anchors_per_tx,
+    lastAnchorAt: stats.last_anchor_time,
+    lastTxAt: stats.last_tx_time,
     last24hCount: stats.last_24h_count,
   };
 
   res.json(result);
+}
+
+export interface TreasuryX402StatsResponse {
+  total: number;
+  revenue: number;
+  recent: Array<{ tx_hash: string; amount_usd: number; created_at: string }>;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function toFiniteNumber(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string' && value.trim() !== '') {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function parseX402StatsPayload(data: unknown): TreasuryX402StatsResponse | null {
+  if (!isRecord(data)) return null;
+
+  const total = toFiniteNumber(data.total_payments);
+  const revenue = toFiniteNumber(data.total_revenue_usd);
+  if (total === null || revenue === null) return null;
+
+  const recentRaw = data.recent_payments;
+  if (recentRaw !== undefined && !Array.isArray(recentRaw)) return null;
+
+  const recent: TreasuryX402StatsResponse['recent'] = [];
+  for (const item of recentRaw ?? []) {
+    if (!isRecord(item) || typeof item.tx_hash !== 'string' || item.tx_hash.trim() === '') {
+      return null;
+    }
+    const amount = toFiniteNumber(item.amount_usd);
+    if (amount === null || typeof item.created_at !== 'string' || !Number.isFinite(new Date(item.created_at).getTime())) {
+      return null;
+    }
+    recent.push({
+      tx_hash: item.tx_hash,
+      amount_usd: amount,
+      created_at: item.created_at,
+    });
+  }
+
+  return { total, revenue, recent };
+}
+
+export async function handleTreasuryX402Stats(
+  userId: string,
+  _req: Request,
+  res: Response,
+): Promise<void> {
+  const isAdmin = await isPlatformAdmin(userId);
+  if (!isAdmin) {
+    res.status(403).json({ error: 'Forbidden — platform admin access required' });
+    return;
+  }
+
+  try {
+    const { data, error } = await db.rpc('get_treasury_stats');
+    if (error) {
+      logger.error({ error }, 'Treasury x402 stats RPC failed');
+      res.status(503).json({ error: 'Treasury x402 stats temporarily unavailable' });
+      return;
+    }
+    if (!data) {
+      res.status(503).json({ error: 'Treasury x402 stats returned no data' });
+      return;
+    }
+
+    const parsed = parseX402StatsPayload(data);
+    if (!parsed) {
+      logger.error({ data }, 'Treasury x402 stats RPC returned invalid payload');
+      res.status(502).json({ error: 'Treasury x402 stats returned invalid payload' });
+      return;
+    }
+
+    res.json(parsed);
+  } catch (err) {
+    logger.error({ error: err }, 'handleTreasuryX402Stats failed');
+    res.status(500).json({ error: 'Internal server error' });
+  }
 }
 
 // =============================================================================

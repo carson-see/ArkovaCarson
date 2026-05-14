@@ -27,6 +27,10 @@ async function expectBillingOverview(page: import('@playwright/test').Page) {
   ).toBeVisible({ timeout: 15000 });
 }
 
+function userMenuButton(page: import('@playwright/test').Page) {
+  return page.locator('header').getByRole('button', { name: /Jamie Demo.*User/i });
+}
+
 async function signInAsIndividual(page: import('@playwright/test').Page) {
   await page.goto('/login');
 
@@ -38,7 +42,7 @@ async function signInAsIndividual(page: import('@playwright/test').Page) {
   }
 
   await page.waitForURL(/\/dashboard/, { timeout: 15000 });
-  await expect(page.getByRole('button', { name: /Jamie Demo.*User/i }))
+  await expect(userMenuButton(page))
     .toBeVisible({ timeout: 10000 });
 }
 
@@ -176,7 +180,7 @@ test.describe('Billing', () => {
       await openAsIndividual(individualPage, '/billing');
       await expectBillingOverview(individualPage);
 
-      await individualPage.getByRole('button', { name: /Jamie Demo.*User/i }).click();
+      await userMenuButton(individualPage).click();
       await individualPage.getByRole('menuitem', { name: 'Settings' }).click();
 
       await expect(individualPage).toHaveURL(/\/settings/, { timeout: 10000 });

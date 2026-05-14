@@ -96,6 +96,8 @@ interface RecordFilters {
 }
 
 type JobRunStatus = 'idle' | 'running' | 'done' | 'error';
+type PipelineStatsSource = 'worker-cache' | 'client-rpc-fallback';
+type AnchorOperationalStatus = 'PENDING' | 'BROADCASTING' | 'SUBMITTED' | 'SECURED' | 'EXPIRED' | 'REVOKED';
 
 interface PipelineJobControl {
   path: string;
@@ -106,6 +108,90 @@ interface PipelineJobControl {
 }
 
 const PAGE_SIZE = 25;
+const PIPELINE_CACHE_STALE_MS = 10 * 60 * 1000;
+
+const OPERATIONAL_STATUS_FILTERS: Array<{ value: AnchorOperationalStatus | 'unlinked'; label: string }> = [
+  { value: 'PENDING', label: PIPELINE_LABELS.STATUS_PENDING },
+  { value: 'BROADCASTING', label: PIPELINE_LABELS.STATUS_BROADCASTING },
+  { value: 'SUBMITTED', label: PIPELINE_LABELS.STATUS_SUBMITTED },
+  { value: 'SECURED', label: PIPELINE_LABELS.STATUS_SECURED_CONFIRMED },
+  { value: 'EXPIRED', label: PIPELINE_LABELS.STATUS_EXPIRED },
+  { value: 'REVOKED', label: PIPELINE_LABELS.STATUS_REVOKED },
+  { value: 'unlinked', label: PIPELINE_LABELS.STATUS_UNLINKED },
+];
+
+const STATUS_BADGE_CLASS: Record<AnchorOperationalStatus, string> = {
+  PENDING: 'bg-amber-500/10 text-amber-400 border-amber-500/20',
+  BROADCASTING: 'bg-blue-500/10 text-blue-400 border-blue-500/20',
+  SUBMITTED: 'bg-cyan-500/10 text-cyan-400 border-cyan-500/20',
+  SECURED: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20',
+  EXPIRED: 'bg-muted text-muted-foreground border-border/50',
+  REVOKED: 'bg-red-500/10 text-red-400 border-red-500/20',
+};
+
+const STATUS_BADGE_LABEL: Record<AnchorOperationalStatus, string> = {
+  PENDING: PIPELINE_LABELS.STATUS_PENDING,
+  BROADCASTING: PIPELINE_LABELS.STATUS_BROADCASTING,
+  SUBMITTED: PIPELINE_LABELS.STATUS_SUBMITTED,
+  SECURED: PIPELINE_LABELS.STATUS_SECURED_CONFIRMED,
+  EXPIRED: PIPELINE_LABELS.STATUS_EXPIRED,
+  REVOKED: PIPELINE_LABELS.STATUS_REVOKED,
+};
+
+function isAnchorOperationalStatus(status: string | null | undefined): status is AnchorOperationalStatus {
+  return status === 'PENDING' ||
+    status === 'BROADCASTING' ||
+    status === 'SUBMITTED' ||
+    status === 'SECURED' ||
+    status === 'EXPIRED' ||
+    status === 'REVOKED';
+}
+
+function formatCacheFreshness(updatedAt: string | null | undefined): string {
+  if (!updatedAt) return PIPELINE_LABELS.CACHE_NO_TIMESTAMP;
+  const updatedMs = new Date(updatedAt).getTime();
+  if (!Number.isFinite(updatedMs)) return PIPELINE_LABELS.CACHE_TIMESTAMP_UNAVAILABLE;
+  const ageMs = Math.max(Date.now() - updatedMs, 0);
+  const ageMinutes = Math.floor(ageMs / 60_000);
+  if (ageMinutes < 1) return PIPELINE_LABELS.CACHE_REFRESHED_LESS_THAN_MINUTE;
+  if (ageMinutes === 1) return PIPELINE_LABELS.CACHE_REFRESHED_ONE_MINUTE;
+  return PIPELINE_LABELS.CACHE_REFRESHED_MINUTES(ageMinutes.toLocaleString());
+}
+
+function isCacheStale(updatedAt: string | null | undefined): boolean {
+  if (!updatedAt) return true;
+  const updatedMs = new Date(updatedAt).getTime();
+  return !Number.isFinite(updatedMs) || Date.now() - updatedMs > PIPELINE_CACHE_STALE_MS;
+}
+
+function renderOperationalStatusBadge(status: string | null | undefined, chainTxId: string | null | undefined) {
+  if (!isAnchorOperationalStatus(status)) {
+    return (
+      <Badge variant="outline" className="text-muted-foreground border-border/50 text-[10px]">
+        {PIPELINE_LABELS.STATUS_UNKNOWN}
+      </Badge>
+    );
+  }
+
+  if (status === 'SECURED' && !chainTxId) {
+    return (
+      <Badge className="bg-red-500/10 text-red-400 border-red-500/20 text-[10px]">
+        {PIPELINE_LABELS.STATUS_SECURED_MISSING_RECEIPT}
+      </Badge>
+    );
+  }
+
+  const label = status === 'SUBMITTED' && chainTxId
+    ? PIPELINE_LABELS.STATUS_SUBMITTED_MEMPOOL
+    : STATUS_BADGE_LABEL[status];
+
+  return (
+    <Badge className={`${STATUS_BADGE_CLASS[status]} text-[10px]`}>
+      {status === 'SECURED' && <ArkovaIcon className="h-3 w-3 mr-1" />}
+      {label}
+    </Badge>
+  );
+}
 
 // ─── Pipeline Region + Source Config (module-scope to avoid re-allocation per render) ───
 
@@ -182,6 +268,8 @@ export function PipelineAdminPage() {
   // worker timeout looked identical to "the system is empty." `statsError`
   // surfaces a banner + retry button instead of rendering 0/0/0.
   const [statsError, setStatsError] = useState<string | null>(null);
+  const [statsWarning, setStatsWarning] = useState<string | null>(null);
+  const [statsSource, setStatsSource] = useState<PipelineStatsSource | null>(null);
 
   const fetchStats = useCallback(async () => {
     try {
@@ -199,6 +287,7 @@ export function PipelineAdminPage() {
       let cacheUpdatedAt: string | null = null;
       const bySource: Record<string, number> = {};
       let workerErrorMessage: string | null = null;
+      let source: PipelineStatsSource = 'worker-cache';
 
       try {
         const response = await workerFetch('/api/admin/pipeline-stats', { method: 'GET' });
@@ -213,15 +302,15 @@ export function PipelineAdminPage() {
             bySource: Record<string, number>;
           };
           totalRecords = data.totalRecords;
-          anchoredRecords = data.anchoredRecords;
+          securedRecords = data.securedRecords ?? 0;
+          submittedRecords = data.submittedRecords ?? 0;
+          anchoredRecords = data.securedRecords ?? data.anchoredRecords;
           pendingRecords = data.pendingRecords;
           embeddedRecords = data.embeddedRecords;
           anchorLinkedRecords = data.anchorLinkedRecords ?? data.anchoredRecords;
           pendingRecordLinks = data.pendingRecordLinks ?? 0;
           pendingAnchorRecords = data.pendingAnchorRecords ?? 0;
           broadcastingRecords = data.broadcastingRecords ?? 0;
-          submittedRecords = data.submittedRecords ?? 0;
-          securedRecords = data.securedRecords ?? 0;
           cacheUpdatedAt = data.cacheUpdatedAt ?? null;
           Object.assign(bySource, data.bySource);
         } else {
@@ -229,21 +318,27 @@ export function PipelineAdminPage() {
         }
       } catch (workerErr) {
         workerErrorMessage = workerErr instanceof Error ? workerErr.message : 'Worker pipeline stats unavailable';
+        source = 'client-rpc-fallback';
         // Fallback: direct Supabase RPC (may fail due to RLS)
         const { data: pipelineStats, error: rpcError } = await dbAny.rpc('get_pipeline_stats');
-        if (!rpcError && pipelineStats) {
-          totalRecords = pipelineStats.total_records ?? 0;
-          anchorLinkedRecords = pipelineStats.anchor_linked_records ?? pipelineStats.anchored_records ?? 0;
-          pendingRecordLinks = pipelineStats.pending_record_links ?? 0;
-          pendingAnchorRecords = pipelineStats.pending_anchor_records ?? 0;
-          broadcastingRecords = pipelineStats.broadcasting_records ?? 0;
-          submittedRecords = pipelineStats.submitted_records ?? 0;
-          securedRecords = pipelineStats.secured_records ?? 0;
-          anchoredRecords = pipelineStats.bitcoin_anchored_records ?? pipelineStats.anchored_records ?? 0;
-          pendingRecords = pipelineStats.pending_bitcoin_records ?? pipelineStats.pending_records ?? 0;
-          embeddedRecords = pipelineStats.embedded_records ?? 0;
-          cacheUpdatedAt = typeof pipelineStats.cache_updated_at === 'string' ? pipelineStats.cache_updated_at : null;
+        if (rpcError || !pipelineStats) {
+          const fallbackMessage = typeof rpcError?.message === 'string'
+            ? rpcError.message
+            : PIPELINE_LABELS.DIRECT_RPC_FALLBACK_NO_DATA;
+          throw new Error(`${workerErrorMessage}; fallback failed: ${fallbackMessage}`);
         }
+
+        totalRecords = pipelineStats.total_records ?? 0;
+        anchorLinkedRecords = pipelineStats.anchor_linked_records ?? pipelineStats.anchored_records ?? 0;
+        pendingRecordLinks = pipelineStats.pending_record_links ?? 0;
+        pendingAnchorRecords = pipelineStats.pending_anchor_records ?? 0;
+        broadcastingRecords = pipelineStats.broadcasting_records ?? 0;
+        submittedRecords = pipelineStats.submitted_records ?? 0;
+        securedRecords = pipelineStats.secured_records ?? 0;
+        anchoredRecords = pipelineStats.secured_records ?? pipelineStats.anchored_records ?? 0;
+        pendingRecords = (pipelineStats.pending_bitcoin_records ?? pipelineStats.pending_records ?? 0) + submittedRecords;
+        embeddedRecords = pipelineStats.embedded_records ?? 0;
+        cacheUpdatedAt = typeof pipelineStats.cache_updated_at === 'string' ? pipelineStats.cache_updated_at : null;
 
         const { data: sourceCounts } = await dbAny.rpc('count_public_records_by_source');
         if (sourceCounts && Array.isArray(sourceCounts)) {
@@ -288,7 +383,11 @@ export function PipelineAdminPage() {
       });
       // SCRUM-1260 (R1-6): clear error state on successful refresh so the
       // banner disappears once the worker recovers.
-      setStatsError(workerErrorMessage);
+      setStatsError(null);
+      setStatsWarning(workerErrorMessage
+        ? PIPELINE_LABELS.WORKER_CACHE_FALLBACK_WARNING(workerErrorMessage)
+        : null);
+      setStatsSource(source);
     } catch (err) {
       console.error('PipelineAdminPage: failed to fetch stats', err);
       // SCRUM-1260 (R1-6): surface the error instead of silently zeroing.
@@ -298,6 +397,7 @@ export function PipelineAdminPage() {
       // "zeros everywhere" tile grid.
       const message = err instanceof Error ? err.message : 'Pipeline stats fetch failed';
       setStatsError(message);
+      setStatsWarning(null);
     } finally {
       setLoading(false);
     }
@@ -622,26 +722,13 @@ export function PipelineAdminPage() {
   const sourceIcon = (source: string) => SOURCE_CONFIG[source]?.icon ?? <Database className="h-4 w-4" />;
   const sourceLabel = (source: string) => SOURCE_CONFIG[source]?.label ?? source;
   const renderAnchorStatusBadge = (record: PublicRecord) => {
-    if (record.chain_tx_id && (record.anchor_status === 'SUBMITTED' || record.anchor_status === 'SECURED')) {
-      return (
-        <Badge className="bg-emerald-500/10 text-emerald-400 border-emerald-500/20 text-[10px]">
-          <ArkovaIcon className="h-3 w-3 mr-1" />
-          Anchored
-        </Badge>
-      );
-    }
-
     if (record.anchor_id) {
-      return (
-        <Badge className="bg-amber-500/10 text-amber-400 border-amber-500/20 text-[10px]">
-          {record.anchor_status ?? 'Queued'}
-        </Badge>
-      );
+      return renderOperationalStatusBadge(record.anchor_status, record.chain_tx_id);
     }
 
     return (
       <Badge variant="outline" className="text-muted-foreground border-border/50 text-[10px]">
-        Unlinked
+        {PIPELINE_LABELS.STATUS_UNLINKED}
       </Badge>
     );
   };
@@ -686,6 +773,36 @@ export function PipelineAdminPage() {
           />
         )}
 
+        {statsWarning && (
+          <DataErrorBanner
+            data-testid="pipeline-stats-fallback"
+            title={DATA_ERROR_LABELS.STATS_UNAVAILABLE_TITLE}
+            message={statsWarning}
+            spacing="mb-3"
+            onRetry={handleRefresh}
+            retrying={refreshing}
+          />
+        )}
+
+        {stats && (
+          <div
+            data-testid="pipeline-cache-freshness"
+            className="flex flex-wrap items-center gap-2 rounded-md border border-border/50 bg-muted/20 px-3 py-2 text-xs text-muted-foreground"
+          >
+            <Badge variant="outline" className="font-mono text-[10px]">
+              {statsSource === 'client-rpc-fallback'
+                ? PIPELINE_LABELS.DIRECT_RPC_FALLBACK_SOURCE
+                : PIPELINE_LABELS.WORKER_CACHE_SOURCE}
+            </Badge>
+            <span>{formatCacheFreshness(stats.cacheUpdatedAt)}</span>
+            {isCacheStale(stats.cacheUpdatedAt) && (
+              <Badge className="bg-amber-500/10 text-amber-400 border-amber-500/20 text-[10px]">
+                {PIPELINE_LABELS.STALE}
+              </Badge>
+            )}
+          </div>
+        )}
+
         {/* Stats Grid */}
         <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
           <StatCard
@@ -699,21 +816,32 @@ export function PipelineAdminPage() {
             value={stats?.anchoredRecords}
             icon={<ArkovaIcon className="h-5 w-5 text-emerald-400" />}
             loading={loading}
-            subtitle={`${(stats?.submittedRecords ?? 0).toLocaleString()} submitted / ${(stats?.securedRecords ?? 0).toLocaleString()} confirmed`}
+            subtitle={stats
+              ? PIPELINE_LABELS.RECORDS_ANCHORED_SUBTITLE(
+                stats.submittedRecords.toLocaleString(),
+                stats.securedRecords.toLocaleString(),
+              )
+              : undefined}
           />
           <StatCard
             label={PIPELINE_LABELS.RECORDS_PENDING}
             value={stats?.pendingRecords}
             icon={<AlertCircle className="h-5 w-5 text-amber-400" />}
             loading={loading}
-            subtitle={`${(stats?.pendingRecordLinks ?? 0).toLocaleString()} unlinked / ${(stats?.pendingAnchorRecords ?? 0).toLocaleString()} queued / ${(stats?.broadcastingRecords ?? 0).toLocaleString()} broadcasting`}
+            subtitle={stats
+              ? PIPELINE_LABELS.RECORDS_PENDING_SUBTITLE(
+                stats.pendingRecordLinks.toLocaleString(),
+                stats.pendingAnchorRecords.toLocaleString(),
+                stats.broadcastingRecords.toLocaleString(),
+              )
+              : undefined}
           />
           <StatCard
             label={PIPELINE_LABELS.RECORDS_EMBEDDED}
             value={stats?.embeddedRecords}
             icon={<Cpu className="h-5 w-5 text-purple-400" />}
             loading={loading}
-            subtitle="Vector embeddings enable AI search and cross-reference matching across all pipeline records"
+            subtitle={PIPELINE_LABELS.RECORDS_EMBEDDED_SUBTITLE}
           />
         </div>
 
@@ -793,7 +921,8 @@ export function PipelineAdminPage() {
                 {Object.entries(stats?.byCredentialType ?? {})
                   .sort(([, a], [, b]) => b.total - a.total)
                   .map(([ct, counts]) => {
-                    const label = PIPELINE_LABELS[`TYPE_${ct}` as keyof typeof PIPELINE_LABELS] ?? formatCredentialType(ct);
+                    const labelCandidate = PIPELINE_LABELS[`TYPE_${ct}` as keyof typeof PIPELINE_LABELS];
+                    const label = typeof labelCandidate === 'string' ? labelCandidate : formatCredentialType(ct);
                     const securedPct = counts.total > 0 ? Math.round((counts.secured / counts.total) * 100) : 0;
                     return (
                       <div
@@ -814,7 +943,7 @@ export function PipelineAdminPage() {
                               {counts.secured.toLocaleString()}
                             </Badge>
                             {counts.broadcasting > 0 && (
-                              <Badge className="bg-blue-500/10 text-blue-400 border-blue-500/20 text-[10px] font-mono" title="Broadcasting">
+                              <Badge className="bg-blue-500/10 text-blue-400 border-blue-500/20 text-[10px] font-mono" title={PIPELINE_LABELS.STATUS_BROADCASTING}>
                                 {counts.broadcasting.toLocaleString()}
                               </Badge>
                             )}
@@ -1036,8 +1165,11 @@ export function PipelineAdminPage() {
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">{PIPELINE_LABELS.FILTER_ALL_STATUSES}</SelectItem>
-                  <SelectItem value="anchored">{PIPELINE_LABELS.FILTER_ANCHORED}</SelectItem>
-                  <SelectItem value="unanchored">{PIPELINE_LABELS.FILTER_UNANCHORED}</SelectItem>
+                  {OPERATIONAL_STATUS_FILTERS.map((status) => (
+                    <SelectItem key={status.value} value={status.value}>
+                      {status.label}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
@@ -1242,21 +1374,13 @@ export function PipelineAdminPage() {
                             <div>
                               <span className="text-[10px] text-muted-foreground">Status</span>
                               <div className="mt-0.5">
-                                <Badge className={
-                                  anchorDetails.status === 'SECURED'
-                                    ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
-                                    : anchorDetails.status === 'SUBMITTED'
-                                    ? 'bg-amber-500/10 text-amber-400 border-amber-500/20'
-                                    : 'bg-muted text-muted-foreground'
-                                }>
-                                  {anchorDetails.status}
-                                </Badge>
+                                {renderOperationalStatusBadge(anchorDetails.status, anchorDetails.chain_tx_id)}
                               </div>
                             </div>
 
                             <div>
                               <span className="text-[10px] text-muted-foreground">
-                                {anchorDetails.chain_tx_id ? 'Network Receipt (Mempool)' : 'Mempool'}
+                                {anchorDetails.chain_tx_id ? PIPELINE_LABELS.ANCHOR_DETAIL_RECEIPT_MEMPOOL : PIPELINE_LABELS.ANCHOR_DETAIL_MEMPOOL}
                               </span>
                               <div className="flex items-center gap-2 mt-0.5">
                                 {anchorDetails.chain_tx_id ? (
@@ -1459,7 +1583,7 @@ function StatCard({
         ) : (
           <>
             <p className="text-2xl font-bold font-mono">
-              {(value ?? 0).toLocaleString()}
+              {typeof value === 'number' ? value.toLocaleString() : '—'}
             </p>
             {subtitle && (
               <p className="text-xs text-muted-foreground/60 mt-1">{subtitle}</p>

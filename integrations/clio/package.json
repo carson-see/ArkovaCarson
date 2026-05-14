@@ -9,10 +9,10 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "httpx": "^0.1.0"
+    "httpx": "1.0.0"
   },
   "devDependencies": {
-    "typescript": "^5.4.0",
-    "vitest": "^1.6.0"
+    "typescript": "5.9.3",
+    "vitest": "4.1.6"
   }
 }

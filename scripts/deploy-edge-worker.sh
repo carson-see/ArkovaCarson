@@ -37,7 +37,7 @@ fi
 cd "$EDGE_DIR"
 
 echo "== Installing edge worker dependencies"
-npm install --silent
+npm ci --ignore-scripts --silent
 
 echo "== Typechecking edge worker"
 npx tsc --noEmit

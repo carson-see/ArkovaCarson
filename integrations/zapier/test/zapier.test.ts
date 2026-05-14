@@ -12,7 +12,7 @@ import { BATCH_SYNC_LIMIT, VALID_EVENTS } from '../src/constants';
 describe('Zapier App Structure', () => {
   it('exports a valid Zapier app definition', () => {
     expect(App.version).toBe('1.0.0');
-    expect(App.platformVersion).toBe('15.0.0');
+    expect(App.platformVersion).toBe('18.6.0');
     expect(App.authentication).toBeDefined();
     expect(App.authentication.type).toBe('custom');
   });
@@ -23,9 +23,9 @@ describe('Zapier App Structure', () => {
   });
 
   it('has required actions', () => {
-    expect(App.actions.anchor_document).toBeDefined();
-    expect(App.actions.verify_credential).toBeDefined();
-    expect(App.actions.batch_verify).toBeDefined();
+    expect(App.creates.anchor_document).toBeDefined();
+    expect(App.creates.verify_credential).toBeDefined();
+    expect(App.creates.batch_verify).toBeDefined();
   });
 
   it('triggers use hook type (REST hooks)', () => {
@@ -52,7 +52,7 @@ describe('Anchor Secured Trigger', () => {
 
   it('has correct display metadata', () => {
     expect(trigger.display.label).toBe('New Anchor Secured');
-    expect(trigger.display.important).toBe(true);
+    expect(trigger.display.description).toContain('SECURED');
   });
 
   it('provides output fields', () => {
@@ -100,7 +100,7 @@ describe('Anchor Revoked Trigger', () => {
 });
 
 describe('Anchor Document Action', () => {
-  const action = App.actions.anchor_document;
+  const action = App.creates.anchor_document;
 
   it('requires fingerprint input', () => {
     const fields = action.operation.inputFields;
@@ -125,7 +125,7 @@ describe('Anchor Document Action', () => {
 });
 
 describe('Verify Credential Action', () => {
-  const action = App.actions.verify_credential;
+  const action = App.creates.verify_credential;
 
   it('requires public_id input', () => {
     const fields = action.operation.inputFields;
@@ -141,7 +141,7 @@ describe('Verify Credential Action', () => {
 });
 
 describe('Batch Verify Action', () => {
-  const action = App.actions.batch_verify;
+  const action = App.creates.batch_verify;
 
   it('requires public_ids input', () => {
     const fields = action.operation.inputFields;

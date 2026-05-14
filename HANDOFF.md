@@ -14,40 +14,82 @@
 
 ## Now
 
-### 2026-05-12 — PR #753 (SCRUM-1798/1799/1800) merged main → T3 48h re-soak underway
+### 2026-05-14 — PR #753 (SCRUM-1798/1799/1800) READY TO MERGE — T3 re-soak GREEN
 
-**Status:** PR #753 `MERGEABLE` at tip `<post-merge-sha>` (was `a55b30f9` pre-merge), main merged in to resolve 87-commit drift, T3 48h re-soak running. **Not yet eligible to merge** — awaiting fresh soak completion.
+**Status:** PR #753 ready for merge as the next merge into `main`. T3 48h re-soak on the merge SHA `406a5bef` completed clean (0 worker errors, 461,977 requests, 48h exact). Merging main again now to clear `CONFLICTING` state introduced by 48 commits that landed during the soak window — conflicts are docs-only (HANDOFF.md + STAGING_RIG.md) with no code change.
 
-**What changed in this update:**
+**Soak validation (final):**
 
-* Discovered post-T3-soak that CI had stopped firing on the branch after `614c40fe` because the PR was in `CONFLICTING` state (87 commits behind main, including 3 new migrations: `0300_test_credit_pool`, `0301_anchor_quota_nonneg_check`, `0304_drop_broken_search_public_credentials_overload`).
-* Merged `origin/main` into the branch. Two conflicts resolved cleanly:
-  * `HANDOFF.md` — kept both narratives (5-11 main entry + 5-10 PR #753 entry side by side).
-  * `services/worker/src/jobs/check-confirmations.test.ts` — both sides added different test helper functions (PR #753: `setupBulkDrainTest` / `flattenAuditRows` / `drainMicrotasks` for SCRUM-1800 bulk-drain emit suite; main: `submittedCandidate` / `setupCursorRotationScenario` for cursor-rotation tests). Combined both sets — no semantic conflict.
-* SonarCloud `typescript:S7739` MAJOR (HIGH reliability) on `delivery.test.ts:69`, plus two pre-existing lint errors (`prefer-const` in `anchorExpirySweep.ts`, `no-unused-vars` in `delivery.test.ts`) all fixed in commit `b2feaac2`.
-* T3 soak result on `a55b30f9` (2026-05-10T15:11:33Z → 2026-05-12T15:11:33Z, 48h, 462,110 reqs, 0 worker errors) is **no longer transferable** because the merged-in 87 commits include treasury-cache + anchor-quota + billing + auth + 3 migrations — those are unsoaked under §1.12 strict. Hence fresh T3.
+* Worker revision: `arkova-worker-staging-00065-say` (image `scrum1798-406a5bef`, digest `sha256:8564baae9e7...`)
+* Soak window: 2026-05-12T18:13:53.530Z to 2026-05-14T18:13:53Z (t+172800s exact)
+* 461,977 requests at 2.7/s sustained; 0 worker ERROR logs over full 48h window
+* `/health` git_sha confirmed `406a5bef267c7818e82fa5662f1ee916cebb4769` from start to end; worker uptime 172,914s -- same Cloud Run instance throughout
+* 2 midnight UTC crossings (2026-05-13, 2026-05-14), both clean
+* All T3 coverage gates met (CLAUDE.md section 1.12) -- see [`docs/staging/scrum-1798-soak-evidence.md`](./docs/staging/scrum-1798-soak-evidence.md) for the full checklist
+* staging_deploy_log id: 15
 
-**Audit-fix history preserved on the branch (T3 originally triggered by these):**
+**Engineering judgment exception (Carson 2026-05-14):** the 48 commits that landed on main *during* the 48h soak include 1 new migration (`0305_pipeline_operational_status_filters.sql`) + `treasury.ts/test` + `anchor-stats.ts/test` + `verify.ts/test` + `admin-pipeline-stats.ts` changes. A strict section 1.12 reading would re-trigger a fresh 48h soak on the new merge SHA. With main moving ~48 commits per 48h window that creates infinite regress for any T3-chain PR. Carson's call (2026-05-14): the 406a5bef soak validates the credential.* emit-point worker code PR #753 ships; the main-side changes since are orthogonal to PR #753's surface (treasury / anchor-stats are read-side; PR #753 is webhook emit-side). Merge with engineering judgment instead of another full T3 cycle.
 
-| # | Severity | Surface | Fix |
+**Audit-fix history (all closed):**
+
+| # | Severity | Surface | Fix commit |
 |---|---|---|---|
-| A1 | HIGH | `services/worker/src/webhooks/delivery.ts` | Retry-path idempotency re-fires when `status !== 'success'` (was unconditional early-return). Uses `.update().eq().select().single()` UPDATE…RETURNING. |
-| A2 | HIGH | `services/worker/src/webhooks/delivery.ts` | Distinguish PGRST116 from real DB/RLS errors at idempotency lookup. Real errors → `Sentry.captureException(stage='idempotency_lookup')` + return false (was silent swallow). |
-| A3 | HIGH | `services/worker/src/jobs/check-confirmations.ts` | Mutex moved above mock-path branch + `WHERE chain_tx_id IS NULL` guard prevents double-fan-out under concurrency. |
-| A4 | HIGH | `services/worker/src/jobs/anchorExpirySweep.ts` | Cursor advancement walks page in reverse, advances only past finite-and-expired rows; future-dated rows do NOT advance. |
-| A5 | HIGH | `services/worker/src/api/anchor-revoke.ts` | Membership lookup propagates non-PGRST116 as 500 (was collapsing every error to 404). |
-| C1 | MEDIUM | `services/worker/src/jobs/check-confirmations.ts` | `audit_events.actor_id = null` for system events (was zero-UUID FK violation). |
+| A1 | HIGH | `services/worker/src/webhooks/delivery.ts` | `a55b30f9` retry-path idempotency re-fires when `status !== 'success'` |
+| A2 | HIGH | `services/worker/src/webhooks/delivery.ts` | `a55b30f9` PGRST116 distinguished from real DB errors at idempotency lookup |
+| A3 | HIGH | `services/worker/src/jobs/check-confirmations.ts` | `a55b30f9` mutex moved above mock branch + `chain_tx_id IS NULL` guard |
+| A4 | HIGH | `services/worker/src/jobs/anchorExpirySweep.ts` | `a55b30f9` cursor advancement only past finite-and-expired rows |
+| A5 | HIGH | `services/worker/src/api/anchor-revoke.ts` | `a55b30f9` membership lookup error propagation |
+| C1 | MEDIUM | `services/worker/src/jobs/check-confirmations.ts` | `354003a7` `audit_events.actor_id = null` for system events |
+| CI-1 | MAJOR (Sonar) | `services/worker/src/webhooks/delivery.test.ts` | `b2feaac2` thenable property removed (real Promise + attached `.select()`) |
+| CI-2 | error (lint) | `services/worker/src/jobs/anchorExpirySweep.ts` | `b2feaac2` `let -> const` for never-reassigned `candidates` |
+| CI-3 | error (lint) | `services/worker/src/webhooks/delivery.test.ts` | `b2feaac2` vestigial `const result =` binding dropped |
 
-**Follow-up tickets (carried from 2026-05-10):**
+**Follow-up tickets:**
 
-* SCRUM-1805 — Sentry alert on `Failed to create delivery log` worker errors (Sentry capture wired in `b1c6e1f2`; alert rule spec at `infra/sentry/alert-rules.json`).
-* SCRUM-1806 — Flip `ENABLE_CREDENTIAL_VERIFIED_WEBHOOK` on in prod after PR #753 merges + deploys.
-* SCRUM-1807 — Cursor-based pagination for `anchorExpirySweep` (shipped in this PR at commit `4c7e3b51`).
-* SCRUM-1808 — Staging cron-secret drift (every PR's soak hits 100% 401 on cron mode; unblocked by PR #760's claim.sh rig).
+* SCRUM-1805 -- Sentry alert on `Failed to create delivery log` worker errors (Sentry capture wired in `b1c6e1f2`; alert rule spec at `infra/sentry/alert-rules.json`).
+* SCRUM-1806 -- Flip `ENABLE_CREDENTIAL_VERIFIED_WEBHOOK` on in prod after PR #753 merges + deploys.
+* SCRUM-1807 -- Cursor-based pagination for `anchorExpirySweep` (shipped in this PR at commit `4c7e3b51`).
+* SCRUM-1808 -- Staging cron-secret drift (every PR's soak hits 100% 401 on cron mode; unblocked by PR #760's claim.sh rig).
 
 **Confluence:** [SCRUM-1743 page](https://arkova.atlassian.net/wiki/spaces/A/pages/44204033).
 
 ---
+
+### 2026-05-14 — SSD checkout reconciliation note
+
+**SSD role:** `/Volumes/Extreme/Arkova` is backup/worktree storage, not the authoritative day-to-day checkout. The old SSD checkout at `/Volumes/Extreme/Arkova/arkova-mvpcopy-main` is now treated as quarantined evidence, not a working `main`.
+
+**Clean SSD `main` worktree created:** `/Volumes/Extreme/Arkova/worktrees/main-clean` was created from then-current `main` at `dd8009e1e0298fff5b3e4117dcdc912786209787`. GitHub `main`, local `origin/main`, and local `main` were verified to all point at `dd8009e1` before the worktree was created. This HANDOFF update is a docs-only direct `main` update, so newer sessions should expect `main` to include one or more `docs: record SSD checkout reconciliation` commits after `dd8009e1`.
+
+**Do not reset/delete the old checkout yet.** `/Volumes/Extreme/Arkova/arkova-mvpcopy-main` remains on `fix/p0-dashboard-truth-2026-05-12` at `632fab0e`, `+11/-29`, with six dirty P0 dashboard files plus untracked `output/playwright/p0-dashboard-truth/` evidence artifacts. Inventory found the 11 local-ahead commits are patch-equivalent to upstream/main, and the six dirty tracked files are byte-for-byte present in upstream/main, but the local evidence artifacts still need an explicit archive/destination decision before cleanup.
+
+**PR #774 behavior is protected, not obsolete.** Preserve the dashboard truth contract: only confirmed `SECURED` records count as anchored; `SUBMITTED` stays distinct as in-mempool/submitted; worker/cache failures remain visible; missing stats are not coerced to zero; unavailable treasury stats stay unknown; public verify keeps `SUBMITTED` distinct; package pinning and npm install policy hardening remain protected.
+
+**Protected worktrees were not intentionally touched by the reconciliation.** `/Volumes/Extreme/Arkova/worktrees/scrum-1649-docusign-action-modes` was initially observed at `ba2ec3b8`, then later read-only verification showed it at `5b4009bd`, `+0/-0` with `origin/codex/scrum-1649-docusign-action-modes`; reflog entries show DocuSign commits at 2026-05-14 12:32 and 12:35. Treat that worktree as protected; do not clean its pre-existing untracked `node_modules` directories without explicit approval.
+
+_Last refreshed: 2026-05-14 by Codex — claims verified against local read-only `git status`, `git worktree list`, `git ls-remote origin refs/heads/main`, `git cherry -v`, and path-limited `git diff` output. No PR was opened; this is a direct internal documentation update only._
+
+### 2026-05-13 — SCRUM-1834 supply-chain install policy sandbox
+
+**PR #779 / branch `codex/supply-chain-install-policy-20260513` packages the previously orphaned local-only supply-chain commits into one tracked PR lane under SCRUM-1834.** Scope: recursive dependency pinning across every tracked `package.json`, npm install-script policy guard for CI/deploy scripts and Dockerfiles, default `npm ci --ignore-scripts` in GitHub Actions/deploy helpers/worker image builds, exact nested package pins/lockfiles for integrations and packages, Zapier Platform 18 compatibility cleanup, and the worker OpenTelemetry/protobufjs audit fix discovered while expanding the guard to override values.
+
+**Jira hierarchy is explicit:** SCRUM-1834 parent is SCRUM-550, with Spec/Implement/Verify subtasks SCRUM-1835, SCRUM-1836, and SCRUM-1837. Protected scopes were not edited: PR #774/P0 dashboard truth, SCRUM-908 migration drift including `0305_pipeline_operational_status_filters.sql`, SCRUM-1803 staging lease work, PR #753 soak/runtime files, P0 dashboard lane files, and logo assets.
+
+**Validation completed locally with lifecycle scripts disabled for installs:** root `npm ci --ignore-scripts`; root `ci:dep-pinning`; root `ci:install-script-policy` (28 files scanned, including Dockerfiles); CI guard Vitest suite (31 tests); root `typecheck`; root `lint`; worker `npm ci --ignore-scripts`, `typecheck`, `lint` (warnings-only existing backlog), `build`, audit with 0 vulnerabilities, and `docker build --no-cache -f services/worker/Dockerfile services/worker -t arkova-worker-install-policy:local` using `npm ci --ignore-scripts` in both stages; image smoke confirmed Node v20.20.2, non-root UID 100, and no runtime `.npmrc`; `git diff --check`; nested clean installs/builds/tests for Bullhorn, Clio, Zapier, Embed, and SDK; Zapier structural validate. Residual risk: Zapier CLI 18.6.0 still carries non-critical high dev-tool transitive audit findings; npm's force fix points to a breaking downgrade to Zapier CLI 8.2.1, so follow-up SCRUM-1838 (subtasks SCRUM-1839, SCRUM-1840, SCRUM-1841) tracks the vendor/compensating-control path.
+
+### 2026-05-12 — dependency consolidation merge follow-up (#772 merged; #773 rebased)
+
+**PR #772 / branch `codex/deps-routine-20260512` merged to `main` as merge commit `12ab7848d9f5f293e7193e386a1273dd1ea41b74`.** It consolidates #764, #770, #771, and #775. Scope: root production/dev dependency bumps, worker Sentry/Vite/Vitest/TypeScript-ESLint/dev type bumps, worker transitive `@protobufjs/utf8` lockfile bump, and edge `@cloudflare/workers-types`.
+
+**Validation completed locally:** root `typecheck`, `lint`, `lint:copy`, `security:license-denylist`, `build`, `test`; worker `typecheck`, `lint`, `build:circuit`, `test`, `build`; edge `typecheck`. Worker test total after circuit build: 398 files / 5,378 tests. Root test total after worker build artifacts existed: 205 files passed / 1 skipped, 1,988 tests passed / 2 skipped. Latest `#775` fold-in validation: worker package-lock-only install, worker `typecheck`, worker `lint` (0 errors, existing warning backlog), worker `test` (398 files / 5,378 tests), root `lint:copy`, `git diff --check`.
+
+**Gate repairs included:** generated Supabase types now include `org_credits` in both root and worker type maps, matching the existing baseline + 0300/0301 migrations used by worker billing/quota code. `drop-search-overload.test.ts` now ignores generated `dist/` output so the root suite is order-independent after worker builds.
+
+**Staging evidence:** Fresh T1 read-only `/health` soak on tag URL `https://pr-772---arkova-worker-staging-kvojbeutfa-uc.a.run.app`, worker revision `arkova-worker-staging-00067-wor`, image `us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker:pr772-f7409a1d6bdd`, deploy log id 16, 2026-05-12T20:06:19Z → 2026-05-12T20:36:19Z. Result: 1,496/1,496 HTTP 200, 0 failures, p95 178ms, p99 877ms. Evidence JSON: `docs/staging/soak-pr-772-20260512T2006Z.json`. PR #753 and PR #774 were not reset, reseeded, edited, or otherwise touched.
+
+**PR #773 / branch `codex/deps-frontend-major-20260512` remains the frontend major dependency batch replacing #767, #768, and #769.** React/React DOM and type packages are upgraded to 19.x, Tailwind is migrated from v3 config to v4 CSS-first `@theme` tokens plus `@tailwindcss/postcss`, `tw-animate-css`, and deprecated v3 utilities are migrated. After #772 merged, this branch was rebased/merged forward against `origin/main` and its conflicts were resolved by keeping both dependency batches.
+
+_Last refreshed: 2026-05-12 by carson-see — claims verified against gcloud/MCP/CI output._ Evidence: GitHub Actions run 25758795157 (CI Tests/E2E/TypeCheck & Lint/Migration Drift/Staging Soak Evidence green on the `#775` fold-in head), Cloud Build 70c4fd38-618a-4b2a-92b1-6f6076d991a5, staging deploy log id 16, soak evidence at docs/staging/soak-pr-772-20260512T2006Z.json, and staging tag URL health evidence for worker revision arkova-worker-staging-00067-wor.
 
 ### 2026-05-11 — PR #756 + PR #763 ready for review
 

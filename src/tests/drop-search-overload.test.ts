@@ -16,9 +16,7 @@ const migrationSql = fs.readFileSync(MIGRATION_PATH, 'utf8');
 
 let baselineCache: string | null = null;
 function baseline(): string {
-  if (baselineCache === null) {
-    baselineCache = fs.readFileSync(BASELINE_PATH, 'utf8');
-  }
+  baselineCache ??= fs.readFileSync(BASELINE_PATH, 'utf8');
   return baselineCache;
 }
 
@@ -42,7 +40,8 @@ describe('0304: drop broken search_public_credentials(text,int,int) overload', (
       ...sql.matchAll(/CREATE\s+OR\s+REPLACE\s+FUNCTION\s+"public"\."search_public_credentials"\s*\(/g),
     ];
     expect(createMatches.length).toBe(1);
-    const idx = createMatches[0].index!;
+    const [match] = createMatches;
+    const idx = match.index ?? -1;
     const snippet = sql.slice(idx, idx + 300);
     expect(snippet).toContain('"p_query"');
     expect(snippet).toContain('"p_limit"');
@@ -67,10 +66,11 @@ describe('0304: drop broken search_public_credentials(text,int,int) overload', (
 
 function findTsFiles(dir: string): string[] {
   const results: string[] = [];
+  const ignoredDirs = new Set(['node_modules', 'dist', 'coverage']);
   if (!fs.existsSync(dir)) return results;
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     const full = path.join(dir, entry.name);
-    if (entry.isDirectory() && entry.name !== 'node_modules') {
+    if (entry.isDirectory() && !ignoredDirs.has(entry.name)) {
       results.push(...findTsFiles(full));
     } else if (entry.isFile() && /\.[tj]sx?$/.test(entry.name)) {
       results.push(full);

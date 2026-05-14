@@ -551,8 +551,8 @@ const doc = new Document({
         makeTable(
           ["Layer", "Technology", "Purpose"],
           [
-            [B("Frontend"), "React 18 + TypeScript", "Single-page application"],
-            [B("Styling"), "Tailwind CSS + shadcn/ui", "Component library and design system"],
+            [B("Frontend"), "React 19 + TypeScript", "Single-page application"],
+            [B("Styling"), "Tailwind CSS 4 + shadcn/ui", "Component library and design system"],
             [B("Icons"), "Lucide React", "Consistent icon set"],
             [B("Bundler"), "Vite", "Development and production builds"],
             [B("Routing"), "react-router-dom v6", "Client-side routing with named routes"],

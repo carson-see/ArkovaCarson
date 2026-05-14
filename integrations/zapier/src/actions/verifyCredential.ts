@@ -44,7 +44,6 @@ export const verifyCredentialAction = {
   display: {
     label: 'Verify Credential',
     description: 'Verify a credential by its Arkova public ID.',
-    important: true,
   },
   operation: {
     perform,

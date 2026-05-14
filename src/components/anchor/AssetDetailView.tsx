@@ -303,7 +303,7 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
                         setEditingFilename(false);
                       }
                     }}
-                    className="flex-1 min-w-0 text-lg font-medium bg-muted rounded px-2 py-1 border border-primary/30 focus:outline-none focus:ring-1 focus:ring-primary"
+                    className="flex-1 min-w-0 text-lg font-medium bg-muted rounded px-2 py-1 border border-primary/30 focus:outline-hidden focus:ring-1 focus:ring-primary"
                     autoFocus
                     disabled={renameSaving}
                     maxLength={255}
