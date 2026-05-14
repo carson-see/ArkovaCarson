@@ -1,4 +1,3 @@
-import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -15,13 +14,15 @@ describe('check-staging-gcloud-policy', () => {
   it('collects tracked policy files from any repository path', () => {
     const repo = mkdtempSync(join(tmpdir(), 'staging-gcloud-policy-'));
     try {
+      mkdirSync(join(repo, '.git'), { recursive: true });
+      mkdirSync(join(repo, 'node_modules', 'pkg'), { recursive: true });
       mkdirSync(join(repo, 'scratch'), { recursive: true });
       mkdirSync(join(repo, 'src'), { recursive: true });
+      writeFileSync(join(repo, '.git', 'ignored.md'), 'gcloud run deploy arkova-worker-staging');
+      writeFileSync(join(repo, 'node_modules', 'pkg', 'ignored.md'), 'gcloud run deploy arkova-worker-staging');
       writeFileSync(join(repo, 'scratch', 'manual.txt'), 'gcloud run deploy arkova-worker-staging');
       writeFileSync(join(repo, 'src', 'workflow.yaml'), 'name: staging');
       writeFileSync(join(repo, 'src', 'ignored.ts'), 'gcloud run deploy arkova-worker-staging');
-      execFileSync('git', ['-C', repo, 'init', '-q']);
-      execFileSync('git', ['-C', repo, 'add', '.']);
 
       expect(collectFiles(repo)).toEqual(['scratch/manual.txt', 'src/workflow.yaml']);
     } finally {

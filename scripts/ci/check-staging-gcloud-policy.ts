@@ -7,7 +7,6 @@
  * and staging_deploy_log audit rows.
  */
 
-import { execFileSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -17,7 +16,16 @@ const MAX_COMMAND_LINES = 25;
 const CHECKED_EXTENSIONS = new Set(['.md', '.mdx', '.rst', '.sh', '.txt', '.yml', '.yaml']);
 const DOCS_EXTENSIONS = new Set(['.md', '.mdx', '.rst', '.txt']);
 const DEPLOY_WRAPPER = 'scripts/staging/deploy.sh';
-const FALLBACK_IGNORED_DIRS = new Set(['.git', 'node_modules']);
+const IGNORED_DIRS = new Set([
+  '.git',
+  '.next',
+  '.turbo',
+  '.vercel',
+  'build',
+  'coverage',
+  'dist',
+  'node_modules',
+]);
 
 export interface Violation {
   file: string;
@@ -39,19 +47,6 @@ function isDocsFile(path: string): boolean {
 }
 
 export function collectFiles(repo: string): string[] {
-  try {
-    return execFileSync('git', ['-C', repo, 'ls-files'], { encoding: 'utf8' })
-      .split('\n')
-      .filter(Boolean)
-      .map(normalizeRelPath)
-      .filter(hasCheckedExtension)
-      .sort((left, right) => left.localeCompare(right));
-  } catch {
-    return collectFilesFromDisk(repo);
-  }
-}
-
-function collectFilesFromDisk(repo: string): string[] {
   const files: string[] = [];
 
   function walk(absDir: string): void {
@@ -60,7 +55,7 @@ function collectFilesFromDisk(repo: string): string[] {
     for (const entry of readdirSync(absDir, { withFileTypes: true })) {
       const absPath = join(absDir, entry.name);
       if (entry.isDirectory()) {
-        if (FALLBACK_IGNORED_DIRS.has(entry.name)) continue;
+        if (IGNORED_DIRS.has(entry.name)) continue;
         walk(absPath);
         continue;
       }
