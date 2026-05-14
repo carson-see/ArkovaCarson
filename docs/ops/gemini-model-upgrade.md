@@ -72,9 +72,11 @@ npx vitest run src/ai/gemini-config.test.ts
 ### 4. Deploy to Staging
 
 ```bash
-# Update Cloud Run env var (staging)
-gcloud run services update arkova-worker-staging \
-  --set-env-vars GEMINI_MODEL=gemini-3-flash-001
+# Staging deploys must go through the lease-enforced wrapper.
+./scripts/staging/claim.sh acquire <pr-number> "SCRUM-1821: gemini model staging validation"
+./scripts/staging/deploy.sh \
+  --pr <pr-number> \
+  --image us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker:<image-tag>
 
 # Monitor for 24 hours:
 # - Error rates in Sentry

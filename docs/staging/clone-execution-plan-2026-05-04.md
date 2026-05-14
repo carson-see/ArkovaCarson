@@ -504,6 +504,7 @@ SELECT id, raw_user_meta_data FROM auth.users WHERE raw_user_meta_data::text ~ '
 ### 10.1 Roll worker revision
 
 ```bash
+# staging-gcloud-ok: historical pre-SCRUM-1803 clone execution transcript.
 gcloud run services update arkova-worker-staging \
   --region=us-central1 \
   --update-env-vars=NODE_ENV=production

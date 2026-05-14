@@ -37,7 +37,9 @@ REASON="${3:-}"
 : "${STAGING_SUPABASE_URL:?STAGING_SUPABASE_URL is required}"
 : "${STAGING_SUPABASE_SERVICE_ROLE_KEY:?STAGING_SUPABASE_SERVICE_ROLE_KEY is required}"
 
-PG_REST="${STAGING_SUPABASE_URL}/rest/v1/staging_lease"
+PG_REST_BASE="${STAGING_SUPABASE_URL}/rest/v1"
+PG_REST="${PG_REST_BASE}/staging_lease"
+TAG_URL_HOST="${STAGING_CLOUD_RUN_HOST:-arkova-worker-staging-270018525501.us-central1.run.app}"
 AUTH=( -H "apikey: ${STAGING_SUPABASE_SERVICE_ROLE_KEY}"
        -H "Authorization: Bearer ${STAGING_SUPABASE_SERVICE_ROLE_KEY}" )
 
@@ -54,6 +56,25 @@ post_slack() {
       -d "{\"text\":\"${msg}\"}" "${SLACK_WEBHOOK_URL}" >/dev/null || true
   fi
   echo "${msg}"
+}
+
+print_status() {
+  local leases="$1" logs="$2"
+  jq -s --arg host "$TAG_URL_HOST" '
+    (.[0] // []) as $leases
+    | (.[1] // []) as $logs
+    | $leases
+    | map(
+        . as $lease
+        | ($logs | map(select(.pr_number == $lease.pr_number)) | first) as $log
+        | ($log.tag // ("pr-" + ($lease.pr_number | tostring))) as $tag
+        | . + {
+            tag_url: ("https://" + $tag + "---" + $host),
+            latest_staging_deploy_log_id: ($log.id // null),
+            latest_staging_deploy_at: ($log.deployed_at // null)
+          }
+      )
+  ' <(printf '%s\n' "$leases") <(printf '%s\n' "$logs")
 }
 
 # Best-effort cleanup of leases older than 72h. Idempotent; not fatal if it fails.
@@ -121,10 +142,14 @@ case "${ACTION}" in
     # from the original command line ourselves so `status --pr N` and
     # `status` both work without confusing the acquire/release cases.
     if [ "${PR_NUM}" = "--pr" ] && [ -n "${REASON}" ]; then
-      curl -sS "${AUTH[@]}" "${PG_REST}?pr_number=eq.${REASON}&select=*" | jq .
+      LEASES=$(curl -sS "${AUTH[@]}" "${PG_REST}?pr_number=eq.${REASON}&select=*")
+      LOGS=$(curl -sS "${AUTH[@]}" "${PG_REST_BASE}/staging_deploy_log?pr_number=eq.${REASON}&select=pr_number,id,tag,deployed_at&order=deployed_at.desc&limit=1")
+      print_status "$LEASES" "$LOGS"
     elif [ -z "${PR_NUM}" ]; then
       # Default: all current leases, newest first.
-      curl -sS "${AUTH[@]}" "${PG_REST}?select=*&order=acquired_at.desc" | jq .
+      LEASES=$(curl -sS "${AUTH[@]}" "${PG_REST}?select=*&order=acquired_at.desc")
+      LOGS=$(curl -sS "${AUTH[@]}" "${PG_REST_BASE}/staging_deploy_log?select=pr_number,id,tag,deployed_at&order=deployed_at.desc")
+      print_status "$LEASES" "$LOGS"
     else
       echo "Usage: $0 status [--pr <pr-number>]" >&2
       exit 2

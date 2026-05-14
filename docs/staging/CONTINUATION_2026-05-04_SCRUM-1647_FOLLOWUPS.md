@@ -99,6 +99,7 @@ YOUR JOB IN THIS SESSION (in order, no deferring)
    * Ask Carson to run `gcloud auth login` interactively in the shell
      this session uses, then `gcloud config set project arkova1`, then
      confirm via `gcloud run services list --region us-central1`.
+   * Historical note only — staging-gcloud-ok: pre-SCRUM-1803 provisioning transcript, do not use for current deploys.
    * Once auth works, `gcloud run deploy arkova-worker-staging
      --source=services/worker --region=us-central1 --no-traffic
      --min-instances=0 --service-account=<TBD> --set-env-vars

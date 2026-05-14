@@ -9,7 +9,9 @@ Tooling for the standing `arkova-staging` Supabase rig + `arkova-worker-staging`
 | `seed.ts` | Synthesize prod-shape data on the staging rig. Tier flag (`--smoke` / `--standard` / `--full`) controls volume. Goes through the `staging_seed_auth_users` RPC (staging-only) so profiles satisfy the `auth.users` FK. Synthetic data only — never copies real customer rows. |
 | `load-harness.ts` | Drive sustained synthetic load against the worker. Modes: `anchor`, `burst`, `oscillate`, `webhooks`, `events`, `cron`, `reads`, `mixed` (default). Mixed runs all four pressure types concurrently. Set `STAGING_API_BASE` to the per-PR tag URL printed by `deploy.sh` so parallel soaks don't contaminate each other (SCRUM-1803). |
 | `claim.sh` | Per-PR lease (multi-tenant after SCRUM-1803). Acquire / release / status the staging-rig lease. Posts to `#eng-staging` if `SLACK_WEBHOOK_URL` is set. |
-| `deploy.sh` | **Lease-enforced, tag-routed worker deploys (SCRUM-1803).** Refuses to deploy without a `staging_lease` row for the PR (override with `--force "<reason>"`). Each deploy gets `--tag pr-N --no-traffic`, reachable at `https://pr-N---arkova-worker-staging-...run.app`. Writes an audit row to `staging_deploy_log`. Replaces ad-hoc `gcloud run services update` calls. |
+| `deploy.sh` | **Lease-enforced, tag-routed worker deploys (SCRUM-1803/SCRUM-1821).** Refuses to deploy without a `staging_lease` row for the PR (override with a structured `--force "<Jira>: <reason>"`). Checks image existence, blocks recent other-PR revisions, gates `--promote` behind the per-day Secret Manager token, deploys with `--tag pr-N --no-traffic`, and writes an audit row to `staging_deploy_log`. Replaces ad-hoc Cloud Run update calls. |
+| `cleanup-orphan-tags.sh` | Orphan tag janitor for `pr-*` Cloud Run traffic tags. Uses `gh api` to keep open PRs and removes tags for closed/merged PRs older than 7 days. Dry-run by default; live removal requires `--apply` for Cloud Scheduler / maintenance job use. |
+| `rotate-deploy-iam.sh` | SCRUM-1821 item 8 deploy-only IAM rotation. Dry-run by default; live apply requires `--apply --confirm SCRUM-1821`. Creates/uses `arkova-staging-deployer`, grants conditioned `roles/run.developer` for `arkova-worker-staging`, grants `roles/iam.serviceAccountUser` on the runtime SA, and revokes `roles/run.developer` from the default compute SA. Includes `--rollback`. |
 | `migrations/staging_only_deploy_log_and_lease_pk.sql` | **Staging-only schema migration (SCRUM-1803).** Adds PRIMARY KEY to `staging_lease` (one row per PR), creates append-only `staging_deploy_log` audit table, ships `record_staging_deploy` SECURITY DEFINER RPC. Apply via Supabase MCP `apply_migration` to `ujtlwnoqfhtitcmsnrpq` only. Never to prod. |
 | `teardown-and-reset.sh` | Lease-aware truncate + migration sync + reseed. Run between PRs. Note: superseded by `seed.ts --reset` (which uses the new `staging_purge_synthetic_data` RPC); keep this script around only for the migration-sync step. |
 
@@ -31,6 +33,9 @@ Tooling for the standing `arkova-staging` Supabase rig + `arkova-worker-staging`
   staging; keep the override visible in the PR evidence block so reviewers know
   which paths were exercised.
 - `SLACK_WEBHOOK_URL` — `claim.sh` lease notifications.
+- `STAGING_PROMOTE_TOKEN` — required only for `deploy.sh --promote`; value must match the current per-day Secret Manager token (`STAGING_PROMOTE_SECRET`, default `staging-promote-token`).
+- `STAGING_CLOUD_RUN_HOST` — optional host override used by `claim.sh status` when rendering tag URLs. Default `arkova-worker-staging-270018525501.us-central1.run.app`.
+- `STAGING_GCP_PROJECT`, `STAGING_CLOUD_RUN_REGION`, `STAGING_CLOUD_RUN_SERVICE`, `STAGING_DEPLOY_SA_ID`, `STAGING_COMPUTE_SA_EMAIL`, `STAGING_RUNTIME_SA_EMAIL` — IAM rotation overrides for `rotate-deploy-iam.sh`.
 - `SAMPLE_FROM_PROD=1` + `PROD_SUPABASE_URL` + `PROD_SUPABASE_SERVICE_ROLE_KEY` — read-only sample of prod's status distribution for sizing. (Currently unused by the rewritten seed; the tier flags supersede this.)
 
 ## Seed tier matrix
@@ -92,10 +97,18 @@ npm run staging:load -- --mode mixed --duration 720 \
 
 # When done
 ./scripts/staging/claim.sh release <pr-number>
+
+# Weekly/Cloud Scheduler hygiene
+./scripts/staging/cleanup-orphan-tags.sh
+./scripts/staging/cleanup-orphan-tags.sh --apply
+
+# SCRUM-1821 item 8: review IAM rotation, then apply only with an operator-approved change window
+npm run staging:rotate-iam
+npm run staging:rotate-iam -- --apply --confirm SCRUM-1821
 ```
 
 ## What this folder does NOT do
 
 - Create the Supabase project itself (`mcp__supabase__create_project` — operator-run, billed).
-- Deploy the staging worker (`gcloud run deploy arkova-worker-staging` — see [STAGING_RIG.md](../../docs/reference/STAGING_RIG.md)).
+- Provision the staging Cloud Run service from scratch; current worker deploys go through `scripts/staging/deploy.sh` (see [STAGING_RIG.md](../../docs/reference/STAGING_RIG.md)).
 - Run the soak unattended (the engineer / agent who owns the PR drives it).
