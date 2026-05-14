@@ -18,13 +18,13 @@
 
 **SSD role:** `/Volumes/Extreme/Arkova` is backup/worktree storage, not the authoritative day-to-day checkout. The old SSD checkout at `/Volumes/Extreme/Arkova/arkova-mvpcopy-main` is now treated as quarantined evidence, not a working `main`.
 
-**Clean SSD `main` worktree created:** `/Volumes/Extreme/Arkova/worktrees/main-clean` is on `main` at `dd8009e1e0298fff5b3e4117dcdc912786209787`, tracking `origin/main`, `+0/-0`, and clean. GitHub `main`, local `origin/main`, and local `main` were verified to all point at `dd8009e1` before the worktree was created.
+**Clean SSD `main` worktree created:** `/Volumes/Extreme/Arkova/worktrees/main-clean` was created from then-current `main` at `dd8009e1e0298fff5b3e4117dcdc912786209787`. GitHub `main`, local `origin/main`, and local `main` were verified to all point at `dd8009e1` before the worktree was created. This HANDOFF update is a docs-only direct `main` update, so newer sessions should expect `main` to include one or more `docs: record SSD checkout reconciliation` commits after `dd8009e1`.
 
 **Do not reset/delete the old checkout yet.** `/Volumes/Extreme/Arkova/arkova-mvpcopy-main` remains on `fix/p0-dashboard-truth-2026-05-12` at `632fab0e`, `+11/-29`, with six dirty P0 dashboard files plus untracked `output/playwright/p0-dashboard-truth/` evidence artifacts. Inventory found the 11 local-ahead commits are patch-equivalent to upstream/main, and the six dirty tracked files are byte-for-byte present in upstream/main, but the local evidence artifacts still need an explicit archive/destination decision before cleanup.
 
 **PR #774 behavior is protected, not obsolete.** Preserve the dashboard truth contract: only confirmed `SECURED` records count as anchored; `SUBMITTED` stays distinct as in-mempool/submitted; worker/cache failures remain visible; missing stats are not coerced to zero; unavailable treasury stats stay unknown; public verify keeps `SUBMITTED` distinct; package pinning and npm install policy hardening remain protected.
 
-**Protected worktrees were not disturbed:** `/Volumes/Extreme/Arkova/worktrees/scrum-1649-docusign-action-modes` remains on `codex/scrum-1649-docusign-action-modes` at `ba2ec3b8`, `+0/-0` with upstream, with only pre-existing untracked `node_modules` directories observed.
+**Protected worktrees were not intentionally touched by the reconciliation.** `/Volumes/Extreme/Arkova/worktrees/scrum-1649-docusign-action-modes` was initially observed at `ba2ec3b8`, then later read-only verification showed it at `5b4009bd`, `+0/-0` with `origin/codex/scrum-1649-docusign-action-modes`; reflog entries show DocuSign commits at 2026-05-14 12:32 and 12:35. Treat that worktree as protected; do not clean its pre-existing untracked `node_modules` directories without explicit approval.
 
 _Last refreshed: 2026-05-14 by Codex — claims verified against local read-only `git status`, `git worktree list`, `git ls-remote origin refs/heads/main`, `git cherry -v`, and path-limited `git diff` output. No PR was opened; this is a direct internal documentation update only._
 
