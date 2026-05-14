@@ -18,21 +18,23 @@ FAIL=0
 TMP_DIR=""
 
 cleanup() {
-  if [ -n "${TMP_DIR}" ] && [ -d "${TMP_DIR}" ]; then
+  if [[ -n "${TMP_DIR}" && -d "${TMP_DIR}" ]]; then
     rm -rf "${TMP_DIR}"
   fi
+  return 0
 }
 trap cleanup EXIT
 
 assert_exit() {
   local label="$1" expected="$2" actual="$3"
-  if [ "$actual" = "$expected" ]; then
+  if [[ "$actual" == "$expected" ]]; then
     echo "  PASS  $label  exit=$actual"
     PASS=$((PASS + 1))
   else
     echo "  FAIL  $label  exit=$actual  (expected $expected)"
     FAIL=$((FAIL + 1))
   fi
+  return 0
 }
 
 assert_match() {
@@ -45,6 +47,7 @@ assert_match() {
     echo "        output: $output"
     FAIL=$((FAIL + 1))
   fi
+  return 0
 }
 
 echo "─── arg validation ─────────────────────────────────────────"
@@ -109,7 +112,7 @@ out=$(STAGING_CLOUD_RUN_SERVICE=arkova-worker-staging \
 # This will fail the lease check (HTTP error from invalid host). Expect
 # either exit=1 (lease lookup failed → no lease found → exit 1) or any
 # non-zero exit before reaching gcloud.
-if [ "$rc" -ne 0 ]; then
+if [[ "$rc" -ne 0 ]]; then
   echo "  PASS  staging service name accepted past guard (lease check then errors as expected, rc=$rc)"
   PASS=$((PASS + 1))
 else
@@ -120,14 +123,14 @@ fi
 echo ""
 echo "─── lease check (live staging Supabase, requires creds) ────"
 
-if [ -n "${SKIP_LIVE_TESTS:-}" ]; then
+if [[ -n "${SKIP_LIVE_TESTS:-}" ]]; then
   echo "  SKIP  live lease-check tests (SKIP_LIVE_TESTS set)"
 elif ! command -v gcloud >/dev/null 2>&1; then
   echo "  SKIP  no gcloud installed"
 else
   STAGING_URL=$(gcloud secrets versions access latest --secret=supabase-url-staging --project=arkova1 2>/dev/null || true)
   STAGING_KEY=$(gcloud secrets versions access latest --secret=supabase-service-role-key-staging --project=arkova1 2>/dev/null || true)
-  if [ -z "$STAGING_URL" ] || [ -z "$STAGING_KEY" ]; then
+  if [[ -z "$STAGING_URL" || -z "$STAGING_KEY" ]]; then
     echo "  SKIP  staging secrets not readable (run gcloud auth)"
   else
     # PR 99999 has no lease — must exit 1 with the lease error.
@@ -177,7 +180,7 @@ if [[ "$args" == *"artifacts docker images describe"* ]]; then
 fi
 
 if [[ "$args" == *"run revisions list"* ]]; then
-  if [ "${STAGING_FAKE_COLLISION:-0}" = "1" ]; then
+  if [[ "${STAGING_FAKE_COLLISION:-0}" == "1" ]]; then
     printf '[{"metadata":{"name":"arkova-worker-staging-00077-other","creationTimestamp":"2026-05-14T12:00:00Z","labels":{"pr":"743"}}}]\n'
   else
     printf '[]\n'
@@ -223,5 +226,5 @@ echo "─── summary ──────────────────�
 echo "  pass: $PASS"
 echo "  fail: $FAIL"
 
-[ "$FAIL" -eq 0 ] || exit 1
+[[ "$FAIL" -eq 0 ]] || exit 1
 exit 0

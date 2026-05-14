@@ -19,7 +19,7 @@ usage() {
   echo "Usage: $0 [--dry-run|--apply] [--older-than-days N] [--repo owner/name]"
 }
 
-while [ $# -gt 0 ]; do
+while [[ $# -gt 0 ]]; do
   case "$1" in
     --dry-run) DRY_RUN=1; shift ;;
     --apply) DRY_RUN=0; shift ;;
@@ -40,6 +40,7 @@ esac
 
 case "$OLDER_THAN_DAYS" in
   *[!0-9]*|"") echo "ERROR: --older-than-days must be numeric" >&2; exit 2 ;;
+  *) ;;
 esac
 
 NOW_EPOCH="${STAGING_JANITOR_NOW_EPOCH:-$(date -u +%s)}"
@@ -72,28 +73,28 @@ tags=$(jq -r '
   | [.tag, (.revisionName // "")] | @tsv
 ' <<<"$traffic_json")
 
-if [ -z "$tags" ]; then
+if [[ -z "$tags" ]]; then
   info "No pr-* traffic tags found on $SERVICE."
   exit 0
 fi
 
 removed=0
 while IFS=$'\t' read -r tag revision; do
-  [ -n "$tag" ] || continue
+  [[ -n "$tag" ]] || continue
   pr="${tag#pr-}"
   closed_epoch=$(closed_epoch_for_pr "$pr" || true)
-  if [ -z "$closed_epoch" ]; then
+  if [[ -z "$closed_epoch" ]]; then
     info "keeping $tag; PR #$pr is open or close time is unavailable."
     continue
   fi
 
   age=$((NOW_EPOCH - closed_epoch))
-  if [ "$age" -lt "$THRESHOLD_SECONDS" ]; then
+  if [[ "$age" -lt "$THRESHOLD_SECONDS" ]]; then
     info "keeping $tag; PR #$pr closed less than ${OLDER_THAN_DAYS}d ago."
     continue
   fi
 
-  if [ $DRY_RUN -eq 1 ]; then
+  if [[ $DRY_RUN -eq 1 ]]; then
     echo "would remove tag $tag (PR #$pr closed $((age / 86400))d ago; revision $revision)"
   else
     gcloud run services update-traffic "$SERVICE" \

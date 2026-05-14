@@ -9,21 +9,23 @@ FAIL=0
 TMP_DIR=""
 
 cleanup() {
-  if [ -n "${TMP_DIR}" ] && [ -d "${TMP_DIR}" ]; then
+  if [[ -n "${TMP_DIR}" && -d "${TMP_DIR}" ]]; then
     rm -rf "${TMP_DIR}"
   fi
+  return 0
 }
 trap cleanup EXIT
 
 assert_exit() {
   local label="$1" expected="$2" actual="$3"
-  if [ "$actual" = "$expected" ]; then
+  if [[ "$actual" == "$expected" ]]; then
     echo "  PASS  $label  exit=$actual"
     PASS=$((PASS + 1))
   else
     echo "  FAIL  $label  exit=$actual  (expected $expected)"
     FAIL=$((FAIL + 1))
   fi
+  return 0
 }
 
 assert_match() {
@@ -36,6 +38,7 @@ assert_match() {
     echo "        output: $output"
     FAIL=$((FAIL + 1))
   fi
+  return 0
 }
 
 assert_no_match() {
@@ -48,6 +51,7 @@ assert_no_match() {
     echo "  PASS  $label  no match /$pattern/"
     PASS=$((PASS + 1))
   fi
+  return 0
 }
 
 echo "─── orphan tag janitor ─────────────────────────────────────"
@@ -105,5 +109,5 @@ echo "─── summary ──────────────────�
 echo "  pass: $PASS"
 echo "  fail: $FAIL"
 
-[ "$FAIL" -eq 0 ] || exit 1
+[[ "$FAIL" -eq 0 ]] || exit 1
 exit 0

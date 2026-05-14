@@ -51,7 +51,7 @@ stale_cutoff() {
 
 post_slack() {
   local msg="$1"
-  if [ -n "${SLACK_WEBHOOK_URL:-}" ]; then
+  if [[ -n "${SLACK_WEBHOOK_URL:-}" ]]; then
     curl -sS -X POST -H "Content-Type: application/json" \
       -d "{\"text\":\"${msg}\"}" "${SLACK_WEBHOOK_URL}" >/dev/null || true
   fi
@@ -87,7 +87,7 @@ evict_stale() {
 
 case "${ACTION}" in
   acquire)
-    if [ -z "${PR_NUM}" ] || [ -z "${REASON}" ]; then
+    if [[ -z "${PR_NUM}" || -z "${REASON}" ]]; then
       echo "Usage: $0 acquire <pr-number> \"<short reason>\"" >&2
       exit 2
     fi
@@ -96,7 +96,7 @@ case "${ACTION}" in
     # Reject if THIS PR already holds a lease.
     EXISTING=$(curl -sS "${AUTH[@]}" \
       "${PG_REST}?pr_number=eq.${PR_NUM}&select=pr_number,reason,acquired_at,acquired_by")
-    if [ "${EXISTING}" != "[]" ] && [ -n "${EXISTING}" ]; then
+    if [[ "${EXISTING}" != "[]" && -n "${EXISTING}" ]]; then
       echo "::error::PR #${PR_NUM} already holds a staging lease:" >&2
       echo "${EXISTING}" | jq . >&2 || echo "${EXISTING}" >&2
       echo "Run \`$0 release ${PR_NUM}\` first if this is stale." >&2
@@ -105,7 +105,7 @@ case "${ACTION}" in
 
     # Soft-warn if other PRs hold leases — informational, not blocking.
     OTHERS=$(curl -sS "${AUTH[@]}" "${PG_REST}?select=pr_number,acquired_by,reason")
-    if [ "${OTHERS}" != "[]" ] && [ -n "${OTHERS}" ]; then
+    if [[ "${OTHERS}" != "[]" && -n "${OTHERS}" ]]; then
       echo "::notice::Other PRs currently soaking on the staging rig:" >&2
       echo "${OTHERS}" | jq -r '.[] | "  PR #\(.pr_number) — \(.acquired_by): \(.reason)"' >&2 \
         || echo "${OTHERS}" >&2
@@ -126,7 +126,7 @@ case "${ACTION}" in
     ;;
 
   release)
-    if [ -z "${PR_NUM}" ]; then
+    if [[ -z "${PR_NUM}" ]]; then
       echo "Usage: $0 release <pr-number>" >&2
       exit 2
     fi
@@ -141,11 +141,11 @@ case "${ACTION}" in
     # PR_NUM. For `status` we ignore PR_NUM and parse the optional --pr flag
     # from the original command line ourselves so `status --pr N` and
     # `status` both work without confusing the acquire/release cases.
-    if [ "${PR_NUM}" = "--pr" ] && [ -n "${REASON}" ]; then
+    if [[ "${PR_NUM}" == "--pr" && -n "${REASON}" ]]; then
       LEASES=$(curl -sS "${AUTH[@]}" "${PG_REST}?pr_number=eq.${REASON}&select=*")
       LOGS=$(curl -sS "${AUTH[@]}" "${PG_REST_BASE}/staging_deploy_log?pr_number=eq.${REASON}&select=pr_number,id,tag,deployed_at&order=deployed_at.desc&limit=1")
       print_status "$LEASES" "$LOGS"
-    elif [ -z "${PR_NUM}" ]; then
+    elif [[ -z "${PR_NUM}" ]]; then
       # Default: all current leases, newest first.
       LEASES=$(curl -sS "${AUTH[@]}" "${PG_REST}?select=*&order=acquired_at.desc")
       LOGS=$(curl -sS "${AUTH[@]}" "${PG_REST_BASE}/staging_deploy_log?select=pr_number,id,tag,deployed_at&order=deployed_at.desc")

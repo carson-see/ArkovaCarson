@@ -26,7 +26,7 @@ usage() {
   echo "Usage: $0 [--apply --confirm SCRUM-1821] [--rollback] [--project arkova1] [--region us-central1] [--service arkova-worker-staging]"
 }
 
-while [ $# -gt 0 ]; do
+while [[ $# -gt 0 ]]; do
   case "$1" in
     --apply) APPLY=1; shift ;;
     --rollback) ROLLBACK=1; shift ;;
@@ -42,13 +42,13 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-if [ -n "$DEPLOY_SA_EMAIL_OVERRIDE" ]; then
+if [[ -n "$DEPLOY_SA_EMAIL_OVERRIDE" ]]; then
   DEPLOY_SA="$DEPLOY_SA_EMAIL_OVERRIDE"
 else
   DEPLOY_SA="${DEPLOY_SA_ID}@${PROJECT}.iam.gserviceaccount.com"
 fi
 
-if [ $APPLY -eq 1 ] && [ "$CONFIRM" != "SCRUM-1821" ]; then
+if [[ $APPLY -eq 1 && "$CONFIRM" != "SCRUM-1821" ]]; then
   echo "ERROR: live IAM changes require --confirm SCRUM-1821" >&2
   exit 2
 fi
@@ -68,20 +68,20 @@ print_cmd() {
 
 run_cmd() {
   print_cmd "$@"
-  if [ $APPLY -eq 1 ]; then
+  if [[ $APPLY -eq 1 ]]; then
     echo "executing: $*" >&2
     "$@"
   fi
 }
 
 ensure_deploy_sa() {
-  if [ -n "$DEPLOY_SA_EMAIL_OVERRIDE" ]; then
+  if [[ -n "$DEPLOY_SA_EMAIL_OVERRIDE" ]]; then
     echo "Custom deploy SA email supplied; assuming service account already exists."
     return
   fi
 
   print_cmd gcloud iam service-accounts describe "$DEPLOY_SA" --project="$PROJECT"
-  if [ $APPLY -eq 1 ] && gcloud iam service-accounts describe "$DEPLOY_SA" --project="$PROJECT" >/dev/null 2>&1; then
+  if [[ $APPLY -eq 1 ]] && gcloud iam service-accounts describe "$DEPLOY_SA" --project="$PROJECT" >/dev/null 2>&1; then
     echo "Deploy SA already exists; skipping create."
     return
   fi
@@ -91,6 +91,16 @@ ensure_deploy_sa() {
     --display-name="Arkova staging deploy-only service account"
 }
 
+MODE_LABEL="dry-run"
+if [[ $APPLY -eq 1 ]]; then
+  MODE_LABEL="apply"
+fi
+
+DIRECTION_LABEL="rotate"
+if [[ $ROLLBACK -eq 1 ]]; then
+  DIRECTION_LABEL="rollback"
+fi
+
 echo "SCRUM-1821 staging deploy IAM rotation"
 echo "project:       $PROJECT"
 echo "region:        $REGION"
@@ -99,11 +109,11 @@ echo "deploy SA:     $DEPLOY_SA"
 echo "compute SA:    $COMPUTE_SA"
 echo "runtime SA:    $RUNTIME_SA"
 echo "run condition: $RUN_CONDITION_EXPR"
-echo "mode:          $([ $APPLY -eq 1 ] && echo apply || echo dry-run)"
-echo "direction:     $([ $ROLLBACK -eq 1 ] && echo rollback || echo rotate)"
+echo "mode:          $MODE_LABEL"
+echo "direction:     $DIRECTION_LABEL"
 echo
 
-if [ $ROLLBACK -eq 1 ]; then
+if [[ $ROLLBACK -eq 1 ]]; then
   echo "Rollback plan: restore run.developer to compute SA and remove deploy-only SA deploy roles."
   run_cmd gcloud projects add-iam-policy-binding "$PROJECT" \
     --member="serviceAccount:${COMPUTE_SA}" \
