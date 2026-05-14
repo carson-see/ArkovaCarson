@@ -14,133 +14,21 @@
 
 ## Now
 
-### 2026-05-16 — SCRUM-1966 prod hotfix MERGED (PR #805)
+### 2026-05-14 — SCRUM-1658 PR #783 DocuSign staging soak in progress
 
-**PR #805 merged** to `main` at 2026-05-16 (merge commit `19d50084`). Three production hotfixes: (1) RLS statement timeout on bulk upload — consolidated 3 anchors SELECT policies into 1 with scalar subquery wrappers, same for attestations; query time dropped from timeout to 0.134ms. (2) Treasury x402-stats 502 — `parseX402StatsPayload` null handling fix. (3) Missing org_credits for Arkova org — seeded Free-tier allocation. Migrations 0307+0308. T2 12h soak: 115K requests, zero 500s. Jira: SCRUM-1966 → Done. Confluence: [page 53411876](https://arkova.atlassian.net/wiki/spaces/A/pages/53411876). Bug tracker: BUG-RLS-TIMEOUT (P1), BUG-TREASURY-502 (P2), BUG-ORG-CREDITS-MISSING (P3).
+**Draft PR #783 is still open/draft at `5b4009bd9eebd8e80d8c2991c39066bc9212897c`; do not merge.** Staging tag URL is `https://pr-783---arkova-worker-staging-kvojbeutfa-uc.a.run.app` on worker revision `arkova-worker-staging-00087-kim`, image digest `sha256:4abeaa07211b31e9fc0d4d92e0046e7d09b036c28c0a10cfd8b05af78323d356`, deploy log id `36`, Supabase ref `ujtlwnoqfhtitcmsnrpq`. Flags on the revision: `ENABLE_DOCUSIGN_WEBHOOK=true`, `ENABLE_ORG_CREDIT_ENFORCEMENT=true`, `ENABLE_RULES_ENGINE=true`, `ENABLE_RULE_ACTION_DISPATCHER=true`, `USE_MOCKS=true`, `ENABLE_PROD_NETWORK_ANCHORING=false`, `BATCH_ANCHOR_MAX_SIZE=100`.
 
-_Last refreshed: 2026-05-16 by Carson — claims verified against `gh api pulls/805/merge`, merge commit `19d50084`, Jira MCP transition._
+**Runtime evidence captured before the 48h soak:** signed DocuSign fixtures all returned 202 at 2026-05-14T16:56Z; `/jobs/rules-engine` processed 5/5; `/jobs/rule-action-dispatcher` dispatched 5/5. Fixture envelope suffix: `20260514T165600Z`. Paid fast-track (`scrum1658-pr783-paid-env-20260514T165600Z`) created pending `ARK-DOC-DRA78T`, routed `anchor_pipeline`, fast-track job payload includes `anchor_public_id`, org credits 2 -> 1. Credit-denied (`scrum1658-pr783-denied-env-20260514T165600Z`) created pending `ARK-DOC-DDP722`, `credit_denial_reason=insufficient_credits`, zero fast-track jobs, `chain_tx_id=null`, credits stayed 0. Queue direct (`scrum1658-pr783-queue-env-20260514T165600Z`) created pending `ARK-DOC-KQTNN6`, routed `anchor_queue`, no credit movement (5 -> 5). Manual admin queue run for org `00001658-0783-4000-8000-000000000104` returned 200 at 2026-05-14T16:58:21Z, processed 1, queue run `6acba5f6-c815-42a3-b663-5f7f5fcf3188`, credits 1 -> 0, anchor `ARK-DOC-CVCKVV` is `SUBMITTED` with mock tx `mock_receipt_1778777901685_dkae7x`; per PR #774 rules this is submitted, not anchored/secured.
 
-### 2026-05-16 — SCRUM-1651 ORG-12 cross-tenant test matrix MERGED (PR #790)
+**T3 soak is started but incomplete.** Soak window starts 2026-05-14T17:00Z and must run 48h, covering at least the 2026-05-15 and 2026-05-16 03:00 America/New_York scheduler cycles. Daily scheduler config observed: `daily-anchor-flush`, `0 3 * * *`, timezone `America/New_York`, target `/jobs/batch-anchors?force=true`. An active thread heartbeat is set for 03:05 Eastern to run the isolated org-scoped scheduled fixture (`org_id=00001658-0783-4000-8000-000000000105`) on the PR #783 tag only, without touching PR #753/#781/Nessie/#774/SCRUM-908/SCRUM-1803/package/deploy protected areas. Scheduled fixture currently pending: `scrum1658-pr783-scheduled-env-20260514T165600Z`, anchor `ARK-DOC-TMD3CH`, credits 2.
 
-**PR #790 merged** to `main` at 2026-05-16. 59 tests covering `resolveActiveOrg` pure resolver: URL attacks, session-poisoning, profile-drift, combined attacks, dual-membership parent↔sub-org isolation, operation-scoped invariant, and empty-string JS truthiness edge cases. Also fixed `.sonarcloud.properties` CPD exclusion for test files (was overriding `sonar-project.properties` glob). T1 soak (test-only, no production code). Quality gauntlet: /code-review (4 issues), /simplify (dedup+types), /tech-debt, /debug (dead guard+edge cases). Zero `memberships[0]` hits in production code — grep guard effective. Browser UAT blocked by no local Supabase; resolver verified exhaustively via unit tests on pure function. SCRUM-1664 subtask: test matrix deliverable complete; manual two-membership UAT + Confluence LIVE block remain.
+**Rules reminder from main-clean handoff line 16 update:** `/Volumes/Extreme/Arkova` is backup/worktree storage, not authoritative main; do not clean this worktree's pre-existing untracked `node_modules` directories without explicit approval. Keep PR #774 semantics: only `SECURED` is anchored; `SUBMITTED` is distinct and must remain visible; missing/failed stats are not coerced to zero/anchored truth.
 
-_Last refreshed: 2026-05-16 by Claude — claims verified against `gh pr view 790`, `git log`, CI run 25958111080._
+### 2026-05-13 — SCRUM-1649 DocuSign connector action modes in sandbox
 
-### 2026-05-16 — SCRUM-1918 audit event_category CHECK constraint fix MERGED
+**Draft PR #783 / branch `codex/scrum-1649-docusign-action-modes` in worktree `/Volumes/Extreme/Arkova/worktrees/scrum-1649-docusign-action-modes` is packaging the DocuSign connector story under parent epic SCRUM-1048.** Scope so far: DocuSign webhook now carries single-document SHA-256 into sanitized rule-event payloads; rules-engine executions preserve connector metadata while hashing sender email; rule-action dispatcher materializes real org-scoped `anchors.status=PENDING` rows for `AUTO_ANCHOR`, credit-denied `FAST_TRACK_ANCHOR`, and paid `FAST_TRACK_ANCHOR` before job handoff. Anchor metadata stores hashed sender/account identifiers only and omits raw email, raw DocuSign account ID, rule ID, and execution ID.
 
-**PR #794 merged** to `main` at 2026-05-16T08:54:54Z (merge commit `9d1445af`). Five `event_category` string values (`api_key`, `PLATFORM`, `SECURITY`, `COMPLIANCE`, `NOTIFICATION`) silently violated the `audit_events_event_category_valid` CHECK constraint, causing all affected audit inserts to be dropped. Fixed by mapping each to valid categories: `API`, `SYSTEM`, `ADMIN`. 9 files changed (7 production + 2 test), 13 line substitutions. T2 staging soak ran 12.5h at 2.7 req/s with 0 cron errors. Jira: SCRUM-1918 → Done; SCRUM-1917, SCRUM-1920 closed as duplicates.
-
-### 2026-05-16 — Jira housekeeping + git sync
-
-**Jira transitions (all code merged to main):** SCRUM-1821 (In Progress → Done, PRs #785+#787), SCRUM-1842 + subtasks SCRUM-1843/1844 (To Do → Done, PR #782). Already Done: SCRUM-952, SCRUM-1655, SCRUM-1834. SCRUM-1909 left open (PR #792 still in review).
-
-**Git sync:** `origin/main` at `6b2be6dd`, local `main` fast-forwarded to match. PR #792 rebased onto current main to clear CONFLICTING state.
-
-_Last refreshed: 2026-05-16 by Carson — claims verified against Jira MCP, `gh pr list`, `git fetch --all`._
-
-### 2026-05-15 — SCRUM-1909 worker lint cleanup (365→119 warnings)
-
-**Scope:** Reduce `services/worker/` ESLint warnings from 365 to 119 across 4 PRs. No runtime behavior changes except one pre-existing bug fix (event_category CHECK constraint violation in `api/v1/keys.ts`).
-
-**PRs:**
-
-| PR | Branch | Tier | Scope | Status |
-|---|---|---|---|---|
-| [#789](https://github.com/carson-see/ArkovaCarson/pull/789) | `chore/worker-lint-cleanup` | T3 | 34 fixes: `@ts-ignore` removal, `{ cause: err }`, `@ts-expect-error` | **MERGED** 2026-05-16 |
-| [#791](https://github.com/carson-see/ArkovaCarson/pull/791) | `chore/scrum-1909-lint-cleanup-s1` | T3 | 163 suppressions: `missing-org-filter` + `no-explicit-any` + Express type augmentation | T3 soak started 2026-05-15T20:29Z |
-| [#792](https://github.com/carson-see/ArkovaCarson/pull/792) | `fix/tenant-isolation-audit-org-id` | T2 | 12 tenant isolation gaps: `org_id` on audit inserts + PATCH guard + `event_category: 'API'` fix | **MERGED** 2026-05-16 |
-| [#793](https://github.com/carson-see/ArkovaCarson/pull/793) | `chore/scrum-1909-lint-cleanup-s2` | T3 | 48 fixes: test file `as any` → proper types + `chain/base.ts` + `hsmBridge.ts` suppressions | T3 soak started 2026-05-15T20:36Z |
-
-**CI note:** Staging evidence gate checkbox regex bug root-cause fixed in PR [#801](https://github.com/carson-see/ArkovaCarson/pull/801) — `missingFields`, `extractEvidenceFieldValue`, and `TIER_DECLARATION_RE` now accept `- [x]` / `- [ ]` prefixes and no longer bleed across newlines on empty field values.
-
-**Warning trajectory:** 365 (baseline) → 331 (#789) → 119 (#791+#792+#793). Remaining 119 require deeper refactoring tracked as follow-on S3+ batches.
-
-**Soak targets:** #789 T3 ends 2026-05-17T18:40Z, #791 T3 ends 2026-05-17T20:29Z, #792 T2 ends 2026-05-16T08:23Z, #793 T3 ends 2026-05-17T20:36Z.
-
-_Last refreshed: 2026-05-16 by Claude — claims verified against `gcloud run revisions list`, staging health endpoints, `gh pr view/checks`, staging_deploy_log ids, and CI run logs._
-
-### 2026-05-15 — Tech-debt: useActiveOrg memo stability (PR #796)
-
-**PR #796 / branch `claude/tender-johnson-667dd9`** fixes a minor perf issue in `src/hooks/useActiveOrg.ts` flagged by CodeRabbit on PR #689. The hook's outer `useMemo` depended on the `orgs` array reference from `useUserOrgs`, causing `resolveActiveOrg` to re-run on every React Query background refetch even when org IDs hadn't changed. Fix: serialize org IDs into a stable string key, use that as the `useMemo` dependency. Two new `renderHook` tests prove referential stability. T1 evidence: full suite 2059/2059, lint/typecheck/copy-lint clean.
-
-### 2026-05-15 — SCRUM-1655 DocuSign live verification PR lane
-
-**Scope:** SCRUM-1655 remains the live/operator verification subtask for parent SCRUM-1648, not a duplicate implementation story. PR #689 already unit-pinned DS-01 multi-sender behavior; DS-02/DS-03/DS-04 remain represented by existing handler behavior (`findIntegration()` fail-closed lookup, mandatory HMAC, `docusign_webhook_nonces` dedupe).
-
-**Prod state verified this session:** Cloud Run worker is serving revision `arkova-worker-00559-n9t` at 100% latest-revision traffic with `DOCUSIGN_INTEGRATION_KEY`, `DOCUSIGN_CLIENT_SECRET`, `DOCUSIGN_CONNECT_HMAC_SECRET`, `GCP_KMS_INTEGRATION_TOKEN_KEY`, `ENABLE_DOCUSIGN_OAUTH=true`, `ENABLE_DOCUSIGN_WEBHOOK=true`, and `DOCUSIGN_DEMO=true`. `/health` returned 200 with `git_sha=6899f10aba7e233755385edfd2b28112129e41d7`, `network=mainnet`. DocuSign sandbox OAuth completed for the Arkova org on 2026-05-15T14:34Z; `org_integrations` has one active `provider=docusign` row with `base_uri=https://demo.docusign.net` and token encryption key `projects/arkova1/locations/global/keyRings/arkova-signing/cryptoKeys/integration-tokens`. Prod accepted+duplicate smoke passed twice against that connected account: invalid HMAC `401 invalid_signature`, signed known account `202 ok`, replay `200 duplicate`. The SCRUM-1655 sandbox rule (`7c440d28-ba2b-4b30-a834-8f0d4df30ac1`) processed two DocuSign `ESIGN_COMPLETED` events from distinct sender emails (`scrum-1655-prod-sandbox-1@arkova.ai`, `scrum-1655-prod-sandbox-2@arkova.ai`) to `PROCESSED`; dispatcher created two `SUCCEEDED` executions with `output_payload.outcome=queued_for_review` and `routed_to=review_queue`.
-
-**Staging evidence found after re-checking Carson's "2 and 3 were done" note:** Staging Supabase has active DocuSign integrations, enabled `ESIGN_COMPLETED` rules, recent DocuSign nonces/events/jobs, and one org/account with two distinct senders processed in the last 30 days (`PROCESSED`, latest 2026-05-15T07:13:22Z). The DocuSign-enabled staging tag `pr-783` (`arkova-worker-staging-00087-kim`, health `git_sha=5b4009bd9eebd8e80d8c2991c39066bc9212897c`) passed accepted+duplicate smoke on 2026-05-15: invalid HMAC `401 invalid_signature`, signed known account `202 ok`, replay `200 duplicate`. Shared staging 100% traffic is still pinned to older revision `arkova-worker-staging-00043-hk8` without the DocuSign flag, so use the tag URL for protected staging smoke.
-
-**Current PR branch/worktree:** `codex/scrum-1655-docusign-live-verification` in `/Volumes/Extreme/Arkova/worktrees/scrum-1655-docusign-live-verification`. The PR packages durable worker deploy bindings for the DocuSign secrets/flags, a safe `npm --prefix services/worker run smoke:docusign` operator script, path-scoped integration OAuth routing, additive migration `0306_docusign_org_integrations_base_uri.sql`, and updated runbook evidence steps. Prod DDL and the `0306` Supabase migration ledger row are reconciled; local migration-drift parity reports missing=0 and numericDrift=0. Do not touch protected `/Volumes/Extreme/Arkova/worktrees/scrum-1649-docusign-action-modes`; it owns the adjacent SCRUM-1649 action-mode implementation.
-
-### 2026-05-14 — PR #753 (SCRUM-1798/1799/1800) MERGED ✅
-
-**Status:** PR #753 **MERGED** to `main` at 2026-05-14T19:22:11Z (squash commit `1fc43863434aebfe418c69abd30c876f0c8a26b7`). SCRUM-1798, SCRUM-1799, SCRUM-1800 all transitioned to **Done** along with their 9 subtasks (SCRUM-1825..1833). Confluence [SCRUM-1743 page](https://arkova.atlassian.net/wiki/spaces/A/pages/44204033) updated to v5. Staging lease released. Local repo + SSD repo refs synced with origin. Branch `claude/scrum-1798-credential-issued-emit` deleted on origin + locally.
-
-**T3 48h re-soak on the merge SHA `406a5bef` completed clean** (0 worker errors, 461,977 requests, 48h exact, 2026-05-12T18:13:53Z → 2026-05-14T18:13:53Z, all §1.12 coverage gates met). After soak completion, merged main one more time to clear `CONFLICTING` state introduced by 48 commits that landed during the soak window — conflicts were docs-only (HANDOFF.md + STAGING_RIG.md) with no code change. Final merge SHA at merge time: `98154fdd`.
-
-**Soak validation (final):**
-
-* Worker revision: `arkova-worker-staging-00065-say` (image `scrum1798-406a5bef`, digest `sha256:8564baae9e7...`)
-* Soak window: 2026-05-12T18:13:53.530Z to 2026-05-14T18:13:53Z (t+172800s exact)
-* 461,977 requests at 2.7/s sustained; 0 worker ERROR logs over full 48h window
-* `/health` git_sha confirmed `406a5bef267c7818e82fa5662f1ee916cebb4769` from start to end; worker uptime 172,914s -- same Cloud Run instance throughout
-* 2 midnight UTC crossings (2026-05-13, 2026-05-14), both clean
-* All T3 coverage gates met (CLAUDE.md section 1.12) -- see [`docs/staging/scrum-1798-soak-evidence.md`](./docs/staging/scrum-1798-soak-evidence.md) for the full checklist
-* staging_deploy_log id: 15
-
-**Engineering judgment exception (Carson 2026-05-14):** the 48 commits that landed on main *during* the 48h soak include 1 new migration (`0305_pipeline_operational_status_filters.sql`) + `treasury.ts/test` + `anchor-stats.ts/test` + `verify.ts/test` + `admin-pipeline-stats.ts` changes. A strict section 1.12 reading would re-trigger a fresh 48h soak on the new merge SHA. With main moving ~48 commits per 48h window that creates infinite regress for any T3-chain PR. Carson's call (2026-05-14): the 406a5bef soak validates the credential.* emit-point worker code PR #753 ships; the main-side changes since are orthogonal to PR #753's surface (treasury / anchor-stats are read-side; PR #753 is webhook emit-side). Merge with engineering judgment instead of another full T3 cycle.
-
-**Audit-fix history (all closed):**
-
-| # | Severity | Surface | Fix commit |
-|---|---|---|---|
-| A1 | HIGH | `services/worker/src/webhooks/delivery.ts` | `a55b30f9` retry-path idempotency re-fires when `status !== 'success'` |
-| A2 | HIGH | `services/worker/src/webhooks/delivery.ts` | `a55b30f9` PGRST116 distinguished from real DB errors at idempotency lookup |
-| A3 | HIGH | `services/worker/src/jobs/check-confirmations.ts` | `a55b30f9` mutex moved above mock branch + `chain_tx_id IS NULL` guard |
-| A4 | HIGH | `services/worker/src/jobs/anchorExpirySweep.ts` | `a55b30f9` cursor advancement only past finite-and-expired rows |
-| A5 | HIGH | `services/worker/src/api/anchor-revoke.ts` | `a55b30f9` membership lookup error propagation |
-| C1 | MEDIUM | `services/worker/src/jobs/check-confirmations.ts` | `354003a7` `audit_events.actor_id = null` for system events |
-| CI-1 | MAJOR (Sonar) | `services/worker/src/webhooks/delivery.test.ts` | `b2feaac2` thenable property removed (real Promise + attached `.select()`) |
-| CI-2 | error (lint) | `services/worker/src/jobs/anchorExpirySweep.ts` | `b2feaac2` `let -> const` for never-reassigned `candidates` |
-| CI-3 | error (lint) | `services/worker/src/webhooks/delivery.test.ts` | `b2feaac2` vestigial `const result =` binding dropped |
-
-**Follow-up tickets:**
-
-* SCRUM-1805 -- Sentry alert on `Failed to create delivery log` worker errors (Sentry capture wired in `b1c6e1f2`; alert rule spec at `infra/sentry/alert-rules.json`).
-* SCRUM-1806 -- Flip `ENABLE_CREDENTIAL_VERIFIED_WEBHOOK` on in prod after PR #753 merges + deploys.
-* SCRUM-1807 -- Cursor-based pagination for `anchorExpirySweep` (shipped in this PR at commit `4c7e3b51`).
-* SCRUM-1808 -- Staging cron-secret drift (every PR's soak hits 100% 401 on cron mode; unblocked by PR #760's claim.sh rig).
-
-**Confluence:** [SCRUM-1743 page](https://arkova.atlassian.net/wiki/spaces/A/pages/44204033).
-
----
-
-### 2026-05-15 — SCRUM-952 public verify trust-surface PR hardening
-
-**PR #784 / branch `codex/scrum-952-public-verify-contract` remains the SCRUM-952 lane and is scoped to the public `/verify/:publicId` status contract.** It centralizes public verification status normalization, maps frozen public API `ACTIVE` to canonical `SECURED`, prevents `PENDING`/`SUBMITTED` from rendering green verified/proof affordances, preserves terminal proof affordances for `SECURED`/`REVOKED`/`EXPIRED`, and keeps subtype labels such as `professional_certification` user-readable as `Professional Certification`.
-
-**Verification evidence:** unit/component tests on touched verification/subtype paths passed (76 tests), `typecheck` passed, targeted lint returned 0 errors, `lint:copy` passed, `build` passed, and staging-backed Chromium public verification smoke passed 10/10 against Supabase project `ujtlwnoqfhtitcmsnrpq`. Earlier T1 soak for the same PR ran 13 scheduled Chromium runs with 130/130 checks passed. SonarCloud passed with 0.0% new-code duplication. UAT screenshots for all five public states at 1280px and 375px are stored under `docs/uat/scrum-952-public-verify/`.
-
-**Direct artifacts:** PR checks page: https://github.com/carson-see/ArkovaCarson/pull/784/checks. Green CI evidence run on `b1006914`: https://github.com/carson-see/ArkovaCarson/actions/runs/25924266375, including `Tests` https://github.com/carson-see/ArkovaCarson/actions/runs/25924266375/job/76201672163, `E2E Tests` https://github.com/carson-see/ArkovaCarson/actions/runs/25924266375/job/76203916844, and `TypeCheck & Lint` https://github.com/carson-see/ArkovaCarson/actions/runs/25924266375/job/76201150953. Staging evidence gate: https://github.com/carson-see/ArkovaCarson/actions/runs/25924266369/job/76201150651. SonarCloud project: https://sonarcloud.io/project/overview?id=carson-see_ArkovaCarson. UAT screenshots folder: `docs/uat/scrum-952-public-verify/`.
-
-**Merge status:** GitHub Actions runner/payment gating is no longer blocking this PR. The CI-only Supabase startup wrapper now moves local Supabase ports below the Linux ephemeral range, which cleared the E2E `54326` inbucket port collision. Remaining non-code merge policy risk is stale CodeRabbit `CHANGES_REQUESTED` reviews on older commits; current actionable comments have been addressed in this branch.
-
-_Last refreshed: 2026-05-15 by Codex — claims verified against local test/typecheck/lint/copy-lint output, staging-backed Playwright smoke, generated UAT screenshots, `gh pr view/checks`, GitHub Actions run/job URLs, SonarCloud status, and PR #784 evidence comments._
-
-### 2026-05-14 — SSD checkout reconciliation note
-
-**SSD role:** `/Volumes/Extreme/Arkova` is backup/worktree storage, not the authoritative day-to-day checkout. The old SSD checkout at `/Volumes/Extreme/Arkova/arkova-mvpcopy-main` is now treated as quarantined evidence, not a working `main`.
-
-**Clean SSD `main` worktree created:** `/Volumes/Extreme/Arkova/worktrees/main-clean` was created from then-current `main` at `dd8009e1e0298fff5b3e4117dcdc912786209787`. GitHub `main`, local `origin/main`, and local `main` were verified to all point at `dd8009e1` before the worktree was created. This HANDOFF update is a docs-only direct `main` update, so newer sessions should expect `main` to include one or more `docs: record SSD checkout reconciliation` commits after `dd8009e1`.
-
-**Do not reset/delete the old checkout yet.** `/Volumes/Extreme/Arkova/arkova-mvpcopy-main` remains on `fix/p0-dashboard-truth-2026-05-12` at `632fab0e`, `+11/-29`, with six dirty P0 dashboard files plus untracked `output/playwright/p0-dashboard-truth/` evidence artifacts. Inventory found the 11 local-ahead commits are patch-equivalent to upstream/main, and the six dirty tracked files are byte-for-byte present in upstream/main, but the local evidence artifacts still need an explicit archive/destination decision before cleanup.
-
-**PR #774 behavior is protected, not obsolete.** Preserve the dashboard truth contract: only confirmed `SECURED` records count as anchored; `SUBMITTED` stays distinct as in-mempool/submitted; worker/cache failures remain visible; missing stats are not coerced to zero; unavailable treasury stats stay unknown; public verify keeps `SUBMITTED` distinct; package pinning and npm install policy hardening remain protected.
-
-**Protected worktrees were not intentionally touched by the reconciliation.** `/Volumes/Extreme/Arkova/worktrees/scrum-1649-docusign-action-modes` was initially observed at `ba2ec3b8`, then later read-only verification showed it at `5b4009bd`, `+0/-0` with `origin/codex/scrum-1649-docusign-action-modes`; reflog entries show DocuSign commits at 2026-05-14 12:32 and 12:35. Treat that worktree as protected; do not clean its pre-existing untracked `node_modules` directories without explicit approval.
-
-_Last refreshed: 2026-05-14 by Codex — claims verified against local read-only `git status`, `git worktree list`, `git ls-remote origin refs/heads/main`, `git cherry -v`, and path-limited `git diff` output. No PR was opened; this is a direct internal documentation update only._
+**TDD evidence in this branch:** Red->green cycles were run for webhook document hashes, fast-track anchor materialization, deterministic-vs-retryable dispatch failures, refund compensation, sanitized validation logging, and sender hash validation. Current targeted verification: worker `npm run test -- src/jobs/rules-engine.test.ts src/jobs/rule-action-dispatcher.test.ts src/api/v1/webhooks/docusign.test.ts` = 3 files / 41 tests passing; full worker suite = 398 files / 5,389 tests passing. Evidence URL: https://github.com/carson-see/ArkovaCarson/pull/783/checks. Remaining gates before claiming story Done: GitHub checks on latest push, Jira/Confluence closeout, and staging/live verification for SCRUM-1658.
 
 ### 2026-05-13 — SCRUM-1834 supply-chain install policy sandbox
 
