@@ -77,6 +77,13 @@ print_status() {
   ' <(printf '%s\n' "$leases") <(printf '%s\n' "$logs")
 }
 
+print_all_status() {
+  local leases logs
+  leases=$(curl -sS "${AUTH[@]}" "${PG_REST}?select=*&order=acquired_at.desc")
+  logs=$(curl -sS "${AUTH[@]}" "${PG_REST_BASE}/staging_deploy_log?select=pr_number,id,tag,deployed_at&order=deployed_at.desc")
+  print_status "$leases" "$logs"
+}
+
 # Best-effort cleanup of leases older than 72h. Idempotent; not fatal if it fails.
 evict_stale() {
   local cutoff
@@ -136,6 +143,7 @@ case "${ACTION}" in
 
   status)
     # `claim.sh status` lists all current leases.
+    # `claim.sh status --all` does the same, explicitly.
     # `claim.sh status --pr <N>` filters to a single PR.
     # Note: positional arg parsing at the top of this script reads $2 as
     # PR_NUM. For `status` we ignore PR_NUM and parse the optional --pr flag
@@ -147,11 +155,11 @@ case "${ACTION}" in
       print_status "$LEASES" "$LOGS"
     elif [[ -z "${PR_NUM}" ]]; then
       # Default: all current leases, newest first.
-      LEASES=$(curl -sS "${AUTH[@]}" "${PG_REST}?select=*&order=acquired_at.desc")
-      LOGS=$(curl -sS "${AUTH[@]}" "${PG_REST_BASE}/staging_deploy_log?select=pr_number,id,tag,deployed_at&order=deployed_at.desc")
-      print_status "$LEASES" "$LOGS"
+      print_all_status
+    elif [[ "${PR_NUM}" == "--all" && -z "${REASON}" ]]; then
+      print_all_status
     else
-      echo "Usage: $0 status [--pr <pr-number>]" >&2
+      echo "Usage: $0 status [--all|--pr <pr-number>]" >&2
       exit 2
     fi
     ;;

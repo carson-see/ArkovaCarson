@@ -12,6 +12,7 @@ set -euo pipefail
 PROJECT="${STAGING_GCP_PROJECT:-arkova1}"
 REGION="${STAGING_CLOUD_RUN_REGION:-us-central1}"
 SERVICE="${STAGING_CLOUD_RUN_SERVICE:-arkova-worker-staging}"
+APPROVED_SERVICE="arkova-worker-staging"
 DEPLOY_SA_ID="${STAGING_DEPLOY_SA_ID:-arkova-staging-deployer}"
 DEPLOY_SA_EMAIL_OVERRIDE="${STAGING_DEPLOY_SA_EMAIL:-}"
 COMPUTE_SA="${STAGING_COMPUTE_SA_EMAIL:-270018525501-compute@developer.gserviceaccount.com}"
@@ -42,6 +43,13 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+validate_service_or_exit() {
+  if [[ "$SERVICE" != "$APPROVED_SERVICE" ]]; then
+    echo "ERROR: live IAM rotation only supports service '$APPROVED_SERVICE'; got '$SERVICE'." >&2
+    exit 2
+  fi
+}
+
 if [[ -n "$DEPLOY_SA_EMAIL_OVERRIDE" ]]; then
   DEPLOY_SA="$DEPLOY_SA_EMAIL_OVERRIDE"
 else
@@ -51,6 +59,10 @@ fi
 if [[ $APPLY -eq 1 && "$CONFIRM" != "SCRUM-1821" ]]; then
   echo "ERROR: live IAM changes require --confirm SCRUM-1821" >&2
   exit 2
+fi
+
+if [[ $APPLY -eq 1 || $ROLLBACK -eq 1 ]]; then
+  validate_service_or_exit
 fi
 
 RUN_CONDITION_TITLE="${STAGING_DEPLOY_CONDITION_TITLE:-arkova_staging_deploy_only}"

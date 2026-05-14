@@ -99,6 +99,8 @@ export function scanTextForRawStagingGcloud(file: string, text: string): Violati
     const window = commandWindow(lines, index);
     const commandAt = line.search(/\bgcloud\s+run\s+(?:deploy|services\s+update)\b/);
     const prefix = commandAt === -1 ? '' : line.slice(0, commandAt).trim();
+    // The 60-char cutoff filters runbook/table prefixes only observed in markdown references.
+    // This accepted tradeoff keeps commandWindow/isRawStagingDeployCommand scanning low-noise.
     if (prefix.length > 60) return;
     if (!isRawStagingDeployCommand(window)) return;
 

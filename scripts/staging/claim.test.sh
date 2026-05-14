@@ -69,6 +69,12 @@ assert_exit  "status succeeds"       0 "$rc"
 assert_match "status includes tag URL" "https://pr-742---arkova-worker-staging-270018525501.us-central1.run.app" "$out"
 assert_match "status includes latest log id" '"latest_staging_deploy_log_id": 142' "$out"
 
+out=$(PATH="${FAKEBIN}:$PATH" \
+      STAGING_SUPABASE_URL=https://staging.example STAGING_SUPABASE_SERVICE_ROLE_KEY=test \
+      $CLAIM status --all 2>&1); rc=$?
+assert_exit  "status --all succeeds"       0 "$rc"
+assert_match "status --all includes tag URL" "https://pr-742---arkova-worker-staging-270018525501.us-central1.run.app" "$out"
+
 echo ""
 echo "─── summary ─────────────────────────────────────────────────"
 echo "  pass: $PASS"

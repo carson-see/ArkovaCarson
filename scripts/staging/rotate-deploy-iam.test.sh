@@ -60,11 +60,19 @@ out=$($SCRIPT --apply 2>&1); rc=$?
 assert_exit  "apply requires confirm token" 2 "$rc"
 assert_match "apply confirm error" "--confirm SCRUM-1821" "$out"
 
+out=$($SCRIPT --apply --confirm SCRUM-1821 --service arkova-worker-staging-preview 2>&1); rc=$?
+assert_exit  "apply rejects non-approved service" 2 "$rc"
+assert_match "apply service guard error" "only supports service 'arkova-worker-staging'" "$out"
+
 out=$($SCRIPT --rollback 2>&1); rc=$?
 assert_exit  "rollback dry-run succeeds" 0 "$rc"
 assert_match "rollback re-grants compute" "add-iam-policy-binding arkova1.*270018525501-compute@developer.gserviceaccount.com.*roles/run.developer" "$out"
 assert_match "rollback removes deploy SA role" "remove-iam-policy-binding arkova1.*arkova-staging-deployer@arkova1.iam.gserviceaccount.com.*roles/run.developer" "$out"
 assert_match "rollback removes conditioned role" "--condition=.*arkova_staging_deploy_only" "$out"
+
+out=$($SCRIPT --rollback --service arkova-worker-staging-preview 2>&1); rc=$?
+assert_exit  "rollback rejects non-approved service" 2 "$rc"
+assert_match "rollback service guard error" "only supports service 'arkova-worker-staging'" "$out"
 
 out=$($SCRIPT --project test-project --region europe-west1 --service arkova-worker-staging-preview --deploy-sa-id custom-deployer 2>&1); rc=$?
 assert_exit  "custom project dry-run succeeds" 0 "$rc"
