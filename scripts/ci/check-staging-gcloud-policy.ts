@@ -7,23 +7,17 @@
  * and staging_deploy_log audit rows.
  */
 
+import { execFileSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ALLOW_MARKER = 'staging-gcloud-ok:';
 const MAX_COMMAND_LINES = 25;
-const CHECKED_DIRS = [
-  '.github/workflows',
-  'scripts',
-  'docs/ops',
-  'docs/reference',
-  'docs/runbooks',
-  'docs/staging',
-];
-const CHECKED_EXTENSIONS = new Set(['.md', '.sh', '.yml', '.yaml']);
+const CHECKED_EXTENSIONS = new Set(['.md', '.mdx', '.rst', '.sh', '.txt', '.yml', '.yaml']);
 const DOCS_EXTENSIONS = new Set(['.md', '.mdx', '.rst', '.txt']);
 const DEPLOY_WRAPPER = 'scripts/staging/deploy.sh';
+const FALLBACK_IGNORED_DIRS = new Set(['.git', 'node_modules']);
 
 export interface Violation {
   file: string;
@@ -44,7 +38,20 @@ function isDocsFile(path: string): boolean {
   return [...DOCS_EXTENSIONS].some((ext) => normalized.endsWith(ext));
 }
 
-function collectFiles(repo: string): string[] {
+export function collectFiles(repo: string): string[] {
+  try {
+    return execFileSync('git', ['-C', repo, 'ls-files'], { encoding: 'utf8' })
+      .split('\n')
+      .filter(Boolean)
+      .map(normalizeRelPath)
+      .filter(hasCheckedExtension)
+      .sort((left, right) => left.localeCompare(right));
+  } catch {
+    return collectFilesFromDisk(repo);
+  }
+}
+
+function collectFilesFromDisk(repo: string): string[] {
   const files: string[] = [];
 
   function walk(absDir: string): void {
@@ -53,6 +60,7 @@ function collectFiles(repo: string): string[] {
     for (const entry of readdirSync(absDir, { withFileTypes: true })) {
       const absPath = join(absDir, entry.name);
       if (entry.isDirectory()) {
+        if (FALLBACK_IGNORED_DIRS.has(entry.name)) continue;
         walk(absPath);
         continue;
       }
@@ -61,9 +69,7 @@ function collectFiles(repo: string): string[] {
     }
   }
 
-  for (const dir of CHECKED_DIRS) {
-    walk(join(repo, dir));
-  }
+  walk(repo);
 
   return [...new Set(files)].sort((left, right) => left.localeCompare(right));
 }

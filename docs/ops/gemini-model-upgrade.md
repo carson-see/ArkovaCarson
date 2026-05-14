@@ -78,6 +78,17 @@ npx vitest run src/ai/gemini-config.test.ts
   --pr <pr-number> \
   --image us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker:<image-tag>
 
+# Image choice:
+# - To validate gemini-config.ts or other PR code, use a PR-built worker image.
+#   Build one from the PR branch with Cloud Build, using a tag such as
+#   pr-<pr-number>-<short-sha>, then copy the image reference from Cloud Build
+#   logs or Artifact Registry:
+#     (cd services/worker && gcloud builds submit \
+#       --tag us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker:pr-<pr-number>-<short-sha> .)
+# - To validate only staging deploy mechanics, use the current production image
+#   reference, for example the pinned image in docs/reference/STAGING_RIG.md or
+#   the image shown by the production Cloud Run service.
+
 # Monitor for 24 hours:
 # - Error rates in Sentry
 # - Extraction success rate

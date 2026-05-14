@@ -1,6 +1,10 @@
+import { execFileSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-import { scanTextForRawStagingGcloud } from './check-staging-gcloud-policy.js';
+import { collectFiles, scanTextForRawStagingGcloud } from './check-staging-gcloud-policy.js';
 
 const workflowText = (commandLines: string[]): string => ['run: |', ...commandLines].join('\n');
 
@@ -8,6 +12,23 @@ const scanWorkflow = (commandLines: string[]) =>
   scanTextForRawStagingGcloud('.github/workflows/staging.yml', workflowText(commandLines));
 
 describe('check-staging-gcloud-policy', () => {
+  it('collects tracked policy files from any repository path', () => {
+    const repo = mkdtempSync(join(tmpdir(), 'staging-gcloud-policy-'));
+    try {
+      mkdirSync(join(repo, 'scratch'), { recursive: true });
+      mkdirSync(join(repo, 'src'), { recursive: true });
+      writeFileSync(join(repo, 'scratch', 'manual.txt'), 'gcloud run deploy arkova-worker-staging');
+      writeFileSync(join(repo, 'src', 'workflow.yaml'), 'name: staging');
+      writeFileSync(join(repo, 'src', 'ignored.ts'), 'gcloud run deploy arkova-worker-staging');
+      execFileSync('git', ['-C', repo, 'init', '-q']);
+      execFileSync('git', ['-C', repo, 'add', '.']);
+
+      expect(collectFiles(repo)).toEqual(['scratch/manual.txt', 'src/workflow.yaml']);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
   it('flags raw staging gcloud deploy commands outside deploy.sh', () => {
     const hits = scanTextForRawStagingGcloud(
       'docs/staging/README.md',

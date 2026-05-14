@@ -503,16 +503,24 @@ SELECT id, raw_user_meta_data FROM auth.users WHERE raw_user_meta_data::text ~ '
 
 ### 10.1 Roll worker revision
 
-<!-- staging-gcloud-ok: warning names a historical command so operators do not run it. -->
-Historical-only transcript: do not run `gcloud run services update arkova-worker-staging --update-env-vars=NODE_ENV=production`; use `scripts/staging/deploy.sh` for current staging deploys.
+Use the SCRUM-1821 lease-enforced wrapper, not a direct staging service update:
 
-```text
-# staging-gcloud-ok: non-operational historical transcript only; use scripts/staging/deploy.sh.
-# gcloud run services update arkova-worker-staging \
-#   --region=us-central1 \
-#   --update-env-vars=NODE_ENV=production
-# any noop change forces new revision so worker resets connection pool
+```bash
+CURRENT_IMAGE_REFERENCE="$(gcloud run services describe arkova-worker-staging \
+  --region=us-central1 \
+  --project=arkova1 \
+  --format='value(spec.template.spec.containers[0].image)')"
+
+./scripts/staging/deploy.sh \
+  --pr <PR_NUMBER> \
+  --image "${CURRENT_IMAGE_REFERENCE}"
 ```
+
+For Phase 10.1, `<CURRENT_IMAGE_REFERENCE>` should be the image already
+deployed to staging so the code under test does not change. Each
+`scripts/staging/deploy.sh` invocation creates a new tagged Cloud Run revision,
+which rolls the worker revision and resets the worker connection pool while
+preserving the deploy lease, tag routing, and `staging_deploy_log` evidence.
 
 ### 10.2 30-min sanity soak
 
