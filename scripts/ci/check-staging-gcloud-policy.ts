@@ -113,12 +113,12 @@ export function scanTextForRawStagingGcloud(file: string, text: string): Violati
   const docsHeuristicsAllowed = isDocsFile(normalizedFile);
 
   lines.forEach((line, index) => {
-    if (!/\bgcloud\s+run\s+(?:deploy|services\s+update)\b/.test(line)) return;
+    const window = commandWindow(lines, index);
+    if (!/\bgcloud\s+run\s+(?:deploy|services\s+update)\b/.test(window)) return;
     if (docsHeuristicsAllowed && hasAllowMarker(lines, index)) return;
 
-    const window = commandWindow(lines, index);
-    const commandAt = line.search(/\bgcloud\s+run\s+(?:deploy|services\s+update)\b/);
-    const prefix = commandAt === -1 ? '' : line.slice(0, commandAt).trim();
+    const commandAt = window.search(/\bgcloud\s+run\s+(?:deploy|services\s+update)\b/);
+    const prefix = commandAt === -1 ? '' : window.slice(0, commandAt).trim();
     // The 60-char cutoff filters runbook/table prefixes only observed in docs references.
     // This accepted tradeoff keeps commandWindow/isRawStagingDeployCommand scanning low-noise.
     if (docsHeuristicsAllowed && prefix.length > 60) return;

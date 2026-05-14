@@ -14,7 +14,7 @@ OLDER_THAN_DAYS="${STAGING_ORPHAN_TAG_DAYS:-7}"
 DRY_RUN=1
 
 usage() {
-  sed -n '2,28p' "$0"
+  sed -n '2,5p' "$0"
   echo
   echo "Usage: $0 [--dry-run|--apply] [--older-than-days N] [--repo owner/name]"
 }

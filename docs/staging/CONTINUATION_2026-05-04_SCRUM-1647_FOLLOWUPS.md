@@ -100,10 +100,8 @@ YOUR JOB IN THIS SESSION (in order, no deferring)
      this session uses, then `gcloud config set project arkova1`, then
      confirm via `gcloud run services list --region us-central1`.
    * Historical note only — staging-gcloud-ok: pre-SCRUM-1803 provisioning transcript, do not use for current deploys.
-   * Once auth works, `gcloud run deploy arkova-worker-staging
-     --source=services/worker --region=us-central1 --no-traffic
-     --min-instances=0 --service-account=<TBD> --set-env-vars
-     SUPABASE_URL=<staging-branch-url>,SUPABASE_SERVICE_ROLE_KEY=<staging-key>,...`.
+   * Once auth works, deploy via `./scripts/staging/deploy.sh --pr <PR_NUMBER> --image <worker-image-tag>`
+     so lease, promote-token, and preflight controls are enforced.
      Pull the staging branch URL from Supabase MCP `get_project_url`.
      Pull `SUPABASE_SERVICE_ROLE_KEY` only from the approved service-role
      secret/key source for that project_ref; do not use publishable/anon

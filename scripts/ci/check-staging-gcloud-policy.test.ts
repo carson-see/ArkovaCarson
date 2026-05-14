@@ -47,6 +47,23 @@ describe('check-staging-gcloud-policy', () => {
     expect(hits[0].text).toContain('arkova-worker-staging');
   });
 
+  it('flags raw staging deploys when gcloud command tokens are split across continuations', () => {
+    const hits = scanTextForRawStagingGcloud(
+      '.github/workflows/staging.yml',
+      [
+        'run: |',
+        '  gcloud \\',
+        '    run deploy \\',
+        '    --region us-central1 \\',
+        '    --project arkova1 \\',
+        '    arkova-worker-staging',
+      ].join('\n'),
+    );
+
+    expect(hits).toHaveLength(1);
+    expect(hits[0].text).toContain('arkova-worker-staging');
+  });
+
   it('allows the lease-enforced deploy wrapper itself', () => {
     const hits = scanTextForRawStagingGcloud(
       'scripts/staging/deploy.sh',

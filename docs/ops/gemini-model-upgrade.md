@@ -82,6 +82,9 @@ npx vitest run src/ai/gemini-config.test.ts
 # - Error rates in Sentry
 # - Extraction success rate
 # - Confidence distribution
+
+# Release the lease after staging validation completes.
+./scripts/staging/claim.sh release <pr-number>
 ```
 
 ### 5. Deploy to Production
