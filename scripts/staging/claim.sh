@@ -43,6 +43,15 @@ TAG_URL_HOST="${STAGING_CLOUD_RUN_HOST:-arkova-worker-staging-270018525501.us-ce
 AUTH=( -H "apikey: ${STAGING_SUPABASE_SERVICE_ROLE_KEY}"
        -H "Authorization: Bearer ${STAGING_SUPABASE_SERVICE_ROLE_KEY}" )
 
+require_numeric_pr() {
+  local value="$1"
+  local context="$2"
+  if [[ ! "$value" =~ ^[0-9]+$ ]]; then
+    echo "ERROR: ${context} requires a numeric PR number; got '${value}'." >&2
+    exit 2
+  fi
+}
+
 # 72 hours in the past, portable across BSD date (macOS) and GNU date (Linux).
 stale_cutoff() {
   date -u -v-72H +%Y-%m-%dT%H:%M:%SZ 2>/dev/null \
@@ -98,6 +107,7 @@ case "${ACTION}" in
       echo "Usage: $0 acquire <pr-number> \"<short reason>\"" >&2
       exit 2
     fi
+    require_numeric_pr "${PR_NUM}" "acquire"
     evict_stale
 
     # Reject if THIS PR already holds a lease.
@@ -137,6 +147,7 @@ case "${ACTION}" in
       echo "Usage: $0 release <pr-number>" >&2
       exit 2
     fi
+    require_numeric_pr "${PR_NUM}" "release"
     curl -sS -X DELETE "${AUTH[@]}" "${PG_REST}?pr_number=eq.${PR_NUM}" >/dev/null
     post_slack ":unlock: Staging rig lease released for PR #${PR_NUM}."
     ;;
@@ -150,6 +161,7 @@ case "${ACTION}" in
     # from the original command line ourselves so `status --pr N` and
     # `status` both work without confusing the acquire/release cases.
     if [[ "${PR_NUM}" == "--pr" && -n "${REASON}" ]]; then
+      require_numeric_pr "${REASON}" "status --pr"
       LEASES=$(curl -sS "${AUTH[@]}" "${PG_REST}?pr_number=eq.${REASON}&select=*")
       LOGS=$(curl -sS "${AUTH[@]}" "${PG_REST_BASE}/staging_deploy_log?pr_number=eq.${REASON}&select=pr_number,id,tag,deployed_at&order=deployed_at.desc&limit=1")
       print_status "$LEASES" "$LOGS"

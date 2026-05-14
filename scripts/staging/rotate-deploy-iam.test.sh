@@ -64,6 +64,15 @@ out=$($SCRIPT --apply --confirm SCRUM-1821 --service arkova-worker-staging-previ
 assert_exit  "apply rejects non-approved service" 2 "$rc"
 assert_match "apply service guard error" "only supports service 'arkova-worker-staging'" "$out"
 
+out=$($SCRIPT --apply --confirm SCRUM-1821 --project test-project 2>&1); rc=$?
+assert_exit  "apply rejects non-approved project" 2 "$rc"
+assert_match "apply project guard error" "only supports project 'arkova1'" "$out"
+
+out=$(STAGING_DEPLOY_CONDITION_EXPR='resource.name.startsWith("projects/arkova1")' \
+      $SCRIPT --apply --confirm SCRUM-1821 2>&1); rc=$?
+assert_exit  "apply rejects condition override" 2 "$rc"
+assert_match "apply condition override error" "may not override the staging service condition" "$out"
+
 out=$($SCRIPT --rollback 2>&1); rc=$?
 assert_exit  "rollback dry-run succeeds" 0 "$rc"
 assert_match "rollback re-grants compute" "add-iam-policy-binding arkova1.*270018525501-compute@developer.gserviceaccount.com.*roles/run.developer" "$out"
@@ -73,6 +82,10 @@ assert_match "rollback removes conditioned role" "--condition=.*arkova_staging_d
 out=$($SCRIPT --rollback --service arkova-worker-staging-preview 2>&1); rc=$?
 assert_exit  "rollback rejects non-approved service" 2 "$rc"
 assert_match "rollback service guard error" "only supports service 'arkova-worker-staging'" "$out"
+
+out=$($SCRIPT --rollback --project test-project 2>&1); rc=$?
+assert_exit  "rollback rejects non-approved project" 2 "$rc"
+assert_match "rollback project guard error" "only supports project 'arkova1'" "$out"
 
 out=$($SCRIPT --project test-project --region europe-west1 --service arkova-worker-staging-preview --deploy-sa-id custom-deployer 2>&1); rc=$?
 assert_exit  "custom project dry-run succeeds" 0 "$rc"

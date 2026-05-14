@@ -75,6 +75,31 @@ out=$(PATH="${FAKEBIN}:$PATH" \
 assert_exit  "status --all succeeds"       0 "$rc"
 assert_match "status --all includes tag URL" "https://pr-742---arkova-worker-staging-270018525501.us-central1.run.app" "$out"
 
+out=$(PATH="${FAKEBIN}:$PATH" \
+      STAGING_SUPABASE_URL=https://staging.example STAGING_SUPABASE_SERVICE_ROLE_KEY=test \
+      $CLAIM status --pr 742 2>&1); rc=$?
+assert_exit  "status --pr succeeds"       0 "$rc"
+assert_match "status --pr includes tag URL" "https://pr-742---arkova-worker-staging-270018525501.us-central1.run.app" "$out"
+assert_match "status --pr includes latest log id" '"latest_staging_deploy_log_id": 142' "$out"
+
+out=$(PATH="${FAKEBIN}:$PATH" \
+      STAGING_SUPABASE_URL=https://staging.example STAGING_SUPABASE_SERVICE_ROLE_KEY=test \
+      $CLAIM status --pr abc 2>&1); rc=$?
+assert_exit  "status --pr rejects nonnumeric PR" 2 "$rc"
+assert_match "status --pr numeric error" "requires a numeric PR number" "$out"
+
+out=$(PATH="${FAKEBIN}:$PATH" \
+      STAGING_SUPABASE_URL=https://staging.example STAGING_SUPABASE_SERVICE_ROLE_KEY=test \
+      $CLAIM acquire abc "bad input" 2>&1); rc=$?
+assert_exit  "acquire rejects nonnumeric PR" 2 "$rc"
+assert_match "acquire numeric error" "requires a numeric PR number" "$out"
+
+out=$(PATH="${FAKEBIN}:$PATH" \
+      STAGING_SUPABASE_URL=https://staging.example STAGING_SUPABASE_SERVICE_ROLE_KEY=test \
+      $CLAIM release abc 2>&1); rc=$?
+assert_exit  "release rejects nonnumeric PR" 2 "$rc"
+assert_match "release numeric error" "requires a numeric PR number" "$out"
+
 echo ""
 echo "─── summary ─────────────────────────────────────────────────"
 echo "  pass: $PASS"

@@ -503,8 +503,11 @@ SELECT id, raw_user_meta_data FROM auth.users WHERE raw_user_meta_data::text ~ '
 
 ### 10.1 Roll worker revision
 
+<!-- staging-gcloud-ok: warning names a historical command so operators do not run it. -->
+Historical-only transcript: do not run `gcloud run services update arkova-worker-staging --update-env-vars=NODE_ENV=production`; use `scripts/staging/deploy.sh` for current staging deploys.
+
 ```bash
-# staging-gcloud-ok: historical pre-SCRUM-1803 clone execution transcript.
+# staging-gcloud-ok: non-operational historical transcript only; use scripts/staging/deploy.sh.
 gcloud run services update arkova-worker-staging \
   --region=us-central1 \
   --update-env-vars=NODE_ENV=production

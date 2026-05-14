@@ -28,6 +28,25 @@ describe('check-staging-gcloud-policy', () => {
     expect(hits[0].text).toContain('gcloud run services update');
   });
 
+  it('keeps following long shell continuations until the staging target appears', () => {
+    const hits = scanTextForRawStagingGcloud(
+      '.github/workflows/staging.yml',
+      [
+        'run: |',
+        '  gcloud run services update \\',
+        '    --region us-central1 \\',
+        '    --project arkova1 \\',
+        '    --update-env-vars A=1 \\',
+        '    --update-env-vars B=2 \\',
+        '    --update-env-vars C=3 \\',
+        '    arkova-worker-staging',
+      ].join('\n'),
+    );
+
+    expect(hits).toHaveLength(1);
+    expect(hits[0].text).toContain('arkova-worker-staging');
+  });
+
   it('allows the lease-enforced deploy wrapper itself', () => {
     const hits = scanTextForRawStagingGcloud(
       'scripts/staging/deploy.sh',
@@ -56,5 +75,38 @@ describe('check-staging-gcloud-policy', () => {
     );
 
     expect(hits).toEqual([]);
+  });
+
+  it('does not allow exception markers in executable shell files', () => {
+    const hits = scanTextForRawStagingGcloud(
+      'scripts/staging/bypass.sh',
+      [
+        '# staging-gcloud-ok: shell scripts must use scripts/staging/deploy.sh',
+        'gcloud run deploy arkova-worker-staging --image old',
+      ].join('\n'),
+    );
+
+    expect(hits).toHaveLength(1);
+  });
+
+  it('does not allow exception markers in shell files under docs', () => {
+    const hits = scanTextForRawStagingGcloud(
+      'docs/staging/bypass.sh',
+      [
+        '# staging-gcloud-ok: only prose transcripts may use this marker',
+        'gcloud run deploy arkova-worker-staging --image old',
+      ].join('\n'),
+    );
+
+    expect(hits).toHaveLength(1);
+  });
+
+  it('does not apply long-prefix docs heuristics to workflow files', () => {
+    const hits = scanTextForRawStagingGcloud(
+      '.github/workflows/staging.yml',
+      '      - name: intentionally long workflow prefix before raw gcloud command: gcloud run deploy arkova-worker-staging --image old',
+    );
+
+    expect(hits).toHaveLength(1);
   });
 });

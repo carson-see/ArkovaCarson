@@ -12,6 +12,7 @@ set -euo pipefail
 PROJECT="${STAGING_GCP_PROJECT:-arkova1}"
 REGION="${STAGING_CLOUD_RUN_REGION:-us-central1}"
 SERVICE="${STAGING_CLOUD_RUN_SERVICE:-arkova-worker-staging}"
+APPROVED_PROJECT="${STAGING_APPROVED_GCP_PROJECT:-arkova1}"
 APPROVED_SERVICE="arkova-worker-staging"
 DEPLOY_SA_ID="${STAGING_DEPLOY_SA_ID:-arkova-staging-deployer}"
 DEPLOY_SA_EMAIL_OVERRIDE="${STAGING_DEPLOY_SA_EMAIL:-}"
@@ -50,6 +51,13 @@ validate_service_or_exit() {
   fi
 }
 
+validate_project_or_exit() {
+  if [[ "$PROJECT" != "$APPROVED_PROJECT" ]]; then
+    echo "ERROR: live IAM rotation only supports project '$APPROVED_PROJECT'; got '$PROJECT'." >&2
+    exit 2
+  fi
+}
+
 if [[ -n "$DEPLOY_SA_EMAIL_OVERRIDE" ]]; then
   DEPLOY_SA="$DEPLOY_SA_EMAIL_OVERRIDE"
 else
@@ -62,11 +70,18 @@ if [[ $APPLY -eq 1 && "$CONFIRM" != "SCRUM-1821" ]]; then
 fi
 
 if [[ $APPLY -eq 1 || $ROLLBACK -eq 1 ]]; then
+  validate_project_or_exit
   validate_service_or_exit
 fi
 
 RUN_CONDITION_TITLE="${STAGING_DEPLOY_CONDITION_TITLE:-arkova_staging_deploy_only}"
-RUN_CONDITION_EXPR="${STAGING_DEPLOY_CONDITION_EXPR:-resource.name == \"projects/${PROJECT}/locations/${REGION}/services/${SERVICE}\"}"
+DEFAULT_RUN_CONDITION_EXPR="resource.name == \"projects/${PROJECT}/locations/${REGION}/services/${SERVICE}\""
+if [[ $APPLY -eq 1 && -n "${STAGING_DEPLOY_CONDITION_EXPR:-}" && "${STAGING_DEPLOY_CONDITION_EXPR}" != "$DEFAULT_RUN_CONDITION_EXPR" ]]; then
+  echo "ERROR: STAGING_DEPLOY_CONDITION_EXPR may not override the staging service condition during --apply." >&2
+  echo "Expected: ${DEFAULT_RUN_CONDITION_EXPR}" >&2
+  exit 2
+fi
+RUN_CONDITION_EXPR="${STAGING_DEPLOY_CONDITION_EXPR:-$DEFAULT_RUN_CONDITION_EXPR}"
 RUN_CONDITION_DESC="${STAGING_DEPLOY_CONDITION_DESC:-SCRUM-1821 deploy-only access to ${SERVICE}}"
 RUN_CONDITION="title=${RUN_CONDITION_TITLE},expression=${RUN_CONDITION_EXPR},description=${RUN_CONDITION_DESC}"
 

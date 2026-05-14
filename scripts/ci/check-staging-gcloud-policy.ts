@@ -12,6 +12,7 @@ import { join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ALLOW_MARKER = 'staging-gcloud-ok:';
+const MAX_COMMAND_LINES = 25;
 const CHECKED_DIRS = [
   '.github/workflows',
   'scripts',
@@ -21,6 +22,7 @@ const CHECKED_DIRS = [
   'docs/staging',
 ];
 const CHECKED_EXTENSIONS = new Set(['.md', '.sh', '.yml', '.yaml']);
+const DOCS_EXTENSIONS = new Set(['.md', '.mdx', '.rst', '.txt']);
 const DEPLOY_WRAPPER = 'scripts/staging/deploy.sh';
 
 export interface Violation {
@@ -35,6 +37,11 @@ function normalizeRelPath(path: string): string {
 
 function hasCheckedExtension(path: string): boolean {
   return [...CHECKED_EXTENSIONS].some((ext) => path.endsWith(ext));
+}
+
+function isDocsFile(path: string): boolean {
+  const normalized = normalizeRelPath(path);
+  return [...DOCS_EXTENSIONS].some((ext) => normalized.endsWith(ext));
 }
 
 function collectFiles(repo: string): string[] {
@@ -72,8 +79,19 @@ function hasAllowMarker(lines: string[], index: number): boolean {
 }
 
 function commandWindow(lines: string[], index: number): string {
-  return lines
-    .slice(index, index + 5)
+  const commandLines = [lines[index]];
+  let cursor = index;
+
+  while (
+    commandLines.length < MAX_COMMAND_LINES
+    && cursor + 1 < lines.length
+    && /\\\s*$/.test(lines[cursor])
+  ) {
+    cursor += 1;
+    commandLines.push(lines[cursor]);
+  }
+
+  return commandLines
     .join(' ')
     .replace(/\\\s*/g, ' ')
     .replace(/\s+/g, ' ')
@@ -86,22 +104,24 @@ function isRawStagingDeployCommand(text: string): boolean {
 }
 
 export function scanTextForRawStagingGcloud(file: string, text: string): Violation[] {
-  if (normalizeRelPath(file) === DEPLOY_WRAPPER) return [];
+  const normalizedFile = normalizeRelPath(file);
+  if (normalizedFile === DEPLOY_WRAPPER) return [];
 
   const lines = text.split(/\r?\n/);
   const violations: Violation[] = [];
   const seen = new Set<number>();
+  const docsHeuristicsAllowed = isDocsFile(normalizedFile);
 
   lines.forEach((line, index) => {
     if (!/\bgcloud\s+run\s+(?:deploy|services\s+update)\b/.test(line)) return;
-    if (hasAllowMarker(lines, index)) return;
+    if (docsHeuristicsAllowed && hasAllowMarker(lines, index)) return;
 
     const window = commandWindow(lines, index);
     const commandAt = line.search(/\bgcloud\s+run\s+(?:deploy|services\s+update)\b/);
     const prefix = commandAt === -1 ? '' : line.slice(0, commandAt).trim();
-    // The 60-char cutoff filters runbook/table prefixes only observed in markdown references.
+    // The 60-char cutoff filters runbook/table prefixes only observed in docs references.
     // This accepted tradeoff keeps commandWindow/isRawStagingDeployCommand scanning low-noise.
-    if (prefix.length > 60) return;
+    if (docsHeuristicsAllowed && prefix.length > 60) return;
     if (!isRawStagingDeployCommand(window)) return;
 
     const lineNumber = index + 1;
@@ -135,7 +155,7 @@ function main(): void {
   }
   console.error('');
   console.error('Fix: use scripts/staging/deploy.sh so lease checks, tag routing, and staging_deploy_log audit rows run.');
-  console.error(`For historical transcripts only, add a nearby "${ALLOW_MARKER} <reason>" comment.`);
+  console.error(`For docs-only historical transcripts, add a nearby "${ALLOW_MARKER} <reason>" comment.`);
   process.exit(1);
 }
 
