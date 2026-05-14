@@ -14,9 +14,11 @@
 
 ## Now
 
-### 2026-05-14 — PR #753 (SCRUM-1798/1799/1800) READY TO MERGE — T3 re-soak GREEN
+### 2026-05-14 — PR #753 (SCRUM-1798/1799/1800) MERGED ✅
 
-**Status:** PR #753 ready for merge as the next merge into `main`. T3 48h re-soak on the merge SHA `406a5bef` completed clean (0 worker errors, 461,977 requests, 48h exact). Merging main again now to clear `CONFLICTING` state introduced by 48 commits that landed during the soak window — conflicts are docs-only (HANDOFF.md + STAGING_RIG.md) with no code change.
+**Status:** PR #753 **MERGED** to `main` at 2026-05-14T19:22:11Z (squash commit `1fc43863434aebfe418c69abd30c876f0c8a26b7`). SCRUM-1798, SCRUM-1799, SCRUM-1800 all transitioned to **Done** along with their 9 subtasks (SCRUM-1825..1833). Confluence [SCRUM-1743 page](https://arkova.atlassian.net/wiki/spaces/A/pages/44204033) updated to v5. Staging lease released. Local repo + SSD repo refs synced with origin. Branch `claude/scrum-1798-credential-issued-emit` deleted on origin + locally.
+
+**T3 48h re-soak on the merge SHA `406a5bef` completed clean** (0 worker errors, 461,977 requests, 48h exact, 2026-05-12T18:13:53Z → 2026-05-14T18:13:53Z, all §1.12 coverage gates met). After soak completion, merged main one more time to clear `CONFLICTING` state introduced by 48 commits that landed during the soak window — conflicts were docs-only (HANDOFF.md + STAGING_RIG.md) with no code change. Final merge SHA at merge time: `98154fdd`.
 
 **Soak validation (final):**
 
