@@ -100,8 +100,12 @@ YOUR JOB IN THIS SESSION (in order, no deferring)
      this session uses, then `gcloud config set project arkova1`, then
      confirm via `gcloud run services list --region us-central1`.
    * Historical note only — staging-gcloud-ok: pre-SCRUM-1803 provisioning transcript, do not use for current deploys.
-   * Once auth works, deploy via `./scripts/staging/deploy.sh --pr <PR_NUMBER> --image <worker-image-tag>`
-     so lease, promote-token, and preflight controls are enforced.
+   * Once auth works, acquire the lease with
+     `./scripts/staging/claim.sh acquire <PR_NUMBER> "<short reason>"`, then
+     deploy via `./scripts/staging/deploy.sh --pr <PR_NUMBER> --image <worker-image-tag>`
+     so lease, promote-token, and preflight controls are enforced. If the lease
+     is already active for `<PR_NUMBER>`, confirm it with
+     `./scripts/staging/claim.sh status --pr <PR_NUMBER>` before deploying.
      To choose `<worker-image-tag>`, list recent Artifact Registry tags with
      `gcloud artifacts docker images list us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker --include-tags --limit=20`.
      Prefer a PR-built tag such as `pr-<PR_NUMBER>-<short-sha>` from Cloud
