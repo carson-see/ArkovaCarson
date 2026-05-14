@@ -171,11 +171,20 @@ allows the same set of files to coexist with non-canonical ledger entries.
 
    ```bash
    STAGING_API_BASE="https://pr-<N>---arkova-worker-staging-270018525501.us-central1.run.app" \
+     STAGING_CRON_SECRET="$(gcloud secrets versions access latest --secret=cron-secret --project=arkova1)" \
      npx tsx scripts/staging/load-harness.ts --mode mixed --duration 720 \
        --evidence-out docs/staging/soak-pr-<N>.json
    ```
 
    Other PRs' soaks hit their own tag URLs; your traffic is isolated to your revision.
+
+   **Note on `STAGING_CRON_SECRET` (SCRUM-1808):** the staging worker binds its
+   `CRON_SECRET` env var to the gcloud secret named **`cron-secret`** (the same
+   secret prod uses; not `cron-secret-staging`). Set the harness env var from
+   that source — sourcing from `cron-secret-staging` will return 401 on every
+   `cron` mode request and silently degrade soak coverage. The harness's
+   `agents.md` already documents this; surfaced here so the soak-workflow flow
+   is self-contained.
 
 6. **Rollback rehearsal** — for any new migration in the PR, apply its `-- ROLLBACK:` block and confirm `/health` on your tag URL stays green, then re-apply.
 

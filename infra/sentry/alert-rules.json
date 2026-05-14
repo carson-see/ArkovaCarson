@@ -1,6 +1,6 @@
 {
     "$schema": "https://docs.sentry.io/api/alerts/issue-alert-rule/",
-    "comment": "Source of truth for the 9 Sentry alert rules in arkova-worker (SCRUM-1254 / R0-8 + SCRUM-1308 / R0-8-FU2 + SCRUM-1247 / R0-1). Sentry MCP cannot create issue alert rules; an admin opens https://arkova.sentry.io/alerts/rules/ and creates each rule below 1:1. Update this file alongside any UI change. SCRUM-1062 (BQ export pipeline) added 2 rules: consecutive-failure on incremental cron and any-failure on daily snapshot.",
+    "comment": "Source of truth for the 10 Sentry alert rules in arkova-worker (SCRUM-1254 / R0-8 + SCRUM-1308 / R0-8-FU2 + SCRUM-1247 / R0-1). Sentry MCP cannot create issue alert rules; an admin opens https://arkova.sentry.io/alerts/rules/ and creates each rule below 1:1. Update this file alongside any UI change. SCRUM-1062 (BQ export pipeline) added 2 rules: consecutive-failure on incremental cron and any-failure on daily snapshot. SCRUM-1805 (PR #753) added 1 rule: any-failure on webhook delivery_log insert (first-occurrence page; steady state is zero events).",
     "project": "arkova-worker",
     "rules": [
         {
@@ -298,6 +298,41 @@
                     "id": "sentry.integrations.slack.notify_action.SlackNotifyServiceAction",
                     "channel": "#ops",
                     "tags": "table,subsystem"
+                }
+            ],
+            "frequency": 60
+        },
+        {
+            "name": "SCRUM-1805 \u2014 Webhook delivery_log insert failure",
+            "comment": "PR #753 dispatcher fix wrapped the delivery_log insert path with Sentry.captureException after the pre-existing PG 22P02 UUID-coercion bug ran undetected for the lifetime of PR #734. Any non-zero rate of `subsystem:webhooks AND stage:delivery_log_insert` indicates the dispatcher cannot persist a delivery row \u2014 customer events are being silently dropped at the storage layer (pre-fix this was a UUID type mismatch; post-fix it would be a DB outage, RLS regression, or schema drift). Threshold = 1 occurrence / 5 minutes; we want a page on first occurrence rather than a frequency-based pattern because the steady-state expectation is zero.",
+            "actionMatch": "all",
+            "filterMatch": "all",
+            "conditions": [
+                {
+                    "id": "sentry.rules.conditions.event_frequency.EventFrequencyCondition",
+                    "value": 1,
+                    "interval": "5m"
+                }
+            ],
+            "filters": [
+                {
+                    "id": "sentry.rules.filters.tagged_event.TaggedEventFilter",
+                    "key": "subsystem",
+                    "match": "eq",
+                    "value": "webhooks"
+                },
+                {
+                    "id": "sentry.rules.filters.tagged_event.TaggedEventFilter",
+                    "key": "stage",
+                    "match": "eq",
+                    "value": "delivery_log_insert"
+                }
+            ],
+            "actions": [
+                {
+                    "id": "sentry.integrations.slack.notify_action.SlackNotifyServiceAction",
+                    "channel": "#ops",
+                    "tags": "event_type,endpoint_id,subsystem"
                 }
             ],
             "frequency": 60

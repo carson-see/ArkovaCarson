@@ -50,7 +50,9 @@ type SecuredWebhookAnchor = {
 type BatchSecuredAuditRow = {
   event_type: string;
   event_category: string;
-  actor_id: string;
+  // null = system-driven event (cron / queue worker), not user-attributable.
+  // Pre-PR-#753 used a zero-UUID literal which violated audit_events_actor_id_fkey.
+  actor_id: string | null;
   target_type: string;
   target_id: string;
   org_id: string | null;
@@ -138,7 +140,12 @@ function buildBatchSecuredAuditRows(
   const rows = orgCounts.map(({ orgId, count }) => ({
     event_type: 'anchor.batch_secured',
     event_category: 'ANCHOR',
-    actor_id: '00000000-0000-0000-0000-000000000000',
+    // System-driven event; audit_events.actor_id is nullable for system rows
+    // (see e.g. user.data_anonymized in the prod migrations). The pre-PR-#753
+    // hardcoded zero-UUID violated the audit_events_actor_id_fkey constraint
+    // in every environment that didn't seed a zero-UUID profile — silently
+    // failing every batch audit insert.
+    actor_id: null,
     target_type: 'anchor',
     target_id: txId,
     org_id: orgId,
@@ -149,7 +156,12 @@ function buildBatchSecuredAuditRows(
     rows.push({
       event_type: 'anchor.batch_secured',
       event_category: 'ANCHOR',
-      actor_id: '00000000-0000-0000-0000-000000000000',
+      // System-driven event; audit_events.actor_id is nullable for system rows
+    // (see e.g. user.data_anonymized in the prod migrations). The pre-PR-#753
+    // hardcoded zero-UUID violated the audit_events_actor_id_fkey constraint
+    // in every environment that didn't seed a zero-UUID profile — silently
+    // failing every batch audit insert.
+    actor_id: null,
       target_type: 'anchor',
       target_id: txId,
       org_id: null,
@@ -179,18 +191,199 @@ export async function fanOutSecuredAnchorWebhooks(
     return;
   }
 
-  const tasks = eligible.map((anchor) => async () => {
-    await dispatchWebhookEvent(anchor.org_id, 'anchor.secured', anchor.public_id, {
-      public_id: anchor.public_id,
-      status: 'SECURED',
-      chain_tx_id: txId,
-      chain_block_height: blockHeight,
-      chain_timestamp: blockTimestamp,
-      secured_at: blockTimestamp,
-    });
+  // SCRUM-1800 (SCRUM-1743 Phase 2c): fetch credential_type for the drained
+  // anchors so we can also dispatch credential.status_changed alongside
+  // anchor.secured. The drain RPC (drain_submitted_to_secured_for_tx) only
+  // returns public_id + org_id; credential_type comes from chunked bulk
+  // SELECTs here. credential.status_changed schema requires credential_type;
+  // anchors missing it skip the credential.* dispatch (anchor.* still fires).
+  //
+  // CodeRabbit PR #753: chunk the `.in()` lookup to 500 entries. Supabase-js
+  // serializes `.in()` as a URL query param; 10K-anchor merkle batches
+  // exceed PostgREST's URI length and trigger HTTP 414, dropping all
+  // credential.* events for that batch. Same chunk size as PROOF_UPSERT_CHUNK
+  // in anchorProofs.ts. Per-chunk failures are logged but other chunks still
+  // populate the map, so a partial outage doesn't silently drop the whole
+  // batch's credential events.
+  const CRED_LOOKUP_CHUNK = 500;
+  const credentialTypeByPublicId = new Map<string, string>();
+  const publicIdsForLookup = eligible.map((a) => a.public_id);
+  for (let i = 0; i < publicIdsForLookup.length; i += CRED_LOOKUP_CHUNK) {
+    const chunk = publicIdsForLookup.slice(i, i + CRED_LOOKUP_CHUNK);
+    try {
+      // PR #753 audit fix C1: org-blind query is intentional and safe here.
+      // The `eligible` array (built upstream from the drain RPC's per-tx
+      // anchor list) carries each anchor's `org_id`, and every downstream
+      // dispatch uses `dispatchWebhookEvent(anchor.org_id, …)` which scopes
+      // the webhook_endpoints SELECT by org_id. The credential_type lookup
+      // is read-only metadata enrichment; cross-org leakage at this step
+      // would require a downstream caller to bypass the per-anchor org_id
+      // routing, which doesn't happen in the fan-out task closures below.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any, arkova/missing-org-filter
+      const { data: credRows, error: credErr } = await (db as any)
+        .from('anchors')
+        .select('public_id, credential_type')
+        .in('public_id', chunk);
+      if (credErr) {
+        logger.warn(
+          { txId, error: credErr, chunkStart: i, chunkSize: chunk.length },
+          'Failed to fetch credential_type chunk for credential.status_changed fan-out — chunk skipped, others continue',
+        );
+        continue;
+      }
+      if (Array.isArray(credRows)) {
+        for (const row of credRows) {
+          if (row && typeof row.public_id === 'string' && typeof row.credential_type === 'string') {
+            credentialTypeByPublicId.set(row.public_id, row.credential_type);
+          }
+        }
+      }
+    } catch (lookupError) {
+      logger.warn(
+        { txId, error: lookupError, chunkStart: i, chunkSize: chunk.length },
+        'credential_type chunked lookup threw — chunk skipped, others continue',
+      );
+    }
+  }
+
+  // SCRUM-1800 (SCRUM-1743 Phase 2c): track per-org credential.status_changed
+  // dispatch outcomes so the per-batch audit row records dispatched/failed
+  // counts plus a sample of failure reasons. Avoids the previous "first error
+  // only" reporting which lost 99 out of 100 failure causes on bad batches.
+  const credentialOutcomes = new Map<string, {
+    dispatched: number;
+    failed: number;
+    sample_failures: Array<{ public_id: string; error: string }>;
+  }>();
+  const recordCredentialOutcome = (orgId: string, publicId: string, error: unknown | null) => {
+    const slot = credentialOutcomes.get(orgId) ?? { dispatched: 0, failed: 0, sample_failures: [] };
+    if (error) {
+      slot.failed++;
+      if (slot.sample_failures.length < 5) {
+        const msg = error instanceof Error ? error.message : String(error);
+        slot.sample_failures.push({ public_id: publicId, error: msg });
+      }
+    } else {
+      slot.dispatched++;
+    }
+    credentialOutcomes.set(orgId, slot);
+  };
+
+  const tasks = eligible.flatMap((anchor) => {
+    const baseTask = async () => {
+      await dispatchWebhookEvent(anchor.org_id, 'anchor.secured', anchor.public_id, {
+        public_id: anchor.public_id,
+        status: 'SECURED',
+        chain_tx_id: txId,
+        chain_block_height: blockHeight,
+        chain_timestamp: blockTimestamp,
+        secured_at: blockTimestamp,
+      });
+    };
+    const credentialType = credentialTypeByPublicId.get(anchor.public_id);
+    if (!credentialType) return [baseTask];
+    // SCRUM-1800: credential.status_changed alongside anchor.secured.
+    // previous_status: 'SUBMITTED' is the most accurate label for the
+    // bulk-confirm path (PENDING anchors flow through SUBMITTED before
+    // SECURED via the merkle-batch broadcast in jobs/batch-anchor.ts).
+    const credentialTask = async () => {
+      try {
+        await dispatchWebhookEvent(anchor.org_id, 'credential.status_changed', anchor.public_id, {
+          public_id: anchor.public_id,
+          credential_type: credentialType,
+          previous_status: 'SUBMITTED',
+          new_status: 'SECURED',
+          changed_at: blockTimestamp,
+        });
+        recordCredentialOutcome(anchor.org_id, anchor.public_id, null);
+      } catch (emitErr) {
+        recordCredentialOutcome(anchor.org_id, anchor.public_id, emitErr);
+        // Re-throw so runWithConcurrency.rejected still surfaces the failure
+        // for the existing logger.warn aggregate at line ~280.
+        throw emitErr;
+      }
+    };
+    return [baseTask, credentialTask];
   });
 
+  // SCRUM-1800: tally planned credential.status_changed dispatches per org.
+  // Used to write a single per-org audit row at the end of the batch (vs.
+  // per-anchor — which would multiply audit volume by ~10K on a typical merkle
+  // batch). Counts the number of credential events we *attempted* to dispatch;
+  // the webhook_delivery_logs table records per-attempt outcome.
+  const credentialOrgCounts = new Map<string, number>();
+  const credentialPublicIdsByOrg = new Map<string, string[]>();
+  for (const anchor of eligible) {
+    if (credentialTypeByPublicId.has(anchor.public_id)) {
+      credentialOrgCounts.set(anchor.org_id, (credentialOrgCounts.get(anchor.org_id) ?? 0) + 1);
+      const existing = credentialPublicIdsByOrg.get(anchor.org_id) ?? [];
+      // Cap stored IDs per org to keep audit row size bounded — a 10K-credential
+      // merkle batch should not produce a 1MB JSON details column.
+      if (existing.length < 100) existing.push(anchor.public_id);
+      credentialPublicIdsByOrg.set(anchor.org_id, existing);
+    }
+  }
+
   const result = await runWithConcurrency(tasks, BULK_WEBHOOK_FAN_OUT_CONCURRENCY);
+
+  // SCRUM-1800: write per-org credential.status_changed.batch audit row(s)
+  // after the fan-out completes. One row per org with at least one credential
+  // event in this batch — keeps audit volume bounded while preserving the
+  // tamper-evident link to the underlying merkle tx.
+  if (credentialOrgCounts.size > 0) {
+    const credAuditRows = Array.from(credentialOrgCounts.entries()).map(([orgId, count]) => {
+      const outcome = credentialOutcomes.get(orgId) ?? {
+        dispatched: 0,
+        failed: 0,
+        sample_failures: [],
+      };
+      return {
+        event_type: 'credential.status_changed.batch',
+        event_category: 'WEBHOOK',
+        // System-driven event; audit_events.actor_id is nullable for system rows
+    // (see e.g. user.data_anonymized in the prod migrations). The pre-PR-#753
+    // hardcoded zero-UUID violated the audit_events_actor_id_fkey constraint
+    // in every environment that didn't seed a zero-UUID profile — silently
+    // failing every batch audit insert.
+    actor_id: null,
+        target_type: 'anchor',
+        target_id: txId,
+        org_id: orgId,
+        details: JSON.stringify({
+          chain_tx_id: txId,
+          block_height: blockHeight,
+          previous_status: 'SUBMITTED',
+          new_status: 'SECURED',
+          credentials_dispatched_attempted: count,
+          // SCRUM-1800: per-emit outcome counters + first 5 failure samples.
+          // Lets operators answer "did anything in this batch fail?" without
+          // joining webhook_delivery_logs, and recover dropped events via
+          // SCRUM-1738 retry path using the captured public_ids.
+          credentials_dispatched_succeeded: outcome.dispatched,
+          credentials_dispatched_failed: outcome.failed,
+          sample_failures: outcome.sample_failures,
+          sample_public_ids: credentialPublicIdsByOrg.get(orgId) ?? [],
+        }),
+      };
+    });
+    try {
+      const { error: credAuditErr } =
+        credAuditRows.length === 1
+          ? await db.from('audit_events').insert(credAuditRows[0])
+          : await db.from('audit_events').insert(credAuditRows);
+      if (credAuditErr) {
+        logger.warn(
+          { txId, error: credAuditErr },
+          'Failed to insert credential.status_changed.batch audit rows',
+        );
+      }
+    } catch (auditError) {
+      logger.warn(
+        { txId, error: auditError },
+        'credential.status_changed.batch audit insert threw',
+      );
+    }
+  }
 
   if (result.rejected.length > 0) {
     const firstReason = result.rejected[0]?.reason;
@@ -543,16 +736,12 @@ async function fetchTxStatus(txid: string): Promise<MempoolTxResponse | null> {
 export async function checkSubmittedConfirmations(): Promise<{ checked: number; confirmed: number }> {
   logger.info('Starting confirmation check for SUBMITTED anchors');
 
-  // In mock mode, auto-confirm all SUBMITTED anchors
-  if (config.useMocks || config.nodeEnv === 'test') {
-    return autoConfirmMockAnchors();
-  }
-
-  // RACE-3: In-process mutex — prevent concurrent cron runs from overlapping.
-  // NOTE: Advisory locks (pg_try_advisory_lock) don't work with Supabase connection
-  // pooling (Supavisor/PgBouncer in transaction mode) because each RPC call may
-  // use a different PG backend, and advisory locks are per-backend.
-  // Since we run a single worker process, an in-memory flag is sufficient.
+  // PR #753 audit fix A3: serialize BOTH the mock-mode and real-mode paths
+  // through the same in-process mutex. Pre-fix, the mock-mode early-return
+  // bypassed the mutex check, so two concurrent cron-handler invocations
+  // could each generate distinct `txId = mock-batch-${Date.now()}` strings
+  // and race the chain_tx_id backfill UPDATE — the loser's webhook payload
+  // would carry a tx_id that doesn't match what's in the DB.
   if (confirmationCheckRunning) {
     logger.info('Confirmation check skipped — already in progress');
     return { checked: 0, confirmed: 0 };
@@ -560,6 +749,9 @@ export async function checkSubmittedConfirmations(): Promise<{ checked: number; 
   confirmationCheckRunning = true;
 
   try {
+    if (config.useMocks || config.nodeEnv === 'test') {
+      return await autoConfirmMockAnchors();
+    }
     return await checkSubmittedConfirmationsUnlocked();
   } finally {
     // RACE-3: Always release the in-process mutex, even if an unexpected
@@ -797,9 +989,18 @@ async function checkSubmittedConfirmationsUnlocked(): Promise<{ checked: number;
  * No mempool.space calls — just promotes all SUBMITTED → SECURED instantly.
  */
 async function autoConfirmMockAnchors(): Promise<{ checked: number; confirmed: number }> {
+  // SCRUM-1800 (PR #753): the mock path needs to fan out anchor.secured +
+  // credential.status_changed webhooks alongside the SUBMITTED→SECURED
+  // transition, otherwise staging soaks (which run with USE_MOCKS=true)
+  // can't exercise the real-path's bulk-drain webhook code. This kept
+  // PR #1264's anchor.secured fan-out and PR #753's credential.status_changed
+  // fan-out invisible to every staging soak prior to this fix.
+  //
+  // Select public_id + org_id alongside id so we can dispatch with the same
+  // signature as fanOutSecuredAnchorWebhooks expects.
   const { data: anchors, error } = await db
     .from('anchors')
-    .select('id')
+    .select('id, public_id, org_id, chain_tx_id')
     .eq('status', 'SUBMITTED')
     .is('deleted_at', null)
     .limit(100);
@@ -808,15 +1009,51 @@ async function autoConfirmMockAnchors(): Promise<{ checked: number; confirmed: n
     return { checked: 0, confirmed: 0 };
   }
 
-  const ids = anchors.map((a) => a.id);
+  const blockHeight = 100000;
+  const blockTimestamp = new Date().toISOString();
+  const txId = `mock-batch-${Date.now()}`;
 
+  // SCRUM-1800 (PR #753): the `anchors_chain_data_consistency` constraint
+  // requires `chain_tx_id IS NOT NULL` whenever status='SECURED'. Some
+  // synthetic SUBMITTED rows in the staging seed lack chain_tx_id, which
+  // would fail the bulk UPDATE transactionally. Pre-update those rows with
+  // a synthetic mock-batch tx_id so the transition can proceed (also
+  // ensures fanOutSecuredAnchorWebhooks has a tx_id to attribute the
+  // anchor.secured payload to). Mock-mode only — real path doesn't need
+  // this because chain submission always sets chain_tx_id before
+  // status='SUBMITTED'.
+  const idsMissingTxId = anchors
+    .filter((a) => !a.chain_tx_id)
+    .map((a) => a.id as string);
+  if (idsMissingTxId.length > 0) {
+    // PR #753 audit fix A3: guard the backfill with `chain_tx_id IS NULL` so
+    // a cross-instance race (two worker pods both running this in mock mode)
+    // can't overwrite each other's synthetic tx_id. The loser's UPDATE
+    // matches zero rows; both proceed to SECURED with their own tx_id in
+    // their per-anchor map, but the DB carries the FIRST tick's value.
+    const { error: backfillErr } = await db
+      .from('anchors')
+      .update({ chain_tx_id: txId })
+      .in('id', idsMissingTxId)
+      .eq('status', 'SUBMITTED')
+      .is('chain_tx_id', null);
+    if (backfillErr) {
+      logger.error(
+        { error: backfillErr, count: idsMissingTxId.length },
+        'Failed to backfill chain_tx_id on synthetic mock anchors',
+      );
+      return { checked: anchors.length, confirmed: 0 };
+    }
+  }
+
+  const ids = anchors.map((a) => a.id as string);
   const { error: updateError } = await db
     .from('anchors')
     .update({
       status: 'SECURED',
       // chain_confirmations: 1, — column pending migration 0068b
-      chain_block_height: 100000,
-      chain_timestamp: new Date().toISOString(),
+      chain_block_height: blockHeight,
+      chain_timestamp: blockTimestamp,
     })
     .in('id', ids)
     .eq('status', 'SUBMITTED');
@@ -827,5 +1064,27 @@ async function autoConfirmMockAnchors(): Promise<{ checked: number; confirmed: n
   }
 
   logger.info({ count: anchors.length }, 'Auto-confirmed SUBMITTED anchors (mock mode)');
+
+  // Fan out webhooks — same path as the real chain-confirmation route.
+  // anchors fetched above carry the public_id + org_id needed by
+  // fanOutSecuredAnchorWebhooks; rows with either field null are filtered
+  // inside that helper (existing behavior).
+  const securedAnchors = anchors.map((a) => ({
+    public_id: (a.public_id as string | null) ?? null,
+    org_id: (a.org_id as string | null) ?? null,
+  }));
+  const fanOutPromise = fanOutSecuredAnchorWebhooks(
+    securedAnchors,
+    txId,
+    blockHeight,
+    blockTimestamp,
+  );
+  void fanOutPromise.catch((fanOutErr) => {
+    logger.error(
+      { txId, error: fanOutErr },
+      'Mock-mode webhook fan-out unexpectedly threw — should never happen (helper catches internally)',
+    );
+  });
+
   return { checked: anchors.length, confirmed: anchors.length };
 }

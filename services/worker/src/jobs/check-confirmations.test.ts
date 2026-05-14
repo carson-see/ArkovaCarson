@@ -24,6 +24,7 @@ const {
   mockBuildAnchorSecuredEmail,
   mockDrainResults,
   mockInvalidateVerificationCache,
+  mockCredentialTypeSelectResult,
 } = vi.hoisted(() => {
   const mockLogger = {
     info: vi.fn(),
@@ -45,6 +46,14 @@ const {
   const mockAnchorsSelectPages: Array<{ data: unknown; error: unknown }> = [];
   const mockAnchorsCursorFilters: string[] = [];
   const mockAnchorsUpdateResult: { error: unknown } = { error: null };
+  // SCRUM-1800 (SCRUM-1743 Phase 2c): the bulk credential_type lookup added in
+  // check-confirmations.ts uses `.from('anchors').select(...).in('public_id', ids)`,
+  // which is a different terminator than the main SUBMITTED select. We expose a
+  // dedicated result so tests can drive credential.status_changed emission.
+  const mockCredentialTypeSelectResult: { data: unknown; error: unknown } = {
+    data: [],
+    error: null,
+  };
   const mockDrainResults: Array<{
     data: {
       updated: number;
@@ -68,6 +77,7 @@ const {
     mockBuildAnchorSecuredEmail,
     mockDrainResults,
     mockInvalidateVerificationCache,
+    mockCredentialTypeSelectResult,
   };
 });
 
@@ -129,6 +139,11 @@ vi.mock('../utils/db.js', () => {
       data: { credential_type: 'DEGREE', metadata: { issuerName: 'Test Uni' } },
       error: null,
     }));
+    // SCRUM-1800 (SCRUM-1743 Phase 2c): bulk credential_type lookup terminator.
+    // Used by check-confirmations.ts to fan credential.status_changed alongside
+    // anchor.secured. Returns a thenable-like result directly so the production
+    // call shape `await db.from('anchors').select(...).in('public_id', ids)` resolves.
+    chain.in = vi.fn(() => mockCredentialTypeSelectResult);
     return chain;
   };
 
@@ -226,6 +241,57 @@ const MOCK_UNCONFIRMED_TX = {
   },
 };
 
+// ---- SCRUM-1800 (Phase 2c) bulk-drain test helpers ----
+// Extracted to break SonarCloud new-code duplication on the bulk-drain emit
+// suite (SonarCloud sees the same setup pattern across 5+ tests).
+
+type DrainAnchor = { public_id: string; org_id: string };
+type CredentialTypeRow = { public_id: string; credential_type: string };
+
+function setupBulkDrainTest(opts: {
+  anchors: DrainAnchor[];
+  credentialTypes?: CredentialTypeRow[];
+  capped?: boolean;
+}): void {
+  mockAnchorsSelectResult.data = [MOCK_SUBMITTED_ANCHOR];
+  mockDrainResults.splice(0, mockDrainResults.length, {
+    data: {
+      updated: opts.anchors.length,
+      capped: opts.capped ?? false,
+      anchors: opts.anchors,
+    },
+    error: null,
+  });
+  mockCredentialTypeSelectResult.data = opts.credentialTypes ?? [];
+  mockFetch
+    .mockResolvedValueOnce({ ok: true, text: () => Promise.resolve('200200') })
+    .mockResolvedValueOnce({
+      ok: true,
+      json: () => Promise.resolve(MOCK_CONFIRMED_TX),
+    });
+}
+
+function flattenAuditRows(): Array<Record<string, unknown>> {
+  const flat: Array<Record<string, unknown>> = [];
+  for (const call of mockAuditInsert.mock.calls) {
+    const arg = call[0];
+    if (Array.isArray(arg)) flat.push(...(arg as Array<Record<string, unknown>>));
+    else flat.push(arg as Record<string, unknown>);
+  }
+  return flat;
+}
+
+// fanOutSecuredAnchorWebhooks is fire-and-forget (line ~690 in
+// check-confirmations.ts). Drain microtasks so the credential audit insert
+// at the end of the detached promise lands before assertions.
+async function drainMicrotasks(): Promise<void> {
+  for (let i = 0; i < 10; i++) await Promise.resolve();
+}
+
+// ---- Cursor-rotation helpers (from origin/main) ----
+// Used by the second-page advancement tests that PR #753 picks up via the
+// merge from main.
+
 function submittedCandidate(index: number, chainTxId: string) {
   return {
     id: `candidate-${String(index).padStart(4, '0')}`,
@@ -292,6 +358,12 @@ describe('checkSubmittedConfirmations', () => {
     mockAuditInsert.mockResolvedValue({ error: null });
     mockChainIndexUpsert.mockResolvedValue({ error: null });
     mockDispatchWebhookEvent.mockResolvedValue(undefined);
+    // SCRUM-1800 (SCRUM-1743 Phase 2c): default the credential_type bulk lookup
+    // to empty so existing tests retain their original `anchor.secured`-only
+    // call counts. Tests covering credential.status_changed override this with
+    // real rows.
+    mockCredentialTypeSelectResult.data = [];
+    mockCredentialTypeSelectResult.error = null;
     mockSendEmail.mockResolvedValue({ success: true, messageId: 'msg-001' });
     mockBuildAnchorSecuredEmail.mockReturnValue({ subject: 'Test Subject', html: '<p>test</p>' });
     mockInvalidateVerificationCache.mockResolvedValue(undefined);
@@ -557,6 +629,197 @@ describe('checkSubmittedConfirmations', () => {
           details: expect.stringContaining('Batch confirmed 1 anchors'),
         }),
       ]),
+    );
+  });
+
+  // ---- SCRUM-1800 (SCRUM-1743 Phase 2c): credential.status_changed fan-out ----
+
+  it('dispatches credential.status_changed alongside anchor.secured for anchors with credential_type', async () => {
+    setupBulkDrainTest({
+      anchors: [
+        { public_id: 'pub-001', org_id: 'org-001' },
+        { public_id: 'pub-002', org_id: 'org-001' },
+      ],
+      credentialTypes: [
+        { public_id: 'pub-001', credential_type: 'DEGREE' },
+        { public_id: 'pub-002', credential_type: 'TRANSCRIPT' },
+      ],
+    });
+
+    await checkSubmittedConfirmations();
+
+    // 2 anchors × (anchor.secured + credential.status_changed) = 4 dispatches
+    expect(mockDispatchWebhookEvent).toHaveBeenCalledTimes(4);
+    expect(mockDispatchWebhookEvent).toHaveBeenCalledWith(
+      'org-001',
+      'credential.status_changed',
+      'pub-001',
+      expect.objectContaining({
+        public_id: 'pub-001',
+        credential_type: 'DEGREE',
+        previous_status: 'SUBMITTED',
+        new_status: 'SECURED',
+      }),
+    );
+    expect(mockDispatchWebhookEvent).toHaveBeenCalledWith(
+      'org-001',
+      'credential.status_changed',
+      'pub-002',
+      expect.objectContaining({
+        public_id: 'pub-002',
+        credential_type: 'TRANSCRIPT',
+        previous_status: 'SUBMITTED',
+        new_status: 'SECURED',
+      }),
+    );
+    expect(mockDispatchWebhookEvent).toHaveBeenCalledWith(
+      'org-001',
+      'anchor.secured',
+      'pub-001',
+      expect.objectContaining({ status: 'SECURED' }),
+    );
+  });
+
+  it('skips credential.status_changed for anchors without credential_type but still emits anchor.secured', async () => {
+    setupBulkDrainTest({
+      anchors: [
+        { public_id: 'pub-001', org_id: 'org-001' },
+        { public_id: 'pub-002', org_id: 'org-001' },
+      ],
+      // pub-002 deliberately omitted — non-credential anchor
+      credentialTypes: [{ public_id: 'pub-001', credential_type: 'DEGREE' }],
+    });
+
+    await checkSubmittedConfirmations();
+
+    // 2 anchor.secured + 1 credential.status_changed (only pub-001 has credential_type)
+    expect(mockDispatchWebhookEvent).toHaveBeenCalledTimes(3);
+    expect(mockDispatchWebhookEvent).toHaveBeenCalledWith(
+      'org-001',
+      'credential.status_changed',
+      'pub-001',
+      expect.any(Object),
+    );
+    expect(mockDispatchWebhookEvent).not.toHaveBeenCalledWith(
+      expect.anything(),
+      'credential.status_changed',
+      'pub-002',
+      expect.anything(),
+    );
+  });
+
+  it('writes a credential.status_changed.batch audit row per org with sample public_ids', async () => {
+    setupBulkDrainTest({
+      anchors: [
+        { public_id: 'pub-001', org_id: 'org-001' },
+        { public_id: 'pub-002', org_id: 'org-001' },
+        { public_id: 'pub-003', org_id: 'org-002' },
+      ],
+      credentialTypes: [
+        { public_id: 'pub-001', credential_type: 'DEGREE' },
+        { public_id: 'pub-002', credential_type: 'TRANSCRIPT' },
+        { public_id: 'pub-003', credential_type: 'CERTIFICATE' },
+      ],
+    });
+
+    await checkSubmittedConfirmations();
+    await drainMicrotasks();
+
+    const credBatchRows = flattenAuditRows().filter(
+      (r) => (r as { event_type?: string }).event_type === 'credential.status_changed.batch',
+    );
+    // 2 orgs → 2 batch audit rows
+    expect(credBatchRows.length).toBe(2);
+    const org1Row = credBatchRows.find((r) => (r as { org_id?: string }).org_id === 'org-001');
+    expect(org1Row).toBeDefined();
+    if (!org1Row) throw new Error('unreachable after toBeDefined assertion');
+    const org1Details = JSON.parse(String((org1Row as { details: unknown }).details));
+    expect(org1Details.credentials_dispatched_attempted).toBe(2);
+    expect(org1Details.previous_status).toBe('SUBMITTED');
+    expect(org1Details.new_status).toBe('SECURED');
+    expect(org1Details.sample_public_ids).toEqual(
+      expect.arrayContaining(['pub-001', 'pub-002']),
+    );
+  });
+
+  it('captures per-emit failure outcomes in credential.status_changed.batch audit row', async () => {
+    setupBulkDrainTest({
+      anchors: [
+        { public_id: 'pub-001', org_id: 'org-001' },
+        { public_id: 'pub-002', org_id: 'org-001' },
+        { public_id: 'pub-003', org_id: 'org-001' },
+      ],
+      credentialTypes: [
+        { public_id: 'pub-001', credential_type: 'DEGREE' },
+        { public_id: 'pub-002', credential_type: 'TRANSCRIPT' },
+        { public_id: 'pub-003', credential_type: 'CERTIFICATE' },
+      ],
+    });
+
+    // Make the credential.status_changed dispatch fail for pub-002 only.
+    // anchor.secured calls succeed; credential.status_changed for pub-001 +
+    // pub-003 succeed; pub-002 throws.
+    mockDispatchWebhookEvent.mockImplementation(
+      async (_orgId: string, eventType: string, eventId: string) => {
+        if (eventType === 'credential.status_changed' && eventId === 'pub-002') {
+          throw new Error('endpoint pub-002 timeout');
+        }
+        return undefined;
+      },
+    );
+
+    await checkSubmittedConfirmations();
+    await drainMicrotasks();
+
+    const credBatch = flattenAuditRows().find(
+      (r) => (r as { event_type?: string }).event_type === 'credential.status_changed.batch',
+    ) as { details: string } | undefined;
+    expect(credBatch).toBeDefined();
+    const details = JSON.parse(credBatch!.details);
+    expect(details.credentials_dispatched_attempted).toBe(3);
+    expect(details.credentials_dispatched_succeeded).toBe(2);
+    expect(details.credentials_dispatched_failed).toBe(1);
+    expect(details.sample_failures).toHaveLength(1);
+    expect(details.sample_failures[0].public_id).toBe('pub-002');
+    expect(details.sample_failures[0].error).toBe('endpoint pub-002 timeout');
+  });
+
+  it('does not write credential.status_changed.batch audit row when no anchors have credential_type', async () => {
+    setupBulkDrainTest({
+      anchors: [{ public_id: 'pub-001', org_id: 'org-001' }],
+      // No credential_type → no credential audit
+      credentialTypes: [],
+    });
+
+    await checkSubmittedConfirmations();
+    await drainMicrotasks();
+
+    const credBatchRows = flattenAuditRows().filter(
+      (r) => (r as { event_type?: string }).event_type === 'credential.status_changed.batch',
+    );
+    expect(credBatchRows.length).toBe(0);
+  });
+
+  it('continues anchor.secured fan-out when credential_type lookup fails', async () => {
+    setupBulkDrainTest({
+      anchors: [{ public_id: 'pub-001', org_id: 'org-001' }],
+    });
+    mockCredentialTypeSelectResult.data = null;
+    mockCredentialTypeSelectResult.error = { message: 'simulated DB outage' };
+
+    await checkSubmittedConfirmations();
+
+    // anchor.secured still emits; credential.status_changed suppressed
+    expect(mockDispatchWebhookEvent).toHaveBeenCalledTimes(1);
+    expect(mockDispatchWebhookEvent).toHaveBeenCalledWith(
+      'org-001',
+      'anchor.secured',
+      'pub-001',
+      expect.any(Object),
+    );
+    expect(mockLogger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({ txId: MOCK_SUBMITTED_ANCHOR.chain_tx_id }),
+      expect.stringContaining('Failed to fetch credential_type'),
     );
   });
 

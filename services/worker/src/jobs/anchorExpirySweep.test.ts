@@ -42,22 +42,41 @@ interface FakeAnchor {
 }
 
 function makeDb(opts: {
-  candidates: FakeAnchor[];
+  candidates?: FakeAnchor[];
+  /** SCRUM-1807: pre-shaped pages for cursor-pagination tests. If supplied,
+   * each call to selectExpiringSecured(cursor?) returns the next page,
+   * cycling through this array. The mock asserts that every call after the
+   * first carries a cursor matching the previous page's last row. */
+  pages?: FakeAnchor[][];
   casMisses?: Set<string>;
   webhookThrows?: Set<string>;
   auditFails?: Set<string>;
+  selectThrowsAfterPage?: number;
 }): {
   db: AnchorExpirySweepDb;
   dispatched: Array<{ orgId: string; eventType: string; data: Record<string, unknown> }>;
   audits: Array<Record<string, unknown>>;
   updated: string[];
+  cursorCalls: Array<unknown>;
 } {
   const dispatched: Array<{ orgId: string; eventType: string; data: Record<string, unknown> }> = [];
   const audits: Array<Record<string, unknown>> = [];
   const updated: string[] = [];
+  const cursorCalls: Array<unknown> = [];
+
+  let callIndex = 0;
+  const pages = opts.pages ?? (opts.candidates ? [opts.candidates] : []);
 
   const db: AnchorExpirySweepDb = {
-    selectExpiringSecured: vi.fn(async () => opts.candidates),
+    selectExpiringSecured: vi.fn(async (cursor) => {
+      cursorCalls.push(cursor);
+      if (opts.selectThrowsAfterPage !== undefined && callIndex >= opts.selectThrowsAfterPage) {
+        throw new Error(`select page ${callIndex} simulated failure`);
+      }
+      const result = pages[callIndex] ?? [];
+      callIndex++;
+      return result;
+    }),
     casUpdateToExpired: vi.fn(async (anchorId: string) => {
       if (opts.casMisses?.has(anchorId)) return false;
       updated.push(anchorId);
@@ -77,7 +96,7 @@ function makeDb(opts: {
       dispatched.push({ orgId, eventType, data });
     }),
   };
-  return { db, dispatched, audits, updated };
+  return { db, dispatched, audits, updated, cursorCalls };
 }
 
 const FROZEN_NOW = '2026-05-08T12:00:00.000Z';
@@ -113,7 +132,10 @@ describe('sweepExpiredAnchors (SCRUM-1736)', () => {
   it('returns zeros and dispatches nothing when there are no candidates', async () => {
     const { db, dispatched, updated } = makeDb({ candidates: [] });
     const result = await sweepExpiredAnchors(db);
-    expect(result).toEqual({ checked: 0, newly_expired: 0, webhooks_dispatched: 0, errors: [] });
+    // SCRUM-1807: result shape now includes `pages`. With no candidates the
+    // first cursor-driven page returns empty and we exit before fetching a
+    // second page, so pages=1.
+    expect(result).toEqual({ checked: 0, newly_expired: 0, webhooks_dispatched: 0, errors: [], pages: 1 });
     expect(updated).toHaveLength(0);
     expect(dispatched).toHaveLength(0);
   });
@@ -276,5 +298,218 @@ describe('sweepExpiredAnchors (SCRUM-1736)', () => {
     expect(result.webhooks_dispatched).toBe(0);
     expect(result.errors).toHaveLength(1);
     expect(result.errors.join(' ')).toMatch(/future/i);
+  });
+
+  // ---- SCRUM-1800 (SCRUM-1743 Phase 2c): credential.status_changed on SECURED → EXPIRED ----
+
+  it('dispatches credential.status_changed alongside anchor.expired for credential anchors', async () => {
+    const credAnchor: FakeAnchor & { credential_type: string } = {
+      ...EXPIRED_SECURED,
+      id: '11111111-2222-3333-4444-555555555555',
+      public_id: 'ARK-2026-CRED-1',
+      credential_type: 'DEGREE',
+    };
+    const { db, dispatched, audits } = makeDb({ candidates: [credAnchor] });
+    const result = await sweepExpiredAnchors(db);
+
+    expect(result.errors).toEqual([]);
+    expect(result.newly_expired).toBe(1);
+    // Both anchor.expired AND credential.status_changed dispatched.
+    // CodeRabbit PR #753: counter now includes credential.status_changed
+    // successes (was: anchor.expired only) so rollout/alerting signals
+    // don't undercount the new emit path.
+    expect(result.webhooks_dispatched).toBe(2);
+    expect(dispatched).toHaveLength(2);
+
+    const credEvent = dispatched.find((d) => d.eventType === 'credential.status_changed');
+    expect(credEvent).toBeDefined();
+    expect(credEvent!.orgId).toBe('org-uuid-1');
+    expect(credEvent!.data).toMatchObject({
+      public_id: 'ARK-2026-CRED-1',
+      credential_type: 'DEGREE',
+      previous_status: 'SECURED',
+      new_status: 'EXPIRED',
+    });
+
+    // Audit row written for credential.status_changed
+    const credAudit = audits.find((a) => a.event_type === 'credential.status_changed');
+    expect(credAudit).toBeDefined();
+    const details = JSON.parse(String(credAudit!.details));
+    expect(details.dispatched).toBe(true);
+    expect(details.previous_status).toBe('SECURED');
+    expect(details.new_status).toBe('EXPIRED');
+  });
+
+  it('uses deterministic event_id "cred-status-expired-${public_id}" for credential.status_changed', async () => {
+    const credAnchor: FakeAnchor & { credential_type: string } = {
+      ...EXPIRED_SECURED,
+      id: '11111111-2222-3333-4444-666666666666',
+      public_id: 'ARK-2026-CRED-2',
+      credential_type: 'TRANSCRIPT',
+    };
+    let capturedEventId: string | undefined;
+    const db: AnchorExpirySweepDb = {
+      selectExpiringSecured: vi.fn(async () => [credAnchor]),
+      casUpdateToExpired: vi.fn(async () => true),
+      insertAuditEvent: vi.fn(async () => undefined),
+      dispatchWebhookEvent: vi.fn(async (_orgId, eventType, eventId) => {
+        if (eventType === 'credential.status_changed') {
+          capturedEventId = eventId;
+        }
+      }),
+    };
+    await sweepExpiredAnchors(db);
+    expect(capturedEventId).toBe('cred-status-expired-ARK-2026-CRED-2');
+  });
+
+  it('writes credential.status_changed_dispatch_failed sentinel audit when credential dispatch throws', async () => {
+    const credAnchor: FakeAnchor & { credential_type: string } = {
+      ...EXPIRED_SECURED,
+      id: '11111111-2222-3333-4444-777777777777',
+      public_id: 'ARK-2026-CRED-3',
+      credential_type: 'CERTIFICATE',
+    };
+    const dispatched: Array<{ orgId: string; eventType: string; data: Record<string, unknown> }> = [];
+    const audits: Array<Record<string, unknown>> = [];
+    const db: AnchorExpirySweepDb = {
+      selectExpiringSecured: vi.fn(async () => [credAnchor]),
+      casUpdateToExpired: vi.fn(async () => true),
+      insertAuditEvent: vi.fn(async (row) => {
+        audits.push(row);
+      }),
+      dispatchWebhookEvent: vi.fn(async (orgId, eventType, _eventId, data) => {
+        if (eventType === 'credential.status_changed') {
+          throw new Error('credential webhook system down');
+        }
+        dispatched.push({ orgId, eventType, data });
+      }),
+    };
+
+    const result = await sweepExpiredAnchors(db);
+
+    // anchor.expired dispatched OK; credential.status_changed failed
+    expect(dispatched).toHaveLength(1);
+    expect(dispatched[0].eventType).toBe('anchor.expired');
+    expect(result.errors.join(' ')).toMatch(/credential\.status_changed dispatch failed/);
+
+    const sentinel = audits.find(
+      (a) => a.event_type === 'credential.status_changed_dispatch_failed',
+    );
+    expect(sentinel).toBeDefined();
+    const details = JSON.parse(String(sentinel!.details));
+    expect(details.error).toBe('credential webhook system down');
+    expect(details.recovery).toMatch(/SCRUM-1738/);
+  });
+
+  it('skips credential.status_changed dispatch for non-credential anchors (credential_type null)', async () => {
+    // EXPIRED_SECURED has no credential_type set → behaves as null
+    const { db, dispatched, audits } = makeDb({ candidates: [EXPIRED_SECURED] });
+    await sweepExpiredAnchors(db);
+
+    const credEvents = dispatched.filter((d) => d.eventType === 'credential.status_changed');
+    expect(credEvents).toHaveLength(0);
+    const credAudits = audits.filter((a) =>
+      String(a.event_type).startsWith('credential.status_changed'),
+    );
+    expect(credAudits).toHaveLength(0);
+  });
+
+  // ---- SCRUM-1807: cursor-paginated drain ----
+
+  it('drains a multi-page backlog via keyset cursor (no row-starvation)', async () => {
+    // To trigger pagination, the first page MUST be exactly EXPIRY_SWEEP_PAGE_SIZE
+    // (= 500) — that's the production termination signal: a short page means
+    // the backlog is fully drained. We synthesize 500 rows on page 1 and 2
+    // rows on page 2 (partial → loop exits after page 2).
+    const pageA: FakeAnchor[] = Array.from({ length: 500 }, (_, i): FakeAnchor => ({
+      ...EXPIRED_SECURED,
+      id: `11111111-1111-4111-8111-${i.toString(16).padStart(12, '0')}`,
+      public_id: `ARK-PG-A${i}`,
+      // Spread expires_at so each row has a unique (expires_at, id) — keyset
+      // cursor relies on the last row's pair for the next page's filter.
+      expires_at: `2026-05-01T00:${Math.floor(i / 60).toString().padStart(2, '0')}:${(i % 60).toString().padStart(2, '0')}.000Z`,
+    }));
+    const lastA = pageA[pageA.length - 1];
+    const pageB: FakeAnchor[] = [
+      { ...EXPIRED_SECURED, id: '22222222-2222-4222-8222-bbbbbbbbbbba', public_id: 'ARK-PG-B1', expires_at: '2026-05-04T00:00:00.000Z' },
+      { ...EXPIRED_SECURED, id: '22222222-2222-4222-8222-bbbbbbbbbbbb', public_id: 'ARK-PG-B2', expires_at: '2026-05-05T00:00:00.000Z' },
+    ];
+
+    const { db, updated, cursorCalls } = makeDb({ pages: [pageA, pageB] });
+    const result = await sweepExpiredAnchors(db);
+
+    // First call: no cursor (undefined). Second call: cursor derived from
+    // page A's last row. Page B is partial (< page size) → loop terminates
+    // after processing it.
+    expect(cursorCalls[0]).toBeUndefined();
+    expect(cursorCalls[1]).toEqual({
+      last_expires_at: lastA.expires_at,
+      last_id: lastA.id,
+    });
+    expect(cursorCalls).toHaveLength(2);
+
+    // All 502 anchors processed across 2 pages.
+    expect(result.checked).toBe(502);
+    expect(result.newly_expired).toBe(502);
+    expect(result.pages).toBe(2);
+    expect(result.errors).toEqual([]);
+    expect(updated).toHaveLength(502);
+  });
+
+  it('terminates pagination on first empty page even if upstream returns infinitely', async () => {
+    // pages[0] populated, pages[1+] empty — covers the "backlog fully
+    // drained" case.
+    const onlyPage: FakeAnchor[] = [
+      { ...EXPIRED_SECURED, id: '33333333-3333-4333-8333-cccccccccccc', public_id: 'ARK-LAST-1' },
+    ];
+    const { db, cursorCalls } = makeDb({ pages: [onlyPage, []] });
+    const result = await sweepExpiredAnchors(db);
+
+    // Single non-empty page, length < page size → loop exits after one call.
+    // Empty pages[1] never queried because length<EXPIRY_SWEEP_PAGE_SIZE check terminates.
+    expect(result.pages).toBe(1);
+    expect(cursorCalls).toHaveLength(1);
+    expect(result.checked).toBe(1);
+  });
+
+  it('records selectExpiringSecured failure on a later page without losing earlier-page progress', async () => {
+    const pageA: FakeAnchor[] = [
+      { ...EXPIRED_SECURED, id: '44444444-4444-4444-8444-aaaaaaaaaaaa', public_id: 'ARK-OK-1', expires_at: '2026-05-01T00:00:00.000Z' },
+      { ...EXPIRED_SECURED, id: '44444444-4444-4444-8444-aaaaaaaaaaab', public_id: 'ARK-OK-2', expires_at: '2026-05-02T00:00:00.000Z' },
+      // 3rd row to allow continuation
+      ...Array.from({ length: 498 }, (_, i): FakeAnchor => ({
+        ...EXPIRED_SECURED,
+        id: `44444444-4444-4444-8444-aaaaaaaa${i.toString(16).padStart(4, '0')}`,
+        public_id: `ARK-FILL-${i}`,
+        expires_at: `2026-05-03T00:00:00.${i.toString().padStart(3, '0')}Z`,
+      })),
+    ];
+
+    const { db, updated } = makeDb({ pages: [pageA], selectThrowsAfterPage: 1 });
+    const result = await sweepExpiredAnchors(db);
+
+    // Page 1 fetched + processed (500 rows == EXPIRY_SWEEP_PAGE_SIZE). Page 2 throws.
+    expect(result.checked).toBe(500);
+    expect(updated).toHaveLength(500); // page 1 anchors all transitioned
+    expect(result.errors.some((e) => e.includes('selectExpiringSecured page 1 failed'))).toBe(true);
+  });
+
+  it('hits page cap and reports remainder deferred to next cron tick', async () => {
+    // Build a page generator that ALWAYS returns a full page so the cap
+    // (EXPIRY_SWEEP_MAX_PAGES = 50) is the only termination signal.
+    const fullPage: FakeAnchor[] = Array.from({ length: 500 }, (_, i): FakeAnchor => ({
+      ...EXPIRED_SECURED,
+      id: `55555555-5555-4555-8555-${i.toString(16).padStart(12, '0')}`,
+      public_id: `ARK-CAP-${i}`,
+      expires_at: `2026-05-01T00:00:${(i % 60).toString().padStart(2, '0')}.000Z`,
+    }));
+    const pages = Array.from({ length: 60 }, () => fullPage);
+
+    const { db } = makeDb({ pages });
+    const result = await sweepExpiredAnchors(db);
+
+    expect(result.pages).toBe(50);
+    expect(result.errors.some((e) => e.includes('hit page cap'))).toBe(true);
+    expect(result.checked).toBe(500 * 50);
   });
 });

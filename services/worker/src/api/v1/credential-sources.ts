@@ -12,7 +12,7 @@ import {
   evidenceDateToTimestamp,
   type CredentialSourceImportPreview,
 } from '../../lib/credential-source-import.js';
-import { isPrivateUrlResolved } from '../../webhooks/delivery.js';
+import { dispatchWebhookEvent, isPrivateUrlResolved } from '../../webhooks/delivery.js';
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 import { deductOrgCredit, type DeductionResult } from '../../utils/orgCredits.js';
@@ -607,6 +607,92 @@ router.post('/import-url/confirm', async (req: Request, res: Response) => {
         );
       }
       throw postCreateError;
+    }
+
+    // SCRUM-1798 (SCRUM-1743 Phase 2a): emit `credential.issued` webhook after
+    // the credential row is committed + recipient linked + audit logged.
+    // Best-effort dispatch — failure does NOT abort the response. The anchor
+    // row is already authoritative; customers reconcile via
+    // `/api/v1/anchors/:public_id` if they miss a delivery. Pattern mirrors
+    // `anchor.submitted` emit in services/worker/src/jobs/anchor.ts.
+    //
+    // org_public_id + recipient_public_id are optional+nullable in the schema
+    // (services/worker/src/webhooks/payload-schemas.ts CREDENTIAL_BASE_FIELDS)
+    // — joining to orgs.public_id / profiles.public_id is a follow-up; schema
+    // accepts null today.
+    if (orgId && anchor.public_id) {
+      const issuedAt =
+        evidenceDateToTimestamp(preview.credential_issued_at) ?? anchor.created_at;
+      const expiresAt = evidenceDateToTimestamp(preview.credential_expires_at, true);
+      // Capture narrowed values into locals so TypeScript keeps the non-null
+      // narrowing across the async closure below.
+      const publicId: string = anchor.public_id;
+      const anchorOrgId: string = orgId;
+      const anchorId: string = anchor.id;
+
+      // Codex P2 PR #753: fire-and-forget the webhook dispatch. The previous
+      // pattern awaited dispatchWebhookEvent which awaits Promise.all over
+      // deliverToEndpoint — each endpoint has a 10s fetch timeout. A slow or
+      // black-holed customer endpoint could add up to ~10s to every successful
+      // import. The webhook is best-effort; the credential is already
+      // committed by the time we get here. The .then handler writes the
+      // tamper-evident audit row capturing dispatch outcome (success or
+      // dispatch_error) after the dispatch resolves; the response returns
+      // immediately regardless.
+      const dispatchPromise = (async () => {
+        try {
+          await dispatchWebhookEvent(anchorOrgId, 'credential.issued', publicId, {
+            public_id: publicId,
+            credential_type: preview.credential_type,
+            status: 'ISSUED',
+            issued_at: issuedAt,
+            expires_at: expiresAt,
+          });
+          return { dispatched: true, error: null as string | null };
+        } catch (webhookError) {
+          const message = webhookError instanceof Error
+            ? webhookError.message
+            : String(webhookError);
+          logger.warn(
+            { anchorId, publicId, error: webhookError },
+            'Failed to dispatch credential.issued webhook (response NOT aborted)',
+          );
+          return { dispatched: false, error: message };
+        }
+      })();
+
+      void dispatchPromise.then((outcome) => {
+        // SCRUM-1800 (SCRUM-1743 Phase 2c): tamper-evident audit row tied to
+        // the webhook emit decision. The existing CREDENTIAL_SOURCE_IMPORTED
+        // row captures the import action; this `credential.issued` row
+        // captures the outbound webhook fan-out specifically so auditors can
+        // answer "was a credential.issued event emitted for anchor X?"
+        // without joining webhook_delivery_logs.
+        // eslint-disable-next-line arkova/missing-org-filter -- Insert-only audit write; tenant scope is carried in the validated org_id field.
+        void db.from('audit_events').insert({
+          event_type: 'credential.issued',
+          event_category: 'WEBHOOK',
+          actor_id: userId,
+          org_id: anchorOrgId,
+          target_type: 'anchor',
+          target_id: anchorId,
+          details: JSON.stringify({
+            public_id: publicId,
+            credential_type: preview.credential_type,
+            dispatched: outcome.dispatched,
+            dispatch_error: outcome.error,
+            issued_at: issuedAt,
+            expires_at: expiresAt,
+          }),
+        }).then(({ error }: { error: unknown }) => {
+          if (error) {
+            logger.error(
+              { error, anchorId },
+              'Failed to write credential.issued audit row',
+            );
+          }
+        });
+      });
     }
 
     res.status(201).json({

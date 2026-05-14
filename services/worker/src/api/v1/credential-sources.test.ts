@@ -129,8 +129,12 @@ vi.mock('../../utils/orgCredits.js', () => ({
   deductOrgCredit: mockDeductOrgCredit,
 }));
 
+const { mockDispatchWebhookEvent } = vi.hoisted(() => ({
+  mockDispatchWebhookEvent: vi.fn().mockResolvedValue(undefined),
+}));
 vi.mock('../../webhooks/delivery.js', () => ({
   isPrivateUrlResolved: vi.fn().mockResolvedValue(false),
+  dispatchWebhookEvent: mockDispatchWebhookEvent,
 }));
 
 vi.mock('../../lib/urls.js', () => ({
@@ -558,5 +562,119 @@ describe('credentialSourcesRouter', () => {
     expect(res.status).toBe(400);
     expect(res.body.error).toBe('invalid_request');
     expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+
+  // SCRUM-1798 (Phase 2a of SCRUM-1743): credential.issued webhook emission
+  // tests. Verifies the dispatcher is called with a schema-compliant payload
+  // after a successful credential creation, and that emit failures do not
+  // abort the response (best-effort dispatch).
+  describe('credential.issued webhook emission (SCRUM-1798)', () => {
+    it('dispatches credential.issued after successful import + recipient link + audit', async () => {
+      await request(makeApp())
+        .post('/api/v1/credential-sources/import-url/preview')
+        .send({ source_url: 'https://credentials.example.com/abc', credential_type: 'CERTIFICATE' });
+
+      const res = await request(makeApp())
+        .post('/api/v1/credential-sources/import-url/confirm')
+        .send({ source_url: 'https://credentials.example.com/abc', credential_type: 'CERTIFICATE' });
+
+      expect(res.status).toBe(201);
+      // Dispatch is now fire-and-forget (Codex P2 PR #753); drain microtasks
+      // so the awaited Promise.all inside dispatchWebhookEvent settles before
+      // we assert.
+      for (let i = 0; i < 10; i++) await Promise.resolve();
+      expect(mockDispatchWebhookEvent).toHaveBeenCalledWith(
+        'org-1',
+        'credential.issued',
+        expect.stringMatching(/^ARK-\d{4}-[A-F0-9]{8}$/),
+        expect.objectContaining({
+          public_id: expect.stringMatching(/^ARK-\d{4}-[A-F0-9]{8}$/),
+          credential_type: 'CERTIFICATE',
+          status: 'ISSUED',
+          issued_at: expect.any(String),
+        }),
+      );
+      // CodeRabbit PR #753: ensure routing event_id arg matches the
+      // payload's public_id (and the response body's anchor.public_id) so
+      // event identity can't drift across the dispatch envelope.
+      const [, , eventPublicId, payload] = mockDispatchWebhookEvent.mock.calls[0] as [
+        string,
+        string,
+        string,
+        { public_id: string },
+      ];
+      expect(payload.public_id).toBe(eventPublicId);
+      expect(eventPublicId).toBe(res.body.anchor.public_id);
+    });
+
+    it('does NOT abort the response if dispatch fails (best-effort)', async () => {
+      mockDispatchWebhookEvent.mockRejectedValueOnce(new Error('webhook endpoint down'));
+
+      await request(makeApp())
+        .post('/api/v1/credential-sources/import-url/preview')
+        .send({ source_url: 'https://credentials.example.com/xyz', credential_type: 'DEGREE' });
+
+      const res = await request(makeApp())
+        .post('/api/v1/credential-sources/import-url/confirm')
+        .send({ source_url: 'https://credentials.example.com/xyz', credential_type: 'DEGREE' });
+
+      expect(res.status).toBe(201);
+      expect(res.body.duplicate).toBe(false);
+      expect(mockDispatchWebhookEvent).toHaveBeenCalled();
+    });
+
+    it('skips dispatch when org_id is null (org-less import)', async () => {
+      mockProfileSingle.mockResolvedValue({ data: { org_id: null }, error: null });
+
+      await request(makeApp())
+        .post('/api/v1/credential-sources/import-url/preview')
+        .send({ source_url: 'https://credentials.example.com/orgless', credential_type: 'BADGE' });
+
+      const res = await request(makeApp())
+        .post('/api/v1/credential-sources/import-url/confirm')
+        .send({ source_url: 'https://credentials.example.com/orgless', credential_type: 'BADGE' });
+
+      expect(res.status).toBe(201);
+      expect(mockDispatchWebhookEvent).not.toHaveBeenCalled();
+    });
+
+    // Helper: import a credential then return the credential.issued audit
+    // row's parsed details. Drains microtasks because both the dispatch and
+    // the audit insert are fire-and-forget.
+    async function importAndReadIssuedAudit(sourceSlug: string, credentialType: string) {
+      await request(makeApp())
+        .post('/api/v1/credential-sources/import-url/preview')
+        .send({ source_url: `https://credentials.example.com/${sourceSlug}`, credential_type: credentialType });
+
+      const res = await request(makeApp())
+        .post('/api/v1/credential-sources/import-url/confirm')
+        .send({ source_url: `https://credentials.example.com/${sourceSlug}`, credential_type: credentialType });
+
+      expect(res.status).toBe(201);
+      for (let i = 0; i < 10; i++) await Promise.resolve();
+
+      const issuedRow = mockAuditInsert.mock.calls
+        .map((c: unknown[]) => c[0])
+        .find((row: any) => row?.event_type === 'credential.issued') as
+        | { event_category: string; org_id: string; details: string }
+        | undefined;
+      expect(issuedRow).toBeDefined();
+      return { row: issuedRow!, details: JSON.parse(issuedRow!.details) };
+    }
+
+    it('writes a credential.issued audit row capturing dispatch outcome', async () => {
+      const { row, details } = await importAndReadIssuedAudit('auditable', 'INSURANCE');
+      expect(row.event_category).toBe('WEBHOOK');
+      expect(row.org_id).toBe('org-1');
+      expect(details.dispatched).toBe(true);
+      expect(details.credential_type).toBe('INSURANCE');
+    });
+
+    it('writes a credential.issued audit row with dispatched=false when dispatch fails', async () => {
+      mockDispatchWebhookEvent.mockRejectedValueOnce(new Error('endpoint offline'));
+      const { details } = await importAndReadIssuedAudit('dispatchfail', 'TRANSCRIPT');
+      expect(details.dispatched).toBe(false);
+      expect(details.dispatch_error).toBe('endpoint offline');
+    });
   });
 });

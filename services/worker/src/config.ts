@@ -107,6 +107,14 @@ const ConfigSchema = z.object({
    * normal worker cadence is unchanged unless ops explicitly flips it.
    */
   disableInProcessAnchorCron: boolFlag(false),
+  /**
+   * SCRUM-1799 (SCRUM-1743 Phase 2b) — gate the credential.verified webhook
+   * emit on the verify hot path. Default false: emit code is wired but dark
+   * in prod. Carson flips per-tenant via switchboard or globally by setting
+   * the env var to "true" once a customer endpoint is validated under a
+   * staging soak. See SCRUM-1806 for the ramp plan.
+   */
+  enableCredentialVerifiedWebhook: boolFlag(false),
 
   // AI Intelligence (P8)
   /** Gemini API key for AI extraction (Constitution 4A: PII-stripped metadata only) */

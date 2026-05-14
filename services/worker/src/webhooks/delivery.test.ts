@@ -15,6 +15,7 @@ const {
   mockLogger,
   mockDbFrom,
   mockFetch,
+  mockSentry,
   // Delivery log query chains
   deliveryLogSelect,
   deliveryLogInsert,
@@ -33,6 +34,12 @@ const {
     debug: vi.fn(),
   };
 
+  // SCRUM-1805: dispatcher captures delivery_log insert failures to Sentry.
+  const mockSentry = {
+    captureException: vi.fn(),
+    captureMessage: vi.fn(),
+  };
+
   // Delivery log chains
   const deliveryLogSelectSingle = vi.fn();
   const deliveryLogSelectEq = vi.fn(() => ({ single: deliveryLogSelectSingle }));
@@ -49,10 +56,35 @@ const {
     select: deliveryLogInsertSelect,
   };
 
-  const deliveryLogUpdateEq = vi.fn();
+  // PR #753 audit fix A1: the retry path uses .update().eq().select().single()
+  // (PostgREST's UPDATE...RETURNING). The original existing-row .update().eq()
+  // chain (no .select()) is still used elsewhere. Mock .eq() to return a real
+  // Promise (so `await .eq(...)` works via inherited Promise.prototype.then)
+  // with a `.select()` method attached (so `await .eq(...).select().single()`
+  // works too). SonarCloud S7739 forbids hand-rolling a `then` property on a
+  // plain object; using a real Promise sidesteps that — the `then` comes from
+  // Promise.prototype, not from a property added to the object.
+  const deliveryLogUpdateSingle = vi.fn();
+  const deliveryLogUpdateEqResult: { resolved: unknown } = { resolved: { error: null } };
+  type EqChain = Promise<unknown> & { select: () => { single: typeof deliveryLogUpdateSingle } };
+  const deliveryLogUpdateEq = vi.fn(() => {
+    const promise = Promise.resolve(deliveryLogUpdateEqResult.resolved) as EqChain;
+    promise.select = () => ({ single: deliveryLogUpdateSingle });
+    return promise;
+  });
+  // Bridge legacy tests' deliveryLogUpdate.eq.mockResolvedValue(...) onto the
+  // new chain's resolved-value slot. Use Object.assign to override the
+  // vitest-supplied mockResolvedValue without colliding on its strict
+  // intersection-typed signature (which expects a MockInstance return).
+  Object.assign(deliveryLogUpdateEq, {
+    mockResolvedValue: (val: unknown) => {
+      deliveryLogUpdateEqResult.resolved = val;
+    },
+  });
   const deliveryLogUpdate = {
     update: vi.fn(() => ({ eq: deliveryLogUpdateEq })),
     eq: deliveryLogUpdateEq,
+    single: deliveryLogUpdateSingle,
   };
 
   // Webhook endpoints query chain
@@ -88,6 +120,7 @@ const {
     mockLogger,
     mockDbFrom,
     mockFetch,
+    mockSentry,
     deliveryLogSelect,
     deliveryLogInsert,
     deliveryLogUpdate,
@@ -100,6 +133,7 @@ const {
 // ---- Module mocks ----
 
 vi.mock('../utils/logger.js', () => ({ logger: mockLogger }));
+vi.mock('../utils/sentry.js', () => ({ Sentry: mockSentry }));
 
 vi.mock('../utils/db.js', () => ({
   db: {
@@ -175,8 +209,11 @@ function setupDbRouting(overrides: Record<string, unknown> = {}) {
           select: deliveryLogSelect.eq === undefined
             ? vi.fn()
             : (selectArg: string) => {
-                // Distinguish between idempotency check (select('id')) and retry query (select('*, ...'))
-                if (selectArg === 'id') {
+                // Distinguish between idempotency check (select('id...')) and retry query (select('*, ...'))
+                // PR #753 audit fix A1+A2: idempotency check now selects
+                // 'id, status, attempt_number' so it can short-circuit on
+                // 'success' but UPDATE in place on 'retrying'/'pending'.
+                if (selectArg === 'id' || selectArg === 'id, status, attempt_number') {
                   return { eq: vi.fn(() => ({ single: deliveryLogSelect.single })) };
                 }
                 // Retry query with join
@@ -538,9 +575,14 @@ describe('deliverToEndpoint', () => {
     vi.useRealTimers();
   });
 
-  it('skips delivery when idempotency check finds existing record', async () => {
-    // Already delivered
-    deliveryLogSelect.single.mockResolvedValue({ data: { id: 'existing-log' }, error: null });
+  it('skips delivery when idempotency check finds existing SUCCESS record', async () => {
+    // PR #753 audit fix A1: only short-circuit when the prior delivery
+    // succeeded. 'retrying'/'pending'/'failed' rows must re-fire so
+    // processWebhookRetries actually retries (was previously a no-op).
+    deliveryLogSelect.single.mockResolvedValue({
+      data: { id: 'existing-log', status: 'success', attempt_number: 1 },
+      error: null,
+    });
 
     await dispatchWebhookEvent('org-001', 'anchor.secured', 'evt-001', MOCK_PAYLOAD_DATA);
 
@@ -548,6 +590,56 @@ describe('deliverToEndpoint', () => {
     expect(mockLogger.debug).toHaveBeenCalledWith(
       expect.objectContaining({ endpointId: 'ep-001', eventId: 'evt-001' }),
       'Webhook already delivered',
+    );
+  });
+
+  it('PR #753 audit A1: re-fires HTTP when existing row is in retrying status (retry path)', async () => {
+    // Pre-fix: idempotency check returned true for ANY existing row, so
+    // processWebhookRetries was a silent no-op for every retry. Post-fix:
+    // existing row with status='retrying' should UPDATE in place + proceed
+    // to fire fetch.
+    deliveryLogSelect.single.mockResolvedValue({
+      data: { id: 'existing-log', status: 'retrying', attempt_number: 1 },
+      error: null,
+    });
+    // The retry path's .update().eq().select().single() chain — configure the
+    // single() return.
+    deliveryLogUpdate.single.mockResolvedValue({ data: { id: 'existing-log' }, error: null });
+    // Subsequent status-update calls (from fetch result) use .update().eq()
+    // directly — leave that on the legacy-style resolution.
+    deliveryLogUpdate.eq.mockResolvedValue({ error: null });
+    mockFetch.mockResolvedValue({ ok: true, status: 200, text: () => Promise.resolve('OK') });
+
+    await dispatchWebhookEvent('org-001', 'anchor.secured', 'evt-001', MOCK_PAYLOAD_DATA);
+
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(deliveryLogUpdate.update).toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'pending' }),
+    );
+  });
+
+  it('PR #753 audit A2: surfaces idempotency lookup error to Sentry instead of swallowing', async () => {
+    deliveryLogSelect.single.mockResolvedValue({
+      data: null,
+      // Not PGRST116 (no-row) — a transient DB / RLS error
+      error: { code: '08006', message: 'connection terminated' },
+    });
+
+    // dispatchWebhookEvent returns Promise<void>; the `return false` from
+    // A2's audit fix lives inside deliverToEndpoint and is not surfaced to
+    // callers. Observable A2 contract: no HTTP fan-out + Sentry breadcrumb.
+    await dispatchWebhookEvent('org-001', 'anchor.secured', 'evt-001', MOCK_PAYLOAD_DATA);
+
+    expect(mockFetch).not.toHaveBeenCalled();
+    expect(mockSentry.captureException).toHaveBeenCalledWith(
+      expect.any(Error),
+      expect.objectContaining({
+        tags: expect.objectContaining({ stage: 'idempotency_lookup' }),
+      }),
+    );
+    expect(mockLogger.error).toHaveBeenCalledWith(
+      expect.objectContaining({ error: expect.objectContaining({ code: '08006' }) }),
+      'Idempotency lookup failed',
     );
   });
 
@@ -565,6 +657,67 @@ describe('deliverToEndpoint', () => {
       expect.objectContaining({ error: expect.objectContaining({ message: 'constraint violation' }) }),
       'Failed to create delivery log',
     );
+    // SCRUM-1805: delivery_log insert failure must surface to Sentry. The
+    // pre-PR-#753 22P02 UUID-coercion bug ran undetected because nobody was
+    // watching for this `logger.error`. Sentry capture lets a SCRUM-1805
+    // alert rule trip on the first occurrence.
+    expect(mockSentry.captureException).toHaveBeenCalledWith(
+      expect.any(Error),
+      expect.objectContaining({
+        tags: expect.objectContaining({
+          subsystem: 'webhooks',
+          stage: 'delivery_log_insert',
+          event_type: 'anchor.secured',
+        }),
+      }),
+    );
+  });
+
+  // SCRUM-1800: Bug found during PR #753 staging soak. webhook_delivery_logs.event_id
+  // is uuid NOT NULL, but every existing producer passes a string event_id (public_id,
+  // 'expired-${public_id}', etc.). Pre-fix: insert threw 22P02, log failed to create,
+  // delivery silently dropped. Fix: dispatcher coerces non-UUID event_ids to a fresh
+  // UUID for the column while the original string still appears in the JSONB payload.
+  it('coerces non-UUID event_id to a UUID for the webhook_delivery_logs.event_id column', async () => {
+    deliveryLogSelect.single.mockResolvedValue({ data: null, error: null });
+    deliveryLogInsert.single.mockResolvedValue({ data: { id: 'log-001' }, error: null });
+    mockFetch.mockResolvedValue({ ok: true, status: 200, text: () => Promise.resolve('OK') });
+    deliveryLogUpdate.eq.mockResolvedValue({ error: null });
+
+    await dispatchWebhookEvent(
+      'org-001',
+      'anchor.secured',
+      'ARK-2026-NOT-A-UUID',
+      MOCK_PAYLOAD_DATA,
+    );
+
+    const insertCall = deliveryLogInsert.insert.mock.calls.at(-1) as unknown[] | undefined;
+    expect(insertCall).toBeDefined();
+    const insertedRow = (insertCall as unknown[])[0] as { event_id: string; payload: { event_id: string }; idempotency_key: string };
+    // event_id (column) is a UUID
+    expect(insertedRow.event_id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
+    expect(insertedRow.event_id).not.toBe('ARK-2026-NOT-A-UUID');
+    // Payload still carries the semantically meaningful string event_id for the customer
+    expect(insertedRow.payload.event_id).toBe('ARK-2026-NOT-A-UUID');
+    // Idempotency key uses the supplied string so retries dedupe deterministically
+    // Idempotency key now includes event_type to avoid cross-event-type
+    // collisions (CodeRabbit PR #753).
+    expect(insertedRow.idempotency_key).toBe('ep-001-anchor.secured-ARK-2026-NOT-A-UUID');
+  });
+
+  it('preserves UUID event_id when caller supplies one', async () => {
+    deliveryLogSelect.single.mockResolvedValue({ data: null, error: null });
+    deliveryLogInsert.single.mockResolvedValue({ data: { id: 'log-001' }, error: null });
+    mockFetch.mockResolvedValue({ ok: true, status: 200, text: () => Promise.resolve('OK') });
+    deliveryLogUpdate.eq.mockResolvedValue({ error: null });
+
+    const realUuid = 'a1b2c3d4-e5f6-4789-9abc-def012345678';
+    await dispatchWebhookEvent('org-001', 'anchor.secured', realUuid, MOCK_PAYLOAD_DATA);
+
+    const insertCall = deliveryLogInsert.insert.mock.calls.at(-1) as unknown[] | undefined;
+    expect(insertCall).toBeDefined();
+    const insertedRow = (insertCall as unknown[])[0] as { event_id: string };
+    expect(insertedRow.event_id).toBe(realUuid);
   });
 
   it('updates log to success on HTTP 200', async () => {
@@ -694,7 +847,10 @@ describe('deliverToEndpoint', () => {
       expect.objectContaining({
         endpoint_id: 'ep-001',
         event_type: 'anchor.secured',
-        event_id: 'evt-001',
+        // SCRUM-1800: 'evt-001' is not a UUID, so the dispatcher mints a fresh
+        // UUID for the column. The original string still appears in the JSONB
+        // payload's event_id field (see UUID-coercion test above).
+        event_id: expect.stringMatching(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i),
         attempt_number: 1,
         status: 'pending',
         idempotency_key: expect.stringContaining('ep-001'),
@@ -713,11 +869,13 @@ describe('deliverToEndpoint', () => {
     const insertCall = (deliveryLogInsert.insert.mock.calls[0] as unknown[])?.[0] as Record<string, unknown>;
     const key = insertCall.idempotency_key as string;
 
-    // Key should be endpoint_id-event_id (no attempt suffix)
-    // Old format was "ep-001-evt-001-1" (with attempt), new is "ep-001-evt-001"
-    expect(key).toBe('ep-001-evt-001');
-    // Confirm it's exactly endpoint_id + event_id, no extra segments
-    expect(key).not.toContain('-1-'); // No embedded attempt number
+    // Key should be endpoint_id-event_type-event_id (no attempt suffix).
+    // Old format was "ep-001-evt-001-1" (with attempt). RACE-6 dropped the
+    // attempt number; CodeRabbit PR #753 added event_type to avoid
+    // cross-event-type idempotency collisions.
+    expect(key).toBe('ep-001-anchor.secured-evt-001');
+    // Confirm there is no embedded attempt number suffix
+    expect(key).not.toMatch(/-1$/);
   });
 });
 

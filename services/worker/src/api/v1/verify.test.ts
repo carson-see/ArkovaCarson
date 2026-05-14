@@ -26,6 +26,7 @@ function createAnchor(overrides: Partial<AnchorByPublicId> = {}): AnchorByPublic
     public_id: 'ARK-2026-TEST-001',
     fingerprint: 'a'.repeat(64),
     status: 'SECURED',
+    org_id: 'org-test-1', // SCRUM-1799 internal-only
     chain_tx_id: 'b8e381df09ca404eaae2e5e9d9b3d27567fe97ece39ead718f6d2c77ca60eb57',
     chain_block_height: 204567,
     chain_timestamp: '2026-03-12T10:30:00Z',

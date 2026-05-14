@@ -14,6 +14,47 @@
 
 ## Now
 
+### 2026-05-14 — PR #753 (SCRUM-1798/1799/1800) READY TO MERGE — T3 re-soak GREEN
+
+**Status:** PR #753 ready for merge as the next merge into `main`. T3 48h re-soak on the merge SHA `406a5bef` completed clean (0 worker errors, 461,977 requests, 48h exact). Merging main again now to clear `CONFLICTING` state introduced by 48 commits that landed during the soak window — conflicts are docs-only (HANDOFF.md + STAGING_RIG.md) with no code change.
+
+**Soak validation (final):**
+
+* Worker revision: `arkova-worker-staging-00065-say` (image `scrum1798-406a5bef`, digest `sha256:8564baae9e7...`)
+* Soak window: 2026-05-12T18:13:53.530Z to 2026-05-14T18:13:53Z (t+172800s exact)
+* 461,977 requests at 2.7/s sustained; 0 worker ERROR logs over full 48h window
+* `/health` git_sha confirmed `406a5bef267c7818e82fa5662f1ee916cebb4769` from start to end; worker uptime 172,914s -- same Cloud Run instance throughout
+* 2 midnight UTC crossings (2026-05-13, 2026-05-14), both clean
+* All T3 coverage gates met (CLAUDE.md section 1.12) -- see [`docs/staging/scrum-1798-soak-evidence.md`](./docs/staging/scrum-1798-soak-evidence.md) for the full checklist
+* staging_deploy_log id: 15
+
+**Engineering judgment exception (Carson 2026-05-14):** the 48 commits that landed on main *during* the 48h soak include 1 new migration (`0305_pipeline_operational_status_filters.sql`) + `treasury.ts/test` + `anchor-stats.ts/test` + `verify.ts/test` + `admin-pipeline-stats.ts` changes. A strict section 1.12 reading would re-trigger a fresh 48h soak on the new merge SHA. With main moving ~48 commits per 48h window that creates infinite regress for any T3-chain PR. Carson's call (2026-05-14): the 406a5bef soak validates the credential.* emit-point worker code PR #753 ships; the main-side changes since are orthogonal to PR #753's surface (treasury / anchor-stats are read-side; PR #753 is webhook emit-side). Merge with engineering judgment instead of another full T3 cycle.
+
+**Audit-fix history (all closed):**
+
+| # | Severity | Surface | Fix commit |
+|---|---|---|---|
+| A1 | HIGH | `services/worker/src/webhooks/delivery.ts` | `a55b30f9` retry-path idempotency re-fires when `status !== 'success'` |
+| A2 | HIGH | `services/worker/src/webhooks/delivery.ts` | `a55b30f9` PGRST116 distinguished from real DB errors at idempotency lookup |
+| A3 | HIGH | `services/worker/src/jobs/check-confirmations.ts` | `a55b30f9` mutex moved above mock branch + `chain_tx_id IS NULL` guard |
+| A4 | HIGH | `services/worker/src/jobs/anchorExpirySweep.ts` | `a55b30f9` cursor advancement only past finite-and-expired rows |
+| A5 | HIGH | `services/worker/src/api/anchor-revoke.ts` | `a55b30f9` membership lookup error propagation |
+| C1 | MEDIUM | `services/worker/src/jobs/check-confirmations.ts` | `354003a7` `audit_events.actor_id = null` for system events |
+| CI-1 | MAJOR (Sonar) | `services/worker/src/webhooks/delivery.test.ts` | `b2feaac2` thenable property removed (real Promise + attached `.select()`) |
+| CI-2 | error (lint) | `services/worker/src/jobs/anchorExpirySweep.ts` | `b2feaac2` `let -> const` for never-reassigned `candidates` |
+| CI-3 | error (lint) | `services/worker/src/webhooks/delivery.test.ts` | `b2feaac2` vestigial `const result =` binding dropped |
+
+**Follow-up tickets:**
+
+* SCRUM-1805 -- Sentry alert on `Failed to create delivery log` worker errors (Sentry capture wired in `b1c6e1f2`; alert rule spec at `infra/sentry/alert-rules.json`).
+* SCRUM-1806 -- Flip `ENABLE_CREDENTIAL_VERIFIED_WEBHOOK` on in prod after PR #753 merges + deploys.
+* SCRUM-1807 -- Cursor-based pagination for `anchorExpirySweep` (shipped in this PR at commit `4c7e3b51`).
+* SCRUM-1808 -- Staging cron-secret drift (every PR's soak hits 100% 401 on cron mode; unblocked by PR #760's claim.sh rig).
+
+**Confluence:** [SCRUM-1743 page](https://arkova.atlassian.net/wiki/spaces/A/pages/44204033).
+
+---
+
 ### 2026-05-14 — SSD checkout reconciliation note
 
 **SSD role:** `/Volumes/Extreme/Arkova` is backup/worktree storage, not the authoritative day-to-day checkout. The old SSD checkout at `/Volumes/Extreme/Arkova/arkova-mvpcopy-main` is now treated as quarantined evidence, not a working `main`.

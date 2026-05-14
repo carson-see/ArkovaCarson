@@ -8,6 +8,7 @@ import crypto from 'node:crypto';
 import type { Json } from '../types/database.types.js';
 import { db } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
+import { Sentry } from '../utils/sentry.js';
 import { validateWebhookPayload } from './payload-schemas.js';
 
 const MAX_RETRIES = 5;
@@ -270,38 +271,144 @@ async function deliverToEndpoint(
   const signature = signPayload(`${timestamp}.${payloadString}`, endpoint.secret_hash);
 
   // RACE-6 fix: Remove attempt number from idempotency key to prevent
-  // duplicate deliveries across retry attempts after worker restart
-  const idempotencyKey = `${endpoint.id}-${payload.event_id}`;
+  // duplicate deliveries across retry attempts after worker restart.
+  //
+  // CodeRabbit PR #753: include event_type in the dedup key so two distinct
+  // lifecycle events that happen to share an event_id string (e.g. a future
+  // caller passing `anchor.public_id` for both anchor.expired and
+  // credential.status_changed for the same anchor) don't collide and
+  // silently drop the second event. The webhook_delivery_logs table's
+  // idempotency_key column is text + UNIQUE (no schema change required).
+  const idempotencyKey = `${endpoint.id}-${payload.event_type}-${payload.event_id}`;
 
-  // Check if already delivered
-  const { data: existing } = await db
+  // SCRUM-1800 (post-PR #734 hotfix): `webhook_delivery_logs.event_id` is
+  // typed `uuid NOT NULL`, but every existing producer (anchor.ts,
+  // anchorExpirySweep.ts, credential-sources.ts, anchor-revoke.ts,
+  // check-confirmations.ts, oracle.ts, verify.ts) passes a string event_id
+  // (`public_id`, `expired-${public_id}`, etc.) — so the insert at line ~289
+  // throws PG 22P02 "invalid input syntax for type uuid" and the delivery is
+  // silently dropped (deliverToEndpoint returns false; dispatchWebhookEvent
+  // doesn't observe it). This was found during PR #753 staging soak; the
+  // bug pre-dates PR #753 and affects anchor.submitted / anchor.expired in
+  // prod too. Fix at the dispatcher: assign a fresh UUID for the column,
+  // keep the original string in the JSONB payload so customers see the
+  // semantically meaningful `event_id` field, and keep the idempotency_key
+  // based on the supplied string so retries dedupe deterministically.
+  const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+    payload.event_id,
+  );
+  const dbEventId = isUuid ? payload.event_id : crypto.randomUUID();
+
+  // PR #753 audit-fix (A1+A2): the previous "if (existing) return true" pattern
+  // short-circuited every retry attempt because processWebhookRetries
+  // re-enters deliverToEndpoint with the SAME payload (read from log.payload),
+  // which produces the same idempotency_key, so the original 'retrying' row
+  // was found and the HTTP fetch was skipped entirely. Net effect: every
+  // webhook retry was a silent no-op. Fix: only short-circuit on 'success'
+  // (the row represents a completed delivery — the customer has already
+  // received this event). For 'retrying'/'pending'/'failed' rows, UPDATE in
+  // place with the new attempt_number and proceed to re-fire the HTTP call.
+  // Also propagate the SELECT error: PGRST116 = no row (happy path), anything
+  // else (RLS regression, transient DB) should fail loud, not be swallowed.
+  const { data: existing, error: lookupError } = await db
     .from('webhook_delivery_logs')
-    .select('id')
+    .select('id, status, attempt_number')
     .eq('idempotency_key', idempotencyKey)
     .single();
 
-  if (existing) {
+  // PGRST116 = "JSON object requested, multiple (or no) rows returned" — for
+  // .single() this means zero rows matched (the happy path for first attempt).
+  // Anything else (RLS regression, transient DB) should fail loud.
+  const isNoRowError = (err: unknown): boolean => {
+    const code = (err as { code?: string })?.code;
+    return code === 'PGRST116';
+  };
+  if (lookupError && !isNoRowError(lookupError)) {
+    logger.error({ error: lookupError, endpointId: endpoint.id }, 'Idempotency lookup failed');
+    Sentry.captureException(
+      lookupError instanceof Error ? lookupError : new Error('idempotency lookup failed'),
+      {
+        tags: { subsystem: 'webhooks', stage: 'idempotency_lookup', event_type: payload.event_type },
+        extra: { idempotency_key: idempotencyKey, endpoint_id: endpoint.id },
+      },
+    );
+    return false;
+  }
+
+  if (existing && existing.status === 'success') {
     logger.debug({ endpointId: endpoint.id, eventId: payload.event_id }, 'Webhook already delivered');
     return true;
   }
 
-  // Log the attempt
-  const { data: logEntry, error: logError } = await db
-    .from('webhook_delivery_logs')
-    .insert({
-      endpoint_id: endpoint.id,
-      event_type: payload.event_type,
-      event_id: payload.event_id,
-      payload: payload as unknown as Json,
-      attempt_number: attempt,
-      status: 'pending',
-      idempotency_key: idempotencyKey,
-    })
-    .select()
-    .single();
+  // Either insert a new row (first attempt) or update the existing
+  // pending/retrying/failed row in place (retry attempt).
+  let logEntry: { id: string } | null = null;
+  let logError: { message?: string } | null = null;
+
+  if (existing) {
+    const { data, error } = await db
+      .from('webhook_delivery_logs')
+      .update({
+        attempt_number: attempt,
+        status: 'pending',
+      })
+      .eq('id', existing.id)
+      .select()
+      .single();
+    logEntry = data;
+    logError = error;
+  } else {
+    const { data, error } = await db
+      .from('webhook_delivery_logs')
+      .insert({
+        endpoint_id: endpoint.id,
+        event_type: payload.event_type,
+        event_id: dbEventId,
+        payload: payload as unknown as Json,
+        attempt_number: attempt,
+        status: 'pending',
+        idempotency_key: idempotencyKey,
+      })
+      .select()
+      .single();
+    logEntry = data;
+    logError = error;
+  }
 
   if (logError) {
+    // SCRUM-1805: surface delivery-log insert failures to Sentry so an outage
+    // (DB unreachable, schema mismatch, RLS regression, etc.) doesn't silently
+    // drop customer webhook events. The pre-PR-#753 22P02 UUID-coercion bug
+    // ran undetected for the lifetime of PR #734 because nobody was watching
+    // for this `logger.error`. Using captureException with structured tags so
+    // it groups by endpoint + event_type for triage.
+    Sentry.captureException(
+      logError instanceof Error ? logError : new Error(`webhook delivery_log insert failed: ${(logError as { message?: string })?.message ?? 'unknown'}`),
+      {
+        tags: {
+          subsystem: 'webhooks',
+          stage: 'delivery_log_insert',
+          event_type: payload.event_type,
+          endpoint_id: endpoint.id,
+        },
+        extra: {
+          event_id: payload.event_id,
+          db_event_id: dbEventId,
+          idempotency_key: idempotencyKey,
+          org_id: endpoint.org_id,
+        },
+      },
+    );
     logger.error({ error: logError }, 'Failed to create delivery log');
+    return false;
+  }
+
+  // PR #753 audit fix: even on the no-error path, narrow `logEntry` to
+  // non-null before downstream `logEntry.id` accesses below. The DB happy
+  // path always returns the inserted/updated row, but TypeScript can't see
+  // that and would let a future regression silently dereference null.
+  if (!logEntry) {
+    logger.error({ endpointId: endpoint.id }, 'delivery_log insert/update returned no row but no error — bailing');
     return false;
   }
 

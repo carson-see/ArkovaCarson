@@ -21,8 +21,11 @@ import { createHmac, randomUUID } from 'crypto';
 import { z } from 'zod';
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
+import { config } from '../../config.js';
 import { buildVerificationResult, EMPTY_API_RICH_FIELDS } from './verify.js';
 import type { AnchorByPublicId } from './verify.js';
+import { dispatchWebhookEvent } from '../../webhooks/delivery.js';
+import { runWithConcurrency } from '../../utils/concurrency.js';
 
 const router = Router();
 
@@ -118,6 +121,7 @@ router.post('/verify', async (req: Request, res: Response) => {
         public_id: raw.public_id as string,
         fingerprint: raw.fingerprint as string,
         status: raw.status as string,
+        org_id: (raw.org_id as string | null) ?? null, // SCRUM-1799 internal-only
         chain_tx_id: (raw.chain_tx_id as string) ?? null,
         chain_block_height: (raw.chain_block_height as number) ?? null,
         chain_timestamp: (raw.chain_timestamp as string) ?? null,
@@ -169,6 +173,87 @@ router.post('/verify', async (req: Request, res: Response) => {
       signature,
     };
 
+    // SCRUM-1799 (SCRUM-1743 Phase 2b): credential.verified emit on oracle
+    // batch verifications. Same gating + cache-MISS semantics as the public
+    // GET /api/v1/verify/:publicId path — but oracle is intrinsically batch +
+    // does NOT consult the verify cache (each call is a fresh DB lookup), so
+    // every successful, terminal-status result becomes an emit candidate.
+    //
+    // Rate safety: capped at 25 ids per request (OracleQuerySchema). Fan-out
+    // uses the shared concurrency helper (default 5) so one large batch
+    // doesn't spike webhook delivery for the org.
+    //
+    // Default-OFF feature flag: ENABLE_CREDENTIAL_VERIFIED_WEBHOOK. The audit
+    // count of dispatched/skipped emits lands in the existing ORACLE_QUERY
+    // audit row's details so the trail matches what was actually attempted.
+    // _planned = candidates count (queued for fan-out); _skipped = anchors
+    // ineligible to emit (not found, no org_id, non-terminal status). Both are
+    // resolved synchronously before the audit write so the audit row is
+    // accurate even though the fan-out itself is detached.
+    let credentialVerifiedPlanned = 0;
+    let credentialVerifiedSkipped = 0;
+    if (config.enableCredentialVerifiedWebhook) {
+      type EmitCandidate = {
+        publicId: string;
+        orgId: string;
+        credentialType: string;
+        terminalStatus: 'SECURED' | 'REVOKED' | 'EXPIRED';
+      };
+      const candidates: EmitCandidate[] = [];
+      for (const pid of public_ids) {
+        const raw = anchorMap.get(pid);
+        if (!raw) {
+          credentialVerifiedSkipped++;
+          continue;
+        }
+        const orgId = raw.org_id as string | null;
+        if (!orgId) {
+          credentialVerifiedSkipped++;
+          continue;
+        }
+        const status = raw.status as string;
+        const terminalStatus =
+          status === 'SECURED' || status === 'ACTIVE' ? 'SECURED' as const
+          : status === 'REVOKED' ? 'REVOKED' as const
+          : status === 'EXPIRED' ? 'EXPIRED' as const
+          : null;
+        if (!terminalStatus) {
+          credentialVerifiedSkipped++;
+          continue;
+        }
+        const credentialType = (raw.credential_type as string | null) ?? 'OTHER';
+        candidates.push({ publicId: pid, orgId, credentialType, terminalStatus });
+      }
+      credentialVerifiedPlanned = candidates.length;
+      if (candidates.length > 0) {
+        const verifiedAt = new Date().toISOString();
+        const tasks = candidates.map((cand) => async () => {
+          try {
+            await dispatchWebhookEvent(cand.orgId, 'credential.verified', cand.publicId, {
+              public_id: cand.publicId,
+              credential_type: cand.credentialType,
+              status: cand.terminalStatus,
+              verified_at: verifiedAt,
+            });
+          } catch (emitErr) {
+            logger.warn(
+              { queryId, publicId: cand.publicId, error: emitErr },
+              'Oracle credential.verified emit failed (response NOT aborted)',
+            );
+          }
+        });
+        // Detached: oracle response is signed + ready; webhook fan-out should
+        // not block the agent's verify result. Bounded concurrency keeps the
+        // outbound dispatch from overwhelming a customer endpoint.
+        void runWithConcurrency(tasks, 5).catch((fanOutErr) => {
+          logger.error(
+            { queryId, error: fanOutErr },
+            'Detached oracle credential.verified fan-out unexpectedly threw',
+          );
+        });
+      }
+    }
+
     // Audit trail — log every oracle query
     void db.from('audit_events').insert({
       event_type: 'ORACLE_QUERY',
@@ -180,6 +265,12 @@ router.post('/verify', async (req: Request, res: Response) => {
         public_ids_queried: public_ids.length,
         verified_count: results.filter((r) => r.verified).length,
         not_found_count: results.filter((r) => r.error === 'Record not found').length,
+        // SCRUM-1799: capture the credential.verified emit decision counts so
+        // auditors can correlate webhook deliveries to the originating batch.
+        // `_planned` reflects the number of dispatch tasks queued; the actual
+        // delivery outcome is in webhook_delivery_logs.
+        credential_verified_emit_planned: credentialVerifiedPlanned,
+        credential_verified_emit_skipped: credentialVerifiedSkipped,
       }),
     });
 

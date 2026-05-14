@@ -143,10 +143,14 @@ anchorRouter.post('/send-invitation-email', rateLimiters.checkout, async (req, r
   }
 
   try {
-    // Verify the caller is an org admin
+    // Verify the caller is an org admin.
+    // PR #753 (no-shortcuts): the table is `memberships` not `org_memberships`.
+    // The wrong-table-name bug was inherited across both org-admin call sites
+    // (here + anchor-revoke.ts) and silently 403'd every invite-email request
+    // in prod. Surfaced during PR #753's T3 staging soak.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data: membership } = await (db as any)
-      .from('org_memberships')
+      .from('memberships')
       .select('role')
       .eq('user_id', userId)
       .eq('org_id', orgId)
