@@ -58,7 +58,7 @@ function collectFiles(repo: string): string[] {
     walk(join(repo, dir));
   }
 
-  return [...new Set(files)].sort();
+  return [...new Set(files)].sort((left, right) => left.localeCompare(right));
 }
 
 function hasAllowMarker(lines: string[], index: number): boolean {
