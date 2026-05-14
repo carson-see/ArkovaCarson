@@ -14,6 +14,14 @@
 
 ## Now
 
+### 2026-05-14 — SCRUM-1655 DocuSign live verification PR lane
+
+**Scope:** SCRUM-1655 remains the live/operator verification subtask for parent SCRUM-1648, not a duplicate implementation story. PR #689 already unit-pinned DS-01 multi-sender behavior; DS-02/DS-03/DS-04 remain represented by existing handler behavior (`findIntegration()` fail-closed lookup, mandatory HMAC, `docusign_webhook_nonces` dedupe).
+
+**Prod state verified this session:** Cloud Run worker was manually updated after Carson approval to revision `arkova-worker-00556-m5l` with `DOCUSIGN_INTEGRATION_KEY`, `DOCUSIGN_CLIENT_SECRET`, `DOCUSIGN_CONNECT_HMAC_SECRET`, `ENABLE_DOCUSIGN_OAUTH=true`, `ENABLE_DOCUSIGN_WEBHOOK=true`, and `DOCUSIGN_DEMO=true`. `/health` returned 200 with `git_sha=89e967f1d5a4cc9ccbcc536f69d31ed427e4ebdd`, `network=mainnet`. Invalid HMAC returns `401 invalid_signature`; signed unknown account returns `200 orphaned`. Prod still has 0 active `provider=docusign` integrations and 0 DocuSign/ESIGN rules, so the live two-sender E2E and duplicate path are still blocked on real sandbox OAuth + Connect setup.
+
+**Current PR branch/worktree:** `codex/scrum-1655-docusign-live-verification` in `/Volumes/Extreme/Arkova/worktrees/scrum-1655-docusign-live-verification`. The PR packages durable worker deploy bindings for the DocuSign secrets/flags, a safe `npm --prefix services/worker run smoke:docusign` operator script, and updated runbook evidence steps. Do not touch protected `/Volumes/Extreme/Arkova/worktrees/scrum-1649-docusign-action-modes`; it owns the adjacent SCRUM-1649 action-mode implementation.
+
 ### 2026-05-14 — PR #753 (SCRUM-1798/1799/1800) MERGED ✅
 
 **Status:** PR #753 **MERGED** to `main` at 2026-05-14T19:22:11Z (squash commit `1fc43863434aebfe418c69abd30c876f0c8a26b7`). SCRUM-1798, SCRUM-1799, SCRUM-1800 all transitioned to **Done** along with their 9 subtasks (SCRUM-1825..1833). Confluence [SCRUM-1743 page](https://arkova.atlassian.net/wiki/spaces/A/pages/44204033) updated to v5. Staging lease released. Local repo + SSD repo refs synced with origin. Branch `claude/scrum-1798-credential-issued-emit` deleted on origin + locally.
