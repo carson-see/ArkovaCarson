@@ -10,6 +10,7 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 import { createHash } from 'node:crypto';
 import ws from 'ws';
+import { z } from 'zod';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export const WS_CLIENT_OPTIONS = { realtime: { transport: ws as any } } as const;
@@ -31,6 +32,28 @@ const SUPABASE_SERVICE_KEY = requireEnv('E2E_SUPABASE_SERVICE_KEY');
 const SEED_PASSWORD = requireEnv('E2E_SEED_PASSWORD');
 const ANCHOR_FINGERPRINT_MAX_LENGTH = 64;
 const SHA256_HEX_RE = /^[a-f0-9]{64}$/i;
+// Zod v4's .uuid() enforces RFC version/variant bits. Arkova's deterministic
+// seed IDs are valid Postgres UUID text but use zeroed version/variant fields.
+const POSTGRES_UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+type TestAnchorStatus = 'PENDING' | 'SUBMITTED' | 'SECURED' | 'REVOKED' | 'EXPIRED';
+const TestAnchorStatusSchema = z.enum(['PENDING', 'SUBMITTED', 'SECURED', 'REVOKED', 'EXPIRED']);
+const AnchorCreateSchema = z.object({
+  user_id: z.string().regex(POSTGRES_UUID_RE, 'user_id must be valid Postgres UUID text'),
+  fingerprint: z.string().regex(SHA256_HEX_RE),
+  filename: z.string().min(1),
+  file_size: z.number().int().positive(),
+  status: TestAnchorStatusSchema,
+}).strict();
+const AnchorUpdateSchema = z.object({
+  status: TestAnchorStatusSchema,
+  chain_tx_id: z.string().regex(SHA256_HEX_RE).optional(),
+  chain_block_height: z.number().int().positive().optional(),
+  chain_timestamp: z.string().datetime().optional(),
+  revocation_reason: z.string().min(1).optional(),
+  revoked_at: z.string().datetime().optional(),
+  expires_at: z.string().datetime().optional(),
+}).strict();
+type AnchorUpdatePayload = z.infer<typeof AnchorUpdateSchema>;
 
 /**
  * Service-role Supabase client for E2E test setup/teardown.
@@ -92,15 +115,56 @@ export async function getSeedUserOrgId(
   return data.org_id as string;
 }
 
+export async function resolveSeedIndividualOrFallbackProfileId(
+  serviceClient: SupabaseClient,
+  options: {
+    errorLabel: string;
+    fallbackLabel: string;
+    warningPrefix: string;
+  },
+): Promise<string> {
+  const seedProfileId = SEED_USERS.individual.id;
+  const { data: seededUser, error: seededLookupError } = await serviceClient
+    .from('profiles')
+    .select('id')
+    .eq('id', seedProfileId)
+    .maybeSingle();
+
+  if (seededLookupError) {
+    throw new Error(
+      `Unable to resolve seed profile ${seedProfileId} for ${options.errorLabel}: ${seededLookupError.message}`
+    );
+  }
+
+  if (seededUser?.id) return seededUser.id as string;
+
+  const { data: fallbackUser, error } = await serviceClient
+    .from('profiles')
+    .select('id')
+    .limit(1)
+    .maybeSingle();
+
+  if (error || !fallbackUser?.id) {
+    throw new Error(`Unable to resolve ${options.errorLabel}: ${error?.message ?? 'no profiles available'}`);
+  }
+
+  console.warn(
+    `[${options.warningPrefix}] seed profile not found; ` +
+    `using fallback profile for ${options.fallbackLabel}.`
+  );
+
+  return fallbackUser.id as string;
+}
+
 /**
- * Create a test anchor via service client. Returns anchor with public_id if SECURED.
+ * Create a test anchor via service client. Returns anchor with public_id.
  * Caller is responsible for cleanup via `deleteTestAnchor()`.
  */
 export async function createTestAnchor(
   serviceClient: SupabaseClient,
   overrides: {
     userId?: string;
-    status?: 'PENDING' | 'SECURED' | 'REVOKED' | 'EXPIRED';
+    status?: TestAnchorStatus;
     filename?: string;
     fingerprint?: string;
   } = {}
@@ -111,18 +175,18 @@ export async function createTestAnchor(
     ? fingerprintSeed.toLowerCase()
     : createHash('sha256').update(fingerprintSeed).digest('hex');
 
-  const defaults = {
+  const createPayload = AnchorCreateSchema.parse({
     user_id: overrides.userId ?? SEED_USERS.individual.id,
     fingerprint: fingerprint.slice(0, ANCHOR_FINGERPRINT_MAX_LENGTH),
     filename: overrides.filename ?? `e2e_test_${timestamp}.pdf`,
     file_size: 12345,
-    status: 'PENDING' as const,
-  };
+    status: 'PENDING',
+  });
 
   // Insert as PENDING first
   const { data: anchor, error: insertError } = await serviceClient
     .from('anchors')
-    .insert(defaults)
+    .insert(createPayload)
     .select()
     .single();
 
@@ -131,34 +195,55 @@ export async function createTestAnchor(
   }
 
   // If requested status is not PENDING, update it
-  const targetStatus = overrides.status ?? 'PENDING';
+  const targetStatus: TestAnchorStatus = overrides.status ?? 'PENDING';
   if (targetStatus !== 'PENDING') {
-    const updateFields: Record<string, unknown> = { status: targetStatus };
+    const updateFields: AnchorUpdatePayload = { status: targetStatus };
 
-    if (targetStatus === 'SECURED') {
-      updateFields.chain_tx_id = `e2e_receipt_${timestamp}`;
+    const hasConfirmedNetworkReceipt =
+      targetStatus === 'SECURED' ||
+      targetStatus === 'REVOKED' ||
+      targetStatus === 'EXPIRED';
+
+    if (hasConfirmedNetworkReceipt) {
+      updateFields.chain_tx_id = createHash('sha256')
+        .update(`e2e_receipt_${timestamp}_${targetStatus}`)
+        .digest('hex');
       updateFields.chain_block_height = 99999;
       updateFields.chain_timestamp = new Date().toISOString();
     }
 
     if (targetStatus === 'REVOKED') {
       updateFields.revocation_reason = 'E2E test revocation';
+      updateFields.revoked_at = new Date().toISOString();
     }
 
-    await serviceClient
+    if (targetStatus === 'EXPIRED') {
+      updateFields.expires_at = new Date(timestamp - 86_400_000).toISOString();
+    }
+
+    const parsedUpdateFields = AnchorUpdateSchema.parse(updateFields);
+    const { error: updateError } = await serviceClient
       .from('anchors')
-      .update(updateFields)
+      .update(parsedUpdateFields)
       .eq('id', anchor.id);
+
+    if (updateError) {
+      throw new Error(`Failed to update test anchor status: ${updateError.message}`);
+    }
   }
 
   // Re-fetch to get generated fields (public_id, updated status)
-  const { data: final } = await serviceClient
+  const { data: final, error: finalFetchError } = await serviceClient
     .from('anchors')
     .select('*')
     .eq('id', anchor.id)
     .single();
 
-  return final!;
+  if (finalFetchError || !final) {
+    throw new Error(`Failed to fetch created test anchor: ${finalFetchError?.message ?? 'missing row'}`);
+  }
+
+  return final;
 }
 
 /**

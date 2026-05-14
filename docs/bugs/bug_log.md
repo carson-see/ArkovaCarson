@@ -1,5 +1,13 @@
 # Arkova Bug Log
-_Last updated: 2026-04-21 | Active bugs: 21 (UAT launch readiness) + 2 (Supabase config) + 1 (CRIT-2 operational) | Resolved: 63 (40 prior + 5 from 2026-04-18 + 1 from 2026-04-19 + 3 from 2026-04-20 dep-bump sprint + 8 from 2026-04-21 top-10 UAT sprint batch 1 + 5 from 2026-04-21 batch 2 + 1 from 2026-04-21 10-story sprint)_
+_Last updated: 2026-05-15 | Active bugs: 21 (UAT launch readiness) + 2 (Supabase config) + 1 (CRIT-2 operational) | Resolved: 64 (40 prior + 5 from 2026-04-18 + 1 from 2026-04-19 + 3 from 2026-04-20 dep-bump sprint + 8 from 2026-04-21 top-10 UAT sprint batch 1 + 5 from 2026-04-21 batch 2 + 1 from 2026-04-21 10-story sprint + 1 SCRUM-952 trust-surface closure)_
+
+## 2026-05-15 — SCRUM-952 Public Verification Trust-Surface Closure
+
+SCRUM-952 closed the UAT trust-surface bug where public `/verify/:publicId` could mix final-verification language with an awaiting-confirmation badge. The historical Jira/Confluence reference is BUG-2026-05-15-001.
+
+| ID | Severity | Summary | Fix | Regression Test |
+|----|----------|---------|-----|-----------------|
+| BUG-2026-05-15-001 / SCRUM-952 | MEDIUM | Public verification could overstate trust by showing green verified affordances for non-final anchor states. The same story also required known subtypes such as `professional_certification` to render as human labels instead of the generic `Other` fallback. | PR #784 centralizes public status normalization, maps frozen public API `ACTIVE` to canonical `SECURED`, hides proof affordances for `PENDING` and `SUBMITTED`, preserves proof affordances for terminal states, normalizes downloaded proof status, fixes the 375px credential-card layout, and captures desktop/mobile UAT screenshots for all five public states. | `src/lib/publicVerificationState.test.ts`, `src/components/verification/PublicVerification.test.tsx`, `src/components/verification/VerifierProofDownload.test.tsx`, `src/lib/__tests__/credentialSubTypes.test.ts`, `e2e/public-verification.spec.ts`, and UAT artifacts in `docs/uat/scrum-952-public-verify/`. |
 
 ## 2026-04-21 — 10-Story Sprint (SCRUM-916..925 + SCRUM-953)
 

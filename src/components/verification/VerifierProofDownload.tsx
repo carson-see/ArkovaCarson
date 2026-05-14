@@ -11,6 +11,7 @@ import { useState } from 'react';
 import { Download, FileJson, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { VERIFICATION_DISPLAY_LABELS } from '@/lib/copy';
+import { hasPublicVerificationProof, normalizePublicVerificationStatus } from '@/lib/publicVerificationState';
 
 interface VerifierProofDownloadProps {
   publicId: string;
@@ -34,6 +35,7 @@ export function VerifierProofDownload({
   networkReceiptId,
 }: Readonly<VerifierProofDownloadProps>) {
   const [downloading, setDownloading] = useState(false);
+  const publicStatus = normalizePublicVerificationStatus(status);
 
   const handleDownloadJson = async () => {
     setDownloading(true);
@@ -41,7 +43,7 @@ export function VerifierProofDownload({
       const proof = {
         version: '1.0',
         verification_id: publicId,
-        status,
+        status: publicStatus,
         fingerprint,
         issuer: issuerName ?? undefined,
         credential_type: credentialType ?? undefined,
@@ -66,8 +68,7 @@ export function VerifierProofDownload({
     }
   };
 
-  // Only show for SECURED anchors (PENDING has no proof yet)
-  if (status === 'PENDING') return null;
+  if (!hasPublicVerificationProof(publicStatus)) return null;
 
   return (
     <div className="space-y-2">

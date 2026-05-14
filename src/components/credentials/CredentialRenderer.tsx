@@ -326,17 +326,17 @@ export function CredentialRenderer({
   return (
     <div className={`rounded-xl overflow-hidden border-l-4 ${config.borderAccent} bg-[#192028] transition-all duration-300`}>
       {/* Header with type-specific gradient */}
-      <div className={`bg-gradient-to-r ${config.bgGradient} px-6 py-5`}>
-        <div className="flex items-start justify-between gap-3">
-          <div className="flex items-center gap-4 min-w-0">
+      <div className={`bg-gradient-to-r ${config.bgGradient} px-4 py-5 sm:px-6`}>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div className="flex min-w-0 items-center gap-4">
             <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-[#242b32] border border-[#3c494e]/20 shrink-0">
               <TypeIcon className={`h-6 w-6 ${config.accentColor}`} />
             </div>
-            <div className="min-w-0">
+            <div className="min-w-0 flex-1">
               <p className="text-[10px] uppercase tracking-widest text-[#859398] mb-1">
                 {config.label}
               </p>
-              <h3 className="font-bold text-lg text-[#dce3ed] break-words">
+              <h3 className="font-bold text-lg leading-tight text-[#dce3ed] break-words">
                 {template?.name ?? credentialLabel ?? LABELS.DOCUMENT_RECORD}
               </h3>
               {credentialLabel && template?.name && (
@@ -345,7 +345,7 @@ export function CredentialRenderer({
             </div>
           </div>
           {statusLabel && (
-            <Badge className={`shrink-0 ${statusColor}`}>
+            <Badge className={`w-fit shrink-0 sm:ml-auto ${statusColor}`}>
               {statusLabel}
             </Badge>
           )}

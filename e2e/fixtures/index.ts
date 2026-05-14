@@ -12,6 +12,7 @@ export { expect } from '@playwright/test';
 export {
   getServiceClient,
   getSeedUserOrgId,
+  resolveSeedIndividualOrFallbackProfileId,
   SEED_USERS,
   createTestAnchor,
   deleteTestAnchor,
