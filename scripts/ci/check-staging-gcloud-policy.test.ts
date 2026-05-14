@@ -2,6 +2,11 @@ import { describe, expect, it } from 'vitest';
 
 import { scanTextForRawStagingGcloud } from './check-staging-gcloud-policy.js';
 
+const workflowText = (commandLines: string[]): string => ['run: |', ...commandLines].join('\n');
+
+const scanWorkflow = (commandLines: string[]) =>
+  scanTextForRawStagingGcloud('.github/workflows/staging.yml', workflowText(commandLines));
+
 describe('check-staging-gcloud-policy', () => {
   it('flags raw staging gcloud deploy commands outside deploy.sh', () => {
     const hits = scanTextForRawStagingGcloud(
@@ -13,26 +18,15 @@ describe('check-staging-gcloud-policy', () => {
     expect(hits[0]).toMatchObject({ file: 'docs/staging/README.md', line: 1 });
   });
 
-  it('flags multiline raw staging service updates', () => {
-    const hits = scanTextForRawStagingGcloud(
-      '.github/workflows/staging.yml',
+  it.each([
+    [
+      'multiline service updates',
+      ['  gcloud run services update \\', '    arkova-worker-staging \\', '    --region us-central1'],
+      'gcloud run services update',
+    ],
+    [
+      'long continuations',
       [
-        'run: |',
-        '  gcloud run services update \\',
-        '    arkova-worker-staging \\',
-        '    --region us-central1',
-      ].join('\n'),
-    );
-
-    expect(hits).toHaveLength(1);
-    expect(hits[0].text).toContain('gcloud run services update');
-  });
-
-  it('keeps following long shell continuations until the staging target appears', () => {
-    const hits = scanTextForRawStagingGcloud(
-      '.github/workflows/staging.yml',
-      [
-        'run: |',
         '  gcloud run services update \\',
         '    --region us-central1 \\',
         '    --project arkova1 \\',
@@ -40,28 +34,19 @@ describe('check-staging-gcloud-policy', () => {
         '    --update-env-vars B=2 \\',
         '    --update-env-vars C=3 \\',
         '    arkova-worker-staging',
-      ].join('\n'),
-    );
+      ],
+      'arkova-worker-staging',
+    ],
+    [
+      'token-split deploys',
+      ['  gcloud \\', '    run deploy \\', '    --region us-central1 \\', '    --project arkova1 \\', '    arkova-worker-staging'],
+      'arkova-worker-staging',
+    ],
+  ])('flags raw staging %s', (_label, commandLines, expectedText) => {
+    const hits = scanWorkflow(commandLines);
 
     expect(hits).toHaveLength(1);
-    expect(hits[0].text).toContain('arkova-worker-staging');
-  });
-
-  it('flags raw staging deploys when gcloud command tokens are split across continuations', () => {
-    const hits = scanTextForRawStagingGcloud(
-      '.github/workflows/staging.yml',
-      [
-        'run: |',
-        '  gcloud \\',
-        '    run deploy \\',
-        '    --region us-central1 \\',
-        '    --project arkova1 \\',
-        '    arkova-worker-staging',
-      ].join('\n'),
-    );
-
-    expect(hits).toHaveLength(1);
-    expect(hits[0].text).toContain('arkova-worker-staging');
+    expect(hits[0].text).toContain(expectedText);
   });
 
   it('allows the lease-enforced deploy wrapper itself', () => {
@@ -119,10 +104,9 @@ describe('check-staging-gcloud-policy', () => {
   });
 
   it('does not apply long-prefix docs heuristics to workflow files', () => {
-    const hits = scanTextForRawStagingGcloud(
-      '.github/workflows/staging.yml',
+    const hits = scanWorkflow([
       '      - name: intentionally long workflow prefix before raw gcloud command: gcloud run deploy arkova-worker-staging --image old',
-    );
+    ]);
 
     expect(hits).toHaveLength(1);
   });

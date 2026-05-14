@@ -112,7 +112,7 @@ export function scanTextForRawStagingGcloud(file: string, text: string): Violati
   const seen = new Set<number>();
   const docsHeuristicsAllowed = isDocsFile(normalizedFile);
 
-  lines.forEach((line, index) => {
+  lines.forEach((_line, index) => {
     const window = commandWindow(lines, index);
     if (!/\bgcloud\s+run\s+(?:deploy|services\s+update)\b/.test(window)) return;
     if (docsHeuristicsAllowed && hasAllowMarker(lines, index)) return;
