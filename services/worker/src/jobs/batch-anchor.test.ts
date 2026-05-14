@@ -72,6 +72,7 @@ vi.mock('../config.js', () => ({
   config: {
     nodeEnv: 'test',
     useMocks: true,
+    enableOrgCreditEnforcement: true,
   },
 }));
 
@@ -146,6 +147,43 @@ const MOCK_RECEIPT: ChainReceipt = {
 const ANCHOR_A = { id: 'anchor-a', fingerprint: 'aa'.repeat(32), metadata: null };
 const ANCHOR_B = { id: 'anchor-b', fingerprint: 'bb'.repeat(32), metadata: null };
 const ANCHOR_C = { id: 'anchor-c', fingerprint: 'cc'.repeat(32), metadata: null };
+const DOCUSIGN_QUEUE_ANCHOR = {
+  id: 'anchor-docusign-queue',
+  org_id: '11111111-1111-4111-8111-111111111111',
+  user_id: '22222222-2222-4222-8222-222222222222',
+  fingerprint: 'dd'.repeat(32),
+  public_id: 'ARK-2026-QUEUE1',
+  credential_type: 'CONTRACT_POSTSIGNING',
+  metadata: {
+    connector_source: 'docusign',
+    rule_action_type: 'AUTO_ANCHOR',
+    credit_denial_reason: null,
+  },
+};
+const DOCUSIGN_CREDIT_DENIED_ANCHOR = {
+  ...DOCUSIGN_QUEUE_ANCHOR,
+  id: 'anchor-docusign-denied',
+  fingerprint: 'ee'.repeat(32),
+  public_id: 'ARK-2026-DENIED1',
+  metadata: {
+    connector_source: 'docusign',
+    rule_action_type: 'FAST_TRACK_ANCHOR',
+    credit_denial_reason: 'insufficient_credits',
+    _claimed_by: 'batch-123',
+    _claimed_at: '2026-05-14T12:00:00.000Z',
+  },
+};
+const DOCUSIGN_PAID_FAST_TRACK_ANCHOR = {
+  ...DOCUSIGN_QUEUE_ANCHOR,
+  id: 'anchor-docusign-paid-fast-track',
+  fingerprint: 'ff'.repeat(32),
+  public_id: 'ARK-2026-PAID1',
+  metadata: {
+    connector_source: 'docusign',
+    rule_action_type: 'FAST_TRACK_ANCHOR',
+    credit_denial_reason: null,
+  },
+};
 
 function fastCounts(pending: number) {
   return { PENDING: pending, SUBMITTED: 0, BROADCASTING: 0, SECURED: 0, REVOKED: 0, total: pending };
@@ -424,6 +462,87 @@ describe('processBatchAnchors', () => {
       }),
       'Forced org batch flush',
     );
+  });
+
+  it('deducts org credits for DocuSign AUTO_ANCHOR queue items during manual org queue runs', async () => {
+    mockPendingBacklogReady();
+    mockDbRpc
+      .mockResolvedValueOnce({ data: [DOCUSIGN_QUEUE_ANCHOR], error: null }) // claim
+      .mockResolvedValueOnce({ data: { success: true, balance: 4, deducted: 1 }, error: null }) // deduct_org_credit
+      .mockResolvedValueOnce({ data: 1, error: null }); // submit_batch_anchors
+
+    const result = await processBatchAnchors({
+      force: true,
+      orgId: DOCUSIGN_QUEUE_ANCHOR.org_id,
+    });
+
+    expect(result.processed).toBe(1);
+    expect(mockDbRpc).toHaveBeenCalledWith('deduct_org_credit', expect.objectContaining({
+      p_org_id: DOCUSIGN_QUEUE_ANCHOR.org_id,
+      p_amount: 1,
+      p_reason: 'rule.auto_anchor_queue_run',
+      p_reference_id: DOCUSIGN_QUEUE_ANCHOR.id,
+    }));
+    expect(mockAnchorsUpdate).toHaveBeenCalledWith(expect.objectContaining({
+      metadata: expect.objectContaining({
+        credit_denial_reason: null,
+        queue_credit_source: 'org_credits',
+        queue_credit_reason: 'rule.auto_anchor_queue_run',
+        queue_credit_balance_after: 4,
+      }),
+    }));
+    expect(mockSubmitFingerprint).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps credit-denied DocuSign queue items pending when org credits are insufficient', async () => {
+    mockPendingBacklogReady();
+    mockDbRpc
+      .mockResolvedValueOnce({ data: [DOCUSIGN_CREDIT_DENIED_ANCHOR], error: null }) // claim
+      .mockResolvedValueOnce({
+        data: { success: false, error: 'insufficient_credits', balance: 0, required: 1 },
+        error: null,
+      }); // deduct_org_credit
+
+    const result = await processBatchAnchors({
+      force: true,
+      orgId: DOCUSIGN_CREDIT_DENIED_ANCHOR.org_id,
+    });
+
+    expect(result).toEqual({ processed: 0, batchId: null, merkleRoot: null, txId: null });
+    expect(mockSubmitFingerprint).not.toHaveBeenCalled();
+    expect(mockDbRpc).not.toHaveBeenCalledWith('submit_batch_anchors', expect.anything());
+    expect(mockAnchorsUpdate).toHaveBeenCalledWith(expect.objectContaining({
+      status: 'PENDING',
+      metadata: expect.objectContaining({
+        credit_denial_reason: 'insufficient_credits',
+        queue_credit_required: 1,
+        queue_credit_balance: 0,
+      }),
+    }));
+    const updateCalls = mockAnchorsUpdate.mock.calls as unknown[][];
+    const denialUpdate = updateCalls.find(
+      (call) => (call[0] as Record<string, unknown> | undefined)?.status === 'PENDING',
+    );
+    expect(JSON.stringify(denialUpdate?.[0])).not.toContain('_claimed_by');
+    expect(JSON.stringify(denialUpdate?.[0])).not.toContain('_claimed_at');
+  });
+
+  it('does not double-charge FAST_TRACK_ANCHOR items that already passed the instant credit gate', async () => {
+    mockPendingBacklogReady();
+    mockDbRpc
+      .mockResolvedValueOnce({ data: [DOCUSIGN_PAID_FAST_TRACK_ANCHOR], error: null }) // claim
+      .mockResolvedValueOnce({ data: 1, error: null }); // submit_batch_anchors
+
+    const result = await processBatchAnchors({
+      force: true,
+      orgId: DOCUSIGN_PAID_FAST_TRACK_ANCHOR.org_id,
+    });
+
+    expect(result.processed).toBe(1);
+    expect(mockDbRpc).not.toHaveBeenCalledWith('deduct_org_credit', expect.anything());
+    expect(mockDbRpc).toHaveBeenCalledWith('submit_batch_anchors', expect.objectContaining({
+      p_anchor_ids: [DOCUSIGN_PAID_FAST_TRACK_ANCHOR.id],
+    }));
   });
 
   it('still enforces the fee ceiling for forced manual org queue runs', async () => {
