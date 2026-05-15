@@ -57,6 +57,12 @@ describe('check-staging-evidence', () => {
       ).toBe('T3');
     });
 
+    it('returns T3 when anchorExpirySweep.ts is touched', () => {
+      expect(
+        requiredTierFor(['services/worker/src/jobs/anchorExpirySweep.ts']).tier,
+      ).toBe('T3');
+    });
+
     it('returns T3 when scheduled.ts is touched', () => {
       expect(
         requiredTierFor(['services/worker/src/routes/scheduled.ts']).tier,
