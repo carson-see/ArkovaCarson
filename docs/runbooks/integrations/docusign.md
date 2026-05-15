@@ -35,7 +35,7 @@ DOCUSIGN_CLIENT_SECRET=docusign_client_secret:latest
 DOCUSIGN_CONNECT_HMAC_SECRET=docusign_connect_hmac_secret:latest
 ```
 
-As of the 2026-05-15 SCRUM-1655 verification pass, production was serving revision `arkova-worker-00558-mgb` with those bindings and flags enabled. This PR makes that state durable for the next GitHub Actions deploy.
+As of the 2026-05-15 SCRUM-1655 verification pass, production was serving revision `arkova-worker-00559-n9t` with those bindings, flags, and `GCP_KMS_INTEGRATION_TOKEN_KEY=projects/arkova1/locations/global/keyRings/arkova-signing/cryptoKeys/integration-tokens` enabled. This PR makes that state durable for the next GitHub Actions deploy.
 
 ## DocuSign Admin Setup
 
@@ -93,8 +93,10 @@ As of the 2026-05-15 SCRUM-1655 verification pass, production was serving revisi
 
 ## 2026-05-15 Evidence Snapshot
 
-- Production revision `arkova-worker-00558-mgb` has the DocuSign flags/secrets bound and safe orphan smoke passed: invalid HMAC `401 invalid_signature`, signed unknown account `200 orphaned`.
-- Production Supabase currently has 0 active `provider=docusign` integrations and one enabled sandbox `ESIGN_COMPLETED` rule, so prod accepted+duplicate smoke is intentionally not run until sandbox OAuth creates an active integration.
+- Production revision `arkova-worker-00559-n9t` has the DocuSign flags/secrets and `GCP_KMS_INTEGRATION_TOKEN_KEY` bound. `/health` is green with `git_sha=6899f10aba7e233755385edfd2b28112129e41d7`.
+- Production DocuSign sandbox OAuth completed for the Arkova org; `org_integrations` has one active `provider=docusign` row with `base_uri=https://demo.docusign.net` and token encryption through `integration-tokens`.
+- Production accepted+duplicate smoke passed twice against the connected account: invalid HMAC `401 invalid_signature`, signed known account `202 ok`, replay `200 duplicate`.
+- Production SCRUM-1655 sandbox rule `7c440d28-ba2b-4b30-a834-8f0d4df30ac1` processed two `ESIGN_COMPLETED` events from distinct sender emails (`scrum-1655-prod-sandbox-1@arkova.ai`, `scrum-1655-prod-sandbox-2@arkova.ai`) to `PROCESSED`; dispatcher wrote two `SUCCEEDED` executions with `queued_for_review` / `review_queue`.
 - Staging Supabase has active DocuSign integrations, enabled `ESIGN_COMPLETED` rules, and one org/account with two distinct sender emails processed in the last 30 days (`PROCESSED`, latest 2026-05-15T07:13:22Z).
 - DocuSign-enabled staging tag `pr-783` (`arkova-worker-staging-00087-kim`, health `git_sha=5b4009bd9eebd8e80d8c2991c39066bc9212897c`) passed accepted+duplicate smoke: invalid HMAC `401 invalid_signature`, signed known account `202 ok`, replay `200 duplicate`.
 - Shared staging 100% traffic is pinned to older revision `arkova-worker-staging-00043-hk8`, which lacks the DocuSign flag; use the tagged staging URL for this smoke until shared staging is promoted.

@@ -62,7 +62,33 @@ interface SmokeDeps {
 }
 
 function normalizeWorkerUrl(url: string): string {
-  return url.replace(/\/+$/, '');
+  const trimmed = url.trim();
+  if (!trimmed) {
+    throw new Error('--worker-url / WORKER_URL must be a non-empty URL.');
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    throw new Error('--worker-url / WORKER_URL must be a valid absolute URL.');
+  }
+
+  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+    throw new Error('--worker-url / WORKER_URL must use http or https.');
+  }
+  if (parsed.username || parsed.password) {
+    throw new Error('--worker-url / WORKER_URL must not include credentials.');
+  }
+
+  parsed.hash = '';
+  parsed.search = '';
+  let pathname = parsed.pathname;
+  while (pathname.endsWith('/') && pathname.length > 1) {
+    pathname = pathname.slice(0, -1);
+  }
+
+  return `${parsed.origin}${pathname === '/' ? '' : pathname}`;
 }
 
 function sha256Hex(value: string): string {

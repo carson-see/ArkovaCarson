@@ -76,6 +76,14 @@ describe('docusign-connect-smoke', () => {
       WORKER_URL: 'https://worker.example.test',
       DOCUSIGN_CONNECT_HMAC_SECRET: SECRET,
     })).toThrow('Do not pass --bearer-token');
+    expect(() => parseArgs([], {
+      WORKER_URL: 'ftp://worker.example.test',
+      DOCUSIGN_CONNECT_HMAC_SECRET: SECRET,
+    })).toThrow('must use http or https');
+    expect(() => parseArgs([], {
+      WORKER_URL: 'https://user:pass@worker.example.test',
+      DOCUSIGN_CONNECT_HMAC_SECRET: SECRET,
+    })).toThrow('must not include credentials');
   });
 
   it('requires an explicit account id and allow-processing flag for accepted duplicate smoke', () => {
