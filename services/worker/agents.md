@@ -19,6 +19,11 @@ Driving worker eslint warnings to zero so `--max-warnings 0` can be re-enabled (
 
 **Suppression policy for `arkova/missing-org-filter`**: pipeline crons, Stripe webhooks, and chain maintenance use service-role (suppress with `-- service-role admin query`). Public verification endpoints suppress with `-- public verification endpoint`. User-facing endpoints with real gaps get org_id added.
 
+## Treasury null-handling fix (2026-05-15, PR #805)
+
+- **`src/api/treasury.ts`** line 187: fixed null handling in `parseX402StatsPayload` — `!== undefined` changed to `!= null` so `recent_payments: null` from SQL RPC no longer triggers 502.
+- **`src/api/treasury.test.ts`**: new `it.each` tests cover null/undefined `recent_payments`, plus `handleTreasuryHealth` DB error handling and `parseThresholdUsd` edge cases.
+
 ## Routine dependency consolidation (2026-05-12)
 
 PR replacement branch `codex/deps-routine-20260512` bundles the worker dependency updates from #770 into the root/edge routine dependency batch. Worker bumps: `@sentry/node` and `@sentry/profiling-node` 10.53.0, `@types/node` 25.7.0, `@vitest/coverage-v8` and `vitest` 4.1.6, `typescript-eslint` 8.59.3, and `vite` 8.0.12.
