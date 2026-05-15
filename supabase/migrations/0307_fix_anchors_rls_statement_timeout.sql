@@ -73,6 +73,7 @@ COMMIT;
 
 -- ROLLBACK SQL (manual — paste into a compensating migration if needed):
 --
+-- BEGIN;
 -- DROP POLICY IF EXISTS "anchors_select" ON "public"."anchors";
 -- CREATE POLICY "anchors_select_own" ON "public"."anchors"
 --   FOR SELECT TO "authenticated"
@@ -83,4 +84,17 @@ COMMIT;
 -- CREATE POLICY "anchors_select_platform_admin" ON "public"."anchors"
 --   FOR SELECT TO "authenticated"
 --   USING (public.is_current_user_platform_admin());
+--
+-- DROP POLICY IF EXISTS "attestations_select" ON "public"."attestations";
+-- CREATE POLICY "attestations_select" ON "public"."attestations"
+--   FOR SELECT TO "authenticated"
+--   USING (attester_user_id = (SELECT auth.uid())
+--     OR attester_org_id = get_user_org_id()
+--     OR (EXISTS (SELECT 1 FROM anchors a WHERE a.id = anchor_id AND a.user_id = (SELECT auth.uid())))
+--     OR status = 'ACTIVE'::attestation_status);
+-- CREATE POLICY "attestations_select_platform_admin" ON "public"."attestations"
+--   FOR SELECT TO "authenticated"
+--   USING (is_current_user_platform_admin());
+--
 -- NOTIFY pgrst, 'reload schema';
+-- COMMIT;
