@@ -265,13 +265,17 @@ export async function runDocusignConnectSmoke(
   deps: SmokeDeps = {},
 ): Promise<DocusignSmokeResult> {
   const fetchImpl = deps.fetchImpl ?? fetch;
-  const payload = buildDocusignConnectPayload(options);
+  const normalizedOptions: DocusignSmokeOptions = {
+    ...options,
+    workerUrl: normalizeWorkerUrl(options.workerUrl),
+  };
+  const payload = buildDocusignConnectPayload(normalizedOptions);
   const rawBody = JSON.stringify(payload);
-  const validSignature = signDocusignPayload(rawBody, options.hmacSecret);
-  const invalidSignature = signDocusignPayload(rawBody, `${options.hmacSecret}:invalid`);
+  const validSignature = signDocusignPayload(rawBody, normalizedOptions.hmacSecret);
+  const invalidSignature = signDocusignPayload(rawBody, `${normalizedOptions.hmacSecret}:invalid`);
 
   const checks: SmokeCheck[] = [];
-  const invalid = await postPayload({ options, rawBody, signature: invalidSignature, fetchImpl });
+  const invalid = await postPayload({ options: normalizedOptions, rawBody, signature: invalidSignature, fetchImpl });
   checks.push(checkResult(
     'invalid_hmac_rejected',
     invalid,
@@ -279,8 +283,8 @@ export async function runDocusignConnectSmoke(
     'Tampered signature must be rejected before payload processing.',
   ));
 
-  if (options.mode === 'orphan') {
-    const orphan = await postPayload({ options, rawBody, signature: validSignature, fetchImpl });
+  if (normalizedOptions.mode === 'orphan') {
+    const orphan = await postPayload({ options: normalizedOptions, rawBody, signature: validSignature, fetchImpl });
     checks.push(checkResult(
       'signed_unknown_account_orphaned',
       orphan,
@@ -293,14 +297,30 @@ export async function runDocusignConnectSmoke(
       detail: 'Duplicate-path smoke requires a connected sandbox account; orphaned accounts return before nonce insert.',
     });
   } else {
-    const accepted = await postPayload({ options, rawBody, signature: validSignature, fetchImpl });
+    if (!normalizedOptions.allowProcessing) {
+      checks.push({
+        name: 'processing_opt_in_required',
+        status: 'fail',
+        detail: 'Accepted duplicate smoke requires allowProcessing=true because it can enqueue real work.',
+      });
+      return {
+        ok: false,
+        worker_url: normalizedOptions.workerUrl,
+        mode: normalizedOptions.mode,
+        envelope_id: normalizedOptions.envelopeId,
+        event_id: normalizedOptions.eventId,
+        account_id_sha256: sha256Hex(normalizedOptions.accountId),
+        checks,
+      };
+    }
+    const accepted = await postPayload({ options: normalizedOptions, rawBody, signature: validSignature, fetchImpl });
     checks.push(checkResult(
       'signed_known_account_accepted',
       accepted,
       accepted.status === 202 && codeFromBody(accepted.body) === 'ok',
       'Signed payload for a connected sandbox account should enqueue one rule event and one retryable job.',
     ));
-    const duplicate = await postPayload({ options, rawBody, signature: validSignature, fetchImpl });
+    const duplicate = await postPayload({ options: normalizedOptions, rawBody, signature: validSignature, fetchImpl });
     checks.push(checkResult(
       'duplicate_delivery_deduped',
       duplicate,
@@ -311,11 +331,11 @@ export async function runDocusignConnectSmoke(
 
   return {
     ok: checks.every((check) => check.status !== 'fail'),
-    worker_url: options.workerUrl,
-    mode: options.mode,
-    envelope_id: options.envelopeId,
-    event_id: options.eventId,
-    account_id_sha256: sha256Hex(options.accountId),
+    worker_url: normalizedOptions.workerUrl,
+    mode: normalizedOptions.mode,
+    envelope_id: normalizedOptions.envelopeId,
+    event_id: normalizedOptions.eventId,
+    account_id_sha256: sha256Hex(normalizedOptions.accountId),
     checks,
   };
 }

@@ -172,4 +172,32 @@ describe('docusign-connect-smoke', () => {
     ]);
     expect(fetchImpl).toHaveBeenCalledTimes(3);
   });
+
+  it('rejects accepted duplicate smoke without runner-level processing opt-in', async () => {
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(401, { error: { code: 'invalid_signature' } }));
+
+    const result = await runDocusignConnectSmoke({
+      workerUrl: 'https://worker.example.test/',
+      hmacSecret: SECRET,
+      bearerToken: null,
+      mode: 'accepted-duplicate',
+      accountId: 'acct-1',
+      envelopeId: 'env-smoke',
+      eventId: 'evt-smoke',
+      generatedDateTime: '2026-05-14T20:00:00.000Z',
+      senderEmail: 'smoke.sender@example.com',
+      timeoutMs: 1000,
+      allowProcessing: false,
+    }, { fetchImpl });
+
+    expect(result.ok).toBe(false);
+    expect(result.worker_url).toBe('https://worker.example.test');
+    expect(result.checks).toEqual([
+      expect.objectContaining({ name: 'invalid_hmac_rejected', status: 'pass', http_status: 401 }),
+      expect.objectContaining({ name: 'processing_opt_in_required', status: 'fail' }),
+    ]);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(fetchImpl.mock.calls[0][0]).toBe('https://worker.example.test/webhooks/docusign');
+  });
 });
