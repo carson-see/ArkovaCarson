@@ -152,82 +152,70 @@ const actors: ActorScenario[] = [
 ];
 
 
+type AttackVector = 'url' | 'session' | 'profile';
+
+function buildAttackInput(
+  vector: AttackVector,
+  targetOrgId: string,
+  actor: ActorScenario,
+): Parameters<typeof resolveActiveOrg>[0] {
+  return {
+    urlOrgId: vector === 'url' ? targetOrgId : null,
+    sessionOrgId: vector === 'session' ? targetOrgId : null,
+    profileOrgId: vector === 'profile' ? targetOrgId : actor.profileOrgId,
+    membershipOrgIds: actor.membershipOrgIds,
+  };
+}
+
+function runSingleVectorMatrix(opts: {
+  vector: AttackVector;
+  describeLabel: string;
+  testLabel: (actor: ActorScenario, target: TargetLabel) => string;
+  filterActors?: (a: ActorScenario) => boolean;
+}) {
+  const filtered = opts.filterActors ? actors.filter(opts.filterActors) : actors;
+  describe(opts.describeLabel, () => {
+    for (const actor of filtered) {
+      for (const targetLabel of Object.keys(TARGET_MAP) as TargetLabel[]) {
+        const targetOrgId = TARGET_MAP[targetLabel];
+        if (actor.membershipOrgIds.includes(targetOrgId)) continue;
+
+        it(opts.testLabel(actor, targetLabel), () => {
+          const r = resolveActiveOrg(buildAttackInput(opts.vector, targetOrgId, actor));
+          expect(r.orgId).not.toBe(targetOrgId);
+          if (opts.vector === 'profile') {
+            expect(r.orgId).toBeNull();
+            expect(r.source.kind).toBe('none');
+          } else if (actor.profileOrgId && actor.membershipOrgIds.includes(actor.profileOrgId)) {
+            expect(r.orgId).toBe(actor.profileOrgId);
+          } else {
+            expect(r.orgId).toBeNull();
+            expect(r.source.kind).toBe('none');
+          }
+        });
+      }
+    }
+  });
+}
+
 describe('Cross-tenant negative test matrix (SCRUM-1651 ORG-12)', () => {
-  describe('URL-based attacks: attacker pastes /orgs/:targetOrg in URL', () => {
-    for (const actor of actors) {
-      for (const targetLabel of Object.keys(TARGET_MAP) as TargetLabel[]) {
-        const targetOrgId = TARGET_MAP[targetLabel];
-        const isMember = actor.membershipOrgIds.includes(targetOrgId);
-
-        if (isMember) continue; // skip — legitimate access
-
-        it(`${actor.label} cannot reach ${targetLabel} via URL`, () => {
-          const r = resolveActiveOrg({
-            urlOrgId: targetOrgId,
-            sessionOrgId: null,
-            profileOrgId: actor.profileOrgId,
-            membershipOrgIds: actor.membershipOrgIds,
-          });
-          expect(r.orgId).not.toBe(targetOrgId);
-          if (actor.profileOrgId && actor.membershipOrgIds.includes(actor.profileOrgId)) {
-            expect(r.orgId).toBe(actor.profileOrgId);
-          } else {
-            expect(r.orgId).toBeNull();
-            expect(r.source.kind).toBe('none');
-          }
-        });
-      }
-    }
+  runSingleVectorMatrix({
+    vector: 'url',
+    describeLabel: 'URL-based attacks: attacker pastes /orgs/:targetOrg in URL',
+    testLabel: (a, t) => `${a.label} cannot reach ${t} via URL`,
   });
 
-  describe('Session-poisoning attacks: attacker sets localStorage to another org', () => {
-    for (const actor of actors) {
-      for (const targetLabel of Object.keys(TARGET_MAP) as TargetLabel[]) {
-        const targetOrgId = TARGET_MAP[targetLabel];
-        const isMember = actor.membershipOrgIds.includes(targetOrgId);
-
-        if (isMember) continue;
-
-        it(`${actor.label} cannot reach ${targetLabel} via poisoned session storage`, () => {
-          const r = resolveActiveOrg({
-            urlOrgId: null,
-            sessionOrgId: targetOrgId,
-            profileOrgId: actor.profileOrgId,
-            membershipOrgIds: actor.membershipOrgIds,
-          });
-          expect(r.orgId).not.toBe(targetOrgId);
-          if (actor.profileOrgId && actor.membershipOrgIds.includes(actor.profileOrgId)) {
-            expect(r.orgId).toBe(actor.profileOrgId);
-          } else {
-            expect(r.orgId).toBeNull();
-            expect(r.source.kind).toBe('none');
-          }
-        });
-      }
-    }
+  runSingleVectorMatrix({
+    vector: 'session',
+    describeLabel: 'Session-poisoning attacks: attacker sets localStorage to another org',
+    testLabel: (a, t) => `${a.label} cannot reach ${t} via poisoned session storage`,
   });
 
-  describe('Profile-drift attacks: profile.org_id points to an org with revoked membership', () => {
-    for (const actor of actors.filter(a => a.membershipOrgIds.length > 0)) {
-      for (const targetLabel of Object.keys(TARGET_MAP) as TargetLabel[]) {
-        const targetOrgId = TARGET_MAP[targetLabel];
-        const isMember = actor.membershipOrgIds.includes(targetOrgId);
-
-        if (isMember) continue;
-
-        it(`${actor.label} with drifted profile.org_id=${targetLabel} cannot reach ${targetLabel}`, () => {
-          const r = resolveActiveOrg({
-            urlOrgId: null,
-            sessionOrgId: null,
-            profileOrgId: targetOrgId,
-            membershipOrgIds: actor.membershipOrgIds,
-          });
-          expect(r.orgId).not.toBe(targetOrgId);
-          expect(r.orgId).toBeNull();
-          expect(r.source.kind).toBe('none');
-        });
-      }
-    }
+  runSingleVectorMatrix({
+    vector: 'profile',
+    describeLabel: 'Profile-drift attacks: profile.org_id points to an org with revoked membership',
+    testLabel: (a, t) => `${a.label} with drifted profile.org_id=${t} cannot reach ${t}`,
+    filterActors: a => a.membershipOrgIds.length > 0,
   });
 
   describe('Combined attack: URL + session + profile all point to a foreign org', () => {
