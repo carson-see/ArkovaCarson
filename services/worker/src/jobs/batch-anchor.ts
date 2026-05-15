@@ -16,7 +16,7 @@
 
 import { db, withDbTimeout } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
-import { getChainClient } from '../chain/client.js';
+import { getChainClientAsync } from '../chain/client.js';
 import { buildMerkleTree } from '../utils/merkle.js';
 import { getComplianceControlIds } from '../utils/complianceMapping.js';
 import { config } from '../config.js';
@@ -433,7 +433,7 @@ async function _processBatchAnchorsInner(opts: ProcessBatchAnchorOptions = {}): 
   }
 
   // Phase 0a: Pre-flight UTXO check — skip immediately if treasury is empty.
-  const chainClient = getChainClient();
+  const chainClient = await getChainClientAsync();
   try {
     if (chainClient.hasFunds) {
       const funded = await chainClient.hasFunds();
@@ -615,7 +615,7 @@ async function _processBatchAnchorsInner(opts: ProcessBatchAnchorOptions = {}): 
   // Phase 3: Publish Merkle root to chain
   let receipt;
   try {
-    const chainClient = getChainClient();
+    const chainClient = await getChainClientAsync();
     receipt = await chainClient.submitFingerprint({
       fingerprint: tree.root,
       timestamp: new Date().toISOString(),
@@ -916,7 +916,7 @@ async function legacyProcessBatchAnchors(orgId?: string): Promise<BatchAnchorRes
 
   let receipt;
   try {
-    const chainClient = getChainClient();
+    const chainClient = await getChainClientAsync();
     receipt = await chainClient.submitFingerprint({
       fingerprint: tree.root,
       timestamp: new Date().toISOString(),

@@ -13,6 +13,8 @@ import type { ChainReceipt } from '../chain/types.js';
 const {
   mockSubmitFingerprint,
   mockEstimateCurrentFee,
+  mockGetChainClient,
+  mockGetChainClientAsync,
   mockAnchorsUpdate,
   mockCallRpc,
   mockLogger,
@@ -21,6 +23,14 @@ const {
 } = vi.hoisted(() => {
   const mockSubmitFingerprint = vi.fn();
   const mockEstimateCurrentFee = vi.fn();
+  const mockGetChainClient = vi.fn(() => ({
+    submitFingerprint: mockSubmitFingerprint,
+    estimateCurrentFee: mockEstimateCurrentFee,
+  }));
+  const mockGetChainClientAsync = vi.fn(() => Promise.resolve({
+    submitFingerprint: mockSubmitFingerprint,
+    estimateCurrentFee: mockEstimateCurrentFee,
+  }));
   const mockCallRpc = vi.fn();
 
   // RACE-1: Update chain supports .eq() chaining + thenable
@@ -54,6 +64,8 @@ const {
   return {
     mockSubmitFingerprint,
     mockEstimateCurrentFee,
+    mockGetChainClient,
+    mockGetChainClientAsync,
     mockAnchorsUpdate,
     mockCallRpc,
     mockLogger,
@@ -81,9 +93,9 @@ vi.mock('../utils/rpc.js', () => ({
 }));
 
 vi.mock('../chain/client.js', () => ({
-  getInitializedChainClient: () => ({ submitFingerprint: mockSubmitFingerprint, estimateCurrentFee: mockEstimateCurrentFee }),
-  getChainClientAsync: () => Promise.resolve({ submitFingerprint: mockSubmitFingerprint, estimateCurrentFee: mockEstimateCurrentFee }),
-  getChainClient: () => ({ submitFingerprint: mockSubmitFingerprint, estimateCurrentFee: mockEstimateCurrentFee }),
+  getInitializedChainClient: mockGetChainClient,
+  getChainClientAsync: mockGetChainClientAsync,
+  getChainClient: mockGetChainClient,
 }));
 
 const mockDbRpc = vi.hoisted(() => vi.fn());
@@ -215,6 +227,14 @@ describe('processBatchAnchors', () => {
     mockSelectMaybeSingle.mockResolvedValue({ data: null, error: null });
     mockSubmitFingerprint.mockResolvedValue(MOCK_RECEIPT);
     mockEstimateCurrentFee.mockResolvedValue(1);
+    mockGetChainClient.mockReturnValue({
+      submitFingerprint: mockSubmitFingerprint,
+      estimateCurrentFee: mockEstimateCurrentFee,
+    });
+    mockGetChainClientAsync.mockResolvedValue({
+      submitFingerprint: mockSubmitFingerprint,
+      estimateCurrentFee: mockEstimateCurrentFee,
+    });
     setUpdateResult({ error: null, count: 1 });
   });
 
@@ -395,6 +415,22 @@ describe('processBatchAnchors', () => {
     const result = await processBatchAnchors();
 
     expect(result.processed).toBe(1);
+    expect(mockSubmitFingerprint).toHaveBeenCalledTimes(1);
+  });
+
+  it('waits for async chain client initialization during cold-start forced flushes', async () => {
+    mockPendingBacklogReady();
+    mockGetChainClient.mockImplementation(() => {
+      throw new Error('getChainClient() called before initChainClient()');
+    });
+    mockDbRpc
+      .mockResolvedValueOnce({ data: [ANCHOR_A], error: null }) // claim
+      .mockResolvedValueOnce({ data: 1, error: null }); // submit_batch_anchors
+
+    const result = await processBatchAnchors({ force: true, orgId: 'org-1' });
+
+    expect(result.processed).toBe(1);
+    expect(mockGetChainClientAsync).toHaveBeenCalled();
     expect(mockSubmitFingerprint).toHaveBeenCalledTimes(1);
   });
 
