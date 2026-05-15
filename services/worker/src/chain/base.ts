@@ -249,7 +249,7 @@ export class BaseChainClient implements ChainClient {
       this.publicClient = createPublicClient({
         chain: this.chain,
         transport,
-      }) as any;
+      }) as any; // eslint-disable-line @typescript-eslint/no-explicit-any -- viem's branded generic types don't directly assign to PublicClient
     }
 
     if (clientConfig.walletClient) {
@@ -261,7 +261,7 @@ export class BaseChainClient implements ChainClient {
         account: this.account,
         chain: this.chain,
         transport,
-      }) as any;
+      }) as any; // eslint-disable-line @typescript-eslint/no-explicit-any -- viem's branded generic types don't directly assign to WalletClient
     }
 
     // Log only the address, NEVER the private key (Constitution 1.4)
@@ -346,6 +346,7 @@ export class BaseChainClient implements ChainClient {
         value: 0n,
         data: calldata,
         gas: gasLimit,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- viem sendTransaction params require complex branded generics
       } as any),
       'send transaction',
     );
