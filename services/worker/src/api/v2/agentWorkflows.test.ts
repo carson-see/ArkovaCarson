@@ -1,4 +1,3 @@
-// @ts-nocheck — edge source is outside worker rootDir; Vitest resolves it at runtime.
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { openApiV2Spec } from './openapi.js';

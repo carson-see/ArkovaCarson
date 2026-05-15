@@ -203,6 +203,7 @@ export class DefaultAdesEngine implements AdesEngine {
         // For B-T and above, timestamp is required — fail the signature
         throw new Error(
           `Timestamp required for level ${request.level} but TSA failed: ${err instanceof Error ? err.message : String(err)}`,
+          { cause: err },
         );
       }
     }

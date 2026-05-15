@@ -89,7 +89,7 @@ export class HttpCrlManager implements CrlManager {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       logger.error({ url, issuerCn, error: message }, 'CRL fetch failed');
-      throw new Error(`CRL fetch failed for ${url}: ${message}`);
+      throw new Error(`CRL fetch failed for ${url}: ${message}`, { cause: err });
     }
   }
 

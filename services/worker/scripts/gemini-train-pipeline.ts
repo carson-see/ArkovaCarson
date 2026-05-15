@@ -529,8 +529,8 @@ async function main(): Promise<void> {
   console.log(`Max examples:  ${MAX_EXAMPLES || 'unlimited'}`);
 
   // Step 1: Convert
-  let trainCount = 0;
-  let valCount = 0;
+  let trainCount: number;
+  let valCount: number;
   let stats: Record<string, number> = {};
 
   if (SKIP_CONVERT) {
