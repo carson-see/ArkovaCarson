@@ -73,7 +73,7 @@ emergencyAccessRouter.post('/', async (req: Request, res: Response) => {
 
     void dbAny.from('audit_events').insert({
       event_type: 'EMERGENCY_ACCESS_REQUESTED',
-      event_category: 'SECURITY',
+      event_category: 'ADMIN',
       actor_id: userId,
       org_id: req.orgId,
       target_type: 'emergency_access_grant',
@@ -154,7 +154,7 @@ emergencyAccessRouter.patch('/:id/approve', async (req: Request, res: Response) 
 
     void dbAny.from('audit_events').insert({
       event_type: 'EMERGENCY_ACCESS_APPROVED',
-      event_category: 'SECURITY',
+      event_category: 'ADMIN',
       actor_id: approverId,
       org_id: req.orgId,
       target_type: 'emergency_access_grant',
@@ -205,7 +205,7 @@ emergencyAccessRouter.patch('/:id/revoke', async (req: Request, res: Response) =
 
     void dbAny.from('audit_events').insert({
       event_type: 'EMERGENCY_ACCESS_REVOKED',
-      event_category: 'SECURITY',
+      event_category: 'ADMIN',
       actor_id: revokerId,
       org_id: req.orgId,
       target_type: 'emergency_access_grant',

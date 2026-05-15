@@ -109,7 +109,7 @@ router.post('/', async (req: Request, res: Response) => {
     try {
       await dbAny.from('audit_events').insert({
         event_type: 'COMPLIANCE_REPORT_GENERATED',
-        event_category: 'COMPLIANCE',
+        event_category: 'ADMIN',
         actor_id: req.authUserId,
         org_id: orgId,
         target_type: 'compliance_report',

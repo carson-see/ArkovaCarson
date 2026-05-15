@@ -51,7 +51,7 @@ export async function runRegulatoryChangeScan(): Promise<RegulatoryChangeScanRes
         .from('audit_events')
         .insert({
           event_type: 'regulatory.rule_stale',
-          event_category: 'COMPLIANCE',
+          event_category: 'SYSTEM',
           details: JSON.stringify({
             rule_id: rule.id,
             jurisdiction_code: rule.jurisdiction_code,
