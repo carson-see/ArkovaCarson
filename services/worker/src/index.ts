@@ -343,15 +343,15 @@ const integrationsAuthGate = (req: Request, res: Response, next: NextFunction) =
 app.use(
   '/api/v1/integrations',
   pathScopedKillSwitch('/google_drive', 'ENABLE_DRIVE_OAUTH'),
-  rateLimiters.api,
-  integrationsAuthGate,
+  pathScopedMiddleware('/google_drive', rateLimiters.api),
+  pathScopedMiddleware('/google_drive', integrationsAuthGate),
   pathScopedMiddleware('/google_drive', driveOAuthRouter),
 );
 app.use(
   '/api/v1/integrations',
   pathScopedKillSwitch('/docusign', 'ENABLE_DOCUSIGN_OAUTH'),
-  rateLimiters.api,
-  integrationsAuthGate,
+  pathScopedMiddleware('/docusign', rateLimiters.api),
+  pathScopedMiddleware('/docusign', integrationsAuthGate),
   pathScopedMiddleware('/docusign', docusignOAuthRouter),
 );
 

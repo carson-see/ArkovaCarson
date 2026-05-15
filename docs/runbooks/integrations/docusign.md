@@ -84,6 +84,7 @@ As of the 2026-05-14 SCRUM-1655 verification pass, production was manually updat
    DOCUSIGN_SMOKE_ACCOUNT_ID="$DOCUSIGN_SANDBOX_ACCOUNT_ID" \
    npm --prefix services/worker run smoke:docusign -- \
      --mode=accepted-duplicate \
+     --account-id="$DOCUSIGN_SANDBOX_ACCOUNT_ID" \
      --allow-processing
    ```
 
