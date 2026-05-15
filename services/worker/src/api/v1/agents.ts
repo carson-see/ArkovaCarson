@@ -251,6 +251,7 @@ router.patch('/:agentId', async (req: Request<{ agentId: string }>, res: Respons
 
     void db.from('audit_events').insert({
       actor_id: userId,
+      org_id: orgId,
       event_type: parsed.data.status === 'suspended' ? 'AGENT_SUSPENDED' : 'AGENT_UPDATED',
       event_category: 'SYSTEM',
       target_type: 'agent',
@@ -305,6 +306,7 @@ router.delete('/:agentId', async (req: Request<{ agentId: string }>, res: Respon
 
     void db.from('audit_events').insert({
       actor_id: userId,
+      org_id: orgId,
       event_type: 'AGENT_REVOKED',
       event_category: 'SYSTEM',
       target_type: 'agent',
