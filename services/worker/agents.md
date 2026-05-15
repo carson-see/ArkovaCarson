@@ -6,6 +6,11 @@ _Last updated: 2026-05-12 (routine dependency consolidation)._
 
 Express-based worker service handling privileged server-side operations: Merkle batch anchoring, Stripe webhook verification, outbound webhook delivery, cron job scheduling, rules engine, and org tier/quota enforcement. Uses Supabase service_role key — never the anon key.
 
+## Treasury null-handling fix (2026-05-15, PR #788)
+
+- **`src/api/treasury.ts`** line 187: fixed null handling in `parseX402StatsPayload` — `!== undefined` changed to `!= null` so `recent_payments: null` from SQL RPC no longer triggers 502.
+- **`src/api/treasury.test.ts`**: new `it.each` tests cover null/undefined `recent_payments`, plus `handleTreasuryHealth` DB error handling and `parseThresholdUsd` edge cases.
+
 ## Routine dependency consolidation (2026-05-12)
 
 PR replacement branch `codex/deps-routine-20260512` bundles the worker dependency updates from #770 into the root/edge routine dependency batch. Worker bumps: `@sentry/node` and `@sentry/profiling-node` 10.53.0, `@types/node` 25.7.0, `@vitest/coverage-v8` and `vitest` 4.1.6, `typescript-eslint` 8.59.3, and `vite` 8.0.12.

@@ -14,6 +14,22 @@
 
 ## Now
 
+### 2026-05-15 — PR #788 prod hotfix (RLS timeout + treasury 502 + org_credits) + PR #789 lint cleanup
+
+**PR #788 / branch `fix/prod-rls-timeout-treasury-credits` — three production hotfixes, T3 soak in progress.**
+
+Fixes: (1) `anchors_select_platform_admin` RLS policy caused full-table seq scan on 2.87M rows — consolidated 3 permissive SELECT policies into 1 with scalar subquery `(SELECT ...)` wrappers forcing InitPlan evaluation → BitmapOr index scans. Same pattern applied to `attestations`. (2) Treasury x402-stats 502 — `parseX402StatsPayload` rejected `recent_payments: null` from RPC with strict `!== undefined`; fixed to `!= null`. (3) Missing `org_credits` row for Arkova org seeded via migration 0308.
+
+Staging state: migrations 0307 + 0308 applied to `ujtlwnoqfhtitcmsnrpq`. Worker revision `arkova-worker-staging-00094-yeh` (sha `27c60fb2e8879d54a8c61db60616e73fcc1ced31`) healthy at tag URL `https://pr-788---arkova-worker-staging-kvojbeutfa-uc.a.run.app`. EXPLAIN ANALYZE confirms Index Scan on `idx_anchors_user_id` with InitPlan evaluation (0.134ms). Rollback rehearsal passed 5/5 steps. Per-org isolation verified (`relrowsecurity=true`, `relforcerowsecurity=true`). Soak started 2026-05-15T18:28Z, target end 2026-05-17T18:28Z. Daily flush observation pending at ~24h mark.
+
+**PR #789 / branch `chore/worker-lint-cleanup` — 34 quick-win ESLint warning fixes, T2 soak in progress.**
+
+Fixes 34 of 365 pre-existing worker warnings: `ban-ts-comment` (6), `preserve-caught-error` (6), `no-useless-assignment` (22). 26 files, net -6 lines. Worker revision `arkova-worker-staging-00095-xis` (sha `f15ba5d20117348dac0ffcb08d2f248872705562`) healthy at `https://pr-789---arkova-worker-staging-kvojbeutfa-uc.a.run.app`. Soak started 2026-05-15T18:40Z, target end 2026-05-16T06:40Z.
+
+**Known issue:** staging Cloud Run has a stale broken revision `arkova-worker-staging-00088-wif` with image `foo` (`mirror.gcr.io/library/foo`) that causes deploy script error messages referencing it even when the actual deploy succeeds. This is cosmetic — tag URL health check is the reliable success signal.
+
+_Last refreshed: 2026-05-15 by carson — claims verified against staging worker `/health?detailed=true`, EXPLAIN ANALYZE on staging DB, rollback rehearsal SQL, `pg_policies` queries, and `gcloud run revisions list` output._
+
 ### 2026-05-15 — SCRUM-1655 DocuSign live verification PR lane
 
 **Scope:** SCRUM-1655 remains the live/operator verification subtask for parent SCRUM-1648, not a duplicate implementation story. PR #689 already unit-pinned DS-01 multi-sender behavior; DS-02/DS-03/DS-04 remain represented by existing handler behavior (`findIntegration()` fail-closed lookup, mandatory HMAC, `docusign_webhook_nonces` dedupe).
