@@ -5,7 +5,7 @@
  * - CredentialRenderer for template-based display (UF-01)
  * - PENDING / SUBMITTED pre-secured banners with amber clock + status-specific copy (UF-04, SCRUM-952)
  * - Status banner (PENDING / SUBMITTED / SECURED / REVOKED / EXPIRED) — SUBMITTED ≠ SECURED
- * - Cryptographic proof (fingerprint, network receipt, block height) — SECURED only
+ * - Cryptographic proof (fingerprint, network receipt, block height) — terminal proof states only
  * - Lifecycle timeline
  *
  * Shows redacted information - no sensitive data exposed.
@@ -35,6 +35,12 @@ import { supabase } from '@/lib/supabase';
 import { logVerificationEvent } from '@/lib/logVerificationEvent';
 import { issuerRegistryPath } from '@/lib/routes';
 import { ANCHOR_STATUS_LABELS, ANCHORING_STATUS_LABELS, PUBLIC_VERIFICATION_LABELS, VERIFICATION_DISPLAY_LABELS } from '@/lib/copy';
+import {
+  hasPublicVerificationProof,
+  isPreSecuredStatus,
+  normalizePublicVerificationStatus,
+  type PublicVerificationStatus,
+} from '@/lib/publicVerificationState';
 import { ExplorerLink } from '@/components/ui/ExplorerLink';
 import { ComplianceBadge } from '@/components/anchor/ComplianceBadge';
 import { EvidenceLayersSection } from '@/components/verification/EvidenceLayersSection';
@@ -229,13 +235,16 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
     }) + ' UTC';
   };
 
-  const isRevoked = data.status === 'REVOKED';
-  const isExpired = data.status === 'EXPIRED';
-  const isPending = data.status === 'PENDING';
-  const isSubmitted = data.status === 'SUBMITTED';
-  const isAwaitingConfirmation = isPending || isSubmitted;
+  const publicStatus = normalizePublicVerificationStatus(data.status);
+  const isRevoked = publicStatus === 'REVOKED';
+  const isExpired = publicStatus === 'EXPIRED';
+  const isPending = publicStatus === 'PENDING';
+  const isSubmitted = publicStatus === 'SUBMITTED';
+  const isSecured = publicStatus === 'SECURED';
+  const isAwaitingConfirmation = isPreSecuredStatus(publicStatus);
+  const hasProof = hasPublicVerificationProof(publicStatus);
   const securedAt = data.secured_at ?? data.anchor_timestamp;
-  const statusLabel = (ANCHOR_STATUS_LABELS as Record<string, string>)[data.status] ?? data.status;
+  const statusLabel = ANCHOR_STATUS_LABELS[publicStatus];
   // Extract DB field (bitcoin_block) to avoid copy-lint trigger in template literal
   const networkRecordBlock = data.bitcoin_block;
 
@@ -246,11 +255,11 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
   const pendingSince = isAwaitingConfirmation && data.created_at
     ? formatTimeSince(data.created_at)
     : null;
-  const heroTitle = getHeroTitle(data.status, securedAt, formatDate);
-  const heroSubtitle = getHeroSubtitle(data.status);
+  const heroTitle = getHeroTitle(publicStatus, securedAt, formatDate);
+  const heroSubtitle = getHeroSubtitle(publicStatus);
   let statusBadgeVariant: 'default' | 'secondary' | 'outline' = 'default';
   let statusBadgeClassName = 'bg-green-600 hover:bg-green-700';
-  let statusBadgeLabel = statusLabel;
+  let statusBadgeLabel: string = statusLabel;
 
   if (isAwaitingConfirmation || isExpired) {
     statusBadgeVariant = 'outline';
@@ -287,7 +296,7 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
             : isRevoked ? 'bg-gray-500/10'
             : 'bg-green-500/10'
           }`}>
-            {isAwaitingConfirmation ? (
+            {isPending ? (
               <Clock className="h-8 w-8 text-amber-500 animate-pulse" />
             ) : isSubmitted ? (
               <Clock className="h-8 w-8 text-amber-500" />
@@ -328,7 +337,7 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
           metadata={data.metadata}
           template={template}
           issuerName={data.issuer_name}
-          status={data.status === 'ACTIVE' ? 'SECURED' : data.status}
+          status={publicStatus}
           filename={data.filename}
           fingerprint={data.fingerprint}
           issuedDate={data.issued_at ?? data.issued_date}
@@ -384,7 +393,7 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
         {/* ============================================================
             SECTION 2D: Compliance Controls (CML-01)
             ============================================================ */}
-        {(data.status === 'SECURED' || data.status === 'REVOKED') && (
+        {(isSecured || isRevoked) && (
           <>
             <Separator />
             <ComplianceBadge
@@ -398,12 +407,12 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
         {/* ============================================================
             SECTION 2b: Evidence Layers (COMP-01)
             ============================================================ */}
-        {!isAwaitingConfirmation && (
+        {hasProof && (
           <>
             <Separator />
             <EvidenceLayersSection
               layers={[
-                { type: 'anchor', present: data.status === 'SECURED' || data.status === 'REVOKED', timestamp: data.secured_at, detail: data.network_receipt_id ? `Network record: ${data.network_receipt_id.substring(0, 16)}...` : undefined },
+                { type: 'anchor', present: true, timestamp: securedAt, detail: data.network_receipt_id ? `${PUBLIC_VERIFICATION_LABELS.NETWORK_RECORD_PREFIX}${data.network_receipt_id.substring(0, 16)}...` : undefined },
                 { type: 'signature', present: false },
                 { type: 'timestamp', present: false },
               ]}
@@ -412,9 +421,9 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
         )}
 
         {/* ============================================================
-            SECTION 3: Cryptographic Proof (only for non-PENDING)
+            SECTION 3: Cryptographic Proof (terminal proof states only)
             ============================================================ */}
-        {!isAwaitingConfirmation && (
+        {hasProof && (
           <>
             <Separator />
             <div>
@@ -510,13 +519,13 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
         {/* ============================================================
             SECTION 5: Proof Download (UF-07)
             ============================================================ */}
-        {!isAwaitingConfirmation && (
+        {hasProof && (
           <>
             <Separator />
             <VerifierProofDownload
               publicId={data.public_id}
               fingerprint={data.fingerprint}
-              status={data.status}
+              status={publicStatus}
               issuerName={data.issuer_name}
               credentialType={data.credential_type}
               filename={data.filename}
@@ -572,16 +581,7 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
 /** Map public anchor data to AnchorLifecycleData for the timeline.
  * The RPC maps SECURED→ACTIVE for the frozen API schema, so we reverse it here. */
 function mapToLifecycleData(data: PublicAnchorData): AnchorLifecycleData {
-  // Reverse the RPC status mapping: ACTIVE→SECURED for the lifecycle component
-  const validStatuses: Record<string, AnchorLifecycleData['status']> = {
-    ACTIVE: 'SECURED',
-    SECURED: 'SECURED',
-    REVOKED: 'REVOKED',
-    EXPIRED: 'EXPIRED',
-    PENDING: 'PENDING',
-    SUBMITTED: 'SUBMITTED',
-  };
-  const status = validStatuses[data.status] ?? 'PENDING';
+  const status = normalizePublicVerificationStatus(data.status);
   return {
     status,
     createdAt: data.created_at!,
@@ -594,7 +594,7 @@ function mapToLifecycleData(data: PublicAnchorData): AnchorLifecycleData {
 }
 
 function getHeroTitle(
-  status: string,
+  status: PublicVerificationStatus,
   securedAt: string | undefined,
   formatDate: (dateStr: string) => string,
 ): string {
@@ -608,7 +608,7 @@ function getHeroTitle(
   return PUBLIC_VERIFICATION_LABELS.DOCUMENT_VERIFIED;
 }
 
-function getHeroSubtitle(status: string): string {
+function getHeroSubtitle(status: PublicVerificationStatus): string {
   if (status === 'SUBMITTED') return ANCHORING_STATUS_LABELS.SUBMITTED_PUBLIC_SUBTITLE;
   if (status === 'PENDING') return ANCHORING_STATUS_LABELS.PENDING_PUBLIC_SUBTITLE;
   if (status === 'REVOKED') return PUBLIC_VERIFICATION_LABELS.REVOKED_DESC;
@@ -660,7 +660,7 @@ function CredentialJsonLd({ data }: Readonly<{ data: PublicAnchorData }>) {
     jsonLd.expires = data.expires_at ?? data.expiry_date;
   }
 
-  if (data.status === 'SECURED' || data.status === 'ACTIVE') {
+  if (normalizePublicVerificationStatus(data.status) === 'SECURED') {
     jsonLd.additionalProperty = {
       '@type': 'PropertyValue',
       'name': 'verificationStatus',

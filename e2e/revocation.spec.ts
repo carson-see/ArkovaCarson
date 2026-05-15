@@ -157,8 +157,11 @@ test.describe('Revocation', () => {
       await orgAdminPage.goto(`/records/${anchor.id}`);
       await expect(orgAdminPage.getByRole('heading', { name: 'Record Details' })).toBeVisible({ timeout: 10000 });
 
-      // Should show Revoked status
-      await expect(orgAdminPage.getByText('Revoked')).toBeVisible();
+      const certificateHeader = orgAdminPage
+        .locator('.bg-gradient-to-r')
+        .filter({ has: orgAdminPage.getByRole('heading', { name: 'Verification Certificate' }) });
+
+      await expect(certificateHeader.getByText('Revoked', { exact: true })).toBeVisible();
     });
   });
 });

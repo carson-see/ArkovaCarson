@@ -726,6 +726,7 @@ export const PUBLIC_VERIFICATION_LABELS = {
   FINGERPRINT_SHA256: 'Fingerprint (SHA-256)',
   NETWORK_RECEIPT: 'Network Receipt',
   NETWORK_RECORD: 'Network Record',
+  NETWORK_RECORD_PREFIX: 'Network record: ',
   OBSERVED_TIME: 'Observed Time',
   LIFECYCLE: 'Lifecycle',
   SECURED_BY: 'Secured by Arkova',

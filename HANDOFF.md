@@ -57,6 +57,18 @@
 
 ---
 
+### 2026-05-15 — SCRUM-952 public verify trust-surface PR hardening
+
+**PR #784 / branch `codex/scrum-952-public-verify-contract` remains the SCRUM-952 lane and is scoped to the public `/verify/:publicId` status contract.** It centralizes public verification status normalization, maps frozen public API `ACTIVE` to canonical `SECURED`, prevents `PENDING`/`SUBMITTED` from rendering green verified/proof affordances, preserves terminal proof affordances for `SECURED`/`REVOKED`/`EXPIRED`, and keeps subtype labels such as `professional_certification` user-readable as `Professional Certification`.
+
+**Verification evidence:** unit/component tests on touched verification/subtype paths passed (76 tests), `typecheck` passed, targeted lint returned 0 errors, `lint:copy` passed, `build` passed, and staging-backed Chromium public verification smoke passed 10/10 against Supabase project `ujtlwnoqfhtitcmsnrpq`. Earlier T1 soak for the same PR ran 13 scheduled Chromium runs with 130/130 checks passed. SonarCloud passed with 0.0% new-code duplication. UAT screenshots for all five public states at 1280px and 375px are stored under `docs/uat/scrum-952-public-verify/`.
+
+**Direct artifacts:** PR checks page: https://github.com/carson-see/ArkovaCarson/pull/784/checks. Green CI evidence run on `b1006914`: https://github.com/carson-see/ArkovaCarson/actions/runs/25924266375, including `Tests` https://github.com/carson-see/ArkovaCarson/actions/runs/25924266375/job/76201672163, `E2E Tests` https://github.com/carson-see/ArkovaCarson/actions/runs/25924266375/job/76203916844, and `TypeCheck & Lint` https://github.com/carson-see/ArkovaCarson/actions/runs/25924266375/job/76201150953. Staging evidence gate: https://github.com/carson-see/ArkovaCarson/actions/runs/25924266369/job/76201150651. SonarCloud project: https://sonarcloud.io/project/overview?id=carson-see_ArkovaCarson. UAT screenshots folder: `docs/uat/scrum-952-public-verify/`.
+
+**Merge status:** GitHub Actions runner/payment gating is no longer blocking this PR. The CI-only Supabase startup wrapper now moves local Supabase ports below the Linux ephemeral range, which cleared the E2E `54326` inbucket port collision. Remaining non-code merge policy risk is stale CodeRabbit `CHANGES_REQUESTED` reviews on older commits; current actionable comments have been addressed in this branch.
+
+_Last refreshed: 2026-05-15 by Codex — claims verified against local test/typecheck/lint/copy-lint output, staging-backed Playwright smoke, generated UAT screenshots, `gh pr view/checks`, GitHub Actions run/job URLs, SonarCloud status, and PR #784 evidence comments._
+
 ### 2026-05-14 — SSD checkout reconciliation note
 
 **SSD role:** `/Volumes/Extreme/Arkova` is backup/worktree storage, not the authoritative day-to-day checkout. The old SSD checkout at `/Volumes/Extreme/Arkova/arkova-mvpcopy-main` is now treated as quarantined evidence, not a working `main`.
