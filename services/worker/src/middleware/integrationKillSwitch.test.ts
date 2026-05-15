@@ -126,4 +126,32 @@ describe('killSwitch middleware', () => {
       }),
     );
   });
+
+  it('does not call a path-scoped router for a sibling integration path', async () => {
+    vi.resetModules();
+    const { pathScopedMiddleware } = await import('./integrationKillSwitch.js');
+    const inner = vi.fn();
+    const handler = pathScopedMiddleware('/google_drive', inner);
+    const next = vi.fn();
+    const res = makeRes();
+
+    handler({ path: '/docusign/oauth/start' } as never, res, next);
+
+    expect(inner).not.toHaveBeenCalled();
+    expect(next).toHaveBeenCalledOnce();
+  });
+
+  it('calls a path-scoped router for its own integration path', async () => {
+    vi.resetModules();
+    const { pathScopedMiddleware } = await import('./integrationKillSwitch.js');
+    const inner = vi.fn();
+    const handler = pathScopedMiddleware('/docusign', inner);
+    const next = vi.fn();
+    const res = makeRes();
+
+    handler({ path: '/docusign/oauth/start' } as never, res, next);
+
+    expect(inner).toHaveBeenCalledOnce();
+    expect(next).not.toHaveBeenCalled();
+  });
 });

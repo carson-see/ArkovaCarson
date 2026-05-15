@@ -199,7 +199,11 @@ app.use(
 );
 
 // ─── DocuSign Connect webhook (SCRUM-1101) — raw body required for HMAC ───
-import { killSwitch, pathScopedKillSwitch } from './middleware/integrationKillSwitch.js';
+import {
+  killSwitch,
+  pathScopedKillSwitch,
+  pathScopedMiddleware,
+} from './middleware/integrationKillSwitch.js';
 import { ruleEventBackpressure } from './middleware/ruleEventBackpressure.js';
 app.use(
   '/webhooks/docusign',
@@ -341,14 +345,14 @@ app.use(
   pathScopedKillSwitch('/google_drive', 'ENABLE_DRIVE_OAUTH'),
   rateLimiters.api,
   integrationsAuthGate,
-  driveOAuthRouter,
+  pathScopedMiddleware('/google_drive', driveOAuthRouter),
 );
 app.use(
   '/api/v1/integrations',
   pathScopedKillSwitch('/docusign', 'ENABLE_DOCUSIGN_OAUTH'),
   rateLimiters.api,
   integrationsAuthGate,
-  docusignOAuthRouter,
+  pathScopedMiddleware('/docusign', docusignOAuthRouter),
 );
 
 // Payment-state enforcement: suspended/cancelled orgs get 402 (SCRUM-1221).
