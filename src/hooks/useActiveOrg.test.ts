@@ -80,11 +80,6 @@ describe('resolveActiveOrg (SCRUM-1651 ORG-02)', () => {
   });
 
   it('sessionOrgId pointing to a revoked membership falls through to profile.org_id', () => {
-    // SCRUM-1647 follow-up: pin the asymmetric session-vs-profile fallthrough.
-    // The session storage may carry an org id the user picked yesterday; if
-    // their membership to that org has since been revoked, the resolver
-    // must NOT honor the stale session value and must fall back to the
-    // implicit primary instead of producing a `session` source.
     const r = resolveActiveOrg({
       urlOrgId: null,
       sessionOrgId: ORG_SUB,           // user picked the sub-org from the switcher
@@ -107,10 +102,6 @@ describe('resolveActiveOrg (SCRUM-1651 ORG-02)', () => {
   });
 
   it('cross-tenant safety: every input pointing to a non-member org returns none (no active selection)', () => {
-    // All three inputs reference an org the user is NOT a member of. The
-    // user's only real membership is ORG_PARENT but no input pointed at it.
-    // Each layer rejects independently → final result is `none`. The user
-    // sees the multi-org picker / OrgRequiredCard, not the unrelated tenant.
     const r = resolveActiveOrg({
       urlOrgId: ORG_OTHER_TENANT,
       sessionOrgId: ORG_OTHER_TENANT,
@@ -133,28 +124,8 @@ describe('resolveActiveOrg (SCRUM-1651 ORG-02)', () => {
   });
 });
 
-/**
- * SCRUM-1651 ORG-12 — Cross-tenant negative test matrix.
- *
- * The acceptance criteria require proving that users cannot see or mutate
- * other org/sub-org data through UI or API for the following operation
- * categories: read, write, delete, list, anchor-create, queue-claim,
- * credit-consume, integration-disconnect.
- *
- * Since every org-scoped operation in the frontend flows through
- * `resolveActiveOrg()` to determine the active org — and downstream hooks
- * and API calls scope their queries to that resolved org id — the resolver
- * is the single chokepoint. If the resolver never resolves to an org the
- * user doesn't belong to, no downstream operation can leak data.
- *
- * This matrix tests every combination of actor type (parent-org admin,
- * sub-org admin, unrelated-org admin, individual user) against every
- * target org, proving the resolver never resolves to a non-member org.
- *
- * The RLS layer in Supabase provides defense-in-depth at the database
- * level; these tests verify the client-side gate that prevents the UI
- * from even attempting cross-tenant operations.
- */
+// SCRUM-1651 ORG-12 — resolveActiveOrg is the client-side chokepoint;
+// RLS provides defense-in-depth at the DB layer.
 
 const ORG_UNRELATED = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
 
@@ -172,16 +143,6 @@ const actors: ActorScenario[] = [
   { label: 'individual user (no org)', membershipOrgIds: [], profileOrgId: null },
 ];
 
-/**
- * Operations from the AC: read, write, delete, list, anchor-create,
- * queue-claim, credit-consume, integration-disconnect. Each operation
- * would send the resolved orgId to a different API endpoint — here we
- * verify the resolver never produces an orgId the actor shouldn't reach.
- */
-const operations = [
-  'read', 'write', 'delete', 'list',
-  'anchor-create', 'queue-claim', 'credit-consume', 'integration-disconnect',
-] as const;
 
 describe('Cross-tenant negative test matrix (SCRUM-1651 ORG-12)', () => {
   describe('URL-based attacks: attacker pastes /orgs/:targetOrg in URL', () => {
@@ -197,7 +158,7 @@ describe('Cross-tenant negative test matrix (SCRUM-1651 ORG-12)', () => {
 
         if (isMember) continue; // skip — legitimate access
 
-        it(`${actor.label} cannot reach ${targetLabel} via URL (all ${operations.length} operations blocked)`, () => {
+        it(`${actor.label} cannot reach ${targetLabel} via URL`, () => {
           const r = resolveActiveOrg({
             urlOrgId: targetOrgId,
             sessionOrgId: null,
@@ -271,10 +232,7 @@ describe('Cross-tenant negative test matrix (SCRUM-1651 ORG-12)', () => {
             membershipOrgIds: actor.membershipOrgIds,
           });
           expect(r.orgId).not.toBe(targetOrgId);
-          // With a drifted profile, the resolver should resolve to the
-          // first valid membership or none if no membership exists.
-          // Since profileOrgId is not in membershipOrgIds, implicit_primary
-          // is skipped. None is returned (no URL, no session, no valid profile).
+          // profileOrgId not in membershipOrgIds → implicit_primary skipped → none.
           expect(r.orgId).toBeNull();
           expect(r.source.kind).toBe('none');
         });
@@ -283,10 +241,8 @@ describe('Cross-tenant negative test matrix (SCRUM-1651 ORG-12)', () => {
   });
 
   describe('Combined attack: URL + session + profile all point to a foreign org', () => {
-    // Only test actors who are NOT members of ORG_UNRELATED — actors who
-    // ARE members have legitimate access, which is not an attack scenario.
     for (const actor of actors.filter(
-      a => a.membershipOrgIds.length > 0 && !a.membershipOrgIds.includes(ORG_UNRELATED),
+      a => !a.membershipOrgIds.includes(ORG_UNRELATED),
     )) {
       it(`${actor.label} cannot bypass when all three inputs point to unrelated org`, () => {
         const r = resolveActiveOrg({
@@ -296,8 +252,6 @@ describe('Cross-tenant negative test matrix (SCRUM-1651 ORG-12)', () => {
           membershipOrgIds: actor.membershipOrgIds,
         });
         expect(r.orgId).not.toBe(ORG_UNRELATED);
-        // The resolver falls through all three layers and lands on none
-        // because ORG_UNRELATED is not in any actor's membership set.
         expect(r.orgId).toBeNull();
         expect(r.source.kind).toBe('none');
       });
@@ -354,50 +308,62 @@ describe('Cross-tenant negative test matrix (SCRUM-1651 ORG-12)', () => {
   });
 
   describe('Operation-scoped invariant: resolved orgId is always in membershipOrgIds or null', () => {
-    // This is the fundamental invariant that makes all downstream
-    // org-scoped operations (the 8 categories from the AC) safe.
-    // If it holds, no operation can escape the user's org boundary.
-    const allInputCombinations: Array<{
+    const attackCombinations: Array<{
+      label: string;
       urlOrgId: string | null;
       sessionOrgId: string | null;
       profileOrgId: string | null;
       membershipOrgIds: string[];
     }> = [
-      // URL attacks
-      { urlOrgId: ORG_OTHER_TENANT, sessionOrgId: null, profileOrgId: null, membershipOrgIds: [ORG_PARENT] },
-      { urlOrgId: ORG_OTHER_TENANT, sessionOrgId: ORG_OTHER_TENANT, profileOrgId: null, membershipOrgIds: [ORG_PARENT] },
-      { urlOrgId: ORG_OTHER_TENANT, sessionOrgId: ORG_OTHER_TENANT, profileOrgId: ORG_OTHER_TENANT, membershipOrgIds: [ORG_PARENT] },
-      // Session attacks
-      { urlOrgId: null, sessionOrgId: ORG_OTHER_TENANT, profileOrgId: null, membershipOrgIds: [ORG_PARENT] },
-      { urlOrgId: null, sessionOrgId: ORG_OTHER_TENANT, profileOrgId: ORG_PARENT, membershipOrgIds: [ORG_PARENT] },
-      // Profile drift
-      { urlOrgId: null, sessionOrgId: null, profileOrgId: ORG_OTHER_TENANT, membershipOrgIds: [ORG_PARENT] },
-      // Dual-member edge cases
-      { urlOrgId: ORG_OTHER_TENANT, sessionOrgId: ORG_SUB, profileOrgId: ORG_PARENT, membershipOrgIds: [ORG_PARENT, ORG_SUB] },
-      { urlOrgId: null, sessionOrgId: ORG_OTHER_TENANT, profileOrgId: ORG_OTHER_TENANT, membershipOrgIds: [ORG_PARENT, ORG_SUB] },
-      // No memberships
-      { urlOrgId: ORG_PARENT, sessionOrgId: ORG_PARENT, profileOrgId: ORG_PARENT, membershipOrgIds: [] },
-      { urlOrgId: null, sessionOrgId: null, profileOrgId: null, membershipOrgIds: [] },
-      // Legitimate — should resolve
-      { urlOrgId: ORG_PARENT, sessionOrgId: null, profileOrgId: null, membershipOrgIds: [ORG_PARENT] },
-      { urlOrgId: null, sessionOrgId: ORG_SUB, profileOrgId: ORG_PARENT, membershipOrgIds: [ORG_PARENT, ORG_SUB] },
+      { label: 'URL attack only', urlOrgId: ORG_OTHER_TENANT, sessionOrgId: null, profileOrgId: null, membershipOrgIds: [ORG_PARENT] },
+      { label: 'URL + session attack', urlOrgId: ORG_OTHER_TENANT, sessionOrgId: ORG_OTHER_TENANT, profileOrgId: null, membershipOrgIds: [ORG_PARENT] },
+      { label: 'all three inputs foreign', urlOrgId: ORG_OTHER_TENANT, sessionOrgId: ORG_OTHER_TENANT, profileOrgId: ORG_OTHER_TENANT, membershipOrgIds: [ORG_PARENT] },
+      { label: 'session attack only', urlOrgId: null, sessionOrgId: ORG_OTHER_TENANT, profileOrgId: null, membershipOrgIds: [ORG_PARENT] },
+      { label: 'session attack with valid profile', urlOrgId: null, sessionOrgId: ORG_OTHER_TENANT, profileOrgId: ORG_PARENT, membershipOrgIds: [ORG_PARENT] },
+      { label: 'profile drift only', urlOrgId: null, sessionOrgId: null, profileOrgId: ORG_OTHER_TENANT, membershipOrgIds: [ORG_PARENT] },
+      { label: 'dual-member URL attack with valid session', urlOrgId: ORG_OTHER_TENANT, sessionOrgId: ORG_SUB, profileOrgId: ORG_PARENT, membershipOrgIds: [ORG_PARENT, ORG_SUB] },
+      { label: 'dual-member session + profile drift', urlOrgId: null, sessionOrgId: ORG_OTHER_TENANT, profileOrgId: ORG_OTHER_TENANT, membershipOrgIds: [ORG_PARENT, ORG_SUB] },
+      { label: 'no memberships — all inputs poisoned', urlOrgId: ORG_PARENT, sessionOrgId: ORG_PARENT, profileOrgId: ORG_PARENT, membershipOrgIds: [] },
+      { label: 'no memberships — all inputs empty', urlOrgId: null, sessionOrgId: null, profileOrgId: null, membershipOrgIds: [] },
     ];
 
-    for (const [i, inputs] of allInputCombinations.entries()) {
-      it(`combination ${i + 1}: resolved orgId is in membershipOrgIds or null`, () => {
-        const r = resolveActiveOrg(inputs);
+    for (const combo of attackCombinations) {
+      it(`${combo.label}: resolved orgId is in membershipOrgIds or null`, () => {
+        const r = resolveActiveOrg(combo);
         if (r.orgId !== null) {
           expect(
-            inputs.membershipOrgIds.includes(r.orgId),
-            `resolved orgId ${r.orgId} is not in membershipOrgIds [${inputs.membershipOrgIds.join(', ')}]`,
+            combo.membershipOrgIds.includes(r.orgId),
+            `resolved orgId ${r.orgId} is not in membershipOrgIds [${combo.membershipOrgIds.join(', ')}]`,
           ).toBe(true);
+        } else {
+          expect(r.source.kind).toBe('none');
         }
-        // Additionally verify: the resolved orgId is NEVER ORG_OTHER_TENANT
-        // unless ORG_OTHER_TENANT is in the membership list.
-        if (!inputs.membershipOrgIds.includes(ORG_OTHER_TENANT)) {
+        if (!combo.membershipOrgIds.includes(ORG_OTHER_TENANT)) {
           expect(r.orgId).not.toBe(ORG_OTHER_TENANT);
         }
       });
     }
+
+    it('legitimate: URL to member org resolves (not null)', () => {
+      const r = resolveActiveOrg({
+        urlOrgId: ORG_PARENT,
+        sessionOrgId: null,
+        profileOrgId: null,
+        membershipOrgIds: [ORG_PARENT],
+      });
+      expect(r.orgId).toBe(ORG_PARENT);
+      expect(r.source.kind).toBe('url');
+    });
+
+    it('legitimate: session to member org resolves (not null)', () => {
+      const r = resolveActiveOrg({
+        urlOrgId: null,
+        sessionOrgId: ORG_SUB,
+        profileOrgId: ORG_PARENT,
+        membershipOrgIds: [ORG_PARENT, ORG_SUB],
+      });
+      expect(r.orgId).toBe(ORG_SUB);
+      expect(r.source.kind).toBe('session');
+    });
   });
 });
