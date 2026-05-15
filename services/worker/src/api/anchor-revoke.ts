@@ -39,7 +39,7 @@ anchorRevokeRouter.post('/:id/revoke', async (req: Request<{ id: string }>, res:
 
   const { reason } = parsed.data;
 
-  const userId = (req as any).userId as string | undefined;
+  const userId = req.userId;
   if (!userId) {
     res.status(401).json({ error: 'unauthorized', message: 'Authentication required.' });
     return;
