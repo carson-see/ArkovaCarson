@@ -24,7 +24,6 @@
 
 BEGIN;
 
--- Drop the three separate policies
 DROP POLICY IF EXISTS "anchors_select_own" ON "public"."anchors";
 DROP POLICY IF EXISTS "anchors_select_org" ON "public"."anchors";
 DROP POLICY IF EXISTS "anchors_select_platform_admin" ON "public"."anchors";
