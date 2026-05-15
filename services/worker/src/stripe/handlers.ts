@@ -47,6 +47,7 @@ async function lookupSubscriptionOrThrow<T>(
   context: Record<string, unknown>,
   eventName: string,
 ): Promise<T | null> {
+  // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
   const { data, error } = await (db
     .from('subscriptions')
     .select(selectCols)
@@ -82,6 +83,7 @@ function stripeReferenceId(ref: StripeReference): string | null {
 async function resolvePaymentGraceTarget(
   stripeSubscriptionId: string,
 ): Promise<PaymentGraceTarget> {
+  // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
   const { data: subscription, error } = await db
     .from('subscriptions')
     .select('user_id, org_id')
@@ -285,6 +287,7 @@ export async function handleCheckoutComplete(event: StripeEvent): Promise<void> 
   }
 
   // Log audit event
+  // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
   await db.from('audit_events').insert({
     event_type: 'payment.subscription_created',
     event_category: 'ADMIN',
@@ -420,6 +423,7 @@ export async function handleSubscriptionUpdated(event: StripeEvent): Promise<voi
   }
 
   // Get existing subscription to check for plan change and cancellation transition
+  // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
   const { data: existingSub } = await db
     .from('subscriptions')
     .select('user_id, plan_id, cancel_at_period_end, org_id')
@@ -482,6 +486,7 @@ export async function handleSubscriptionUpdated(event: StripeEvent): Promise<voi
     updatePayload.plan_id = newPlanId;
   }
 
+  // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
   const { error } = await db
     .from('subscriptions')
     .update(updatePayload)
@@ -495,6 +500,7 @@ export async function handleSubscriptionUpdated(event: StripeEvent): Promise<voi
   // Log audit event if plan changed
   const planChanged = newPlanId && existingSub?.plan_id && newPlanId !== existingSub.plan_id;
   if (planChanged && existingSub.user_id) {
+    // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
     await db.from('audit_events').insert({
       event_type: 'payment.plan_changed',
       event_category: 'ADMIN',
@@ -511,6 +517,7 @@ export async function handleSubscriptionUpdated(event: StripeEvent): Promise<voi
   // Log audit event only on transition to cancel_at_period_end (false → true)
   const cancelTransition = subscription.cancel_at_period_end && !existingSub?.cancel_at_period_end;
   if (cancelTransition && existingSub?.user_id) {
+    // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
     await db.from('audit_events').insert({
       event_type: 'payment.subscription_cancel_scheduled',
       event_category: 'ADMIN',
@@ -545,6 +552,7 @@ export async function handleSubscriptionDeleted(event: StripeEvent): Promise<voi
   );
   if (!existingSub) return;
 
+  // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
   const { error } = await db
     .from('subscriptions')
     .update({ status: 'canceled' })
@@ -557,6 +565,7 @@ export async function handleSubscriptionDeleted(event: StripeEvent): Promise<voi
 
   // Log audit event if we found the user
   if (existingSub.user_id) {
+    // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
     await db.from('audit_events').insert({
       event_type: 'payment.subscription_canceled',
       event_category: 'ADMIN',
@@ -593,6 +602,7 @@ export async function handlePaymentFailed(event: StripeEvent): Promise<void> {
     );
     if (!existingSub) return;
 
+    // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
     const { error } = await db
       .from('subscriptions')
       .update({ status: 'past_due' })
@@ -608,6 +618,7 @@ export async function handlePaymentFailed(event: StripeEvent): Promise<void> {
     const target = await resolvePaymentGraceTarget(stripeSubscriptionId);
 
     if (target.userId) {
+      // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
       await db.from('audit_events').insert({
         event_type: 'payment.failed',
         event_category: 'ADMIN',
@@ -651,6 +662,7 @@ export async function handlePaymentSucceeded(event: StripeEvent): Promise<void> 
   );
   if (!existingSub) return;
 
+  // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
   const { error } = await db
     .from('subscriptions')
     .update({ status: 'active' })
@@ -664,6 +676,7 @@ export async function handlePaymentSucceeded(event: StripeEvent): Promise<void> 
   const target = await resolvePaymentGraceTarget(stripeSubscriptionId);
 
   if (target.userId) {
+    // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
     await db.from('audit_events').insert({
       event_type: 'payment.succeeded',
       event_category: 'ADMIN',
@@ -719,6 +732,7 @@ async function handleIdentityVerified(event: StripeEvent): Promise<void> {
   }
 
   // Log audit event
+  // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
   await db.from('audit_events').insert({
     actor_id: userId,
     event_type: 'IDENTITY_VERIFIED',

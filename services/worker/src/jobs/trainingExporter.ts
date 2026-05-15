@@ -42,6 +42,7 @@ export async function exportTrainingData(supabase: SupabaseClient): Promise<{
     return { exported: 0, errors: 0 };
   }
 
+  // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
   const { data: records, error: fetchError } = await supabase
     .from('public_records')
     .select('id, title, source_url, record_type, metadata, content_hash')
@@ -87,6 +88,7 @@ export async function exportTrainingData(supabase: SupabaseClient): Promise<{
 
   // Mark exported records
   if (exportedIds.length > 0) {
+    // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
     const { error: updateError } = await supabase
       .from('public_records')
       .update({ training_exported: true })

@@ -58,6 +58,7 @@ export async function crossReferenceIssuer(
   try {
     // Single query: search public_records by title (ilike) across all pipeline sources
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
     const { data: records, error } = await (supabase as any)
       .from('public_records')
       .select('source, source_id, title, metadata')

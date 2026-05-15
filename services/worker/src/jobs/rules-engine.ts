@@ -148,6 +148,7 @@ function groupEventsByOrg(events: EventRow[]): Map<string, EventRow[]> {
 async function fetchRulesByOrg(orgIds: string[]): Promise<Map<string, RuleRow[]> | null> {
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
     const { data, error } = await (db as any)
       .from('organization_rules')
       .select(
@@ -203,6 +204,7 @@ async function persistMatches(inserts: MatchInsert[]): Promise<{ recorded: numbe
   if (inserts.length === 0) return { recorded: 0, errored: false };
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
     const { error } = await (db as any)
       .from('organization_rule_executions')
       .upsert(

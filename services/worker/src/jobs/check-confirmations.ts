@@ -369,7 +369,9 @@ export async function fanOutSecuredAnchorWebhooks(
     try {
       const { error: credAuditErr } =
         credAuditRows.length === 1
+          // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
           ? await db.from('audit_events').insert(credAuditRows[0])
+          // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
           : await db.from('audit_events').insert(credAuditRows);
       if (credAuditErr) {
         logger.warn(
@@ -909,7 +911,9 @@ async function checkSubmittedConfirmationsUnlocked(): Promise<{ checked: number;
           );
           const { error: auditErr } =
             auditRows.length === 1
+              // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
               ? await db.from('audit_events').insert(auditRows[0])
+              // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
               : await db.from('audit_events').insert(auditRows);
           if (auditErr) logger.warn({ auditErr, txId }, 'Failed to insert batch audit event');
 

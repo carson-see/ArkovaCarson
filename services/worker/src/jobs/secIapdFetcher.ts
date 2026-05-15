@@ -112,6 +112,7 @@ async function insertAdviserFirm(
   const sourceId = `sec-iapd-${firm.crdNumber}`;
 
   // Check for duplicates
+  // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
   const { data: existing } = await dbAny(supabase)
     .from('public_records')
     .select('id')
@@ -132,6 +133,7 @@ async function insertAdviserFirm(
 
   const statusLabel = firm.registrationStatus ?? 'Unknown';
 
+  // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
   const { error: insertError } = await dbAny(supabase)
     .from('public_records')
     .insert({

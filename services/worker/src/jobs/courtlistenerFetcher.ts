@@ -359,6 +359,7 @@ export async function fetchCourtOpinions(
     // Batch upsert
     for (let i = 0; i < records.length; i += BULK_INSERT_BATCH) {
       const batch = records.slice(i, i + BULK_INSERT_BATCH);
+      // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
       const { error: insertError, count } = await supabase
         .from('public_records')
         .upsert(batch, { onConflict: 'source,source_id', ignoreDuplicates: true, count: 'exact' });

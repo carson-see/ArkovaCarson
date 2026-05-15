@@ -67,6 +67,7 @@ export async function fetchFederalRegisterDocuments(supabase: SupabaseClient): P
   }
 
   // Determine resume point
+  // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
   const { data: lastRecord } = await supabase
     .from('public_records')
     .select('metadata')
@@ -127,6 +128,7 @@ export async function fetchFederalRegisterDocuments(supabase: SupabaseClient): P
 
     for (const doc of docs) {
       // Check for duplicates
+      // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
       const { data: existing } = await supabase
         .from('public_records')
         .select('id')
@@ -147,6 +149,7 @@ export async function fetchFederalRegisterDocuments(supabase: SupabaseClient): P
 
       const agencyNames = doc.agencies?.map((a) => a.name) ?? [];
 
+      // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
       const { error: insertError } = await supabase.from('public_records').insert({
         source: 'federal_register',
         source_id: doc.document_number,
