@@ -3,6 +3,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type { SupabaseClient } from '@supabase/supabase-js';
 
 const mockRpc = vi.fn();
 const mockUpsert = vi.fn();
@@ -38,7 +39,7 @@ describe('Kenya Compliance Data Fetcher (KAU-01/02)', () => {
   it('returns early when flag is disabled', async () => {
     mockRpc.mockResolvedValue({ data: false });
     const { fetchKenyaComplianceData } = await import('../kenyaLawFetcher.js');
-    const result = await fetchKenyaComplianceData(createMockSupabase() as any);
+    const result = await fetchKenyaComplianceData(createMockSupabase() as unknown as SupabaseClient);
     expect(result.statutesInserted).toBe(0);
     expect(result.casesInserted).toBe(0);
   });
@@ -53,7 +54,7 @@ describe('Kenya Compliance Data Fetcher (KAU-01/02)', () => {
     }));
 
     const { fetchKenyaComplianceData } = await import('../kenyaLawFetcher.js');
-    const result = await fetchKenyaComplianceData(createMockSupabase() as any);
+    const result = await fetchKenyaComplianceData(createMockSupabase() as unknown as SupabaseClient);
 
     // Should insert statute sections (18 sections across 3 statutes)
     expect(result.statutesInserted).toBeGreaterThan(0);

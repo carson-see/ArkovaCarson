@@ -3,6 +3,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type { SupabaseClient } from '@supabase/supabase-js';
 
 const mockRpc = vi.fn();
 const mockUpsert = vi.fn();
@@ -36,7 +37,7 @@ describe('Australia Compliance Data Fetcher (KAU-03/04)', () => {
   it('returns early when flag is disabled', async () => {
     mockRpc.mockResolvedValue({ data: false });
     const { fetchAustraliaComplianceData } = await import('../australiaLawFetcher.js');
-    const result = await fetchAustraliaComplianceData(createMockSupabase() as any);
+    const result = await fetchAustraliaComplianceData(createMockSupabase() as unknown as SupabaseClient);
     expect(result.statutesInserted).toBe(0);
   });
 
@@ -47,7 +48,7 @@ describe('Australia Compliance Data Fetcher (KAU-03/04)', () => {
     }));
 
     const { fetchAustraliaComplianceData } = await import('../australiaLawFetcher.js');
-    const result = await fetchAustraliaComplianceData(createMockSupabase() as any);
+    const result = await fetchAustraliaComplianceData(createMockSupabase() as unknown as SupabaseClient);
 
     // 31 sections across Privacy Act + APP + NDB
     expect(result.statutesInserted).toBeGreaterThan(0);

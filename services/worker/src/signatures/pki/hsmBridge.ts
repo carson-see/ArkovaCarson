@@ -43,6 +43,7 @@ export class AwsKmsHsmBridge implements HsmBridge {
 
   async sign(request: HsmSignRequest): Promise<HsmSignResponse> {
     validateSignRequest(request);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- KMS client is lazily imported and typed as unknown; cast needed to call SDK methods
     const client = await this.getClient() as any;
     const { SignCommand } = await import('@aws-sdk/client-kms');
 
@@ -76,6 +77,7 @@ export class AwsKmsHsmBridge implements HsmBridge {
   }
 
   async getPublicKey(provider: KmsProvider, keyId: string): Promise<Buffer> {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- KMS client is lazily imported and typed as unknown; cast needed to call SDK methods
     const client = await this.getClient() as any;
     const { GetPublicKeyCommand } = await import('@aws-sdk/client-kms');
 
@@ -104,6 +106,7 @@ export class GcpKmsHsmBridge implements HsmBridge {
 
   async sign(request: HsmSignRequest): Promise<HsmSignResponse> {
     validateSignRequest(request);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- KMS client is lazily imported and typed as unknown; cast needed to call SDK methods
     const client = await this.getClient() as any;
 
     const [response] = await client.asymmetricSign({
@@ -130,6 +133,7 @@ export class GcpKmsHsmBridge implements HsmBridge {
   }
 
   async getPublicKey(_provider: KmsProvider, keyId: string): Promise<Buffer> {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- KMS client is lazily imported and typed as unknown; cast needed to call SDK methods
     const client = await this.getClient() as any;
     const [response] = await client.getPublicKey({ name: keyId });
     if (!response.pem) {
