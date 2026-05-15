@@ -102,6 +102,31 @@ run_cmd() {
   fi
 }
 
+run_optional_iam_remove_cmd() {
+  print_cmd "$@"
+  if [[ $APPLY -ne 1 ]]; then
+    return
+  fi
+
+  echo "executing: $*" >&2
+  local output rc
+  set +e
+  output=$("$@" 2>&1)
+  rc=$?
+  set -e
+  if [[ $rc -eq 0 ]]; then
+    printf '%s\n' "$output"
+    return
+  fi
+  if grep -qiE 'not found|notFound' <<<"$output"; then
+    printf '%s\n' "$output" >&2
+    echo "Optional IAM binding absent; continuing." >&2
+    return
+  fi
+  printf '%s\n' "$output" >&2
+  return "$rc"
+}
+
 ensure_deploy_sa() {
   if [[ -n "$DEPLOY_SA_EMAIL_OVERRIDE" ]]; then
     echo "Custom deploy SA email supplied; assuming service account already exists."
@@ -146,17 +171,18 @@ if [[ $ROLLBACK -eq 1 ]]; then
   echo "Rollback plan: restore run.developer to compute SA and remove deploy-only SA deploy roles."
   run_cmd gcloud projects add-iam-policy-binding "$PROJECT" \
     --member="serviceAccount:${COMPUTE_SA}" \
-    --role=roles/run.developer
-  run_cmd gcloud artifacts repositories remove-iam-policy-binding "$ARTIFACT_REPOSITORY" \
+    --role=roles/run.developer \
+    --condition=None
+  run_optional_iam_remove_cmd gcloud artifacts repositories remove-iam-policy-binding "$ARTIFACT_REPOSITORY" \
     --location="$REGION" \
     --project="$PROJECT" \
     --member="serviceAccount:${DEPLOY_SA}" \
     --role=roles/artifactregistry.reader
-  run_cmd gcloud projects remove-iam-policy-binding "$PROJECT" \
+  run_optional_iam_remove_cmd gcloud projects remove-iam-policy-binding "$PROJECT" \
     --member="serviceAccount:${DEPLOY_SA}" \
     --role=roles/run.developer \
     --condition="$RUN_CONDITION"
-  run_cmd gcloud iam service-accounts remove-iam-policy-binding "$RUNTIME_SA" \
+  run_optional_iam_remove_cmd gcloud iam service-accounts remove-iam-policy-binding "$RUNTIME_SA" \
     --project="$PROJECT" \
     --member="serviceAccount:${DEPLOY_SA}" \
     --role=roles/iam.serviceAccountUser
@@ -178,9 +204,10 @@ run_cmd gcloud iam service-accounts add-iam-policy-binding "$RUNTIME_SA" \
   --project="$PROJECT" \
   --member="serviceAccount:${DEPLOY_SA}" \
   --role=roles/iam.serviceAccountUser
-run_cmd gcloud projects remove-iam-policy-binding "$PROJECT" \
+run_optional_iam_remove_cmd gcloud projects remove-iam-policy-binding "$PROJECT" \
   --member="serviceAccount:${COMPUTE_SA}" \
-  --role=roles/run.developer
+  --role=roles/run.developer \
+  --condition=None
 
 echo
 echo "Rollback if staging deploys fail:"

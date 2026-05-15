@@ -54,6 +54,7 @@ assert_match "dry-run grants artifact reader" "artifacts repositories add-iam-po
 assert_match "dry-run grants run developer" "add-iam-policy-binding arkova1.*roles/run.developer" "$out"
 assert_match "run developer is service-scoped" "--condition=.*arkova_staging_deploy_only.*arkova-worker-staging" "$out"
 assert_match "dry-run revokes compute run developer" "remove-iam-policy-binding arkova1.*270018525501-compute@developer.gserviceaccount.com.*roles/run.developer" "$out"
+assert_match "dry-run revokes unconditional compute role" "--condition=None" "$out"
 assert_match "dry-run prints rollback" "--rollback --apply --confirm SCRUM-1821" "$out"
 assert_no_match "dry-run does not execute gcloud" "^executing:" "$out"
 
@@ -77,6 +78,7 @@ assert_match "apply condition override error" "may not override the staging serv
 out=$($SCRIPT --rollback 2>&1); rc=$?
 assert_exit  "rollback dry-run succeeds" 0 "$rc"
 assert_match "rollback re-grants compute" "add-iam-policy-binding arkova1.*270018525501-compute@developer.gserviceaccount.com.*roles/run.developer" "$out"
+assert_match "rollback re-grants unconditional compute role" "--condition=None" "$out"
 assert_match "rollback removes artifact reader" "artifacts repositories remove-iam-policy-binding arkova-worker-images.*roles/artifactregistry.reader" "$out"
 assert_match "rollback removes deploy SA role" "remove-iam-policy-binding arkova1.*arkova-staging-deployer@arkova1.iam.gserviceaccount.com.*roles/run.developer" "$out"
 assert_match "rollback removes conditioned role" "--condition=.*arkova_staging_deploy_only" "$out"
@@ -88,6 +90,25 @@ assert_match "rollback service guard error" "only supports service 'arkova-worke
 out=$($SCRIPT --rollback --project test-project 2>&1); rc=$?
 assert_exit  "rollback rejects non-approved project" 2 "$rc"
 assert_match "rollback project guard error" "only supports project 'arkova1'" "$out"
+
+fake_gcloud_dir=$(mktemp -d)
+cat > "$fake_gcloud_dir/gcloud" <<'FAKE_GCLOUD'
+#!/usr/bin/env bash
+args="$*"
+case "$args" in
+  *"iam service-accounts describe"*) exit 0 ;;
+  *"projects remove-iam-policy-binding"*"--condition=None"*)
+    echo "ERROR: (gcloud.projects.remove-iam-policy-binding) Policy binding with the specified principal, role, and condition not found!" >&2
+    exit 1
+    ;;
+  *) echo "stub gcloud $args"; exit 0 ;;
+esac
+FAKE_GCLOUD
+chmod +x "$fake_gcloud_dir/gcloud"
+out=$(PATH="$fake_gcloud_dir:$PATH" $SCRIPT --apply --confirm SCRUM-1821 2>&1); rc=$?
+rm -rf "$fake_gcloud_dir"
+assert_exit  "apply tolerates absent compute run.developer binding" 0 "$rc"
+assert_match "apply reports optional missing binding" "Optional IAM binding absent; continuing" "$out"
 
 out=$($SCRIPT --project test-project --region europe-west1 --service arkova-worker-staging-preview --deploy-sa-id custom-deployer 2>&1); rc=$?
 assert_exit  "custom project dry-run succeeds" 0 "$rc"
