@@ -56,10 +56,12 @@ describe('docusign-connect-smoke', () => {
     expect(parseArgs([], {
       WORKER_URL: 'https://worker.example.test/',
       DOCUSIGN_CONNECT_HMAC_SECRET: SECRET,
+      WORKER_BEARER_TOKEN: 'fixture-worker-token',
     })).toMatchObject({
       workerUrl: 'https://worker.example.test',
       mode: 'orphan',
       hmacSecret: SECRET,
+      bearerToken: 'fixture-worker-token',
       allowProcessing: false,
     });
 
@@ -70,6 +72,10 @@ describe('docusign-connect-smoke', () => {
       WORKER_URL: 'https://worker.example.test',
       DOCUSIGN_CONNECT_HMAC_SECRET: SECRET,
     })).toThrow('Do not pass --hmac-secret');
+    expect(() => parseArgs(['--bearer-token=do-not-do-this'], {
+      WORKER_URL: 'https://worker.example.test',
+      DOCUSIGN_CONNECT_HMAC_SECRET: SECRET,
+    })).toThrow('Do not pass --bearer-token');
   });
 
   it('requires an explicit account id and allow-processing flag for accepted duplicate smoke', () => {
@@ -104,6 +110,7 @@ describe('docusign-connect-smoke', () => {
     const result = await runDocusignConnectSmoke({
       workerUrl: 'https://worker.example.test',
       hmacSecret: SECRET,
+      bearerToken: 'fixture-worker-token',
       mode: 'orphan',
       accountId: 'arkova-smoke-unknown',
       envelopeId: 'env-smoke',
@@ -118,6 +125,7 @@ describe('docusign-connect-smoke', () => {
     expect(result.mode).toBe('orphan');
     expect(result.account_id_sha256).toMatch(/^[a-f0-9]{64}$/);
     expect(JSON.stringify(result)).not.toContain(SECRET);
+    expect(JSON.stringify(result)).not.toContain('fixture-worker-token');
     expect(result.checks).toEqual([
       expect.objectContaining({ name: 'invalid_hmac_rejected', status: 'pass', http_status: 401 }),
       expect.objectContaining({ name: 'signed_unknown_account_orphaned', status: 'pass', http_status: 200 }),
@@ -126,6 +134,7 @@ describe('docusign-connect-smoke', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(2);
     expect(fetchImpl.mock.calls[0][0]).toBe('https://worker.example.test/webhooks/docusign');
     expect(fetchImpl.mock.calls[0][1]?.headers).toMatchObject({
+      Authorization: 'Bearer fixture-worker-token',
       'Content-Type': 'application/json',
       'X-DocuSign-Signature-1': expect.any(String),
     });
@@ -143,6 +152,7 @@ describe('docusign-connect-smoke', () => {
     const result = await runDocusignConnectSmoke({
       workerUrl: 'https://worker.example.test/',
       hmacSecret: SECRET,
+      bearerToken: null,
       mode: 'accepted-duplicate',
       accountId: 'acct-1',
       envelopeId: 'env-smoke',

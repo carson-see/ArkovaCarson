@@ -58,7 +58,7 @@ As of the 2026-05-14 SCRUM-1655 verification pass, production was manually updat
 
    Expected result: `invalid_hmac_rejected` passes with HTTP `401 invalid_signature`, `signed_unknown_account_orphaned` passes with HTTP `200 orphaned`, and `duplicate_delivery_deduped` is skipped because unknown accounts return before nonce insert.
 
-2. Connect a sandbox DocuSign account through Arkova OAuth. Production currently has no active `provider=docusign` row to reuse, so do not tick SCRUM-1648 AC until this is real.
+2. Connect a sandbox DocuSign account through Arkova OAuth. Production currently has no active `provider=docusign` row to reuse, so prod accepted+duplicate smoke cannot run until this exists.
 3. Create or enable one Arkova rule for DocuSign completed envelopes in the connected sandbox org.
 4. Configure DocuSign Connect at the account/organization level to `https://arkova-worker-270018525501.us-central1.run.app/webhooks/docusign`, enable JSON payloads, and enable HMAC signing with the same `docusign_connect_hmac_secret` value.
 5. Complete sandbox envelopes from two distinct authorized DocuSign senders on that same DocuSign account. Confirm both produce sanitized `ESIGN_COMPLETED` events and retryable `docusign.envelope_completed` jobs.
@@ -75,12 +75,33 @@ As of the 2026-05-14 SCRUM-1655 verification pass, production was manually updat
 
    Expected result: `invalid_hmac_rejected` passes with HTTP `401`, `signed_known_account_accepted` passes with HTTP `202`, and replaying the exact same payload returns HTTP `200 duplicate`.
 
+   For protected staging Cloud Run targets, set `WORKER_BEARER_TOKEN` from an identity token. Keep it in the environment, not argv.
+
+   ```bash
+   WORKER_URL=https://pr-783---arkova-worker-staging-kvojbeutfa-uc.a.run.app \
+   WORKER_BEARER_TOKEN="$(gcloud auth print-identity-token --audiences=https://arkova-worker-staging-kvojbeutfa-uc.a.run.app)" \
+   DOCUSIGN_CONNECT_HMAC_SECRET="$(gcloud secrets versions access latest --project=arkova1 --secret=docusign-connect-hmac-secret-pr712-staging)" \
+   DOCUSIGN_SMOKE_ACCOUNT_ID="$DOCUSIGN_SANDBOX_ACCOUNT_ID" \
+   npm --prefix services/worker run smoke:docusign -- \
+     --mode=accepted-duplicate \
+     --allow-processing
+   ```
+
 7. Force the eSignature document fetch to return `503`; the job should retry and eventually move to `dead` after five attempts.
 8. Update HANDOFF, Confluence, and Jira with the Cloud Run revision, `/health` git SHA, smoke JSON, two-sender event IDs, job IDs, and any bug-log links. Only then tick SCRUM-1648 AC/DoD.
+
+## 2026-05-15 Evidence Snapshot
+
+- Production revision `arkova-worker-00556-m5l` has the DocuSign flags/secrets bound and safe orphan smoke passed: invalid HMAC `401 invalid_signature`, signed unknown account `200 orphaned`.
+- Production Supabase currently has 0 active `provider=docusign` integrations and 0 `ESIGN_COMPLETED` rules, so prod accepted+duplicate smoke is intentionally not run there.
+- Staging Supabase has active DocuSign integrations, enabled `ESIGN_COMPLETED` rules, and one org/account with two distinct sender emails processed in the last 30 days (`PROCESSED`, latest 2026-05-15T07:13:22Z).
+- DocuSign-enabled staging tag `pr-783` (`arkova-worker-staging-00087-kim`, health `git_sha=5b4009bd9eebd8e80d8c2991c39066bc9212897c`) passed accepted+duplicate smoke: invalid HMAC `401 invalid_signature`, signed known account `202 ok`, replay `200 duplicate`.
+- Shared staging 100% traffic is pinned to older revision `arkova-worker-staging-00043-hk8`, which lacks the DocuSign flag; use the tagged staging URL for this smoke until shared staging is promoted.
 
 ## Operational Notes
 
 - Unknown connected accounts return `200 { orphaned: true }` to avoid DocuSign retry storms.
 - Missing `DOCUSIGN_CONNECT_HMAC_SECRET` returns `503` so Connect retries after the secret is fixed.
+- `WORKER_BEARER_TOKEN` is supported for protected Cloud Run staging targets and is intentionally env-only.
 - Raw webhook payloads and signed PDFs are not persisted by the webhook route.
 - New migrations were not required for this story; it uses `org_integrations`, `organization_rule_events`, and `job_queue`.

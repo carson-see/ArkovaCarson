@@ -23,6 +23,7 @@ interface DocusignConnectPayload {
 export interface DocusignSmokeOptions {
   workerUrl: string;
   hmacSecret: string;
+  bearerToken: string | null;
   mode: DocusignSmokeMode;
   accountId: string;
   envelopeId: string;
@@ -107,6 +108,9 @@ export function parseArgs(argv: string[], env: NodeJS.ProcessEnv = process.env):
   if (values.has('hmac-secret')) {
     throw new Error('Do not pass --hmac-secret on the command line; use DOCUSIGN_CONNECT_HMAC_SECRET env instead.');
   }
+  if (values.has('bearer-token')) {
+    throw new Error('Do not pass --bearer-token on the command line; use WORKER_BEARER_TOKEN env instead.');
+  }
 
   const hmacSecret = (env.DOCUSIGN_CONNECT_HMAC_SECRET ?? '').trim();
   if (!hmacSecret) {
@@ -155,6 +159,7 @@ export function parseArgs(argv: string[], env: NodeJS.ProcessEnv = process.env):
   return {
     workerUrl: normalizeWorkerUrl(values.get('worker-url') ?? env.WORKER_URL ?? 'http://localhost:3001'),
     hmacSecret,
+    bearerToken: (env.WORKER_BEARER_TOKEN ?? '').trim() || null,
     mode,
     accountId,
     envelopeId,
@@ -225,13 +230,17 @@ async function postPayload(args: {
 }): Promise<HttpResult> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), args.options.timeoutMs);
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    'X-DocuSign-Signature-1': args.signature,
+  };
+  if (args.options.bearerToken) {
+    headers.Authorization = `Bearer ${args.options.bearerToken}`;
+  }
   try {
     const res = await args.fetchImpl(`${args.options.workerUrl}/webhooks/docusign`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-DocuSign-Signature-1': args.signature,
-      },
+      headers,
       body: args.rawBody,
       signal: controller.signal,
     });
@@ -316,6 +325,10 @@ function usage(): string {
 DocuSign Connect smoke
 
 Safe orphan smoke:
+  DOCUSIGN_CONNECT_HMAC_SECRET=... WORKER_URL=https://... npm run smoke:docusign -- --mode=orphan
+
+Protected Cloud Run target:
+  WORKER_BEARER_TOKEN="$(gcloud auth print-identity-token --audiences=https://...)" \
   DOCUSIGN_CONNECT_HMAC_SECRET=... WORKER_URL=https://... npm run smoke:docusign -- --mode=orphan
 
 Accepted + duplicate smoke, only for a connected sandbox account:
