@@ -47,7 +47,6 @@ async function lookupSubscriptionOrThrow<T>(
   context: Record<string, unknown>,
   eventName: string,
 ): Promise<T | null> {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- chained Supabase select() typing varies by `selectCols` runtime value
   const { data, error } = await (db
     .from('subscriptions')
     .select(selectCols)
