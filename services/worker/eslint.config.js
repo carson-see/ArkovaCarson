@@ -33,6 +33,16 @@ export default tseslint.config(
       'preserve-caught-error': 'warn',
     },
   },
+  // Worker cron jobs in src/jobs/ run under the service-role client and operate
+  // cross-tenant by design (pipeline ingestion, anchor lifecycle, rules engine).
+  // The tenant-isolation rule is valuable for API handlers and webhooks where
+  // per-request user context exists, but false-positives on every job query.
+  {
+    files: ['src/jobs/**/*.ts'],
+    rules: {
+      'arkova/missing-org-filter': 'off',
+    },
+  },
   // SCRUM-1250 (R0-4): test-file overrides. Tests legitimately use `_` prefixed
   // vars to ignore destructured fields, `any` in mock factories, and require()
   // for dynamic imports of vi.mock'd modules. Without this block 119 errors in
