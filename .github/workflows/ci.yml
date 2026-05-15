@@ -94,6 +94,9 @@ jobs:
       - name: Enforce npm install script policy
         run: npm run ci:install-script-policy
 
+      - name: Block raw staging gcloud deploy bypasses (SCRUM-1821)
+        run: npm run ci:staging-gcloud-policy
+
       - name: Block new ad-hoc process.env reads in worker (SCRUM-1258)
         env:
           # PR labels feed the worker-env-adhoc-baseline-update override

@@ -292,9 +292,11 @@ describe('check-staging-evidence', () => {
         isStagingToolingOnly([
           'scripts/staging/seed.ts',
           'scripts/ci/check-staging-evidence.ts',
+          'scripts/ci/check-staging-gcloud-policy.ts',
           '.github/workflows/ci.yml',
           'CLAUDE.md',
           'docs/staging/README.md',
+          'docs/ops/gemini-model-upgrade.md',
           '.github/workflows/staging-evidence.yml',
           'scripts/gcp-setup/cloud-scheduler.sh',
         ]).pass,

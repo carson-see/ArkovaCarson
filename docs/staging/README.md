@@ -48,10 +48,10 @@ Estimated all-in: **$80–$120/month** at typical utilization.
 ./scripts/staging/teardown-and-reset.sh
 
 # 3. Apply your migration to staging via Supabase MCP, then deploy
-#    arkova-worker-staging at your branch SHA:
-gcloud run deploy arkova-worker-staging \
-  --image us-central1-docker.pkg.dev/arkova-prod/arkova/worker:<your-sha> \
-  --region us-central1
+#    arkova-worker-staging through the lease-enforced wrapper:
+./scripts/staging/deploy.sh \
+  --pr 1234 \
+  --image us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker:<your-sha>
 
 # 4. Drive load for the soak window.
 npm run staging:load -- --mode oscillate --duration 2880  # T3

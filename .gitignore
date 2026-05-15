@@ -165,6 +165,7 @@ services/worker/training-data/*
 
 # Playwright reports
 playwright-report/
+/output/
 
 # UAT screenshots
 /uat-*.png
