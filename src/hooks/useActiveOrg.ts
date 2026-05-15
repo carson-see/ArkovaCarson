@@ -23,7 +23,7 @@
  * The hook is intentionally read-only — switching the active org is a route
  * change (push to /orgs/:newId) so the URL stays the source of truth.
  */
-import { useMemo } from 'react';
+import { useMemo, useRef } from 'react';
 import { useParams } from 'react-router-dom';
 import { useProfile } from './useProfile';
 import { useUserOrgs } from './useUserOrgs';
@@ -137,14 +137,24 @@ export function resolveActiveOrg(args: {
   };
 }
 
+/** Return a referentially stable array when the sorted IDs haven't changed. */
+function useStableIds(ids: string[]): string[] {
+  const ref = useRef(ids);
+  const key = ids.slice().sort().join('\0');
+  const prev = ref.current.slice().sort().join('\0');
+  if (key !== prev) ref.current = ids;
+  return ref.current;
+}
+
 export function useActiveOrg(): UseActiveOrgResult {
   const params = useParams<{ orgId?: string }>();
   const { profile, loading: profileLoading } = useProfile();
   const { orgs, loading: orgsLoading } = useUserOrgs();
 
+  const membershipOrgIds = useStableIds(orgs.map((o) => o.orgId));
+
   return useMemo<UseActiveOrgResult>(() => {
     const sessionOrgId = readSessionOrg();
-    const membershipOrgIds = orgs.map((o) => o.orgId);
     const { orgId, source, hasMultipleMemberships } = resolveActiveOrg({
       urlOrgId: params.orgId ?? null,
       sessionOrgId,
@@ -157,5 +167,5 @@ export function useActiveOrg(): UseActiveOrgResult {
       hasMultipleMemberships,
       loading: profileLoading || orgsLoading,
     };
-  }, [params.orgId, profile?.org_id, profileLoading, orgs, orgsLoading]);
+  }, [params.orgId, profile?.org_id, profileLoading, membershipOrgIds, orgsLoading]);
 }
