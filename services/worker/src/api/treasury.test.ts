@@ -171,6 +171,50 @@ describe('handleTreasuryX402Stats', () => {
     });
   });
 
+  it('treats recent_payments: null as empty array (no 502)', async () => {
+    const { db } = await import('../utils/db.js');
+    vi.mocked(db.rpc).mockResolvedValueOnce({
+      data: {
+        total_payments: 3,
+        total_revenue_usd: 15.0,
+        recent_payments: null,
+      },
+      error: null,
+    } as never);
+
+    const res = createMockRes();
+    await handleTreasuryX402Stats('admin-123', {} as Request, res);
+
+    expect(res.status).not.toHaveBeenCalledWith(502);
+    expect(res.json).toHaveBeenCalledWith({
+      total: 3,
+      revenue: 15.0,
+      recent: [],
+    });
+  });
+
+  it('treats recent_payments: undefined as empty array', async () => {
+    const { db } = await import('../utils/db.js');
+    vi.mocked(db.rpc).mockResolvedValueOnce({
+      data: {
+        total_payments: 0,
+        total_revenue_usd: 0,
+        recent_payments: undefined,
+      },
+      error: null,
+    } as never);
+
+    const res = createMockRes();
+    await handleTreasuryX402Stats('admin-123', {} as Request, res);
+
+    expect(res.status).not.toHaveBeenCalledWith(502);
+    expect(res.json).toHaveBeenCalledWith({
+      total: 0,
+      revenue: 0,
+      recent: [],
+    });
+  });
+
   it('returns 502 for invalid RPC payloads instead of emitting misleading zeros', async () => {
     const { db } = await import('../utils/db.js');
     vi.mocked(db.rpc).mockResolvedValueOnce({

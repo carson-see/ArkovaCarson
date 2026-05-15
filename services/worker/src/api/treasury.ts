@@ -184,7 +184,7 @@ function parseX402StatsPayload(data: unknown): TreasuryX402StatsResponse | null 
   if (total === null || revenue === null) return null;
 
   const recentRaw = data.recent_payments;
-  if (recentRaw !== undefined && !Array.isArray(recentRaw)) return null;
+  if (recentRaw != null && !Array.isArray(recentRaw)) return null;
 
   const recent: TreasuryX402StatsResponse['recent'] = [];
   for (const item of recentRaw ?? []) {
