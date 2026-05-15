@@ -67,7 +67,7 @@ function buildApp() {
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
-    (req as any).userId = 'u1';
+    req.userId = 'u1';
     next();
   });
   app.use('/api/anchor', anchorRevokeRouter);
