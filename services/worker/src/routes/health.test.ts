@@ -60,6 +60,7 @@ function createMockDeps(overrides: Partial<HealthCheckDeps> = {}): HealthCheckDe
 /** Cast checks to typed accessor to avoid TS18046 on Record<string, unknown>. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- test helper: health checks have dynamic shape per subsystem
 function checks(result: { body: { checks: Record<string, unknown> } }): Record<string, any> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- health check response has dynamic shape
   return result.body.checks as Record<string, any>;
 }
 

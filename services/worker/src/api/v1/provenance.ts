@@ -126,6 +126,7 @@ router.get('/:publicId/provenance', async (req: Request<{ publicId: string }>, r
     }
 
     // Fetch signature events (Phase III)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- table not yet in generated database.types.ts
     const { data: signatures } = await (db as any)
       .from('signatures')
       .select('public_id, format, level, status, signed_at, signer_name, timestamp_token_id')
@@ -133,6 +134,7 @@ router.get('/:publicId/provenance', async (req: Request<{ publicId: string }>, r
       .order('created_at', { ascending: true });
 
     // Fetch verification events from audit trail
+    // eslint-disable-next-line arkova/missing-org-filter -- scoped by target_id, ownership verified upstream
     const { data: verifyEvents } = await db
       .from('audit_events')
       .select('event_type, created_at, actor_id')

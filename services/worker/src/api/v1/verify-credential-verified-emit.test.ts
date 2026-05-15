@@ -244,6 +244,7 @@ describe('GET /api/v1/verify/:publicId — credential.verified emit', () => {
 
     const calls = mockAuditInsert.mock.calls.map((c: unknown[]) => c[0]);
     const queryRow = calls.find(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- scanning vi.fn().mock.calls which returns any[][]
       (row: any) => row?.event_type === 'VERIFICATION_QUERIED',
     ) as { details: string } | undefined;
     expect(queryRow).toBeDefined();
@@ -263,6 +264,7 @@ describe('GET /api/v1/verify/:publicId — credential.verified emit', () => {
 
     const calls = mockAuditInsert.mock.calls.map((c: unknown[]) => c[0]);
     const queryRow = calls.find(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- scanning vi.fn().mock.calls which returns any[][]
       (row: any) => row?.event_type === 'VERIFICATION_QUERIED',
     ) as { details: string } | undefined;
     expect(queryRow).toBeDefined();
@@ -280,6 +282,7 @@ describe('GET /api/v1/verify/:publicId — credential.verified emit', () => {
 
     const calls = mockAuditInsert.mock.calls.map((c: unknown[]) => c[0]);
     const queryRow = calls.find(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- scanning vi.fn().mock.calls which returns any[][]
       (row: any) => row?.event_type === 'VERIFICATION_QUERIED',
     ) as { details: string } | undefined;
     expect(queryRow).toBeDefined();

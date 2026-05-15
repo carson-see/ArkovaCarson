@@ -54,6 +54,7 @@ async function generateAnchorSummary(userId: string, orgId: string | null): Prom
  */
 async function generateComplianceAudit(userId: string, orgId: string | null): Promise<Record<string, unknown>> {
   // Fetch audit events
+  // eslint-disable-next-line arkova/missing-org-filter -- report scoped by actor_id
   const { data: events } = await db
     .from('audit_events')
     .select('*')
@@ -75,6 +76,7 @@ async function generateComplianceAudit(userId: string, orgId: string | null): Pr
  */
 async function generateActivityLog(userId: string, orgId: string | null): Promise<Record<string, unknown>> {
   // Fetch recent activity
+  // eslint-disable-next-line arkova/missing-org-filter -- report scoped by actor_id
   const { data: activity } = await db
     .from('audit_events')
     .select('event_type, event_category, timestamp, details')
