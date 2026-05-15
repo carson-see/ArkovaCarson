@@ -50,6 +50,7 @@ echo "─── deploy-only IAM rotation ─────────────
 out=$($SCRIPT 2>&1); rc=$?
 assert_exit  "default dry-run succeeds" 0 "$rc"
 assert_match "dry-run creates deploy SA" "service-accounts create arkova-staging-deployer" "$out"
+assert_match "dry-run grants artifact reader" "artifacts repositories add-iam-policy-binding arkova-worker-images.*roles/artifactregistry.reader" "$out"
 assert_match "dry-run grants run developer" "add-iam-policy-binding arkova1.*roles/run.developer" "$out"
 assert_match "run developer is service-scoped" "--condition=.*arkova_staging_deploy_only.*arkova-worker-staging" "$out"
 assert_match "dry-run revokes compute run developer" "remove-iam-policy-binding arkova1.*270018525501-compute@developer.gserviceaccount.com.*roles/run.developer" "$out"
@@ -76,6 +77,7 @@ assert_match "apply condition override error" "may not override the staging serv
 out=$($SCRIPT --rollback 2>&1); rc=$?
 assert_exit  "rollback dry-run succeeds" 0 "$rc"
 assert_match "rollback re-grants compute" "add-iam-policy-binding arkova1.*270018525501-compute@developer.gserviceaccount.com.*roles/run.developer" "$out"
+assert_match "rollback removes artifact reader" "artifacts repositories remove-iam-policy-binding arkova-worker-images.*roles/artifactregistry.reader" "$out"
 assert_match "rollback removes deploy SA role" "remove-iam-policy-binding arkova1.*arkova-staging-deployer@arkova1.iam.gserviceaccount.com.*roles/run.developer" "$out"
 assert_match "rollback removes conditioned role" "--condition=.*arkova_staging_deploy_only" "$out"
 

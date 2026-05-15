@@ -212,7 +212,7 @@ Run `./scripts/staging/cleanup-orphan-tags.sh` to inspect old tag URLs. The jani
 
 SCRUM-1821 item 8 is handled by `./scripts/staging/rotate-deploy-iam.sh`. The script is dry-run by default and prints the exact `gcloud` commands. Live IAM mutation requires `--apply --confirm SCRUM-1821`; rollback uses `--rollback --apply --confirm SCRUM-1821`.
 
-The forward path creates/uses `arkova-staging-deployer@arkova1.iam.gserviceaccount.com`, grants a conditioned `roles/run.developer` binding limited to `projects/arkova1/locations/us-central1/services/arkova-worker-staging`, grants `roles/iam.serviceAccountUser` on the runtime service account, and removes `roles/run.developer` from `270018525501-compute@developer.gserviceaccount.com`.
+The forward path creates/uses `arkova-staging-deployer@arkova1.iam.gserviceaccount.com`, grants `roles/artifactregistry.reader` on the `arkova-worker-images` repository so the deploy wrapper can preflight image existence, grants a conditioned `roles/run.developer` binding limited to `projects/arkova1/locations/us-central1/services/arkova-worker-staging`, grants `roles/iam.serviceAccountUser` on the runtime service account, and removes `roles/run.developer` from `270018525501-compute@developer.gserviceaccount.com`.
 
 ## Cost discipline
 

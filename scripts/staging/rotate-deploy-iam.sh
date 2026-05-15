@@ -14,6 +14,7 @@ REGION="${STAGING_CLOUD_RUN_REGION:-us-central1}"
 SERVICE="${STAGING_CLOUD_RUN_SERVICE:-arkova-worker-staging}"
 APPROVED_PROJECT="${STAGING_APPROVED_GCP_PROJECT:-arkova1}"
 APPROVED_SERVICE="arkova-worker-staging"
+ARTIFACT_REPOSITORY="${STAGING_ARTIFACT_REPOSITORY:-arkova-worker-images}"
 DEPLOY_SA_ID="${STAGING_DEPLOY_SA_ID:-arkova-staging-deployer}"
 DEPLOY_SA_EMAIL_OVERRIDE="${STAGING_DEPLOY_SA_EMAIL:-}"
 COMPUTE_SA="${STAGING_COMPUTE_SA_EMAIL:-270018525501-compute@developer.gserviceaccount.com}"
@@ -132,6 +133,7 @@ echo "SCRUM-1821 staging deploy IAM rotation"
 echo "project:       $PROJECT"
 echo "region:        $REGION"
 echo "service:       $SERVICE"
+echo "artifact repo: $ARTIFACT_REPOSITORY"
 echo "deploy SA:     $DEPLOY_SA"
 echo "compute SA:    $COMPUTE_SA"
 echo "runtime SA:    $RUNTIME_SA"
@@ -145,6 +147,11 @@ if [[ $ROLLBACK -eq 1 ]]; then
   run_cmd gcloud projects add-iam-policy-binding "$PROJECT" \
     --member="serviceAccount:${COMPUTE_SA}" \
     --role=roles/run.developer
+  run_cmd gcloud artifacts repositories remove-iam-policy-binding "$ARTIFACT_REPOSITORY" \
+    --location="$REGION" \
+    --project="$PROJECT" \
+    --member="serviceAccount:${DEPLOY_SA}" \
+    --role=roles/artifactregistry.reader
   run_cmd gcloud projects remove-iam-policy-binding "$PROJECT" \
     --member="serviceAccount:${DEPLOY_SA}" \
     --role=roles/run.developer \
@@ -156,8 +163,13 @@ if [[ $ROLLBACK -eq 1 ]]; then
   exit 0
 fi
 
-echo "Forward plan: create deploy-only SA, grant conditioned staging deploy rights, then revoke deploy rights from compute SA."
+echo "Forward plan: create deploy-only SA, grant image-read and conditioned staging deploy rights, then revoke deploy rights from compute SA."
 ensure_deploy_sa
+run_cmd gcloud artifacts repositories add-iam-policy-binding "$ARTIFACT_REPOSITORY" \
+  --location="$REGION" \
+  --project="$PROJECT" \
+  --member="serviceAccount:${DEPLOY_SA}" \
+  --role=roles/artifactregistry.reader
 run_cmd gcloud projects add-iam-policy-binding "$PROJECT" \
   --member="serviceAccount:${DEPLOY_SA}" \
   --role=roles/run.developer \
