@@ -51,6 +51,7 @@ KMS_PROVIDER=gcp                    # "gcp" in prod; "aws" is non-deployed abstr
 BITCOIN_KMS_KEY_ID=                 # (AWS path, non-deployed) KMS key ID
 BITCOIN_KMS_REGION=                 # (AWS path, non-deployed) region
 GCP_KMS_KEY_RESOURCE_NAME=          # GCP KMS key resource path (prod)
+GCP_KMS_INTEGRATION_TOKEN_KEY=      # Dedicated symmetric KMS key for OAuth token encryption
 GCP_KMS_PROJECT_ID=                 # optional — defaults to application default
 ```
 

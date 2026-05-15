@@ -71,6 +71,8 @@ const ConfigSchema = z.object({
   bitcoinKmsRegion: z.string().optional(),
   /** GCP KMS key resource name for mainnet transaction signing (MVP-29) */
   gcpKmsKeyResourceName: z.string().optional(),
+  /** Dedicated symmetric GCP KMS key for OAuth token encryption. */
+  gcpKmsIntegrationTokenKey: z.string().optional(),
   /** GCP project ID for KMS (optional — defaults to application default) */
   gcpKmsProjectId: z.string().optional(),
 
@@ -419,6 +421,21 @@ const ConfigSchema = z.object({
 
   if (
     cfg.nodeEnv === 'production'
+    && (cfg.enableDriveOauth || cfg.enableDocusignOauth || cfg.enableGrcIntegrations)
+    && !cfg.gcpKmsIntegrationTokenKey?.trim()
+  ) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message:
+        'Production OAuth integrations require GCP_KMS_INTEGRATION_TOKEN_KEY '
+        + 'pointing at a symmetric encrypt/decrypt KMS key. Do not reuse '
+        + 'GCP_KMS_KEY_RESOURCE_NAME; that key is for Bitcoin signing.',
+      path: ['gcpKmsIntegrationTokenKey'],
+    });
+  }
+
+  if (
+    cfg.nodeEnv === 'production'
     && cfg.enableDocusignOauth
     && (!cfg.docusignIntegrationKey || !cfg.docusignClientSecret)
   ) {
@@ -545,6 +562,7 @@ function loadConfig(): Config {
     bitcoinKmsKeyId: process.env.BITCOIN_KMS_KEY_ID,
     bitcoinKmsRegion: process.env.BITCOIN_KMS_REGION,
     gcpKmsKeyResourceName: process.env.GCP_KMS_KEY_RESOURCE_NAME,
+    gcpKmsIntegrationTokenKey: process.env.GCP_KMS_INTEGRATION_TOKEN_KEY,
     gcpKmsProjectId: process.env.GCP_KMS_PROJECT_ID,
     chainApiUrl: process.env.CHAIN_API_URL,
     chainApiKey: process.env.CHAIN_API_KEY,

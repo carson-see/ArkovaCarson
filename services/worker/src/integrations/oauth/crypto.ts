@@ -5,8 +5,8 @@
  * `org_integrations.encrypted_tokens`. Cleartext never lands in Postgres.
  *
  * Design choices:
- *   - Use the same GCP KMS project + keyring as the Bitcoin signing provider
- *     (see chain/gcp-kms-signing-provider) so there's one trust boundary.
+ *   - Use a dedicated symmetric GCP KMS key for OAuth tokens. Do not reuse the
+ *     Bitcoin signing key; asymmetric signing keys cannot encrypt OAuth tokens.
  *   - Store ciphertext as bytea. Plaintext is JSON-serialised before encrypt.
  *   - Key version is identified by the full KMS resource name (written into
  *     `org_integrations.token_kms_key_id`) so we can rotate without losing
@@ -60,17 +60,13 @@ export async function createDefaultKmsClient(): Promise<KmsClient> {
 
 /** Read the KMS key name from env. Throws if not provisioned. */
 export function getIntegrationTokenKeyName(env: NodeJS.ProcessEnv = process.env): string {
-  // Reuse an existing project if present; fall back to the Bitcoin keyring
-  // project so we only need one Secret Manager / KMS config path.
-  const name =
-    env.GCP_KMS_INTEGRATION_TOKEN_KEY ??
-    env.GCP_KMS_KEY_RESOURCE_NAME;
+  const name = env.GCP_KMS_INTEGRATION_TOKEN_KEY;
   if (!name || name.trim() === '') {
     throw new Error(
-      'GCP_KMS_INTEGRATION_TOKEN_KEY (or GCP_KMS_KEY_RESOURCE_NAME fallback) not set — provision a KMS key before connecting integrations.',
+      'GCP_KMS_INTEGRATION_TOKEN_KEY not set — provision a symmetric encrypt/decrypt KMS key before connecting integrations.',
     );
   }
-  return name;
+  return name.trim();
 }
 
 /** Encrypt a tokens payload to a bytea-ready buffer + record the key id. */
