@@ -33,8 +33,9 @@ CREATE TABLE IF NOT EXISTS org_integrations (
   -- multi-account tenancy detection.
   account_id text,
   account_label text,
-  -- Ciphertext only. Encryption happens in the worker via the same GCP KMS
-  -- key ring used for Bitcoin signing (see chain/gcp-kms-signing-provider).
+  -- Ciphertext only. Encryption happens in the worker via the dedicated
+  -- symmetric OAuth-token KMS key recorded in token_kms_key_id. Do not reuse
+  -- the Bitcoin signing key; asymmetric signing keys cannot encrypt tokens.
   -- Column is bytea; application decides how to structure the plaintext
   -- before encrypting (typically a JSON blob of { access_token,
   -- refresh_token, expires_at, scope }).

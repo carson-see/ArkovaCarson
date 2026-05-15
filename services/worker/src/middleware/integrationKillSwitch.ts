@@ -8,7 +8,7 @@
  * Each flag corresponds to a specific finding in the audit; see Jira
  * "Integration Hardening" epic.
  */
-import type { Request, Response, NextFunction } from 'express';
+import type { Request, Response, NextFunction, RequestHandler } from 'express';
 
 type FlagName =
   | 'ENABLE_DRIVE_OAUTH'              // C1-C4: webhook URL mismatch, falls-open auth, dead disconnect
@@ -38,5 +38,24 @@ export function killSwitch(flag: FlagName) {
   return (_req: Request, res: Response, next: NextFunction) => {
     if (enabled) return next();
     res.status(503).json(denyBody);
+  };
+}
+
+function pathMatchesScope(path: string, prefix: string): boolean {
+  return path === prefix || path.startsWith(`${prefix}/`);
+}
+
+export function pathScopedKillSwitch(prefix: `/${string}`, flag: FlagName) {
+  const gate = killSwitch(flag);
+  return (req: Request, res: Response, next: NextFunction) => {
+    if (!pathMatchesScope(req.path, prefix)) return next();
+    return gate(req, res, next);
+  };
+}
+
+export function pathScopedMiddleware(prefix: `/${string}`, handler: RequestHandler): RequestHandler {
+  return (req: Request, res: Response, next: NextFunction) => {
+    if (!pathMatchesScope(req.path, prefix)) return next();
+    return handler(req, res, next);
   };
 }

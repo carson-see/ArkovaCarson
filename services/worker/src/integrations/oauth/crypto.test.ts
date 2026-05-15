@@ -44,12 +44,10 @@ describe('getIntegrationTokenKeyName', () => {
     ).toBe('projects/p/locations/l/keyRings/r/cryptoKeys/k-int');
   });
 
-  it('falls back to GCP_KMS_KEY_RESOURCE_NAME', () => {
-    expect(
-      getIntegrationTokenKeyName({
-        GCP_KMS_KEY_RESOURCE_NAME: 'projects/p/locations/l/keyRings/r/cryptoKeys/k',
-      }),
-    ).toBe('projects/p/locations/l/keyRings/r/cryptoKeys/k');
+  it('does not fall back to the chain signing key', () => {
+    expect(() => getIntegrationTokenKeyName({
+      GCP_KMS_KEY_RESOURCE_NAME: 'projects/p/locations/l/keyRings/r/cryptoKeys/bitcoin-mainnet',
+    })).toThrow(/GCP_KMS_INTEGRATION_TOKEN_KEY not set/i);
   });
 
   it('throws if neither is set', () => {
@@ -57,7 +55,10 @@ describe('getIntegrationTokenKeyName', () => {
   });
 
   it('throws if key is blank', () => {
-    expect(() => getIntegrationTokenKeyName({ GCP_KMS_KEY_RESOURCE_NAME: '   ' })).toThrow();
+    expect(() => getIntegrationTokenKeyName({
+      GCP_KMS_INTEGRATION_TOKEN_KEY: '   ',
+      GCP_KMS_KEY_RESOURCE_NAME: 'projects/p/locations/l/keyRings/r/cryptoKeys/bitcoin-mainnet',
+    })).toThrow();
   });
 });
 

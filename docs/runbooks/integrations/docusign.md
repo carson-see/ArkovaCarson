@@ -2,6 +2,8 @@
 
 Story: SCRUM-1101 — CONN-V2-03 DocuSign connector
 
+Current live close-out story: SCRUM-1655 / parent SCRUM-1648.
+
 ## Runtime Shape
 
 - Admin OAuth uses DocuSign Authorization Code Grant with `signature extended openid email`.
@@ -19,9 +21,21 @@ DOCUSIGN_INTEGRATION_KEY=
 DOCUSIGN_CLIENT_SECRET=
 DOCUSIGN_CONNECT_HMAC_SECRET=
 DOCUSIGN_DEMO=true
+ENABLE_DOCUSIGN_OAUTH=true
+ENABLE_DOCUSIGN_WEBHOOK=true
 ```
 
 Do not paste refresh tokens into logs, tickets, or Confluence. Refresh tokens are encrypted through `GCP_KMS_INTEGRATION_TOKEN_KEY` before persistence in `org_integrations.encrypted_tokens`.
+
+The worker deploy workflow binds the production Secret Manager resources as:
+
+```bash
+DOCUSIGN_INTEGRATION_KEY=docusign_integration_key:latest
+DOCUSIGN_CLIENT_SECRET=docusign_client_secret:latest
+DOCUSIGN_CONNECT_HMAC_SECRET=docusign_connect_hmac_secret:latest
+```
+
+As of the 2026-05-15 SCRUM-1655 verification pass, production was serving revision `arkova-worker-00559-n9t` with those bindings, flags, and `GCP_KMS_INTEGRATION_TOKEN_KEY=projects/arkova1/locations/global/keyRings/arkova-signing/cryptoKeys/integration-tokens` enabled. This PR makes that state durable for the next GitHub Actions deploy.
 
 ## DocuSign Admin Setup
 
@@ -34,16 +48,63 @@ Do not paste refresh tokens into logs, tickets, or Confluence. Refresh tokens ar
 
 ## Verification
 
-1. Connect a sandbox DocuSign account through OAuth.
-2. Complete a sandbox envelope.
-3. Confirm `organization_rule_events` receives one sanitized `ESIGN_COMPLETED` event within two minutes.
-4. Confirm `job_queue` receives one `docusign.envelope_completed` job.
-5. Replay the same payload with one byte changed and the original signature; the worker must return `401`.
-6. Force the eSignature document fetch to return `503`; the job should retry and eventually move to `dead` after five attempts.
+1. Run the safe production route smoke. This verifies invalid HMAC rejection and signed unknown-account acknowledgement without creating integration rows, rule events, or jobs.
+
+   ```bash
+   WORKER_URL=https://arkova-worker-270018525501.us-central1.run.app \
+   DOCUSIGN_CONNECT_HMAC_SECRET="$(gcloud secrets versions access latest --project=arkova1 --secret=docusign_connect_hmac_secret)" \
+   npm --prefix services/worker run smoke:docusign -- --mode=orphan
+   ```
+
+   Expected result: `invalid_hmac_rejected` passes with HTTP `401 invalid_signature`, `signed_unknown_account_orphaned` passes with HTTP `200 orphaned`, and `duplicate_delivery_deduped` is skipped because unknown accounts return before nonce insert.
+
+2. Connect a sandbox DocuSign account through Arkova OAuth. Production currently has no active `provider=docusign` row to reuse, so prod accepted+duplicate smoke cannot run until this exists.
+3. Create or enable one Arkova rule for DocuSign completed envelopes in the connected sandbox org.
+4. Configure DocuSign Connect at the account/organization level to `https://arkova-worker-270018525501.us-central1.run.app/webhooks/docusign`, enable JSON payloads, and enable HMAC signing with the same `docusign_connect_hmac_secret` value.
+5. Complete sandbox envelopes from two distinct authorized DocuSign senders on that same DocuSign account. Confirm both produce sanitized `ESIGN_COMPLETED` events and retryable `docusign.envelope_completed` jobs.
+6. Run the accepted + duplicate smoke only after the connected sandbox account and Arkova rule exist. This mode can enqueue real work, so it requires `--allow-processing`.
+
+   ```bash
+   WORKER_URL=https://arkova-worker-270018525501.us-central1.run.app \
+   DOCUSIGN_CONNECT_HMAC_SECRET="$(gcloud secrets versions access latest --project=arkova1 --secret=docusign_connect_hmac_secret)" \
+   npm --prefix services/worker run smoke:docusign -- \
+     --mode=accepted-duplicate \
+     --account-id="$DOCUSIGN_SANDBOX_ACCOUNT_ID" \
+     --allow-processing
+   ```
+
+   Expected result: `invalid_hmac_rejected` passes with HTTP `401`, `signed_known_account_accepted` passes with HTTP `202`, and replaying the exact same payload returns HTTP `200 duplicate`.
+
+   For protected staging Cloud Run targets, set `WORKER_BEARER_TOKEN` from an identity token. Keep it in the environment, not argv.
+
+   ```bash
+   WORKER_URL=https://pr-783---arkova-worker-staging-kvojbeutfa-uc.a.run.app \
+   WORKER_BEARER_TOKEN="$(gcloud auth print-identity-token --audiences=https://arkova-worker-staging-kvojbeutfa-uc.a.run.app)" \
+   DOCUSIGN_CONNECT_HMAC_SECRET="$(gcloud secrets versions access latest --project=arkova1 --secret=docusign-connect-hmac-secret-pr712-staging)" \
+   DOCUSIGN_SMOKE_ACCOUNT_ID="$DOCUSIGN_SANDBOX_ACCOUNT_ID" \
+   npm --prefix services/worker run smoke:docusign -- \
+     --mode=accepted-duplicate \
+     --account-id="$DOCUSIGN_SANDBOX_ACCOUNT_ID" \
+     --allow-processing
+   ```
+
+7. Force the eSignature document fetch to return `503`; the job should retry and eventually move to `dead` after five attempts.
+8. Update HANDOFF, Confluence, and Jira with the Cloud Run revision, `/health` git SHA, smoke JSON, two-sender event IDs, job IDs, and any bug-log links. Only then tick SCRUM-1648 AC/DoD.
+
+## 2026-05-15 Evidence Snapshot
+
+- Production revision `arkova-worker-00559-n9t` has the DocuSign flags/secrets and `GCP_KMS_INTEGRATION_TOKEN_KEY` bound. `/health` is green with `git_sha=6899f10aba7e233755385edfd2b28112129e41d7`.
+- Production DocuSign sandbox OAuth completed for the Arkova org; `org_integrations` has one active `provider=docusign` row with `base_uri=https://demo.docusign.net` and token encryption through `integration-tokens`.
+- Production accepted+duplicate smoke passed twice against the connected account: invalid HMAC `401 invalid_signature`, signed known account `202 ok`, replay `200 duplicate`.
+- Production SCRUM-1655 sandbox rule `7c440d28-ba2b-4b30-a834-8f0d4df30ac1` processed two `ESIGN_COMPLETED` events from distinct sender emails (`scrum-1655-prod-sandbox-1@arkova.ai`, `scrum-1655-prod-sandbox-2@arkova.ai`) to `PROCESSED`; dispatcher wrote two `SUCCEEDED` executions with `queued_for_review` / `review_queue`.
+- Staging Supabase has active DocuSign integrations, enabled `ESIGN_COMPLETED` rules, and one org/account with two distinct sender emails processed in the last 30 days (`PROCESSED`, latest 2026-05-15T07:13:22Z).
+- DocuSign-enabled staging tag `pr-783` (`arkova-worker-staging-00087-kim`, health `git_sha=5b4009bd9eebd8e80d8c2991c39066bc9212897c`) passed accepted+duplicate smoke: invalid HMAC `401 invalid_signature`, signed known account `202 ok`, replay `200 duplicate`.
+- Shared staging 100% traffic is pinned to older revision `arkova-worker-staging-00043-hk8`, which lacks the DocuSign flag; use the tagged staging URL for this smoke until shared staging is promoted.
 
 ## Operational Notes
 
 - Unknown connected accounts return `200 { orphaned: true }` to avoid DocuSign retry storms.
 - Missing `DOCUSIGN_CONNECT_HMAC_SECRET` returns `503` so Connect retries after the secret is fixed.
+- `WORKER_BEARER_TOKEN` is supported for protected Cloud Run staging targets and is intentionally env-only.
 - Raw webhook payloads and signed PDFs are not persisted by the webhook route.
-- New migrations were not required for this story; it uses `org_integrations`, `organization_rule_events`, and `job_queue`.
+- This story includes additive migration `0306_docusign_org_integrations_base_uri.sql` (`org_integrations.base_uri`); verify it before deployment along with the existing `org_integrations`, `organization_rule_events`, and `job_queue` paths.

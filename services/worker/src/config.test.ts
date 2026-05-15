@@ -392,6 +392,17 @@ describe('SCRUM-1258 vendor connector cross-field guards', () => {
     });
   });
 
+  it('rejects production DocuSign OAuth without a dedicated integration-token KMS key', async () => {
+    await expectConfigToReject({
+      ...PROD_SIGNET,
+      ENABLE_DOCUSIGN_OAUTH: 'true',
+      DOCUSIGN_INTEGRATION_KEY: 'fake-integration-key',
+      DOCUSIGN_CLIENT_SECRET: 'fake-client-secret',
+      GCP_KMS_KEY_RESOURCE_NAME: 'projects/p/locations/l/keyRings/r/cryptoKeys/bitcoin-mainnet',
+      GCP_KMS_INTEGRATION_TOKEN_KEY: undefined,
+    });
+  });
+
   it('rejects production with ENABLE_DOCUSIGN_WEBHOOK=true and missing DOCUSIGN_CONNECT_HMAC_SECRET', async () => {
     await expectConfigToReject({
       ...PROD_SIGNET,
@@ -415,11 +426,13 @@ describe('SCRUM-1258 vendor connector cross-field guards', () => {
         GOOGLE_OAUTH_CLIENT_ID: 'fake-client-id',
         GOOGLE_OAUTH_CLIENT_SECRET: 'fake-client-secret',
         INTEGRATION_STATE_HMAC_SECRET: 'fake-hmac',
+        GCP_KMS_INTEGRATION_TOKEN_KEY: 'projects/p/locations/l/keyRings/r/cryptoKeys/integration-tokens',
       },
       (mod) => {
         expect(mod.config.enableDriveOauth).toBe(true);
         expect(mod.config.googleOauthClientId).toBe('fake-client-id');
         expect(mod.config.integrationStateHmacSecret).toBe('fake-hmac');
+        expect(mod.config.gcpKmsIntegrationTokenKey).toContain('integration-tokens');
       },
     );
   });

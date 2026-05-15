@@ -54,9 +54,9 @@ if possible:
    `roles/cloudkms.cryptoKeyEncrypterDecrypter` on the key.
 4. Set `GCP_KMS_INTEGRATION_TOKEN_KEY` to the full resource name
    (`projects/<p>/locations/<l>/keyRings/arkova-prod-keyring/cryptoKeys/integration-tokens`).
-   If unset, the code falls back to `GCP_KMS_KEY_RESOURCE_NAME`; using a
-   dedicated key is preferred so a chain-signing key compromise does not
-   leak OAuth tokens.
+   This must be a symmetric encrypt/decrypt key. The worker fails closed when
+   production OAuth integrations are enabled without this setting; do not reuse
+   `GCP_KMS_KEY_RESOURCE_NAME`, which is reserved for Bitcoin signing.
 
 ## Channel renewal cadence
 
@@ -74,7 +74,7 @@ See `docs/reference/ENV.md`. Key ones:
 | `GOOGLE_OAUTH_CLIENT_ID` | From GCP OAuth app |
 | `GOOGLE_OAUTH_CLIENT_SECRET` | From GCP OAuth app |
 | `GCP_KMS_INTEGRATION_TOKEN_KEY` | Dedicated KMS key for OAuth tokens |
-| `GCP_KMS_KEY_RESOURCE_NAME` | Fallback (chain signing key — not recommended) |
+| `GCP_KMS_KEY_RESOURCE_NAME` | Bitcoin signing key only; not valid for OAuth token encryption |
 
 ## Troubleshooting
 

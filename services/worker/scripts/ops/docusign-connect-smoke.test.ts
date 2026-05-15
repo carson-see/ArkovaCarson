@@ -1,0 +1,214 @@
+import crypto from 'node:crypto';
+import { describe, expect, it, vi } from 'vitest';
+import {
+  buildDocusignConnectPayload,
+  parseArgs,
+  runDocusignConnectSmoke,
+  signDocusignPayload,
+} from './docusign-connect-smoke.js';
+
+const HMAC_FIXTURE = crypto
+  .createHash('sha256')
+  .update('docusign-connect-smoke-test-fixture')
+  .digest('hex');
+
+function jsonResponse(status: number, body: unknown): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { 'content-type': 'application/json' },
+  });
+}
+
+describe('docusign-connect-smoke', () => {
+  it('builds a completed-envelope payload without exposing the HMAC secret', () => {
+    const payload = buildDocusignConnectPayload({
+      accountId: 'acct-1',
+      envelopeId: 'env-1',
+      eventId: 'evt-1',
+      generatedDateTime: '2026-05-14T20:00:00.000Z',
+      senderEmail: 'sender@example.com',
+    });
+
+    expect(payload).toMatchObject({
+      event: 'envelope-completed',
+      eventId: 'evt-1',
+      envelopeId: 'env-1',
+      accountId: 'acct-1',
+      status: 'completed',
+      sender: { email: 'sender@example.com' },
+    });
+    expect(payload.envelopeDocuments).toEqual([
+      expect.objectContaining({
+        documentId: 'combined',
+        name: 'arkova-smoke-env-1.pdf',
+        sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
+      }),
+    ]);
+    expect(JSON.stringify(payload)).not.toContain(HMAC_FIXTURE);
+  });
+
+  it('signs the exact raw JSON body with DocuSign base64 HMAC-SHA256', () => {
+    const rawBody = '{"event":"envelope-completed"}';
+    const signature = signDocusignPayload(rawBody, HMAC_FIXTURE);
+    const expected = crypto.createHmac('sha256', HMAC_FIXTURE).update(rawBody).digest('base64');
+
+    expect(signature).toBe(expected);
+  });
+
+  it('defaults to an orphan-only smoke and requires a secret', () => {
+    expect(parseArgs([], {
+      WORKER_URL: 'https://worker.example.test/',
+      DOCUSIGN_CONNECT_HMAC_SECRET: HMAC_FIXTURE,
+      WORKER_BEARER_TOKEN: 'fixture-worker-token',
+    })).toMatchObject({
+      workerUrl: 'https://worker.example.test',
+      mode: 'orphan',
+      hmacSecret: HMAC_FIXTURE,
+      bearerToken: 'fixture-worker-token',
+      allowProcessing: false,
+    });
+
+    expect(() => parseArgs([], { WORKER_URL: 'https://worker.example.test' })).toThrow(
+      'DOCUSIGN_CONNECT_HMAC_SECRET is required',
+    );
+    expect(() => parseArgs(['--hmac-secret=do-not-do-this'], {
+      WORKER_URL: 'https://worker.example.test',
+      DOCUSIGN_CONNECT_HMAC_SECRET: HMAC_FIXTURE,
+    })).toThrow('Do not pass --hmac-secret');
+    expect(() => parseArgs(['--bearer-token=do-not-do-this'], {
+      WORKER_URL: 'https://worker.example.test',
+      DOCUSIGN_CONNECT_HMAC_SECRET: HMAC_FIXTURE,
+    })).toThrow('Do not pass --bearer-token');
+    expect(() => parseArgs([], {
+      WORKER_URL: 'ftp://worker.example.test',
+      DOCUSIGN_CONNECT_HMAC_SECRET: HMAC_FIXTURE,
+    })).toThrow('must use http or https');
+    expect(() => parseArgs([], {
+      WORKER_URL: 'https://user:pass@worker.example.test',
+      DOCUSIGN_CONNECT_HMAC_SECRET: HMAC_FIXTURE,
+    })).toThrow('must not include credentials');
+  });
+
+  it('requires an explicit account id and allow-processing flag for accepted duplicate smoke', () => {
+    const env = {
+      WORKER_URL: 'https://worker.example.test',
+      DOCUSIGN_CONNECT_HMAC_SECRET: HMAC_FIXTURE,
+    };
+
+    expect(() => parseArgs(['--mode=accepted-duplicate', '--account-id=acct-1'], env)).toThrow(
+      '--allow-processing',
+    );
+    expect(() => parseArgs(['--mode=accepted-duplicate', '--allow-processing'], env)).toThrow(
+      '--account-id',
+    );
+
+    expect(parseArgs([
+      '--mode=accepted-duplicate',
+      '--account-id=acct-1',
+      '--allow-processing',
+    ], env)).toMatchObject({
+      mode: 'accepted-duplicate',
+      accountId: 'acct-1',
+      allowProcessing: true,
+    });
+  });
+
+  it('runs the safe orphan smoke: invalid HMAC is rejected and signed unknown account is orphaned', async () => {
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(401, { error: { code: 'invalid_signature' } }))
+      .mockResolvedValueOnce(jsonResponse(200, { ok: true, orphaned: true }));
+
+    const result = await runDocusignConnectSmoke({
+      workerUrl: 'https://worker.example.test',
+      hmacSecret: HMAC_FIXTURE,
+      bearerToken: 'fixture-worker-token',
+      mode: 'orphan',
+      accountId: 'arkova-smoke-unknown',
+      envelopeId: 'env-smoke',
+      eventId: 'evt-smoke',
+      generatedDateTime: '2026-05-14T20:00:00.000Z',
+      senderEmail: 'smoke.sender@example.com',
+      timeoutMs: 1000,
+      allowProcessing: false,
+    }, { fetchImpl });
+
+    expect(result.ok).toBe(true);
+    expect(result.mode).toBe('orphan');
+    expect(result.account_id_sha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(JSON.stringify(result)).not.toContain(HMAC_FIXTURE);
+    expect(JSON.stringify(result)).not.toContain('fixture-worker-token');
+    expect(result.checks).toEqual([
+      expect.objectContaining({ name: 'invalid_hmac_rejected', status: 'pass', http_status: 401 }),
+      expect.objectContaining({ name: 'signed_unknown_account_orphaned', status: 'pass', http_status: 200 }),
+      expect.objectContaining({ name: 'duplicate_delivery_deduped', status: 'skip' }),
+    ]);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    expect(fetchImpl.mock.calls[0][0]).toBe('https://worker.example.test/webhooks/docusign');
+    expect(fetchImpl.mock.calls[0][1]?.headers).toMatchObject({
+      Authorization: 'Bearer fixture-worker-token',
+      'Content-Type': 'application/json',
+      'X-DocuSign-Signature-1': expect.any(String),
+    });
+    expect(fetchImpl.mock.calls[0][1]?.headers['X-DocuSign-Signature-1']).not.toBe(
+      fetchImpl.mock.calls[1][1]?.headers['X-DocuSign-Signature-1'],
+    );
+  });
+
+  it('runs accepted duplicate smoke only after explicit processing opt-in', async () => {
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(401, { error: { code: 'invalid_signature' } }))
+      .mockResolvedValueOnce(jsonResponse(202, { ok: true, rule_event_id: 'rule-event-1', job_id: 'job-1' }))
+      .mockResolvedValueOnce(jsonResponse(200, { ok: true, duplicate: true }));
+
+    const result = await runDocusignConnectSmoke({
+      workerUrl: 'https://worker.example.test/',
+      hmacSecret: HMAC_FIXTURE,
+      bearerToken: null,
+      mode: 'accepted-duplicate',
+      accountId: 'acct-1',
+      envelopeId: 'env-smoke',
+      eventId: 'evt-smoke',
+      generatedDateTime: '2026-05-14T20:00:00.000Z',
+      senderEmail: 'smoke.sender@example.com',
+      timeoutMs: 1000,
+      allowProcessing: true,
+    }, { fetchImpl });
+
+    expect(result.ok).toBe(true);
+    expect(result.mode).toBe('accepted-duplicate');
+    expect(result.checks).toEqual([
+      expect.objectContaining({ name: 'invalid_hmac_rejected', status: 'pass', http_status: 401 }),
+      expect.objectContaining({ name: 'signed_known_account_accepted', status: 'pass', http_status: 202 }),
+      expect.objectContaining({ name: 'duplicate_delivery_deduped', status: 'pass', http_status: 200 }),
+    ]);
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+  });
+
+  it('rejects accepted duplicate smoke without runner-level processing opt-in', async () => {
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(401, { error: { code: 'invalid_signature' } }));
+
+    const result = await runDocusignConnectSmoke({
+      workerUrl: 'https://worker.example.test/',
+      hmacSecret: HMAC_FIXTURE,
+      bearerToken: null,
+      mode: 'accepted-duplicate',
+      accountId: 'acct-1',
+      envelopeId: 'env-smoke',
+      eventId: 'evt-smoke',
+      generatedDateTime: '2026-05-14T20:00:00.000Z',
+      senderEmail: 'smoke.sender@example.com',
+      timeoutMs: 1000,
+      allowProcessing: false,
+    }, { fetchImpl });
+
+    expect(result.ok).toBe(false);
+    expect(result.worker_url).toBe('https://worker.example.test');
+    expect(result.checks).toEqual([
+      expect.objectContaining({ name: 'invalid_hmac_rejected', status: 'pass', http_status: 401 }),
+      expect.objectContaining({ name: 'processing_opt_in_required', status: 'fail' }),
+    ]);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(fetchImpl.mock.calls[0][0]).toBe('https://worker.example.test/webhooks/docusign');
+  });
+});

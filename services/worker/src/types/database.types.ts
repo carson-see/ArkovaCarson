@@ -2769,6 +2769,7 @@ export type Database = {
         Row: {
           account_id: string | null
           account_label: string | null
+          base_uri: string | null
           connected_at: string
           created_at: string
           encrypted_tokens: string | null
@@ -2787,6 +2788,7 @@ export type Database = {
         Insert: {
           account_id?: string | null
           account_label?: string | null
+          base_uri?: string | null
           connected_at?: string
           created_at?: string
           encrypted_tokens?: string | null
@@ -2805,6 +2807,7 @@ export type Database = {
         Update: {
           account_id?: string | null
           account_label?: string | null
+          base_uri?: string | null
           connected_at?: string
           created_at?: string
           encrypted_tokens?: string | null
