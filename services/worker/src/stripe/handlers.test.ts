@@ -985,7 +985,7 @@ describe('handleSubscriptionDeleted', () => {
 
   it('looks up user_id for audit log', async () => {
     await handleSubscriptionDeleted(SUBSCRIPTION_DELETED_EVENT);
-    expect(subscriptionsSelect.select).toHaveBeenCalledWith('user_id');
+    expect(subscriptionsSelect.select).toHaveBeenCalledWith('user_id, org_id');
   });
 
   it('logs audit event when user found', async () => {
