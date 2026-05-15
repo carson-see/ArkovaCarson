@@ -7,7 +7,10 @@ import {
   signDocusignPayload,
 } from './docusign-connect-smoke.js';
 
-const SECRET = 'fixture-docusign-hmac-secret';
+const HMAC_FIXTURE = crypto
+  .createHash('sha256')
+  .update('docusign-connect-smoke-test-fixture')
+  .digest('hex');
 
 function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {
@@ -41,13 +44,13 @@ describe('docusign-connect-smoke', () => {
         sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
       }),
     ]);
-    expect(JSON.stringify(payload)).not.toContain(SECRET);
+    expect(JSON.stringify(payload)).not.toContain(HMAC_FIXTURE);
   });
 
   it('signs the exact raw JSON body with DocuSign base64 HMAC-SHA256', () => {
     const rawBody = '{"event":"envelope-completed"}';
-    const signature = signDocusignPayload(rawBody, SECRET);
-    const expected = crypto.createHmac('sha256', SECRET).update(rawBody).digest('base64');
+    const signature = signDocusignPayload(rawBody, HMAC_FIXTURE);
+    const expected = crypto.createHmac('sha256', HMAC_FIXTURE).update(rawBody).digest('base64');
 
     expect(signature).toBe(expected);
   });
@@ -55,12 +58,12 @@ describe('docusign-connect-smoke', () => {
   it('defaults to an orphan-only smoke and requires a secret', () => {
     expect(parseArgs([], {
       WORKER_URL: 'https://worker.example.test/',
-      DOCUSIGN_CONNECT_HMAC_SECRET: SECRET,
+      DOCUSIGN_CONNECT_HMAC_SECRET: HMAC_FIXTURE,
       WORKER_BEARER_TOKEN: 'fixture-worker-token',
     })).toMatchObject({
       workerUrl: 'https://worker.example.test',
       mode: 'orphan',
-      hmacSecret: SECRET,
+      hmacSecret: HMAC_FIXTURE,
       bearerToken: 'fixture-worker-token',
       allowProcessing: false,
     });
@@ -70,26 +73,26 @@ describe('docusign-connect-smoke', () => {
     );
     expect(() => parseArgs(['--hmac-secret=do-not-do-this'], {
       WORKER_URL: 'https://worker.example.test',
-      DOCUSIGN_CONNECT_HMAC_SECRET: SECRET,
+      DOCUSIGN_CONNECT_HMAC_SECRET: HMAC_FIXTURE,
     })).toThrow('Do not pass --hmac-secret');
     expect(() => parseArgs(['--bearer-token=do-not-do-this'], {
       WORKER_URL: 'https://worker.example.test',
-      DOCUSIGN_CONNECT_HMAC_SECRET: SECRET,
+      DOCUSIGN_CONNECT_HMAC_SECRET: HMAC_FIXTURE,
     })).toThrow('Do not pass --bearer-token');
     expect(() => parseArgs([], {
       WORKER_URL: 'ftp://worker.example.test',
-      DOCUSIGN_CONNECT_HMAC_SECRET: SECRET,
+      DOCUSIGN_CONNECT_HMAC_SECRET: HMAC_FIXTURE,
     })).toThrow('must use http or https');
     expect(() => parseArgs([], {
       WORKER_URL: 'https://user:pass@worker.example.test',
-      DOCUSIGN_CONNECT_HMAC_SECRET: SECRET,
+      DOCUSIGN_CONNECT_HMAC_SECRET: HMAC_FIXTURE,
     })).toThrow('must not include credentials');
   });
 
   it('requires an explicit account id and allow-processing flag for accepted duplicate smoke', () => {
     const env = {
       WORKER_URL: 'https://worker.example.test',
-      DOCUSIGN_CONNECT_HMAC_SECRET: SECRET,
+      DOCUSIGN_CONNECT_HMAC_SECRET: HMAC_FIXTURE,
     };
 
     expect(() => parseArgs(['--mode=accepted-duplicate', '--account-id=acct-1'], env)).toThrow(
@@ -117,7 +120,7 @@ describe('docusign-connect-smoke', () => {
 
     const result = await runDocusignConnectSmoke({
       workerUrl: 'https://worker.example.test',
-      hmacSecret: SECRET,
+      hmacSecret: HMAC_FIXTURE,
       bearerToken: 'fixture-worker-token',
       mode: 'orphan',
       accountId: 'arkova-smoke-unknown',
@@ -132,7 +135,7 @@ describe('docusign-connect-smoke', () => {
     expect(result.ok).toBe(true);
     expect(result.mode).toBe('orphan');
     expect(result.account_id_sha256).toMatch(/^[a-f0-9]{64}$/);
-    expect(JSON.stringify(result)).not.toContain(SECRET);
+    expect(JSON.stringify(result)).not.toContain(HMAC_FIXTURE);
     expect(JSON.stringify(result)).not.toContain('fixture-worker-token');
     expect(result.checks).toEqual([
       expect.objectContaining({ name: 'invalid_hmac_rejected', status: 'pass', http_status: 401 }),
@@ -159,7 +162,7 @@ describe('docusign-connect-smoke', () => {
 
     const result = await runDocusignConnectSmoke({
       workerUrl: 'https://worker.example.test/',
-      hmacSecret: SECRET,
+      hmacSecret: HMAC_FIXTURE,
       bearerToken: null,
       mode: 'accepted-duplicate',
       accountId: 'acct-1',
@@ -187,7 +190,7 @@ describe('docusign-connect-smoke', () => {
 
     const result = await runDocusignConnectSmoke({
       workerUrl: 'https://worker.example.test/',
-      hmacSecret: SECRET,
+      hmacSecret: HMAC_FIXTURE,
       bearerToken: null,
       mode: 'accepted-duplicate',
       accountId: 'acct-1',

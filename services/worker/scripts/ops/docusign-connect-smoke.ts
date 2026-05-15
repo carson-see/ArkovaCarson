@@ -311,17 +311,19 @@ export async function runDocusignConnectSmoke(
 
   if (normalizedOptions.mode === 'orphan') {
     const orphan = await postPayload({ options: normalizedOptions, rawBody, signature: validSignature, fetchImpl });
-    checks.push(checkResult(
-      'signed_unknown_account_orphaned',
-      orphan,
-      orphan.status === 200 && codeFromBody(orphan.body) === 'orphaned',
-      'Signed payload for an unknown account must be acknowledged without processing.',
-    ));
-    checks.push({
-      name: 'duplicate_delivery_deduped',
-      status: 'skip',
-      detail: 'Duplicate-path smoke requires a connected sandbox account; orphaned accounts return before nonce insert.',
-    });
+    checks.push(
+      checkResult(
+        'signed_unknown_account_orphaned',
+        orphan,
+        orphan.status === 200 && codeFromBody(orphan.body) === 'orphaned',
+        'Signed payload for an unknown account must be acknowledged without processing.',
+      ),
+      {
+        name: 'duplicate_delivery_deduped',
+        status: 'skip',
+        detail: 'Duplicate-path smoke requires a connected sandbox account; orphaned accounts return before nonce insert.',
+      },
+    );
   } else {
     if (!normalizedOptions.allowProcessing) {
       checks.push({
@@ -340,19 +342,21 @@ export async function runDocusignConnectSmoke(
       };
     }
     const accepted = await postPayload({ options: normalizedOptions, rawBody, signature: validSignature, fetchImpl });
-    checks.push(checkResult(
-      'signed_known_account_accepted',
-      accepted,
-      accepted.status === 202 && codeFromBody(accepted.body) === 'ok',
-      'Signed payload for a connected sandbox account should enqueue one rule event and one retryable job.',
-    ));
     const duplicate = await postPayload({ options: normalizedOptions, rawBody, signature: validSignature, fetchImpl });
-    checks.push(checkResult(
-      'duplicate_delivery_deduped',
-      duplicate,
-      duplicate.status === 200 && codeFromBody(duplicate.body) === 'duplicate',
-      'Replaying the exact same signed payload should be idempotently acknowledged as duplicate.',
-    ));
+    checks.push(
+      checkResult(
+        'signed_known_account_accepted',
+        accepted,
+        accepted.status === 202 && codeFromBody(accepted.body) === 'ok',
+        'Signed payload for a connected sandbox account should enqueue one rule event and one retryable job.',
+      ),
+      checkResult(
+        'duplicate_delivery_deduped',
+        duplicate,
+        duplicate.status === 200 && codeFromBody(duplicate.body) === 'duplicate',
+        'Replaying the exact same signed payload should be idempotently acknowledged as duplicate.',
+      ),
+    );
   }
 
   return {
@@ -395,8 +399,10 @@ async function main(): Promise<void> {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  main().catch((err) => {
+  try {
+    await main();
+  } catch (err) {
     console.error(err instanceof Error ? err.message : String(err));
     process.exitCode = 1;
-  });
+  }
 }
