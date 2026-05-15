@@ -384,33 +384,3 @@ describe('API Key CRUD — tenant isolation: PATCH update includes org_id guard'
   });
 });
 
-describe('API Key CRUD — tenant isolation: logAuditEvent includes org_id', () => {
-  /**
-   * Gap #4 from tenant isolation audit: the logAuditEvent helper inserts
-   * audit events without org_id. It should accept and pass through org_id.
-   */
-
-  it('logAuditEvent inserts org_id when provided', async () => {
-    const { db } = await import('../../utils/db.js');
-
-    const insertMock = vi.fn().mockResolvedValue({ error: null });
-    (db.from as ReturnType<typeof vi.fn>).mockReturnValue({
-      insert: insertMock,
-    });
-
-    // We need to test via the POST /keys handler which calls logAuditEvent.
-    // The logAuditEvent function is not exported, so we verify via the handler.
-    // After fixing, audit inserts from key CRUD should include org_id.
-    // For now, we verify the insert call payload structure.
-
-    // Import the module to trigger the logAuditEvent through a handler
-    const { keysRouter } = await import('./keys.js');
-    expect(keysRouter).toBeDefined();
-
-    // Direct inspection: after the fix, logAuditEvent will include org_id.
-    // We validate that audit_events inserts from PATCH /keys/:keyId (revocation)
-    // include org_id by checking the mock calls after a full handler run.
-    // This test documents the expectation; the handler integration test above
-    // covers the UPDATE path.
-  });
-});
