@@ -40,3 +40,15 @@ export function killSwitch(flag: FlagName) {
     res.status(503).json(denyBody);
   };
 }
+
+function pathMatchesScope(path: string, prefix: string): boolean {
+  return path === prefix || path.startsWith(`${prefix}/`);
+}
+
+export function pathScopedKillSwitch(prefix: `/${string}`, flag: FlagName) {
+  const gate = killSwitch(flag);
+  return (req: Request, res: Response, next: NextFunction) => {
+    if (!pathMatchesScope(req.path, prefix)) return next();
+    return gate(req, res, next);
+  };
+}

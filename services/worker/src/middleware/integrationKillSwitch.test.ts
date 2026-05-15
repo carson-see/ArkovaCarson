@@ -3,6 +3,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 describe('killSwitch middleware', () => {
   const ORIGINAL_NODE_ENV = process.env.NODE_ENV;
   const ORIGINAL_FLAG = process.env.ENABLE_DRIVE_OAUTH;
+  const ORIGINAL_DOCUSIGN_FLAG = process.env.ENABLE_DOCUSIGN_OAUTH;
 
   beforeEach(() => {
     vi.resetModules();
@@ -13,6 +14,8 @@ describe('killSwitch middleware', () => {
     else process.env.NODE_ENV = ORIGINAL_NODE_ENV;
     if (ORIGINAL_FLAG === undefined) delete process.env.ENABLE_DRIVE_OAUTH;
     else process.env.ENABLE_DRIVE_OAUTH = ORIGINAL_FLAG;
+    if (ORIGINAL_DOCUSIGN_FLAG === undefined) delete process.env.ENABLE_DOCUSIGN_OAUTH;
+    else process.env.ENABLE_DOCUSIGN_OAUTH = ORIGINAL_DOCUSIGN_FLAG;
   });
 
   function makeRes() {
@@ -86,5 +89,41 @@ describe('killSwitch middleware', () => {
     handler({} as never, res, next);
     expect(next).not.toHaveBeenCalled();
     expect(res.status).toHaveBeenCalledWith(503);
+  });
+
+  it('does not let the Drive OAuth gate block DocuSign paths', async () => {
+    delete process.env.NODE_ENV;
+    delete process.env.ENABLE_DRIVE_OAUTH;
+    vi.resetModules();
+    const { pathScopedKillSwitch } = await import('./integrationKillSwitch.js');
+    const handler = pathScopedKillSwitch('/google_drive', 'ENABLE_DRIVE_OAUTH');
+    const next = vi.fn();
+    const res = makeRes();
+
+    handler({ path: '/docusign/oauth/start' } as never, res, next);
+
+    expect(next).toHaveBeenCalledOnce();
+    expect(res.status).not.toHaveBeenCalled();
+  });
+
+  it('still blocks matching integration paths when their own flag is disabled', async () => {
+    delete process.env.NODE_ENV;
+    delete process.env.ENABLE_DOCUSIGN_OAUTH;
+    vi.resetModules();
+    const { pathScopedKillSwitch } = await import('./integrationKillSwitch.js');
+    const handler = pathScopedKillSwitch('/docusign', 'ENABLE_DOCUSIGN_OAUTH');
+    const next = vi.fn();
+    const res = makeRes();
+
+    handler({ path: '/docusign/oauth/start' } as never, res, next);
+
+    expect(next).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(503);
+    expect(res.json).toHaveBeenCalledWith(
+      expect.objectContaining({
+        error: 'integration_disabled',
+        flag: 'ENABLE_DOCUSIGN_OAUTH',
+      }),
+    );
   });
 });
