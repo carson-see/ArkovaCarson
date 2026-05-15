@@ -6,8 +6,22 @@
  * launch-critical security invariant lives, so the unit-level test pins
  * every branch of resolution + every membership-membership boundary.
  */
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { renderHook } from '@testing-library/react';
 import { resolveActiveOrg } from './useActiveOrg';
+
+const mockOrgsState = { orgs: [] as { orgId: string }[], loading: false };
+const mockProfileState = { profile: null as { org_id: string | null } | null, loading: false };
+
+vi.mock('./useUserOrgs', () => ({
+  useUserOrgs: () => ({ ...mockOrgsState, error: null, refreshOrgs: async () => {} }),
+}));
+vi.mock('./useProfile', () => ({
+  useProfile: () => mockProfileState,
+}));
+vi.mock('react-router-dom', () => ({
+  useParams: () => ({}),
+}));
 
 const ORG_PARENT = '11111111-1111-4111-8111-111111111111';
 const ORG_SUB = '22222222-2222-4222-8222-222222222222';
@@ -356,5 +370,57 @@ describe('Cross-tenant negative test matrix (SCRUM-1651 ORG-12)', () => {
       expect(r.orgId).toBe(ORG_PARENT);
       expect(r.source.kind).toBe('implicit_primary');
     });
+  });
+});
+
+describe('useActiveOrg hook — referential stability (CodeRabbit #689)', () => {
+  beforeEach(() => {
+    mockOrgsState.orgs = [];
+    mockOrgsState.loading = false;
+    mockProfileState.profile = null;
+    mockProfileState.loading = false;
+    try { window.localStorage.removeItem('arkova.activeOrg.v1'); } catch { /* noop */ }
+  });
+
+  it('returns a stable result object when org array reference changes but IDs are the same', async () => {
+    const { useActiveOrg } = await import('./useActiveOrg');
+
+    mockProfileState.profile = { org_id: ORG_PARENT };
+    mockProfileState.loading = false;
+    mockOrgsState.orgs = [{ orgId: ORG_PARENT }, { orgId: ORG_SUB }];
+    mockOrgsState.loading = false;
+
+    const { result, rerender } = renderHook(() => useActiveOrg());
+    const first = result.current;
+
+    expect(first.orgId).toBe(ORG_PARENT);
+    expect(first.source.kind).toBe('implicit_primary');
+
+    // Simulate background refetch — new array reference, same org IDs
+    mockOrgsState.orgs = [{ orgId: ORG_PARENT }, { orgId: ORG_SUB }];
+    rerender();
+
+    expect(result.current).toBe(first);
+  });
+
+  it('invalidates when org IDs actually change', async () => {
+    const { useActiveOrg } = await import('./useActiveOrg');
+
+    mockProfileState.profile = { org_id: ORG_PARENT };
+    mockProfileState.loading = false;
+    mockOrgsState.orgs = [{ orgId: ORG_PARENT }];
+    mockOrgsState.loading = false;
+
+    const { result, rerender } = renderHook(() => useActiveOrg());
+    const first = result.current;
+
+    expect(first.hasMultipleMemberships).toBe(false);
+
+    // A real membership change — new org added
+    mockOrgsState.orgs = [{ orgId: ORG_PARENT }, { orgId: ORG_SUB }];
+    rerender();
+
+    expect(result.current.hasMultipleMemberships).toBe(true);
+    expect(result.current).not.toBe(first);
   });
 });

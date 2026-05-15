@@ -23,7 +23,7 @@
  * The hook is intentionally read-only — switching the active org is a route
  * change (push to /orgs/:newId) so the URL stays the source of truth.
  */
-import { useMemo, useRef } from 'react';
+import { useMemo } from 'react';
 import { useParams } from 'react-router-dom';
 import { useProfile } from './useProfile';
 import { useUserOrgs } from './useUserOrgs';
@@ -137,21 +137,13 @@ export function resolveActiveOrg(args: {
   };
 }
 
-/** Return a referentially stable array when the sorted IDs haven't changed. */
-function useStableIds(ids: string[]): string[] {
-  const ref = useRef(ids);
-  const key = ids.slice().sort().join('\0');
-  const prev = ref.current.slice().sort().join('\0');
-  if (key !== prev) ref.current = ids;
-  return ref.current;
-}
-
 export function useActiveOrg(): UseActiveOrgResult {
   const params = useParams<{ orgId?: string }>();
   const { profile, loading: profileLoading } = useProfile();
   const { orgs, loading: orgsLoading } = useUserOrgs();
 
-  const membershipOrgIds = useStableIds(orgs.map((o) => o.orgId));
+  const orgIdKey = orgs.map((o) => o.orgId).sort().join('\0');
+  const membershipOrgIds = useMemo(() => orgIdKey.split('\0').filter(Boolean), [orgIdKey]);
 
   return useMemo<UseActiveOrgResult>(() => {
     const sessionOrgId = readSessionOrg();
