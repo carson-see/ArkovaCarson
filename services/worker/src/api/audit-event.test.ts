@@ -156,7 +156,7 @@ describe('POST /api/audit/event', () => {
   });
 
   it('rejects unknown event_category enum value', async () => {
-    const res = await invoke({ event_type: 'X', event_category: 'SECURITY' });
+    const res = await invoke({ event_type: 'X', event_category: 'FOOBAR' });
     expect(res.statusCode).toBe(400);
     expect(mockInsert).not.toHaveBeenCalled();
   });
