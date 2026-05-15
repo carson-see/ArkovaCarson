@@ -35,7 +35,7 @@ DOCUSIGN_CLIENT_SECRET=docusign_client_secret:latest
 DOCUSIGN_CONNECT_HMAC_SECRET=docusign_connect_hmac_secret:latest
 ```
 
-As of the 2026-05-14 SCRUM-1655 verification pass, production was manually updated to serving revision `arkova-worker-00556-m5l` with those bindings and flags enabled. This PR makes that state durable for the next GitHub Actions deploy.
+As of the 2026-05-15 SCRUM-1655 verification pass, production was serving revision `arkova-worker-00558-mgb` with those bindings and flags enabled. This PR makes that state durable for the next GitHub Actions deploy.
 
 ## DocuSign Admin Setup
 
@@ -93,8 +93,8 @@ As of the 2026-05-14 SCRUM-1655 verification pass, production was manually updat
 
 ## 2026-05-15 Evidence Snapshot
 
-- Production revision `arkova-worker-00556-m5l` has the DocuSign flags/secrets bound and safe orphan smoke passed: invalid HMAC `401 invalid_signature`, signed unknown account `200 orphaned`.
-- Production Supabase currently has 0 active `provider=docusign` integrations and 0 `ESIGN_COMPLETED` rules, so prod accepted+duplicate smoke is intentionally not run there.
+- Production revision `arkova-worker-00558-mgb` has the DocuSign flags/secrets bound and safe orphan smoke passed: invalid HMAC `401 invalid_signature`, signed unknown account `200 orphaned`.
+- Production Supabase currently has 0 active `provider=docusign` integrations and one enabled sandbox `ESIGN_COMPLETED` rule, so prod accepted+duplicate smoke is intentionally not run until sandbox OAuth creates an active integration.
 - Staging Supabase has active DocuSign integrations, enabled `ESIGN_COMPLETED` rules, and one org/account with two distinct sender emails processed in the last 30 days (`PROCESSED`, latest 2026-05-15T07:13:22Z).
 - DocuSign-enabled staging tag `pr-783` (`arkova-worker-staging-00087-kim`, health `git_sha=5b4009bd9eebd8e80d8c2991c39066bc9212897c`) passed accepted+duplicate smoke: invalid HMAC `401 invalid_signature`, signed known account `202 ok`, replay `200 duplicate`.
 - Shared staging 100% traffic is pinned to older revision `arkova-worker-staging-00043-hk8`, which lacks the DocuSign flag; use the tagged staging URL for this smoke until shared staging is promoted.
@@ -105,4 +105,4 @@ As of the 2026-05-14 SCRUM-1655 verification pass, production was manually updat
 - Missing `DOCUSIGN_CONNECT_HMAC_SECRET` returns `503` so Connect retries after the secret is fixed.
 - `WORKER_BEARER_TOKEN` is supported for protected Cloud Run staging targets and is intentionally env-only.
 - Raw webhook payloads and signed PDFs are not persisted by the webhook route.
-- New migrations were not required for this story; it uses `org_integrations`, `organization_rule_events`, and `job_queue`.
+- This story includes additive migration `0306_docusign_org_integrations_base_uri.sql` (`org_integrations.base_uri`); verify it before deployment along with the existing `org_integrations`, `organization_rule_events`, and `job_queue` paths.
