@@ -2,6 +2,16 @@
 
 Document anchoring system with cryptographic fingerprinting and on-chain verification.
 
+## Local Source Of Truth
+
+The canonical local Arkova checkout is:
+
+```bash
+/Volumes/Extreme/Arkova/arkova-mvpcopy-main
+```
+
+Use that path for day-to-day work on `main`. Desktop copies, archived folders, backup drives, and PR worktrees are not the source of truth. See [docs/ops/local-source-of-truth.md](docs/ops/local-source-of-truth.md) before moving, deleting, or backing up local Arkova files.
+
 ---
 
 ## Running Arkova MVP Locally
