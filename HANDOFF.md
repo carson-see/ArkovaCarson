@@ -47,6 +47,14 @@ _Last refreshed: 2026-05-16 by Carson — claims verified against Jira MCP, `gh 
 
 **Warning trajectory:** 365 (baseline) → 331 (#789) → 119 (#791+#792+#793). Remaining 119 require deeper refactoring tracked as follow-on S3+ batches.
 
+**Soak targets:** #789 T3 ends 2026-05-17T18:40Z, #791 T3 ends 2026-05-17T20:29Z, #792 T2 ends 2026-05-16T08:23Z, #793 T3 ends 2026-05-17T20:36Z.
+
+_Last refreshed: 2026-05-16 by Claude — claims verified against `gcloud run revisions list`, staging health endpoints, `gh pr view/checks`, staging_deploy_log ids, and CI run logs._
+
+### 2026-05-15 — Tech-debt: useActiveOrg memo stability (PR #796)
+
+**PR #796 / branch `claude/tender-johnson-667dd9`** fixes a minor perf issue in `src/hooks/useActiveOrg.ts` flagged by CodeRabbit on PR #689. The hook's outer `useMemo` depended on the `orgs` array reference from `useUserOrgs`, causing `resolveActiveOrg` to re-run on every React Query background refetch even when org IDs hadn't changed. Fix: serialize org IDs into a stable string key, use that as the `useMemo` dependency. Two new `renderHook` tests prove referential stability. T1 evidence: full suite 2059/2059, lint/typecheck/copy-lint clean.
+
 ### 2026-05-15 — SCRUM-1655 DocuSign live verification PR lane
 
 **Scope:** SCRUM-1655 remains the live/operator verification subtask for parent SCRUM-1648, not a duplicate implementation story. PR #689 already unit-pinned DS-01 multi-sender behavior; DS-02/DS-03/DS-04 remain represented by existing handler behavior (`findIntegration()` fail-closed lookup, mandatory HMAC, `docusign_webhook_nonces` dedupe).
