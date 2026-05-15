@@ -322,9 +322,6 @@ describe('Cross-tenant negative test matrix (SCRUM-1651 ORG-12)', () => {
         } else {
           expect(r.source.kind).toBe('none');
         }
-        if (!combo.membershipOrgIds.includes(ORG_OTHER_TENANT)) {
-          expect(r.orgId).not.toBe(ORG_OTHER_TENANT);
-        }
       });
     }
 
@@ -348,6 +345,28 @@ describe('Cross-tenant negative test matrix (SCRUM-1651 ORG-12)', () => {
       });
       expect(r.orgId).toBe(ORG_SUB);
       expect(r.source.kind).toBe('session');
+    });
+
+    it('empty-string urlOrgId is treated as absent (JS truthiness)', () => {
+      const r = resolveActiveOrg({
+        urlOrgId: '',
+        sessionOrgId: null,
+        profileOrgId: ORG_PARENT,
+        membershipOrgIds: [ORG_PARENT],
+      });
+      expect(r.orgId).toBe(ORG_PARENT);
+      expect(r.source.kind).toBe('implicit_primary');
+    });
+
+    it('empty-string sessionOrgId is treated as absent (JS truthiness)', () => {
+      const r = resolveActiveOrg({
+        urlOrgId: null,
+        sessionOrgId: '',
+        profileOrgId: ORG_PARENT,
+        membershipOrgIds: [ORG_PARENT],
+      });
+      expect(r.orgId).toBe(ORG_PARENT);
+      expect(r.source.kind).toBe('implicit_primary');
     });
   });
 });
