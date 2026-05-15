@@ -100,6 +100,7 @@ async function insertCharity(
   const sourceId = `acnc-${abn}`;
 
   // Check for duplicates
+  // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
   const { data: existing } = await dbAny(supabase)
     .from('public_records')
     .select('id')
@@ -125,6 +126,7 @@ async function insertCharity(
 
   const purposes = buildPurposes(charity);
 
+  // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
   const { error: insertError } = await dbAny(supabase)
     .from('public_records')
     .insert({
@@ -241,6 +243,7 @@ export async function fetchAcncCharities(supabase: SupabaseClient): Promise<{
   let totalErrors = 0;
 
   // Resume from where we left off
+  // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
   const { count: existingCount } = await dbAny(supabase)
     .from('public_records')
     .select('id', { count: 'exact', head: true })

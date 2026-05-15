@@ -59,6 +59,7 @@ async function getPendingCount(): Promise<number | null> {
   }
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
     const { count, error } = await (db as any)
       .from('organization_rule_events')
       .select('id', { count: 'exact', head: true })
@@ -78,6 +79,7 @@ async function getPendingCount(): Promise<number | null> {
 
 async function emitBackpressureAudit(pendingCount: number): Promise<void> {
   try {
+    // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
     const { error } = await db.from('audit_events').insert({
       event_type: 'RULE_EVENT_BACKPRESSURE_TRIPPED',
       event_category: 'SYSTEM',

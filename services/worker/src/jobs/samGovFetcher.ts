@@ -137,6 +137,7 @@ async function insertSamEntity(
   const sourceId = `sam-${uei}`;
 
   // Check for duplicates
+  // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
   const { data: existing } = await dbAny(supabase)
     .from('public_records')
     .select('id')
@@ -159,6 +160,7 @@ async function insertSamEntity(
     state: entity.stateCode,
   });
 
+  // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
   const { error: insertError } = await dbAny(supabase)
     .from('public_records')
     .insert({
@@ -226,6 +228,7 @@ async function insertSamExclusion(
 
   const sourceId = `sam-excl-${identifier}`;
 
+  // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
   const { data: existing } = await dbAny(supabase)
     .from('public_records')
     .select('id')
@@ -248,6 +251,7 @@ async function insertSamExclusion(
     program: exclusion.exclusionProgram,
   });
 
+  // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
   const { error: insertError } = await dbAny(supabase)
     .from('public_records')
     .insert({

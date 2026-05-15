@@ -151,6 +151,7 @@ async function insertProvider(
   const sourceId = `npi-${npiNumber}`;
 
   // Check for duplicates
+  // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
   const { data: existing } = await dbAny(supabase)
     .from('public_records')
     .select('id')
@@ -185,6 +186,7 @@ async function insertProvider(
     .filter(t => t.license && t.state)
     .map(t => ({ state: t.state, license: t.license, taxonomy: t.desc }));
 
+  // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
   const { error: insertError } = await dbAny(supabase)
     .from('public_records')
     .insert({

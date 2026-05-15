@@ -135,6 +135,7 @@ export async function fetchEdgarFilings(supabase: SupabaseClient): Promise<{
   }
 
   // Determine resume point
+  // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
   const { data: lastRecord } = await supabase
     .from('public_records')
     .select('metadata')
@@ -228,6 +229,7 @@ export async function fetchEdgarFilings(supabase: SupabaseClient): Promise<{
         const accession = hit._id.replace(/-/g, '');
 
         // Check for duplicates
+        // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
         const { data: existing } = await supabase
           .from('public_records')
           .select('id')
@@ -266,6 +268,7 @@ export async function fetchEdgarFilings(supabase: SupabaseClient): Promise<{
 
         const cik = src.ciks?.[0] ?? '';
 
+        // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
         const { error: insertError } = await supabase.from('public_records').insert({
           source: 'edgar',
           source_id: hit._id,
@@ -548,6 +551,7 @@ async function fetchEdgarViaSubmissionsApi(
         const sourceId = accession.replace(/-/g, '');
 
         // Check for duplicates
+        // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
         const { data: existing } = await supabase
           .from('public_records')
           .select('id')
@@ -567,6 +571,7 @@ async function fetchEdgarViaSubmissionsApi(
           file_date: filingDate,
         });
 
+        // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
         const { error: insertError } = await supabase.from('public_records').insert({
           source: 'edgar',
           source_id: accession,
@@ -966,6 +971,7 @@ async function fetchEftsShard(
     // Batch upsert — ON CONFLICT (source, source_id) DO NOTHING
     for (let i = 0; i < records.length; i += BULK_INSERT_BATCH) {
       const batch = records.slice(i, i + BULK_INSERT_BATCH);
+      // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
       const { error: insertError, count } = await supabase
         .from('public_records')
         .upsert(batch, { onConflict: 'source,source_id', ignoreDuplicates: true, count: 'exact' });

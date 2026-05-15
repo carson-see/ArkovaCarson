@@ -85,6 +85,7 @@ export async function fetchIpedsInstitutions(
   const year = new Date().getFullYear() - 1; // IPEDS data lags ~1 year
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
   const { count: existingCount } = await (supabase as any)
     .from('public_records')
     .select('id', { count: 'exact', head: true })
@@ -154,6 +155,7 @@ export async function fetchIpedsInstitutions(
 
         if (batch.length >= INSERT_BATCH_SIZE) {
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
           const { error } = await (supabase as any)
             .from('public_records')
             .upsert(batch, { onConflict: 'source,source_id', ignoreDuplicates: true });
@@ -181,6 +183,7 @@ export async function fetchIpedsInstitutions(
   // Flush remaining
   if (batch.length > 0) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
     const { error } = await (supabase as any)
       .from('public_records')
       .upsert(batch, { onConflict: 'source,source_id', ignoreDuplicates: true });

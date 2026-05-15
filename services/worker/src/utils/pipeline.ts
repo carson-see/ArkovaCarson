@@ -34,6 +34,7 @@ export async function batchUpsertRecords(
 ): Promise<{ inserted: number; errors: number }> {
   if (records.length === 0) return { inserted: 0, errors: 0 };
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
   const { error } = await (supabase as any)
     .from('public_records')
     .upsert(records, { onConflict: 'source,source_id', ignoreDuplicates: true });
@@ -52,6 +53,7 @@ export async function getExistingSourceIds(
 ): Promise<Set<string>> {
   if (sourceIds.length === 0) return new Set();
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
   const { data } = await (supabase as any)
     .from('public_records')
     .select('source_id')

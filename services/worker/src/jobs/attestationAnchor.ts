@@ -65,6 +65,7 @@ export async function processAttestationAnchoring(
   }
 
   // Fetch PENDING attestations that have fingerprints
+  // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
   const { data: attestations, error: fetchError } = await client
     .from('attestations')
     .select('id, public_id, fingerprint, attester_org_id, attestation_type')
@@ -119,6 +120,7 @@ export async function processAttestationAnchoring(
   for (const att of rows) {
     const proof = tree.proofs.get(att.fingerprint);
 
+    // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
     const { data: updated, error: updateError } = await client
       .from('attestations')
       .update({

@@ -130,6 +130,7 @@ export async function fetchOpenAlexWorks(supabase: SupabaseClient): Promise<{
   }
 
   // Determine resume point
+  // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
   const { data: lastRecord } = await supabase
     .from('public_records')
     .select('metadata')
@@ -212,6 +213,7 @@ export async function fetchOpenAlexWorks(supabase: SupabaseClient): Promise<{
       const doi = work.doi?.replace('https://doi.org/', '') ?? null;
 
       // Check for duplicates
+      // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
       const { data: existing } = await supabase
         .from('public_records')
         .select('id')
@@ -248,6 +250,7 @@ export async function fetchOpenAlexWorks(supabase: SupabaseClient): Promise<{
         ? `https://doi.org/${doi}`
         : work.open_access?.oa_url ?? `https://openalex.org/${openalexId}`;
 
+      // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
       const { error: insertError } = await supabase.from('public_records').insert({
         source: 'openalex',
         source_id: openalexId,
@@ -487,6 +490,7 @@ export async function fetchOpenAlexBulk(
     // Batch upsert
     for (let i = 0; i < records.length; i += BULK_INSERT_BATCH) {
       const batch = records.slice(i, i + BULK_INSERT_BATCH);
+      // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
       const { error: insertError, count } = await supabase
         .from('public_records')
         .upsert(batch, { onConflict: 'source,source_id', ignoreDuplicates: true, count: 'exact' });

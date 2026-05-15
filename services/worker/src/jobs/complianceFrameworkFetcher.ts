@@ -689,6 +689,7 @@ export async function fetchComplianceFrameworks(
     for (let i = 0; i < records.length; i += INSERT_BATCH_SIZE) {
       const batch = records.slice(i, i + INSERT_BATCH_SIZE);
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
       const { error } = await (supabase as any)
         .from('public_records')
         .upsert(batch, { onConflict: 'source,source_id', ignoreDuplicates: true });
@@ -725,6 +726,7 @@ export async function fetchComplianceFrameworks(
     for (let i = 0; i < records.length; i += INSERT_BATCH_SIZE) {
       const batch = records.slice(i, i + INSERT_BATCH_SIZE);
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
       const { error } = await (supabase as any)
         .from('public_records')
         .upsert(batch, { onConflict: 'source,source_id', ignoreDuplicates: true });
@@ -766,6 +768,7 @@ export async function fetchComplianceFrameworks(
     for (let i = 0; i < records.length; i += INSERT_BATCH_SIZE) {
       const batch = records.slice(i, i + INSERT_BATCH_SIZE);
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
       const { error } = await (supabase as any)
         .from('public_records')
         .upsert(batch, { onConflict: 'source,source_id', ignoreDuplicates: true });

@@ -168,6 +168,7 @@ router.post('/sign', async (req: Request, res: Response) => {
     // Resolve attestation if provided
     let attestationId: string | null = null;
     if (body.attestation_id) {
+      // eslint-disable-next-line arkova/missing-org-filter -- public verification endpoint
       const { data: att } = await db
         .from('attestations')
         .select('id')

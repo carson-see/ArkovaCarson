@@ -104,6 +104,7 @@ async function insertAttorney(
   const sourceId = `calbar-${attorney.barNumber}`;
 
   // Check for duplicates
+  // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
   const { data: existing } = await dbAny(supabase)
     .from('public_records')
     .select('id')
@@ -122,6 +123,7 @@ async function insertAttorney(
     admissionDate: attorney.admissionDate,
   });
 
+  // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
   const { error: insertError } = await dbAny(supabase)
     .from('public_records')
     .insert({
@@ -183,6 +185,7 @@ export async function fetchCalBarAttorneys(supabase: SupabaseClient): Promise<{
   }
 
   // Determine resume point — find highest bar number already ingested
+  // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
   const { data: lastRecord } = await dbAny(supabase)
     .from('public_records')
     .select('source_id')
