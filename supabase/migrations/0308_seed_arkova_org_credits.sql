@@ -14,12 +14,12 @@
 INSERT INTO org_credits (org_id, balance, monthly_allocation, purchased, cycle_start, cycle_end, is_test, anchor_quota)
 VALUES (
   '40383eb2-f1cd-4a85-8099-afafff95e5cf',
-  50,   -- balance: full monthly allocation
-  50,   -- monthly_allocation: Free tier (cost-tracker.ts CREDIT_ALLOCATIONS.free)
-  0,    -- purchased: no purchased credits
-  date_trunc('month', now()),                    -- cycle_start: first of current month
-  date_trunc('month', now()) + interval '1 month', -- cycle_end: first of next month
-  false, -- is_test: production org
-  NULL   -- anchor_quota: no hard anchor limit
+  50,
+  50, -- Free tier (cost-tracker.ts CREDIT_ALLOCATIONS.free)
+  0,
+  date_trunc('month', now()),
+  date_trunc('month', now()) + interval '1 month',
+  false,
+  NULL
 )
 ON CONFLICT (org_id) DO NOTHING;
