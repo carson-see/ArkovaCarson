@@ -219,7 +219,7 @@ export async function fanOutSecuredAnchorWebhooks(
       // is read-only metadata enrichment; cross-org leakage at this step
       // would require a downstream caller to bypass the per-anchor org_id
       // routing, which doesn't happen in the fan-out task closures below.
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any, arkova/missing-org-filter -- batch fan-out: scoped by upstream drain set, org routing enforced in dispatch closures
       const { data: credRows, error: credErr } = await (db as any)
         .from('anchors')
         .select('public_id, credential_type')

@@ -71,8 +71,7 @@ async function insertBatch(
     },
   }));
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any, arkova/missing-org-filter -- service-role admin query
   const { error } = await (supabase as any)
     .from('public_records')
     .upsert(records, { onConflict: 'source,source_id', ignoreDuplicates: true });
@@ -97,8 +96,7 @@ async function fetchDelawareEntities(
   // We search by entity number ranges — file numbers are sequential.
   // Resume from last fetched number.
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any, arkova/missing-org-filter -- service-role admin query
   const { data: lastRecord } = await (supabase as any)
     .from('public_records')
     .select('source_id')
@@ -191,8 +189,7 @@ async function fetchCaliforniaEntities(
   maxPerRun: number,
 ): Promise<SosFetchResult> {
   // CA bizfile search API — paginated, public
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any, arkova/missing-org-filter -- service-role admin query
   const { data: lastRecord } = await (supabase as any)
     .from('public_records')
     .select('metadata')

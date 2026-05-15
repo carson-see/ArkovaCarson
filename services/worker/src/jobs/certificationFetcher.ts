@@ -38,8 +38,7 @@ async function fetchCfaCharterholders(
   const skipped = 0;
   const errors = 0;
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any, arkova/missing-org-filter -- service-role admin query
   const { count: existingCount } = await (supabase as any)
     .from('public_records')
     .select('id', { count: 'exact', head: true })

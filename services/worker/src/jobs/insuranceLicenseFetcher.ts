@@ -40,8 +40,7 @@ async function fetchCdiLicenses(
   let errors = 0;
 
   // Resume from last fetched license number
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any, arkova/missing-org-filter -- service-role admin query
   const { data: lastRecord } = await (supabase as any)
     .from('public_records')
     .select('metadata')
@@ -105,8 +104,7 @@ async function fetchCdiLicenses(
       });
 
       if (batch.length >= 100) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any, arkova/missing-org-filter -- service-role admin query
         const { error } = await (supabase as any)
           .from('public_records')
           .upsert(batch, { onConflict: 'source,source_id', ignoreDuplicates: true });
@@ -123,8 +121,7 @@ async function fetchCdiLicenses(
 
   // Flush remaining
   if (batch.length > 0) {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any, arkova/missing-org-filter -- service-role admin query
     const { error } = await (supabase as any)
       .from('public_records')
       .upsert(batch, { onConflict: 'source,source_id', ignoreDuplicates: true });

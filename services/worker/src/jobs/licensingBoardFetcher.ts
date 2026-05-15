@@ -49,8 +49,7 @@ async function fetchCaNursing(
   let errors = 0;
 
   // Resume from highest license number fetched (not row count — 404 gaps don't create rows)
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any, arkova/missing-org-filter -- service-role admin query
   const { data: lastRecord } = await (supabase as any)
     .from('public_records')
     .select('metadata')
@@ -116,8 +115,7 @@ async function fetchCaNursing(
         },
       }));
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any, arkova/missing-org-filter -- service-role admin query
       const { error } = await (supabase as any)
         .from('public_records')
         .upsert(records, { onConflict: 'source,source_id', ignoreDuplicates: true });

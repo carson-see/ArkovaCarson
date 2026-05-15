@@ -1023,7 +1023,7 @@ router.patch('/:publicId/revoke', async (req: Request, res: Response) => {
 
   try {
     // Verify ownership
-    // eslint-disable-next-line arkova/missing-org-filter -- public verification endpoint
+    // eslint-disable-next-line arkova/missing-org-filter -- attestation lookup by public_id, ownership verified by attester_user_id check
     const { data: attestation, error: findError } = await dbAny
       .from('attestations')
       .select('id, status, attester_user_id')
@@ -1045,7 +1045,7 @@ router.patch('/:publicId/revoke', async (req: Request, res: Response) => {
       return;
     }
 
-    // eslint-disable-next-line arkova/missing-org-filter -- public verification endpoint
+    // eslint-disable-next-line arkova/missing-org-filter -- attestation update by public_id, ownership verified above
     const { error: updateError } = await dbAny
       .from('attestations')
       .update({

@@ -152,8 +152,7 @@ export async function runQueueReminderJob(
 
   let rules: CronRuleRow[];
   try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any, arkova/missing-org-filter -- service-role admin query
     const { data, error } = await (db as any)
       .from('organization_rules')
       .select(
@@ -206,8 +205,7 @@ export async function runQueueReminderJob(
   //   - `match_reason` lives under `input_payload`, not top-level.
   //   - Upsert with ignoreDuplicates matches the rules-engine idempotency.
   try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any, arkova/missing-org-filter -- service-role admin query
     const { error } = await (db as any)
       .from('organization_rule_executions')
       .upsert(
