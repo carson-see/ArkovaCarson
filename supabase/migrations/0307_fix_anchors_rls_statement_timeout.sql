@@ -57,6 +57,7 @@ CREATE POLICY "attestations_select" ON "public"."attestations"
       SELECT 1 FROM public.anchors a
       WHERE a.id = anchor_id AND a.user_id = (SELECT auth.uid())
     ))
+    OR status = 'ACTIVE'::public.attestation_status
     OR (SELECT public.is_current_user_platform_admin())
   );
 
