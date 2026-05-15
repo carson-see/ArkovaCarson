@@ -267,7 +267,6 @@ export const EMPTY_API_RICH_FIELDS = {
 } as const;
 
 /** Fire-and-forget audit log for verification queries */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 function logVerificationAudit(
   req: any,
   publicId: string,
