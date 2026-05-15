@@ -503,12 +503,28 @@ SELECT id, raw_user_meta_data FROM auth.users WHERE raw_user_meta_data::text ~ '
 
 ### 10.1 Roll worker revision
 
+Use the SCRUM-1821 lease-enforced wrapper, not a direct staging service update:
+
 ```bash
-gcloud run services update arkova-worker-staging \
+CURRENT_IMAGE_REFERENCE="$(gcloud run services describe arkova-worker-staging \
   --region=us-central1 \
-  --update-env-vars=NODE_ENV=production
-# any noop change forces new revision so worker resets connection pool
+  --project=arkova1 \
+  --format='value(spec.template.spec.containers[0].image)')"
+
+./scripts/staging/claim.sh acquire <PR_NUMBER> "Phase 10.1 worker revision roll"
+./scripts/staging/deploy.sh \
+  --pr <PR_NUMBER> \
+  --image "${CURRENT_IMAGE_REFERENCE}"
 ```
+
+For Phase 10.1, `<CURRENT_IMAGE_REFERENCE>` should be the image already
+deployed to staging so the code under test does not change. Each
+`scripts/staging/deploy.sh` invocation creates a new tagged Cloud Run revision,
+which rolls the worker revision and resets the worker connection pool while
+preserving the deploy lease, tag routing, and `staging_deploy_log` evidence.
+If a lease is already active for `<PR_NUMBER>`, confirm it with
+`./scripts/staging/claim.sh status --pr <PR_NUMBER>` instead of acquiring a
+second lease.
 
 ### 10.2 30-min sanity soak
 

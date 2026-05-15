@@ -284,6 +284,7 @@ export function isStagingToolingOnly(files: string[]): StagingFilesOnlyResult {
   const ALLOW = [
     /^scripts\/staging\//,
     /^scripts\/ci\/check-staging-evidence(\.test)?\.ts$/,
+    /^scripts\/ci\/check-staging-gcloud-policy(\.test)?\.ts$/,
     /^scripts\/ci\/lib\//,
     // Operator-setup tooling lives next to the rig conceptually — same
     // category of meta-infra (script the operator runs once to wire up
@@ -291,6 +292,7 @@ export function isStagingToolingOnly(files: string[]): StagingFilesOnlyResult {
     // only change what `bash scripts/gcp-setup/*` does on the next run.
     /^scripts\/gcp-setup\//,
     /^docs\/staging\//,
+    /^docs\/ops\/gemini-model-upgrade\.md$/,
     // SCRUM-1803: STAGING_RIG.md lives at docs/reference/, not docs/staging/.
     // Same operational category — workflow doc for the staging rig.
     /^docs\/reference\/STAGING_RIG\.md$/,

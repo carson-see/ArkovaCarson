@@ -29,10 +29,12 @@
 #   --image <REF>        REQUIRED. Full Artifact-Registry image reference.
 #   --build-sha <SHA>    Optional. Sets BUILD_SHA env var on the revision.
 #                        Defaults to `git rev-parse HEAD`. "unknown" if not in a repo.
-#   --force "<reason>"   Bypass lease check. Logs a staging_deploy_log entry with
-#                        forced=true; reason is required and visible in the audit.
+#   --force "<reason>"   Bypass lease check. Reason must start with a Jira key,
+#                        e.g. "SCRUM-1821: emergency repair". Logs forced=true.
 #   --promote            After deploying the tag revision, route 100% of the main-URL
 #                        traffic to it. Default: --no-traffic (tag URL only).
+#   --promote-token <T>  Required with --promote. Prefer STAGING_PROMOTE_TOKEN
+#                        sourced from Secret Manager over passing this in shell history.
 #   --dry-run            Print what would happen, do nothing.
 #   --help               Show this banner.
 #
@@ -60,7 +62,7 @@ case "$SERVICE" in
     ;;
 esac
 
-PR=""; IMAGE=""; BUILD_SHA=""
+PR=""; IMAGE=""; BUILD_SHA=""; PROMOTE_TOKEN="${STAGING_PROMOTE_TOKEN:-}"
 FORCE=0; FORCE_REASON=""
 PROMOTE=0; DRY_RUN=0
 
@@ -72,6 +74,7 @@ while [ $# -gt 0 ]; do
     --build-sha)  BUILD_SHA="${2:?}"; shift 2 ;;
     --force)      FORCE=1; FORCE_REASON="${2:-}"; shift 2 ;;
     --promote)    PROMOTE=1; shift ;;
+    --promote-token) PROMOTE_TOKEN="${2:?}"; shift 2 ;;
     --dry-run)    DRY_RUN=1; shift ;;
     --help|-h)
       sed -n '2,40p' "$0"
@@ -96,6 +99,12 @@ esac
 
 if [ $FORCE -eq 1 ] && [ -z "$FORCE_REASON" ]; then
   echo "ERROR: --force requires a non-empty reason: --force \"<reason>\"" >&2
+  exit 2
+fi
+
+if [ $FORCE -eq 1 ] && [[ ! "$FORCE_REASON" =~ ^[A-Z][A-Z0-9]+-[0-9]+:.+ ]]; then
+  echo "ERROR: --force reason must start with a Jira key and colon." >&2
+  echo "       Example: --force \"SCRUM-1821: recover contaminated staging soak\"" >&2
   exit 2
 fi
 
@@ -230,6 +239,109 @@ record_deploy() {
   fi
 }
 
+require_promote_authorization() {
+  if [ $PROMOTE -eq 0 ]; then
+    return 0
+  fi
+
+  if [ -z "$PROMOTE_TOKEN" ]; then
+    echo "ERROR: --promote requires STAGING_PROMOTE_TOKEN or --promote-token." >&2
+    echo "       Pull the per-day token from Secret Manager before promoting." >&2
+    exit 2
+  fi
+
+  local expected
+  expected="${STAGING_PROMOTE_EXPECTED_TOKEN:-}"
+  if [ -z "$expected" ]; then
+    local secret_name="${STAGING_PROMOTE_SECRET:-staging-promote-token}"
+    expected=$(gcloud secrets versions access latest \
+      --secret="$secret_name" \
+      --project="$PROJECT" 2>/dev/null || true)
+  fi
+
+  if [ -z "$expected" ]; then
+    echo "ERROR: could not read expected staging promote token from Secret Manager." >&2
+    echo "       Set STAGING_PROMOTE_SECRET or STAGING_PROMOTE_EXPECTED_TOKEN for tests." >&2
+    exit 2
+  fi
+
+  if [ "$PROMOTE_TOKEN" != "$expected" ]; then
+    echo "ERROR: STAGING_PROMOTE_TOKEN does not match the current per-day promote token." >&2
+    exit 2
+  fi
+}
+
+check_image_exists() {
+  info "checking Artifact Registry image exists..."
+  if ! gcloud artifacts docker images describe "$IMAGE" \
+    --project="$PROJECT" \
+    --format="value(image_summary.fully_qualified_digest)" >/dev/null 2>&1; then
+    echo "ERROR: image does not exist or is not readable: $IMAGE" >&2
+    echo "       Build/push the worker image before running the staging deploy wrapper." >&2
+    exit 1
+  fi
+}
+
+check_recent_revision_collision() {
+  local now window revisions traffic conflicts
+  now="${STAGING_DEPLOY_NOW_EPOCH:-$(date -u +%s)}"
+  window="${STAGING_DEPLOY_COLLISION_WINDOW_SECONDS:-300}"
+
+  if ! revisions=$(gcloud run revisions list \
+    --service="$SERVICE" \
+    --region="$REGION" \
+    --project="$PROJECT" \
+    --sort-by="~metadata.creationTimestamp" \
+    --limit=10 \
+    --format=json 2>/dev/null); then
+    echo "ERROR: could not inspect recent Cloud Run revisions for $SERVICE." >&2
+    echo "       Refusing to deploy because collision detection could not run." >&2
+    exit 1
+  fi
+
+  traffic=$(gcloud run services describe "$SERVICE" \
+    --region="$REGION" \
+    --project="$PROJECT" \
+    --format=json\(status.traffic\) 2>/dev/null || true)
+  if [ -z "$traffic" ]; then
+    traffic='{}'
+  fi
+
+  conflicts=$(jq -nr \
+    --arg pr "$PR" \
+    --argjson now "$now" \
+    --argjson window "$window" \
+    --argjson revisions "$revisions" \
+    --argjson traffic "$traffic" '
+    def epoch:
+      if type == "string" then (sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601?)
+      else null end;
+    def tag_pr:
+      if type == "string" and test("^pr-[0-9]+$") then sub("^pr-"; "")
+      else null end;
+    ($traffic.status.traffic // []
+      | map(select(.revisionName != null and .tag != null) | { key: .revisionName, value: (.tag | tag_pr) })
+      | from_entries) as $pr_by_revision
+    |
+    [
+      $revisions[]?
+      | .metadata as $m
+      | ($m.creationTimestamp | epoch) as $created
+      | ($m.labels.pr // $pr_by_revision[$m.name] // "unlabeled") as $revision_pr
+      | select($created != null)
+      | select(($now - $created) >= 0 and ($now - $created) <= $window)
+      | select($revision_pr != $pr)
+      | "recent Cloud Run revision \($m.name // "unknown") from PR #\($revision_pr) is \($now - $created | floor)s old"
+    ] | .[]')
+
+  if [ -n "$conflicts" ]; then
+    echo "ERROR: refusing staging deploy because another lease holder deployed recently:" >&2
+    echo "$conflicts" | sed 's/^/  - /' >&2
+    echo "       Wait for the 5-minute collision window to pass or coordinate in #eng-staging." >&2
+    exit 1
+  fi
+}
+
 # ─── 1. Lease check ──────────────────────────────────────────────────
 LEASE_OK=true
 if LEASE_BODY=$(check_lease "$PR"); then
@@ -256,6 +368,8 @@ EOF
   fi
 fi
 
+require_promote_authorization
+
 # ─── 2. Pre-deploy banner ────────────────────────────────────────────
 info "------------------------------------------------------------"
 info "  service:   $SERVICE  (project=$PROJECT  region=$REGION)"
@@ -272,6 +386,9 @@ if [ $DRY_RUN -eq 1 ]; then
   info "DRY RUN — not deploying."
   exit 0
 fi
+
+check_image_exists
+check_recent_revision_collision
 
 # ─── 3. Deploy with tag, no traffic shift by default ─────────────────
 GCLOUD_FLAGS=(

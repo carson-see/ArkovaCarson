@@ -99,10 +99,19 @@ YOUR JOB IN THIS SESSION (in order, no deferring)
    * Ask Carson to run `gcloud auth login` interactively in the shell
      this session uses, then `gcloud config set project arkova1`, then
      confirm via `gcloud run services list --region us-central1`.
-   * Once auth works, `gcloud run deploy arkova-worker-staging
-     --source=services/worker --region=us-central1 --no-traffic
-     --min-instances=0 --service-account=<TBD> --set-env-vars
-     SUPABASE_URL=<staging-branch-url>,SUPABASE_SERVICE_ROLE_KEY=<staging-key>,...`.
+   * Historical note only — staging-gcloud-ok: pre-SCRUM-1803 provisioning transcript, do not use for current deploys.
+   * Once auth works, acquire the lease with
+     `./scripts/staging/claim.sh acquire <PR_NUMBER> "<short reason>"`, then
+     deploy via `./scripts/staging/deploy.sh --pr <PR_NUMBER> --image <worker-image-tag>`
+     so lease, promote-token, and preflight controls are enforced. If the lease
+     is already active for `<PR_NUMBER>`, confirm it with
+     `./scripts/staging/claim.sh status --pr <PR_NUMBER>` before deploying.
+     To choose `<worker-image-tag>`, list recent Artifact Registry tags with
+     `gcloud artifacts docker images list us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker --include-tags --limit=20`.
+     Prefer a PR-built tag such as `pr-<PR_NUMBER>-<short-sha>` from Cloud
+     Build or CI logs when validating PR code; use the current production image
+     tag when reproducing production behavior. If no suitable PR tag exists,
+     build one from the PR branch with Cloud Build before deploying.
      Pull the staging branch URL from Supabase MCP `get_project_url`.
      Pull `SUPABASE_SERVICE_ROLE_KEY` only from the approved service-role
      secret/key source for that project_ref; do not use publishable/anon

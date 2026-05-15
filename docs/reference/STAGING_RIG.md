@@ -140,7 +140,7 @@ allows the same set of files to coexist with non-canonical ledger entries.
 
 ## How to run a T2 soak (CLAUDE.md §1.12)
 
-**Updated 2026-05-09 — SCRUM-1803.** Multiple PRs can soak in parallel; each PR gets its own tag-routed Cloud Run revision URL via `scripts/staging/deploy.sh`. The lease is now per-PR (PRIMARY KEY on `pr_number`); deploys are gated by lease presence.
+**Updated 2026-05-09 — SCRUM-1803; hardened 2026-05-14 — SCRUM-1821.** Multiple PRs can soak in parallel; each PR gets its own tag-routed Cloud Run revision URL via `scripts/staging/deploy.sh`. The lease is now per-PR (PRIMARY KEY on `pr_number`); deploys are gated by lease presence, image existence, recent-revision collision detection, structured force reasons, and an extra promote token for main-URL traffic shifts. SCRUM-1821 also adds the dry-run/apply script for rotating staging deploy privileges from the default compute SA to a deploy-only SA.
 
 1. **Acquire your lease** — multiple PRs may hold leases simultaneously, but only one per PR:
 
@@ -150,11 +150,11 @@ allows the same set of files to coexist with non-canonical ledger entries.
    ./scripts/staging/claim.sh acquire <pr-number> "<short reason>"
    ```
 
-   `claim.sh` prints any other PRs currently soaking — that's expected; the tag URL pattern keeps them isolated.
+   `claim.sh` prints any other PRs currently soaking — that's expected; the tag URL pattern keeps them isolated. `./scripts/staging/claim.sh status` also lists each PR's tag URL plus the latest `staging_deploy_log` row id.
 
 2. **Build your image** — `gcloud builds submit --tag us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker:scrum-N-<sha>` from `services/worker/`.
 
-3. **Deploy via the lease-enforced wrapper** — refuses to deploy without a lease (override with `--force "<reason>"` for audited bypass):
+3. **Deploy via the lease-enforced wrapper** — refuses to deploy without a lease (override only with a structured Jira reason such as `--force "SCRUM-1821: recover contaminated soak"`):
 
    ```bash
    ./scripts/staging/deploy.sh --pr <N> --image <image-ref>
@@ -163,7 +163,7 @@ allows the same set of files to coexist with non-canonical ledger entries.
    #   STAGING_DEPLOY_LOG_ID=<row id for the PR evidence block>
    ```
 
-   The `--no-traffic` flag is implicit; the main URL is undisturbed unless you pass `--promote`. Each deploy writes a row to `staging_deploy_log` (append-only, audit-grade).
+   The wrapper checks that the image exists in Artifact Registry and refuses to proceed if another PR-labeled revision landed in the last 5 minutes. The `--no-traffic` flag is implicit; the main URL is undisturbed unless you pass `--promote` plus `STAGING_PROMOTE_TOKEN` from Secret Manager. Each deploy writes a row to `staging_deploy_log` (append-only, audit-grade).
 
 4. **Seed** — `npx tsx scripts/staging/seed.ts` against the staging Supabase project. Synthetic data only, namespaced by `org_prefix LIKE 'STG%'`.
 
@@ -202,7 +202,17 @@ The tag URL pattern is Cloud Run's native isolation: `--tag pr-N --no-traffic` c
 
 ### Force-deploy bypass
 
-`deploy.sh --force "<reason>"` skips the lease check but writes `forced=true` and the reason to `staging_deploy_log`. Use ONLY for genuine emergencies (recovering a contaminated soak from a different session, urgent prod hotfix needing same-session staging). Audit log is queryable by anyone reviewing soak evidence.
+`deploy.sh --force "<Jira>: <reason>"` skips the lease check but writes `forced=true` and the reason to `staging_deploy_log`. Use ONLY for genuine emergencies (recovering a contaminated soak from a different session, urgent prod hotfix needing same-session staging). Audit log is queryable by anyone reviewing soak evidence.
+
+### Orphan tag cleanup
+
+Run `./scripts/staging/cleanup-orphan-tags.sh` to inspect old tag URLs. The janitor is dry-run by default, reads current `pr-*` Cloud Run traffic tags, checks PR state through `gh api`, and removes tags only for closed or merged PRs older than 7 days when passed `--apply`. This is designed to be wired to Cloud Scheduler or an equivalent authenticated maintenance job.
+
+### Deploy-only IAM rotation
+
+SCRUM-1821 item 8 is handled by `./scripts/staging/rotate-deploy-iam.sh`. The script is dry-run by default and prints the exact `gcloud` commands. Live IAM mutation requires `--apply --confirm SCRUM-1821`; rollback uses `--rollback --apply --confirm SCRUM-1821`.
+
+The forward path creates/uses `arkova-staging-deployer@arkova1.iam.gserviceaccount.com`, grants `roles/artifactregistry.reader` on the `arkova-worker-images` repository so the deploy wrapper can preflight image existence, grants a conditioned `roles/run.developer` binding limited to `projects/arkova1/locations/us-central1/services/arkova-worker-staging`, grants `roles/iam.serviceAccountUser` on the runtime service account, and removes `roles/run.developer` from `270018525501-compute@developer.gserviceaccount.com`.
 
 ## Cost discipline
 

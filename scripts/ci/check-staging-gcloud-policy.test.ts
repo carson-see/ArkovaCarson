@@ -1,0 +1,135 @@
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { describe, expect, it } from 'vitest';
+
+import { collectFiles, scanTextForRawStagingGcloud } from './check-staging-gcloud-policy.js';
+
+const workflowText = (commandLines: string[]): string => ['run: |', ...commandLines].join('\n');
+
+const scanWorkflow = (commandLines: string[]) =>
+  scanTextForRawStagingGcloud('.github/workflows/staging.yml', workflowText(commandLines));
+
+describe('check-staging-gcloud-policy', () => {
+  it('collects tracked policy files from any repository path', () => {
+    const repo = mkdtempSync(join(tmpdir(), 'staging-gcloud-policy-'));
+    try {
+      mkdirSync(join(repo, '.git'), { recursive: true });
+      mkdirSync(join(repo, 'node_modules', 'pkg'), { recursive: true });
+      mkdirSync(join(repo, 'scratch'), { recursive: true });
+      mkdirSync(join(repo, 'src'), { recursive: true });
+      writeFileSync(join(repo, '.git', 'ignored.md'), 'gcloud run deploy arkova-worker-staging');
+      writeFileSync(join(repo, 'node_modules', 'pkg', 'ignored.md'), 'gcloud run deploy arkova-worker-staging');
+      writeFileSync(join(repo, 'scratch', 'manual.txt'), 'gcloud run deploy arkova-worker-staging');
+      writeFileSync(join(repo, 'src', 'workflow.yaml'), 'name: staging');
+      writeFileSync(join(repo, 'src', 'ignored.ts'), 'gcloud run deploy arkova-worker-staging');
+
+      expect(collectFiles(repo)).toEqual(['scratch/manual.txt', 'src/workflow.yaml']);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  it('flags raw staging gcloud deploy commands outside deploy.sh', () => {
+    const hits = scanTextForRawStagingGcloud(
+      'docs/staging/README.md',
+      'gcloud run deploy arkova-worker-staging --image us-central1-docker.pkg.dev/arkova1/img:tag',
+    );
+
+    expect(hits).toHaveLength(1);
+    expect(hits[0]).toMatchObject({ file: 'docs/staging/README.md', line: 1 });
+  });
+
+  it.each([
+    [
+      'multiline service updates',
+      ['  gcloud run services update \\', '    arkova-worker-staging \\', '    --region us-central1'],
+      'gcloud run services update',
+    ],
+    [
+      'long continuations',
+      [
+        '  gcloud run services update \\',
+        '    --region us-central1 \\',
+        '    --project arkova1 \\',
+        '    --update-env-vars A=1 \\',
+        '    --update-env-vars B=2 \\',
+        '    --update-env-vars C=3 \\',
+        '    arkova-worker-staging',
+      ],
+      'arkova-worker-staging',
+    ],
+    [
+      'token-split deploys',
+      ['  gcloud \\', '    run deploy \\', '    --region us-central1 \\', '    --project arkova1 \\', '    arkova-worker-staging'],
+      'arkova-worker-staging',
+    ],
+  ])('flags raw staging %s', (_label, commandLines, expectedText) => {
+    const hits = scanWorkflow(commandLines);
+
+    expect(hits).toHaveLength(1);
+    expect(hits[0].text).toContain(expectedText);
+  });
+
+  it('allows the lease-enforced deploy wrapper itself', () => {
+    const hits = scanTextForRawStagingGcloud(
+      'scripts/staging/deploy.sh',
+      'gcloud run services update "$SERVICE" "${GCLOUD_FLAGS[@]}"',
+    );
+
+    expect(hits).toEqual([]);
+  });
+
+  it('does not flag production worker deploys', () => {
+    const hits = scanTextForRawStagingGcloud(
+      'scripts/deploy-worker.sh',
+      'gcloud run deploy arkova-worker --source=services/worker/',
+    );
+
+    expect(hits).toEqual([]);
+  });
+
+  it('allows explicit exceptions with a nearby reason', () => {
+    const hits = scanTextForRawStagingGcloud(
+      'docs/staging/historical.md',
+      [
+        '# staging-gcloud-ok: historical incident transcript, do not run',
+        'gcloud run deploy arkova-worker-staging --image old',
+      ].join('\n'),
+    );
+
+    expect(hits).toEqual([]);
+  });
+
+  it('does not allow exception markers in executable shell files', () => {
+    const hits = scanTextForRawStagingGcloud(
+      'scripts/staging/bypass.sh',
+      [
+        '# staging-gcloud-ok: shell scripts must use scripts/staging/deploy.sh',
+        'gcloud run deploy arkova-worker-staging --image old',
+      ].join('\n'),
+    );
+
+    expect(hits).toHaveLength(1);
+  });
+
+  it('does not allow exception markers in shell files under docs', () => {
+    const hits = scanTextForRawStagingGcloud(
+      'docs/staging/bypass.sh',
+      [
+        '# staging-gcloud-ok: only prose transcripts may use this marker',
+        'gcloud run deploy arkova-worker-staging --image old',
+      ].join('\n'),
+    );
+
+    expect(hits).toHaveLength(1);
+  });
+
+  it('does not apply long-prefix docs heuristics to workflow files', () => {
+    const hits = scanWorkflow([
+      '      - name: intentionally long workflow prefix before raw gcloud command: gcloud run deploy arkova-worker-staging --image old',
+    ]);
+
+    expect(hits).toHaveLength(1);
+  });
+});
