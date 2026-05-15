@@ -200,6 +200,7 @@ router.get('/:publicId/lifecycle', async (req: Request, res: Response) => {
       return;
     }
 
+    // eslint-disable-next-line arkova/missing-org-filter -- scoped by target_id, ownership verified upstream
     const { data: events, error } = await dbAny
       .from('audit_events')
       .select('event_type, created_at, actor_id, details')

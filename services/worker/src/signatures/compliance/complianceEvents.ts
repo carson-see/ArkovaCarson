@@ -41,6 +41,7 @@ export async function checkCertificateExpiry(orgId: string): Promise<ComplianceE
   const events: ComplianceEvent[] = [];
   const now = new Date();
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- table not yet in generated database.types.ts
   const { data: certs } = await (db as any)
     .from('signing_certificates')
     .select('id, subject_cn, not_after, status')
@@ -159,6 +160,7 @@ export async function fireComplianceEvents(events: ComplianceEvent[]): Promise<v
             endpoint_id: ep.id,
             event_type: event.event_type,
             event_id: crypto.randomUUID(),
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any -- ComplianceEvent.data is Record<string,unknown>, incompatible with Supabase JSON type
             payload: event.data as any,
             status: 'pending',
           }).then(() => {}, () => {});

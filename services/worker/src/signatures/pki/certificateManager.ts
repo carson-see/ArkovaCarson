@@ -184,6 +184,7 @@ export class X509CertificateManager implements CertificateManager {
       notAfter: new Date(cert.validTo),
       keyAlgorithm,
       keySize,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Node.js X509Certificate type definition gap
       signatureAlgorithm: (cert as any).sigAlgName || 'unknown',
       fingerprintSha256: cert.fingerprint256.replace(/:/g, '').toLowerCase(),
       ocspUrls,

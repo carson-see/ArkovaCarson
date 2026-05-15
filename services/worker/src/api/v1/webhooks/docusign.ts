@@ -39,7 +39,7 @@ function signatureHeader(req: Request): string | undefined {
 }
 
 async function findIntegration(accountId: string): Promise<DocusignIntegrationRow | null> {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any, arkova/missing-org-filter -- webhook ingress: resolving org from external provider ID
   const { data, error } = await (db as any)
     .from('org_integrations')
     .select('id, org_id, account_id')
@@ -166,7 +166,7 @@ docusignWebhookRouter.post('/', async (req: Request, res: Response) => {
     // Replay protection: dedupe on (envelope_id, event_id, generated_at).
     // DocuSign retries on any non-2xx response, so a duplicate must return
     // 200 to stop the retry loop. Migration 0256 creates the nonce table.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any, arkova/missing-org-filter -- webhook ingress: resolving org from external provider ID
     const { error: nonceErr } = await (db as any)
       .from('docusign_webhook_nonces')
       .insert({

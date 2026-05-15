@@ -52,6 +52,7 @@ async function lookupSubscriptionOrThrow<T>(
     .from('subscriptions')
     .select(selectCols)
     .eq('stripe_subscription_id', stripeSubscriptionId)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Supabase select chain return type varies by runtime columns
     .maybeSingle() as any);
   if (error) {
     logger.error(

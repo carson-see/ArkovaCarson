@@ -150,6 +150,7 @@ async function tryX402(req: Request): Promise<PaymentResolution | null> {
   if (!data) return null;
 
   // Mark payment as consumed to prevent replay
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- table not yet in generated database.types.ts
   await (db as any)
     .from('x402_payments')
     .update({ consumed_at: new Date().toISOString() })
