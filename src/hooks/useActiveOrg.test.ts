@@ -73,7 +73,7 @@ describe('resolveActiveOrg (SCRUM-1651 ORG-02)', () => {
       urlOrgId: null,
       sessionOrgId: null,
       profileOrgId: ORG_PARENT,
-      membershipOrgIds: [], // membership was revoked since profile cached
+      membershipOrgIds: [],
     });
     expect(r.orgId).toBeNull();
     expect(r.source.kind).toBe('none');
@@ -82,9 +82,9 @@ describe('resolveActiveOrg (SCRUM-1651 ORG-02)', () => {
   it('sessionOrgId pointing to a revoked membership falls through to profile.org_id', () => {
     const r = resolveActiveOrg({
       urlOrgId: null,
-      sessionOrgId: ORG_SUB,           // user picked the sub-org from the switcher
-      profileOrgId: ORG_PARENT,        // legacy primary
-      membershipOrgIds: [ORG_PARENT],  // ORG_SUB membership has been revoked since
+      sessionOrgId: ORG_SUB,
+      profileOrgId: ORG_PARENT,
+      membershipOrgIds: [ORG_PARENT],
     });
     expect(r.orgId).toBe(ORG_PARENT);
     expect(r.source.kind).toBe('implicit_primary');
@@ -129,6 +129,14 @@ describe('resolveActiveOrg (SCRUM-1651 ORG-02)', () => {
 
 const ORG_UNRELATED = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
 
+const TARGET_MAP = {
+  'parent-org': ORG_PARENT,
+  'sub-org': ORG_SUB,
+  'unrelated-org': ORG_UNRELATED,
+} as const;
+
+type TargetLabel = keyof typeof TARGET_MAP;
+
 type ActorScenario = {
   label: string;
   membershipOrgIds: string[];
@@ -147,13 +155,8 @@ const actors: ActorScenario[] = [
 describe('Cross-tenant negative test matrix (SCRUM-1651 ORG-12)', () => {
   describe('URL-based attacks: attacker pastes /orgs/:targetOrg in URL', () => {
     for (const actor of actors) {
-      for (const targetLabel of ['parent-org', 'sub-org', 'unrelated-org'] as const) {
-        const targetMap = {
-          'parent-org': ORG_PARENT,
-          'sub-org': ORG_SUB,
-          'unrelated-org': ORG_UNRELATED,
-        };
-        const targetOrgId = targetMap[targetLabel];
+      for (const targetLabel of Object.keys(TARGET_MAP) as TargetLabel[]) {
+        const targetOrgId = TARGET_MAP[targetLabel];
         const isMember = actor.membershipOrgIds.includes(targetOrgId);
 
         if (isMember) continue; // skip — legitimate access
@@ -165,10 +168,7 @@ describe('Cross-tenant negative test matrix (SCRUM-1651 ORG-12)', () => {
             profileOrgId: actor.profileOrgId,
             membershipOrgIds: actor.membershipOrgIds,
           });
-          // The resolved orgId must NEVER be the target the attacker tried.
           expect(r.orgId).not.toBe(targetOrgId);
-          // If the attacker's own profile.org_id is a valid membership,
-          // the resolver falls through to it. Otherwise → none.
           if (actor.profileOrgId && actor.membershipOrgIds.includes(actor.profileOrgId)) {
             expect(r.orgId).toBe(actor.profileOrgId);
           } else {
@@ -182,13 +182,8 @@ describe('Cross-tenant negative test matrix (SCRUM-1651 ORG-12)', () => {
 
   describe('Session-poisoning attacks: attacker sets localStorage to another org', () => {
     for (const actor of actors) {
-      for (const targetLabel of ['parent-org', 'sub-org', 'unrelated-org'] as const) {
-        const targetMap = {
-          'parent-org': ORG_PARENT,
-          'sub-org': ORG_SUB,
-          'unrelated-org': ORG_UNRELATED,
-        };
-        const targetOrgId = targetMap[targetLabel];
+      for (const targetLabel of Object.keys(TARGET_MAP) as TargetLabel[]) {
+        const targetOrgId = TARGET_MAP[targetLabel];
         const isMember = actor.membershipOrgIds.includes(targetOrgId);
 
         if (isMember) continue;
@@ -205,6 +200,7 @@ describe('Cross-tenant negative test matrix (SCRUM-1651 ORG-12)', () => {
             expect(r.orgId).toBe(actor.profileOrgId);
           } else {
             expect(r.orgId).toBeNull();
+            expect(r.source.kind).toBe('none');
           }
         });
       }
@@ -213,13 +209,8 @@ describe('Cross-tenant negative test matrix (SCRUM-1651 ORG-12)', () => {
 
   describe('Profile-drift attacks: profile.org_id points to an org with revoked membership', () => {
     for (const actor of actors.filter(a => a.membershipOrgIds.length > 0)) {
-      for (const targetLabel of ['parent-org', 'sub-org', 'unrelated-org'] as const) {
-        const targetMap = {
-          'parent-org': ORG_PARENT,
-          'sub-org': ORG_SUB,
-          'unrelated-org': ORG_UNRELATED,
-        };
-        const targetOrgId = targetMap[targetLabel];
+      for (const targetLabel of Object.keys(TARGET_MAP) as TargetLabel[]) {
+        const targetOrgId = TARGET_MAP[targetLabel];
         const isMember = actor.membershipOrgIds.includes(targetOrgId);
 
         if (isMember) continue;
@@ -228,11 +219,10 @@ describe('Cross-tenant negative test matrix (SCRUM-1651 ORG-12)', () => {
           const r = resolveActiveOrg({
             urlOrgId: null,
             sessionOrgId: null,
-            profileOrgId: targetOrgId, // drifted — points to non-member org
+            profileOrgId: targetOrgId,
             membershipOrgIds: actor.membershipOrgIds,
           });
           expect(r.orgId).not.toBe(targetOrgId);
-          // profileOrgId not in membershipOrgIds → implicit_primary skipped → none.
           expect(r.orgId).toBeNull();
           expect(r.source.kind).toBe('none');
         });
@@ -308,13 +298,7 @@ describe('Cross-tenant negative test matrix (SCRUM-1651 ORG-12)', () => {
   });
 
   describe('Operation-scoped invariant: resolved orgId is always in membershipOrgIds or null', () => {
-    const attackCombinations: Array<{
-      label: string;
-      urlOrgId: string | null;
-      sessionOrgId: string | null;
-      profileOrgId: string | null;
-      membershipOrgIds: string[];
-    }> = [
+    const attackCombinations: Array<Parameters<typeof resolveActiveOrg>[0] & { label: string }> = [
       { label: 'URL attack only', urlOrgId: ORG_OTHER_TENANT, sessionOrgId: null, profileOrgId: null, membershipOrgIds: [ORG_PARENT] },
       { label: 'URL + session attack', urlOrgId: ORG_OTHER_TENANT, sessionOrgId: ORG_OTHER_TENANT, profileOrgId: null, membershipOrgIds: [ORG_PARENT] },
       { label: 'all three inputs foreign', urlOrgId: ORG_OTHER_TENANT, sessionOrgId: ORG_OTHER_TENANT, profileOrgId: ORG_OTHER_TENANT, membershipOrgIds: [ORG_PARENT] },
