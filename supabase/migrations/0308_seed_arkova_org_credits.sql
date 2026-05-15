@@ -12,7 +12,7 @@
 -- operational for audit and future billing.
 
 INSERT INTO org_credits (org_id, balance, monthly_allocation, purchased, cycle_start, cycle_end, is_test, anchor_quota)
-VALUES (
+SELECT
   '40383eb2-f1cd-4a85-8099-afafff95e5cf',
   50,
   50, -- Free tier (cost-tracker.ts CREDIT_ALLOCATIONS.free)
@@ -21,5 +21,5 @@ VALUES (
   date_trunc('month', now()) + interval '1 month',
   false,
   NULL
-)
+WHERE EXISTS (SELECT 1 FROM organizations WHERE id = '40383eb2-f1cd-4a85-8099-afafff95e5cf')
 ON CONFLICT (org_id) DO NOTHING;
