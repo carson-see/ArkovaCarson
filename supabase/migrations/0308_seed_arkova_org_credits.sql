@@ -21,5 +21,8 @@ SELECT
   date_trunc('month', now()) + interval '1 month',
   false,
   NULL
-WHERE EXISTS (SELECT 1 FROM organizations WHERE id = '40383eb2-f1cd-4a85-8099-afafff95e5cf')
+WHERE EXISTS (
+  SELECT 1 FROM organizations
+  WHERE id = '40383eb2-f1cd-4a85-8099-afafff95e5cf'
+)
 ON CONFLICT (org_id) DO NOTHING;
