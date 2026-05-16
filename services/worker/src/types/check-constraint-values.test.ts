@@ -43,11 +43,6 @@ const BASELINE_PATH = resolve(
   '../../../../supabase/migrations/00000000000000_baseline_at_main_HEAD.sql',
 );
 
-const EXPAND_MIGRATION_PATH = resolve(
-  __dirname,
-  '../../../../supabase/migrations/0307_expand_audit_event_category_constraint.sql',
-);
-
 function parseCheckConstraint(sql: string, constraintName: string): string[] {
   const pattern = new RegExp(
     `CONSTRAINT\\s+"${constraintName}"\\s+CHECK\\s*\\(.*?ARRAY\\[([^\\]]+)\\]`,
@@ -55,22 +50,10 @@ function parseCheckConstraint(sql: string, constraintName: string): string[] {
   );
   const match = sql.match(pattern);
   if (!match) return [];
-  return [...match[1].matchAll(/'([^']+)'::"text"/g)].map((m) => m[1]);
+  return [...match[1].matchAll(/'([^']+)'::"?text"?/g)].map((m) => m[1]);
 }
 
-let baselineSql: string;
-try {
-  baselineSql = readFileSync(BASELINE_PATH, 'utf-8');
-} catch {
-  baselineSql = '';
-}
-
-let expandSql: string;
-try {
-  expandSql = readFileSync(EXPAND_MIGRATION_PATH, 'utf-8');
-} catch {
-  expandSql = '';
-}
+const baselineSql = readFileSync(BASELINE_PATH, 'utf-8');
 
 describe('check-constraint-values', () => {
   describe('no duplicates in any const array', () => {
@@ -117,7 +100,7 @@ describe('check-constraint-values', () => {
     }
   });
 
-  describe.skipIf(!baselineSql)('matches baseline CHECK constraints', () => {
+  describe('matches baseline CHECK constraints', () => {
     const cases: Array<{
       name: string;
       constraint: string;
@@ -152,10 +135,7 @@ describe('check-constraint-values', () => {
     for (const { name, constraint, tsArray } of cases) {
       it(`${name} matches ${constraint}`, () => {
         const dbValues = parseCheckConstraint(baselineSql, constraint);
-        if (dbValues.length === 0) {
-          // Constraint not found in baseline — might use a different naming pattern
-          return;
-        }
+        expect(dbValues.length, `Constraint not found in baseline: ${constraint}`).toBeGreaterThan(0);
         const tsSet = new Set(tsArray);
         const dbSet = new Set(dbValues);
         expect([...tsSet].sort()).toEqual([...dbSet].sort());
