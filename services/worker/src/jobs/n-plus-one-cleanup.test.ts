@@ -128,9 +128,9 @@ describe('SCRUM-1296: cloud-logging-drain bumpRetryCounts', () => {
       error: null,
     };
 
-    let callIndex = 0;
+    let _callIndex = 0;
     mockDbFrom.mockImplementation(() => {
-      callIndex++;
+      _callIndex++;
       const chain: Record<string, unknown> = {};
       const methods = ['eq', 'is', 'lt', 'lte', 'gte', 'not', 'in', 'limit', 'single', 'maybeSingle', 'order'];
       for (const m of methods) {
