@@ -20,8 +20,8 @@
 
 | PR | Branch | Tier | Scope | Status |
 |---|---|---|---|---|
-| [#812](https://github.com/carson-see/ArkovaCarson/pull/812) | `feat/scrum-1101-docusign-connect-provision` | T2 | SCRUM-1718: DocuSign Connect auto-provisioning + E2E spec (9 E2E, 13 component tests) | CI green except SonarCloud (2 hotspots), Tests pending |
-| [#815](https://github.com/carson-see/ArkovaCarson/pull/815) | `claude/lucid-heisenberg-f6c757` | T1 | SCRUM-1729: Outbound webhook delivery round-trip integration test (15 tests) + CI fixes | CI re-running after fixes |
+| [#812](https://github.com/carson-see/ArkovaCarson/pull/812) | `feat/scrum-1101-docusign-connect-provision` | T2 | SCRUM-1718: DocuSign Connect auto-provisioning + E2E spec (9 E2E, 13 component tests) | 21/24 checks pass; SonarCloud + TypeCheck pending (security.exclusions fix applied) |
+| [#815](https://github.com/carson-see/ArkovaCarson/pull/815) | `claude/lucid-heisenberg-f6c757` | T1 (staging-tooling-only) | SCRUM-1729: Webhook round-trip test (15 tests) + CI fixes + SonarCloud config | CI workflow not re-triggering (GH Actions bug); previous full CI passed |
 
 **Jira transitions this session:** SCRUM-1737 (To Do → In Progress), SCRUM-1738 (To Do → In Progress). SCRUM-1648 and SCRUM-1803 confirmed Done with all subtasks. SCRUM-1649 code complete, awaiting DS-AUTO-02 E2E verification (SCRUM-1658).
 
