@@ -29,6 +29,19 @@ const STATUS_LABELS: Record<BadgeStatus, string> = {
 };
 
 /**
+ * Escape a string for safe use in SVG/XML attributes.
+ * Prevents XSS via crafted publicId values.
+ */
+function escapeXml(str: string): string {
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+/**
  * Generate an Arkova verification badge SVG string.
  *
  * @param publicId - The public verification ID
@@ -36,6 +49,8 @@ const STATUS_LABELS: Record<BadgeStatus, string> = {
  * @returns SVG markup string
  */
 export function generateBadgeSvg(publicId: string, options: BadgeSvgOptions = {}): string {
+  // Sanitize publicId for use in SVG attributes
+  const safeId = escapeXml(publicId.replace(/[^a-zA-Z0-9_-]/g, '_'));
   const { status = 'verified', width = 180 } = options;
   const colors = STATUS_COLORS[status];
   const statusLabel = STATUS_LABELS[status];
@@ -46,14 +61,14 @@ export function generateBadgeSvg(publicId: string, options: BadgeSvgOptions = {}
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img" aria-label="${BADGE_LABELS.ALT_TEXT}">
   <title>${BADGE_LABELS.TITLE}</title>
   <defs>
-    <linearGradient id="bg-${publicId}" x1="0" y1="0" x2="1" y2="0">
+    <linearGradient id="bg-${safeId}" x1="0" y1="0" x2="1" y2="0">
       <stop offset="0" stop-color="#1e293b"/>
       <stop offset="${arkovaWidth / width}" stop-color="#1e293b"/>
       <stop offset="${arkovaWidth / width}" stop-color="${colors.bg}"/>
       <stop offset="1" stop-color="${colors.bg}"/>
     </linearGradient>
   </defs>
-  <rect width="${width}" height="${height}" rx="4" fill="url(#bg-${publicId})"/>
+  <rect width="${width}" height="${height}" rx="4" fill="url(#bg-${safeId})"/>
   <rect x="${arkovaWidth}" width="${statusWidth}" height="${height}" rx="0" fill="${colors.bg}"/>
   <rect x="${width - 4}" width="4" height="${height}" rx="0" fill="${colors.bg}"/>
   <rect width="4" height="${height}" rx="0" fill="#1e293b"/>
