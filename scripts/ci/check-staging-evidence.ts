@@ -313,7 +313,7 @@ export function isStagingToolingOnly(files: string[]): StagingFilesOnlyResult {
     // ESLint rules and config are dev-time lint tooling, not runtime code.
     // Changes here affect CI's lint step, not the deployed worker.
     /^eslint-rules\//,
-    /eslint\.config\.(js|cjs|mjs)$/,
+    /(^|\/)eslint\.config\.(js|cjs|mjs)$/,
   ];
   for (const f of files) {
     if (!ALLOW.some((re) => re.test(f))) {
