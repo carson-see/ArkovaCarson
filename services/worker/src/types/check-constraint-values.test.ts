@@ -138,7 +138,7 @@ describe('check-constraint-values', () => {
         expect(dbValues.length, `Constraint not found in baseline: ${constraint}`).toBeGreaterThan(0);
         const tsSet = new Set(tsArray);
         const dbSet = new Set(dbValues);
-        expect([...tsSet].sort()).toEqual([...dbSet].sort());
+        expect([...tsSet].sort((a, b) => a.localeCompare(b))).toEqual([...dbSet].sort((a, b) => a.localeCompare(b)));
       });
     }
   });
