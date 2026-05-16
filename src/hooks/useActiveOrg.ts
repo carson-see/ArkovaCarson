@@ -142,9 +142,11 @@ export function useActiveOrg(): UseActiveOrgResult {
   const { profile, loading: profileLoading } = useProfile();
   const { orgs, loading: orgsLoading } = useUserOrgs();
 
+  const orgIdKey = useMemo(() => orgs.map((o) => o.orgId).sort().join('\0'), [orgs]);
+  const membershipOrgIds = useMemo(() => orgIdKey.split('\0').filter(Boolean), [orgIdKey]);
+
   return useMemo<UseActiveOrgResult>(() => {
     const sessionOrgId = readSessionOrg();
-    const membershipOrgIds = orgs.map((o) => o.orgId);
     const { orgId, source, hasMultipleMemberships } = resolveActiveOrg({
       urlOrgId: params.orgId ?? null,
       sessionOrgId,
@@ -157,5 +159,5 @@ export function useActiveOrg(): UseActiveOrgResult {
       hasMultipleMemberships,
       loading: profileLoading || orgsLoading,
     };
-  }, [params.orgId, profile?.org_id, profileLoading, orgs, orgsLoading]);
+  }, [params.orgId, profile?.org_id, profileLoading, membershipOrgIds, orgsLoading]);
 }
