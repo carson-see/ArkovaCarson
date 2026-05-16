@@ -44,6 +44,9 @@ import {
 import { ExplorerLink } from '@/components/ui/ExplorerLink';
 import { ComplianceBadge } from '@/components/anchor/ComplianceBadge';
 import { EvidenceLayersSection } from '@/components/verification/EvidenceLayersSection';
+import { SourceProvenanceDisplay } from '@/components/verification/SourceProvenanceDisplay';
+import { LinkedInCredentialHelper } from '@/components/verification/LinkedInCredentialHelper';
+import type { SourceProvenanceData } from '@/lib/sourceProvenance';
 
 interface PublicAnchorData {
   public_id: string;
@@ -77,6 +80,13 @@ interface PublicAnchorData {
   jurisdiction?: string;
   /** BETA-12: Immutable description */
   description?: string;
+  /** CSI-03: Source provenance fields */
+  source_url?: string;
+  source_provider?: string;
+  verification_level?: string;
+  evidence_package_hash?: string;
+  source_payload_hash?: string;
+  fetched_at?: string;
   error?: string;
 }
 
@@ -421,6 +431,35 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
         )}
 
         {/* ============================================================
+            SECTION 2e: Source Provenance (CSI-03)
+            ============================================================ */}
+        {(data.verification_level || data.source_url || data.source_provider) && (
+          <>
+            <Separator />
+            <SourceProvenanceDisplay
+              data={{
+                source_url: data.source_url,
+                source_provider: data.source_provider,
+                verification_level: data.verification_level as import('@/lib/sourceProvenance').VerificationLevel,
+                evidence_package_hash: data.evidence_package_hash,
+                source_payload_hash: data.source_payload_hash,
+                fetched_at: data.fetched_at,
+              }}
+            />
+          </>
+        )}
+
+        {/* ============================================================
+            SECTION 2f: LinkedIn Share (CSI-03)
+            ============================================================ */}
+        {isSecured && (
+          <>
+            <Separator />
+            <LinkedInCredentialHelper publicId={data.public_id} />
+          </>
+        )}
+
+        {/* ============================================================
             SECTION 3: Cryptographic Proof (terminal proof states only)
             ============================================================ */}
         {hasProof && (
@@ -517,7 +556,7 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
         <ProvenanceTimeline publicId={data.public_id} />
 
         {/* ============================================================
-            SECTION 5: Proof Download (UF-07)
+            SECTION 5: Proof Download (UF-07 + CSI-03 enrichment)
             ============================================================ */}
         {hasProof && (
           <>
@@ -531,6 +570,14 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
               filename={data.filename}
               securedAt={data.secured_at ?? data.anchor_timestamp}
               networkReceiptId={data.network_receipt_id}
+              sourceProvenance={{
+                source_url: data.source_url,
+                source_provider: data.source_provider,
+                verification_level: data.verification_level as SourceProvenanceData["verification_level"],
+                evidence_package_hash: data.evidence_package_hash,
+                source_payload_hash: data.source_payload_hash,
+                fetched_at: data.fetched_at,
+              }}
             />
           </>
         )}

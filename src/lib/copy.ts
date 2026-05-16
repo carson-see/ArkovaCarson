@@ -2574,5 +2574,55 @@ export const PRIVACY_NOTICE_LABELS = {
   INFORMATION_OFFICER_LABEL: 'Information Officer',
 } as const;
 
+// ─── Evidence Level Labels (CSI-03 / SCRUM-1599) ─────────────────────────────
+
+export const EVIDENCE_LEVEL_LABELS: Record<string, string> = {
+  issuer_anchored: 'Issuer Anchored',
+  source_signed: 'Source Signed',
+  account_linked: 'Account Linked',
+  captured_url: 'Captured URL Evidence',
+  ai_captured: 'AI-Captured Evidence',
+} as const;
+
+export const EVIDENCE_LEVEL_DESCRIPTIONS: Record<string, string> = {
+  issuer_anchored: 'Verified directly with the issuing organization. The credential was cryptographically anchored by the original issuer.',
+  source_signed: 'The credential source provided a cryptographic signature proving origin and integrity.',
+  account_linked: 'Imported from an authenticated account. The holder proved access to the issuing platform.',
+  captured_url: 'Captured from a public URL. The content was fetched and fingerprinted at the recorded time.',
+  ai_captured: 'Extracted using AI from an uploaded document. Content was parsed and structured automatically.',
+} as const;
+
+// ─── Source Provenance Display (CSI-03 / SCRUM-1599) ──────────────────────────
+
+export const SOURCE_PROVENANCE_LABELS = {
+  SECTION_TITLE: 'Source Provenance',
+  EVIDENCE_LEVEL_LABEL: 'Evidence Level',
+  SOURCE_URL_LABEL: 'Source',
+  PROVIDER_LABEL: 'Provider',
+  FETCHED_AT_LABEL: 'Captured',
+  BADGE_ALT: 'Arkova Verified',
+  SHARE_LINKEDIN_LABEL: 'Add to LinkedIn Profile',
+  SHARE_LINKEDIN_DESCRIPTION: 'Use your Arkova verification URL as the Credential URL on LinkedIn.',
+  PROOF_SECTION_TITLE: 'Evidence Package',
+  PROOF_SECTION_DESCRIPTION: 'Cryptographic proof of source provenance included in the verification record.',
+} as const;
+
+// ─── LinkedIn Share (CSI-03 / SCRUM-1599) ─────────────────────────────────────
+
+export const LINKEDIN_SHARE_LABELS = {
+  CREDENTIAL_URL_LABEL: 'Credential URL for LinkedIn',
+  COPY_URL: 'Copy verification URL',
+  URL_COPIED: 'Verification URL copied to clipboard',
+  NOTE: 'Use this URL as the Credential URL when adding to your LinkedIn profile.',
+  CREDENTIAL_URL_HELP: 'This links to your Arkova verification page, not a native LinkedIn badge.',
+} as const;
+
+// ─── Badge SVG (CSI-03 / SCRUM-1599) ─────────────────────────────────────────
+
+export const BADGE_LABELS = {
+  ALT_TEXT: 'Arkova Verified',
+  TITLE: 'Arkova Verification Badge',
+} as const;
+
 /** DPO/Information Officer contact — single source for all jurisdictions (REG-28) */
 export const PRIVACY_CONTACT_EMAIL = 'privacy@arkova.ai';
