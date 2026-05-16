@@ -50,6 +50,13 @@ export async function checkAttestationExpiry(): Promise<ExpiryResult> {
 
     result.checked = expiringAttestations?.length ?? 0;
 
+    // SCRUM-1296: Collect webhook events for bulk insert instead of per-row inserts
+    const webhookInserts: Array<{
+      org_id: string;
+      event_type: string;
+      payload: Record<string, unknown>;
+    }> = [];
+
     for (const att of (expiringAttestations ?? [])) {
       const expiresAt = new Date(att.expires_at);
       const daysUntilExpiry = Math.ceil((expiresAt.getTime() - now.getTime()) / (24 * 60 * 60 * 1000));
@@ -57,7 +64,6 @@ export async function checkAttestationExpiry(): Promise<ExpiryResult> {
       let eventType: string | null = null;
 
       if (daysUntilExpiry <= 0) {
-        // Should not happen (we filtered >= now) but handle edge case
         result.newly_expired++;
         eventType = 'attestation.expired';
       } else if (daysUntilExpiry <= 7) {
@@ -69,24 +75,18 @@ export async function checkAttestationExpiry(): Promise<ExpiryResult> {
       }
 
       if (eventType && att.attester_org_id) {
-        // Queue webhook event for the attester's org
-        try {
-          await dbAny.from('webhook_events').insert({
-            org_id: att.attester_org_id,
-            event_type: eventType,
-            payload: {
-              public_id: att.public_id,
-              attestation_type: att.attestation_type,
-              subject_identifier: att.subject_identifier,
-              attester_name: att.attester_name,
-              expires_at: att.expires_at,
-              days_until_expiry: daysUntilExpiry,
-            },
-          });
-          result.webhooks_queued++;
-        } catch (webhookError) {
-          logger.warn({ error: webhookError, publicId: att.public_id }, 'Failed to queue expiry webhook');
-        }
+        webhookInserts.push({
+          org_id: att.attester_org_id,
+          event_type: eventType,
+          payload: {
+            public_id: att.public_id,
+            attestation_type: att.attestation_type,
+            subject_identifier: att.subject_identifier,
+            attester_name: att.attester_name,
+            expires_at: att.expires_at,
+            days_until_expiry: daysUntilExpiry,
+          },
+        });
       }
     }
 
@@ -101,32 +101,45 @@ export async function checkAttestationExpiry(): Promise<ExpiryResult> {
     if (!expiredError && justExpired?.length) {
       result.newly_expired += justExpired.length;
 
-      for (const att of justExpired) {
-        // Update status to EXPIRED
-        await dbAny
-          .from('attestations')
-          .update({ status: 'EXPIRED' })
-          .eq('id', att.id);
+      // SCRUM-1296: Bulk status update — single .in() call instead of N individual updates
+      const expiredIds = justExpired.map((att: { id: string }) => att.id);
+      const { error: bulkUpdateErr } = await dbAny
+        .from('attestations')
+        .update({ status: 'EXPIRED' })
+        .in('id', expiredIds);
 
-        // Queue expired webhook event
+      if (bulkUpdateErr) {
+        logger.error({ error: bulkUpdateErr, count: expiredIds.length }, 'Failed to bulk-update expired attestations');
+      }
+
+      // Collect expired webhook events for bulk insert
+      for (const att of justExpired) {
         if (att.attester_org_id) {
-          try {
-            await dbAny.from('webhook_events').insert({
-              org_id: att.attester_org_id,
-              event_type: 'attestation.expired',
-              payload: {
-                public_id: att.public_id,
-                attestation_type: att.attestation_type,
-                subject_identifier: att.subject_identifier,
-                attester_name: att.attester_name,
-                expires_at: att.expires_at,
-              },
-            });
-            result.webhooks_queued++;
-          } catch (webhookError) {
-            logger.warn({ error: webhookError, publicId: att.public_id }, 'Failed to queue expired webhook');
-          }
+          webhookInserts.push({
+            org_id: att.attester_org_id,
+            event_type: 'attestation.expired',
+            payload: {
+              public_id: att.public_id,
+              attestation_type: att.attestation_type,
+              subject_identifier: att.subject_identifier,
+              attester_name: att.attester_name,
+              expires_at: att.expires_at,
+            },
+          });
         }
+      }
+    }
+
+    // SCRUM-1296: Single bulk insert for all webhook events
+    if (webhookInserts.length > 0) {
+      const { error: insertErr } = await dbAny
+        .from('webhook_events')
+        .insert(webhookInserts);
+
+      if (insertErr) {
+        logger.warn({ error: insertErr, count: webhookInserts.length }, 'Failed to bulk-insert expiry webhooks');
+      } else {
+        result.webhooks_queued = webhookInserts.length;
       }
     }
 
