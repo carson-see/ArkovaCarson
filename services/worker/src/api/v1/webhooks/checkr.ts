@@ -62,7 +62,7 @@ function accountHeader(req: Request): string | undefined {
 
 async function findIntegration(accountId: string | undefined): Promise<CheckrIntegrationRow | null> {
   if (!accountId) return null;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any, arkova/missing-org-filter -- webhook ingress: resolving org from external Checkr account_id
   const { data, error } = await (db as any)
     .from('org_integrations')
     .select('id, org_id, account_id')

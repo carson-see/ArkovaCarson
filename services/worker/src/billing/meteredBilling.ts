@@ -1,3 +1,4 @@
+/* eslint-disable arkova/missing-org-filter -- cross-org cron: metered billing batch processes all active subscriptions */
 /**
  * Stripe Metered Billing (PAY-02 / SCRUM-443)
  *

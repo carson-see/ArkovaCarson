@@ -1,3 +1,4 @@
+/* eslint-disable arkova/missing-org-filter -- webhook ingress: org resolved from integration_id passed by drive webhook handler */
 /**
  * Drive changes-feed runner — webhook ↔ processor glue (SCRUM-1661 [Verify]).
  *

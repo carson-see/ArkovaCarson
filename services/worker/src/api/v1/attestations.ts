@@ -1,3 +1,4 @@
+/* eslint-disable arkova/missing-org-filter -- public verification endpoints: attestation lookup/list/verify are intentionally cross-tenant */
 /**
  * Attestations API (Phase II)
  *

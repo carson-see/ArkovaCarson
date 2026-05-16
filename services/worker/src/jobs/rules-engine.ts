@@ -1,3 +1,4 @@
+/* eslint-disable arkova/missing-org-filter -- cross-org cron: claims events across all orgs, groups by org_id before rule evaluation */
 /**
  * Rules Engine Execution Worker (ARK-106 — SCRUM-1018)
  *

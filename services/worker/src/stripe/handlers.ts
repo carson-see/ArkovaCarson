@@ -1,3 +1,4 @@
+/* eslint-disable arkova/missing-org-filter -- webhook ingress: org resolved from stripe_subscription_id, not available at query time */
 /**
  * Stripe Webhook Handlers
  *

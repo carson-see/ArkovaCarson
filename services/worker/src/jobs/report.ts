@@ -53,11 +53,13 @@ async function generateAnchorSummary(userId: string, orgId: string | null): Prom
  * Generate compliance audit report
  */
 async function generateComplianceAudit(userId: string, orgId: string | null): Promise<Record<string, unknown>> {
-  // Fetch audit events
-  const { data: events } = await db
+  // eslint-disable-next-line arkova/missing-org-filter -- org_id conditionally applied below when non-null
+  let query = db
     .from('audit_events')
-    .select('*')
-    .eq('actor_id', userId)
+    .select('event_type, event_category, actor_id, target_type, target_id, org_id, details, created_at')
+    .eq('actor_id', userId);
+  if (orgId) query = query.eq('org_id', orgId);
+  const { data: events } = await query
     .order('created_at', { ascending: false })
     .limit(1000);
 
@@ -74,11 +76,13 @@ async function generateComplianceAudit(userId: string, orgId: string | null): Pr
  * Generate activity log report
  */
 async function generateActivityLog(userId: string, orgId: string | null): Promise<Record<string, unknown>> {
-  // Fetch recent activity
-  const { data: activity } = await db
+  // eslint-disable-next-line arkova/missing-org-filter -- org_id conditionally applied below when non-null
+  let query = db
     .from('audit_events')
     .select('event_type, event_category, created_at, details')
-    .eq('actor_id', userId)
+    .eq('actor_id', userId);
+  if (orgId) query = query.eq('org_id', orgId);
+  const { data: activity } = await query
     .order('created_at', { ascending: false })
     .limit(500);
 
