@@ -315,9 +315,12 @@ test.describe('DocuSign integration', () => {
         .single();
       expect(error).toBeNull();
 
-      // If individual has no org, they can't access any org settings — valid security posture
-      if (!profile?.org_id) {
-        // Navigate to the org admin's org settings as the individual user
+      // If individual has their own org, navigate to its settings. Otherwise,
+      // navigate to the org admin's org settings as the individual user to test
+      // the authz boundary (they shouldn't be able to connect).
+      if (profile?.org_id) {
+        await individualPage.goto(`/organizations/${profile.org_id}?tab=settings`);
+      } else {
         const { data: adminProfile } = await service
           .from('profiles')
           .select('org_id')
@@ -325,8 +328,6 @@ test.describe('DocuSign integration', () => {
           .single();
         if (!adminProfile?.org_id) return; // No org to test against
         await individualPage.goto(`/organizations/${adminProfile.org_id}?tab=settings`);
-      } else {
-        await individualPage.goto(`/organizations/${profile.org_id}?tab=settings`);
       }
 
       // Either the settings tab redirects/hides the connector, or the API

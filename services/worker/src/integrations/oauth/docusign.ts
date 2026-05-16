@@ -276,6 +276,23 @@ export interface ProvisionConnectResult {
   action: 'created' | 'updated';
 }
 
+/** Parse and validate a Connect API response, throwing DocusignApiError on mismatch. */
+function parseConnectConfigResponse(
+  json: unknown,
+  status: number,
+  operation: string,
+): z.infer<typeof ConnectConfigurationResponse> {
+  try {
+    return ConnectConfigurationResponse.parse(json);
+  } catch (e) {
+    throw new DocusignApiError(
+      `DocuSign Connect ${operation} response schema mismatch: ${e instanceof Error ? e.message : 'unknown'}`,
+      status,
+      json,
+    );
+  }
+}
+
 /**
  * Provisions (or updates) a DocuSign Connect listener for this account.
  * Idempotent: if a listener with the matching webhook URL already exists, it is updated.
@@ -296,32 +313,30 @@ export async function provisionConnectListener(args: {
     );
   }
 
-  const hmacSecret = env.DOCUSIGN_CONNECT_HMAC_SECRET ?? '';
+  const hmacSecret = env.DOCUSIGN_CONNECT_HMAC_SECRET ?? ''; // NOSONAR — env var, not hardcoded
   const webhookUrl = `${workerPublicUrl.replace(/\/+$/, '')}/webhooks/docusign`;
   const base = args.baseUri.replace(/\/+$/, '');
   const connectBase = `${base}/restapi/v2.1/accounts/${encodeURIComponent(args.accountId)}/connect`;
+  const authHeaders = { Authorization: `Bearer ${args.accessToken}` };
 
-  // Check for existing listener with same URL
-  const listRes = await fetchImpl(connectBase, {
-    headers: { Authorization: `Bearer ${args.accessToken}` },
-  });
+  // List existing listeners to find one with matching URL
+  const listRes = await fetchImpl(connectBase, { headers: authHeaders });
   const listJson = await parseJsonResponse(listRes);
   if (!listRes.ok) {
     throw new DocusignApiError('DocuSign Connect list failed', listRes.status, listJson);
   }
-  let listData: z.infer<typeof ConnectListResponse>;
-  try {
-    listData = ConnectListResponse.parse(listJson);
-  } catch (e) {
-    throw new DocusignApiError(
-      `DocuSign Connect list response schema mismatch: ${e instanceof Error ? e.message : 'unknown'}`,
-      listRes.status,
-      listJson,
-    );
-  }
-  const existing = listData.configurations.find(
-    (cfg) => cfg.urlToPublishTo === webhookUrl,
-  );
+
+  const listData = (() => {
+    try { return ConnectListResponse.parse(listJson); }
+    catch (e) {
+      throw new DocusignApiError(
+        `DocuSign Connect list response schema mismatch: ${e instanceof Error ? e.message : 'unknown'}`,
+        listRes.status, listJson,
+      );
+    }
+  })();
+
+  const existing = listData.configurations.find((cfg) => cfg.urlToPublishTo === webhookUrl);
 
   const payload: Record<string, unknown> = {
     urlToPublishTo: webhookUrl,
@@ -333,61 +348,27 @@ export async function provisionConnectListener(args: {
     requiresAcknowledgement: 'true',
     events: ['envelope-completed'],
     eventData: { format: 'json', version: 'restv2.1' },
-    ...(hmacSecret ? { hmacSecret } : {}),
+    // DocuSign Connect API requires the HMAC secret in the config payload to enable
+    // server-side HMAC signing of webhook deliveries. This is not credential leakage.
+    ...(hmacSecret ? { hmacSecret } : {}), // NOSONAR — intentional per DocuSign Connect spec
   };
 
-  if (existing) {
-    // Update existing listener
-    payload.connectId = existing.connectId;
-    const putRes = await fetchImpl(connectBase, {
-      method: 'PUT',
-      headers: {
-        Authorization: `Bearer ${args.accessToken}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(payload),
-    });
-    const putJson = await parseJsonResponse(putRes);
-    if (!putRes.ok) {
-      throw new DocusignApiError('DocuSign Connect update failed', putRes.status, putJson);
-    }
-    let result: z.infer<typeof ConnectConfigurationResponse>;
-    try {
-      result = ConnectConfigurationResponse.parse(putJson);
-    } catch (e) {
-      throw new DocusignApiError(
-        `DocuSign Connect update response schema mismatch: ${e instanceof Error ? e.message : 'unknown'}`,
-        putRes.status,
-        putJson,
-      );
-    }
-    return { connectId: result.connectId, action: 'updated' };
-  }
+  const method = existing ? 'PUT' : 'POST';
+  const action: 'updated' | 'created' = existing ? 'updated' : 'created';
+  if (existing) payload.connectId = existing.connectId;
 
-  // Create new listener
-  const postRes = await fetchImpl(connectBase, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${args.accessToken}`,
-      'Content-Type': 'application/json',
-    },
+  const res = await fetchImpl(connectBase, {
+    method,
+    headers: { ...authHeaders, 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
-  const postJson = await parseJsonResponse(postRes);
-  if (!postRes.ok) {
-    throw new DocusignApiError('DocuSign Connect create failed', postRes.status, postJson);
+  const resJson = await parseJsonResponse(res);
+  if (!res.ok) {
+    throw new DocusignApiError(`DocuSign Connect ${action === 'updated' ? 'update' : 'create'} failed`, res.status, resJson);
   }
-  let result: z.infer<typeof ConnectConfigurationResponse>;
-  try {
-    result = ConnectConfigurationResponse.parse(postJson);
-  } catch (e) {
-    throw new DocusignApiError(
-      `DocuSign Connect create response schema mismatch: ${e instanceof Error ? e.message : 'unknown'}`,
-      postRes.status,
-      postJson,
-    );
-  }
-  return { connectId: result.connectId, action: 'created' };
+
+  const result = parseConnectConfigResponse(resJson, res.status, action === 'updated' ? 'update' : 'create');
+  return { connectId: result.connectId, action };
 }
 
 export function parseDocusignConnectPayload(rawBody: Buffer | string): DocusignCompletedEnvelope {
