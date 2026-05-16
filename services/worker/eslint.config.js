@@ -33,12 +33,24 @@ export default tseslint.config(
       'preserve-caught-error': 'warn',
     },
   },
-  // Worker cron jobs in src/jobs/ run under the service-role client and operate
-  // cross-tenant by design (pipeline ingestion, anchor lifecycle, rules engine).
-  // The tenant-isolation rule is valuable for API handlers and webhooks where
-  // per-request user context exists, but false-positives on every job query.
+  // Cross-tenant system crons that run under the service-role client with no
+  // per-user/org context. The tenant-isolation rule stays active for org-scoped
+  // jobs (report.ts, rules-engine.ts, rule-action-dispatcher.ts, queue-reminders.ts).
   {
-    files: ['src/jobs/**/*.ts'],
+    files: [
+      'src/jobs/*Fetcher.ts',
+      'src/jobs/*fetcher.ts',
+      'src/jobs/attestationAnchor.ts',
+      'src/jobs/attestationExpiry.ts',
+      'src/jobs/chain-maintenance.ts',
+      'src/jobs/check-confirmations.ts',
+      'src/jobs/cloud-logging-drain.ts',
+      'src/jobs/db-health-monitor.ts',
+      'src/jobs/monthly-allocation-rollover.ts',
+      'src/jobs/publicRecordAnchor.ts',
+      'src/jobs/regulatory-change-scan.ts',
+      'src/jobs/trainingExporter.ts',
+    ],
     rules: {
       'arkova/missing-org-filter': 'off',
     },
