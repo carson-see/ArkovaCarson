@@ -146,7 +146,9 @@ test.describe('DocuSign integration', () => {
 
       // After mocked OAuth round-trip, verify success toast and URL
       await expect(orgAdminPage.getByText('DocuSign connected.').first()).toBeVisible();
-      await expect(orgAdminPage).toHaveURL(new RegExp(`/organizations/${orgId}\\?tab=settings`));
+      await expect(orgAdminPage).toHaveURL(
+        (url) => new URL(url).pathname === `/organizations/${orgId}` && new URL(url).searchParams.get('tab') === 'settings',
+      );
     });
 
     test('Connect button triggers redirect to DocuSign domain', async ({ orgAdminPage }) => {
@@ -314,17 +316,16 @@ test.describe('DocuSign integration', () => {
       // Note: if the app redirects or hides the settings tab for non-admins,
       // the DocuSign card simply won't be present on the page.
       const service = getServiceClient();
-      const { data: profile } = await service
+      const { data: profile, error } = await service
         .from('profiles')
         .select('org_id')
         .eq('id', SEED_USERS.individual.id)
         .single();
-
-      if (!profile?.org_id) {
-        // Individual user has no org — they can't access org settings at all
-        // This is the expected behavior; the test passes by confirming no crash.
-        return;
-      }
+      expect(error).toBeNull();
+      expect(
+        profile?.org_id,
+        'SEED_USERS.individual must belong to an org for non-admin authz validation',
+      ).toBeTruthy();
 
       await individualPage.goto(`/organizations/${profile.org_id}?tab=settings`);
 
@@ -341,8 +342,13 @@ test.describe('DocuSign integration', () => {
         return;
       }
 
-      // Card is visible but connect should fail with 403
+      // Card is visible but connect should fail with 403 or be disabled
       if (await connectButton.isVisible().catch(() => false)) {
+        if (await connectButton.isDisabled()) {
+          // Button visible but disabled for non-admins — correct behavior
+          return;
+        }
+
         await individualPage.route('http://localhost:3001/api/v1/integrations/docusign/oauth/start', async (route) => {
           await route.fulfill({
             status: 403,

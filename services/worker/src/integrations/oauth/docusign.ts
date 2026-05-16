@@ -309,7 +309,16 @@ export async function provisionConnectListener(args: {
   if (!listRes.ok) {
     throw new DocusignApiError('DocuSign Connect list failed', listRes.status, listJson);
   }
-  const listData = ConnectListResponse.parse(listJson);
+  let listData: z.infer<typeof ConnectListResponse>;
+  try {
+    listData = ConnectListResponse.parse(listJson);
+  } catch (e) {
+    throw new DocusignApiError(
+      `DocuSign Connect list response schema mismatch: ${e instanceof Error ? e.message : 'unknown'}`,
+      listRes.status,
+      listJson,
+    );
+  }
   const existing = listData.configurations.find(
     (cfg) => cfg.urlToPublishTo === webhookUrl,
   );
@@ -342,7 +351,16 @@ export async function provisionConnectListener(args: {
     if (!putRes.ok) {
       throw new DocusignApiError('DocuSign Connect update failed', putRes.status, putJson);
     }
-    const result = ConnectConfigurationResponse.parse(putJson);
+    let result: z.infer<typeof ConnectConfigurationResponse>;
+    try {
+      result = ConnectConfigurationResponse.parse(putJson);
+    } catch (e) {
+      throw new DocusignApiError(
+        `DocuSign Connect update response schema mismatch: ${e instanceof Error ? e.message : 'unknown'}`,
+        putRes.status,
+        putJson,
+      );
+    }
     return { connectId: result.connectId, action: 'updated' };
   }
 
@@ -359,7 +377,16 @@ export async function provisionConnectListener(args: {
   if (!postRes.ok) {
     throw new DocusignApiError('DocuSign Connect create failed', postRes.status, postJson);
   }
-  const result = ConnectConfigurationResponse.parse(postJson);
+  let result: z.infer<typeof ConnectConfigurationResponse>;
+  try {
+    result = ConnectConfigurationResponse.parse(postJson);
+  } catch (e) {
+    throw new DocusignApiError(
+      `DocuSign Connect create response schema mismatch: ${e instanceof Error ? e.message : 'unknown'}`,
+      postRes.status,
+      postJson,
+    );
+  }
   return { connectId: result.connectId, action: 'created' };
 }
 
