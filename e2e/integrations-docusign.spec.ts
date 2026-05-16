@@ -53,9 +53,7 @@ test.describe('DocuSign integration', () => {
       });
 
       await orgAdminPage.goto(`/organizations/${orgId}?tab=settings`);
-      const docusignCard = orgAdminPage.locator('[data-testid="docusign-card"]').or(
-        orgAdminPage.locator('section', { has: orgAdminPage.getByRole('heading', { name: 'DocuSign' }) }),
-      );
+      const docusignCard = orgAdminPage.locator('[data-testid="docusign-card"]');
       await expect(docusignCard.getByText('Not connected')).toBeVisible();
       await expect(docusignCard.getByRole('button', { name: 'Connect' })).toBeVisible();
     });
@@ -82,9 +80,7 @@ test.describe('DocuSign integration', () => {
       });
 
       await orgAdminPage.goto(`/organizations/${orgId}?tab=settings`);
-      const docusignCard = orgAdminPage.locator('[data-testid="docusign-card"]').or(
-        orgAdminPage.locator('section', { has: orgAdminPage.getByRole('heading', { name: 'DocuSign' }) }),
-      );
+      const docusignCard = orgAdminPage.locator('[data-testid="docusign-card"]');
       await expect(docusignCard.getByText('Connected')).toBeVisible();
       await expect(docusignCard.getByText(/Account: Arkova Demo/)).toBeVisible();
       await expect(docusignCard.getByRole('button', { name: 'Disconnect' })).toBeVisible();
@@ -141,7 +137,7 @@ test.describe('DocuSign integration', () => {
       await orgAdminPage.goto(`/organizations/${orgId}?tab=settings`);
       await expect(orgAdminPage.getByRole('heading', { name: 'Organization Settings' })).toBeVisible();
 
-      const docusignCard = orgAdminPage.locator('section, [class*="card"], div').filter({ hasText: 'DocuSign' }).filter({ has: orgAdminPage.getByRole('button', { name: 'Connect' }) }).first();
+      const docusignCard = orgAdminPage.locator('[data-testid="docusign-card"]');
       await docusignCard.getByRole('button', { name: 'Connect' }).click();
 
       // After mocked OAuth round-trip, verify success toast and URL
@@ -191,7 +187,7 @@ test.describe('DocuSign integration', () => {
       });
 
       await orgAdminPage.goto(`/organizations/${orgId}?tab=settings`);
-      const docusignCard = orgAdminPage.locator('section, [class*="card"], div').filter({ hasText: 'DocuSign' }).filter({ has: orgAdminPage.getByRole('button', { name: 'Connect' }) }).first();
+      const docusignCard = orgAdminPage.locator('[data-testid="docusign-card"]');
       await docusignCard.getByRole('button', { name: 'Connect' }).click();
 
       // Verify the redirect went to DocuSign domain
@@ -226,7 +222,7 @@ test.describe('DocuSign integration', () => {
       });
 
       await orgAdminPage.goto(`/organizations/${orgId}?tab=settings`);
-      const docusignCard = orgAdminPage.locator('section, [class*="card"], div').filter({ hasText: 'DocuSign' }).filter({ has: orgAdminPage.getByRole('button', { name: 'Connect' }) }).first();
+      const docusignCard = orgAdminPage.locator('[data-testid="docusign-card"]');
       await docusignCard.getByRole('button', { name: 'Connect' }).click();
 
       await expect(orgAdminPage.getByText('Must be org admin to connect DocuSign')).toBeVisible();
@@ -272,7 +268,7 @@ test.describe('DocuSign integration', () => {
       });
 
       await orgAdminPage.goto(`/organizations/${orgId}?tab=settings`);
-      const docusignCard = orgAdminPage.locator('section, [class*="card"], div').filter({ hasText: 'DocuSign' }).filter({ has: orgAdminPage.getByRole('button', { name: 'Connect' }) }).first();
+      const docusignCard = orgAdminPage.locator('[data-testid="docusign-card"]');
       await expect(docusignCard.getByText('DocuSign')).toBeVisible();
       await expect(docusignCard.getByRole('button', { name: 'Connect' })).toBeVisible();
     });
@@ -299,7 +295,7 @@ test.describe('DocuSign integration', () => {
       });
 
       await orgAdminPage.goto(`/organizations/${orgId}?tab=settings`);
-      const docusignCard = orgAdminPage.locator('section, [class*="card"], div').filter({ hasText: 'DocuSign' }).filter({ has: orgAdminPage.getByRole('button', { name: 'Disconnect' }) }).first();
+      const docusignCard = orgAdminPage.locator('[data-testid="docusign-card"]');
       await expect(docusignCard.getByText('Connected')).toBeVisible();
       await expect(docusignCard.getByText(/Account: Mobile Test Org/)).toBeVisible();
       await expect(docusignCard.getByRole('button', { name: 'Disconnect' })).toBeVisible();
