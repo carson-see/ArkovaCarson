@@ -17,7 +17,6 @@
  * Stories: BETA-02
  */
 
-import pLimit from 'p-limit';
 import { db } from '../utils/db.js';
 import { logger, createRpcLogger } from '../utils/logger.js';
 import { invalidateVerificationCache } from '../utils/verifyCache.js';
@@ -26,10 +25,6 @@ import { getChainClientAsync } from '../chain/client.js';
 import { getNetworkDisplayName, config } from '../config.js';
 import { dispatchWebhookEvent } from '../webhooks/delivery.js';
 import { sendEmail, buildRevocationEmail } from '../email/index.js';
-
-// SCRUM-1296: Bounded concurrency for revocation processing.
-// 10 concurrent revocations balances throughput vs DB connection pool pressure.
-const REVOCATION_CONCURRENCY = 10;
 
 /**
  * Process a single revocation — broadcast OP_RETURN to chain.
@@ -224,15 +219,22 @@ export async function processRevokedAnchors(): Promise<{ processed: number; fail
 
   logger.info({ count: anchors.length }, 'Found revoked anchors needing chain revocation');
 
-  // SCRUM-1296: Bounded concurrency instead of sequential loop.
-  // Each processRevocation is independent (no shared UTXO state for revocations).
-  const limit = pLimit(REVOCATION_CONCURRENCY);
-  const results = await Promise.all(
-    anchors.map((anchor) => limit(() => processRevocation(anchor.id))),
-  );
+  // UTXO selection is not safe under concurrency — treasury wallet UTXOs are shared state.
+  // Each processRevocation call broadcasts a chain transaction that consumes UTXOs from the
+  // same treasury wallet. Concurrent calls would all see the same unspent set via listUnspent(),
+  // attempt to spend the same outputs, and all but one would fail at broadcast with
+  // "inputs-missingorspent". Sequential processing ensures each tx sees the post-spend state.
+  let processed = 0;
+  let failed = 0;
 
-  const processed = results.filter(Boolean).length;
-  const failed = results.length - processed;
+  for (const anchor of anchors) {
+    const success = await processRevocation(anchor.id);
+    if (success) {
+      processed++;
+    } else {
+      failed++;
+    }
+  }
 
   logger.info({ processed, failed }, 'Finished processing revocations');
   return { processed, failed };
