@@ -307,11 +307,14 @@ export async function processFailedPaymentRecovery(): Promise<{
 
     let gpOrgId: string | null = null;
     if (gp.user_id) {
-      const { data: gpProfile } = await db
+      const { data: gpProfile, error: profileError } = await db
         .from('profiles')
         .select('org_id')
         .eq('id', gp.user_id)
         .maybeSingle();
+      if (profileError) {
+        logger.warn({ error: profileError, userId: gp.user_id }, 'Failed to resolve org for grace period audit — org_id will be null');
+      }
       gpOrgId = gpProfile?.org_id ?? null;
     }
 

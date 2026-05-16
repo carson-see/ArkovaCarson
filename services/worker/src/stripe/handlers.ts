@@ -286,11 +286,14 @@ export async function handleCheckoutComplete(event: StripeEvent): Promise<void> 
   }
 
   // Resolve org for audit event + org propagation
-  const { data: adminProfile } = await db
+  const { data: adminProfile, error: profileError } = await db
     .from('profiles')
     .select('org_id')
     .eq('id', userId)
     .maybeSingle();
+  if (profileError) {
+    logger.warn({ error: profileError, userId }, 'Failed to resolve org for checkout audit — org_id will be null');
+  }
 
   // Log audit event
   await db.from('audit_events').insert({
@@ -725,11 +728,14 @@ async function handleIdentityVerified(event: StripeEvent): Promise<void> {
   }
 
   // Resolve org for audit event
-  const { data: verifiedProfile } = await db
+  const { data: verifiedProfile, error: verifyProfileError } = await db
     .from('profiles')
     .select('org_id')
     .eq('id', userId)
     .maybeSingle();
+  if (verifyProfileError) {
+    logger.warn({ error: verifyProfileError, userId }, 'Failed to resolve org for identity verification audit — org_id will be null');
+  }
 
   await db.from('audit_events').insert({
     actor_id: userId,

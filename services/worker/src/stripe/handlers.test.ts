@@ -990,7 +990,7 @@ describe('handleSubscriptionDeleted', () => {
 
   it('logs audit event when user found', async () => {
     subscriptionsSelect.maybeSingle.mockResolvedValue({
-      data: { user_id: 'user-001' },
+      data: { user_id: 'user-001', org_id: 'org-001' },
     });
     await handleSubscriptionDeleted(SUBSCRIPTION_DELETED_EVENT);
     expect(auditInsert).toHaveBeenCalledWith(
@@ -998,6 +998,7 @@ describe('handleSubscriptionDeleted', () => {
         event_type: 'payment.subscription_canceled',
         event_category: 'ADMIN',
         actor_id: 'user-001',
+        org_id: 'org-001',
       }),
     );
   });
