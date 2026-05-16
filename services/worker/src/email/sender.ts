@@ -145,7 +145,7 @@ async function logEmailAudit(
   try {
     await db.from('audit_events').insert({
       event_type: success ? 'EMAIL_SENT' : 'EMAIL_DELIVERY_FAILED',
-      event_category: 'NOTIFICATION',
+      event_category: 'SYSTEM',
       actor_id: options.actorId ?? null,
       org_id: options.orgId ?? null,
       target_type: options.anchorId ? 'anchor' : 'user',

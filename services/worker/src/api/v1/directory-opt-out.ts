@@ -63,7 +63,7 @@ router.patch('/:publicId', async (req, res) => {
 
     void dbAny.from('audit_events').insert({
       event_type: 'DIRECTORY_OPT_OUT_CHANGED',
-      event_category: 'COMPLIANCE',
+      event_category: 'ADMIN',
       target_type: 'anchor',
       target_id: publicId,
       org_id: req.orgId,
@@ -124,7 +124,7 @@ router.post('/bulk', async (req, res) => {
 
     void dbAny.from('audit_events').insert({
       event_type: 'DIRECTORY_OPT_OUT_BULK_UPDATE',
-      event_category: 'COMPLIANCE',
+      event_category: 'ADMIN',
       target_type: 'organization',
       target_id: req.orgId,
       org_id: req.orgId,
