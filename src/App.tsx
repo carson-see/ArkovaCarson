@@ -83,6 +83,7 @@ const PlatformControlsPage = React.lazy(() => import('@/pages/PlatformControlsPa
 const OrganizationsListPage = React.lazy(() => import('@/pages/OrganizationsListPage').then(m => ({ default: m.OrganizationsListPage })));
 const OrgProfilePage = React.lazy(() => import('@/pages/OrgProfilePage').then(m => ({ default: m.OrgProfilePage })));
 const AnchorQueuePage = React.lazy(() => import('@/pages/AnchorQueuePage').then(m => ({ default: m.AnchorQueuePage })));
+const VersionConflictsPage = React.lazy(() => import('@/pages/VersionConflictsPage').then(m => ({ default: m.VersionConflictsPage })));
 const PublicAttestationVerifyPage = React.lazy(() => import('@/pages/PublicAttestationVerifyPage').then(m => ({ default: m.PublicAttestationVerifyPage })));
 const StateBarApiPage = React.lazy(() => import('@/pages/StateBarApiPage').then(m => ({ default: m.StateBarApiPage })));
 const ApiSandboxPage = React.lazy(() => import('@/pages/ApiSandboxPage').then(m => ({ default: m.ApiSandboxPage })));
@@ -250,6 +251,7 @@ export function App() {
           <Route path={ROUTES.RULES} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="Rules"><RulesPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
           <Route path={ROUTES.RULE_BUILDER} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="RuleBuilder"><RuleBuilderPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
           <Route path={ROUTES.ANCHOR_QUEUE} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="AnchorQueue"><AnchorQueuePage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
+          <Route path={ROUTES.VERSION_CONFLICTS} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="VersionConflicts"><VersionConflictsPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
           {/* SCRUM-1097 — AC names /admin/queue specifically. Alias to the existing AnchorQueuePage so both URLs work. */}
           <Route path="/admin/queue" element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="AnchorQueue"><AnchorQueuePage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
           <Route path={ROUTES.ADMIN_ONBOARDING} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="AdminOnboarding"><AdminOnboardingPage /></RouteErrorBoundary></RouteGuard></AuthGuard>}

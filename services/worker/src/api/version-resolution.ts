@@ -19,6 +19,58 @@ import { emitOrgAdminNotifications } from '../notifications/dispatcher.js';
 
 export const versionResolutionRouter = Router();
 
+// GET / — List version conflicts for the user's org (filtered by status)
+versionResolutionRouter.get('/', async (req: Request, res: Response) => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const userId = (req as any).userId as string | undefined;
+  if (!userId) {
+    res.status(401).json({ error: 'unauthorized', message: 'Authentication required.' });
+    return;
+  }
+
+  const status = req.query.status as string | undefined;
+
+  try {
+    // Get user's org membership
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: membership } = await (db as any)
+      .from('org_members')
+      .select('org_id, role')
+      .eq('user_id', userId)
+      .single();
+
+    if (!membership) {
+      res.status(403).json({ error: 'forbidden', message: 'No org membership found.' });
+      return;
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let query = (db as any)
+      .from('external_document_versions')
+      .select('id, org_id, external_file_id, filename, fingerprint, source, status, version_number, metadata, created_at')
+      .eq('org_id', membership.org_id)
+      .order('created_at', { ascending: false })
+      .limit(50);
+
+    if (status) {
+      query = query.eq('status', status);
+    }
+
+    const { data: versions, error: fetchError } = await query;
+
+    if (fetchError) {
+      logger.error({ error: fetchError, userId }, 'Failed to fetch versions');
+      res.status(500).json({ error: 'internal_error', message: 'Failed to fetch versions.' });
+      return;
+    }
+
+    res.json({ versions: versions ?? [] });
+  } catch (error) {
+    logger.error({ error, userId }, 'Version list failed');
+    res.status(500).json({ error: 'internal_error', message: 'Failed to fetch versions.' });
+  }
+});
+
 const ResolveBodySchema = z.object({
   decision: z.enum(['approve', 'skip', 'flag']),
   notes: z.string().max(2000).optional(),

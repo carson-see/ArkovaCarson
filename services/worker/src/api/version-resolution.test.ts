@@ -206,3 +206,64 @@ describe('POST /api/v1/versions/:versionId/resolve', () => {
     expect(mockEmitNotifications).toHaveBeenCalled();
   });
 });
+
+describe('GET /api/v1/versions', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('returns 401 when no userId in request', async () => {
+    const app = createApp(undefined);
+    const res = await request(app).get('/api/v1/versions');
+    expect(res.status).toBe(401);
+  });
+
+  it('returns 403 when user has no org membership', async () => {
+    const app = createApp('user-1');
+    mockDbFrom.mockReturnValue(makeChainable({ data: null, error: null }));
+
+    const res = await request(app).get('/api/v1/versions');
+    expect(res.status).toBe(403);
+  });
+
+  it('returns versions for the user org', async () => {
+    const app = createApp('user-1');
+    const versions = [
+      { id: 'v-1', org_id: 'org-1', filename: 'contract.pdf', source: 'docusign', status: 'pending_review' },
+      { id: 'v-2', org_id: 'org-1', filename: 'offer.pdf', source: 'google_drive', status: 'pending_review' },
+    ];
+
+    mockDbFrom.mockImplementation((table: string) => {
+      if (table === 'org_members') {
+        return makeChainable({ data: { org_id: 'org-1', role: 'admin' }, error: null });
+      }
+      if (table === 'external_document_versions') {
+        return makeChainable({ data: versions, error: null });
+      }
+      return makeChainable({ data: null, error: null });
+    });
+
+    const res = await request(app).get('/api/v1/versions');
+    expect(res.status).toBe(200);
+    expect(res.body.versions).toHaveLength(2);
+    expect(res.body.versions[0].filename).toBe('contract.pdf');
+  });
+
+  it('filters by status query param', async () => {
+    const app = createApp('user-1');
+
+    mockDbFrom.mockImplementation((table: string) => {
+      if (table === 'org_members') {
+        return makeChainable({ data: { org_id: 'org-1', role: 'admin' }, error: null });
+      }
+      if (table === 'external_document_versions') {
+        return makeChainable({ data: [], error: null });
+      }
+      return makeChainable({ data: null, error: null });
+    });
+
+    const res = await request(app).get('/api/v1/versions?status=pending_review');
+    expect(res.status).toBe(200);
+    expect(res.body.versions).toEqual([]);
+  });
+});

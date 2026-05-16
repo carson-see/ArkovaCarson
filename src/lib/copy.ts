@@ -1291,6 +1291,30 @@ export const REVIEW_QUEUE_LABELS = {
 } as const;
 
 // =============================================================================
+// VERSION RESOLUTION (SCRUM-1972 / SCRUM-1126)
+// =============================================================================
+
+export const VERSION_RESOLUTION_LABELS = {
+  PAGE_TITLE: 'Document Version Conflicts',
+  PAGE_SUBTITLE: 'Review and resolve version conflicts detected by connector rules.',
+  EMPTY: 'No version conflicts to review',
+  EMPTY_DETAIL: 'When a connector detects a document change that conflicts with a secured version, it will appear here for review.',
+  STATUS_PENDING: 'Pending Review',
+  STATUS_APPROVED: 'Approved',
+  STATUS_SKIPPED: 'Skipped',
+  STATUS_FLAGGED: 'Flagged',
+  ACTION_APPROVE: 'Secure New Version',
+  ACTION_SKIP: 'Skip',
+  ACTION_FLAG: 'Flag for Review',
+  NOTES_PLACEHOLDER: 'Add resolution notes (optional)...',
+  ACTION_SUCCESS: 'Version conflict resolved successfully',
+  SOURCE_LABEL: 'Source',
+  VERSION_LABEL: 'Version',
+  DETECTED_LABEL: 'Detected',
+  NAV_LABEL: 'Version Conflicts',
+} as const;
+
+// =============================================================================
 // COMPLIANCE DASHBOARD
 // =============================================================================
 
