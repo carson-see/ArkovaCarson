@@ -14,6 +14,12 @@
 
 ## Now
 
+### 2026-05-16 — SCRUM-1966 prod hotfix MERGED (PR #805)
+
+**PR #805 merged** to `main` at 2026-05-16 (merge commit `19d50084`). Three production hotfixes: (1) RLS statement timeout on bulk upload — consolidated 3 anchors SELECT policies into 1 with scalar subquery wrappers, same for attestations; query time dropped from timeout to 0.134ms. (2) Treasury x402-stats 502 — `parseX402StatsPayload` null handling fix. (3) Missing org_credits for Arkova org — seeded Free-tier allocation. Migrations 0307+0308. T2 12h soak: 115K requests, zero 500s. Jira: SCRUM-1966 → Done. Confluence: [page 53411876](https://arkova.atlassian.net/wiki/spaces/A/pages/53411876). Bug tracker: BUG-RLS-TIMEOUT (P1), BUG-TREASURY-502 (P2), BUG-ORG-CREDITS-MISSING (P3).
+
+_Last refreshed: 2026-05-16 by Carson — claims verified against `gh api pulls/805/merge`, merge commit `19d50084`, Jira MCP transition._
+
 ### 2026-05-16 — SCRUM-1651 ORG-12 cross-tenant test matrix MERGED (PR #790)
 
 **PR #790 merged** to `main` at 2026-05-16. 59 tests covering `resolveActiveOrg` pure resolver: URL attacks, session-poisoning, profile-drift, combined attacks, dual-membership parent↔sub-org isolation, operation-scoped invariant, and empty-string JS truthiness edge cases. Also fixed `.sonarcloud.properties` CPD exclusion for test files (was overriding `sonar-project.properties` glob). T1 soak (test-only, no production code). Quality gauntlet: /code-review (4 issues), /simplify (dedup+types), /tech-debt, /debug (dead guard+edge cases). Zero `memberships[0]` hits in production code — grep guard effective. Browser UAT blocked by no local Supabase; resolver verified exhaustively via unit tests on pure function. SCRUM-1664 subtask: test matrix deliverable complete; manual two-membership UAT + Confluence LIVE block remain.
@@ -42,7 +48,7 @@ _Last refreshed: 2026-05-16 by Carson — claims verified against Jira MCP, `gh 
 |---|---|---|---|---|
 | [#789](https://github.com/carson-see/ArkovaCarson/pull/789) | `chore/worker-lint-cleanup` | T3 | 34 fixes: `@ts-ignore` removal, `{ cause: err }`, `@ts-expect-error` | **MERGED** 2026-05-16 |
 | [#791](https://github.com/carson-see/ArkovaCarson/pull/791) | `chore/scrum-1909-lint-cleanup-s1` | T3 | 163 suppressions: `missing-org-filter` + `no-explicit-any` + Express type augmentation | T3 soak started 2026-05-15T20:29Z |
-| [#792](https://github.com/carson-see/ArkovaCarson/pull/792) | `fix/tenant-isolation-audit-org-id` | T2 | 12 tenant isolation gaps: `org_id` on audit inserts + PATCH guard + `event_category: 'API'` fix | T2 soak complete, rebased, awaiting merge |
+| [#792](https://github.com/carson-see/ArkovaCarson/pull/792) | `fix/tenant-isolation-audit-org-id` | T2 | 12 tenant isolation gaps: `org_id` on audit inserts + PATCH guard + `event_category: 'API'` fix | **MERGED** 2026-05-16 |
 | [#793](https://github.com/carson-see/ArkovaCarson/pull/793) | `chore/scrum-1909-lint-cleanup-s2` | T3 | 48 fixes: test file `as any` → proper types + `chain/base.ts` + `hsmBridge.ts` suppressions | T3 soak started 2026-05-15T20:36Z |
 
 **CI note:** Staging evidence gate checkbox regex bug root-cause fixed in PR [#801](https://github.com/carson-see/ArkovaCarson/pull/801) — `missingFields`, `extractEvidenceFieldValue`, and `TIER_DECLARATION_RE` now accept `- [x]` / `- [ ]` prefixes and no longer bleed across newlines on empty field values.
