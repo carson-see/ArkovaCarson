@@ -110,7 +110,7 @@ describe('check-constraint-values', () => {
       { name: 'ai_usage_events.event_type', constraint: 'ai_usage_events_event_type_check', tsArray: AI_USAGE_EVENT_TYPES },
       { name: 'ats_integrations.provider', constraint: 'ats_integrations_provider_check', tsArray: ATS_PROVIDERS },
       { name: 'connector_subscriptions.provider', constraint: 'connector_subscriptions_provider_check', tsArray: CONNECTOR_PROVIDERS },
-      { name: 'data_subject_requests.request_type', constraint: 'data_subject_requests_request_type_check', tsArray: DSR_REQUEST_TYPES },
+      { name: 'data_subject_requests.request_type', constraint: 'data_subject_requests_type_valid', tsArray: DSR_REQUEST_TYPES },
       { name: 'entitlements.source', constraint: 'entitlements_source_check', tsArray: ENTITLEMENT_SOURCES },
       { name: 'integration_events.status', constraint: 'integration_events_status_check', tsArray: INTEGRATION_EVENT_STATUSES },
       { name: 'kyb_events.provider', constraint: 'kyb_events_provider_check', tsArray: KYB_PROVIDERS },
