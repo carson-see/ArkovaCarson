@@ -13,6 +13,7 @@ Background workers for anchor lifecycle, billing reconciliation, drive ingestion
 - `publicRecordEmbedder.ts` (PH1-INT-01) — `embedPublicRecords()` generates vector embeddings for unembedded public records. Uses Gemini embedding model via AI provider abstraction. Batched with bounded concurrency (25) and exponential backoff on rate limits. Gated by `ENABLE_PUBLIC_RECORD_EMBEDDINGS` flag.
 - `attestationAnchor.ts` — `processAttestationAnchoring()` Merkle-batches PENDING attestation fingerprints to Bitcoin via OP_RETURN. Gated by `ENABLE_ATTESTATION_ANCHORING` flag. Dispatches `attestation.active` webhooks and audit events.
 - **`anchorExpirySweep.ts` (SCRUM-1736)** — daily 03:00 UTC sweep that flips `anchors.status` from SECURED to EXPIRED past `expires_at` and dispatches `anchor.expired` outbound webhook. Compare-and-set on UPDATE guards against concurrent revocation. Sentinel `anchor.expired_dispatch_failed` audit row written if dispatch throws so manual recovery is possible (per CodeRabbit PR #734 review). Adapter validates every write via Zod (`AnchorIdSchema`, `AuditEventRowSchema`).
+- **`rule-action-dispatcher.ts`** — Routes rule action types from the rules engine: `QUEUE_FOR_REVIEW` (routed marker), `FLAG_COLLISION` (routed marker), `FORWARD_TO_URL` (signed outbound POST + retry), `AUTO_ANCHOR` (DS-07 queue mode — routes to org anchor queue), `FAST_TRACK_ANCHOR` (DS-06 instant secure — credit gate via `deductOrgCredit` then anchor job dispatch; falls to queue with `credit_denied` on insufficient credits). Idempotency via `(rule_id, trigger_event_id)` unique index.
 - **`treasury-cache.ts`** — `refreshTreasuryCache()`. Fetches treasury balance, BTC price, fee rates, UTXO count, network info, and anchor stats (via `../utils/anchor-stats.ts`), then upserts into `treasury_cache` singleton. SCRUM-1786: sentinel guard prevents -1 from overwriting last-good cached values.
 
 ## Conventions
@@ -28,6 +29,6 @@ Background workers for anchor lifecycle, billing reconciliation, drive ingestion
 
 
 ## Open work
-- SCRUM-1736 (PR #734) — anchorExpirySweep producer; awaiting Carson merge + Mon 2026-05-11 deploy.
-- SCRUM-1737 [Verify] — HakiChain receiver round-trip + Tier 3 48h soak post-merge.
+- SCRUM-1737 [Verify] — HakiChain receiver round-trip + Tier 3 48h soak. PR #815 adds round-trip integration test (15 tests). Awaiting staging soak.
 - SCRUM-1738 [Close-out] — Confluence Webhooks topic page update post-merge.
+- SCRUM-1658 [Verify] — DS-AUTO-02 E2E verification for instant-secure + queue paths.
