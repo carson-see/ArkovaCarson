@@ -304,13 +304,40 @@ function logVerificationAudit(
   });
 }
 
+/** Shape returned by the Supabase nested select in defaultLookup (not yet in generated types). */
+interface AnchorSelectRow {
+  public_id: string;
+  fingerprint: string;
+  status: string;
+  chain_tx_id: string | null;
+  chain_block_height: number | null;
+  chain_timestamp: string | null;
+  created_at: string;
+  credential_type: string | null;
+  sub_type: string | null;
+  issued_at: string | null;
+  expires_at: string | null;
+  description: string | null;
+  directory_info_opt_out: boolean;
+  compliance_controls: Record<string, unknown> | null;
+  chain_confirmations: number | null;
+  version_number: number | null;
+  revocation_tx_id: string | null;
+  revocation_block_height: number | null;
+  file_mime: string | null;
+  file_size: number | null;
+  org_id: string | null;
+  organization: { display_name: string } | null;
+  parent: { public_id: string } | null;
+  extraction_manifests: Array<{
+    confidence_scores: Record<string, unknown> | null;
+    extraction_timestamp: string;
+  }>;
+}
+
 /** Default DB-backed lookup — single JOIN for orgName + parent public_id to avoid N+1 on hot path */
 const defaultLookup: PublicIdLookup = {
   async lookupByPublicId(publicId: string) {
-    // Supabase nested select hydrates org + parent anchor in one round-trip.
-    // `organization:org_id(display_name)` and `parent:parent_anchor_id(public_id)` each resolve
-    // the referenced row via the FK. `directory_info_opt_out` added by migration 0197 is
-    // not yet in generated types; `parent_anchor_id` FK to anchors.id never leaves this module.
     const { data, error } = await db
       .from('anchors')
       .select(
@@ -318,11 +345,8 @@ const defaultLookup: PublicIdLookup = {
           'credential_type, sub_type, issued_at, expires_at, description, directory_info_opt_out, ' +
           'compliance_controls, chain_confirmations, version_number, ' +
           'revocation_tx_id, revocation_block_height, file_mime, file_size, ' +
-          'org_id, ' + // SCRUM-1799 internal — never copied into VerificationResult
+          'org_id, ' +
           'organization:org_id(display_name), parent:parent_anchor_id(public_id), ' +
-          // API-RICH-02 (SCRUM-895): nested fetch of latest extraction manifest. Supabase
-          // returns all matching rows for a 1:N relationship; we sort + pick the newest in JS
-          // so this still costs one round-trip (per AC: "no N+1 regression").
           'extraction_manifests(confidence_scores, extraction_timestamp)',
       )
       .eq('public_id', publicId)
@@ -331,13 +355,8 @@ const defaultLookup: PublicIdLookup = {
 
     if (error || !data) return null;
 
-    const row = data as unknown as Record<string, unknown>;
-    const organization = row.organization as { display_name: string } | null | undefined;
-    const parent = row.parent as { public_id: string } | null | undefined;
-    const manifests = ((row.extraction_manifests ?? []) as Array<{
-      confidence_scores: Record<string, unknown> | null;
-      extraction_timestamp: string;
-    }>);
+    const row = data as unknown as AnchorSelectRow;
+    const manifests = row.extraction_manifests ?? [];
     const latestManifest = manifests.length === 0
       ? null
       : manifests
@@ -345,33 +364,33 @@ const defaultLookup: PublicIdLookup = {
           .sort((a, b) => (a.extraction_timestamp < b.extraction_timestamp ? 1 : -1))[0];
 
     return {
-      public_id: (row.public_id as string) ?? '',
-      fingerprint: row.fingerprint as string,
-      status: row.status as string,
-      org_id: (row.org_id as string | null) ?? null,
-      chain_tx_id: (row.chain_tx_id as string | null) ?? null,
-      chain_block_height: (row.chain_block_height as number | null) ?? null,
-      chain_timestamp: (row.chain_timestamp as string | null) ?? null,
-      created_at: row.created_at as string,
-      credential_type: (row.credential_type as string | null) ?? null,
-      org_name: organization?.display_name ?? null,
+      public_id: row.public_id ?? '',
+      fingerprint: row.fingerprint,
+      status: row.status,
+      org_id: row.org_id ?? null,
+      chain_tx_id: row.chain_tx_id ?? null,
+      chain_block_height: row.chain_block_height ?? null,
+      chain_timestamp: row.chain_timestamp ?? null,
+      created_at: row.created_at,
+      credential_type: row.credential_type ?? null,
+      org_name: row.organization?.display_name ?? null,
       recipient_hash: null,
-      issued_at: (row.issued_at as string | null) ?? null,
-      expires_at: (row.expires_at as string | null) ?? null,
+      issued_at: row.issued_at ?? null,
+      expires_at: row.expires_at ?? null,
       jurisdiction: null,
       merkle_root: null,
-      description: (row.description as string | null) ?? null,
-      directory_info_opt_out: (row.directory_info_opt_out as boolean) ?? false,
-      compliance_controls: (row.compliance_controls as Record<string, unknown> | null) ?? null,
-      chain_confirmations: (row.chain_confirmations as number | null) ?? null,
-      parent_public_id: parent?.public_id ?? null,
-      version_number: (row.version_number as number | null) ?? null,
-      revocation_tx_id: (row.revocation_tx_id as string | null) ?? null,
-      revocation_block_height: (row.revocation_block_height as number | null) ?? null,
-      file_mime: (row.file_mime as string | null) ?? null,
-      file_size: (row.file_size as number | null) ?? null,
+      description: row.description ?? null,
+      directory_info_opt_out: row.directory_info_opt_out ?? false,
+      compliance_controls: row.compliance_controls ?? null,
+      chain_confirmations: row.chain_confirmations ?? null,
+      parent_public_id: row.parent?.public_id ?? null,
+      version_number: row.version_number ?? null,
+      revocation_tx_id: row.revocation_tx_id ?? null,
+      revocation_block_height: row.revocation_block_height ?? null,
+      file_mime: row.file_mime ?? null,
+      file_size: row.file_size ?? null,
       confidence_scores: latestManifest?.confidence_scores ?? null,
-      sub_type: (row.sub_type as string | null) ?? null,
+      sub_type: row.sub_type ?? null,
     } as AnchorByPublicId;
   },
 };

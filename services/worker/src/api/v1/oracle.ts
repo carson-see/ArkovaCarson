@@ -77,7 +77,7 @@ router.post('/verify', async (req: Request, res: Response) => {
   const { public_ids } = parsed.data;
 
   try {
-    const { data: anchors, error: fetchError } = await (db as unknown as typeof db)
+    const { data: anchors, error: fetchError } = await db
       .from('anchors')
       .select('public_id, fingerprint, status, chain_tx_id, chain_block_height, chain_timestamp, created_at, credential_type, issued_at, expires_at, org_id, description, directory_info_opt_out')
       .in('public_id', public_ids)
