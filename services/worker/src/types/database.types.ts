@@ -5635,6 +5635,8 @@ export type Database = {
         | "queue_run_completed"
         | "rule_fired"
         | "version_available_for_review"
+        | "document.version_conflict"
+        | "document.auto_queued"
         | "treasury_alert"
         | "anchor_revoked"
       org_member_role: "owner" | "admin" | "member" | "compliance_officer"
@@ -5925,6 +5927,8 @@ export const Constants = {
         "queue_run_completed",
         "rule_fired",
         "version_available_for_review",
+        "document.version_conflict",
+        "document.auto_queued",
         "treasury_alert",
         "anchor_revoked",
       ],
