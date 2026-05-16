@@ -10,13 +10,14 @@
 
 import type Stripe from 'stripe';
 import { db } from '../utils/db.js';
-import type { TablesUpdate } from '../types/database.types.js';
+import type { TypeSafeTablesUpdate } from '../types/database-overrides.js';
+import type { SubscriptionTier } from '../types/check-constraint-values.js';
 import { logger } from '../utils/logger.js';
 import { callRpc } from '../utils/rpc.js';
 
 type StripeEvent = Stripe.Event;
 
-const PROFILE_TIER_BY_PLAN_ID: Record<string, string> = {
+const PROFILE_TIER_BY_PLAN_ID: Record<string, SubscriptionTier> = {
   free: 'free',
   individual_verified_monthly: 'verified_individual',
   individual_verified_annual: 'verified_individual',
@@ -455,7 +456,7 @@ export async function handleSubscriptionUpdated(event: StripeEvent): Promise<voi
     firstItem != null && firstItem.current_period_start != null && firstItem.current_period_end != null;
 
   // Build update payload — period fields only when valid.
-  const updatePayload: TablesUpdate<'subscriptions'> = {
+  const updatePayload: TypeSafeTablesUpdate<'subscriptions'> = {
     status: mappedStatus,
     cancel_at_period_end: subscription.cancel_at_period_end,
   };
