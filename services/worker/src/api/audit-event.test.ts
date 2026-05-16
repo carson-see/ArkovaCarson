@@ -156,9 +156,18 @@ describe('POST /api/audit/event', () => {
   });
 
   it('rejects unknown event_category enum value', async () => {
-    const res = await invoke({ event_type: 'X', event_category: 'SECURITY' });
+    const res = await invoke({ event_type: 'X', event_category: 'BOGUS_CATEGORY' });
     expect(res.statusCode).toBe(400);
     expect(mockInsert).not.toHaveBeenCalled();
+  });
+
+  it('accepts all 17 CHECK-constraint categories via the Zod schema', async () => {
+    const expanded = ['WEBHOOK', 'API', 'AI', 'BILLING', 'VERIFICATION', 'USER',
+      'ORGANIZATION', 'SECURITY', 'COMPLIANCE', 'NOTIFICATION', 'PLATFORM'];
+    for (const cat of expanded) {
+      const res = await invoke({ event_type: 'TEST', event_category: cat });
+      expect(res.statusCode).toBe(202);
+    }
   });
 
   it('rejects malformed org_id', async () => {

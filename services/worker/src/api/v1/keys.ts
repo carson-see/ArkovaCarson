@@ -68,7 +68,7 @@ function logAuditEvent(actorId: string, eventType: string, targetType: string, t
     .insert({
       actor_id: actorId,
       event_type: eventType,
-      event_category: 'api_key',
+      event_category: 'API',
       target_type: targetType,
       target_id: targetId,
       details: details ?? null,

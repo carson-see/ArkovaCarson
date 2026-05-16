@@ -16,9 +16,9 @@ import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import ws from 'ws';
 import { config } from '../config.js';
 import { logger } from './logger.js';
-import type { Database } from '../types/database.types.js';
+import type { TypeSafeDatabase } from '../types/database-overrides.js';
 
-let client: SupabaseClient<Database> | null = null;
+let client: SupabaseClient<TypeSafeDatabase> | null = null;
 
 /** QA-PERF-3: Track whether PgBouncer pooler is active */
 let poolerActive = false;
@@ -30,7 +30,7 @@ let poolerActive = false;
  *
  * Validates pooler URL format: must use port 6543 for transaction mode.
  */
-export function getDb(): SupabaseClient<Database> {
+export function getDb(): SupabaseClient<TypeSafeDatabase> {
   if (!client) {
     const poolerUrl = process.env.SUPABASE_POOLER_URL;
     const dbUrl = poolerUrl || config.supabaseUrl;
@@ -52,7 +52,7 @@ export function getDb(): SupabaseClient<Database> {
       logger.info('Using PgBouncer pooler connection (QA-PERF-3)');
     }
 
-    client = createClient<Database>(dbUrl, config.supabaseServiceKey, {
+    client = createClient<TypeSafeDatabase>(dbUrl, config.supabaseServiceKey, {
       auth: {
         autoRefreshToken: false,
         persistSession: false,
