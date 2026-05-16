@@ -13,6 +13,7 @@
 import { writeFileSync, mkdirSync } from 'fs';
 import { resolve } from 'path';
 import { createClient } from '@supabase/supabase-js';
+import type { WebSocketLikeConstructor } from '@supabase/realtime-js';
 import ws from 'ws';
 
 interface FlaggedItem {
@@ -52,9 +53,9 @@ export async function runFraudAudit(
   serviceRoleKey: string,
   sampleSize = 100,
 ): Promise<AuditResult> {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
   const db = createClient(supabaseUrl, serviceRoleKey, {
-    realtime: { transport: ws as any },
+    realtime: { transport: ws as unknown as WebSocketLikeConstructor },
   });
 
   // Count all integrity scores by level

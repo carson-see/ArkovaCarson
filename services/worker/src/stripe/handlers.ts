@@ -47,12 +47,12 @@ async function lookupSubscriptionOrThrow<T>(
   context: Record<string, unknown>,
   eventName: string,
 ): Promise<T | null> {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- chained Supabase select() typing varies by `selectCols` runtime value
+
   const { data, error } = await (db
     .from('subscriptions')
     .select(selectCols)
     .eq('stripe_subscription_id', stripeSubscriptionId)
-    .maybeSingle() as any);
+    .maybeSingle() as unknown as Promise<{ data: T | null; error: { message: string; code?: string } | null }>);
   if (error) {
     logger.error(
       { ...context, error },
@@ -307,9 +307,7 @@ export async function handleCheckoutComplete(event: StripeEvent): Promise<void> 
     // Read current KYB state first. Paying must NOT clear a prior Middesk
     // rejection — letting checkout flip REJECTED → VERIFIED would let any org
     // bypass KYB by subscribing.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const dbAny = db as any;
-    const { data: orgRow } = await dbAny
+    const { data: orgRow } = await db
       .from('organizations')
       .select('verification_status')
       .eq('id', orgId)

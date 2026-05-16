@@ -15,7 +15,7 @@ vi.mock('../../utils/logger.js', () => ({
 }));
 
 import { createMockHsmBridge, createHsmBridge } from './hsmBridge.js';
-import type { HsmSignRequest } from '../types.js';
+import type { HsmSignRequest, KeyAlgorithm, KmsProvider } from '../types.js';
 
 describe('HSM Bridge', () => {
   describe('MockHsmBridge', () => {
@@ -40,7 +40,7 @@ describe('HSM Bridge', () => {
       const makeRequest = (alg: string): HsmSignRequest => ({
         provider: 'aws_kms',
         keyId: 'test-key',
-        algorithm: alg as any,
+        algorithm: alg as KeyAlgorithm,
         data: Buffer.alloc(32, 0x01),
       });
 
@@ -68,7 +68,7 @@ describe('HSM Bridge', () => {
       const request: HsmSignRequest = {
         provider: 'aws_kms',
         keyId: 'test-key',
-        algorithm: 'SHA-1' as any,
+        algorithm: 'SHA-1' as KeyAlgorithm,
         data: Buffer.alloc(32),
       };
 
@@ -80,7 +80,7 @@ describe('HSM Bridge', () => {
       const request: HsmSignRequest = {
         provider: 'aws_kms',
         keyId: 'test-key',
-        algorithm: 'MD5' as any,
+        algorithm: 'MD5' as KeyAlgorithm,
         data: Buffer.alloc(32),
       };
 
@@ -151,7 +151,7 @@ describe('HSM Bridge', () => {
     });
 
     it('should throw for unknown provider', () => {
-      expect(() => createHsmBridge('unknown' as any)).toThrow('Unknown KMS provider');
+      expect(() => createHsmBridge('unknown' as KmsProvider)).toThrow('Unknown KMS provider');
     });
   });
 });

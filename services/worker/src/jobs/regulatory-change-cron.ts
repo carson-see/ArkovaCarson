@@ -53,8 +53,7 @@ const DEFAULT_SCORECARD_URL = 'https://app.arkova.ai/compliance/scorecard';
 export async function runRegulatoryChangeCron(
   deps: RegulatoryChangeCronDeps = {},
 ): Promise<RegulatoryChangeCronResult> {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const database = (deps.database ?? db) as any;
+  const database = (deps.database ?? db) as SupabaseClient;
   const sendEmailImpl = deps.sendEmailFn ?? sendEmail;
   const scorecardUrl = deps.scorecardUrl ?? DEFAULT_SCORECARD_URL;
 
@@ -121,9 +120,9 @@ export async function runRegulatoryChangeCron(
   return result;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+
 async function computeImpactForOrg(
-  database: any,
+  database: SupabaseClient,
   orgId: string,
   lastAuditAt: string,
   rules: JurisdictionRule[],
@@ -206,9 +205,9 @@ async function computeImpactForOrg(
   return { impact, currentAudit };
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+
 async function persistChangeEvent(
-  database: any,
+  database: SupabaseClient,
   orgId: string,
   impact: RegulatoryChangeImpact,
   currentAudit: OrgAuditResult,
@@ -237,9 +236,9 @@ async function persistChangeEvent(
   });
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+
 async function createInAppNotification(
-  database: any,
+  database: SupabaseClient,
   orgId: string,
   impact: RegulatoryChangeImpact,
   scorecardUrl: string,
@@ -267,9 +266,9 @@ async function createInAppNotification(
   }
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+
 async function sendImpactEmails(
-  database: any,
+  database: SupabaseClient,
   sendEmailImpl: typeof sendEmail,
   orgId: string,
   impact: RegulatoryChangeImpact,
@@ -283,12 +282,12 @@ async function sendImpactEmails(
     .in('role', ['OWNER', 'ADMIN']);
 
   let sent = 0;
-  for (const a of (admins ?? []) as Array<{
+  for (const a of ((admins ?? []) as unknown as Array<{
     user_id: string;
     role: string;
     notification_preferences: Record<string, unknown> | null;
     users?: { email: string } | null;
-  }>) {
+  }>)) {
     const prefs = a.notification_preferences ?? {};
     const regEmailPref = (prefs as Record<string, unknown>)['regulatory_change_email'];
     const optedOut = regEmailPref === false;

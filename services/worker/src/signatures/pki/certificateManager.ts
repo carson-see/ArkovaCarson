@@ -184,7 +184,7 @@ export class X509CertificateManager implements CertificateManager {
       notAfter: new Date(cert.validTo),
       keyAlgorithm,
       keySize,
-      signatureAlgorithm: (cert as any).sigAlgName || 'unknown',
+      signatureAlgorithm: (cert as unknown as { sigAlgName?: string }).sigAlgName || 'unknown',
       fingerprintSha256: cert.fingerprint256.replace(/:/g, '').toLowerCase(),
       ocspUrls,
       crlUrls,

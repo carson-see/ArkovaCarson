@@ -77,9 +77,7 @@ router.post('/verify', async (req: Request, res: Response) => {
   const { public_ids } = parsed.data;
 
   try {
-    // Batch lookup anchors
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: anchors, error: fetchError } = await (db as any)
+    const { data: anchors, error: fetchError } = await (db as unknown as typeof db)
       .from('anchors')
       .select('public_id, fingerprint, status, chain_tx_id, chain_block_height, chain_timestamp, created_at, credential_type, issued_at, expires_at, org_id, description, directory_info_opt_out')
       .in('public_id', public_ids)
@@ -91,14 +89,13 @@ router.post('/verify', async (req: Request, res: Response) => {
       return;
     }
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const anchorList = (anchors ?? []) as any[];
+    const anchorList = (anchors ?? []) as Array<Record<string, unknown>>;
     const anchorMap = new Map<string, Record<string, unknown>>();
     for (const a of anchorList) {
       anchorMap.set(a.public_id as string, a);
     }
 
-    const orgIds = [...new Set(anchorList.map((a: any) => a.org_id).filter((id: any): id is string => id != null))] as string[];
+    const orgIds = [...new Set(anchorList.map((a) => a.org_id).filter((id): id is string => id != null))] as string[];
     const orgNameMap = new Map<string, string>();
     if (orgIds.length > 0) {
       const { data: orgs } = await db

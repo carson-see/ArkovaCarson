@@ -8,7 +8,7 @@
  * fingerprint. For fingerprint-based verification, use POST /api/verify-anchor.
  */
 
-import { Router } from 'express';
+import { Router, type Request } from 'express';
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 import { config } from '../../config.js';
@@ -267,9 +267,9 @@ export const EMPTY_API_RICH_FIELDS = {
 } as const;
 
 /** Fire-and-forget audit log for verification queries */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+
 function logVerificationAudit(
-  req: any,
+  req: Request,
   publicId: string,
   result: VerificationResult,
   cacheHit: boolean,
@@ -311,8 +311,7 @@ const defaultLookup: PublicIdLookup = {
     // `organization:org_id(display_name)` and `parent:parent_anchor_id(public_id)` each resolve
     // the referenced row via the FK. `directory_info_opt_out` added by migration 0197 is
     // not yet in generated types; `parent_anchor_id` FK to anchors.id never leaves this module.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data, error } = await (db as any)
+    const { data, error } = await db
       .from('anchors')
       .select(
         'public_id, fingerprint, status, chain_tx_id, chain_block_height, chain_timestamp, created_at, ' +
@@ -332,10 +331,13 @@ const defaultLookup: PublicIdLookup = {
 
     if (error || !data) return null;
 
-    const manifests = (data.extraction_manifests ?? []) as Array<{
+    const row = data as unknown as Record<string, unknown>;
+    const organization = row.organization as { display_name: string } | null | undefined;
+    const parent = row.parent as { public_id: string } | null | undefined;
+    const manifests = ((row.extraction_manifests ?? []) as Array<{
       confidence_scores: Record<string, unknown> | null;
       extraction_timestamp: string;
-    }>;
+    }>);
     const latestManifest = manifests.length === 0
       ? null
       : manifests
@@ -343,33 +345,33 @@ const defaultLookup: PublicIdLookup = {
           .sort((a, b) => (a.extraction_timestamp < b.extraction_timestamp ? 1 : -1))[0];
 
     return {
-      public_id: data.public_id ?? '',
-      fingerprint: data.fingerprint,
-      status: data.status,
-      org_id: data.org_id ?? null, // SCRUM-1799 internal-only; not in VerificationResult
-      chain_tx_id: data.chain_tx_id,
-      chain_block_height: data.chain_block_height,
-      chain_timestamp: data.chain_timestamp,
-      created_at: data.created_at,
-      credential_type: data.credential_type,
-      org_name: data.organization?.display_name ?? null,
+      public_id: (row.public_id as string) ?? '',
+      fingerprint: row.fingerprint as string,
+      status: row.status as string,
+      org_id: (row.org_id as string | null) ?? null,
+      chain_tx_id: (row.chain_tx_id as string | null) ?? null,
+      chain_block_height: (row.chain_block_height as number | null) ?? null,
+      chain_timestamp: (row.chain_timestamp as string | null) ?? null,
+      created_at: row.created_at as string,
+      credential_type: (row.credential_type as string | null) ?? null,
+      org_name: organization?.display_name ?? null,
       recipient_hash: null,
-      issued_at: data.issued_at,
-      expires_at: data.expires_at,
+      issued_at: (row.issued_at as string | null) ?? null,
+      expires_at: (row.expires_at as string | null) ?? null,
       jurisdiction: null,
       merkle_root: null,
-      description: data.description ?? null,
-      directory_info_opt_out: data.directory_info_opt_out ?? false,
-      compliance_controls: data.compliance_controls ?? null,
-      chain_confirmations: data.chain_confirmations ?? null,
-      parent_public_id: data.parent?.public_id ?? null,
-      version_number: data.version_number ?? null,
-      revocation_tx_id: data.revocation_tx_id ?? null,
-      revocation_block_height: data.revocation_block_height ?? null,
-      file_mime: data.file_mime ?? null,
-      file_size: data.file_size ?? null,
+      description: (row.description as string | null) ?? null,
+      directory_info_opt_out: (row.directory_info_opt_out as boolean) ?? false,
+      compliance_controls: (row.compliance_controls as Record<string, unknown> | null) ?? null,
+      chain_confirmations: (row.chain_confirmations as number | null) ?? null,
+      parent_public_id: parent?.public_id ?? null,
+      version_number: (row.version_number as number | null) ?? null,
+      revocation_tx_id: (row.revocation_tx_id as string | null) ?? null,
+      revocation_block_height: (row.revocation_block_height as number | null) ?? null,
+      file_mime: (row.file_mime as string | null) ?? null,
+      file_size: (row.file_size as number | null) ?? null,
       confidence_scores: latestManifest?.confidence_scores ?? null,
-      sub_type: data.sub_type ?? null,
+      sub_type: (row.sub_type as string | null) ?? null,
     } as AnchorByPublicId;
   },
 };

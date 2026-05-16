@@ -32,6 +32,49 @@ import type {
 } from '../../signatures/types.js';
 import { getAdesEngine } from '../../signatures/engineFactory.js';
 
+// Helper type for tables not yet in generated Database types.
+// Provides a chainable query builder shape matching Supabase PostgREST.
+interface UntypedQueryBuilder {
+  select(columns?: string): UntypedQueryBuilder;
+  insert(row: Record<string, unknown>): UntypedQueryBuilder;
+  update(row: Record<string, unknown>): UntypedQueryBuilder;
+  eq(col: string, val: unknown): UntypedQueryBuilder;
+  limit(n: number): UntypedQueryBuilder;
+  order(col: string, opts?: { ascending: boolean }): UntypedQueryBuilder;
+  lt(col: string, val: string): UntypedQueryBuilder;
+  gte(col: string, val: string): UntypedQueryBuilder;
+  lte(col: string, val: string): UntypedQueryBuilder;
+  single(): Promise<{ data: Record<string, unknown> | null; error: unknown }>;
+  then: Promise<{ data: Record<string, unknown>[] | null; error: unknown }>['then'];
+}
+
+interface UntypedSupabaseClient {
+  from(table: string): UntypedQueryBuilder;
+}
+
+interface SignatureRow {
+  id: string;
+  public_id: string;
+  org_id: string;
+  status: string;
+  format: string;
+  level: string;
+  document_fingerprint: string | null;
+  signature_value: string | null;
+  signed_attributes: string | null;
+  signer_name: string | null;
+  signer_org: string | null;
+  signed_at: string | null;
+  created_at: string;
+  jurisdiction: string | null;
+  ltv_data_embedded: boolean;
+  timestamp_token_id: string | null;
+  revoked_at: string | null;
+  revocation_reason: string | null;
+  signing_certificates?: { subject_cn: string; subject_org: string; fingerprint_sha256: string } | null;
+}
+
+
 // ─── Zod Schemas ───────────────────────────────────────────────────────
 
 const signRequestSchema = z.object({
@@ -183,7 +226,7 @@ router.post('/sign', async (req: Request, res: Response) => {
 
     // Generate public ID
     // short_code not yet in generated types
-    const { data: orgData } = await (db as any)
+    const { data: orgData } = await (db as unknown as UntypedSupabaseClient)
       .from('organizations')
       .select('short_code')
       .eq('id', orgId)
@@ -195,7 +238,7 @@ router.post('/sign', async (req: Request, res: Response) => {
 
     // Create the signature record (PENDING — engine processes async or inline)
     // signatures table not yet fully in generated types — cast to any
-    const { data: sigRecord, error: insertErr } = await (db as any)
+    const { data: sigRecord, error: insertErr } = await (db as unknown as UntypedSupabaseClient)
       .from('signatures')
       .insert({
         public_id: publicId,
@@ -223,6 +266,8 @@ router.post('/sign', async (req: Request, res: Response) => {
       res.status(500).json({ error: 'Failed to create signature' });
       return;
     }
+
+    const sigId = sigRecord.id as string;
 
     // Invoke AdES engine to sign
     const engine = getAdesEngine();
@@ -279,7 +324,7 @@ router.post('/sign', async (req: Request, res: Response) => {
     }
 
     // Update signature record with engine result
-    const { error: updateErr } = await (db as any)
+    const { error: updateErr } = await (db as unknown as UntypedSupabaseClient)
       .from('signatures')
       .update({
         status: signResult.status,
@@ -292,7 +337,7 @@ router.post('/sign', async (req: Request, res: Response) => {
         timestamp_token_id: timestampTokenId,
         archive_timestamp_id: archiveTimestampId,
       })
-      .eq('id', sigRecord.id);
+      .eq('id', sigId);
 
     if (updateErr) {
       logger.error({ error: updateErr }, 'Failed to update signature with engine result');
@@ -304,7 +349,7 @@ router.post('/sign', async (req: Request, res: Response) => {
       event_category: 'SYSTEM',
       org_id: orgId,
       target_type: 'signature',
-      target_id: sigRecord.id,
+      target_id: sigId,
       details: JSON.stringify({
         public_id: publicId,
         format: body.format,
@@ -347,16 +392,18 @@ router.get('/signatures/:id', async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
 
-    const { data: sig, error } = await (db as any)
+    const { data: sigRaw, error } = await (db as unknown as UntypedSupabaseClient)
       .from('signatures')
       .select('*, signing_certificates(subject_cn, subject_org, fingerprint_sha256)')
       .eq('public_id', id)
       .single();
 
-    if (error || !sig) {
+    if (error || !sigRaw) {
       res.status(404).json({ error: 'Signature not found' });
       return;
     }
+
+    const sig = sigRaw as unknown as SignatureRow;
 
     const response: Record<string, unknown> = {
       signature_id: sig.public_id,
@@ -409,7 +456,7 @@ router.post('/verify-signature', async (req: Request, res: Response) => {
     const body = parsed.data;
 
     // Find the signature
-    let query = (db as any).from('signatures').select('*');
+    let query = (db as unknown as UntypedSupabaseClient).from('signatures').select('*');
 
     if (body.signature_id) {
       query = query.eq('public_id', body.signature_id);
@@ -417,12 +464,14 @@ router.post('/verify-signature', async (req: Request, res: Response) => {
       query = query.eq('document_fingerprint', body.document_fingerprint);
     }
 
-    const { data: sig, error } = await query.limit(1).single();
+    const { data: sigRaw, error } = await query.limit(1).single();
 
-    if (error || !sig) {
+    if (error || !sigRaw) {
       res.status(404).json({ error: 'Signature not found' });
       return;
     }
+
+    const sig = sigRaw as unknown as SignatureRow;
 
     // Build verification checks
     const checks: Record<string, { status: string; detail: string }> = {};
@@ -551,7 +600,7 @@ router.get('/signatures', async (req: Request, res: Response) => {
       return;
     }
 
-    let query = (db as any)
+    let query = (db as unknown as UntypedSupabaseClient)
       .from('signatures')
       .select('public_id, format, level, status, jurisdiction, document_fingerprint, signer_name, signer_org, signed_at, created_at')
       .eq('org_id', membership.org_id)
@@ -615,16 +664,18 @@ router.post('/signatures/:id/revoke', async (req: Request, res: Response) => {
     const { reason, detail } = parsed.data;
 
     // Find the signature and verify ownership
-    const { data: sig, error: findErr } = await (db as any)
+    const { data: sigRaw, error: findErr } = await (db as unknown as UntypedSupabaseClient)
       .from('signatures')
       .select('id, public_id, status, org_id')
       .eq('public_id', id)
       .single();
 
-    if (findErr || !sig) {
+    if (findErr || !sigRaw) {
       res.status(404).json({ error: 'Signature not found' });
       return;
     }
+
+    const sig = sigRaw as unknown as SignatureRow;
 
     // Verify user has admin/owner role in the org
     const { data: membership } = await db
@@ -646,7 +697,7 @@ router.post('/signatures/:id/revoke', async (req: Request, res: Response) => {
     }
 
     // Revoke
-    const { error: updateErr } = await (db as any)
+    const { error: updateErr } = await (db as unknown as UntypedSupabaseClient)
       .from('signatures')
       .update({
         status: 'REVOKED',

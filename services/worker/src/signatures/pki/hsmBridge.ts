@@ -43,7 +43,7 @@ export class AwsKmsHsmBridge implements HsmBridge {
 
   async sign(request: HsmSignRequest): Promise<HsmSignResponse> {
     validateSignRequest(request);
-    const client = await this.getClient() as any;
+    const client = await this.getClient() as { send(command: unknown): Promise<{ Signature?: Uint8Array }> };
     const { SignCommand } = await import('@aws-sdk/client-kms');
 
     const kmsAlgorithm = KEY_ALGORITHM_TO_KMS[request.algorithm]?.aws;
@@ -76,7 +76,7 @@ export class AwsKmsHsmBridge implements HsmBridge {
   }
 
   async getPublicKey(provider: KmsProvider, keyId: string): Promise<Buffer> {
-    const client = await this.getClient() as any;
+    const client = await this.getClient() as { send(command: unknown): Promise<{ PublicKey?: Uint8Array }> };
     const { GetPublicKeyCommand } = await import('@aws-sdk/client-kms');
 
     const command = new GetPublicKeyCommand({ KeyId: keyId });
@@ -104,7 +104,7 @@ export class GcpKmsHsmBridge implements HsmBridge {
 
   async sign(request: HsmSignRequest): Promise<HsmSignResponse> {
     validateSignRequest(request);
-    const client = await this.getClient() as any;
+    const client = await this.getClient() as { asymmetricSign(request: unknown): Promise<[{ signature?: Uint8Array }]> };
 
     const [response] = await client.asymmetricSign({
       name: request.keyId,
@@ -130,7 +130,7 @@ export class GcpKmsHsmBridge implements HsmBridge {
   }
 
   async getPublicKey(_provider: KmsProvider, keyId: string): Promise<Buffer> {
-    const client = await this.getClient() as any;
+    const client = await this.getClient() as { getPublicKey(request: unknown): Promise<[{ pem?: string }]> };
     const [response] = await client.getPublicKey({ name: keyId });
     if (!response.pem) {
       throw new Error('GCP KMS returned empty public key');

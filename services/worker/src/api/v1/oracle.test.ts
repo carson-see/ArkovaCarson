@@ -3,6 +3,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { z } from 'zod';
 
 // ---- Hoisted mocks ----
 const { mockDbFrom, mockLogger } = vi.hoisted(() => {
@@ -145,7 +146,7 @@ describe('Oracle endpoint', () => {
 
   describe('OracleQuerySchema validation', () => {
     it('rejects empty public_ids array', () => {
-      const { z } = require('zod');
+      // z imported at top level
       const schema = z.object({
         public_ids: z.array(z.string().min(3).max(64)).min(1).max(25),
       });
@@ -153,7 +154,7 @@ describe('Oracle endpoint', () => {
     });
 
     it('rejects more than 25 public_ids', () => {
-      const { z } = require('zod');
+      // z imported at top level
       const schema = z.object({
         public_ids: z.array(z.string().min(3).max(64)).min(1).max(25),
       });
@@ -162,7 +163,7 @@ describe('Oracle endpoint', () => {
     });
 
     it('accepts valid public_ids', () => {
-      const { z } = require('zod');
+      // z imported at top level
       const schema = z.object({
         public_ids: z.array(z.string().min(3).max(64)).min(1).max(25),
       });

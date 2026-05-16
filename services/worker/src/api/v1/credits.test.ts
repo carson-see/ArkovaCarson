@@ -36,12 +36,14 @@ vi.mock('../../utils/logger.js', () => ({
 import { db } from '../../utils/db.js';
 import { creditsRouter, CREDIT_PACKS } from './credits.js';
 
+type AuthReq = Request & { userId?: string; orgId?: string };
+
 function createApp(userId = 'user-1', orgId = 'org-1') {
   const app = express();
   app.use(express.json());
   app.use((req: Request, _res: Response, next: NextFunction) => {
-    (req as any).userId = userId;
-    (req as any).orgId = orgId;
+    (req as AuthReq).userId = userId;
+    (req as AuthReq).orgId = orgId;
     next();
   });
   app.use('/api/v1/credits', creditsRouter);
@@ -54,7 +56,7 @@ beforeEach(() => {
 
 describe('GET /api/v1/credits', () => {
   it('returns credit balance', async () => {
-    (db.rpc as any).mockResolvedValue({
+    (db.rpc as ReturnType<typeof vi.fn>).mockResolvedValue({
       data: { monthly_allocation: 1000, used_this_month: 50, remaining: 950 },
       error: null,
     });
@@ -70,7 +72,7 @@ describe('GET /api/v1/credits', () => {
   });
 
   it('returns 500 on DB error', async () => {
-    (db.rpc as any).mockResolvedValue({ data: null, error: { message: 'fail' } });
+    (db.rpc as ReturnType<typeof vi.fn>).mockResolvedValue({ data: null, error: { message: 'fail' } });
 
     const app = createApp();
     const res = await request(app).get('/api/v1/credits');
@@ -90,7 +92,7 @@ describe('POST /api/v1/credits/purchase', () => {
   });
 
   it('grants credits in dev mode (no Stripe key)', async () => {
-    (db.rpc as any).mockResolvedValue({ data: null, error: null });
+    (db.rpc as ReturnType<typeof vi.fn>).mockResolvedValue({ data: null, error: null });
 
     const app = createApp();
     const res = await request(app)
@@ -104,7 +106,7 @@ describe('POST /api/v1/credits/purchase', () => {
   });
 
   it('calls deduct_unified_credits with negative amount (grant)', async () => {
-    (db.rpc as any).mockResolvedValue({ data: null, error: null });
+    (db.rpc as ReturnType<typeof vi.fn>).mockResolvedValue({ data: null, error: null });
 
     const app = createApp();
     await request(app)

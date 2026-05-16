@@ -79,7 +79,7 @@ async function evaluateEntry(
     confidence = 0;
     extractionError = err instanceof Error ? err.message : String(err);
     if (process.env.EVAL_VERBOSE === '1') {
-      // eslint-disable-next-line no-console
+
       console.error(`[eval] entry=${entry.id} provider=${provider.name} ERROR: ${extractionError}`);
     }
   }

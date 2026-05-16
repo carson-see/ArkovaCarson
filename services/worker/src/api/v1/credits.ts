@@ -18,6 +18,11 @@ import { db } from '../../utils/db.js';
 import { config } from '../../config.js';
 import { logger } from '../../utils/logger.js';
 
+interface AuthenticatedRequest extends Request {
+  userId?: string;
+  orgId?: string;
+}
+
 export const creditsRouter = Router();
 
 // ─── Credit Pack Definitions ─────────────────────────────────────────
@@ -40,8 +45,9 @@ const purchaseSchema = z.object({
 // ─── GET /api/v1/credits — Check balance ─────────────────────────────
 
 creditsRouter.get('/', async (req: Request, res: Response) => {
-  const userId = (req as any).userId as string;
-  const orgId = (req as any).orgId as string | undefined;
+  const authReq = req as AuthenticatedRequest;
+  const userId = authReq.userId;
+  const orgId = authReq.orgId;
 
   if (!userId) {
     res.status(401).json({ error: 'Authentication required' });
@@ -79,8 +85,9 @@ creditsRouter.get('/', async (req: Request, res: Response) => {
 // ─── POST /api/v1/credits/purchase — Buy a credit pack ───────────────
 
 creditsRouter.post('/purchase', async (req: Request, res: Response) => {
-  const userId = (req as any).userId as string;
-  const orgId = (req as any).orgId as string | undefined;
+  const authReq = req as AuthenticatedRequest;
+  const userId = authReq.userId;
+  const orgId = authReq.orgId;
 
   if (!userId) {
     res.status(401).json({ error: 'Authentication required' });

@@ -57,10 +57,9 @@ function createMockDeps(overrides: Partial<HealthCheckDeps> = {}): HealthCheckDe
   };
 }
 
-/** Cast checks to typed accessor to avoid TS18046 on Record<string, unknown>. */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- test helper: health checks have dynamic shape per subsystem
-function checks(result: { body: { checks: Record<string, unknown> } }): Record<string, any> {
-  return result.body.checks as Record<string, any>;
+interface HealthCheckEntry { [key: string]: HealthCheckEntry | string | number | boolean | null | undefined }
+function checks(result: { body: { checks: Record<string, unknown> } }): Record<string, HealthCheckEntry> {
+  return result.body.checks as Record<string, HealthCheckEntry>;
 }
 
 describe('buildHealthResponse (P7-TS-06)', () => {

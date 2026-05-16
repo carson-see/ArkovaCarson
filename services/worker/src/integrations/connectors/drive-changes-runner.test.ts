@@ -632,7 +632,7 @@ describe('runDriveChanges (orchestrator) — direct tests for skip + happy paths
           }),
         }),
       }),
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
       rpc: vi.fn(),
     };
     const integration: DriveIntegrationRow = {
@@ -678,7 +678,7 @@ describe('runDriveChanges (orchestrator) — direct tests for skip + happy paths
           }),
         }),
       }),
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+
       rpc: vi.fn(),
     };
     const integration: DriveIntegrationRow = {

@@ -653,9 +653,9 @@ describe('credentialSourcesRouter', () => {
       expect(res.status).toBe(201);
       for (let i = 0; i < 10; i++) await Promise.resolve();
 
-      const issuedRow = mockAuditInsert.mock.calls
-        .map((c: unknown[]) => c[0])
-        .find((row: any) => row?.event_type === 'credential.issued') as
+      const issuedRow = (mockAuditInsert.mock.calls
+        .map((c: unknown[]) => c[0]) as Array<Record<string, unknown>>)
+        .find((row) => row?.event_type === 'credential.issued') as
         | { event_category: string; org_id: string; details: string }
         | undefined;
       expect(issuedRow).toBeDefined();

@@ -126,9 +126,9 @@ router.get('/:publicId/provenance', async (req: Request<{ publicId: string }>, r
     }
 
     // Fetch signature events (Phase III)
-    const { data: signatures } = await (db as any)
+    const { data: signatures } = await (db as unknown as typeof db)
       .from('signatures')
-      .select('public_id, format, level, status, signed_at, signer_name, timestamp_token_id')
+      .select('public_id, format, level, status, signed_at, signer_name, timestamp_token_id, created_at')
       .eq('anchor_id', anchor.id)
       .order('created_at', { ascending: true });
 

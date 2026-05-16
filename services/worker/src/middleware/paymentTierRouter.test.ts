@@ -32,7 +32,9 @@ vi.mock('../utils/logger.js', () => ({
 }));
 
 import { db } from '../utils/db.js';
-import { paymentTierRouter } from './paymentTierRouter.js';
+import { paymentTierRouter, PaymentResolution } from './paymentTierRouter.js';
+
+type PayReq = Request & { userId?: string; orgId?: string; paymentResolution?: PaymentResolution };
 
 function createApp(userId?: string, orgId?: string) {
   const app = express();
@@ -40,19 +42,19 @@ function createApp(userId?: string, orgId?: string) {
 
   // Simulate auth middleware
   app.use((req: Request, _res: Response, next: NextFunction) => {
-    if (userId) (req as any).userId = userId;
-    if (orgId) (req as any).orgId = orgId;
+    if (userId) (req as PayReq).userId = userId;
+    if (orgId) (req as PayReq).orgId = orgId;
     next();
   });
 
   app.use(paymentTierRouter());
 
   app.get('/api/v1/verify/:id', (req: Request, res: Response) => {
-    res.json({ ok: true, tier: (req as any).paymentResolution?.tier });
+    res.json({ ok: true, tier: (req as PayReq).paymentResolution?.tier });
   });
 
   app.post('/api/v1/ai/extract', (req: Request, res: Response) => {
-    res.json({ ok: true, tier: (req as any).paymentResolution?.tier });
+    res.json({ ok: true, tier: (req as PayReq).paymentResolution?.tier });
   });
 
   app.get('/health', (_req: Request, res: Response) => {
@@ -84,7 +86,7 @@ describe('paymentTierRouter', () => {
 
   describe('tier 0: admin bypass', () => {
     it('should authorize admin users without payment', async () => {
-      (db.from as any).mockReturnValue({
+      (db.from as ReturnType<typeof vi.fn>).mockReturnValue({
         select: vi.fn().mockReturnValue({
           eq: vi.fn().mockReturnValue({
             maybeSingle: vi.fn().mockResolvedValue({ data: { is_platform_admin: true }, error: null }),
@@ -101,14 +103,14 @@ describe('paymentTierRouter', () => {
 
   describe('tier 0: beta unlimited', () => {
     it('should authorize when beta mode is active', async () => {
-      (db.from as any).mockReturnValue({
+      (db.from as ReturnType<typeof vi.fn>).mockReturnValue({
         select: vi.fn().mockReturnValue({
           eq: vi.fn().mockReturnValue({
             maybeSingle: vi.fn().mockResolvedValue({ data: { is_platform_admin: false }, error: null }),
           }),
         }),
       });
-      (db.rpc as any)
+      (db.rpc as ReturnType<typeof vi.fn>)
         .mockResolvedValueOnce({ data: null, error: null }); // check_anchor_quota → NULL = unlimited
 
       const app = createApp('user-1', 'org-1');
@@ -121,7 +123,7 @@ describe('paymentTierRouter', () => {
   describe('tier 1: prepaid credits', () => {
     it('should deduct credits and authorize', async () => {
       // Admin check: not admin
-      (db.from as any).mockReturnValue({
+      (db.from as ReturnType<typeof vi.fn>).mockReturnValue({
         select: vi.fn().mockReturnValue({
           eq: vi.fn().mockReturnValue({
             maybeSingle: vi.fn().mockResolvedValue({ data: { is_platform_admin: false }, error: null }),
@@ -132,7 +134,7 @@ describe('paymentTierRouter', () => {
         }),
       });
 
-      (db.rpc as any)
+      (db.rpc as ReturnType<typeof vi.fn>)
         .mockResolvedValueOnce({ data: 50, error: null }) // check_anchor_quota → not null = not beta
         .mockResolvedValueOnce({ data: { remaining: 100 }, error: null }) // check_unified_credits
         .mockResolvedValueOnce({ data: null, error: null }); // deduct_unified_credits
@@ -148,7 +150,7 @@ describe('paymentTierRouter', () => {
   describe('tier 3: 402 when no payment', () => {
     it('should return 402 when all tiers fail', async () => {
       // Not admin
-      (db.from as any).mockReturnValue({
+      (db.from as ReturnType<typeof vi.fn>).mockReturnValue({
         select: vi.fn().mockReturnValue({
           eq: vi.fn().mockReturnValue({
             maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
@@ -159,7 +161,7 @@ describe('paymentTierRouter', () => {
         }),
       });
 
-      (db.rpc as any)
+      (db.rpc as ReturnType<typeof vi.fn>)
         .mockResolvedValueOnce({ data: 50, error: null }) // not beta
         .mockResolvedValueOnce({ data: { remaining: 0 }, error: null }); // no credits
 
