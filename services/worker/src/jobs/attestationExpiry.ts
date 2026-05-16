@@ -101,17 +101,6 @@ export async function checkAttestationExpiry(): Promise<ExpiryResult> {
     if (!expiredError && justExpired?.length) {
       result.newly_expired += justExpired.length;
 
-      // SCRUM-1296: Bulk status update — single .in() call instead of N individual updates
-      const expiredIds = justExpired.map((att: { id: string }) => att.id);
-      const { error: bulkUpdateErr } = await dbAny
-        .from('attestations')
-        .update({ status: 'EXPIRED' })
-        .in('id', expiredIds);
-
-      if (bulkUpdateErr) {
-        logger.error({ error: bulkUpdateErr, count: expiredIds.length }, 'Failed to bulk-update expired attestations');
-      }
-
       // Collect expired webhook events for bulk insert
       for (const att of justExpired) {
         if (att.attester_org_id) {
@@ -128,18 +117,82 @@ export async function checkAttestationExpiry(): Promise<ExpiryResult> {
           });
         }
       }
-    }
 
-    // SCRUM-1296: Single bulk insert for all webhook events
-    if (webhookInserts.length > 0) {
-      const { error: insertErr } = await dbAny
-        .from('webhook_events')
-        .insert(webhookInserts);
+      // SCRUM-1296 BUG FIX: Insert webhooks BEFORE updating status.
+      // If webhook insert fails, attestations stay ACTIVE and will be retried
+      // next tick. Previously, status was updated first — if webhook insert
+      // then failed, those events were permanently lost (cron queries status = 'ACTIVE').
+      const CHUNK_SIZE = 100;
 
-      if (insertErr) {
-        logger.warn({ error: insertErr, count: webhookInserts.length }, 'Failed to bulk-insert expiry webhooks');
+      // Bulk insert webhooks in chunks (PostgREST ~8KB URL limit on .in() filters)
+      if (webhookInserts.length > 0) {
+        let webhooksFailed = false;
+        for (let i = 0; i < webhookInserts.length; i += CHUNK_SIZE) {
+          const chunk = webhookInserts.slice(i, i + CHUNK_SIZE);
+          const { error: insertErr } = await dbAny
+            .from('webhook_events')
+            .insert(chunk);
+
+          if (insertErr) {
+            logger.warn({ error: insertErr, count: chunk.length }, 'Failed to bulk-insert expiry webhooks chunk');
+            webhooksFailed = true;
+            break;
+          } else {
+            result.webhooks_queued += chunk.length;
+          }
+        }
+
+        // Only update status to EXPIRED if webhooks were persisted successfully.
+        // This ensures no webhook events are permanently lost.
+        if (webhooksFailed) {
+          logger.warn(
+            { count: justExpired.length },
+            'Skipping status update to EXPIRED — webhook insert failed, will retry next tick',
+          );
+        } else {
+          // Bulk status update in chunks of 100
+          const expiredIds = justExpired.map((att: { id: string }) => att.id);
+          for (let i = 0; i < expiredIds.length; i += CHUNK_SIZE) {
+            const chunk = expiredIds.slice(i, i + CHUNK_SIZE);
+            const { error: bulkUpdateErr } = await dbAny
+              .from('attestations')
+              .update({ status: 'EXPIRED' })
+              .in('id', chunk);
+
+            if (bulkUpdateErr) {
+              logger.error({ error: bulkUpdateErr, count: chunk.length }, 'Failed to bulk-update expired attestations chunk');
+            }
+          }
+        }
       } else {
-        result.webhooks_queued = webhookInserts.length;
+        // No webhooks to insert but still need to mark as expired
+        const expiredIds = justExpired.map((att: { id: string }) => att.id);
+        for (let i = 0; i < expiredIds.length; i += CHUNK_SIZE) {
+          const chunk = expiredIds.slice(i, i + CHUNK_SIZE);
+          const { error: bulkUpdateErr } = await dbAny
+            .from('attestations')
+            .update({ status: 'EXPIRED' })
+            .in('id', chunk);
+
+          if (bulkUpdateErr) {
+            logger.error({ error: bulkUpdateErr, count: chunk.length }, 'Failed to bulk-update expired attestations chunk');
+          }
+        }
+      }
+    } else if (webhookInserts.length > 0) {
+      // Expiring (but not yet expired) webhook events — insert in chunks
+      const CHUNK_SIZE = 100;
+      for (let i = 0; i < webhookInserts.length; i += CHUNK_SIZE) {
+        const chunk = webhookInserts.slice(i, i + CHUNK_SIZE);
+        const { error: insertErr } = await dbAny
+          .from('webhook_events')
+          .insert(chunk);
+
+        if (insertErr) {
+          logger.warn({ error: insertErr, count: chunk.length }, 'Failed to bulk-insert expiry webhooks chunk');
+        } else {
+          result.webhooks_queued += chunk.length;
+        }
       }
     }
 

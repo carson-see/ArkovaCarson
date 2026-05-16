@@ -106,6 +106,85 @@ describe('SCRUM-1296: cloud-logging-drain bumpRetryCounts', () => {
     // Falls back to bulk .in() update
     expect(mockDbFrom).toHaveBeenCalledWith('cloud_logging_queue');
   });
+
+  it('should increment retry_count in fallback path (not just set last_error)', async () => {
+    const { bumpRetryCounts } = await import('./cloud-logging-drain.js');
+
+    const auditIds = ['id-1', 'id-2', 'id-3'];
+    // RPC fails (function not found)
+    mockDbRpc.mockResolvedValueOnce({
+      data: null,
+      error: { code: '42883', message: 'function not found' },
+    });
+
+    // Track what update() is called with
+    const updatePayloads: unknown[] = [];
+    const selectResult = {
+      data: [
+        { audit_id: 'id-1', retry_count: 2 },
+        { audit_id: 'id-2', retry_count: 5 },
+        { audit_id: 'id-3', retry_count: 2 },
+      ],
+      error: null,
+    };
+
+    let callIndex = 0;
+    mockDbFrom.mockImplementation(() => {
+      callIndex++;
+      const chain: Record<string, unknown> = {};
+      const methods = ['eq', 'is', 'lt', 'lte', 'gte', 'not', 'in', 'limit', 'single', 'maybeSingle', 'order'];
+      for (const m of methods) {
+        chain[m] = vi.fn(() => chain);
+      }
+      chain['select'] = vi.fn(() => {
+        // Return selectResult for the SELECT call
+        return new Proxy(chain, {
+          get(target, prop) {
+            if (prop === 'then') return (res: (v: unknown) => void) => res(selectResult);
+            return target[prop as string] ?? vi.fn(() => target);
+          },
+        });
+      });
+      chain['update'] = vi.fn((payload: unknown) => {
+        updatePayloads.push(payload);
+        return new Proxy(chain, {
+          get(target, prop) {
+            if (prop === 'then') return (res: (v: unknown) => void) => res({ data: null, error: null });
+            return target[prop as string] ?? vi.fn(() => target);
+          },
+        });
+      });
+      // Default thenable
+      Object.defineProperty(chain, 'then', {
+        get() {
+          return (resolve: (v: unknown) => void) => resolve(selectResult);
+        },
+        configurable: true,
+      });
+      return new Proxy(chain, {
+        get(target, prop) {
+          if (prop === 'then') return (res: (v: unknown) => void) => res(selectResult);
+          return target[prop as string] ?? vi.fn(() => target);
+        },
+      });
+    });
+
+    await bumpRetryCounts(auditIds, 'connection timeout');
+
+    expect(mockDbRpc).toHaveBeenCalledTimes(1);
+    expect(mockDbFrom).toHaveBeenCalledWith('cloud_logging_queue');
+    // Verify retry_count was incremented (not just last_error set)
+    const hasRetryIncrement = updatePayloads.some(
+      (p: any) => typeof p === 'object' && p !== null && 'retry_count' in p && p.retry_count > 0,
+    );
+    expect(hasRetryIncrement).toBe(true);
+    // Verify the incremented values are correct (2+1=3 and 5+1=6)
+    const retryValues = updatePayloads
+      .filter((p: any) => typeof p === 'object' && p !== null && 'retry_count' in p)
+      .map((p: any) => p.retry_count);
+    expect(retryValues).toContain(3); // 2 + 1
+    expect(retryValues).toContain(6); // 5 + 1
+  });
 });
 
 describe('SCRUM-1296: attestationExpiry bulk operations', () => {
@@ -146,6 +225,84 @@ describe('SCRUM-1296: attestationExpiry bulk operations', () => {
 
     // Should have used bulk insert (single call, not 3 individual ones)
     expect(result.webhooks_queued).toBe(3);
+  });
+
+  it('should insert webhook events BEFORE updating status to EXPIRED (ordering guarantee)', async () => {
+    const { checkAttestationExpiry } = await import('./attestationExpiry.js');
+
+    const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000);
+
+    // 2 expired attestations
+    const expiredData = [
+      { id: 'e1', public_id: 'pub-e1', attestation_type: 'T', subject_identifier: 's', attester_name: 'A', attester_org_id: 'org-1', expires_at: yesterday.toISOString() },
+      { id: 'e2', public_id: 'pub-e2', attestation_type: 'T', subject_identifier: 's', attester_name: 'B', attester_org_id: 'org-1', expires_at: yesterday.toISOString() },
+    ];
+
+    // Track the order of operations
+    const operationOrder: string[] = [];
+
+    let callCount = 0;
+    mockDbFrom.mockImplementation((table: string) => {
+      callCount++;
+      if (table === 'attestations' && callCount <= 2) {
+        // First two calls are the SELECT queries
+        if (callCount === 1) return makeChainable({ data: [], error: null }); // no expiring
+        return makeChainable({ data: expiredData, error: null }); // expired
+      }
+      if (table === 'webhook_events') {
+        operationOrder.push('webhook_insert');
+        return makeChainable({ data: null, error: null });
+      }
+      if (table === 'attestations' && callCount > 2) {
+        operationOrder.push('status_update');
+        return makeChainable({ data: null, error: null });
+      }
+      return makeChainable({ data: null, error: null });
+    });
+
+    await checkAttestationExpiry();
+
+    // Webhook insert must happen BEFORE status update
+    expect(operationOrder.length).toBeGreaterThanOrEqual(2);
+    expect(operationOrder.indexOf('webhook_insert')).toBeLessThan(
+      operationOrder.indexOf('status_update'),
+    );
+  });
+
+  it('should NOT update status if webhook insert fails (prevents permanent event loss)', async () => {
+    const { checkAttestationExpiry } = await import('./attestationExpiry.js');
+
+    const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000);
+
+    const expiredData = [
+      { id: 'e1', public_id: 'pub-e1', attestation_type: 'T', subject_identifier: 's', attester_name: 'A', attester_org_id: 'org-1', expires_at: yesterday.toISOString() },
+    ];
+
+    let callCount = 0;
+    let statusUpdateCalled = false;
+    mockDbFrom.mockImplementation((table: string) => {
+      callCount++;
+      if (table === 'attestations' && callCount <= 2) {
+        if (callCount === 1) return makeChainable({ data: [], error: null });
+        return makeChainable({ data: expiredData, error: null });
+      }
+      if (table === 'webhook_events') {
+        // Webhook insert FAILS
+        return makeChainable({ data: null, error: { message: 'DB connection lost' } });
+      }
+      if (table === 'attestations' && callCount > 2) {
+        statusUpdateCalled = true;
+        return makeChainable({ data: null, error: null });
+      }
+      return makeChainable({ data: null, error: null });
+    });
+
+    const result = await checkAttestationExpiry();
+
+    // Status should NOT have been updated since webhook insert failed
+    expect(statusUpdateCalled).toBe(false);
+    // Webhooks queued should be 0 since insert failed
+    expect(result.webhooks_queued).toBe(0);
   });
 
   it('should bulk-update expired attestation statuses', async () => {
