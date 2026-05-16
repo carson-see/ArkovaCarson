@@ -1,5 +1,5 @@
 /**
- * Webhook Delivery Round-Trip Integration Test (SCRUM-1729 / SCRUM-1737)
+ * Webhook Delivery Round-Trip Integration Test (SCRUM-1729 / SCRUM-1737).
  *
  * Verifies the full outbound webhook pipeline:
  *   dispatchWebhookEvent → endpoint lookup → schema validation →
