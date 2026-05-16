@@ -22,10 +22,17 @@ Custom ESLint plugin (`eslint-plugin-arkova`) enforcing test quality standards.
 **Fix:** Assert transformations, business logic, side effects, or error handling — not that data passes through unchanged.
 **Current violations:** 8 test blocks
 
+### `arkova/missing-org-filter` (warn — production files only)
+**What:** Flags Supabase `.from('<table>')` calls against multi-tenant tables that lack a tenant-scoping filter (`.eq('org_id', ...)` or `.is('org_id', null)`) in the method chain. Also checks `.insert()`/`.upsert()` payloads for scope keys.
+**Why:** SCRUM-1208 found three cross-tenant bugs in production (docusign webhook, ATS webhook, search endpoint). The rule makes tenant isolation visible at the query site.
+**Monitored tables:** `org_integrations`, `integration_events`, `org_kyb`, `org_members`, `org_memberships`, `subscriptions`, `org_monthly_allocation`, `kyb_webhook_nonces`, `docusign_webhook_nonces`, `audit_events`, `organization_rule_events`, `organization_rule_executions`, `attestations`, `org_tier_entitlements`, `organization_rules`, `api_keys`, `org_api_keys`.
+**Note:** `public_records` is intentionally excluded — it has no `org_id` column and is cross-tenant by design (public data pipeline).
+**Worker override:** Cross-tenant system crons (`*Fetcher.ts`, `attestationAnchor.ts`, `chain-maintenance.ts`, etc.) are exempted in `services/worker/eslint.config.js`. Org-scoped jobs (`report.ts`, `rules-engine.ts`, `rule-action-dispatcher.ts`, `queue-reminders.ts`) keep the rule active.
+
 ## Architecture
-- ESLint v8 with `.eslintrc.cjs`
+- ESLint v9 flat config
 - Plugin registered as `file:./eslint-rules` in `package.json` devDependencies
-- Rules only apply to test files via `overrides[].files` pattern
+- Test-quality rules apply to test files; `missing-org-filter` applies to production files
 - All rules are AST-based (no regex on source text)
 
 ## Escalation Plan

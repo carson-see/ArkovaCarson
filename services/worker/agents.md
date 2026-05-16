@@ -17,7 +17,7 @@ Driving worker eslint warnings to zero so `--max-warnings 0` can be re-enabled (
 
 **`types/express.d.ts`** centralizes Request augmentation for `userId`, `orgId`, `paymentResolution`, `rawBody`, `id`. Coexists with per-middleware augmentations in `requireOrgId.ts` and `apiKeyAuth.ts`. TypeScript merges all declarations.
 
-**Suppression policy for `arkova/missing-org-filter`**: pipeline crons, Stripe webhooks, and chain maintenance use service-role (suppress with `-- service-role admin query`). Public verification endpoints suppress with `-- public verification endpoint`. User-facing endpoints with real gaps get org_id added.
+**Suppression policy for `arkova/missing-org-filter`** (updated PR #798): `public_records` removed from monitored tables (no org_id column, cross-tenant by design). Cross-tenant system crons (`*Fetcher.ts`, `attestationAnchor.ts`, `chain-maintenance.ts`, `check-confirmations.ts`, etc.) exempted via eslint.config.js override. Org-scoped jobs (`report.ts`, `rules-engine.ts`, `rule-action-dispatcher.ts`, `queue-reminders.ts`) keep the rule active — inline `eslint-disable` with `-- service-role admin query` for those. Stripe webhooks and public verification endpoints suppress with `-- public verification endpoint`.
 
 ## Treasury null-handling fix (2026-05-15, PR #805)
 
