@@ -1,6 +1,6 @@
 # agents.md — services/worker
 
-_Last updated: 2026-05-15 (SCRUM-1909 lint warning cleanup)._
+_Last updated: 2026-05-16 (SCRUM-1909 lint warning cleanup)._
 
 ## What This Folder Contains
 
@@ -8,11 +8,12 @@ Express-based worker service handling privileged server-side operations: Merkle 
 
 ## SCRUM-1909 ESLint warning cleanup (2026-05-15)
 
-Driving worker eslint warnings to zero so `--max-warnings 0` can be re-enabled (CLAUDE.md §0 Rule 9 / SCRUM-1250 R4). PRs #789, #791, #792 cover S1 work:
+Driving worker eslint warnings to zero so `--max-warnings 0` can be re-enabled (CLAUDE.md §0 Rule 9 / SCRUM-1250 R4). PRs #789, #791, #792, #793 cover S1+S2 work:
 
 - **PR #789**: 34 quick-win warnings (ban-ts-comment → ts-expect-error, preserve-caught-error, no-useless-assignment). 365 → 331.
 - **PR #791**: 163 warnings — Express type augmentation (`types/express.d.ts`), `require()` → ESM import, `arkova/missing-org-filter` + `no-explicit-any` suppressions. 331 → 119.
-- **PR #792**: Security fix — 12 tenant isolation gaps (org_id on audit inserts, api_keys TOCTOU guard).
+- **PR #792**: Security fix — 12 tenant isolation gaps (org_id on audit inserts, api_keys TOCTOU guard, event_category CHECK constraint fix).
+- **PR #793**: 48 warnings — test file `as any` → proper types, `chain/base.ts` + `hsmBridge.ts` suppressions.
 
 **`types/express.d.ts`** centralizes Request augmentation for `userId`, `orgId`, `paymentResolution`, `rawBody`, `id`. Coexists with per-middleware augmentations in `requireOrgId.ts` and `apiKeyAuth.ts`. TypeScript merges all declarations.
 

@@ -18,32 +18,28 @@
 
 **PR #794 merged** to `main` at 2026-05-16T08:54:54Z (merge commit `9d1445af`). Five `event_category` string values (`api_key`, `PLATFORM`, `SECURITY`, `COMPLIANCE`, `NOTIFICATION`) silently violated the `audit_events_event_category_valid` CHECK constraint, causing all affected audit inserts to be dropped. Fixed by mapping each to valid categories: `API`, `SYSTEM`, `ADMIN`. 9 files changed (7 production + 2 test), 13 line substitutions. T2 staging soak ran 12.5h at 2.7 req/s with 0 cron errors. Jira: SCRUM-1918 → Done; SCRUM-1917, SCRUM-1920 closed as duplicates.
 
+### 2026-05-16 — Jira housekeeping + git sync
+
+**Jira transitions (all code merged to main):** SCRUM-1821 (In Progress → Done, PRs #785+#787), SCRUM-1842 + subtasks SCRUM-1843/1844 (To Do → Done, PR #782). Already Done: SCRUM-952, SCRUM-1655, SCRUM-1834. SCRUM-1909 left open (PR #792 still in review).
+
+**Git sync:** `origin/main` at `6b2be6dd`, local `main` fast-forwarded to match. PR #792 rebased onto current main to clear CONFLICTING state.
+
+_Last refreshed: 2026-05-16 by Carson — claims verified against Jira MCP, `gh pr list`, `git fetch --all`._
+
 ### 2026-05-15 — SCRUM-1909 worker lint cleanup (365→119 warnings)
 
 **Scope:** Reduce `services/worker/` ESLint warnings from 365 to 119 across 4 PRs. No runtime behavior changes except one pre-existing bug fix (event_category CHECK constraint violation in `api/v1/keys.ts`).
 
-**PRs (all open, awaiting staging soak + merge):**
+**PRs:**
 
 | PR | Branch | Tier | Scope | Status |
 |---|---|---|---|---|
-| [#789](https://github.com/carson-see/ArkovaCarson/pull/789) | `chore/worker-lint-cleanup` | T3 | 34 fixes: `@ts-ignore` removal, `{ cause: err }`, `@ts-expect-error` | T3 soak started 2026-05-15T18:40Z, rev `00099-sog`, deploy log 40 |
-| [#791](https://github.com/carson-see/ArkovaCarson/pull/791) | `chore/scrum-1909-lint-cleanup-s1` | T3 | 163 suppressions: `missing-org-filter` + `no-explicit-any` + Express type augmentation | T3 soak started 2026-05-15T20:29Z, rev `00104-wic`, deploy log 43 |
-| [#792](https://github.com/carson-see/ArkovaCarson/pull/792) | `fix/tenant-isolation-audit-org-id` | T2 | 12 tenant isolation gaps: `org_id` on audit inserts + PATCH guard + `event_category: 'API'` fix | T2 soak started 2026-05-15T20:23Z, rev `00100-jay`, deploy log 41 |
-| [#793](https://github.com/carson-see/ArkovaCarson/pull/793) | `chore/scrum-1909-lint-cleanup-s2` | T3 | 48 fixes: test file `as any` → proper types + `chain/base.ts` + `hsmBridge.ts` suppressions | T3 soak started 2026-05-15T20:36Z, rev `00106-qex`, deploy log 46 |
-
-*T3 forced by path rules (`chain/`, `check-confirmations.ts`) even though changes are lint-only (comments/type annotations).
-
-**All staging deploys healthy:** All 4 tag-routed URLs return `200 /health` with `database: ok, anchoring: ok, kms: ok`.
-
-**Bug found and fixed in PR #792:** `event_category: 'api_key'` in `logAuditEvent()` violates the `audit_events` CHECK constraint — all API key lifecycle audit events (create, revoke, delete) were silently failing at DB insert. Changed to `'API'` (valid CHECK value).
-
-**CI note:** Staging evidence gate initially failed on all PRs because the check script's regex `^[\s\-*]*Field:` doesn't match markdown checkbox format `- [x] Field:`. Fixed by removing checkboxes from PR bodies. TLA+/SonarCloud failures on #791/#793 are infrastructure issues (TLA2TOOLS_JAR checksum, SonarCloud intermittent).
+| [#789](https://github.com/carson-see/ArkovaCarson/pull/789) | `chore/worker-lint-cleanup` | T3 | 34 fixes: `@ts-ignore` removal, `{ cause: err }`, `@ts-expect-error` | **MERGED** 2026-05-16 |
+| [#791](https://github.com/carson-see/ArkovaCarson/pull/791) | `chore/scrum-1909-lint-cleanup-s1` | T3 | 163 suppressions: `missing-org-filter` + `no-explicit-any` + Express type augmentation | T3 soak started 2026-05-15T20:29Z |
+| [#792](https://github.com/carson-see/ArkovaCarson/pull/792) | `fix/tenant-isolation-audit-org-id` | T2 | 12 tenant isolation gaps: `org_id` on audit inserts + PATCH guard + `event_category: 'API'` fix | T2 soak complete, rebased, awaiting merge |
+| [#793](https://github.com/carson-see/ArkovaCarson/pull/793) | `chore/scrum-1909-lint-cleanup-s2` | T3 | 48 fixes: test file `as any` → proper types + `chain/base.ts` + `hsmBridge.ts` suppressions | T3 soak started 2026-05-15T20:36Z |
 
 **Warning trajectory:** 365 (baseline) → 331 (#789) → 119 (#791+#792+#793). Remaining 119 require deeper refactoring tracked as follow-on S3+ batches.
-
-**Soak targets:** #789 T3 ends 2026-05-17T18:40Z, #791 T3 ends 2026-05-17T20:29Z, #792 T2 ends 2026-05-16T08:23Z, #793 T3 ends 2026-05-17T20:36Z.
-
-_Last refreshed: 2026-05-16 by Claude — claims verified against `gcloud run revisions list`, staging health endpoints, `gh pr view/checks`, staging_deploy_log ids, and CI run logs._
 
 ### 2026-05-15 — SCRUM-1655 DocuSign live verification PR lane
 

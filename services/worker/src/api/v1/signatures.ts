@@ -497,6 +497,7 @@ router.post('/verify-signature', async (req: Request, res: Response) => {
       await db.from('audit_events').insert({
         event_type: 'signature.verified',
         event_category: 'SYSTEM',
+        org_id: sig.org_id ?? undefined,
         target_type: 'signature',
         target_id: sig.id,
         details: JSON.stringify({ valid, checks_passed: Object.values(checks).filter(c => c.status === 'PASS').length }),

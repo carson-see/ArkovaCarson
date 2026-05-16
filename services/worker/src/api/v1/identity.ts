@@ -170,7 +170,7 @@ identityRouter.post('/dev-verify', async (req: Request, res: Response) => {
 
     const { data: profile, error: profileError } = await db
       .from('profiles')
-      .select('identity_verification_status')
+      .select('identity_verification_status, org_id')
       .eq('id', userId)
       .single();
 
@@ -197,6 +197,7 @@ identityRouter.post('/dev-verify', async (req: Request, res: Response) => {
     // Log audit event
     await db.from('audit_events').insert({
       actor_id: userId,
+      org_id: profile.org_id ?? undefined,
       event_type: 'IDENTITY_VERIFIED',
       event_category: 'ADMIN',
       details: 'Identity verified via dev bypass (testing only)',

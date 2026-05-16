@@ -104,6 +104,7 @@ orgVerificationRouter.post('/verify-ein', async (req: Request, res: Response) =>
     // Log audit event (never log the actual EIN)
     await db.from('audit_events').insert({
       actor_id: userId,
+      org_id: orgId,
       event_type: 'ORG_EIN_SUBMITTED',
       event_category: 'ADMIN',
       target_type: 'organization',
@@ -310,6 +311,7 @@ orgVerificationRouter.post('/confirm-domain', async (req: Request, res: Response
 
     await db.from('audit_events').insert({
       actor_id: userId,
+      org_id: orgId,
       event_type: isFullyVerified ? 'ORG_VERIFIED' : 'ORG_DOMAIN_VERIFIED',
       event_category: 'ADMIN',
       target_type: 'organization',
@@ -377,6 +379,7 @@ orgVerificationRouter.post('/dev-verify', async (req: Request, res: Response) =>
 
     await db.from('audit_events').insert({
       actor_id: userId,
+      org_id: orgId,
       event_type: 'ORG_VERIFIED',
       event_category: 'ADMIN',
       target_type: 'organization',
