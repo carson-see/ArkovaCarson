@@ -162,10 +162,13 @@ export const PATH_RULES: PathRule[] = [
 
 const TIER_RANK: Record<Tier, number> = { T1: 1, T2: 2, T3: 3 };
 
+const NON_RUNTIME_RE = /\.(md|test\.tsx?|spec\.tsx?)$/;
+
 export function requiredTierFor(files: string[]): { tier: Tier; reason: string } {
   let best: Tier = 'T1';
   let reason = 'default frontend / additive change';
   for (const f of files) {
+    if (NON_RUNTIME_RE.test(f)) continue;
     for (const rule of PATH_RULES) {
       if (rule.pattern.test(f) && TIER_RANK[rule.minTier] > TIER_RANK[best]) {
         best = rule.minTier;

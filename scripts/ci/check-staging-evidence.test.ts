@@ -108,6 +108,33 @@ describe('check-staging-evidence', () => {
         requiredTierFor(['services/worker/src/api/v1/anchor.ts']).tier,
       ).toBe('T2');
     });
+
+    it('skips .md files when determining tier', () => {
+      expect(
+        requiredTierFor(['services/worker/src/webhooks/agents.md']).tier,
+      ).toBe('T1');
+    });
+
+    it('skips .test.ts files when determining tier', () => {
+      expect(
+        requiredTierFor(['services/worker/src/webhooks/delivery.test.ts']).tier,
+      ).toBe('T1');
+    });
+
+    it('skips .spec.tsx files when determining tier', () => {
+      expect(
+        requiredTierFor(['services/worker/src/chain/client.spec.tsx']).tier,
+      ).toBe('T1');
+    });
+
+    it('still detects runtime files alongside non-runtime files', () => {
+      expect(
+        requiredTierFor([
+          'services/worker/src/webhooks/agents.md',
+          'services/worker/src/webhooks/delivery.ts',
+        ]).tier,
+      ).toBe('T2');
+    });
   });
 
   describe('extractDeclaredTier', () => {
