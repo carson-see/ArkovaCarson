@@ -119,6 +119,16 @@ const TEST_ENDPOINT_ID = 'ep_test_001';
 const TEST_ENDPOINT_URL = 'https://203.0.113.50/webhooks/arkova';
 const TEST_SECRET = crypto.randomBytes(32).toString('hex');
 
+const MINIMAL_SECURED_PAYLOAD = {
+  public_id: 'anc_minimal',
+  chain_tx_id: 'abc123',
+  chain_block_height: 1,
+  status: 'SECURED' as const,
+  chain_timestamp: '2026-05-16T00:00:00.000Z',
+  secured_at: '2026-05-16T00:00:01.000Z',
+  org_public_id: null,
+};
+
 function makeEndpoint(overrides: Partial<Record<string, unknown>> = {}) {
   return {
     id: TEST_ENDPOINT_ID,
@@ -327,15 +337,9 @@ describe('Webhook Delivery Round-Trip (SCRUM-1729)', () => {
       endpointsContains.mockResolvedValue({ data: [makeEndpoint()], error: null });
       setupSuccessfulDelivery();
 
-      await dispatchWebhookEvent(TEST_ORG_ID, 'anchor.secured', 'evt_gated', {
-        public_id: 'anc_gated',
-        chain_tx_id: 'abc123',
-        chain_block_height: 1,
-        status: 'SECURED' as const,
-        chain_timestamp: '2026-05-16T00:00:00.000Z',
-        secured_at: '2026-05-16T00:00:01.000Z',
-        org_public_id: null,
-      });
+      await dispatchWebhookEvent(
+        TEST_ORG_ID, 'anchor.secured', 'evt_gated', MINIMAL_SECURED_PAYLOAD,
+      );
 
       expect(mockFetch).not.toHaveBeenCalled();
     });
@@ -346,15 +350,9 @@ describe('Webhook Delivery Round-Trip (SCRUM-1729)', () => {
       mockRpc.mockResolvedValue({ data: true, error: null });
       endpointsContains.mockResolvedValue({ data: [], error: null });
 
-      await dispatchWebhookEvent(TEST_ORG_ID, 'anchor.secured', 'evt_no_ep', {
-        public_id: 'anc_no_ep',
-        chain_tx_id: 'abc123',
-        chain_block_height: 1,
-        status: 'SECURED' as const,
-        chain_timestamp: '2026-05-16T00:00:00.000Z',
-        secured_at: '2026-05-16T00:00:01.000Z',
-        org_public_id: null,
-      });
+      await dispatchWebhookEvent(
+        TEST_ORG_ID, 'anchor.secured', 'evt_no_ep', MINIMAL_SECURED_PAYLOAD,
+      );
 
       expect(mockFetch).not.toHaveBeenCalled();
       expect(mockLogger.debug).toHaveBeenCalledWith(
@@ -398,15 +396,9 @@ describe('Webhook Delivery Round-Trip (SCRUM-1729)', () => {
       setupStandardMocks([ep1, ep2]);
       setupSuccessfulDelivery();
 
-      await dispatchWebhookEvent(TEST_ORG_ID, 'anchor.secured', 'evt_multi', {
-        public_id: 'anc_multi',
-        chain_tx_id: 'tx_multi',
-        chain_block_height: 100,
-        status: 'SECURED' as const,
-        chain_timestamp: '2026-05-16T00:00:00.000Z',
-        secured_at: '2026-05-16T00:00:01.000Z',
-        org_public_id: null,
-      });
+      await dispatchWebhookEvent(
+        TEST_ORG_ID, 'anchor.secured', 'evt_multi', MINIMAL_SECURED_PAYLOAD,
+      );
 
       expect(mockFetch).toHaveBeenCalledTimes(2);
       const urls = mockFetch.mock.calls.map((c: unknown[]) => c[0]);
@@ -418,49 +410,25 @@ describe('Webhook Delivery Round-Trip (SCRUM-1729)', () => {
   describe('SSRF protection', () => {
     it('blocks delivery to private IP endpoints', async () => {
       setupStandardMocks([makeEndpoint({ url: 'https://192.168.1.1/hook' })]);
-
-      await dispatchWebhookEvent(TEST_ORG_ID, 'anchor.secured', 'evt_ssrf', {
-        public_id: 'anc_ssrf',
-        chain_tx_id: 'tx_ssrf',
-        chain_block_height: 100,
-        status: 'SECURED' as const,
-        chain_timestamp: '2026-05-16T00:00:00.000Z',
-        secured_at: '2026-05-16T00:00:01.000Z',
-        org_public_id: null,
-      });
-
+      await dispatchWebhookEvent(
+        TEST_ORG_ID, 'anchor.secured', 'evt_ssrf', MINIMAL_SECURED_PAYLOAD,
+      );
       expect(mockFetch).not.toHaveBeenCalled();
     });
 
     it('blocks delivery to localhost', async () => {
       setupStandardMocks([makeEndpoint({ url: 'https://localhost/hook' })]);
-
-      await dispatchWebhookEvent(TEST_ORG_ID, 'anchor.secured', 'evt_localhost', {
-        public_id: 'anc_localhost',
-        chain_tx_id: 'tx_local',
-        chain_block_height: 100,
-        status: 'SECURED' as const,
-        chain_timestamp: '2026-05-16T00:00:00.000Z',
-        secured_at: '2026-05-16T00:00:01.000Z',
-        org_public_id: null,
-      });
-
+      await dispatchWebhookEvent(
+        TEST_ORG_ID, 'anchor.secured', 'evt_localhost', MINIMAL_SECURED_PAYLOAD,
+      );
       expect(mockFetch).not.toHaveBeenCalled();
     });
 
     it('blocks delivery to cloud metadata endpoint', async () => {
       setupStandardMocks([makeEndpoint({ url: 'https://169.254.169.254/latest/meta-data/' })]);
-
-      await dispatchWebhookEvent(TEST_ORG_ID, 'anchor.secured', 'evt_meta', {
-        public_id: 'anc_meta',
-        chain_tx_id: 'tx_meta',
-        chain_block_height: 100,
-        status: 'SECURED' as const,
-        chain_timestamp: '2026-05-16T00:00:00.000Z',
-        secured_at: '2026-05-16T00:00:01.000Z',
-        org_public_id: null,
-      });
-
+      await dispatchWebhookEvent(
+        TEST_ORG_ID, 'anchor.secured', 'evt_meta', MINIMAL_SECURED_PAYLOAD,
+      );
       expect(mockFetch).not.toHaveBeenCalled();
     });
   });
@@ -471,15 +439,9 @@ describe('Webhook Delivery Round-Trip (SCRUM-1729)', () => {
       setupFailedDelivery(500);
 
       for (let i = 0; i < 5; i++) {
-        await dispatchWebhookEvent(TEST_ORG_ID, 'anchor.secured', `evt_cb_${i}`, {
-          public_id: `anc_cb_${i}`,
-          chain_tx_id: `tx_cb_${i}`,
-          chain_block_height: 100 + i,
-          status: 'SECURED' as const,
-          chain_timestamp: '2026-05-16T00:00:00.000Z',
-          secured_at: '2026-05-16T00:00:01.000Z',
-          org_public_id: null,
-        });
+        await dispatchWebhookEvent(
+          TEST_ORG_ID, 'anchor.secured', `evt_cb_${i}`, MINIMAL_SECURED_PAYLOAD,
+        );
       }
 
       expect(isCircuitOpen(TEST_ENDPOINT_ID)).toBe(true);
