@@ -120,7 +120,6 @@ export async function fetchFederalRegisterDocuments(supabase: SupabaseClient): P
     const docs = result.results ?? [];
 
     if (docs.length === 0) {
-      hasMore = false;
       break;
     }
 

@@ -61,8 +61,8 @@ async function evaluateEntry(
   };
 
   const start = Date.now();
-  let extractedFields: Record<string, unknown> = {};
-  let confidence = 0;
+  let extractedFields: Record<string, unknown>;
+  let confidence: number;
   let tokensUsed = 0;
 
   let extractionError: string | undefined;

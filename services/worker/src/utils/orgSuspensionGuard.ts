@@ -37,7 +37,7 @@ export type OrgSuspensionGuardResult =
  */
 export async function ensureOrgNotSuspended(orgId: string): Promise<OrgSuspensionGuardResult> {
   let data: unknown;
-  let error: { message?: string } | null = null;
+  let error: { message?: string } | null;
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const result = await (db.rpc as any)('is_org_suspended', { p_org_id: orgId });

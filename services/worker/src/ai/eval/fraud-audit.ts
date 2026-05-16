@@ -164,7 +164,7 @@ export async function runFraudAudit(
   }
 
   // Generate recommendation
-  let recommendation = '';
+  let recommendation: string;
   if (items.length < 10) {
     recommendation = `Only ${items.length} FLAGGED items found. Sample too small for statistical analysis. Monitor as more data flows through integrity scoring.`;
   } else {

@@ -247,6 +247,7 @@ export async function enhancedAnalyzeDocument(
     logger.error({ error: err, credentialType }, 'Visual fraud analysis failed');
     throw new Error(
       `Visual fraud analysis failed: ${err instanceof Error ? err.message : 'Unknown error'}`,
+      { cause: err },
     );
   }
 }

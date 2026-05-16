@@ -207,7 +207,7 @@ export async function fetchCourtOpinions(
   let totalSkipped = 0;
   let totalErrors = 0;
   let pagesActuallyProcessed = 0;
-  let nextUrl: string | null = null;
+  let nextUrl: string | null;
 
   // Auto-resume: find the earliest date_filed we already have and resume from there
   // Since we fetch newest-first (-date_filed), resume endDate to ONE DAY BEFORE our min date

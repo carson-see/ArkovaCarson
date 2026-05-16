@@ -239,7 +239,7 @@ export async function sweepExpiredAnchors(db: AnchorExpirySweepDb): Promise<Anch
       continue;
     }
 
-    let transitioned = false;
+    let transitioned: boolean;
     try {
       transitioned = await db.casUpdateToExpired(anchor.id, nowIso);
     } catch (err) {

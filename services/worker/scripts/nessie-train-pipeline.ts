@@ -646,7 +646,7 @@ async function main(): Promise<void> {
 
   // Step 1: Export
   let stats: Record<string, number> = {};
-  let totalExported = 0;
+  let totalExported: number;
 
   if (SKIP_EXPORT) {
     console.log('\n--- Step 1: Export SKIPPED (--skip-export) ---');

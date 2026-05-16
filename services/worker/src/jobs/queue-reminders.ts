@@ -150,7 +150,7 @@ export async function runQueueReminderJob(
     return result;
   }
 
-  let rules: CronRuleRow[] = [];
+  let rules: CronRuleRow[];
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data, error } = await (db as any)

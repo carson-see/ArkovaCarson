@@ -66,7 +66,7 @@ async function main() {
   let consecutiveEmptyBatches = 0;
 
   while (consecutiveEmptyBatches < 3) {
-    let anchors: AnchorMigrationRecord[] | null = null;
+    let anchors: AnchorMigrationRecord[] | null;
 
     try {
       const result = await withRetry(async () => {

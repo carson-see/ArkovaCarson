@@ -236,7 +236,7 @@ export async function processDriveChanges(args: {
 
       // GD-04 + GD-05 + GD-06: matching change → enqueue exactly one rule
       // event, attribution preserved where Google permits.
-      let ruleEventId: string | null = null;
+      let ruleEventId: string | null;
       try {
         ruleEventId = await args.db.enqueueRuleEvent({
           org_id: args.integration.org_id,
