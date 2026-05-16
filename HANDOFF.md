@@ -45,6 +45,8 @@ _Last refreshed: 2026-05-16 by Carson — claims verified against Jira MCP, `gh 
 | [#792](https://github.com/carson-see/ArkovaCarson/pull/792) | `fix/tenant-isolation-audit-org-id` | T2 | 12 tenant isolation gaps: `org_id` on audit inserts + PATCH guard + `event_category: 'API'` fix | T2 soak complete, rebased, awaiting merge |
 | [#793](https://github.com/carson-see/ArkovaCarson/pull/793) | `chore/scrum-1909-lint-cleanup-s2` | T3 | 48 fixes: test file `as any` → proper types + `chain/base.ts` + `hsmBridge.ts` suppressions | T3 soak started 2026-05-15T20:36Z |
 
+**CI note:** Staging evidence gate checkbox regex bug root-cause fixed in PR [#801](https://github.com/carson-see/ArkovaCarson/pull/801) — `missingFields`, `extractEvidenceFieldValue`, and `TIER_DECLARATION_RE` now accept `- [x]` / `- [ ]` prefixes and no longer bleed across newlines on empty field values.
+
 **Warning trajectory:** 365 (baseline) → 331 (#789) → 119 (#791+#792+#793). Remaining 119 require deeper refactoring tracked as follow-on S3+ batches.
 
 **Soak targets:** #789 T3 ends 2026-05-17T18:40Z, #791 T3 ends 2026-05-17T20:29Z, #792 T2 ends 2026-05-16T08:23Z, #793 T3 ends 2026-05-17T20:36Z.

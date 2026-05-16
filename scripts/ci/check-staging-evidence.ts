@@ -177,7 +177,7 @@ export function requiredTierFor(files: string[]): { tier: Tier; reason: string }
 }
 
 const EVIDENCE_HEADER_RE = /^##\s+Staging\s+Soak\s+Evidence\s*$/im;
-const TIER_DECLARATION_RE = /^\s*[-*]?\s*Tier:\s*(T[123])\b/im;
+const TIER_DECLARATION_RE = /^\s*[-*]?\s*(?:\[[ x]\]\s*)?Tier:\s*(T[123])\b/im;
 const UTC_TIMESTAMP_RE = /^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2})(?::(\d{2}))?\s*(?:UTC|Z)\b/i;
 
 function escapeRegExp(value: string): string {
@@ -198,14 +198,14 @@ export function missingFields(body: string, tier: Tier): string[] {
   const missing: string[] = [];
   for (const field of spec.requiredFields) {
     // Field labels are line-anchored to avoid matching prose mentions.
-    const re = new RegExp(String.raw`^[\s\-*]*${escapeRegExp(field)}`, 'im');
+    const re = new RegExp(String.raw`^[\s\-*]*(?:\[[ x]\]\s*)?${escapeRegExp(field)}`, 'im');
     if (!re.test(body)) missing.push(field);
   }
   return missing;
 }
 
 function extractEvidenceFieldValue(body: string, field: string): string | null {
-  const re = new RegExp(String.raw`^[\s\-*]*${escapeRegExp(field)}\s*(.*)$`, 'im');
+  const re = new RegExp(String.raw`^[\s\-*]*(?:\[[ x]\]\s*)?${escapeRegExp(field)}[^\S\n]*(.*)$`, 'im');
   const m = re.exec(body);
   return m ? m[1].trim() : null;
 }
