@@ -322,19 +322,9 @@ jobs:
             )
             # Filter out exempt migrations from version drift check too —
             # renames of exempt files should not block PRs. The drift
-            # entries have trailing context "(expected ...)", so match
-            # the leading name portion against the exempt list.
-            filtered_drift=""
-            while IFS= read -r line; do
-              [ -n "$line" ] || continue
-              drift_name="${line%% (*}"
-              if echo "$drift_name" | grep -qE "$exempt_regex"; then
-                continue
-              fi
-              filtered_drift="${filtered_drift}${line}
-"
-            done < <(echo "$changed_version_drift")
-            changed_version_drift="$filtered_drift"
+            # entries have format "name (expected ...)", so extract the
+            # leading name and test against exempt_regex.
+            changed_version_drift=$(echo "$changed_version_drift" | while IFS= read -r line; do [ -n "$line" ] || continue; dn="${line%% (*}"; echo "$dn" | grep -qE "$exempt_regex" || echo "$line"; done || true)
             changed_version_drift_count=$(echo "$changed_version_drift" | grep -c . || true)
             echo "- PR numeric ledger drift: $changed_version_drift_count"
 
