@@ -355,6 +355,16 @@ app.use(
   pathScopedMiddleware('/docusign', docusignOAuthRouter),
 );
 
+// Rule templates discovery (SCRUM-1126) — public, no auth required.
+// Must be mounted BEFORE the catch-all apiV1Router which applies auth.
+import { rulesTemplatesRouter } from './api/rules-templates.js';
+app.use('/api/v1/rules/templates', rateLimiters.api, rulesTemplatesRouter);
+
+// Version resolution (SCRUM-1971) — org admin reviews document version conflicts.
+// Must also precede apiV1Router to avoid its auth gate.
+import { versionResolutionRouter } from './api/version-resolution.js';
+app.use('/api/v1/versions', rateLimiters.api, requireAuthMw, versionResolutionRouter);
+
 // Payment-state enforcement: suspended/cancelled orgs get 402 (SCRUM-1221).
 app.use('/api/v1', requirePaymentCurrent());
 
@@ -365,14 +375,6 @@ app.use('/api/v1', apiV1Router);
 app.use('/api/v2', requirePaymentCurrent());
 import { apiV2Router } from './api/v2/router.js';
 app.use('/api/v2', apiV2Router);
-
-// Rule templates discovery (SCRUM-1126) — public, no auth required
-import { rulesTemplatesRouter } from './api/rules-templates.js';
-app.use('/api/v1/rules/templates', rateLimiters.api, rulesTemplatesRouter);
-
-// Version resolution (SCRUM-1971) — org admin reviews document version conflicts
-import { versionResolutionRouter } from './api/version-resolution.js';
-app.use('/api/v1/versions', rateLimiters.api, requireAuthMw, versionResolutionRouter);
 
 // Anchor revocation (SCRUM-1095) — requires auth, mounted under /api/anchor
 import { anchorRevokeRouter } from './api/anchor-revoke.js';
