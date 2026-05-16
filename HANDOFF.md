@@ -16,13 +16,58 @@
 
 ### 2026-05-16 — SCRUM-1296 N+1 fan-out elimination (PR #807)
 
-**PR #807 open** on branch `claude/clever-hellman-4d1a3e`. Replaces sequential per-row DB round-trips in 4 worker hot-path jobs with bounded concurrency or bulk operations: revocation (unchanged — sequential for UTXO safety), broadcast-recovery (`runWithConcurrency`), cloud-logging-drain (new `bump_cloud_logging_retry_counts` RPC, migration 0309), attestationExpiry (`runWithConcurrency`). Chunked `.in()` at 100 per batch. T3 48h staging soak required (chain-adjacent lifecycle changes). Code review findings being addressed.
+**PR #807 open** on branch `claude/clever-hellman-4d1a3e`. Six commits:
+1. `6c73d685` — initial N+1 elimination in 4 jobs (bulk ops + runWithConcurrency)
+2. `4207b091` — agents.md + HANDOFF.md docs
+3. `90191d6c` — revert revocation to sequential (UTXO contention fix)
+4. `b6b33b21` — fix attestation webhook ordering + drain retry regression
+5. `99381389` — fix broadcast-recovery metadata wipe + migration 0309 NOTIFY + remove p-limit
+6. `b32e40a2` — lint fix
+
+**Bugs fixed (code review findings):**
+- attestationExpiry: webhook events now inserted BEFORE status update (prevents event loss on failure)
+- attestationExpiry: chunked `.in()` at 100 per batch (PostgREST URL limit safety)
+- cloud-logging-drain: retry_count properly incremented in fallback path
+- broadcast-recovery: per-anchor metadata preserved during bulk updates
+- migration 0309: `NOTIFY pgrst, 'reload schema'` added
+- p-limit dependency removed; using in-house `runWithConcurrency` utility
+
+**Remaining for Done (SCRUM-1690 + 1691):**
+- publicRecordAnchor.ts `fetchUnanchoredPublicRecords` parallelization (in progress)
+- Load test: 1000 anchors < 30s p95
+- PG connection saturation evidence (Sentry metric)
+- T3 48h staging soak (blocked on deploy — human-gated)
 
 **Key decision:** Revocations remain strictly sequential — UTXO selection from a shared treasury wallet is not concurrency-safe (double-spend risk).
 
 **Tier:** T3 (touches anchor lifecycle hot path). Soak not yet started; PR in review.
 
-_Last refreshed: 2026-05-16 by Claude — claims verified against PR #807 diff, migration 0309, job source files._
+_Last refreshed: 2026-05-16 by Claude — claims verified against git log on claude/clever-hellman-4d1a3e, vitest 2126/2126 green, worker lint 0 errors._
+
+### 2026-05-16 — SCRUM-1126 Smart queue rules + version control (PR #807 consolidated)
+
+**Status:** Implementation in progress. Adding to PR #807 branch to consolidate (user directive: "we don't want a million PRs").
+
+**Subtasks being implemented:**
+- SCRUM-1969 [Schema]: `external_document_versions` + `version_reviews` tables + RLS (migration 0310)
+- SCRUM-1970 [Backend]: Version conflict detection in rules-engine evaluation
+- SCRUM-1971 [Backend]: Version resolution API (`GET/POST /api/v1/versions`)
+- SCRUM-1972 [Frontend]: VersionConflictsPage + useVersionResolution hook
+- SCRUM-1973 [Backend]: Rule templates API (`GET /api/v1/rules/templates`)
+
+**Already exists in codebase:** `organization_rules` table, `review_queue_items`, `rules-engine.ts`, `queue-resolution.ts`, rules CRUD/draft APIs.
+
+**Remaining for Done (SCRUM-1974):** E2E staging soak (T2), Confluence page, full close-out.
+
+_Last refreshed: 2026-05-16 by Claude — claims verified against Jira subtask structure and codebase grep._
+
+### 2026-05-16 — SCRUM-1649 DocuSign action modes (PR #783 — DO NOT TOUCH)
+
+**Status:** Implementation complete in PR #783 (branch `codex/scrum-1649-docusign-action-modes`). Subtask SCRUM-1656 [Spec] Done. SCRUM-1657 [Implement] In Progress (code done, PR open). SCRUM-1658 [Verify] To Do — blocked on staging deploy + live verification.
+
+**No code work possible here.** PR #783 is protected. Next action: Carson deploys to staging, runs E2E verification (instant-secure-paid + credits-denied + queue path), then Confluence + close-out.
+
+_Last refreshed: 2026-05-16 by Claude — claims verified against `gh pr view 783` and Jira subtask status._
 
 ### 2026-05-16 — SCRUM-1966 prod hotfix MERGED (PR #805)
 
