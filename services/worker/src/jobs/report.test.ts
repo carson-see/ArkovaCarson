@@ -220,7 +220,7 @@ describe('processReport', () => {
     await processReport(makeReport({ report_type: 'compliance_audit' }));
 
     expect(mockFrom).toHaveBeenCalledWith('audit_events');
-    expect(auditEventsTable.select).toHaveBeenCalledWith('*');
+    expect(auditEventsTable.select).toHaveBeenCalledWith('event_type, event_category, actor_id, target_type, target_id, org_id, details, created_at');
     expect(auditEventsTable.order).toHaveBeenCalledWith('created_at', { ascending: false });
     expect(auditEventsTable.limit).toHaveBeenCalledWith(1000);
   });
