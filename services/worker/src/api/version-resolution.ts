@@ -12,7 +12,13 @@ import { Router } from 'express';
 import type { Request, Response } from 'express';
 import { z } from 'zod';
 import { db } from '../utils/db.js';
+import type { SupabaseClient } from '@supabase/supabase-js';
 import { logger } from '../utils/logger.js';
+
+// Tables created by migration 0310 are not yet in generated types.
+// Use untyped accessor until next `gen:types` run.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const untypedDb = db as unknown as SupabaseClient<any, 'public', any>;
 
 // ─── Zod schemas ───────────────────────────────────────────────────────────────
 
@@ -84,7 +90,7 @@ export async function handleListVersions(
   }
 
   try {
-    const { data, error } = await db
+    const { data, error } = await untypedDb
       .from('external_document_versions')
       .select('id, external_file_id, source, fingerprint, version_number, status, metadata, detected_at')
       .eq('org_id', orgId!)
@@ -154,7 +160,7 @@ export async function handleResolveVersion(
 
   try {
     // Look up the version — filter by org_id ensures cross-tenant isolation
-    const { data: version, error: lookupError } = await db
+    const { data: version, error: lookupError } = await untypedDb
       .from('external_document_versions')
       .select('id, external_file_id, fingerprint, org_id, source, metadata')
       .eq('id', versionId)
@@ -185,13 +191,11 @@ export async function handleResolveVersion(
     const newStatus = statusMap[decision];
 
     // Update version status
-    const { error: updateError } = await db
+    const { error: updateError } = await untypedDb
       .from('external_document_versions')
-      .update({ status: newStatus, reviewed_at: new Date().toISOString(), reviewed_by: userId })
+      .update({ status: newStatus, updated_at: new Date().toISOString() })
       .eq('id', versionId)
-      .eq('org_id', orgId!)
-      .select('id')
-      .single();
+      .eq('org_id', orgId!);
 
     if (updateError) {
       logger.error({ error: updateError, versionId }, 'Version status update failed');
@@ -207,27 +211,29 @@ export async function handleResolveVersion(
         .from('anchors')
         .insert({
           org_id: orgId,
-          external_file_id: version.external_file_id,
           fingerprint: version.fingerprint,
+          filename: version.external_file_id,
           status: 'PENDING',
-          source: version.source ?? 'version_resolution',
-          created_by: userId,
+          user_id: userId,
+          metadata: {
+            source: version.source ?? 'version_resolution',
+            external_file_id: version.external_file_id,
+            resolved_from_version: versionId,
+          },
         })
         .select('id, public_id')
         .single();
 
       if (anchorError) {
         logger.error({ error: anchorError, versionId }, 'Anchor creation failed during version approval');
-        // Non-fatal: version is already approved, log but don't fail the request
       }
     }
 
     // Record the review decision
-    const { error: reviewError } = await db
+    const { error: reviewError } = await untypedDb
       .from('version_reviews')
       .insert({
         version_id: versionId,
-        org_id: orgId,
         reviewer_id: userId,
         decision,
         notes: notes ?? null,
