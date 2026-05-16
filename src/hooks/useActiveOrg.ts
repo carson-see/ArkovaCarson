@@ -142,7 +142,7 @@ export function useActiveOrg(): UseActiveOrgResult {
   const { profile, loading: profileLoading } = useProfile();
   const { orgs, loading: orgsLoading } = useUserOrgs();
 
-  const orgIdKey = orgs.map((o) => o.orgId).sort().join('\0');
+  const orgIdKey = useMemo(() => orgs.map((o) => o.orgId).sort().join('\0'), [orgs]);
   const membershipOrgIds = useMemo(() => orgIdKey.split('\0').filter(Boolean), [orgIdKey]);
 
   return useMemo<UseActiveOrgResult>(() => {

@@ -6,7 +6,7 @@
  * launch-critical security invariant lives, so the unit-level test pins
  * every branch of resolution + every membership-membership boundary.
  */
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it, vi, beforeEach } from 'vitest';
 import { renderHook } from '@testing-library/react';
 import { resolveActiveOrg } from './useActiveOrg';
 
