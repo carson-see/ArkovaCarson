@@ -14,6 +14,10 @@
 
 ## Now
 
+### 2026-05-16 — SCRUM-1918 audit event_category CHECK constraint fix MERGED
+
+**PR #794 merged** to `main` at 2026-05-16T08:54:54Z (merge commit `9d1445af`). Five `event_category` string values (`api_key`, `PLATFORM`, `SECURITY`, `COMPLIANCE`, `NOTIFICATION`) silently violated the `audit_events_event_category_valid` CHECK constraint, causing all affected audit inserts to be dropped. Fixed by mapping each to valid categories: `API`, `SYSTEM`, `ADMIN`. 9 files changed (7 production + 2 test), 13 line substitutions. T2 staging soak ran 12.5h at 2.7 req/s with 0 cron errors. Jira: SCRUM-1918 → Done; SCRUM-1917, SCRUM-1920 closed as duplicates.
+
 ### 2026-05-15 — SCRUM-1909 worker lint cleanup (365→119 warnings)
 
 **Scope:** Reduce `services/worker/` ESLint warnings from 365 to 119 across 4 PRs. No runtime behavior changes except one pre-existing bug fix (event_category CHECK constraint violation in `api/v1/keys.ts`).
@@ -39,7 +43,7 @@
 
 **Soak targets:** #789 T3 ends 2026-05-17T18:40Z, #791 T3 ends 2026-05-17T20:29Z, #792 T2 ends 2026-05-16T08:23Z, #793 T3 ends 2026-05-17T20:36Z.
 
-_Last refreshed: 2026-05-15 by Claude — claims verified against `gcloud run revisions list`, staging health endpoints, `gh pr view/checks`, staging_deploy_log ids, and CI run logs._
+_Last refreshed: 2026-05-16 by Claude — claims verified against `gcloud run revisions list`, staging health endpoints, `gh pr view/checks`, staging_deploy_log ids, and CI run logs._
 
 ### 2026-05-15 — SCRUM-1655 DocuSign live verification PR lane
 
