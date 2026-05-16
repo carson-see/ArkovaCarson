@@ -366,6 +366,10 @@ app.use('/api/v2', requirePaymentCurrent());
 import { apiV2Router } from './api/v2/router.js';
 app.use('/api/v2', apiV2Router);
 
+// Rule templates discovery (SCRUM-1126) — public, no auth required
+import { rulesTemplatesRouter } from './api/rules-templates.js';
+app.use('/api/v1/rules/templates', rateLimiters.api, rulesTemplatesRouter);
+
 // Anchor revocation (SCRUM-1095) — requires auth, mounted under /api/anchor
 import { anchorRevokeRouter } from './api/anchor-revoke.js';
 app.use('/api/anchor', rateLimiters.api, requireAuthMw, anchorRevokeRouter);
