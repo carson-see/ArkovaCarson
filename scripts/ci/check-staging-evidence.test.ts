@@ -126,6 +126,14 @@ describe('check-staging-evidence', () => {
     it('rejects malformed tier (T4)', () => {
       expect(extractDeclaredTier('Tier: T4')).toBeNull();
     });
+
+    it('finds tier with checked checkbox prefix', () => {
+      expect(extractDeclaredTier('- [x] Tier: T2\n')).toBe('T2');
+    });
+
+    it('finds tier with unchecked checkbox prefix', () => {
+      expect(extractDeclaredTier('- [ ] Tier: T1\n')).toBe('T1');
+    });
   });
 
   describe('hasEvidenceSection', () => {
@@ -441,6 +449,22 @@ describe('check-staging-evidence', () => {
       });
       expect(r.ok).toBe(false);
       expect(r.errors.join(' ')).toMatch(/missing required fields/i);
+    });
+
+    it('passes a complete T1 PR with checkbox-prefixed fields', () => {
+      const body = `## Staging Soak Evidence
+- [x] Tier: T1
+- [x] Staging branch: arkova-staging
+- [x] Worker revision: arkova-worker-staging-00099-xyz
+- [x] Soak start: 2026-05-09 14:00 UTC
+- [x] Soak end: 2026-05-09 16:00 UTC
+- [x] E2E result: green
+`;
+      const r = check({
+        body,
+        files: ['src/components/Foo.tsx'],
+      });
+      expect(r.ok).toBe(true);
     });
 
     it('SCRUM-1208: HANDOFF.md and .gitignore are now in the staging-tooling allowlist (PR #733 follow-up)', () => {

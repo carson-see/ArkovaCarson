@@ -177,7 +177,7 @@ export function requiredTierFor(files: string[]): { tier: Tier; reason: string }
 }
 
 const EVIDENCE_HEADER_RE = /^##\s+Staging\s+Soak\s+Evidence\s*$/im;
-const TIER_DECLARATION_RE = /^\s*[-*]?\s*Tier:\s*(T[123])\b/im;
+const TIER_DECLARATION_RE = /^\s*[-*]?\s*(?:\[[ x]\]\s*)?Tier:\s*(T[123])\b/im;
 const UTC_TIMESTAMP_RE = /^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2})(?::(\d{2}))?\s*(?:UTC|Z)\b/i;
 
 function escapeRegExp(value: string): string {
