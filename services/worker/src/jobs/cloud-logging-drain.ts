@@ -159,16 +159,46 @@ export async function bumpRetryCounts(auditIds: string[], errorMsg?: string): Pr
   if (!rpcErr) return;
 
   // Fallback: chunked .in() update — still O(1) per chunk vs O(N) per row.
-  // Cannot atomically increment without RPC, so we set last_error and rely
-  // on the next tick to re-read counts. This is acceptable because the
-  // retry ceiling is a soft alert boundary.
+  // We need each row's current retry_count to increment it. Read all rows,
+  // then batch-update per distinct retry_count value. This avoids indefinite
+  // retries when the RPC is unavailable (BUG: previously only set last_error
+  // without incrementing retry_count, causing rows to retry forever).
   const CHUNK_SIZE = 100;
   for (let i = 0; i < auditIds.length; i += CHUNK_SIZE) {
     const chunk = auditIds.slice(i, i + CHUNK_SIZE);
+
+    // Read current retry_count for this chunk
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await (db as any)
+    const { data: rows, error: readErr } = await (db as any)
       .from('cloud_logging_queue')
-      .update({ last_error: truncatedError })
+      .select('audit_id, retry_count')
       .in('audit_id', chunk);
+
+    if (readErr || !rows) {
+      // If we can't read, at least set last_error so it's visible
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (db as any)
+        .from('cloud_logging_queue')
+        .update({ last_error: truncatedError })
+        .in('audit_id', chunk);
+      continue;
+    }
+
+    // Group by current retry_count to batch updates
+    const byCount = new Map<number, string[]>();
+    for (const row of rows as Array<{ audit_id: string; retry_count: number }>) {
+      const current = row.retry_count ?? 0;
+      const group = byCount.get(current) ?? [];
+      group.push(row.audit_id);
+      byCount.set(current, group);
+    }
+
+    for (const [currentCount, ids] of byCount) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (db as any)
+        .from('cloud_logging_queue')
+        .update({ retry_count: currentCount + 1, last_error: truncatedError })
+        .in('audit_id', ids);
+    }
   }
 }
