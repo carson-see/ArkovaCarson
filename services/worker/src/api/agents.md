@@ -19,6 +19,8 @@ Express route handlers for the worker's HTTP API. Covers admin endpoints, anchor
 | `admin-actions.ts` / `admin-health.ts` | Admin action + health check endpoints |
 | `rules-crud.ts` / `rules-draft.ts` | Rules engine CRUD and draft management |
 | `queue-resolution.ts` | Review queue resolution endpoint |
+| `rules-templates.ts` | Public rules templates discovery endpoint (SCRUM-1973) |
+| `version-resolution.ts` | Version conflict resolution API — list/resolve for org admins (SCRUM-1971) |
 | `recipients.ts` | Credential recipient management |
 | `treasury.ts` | Treasury balance and fee account endpoints |
 | `apiScopes.ts` | API key scope definitions and validation |

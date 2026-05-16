@@ -14,52 +14,43 @@
 
 ## Now
 
-### 2026-05-16 — SCRUM-1296 N+1 fan-out elimination (PR #807)
+### 2026-05-16 — SCRUM-1296 + SCRUM-1126 consolidated (PR #807) — T3 SOAK RUNNING
 
-**PR #807 open** on branch `claude/clever-hellman-4d1a3e`. Six commits:
-1. `6c73d685` — initial N+1 elimination in 4 jobs (bulk ops + runWithConcurrency)
-2. `4207b091` — agents.md + HANDOFF.md docs
-3. `90191d6c` — revert revocation to sequential (UTXO contention fix)
-4. `b6b33b21` — fix attestation webhook ordering + drain retry regression
-5. `99381389` — fix broadcast-recovery metadata wipe + migration 0309 NOTIFY + remove p-limit
-6. `b32e40a2` — lint fix
+**PR #807 open** on branch `claude/clever-hellman-4d1a3e`. 14 commits total covering both stories.
 
-**Bugs fixed (code review findings):**
-- attestationExpiry: webhook events now inserted BEFORE status update (prevents event loss on failure)
-- attestationExpiry: chunked `.in()` at 100 per batch (PostgREST URL limit safety)
-- cloud-logging-drain: retry_count properly incremented in fallback path
-- broadcast-recovery: per-anchor metadata preserved during bulk updates
-- migration 0309: `NOTIFY pgrst, 'reload schema'` added
-- p-limit dependency removed; using in-house `runWithConcurrency` utility
+**SCRUM-1296 N+1 fan-out elimination:**
+- 4 worker hot-path jobs rewritten with bulk ops + `runWithConcurrency`
+- Revocations remain sequential (UTXO contention safety)
+- Migration 0309: `bump_cloud_logging_retry_counts` RPC
+- Bugs fixed: attestation ordering, drain retry, broadcast-recovery metadata, p-limit removal
 
-**Remaining for Done (SCRUM-1690 + 1691):**
-- publicRecordAnchor.ts `fetchUnanchoredPublicRecords` parallelization (in progress)
-- Load test: 1000 anchors < 30s p95
-- PG connection saturation evidence (Sentry metric)
-- T3 48h staging soak (blocked on deploy — human-gated)
+**SCRUM-1126 Smart queue rules + version control:**
+- SCRUM-1969: `external_document_versions` + `version_reviews` tables + RLS (migration 0310)
+- SCRUM-1970: Version conflict detection in rules-engine evaluation
+- SCRUM-1971: Version resolution API (`GET/POST /api/v1/versions`)
+- SCRUM-1972: VersionConflictsPage + useVersionResolution hook
+- SCRUM-1973: Rule templates API (`GET /api/v1/rules/templates`)
 
-**Key decision:** Revocations remain strictly sequential — UTXO selection from a shared treasury wallet is not concurrency-safe (double-spend risk).
+**Staging state:**
+- Cloud Run revision: `arkova-worker-staging-00117-vab`
+- Tag URL: `https://pr-807---arkova-worker-staging-kvojbeutfa-uc.a.run.app`
+- Build SHA: `38f386e6d35b88f8dfc3201363d3449898730387`
+- Migrations 0309 + 0310: applied and rollback-rehearsed
+- All endpoints verified: `/health` 200, `/api/v1/rules/templates` 200, `/api/v1/versions` 401 (auth required — correct)
 
-**Tier:** T3 (touches anchor lifecycle hot path). Soak not yet started; PR in review.
+**T3 48h soak:**
+- Started: 2026-05-16T14:30:10Z
+- Ends: 2026-05-18T14:30:10Z
+- Mode: `mixed` (webhooks 10/min + events 100/min + cron 5min cycles + reads 50/min including version-resolution + templates endpoints)
+- Evidence file: `docs/staging/soak-pr-807.json`
+- PID: 57080 on local machine
 
-_Last refreshed: 2026-05-16 by Claude — claims verified against git log on claude/clever-hellman-4d1a3e, vitest 2126/2126 green, worker lint 0 errors._
+**Confluence:** [SCRUM-1296 page 53772290](https://arkova.atlassian.net/wiki/spaces/A/pages/53772290) | [SCRUM-1126 page 53379083](https://arkova.atlassian.net/wiki/spaces/A/pages/53379083)
+**Bugs logged:** BUG-2026-05-16-001 through 004 in [master tracker](https://arkova.atlassian.net/wiki/spaces/A/pages/28115270)
 
-### 2026-05-16 — SCRUM-1126 Smart queue rules + version control (PR #807 consolidated)
+**Tier:** T3 (touches anchor lifecycle hot path via batch-anchors cron + version→anchor approval flow).
 
-**Status:** Implementation in progress. Adding to PR #807 branch to consolidate (user directive: "we don't want a million PRs").
-
-**Subtasks being implemented:**
-- SCRUM-1969 [Schema]: `external_document_versions` + `version_reviews` tables + RLS (migration 0310)
-- SCRUM-1970 [Backend]: Version conflict detection in rules-engine evaluation
-- SCRUM-1971 [Backend]: Version resolution API (`GET/POST /api/v1/versions`)
-- SCRUM-1972 [Frontend]: VersionConflictsPage + useVersionResolution hook
-- SCRUM-1973 [Backend]: Rule templates API (`GET /api/v1/rules/templates`)
-
-**Already exists in codebase:** `organization_rules` table, `review_queue_items`, `rules-engine.ts`, `queue-resolution.ts`, rules CRUD/draft APIs.
-
-**Remaining for Done (SCRUM-1974):** E2E staging soak (T2), Confluence page, full close-out.
-
-_Last refreshed: 2026-05-16 by Claude — claims verified against Jira subtask structure and codebase grep._
+_Last refreshed: 2026-05-16 by Claude — claims verified against `gcloud run revisions list`, staging /health endpoint, load-harness stdout._
 
 ### 2026-05-16 — SCRUM-1649 DocuSign action modes (PR #783 — DO NOT TOUCH)
 
