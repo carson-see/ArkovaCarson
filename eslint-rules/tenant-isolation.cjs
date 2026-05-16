@@ -56,7 +56,6 @@ const MULTI_TENANT_TABLES = new Set([
   'organization_rule_events',
   'organization_rule_executions',
   'attestations',
-  'public_records',
   'org_tier_entitlements',
   'organization_rules',
   'api_keys',

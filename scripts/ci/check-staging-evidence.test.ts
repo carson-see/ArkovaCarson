@@ -395,6 +395,23 @@ describe('check-staging-evidence', () => {
       ).toBe(true);
     });
 
+    it('passes for eslint config and rule files', () => {
+      expect(
+        isStagingToolingOnly([
+          'eslint-rules/tenant-isolation.cjs',
+          'services/worker/eslint.config.js',
+        ]).pass,
+      ).toBe(true);
+    });
+
+    it('rejects eslint-config lookalike filenames', () => {
+      expect(
+        isStagingToolingOnly([
+          'services/worker/src/noteslint.config.js',
+        ]).pass,
+      ).toBe(false);
+    });
+
     it('fails when any file is outside the allowlist', () => {
       expect(
         isStagingToolingOnly([
