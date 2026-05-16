@@ -376,6 +376,14 @@ app.use('/api/anchor', rateLimiters.api, requireAuthMw, anchorRevokeRouter);
 import { auditEventRouter } from './api/audit-event.js';
 app.use('/api/audit', rateLimiters.api, requireAuthMw, auditEventRouter);
 
+// SCRUM-1126 — Version resolution (admin review of connector version conflicts)
+import { versionResolutionRouter } from './api/version-resolution.js';
+app.use('/api/v1/versions', rateLimiters.api, requireAuthMw, versionResolutionRouter);
+
+// SCRUM-1973 — Rule templates (public discovery, no auth)
+import { rulesTemplatesRouter } from './api/rules-templates.js';
+app.use('/api/v1/rules', rateLimiters.api, rulesTemplatesRouter);
+
 // ─── 404 catch-all — JSON response for unmatched routes (BUG-14) ───
 // Must be after all route mounts, before error handlers.
 // Without this, Express returns plain text "Cannot GET /path" which breaks API clients.
