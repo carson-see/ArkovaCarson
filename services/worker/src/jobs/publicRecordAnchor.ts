@@ -441,11 +441,16 @@ async function fetchNonPriorityRecords(
 }
 
 async function fetchUnanchoredPublicRecords(client: SupabaseClient): Promise<PipelinePublicRecord[]> {
-  const records: PipelinePublicRecord[] = [];
-  for (const source of PRIORITY_SOURCES) {
-    if (records.length >= PUBLIC_RECORD_BATCH_SIZE) break;
-    records.push(...await fetchRecordsForSource(client, source, PUBLIC_RECORD_BATCH_SIZE - records.length));
-  }
+  // Fetch all priority sources in parallel (SCRUM-1296 N+1 fan-out cleanup).
+  // Each source is independent, so we use Promise.all instead of sequential loop.
+  // Cap per-source at a fair share of the batch size to avoid over-fetching.
+  const perSourceCap = Math.ceil(PUBLIC_RECORD_BATCH_SIZE / PRIORITY_SOURCES.length);
+  const sourceResults = await Promise.all(
+    PRIORITY_SOURCES.map((source) => fetchRecordsForSource(client, source, perSourceCap)),
+  );
+
+  // Merge and cap total at PUBLIC_RECORD_BATCH_SIZE
+  const records: PipelinePublicRecord[] = sourceResults.flat().slice(0, PUBLIC_RECORD_BATCH_SIZE);
 
   if (records.length < PUBLIC_RECORD_BATCH_SIZE) {
     records.push(...await fetchNonPriorityRecords(client, PUBLIC_RECORD_BATCH_SIZE - records.length));
