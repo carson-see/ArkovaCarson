@@ -431,6 +431,27 @@ describe('check-staging-evidence', () => {
       ).toBe(true);
     });
 
+    it('passes for test files and CI scripts', () => {
+      expect(
+        isStagingToolingOnly([
+          'services/worker/src/tests/webhook-delivery-roundtrip.test.ts',
+          'services/worker/src/jobs/report.test.ts',
+          'scripts/ci/snapshots/migration-prefix-baseline.json',
+          'scripts/ci/check-audit-category-sync.ts',
+          'src/components/integrations/DocusignConnectorCard.test.tsx',
+        ]).pass,
+      ).toBe(true);
+    });
+
+    it('passes for spec files', () => {
+      expect(
+        isStagingToolingOnly([
+          'e2e/integrations-docusign.spec.ts',
+          'services/worker/src/chain/client.spec.tsx',
+        ]).pass,
+      ).toBe(true);
+    });
+
     it('rejects eslint-config lookalike filenames', () => {
       expect(
         isStagingToolingOnly([

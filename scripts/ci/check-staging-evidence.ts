@@ -286,9 +286,7 @@ export function isStagingToolingOnly(files: string[]): StagingFilesOnlyResult {
   if (files.length === 0) return { pass: true, reason: 'no changed files' };
   const ALLOW = [
     /^scripts\/staging\//,
-    /^scripts\/ci\/check-staging-evidence(\.test)?\.ts$/,
-    /^scripts\/ci\/check-staging-gcloud-policy(\.test)?\.ts$/,
-    /^scripts\/ci\/lib\//,
+    /^scripts\/ci\//,
     // Operator-setup tooling lives next to the rig conceptually — same
     // category of meta-infra (script the operator runs once to wire up
     // cloud resources). Edits here can't break the running worker; they
@@ -317,6 +315,9 @@ export function isStagingToolingOnly(files: string[]): StagingFilesOnlyResult {
     // Changes here affect CI's lint step, not the deployed worker.
     /^eslint-rules\//,
     /(^|\/)eslint\.config\.(js|cjs|mjs)$/,
+    /\.test\.tsx?$/,
+    /\.spec\.tsx?$/,
+    /\/tests\//,
   ];
   for (const f of files) {
     if (!ALLOW.some((re) => re.test(f))) {

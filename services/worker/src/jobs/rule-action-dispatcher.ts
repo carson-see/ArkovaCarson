@@ -9,9 +9,7 @@
  *   - QUEUE_FOR_REVIEW  → routed marker (compliance inbox queries reads it)
  *   - FLAG_COLLISION    → routed marker (compliance inbox queries reads it)
  *   - FORWARD_TO_URL    → signed outbound HTTP POST + retry on transient err
- *   - AUTO_ANCHOR       → DS-07 queue mode (routed to org anchor queue, no credits)
- *   - FAST_TRACK_ANCHOR → DS-06 instant secure (credit gate + anchor job dispatch)
- *   - unknown           → fail-closed visible failure
+ *   - AUTO_ANCHOR / FAST_TRACK_ANCHOR / unknown → fail-closed visible failure
  *
  * Idempotency is provided by the `(rule_id, trigger_event_id)` unique index
  * on the executions table — the matcher (rules-engine.ts) cannot insert two
