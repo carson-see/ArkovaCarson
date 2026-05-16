@@ -119,7 +119,7 @@ export const PATH_RULES: PathRule[] = [
     reason: 'chain/treasury hot path',
   },
   {
-    pattern: /^services\/worker\/src\/jobs\/(anchor|anchorExpirySweep|batch-anchor|check-confirmations|broadcast-recovery|chain-maintenance)\.ts$/,
+    pattern: /^services\/worker\/src\/jobs\/(anchor|anchorExpirySweep|batch-anchor|check-confirmations|broadcast-recovery|chain-maintenance|attestationAnchor|grace-expiry-sweep|revocation)\.ts$/,
     minTier: 'T3',
     reason: 'anchor lifecycle / batch processor',
   },
