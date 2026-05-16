@@ -14,6 +14,30 @@
 
 ## Now
 
+### 2026-05-16 — Maintenance sprint review (SCRUM-1101, 1864, 1649, 1803, 1729, 1648)
+
+**PRs in review:**
+
+| PR | Branch | Tier | Scope | Status |
+|---|---|---|---|---|
+| [#812](https://github.com/carson-see/ArkovaCarson/pull/812) | `feat/scrum-1101-docusign-connect-provision` | T2 | SCRUM-1718: DocuSign Connect auto-provisioning + E2E spec (9 E2E, 13 component tests) | CI green except SonarCloud (2 hotspots), Tests pending |
+| [#815](https://github.com/carson-see/ArkovaCarson/pull/815) | `claude/lucid-heisenberg-f6c757` | T1 | SCRUM-1729: Outbound webhook delivery round-trip integration test (15 tests) + CI fixes | CI re-running after fixes |
+
+**Jira transitions this session:** SCRUM-1737 (To Do → In Progress), SCRUM-1738 (To Do → In Progress). SCRUM-1648 and SCRUM-1803 confirmed Done with all subtasks. SCRUM-1649 code complete, awaiting DS-AUTO-02 E2E verification (SCRUM-1658).
+
+**agents.md updates:** `services/worker/src/jobs/agents.md` (rule-action-dispatcher, open work), `services/worker/src/webhooks/agents.md` (credential event types, round-trip test reference).
+
+**CI improvements (PR #815):** (1) `check-audit-category-sync.ts` `.at(-1)` → `[arr.length-1]` for ES2022 compat. (2) Migration prefix baseline grandfathers `0307`. (3) `requiredTierFor` now skips `.md`/`.test.ts`/`.spec.tsx` files — docs and tests have zero runtime impact and should not inflate soak tier.
+
+**Remaining subtasks blocked on merge:**
+- SCRUM-1717 [Verify] — DocuSign real envelope round-trip (blocked on PR #812)
+- SCRUM-1719 [Close-out] — Confluence + HANDOFF + bug log for SCRUM-1101 (blocked on PR #812)
+- SCRUM-1737 [Verify] — HakiChain receiver round-trip + T3 48h soak (needs staging)
+- SCRUM-1738 [Close-out] — Confluence Webhooks page update (agents.md done, Confluence pending)
+- SCRUM-1658 [Verify] — DS-AUTO-02 E2E verification for instant-secure + queue paths (needs staging)
+
+_Last refreshed: 2026-05-16 by Claude — claims verified against `gh pr checks`, `gh pr view`, CI run logs._
+
 ### 2026-05-16 — SCRUM-1966 prod hotfix MERGED (PR #805)
 
 **PR #805 merged** to `main` at 2026-05-16 (merge commit `19d50084`). Three production hotfixes: (1) RLS statement timeout on bulk upload — consolidated 3 anchors SELECT policies into 1 with scalar subquery wrappers, same for attestations; query time dropped from timeout to 0.134ms. (2) Treasury x402-stats 502 — `parseX402StatsPayload` null handling fix. (3) Missing org_credits for Arkova org — seeded Free-tier allocation. Migrations 0307+0308. T2 12h soak: 115K requests, zero 500s. Jira: SCRUM-1966 → Done. Confluence: [page 53411876](https://arkova.atlassian.net/wiki/spaces/A/pages/53411876). Bug tracker: BUG-RLS-TIMEOUT (P1), BUG-TREASURY-502 (P2), BUG-ORG-CREDITS-MISSING (P3).
