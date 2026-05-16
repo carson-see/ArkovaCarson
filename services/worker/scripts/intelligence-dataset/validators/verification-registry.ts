@@ -57,7 +57,7 @@ export function loadRegistry(path: string): Registry {
     }
     return parsed;
   } catch (err) {
-    throw new Error(`failed to parse verification registry at ${path}: ${(err as Error).message}`);
+    throw new Error(`failed to parse verification registry at ${path}: ${(err as Error).message}`, { cause: err });
   }
 }
 

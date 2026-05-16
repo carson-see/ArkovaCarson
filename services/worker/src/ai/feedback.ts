@@ -188,7 +188,7 @@ export async function analyzeFeedbackForPromptImprovement(
       const rejectionRate = s.rejectedCount / s.totalSuggestions;
       const editRate = s.editedCount / s.totalSuggestions;
 
-      let suggestion = '';
+      let suggestion: string;
       if (rejectionRate > 0.40) {
         suggestion = `CRITICAL: ${s.fieldKey} for ${s.credentialType} has ${(rejectionRate * 100).toFixed(0)}% rejection rate. Consider adding specific few-shot examples or tightening extraction rules.`;
       } else if (editRate > 0.30) {

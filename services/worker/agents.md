@@ -1,10 +1,28 @@
 # agents.md — services/worker
 
-_Last updated: 2026-05-12 (routine dependency consolidation)._
+_Last updated: 2026-05-16 (SCRUM-1909 lint warning cleanup)._
 
 ## What This Folder Contains
 
 Express-based worker service handling privileged server-side operations: Merkle batch anchoring, Stripe webhook verification, outbound webhook delivery, cron job scheduling, rules engine, and org tier/quota enforcement. Uses Supabase service_role key — never the anon key.
+
+## SCRUM-1909 ESLint warning cleanup (2026-05-15)
+
+Driving worker eslint warnings to zero so `--max-warnings 0` can be re-enabled (CLAUDE.md §0 Rule 9 / SCRUM-1250 R4). PRs #789, #791, #792, #793 cover S1+S2 work:
+
+- **PR #789**: 34 quick-win warnings (ban-ts-comment → ts-expect-error, preserve-caught-error, no-useless-assignment). 365 → 331.
+- **PR #791**: 163 warnings — Express type augmentation (`types/express.d.ts`), `require()` → ESM import, `arkova/missing-org-filter` + `no-explicit-any` suppressions. 331 → 119.
+- **PR #792**: Security fix — 12 tenant isolation gaps (org_id on audit inserts, api_keys TOCTOU guard, event_category CHECK constraint fix).
+- **PR #793**: 48 warnings — test file `as any` → proper types, `chain/base.ts` + `hsmBridge.ts` suppressions.
+
+**`types/express.d.ts`** centralizes Request augmentation for `userId`, `orgId`, `paymentResolution`, `rawBody`, `id`. Coexists with per-middleware augmentations in `requireOrgId.ts` and `apiKeyAuth.ts`. TypeScript merges all declarations.
+
+**Suppression policy for `arkova/missing-org-filter`** (updated PR #798): `public_records` removed from monitored tables (no org_id column, cross-tenant by design). Cross-tenant system crons (`*Fetcher.ts`, `attestationAnchor.ts`, `chain-maintenance.ts`, `check-confirmations.ts`, etc.) exempted via eslint.config.js override. Org-scoped jobs (`report.ts`, `rules-engine.ts`, `rule-action-dispatcher.ts`, `queue-reminders.ts`) keep the rule active — inline `eslint-disable` with `-- service-role admin query` for those. Stripe webhooks and public verification endpoints suppress with `-- public verification endpoint`.
+
+## Treasury null-handling fix (2026-05-15, PR #805)
+
+- **`src/api/treasury.ts`** line 187: fixed null handling in `parseX402StatsPayload` — `!== undefined` changed to `!= null` so `recent_payments: null` from SQL RPC no longer triggers 502.
+- **`src/api/treasury.test.ts`**: new `it.each` tests cover null/undefined `recent_payments`, plus `handleTreasuryHealth` DB error handling and `parseThresholdUsd` edge cases.
 
 ## Routine dependency consolidation (2026-05-12)
 

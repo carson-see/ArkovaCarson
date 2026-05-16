@@ -178,7 +178,7 @@ async function main() {
 
   // Markdown report
   const report = formatEvalReport(result);
-  let calReport = '';
+  let calReport: string;
   try {
     calReport = formatCalibrationReport(result.entryResults);
   } catch {

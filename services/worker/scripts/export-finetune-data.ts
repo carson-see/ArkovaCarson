@@ -82,7 +82,6 @@ async function main(): Promise<void> {
     }
 
     if (!data || data.length === 0) {
-      hasMore = false;
       break;
     }
 

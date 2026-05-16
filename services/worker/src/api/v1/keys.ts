@@ -63,10 +63,11 @@ export const UpdateKeySchema = z.object({
 /**
  * Log an audit event (fire-and-forget).
  */
-function logAuditEvent(actorId: string, eventType: string, targetType: string, targetId: string, details?: string) {
+function logAuditEvent(actorId: string, eventType: string, targetType: string, targetId: string, details?: string, orgId?: string) {
   void db.from('audit_events')
     .insert({
       actor_id: actorId,
+      org_id: orgId ?? undefined,
       event_type: eventType,
       event_category: 'API',
       target_type: targetType,
@@ -156,7 +157,7 @@ router.post('/', async (req, res) => {
     }
 
     // Log audit event
-    logAuditEvent(userId, 'api_key.created', 'api_key', inserted.id, JSON.stringify({ key_prefix: prefix, name, scopes }));
+    logAuditEvent(userId, 'api_key.created', 'api_key', inserted.id, JSON.stringify({ key_prefix: prefix, name, scopes }), profile.org_id);
 
     // Return raw key ONCE — Constitution 1.4. SCRUM-1271-D: omit internal id.
     res.status(201).json({
@@ -274,6 +275,7 @@ router.patch('/:keyId', async (req, res) => {
     const { data: updated, error } = await db.from('api_keys')
       .update(updateData)
       .eq('id', keyId)
+      .eq('org_id', profile.org_id)
       .select('id, key_prefix, name, scopes, rate_limit_tier, is_active, created_at, expires_at, last_used_at')
       .single();
 
@@ -284,7 +286,7 @@ router.patch('/:keyId', async (req, res) => {
 
     // Log revocation to audit_events
     if (parsed.data.is_active === false) {
-      logAuditEvent(userId, 'api_key.revoked', 'api_key', keyId, JSON.stringify({ key_prefix: updated.key_prefix }));
+      logAuditEvent(userId, 'api_key.revoked', 'api_key', keyId, JSON.stringify({ key_prefix: updated.key_prefix }), profile.org_id);
     }
 
     res.json(toPublicKey(updated));
@@ -334,7 +336,7 @@ router.delete('/:keyId', async (req, res) => {
     }
 
     // Log deletion to audit_events
-    logAuditEvent(userId, 'api_key.deleted', 'api_key', keyId);
+    logAuditEvent(userId, 'api_key.deleted', 'api_key', keyId, undefined, profile.org_id);
 
     res.status(204).end();
   } catch (err) {

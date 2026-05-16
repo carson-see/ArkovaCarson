@@ -258,6 +258,7 @@ router.post('/verify', async (req: Request, res: Response) => {
     void db.from('audit_events').insert({
       event_type: 'ORACLE_QUERY',
       event_category: 'ANCHOR',
+      org_id: req.apiKey?.orgId ?? undefined,
       target_type: 'oracle',
       target_id: queryId,
       details: JSON.stringify({

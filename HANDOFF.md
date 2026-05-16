@@ -14,6 +14,55 @@
 
 ## Now
 
+### 2026-05-16 — SCRUM-1966 prod hotfix MERGED (PR #805)
+
+**PR #805 merged** to `main` at 2026-05-16 (merge commit `19d50084`). Three production hotfixes: (1) RLS statement timeout on bulk upload — consolidated 3 anchors SELECT policies into 1 with scalar subquery wrappers, same for attestations; query time dropped from timeout to 0.134ms. (2) Treasury x402-stats 502 — `parseX402StatsPayload` null handling fix. (3) Missing org_credits for Arkova org — seeded Free-tier allocation. Migrations 0307+0308. T2 12h soak: 115K requests, zero 500s. Jira: SCRUM-1966 → Done. Confluence: [page 53411876](https://arkova.atlassian.net/wiki/spaces/A/pages/53411876). Bug tracker: BUG-RLS-TIMEOUT (P1), BUG-TREASURY-502 (P2), BUG-ORG-CREDITS-MISSING (P3).
+
+_Last refreshed: 2026-05-16 by Carson — claims verified against `gh api pulls/805/merge`, merge commit `19d50084`, Jira MCP transition._
+
+### 2026-05-16 — SCRUM-1651 ORG-12 cross-tenant test matrix MERGED (PR #790)
+
+**PR #790 merged** to `main` at 2026-05-16. 59 tests covering `resolveActiveOrg` pure resolver: URL attacks, session-poisoning, profile-drift, combined attacks, dual-membership parent↔sub-org isolation, operation-scoped invariant, and empty-string JS truthiness edge cases. Also fixed `.sonarcloud.properties` CPD exclusion for test files (was overriding `sonar-project.properties` glob). T1 soak (test-only, no production code). Quality gauntlet: /code-review (4 issues), /simplify (dedup+types), /tech-debt, /debug (dead guard+edge cases). Zero `memberships[0]` hits in production code — grep guard effective. Browser UAT blocked by no local Supabase; resolver verified exhaustively via unit tests on pure function. SCRUM-1664 subtask: test matrix deliverable complete; manual two-membership UAT + Confluence LIVE block remain.
+
+_Last refreshed: 2026-05-16 by Claude — claims verified against `gh pr view 790`, `git log`, CI run 25958111080._
+
+### 2026-05-16 — SCRUM-1918 audit event_category CHECK constraint fix MERGED
+
+**PR #794 merged** to `main` at 2026-05-16T08:54:54Z (merge commit `9d1445af`). Five `event_category` string values (`api_key`, `PLATFORM`, `SECURITY`, `COMPLIANCE`, `NOTIFICATION`) silently violated the `audit_events_event_category_valid` CHECK constraint, causing all affected audit inserts to be dropped. Fixed by mapping each to valid categories: `API`, `SYSTEM`, `ADMIN`. 9 files changed (7 production + 2 test), 13 line substitutions. T2 staging soak ran 12.5h at 2.7 req/s with 0 cron errors. Jira: SCRUM-1918 → Done; SCRUM-1917, SCRUM-1920 closed as duplicates.
+
+### 2026-05-16 — Jira housekeeping + git sync
+
+**Jira transitions (all code merged to main):** SCRUM-1821 (In Progress → Done, PRs #785+#787), SCRUM-1842 + subtasks SCRUM-1843/1844 (To Do → Done, PR #782). Already Done: SCRUM-952, SCRUM-1655, SCRUM-1834. SCRUM-1909 left open (PR #792 still in review).
+
+**Git sync:** `origin/main` at `6b2be6dd`, local `main` fast-forwarded to match. PR #792 rebased onto current main to clear CONFLICTING state.
+
+_Last refreshed: 2026-05-16 by Carson — claims verified against Jira MCP, `gh pr list`, `git fetch --all`._
+
+### 2026-05-15 — SCRUM-1909 worker lint cleanup (365→119 warnings)
+
+**Scope:** Reduce `services/worker/` ESLint warnings from 365 to 119 across 4 PRs. No runtime behavior changes except one pre-existing bug fix (event_category CHECK constraint violation in `api/v1/keys.ts`).
+
+**PRs:**
+
+| PR | Branch | Tier | Scope | Status |
+|---|---|---|---|---|
+| [#789](https://github.com/carson-see/ArkovaCarson/pull/789) | `chore/worker-lint-cleanup` | T3 | 34 fixes: `@ts-ignore` removal, `{ cause: err }`, `@ts-expect-error` | **MERGED** 2026-05-16 |
+| [#791](https://github.com/carson-see/ArkovaCarson/pull/791) | `chore/scrum-1909-lint-cleanup-s1` | T3 | 163 suppressions: `missing-org-filter` + `no-explicit-any` + Express type augmentation | T3 soak started 2026-05-15T20:29Z |
+| [#792](https://github.com/carson-see/ArkovaCarson/pull/792) | `fix/tenant-isolation-audit-org-id` | T2 | 12 tenant isolation gaps: `org_id` on audit inserts + PATCH guard + `event_category: 'API'` fix | **MERGED** 2026-05-16 |
+| [#793](https://github.com/carson-see/ArkovaCarson/pull/793) | `chore/scrum-1909-lint-cleanup-s2` | T3 | 48 fixes: test file `as any` → proper types + `chain/base.ts` + `hsmBridge.ts` suppressions | T3 soak started 2026-05-15T20:36Z |
+
+**CI note:** Staging evidence gate checkbox regex bug root-cause fixed in PR [#801](https://github.com/carson-see/ArkovaCarson/pull/801) — `missingFields`, `extractEvidenceFieldValue`, and `TIER_DECLARATION_RE` now accept `- [x]` / `- [ ]` prefixes and no longer bleed across newlines on empty field values.
+
+**Warning trajectory:** 365 (baseline) → 331 (#789) → 119 (#791+#792+#793). Remaining 119 require deeper refactoring tracked as follow-on S3+ batches.
+
+**Soak targets:** #789 T3 ends 2026-05-17T18:40Z, #791 T3 ends 2026-05-17T20:29Z, #792 T2 ends 2026-05-16T08:23Z, #793 T3 ends 2026-05-17T20:36Z.
+
+_Last refreshed: 2026-05-16 by Claude — claims verified against `gcloud run revisions list`, staging health endpoints, `gh pr view/checks`, staging_deploy_log ids, and CI run logs._
+
+### 2026-05-15 — Tech-debt: useActiveOrg memo stability (PR #796)
+
+**PR #796 / branch `claude/tender-johnson-667dd9`** fixes a minor perf issue in `src/hooks/useActiveOrg.ts` flagged by CodeRabbit on PR #689. The hook's outer `useMemo` depended on the `orgs` array reference from `useUserOrgs`, causing `resolveActiveOrg` to re-run on every React Query background refetch even when org IDs hadn't changed. Fix: serialize org IDs into a stable string key, use that as the `useMemo` dependency. Two new `renderHook` tests prove referential stability. T1 evidence: full suite 2059/2059, lint/typecheck/copy-lint clean.
+
 ### 2026-05-15 — SCRUM-1655 DocuSign live verification PR lane
 
 **Scope:** SCRUM-1655 remains the live/operator verification subtask for parent SCRUM-1648, not a duplicate implementation story. PR #689 already unit-pinned DS-01 multi-sender behavior; DS-02/DS-03/DS-04 remain represented by existing handler behavior (`findIntegration()` fail-closed lookup, mandatory HMAC, `docusign_webhook_nonces` dedupe).

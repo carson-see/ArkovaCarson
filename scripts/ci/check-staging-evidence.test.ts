@@ -6,6 +6,7 @@ import {
   isStagingToolingOnly,
   missingFields,
   requiredTierFor,
+  soakDurationErrors,
   TIER_SPECS,
 } from './check-staging-evidence.js';
 
@@ -57,6 +58,30 @@ describe('check-staging-evidence', () => {
       ).toBe('T3');
     });
 
+    it('returns T3 when anchorExpirySweep.ts is touched', () => {
+      expect(
+        requiredTierFor(['services/worker/src/jobs/anchorExpirySweep.ts']).tier,
+      ).toBe('T3');
+    });
+
+    it('returns T3 when attestationAnchor.ts is touched', () => {
+      expect(
+        requiredTierFor(['services/worker/src/jobs/attestationAnchor.ts']).tier,
+      ).toBe('T3');
+    });
+
+    it('returns T3 when grace-expiry-sweep.ts is touched', () => {
+      expect(
+        requiredTierFor(['services/worker/src/jobs/grace-expiry-sweep.ts']).tier,
+      ).toBe('T3');
+    });
+
+    it('returns T3 when revocation.ts is touched', () => {
+      expect(
+        requiredTierFor(['services/worker/src/jobs/revocation.ts']).tier,
+      ).toBe('T3');
+    });
+
     it('returns T3 when scheduled.ts is touched', () => {
       expect(
         requiredTierFor(['services/worker/src/routes/scheduled.ts']).tier,
@@ -100,6 +125,14 @@ describe('check-staging-evidence', () => {
 
     it('rejects malformed tier (T4)', () => {
       expect(extractDeclaredTier('Tier: T4')).toBeNull();
+    });
+
+    it('finds tier with checked checkbox prefix', () => {
+      expect(extractDeclaredTier('- [x] Tier: T2\n')).toBe('T2');
+    });
+
+    it('finds tier with unchecked checkbox prefix', () => {
+      expect(extractDeclaredTier('- [ ] Tier: T1\n')).toBe('T1');
     });
   });
 
@@ -153,6 +186,65 @@ describe('check-staging-evidence', () => {
       const partial = T3_BODY.replace(/Staging deploy log id:.*\n/, '');
       const missing = missingFields(partial, 'T3');
       expect(missing).toContain('Staging deploy log id:');
+    });
+
+    it('recognizes fields prefixed with markdown checkbox [x]', () => {
+      const body = `## Staging Soak Evidence
+- [x] Tier: T1
+- [x] Staging branch: arkova-staging
+- [x] Worker revision: arkova-worker-staging-00099-xyz
+- [x] Soak start: 2026-05-09 14:00 UTC
+- [x] Soak end: 2026-05-09 16:00 UTC
+- [x] E2E result: green
+`;
+      expect(missingFields(body, 'T1')).toEqual([]);
+    });
+
+    it('recognizes fields prefixed with unchecked checkbox [ ]', () => {
+      const body = `## Staging Soak Evidence
+- [ ] Tier: T1
+- [ ] Staging branch: arkova-staging
+- [ ] Worker revision: arkova-worker-staging-00099-xyz
+- [ ] Soak start: 2026-05-09 14:00 UTC
+- [ ] Soak end: 2026-05-09 16:00 UTC
+- [ ] E2E result: green
+`;
+      expect(missingFields(body, 'T1')).toEqual([]);
+    });
+  });
+
+  describe('extractEvidenceFieldValue (via soakDurationErrors)', () => {
+    it('does not capture the next line when field value is empty', () => {
+      const body = `## Staging Soak Evidence
+- Tier: T1
+- Staging branch: arkova-staging
+- Worker revision: arkova-worker-staging-00099-xyz
+- Soak start:
+- Soak end: 2026-05-09 16:00 UTC
+- E2E result: green
+`;
+      const errors = soakDurationErrors(body, 'T1');
+      // Before fix: \s* ate the newline, captured next line as value →
+      // "Soak end must be after Soak start" (wrong). After fix: empty
+      // value → unparseable timestamp (correct).
+      expect(errors).toHaveLength(1);
+      expect(errors[0]).toMatch(/Soak start could not parse/);
+      expect(errors[0]).not.toMatch(/after Soak start/);
+    });
+
+    it('does not bleed next-line content into empty field with checkbox prefix', () => {
+      const body = `## Staging Soak Evidence
+- [x] Tier: T1
+- [x] Staging branch: arkova-staging
+- [x] Worker revision: arkova-worker-staging-00099-xyz
+- [x] Soak start:
+- [x] Soak end: 2026-05-09 16:00 UTC
+- [x] E2E result: green
+`;
+      const errors = soakDurationErrors(body, 'T1');
+      expect(errors).toHaveLength(1);
+      expect(errors[0]).toMatch(/Soak start could not parse/);
+      expect(errors[0]).not.toMatch(/after Soak start/);
     });
   });
 
@@ -303,6 +395,23 @@ describe('check-staging-evidence', () => {
       ).toBe(true);
     });
 
+    it('passes for eslint config and rule files', () => {
+      expect(
+        isStagingToolingOnly([
+          'eslint-rules/tenant-isolation.cjs',
+          'services/worker/eslint.config.js',
+        ]).pass,
+      ).toBe(true);
+    });
+
+    it('rejects eslint-config lookalike filenames', () => {
+      expect(
+        isStagingToolingOnly([
+          'services/worker/src/noteslint.config.js',
+        ]).pass,
+      ).toBe(false);
+    });
+
     it('fails when any file is outside the allowlist', () => {
       expect(
         isStagingToolingOnly([
@@ -357,6 +466,22 @@ describe('check-staging-evidence', () => {
       });
       expect(r.ok).toBe(false);
       expect(r.errors.join(' ')).toMatch(/missing required fields/i);
+    });
+
+    it('passes a complete T1 PR with checkbox-prefixed fields', () => {
+      const body = `## Staging Soak Evidence
+- [x] Tier: T1
+- [x] Staging branch: arkova-staging
+- [x] Worker revision: arkova-worker-staging-00099-xyz
+- [x] Soak start: 2026-05-09 14:00 UTC
+- [x] Soak end: 2026-05-09 16:00 UTC
+- [x] E2E result: green
+`;
+      const r = check({
+        body,
+        files: ['src/components/Foo.tsx'],
+      });
+      expect(r.ok).toBe(true);
     });
 
     it('SCRUM-1208: HANDOFF.md and .gitignore are now in the staging-tooling allowlist (PR #733 follow-up)', () => {

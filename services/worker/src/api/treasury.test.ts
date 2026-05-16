@@ -171,6 +171,28 @@ describe('handleTreasuryX402Stats', () => {
     });
   });
 
+  it.each([null, undefined])('treats recent_payments: %s as empty array', async (recentValue) => {
+    const { db } = await import('../utils/db.js');
+    vi.mocked(db.rpc).mockResolvedValueOnce({
+      data: {
+        total_payments: 3,
+        total_revenue_usd: 15.0,
+        recent_payments: recentValue,
+      },
+      error: null,
+    } as never);
+
+    const res = createMockRes();
+    await handleTreasuryX402Stats('admin-123', {} as Request, res);
+
+    expect(res.status).not.toHaveBeenCalledWith(502);
+    expect(res.json).toHaveBeenCalledWith({
+      total: 3,
+      revenue: 15.0,
+      recent: [],
+    });
+  });
+
   it('returns 502 for invalid RPC payloads instead of emitting misleading zeros', async () => {
     const { db } = await import('../utils/db.js');
     vi.mocked(db.rpc).mockResolvedValueOnce({
@@ -321,3 +343,4 @@ describe('parseThresholdUsd', () => {
     expect(parseThresholdUsd('500')).toBe(500);
   });
 });
+

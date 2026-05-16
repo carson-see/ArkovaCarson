@@ -86,7 +86,7 @@ describe('runRegulatoryChangeScan', () => {
     expect(insertFn).toHaveBeenCalledTimes(2);
     expect(insertFn.mock.calls[0][0]).toMatchObject({
       event_type: 'regulatory.rule_stale',
-      event_category: 'COMPLIANCE',
+      event_category: 'SYSTEM',
     });
   });
 

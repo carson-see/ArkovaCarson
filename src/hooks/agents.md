@@ -1,5 +1,5 @@
 # agents.md — hooks
-_Last updated: 2026-05-05_
+_Last updated: 2026-05-15_
 
 ## What This Folder Contains
 
@@ -7,6 +7,8 @@ React hooks for data fetching and mutations against Supabase. Each hook encapsul
 
 ## Recent Changes
 
+- 2026-05-15 SCRUM-1651 ORG-HIER-01 verification: Expanded `useActiveOrg.test.ts` from 10 to 56 tests with full cross-tenant negative test matrix (SCRUM-1651 ORG-12). Matrix covers URL-based attacks, session-poisoning attacks, profile-drift attacks, combined attacks, parent/sub-org isolation for dual-membership users, and the operation-scoped invariant proving resolved orgId is always in membershipOrgIds or null. All 56 tests green.
+- 2026-05-15 Tech-debt (CodeRabbit #689): `useActiveOrg.ts` — extracted `membershipOrgIds` into a value-stable `useMemo` keyed on sorted org ID string. Prevents unnecessary `resolveActiveOrg` recalculation on background React Query refetches when org IDs haven't changed.
 - 2026-05-05 SCRUM-1755: Created `useCanIssueCredential.ts` (+ 15 resolver tests) — gate hook for the Issue Credential UI surface. Pure `resolveIssueGate()` carries the logic; React wrapper pulls `organizations.verification_status` / `suspended` / `parent_org_id` / `parent_approval_status` and the parent-org row when present. Returns a discriminated `IssueGate` so UI surfaces can render the right gate-blocked banner copy. Replaces the prior implicit "ORG_ADMIN ⇒ may issue" assumption.
 - 2026-04-26 SCRUM-1260 R1-6 /simplify carry-over: Extracted `useVisibilityPolling.ts` — page-visibility-aware polling with `(cb, intervalMs)` contract. Replaces three near-identical inline copies in `AnchorQueuePage`, `useTreasuryBalance`, `PipelineAdminPage`. `useTreasuryBalance.ts` also gained `Promise.all` parallelization for the worker + mempool legs (16s → ~8s worst case) plus equality guards on `setBalance` / `setFeeRates` / `setReceipts` so identical poll payloads don't churn the consumer tree.
 - 2026-04-24 API-V2-02: `useApiKeys.ts` now defaults new keys to `read:search`, matching the v2 scope vocabulary and migration `0253_api_key_scope_defaults.sql`.

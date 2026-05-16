@@ -215,7 +215,6 @@ export async function fetchEdgarFilings(supabase: SupabaseClient): Promise<{
       const hits = result.hits?.hits ?? [];
 
       if (hits.length === 0) {
-        hasMore = false;
         break;
       }
 
@@ -910,7 +909,6 @@ async function fetchEftsShard(
 
     const hits = result.hits?.hits ?? [];
     if (hits.length === 0) {
-      hasMore = false;
       break;
     }
 

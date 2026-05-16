@@ -721,8 +721,8 @@ function buildTargetOutput(
 
 function enrichEntry(entry: GoldenDatasetEntry): EnrichedEntry {
   // 1. subType source priority
-  let subType: string | null = null;
-  let subTypeSource: EnrichedEntry['subTypeSource'] = 'other';
+  let subType: string | null;
+  let subTypeSource: EnrichedEntry['subTypeSource'];
 
   const backfill = SUBTYPE_BACKFILL[entry.id];
   if (backfill?.subType) {

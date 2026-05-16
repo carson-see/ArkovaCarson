@@ -92,7 +92,7 @@ describe('sendEmail', () => {
     expect(mockAuditInsert).toHaveBeenCalledWith(
       expect.objectContaining({
         event_type: 'EMAIL_SENT',
-        event_category: 'NOTIFICATION',
+        event_category: 'SYSTEM',
       }),
     );
   });
@@ -190,7 +190,7 @@ describe('sendEmail', () => {
     expect(mockAuditInsert).toHaveBeenCalledWith(
       expect.objectContaining({
         event_type: 'EMAIL_DELIVERY_FAILED',
-        event_category: 'NOTIFICATION',
+        event_category: 'SYSTEM',
       }),
     );
   });

@@ -120,6 +120,7 @@ export async function handleAccountExport(
         .is('deleted_at', null)
         .order('created_at', { ascending: false })
         .limit(10000),
+      // eslint-disable-next-line arkova/missing-org-filter -- GDPR export scoped by actor_id, intentionally cross-org
       db
         .from('audit_events')
         .select('id, event_type, event_category, target_type, target_id, details, created_at')

@@ -276,6 +276,7 @@ function logVerificationAudit(
   credentialVerifiedDispatched: boolean | null = null,
   credentialVerifiedDispatchError: string | null = null,
 ): void {
+  // eslint-disable-next-line arkova/missing-org-filter -- anonymous public verification endpoint, no org context for the querier
   void db.from('audit_events').insert({
     event_type: 'VERIFICATION_QUERIED',
     event_category: 'ANCHOR',

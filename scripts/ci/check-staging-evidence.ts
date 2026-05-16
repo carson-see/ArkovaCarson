@@ -119,7 +119,7 @@ export const PATH_RULES: PathRule[] = [
     reason: 'chain/treasury hot path',
   },
   {
-    pattern: /^services\/worker\/src\/jobs\/(anchor|batch-anchor|check-confirmations|broadcast-recovery|chain-maintenance)\.ts$/,
+    pattern: /^services\/worker\/src\/jobs\/(anchor|anchorExpirySweep|batch-anchor|check-confirmations|broadcast-recovery|chain-maintenance|attestationAnchor|grace-expiry-sweep|revocation)\.ts$/,
     minTier: 'T3',
     reason: 'anchor lifecycle / batch processor',
   },
@@ -177,7 +177,7 @@ export function requiredTierFor(files: string[]): { tier: Tier; reason: string }
 }
 
 const EVIDENCE_HEADER_RE = /^##\s+Staging\s+Soak\s+Evidence\s*$/im;
-const TIER_DECLARATION_RE = /^\s*[-*]?\s*Tier:\s*(T[123])\b/im;
+const TIER_DECLARATION_RE = /^\s*[-*]?\s*(?:\[[ x]\]\s*)?Tier:\s*(T[123])\b/im;
 const UTC_TIMESTAMP_RE = /^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2})(?::(\d{2}))?\s*(?:UTC|Z)\b/i;
 
 function escapeRegExp(value: string): string {
@@ -198,14 +198,14 @@ export function missingFields(body: string, tier: Tier): string[] {
   const missing: string[] = [];
   for (const field of spec.requiredFields) {
     // Field labels are line-anchored to avoid matching prose mentions.
-    const re = new RegExp(String.raw`^[\s\-*]*${escapeRegExp(field)}`, 'im');
+    const re = new RegExp(String.raw`^[\s\-*]*(?:\[[ x]\]\s*)?${escapeRegExp(field)}`, 'im');
     if (!re.test(body)) missing.push(field);
   }
   return missing;
 }
 
 function extractEvidenceFieldValue(body: string, field: string): string | null {
-  const re = new RegExp(String.raw`^[\s\-*]*${escapeRegExp(field)}\s*(.*)$`, 'im');
+  const re = new RegExp(String.raw`^[\s\-*]*(?:\[[ x]\]\s*)?${escapeRegExp(field)}[^\S\n]*(.*)$`, 'im');
   const m = re.exec(body);
   return m ? m[1].trim() : null;
 }
@@ -310,6 +310,10 @@ export function isStagingToolingOnly(files: string[]): StagingFilesOnlyResult {
     /^package\.json$/,
     /^package-lock\.json$/,
     /agents\.md$/,
+    // ESLint rules and config are dev-time lint tooling, not runtime code.
+    // Changes here affect CI's lint step, not the deployed worker.
+    /^eslint-rules\//,
+    /(^|\/)eslint\.config\.(js|cjs|mjs)$/,
   ];
   for (const f of files) {
     if (!ALLOW.some((re) => re.test(f))) {

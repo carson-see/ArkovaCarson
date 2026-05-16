@@ -342,8 +342,8 @@ async function deliverToEndpoint(
 
   // Either insert a new row (first attempt) or update the existing
   // pending/retrying/failed row in place (retry attempt).
-  let logEntry: { id: string } | null = null;
-  let logError: { message?: string } | null = null;
+  let logEntry: { id: string } | null;
+  let logError: { message?: string } | null;
 
   if (existing) {
     const { data, error } = await db

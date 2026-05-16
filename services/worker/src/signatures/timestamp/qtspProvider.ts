@@ -120,6 +120,7 @@ export class DefaultQtspProvider implements QtspProvider {
         throw new Error(
           `Both TSA providers failed. Primary: ${this.primary.name}, Secondary: ${this.secondary.name}. ` +
           `Error: ${err instanceof Error ? err.message : String(err)}`,
+          { cause: err },
         );
       }
     }

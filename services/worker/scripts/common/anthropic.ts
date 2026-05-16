@@ -74,6 +74,6 @@ export async function callAnthropicJson<T>(opts: AnthropicCallOpts): Promise<T> 
   try {
     return JSON.parse(jsonText) as T;
   } catch (err) {
-    throw new Error(`Anthropic response was not valid JSON: ${(err as Error).message}\n--\n${text.slice(0, 400)}`);
+    throw new Error(`Anthropic response was not valid JSON: ${(err as Error).message}\n--\n${text.slice(0, 400)}`, { cause: err });
   }
 }
