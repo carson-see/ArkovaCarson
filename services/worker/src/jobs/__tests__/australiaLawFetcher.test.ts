@@ -2,6 +2,7 @@
  * KAU-03/04: Australia Compliance Data Fetcher Tests
  */
 
+import type { SupabaseClient } from '@supabase/supabase-js';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { SupabaseClient } from '@supabase/supabase-js';
 

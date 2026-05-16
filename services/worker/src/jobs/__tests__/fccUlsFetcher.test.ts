@@ -5,6 +5,7 @@
  * error handling, and pagination. All HTTP calls mocked.
  */
 
+import type { SupabaseClient } from '@supabase/supabase-js';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { SupabaseClient } from '@supabase/supabase-js';
 

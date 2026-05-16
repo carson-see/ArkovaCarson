@@ -2,6 +2,7 @@
  * NCX-01: eCFR Regulatory Text Fetcher Tests
  */
 
+import type { SupabaseClient } from '@supabase/supabase-js';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { SupabaseClient } from '@supabase/supabase-js';
 

@@ -51,6 +51,7 @@ function makeUtxos(values: number[]): Utxo[] {
 
 // Create a minimal mock signing provider using the repo's standard test WIF
 function makeMockSigner() {
+   
   const ECPair = ECPairFactory(ecc);
   const TEST_WIF = 'cVt4o7BGAig1UXywgGSmARhxMdzP5qvQsxKkSsc1XEkw3tDTQFpy';
   const keyPair = ECPair.fromWIF(TEST_WIF, bitcoin.networks.testnet);
@@ -158,6 +159,7 @@ describe('Bitcoin Audit Hardening', () => {
 
       // Parse the TX to verify nSequence
        
+      // bitcoin imported at top level
       const tx = bitcoin.Transaction.fromHex(txHex);
       expect(tx.ins[0].sequence).toBe(0xfffffffd);
     });
@@ -213,6 +215,7 @@ describe('Bitcoin Audit Hardening', () => {
 
       // Verify TX has 2 inputs
        
+      // bitcoin imported at top level
       const tx = bitcoin.Transaction.fromHex(result.txHex);
       expect(tx.ins.length).toBe(2);
 
@@ -241,6 +244,7 @@ describe('Bitcoin Audit Hardening', () => {
       expect(result.txHex).toBeTruthy();
       // TX should have OP_RETURN with 44-byte payload (4 prefix + 32 fingerprint + 8 metadata)
        
+      // bitcoin imported at top level
       const tx = bitcoin.Transaction.fromHex(result.txHex);
       const opReturnOutput = tx.outs.find((o: { script: Buffer }) => o.script[0] === 0x6a);
       expect(opReturnOutput).toBeDefined();

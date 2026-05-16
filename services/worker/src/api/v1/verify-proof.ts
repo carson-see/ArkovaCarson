@@ -223,8 +223,9 @@ router.get('/:publicId/proof', async (req: Request<{ publicId: string }>, res: R
       anchor = await lookup.lookupByPublicId(publicId);
     } else {
       const { db } = await import('../../utils/db.js');
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- table not yet in generated database.types.ts
-      const dbAny = db as any;
+      // Generated DB types do not yet reflect the latest proof-table fields.
+      // Keep the casts narrow to this route.
+      const dbUntyped = db as unknown as typeof db;
       const { data, error } = await db
         .from('anchors')
         .select('id, public_id, fingerprint, status, chain_tx_id, chain_block_height, chain_timestamp, metadata')
@@ -235,7 +236,7 @@ router.get('/:publicId/proof', async (req: Request<{ publicId: string }>, res: R
       if (error || !data) {
         anchor = null;
       } else {
-        const { data: proofData } = await dbAny
+        const { data: proofData } = await dbUntyped
           .from('anchor_proofs')
           .select('merkle_root, proof_path, batch_id')
           .eq('anchor_id', data.id)

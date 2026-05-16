@@ -152,6 +152,7 @@ describe('Attestation Public ID Format', () => {
   });
 
   it('generates unique 6-char suffix from UUID', () => {
+    // crypto imported at top level
     const uuid = crypto.randomUUID();
     const uniquePart = uuid.slice(0, 6).toUpperCase();
 
@@ -223,6 +224,8 @@ describe('Attestation ID Collision Handling', () => {
 // ─── Validation Tests ────────────────────────────────────
 
 describe('Attestation Validation', () => {
+  // z imported at top level
+
   const CreateAttestationSchema = z.object({
     anchor_id: z.string().uuid().optional(),
     subject_type: z.enum(['credential', 'entity', 'process', 'asset']).default('credential'),
