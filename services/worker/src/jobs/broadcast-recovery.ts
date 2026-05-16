@@ -103,33 +103,42 @@ async function manualRecovery(staleMinutes: number): Promise<BroadcastRecoveryRe
   });
 
   // SCRUM-1296: Chunked bulk update — process in batches of 100
+  // Each anchor gets its own metadata preserved (cleanMeta) plus recovery fields.
   const CHUNK_SIZE = 100;
   const recovered: Array<{ id: string; fingerprint: string; claimedBy: string }> = [];
 
   for (let i = 0; i < allAnchors.length; i += CHUNK_SIZE) {
     const chunk = allAnchors.slice(i, i + CHUNK_SIZE);
-    const chunkIds = chunk.map((a) => a.id);
 
-    // Bulk update status; metadata per-row differences are acceptable to
-    // lose in the fallback path — the recovery_reason + recovered_at are
-    // the critical fields. For the fallback (RPC unavailable), we set a
-    // uniform metadata payload. The RPC path (primary) handles per-row metadata.
-    const { error: updateError } = await db
-      .from('anchors')
-      .update({
-        status: 'PENDING',
-        metadata: {
-          _recovery_reason: 'stuck_broadcasting',
-          _recovered_at: recoveredAt,
-        },
-      })
-      .in('id', chunkIds)
-      .eq('status', 'BROADCASTING');
+    // Per-anchor update to preserve existing metadata — each anchor may
+    // have different business-critical fields in metadata that must survive.
+    const results = await Promise.allSettled(
+      chunk.map((anchor) =>
+        db
+          .from('anchors')
+          .update({
+            status: 'PENDING',
+            metadata: {
+              ...anchor.cleanMeta,
+              _recovery_reason: 'stuck_broadcasting',
+              _recovered_at: recoveredAt,
+              _previous_claimed_by: anchor.claimedBy,
+            },
+          })
+          .eq('id', anchor.id)
+          .eq('status', 'BROADCASTING'),
+      ),
+    );
 
-    if (!updateError) {
-      recovered.push(...chunk.map((a) => ({ id: a.id, fingerprint: a.fingerprint, claimedBy: a.claimedBy })));
-    } else {
-      logger.error({ error: updateError, chunkSize: chunkIds.length }, 'Bulk recovery update failed for chunk');
+    for (let j = 0; j < results.length; j++) {
+      const result = results[j];
+      const anchor = chunk[j];
+      if (result.status === 'fulfilled' && !result.value.error) {
+        recovered.push({ id: anchor.id, fingerprint: anchor.fingerprint, claimedBy: anchor.claimedBy });
+      } else {
+        const err = result.status === 'rejected' ? result.reason : result.value.error;
+        logger.error({ error: err, anchorId: anchor.id }, 'Recovery update failed for anchor');
+      }
     }
   }
 
