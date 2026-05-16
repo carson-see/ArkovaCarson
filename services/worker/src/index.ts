@@ -370,6 +370,10 @@ app.use('/api/v2', apiV2Router);
 import { rulesTemplatesRouter } from './api/rules-templates.js';
 app.use('/api/v1/rules/templates', rateLimiters.api, rulesTemplatesRouter);
 
+// Version resolution (SCRUM-1971) — org admin reviews document version conflicts
+import { versionResolutionRouter } from './api/version-resolution.js';
+app.use('/api/v1/versions', rateLimiters.api, requireAuthMw, versionResolutionRouter);
+
 // Anchor revocation (SCRUM-1095) — requires auth, mounted under /api/anchor
 import { anchorRevokeRouter } from './api/anchor-revoke.js';
 app.use('/api/anchor', rateLimiters.api, requireAuthMw, anchorRevokeRouter);
