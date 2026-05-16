@@ -14,6 +14,12 @@
 
 ## Now
 
+### 2026-05-16 — SCRUM-1651 ORG-12 cross-tenant test matrix MERGED (PR #790)
+
+**PR #790 merged** to `main` at 2026-05-16. 59 tests covering `resolveActiveOrg` pure resolver: URL attacks, session-poisoning, profile-drift, combined attacks, dual-membership parent↔sub-org isolation, operation-scoped invariant, and empty-string JS truthiness edge cases. Also fixed `.sonarcloud.properties` CPD exclusion for test files (was overriding `sonar-project.properties` glob). T1 soak (test-only, no production code). Quality gauntlet: /code-review (4 issues), /simplify (dedup+types), /tech-debt, /debug (dead guard+edge cases). Zero `memberships[0]` hits in production code — grep guard effective. Browser UAT blocked by no local Supabase; resolver verified exhaustively via unit tests on pure function. SCRUM-1664 subtask: test matrix deliverable complete; manual two-membership UAT + Confluence LIVE block remain.
+
+_Last refreshed: 2026-05-16 by Claude — claims verified against `gh pr view 790`, `git log`, CI run 25958111080._
+
 ### 2026-05-16 — SCRUM-1918 audit event_category CHECK constraint fix MERGED
 
 **PR #794 merged** to `main` at 2026-05-16T08:54:54Z (merge commit `9d1445af`). Five `event_category` string values (`api_key`, `PLATFORM`, `SECURITY`, `COMPLIANCE`, `NOTIFICATION`) silently violated the `audit_events_event_category_valid` CHECK constraint, causing all affected audit inserts to be dropped. Fixed by mapping each to valid categories: `API`, `SYSTEM`, `ADMIN`. 9 files changed (7 production + 2 test), 13 line substitutions. T2 staging soak ran 12.5h at 2.7 req/s with 0 cron errors. Jira: SCRUM-1918 → Done; SCRUM-1917, SCRUM-1920 closed as duplicates.
