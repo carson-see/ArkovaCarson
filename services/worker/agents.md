@@ -1,6 +1,6 @@
 # agents.md — services/worker
 
-_Last updated: 2026-05-15 (SCRUM-1909 lint warning cleanup)._
+_Last updated: 2026-05-16 (SCRUM-1909 lint warning cleanup)._
 
 ## What This Folder Contains
 
