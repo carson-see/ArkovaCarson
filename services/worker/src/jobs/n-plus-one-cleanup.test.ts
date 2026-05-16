@@ -221,19 +221,34 @@ describe('SCRUM-1296: broadcast-recovery chunked bulk update', () => {
   });
 });
 
-describe('SCRUM-1296: revocation bounded concurrency', () => {
+describe('SCRUM-1296: revocation sequential processing (UTXO safety)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  it('should use pLimit for bounded concurrency (import verification)', async () => {
-    // Verify p-limit is importable and the module structure is correct.
-    // Full concurrency behavior is validated by the revocation.test.ts suite
-    // which mocks processRevocation and verifies all anchors are processed.
-    const pLimitModule = await import('p-limit');
-    expect(pLimitModule.default).toBeDefined();
-    expect(typeof pLimitModule.default).toBe('function');
-    const limit = pLimitModule.default(5);
-    expect(typeof limit).toBe('function');
+  it('should NOT import p-limit — revocations must be sequential for UTXO safety', async () => {
+    // Revocations broadcast chain transactions from a shared treasury wallet.
+    // Concurrent UTXO selection would cause "inputs-missingorspent" failures.
+    // Verify the module does not use p-limit (sequential for...of is required).
+    const fs = await import('fs');
+    const path = await import('path');
+    const revocationSource = fs.readFileSync(
+      path.resolve(__dirname, './revocation.ts'),
+      'utf-8',
+    );
+    expect(revocationSource).not.toContain('p-limit');
+    expect(revocationSource).not.toContain('pLimit');
+    expect(revocationSource).toContain('for (const anchor of anchors)');
+  });
+
+  it('should contain UTXO safety comment explaining sequential requirement', async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const revocationSource = fs.readFileSync(
+      path.resolve(__dirname, './revocation.ts'),
+      'utf-8',
+    );
+    expect(revocationSource).toContain('UTXO selection is not safe under concurrency');
+    expect(revocationSource).toContain('treasury wallet UTXOs are shared state');
   });
 });
