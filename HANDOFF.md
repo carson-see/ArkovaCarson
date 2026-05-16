@@ -14,6 +14,16 @@
 
 ## Now
 
+### 2026-05-16 — SCRUM-1296 N+1 fan-out elimination (PR #807)
+
+**PR #807 open** on branch `claude/clever-hellman-4d1a3e`. Replaces sequential per-row DB round-trips in 4 worker hot-path jobs with bounded concurrency or bulk operations: revocation (unchanged — sequential for UTXO safety), broadcast-recovery (`runWithConcurrency`), cloud-logging-drain (new `bump_cloud_logging_retry_counts` RPC, migration 0309), attestationExpiry (`runWithConcurrency`). Chunked `.in()` at 100 per batch. T3 48h staging soak required (chain-adjacent lifecycle changes). Code review findings being addressed.
+
+**Key decision:** Revocations remain strictly sequential — UTXO selection from a shared treasury wallet is not concurrency-safe (double-spend risk).
+
+**Tier:** T3 (touches anchor lifecycle hot path). Soak not yet started; PR in review.
+
+_Last refreshed: 2026-05-16 by Claude — claims verified against PR #807 diff, migration 0309, job source files._
+
 ### 2026-05-16 — SCRUM-1966 prod hotfix MERGED (PR #805)
 
 **PR #805 merged** to `main` at 2026-05-16 (merge commit `19d50084`). Three production hotfixes: (1) RLS statement timeout on bulk upload — consolidated 3 anchors SELECT policies into 1 with scalar subquery wrappers, same for attestations; query time dropped from timeout to 0.134ms. (2) Treasury x402-stats 502 — `parseX402StatsPayload` null handling fix. (3) Missing org_credits for Arkova org — seeded Free-tier allocation. Migrations 0307+0308. T2 12h soak: 115K requests, zero 500s. Jira: SCRUM-1966 → Done. Confluence: [page 53411876](https://arkova.atlassian.net/wiki/spaces/A/pages/53411876). Bug tracker: BUG-RLS-TIMEOUT (P1), BUG-TREASURY-502 (P2), BUG-ORG-CREDITS-MISSING (P3).

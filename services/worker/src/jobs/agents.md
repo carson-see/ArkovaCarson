@@ -25,7 +25,25 @@ Background workers for anchor lifecycle, billing reconciliation, drive ingestion
 
 - **Treasury cache sentinel guard** (SCRUM-1786): Before upserting, if any of `total_secured`, `total_pending`, `last_24h_count` is -1, read existing cache row and preserve last-good values. Defense-in-depth against upstream failures.
 - **Anchor stats from pipeline_dashboard_cache** (SCRUM-1786): `fetchAnchorStats()` reads from `pipeline_dashboard_cache` instead of the `get_anchor_status_counts_fast` RPC. The RPC's 1s per-status timeouts produced -1 sentinels on the 2.9M-row anchors table.
+- **N+1 fan-out elimination** (SCRUM-1296): Sequential per-row DB round-trips replaced with bounded concurrency or bulk operations in hot-path jobs. Pattern details below.
 
+### N+1 Cleanup Patterns (SCRUM-1296)
+
+Affected jobs and their concurrency model:
+
+| Job | Strategy | Rationale |
+|---|---|---|
+| `revocation.ts` | **Sequential** (unchanged) | UTXO selection from a shared treasury wallet is not safe under concurrency — double-spend risk |
+| `broadcast-recovery.ts` | Bounded concurrency via `runWithConcurrency` | DB fan-out only; no chain interaction during recovery reset |
+| `cloud-logging-drain` | Bulk RPC (`bump_cloud_logging_retry_counts`) | Read-modify-write loops replaced with single atomic DB call |
+| `attestationExpiry` | Bounded concurrency via `runWithConcurrency` | DB fan-out only; attestation expiry does not touch chain |
+
+Key implementation patterns:
+
+- **`runWithConcurrency`** (from `../utils/concurrency.ts`): codebase utility for bounded-parallel async work. Used instead of `p-limit` — deliberate choice to avoid the external dependency.
+- **Chunked `.in()` queries**: Supabase `.in()` filter calls are chunked at **100 IDs per batch** to stay within PostgREST query-string limits and avoid request-size failures on large result sets.
+- **`bump_cloud_logging_retry_counts` RPC** (migration `0309`, `SECURITY DEFINER`): Atomically increments retry counts for a batch of IDs in a single DB round-trip, replacing the prior read-modify-write loop. Accepts an array of IDs; returns updated count.
+- **Bulk updates with per-anchor metadata**: `broadcast-recovery` preserves per-anchor `recovery_metadata` in bulk update payloads — each anchor retains its own failure context even within a batched write.
 
 ## Open work
 - SCRUM-1736 (PR #734) — anchorExpirySweep producer; awaiting Carson merge + Mon 2026-05-11 deploy.
