@@ -343,3 +343,4 @@ describe('parseThresholdUsd', () => {
     expect(parseThresholdUsd('500')).toBe(500);
   });
 });
+
