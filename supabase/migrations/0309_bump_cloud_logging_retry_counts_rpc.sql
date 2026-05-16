@@ -20,3 +20,6 @@ BEGIN
   WHERE audit_id = ANY(p_audit_ids);
 END;
 $$;
+
+-- Reload PostgREST schema cache so .rpc() calls discover the new function immediately
+NOTIFY pgrst, 'reload schema';

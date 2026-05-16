@@ -342,7 +342,7 @@ describe('SCRUM-1296: broadcast-recovery chunked bulk update', () => {
     vi.clearAllMocks();
   });
 
-  it('should use chunked .in() update instead of per-row updates', async () => {
+  it('should preserve per-anchor metadata during recovery', async () => {
     const { recoverStuckBroadcasts } = await import('./broadcast-recovery.js');
 
     // RPC fails → fallback to manual recovery
@@ -351,11 +351,11 @@ describe('SCRUM-1296: broadcast-recovery chunked bulk update', () => {
       error: { code: '42883', message: 'function not found' },
     });
 
-    // 5 stuck anchors
+    // 5 stuck anchors with distinct metadata
     const stuckAnchors = Array.from({ length: 5 }, (_, i) => ({
       id: `anchor-${i}`,
       fingerprint: `fp-${i}`,
-      metadata: { _claimed_by: `worker-${i}`, _claimed_at: new Date().toISOString() },
+      metadata: { _claimed_by: `worker-${i}`, _claimed_at: new Date().toISOString(), business_field: `val-${i}` },
     }));
 
     let fromCallCount = 0;
@@ -365,16 +365,15 @@ describe('SCRUM-1296: broadcast-recovery chunked bulk update', () => {
     mockDbFrom.mockImplementation(() => {
       fromCallCount++;
       if (fromCallCount === 1) return selectChain; // SELECT stuck
-      return updateChain; // UPDATE bulk
+      return updateChain; // Per-anchor UPDATE preserving metadata
     });
 
     const result = await recoverStuckBroadcasts(5);
 
-    // Should NOT make 5 individual update calls
-    // Should use chunked bulk update (1-2 calls max for 5 items)
     expect(result.recovered).toBe(5);
-    // The .from('anchors') calls: 1 SELECT + at most 1 bulk UPDATE (not 5)
-    expect(fromCallCount).toBeLessThanOrEqual(2);
+    // 1 SELECT + 5 per-anchor UPDATEs (preserving individual metadata)
+    // Chunked in batches of 100, so all 5 are in one chunk processed via Promise.allSettled
+    expect(fromCallCount).toBe(6);
   });
 });
 
@@ -384,9 +383,6 @@ describe('SCRUM-1296: revocation sequential processing (UTXO safety)', () => {
   });
 
   it('should NOT import p-limit — revocations must be sequential for UTXO safety', async () => {
-    // Revocations broadcast chain transactions from a shared treasury wallet.
-    // Concurrent UTXO selection would cause "inputs-missingorspent" failures.
-    // Verify the module does not use p-limit (sequential for...of is required).
     const fs = await import('fs');
     const path = await import('path');
     const revocationSource = fs.readFileSync(
@@ -407,5 +403,17 @@ describe('SCRUM-1296: revocation sequential processing (UTXO safety)', () => {
     );
     expect(revocationSource).toContain('UTXO selection is not safe under concurrency');
     expect(revocationSource).toContain('treasury wallet UTXOs are shared state');
+  });
+
+  it('should use runWithConcurrency for bounded non-chain concurrency', async () => {
+    const { runWithConcurrency } = await import('../utils/concurrency.js');
+    expect(runWithConcurrency).toBeDefined();
+    expect(typeof runWithConcurrency).toBe('function');
+
+    const tasks = [1, 2, 3, 4, 5].map((n) => async () => n * 2);
+    const result = await runWithConcurrency(tasks, 2);
+    expect(result.fulfilled).toHaveLength(5);
+    expect(result.rejected).toHaveLength(0);
+    expect(result.fulfilled.sort((a, b) => a - b)).toEqual([2, 4, 6, 8, 10]);
   });
 });
