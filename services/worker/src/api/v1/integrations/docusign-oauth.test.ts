@@ -296,4 +296,208 @@ describe('DocuSign OAuth router', () => {
       status: 'success',
     });
   });
+
+  it('provisions a Connect listener after successful OAuth callback', async () => {
+    const captured: Record<string, unknown[]> = {};
+    const capture = (method: string, value: unknown) => {
+      captured[method] = [...(captured[method] ?? []), value];
+    };
+    const db = {
+      from: vi.fn((table: string) => {
+        if (table === 'org_members') return mockQuery({ data: { role: 'owner' }, error: null });
+        if (table === 'org_integrations') return mockQuery({ data: { id: 'integration-1' }, error: null }, capture);
+        if (table === 'integration_events') return mockQuery({ data: null, error: null }, capture);
+        return mockQuery({ data: null, error: null }, capture);
+      }),
+    };
+
+    const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      if (url === 'https://account-d.docusign.com/oauth/token') {
+        return new Response(JSON.stringify({
+          access_token: 'access-token-provision',
+          expires_in: 3600,
+          refresh_token: 'refresh-token-provision',
+          scope: 'signature extended',
+          token_type: 'Bearer',
+        }), { status: 200 });
+      }
+      if (url === 'https://account-d.docusign.com/oauth/userinfo') {
+        return new Response(JSON.stringify({
+          sub: 'docusign-sub-1',
+          email: 'admin@example.com',
+          accounts: [{
+            account_id: 'docusign-account-1',
+            account_name: 'Acme Legal',
+            base_uri: 'https://demo.docusign.net',
+            is_default: true,
+          }],
+        }), { status: 200 });
+      }
+      // Connect list — no existing listeners (GET request)
+      if (url.includes('/connect') && (!init?.method || init.method === 'GET')) {
+        return new Response(JSON.stringify({ configurations: [] }), { status: 200 });
+      }
+      // Connect create (POST request)
+      if (url.includes('/connect') && init?.method === 'POST') {
+        return new Response(JSON.stringify({ connectId: '99001' }), { status: 201 });
+      }
+      return new Response('{}', { status: 404 });
+    });
+
+    const app = express();
+    app.use(express.json());
+    app.use((req, _res, next) => {
+      (req as unknown as { userId: string }).userId = TEST_USER_ID;
+      next();
+    });
+    app.use('/api/v1/integrations', createDocusignOAuthRouter({
+      db,
+      env: {
+        DOCUSIGN_INTEGRATION_KEY: 'docusign-client',
+        DOCUSIGN_CLIENT_SECRET: 'docusign-client-secret',
+        DOCUSIGN_DEMO: 'true',
+        DOCUSIGN_CONNECT_HMAC_SECRET: 'hmac-secret-123',
+        WORKER_PUBLIC_URL: 'https://arkova-worker.example.com',
+        GCP_KMS_INTEGRATION_TOKEN_KEY: 'projects/p/locations/l/keyRings/r/cryptoKeys/k',
+      },
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      stateSecret: 'test-state-secret',
+      frontendUrl: 'http://localhost:5173',
+      now: () => new Date('2026-04-24T12:00:00.000Z'),
+      kms: {
+        async encrypt() { return Buffer.from('encrypted-token-payload'); },
+        async decrypt() { return Buffer.from('{}'); },
+      },
+    }));
+
+    const start = await request(app)
+      .post('/api/v1/integrations/docusign/oauth/start')
+      .set('host', 'worker.test')
+      .send({
+        org_id: TEST_ORG_ID,
+        return_to: 'http://localhost:5173/organizations/org-1?tab=settings',
+      });
+    const state = new URL(start.body.authorizationUrl).searchParams.get('state');
+
+    const callback = await request(app)
+      .get('/api/v1/integrations/docusign/oauth/callback')
+      .set('host', 'worker.test')
+      .query({ code: 'docusign-code', state });
+
+    expect(callback.status).toBe(302);
+    expect(callback.headers.location).toContain('docusign=connected');
+
+    // Verify provisioning was called (Connect API hit)
+    const connectCalls = fetchImpl.mock.calls.filter(
+      (call) => String(call[0]).includes('/connect'),
+    );
+    expect(connectCalls.length).toBeGreaterThanOrEqual(1);
+
+    // Verify connect_listener_provisioned event was recorded
+    const events = captured.insert ?? [];
+    const provisionEvent = events.find(
+      (e) => (e as Record<string, unknown>).event_type === 'connect_listener_provisioned',
+    );
+    expect(provisionEvent).toBeDefined();
+  });
+
+  it('OAuth callback succeeds even when Connect provisioning fails', async () => {
+    const captured: Record<string, unknown[]> = {};
+    const capture = (method: string, value: unknown) => {
+      captured[method] = [...(captured[method] ?? []), value];
+    };
+    const db = {
+      from: vi.fn((table: string) => {
+        if (table === 'org_members') return mockQuery({ data: { role: 'owner' }, error: null });
+        if (table === 'org_integrations') return mockQuery({ data: { id: 'integration-1' }, error: null }, capture);
+        if (table === 'integration_events') return mockQuery({ data: null, error: null }, capture);
+        return mockQuery({ data: null, error: null }, capture);
+      }),
+    };
+
+    const fetchImpl = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url === 'https://account-d.docusign.com/oauth/token') {
+        return new Response(JSON.stringify({
+          access_token: 'access-token-fail-provision',
+          expires_in: 3600,
+          refresh_token: 'refresh-token-fail-provision',
+          scope: 'signature extended',
+          token_type: 'Bearer',
+        }), { status: 200 });
+      }
+      if (url === 'https://account-d.docusign.com/oauth/userinfo') {
+        return new Response(JSON.stringify({
+          sub: 'docusign-sub-1',
+          email: 'admin@example.com',
+          accounts: [{
+            account_id: 'docusign-account-1',
+            account_name: 'Acme Legal',
+            base_uri: 'https://demo.docusign.net',
+            is_default: true,
+          }],
+        }), { status: 200 });
+      }
+      // Connect API calls all fail with 500
+      if (url.includes('/connect')) {
+        return new Response(
+          JSON.stringify({ errorCode: 'INTERNAL_ERROR', message: 'Server error' }),
+          { status: 500 },
+        );
+      }
+      return new Response('{}', { status: 404 });
+    });
+
+    const app = express();
+    app.use(express.json());
+    app.use((req, _res, next) => {
+      (req as unknown as { userId: string }).userId = TEST_USER_ID;
+      next();
+    });
+    app.use('/api/v1/integrations', createDocusignOAuthRouter({
+      db,
+      env: {
+        DOCUSIGN_INTEGRATION_KEY: 'docusign-client',
+        DOCUSIGN_CLIENT_SECRET: 'docusign-client-secret',
+        DOCUSIGN_DEMO: 'true',
+        DOCUSIGN_CONNECT_HMAC_SECRET: 'hmac-secret-123',
+        WORKER_PUBLIC_URL: 'https://arkova-worker.example.com',
+        GCP_KMS_INTEGRATION_TOKEN_KEY: 'projects/p/locations/l/keyRings/r/cryptoKeys/k',
+      },
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      stateSecret: 'test-state-secret',
+      frontendUrl: 'http://localhost:5173',
+      now: () => new Date('2026-04-24T12:00:00.000Z'),
+      kms: {
+        async encrypt() { return Buffer.from('encrypted-token-payload'); },
+        async decrypt() { return Buffer.from('{}'); },
+      },
+    }));
+
+    const start = await request(app)
+      .post('/api/v1/integrations/docusign/oauth/start')
+      .set('host', 'worker.test')
+      .send({
+        org_id: TEST_ORG_ID,
+        return_to: 'http://localhost:5173/organizations/org-1?tab=settings',
+      });
+    const state = new URL(start.body.authorizationUrl).searchParams.get('state');
+
+    const callback = await request(app)
+      .get('/api/v1/integrations/docusign/oauth/callback')
+      .set('host', 'worker.test')
+      .query({ code: 'docusign-code', state });
+
+    // OAuth still succeeds — redirect to connected
+    expect(callback.status).toBe(302);
+    expect(callback.headers.location).toContain('docusign=connected');
+
+    // But a connect_listener_failed event was recorded
+    const events = captured.insert ?? [];
+    const failEvent = events.find(
+      (e) => (e as Record<string, unknown>).event_type === 'connect_listener_failed',
+    );
+    expect(failEvent).toBeDefined();
+  });
 });

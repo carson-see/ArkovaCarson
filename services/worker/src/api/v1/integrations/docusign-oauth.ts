@@ -21,6 +21,7 @@ import {
   buildDocusignAuthorizationUrl,
   exchangeDocusignCode,
   getDocusignUserInfo,
+  provisionConnectListener,
   type DocusignClientDeps,
 } from '../../../integrations/oauth/docusign.js';
 import {
@@ -311,6 +312,37 @@ export function createDocusignOAuthRouter(deps: DocusignOAuthDeps = {}): Router 
           account_id: account.account_id,
         },
       });
+
+      // Auto-provision Connect listener (non-fatal)
+      try {
+        const provisionResult = await provisionConnectListener({
+          accessToken: tokens.access_token,
+          baseUri: account.base_uri,
+          accountId: account.account_id,
+          deps: docusignDeps,
+        });
+        await recordIntegrationEvent(db, {
+          orgId: payload.orgId,
+          integrationId: integration?.id,
+          eventType: 'connect_listener_provisioned',
+          status: 'success',
+          details: {
+            connect_id: provisionResult.connectId,
+            action: provisionResult.action,
+          },
+        });
+      } catch (provisionError) {
+        logger.error({ error: provisionError, orgId: payload.orgId }, 'DocuSign Connect listener provisioning failed');
+        await recordIntegrationEvent(db, {
+          orgId: payload.orgId,
+          integrationId: integration?.id,
+          eventType: 'connect_listener_failed',
+          status: 'error',
+          details: {
+            error: provisionError instanceof Error ? provisionError.message : 'Unknown error',
+          },
+        });
+      }
 
       res.redirect(302, appendResult(returnTo, 'docusign', 'connected'));
     } catch (error) {
