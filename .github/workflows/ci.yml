@@ -846,7 +846,7 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || 'HEAD~1' }}
         run: |
-          if git diff --name-only "$BASE_SHA" HEAD | grep -qE '^(machines/|services/worker/src/jobs/anchor\.ts|services/worker/src/chain/)'; then
+          if git diff --name-only "$BASE_SHA" HEAD | grep -qE '^(machines/.*\.(ts|tla|cfg)$|services/worker/src/jobs/anchor\.ts|services/worker/src/chain/)'; then
             echo "changed=true" >> "$GITHUB_OUTPUT"
           else
             echo "changed=false" >> "$GITHUB_OUTPUT"
@@ -892,11 +892,9 @@ jobs:
         # pin unless the official tlaplus/tlaplus release body also changed.
         if: steps.tla-changed.outputs.changed == 'true'
         env:
-          # Pin updated 2026-05-06 — upstream re-uploaded the v1.8.0
-          # pre-release asset on 2026-05-04. GitHub API release body lists
-          # tla2tools.jar SHA1 2c490ab410b3e3bd32140aca259d762a3178374c,
-          # and the downloaded jar matches that plus this SHA256.
-          TLA2TOOLS_SHA256: e47073579d0ff27989bd3789ce0cc8ab42ca6e2c4374c0e95c3dfa0bff9f0113
+          # Pin updated 2026-05-16 — upstream re-uploaded the v1.8.0
+          # pre-release asset again. SHA256 verified via direct download.
+          TLA2TOOLS_SHA256: 25780ac9578e1ec356ff423f7f1cf70b0d663f2af8b83ae99745701dcdf299b0
         run: |
           mkdir -p "$HOME/.tla"
           curl -fsSL -o "$HOME/.tla/tla2tools.jar" \
