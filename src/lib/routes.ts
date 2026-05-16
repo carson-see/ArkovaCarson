@@ -84,6 +84,9 @@ export const ROUTES = {
   // Anchor Queue (UX-02 — SCRUM-1028): PENDING_RESOLUTION collision review
   ANCHOR_QUEUE: '/organization/queue',
 
+  // Version Conflicts (SCRUM-1126): version-conflict resolution
+  VERSION_CONFLICTS: '/organization/version-conflicts',
+
   // Phase III — Signatures & Compliance Center (PH3-ESIG)
   VERIFY_SIGNATURE: '/verify/signature/:signaturePublicId',
   SIGNATURE_COMPLIANCE: '/organization/signature-compliance',

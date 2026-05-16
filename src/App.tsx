@@ -98,6 +98,7 @@ const DataRetentionPage = React.lazy(() => import('@/pages/DataRetentionPage').t
 const AuditorBatchPage = React.lazy(() => import('@/pages/AuditorBatchPage').then(m => ({ default: m.AuditorBatchPage })));
 const ComplianceTrendPage = React.lazy(() => import('@/pages/ComplianceTrendPage').then(m => ({ default: m.ComplianceTrendPage })));
 const ComplianceScorecardPage = React.lazy(() => import('@/pages/ComplianceScorecardPage').then(m => ({ default: m.ComplianceScorecardPage })));
+const VersionConflictsPage = React.lazy(() => import('@/pages/VersionConflictsPage').then(m => ({ default: m.VersionConflictsPage })));
 
 /**
  * Redirect authenticated users away from login/signup.
@@ -252,6 +253,8 @@ export function App() {
           <Route path={ROUTES.ANCHOR_QUEUE} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="AnchorQueue"><AnchorQueuePage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
           {/* SCRUM-1097 — AC names /admin/queue specifically. Alias to the existing AnchorQueuePage so both URLs work. */}
           <Route path="/admin/queue" element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="AnchorQueue"><AnchorQueuePage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
+          {/* SCRUM-1126 — Version conflict resolution */}
+          <Route path={ROUTES.VERSION_CONFLICTS} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="VersionConflicts"><VersionConflictsPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
           <Route path={ROUTES.ADMIN_ONBOARDING} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="AdminOnboarding"><AdminOnboardingPage /></RouteErrorBoundary></RouteGuard></AuthGuard>}
           />
           {/* SCRUM-1098 — alias /admin/onboarding to the existing wizard so the AC's first-login URL works. */}

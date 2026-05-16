@@ -2576,3 +2576,20 @@ export const PRIVACY_NOTICE_LABELS = {
 
 /** DPO/Information Officer contact — single source for all jurisdictions (REG-28) */
 export const PRIVACY_CONTACT_EMAIL = 'privacy@arkova.ai';
+
+// =============================================================================
+// VERSION RESOLUTION (SCRUM-1126)
+// =============================================================================
+
+export const VERSION_RESOLUTION_LABELS = {
+  PAGE_TITLE: 'Version Conflicts',
+  PAGE_SUBTITLE: 'Review and resolve documents with multiple pending versions.',
+  EMPTY: 'No version conflicts pending review.',
+  LOADING: 'Loading version conflicts…',
+  ERROR: 'Unable to load version conflicts. Please try again.',
+  SIBLING_COUNT_LABEL: 'Versions',
+  actions: {
+    APPROVE: 'Select as canonical',
+    SKIP: 'Skip',
+  },
+} as const;
