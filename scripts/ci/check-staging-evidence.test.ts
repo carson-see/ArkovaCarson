@@ -63,6 +63,24 @@ describe('check-staging-evidence', () => {
       ).toBe('T3');
     });
 
+    it('returns T3 when attestationAnchor.ts is touched', () => {
+      expect(
+        requiredTierFor(['services/worker/src/jobs/attestationAnchor.ts']).tier,
+      ).toBe('T3');
+    });
+
+    it('returns T3 when grace-expiry-sweep.ts is touched', () => {
+      expect(
+        requiredTierFor(['services/worker/src/jobs/grace-expiry-sweep.ts']).tier,
+      ).toBe('T3');
+    });
+
+    it('returns T3 when revocation.ts is touched', () => {
+      expect(
+        requiredTierFor(['services/worker/src/jobs/revocation.ts']).tier,
+      ).toBe('T3');
+    });
+
     it('returns T3 when scheduled.ts is touched', () => {
       expect(
         requiredTierFor(['services/worker/src/routes/scheduled.ts']).tier,
