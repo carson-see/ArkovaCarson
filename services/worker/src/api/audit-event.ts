@@ -12,7 +12,11 @@ import { z } from 'zod';
 import { db } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
 
-const AUDIT_EVENT_CATEGORIES = ['AUTH', 'ANCHOR', 'PROFILE', 'ORG', 'ADMIN', 'SYSTEM'] as const;
+const AUDIT_EVENT_CATEGORIES = [
+  'AUTH', 'ANCHOR', 'PROFILE', 'ORG', 'ADMIN', 'SYSTEM', 'ORGANIZATION',
+  'WEBHOOK', 'API', 'AI', 'BILLING', 'VERIFICATION', 'USER',
+  'SECURITY', 'PLATFORM', 'COMPLIANCE', 'NOTIFICATION',
+] as const;
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 

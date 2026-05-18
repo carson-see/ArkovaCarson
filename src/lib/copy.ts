@@ -1836,6 +1836,7 @@ export const PIPELINE_LABELS = {
   DIRECT_RPC_FALLBACK_SOURCE: 'Direct RPC fallback',
   DIRECT_RPC_FALLBACK_NO_DATA: 'Direct RPC fallback returned no data',
   WORKER_CACHE_FALLBACK_WARNING: (error: string) => `Worker/cache source failed (${error}); showing direct RPC fallback values.`,
+  LIFECYCLE_COUNTS_UNAVAILABLE_WARNING: 'Pipeline lifecycle counts unavailable: direct RPC returned cache-miss placeholders or timeout sentinels.',
   STALE: 'Stale',
   RECORDS_ANCHORED_SUBTITLE: (submitted: string, secured: string) => `${submitted} submitted / ${secured} confirmed`,
   RECORDS_PENDING_SUBTITLE: (unlinked: string, queued: string, submitting: string) => `${unlinked} unlinked / ${queued} queued / ${submitting} submitting to network`,
