@@ -171,7 +171,8 @@ export async function detectReorgs(): Promise<ReorgCheckResult> {
             await db.from('audit_events').insert({
               event_type: 'anchor.reorg_detected',
               event_category: 'ANCHOR',
-              actor_id: '00000000-0000-0000-0000-000000000000',
+              actor_id: null,
+              org_id: null,
               target_type: 'anchor',
               target_id: affected[0]?.id ?? txId,
               details: `Reorg detected: TX ${txId} not found. ${affected.length} anchor(s) reverted.`,
@@ -545,7 +546,8 @@ export async function consolidateUtxos(): Promise<ConsolidationResult> {
     await db.from('audit_events').insert({
       event_type: 'chain.consolidation_opportunity',
       event_category: 'SYSTEM',
-      actor_id: '00000000-0000-0000-0000-000000000000',
+      actor_id: null,
+      org_id: null,
       target_type: 'system',
       target_id: 'treasury',
       details: `Fee rate ${currentFeeRate} sat/vB below consolidation threshold ${CONSOLIDATION_MAX_FEE_RATE}. Consider consolidating UTXOs < ${CONSOLIDATION_UTXO_THRESHOLD_SATS} sats.`,
@@ -609,7 +611,8 @@ export async function monitorFeeRates(): Promise<FeeMonitorResult> {
     await db.from('audit_events').insert({
       event_type: 'chain.fee_rate_sample',
       event_category: 'SYSTEM',
-      actor_id: '00000000-0000-0000-0000-000000000000',
+      actor_id: null,
+      org_id: null,
       target_type: 'system',
       target_id: 'mempool',
       details: JSON.stringify({
@@ -656,7 +659,8 @@ export async function monitorFeeRates(): Promise<FeeMonitorResult> {
       await db.from('audit_events').insert({
         event_type: 'chain.fee_spike',
         event_category: 'SYSTEM',
-        actor_id: '00000000-0000-0000-0000-000000000000',
+        actor_id: null,
+        org_id: null,
         target_type: 'system',
         target_id: 'mempool',
         details: `Fee spike: ${currentRate} sat/vB (avg 24h: ${avgRate24h?.toFixed(1)}). Ratio: ${(currentRate / avgRate24h).toFixed(1)}x.`,
