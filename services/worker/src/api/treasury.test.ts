@@ -7,6 +7,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { Request, Response } from 'express';
 import { handleTreasuryStatus, handleTreasuryHealth, handleTreasuryX402Stats } from './treasury.js';
 
+const { mockFetchAnchorStats } = vi.hoisted(() => ({
+  mockFetchAnchorStats: vi.fn(),
+}));
+
 // Mock dependencies
 vi.mock('../utils/db.js', () => ({
   db: {
@@ -69,6 +73,10 @@ vi.mock('../utils/logger.js', () => ({
   logger: { warn: vi.fn(), error: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }));
 
+vi.mock('../utils/anchor-stats.js', () => ({
+  fetchAnchorStats: mockFetchAnchorStats,
+}));
+
 function createMockRes(): Response {
   const res = {
     status: vi.fn().mockReturnThis(),
@@ -77,9 +85,27 @@ function createMockRes(): Response {
   return res;
 }
 
+const baseAnchorStats = {
+  total_secured: 5,
+  total_pending: 3,
+  total_broadcasting: 0,
+  total_submitted: 0,
+  total_revoked: 0,
+  by_status: { PENDING: 3, BROADCASTING: 0, SUBMITTED: 0, SECURED: 5, REVOKED: 0 },
+  last_secured_at: '2026-03-16T00:00:00Z',
+  distinct_tx_count: 2,
+  anchors_with_tx: 4,
+  avg_anchors_per_tx: 2,
+  last_anchor_time: '2026-03-16T00:00:00Z',
+  last_tx_time: '2026-03-16T00:00:00Z',
+  distinct_tx_approximate: false,
+  last_24h_count: 1,
+};
+
 describe('handleTreasuryStatus', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockFetchAnchorStats.mockResolvedValue(baseAnchorStats);
   });
 
   it('returns 403 for non-admin users', async () => {
@@ -91,7 +117,7 @@ describe('handleTreasuryStatus', () => {
           single: vi.fn().mockResolvedValue({ data: { email: 'user@example.com' }, error: null }),
         }),
       }),
-    } as never);
+    });
 
     const res = createMockRes();
     await handleTreasuryStatus('user-123', {} as Request, res);
@@ -130,6 +156,60 @@ describe('handleTreasuryStatus', () => {
     expect(response.wallet).toBeNull();
     expect(response.error).toContain('not configured');
   });
+
+  it('does not expose -1 aggregate sentinels from anchor stats in the worker API', async () => {
+    mockFetchAnchorStats.mockResolvedValueOnce({
+      ...baseAnchorStats,
+      total_secured: -1,
+      total_pending: -1,
+      total_broadcasting: -1,
+      total_submitted: -1,
+      total_revoked: -1,
+      by_status: { PENDING: -1, BROADCASTING: 0, SUBMITTED: -1, SECURED: -1, REVOKED: 0 },
+      last_secured_at: null,
+      distinct_tx_count: -1,
+      anchors_with_tx: -1,
+      avg_anchors_per_tx: -1,
+      last_anchor_time: null,
+      last_tx_time: null,
+      distinct_tx_approximate: true,
+      last_24h_count: -1,
+    });
+
+    const res = createMockRes();
+    await handleTreasuryStatus('admin-123', {} as Request, res);
+
+    const response = vi.mocked(res.json).mock.calls[0][0] as {
+      recentAnchors: Record<string, unknown>;
+    };
+    expect(response.recentAnchors.totalSecured).toBeNull();
+    expect(response.recentAnchors.totalPending).toBeNull();
+    expect(response.recentAnchors.totalSubmitted).toBeNull();
+    expect(response.recentAnchors.distinctTxIds).toBeNull();
+    expect(response.recentAnchors.avgAnchorsPerTx).toBeNull();
+    expect(response.recentAnchors.last24hCount).toBeNull();
+    expect(response.recentAnchors.byStatus).toMatchObject({
+      PENDING: null,
+      SUBMITTED: null,
+      SECURED: null,
+    });
+  });
+
+  it('does not throw when anchor by_status is unavailable', async () => {
+    mockFetchAnchorStats.mockResolvedValueOnce({
+      ...baseAnchorStats,
+      by_status: null,
+    });
+
+    const res = createMockRes();
+    await handleTreasuryStatus('admin-123', {} as Request, res);
+
+    const response = vi.mocked(res.json).mock.calls[0][0] as {
+      recentAnchors: Record<string, unknown>;
+    };
+    expect(response.recentAnchors.byStatus).toEqual({});
+    expect(res.status).not.toHaveBeenCalledWith(500);
+  });
 });
 
 describe('handleTreasuryX402Stats', () => {
@@ -152,7 +232,7 @@ describe('handleTreasuryX402Stats', () => {
         ],
       },
       error: null,
-    } as never);
+    });
 
     const res = createMockRes();
     await handleTreasuryX402Stats('admin-123', {} as Request, res);
@@ -208,7 +288,7 @@ describe('handleTreasuryX402Stats', () => {
         ],
       },
       error: null,
-    } as never);
+    });
 
     const res = createMockRes();
     await handleTreasuryX402Stats('admin-123', {} as Request, res);
@@ -254,22 +334,22 @@ async function runHealthWithTableErrors({
       return buildChain('select.eq.single', {
         data: { is_platform_admin: true },
         error: null,
-      }) as never;
+      });
     }
     if (table === 'treasury_cache') {
       return buildChain('select.limit.maybeSingle', {
         data: null,
         error: cacheError ?? null,
-      }) as never;
+      });
     }
     if (table === 'treasury_alert_state') {
       return buildChain('select.eq.maybeSingle', {
         data: null,
         error: alertError ?? null,
-      }) as never;
+      });
     }
     throw new Error(`Unexpected db.from('${table}')`);
-  }) as never);
+  }));
   const res = createMockRes();
   await handleTreasuryHealth('admin-123', {} as Request, res);
   return res;
