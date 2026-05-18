@@ -7,6 +7,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { Request, Response } from 'express';
 import { handleTreasuryStatus, handleTreasuryHealth, handleTreasuryX402Stats } from './treasury.js';
 
+const { mockFetchAnchorStats } = vi.hoisted(() => ({
+  mockFetchAnchorStats: vi.fn(),
+}));
+
 // Mock dependencies
 vi.mock('../utils/db.js', () => ({
   db: {
@@ -69,6 +73,10 @@ vi.mock('../utils/logger.js', () => ({
   logger: { warn: vi.fn(), error: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }));
 
+vi.mock('../utils/anchor-stats.js', () => ({
+  fetchAnchorStats: mockFetchAnchorStats,
+}));
+
 function createMockRes(): Response {
   const res = {
     status: vi.fn().mockReturnThis(),
@@ -77,9 +85,27 @@ function createMockRes(): Response {
   return res;
 }
 
+const baseAnchorStats = {
+  total_secured: 5,
+  total_pending: 3,
+  total_broadcasting: 0,
+  total_submitted: 0,
+  total_revoked: 0,
+  by_status: { PENDING: 3, BROADCASTING: 0, SUBMITTED: 0, SECURED: 5, REVOKED: 0 },
+  last_secured_at: '2026-03-16T00:00:00Z',
+  distinct_tx_count: 2,
+  anchors_with_tx: 4,
+  avg_anchors_per_tx: 2,
+  last_anchor_time: '2026-03-16T00:00:00Z',
+  last_tx_time: '2026-03-16T00:00:00Z',
+  distinct_tx_approximate: false,
+  last_24h_count: 1,
+};
+
 describe('handleTreasuryStatus', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockFetchAnchorStats.mockResolvedValue(baseAnchorStats);
   });
 
   it('returns 403 for non-admin users', async () => {
@@ -129,6 +155,90 @@ describe('handleTreasuryStatus', () => {
     const response = vi.mocked(res.json).mock.calls[0][0] as Record<string, unknown>;
     expect(response.wallet).toBeNull();
     expect(response.error).toContain('not configured');
+  });
+
+  it('returns fees and stats even when wallet section fails (parallel isolation)', async () => {
+    // Simulate WIF configured but UTXO provider throws
+    const { config } = await import('../config.js');
+    const origWif = config.bitcoinTreasuryWif;
+    (config as Record<string, unknown>).bitcoinTreasuryWif = 'cTestWif';
+
+    const { createUtxoProvider } = await import('../chain/utxo-provider.js');
+    vi.mocked(createUtxoProvider).mockReturnValueOnce({
+      listUnspent: vi.fn().mockRejectedValue(new Error('RPC timeout')),
+      getBlockchainInfo: vi.fn().mockRejectedValue(new Error('RPC timeout')),
+    } as never);
+
+    const res = createMockRes();
+    await handleTreasuryStatus('admin-123', {} as Request, res);
+
+    // Restore
+    (config as Record<string, unknown>).bitcoinTreasuryWif = origWif;
+
+    const response = vi.mocked(res.json).mock.calls[0][0] as Record<string, unknown>;
+    // Wallet failed but fees and stats should still be populated
+    expect(response.wallet).toBeNull();
+    expect(response.error).toBe('Wallet data temporarily unavailable');
+    expect(response.fees).toEqual(
+      expect.objectContaining({ estimatorName: 'Static', currentRateSatPerVbyte: 1 }),
+    );
+    expect(response.recentAnchors).toEqual(
+      expect.objectContaining({ totalSecured: expect.any(Number) }),
+    );
+  });
+
+  it('does not expose -1 aggregate sentinels from anchor stats in the worker API', async () => {
+    mockFetchAnchorStats.mockResolvedValueOnce({
+      ...baseAnchorStats,
+      total_secured: -1,
+      total_pending: -1,
+      total_broadcasting: -1,
+      total_submitted: -1,
+      total_revoked: -1,
+      by_status: { PENDING: -1, BROADCASTING: 0, SUBMITTED: -1, SECURED: -1, REVOKED: 0 },
+      last_secured_at: null,
+      distinct_tx_count: -1,
+      anchors_with_tx: -1,
+      avg_anchors_per_tx: -1,
+      last_anchor_time: null,
+      last_tx_time: null,
+      distinct_tx_approximate: true,
+      last_24h_count: -1,
+    });
+
+    const res = createMockRes();
+    await handleTreasuryStatus('admin-123', {} as Request, res);
+
+    const response = vi.mocked(res.json).mock.calls[0][0] as {
+      recentAnchors: Record<string, unknown>;
+    };
+    expect(response.recentAnchors.totalSecured).toBeNull();
+    expect(response.recentAnchors.totalPending).toBeNull();
+    expect(response.recentAnchors.totalSubmitted).toBeNull();
+    expect(response.recentAnchors.distinctTxIds).toBeNull();
+    expect(response.recentAnchors.avgAnchorsPerTx).toBeNull();
+    expect(response.recentAnchors.last24hCount).toBeNull();
+    expect(response.recentAnchors.byStatus).toMatchObject({
+      PENDING: null,
+      SUBMITTED: null,
+      SECURED: null,
+    });
+  });
+
+  it('does not throw when anchor by_status is unavailable', async () => {
+    mockFetchAnchorStats.mockResolvedValueOnce({
+      ...baseAnchorStats,
+      by_status: null,
+    });
+
+    const res = createMockRes();
+    await handleTreasuryStatus('admin-123', {} as Request, res);
+
+    const response = vi.mocked(res.json).mock.calls[0][0] as {
+      recentAnchors: Record<string, unknown>;
+    };
+    expect(response.recentAnchors.byStatus).toEqual({});
+    expect(res.status).not.toHaveBeenCalledWith(500);
   });
 });
 
@@ -249,24 +359,25 @@ async function runHealthWithTableErrors({
   const { db } = await import('../utils/db.js');
   // Route by table name so platformAdmin lookup stays on profiles and
   // treasury_cache / treasury_alert_state each get their own chain result.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   vi.mocked(db.from).mockImplementation(((table: string) => {
     if (table === 'profiles') {
       return buildChain('select.eq.single', {
         data: { is_platform_admin: true },
         error: null,
-      }) as never;
+      });
     }
     if (table === 'treasury_cache') {
       return buildChain('select.limit.maybeSingle', {
         data: null,
         error: cacheError ?? null,
-      }) as never;
+      });
     }
     if (table === 'treasury_alert_state') {
       return buildChain('select.eq.maybeSingle', {
         data: null,
         error: alertError ?? null,
-      }) as never;
+      });
     }
     throw new Error(`Unexpected db.from('${table}')`);
   }) as never);

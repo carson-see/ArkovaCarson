@@ -846,7 +846,7 @@ jobs:
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || 'HEAD~1' }}
         run: |
-          if git diff --name-only "$BASE_SHA" HEAD | grep -qE '^(machines/|services/worker/src/jobs/anchor\.ts|services/worker/src/chain/)'; then
+          if git diff --name-only "$BASE_SHA" HEAD | grep -qE '^(machines/.*\.(ts|tla|cfg)$|services/worker/src/jobs/anchor\.ts|services/worker/src/chain/)'; then
             echo "changed=true" >> "$GITHUB_OUTPUT"
           else
             echo "changed=false" >> "$GITHUB_OUTPUT"
