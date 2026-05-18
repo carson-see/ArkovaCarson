@@ -65,8 +65,7 @@ async function fetchAnchor(apiBaseUrl: string, publicId: string): Promise<Anchor
   return (await response.json()) as AnchorData;
 }
 
-/** Map anchor status to the analytics result category. Only SECURED is 'verified'. */
-export function toAnalyticsResult(status: string): 'verified' | 'revoked' | 'not_found' {
+function toAnalyticsResult(status: string): 'verified' | 'revoked' | 'not_found' {
   if (status === 'SECURED') return 'verified';
   if (status === 'REVOKED') return 'revoked';
   return 'not_found';
