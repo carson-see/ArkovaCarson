@@ -7,23 +7,9 @@ import { beforeEach, describe, it, expect, vi } from 'vitest';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 
-vi.mock('@/hooks/useAuth', () => ({
-  useAuth: vi.fn().mockReturnValue({
-    user: { email: 'carson@arkova.ai', id: 'user-1' },
-    signOut: vi.fn(),
-    session: null,
-    loading: false,
-    error: null,
-  }),
-}));
+vi.mock('@/hooks/useAuth', () => ({ useAuth: vi.fn().mockReturnValue({ user: { email: 'carson@arkova.ai', id: 'user-1' }, signOut: vi.fn(), session: null, loading: false, error: null }) }));
 
-vi.mock('@/hooks/useProfile', () => ({
-  useProfile: vi.fn().mockReturnValue({
-    profile: { org_id: 'org-1', role: 'ORG_ADMIN', full_name: 'Carson' },
-    loading: false,
-    destination: '/dashboard',
-  }),
-}));
+vi.mock('@/hooks/useProfile', () => ({ useProfile: vi.fn().mockReturnValue({ profile: { org_id: 'org-1', role: 'ORG_ADMIN', full_name: 'Carson' }, loading: false, destination: '/dashboard' }) }));
 
 vi.mock('@/hooks/useTheme', () => ({
   useTheme: vi.fn().mockReturnValue({ theme: 'dark', setTheme: vi.fn() }),
@@ -72,7 +58,51 @@ import { PipelineAdminPage } from './PipelineAdminPage';
 import { workerFetch } from '@/lib/workerClient';
 import { supabase } from '@/lib/supabase';
 
+function mockAuthUser(email: string, id: string) {
+  return {
+    id,
+    email,
+    app_metadata: {},
+    user_metadata: {},
+    aud: 'authenticated',
+    created_at: '2026-01-01T00:00:00.000Z',
+  };
+}
+
+function mockAuthState(email: string, id: string) {
+  return {
+    user: mockAuthUser(email, id),
+    signOut: vi.fn(),
+    signIn: vi.fn(),
+    signUp: vi.fn(),
+    signInWithGoogle: vi.fn(),
+    signInWithLinkedIn: vi.fn(),
+    clearError: vi.fn(),
+    session: null,
+    loading: false,
+    error: null,
+  };
+}
+
 const defaultRecordPage = { data: [], total: 0 };
+const submittedRecordPage = {
+  total: 1,
+  data: [{
+    id: 'record-1',
+    source: 'edgar',
+    source_id: 'SRC-1',
+    source_url: null,
+    record_type: 'filing',
+    title: 'Submitted filing',
+    content_hash: 'a'.repeat(64),
+    anchor_id: 'anchor-1',
+    metadata: {},
+    created_at: '2026-05-12T10:00:00Z',
+    updated_at: '2026-05-12T10:00:00Z',
+    anchor_status: 'SUBMITTED',
+    chain_tx_id: 'b'.repeat(64),
+  }],
+};
 
 function mockSupabaseRpc(overrides?: Record<string, unknown>) {
   (supabase.rpc as unknown as ReturnType<typeof vi.fn>).mockImplementation((name: string) => {
@@ -107,13 +137,7 @@ describe('PipelineAdminPage', () => {
     vi.clearAllMocks();
     mockSupabaseRpc();
     const { useAuth } = await import('@/hooks/useAuth');
-    vi.mocked(useAuth).mockReturnValue({
-      user: { email: 'carson@arkova.ai', id: 'user-1' },
-      signOut: vi.fn(),
-      session: null,
-      loading: false,
-      error: null,
-    } as unknown as ReturnType<typeof useAuth>);
+    vi.mocked(useAuth).mockReturnValue(mockAuthState('carson@arkova.ai', 'user-1'));
   });
 
   it('renders page title for admin user', () => {
@@ -146,24 +170,7 @@ describe('PipelineAdminPage', () => {
 
   it('renders SUBMITTED records as in mempool, not anchored', async () => {
     mockSupabaseRpc({
-      recordPage: {
-        total: 1,
-        data: [{
-          id: 'record-1',
-          source: 'edgar',
-          source_id: 'SRC-1',
-          source_url: null,
-          record_type: 'filing',
-          title: 'Submitted filing',
-          content_hash: 'a'.repeat(64),
-          anchor_id: 'anchor-1',
-          metadata: {},
-          created_at: '2026-05-12T10:00:00Z',
-          updated_at: '2026-05-12T10:00:00Z',
-          anchor_status: 'SUBMITTED',
-          chain_tx_id: 'b'.repeat(64),
-        }],
-      },
+      recordPage: submittedRecordPage,
     });
 
     render(
@@ -187,6 +194,76 @@ describe('PipelineAdminPage', () => {
 
     expect(await screen.findByTestId('pipeline-stats-fallback')).toHaveTextContent('Worker/cache source failed');
     expect(screen.getByTestId('pipeline-cache-freshness')).toHaveTextContent('Direct RPC fallback');
+  });
+
+  it('surfaces unavailable lifecycle counts instead of rendering cache-miss zeros as truth', async () => {
+    vi.mocked(workerFetch).mockResolvedValueOnce(new Response(
+      JSON.stringify({
+        totalRecords: 10000,
+        anchoredRecords: null,
+        pendingRecords: null,
+        embeddedRecords: 8000,
+        anchorLinkedRecords: null,
+        pendingRecordLinks: null,
+        pendingAnchorRecords: null,
+        broadcastingRecords: null,
+        submittedRecords: null,
+        securedRecords: null,
+        cacheUpdatedAt: '2026-05-12T12:00:00Z',
+        bySource: {},
+        statusCountsAvailable: false,
+        statusCountsWarning: 'Pipeline lifecycle counts unavailable: cache miss',
+      }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } },
+    ));
+    mockSupabaseRpc({
+      recordPage: submittedRecordPage,
+    });
+
+    render(
+      <MemoryRouter>
+        <PipelineAdminPage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByTestId('pipeline-status-counts-warning')).toHaveTextContent('cache miss');
+    expect(screen.getByText('— submitted / — confirmed')).toBeInTheDocument();
+    expect(screen.getByText('— unlinked / — queued / — submitting to network')).toBeInTheDocument();
+    expect(screen.queryByText('0 submitted / 0 confirmed')).not.toBeInTheDocument();
+    expect(await screen.findByText('Submitted / In Mempool')).toBeInTheDocument();
+  });
+
+  it('nulls all lifecycle sub-counts when direct RPC fallback reports a cache miss', async () => {
+    vi.mocked(workerFetch).mockRejectedValueOnce(new Error('worker unavailable'));
+    mockSupabaseRpc({
+      recordPage: submittedRecordPage,
+      pipelineStats: {
+        total_records: 10000,
+        anchored_records: 0,
+        pending_records: 0,
+        embedded_records: 0,
+        anchor_linked_records: 0,
+        pending_record_links: 0,
+        pending_anchor_records: 0,
+        broadcasting_records: 0,
+        submitted_records: 0,
+        secured_records: 0,
+        cache_miss: true,
+        cache_updated_at: null,
+      },
+    });
+
+    render(
+      <MemoryRouter>
+        <PipelineAdminPage />
+      </MemoryRouter>,
+    );
+
+    expect(await screen.findByTestId('pipeline-status-counts-warning')).toHaveTextContent('unavailable');
+    expect(screen.getByText('— submitted / — confirmed')).toBeInTheDocument();
+    expect(screen.getByText('— unlinked / — queued / — submitting to network')).toBeInTheDocument();
+    expect(screen.queryByText('0 submitted / 0 confirmed')).not.toBeInTheDocument();
+    expect(screen.queryByText('0 unlinked / 0 queued / 0 submitting to network')).not.toBeInTheDocument();
   });
 
   it('surfaces hard stats failure without coercing missing stat cards to zero', async () => {
@@ -216,13 +293,7 @@ describe('PipelineAdminPage', () => {
 
   it('shows access restricted for non-admin', async () => {
     const { useAuth } = await import('@/hooks/useAuth');
-    vi.mocked(useAuth).mockReturnValue({
-      user: { email: 'regular@test.com', id: 'user-2' },
-      signOut: vi.fn(),
-      session: null,
-      loading: false,
-      error: null,
-    } as unknown as ReturnType<typeof useAuth>);
+    vi.mocked(useAuth).mockReturnValue(mockAuthState('regular@test.com', 'user-2'));
 
     render(
       <MemoryRouter>

@@ -97,7 +97,7 @@ describe('handlePipelineStats — RPC happy path', () => {
     const res = mockRes();
     await handlePipelineStats('admin-1', {} as Request, res);
     expect(res.status).not.toHaveBeenCalled();
-    const payload = (res.json as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    const payload = res.json.mock.calls[0][0];
     expect(payload.totalRecords).toBe(2_950_000);
     expect(payload.anchoredRecords).toBe(1_000_000);
     expect(payload.pendingRecords).toBe(1_700_200);
@@ -126,7 +126,7 @@ describe('handlePipelineStats — RPC happy path', () => {
     });
     const res = mockRes();
     await handlePipelineStats('admin-1', {} as Request, res);
-    const payload = (res.json as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    const payload = res.json.mock.calls[0][0];
     expect(payload.anchoredRecords).toBe(60);
     expect(payload.pendingRecords).toBe(40);
     expect(payload.anchorLinkedRecords).toBe(60);
@@ -142,6 +142,75 @@ describe('handlePipelineStats — RPC happy path', () => {
     const payload = (res.json as ReturnType<typeof vi.fn>).mock.calls[0][0];
     expect(payload.bySource).toEqual({});
     expect(payload.totalRecords).toBe(2_950_000);
+  });
+
+  it('marks lifecycle counts unavailable when get_pipeline_stats returns cache-miss zero placeholders', async () => {
+    isPlatformAdminMock.mockResolvedValueOnce(true);
+    mockRpcs({
+      pipeline: {
+        data: {
+          total_records: 123_456,
+          anchor_linked_records: 0,
+          pending_record_links: 123_456,
+          pending_anchor_records: 0,
+          broadcasting_records: 0,
+          submitted_records: 0,
+          secured_records: 0,
+          bitcoin_anchored_records: 0,
+          pending_bitcoin_records: 123_456,
+          embedded_records: 50_000,
+          cache_miss: true,
+        },
+        error: null,
+      },
+    });
+
+    const res = mockRes();
+    await handlePipelineStats('admin-1', {} as Request, res);
+
+    const payload = (res.json as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(payload.statusCountsAvailable).toBe(false);
+    expect(payload.statusCountsWarning).toContain('cache miss');
+    expect(payload.anchoredRecords).toBeNull();
+    expect(payload.pendingRecords).toBeNull();
+    expect(payload.submittedRecords).toBeNull();
+    expect(payload.securedRecords).toBeNull();
+  });
+
+  it('does not expose -1 lifecycle sentinels as real dashboard counts', async () => {
+    isPlatformAdminMock.mockResolvedValueOnce(true);
+    mockRpcs({
+      pipeline: {
+        data: {
+          total_records: 123_456,
+          anchor_linked_records: -1,
+          pending_record_links: -1,
+          pending_anchor_records: -1,
+          broadcasting_records: -1,
+          submitted_records: -1,
+          secured_records: -1,
+          bitcoin_anchored_records: 0,
+          pending_bitcoin_records: 0,
+          embedded_records: -1,
+          cache_updated_at: '2026-05-13T12:00:00Z',
+        },
+        error: null,
+      },
+    });
+
+    const res = mockRes();
+    await handlePipelineStats('admin-1', {} as Request, res);
+
+    const payload = (res.json as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(payload.statusCountsAvailable).toBe(false);
+    expect(payload.statusCountsWarning).toContain('unavailable');
+    expect(payload.anchorLinkedRecords).toBeNull();
+    expect(payload.pendingRecordLinks).toBeNull();
+    expect(payload.pendingAnchorRecords).toBeNull();
+    expect(payload.broadcastingRecords).toBeNull();
+    expect(payload.submittedRecords).toBeNull();
+    expect(payload.securedRecords).toBeNull();
+    expect(payload.embeddedRecords).toBeNull();
   });
 });
 
