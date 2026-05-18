@@ -219,7 +219,7 @@ export async function fanOutSecuredAnchorWebhooks(
       // is read-only metadata enrichment; cross-org leakage at this step
       // would require a downstream caller to bypass the per-anchor org_id
       // routing, which doesn't happen in the fan-out task closures below.
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any, arkova/missing-org-filter -- batch fan-out: scoped by upstream drain set, org routing enforced in dispatch closures
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- batch fan-out: scoped by upstream drain set, org routing enforced in dispatch closures
       const { data: credRows, error: credErr } = await (db as any)
         .from('anchors')
         .select('public_id, credential_type')
@@ -369,9 +369,7 @@ export async function fanOutSecuredAnchorWebhooks(
     try {
       const { error: credAuditErr } =
         credAuditRows.length === 1
-          // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
           ? await db.from('audit_events').insert(credAuditRows[0])
-          // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
           : await db.from('audit_events').insert(credAuditRows);
       if (credAuditErr) {
         logger.warn(
@@ -911,9 +909,7 @@ async function checkSubmittedConfirmationsUnlocked(): Promise<{ checked: number;
           );
           const { error: auditErr } =
             auditRows.length === 1
-              // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
               ? await db.from('audit_events').insert(auditRows[0])
-              // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
               : await db.from('audit_events').insert(auditRows);
           if (auditErr) logger.warn({ auditErr, txId }, 'Failed to insert batch audit event');
 

@@ -78,7 +78,6 @@ async function fetchDeadTuples(): Promise<DeadTupleRow[]> {
 }
 
 async function fetchSmokeHistory(): Promise<SmokeRow[]> {
-  // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
   const { data, error } = await db
     .from('audit_events')
     .select('created_at, details')

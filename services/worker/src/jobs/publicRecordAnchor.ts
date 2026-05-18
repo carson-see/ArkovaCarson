@@ -395,7 +395,6 @@ async function fetchRecordsForSource(
   const records: PipelinePublicRecord[] = [];
   for (let offset = 0; offset < limit; offset += POSTGREST_ROW_LIMIT) {
     const chunkSize = Math.min(POSTGREST_ROW_LIMIT, limit - offset);
-    // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
     const { data: chunk, error } = await client
       .from('public_records')
       .select(PUBLIC_RECORD_SELECT)
@@ -422,7 +421,6 @@ async function fetchNonPriorityRecords(
   const records: PipelinePublicRecord[] = [];
   for (let offset = 0; offset < limit; offset += POSTGREST_ROW_LIMIT) {
     const chunkSize = Math.min(POSTGREST_ROW_LIMIT, limit - offset);
-    // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
     const { data: chunk, error } = await client
       .from('public_records')
       .select(PUBLIC_RECORD_SELECT)

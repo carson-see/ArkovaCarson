@@ -38,7 +38,6 @@ export async function runAllocationRollover(): Promise<RolloverRunSummary> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const dbUntyped = db as any;
 
-  // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
   const { data: openPeriods, error: listErr } = await dbUntyped
     .from('org_monthly_allocation')
     .select('org_id')

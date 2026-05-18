@@ -155,7 +155,6 @@ async function insertBroker(
   const sourceId = `finra-${broker.crdNumber}`;
 
   // Check for duplicates
-  // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
   const { data: existing } = await dbAny(supabase)
     .from('public_records')
     .select('id')
@@ -183,7 +182,6 @@ async function insertBroker(
     disclosures: broker.disclosureCount,
   });
 
-  // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
   const { error: insertError } = await dbAny(supabase)
     .from('public_records')
     .insert({

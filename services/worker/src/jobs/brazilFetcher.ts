@@ -119,7 +119,6 @@ async function fetchAndInsertCnpj(
   const sourceId = `cnpj-br-${cleanCnpj}`;
 
   // Check for duplicates
-  // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
   const { data: existing } = await dbAny(supabase)
     .from('public_records')
     .select('id')
@@ -175,7 +174,6 @@ async function fetchAndInsertCnpj(
     uf: data.uf,
   });
 
-  // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
   const { error: insertError } = await dbAny(supabase)
     .from('public_records')
     .insert({

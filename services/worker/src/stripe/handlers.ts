@@ -298,7 +298,6 @@ export async function handleCheckoutComplete(event: StripeEvent): Promise<void> 
   }
 
   // Log audit event
-  // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
   await db.from('audit_events').insert({
     event_type: 'payment.subscription_created',
     event_category: 'ADMIN',
@@ -504,7 +503,6 @@ export async function handleSubscriptionUpdated(event: StripeEvent): Promise<voi
   // Log audit event if plan changed
   const planChanged = newPlanId && existingSub?.plan_id && newPlanId !== existingSub.plan_id;
   if (planChanged && existingSub.user_id) {
-    // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
     await db.from('audit_events').insert({
       event_type: 'payment.plan_changed',
       event_category: 'ADMIN',
@@ -522,7 +520,6 @@ export async function handleSubscriptionUpdated(event: StripeEvent): Promise<voi
   // Log audit event only on transition to cancel_at_period_end (false → true)
   const cancelTransition = subscription.cancel_at_period_end && !existingSub?.cancel_at_period_end;
   if (cancelTransition && existingSub?.user_id) {
-    // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
     await db.from('audit_events').insert({
       event_type: 'payment.subscription_cancel_scheduled',
       event_category: 'ADMIN',
@@ -571,7 +568,6 @@ export async function handleSubscriptionDeleted(event: StripeEvent): Promise<voi
 
   // Log audit event if we found the user
   if (existingSub.user_id) {
-    // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
     await db.from('audit_events').insert({
       event_type: 'payment.subscription_canceled',
       event_category: 'ADMIN',
@@ -625,7 +621,6 @@ export async function handlePaymentFailed(event: StripeEvent): Promise<void> {
     const target = await resolvePaymentGraceTarget(stripeSubscriptionId);
 
     if (target.userId) {
-      // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
       await db.from('audit_events').insert({
         event_type: 'payment.failed',
         event_category: 'ADMIN',
@@ -684,7 +679,6 @@ export async function handlePaymentSucceeded(event: StripeEvent): Promise<void> 
   const target = await resolvePaymentGraceTarget(stripeSubscriptionId);
 
   if (target.userId) {
-    // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
     await db.from('audit_events').insert({
       event_type: 'payment.succeeded',
       event_category: 'ADMIN',
@@ -750,7 +744,6 @@ async function handleIdentityVerified(event: StripeEvent): Promise<void> {
     logger.warn({ error: verifyProfileError, userId }, 'Failed to resolve org for identity verification audit — org_id will be null');
   }
 
-  // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
   await db.from('audit_events').insert({
     actor_id: userId,
     event_type: 'IDENTITY_VERIFIED',

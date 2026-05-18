@@ -35,7 +35,6 @@ export async function checkAttestationExpiry(): Promise<ExpiryResult> {
     const in30Days = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
 
     // Find ACTIVE attestations expiring within 30 days
-    // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
     const { data: expiringAttestations, error } = await dbAny
       .from('attestations')
       .select('id, public_id, attestation_type, subject_identifier, attester_name, attester_org_id, expires_at, status')
@@ -92,7 +91,6 @@ export async function checkAttestationExpiry(): Promise<ExpiryResult> {
     }
 
     // Also find attestations that just expired (status still ACTIVE but expires_at < now)
-    // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
     const { data: justExpired, error: expiredError } = await dbAny
       .from('attestations')
       .select('id, public_id, attestation_type, subject_identifier, attester_name, attester_org_id, expires_at')
@@ -105,7 +103,6 @@ export async function checkAttestationExpiry(): Promise<ExpiryResult> {
 
       for (const att of justExpired) {
         // Update status to EXPIRED
-        // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
         await dbAny
           .from('attestations')
           .update({ status: 'EXPIRED' })

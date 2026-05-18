@@ -168,7 +168,6 @@ export async function detectReorgs(): Promise<ReorgCheckResult> {
               );
             }
 
-            // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
             await db.from('audit_events').insert({
               event_type: 'anchor.reorg_detected',
               event_category: 'ANCHOR',
@@ -544,7 +543,6 @@ export async function consolidateUtxos(): Promise<ConsolidationResult> {
     );
 
     // Log as audit event for ops visibility
-    // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
     await db.from('audit_events').insert({
       event_type: 'chain.consolidation_opportunity',
       event_category: 'SYSTEM',
@@ -610,7 +608,6 @@ export async function monitorFeeRates(): Promise<FeeMonitorResult> {
     }
 
     // Record fee rate as audit event
-    // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
     await db.from('audit_events').insert({
       event_type: 'chain.fee_rate_sample',
       event_category: 'SYSTEM',
@@ -627,7 +624,6 @@ export async function monitorFeeRates(): Promise<FeeMonitorResult> {
 
     // Calculate 24h average from recent samples
     const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-    // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
     const { data: recentSamples } = await db
       .from('audit_events')
       .select('details')
@@ -660,7 +656,6 @@ export async function monitorFeeRates(): Promise<FeeMonitorResult> {
         'FEE SPIKE DETECTED: Current rate exceeds 5x 24h average — non-urgent anchoring should be deferred',
       );
 
-      // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
       await db.from('audit_events').insert({
         event_type: 'chain.fee_spike',
         event_category: 'SYSTEM',

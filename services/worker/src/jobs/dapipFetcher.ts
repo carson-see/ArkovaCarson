@@ -72,7 +72,6 @@ async function insertInstitution(
   const sourceId = `dapip-${inst.unitid}`;
 
   // Check for duplicates
-  // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
   const { data: existing } = await dbAny(supabase)
     .from('public_records')
     .select('id')
@@ -96,7 +95,6 @@ async function insertInstitution(
     .filter(Boolean)
     .join(', ');
 
-  // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
   const { error: insertError } = await dbAny(supabase)
     .from('public_records')
     .insert({
@@ -151,7 +149,6 @@ export async function fetchDapipInstitutions(supabase: SupabaseClient): Promise<
   let totalErrors = 0;
 
   // Resume from where we left off: count existing DAPIP records to calculate start page
-  // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
   const { count: existingCount } = await dbAny(supabase)
     .from('public_records')
     .select('id', { count: 'exact', head: true })

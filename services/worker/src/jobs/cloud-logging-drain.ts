@@ -125,7 +125,6 @@ async function claimBatch(): Promise<AuditLogEntry[]> {
 
   const auditIds = rows.map((r) => r.audit_id);
 
-  // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
   const { data: audit, error: aErr } = await db
     .from('audit_events')
     .select('id, event_type, event_category, actor_id, org_id, target_type, target_id, details, created_at')

@@ -18,7 +18,6 @@
 import type { PaymentResolution } from '../middleware/paymentTierRouter.js';
 
 declare global {
-  // eslint-disable-next-line @typescript-eslint/no-namespace
   namespace Express {
     interface Request {
       /** Authenticated user ID, set by requireAuth middleware. */

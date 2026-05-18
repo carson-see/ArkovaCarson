@@ -47,7 +47,6 @@ export async function runRegulatoryChangeScan(): Promise<RegulatoryChangeScanRes
   const now = new Date().toISOString();
   const results = await Promise.all(
     rules.map((rule) =>
-      // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
       dbAny
         .from('audit_events')
         .insert({

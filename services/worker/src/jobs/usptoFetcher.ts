@@ -58,7 +58,6 @@ export async function fetchUsptoPAtents(supabase: SupabaseClient): Promise<Fetch
   }
 
   // Determine resume point
-  // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
   const { data: lastRecord } = await supabase
     .from('public_records')
     .select('metadata')
@@ -162,7 +161,6 @@ export async function fetchUsptoPAtents(supabase: SupabaseClient): Promise<Fetch
 
           // Flush batch
           if (insertBatch.length >= INSERT_BATCH_SIZE) {
-            // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
             const { error: insertError } = await supabase
               .from('public_records')
               .upsert(insertBatch, { onConflict: 'source,source_id', ignoreDuplicates: true });
@@ -183,7 +181,6 @@ export async function fetchUsptoPAtents(supabase: SupabaseClient): Promise<Fetch
 
         // Flush remaining
         if (insertBatch.length > 0) {
-          // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
           const { error: insertError } = await supabase
             .from('public_records')
             .upsert(insertBatch, { onConflict: 'source,source_id', ignoreDuplicates: true });

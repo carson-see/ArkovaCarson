@@ -84,7 +84,6 @@ async function insertFccLicense(
   const sourceId = `fcc-${identifier}`;
 
   // Check for duplicates
-  // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
   const { data: existing } = await dbAny(supabase)
     .from('public_records')
     .select('id')
@@ -111,7 +110,6 @@ async function insertFccLicense(
     ? `https://wireless2.fcc.gov/UlsApp/UlsSearch/license.jsp?licKey=${licenseId || callsign}`
     : `https://wireless2.fcc.gov/UlsApp/UlsSearch/searchLicense.jsp`;
 
-  // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
   const { error: insertError } = await dbAny(supabase)
     .from('public_records')
     .insert({
