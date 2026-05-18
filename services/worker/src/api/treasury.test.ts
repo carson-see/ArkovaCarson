@@ -117,7 +117,7 @@ describe('handleTreasuryStatus', () => {
           single: vi.fn().mockResolvedValue({ data: { email: 'user@example.com' }, error: null }),
         }),
       }),
-    });
+    } as never);
 
     const res = createMockRes();
     await handleTreasuryStatus('user-123', {} as Request, res);
@@ -262,7 +262,7 @@ describe('handleTreasuryX402Stats', () => {
         ],
       },
       error: null,
-    });
+    } as never);
 
     const res = createMockRes();
     await handleTreasuryX402Stats('admin-123', {} as Request, res);
@@ -318,7 +318,7 @@ describe('handleTreasuryX402Stats', () => {
         ],
       },
       error: null,
-    });
+    } as never);
 
     const res = createMockRes();
     await handleTreasuryX402Stats('admin-123', {} as Request, res);
@@ -359,6 +359,7 @@ async function runHealthWithTableErrors({
   const { db } = await import('../utils/db.js');
   // Route by table name so platformAdmin lookup stays on profiles and
   // treasury_cache / treasury_alert_state each get their own chain result.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   vi.mocked(db.from).mockImplementation(((table: string) => {
     if (table === 'profiles') {
       return buildChain('select.eq.single', {
@@ -379,7 +380,7 @@ async function runHealthWithTableErrors({
       });
     }
     throw new Error(`Unexpected db.from('${table}')`);
-  }));
+  }) as never);
   const res = createMockRes();
   await handleTreasuryHealth('admin-123', {} as Request, res);
   return res;
