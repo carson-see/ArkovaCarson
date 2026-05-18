@@ -45,7 +45,7 @@ export function extractConstraintCategories(): string[] {
     const sql = readFileSync(join(migrationsDir, file), 'utf-8');
     if (sql.includes('audit_events_event_category_valid')) {
       const allArrays = [...sql.matchAll(/ARRAY\[([^\]]+)\]/g)];
-      const lastMatch = allArrays.at(-1);
+      const lastMatch = allArrays[allArrays.length - 1];
       if (!lastMatch) continue;
       const categories = [...lastMatch[1].matchAll(/'([A-Z_]+)'/g)].map(m => m[1]);
       if (categories.length > 0) return categories;
