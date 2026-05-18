@@ -355,4 +355,33 @@ describe('provisionConnectListener', () => {
       }),
     ).rejects.toBeInstanceOf(DocusignConfigError);
   });
+
+  it('throws DocusignConfigError when DOCUSIGN_CONNECT_HMAC_SECRET is missing', async () => {
+    const fetchImpl = async () => new Response('{}', { status: 200 });
+
+    await expect(
+      provisionConnectListener({
+        accessToken: 'at-test',
+        baseUri: 'https://demo.docusign.net',
+        accountId: 'acct-1',
+        deps: {
+          env: { ...ENV, WORKER_PUBLIC_URL: 'https://arkova-worker.example.com' },
+          fetchImpl: fetchImpl as unknown as typeof fetch,
+        },
+      }),
+    ).rejects.toThrow(DocusignConfigError);
+
+    // Also verify the error message references the env var name
+    await expect(
+      provisionConnectListener({
+        accessToken: 'at-test',
+        baseUri: 'https://demo.docusign.net',
+        accountId: 'acct-1',
+        deps: {
+          env: { ...ENV, WORKER_PUBLIC_URL: 'https://arkova-worker.example.com' },
+          fetchImpl: fetchImpl as unknown as typeof fetch,
+        },
+      }),
+    ).rejects.toThrow(/DOCUSIGN_CONNECT_HMAC_SECRET/);
+  });
 });

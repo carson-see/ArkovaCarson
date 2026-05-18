@@ -332,19 +332,26 @@ export function createDocusignOAuthRouter(deps: DocusignOAuthDeps = {}): Router 
           },
         });
       } catch (provisionError) {
-        const errorMessage = provisionError instanceof Error ? provisionError.message : 'Unknown error';
-        const errorName = provisionError instanceof Error ? provisionError.name : 'UnknownError';
         logger.error(
-          { orgId: payload.orgId, errorName, errorMessage },
+          { message: provisionError instanceof Error ? provisionError.message : String(provisionError), orgId: payload.orgId },
           'DocuSign Connect listener provisioning failed',
         );
-        await recordIntegrationEvent(db, {
-          orgId: payload.orgId,
-          integrationId: integration?.id,
-          eventType: 'connect_listener_failed',
-          status: 'error',
-          details: { error: errorMessage },
-        });
+        try {
+          await recordIntegrationEvent(db, {
+            orgId: payload.orgId,
+            integrationId: integration?.id,
+            eventType: 'connect_listener_failed',
+            status: 'error',
+            details: {
+              error: provisionError instanceof Error ? provisionError.message : String(provisionError),
+            },
+          });
+        } catch (eventError) {
+          logger.warn(
+            { message: eventError instanceof Error ? eventError.message : String(eventError) },
+            'Failed to record Connect provisioning failure event',
+          );
+        }
       }
 
       res.redirect(302, appendResult(returnTo, 'docusign', 'connected'));
