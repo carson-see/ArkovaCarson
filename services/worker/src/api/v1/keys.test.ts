@@ -191,6 +191,20 @@ describe('API Key CRUD — AUTH-06 ORG_ADMIN role enforcement', () => {
   });
 });
 
+describe('API Key CRUD — audit event_category matches CHECK constraint', () => {
+  it('logAuditEvent uses an event_category in the allowed set', async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const source = fs.readFileSync(
+      path.resolve(__dirname, 'keys.ts'),
+      'utf-8',
+    );
+    const match = source.match(/event_category:\s*['"]([^'"]+)['"]/);
+    expect(match).not.toBeNull();
+    expect(match![1]).toBe('API');
+  });
+});
+
 describe('API Key CRUD — validation schemas', () => {
   it('CreateKeySchema accepts valid input', async () => {
     const { CreateKeySchema } = await import('./keys.js');
