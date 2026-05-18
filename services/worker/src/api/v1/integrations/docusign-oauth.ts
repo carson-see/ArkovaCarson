@@ -284,7 +284,7 @@ export function createDocusignOAuthRouter(deps: DocusignOAuthDeps = {}): Router 
           org_id: payload.orgId,
           provider: Provider,
           account_id: account.account_id,
-          account_label: account.account_name ?? info.email ?? null,
+          account_label: account.account_name ?? account.account_id ?? null,
           base_uri: account.base_uri,
           encrypted_tokens: toPostgresBytea(encrypted.ciphertext),
           token_kms_key_id: encrypted.keyId,
@@ -313,14 +313,14 @@ export function createDocusignOAuthRouter(deps: DocusignOAuthDeps = {}): Router 
         },
       });
 
-      // Auto-provision Connect listener (non-fatal)
-      try {
-        const provisionResult = await provisionConnectListener({
-          accessToken: tokens.access_token,
-          baseUri: account.base_uri,
-          accountId: account.account_id,
-          deps: docusignDeps,
-        });
+      // Auto-provision Connect listener (fire-and-forget, non-fatal).
+      // Don't block the redirect — user shouldn't wait for DocuSign API calls.
+      void provisionConnectListener({
+        accessToken: tokens.access_token,
+        baseUri: account.base_uri,
+        accountId: account.account_id,
+        deps: docusignDeps,
+      }).then(async (provisionResult) => {
         await recordIntegrationEvent(db, {
           orgId: payload.orgId,
           integrationId: integration?.id,
@@ -331,7 +331,7 @@ export function createDocusignOAuthRouter(deps: DocusignOAuthDeps = {}): Router 
             action: provisionResult.action,
           },
         });
-      } catch (provisionError) {
+      }).catch(async (provisionError) => {
         logger.error(
           { message: provisionError instanceof Error ? provisionError.message : String(provisionError), orgId: payload.orgId },
           'DocuSign Connect listener provisioning failed',
@@ -352,7 +352,7 @@ export function createDocusignOAuthRouter(deps: DocusignOAuthDeps = {}): Router 
             'Failed to record Connect provisioning failure event',
           );
         }
-      }
+      });
 
       res.redirect(302, appendResult(returnTo, 'docusign', 'connected'));
     } catch (error) {

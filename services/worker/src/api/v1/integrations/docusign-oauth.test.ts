@@ -388,18 +388,22 @@ describe('DocuSign OAuth router', () => {
     expect(callback.status).toBe(302);
     expect(callback.headers.location).toContain('docusign=connected');
 
-    // Verify provisioning was called (Connect API hit)
-    const connectCalls = fetchImpl.mock.calls.filter(
-      (call) => String(call[0]).includes('/connect'),
-    );
-    expect(connectCalls.length).toBeGreaterThanOrEqual(1);
+    // Provisioning is fire-and-forget — wait for the async promise to settle
+    await vi.waitFor(() => {
+      const connectCalls = fetchImpl.mock.calls.filter(
+        (call) => String(call[0]).includes('/connect'),
+      );
+      expect(connectCalls.length).toBeGreaterThanOrEqual(1);
+    }, { timeout: 2000 });
 
     // Verify connect_listener_provisioned event was recorded
-    const events = captured.insert ?? [];
-    const provisionEvent = events.find(
-      (e) => (e as Record<string, unknown>).event_type === 'connect_listener_provisioned',
-    );
-    expect(provisionEvent).toBeDefined();
+    await vi.waitFor(() => {
+      const events = captured.insert ?? [];
+      const provisionEvent = events.find(
+        (e) => (e as Record<string, unknown>).event_type === 'connect_listener_provisioned',
+      );
+      expect(provisionEvent).toBeDefined();
+    }, { timeout: 2000 });
   });
 
   it('OAuth callback succeeds even when Connect provisioning fails', async () => {
@@ -493,11 +497,13 @@ describe('DocuSign OAuth router', () => {
     expect(callback.status).toBe(302);
     expect(callback.headers.location).toContain('docusign=connected');
 
-    // But a connect_listener_failed event was recorded
-    const events = captured.insert ?? [];
-    const failEvent = events.find(
-      (e) => (e as Record<string, unknown>).event_type === 'connect_listener_failed',
-    );
-    expect(failEvent).toBeDefined();
+    // Provisioning is fire-and-forget — wait for the async failure path to settle
+    await vi.waitFor(() => {
+      const events = captured.insert ?? [];
+      const failEvent = events.find(
+        (e) => (e as Record<string, unknown>).event_type === 'connect_listener_failed',
+      );
+      expect(failEvent).toBeDefined();
+    }, { timeout: 2000 });
   });
 });

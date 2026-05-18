@@ -348,7 +348,9 @@ export async function provisionConnectListener(args: {
     throw new DocusignApiError('DocuSign Connect list failed', listRes.status, listJson);
   }
 
+  // DocuSign may return null or empty body — treat as no existing listeners
   const listData = (() => {
+    if (listJson === null || listJson === undefined) return { configurations: [] };
     try { return ConnectListResponse.parse(listJson); }
     catch (e) {
       throw new DocusignApiError(
