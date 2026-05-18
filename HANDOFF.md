@@ -20,8 +20,8 @@
 
 | PR | Branch | Tier | Scope | Status |
 |---|---|---|---|---|
-| [#812](https://github.com/carson-see/ArkovaCarson/pull/812) | `feat/scrum-1101-docusign-connect-provision` | T2 | SCRUM-1718: DocuSign Connect auto-provisioning + E2E spec (9 E2E, 13 component tests) | 26/27 green; Tests pending. SonarCloud PASS (regex→while-loop fix for S5852) |
-| [#820](https://github.com/carson-see/ArkovaCarson/pull/820) | `fix/scrum-1729-webhook-roundtrip-test` | T1 (staging-tooling-only) | SCRUM-1729: Webhook round-trip test (15 tests) + CI fixes + SonarCloud config cleanup | Recreated from #815→#818→#820 (stuck GH Actions on old branch); CI workflow pending trigger |
+| [#812](https://github.com/carson-see/ArkovaCarson/pull/812) | `feat/scrum-1101-docusign-connect-provision` | T2 | SCRUM-1718: DocuSign Connect auto-provisioning + E2E spec (9 E2E, 13 component tests) | All checks green (SonarCloud ✅). Review fixes applied: PII fallback, fire-and-forget provisioning, null safety. CI re-running. |
+| [#820](https://github.com/carson-see/ArkovaCarson/pull/820) | `fix/scrum-1729-webhook-roundtrip-test` | T1 (staging-tooling-only) | SCRUM-1729: Webhook round-trip test (15 tests) + CI fixes + SonarCloud config cleanup | CI workflow stuck (GH Actions bug). Code green on previous full CI run. Awaiting queue drain or admin action. |
 
 **Jira transitions this session:** SCRUM-1737 (To Do → In Progress), SCRUM-1738 (To Do → In Progress). SCRUM-1648 and SCRUM-1803 confirmed Done with all subtasks. SCRUM-1649 code complete, awaiting DS-AUTO-02 E2E verification (SCRUM-1658).
 
@@ -36,7 +36,9 @@
 - SCRUM-1738 [Close-out] — Confluence Webhooks page update (agents.md done, Confluence pending)
 - SCRUM-1658 [Verify] — DS-AUTO-02 E2E verification for instant-secure + queue paths (needs staging)
 
-_Last refreshed: 2026-05-18 by Claude — claims verified against `gh pr checks 812`, `gh pr checks 818`, `gh run list`, `gh pr view`._
+**Review gauntlet completed (2026-05-18):** /simplify, /code-review, /debug, /deploy-checklist run on both PRs. PR #812 had 3 medium findings fixed (PII in account_label fallback, blocking provisioning call, null Connect API response). PR #820 findings are test coverage gaps (not production bugs). Full report in session transcript.
+
+_Last refreshed: 2026-05-18 by Claude — claims verified against `gh pr checks 812`, `gh pr checks 820`, `gh run list`, `npx vitest run` (23 tests pass locally)._
 
 ### 2026-05-16 — SCRUM-1966 prod hotfix MERGED (PR #805)
 
