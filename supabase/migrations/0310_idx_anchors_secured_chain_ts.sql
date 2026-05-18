@@ -5,7 +5,7 @@
 -- that fetches the latest secured chain_timestamp does a full sort of
 -- ~3M rows (EXPLAIN cost: 1,691,446) and times out.
 --
--- The partial index covers only SECURED rows with non-null deleted_at,
+-- The partial index covers only SECURED rows where deleted_at IS NULL,
 -- matching the WHERE clause used by fetchAnchorStats() in
 -- services/worker/src/utils/anchor-stats.ts.
 
