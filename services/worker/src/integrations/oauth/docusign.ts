@@ -314,8 +314,12 @@ export async function provisionConnectListener(args: {
   }
 
   const hmacSecret = env.DOCUSIGN_CONNECT_HMAC_SECRET ?? ''; // NOSONAR — env var, not hardcoded
-  const webhookUrl = `${workerPublicUrl.replace(/\/+$/, '')}/webhooks/docusign`;
-  const base = args.baseUri.replace(/\/+$/, '');
+  // Strip trailing slashes without regex (avoids SonarCloud S5852 false positive)
+  let trimmedUrl = workerPublicUrl;
+  while (trimmedUrl.endsWith('/')) trimmedUrl = trimmedUrl.slice(0, -1);
+  const webhookUrl = `${trimmedUrl}/webhooks/docusign`;
+  let base = args.baseUri;
+  while (base.endsWith('/')) base = base.slice(0, -1);
   const connectBase = `${base}/restapi/v2.1/accounts/${encodeURIComponent(args.accountId)}/connect`;
   const authHeaders = { Authorization: `Bearer ${args.accessToken}` };
 
