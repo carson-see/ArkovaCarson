@@ -9,6 +9,6 @@
 -- matching the WHERE clause used by fetchAnchorStats() in
 -- services/worker/src/utils/anchor-stats.ts.
 
-CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_anchors_secured_chain_ts
+CREATE INDEX IF NOT EXISTS idx_anchors_secured_chain_ts
   ON public.anchors (chain_timestamp DESC NULLS LAST)
   WHERE status = 'SECURED' AND deleted_at IS NULL;
