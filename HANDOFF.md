@@ -14,6 +14,12 @@
 
 ## Now
 
+### 2026-05-16 — Bug fix: report query ordering MERGED (PR #811)
+
+**PR #811 merged** to `main` at 2026-05-16 (merge commit `73a13bab`). `generateComplianceAudit` and `generateActivityLog` in `services/worker/src/jobs/report.ts` used `.order('timestamp')` but `audit_events` has no `timestamp` column — it's `created_at`. PostgREST silently returned unordered results. Fixed 3 references (2× `.order()`, 1× `.select()`). Also fixed pre-existing TypeCheck failure in `scripts/ci/check-audit-category-sync.ts` (`.at(-1)` needs ES2022, replaced with `[arr.length - 1]`). T1 soak: 2h mixed-mode, 19K requests, worker healthy. No Jira ticket (opportunistic bug fix).
+
+_Last refreshed: 2026-05-16 by Carson — claims verified against `gh pr view 811`, merge commit `73a13bab`, staging deploy log id 51._
+
 ### 2026-05-16 — SCRUM-1966 prod hotfix MERGED (PR #805)
 
 **PR #805 merged** to `main` at 2026-05-16 (merge commit `19d50084`). Three production hotfixes: (1) RLS statement timeout on bulk upload — consolidated 3 anchors SELECT policies into 1 with scalar subquery wrappers, same for attestations; query time dropped from timeout to 0.134ms. (2) Treasury x402-stats 502 — `parseX402StatsPayload` null handling fix. (3) Missing org_credits for Arkova org — seeded Free-tier allocation. Migrations 0307+0308. T2 12h soak: 115K requests, zero 500s. Jira: SCRUM-1966 → Done. Confluence: [page 53411876](https://arkova.atlassian.net/wiki/spaces/A/pages/53411876). Bug tracker: BUG-RLS-TIMEOUT (P1), BUG-TREASURY-502 (P2), BUG-ORG-CREDITS-MISSING (P3).

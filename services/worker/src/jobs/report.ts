@@ -58,7 +58,7 @@ async function generateComplianceAudit(userId: string, orgId: string | null): Pr
     .from('audit_events')
     .select('*')
     .eq('actor_id', userId)
-    .order('timestamp', { ascending: false })
+    .order('created_at', { ascending: false })
     .limit(1000);
 
   return {
@@ -77,9 +77,9 @@ async function generateActivityLog(userId: string, orgId: string | null): Promis
   // Fetch recent activity
   const { data: activity } = await db
     .from('audit_events')
-    .select('event_type, event_category, timestamp, details')
+    .select('event_type, event_category, created_at, details')
     .eq('actor_id', userId)
-    .order('timestamp', { ascending: false })
+    .order('created_at', { ascending: false })
     .limit(500);
 
   return {

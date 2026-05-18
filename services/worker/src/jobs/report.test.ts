@@ -216,18 +216,21 @@ describe('processReport', () => {
     expect(anchorsTable.is).toHaveBeenCalledWith('deleted_at', null);
   });
 
-  it('queries audit_events with limit 1000 for compliance_audit', async () => {
+  it('queries audit_events with limit 1000 for compliance_audit ordered by created_at', async () => {
     await processReport(makeReport({ report_type: 'compliance_audit' }));
 
     expect(mockFrom).toHaveBeenCalledWith('audit_events');
     expect(auditEventsTable.select).toHaveBeenCalledWith('*');
+    expect(auditEventsTable.order).toHaveBeenCalledWith('created_at', { ascending: false });
     expect(auditEventsTable.limit).toHaveBeenCalledWith(1000);
   });
 
-  it('queries audit_events with limit 500 for activity_log', async () => {
+  it('queries audit_events with limit 500 for activity_log ordered by created_at', async () => {
     await processReport(makeReport({ report_type: 'activity_log' }));
 
     expect(mockFrom).toHaveBeenCalledWith('audit_events');
+    expect(auditEventsTable.select).toHaveBeenCalledWith('event_type, event_category, created_at, details');
+    expect(auditEventsTable.order).toHaveBeenCalledWith('created_at', { ascending: false });
     expect(auditEventsTable.limit).toHaveBeenCalledWith(500);
   });
 

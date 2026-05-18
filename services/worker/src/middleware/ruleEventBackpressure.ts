@@ -81,6 +81,8 @@ async function emitBackpressureAudit(pendingCount: number): Promise<void> {
     const { error } = await db.from('audit_events').insert({
       event_type: 'RULE_EVENT_BACKPRESSURE_TRIPPED',
       event_category: 'SYSTEM',
+      actor_id: null,
+      org_id: null,
       target_type: 'organization_rule_events',
       target_id: 'backpressure',
       details: JSON.stringify({
