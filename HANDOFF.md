@@ -14,6 +14,21 @@
 
 ## Now
 
+### 2026-05-18 — PR #781 MERGED: surface dashboard stale truth + drain stuck anchors (SCRUM-1707, SCRUM-1708, SCRUM-1786)
+
+**PR #781 merged** to `main` at 2026-05-18T17:14Z (merge commit `d545d617`, 12 commits). Consolidated fix for three stories:
+- **SCRUM-1708:** pipeline cache miss and lifecycle sentinels render as unavailable/stale truth instead of approximate zeroes (`statusCountsAvailable`, `statusCountsWarning` fields).
+- **SCRUM-1786:** treasury anchor aggregates sanitized at worker API boundary; missing/invalid buckets stay `null` instead of `-1` or silent zero.
+- **SCRUM-1707:** stale mempool-visible `SUBMITTED` anchors can safely requeue after 72h abandon window with chain lookups gated, shared receipt checks cached, Zod-validated writes, and compare-and-set races treated as benign.
+
+**T3 48h soak completed clean:** 247+ consecutive 5-min samples on `arkova-worker-staging-00083-xen` (SHA `8ff2065e`), 0 errors, `negativeSentinelCount=0` throughout, 2 midnight UTC crossings clean (2026-05-14, 2026-05-15). Soak window: 2026-05-13T22:11Z to 2026-05-15T22:11Z. Worker remained healthy through 2026-05-18.
+
+**Jira transitions:** SCRUM-1707, SCRUM-1708, SCRUM-1786 + all 15 subtasks → Done (2026-05-18). Confluence pages updated: [SCRUM-1707](https://arkova.atlassian.net/wiki/spaces/A/pages/42205185), [SCRUM-1708](https://arkova.atlassian.net/wiki/spaces/A/pages/42336276), [SCRUM-1786](https://arkova.atlassian.net/wiki/spaces/A/pages/43876353).
+
+**Production state:** worker at `950a4265` (PR #802) — PR #781 merge commit `d545d617` NOT yet deployed. Production deploy required to activate these fixes.
+
+_Last refreshed: 2026-05-18 by Claude — claims verified against `git log main`, `gh pr view 781`, production `/health` endpoint, Jira MCP transitions, Confluence MCP updates._
+
 ### 2026-05-18 — Audit integrity sweep complete (PRs #799, #802 MERGED)
 
 **PR #802 merged** to `main` at 2026-05-18T16:58:43Z (merge commit `950a4265`). Fixed `event_category: 'api_key'` → `'API'` in `services/worker/src/api/v1/keys.ts` — violated CHECK constraint, silently dropping all API key audit events via fire-and-forget `void` pattern. Updated `AUDIT_EVENT_CATEGORIES` constants in `src/lib/validators.ts` and `services/worker/src/api/audit-event.ts` to match the full 17-value DB constraint. Added regression test. T2 12h soak: 720 cron invocations, 0 failures. Duplicate migration `0307_extend_*` removed (superseded by `0309_expand_*` already on main).
@@ -29,6 +44,7 @@
 
 | PR | Title | Merged | Jira |
 |---|---|---|---|
+| #781 | fix: surface dashboard stale truth + drain stuck anchors | 2026-05-18 | SCRUM-1707/1708/1786 ✅ |
 | #802 | fix: valid event_category for API key audit events | 2026-05-18 | — |
 | #799 | fix(SCRUM-1916): org_id on remaining audit inserts | 2026-05-18 | SCRUM-1916 ✅ |
 | #811 | fix: correct column name in report queries | 2026-05-16 | — |
@@ -38,7 +54,6 @@
 | #800 | fix(ci): T3 path rule for anchor jobs | 2026-05-16 | — |
 | #798 | fix(lint): false-positive org-filter warnings | 2026-05-16 | — |
 | #797 | fix: audit CHECK constraint (BUG-2026-05-15-004) | 2026-05-16 | SCRUM-1919 ✅ |
-| #796 | perf: useActiveOrg memo stability | 2026-05-16 | — |
 
 _Last refreshed: 2026-05-18 by Carson — claims verified against `gh pr list --state merged`, Jira MCP transitions, `git log origin/main`._
 
