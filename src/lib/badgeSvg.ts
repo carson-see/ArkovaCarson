@@ -10,10 +10,6 @@ export function toBadgeStatus(anchorStatus: string): BadgeStatus {
     case 'EXPIRED':
     case 'SUPERSEDED':
       return 'expired';
-    case 'PENDING':
-    case 'SUBMITTED':
-    case 'BROADCASTING':
-    case 'PENDING_RESOLUTION':
     default:
       return 'pending';
   }
@@ -26,16 +22,9 @@ export const badgeColors: Record<BadgeStatus, { bg: string; text: string }> = {
   expired: { bg: '#d97706', text: '#ffffff' },
 };
 
-const labels: Record<BadgeStatus, string> = {
-  verified: 'Verified',
-  pending: 'Pending',
-  revoked: 'Revoked',
-  expired: 'Expired',
-};
-
 export function generateBadgeSvg(status: BadgeStatus): string {
   const { bg, text } = badgeColors[status];
-  const label = labels[status];
+  const label = status.charAt(0).toUpperCase() + status.slice(1);
   const width = 20 + label.length * 7.5;
 
   return [
