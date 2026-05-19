@@ -24,6 +24,7 @@ vi.mock('../utils/db.js', () => ({
 }));
 
 import { auditEventRouter, auditEventBodySchema } from './audit-event.js';
+import { AUDIT_EVENT_CATEGORIES } from '../types/audit-event-category.js';
 
 const SUBJECT_USER_ID = '11111111-1111-4111-8111-111111111111';
 
@@ -156,9 +157,17 @@ describe('POST /api/audit/event', () => {
   });
 
   it('rejects unknown event_category enum value', async () => {
-    const res = await invoke({ event_type: 'X', event_category: 'FOOBAR' });
+    const res = await invoke({ event_type: 'X', event_category: 'BOGUS_CATEGORY' });
     expect(res.statusCode).toBe(400);
     expect(mockInsert).not.toHaveBeenCalled();
+  });
+
+  it('accepts all CHECK-constraint categories via the Zod schema', async () => {
+    for (const cat of AUDIT_EVENT_CATEGORIES) {
+      const res = await invoke({ event_type: 'TEST', event_category: cat });
+      expect(res.statusCode).toBe(202);
+    }
+    expect(mockInsert).toHaveBeenCalledTimes(AUDIT_EVENT_CATEGORIES.length);
   });
 
   it('rejects malformed org_id', async () => {

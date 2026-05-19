@@ -25,4 +25,26 @@ describe('AnchorStats', () => {
     const quarantinedRow = screen.getByText('QUARANTINED').closest('div');
     expect(quarantinedRow).toHaveTextContent('2');
   });
+
+  it('renders unavailable totals as an em dash', () => {
+    render(
+      <AnchorStats
+        loading={false}
+        stats={{
+          byStatus: {
+            SECURED: 3,
+            PENDING: null,
+          },
+          totalAnchors: null,
+          distinctTxIds: null,
+          avgAnchorsPerTx: null,
+          lastAnchorTime: null,
+          lastTxTime: null,
+        }}
+      />,
+    );
+
+    const totalRow = screen.getByText('Total Records').closest('div');
+    expect(totalRow).toHaveTextContent('—');
+  });
 });

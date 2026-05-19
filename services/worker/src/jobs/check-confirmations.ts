@@ -12,6 +12,7 @@
  * Stories: BETA-01
  */
 
+import type { AuditEventCategory } from '../types/audit-event-category.js';
 import { db } from '../utils/db.js';
 import { invalidateVerificationCache } from '../utils/verifyCache.js';
 import { logger } from '../utils/logger.js';
@@ -49,7 +50,7 @@ type SecuredWebhookAnchor = {
 
 type BatchSecuredAuditRow = {
   event_type: string;
-  event_category: string;
+  event_category: AuditEventCategory;
   // null = system-driven event (cron / queue worker), not user-attributable.
   // Pre-PR-#753 used a zero-UUID literal which violated audit_events_actor_id_fkey.
   actor_id: string | null;
@@ -137,9 +138,9 @@ function buildBatchSecuredAuditRows(
   const orgCounts = summarizeDrainedOrgCounts(drainedAnchors);
   const attributedCount = orgCounts.reduce((sum, row) => sum + row.count, 0);
   const unknownCount = Math.max(groupConfirmed - attributedCount, 0);
-  const rows = orgCounts.map(({ orgId, count }) => ({
+  const rows: BatchSecuredAuditRow[] = orgCounts.map(({ orgId, count }) => ({
     event_type: 'anchor.batch_secured',
-    event_category: 'ANCHOR',
+    event_category: 'ANCHOR' as const,
     // System-driven event; audit_events.actor_id is nullable for system rows
     // (see e.g. user.data_anonymized in the prod migrations). The pre-PR-#753
     // hardcoded zero-UUID violated the audit_events_actor_id_fkey constraint
@@ -339,7 +340,7 @@ export async function fanOutSecuredAnchorWebhooks(
       };
       return {
         event_type: 'credential.status_changed.batch',
-        event_category: 'WEBHOOK',
+        event_category: 'WEBHOOK' as const,
         // System-driven event; audit_events.actor_id is nullable for system rows
     // (see e.g. user.data_anonymized in the prod migrations). The pre-PR-#753
     // hardcoded zero-UUID violated the audit_events_actor_id_fkey constraint

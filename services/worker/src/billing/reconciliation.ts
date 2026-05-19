@@ -45,6 +45,7 @@ interface StripeReconciliationResult {
   totalSubscriptions: number;
   discrepancies: Array<{
     userId: string;
+    orgId: string | null;
     planLimit: number;
     actualAnchors: number;
     overQuota: number;
@@ -66,7 +67,7 @@ export async function runStripeAnchorReconciliation(
   // Get all active subscriptions with plan limits
   const { data: subs } = await db
     .from('subscriptions')
-    .select('user_id, plan_id, plans(records_per_month)')
+    .select('user_id, org_id, plan_id, plans(records_per_month)')
     .in('status', ['active', 'past_due']);
 
   if (!subs || subs.length === 0) {
@@ -96,6 +97,7 @@ export async function runStripeAnchorReconciliation(
     if (actualAnchors > planLimit) {
       discrepancies.push({
         userId,
+        orgId: (sub as Record<string, unknown>).org_id as string | null ?? null,
         planLimit,
         actualAnchors,
         overQuota: actualAnchors - planLimit,
@@ -121,6 +123,7 @@ export async function runStripeAnchorReconciliation(
       event_type: 'reconciliation.over_quota',
       event_category: 'ADMIN',
       actor_id: d.userId,
+      org_id: d.orgId,
       details: `User exceeded quota: ${d.actualAnchors}/${d.planLimit} anchors in ${targetMonth} (over by ${d.overQuota})`,
     });
   }
@@ -302,6 +305,20 @@ export async function processFailedPaymentRecovery(): Promise<{
 
   for (const gp of expiredGracePeriods) {
     processed++;
+
+    let gpOrgId: string | null = null;
+    if (gp.user_id) {
+      const { data: gpProfile, error: profileError } = await db
+        .from('profiles')
+        .select('org_id')
+        .eq('id', gp.user_id)
+        .maybeSingle();
+      if (profileError) {
+        logger.warn({ error: profileError, userId: gp.user_id }, 'Failed to resolve org for grace period audit — org_id will be null');
+      }
+      gpOrgId = gpProfile?.org_id ?? null;
+    }
+
     const graceDaysExpired = Math.floor(
       (now.getTime() - new Date(gp.grace_end).getTime()) / (1000 * 60 * 60 * 24),
     );
@@ -329,6 +346,7 @@ export async function processFailedPaymentRecovery(): Promise<{
           event_type: 'payment.auto_downgraded',
           event_category: 'ADMIN',
           actor_id: gp.user_id,
+          org_id: gpOrgId,
           details: `Auto-downgraded to free tier after 30 days of failed payment (subscription: ${gp.stripe_subscription_id})`,
         });
 
@@ -342,6 +360,7 @@ export async function processFailedPaymentRecovery(): Promise<{
         event_type: 'payment.anchoring_disabled',
         event_category: 'ADMIN',
         actor_id: gp.user_id,
+        org_id: gpOrgId,
         details: `Anchoring disabled due to failed payment. ${30 - 7 - graceDaysExpired} days until auto-downgrade.`,
       });
     }
