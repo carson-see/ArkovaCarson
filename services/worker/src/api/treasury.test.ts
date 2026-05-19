@@ -117,7 +117,7 @@ describe('handleTreasuryStatus', () => {
           single: vi.fn().mockResolvedValue({ data: { email: 'user@example.com' }, error: null }),
         }),
       }),
-    });
+    } as never);
 
     const res = createMockRes();
     await handleTreasuryStatus('user-123', {} as Request, res);
@@ -155,6 +155,36 @@ describe('handleTreasuryStatus', () => {
     const response = vi.mocked(res.json).mock.calls[0][0] as Record<string, unknown>;
     expect(response.wallet).toBeNull();
     expect(response.error).toContain('not configured');
+  });
+
+  it('returns fees and stats even when wallet section fails (parallel isolation)', async () => {
+    // Simulate WIF configured but UTXO provider throws
+    const { config } = await import('../config.js');
+    const origWif = config.bitcoinTreasuryWif;
+    (config as Record<string, unknown>).bitcoinTreasuryWif = 'cTestWif';
+
+    const { createUtxoProvider } = await import('../chain/utxo-provider.js');
+    vi.mocked(createUtxoProvider).mockReturnValueOnce({
+      listUnspent: vi.fn().mockRejectedValue(new Error('RPC timeout')),
+      getBlockchainInfo: vi.fn().mockRejectedValue(new Error('RPC timeout')),
+    } as never);
+
+    const res = createMockRes();
+    await handleTreasuryStatus('admin-123', {} as Request, res);
+
+    // Restore
+    (config as Record<string, unknown>).bitcoinTreasuryWif = origWif;
+
+    const response = vi.mocked(res.json).mock.calls[0][0] as Record<string, unknown>;
+    // Wallet failed but fees and stats should still be populated
+    expect(response.wallet).toBeNull();
+    expect(response.error).toBe('Wallet data temporarily unavailable');
+    expect(response.fees).toEqual(
+      expect.objectContaining({ estimatorName: 'Static', currentRateSatPerVbyte: 1 }),
+    );
+    expect(response.recentAnchors).toEqual(
+      expect.objectContaining({ totalSecured: expect.any(Number) }),
+    );
   });
 
   it('does not expose -1 aggregate sentinels from anchor stats in the worker API', async () => {
@@ -232,7 +262,7 @@ describe('handleTreasuryX402Stats', () => {
         ],
       },
       error: null,
-    });
+    } as never);
 
     const res = createMockRes();
     await handleTreasuryX402Stats('admin-123', {} as Request, res);
@@ -288,7 +318,7 @@ describe('handleTreasuryX402Stats', () => {
         ],
       },
       error: null,
-    });
+    } as never);
 
     const res = createMockRes();
     await handleTreasuryX402Stats('admin-123', {} as Request, res);
@@ -329,6 +359,7 @@ async function runHealthWithTableErrors({
   const { db } = await import('../utils/db.js');
   // Route by table name so platformAdmin lookup stays on profiles and
   // treasury_cache / treasury_alert_state each get their own chain result.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   vi.mocked(db.from).mockImplementation(((table: string) => {
     if (table === 'profiles') {
       return buildChain('select.eq.single', {
@@ -349,7 +380,7 @@ async function runHealthWithTableErrors({
       });
     }
     throw new Error(`Unexpected db.from('${table}')`);
-  }));
+  }) as never);
   const res = createMockRes();
   await handleTreasuryHealth('admin-123', {} as Request, res);
   return res;

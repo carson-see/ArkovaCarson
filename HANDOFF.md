@@ -14,20 +14,26 @@
 
 ## Now
 
-### 2026-05-18 — PR #781 MERGED: surface dashboard stale truth + drain stuck anchors (SCRUM-1707, SCRUM-1708, SCRUM-1786)
+### 2026-05-18 — PR #803 type-safe CHECK constraint overrides MERGED
 
-**PR #781 merged** to `main` at 2026-05-18T17:14Z (merge commit `d545d617`, 12 commits). Consolidated fix for three stories:
-- **SCRUM-1708:** pipeline cache miss and lifecycle sentinels render as unavailable/stale truth instead of approximate zeroes (`statusCountsAvailable`, `statusCountsWarning` fields).
-- **SCRUM-1786:** treasury anchor aggregates sanitized at worker API boundary; missing/invalid buckets stay `null` instead of `-1` or silent zero.
-- **SCRUM-1707:** stale mempool-visible `SUBMITTED` anchors can safely requeue after 72h abandon window with chain lookups gated, shared receipt checks cached, Zod-validated writes, and compare-and-set races treated as benign.
+**PR [#803](https://github.com/carson-see/ArkovaCarson/pull/803) merged** to `main` at 2026-05-18 (merge commit `3cae7141`). Type-safe overrides for all 34 CHECK-constrained TEXT columns across 22 tables.
 
-**T3 48h soak completed clean:** 247+ consecutive 5-min samples on `arkova-worker-staging-00083-xen` (SHA `8ff2065e`), 0 errors, `negativeSentinelCount=0` throughout, 2 midnight UTC crossings clean (2026-05-14, 2026-05-15). Soak window: 2026-05-13T22:11Z to 2026-05-15T22:11Z. Worker remained healthy through 2026-05-18.
+**What shipped:**
+- `check-constraint-values.ts`: TypeScript union types mirroring every TEXT+CHECK column in the schema
+- `database-overrides.ts`: `NarrowField<T, K, V>` generic preserves optionality while narrowing `string` → exact union
+- `TypeSafeDatabase` wrapping Supabase codegen `Database` type, overriding 22 tables
+- Migration 0309: expands `audit_events_event_category_valid` CHECK from 13→17 categories (SECURITY, COMPLIANCE, NOTIFICATION, PLATFORM)
+- 56 new tests (no-duplicate + constraint-parity against baseline SQL)
+- Fixes 6 runtime bugs (wrong category literals, loose Record types)
+- Fixes 4 pre-existing CI failures (TLA+ jar SHA256 pin, trigger regex, ES2022 `.at()` compat, SonarCloud S2871 sort comparator)
 
-**Jira transitions:** SCRUM-1707, SCRUM-1708, SCRUM-1786 + all 15 subtasks → Done (2026-05-18). Confluence pages updated: [SCRUM-1707](https://arkova.atlassian.net/wiki/spaces/A/pages/42205185), [SCRUM-1708](https://arkova.atlassian.net/wiki/spaces/A/pages/42336276), [SCRUM-1786](https://arkova.atlassian.net/wiki/spaces/A/pages/43876353).
+**Staging soak:** T3, 68h (2026-05-15T20:51Z → 2026-05-18T16:47Z). Zero errors.
 
-**Production state:** worker at `950a4265` (PR #802) — PR #781 merge commit `d545d617` NOT yet deployed. Production deploy required to activate these fixes.
-
-_Last refreshed: 2026-05-18 by Claude — claims verified against `git log main`, `gh pr view 781`, production `/health` endpoint, Jira MCP transitions, Confluence MCP updates._
+**Cross-system state:**
+- Jira: SCRUM-1288 → Done (type-safety wave Sub-PR A complete)
+- Confluence: Audit Events page (v4), Data Model page (v17) both updated
+- Migration 0309 applied to both prod (`vzwyaatejekddvltxyye`) and staging (`ujtlwnoqfhtitcmsnrpq`)
+- Local + SSD repos synced to merge commit `3cae7141`
 
 ### 2026-05-18 — Audit integrity sweep complete (PRs #799, #802 MERGED)
 
@@ -36,6 +42,7 @@ _Last refreshed: 2026-05-18 by Claude — claims verified against `git log main`
 **PR #799 merged** to `main` at 2026-05-18T16:56:33Z (merge commit `60bb8e17`). Added `org_id` to 16 `audit_events` inserts across 5 worker files. Fixed 4 deprecated zero-UUID `actor_id` values → `null`. T3 55h soak: 0 errors. SCRUM-1916 → Done.
 
 **Jira transitions this session:**
+- SCRUM-1288 → Done (PR #803 — type-safe CHECK constraint overrides)
 - SCRUM-1916 → Done (PR #799 — org_id audit inserts)
 - SCRUM-1919 → Done (BUG-2026-05-15-004 — CHECK constraint fix, PR #797)
 - SCRUM-1966 — already Done (PR #805)
@@ -44,7 +51,7 @@ _Last refreshed: 2026-05-18 by Claude — claims verified against `git log main`
 
 | PR | Title | Merged | Jira |
 |---|---|---|---|
-| #781 | fix: surface dashboard stale truth + drain stuck anchors | 2026-05-18 | SCRUM-1707/1708/1786 ✅ |
+| #803 | feat: type-safe overrides for all 34 CHECK-constrained TEXT columns | 2026-05-18 | SCRUM-1288 ✅ |
 | #802 | fix: valid event_category for API key audit events | 2026-05-18 | — |
 | #799 | fix(SCRUM-1916): org_id on remaining audit inserts | 2026-05-18 | SCRUM-1916 ✅ |
 | #811 | fix: correct column name in report queries | 2026-05-16 | — |
@@ -54,8 +61,9 @@ _Last refreshed: 2026-05-18 by Claude — claims verified against `git log main`
 | #800 | fix(ci): T3 path rule for anchor jobs | 2026-05-16 | — |
 | #798 | fix(lint): false-positive org-filter warnings | 2026-05-16 | — |
 | #797 | fix: audit CHECK constraint (BUG-2026-05-15-004) | 2026-05-16 | SCRUM-1919 ✅ |
+| #796 | perf: useActiveOrg memo stability | 2026-05-16 | — |
 
-_Last refreshed: 2026-05-18 by Carson — claims verified against `gh pr list --state merged`, Jira MCP transitions, `git log origin/main`._
+_Last refreshed: 2026-05-18 by Carson — claims verified against `gh api pulls/803` (merged: true, sha: 3cae7141), Jira MCP transitions (SCRUM-1288 → Done), Confluence updates (Audit Events v4, Data Model v17), `git log origin/main`._
 
 ### 2026-05-16 — Bug fix: report query ordering MERGED (PR #811)
 

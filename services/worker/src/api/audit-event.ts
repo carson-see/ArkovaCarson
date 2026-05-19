@@ -11,23 +11,16 @@ import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { db } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
+import { AUDIT_EVENT_CATEGORIES, auditEventCategorySchema } from '../types/audit-event-category.js';
 
-const AUDIT_EVENT_CATEGORIES = [
-  'AUTH', 'ANCHOR', 'PROFILE', 'ORG', 'ADMIN', 'SYSTEM', 'ORGANIZATION',
-  'WEBHOOK', 'API', 'AI', 'BILLING', 'VERIFICATION', 'USER',
-  'SECURITY', 'PLATFORM', 'COMPLIANCE', 'NOTIFICATION',
-] as const;
+export { AUDIT_EVENT_CATEGORIES };
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-// Schema maxima are pinned to the audit_events table CHECK constraints from
-// migration 0006: event_type ≤ 100, target_type ≤ 50, details ≤ 10000. Keep
-// these in lockstep — Zod rejecting at the route is faster than catching a
-// 23514 from Postgres after the row reaches the DB.
 export const auditEventBodySchema = z
   .object({
     event_type: z.string().min(1).max(100),
-    event_category: z.enum(AUDIT_EVENT_CATEGORIES),
+    event_category: auditEventCategorySchema,
     target_type: z.string().min(1).max(50).nullable().optional(),
     target_id: z.string().min(1).max(120).nullable().optional(),
     org_id: z.string().regex(UUID_RE, 'org_id must be a UUID').nullable().optional(),
