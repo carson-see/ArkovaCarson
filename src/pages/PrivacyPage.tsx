@@ -1,8 +1,7 @@
 /**
  * Privacy Policy Page
  *
- * Public route at /privacy. Placeholder content — to be replaced with
- * legal-reviewed copy before production launch.
+ * Public route at /privacy.
  */
 
 import { Link } from 'react-router-dom';
@@ -124,8 +123,8 @@ export function PrivacyPage() {
           </div>
 
           <p className="text-xs pt-6 border-t">
-            This privacy policy is a placeholder and will be updated following legal review
-            prior to production launch.
+            We may update this policy from time to time. Material changes will be posted here,
+            and registered users will receive notice when required.
           </p>
         </div>
       </main>

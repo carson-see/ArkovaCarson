@@ -9,7 +9,7 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { FORBIDDEN_TERMS, stripClassNameAttributes } from './check-copy-terms.js';
+import { FORBIDDEN_TERMS, LAUNCH_BLOCKER_COPY_TERMS, stripClassNameAttributes } from './check-copy-terms.js';
 
 function matches(term: string, haystack: string): boolean {
   return new RegExp(term, 'gi').test(haystack);
@@ -156,5 +156,18 @@ describe('FORBIDDEN_TERMS — block compound-phrase detection (SCRUM-951)', () =
       '<p className="inline-block text-block-fg">Network Checkpoint</p>',
     );
     expect(matches(blockTerm, cleaned)).toBe(false);
+  });
+});
+
+describe('LAUNCH_BLOCKER_COPY_TERMS — public legal placeholder copy', () => {
+  it('flags public legal placeholder disclaimers without banning normal input placeholders', () => {
+    const matcher = new RegExp(LAUNCH_BLOCKER_COPY_TERMS.join('|'), 'gi');
+
+    expect(
+      matcher.test('This privacy policy is a placeholder and will be updated following legal review'),
+    ).toBe(true);
+
+    matcher.lastIndex = 0;
+    expect(matcher.test('placeholder="you@example.com"')).toBe(false);
   });
 });
