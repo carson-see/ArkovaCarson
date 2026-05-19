@@ -65,6 +65,13 @@ async function fetchAnchor(apiBaseUrl: string, publicId: string): Promise<Anchor
   return (await response.json()) as AnchorData;
 }
 
+function toAnalyticsResult(status: string): 'verified' | 'revoked' | 'not_found' {
+  if (status === 'ACTIVE') return 'verified';
+  if (status === 'SECURED') return 'verified';
+  if (status === 'REVOKED') return 'revoked';
+  return 'not_found';
+}
+
 /** Fire-and-forget analytics: log an embed verification event. */
 function logEmbedEvent(apiBaseUrl: string, publicId: string, result: 'verified' | 'revoked' | 'not_found'): void {
   // Use the public RPC to record method=embed; ignore failures completely.
@@ -114,7 +121,7 @@ export async function mount(config: ArkovaEmbedConfig): Promise<void> {
 
     renderInto(c.target, c.mode, renderWidget(c.mode, data, c.appBaseUrl));
     if (!c.disableAnalytics) {
-      logEmbedEvent(c.apiBaseUrl, c.publicId, data.status === 'REVOKED' ? 'revoked' : 'verified');
+      logEmbedEvent(c.apiBaseUrl, c.publicId, toAnalyticsResult(data.status));
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : 'Verification failed';
