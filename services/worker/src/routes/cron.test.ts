@@ -273,6 +273,17 @@ vi.mock('../jobs/org-queue-scheduler.js', () => ({
   runOrgQueueScheduler: (...args: unknown[]) => mockRunOrgQueueScheduler(...args),
 }));
 
+const mockRunDocusignEnvelopeCompletedJobs = vi.fn().mockResolvedValue({
+  claimed: 1,
+  completed: 1,
+  failed: 0,
+  dead: 0,
+  jobIds: ['job-1'],
+});
+vi.mock('../jobs/docusign-envelope-completed.js', () => ({
+  runDocusignEnvelopeCompletedJobs: (...args: unknown[]) => mockRunDocusignEnvelopeCompletedJobs(...args),
+}));
+
 // ─── Import after mocks ───
 import { cronRouter } from './cron.js';
 import { config } from '../config.js';
@@ -527,6 +538,23 @@ describe('cron routes', () => {
       const res = await request(app).post('/cron/org-queue-scheduler');
       expect(res.status).toBe(500);
       expect(res.body.error).toBe('Processing failed');
+    });
+  });
+
+  describe('POST /docusign-envelope-completed', () => {
+    it('runs the DocuSign queue processor and forwards the optional limit', async () => {
+      const app = createApp();
+      const res = await request(app).post('/cron/docusign-envelope-completed?limit=3');
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({
+        claimed: 1,
+        completed: 1,
+        failed: 0,
+        dead: 0,
+        jobIds: ['job-1'],
+      });
+      expect(mockRunDocusignEnvelopeCompletedJobs).toHaveBeenCalledWith({ limit: 3 });
     });
   });
 

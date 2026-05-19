@@ -42,6 +42,16 @@ export interface JobSubmission<T = unknown> {
 
 const DEFAULT_MAX_ATTEMPTS = 3;
 
+export type JobHandler<T = unknown> = (job: Job<T>) => Promise<void>;
+
+export interface ProcessJobResult {
+  claimed: boolean;
+  status: 'idle' | 'completed' | 'failed' | 'dead';
+  jobId?: string;
+  attempts?: number;
+  error?: string;
+}
+
 /**
  * Submit a job to the queue.
  */
@@ -126,6 +136,38 @@ export async function failJob(jobId: string, errorMessage: string, attempts: num
 
   if (status === 'dead') {
     logger.warn({ jobId, attempts, error: errorMessage }, 'Job moved to dead letter queue');
+  }
+}
+
+/**
+ * Claim and process one queued job with the shared retry/dead-letter policy.
+ */
+export async function processNextJob<T = unknown>(
+  type: string,
+  handler: JobHandler<T>,
+): Promise<ProcessJobResult> {
+  const job = await claimJob<T>(type);
+  if (!job) return { claimed: false, status: 'idle' };
+
+  try {
+    await handler(job);
+    await completeJob(job.id);
+    return {
+      claimed: true,
+      status: 'completed',
+      jobId: job.id,
+      attempts: job.attempts,
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    await failJob(job.id, message, job.attempts, job.max_attempts);
+    return {
+      claimed: true,
+      status: job.attempts >= job.max_attempts ? 'dead' : 'failed',
+      jobId: job.id,
+      attempts: job.attempts,
+      error: message,
+    };
   }
 }
 

@@ -85,6 +85,7 @@ function createApp(db: unknown) {
         DOCUSIGN_INTEGRATION_KEY: 'docusign-client',
         DOCUSIGN_CLIENT_SECRET: 'docusign-client-secret',
         DOCUSIGN_DEMO: 'true',
+        GCP_SECRET_MANAGER_PROJECT_ID: 'test-project',
         GCP_KMS_INTEGRATION_TOKEN_KEY: 'projects/p/locations/l/keyRings/r/cryptoKeys/k',
       },
       stateSecret: 'test-state-secret',
@@ -147,11 +148,12 @@ describe('DocuSign OAuth router', () => {
     expect(res.body.error).toContain('org admin');
   });
 
-  it('exchanges callback code, encrypts tokens, stores integration state, and redirects to settings', async () => {
+  it('exchanges callback code, stores the refresh token in Secret Manager, stores only the handle in Postgres, and redirects to settings', async () => {
     const captured: Record<string, unknown[]> = {};
     const capture = (method: string, value: unknown) => {
       captured[method] = [...(captured[method] ?? []), value];
     };
+    const secretWrites: Array<{ name: string; value: string }> = [];
     const db = {
       from: vi.fn((table: string) => {
         if (table === 'org_members') return mockQuery({ data: { role: 'owner' }, error: null });
@@ -193,12 +195,13 @@ describe('DocuSign OAuth router', () => {
       (req as unknown as { userId: string }).userId = TEST_USER_ID;
       next();
     });
-    app.use('/api/v1/integrations', createDocusignOAuthRouter({
+    const deps = {
       db,
       env: {
         DOCUSIGN_INTEGRATION_KEY: 'docusign-client',
         DOCUSIGN_CLIENT_SECRET: 'docusign-client-secret',
         DOCUSIGN_DEMO: 'true',
+        GCP_SECRET_MANAGER_PROJECT_ID: 'test-project',
         GCP_KMS_INTEGRATION_TOKEN_KEY: 'projects/p/locations/l/keyRings/r/cryptoKeys/k',
       },
       fetchImpl: fetchImpl as unknown as typeof fetch,
@@ -206,16 +209,29 @@ describe('DocuSign OAuth router', () => {
       frontendUrl: 'http://localhost:5173',
       now: () => new Date('2026-04-24T12:00:00.000Z'),
       kms: {
-        async encrypt({ plaintext }) {
-          // Tokens MUST reach KMS, never Postgres or logs in cleartext.
-          expect(plaintext.toString('utf8')).toContain('refresh-token-aaaaaaaa');
+        async encrypt({ plaintext }: { plaintext: Buffer }) {
+          // Access token metadata may be encrypted, but the long-lived refresh
+          // token must live in Secret Manager rather than DB ciphertext.
+          expect(plaintext.toString('utf8')).not.toContain('refresh-token-aaaaaaaa');
           return Buffer.from('encrypted-token-payload');
         },
         async decrypt() {
           return Buffer.from('{}');
         },
       },
-    }));
+      refreshTokenStore: {
+        async put({ name, value }: { name: string; value: string }) {
+          secretWrites.push({ name, value });
+        },
+        async get() {
+          return null;
+        },
+        async delete() {
+          return undefined;
+        },
+      },
+    };
+    app.use('/api/v1/integrations', createDocusignOAuthRouter(deps));
 
     const start = await request(app)
       .post('/api/v1/integrations/docusign/oauth/start')
@@ -241,6 +257,13 @@ describe('DocuSign OAuth router', () => {
     expect(upsert.account_label).toBe('Acme Legal');
     expect(upsert.base_uri).toBe('https://demo.docusign.net');
     expect(upsert.encrypted_tokens).toBe('\\x656e637279707465642d746f6b656e2d7061796c6f6164');
+    expect(upsert.token_secret_name).toMatch(/^projects\/test-project\/secrets\/arkova-docusign-/);
+    expect(secretWrites).toEqual([
+      {
+        name: upsert.token_secret_name as string,
+        value: 'refresh-token-aaaaaaaa',
+      },
+    ]);
     expect(JSON.stringify(upsert)).not.toContain('refresh-token-aaaaaaaa');
     expect(JSON.stringify(upsert)).not.toContain('access-token-aaaaaaaa');
     expect(captured.insert?.[0]).toMatchObject({
@@ -359,6 +382,7 @@ describe('DocuSign OAuth router', () => {
         DOCUSIGN_DEMO: 'true',
         DOCUSIGN_CONNECT_HMAC_SECRET: 'hmac-secret-123',
         WORKER_PUBLIC_URL: 'https://arkova-worker.example.com',
+        GCP_SECRET_MANAGER_PROJECT_ID: 'test-project',
         GCP_KMS_INTEGRATION_TOKEN_KEY: 'projects/p/locations/l/keyRings/r/cryptoKeys/k',
       },
       fetchImpl: fetchImpl as unknown as typeof fetch,
@@ -368,6 +392,11 @@ describe('DocuSign OAuth router', () => {
       kms: {
         async encrypt() { return Buffer.from('encrypted-token-payload'); },
         async decrypt() { return Buffer.from('{}'); },
+      },
+      refreshTokenStore: {
+        async put() { return undefined; },
+        async get() { return null; },
+        async delete() { return undefined; },
       },
     }));
 
@@ -467,6 +496,7 @@ describe('DocuSign OAuth router', () => {
         DOCUSIGN_DEMO: 'true',
         DOCUSIGN_CONNECT_HMAC_SECRET: 'hmac-secret-123',
         WORKER_PUBLIC_URL: 'https://arkova-worker.example.com',
+        GCP_SECRET_MANAGER_PROJECT_ID: 'test-project',
         GCP_KMS_INTEGRATION_TOKEN_KEY: 'projects/p/locations/l/keyRings/r/cryptoKeys/k',
       },
       fetchImpl: fetchImpl as unknown as typeof fetch,
@@ -476,6 +506,11 @@ describe('DocuSign OAuth router', () => {
       kms: {
         async encrypt() { return Buffer.from('encrypted-token-payload'); },
         async decrypt() { return Buffer.from('{}'); },
+      },
+      refreshTokenStore: {
+        async put() { return undefined; },
+        async get() { return null; },
+        async delete() { return undefined; },
       },
     }));
 
