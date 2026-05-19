@@ -14,6 +14,63 @@
 
 ## Now
 
+### 2026-05-18 — PR #803 type-safe CHECK constraint overrides MERGED
+
+**PR [#803](https://github.com/carson-see/ArkovaCarson/pull/803) merged** to `main` at 2026-05-18 (merge commit `3cae7141`). Type-safe overrides for all 34 CHECK-constrained TEXT columns across 22 tables.
+
+**What shipped:**
+- `check-constraint-values.ts`: TypeScript union types mirroring every TEXT+CHECK column in the schema
+- `database-overrides.ts`: `NarrowField<T, K, V>` generic preserves optionality while narrowing `string` → exact union
+- `TypeSafeDatabase` wrapping Supabase codegen `Database` type, overriding 22 tables
+- Migration 0309: expands `audit_events_event_category_valid` CHECK from 13→17 categories (SECURITY, COMPLIANCE, NOTIFICATION, PLATFORM)
+- 56 new tests (no-duplicate + constraint-parity against baseline SQL)
+- Fixes 6 runtime bugs (wrong category literals, loose Record types)
+- Fixes 4 pre-existing CI failures (TLA+ jar SHA256 pin, trigger regex, ES2022 `.at()` compat, SonarCloud S2871 sort comparator)
+
+**Staging soak:** T3, 68h (2026-05-15T20:51Z → 2026-05-18T16:47Z). Zero errors.
+
+**Cross-system state:**
+- Jira: SCRUM-1288 → Done (type-safety wave Sub-PR A complete)
+- Confluence: Audit Events page (v4), Data Model page (v17) both updated
+- Migration 0309 applied to both prod (`vzwyaatejekddvltxyye`) and staging (`ujtlwnoqfhtitcmsnrpq`)
+- Local + SSD repos synced to merge commit `3cae7141`
+
+### 2026-05-18 — Audit integrity sweep complete (PRs #799, #802 MERGED)
+
+**PR #802 merged** to `main` at 2026-05-18T16:58:43Z (merge commit `950a4265`). Fixed `event_category: 'api_key'` → `'API'` in `services/worker/src/api/v1/keys.ts` — violated CHECK constraint, silently dropping all API key audit events via fire-and-forget `void` pattern. Updated `AUDIT_EVENT_CATEGORIES` constants in `src/lib/validators.ts` and `services/worker/src/api/audit-event.ts` to match the full 17-value DB constraint. Added regression test. T2 12h soak: 720 cron invocations, 0 failures. Duplicate migration `0307_extend_*` removed (superseded by `0309_expand_*` already on main).
+
+**PR #799 merged** to `main` at 2026-05-18T16:56:33Z (merge commit `60bb8e17`). Added `org_id` to 16 `audit_events` inserts across 5 worker files. Fixed 4 deprecated zero-UUID `actor_id` values → `null`. T3 55h soak: 0 errors. SCRUM-1916 → Done.
+
+**Jira transitions this session:**
+- SCRUM-1288 → Done (PR #803 — type-safe CHECK constraint overrides)
+- SCRUM-1916 → Done (PR #799 — org_id audit inserts)
+- SCRUM-1919 → Done (BUG-2026-05-15-004 — CHECK constraint fix, PR #797)
+- SCRUM-1966 — already Done (PR #805)
+
+**Last 10 merged PRs on main (all live):**
+
+| PR | Title | Merged | Jira |
+|---|---|---|---|
+| #803 | feat: type-safe overrides for all 34 CHECK-constrained TEXT columns | 2026-05-18 | SCRUM-1288 ✅ |
+| #802 | fix: valid event_category for API key audit events | 2026-05-18 | — |
+| #799 | fix(SCRUM-1916): org_id on remaining audit inserts | 2026-05-18 | SCRUM-1916 ✅ |
+| #811 | fix: correct column name in report queries | 2026-05-16 | — |
+| #806 | docs: backfill agents.md (153 dirs) | 2026-05-16 | — |
+| #805 | fix(SCRUM-1966): RLS timeout + treasury 502 + credits | 2026-05-16 | SCRUM-1966 ✅ |
+| #801 | fix(ci): staging evidence regex | 2026-05-16 | — |
+| #800 | fix(ci): T3 path rule for anchor jobs | 2026-05-16 | — |
+| #798 | fix(lint): false-positive org-filter warnings | 2026-05-16 | — |
+| #797 | fix: audit CHECK constraint (BUG-2026-05-15-004) | 2026-05-16 | SCRUM-1919 ✅ |
+| #796 | perf: useActiveOrg memo stability | 2026-05-16 | — |
+
+_Last refreshed: 2026-05-18 by Carson — claims verified against `gh api pulls/803` (merged: true, sha: 3cae7141), Jira MCP transitions (SCRUM-1288 → Done), Confluence updates (Audit Events v4, Data Model v17), `git log origin/main`._
+
+### 2026-05-16 — Bug fix: report query ordering MERGED (PR #811)
+
+**PR #811 merged** to `main` at 2026-05-16 (merge commit `73a13bab`). `generateComplianceAudit` and `generateActivityLog` in `services/worker/src/jobs/report.ts` used `.order('timestamp')` but `audit_events` has no `timestamp` column — it's `created_at`. PostgREST silently returned unordered results. Fixed 3 references (2× `.order()`, 1× `.select()`). Also fixed pre-existing TypeCheck failure in `scripts/ci/check-audit-category-sync.ts` (`.at(-1)` needs ES2022, replaced with `[arr.length - 1]`). T1 soak: 2h mixed-mode, 19K requests, worker healthy. No Jira ticket (opportunistic bug fix).
+
+_Last refreshed: 2026-05-16 by Carson — claims verified against `gh pr view 811`, merge commit `73a13bab`, staging deploy log id 51._
+
 ### 2026-05-16 — SCRUM-1966 prod hotfix MERGED (PR #805)
 
 **PR #805 merged** to `main` at 2026-05-16 (merge commit `19d50084`). Three production hotfixes: (1) RLS statement timeout on bulk upload — consolidated 3 anchors SELECT policies into 1 with scalar subquery wrappers, same for attestations; query time dropped from timeout to 0.134ms. (2) Treasury x402-stats 502 — `parseX402StatsPayload` null handling fix. (3) Missing org_credits for Arkova org — seeded Free-tier allocation. Migrations 0307+0308. T2 12h soak: 115K requests, zero 500s. Jira: SCRUM-1966 → Done. Confluence: [page 53411876](https://arkova.atlassian.net/wiki/spaces/A/pages/53411876). Bug tracker: BUG-RLS-TIMEOUT (P1), BUG-TREASURY-502 (P2), BUG-ORG-CREDITS-MISSING (P3).

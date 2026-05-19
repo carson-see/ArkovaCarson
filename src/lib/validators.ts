@@ -311,6 +311,17 @@ export const AUDIT_EVENT_CATEGORIES = [
   'ORG',
   'ADMIN',
   'SYSTEM',
+  'ORGANIZATION',
+  'WEBHOOK',
+  'API',
+  'AI',
+  'BILLING',
+  'VERIFICATION',
+  'USER',
+  'SECURITY',
+  'PLATFORM',
+  'COMPLIANCE',
+  'NOTIFICATION',
 ] as const;
 
 export type AuditEventCategory = (typeof AUDIT_EVENT_CATEGORIES)[number];

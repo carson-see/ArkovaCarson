@@ -21,6 +21,8 @@
 import { db } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
 import { config } from '../config.js';
+import { z } from 'zod';
+import type { Json } from '../types/database.types.js';
 
 // ─── Constants ──────────────────────────────────────────────────────────
 
@@ -52,6 +54,26 @@ const LOCK_REBROADCAST = 42012;
 const LOCK_CONSOLIDATION = 42013;
 const LOCK_FEE_MONITOR = 42014;
 
+const AbandonedSubmittedAnchorUpdateSchema = z.object({
+  status: z.literal('PENDING'),
+  chain_tx_id: z.null(),
+  chain_block_height: z.null(),
+  chain_timestamp: z.null(),
+  metadata: z.object({
+    _abandoned_tx_id: z.string().min(1),
+    _abandoned_at: z.string().datetime(),
+    _abandon_reason: z.string().min(1),
+  }).catchall(z.unknown()),
+}).strict();
+
+const RebroadcastSubmittedAnchorUpdateSchema = z.object({
+  metadata: z.object({
+    _rebroadcast_attempts: z.number().int().nonnegative(),
+    _last_rebroadcast: z.string().datetime(),
+  }).catchall(z.unknown()),
+  updated_at: z.string().datetime(),
+}).strict();
+
 // ─── Helpers ────────────────────────────────────────────────────────────
 
 function getMempoolBaseUrl(): string {
@@ -63,6 +85,52 @@ function getMempoolBaseUrl(): string {
     mainnet: 'https://mempool.space',
   };
   return paths[config.bitcoinNetwork] ?? 'https://mempool.space/signet';
+}
+
+type SubmittedTxChainState = 'confirmed' | 'unconfirmed' | 'not_found' | 'unknown';
+
+async function getSubmittedTxChainState(txId: string, baseUrl: string): Promise<SubmittedTxChainState> {
+  if (!config.enableProdNetworkAnchoring) {
+    return 'unknown';
+  }
+
+  try {
+    const { getChainClientAsync } = await import('../chain/client.js');
+    const chainClient = await getChainClientAsync();
+    const receipt = await chainClient.getReceipt(txId);
+    if (receipt) {
+      return receipt.confirmations > 0 ? 'confirmed' : 'unconfirmed';
+    }
+  } catch (err) {
+    logger.debug({ txId, error: err }, 'Chain client receipt lookup unavailable for submitted TX monitor');
+  }
+
+  try {
+    const resp = await fetch(`${baseUrl}/api/tx/${txId}`, {
+      signal: AbortSignal.timeout(10000),
+    });
+
+    if (resp.ok) {
+      const txData = await resp.json() as { status: { confirmed: boolean } };
+      return txData.status.confirmed ? 'confirmed' : 'unconfirmed';
+    }
+
+    return resp.status === 404 ? 'not_found' : 'unknown';
+  } catch {
+    return 'unknown';
+  }
+}
+
+function isTimestampBefore(timestamp: string | null | undefined, cutoff: string): boolean {
+  const timestampMs = Date.parse(timestamp ?? '');
+  const cutoffMs = Date.parse(cutoff);
+  return Number.isFinite(timestampMs) && Number.isFinite(cutoffMs) && timestampMs < cutoffMs;
+}
+
+function getStoredRebroadcastAttempts(metadata: Record<string, unknown> | null): number | null {
+  const attempts = metadata?._rebroadcast_attempts;
+  if (attempts == null) return 0;
+  return typeof attempts === 'number' && Number.isInteger(attempts) && attempts >= 0 ? attempts : null;
 }
 
 async function acquireLock(_lockId: number): Promise<boolean> {
@@ -171,7 +239,8 @@ export async function detectReorgs(): Promise<ReorgCheckResult> {
             await db.from('audit_events').insert({
               event_type: 'anchor.reorg_detected',
               event_category: 'ANCHOR',
-              actor_id: '00000000-0000-0000-0000-000000000000',
+              actor_id: null,
+              org_id: null,
               target_type: 'anchor',
               target_id: affected[0]?.id ?? txId,
               details: `Reorg detected: TX ${txId} not found. ${affected.length} anchor(s) reverted.`,
@@ -285,58 +354,112 @@ export async function monitorStuckTransactions(): Promise<StuckTxResult> {
     let stuck = 0;
     let recovered = 0;
     const baseUrl = getMempoolBaseUrl();
+    const abandonSubmittedAnchor = async (
+      anchor: (typeof stuckAnchors)[number],
+      reason: string,
+      logMessage: string,
+    ) => {
+      const metadata = anchor.metadata as Record<string, unknown> | null;
+      const attempts = ((metadata?._rebroadcast_attempts as number) ?? 0);
+      const pendingMetadata = metadata
+        ? Object.fromEntries(Object.entries(metadata).filter(([key]) => key !== '_rebroadcast_attempts'))
+        : undefined;
+      const updatePayload = AbandonedSubmittedAnchorUpdateSchema.safeParse({
+        status: 'PENDING',
+        chain_tx_id: null,
+        chain_block_height: null,
+        chain_timestamp: null,
+        metadata: {
+          ...pendingMetadata,
+          _abandoned_tx_id: anchor.chain_tx_id,
+          _abandoned_at: new Date().toISOString(),
+          _abandon_reason: reason,
+        },
+      });
+
+      if (!updatePayload.success) {
+        logger.error(
+          { anchorId: anchor.id, txId: anchor.chain_tx_id, error: updatePayload.error },
+          'Invalid stale submitted anchor abandonment payload',
+        );
+        return;
+      }
+
+      const { data: updatedAnchor, error: updateError } = await db.from('anchors')
+        .update({
+          ...updatePayload.data,
+          metadata: updatePayload.data.metadata as Json,
+        })
+        .eq('id', anchor.id)
+        .eq('status', 'SUBMITTED')
+        .select('id')
+        .maybeSingle();
+
+      if (updateError) {
+        logger.error(
+          { anchorId: anchor.id, txId: anchor.chain_tx_id, error: updateError },
+          'Failed to abandon stale submitted anchor',
+        );
+        return;
+      }
+      if (!updatedAnchor) {
+        logger.debug(
+          { anchorId: anchor.id, txId: anchor.chain_tx_id },
+          'Stale submitted anchor changed before abandonment update',
+        );
+        return;
+      }
+
+      recovered++;
+      logger.warn({ anchorId: anchor.id, txId: anchor.chain_tx_id, attempts }, logMessage);
+    };
+
+    const txStateById = new Map<string, Awaited<ReturnType<typeof getSubmittedTxChainState>>>();
 
     for (const anchor of stuckAnchors) {
       // Check if TX is actually still unconfirmed
-      try {
-        const resp = await fetch(`${baseUrl}/api/tx/${anchor.chain_tx_id}`, {
-          signal: AbortSignal.timeout(10000),
-        });
-
-        if (resp.ok) {
-          const txData = await resp.json() as { status: { confirmed: boolean } };
-          if (txData.status.confirmed) {
-            // TX actually confirmed — the check-confirmations job will handle promotion
-            continue;
-          }
-        }
-
-        if (resp.status === 404) {
-          // TX dropped from mempool — count rebroadcast attempts
-          const metadata = anchor.metadata as Record<string, unknown> | null;
-          const attempts = ((metadata?._rebroadcast_attempts as number) ?? 0);
-
-          if (attempts >= MAX_REBROADCAST_ATTEMPTS || anchor.updated_at < abandonCutoff) {
-            // Abandon: revert to PENDING for resubmission with fresh fee
-            await db.from('anchors')
-              .update({
-                status: 'PENDING',
-                chain_tx_id: null,
-                chain_block_height: null,
-                chain_timestamp: null,
-                metadata: {
-                  ...(metadata ?? {}),
-                  _abandoned_tx_id: anchor.chain_tx_id,
-                  _abandoned_at: new Date().toISOString(),
-                  _abandon_reason: 'TX dropped from mempool after max rebroadcast attempts',
-                },
-              })
-              .eq('id', anchor.id)
-              .eq('status', 'SUBMITTED');
-
-            recovered++;
-            logger.warn(
-              { anchorId: anchor.id, txId: anchor.chain_tx_id, attempts },
-              'Abandoned stuck TX — reverted SUBMITTED → PENDING for resubmission',
-            );
-          }
-        }
-
-        stuck++;
-      } catch {
-        // Network error checking TX — will retry next run
-        stuck++;
+      let txState = txStateById.get(anchor.chain_tx_id);
+      if (!txState) {
+        txState = await getSubmittedTxChainState(anchor.chain_tx_id, baseUrl);
+        txStateById.set(anchor.chain_tx_id, txState);
       }
+      if (txState === 'confirmed') {
+        // TX actually confirmed — the check-confirmations job will handle promotion
+        continue;
+      }
+
+      const metadata = anchor.metadata as Record<string, unknown> | null;
+      const attempts = ((metadata?._rebroadcast_attempts as number) ?? 0);
+      const crossedAbandonCutoff = isTimestampBefore(anchor.updated_at, abandonCutoff);
+
+      if (txState === 'unconfirmed') {
+        if (crossedAbandonCutoff) {
+          const reason = attempts >= MAX_REBROADCAST_ATTEMPTS
+            ? 'TX remained unconfirmed in mempool after max rebroadcast attempts'
+            : 'TX remained unconfirmed in mempool after 72h timeout';
+          await abandonSubmittedAnchor(
+            anchor,
+            reason,
+            'Abandoned stale unconfirmed TX — reverted SUBMITTED → PENDING for resubmission',
+          );
+        }
+      }
+
+      if (txState === 'not_found') {
+        if (attempts >= MAX_REBROADCAST_ATTEMPTS || crossedAbandonCutoff) {
+          const reason = attempts >= MAX_REBROADCAST_ATTEMPTS
+            ? 'TX dropped from mempool after max rebroadcast attempts'
+            : 'TX dropped from mempool after 72h timeout';
+          // Abandon: revert to PENDING for resubmission with fresh fee
+          await abandonSubmittedAnchor(
+            anchor,
+            reason,
+            'Abandoned stuck TX — reverted SUBMITTED → PENDING for resubmission',
+          );
+        }
+      }
+
+      stuck++;
     }
 
     if (stuck > 0) {
@@ -427,6 +550,15 @@ export async function rebroadcastDroppedTransactions(): Promise<RebroadcastResul
           failed++;
           continue;
         }
+        const currentAttempts = getStoredRebroadcastAttempts(metadata);
+        if (currentAttempts === null) {
+          logger.error(
+            { txId, attempts: metadata?._rebroadcast_attempts },
+            'Invalid rebroadcast metadata payload',
+          );
+          failed++;
+          continue;
+        }
 
         // Rebroadcast
         const broadcastResp = await fetch(`${baseUrl}/api/tx`, {
@@ -438,16 +570,33 @@ export async function rebroadcastDroppedTransactions(): Promise<RebroadcastResul
 
         if (broadcastResp.ok) {
           rebroadcast++;
-          const attempts = ((metadata?._rebroadcast_attempts as number) ?? 0) + 1;
+          const attempts = currentAttempts + 1;
+          const rebroadcastedAt = new Date().toISOString();
 
           // Update rebroadcast count in metadata
           const affectedAnchors = oldAnchors.filter((a) => a.chain_tx_id === txId);
           for (const affected of affectedAnchors) {
-            const affMeta = (affected.metadata as Record<string, unknown>) ?? {};
+            const affMeta = affected.metadata as Record<string, unknown> | null;
+            const updatePayload = RebroadcastSubmittedAnchorUpdateSchema.safeParse({
+              metadata: {
+                ...(affMeta ?? {}),
+                _rebroadcast_attempts: attempts,
+                _last_rebroadcast: rebroadcastedAt,
+              },
+              updated_at: rebroadcastedAt,
+            });
+            if (!updatePayload.success) {
+              logger.error(
+                { anchorId: affected.id, txId, error: updatePayload.error },
+                'Invalid rebroadcast metadata payload',
+              );
+              failed++;
+              continue;
+            }
             await db.from('anchors')
               .update({
-                metadata: { ...affMeta, _rebroadcast_attempts: attempts, _last_rebroadcast: new Date().toISOString() },
-                updated_at: new Date().toISOString(),
+                ...updatePayload.data,
+                metadata: updatePayload.data.metadata as Json,
               })
               .eq('id', affected.id);
           }
@@ -545,7 +694,8 @@ export async function consolidateUtxos(): Promise<ConsolidationResult> {
     await db.from('audit_events').insert({
       event_type: 'chain.consolidation_opportunity',
       event_category: 'SYSTEM',
-      actor_id: '00000000-0000-0000-0000-000000000000',
+      actor_id: null,
+      org_id: null,
       target_type: 'system',
       target_id: 'treasury',
       details: `Fee rate ${currentFeeRate} sat/vB below consolidation threshold ${CONSOLIDATION_MAX_FEE_RATE}. Consider consolidating UTXOs < ${CONSOLIDATION_UTXO_THRESHOLD_SATS} sats.`,
@@ -609,7 +759,8 @@ export async function monitorFeeRates(): Promise<FeeMonitorResult> {
     await db.from('audit_events').insert({
       event_type: 'chain.fee_rate_sample',
       event_category: 'SYSTEM',
-      actor_id: '00000000-0000-0000-0000-000000000000',
+      actor_id: null,
+      org_id: null,
       target_type: 'system',
       target_id: 'mempool',
       details: JSON.stringify({
@@ -656,7 +807,8 @@ export async function monitorFeeRates(): Promise<FeeMonitorResult> {
       await db.from('audit_events').insert({
         event_type: 'chain.fee_spike',
         event_category: 'SYSTEM',
-        actor_id: '00000000-0000-0000-0000-000000000000',
+        actor_id: null,
+        org_id: null,
         target_type: 'system',
         target_id: 'mempool',
         details: `Fee spike: ${currentRate} sat/vB (avg 24h: ${avgRate24h?.toFixed(1)}). Ratio: ${(currentRate / avgRate24h).toFixed(1)}x.`,

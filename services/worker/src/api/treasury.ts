@@ -39,20 +39,33 @@ export interface TreasuryStatusResponse {
     currentRateSatPerVbyte: number;
   } | null;
   recentAnchors: {
-    totalSecured: number;
-    totalPending: number;
-    totalBroadcasting?: number;
-    totalSubmitted?: number;
-    totalRevoked?: number;
-    byStatus?: Record<string, number>;
+    totalSecured: number | null;
+    totalPending: number | null;
+    totalBroadcasting?: number | null;
+    totalSubmitted?: number | null;
+    totalRevoked?: number | null;
+    byStatus?: Record<string, number | null>;
     lastSecuredAt: string | null;
-    distinctTxIds?: number;
-    avgAnchorsPerTx?: number;
+    distinctTxIds?: number | null;
+    avgAnchorsPerTx?: number | null;
     lastAnchorAt?: string | null;
     lastTxAt?: string | null;
-    last24hCount: number;
+    last24hCount: number | null;
   };
   error?: string;
+}
+
+function nonNegativeNumberOrNull(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
+}
+
+function sanitizeStatusCounts(counts: Record<string, unknown> | null | undefined): Record<string, number | null> {
+  if (!counts || typeof counts !== 'object' || Array.isArray(counts)) {
+    return {};
+  }
+  return Object.fromEntries(
+    Object.entries(counts).map(([status, count]) => [status, nonNegativeNumberOrNull(count)]),
+  );
 }
 
 export async function handleTreasuryStatus(
@@ -79,9 +92,15 @@ export async function handleTreasuryStatus(
     },
   };
 
-  // 1. Wallet balance + UTXOs (requires BITCOIN_TREASURY_WIF)
-  if (config.bitcoinTreasuryWif) {
-    try {
+  // Run all three data-fetching sections in parallel. Each is independent
+  // and makes external HTTP/DB calls — running them serially easily exceeds
+  // the frontend's 8-second workerFetch timeout.
+  const [walletResult, feeResult, statsResult] = await Promise.allSettled([
+    // 1. Wallet balance + UTXOs (requires BITCOIN_TREASURY_WIF)
+    (async () => {
+      if (!config.bitcoinTreasuryWif) {
+        return { error: 'Treasury wallet not configured (BITCOIN_TREASURY_WIF not set)' } as const;
+      }
       const address = addressFromWif(config.bitcoinTreasuryWif);
       const utxoProvider = createUtxoProvider({
         type: config.bitcoinUtxoProvider as 'rpc' | 'mempool' | 'getblock',
@@ -90,69 +109,89 @@ export async function handleTreasuryStatus(
         mempoolApiUrl: config.mempoolApiUrl,
         network: config.bitcoinNetwork,
       });
+      const [utxos, blockchainInfo] = await Promise.allSettled([
+        utxoProvider.listUnspent(address),
+        utxoProvider.getBlockchainInfo(),
+      ]);
+      return { address, utxos, blockchainInfo } as const;
+    })(),
 
-      const utxos = await utxoProvider.listUnspent(address);
-      const balanceSats = utxos.reduce((sum, u) => sum + u.valueSats, 0);
+    // 2. Fee estimates
+    (async () => {
+      const useMempoolFees = config.bitcoinUtxoProvider === 'mempool' || !config.bitcoinRpcUrl;
+      const feeEstimator = createFeeEstimator({
+        strategy: useMempoolFees ? 'mempool' : 'static',
+        mempoolApiUrl: config.mempoolApiUrl,
+        staticRate: 1,
+      });
+      return { rate: await feeEstimator.estimateFee(), name: feeEstimator.name };
+    })(),
 
-      result.wallet = {
-        address,
-        balanceSats,
-        utxoCount: utxos.length,
-      };
+    // 3. Anchor stats from Supabase
+    fetchAnchorStats(),
+  ]);
 
-      // Network info
-      try {
-        const blockchainInfo = await utxoProvider.getBlockchainInfo();
-        result.network = {
-          name: blockchainInfo.chain,
-          blockHeight: blockchainInfo.blocks,
+  // Unpack 1: Wallet + network
+  if (walletResult.status === 'fulfilled') {
+    const wr = walletResult.value;
+    if ('error' in wr) {
+      result.error = wr.error;
+    } else {
+      if (wr.utxos.status === 'fulfilled') {
+        const utxos = wr.utxos.value;
+        result.wallet = {
+          address: wr.address,
+          balanceSats: utxos.reduce((sum, u) => sum + u.valueSats, 0),
+          utxoCount: utxos.length,
         };
-      } catch (err) {
-        logger.warn({ error: err }, 'Failed to fetch blockchain info for treasury status');
+      } else {
+        logger.warn({ error: wr.utxos.reason }, 'Failed to fetch wallet data for treasury status');
+        result.error = 'Wallet data temporarily unavailable';
       }
-    } catch (err) {
-      logger.warn({ error: err }, 'Failed to fetch wallet data for treasury status');
-      result.error = 'Wallet data temporarily unavailable';
+      if (wr.blockchainInfo.status === 'fulfilled') {
+        result.network = {
+          name: wr.blockchainInfo.value.chain,
+          blockHeight: wr.blockchainInfo.value.blocks,
+        };
+      } else {
+        logger.warn({ error: wr.blockchainInfo.reason }, 'Failed to fetch blockchain info for treasury status');
+      }
     }
   } else {
-    result.error = 'Treasury wallet not configured (BITCOIN_TREASURY_WIF not set)';
+    logger.warn({ error: walletResult.reason }, 'Failed to fetch wallet data for treasury status');
+    result.error = 'Wallet data temporarily unavailable';
   }
 
-  // 2. Fee estimates
-  try {
-    const useMempoolFees = config.bitcoinUtxoProvider === 'mempool' || !config.bitcoinRpcUrl;
-    const feeEstimator = createFeeEstimator({
-      strategy: useMempoolFees ? 'mempool' : 'static',
-      mempoolApiUrl: config.mempoolApiUrl,
-      staticRate: 1,
-    });
-    const rate = await feeEstimator.estimateFee();
+  // Unpack 2: Fees
+  if (feeResult.status === 'fulfilled') {
     result.fees = {
-      estimatorName: feeEstimator.name,
-      currentRateSatPerVbyte: rate,
+      estimatorName: feeResult.value.name,
+      currentRateSatPerVbyte: feeResult.value.rate,
     };
-  } catch (err) {
-    logger.warn({ error: err }, 'Failed to estimate fees for treasury status');
+  } else {
+    logger.warn({ error: feeResult.reason }, 'Failed to estimate fees for treasury status');
   }
 
-  // 3. Anchor stats from Supabase (shared helper — same query as
-  //    treasury-cache cron, extracted to utils/anchor-stats.ts so SonarCloud
-  //    doesn't flag duplicate-lines density).
-  const stats = await fetchAnchorStats();
-  result.recentAnchors = {
-    totalSecured: stats.total_secured,
-    totalPending: stats.total_pending,
-    totalBroadcasting: stats.total_broadcasting,
-    totalSubmitted: stats.total_submitted,
-    totalRevoked: stats.total_revoked,
-    byStatus: stats.by_status,
-    lastSecuredAt: stats.last_secured_at,
-    distinctTxIds: stats.distinct_tx_count,
-    avgAnchorsPerTx: stats.avg_anchors_per_tx,
-    lastAnchorAt: stats.last_anchor_time,
-    lastTxAt: stats.last_tx_time,
-    last24hCount: stats.last_24h_count,
-  };
+  // Unpack 3: Anchor stats (with sentinel scrubbing from #781)
+  if (statsResult.status === 'fulfilled') {
+    const stats = statsResult.value;
+    result.recentAnchors = {
+      totalSecured: nonNegativeNumberOrNull(stats.total_secured),
+      totalPending: nonNegativeNumberOrNull(stats.total_pending),
+      totalBroadcasting: nonNegativeNumberOrNull(stats.total_broadcasting),
+      totalSubmitted: nonNegativeNumberOrNull(stats.total_submitted),
+      totalRevoked: nonNegativeNumberOrNull(stats.total_revoked),
+      byStatus: sanitizeStatusCounts(stats.by_status),
+      lastSecuredAt: stats.last_secured_at,
+      distinctTxIds: nonNegativeNumberOrNull(stats.distinct_tx_count),
+      avgAnchorsPerTx: nonNegativeNumberOrNull(stats.avg_anchors_per_tx),
+      lastAnchorAt: stats.last_anchor_time,
+      lastTxAt: stats.last_tx_time,
+      last24hCount: nonNegativeNumberOrNull(stats.last_24h_count),
+    };
+  } else {
+    logger.warn({ error: statsResult.reason }, 'Failed to fetch anchor stats for treasury status');
+  }
 
   res.json(result);
 }

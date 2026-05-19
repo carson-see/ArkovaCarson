@@ -98,7 +98,7 @@ export function AnchorStats({ stats, loading }: Readonly<AnchorStatsProps>) {
                   <FileText className="h-3.5 w-3.5" />
                   {TREASURY_LABELS.ANCHOR_STATS_TOTAL_RECORDS}
                 </span>
-                <span className="font-mono font-semibold">{stats.totalAnchors.toLocaleString()}</span>
+                <span className="font-mono font-semibold">{formatMaybeCount(stats.totalAnchors)}</span>
               </div>
               <div className="flex items-center justify-between text-sm">
                 <span className="flex items-center gap-2 text-muted-foreground">
