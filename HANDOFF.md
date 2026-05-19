@@ -1552,4 +1552,4 @@ _Last refreshed: 2026-05-05 by Codex — claims verified against gcloud/MCP/CI o
 
 ---
 
-_Last refreshed: 2026-05-19 by Codex — PR #817 / SCRUM-1599 local worktree update only, not merged/deployed. Added public-safe source provenance validation, fail-closed badge status mapping, worker `/api/badge/:publicId` SVG endpoint, `get_public_anchor` migration 0311 for SUPERSEDED + CSI-03 fields, SUPERSEDED public/internal visibility, and LinkedIn limitation release note. Local test execution initially blocked because this worktree lacked installed `vitest`; dependencies were installed and targeted suites passed._
+_Last refreshed: 2026-05-19 by Codex — claims verified against gcloud/MCP/CI output._

@@ -29,14 +29,17 @@ export function ArkovaBadge({ status, className }: Readonly<ArkovaBadgeProps>) {
   const badgeStatus = toBadgeStatus(status);
   const svg = generateBadgeSvg(`inline-${status}`, { status: badgeStatus });
   const label = BADGE_STATUS_LABELS[badgeStatus];
+  const imageSrc = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
 
   return (
-    <span
+    <img
       className={className}
       data-testid="arkova-badge"
-      dangerouslySetInnerHTML={{ __html: svg }}
-      role="img"
-      aria-label={`Arkova ${label}`}
+      src={imageSrc}
+      alt={`Arkova ${label}`}
+      width={180}
+      height={28}
+      loading="lazy"
     />
   );
 }
