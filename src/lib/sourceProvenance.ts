@@ -8,8 +8,8 @@
  * - Evidence metadata for proof downloads
  */
 
-import { EVIDENCE_LEVEL_LABELS, EVIDENCE_LEVEL_DESCRIPTIONS } from '@/lib/copy';
-import { getAppBaseUrl } from '@/lib/routes';
+import { EVIDENCE_LEVEL_LABELS, EVIDENCE_LEVEL_DESCRIPTIONS, type EvidenceLevel } from '@/lib/copy';
+import { verifyUrl } from '@/lib/routes';
 
 // =============================================================================
 // Types
@@ -19,12 +19,7 @@ import { getAppBaseUrl } from '@/lib/routes';
  * Verification level enum values from CSI-01 evidence package.
  * Ordered from strongest to weakest evidence.
  */
-export type VerificationLevel =
-  | 'issuer_anchored'
-  | 'source_signed'
-  | 'account_linked'
-  | 'captured_url'
-  | 'ai_captured';
+export type VerificationLevel = EvidenceLevel;
 
 /**
  * Source provenance data that may be available on a public verification page.
@@ -253,5 +248,5 @@ export function badgeUrl(publicId: string, status: string): string {
  * Per CSI-03: use Arkova verification URL, no native LinkedIn checkmark claim.
  */
 export function linkedInCredentialUrl(publicId: string): string {
-  return `${getAppBaseUrl()}/verify/${encodeURIComponent(publicId)}`;
+  return verifyUrl(encodeURIComponent(publicId));
 }
