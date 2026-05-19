@@ -295,6 +295,12 @@ jobs:
                 if ! [[ "$local_name" =~ ^[0-9]{4}_ || "$local_name" =~ ^[0-9]{14}_ ]]; then
                   continue
                 fi
+                # Keep PR-owned ledger-drift handling aligned with the verified
+                # historical exemptions above, including SCRUM-908's 0299–0310
+                # db-push ledger rows until operator reconciliation lands.
+                if echo "$local_name" | grep -Eq "$exempt_regex"; then
+                  continue
+                fi
                 local_version="${local_name%%_*}"
                 canonical_suffix=$(echo "$local_name" | sed -E 's/^[0-9]{4}[a-z]?_//; s/^[0-9]{14}_//')
                 exact_version_count=$(echo "$prod_response" | jq --arg version "$local_version" '[.[] | select((.version | tostring) == $version)] | length')
