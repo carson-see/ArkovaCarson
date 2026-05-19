@@ -1,7 +1,51 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { mount } from './index';
 
 // stripTrailingSlashes is not exported, but we can test it via resolveConfig behavior
 // by mounting with trailing-slash URLs. Test the public mount() interface instead.
+
+describe('mount analytics event result', () => {
+  let origFetch: typeof globalThis.fetch;
+  let eventPayloads: Array<{ method: string; result: string }>;
+
+  beforeEach(() => {
+    origFetch = globalThis.fetch;
+    eventPayloads = [];
+  });
+
+  afterEach(() => {
+    globalThis.fetch = origFetch;
+  });
+
+  async function mountWithStatus(status: string): Promise<void> {
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith('/event') && init?.body) {
+        eventPayloads.push(JSON.parse(init.body as string));
+        return new Response('{}', { status: 200 });
+      }
+      return new Response(JSON.stringify({ verified: true, status }), { status: 200 });
+    }) as typeof fetch;
+
+    const target = document.createElement('div');
+    await mount({ publicId: 'ARK-TEST', target, apiBaseUrl: 'https://example.com' });
+  }
+
+  it.each([
+    ['ACTIVE', 'verified'],
+    ['SECURED', 'verified'],
+    ['REVOKED', 'revoked'],
+    ['PENDING', 'not_found'],
+    ['SUBMITTED', 'not_found'],
+    ['BROADCASTING', 'not_found'],
+    ['EXPIRED', 'not_found'],
+    ['SUPERSEDED', 'not_found'],
+  ] as const)('logs %s as result=%s', async (status, expected) => {
+    await mountWithStatus(status);
+    expect(eventPayloads).toHaveLength(1);
+    expect(eventPayloads[0].result).toBe(expected);
+  });
+});
 
 describe('resolveConfig trailing-slash stripping', () => {
   it('strips trailing slashes from apiBaseUrl', async () => {
@@ -14,7 +58,6 @@ describe('resolveConfig trailing-slash stripping', () => {
       return new Response(JSON.stringify({ verified: true, status: 'SECURED' }), { status: 200 });
     }) as typeof fetch;
 
-    const { mount } = await import('./index');
     const target = document.createElement('div');
     await mount({ publicId: 'ARK-TEST', target, apiBaseUrl: 'https://example.com///' });
 
