@@ -32,6 +32,7 @@ describe('mount analytics event result', () => {
   }
 
   it.each([
+    ['ACTIVE', 'verified'],
     ['SECURED', 'verified'],
     ['REVOKED', 'revoked'],
     ['PENDING', 'not_found'],

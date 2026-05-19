@@ -66,6 +66,7 @@ async function fetchAnchor(apiBaseUrl: string, publicId: string): Promise<Anchor
 }
 
 function toAnalyticsResult(status: string): 'verified' | 'revoked' | 'not_found' {
+  if (status === 'ACTIVE') return 'verified';
   if (status === 'SECURED') return 'verified';
   if (status === 'REVOKED') return 'revoked';
   return 'not_found';
