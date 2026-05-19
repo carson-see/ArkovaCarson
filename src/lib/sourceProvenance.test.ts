@@ -4,7 +4,7 @@
  * TDD: These tests cover the source provenance logic for public verification pages.
  */
 
-import { describe, it, expect } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
 import {
   sanitizeSourceUrl,
   isSourceUrlSafe,
@@ -17,6 +17,10 @@ import {
   badgeUrl,
   linkedInCredentialUrl,
 } from './sourceProvenance';
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 // =============================================================================
 // sanitizeSourceUrl
@@ -284,6 +288,11 @@ describe('badgeUrl', () => {
     expect(result).toContain('/api/badge/ARK-2026-001');
     expect(result).toContain('status=SECURED');
   });
+
+  it('encodes public ID path segments', () => {
+    const result = badgeUrl('ARK 2026/001?x=1', 'SECURED');
+    expect(result).toContain('/api/badge/ARK%202026%2F001%3Fx%3D1');
+  });
 });
 
 // =============================================================================
@@ -294,6 +303,12 @@ describe('linkedInCredentialUrl', () => {
   it('builds Arkova verification URL (not LinkedIn native)', () => {
     const result = linkedInCredentialUrl('ARK-2026-001');
     expect(result).toBe('https://app.arkova.ai/verify/ARK-2026-001');
+  });
+
+  it('uses configured app base URL and encodes the public ID', () => {
+    vi.stubEnv('VITE_APP_URL', 'https://preview.arkova.ai/');
+    const result = linkedInCredentialUrl('ARK 2026/001?x=1');
+    expect(result).toBe('https://preview.arkova.ai/verify/ARK%202026%2F001%3Fx%3D1');
   });
 
   it('does not include linkedin.com domain', () => {

@@ -9,6 +9,7 @@
  */
 
 import { EVIDENCE_LEVEL_LABELS, EVIDENCE_LEVEL_DESCRIPTIONS } from '@/lib/copy';
+import { getAppBaseUrl } from '@/lib/routes';
 
 // =============================================================================
 // Types
@@ -130,22 +131,6 @@ export function isSourceUrlSafe(url: string | null | undefined): boolean {
 // =============================================================================
 
 /**
- * Get the human-readable label for a verification level.
- */
-export function getEvidenceLevelLabel(level: VerificationLevel | string | null | undefined): string | null {
-  if (!level) return null;
-  return EVIDENCE_LEVEL_LABELS[level as VerificationLevel] ?? null;
-}
-
-/**
- * Get the description for a verification level.
- */
-export function getEvidenceLevelDescription(level: VerificationLevel | string | null | undefined): string | null {
-  if (!level) return null;
-  return EVIDENCE_LEVEL_DESCRIPTIONS[level as VerificationLevel] ?? null;
-}
-
-/**
  * Ordered strength of verification levels (highest first).
  */
 const LEVEL_STRENGTH: Record<VerificationLevel, number> = {
@@ -156,12 +141,35 @@ const LEVEL_STRENGTH: Record<VerificationLevel, number> = {
   ai_captured: 1,
 };
 
+function isVerificationLevel(level: string): level is VerificationLevel {
+  return Object.prototype.hasOwnProperty.call(LEVEL_STRENGTH, level);
+}
+
+/**
+ * Get the human-readable label for a verification level.
+ */
+export function getEvidenceLevelLabel(level: VerificationLevel | string | null | undefined): string | null {
+  if (!level) return null;
+  if (!isVerificationLevel(level)) return null;
+  return EVIDENCE_LEVEL_LABELS[level] ?? null;
+}
+
+/**
+ * Get the description for a verification level.
+ */
+export function getEvidenceLevelDescription(level: VerificationLevel | string | null | undefined): string | null {
+  if (!level) return null;
+  if (!isVerificationLevel(level)) return null;
+  return EVIDENCE_LEVEL_DESCRIPTIONS[level] ?? null;
+}
+
 /**
  * Get the relative strength of a verification level (1-5, 5 being strongest).
  */
 export function getEvidenceLevelStrength(level: VerificationLevel | string | null | undefined): number {
   if (!level) return 0;
-  return LEVEL_STRENGTH[level as VerificationLevel] ?? 0;
+  if (!isVerificationLevel(level)) return 0;
+  return LEVEL_STRENGTH[level];
 }
 
 /**
@@ -229,10 +237,11 @@ export function buildEvidenceProofFields(data: SourceProvenanceData): EvidencePr
  * Build the URL for the Arkova verification badge SVG.
  */
 export function badgeUrl(publicId: string, status: string): string {
+  const safePublicId = encodeURIComponent(publicId);
   const baseUrl = typeof window !== 'undefined'
     ? (window.location.origin)
     : 'https://app.arkova.ai';
-  return `${baseUrl}/api/badge/${publicId}?status=${encodeURIComponent(status)}`;
+  return `${baseUrl}/api/badge/${safePublicId}?status=${encodeURIComponent(status)}`;
 }
 
 // =============================================================================
@@ -244,5 +253,5 @@ export function badgeUrl(publicId: string, status: string): string {
  * Per CSI-03: use Arkova verification URL, no native LinkedIn checkmark claim.
  */
 export function linkedInCredentialUrl(publicId: string): string {
-  return `https://app.arkova.ai/verify/${publicId}`;
+  return `${getAppBaseUrl()}/verify/${encodeURIComponent(publicId)}`;
 }
