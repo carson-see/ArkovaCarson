@@ -28,10 +28,15 @@ export function LinkedInCredentialHelper({
   const credentialUrl = linkedInCredentialUrl(publicId);
 
   const handleCopy = useCallback(async () => {
-    await navigator.clipboard.writeText(credentialUrl);
-    setCopied(true);
-    toast.success(LINKEDIN_SHARE_LABELS.URL_COPIED);
-    setTimeout(() => setCopied(false), 2000);
+    try {
+      await navigator.clipboard.writeText(credentialUrl);
+      setCopied(true);
+      toast.success(LINKEDIN_SHARE_LABELS.URL_COPIED);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      setCopied(false);
+      toast.error(LINKEDIN_SHARE_LABELS.URL_COPY_FAILED);
+    }
   }, [credentialUrl]);
 
   return (

@@ -9,6 +9,7 @@
  */
 
 import { EVIDENCE_LEVEL_LABELS, EVIDENCE_LEVEL_DESCRIPTIONS } from '@/lib/copy';
+import { z } from 'zod';
 
 // =============================================================================
 // Types
@@ -24,6 +25,21 @@ export type VerificationLevel =
   | 'account_linked'
   | 'captured_url'
   | 'ai_captured';
+
+export const VERIFICATION_LEVEL_VALUES = [
+  'issuer_anchored',
+  'source_signed',
+  'account_linked',
+  'captured_url',
+  'ai_captured',
+] as const satisfies readonly VerificationLevel[];
+
+export const verificationLevelSchema = z.enum(VERIFICATION_LEVEL_VALUES);
+
+export function parseVerificationLevel(value: unknown): VerificationLevel | null {
+  const parsed = verificationLevelSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
+}
 
 /**
  * Source provenance data that may be available on a public verification page.
@@ -87,6 +103,9 @@ export function sanitizeSourceUrl(rawUrl: string | null | undefined): string | n
   try {
     const url = new URL(rawUrl);
 
+    // Only public web URLs are safe to display or link from verification pages.
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
+
     // Never display URLs with userinfo (user:pass@host)
     if (url.username || url.password) return null;
 
@@ -127,16 +146,18 @@ export function isSourceUrlSafe(url: string | null | undefined): boolean {
  * Get the human-readable label for a verification level.
  */
 export function getEvidenceLevelLabel(level: VerificationLevel | string | null | undefined): string | null {
-  if (!level) return null;
-  return EVIDENCE_LEVEL_LABELS[level as VerificationLevel] ?? null;
+  const parsed = parseVerificationLevel(level);
+  if (!parsed) return null;
+  return EVIDENCE_LEVEL_LABELS[parsed] ?? null;
 }
 
 /**
  * Get the description for a verification level.
  */
 export function getEvidenceLevelDescription(level: VerificationLevel | string | null | undefined): string | null {
-  if (!level) return null;
-  return EVIDENCE_LEVEL_DESCRIPTIONS[level as VerificationLevel] ?? null;
+  const parsed = parseVerificationLevel(level);
+  if (!parsed) return null;
+  return EVIDENCE_LEVEL_DESCRIPTIONS[parsed] ?? null;
 }
 
 /**
@@ -154,8 +175,9 @@ const LEVEL_STRENGTH: Record<VerificationLevel, number> = {
  * Get the relative strength of a verification level (1-5, 5 being strongest).
  */
 export function getEvidenceLevelStrength(level: VerificationLevel | string | null | undefined): number {
-  if (!level) return 0;
-  return LEVEL_STRENGTH[level as VerificationLevel] ?? 0;
+  const parsed = parseVerificationLevel(level);
+  if (!parsed) return 0;
+  return LEVEL_STRENGTH[parsed] ?? 0;
 }
 
 /**
@@ -210,7 +232,8 @@ export function buildEvidenceProofFields(data: SourceProvenanceData): EvidencePr
     if (safe) fields.source_url = safe;
   }
   if (data.fetched_at) fields.fetched_at = data.fetched_at;
-  if (data.verification_level) fields.verification_level = data.verification_level;
+  const verificationLevel = parseVerificationLevel(data.verification_level);
+  if (verificationLevel) fields.verification_level = verificationLevel;
 
   return fields;
 }
@@ -222,11 +245,11 @@ export function buildEvidenceProofFields(data: SourceProvenanceData): EvidencePr
 /**
  * Build the URL for the Arkova verification badge SVG.
  */
-export function badgeUrl(publicId: string, status: string): string {
+export function badgeUrl(publicId: string): string {
   const baseUrl = typeof window !== 'undefined'
     ? (window.location.origin)
     : 'https://app.arkova.ai';
-  return `${baseUrl}/api/badge/${publicId}?status=${encodeURIComponent(status)}`;
+  return `${baseUrl}/api/badge/${encodeURIComponent(publicId)}`;
 }
 
 // =============================================================================
@@ -238,5 +261,5 @@ export function badgeUrl(publicId: string, status: string): string {
  * Per CSI-03: use Arkova verification URL, no native LinkedIn checkmark claim.
  */
 export function linkedInCredentialUrl(publicId: string): string {
-  return `https://app.arkova.ai/verify/${publicId}`;
+  return `https://app.arkova.ai/verify/${encodeURIComponent(publicId)}`;
 }

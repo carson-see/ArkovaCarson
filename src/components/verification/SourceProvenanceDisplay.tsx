@@ -16,8 +16,8 @@ import { EvidenceLevelBadge } from './EvidenceLevelBadge';
 import {
   sanitizeSourceUrl,
   formatProvider,
+  parseVerificationLevel,
   type SourceProvenanceData,
-  type VerificationLevel,
 } from '@/lib/sourceProvenance';
 
 interface SourceProvenanceDisplayProps {
@@ -55,7 +55,8 @@ export function SourceProvenanceDisplay({
 }: Readonly<SourceProvenanceDisplayProps>) {
   const safeUrl = sanitizeSourceUrl(data.source_url);
   const provider = formatProvider(data.source_provider);
-  const hasAnyContent = safeUrl || provider || data.verification_level || data.fetched_at;
+  const verificationLevel = parseVerificationLevel(data.verification_level);
+  const hasAnyContent = safeUrl || provider || verificationLevel || data.fetched_at;
 
   if (!hasAnyContent) return null;
 
@@ -68,9 +69,9 @@ export function SourceProvenanceDisplay({
 
       <div className="space-y-2">
         {/* Evidence Level */}
-        {data.verification_level && (
+        {verificationLevel && (
           <EvidenceLevelBadge
-            level={data.verification_level as VerificationLevel}
+            level={verificationLevel}
             showDescription
           />
         )}

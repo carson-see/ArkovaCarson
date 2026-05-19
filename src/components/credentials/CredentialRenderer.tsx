@@ -44,6 +44,7 @@ const STATUS_COLORS: Record<string, string> = {
   PENDING: 'bg-amber-500/15 text-amber-400 border border-amber-500/30',
   REVOKED: 'bg-red-500/15 text-red-400 border border-red-500/30',
   EXPIRED: 'bg-[#859398]/15 text-[#859398] border border-[#859398]/30',
+  SUPERSEDED: 'bg-[#859398]/15 text-[#859398] border border-[#859398]/30',
 };
 
 /** Type-specific visual config */

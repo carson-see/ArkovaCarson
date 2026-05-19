@@ -35,9 +35,6 @@ export const ROUTES = {
   COMPLIANCE_TRENDS: '/organization/compliance-trends',
   COMPLIANCE_SCORECARD: '/compliance/scorecard',
 
-  // Badge endpoint (CSI-03)
-  BADGE: '/badge/:publicId',
-
   // OAuth callback (Supabase redirects here after Google OAuth)
   AUTH_CALLBACK: '/auth/callback',
 

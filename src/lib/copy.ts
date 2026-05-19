@@ -20,6 +20,7 @@ export const ANCHOR_STATUS_LABELS = {
   SECURED: 'Secured',
   REVOKED: 'Revoked',
   EXPIRED: 'Expired',
+  SUPERSEDED: 'Superseded',
 } as const;
 
 export const ANCHOR_STATUS_DESCRIPTIONS = {
@@ -28,6 +29,7 @@ export const ANCHOR_STATUS_DESCRIPTIONS = {
   SECURED: 'Your record has been permanently secured with cryptographic verification.',
   REVOKED: 'This record has been revoked and is no longer active.',
   EXPIRED: 'This record has passed its expiration date.',
+  SUPERSEDED: 'This record has been replaced by a newer version.',
 } as const;
 
 // =============================================================================
@@ -42,6 +44,7 @@ export const LIFECYCLE_LABELS = {
   SECURED: 'Secured',
   REVOKED: 'Revoked',
   EXPIRED: 'Expired',
+  SUPERSEDED: 'Superseded',
   REVOCATION_REASON: 'Reason',
   EXPIRES_ON: 'Expires',
 } as const;
@@ -717,10 +720,12 @@ export const PUBLIC_VERIFICATION_LABELS = {
   NOT_FOUND_DESC: 'The document you are looking for may not exist or has not been verified yet.',
   RECORD_REVOKED: 'Record Revoked',
   RECORD_EXPIRED: 'Record Expired',
+  RECORD_SUPERSEDED: 'Record Superseded',
   DOCUMENT_VERIFIED: 'Document Verified',
   VERIFIED_ON: 'Verified on {date}',
   REVOKED_DESC: 'This record has been revoked by the issuing organization',
   EXPIRED_DESC: 'This record has passed its expiration date',
+  SUPERSEDED_DESC: 'This record has been replaced by a newer version.',
   VERIFIED_DESC: 'This record is permanently anchored.',
   CRYPTOGRAPHIC_PROOF: 'Cryptographic Proof',
   FINGERPRINT_SHA256: 'Fingerprint (SHA-256)',
@@ -2614,6 +2619,7 @@ export const LINKEDIN_SHARE_LABELS = {
   CREDENTIAL_URL_LABEL: 'Credential URL for LinkedIn',
   COPY_URL: 'Copy verification URL',
   URL_COPIED: 'Verification URL copied to clipboard',
+  URL_COPY_FAILED: 'Unable to copy verification URL',
   NOTE: 'Use this URL as the Credential URL when adding to your LinkedIn profile.',
   CREDENTIAL_URL_HELP: 'This links to your Arkova verification page, not a native LinkedIn badge.',
 } as const;
@@ -2622,7 +2628,15 @@ export const LINKEDIN_SHARE_LABELS = {
 
 export const BADGE_LABELS = {
   ALT_TEXT: 'Arkova Verified',
+  ALT_TEXT_PREFIX: 'Arkova',
   TITLE: 'Arkova Verification Badge',
+  STATUS_VERIFIED: 'Verified',
+  STATUS_REVOKED: 'Revoked',
+  STATUS_EXPIRED: 'Expired',
+  STATUS_PENDING: 'Pending',
+  STATUS_SUBMITTED: 'Submitted',
+  STATUS_SUPERSEDED: 'Superseded',
+  STATUS_UNAVAILABLE: 'Unavailable',
 } as const;
 
 /** DPO/Information Officer contact — single source for all jurisdictions (REG-28) */

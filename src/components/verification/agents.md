@@ -1,5 +1,5 @@
 # agents.md — verification
-_Last updated: 2026-05-15 (SCRUM-952 public verify state contract)_
+_Last updated: 2026-05-19 (SCRUM-1599 source provenance + badge safety)_
 
 ## What This Folder Contains
 
@@ -32,6 +32,17 @@ confirmed the underlying transaction.
   proof sections visible.
 - **EXPIRED** → `Record Expired`, amber clock, neutral outline badge, terminal
   proof sections visible.
+- **SUPERSEDED** → `Record Superseded`, gray XCircle, neutral badge, terminal
+  proof sections visible. Never collapse this to PENDING or SECURED.
+
+## Source provenance (SCRUM-1599, 2026-05-19)
+
+`PublicVerification.tsx` may receive source provenance either as top-level RPC
+fields or from sanitized `metadata`. Use `extractSourceProvenance()` and
+`parseVerificationLevel()` rather than casting arbitrary strings. Public
+credential-card metadata is defensively filtered for PII and CSI internal fields;
+source fields render in `SourceProvenanceDisplay`, and hashes belong in proof
+downloads.
 
 ## Do / Don't Rules
 

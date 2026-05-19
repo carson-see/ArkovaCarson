@@ -73,6 +73,12 @@ describe('sanitizeSourceUrl', () => {
     expect(sanitizeSourceUrl('ftp://')).toBeNull();
   });
 
+  it('rejects non-http URL schemes', () => {
+    expect(sanitizeSourceUrl('javascript:alert(1)')).toBeNull();
+    expect(sanitizeSourceUrl('data:text/html,<script>alert(1)</script>')).toBeNull();
+    expect(sanitizeSourceUrl('ftp://example.com/cert')).toBeNull();
+  });
+
   it('preserves path structure', () => {
     const url = 'https://www.credly.com/badges/12345678-abcd-efgh-ijkl-mnopqrstuvwx';
     expect(sanitizeSourceUrl(url)).toBe(url);
@@ -249,10 +255,16 @@ describe('buildEvidenceProofFields', () => {
 // =============================================================================
 
 describe('badgeUrl', () => {
-  it('builds a badge URL with public ID and status', () => {
-    const result = badgeUrl('ARK-2026-001', 'SECURED');
+  it('builds a badge URL with public ID', () => {
+    const result = badgeUrl('ARK-2026-001');
     expect(result).toContain('/api/badge/ARK-2026-001');
-    expect(result).toContain('status=SECURED');
+    expect(result).not.toContain('status=');
+  });
+
+  it('encodes public IDs in the badge path', () => {
+    const result = badgeUrl('ARK/2026?`#001`');
+    expect(result).toContain('/api/badge/ARK%2F2026%3F%60%23001%60');
+    expect(result).not.toContain('/api/badge/ARK/2026?`#001`');
   });
 });
 
@@ -269,5 +281,10 @@ describe('linkedInCredentialUrl', () => {
   it('does not include linkedin.com domain', () => {
     const result = linkedInCredentialUrl('ARK-2026-001');
     expect(result).not.toContain('linkedin.com');
+  });
+
+  it('encodes public IDs in the verification path', () => {
+    const result = linkedInCredentialUrl('ARK/2026?`#001`');
+    expect(result).toBe('https://app.arkova.ai/verify/ARK%2F2026%3F%60%23001%60');
   });
 });

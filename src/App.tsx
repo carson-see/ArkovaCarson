@@ -98,7 +98,6 @@ const DataRetentionPage = React.lazy(() => import('@/pages/DataRetentionPage').t
 const AuditorBatchPage = React.lazy(() => import('@/pages/AuditorBatchPage').then(m => ({ default: m.AuditorBatchPage })));
 const ComplianceTrendPage = React.lazy(() => import('@/pages/ComplianceTrendPage').then(m => ({ default: m.ComplianceTrendPage })));
 const ComplianceScorecardPage = React.lazy(() => import('@/pages/ComplianceScorecardPage').then(m => ({ default: m.ComplianceScorecardPage })));
-const BadgePage = React.lazy(() => import('@/pages/BadgePage').then(m => ({ default: m.BadgePage })));
 
 /**
  * Redirect authenticated users away from login/signup.
@@ -216,7 +215,6 @@ export function App() {
           <Route path={ROUTES.INDEPENDENT_VERIFY} element={<RouteErrorBoundary section="IndependentVerify"><IndependentVerifyPage /></RouteErrorBoundary>} />
           <Route path={ROUTES.DATA_RETENTION} element={<RouteErrorBoundary section="DataRetention"><DataRetentionPage /></RouteErrorBoundary>} />
           <Route path={ROUTES.VAULT_LEGACY} element={<Navigate to={ROUTES.DASHBOARD} replace />} />
-          <Route path={ROUTES.BADGE} element={<BadgePage />} />
 
           {/* OAuth callback — Supabase redirects here after Google sign-in */}
           <Route path={ROUTES.AUTH_CALLBACK} element={<AuthCallbackPage />} />

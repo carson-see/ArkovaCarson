@@ -1,10 +1,11 @@
 # services/worker/src/
+_Last updated: 2026-05-19 (SCRUM-1599 badge endpoint)_
 
 Root of the Arkova anchoring worker — a Node + Express service for backend processing (webhooks, cron, Bitcoin anchoring, billing, API).
 
 ## Key Files
 
-- **index.ts** — Express app compositor. Mounts routers, Sentry, compression, Stripe webhook handler, and cron scheduler. Slim (~100 lines); route handlers live in `routes/`.
+- **index.ts** — Express app compositor. Mounts routers, Sentry, compression, Stripe webhook handler, public badge endpoint, and cron scheduler. Slim (~100 lines); route handlers live in `routes/`.
 - **config.ts** — Zod-validated environment config. All secrets from env vars, never logged. Exports singleton `config`.
 - **auth.ts** — JWT verification: local `jose` verification (preferred) with Supabase API fallback.
 - **config.test.ts** / **auth.test.ts** / **index.test.ts** — Unit tests for config parsing, auth, and app bootstrap.
