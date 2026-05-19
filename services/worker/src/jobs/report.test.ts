@@ -245,7 +245,7 @@ describe('processReport', () => {
     await processReport(makeReport({ report_type: 'activity_log', org_id: null }));
 
     const eqCalls = (auditEventsTable.eq as ReturnType<typeof vi.fn>).mock.calls;
-    const orgIdCalls = eqCalls.filter(([field]: [string]) => field === 'org_id');
+    const orgIdCalls = eqCalls.filter(([field]) => field === 'org_id');
     expect(orgIdCalls).toHaveLength(0);
   });
 
