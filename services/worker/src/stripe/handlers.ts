@@ -10,13 +10,14 @@
 
 import type Stripe from 'stripe';
 import { db } from '../utils/db.js';
-import type { TablesUpdate } from '../types/database.types.js';
+import type { TypeSafeTablesUpdate } from '../types/database-overrides.js';
+import type { SubscriptionTier } from '../types/check-constraint-values.js';
 import { logger } from '../utils/logger.js';
 import { callRpc } from '../utils/rpc.js';
 
 type StripeEvent = Stripe.Event;
 
-const PROFILE_TIER_BY_PLAN_ID: Record<string, string> = {
+const PROFILE_TIER_BY_PLAN_ID: Record<string, SubscriptionTier> = {
   free: 'free',
   individual_verified_monthly: 'verified_individual',
   individual_verified_annual: 'verified_individual',
@@ -285,21 +286,24 @@ export async function handleCheckoutComplete(event: StripeEvent): Promise<void> 
     }
   }
 
+  // Resolve org for audit event + org propagation
+  const { data: adminProfile, error: profileError } = await db
+    .from('profiles')
+    .select('org_id')
+    .eq('id', userId)
+    .maybeSingle();
+  if (profileError) {
+    logger.warn({ error: profileError, userId }, 'Failed to resolve org for checkout audit — org_id will be null');
+  }
+
   // Log audit event
   await db.from('audit_events').insert({
     event_type: 'payment.subscription_created',
     event_category: 'ADMIN',
     actor_id: userId,
+    org_id: adminProfile?.org_id ?? null,
     details: `Subscription created: ${session.subscription}`,
   });
-
-  // Propagate subscription activation to org: set verification_status = VERIFIED
-  // and mark the admin profile as is_verified = true (Verified Admin badge).
-  const { data: adminProfile } = await db
-    .from('profiles')
-    .select('org_id')
-    .eq('id', userId)
-    .maybeSingle();
 
   if (adminProfile?.org_id) {
     const orgId = adminProfile.org_id;
@@ -453,7 +457,7 @@ export async function handleSubscriptionUpdated(event: StripeEvent): Promise<voi
     firstItem != null && firstItem.current_period_start != null && firstItem.current_period_end != null;
 
   // Build update payload — period fields only when valid.
-  const updatePayload: TablesUpdate<'subscriptions'> = {
+  const updatePayload: TypeSafeTablesUpdate<'subscriptions'> = {
     status: mappedStatus,
     cancel_at_period_end: subscription.cancel_at_period_end,
   };
@@ -498,6 +502,7 @@ export async function handleSubscriptionUpdated(event: StripeEvent): Promise<voi
       event_type: 'payment.plan_changed',
       event_category: 'ADMIN',
       actor_id: existingSub.user_id,
+      org_id: existingSub.org_id ?? null,
       details: `Plan changed from ${existingSub.plan_id} to ${newPlanId} (subscription: ${subscription.id})`,
     });
 
@@ -514,6 +519,7 @@ export async function handleSubscriptionUpdated(event: StripeEvent): Promise<voi
       event_type: 'payment.subscription_cancel_scheduled',
       event_category: 'ADMIN',
       actor_id: existingSub.user_id,
+      org_id: existingSub.org_id ?? null,
       details: `Subscription ${subscription.id} scheduled for cancellation at period end`,
     });
   }
@@ -536,9 +542,9 @@ export async function handleSubscriptionDeleted(event: StripeEvent): Promise<voi
   logger.info({ subscriptionId: subscription.id }, 'Processing subscription deletion');
 
   // SCRUM-1266 (R2-3) + PR #567 review-fix — orphan-row guard via shared helper.
-  const existingSub = await lookupSubscriptionOrThrow<{ user_id: string | null }>(
+  const existingSub = await lookupSubscriptionOrThrow<{ user_id: string | null; org_id: string | null }>(
     subscription.id,
-    'user_id',
+    'user_id, org_id',
     { subscriptionId: subscription.id },
     'subscription_deleted',
   );
@@ -560,6 +566,7 @@ export async function handleSubscriptionDeleted(event: StripeEvent): Promise<voi
       event_type: 'payment.subscription_canceled',
       event_category: 'ADMIN',
       actor_id: existingSub.user_id,
+      org_id: existingSub.org_id ?? null,
       details: `Subscription canceled: ${subscription.id}`,
     });
   }
@@ -611,6 +618,7 @@ export async function handlePaymentFailed(event: StripeEvent): Promise<void> {
         event_type: 'payment.failed',
         event_category: 'ADMIN',
         actor_id: target.userId,
+        org_id: target.orgId,
         details: `Payment failed for invoice: ${invoice.id}`,
       });
     }
@@ -667,6 +675,7 @@ export async function handlePaymentSucceeded(event: StripeEvent): Promise<void> 
       event_type: 'payment.succeeded',
       event_category: 'ADMIN',
       actor_id: target.userId,
+      org_id: target.orgId,
       details: `Payment succeeded for invoice: ${invoice.id}`,
     });
   }
@@ -717,11 +726,21 @@ async function handleIdentityVerified(event: StripeEvent): Promise<void> {
     throw error;
   }
 
-  // Log audit event
+  // Resolve org for audit event
+  const { data: verifiedProfile, error: verifyProfileError } = await db
+    .from('profiles')
+    .select('org_id')
+    .eq('id', userId)
+    .maybeSingle();
+  if (verifyProfileError) {
+    logger.warn({ error: verifyProfileError, userId }, 'Failed to resolve org for identity verification audit — org_id will be null');
+  }
+
   await db.from('audit_events').insert({
     actor_id: userId,
     event_type: 'IDENTITY_VERIFIED',
     event_category: 'ADMIN',
+    org_id: verifiedProfile?.org_id ?? null,
     details: `Identity verified via Stripe session ${session.id}`,
   });
 

@@ -15,6 +15,7 @@
  * Auth: service account on Cloud Run needs `roles/logging.logWriter`.
  */
 
+import type { AuditEventCategory } from '../types/audit-event-category.js';
 import { getGcpAccessToken, hasGcpCredential } from '../utils/gcp-auth.js';
 import { logger } from '../utils/logger.js';
 
@@ -22,7 +23,7 @@ export interface AuditLogEntry {
   /** audit_events.id — deduplicates retries against Cloud Logging */
   id: string;
   event_type: string;
-  event_category: string;
+  event_category: AuditEventCategory;
   actor_id: string | null;
   org_id: string | null;
   target_type: string | null;
