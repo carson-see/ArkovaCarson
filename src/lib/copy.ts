@@ -2577,3 +2577,28 @@ export const PRIVACY_NOTICE_LABELS = {
 
 /** DPO/Information Officer contact — single source for all jurisdictions (REG-28) */
 export const PRIVACY_CONTACT_EMAIL = 'privacy@arkova.ai';
+
+// ─── Evidence Level Labels (CSI-03 / SCRUM-1599) ─────────────────────────────
+
+export type EvidenceLevel =
+  | 'issuer_anchored'
+  | 'source_signed'
+  | 'account_linked'
+  | 'captured_url'
+  | 'ai_captured';
+
+export const EVIDENCE_LEVEL_LABELS = {
+  issuer_anchored: 'Issuer Anchored',
+  source_signed: 'Source Signed',
+  account_linked: 'Account Linked',
+  captured_url: 'Captured URL Evidence',
+  ai_captured: 'AI-Captured Evidence',
+} as const satisfies Record<EvidenceLevel, string>;
+
+export const EVIDENCE_LEVEL_DESCRIPTIONS = {
+  issuer_anchored: 'Verified directly with the issuing organization. The credential was cryptographically anchored by the original issuer.',
+  source_signed: 'The credential source provided a cryptographic signature proving origin and integrity.',
+  account_linked: 'Imported from an authenticated account. The holder proved access to the issuing platform.',
+  captured_url: 'Captured from a public URL. The content was fetched and fingerprinted at the recorded time.',
+  ai_captured: 'Extracted using AI from an uploaded document. Content was parsed and structured automatically.',
+} as const satisfies Record<EvidenceLevel, string>;
