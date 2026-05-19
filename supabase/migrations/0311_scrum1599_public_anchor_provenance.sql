@@ -71,7 +71,7 @@ BEGIN
     RETURN jsonb_build_object('error', 'Record not found');
   END IF;
 
-  IF v_recipient_raw IS NOT NULL AND v_recipient_raw != '' THEN
+  IF v_recipient_raw IS NOT NULL AND length(v_recipient_raw) > 0 THEN
     v_recipient_hash := encode(extensions.digest(v_recipient_raw::bytea, 'sha256'), 'hex');
     v_result := v_result || jsonb_build_object('recipient_identifier', v_recipient_hash);
   ELSE
