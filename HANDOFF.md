@@ -14,6 +14,10 @@
 
 ## Now
 
+### 2026-05-19 — SCRUM-1101 / PR #812 DocuSign Connect provision audit
+
+**PR #812** (`feat/scrum-1101-docusign-connect-provision`) advanced to head `10e1cff6` with a narrow TDD fix: `provisionConnectListener` now sends DocuSign custom Connect config fields (`configurationType: custom`, `includeHMAC: true`, `envelopeEvents: ['Completed']`) and test coverage pins the payload. Local verification passed: worker DocuSign/report targeted tests 56/56, root DocuSign connector component tests 13/13, root/worker typecheck, root lint, worker lint (warnings only), `lint:copy`, and audit category sync. PR remains **blocked**: GitHub review decision is still CHANGES_REQUESTED due unresolved staging evidence thread; `Staging Soak Evidence Gate` fails because `Soak end` is still `IN PROGRESS ...` instead of an ISO timestamp; PR is BEHIND `main` by 56 commits; SCRUM-1101/SCRUM-1718 AC still have implementation/evidence gaps for refresh-token Secret Manager storage and the live document-fetch job processor wiring.
+
 ### 2026-05-16 — SCRUM-1966 prod hotfix MERGED (PR #805)
 
 **PR #805 merged** to `main` at 2026-05-16 (merge commit `19d50084`). Three production hotfixes: (1) RLS statement timeout on bulk upload — consolidated 3 anchors SELECT policies into 1 with scalar subquery wrappers, same for attestations; query time dropped from timeout to 0.134ms. (2) Treasury x402-stats 502 — `parseX402StatsPayload` null handling fix. (3) Missing org_credits for Arkova org — seeded Free-tier allocation. Migrations 0307+0308. T2 12h soak: 115K requests, zero 500s. Jira: SCRUM-1966 → Done. Confluence: [page 53411876](https://arkova.atlassian.net/wiki/spaces/A/pages/53411876). Bug tracker: BUG-RLS-TIMEOUT (P1), BUG-TREASURY-502 (P2), BUG-ORG-CREDITS-MISSING (P3).
