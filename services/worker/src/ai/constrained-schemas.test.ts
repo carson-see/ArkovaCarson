@@ -16,6 +16,15 @@ import {
   type ConstrainedDecodingSchema,
 } from './constrained-schemas.js';
 
+interface SchemaProperty {
+  type?: string;
+  minimum?: number;
+  maximum?: number;
+  items?: SchemaProperty;
+  properties?: Record<string, SchemaProperty>;
+  enum?: string[];
+}
+
 function validateSchemaStructure(schema: ConstrainedDecodingSchema) {
   const s = schema.jsonSchema;
   expect(s.type).toBe('object');
@@ -23,7 +32,6 @@ function validateSchemaStructure(schema: ConstrainedDecodingSchema) {
     expect.arrayContaining(['answer', 'confidence', 'risks', 'recommendations', 'citations']),
   );
 
-  interface SchemaProperty { type?: string; minimum?: number; maximum?: number; items?: SchemaProperty; properties?: Record<string, SchemaProperty>; enum?: string[] }
   const props = s.properties as Record<string, SchemaProperty>;
   expect(props.answer.type).toBe('string');
   expect(props.confidence.type).toBe('number');
@@ -70,7 +78,6 @@ describe('ConstrainedDecodingSchemas', () => {
     });
 
     it('enum IDs match canonicalIds', () => {
-      interface SchemaProperty { type?: string; items?: SchemaProperty; properties?: Record<string, SchemaProperty>; enum?: string[] }
       const props = FCRA_SCHEMA.jsonSchema.properties as Record<string, SchemaProperty>;
       const citationEnum = props.citations.items!.properties!.record_id.enum;
       expect(citationEnum).toEqual(FCRA_SCHEMA.canonicalIds);

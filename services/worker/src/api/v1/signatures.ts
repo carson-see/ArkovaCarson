@@ -267,7 +267,12 @@ router.post('/sign', async (req: Request, res: Response) => {
       return;
     }
 
-    const sigId = sigRecord.id as string;
+    const sigId = sigRecord.id;
+    if (typeof sigId !== 'string' || sigId.length === 0) {
+      logger.error({ publicId }, 'Signature record insert returned an invalid id');
+      res.status(500).json({ error: 'Failed to create signature' });
+      return;
+    }
 
     // Invoke AdES engine to sign
     const engine = getAdesEngine();
