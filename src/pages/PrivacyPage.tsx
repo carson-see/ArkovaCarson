@@ -7,6 +7,7 @@
 import { Link } from 'react-router-dom';
 import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
 import { JurisdictionPrivacyNotices } from '@/components/compliance/JurisdictionPrivacyNotices';
+import { LEGAL_PAGE_LABELS } from '@/lib/copy';
 
 import { usePageMeta } from '@/hooks/usePageMeta';
 
@@ -123,8 +124,7 @@ export function PrivacyPage() {
           </div>
 
           <p className="text-xs pt-6 border-t">
-            We may update this policy from time to time. Material changes will be posted here,
-            and registered users will receive notice when required.
+            {LEGAL_PAGE_LABELS.PRIVACY_UPDATE_NOTICE}
           </p>
         </div>
       </main>

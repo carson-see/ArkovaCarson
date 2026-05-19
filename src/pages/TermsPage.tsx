@@ -6,6 +6,7 @@
 
 import { Link } from 'react-router-dom';
 import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
+import { LEGAL_PAGE_LABELS } from '@/lib/copy';
 
 import { usePageMeta } from '@/hooks/usePageMeta';
 
@@ -101,8 +102,7 @@ export function TermsPage() {
           </section>
 
           <p className="text-xs pt-6 border-t">
-            We may update these terms from time to time. Material changes will be posted here,
-            and registered users will receive notice when required.
+            {LEGAL_PAGE_LABELS.TERMS_UPDATE_NOTICE}
           </p>
         </div>
       </main>

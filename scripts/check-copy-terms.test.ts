@@ -9,7 +9,12 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { FORBIDDEN_TERMS, LAUNCH_BLOCKER_COPY_TERMS, stripClassNameAttributes } from './check-copy-terms.js';
+import {
+  FORBIDDEN_TERMS,
+  LAUNCH_BLOCKER_COPY_TERMS,
+  shouldSkipLine,
+  stripClassNameAttributes,
+} from './check-copy-terms.js';
 
 function matches(term: string, haystack: string): boolean {
   return new RegExp(term, 'gi').test(haystack);
@@ -160,14 +165,18 @@ describe('FORBIDDEN_TERMS — block compound-phrase detection (SCRUM-951)', () =
 });
 
 describe('LAUNCH_BLOCKER_COPY_TERMS — public legal placeholder copy', () => {
-  it('flags public legal placeholder disclaimers without banning normal input placeholders', () => {
-    const matcher = new RegExp(LAUNCH_BLOCKER_COPY_TERMS.join('|'), 'gi');
+  it.each(LAUNCH_BLOCKER_COPY_TERMS)('flags "%s" independently', (term) => {
+    expect(matches(term, `Public page copy says ${term} to users.`)).toBe(true);
+  });
 
-    expect(
-      matcher.test('This privacy policy is a placeholder and will be updated following legal review'),
-    ).toBe(true);
+  it('does not ban normal input placeholder attributes', () => {
+    for (const term of LAUNCH_BLOCKER_COPY_TERMS) {
+      expect(matches(term, 'placeholder="you@example.com"')).toBe(false);
+    }
+  });
 
-    matcher.lastIndex = 0;
-    expect(matcher.test('placeholder="you@example.com"')).toBe(false);
+  it('skips block comment opener lines that mention legal review work', () => {
+    const line = '/* following legal review, approved 2026-03-01 */';
+    expect(shouldSkipLine(line, line.trim())).toBe(true);
   });
 });

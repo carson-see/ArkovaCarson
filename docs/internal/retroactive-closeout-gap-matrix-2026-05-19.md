@@ -1,3 +1,7 @@
+# Internal Engineering Note - Not Documentation
+
+This temporary worksheet is not the documentation source of truth. The corresponding audit record belongs in Confluence space A; this file only preserves the branch-local engineering evidence used while closing PR #834.
+
 # Retroactive Closeout Gap Matrix — 2026-05-19
 
 Snapshot time: 2026-05-19 13:54 EDT

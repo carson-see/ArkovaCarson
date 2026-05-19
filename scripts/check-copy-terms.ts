@@ -147,9 +147,15 @@ const LAUNCH_BLOCKER_REGEXES = LAUNCH_BLOCKER_COPY_TERMS.map((t) => new RegExp(t
  * className attribute values are stripped separately by
  * {@link stripClassNameAttributes} so JSX text on the same line still gets scanned.
  */
-function shouldSkipLine(line: string, trimmed: string): boolean {
+export function shouldSkipLine(line: string, trimmed: string): boolean {
   // Skip comments and imports
-  if (trimmed.startsWith('//') || trimmed.startsWith('*') || trimmed.startsWith('import ')) {
+  if (
+    trimmed.startsWith('//') ||
+    trimmed.startsWith('/*') ||
+    trimmed.startsWith('*') ||
+    trimmed.startsWith('*/') ||
+    trimmed.startsWith('import ')
+  ) {
     return true;
   }
   // Skip Web Crypto API usage and "cryptographic" adjective

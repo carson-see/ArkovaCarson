@@ -27,6 +27,7 @@ describe('revision drift Sentry alert contract', () => {
     const rule = rules.find((candidate) => candidate.name.includes('Cloud Run revision drift'));
 
     expect(rule).toBeDefined();
+    expect(rule?.filters).toBeDefined();
     expect(rule?.filters).toContainEqual(
       expect.objectContaining({
         key: 'source',
@@ -40,6 +41,7 @@ describe('revision drift Sentry alert contract', () => {
     expect(workflow).toContain('source: "revision-drift"');
     expect(workflow).toContain('story: "SCRUM-1247"');
     expect(workflow).toContain('deployed_sha: $live');
+    expect(workflow).not.toContain('live_sha: $live');
     expect(workflow).toContain('head_sha: $head');
   });
 });
