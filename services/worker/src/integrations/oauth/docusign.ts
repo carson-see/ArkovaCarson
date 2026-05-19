@@ -365,16 +365,19 @@ export async function provisionConnectListener(args: {
   const payload: Record<string, unknown> = {
     urlToPublishTo: webhookUrl,
     name: 'Arkova Connect',
+    configurationType: 'custom',
     allowEnvelopePublish: 'true',
     enableLog: 'true',
     allUsers: 'true',
+    includeHMAC: 'true',
     includeDocumentFields: 'true',
     requiresAcknowledgement: 'true',
+    envelopeEvents: ['Completed'],
     events: ['envelope-completed'],
     eventData: { format: 'json', version: 'restv2.1' },
-    // DocuSign Connect API requires the HMAC secret in the config payload to enable
-    // server-side HMAC signing of webhook deliveries. This is not credential leakage.
-    ...(hmacSecret ? { hmacSecret } : {}), // NOSONAR — intentional per DocuSign Connect spec
+    // Shared-secret provisioning remains in place for the existing Arkova
+    // Connect flow; includeHMAC above enables DocuSign delivery signing.
+    ...(hmacSecret ? { hmacSecret } : {}), // NOSONAR — intentional Arkova Connect shared secret
   };
 
   const method = existing ? 'PUT' : 'POST';

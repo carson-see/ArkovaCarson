@@ -260,9 +260,13 @@ describe('provisionConnectListener', () => {
     // Verify payload shape
     const body = postBody as Record<string, unknown>;
     expect(body.urlToPublishTo).toBe('https://arkova-worker.example.com/webhooks/docusign');
+    expect(body.configurationType).toBe('custom');
     expect(body.allUsers).toBe('true');
     expect(body.allowEnvelopePublish).toBe('true');
+    expect(body.enableLog).toBe('true');
+    expect(body.includeHMAC).toBe('true');
     expect(body.requiresAcknowledgement).toBe('true');
+    expect(body.envelopeEvents).toEqual(['Completed']);
     expect(body.events).toEqual(['envelope-completed']);
     expect(body.eventData).toMatchObject({ format: 'json', version: 'restv2.1' });
   });
