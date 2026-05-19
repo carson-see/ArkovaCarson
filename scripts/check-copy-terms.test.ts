@@ -195,4 +195,13 @@ describe('LAUNCH_BLOCKER_COPY_TERMS — public legal placeholder copy', () => {
     const line = '/* following legal review, approved 2026-03-01 */';
     expect(shouldSkipLine(line, line.trim())).toBe(true);
   });
+
+  it('does not globally skip visible star-prefixed copy outside block comments', () => {
+    const line = '* following legal review prior to production launch';
+
+    expect(shouldSkipLine(line, line.trim())).toBe(false);
+    expect(
+      findTermViolations(line, 7, 'src/pages/TermsPage.tsx').map((violation) => violation.term),
+    ).toEqual(['following legal review', 'prior to production launch']);
+  });
 });

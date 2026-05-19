@@ -152,8 +152,6 @@ export function shouldSkipLine(line: string, trimmed: string): boolean {
   if (
     trimmed.startsWith('//') ||
     trimmed.startsWith('/*') ||
-    trimmed.startsWith('*') ||
-    trimmed.startsWith('*/') ||
     trimmed.startsWith('import ')
   ) {
     return true;
@@ -302,10 +300,21 @@ function checkFile(filePath: string): Violation[] {
   const violations: Violation[] = [];
   const content = fs.readFileSync(filePath, 'utf-8');
   const lines = content.split('\n');
+  let inBlockComment = false;
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     const trimmed = line.trim();
+
+    if (inBlockComment) {
+      if (trimmed.includes('*/')) inBlockComment = false;
+      continue;
+    }
+
+    if (trimmed.startsWith('/*')) {
+      if (!trimmed.includes('*/')) inBlockComment = true;
+      continue;
+    }
 
     if (shouldSkipLine(line, trimmed)) {
       continue;
