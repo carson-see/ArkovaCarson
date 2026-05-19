@@ -12,6 +12,7 @@ import { describe, it, expect } from 'vitest';
 import {
   FORBIDDEN_TERMS,
   LAUNCH_BLOCKER_COPY_TERMS,
+  findTermViolations,
   shouldSkipLine,
   stripClassNameAttributes,
 } from './check-copy-terms.js';
@@ -169,7 +170,22 @@ describe('LAUNCH_BLOCKER_COPY_TERMS — public legal placeholder copy', () => {
     expect(matches(term, `Public page copy says ${term} to users.`)).toBe(true);
   });
 
-  it('does not ban normal input placeholder attributes', () => {
+  it('flags launch-blocker copy on plain multiline JSX text lines', () => {
+    const violations = findTermViolations(
+      'This privacy policy is a placeholder and will be updated following legal review.',
+      42,
+      'src/pages/PrivacyPage.tsx',
+    );
+
+    expect(violations.map((violation) => violation.term)).toEqual([
+      'placeholder and will be updated',
+      'following legal review',
+    ]);
+  });
+
+  it('does not ban the placeholder attribute keyword by itself', () => {
+    // The launch-blocker list is phrase-based. Normal form placeholder attrs
+    // remain valid unless the legal launch-blocker phrase itself is present.
     for (const term of LAUNCH_BLOCKER_COPY_TERMS) {
       expect(matches(term, 'placeholder="you@example.com"')).toBe(false);
     }

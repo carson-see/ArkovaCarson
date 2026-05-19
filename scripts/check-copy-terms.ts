@@ -259,9 +259,23 @@ function isCodeIdentifier(line: string, matchIndex: number): boolean {
   return false;
 }
 
-function findTermViolations(line: string, lineNum: number, filePath: string): Violation[] {
+export function findTermViolations(line: string, lineNum: number, filePath: string): Violation[] {
   const results: Violation[] = [];
   const cleaned = stripClassNameAttributes(line);
+
+  for (const regex of LAUNCH_BLOCKER_REGEXES) {
+    regex.lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = regex.exec(cleaned)) !== null) {
+      results.push({
+        file: filePath,
+        line: lineNum,
+        term: match[0],
+        context: cleaned.trim().substring(0, 80),
+      });
+    }
+  }
+
   // Quote/JSX context is a per-line property; computing it once per term
   // saves 6×n includes() calls when the line has many term matches.
   const hasString = cleaned.includes('"') || cleaned.includes("'") || cleaned.includes('`');
@@ -273,19 +287,6 @@ function findTermViolations(line: string, lineNum: number, filePath: string): Vi
     let match: RegExpExecArray | null;
     while ((match = regex.exec(cleaned)) !== null) {
       if (isCodeIdentifier(cleaned, match.index)) continue;
-      results.push({
-        file: filePath,
-        line: lineNum,
-        term: match[0],
-        context: cleaned.trim().substring(0, 80),
-      });
-    }
-  }
-
-  for (const regex of LAUNCH_BLOCKER_REGEXES) {
-    regex.lastIndex = 0;
-    let match: RegExpExecArray | null;
-    while ((match = regex.exec(cleaned)) !== null) {
       results.push({
         file: filePath,
         line: lineNum,
