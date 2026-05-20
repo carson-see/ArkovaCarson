@@ -30,6 +30,8 @@ vi.mock('../../../utils/db.js', () => ({
 import { createDocusignOAuthRouter } from './docusign-oauth.js';
 import { logger } from '../../../utils/logger.js';
 
+type DocusignRouterDeps = NonNullable<Parameters<typeof createDocusignOAuthRouter>[0]>;
+
 interface QueryResult {
   data?: unknown;
   error?: unknown;
@@ -71,7 +73,7 @@ function mockQuery(result: QueryResult, capture?: (method: string, value: unknow
   return chain;
 }
 
-function createApp(db: unknown) {
+function createApp(db: unknown, overrides: Partial<DocusignRouterDeps> = {}) {
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -81,7 +83,7 @@ function createApp(db: unknown) {
   app.use(
     '/api/v1/integrations',
     createDocusignOAuthRouter({
-      db,
+      db: db as unknown as DocusignRouterDeps['db'],
       env: {
         DOCUSIGN_INTEGRATION_KEY: 'docusign-client',
         DOCUSIGN_CLIENT_SECRET: 'docusign-client-secret',
@@ -100,6 +102,7 @@ function createApp(db: unknown) {
           return Buffer.from('{}');
         },
       } satisfies KmsClient,
+      ...overrides,
     }),
   );
   return app;
@@ -181,7 +184,6 @@ describe('DocuSign OAuth router', () => {
           email: 'admin@example.com',
           accounts: [{
             account_id: 'docusign-account-1',
-            account_name: 'Acme Legal',
             base_uri: 'https://demo.docusign.net',
             is_default: true,
           }],
@@ -197,7 +199,7 @@ describe('DocuSign OAuth router', () => {
       next();
     });
     const deps = {
-      db,
+      db: db as unknown as DocusignRouterDeps['db'],
       env: {
         DOCUSIGN_INTEGRATION_KEY: 'docusign-client',
         DOCUSIGN_CLIENT_SECRET: 'docusign-client-secret',
@@ -255,7 +257,7 @@ describe('DocuSign OAuth router', () => {
     const upsert = captured.upsert?.[0] as Record<string, unknown>;
     expect(upsert.provider).toBe('docusign');
     expect(upsert.account_id).toBe('docusign-account-1');
-    expect(upsert.account_label).toBe('Acme Legal');
+    expect(upsert.account_label).toBe('docusign-account-1');
     expect(upsert.base_uri).toBe('https://demo.docusign.net');
     expect(upsert.encrypted_tokens).toBe('\\x656e637279707465642d746f6b656e2d7061796c6f6164');
     expect(upsert.token_secret_name).toMatch(/^projects\/test-project\/secrets\/arkova-docusign-/);
@@ -272,6 +274,10 @@ describe('DocuSign OAuth router', () => {
       provider: 'docusign',
       event_type: 'oauth_connected',
       status: 'success',
+      details: {
+        account_id: 'docusign-account-1',
+        account_label: 'docusign-account-1',
+      },
     });
   });
 
@@ -292,18 +298,35 @@ describe('DocuSign OAuth router', () => {
 
   it('disconnects active DocuSign integrations for org admins', async () => {
     const captured: Record<string, unknown[]> = {};
+    const deletedSecrets: string[] = [];
     const capture = (method: string, value: unknown) => {
       captured[method] = [...(captured[method] ?? []), value];
     };
     const db = {
       from: vi.fn((table: string) => {
         if (table === 'org_members') return mockQuery({ data: { role: 'admin' }, error: null });
-        if (table === 'org_integrations') return mockQuery({ data: [{ id: 'integration-1' }], error: null }, capture);
+        if (table === 'org_integrations') {
+          return mockQuery({
+            data: [{
+              id: 'integration-1',
+              token_secret_name: 'projects/test-project/secrets/arkova-docusign-refresh-token',
+            }],
+            error: null,
+          }, capture);
+        }
         if (table === 'integration_events') return mockQuery({ data: null, error: null }, capture);
         return mockQuery({ data: null, error: null });
       }),
     };
-    const app = createApp(db);
+    const app = createApp(db, {
+      refreshTokenStore: {
+        async put() { return undefined; },
+        async get() { return null; },
+        async delete({ name }: { name: string }) {
+          deletedSecrets.push(name);
+        },
+      },
+    });
 
     const res = await request(app)
       .post('/api/v1/integrations/docusign/disconnect')
@@ -311,9 +334,13 @@ describe('DocuSign OAuth router', () => {
 
     expect(res.status).toBe(200);
     expect(res.body.disconnected).toBe(true);
+    expect(deletedSecrets).toEqual([
+      'projects/test-project/secrets/arkova-docusign-refresh-token',
+    ]);
     expect(captured.update?.[0]).toMatchObject({
       encrypted_tokens: null,
       token_kms_key_id: null,
+      token_secret_name: null,
     });
     expect(captured.insert?.[0]).toMatchObject({
       event_type: 'oauth_disconnected',
@@ -349,7 +376,7 @@ describe('DocuSign OAuth router', () => {
       next();
     });
     app.use('/api/v1/integrations', createDocusignOAuthRouter({
-      db,
+      db: db as unknown as DocusignRouterDeps['db'],
       env: {
         DOCUSIGN_INTEGRATION_KEY: 'docusign-client',
         DOCUSIGN_CLIENT_SECRET: 'docusign-client-secret',
@@ -471,7 +498,7 @@ describe('DocuSign OAuth router', () => {
       next();
     });
     app.use('/api/v1/integrations', createDocusignOAuthRouter({
-      db,
+      db: db as unknown as DocusignRouterDeps['db'],
       env: {
         DOCUSIGN_INTEGRATION_KEY: 'docusign-client',
         DOCUSIGN_CLIENT_SECRET: 'docusign-client-secret',
@@ -578,7 +605,7 @@ describe('DocuSign OAuth router', () => {
       next();
     });
     app.use('/api/v1/integrations', createDocusignOAuthRouter({
-      db,
+      db: db as unknown as DocusignRouterDeps['db'],
       env: {
         DOCUSIGN_INTEGRATION_KEY: 'docusign-client',
         DOCUSIGN_CLIENT_SECRET: 'docusign-client-secret',
@@ -692,7 +719,7 @@ describe('DocuSign OAuth router', () => {
       next();
     });
     app.use('/api/v1/integrations', createDocusignOAuthRouter({
-      db,
+      db: db as unknown as DocusignRouterDeps['db'],
       env: {
         DOCUSIGN_INTEGRATION_KEY: 'docusign-client',
         DOCUSIGN_CLIENT_SECRET: 'docusign-client-secret',
