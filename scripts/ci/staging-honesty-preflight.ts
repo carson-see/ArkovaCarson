@@ -711,7 +711,8 @@ async function main(): Promise<void> {
     try {
       prodVersions = await fetchMigrationVersionsViaManagementApi(prodProjectRef, managementApiToken);
     } catch {
-      console.error('::warning::Failed to query prod migration ledger via Management API; continuing with configured/default prod versions.');
+      console.error('::error::Failed to query prod migration ledger via Management API; refusing to use configured/default prod versions as live prod evidence.');
+      process.exit(1);
     }
   }
 
@@ -721,10 +722,11 @@ async function main(): Promise<void> {
     try {
       prodFacts = await fetchProdFactsViaManagementApi(prodProjectRef, managementApiToken);
     } catch {
-      console.error('::warning::Failed to query prod facts via Management API; falling back to environment cron facts when available.');
+      console.error('::error::Failed to query prod facts via Management API; refusing to use staging cron data as prod evidence.');
+      process.exit(1);
     }
   }
-  if (!prodFacts) {
+  if (!prodFacts && !(managementApiToken && prodProjectRef)) {
     try {
       const cronClient = createClient(supabaseUrl, serviceRoleKey, { db: { schema: 'cron' } });
       const { data: cronData, error: cronError } = await cronClient
