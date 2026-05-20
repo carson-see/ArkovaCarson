@@ -39,11 +39,10 @@
 
 | Domain | Count | Files |
 |---|---|---|
-| jobs/__tests__/ | 37 | cmsPhysicianFetcher (11), fccUlsFetcher (10), intlComplianceFetcher (6), newFetchers (6), australiaLawFetcher (2), ecfrFetcher (2), kenyaLawFetcher (2) |
+| jobs/__tests__/ | 39 | cmsPhysicianFetcher (11), fccUlsFetcher (10), intlComplianceFetcher (6), newFetchers (6), australiaLawFetcher (2), ecfrFetcher (2), kenyaLawFetcher (2) |
 | middleware/ | 7 | paymentTierRouter.test (7) |
 | billing/ | 5 | meteredBilling.test (5) |
 | api/v1/ | 4 | credits.test (4) |
-| api/v2/ | 2 | agentWorkflows.test.ts `no-explicit-any`; these 2 warnings are included in this 55-warning test breakdown, while the file-level `@ts-nocheck` is counted separately only under `ban-ts-comment` |
 
 ### `unused-disable` (40 total -- ALL auto-fixable)
 
