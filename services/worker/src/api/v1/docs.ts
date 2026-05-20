@@ -830,7 +830,35 @@ export const openApiSpec: Record<string, any> = {
           },
         },
         responses: {
-          '201': { description: 'CLE completion submitted with public_id only; no internal anchor id or attorney identifier is returned' },
+          '201': {
+            description: 'CLE completion submitted with public_id only; no internal anchor id or attorney identifier is returned',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  additionalProperties: false,
+                  required: ['public_id', 'status', 'message', 'credit'],
+                  properties: {
+                    public_id: { type: 'string' },
+                    status: { type: 'string', enum: ['PENDING'] },
+                    message: { type: 'string' },
+                    credit: {
+                      type: 'object',
+                      additionalProperties: false,
+                      required: ['course_title', 'credit_hours', 'credit_category', 'jurisdiction', 'completion_date'],
+                      properties: {
+                        course_title: { type: 'string' },
+                        credit_hours: { type: 'number' },
+                        credit_category: { type: 'string' },
+                        jurisdiction: { type: 'string' },
+                        completion_date: { type: 'string', format: 'date' },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
           '400': { $ref: '#/components/responses/BadRequest' },
           '401': { $ref: '#/components/responses/Unauthorized' },
           '402': { description: 'Payment required (x402)', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },

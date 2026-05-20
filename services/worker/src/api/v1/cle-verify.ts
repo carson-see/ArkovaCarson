@@ -180,9 +180,16 @@ router.get('/verify', async (req: Request, res: Response) => {
       .order('created_at', { ascending: false });
 
     // Filter by bar_number in metadata
+    const requestedJurisdiction = jurisdiction?.toLowerCase();
     const cleRecords = (anchors ?? []).filter((a: Record<string, unknown>) => {
       const meta = a.metadata as Record<string, unknown> | null;
-      return meta?.bar_number === sanitizedBarNumber;
+      if (meta?.bar_number !== sanitizedBarNumber) {
+        return false;
+      }
+      if (!requestedJurisdiction) {
+        return true;
+      }
+      return String(meta?.jurisdiction ?? '').toLowerCase().includes(requestedJurisdiction);
     });
 
     // Also check attestations

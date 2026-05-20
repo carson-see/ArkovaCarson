@@ -148,6 +148,25 @@ describe('cle-verify public response sanitizer (SCRUM-1868)', () => {
         created_at: '2026-04-03T00:00:00Z',
         chain_tx_id: 'tx-other',
       },
+      {
+        id: 'anchor-other-jurisdiction',
+        public_id: 'ARK-2026-CLE-OHIO',
+        filename: 'CLE_Ohio_BAR-123_2026-04-15.json',
+        credential_type: 'CLE',
+        metadata: {
+          bar_number: 'BAR-123',
+          attorney_name: 'Ada Counsel',
+          course_title: 'Ohio Professional Responsibility',
+          provider_name: 'Ohio CLE Institute',
+          credit_hours: 12,
+          credit_category: 'Ethics',
+          completion_date: '2026-04-15',
+          jurisdiction: 'Ohio',
+        },
+        status: 'SECURED',
+        created_at: '2026-04-16T00:00:00Z',
+        chain_tx_id: 'tx-secret-ohio',
+      },
     ];
     mockTables.attestationRows = [
       {
@@ -213,6 +232,7 @@ describe('cle-verify public response sanitizer (SCRUM-1868)', () => {
     expect(payload).not.toContain('filename');
     expect(payload).not.toContain('metadata');
     expect(payload).not.toContain('claims');
+    expect(payload).not.toContain('Ohio Professional Responsibility');
   });
 
   it('GET /cle/credits returns public credit rows without bar number, filename fallback, metadata, or chain receipt', async () => {
