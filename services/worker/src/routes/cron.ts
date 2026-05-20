@@ -246,7 +246,11 @@ cronRouter.post('/batch-anchors', async (req, res) => {
 
 cronRouter.post('/check-confirmations', async (_req, res) => {
   try {
-    const result = await checkSubmittedConfirmations();
+    const result = await withCronMonitoring(
+      'check-confirmations',
+      '*/2 * * * *',
+      () => checkSubmittedConfirmations(),
+    )();
     res.json(result);
   } catch (error) {
     logger.error({ error }, 'Confirmation check failed');
@@ -272,7 +276,7 @@ cronRouter.post('/webhook-retries', async (_req, res) => {
   try {
     const retried = await withCronMonitoring(
       'webhook-retries',
-      '*/2 * * * *',
+      '*/10 * * * *',
       () => processWebhookRetries(),
     )();
     res.json({ retried });
