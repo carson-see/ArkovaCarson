@@ -145,7 +145,7 @@ export async function fetchEcfrRegulations(
         if (sectionsProcessed >= MAX_SECTIONS_PER_RUN) break;
 
         // Check if already ingested
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- service-role admin query
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const { data: existing } = await (supabase as any)
           .from('public_records')
           .select('id')
@@ -189,7 +189,7 @@ export async function fetchEcfrRegulations(
         sectionsProcessed++;
 
         if (batch.length >= INSERT_BATCH_SIZE) {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any -- service-role admin query
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
           const { error } = await (supabase as any)
             .from('public_records')
             .upsert(batch, { onConflict: 'source,source_id', ignoreDuplicates: true });
@@ -205,7 +205,7 @@ export async function fetchEcfrRegulations(
 
       // Flush remaining
       if (batch.length > 0) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- service-role admin query
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const { error } = await (supabase as any)
           .from('public_records')
           .upsert(batch, { onConflict: 'source,source_id', ignoreDuplicates: true });
