@@ -11,7 +11,7 @@ describe('publicVerificationState', () => {
   });
 
   it('preserves all public verification statuses', () => {
-    for (const status of ['PENDING', 'SUBMITTED', 'SECURED', 'REVOKED', 'EXPIRED'] as const) {
+    for (const status of ['PENDING', 'SUBMITTED', 'SECURED', 'REVOKED', 'EXPIRED', 'SUPERSEDED'] as const) {
       expect(normalizePublicVerificationStatus(status)).toBe(status);
     }
   });
@@ -26,6 +26,7 @@ describe('publicVerificationState', () => {
     expect(isPreSecuredStatus('SECURED')).toBe(false);
     expect(isPreSecuredStatus('REVOKED')).toBe(false);
     expect(isPreSecuredStatus('EXPIRED')).toBe(false);
+    expect(isPreSecuredStatus('SUPERSEDED')).toBe(false);
   });
 
   it('exposes proof only after a public record has a terminal proof state', () => {
@@ -34,5 +35,6 @@ describe('publicVerificationState', () => {
     expect(hasPublicVerificationProof('SECURED')).toBe(true);
     expect(hasPublicVerificationProof('REVOKED')).toBe(true);
     expect(hasPublicVerificationProof('EXPIRED')).toBe(true);
+    expect(hasPublicVerificationProof('SUPERSEDED')).toBe(true);
   });
 });

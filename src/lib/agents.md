@@ -22,9 +22,11 @@ Core utility modules shared across the frontend. Every write path uses Zod valid
 - `explorer.ts` — mempool.space URL builder (uses approved terminology)
 - `mlRuntime.ts` — WebGPU detection and VRAM budget for in-browser ML (2 GB cap)
 - `csvExport.ts` / `csvParser.ts` / `xlsxParser.ts` — data import/export utilities
+- `sourceProvenance.ts` / `badgeSvg.ts` — SCRUM-1599 public-safe source provenance helpers, evidence-level validation, badge URL construction, and fail-closed badge SVG status mapping
 
 ## Do / Don't Rules
 - DO: Validate with Zod before any Supabase write
 - DO: Put all UI-visible strings in `copy.ts`, not inline JSX
 - DON'T: Import `piiStripper`, `fileHasher`, `aiExtraction`, `mlRuntime`, or `ocrWorker` in `services/worker/`
 - DON'T: Expose service role key, raw API keys, or user emails in any module
+- DON'T: Cast `verification_level` strings directly; use `parseVerificationLevel()` so unknown values disappear instead of rendering misleading evidence labels

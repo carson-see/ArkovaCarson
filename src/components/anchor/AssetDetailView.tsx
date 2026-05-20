@@ -22,9 +22,11 @@ import { AnchorLifecycleTimeline } from './AnchorLifecycleTimeline';
 import { VerificationWalkthrough } from './VerificationWalkthrough';
 import { AnchorDisclaimer } from './AnchorDisclaimer';
 import { CredentialRenderer } from '@/components/credentials/CredentialRenderer';
+import { SourceProvenanceDisplay } from '@/components/verification/SourceProvenanceDisplay';
 import { useCredentialTemplate } from '@/hooks/useCredentialTemplate';
 import { formatFingerprint } from '@/lib/fileHasher';
-import { LIFECYCLE_LABELS, CREDENTIAL_TYPE_LABELS, SHARE_LABELS, EXPLORER_LABELS, FINGERPRINT_TOOLTIP, VERSION_HISTORY_LABELS, RECORDS_LIST_LABELS, RECORD_DETAIL_LABELS, formatCredentialType, getTemplateDescription } from '@/lib/copy';
+import { ANCHOR_STATUS_LABELS, LIFECYCLE_LABELS, CREDENTIAL_TYPE_LABELS, SHARE_LABELS, EXPLORER_LABELS, FINGERPRINT_TOOLTIP, VERSION_HISTORY_LABELS, RECORDS_LIST_LABELS, RECORD_DETAIL_LABELS, formatCredentialType, getTemplateDescription } from '@/lib/copy';
+import { sanitizeSourceUrl, type SourceProvenanceData } from '@/lib/sourceProvenance';
 import {
   Tooltip,
   TooltipContent,
@@ -59,11 +61,12 @@ interface AnchorRecord {
   publicId?: string;
   filename: string;
   fingerprint: string;
-  status: 'PENDING' | 'BROADCASTING' | 'SECURED' | 'REVOKED' | 'EXPIRED' | 'SUBMITTED';
+  status: 'PENDING' | 'BROADCASTING' | 'SECURED' | 'REVOKED' | 'EXPIRED' | 'SUPERSEDED' | 'SUBMITTED';
   createdAt: string;
   securedAt?: string;
   issuedAt?: string;
   revokedAt?: string;
+  supersededAt?: string;
   revocationReason?: string;
   expiresAt?: string;
   fileSize: number;
@@ -104,6 +107,59 @@ interface AssetDetailViewProps {
 
 type VerificationState = 'idle' | 'verifying' | 'match' | 'mismatch';
 
+function metadataString(metadata: Record<string, unknown> | null | undefined, key: string): string | null {
+  const value = metadata?.[key];
+  return typeof value === 'string' && value.trim() ? value : null;
+}
+
+function buildAnchorSourceProvenance(metadata: Record<string, unknown> | null | undefined): SourceProvenanceData {
+  return {
+    source_url: metadataString(metadata, 'source_url'),
+    source_provider: metadataString(metadata, 'source_provider') ?? metadataString(metadata, 'pipeline_source'),
+    verification_level: metadataString(metadata, 'verification_level') as SourceProvenanceData['verification_level'],
+    evidence_package_hash: metadataString(metadata, 'evidence_package_hash'),
+    source_payload_hash: metadataString(metadata, 'source_payload_hash'),
+    fetched_at: metadataString(metadata, 'fetched_at') ?? metadataString(metadata, 'source_fetched_at'),
+  };
+}
+
+const ANCHOR_CREDENTIAL_METADATA_HIDDEN_KEYS = new Set([
+  'pipeline_source',
+  'source_url',
+  'source_provider',
+  'verification_level',
+  'evidence_package_hash',
+  'source_payload_hash',
+  'fetched_at',
+  'source_fetched_at',
+  'abstract',
+  'description',
+  'summary',
+  'merkle_proof',
+  'merkle_root',
+  'merkle_index',
+  'batch_id',
+  'ai_tags',
+  'ai_summary',
+  'ai_document_type',
+  'issuer',
+  'issuer_name',
+  'recipient',
+  'recipient_name',
+  '_confidence',
+]);
+
+function buildAnchorCredentialMetadata(metadata: Record<string, unknown> | null | undefined): Record<string, unknown> | undefined {
+  if (!metadata) return undefined;
+  return Object.fromEntries(
+    Object.entries(metadata).filter(([key]) => isAnchorMetadataVisible(key))
+  );
+}
+
+function isAnchorMetadataVisible(key: string): boolean {
+  return !ANCHOR_CREDENTIAL_METADATA_HIDDEN_KEYS.has(key.toLowerCase()) && !key.startsWith('_');
+}
+
 const statusConfig = {
   PENDING: {
     label: 'Pending',
@@ -135,6 +191,12 @@ const statusConfig = {
     icon: AlertTriangle,
     color: 'text-amber-600',
   },
+  SUPERSEDED: {
+    label: ANCHOR_STATUS_LABELS.SUPERSEDED,
+    variant: 'secondary' as const,
+    icon: GitBranch,
+    color: 'text-muted-foreground',
+  },
   SUBMITTED: {
     label: 'Submitted',
     variant: 'secondary' as const,
@@ -158,6 +220,17 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
 
   const status = statusConfig[anchor.status];
   const StatusIcon = status.icon;
+  const sourceProvenance = buildAnchorSourceProvenance(anchor.metadata);
+  const credentialMetadata = anchor.metadata ?? undefined;
+  const visibleMetadata = buildAnchorCredentialMetadata(anchor.metadata);
+  const hasSourceProvenance = Boolean(
+    sanitizeSourceUrl(sourceProvenance.source_url) ||
+    sourceProvenance.source_provider ||
+    sourceProvenance.verification_level ||
+    sourceProvenance.evidence_package_hash ||
+    sourceProvenance.source_payload_hash ||
+    sourceProvenance.fetched_at
+  );
 
   const handleCopyFingerprint = async () => {
     await navigator.clipboard.writeText(anchor.fingerprint);
@@ -516,35 +589,13 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
             );
           })()}
 
-          {/* Source Document Link (pipeline records) */}
-          {(() => {
-            const sourceUrl = anchor.metadata?.source_url;
-            const pipelineSource = String(anchor.metadata?.pipeline_source ?? '');
-            const _recordType = String(anchor.metadata?.record_type ?? '');
-            if (typeof sourceUrl !== 'string' || !sourceUrl) return null;
-            const linkLabel = pipelineSource === 'edgar' ? 'SEC EDGAR' :
-              pipelineSource === 'openalex' ? 'OpenAlex' :
-              pipelineSource === 'uspto' ? 'USPTO' :
-              pipelineSource === 'federal_register' ? 'Federal Register' :
-              'Source';
-            return (
-              <>
-                <Separator />
-                <div className="space-y-2">
-                  <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Source</span>
-                  <a
-                    href={sourceUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center gap-1.5 text-sm text-[#00d4ff] hover:underline"
-                  >
-                    <ExternalLink className="h-3.5 w-3.5" />
-                    {linkLabel}
-                  </a>
-                </div>
-              </>
-            );
-          })()}
+          {/* Source provenance (CSI-03) */}
+          {hasSourceProvenance && (
+            <>
+              <Separator />
+              <SourceProvenanceDisplay data={sourceProvenance} />
+            </>
+          )}
 
           {/* AI Tags — displayed as badges when present */}
           {Array.isArray(anchor.metadata?.ai_tags) && (anchor.metadata!.ai_tags as string[]).length > 0 && (
@@ -578,14 +629,13 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
           )}
 
           {/* METADATA — pipeline-style key-value pairs (PII-sensitive keys filtered) */}
-          {anchor.metadata && Object.keys(anchor.metadata).filter(k => !['pipeline_source', 'source_url', 'abstract', 'description', 'summary', 'merkle_proof', 'merkle_root', 'merkle_index', 'batch_id', 'ai_tags', 'ai_summary', 'ai_document_type', 'issuer', 'issuer_name', 'recipient', 'recipient_name', '_confidence'].includes(k) && !k.startsWith('_')).length > 0 && (
+          {visibleMetadata && Object.keys(visibleMetadata).length > 0 && (
             <>
               <Separator />
               <div className="space-y-3">
                 <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Metadata</span>
                 <div className="space-y-2">
-                  {Object.entries(anchor.metadata)
-                    .filter(([k]) => !['pipeline_source', 'source_url', 'abstract', 'description', 'summary', 'merkle_proof', 'merkle_root', 'merkle_index', 'batch_id', 'ai_tags', 'ai_summary', 'ai_document_type', 'issuer', 'issuer_name', 'recipient', 'recipient_name', '_confidence'].includes(k) && !k.startsWith('_'))
+                  {Object.entries(visibleMetadata)
                     .map(([key, value]) => (
                       <div key={key} className="flex gap-4">
                         <span className="text-xs text-muted-foreground whitespace-nowrap min-w-[120px]">{key.replace(/_/g, ' ')}:</span>
@@ -628,13 +678,13 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
       )}
 
       {/* Verification Walkthrough (DEMO-02) */}
-      <VerificationWalkthrough hasMetadata={!!anchor.metadata && Object.keys(anchor.metadata).length > 0} />
+      <VerificationWalkthrough hasMetadata={!!visibleMetadata && Object.keys(visibleMetadata).length > 0} />
 
       {/* Credential Details (UF-01) — template-driven rendering */}
-      {(anchor.credentialType || anchor.metadata) && (
+      {(anchor.credentialType || credentialMetadata) && (
         <CredentialRenderer
           credentialType={anchor.credentialType}
-          metadata={anchor.metadata ?? undefined}
+          metadata={credentialMetadata}
           template={template}
           issuerName={anchor.issuerName}
           status={anchor.status}
@@ -660,6 +710,7 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
               issuedAt: anchor.issuedAt,
               securedAt: anchor.securedAt,
               revokedAt: anchor.revokedAt,
+              supersededAt: anchor.supersededAt,
               revocationReason: anchor.revocationReason,
               expiresAt: anchor.expiresAt,
             }}

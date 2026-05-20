@@ -20,6 +20,7 @@ export const ANCHOR_STATUS_LABELS = {
   SECURED: 'Secured',
   REVOKED: 'Revoked',
   EXPIRED: 'Expired',
+  SUPERSEDED: 'Superseded',
 } as const;
 
 export const ANCHOR_STATUS_DESCRIPTIONS = {
@@ -28,6 +29,7 @@ export const ANCHOR_STATUS_DESCRIPTIONS = {
   SECURED: 'Your record has been permanently secured with cryptographic verification.',
   REVOKED: 'This record has been revoked and is no longer active.',
   EXPIRED: 'This record has passed its expiration date.',
+  SUPERSEDED: 'This record has been replaced by a newer version.',
 } as const;
 
 // =============================================================================
@@ -42,6 +44,7 @@ export const LIFECYCLE_LABELS = {
   SECURED: 'Secured',
   REVOKED: 'Revoked',
   EXPIRED: 'Expired',
+  SUPERSEDED: 'Superseded',
   REVOCATION_REASON: 'Reason',
   EXPIRES_ON: 'Expires',
 } as const;
@@ -717,10 +720,12 @@ export const PUBLIC_VERIFICATION_LABELS = {
   NOT_FOUND_DESC: 'The document you are looking for may not exist or has not been verified yet.',
   RECORD_REVOKED: 'Record Revoked',
   RECORD_EXPIRED: 'Record Expired',
+  RECORD_SUPERSEDED: 'Record Superseded',
   DOCUMENT_VERIFIED: 'Document Verified',
   VERIFIED_ON: 'Verified on {date}',
   REVOKED_DESC: 'This record has been revoked by the issuing organization',
   EXPIRED_DESC: 'This record has passed its expiration date',
+  SUPERSEDED_DESC: 'This record has been replaced by a newer version.',
   VERIFIED_DESC: 'This record is permanently anchored.',
   CRYPTOGRAPHIC_PROOF: 'Cryptographic Proof',
   FINGERPRINT_SHA256: 'Fingerprint (SHA-256)',
@@ -2580,6 +2585,54 @@ export const PRIVACY_NOTICE_LABELS = {
   TRANSFER_BASIS_LABEL: 'Cross-Border Transfer Basis',
   BREACH_TIMELINE_LABEL: 'Breach Notification Timeline',
   INFORMATION_OFFICER_LABEL: 'Information Officer',
+} as const;
+
+// ─── Source Provenance Display (CSI-03 / SCRUM-1599) ──────────────────────────
+
+export const SOURCE_PROVENANCE_LABELS = {
+  SECTION_TITLE: 'Source Provenance',
+  EVIDENCE_LEVEL_LABEL: 'Evidence Level',
+  SOURCE_URL_LABEL: 'Source',
+  PROVIDER_LABEL: 'Provider',
+  FETCHED_AT_LABEL: 'Captured',
+  BADGE_ALT: 'Arkova Verified',
+  SHARE_LINKEDIN_LABEL: 'Add to LinkedIn Profile',
+  SHARE_LINKEDIN_DESCRIPTION: 'Use your Arkova verification URL as the Credential URL on LinkedIn.',
+  PROOF_SECTION_TITLE: 'Evidence Package',
+  PROOF_SECTION_DESCRIPTION: 'Cryptographic proof of source provenance included in the verification record.',
+} as const;
+
+// ─── LinkedIn Share (CSI-03 / SCRUM-1599) ─────────────────────────────────────
+
+export const LINKEDIN_SHARE_LABELS = {
+  CREDENTIAL_URL_LABEL: 'Credential URL for LinkedIn',
+  COPY_URL: 'Copy verification URL',
+  URL_COPIED: 'Verification URL copied to clipboard',
+  URL_COPY_FAILED: 'Unable to copy verification URL',
+  NOTE: 'Use this URL as the Credential URL when adding to your LinkedIn profile.',
+  CREDENTIAL_URL_HELP: 'This links to your Arkova verification page, not a native LinkedIn badge.',
+} as const;
+
+// ─── Badge SVG (CSI-03 / SCRUM-1599) ─────────────────────────────────────────
+
+export const BADGE_LABELS = {
+  ALT_TEXT: 'Arkova Verified',
+  ALT_TEXT_PREFIX: 'Arkova',
+  TITLE: 'Arkova Verification Badge',
+  STATUS_VERIFIED: 'Verified',
+  STATUS_REVOKED: 'Revoked',
+  STATUS_EXPIRED: 'Expired',
+  STATUS_PENDING: 'Pending',
+  STATUS_SUBMITTED: 'Submitted',
+  STATUS_SUPERSEDED: 'Superseded',
+  STATUS_UNAVAILABLE: 'Unavailable',
+  verified: 'Verified',
+  revoked: 'Revoked',
+  expired: 'Expired',
+  pending: 'Pending',
+  submitted: 'Submitted',
+  superseded: 'Superseded',
+  unavailable: 'Unavailable',
 } as const;
 
 /** DPO/Information Officer contact — single source for all jurisdictions (REG-28) */

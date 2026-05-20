@@ -44,6 +44,10 @@ import {
 import { ExplorerLink } from '@/components/ui/ExplorerLink';
 import { ComplianceBadge } from '@/components/anchor/ComplianceBadge';
 import { EvidenceLayersSection } from '@/components/verification/EvidenceLayersSection';
+import { SourceProvenanceDisplay } from '@/components/verification/SourceProvenanceDisplay';
+import { LinkedInCredentialHelper } from '@/components/verification/LinkedInCredentialHelper';
+import { ArkovaBadge } from '@/components/verification/ArkovaBadge';
+import { parseVerificationLevel, sanitizeSourceUrl, type SourceProvenanceData } from '@/lib/sourceProvenance';
 
 interface PublicAnchorData {
   public_id: string;
@@ -54,13 +58,14 @@ interface PublicAnchorData {
   verified: boolean;
   credential_type?: string;
   issuer_name?: string;
-  org_id?: string;
+  issuer_public_id?: string;
   metadata?: Record<string, unknown>;
   // Lifecycle fields (from migration 0047)
   created_at?: string;
   secured_at?: string;
   issued_at?: string;
   revoked_at?: string;
+  superseded_at?: string;
   revocation_reason?: string;
   expires_at?: string;
   // Phase 1.5 frozen schema fields
@@ -77,12 +82,48 @@ interface PublicAnchorData {
   jurisdiction?: string;
   /** BETA-12: Immutable description */
   description?: string;
+  /** CSI-03: Source provenance fields */
+  source_url?: string;
+  source_provider?: string;
+  verification_level?: string;
+  evidence_package_hash?: string;
+  source_payload_hash?: string;
+  fetched_at?: string;
   error?: string;
 }
 
 interface PublicVerificationProps {
   publicId: string;
 }
+
+const PUBLIC_METADATA_HIDDEN_KEYS = new Set([
+  'recipient',
+  'email',
+  'phone',
+  'phone_number',
+  'ssn',
+  'social_security',
+  'student_id',
+  'student_number',
+  'address',
+  'street_address',
+  'home_address',
+  'mailing_address',
+  'dob',
+  'date_of_birth',
+  'birthday',
+  'national_id',
+  'passport_number',
+  'drivers_license',
+  'pipeline_source',
+  'source_url',
+  'source_provider',
+  'verification_level',
+  'evidence_package_hash',
+  'source_payload_hash',
+  'fetched_at',
+  'source_fetched_at',
+]);
 
 export function PublicVerification({ publicId }: Readonly<PublicVerificationProps>) {
   const [data, setData] = useState<PublicAnchorData | null>(null);
@@ -93,7 +134,7 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
   // Fetch template for credential rendering (UF-01)
   const { template } = useCredentialTemplate(
     data?.credential_type,
-    data?.org_id,
+    undefined,
     { public: true }
   );
 
@@ -238,6 +279,7 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
   const publicStatus = normalizePublicVerificationStatus(data.status);
   const isRevoked = publicStatus === 'REVOKED';
   const isExpired = publicStatus === 'EXPIRED';
+  const isSuperseded = publicStatus === 'SUPERSEDED';
   const isPending = publicStatus === 'PENDING';
   const isSubmitted = publicStatus === 'SUBMITTED';
   const isSecured = publicStatus === 'SECURED';
@@ -247,6 +289,16 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
   const statusLabel = ANCHOR_STATUS_LABELS[publicStatus];
   // Extract DB field (bitcoin_block) to avoid copy-lint trigger in template literal
   const networkRecordBlock = data.bitcoin_block;
+  const sourceProvenance = extractSourceProvenance(data);
+  const credentialMetadata = sanitizeCredentialMetadata(data.metadata);
+  const hasSourceProvenance = Boolean(
+    sanitizeSourceUrl(sourceProvenance.source_url) ||
+    sourceProvenance.source_provider ||
+    sourceProvenance.verification_level ||
+    sourceProvenance.evidence_package_hash ||
+    sourceProvenance.source_payload_hash ||
+    sourceProvenance.fetched_at
+  );
 
   // Calculate time since creation for not-yet-secured anchors. PENDING +
   // SUBMITTED both render the "awaiting confirmation" hero so reuse that
@@ -264,7 +316,7 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
   if (isAwaitingConfirmation || isExpired) {
     statusBadgeVariant = 'outline';
     statusBadgeClassName = 'border-amber-500 text-amber-600 bg-amber-50 dark:bg-amber-950/20';
-  } else if (isRevoked) {
+  } else if (isRevoked || isSuperseded) {
     statusBadgeVariant = 'secondary';
     statusBadgeClassName = '';
   }
@@ -285,7 +337,7 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
           ? 'bg-gradient-to-r from-amber-500/10 to-amber-400/5 px-6 py-6'
           : isExpired
             ? 'bg-gradient-to-r from-amber-500/10 to-amber-400/5 px-6 py-6'
-            : isRevoked
+            : isRevoked || isSuperseded
               ? 'bg-gradient-to-r from-gray-500/10 to-gray-400/5 px-6 py-6'
               : 'bg-gradient-to-r from-green-500/10 to-green-400/5 px-6 py-6'
       }>
@@ -293,7 +345,7 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
           <div className={`flex h-16 w-16 items-center justify-center rounded-full mb-4 ${
             isAwaitingConfirmation ? 'bg-amber-500/10'
             : isExpired ? 'bg-amber-500/10'
-            : isRevoked ? 'bg-gray-500/10'
+            : isRevoked || isSuperseded ? 'bg-gray-500/10'
             : 'bg-green-500/10'
           }`}>
             {isPending ? (
@@ -304,6 +356,8 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
               <Clock className="h-8 w-8 text-amber-500" />
             ) : isRevoked ? (
               <Ban className="h-8 w-8 text-gray-500" />
+            ) : isSuperseded ? (
+              <XCircle className="h-8 w-8 text-gray-500" />
             ) : (
               <CheckCircle className="h-8 w-8 text-green-500" />
             )}
@@ -334,7 +388,7 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
             ============================================================ */}
         <CredentialRenderer
           credentialType={data.credential_type}
-          metadata={data.metadata}
+          metadata={credentialMetadata}
           template={template}
           issuerName={data.issuer_name}
           status={publicStatus}
@@ -359,7 +413,7 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
         {/* ============================================================
             SECTION 2B: Issuer Info (UF-07) — links to issuer registry
             ============================================================ */}
-        {data.issuer_name && data.org_id && (
+        {data.issuer_name && data.issuer_public_id && (
           <>
             <Separator />
             <div className="flex items-center justify-between">
@@ -368,7 +422,7 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
                 <span className="font-medium">{data.issuer_name}</span>
               </div>
               <a
-                href={issuerRegistryPath(data.org_id)}
+                href={issuerRegistryPath(data.issuer_public_id)}
                 className="text-xs text-primary hover:underline"
               >
                 {VERIFICATION_DISPLAY_LABELS.VIEW_ISSUER_REGISTRY}
@@ -417,6 +471,29 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
                 { type: 'timestamp', present: false },
               ]}
             />
+          </>
+        )}
+
+        {/* ============================================================
+            SECTION 2e: Source Provenance (CSI-03)
+            ============================================================ */}
+        {hasSourceProvenance && (
+          <>
+            <Separator />
+            <SourceProvenanceDisplay data={sourceProvenance} />
+          </>
+        )}
+
+        {/* ============================================================
+            SECTION 2f: LinkedIn Share (CSI-03)
+            ============================================================ */}
+        {isSecured && (
+          <>
+            <Separator />
+            <div className="space-y-3">
+              <ArkovaBadge publicId={data.public_id} status={publicStatus} />
+              <LinkedInCredentialHelper publicId={data.public_id} />
+            </div>
           </>
         )}
 
@@ -517,7 +594,7 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
         <ProvenanceTimeline publicId={data.public_id} />
 
         {/* ============================================================
-            SECTION 5: Proof Download (UF-07)
+            SECTION 5: Proof Download (UF-07 + CSI-03 enrichment)
             ============================================================ */}
         {hasProof && (
           <>
@@ -531,6 +608,7 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
               filename={data.filename}
               securedAt={data.secured_at ?? data.anchor_timestamp}
               networkReceiptId={data.network_receipt_id}
+              sourceProvenance={sourceProvenance}
             />
           </>
         )}
@@ -588,9 +666,48 @@ function mapToLifecycleData(data: PublicAnchorData): AnchorLifecycleData {
     issuedAt: data.issued_at ?? data.issued_date,
     securedAt: data.secured_at ?? data.anchor_timestamp,
     revokedAt: data.revoked_at,
+    supersededAt: data.superseded_at,
     revocationReason: data.revocation_reason,
     expiresAt: data.expires_at ?? data.expiry_date,
   };
+}
+
+function extractSourceProvenance(data: PublicAnchorData): SourceProvenanceData {
+  const metadata = data.metadata ?? {};
+  const verificationLevel = parseVerificationLevel(
+    data.verification_level ?? metadata.verification_level
+  );
+
+  return {
+    source_url: sanitizeSourceUrl(firstString(data.source_url, metadata.source_url)),
+    source_provider: firstString(data.source_provider, metadata.source_provider),
+    verification_level: verificationLevel,
+    evidence_package_hash: firstString(data.evidence_package_hash, metadata.evidence_package_hash),
+    source_payload_hash: firstString(data.source_payload_hash, metadata.source_payload_hash),
+    fetched_at: firstString(data.fetched_at, metadata.fetched_at, metadata.source_fetched_at),
+  };
+}
+
+function sanitizeCredentialMetadata(metadata: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
+  if (!metadata) return metadata;
+
+  const safeEntries = Object.entries(metadata).filter(([key]) => {
+    const normalizedKey = normalizeMetadataKey(key);
+    return !PUBLIC_METADATA_HIDDEN_KEYS.has(normalizedKey) && !normalizedKey.startsWith('source_');
+  });
+
+  return Object.fromEntries(safeEntries);
+}
+
+function normalizeMetadataKey(key: string): string {
+  return key.trim().toLowerCase().replace(/[\s-]+/g, '_');
+}
+
+function firstString(...values: unknown[]): string | null {
+  for (const value of values) {
+    if (typeof value === 'string' && value.trim()) return value;
+  }
+  return null;
 }
 
 function getHeroTitle(
@@ -602,6 +719,7 @@ function getHeroTitle(
   if (status === 'PENDING') return ANCHORING_STATUS_LABELS.PENDING_PUBLIC_TITLE;
   if (status === 'REVOKED') return PUBLIC_VERIFICATION_LABELS.RECORD_REVOKED;
   if (status === 'EXPIRED') return PUBLIC_VERIFICATION_LABELS.RECORD_EXPIRED;
+  if (status === 'SUPERSEDED') return PUBLIC_VERIFICATION_LABELS.RECORD_SUPERSEDED;
   if (securedAt) {
     return PUBLIC_VERIFICATION_LABELS.VERIFIED_ON.replace('{date}', formatDate(securedAt));
   }
@@ -613,6 +731,7 @@ function getHeroSubtitle(status: PublicVerificationStatus): string {
   if (status === 'PENDING') return ANCHORING_STATUS_LABELS.PENDING_PUBLIC_SUBTITLE;
   if (status === 'REVOKED') return PUBLIC_VERIFICATION_LABELS.REVOKED_DESC;
   if (status === 'EXPIRED') return PUBLIC_VERIFICATION_LABELS.EXPIRED_DESC;
+  if (status === 'SUPERSEDED') return PUBLIC_VERIFICATION_LABELS.SUPERSEDED_DESC;
   return PUBLIC_VERIFICATION_LABELS.VERIFIED_DESC;
 }
 

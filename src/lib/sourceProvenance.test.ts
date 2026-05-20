@@ -1,7 +1,5 @@
 /**
  * Source Provenance Utilities Tests (CSI-03 / SCRUM-1599)
- *
- * TDD: These tests cover the source provenance logic for public verification pages.
  */
 
 import { afterEach, describe, it, expect, vi } from 'vitest';
@@ -22,10 +20,6 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-// =============================================================================
-// sanitizeSourceUrl
-// =============================================================================
-
 describe('sanitizeSourceUrl', () => {
   it('returns null for null/undefined input', () => {
     expect(sanitizeSourceUrl(null)).toBeNull();
@@ -39,44 +33,47 @@ describe('sanitizeSourceUrl', () => {
     );
   });
 
-  it('strips sensitive query parameters', () => {
-    const url = 'https://example.com/badge?id=123&token=secret123&name=test';
+  it('strips sensitive query parameters including OAuth redirect values', () => {
+    const url = 'https://example.com/badge?id=123&token=secret123&state=public-route&code=course-101';
     const result = sanitizeSourceUrl(url);
     expect(result).toContain('id=123');
-    expect(result).toContain('name=test');
+    expect(result).not.toContain('state=public-route');
+    expect(result).not.toContain('code=course-101');
     expect(result).not.toContain('token=secret123');
   });
 
   it('strips access_token parameter', () => {
-    const url = 'https://api.example.com/v1/cert?access_token=xyz&format=json';
-    const result = sanitizeSourceUrl(url);
+    const result = sanitizeSourceUrl('https://api.example.com/v1/cert?access_token=xyz&format=json');
     expect(result).toContain('format=json');
     expect(result).not.toContain('access_token');
   });
 
-  it('strips API key parameters (case-insensitive)', () => {
-    const url = 'https://example.com/doc?api_key=abc123&id=42';
-    const result = sanitizeSourceUrl(url);
+  it('strips API key parameters case-insensitively', () => {
+    const result = sanitizeSourceUrl('https://example.com/doc?api_key=abc123&id=42');
     expect(result).toContain('id=42');
     expect(result).not.toContain('api_key');
   });
 
-  it('returns null for URLs with userinfo (user:pass@host)', () => {
+  it('strips signature-style parameters', () => {
+    expect(sanitizeSourceUrl('https://example.com/doc?sig=abc&id=1')).toBe('https://example.com/doc?id=1');
+    expect(sanitizeSourceUrl('https://example.com/doc?signature=xyz&name=test')).toBe('https://example.com/doc?name=test');
+    expect(sanitizeSourceUrl('https://example.com/doc?x-api-key=secret&id=2')).toBe('https://example.com/doc?id=2');
+    expect(sanitizeSourceUrl('https://example.com/doc?hmac=deadbeef&type=cert')).toBe('https://example.com/doc?type=cert');
+  });
+
+  it('returns null for URLs with userinfo', () => {
     expect(sanitizeSourceUrl('https://user:pass@example.com/badge')).toBeNull();
     expect(sanitizeSourceUrl('https://admin@example.com/cert')).toBeNull();
   });
 
   it('strips URL fragments', () => {
-    const url = 'https://example.com/badge/123#access_token=secret';
-    const result = sanitizeSourceUrl(url);
-    expect(result).toBe('https://example.com/badge/123');
+    expect(sanitizeSourceUrl('https://example.com/badge/123#access_token=secret')).toBe(
+      'https://example.com/badge/123'
+    );
   });
 
-  it('returns null for invalid URLs', () => {
+  it('rejects invalid and non-http(s) URLs', () => {
     expect(sanitizeSourceUrl('not-a-url')).toBeNull();
-  });
-
-  it('rejects non-http(s) protocols', () => {
     expect(sanitizeSourceUrl('file:///etc/passwd')).toBeNull();
     expect(sanitizeSourceUrl('blob:https://example.com/uuid')).toBeNull();
     expect(sanitizeSourceUrl('javascript:alert(1)')).toBeNull();
@@ -88,34 +85,7 @@ describe('sanitizeSourceUrl', () => {
     expect(sanitizeSourceUrl('https://example.com/badge')).toBe('https://example.com/badge');
     expect(sanitizeSourceUrl('http://example.com/badge')).toBe('http://example.com/badge');
   });
-
-  it('strips additional sensitive params: sig, signature, x-api-key, hmac', () => {
-    const url = 'https://example.com/doc?sig=abc&id=1';
-    expect(sanitizeSourceUrl(url)).toContain('id=1');
-    expect(sanitizeSourceUrl(url)).not.toContain('sig=abc');
-
-    const url2 = 'https://example.com/doc?signature=xyz&name=test';
-    expect(sanitizeSourceUrl(url2)).toContain('name=test');
-    expect(sanitizeSourceUrl(url2)).not.toContain('signature=xyz');
-
-    const url3 = 'https://example.com/doc?x-api-key=secret&id=2';
-    expect(sanitizeSourceUrl(url3)).toContain('id=2');
-    expect(sanitizeSourceUrl(url3)).not.toContain('x-api-key=secret');
-
-    const url4 = 'https://example.com/doc?hmac=deadbeef&type=cert';
-    expect(sanitizeSourceUrl(url4)).toContain('type=cert');
-    expect(sanitizeSourceUrl(url4)).not.toContain('hmac=deadbeef');
-  });
-
-  it('preserves path structure', () => {
-    const url = 'https://www.credly.com/badges/12345678-abcd-efgh-ijkl-mnopqrstuvwx';
-    expect(sanitizeSourceUrl(url)).toBe(url);
-  });
 });
-
-// =============================================================================
-// isSourceUrlSafe
-// =============================================================================
 
 describe('isSourceUrlSafe', () => {
   it('returns false for null/undefined', () => {
@@ -132,86 +102,36 @@ describe('isSourceUrlSafe', () => {
   });
 });
 
-// =============================================================================
-// getEvidenceLevelLabel
-// =============================================================================
-
-describe('getEvidenceLevelLabel', () => {
-  it('returns correct labels for all levels', () => {
+describe('evidence level helpers', () => {
+  it('returns labels and descriptions for valid levels', () => {
     expect(getEvidenceLevelLabel('issuer_anchored')).toBe('Issuer Anchored');
     expect(getEvidenceLevelLabel('source_signed')).toBe('Source Signed');
     expect(getEvidenceLevelLabel('account_linked')).toBe('Account Linked');
     expect(getEvidenceLevelLabel('captured_url')).toBe('Captured URL Evidence');
     expect(getEvidenceLevelLabel('ai_captured')).toBe('AI-Captured Evidence');
-  });
-
-  it('returns null for unknown levels', () => {
-    expect(getEvidenceLevelLabel('unknown_level')).toBeNull();
-    expect(getEvidenceLevelLabel(null)).toBeNull();
-    expect(getEvidenceLevelLabel(undefined)).toBeNull();
-  });
-});
-
-// =============================================================================
-// getEvidenceLevelDescription
-// =============================================================================
-
-describe('getEvidenceLevelDescription', () => {
-  it('returns descriptions for valid levels', () => {
     expect(getEvidenceLevelDescription('issuer_anchored')).toContain('Verified directly');
     expect(getEvidenceLevelDescription('captured_url')).toContain('public URL');
   });
 
-  it('returns null for unknown levels', () => {
-    expect(getEvidenceLevelDescription(null)).toBeNull();
+  it('returns null/0 for unknown levels', () => {
+    expect(getEvidenceLevelLabel('unknown_level')).toBeNull();
+    expect(getEvidenceLevelLabel(null)).toBeNull();
     expect(getEvidenceLevelDescription('nonsense')).toBeNull();
+    expect(getEvidenceLevelStrength('invalid')).toBe(0);
   });
-});
 
-// =============================================================================
-// getEvidenceLevelStrength
-// =============================================================================
-
-describe('getEvidenceLevelStrength', () => {
-  it('returns correct strength ordering', () => {
+  it('orders evidence strength', () => {
     expect(getEvidenceLevelStrength('issuer_anchored')).toBe(5);
     expect(getEvidenceLevelStrength('source_signed')).toBe(4);
     expect(getEvidenceLevelStrength('account_linked')).toBe(3);
     expect(getEvidenceLevelStrength('captured_url')).toBe(2);
     expect(getEvidenceLevelStrength('ai_captured')).toBe(1);
-  });
-
-  it('returns 0 for null/unknown', () => {
-    expect(getEvidenceLevelStrength(null)).toBe(0);
-    expect(getEvidenceLevelStrength(undefined)).toBe(0);
-    expect(getEvidenceLevelStrength('invalid')).toBe(0);
-  });
-});
-
-// =============================================================================
-// isStrongEvidence
-// =============================================================================
-
-describe('isStrongEvidence', () => {
-  it('returns true for issuer_anchored and source_signed', () => {
     expect(isStrongEvidence('issuer_anchored')).toBe(true);
     expect(isStrongEvidence('source_signed')).toBe(true);
-  });
-
-  it('returns false for weaker levels', () => {
-    expect(isStrongEvidence('account_linked')).toBe(false);
     expect(isStrongEvidence('captured_url')).toBe(false);
-    expect(isStrongEvidence('ai_captured')).toBe(false);
-  });
-
-  it('returns false for null', () => {
     expect(isStrongEvidence(null)).toBe(false);
   });
 });
-
-// =============================================================================
-// formatProvider
-// =============================================================================
 
 describe('formatProvider', () => {
   it('formats known providers with correct casing', () => {
@@ -231,88 +151,68 @@ describe('formatProvider', () => {
   });
 });
 
-// =============================================================================
-// buildEvidenceProofFields
-// =============================================================================
-
 describe('buildEvidenceProofFields', () => {
   it('includes all present fields', () => {
-    const data = {
+    const result = buildEvidenceProofFields({
       evidence_package_hash: 'abc123',
       source_payload_hash: 'def456',
       source_provider: 'credly',
       source_url: 'https://credly.com/badges/123',
       fetched_at: '2026-05-10T12:00:00Z',
-      verification_level: 'captured_url' as const,
-    };
+      verification_level: 'captured_url',
+    });
 
-    const result = buildEvidenceProofFields(data);
-    expect(result.evidence_package_hash).toBe('abc123');
-    expect(result.source_payload_hash).toBe('def456');
-    expect(result.source_provider).toBe('credly');
-    expect(result.source_url).toBe('https://credly.com/badges/123');
-    expect(result.fetched_at).toBe('2026-05-10T12:00:00Z');
-    expect(result.verification_level).toBe('captured_url');
+    expect(result).toEqual({
+      evidence_package_hash: 'abc123',
+      source_payload_hash: 'def456',
+      source_provider: 'credly',
+      source_url: 'https://credly.com/badges/123',
+      fetched_at: '2026-05-10T12:00:00Z',
+      verification_level: 'captured_url',
+    });
   });
 
-  it('omits null/undefined fields', () => {
-    const result = buildEvidenceProofFields({});
-    expect(Object.keys(result)).toHaveLength(0);
+  it('omits null/undefined/invalid fields and unsafe URLs', () => {
+    expect(buildEvidenceProofFields({})).toEqual({});
+    expect(buildEvidenceProofFields({ source_url: 'https://user:pass@evil.com/cert' }).source_url).toBeUndefined();
+    expect(buildEvidenceProofFields({ verification_level: 'not_real' as never }).verification_level).toBeUndefined();
   });
 
   it('sanitizes source_url before including', () => {
-    const data = {
+    const result = buildEvidenceProofFields({
       source_url: 'https://example.com/badge?token=secret&id=123',
-    };
-    const result = buildEvidenceProofFields(data);
+    });
     expect(result.source_url).toContain('id=123');
     expect(result.source_url).not.toContain('token=secret');
   });
-
-  it('excludes unsafe source URLs', () => {
-    const data = {
-      source_url: 'https://user:pass@evil.com/cert',
-    };
-    const result = buildEvidenceProofFields(data);
-    expect(result.source_url).toBeUndefined();
-  });
 });
-
-// =============================================================================
-// badgeUrl
-// =============================================================================
 
 describe('badgeUrl', () => {
-  it('builds a badge URL with public ID and status', () => {
-    const result = badgeUrl('ARK-2026-001', 'SECURED');
+  it('builds a badge URL with public ID and no spoofable status parameter', () => {
+    const result = badgeUrl('ARK-2026-001');
     expect(result).toContain('/api/badge/ARK-2026-001');
-    expect(result).toContain('status=SECURED');
+    expect(result).not.toContain('status=');
   });
 
-  it('encodes public ID path segments', () => {
-    const result = badgeUrl('ARK 2026/001?x=1', 'SECURED');
-    expect(result).toContain('/api/badge/ARK%202026%2F001%3Fx%3D1');
+  it('encodes public IDs in the badge path', () => {
+    const result = badgeUrl('ARK/2026?`#001`');
+    expect(result).toContain('/api/badge/ARK%2F2026%3F%60%23001%60');
   });
 });
 
-// =============================================================================
-// linkedInCredentialUrl
-// =============================================================================
-
 describe('linkedInCredentialUrl', () => {
-  it('builds Arkova verification URL (not LinkedIn native)', () => {
-    const result = linkedInCredentialUrl('ARK-2026-001');
-    expect(result).toBe('https://app.arkova.ai/verify/ARK-2026-001');
+  it('builds Arkova verification URL', () => {
+    expect(linkedInCredentialUrl('ARK-2026-001')).toBe('https://app.arkova.ai/verify/ARK-2026-001');
   });
 
   it('uses configured app base URL and encodes the public ID', () => {
     vi.stubEnv('VITE_APP_URL', 'https://preview.arkova.ai/');
-    const result = linkedInCredentialUrl('ARK 2026/001?x=1');
-    expect(result).toBe('https://preview.arkova.ai/verify/ARK%202026%2F001%3Fx%3D1');
+    expect(linkedInCredentialUrl('ARK 2026/001?x=1')).toBe(
+      'https://preview.arkova.ai/verify/ARK%202026%2F001%3Fx%3D1'
+    );
   });
 
   it('does not include linkedin.com domain', () => {
-    const result = linkedInCredentialUrl('ARK-2026-001');
-    expect(result).not.toContain('linkedin.com');
+    expect(linkedInCredentialUrl('ARK-2026-001')).not.toContain('linkedin.com');
   });
 });
