@@ -158,7 +158,7 @@ export function DocusignConnectorCard({ orgId }: DocusignConnectorCardProps) {
               <div className="flex items-center gap-2">
                 <p className="text-sm font-medium">Status</p>
                 <Badge variant={connected ? 'default' : 'secondary'}>
-                  {statusLoading ? 'Checking' : connected ? CONNECTIONS_LABELS.STATUS_CONNECTED : CONNECTIONS_LABELS.STATUS_NOT_CONNECTED}
+                  {statusLoading ? CONNECTIONS_LABELS.STATUS_CHECKING : connected ? CONNECTIONS_LABELS.STATUS_CONNECTED : CONNECTIONS_LABELS.STATUS_NOT_CONNECTED}
                 </Badge>
               </div>
               {connected && accountLabel && (

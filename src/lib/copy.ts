@@ -1130,6 +1130,7 @@ export const CONNECTIONS_LABELS = {
   DISCONNECTING: 'Disconnecting…',
   STATUS_CONNECTED: 'Connected',
   STATUS_NOT_CONNECTED: 'Not connected',
+  STATUS_CHECKING: 'Checking',
   CONNECT_FAILED: 'Could not start the connection. Please try again.',
   DISCONNECT_FAILED: 'Could not disconnect. Please try again.',
   TOAST_CONNECTED: 'DocuSign connected. Completed envelopes will now trigger rules.',

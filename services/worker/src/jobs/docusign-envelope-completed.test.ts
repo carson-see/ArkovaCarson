@@ -116,7 +116,11 @@ describe('runDocusignEnvelopeCompletedJobs', () => {
     const db = {
       from: vi.fn((table: string) => {
         expect(table).toBe('integration_events');
-        return {
+        const query = {
+          select: vi.fn(() => query),
+          eq: vi.fn(() => query),
+          is: vi.fn(() => query),
+          maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
           insert: vi.fn((value: Record<string, unknown>) => {
             inserted = value;
             return {
@@ -126,6 +130,7 @@ describe('runDocusignEnvelopeCompletedJobs', () => {
             };
           }),
         };
+        return query;
       }),
     };
     const deps = makeDocusignEnvelopeJobDeps({ db });

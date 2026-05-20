@@ -9,6 +9,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import { toast } from 'sonner';
 import { DocusignConnectorCard } from './DocusignConnectorCard';
+import { CONNECTIONS_LABELS } from '@/lib/copy';
 
 const supabaseQuery = {
   select: vi.fn().mockReturnThis(),
@@ -60,13 +61,13 @@ describe('DocusignConnectorCard', () => {
     Object.defineProperty(window, 'location', { configurable: true, value: originalLocation });
   });
 
-  it('renders loading state with "Checking" badge while fetching connection status', () => {
+  it('renders loading state with the shared checking badge copy while fetching connection status', () => {
     // Never resolve the Supabase query so component stays in loading state
     supabaseQuery.maybeSingle.mockReturnValue(new Promise(() => {}));
 
     render(<DocusignConnectorCard orgId={ORG_ID} />);
 
-    expect(screen.getByText('Checking')).toBeInTheDocument();
+    expect(screen.getByText(CONNECTIONS_LABELS.STATUS_CHECKING)).toBeInTheDocument();
     // Connect button should be disabled during loading
     const connectButton = screen.getByRole('button', { name: /connect/i });
     expect(connectButton).toBeDisabled();

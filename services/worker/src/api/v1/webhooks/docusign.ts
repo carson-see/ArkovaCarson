@@ -13,6 +13,7 @@ import { Router, type Request, type Response } from 'express';
 import { db } from '../../../utils/db.js';
 import { logger } from '../../../utils/logger.js';
 import { submitJob } from '../../../utils/jobQueue.js';
+import { DOCUSIGN_ENVELOPE_COMPLETED_JOB_TYPE } from '../../../jobs/docusign-envelope-completed.js';
 import { adaptDocusign } from '../../../integrations/connectors/adapters.js';
 import {
   parseDocusignConnectPayload,
@@ -107,7 +108,7 @@ async function enqueueFetchJob(args: {
   ruleEventId: string;
 }): Promise<string> {
   const jobId = await submitJob({
-    type: 'docusign.envelope_completed',
+    type: DOCUSIGN_ENVELOPE_COMPLETED_JOB_TYPE,
     max_attempts: 5,
     priority: 10,
     payload: {
