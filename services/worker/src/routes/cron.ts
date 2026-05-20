@@ -77,6 +77,7 @@ import { runQueueReminderJob } from '../jobs/queue-reminders.js';
 import { runOrgQueueScheduler } from '../jobs/org-queue-scheduler.js';
 import { runRulesEngine } from '../jobs/rules-engine.js';
 import { runRuleActionDispatcher } from '../jobs/rule-action-dispatcher.js';
+import { runDocusignEnvelopeCompletedJobs } from '../jobs/docusign-envelope-completed.js';
 import { runDbHealthMonitor } from '../jobs/db-health-monitor.js';
 import { runSubscriptionRenewal } from '../jobs/workspace-subscription-renewal.js';
 import { runMainnetMigration, getMigrationStatus } from '../jobs/mainnet-migration.js';
@@ -91,6 +92,9 @@ export const cronRouter = Router();
 
 // CORS for browser-based admin triggers (PipelineAdminPage)
 import { corsMiddleware } from './middleware.js';
+
+const DocusignEnvelopeCompletedLimitSchema = z.coerce.number().int().min(1).max(100);
+
 cronRouter.use(corsMiddleware);
 
 // Dedicated rate limiter for cron endpoints
@@ -367,6 +371,27 @@ cronRouter.post('/rule-action-dispatcher', async (_req, res) => {
     res.json(result);
   } catch (error) {
     logger.error({ error }, 'Rule action dispatcher pass failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+// ─── SCRUM-1101/SCRUM-1718: DocuSign completed-envelope document fetch jobs ───
+cronRouter.post('/docusign-envelope-completed', async (req, res) => {
+  try {
+    const rawLimit = req.query.limit ?? req.body?.limit;
+    const parsedLimit = rawLimit === undefined
+      ? undefined
+      : DocusignEnvelopeCompletedLimitSchema.safeParse(rawLimit);
+    if (parsedLimit && !parsedLimit.success) {
+      res.status(400).json({ error: 'Invalid request', details: parsedLimit.error.flatten() });
+      return;
+    }
+    const result = await runDocusignEnvelopeCompletedJobs({
+      limit: parsedLimit?.data,
+    });
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'DocuSign completed-envelope queue pass failed');
     res.status(500).json({ error: 'Processing failed' });
   }
 });
