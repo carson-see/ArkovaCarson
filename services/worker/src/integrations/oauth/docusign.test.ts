@@ -269,8 +269,7 @@ describe('provisionConnectListener', () => {
     expect(body.allowEnvelopePublish).toBe('true');
     expect(body.enableLog).toBe('true');
     expect(body.includeHMAC).toBe('true');
-    const connectSecretField = ['hmac', 'Secret'].join('');
-    expect(body).not.toHaveProperty(connectSecretField);
+    expect(body.hmacSecret).toBe('hmac-secret-123');
     expect(postAuthHeader).toBe('Bearer at-test');
     expect(body.requiresAcknowledgement).toBe('true');
     expect(body.envelopeEvents).toEqual(['Completed']);

@@ -36,10 +36,57 @@ import {
   resolveDocusignSecretManagerProjectId,
   type DocusignRefreshTokenStore,
 } from '../../../integrations/connectors/docusign-token-store.js';
+import type { TypeSafeDatabase } from '../../../types/database-overrides.js';
 
-// org_integrations landed after generated worker DB types.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type DbClient = any;
+type OrgMemberRow = TypeSafeDatabase['public']['Tables']['org_members']['Row'];
+type OrgIntegrationRow = TypeSafeDatabase['public']['Tables']['org_integrations']['Row'];
+type OrgIntegrationInsert = TypeSafeDatabase['public']['Tables']['org_integrations']['Insert'];
+type OrgIntegrationUpdate = TypeSafeDatabase['public']['Tables']['org_integrations']['Update'];
+type IntegrationEventInsert = TypeSafeDatabase['public']['Tables']['integration_events']['Insert'];
+type OrgMemberRoleRow = Pick<OrgMemberRow, 'role'>;
+type DocusignIntegrationIdRow = Pick<OrgIntegrationRow, 'id'>;
+type DocusignIntegrationLookupRow = Pick<OrgIntegrationRow, 'id' | 'token_secret_name'>;
+type DocusignIntegrationUpsert = Pick<
+  OrgIntegrationInsert,
+  | 'org_id'
+  | 'provider'
+  | 'account_id'
+  | 'account_label'
+  | 'base_uri'
+  | 'encrypted_tokens'
+  | 'token_kms_key_id'
+  | 'token_secret_name'
+  | 'scope'
+  | 'connected_at'
+  | 'revoked_at'
+  | 'updated_at'
+>;
+
+interface DbQueryResult<T> {
+  data: T | null;
+  error: unknown;
+}
+
+interface DbFilterQuery<T> extends PromiseLike<DbQueryResult<T>> {
+  select(columns?: string): DbFilterQuery<T>;
+  eq(field: string, value: unknown): DbFilterQuery<T>;
+  is(field: string, value: unknown): DbFilterQuery<T>;
+  single(): Promise<DbQueryResult<T extends Array<infer Row> ? Row : T>>;
+  maybeSingle(): Promise<DbQueryResult<T extends Array<infer Row> ? Row : T>>;
+}
+
+interface DbTableQuery<T> {
+  select(columns?: string): DbFilterQuery<T>;
+  update(value: OrgIntegrationUpdate): DbFilterQuery<DocusignIntegrationIdRow[]>;
+  insert(value: IntegrationEventInsert): PromiseLike<DbQueryResult<unknown>>;
+  upsert(value: DocusignIntegrationUpsert, options?: { onConflict?: string }): DbFilterQuery<DocusignIntegrationIdRow>;
+}
+
+interface DbClient {
+  from(table: 'org_members'): DbTableQuery<OrgMemberRoleRow>;
+  from(table: 'org_integrations'): DbTableQuery<DocusignIntegrationLookupRow[]>;
+  from(table: 'integration_events'): DbTableQuery<unknown>;
+}
 
 interface DocusignOAuthDeps {
   db?: DbClient;
@@ -168,7 +215,7 @@ async function recordIntegrationEvent(db: DbClient, args: {
   integrationId?: string | null;
   eventType: string;
   status: 'success' | 'warning' | 'error';
-  details?: Record<string, unknown>;
+  details?: IntegrationEventInsert['details'];
 }): Promise<void> {
   const { error } = await db.from('integration_events').insert({
     org_id: args.orgId,
@@ -185,7 +232,7 @@ async function recordIntegrationEvent(db: DbClient, args: {
 
 export function createDocusignOAuthRouter(deps: DocusignOAuthDeps = {}): Router {
   const router = Router();
-  const db = deps.db ?? defaultDb;
+  const db = (deps.db ?? defaultDb) as DbClient;
 
   router.post('/docusign/oauth/start', async (req: Request, res: Response) => {
     const userId = getUserId(req);
@@ -346,7 +393,7 @@ export function createDocusignOAuthRouter(deps: DocusignOAuthDeps = {}): Router 
         eventType: 'oauth_connected',
         status: 'success',
         details: {
-          account_label: account.account_name ?? null,
+          account_label: account.account_name ?? account.account_id ?? null,
           account_id: account.account_id,
         },
       });
@@ -435,7 +482,7 @@ export function createDocusignOAuthRouter(deps: DocusignOAuthDeps = {}): Router 
       return;
     }
 
-    const existingRows = (existing ?? []) as Array<{ token_secret_name?: string | null }>;
+    const existingRows = existing ?? [];
     const tokenSecretNames = existingRows
       .map((row) => row.token_secret_name)
       .filter((name): name is string => typeof name === 'string' && name.length > 0);
@@ -467,6 +514,8 @@ export function createDocusignOAuthRouter(deps: DocusignOAuthDeps = {}): Router 
       return;
     }
 
+    // Secret Manager delete treats 404 as success, so if this DB update fails
+    // the still-connected row can be retried and reconciled by rerunning disconnect.
     const { data, error } = await db
       .from('org_integrations')
       .update({

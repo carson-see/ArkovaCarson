@@ -370,6 +370,9 @@ export async function provisionConnectListener(args: {
     enableLog: 'true',
     allUsers: 'true',
     includeHMAC: 'true',
+    // DocuSign must sign deliveries with the same key the webhook verifier uses.
+    // Never log this Connect payload.
+    hmacSecret: connectHmacSecret, // NOSONAR
     includeDocumentFields: 'true',
     requiresAcknowledgement: 'true',
     envelopeEvents: ['Completed'],

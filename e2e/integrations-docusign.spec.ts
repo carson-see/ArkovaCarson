@@ -327,8 +327,7 @@ test.describe('DocuSign integration', () => {
           .eq('id', SEED_USERS.orgAdmin.id)
           .single();
         if (!adminProfile?.org_id) {
-          test.skip(true, 'No org admin org_id available to exercise the non-admin DocuSign authz boundary');
-          throw new Error('Skipped: missing org admin org_id');
+          throw new Error('Missing org admin org_id to exercise the non-admin DocuSign authz boundary');
         }
         await individualPage.goto(`/organizations/${adminProfile.org_id}?tab=settings`);
       }
