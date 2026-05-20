@@ -223,8 +223,7 @@ router.get('/:publicId/proof', async (req: Request<{ publicId: string }>, res: R
       anchor = await lookup.lookupByPublicId(publicId);
     } else {
       const { db } = await import('../../utils/db.js');
-      // Generated DB types do not yet reflect the latest proof-table fields.
-      // Keep the casts narrow to this route.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- table not yet in generated database.types.ts
       const dbAny = db as any;
       const { data, error } = await db
         .from('anchors')

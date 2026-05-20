@@ -117,6 +117,7 @@ export async function reportMeteredUsageToStripe(): Promise<UsageReportResult[]>
 
   // Find all orgs with active metered subscriptions
   // Note: subscriptions table uses plan_id FK to plans table, not plan_type column
+  // eslint-disable-next-line arkova/missing-org-filter -- admin aggregation query
   const { data: subs, error: subError } = await db
     .from('subscriptions')
     .select('id, user_id, org_id, stripe_subscription_id, plan_id')

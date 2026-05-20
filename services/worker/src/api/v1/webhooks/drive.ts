@@ -82,6 +82,7 @@ interface DriveChannelLookup {
  * and fall back to skipping verification (logs a warning).
  */
 async function resolveDriveChannel(channelId: string): Promise<DriveChannelLookup | null> {
+  // eslint-disable-next-line arkova/missing-org-filter -- webhook ingress: resolving org from external provider ID
   const { data, error } = await dbAny
     .from('org_integrations')
     .select('org_id, id, account_label, encrypted_tokens, token_kms_key_id, last_page_token')

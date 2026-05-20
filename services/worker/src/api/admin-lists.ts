@@ -298,6 +298,7 @@ export async function handleAdminSubscriptions(
   const statusFilter = (req.query.status as string) || '';
 
   try {
+    // eslint-disable-next-line arkova/missing-org-filter -- admin aggregation query
     let query = db
       .from('subscriptions')
       .select('id, user_id, plan_id, status, stripe_customer_id, stripe_subscription_id, current_period_start, current_period_end, created_at, plans(name, price_cents)', { count: 'exact' })

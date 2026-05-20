@@ -40,8 +40,8 @@ function createApp(userId = 'user-1', orgId = 'org-1') {
   const app = express();
   app.use(express.json());
   app.use((req: Request, _res: Response, next: NextFunction) => {
-    (req as any).userId = userId;
-    (req as any).orgId = orgId;
+    req.userId = userId;
+    req.orgId = orgId;
     next();
   });
   app.use('/api/v1/credits', creditsRouter);
