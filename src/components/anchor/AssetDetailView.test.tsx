@@ -250,5 +250,6 @@ describe('AssetDetailView', () => {
 
     expect(getAllByText('Ada Lovelace').length).toBeGreaterThan(0);
     expect(queryByText(/token=secret/)).not.toBeInTheDocument();
+    expect(queryByText(/AI-extracted metadata/)).not.toBeInTheDocument();
   });
 });

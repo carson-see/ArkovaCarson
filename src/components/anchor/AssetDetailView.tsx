@@ -678,7 +678,7 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
       )}
 
       {/* Verification Walkthrough (DEMO-02) */}
-      <VerificationWalkthrough hasMetadata={!!credentialMetadata && Object.keys(credentialMetadata).length > 0} />
+      <VerificationWalkthrough hasMetadata={!!visibleMetadata && Object.keys(visibleMetadata).length > 0} />
 
       {/* Credential Details (UF-01) — template-driven rendering */}
       {(anchor.credentialType || credentialMetadata) && (
