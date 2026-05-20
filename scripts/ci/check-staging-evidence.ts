@@ -309,6 +309,8 @@ export function isStagingToolingOnly(files: string[]): StagingFilesOnlyResult {
     /^\.claude\/hooks\//,
     /^package\.json$/,
     /^package-lock\.json$/,
+    /^packages\/[^/]+\/package-lock\.json$/,
+    /^services\/[^/]+\/package-lock\.json$/,
     /agents\.md$/,
     // ESLint rules and config are dev-time lint tooling, not runtime code.
     // Changes here affect CI's lint step, not the deployed worker.
