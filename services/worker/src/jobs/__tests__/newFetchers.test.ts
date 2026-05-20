@@ -4,6 +4,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type { SupabaseClient } from '@supabase/supabase-js';
 
 const mockRpc = vi.fn();
 const mockLogger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
@@ -38,7 +39,7 @@ describe('NPH-05: SOS Fetcher', () => {
   it('returns empty when flag is disabled', async () => {
     mockRpc.mockResolvedValue({ data: false });
     const { fetchSosEntities } = await import('../sosFetcher.js');
-    const result = await fetchSosEntities(createMockSupabase() as any);
+    const result = await fetchSosEntities(createMockSupabase() as unknown as SupabaseClient);
     expect(result).toEqual([]);
   });
 });
@@ -47,7 +48,7 @@ describe('NPH-06: Licensing Board Fetcher', () => {
   it('returns empty when flag is disabled', async () => {
     mockRpc.mockResolvedValue({ data: false });
     const { fetchLicensingBoardRecords } = await import('../licensingBoardFetcher.js');
-    const result = await fetchLicensingBoardRecords(createMockSupabase() as any);
+    const result = await fetchLicensingBoardRecords(createMockSupabase() as unknown as SupabaseClient);
     expect(result).toEqual([]);
   });
 });
@@ -56,7 +57,7 @@ describe('NPH-07: Insurance License Fetcher', () => {
   it('returns empty when flag is disabled', async () => {
     mockRpc.mockResolvedValue({ data: false });
     const { fetchInsuranceLicenses } = await import('../insuranceLicenseFetcher.js');
-    const result = await fetchInsuranceLicenses(createMockSupabase() as any);
+    const result = await fetchInsuranceLicenses(createMockSupabase() as unknown as SupabaseClient);
     expect(result).toEqual([]);
   });
 });
@@ -65,7 +66,7 @@ describe('NPH-08: CLE Fetcher', () => {
   it('returns empty when flag is disabled', async () => {
     mockRpc.mockResolvedValue({ data: false });
     const { fetchCleRecords } = await import('../cleFetcher.js');
-    const result = await fetchCleRecords(createMockSupabase() as any);
+    const result = await fetchCleRecords(createMockSupabase() as unknown as SupabaseClient);
     expect(result).toEqual([]);
   });
 });
@@ -74,7 +75,7 @@ describe('NPH-09: Certification Fetcher', () => {
   it('returns empty when flag is disabled', async () => {
     mockRpc.mockResolvedValue({ data: false });
     const { fetchCertificationRecords } = await import('../certificationFetcher.js');
-    const result = await fetchCertificationRecords(createMockSupabase() as any);
+    const result = await fetchCertificationRecords(createMockSupabase() as unknown as SupabaseClient);
     expect(result).toEqual([]);
   });
 });
@@ -83,7 +84,7 @@ describe('NPH-10: IPEDS Fetcher', () => {
   it('returns zeros when flag is disabled', async () => {
     mockRpc.mockResolvedValue({ data: false });
     const { fetchIpedsInstitutions } = await import('../ipedsFetcher.js');
-    const result = await fetchIpedsInstitutions(createMockSupabase() as any);
+    const result = await fetchIpedsInstitutions(createMockSupabase() as unknown as SupabaseClient);
     expect(result).toEqual({ inserted: 0, skipped: 0, errors: 0, total: 0 });
   });
 });

@@ -10,12 +10,20 @@
  */
 
 import { logger } from '../../utils/logger.js';
+import type { KeyManagementServiceClient } from '@google-cloud/kms';
 import type {
   KmsProvider,
   HsmSignRequest,
   HsmSignResponse,
 } from '../types.js';
 import { KEY_ALGORITHM_TO_KMS, BANNED_ALGORITHMS, MIN_RSA_KEY_SIZE } from '../constants.js';
+
+interface AwsKmsClient {
+  send(command: unknown): Promise<{
+    Signature?: Uint8Array;
+    PublicKey?: Uint8Array;
+  }>;
+}
 
 // ─── Interface ─────────────────────────────────────────────────────────
 
@@ -29,21 +37,21 @@ export interface HsmBridge {
 
 export class AwsKmsHsmBridge implements HsmBridge {
   readonly name = 'AWS KMS';
-  private client: unknown | null = null;
+  private client: AwsKmsClient | null = null;
 
-  private async getClient(): Promise<unknown> {
+  private async getClient(): Promise<AwsKmsClient> {
     if (this.client) return this.client;
     // Lazy-load AWS SDK (same pattern as chain/signing-provider.ts)
     const { KMSClient } = await import('@aws-sdk/client-kms');
     this.client = new KMSClient({
       region: process.env.ADES_KMS_REGION || process.env.BITCOIN_KMS_REGION || 'us-east-1',
-    });
+    }) as AwsKmsClient;
     return this.client;
   }
 
   async sign(request: HsmSignRequest): Promise<HsmSignResponse> {
     validateSignRequest(request);
-    const client = await this.getClient() as any;
+    const client = await this.getClient();
     const { SignCommand } = await import('@aws-sdk/client-kms');
 
     const kmsAlgorithm = KEY_ALGORITHM_TO_KMS[request.algorithm]?.aws;
@@ -76,7 +84,7 @@ export class AwsKmsHsmBridge implements HsmBridge {
   }
 
   async getPublicKey(provider: KmsProvider, keyId: string): Promise<Buffer> {
-    const client = await this.getClient() as any;
+    const client = await this.getClient();
     const { GetPublicKeyCommand } = await import('@aws-sdk/client-kms');
 
     const command = new GetPublicKeyCommand({ KeyId: keyId });
@@ -93,9 +101,9 @@ export class AwsKmsHsmBridge implements HsmBridge {
 
 export class GcpKmsHsmBridge implements HsmBridge {
   readonly name = 'GCP Cloud HSM';
-  private client: unknown | null = null;
+  private client: KeyManagementServiceClient | null = null;
 
-  private async getClient(): Promise<unknown> {
+  private async getClient(): Promise<KeyManagementServiceClient> {
     if (this.client) return this.client;
     const { KeyManagementServiceClient } = await import('@google-cloud/kms');
     this.client = new KeyManagementServiceClient();
@@ -104,7 +112,7 @@ export class GcpKmsHsmBridge implements HsmBridge {
 
   async sign(request: HsmSignRequest): Promise<HsmSignResponse> {
     validateSignRequest(request);
-    const client = await this.getClient() as any;
+    const client = await this.getClient();
 
     const [response] = await client.asymmetricSign({
       name: request.keyId,
@@ -130,7 +138,7 @@ export class GcpKmsHsmBridge implements HsmBridge {
   }
 
   async getPublicKey(_provider: KmsProvider, keyId: string): Promise<Buffer> {
-    const client = await this.getClient() as any;
+    const client = await this.getClient();
     const [response] = await client.getPublicKey({ name: keyId });
     if (!response.pem) {
       throw new Error('GCP KMS returned empty public key');
