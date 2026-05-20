@@ -394,7 +394,7 @@ check_recent_revision_collision
 GCLOUD_FLAGS=(
   --image="$IMAGE"
   --tag="$TAG"
-  --update-env-vars=BUILD_SHA="$BUILD_SHA"
+  --update-env-vars=BUILD_SHA="$BUILD_SHA",BATCH_ANCHOR_MAX_SIZE=10000
   --update-labels=pr="$PR",deployed-by-script=deploy-sh,scrum1803=enforced
   --region="$REGION"
   --project="$PROJECT"
