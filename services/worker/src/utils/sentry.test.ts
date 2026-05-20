@@ -19,6 +19,8 @@ vi.mock('@sentry/node', async () => {
   return {
     ...actual,
     addBreadcrumb: vi.fn(),
+    captureCheckIn: vi.fn(() => 'mock-check-in-id'),
+    flush: vi.fn(() => Promise.resolve(true)),
   };
 });
 
