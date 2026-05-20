@@ -175,8 +175,8 @@ describe('handleListPendingResolution', () => {
     // Second call: anchors query
     const anchorLimit = vi.fn().mockResolvedValue({ data: anchors, error: anchorError });
     const anchorOrder = vi.fn().mockReturnValue({ limit: anchorLimit });
-    const anchorIsNot = vi.fn().mockReturnValue({ order: anchorOrder });
-    const anchorEqStatus = vi.fn().mockReturnValue({ is: anchorIsNot });
+    const anchorIs = vi.fn().mockReturnValue({ order: anchorOrder });
+    const anchorEqStatus = vi.fn().mockReturnValue({ is: anchorIs });
     const anchorEqOrg = vi.fn().mockReturnValue({ eq: anchorEqStatus });
     const anchorSelect = vi.fn().mockReturnValue({ eq: anchorEqOrg });
 
@@ -278,7 +278,7 @@ describe('handleListPendingResolution', () => {
     await handleListPendingResolution('user-1', mockReq(), res);
     expect(status).toHaveBeenCalledWith(500);
     expect(json).toHaveBeenCalledWith(
-      expect.objectContaining({ error: expect.objectContaining({ code: 'rpc_failed' }) }),
+      expect.objectContaining({ error: expect.objectContaining({ code: 'query_failed' }) }),
     );
   });
 
