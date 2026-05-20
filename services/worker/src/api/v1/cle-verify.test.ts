@@ -336,8 +336,10 @@ describe('cle-verify public response sanitizer (SCRUM-1868)', () => {
     expect(logPayload).not.toContain('anchor-internal-submit');
     expect(logPayload).not.toContain('anchor_id');
 
-    expect(mockTables.insertedPayload?.filename).not.toContain('BAR-123');
-    expect(String(mockTables.insertedPayload?.fingerprint)).not.toMatch(/[A-F]/);
+    expect(String(mockTables.insertedPayload?.filename)).toMatch(
+      /^CLE_[A-Za-z0-9_-]+_\d{4}-\d{2}-\d{2}_[a-f0-9]{12}\.json$/,
+    );
+    expect(String(mockTables.insertedPayload?.filename)).not.toMatch(/BAR|bar_number|Ada/i);
     expect(String(mockTables.insertedPayload?.fingerprint)).toMatch(/^[a-f0-9]{64}$/);
   });
 });
