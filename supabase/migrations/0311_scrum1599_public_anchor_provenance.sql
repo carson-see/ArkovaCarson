@@ -94,7 +94,7 @@ BEGIN
 END;
 $$;
 
+NOTIFY pgrst, 'reload schema';
+
 COMMENT ON FUNCTION public.get_public_anchor(p_public_id text)
   IS 'Returns redacted anchor info for public verification with CSI-03 source provenance. Returns SECURED/ACTIVE, REVOKED, EXPIRED, SUPERSEDED, PENDING, SUBMITTED.';
-
-NOTIFY pgrst, 'reload schema';
