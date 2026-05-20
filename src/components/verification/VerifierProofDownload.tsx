@@ -4,7 +4,10 @@
  * Allows public verifiers to download JSON proof package
  * and PDF summary from the verification page.
  *
- * @see UF-07
+ * CSI-03: Enriched with evidence_package_hash, source_payload_hash,
+ * source_provider, source_url, fetched_at, verification_level.
+ *
+ * @see UF-07, CSI-03 / SCRUM-1599
  */
 
 import { useState } from 'react';
@@ -12,6 +15,7 @@ import { Download, FileJson, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { VERIFICATION_DISPLAY_LABELS } from '@/lib/copy';
 import { hasPublicVerificationProof, normalizePublicVerificationStatus } from '@/lib/publicVerificationState';
+import { buildEvidenceProofFields, type SourceProvenanceData } from '@/lib/sourceProvenance';
 
 interface VerifierProofDownloadProps {
   publicId: string;
@@ -22,6 +26,8 @@ interface VerifierProofDownloadProps {
   filename?: string;
   securedAt?: string | null;
   networkReceiptId?: string | null;
+  /** CSI-03: Source provenance metadata for enriched proof package */
+  sourceProvenance?: SourceProvenanceData | null;
 }
 
 export function VerifierProofDownload({
@@ -33,6 +39,7 @@ export function VerifierProofDownload({
   filename,
   securedAt,
   networkReceiptId,
+  sourceProvenance,
 }: Readonly<VerifierProofDownloadProps>) {
   const [downloading, setDownloading] = useState(false);
   const publicStatus = normalizePublicVerificationStatus(status);
@@ -40,8 +47,13 @@ export function VerifierProofDownload({
   const handleDownloadJson = async () => {
     setDownloading(true);
     try {
+      // CSI-03: Build evidence fields from source provenance
+      const evidenceFields = sourceProvenance
+        ? buildEvidenceProofFields(sourceProvenance)
+        : {};
+
       const proof = {
-        version: '1.0',
+        version: '1.1',
         verification_id: publicId,
         status: publicStatus,
         fingerprint,
@@ -50,6 +62,8 @@ export function VerifierProofDownload({
         filename: filename ?? undefined,
         secured_at: securedAt ?? undefined,
         network_receipt_id: networkReceiptId ?? undefined,
+        // CSI-03: Evidence provenance fields
+        ...evidenceFields,
         verified_at: new Date().toISOString(),
         disclaimer: 'This proof package confirms the existence and status of a record anchored with Arkova. It does not assert the accuracy of the underlying document.',
       };

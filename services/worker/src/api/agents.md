@@ -1,6 +1,6 @@
 # agents.md — services/worker/src/api/
 
-_Last updated: 2026-05-16_
+_Last updated: 2026-05-19 (SCRUM-1599 badge endpoint)_
 
 ## What This Folder Contains
 
@@ -9,6 +9,7 @@ Express route handlers for the worker's HTTP API. Covers admin endpoints, anchor
 | File | Purpose |
 |------|---------|
 | `_org-auth.ts` | Shared org-auth helpers for service_role handlers (single source of truth for org_id scoping) |
+| `badge.ts` | Public `/api/badge/:publicId` SVG endpoint; resolves status from `get_public_anchor` and fails closed for unknown states |
 | `anchor-lineage.ts` | Anchor parent/child lineage traversal endpoint |
 | `anchor-revoke.ts` | Anchor revocation endpoint |
 | `verify-anchor.ts` | Public anchor verification endpoint |

@@ -10,6 +10,7 @@ _Last updated: 2026-05-19_
 Top-level page components rendered by react-router-dom routes. Each page composes layout (AppShell) with domain-specific hooks and components.
 
 ## Recent Changes
+- 2026-05-19 SCRUM-1599: removed `BadgePage.tsx` from the SPA route table. Badge SVGs are served by the worker at `/api/badge/:publicId` so status cannot be spoofed from frontend query parameters.
 - 2026-05-19 SCRUM-1247 closeout: `PrivacyPage.tsx` and `TermsPage.tsx` render their policy-update notices from `LEGAL_PAGE_LABELS` in `src/lib/copy.ts`; keep legal/public page copy centralized and covered by `e2e/legal-pages.spec.ts`.
 - 2026-05-03 SCRUM-897: `PublicAttestationVerifyPage.tsx` fetches `/api/v1/attestations/{publicId}?include=credentials` so public attestation verification can show evidence metadata and the bounded attestor credential chain. Evidence cards must use `public_id`, `fingerprint`, `mime`, and `size`; never render internal evidence UUIDs.
 - 2026-04-24 SCRUM-1102: `RulesPage.tsx` adds org-admin "Run now" and execution history actions for each rule. New user-visible strings live in `RULES_PAGE_COPY` (`src/lib/copy.ts`). Pattern: rule actions that enqueue work should show a queued toast with a history action rather than blocking for worker completion.

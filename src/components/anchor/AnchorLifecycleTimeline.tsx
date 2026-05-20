@@ -28,6 +28,7 @@ export interface AnchorLifecycleData {
   issuedAt?: string;
   securedAt?: string;
   revokedAt?: string;
+  supersededAt?: string;
   revocationReason?: string;
   expiresAt?: string;
 }
@@ -91,8 +92,19 @@ function buildLifecycleEvents(data: AnchorLifecycleData): LifecycleEvent[] {
     });
   }
 
+  // Superseded — only if replaced by a newer record
+  if (data.status === 'SUPERSEDED') {
+    events.push({
+      label: LIFECYCLE_LABELS.SUPERSEDED,
+      timestamp: data.supersededAt ?? null,
+      icon: AlertTriangle,
+      status: 'terminal',
+      detail: data.revocationReason ?? undefined,
+    });
+  }
+
   // Show upcoming expiry for active records
-  if (data.expiresAt && data.status !== 'EXPIRED' && data.status !== 'REVOKED') {
+  if (data.expiresAt && data.status !== 'EXPIRED' && data.status !== 'REVOKED' && data.status !== 'SUPERSEDED') {
     events.push({
       label: LIFECYCLE_LABELS.EXPIRES_ON,
       timestamp: data.expiresAt,
