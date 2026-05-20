@@ -244,15 +244,32 @@ export function isSupabaseMigrationsSchemaUnavailable(
     || (message.includes('supabase_migrations') && message.includes('invalid schema'));
 }
 
+function normalizeMigrationVersion(value: unknown): string | null {
+  const raw = String(value ?? '').trim();
+  if (!raw) return null;
+  if (raw === '00000000000000') return raw;
+  if (/^\d+$/.test(raw) && raw.length < 14) {
+    return raw.padStart(4, '0');
+  }
+  return raw;
+}
+
 export function mapManagementMigrationRows(rows: readonly Record<string, unknown>[]): MigrationRow[] {
-  return rows.map((row) => ({
-    version: String(row.version ?? ''),
-    name: String(row.name ?? ''),
-  }));
+  return rows.flatMap((row) => {
+    const version = normalizeMigrationVersion(row.version);
+    if (!version) return [];
+    return [{
+      version,
+      name: String(row.name ?? ''),
+    }];
+  });
 }
 
 export function mapManagementMigrationVersions(rows: readonly Record<string, unknown>[]): string[] {
-  return rows.map((row) => String(row.version ?? ''));
+  return rows.flatMap((row) => {
+    const version = normalizeMigrationVersion(row.version);
+    return version ? [version] : [];
+  });
 }
 
 export function mapManagementProdFacts(
@@ -605,8 +622,7 @@ async function queryManagementApi(projectRef: string, managementApiToken: string
   });
 
   if (!response.ok) {
-    const body = await response.text();
-    throw new Error(`Supabase Management API query failed (${response.status}): ${body}`);
+    throw new Error(`Supabase Management API query failed (${response.status})`);
   }
 
   const payload = await response.json() as unknown;

@@ -390,8 +390,9 @@ describe('mapManagementMigrationRows', () => {
     expect(mapManagementMigrationRows([
       { version: 294, name: '0294_refund_org_credit' },
       { version: '20260505010337', name: null },
+      { name: 'ignored_missing_version' },
     ])).toEqual([
-      { version: '294', name: '0294_refund_org_credit' },
+      { version: '0294', name: '0294_refund_org_credit' },
       { version: '20260505010337', name: '' },
     ]);
   });
@@ -403,7 +404,7 @@ describe('mapManagementMigrationVersions', () => {
       { version: 294 },
       { version: '0295' },
       { ignored: 'row' },
-    ])).toEqual(['294', '0295', '']);
+    ])).toEqual(['0294', '0295']);
   });
 });
 
