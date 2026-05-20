@@ -249,7 +249,7 @@ export class BaseChainClient implements ChainClient {
       this.publicClient = createPublicClient({
         chain: this.chain,
         transport,
-      }) as unknown as PublicClient;
+      });
     }
 
     if (clientConfig.walletClient) {
