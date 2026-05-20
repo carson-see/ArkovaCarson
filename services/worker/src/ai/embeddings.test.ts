@@ -69,6 +69,22 @@ function createMockProvider(): IAIProvider {
   };
 }
 
+function createBatchMockProvider(): IAIProvider {
+  return {
+    ...createMockProvider(),
+    name: 'gemini',
+    generateEmbedding: vi.fn(),
+    generateEmbeddings: vi.fn().mockResolvedValue({
+      embeddings: [
+        { embedding: new Array(768).fill(0.1), model: 'gemini-embedding-001' },
+        { embedding: new Array(768).fill(0.2), model: 'gemini-embedding-001' },
+        { embedding: new Array(768).fill(0.3), model: 'gemini-embedding-001' },
+      ],
+      model: 'gemini-embedding-001',
+    }),
+  };
+}
+
 describe('embeddings', () => {
   let mockProvider: IAIProvider;
 
@@ -224,6 +240,109 @@ describe('embeddings', () => {
   });
 
   describe('batchReEmbed', () => {
+    it('uses a provider-native batch embedding call when available', async () => {
+      const batchProvider = createBatchMockProvider();
+
+      const results = await batchReEmbed(batchProvider, 'org-123', [
+        { anchorId: 'a1', metadata: { credentialType: 'DEGREE', issuerName: 'State University' } },
+        { anchorId: 'a2', metadata: { credentialType: 'CERTIFICATE', issuerName: 'Example Academy' } },
+        { anchorId: 'a3', metadata: { credentialType: 'LICENSE', jurisdiction: 'MI' } },
+      ], 'user-123');
+
+      expect(results).toMatchObject({
+        total: 3,
+        succeeded: 3,
+        failed: 0,
+        errors: [],
+      });
+      expect(batchProvider.generateEmbeddings).toHaveBeenCalledTimes(1);
+      expect(batchProvider.generateEmbeddings).toHaveBeenCalledWith(
+        expect.arrayContaining([
+          expect.objectContaining({ text: expect.stringContaining('DEGREE') }),
+          expect.objectContaining({ text: expect.stringContaining('CERTIFICATE') }),
+          expect.objectContaining({ text: expect.stringContaining('LICENSE') }),
+        ]),
+        'RETRIEVAL_DOCUMENT',
+      );
+      expect(batchProvider.generateEmbedding).not.toHaveBeenCalled();
+      expect(checkAICredits).toHaveBeenCalledTimes(1);
+      expect(checkAICredits).toHaveBeenCalledWith('org-123', 'user-123');
+      expect(deductAICredits).toHaveBeenCalledTimes(1);
+      expect(deductAICredits).toHaveBeenCalledWith('org-123', 'user-123', 3);
+      expect(logAIUsageEvent).toHaveBeenCalledWith(
+        expect.objectContaining({
+          orgId: 'org-123',
+          userId: 'user-123',
+          eventType: 'embedding',
+          provider: 'gemini',
+          creditsConsumed: 3,
+          success: true,
+        }),
+      );
+    });
+
+    it('splits provider-native batch embedding calls at 250 inputs', async () => {
+      const generateEmbeddings = vi.fn().mockImplementation(async (
+        inputs: Array<{ text: string }>,
+      ) => ({
+        embeddings: inputs.map((_, index) => ({
+          embedding: new Array(768).fill(index / 1000),
+          model: 'gemini-embedding-001',
+        })),
+        model: 'gemini-embedding-001',
+      }));
+      const batchProvider: IAIProvider = {
+        ...createMockProvider(),
+        name: 'gemini',
+        generateEmbedding: vi.fn(),
+        generateEmbeddings,
+      };
+      const items = Array.from({ length: 251 }, (_, index) => ({
+        anchorId: `anchor-${index}`,
+        metadata: { credentialType: 'CERTIFICATE', issuerName: `Issuer ${index}` },
+      }));
+
+      const results = await batchReEmbed(batchProvider, 'org-123', items, 'user-123');
+
+      expect(results).toMatchObject({
+        total: 251,
+        succeeded: 251,
+        failed: 0,
+      });
+      expect(generateEmbeddings).toHaveBeenCalledTimes(2);
+      expect(generateEmbeddings.mock.calls[0]?.[0]).toHaveLength(250);
+      expect(generateEmbeddings.mock.calls[1]?.[0]).toHaveLength(1);
+      expect(deductAICredits).toHaveBeenCalledWith('org-123', 'user-123', 251);
+    });
+
+    it('fails the whole batch without provider calls when credits cannot cover every item', async () => {
+      const batchProvider = createBatchMockProvider();
+      vi.mocked(checkAICredits).mockResolvedValueOnce({
+        monthlyAllocation: 2,
+        usedThisMonth: 0,
+        remaining: 2,
+        hasCredits: true,
+      });
+
+      const results = await batchReEmbed(batchProvider, 'org-123', [
+        { anchorId: 'a1', metadata: { credentialType: 'DEGREE' } },
+        { anchorId: 'a2', metadata: { credentialType: 'CERTIFICATE' } },
+        { anchorId: 'a3', metadata: { credentialType: 'LICENSE' } },
+      ], 'user-123');
+
+      expect(results.total).toBe(3);
+      expect(results.succeeded).toBe(0);
+      expect(results.failed).toBe(3);
+      expect(results.errors).toEqual([
+        { anchorId: 'a1', error: 'Insufficient AI credits for embedding batch' },
+        { anchorId: 'a2', error: 'Insufficient AI credits for embedding batch' },
+        { anchorId: 'a3', error: 'Insufficient AI credits for embedding batch' },
+      ]);
+      expect(batchProvider.generateEmbeddings).not.toHaveBeenCalled();
+      expect(batchProvider.generateEmbedding).not.toHaveBeenCalled();
+      expect(deductAICredits).not.toHaveBeenCalled();
+    });
+
     it('processes multiple anchors', async () => {
       const results = await batchReEmbed(mockProvider, 'org-123', [
         { anchorId: 'a1', metadata: { credentialType: 'DEGREE' } },

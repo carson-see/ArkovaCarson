@@ -17,6 +17,8 @@ import type {
   ExtractionRequest,
   ExtractionResult,
   EmbeddingResult,
+  BatchEmbeddingInput,
+  BatchEmbeddingResult,
   EmbeddingTaskType,
   ProviderHealth,
 } from './types.js';
@@ -455,6 +457,80 @@ export class GeminiProvider implements IAIProvider {
 
     return {
       embedding: result.values,
+      model: this.embeddingModelName,
+    };
+  }
+
+  async generateEmbeddings(
+    inputs: BatchEmbeddingInput[],
+    taskType?: EmbeddingTaskType,
+  ): Promise<BatchEmbeddingResult> {
+    this.checkCircuit();
+
+    if (inputs.length === 0) {
+      return { embeddings: [], model: this.embeddingModelName };
+    }
+
+    const result = await this.withRetry(async () => {
+      const apiKey = this.apiKey;
+      const model = this.embeddingModelName;
+      const requests = inputs.map((input) => {
+        const request: Record<string, unknown> = {
+          model: `models/${model}`,
+          content: { parts: [{ text: input.text }] },
+          outputDimensionality: 768,
+        };
+        const resolvedTaskType = input.taskType ?? taskType;
+        if (resolvedTaskType) request.taskType = resolvedTaskType;
+        if (input.title) request.title = input.title;
+        return request;
+      });
+
+      return await traceAiProviderCall<Array<{ values: number[] }>>(
+        {
+          provider: 'gemini',
+          operation: 'batchEmbed',
+          model,
+          inputCharacterCount: inputs.reduce((sum, input) => sum + input.text.length, 0),
+        },
+        async () => {
+          const response = await fetch(
+            `https://generativelanguage.googleapis.com/v1beta/models/${model}:batchEmbedContents`,
+            {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'x-goog-api-key': apiKey!,
+              },
+              body: JSON.stringify({ requests }),
+            },
+          );
+
+          if (!response.ok) {
+            const errorBody = await response.text();
+            logger.error({ status: response.status, errorBody, model }, 'Gemini batch embedding API error');
+            throw new Error(`Batch embedding generation failed (status ${response.status})`);
+          }
+
+          const data = (await response.json()) as { embeddings?: Array<{ values: number[] }> };
+          if (!Array.isArray(data.embeddings) || data.embeddings.length !== inputs.length) {
+            logger.error(
+              { expected: inputs.length, actual: data.embeddings?.length ?? 0, model },
+              'Gemini batch embedding API returned unexpected embedding count',
+            );
+            throw new Error('Batch embedding generation returned an unexpected embedding count');
+          }
+
+          return data.embeddings;
+        },
+      );
+    });
+
+    return {
+      embeddings: result.map((embedding) => ({
+        embedding: embedding.values,
+        model: this.embeddingModelName,
+      })),
       model: this.embeddingModelName,
     };
   }

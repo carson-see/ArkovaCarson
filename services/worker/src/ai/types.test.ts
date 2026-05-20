@@ -6,7 +6,13 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import type { IAIProvider, ExtractionRequest, ExtractionResult, EmbeddingResult } from './types.js';
+import type {
+  IAIProvider,
+  BatchEmbeddingResult,
+  ExtractionRequest,
+  ExtractionResult,
+  EmbeddingResult,
+} from './types.js';
 import { MockAIProvider } from './mock.js';
 
 describe('IAIProvider interface (via MockAIProvider)', () => {
@@ -41,6 +47,20 @@ describe('IAIProvider interface (via MockAIProvider)', () => {
     expect(result.embedding).toHaveLength(768);
     expect(result.model).toBeDefined();
     result.embedding.forEach((v) => expect(typeof v).toBe('number'));
+  });
+
+  it('generateEmbeddings returns one vector per batch input when implemented', async () => {
+    const result: BatchEmbeddingResult = await provider.generateEmbeddings!([
+      { text: 'University of Michigan' },
+      { text: 'State Bar CLE' },
+    ], 'RETRIEVAL_DOCUMENT');
+
+    expect(result.embeddings).toHaveLength(2);
+    expect(result.model).toBeDefined();
+    result.embeddings.forEach((embedding) => {
+      expect(embedding.embedding).toHaveLength(768);
+      expect(embedding.model).toBeDefined();
+    });
   });
 
   it('healthCheck returns provider status', async () => {

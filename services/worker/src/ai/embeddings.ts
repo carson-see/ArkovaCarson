@@ -16,6 +16,8 @@ import { checkAICredits, deductAICredits, logAIUsageEvent } from './cost-tracker
 import { db } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
 
+const MAX_NATIVE_EMBEDDING_BATCH_SIZE = 250;
+
 /** Metadata fields used to generate embedding text */
 export interface EmbeddingMetadata {
   credentialType?: string;
@@ -50,6 +52,11 @@ export interface BatchReEmbedResult {
   succeeded: number;
   failed: number;
   errors: Array<{ anchorId: string; error: string }>;
+}
+
+interface PreparedEmbeddingItem {
+  anchorId: string;
+  text: string;
 }
 
 /**
@@ -126,14 +133,7 @@ export async function generateAndStoreEmbedding(
     const durationMs = Date.now() - startMs;
 
     // Compute source text hash for deduplication
-    const encoder = new TextEncoder();
-    const hashBuffer = await globalThis.crypto.subtle.digest(
-      'SHA-256',
-      encoder.encode(text),
-    );
-    const sourceTextHash = Array.from(new Uint8Array(hashBuffer))
-      .map((b) => b.toString(16).padStart(2, '0'))
-      .join('');
+    const sourceTextHash = await sha256Hex(text);
 
     // Upsert into credential_embeddings (UNIQUE on anchor_id)
     // New table not yet in generated types — use any bypass
@@ -190,9 +190,21 @@ export async function generateAndStoreEmbedding(
   }
 }
 
+async function sha256Hex(text: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const hashBuffer = await globalThis.crypto.subtle.digest(
+    'SHA-256',
+    encoder.encode(text),
+  );
+  return Array.from(new Uint8Array(hashBuffer))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+}
+
 /**
  * Re-embed multiple credentials in batch.
- * Processes sequentially to respect rate limits.
+ * Uses provider-native batching when available; otherwise falls back to the
+ * legacy sequential path to preserve compatibility with non-batch providers.
  */
 export async function batchReEmbed(
   provider: IAIProvider,
@@ -206,6 +218,14 @@ export async function batchReEmbed(
     failed: 0,
     errors: [],
   };
+
+  if (items.length === 0) {
+    return result;
+  }
+
+  if (provider.generateEmbeddings) {
+    return batchReEmbedNative(provider, orgId, items, userId);
+  }
 
   for (const item of items) {
     const storeResult = await generateAndStoreEmbedding(provider, {
@@ -227,4 +247,114 @@ export async function batchReEmbed(
   }
 
   return result;
+}
+
+async function batchReEmbedNative(
+  provider: IAIProvider,
+  orgId: string,
+  items: Array<{ anchorId: string; metadata: EmbeddingMetadata }>,
+  userId?: string,
+): Promise<BatchReEmbedResult> {
+  const prepared = items.map((item): PreparedEmbeddingItem => ({
+    anchorId: item.anchorId,
+    text: buildEmbeddingText(item.metadata),
+  }));
+  const result: BatchReEmbedResult = {
+    total: items.length,
+    succeeded: 0,
+    failed: 0,
+    errors: [],
+  };
+
+  const credits = await checkAICredits(orgId, userId);
+  if (!credits?.hasCredits || credits.remaining < items.length) {
+    result.failed = items.length;
+    result.errors = items.map((item) => ({
+      anchorId: item.anchorId,
+      error: 'Insufficient AI credits for embedding batch',
+    }));
+    return result;
+  }
+
+  const startMs = Date.now();
+
+  try {
+    const embeddings: EmbeddingResult[] = [];
+    for (let i = 0; i < prepared.length; i += MAX_NATIVE_EMBEDDING_BATCH_SIZE) {
+      const chunk = prepared.slice(i, i + MAX_NATIVE_EMBEDDING_BATCH_SIZE);
+      const embeddingResult = await provider.generateEmbeddings!(
+        chunk.map((item) => ({ text: item.text })),
+        'RETRIEVAL_DOCUMENT',
+      );
+
+      if (embeddingResult.embeddings.length !== chunk.length) {
+        throw new Error('Batch embedding result count did not match input count');
+      }
+
+      embeddings.push(...embeddingResult.embeddings);
+    }
+    const durationMs = Date.now() - startMs;
+
+    const rows = await Promise.all(prepared.map(async (item, index) => ({
+      anchor_id: item.anchorId,
+      org_id: orgId,
+      embedding: embeddings[index].embedding,
+      model_version: embeddings[index].model,
+      source_text_hash: await sha256Hex(item.text),
+    })));
+
+    // New table not yet in generated types — use any bypass
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { error: dbError } = await (db as any).from('credential_embeddings').upsert(
+      rows,
+      { onConflict: 'anchor_id' },
+    );
+
+    if (dbError) {
+      result.failed = items.length;
+      result.errors = items.map((item) => ({
+        anchorId: item.anchorId,
+        error: `Database error: ${dbError.message}`,
+      }));
+      logger.error({ error: dbError, count: items.length }, 'Failed to store batch embeddings');
+      return result;
+    }
+
+    await deductAICredits(orgId, userId, items.length);
+
+    logAIUsageEvent({
+      orgId,
+      userId,
+      eventType: 'embedding',
+      provider: provider.name,
+      creditsConsumed: items.length,
+      durationMs,
+      success: true,
+    }).catch(() => {});
+
+    result.succeeded = items.length;
+    return result;
+  } catch (err) {
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    const durationMs = Date.now() - startMs;
+
+    logger.error({ error: err, count: items.length }, 'Batch embedding generation failed');
+
+    logAIUsageEvent({
+      orgId,
+      userId,
+      eventType: 'embedding',
+      provider: provider.name,
+      success: false,
+      errorMessage,
+      durationMs,
+    }).catch(() => {});
+
+    result.failed = items.length;
+    result.errors = items.map((item) => ({
+      anchorId: item.anchorId,
+      error: errorMessage,
+    }));
+    return result;
+  }
 }

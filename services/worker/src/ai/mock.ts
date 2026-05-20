@@ -4,7 +4,16 @@
  * Returns deterministic results without calling any external API.
  */
 
-import type { IAIProvider, ExtractionRequest, ExtractionResult, EmbeddingResult, ProviderHealth } from './types.js';
+import type {
+  IAIProvider,
+  BatchEmbeddingInput,
+  BatchEmbeddingResult,
+  EmbeddingTaskType,
+  ExtractionRequest,
+  ExtractionResult,
+  EmbeddingResult,
+  ProviderHealth,
+} from './types.js';
 
 export class MockAIProvider implements IAIProvider {
   readonly name = 'mock';
@@ -22,7 +31,7 @@ export class MockAIProvider implements IAIProvider {
     };
   }
 
-  async generateEmbedding(text: string, _taskType?: import('./types.js').EmbeddingTaskType): Promise<EmbeddingResult> {
+  async generateEmbedding(text: string, _taskType?: EmbeddingTaskType): Promise<EmbeddingResult> {
     // Deterministic 768-dim embedding from text hash
     const embedding = new Array(768).fill(0).map((_, i) => {
       const charCode = text.charCodeAt(i % text.length) || 0;
@@ -31,6 +40,19 @@ export class MockAIProvider implements IAIProvider {
 
     return {
       embedding,
+      model: 'mock-embedding-v1',
+    };
+  }
+
+  async generateEmbeddings(
+    inputs: BatchEmbeddingInput[],
+    taskType?: EmbeddingTaskType,
+  ): Promise<BatchEmbeddingResult> {
+    const embeddings = await Promise.all(
+      inputs.map((input) => this.generateEmbedding(input.text, input.taskType ?? taskType)),
+    );
+    return {
+      embeddings,
       model: 'mock-embedding-v1',
     };
   }
