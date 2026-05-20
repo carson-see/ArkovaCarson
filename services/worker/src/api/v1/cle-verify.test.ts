@@ -242,6 +242,29 @@ describe('cle-verify public response sanitizer (SCRUM-1868)', () => {
     expect(payload).not.toContain('metadata');
   });
 
+  it('omits jurisdiction fields instead of returning jurisdiction null', async () => {
+    mockTables.anchorsRows = mockTables.anchorsRows.map((row) => {
+      const metadata = row.metadata as Record<string, unknown>;
+      return { ...row, metadata: { ...metadata, jurisdiction: null } };
+    });
+
+    const verifyRes = await request(createApp())
+      .get('/api/v1/cle/verify')
+      .query({ bar_number: 'BAR-123' })
+      .expect(200);
+    const creditsRes = await request(createApp())
+      .get('/api/v1/cle/credits')
+      .query({ bar_number: 'BAR-123' })
+      .expect(200);
+
+    expect(verifyRes.body).not.toHaveProperty('jurisdiction');
+    expect(creditsRes.body).not.toHaveProperty('jurisdiction');
+    expect(verifyRes.body.records[0]).not.toHaveProperty('jurisdiction');
+    expect(creditsRes.body.credits[0]).not.toHaveProperty('jurisdiction');
+    expect(stringify(verifyRes.body)).not.toContain('"jurisdiction":null');
+    expect(stringify(creditsRes.body)).not.toContain('"jurisdiction":null');
+  });
+
   it('POST /cle/submit returns only public anchor identifiers and logs without attorney identifiers', async () => {
     const res = await request(createApp())
       .post('/api/v1/cle/submit')
@@ -288,7 +311,7 @@ describe('cle-verify public response sanitizer (SCRUM-1868)', () => {
     expect(logPayload).not.toContain('anchor_id');
 
     expect(mockTables.insertedPayload?.filename).not.toContain('BAR-123');
-    expect(mockTables.insertedPayload?.fingerprint).not.toContain('BAR');
+    expect(String(mockTables.insertedPayload?.fingerprint)).not.toMatch(/[A-F]/);
     expect(String(mockTables.insertedPayload?.fingerprint)).toMatch(/^[a-f0-9]{64}$/);
   });
 });

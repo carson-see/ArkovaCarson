@@ -88,7 +88,7 @@ function publicNumber(value: unknown): number {
 
 function toPublicCleRecord(row: Record<string, unknown>): Record<string, unknown> {
   const meta = cleMetadata(row);
-  return {
+  const record: Record<string, unknown> = {
     public_id: publicString(row.public_id),
     course_title: publicString(meta.course_title),
     provider_name: publicString(meta.provider_name),
@@ -96,10 +96,14 @@ function toPublicCleRecord(row: Record<string, unknown>): Record<string, unknown
     credit_category: publicString(meta.credit_category) ?? 'General',
     delivery_method: publicString(meta.delivery_method),
     completion_date: publicString(meta.completion_date),
-    jurisdiction: publicString(meta.jurisdiction),
     anchor_status: publicString(row.status),
     anchored_at: publicString(row.created_at),
   };
+  const jurisdiction = publicString(meta.jurisdiction);
+  if (jurisdiction) {
+    record.jurisdiction = jurisdiction;
+  }
+  return record;
 }
 
 function toPublicCleAttestation(row: Record<string, unknown>): Record<string, unknown> {
@@ -226,8 +230,7 @@ router.get('/verify', async (req: Request, res: Response) => {
       ) ? 'compliant' : 'deficient';
     }
 
-    res.json({
-      jurisdiction: jurisdiction ?? null,
+    const response: Record<string, unknown> = {
       compliance_status: complianceStatus,
       summary: {
         total_cle_hours: totalHours,
@@ -240,7 +243,11 @@ router.get('/verify', async (req: Request, res: Response) => {
       records: cleRecords.slice(0, 20).map(toPublicCleRecord),
       attestations: cleAttestations.slice(0, 10).map(toPublicCleAttestation),
       verified_at: new Date().toISOString(),
-    });
+    };
+    if (jurisdiction) {
+      response.jurisdiction = jurisdiction;
+    }
+    res.json(response);
   } catch (err) {
     logger.error({ error: err }, 'cle-verify: unexpected error');
     res.status(500).json({ error: 'CLE verification failed' });
@@ -291,11 +298,14 @@ router.get('/credits', async (req: Request, res: Response) => {
       });
     }
 
-    res.json({
-      jurisdiction: jurisdiction ?? null,
+    const response: Record<string, unknown> = {
       total_credits: credits.length,
       credits: credits.map(toPublicCleRecord),
-    });
+    };
+    if (jurisdiction) {
+      response.jurisdiction = jurisdiction;
+    }
+    res.json(response);
   } catch (err) {
     logger.error({ error: err }, 'cle-credits: unexpected error');
     res.status(500).json({ error: 'CLE credit lookup failed' });

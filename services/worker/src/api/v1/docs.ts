@@ -18,6 +18,32 @@ const router = Router();
 // is exactly the drift pattern SCRUM-1794 was filed to clean up.
 const WEBHOOK_EVENT_ENUM = [...VALID_WEBHOOK_EVENTS];
 
+const CLE_CREDIT_ROW_SCHEMA = {
+  type: 'object',
+  properties: {
+    public_id: { type: 'string', nullable: true },
+    course_title: { type: 'string', nullable: true },
+    provider_name: { type: 'string', nullable: true },
+    credit_hours: { type: 'number' },
+    credit_category: { type: 'string' },
+    delivery_method: { type: 'string', nullable: true },
+    completion_date: { type: 'string', nullable: true },
+    jurisdiction: { type: 'string' },
+    anchor_status: { type: 'string', nullable: true },
+    anchored_at: { type: 'string', nullable: true },
+  },
+};
+
+const CLE_ATTESTATION_ROW_SCHEMA = {
+  type: 'object',
+  properties: {
+    public_id: { type: 'string', nullable: true },
+    attestation_type: { type: 'string', nullable: true },
+    status: { type: 'string', nullable: true },
+    created_at: { type: 'string', nullable: true },
+  },
+};
+
 /** OpenAPI 3.0 specification for the Verification API */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export const openApiSpec: Record<string, any> = {
@@ -702,7 +728,7 @@ export const openApiSpec: Record<string, any> = {
                 schema: {
                   type: 'object',
                   properties: {
-                    jurisdiction: { type: 'string', nullable: true },
+                    jurisdiction: { type: 'string' },
                     compliance_status: { type: 'string', enum: ['compliant', 'deficient', 'unknown'] },
                     summary: {
                       type: 'object',
@@ -716,33 +742,11 @@ export const openApiSpec: Record<string, any> = {
                     },
                     records: {
                       type: 'array',
-                      items: {
-                        type: 'object',
-                        properties: {
-                          public_id: { type: 'string', nullable: true },
-                          course_title: { type: 'string', nullable: true },
-                          provider_name: { type: 'string', nullable: true },
-                          credit_hours: { type: 'number' },
-                          credit_category: { type: 'string' },
-                          delivery_method: { type: 'string', nullable: true },
-                          completion_date: { type: 'string', nullable: true },
-                          jurisdiction: { type: 'string', nullable: true },
-                          anchor_status: { type: 'string', nullable: true },
-                          anchored_at: { type: 'string', nullable: true },
-                        },
-                      },
+                      items: CLE_CREDIT_ROW_SCHEMA,
                     },
                     attestations: {
                       type: 'array',
-                      items: {
-                        type: 'object',
-                        properties: {
-                          public_id: { type: 'string', nullable: true },
-                          attestation_type: { type: 'string', nullable: true },
-                          status: { type: 'string', nullable: true },
-                          created_at: { type: 'string', nullable: true },
-                        },
-                      },
+                      items: CLE_ATTESTATION_ROW_SCHEMA,
                     },
                     verified_at: { type: 'string', format: 'date-time' },
                   },
@@ -752,6 +756,7 @@ export const openApiSpec: Record<string, any> = {
           },
           '400': { $ref: '#/components/responses/BadRequest' },
           '402': { description: 'Payment required (x402)', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
+          '429': { $ref: '#/components/responses/RateLimited' },
         },
       },
     },
@@ -769,9 +774,27 @@ export const openApiSpec: Record<string, any> = {
           { name: 'period_end', in: 'query', schema: { type: 'string', format: 'date' } },
         ],
         responses: {
-          '200': { description: 'Public-safe CLE credit rows' },
+          '200': {
+            description: 'Public-safe CLE credit rows',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    jurisdiction: { type: 'string' },
+                    total_credits: { type: 'integer' },
+                    credits: {
+                      type: 'array',
+                      items: CLE_CREDIT_ROW_SCHEMA,
+                    },
+                  },
+                },
+              },
+            },
+          },
           '400': { $ref: '#/components/responses/BadRequest' },
           '402': { description: 'Payment required (x402)', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
+          '429': { $ref: '#/components/responses/RateLimited' },
         },
       },
     },
@@ -781,7 +804,7 @@ export const openApiSpec: Record<string, any> = {
         description: 'Submit a CLE course completion. x402 payment gate.',
         operationId: 'cleSubmit',
         tags: ['Compliance'],
-        security: [{ ApiKeyBearer: [] }, { ApiKeyHeader: [] }],
+        security: [{ ApiKeyBearer: [] }, { ApiKeyHeader: [] }, {}],
         requestBody: {
           required: true,
           content: {
@@ -810,6 +833,8 @@ export const openApiSpec: Record<string, any> = {
           '201': { description: 'CLE completion submitted with public_id only; no internal anchor id or attorney identifier is returned' },
           '400': { $ref: '#/components/responses/BadRequest' },
           '401': { $ref: '#/components/responses/Unauthorized' },
+          '402': { description: 'Payment required (x402)', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
+          '429': { $ref: '#/components/responses/RateLimited' },
         },
       },
     },
