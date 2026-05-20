@@ -71,13 +71,24 @@ export async function fetchUsptoPAtents(supabase: SupabaseClient): Promise<Fetch
 
   logger.info({ resumeDate, maxPerRun: MAX_PER_RUN }, 'USPTO bulk fetch starting');
 
-  // Download the ZIP
+  // Download the ZIP (single retry on transient TCP errors)
   let response: Response;
   try {
     response = await fetch(PATENT_TSV_URL);
   } catch (err) {
-    logger.error({ error: err }, 'Failed to download PatentsView bulk data');
-    return { status: 'download_failed', inserted: 0, skipped: 0, errors: 0, resumeDate };
+    if (err instanceof TypeError && /terminated|socket hang up|ECONNRESET/i.test(err.message)) {
+      logger.warn({ error: err }, 'Transient download failure — retrying once');
+      await new Promise((r) => setTimeout(r, 2000));
+      try {
+        response = await fetch(PATENT_TSV_URL);
+      } catch (retryErr) {
+        logger.error({ error: retryErr }, 'Failed to download PatentsView bulk data after retry');
+        return { status: 'download_failed', inserted: 0, skipped: 0, errors: 0, resumeDate };
+      }
+    } else {
+      logger.error({ error: err }, 'Failed to download PatentsView bulk data');
+      return { status: 'download_failed', inserted: 0, skipped: 0, errors: 0, resumeDate };
+    }
   }
 
   if (!response.ok || !response.body) {
