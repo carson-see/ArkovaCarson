@@ -132,7 +132,7 @@ router.get('/:publicId/provenance', async (req: Request<{ publicId: string }>, r
       .eq('anchor_id', anchor.id)
       .order('created_at', { ascending: true });
 
-    // Fetch verification events from audit trail
+    // eslint-disable-next-line arkova/missing-org-filter -- public verification endpoint: provenance timeline is intentionally cross-tenant
     const { data: verifyEvents } = await db
       .from('audit_events')
       .select('event_type, created_at, actor_id')

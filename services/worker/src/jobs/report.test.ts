@@ -207,6 +207,21 @@ describe('processReport', () => {
     expect(mockFrom).toHaveBeenCalledWith('billing_events');
   });
 
+  it('filters billing_events by org_id when org_id is present (tenant isolation)', async () => {
+    await processReport(makeReport({ report_type: 'billing_history', org_id: 'org-xyz' }));
+
+    expect(billingEventsTable.eq).toHaveBeenCalledWith('user_id', 'user-001');
+    expect(billingEventsTable.eq).toHaveBeenCalledWith('org_id', 'org-xyz');
+  });
+
+  it('does not filter billing_events by org_id when org_id is null', async () => {
+    await processReport(makeReport({ report_type: 'billing_history', org_id: null }));
+
+    const eqCalls = (billingEventsTable.eq as ReturnType<typeof vi.fn>).mock.calls;
+    const orgIdCalls = eqCalls.filter(([field]) => field === 'org_id');
+    expect(orgIdCalls).toHaveLength(0);
+  });
+
   it('queries anchors table for anchor_summary', async () => {
     await processReport(makeReport({ report_type: 'anchor_summary' }));
 
@@ -216,11 +231,26 @@ describe('processReport', () => {
     expect(anchorsTable.is).toHaveBeenCalledWith('deleted_at', null);
   });
 
+  it('filters anchors by org_id when org_id is present (tenant isolation)', async () => {
+    await processReport(makeReport({ report_type: 'anchor_summary', org_id: 'org-xyz' }));
+
+    expect(anchorsTable.eq).toHaveBeenCalledWith('user_id', 'user-001');
+    expect(anchorsTable.eq).toHaveBeenCalledWith('org_id', 'org-xyz');
+  });
+
+  it('does not filter anchors by org_id when org_id is null', async () => {
+    await processReport(makeReport({ report_type: 'anchor_summary', org_id: null }));
+
+    const eqCalls = (anchorsTable.eq as ReturnType<typeof vi.fn>).mock.calls;
+    const orgIdCalls = eqCalls.filter(([field]) => field === 'org_id');
+    expect(orgIdCalls).toHaveLength(0);
+  });
+
   it('queries audit_events with limit 1000 for compliance_audit ordered by created_at', async () => {
     await processReport(makeReport({ report_type: 'compliance_audit' }));
 
     expect(mockFrom).toHaveBeenCalledWith('audit_events');
-    expect(auditEventsTable.select).toHaveBeenCalledWith('*');
+    expect(auditEventsTable.select).toHaveBeenCalledWith('event_type, event_category, actor_id, target_type, target_id, org_id, details, created_at');
     expect(auditEventsTable.order).toHaveBeenCalledWith('created_at', { ascending: false });
     expect(auditEventsTable.limit).toHaveBeenCalledWith(1000);
   });
@@ -232,6 +262,21 @@ describe('processReport', () => {
     expect(auditEventsTable.select).toHaveBeenCalledWith('event_type, event_category, created_at, details');
     expect(auditEventsTable.order).toHaveBeenCalledWith('created_at', { ascending: false });
     expect(auditEventsTable.limit).toHaveBeenCalledWith(500);
+  });
+
+  it('filters audit_events by org_id when org_id is present (tenant isolation)', async () => {
+    await processReport(makeReport({ report_type: 'compliance_audit', org_id: 'org-xyz' }));
+
+    expect(auditEventsTable.eq).toHaveBeenCalledWith('actor_id', 'user-001');
+    expect(auditEventsTable.eq).toHaveBeenCalledWith('org_id', 'org-xyz');
+  });
+
+  it('does not filter by org_id when org_id is null', async () => {
+    await processReport(makeReport({ report_type: 'activity_log', org_id: null }));
+
+    const eqCalls = (auditEventsTable.eq as ReturnType<typeof vi.fn>).mock.calls;
+    const orgIdCalls = eqCalls.filter(([field]) => field === 'org_id');
+    expect(orgIdCalls).toHaveLength(0);
   });
 
   it('stores artifact with correct filename pattern', async () => {

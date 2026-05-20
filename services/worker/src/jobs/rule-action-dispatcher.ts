@@ -1,3 +1,4 @@
+/* eslint-disable arkova/missing-org-filter -- cross-org cron: dispatches pending executions across all orgs, org_id read from each execution row */
 /**
  * Rule Action Dispatcher MVP (SCRUM-1142)
  *

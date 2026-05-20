@@ -200,6 +200,7 @@ router.get('/:publicId/lifecycle', async (req: Request, res: Response) => {
       return;
     }
 
+    // eslint-disable-next-line arkova/missing-org-filter -- public verification endpoint: lifecycle events scoped by anchor.id (ownership checked above)
     const { data: events, error } = await dbAny
       .from('audit_events')
       .select('event_type, created_at, actor_id, details')

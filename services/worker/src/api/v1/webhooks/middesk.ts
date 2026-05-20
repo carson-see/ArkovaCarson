@@ -70,6 +70,7 @@ middeskWebhookRouter.post('/', async (req: Request, res: Response) => {
   // Replay protection. Cast until database.types.ts is regenerated post-0250.
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const dbUntyped = db as any;
+  // eslint-disable-next-line arkova/missing-org-filter -- webhook ingress: nonce dedup insert, org resolved downstream
   const { error: nonceErr } = await dbUntyped.from('kyb_webhook_nonces').insert({
     provider: 'middesk',
     nonce: event.id,

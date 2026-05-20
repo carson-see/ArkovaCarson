@@ -50,7 +50,7 @@ async function findIntegration(
   if (!webhookId) return null;
   // Cast until database.types.ts is regenerated — provider='adobe_sign' rows
   // mirror the existing 'docusign' shape (org_integrations table from 0251).
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any, arkova/missing-org-filter -- webhook ingress: resolving org from external Adobe Sign webhook_id
   const { data, error } = await (db as any)
     .from('org_integrations')
     .select('id, org_id, webhook_id')

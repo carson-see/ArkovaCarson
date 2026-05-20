@@ -300,6 +300,7 @@ const defaultLookup: EvidenceLookup = {
     };
   },
   async auditEventsForAnchor(internalAnchorId) {
+    // eslint-disable-next-line arkova/missing-org-filter -- public verification endpoint: events scoped by anchor internal ID (ownership checked in caller)
     const { data } = await dbAny
       .from('audit_events')
       .select('event_type, created_at, actor_id, details')
