@@ -1,12 +1,12 @@
 /**
  * Terms of Service Page
  *
- * Public route at /terms. Placeholder content — to be replaced with
- * legal-reviewed copy before production launch.
+ * Public route at /terms.
  */
 
 import { Link } from 'react-router-dom';
 import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
+import { LEGAL_PAGE_LABELS } from '@/lib/copy';
 
 import { usePageMeta } from '@/hooks/usePageMeta';
 
@@ -102,8 +102,7 @@ export function TermsPage() {
           </section>
 
           <p className="text-xs pt-6 border-t">
-            These terms of service are a placeholder and will be updated following legal review
-            prior to production launch.
+            {LEGAL_PAGE_LABELS.TERMS_UPDATE_NOTICE}
           </p>
         </div>
       </main>
