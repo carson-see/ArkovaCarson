@@ -256,7 +256,11 @@ cronRouter.post('/check-confirmations', async (_req, res) => {
 
 cronRouter.post('/process-revocations', async (_req, res) => {
   try {
-    const result = await processRevokedAnchors();
+    const result = await withCronMonitoring(
+      'process-revocations',
+      '*/5 * * * *',
+      () => processRevokedAnchors(),
+    )();
     res.json(result);
   } catch (error) {
     logger.error({ error }, 'Revocation processing failed');
@@ -266,7 +270,11 @@ cronRouter.post('/process-revocations', async (_req, res) => {
 
 cronRouter.post('/webhook-retries', async (_req, res) => {
   try {
-    const retried = await processWebhookRetries();
+    const retried = await withCronMonitoring(
+      'webhook-retries',
+      '*/2 * * * *',
+      () => processWebhookRetries(),
+    )();
     res.json({ retried });
   } catch (error) {
     logger.error({ error }, 'Webhook retry processing failed');

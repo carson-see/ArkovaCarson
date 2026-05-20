@@ -673,11 +673,28 @@ describe('deliverToEndpoint', () => {
     );
   });
 
-  // SCRUM-1800: Bug found during PR #753 staging soak. webhook_delivery_logs.event_id
-  // is uuid NOT NULL, but every existing producer passes a string event_id (public_id,
-  // 'expired-${public_id}', etc.). Pre-fix: insert threw 22P02, log failed to create,
-  // delivery silently dropped. Fix: dispatcher coerces non-UUID event_ids to a fresh
-  // UUID for the column while the original string still appears in the JSONB payload.
+  it('retries delivery_log insert once on transient fetch failure', async () => {
+    vi.useRealTimers();
+
+    deliveryLogSelect.single.mockResolvedValue({ data: null, error: null });
+    deliveryLogInsert.single
+      .mockResolvedValueOnce({ data: null, error: { message: 'TypeError: fetch failed' } })
+      .mockResolvedValueOnce({ data: { id: 'log-retry-ok' }, error: null });
+    mockFetch.mockResolvedValue({ ok: true, status: 200, text: () => Promise.resolve('OK') });
+    deliveryLogUpdate.eq.mockResolvedValue({ error: null });
+
+    mockRpc.mockResolvedValue({ data: true });
+    endpointsSelect.contains.mockResolvedValue({ data: [MOCK_ENDPOINT], error: null });
+    setupDbRouting();
+
+    await dispatchWebhookEvent('org-001', 'anchor.secured', 'evt-001', MOCK_PAYLOAD_DATA);
+
+    expect(deliveryLogInsert.insert).toHaveBeenCalledTimes(2);
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+
+    vi.useFakeTimers();
+  }, 10_000);
+
   it('coerces non-UUID event_id to a UUID for the webhook_delivery_logs.event_id column', async () => {
     deliveryLogSelect.single.mockResolvedValue({ data: null, error: null });
     deliveryLogInsert.single.mockResolvedValue({ data: { id: 'log-001' }, error: null });

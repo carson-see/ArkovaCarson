@@ -345,20 +345,19 @@ async function deliverToEndpoint(
   let logEntry: { id: string } | null;
   let logError: { message?: string } | null;
 
-  if (existing) {
-    const { data, error } = await db
-      .from('webhook_delivery_logs')
-      .update({
-        attempt_number: attempt,
-        status: 'pending',
-      })
-      .eq('id', existing.id)
-      .select()
-      .single();
-    logEntry = data;
-    logError = error;
-  } else {
-    const { data, error } = await db
+  const performLogWrite = async (): Promise<{ data: { id: string } | null; error: { message?: string } | null }> => {
+    if (existing) {
+      return db
+        .from('webhook_delivery_logs')
+        .update({
+          attempt_number: attempt,
+          status: 'pending',
+        })
+        .eq('id', existing.id)
+        .select()
+        .single();
+    }
+    return db
       .from('webhook_delivery_logs')
       .insert({
         endpoint_id: endpoint.id,
@@ -371,8 +370,16 @@ async function deliverToEndpoint(
       })
       .select()
       .single();
-    logEntry = data;
-    logError = error;
+  };
+
+  ({ data: logEntry, error: logError } = await performLogWrite());
+
+  // Single retry on transient network errors (e.g. "TypeError: fetch failed")
+  // before giving up. Fixes ARKOVA-WORKER-C.
+  if (logError && /fetch failed|ECONNRESET|ETIMEDOUT|socket hang up/i.test(logError.message ?? '')) {
+    logger.warn({ error: logError, endpointId: endpoint.id }, 'Transient delivery_log write failure — retrying once');
+    await new Promise((r) => setTimeout(r, INITIAL_RETRY_DELAY_MS));
+    ({ data: logEntry, error: logError } = await performLogWrite());
   }
 
   if (logError) {
