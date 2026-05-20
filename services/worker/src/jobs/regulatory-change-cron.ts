@@ -121,9 +121,9 @@ export async function runRegulatoryChangeCron(
   return result;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Supabase client type varies by caller context
+ 
 async function computeImpactForOrg(
-  database: any,
+  database: SupabaseClient,
   orgId: string,
   lastAuditAt: string,
   rules: JurisdictionRule[],
@@ -206,9 +206,9 @@ async function computeImpactForOrg(
   return { impact, currentAudit };
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Supabase client type varies by caller context
+ 
 async function persistChangeEvent(
-  database: any,
+  database: SupabaseClient,
   orgId: string,
   impact: RegulatoryChangeImpact,
   currentAudit: OrgAuditResult,
@@ -237,9 +237,9 @@ async function persistChangeEvent(
   });
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Supabase client type varies by caller context
+ 
 async function createInAppNotification(
-  database: any,
+  database: SupabaseClient,
   orgId: string,
   impact: RegulatoryChangeImpact,
   scorecardUrl: string,
@@ -267,9 +267,9 @@ async function createInAppNotification(
   }
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Supabase client type varies by caller context
+ 
 async function sendImpactEmails(
-  database: any,
+  database: SupabaseClient,
   sendEmailImpl: typeof sendEmail,
   orgId: string,
   impact: RegulatoryChangeImpact,
@@ -283,7 +283,7 @@ async function sendImpactEmails(
     .in('role', ['OWNER', 'ADMIN']);
 
   let sent = 0;
-  for (const a of (admins ?? []) as Array<{
+  for (const a of (admins ?? []) as unknown as Array<{
     user_id: string;
     role: string;
     notification_preferences: Record<string, unknown> | null;

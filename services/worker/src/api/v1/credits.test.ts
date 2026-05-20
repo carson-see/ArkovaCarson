@@ -54,10 +54,10 @@ beforeEach(() => {
 
 describe('GET /api/v1/credits', () => {
   it('returns credit balance', async () => {
-    (db.rpc as any).mockResolvedValue({
+    vi.mocked(db.rpc).mockResolvedValue({
       data: { monthly_allocation: 1000, used_this_month: 50, remaining: 950 },
       error: null,
-    });
+    } as never);
 
     const app = createApp();
     const res = await request(app).get('/api/v1/credits');
@@ -70,7 +70,7 @@ describe('GET /api/v1/credits', () => {
   });
 
   it('returns 500 on DB error', async () => {
-    (db.rpc as any).mockResolvedValue({ data: null, error: { message: 'fail' } });
+    vi.mocked(db.rpc).mockResolvedValue({ data: null, error: { message: 'fail' } } as never);
 
     const app = createApp();
     const res = await request(app).get('/api/v1/credits');
@@ -90,7 +90,7 @@ describe('POST /api/v1/credits/purchase', () => {
   });
 
   it('grants credits in dev mode (no Stripe key)', async () => {
-    (db.rpc as any).mockResolvedValue({ data: null, error: null });
+    vi.mocked(db.rpc).mockResolvedValue({ data: null, error: null } as never);
 
     const app = createApp();
     const res = await request(app)
@@ -104,7 +104,7 @@ describe('POST /api/v1/credits/purchase', () => {
   });
 
   it('calls deduct_unified_credits with negative amount (grant)', async () => {
-    (db.rpc as any).mockResolvedValue({ data: null, error: null });
+    vi.mocked(db.rpc).mockResolvedValue({ data: null, error: null } as never);
 
     const app = createApp();
     await request(app)

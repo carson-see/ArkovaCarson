@@ -84,13 +84,13 @@ describe('paymentTierRouter', () => {
 
   describe('tier 0: admin bypass', () => {
     it('should authorize admin users without payment', async () => {
-      (db.from as any).mockReturnValue({
+      vi.mocked(db.from).mockReturnValue({
         select: vi.fn().mockReturnValue({
           eq: vi.fn().mockReturnValue({
             maybeSingle: vi.fn().mockResolvedValue({ data: { is_platform_admin: true }, error: null }),
           }),
         }),
-      });
+      } as never);
 
       const app = createApp('admin-123', 'org-1');
       const res = await request(app).get('/api/v1/verify/test');
@@ -101,15 +101,15 @@ describe('paymentTierRouter', () => {
 
   describe('tier 0: beta unlimited', () => {
     it('should authorize when beta mode is active', async () => {
-      (db.from as any).mockReturnValue({
+      vi.mocked(db.from).mockReturnValue({
         select: vi.fn().mockReturnValue({
           eq: vi.fn().mockReturnValue({
             maybeSingle: vi.fn().mockResolvedValue({ data: { is_platform_admin: false }, error: null }),
           }),
         }),
-      });
-      (db.rpc as any)
-        .mockResolvedValueOnce({ data: null, error: null }); // check_anchor_quota → NULL = unlimited
+      } as never);
+      vi.mocked(db.rpc)
+        .mockResolvedValueOnce({ data: null, error: null } as never);
 
       const app = createApp('user-1', 'org-1');
       const res = await request(app).get('/api/v1/verify/test');
@@ -121,7 +121,7 @@ describe('paymentTierRouter', () => {
   describe('tier 1: prepaid credits', () => {
     it('should deduct credits and authorize', async () => {
       // Admin check: not admin
-      (db.from as any).mockReturnValue({
+      vi.mocked(db.from).mockReturnValue({
         select: vi.fn().mockReturnValue({
           eq: vi.fn().mockReturnValue({
             maybeSingle: vi.fn().mockResolvedValue({ data: { is_platform_admin: false }, error: null }),
@@ -130,12 +130,12 @@ describe('paymentTierRouter', () => {
             }),
           }),
         }),
-      });
+      } as never);
 
-      (db.rpc as any)
-        .mockResolvedValueOnce({ data: 50, error: null }) // check_anchor_quota → not null = not beta
-        .mockResolvedValueOnce({ data: { remaining: 100 }, error: null }) // check_unified_credits
-        .mockResolvedValueOnce({ data: null, error: null }); // deduct_unified_credits
+      vi.mocked(db.rpc)
+        .mockResolvedValueOnce({ data: 50, error: null } as never)
+        .mockResolvedValueOnce({ data: { remaining: 100 }, error: null } as never)
+        .mockResolvedValueOnce({ data: null, error: null } as never);
 
       const app = createApp('user-1', 'org-1');
       const res = await request(app).get('/api/v1/verify/test');
@@ -148,7 +148,7 @@ describe('paymentTierRouter', () => {
   describe('tier 3: 402 when no payment', () => {
     it('should return 402 when all tiers fail', async () => {
       // Not admin
-      (db.from as any).mockReturnValue({
+      vi.mocked(db.from).mockReturnValue({
         select: vi.fn().mockReturnValue({
           eq: vi.fn().mockReturnValue({
             maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
@@ -157,11 +157,11 @@ describe('paymentTierRouter', () => {
             }),
           }),
         }),
-      });
+      } as never);
 
-      (db.rpc as any)
-        .mockResolvedValueOnce({ data: 50, error: null }) // not beta
-        .mockResolvedValueOnce({ data: { remaining: 0 }, error: null }); // no credits
+      vi.mocked(db.rpc)
+        .mockResolvedValueOnce({ data: 50, error: null } as never)
+        .mockResolvedValueOnce({ data: { remaining: 0 }, error: null } as never);
 
       const app = createApp('user-1', 'org-1');
       const res = await request(app).get('/api/v1/verify/test');

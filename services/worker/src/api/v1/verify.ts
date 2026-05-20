@@ -8,7 +8,7 @@
  * fingerprint. For fingerprint-based verification, use POST /api/verify-anchor.
  */
 
-import { Router } from 'express';
+import { Router, type Request } from 'express';
 import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 import { config } from '../../config.js';
@@ -267,9 +267,9 @@ export const EMPTY_API_RICH_FIELDS = {
 } as const;
 
 /** Fire-and-forget audit log for verification queries */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Express Request type varies across middleware chains
+ 
 function logVerificationAudit(
-  req: any,
+  req: Request,
   publicId: string,
   result: VerificationResult,
   cacheHit: boolean,

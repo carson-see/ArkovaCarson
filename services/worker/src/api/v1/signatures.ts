@@ -31,6 +31,10 @@ import type {
   TrustLevel,
 } from '../../signatures/types.js';
 import { getAdesEngine } from '../../signatures/engineFactory.js';
+import type { SupabaseClient } from '@supabase/supabase-js';
+
+// `signatures` table not yet in generated Supabase types
+const sigDb = db as unknown as SupabaseClient;
 
 // ─── Zod Schemas ───────────────────────────────────────────────────────
 
@@ -184,7 +188,7 @@ router.post('/sign', async (req: Request, res: Response) => {
 
     // Generate public ID
     // short_code not yet in generated types
-    const { data: orgData } = await (db as any)
+    const { data: orgData } = await sigDb
       .from('organizations')
       .select('short_code')
       .eq('id', orgId)
@@ -196,7 +200,7 @@ router.post('/sign', async (req: Request, res: Response) => {
 
     // Create the signature record (PENDING — engine processes async or inline)
     // signatures table not yet fully in generated types — cast to any
-    const { data: sigRecord, error: insertErr } = await (db as any)
+    const { data: sigRecord, error: insertErr } = await sigDb
       .from('signatures')
       .insert({
         public_id: publicId,
@@ -280,7 +284,7 @@ router.post('/sign', async (req: Request, res: Response) => {
     }
 
     // Update signature record with engine result
-    const { error: updateErr } = await (db as any)
+    const { error: updateErr } = await sigDb
       .from('signatures')
       .update({
         status: signResult.status,
@@ -348,7 +352,7 @@ router.get('/signatures/:id', async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
 
-    const { data: sig, error } = await (db as any)
+    const { data: sig, error } = await sigDb
       .from('signatures')
       .select('*, signing_certificates(subject_cn, subject_org, fingerprint_sha256)')
       .eq('public_id', id)
@@ -410,7 +414,7 @@ router.post('/verify-signature', async (req: Request, res: Response) => {
     const body = parsed.data;
 
     // Find the signature
-    let query = (db as any).from('signatures').select('*');
+    let query = sigDb.from('signatures').select('*');
 
     if (body.signature_id) {
       query = query.eq('public_id', body.signature_id);
@@ -552,7 +556,7 @@ router.get('/signatures', async (req: Request, res: Response) => {
       return;
     }
 
-    let query = (db as any)
+    let query = sigDb
       .from('signatures')
       .select('public_id, format, level, status, jurisdiction, document_fingerprint, signer_name, signer_org, signed_at, created_at')
       .eq('org_id', membership.org_id)
@@ -616,7 +620,7 @@ router.post('/signatures/:id/revoke', async (req: Request, res: Response) => {
     const { reason, detail } = parsed.data;
 
     // Find the signature and verify ownership
-    const { data: sig, error: findErr } = await (db as any)
+    const { data: sig, error: findErr } = await sigDb
       .from('signatures')
       .select('id, public_id, status, org_id')
       .eq('public_id', id)
@@ -647,7 +651,7 @@ router.post('/signatures/:id/revoke', async (req: Request, res: Response) => {
     }
 
     // Revoke
-    const { error: updateErr } = await (db as any)
+    const { error: updateErr } = await sigDb
       .from('signatures')
       .update({
         status: 'REVOKED',

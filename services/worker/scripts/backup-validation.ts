@@ -91,7 +91,7 @@ async function checkRlsEnabled(
   if (error) {
     // Try direct query via pg_tables (service_role can read it)
     const { data: pgData, error: pgError } = await supabase
-      .from('pg_tables' as any)
+      .from('pg_tables' as never)
       .select('rowsecurity')
       .eq('schemaname', 'public')
       .eq('tablename', table)
@@ -106,7 +106,7 @@ async function checkRlsEnabled(
       };
     }
 
-    const enabled = (pgData as any).rowsecurity === true;
+    const enabled = (pgData as Record<string, unknown>).rowsecurity === true;
     return {
       name: `RLS enabled: ${table}`,
       passed: enabled,
@@ -114,7 +114,7 @@ async function checkRlsEnabled(
     };
   }
 
-  const enabled = data === true || (data as any)?.enabled === true;
+  const enabled = data === true || (data as Record<string, unknown> | null)?.enabled === true;
   return {
     name: `RLS enabled: ${table}`,
     passed: enabled,

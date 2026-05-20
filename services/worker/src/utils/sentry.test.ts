@@ -22,7 +22,7 @@ vi.mock('@sentry/node', async () => {
   };
 });
 
-import { scrubPiiFromEvent, scrubPiiFromBreadcrumb, emitRpcFallback, Sentry } from './sentry.js';
+import { scrubPiiFromEvent, scrubPiiFromBreadcrumb, emitRpcFallback, withCronMonitoring, Sentry } from './sentry.js';
 
 describe('scrubPiiFromEvent', () => {
   it('strips email addresses from exception messages', () => {
@@ -322,5 +322,36 @@ describe('emitRpcFallback (SCRUM-1262 R1-8 /simplify carry-over)', () => {
       expect.objectContaining({ reason: 'unknown' }),
       expect.any(String),
     );
+  });
+});
+
+describe('withCronMonitoring', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('flushes Sentry after a successful check-in so Cloud Run does not drop the event', async () => {
+    const fn = vi.fn().mockResolvedValue({ ok: true });
+    const wrapped = withCronMonitoring('test-job', '*/5 * * * *', fn);
+
+    await wrapped();
+
+    expect(Sentry.captureCheckIn).toHaveBeenCalledTimes(2);
+    expect(Sentry.captureCheckIn).toHaveBeenLastCalledWith(
+      expect.objectContaining({ status: 'ok' }),
+    );
+    expect(Sentry.flush).toHaveBeenCalledWith(2000);
+  });
+
+  it('flushes Sentry after an error check-in before re-throwing', async () => {
+    const fn = vi.fn().mockRejectedValue(new Error('boom'));
+    const wrapped = withCronMonitoring('test-job', '*/5 * * * *', fn);
+
+    await expect(wrapped()).rejects.toThrow('boom');
+
+    expect(Sentry.captureCheckIn).toHaveBeenLastCalledWith(
+      expect.objectContaining({ status: 'error' }),
+    );
+    expect(Sentry.flush).toHaveBeenCalledWith(2000);
   });
 });
