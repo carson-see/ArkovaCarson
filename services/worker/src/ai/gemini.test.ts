@@ -259,6 +259,51 @@ describe('GeminiProvider', () => {
       expect(result.model).toBe('gemini-embedding-001');
       fetchSpy.mockRestore();
     });
+
+    it('uses the Gemini batchEmbedContents endpoint for native batch embeddings', async () => {
+      const first = new Array(768).fill(0.1);
+      const second = new Array(768).fill(0.2);
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+        new Response(JSON.stringify({
+          embeddings: [
+            { values: first },
+            { values: second },
+          ],
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      );
+
+      const provider = new GeminiProvider('test-key');
+      const result = await provider.generateEmbeddings([
+        { text: 'DEGREE University of Michigan' },
+        { text: 'CERTIFICATE Example Academy' },
+      ], 'RETRIEVAL_DOCUMENT');
+
+      expect(result.embeddings).toHaveLength(2);
+      expect(result.embeddings[0].embedding).toEqual(first);
+      expect(result.embeddings[1].embedding).toEqual(second);
+      expect(result.model).toBe('gemini-embedding-001');
+      expect(fetchSpy).toHaveBeenCalledWith(
+        expect.stringContaining(':batchEmbedContents'),
+        expect.objectContaining({
+          method: 'POST',
+          headers: expect.objectContaining({ 'x-goog-api-key': 'test-key' }),
+        }),
+      );
+      const requestBody = JSON.parse((fetchSpy.mock.calls[0]?.[1] as RequestInit).body as string) as {
+        requests: Array<{ taskType: string; content: { parts: Array<{ text: string }> } }>;
+      };
+      expect(requestBody.requests).toHaveLength(2);
+      expect(requestBody.requests[0]).toMatchObject({
+        model: 'models/gemini-embedding-001',
+        taskType: 'RETRIEVAL_DOCUMENT',
+        outputDimensionality: 768,
+        content: { parts: [{ text: 'DEGREE University of Michigan' }] },
+      });
+      fetchSpy.mockRestore();
+    });
   });
 
   describe('healthCheck', () => {
