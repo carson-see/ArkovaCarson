@@ -72,7 +72,7 @@ type Outcome =
   | { kind: 'permanent_failure'; error: string };
 
 async function fetchPendingExecutions(): Promise<ExecutionRow[]> {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any, arkova/missing-org-filter -- service-role admin query
   const { data, error } = await (db as any)
     .from('organization_rule_executions')
     .select('id, rule_id, org_id, trigger_event_id, status, attempt_count, input_payload')
@@ -91,7 +91,7 @@ async function fetchPendingExecutions(): Promise<ExecutionRow[]> {
 
 async function fetchRulesByIds(ruleIds: string[]): Promise<Map<string, RuleRow>> {
   if (ruleIds.length === 0) return new Map();
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any, arkova/missing-org-filter -- service-role admin query
   const { data, error } = await (db as any)
     .from('organization_rules')
     .select('id, org_id, name, action_type, action_config')
@@ -381,7 +381,7 @@ async function finalizeExecution(exec: ExecutionRow, outcome: Outcome): Promise<
   // Race guard: only finalize if the row is still in the status we read.
   // A second dispatcher instance racing on the same row will get 0 rows
   // updated and the loser bails — no double dispatch / double notify.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any, arkova/missing-org-filter -- service-role admin query
   const { error: writeErr } = await (db as any)
     .from('organization_rule_executions')
     .update({

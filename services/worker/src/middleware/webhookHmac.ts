@@ -50,7 +50,7 @@ const DEFAULT_MAX_BODY_BYTES = 1_000_000;
 
 /**
  * Express middleware factory. The caller should attach a raw-body parser
- * BEFORE this middleware so `req.body` / `(req as any).rawBody` contains
+ * BEFORE this middleware so `req.body` / `req.rawBody` contains
  * the bytes used to compute the signature. Uses `req.rawBody` when present;
  * else stringifies `req.body`.
  */
@@ -108,8 +108,7 @@ export function webhookHmac(options: WebhookHmacOptions) {
     // whitespace / unicode / key-order differences between the sender's bytes
     // and our re-serialization flip HMACs silently, surfacing as
     // invalid_signature with no way to diagnose from the logs. Fail-closed.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const rawBody: Buffer | string | undefined = (req as any).rawBody;
+    const rawBody: Buffer | string | undefined = req.rawBody;
     if (rawBody == null) {
       logger.error(
         { path: req.path },

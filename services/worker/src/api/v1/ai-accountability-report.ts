@@ -75,6 +75,7 @@ router.post('/', async (req: Request, res: Response) => {
       .limit(5);
 
     // Fetch audit events (lifecycle + human overrides)
+    // eslint-disable-next-line arkova/missing-org-filter -- scoped by target_id, ownership verified upstream
     const { data: auditEvents } = await db
       .from('audit_events')
       .select('event_type, details, created_at')

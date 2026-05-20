@@ -508,6 +508,7 @@ router.get('/:publicId', async (req: Request, res: Response) => {
     // defense in attestations-sanitizer.test.ts: the test catches a future
     // res.json() spread, the narrow SELECT removes the latent attack surface
     // even if a refactor accidentally widens the response.
+    // eslint-disable-next-line arkova/missing-org-filter -- public verification endpoint
     const { data: attestation, error } = await dbAny
       .from('attestations')
       .select(
@@ -631,6 +632,7 @@ router.get('/', async (req: Request, res: Response) => {
   const { anchor_id, subject_identifier, attestation_type, status, cursor, page, limit } = parsed.data;
 
   try {
+    // eslint-disable-next-line arkova/missing-org-filter -- public verification endpoint
     let query = dbAny
       .from('attestations')
       .select('public_id, attestation_type, status, subject_type, subject_identifier, attester_name, attester_type, summary, issued_at, expires_at, created_at, fingerprint, chain_tx_id', { count: 'exact' });
@@ -913,6 +915,7 @@ router.post('/batch-verify', requireScope('verify:batch'), attestationBatchRateL
 
   try {
     // Single DB call to fetch all attestations
+    // eslint-disable-next-line arkova/missing-org-filter -- public verification endpoint
     const { data: attestations, error } = await dbAny
       .from('attestations')
       .select('public_id, attestation_type, status, subject_identifier, attester_name, attester_type, issued_at, expires_at, chain_tx_id, chain_block_height, chain_timestamp')
@@ -1020,6 +1023,7 @@ router.patch('/:publicId/revoke', async (req: Request, res: Response) => {
 
   try {
     // Verify ownership
+    // eslint-disable-next-line arkova/missing-org-filter -- attestation lookup by public_id, ownership verified by attester_user_id check
     const { data: attestation, error: findError } = await dbAny
       .from('attestations')
       .select('id, status, attester_user_id')
@@ -1041,6 +1045,7 @@ router.patch('/:publicId/revoke', async (req: Request, res: Response) => {
       return;
     }
 
+    // eslint-disable-next-line arkova/missing-org-filter -- attestation update by public_id, ownership verified above
     const { error: updateError } = await dbAny
       .from('attestations')
       .update({

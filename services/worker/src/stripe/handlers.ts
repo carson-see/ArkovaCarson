@@ -48,11 +48,12 @@ async function lookupSubscriptionOrThrow<T>(
   context: Record<string, unknown>,
   eventName: string,
 ): Promise<T | null> {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- chained Supabase select() typing varies by `selectCols` runtime value
+  // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
   const { data, error } = await (db
     .from('subscriptions')
     .select(selectCols)
     .eq('stripe_subscription_id', stripeSubscriptionId)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Supabase select chain return type varies by runtime columns
     .maybeSingle() as any);
   if (error) {
     logger.error(
@@ -84,6 +85,7 @@ function stripeReferenceId(ref: StripeReference): string | null {
 async function resolvePaymentGraceTarget(
   stripeSubscriptionId: string,
 ): Promise<PaymentGraceTarget> {
+  // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
   const { data: subscription, error } = await db
     .from('subscriptions')
     .select('user_id, org_id')
@@ -425,6 +427,7 @@ export async function handleSubscriptionUpdated(event: StripeEvent): Promise<voi
   }
 
   // Get existing subscription to check for plan change and cancellation transition
+  // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
   const { data: existingSub } = await db
     .from('subscriptions')
     .select('user_id, plan_id, cancel_at_period_end, org_id')
@@ -487,6 +490,7 @@ export async function handleSubscriptionUpdated(event: StripeEvent): Promise<voi
     updatePayload.plan_id = newPlanId;
   }
 
+  // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
   const { error } = await db
     .from('subscriptions')
     .update(updatePayload)
@@ -552,6 +556,7 @@ export async function handleSubscriptionDeleted(event: StripeEvent): Promise<voi
   );
   if (!existingSub) return;
 
+  // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
   const { error } = await db
     .from('subscriptions')
     .update({ status: 'canceled' })
@@ -601,6 +606,7 @@ export async function handlePaymentFailed(event: StripeEvent): Promise<void> {
     );
     if (!existingSub) return;
 
+    // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
     const { error } = await db
       .from('subscriptions')
       .update({ status: 'past_due' })
@@ -660,6 +666,7 @@ export async function handlePaymentSucceeded(event: StripeEvent): Promise<void> 
   );
   if (!existingSub) return;
 
+  // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
   const { error } = await db
     .from('subscriptions')
     .update({ status: 'active' })

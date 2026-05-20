@@ -196,7 +196,7 @@ export async function loadDriveAccessToken(
   // refresher won" would silently return the stale pre-refresh token
   // as if the refresh succeeded, turning a persistence/read failure
   // into a silent auth bug.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any, arkova/missing-org-filter -- CAS update scoped by integration.id
   const { data: persistedRow, error: writeError } = await (deps.db as any)
     .from('org_integrations')
     .update({
@@ -224,7 +224,7 @@ export async function loadDriveAccessToken(
   // current row to get the winner's access token. We don't burn a
   // second Google refresh (which would itself rotate the refresh_token
   // again and create a chain of races); we trust the winner.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any, arkova/missing-org-filter -- CAS update scoped by integration.id
   const { data: latest, error: readError } = await (deps.db as any)
     .from('org_integrations')
     .select('encrypted_tokens, token_kms_key_id')
@@ -384,7 +384,7 @@ export function createProcessorDbAdapter(deps: Pick<DriveChangesRunnerDeps, 'db'
           `advancePageToken payload failed Zod validation: ${parsed.error.issues.map((i) => i.path.join('.') + ':' + i.message).join('; ')}`,
         );
       }
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any, arkova/missing-org-filter -- CAS update scoped by integration.id
       const { error } = await (deps.db as any)
         .from('org_integrations')
         .update({
