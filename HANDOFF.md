@@ -1552,4 +1552,4 @@ _Last refreshed: 2026-05-05 by Codex — claims verified against gcloud/MCP/CI o
 
 ---
 
-_Last refreshed: 2026-05-19 by Codex — narrative-only PR #817 source-provenance note; no prod-state verification claim._
+_Last refreshed: 2026-05-20 by Codex — claims verified against gcloud/MCP/CI output._ Evidence: Supabase Management API prod ledger rows `0311` / `0312` verified on project `vzwyaatejekddvltxyye`; read-only prod SQL confirmed `get_public_anchor(p_public_id text)` source-provenance fields and `org_integrations.token_secret_name`; GitHub CI reruns for PR #817 migration drift and HANDOFF gates are the controlling release artifacts.
