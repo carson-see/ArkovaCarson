@@ -1,5 +1,3 @@
-import { createHash } from 'node:crypto';
-
 import { db as defaultDb } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
 import { processNextJob } from '../utils/jobQueue.js';
@@ -16,6 +14,8 @@ import {
 } from '../integrations/connectors/docusign-token-store.js';
 
 export const DOCUSIGN_ENVELOPE_COMPLETED_JOB_TYPE = 'docusign.envelope_completed';
+const DEFAULT_DOCUSIGN_ENVELOPE_JOB_LIMIT = 10;
+const MAX_DOCUSIGN_ENVELOPE_JOB_LIMIT = 100;
 
 // org_integrations landed after generated worker DB types.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -47,6 +47,7 @@ export interface DocusignEnvelopeJobRunResult {
   completed: number;
   failed: number;
   dead: number;
+  updateFailed: number;
   jobIds: string[];
 }
 
@@ -126,7 +127,6 @@ export function makeDocusignEnvelopeJobDeps(
     },
 
     async enqueueSignedDocument(input): Promise<DocusignDocumentSinkResult> {
-      const documentSha256 = createHash('sha256').update(input.documentBytes).digest('hex');
       const { data, error } = await db
         .from('integration_events')
         .insert({
@@ -141,7 +141,6 @@ export function makeDocusignEnvelopeJobDeps(
             rule_event_id: input.ruleEventId,
             content_type: input.contentType,
             byte_length: input.documentBytes.byteLength,
-            document_sha256: documentSha256,
           },
         })
         .select('id')
@@ -160,13 +159,17 @@ export function makeDocusignEnvelopeJobDeps(
 export async function runDocusignEnvelopeCompletedJobs(
   options: DocusignEnvelopeJobRunOptions = {},
 ): Promise<DocusignEnvelopeJobRunResult> {
-  const limit = options.limit ?? 10;
+  const rawLimit = options.limit ?? DEFAULT_DOCUSIGN_ENVELOPE_JOB_LIMIT;
+  const limit = Number.isFinite(rawLimit)
+    ? Math.min(MAX_DOCUSIGN_ENVELOPE_JOB_LIMIT, Math.max(1, Math.trunc(rawLimit)))
+    : DEFAULT_DOCUSIGN_ENVELOPE_JOB_LIMIT;
   const jobDeps = options.jobDeps ?? makeDocusignEnvelopeJobDeps(options);
   const result: DocusignEnvelopeJobRunResult = {
     claimed: 0,
     completed: 0,
     failed: 0,
     dead: 0,
+    updateFailed: 0,
     jobIds: [],
   };
 
@@ -181,6 +184,7 @@ export async function runDocusignEnvelopeCompletedJobs(
     if (processed.status === 'completed') result.completed += 1;
     if (processed.status === 'failed') result.failed += 1;
     if (processed.status === 'dead') result.dead += 1;
+    if (processed.status === 'update_failed') result.updateFailed += 1;
   }
 
   return result;

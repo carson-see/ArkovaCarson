@@ -278,6 +278,7 @@ const mockRunDocusignEnvelopeCompletedJobs = vi.fn().mockResolvedValue({
   completed: 1,
   failed: 0,
   dead: 0,
+  updateFailed: 0,
   jobIds: ['job-1'],
 });
 vi.mock('../jobs/docusign-envelope-completed.js', () => ({
@@ -552,9 +553,28 @@ describe('cron routes', () => {
         completed: 1,
         failed: 0,
         dead: 0,
+        updateFailed: 0,
         jobIds: ['job-1'],
       });
       expect(mockRunDocusignEnvelopeCompletedJobs).toHaveBeenCalledWith({ limit: 3 });
+    });
+
+    it('rejects invalid limit values before running the DocuSign queue processor', async () => {
+      const app = createApp();
+      const res = await request(app).post('/cron/docusign-envelope-completed?limit=not-a-number');
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe('Invalid request');
+      expect(mockRunDocusignEnvelopeCompletedJobs).not.toHaveBeenCalled();
+    });
+
+    it('rejects out-of-range limit values before running the DocuSign queue processor', async () => {
+      const app = createApp();
+      const res = await request(app).post('/cron/docusign-envelope-completed?limit=101');
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe('Invalid request');
+      expect(mockRunDocusignEnvelopeCompletedJobs).not.toHaveBeenCalled();
     });
   });
 

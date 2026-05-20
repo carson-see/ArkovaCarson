@@ -17,6 +17,7 @@ export interface GcpSecretManagerRefreshTokenStoreDeps {
 const SECRET_NAME_RE = /^projects\/([^/]+)\/secrets\/([A-Za-z0-9_-]{1,255})$/;
 const SAFE_PROJECT_RE = /^[A-Za-z0-9:_-]{1,128}$/;
 const SAFE_ORG_RE = /^[A-Za-z0-9_-]{1,64}$/;
+const SECRET_MANAGER_TIMEOUT_MS = 10_000;
 
 function assertSafeSegment(value: string, label: string, pattern: RegExp): string {
   const trimmed = value.trim();
@@ -77,9 +78,27 @@ export function createGcpSecretManagerRefreshTokenStore(
     });
   }
 
+  async function fetchSecretManager(path: string, init?: RequestInit): Promise<Response> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), SECRET_MANAGER_TIMEOUT_MS);
+    try {
+      return await fetchImpl(secretManagerUrl(path), {
+        ...init,
+        signal: controller.signal,
+      });
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') {
+        throw new Error(`Secret Manager request timed out after ${SECRET_MANAGER_TIMEOUT_MS}ms`, { cause: error });
+      }
+      throw error;
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
   async function ensureSecretExists(name: string): Promise<void> {
     const { projectId, secretId } = parseSecretName(name);
-    const getRes = await fetchImpl(secretManagerUrl(name), {
+    const getRes = await fetchSecretManager(name, {
       headers: await headers(),
     });
     if (getRes.ok) return;
@@ -88,14 +107,11 @@ export function createGcpSecretManagerRefreshTokenStore(
     }
 
     const project = assertSafeSegment(projectId, 'projectId', SAFE_PROJECT_RE);
-    const createRes = await fetchImpl(
-      secretManagerUrl(`projects/${project}/secrets?secretId=${encodeURIComponent(secretId)}`),
-      {
-        method: 'POST',
-        headers: await headers(),
-        body: JSON.stringify({ replication: { automatic: {} } }),
-      },
-    );
+    const createRes = await fetchSecretManager(`projects/${project}/secrets?secretId=${encodeURIComponent(secretId)}`, {
+      method: 'POST',
+      headers: await headers(),
+      body: JSON.stringify({ replication: { automatic: {} } }),
+    });
     if (!createRes.ok && createRes.status !== 409) {
       throw new Error(`Secret Manager create failed for DocuSign token secret: ${createRes.status}`);
     }
@@ -105,7 +121,7 @@ export function createGcpSecretManagerRefreshTokenStore(
     async put({ name, value }) {
       parseSecretName(name);
       await ensureSecretExists(name);
-      const res = await fetchImpl(secretManagerUrl(`${name}:addVersion`), {
+      const res = await fetchSecretManager(`${name}:addVersion`, {
         method: 'POST',
         headers: await headers(),
         body: JSON.stringify({
@@ -119,7 +135,7 @@ export function createGcpSecretManagerRefreshTokenStore(
 
     async get({ name }) {
       parseSecretName(name);
-      const res = await fetchImpl(secretManagerUrl(`${name}/versions/latest:access`), {
+      const res = await fetchSecretManager(`${name}/versions/latest:access`, {
         headers: await headers(),
       });
       if (res.status === 404) return null;
@@ -133,7 +149,7 @@ export function createGcpSecretManagerRefreshTokenStore(
 
     async delete({ name }) {
       parseSecretName(name);
-      const res = await fetchImpl(secretManagerUrl(name), {
+      const res = await fetchSecretManager(name, {
         method: 'DELETE',
         headers: await headers(),
       });

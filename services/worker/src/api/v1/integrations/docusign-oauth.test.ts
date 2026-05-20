@@ -320,6 +320,65 @@ describe('DocuSign OAuth router', () => {
     });
   });
 
+  it('surfaces refresh-token secret deletion failures during disconnect', async () => {
+    const captured: Record<string, unknown[]> = {};
+    const capture = (method: string, value: unknown) => {
+      captured[method] = [...(captured[method] ?? []), value];
+    };
+    const db = {
+      from: vi.fn((table: string) => {
+        if (table === 'org_members') return mockQuery({ data: { role: 'admin' }, error: null });
+        if (table === 'org_integrations') {
+          return mockQuery({
+            data: [{
+              id: 'integration-1',
+              token_secret_name: 'projects/test-project/secrets/arkova-docusign-refresh-token',
+            }],
+            error: null,
+          }, capture);
+        }
+        if (table === 'integration_events') return mockQuery({ data: null, error: null }, capture);
+        return mockQuery({ data: null, error: null });
+      }),
+    };
+    const app = express();
+    app.use(express.json());
+    app.use((req, _res, next) => {
+      (req as unknown as { userId: string }).userId = TEST_USER_ID;
+      next();
+    });
+    app.use('/api/v1/integrations', createDocusignOAuthRouter({
+      db,
+      env: {
+        DOCUSIGN_INTEGRATION_KEY: 'docusign-client',
+        DOCUSIGN_CLIENT_SECRET: 'docusign-client-secret',
+        DOCUSIGN_DEMO: 'true',
+        GCP_SECRET_MANAGER_PROJECT_ID: 'test-project',
+        GCP_KMS_INTEGRATION_TOKEN_KEY: 'projects/p/locations/l/keyRings/r/cryptoKeys/k',
+      },
+      stateSecret: 'test-state-secret',
+      frontendUrl: 'http://localhost:5173',
+      now: () => new Date('2026-04-24T12:00:00.000Z'),
+      kms: {
+        async encrypt() { return Buffer.from('encrypted-token-payload'); },
+        async decrypt() { return Buffer.from('{}'); },
+      },
+      refreshTokenStore: {
+        async put() { return undefined; },
+        async get() { return null; },
+        async delete() { throw new Error('secret delete failed'); },
+      },
+    }));
+
+    const res = await request(app)
+      .post('/api/v1/integrations/docusign/disconnect')
+      .send({ org_id: TEST_ORG_ID });
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe('Failed to delete DocuSign refresh token secret');
+    expect(captured.insert).toBeUndefined();
+  });
+
   it('provisions a Connect listener after successful OAuth callback', async () => {
     const captured: Record<string, unknown[]> = {};
     const capture = (method: string, value: unknown) => {

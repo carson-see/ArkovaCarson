@@ -92,6 +92,9 @@ export const cronRouter = Router();
 
 // CORS for browser-based admin triggers (PipelineAdminPage)
 import { corsMiddleware } from './middleware.js';
+
+const DocusignEnvelopeCompletedLimitSchema = z.coerce.number().int().min(1).max(100);
+
 cronRouter.use(corsMiddleware);
 
 // Dedicated rate limiter for cron endpoints
@@ -376,9 +379,15 @@ cronRouter.post('/rule-action-dispatcher', async (_req, res) => {
 cronRouter.post('/docusign-envelope-completed', async (req, res) => {
   try {
     const rawLimit = req.query.limit ?? req.body?.limit;
-    const parsedLimit = rawLimit === undefined ? undefined : Number.parseInt(String(rawLimit), 10);
+    const parsedLimit = rawLimit === undefined
+      ? undefined
+      : DocusignEnvelopeCompletedLimitSchema.safeParse(rawLimit);
+    if (parsedLimit && !parsedLimit.success) {
+      res.status(400).json({ error: 'Invalid request', details: parsedLimit.error.flatten() });
+      return;
+    }
     const result = await runDocusignEnvelopeCompletedJobs({
-      limit: Number.isFinite(parsedLimit) ? parsedLimit : undefined,
+      limit: parsedLimit?.data,
     });
     res.json(result);
   } catch (error) {

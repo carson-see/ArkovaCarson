@@ -77,5 +77,28 @@ describe('DocuSign refresh token Secret Manager store', () => {
     expect(calls.every((call) => call.init?.headers instanceof Headers
       ? call.init.headers.get('authorization') === 'Bearer gcp-token'
       : true)).toBe(true);
+    expect(calls.every((call) => call.init?.signal instanceof AbortSignal)).toBe(true);
+  });
+
+  it('aborts hung Secret Manager requests with a bounded timeout', async () => {
+    vi.useFakeTimers();
+    const fetchImpl = vi.fn((_url: string | URL | Request, init?: RequestInit) =>
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => {
+          reject(new DOMException('aborted', 'AbortError'));
+        });
+      }));
+    const store = createGcpSecretManagerRefreshTokenStore({
+      env: { GCP_SECRET_MANAGER_PROJECT_ID: 'p' },
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      getAccessToken: async () => 'gcp-token',
+    });
+
+    const request = expect(
+      store.get({ name: 'projects/p/secrets/arkova-docusign-test' }),
+    ).rejects.toThrow('Secret Manager request timed out after 10000ms');
+    await vi.advanceTimersByTimeAsync(10_000);
+    await request;
+    vi.useRealTimers();
   });
 });

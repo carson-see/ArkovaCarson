@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mockRpc = vi.hoisted(() => vi.fn());
 const updates = vi.hoisted(() => [] as Array<Record<string, unknown>>);
+const updateErrors = vi.hoisted(() => [] as Array<unknown>);
 
 vi.mock('./db.js', () => ({
   db: {
@@ -10,7 +11,7 @@ vi.mock('./db.js', () => ({
       update: vi.fn((patch: Record<string, unknown>) => {
         updates.push(patch);
         return {
-          eq: vi.fn().mockResolvedValue({ data: null, error: null }),
+          eq: vi.fn().mockResolvedValue({ data: null, error: updateErrors.shift() ?? null }),
         };
       }),
     })),
@@ -49,6 +50,7 @@ describe('processNextJob', () => {
   beforeEach(() => {
     mockRpc.mockReset();
     updates.length = 0;
+    updateErrors.length = 0;
     vi.useRealTimers();
   });
 
@@ -106,5 +108,39 @@ describe('processNextJob', () => {
       last_error: 'permanent after retries',
     });
     expect(updates[0]).not.toHaveProperty('scheduled_for');
+  });
+
+  it('returns update_failed when marking a successful job completed fails', async () => {
+    mockRpc.mockResolvedValue({ data: [job()], error: null });
+    updateErrors.push({ message: 'database unavailable' });
+
+    const result = await processNextJob('docusign.envelope_completed', vi.fn().mockResolvedValue(undefined));
+
+    expect(result).toMatchObject({
+      claimed: true,
+      jobId: 'job-1',
+      status: 'update_failed',
+      attempts: 1,
+      error: 'job_complete_update_failed:job-1',
+    });
+    expect(updates[0]).toMatchObject({ status: 'completed' });
+  });
+
+  it('returns update_failed when persisting a failed job status fails', async () => {
+    mockRpc.mockResolvedValue({ data: [job({ attempts: 2, max_attempts: 5 })], error: null });
+    updateErrors.push({ message: 'database unavailable' });
+
+    const result = await processNextJob('docusign.envelope_completed', async () => {
+      throw new Error('DocuSign temporarily unavailable');
+    });
+
+    expect(result).toMatchObject({
+      claimed: true,
+      jobId: 'job-1',
+      status: 'update_failed',
+      attempts: 2,
+      error: 'job_fail_update_failed:job-1',
+    });
+    expect(updates[0]).toMatchObject({ status: 'failed' });
   });
 });

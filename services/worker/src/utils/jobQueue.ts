@@ -46,7 +46,7 @@ export type JobHandler<T = unknown> = (job: Job<T>) => Promise<void>;
 
 export interface ProcessJobResult {
   claimed: boolean;
-  status: 'idle' | 'completed' | 'failed' | 'dead';
+  status: 'idle' | 'completed' | 'failed' | 'dead' | 'update_failed';
   jobId?: string;
   attempts?: number;
   error?: string;
@@ -108,10 +108,13 @@ export async function claimJob<T>(type: string): Promise<Job<T> | null> {
  */
 export async function completeJob(jobId: string): Promise<void> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  await (db as any)
+  const { error } = await (db as any)
     .from('job_queue')
     .update({ status: 'completed', updated_at: new Date().toISOString() })
     .eq('id', jobId);
+  if (error) {
+    throw new Error(`job_complete_update_failed:${jobId}`);
+  }
 }
 
 /**
@@ -121,7 +124,7 @@ export async function failJob(jobId: string, errorMessage: string, attempts: num
   const status: JobStatus = attempts >= maxAttempts ? 'dead' : 'failed';
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  await (db as any)
+  const { error } = await (db as any)
     .from('job_queue')
     .update({
       status,
@@ -133,6 +136,9 @@ export async function failJob(jobId: string, errorMessage: string, attempts: num
       } : {}),
     })
     .eq('id', jobId);
+  if (error) {
+    throw new Error(`job_fail_update_failed:${jobId}`);
+  }
 
   if (status === 'dead') {
     logger.warn({ jobId, attempts, error: errorMessage }, 'Job moved to dead letter queue');
@@ -151,16 +157,20 @@ export async function processNextJob<T = unknown>(
 
   try {
     await handler(job);
-    await completeJob(job.id);
-    return {
-      claimed: true,
-      status: 'completed',
-      jobId: job.id,
-      attempts: job.attempts,
-    };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    await failJob(job.id, message, job.attempts, job.max_attempts);
+    try {
+      await failJob(job.id, message, job.attempts, job.max_attempts);
+    } catch (updateError) {
+      const updateMessage = updateError instanceof Error ? updateError.message : String(updateError);
+      return {
+        claimed: true,
+        status: 'update_failed',
+        jobId: job.id,
+        attempts: job.attempts,
+        error: updateMessage,
+      };
+    }
     return {
       claimed: true,
       status: job.attempts >= job.max_attempts ? 'dead' : 'failed',
@@ -169,6 +179,26 @@ export async function processNextJob<T = unknown>(
       error: message,
     };
   }
+
+  try {
+    await completeJob(job.id);
+  } catch (updateError) {
+    const updateMessage = updateError instanceof Error ? updateError.message : String(updateError);
+    return {
+      claimed: true,
+      status: 'update_failed',
+      jobId: job.id,
+      attempts: job.attempts,
+      error: updateMessage,
+    };
+  }
+
+  return {
+    claimed: true,
+    status: 'completed',
+    jobId: job.id,
+    attempts: job.attempts,
+  };
 }
 
 /**

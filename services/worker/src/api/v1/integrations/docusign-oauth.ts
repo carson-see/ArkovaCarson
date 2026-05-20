@@ -444,11 +444,20 @@ export function createDocusignOAuthRouter(deps: DocusignOAuthDeps = {}): Router 
       env: deps.env,
       fetchImpl: deps.fetchImpl,
     });
-    await Promise.allSettled(
+    const deleteResults = await Promise.allSettled(
       ((existing ?? []) as Array<{ token_secret_name?: string | null }>).flatMap((row) =>
         row.token_secret_name ? [refreshTokenStore.delete({ name: row.token_secret_name })] : [],
       ),
     );
+    const failedDeletes = deleteResults.filter((result) => result.status === 'rejected');
+    if (failedDeletes.length > 0) {
+      logger.error(
+        { orgId, failedDeleteCount: failedDeletes.length },
+        'DocuSign refresh-token secret deletion failed during disconnect',
+      );
+      res.status(500).json({ error: 'Failed to delete DocuSign refresh token secret' });
+      return;
+    }
 
     await recordIntegrationEvent(db, {
       orgId,
