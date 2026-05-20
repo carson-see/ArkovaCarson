@@ -683,24 +683,99 @@ export const openApiSpec: Record<string, any> = {
         },
       },
     },
-    '/cle': {
+    '/cle/verify': {
       get: {
         summary: 'CLE verification lookup',
-        description: 'Verify Continuing Legal Education credits. x402 payment gate.',
+        description: 'Verify Continuing Legal Education credits. Responses use a public-safe allowlist and omit bar numbers, attorney names, raw metadata, internal IDs, filenames, claims, and chain transaction IDs. x402 payment gate.',
         operationId: 'cleVerify',
         tags: ['Compliance'],
         security: [{ ApiKeyBearer: [] }, { ApiKeyHeader: [] }, {}],
         parameters: [
-          { name: 'attorney_name', in: 'query', schema: { type: 'string' } },
-          { name: 'bar_number', in: 'query', schema: { type: 'string' } },
+          { name: 'bar_number', in: 'query', required: true, schema: { type: 'string' } },
           { name: 'jurisdiction', in: 'query', schema: { type: 'string' } },
         ],
         responses: {
-          '200': { description: 'CLE verification results' },
+          '200': {
+            description: 'Public-safe CLE verification results',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    jurisdiction: { type: 'string', nullable: true },
+                    compliance_status: { type: 'string', enum: ['compliant', 'deficient', 'unknown'] },
+                    summary: {
+                      type: 'object',
+                      properties: {
+                        total_cle_hours: { type: 'number' },
+                        ethics_hours: { type: 'number' },
+                        credits_by_category: { type: 'object', additionalProperties: { type: 'number' } },
+                        total_anchored_records: { type: 'integer' },
+                        total_attestations: { type: 'integer' },
+                      },
+                    },
+                    records: {
+                      type: 'array',
+                      items: {
+                        type: 'object',
+                        properties: {
+                          public_id: { type: 'string', nullable: true },
+                          course_title: { type: 'string', nullable: true },
+                          provider_name: { type: 'string', nullable: true },
+                          credit_hours: { type: 'number' },
+                          credit_category: { type: 'string' },
+                          delivery_method: { type: 'string', nullable: true },
+                          completion_date: { type: 'string', nullable: true },
+                          jurisdiction: { type: 'string', nullable: true },
+                          anchor_status: { type: 'string', nullable: true },
+                          anchored_at: { type: 'string', nullable: true },
+                        },
+                      },
+                    },
+                    attestations: {
+                      type: 'array',
+                      items: {
+                        type: 'object',
+                        properties: {
+                          public_id: { type: 'string', nullable: true },
+                          attestation_type: { type: 'string', nullable: true },
+                          status: { type: 'string', nullable: true },
+                          created_at: { type: 'string', nullable: true },
+                        },
+                      },
+                    },
+                    verified_at: { type: 'string', format: 'date-time' },
+                  },
+                },
+              },
+            },
+          },
           '400': { $ref: '#/components/responses/BadRequest' },
           '402': { description: 'Payment required (x402)', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
         },
       },
+    },
+    '/cle/credits': {
+      get: {
+        summary: 'CLE credit list',
+        description: 'List public-safe CLE credit records for a bar number lookup. x402 payment gate.',
+        operationId: 'cleCredits',
+        tags: ['Compliance'],
+        security: [{ ApiKeyBearer: [] }, { ApiKeyHeader: [] }, {}],
+        parameters: [
+          { name: 'bar_number', in: 'query', required: true, schema: { type: 'string' } },
+          { name: 'jurisdiction', in: 'query', schema: { type: 'string' } },
+          { name: 'period_start', in: 'query', schema: { type: 'string', format: 'date' } },
+          { name: 'period_end', in: 'query', schema: { type: 'string', format: 'date' } },
+        ],
+        responses: {
+          '200': { description: 'Public-safe CLE credit rows' },
+          '400': { $ref: '#/components/responses/BadRequest' },
+          '402': { description: 'Payment required (x402)', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
+        },
+      },
+    },
+    '/cle/submit': {
       post: {
         summary: 'Submit CLE completion',
         description: 'Submit a CLE course completion. x402 payment gate.',
@@ -709,10 +784,30 @@ export const openApiSpec: Record<string, any> = {
         security: [{ ApiKeyBearer: [] }, { ApiKeyHeader: [] }],
         requestBody: {
           required: true,
-          content: { 'application/json': { schema: { type: 'object', required: ['course_name', 'credits'], properties: { course_name: { type: 'string' }, credits: { type: 'number' }, completion_date: { type: 'string', format: 'date' } } } } },
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['bar_number', 'course_title', 'provider_name', 'credit_hours', 'credit_category', 'jurisdiction', 'completion_date'],
+                properties: {
+                  bar_number: { type: 'string' },
+                  attorney_name: { type: 'string' },
+                  course_title: { type: 'string' },
+                  provider_name: { type: 'string' },
+                  provider_accreditation_number: { type: 'string' },
+                  credit_hours: { type: 'number' },
+                  credit_category: { type: 'string' },
+                  delivery_method: { type: 'string' },
+                  jurisdiction: { type: 'string' },
+                  completion_date: { type: 'string', format: 'date' },
+                  course_number: { type: 'string' },
+                },
+              },
+            },
+          },
         },
         responses: {
-          '201': { description: 'CLE completion submitted' },
+          '201': { description: 'CLE completion submitted with public_id only; no internal anchor id or attorney identifier is returned' },
           '400': { $ref: '#/components/responses/BadRequest' },
           '401': { $ref: '#/components/responses/Unauthorized' },
         },
