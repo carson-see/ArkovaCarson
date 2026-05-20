@@ -6,7 +6,7 @@
  * arrays passed into the analysis layer.
  */
 
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   classifyMigrationRow,
   findDuplicateNames,
@@ -19,6 +19,7 @@ import {
   mapManagementMigrationRows,
   mapManagementMigrationVersions,
   mapManagementProdFacts,
+  queryManagementApi,
   isOrgSeedName,
   buildReport,
   parseArgs,
@@ -28,6 +29,11 @@ import {
   type OrgTopologyData,
   type ProdFactsData,
 } from './staging-honesty-preflight.js';
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -70,7 +76,7 @@ describe('classifyMigrationRow', () => {
   });
 
   it('flags a row with a long timestamp version (14+ digits)', () => {
-    const result = classifyMigrationRow({ version: '20260505010337', name: 'pr695_0292' });
+    const result = classifyMigrationRow({ version: '20260505010337', name: 'manual_preview_migration' });
     expect(result).not.toBeNull();
     expect(result!.reason).toMatch(/timestamp/i);
   });
@@ -105,6 +111,12 @@ describe('classifyMigrationRow', () => {
 
   it('does not flag the baseline row name used by Path C', () => {
     expect(classifyMigrationRow({ version: '00000000000000', name: 'baseline_at_main_HEAD' })).toBeNull();
+  });
+
+  it('flags a staging artifact name even when it reuses the init version', () => {
+    const result = classifyMigrationRow({ version: '00000000000000', name: 'pr695_something' });
+    expect(result).not.toBeNull();
+    expect(result!.reason).toMatch(/pr695_/);
   });
 });
 
@@ -392,9 +404,11 @@ describe('mapManagementMigrationRows', () => {
       { version: '20260505010337', name: null },
       { name: 'ignored_missing_version' },
       { version: {}, name: 'ignored_object_version' },
+      { version: '0296', name: {} },
     ])).toEqual([
       { version: '0294', name: '0294_refund_org_credit' },
       { version: '20260505010337', name: '' },
+      { version: '0296', name: '' },
     ]);
   });
 });
@@ -421,11 +435,46 @@ describe('mapManagementProdFacts', () => {
     });
   });
 
+  it('accepts truthy values returned by Management API SQL drivers', () => {
+    expect(mapManagementProdFacts(
+      [{ cron_job_names: ['vacuum-anchors'] }],
+      [{ function_exists: 't' }],
+    )).toEqual({
+      cronJobNames: ['vacuum-anchors'],
+      functionExists: true,
+    });
+
+    expect(mapManagementProdFacts([], [{ function_exists: 'true' }]).functionExists).toBe(true);
+    expect(mapManagementProdFacts([], [{ function_exists: 1 }]).functionExists).toBe(true);
+  });
+
   it('handles empty Management API result sets', () => {
     expect(mapManagementProdFacts([], [])).toEqual({
       cronJobNames: [],
       functionExists: false,
     });
+  });
+});
+
+describe('queryManagementApi', () => {
+  it('uses a timeout signal and returns object rows only', async () => {
+    const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify([
+      { version: '0294' },
+      null,
+      ['ignored'],
+    ]), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(queryManagementApi('prod-ref', 'sbp_test', 'select 1')).resolves.toEqual([
+      { version: '0294' },
+    ]);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [, init] = fetchMock.mock.calls[0];
+    expect(init?.signal).toBeInstanceOf(AbortSignal);
   });
 });
 
