@@ -668,7 +668,7 @@ router.post('/import-url/confirm', async (req: Request, res: Response) => {
         // captures the outbound webhook fan-out specifically so auditors can
         // answer "was a credential.issued event emitted for anchor X?"
         // without joining webhook_delivery_logs.
-        // eslint-disable-next-line arkova/missing-org-filter -- Insert-only audit write; tenant scope is carried in the validated org_id field.
+
         void db.from('audit_events').insert({
           event_type: 'credential.issued',
           event_category: 'WEBHOOK',

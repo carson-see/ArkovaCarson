@@ -11,6 +11,8 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
+import crypto from 'crypto';
+import { z } from 'zod';
 
 // Mock db and logger
 const mockFrom = vi.fn();
@@ -150,7 +152,7 @@ describe('Attestation Public ID Format', () => {
   });
 
   it('generates unique 6-char suffix from UUID', () => {
-    const crypto = require('crypto');
+    // crypto imported at top level
     const uuid = crypto.randomUUID();
     const uniquePart = uuid.slice(0, 6).toUpperCase();
 
@@ -204,7 +206,7 @@ describe('Attestation ID Collision Handling', () => {
     const ids: string[] = [];
     for (let i = 0; i < MAX_RETRIES; i++) {
       attempts++;
-      const id = `ARK-IND-VER-${require('crypto').randomUUID().slice(0, 6).toUpperCase()}`;
+      const id = `ARK-IND-VER-${crypto.randomUUID().slice(0, 6).toUpperCase()}`;
       ids.push(id);
     }
     expect(attempts).toBe(3);
@@ -222,7 +224,7 @@ describe('Attestation ID Collision Handling', () => {
 // ─── Validation Tests ────────────────────────────────────
 
 describe('Attestation Validation', () => {
-  const { z } = require('zod');
+  // z imported at top level
 
   const CreateAttestationSchema = z.object({
     anchor_id: z.string().uuid().optional(),

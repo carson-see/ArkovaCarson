@@ -249,7 +249,7 @@ export class BaseChainClient implements ChainClient {
       this.publicClient = createPublicClient({
         chain: this.chain,
         transport,
-      }) as any;
+      });
     }
 
     if (clientConfig.walletClient) {
@@ -261,7 +261,7 @@ export class BaseChainClient implements ChainClient {
         account: this.account,
         chain: this.chain,
         transport,
-      }) as any;
+      }) as unknown as WalletClient;
     }
 
     // Log only the address, NEVER the private key (Constitution 1.4)
@@ -346,7 +346,7 @@ export class BaseChainClient implements ChainClient {
         value: 0n,
         data: calldata,
         gas: gasLimit,
-      } as any),
+      } as Parameters<WalletClient['sendTransaction']>[0]),
       'send transaction',
     );
 

@@ -41,7 +41,7 @@ export async function checkCertificateExpiry(orgId: string): Promise<ComplianceE
   const events: ComplianceEvent[] = [];
   const now = new Date();
 
-  const { data: certs } = await (db as any)
+  const { data: certs } = await db
     .from('signing_certificates')
     .select('id, subject_cn, not_after, status')
     .eq('org_id', orgId)
@@ -159,7 +159,7 @@ export async function fireComplianceEvents(events: ComplianceEvent[]): Promise<v
             endpoint_id: ep.id,
             event_type: event.event_type,
             event_id: crypto.randomUUID(),
-            payload: event.data as any,
+            payload: event.data as unknown as import('../../types/database.types.js').Json,
             status: 'pending',
           }).then(() => {}, () => {});
         }

@@ -74,7 +74,7 @@ function buildApp(apiKeyId: string | null = 'agent-key-1') {
   app.use(express.json());
   app.use((req, _res, next) => {
     if (apiKeyId) {
-      (req as any).apiKey = { keyId: apiKeyId };
+      (req as unknown as { apiKey: { keyId: string } }).apiKey = { keyId: apiKeyId };
     }
     next();
   });

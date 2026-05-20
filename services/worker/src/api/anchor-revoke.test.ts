@@ -61,13 +61,18 @@ const {
   __mockMembershipSingle: mockMembershipSingle,
   __mockRpc: mockRpc,
   __mockInsert: mockInsert,
-} = await import('../utils/db.js') as any;
+} = await import('../utils/db.js') as unknown as {
+  __mockAnchorSingle: ReturnType<typeof vi.fn>;
+  __mockMembershipSingle: ReturnType<typeof vi.fn>;
+  __mockRpc: ReturnType<typeof vi.fn>;
+  __mockInsert: ReturnType<typeof vi.fn>;
+};
 
 function buildApp() {
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
-    (req as any).userId = 'u1';
+    (req as unknown as { userId: string }).userId = 'u1';
     next();
   });
   app.use('/api/anchor', anchorRevokeRouter);
@@ -276,8 +281,8 @@ describe('POST /api/anchor/:id/revoke', () => {
 
     expect(res.status).toBe(200);
 
-    const calls = mockDispatchWebhookEvent.mock.calls;
-    const eventTypes = calls.map((c: unknown[]) => c[1]);
+    const calls = mockDispatchWebhookEvent.mock.calls as unknown[][];
+    const eventTypes = calls.map((c) => c[1]);
     expect(eventTypes).toContain('anchor.revoked');
     expect(eventTypes).not.toContain('credential.status_changed');
   });
@@ -326,14 +331,14 @@ describe('POST /api/anchor/:id/revoke', () => {
     // mockInsert is shared between the existing anchor.revoked audit and the
     // new emit-decision rows. Assert that a credential.status_changed row was
     // inserted with `dispatched: true` and the correct status transition.
-    const calls = mockInsert.mock.calls.map((c: unknown[]) => c[0]);
+    const calls = mockInsert.mock.calls.map((c: unknown[]) => c[0]) as Array<Record<string, unknown>>;
     const credRow = calls.find(
-      (row: any) => row?.event_type === 'credential.status_changed',
-    );
+      (row) => row?.event_type === 'credential.status_changed',
+    )!;
     expect(credRow).toBeDefined();
     expect(credRow.org_id).toBe('org1');
     expect(credRow.target_id).toBe('11111111-1111-4111-8111-111111111111');
-    const details = JSON.parse(credRow.details);
+    const details = JSON.parse(credRow.details as string);
     expect(details.dispatched).toBe(true);
     expect(details.previous_status).toBe('SECURED');
     expect(details.new_status).toBe('REVOKED');
@@ -352,12 +357,12 @@ describe('POST /api/anchor/:id/revoke', () => {
 
     expect(res.status).toBe(200);
 
-    const calls = mockInsert.mock.calls.map((c: unknown[]) => c[0]);
+    const calls = mockInsert.mock.calls.map((c: unknown[]) => c[0]) as Array<Record<string, unknown>>;
     const dispatchRow = calls.find(
-      (row: any) => row?.event_type === 'anchor.revoked.dispatched',
-    );
+      (row) => row?.event_type === 'anchor.revoked.dispatched',
+    )!;
     expect(dispatchRow).toBeDefined();
-    const details = JSON.parse(dispatchRow.details);
+    const details = JSON.parse(dispatchRow.details as string);
     expect(details.dispatched).toBe(false);
     expect(details.dispatch_error).toBe('webhook system down');
   });

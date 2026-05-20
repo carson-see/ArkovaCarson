@@ -16,6 +16,15 @@ import {
   type ConstrainedDecodingSchema,
 } from './constrained-schemas.js';
 
+interface SchemaProperty {
+  type?: string;
+  minimum?: number;
+  maximum?: number;
+  items?: SchemaProperty;
+  properties?: Record<string, SchemaProperty>;
+  enum?: string[];
+}
+
 function validateSchemaStructure(schema: ConstrainedDecodingSchema) {
   const s = schema.jsonSchema;
   expect(s.type).toBe('object');
@@ -23,7 +32,7 @@ function validateSchemaStructure(schema: ConstrainedDecodingSchema) {
     expect.arrayContaining(['answer', 'confidence', 'risks', 'recommendations', 'citations']),
   );
 
-  const props = s.properties as Record<string, any>;
+  const props = s.properties as Record<string, SchemaProperty>;
   expect(props.answer.type).toBe('string');
   expect(props.confidence.type).toBe('number');
   expect(props.confidence.minimum).toBe(0.55);
@@ -32,12 +41,12 @@ function validateSchemaStructure(schema: ConstrainedDecodingSchema) {
   expect(props.recommendations.type).toBe('array');
   expect(props.citations.type).toBe('array');
 
-  const citationItem = props.citations.items;
+  const citationItem = props.citations.items!;
   expect(citationItem.type).toBe('object');
-  expect(citationItem.properties.record_id.enum).toBeDefined();
-  expect(Array.isArray(citationItem.properties.record_id.enum)).toBe(true);
-  expect(citationItem.properties.record_id.enum.length).toBeGreaterThan(0);
-  expect(citationItem.properties.relevance.type).toBe('string');
+  expect(citationItem.properties!.record_id.enum).toBeDefined();
+  expect(Array.isArray(citationItem.properties!.record_id.enum)).toBe(true);
+  expect(citationItem.properties!.record_id.enum!.length).toBeGreaterThan(0);
+  expect(citationItem.properties!.relevance.type).toBe('string');
 }
 
 describe('ConstrainedDecodingSchemas', () => {
@@ -69,8 +78,8 @@ describe('ConstrainedDecodingSchemas', () => {
     });
 
     it('enum IDs match canonicalIds', () => {
-      const citationEnum = (FCRA_SCHEMA.jsonSchema.properties as any).citations.items.properties
-        .record_id.enum;
+      const props = FCRA_SCHEMA.jsonSchema.properties as Record<string, SchemaProperty>;
+      const citationEnum = props.citations.items!.properties!.record_id.enum;
       expect(citationEnum).toEqual(FCRA_SCHEMA.canonicalIds);
     });
   });

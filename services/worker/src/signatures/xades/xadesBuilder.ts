@@ -94,7 +94,7 @@ function buildSignedProperties(params: XadesSignatureParams): string {
     '            <xades:Cert>',
     '              <xades:CertDigest>',
     '                <ds:DigestMethod Algorithm="http://www.w3.org/2001/04/xmlenc#sha256"/>',
-    `                <ds:DigestValue>${(attrs.signingCertificateV2 as any)?.certHash || ''}</ds:DigestValue>`,
+    `                <ds:DigestValue>${(attrs.signingCertificateV2 as { certHash?: string } | undefined)?.certHash || ''}</ds:DigestValue>`,
     '              </xades:CertDigest>',
     '            </xades:Cert>',
     '          </xades:SigningCertificateV2>',

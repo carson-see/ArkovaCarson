@@ -73,8 +73,8 @@ describe('NCE-03: Intelligence Training Data', () => {
   });
 
   it('rejects invalid examples', () => {
-    const invalidExample = { messages: [] };
-    const error = validateExample(invalidExample as any);
+    const invalidExample = { messages: [], taskType: 'compliance_qa' as const, domain: 'test' };
+    const error = validateExample(invalidExample);
     expect(error).toBeTruthy();
   });
 

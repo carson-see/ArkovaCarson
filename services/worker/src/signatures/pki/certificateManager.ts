@@ -62,6 +62,107 @@ export interface AlgorithmComplianceResult {
   errors: string[];
 }
 
+interface SignatureAlgorithmFields {
+  signatureAlgorithm?: string;
+  signatureAlgorithmOid?: string;
+}
+
+interface Asn1Element {
+  tag: number;
+  valueStart: number;
+  valueEnd: number;
+  nextOffset: number;
+}
+
+function readAsn1Element(buffer: Uint8Array, offset: number): Asn1Element | null {
+  if (offset + 2 > buffer.length) {
+    return null;
+  }
+
+  const tag = buffer[offset];
+  const firstLengthByte = buffer[offset + 1];
+  let valueStart = offset + 2;
+  let length = 0;
+
+  if ((firstLengthByte & 0x80) === 0) {
+    length = firstLengthByte;
+  } else {
+    const lengthBytes = firstLengthByte & 0x7f;
+    if (lengthBytes === 0 || lengthBytes > 4 || valueStart + lengthBytes > buffer.length) {
+      return null;
+    }
+
+    for (let i = 0; i < lengthBytes; i++) {
+      length = (length << 8) | buffer[valueStart + i];
+    }
+    valueStart += lengthBytes;
+  }
+
+  const valueEnd = valueStart + length;
+  if (valueEnd > buffer.length) {
+    return null;
+  }
+
+  return {
+    tag,
+    valueStart,
+    valueEnd,
+    nextOffset: valueEnd,
+  };
+}
+
+function decodeObjectIdentifier(bytes: Uint8Array): string | null {
+  if (bytes.length === 0) {
+    return null;
+  }
+
+  const firstByte = bytes[0];
+  const firstArc = firstByte < 40 ? 0 : firstByte < 80 ? 1 : 2;
+  const arcs = [firstArc, firstByte - firstArc * 40];
+  let value = 0;
+  let hasContinuation = false;
+
+  for (let i = 1; i < bytes.length; i++) {
+    const byte = bytes[i];
+    if (value > Number.MAX_SAFE_INTEGER / 128) {
+      return null;
+    }
+
+    value = value * 128 + (byte & 0x7f);
+    hasContinuation = (byte & 0x80) !== 0;
+    if (!hasContinuation) {
+      arcs.push(value);
+      value = 0;
+    }
+  }
+
+  return hasContinuation ? null : arcs.join('.');
+}
+
+function parseCertificateSignatureAlgorithmOid(raw: Uint8Array): string | null {
+  const certificate = readAsn1Element(raw, 0);
+  if (!certificate || certificate.tag !== 0x30) {
+    return null;
+  }
+
+  const tbsCertificate = readAsn1Element(raw, certificate.valueStart);
+  if (!tbsCertificate) {
+    return null;
+  }
+
+  const signatureAlgorithm = readAsn1Element(raw, tbsCertificate.nextOffset);
+  if (!signatureAlgorithm || signatureAlgorithm.tag !== 0x30) {
+    return null;
+  }
+
+  const algorithmOid = readAsn1Element(raw, signatureAlgorithm.valueStart);
+  if (!algorithmOid || algorithmOid.tag !== 0x06) {
+    return null;
+  }
+
+  return decodeObjectIdentifier(raw.subarray(algorithmOid.valueStart, algorithmOid.valueEnd));
+}
+
 // ─── Implementation ────────────────────────────────────────────────────
 
 export class X509CertificateManager implements CertificateManager {
@@ -174,6 +275,8 @@ export class X509CertificateManager implements CertificateManager {
       crlUrls.push(...crlMatch.map(m => m.replace('URI:', '')));
     }
 
+    const signatureAlgorithm = this.getSignatureAlgorithm(cert);
+
     return {
       subjectCn,
       subjectOrg,
@@ -184,7 +287,7 @@ export class X509CertificateManager implements CertificateManager {
       notAfter: new Date(cert.validTo),
       keyAlgorithm,
       keySize,
-      signatureAlgorithm: (cert as any).sigAlgName || 'unknown',
+      signatureAlgorithm,
       fingerprintSha256: cert.fingerprint256.replace(/:/g, '').toLowerCase(),
       ocspUrls,
       crlUrls,
@@ -212,6 +315,17 @@ export class X509CertificateManager implements CertificateManager {
     }
 
     return { compliant: errors.length === 0, errors };
+  }
+
+  private getSignatureAlgorithm(cert: crypto.X509Certificate): string {
+    const signatureFields = cert as crypto.X509Certificate & SignatureAlgorithmFields;
+    const oid = signatureFields.signatureAlgorithmOid ?? parseCertificateSignatureAlgorithmOid(cert.raw);
+
+    if (oid && BANNED_ALGORITHMS.has(oid)) {
+      return oid;
+    }
+
+    return signatureFields.signatureAlgorithm ?? oid ?? 'unknown';
   }
 }
 
