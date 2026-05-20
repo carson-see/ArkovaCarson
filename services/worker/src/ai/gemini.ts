@@ -503,12 +503,16 @@ export class GeminiProvider implements IAIProvider {
                 'x-goog-api-key': apiKey!,
               },
               body: JSON.stringify({ requests }),
+              signal: AbortSignal.timeout(30_000),
             },
           );
 
           if (!response.ok) {
-            const errorBody = await response.text();
-            logger.error({ status: response.status, errorBody, model }, 'Gemini batch embedding API error');
+            // Discard raw error body — it may echo request content containing PII.
+            // Log only HTTP status and content-length for debugging.
+            const contentLength = response.headers.get('content-length');
+            await response.text(); // drain body
+            logger.error({ status: response.status, contentLength, model }, 'Gemini batch embedding API error');
             throw new Error(`Batch embedding generation failed (status ${response.status})`);
           }
 
