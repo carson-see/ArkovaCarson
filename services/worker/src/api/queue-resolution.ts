@@ -102,7 +102,7 @@ export async function handleListPendingResolution(
 
     if (error) {
       logger.error({ error }, 'anchors query for pending resolution failed');
-      res.status(500).json({ error: { code: 'rpc_failed', message: 'Failed to list pending resolutions' } });
+      res.status(500).json({ error: { code: 'query_failed', message: 'Failed to list pending resolutions' } });
       return;
     }
 
