@@ -43,7 +43,7 @@
 | middleware/ | 7 | paymentTierRouter.test (7) |
 | billing/ | 5 | meteredBilling.test (5) |
 | api/v1/ | 4 | credits.test (4) |
-| api/v2/ | 2 | (via ban-ts-comment, counted separately) |
+| api/v2/ | 2 | agentWorkflows.test.ts `no-explicit-any`; the file-level `@ts-nocheck` is counted separately under `ban-ts-comment` |
 
 ### `unused-disable` (40 total -- ALL auto-fixable)
 
@@ -209,11 +209,11 @@ Priority order (by warning density):
 9. ecfrFetcher.test.ts (2)
 10. kenyaLawFetcher.test.ts (2)
 
-### Batch 8: Type `any` in prod fetcher files (Supabase client casts)
+### Batch 8: Type `any` in prod jobs files (Supabase client casts)
 
-**Method:** The fetcher pattern casts `supabase as any` to work around missing table types in the Supabase client for `public_records`. Fix: extend `database.types.ts` to include `public_records` table type, or create a typed wrapper. Alternatively, suppress with `// eslint-disable-next-line @typescript-eslint/no-explicit-any -- public_records not in generated types`.
+**Method:** Jobs files (fetchers, crons, rules) cast `supabase as any` to work around missing table types in the Supabase client for `public_records`. Fix: extend `database.types.ts` to include `public_records` table type, or create a typed wrapper. Alternatively, suppress with `// eslint-disable-next-line @typescript-eslint/no-explicit-any -- public_records not in generated types`.
 **Warnings eliminated:** 39
-**Files touched:** 15 fetcher files in jobs/
+**Files touched:** 15 jobs files (fetchers, crons, rules)
 **Risk:** MEDIUM -- if typing route: requires `gen:types` to include public_records; if suppress route: safe
 **Soak tier:** T1 (type-only change, no runtime impact)
 **Effort:** 3 hours (type route) or 1 hour (suppress route)
@@ -227,9 +227,9 @@ Priority order (by warning density):
 | File | Count | Strategy |
 |---|---|---|
 | api/v1/signatures.ts | 8 | Type the signature verification payloads and error objects |
+| api/v1/verify.ts | 1 | Type the verification payload and error object |
 | signatures/pki/hsmBridge.ts | 4 | Type the HSM SDK responses |
 | chain/base.ts | 3 | Type the UTXO/transaction objects |
-| regulatory-change-cron.ts | 4 | Type the regulatory API responses |
 | utils/pipeline.ts | 2 | Add generics to pipeline stages |
 | middleware/ruleEventBackpressure.ts | 1 | Type the backpressure state |
 
@@ -250,7 +250,7 @@ Priority order (by warning density):
 | B5: preserve-caught-error fixes | 4 | 62 (33%) | 15 min | Safe | T1 |
 | B6: Dead assignment cleanup | 14 | 76 (40%) | 2 hr | Medium | T1 |
 | B7: Test file `any` typing | 55 | 131 (69%) | 4 hr | Safe | T1 |
-| B8: Fetcher `any` typing/suppress | 39 | 170 (90%) | 1-3 hr | Medium | T1 |
+| B8: Jobs `any` typing/suppress | 39 | 170 (90%) | 1-3 hr | Medium | T1 |
 | B9: Remaining prod `any` typing | 19 | 189 (100%) | 6 hr | Medium | T1 |
 
 **Total estimated effort:** 15-17 hours
@@ -265,7 +265,7 @@ B8-B9 carry to Sprint 3 (remaining 58 warnings, 7-9 hours).
 - **PR 2 (B3):** "fix(SCRUM-1208): add org_id filter to api_keys update" -- 1 warning, T2 soak required. Separate PR for security review.
 - **PR 3 (B6):** "refactor: remove dead variable assignments in worker" -- 14 warnings, T1. Ship after review of each case.
 - **PR 4 (B7):** "chore: type test mock factories" -- 55 warnings, T1. Large but zero-risk.
-- **PR 5 (B8):** "chore: type/suppress fetcher Supabase casts" -- 39 warnings, T1.
+- **PR 5 (B8):** "chore: type/suppress jobs Supabase casts" -- 39 warnings, T1.
 - **PR 6 (B9):** "refactor: type signatures, chain, and API handler anys" -- 19 warnings, T1 but careful review.
 
 ---
