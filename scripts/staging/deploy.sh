@@ -47,6 +47,7 @@ set -euo pipefail
 PROJECT="${STAGING_GCP_PROJECT:-arkova1}"
 REGION="${STAGING_GCP_REGION:-us-central1}"
 SERVICE="${STAGING_CLOUD_RUN_SERVICE:-arkova-worker-staging}"
+STAGING_BATCH_ANCHOR_MAX_SIZE="${STAGING_BATCH_ANCHOR_MAX_SIZE:-10000}"
 
 # Hard production guard. The script lives in scripts/staging/ and only ever
 # wants to talk to a staging Cloud Run service. Anything that doesn't end in
@@ -394,7 +395,7 @@ check_recent_revision_collision
 GCLOUD_FLAGS=(
   --image="$IMAGE"
   --tag="$TAG"
-  --update-env-vars=BUILD_SHA="$BUILD_SHA",BATCH_ANCHOR_MAX_SIZE=10000
+  --update-env-vars=BUILD_SHA="$BUILD_SHA",BATCH_ANCHOR_MAX_SIZE="$STAGING_BATCH_ANCHOR_MAX_SIZE"
   --update-labels=pr="$PR",deployed-by-script=deploy-sh,scrum1803=enforced
   --region="$REGION"
   --project="$PROJECT"

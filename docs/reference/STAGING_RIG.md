@@ -45,7 +45,7 @@ The staging worker reuses the prod Docker image but overrides env-vars + secrets
 | `ENABLE_PROD_NETWORK_ANCHORING` | `true` | **`false`** | belt-and-suspenders against the chain client |
 | `ENABLE_AI_FRAUD` | `true` | `false` | no need to burn Gemini budget on staging |
 | `ENABLE_AI_REPORTS` | `true` | `false` | same |
-| `BATCH_ANCHOR_MAX_SIZE` | `10000` | `10000` | keep Trigger A/B soak semantics production-like; do not preserve stale low staging overrides |
+| `BATCH_ANCHOR_MAX_SIZE` | `10000` | `10000` via `STAGING_BATCH_ANCHOR_MAX_SIZE` in `scripts/staging/deploy.sh` | keep Trigger A/B soak semantics production-like; do not preserve stale low staging overrides |
 | `CORS_ALLOWED_ORIGINS` | full prod list | `https://app.arkova.ai` only | staging worker isn't called from any other origin during soak |
 | `CRON_OIDC_AUDIENCE` | prod URL | (not set; staging cron triggered manually during soak) | |
 
