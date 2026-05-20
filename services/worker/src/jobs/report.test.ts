@@ -207,6 +207,15 @@ describe('processReport', () => {
     expect(mockFrom).toHaveBeenCalledWith('billing_events');
   });
 
+  it('does not select raw Stripe payloads for billing_history artifacts', async () => {
+    await processReport(makeReport({ report_type: 'billing_history' }));
+
+    expect(billingEventsTable.select).not.toHaveBeenCalledWith('*');
+    expect(billingEventsTable.select).toHaveBeenCalledWith(
+      'id, stripe_event_id, event_type, user_id, org_id, subscription_id, processed_at, idempotency_key',
+    );
+  });
+
   it('filters billing_events by org_id when org_id is present (tenant isolation)', async () => {
     await processReport(makeReport({ report_type: 'billing_history', org_id: 'org-xyz' }));
 
@@ -274,6 +283,15 @@ describe('processReport', () => {
   it('does not filter by org_id when org_id is null', async () => {
     await processReport(makeReport({ report_type: 'activity_log', org_id: null }));
 
+    const eqCalls = (auditEventsTable.eq as ReturnType<typeof vi.fn>).mock.calls;
+    const orgIdCalls = eqCalls.filter(([field]) => field === 'org_id');
+    expect(orgIdCalls).toHaveLength(0);
+  });
+
+  it('documents null-org compliance_audit scope as actor-only audit_events filtering', async () => {
+    await processReport(makeReport({ report_type: 'compliance_audit', org_id: null }));
+
+    expect(auditEventsTable.eq).toHaveBeenCalledWith('actor_id', 'user-001');
     const eqCalls = (auditEventsTable.eq as ReturnType<typeof vi.fn>).mock.calls;
     const orgIdCalls = eqCalls.filter(([field]) => field === 'org_id');
     expect(orgIdCalls).toHaveLength(0);

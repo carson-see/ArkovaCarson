@@ -27,6 +27,7 @@ BEGIN;
 DROP POLICY IF EXISTS "anchors_select_own" ON "public"."anchors";
 DROP POLICY IF EXISTS "anchors_select_org" ON "public"."anchors";
 DROP POLICY IF EXISTS "anchors_select_platform_admin" ON "public"."anchors";
+DROP POLICY IF EXISTS "anchors_select" ON "public"."anchors";
 
 -- Create consolidated policy with scalar subquery wrappers for InitPlan evaluation
 CREATE POLICY "anchors_select" ON "public"."anchors"

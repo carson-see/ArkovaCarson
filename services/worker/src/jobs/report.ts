@@ -103,7 +103,7 @@ async function generateBillingHistory(userId: string, orgId: string | null): Pro
   // Fetch billing events
   let query = db
     .from('billing_events')
-    .select('*')
+    .select('id, stripe_event_id, event_type, user_id, org_id, subscription_id, processed_at, idempotency_key')
     .eq('user_id', userId);
   if (orgId !== null) query = query.eq('org_id', orgId);
   const { data: events } = await query

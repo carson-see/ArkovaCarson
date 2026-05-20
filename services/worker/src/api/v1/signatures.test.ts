@@ -13,7 +13,7 @@ type QueryRecord = {
   filters: Filter[];
 };
 
-const { mockFrom, queries, insertedRows } = vi.hoisted(() => {
+const { mockFrom, queries, insertedRows, signMock } = vi.hoisted(() => {
   type LocalFilter = {
     op: 'eq' | 'in';
     column: string;
@@ -27,6 +27,16 @@ const { mockFrom, queries, insertedRows } = vi.hoisted(() => {
 
   const queries: LocalQueryRecord[] = [];
   const insertedRows: Array<{ table: string; payload: unknown }> = [];
+  const signMock = vi.fn(async () => ({
+    status: 'COMPLETE',
+    signatureValue: 'signature-bytes',
+    signedAttributes: {},
+    signatureAlgorithm: 'RSASSA-PKCS1-v1_5-SHA256',
+    signedAt: new Date('2026-05-20T12:00:00.000Z'),
+    ltvDataEmbedded: false,
+    timestampTokenId: null,
+    ltvData: null,
+  }));
 
   function hasEq(filters: LocalFilter[], column: string, value: unknown): boolean {
     return filters.some((filter) => (
@@ -81,11 +91,28 @@ const { mockFrom, queries, insertedRows } = vi.hoisted(() => {
         public_id: 'ARK-ORGA-VER-ABC123',
         attester_org_id: 'org-a',
       };
+      const orgBFixture = {
+        id: 'attestation-org-b',
+        public_id: 'ARK-ORGB-VER-ABC123',
+        attester_org_id: 'org-b',
+      };
       const matchesPublicId = hasEq(filters, 'public_id', orgAFixture.public_id);
       const matchesOrg = hasEq(filters, 'attester_org_id', orgAFixture.attester_org_id);
+      const matchesOrgBPublicId = hasEq(filters, 'public_id', orgBFixture.public_id);
+      const matchesOrgB = hasEq(filters, 'attester_org_id', orgBFixture.attester_org_id);
+      if (matchesOrgBPublicId && matchesOrgB) {
+        return Promise.resolve({ data: orgBFixture, error: null });
+      }
       return Promise.resolve({
         data: matchesPublicId && matchesOrg ? orgAFixture : null,
         error: matchesPublicId && matchesOrg ? null : { code: 'PGRST116', message: 'No rows' },
+      });
+    }
+
+    if (table === 'signatures') {
+      return Promise.resolve({
+        data: { id: 'signature-row-id' },
+        error: null,
       });
     }
 
@@ -114,6 +141,9 @@ const { mockFrom, queries, insertedRows } = vi.hoisted(() => {
       return builder;
     });
     builder.update = vi.fn(() => builder);
+    builder.then = vi.fn((onFulfilled: (value: unknown) => unknown, onRejected?: (reason: unknown) => unknown) => (
+      Promise.resolve({ data: null, error: null }).then(onFulfilled, onRejected)
+    ));
     return builder;
   }
 
@@ -121,6 +151,7 @@ const { mockFrom, queries, insertedRows } = vi.hoisted(() => {
     mockFrom: vi.fn((table: string) => createBuilder(table)),
     queries,
     insertedRows,
+    signMock,
   };
 });
 
@@ -137,11 +168,7 @@ vi.mock('../../lib/urls.js', () => ({
 }));
 
 vi.mock('../../signatures/engineFactory.js', () => ({
-  getAdesEngine: vi.fn(() => ({
-    sign: vi.fn(async () => {
-      throw new Error('signing engine should not be reached');
-    }),
-  })),
+  getAdesEngine: vi.fn(() => ({ sign: signMock })),
 }));
 
 import { signaturesRouter } from './signatures.js';
@@ -162,6 +189,7 @@ describe('signatures attestation tenant isolation', () => {
     vi.clearAllMocks();
     queries.length = 0;
     insertedRows.length = 0;
+    signMock.mockClear();
   });
 
   it('does not resolve an attestation from another organization when creating a signature', async () => {
@@ -189,5 +217,34 @@ describe('signatures attestation tenant isolation', () => {
       value: 'org-b',
     });
     expect(insertedRows).not.toContainEqual(expect.objectContaining({ table: 'signatures' }));
+  });
+
+  it('creates a signature when the attestation belongs to the signer organization', async () => {
+    const res = await request(appWithAuth())
+      .post('/sign')
+      .send({
+        attestation_id: 'ARK-ORGB-VER-ABC123',
+        fingerprint: `sha256:${'b'.repeat(64)}`,
+        format: 'PAdES',
+        level: 'B-B',
+        signer_certificate_id: '11111111-1111-4111-8111-111111111111',
+      });
+
+    expect(res.status).toBe(201);
+    expect(res.body).toMatchObject({
+      signatureId: expect.stringMatching(/^ARK-ORG-SIG-/),
+      status: 'COMPLETE',
+      format: 'PAdES',
+      level: 'B-B',
+    });
+    const attestationQuery = queries.find((query: QueryRecord) => query.table === 'attestations');
+    expect(attestationQuery?.filters).toContainEqual({
+      op: 'eq',
+      column: 'attester_org_id',
+      value: 'org-b',
+    });
+    expect(insertedRows).toContainEqual(expect.objectContaining({ table: 'signatures' }));
+    expect(insertedRows).toContainEqual(expect.objectContaining({ table: 'audit_events' }));
+    expect(signMock).toHaveBeenCalledTimes(1);
   });
 });

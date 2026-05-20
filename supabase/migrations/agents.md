@@ -6,9 +6,9 @@ This directory now starts with the Path C baseline, `00000000000000_baseline_at_
 - Do not edit an already-merged migration. Add a new forward migration with the next available numeric prefix.
 - Treat migrations as prod-bound: a migration PR is not Done until prod Supabase schema/ledger evidence is captured.
 
-## Recent migrations (PR #788)
+## Recent migrations (PR #788 / PR #810)
 
-- **0313_fix_anchors_rls_statement_timeout.sql** (renamed from 0309/0310 to resolve prefix collisions with merged migrations): Consolidated three separate `anchors` SELECT RLS policies into one with scalar subquery wrappers for InitPlan evaluation. Same pattern applied to `attestations` (5 branches including `status='ACTIVE'`).
+- **0313_fix_anchors_rls_statement_timeout.sql** (renamed from 0307 to resolve prefix collisions with merged migrations): Consolidated three separate `anchors` SELECT RLS policies into one with scalar subquery wrappers for InitPlan evaluation. Same pattern applied to `attestations` (5 branches including `status='ACTIVE'`).
 - **0308_seed_arkova_org_credits.sql**: Seeds `org_credits` for Arkova prod org with `EXISTS` guard for idempotency.
 
 ## Numbering note (PR #810)

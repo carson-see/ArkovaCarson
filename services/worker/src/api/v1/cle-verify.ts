@@ -109,7 +109,7 @@ router.get('/verify', async (req: Request, res: Response) => {
     // Find all CLE anchors for this bar number
     const { data: anchors } = await db
       .from('anchors')
-      .select('id, filename, credential_type, metadata, status, created_at, chain_tx_id, chain_block_height')
+      .select('public_id, filename, credential_type, metadata, status, created_at, chain_tx_id, chain_block_height')
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       .eq('credential_type', 'CLE' as any)
       .eq('status', 'SECURED')
@@ -124,7 +124,7 @@ router.get('/verify', async (req: Request, res: Response) => {
     // eslint-disable-next-line arkova/missing-org-filter -- public verification endpoint: CLE credential lookup is intentionally cross-tenant
     const { data: attestations } = await dbAny
       .from('attestations')
-      .select('id, public_id, attestation_type, claims, status, created_at')
+      .select('public_id, attestation_type, claims, status, created_at')
       .eq('status', 'ACTIVE')
       .ilike('subject_identifier', `%${sanitizedBarNumber}%`)
       .limit(50);
@@ -178,14 +178,20 @@ router.get('/verify', async (req: Request, res: Response) => {
       },
       requirements,
       records: cleRecords.slice(0, 20).map((r: Record<string, unknown>) => ({
-        id: r.id,
+        public_id: r.public_id,
         filename: r.filename,
         metadata: r.metadata,
         status: r.status,
         chain_tx_id: r.chain_tx_id,
         created_at: r.created_at,
       })),
-      attestations: cleAttestations.slice(0, 10),
+      attestations: cleAttestations.slice(0, 10).map((a: Record<string, unknown>) => ({
+        public_id: a.public_id,
+        attestation_type: a.attestation_type,
+        claims: a.claims,
+        status: a.status,
+        created_at: a.created_at,
+      })),
       verified_at: new Date().toISOString(),
     });
   } catch (err) {
@@ -209,7 +215,7 @@ router.get('/credits', async (req: Request, res: Response) => {
   try {
     let query = db
       .from('anchors')
-      .select('id, filename, credential_type, metadata, status, created_at, chain_tx_id, public_id')
+      .select('filename, credential_type, metadata, status, created_at, chain_tx_id, public_id')
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       .eq('credential_type', 'CLE' as any)
       .in('status', ['SECURED', 'SUBMITTED', 'PENDING'])
@@ -243,7 +249,6 @@ router.get('/credits', async (req: Request, res: Response) => {
       jurisdiction: jurisdiction ?? null,
       total_credits: credits.length,
       credits: credits.map((c: Record<string, unknown>) => ({
-        id: c.id,
         public_id: c.public_id,
         course_title: (c.metadata as Record<string, unknown>)?.course_title ?? c.filename,
         provider_name: (c.metadata as Record<string, unknown>)?.provider_name ?? null,

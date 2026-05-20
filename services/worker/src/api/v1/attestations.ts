@@ -1023,11 +1023,11 @@ router.patch('/:publicId/revoke', async (req: Request, res: Response) => {
 
   try {
     // Verify ownership
+    // eslint-disable-next-line arkova/missing-org-filter -- v1 revoke must fetch by public_id first so wrong-owner requests keep the published 403 response; the update below is scoped by attester_user_id.
     const { data: attestation, error: findError } = await dbAny
       .from('attestations')
       .select('id, status, attester_user_id, attester_org_id')
       .eq('public_id', publicId)
-      .eq('attester_user_id', userId)
       .single();
 
     if (findError || !attestation) {
