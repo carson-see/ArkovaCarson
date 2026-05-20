@@ -53,6 +53,12 @@ function rpcErrorCodeForStatus(status: number): 'forbidden' | 'not_found' | 'con
   return 'internal';
 }
 
+function metadataExternalFileId(metadata: unknown): string | null {
+  if (!metadata || typeof metadata !== 'object') return null;
+  const externalFileId = (metadata as Record<string, unknown>).external_file_id;
+  return typeof externalFileId === 'string' ? externalFileId : null;
+}
+
 /**
  * GET /api/queue/pending
  * Returns anchors currently in PENDING_RESOLUTION for the caller's org.
@@ -100,12 +106,20 @@ export async function handleListPendingResolution(
       return;
     }
 
-    const rows = (Array.isArray(data) ? data : []).map((r) => ({
+    const pendingAnchors = Array.isArray(data) ? data : [];
+    const siblingCounts = new Map<string | null, number>();
+    const externalFileIds = pendingAnchors.map((r) => metadataExternalFileId(r.metadata));
+    for (const externalFileId of externalFileIds) {
+      siblingCounts.set(externalFileId, (siblingCounts.get(externalFileId) ?? 0) + 1);
+    }
+
+    const rows = pendingAnchors.map((r, index) => ({
       public_id: r.public_id,
-      external_file_id: (r.metadata as Record<string, unknown>)?.external_file_id as string | null ?? null,
+      external_file_id: externalFileIds[index] ?? null,
       filename: r.filename,
       fingerprint: r.fingerprint,
       created_at: r.created_at,
+      sibling_count: Math.max((siblingCounts.get(externalFileIds[index] ?? null) ?? 1) - 1, 0),
     }));
     res.json({ items: rows, count: rows.length });
   } catch (err) {
