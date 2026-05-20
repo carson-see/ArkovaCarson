@@ -104,45 +104,18 @@ describe('POST /api/v1/ai/fraud/visual', () => {
     expect(res.status).toHaveBeenCalledWith(400);
   });
 
-  it('returns analysis result on success', async () => {
-    const mockResult = {
-      riskLevel: 'LOW' as const,
-      riskScore: 12,
-      signals: [
-        {
-          id: 'font_consistent',
-          category: 'font' as const,
-          severity: 'info' as const,
-          description: 'Consistent font usage throughout',
-          confidence: 0.95,
-        },
-      ],
-      summary: 'Document appears authentic with no significant fraud indicators.',
-      recommendations: ['No action needed'],
-      model: 'gemini-3-flash-preview',
-      processingTimeMs: 1200,
-    };
-
-    vi.mocked(analyzeDocumentImage).mockResolvedValue(mockResult);
-
+  it('fails closed for valid image payloads without invoking server-side image analysis', async () => {
     const handler = getPostHandler()!;
     const { req, res } = createMockReqRes(validBody);
 
     await handler(req, res);
 
-    expect(analyzeDocumentImage).toHaveBeenCalledWith(
-      validBody.imageBase64,
-      validBody.mimeType,
-      validBody.credentialType,
-    );
+    expect(analyzeDocumentImage).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(410);
     expect(res.json).toHaveBeenCalledWith({
-      riskLevel: 'LOW',
-      riskScore: 12,
-      signals: mockResult.signals,
-      summary: mockResult.summary,
-      recommendations: mockResult.recommendations,
-      model: 'gemini-3-flash-preview',
-      processingTimeMs: 1200,
+      error: 'server_side_visual_fraud_disabled',
+      message: 'Visual fraud detection must run in the client-side worker. Server-side image analysis is disabled by Constitution 4A.',
+      requiredArchitecture: 'client_side_worker_v2',
     });
   });
 
@@ -154,27 +127,11 @@ describe('POST /api/v1/ai/fraud/visual', () => {
 
     await handler(req, res);
 
-    expect(res.status).toHaveBeenCalledWith(500);
-    expect(res.json).toHaveBeenCalledWith(
-      expect.objectContaining({
-        error: 'Visual fraud analysis failed',
-        message: 'Gemini API error',
-      }),
-    );
+    expect(analyzeDocumentImage).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(410);
   });
 
-  it('accepts all valid mime types', async () => {
-    const mockResult = {
-      riskLevel: 'LOW' as const,
-      riskScore: 5,
-      signals: [],
-      summary: 'Clean',
-      recommendations: [],
-      model: 'gemini-3-flash-preview',
-      processingTimeMs: 800,
-    };
-    vi.mocked(analyzeDocumentImage).mockResolvedValue(mockResult);
-
+  it('rejects all formerly valid mime types without provider calls', async () => {
     for (const mime of ['image/png', 'image/jpeg', 'image/webp', 'image/gif']) {
       const handler = getPostHandler()!;
       const { req, res } = createMockReqRes({
@@ -185,7 +142,8 @@ describe('POST /api/v1/ai/fraud/visual', () => {
 
       await handler(req, res);
 
-      expect(res.json).toHaveBeenCalled();
+      expect(res.status).toHaveBeenCalledWith(410);
     }
+    expect(analyzeDocumentImage).not.toHaveBeenCalled();
   });
 });

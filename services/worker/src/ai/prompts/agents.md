@@ -1,6 +1,6 @@
 # agents.md — services/worker/src/ai/prompts/
 
-_Last updated: 2026-05-16_
+_Last updated: 2026-05-20_
 
 ## What This Folder Contains
 
@@ -14,6 +14,8 @@ System prompts and few-shot examples for all AI provider tasks. Prompts receive 
 | `reasoning-fewshots.ts` | 80+ OBSERVE-IDENTIFY-CLASSIFY-VERIFY-ASSESS reasoning examples for extraction |
 | `nessie-condensed.ts` | 1.5K char condensed prompt for Nessie fine-tuned models (full prompt causes 0% F1) |
 | `template-reconstruction.ts` | Prompts for generating human-readable credential templates from extracted metadata |
+| `cpe-extraction-prompt.ts` | Dedicated R-CPE-01 metadata prompt; accepts only PII-stripped professional-education evidence |
+| `cle-extraction-prompt.ts` | Dedicated R-LEGAL-01 metadata prompt; keeps `ethics_hours` explicit and nullable when not evidenced |
 
 ## Do / Don't Rules
 

@@ -2,6 +2,11 @@
 
 _Last updated: 2026-05-16_
 
+## 2026-05-20 Explicit Eval Gates
+
+- `eval-gates.ts` owns SCRUM-1962 and SCRUM-1963 gate configuration. Gates fail closed when matching Phase 5 entries are missing, when aggregate weighted F1 is below threshold, or when required field-level F1 is below threshold.
+- CPE entries are selected by the `cpe` tag. CLE entries are selected by `cle` tag and exclude `cpe` so continuing professional education does not satisfy the legal ethics-hours gate.
+
 ## What This Folder Contains
 
 AI extraction evaluation framework — golden datasets, scoring engine, calibration, drift detection, and fraud eval. Measures precision/recall/F1 per field and per credential type across providers.
@@ -21,6 +26,7 @@ AI extraction evaluation framework — golden datasets, scoring engine, calibrat
 | `semantic-similarity.ts` | Embedding-based cosine similarity scoring (replaces keyword overlap) |
 | `baseline-metrics.ts` | Stored metric baselines for regression detection |
 | `drift-alert.ts` | Eval drift severity alerting (ok / warning / critical) |
+| `eval-gates.ts` | Fail-closed merge gate evaluator for SCRUM-1962 CPE and SCRUM-1963 CLE ethics-hours thresholds |
 | `calibration-regression.test.ts` | Regression tests for calibration stability |
 | `fraud-eval-dataset.ts` | 100 adversarial examples (50 clean + 50 tampered) for fraud detection eval |
 | `fraud-audit.ts` | CLI tool for false positive audit of FLAGGED integrity scores |

@@ -1,6 +1,6 @@
 # agents.md — services/worker/src/compliance/
 
-_Last updated: 2026-04-28_
+_Last updated: 2026-05-20_
 
 ## What This Folder Contains
 
@@ -20,6 +20,7 @@ persistence.
 | `benchmarking.ts` | Industry benchmark comparisons | NCE-17 |
 | `cross-reference.ts` | Credential × rule cross-reference | NCE-15 |
 | `auth-helpers.ts` | Shared `getCallerOrgId(req, res)` — every compliance route uses this |
+| `professional-education.ts` | Shared CPE/CLE taxonomy, metadata validation, normalization, and PII stripping helpers for R-CPE-01 / R-LEGAL-01 foundation work | SCRUM-1851 / SCRUM-1877 |
 
 ## Conventions
 
@@ -42,6 +43,11 @@ persistence.
   fluent-builder mock pattern.
 
 ## Recent Changes
+
+- **2026-05-20 — SCRUM-1851 / SCRUM-1877** (`professional-education.ts`):
+  Added pure CPE/CLE metadata schemas, controlled vocabularies, manual-review
+  normalization, and shared professional-education PII stripping. Keep adapters
+  thin and validate extracted metadata here before persisting to anchors.
 
 - **2026-04-28 — SCRUM-954** (`src/api/v1/compliance-audit.ts`): `loadOrgJurisdictions`
   gained a third fallback. Orgs with no `organizations.jurisdictions` and no

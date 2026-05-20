@@ -26,6 +26,10 @@ export { GOLDEN_DATASET_EXTENDED } from './golden-dataset-extended.js';
 export { GOLDEN_DATASET_PHASE2 } from './golden-dataset-phase2.js';
 export { GOLDEN_DATASET_PHASE5 } from './golden-dataset-phase5.js';
 export { GOLDEN_DATASET_PHASE9 } from './golden-dataset-phase9.js';
+export {
+  GOLDEN_DATASET_PROFESSIONAL_EDUCATION,
+  PROFESSIONAL_EDUCATION_GATE_MINIMUMS,
+} from './golden-dataset-professional-education.js';
 
 export {
   compareField,
@@ -43,6 +47,19 @@ export {
   getPromptVersionHash,
 } from './runner.js';
 export type { EvalRunOptions } from './runner.js';
+
+export {
+  EVAL_GATE_CONFIGS,
+  evaluateEvalGate,
+  evaluateEvalGates,
+  getEvalGateConfig,
+} from './eval-gates.js';
+export type {
+  EvalGateConfig,
+  EvalGateFieldRequirement,
+  EvalGateFieldResult,
+  EvalGateResult,
+} from './eval-gates.js';
 
 export {
   analyzeCalibration,

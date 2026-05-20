@@ -23,7 +23,7 @@ interface LifecycleEvent {
 }
 
 export interface AnchorLifecycleData {
-  status: 'PENDING' | 'BROADCASTING' | 'SECURED' | 'REVOKED' | 'EXPIRED' | 'SUBMITTED';
+  status: 'PENDING' | 'BROADCASTING' | 'SECURED' | 'REVOKED' | 'EXPIRED' | 'SUBMITTED' | 'SUPERSEDED' | 'PENDING_RESOLUTION';
   createdAt: string;
   issuedAt?: string;
   securedAt?: string;

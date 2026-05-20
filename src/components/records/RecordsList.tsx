@@ -25,7 +25,7 @@ export interface Record {
   id: string;
   filename: string;
   fingerprint: string;
-  status: 'PENDING' | 'BROADCASTING' | 'SUBMITTED' | 'SECURED' | 'REVOKED' | 'EXPIRED';
+  status: 'PENDING' | 'BROADCASTING' | 'SUBMITTED' | 'SECURED' | 'REVOKED' | 'EXPIRED' | 'SUPERSEDED' | 'PENDING_RESOLUTION';
   createdAt: string;
   securedAt?: string;
   fileSize: number;
@@ -86,6 +86,18 @@ const statusConfig = {
     tooltip: 'This record\'s validity period has ended',
     variant: 'outline' as const,
     icon: AlertTriangle,
+  },
+  SUPERSEDED: {
+    label: 'Superseded',
+    tooltip: 'A newer version has replaced this record',
+    variant: 'outline' as const,
+    icon: CheckCircle,
+  },
+  PENDING_RESOLUTION: {
+    label: 'Needs Review',
+    tooltip: 'This record is waiting for queue resolution',
+    variant: 'warning' as const,
+    icon: Clock,
   },
 };
 

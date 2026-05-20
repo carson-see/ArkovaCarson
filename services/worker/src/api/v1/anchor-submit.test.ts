@@ -30,6 +30,10 @@ vi.mock('../../config.js', () => ({
 
 vi.mock('../../utils/logger.js', () => ({ logger: mockLogger }));
 
+vi.mock('../../utils/jobQueue.js', () => ({
+  submitJob: vi.fn().mockResolvedValue('job-1'),
+}));
+
 vi.mock('../../utils/db.js', () => {
   const eqChain: Record<string, unknown> = {};
   eqChain.eq = vi.fn(() => eqChain);
@@ -52,6 +56,7 @@ vi.mock('../../lib/urls.js', () => ({
 
 import { anchorSubmitRouter } from './anchor-submit.js';
 import { requireScope } from '../../middleware/apiKeyAuth.js';
+import { submitJob } from '../../utils/jobQueue.js';
 
 // CodeRabbit PR #736 nit: prefer interface for object-shape type assertions
 // per repository TypeScript conventions.
@@ -168,6 +173,46 @@ describe('POST /api/v1/anchor — Zod validation', () => {
     expect(res.body.status).toBe('PENDING');
     expect(res.body.record_uri).toContain('/verify/');
     expect(mockInsert.mock.calls[0]?.[0]).not.toHaveProperty('metadata');
+    expect(submitJob).not.toHaveBeenCalled();
+  });
+
+  it('accepts CPE credential type and enqueues async professional education extraction', async () => {
+    mockInsertChain.single.mockResolvedValueOnce({
+      data: {
+        id: '550e8400-e29b-41d4-a716-446655440000',
+        public_id: 'ARK-2026-CPE12345',
+        fingerprint: VALID_FINGERPRINT,
+        status: 'PENDING',
+        credential_type: 'CPE',
+        metadata: {
+          credential_title: 'Advanced Tax Planning CPE',
+          source_provider: 'udemy',
+          source_url: 'https://udemy.com/certificate/UC-123',
+        },
+        created_at: '2026-04-27T00:00:00Z',
+      },
+      error: null,
+    });
+
+    const res = await request(makeApp()).post('/v1/anchor').send({
+      fingerprint: VALID_FINGERPRINT,
+      credential_type: 'CPE',
+      metadata: {
+        credential_title: 'Advanced Tax Planning CPE',
+        source_provider: 'udemy',
+        source_url: 'https://udemy.com/certificate/UC-123',
+      },
+    });
+
+    expect(res.status).toBe(201);
+    expect(submitJob).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'professional_education.metadata_extraction',
+      payload: expect.objectContaining({
+        anchorId: '550e8400-e29b-41d4-a716-446655440000',
+        educationKind: 'CPE',
+      }),
+      max_attempts: 5,
+    }));
   });
 
   it('accepts BADGE credential type and persists public-safe evidence metadata', async () => {

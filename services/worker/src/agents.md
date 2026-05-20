@@ -2,6 +2,10 @@
 
 Root of the Arkova anchoring worker — a Node + Express service for backend processing (webhooks, cron, Bitcoin anchoring, billing, API).
 
+## 2026-05-20 AI Fraud Safety Note
+
+- `config.ts` documents `ENABLE_VISUAL_FRAUD_DETECTION` as a legacy gate. The server route is fail-closed pending SCRUM-1955 client-side worker rearchitecture; do not re-enable server-side document/image byte processing in fraud paths.
+
 ## Key Files
 
 - **index.ts** — Express app compositor. Mounts routers, Sentry, compression, Stripe webhook handler, and cron scheduler. Slim (~100 lines); route handlers live in `routes/`.

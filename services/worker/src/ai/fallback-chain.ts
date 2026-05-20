@@ -30,6 +30,24 @@ export interface ModelMetrics {
 
 export type FallbackMetrics = Record<string, ModelMetrics>;
 
+export type FallbackReason =
+  | 'rate_limit'
+  | 'provider_unavailable'
+  | 'timeout'
+  | 'model_deprecated'
+  | 'provider_error';
+
+export interface ProviderFallbackEvent {
+  event: 'provider_fallback';
+  fromProvider: string;
+  toProvider: string;
+  reason: FallbackReason;
+}
+
+export interface FallbackChainOptions {
+  onFallback?: (event: ProviderFallbackEvent) => void;
+}
+
 /** Errors that should trigger fallback to next provider */
 function isRetriableError(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
@@ -54,11 +72,30 @@ function isRetriableError(error: unknown): boolean {
   return false;
 }
 
+function fallbackReason(error: unknown): FallbackReason {
+  if (!(error instanceof Error)) return 'provider_error';
+
+  const status = (error as Error & { status?: number }).status;
+  if (status === 429) return 'rate_limit';
+  if (status === 502 || status === 503 || status === 504) return 'provider_unavailable';
+
+  const msg = error.message.toLowerCase();
+  if (msg.includes('rate limit') || msg.includes('quota exceeded')) return 'rate_limit';
+  if (msg.includes('timeout') || msg.includes('timed out')) return 'timeout';
+  if (msg.includes('deprecated')) return 'model_deprecated';
+  if (msg.includes('unavailable') || msg.includes('not found')) return 'provider_unavailable';
+
+  return 'provider_error';
+}
+
 export class FallbackChainProvider implements IAIProvider {
   readonly name = 'fallback-chain';
   private readonly metrics: FallbackMetrics = {};
 
-  constructor(private readonly providers: IAIProvider[]) {
+  constructor(
+    private readonly providers: IAIProvider[],
+    private readonly options: FallbackChainOptions = {},
+  ) {
     if (providers.length === 0) {
       throw new Error('FallbackChainProvider requires at least one provider');
     }
@@ -98,6 +135,13 @@ export class FallbackChainProvider implements IAIProvider {
         if (i === this.providers.length - 1) {
           throw lastError;
         }
+
+        this.options.onFallback?.({
+          event: 'provider_fallback',
+          fromProvider: provider.name,
+          toProvider: this.providers[i + 1].name,
+          reason: fallbackReason(error),
+        });
 
         // Fall through to next provider
       }

@@ -29,14 +29,18 @@ const ALL_FIELDS = [
   'creditType',
   'barNumber',
   'activityNumber',
+  'courseId',
   'providerName',
   'approvedBy',
+  'deliveryMethod',
+  'ethicsHours',
+  'nasbaStatus',
   'fraudSignals',
 ] as const;
 
 const DATE_FIELDS = new Set(['issuedDate', 'expiryDate']);
 const ARRAY_FIELDS = new Set(['fraudSignals']);
-const NUMERIC_FIELDS = new Set(['creditHours']);
+const NUMERIC_FIELDS = new Set(['creditHours', 'ethicsHours']);
 /** Fields that accept fuzzy/semantic matching (normalized generalizations are OK) */
 const FUZZY_FIELDS = new Set(['fieldOfStudy', 'issuerName', 'accreditingBody']);
 
