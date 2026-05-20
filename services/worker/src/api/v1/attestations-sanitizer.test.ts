@@ -292,4 +292,23 @@ describe('attestations.ts public shape (SCRUM-1444 / SCRUM-1271-B)', () => {
     const findings = findUntrustedResponseSpreads(source, ALLOWLISTED_SPREADS);
     expect(findings, 'attestations.ts: untrusted spread in res.json() call').toEqual([]);
   });
+
+  it('keeps the internal attestation id available for evidence lookup without returning it', () => {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const source = readFileSync(resolve(here, 'attestations.ts'), 'utf8');
+
+    expect(source).toMatch(/\.select\(\s*['"]id, public_id, attestation_type, status,/);
+    expect(source).toContain(".eq('attestation_id', attestation.id)");
+    expect(source).not.toMatch(/res\.json\(\s*\{[\s\S]{0,200}\bid:\s*attestation\.id/);
+  });
+
+  it('makes revoke atomic by conditioning the update on non-revoked status', () => {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const source = readFileSync(resolve(here, 'attestations.ts'), 'utf8');
+
+    expect(source).toMatch(
+      /\.update\(\{[\s\S]*?status:\s*['"]REVOKED['"][\s\S]*?\}\)[\s\S]*?\.eq\(['"]id['"],\s*attestation\.id\)[\s\S]*?\.eq\(['"]attester_user_id['"],\s*userId\)[\s\S]*?\.neq\(['"]status['"],\s*['"]REVOKED['"]\)[\s\S]*?\.select\(['"]id['"]\)[\s\S]*?\.maybeSingle\(\)/,
+    );
+    expect(source).toMatch(/if \(!updatedAttestation\) \{[\s\S]*?res\.status\(409\)\.json\(\{ error: ['"]Attestation is already revoked['"] \}\)/);
+  });
 });

@@ -512,7 +512,7 @@ router.get('/:publicId', async (req: Request, res: Response) => {
     const { data: attestation, error } = await dbAny
       .from('attestations')
       .select(
-        'public_id, attestation_type, status, ' +
+        'id, public_id, attestation_type, status, ' +
         'subject_type, subject_identifier, ' +
         'attester_name, attester_type, attester_title, attester_org_id, ' +
         'claims, summary, jurisdiction, ' +
@@ -1040,24 +1040,29 @@ router.patch('/:publicId/revoke', async (req: Request, res: Response) => {
       return;
     }
 
-    if (attestation.status === 'REVOKED') {
-      res.status(409).json({ error: 'Attestation is already revoked' });
-      return;
-    }
+    const revokedAt = new Date().toISOString();
 
-    const { error: updateError } = await dbAny
+    const { data: updatedAttestation, error: updateError } = await dbAny
       .from('attestations')
       .update({
         status: 'REVOKED',
-        revoked_at: new Date().toISOString(),
+        revoked_at: revokedAt,
         revocation_reason: reason,
       })
       .eq('id', attestation.id)
-      .eq('attester_user_id', userId);
+      .eq('attester_user_id', userId)
+      .neq('status', 'REVOKED')
+      .select('id')
+      .maybeSingle();
 
     if (updateError) {
       logger.error({ error: updateError }, 'Attestation revocation failed');
       res.status(500).json({ error: 'Revocation failed' });
+      return;
+    }
+
+    if (!updatedAttestation) {
+      res.status(409).json({ error: 'Attestation is already revoked' });
       return;
     }
 
@@ -1069,11 +1074,11 @@ router.patch('/:publicId/revoke', async (req: Request, res: Response) => {
         public_id: publicId,
         status: 'REVOKED',
         revocation_reason: reason,
-        revoked_at: new Date().toISOString(),
+        revoked_at: revokedAt,
       }).catch((err: unknown) => logger.warn({ error: err }, 'Attestation revocation webhook failed'));
     }
 
-    res.json({ public_id: publicId, status: 'REVOKED', revoked_at: new Date().toISOString() });
+    res.json({ public_id: publicId, status: 'REVOKED', revoked_at: revokedAt });
   } catch (error) {
     logger.error({ error }, 'Attestation revocation error');
     res.status(500).json({ error: 'Internal server error' });

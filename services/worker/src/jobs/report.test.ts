@@ -207,6 +207,21 @@ describe('processReport', () => {
     expect(mockFrom).toHaveBeenCalledWith('billing_events');
   });
 
+  it('filters billing_events by org_id when org_id is present (tenant isolation)', async () => {
+    await processReport(makeReport({ report_type: 'billing_history', org_id: 'org-xyz' }));
+
+    expect(billingEventsTable.eq).toHaveBeenCalledWith('user_id', 'user-001');
+    expect(billingEventsTable.eq).toHaveBeenCalledWith('org_id', 'org-xyz');
+  });
+
+  it('does not filter billing_events by org_id when org_id is null', async () => {
+    await processReport(makeReport({ report_type: 'billing_history', org_id: null }));
+
+    const eqCalls = (billingEventsTable.eq as ReturnType<typeof vi.fn>).mock.calls;
+    const orgIdCalls = eqCalls.filter(([field]) => field === 'org_id');
+    expect(orgIdCalls).toHaveLength(0);
+  });
+
   it('queries anchors table for anchor_summary', async () => {
     await processReport(makeReport({ report_type: 'anchor_summary' }));
 
@@ -214,6 +229,21 @@ describe('processReport', () => {
     expect(anchorsTable.select).toHaveBeenCalledWith('id, status, created_at');
     expect(anchorsTable.eq).toHaveBeenCalledWith('user_id', 'user-001');
     expect(anchorsTable.is).toHaveBeenCalledWith('deleted_at', null);
+  });
+
+  it('filters anchors by org_id when org_id is present (tenant isolation)', async () => {
+    await processReport(makeReport({ report_type: 'anchor_summary', org_id: 'org-xyz' }));
+
+    expect(anchorsTable.eq).toHaveBeenCalledWith('user_id', 'user-001');
+    expect(anchorsTable.eq).toHaveBeenCalledWith('org_id', 'org-xyz');
+  });
+
+  it('does not filter anchors by org_id when org_id is null', async () => {
+    await processReport(makeReport({ report_type: 'anchor_summary', org_id: null }));
+
+    const eqCalls = (anchorsTable.eq as ReturnType<typeof vi.fn>).mock.calls;
+    const orgIdCalls = eqCalls.filter(([field]) => field === 'org_id');
+    expect(orgIdCalls).toHaveLength(0);
   });
 
   it('queries audit_events with limit 1000 for compliance_audit ordered by created_at', async () => {

@@ -24,11 +24,13 @@ interface ReportData {
 async function generateAnchorSummary(userId: string, orgId: string | null): Promise<Record<string, unknown>> {
   // Fetch anchor statistics
   // Capped at 10000 to prevent OOM on large accounts
-  const { data: anchors } = await db
+  let query = db
     .from('anchors')
     .select('id, status, created_at')
     .eq('user_id', userId)
-    .is('deleted_at', null)
+    .is('deleted_at', null);
+  if (orgId !== null) query = query.eq('org_id', orgId);
+  const { data: anchors } = await query
     .limit(10000);
 
   const total = anchors?.length || 0;
@@ -58,7 +60,7 @@ async function generateComplianceAudit(userId: string, orgId: string | null): Pr
     .from('audit_events')
     .select('event_type, event_category, actor_id, target_type, target_id, org_id, details, created_at')
     .eq('actor_id', userId);
-  if (orgId) query = query.eq('org_id', orgId);
+  if (orgId !== null) query = query.eq('org_id', orgId);
   const { data: events } = await query
     .order('created_at', { ascending: false })
     .limit(1000);
@@ -81,7 +83,7 @@ async function generateActivityLog(userId: string, orgId: string | null): Promis
     .from('audit_events')
     .select('event_type, event_category, created_at, details')
     .eq('actor_id', userId);
-  if (orgId) query = query.eq('org_id', orgId);
+  if (orgId !== null) query = query.eq('org_id', orgId);
   const { data: activity } = await query
     .order('created_at', { ascending: false })
     .limit(500);
@@ -97,12 +99,14 @@ async function generateActivityLog(userId: string, orgId: string | null): Promis
 /**
  * Generate billing history report
  */
-async function generateBillingHistory(userId: string, _orgId: string | null): Promise<Record<string, unknown>> {
+async function generateBillingHistory(userId: string, orgId: string | null): Promise<Record<string, unknown>> {
   // Fetch billing events
-  const { data: events } = await db
+  let query = db
     .from('billing_events')
     .select('*')
-    .eq('user_id', userId)
+    .eq('user_id', userId);
+  if (orgId !== null) query = query.eq('org_id', orgId);
+  const { data: events } = await query
     .order('processed_at', { ascending: false })
     .limit(100);
 
