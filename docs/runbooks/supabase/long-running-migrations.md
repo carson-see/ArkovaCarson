@@ -76,12 +76,11 @@ For a hot table index cleanup such as SCRUM-1286:
 
 ### SCRUM-1286 anchors checklist
 
-Before dropping `idx_anchors_filename_trgm` or
-`idx_anchors_description_trgm`, verify that no live caller still depends on
-substring search over `anchors.filename` or `anchors.description`. As of
-2026-05-20, the trigram GIN drop is deferred because `search_public_credentials`,
-`src/pages/SearchPage.tsx`, and `services/worker/src/api/v2/search.ts` still
-contain `%query%` search paths over those columns.
+Do not drop `idx_anchors_filename_trgm` or
+`idx_anchors_description_trgm` as part of SCRUM-1286. On 2026-05-20, SCRUM-1976
+captured production `EXPLAIN (ANALYZE, BUFFERS)` evidence proving that public
+and v2 filename/description searches use both trigram GINs. Drop those GINs only
+after replacing the product search path and re-baselining the production plans.
 
 ## Alternative — direct psql via non-pooler connection
 

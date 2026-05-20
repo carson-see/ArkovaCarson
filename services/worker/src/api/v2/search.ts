@@ -5,7 +5,7 @@ import { logger } from '../../utils/logger.js';
 import { requireScopeV2 } from './scopeGuard.js';
 import { ProblemError } from './problem.js';
 import { createV2ScopeRateLimit } from './rateLimit.js';
-import { sanitizeFilterValue, visibleAnchorScope } from './resourceIdentifiers.js';
+import { sanitizeFilterValue, SHA256_HEX_RE, visibleAnchorScope } from './resourceIdentifiers.js';
 
 export const searchRouter = Router();
 
@@ -103,9 +103,12 @@ async function searchRecords(
   orgId?: string | null,
 ): Promise<SearchResult[]> {
   const safe = sanitizeFilterValue(q);
+  const textFilter = SHA256_HEX_RE.test(q)
+    ? `filename.ilike.%${safe}%,description.ilike.%${safe}%,fingerprint.eq.${safe.toLowerCase()}`
+    : `filename.ilike.%${safe}%,description.ilike.%${safe}%`;
   const { data, error } = await db.from('anchors')
     .select('public_id, filename, description, credential_type, status, fingerprint')
-    .or(`filename.ilike.%${safe}%,description.ilike.%${safe}%,fingerprint.ilike.%${safe}%`)
+    .or(textFilter)
     .in('status', ['SECURED', 'SUBMITTED', 'PENDING'])
     .is('deleted_at', null)
     .not('public_id', 'is', null)
@@ -170,13 +173,7 @@ async function searchDocuments(
   const safe = sanitizeFilterValue(q);
   const { data, error } = await db.from('anchors')
     .select('public_id, filename, description, metadata, credential_type, status')
-    .or([
-      `filename.ilike.%${safe}%`,
-      `description.ilike.%${safe}%`,
-      `metadata->>issuer.ilike.%${safe}%`,
-      `metadata->>recipient.ilike.%${safe}%`,
-      `metadata->>title.ilike.%${safe}%`,
-    ].join(','))
+    .or(`filename.ilike.%${safe}%,description.ilike.%${safe}%`)
     .in('status', ['SECURED', 'SUBMITTED', 'PENDING'])
     .is('deleted_at', null)
     .not('public_id', 'is', null)

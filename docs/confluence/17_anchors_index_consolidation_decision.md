@@ -7,11 +7,14 @@ https://arkova.atlassian.net/wiki/spaces/A/pages/56852483/SCRUM-1286+Anchors+Ind
 Follow-up for deferred trigram drop:
 https://arkova.atlassian.net/browse/SCRUM-1976
 
+SCRUM-1976 final decision:
+https://arkova.atlassian.net/wiki/spaces/A/pages/57278465/SCRUM-1976+Anchors+Trigram+Search+Decision
+
 ## SCRUM-1286 Scope
 
 SCRUM-1286 consolidates redundant or barely-used `public.anchors` indexes after
 the R1 vacuum and deferred pipeline index work completed. The confirmed drop set
-is documented in `supabase/migrations/0311_anchors_index_consolidation.sql`.
+is documented in `supabase/migrations/0313_anchors_index_consolidation.sql`.
 
 ## Confirmed Drops
 
@@ -31,9 +34,46 @@ Keep `anchors_unique_active_child_per_parent` because it enforces lineage
 correctness, and keep `idx_anchors_pipeline_status` because the pipeline
 dashboard cache depends on it.
 
+## Production Application Evidence
+
+Applied to production project `vzwyaatejekddvltxyye` on 2026-05-20 with each
+`DROP INDEX CONCURRENTLY IF EXISTS` run as a standalone statement:
+
+- `public.idx_anchors_status`
+- `public.idx_anchors_user_created`
+- `public.idx_anchors_credential_type_btree`
+- `public.idx_anchors_sub_type`
+- `public.idx_anchors_pipeline_source_id`
+
+The production migration ledger is recorded as:
+
+| Version | Name | Created by |
+|---|---|---|
+| `0313` | `anchors_index_consolidation` | `codex-scrum-1286` |
+
+Post-drop verification:
+
+- The five dropped indexes no longer appear in `pg_stat_user_indexes` for
+  `public.anchors`.
+- `public.anchors` index count changed from 35 to 30.
+- `public.anchors` total index size changed from 7699 MB to 7386 MB, an
+  observed reclaim of about 313 MB after the earlier R1 vacuum. This is lower
+  than the original pre-vacuum estimate because the AC estimate was captured
+  before vacuum/index shrinkage.
+- The two trigram GINs remain: `idx_anchors_filename_trgm` at 2726 MB and
+  `idx_anchors_description_trgm` at 1091 MB.
+
+Representative post-drop plan checks:
+
+- User/fingerprint lookup still uses `idx_anchors_fingerprint_lookup`.
+- Pending status lookup moved from `idx_anchors_status` to
+  `idx_anchors_status_created`.
+- Secured chain lookup still uses `idx_anchors_secured_chain_ts`.
+- Secured revocation lookup remains a sequential scan, unchanged by the drop.
+
 ## Trigram GIN Decision
 
-Decision: defer dropping `idx_anchors_filename_trgm` and
+Decision: keep `idx_anchors_filename_trgm` and
 `idx_anchors_description_trgm`.
 
 Reason: the pre-drop code search found live non-test substring search paths over
@@ -49,14 +89,13 @@ Reason: the pre-drop code search found live non-test substring search paths over
   were added to prevent full scans and timeouts on large `anchors` searches.
 
 Production `idx_scan` counts were low enough to make the GINs strong reclaim
-candidates, but the code still has search paths that can reasonably expect
-trigram acceleration. The safe path is to file and complete a follow-up that
-replaces or proves those substring paths before shipping the 3.1 GB drop. That
-follow-up is SCRUM-1976.
+candidates, but SCRUM-1976 production `EXPLAIN (ANALYZE, BUFFERS)` proved the
+public and v2 filename/description search shapes use both trigram indexes. The
+3.1 GB stretch drop is therefore not approved.
 
 ## Required Verification
 
-Before applying `0311`, capture:
+Before applying `0313`, capture:
 
 ```sql
 select
@@ -76,6 +115,7 @@ where schemaname = 'public'
 order by indexrelname;
 ```
 
-After applying `0311`, rerun the top `anchors` query EXPLAIN baselines and
+After applying `0313`, rerun the top `anchors` query EXPLAIN baselines and
 confirm no search, pipeline, status, or credential-type regression before moving
-SCRUM-1286 to Done.
+SCRUM-1286 to Done. This was completed on 2026-05-20; see Production Application
+Evidence above and SCRUM-1976's final search decision doc.
