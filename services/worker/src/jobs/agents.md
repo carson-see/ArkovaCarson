@@ -14,6 +14,7 @@ Background workers for anchor lifecycle, billing reconciliation, drive ingestion
 - `attestationAnchor.ts` — `processAttestationAnchoring()` Merkle-batches PENDING attestation fingerprints to Bitcoin via OP_RETURN. Gated by `ENABLE_ATTESTATION_ANCHORING` flag. Dispatches `attestation.active` webhooks and audit events.
 - **`anchorExpirySweep.ts` (SCRUM-1736)** — daily 03:00 UTC sweep that flips `anchors.status` from SECURED to EXPIRED past `expires_at` and dispatches `anchor.expired` outbound webhook. Compare-and-set on UPDATE guards against concurrent revocation. Sentinel `anchor.expired_dispatch_failed` audit row written if dispatch throws so manual recovery is possible (per CodeRabbit PR #734 review). Adapter validates every write via Zod (`AnchorIdSchema`, `AuditEventRowSchema`).
 - **`treasury-cache.ts`** — `refreshTreasuryCache()`. Fetches treasury balance, BTC price, fee rates, UTXO count, network info, and anchor stats (via `../utils/anchor-stats.ts`), then upserts into `treasury_cache` singleton. SCRUM-1786: sentinel guard prevents -1 from overwriting last-good cached values.
+- **`provider-registry-refresh.ts` (SCRUM-1949)** — weekly overdue detector for the quarterly CPE/CLE provider registry refresh control. Reads service-role-only registries, defaults `PROVIDER_REFRESH_OVERDUE_DAYS` to 95, and posts grouped Slack alerts through `SLACK_OPS_WEBHOOK_URL`.
 
 ## Conventions
 - Every job exports a single `process<Domain>()` function returning `{processed, failed, errors}`.

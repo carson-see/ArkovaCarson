@@ -12,6 +12,11 @@ This directory now starts with the Path C baseline, `00000000000000_baseline_at_
 
 ## Recent migrations (PR #788)
 
+- **0315_provider_registry_refresh_controls.sql**: Adds SCRUM-1949
+  `provider_registry.updated` audit triggers on the CPE/CLE provider registries
+  with operator identity, changed fields, old/new values, and
+  `last_verified_date` evidence for quarterly SOC 2 CC8 refreshes.
+
 - **0314_professional_education_foundations.sql**: Adds CPE/CLE metadata
   columns on `anchors`, service-role-only CPE/CLE provider registries with RLS
   + `FORCE ROW LEVEL SECURITY`, static seed entries, and secured-anchor

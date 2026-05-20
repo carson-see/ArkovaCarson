@@ -81,6 +81,7 @@ import { runRuleActionDispatcher } from '../jobs/rule-action-dispatcher.js';
 import { runDocusignEnvelopeCompletedJobs } from '../jobs/docusign-envelope-completed.js';
 import { runDbHealthMonitor } from '../jobs/db-health-monitor.js';
 import { runSubscriptionRenewal } from '../jobs/workspace-subscription-renewal.js';
+import { runProviderRegistryRefreshOverdueCheck } from '../jobs/provider-registry-refresh.js';
 import { runMainnetMigration, getMigrationStatus } from '../jobs/mainnet-migration.js';
 import { checkPipelineHealth } from '../jobs/pipeline-health.js';
 import { GRACE_EXPIRY_SWEEP_CRON, runGraceExpirySweep } from '../jobs/grace-expiry-sweep.js';
@@ -337,6 +338,21 @@ cronRouter.post('/treasury-alert-check', async (_req, res) => {
     });
   } catch (error) {
     logger.error({ error }, 'Treasury alert check failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+// ─── SCRUM-1949: Provider Registry Refresh Overdue Alert ───
+cronRouter.post('/provider-registry-refresh-overdue', async (_req, res) => {
+  try {
+    const result = await withCronMonitoring(
+      'provider-registry-refresh-overdue',
+      '0 14 * * 1',
+      () => runProviderRegistryRefreshOverdueCheck(),
+    )();
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'Provider registry refresh overdue check failed');
     res.status(500).json({ error: 'Processing failed' });
   }
 });
