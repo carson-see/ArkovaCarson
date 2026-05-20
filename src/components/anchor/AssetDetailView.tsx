@@ -25,7 +25,7 @@ import { CredentialRenderer } from '@/components/credentials/CredentialRenderer'
 import { SourceProvenanceDisplay } from '@/components/verification/SourceProvenanceDisplay';
 import { useCredentialTemplate } from '@/hooks/useCredentialTemplate';
 import { formatFingerprint } from '@/lib/fileHasher';
-import { LIFECYCLE_LABELS, CREDENTIAL_TYPE_LABELS, SHARE_LABELS, EXPLORER_LABELS, FINGERPRINT_TOOLTIP, VERSION_HISTORY_LABELS, RECORDS_LIST_LABELS, RECORD_DETAIL_LABELS, formatCredentialType, getTemplateDescription } from '@/lib/copy';
+import { ANCHOR_STATUS_LABELS, LIFECYCLE_LABELS, CREDENTIAL_TYPE_LABELS, SHARE_LABELS, EXPLORER_LABELS, FINGERPRINT_TOOLTIP, VERSION_HISTORY_LABELS, RECORDS_LIST_LABELS, RECORD_DETAIL_LABELS, formatCredentialType, getTemplateDescription } from '@/lib/copy';
 import { sanitizeSourceUrl, type SourceProvenanceData } from '@/lib/sourceProvenance';
 import {
   Tooltip,
@@ -192,7 +192,7 @@ const statusConfig = {
     color: 'text-amber-600',
   },
   SUPERSEDED: {
-    label: 'Superseded',
+    label: ANCHOR_STATUS_LABELS.SUPERSEDED,
     variant: 'secondary' as const,
     icon: GitBranch,
     color: 'text-muted-foreground',

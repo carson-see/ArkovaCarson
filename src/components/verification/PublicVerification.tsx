@@ -690,11 +690,15 @@ function sanitizeCredentialMetadata(metadata: Record<string, unknown> | undefine
   if (!metadata) return metadata;
 
   const safeEntries = Object.entries(metadata).filter(([key]) => {
-    const normalizedKey = key.toLowerCase();
+    const normalizedKey = normalizeMetadataKey(key);
     return !PUBLIC_METADATA_HIDDEN_KEYS.has(normalizedKey) && !normalizedKey.startsWith('source_');
   });
 
   return Object.fromEntries(safeEntries);
+}
+
+function normalizeMetadataKey(key: string): string {
+  return key.trim().toLowerCase().replace(/[\s-]+/g, '_');
 }
 
 function firstString(...values: unknown[]): string | null {

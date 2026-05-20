@@ -25,8 +25,11 @@ interface SourceProvenanceDisplayProps {
   className?: string;
 }
 
-function formatDate(dateStr: string): string {
-  return new Date(dateStr).toLocaleString('en-US', {
+function formatDate(dateStr: string): string | null {
+  const parsed = new Date(dateStr);
+  if (Number.isNaN(parsed.getTime())) return null;
+
+  return parsed.toLocaleString('en-US', {
     dateStyle: 'medium',
     timeStyle: 'short',
     timeZone: 'UTC',
@@ -56,7 +59,8 @@ export function SourceProvenanceDisplay({
   const safeUrl = sanitizeSourceUrl(data.source_url);
   const provider = formatProvider(data.source_provider);
   const verificationLevel = parseVerificationLevel(data.verification_level);
-  const hasAnyContent = safeUrl || provider || verificationLevel || data.fetched_at;
+  const fetchedAt = data.fetched_at ? formatDate(data.fetched_at) : null;
+  const hasAnyContent = safeUrl || provider || verificationLevel || fetchedAt;
 
   if (!hasAnyContent) return null;
 
@@ -106,13 +110,13 @@ export function SourceProvenanceDisplay({
         )}
 
         {/* Fetched At */}
-        {data.fetched_at && (
+        {fetchedAt && (
           <div className="flex items-center gap-2 text-sm">
             <Calendar className="h-3.5 w-3.5 text-muted-foreground" />
             <span className="text-muted-foreground shrink-0">
               {SOURCE_PROVENANCE_LABELS.FETCHED_AT_LABEL}:
             </span>
-            <span className="text-sm">{formatDate(data.fetched_at)}</span>
+            <span className="text-sm">{fetchedAt}</span>
           </div>
         )}
       </div>
