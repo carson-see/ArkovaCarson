@@ -55,13 +55,15 @@ function rpcErrorCodeForStatus(status: number): 'forbidden' | 'not_found' | 'con
 
 /**
  * GET /api/queue/pending
- * Returns anchors currently in PENDING_RESOLUTION for the caller's org,
- * with a `sibling_count` per row so the UI can badge collisions.
+ * Returns anchors currently in PENDING_RESOLUTION for the caller's org.
  *
- * Caller is authenticated upstream via `requireAuth` middleware — userId
- * is available on req but isn't forwarded here (the RPC reads `auth.uid()`).
+ * Bug fix: the old implementation called `list_pending_resolution_anchors_v2`
+ * RPC which uses `auth.uid()` internally. The worker's service_role client
+ * has no JWT context → auth.uid() = NULL → "Profile not found" → 500.
+ * Fix: look up caller profile via userId, then query anchors directly.
  */
 export async function handleListPendingResolution(
+  userId: string,
   req: Request,
   res: Response,
 ): Promise<void> {
@@ -71,19 +73,40 @@ export async function handleListPendingResolution(
   );
 
   try {
-    const { data, error } = await callRpc<PendingResolutionAnchor[]>(
-      db,
-      'list_pending_resolution_anchors_v2',
-      { p_limit: limit },
-    );
+    const profile = await getCallerProfile(userId);
+    if (!profile) {
+      res.status(403).json({ error: { code: 'forbidden', message: 'Profile not found' } });
+      return;
+    }
+
+    const orgId = profile.org_id ?? null;
+    if (!orgId) {
+      res.json({ items: [], count: 0 });
+      return;
+    }
+
+    const { data, error } = await db
+      .from('anchors')
+      .select('public_id, metadata, filename, fingerprint, created_at')
+      .eq('org_id', orgId)
+      .eq('status', 'PENDING_RESOLUTION')
+      .is('deleted_at', null)
+      .order('created_at', { ascending: false })
+      .limit(limit);
 
     if (error) {
-      logger.error({ error }, 'list_pending_resolution_anchors RPC failed');
+      logger.error({ error }, 'anchors query for pending resolution failed');
       res.status(500).json({ error: { code: 'rpc_failed', message: 'Failed to list pending resolutions' } });
       return;
     }
 
-    const rows = Array.isArray(data) ? (data as PendingResolutionAnchor[]) : [];
+    const rows = (Array.isArray(data) ? data : []).map((r) => ({
+      public_id: r.public_id,
+      external_file_id: (r.metadata as Record<string, unknown>)?.external_file_id as string | null ?? null,
+      filename: r.filename,
+      fingerprint: r.fingerprint,
+      created_at: r.created_at,
+    }));
     res.json({ items: rows, count: rows.length });
   } catch (err) {
     logger.error({ error: err }, 'handleListPendingResolution unexpected error');
