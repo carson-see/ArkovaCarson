@@ -148,56 +148,111 @@ describe('mapRpcErrorToStatus', () => {
 });
 
 describe('handleListPendingResolution', () => {
-  beforeEach(() => rpcMock.mockReset());
+  beforeEach(() => {
+    rpcMock.mockReset();
+    fromMock.mockReset();
+  });
   afterEach(() => vi.restoreAllMocks());
 
-  it('returns items + count on success', async () => {
-    rpcMock.mockResolvedValue({
-      data: [
-        { public_id: 'pid_acmemsa1', external_file_id: 'drive-123', filename: 'f.pdf', fingerprint: 'fp', created_at: 't', sibling_count: 2 },
+  /**
+   * Helper: wire up the fromMock chain so that:
+   *   db.from('profiles').select('org_id').eq('id', userId).maybeSingle()
+   * resolves with the given profile data.
+   *
+   * Then wire a second fromMock call for the anchors query.
+   */
+  function mockProfileAndAnchors(
+    profile: { org_id: string | null } | null,
+    anchors: unknown[] = [],
+    profileError: unknown = null,
+    anchorError: unknown = null,
+  ) {
+    // First call: profiles lookup
+    const profileMaybeSingle = vi.fn().mockResolvedValue({ data: profile, error: profileError });
+    const profileEq = vi.fn().mockReturnValue({ maybeSingle: profileMaybeSingle });
+    const profileSelect = vi.fn().mockReturnValue({ eq: profileEq });
+
+    // Second call: anchors query
+    const anchorLimit = vi.fn().mockResolvedValue({ data: anchors, error: anchorError });
+    const anchorOrder = vi.fn().mockReturnValue({ limit: anchorLimit });
+    const anchorIsNot = vi.fn().mockReturnValue({ order: anchorOrder });
+    const anchorEqStatus = vi.fn().mockReturnValue({ is: anchorIsNot });
+    const anchorEqOrg = vi.fn().mockReturnValue({ eq: anchorEqStatus });
+    const anchorSelect = vi.fn().mockReturnValue({ eq: anchorEqOrg });
+
+    fromMock
+      .mockReturnValueOnce({ select: profileSelect })
+      .mockReturnValueOnce({ select: anchorSelect });
+
+    return { profileEq, anchorEqOrg, anchorEqStatus, anchorLimit };
+  }
+
+  it('returns items + count when caller has an org', async () => {
+    mockProfileAndAnchors(
+      { org_id: 'org-1' },
+      [
+        {
+          public_id: 'pid_acmemsa1',
+          metadata: { external_file_id: 'drive-123' },
+          filename: 'f.pdf',
+          fingerprint: 'fp',
+          created_at: '2026-01-01T00:00:00Z',
+        },
       ],
-      error: null,
-    });
+    );
     const { res, status, json } = mockRes();
-    await handleListPendingResolution(mockReq(), res);
+    await handleListPendingResolution('user-1', mockReq(), res);
     expect(status).not.toHaveBeenCalled();
     expect(json).toHaveBeenCalledWith(
       expect.objectContaining({ count: 1, items: expect.any(Array) }),
     );
   });
 
-  it('clamps limit to [1, 500]', async () => {
-    rpcMock.mockResolvedValue({ data: [], error: null });
-    const { res } = mockRes();
-    await handleListPendingResolution(mockReq({ query: { limit: '10000' } }), res);
-    expect(rpcMock).toHaveBeenCalledWith(
-      'list_pending_resolution_anchors_v2',
-      { p_limit: 500 },
-    );
-
-    rpcMock.mockReset();
-    rpcMock.mockResolvedValue({ data: [], error: null });
-    const { res: res2 } = mockRes();
-    await handleListPendingResolution(mockReq({ query: { limit: '-5' } }), res2);
-    expect(rpcMock).toHaveBeenCalledWith(
-      'list_pending_resolution_anchors_v2',
-      { p_limit: 1 },
-    );
-  });
-
-  it('returns 500 when RPC errors', async () => {
-    rpcMock.mockResolvedValue({ data: null, error: { message: 'boom' } });
-    const { res, status, json } = mockRes();
-    await handleListPendingResolution(mockReq(), res);
-    expect(status).toHaveBeenCalledWith(500);
-    expect(json).toHaveBeenCalledWith(expect.objectContaining({ error: expect.any(Object) }));
-  });
-
-  it('coerces non-array data to empty list', async () => {
-    rpcMock.mockResolvedValue({ data: null, error: null });
+  it('returns empty list when caller has no org', async () => {
+    mockProfileAndAnchors({ org_id: null });
     const { res, json } = mockRes();
-    await handleListPendingResolution(mockReq(), res);
+    await handleListPendingResolution('user-1', mockReq(), res);
     expect(json).toHaveBeenCalledWith({ items: [], count: 0 });
+  });
+
+  it('returns 403 when profile is not found', async () => {
+    mockProfileAndAnchors(null);
+    const { res, status, json } = mockRes();
+    await handleListPendingResolution('user-1', mockReq(), res);
+    expect(status).toHaveBeenCalledWith(403);
+    expect(json).toHaveBeenCalledWith(
+      expect.objectContaining({ error: expect.objectContaining({ code: 'forbidden' }) }),
+    );
+  });
+
+  it('returns empty list when no anchors match', async () => {
+    mockProfileAndAnchors({ org_id: 'org-1' }, []);
+    const { res, json } = mockRes();
+    await handleListPendingResolution('user-1', mockReq(), res);
+    expect(json).toHaveBeenCalledWith({ items: [], count: 0 });
+  });
+
+  it('returns 500 when anchors query fails', async () => {
+    mockProfileAndAnchors({ org_id: 'org-1' }, [], null, { message: 'db error' });
+    const { res, status, json } = mockRes();
+    await handleListPendingResolution('user-1', mockReq(), res);
+    expect(status).toHaveBeenCalledWith(500);
+    expect(json).toHaveBeenCalledWith(
+      expect.objectContaining({ error: expect.objectContaining({ code: 'rpc_failed' }) }),
+    );
+  });
+
+  it('clamps limit to [1, 500]', async () => {
+    const mocks1 = mockProfileAndAnchors({ org_id: 'org-1' }, []);
+    const { res } = mockRes();
+    await handleListPendingResolution('user-1', mockReq({ query: { limit: '10000' } }), res);
+    expect(mocks1.anchorLimit).toHaveBeenCalledWith(500);
+
+    fromMock.mockReset();
+    const mocks2 = mockProfileAndAnchors({ org_id: 'org-1' }, []);
+    const { res: res2 } = mockRes();
+    await handleListPendingResolution('user-1', mockReq({ query: { limit: '-5' } }), res2);
+    expect(mocks2.anchorLimit).toHaveBeenCalledWith(1);
   });
 });
 
