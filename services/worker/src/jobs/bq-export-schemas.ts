@@ -198,7 +198,7 @@ const AUDIT_EVENTS: BqTableTarget = {
     fields: [
       ID_REQUIRED,
       { name: 'event_type', type: 'STRING', mode: 'REQUIRED', description: 'Source NOT NULL; e.g. "anchor.created"' },
-      { name: 'event_category', type: 'STRING', mode: 'REQUIRED', description: 'CHECK constraint: AUTH/ANCHOR/PROFILE/ORG/ADMIN/SYSTEM' },
+      { name: 'event_category', type: 'STRING', mode: 'REQUIRED', description: 'CHECK constraint: AUTH/ANCHOR/PROFILE/ORG/ADMIN/SYSTEM/ORGANIZATION/WEBHOOK/API/AI/BILLING/VERIFICATION/USER/SECURITY/COMPLIANCE/NOTIFICATION/PLATFORM' },
       { name: 'actor_id', type: 'STRING', mode: 'NULLABLE', description: 'uuid only; actor_email/actor_ip excluded as PII' },
       { name: 'target_type', type: 'STRING', mode: 'NULLABLE' },
       { name: 'target_id', type: 'STRING', mode: 'NULLABLE' },

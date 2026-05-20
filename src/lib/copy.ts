@@ -1836,6 +1836,7 @@ export const PIPELINE_LABELS = {
   DIRECT_RPC_FALLBACK_SOURCE: 'Direct RPC fallback',
   DIRECT_RPC_FALLBACK_NO_DATA: 'Direct RPC fallback returned no data',
   WORKER_CACHE_FALLBACK_WARNING: (error: string) => `Worker/cache source failed (${error}); showing direct RPC fallback values.`,
+  LIFECYCLE_COUNTS_UNAVAILABLE_WARNING: 'Pipeline lifecycle counts unavailable: direct RPC returned cache-miss placeholders or timeout sentinels.',
   STALE: 'Stale',
   RECORDS_ANCHORED_SUBTITLE: (submitted: string, secured: string) => `${submitted} submitted / ${secured} confirmed`,
   RECORDS_PENDING_SUBTITLE: (unlinked: string, queued: string, submitting: string) => `${unlinked} unlinked / ${queued} queued / ${submitting} submitting to network`,
@@ -2114,6 +2115,13 @@ export const PUBLIC_FOOTER_LABELS = {
   NAV_TERMS: 'Terms',
   COPYRIGHT: 'Arkova',
   STEP_PREFIX: 'Step',
+} as const;
+
+export const LEGAL_PAGE_LABELS = {
+  PRIVACY_UPDATE_NOTICE:
+    'We may update this policy from time to time. Material changes will be posted here, and registered users will receive notice when required.',
+  TERMS_UPDATE_NOTICE:
+    'We may update these terms from time to time. Material changes will be posted here, and registered users will receive notice when required.',
 } as const;
 
 // =============================================================================
@@ -2576,3 +2584,28 @@ export const PRIVACY_NOTICE_LABELS = {
 
 /** DPO/Information Officer contact — single source for all jurisdictions (REG-28) */
 export const PRIVACY_CONTACT_EMAIL = 'privacy@arkova.ai';
+
+// ─── Evidence Level Labels (CSI-03 / SCRUM-1599) ─────────────────────────────
+
+export type EvidenceLevel =
+  | 'issuer_anchored'
+  | 'source_signed'
+  | 'account_linked'
+  | 'captured_url'
+  | 'ai_captured';
+
+export const EVIDENCE_LEVEL_LABELS = {
+  issuer_anchored: 'Issuer Anchored',
+  source_signed: 'Source Signed',
+  account_linked: 'Account Linked',
+  captured_url: 'Captured URL Evidence',
+  ai_captured: 'AI-Captured Evidence',
+} as const satisfies Record<EvidenceLevel, string>;
+
+export const EVIDENCE_LEVEL_DESCRIPTIONS = {
+  issuer_anchored: 'Verified directly with the issuing organization. The credential was cryptographically anchored by the original issuer.',
+  source_signed: 'The credential source provided a cryptographic signature proving origin and integrity.',
+  account_linked: 'Imported from an authenticated account. The holder proved access to the issuing platform.',
+  captured_url: 'Captured from a public URL. The content was fetched and fingerprinted at the recorded time.',
+  ai_captured: 'Extracted using AI from an uploaded document. Content was parsed and structured automatically.',
+} as const satisfies Record<EvidenceLevel, string>;

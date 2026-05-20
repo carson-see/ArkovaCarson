@@ -32,4 +32,11 @@ ALTER TABLE public.audit_events ADD CONSTRAINT audit_events_event_category_valid
     'SECURITY'
   ]));
 
+COMMENT ON COLUMN audit_events.event_category IS
+  'Event category. CHECK constraint: AUTH, ANCHOR, PROFILE, ORG, ADMIN, SYSTEM, '
+  'ORGANIZATION, WEBHOOK, API, AI, BILLING, VERIFICATION, USER, '
+  'SECURITY, COMPLIANCE, NOTIFICATION, PLATFORM';
+
+NOTIFY pgrst, 'reload schema';
+
 COMMIT;
