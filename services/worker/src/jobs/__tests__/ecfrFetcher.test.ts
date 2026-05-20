@@ -3,6 +3,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type { SupabaseClient } from '@supabase/supabase-js';
 
 const mockRpc = vi.fn();
 const mockLogger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
@@ -36,7 +37,7 @@ describe('eCFR Fetcher (NCX-01)', () => {
   it('returns early when flag is disabled', async () => {
     mockRpc.mockResolvedValue({ data: false });
     const { fetchEcfrRegulations } = await import('../ecfrFetcher.js');
-    const result = await fetchEcfrRegulations(createMockSupabase() as any);
+    const result = await fetchEcfrRegulations(createMockSupabase() as unknown as SupabaseClient);
     expect(result.inserted).toBe(0);
     expect(result.titlesProcessed).toBe(0);
   });
@@ -71,7 +72,7 @@ describe('eCFR Fetcher (NCX-01)', () => {
     vi.stubGlobal('fetch', mockFetch);
 
     const { fetchEcfrRegulations } = await import('../ecfrFetcher.js');
-    const result = await fetchEcfrRegulations(createMockSupabase() as any);
+    const result = await fetchEcfrRegulations(createMockSupabase() as unknown as SupabaseClient);
 
     expect(mockFetch).toHaveBeenCalled();
     expect(result.inserted + result.skipped).toBeGreaterThan(0);
