@@ -18,7 +18,7 @@ Operational, CI, deployment, and security scripts. Run manually or from CI workf
 - **`deploy-embed-cdn.sh`** — deploys the embed widget to CDN.
 - **`deploy-tunnel.sh`** — deploys Cloudflare Tunnel.
 - **`publish-packages.sh`** — publishes SDK packages to npm.
-- **`check-copy-terms.ts`** — CI lint for banned UI terminology (Constitution 1.3).
+- **`check-copy-terms.ts`** — CI lint for banned UI terminology and public launch-blocker legal placeholder copy (Constitution 1.3).
 - **`check-homepage-jsonld.test.ts`** — tests for homepage JSON-LD structured data.
 - **`enforce-tdd.sh`** — enforces TDD: test must exist before production code.
 - **`ci-supabase-start.sh`** — starts Supabase for CI environments.

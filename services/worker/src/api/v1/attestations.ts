@@ -1,4 +1,3 @@
-/* eslint-disable arkova/missing-org-filter -- public verification endpoints: attestation lookup/list/verify are intentionally cross-tenant */
 /**
  * Attestations API (Phase II)
  *
@@ -509,6 +508,7 @@ router.get('/:publicId', async (req: Request, res: Response) => {
     // defense in attestations-sanitizer.test.ts: the test catches a future
     // res.json() spread, the narrow SELECT removes the latent attack surface
     // even if a refactor accidentally widens the response.
+    // eslint-disable-next-line arkova/missing-org-filter -- public verification lookup by public attestation id is intentionally cross-tenant
     const { data: attestation, error } = await dbAny
       .from('attestations')
       .select(
@@ -632,6 +632,7 @@ router.get('/', async (req: Request, res: Response) => {
   const { anchor_id, subject_identifier, attestation_type, status, cursor, page, limit } = parsed.data;
 
   try {
+    // eslint-disable-next-line arkova/missing-org-filter -- public attestation listing exposes only public response fields and optional public filters
     let query = dbAny
       .from('attestations')
       .select('public_id, attestation_type, status, subject_type, subject_identifier, attester_name, attester_type, summary, issued_at, expires_at, created_at, fingerprint, chain_tx_id', { count: 'exact' });
@@ -914,6 +915,7 @@ router.post('/batch-verify', requireScope('verify:batch'), attestationBatchRateL
 
   try {
     // Single DB call to fetch all attestations
+    // eslint-disable-next-line arkova/missing-org-filter -- batch verification accepts public attestation ids and returns only public verification fields
     const { data: attestations, error } = await dbAny
       .from('attestations')
       .select('public_id, attestation_type, status, subject_identifier, attester_name, attester_type, issued_at, expires_at, chain_tx_id, chain_block_height, chain_timestamp')
@@ -1023,8 +1025,9 @@ router.patch('/:publicId/revoke', async (req: Request, res: Response) => {
     // Verify ownership
     const { data: attestation, error: findError } = await dbAny
       .from('attestations')
-      .select('id, status, attester_user_id')
+      .select('id, status, attester_user_id, attester_org_id')
       .eq('public_id', publicId)
+      .eq('attester_user_id', userId)
       .single();
 
     if (findError || !attestation) {
@@ -1049,7 +1052,8 @@ router.patch('/:publicId/revoke', async (req: Request, res: Response) => {
         revoked_at: new Date().toISOString(),
         revocation_reason: reason,
       })
-      .eq('id', attestation.id);
+      .eq('id', attestation.id)
+      .eq('attester_user_id', userId);
 
     if (updateError) {
       logger.error({ error: updateError }, 'Attestation revocation failed');

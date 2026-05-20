@@ -9,7 +9,13 @@
  */
 
 import { describe, it, expect } from 'vitest';
-import { FORBIDDEN_TERMS, stripClassNameAttributes } from './check-copy-terms.js';
+import {
+  FORBIDDEN_TERMS,
+  LAUNCH_BLOCKER_COPY_TERMS,
+  findTermViolations,
+  shouldSkipLine,
+  stripClassNameAttributes,
+} from './check-copy-terms.js';
 
 function matches(term: string, haystack: string): boolean {
   return new RegExp(term, 'gi').test(haystack);
@@ -156,5 +162,46 @@ describe('FORBIDDEN_TERMS — block compound-phrase detection (SCRUM-951)', () =
       '<p className="inline-block text-block-fg">Network Checkpoint</p>',
     );
     expect(matches(blockTerm, cleaned)).toBe(false);
+  });
+});
+
+describe('LAUNCH_BLOCKER_COPY_TERMS — public legal placeholder copy', () => {
+  it.each(LAUNCH_BLOCKER_COPY_TERMS)('flags "%s" independently', (term) => {
+    expect(matches(term, `Public page copy says ${term} to users.`)).toBe(true);
+  });
+
+  it('flags launch-blocker copy on plain multiline JSX text lines', () => {
+    const violations = findTermViolations(
+      'This privacy policy is a placeholder and will be updated following legal review.',
+      42,
+      'src/pages/PrivacyPage.tsx',
+    );
+
+    expect(violations.map((violation) => violation.term)).toEqual([
+      'placeholder and will be updated',
+      'following legal review',
+    ]);
+  });
+
+  it('does not ban the placeholder attribute keyword by itself', () => {
+    // The launch-blocker list is phrase-based. Normal form placeholder attrs
+    // remain valid unless the legal launch-blocker phrase itself is present.
+    for (const term of LAUNCH_BLOCKER_COPY_TERMS) {
+      expect(matches(term, 'placeholder="you@example.com"')).toBe(false);
+    }
+  });
+
+  it('skips block comment opener lines that mention legal review work', () => {
+    const line = '/* following legal review, approved 2026-03-01 */';
+    expect(shouldSkipLine(line, line.trim())).toBe(true);
+  });
+
+  it('does not globally skip visible star-prefixed copy outside block comments', () => {
+    const line = '* following legal review prior to production launch';
+
+    expect(shouldSkipLine(line, line.trim())).toBe(false);
+    expect(
+      findTermViolations(line, 7, 'src/pages/TermsPage.tsx').map((violation) => violation.term),
+    ).toEqual(['following legal review', 'prior to production launch']);
   });
 });
