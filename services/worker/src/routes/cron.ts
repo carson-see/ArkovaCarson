@@ -248,7 +248,7 @@ cronRouter.post('/check-confirmations', async (_req, res) => {
   try {
     const result = await withCronMonitoring(
       'check-confirmations',
-      '*/2 * * * *',
+      '*/30 * * * *',
       () => checkSubmittedConfirmations(),
     )();
     res.json(result);
@@ -443,7 +443,11 @@ cronRouter.post('/fetch-edgar', async (_req, res) => {
 
 cronRouter.post('/fetch-uspto', async (_req, res) => {
   try {
-    const result = await fetchUsptoPAtents(db);
+    const result = await withCronMonitoring(
+      'fetch-uspto',
+      '*/15 * * * *',
+      () => fetchUsptoPAtents(db),
+    )();
     res.json(result);
   } catch (error) {
     logger.error({ error }, 'USPTO fetch failed');

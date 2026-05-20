@@ -602,7 +602,7 @@ describe('cron routes', () => {
       await request(app).post('/cron/check-confirmations');
       expect(mockWithCronMonitoring).toHaveBeenCalledWith(
         'check-confirmations',
-        '*/2 * * * *',
+        '*/30 * * * *',
         expect.any(Function),
       );
     });
@@ -714,6 +714,17 @@ describe('cron routes', () => {
       const app = createApp();
       const res = await request(app).post('/cron/fetch-uspto');
       expect(res.status).toBe(500);
+    });
+
+    it('invokes withCronMonitoring with correct slug and schedule', async () => {
+      mockWithCronMonitoring.mockClear();
+      const app = createApp();
+      await request(app).post('/cron/fetch-uspto');
+      expect(mockWithCronMonitoring).toHaveBeenCalledWith(
+        'fetch-uspto',
+        '*/15 * * * *',
+        expect.any(Function),
+      );
     });
   });
 
