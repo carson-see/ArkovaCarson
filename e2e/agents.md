@@ -1,5 +1,5 @@
 # agents.md — e2e/
-_Last updated: 2026-03-21_
+_Last updated: 2026-05-19_
 
 ## What This Folder Contains
 
@@ -42,10 +42,12 @@ Tests that need unauthenticated state (e.g., `auth.spec.ts`, `route-guards.spec.
 | `cross-tenant.spec.ts` | Cross-tenant isolation: user-to-user, org-to-org, record list isolation | 5 | `test`, `expect`, `getServiceClient`, `createTestAnchor`, `deleteTestAnchor`, `SEED_USERS`, `individualPage`, `orgAdminPage`, `orgBAdminPage` |
 | `error-states.spec.ts` | Error handling: 404 record, invalid verification, expired session, unknown routes | 5 | `test`, `expect`, `individualPage` |
 | `performance.spec.ts` | Frontend performance smoke: dashboard load <5s, stats render <3s, verification page <3s, navigation <3s, org admin <5s | 5 | `test`, `expect`, `individualPage`, `orgAdminPage` |
+| `legal-pages.spec.ts` | Public privacy and terms routes: update notices present, launch-blocker placeholder copy absent | 2 | `@playwright/test`, unauthenticated empty storageState |
 
 ## Do / Don't Rules
 
-- **DO** import `test` and `expect` from `./fixtures` (not `@playwright/test` directly)
+- **DO** import `test` and `expect` from `./fixtures` for seeded/authenticated flows.
+- **DO** import from `@playwright/test` directly only for public unauthenticated smoke specs that do not need seed data or service-role helpers.
 - **DO** use `SEED_USERS` constants for known test credentials
 - **DO** clean up test data in `afterAll` / `afterEach` via service client
 - **DO** use timestamped unique names for test data to avoid collisions
@@ -77,3 +79,4 @@ Tests that need unauthenticated state (e.g., `auth.spec.ts`, `route-guards.spec.
 | 2026-03-12 | MVP audit: 14 launch gap stories identified (see `docs/stories/11_mvp_launch_gaps.md`). E2E targets for new flows: MVP-03 legal pages (routing), MVP-05 error boundary + 404 page, MVP-02 toast notifications, MVP-06 file-based verification, MVP-07 mobile responsive layout. |
 | 2026-04-24 | SCRUM-1091 (PUBLIC-ORG-08): Added `public-org-page.spec.ts` — anonymous-visitor flow at `/issuer/:orgId` covering desktop (1280px), mobile (375px), JSON-LD + OG/Twitter meta presence. |
 | 2026-04-26 | SCRUM-1302: Replaced per-test UI login with Playwright `storageState` setup project. Auth setup runs once, all specs reuse saved session. Specs needing unauthenticated state override with empty storageState. Removed `continue-on-error: true` from CI E2E step. Increased `webServer.timeout` to 120s. |
+| 2026-05-19 | SCRUM-1247 closeout: Added `legal-pages.spec.ts` for public `/privacy` and `/terms` notices without seeded auth dependencies. |

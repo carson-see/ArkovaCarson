@@ -2117,6 +2117,13 @@ export const PUBLIC_FOOTER_LABELS = {
   STEP_PREFIX: 'Step',
 } as const;
 
+export const LEGAL_PAGE_LABELS = {
+  PRIVACY_UPDATE_NOTICE:
+    'We may update this policy from time to time. Material changes will be posted here, and registered users will receive notice when required.',
+  TERMS_UPDATE_NOTICE:
+    'We may update these terms from time to time. Material changes will be posted here, and registered users will receive notice when required.',
+} as const;
+
 // =============================================================================
 // HOW IT WORKS PAGE (GEO-08)
 // =============================================================================
