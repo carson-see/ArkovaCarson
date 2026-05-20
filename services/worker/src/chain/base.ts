@@ -249,7 +249,7 @@ export class BaseChainClient implements ChainClient {
       this.publicClient = createPublicClient({
         chain: this.chain,
         transport,
-      }) as any; // eslint-disable-line @typescript-eslint/no-explicit-any -- viem's branded generic types don't directly assign to PublicClient
+      });
     }
 
     if (clientConfig.walletClient) {
@@ -261,7 +261,7 @@ export class BaseChainClient implements ChainClient {
         account: this.account,
         chain: this.chain,
         transport,
-      }) as any; // eslint-disable-line @typescript-eslint/no-explicit-any -- viem's branded generic types don't directly assign to WalletClient
+      });
     }
 
     // Log only the address, NEVER the private key (Constitution 1.4)

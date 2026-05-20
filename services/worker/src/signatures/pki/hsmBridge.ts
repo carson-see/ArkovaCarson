@@ -10,6 +10,8 @@
  */
 
 import { logger } from '../../utils/logger.js';
+import type { KMSClient } from '@aws-sdk/client-kms';
+import type { KeyManagementServiceClient } from '@google-cloud/kms';
 import type {
   KmsProvider,
   HsmSignRequest,
@@ -29,9 +31,9 @@ export interface HsmBridge {
 
 export class AwsKmsHsmBridge implements HsmBridge {
   readonly name = 'AWS KMS';
-  private client: unknown | null = null;
+  private client: KMSClient | null = null;
 
-  private async getClient(): Promise<unknown> {
+  private async getClient(): Promise<KMSClient> {
     if (this.client) return this.client;
     // Lazy-load AWS SDK (same pattern as chain/signing-provider.ts)
     const { KMSClient } = await import('@aws-sdk/client-kms');
@@ -43,8 +45,7 @@ export class AwsKmsHsmBridge implements HsmBridge {
 
   async sign(request: HsmSignRequest): Promise<HsmSignResponse> {
     validateSignRequest(request);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- KMS client is lazily imported and typed as unknown; cast needed to call SDK methods
-    const client = await this.getClient() as any;
+    const client = await this.getClient();
     const { SignCommand } = await import('@aws-sdk/client-kms');
 
     const kmsAlgorithm = KEY_ALGORITHM_TO_KMS[request.algorithm]?.aws;
@@ -77,8 +78,7 @@ export class AwsKmsHsmBridge implements HsmBridge {
   }
 
   async getPublicKey(provider: KmsProvider, keyId: string): Promise<Buffer> {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- KMS client is lazily imported and typed as unknown; cast needed to call SDK methods
-    const client = await this.getClient() as any;
+    const client = await this.getClient();
     const { GetPublicKeyCommand } = await import('@aws-sdk/client-kms');
 
     const command = new GetPublicKeyCommand({ KeyId: keyId });
@@ -95,9 +95,9 @@ export class AwsKmsHsmBridge implements HsmBridge {
 
 export class GcpKmsHsmBridge implements HsmBridge {
   readonly name = 'GCP Cloud HSM';
-  private client: unknown | null = null;
+  private client: KeyManagementServiceClient | null = null;
 
-  private async getClient(): Promise<unknown> {
+  private async getClient(): Promise<KeyManagementServiceClient> {
     if (this.client) return this.client;
     const { KeyManagementServiceClient } = await import('@google-cloud/kms');
     this.client = new KeyManagementServiceClient();
@@ -106,8 +106,7 @@ export class GcpKmsHsmBridge implements HsmBridge {
 
   async sign(request: HsmSignRequest): Promise<HsmSignResponse> {
     validateSignRequest(request);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- KMS client is lazily imported and typed as unknown; cast needed to call SDK methods
-    const client = await this.getClient() as any;
+    const client = await this.getClient();
 
     const [response] = await client.asymmetricSign({
       name: request.keyId,
@@ -133,8 +132,7 @@ export class GcpKmsHsmBridge implements HsmBridge {
   }
 
   async getPublicKey(_provider: KmsProvider, keyId: string): Promise<Buffer> {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- KMS client is lazily imported and typed as unknown; cast needed to call SDK methods
-    const client = await this.getClient() as any;
+    const client = await this.getClient();
     const [response] = await client.getPublicKey({ name: keyId });
     if (!response.pem) {
       throw new Error('GCP KMS returned empty public key');
