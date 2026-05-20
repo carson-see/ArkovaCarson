@@ -10,7 +10,6 @@
  */
 
 import { logger } from '../../utils/logger.js';
-import type { KMSClient } from '@aws-sdk/client-kms';
 import type { KeyManagementServiceClient } from '@google-cloud/kms';
 import type {
   KmsProvider,
@@ -18,6 +17,13 @@ import type {
   HsmSignResponse,
 } from '../types.js';
 import { KEY_ALGORITHM_TO_KMS, BANNED_ALGORITHMS, MIN_RSA_KEY_SIZE } from '../constants.js';
+
+interface AwsKmsClient {
+  send(command: unknown): Promise<{
+    Signature?: Uint8Array;
+    PublicKey?: Uint8Array;
+  }>;
+}
 
 // ─── Interface ─────────────────────────────────────────────────────────
 
@@ -31,15 +37,15 @@ export interface HsmBridge {
 
 export class AwsKmsHsmBridge implements HsmBridge {
   readonly name = 'AWS KMS';
-  private client: KMSClient | null = null;
+  private client: AwsKmsClient | null = null;
 
-  private async getClient(): Promise<KMSClient> {
+  private async getClient(): Promise<AwsKmsClient> {
     if (this.client) return this.client;
     // Lazy-load AWS SDK (same pattern as chain/signing-provider.ts)
     const { KMSClient } = await import('@aws-sdk/client-kms');
     this.client = new KMSClient({
       region: process.env.ADES_KMS_REGION || process.env.BITCOIN_KMS_REGION || 'us-east-1',
-    });
+    }) as AwsKmsClient;
     return this.client;
   }
 
