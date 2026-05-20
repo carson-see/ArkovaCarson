@@ -26,6 +26,7 @@
     "healthcheck": "tsx scripts/healthcheck/index.ts",
     "audit:secrets": "tsx scripts/secrets/audit-env.ts",
     "ci:api-scope-vocabulary": "tsx scripts/ci/check-api-scope-vocabulary.ts",
+    "ci:anchor-index-justification": "tsx scripts/ci/check-anchor-index-justification.ts",
     "ci:dep-pinning": "tsx scripts/ci/check-dep-pinning.ts",
     "ci:install-script-policy": "tsx scripts/ci/check-npm-install-policy.ts",
     "ci:staging-gcloud-policy": "tsx scripts/ci/check-staging-gcloud-policy.ts",
