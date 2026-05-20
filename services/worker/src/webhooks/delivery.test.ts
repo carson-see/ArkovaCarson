@@ -695,6 +695,34 @@ describe('deliverToEndpoint', () => {
     vi.useFakeTimers();
   }, 10_000);
 
+  it('recovers from duplicate-key on delivery_log insert by fetching the committed row', async () => {
+    vi.useRealTimers();
+
+    // First idempotency lookup returns no row (PGRST116)
+    deliveryLogSelect.single.mockResolvedValueOnce({ data: null, error: null });
+    // Insert hits unique constraint (original insert committed but response lost)
+    deliveryLogInsert.single
+      .mockResolvedValueOnce({ data: null, error: { message: 'duplicate key value violates unique constraint "webhook_delivery_logs_idempotency_key_key"', code: '23505' } });
+    // Recovery lookup fetches the committed row
+    deliveryLogSelect.single.mockResolvedValueOnce({ data: { id: 'log-dup-recovered', status: 'pending', attempt_number: 1 }, error: null });
+    // Fetch succeeds
+    mockFetch.mockResolvedValue({ ok: true, status: 200, text: () => Promise.resolve('OK') });
+    deliveryLogUpdate.eq.mockResolvedValue({ error: null });
+
+    mockRpc.mockResolvedValue({ data: true });
+    endpointsSelect.contains.mockResolvedValue({ data: [MOCK_ENDPOINT], error: null });
+    setupDbRouting();
+
+    await dispatchWebhookEvent('org-001', 'anchor.secured', 'evt-001', MOCK_PAYLOAD_DATA);
+
+    // Insert was called once (failed with duplicate key)
+    expect(deliveryLogInsert.insert).toHaveBeenCalledTimes(1);
+    // Recovery lookup fetched the existing row, delivery proceeded
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+
+    vi.useFakeTimers();
+  }, 10_000);
+
   it('coerces non-UUID event_id to a UUID for the webhook_delivery_logs.event_id column', async () => {
     deliveryLogSelect.single.mockResolvedValue({ data: null, error: null });
     deliveryLogInsert.single.mockResolvedValue({ data: { id: 'log-001' }, error: null });

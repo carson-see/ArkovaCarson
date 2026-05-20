@@ -382,6 +382,22 @@ async function deliverToEndpoint(
     ({ data: logEntry, error: logError } = await performLogWrite());
   }
 
+  // If the retry (or first attempt) hit a duplicate-key / unique constraint
+  // violation, the original insert actually committed — fetch the existing row
+  // so delivery can proceed instead of silently dropping the event.
+  if (logError && /duplicate key|unique constraint|23505/i.test(logError.message ?? '')) {
+    logger.info({ endpointId: endpoint.id, idempotencyKey }, 'Duplicate key on delivery_log — fetching committed row');
+    const { data: existingRow } = await db
+      .from('webhook_delivery_logs')
+      .select('id, status, attempt_number')
+      .eq('idempotency_key', idempotencyKey)
+      .single();
+    if (existingRow) {
+      logEntry = existingRow;
+      logError = null;
+    }
+  }
+
   if (logError) {
     // SCRUM-1805: surface delivery-log insert failures to Sentry so an outage
     // (DB unreachable, schema mismatch, RLS regression, etc.) doesn't silently
