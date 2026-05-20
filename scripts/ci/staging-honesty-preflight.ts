@@ -710,8 +710,8 @@ async function main(): Promise<void> {
   if (managementApiToken && prodProjectRef) {
     try {
       prodVersions = await fetchMigrationVersionsViaManagementApi(prodProjectRef, managementApiToken);
-    } catch (err) {
-      console.error(`::warning::Failed to query prod migration ledger via Management API: ${err instanceof Error ? err.message : String(err)}`);
+    } catch {
+      console.error('::warning::Failed to query prod migration ledger via Management API; continuing with configured/default prod versions.');
     }
   }
 
@@ -720,8 +720,8 @@ async function main(): Promise<void> {
   if (!prodFacts && managementApiToken && prodProjectRef) {
     try {
       prodFacts = await fetchProdFactsViaManagementApi(prodProjectRef, managementApiToken);
-    } catch (err) {
-      console.error(`::warning::Failed to query prod facts via Management API: ${err instanceof Error ? err.message : String(err)}`);
+    } catch {
+      console.error('::warning::Failed to query prod facts via Management API; falling back to environment cron facts when available.');
     }
   }
   if (!prodFacts) {
