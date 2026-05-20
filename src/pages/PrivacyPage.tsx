@@ -1,13 +1,13 @@
 /**
  * Privacy Policy Page
  *
- * Public route at /privacy. Placeholder content — to be replaced with
- * legal-reviewed copy before production launch.
+ * Public route at /privacy.
  */
 
 import { Link } from 'react-router-dom';
 import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
 import { JurisdictionPrivacyNotices } from '@/components/compliance/JurisdictionPrivacyNotices';
+import { LEGAL_PAGE_LABELS } from '@/lib/copy';
 
 import { usePageMeta } from '@/hooks/usePageMeta';
 
@@ -124,8 +124,7 @@ export function PrivacyPage() {
           </div>
 
           <p className="text-xs pt-6 border-t">
-            This privacy policy is a placeholder and will be updated following legal review
-            prior to production launch.
+            {LEGAL_PAGE_LABELS.PRIVACY_UPDATE_NOTICE}
           </p>
         </div>
       </main>

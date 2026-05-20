@@ -12,6 +12,7 @@ CI gate scripts. Each one fails the build with a structured exit code + actionab
 - `check-deploy-lint-parity.ts` (R0-4 / SCRUM-1250) — enforces that `deploy-worker.yml` and `ci.yml` lint steps run the SAME `npm run lint` script per CLAUDE.md §0 rule 9.
 - `check-rls-auth-uid-wrap.ts` (SCRUM-1280) — RLS policy lint: `auth.uid()` must always be wrapped in `(SELECT auth.uid())` to allow Postgres planner constant-folding.
 - `check-handoff-claims.ts` (R0-6 / SCRUM-1252) — HANDOFF.md verification lint: edits asserting prod state require a verification artifact link.
+- `check-sentry-alert-contract.test.ts` — regression test for the revision-drift workflow tags consumed by the documented Sentry alert rule.
 - `check-views-security-invoker.ts` — every Postgres view must use `WITH (security_invoker=true)` to prevent RLS bypass.
 - `feedback-rules/` — orchestrator + per-rule scripts (R0-7 / SCRUM-1253) for `memory/feedback_*.md` rules.
 
