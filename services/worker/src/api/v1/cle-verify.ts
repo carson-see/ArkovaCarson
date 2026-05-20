@@ -122,6 +122,7 @@ router.get('/verify', async (req: Request, res: Response) => {
     });
 
     // Also check attestations
+    // eslint-disable-next-line arkova/missing-org-filter -- public verification endpoint
     const { data: attestations } = await dbAny
       .from('attestations')
       .select('id, public_id, attestation_type, claims, status, created_at')

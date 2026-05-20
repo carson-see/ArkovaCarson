@@ -58,7 +58,7 @@ async function getPendingCount(): Promise<number | null> {
     return cachedCount.value;
   }
   try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any, arkova/missing-org-filter -- service-role admin query
     const { count, error } = await (db as any)
       .from('organization_rule_events')
       .select('id', { count: 'exact', head: true })

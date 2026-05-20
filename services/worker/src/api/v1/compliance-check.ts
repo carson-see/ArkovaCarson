@@ -55,6 +55,7 @@ router.post('/', async (req: Request, res: Response) => {
 
     // 1. SEC filings check
     if (checkAll || check_types.includes('sec_filings')) {
+      // eslint-disable-next-line arkova/missing-org-filter -- public verification endpoint
       const { data: secRecords } = await dbAny
         .from('public_records')
         .select('id, title, source_url, record_type, metadata, created_at')
@@ -78,6 +79,7 @@ router.post('/', async (req: Request, res: Response) => {
 
     // 2. Regulatory actions check
     if (checkAll || check_types.includes('regulatory_actions')) {
+      // eslint-disable-next-line arkova/missing-org-filter -- public verification endpoint
       const { data: regRecords } = await dbAny
         .from('public_records')
         .select('id, title, source_url, record_type, metadata, created_at')
@@ -102,6 +104,7 @@ router.post('/', async (req: Request, res: Response) => {
 
     // 3. Attestations check
     if (checkAll || check_types.includes('attestations')) {
+      // eslint-disable-next-line arkova/missing-org-filter -- public verification endpoint
       const { data: attestations } = await dbAny
         .from('attestations')
         .select('id, public_id, attestation_type, subject_identifier, attester_name, status, claims, created_at')

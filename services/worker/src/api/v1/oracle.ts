@@ -98,6 +98,7 @@ router.post('/verify', async (req: Request, res: Response) => {
       anchorMap.set(a.public_id as string, a);
     }
 
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- Supabase multi-table join return type
     const orgIds = [...new Set(anchorList.map((a: any) => a.org_id).filter((id: any): id is string => id != null))] as string[];
     const orgNameMap = new Map<string, string>();
     if (orgIds.length > 0) {

@@ -162,6 +162,7 @@ export function apiKeyAuth(hmacSecret: string, options: { required?: boolean } =
 
     // Look up in database
     try {
+      // eslint-disable-next-line arkova/missing-org-filter -- auth: org unknown until key resolved
       const { data: apiKey, error } = await db.from('api_keys')
         .select('id, org_id, created_by, scopes, rate_limit_tier, key_prefix, is_active, expires_at')
         .eq('key_hash', keyHash)
@@ -204,6 +205,7 @@ export function apiKeyAuth(hmacSecret: string, options: { required?: boolean } =
       };
 
       // Update last_used_at (fire-and-forget, non-blocking)
+      // eslint-disable-next-line arkova/missing-org-filter -- auth: org unknown until key resolved
       void db.from('api_keys')
         .update({ last_used_at: new Date().toISOString() })
         .eq('id', apiKey.id);
