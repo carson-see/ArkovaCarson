@@ -42,6 +42,16 @@ export interface JobSubmission<T = unknown> {
 
 const DEFAULT_MAX_ATTEMPTS = 3;
 
+export type JobHandler<T = unknown> = (job: Job<T>) => Promise<void>;
+
+export interface ProcessJobResult {
+  claimed: boolean;
+  status: 'idle' | 'completed' | 'failed' | 'dead' | 'update_failed';
+  jobId?: string;
+  attempts?: number;
+  error?: string;
+}
+
 /**
  * Submit a job to the queue.
  */
@@ -98,10 +108,13 @@ export async function claimJob<T>(type: string): Promise<Job<T> | null> {
  */
 export async function completeJob(jobId: string): Promise<void> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  await (db as any)
+  const { error } = await (db as any)
     .from('job_queue')
     .update({ status: 'completed', updated_at: new Date().toISOString() })
     .eq('id', jobId);
+  if (error) {
+    throw new Error(`job_complete_update_failed:${jobId}`);
+  }
 }
 
 /**
@@ -111,7 +124,7 @@ export async function failJob(jobId: string, errorMessage: string, attempts: num
   const status: JobStatus = attempts >= maxAttempts ? 'dead' : 'failed';
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  await (db as any)
+  const { error } = await (db as any)
     .from('job_queue')
     .update({
       status,
@@ -123,10 +136,69 @@ export async function failJob(jobId: string, errorMessage: string, attempts: num
       } : {}),
     })
     .eq('id', jobId);
+  if (error) {
+    throw new Error(`job_fail_update_failed:${jobId}`);
+  }
 
   if (status === 'dead') {
     logger.warn({ jobId, attempts, error: errorMessage }, 'Job moved to dead letter queue');
   }
+}
+
+/**
+ * Claim and process one queued job with the shared retry/dead-letter policy.
+ */
+export async function processNextJob<T = unknown>(
+  type: string,
+  handler: JobHandler<T>,
+): Promise<ProcessJobResult> {
+  const job = await claimJob<T>(type);
+  if (!job) return { claimed: false, status: 'idle' };
+
+  try {
+    await handler(job);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    try {
+      await failJob(job.id, message, job.attempts, job.max_attempts);
+    } catch (updateError) {
+      const updateMessage = updateError instanceof Error ? updateError.message : String(updateError);
+      return {
+        claimed: true,
+        status: 'update_failed',
+        jobId: job.id,
+        attempts: job.attempts,
+        error: updateMessage,
+      };
+    }
+    return {
+      claimed: true,
+      status: job.attempts >= job.max_attempts ? 'dead' : 'failed',
+      jobId: job.id,
+      attempts: job.attempts,
+      error: message,
+    };
+  }
+
+  try {
+    await completeJob(job.id);
+  } catch (updateError) {
+    const updateMessage = updateError instanceof Error ? updateError.message : String(updateError);
+    return {
+      claimed: true,
+      status: 'update_failed',
+      jobId: job.id,
+      attempts: job.attempts,
+      error: updateMessage,
+    };
+  }
+
+  return {
+    claimed: true,
+    status: 'completed',
+    jobId: job.id,
+    attempts: job.attempts,
+  };
 }
 
 /**
