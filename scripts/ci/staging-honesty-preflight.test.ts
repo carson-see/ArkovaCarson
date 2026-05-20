@@ -15,6 +15,10 @@ import {
   computeProdDivergence,
   checkOrgTopology,
   checkProdFacts,
+  isSupabaseMigrationsSchemaUnavailable,
+  mapManagementMigrationRows,
+  mapManagementMigrationVersions,
+  mapManagementProdFacts,
   isOrgSeedName,
   buildReport,
   parseArgs,
@@ -97,6 +101,10 @@ describe('classifyMigrationRow', () => {
 
   it('does not flag the init migration (00000000000000)', () => {
     expect(classifyMigrationRow({ version: '00000000000000', name: '00000000000000' })).toBeNull();
+  });
+
+  it('does not flag the baseline row name used by Path C', () => {
+    expect(classifyMigrationRow({ version: '00000000000000', name: 'baseline_at_main_HEAD' })).toBeNull();
   });
 });
 
@@ -336,9 +344,85 @@ describe('parseArgs', () => {
     expect(args.prodFacts).toEqual({ cronJobNames: ['vacuum-anchors'], functionExists: true });
   });
 
+  it('parses --management-api-token', () => {
+    const args = parseArgs(['--management-api-token', 'sbp_test']);
+    expect(args.managementApiToken).toBe('sbp_test');
+  });
+
+  it('parses --prod-project-ref', () => {
+    const args = parseArgs(['--prod-project-ref', 'prod-ref']);
+    expect(args.prodProjectRef).toBe('prod-ref');
+  });
+
   it('ignores malformed --prod-facts JSON', () => {
     const args = parseArgs(['--prod-facts', 'not-json']);
     expect(args.prodFacts).toBeUndefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Management API fallback helpers
+// ---------------------------------------------------------------------------
+
+describe('isSupabaseMigrationsSchemaUnavailable', () => {
+  it('detects hidden supabase_migrations schema errors from PostgREST', () => {
+    expect(isSupabaseMigrationsSchemaUnavailable({
+      message: 'Invalid schema: supabase_migrations',
+    })).toBe(true);
+  });
+
+  it('detects PGRST106 hidden-schema errors that omit the requested schema', () => {
+    expect(isSupabaseMigrationsSchemaUnavailable({
+      code: 'PGRST106',
+      message: 'The schema must be one of the following: public, graphql_public',
+    })).toBe(true);
+  });
+
+  it('does not treat unrelated query errors as fallback-safe', () => {
+    expect(isSupabaseMigrationsSchemaUnavailable({
+      message: 'permission denied for table schema_migrations',
+    })).toBe(false);
+  });
+});
+
+describe('mapManagementMigrationRows', () => {
+  it('normalizes raw Management API rows into MigrationRow objects', () => {
+    expect(mapManagementMigrationRows([
+      { version: 294, name: '0294_refund_org_credit' },
+      { version: '20260505010337', name: null },
+    ])).toEqual([
+      { version: '294', name: '0294_refund_org_credit' },
+      { version: '20260505010337', name: '' },
+    ]);
+  });
+});
+
+describe('mapManagementMigrationVersions', () => {
+  it('normalizes Management API version rows for prod ledger comparison', () => {
+    expect(mapManagementMigrationVersions([
+      { version: 294 },
+      { version: '0295' },
+      { ignored: 'row' },
+    ])).toEqual(['294', '0295', '']);
+  });
+});
+
+describe('mapManagementProdFacts', () => {
+  it('normalizes cron and function rows from the Management API', () => {
+    expect(mapManagementProdFacts(
+      [{ cron_job_names: ['vacuum-anchors', 'refresh-pipeline-dashboard-cache'] }],
+      [{ function_exists: true }],
+    )).toEqual({
+      cronJobNames: ['vacuum-anchors', 'refresh-pipeline-dashboard-cache'],
+      functionExists: true,
+    });
+  });
+
+  it('handles empty Management API result sets', () => {
+    expect(mapManagementProdFacts([], [])).toEqual({
+      cronJobNames: [],
+      functionExists: false,
+    });
   });
 });
 
@@ -411,12 +495,13 @@ describe('checkOrgTopology', () => {
 describe('checkProdFacts', () => {
   it('passes when all prod facts match', () => {
     const result = checkProdFacts({
-      cronJobNames: ['vacuum-anchors'],
+      cronJobNames: ['vacuum-anchors', 'refresh-pipeline-dashboard-cache'],
       functionExists: true,
     });
     expect(result.passed).toBe(true);
     expect(result.name).toBe('prod_facts');
     expect(result.details).toMatch(/vacuum-anchors scheduled/);
+    expect(result.details).toMatch(/refresh-pipeline-dashboard-cache scheduled/);
   });
 
   it('fails when vacuum-anchors job is missing', () => {
@@ -437,24 +522,23 @@ describe('checkProdFacts', () => {
     expect(result.details).toMatch(/refresh_pipeline_dashboard_cache\(\) function missing/);
   });
 
-  it('fails when refresh_pipeline_dashboard_cache is incorrectly scheduled', () => {
+  it('fails when refresh-pipeline-dashboard-cache job is missing', () => {
     const result = checkProdFacts({
-      cronJobNames: ['vacuum-anchors', 'refresh_pipeline_dashboard_cache'],
+      cronJobNames: ['vacuum-anchors'],
       functionExists: true,
     });
     expect(result.passed).toBe(false);
-    expect(result.details).toMatch(/should be unscheduled per prod/);
+    expect(result.details).toMatch(/refresh-pipeline-dashboard-cache job missing/);
   });
 
   it('reports multiple issues together', () => {
     const result = checkProdFacts({
-      cronJobNames: ['refresh_pipeline_dashboard_cache'],
+      cronJobNames: ['refresh-pipeline-dashboard-cache'],
       functionExists: false,
     });
     expect(result.passed).toBe(false);
     expect(result.details).toMatch(/vacuum-anchors/);
     expect(result.details).toMatch(/function missing/);
-    expect(result.details).toMatch(/should be unscheduled/);
   });
 });
 
@@ -484,7 +568,7 @@ describe('buildReport with org topology and prod facts', () => {
       migrationRows: CLEAN_ROWS,
       submittedAnchorCount: 5,
       prodVersions: DEFAULT_PROD,
-      prodFacts: { cronJobNames: ['vacuum-anchors'], functionExists: true },
+      prodFacts: { cronJobNames: ['vacuum-anchors', 'refresh-pipeline-dashboard-cache'], functionExists: true },
     });
     const check = report.checks.find((c) => c.name === 'prod_facts');
     expect(check).toBeDefined();
@@ -509,7 +593,7 @@ describe('buildReport with org topology and prod facts', () => {
       submittedAnchorCount: 5,
       prodVersions: DEFAULT_PROD,
       orgTopology: { totalOrgs: 5, seedOrgs: 0 },
-      prodFacts: { cronJobNames: ['vacuum-anchors'], functionExists: true },
+      prodFacts: { cronJobNames: ['vacuum-anchors', 'refresh-pipeline-dashboard-cache'], functionExists: true },
     });
     expect(report.environment_type).toBe('clean_mirror');
     expect(report.checks.every((c) => c.passed)).toBe(true);

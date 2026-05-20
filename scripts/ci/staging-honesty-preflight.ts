@@ -14,8 +14,15 @@
  * Connection:
  *   --project-ref  Supabase project ref (or STAGING_PROJECT_REF env var).
  *                  URL derived as https://<ref>.supabase.co
+ *   --prod-project-ref  Production Supabase project ref (or PROD_PROJECT_REF
+ *                  env var). When paired with a Management API token, the
+ *                  prod ledger and prod cron facts are queried live.
  *   --supabase-url Override the derived URL directly.
  *   --service-role-key  Service role key (or SUPABASE_SERVICE_ROLE_KEY env).
+ *   --management-api-token  Supabase Management API token (or
+ *                  SUPABASE_ACCESS_TOKEN / SUPABASE_MANAGEMENT_API_TOKEN env)
+ *                  used as a read-only fallback when supabase_migrations is
+ *                  hidden from PostgREST.
  *
  * Checks:
  *   1. PR-only / staging-only rows (timestamp versions, pr695_/pr697_/
@@ -80,8 +87,10 @@ export interface ProdFactsData {
 
 export interface ParsedArgs {
   projectRef: string | undefined;
+  prodProjectRef: string | undefined;
   supabaseUrl: string | undefined;
   serviceRoleKey: string | undefined;
+  managementApiToken: string | undefined;
   prodVersions: string[];
   prodFacts: ProdFactsData | undefined;
   format: 'json' | 'text';
@@ -123,6 +132,25 @@ const TIMESTAMP_VERSION_RE = /^\d{14,}$/;
 /** Prefixes in org names that indicate staging seed data (case-insensitive). */
 const SEED_ORG_PREFIXES = ['stg', 'staging_seed_', 'test_org_'];
 
+const MANAGEMENT_API_BASE_URL = 'https://api.supabase.com/v1';
+const MIGRATION_LEDGER_QUERY = `
+  select version, name
+  from supabase_migrations.schema_migrations
+  order by version asc
+`;
+const MIGRATION_VERSION_QUERY = `
+  select version
+  from supabase_migrations.schema_migrations
+  order by version asc
+`;
+const CRON_JOB_NAMES_QUERY = `
+  select coalesce(jsonb_agg(jobname order by jobname), '[]'::jsonb) as cron_job_names
+  from cron.job
+`;
+const REFRESH_FUNCTION_EXISTS_QUERY = `
+  select to_regprocedure('public.refresh_pipeline_dashboard_cache()') is not null as function_exists
+`;
+
 // ---------------------------------------------------------------------------
 // Pure classification functions (exported for testing)
 // ---------------------------------------------------------------------------
@@ -135,7 +163,7 @@ export function classifyMigrationRow(row: MigrationRow): ArtifactClassification 
   const { version, name } = row;
 
   // The init row is always canonical.
-  if (version === '00000000000000' && name === '00000000000000') return null;
+  if (version === '00000000000000') return null;
 
   // Timestamp-format version (14+ digits, but not the init row).
   if (TIMESTAMP_VERSION_RE.test(version)) {
@@ -206,6 +234,41 @@ export function detectKnownArtifacts(rows: MigrationRow[]): MigrationRow[] {
   return artifacts;
 }
 
+export function isSupabaseMigrationsSchemaUnavailable(
+  error: { code?: string; message?: string } | null | undefined,
+): boolean {
+  const code = error?.code?.toUpperCase();
+  const message = error?.message?.toLowerCase() ?? '';
+  return code === 'PGRST106'
+    || message.includes('schema must be one of')
+    || (message.includes('supabase_migrations') && message.includes('invalid schema'));
+}
+
+export function mapManagementMigrationRows(rows: readonly Record<string, unknown>[]): MigrationRow[] {
+  return rows.map((row) => ({
+    version: String(row.version ?? ''),
+    name: String(row.name ?? ''),
+  }));
+}
+
+export function mapManagementMigrationVersions(rows: readonly Record<string, unknown>[]): string[] {
+  return rows.map((row) => String(row.version ?? ''));
+}
+
+export function mapManagementProdFacts(
+  cronRows: readonly Record<string, unknown>[],
+  functionRows: readonly Record<string, unknown>[],
+): ProdFactsData {
+  const cronJobNamesValue = cronRows[0]?.cron_job_names;
+  const cronJobNames = Array.isArray(cronJobNamesValue)
+    ? cronJobNamesValue.map(String)
+    : [];
+  return {
+    cronJobNames,
+    functionExists: functionRows[0]?.function_exists === true,
+  };
+}
+
 /**
  * Compare staging migration versions against the prod ledger.
  */
@@ -262,8 +325,8 @@ export function checkOrgTopology(data: OrgTopologyData): CheckResult {
 /**
  * Verify prod facts from the 2026-05-06 correction:
  *   - pg_cron has vacuum-anchors job
- *   - refresh_pipeline_dashboard_cache() exists but is NOT scheduled
- *   - autovacuum is not blocked (reflected by absence of the function in cron)
+ *   - refresh_pipeline_dashboard_cache() exists
+ *   - refresh-pipeline-dashboard-cache is scheduled per the SCRUM-1708 cadence
  */
 export function checkProdFacts(data: ProdFactsData): CheckResult {
   const issues: string[] = [];
@@ -276,15 +339,15 @@ export function checkProdFacts(data: ProdFactsData): CheckResult {
     issues.push('refresh_pipeline_dashboard_cache() function missing');
   }
 
-  if (data.cronJobNames.some((n) => n.includes('refresh_pipeline_dashboard_cache'))) {
-    issues.push('refresh_pipeline_dashboard_cache is scheduled (should be unscheduled per prod)');
+  if (!data.cronJobNames.includes('refresh-pipeline-dashboard-cache')) {
+    issues.push('refresh-pipeline-dashboard-cache job missing');
   }
 
   return {
     name: 'prod_facts',
     passed: issues.length === 0,
     details: issues.length === 0
-      ? 'Prod facts verified: vacuum-anchors scheduled, refresh_pipeline_dashboard_cache exists but unscheduled.'
+      ? 'Prod facts verified: vacuum-anchors scheduled, refresh_pipeline_dashboard_cache exists, refresh-pipeline-dashboard-cache scheduled.'
       : `Prod facts divergence: ${issues.join('; ')}.`,
   };
 }
@@ -435,8 +498,10 @@ export function buildReport(opts: {
 
 export function parseArgs(argv: string[]): ParsedArgs {
   let projectRef: string | undefined;
+  let prodProjectRef: string | undefined;
   let supabaseUrl: string | undefined;
   let serviceRoleKey: string | undefined;
+  let managementApiToken: string | undefined;
   let prodVersions: string[] = DEFAULT_PROD_VERSIONS;
   let prodFacts: ProdFactsData | undefined;
   let format: 'json' | 'text' = 'json';
@@ -449,12 +514,20 @@ export function parseArgs(argv: string[]): ParsedArgs {
         projectRef = next;
         i++;
         break;
+      case '--prod-project-ref':
+        prodProjectRef = next;
+        i++;
+        break;
       case '--supabase-url':
         supabaseUrl = next;
         i++;
         break;
       case '--service-role-key':
         serviceRoleKey = next;
+        i++;
+        break;
+      case '--management-api-token':
+        managementApiToken = next;
         i++;
         break;
       case '--prod-versions':
@@ -474,7 +547,7 @@ export function parseArgs(argv: string[]): ParsedArgs {
     }
   }
 
-  return { projectRef, supabaseUrl, serviceRoleKey, prodVersions, prodFacts, format };
+  return { projectRef, prodProjectRef, supabaseUrl, serviceRoleKey, managementApiToken, prodVersions, prodFacts, format };
 }
 
 // ---------------------------------------------------------------------------
@@ -521,11 +594,55 @@ function formatText(report: PreflightReport): string {
 // Main (DB-connected)
 // ---------------------------------------------------------------------------
 
+async function queryManagementApi(projectRef: string, managementApiToken: string, query: string): Promise<Record<string, unknown>[]> {
+  const response = await fetch(`${MANAGEMENT_API_BASE_URL}/projects/${encodeURIComponent(projectRef)}/database/query/read-only`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${managementApiToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ query }),
+  });
+
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`Supabase Management API query failed (${response.status}): ${body}`);
+  }
+
+  const payload = await response.json() as unknown;
+  if (!Array.isArray(payload)) {
+    throw new Error('Supabase Management API query returned a non-array payload.');
+  }
+  return payload.filter((row): row is Record<string, unknown> => row !== null && typeof row === 'object' && !Array.isArray(row));
+}
+
+async function fetchMigrationRowsViaManagementApi(projectRef: string, managementApiToken: string): Promise<MigrationRow[]> {
+  const rows = await queryManagementApi(projectRef, managementApiToken, MIGRATION_LEDGER_QUERY);
+  return mapManagementMigrationRows(rows);
+}
+
+async function fetchMigrationVersionsViaManagementApi(projectRef: string, managementApiToken: string): Promise<string[]> {
+  const rows = await queryManagementApi(projectRef, managementApiToken, MIGRATION_VERSION_QUERY);
+  return mapManagementMigrationVersions(rows);
+}
+
+async function fetchProdFactsViaManagementApi(projectRef: string, managementApiToken: string): Promise<ProdFactsData> {
+  const [cronRows, functionRows] = await Promise.all([
+    queryManagementApi(projectRef, managementApiToken, CRON_JOB_NAMES_QUERY),
+    queryManagementApi(projectRef, managementApiToken, REFRESH_FUNCTION_EXISTS_QUERY),
+  ]);
+  return mapManagementProdFacts(cronRows, functionRows);
+}
+
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
 
   const projectRef = args.projectRef ?? process.env.STAGING_PROJECT_REF;
+  const prodProjectRef = args.prodProjectRef ?? process.env.PROD_PROJECT_REF;
   const serviceRoleKey = args.serviceRoleKey ?? process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const managementApiToken = args.managementApiToken
+    ?? process.env.SUPABASE_ACCESS_TOKEN
+    ?? process.env.SUPABASE_MANAGEMENT_API_TOKEN;
   const supabaseUrl = args.supabaseUrl
     ?? (projectRef ? `https://${projectRef}.supabase.co` : undefined);
 
@@ -548,15 +665,20 @@ async function main(): Promise<void> {
     .select('version, name')
     .order('version', { ascending: true });
 
+  let migrationRows: MigrationRow[];
   if (migrationError) {
-    console.error(`::error::Failed to query schema_migrations: ${migrationError.message}`);
-    process.exit(1);
+    if (isSupabaseMigrationsSchemaUnavailable(migrationError) && managementApiToken && projectRef) {
+      migrationRows = await fetchMigrationRowsViaManagementApi(projectRef, managementApiToken);
+    } else {
+      const hint = isSupabaseMigrationsSchemaUnavailable(migrationError)
+        ? ' Set --management-api-token or SUPABASE_ACCESS_TOKEN to query the ledger through the Supabase Management API.'
+        : '';
+      console.error(`::error::Failed to query schema_migrations: ${migrationError.message}${hint}`);
+      process.exit(1);
+    }
+  } else {
+    migrationRows = mapManagementMigrationRows(migrationData ?? []);
   }
-
-  const migrationRows: MigrationRow[] = (migrationData ?? []).map((r) => ({
-    version: String(r.version),
-    name: String(r.name),
-  }));
 
   // Query SUBMITTED anchor count.
   const publicClient = createClient(supabaseUrl, serviceRoleKey);
@@ -584,8 +706,24 @@ async function main(): Promise<void> {
     // Org topology check skipped — table may not exist in this environment.
   }
 
-  // Prod facts: prefer CLI flag, fall back to live query (best-effort via cron schema).
+  let prodVersions = args.prodVersions;
+  if (managementApiToken && prodProjectRef) {
+    try {
+      prodVersions = await fetchMigrationVersionsViaManagementApi(prodProjectRef, managementApiToken);
+    } catch (err) {
+      console.error(`::warning::Failed to query prod migration ledger via Management API: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  // Prod facts: prefer CLI flag, then prod Management API, then environment cron schema.
   let prodFacts: ProdFactsData | undefined = args.prodFacts;
+  if (!prodFacts && managementApiToken && prodProjectRef) {
+    try {
+      prodFacts = await fetchProdFactsViaManagementApi(prodProjectRef, managementApiToken);
+    } catch (err) {
+      console.error(`::warning::Failed to query prod facts via Management API: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
   if (!prodFacts) {
     try {
       const cronClient = createClient(supabaseUrl, serviceRoleKey, { db: { schema: 'cron' } });
@@ -606,7 +744,7 @@ async function main(): Promise<void> {
     projectRef: projectRef ?? supabaseUrl,
     migrationRows,
     submittedAnchorCount: count ?? 0,
-    prodVersions: args.prodVersions,
+    prodVersions,
     orgTopology,
     prodFacts,
   });
