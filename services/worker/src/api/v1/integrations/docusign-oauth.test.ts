@@ -28,6 +28,7 @@ vi.mock('../../../utils/db.js', () => ({
 }));
 
 import { createDocusignOAuthRouter } from './docusign-oauth.js';
+import { logger } from '../../../utils/logger.js';
 
 interface QueryResult {
   data?: unknown;
@@ -376,7 +377,150 @@ describe('DocuSign OAuth router', () => {
 
     expect(res.status).toBe(500);
     expect(res.body.error).toBe('Failed to delete DocuSign refresh token secret');
+    expect(captured.update).toBeUndefined();
     expect(captured.insert).toBeUndefined();
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.objectContaining({
+        orgId: TEST_ORG_ID,
+        tokenSecretNames: ['projects/test-project/secrets/arkova-docusign-refresh-token'],
+      }),
+      'DocuSign refresh-token secret deletion failed during disconnect',
+    );
+  });
+
+  it('fails disconnect when the existing integration lookup errors before secret cleanup', async () => {
+    const captured: Record<string, unknown[]> = {};
+    const capture = (method: string, value: unknown) => {
+      captured[method] = [...(captured[method] ?? []), value];
+    };
+    let integrationQueryCount = 0;
+    const db = {
+      from: vi.fn((table: string) => {
+        if (table === 'org_members') return mockQuery({ data: { role: 'admin' }, error: null });
+        if (table === 'org_integrations') {
+          integrationQueryCount += 1;
+          if (integrationQueryCount === 1) {
+            return mockQuery({ data: null, error: { message: 'db unavailable' } }, capture);
+          }
+          return mockQuery({ data: [{ id: 'integration-1' }], error: null }, capture);
+        }
+        if (table === 'integration_events') return mockQuery({ data: null, error: null }, capture);
+        return mockQuery({ data: null, error: null });
+      }),
+    };
+    const app = createApp(db);
+
+    const res = await request(app)
+      .post('/api/v1/integrations/docusign/disconnect')
+      .send({ org_id: TEST_ORG_ID });
+
+    expect(res.status).toBe(500);
+    expect(res.body.error).toBe('Failed to disconnect DocuSign');
+    expect(captured.update).toBeUndefined();
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.objectContaining({ orgId: TEST_ORG_ID }),
+      'DocuSign disconnect existing integration lookup failed',
+    );
+  });
+
+  it('logs and redirects when refresh-token cleanup fails after an upsert error', async () => {
+    const captured: Record<string, unknown[]> = {};
+    const capture = (method: string, value: unknown) => {
+      captured[method] = [...(captured[method] ?? []), value];
+    };
+    const secretDeletes: string[] = [];
+    const db = {
+      from: vi.fn((table: string) => {
+        if (table === 'org_members') return mockQuery({ data: { role: 'owner' }, error: null });
+        if (table === 'org_integrations') return mockQuery({ data: null, error: { message: 'upsert failed' } }, capture);
+        if (table === 'integration_events') return mockQuery({ data: null, error: null }, capture);
+        return mockQuery({ data: null, error: null }, capture);
+      }),
+    };
+
+    const fetchImpl = vi.fn(async (input: string | URL | Request) => {
+      const url = String(input);
+      if (url === 'https://account-d.docusign.com/oauth/token') {
+        return new Response(JSON.stringify({
+          access_token: 'access-token-upsert-fail',
+          expires_in: 3600,
+          refresh_token: 'refresh-token-upsert-fail',
+          scope: 'signature extended',
+          token_type: 'Bearer',
+        }), { status: 200 });
+      }
+      if (url === 'https://account-d.docusign.com/oauth/userinfo') {
+        return new Response(JSON.stringify({
+          sub: 'docusign-sub-1',
+          email: 'admin@example.com',
+          accounts: [{
+            account_id: 'docusign-account-1',
+            account_name: 'Acme Legal',
+            base_uri: 'https://demo.docusign.net',
+            is_default: true,
+          }],
+        }), { status: 200 });
+      }
+      return new Response('{}', { status: 404 });
+    });
+
+    const app = express();
+    app.use(express.json());
+    app.use((req, _res, next) => {
+      (req as unknown as { userId: string }).userId = TEST_USER_ID;
+      next();
+    });
+    app.use('/api/v1/integrations', createDocusignOAuthRouter({
+      db,
+      env: {
+        DOCUSIGN_INTEGRATION_KEY: 'docusign-client',
+        DOCUSIGN_CLIENT_SECRET: 'docusign-client-secret',
+        DOCUSIGN_DEMO: 'true',
+        GCP_SECRET_MANAGER_PROJECT_ID: 'test-project',
+        GCP_KMS_INTEGRATION_TOKEN_KEY: 'projects/p/locations/l/keyRings/r/cryptoKeys/k',
+      },
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      stateSecret: 'test-state-secret',
+      frontendUrl: 'http://localhost:5173',
+      now: () => new Date('2026-04-24T12:00:00.000Z'),
+      kms: {
+        async encrypt() { return Buffer.from('encrypted-token-payload'); },
+        async decrypt() { return Buffer.from('{}'); },
+      },
+      refreshTokenStore: {
+        async put() { return undefined; },
+        async get() { return null; },
+        async delete({ name }: { name: string }) {
+          secretDeletes.push(name);
+          throw new Error('secret delete failed');
+        },
+      },
+    }));
+
+    const start = await request(app)
+      .post('/api/v1/integrations/docusign/oauth/start')
+      .set('host', 'worker.test')
+      .send({
+        org_id: TEST_ORG_ID,
+        return_to: 'http://localhost:5173/organizations/org-1?tab=settings',
+      });
+    const state = new URL(start.body.authorizationUrl).searchParams.get('state');
+
+    const callback = await request(app)
+      .get('/api/v1/integrations/docusign/oauth/callback')
+      .set('host', 'worker.test')
+      .query({ code: 'docusign-code', state });
+
+    expect(callback.status).toBe(302);
+    expect(callback.headers.location).toContain('docusign_error=save_failed');
+    expect(secretDeletes).toHaveLength(1);
+    expect(logger.warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        orgId: TEST_ORG_ID,
+        tokenSecretName: secretDeletes[0],
+      }),
+      'DocuSign refresh-token secret cleanup failed after upsert error',
+    );
   });
 
   it('provisions a Connect listener after successful OAuth callback', async () => {

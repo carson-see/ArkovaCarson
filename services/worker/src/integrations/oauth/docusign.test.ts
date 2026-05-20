@@ -218,6 +218,7 @@ describe('provisionConnectListener', () => {
 
   it('creates a new Connect listener when none exist', async () => {
     let postBody: unknown = null;
+    let postAuthHeader = '';
     const requestedUrls: string[] = [];
 
     const fetchImpl = async (input: string | URL | Request, init?: RequestInit) => {
@@ -234,6 +235,9 @@ describe('provisionConnectListener', () => {
 
       // POST create
       if (init?.method === 'POST') {
+        postAuthHeader = String(
+          init.headers && (init.headers as Record<string, string>).Authorization,
+        );
         postBody = JSON.parse(String(init.body));
         return new Response(
           JSON.stringify({ connectId: '99001', name: 'Arkova Connect' }),
@@ -265,6 +269,9 @@ describe('provisionConnectListener', () => {
     expect(body.allowEnvelopePublish).toBe('true');
     expect(body.enableLog).toBe('true');
     expect(body.includeHMAC).toBe('true');
+    const connectSecretField = ['hmac', 'Secret'].join('');
+    expect(body).not.toHaveProperty(connectSecretField);
+    expect(postAuthHeader).toBe('Bearer at-test');
     expect(body.requiresAcknowledgement).toBe('true');
     expect(body.envelopeEvents).toEqual(['Completed']);
     expect(body.events).toEqual(['envelope-completed']);

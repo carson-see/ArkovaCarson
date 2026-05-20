@@ -295,6 +295,7 @@ ENABLE_DOCUSIGN_OAUTH=false         # DocuSign OAuth routes; default off pending
 # over the raw body before parsing or enqueueing events.
 DOCUSIGN_CONNECT_HMAC_SECRET=
 ENABLE_DOCUSIGN_WEBHOOK=false       # /webhooks/docusign intake; default off until org-wide Connect testing passes
+WORKER_PUBLIC_URL=                  # Public worker origin used when provisioning DocuSign Connect listener URLs
 
 # Sandbox vs production DocuSign account server. Default true. Only a literal
 # "false" flips to production account.docusign.com.
