@@ -60,6 +60,7 @@ const {
     enableProdNetworkAnchoring: false,
     useMocks: true,
     frontendUrl: 'http://localhost:5173',
+    corsAllowedOrigins: 'https://app.arkova.ai',
     apiKeyHmacSecret: 'test-hmac-secret',
   };
   const mockDbFrom = vi.fn();
@@ -614,6 +615,25 @@ describe('worker server', () => {
 
       expect(res.status).toBe(204);
       expect(res.headers['Access-Control-Allow-Origin']).toBe('http://localhost:5173');
+    });
+  });
+
+  describe('OPTIONS /api/v1/integrations OAuth routes (CORS preflight)', () => {
+    it.each([
+      '/api/v1/integrations/docusign/oauth/start',
+      '/api/v1/integrations/google_drive/oauth/start',
+    ])('returns 204 with CORS headers for %s from the production app origin', async (path) => {
+      const res = await request(app, 'OPTIONS', path, undefined, {
+        origin: 'https://app.arkova.ai',
+        'access-control-request-method': 'POST',
+        'access-control-request-headers': 'Content-Type, Authorization',
+      });
+
+      expect(res.status).toBe(204);
+      expect(res.headers['Access-Control-Allow-Origin']).toBe('https://app.arkova.ai');
+      expect(res.headers['Access-Control-Allow-Methods']).toBe('GET, POST, PATCH, DELETE, OPTIONS');
+      expect(res.headers['Access-Control-Allow-Headers']).toContain('Content-Type');
+      expect(res.headers['Access-Control-Allow-Headers']).toContain('Authorization');
     });
   });
 
