@@ -198,14 +198,54 @@ describe('handleListPendingResolution', () => {
           fingerprint: 'fp',
           created_at: '2026-01-01T00:00:00Z',
         },
+        {
+          public_id: 'pid_acmemsa2',
+          metadata: { external_file_id: 'drive-123' },
+          filename: 'f-v2.pdf',
+          fingerprint: 'fp2',
+          created_at: '2026-01-02T00:00:00Z',
+        },
+        {
+          public_id: 'pid_acmemsa3',
+          metadata: null,
+          filename: 'orphan.pdf',
+          fingerprint: 'fp3',
+          created_at: '2026-01-03T00:00:00Z',
+        },
       ],
     );
     const { res, status, json } = mockRes();
     await handleListPendingResolution('user-1', mockReq(), res);
     expect(status).not.toHaveBeenCalled();
-    expect(json).toHaveBeenCalledWith(
-      expect.objectContaining({ count: 1, items: expect.any(Array) }),
-    );
+    expect(json).toHaveBeenCalledWith({
+      count: 3,
+      items: [
+        {
+          public_id: 'pid_acmemsa1',
+          external_file_id: 'drive-123',
+          filename: 'f.pdf',
+          fingerprint: 'fp',
+          created_at: '2026-01-01T00:00:00Z',
+          sibling_count: 1,
+        },
+        {
+          public_id: 'pid_acmemsa2',
+          external_file_id: 'drive-123',
+          filename: 'f-v2.pdf',
+          fingerprint: 'fp2',
+          created_at: '2026-01-02T00:00:00Z',
+          sibling_count: 1,
+        },
+        {
+          public_id: 'pid_acmemsa3',
+          external_file_id: null,
+          filename: 'orphan.pdf',
+          fingerprint: 'fp3',
+          created_at: '2026-01-03T00:00:00Z',
+          sibling_count: 0,
+        },
+      ],
+    });
   });
 
   it('returns empty list when caller has no org', async () => {
