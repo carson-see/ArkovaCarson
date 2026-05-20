@@ -11,6 +11,7 @@ DECLARE
   v_result jsonb;
   v_recipient_hash text;
   v_recipient_raw text;
+  v_app_base_url text := COALESCE(NULLIF(current_setting('app.base_url', true), ''), 'https://app.arkova.ai');
 BEGIN
   SELECT
     a.metadata->>'recipient',
@@ -33,20 +34,31 @@ BEGIN
       'bitcoin_block', CASE WHEN a.status NOT IN ('PENDING') THEN a.chain_block_height END,
       'network_receipt_id', CASE WHEN a.status NOT IN ('PENDING') THEN a.chain_tx_id END,
       'merkle_proof_hash', NULL::text,
-      'record_uri', 'https://app.arkova.io/verify/' || a.public_id,
+      'record_uri', v_app_base_url || '/verify/' || a.public_id,
       'public_id', a.public_id,
       'fingerprint', a.fingerprint,
       'filename', a.filename,
       'file_size', a.file_size,
-      'org_id', a.org_id,
-      'metadata', sanitize_metadata_for_public(COALESCE(a.metadata, '{}'::jsonb)),
+      'issuer_public_id', o.public_id,
+      'metadata', sanitize_metadata_for_public(
+        COALESCE(a.metadata, '{}'::jsonb)
+          - 'pipeline_source'
+          - 'source_url'
+          - 'source_provider'
+          - 'verification_level'
+          - 'evidence_package_hash'
+          - 'source_payload_hash'
+          - 'fetched_at'
+          - 'source_fetched_at'
+      ),
       'created_at', a.created_at,
       'secured_at', CASE WHEN a.status NOT IN ('PENDING') THEN a.chain_timestamp END,
       'issued_at', a.issued_at,
       'revoked_at', a.revoked_at,
+      'superseded_at', CASE WHEN a.status = 'SUPERSEDED' THEN a.revoked_at END,
       'revocation_reason', a.revocation_reason,
       'expires_at', a.expires_at,
-      'source_url', a.metadata->>'source_url',
+      'source_url', regexp_replace(split_part(a.metadata->>'source_url', '#', 1), '\?.*$', ''),
       'source_provider', a.metadata->>'source_provider',
       'verification_level', a.metadata->>'verification_level',
       'evidence_package_hash', a.metadata->>'evidence_package_hash',
@@ -84,3 +96,5 @@ $$;
 
 COMMENT ON FUNCTION public.get_public_anchor(p_public_id text)
   IS 'Returns redacted anchor info for public verification with CSI-03 source provenance. Returns SECURED/ACTIVE, REVOKED, EXPIRED, SUPERSEDED, PENDING, SUBMITTED.';
+
+NOTIFY pgrst, 'reload schema';

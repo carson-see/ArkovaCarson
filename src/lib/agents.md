@@ -8,7 +8,7 @@ Core utility modules shared across the frontend. Every write path uses Zod valid
 ## Key Files
 - `supabase.ts` — typed Supabase client (anon key only, never service role)
 - `routes.ts` — named route constants consumed by App.tsx and navigation
-- `copy.ts` — all user-facing strings; enforces banned-term vocabulary (Constitution 1.3)
+- `copy.ts` — all user-facing strings, including legal-page notices; enforces banned-term vocabulary (Constitution 1.3)
 - `validators.ts` — Zod schemas for fingerprints, anchors, profiles, API keys
 - `switchboard.ts` — feature flag definitions and client-side checking
 - `workerClient.ts` — fetch wrapper for frontend-to-worker API calls with auth injection

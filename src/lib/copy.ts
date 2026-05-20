@@ -2122,6 +2122,13 @@ export const PUBLIC_FOOTER_LABELS = {
   STEP_PREFIX: 'Step',
 } as const;
 
+export const LEGAL_PAGE_LABELS = {
+  PRIVACY_UPDATE_NOTICE:
+    'We may update this policy from time to time. Material changes will be posted here, and registered users will receive notice when required.',
+  TERMS_UPDATE_NOTICE:
+    'We may update these terms from time to time. Material changes will be posted here, and registered users will receive notice when required.',
+} as const;
+
 // =============================================================================
 // HOW IT WORKS PAGE (GEO-08)
 // =============================================================================
@@ -2580,24 +2587,6 @@ export const PRIVACY_NOTICE_LABELS = {
   INFORMATION_OFFICER_LABEL: 'Information Officer',
 } as const;
 
-// ─── Evidence Level Labels (CSI-03 / SCRUM-1599) ─────────────────────────────
-
-export const EVIDENCE_LEVEL_LABELS: Record<string, string> = {
-  issuer_anchored: 'Issuer Anchored',
-  source_signed: 'Source Signed',
-  account_linked: 'Account Linked',
-  captured_url: 'Captured URL Evidence',
-  ai_captured: 'AI-Captured Evidence',
-} as const;
-
-export const EVIDENCE_LEVEL_DESCRIPTIONS: Record<string, string> = {
-  issuer_anchored: 'Verified directly with the issuing organization. The credential was cryptographically anchored by the original issuer.',
-  source_signed: 'The credential source provided a cryptographic signature proving origin and integrity.',
-  account_linked: 'Imported from an authenticated account. The holder proved access to the issuing platform.',
-  captured_url: 'Captured from a public URL. The content was fetched and fingerprinted at the recorded time.',
-  ai_captured: 'Extracted using AI from an uploaded document. Content was parsed and structured automatically.',
-} as const;
-
 // ─── Source Provenance Display (CSI-03 / SCRUM-1599) ──────────────────────────
 
 export const SOURCE_PROVENANCE_LABELS = {
@@ -2637,7 +2626,39 @@ export const BADGE_LABELS = {
   STATUS_SUBMITTED: 'Submitted',
   STATUS_SUPERSEDED: 'Superseded',
   STATUS_UNAVAILABLE: 'Unavailable',
+  verified: 'Verified',
+  revoked: 'Revoked',
+  expired: 'Expired',
+  pending: 'Pending',
+  submitted: 'Submitted',
+  superseded: 'Superseded',
+  unavailable: 'Unavailable',
 } as const;
 
 /** DPO/Information Officer contact — single source for all jurisdictions (REG-28) */
 export const PRIVACY_CONTACT_EMAIL = 'privacy@arkova.ai';
+
+// ─── Evidence Level Labels (CSI-03 / SCRUM-1599) ─────────────────────────────
+
+export type EvidenceLevel =
+  | 'issuer_anchored'
+  | 'source_signed'
+  | 'account_linked'
+  | 'captured_url'
+  | 'ai_captured';
+
+export const EVIDENCE_LEVEL_LABELS = {
+  issuer_anchored: 'Issuer Anchored',
+  source_signed: 'Source Signed',
+  account_linked: 'Account Linked',
+  captured_url: 'Captured URL Evidence',
+  ai_captured: 'AI-Captured Evidence',
+} as const satisfies Record<EvidenceLevel, string>;
+
+export const EVIDENCE_LEVEL_DESCRIPTIONS = {
+  issuer_anchored: 'Verified directly with the issuing organization. The credential was cryptographically anchored by the original issuer.',
+  source_signed: 'The credential source provided a cryptographic signature proving origin and integrity.',
+  account_linked: 'Imported from an authenticated account. The holder proved access to the issuing platform.',
+  captured_url: 'Captured from a public URL. The content was fetched and fingerprinted at the recorded time.',
+  ai_captured: 'Extracted using AI from an uploaded document. Content was parsed and structured automatically.',
+} as const satisfies Record<EvidenceLevel, string>;

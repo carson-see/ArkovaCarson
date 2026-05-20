@@ -46,6 +46,7 @@ import { ComplianceBadge } from '@/components/anchor/ComplianceBadge';
 import { EvidenceLayersSection } from '@/components/verification/EvidenceLayersSection';
 import { SourceProvenanceDisplay } from '@/components/verification/SourceProvenanceDisplay';
 import { LinkedInCredentialHelper } from '@/components/verification/LinkedInCredentialHelper';
+import { ArkovaBadge } from '@/components/verification/ArkovaBadge';
 import { parseVerificationLevel, sanitizeSourceUrl, type SourceProvenanceData } from '@/lib/sourceProvenance';
 
 interface PublicAnchorData {
@@ -57,13 +58,14 @@ interface PublicAnchorData {
   verified: boolean;
   credential_type?: string;
   issuer_name?: string;
-  org_id?: string;
+  issuer_public_id?: string;
   metadata?: Record<string, unknown>;
   // Lifecycle fields (from migration 0047)
   created_at?: string;
   secured_at?: string;
   issued_at?: string;
   revoked_at?: string;
+  superseded_at?: string;
   revocation_reason?: string;
   expires_at?: string;
   // Phase 1.5 frozen schema fields
@@ -113,6 +115,7 @@ const PUBLIC_METADATA_HIDDEN_KEYS = new Set([
   'national_id',
   'passport_number',
   'drivers_license',
+  'pipeline_source',
   'source_url',
   'source_provider',
   'verification_level',
@@ -131,7 +134,7 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
   // Fetch template for credential rendering (UF-01)
   const { template } = useCredentialTemplate(
     data?.credential_type,
-    data?.org_id,
+    undefined,
     { public: true }
   );
 
@@ -408,7 +411,7 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
         {/* ============================================================
             SECTION 2B: Issuer Info (UF-07) — links to issuer registry
             ============================================================ */}
-        {data.issuer_name && data.org_id && (
+        {data.issuer_name && data.issuer_public_id && (
           <>
             <Separator />
             <div className="flex items-center justify-between">
@@ -417,7 +420,7 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
                 <span className="font-medium">{data.issuer_name}</span>
               </div>
               <a
-                href={issuerRegistryPath(data.org_id)}
+                href={issuerRegistryPath(data.issuer_public_id)}
                 className="text-xs text-primary hover:underline"
               >
                 {VERIFICATION_DISPLAY_LABELS.VIEW_ISSUER_REGISTRY}
@@ -485,7 +488,10 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
         {isSecured && (
           <>
             <Separator />
-            <LinkedInCredentialHelper publicId={data.public_id} />
+            <div className="space-y-3">
+              <ArkovaBadge publicId={data.public_id} status={publicStatus} />
+              <LinkedInCredentialHelper publicId={data.public_id} />
+            </div>
           </>
         )}
 
@@ -658,6 +664,7 @@ function mapToLifecycleData(data: PublicAnchorData): AnchorLifecycleData {
     issuedAt: data.issued_at ?? data.issued_date,
     securedAt: data.secured_at ?? data.anchor_timestamp,
     revokedAt: data.revoked_at,
+    supersededAt: data.superseded_at,
     revocationReason: data.revocation_reason,
     expiresAt: data.expires_at ?? data.expiry_date,
   };

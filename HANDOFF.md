@@ -1552,4 +1552,4 @@ _Last refreshed: 2026-05-05 by Codex — claims verified against gcloud/MCP/CI o
 
 ---
 
-_Last refreshed: 2026-05-19 by Codex — claims verified against gcloud/MCP/CI output._
+_Last refreshed: 2026-05-19 by Codex — narrative-only PR #817 source-provenance note; no prod-state verification claim._

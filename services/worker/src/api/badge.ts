@@ -29,6 +29,10 @@ interface PublicAnchorRpcClient {
 }
 
 const publicIdSchema = z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/);
+const publicAnchorBadgeSchema = z.object({
+  public_id: z.string().optional(),
+  status: z.string(),
+}).passthrough();
 
 const STATUS_LABELS: Record<BadgeStatus, string> = {
   verified: 'Verified',
@@ -40,6 +44,7 @@ const STATUS_LABELS: Record<BadgeStatus, string> = {
   unavailable: 'Unavailable',
 };
 
+// Keep this visual contract in sync with src/lib/badgeSvg.ts.
 const STATUS_COLORS: Record<BadgeStatus, { bg: string; text: string; accent: string }> = {
   verified: { bg: '#059669', text: '#ffffff', accent: '#34d399' },
   revoked: { bg: '#dc2626', text: '#ffffff', accent: '#f87171' },
@@ -65,12 +70,12 @@ async function defaultLookupPublicAnchor(publicId: string): Promise<PublicBadgeA
     return null;
   }
 
-  const status = (data as { status?: unknown }).status;
-  if (typeof status !== 'string') return null;
+  const parsed = publicAnchorBadgeSchema.safeParse(data);
+  if (!parsed.success) return null;
 
-  const returnedPublicId = (data as { public_id?: unknown }).public_id;
+  const { status, public_id: returnedPublicId } = parsed.data;
   return {
-    public_id: typeof returnedPublicId === 'string' ? returnedPublicId : publicId,
+    public_id: returnedPublicId ?? publicId,
     status,
   };
 }

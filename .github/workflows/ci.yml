@@ -531,7 +531,7 @@ jobs:
         run: npm ci --ignore-scripts
 
       - name: Setup Supabase CLI
-        uses: supabase/setup-cli@df56b21da46c98abb12a9804e4fb1f657773e333 # v1
+        uses: supabase/setup-cli@a4d563a017eb7e7da097c40c441f85dbdcc4411f # v2.0.1
         with:
           version: 1.123.0
 
@@ -589,7 +589,7 @@ jobs:
         run: npm ci --ignore-scripts
 
       - name: Setup Supabase CLI
-        uses: supabase/setup-cli@df56b21da46c98abb12a9804e4fb1f657773e333 # v1
+        uses: supabase/setup-cli@a4d563a017eb7e7da097c40c441f85dbdcc4411f # v2.0.1
         with:
           version: 1.123.0
 
@@ -892,9 +892,10 @@ jobs:
         # pin unless the official tlaplus/tlaplus release body also changed.
         if: steps.tla-changed.outputs.changed == 'true'
         env:
-          # Pin updated 2026-05-16 — upstream re-uploaded the v1.8.0
-          # pre-release asset again. SHA256 verified via direct download.
-          TLA2TOOLS_SHA256: 25780ac9578e1ec356ff423f7f1cf70b0d663f2af8b83ae99745701dcdf299b0
+          # Pin updated 2026-05-19 — upstream re-uploaded the v1.8.0
+          # pre-release asset again. Verified by direct download from the
+          # official tlaplus/tlaplus release URL.
+          TLA2TOOLS_SHA256: 71546dff3897a01b0ee4fa64135d9f5e9384d2b7e47b3cc20a16b655b0eb4f86
         run: |
           mkdir -p "$HOME/.tla"
           curl -fsSL -o "$HOME/.tla/tla2tools.jar" \
@@ -1012,7 +1013,7 @@ jobs:
         run: npx playwright install --with-deps chromium
 
       - name: Setup Supabase CLI
-        uses: supabase/setup-cli@df56b21da46c98abb12a9804e4fb1f657773e333 # v1
+        uses: supabase/setup-cli@a4d563a017eb7e7da097c40c441f85dbdcc4411f # v2.0.1
         with:
           version: 1.123.0
 

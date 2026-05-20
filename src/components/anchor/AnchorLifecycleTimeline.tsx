@@ -28,6 +28,7 @@ export interface AnchorLifecycleData {
   issuedAt?: string;
   securedAt?: string;
   revokedAt?: string;
+  supersededAt?: string;
   revocationReason?: string;
   expiresAt?: string;
 }
@@ -95,7 +96,7 @@ function buildLifecycleEvents(data: AnchorLifecycleData): LifecycleEvent[] {
   if (data.status === 'SUPERSEDED') {
     events.push({
       label: LIFECYCLE_LABELS.SUPERSEDED,
-      timestamp: data.revokedAt ?? null,
+      timestamp: data.supersededAt ?? null,
       icon: AlertTriangle,
       status: 'terminal',
       detail: data.revocationReason ?? undefined,

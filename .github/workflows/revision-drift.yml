@@ -148,7 +148,7 @@ jobs:
               platform: "other",
               fingerprint: ["revision-drift", $kind],
               message: { formatted: $msg },
-              tags: { live_sha: $live, head_sha: $head, drift_age_seconds: $age, drift_kind: $kind, source: "revision-drift.yml" },
+              tags: { story: "SCRUM-1247", deployed_sha: $live, head_sha: $head, drift_age_seconds: $age, drift_kind: $kind, source: "revision-drift" },
               extra: { workflow: "revision-drift", repo: "carson-see/ArkovaCarson" }
             }')
           # length is byte count of the payload as written to the envelope file

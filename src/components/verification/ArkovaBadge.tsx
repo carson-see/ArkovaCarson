@@ -10,12 +10,13 @@
  */
 
 import {
-  BADGE_STATUS_LABELS,
   generateBadgeSvg,
   toBadgeStatus,
 } from '@/lib/badgeSvg';
+import { BADGE_LABELS } from '@/lib/copy';
 
 interface ArkovaBadgeProps {
+  publicId: string;
   status: string;
   className?: string;
 }
@@ -25,10 +26,10 @@ export { generateBadgeSvg } from '@/lib/badgeSvg';
 /**
  * React component rendering the badge inline.
  */
-export function ArkovaBadge({ status, className }: Readonly<ArkovaBadgeProps>) {
+export function ArkovaBadge({ publicId, status, className }: Readonly<ArkovaBadgeProps>) {
   const badgeStatus = toBadgeStatus(status);
-  const svg = generateBadgeSvg(`inline-${status}`, { status: badgeStatus });
-  const label = BADGE_STATUS_LABELS[badgeStatus];
+  const svg = generateBadgeSvg(publicId, { status: badgeStatus });
+  const label = BADGE_LABELS[badgeStatus];
   const imageSrc = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
 
   return (

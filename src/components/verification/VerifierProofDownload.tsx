@@ -53,7 +53,7 @@ export function VerifierProofDownload({
         : {};
 
       const proof = {
-        version: '1.1',
+        version: '1.0',
         verification_id: publicId,
         status: publicStatus,
         fingerprint,

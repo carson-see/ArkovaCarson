@@ -66,6 +66,7 @@ interface AnchorRecord {
   securedAt?: string;
   issuedAt?: string;
   revokedAt?: string;
+  supersededAt?: string;
   revocationReason?: string;
   expiresAt?: string;
   fileSize: number;
@@ -131,13 +132,32 @@ const ANCHOR_CREDENTIAL_METADATA_HIDDEN_KEYS = new Set([
   'source_payload_hash',
   'fetched_at',
   'source_fetched_at',
+  'abstract',
+  'description',
+  'summary',
+  'merkle_proof',
+  'merkle_root',
+  'merkle_index',
+  'batch_id',
+  'ai_tags',
+  'ai_summary',
+  'ai_document_type',
+  'issuer',
+  'issuer_name',
+  'recipient',
+  'recipient_name',
+  '_confidence',
 ]);
 
 function buildAnchorCredentialMetadata(metadata: Record<string, unknown> | null | undefined): Record<string, unknown> | undefined {
   if (!metadata) return undefined;
   return Object.fromEntries(
-    Object.entries(metadata).filter(([key]) => !ANCHOR_CREDENTIAL_METADATA_HIDDEN_KEYS.has(key.toLowerCase()))
+    Object.entries(metadata).filter(([key]) => isAnchorMetadataVisible(key))
   );
+}
+
+function isAnchorMetadataVisible(key: string): boolean {
+  return !ANCHOR_CREDENTIAL_METADATA_HIDDEN_KEYS.has(key.toLowerCase()) && !key.startsWith('_');
 }
 
 const statusConfig = {
@@ -606,14 +626,14 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
           )}
 
           {/* METADATA — pipeline-style key-value pairs (PII-sensitive keys filtered) */}
-          {anchor.metadata && Object.keys(anchor.metadata).filter(k => !['pipeline_source', 'source_url', 'source_provider', 'verification_level', 'evidence_package_hash', 'source_payload_hash', 'fetched_at', 'source_fetched_at', 'abstract', 'description', 'summary', 'merkle_proof', 'merkle_root', 'merkle_index', 'batch_id', 'ai_tags', 'ai_summary', 'ai_document_type', 'issuer', 'issuer_name', 'recipient', 'recipient_name', '_confidence'].includes(k) && !k.startsWith('_')).length > 0 && (
+          {anchor.metadata && Object.keys(anchor.metadata).filter(isAnchorMetadataVisible).length > 0 && (
             <>
               <Separator />
               <div className="space-y-3">
                 <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Metadata</span>
                 <div className="space-y-2">
                   {Object.entries(anchor.metadata)
-                    .filter(([k]) => !['pipeline_source', 'source_url', 'source_provider', 'verification_level', 'evidence_package_hash', 'source_payload_hash', 'fetched_at', 'source_fetched_at', 'abstract', 'description', 'summary', 'merkle_proof', 'merkle_root', 'merkle_index', 'batch_id', 'ai_tags', 'ai_summary', 'ai_document_type', 'issuer', 'issuer_name', 'recipient', 'recipient_name', '_confidence'].includes(k) && !k.startsWith('_'))
+                    .filter(([k]) => isAnchorMetadataVisible(k))
                     .map(([key, value]) => (
                       <div key={key} className="flex gap-4">
                         <span className="text-xs text-muted-foreground whitespace-nowrap min-w-[120px]">{key.replace(/_/g, ' ')}:</span>
@@ -688,6 +708,7 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
               issuedAt: anchor.issuedAt,
               securedAt: anchor.securedAt,
               revokedAt: anchor.revokedAt,
+              supersededAt: anchor.supersededAt,
               revocationReason: anchor.revocationReason,
               expiresAt: anchor.expiresAt,
             }}

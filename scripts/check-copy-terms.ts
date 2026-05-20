@@ -55,6 +55,14 @@ export const FORBIDDEN_TERMS = [
   String.raw`(?<![-\w])issue credential(?![-\w])`,
 ];
 
+export const LAUNCH_BLOCKER_COPY_TERMS = [
+  'placeholder and will be updated',
+  'following legal review',
+  'prior to production launch',
+  'to be replaced with legal-reviewed copy',
+  'legal-reviewed copy before production launch',
+];
+
 // File patterns to check (UI-facing files)
 // These patterns define which files are scanned for UI copy
 const _INCLUDE_PATTERNS = [
@@ -132,15 +140,20 @@ function shouldCheck(filePath: string): boolean {
 // Pre-compile once. Building a new RegExp per line × 13 terms × 224 files was
 // the bulk of `lint:copy` runtime.
 const FORBIDDEN_REGEXES = FORBIDDEN_TERMS.map((t) => new RegExp(t, 'gi'));
+const LAUNCH_BLOCKER_REGEXES = LAUNCH_BLOCKER_COPY_TERMS.map((t) => new RegExp(t, 'gi'));
 
 /**
  * Returns true if the line should be skipped (comments, imports, crypto API).
  * className attribute values are stripped separately by
  * {@link stripClassNameAttributes} so JSX text on the same line still gets scanned.
  */
-function shouldSkipLine(line: string, trimmed: string): boolean {
+export function shouldSkipLine(line: string, trimmed: string): boolean {
   // Skip comments and imports
-  if (trimmed.startsWith('//') || trimmed.startsWith('*') || trimmed.startsWith('import ')) {
+  if (
+    trimmed.startsWith('//') ||
+    trimmed.startsWith('/*') ||
+    trimmed.startsWith('import ')
+  ) {
     return true;
   }
   // Skip Web Crypto API usage and "cryptographic" adjective
@@ -244,9 +257,23 @@ function isCodeIdentifier(line: string, matchIndex: number): boolean {
   return false;
 }
 
-function findTermViolations(line: string, lineNum: number, filePath: string): Violation[] {
+export function findTermViolations(line: string, lineNum: number, filePath: string): Violation[] {
   const results: Violation[] = [];
   const cleaned = stripClassNameAttributes(line);
+
+  for (const regex of LAUNCH_BLOCKER_REGEXES) {
+    regex.lastIndex = 0;
+    let match: RegExpExecArray | null;
+    while ((match = regex.exec(cleaned)) !== null) {
+      results.push({
+        file: filePath,
+        line: lineNum,
+        term: match[0],
+        context: cleaned.trim().substring(0, 80),
+      });
+    }
+  }
+
   // Quote/JSX context is a per-line property; computing it once per term
   // saves 6×n includes() calls when the line has many term matches.
   const hasString = cleaned.includes('"') || cleaned.includes("'") || cleaned.includes('`');
@@ -273,10 +300,21 @@ function checkFile(filePath: string): Violation[] {
   const violations: Violation[] = [];
   const content = fs.readFileSync(filePath, 'utf-8');
   const lines = content.split('\n');
+  let inBlockComment = false;
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     const trimmed = line.trim();
+
+    if (inBlockComment) {
+      if (trimmed.includes('*/')) inBlockComment = false;
+      continue;
+    }
+
+    if (trimmed.startsWith('/*')) {
+      if (!trimmed.includes('*/')) inBlockComment = true;
+      continue;
+    }
 
     if (shouldSkipLine(line, trimmed)) {
       continue;
@@ -330,6 +368,7 @@ function main(): void {
   console.log('  - hash → use "fingerprint"');
   console.log('  - block, transaction → use "record"');
   console.log('  - crypto, bitcoin, blockchain → remove or rephrase');
+  console.log('  - public launch blocker copy → remove placeholder/legal-review disclaimers from public UI');
   console.log('');
   console.log('See src/lib/copy.ts for approved terminology.\n');
 
