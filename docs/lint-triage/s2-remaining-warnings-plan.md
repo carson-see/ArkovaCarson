@@ -43,7 +43,7 @@
 | middleware/ | 7 | paymentTierRouter.test (7) |
 | billing/ | 5 | meteredBilling.test (5) |
 | api/v1/ | 4 | credits.test (4) |
-| api/v2/ | 2 | agentWorkflows.test.ts `no-explicit-any`; the file-level `@ts-nocheck` is counted separately under `ban-ts-comment` |
+| api/v2/ | 2 | agentWorkflows.test.ts `no-explicit-any`; these 2 warnings are included in this 55-warning test breakdown, while the file-level `@ts-nocheck` is counted separately only under `ban-ts-comment` |
 
 ### `unused-disable` (40 total -- ALL auto-fixable)
 
@@ -217,6 +217,8 @@ Priority order (by warning density):
 **Risk:** MEDIUM -- if typing route: requires `gen:types` to include public_records; if suppress route: safe
 **Soak tier:** T1 (type-only change, no runtime impact)
 **Effort:** 3 hours (type route) or 1 hour (suppress route)
+
+Batch 8 is the authoritative home for all 39 jobs/ warnings listed above, including `regulatory-change-cron.ts`; Batch 9 intentionally excludes jobs/ files.
 
 ### Batch 9: Type `any` in remaining prod files
 
