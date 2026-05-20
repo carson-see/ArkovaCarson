@@ -73,7 +73,7 @@ async function fetchNyCle(
       });
 
       if (batch.length >= 100) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- service-role admin query
         const { error } = await (supabase as any)
           .from('public_records')
           .upsert(batch, { onConflict: 'source,source_id', ignoreDuplicates: true });
@@ -84,7 +84,7 @@ async function fetchNyCle(
     }
 
     if (batch.length > 0) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- service-role admin query
       const { error } = await (supabase as any)
         .from('public_records')
         .upsert(batch, { onConflict: 'source,source_id', ignoreDuplicates: true });

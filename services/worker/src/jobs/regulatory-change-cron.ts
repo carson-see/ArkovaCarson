@@ -121,7 +121,7 @@ export async function runRegulatoryChangeCron(
   return result;
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Supabase client type varies by caller context
 async function computeImpactForOrg(
   database: any,
   orgId: string,
@@ -206,7 +206,7 @@ async function computeImpactForOrg(
   return { impact, currentAudit };
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Supabase client type varies by caller context
 async function persistChangeEvent(
   database: any,
   orgId: string,
@@ -237,7 +237,7 @@ async function persistChangeEvent(
   });
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Supabase client type varies by caller context
 async function createInAppNotification(
   database: any,
   orgId: string,
@@ -267,7 +267,7 @@ async function createInAppNotification(
   }
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Supabase client type varies by caller context
 async function sendImpactEmails(
   database: any,
   sendEmailImpl: typeof sendEmail,

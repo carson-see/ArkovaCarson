@@ -61,13 +61,13 @@ const {
   __mockMembershipSingle: mockMembershipSingle,
   __mockRpc: mockRpc,
   __mockInsert: mockInsert,
-} = await import('../utils/db.js') as any;
+} = await import('../utils/db.js') as any; // eslint-disable-line @typescript-eslint/no-explicit-any -- test mock module imports
 
 function buildApp() {
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
-    (req as any).userId = 'u1';
+    req.userId = 'u1';
     next();
   });
   app.use('/api/anchor', anchorRevokeRouter);
@@ -328,6 +328,7 @@ describe('POST /api/anchor/:id/revoke', () => {
     // inserted with `dispatched: true` and the correct status transition.
     const calls = mockInsert.mock.calls.map((c: unknown[]) => c[0]);
     const credRow = calls.find(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- scanning vi.fn().mock.calls which returns any[][]
       (row: any) => row?.event_type === 'credential.status_changed',
     );
     expect(credRow).toBeDefined();
@@ -354,6 +355,7 @@ describe('POST /api/anchor/:id/revoke', () => {
 
     const calls = mockInsert.mock.calls.map((c: unknown[]) => c[0]);
     const dispatchRow = calls.find(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- scanning vi.fn().mock.calls which returns any[][]
       (row: any) => row?.event_type === 'anchor.revoked.dispatched',
     );
     expect(dispatchRow).toBeDefined();

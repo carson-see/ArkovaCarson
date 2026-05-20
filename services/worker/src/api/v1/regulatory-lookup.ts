@@ -38,6 +38,7 @@ router.get('/', async (req: Request, res: Response) => {
   const sanitizedQuery = q.replace(/[%_]/g, '');
 
   try {
+    // eslint-disable-next-line arkova/missing-org-filter -- public verification endpoint
     let query = dbAny
       .from('public_records')
       .select('id, source, source_id, source_url, record_type, title, content_hash, metadata, created_at', { count: 'exact' })

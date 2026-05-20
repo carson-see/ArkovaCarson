@@ -40,6 +40,7 @@ describe('HSM Bridge', () => {
       const makeRequest = (alg: string): HsmSignRequest => ({
         provider: 'aws_kms',
         keyId: 'test-key',
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- testing invalid input for rejection path
         algorithm: alg as any,
         data: Buffer.alloc(32, 0x01),
       });
@@ -68,6 +69,7 @@ describe('HSM Bridge', () => {
       const request: HsmSignRequest = {
         provider: 'aws_kms',
         keyId: 'test-key',
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- testing invalid input for rejection path
         algorithm: 'SHA-1' as any,
         data: Buffer.alloc(32),
       };
@@ -80,6 +82,7 @@ describe('HSM Bridge', () => {
       const request: HsmSignRequest = {
         provider: 'aws_kms',
         keyId: 'test-key',
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- testing invalid input for rejection path
         algorithm: 'MD5' as any,
         data: Buffer.alloc(32),
       };
@@ -151,6 +154,7 @@ describe('HSM Bridge', () => {
     });
 
     it('should throw for unknown provider', () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- testing invalid input for rejection path
       expect(() => createHsmBridge('unknown' as any)).toThrow('Unknown KMS provider');
     });
   });

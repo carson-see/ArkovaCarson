@@ -68,6 +68,7 @@ export async function handlePlatformStats(
         .is('deleted_at', null)
         .gte('created_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()),
       // 5: Subscriptions by plan
+      // eslint-disable-next-line arkova/missing-org-filter -- admin aggregation query
       db.from('subscriptions').select('plan_id, plans(name)')
         .in('status', ['active', 'trialing']),
       // 6: Anchor TX + fee stats via RPC
