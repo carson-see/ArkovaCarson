@@ -73,6 +73,7 @@ router.get('/', async (req: Request, res: Response) => {
     // Also search attestations
     const attestationResults: unknown[] = [];
     if (name || identifier) {
+      // eslint-disable-next-line arkova/missing-org-filter -- public verification endpoint: entity search is intentionally cross-tenant
       const { data: attestations } = await dbAny
         .from('attestations')
         .select('id, public_id, attestation_type, subject_identifier, subject_type, status, attester_name, claims, created_at')

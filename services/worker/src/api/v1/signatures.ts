@@ -172,6 +172,7 @@ router.post('/sign', async (req: Request, res: Response) => {
         .from('attestations')
         .select('id')
         .eq('public_id', body.attestation_id)
+        .eq('attester_org_id', orgId)
         .single();
 
       if (!att) {

@@ -1,3 +1,4 @@
+/* eslint-disable arkova/missing-org-filter -- cross-org cron: evaluates scheduled rules across all orgs */
 /**
  * Scheduled Queue Review Reminders (ARK-107 — SCRUM-1019)
  *

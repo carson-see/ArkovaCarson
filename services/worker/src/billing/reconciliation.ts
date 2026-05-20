@@ -1,3 +1,4 @@
+/* eslint-disable arkova/missing-org-filter -- cross-org cron: monthly batch reconciliation intentionally processes all orgs */
 /**
  * Payment Reconciliation (RECON-1, RECON-3, RECON-5)
  *

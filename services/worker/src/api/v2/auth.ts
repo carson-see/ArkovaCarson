@@ -39,6 +39,7 @@ export function apiKeyAuthV2(hmacSecret: string) {
 
     try {
       const keyHash = hashApiKey(rawKey, hmacSecret);
+      // eslint-disable-next-line arkova/missing-org-filter -- auth resolution: org_id unknown until key is looked up
       const { data: apiKey, error } = await db.from('api_keys')
         .select('id, org_id, created_by, scopes, rate_limit_tier, key_prefix, is_active, expires_at')
         .eq('key_hash', keyHash)
@@ -69,6 +70,7 @@ export function apiKeyAuthV2(hmacSecret: string) {
         keyPrefix: apiKey.key_prefix,
       };
 
+      // eslint-disable-next-line arkova/missing-org-filter -- auth resolution: update scoped by primary key, org just resolved above
       void db.from('api_keys')
         .update({ last_used_at: new Date().toISOString() })
         .eq('id', apiKey.id);

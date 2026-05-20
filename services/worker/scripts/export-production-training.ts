@@ -231,7 +231,6 @@ async function main(): Promise<void> {
   const supabase = createClient(supabaseUrl!, supabaseKey!);
 
   // Count total records across the public-record training corpus.
-  // eslint-disable-next-line arkova/missing-org-filter -- Offline model training intentionally samples public records across organizations.
   const { count, error: countError } = await supabase
     .from('public_records')
     .select('*', { count: 'exact', head: true })
@@ -254,7 +253,6 @@ async function main(): Promise<void> {
   let page = 0;
 
   while (true) {
-    // eslint-disable-next-line arkova/missing-org-filter -- Offline model training intentionally samples public records across organizations.
     const { data, error } = await supabase
       .from('public_records')
       .select('id, source, record_type, title, metadata, content_hash')

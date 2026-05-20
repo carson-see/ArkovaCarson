@@ -1,3 +1,4 @@
+/* eslint-disable arkova/missing-org-filter -- webhook ingress: org resolved from stripe_subscription_id, not available at query time */
 /**
  * Stripe Webhook Handlers
  *
@@ -48,11 +49,11 @@ async function lookupSubscriptionOrThrow<T>(
   context: Record<string, unknown>,
   eventName: string,
 ): Promise<T | null> {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- chained Supabase select() typing varies by `selectCols` runtime value
   const { data, error } = await (db
     .from('subscriptions')
     .select(selectCols)
     .eq('stripe_subscription_id', stripeSubscriptionId)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- chained Supabase select() typing varies by `selectCols` runtime value
     .maybeSingle() as any);
   if (error) {
     logger.error(

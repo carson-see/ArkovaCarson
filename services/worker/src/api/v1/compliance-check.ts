@@ -102,6 +102,7 @@ router.post('/', async (req: Request, res: Response) => {
 
     // 3. Attestations check
     if (checkAll || check_types.includes('attestations')) {
+      // eslint-disable-next-line arkova/missing-org-filter -- public verification endpoint: compliance check is intentionally cross-tenant
       const { data: attestations } = await dbAny
         .from('attestations')
         .select('id, public_id, attestation_type, subject_identifier, attester_name, status, claims, created_at')
