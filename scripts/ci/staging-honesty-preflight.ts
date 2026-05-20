@@ -245,7 +245,9 @@ export function isSupabaseMigrationsSchemaUnavailable(
 }
 
 function normalizeMigrationVersion(value: unknown): string | null {
-  const raw = String(value ?? '').trim();
+  if (value == null) return null;
+  if (typeof value !== 'string' && typeof value !== 'number') return null;
+  const raw = String(value).trim();
   if (!raw) return null;
   if (raw === '00000000000000') return raw;
   if (/^\d+$/.test(raw) && raw.length < 14) {

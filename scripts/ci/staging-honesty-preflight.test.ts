@@ -391,6 +391,7 @@ describe('mapManagementMigrationRows', () => {
       { version: 294, name: '0294_refund_org_credit' },
       { version: '20260505010337', name: null },
       { name: 'ignored_missing_version' },
+      { version: {}, name: 'ignored_object_version' },
     ])).toEqual([
       { version: '0294', name: '0294_refund_org_credit' },
       { version: '20260505010337', name: '' },
@@ -404,6 +405,7 @@ describe('mapManagementMigrationVersions', () => {
       { version: 294 },
       { version: '0295' },
       { ignored: 'row' },
+      { version: {} },
     ])).toEqual(['0294', '0295']);
   });
 });
