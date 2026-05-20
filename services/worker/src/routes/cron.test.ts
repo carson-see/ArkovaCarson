@@ -159,6 +159,17 @@ vi.mock('../jobs/batch-anchor.js', () => ({
   processBatchAnchors: (...args: unknown[]) => mockProcessBatchAnchors(...args),
 }));
 
+const mockProcessProfessionalEducationExtractionJobs = vi.fn().mockResolvedValue({
+  claimed: 1,
+  processed: 1,
+  failed: 0,
+  manualReview: 0,
+});
+vi.mock('../jobs/professional-education-extraction.js', () => ({
+  processProfessionalEducationExtractionJobs: (...args: unknown[]) =>
+    mockProcessProfessionalEducationExtractionJobs(...args),
+}));
+
 const mockFetchAcncCharities = vi.fn().mockResolvedValue({ fetched: 15 });
 vi.mock('../jobs/acncFetcher.js', () => ({
   fetchAcncCharities: (...args: unknown[]) => mockFetchAcncCharities(...args),
@@ -514,6 +525,26 @@ describe('cron routes', () => {
       const app = createApp();
       const res = await request(app).post('/cron/batch-anchors');
       expect(res.status).toBe(500);
+    });
+  });
+
+  describe('POST /professional-education-extraction', () => {
+    it('returns professional education extraction job result and caps maxJobs', async () => {
+      const app = createApp();
+      const res = await request(app)
+        .post('/cron/professional-education-extraction')
+        .send({ maxJobs: 250 });
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({ claimed: 1, processed: 1, failed: 0, manualReview: 0 });
+      expect(mockProcessProfessionalEducationExtractionJobs).toHaveBeenCalledWith(100);
+    });
+
+    it('returns 500 on professional education extraction failure', async () => {
+      mockProcessProfessionalEducationExtractionJobs.mockRejectedValueOnce(new Error('queue down'));
+      const app = createApp();
+      const res = await request(app).post('/cron/professional-education-extraction');
+      expect(res.status).toBe(500);
+      expect(res.body.error).toBe('Processing failed');
     });
   });
 

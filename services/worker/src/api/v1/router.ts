@@ -63,6 +63,7 @@ import { entityVerifyRouter } from './entity-verify.js';
 import { complianceCheckRouter } from './compliance-check.js';
 import { regulatoryLookupRouter } from './regulatory-lookup.js';
 import { cleVerifyRouter } from './cle-verify.js';
+import { credentialsCtdlRouter } from './credentials-ctdl.js';
 import { webhooksRouter } from './webhooks.js';
 // atsWebhookRouter moved to index.ts for raw-body HMAC (SCRUM-1214/1215)
 import { driveWebhookRouter } from './webhooks/drive.js';
@@ -280,11 +281,10 @@ router.use('/ai/integrity', aiFraudGate(), requireAuth, aiRateLimiter, aiIntegri
 // AI review queue — behind ENABLE_AI_FRAUD flag + JWT auth (P8-S9)
 router.use('/ai/review', aiFraudGate(), requireAuth, aiRateLimiter, aiReviewRouter);
 
-// AI visual fraud detection — gated by BOTH ENABLE_AI_FRAUD and the more
-// restrictive ENABLE_VISUAL_FRAUD_DETECTION flag. The visual path ships
-// document image bytes off-device (CLAUDE.md §1.6 carve-out); the second
-// gate blocks tenants that haven't opted into the carve-out per the
-// Confluence policy page even when the broader AI-fraud flag is on.
+// AI visual fraud detection — deprecated server route. Kept mounted behind
+// the existing flags for back-compat but fails closed with 410; SCRUM-1955
+// replaces this with client-side worker analysis that sends only structured
+// findings, never document/image bytes.
 router.use(
   '/ai/fraud/visual',
   aiFraudGate(),
@@ -360,6 +360,7 @@ const anchorAnonAllow = (req: Request, res: Response, next: NextFunction) => {
 router.use('/anchor', anchorAnonAllow, anchorLifecycleRouter);
 router.use('/anchor', anchorAnonAllow, anchorEvidenceRouter);
 router.use('/anchor', requireScope('verify'), anchorExtractionManifestRouter);
+router.use('/credentials', anchorAnonAllow, credentialsCtdlRouter);
 
 // ─── Anchor submission — Agent SDK (Phase 1.5 Priority 4) ───
 // SCRUM-1273: mutating anchor writes require the explicit anchor:write scope.

@@ -59,7 +59,7 @@ interface AnchorRecord {
   publicId?: string;
   filename: string;
   fingerprint: string;
-  status: 'PENDING' | 'BROADCASTING' | 'SECURED' | 'REVOKED' | 'EXPIRED' | 'SUBMITTED';
+  status: 'PENDING' | 'BROADCASTING' | 'SECURED' | 'REVOKED' | 'EXPIRED' | 'SUBMITTED' | 'SUPERSEDED' | 'PENDING_RESOLUTION';
   createdAt: string;
   securedAt?: string;
   issuedAt?: string;
@@ -140,6 +140,18 @@ const statusConfig = {
     variant: 'secondary' as const,
     icon: Clock,
     color: 'text-blue-600',
+  },
+  SUPERSEDED: {
+    label: 'Superseded',
+    variant: 'outline' as const,
+    icon: CheckCircle,
+    color: 'text-muted-foreground',
+  },
+  PENDING_RESOLUTION: {
+    label: 'Needs Review',
+    variant: 'warning' as const,
+    icon: Clock,
+    color: 'text-amber-600',
   },
 };
 

@@ -27,8 +27,14 @@ export interface GroundTruthFields {
   creditType?: string;
   barNumber?: string;
   activityNumber?: string;
+  courseId?: string;
   providerName?: string;
   approvedBy?: string;
+  deliveryMethod?: string;
+  ethicsHours?: number;
+  nasbaStatus?: string;
+  manualReviewExpected?: boolean;
+  parseFailureExpected?: boolean;
   // BUSINESS_ENTITY-specific
   entityType?: string;
   stateOfFormation?: string;
