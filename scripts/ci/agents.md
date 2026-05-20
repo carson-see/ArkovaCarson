@@ -8,6 +8,7 @@ CI gate scripts. Each one fails the build with a structured exit code + actionab
   - Also allowlisted (PR #798): `eslint-rules/`, `**/eslint.config.(js|cjs|mjs)` — lint config is dev-time tooling with no runtime impact.
   - **No override label exists.** The `staging-soak-skip` label was destroyed 2026-05-07 (PR #733). Real CI/agent-config-only PRs must list every touched file in the allowlist or they fail the gate.
 - **`check-npm-install-policy.ts`** — blocks `npm ci` / `npm install` in GitHub Actions workflows and shell deploy helpers unless lifecycle scripts are suppressed with `--ignore-scripts` or a nearby `install-scripts-ok:` comment gives an explicit exception reason.
+- **`check-anchor-index-justification.ts`** — blocks new `public.anchors` indexes in Supabase migrations unless the migration has an adjacent `anchor-index-justification:` comment with a concrete reason.
 - **`check-staging-gcloud-policy.ts`** — blocks raw `gcloud run deploy` / `gcloud run services update` commands against `arkova-worker-staging` outside `scripts/staging/deploy.sh`; historical docs need a nearby `staging-gcloud-ok:` reason.
 - `check-deploy-lint-parity.ts` (R0-4 / SCRUM-1250) — enforces that `deploy-worker.yml` and `ci.yml` lint steps run the SAME `npm run lint` script per CLAUDE.md §0 rule 9.
 - `check-rls-auth-uid-wrap.ts` (SCRUM-1280) — RLS policy lint: `auth.uid()` must always be wrapped in `(SELECT auth.uid())` to allow Postgres planner constant-folding.

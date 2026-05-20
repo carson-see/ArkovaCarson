@@ -112,6 +112,9 @@ jobs:
       - name: Block migration prefix collisions (SCRUM-1287)
         run: npx tsx scripts/ci/check-migration-prefix-uniqueness.ts
 
+      - name: Require justification for new anchors indexes (SCRUM-1286)
+        run: npm run ci:anchor-index-justification
+
       - name: Block API scope vocabulary drift (SCRUM-1581)
         run: npm run ci:api-scope-vocabulary
 
