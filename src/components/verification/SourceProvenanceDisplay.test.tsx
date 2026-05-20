@@ -78,4 +78,21 @@ describe('SourceProvenanceDisplay', () => {
     expect(html).not.toContain('a'.repeat(64));
     expect(html).not.toContain('b'.repeat(64));
   });
+
+  it('renders a package summary for hash-only provenance without exposing hashes', () => {
+    render(
+      <SourceProvenanceDisplay
+        data={{
+          evidence_package_hash: 'evidence-hash-123',
+          source_payload_hash: 'payload-hash-456',
+        }}
+      />
+    );
+
+    const section = screen.getByTestId('source-provenance-display');
+    expect(section).toBeInTheDocument();
+    expect(screen.getByTestId('source-evidence-package')).toHaveTextContent('Evidence Package');
+    expect(section).not.toHaveTextContent('evidence-hash-123');
+    expect(section).not.toHaveTextContent('payload-hash-456');
+  });
 });

@@ -60,7 +60,8 @@ export function SourceProvenanceDisplay({
   const provider = formatProvider(data.source_provider);
   const verificationLevel = parseVerificationLevel(data.verification_level);
   const fetchedAt = data.fetched_at ? formatDate(data.fetched_at) : null;
-  const hasAnyContent = safeUrl || provider || verificationLevel || fetchedAt;
+  const hasEvidencePackage = Boolean(data.evidence_package_hash || data.source_payload_hash);
+  const hasAnyContent = safeUrl || provider || verificationLevel || fetchedAt || hasEvidencePackage;
 
   if (!hasAnyContent) return null;
 
@@ -117,6 +118,15 @@ export function SourceProvenanceDisplay({
               {SOURCE_PROVENANCE_LABELS.FETCHED_AT_LABEL}:
             </span>
             <span className="text-sm">{fetchedAt}</span>
+          </div>
+        )}
+
+        {hasEvidencePackage && (
+          <div className="text-sm" data-testid="source-evidence-package">
+            <span className="text-muted-foreground">
+              {SOURCE_PROVENANCE_LABELS.PROOF_SECTION_TITLE}:
+            </span>{' '}
+            <span>{SOURCE_PROVENANCE_LABELS.PROOF_SECTION_DESCRIPTION}</span>
           </div>
         )}
       </div>

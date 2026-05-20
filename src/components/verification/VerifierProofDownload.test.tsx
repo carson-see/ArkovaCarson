@@ -103,6 +103,35 @@ describe('VerifierProofDownload', () => {
     });
   });
 
+  it('uses the CSI-03 proof schema version when provenance fields are included', async () => {
+    await withMockDownloadAnchor(async () => {
+      render(
+        <VerifierProofDownload
+          {...PROPS}
+          sourceProvenance={{
+            evidence_package_hash: 'evidence-hash-123',
+            source_payload_hash: 'payload-hash-456',
+            source_url: 'https://example.com/cert?id=visible&code=secret-code&state=secret-state',
+          }}
+        />
+      );
+      fireEvent.click(screen.getByText('JSON Proof Package'));
+
+      await waitFor(() => expect(mockCreateObjectURL).toHaveBeenCalled());
+      const [blob] = mockCreateObjectURL.mock.calls[0] as [Blob];
+      const proof = JSON.parse(await blob.text()) as {
+        version: string;
+        evidence_package_hash: string;
+        source_payload_hash: string;
+        source_url: string;
+      };
+      expect(proof.version).toBe('1.1');
+      expect(proof.evidence_package_hash).toBe('evidence-hash-123');
+      expect(proof.source_payload_hash).toBe('payload-hash-456');
+      expect(proof.source_url).toBe('https://example.com/cert?id=visible');
+    });
+  });
+
   it('shows download section title', () => {
     render(<VerifierProofDownload {...PROPS} />);
     expect(screen.getByText('Download Proof')).toBeInTheDocument();

@@ -109,6 +109,33 @@ describe('CredentialRenderer', () => {
       expect(screen.queryByText('Degree')).not.toBeInTheDocument();
       expect(screen.queryByText('GPA')).not.toBeInTheDocument();
     });
+
+    it('skips hidden provenance fields even when a template includes them', () => {
+      render(
+        <CredentialRenderer
+          template={{
+            name: 'Evidence Template',
+            fields: [
+              { key: 'institution', label: 'Institution', type: 'text' },
+              { key: 'source_url', label: 'Source URL', type: 'text' },
+              { key: 'evidence_package_hash', label: 'Evidence Package Hash', type: 'text' },
+            ],
+          }}
+          metadata={{
+            institution: 'MIT',
+            source_url: 'https://credly.com/badges/internal?token=secret&code=oauth-code',
+            evidence_package_hash: 'evidence-hash-123',
+          }}
+          status="SECURED"
+        />
+      );
+
+      expect(screen.getByText('MIT')).toBeInTheDocument();
+      expect(screen.queryByText('Source URL')).not.toBeInTheDocument();
+      expect(screen.queryByText('Evidence Package Hash')).not.toBeInTheDocument();
+      expect(screen.queryByText(/token=secret/)).not.toBeInTheDocument();
+      expect(screen.queryByText('evidence-hash-123')).not.toBeInTheDocument();
+    });
   });
 
   describe('Mode 2: No Template, Has Metadata', () => {

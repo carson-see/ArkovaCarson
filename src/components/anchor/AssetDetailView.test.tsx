@@ -220,4 +220,35 @@ describe('AssetDetailView', () => {
     expect(queryByText(/token=secret/)).not.toBeInTheDocument();
     expect(queryByText('evidence-hash-123')).not.toBeInTheDocument();
   });
+
+  it('renders source provenance when only proof hashes are present', () => {
+    const anchorWithHashOnlySource = {
+      ...mockAnchor,
+      metadata: {
+        evidence_package_hash: 'evidence-hash-123',
+        source_payload_hash: 'payload-hash-456',
+      },
+    };
+    const { getByTestId } = render(<AssetDetailView anchor={anchorWithHashOnlySource} />);
+
+    const section = getByTestId('source-provenance-display');
+    expect(section).toBeInTheDocument();
+    expect(section).not.toHaveTextContent('evidence-hash-123');
+    expect(section).not.toHaveTextContent('payload-hash-456');
+  });
+
+  it('keeps full metadata available to the internal credential renderer', () => {
+    const anchorWithRecipient = {
+      ...mockAnchor,
+      credentialType: 'DEGREE',
+      metadata: {
+        recipient_name: 'Ada Lovelace',
+        source_url: 'https://credly.com/badges/internal?token=secret&id=visible',
+      },
+    };
+    const { getAllByText, queryByText } = render(<AssetDetailView anchor={anchorWithRecipient} />);
+
+    expect(getAllByText('Ada Lovelace').length).toBeGreaterThan(0);
+    expect(queryByText(/token=secret/)).not.toBeInTheDocument();
+  });
 });

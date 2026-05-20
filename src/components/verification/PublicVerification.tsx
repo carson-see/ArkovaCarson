@@ -295,6 +295,8 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
     sanitizeSourceUrl(sourceProvenance.source_url) ||
     sourceProvenance.source_provider ||
     sourceProvenance.verification_level ||
+    sourceProvenance.evidence_package_hash ||
+    sourceProvenance.source_payload_hash ||
     sourceProvenance.fetched_at
   );
 

@@ -33,12 +33,12 @@ describe('sanitizeSourceUrl', () => {
     );
   });
 
-  it('strips sensitive query parameters while preserving non-sensitive routing state', () => {
+  it('strips sensitive query parameters including OAuth redirect values', () => {
     const url = 'https://example.com/badge?id=123&token=secret123&state=public-route&code=course-101';
     const result = sanitizeSourceUrl(url);
     expect(result).toContain('id=123');
-    expect(result).toContain('state=public-route');
-    expect(result).toContain('code=course-101');
+    expect(result).not.toContain('state=public-route');
+    expect(result).not.toContain('code=course-101');
     expect(result).not.toContain('token=secret123');
   });
 

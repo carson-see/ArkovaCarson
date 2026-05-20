@@ -253,4 +253,26 @@ describe('PublicVerification', () => {
     expect(screen.queryByText('private@example.com')).not.toBeInTheDocument();
     expect(screen.queryByText(/token=secret/)).not.toBeInTheDocument();
   });
+
+  it('renders source provenance when only proof hashes are present', async () => {
+    rpcMock.mockResolvedValue({
+      data: {
+        ...baseAnchor,
+        status: 'SECURED',
+        secured_at: '2026-04-01T12:00:00Z',
+        network_receipt_id: 'receipt-123',
+        metadata: {
+          evidence_package_hash: 'evidence-hash-123',
+          source_payload_hash: 'payload-hash-456',
+        },
+      },
+      error: null,
+    });
+
+    render(<PublicVerification publicId="ARK-DOC-123" />);
+
+    expect(await screen.findByTestId('source-provenance-display')).toBeInTheDocument();
+    expect(screen.getByTestId('source-provenance-display')).not.toHaveTextContent('evidence-hash-123');
+    expect(screen.getByTestId('proof-download')).toHaveTextContent('evidence-hash-123');
+  });
 });

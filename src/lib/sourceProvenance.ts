@@ -50,6 +50,8 @@ export interface EvidenceProofFields {
 const SENSITIVE_PARAMS = new Set([
   'token',
   'access_token',
+  'code',
+  'state',
   'api_key',
   'apikey',
   'key',

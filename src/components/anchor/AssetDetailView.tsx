@@ -221,11 +221,14 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
   const status = statusConfig[anchor.status];
   const StatusIcon = status.icon;
   const sourceProvenance = buildAnchorSourceProvenance(anchor.metadata);
-  const credentialMetadata = buildAnchorCredentialMetadata(anchor.metadata);
+  const credentialMetadata = anchor.metadata ?? undefined;
+  const visibleMetadata = buildAnchorCredentialMetadata(anchor.metadata);
   const hasSourceProvenance = Boolean(
     sanitizeSourceUrl(sourceProvenance.source_url) ||
     sourceProvenance.source_provider ||
     sourceProvenance.verification_level ||
+    sourceProvenance.evidence_package_hash ||
+    sourceProvenance.source_payload_hash ||
     sourceProvenance.fetched_at
   );
 
@@ -626,14 +629,13 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
           )}
 
           {/* METADATA — pipeline-style key-value pairs (PII-sensitive keys filtered) */}
-          {anchor.metadata && Object.keys(anchor.metadata).filter(isAnchorMetadataVisible).length > 0 && (
+          {visibleMetadata && Object.keys(visibleMetadata).length > 0 && (
             <>
               <Separator />
               <div className="space-y-3">
                 <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Metadata</span>
                 <div className="space-y-2">
-                  {Object.entries(anchor.metadata)
-                    .filter(([k]) => isAnchorMetadataVisible(k))
+                  {Object.entries(visibleMetadata)
                     .map(([key, value]) => (
                       <div key={key} className="flex gap-4">
                         <span className="text-xs text-muted-foreground whitespace-nowrap min-w-[120px]">{key.replace(/_/g, ' ')}:</span>
