@@ -10,6 +10,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 
+const mockConfig = vi.hoisted(() => ({
+  enableProfessionalEducationSchemaReady: true,
+}));
+const mockSubmitJob = vi.hoisted(() => vi.fn().mockResolvedValue('job-1'));
+
+vi.mock('../../config.js', () => ({ config: mockConfig }));
 vi.mock('../../utils/db.js', () => ({
   db: { from: vi.fn() },
 }));
@@ -18,6 +24,9 @@ vi.mock('../../utils/logger.js', () => ({
 }));
 vi.mock('../../utils/orgCredits.js', () => ({
   deductOrgCredit: vi.fn(),
+}));
+vi.mock('../../utils/jobQueue.js', () => ({
+  submitJob: mockSubmitJob,
 }));
 
 import { anchorBulkRouter, BulkAnchorRequestSchema } from './anchor-bulk.js';
@@ -66,6 +75,7 @@ function makeBuilder(state: {
 describe('POST /api/v1/anchor/bulk (SCRUM-1171)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockConfig.enableProfessionalEducationSchemaReady = true;
     vi.mocked(deductOrgCredit).mockResolvedValue({ allowed: true });
   });
 
@@ -195,6 +205,65 @@ describe('POST /api/v1/anchor/bulk (SCRUM-1171)', () => {
       .expect(402);
     expect(res.body.error).toBe('insufficient_credits');
     expect(res.body.required).toBe(2);
+  });
+
+  it('503s CPE bulk submissions before duplicate checks or inserts when professional education schema is not ready', async () => {
+    mockConfig.enableProfessionalEducationSchemaReady = false;
+
+    const res = await request(buildApp())
+      .post('/api/v1/anchor/bulk')
+      .send({
+        anchors: [
+          {
+            fingerprint: FP(1),
+            credential_type: 'CPE',
+            description: 'CPE certificate',
+          },
+        ],
+      });
+
+    expect(res.status).toBe(503);
+    expect(res.body.error).toBe('professional_education_schema_unavailable');
+    expect(vi.mocked(db.from)).not.toHaveBeenCalled();
+    expect(deductOrgCredit).not.toHaveBeenCalled();
+    expect(mockSubmitJob).not.toHaveBeenCalled();
+  });
+
+  it('keeps existing CLE bulk anchoring available but skips extraction enqueue when schema is not ready', async () => {
+    mockConfig.enableProfessionalEducationSchemaReady = false;
+    vi.mocked(db.from).mockImplementation((table: string): never => {
+      if (table === 'anchors') {
+        return makeBuilder({
+          selectData: [],
+          insertedRow: {
+            id: '550e8400-e29b-41d4-a716-446655440001',
+            public_id: 'ARK-001',
+            fingerprint: FP(1),
+            credential_type: 'CLE',
+            metadata: { credential_title: 'Ethics CLE', bulk_source: 'haki-req-02' },
+            created_at: '2026-04-28T13:00:00Z',
+          },
+        }) as unknown as never;
+      }
+      return makeBuilder() as unknown as never;
+    });
+
+    const res = await request(buildApp())
+      .post('/api/v1/anchor/bulk')
+      .send({
+        anchors: [
+          {
+            fingerprint: FP(1),
+            credential_type: 'CLE',
+            description: 'CLE certificate',
+          },
+        ],
+      });
+
+    expect(res.status).toBe(201);
+    expect(res.body.queued).toBe(1);
+    expect(deductOrgCredit).toHaveBeenCalledWith(expect.anything(), 'org-1', 1, 'anchor.bulk', undefined);
+    expect(mockSubmitJob).not.toHaveBeenCalled();
   });
 
   it('schema rejects > 1000 rows (DoS guard)', () => {

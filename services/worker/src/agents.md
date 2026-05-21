@@ -1,11 +1,15 @@
 # services/worker/src/
-_Last updated: 2026-05-19 (SCRUM-1599 badge endpoint)_
+_Last updated: 2026-05-21 (PR #841 prod containment)_
 
 Root of the Arkova anchoring worker — a Node + Express service for backend processing (webhooks, cron, Bitcoin anchoring, billing, API).
 
 ## 2026-05-20 AI Fraud Safety Note
 
 - `config.ts` documents `ENABLE_VISUAL_FRAUD_DETECTION` as a legacy gate. The server route is fail-closed pending SCRUM-1955 client-side worker rearchitecture; do not re-enable server-side document/image byte processing in fraud paths.
+
+## 2026-05-21 PR #841 Containment Note
+
+- `config.ts` exposes `ENABLE_PROFESSIONAL_EDUCATION_SCHEMA_READY`, default false. Keep CPE/CLE professional-education runtime paths disabled until prod schema and migration-ledger reconciliation is complete.
 
 ## Key Files
 

@@ -24,6 +24,7 @@ vi.mock('../config.js', () => ({
     stripeSecretKey: 'sk_test_smoke',
     bitcoinNetwork: 'testnet',
     enableProdNetworkAnchoring: false,
+    enableProfessionalEducationSchemaReady: true,
   },
 }));
 
@@ -323,10 +324,12 @@ describe('cron routes', () => {
       nodeEnv: string;
       cronSecret?: string;
       cronOidcAudience?: string;
+      enableProfessionalEducationSchemaReady?: boolean;
     };
     mutableConfig.nodeEnv = 'development';
     mutableConfig.cronSecret = 'test-cron-secret-1234';
     mutableConfig.cronOidcAudience = 'https://arkova-worker.run.app';
+    mutableConfig.enableProfessionalEducationSchemaReady = true;
   });
 
   // ═══════════════════════════════════════
@@ -532,6 +535,19 @@ describe('cron routes', () => {
   });
 
   describe('POST /professional-education-extraction', () => {
+    it('503s without invoking the job when professional education schema is not ready', async () => {
+      (config as { enableProfessionalEducationSchemaReady?: boolean }).enableProfessionalEducationSchemaReady = false;
+
+      const app = createApp();
+      const res = await request(app)
+        .post('/cron/professional-education-extraction')
+        .send({ maxJobs: 5 });
+
+      expect(res.status).toBe(503);
+      expect(res.body.error).toBe('professional_education_schema_unavailable');
+      expect(mockProcessProfessionalEducationExtractionJobs).not.toHaveBeenCalled();
+    });
+
     it('returns professional education extraction job result and caps maxJobs', async () => {
       const app = createApp();
       const res = await request(app)
