@@ -6,6 +6,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import type { SupabaseClient } from '@supabase/supabase-js';
 
 const mockRpc = vi.fn();
 const mockFrom = vi.fn();
@@ -69,7 +70,7 @@ describe('FCC ULS Fetcher (NPH-17)', () => {
   it('returns early when ENABLE_PUBLIC_RECORDS_INGESTION is disabled', async () => {
     mockRpc.mockResolvedValue({ data: false });
     const { fetchFccLicenses } = await import('../fccUlsFetcher.js');
-    const result = await fetchFccLicenses(createMockSupabase() as any);
+    const result = await fetchFccLicenses(createMockSupabase() as unknown as SupabaseClient);
     expect(result.inserted).toBe(0);
     expect(result.skipped).toBe(0);
     expect(result.errors).toBe(0);
@@ -81,7 +82,7 @@ describe('FCC ULS Fetcher (NPH-17)', () => {
     fetchSpy.mockResolvedValue(makeFccResponse([]));
 
     const { fetchFccLicenses } = await import('../fccUlsFetcher.js');
-    await fetchFccLicenses(createMockSupabase() as any, { maxPerRun: 0 });
+    await fetchFccLicenses(createMockSupabase() as unknown as SupabaseClient, { maxPerRun: 0 });
 
     // Should have been called at least once
     if (fetchSpy.mock.calls.length > 0) {
@@ -115,7 +116,7 @@ describe('FCC ULS Fetcher (NPH-17)', () => {
 
     const { fetchFccLicenses } = await import('../fccUlsFetcher.js');
     const supabase = createMockSupabase();
-    await fetchFccLicenses(supabase as any, { maxPerRun: 1 });
+    await fetchFccLicenses(supabase as unknown as SupabaseClient, { maxPerRun: 1 });
 
     // Should have attempted to insert — verify from() was called with 'public_records'
     expect(mockFrom).toHaveBeenCalledWith('public_records');
@@ -135,7 +136,7 @@ describe('FCC ULS Fetcher (NPH-17)', () => {
     fetchSpy.mockResolvedValue(makeFccResponse([]));
 
     const { fetchFccLicenses } = await import('../fccUlsFetcher.js');
-    const result = await fetchFccLicenses(createMockSupabase() as any, { maxPerRun: 5 });
+    const result = await fetchFccLicenses(createMockSupabase() as unknown as SupabaseClient, { maxPerRun: 5 });
 
     expect(result.errors).toBeGreaterThan(0);
     expect(mockLogger.error).toHaveBeenCalled();
@@ -151,7 +152,7 @@ describe('FCC ULS Fetcher (NPH-17)', () => {
     });
 
     const { fetchFccLicenses } = await import('../fccUlsFetcher.js');
-    const result = await fetchFccLicenses(createMockSupabase() as any, { maxPerRun: 5 });
+    const result = await fetchFccLicenses(createMockSupabase() as unknown as SupabaseClient, { maxPerRun: 5 });
 
     expect(result.errors).toBeGreaterThan(0);
   });
@@ -166,7 +167,7 @@ describe('FCC ULS Fetcher (NPH-17)', () => {
     fetchSpy.mockResolvedValue(makeFccResponse([]));
 
     const { fetchFccLicenses } = await import('../fccUlsFetcher.js');
-    const result = await fetchFccLicenses(createMockSupabase() as any, { maxPerRun: 5 });
+    const result = await fetchFccLicenses(createMockSupabase() as unknown as SupabaseClient, { maxPerRun: 5 });
 
     expect(result.errors).toBeGreaterThan(0);
   });
@@ -190,7 +191,7 @@ describe('FCC ULS Fetcher (NPH-17)', () => {
     fetchSpy.mockResolvedValue(makeFccResponse([]));
 
     const { fetchFccLicenses } = await import('../fccUlsFetcher.js');
-    const result = await fetchFccLicenses(createMockSupabase() as any, { maxPerRun: 200 });
+    const result = await fetchFccLicenses(createMockSupabase() as unknown as SupabaseClient, { maxPerRun: 200 });
 
     expect(result.pagesProcessed).toBeGreaterThanOrEqual(2);
   });
@@ -222,7 +223,7 @@ describe('FCC ULS Fetcher (NPH-17)', () => {
     fetchSpy.mockResolvedValue(makeFccResponse([]));
 
     const { fetchFccLicenses } = await import('../fccUlsFetcher.js');
-    const result = await fetchFccLicenses(supabase as any, { maxPerRun: 5 });
+    const result = await fetchFccLicenses(supabase as unknown as SupabaseClient, { maxPerRun: 5 });
 
     expect(result.skipped).toBeGreaterThan(0);
   });
@@ -251,7 +252,7 @@ describe('FCC ULS Fetcher (NPH-17)', () => {
     fetchSpy.mockResolvedValue(makeFccResponse([]));
 
     const { fetchFccLicenses } = await import('../fccUlsFetcher.js');
-    const result = await fetchFccLicenses(createMockSupabase() as any, { maxPerRun: 5 });
+    const result = await fetchFccLicenses(createMockSupabase() as unknown as SupabaseClient, { maxPerRun: 5 });
 
     // Should handle the single-object case
     expect(result.inserted + result.skipped + result.errors).toBeGreaterThanOrEqual(0);
@@ -271,7 +272,7 @@ describe('FCC ULS Fetcher (NPH-17)', () => {
     const { fetchFccLicenses } = await import('../fccUlsFetcher.js');
     // The fetcher processes a full batch (50) before checking maxPerRun,
     // so inserted will be >= maxPerRun but it won't continue to more prefixes
-    const result = await fetchFccLicenses(createMockSupabase() as any, { maxPerRun: 10 });
+    const result = await fetchFccLicenses(createMockSupabase() as unknown as SupabaseClient, { maxPerRun: 10 });
 
     // After first batch it should stop, so total should be one batch at most
     expect(result.inserted).toBeLessThanOrEqual(50);

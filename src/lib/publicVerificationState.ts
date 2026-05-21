@@ -1,4 +1,4 @@
-export type PublicVerificationStatus = 'PENDING' | 'SUBMITTED' | 'SECURED' | 'REVOKED' | 'EXPIRED';
+export type PublicVerificationStatus = 'PENDING' | 'SUBMITTED' | 'SECURED' | 'REVOKED' | 'EXPIRED' | 'SUPERSEDED';
 
 export function normalizePublicVerificationStatus(status: string): PublicVerificationStatus {
   if (status === 'ACTIVE') return 'SECURED';
@@ -8,7 +8,8 @@ export function normalizePublicVerificationStatus(status: string): PublicVerific
     status === 'SUBMITTED' ||
     status === 'SECURED' ||
     status === 'REVOKED' ||
-    status === 'EXPIRED'
+    status === 'EXPIRED' ||
+    status === 'SUPERSEDED'
   ) {
     return status;
   }
@@ -21,5 +22,5 @@ export function isPreSecuredStatus(status: PublicVerificationStatus): boolean {
 }
 
 export function hasPublicVerificationProof(status: PublicVerificationStatus): boolean {
-  return status === 'SECURED' || status === 'REVOKED' || status === 'EXPIRED';
+  return status === 'SECURED' || status === 'REVOKED' || status === 'EXPIRED' || status === 'SUPERSEDED';
 }

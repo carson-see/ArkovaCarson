@@ -11,6 +11,7 @@ import {
   fetchDocusignCombinedDocument,
   verifyDocusignConnectHmac,
   parseDocusignConnectPayload,
+  provisionConnectListener,
   DocusignApiError,
   DocusignConfigError,
 } from './docusign.js';
@@ -205,5 +206,186 @@ describe('parseDocusignConnectPayload', () => {
         }),
       ),
     ).toThrow(/completed envelope/i);
+  });
+});
+
+describe('provisionConnectListener', () => {
+  const PROVISION_ENV = {
+    ...ENV,
+    DOCUSIGN_CONNECT_HMAC_SECRET: 'hmac-secret-123',
+    WORKER_PUBLIC_URL: 'https://arkova-worker.example.com',
+  };
+
+  it('creates a new Connect listener when none exist', async () => {
+    let postBody: unknown = null;
+    const requestedUrls: string[] = [];
+
+    const fetchImpl = async (input: string | URL | Request, init?: RequestInit) => {
+      const url = String(input);
+      requestedUrls.push(url);
+
+      // GET list — no existing listeners
+      if (init?.method !== 'POST' && init?.method !== 'PUT') {
+        return new Response(
+          JSON.stringify({ configurations: [] }),
+          { status: 200 },
+        );
+      }
+
+      // POST create
+      if (init?.method === 'POST') {
+        postBody = JSON.parse(String(init.body));
+        return new Response(
+          JSON.stringify({ connectId: '99001', name: 'Arkova Connect' }),
+          { status: 201 },
+        );
+      }
+
+      return new Response('{}', { status: 404 });
+    };
+
+    const result = await provisionConnectListener({
+      accessToken: 'at-test',
+      baseUri: 'https://demo.docusign.net',
+      accountId: 'acct-1',
+      deps: { env: PROVISION_ENV, fetchImpl: fetchImpl as unknown as typeof fetch },
+    });
+
+    expect(result.connectId).toBe('99001');
+    expect(result.action).toBe('created');
+    // Verify the POST URL is correct
+    expect(requestedUrls).toContain(
+      'https://demo.docusign.net/restapi/v2.1/accounts/acct-1/connect',
+    );
+    // Verify payload shape
+    const body = postBody as Record<string, unknown>;
+    expect(body.urlToPublishTo).toBe('https://arkova-worker.example.com/webhooks/docusign');
+    expect(body.configurationType).toBe('custom');
+    expect(body.allUsers).toBe('true');
+    expect(body.allowEnvelopePublish).toBe('true');
+    expect(body.enableLog).toBe('true');
+    expect(body.includeHMAC).toBe('true');
+    expect(body.requiresAcknowledgement).toBe('true');
+    expect(body.envelopeEvents).toEqual(['Completed']);
+    expect(body.events).toEqual(['envelope-completed']);
+    expect(body.eventData).toMatchObject({ format: 'json', version: 'restv2.1' });
+  });
+
+  it('updates an existing Connect listener when URL matches (idempotent)', async () => {
+    let putBody: unknown = null;
+    let method: string | undefined;
+
+    const fetchImpl = async (_input: string | URL | Request, init?: RequestInit) => {
+      // GET list — one existing listener with matching URL
+      if (!init?.method || init.method === 'GET') {
+        return new Response(
+          JSON.stringify({
+            configurations: [
+              {
+                connectId: '22152148',
+                urlToPublishTo: 'https://arkova-worker.example.com/webhooks/docusign',
+                name: 'Old Config',
+              },
+            ],
+          }),
+          { status: 200 },
+        );
+      }
+
+      // PUT update
+      if (init?.method === 'PUT') {
+        method = 'PUT';
+        putBody = JSON.parse(String(init.body));
+        return new Response(
+          JSON.stringify({ connectId: '22152148', name: 'Arkova Connect' }),
+          { status: 200 },
+        );
+      }
+
+      return new Response('{}', { status: 404 });
+    };
+
+    const result = await provisionConnectListener({
+      accessToken: 'at-test',
+      baseUri: 'https://demo.docusign.net',
+      accountId: 'acct-1',
+      deps: { env: PROVISION_ENV, fetchImpl: fetchImpl as unknown as typeof fetch },
+    });
+
+    expect(result.connectId).toBe('22152148');
+    expect(result.action).toBe('updated');
+    expect(method).toBe('PUT');
+    // Must include connectId in the PUT body for update
+    const body = putBody as Record<string, unknown>;
+    expect(body.connectId).toBe('22152148');
+    expect(body.urlToPublishTo).toBe('https://arkova-worker.example.com/webhooks/docusign');
+  });
+
+  it('throws DocusignApiError when the Connect API returns an error', async () => {
+    const fetchImpl = async (_input: string | URL | Request, init?: RequestInit) => {
+      // GET list succeeds (no existing)
+      if (!init?.method || init.method === 'GET') {
+        return new Response(JSON.stringify({ configurations: [] }), { status: 200 });
+      }
+      // POST fails
+      return new Response(
+        JSON.stringify({ errorCode: 'CONNECT_CONFIG_ERROR', message: 'Invalid config' }),
+        { status: 400 },
+      );
+    };
+
+    await expect(
+      provisionConnectListener({
+        accessToken: 'at-test',
+        baseUri: 'https://demo.docusign.net',
+        accountId: 'acct-1',
+        deps: { env: PROVISION_ENV, fetchImpl: fetchImpl as unknown as typeof fetch },
+      }),
+    ).rejects.toBeInstanceOf(DocusignApiError);
+  });
+
+  it('throws DocusignConfigError when WORKER_PUBLIC_URL is not set', async () => {
+    const fetchImpl = async () => new Response('{}', { status: 200 });
+
+    await expect(
+      provisionConnectListener({
+        accessToken: 'at-test',
+        baseUri: 'https://demo.docusign.net',
+        accountId: 'acct-1',
+        deps: {
+          env: { ...ENV, DOCUSIGN_CONNECT_HMAC_SECRET: 'secret' },
+          fetchImpl: fetchImpl as unknown as typeof fetch,
+        },
+      }),
+    ).rejects.toBeInstanceOf(DocusignConfigError);
+  });
+
+  it('throws DocusignConfigError when DOCUSIGN_CONNECT_HMAC_SECRET is missing', async () => {
+    const fetchImpl = async () => new Response('{}', { status: 200 });
+
+    await expect(
+      provisionConnectListener({
+        accessToken: 'at-test',
+        baseUri: 'https://demo.docusign.net',
+        accountId: 'acct-1',
+        deps: {
+          env: { ...ENV, WORKER_PUBLIC_URL: 'https://arkova-worker.example.com' },
+          fetchImpl: fetchImpl as unknown as typeof fetch,
+        },
+      }),
+    ).rejects.toThrow(DocusignConfigError);
+
+    // Also verify the error message references the env var name
+    await expect(
+      provisionConnectListener({
+        accessToken: 'at-test',
+        baseUri: 'https://demo.docusign.net',
+        accountId: 'acct-1',
+        deps: {
+          env: { ...ENV, WORKER_PUBLIC_URL: 'https://arkova-worker.example.com' },
+          fetchImpl: fetchImpl as unknown as typeof fetch,
+        },
+      }),
+    ).rejects.toThrow(/DOCUSIGN_CONNECT_HMAC_SECRET/);
   });
 });

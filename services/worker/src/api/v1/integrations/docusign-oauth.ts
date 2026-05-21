@@ -6,9 +6,10 @@
  *   GET  /api/v1/integrations/docusign/oauth/callback
  *   POST /api/v1/integrations/docusign/disconnect
  *
- * Mirrors the Drive OAuth router (drive-oauth.ts, SCRUM-1168). Tokens are
- * encrypted with the reviewed OAuth crypto helper before storage. Cleartext
- * access/refresh token payload never reaches Postgres or logs.
+ * Mirrors the Drive OAuth router (drive-oauth.ts, SCRUM-1168). Access-token
+ * metadata is encrypted with the reviewed OAuth crypto helper before storage;
+ * long-lived refresh tokens live in Secret Manager and Postgres stores only
+ * the secret resource name. Cleartext token payloads never reach Postgres or logs.
  */
 
 import { createHmac, randomUUID, timingSafeEqual } from 'crypto';
@@ -21,6 +22,7 @@ import {
   buildDocusignAuthorizationUrl,
   exchangeDocusignCode,
   getDocusignUserInfo,
+  provisionConnectListener,
   type DocusignClientDeps,
 } from '../../../integrations/oauth/docusign.js';
 import {
@@ -28,6 +30,12 @@ import {
   encryptTokens,
   type KmsClient,
 } from '../../../integrations/oauth/crypto.js';
+import {
+  buildDocusignRefreshTokenSecretName,
+  createGcpSecretManagerRefreshTokenStore,
+  resolveDocusignSecretManagerProjectId,
+  type DocusignRefreshTokenStore,
+} from '../../../integrations/connectors/docusign-token-store.js';
 
 // org_integrations landed after generated worker DB types.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -41,6 +49,7 @@ interface DocusignOAuthDeps {
   now?: () => Date;
   stateSecret?: string;
   frontendUrl?: string;
+  refreshTokenStore?: DocusignRefreshTokenStore;
 }
 
 interface StatePayload {
@@ -264,18 +273,35 @@ export function createDocusignOAuthRouter(deps: DocusignOAuthDeps = {}): Router 
         res.redirect(302, appendResult(returnTo, 'docusign_error', 'no_account'));
         return;
       }
+      if (!tokens.refresh_token) {
+        logger.warn({ orgId: payload.orgId, accountId: account.account_id }, 'DocuSign token exchange did not include refresh_token');
+        res.redirect(302, appendResult(returnTo, 'docusign_error', 'missing_refresh_token'));
+        return;
+      }
 
       const kms = deps.kms ?? await createDefaultKmsClient();
       const expiresAt = new Date(
         (deps.now?.() ?? new Date()).getTime() + tokens.expires_in * 1000,
       ).toISOString();
+      const refreshTokenStore = deps.refreshTokenStore ?? createGcpSecretManagerRefreshTokenStore({
+        env: deps.env,
+        fetchImpl: deps.fetchImpl,
+      });
+      const tokenSecretName = buildDocusignRefreshTokenSecretName({
+        projectId: resolveDocusignSecretManagerProjectId(deps.env),
+        orgId: payload.orgId,
+        accountId: account.account_id,
+      });
       const encrypted = await encryptTokens({
         access_token: tokens.access_token,
-        refresh_token: tokens.refresh_token,
         token_type: tokens.token_type,
         expires_at: expiresAt,
         scope: tokens.scope,
       }, { kms, env: deps.env });
+      await refreshTokenStore.put({
+        name: tokenSecretName,
+        value: tokens.refresh_token,
+      });
 
       const { data: integration, error: upsertError } = await db
         .from('org_integrations')
@@ -283,10 +309,11 @@ export function createDocusignOAuthRouter(deps: DocusignOAuthDeps = {}): Router 
           org_id: payload.orgId,
           provider: Provider,
           account_id: account.account_id,
-          account_label: account.account_name ?? info.email ?? null,
+          account_label: account.account_name ?? account.account_id ?? null,
           base_uri: account.base_uri,
           encrypted_tokens: toPostgresBytea(encrypted.ciphertext),
           token_kms_key_id: encrypted.keyId,
+          token_secret_name: tokenSecretName,
           scope: tokens.scope ?? null,
           connected_at: (deps.now?.() ?? new Date()).toISOString(),
           revoked_at: null,
@@ -297,6 +324,9 @@ export function createDocusignOAuthRouter(deps: DocusignOAuthDeps = {}): Router 
 
       if (upsertError) {
         logger.error({ error: upsertError, orgId: payload.orgId }, 'DocuSign integration upsert failed');
+        await refreshTokenStore.delete({ name: tokenSecretName }).catch((deleteError) => {
+          logger.warn({ error: deleteError, orgId: payload.orgId }, 'DocuSign refresh-token secret cleanup failed after upsert error');
+        });
         res.redirect(302, appendResult(returnTo, 'docusign_error', 'save_failed'));
         return;
       }
@@ -312,9 +342,53 @@ export function createDocusignOAuthRouter(deps: DocusignOAuthDeps = {}): Router 
         },
       });
 
+      // Auto-provision Connect listener (fire-and-forget, non-fatal).
+      // Don't block the redirect — user shouldn't wait for DocuSign API calls.
+      void provisionConnectListener({
+        accessToken: tokens.access_token,
+        baseUri: account.base_uri,
+        accountId: account.account_id,
+        deps: docusignDeps,
+      }).then(async (provisionResult) => {
+        await recordIntegrationEvent(db, {
+          orgId: payload.orgId,
+          integrationId: integration?.id,
+          eventType: 'connect_listener_provisioned',
+          status: 'success',
+          details: {
+            connect_id: provisionResult.connectId,
+            action: provisionResult.action,
+          },
+        });
+      }).catch(async (provisionError) => {
+        logger.error(
+          { message: provisionError instanceof Error ? provisionError.message : String(provisionError), orgId: payload.orgId },
+          'DocuSign Connect listener provisioning failed',
+        );
+        try {
+          await recordIntegrationEvent(db, {
+            orgId: payload.orgId,
+            integrationId: integration?.id,
+            eventType: 'connect_listener_failed',
+            status: 'error',
+            details: {
+              error: provisionError instanceof Error ? provisionError.message : String(provisionError),
+            },
+          });
+        } catch (eventError) {
+          logger.warn(
+            { message: eventError instanceof Error ? eventError.message : String(eventError) },
+            'Failed to record Connect provisioning failure event',
+          );
+        }
+      });
+
       res.redirect(302, appendResult(returnTo, 'docusign', 'connected'));
     } catch (error) {
-      logger.error({ error, orgId: payload.orgId }, 'DocuSign OAuth callback failed');
+      logger.error(
+        { orgId: payload.orgId, errorMessage: error instanceof Error ? error.message : 'Unknown error' },
+        'DocuSign OAuth callback failed',
+      );
       res.redirect(302, appendResult(returnTo, 'docusign_error', 'callback_failed'));
     }
   });
@@ -339,12 +413,20 @@ export function createDocusignOAuthRouter(deps: DocusignOAuthDeps = {}): Router 
     }
 
     const now = (deps.now?.() ?? new Date()).toISOString();
+    const { data: existing } = await db
+      .from('org_integrations')
+      .select('id, token_secret_name')
+      .eq('org_id', orgId)
+      .eq('provider', Provider)
+      .is('revoked_at', null);
+
     const { data, error } = await db
       .from('org_integrations')
       .update({
         revoked_at: now,
         encrypted_tokens: null,
         token_kms_key_id: null,
+        token_secret_name: null,
         updated_at: now,
       })
       .eq('org_id', orgId)
@@ -355,6 +437,25 @@ export function createDocusignOAuthRouter(deps: DocusignOAuthDeps = {}): Router 
     if (error) {
       logger.error({ error, orgId }, 'DocuSign disconnect failed');
       res.status(500).json({ error: 'Failed to disconnect DocuSign' });
+      return;
+    }
+
+    const refreshTokenStore = deps.refreshTokenStore ?? createGcpSecretManagerRefreshTokenStore({
+      env: deps.env,
+      fetchImpl: deps.fetchImpl,
+    });
+    const deleteResults = await Promise.allSettled(
+      ((existing ?? []) as Array<{ token_secret_name?: string | null }>).flatMap((row) =>
+        row.token_secret_name ? [refreshTokenStore.delete({ name: row.token_secret_name })] : [],
+      ),
+    );
+    const failedDeletes = deleteResults.filter((result) => result.status === 'rejected');
+    if (failedDeletes.length > 0) {
+      logger.error(
+        { orgId, failedDeleteCount: failedDeletes.length },
+        'DocuSign refresh-token secret deletion failed during disconnect',
+      );
+      res.status(500).json({ error: 'Failed to delete DocuSign refresh token secret' });
       return;
     }
 

@@ -22,8 +22,11 @@ vi.mock('@/hooks/useCredentialTemplate', () => ({
 }));
 
 vi.mock('@/components/credentials/CredentialRenderer', () => ({
-  CredentialRenderer: ({ status }: { status: string }) => (
-    <div data-testid="credential-renderer">credential status: {status}</div>
+  CredentialRenderer: ({ status, metadata }: { status: string; metadata?: unknown }) => (
+    <div data-testid="credential-renderer">
+      credential status: {status}
+      {JSON.stringify(metadata ?? {})}
+    </div>
   ),
 }));
 
@@ -36,7 +39,11 @@ vi.mock('@/components/public/ProvenanceTimeline', () => ({
 }));
 
 vi.mock('@/components/verification/VerifierProofDownload', () => ({
-  VerifierProofDownload: () => <div data-testid="proof-download" />,
+  VerifierProofDownload: ({ sourceProvenance }: { sourceProvenance?: unknown }) => (
+    <div data-testid="proof-download">
+      {JSON.stringify(sourceProvenance ?? {})}
+    </div>
+  ),
 }));
 
 vi.mock('@/components/verification/EvidenceLayersSection', () => ({
@@ -184,5 +191,88 @@ describe('PublicVerification', () => {
     expect(screen.getByText('Cryptographic Proof')).toBeInTheDocument();
     expect(screen.getByTestId('evidence-layers')).toHaveTextContent('1 active');
     expect(screen.getByTestId('proof-download')).toBeInTheDocument();
+  });
+
+  it('renders SUPERSEDED records as visible terminal records with proof affordances', async () => {
+    rpcMock.mockResolvedValue({
+      data: {
+        ...baseAnchor,
+        status: 'SUPERSEDED',
+        secured_at: '2026-04-01T12:00:00Z',
+        network_receipt_id: 'receipt-123',
+      },
+      error: null,
+    });
+
+    render(<PublicVerification publicId="ARK-DOC-123" />);
+
+    expect(await screen.findByText('Record Superseded')).toBeInTheDocument();
+    expect(screen.getByText('This record has been replaced by a newer version.')).toBeInTheDocument();
+    expect(screen.queryByText('Submitting to network...')).not.toBeInTheDocument();
+    expect(screen.getByText('Cryptographic Proof')).toBeInTheDocument();
+    expect(screen.getByTestId('evidence-layers')).toHaveTextContent('1 active');
+    expect(screen.getByTestId('proof-download')).toBeInTheDocument();
+  });
+
+  it('uses public-safe source provenance from sanitized metadata without exposing hidden PII', async () => {
+    rpcMock.mockResolvedValue({
+      data: {
+        ...baseAnchor,
+        status: 'SECURED',
+        secured_at: '2026-04-01T12:00:00Z',
+        network_receipt_id: 'receipt-123',
+        metadata: {
+          source_url: 'https://credly.com/badges/abc?token=secret&id=visible',
+          source_provider: 'credly',
+          verification_level: 'source_signed',
+          evidence_package_hash: 'evidence-hash-123',
+          source_payload_hash: 'payload-hash-456',
+          source_fetched_at: '2026-04-01T11:45:00Z',
+          email: 'private@example.com',
+        },
+      },
+      error: null,
+    });
+
+    render(<PublicVerification publicId="ARK-DOC-123" />);
+
+    expect(await screen.findByTestId('source-provenance-display')).toBeInTheDocument();
+    const sourceLink = screen.getByTestId('source-url-link');
+    expect(sourceLink).toHaveAttribute('href', 'https://credly.com/badges/abc?id=visible');
+    expect(screen.getByText('Credly')).toBeInTheDocument();
+    expect(screen.getByText('Source Signed')).toBeInTheDocument();
+
+    const proofDownload = screen.getByTestId('proof-download');
+    const credentialRenderer = screen.getByTestId('credential-renderer');
+    expect(proofDownload).toHaveTextContent('evidence-hash-123');
+    expect(proofDownload).toHaveTextContent('payload-hash-456');
+    expect(credentialRenderer).not.toHaveTextContent('private@example.com');
+    expect(credentialRenderer).not.toHaveTextContent('token=secret');
+    expect(credentialRenderer).not.toHaveTextContent('evidence-hash-123');
+    expect(proofDownload).not.toHaveTextContent('private@example.com');
+    expect(screen.queryByText('private@example.com')).not.toBeInTheDocument();
+    expect(screen.queryByText(/token=secret/)).not.toBeInTheDocument();
+  });
+
+  it('renders source provenance when only proof hashes are present', async () => {
+    rpcMock.mockResolvedValue({
+      data: {
+        ...baseAnchor,
+        status: 'SECURED',
+        secured_at: '2026-04-01T12:00:00Z',
+        network_receipt_id: 'receipt-123',
+        metadata: {
+          evidence_package_hash: 'evidence-hash-123',
+          source_payload_hash: 'payload-hash-456',
+        },
+      },
+      error: null,
+    });
+
+    render(<PublicVerification publicId="ARK-DOC-123" />);
+
+    expect(await screen.findByTestId('source-provenance-display')).toBeInTheDocument();
+    expect(screen.getByTestId('source-provenance-display')).not.toHaveTextContent('evidence-hash-123');
+    expect(screen.getByTestId('proof-download')).toHaveTextContent('evidence-hash-123');
   });
 });

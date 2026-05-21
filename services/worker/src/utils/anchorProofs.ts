@@ -23,6 +23,7 @@ export async function upsertAnchorProofs(
 ): Promise<void> {
   if (rows.length === 0) return;
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- table not yet in generated database.types.ts
   const dbAny = client as any;
 
   for (let i = 0; i < rows.length; i += PROOF_UPSERT_CHUNK) {

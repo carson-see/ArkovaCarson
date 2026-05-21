@@ -77,6 +77,7 @@ import { runQueueReminderJob } from '../jobs/queue-reminders.js';
 import { runOrgQueueScheduler } from '../jobs/org-queue-scheduler.js';
 import { runRulesEngine } from '../jobs/rules-engine.js';
 import { runRuleActionDispatcher } from '../jobs/rule-action-dispatcher.js';
+import { runDocusignEnvelopeCompletedJobs } from '../jobs/docusign-envelope-completed.js';
 import { runDbHealthMonitor } from '../jobs/db-health-monitor.js';
 import { runSubscriptionRenewal } from '../jobs/workspace-subscription-renewal.js';
 import { runMainnetMigration, getMigrationStatus } from '../jobs/mainnet-migration.js';
@@ -91,6 +92,9 @@ export const cronRouter = Router();
 
 // CORS for browser-based admin triggers (PipelineAdminPage)
 import { corsMiddleware } from './middleware.js';
+
+const DocusignEnvelopeCompletedLimitSchema = z.coerce.number().int().min(1).max(100);
+
 cronRouter.use(corsMiddleware);
 
 // Dedicated rate limiter for cron endpoints
@@ -242,7 +246,11 @@ cronRouter.post('/batch-anchors', async (req, res) => {
 
 cronRouter.post('/check-confirmations', async (_req, res) => {
   try {
-    const result = await checkSubmittedConfirmations();
+    const result = await withCronMonitoring(
+      'check-confirmations',
+      '*/30 * * * *',
+      () => checkSubmittedConfirmations(),
+    )();
     res.json(result);
   } catch (error) {
     logger.error({ error }, 'Confirmation check failed');
@@ -252,7 +260,11 @@ cronRouter.post('/check-confirmations', async (_req, res) => {
 
 cronRouter.post('/process-revocations', async (_req, res) => {
   try {
-    const result = await processRevokedAnchors();
+    const result = await withCronMonitoring(
+      'process-revocations',
+      '*/5 * * * *',
+      () => processRevokedAnchors(),
+    )();
     res.json(result);
   } catch (error) {
     logger.error({ error }, 'Revocation processing failed');
@@ -262,7 +274,11 @@ cronRouter.post('/process-revocations', async (_req, res) => {
 
 cronRouter.post('/webhook-retries', async (_req, res) => {
   try {
-    const retried = await processWebhookRetries();
+    const retried = await withCronMonitoring(
+      'webhook-retries',
+      '*/10 * * * *',
+      () => processWebhookRetries(),
+    )();
     res.json({ retried });
   } catch (error) {
     logger.error({ error }, 'Webhook retry processing failed');
@@ -371,6 +387,27 @@ cronRouter.post('/rule-action-dispatcher', async (_req, res) => {
   }
 });
 
+// ─── SCRUM-1101/SCRUM-1718: DocuSign completed-envelope document fetch jobs ───
+cronRouter.post('/docusign-envelope-completed', async (req, res) => {
+  try {
+    const rawLimit = req.query.limit ?? req.body?.limit;
+    const parsedLimit = rawLimit === undefined
+      ? undefined
+      : DocusignEnvelopeCompletedLimitSchema.safeParse(rawLimit);
+    if (parsedLimit && !parsedLimit.success) {
+      res.status(400).json({ error: 'Invalid request', details: parsedLimit.error.flatten() });
+      return;
+    }
+    const result = await runDocusignEnvelopeCompletedJobs({
+      limit: parsedLimit?.data,
+    });
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'DocuSign completed-envelope queue pass failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
 // ─── SCRUM-1147: Drive/Graph subscription renewal sweep ───
 // Vendor renewal calls are stubbed pending live OAuth wiring; production
 // rollout swaps these for real Google Drive channels.watch + MS Graph
@@ -406,7 +443,11 @@ cronRouter.post('/fetch-edgar', async (_req, res) => {
 
 cronRouter.post('/fetch-uspto', async (_req, res) => {
   try {
-    const result = await fetchUsptoPAtents(db);
+    const result = await withCronMonitoring(
+      'fetch-uspto',
+      '*/15 * * * *',
+      () => fetchUsptoPAtents(db),
+    )();
     res.json(result);
   } catch (error) {
     logger.error({ error }, 'USPTO fetch failed');

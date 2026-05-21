@@ -133,7 +133,7 @@ export function DocusignConnectorCard({ orgId }: DocusignConnectorCardProps) {
   const accountLabel = connection?.account_label || connection?.account_id;
 
   return (
-    <Card>
+    <Card data-testid="docusign-card">
       <CardHeader>
         <CardTitle className="flex items-center gap-2">
           <FileSignature className="h-5 w-5" />

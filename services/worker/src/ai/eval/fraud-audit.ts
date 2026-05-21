@@ -52,8 +52,8 @@ export async function runFraudAudit(
   serviceRoleKey: string,
   sampleSize = 100,
 ): Promise<AuditResult> {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const db = createClient(supabaseUrl, serviceRoleKey, {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- ws module type incompatible with Supabase WebSocket type
     realtime: { transport: ws as any },
   });
 

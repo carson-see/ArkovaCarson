@@ -30,6 +30,8 @@ vi.mock('../utils/logger.js', () => ({
 import { db } from '../utils/db.js';
 import { recordMeteredUsage, getMeteredUsage, reportMeteredUsageToStripe } from './meteredBilling.js';
 
+const dbFromMock = () => vi.mocked(db.from as unknown as ReturnType<typeof vi.fn>);
+
 interface SubRow { id: string; user_id: string; org_id: string; stripe_subscription_id: string; plan_id: string }
 interface CreditRow { org_id: string; is_test: boolean }
 interface UsageRow { payload: { quantity: number } }
@@ -63,7 +65,7 @@ function mockReportDb(opts: {
   usageEqAssert?: (col: string, val: string) => void;
   throwOnBillingEvents?: boolean;
 }) {
-  (db.from as ReturnType<typeof vi.fn>).mockImplementation((table: string) => {
+  dbFromMock().mockImplementation((table: string) => {
     if (table === 'subscriptions') return mockSelectIn(opts.subs);
     if (table === 'org_credits') return mockSelectIn(opts.credits, opts.creditsError ?? null);
     if (opts.throwOnBillingEvents) throw new Error(`unexpected table query: ${table}`);
@@ -78,7 +80,7 @@ beforeEach(() => {
 describe('recordMeteredUsage', () => {
   it('inserts usage record into billing_events', async () => {
     const mockInsert = vi.fn().mockResolvedValue({ error: null });
-    (db.from as any).mockReturnValue({ insert: mockInsert });
+    dbFromMock().mockReturnValue({ insert: mockInsert });
 
     await recordMeteredUsage({
       org_id: 'org-1',
@@ -96,7 +98,7 @@ describe('recordMeteredUsage', () => {
   });
 
   it('throws on DB error', async () => {
-    (db.from as any).mockReturnValue({
+    dbFromMock().mockReturnValue({
       insert: vi.fn().mockResolvedValue({ error: { message: 'DB error' } }),
     });
 
@@ -112,7 +114,7 @@ describe('recordMeteredUsage', () => {
 
 describe('getMeteredUsage', () => {
   it('aggregates usage quantities', async () => {
-    (db.from as any).mockReturnValue({
+    dbFromMock().mockReturnValue({
       select: vi.fn().mockReturnValue({
         eq: vi.fn().mockReturnValue({
           eq: vi.fn().mockReturnValue({
@@ -136,7 +138,7 @@ describe('getMeteredUsage', () => {
   });
 
   it('returns 0 on error', async () => {
-    (db.from as any).mockReturnValue({
+    dbFromMock().mockReturnValue({
       select: vi.fn().mockReturnValue({
         eq: vi.fn().mockReturnValue({
           eq: vi.fn().mockReturnValue({
@@ -155,7 +157,7 @@ describe('getMeteredUsage', () => {
 
 describe('reportMeteredUsageToStripe', () => {
   it('returns empty when no metered subscriptions', async () => {
-    (db.from as any).mockReturnValue({
+    dbFromMock().mockReturnValue({
       select: vi.fn().mockReturnValue({
         in: vi.fn().mockResolvedValue({ data: [], error: null }),
       }),

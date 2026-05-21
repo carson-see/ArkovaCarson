@@ -263,6 +263,7 @@ router.get('/', async (req: Request, res: Response) => {
 
     // Fetch full records with anchor proofs
     const recordIds = matches.map((m) => m.public_record_id);
+    // eslint-disable-next-line arkova/missing-org-filter -- public verification endpoint
     const { data: records, error: fetchError } = await dbAny
       .from('public_records')
       .select('id, source, source_url, record_type, title, content_hash, metadata, anchor_id')

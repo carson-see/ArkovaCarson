@@ -40,19 +40,19 @@ function createApp(userId?: string, orgId?: string) {
 
   // Simulate auth middleware
   app.use((req: Request, _res: Response, next: NextFunction) => {
-    if (userId) (req as any).userId = userId;
-    if (orgId) (req as any).orgId = orgId;
+    if (userId) req.userId = userId;
+    if (orgId) req.orgId = orgId;
     next();
   });
 
   app.use(paymentTierRouter());
 
   app.get('/api/v1/verify/:id', (req: Request, res: Response) => {
-    res.json({ ok: true, tier: (req as any).paymentResolution?.tier });
+    res.json({ ok: true, tier: req.paymentResolution?.tier });
   });
 
   app.post('/api/v1/ai/extract', (req: Request, res: Response) => {
-    res.json({ ok: true, tier: (req as any).paymentResolution?.tier });
+    res.json({ ok: true, tier: req.paymentResolution?.tier });
   });
 
   app.get('/health', (_req: Request, res: Response) => {

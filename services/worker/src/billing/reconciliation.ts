@@ -65,6 +65,7 @@ export async function runStripeAnchorReconciliation(
   logger.info({ month: targetMonth }, 'Starting Stripe ↔ anchor reconciliation');
 
   // Get all active subscriptions with plan limits
+  // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
   const { data: subs } = await db
     .from('subscriptions')
     .select('user_id, org_id, plan_id, plans(records_per_month)')
@@ -119,6 +120,7 @@ export async function runStripeAnchorReconciliation(
 
   // Log discrepancies to audit_events
   for (const d of discrepancies) {
+    // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
     await db.from('audit_events').insert({
       event_type: 'reconciliation.over_quota',
       event_category: 'ADMIN',
@@ -332,6 +334,7 @@ export async function processFailedPaymentRecovery(): Promise<{
         .maybeSingle();
 
       if (freePlan && gp.stripe_subscription_id) {
+        // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
         await db
           .from('subscriptions')
           .update({ status: 'canceled', plan_id: freePlan.id })
@@ -342,6 +345,7 @@ export async function processFailedPaymentRecovery(): Promise<{
           .update({ status: 'expired', downgraded_at: now.toISOString() })
           .eq('id', gp.id);
 
+        // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
         await db.from('audit_events').insert({
           event_type: 'payment.auto_downgraded',
           event_category: 'ADMIN',
@@ -356,6 +360,7 @@ export async function processFailedPaymentRecovery(): Promise<{
       // 7-30 days — disable anchoring (reject PENDING anchors for this user)
       anchorsDisabled++;
 
+      // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
       await db.from('audit_events').insert({
         event_type: 'payment.anchoring_disabled',
         event_category: 'ADMIN',
@@ -395,6 +400,7 @@ export async function createGracePeriod(
   }
 
   // Get subscription record
+  // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
   const { data: sub } = await db
     .from('subscriptions')
     .select('id')

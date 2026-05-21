@@ -23,6 +23,7 @@ function validateSchemaStructure(schema: ConstrainedDecodingSchema) {
     expect.arrayContaining(['answer', 'confidence', 'risks', 'recommendations', 'citations']),
   );
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- JSON Schema property traversal
   const props = s.properties as Record<string, any>;
   expect(props.answer.type).toBe('string');
   expect(props.confidence.type).toBe('number');
@@ -69,6 +70,7 @@ describe('ConstrainedDecodingSchemas', () => {
     });
 
     it('enum IDs match canonicalIds', () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- JSON Schema property traversal
       const citationEnum = (FCRA_SCHEMA.jsonSchema.properties as any).citations.items.properties
         .record_id.enum;
       expect(citationEnum).toEqual(FCRA_SCHEMA.canonicalIds);

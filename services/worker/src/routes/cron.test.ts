@@ -169,8 +169,11 @@ vi.mock('../jobs/regulatory-change-scan.js', () => ({
   runRegulatoryChangeScan: (...args: unknown[]) => mockRunRegulatoryChangeScan(...args),
 }));
 
+const mockWithCronMonitoring = vi.fn(
+  (_slug: string, _schedule: string, fn: () => unknown) => fn,
+);
 vi.mock('../utils/sentry.js', () => ({
-  withCronMonitoring: (_slug: string, _schedule: string, fn: () => unknown) => fn,
+  withCronMonitoring: (...args: unknown[]) => mockWithCronMonitoring(...args as [string, string, () => unknown]),
 }));
 
 const mockFetchStateBills = vi.fn().mockResolvedValue({ fetched: 30 });
@@ -271,6 +274,18 @@ const mockRunOrgQueueScheduler = vi.fn().mockResolvedValue({
 });
 vi.mock('../jobs/org-queue-scheduler.js', () => ({
   runOrgQueueScheduler: (...args: unknown[]) => mockRunOrgQueueScheduler(...args),
+}));
+
+const mockRunDocusignEnvelopeCompletedJobs = vi.fn().mockResolvedValue({
+  claimed: 1,
+  completed: 1,
+  failed: 0,
+  dead: 0,
+  updateFailed: 0,
+  jobIds: ['job-1'],
+});
+vi.mock('../jobs/docusign-envelope-completed.js', () => ({
+  runDocusignEnvelopeCompletedJobs: (...args: unknown[]) => mockRunDocusignEnvelopeCompletedJobs(...args),
 }));
 
 // ─── Import after mocks ───
@@ -530,6 +545,42 @@ describe('cron routes', () => {
     });
   });
 
+  describe('POST /docusign-envelope-completed', () => {
+    it('runs the DocuSign queue processor and forwards the optional limit', async () => {
+      const app = createApp();
+      const res = await request(app).post('/cron/docusign-envelope-completed?limit=3');
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({
+        claimed: 1,
+        completed: 1,
+        failed: 0,
+        dead: 0,
+        updateFailed: 0,
+        jobIds: ['job-1'],
+      });
+      expect(mockRunDocusignEnvelopeCompletedJobs).toHaveBeenCalledWith({ limit: 3 });
+    });
+
+    it('rejects invalid limit values before running the DocuSign queue processor', async () => {
+      const app = createApp();
+      const res = await request(app).post('/cron/docusign-envelope-completed?limit=not-a-number');
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe('Invalid request');
+      expect(mockRunDocusignEnvelopeCompletedJobs).not.toHaveBeenCalled();
+    });
+
+    it('rejects out-of-range limit values before running the DocuSign queue processor', async () => {
+      const app = createApp();
+      const res = await request(app).post('/cron/docusign-envelope-completed?limit=101');
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe('Invalid request');
+      expect(mockRunDocusignEnvelopeCompletedJobs).not.toHaveBeenCalled();
+    });
+  });
+
   describe('POST /check-confirmations', () => {
     it('returns result on success', async () => {
       const app = createApp();
@@ -543,6 +594,17 @@ describe('cron routes', () => {
       const app = createApp();
       const res = await request(app).post('/cron/check-confirmations');
       expect(res.status).toBe(500);
+    });
+
+    it('invokes withCronMonitoring with correct slug and schedule', async () => {
+      mockWithCronMonitoring.mockClear();
+      const app = createApp();
+      await request(app).post('/cron/check-confirmations');
+      expect(mockWithCronMonitoring).toHaveBeenCalledWith(
+        'check-confirmations',
+        '*/30 * * * *',
+        expect.any(Function),
+      );
     });
   });
 
@@ -560,6 +622,17 @@ describe('cron routes', () => {
       const res = await request(app).post('/cron/process-revocations');
       expect(res.status).toBe(500);
     });
+
+    it('invokes withCronMonitoring with correct slug and schedule', async () => {
+      mockWithCronMonitoring.mockClear();
+      const app = createApp();
+      await request(app).post('/cron/process-revocations');
+      expect(mockWithCronMonitoring).toHaveBeenCalledWith(
+        'process-revocations',
+        '*/5 * * * *',
+        expect.any(Function),
+      );
+    });
   });
 
   describe('POST /webhook-retries', () => {
@@ -575,6 +648,17 @@ describe('cron routes', () => {
       const app = createApp();
       const res = await request(app).post('/cron/webhook-retries');
       expect(res.status).toBe(500);
+    });
+
+    it('invokes withCronMonitoring with correct slug and schedule', async () => {
+      mockWithCronMonitoring.mockClear();
+      const app = createApp();
+      await request(app).post('/cron/webhook-retries');
+      expect(mockWithCronMonitoring).toHaveBeenCalledWith(
+        'webhook-retries',
+        '*/10 * * * *',
+        expect.any(Function),
+      );
     });
   });
 
@@ -630,6 +714,17 @@ describe('cron routes', () => {
       const app = createApp();
       const res = await request(app).post('/cron/fetch-uspto');
       expect(res.status).toBe(500);
+    });
+
+    it('invokes withCronMonitoring with correct slug and schedule', async () => {
+      mockWithCronMonitoring.mockClear();
+      const app = createApp();
+      await request(app).post('/cron/fetch-uspto');
+      expect(mockWithCronMonitoring).toHaveBeenCalledWith(
+        'fetch-uspto',
+        '*/15 * * * *',
+        expect.any(Function),
+      );
     });
   });
 

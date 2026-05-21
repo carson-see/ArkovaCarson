@@ -5,6 +5,9 @@
  */
 
 import { describe, it, expect, vi } from 'vitest';
+import { ECPairFactory } from 'ecpair';
+import * as ecc from 'tiny-secp256k1';
+import * as bitcoin from 'bitcoinjs-lib';
 import {
   selectUtxo,
   selectMultipleUtxos,
@@ -48,14 +51,9 @@ function makeUtxos(values: number[]): Utxo[] {
 
 // Create a minimal mock signing provider using the repo's standard test WIF
 function makeMockSigner() {
-   
-  const { ECPairFactory } = require('ecpair');
-   
-  const ecc = require('tiny-secp256k1');
   const ECPair = ECPairFactory(ecc);
   const TEST_WIF = 'cVt4o7BGAig1UXywgGSmARhxMdzP5qvQsxKkSsc1XEkw3tDTQFpy';
-   
-  const keyPair = ECPair.fromWIF(TEST_WIF, require('bitcoinjs-lib').networks.testnet);
+  const keyPair = ECPair.fromWIF(TEST_WIF, bitcoin.networks.testnet);
 
   return {
     name: 'Test',
@@ -160,7 +158,6 @@ describe('Bitcoin Audit Hardening', () => {
 
       // Parse the TX to verify nSequence
        
-      const bitcoin = require('bitcoinjs-lib');
       const tx = bitcoin.Transaction.fromHex(txHex);
       expect(tx.ins[0].sequence).toBe(0xfffffffd);
     });
@@ -216,7 +213,6 @@ describe('Bitcoin Audit Hardening', () => {
 
       // Verify TX has 2 inputs
        
-      const bitcoin = require('bitcoinjs-lib');
       const tx = bitcoin.Transaction.fromHex(result.txHex);
       expect(tx.ins.length).toBe(2);
 
@@ -245,7 +241,6 @@ describe('Bitcoin Audit Hardening', () => {
       expect(result.txHex).toBeTruthy();
       // TX should have OP_RETURN with 44-byte payload (4 prefix + 32 fingerprint + 8 metadata)
        
-      const bitcoin = require('bitcoinjs-lib');
       const tx = bitcoin.Transaction.fromHex(result.txHex);
       const opReturnOutput = tx.outs.find((o: { script: Buffer }) => o.script[0] === 0x6a);
       expect(opReturnOutput).toBeDefined();

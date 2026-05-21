@@ -139,7 +139,6 @@ function buildUserPrompt(recs: Recommendation[], gaps: AuditGap[]): string {
  * each /compliance/audit call reuses the same provider + circuit-breaker
  * state instead of constructing a new one.
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 let cachedProvider: { generateRAGResponse(system: string, user: string): Promise<{ text: string; tokensUsed?: number }> } | null = null;
 
 async function getProvider() {

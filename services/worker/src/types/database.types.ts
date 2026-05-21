@@ -2783,6 +2783,7 @@ export type Database = {
           subscription_expires_at: string | null
           subscription_id: string | null
           token_kms_key_id: string | null
+          token_secret_name: string | null
           updated_at: string
         }
         Insert: {
@@ -2802,6 +2803,7 @@ export type Database = {
           subscription_expires_at?: string | null
           subscription_id?: string | null
           token_kms_key_id?: string | null
+          token_secret_name?: string | null
           updated_at?: string
         }
         Update: {
@@ -2821,6 +2823,7 @@ export type Database = {
           subscription_expires_at?: string | null
           subscription_id?: string | null
           token_kms_key_id?: string | null
+          token_secret_name?: string | null
           updated_at?: string
         }
         Relationships: [

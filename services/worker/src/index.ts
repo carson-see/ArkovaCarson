@@ -25,6 +25,7 @@ import { rateLimiters } from './utils/rateLimit.js';
 import { apiV1Router } from './api/v1/router.js';
 import { v1DeprecationHeaders } from './api/v1/deprecation.js';
 import { docsRouter } from './api/v1/docs.js';
+import { badgeRouter } from './api/badge.js';
 
 // Extracted routers (ARCH-1)
 import { billingRouter } from './routes/billing.js';
@@ -300,6 +301,7 @@ app.use(compression({ threshold: 1024 }));
 app.use(express.json());
 
 // ─── Mount routers (ARCH-1: each router owns its middleware) ───
+app.use('/api', rateLimiters.api, badgeRouter); // /api/badge/:publicId
 app.use('/api', billingRouter);    // /api/checkout/session, /api/billing/portal
 app.use('/api', anchorRouter);     // /api/verify-anchor, /api/recipients, /api/account
 app.use('/api', adminRouter);      // /api/treasury/*, /api/admin/*

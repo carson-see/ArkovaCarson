@@ -126,6 +126,7 @@ router.get('/:publicId/provenance', async (req: Request<{ publicId: string }>, r
     }
 
     // Fetch signature events (Phase III)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- table not yet in generated database.types.ts
     const { data: signatures } = await (db as any)
       .from('signatures')
       .select('public_id, format, level, status, signed_at, signer_name, timestamp_token_id')

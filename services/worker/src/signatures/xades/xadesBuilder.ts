@@ -94,6 +94,7 @@ function buildSignedProperties(params: XadesSignatureParams): string {
     '            <xades:Cert>',
     '              <xades:CertDigest>',
     '                <ds:DigestMethod Algorithm="http://www.w3.org/2001/04/xmlenc#sha256"/>',
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- ASN.1 structure, shape validated at runtime
     `                <ds:DigestValue>${(attrs.signingCertificateV2 as any)?.certHash || ''}</ds:DigestValue>`,
     '              </xades:CertDigest>',
     '            </xades:Cert>',

@@ -94,6 +94,7 @@ router.get('/', async (req: Request, res: Response) => {
 
   try {
     // Query public records that have been anchored and may have changed
+    // eslint-disable-next-line arkova/missing-org-filter -- public verification endpoint
     let query = dbAny
       .from('public_records')
       .select('id, source, source_url, record_type, title, content_hash, metadata, anchor_id, created_at, updated_at')

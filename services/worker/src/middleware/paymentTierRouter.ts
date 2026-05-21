@@ -150,6 +150,7 @@ async function tryX402(req: Request): Promise<PaymentResolution | null> {
   if (!data) return null;
 
   // Mark payment as consumed to prevent replay
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- table not yet in generated database.types.ts
   await (db as any)
     .from('x402_payments')
     .update({ consumed_at: new Date().toISOString() })
@@ -216,8 +217,8 @@ export function paymentTierRouter() {
       return;
     }
 
-    const userId = (req as any).userId as string | undefined;
-    const orgId = (req as any).orgId as string | undefined;
+    const userId = req.userId;
+    const orgId = req.orgId;
 
     if (!userId) {
       // No auth context — let auth middleware handle it
@@ -228,14 +229,14 @@ export function paymentTierRouter() {
     // 0. Admin/beta bypass
     const admin = await tryAdminBypass(userId);
     if (admin) {
-      (req as any).paymentResolution = admin;
+      req.paymentResolution = admin;
       next();
       return;
     }
 
     const beta = await tryBetaUnlimited();
     if (beta) {
-      (req as any).paymentResolution = beta;
+      req.paymentResolution = beta;
       next();
       return;
     }
@@ -246,7 +247,7 @@ export function paymentTierRouter() {
     if (orgId) {
       const credits = await tryCredits(orgId, userId, creditCost);
       if (credits) {
-        (req as any).paymentResolution = credits;
+        req.paymentResolution = credits;
         res.setHeader('X-Credits-Remaining', String(credits.creditsRemaining ?? 0));
         next();
         return;
@@ -257,7 +258,7 @@ export function paymentTierRouter() {
     if (orgId) {
       const stripe = await tryStripeMetered(userId, orgId);
       if (stripe) {
-        (req as any).paymentResolution = stripe;
+        req.paymentResolution = stripe;
         next();
         return;
       }
@@ -266,7 +267,7 @@ export function paymentTierRouter() {
     // 3. x402 on-chain payment
     const x402 = await tryX402(req);
     if (x402) {
-      (req as any).paymentResolution = x402;
+      req.paymentResolution = x402;
       next();
       return;
     }

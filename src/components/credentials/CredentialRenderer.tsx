@@ -44,6 +44,7 @@ const STATUS_COLORS: Record<string, string> = {
   PENDING: 'bg-amber-500/15 text-amber-400 border border-amber-500/30',
   REVOKED: 'bg-red-500/15 text-red-400 border border-red-500/30',
   EXPIRED: 'bg-[#859398]/15 text-[#859398] border border-[#859398]/30',
+  SUPERSEDED: 'bg-[#859398]/15 text-[#859398] border border-[#859398]/30',
 };
 
 /** Type-specific visual config */
@@ -195,6 +196,30 @@ export interface CredentialRendererProps {
   compact?: boolean;
 }
 
+const METADATA_DISPLAY_HIDDEN_KEYS = new Set([
+  'recipient',
+  'jurisdiction',
+  'merkle_proof',
+  'merkle_root',
+  'chain_tx_id',
+  'batch_id',
+  'pipeline_source',
+  'source_url',
+  'source_provider',
+  'verification_level',
+  'evidence_package_hash',
+  'source_payload_hash',
+  'fetched_at',
+  'source_fetched_at',
+  'abstract',
+  'description',
+  'summary',
+]);
+
+function isMetadataDisplayHiddenKey(key: string): boolean {
+  return key.startsWith('_') || METADATA_DISPLAY_HIDDEN_KEYS.has(key.toLowerCase());
+}
+
 export function CredentialRenderer({
   credentialType,
   metadata,
@@ -275,6 +300,7 @@ export function CredentialRenderer({
 
   if (hasTemplate && hasMetadata) {
     for (const field of template.fields) {
+      if (isMetadataDisplayHiddenKey(field.key)) continue;
       const raw = metadata[field.key];
       const formatted = formatFieldValue(raw, field.type);
       if (formatted) {
@@ -283,7 +309,7 @@ export function CredentialRenderer({
     }
   } else if (hasMetadata) {
     for (const [key, value] of Object.entries(metadata)) {
-      if (key.startsWith('_') || ['recipient', 'jurisdiction', 'merkle_proof', 'merkle_root', 'chain_tx_id', 'batch_id', 'pipeline_source', 'abstract', 'description', 'summary'].includes(key)) continue;
+      if (isMetadataDisplayHiddenKey(key)) continue;
       const formatted = isSubTypeKey(key) && typeof value === 'string'
         ? formatCredentialSubType(value)
         : formatFieldValue(value);

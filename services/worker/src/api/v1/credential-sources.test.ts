@@ -655,6 +655,7 @@ describe('credentialSourcesRouter', () => {
 
       const issuedRow = mockAuditInsert.mock.calls
         .map((c: unknown[]) => c[0])
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any -- scanning vi.fn().mock.calls which returns any[][]
         .find((row: any) => row?.event_type === 'credential.issued') as
         | { event_category: string; org_id: string; details: string }
         | undefined;

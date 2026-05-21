@@ -74,6 +74,7 @@ describe('NCE-03: Intelligence Training Data', () => {
 
   it('rejects invalid examples', () => {
     const invalidExample = { messages: [] };
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- testing deliberately invalid input
     const error = validateExample(invalidExample as any);
     expect(error).toBeTruthy();
   });

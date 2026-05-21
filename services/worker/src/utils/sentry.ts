@@ -234,6 +234,7 @@ export function withCronMonitoring<T>(
         monitorSlug,
         status: 'ok',
       });
+      await Sentry.flush(2000);
       return result;
     } catch (error) {
       Sentry.captureCheckIn({
@@ -241,6 +242,7 @@ export function withCronMonitoring<T>(
         monitorSlug,
         status: 'error',
       });
+      await Sentry.flush(2000);
       throw error;
     }
   };

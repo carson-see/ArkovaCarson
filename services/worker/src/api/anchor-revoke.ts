@@ -39,7 +39,7 @@ anchorRevokeRouter.post('/:id/revoke', async (req: Request<{ id: string }>, res:
 
   const { reason } = parsed.data;
 
-  const userId = (req as any).userId as string | undefined;
+  const userId = req.userId;
   if (!userId) {
     res.status(401).json({ error: 'unauthorized', message: 'Authentication required.' });
     return;
@@ -74,6 +74,7 @@ anchorRevokeRouter.post('/:id/revoke', async (req: Request<{ id: string }>, res:
     // exercising Trigger B during the T3 staging soak. The unit tests
     // passed because they mock the query, so neither CI nor the previous
     // T2 soak (which only exercised Trigger A / expiry sweep) caught it.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- table not yet in generated database.types.ts
     const { data: membership, error: membershipError } = await (db as any).from('memberships')
       .select('role')
       .eq('user_id', userId)
