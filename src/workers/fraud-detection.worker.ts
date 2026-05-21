@@ -46,10 +46,9 @@ function detectDateSignals(text: string): FraudSignal[] {
   return years
     .filter(year => year > currentYear + FUTURE_YEAR_BUFFER)
     .slice(0, 3)
-    .map(year => ({
+    .map(() => ({
       signal_type: 'future_date',
       score: 0.35,
-      reason: `Document contains future year ${year}.`,
       field_affected: 'issuedDate',
     }));
 }
@@ -61,7 +60,6 @@ function detectLayoutSignals(text: string): FraudSignal[] {
     signals.push({
       signal_type: 'binary_or_corrupt_text_sample',
       score: 0.15,
-      reason: 'Document sample contains repeated undecodable regions.',
       field_affected: null,
     });
   }
@@ -71,7 +69,6 @@ function detectLayoutSignals(text: string): FraudSignal[] {
     signals.push({
       signal_type: 'layout_spacing_anomaly',
       score: 0.2,
-      reason: 'Document has repeated long spacing runs that may indicate manual layout edits.',
       field_affected: null,
     });
   }
@@ -91,7 +88,6 @@ function detectMetadataHintSignals(
   return [{
     signal_type: 'issuer_hint_missing',
     score: 0.1,
-    reason: 'Issuer hint was not found in the document sample.',
     field_affected: 'issuerName',
   }];
 }
