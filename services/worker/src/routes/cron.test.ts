@@ -169,8 +169,11 @@ vi.mock('../jobs/regulatory-change-scan.js', () => ({
   runRegulatoryChangeScan: (...args: unknown[]) => mockRunRegulatoryChangeScan(...args),
 }));
 
+const mockWithCronMonitoring = vi.fn(
+  (_slug: string, _schedule: string, fn: () => unknown) => fn,
+);
 vi.mock('../utils/sentry.js', () => ({
-  withCronMonitoring: (_slug: string, _schedule: string, fn: () => unknown) => fn,
+  withCronMonitoring: (...args: unknown[]) => mockWithCronMonitoring(...args as [string, string, () => unknown]),
 }));
 
 const mockFetchStateBills = vi.fn().mockResolvedValue({ fetched: 30 });
@@ -592,6 +595,17 @@ describe('cron routes', () => {
       const res = await request(app).post('/cron/check-confirmations');
       expect(res.status).toBe(500);
     });
+
+    it('invokes withCronMonitoring with correct slug and schedule', async () => {
+      mockWithCronMonitoring.mockClear();
+      const app = createApp();
+      await request(app).post('/cron/check-confirmations');
+      expect(mockWithCronMonitoring).toHaveBeenCalledWith(
+        'check-confirmations',
+        '*/30 * * * *',
+        expect.any(Function),
+      );
+    });
   });
 
   describe('POST /process-revocations', () => {
@@ -608,6 +622,17 @@ describe('cron routes', () => {
       const res = await request(app).post('/cron/process-revocations');
       expect(res.status).toBe(500);
     });
+
+    it('invokes withCronMonitoring with correct slug and schedule', async () => {
+      mockWithCronMonitoring.mockClear();
+      const app = createApp();
+      await request(app).post('/cron/process-revocations');
+      expect(mockWithCronMonitoring).toHaveBeenCalledWith(
+        'process-revocations',
+        '*/5 * * * *',
+        expect.any(Function),
+      );
+    });
   });
 
   describe('POST /webhook-retries', () => {
@@ -623,6 +648,17 @@ describe('cron routes', () => {
       const app = createApp();
       const res = await request(app).post('/cron/webhook-retries');
       expect(res.status).toBe(500);
+    });
+
+    it('invokes withCronMonitoring with correct slug and schedule', async () => {
+      mockWithCronMonitoring.mockClear();
+      const app = createApp();
+      await request(app).post('/cron/webhook-retries');
+      expect(mockWithCronMonitoring).toHaveBeenCalledWith(
+        'webhook-retries',
+        '*/10 * * * *',
+        expect.any(Function),
+      );
     });
   });
 
@@ -678,6 +714,17 @@ describe('cron routes', () => {
       const app = createApp();
       const res = await request(app).post('/cron/fetch-uspto');
       expect(res.status).toBe(500);
+    });
+
+    it('invokes withCronMonitoring with correct slug and schedule', async () => {
+      mockWithCronMonitoring.mockClear();
+      const app = createApp();
+      await request(app).post('/cron/fetch-uspto');
+      expect(mockWithCronMonitoring).toHaveBeenCalledWith(
+        'fetch-uspto',
+        '*/15 * * * *',
+        expect.any(Function),
+      );
     });
   });
 

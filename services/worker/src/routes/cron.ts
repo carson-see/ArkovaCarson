@@ -246,7 +246,11 @@ cronRouter.post('/batch-anchors', async (req, res) => {
 
 cronRouter.post('/check-confirmations', async (_req, res) => {
   try {
-    const result = await checkSubmittedConfirmations();
+    const result = await withCronMonitoring(
+      'check-confirmations',
+      '*/30 * * * *',
+      () => checkSubmittedConfirmations(),
+    )();
     res.json(result);
   } catch (error) {
     logger.error({ error }, 'Confirmation check failed');
@@ -256,7 +260,11 @@ cronRouter.post('/check-confirmations', async (_req, res) => {
 
 cronRouter.post('/process-revocations', async (_req, res) => {
   try {
-    const result = await processRevokedAnchors();
+    const result = await withCronMonitoring(
+      'process-revocations',
+      '*/5 * * * *',
+      () => processRevokedAnchors(),
+    )();
     res.json(result);
   } catch (error) {
     logger.error({ error }, 'Revocation processing failed');
@@ -266,7 +274,11 @@ cronRouter.post('/process-revocations', async (_req, res) => {
 
 cronRouter.post('/webhook-retries', async (_req, res) => {
   try {
-    const retried = await processWebhookRetries();
+    const retried = await withCronMonitoring(
+      'webhook-retries',
+      '*/10 * * * *',
+      () => processWebhookRetries(),
+    )();
     res.json({ retried });
   } catch (error) {
     logger.error({ error }, 'Webhook retry processing failed');
@@ -431,7 +443,11 @@ cronRouter.post('/fetch-edgar', async (_req, res) => {
 
 cronRouter.post('/fetch-uspto', async (_req, res) => {
   try {
-    const result = await fetchUsptoPAtents(db);
+    const result = await withCronMonitoring(
+      'fetch-uspto',
+      '*/15 * * * *',
+      () => fetchUsptoPAtents(db),
+    )();
     res.json(result);
   } catch (error) {
     logger.error({ error }, 'USPTO fetch failed');
