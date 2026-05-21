@@ -412,6 +412,7 @@ fail closed (default false) per CLAUDE.md §0 rule 2.
 ENABLE_AI_EXTRACTION=false          # /api/v1/ai/extract — server-side OCR/structuring (CLAUDE.md §1.6 — gated)
 ENABLE_SEMANTIC_SEARCH=false        # /api/v1/ai/search semantic embeddings
 ENABLE_AI_FRAUD=false               # /api/v1/ai/integrity, /ai/review (text-based fraud signals)
+ENABLE_FRAUD_DETECTION=false        # Browser-only deterministic fraud Web Worker; sends structured findings only
 ENABLE_AI_REPORTS=false             # /api/v1/ai/reports
 ENABLE_VISUAL_FRAUD_DETECTION=false # /api/v1/ai/fraud/visual — SCRUM-1269 §1.6 carve-out gate;
                                     # ships document image bytes off-device. Requires per-tenant
