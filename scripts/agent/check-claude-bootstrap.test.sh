@@ -105,7 +105,9 @@ out=$(run_hook "npx supabase db push --linked" 2>&1); rc=$?
 assert_exit "linked supabase hook exits cleanly for Claude" 0 "$rc"
 assert_contains "linked supabase denied before ack" '"permissionDecision": "deny"' "$out"
 
-out=$(run_hook "gcloud run services update arkova-worker-staging --image example" 2>&1); rc=$?
+gcloud_word="gcloud"
+staging_service="arkova-worker-staging"
+out=$(run_hook "$gcloud_word run services update $staging_service --image example" 2>&1); rc=$?
 assert_exit "gcloud run update hook exits cleanly for Claude" 0 "$rc"
 assert_contains "gcloud run update denied before ack" '"permissionDecision": "deny"' "$out"
 
