@@ -181,6 +181,10 @@ export const PATH_RULES: PathRule[] = [
 const TIER_RANK: Record<Tier, number> = { T1: 1, T2: 2, T3: 3 };
 const SHA_RE = /\b[0-9a-f]{40}\b/i;
 const DECLARED_TIER_VALUES = new Set<Tier>(['T1', 'T2', 'T3']);
+const ALLOWED_EVIDENCE_SCOPES = new Set([
+  'merge-grade shared staging',
+  'merge-grade isolated staging',
+]);
 
 export function requiredTierFor(files: string[]): { tier: Tier; reason: string } {
   let best: Tier = 'T1';
@@ -324,10 +328,24 @@ function hasCleanMirrorPreflight(value: string): boolean {
   return /["']?environment_type["']?\s*[:=]\s*["']?clean_mirror["']?/.test(lower);
 }
 
+function normalizeEvidenceScope(value: string): string {
+  return value.trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
 function evidenceScopeErrors(body: string): string[] {
   const evidenceScope = extractEvidenceFieldValue(body, 'Evidence scope:');
-  if (evidenceScope === null || !/\bdiagnostic[- ]?only\b/i.test(evidenceScope)) return [];
-  return ['Evidence scope is diagnostic-only; diagnostic evidence is not merge-grade staging evidence.'];
+  if (evidenceScope === null) {
+    return ['Evidence scope must be one of: merge-grade shared staging, merge-grade isolated staging.'];
+  }
+
+  const normalized = normalizeEvidenceScope(evidenceScope);
+  if (/\bdiagnostic[- ]?only\b/i.test(normalized)) {
+    return ['Evidence scope is diagnostic-only; diagnostic evidence is not merge-grade staging evidence.'];
+  }
+
+  if (ALLOWED_EVIDENCE_SCOPES.has(normalized)) return [];
+
+  return ['Evidence scope must be one of: merge-grade shared staging, merge-grade isolated staging.'];
 }
 
 function preflightResultErrors(body: string): string[] {
