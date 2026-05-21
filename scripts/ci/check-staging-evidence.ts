@@ -180,6 +180,7 @@ export const PATH_RULES: PathRule[] = [
 
 const TIER_RANK: Record<Tier, number> = { T1: 1, T2: 2, T3: 3 };
 const SHA_RE = /\b[0-9a-f]{40}\b/i;
+const DECLARED_TIER_VALUES = new Set<Tier>(['T1', 'T2', 'T3']);
 
 export function requiredTierFor(files: string[]): { tier: Tier; reason: string } {
   let best: Tier = 'T1';
@@ -196,7 +197,6 @@ export function requiredTierFor(files: string[]): { tier: Tier; reason: string }
 }
 
 const EVIDENCE_HEADER_RE = /^##\s+Staging\s+Soak\s+Evidence\s*$/im;
-const TIER_DECLARATION_RE = /^\s*[-*]?\s*(?:\[[ x]\]\s*)?Tier:\s*(T[123])\b/im;
 const UTC_TIMESTAMP_RE = /^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2})(?::(\d{2}))?\s*(?:UTC|Z)\b/i;
 
 function escapeRegExp(value: string): string {
@@ -204,8 +204,24 @@ function escapeRegExp(value: string): string {
 }
 
 export function extractDeclaredTier(body: string): Tier | null {
-  const m = TIER_DECLARATION_RE.exec(body);
-  return m ? (m[1] as Tier) : null;
+  for (const line of body.split(/\r?\n/)) {
+    let candidate = line.trimStart();
+    if (candidate.startsWith('-') || candidate.startsWith('*')) {
+      candidate = candidate.slice(1).trimStart();
+    }
+    if (candidate.startsWith('[x]') || candidate.startsWith('[ ]')) {
+      candidate = candidate.slice(3).trimStart();
+    }
+    if (!candidate.startsWith('Tier:')) continue;
+
+    const rest = candidate.slice('Tier:'.length).trimStart();
+    const value = rest.slice(0, 2);
+    const next = rest[2];
+    if (DECLARED_TIER_VALUES.has(value as Tier) && (next === undefined || !/[A-Za-z0-9_]/.test(next))) {
+      return value as Tier;
+    }
+  }
+  return null;
 }
 
 export function hasEvidenceSection(body: string): boolean {
