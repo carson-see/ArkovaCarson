@@ -27,6 +27,14 @@ Copy the appropriate block into your PR description. The CI gate `staging-eviden
 - Tier: T2
 - Staging branch: arkova-staging
 - Worker revision: arkova-worker-staging-NNNNN-xxx
+- PR head SHA: 40-character commit SHA deployed/tested
+- Base SHA: 40-character `main`/base SHA used when evidence was captured
+- Staging project ref: ujtlwnoqfhtitcmsnrpq or approved isolated project ref
+- Cloud Run service/tag URL: https://pr-NNN---arkova-worker-staging-...
+- Image digest: sha256:...
+- Evidence scope: merge-grade shared staging or merge-grade isolated staging
+- Preflight timestamp: YYYY-MM-DD HH:MM UTC
+- Preflight result: environment_type=clean_mirror
 - Soak start: YYYY-MM-DD HH:MM UTC
 - Soak end: YYYY-MM-DD HH:MM UTC
 - E2E result: N/N green
@@ -45,6 +53,14 @@ Copy the appropriate block into your PR description. The CI gate `staging-eviden
 - Tier: T3
 - Staging branch: arkova-staging
 - Worker revision: arkova-worker-staging-NNNNN-xxx
+- PR head SHA: 40-character commit SHA deployed/tested
+- Base SHA: 40-character `main`/base SHA used when evidence was captured
+- Staging project ref: ujtlwnoqfhtitcmsnrpq or approved isolated project ref
+- Cloud Run service/tag URL: https://pr-NNN---arkova-worker-staging-...
+- Image digest: sha256:...
+- Evidence scope: merge-grade shared staging or merge-grade isolated staging
+- Preflight timestamp: YYYY-MM-DD HH:MM UTC
+- Preflight result: environment_type=clean_mirror
 - Soak start: YYYY-MM-DD HH:MM UTC
 - Soak end: YYYY-MM-DD HH:MM UTC
 - E2E result: N/N green

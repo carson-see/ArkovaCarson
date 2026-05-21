@@ -26,8 +26,10 @@ import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import {
   REPO,
+  baseRef,
   prBody,
   changedFiles,
+  resolveCommitOrFail,
 } from './lib/ciContext.js';
 
 export type Tier = 'T1' | 'T2' | 'T3';
@@ -60,6 +62,14 @@ export const TIER_SPECS: Record<Tier, TierSpec> = {
       'Tier:',
       'Staging branch:',
       'Worker revision:',
+      'PR head SHA:',
+      'Base SHA:',
+      'Staging project ref:',
+      'Cloud Run service/tag URL:',
+      'Image digest:',
+      'Evidence scope:',
+      'Preflight timestamp:',
+      'Preflight result:',
       'Soak start:',
       'Soak end:',
       'E2E result:',
@@ -77,6 +87,14 @@ export const TIER_SPECS: Record<Tier, TierSpec> = {
       'Tier:',
       'Staging branch:',
       'Worker revision:',
+      'PR head SHA:',
+      'Base SHA:',
+      'Staging project ref:',
+      'Cloud Run service/tag URL:',
+      'Image digest:',
+      'Evidence scope:',
+      'Preflight timestamp:',
+      'Preflight result:',
       'Soak start:',
       'Soak end:',
       'E2E result:',
@@ -161,6 +179,7 @@ export const PATH_RULES: PathRule[] = [
 ];
 
 const TIER_RANK: Record<Tier, number> = { T1: 1, T2: 2, T3: 3 };
+const SHA_RE = /\b[0-9a-f]{40}\b/i;
 
 export function requiredTierFor(files: string[]): { tier: Tier; reason: string } {
   let best: Tier = 'T1';
@@ -269,6 +288,84 @@ export function soakDurationErrors(body: string, tier: Tier): string[] {
   return errors;
 }
 
+function extractShaField(body: string, field: string): string | null {
+  const value = extractEvidenceFieldValue(body, field);
+  if (value === null) return null;
+  const m = SHA_RE.exec(value);
+  return m ? m[0].toLowerCase() : null;
+}
+
+function normalizeSha(value: string | undefined): string | null {
+  if (!value) return null;
+  const m = SHA_RE.exec(value);
+  return m ? m[0].toLowerCase() : null;
+}
+
+function hasCleanMirrorPreflight(value: string): boolean {
+  const lower = value.toLowerCase();
+  if (/\b(?:soak_artifact|fixture_seeded)\b/.test(lower)) return false;
+  if (/\bdiagnostic[- ]?only\b/.test(lower)) return false;
+  return /["']?environment_type["']?\s*[:=]\s*["']?clean_mirror["']?/.test(lower);
+}
+
+function stagingIntegrityErrors(
+  body: string,
+  tier: Tier,
+  opts: { headSha?: string; baseSha?: string } = {},
+): string[] {
+  if (tier === 'T1') return [];
+
+  const errors: string[] = [];
+
+  const evidenceScope = extractEvidenceFieldValue(body, 'Evidence scope:');
+  if (evidenceScope !== null && /\bdiagnostic[- ]?only\b/i.test(evidenceScope)) {
+    errors.push('Evidence scope is diagnostic-only; diagnostic evidence is not merge-grade staging evidence.');
+  }
+
+  const preflightResult = extractEvidenceFieldValue(body, 'Preflight result:');
+  if (preflightResult !== null && !hasCleanMirrorPreflight(preflightResult)) {
+    errors.push('Preflight result must capture `environment_type=clean_mirror`; dirty or diagnostic preflight output is not merge-grade evidence.');
+  }
+
+  const preflightTimestampValue = extractEvidenceFieldValue(body, 'Preflight timestamp:');
+  const soakStartValue = extractEvidenceFieldValue(body, 'Soak start:');
+  if (preflightTimestampValue !== null) {
+    const preflightMs = parseEvidenceTimestamp(preflightTimestampValue);
+    if (preflightMs === null) {
+      errors.push(`Preflight timestamp could not parse as a timestamp: \`${preflightTimestampValue}\`.`);
+    } else if (soakStartValue !== null) {
+      const soakStartMs = parseEvidenceTimestamp(soakStartValue);
+      if (soakStartMs !== null && preflightMs > soakStartMs) {
+        errors.push('Preflight timestamp must be at or before Soak start.');
+      }
+    }
+  }
+
+  const evidenceHeadSha = extractShaField(body, 'PR head SHA:');
+  if (!evidenceHeadSha) {
+    errors.push('PR head SHA must contain a 40-character commit SHA.');
+  }
+  const expectedHeadSha = normalizeSha(opts.headSha);
+  if (evidenceHeadSha && expectedHeadSha && evidenceHeadSha !== expectedHeadSha) {
+    errors.push(
+      `PR head SHA \`${evidenceHeadSha}\` does not match current PR head \`${expectedHeadSha}\`; evidence cannot be copied across commits.`,
+    );
+  }
+
+  const evidenceBaseSha = extractShaField(body, 'Base SHA:');
+  if (!evidenceBaseSha) {
+    errors.push('Base SHA must contain a 40-character commit SHA.');
+  }
+  const expectedBaseSha = normalizeSha(opts.baseSha);
+  if (evidenceBaseSha && expectedBaseSha && evidenceBaseSha !== expectedBaseSha) {
+    errors.push(
+      `Base SHA \`${evidenceBaseSha}\` does not match current base \`${expectedBaseSha}\`; re-check merge-base drift before claiming merge-grade evidence.`,
+    );
+  }
+
+  return errors;
+}
+
 interface StagingFilesOnlyResult {
   pass: boolean;
   reason: string;
@@ -332,7 +429,7 @@ interface CheckResult {
   notes: string[];
 }
 
-export function check(opts: { body: string; files: string[] }): CheckResult {
+export function check(opts: { body: string; files: string[]; headSha?: string; baseSha?: string }): CheckResult {
   const { body, files } = opts;
   const result: CheckResult = { ok: true, errors: [], notes: [] };
 
@@ -386,12 +483,22 @@ export function check(opts: { body: string; files: string[] }): CheckResult {
     result.errors.push(...durationErrors);
   }
 
+  const integrityErrors = stagingIntegrityErrors(body, declared, opts);
+  if (integrityErrors.length > 0) {
+    result.ok = false;
+    result.errors.push(...integrityErrors);
+  }
+
   return result;
 }
 
 function main(): void {
   const files = changedFiles();
-  const result = check({ body: prBody, files });
+  const currentHeadSha = resolveCommitOrFail(
+    process.env.HEAD_REF_SHA || process.env.GITHUB_SHA || 'HEAD',
+    'CI head ref',
+  );
+  const result = check({ body: prBody, files, headSha: currentHeadSha, baseSha: baseRef });
 
   for (const note of result.notes) console.log(`ℹ️  ${note}`);
   if (result.ok) {
