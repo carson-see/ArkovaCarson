@@ -122,6 +122,11 @@ describe('aiExtraction orchestrator', () => {
     const file = new File(['local pdf bytes stay client-side'], 'clean-degree.pdf', { type: 'application/pdf' });
     const result = await runExtraction(file, 'f'.repeat(64), 'DEGREE');
 
+    expect(stripPIIEnhanced).toHaveBeenCalledTimes(1);
+    expect(stripPIIEnhanced).toHaveBeenCalledWith(
+      'University of Michigan\nBachelor of Science\nIssued May 2026',
+      expect.objectContaining({ enableNER: true }),
+    );
     expect(result?.fields).toEqual([
       { key: 'credentialType', value: 'DEGREE', confidence: 0.94, status: 'suggested' },
       { key: 'issuerName', value: 'University of Michigan', confidence: 0.94, status: 'suggested' },

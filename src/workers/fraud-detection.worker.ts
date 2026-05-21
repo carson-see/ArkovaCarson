@@ -107,9 +107,65 @@ function riskLevelForScore(score: number): FraudDetectionResult['fraud_risk_leve
   return 'low';
 }
 
+function fallbackFraudResult(): FraudDetectionResult {
+  return {
+    fraud_risk_level: 'unknown',
+    fraud_score: 0,
+    fraud_signals: [],
+    analysis_method: FRAUD_ANALYSIS_METHOD,
+    processing_time_ms: 0,
+  };
+}
+
+function toArrayBuffer(value: unknown): ArrayBuffer | null {
+  if (value instanceof ArrayBuffer) return value;
+  if (ArrayBuffer.isView(value)) {
+    const view = new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+    const copy = new Uint8Array(view.byteLength);
+    copy.set(view);
+    return copy.buffer;
+  }
+  return null;
+}
+
+function parseWorkerRequest(value: unknown): FraudWorkerRequest | null {
+  if (typeof value !== 'object' || value === null) return null;
+  const record = value as Record<string, unknown>;
+  const documentBytes = toArrayBuffer(record.documentBytes);
+  if (!documentBytes || typeof record.credentialType !== 'string') return null;
+
+  const metadataHints = record.metadataHints;
+  if (metadataHints !== undefined) {
+    if (typeof metadataHints !== 'object' || metadataHints === null || Array.isArray(metadataHints)) {
+      return null;
+    }
+    const entries = Object.entries(metadataHints);
+    if (!entries.every(([key, val]) => typeof key === 'string' && typeof val === 'string')) {
+      return null;
+    }
+  }
+
+  return {
+    documentBytes,
+    credentialType: record.credentialType,
+    metadataHints: metadataHints as Record<string, string> | undefined,
+  };
+}
+
+export function handleFraudWorkerMessage(value: unknown): FraudDetectionResult {
+  try {
+    const request = parseWorkerRequest(value);
+    if (!request) return fallbackFraudResult();
+
+    const { documentBytes, ...options } = request;
+    return analyzeDocumentBytes(documentBytes, options);
+  } catch {
+    return fallbackFraudResult();
+  }
+}
+
 if (typeof self !== 'undefined' && 'postMessage' in self) {
-  self.onmessage = (event: MessageEvent<FraudWorkerRequest>) => {
-    const { documentBytes, ...options } = event.data;
-    self.postMessage(analyzeDocumentBytes(documentBytes, options));
+  self.onmessage = (event: MessageEvent<unknown>) => {
+    self.postMessage(handleFraudWorkerMessage(event.data));
   };
 }
