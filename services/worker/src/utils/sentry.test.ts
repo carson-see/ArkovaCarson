@@ -7,22 +7,27 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-// vi.mock is hoisted above the import below so sentry.ts (which does
-// `import * as Sentry from '@sentry/node'`) sees the mocked addBreadcrumb.
-// vi.spyOn on the re-exported ESM namespace fails with "Cannot redefine
-// property: addBreadcrumb" because ESM exports are read-only — this is
-// the standard workaround. The other Sentry methods fall through to the
-// real module via importActual so the PII scrubber tests below behave
-// normally (they don't depend on addBreadcrumb at all).
-vi.mock('@sentry/node', async () => {
-  const actual = await vi.importActual<typeof import('@sentry/node')>('@sentry/node');
-  return {
-    ...actual,
-    addBreadcrumb: vi.fn(),
-  };
-});
+// Full mock of @sentry/node — avoids loading the native CPU profiler
+// binary which fails on some architectures. The PII scrubber functions
+// under test are pure (no Sentry SDK calls), so a minimal mock suffices.
+vi.mock('@sentry/node', () => ({
+  init: vi.fn(),
+  addBreadcrumb: vi.fn(),
+  captureCheckIn: vi.fn(() => 'mock-check-in-id'),
+  captureException: vi.fn(),
+  captureMessage: vi.fn(),
+  flush: vi.fn(() => Promise.resolve(true)),
+  setTag: vi.fn(),
+  setUser: vi.fn(),
+  startSpan: vi.fn(),
+  withScope: vi.fn(),
+}));
 
-import { scrubPiiFromEvent, scrubPiiFromBreadcrumb, emitRpcFallback, Sentry } from './sentry.js';
+vi.mock('@sentry/profiling-node', () => ({
+  nodeProfilingIntegration: vi.fn(() => ({})),
+}));
+
+import { scrubPiiFromEvent, scrubPiiFromBreadcrumb, emitRpcFallback, withCronMonitoring, Sentry } from './sentry.js';
 
 describe('scrubPiiFromEvent', () => {
   it('strips email addresses from exception messages', () => {
@@ -322,5 +327,36 @@ describe('emitRpcFallback (SCRUM-1262 R1-8 /simplify carry-over)', () => {
       expect.objectContaining({ reason: 'unknown' }),
       expect.any(String),
     );
+  });
+});
+
+describe('withCronMonitoring', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('flushes Sentry after a successful check-in so Cloud Run does not drop the event', async () => {
+    const fn = vi.fn().mockResolvedValue({ ok: true });
+    const wrapped = withCronMonitoring('test-job', '*/5 * * * *', fn);
+
+    await wrapped();
+
+    expect(Sentry.captureCheckIn).toHaveBeenCalledTimes(2);
+    expect(Sentry.captureCheckIn).toHaveBeenLastCalledWith(
+      expect.objectContaining({ status: 'ok' }),
+    );
+    expect(Sentry.flush).toHaveBeenCalledWith(2000);
+  });
+
+  it('flushes Sentry after an error check-in before re-throwing', async () => {
+    const fn = vi.fn().mockRejectedValue(new Error('boom'));
+    const wrapped = withCronMonitoring('test-job', '*/5 * * * *', fn);
+
+    await expect(wrapped()).rejects.toThrow('boom');
+
+    expect(Sentry.captureCheckIn).toHaveBeenLastCalledWith(
+      expect.objectContaining({ status: 'error' }),
+    );
+    expect(Sentry.flush).toHaveBeenCalledWith(2000);
   });
 });

@@ -412,6 +412,19 @@ describe('check-staging-evidence', () => {
       ).toBe(false);
     });
 
+    it('passes for nested package lockfiles (Dependabot sub-package bumps)', () => {
+      expect(
+        isStagingToolingOnly([
+          'packages/embed/package-lock.json',
+        ]).pass,
+      ).toBe(true);
+      expect(
+        isStagingToolingOnly([
+          'services/worker/package-lock.json',
+        ]).pass,
+      ).toBe(true);
+    });
+
     it('fails when any file is outside the allowlist', () => {
       expect(
         isStagingToolingOnly([
