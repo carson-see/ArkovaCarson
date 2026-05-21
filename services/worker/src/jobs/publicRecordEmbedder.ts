@@ -93,7 +93,7 @@ export async function embedPublicRecords(
 
   if (fetchError) {
     logger.error({ error: fetchError }, 'Failed to fetch unembedded public records');
-    return { total: 0, succeeded: 0, failed: 0, errors: [] };
+    throw new Error(`RPC get_unembedded_public_records failed: ${fetchError.message}`);
   }
 
   if (!records || records.length === 0) {
