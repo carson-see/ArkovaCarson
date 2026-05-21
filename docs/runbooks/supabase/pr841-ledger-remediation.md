@@ -47,8 +47,20 @@ The previous staging state is not reusable evidence because staging already
 recorded #841 as `0313 / legally_binding_attestations` and
 `0314 / professional_education_foundations`.
 
-Before new soak evidence, reset or operator-repair staging so its migration
-ledger matches the cleaned order:
+Before new soak evidence, restore staging by one of these explicitly approved
+paths, then verify the migration ledger matches the cleaned order:
+
+- **Isolated rebuild:** create an operator-approved isolated Supabase project,
+  replay this branch's migrations from an empty database, and wire the matching
+  isolated worker service to that project.
+- **Shared-staging rebuild:** only after explicit approval naming
+  `ujtlwnoqfhtitcmsnrpq` and the active PR evidence being invalidated, wipe and
+  reinitialize shared staging using `docs/reference/STAGING_RIG.md`.
+- **Targeted operator repair:** only after written operator approval for the
+  exact ledger rows and objects being repaired. Do not run `migration repair`,
+  insert/delete ledger rows, or apply rollback SQL as an agent shortcut.
+
+Required cleaned ledger order:
 
 - `0313 / anchors_index_consolidation`
 - `0314 / legally_binding_attestations`
@@ -64,6 +76,21 @@ explicit states:
 - **Index-parity evidence:** run the 0313 concurrent index drops manually
   against the staging project, then verify the drop-target indexes are absent
   before applying or repairing the `0314` and `0315` rows.
+
+  ```sql
+  SELECT indexname
+  FROM pg_indexes
+  WHERE schemaname = 'public'
+    AND indexname IN (
+      'idx_anchors_status',
+      'idx_anchors_user_created',
+      'idx_anchors_credential_type_btree',
+      'idx_anchors_sub_type',
+      'idx_anchors_pipeline_source_id'
+    );
+  ```
+
+  Expected result for index-parity evidence: zero rows.
 - **Schema-order-only evidence:** state clearly in the PR evidence that the
   soak validates only the #841 schema order and does not validate SCRUM-1286
   anchor-index parity. Do not use this narrower evidence to unblock PR #838's
