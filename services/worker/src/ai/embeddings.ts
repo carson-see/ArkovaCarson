@@ -98,6 +98,14 @@ function validateCredentialEmbeddingRows(rows: CredentialEmbeddingRow[]): Creden
   return parsed.data;
 }
 
+function databaseErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === 'object' && error !== null && 'message' in error) {
+    return String((error as { message?: unknown }).message ?? error);
+  }
+  return String(error);
+}
+
 async function readExistingCredentialEmbeddingRows(
   anchorIds: string[],
 ): Promise<CredentialEmbeddingRow[]> {
@@ -140,10 +148,16 @@ async function rollbackStoredCredentialEmbeddings(
       .in('anchor_id', insertedAnchorIds);
 
     if (error) {
+      const message = [
+        'Failed to delete new credential embeddings during rollback',
+        `anchorIds=${insertedAnchorIds.join(',')}`,
+        `error=${databaseErrorMessage(error)}`,
+      ].join(': ');
       logger.error(
         { error, anchorIds: insertedAnchorIds },
-        'Failed to delete new credential embeddings during rollback',
+        message,
       );
+      throw new Error(message);
     }
   }
 
@@ -156,10 +170,17 @@ async function rollbackStoredCredentialEmbeddings(
     );
 
     if (error) {
-      logger.error(
-        { error, anchorIds: previousRows.map((row) => row.anchor_id) },
+      const restoredAnchorIds = previousRows.map((row) => row.anchor_id);
+      const message = [
         'Failed to restore previous credential embeddings during rollback',
+        `anchorIds=${restoredAnchorIds.join(',')}`,
+        `error=${databaseErrorMessage(error)}`,
+      ].join(': ');
+      logger.error(
+        { error, anchorIds: restoredAnchorIds },
+        message,
       );
+      throw new Error(message);
     }
   }
 

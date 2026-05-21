@@ -299,6 +299,24 @@ describe('embeddings', () => {
       expect(mockDb.credentialEmbeddingUpsert).not.toHaveBeenCalled();
       expect(deductAICredits).not.toHaveBeenCalled();
     });
+
+    it('returns rollback delete failures when credit deduction fails after storing a new row', async () => {
+      vi.mocked(deductAICredits).mockRejectedValueOnce(new Error('Credit ledger unavailable'));
+      mockDb.credentialEmbeddingDeleteFilter.mockResolvedValueOnce({
+        error: { message: 'delete denied' },
+      });
+
+      const result = await generateAndStoreEmbedding(mockProvider, {
+        anchorId: 'anchor-123',
+        orgId: 'org-123',
+        metadata: { credentialType: 'DEGREE' },
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('Failed to delete new credential embeddings during rollback');
+      expect(result.error).toContain('anchor-123');
+      expect(result.error).toContain('delete denied');
+    });
   });
 
   describe('batchReEmbed', () => {
@@ -500,6 +518,59 @@ describe('embeddings', () => {
         [previousRow],
         { onConflict: 'anchor_id' },
       );
+    });
+
+    it('returns rollback restore failures when credit deduction fails after replacing rows', async () => {
+      const batchProvider = createBatchMockProvider();
+      const previousRow = {
+        anchor_id: 'a1',
+        org_id: 'org-123',
+        embedding: new Array(768).fill(0.9),
+        model_version: 'previous-model',
+        source_text_hash: 'a'.repeat(64),
+      };
+      mockDb.credentialEmbeddingSnapshotFilter.mockResolvedValueOnce({
+        data: [previousRow],
+        error: null,
+      });
+      mockDb.credentialEmbeddingUpsert
+        .mockResolvedValueOnce({ error: null })
+        .mockResolvedValueOnce({ error: { message: 'restore denied' } });
+      vi.mocked(deductAICredits).mockRejectedValueOnce(new Error('Credit ledger unavailable'));
+
+      const results = await batchReEmbed(batchProvider, 'org-123', [
+        { anchorId: 'a1', metadata: { credentialType: 'DEGREE' } },
+        { anchorId: 'a2', metadata: { credentialType: 'CERTIFICATE' } },
+        { anchorId: 'a3', metadata: { credentialType: 'LICENSE' } },
+      ], 'user-123');
+
+      expect(results).toMatchObject({
+        total: 3,
+        succeeded: 0,
+        failed: 3,
+      });
+      expect(results.errors).toEqual([
+        {
+          anchorId: 'a1',
+          error: expect.stringContaining(
+            'Failed to restore previous credential embeddings during rollback',
+          ),
+        },
+        {
+          anchorId: 'a2',
+          error: expect.stringContaining(
+            'Failed to restore previous credential embeddings during rollback',
+          ),
+        },
+        {
+          anchorId: 'a3',
+          error: expect.stringContaining(
+            'Failed to restore previous credential embeddings during rollback',
+          ),
+        },
+      ]);
+      expect(results.errors[0]?.error).toContain('a1');
+      expect(results.errors[0]?.error).toContain('restore denied');
     });
 
     it('processes multiple anchors', async () => {
