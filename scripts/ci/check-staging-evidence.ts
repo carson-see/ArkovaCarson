@@ -308,6 +308,54 @@ function hasCleanMirrorPreflight(value: string): boolean {
   return /["']?environment_type["']?\s*[:=]\s*["']?clean_mirror["']?/.test(lower);
 }
 
+function evidenceScopeErrors(body: string): string[] {
+  const evidenceScope = extractEvidenceFieldValue(body, 'Evidence scope:');
+  if (evidenceScope === null || !/\bdiagnostic[- ]?only\b/i.test(evidenceScope)) return [];
+  return ['Evidence scope is diagnostic-only; diagnostic evidence is not merge-grade staging evidence.'];
+}
+
+function preflightResultErrors(body: string): string[] {
+  const preflightResult = extractEvidenceFieldValue(body, 'Preflight result:');
+  if (preflightResult === null || hasCleanMirrorPreflight(preflightResult)) return [];
+  return ['Preflight result must capture `environment_type=clean_mirror`; dirty or diagnostic preflight output is not merge-grade evidence.'];
+}
+
+function preflightTimestampErrors(body: string): string[] {
+  const preflightTimestampValue = extractEvidenceFieldValue(body, 'Preflight timestamp:');
+  if (preflightTimestampValue === null) return [];
+
+  const preflightMs = parseEvidenceTimestamp(preflightTimestampValue);
+  if (preflightMs === null) {
+    return [`Preflight timestamp could not parse as a timestamp: \`${preflightTimestampValue}\`.`];
+  }
+
+  const soakStartValue = extractEvidenceFieldValue(body, 'Soak start:');
+  const soakStartMs = soakStartValue === null ? null : parseEvidenceTimestamp(soakStartValue);
+  if (soakStartMs !== null && preflightMs > soakStartMs) {
+    return ['Preflight timestamp must be at or before Soak start.'];
+  }
+
+  return [];
+}
+
+function shaEvidenceErrors(opts: {
+  body: string;
+  field: string;
+  expectedSha?: string;
+  currentLabel: string;
+  staleMessage: string;
+}): string[] {
+  const evidenceSha = extractShaField(opts.body, opts.field);
+  if (!evidenceSha) return [`${opts.field} must contain a 40-character commit SHA.`];
+
+  const expectedSha = normalizeSha(opts.expectedSha);
+  if (!expectedSha || evidenceSha === expectedSha) return [];
+
+  return [
+    `${opts.field} \`${evidenceSha}\` does not match current ${opts.currentLabel} \`${expectedSha}\`; ${opts.staleMessage}`,
+  ];
+}
+
 function stagingIntegrityErrors(
   body: string,
   tier: Tier,
@@ -315,55 +363,25 @@ function stagingIntegrityErrors(
 ): string[] {
   if (tier === 'T1') return [];
 
-  const errors: string[] = [];
-
-  const evidenceScope = extractEvidenceFieldValue(body, 'Evidence scope:');
-  if (evidenceScope !== null && /\bdiagnostic[- ]?only\b/i.test(evidenceScope)) {
-    errors.push('Evidence scope is diagnostic-only; diagnostic evidence is not merge-grade staging evidence.');
-  }
-
-  const preflightResult = extractEvidenceFieldValue(body, 'Preflight result:');
-  if (preflightResult !== null && !hasCleanMirrorPreflight(preflightResult)) {
-    errors.push('Preflight result must capture `environment_type=clean_mirror`; dirty or diagnostic preflight output is not merge-grade evidence.');
-  }
-
-  const preflightTimestampValue = extractEvidenceFieldValue(body, 'Preflight timestamp:');
-  const soakStartValue = extractEvidenceFieldValue(body, 'Soak start:');
-  if (preflightTimestampValue !== null) {
-    const preflightMs = parseEvidenceTimestamp(preflightTimestampValue);
-    if (preflightMs === null) {
-      errors.push(`Preflight timestamp could not parse as a timestamp: \`${preflightTimestampValue}\`.`);
-    } else if (soakStartValue !== null) {
-      const soakStartMs = parseEvidenceTimestamp(soakStartValue);
-      if (soakStartMs !== null && preflightMs > soakStartMs) {
-        errors.push('Preflight timestamp must be at or before Soak start.');
-      }
-    }
-  }
-
-  const evidenceHeadSha = extractShaField(body, 'PR head SHA:');
-  if (!evidenceHeadSha) {
-    errors.push('PR head SHA must contain a 40-character commit SHA.');
-  }
-  const expectedHeadSha = normalizeSha(opts.headSha);
-  if (evidenceHeadSha && expectedHeadSha && evidenceHeadSha !== expectedHeadSha) {
-    errors.push(
-      `PR head SHA \`${evidenceHeadSha}\` does not match current PR head \`${expectedHeadSha}\`; evidence cannot be copied across commits.`,
-    );
-  }
-
-  const evidenceBaseSha = extractShaField(body, 'Base SHA:');
-  if (!evidenceBaseSha) {
-    errors.push('Base SHA must contain a 40-character commit SHA.');
-  }
-  const expectedBaseSha = normalizeSha(opts.baseSha);
-  if (evidenceBaseSha && expectedBaseSha && evidenceBaseSha !== expectedBaseSha) {
-    errors.push(
-      `Base SHA \`${evidenceBaseSha}\` does not match current base \`${expectedBaseSha}\`; re-check merge-base drift before claiming merge-grade evidence.`,
-    );
-  }
-
-  return errors;
+  return [
+    ...evidenceScopeErrors(body),
+    ...preflightResultErrors(body),
+    ...preflightTimestampErrors(body),
+    ...shaEvidenceErrors({
+      body,
+      field: 'PR head SHA:',
+      expectedSha: opts.headSha,
+      currentLabel: 'PR head',
+      staleMessage: 'evidence cannot be copied across commits.',
+    }),
+    ...shaEvidenceErrors({
+      body,
+      field: 'Base SHA:',
+      expectedSha: opts.baseSha,
+      currentLabel: 'base',
+      staleMessage: 're-check merge-base drift before claiming merge-grade evidence.',
+    }),
+  ];
 }
 
 interface StagingFilesOnlyResult {
