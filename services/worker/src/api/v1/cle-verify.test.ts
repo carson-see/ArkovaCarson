@@ -297,6 +297,24 @@ describe('cle-verify public response sanitizer (SCRUM-1868)', () => {
     expect(stringify(creditsRes.body)).not.toContain('"jurisdiction":null');
   });
 
+  it('GET /cle/credits handles non-string jurisdiction metadata while filtering', async () => {
+    mockTables.anchorsRows = mockTables.anchorsRows.map((row) => {
+      const metadata = row.metadata as Record<string, unknown>;
+      return { ...row, metadata: { ...metadata, jurisdiction: { state: 'Michigan' } } };
+    });
+
+    const res = await request(createApp())
+      .get('/api/v1/cle/credits')
+      .query({ bar_number: 'BAR-123', jurisdiction: 'Michigan' })
+      .expect(200);
+
+    expect(res.body).toMatchObject({
+      jurisdiction: 'Michigan',
+      total_credits: 0,
+      credits: [],
+    });
+  });
+
   it('POST /cle/submit returns only public anchor identifiers and logs without attorney identifiers', async () => {
     const res = await request(createApp())
       .post('/api/v1/cle/submit')

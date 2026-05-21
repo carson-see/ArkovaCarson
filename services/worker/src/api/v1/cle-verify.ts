@@ -304,7 +304,11 @@ router.get('/credits', async (req: Request, res: Response) => {
     if (jurisdiction) {
       credits = credits.filter((a: Record<string, unknown>) => {
         const meta = a.metadata as Record<string, unknown> | null;
-        return (meta?.jurisdiction as string ?? '').toLowerCase().includes(jurisdiction.toLowerCase());
+        const metadataJurisdiction = meta?.jurisdiction;
+        const publicJurisdiction = typeof metadataJurisdiction === 'string'
+          ? metadataJurisdiction
+          : '';
+        return publicJurisdiction.toLowerCase().includes(jurisdiction.toLowerCase());
       });
     }
 
