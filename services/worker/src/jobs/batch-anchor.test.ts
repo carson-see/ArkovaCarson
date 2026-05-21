@@ -153,11 +153,9 @@ function fastCounts(pending: number) {
 
 function mockPendingBacklogReady(): void {
   mockCallRpc.mockResolvedValue({ data: fastCounts(MIN_BATCH_THRESHOLD), error: null });
-  mockSelectSingle.mockResolvedValue({
-    data: { created_at: '2026-01-01T00:00:00Z' },
-    error: null,
-  });
+  // oldest query now uses .maybeSingle() (ARKOVA-WORKER-K: .single() caused 406 on 0 rows)
   mockSelectMaybeSingle
+    .mockResolvedValueOnce({ data: { created_at: '2026-01-01T00:00:00Z' }, error: null })
     .mockResolvedValueOnce({ data: { id: 'threshold-anchor' }, error: null })
     .mockResolvedValueOnce({ data: null, error: null });
 }
@@ -377,11 +375,9 @@ describe('processBatchAnchors', () => {
   });
 
   it('fires immediately when the 10k batch-size threshold is crossed, even at fresh age', async () => {
-    mockSelectSingle.mockResolvedValue({
-      data: { created_at: new Date().toISOString() },
-      error: null,
-    });
+    // oldest query + two probes all use .maybeSingle()
     mockSelectMaybeSingle
+      .mockResolvedValueOnce({ data: { created_at: new Date().toISOString() }, error: null })
       .mockResolvedValueOnce({ data: { id: 'threshold-anchor' }, error: null })
       .mockResolvedValueOnce({ data: { id: 'batch-size-anchor' }, error: null });
     mockDbRpc
