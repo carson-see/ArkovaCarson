@@ -1,0 +1,52 @@
+-- SCRUM-1286 / PR #838: anchors index consolidation ledger marker.
+--
+-- REMEDIATION CONTEXT:
+--   Production already records migration version 0313 as
+--   anchors_index_consolidation, created by codex-scrum-1286. PR #841 was
+--   merged with a different 0313 migration before production received that
+--   schema work, which split repo/main from the production ledger.
+--
+-- MANUAL APPLICATION REQUIRED FOR HOT DATASETS:
+--
+--   DROP INDEX CONCURRENTLY IF EXISTS public.idx_anchors_status;
+--   DROP INDEX CONCURRENTLY IF EXISTS public.idx_anchors_user_created;
+--   DROP INDEX CONCURRENTLY IF EXISTS public.idx_anchors_credential_type_btree;
+--   DROP INDEX CONCURRENTLY IF EXISTS public.idx_anchors_sub_type;
+--   DROP INDEX CONCURRENTLY IF EXISTS public.idx_anchors_pipeline_source_id;
+--
+-- These statements must run outside a transaction on a live anchors table.
+-- Production has already completed them and already has the 0313 ledger row.
+-- For staging, apply the concurrent statements manually before repairing or
+-- marking the 0313 ledger row as anchors_index_consolidation.
+--
+-- Keep:
+--   - public.anchors_unique_active_child_per_parent (lineage correctness)
+--   - public.idx_anchors_pipeline_status (pipeline dashboard cache support)
+--   - public.idx_anchors_filename_trgm and public.idx_anchors_description_trgm
+--     (SCRUM-1976 production EXPLAIN showed live search still uses both)
+--
+-- ROLLBACK:
+--   Recreate only the index(es) whose missing plan causes a verified
+--   regression. Run each CREATE INDEX CONCURRENTLY statement standalone:
+--
+--   CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_anchors_status
+--     ON public.anchors (status);
+--
+--   CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_anchors_user_created
+--     ON public.anchors (user_id, created_at DESC);
+--
+--   CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_anchors_credential_type_btree
+--     ON public.anchors (credential_type);
+--
+--   CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_anchors_sub_type
+--     ON public.anchors (sub_type)
+--     WHERE sub_type IS NOT NULL;
+--
+--   idx_anchors_pipeline_source_id is absent from the active baseline and is
+--   tracked as invalid production drift; restore it only from a verified
+--   production definition if an operator confirms a real dependency.
+
+DO $$
+BEGIN
+  RAISE NOTICE 'Migration 0313 records production anchors_index_consolidation. Apply concurrent index drops manually where still needed; see file header.';
+END $$;
