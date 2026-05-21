@@ -2,10 +2,16 @@
 
 Public v1 API surface — frozen contract per CLAUDE.md §1.8. Additive nullable fields only; breaking changes require `v2+` prefix and 12-month deprecation.
 
+## 2026-05-20 Fraud Visual Endpoint Status
+
+- `ai-fraud-visual.ts` is retained for back-compat but now fails closed with HTTP 410 after request validation. It must not call Gemini or any server-side image-analysis provider because SCRUM-1955 requires fraud document/image analysis to run in a client-side worker and send only structured findings server-side.
+- `credentials-ctdl.ts` exposes anonymous `GET /api/v1/credentials/:publicId/ctdl` for SCRUM-1875. It returns public CTDL JSON-LD only for anchored/revoked public IDs and audits every request as `ctdl.requested`.
+
 ## Files
 - `router.ts` — mounts every v1 endpoint with its `requireScope(...)` gate. Anonymous-GET allow on `/verify` is intentional (Constitution §1.10 zero-friction public verification, rate-limited 100/min).
 - **`anchor-submit.ts`** — `POST /api/v1/anchor`. Frozen Zod request shape. Idempotent on duplicate fingerprint (returns existing public_id with HTTP 200). Now wired (SCRUM-1740 commit 9fdaed23) to `ensureAnchorQuotaAvailable` → 402 problem+json `quota_exhausted` for sandbox orgs over their `anchor_quota`. Gate runs AFTER dedup so re-anchoring an existing fingerprint doesn't burn quota.
 - `verify.ts` — `GET /api/v1/verify/:public_id`. Anonymous-allowed.
+- `credentials-ctdl.ts` — `GET /api/v1/credentials/:publicId/ctdl`. Anonymous-allowed, public-safe CTDL JSON-LD projection.
 - `anchor-bulk.ts`, `attestations.ts`, `oracle.ts`, `cle-verify.ts`, etc. — additional v1 surfaces.
 
 ## Scope mapping (verified 2026-05-08)
@@ -14,6 +20,7 @@ Public v1 API surface — frozen contract per CLAUDE.md §1.8. Additive nullable
 | `POST /api/v1/anchor` | `anchor:write` |
 | `GET /api/v1/verify/<id>` | anonymous OR `verify` |
 | `POST /api/v1/batch-verify` | `verify:batch` |
+| `GET /api/v1/credentials/<id>/ctdl` | anonymous OR `verify` |
 | `GET /api/v1/usage` | `usage:read` |
 | `/api/v1/anchor/bulk`, `/api/v1/contracts` | `anchor:write` |
 

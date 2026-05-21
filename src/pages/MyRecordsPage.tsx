@@ -61,6 +61,8 @@ const statusConfig = {
   SECURED: { label: 'Secured', variant: 'success' as const, icon: CheckCircle },
   REVOKED: { label: 'Revoked', variant: 'secondary' as const, icon: XCircle },
   EXPIRED: { label: 'Expired', variant: 'secondary' as const, icon: AlertTriangle },
+  SUPERSEDED: { label: 'Superseded', variant: 'outline' as const, icon: CheckCircle },
+  PENDING_RESOLUTION: { label: 'Needs Review', variant: 'warning' as const, icon: Clock },
 };
 
 type StatusFilter = 'ALL' | 'PENDING' | 'SUBMITTED' | 'SECURED' | 'REVOKED' | 'EXPIRED';
@@ -331,4 +333,3 @@ export function MyRecordsPage() {
     </AppShell>
   );
 }
-

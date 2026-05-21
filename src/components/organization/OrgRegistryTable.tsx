@@ -103,6 +103,16 @@ const statusConfig = {
     variant: 'secondary' as const,
     icon: Loader2,
   },
+  SUPERSEDED: {
+    label: 'Superseded',
+    variant: 'outline' as const,
+    icon: CheckCircle,
+  },
+  PENDING_RESOLUTION: {
+    label: 'Needs Review',
+    variant: 'warning' as const,
+    icon: Clock,
+  },
 };
 
 const PAGE_SIZE = 10;

@@ -7,13 +7,132 @@ export type Json =
   | Json[]
 
 export type Database = {
-  // Allows to automatically instantiate createClient with right options
-  // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
-  __InternalSupabase: {
-    PostgrestVersion: "14.1"
+  graphql_public: {
+    Tables: {
+      [_ in never]: never
+    }
+    Views: {
+      [_ in never]: never
+    }
+    Functions: {
+      graphql: {
+        Args: {
+          extensions?: Json
+          operationName?: string
+          query?: string
+          variables?: Json
+        }
+        Returns: Json
+      }
+    }
+    Enums: {
+      [_ in never]: never
+    }
+    CompositeTypes: {
+      [_ in never]: never
+    }
   }
   public: {
     Tables: {
+      adobe_sign_webhook_nonces: {
+        Row: {
+          agreement_id: string
+          id: string
+          payload_hash: string
+          received_at: string
+          webhook_id: string | null
+        }
+        Insert: {
+          agreement_id: string
+          id?: string
+          payload_hash: string
+          received_at?: string
+          webhook_id?: string | null
+        }
+        Update: {
+          agreement_id?: string
+          id?: string
+          payload_hash?: string
+          received_at?: string
+          webhook_id?: string | null
+        }
+        Relationships: []
+      }
+      agents: {
+        Row: {
+          agent_type: Database["public"]["Enums"]["agent_type"]
+          allowed_scopes: string[]
+          callback_url: string | null
+          created_at: string
+          description: string | null
+          framework: string | null
+          id: string
+          last_active_at: string | null
+          metadata: Json | null
+          name: string
+          org_id: string
+          registered_by: string
+          revoked_at: string | null
+          status: Database["public"]["Enums"]["agent_status"]
+          suspended_at: string | null
+          updated_at: string
+          version: string | null
+        }
+        Insert: {
+          agent_type?: Database["public"]["Enums"]["agent_type"]
+          allowed_scopes?: string[]
+          callback_url?: string | null
+          created_at?: string
+          description?: string | null
+          framework?: string | null
+          id?: string
+          last_active_at?: string | null
+          metadata?: Json | null
+          name: string
+          org_id: string
+          registered_by: string
+          revoked_at?: string | null
+          status?: Database["public"]["Enums"]["agent_status"]
+          suspended_at?: string | null
+          updated_at?: string
+          version?: string | null
+        }
+        Update: {
+          agent_type?: Database["public"]["Enums"]["agent_type"]
+          allowed_scopes?: string[]
+          callback_url?: string | null
+          created_at?: string
+          description?: string | null
+          framework?: string | null
+          id?: string
+          last_active_at?: string | null
+          metadata?: Json | null
+          name?: string
+          org_id?: string
+          registered_by?: string
+          revoked_at?: string | null
+          status?: Database["public"]["Enums"]["agent_status"]
+          suspended_at?: string | null
+          updated_at?: string
+          version?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "agents_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "agents_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "public_org_profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       ai_credits: {
         Row: {
           created_at: string
@@ -54,6 +173,13 @@ export type Database = {
             columns: ["org_id"]
             isOneToOne: false
             referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ai_credits_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "public_org_profiles"
             referencedColumns: ["id"]
           },
         ]
@@ -110,6 +236,13 @@ export type Database = {
             columns: ["org_id"]
             isOneToOne: false
             referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ai_reports_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "public_org_profiles"
             referencedColumns: ["id"]
           },
         ]
@@ -174,6 +307,13 @@ export type Database = {
             referencedRelation: "organizations"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "ai_usage_events_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "public_org_profiles"
+            referencedColumns: ["id"]
+          },
         ]
       }
       anchor_chain_index: {
@@ -223,8 +363,9 @@ export type Database = {
       anchor_proofs: {
         Row: {
           anchor_id: string
-          block_height: number
-          block_timestamp: string
+          batch_id: string | null
+          block_height: number | null
+          block_timestamp: string | null
           created_at: string
           id: string
           merkle_root: string | null
@@ -234,8 +375,9 @@ export type Database = {
         }
         Insert: {
           anchor_id: string
-          block_height: number
-          block_timestamp: string
+          batch_id?: string | null
+          block_height?: number | null
+          block_timestamp?: string | null
           created_at?: string
           id?: string
           merkle_root?: string | null
@@ -245,8 +387,9 @@ export type Database = {
         }
         Update: {
           anchor_id?: string
-          block_height?: number
-          block_timestamp?: string
+          batch_id?: string | null
+          block_height?: number | null
+          block_timestamp?: string | null
           created_at?: string
           id?: string
           merkle_root?: string | null
@@ -259,6 +402,64 @@ export type Database = {
             foreignKeyName: "anchor_proofs_anchor_id_fkey"
             columns: ["anchor_id"]
             isOneToOne: true
+            referencedRelation: "anchors"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      anchor_queue_resolutions: {
+        Row: {
+          created_at: string
+          external_file_id: string
+          id: string
+          org_id: string
+          reason: string | null
+          rejected_anchor_ids: string[]
+          resolved_by_api_key_id: string | null
+          resolved_by_user_id: string | null
+          selected_anchor_id: string
+        }
+        Insert: {
+          created_at?: string
+          external_file_id: string
+          id?: string
+          org_id: string
+          reason?: string | null
+          rejected_anchor_ids?: string[]
+          resolved_by_api_key_id?: string | null
+          resolved_by_user_id?: string | null
+          selected_anchor_id: string
+        }
+        Update: {
+          created_at?: string
+          external_file_id?: string
+          id?: string
+          org_id?: string
+          reason?: string | null
+          rejected_anchor_ids?: string[]
+          resolved_by_api_key_id?: string | null
+          resolved_by_user_id?: string | null
+          selected_anchor_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "anchor_queue_resolutions_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "anchor_queue_resolutions_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "public_org_profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "anchor_queue_resolutions_selected_anchor_id_fkey"
+            columns: ["selected_anchor_id"]
+            isOneToOne: false
             referencedRelation: "anchors"
             referencedColumns: ["id"]
           },
@@ -312,11 +513,14 @@ export type Database = {
           chain_confirmations: number | null
           chain_timestamp: string | null
           chain_tx_id: string | null
+          cle_metadata: Json | null
           compliance_controls: Json | null
+          cpe_metadata: Json | null
           created_at: string
           credential_type: Database["public"]["Enums"]["credential_type"] | null
           deleted_at: string | null
           description: string | null
+          directory_info_opt_out: boolean
           expires_at: string | null
           file_mime: string | null
           file_size: number | null
@@ -338,7 +542,9 @@ export type Database = {
           revocation_reason: string | null
           revocation_tx_id: string | null
           revoked_at: string | null
+          revoked_by: string | null
           status: Database["public"]["Enums"]["anchor_status"]
+          sub_type: string | null
           updated_at: string
           user_id: string
           version_number: number
@@ -348,13 +554,16 @@ export type Database = {
           chain_confirmations?: number | null
           chain_timestamp?: string | null
           chain_tx_id?: string | null
+          cle_metadata?: Json | null
           compliance_controls?: Json | null
+          cpe_metadata?: Json | null
           created_at?: string
           credential_type?:
             | Database["public"]["Enums"]["credential_type"]
             | null
           deleted_at?: string | null
           description?: string | null
+          directory_info_opt_out?: boolean
           expires_at?: string | null
           file_mime?: string | null
           file_size?: number | null
@@ -376,7 +585,9 @@ export type Database = {
           revocation_reason?: string | null
           revocation_tx_id?: string | null
           revoked_at?: string | null
+          revoked_by?: string | null
           status?: Database["public"]["Enums"]["anchor_status"]
+          sub_type?: string | null
           updated_at?: string
           user_id: string
           version_number?: number
@@ -386,13 +597,16 @@ export type Database = {
           chain_confirmations?: number | null
           chain_timestamp?: string | null
           chain_tx_id?: string | null
+          cle_metadata?: Json | null
           compliance_controls?: Json | null
+          cpe_metadata?: Json | null
           created_at?: string
           credential_type?:
             | Database["public"]["Enums"]["credential_type"]
             | null
           deleted_at?: string | null
           description?: string | null
+          directory_info_opt_out?: boolean
           expires_at?: string | null
           file_mime?: string | null
           file_size?: number | null
@@ -414,7 +628,9 @@ export type Database = {
           revocation_reason?: string | null
           revocation_tx_id?: string | null
           revoked_at?: string | null
+          revoked_by?: string | null
           status?: Database["public"]["Enums"]["anchor_status"]
+          sub_type?: string | null
           updated_at?: string
           user_id?: string
           version_number?: number
@@ -425,6 +641,13 @@ export type Database = {
             columns: ["org_id"]
             isOneToOne: false
             referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "anchors_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "public_org_profiles"
             referencedColumns: ["id"]
           },
           {
@@ -483,14 +706,26 @@ export type Database = {
             referencedRelation: "organizations"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "api_key_usage_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "public_org_profiles"
+            referencedColumns: ["id"]
+          },
         ]
       }
       api_keys: {
         Row: {
+          access_purpose: string | null
+          agent_id: string | null
           created_at: string
           created_by: string
           expires_at: string | null
+          ferpa_exception_category: string | null
+          ferpa_verified: boolean
           id: string
+          institution_type: string | null
           is_active: boolean
           key_hash: string
           key_prefix: string
@@ -503,10 +738,15 @@ export type Database = {
           scopes: string[]
         }
         Insert: {
+          access_purpose?: string | null
+          agent_id?: string | null
           created_at?: string
           created_by: string
           expires_at?: string | null
+          ferpa_exception_category?: string | null
+          ferpa_verified?: boolean
           id?: string
+          institution_type?: string | null
           is_active?: boolean
           key_hash: string
           key_prefix: string
@@ -519,10 +759,15 @@ export type Database = {
           scopes?: string[]
         }
         Update: {
+          access_purpose?: string | null
+          agent_id?: string | null
           created_at?: string
           created_by?: string
           expires_at?: string | null
+          ferpa_exception_category?: string | null
+          ferpa_verified?: boolean
           id?: string
+          institution_type?: string | null
           is_active?: boolean
           key_hash?: string
           key_prefix?: string
@@ -536,13 +781,102 @@ export type Database = {
         }
         Relationships: [
           {
+            foreignKeyName: "api_keys_agent_id_fkey"
+            columns: ["agent_id"]
+            isOneToOne: false
+            referencedRelation: "agents"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "api_keys_org_id_fkey"
             columns: ["org_id"]
             isOneToOne: false
             referencedRelation: "organizations"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "api_keys_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "public_org_profiles"
+            referencedColumns: ["id"]
+          },
         ]
+      }
+      ats_integrations: {
+        Row: {
+          callback_url: string | null
+          created_at: string | null
+          enabled: boolean | null
+          field_mapping: Json | null
+          id: string
+          org_id: string
+          provider: string
+          updated_at: string | null
+          webhook_secret: string
+        }
+        Insert: {
+          callback_url?: string | null
+          created_at?: string | null
+          enabled?: boolean | null
+          field_mapping?: Json | null
+          id?: string
+          org_id: string
+          provider: string
+          updated_at?: string | null
+          webhook_secret: string
+        }
+        Update: {
+          callback_url?: string | null
+          created_at?: string | null
+          enabled?: boolean | null
+          field_mapping?: Json | null
+          id?: string
+          org_id?: string
+          provider?: string
+          updated_at?: string | null
+          webhook_secret?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ats_integrations_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ats_integrations_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "public_org_profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      ats_webhook_nonces: {
+        Row: {
+          id: string
+          integration_id: string
+          provider: string
+          received_at: string
+          signature: string
+        }
+        Insert: {
+          id?: string
+          integration_id: string
+          provider: string
+          received_at?: string
+          signature: string
+        }
+        Update: {
+          id?: string
+          integration_id?: string
+          provider?: string
+          received_at?: string
+          signature?: string
+        }
+        Relationships: []
       }
       attestation_evidence: {
         Row: {
@@ -697,6 +1031,13 @@ export type Database = {
             referencedRelation: "organizations"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "attestations_attester_org_id_fkey"
+            columns: ["attester_org_id"]
+            isOneToOne: false
+            referencedRelation: "public_org_profiles"
+            referencedColumns: ["id"]
+          },
         ]
       }
       audit_events: {
@@ -746,6 +1087,13 @@ export type Database = {
             columns: ["org_id"]
             isOneToOne: false
             referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "audit_events_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "public_org_profiles"
             referencedColumns: ["id"]
           },
         ]
@@ -882,6 +1230,13 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "billing_events_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "public_org_profiles"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "billing_events_subscription_id_fkey"
             columns: ["subscription_id"]
             isOneToOne: false
@@ -896,6 +1251,362 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      bq_export_watermarks: {
+        Row: {
+          last_run_error: string | null
+          last_run_status: string
+          last_synced_at: string
+          last_synced_id: string | null
+          table_name: string
+          updated_at: string
+        }
+        Insert: {
+          last_run_error?: string | null
+          last_run_status?: string
+          last_synced_at?: string
+          last_synced_id?: string | null
+          table_name: string
+          updated_at?: string
+        }
+        Update: {
+          last_run_error?: string | null
+          last_run_status?: string
+          last_synced_at?: string
+          last_synced_id?: string | null
+          table_name?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      checkr_webhook_nonces: {
+        Row: {
+          id: string
+          payload_hash: string
+          received_at: string
+          report_id: string
+        }
+        Insert: {
+          id?: string
+          payload_hash: string
+          received_at?: string
+          report_id: string
+        }
+        Update: {
+          id?: string
+          payload_hash?: string
+          received_at?: string
+          report_id?: string
+        }
+        Relationships: []
+      }
+      cle_provider_registry: {
+        Row: {
+          approval_status: string
+          approved_jurisdictions: string[]
+          created_at: string
+          id: string
+          last_verified_date: string | null
+          notes: string | null
+          provider_domain: string | null
+          provider_name: string
+          updated_at: string
+        }
+        Insert: {
+          approval_status: string
+          approved_jurisdictions?: string[]
+          created_at?: string
+          id?: string
+          last_verified_date?: string | null
+          notes?: string | null
+          provider_domain?: string | null
+          provider_name: string
+          updated_at?: string
+        }
+        Update: {
+          approval_status?: string
+          approved_jurisdictions?: string[]
+          created_at?: string
+          id?: string
+          last_verified_date?: string | null
+          notes?: string | null
+          provider_domain?: string | null
+          provider_name?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      cloud_logging_queue: {
+        Row: {
+          audit_id: string
+          enqueued_at: string
+          id: number
+          last_error: string | null
+          retry_count: number
+        }
+        Insert: {
+          audit_id: string
+          enqueued_at?: string
+          id?: number
+          last_error?: string | null
+          retry_count?: number
+        }
+        Update: {
+          audit_id?: string
+          enqueued_at?: string
+          id?: number
+          last_error?: string | null
+          retry_count?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "cloud_logging_queue_audit_id_fkey"
+            columns: ["audit_id"]
+            isOneToOne: true
+            referencedRelation: "audit_events"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      compliance_audits: {
+        Row: {
+          completed_at: string | null
+          created_at: string
+          duration_ms: number | null
+          error_code: string | null
+          error_message: string | null
+          gaps: Json
+          id: string
+          jurisdiction_filter: string[] | null
+          metadata: Json
+          org_id: string
+          overall_grade: string
+          overall_score: number
+          per_jurisdiction: Json
+          quarantines: Json
+          started_at: string
+          status: string
+          triggered_by: string | null
+          updated_at: string
+        }
+        Insert: {
+          completed_at?: string | null
+          created_at?: string
+          duration_ms?: number | null
+          error_code?: string | null
+          error_message?: string | null
+          gaps?: Json
+          id?: string
+          jurisdiction_filter?: string[] | null
+          metadata?: Json
+          org_id: string
+          overall_grade: string
+          overall_score: number
+          per_jurisdiction?: Json
+          quarantines?: Json
+          started_at?: string
+          status?: string
+          triggered_by?: string | null
+          updated_at?: string
+        }
+        Update: {
+          completed_at?: string | null
+          created_at?: string
+          duration_ms?: number | null
+          error_code?: string | null
+          error_message?: string | null
+          gaps?: Json
+          id?: string
+          jurisdiction_filter?: string[] | null
+          metadata?: Json
+          org_id?: string
+          overall_grade?: string
+          overall_score?: number
+          per_jurisdiction?: Json
+          quarantines?: Json
+          started_at?: string
+          status?: string
+          triggered_by?: string | null
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "compliance_audits_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "compliance_audits_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "public_org_profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      compliance_scores: {
+        Row: {
+          created_at: string
+          expiring_documents: Json | null
+          grade: string
+          id: string
+          industry_code: string
+          jurisdiction_code: string
+          last_calculated: string
+          missing_documents: Json | null
+          nessie_analysis_id: string | null
+          org_id: string
+          present_documents: Json | null
+          recommendations: Json | null
+          score: number
+          updated_at: string
+          user_id: string | null
+        }
+        Insert: {
+          created_at?: string
+          expiring_documents?: Json | null
+          grade: string
+          id?: string
+          industry_code: string
+          jurisdiction_code: string
+          last_calculated?: string
+          missing_documents?: Json | null
+          nessie_analysis_id?: string | null
+          org_id: string
+          present_documents?: Json | null
+          recommendations?: Json | null
+          score: number
+          updated_at?: string
+          user_id?: string | null
+        }
+        Update: {
+          created_at?: string
+          expiring_documents?: Json | null
+          grade?: string
+          id?: string
+          industry_code?: string
+          jurisdiction_code?: string
+          last_calculated?: string
+          missing_documents?: Json | null
+          nessie_analysis_id?: string | null
+          org_id?: string
+          present_documents?: Json | null
+          recommendations?: Json | null
+          score?: number
+          updated_at?: string
+          user_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "compliance_scores_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "compliance_scores_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "public_org_profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      connector_subscriptions: {
+        Row: {
+          created_at: string
+          expires_at: string
+          id: string
+          last_renewal_error: string | null
+          last_renewed_at: string | null
+          org_id: string
+          provider: string
+          resource_id: string | null
+          status: string
+          vendor_subscription_id: string
+        }
+        Insert: {
+          created_at?: string
+          expires_at: string
+          id?: string
+          last_renewal_error?: string | null
+          last_renewed_at?: string | null
+          org_id: string
+          provider: string
+          resource_id?: string | null
+          status?: string
+          vendor_subscription_id: string
+        }
+        Update: {
+          created_at?: string
+          expires_at?: string
+          id?: string
+          last_renewal_error?: string | null
+          last_renewed_at?: string | null
+          org_id?: string
+          provider?: string
+          resource_id?: string | null
+          status?: string
+          vendor_subscription_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "connector_subscriptions_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "connector_subscriptions_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "public_org_profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      cpe_provider_registry: {
+        Row: {
+          created_at: string
+          delivery_methods: string[]
+          id: string
+          last_verified_date: string | null
+          nasba_sponsor_id: string | null
+          nasba_status: string
+          notes: string | null
+          provider_domain: string | null
+          provider_name: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          delivery_methods?: string[]
+          id?: string
+          last_verified_date?: string | null
+          nasba_sponsor_id?: string | null
+          nasba_status: string
+          notes?: string | null
+          provider_domain?: string | null
+          provider_name: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          delivery_methods?: string[]
+          id?: string
+          last_verified_date?: string | null
+          nasba_sponsor_id?: string | null
+          nasba_status?: string
+          notes?: string | null
+          provider_domain?: string | null
+          provider_name?: string
+          updated_at?: string
+        }
+        Relationships: []
       }
       credential_embeddings: {
         Row: {
@@ -941,6 +1652,13 @@ export type Database = {
             columns: ["org_id"]
             isOneToOne: false
             referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "credential_embeddings_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "public_org_profiles"
             referencedColumns: ["id"]
           },
         ]
@@ -1036,6 +1754,13 @@ export type Database = {
             referencedRelation: "organizations"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "credential_templates_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "public_org_profiles"
+            referencedColumns: ["id"]
+          },
         ]
       }
       credit_transactions: {
@@ -1078,6 +1803,13 @@ export type Database = {
             columns: ["org_id"]
             isOneToOne: false
             referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "credit_transactions_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "public_org_profiles"
             referencedColumns: ["id"]
           },
         ]
@@ -1127,6 +1859,13 @@ export type Database = {
             referencedRelation: "organizations"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "credits_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "public_org_profiles"
+            referencedColumns: ["id"]
+          },
         ]
       }
       data_subject_requests: {
@@ -1166,6 +1905,211 @@ export type Database = {
             columns: ["user_id"]
             isOneToOne: false
             referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      docusign_webhook_nonces: {
+        Row: {
+          envelope_id: string
+          event_id: string
+          generated_at: string
+          id: string
+          received_at: string
+        }
+        Insert: {
+          envelope_id: string
+          event_id: string
+          generated_at: string
+          id?: string
+          received_at?: string
+        }
+        Update: {
+          envelope_id?: string
+          event_id?: string
+          generated_at?: string
+          id?: string
+          received_at?: string
+        }
+        Relationships: []
+      }
+      drive_folder_path_cache: {
+        Row: {
+          cached_at: string
+          file_id: string
+          folder_path: string | null
+          org_id: string
+        }
+        Insert: {
+          cached_at?: string
+          file_id: string
+          folder_path?: string | null
+          org_id: string
+        }
+        Update: {
+          cached_at?: string
+          file_id?: string
+          folder_path?: string | null
+          org_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "drive_folder_path_cache_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "drive_folder_path_cache_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "public_org_profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      drive_revision_ledger: {
+        Row: {
+          actor_email: string | null
+          file_id: string
+          id: string
+          integration_id: string
+          modified_time: string | null
+          org_id: string
+          outcome: string
+          parent_ids: string[] | null
+          processed_at: string
+          revision_id: string
+          rule_event_id: string | null
+        }
+        Insert: {
+          actor_email?: string | null
+          file_id: string
+          id?: string
+          integration_id: string
+          modified_time?: string | null
+          org_id: string
+          outcome: string
+          parent_ids?: string[] | null
+          processed_at?: string
+          revision_id: string
+          rule_event_id?: string | null
+        }
+        Update: {
+          actor_email?: string | null
+          file_id?: string
+          id?: string
+          integration_id?: string
+          modified_time?: string | null
+          org_id?: string
+          outcome?: string
+          parent_ids?: string[] | null
+          processed_at?: string
+          revision_id?: string
+          rule_event_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "drive_revision_ledger_integration_id_fkey"
+            columns: ["integration_id"]
+            isOneToOne: false
+            referencedRelation: "org_integrations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "drive_revision_ledger_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "drive_revision_ledger_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "public_org_profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      drive_webhook_nonces: {
+        Row: {
+          channel_id: string
+          id: string
+          message_number: number
+          received_at: string
+        }
+        Insert: {
+          channel_id: string
+          id?: string
+          message_number: number
+          received_at?: string
+        }
+        Update: {
+          channel_id?: string
+          id?: string
+          message_number?: number
+          received_at?: string
+        }
+        Relationships: []
+      }
+      emergency_access_grants: {
+        Row: {
+          approver_id: string | null
+          created_at: string
+          expires_at: string
+          granted_at: string
+          grantee_id: string
+          id: string
+          org_id: string
+          reason: string
+          revoke_reason: string | null
+          revoked_at: string | null
+          revoked_by: string | null
+          scope: string
+        }
+        Insert: {
+          approver_id?: string | null
+          created_at?: string
+          expires_at: string
+          granted_at?: string
+          grantee_id: string
+          id?: string
+          org_id: string
+          reason: string
+          revoke_reason?: string | null
+          revoked_at?: string | null
+          revoked_by?: string | null
+          scope?: string
+        }
+        Update: {
+          approver_id?: string | null
+          created_at?: string
+          expires_at?: string
+          granted_at?: string
+          grantee_id?: string
+          id?: string
+          org_id?: string
+          reason?: string
+          revoke_reason?: string | null
+          revoked_at?: string | null
+          revoked_by?: string | null
+          scope?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "emergency_access_grants_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "emergency_access_grants_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "public_org_profiles"
             referencedColumns: ["id"]
           },
         ]
@@ -1210,6 +2154,13 @@ export type Database = {
             columns: ["org_id"]
             isOneToOne: false
             referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "entitlements_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "public_org_profiles"
             referencedColumns: ["id"]
           },
           {
@@ -1280,6 +2231,13 @@ export type Database = {
             columns: ["org_id"]
             isOneToOne: false
             referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "extraction_feedback_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "public_org_profiles"
             referencedColumns: ["id"]
           },
         ]
@@ -1369,6 +2327,92 @@ export type Database = {
             referencedRelation: "organizations"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "extraction_manifests_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "public_org_profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      ferpa_disclosure_log: {
+        Row: {
+          api_key_id: string | null
+          created_at: string
+          disclosed_at: string
+          disclosed_by: string | null
+          disclosure_exception: Database["public"]["Enums"]["ferpa_exception_category"]
+          education_record_ids: string[]
+          id: string
+          legitimate_interest: string
+          notes: string | null
+          org_id: string
+          requesting_party_name: string
+          requesting_party_org: string | null
+          requesting_party_type: Database["public"]["Enums"]["ferpa_party_type"]
+          student_consent_obtained: boolean
+          student_opt_out_checked: boolean
+          verification_event_id: string | null
+        }
+        Insert: {
+          api_key_id?: string | null
+          created_at?: string
+          disclosed_at?: string
+          disclosed_by?: string | null
+          disclosure_exception?: Database["public"]["Enums"]["ferpa_exception_category"]
+          education_record_ids?: string[]
+          id?: string
+          legitimate_interest: string
+          notes?: string | null
+          org_id: string
+          requesting_party_name: string
+          requesting_party_org?: string | null
+          requesting_party_type?: Database["public"]["Enums"]["ferpa_party_type"]
+          student_consent_obtained?: boolean
+          student_opt_out_checked?: boolean
+          verification_event_id?: string | null
+        }
+        Update: {
+          api_key_id?: string | null
+          created_at?: string
+          disclosed_at?: string
+          disclosed_by?: string | null
+          disclosure_exception?: Database["public"]["Enums"]["ferpa_exception_category"]
+          education_record_ids?: string[]
+          id?: string
+          legitimate_interest?: string
+          notes?: string | null
+          org_id?: string
+          requesting_party_name?: string
+          requesting_party_org?: string | null
+          requesting_party_type?: Database["public"]["Enums"]["ferpa_party_type"]
+          student_consent_obtained?: boolean
+          student_opt_out_checked?: boolean
+          verification_event_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "ferpa_disclosure_log_api_key_id_fkey"
+            columns: ["api_key_id"]
+            isOneToOne: false
+            referencedRelation: "api_keys"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ferpa_disclosure_log_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "ferpa_disclosure_log_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "public_org_profiles"
+            referencedColumns: ["id"]
+          },
         ]
       }
       financial_reports: {
@@ -1416,6 +2460,21 @@ export type Database = {
           total_anchors?: number | null
           total_revenue_usd?: number | null
           x402_revenue_usd?: number | null
+        }
+        Relationships: []
+      }
+      freemail_domains: {
+        Row: {
+          added_at: string
+          domain: string
+        }
+        Insert: {
+          added_at?: string
+          domain: string
+        }
+        Update: {
+          added_at?: string
+          domain?: string
         }
         Relationships: []
       }
@@ -1489,6 +2548,13 @@ export type Database = {
             columns: ["org_id"]
             isOneToOne: false
             referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "grc_connections_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "public_org_profiles"
             referencedColumns: ["id"]
           },
         ]
@@ -1586,6 +2652,61 @@ export type Database = {
         }
         Relationships: []
       }
+      integration_events: {
+        Row: {
+          created_at: string
+          details: Json
+          event_type: string
+          id: string
+          integration_id: string | null
+          org_id: string
+          provider: string
+          status: string
+        }
+        Insert: {
+          created_at?: string
+          details?: Json
+          event_type: string
+          id?: string
+          integration_id?: string | null
+          org_id: string
+          provider: string
+          status: string
+        }
+        Update: {
+          created_at?: string
+          details?: Json
+          event_type?: string
+          id?: string
+          integration_id?: string | null
+          org_id?: string
+          provider?: string
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "integration_events_integration_id_fkey"
+            columns: ["integration_id"]
+            isOneToOne: false
+            referencedRelation: "org_integrations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "integration_events_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "integration_events_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "public_org_profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       integrity_scores: {
         Row: {
           anchor_id: string
@@ -1647,6 +2768,13 @@ export type Database = {
             referencedRelation: "organizations"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "integrity_scores_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "public_org_profiles"
+            referencedColumns: ["id"]
+          },
         ]
       }
       invitations: {
@@ -1701,6 +2829,267 @@ export type Database = {
             referencedRelation: "organizations"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "invitations_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "public_org_profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      job_queue: {
+        Row: {
+          attempts: number
+          created_at: string
+          id: string
+          last_error: string | null
+          max_attempts: number
+          payload: Json
+          priority: number
+          scheduled_for: string | null
+          status: string
+          type: string
+          updated_at: string
+        }
+        Insert: {
+          attempts?: number
+          created_at?: string
+          id?: string
+          last_error?: string | null
+          max_attempts?: number
+          payload?: Json
+          priority?: number
+          scheduled_for?: string | null
+          status?: string
+          type: string
+          updated_at?: string
+        }
+        Update: {
+          attempts?: number
+          created_at?: string
+          id?: string
+          last_error?: string | null
+          max_attempts?: number
+          payload?: Json
+          priority?: number
+          scheduled_for?: string | null
+          status?: string
+          type?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      jurisdiction_rules: {
+        Row: {
+          created_at: string
+          details: Json | null
+          effective_date: string | null
+          expiry_date: string | null
+          id: string
+          industry_code: string
+          jurisdiction_code: string
+          optional_credential_types: string[] | null
+          regulatory_reference: string | null
+          required_credential_types: string[]
+          rule_name: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          details?: Json | null
+          effective_date?: string | null
+          expiry_date?: string | null
+          id?: string
+          industry_code: string
+          jurisdiction_code: string
+          optional_credential_types?: string[] | null
+          regulatory_reference?: string | null
+          required_credential_types?: string[]
+          rule_name: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          details?: Json | null
+          effective_date?: string | null
+          expiry_date?: string | null
+          id?: string
+          industry_code?: string
+          jurisdiction_code?: string
+          optional_credential_types?: string[] | null
+          regulatory_reference?: string | null
+          required_credential_types?: string[]
+          rule_name?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      kyb_events: {
+        Row: {
+          created_at: string
+          details: Json
+          event_type: string
+          id: string
+          org_id: string
+          payload_hash: string | null
+          provider: string
+          provider_event_id: string | null
+          status: string
+        }
+        Insert: {
+          created_at?: string
+          details?: Json
+          event_type: string
+          id?: string
+          org_id: string
+          payload_hash?: string | null
+          provider: string
+          provider_event_id?: string | null
+          status: string
+        }
+        Update: {
+          created_at?: string
+          details?: Json
+          event_type?: string
+          id?: string
+          org_id?: string
+          payload_hash?: string | null
+          provider?: string
+          provider_event_id?: string | null
+          status?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "kyb_events_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "kyb_events_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "public_org_profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      kyb_webhook_nonces: {
+        Row: {
+          nonce: string
+          provider: string
+          received_at: string
+        }
+        Insert: {
+          nonce: string
+          provider: string
+          received_at?: string
+        }
+        Update: {
+          nonce?: string
+          provider?: string
+          received_at?: string
+        }
+        Relationships: []
+      }
+      legally_binding_attestations: {
+        Row: {
+          anchor_id: string | null
+          anchor_timestamp: string | null
+          attestation_id: string
+          attestation_statement: string
+          attestation_type: string
+          attesting_org_id: string
+          attesting_org_name: string
+          created_at: string
+          docusign_completed_at: string | null
+          docusign_envelope_id: string | null
+          id: string
+          notarization_completed_at: string | null
+          notary_commission_number: string | null
+          notary_commission_state: string | null
+          notary_name: string | null
+          public_verification_url: string | null
+          status: string
+          subject_credential_id: string | null
+          subject_name: string
+          updated_at: string
+        }
+        Insert: {
+          anchor_id?: string | null
+          anchor_timestamp?: string | null
+          attestation_id: string
+          attestation_statement: string
+          attestation_type: string
+          attesting_org_id: string
+          attesting_org_name: string
+          created_at?: string
+          docusign_completed_at?: string | null
+          docusign_envelope_id?: string | null
+          id?: string
+          notarization_completed_at?: string | null
+          notary_commission_number?: string | null
+          notary_commission_state?: string | null
+          notary_name?: string | null
+          public_verification_url?: string | null
+          status?: string
+          subject_credential_id?: string | null
+          subject_name: string
+          updated_at?: string
+        }
+        Update: {
+          anchor_id?: string | null
+          anchor_timestamp?: string | null
+          attestation_id?: string
+          attestation_statement?: string
+          attestation_type?: string
+          attesting_org_id?: string
+          attesting_org_name?: string
+          created_at?: string
+          docusign_completed_at?: string | null
+          docusign_envelope_id?: string | null
+          id?: string
+          notarization_completed_at?: string | null
+          notary_commission_number?: string | null
+          notary_commission_state?: string | null
+          notary_name?: string | null
+          public_verification_url?: string | null
+          status?: string
+          subject_credential_id?: string | null
+          subject_name?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "legally_binding_attestations_anchor_id_fkey"
+            columns: ["anchor_id"]
+            isOneToOne: false
+            referencedRelation: "anchors"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "legally_binding_attestations_attesting_org_id_fkey"
+            columns: ["attesting_org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "legally_binding_attestations_attesting_org_id_fkey"
+            columns: ["attesting_org_id"]
+            isOneToOne: false
+            referencedRelation: "public_org_profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "legally_binding_attestations_subject_credential_id_fkey"
+            columns: ["subject_credential_id"]
+            isOneToOne: false
+            referencedRelation: "anchors"
+            referencedColumns: ["id"]
+          },
         ]
       }
       memberships: {
@@ -1734,6 +3123,13 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "memberships_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "public_org_profiles"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "memberships_user_id_fkey"
             columns: ["user_id"]
             isOneToOne: false
@@ -1742,37 +3138,142 @@ export type Database = {
           },
         ]
       }
-      org_members: {
+      microsoft_graph_webhook_nonces: {
         Row: {
-          id: string
-          invited_by: string | null
-          joined_at: string
-          org_id: string
-          role: Database["public"]["Enums"]["org_member_role"]
-          user_id: string
+          change_type: string
+          payload_hash: string
+          received_at: string
+          resource_id: string
+          subscription_id: string
         }
         Insert: {
-          id?: string
-          invited_by?: string | null
-          joined_at?: string
-          org_id: string
-          role?: Database["public"]["Enums"]["org_member_role"]
-          user_id: string
+          change_type: string
+          payload_hash: string
+          received_at?: string
+          resource_id: string
+          subscription_id: string
         }
         Update: {
+          change_type?: string
+          payload_hash?: string
+          received_at?: string
+          resource_id?: string
+          subscription_id?: string
+        }
+        Relationships: []
+      }
+      notifications: {
+        Row: {
+          body: string
+          created_at: string
+          id: string
+          link: string | null
+          org_id: string
+          payload: Json
+          read_at: string | null
+          severity: string
+          title: string
+          type: string
+        }
+        Insert: {
+          body: string
+          created_at?: string
           id?: string
-          invited_by?: string | null
-          joined_at?: string
+          link?: string | null
+          org_id: string
+          payload?: Json
+          read_at?: string | null
+          severity?: string
+          title: string
+          type: string
+        }
+        Update: {
+          body?: string
+          created_at?: string
+          id?: string
+          link?: string | null
           org_id?: string
-          role?: Database["public"]["Enums"]["org_member_role"]
-          user_id?: string
+          payload?: Json
+          read_at?: string | null
+          severity?: string
+          title?: string
+          type?: string
         }
         Relationships: [
           {
-            foreignKeyName: "org_members_org_id_fkey"
+            foreignKeyName: "notifications_org_id_fkey"
             columns: ["org_id"]
             isOneToOne: false
             referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "notifications_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "public_org_profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      org_credit_allocations: {
+        Row: {
+          amount: number
+          child_org_id: string
+          created_at: string
+          effective_at: string
+          granted_by: string
+          id: string
+          note: string | null
+          parent_org_id: string
+        }
+        Insert: {
+          amount: number
+          child_org_id: string
+          created_at?: string
+          effective_at?: string
+          granted_by: string
+          id?: string
+          note?: string | null
+          parent_org_id: string
+        }
+        Update: {
+          amount?: number
+          child_org_id?: string
+          created_at?: string
+          effective_at?: string
+          granted_by?: string
+          id?: string
+          note?: string | null
+          parent_org_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "org_credit_allocations_child_org_id_fkey"
+            columns: ["child_org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "org_credit_allocations_child_org_id_fkey"
+            columns: ["child_org_id"]
+            isOneToOne: false
+            referencedRelation: "public_org_profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "org_credit_allocations_parent_org_id_fkey"
+            columns: ["parent_org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "org_credit_allocations_parent_org_id_fkey"
+            columns: ["parent_org_id"]
+            isOneToOne: false
+            referencedRelation: "public_org_profiles"
             referencedColumns: ["id"]
           },
         ]
@@ -1822,14 +3323,649 @@ export type Database = {
             referencedRelation: "organizations"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "org_credits_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: true
+            referencedRelation: "public_org_profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      org_daily_usage: {
+        Row: {
+          count: number
+          org_id: string
+          quota_kind: string
+          updated_at: string
+          usage_date: string
+        }
+        Insert: {
+          count?: number
+          org_id: string
+          quota_kind: string
+          updated_at?: string
+          usage_date?: string
+        }
+        Update: {
+          count?: number
+          org_id?: string
+          quota_kind?: string
+          updated_at?: string
+          usage_date?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "org_daily_usage_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "org_daily_usage_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "public_org_profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      org_integrations: {
+        Row: {
+          account_id: string | null
+          account_label: string | null
+          base_uri: string | null
+          connected_at: string
+          created_at: string
+          encrypted_tokens: string | null
+          id: string
+          last_page_token: string | null
+          last_renewal_at: string | null
+          last_renewal_error: string | null
+          last_token_advanced_at: string | null
+          org_id: string
+          provider: string
+          revoked_at: string | null
+          scope: string | null
+          subscription_expires_at: string | null
+          subscription_id: string | null
+          token_kms_key_id: string | null
+          token_secret_name: string | null
+          updated_at: string
+          watch_renewal_failure_count: number
+        }
+        Insert: {
+          account_id?: string | null
+          account_label?: string | null
+          base_uri?: string | null
+          connected_at?: string
+          created_at?: string
+          encrypted_tokens?: string | null
+          id?: string
+          last_page_token?: string | null
+          last_renewal_at?: string | null
+          last_renewal_error?: string | null
+          last_token_advanced_at?: string | null
+          org_id: string
+          provider: string
+          revoked_at?: string | null
+          scope?: string | null
+          subscription_expires_at?: string | null
+          subscription_id?: string | null
+          token_kms_key_id?: string | null
+          token_secret_name?: string | null
+          updated_at?: string
+          watch_renewal_failure_count?: number
+        }
+        Update: {
+          account_id?: string | null
+          account_label?: string | null
+          base_uri?: string | null
+          connected_at?: string
+          created_at?: string
+          encrypted_tokens?: string | null
+          id?: string
+          last_page_token?: string | null
+          last_renewal_at?: string | null
+          last_renewal_error?: string | null
+          last_token_advanced_at?: string | null
+          org_id?: string
+          provider?: string
+          revoked_at?: string | null
+          scope?: string | null
+          subscription_expires_at?: string | null
+          subscription_id?: string | null
+          token_kms_key_id?: string | null
+          token_secret_name?: string | null
+          updated_at?: string
+          watch_renewal_failure_count?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "org_integrations_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "org_integrations_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "public_org_profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      org_members: {
+        Row: {
+          id: string
+          invited_by: string | null
+          joined_at: string
+          org_id: string
+          role: Database["public"]["Enums"]["org_member_role"]
+          user_id: string
+        }
+        Insert: {
+          id?: string
+          invited_by?: string | null
+          joined_at?: string
+          org_id: string
+          role?: Database["public"]["Enums"]["org_member_role"]
+          user_id: string
+        }
+        Update: {
+          id?: string
+          invited_by?: string | null
+          joined_at?: string
+          org_id?: string
+          role?: Database["public"]["Enums"]["org_member_role"]
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "org_members_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "org_members_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "public_org_profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      org_monthly_allocation: {
+        Row: {
+          anchor_fee_credits: number
+          base_allocation: number
+          closed_at: string | null
+          created_at: string
+          id: string
+          org_id: string
+          period_end: string
+          period_start: string
+          rolled_over_balance: number
+          updated_at: string
+          used_this_cycle: number
+        }
+        Insert: {
+          anchor_fee_credits?: number
+          base_allocation?: number
+          closed_at?: string | null
+          created_at?: string
+          id?: string
+          org_id: string
+          period_end: string
+          period_start: string
+          rolled_over_balance?: number
+          updated_at?: string
+          used_this_cycle?: number
+        }
+        Update: {
+          anchor_fee_credits?: number
+          base_allocation?: number
+          closed_at?: string | null
+          created_at?: string
+          id?: string
+          org_id?: string
+          period_end?: string
+          period_start?: string
+          rolled_over_balance?: number
+          updated_at?: string
+          used_this_cycle?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "org_monthly_allocation_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "org_monthly_allocation_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "public_org_profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      org_tier_entitlements: {
+        Row: {
+          additional_seat_anchor_increment: number | null
+          additional_seat_price_cents: number | null
+          anchors_per_month: number | null
+          billing_period: string
+          can_create_sub_orgs: boolean
+          created_at: string
+          features: Json
+          included_admins: number | null
+          included_seats: number | null
+          included_sub_orgs: number
+          max_self_serve_seats: number | null
+          name: string
+          price_cents: number | null
+          requires_quote: boolean
+          tier_id: string
+          updated_at: string
+        }
+        Insert: {
+          additional_seat_anchor_increment?: number | null
+          additional_seat_price_cents?: number | null
+          anchors_per_month?: number | null
+          billing_period?: string
+          can_create_sub_orgs?: boolean
+          created_at?: string
+          features?: Json
+          included_admins?: number | null
+          included_seats?: number | null
+          included_sub_orgs?: number
+          max_self_serve_seats?: number | null
+          name: string
+          price_cents?: number | null
+          requires_quote?: boolean
+          tier_id: string
+          updated_at?: string
+        }
+        Update: {
+          additional_seat_anchor_increment?: number | null
+          additional_seat_price_cents?: number | null
+          anchors_per_month?: number | null
+          billing_period?: string
+          can_create_sub_orgs?: boolean
+          created_at?: string
+          features?: Json
+          included_admins?: number | null
+          included_seats?: number | null
+          included_sub_orgs?: number
+          max_self_serve_seats?: number | null
+          name?: string
+          price_cents?: number | null
+          requires_quote?: boolean
+          tier_id?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      organization_queue_run_state: {
+        Row: {
+          created_at: string
+          last_error: string | null
+          last_run_at: string | null
+          last_run_status: string
+          last_run_trigger: string | null
+          last_success_at: string | null
+          locked_at: string | null
+          locked_by: string | null
+          org_id: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          last_error?: string | null
+          last_run_at?: string | null
+          last_run_status?: string
+          last_run_trigger?: string | null
+          last_success_at?: string | null
+          locked_at?: string | null
+          locked_by?: string | null
+          org_id: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          last_error?: string | null
+          last_run_at?: string | null
+          last_run_status?: string
+          last_run_trigger?: string | null
+          last_success_at?: string | null
+          locked_at?: string | null
+          locked_by?: string | null
+          org_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "organization_queue_run_state_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: true
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "organization_queue_run_state_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: true
+            referencedRelation: "public_org_profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      organization_queue_runs: {
+        Row: {
+          batch_id: string | null
+          created_at: string
+          error: string | null
+          finished_at: string
+          id: string
+          idempotency_key: string
+          merkle_root: string | null
+          org_id: string
+          processed_count: number
+          started_at: string
+          status: string
+          trigger: string
+          triggered_by: string | null
+          tx_id: string | null
+          worker_id: string | null
+        }
+        Insert: {
+          batch_id?: string | null
+          created_at?: string
+          error?: string | null
+          finished_at: string
+          id?: string
+          idempotency_key: string
+          merkle_root?: string | null
+          org_id: string
+          processed_count?: number
+          started_at: string
+          status: string
+          trigger: string
+          triggered_by?: string | null
+          tx_id?: string | null
+          worker_id?: string | null
+        }
+        Update: {
+          batch_id?: string | null
+          created_at?: string
+          error?: string | null
+          finished_at?: string
+          id?: string
+          idempotency_key?: string
+          merkle_root?: string | null
+          org_id?: string
+          processed_count?: number
+          started_at?: string
+          status?: string
+          trigger?: string
+          triggered_by?: string | null
+          tx_id?: string | null
+          worker_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "organization_queue_runs_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "organization_queue_runs_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "public_org_profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "organization_queue_runs_triggered_by_fkey"
+            columns: ["triggered_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      organization_rule_events: {
+        Row: {
+          attempt_count: number
+          claim_id: string | null
+          claimed_at: string | null
+          created_at: string
+          error: string | null
+          external_file_id: string | null
+          filename: string | null
+          folder_path: string | null
+          id: string
+          org_id: string
+          payload: Json
+          processed_at: string | null
+          sender_email: string | null
+          status: Database["public"]["Enums"]["org_rule_event_status"]
+          subject: string | null
+          trigger_type: Database["public"]["Enums"]["org_rule_trigger_type"]
+          vendor: string | null
+        }
+        Insert: {
+          attempt_count?: number
+          claim_id?: string | null
+          claimed_at?: string | null
+          created_at?: string
+          error?: string | null
+          external_file_id?: string | null
+          filename?: string | null
+          folder_path?: string | null
+          id?: string
+          org_id: string
+          payload?: Json
+          processed_at?: string | null
+          sender_email?: string | null
+          status?: Database["public"]["Enums"]["org_rule_event_status"]
+          subject?: string | null
+          trigger_type: Database["public"]["Enums"]["org_rule_trigger_type"]
+          vendor?: string | null
+        }
+        Update: {
+          attempt_count?: number
+          claim_id?: string | null
+          claimed_at?: string | null
+          created_at?: string
+          error?: string | null
+          external_file_id?: string | null
+          filename?: string | null
+          folder_path?: string | null
+          id?: string
+          org_id?: string
+          payload?: Json
+          processed_at?: string | null
+          sender_email?: string | null
+          status?: Database["public"]["Enums"]["org_rule_event_status"]
+          subject?: string | null
+          trigger_type?: Database["public"]["Enums"]["org_rule_trigger_type"]
+          vendor?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "organization_rule_events_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "organization_rule_events_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "public_org_profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      organization_rule_executions: {
+        Row: {
+          attempt_count: number
+          completed_at: string | null
+          created_at: string
+          duration_ms: number | null
+          error: string | null
+          id: string
+          input_payload: Json
+          org_id: string
+          output_payload: Json | null
+          rule_id: string
+          started_at: string | null
+          status: Database["public"]["Enums"]["org_rule_execution_status"]
+          trigger_event_id: string
+        }
+        Insert: {
+          attempt_count?: number
+          completed_at?: string | null
+          created_at?: string
+          duration_ms?: number | null
+          error?: string | null
+          id?: string
+          input_payload?: Json
+          org_id: string
+          output_payload?: Json | null
+          rule_id: string
+          started_at?: string | null
+          status?: Database["public"]["Enums"]["org_rule_execution_status"]
+          trigger_event_id: string
+        }
+        Update: {
+          attempt_count?: number
+          completed_at?: string | null
+          created_at?: string
+          duration_ms?: number | null
+          error?: string | null
+          id?: string
+          input_payload?: Json
+          org_id?: string
+          output_payload?: Json | null
+          rule_id?: string
+          started_at?: string | null
+          status?: Database["public"]["Enums"]["org_rule_execution_status"]
+          trigger_event_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "organization_rule_executions_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "organization_rule_executions_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "public_org_profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "organization_rule_executions_rule_id_fkey"
+            columns: ["rule_id"]
+            isOneToOne: false
+            referencedRelation: "organization_rules"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      organization_rules: {
+        Row: {
+          action_config: Json
+          action_type: Database["public"]["Enums"]["org_rule_action_type"]
+          created_at: string
+          created_by_user_id: string | null
+          description: string | null
+          enabled: boolean
+          execution_count: number
+          id: string
+          last_executed_at: string | null
+          name: string
+          org_id: string
+          schema_version: number
+          trigger_config: Json
+          trigger_type: Database["public"]["Enums"]["org_rule_trigger_type"]
+          updated_at: string
+        }
+        Insert: {
+          action_config?: Json
+          action_type: Database["public"]["Enums"]["org_rule_action_type"]
+          created_at?: string
+          created_by_user_id?: string | null
+          description?: string | null
+          enabled?: boolean
+          execution_count?: number
+          id?: string
+          last_executed_at?: string | null
+          name: string
+          org_id: string
+          schema_version?: number
+          trigger_config?: Json
+          trigger_type: Database["public"]["Enums"]["org_rule_trigger_type"]
+          updated_at?: string
+        }
+        Update: {
+          action_config?: Json
+          action_type?: Database["public"]["Enums"]["org_rule_action_type"]
+          created_at?: string
+          created_by_user_id?: string | null
+          description?: string | null
+          enabled?: boolean
+          execution_count?: number
+          id?: string
+          last_executed_at?: string | null
+          name?: string
+          org_id?: string
+          schema_version?: number
+          trigger_config?: Json
+          trigger_type?: Database["public"]["Enums"]["org_rule_trigger_type"]
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "organization_rules_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "organization_rules_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "public_org_profiles"
+            referencedColumns: ["id"]
+          },
         ]
       }
       organizations: {
         Row: {
           affiliation_fee_status: string | null
           affiliation_grace_expires_at: string | null
+          banner_url: string | null
           created_at: string
           description: string | null
+          directory_info_fields: string[]
           display_name: string
           domain: string | null
           domain_verification_method: string | null
@@ -1839,8 +3975,13 @@ export type Database = {
           domain_verified_at: string | null
           ein_tax_id: string | null
           founded_date: string | null
+          hipaa_mfa_required: boolean
           id: string
           industry_tag: string | null
+          kyb_completed_at: string | null
+          kyb_provider: string | null
+          kyb_reference_id: string | null
+          kyb_submitted_at: string | null
           legal_name: string
           linkedin_url: string | null
           location: string | null
@@ -1851,17 +3992,29 @@ export type Database = {
           parent_approval_status: string | null
           parent_approved_at: string | null
           parent_org_id: string | null
+          payment_grace_expires_at: string | null
+          payment_state: string | null
+          payment_state_updated_at: string | null
           public_id: string | null
+          session_timeout_minutes: number
+          suspended: boolean
+          suspended_at: string | null
+          suspended_by: string | null
+          suspended_reason: string | null
+          tier: Database["public"]["Enums"]["org_tier"]
           twitter_url: string | null
           updated_at: string
           verification_status: string
+          verified_badge_granted_at: string | null
           website_url: string | null
         }
         Insert: {
           affiliation_fee_status?: string | null
           affiliation_grace_expires_at?: string | null
+          banner_url?: string | null
           created_at?: string
           description?: string | null
+          directory_info_fields?: string[]
           display_name: string
           domain?: string | null
           domain_verification_method?: string | null
@@ -1871,8 +4024,13 @@ export type Database = {
           domain_verified_at?: string | null
           ein_tax_id?: string | null
           founded_date?: string | null
+          hipaa_mfa_required?: boolean
           id?: string
           industry_tag?: string | null
+          kyb_completed_at?: string | null
+          kyb_provider?: string | null
+          kyb_reference_id?: string | null
+          kyb_submitted_at?: string | null
           legal_name: string
           linkedin_url?: string | null
           location?: string | null
@@ -1883,17 +4041,29 @@ export type Database = {
           parent_approval_status?: string | null
           parent_approved_at?: string | null
           parent_org_id?: string | null
+          payment_grace_expires_at?: string | null
+          payment_state?: string | null
+          payment_state_updated_at?: string | null
           public_id?: string | null
+          session_timeout_minutes?: number
+          suspended?: boolean
+          suspended_at?: string | null
+          suspended_by?: string | null
+          suspended_reason?: string | null
+          tier?: Database["public"]["Enums"]["org_tier"]
           twitter_url?: string | null
           updated_at?: string
           verification_status?: string
+          verified_badge_granted_at?: string | null
           website_url?: string | null
         }
         Update: {
           affiliation_fee_status?: string | null
           affiliation_grace_expires_at?: string | null
+          banner_url?: string | null
           created_at?: string
           description?: string | null
+          directory_info_fields?: string[]
           display_name?: string
           domain?: string | null
           domain_verification_method?: string | null
@@ -1903,8 +4073,13 @@ export type Database = {
           domain_verified_at?: string | null
           ein_tax_id?: string | null
           founded_date?: string | null
+          hipaa_mfa_required?: boolean
           id?: string
           industry_tag?: string | null
+          kyb_completed_at?: string | null
+          kyb_provider?: string | null
+          kyb_reference_id?: string | null
+          kyb_submitted_at?: string | null
           legal_name?: string
           linkedin_url?: string | null
           location?: string | null
@@ -1915,10 +4090,20 @@ export type Database = {
           parent_approval_status?: string | null
           parent_approved_at?: string | null
           parent_org_id?: string | null
+          payment_grace_expires_at?: string | null
+          payment_state?: string | null
+          payment_state_updated_at?: string | null
           public_id?: string | null
+          session_timeout_minutes?: number
+          suspended?: boolean
+          suspended_at?: string | null
+          suspended_by?: string | null
+          suspended_reason?: string | null
+          tier?: Database["public"]["Enums"]["org_tier"]
           twitter_url?: string | null
           updated_at?: string
           verification_status?: string
+          verified_badge_granted_at?: string | null
           website_url?: string | null
         }
         Relationships: [
@@ -1927,6 +4112,75 @@ export type Database = {
             columns: ["parent_org_id"]
             isOneToOne: false
             referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "organizations_parent_org_id_fkey"
+            columns: ["parent_org_id"]
+            isOneToOne: false
+            referencedRelation: "public_org_profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      parent_split_tokens: {
+        Row: {
+          consumed_at: string | null
+          expires_at: string
+          id: string
+          issued_at: string
+          issued_to_user_id: string
+          parent_org_id: string
+          sub_org_id: string
+          token_hash: string
+        }
+        Insert: {
+          consumed_at?: string | null
+          expires_at: string
+          id?: string
+          issued_at?: string
+          issued_to_user_id: string
+          parent_org_id: string
+          sub_org_id: string
+          token_hash: string
+        }
+        Update: {
+          consumed_at?: string | null
+          expires_at?: string
+          id?: string
+          issued_at?: string
+          issued_to_user_id?: string
+          parent_org_id?: string
+          sub_org_id?: string
+          token_hash?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "parent_split_tokens_parent_org_id_fkey"
+            columns: ["parent_org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "parent_split_tokens_parent_org_id_fkey"
+            columns: ["parent_org_id"]
+            isOneToOne: false
+            referencedRelation: "public_org_profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "parent_split_tokens_sub_org_id_fkey"
+            columns: ["sub_org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "parent_split_tokens_sub_org_id_fkey"
+            columns: ["sub_org_id"]
+            isOneToOne: false
+            referencedRelation: "public_org_profiles"
             referencedColumns: ["id"]
           },
         ]
@@ -1977,6 +4231,24 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      pipeline_dashboard_cache: {
+        Row: {
+          cache_key: string
+          cache_value: Json
+          updated_at: string
+        }
+        Insert: {
+          cache_key: string
+          cache_value: Json
+          updated_at?: string
+        }
+        Update: {
+          cache_key?: string
+          cache_value?: Json
+          updated_at?: string
+        }
+        Relationships: []
       }
       plans: {
         Row: {
@@ -2126,6 +4398,13 @@ export type Database = {
             columns: ["org_id"]
             isOneToOne: false
             referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "profiles_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "public_org_profiles"
             referencedColumns: ["id"]
           },
         ]
@@ -2341,6 +4620,13 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "reports_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "public_org_profiles"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "reports_user_id_fkey"
             columns: ["user_id"]
             isOneToOne: false
@@ -2423,7 +4709,41 @@ export type Database = {
             referencedRelation: "organizations"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "review_queue_items_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "public_org_profiles"
+            referencedColumns: ["id"]
+          },
         ]
+      }
+      rule_embeddings: {
+        Row: {
+          content_hash: string
+          created_at: string
+          dimensions: number
+          embedding: string
+          last_used_at: string
+          model_version: string
+        }
+        Insert: {
+          content_hash: string
+          created_at?: string
+          dimensions: number
+          embedding: string
+          last_used_at?: string
+          model_version: string
+        }
+        Update: {
+          content_hash?: string
+          created_at?: string
+          dimensions?: number
+          embedding?: string
+          last_used_at?: string
+          model_version?: string
+        }
+        Relationships: []
       }
       signatures: {
         Row: {
@@ -2556,6 +4876,13 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "signatures_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "public_org_profiles"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "signatures_signer_certificate_id_fkey"
             columns: ["signer_certificate_id"]
             isOneToOne: false
@@ -2648,6 +4975,13 @@ export type Database = {
             referencedRelation: "organizations"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "signing_certificates_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "public_org_profiles"
+            referencedColumns: ["id"]
+          },
         ]
       }
       stats_cache: {
@@ -2717,6 +5051,13 @@ export type Database = {
             columns: ["org_id"]
             isOneToOne: false
             referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "subscriptions_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "public_org_profiles"
             referencedColumns: ["id"]
           },
           {
@@ -2862,6 +5203,13 @@ export type Database = {
             referencedColumns: ["id"]
           },
           {
+            foreignKeyName: "timestamp_tokens_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "public_org_profiles"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "timestamp_tokens_signature_id_fkey"
             columns: ["signature_id"]
             isOneToOne: false
@@ -2869,6 +5217,30 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      treasury_alert_state: {
+        Row: {
+          below_threshold: boolean
+          key: string
+          last_balance_usd: number | null
+          last_reason: string | null
+          updated_at: string
+        }
+        Insert: {
+          below_threshold?: boolean
+          key: string
+          last_balance_usd?: number | null
+          last_reason?: string | null
+          updated_at?: string
+        }
+        Update: {
+          below_threshold?: boolean
+          key?: string
+          last_balance_usd?: number | null
+          last_reason?: string | null
+          updated_at?: string
+        }
+        Relationships: []
       }
       treasury_cache: {
         Row: {
@@ -2975,6 +5347,58 @@ export type Database = {
             referencedRelation: "organizations"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "unified_credits_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "public_org_profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      user_notifications: {
+        Row: {
+          created_at: string
+          id: string
+          organization_id: string | null
+          payload: Json
+          read_at: string | null
+          type: Database["public"]["Enums"]["notification_type"]
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          organization_id?: string | null
+          payload?: Json
+          read_at?: string | null
+          type: Database["public"]["Enums"]["notification_type"]
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          organization_id?: string | null
+          payload?: Json
+          read_at?: string | null
+          type?: Database["public"]["Enums"]["notification_type"]
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "user_notifications_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "user_notifications_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "public_org_profiles"
+            referencedColumns: ["id"]
+          },
         ]
       }
       verification_events: {
@@ -3033,6 +5457,13 @@ export type Database = {
             columns: ["org_id"]
             isOneToOne: false
             referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "verification_events_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "public_org_profiles"
             referencedColumns: ["id"]
           },
         ]
@@ -3098,6 +5529,7 @@ export type Database = {
           idempotency_key: string | null
           next_retry_at: string | null
           payload: Json
+          public_id: string
           response_body: string | null
           response_status: number | null
           status: string
@@ -3114,6 +5546,7 @@ export type Database = {
           idempotency_key?: string | null
           next_retry_at?: string | null
           payload: Json
+          public_id?: string
           response_body?: string | null
           response_status?: number | null
           status: string
@@ -3130,6 +5563,7 @@ export type Database = {
           idempotency_key?: string | null
           next_retry_at?: string | null
           payload?: Json
+          public_id?: string
           response_body?: string | null
           response_status?: number | null
           status?: string
@@ -3144,6 +5578,39 @@ export type Database = {
           },
         ]
       }
+      webhook_dlq: {
+        Row: {
+          created_at: string
+          external_id: string | null
+          id: string
+          payload_hash: string | null
+          provider: string
+          reason: string
+          resolved_at: string | null
+          webhook_id: string | null
+        }
+        Insert: {
+          created_at?: string
+          external_id?: string | null
+          id?: string
+          payload_hash?: string | null
+          provider: string
+          reason: string
+          resolved_at?: string | null
+          webhook_id?: string | null
+        }
+        Update: {
+          created_at?: string
+          external_id?: string | null
+          id?: string
+          payload_hash?: string | null
+          provider?: string
+          reason?: string
+          resolved_at?: string | null
+          webhook_id?: string | null
+        }
+        Relationships: []
+      }
       webhook_endpoints: {
         Row: {
           created_at: string
@@ -3153,6 +5620,7 @@ export type Database = {
           id: string
           is_active: boolean
           org_id: string
+          public_id: string
           secret_hash: string
           updated_at: string
           url: string
@@ -3165,6 +5633,7 @@ export type Database = {
           id?: string
           is_active?: boolean
           org_id: string
+          public_id: string
           secret_hash: string
           updated_at?: string
           url: string
@@ -3177,6 +5646,7 @@ export type Database = {
           id?: string
           is_active?: boolean
           org_id?: string
+          public_id?: string
           secret_hash?: string
           updated_at?: string
           url?: string
@@ -3196,6 +5666,13 @@ export type Database = {
             referencedRelation: "organizations"
             referencedColumns: ["id"]
           },
+          {
+            foreignKeyName: "webhook_endpoints_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "public_org_profiles"
+            referencedColumns: ["id"]
+          },
         ]
       }
       x402_payments: {
@@ -3205,12 +5682,15 @@ export type Database = {
           facilitator_url: string
           id: string
           network: string
+          org_id: string | null
           payee_address: string
           payer_address: string
           raw_response: Json | null
           token: string
           tx_hash: string
           verification_request_id: string | null
+          verified: boolean
+          verified_at: string | null
         }
         Insert: {
           amount_usd: number
@@ -3218,12 +5698,15 @@ export type Database = {
           facilitator_url: string
           id?: string
           network: string
+          org_id?: string | null
           payee_address: string
           payer_address: string
           raw_response?: Json | null
           token?: string
           tx_hash: string
           verification_request_id?: string | null
+          verified?: boolean
+          verified_at?: string | null
         }
         Update: {
           amount_usd?: number
@@ -3231,14 +5714,32 @@ export type Database = {
           facilitator_url?: string
           id?: string
           network?: string
+          org_id?: string | null
           payee_address?: string
           payer_address?: string
           raw_response?: Json | null
           token?: string
           tx_hash?: string
           verification_request_id?: string | null
+          verified?: boolean
+          verified_at?: string | null
         }
-        Relationships: []
+        Relationships: [
+          {
+            foreignKeyName: "x402_payments_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "x402_payments_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "public_org_profiles"
+            referencedColumns: ["id"]
+          },
+        ]
       }
     }
     Views: {
@@ -3292,6 +5793,70 @@ export type Database = {
         }
         Relationships: []
       }
+      public_org_profiles: {
+        Row: {
+          created_at: string | null
+          description: string | null
+          display_name: string | null
+          domain: string | null
+          founded_date: string | null
+          id: string | null
+          industry_tag: string | null
+          linkedin_url: string | null
+          location: string | null
+          logo_url: string | null
+          org_type: string | null
+          twitter_url: string | null
+          verification_status: string | null
+          website_url: string | null
+        }
+        Insert: {
+          created_at?: string | null
+          description?: string | null
+          display_name?: string | null
+          domain?: string | null
+          founded_date?: string | null
+          id?: string | null
+          industry_tag?: string | null
+          linkedin_url?: string | null
+          location?: string | null
+          logo_url?: string | null
+          org_type?: string | null
+          twitter_url?: string | null
+          verification_status?: string | null
+          website_url?: string | null
+        }
+        Update: {
+          created_at?: string | null
+          description?: string | null
+          display_name?: string | null
+          domain?: string | null
+          founded_date?: string | null
+          id?: string | null
+          industry_tag?: string | null
+          linkedin_url?: string | null
+          location?: string | null
+          logo_url?: string | null
+          org_type?: string | null
+          twitter_url?: string | null
+          verification_status?: string | null
+          website_url?: string | null
+        }
+        Relationships: []
+      }
+      v_slow_queries: {
+        Row: {
+          calls: number | null
+          max_time_ms: number | null
+          mean_time_ms: number | null
+          query_preview: string | null
+          queryid: number | null
+          rows: number | null
+          stddev_ms: number | null
+          total_time_sec: number | null
+        }
+        Relationships: []
+      }
     }
     Functions: {
       activate_user: {
@@ -3310,11 +5875,28 @@ export type Database = {
         Args: { p_org_id: string; p_org_role?: string; p_user_id: string }
         Returns: undefined
       }
+      allocate_credits_to_sub_org: {
+        Args: {
+          p_amount: number
+          p_child_org_id: string
+          p_note?: string
+          p_parent_org_id: string
+        }
+        Returns: Json
+      }
       allocate_monthly_credits: { Args: never; Returns: number }
+      anonymize_member_display_name: {
+        Args: { p_full_name: string }
+        Returns: string
+      }
       anonymize_user_data: { Args: { p_user_id: string }; Returns: Json }
       archive_old_audit_events: {
         Args: { retention_days?: number }
         Returns: number
+      }
+      auto_associate_profile_to_org_by_email_domain: {
+        Args: { p_email: string; p_user_id: string }
+        Returns: string
       }
       batch_insert_anchors: { Args: { p_anchors: Json }; Returns: Json }
       bulk_create_anchors: { Args: { anchors_data: Json }; Returns: Json }
@@ -3349,14 +5931,40 @@ export type Database = {
           used_this_month: number
         }[]
       }
-      claim_anchoring_job: {
-        Args: { p_lock_duration_seconds?: number; p_worker_id: string }
-        Returns: string
+      claim_due_org_queue_runs: {
+        Args: { p_limit?: number; p_now?: string; p_worker_id?: string }
+        Returns: {
+          last_run_at: string
+          org_id: string
+        }[]
+      }
+      claim_next_job: {
+        Args: { p_now: string; p_type: string }
+        Returns: {
+          attempts: number
+          created_at: string
+          id: string
+          last_error: string | null
+          max_attempts: number
+          payload: Json
+          priority: number
+          scheduled_for: string | null
+          status: string
+          type: string
+          updated_at: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "job_queue"
+          isOneToOne: false
+          isSetofReturn: true
+        }
       }
       claim_pending_anchors: {
         Args: {
           p_exclude_pipeline?: boolean
           p_limit?: number
+          p_org_id?: string
           p_worker_id?: string
         }
         Returns: {
@@ -3369,11 +5977,27 @@ export type Database = {
           user_id: string
         }[]
       }
+      claim_pending_rule_events: {
+        Args: { p_limit?: number }
+        Returns: {
+          external_file_id: string
+          filename: string
+          folder_path: string
+          id: string
+          org_id: string
+          payload: Json
+          sender_email: string
+          subject: string
+          trigger_type: Database["public"]["Enums"]["org_rule_trigger_type"]
+          vendor: string
+        }[]
+      }
       cleanup_expired_data: { Args: never; Returns: Json }
       cleanup_orphaned_anchors: { Args: never; Returns: number }
-      complete_anchoring_job: {
-        Args: { p_error?: string; p_job_id: string; p_success: boolean }
-        Returns: boolean
+      clear_payment_grace: { Args: { p_org_id: string }; Returns: Json }
+      complete_claimed_rule_events: {
+        Args: { p_event_ids: string[] }
+        Returns: number
       }
       count_public_records_by_source: {
         Args: never
@@ -3403,6 +6027,15 @@ export type Database = {
         }
         Returns: Json
       }
+      deduct_org_credit: {
+        Args: {
+          p_amount: number
+          p_org_id: string
+          p_reason?: string
+          p_reference_id?: string
+        }
+        Returns: Json
+      }
       deduct_unified_credits: {
         Args: { p_amount?: number; p_org_id?: string; p_user_id?: string }
         Returns: boolean
@@ -3411,6 +6044,53 @@ export type Database = {
       delete_webhook_endpoint: {
         Args: { p_endpoint_id: string }
         Returns: undefined
+      }
+      drain_submitted_to_secured_for_tx:
+        | {
+            Args: {
+              p_batch_size?: number
+              p_block_height: number
+              p_block_timestamp: string
+              p_chain_tx_id: string
+              p_confirmations?: number
+              p_max_iterations?: number
+            }
+            Returns: Json
+          }
+        | {
+            Args: {
+              p_batch_size?: number
+              p_block_height: number
+              p_block_timestamp: string
+              p_chain_tx_id: string
+            }
+            Returns: Json
+          }
+      enqueue_rule_event: {
+        Args: {
+          p_external_file_id?: string
+          p_filename?: string
+          p_folder_path?: string
+          p_org_id: string
+          p_payload?: Json
+          p_sender_email?: string
+          p_subject?: string
+          p_trigger_type: Database["public"]["Enums"]["org_rule_trigger_type"]
+          p_vendor?: string
+        }
+        Returns: string
+      }
+      expire_payment_grace_if_due: { Args: never; Returns: number }
+      finalize_public_record_anchor_batch: {
+        Args: {
+          p_batch_id?: string
+          p_block_height?: number
+          p_block_timestamp?: string
+          p_items: Json
+          p_merkle_root?: string
+          p_tx_id: string
+        }
+        Returns: Json
       }
       generate_anchor_public_id: {
         Args: { category?: string }
@@ -3421,6 +6101,20 @@ export type Database = {
         Returns: string
       }
       generate_public_id: { Args: never; Returns: string }
+      get_agents_for_user: {
+        Args: { p_user_id: string }
+        Returns: {
+          agent_type: string
+          allowed_scopes: string[]
+          created_at: string
+          framework: string
+          id: string
+          name: string
+          status: string
+        }[]
+      }
+      get_anchor_backlog_stats: { Args: never; Returns: Json }
+      get_anchor_lineage: { Args: { p_public_id: string }; Returns: Json }
       get_anchor_status_counts: { Args: never; Returns: Json }
       get_anchor_status_counts_fast: { Args: never; Returns: Json }
       get_anchor_tx_stats: { Args: never; Returns: Json }
@@ -3433,6 +6127,10 @@ export type Database = {
         }[]
       }
       get_caller_role: { Args: never; Returns: string }
+      get_current_anchor_public_id: {
+        Args: { p_public_id: string }
+        Returns: string
+      }
       get_distinct_record_types: {
         Args: never
         Returns: {
@@ -3478,6 +6176,19 @@ export type Database = {
         }[]
       }
       get_org_anchor_stats: { Args: { p_org_id: string }; Returns: Json }
+      get_org_credit_summary: { Args: { p_org_id: string }; Returns: Json }
+      get_org_members_public: {
+        Args: { p_limit?: number; p_offset?: number; p_org_id: string }
+        Returns: Json
+      }
+      get_org_subtree: {
+        Args: { p_max_depth?: number; p_root_id: string }
+        Returns: Json
+      }
+      get_parent_credit_rollup: {
+        Args: { p_parent_org_id: string }
+        Returns: Json
+      }
       get_payment_ledger: {
         Args: { p_limit?: number; p_offset?: number }
         Returns: {
@@ -3511,6 +6222,10 @@ export type Database = {
         Args: { p_limit?: number; p_offset?: number; p_org_id: string }
         Returns: Json
       }
+      get_public_member_profile: {
+        Args: { p_public_id: string }
+        Returns: Json
+      }
       get_public_org_profile: { Args: { p_org_id: string }; Returns: Json }
       get_public_org_profiles: {
         Args: { p_limit?: number; p_offset?: number; p_org_id?: string }
@@ -3531,24 +6246,56 @@ export type Database = {
           website_url: string
         }[]
       }
-      get_public_records_page: {
-        Args: {
-          p_anchor_status?: string
-          p_page?: number
-          p_page_size?: number
-          p_record_type?: string
-          p_source?: string
-        }
-        Returns: Json
-      }
+      get_public_records_page:
+        | {
+            Args: {
+              p_anchor_status?: string
+              p_page?: number
+              p_page_size?: number
+              p_record_type?: string
+              p_source?: string
+            }
+            Returns: Json
+          }
+        | {
+            Args: {
+              p_anchor_status?: string
+              p_page?: number
+              p_page_size?: number
+              p_record_type?: string
+              p_search?: string
+              p_source?: string
+            }
+            Returns: Json
+          }
       get_public_records_stats: { Args: never; Returns: Json }
       get_public_template: {
         Args: { p_credential_type: string; p_org_id: string }
         Returns: Json
       }
+      get_recent_cron_failures: {
+        Args: { since_minutes: number }
+        Returns: {
+          end_time: string
+          jobid: number
+          jobname: string
+          return_message: string
+          start_time: string
+        }[]
+      }
       get_source_date_range: {
         Args: { p_date_field?: string; p_source: string }
         Returns: Json
+      }
+      get_table_bloat_stats: {
+        Args: { table_names: string[] }
+        Returns: {
+          last_autovacuum: string
+          n_dead_tup: number
+          n_live_tup: number
+          relname: string
+          schemaname: string
+        }[]
       }
       get_treasury_stats: { Args: never; Returns: Json }
       get_unembedded_public_records: {
@@ -3561,21 +6308,12 @@ export type Database = {
           title: string
         }[]
       }
-      get_agents_for_user: {
-        Args: { p_user_id: string }
-        Returns: {
-          allowed_scopes: string[]
-          agent_type: string
-          created_at: string
-          framework: string
-          id: string
-          name: string
-          status: string
-        }[]
-      }
       get_user_anchor_stats: { Args: { p_user_id: string }; Returns: Json }
-      get_user_monthly_anchor_count: { Args: { p_user_id: string }; Returns: number }
       get_user_credits: { Args: { p_user_id?: string }; Returns: Json }
+      get_user_monthly_anchor_count: {
+        Args: { p_user_id: string }
+        Returns: number
+      }
       get_user_org_id: { Args: never; Returns: string }
       get_user_org_ids: { Args: never; Returns: string[] }
       hypopg: { Args: never; Returns: Record<string, unknown>[] }
@@ -3597,6 +6335,10 @@ export type Database = {
       hypopg_reset_index: { Args: never; Returns: undefined }
       hypopg_unhide_all_indexes: { Args: never; Returns: undefined }
       hypopg_unhide_index: { Args: { indexid: unknown }; Returns: boolean }
+      increment_org_usage: {
+        Args: { p_delta?: number; p_org_id: string; p_quota_kind: string }
+        Returns: number
+      }
       index_advisor: {
         Args: { query: string }
         Returns: {
@@ -3629,11 +6371,21 @@ export type Database = {
       is_current_user_platform_admin: { Args: never; Returns: boolean }
       is_org_admin: { Args: never; Returns: boolean }
       is_org_admin_of: { Args: { target_org_id: string }; Returns: boolean }
+      is_org_suspended: { Args: { p_org_id: string }; Returns: boolean }
       is_user_verified: { Args: { p_user_id: string }; Returns: boolean }
       join_org_by_domain: { Args: { p_org_id: string }; Returns: Json }
+      link_public_records_to_anchors: { Args: { p_items: Json }; Returns: Json }
       link_recipient_on_signup: {
         Args: { p_email_hash: string; p_user_id: string }
         Returns: number
+      }
+      list_pending_resolution_anchors: {
+        Args: { p_limit?: number }
+        Returns: Json
+      }
+      list_pending_resolution_anchors_v2: {
+        Args: { p_limit?: number }
+        Returns: Json
       }
       log_verification_event: {
         Args: {
@@ -3647,6 +6399,27 @@ export type Database = {
         Returns: undefined
       }
       lookup_org_by_email_domain: { Args: { p_email: string }; Returns: Json }
+      record_msgraph_nonce_and_enqueue: {
+        Args: {
+          p_change_type: string
+          p_external_file_id?: string
+          p_filename?: string
+          p_folder_path?: string
+          p_org_id: string
+          p_payload?: Json
+          p_payload_hash: string
+          p_resource_id: string
+          p_sender_email?: string
+          p_subject?: string
+          p_subscription_id: string
+          p_trigger_type: Database["public"]["Enums"]["org_rule_trigger_type"]
+          p_vendor?: string
+        }
+        Returns: {
+          duplicate: boolean
+          rule_event_id: string
+        }[]
+      }
       recover_stuck_broadcasts: {
         Args: { p_stale_minutes?: number }
         Returns: {
@@ -3656,12 +6429,53 @@ export type Database = {
           stuck_since: string
         }[]
       }
+      refresh_cache_anchor_status_counts: { Args: never; Returns: undefined }
+      refresh_cache_anchor_tx_stats: { Args: never; Returns: undefined }
+      refresh_cache_anchor_type_counts: { Args: never; Returns: undefined }
+      refresh_cache_by_source: { Args: never; Returns: undefined }
+      refresh_cache_pipeline_stats: { Args: never; Returns: undefined }
+      refresh_cache_record_types: { Args: never; Returns: undefined }
+      refresh_pipeline_dashboard_cache: { Args: never; Returns: Json }
       refresh_stats_cache: { Args: never; Returns: undefined }
       refresh_stats_materialized_views: { Args: never; Returns: undefined }
+      refund_org_credit: {
+        Args: {
+          p_amount: number
+          p_org_id: string
+          p_reason?: string
+          p_reference_id?: string
+        }
+        Returns: Json
+      }
       release_advisory_lock: { Args: { lock_id: number }; Returns: boolean }
-      revoke_anchor:
-        | { Args: { anchor_id: string }; Returns: undefined }
-        | { Args: { anchor_id: string; reason?: string }; Returns: undefined }
+      release_claimed_rule_events: {
+        Args: { p_error?: string; p_event_ids: string[] }
+        Returns: number
+      }
+      resolve_anchor_queue: {
+        Args: {
+          p_external_file_id: string
+          p_reason?: string
+          p_selected_anchor_id: string
+        }
+        Returns: string
+      }
+      resolve_anchor_queue_by_public_id: {
+        Args: {
+          p_external_file_id: string
+          p_reason?: string
+          p_selected_public_id: string
+        }
+        Returns: string
+      }
+      revoke_anchor: {
+        Args: { anchor_id: string; reason?: string }
+        Returns: undefined
+      }
+      roll_over_monthly_allocation: {
+        Args: { p_org_id: string }
+        Returns: Json
+      }
       sanitize_metadata_for_public: {
         Args: { p_metadata: Json }
         Returns: Json
@@ -3740,6 +6554,11 @@ export type Database = {
       set_onboarding_plan: { Args: { p_tier: string }; Returns: Json }
       show_limit: { Args: never; Returns: number }
       show_trgm: { Args: { "": string }; Returns: string[] }
+      start_kyb_verification: {
+        Args: { p_org_id: string; p_provider: string; p_reference_id: string }
+        Returns: Json
+      }
+      start_payment_grace: { Args: { p_org_id: string }; Returns: Json }
       submit_batch_anchors: {
         Args: {
           p_anchor_ids: string[]
@@ -3751,18 +6570,54 @@ export type Database = {
         }
         Returns: number
       }
+      supersede_anchor: {
+        Args: {
+          new_fingerprint: string
+          old_anchor_id: string
+          reason?: string
+        }
+        Returns: string
+      }
+      suspend_suborg: {
+        Args: {
+          p_parent_org_id: string
+          p_reason?: string
+          p_sub_org_id: string
+        }
+        Returns: Json
+      }
       try_advisory_lock: { Args: { lock_id: number }; Returns: boolean }
+      unsuspend_suborg: {
+        Args: { p_parent_org_id: string; p_sub_org_id: string }
+        Returns: Json
+      }
       update_profile_onboarding: {
         Args: {
+          p_org_description?: string
           p_org_display_name?: string
           p_org_domain?: string
+          p_org_ein_tax_id?: string
           p_org_legal_name?: string
+          p_org_linkedin_url?: string
+          p_org_location?: string
+          p_org_twitter_url?: string
+          p_org_type?: string
+          p_org_website_url?: string
           p_role: Database["public"]["Enums"]["user_role"]
         }
         Returns: Json
       }
+      validate_api_key: { Args: { p_api_key: string }; Returns: Json }
+      verify_anchors_rls_enabled: { Args: never; Returns: boolean }
     }
     Enums: {
+      agent_status: "active" | "suspended" | "revoked"
+      agent_type:
+        | "llm_agent"
+        | "ats_integration"
+        | "hr_platform"
+        | "compliance_tool"
+        | "custom"
       ai_report_status: "QUEUED" | "GENERATING" | "COMPLETE" | "FAILED"
       anchor_status:
         | "PENDING"
@@ -3771,6 +6626,8 @@ export type Database = {
         | "EXPIRED"
         | "SUBMITTED"
         | "BROADCASTING"
+        | "SUPERSEDED"
+        | "PENDING_RESOLUTION"
       api_key_rate_limit_tier: "free" | "paid" | "custom"
       attestation_status:
         | "DRAFT"
@@ -3822,16 +6679,77 @@ export type Database = {
         | "ACCREDITATION"
         | "CONTRACT_PRESIGNING"
         | "CONTRACT_POSTSIGNING"
+        | "CPE"
       credit_transaction_type:
         | "ALLOCATION"
         | "PURCHASE"
         | "DEDUCTION"
         | "EXPIRY"
         | "REFUND"
+      ferpa_exception_category:
+        | "99.31(a)(1)"
+        | "99.31(a)(2)"
+        | "99.31(a)(3)"
+        | "99.31(a)(4)"
+        | "99.31(a)(5)"
+        | "99.31(a)(6)"
+        | "99.31(a)(7)"
+        | "99.31(a)(8)"
+        | "99.31(a)(9)"
+        | "99.31(a)(10)"
+        | "99.31(a)(11)"
+        | "99.31(a)(12)"
+        | "other"
+      ferpa_party_type:
+        | "school_official"
+        | "employer"
+        | "government"
+        | "accreditor"
+        | "financial_aid"
+        | "research"
+        | "health_safety"
+        | "subpoena"
+        | "directory_info"
+        | "other"
       grc_platform: "vanta" | "drata" | "anecdotes"
       grc_sync_status: "pending" | "syncing" | "success" | "failed"
       integrity_level: "HIGH" | "MEDIUM" | "LOW" | "FLAGGED"
+      notification_type:
+        | "queue_run_completed"
+        | "rule_fired"
+        | "version_available_for_review"
+        | "treasury_alert"
+        | "anchor_revoked"
       org_member_role: "owner" | "admin" | "member" | "compliance_officer"
+      org_rule_action_type:
+        | "AUTO_ANCHOR"
+        | "FAST_TRACK_ANCHOR"
+        | "QUEUE_FOR_REVIEW"
+        | "FLAG_COLLISION"
+        | "NOTIFY"
+        | "FORWARD_TO_URL"
+      org_rule_event_status: "PENDING" | "CLAIMED" | "PROCESSED" | "FAILED"
+      org_rule_execution_status:
+        | "PENDING"
+        | "RUNNING"
+        | "SUCCEEDED"
+        | "FAILED"
+        | "RETRYING"
+        | "DLQ"
+      org_rule_trigger_type:
+        | "ESIGN_COMPLETED"
+        | "WORKSPACE_FILE_MODIFIED"
+        | "CONNECTOR_DOCUMENT_RECEIVED"
+        | "MANUAL_UPLOAD"
+        | "SCHEDULED_CRON"
+        | "QUEUE_DIGEST"
+        | "EMAIL_INTAKE"
+      org_tier:
+        | "FREE"
+        | "PAID"
+        | "ENTERPRISE"
+        | "SMALL_BUSINESS"
+        | "MEDIUM_BUSINESS"
       profile_status: "ACTIVE" | "PENDING_ACTIVATION" | "DEACTIVATED"
       report_status: "pending" | "generating" | "completed" | "failed"
       report_type:
@@ -3972,8 +6890,19 @@ export type CompositeTypes<
     : never
 
 export const Constants = {
+  graphql_public: {
+    Enums: {},
+  },
   public: {
     Enums: {
+      agent_status: ["active", "suspended", "revoked"],
+      agent_type: [
+        "llm_agent",
+        "ats_integration",
+        "hr_platform",
+        "compliance_tool",
+        "custom",
+      ],
       ai_report_status: ["QUEUED", "GENERATING", "COMPLETE", "FAILED"],
       anchor_status: [
         "PENDING",
@@ -3982,6 +6911,8 @@ export const Constants = {
         "EXPIRED",
         "SUBMITTED",
         "BROADCASTING",
+        "SUPERSEDED",
+        "PENDING_RESOLUTION",
       ],
       api_key_rate_limit_tier: ["free", "paid", "custom"],
       attestation_status: [
@@ -4037,6 +6968,7 @@ export const Constants = {
         "ACCREDITATION",
         "CONTRACT_PRESIGNING",
         "CONTRACT_POSTSIGNING",
+        "CPE",
       ],
       credit_transaction_type: [
         "ALLOCATION",
@@ -4045,10 +6977,77 @@ export const Constants = {
         "EXPIRY",
         "REFUND",
       ],
+      ferpa_exception_category: [
+        "99.31(a)(1)",
+        "99.31(a)(2)",
+        "99.31(a)(3)",
+        "99.31(a)(4)",
+        "99.31(a)(5)",
+        "99.31(a)(6)",
+        "99.31(a)(7)",
+        "99.31(a)(8)",
+        "99.31(a)(9)",
+        "99.31(a)(10)",
+        "99.31(a)(11)",
+        "99.31(a)(12)",
+        "other",
+      ],
+      ferpa_party_type: [
+        "school_official",
+        "employer",
+        "government",
+        "accreditor",
+        "financial_aid",
+        "research",
+        "health_safety",
+        "subpoena",
+        "directory_info",
+        "other",
+      ],
       grc_platform: ["vanta", "drata", "anecdotes"],
       grc_sync_status: ["pending", "syncing", "success", "failed"],
       integrity_level: ["HIGH", "MEDIUM", "LOW", "FLAGGED"],
+      notification_type: [
+        "queue_run_completed",
+        "rule_fired",
+        "version_available_for_review",
+        "treasury_alert",
+        "anchor_revoked",
+      ],
       org_member_role: ["owner", "admin", "member", "compliance_officer"],
+      org_rule_action_type: [
+        "AUTO_ANCHOR",
+        "FAST_TRACK_ANCHOR",
+        "QUEUE_FOR_REVIEW",
+        "FLAG_COLLISION",
+        "NOTIFY",
+        "FORWARD_TO_URL",
+      ],
+      org_rule_event_status: ["PENDING", "CLAIMED", "PROCESSED", "FAILED"],
+      org_rule_execution_status: [
+        "PENDING",
+        "RUNNING",
+        "SUCCEEDED",
+        "FAILED",
+        "RETRYING",
+        "DLQ",
+      ],
+      org_rule_trigger_type: [
+        "ESIGN_COMPLETED",
+        "WORKSPACE_FILE_MODIFIED",
+        "CONNECTOR_DOCUMENT_RECEIVED",
+        "MANUAL_UPLOAD",
+        "SCHEDULED_CRON",
+        "QUEUE_DIGEST",
+        "EMAIL_INTAKE",
+      ],
+      org_tier: [
+        "FREE",
+        "PAID",
+        "ENTERPRISE",
+        "SMALL_BUSINESS",
+        "MEDIUM_BUSINESS",
+      ],
       profile_status: ["ACTIVE", "PENDING_ACTIVATION", "DEACTIVATED"],
       report_status: ["pending", "generating", "completed", "failed"],
       report_type: [

@@ -36,6 +36,8 @@ const ALL_CREDENTIAL_TYPES = [
   'CHARITY', 'ACCREDITATION',
   // Phase 17 expansion (NPH-13)
   'BUSINESS_ENTITY',
+  // SCRUM-1854/SCRUM-1962 professional education gate seed fixtures.
+  'CPE',
 ] as const;
 
 describe('Golden Dataset Integrity', () => {
