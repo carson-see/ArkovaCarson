@@ -105,7 +105,7 @@ npx tsx scripts/ci/check-migration-prefix-uniqueness.ts
 git diff --check
 ```
 
-- [ ] **Step 2: Push branch and open PR**
+- [x] **Step 2: Push branch and open PR**
 
 Open a draft/ready-for-review PR to `main` with staging evidence marked
 pending, because migration reconciliation still needs real staging and operator
