@@ -782,7 +782,7 @@ export const openApiSpec: Record<string, any> = {
                   type: 'object',
                   properties: {
                     jurisdiction: { type: 'string' },
-                    total_credits: { type: 'integer' },
+                    total_credits: { type: 'number' },
                     credits: {
                       type: 'array',
                       items: CLE_CREDIT_ROW_SCHEMA,
