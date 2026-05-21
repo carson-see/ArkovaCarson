@@ -5,12 +5,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 type QueryRecord = {
   table: string;
   selectArg?: string;
+  insertPayload?: unknown;
 };
 
-const { mockFrom, queries } = vi.hoisted(() => {
+const { mockFrom, mockVerifyAuthToken, queries } = vi.hoisted(() => {
   type LocalQueryRecord = {
     table: string;
     selectArg?: string;
+    insertPayload?: unknown;
   };
 
   const queries: LocalQueryRecord[] = [];
@@ -71,11 +73,20 @@ const { mockFrom, queries } = vi.hoisted(() => {
     builder.limit = vi.fn(() => builder);
     builder.gte = vi.fn(() => builder);
     builder.lte = vi.fn(() => builder);
+    builder.insert = vi.fn((payload: unknown) => {
+      record.insertPayload = payload;
+      return builder;
+    });
+    builder.single = vi.fn(async () => ({
+      data: table === 'anchors' ? { public_id: 'ARK-CLE-SUBMIT123' } : null,
+      error: null,
+    }));
     return builder;
   }
 
   return {
     mockFrom: vi.fn((table: string) => createBuilder(table)),
+    mockVerifyAuthToken: vi.fn(),
     queries,
   };
 });
@@ -89,7 +100,7 @@ vi.mock('../../utils/logger.js', () => ({
 }));
 
 vi.mock('../../auth.js', () => ({
-  verifyAuthToken: vi.fn(),
+  verifyAuthToken: mockVerifyAuthToken,
 }));
 
 vi.mock('../../config.js', () => ({
@@ -108,6 +119,7 @@ function appWithRouter() {
 describe('CLE public verification response shape', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockVerifyAuthToken.mockResolvedValue('user-123');
     queries.length = 0;
   });
 
@@ -125,5 +137,35 @@ describe('CLE public verification response shape', () => {
     const attestationQuery = queries.find((query: QueryRecord) => query.table === 'attestations');
     const attestationColumns = attestationQuery?.selectArg?.split(',').map((column) => column.trim()) ?? [];
     expect(attestationColumns).not.toContain('id');
+  });
+
+  it('submits CLE credits with public IDs only', async () => {
+    const res = await request(appWithRouter())
+      .post('/api/v1/cle/submit')
+      .set('Authorization', 'Bearer test-token')
+      .send({
+        bar_number: '123',
+        attorney_name: 'Casey Counsel',
+        course_title: 'Ethics for Automated Compliance',
+        provider_name: 'Arkova CLE',
+        provider_accreditation_number: 'CA-ARK-1',
+        credit_hours: 2,
+        credit_category: 'Ethics',
+        delivery_method: 'Live Webcast',
+        jurisdiction: 'California',
+        completion_date: '2026-05-01',
+        course_number: 'ETH-2026',
+      });
+
+    expect(res.status).toBe(201);
+    expect(res.body).toMatchObject({ public_id: 'ARK-CLE-SUBMIT123' });
+    expect(res.body).not.toHaveProperty('id');
+
+    const insertQuery = queries.find((query: QueryRecord) => query.table === 'anchors' && query.insertPayload);
+    expect(insertQuery).toBeDefined();
+
+    const anchorQuery = queries.find((query: QueryRecord) => query.table === 'anchors' && query.selectArg === 'public_id');
+    expect(anchorQuery).toBeDefined();
+    expect(anchorQuery?.selectArg?.split(',').map((column) => column.trim())).not.toContain('id');
   });
 });

@@ -321,7 +321,7 @@ router.post('/submit', async (req: Request, res: Response) => {
           submitted_via: 'api',
         },
       })
-      .select('id, public_id')
+      .select('public_id')
       .single();
 
     if (insertError) {
@@ -334,11 +334,10 @@ router.post('/submit', async (req: Request, res: Response) => {
       bar_number: data.bar_number,
       jurisdiction: data.jurisdiction,
       credit_hours: data.credit_hours,
-      anchor_id: anchor.id,
+      anchor_public_id: anchor.public_id,
     }, 'cle.credit.submitted');
 
     res.status(201).json({
-      id: anchor.id,
       public_id: anchor.public_id,
       status: 'PENDING',
       message: 'CLE credit submitted for anchoring. Will be included in next batch.',
