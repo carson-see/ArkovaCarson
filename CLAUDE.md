@@ -165,7 +165,7 @@ Do not start, restart, or claim a soak on a dirty project. If contamination is f
 Destructive shared-staging rebuilds require explicit confirmation that names the project ref and lists active PRs/soaks/evidence that will be invalidated. Isolated staging evidence must name the isolated Supabase project ref, Cloud Run service/tag URL, worker revision, image digest, PR head SHA, deploy log id, soak start/end, tier, and preflight result. Evidence may not be copied across heads, services, or projects; any runtime, migration, or tested-code commit after a soak invalidates exact-head evidence and requires a new soak or an explicit residual-risk note.
 
 ### 1.12 Soak tier matrix
-Every PR declares its tier in the body. The path-based detector in `scripts/ci/check-staging-evidence.ts` blocks under-declaration (touch `services/worker/src/chain/` → must be T3; touch `supabase/migrations/` → at least T2). Tier rules:
+Every PR declares its tier in the body. The path-based detector in `scripts/ci/check-staging-evidence.ts` blocks under-declaration (touch `services/worker/src/chain/` → must be T3; touch `supabase/migrations/` → at least T2). Soak evidence must exercise the PR's changed behavior; generic synthetic load is supporting worker-health evidence only, and if it does not cover the changed path, the PR must include targeted staging/E2E evidence or an explicit Carson-approved residual-risk exception. Tier rules:
 
 | Tier | Touches | Min soak | Required evidence |
 |---|---|---|---|
