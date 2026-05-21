@@ -1,8 +1,10 @@
+import { z } from 'zod';
 import { getFlag } from './switchboard';
 
 export const FRAUD_DETECTION_FLAG = 'ENABLE_FRAUD_DETECTION' as const;
 export const FRAUD_ANALYSIS_METHOD = 'client_side_worker_v2' as const;
 export const FRAUD_DETECTION_WORKER_TIMEOUT_MS = 4_000;
+export const FRAUD_DETECTION_SAMPLE_BYTES = 32_768;
 
 export type FraudRiskLevel = 'low' | 'medium' | 'high' | 'critical';
 export type FraudRiskLevelWithFallback = FraudRiskLevel | 'unknown';
@@ -30,6 +32,21 @@ export interface FraudDetectionOptions {
 interface FraudWorkerRequest extends FraudDetectionOptions {
   documentBytes: ArrayBuffer;
 }
+
+const FraudSignalSchema = z.object({
+  signal_type: z.string(),
+  score: z.number(),
+  reason: z.string(),
+  field_affected: z.string().nullable(),
+});
+
+const FraudDetectionResultSchema = z.object({
+  fraud_risk_level: z.enum(['low', 'medium', 'high', 'critical', 'unknown']),
+  fraud_score: z.number(),
+  fraud_signals: z.array(FraudSignalSchema),
+  analysis_method: z.literal(FRAUD_ANALYSIS_METHOD),
+  processing_time_ms: z.number(),
+});
 
 export function unknownFraudDetectionResult(): FraudDetectionResult {
   return {
@@ -67,7 +84,7 @@ export async function detectFraudForDocument(
   }
 
   try {
-    const documentBytes = await file.arrayBuffer();
+    const documentBytes = await file.slice(0, FRAUD_DETECTION_SAMPLE_BYTES).arrayBuffer();
     return await runFraudWorker({
       documentBytes,
       credentialType: options.credentialType,
@@ -99,7 +116,8 @@ function runFraudWorker(request: FraudWorkerRequest): Promise<FraudDetectionResu
     }, FRAUD_DETECTION_WORKER_TIMEOUT_MS);
 
     worker.onmessage = (event: MessageEvent<FraudDetectionResult>) => {
-      finish(event.data);
+      const parsed = FraudDetectionResultSchema.safeParse(event.data);
+      finish(parsed.success ? parsed.data : unknownFraudDetectionResult());
     };
 
     worker.onerror = () => {

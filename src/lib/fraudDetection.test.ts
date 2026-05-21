@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   FRAUD_DETECTION_FLAG,
+  FRAUD_DETECTION_SAMPLE_BYTES,
   FRAUD_DETECTION_WORKER_TIMEOUT_MS,
   detectFraudForDocument,
   unknownFraudDetectionResult,
@@ -72,6 +73,64 @@ describe('SCRUM-1955 fraud detection worker integration', () => {
     expect(terminate).toHaveBeenCalledTimes(1);
   });
 
+  it('samples large documents before sending bytes to the worker', async () => {
+    vi.mocked(getFlag).mockResolvedValueOnce(true);
+    const largeDocument = new File(
+      [new Uint8Array(FRAUD_DETECTION_SAMPLE_BYTES + 8).fill(65)],
+      'large-degree.pdf',
+      { type: 'application/pdf' },
+    );
+    const workerResult: FraudDetectionResult = {
+      fraud_risk_level: 'low',
+      fraud_score: 0,
+      fraud_signals: [],
+      analysis_method: 'client_side_worker_v2',
+      processing_time_ms: 3,
+    };
+    const postMessage = vi.fn();
+
+    class WorkerStub {
+      onmessage: ((event: MessageEvent<FraudDetectionResult>) => void) | null = null;
+      onerror: ((event: ErrorEvent) => void) | null = null;
+
+      postMessage = postMessage.mockImplementation(() => {
+        this.onmessage?.({ data: workerResult } as MessageEvent<FraudDetectionResult>);
+      });
+
+      terminate(): void {}
+    }
+
+    vi.stubGlobal('Worker', WorkerStub);
+
+    await detectFraudForDocument(largeDocument, {
+      credentialType: 'DEGREE',
+    });
+
+    const [request] = postMessage.mock.calls[0] as [{ documentBytes: ArrayBuffer }, ArrayBuffer[]];
+    expect(request.documentBytes.byteLength).toBe(FRAUD_DETECTION_SAMPLE_BYTES);
+  });
+
+  it('returns unknown gracefully when the worker posts an invalid response', async () => {
+    vi.mocked(getFlag).mockResolvedValueOnce(true);
+
+    class WorkerStub {
+      onmessage: ((event: MessageEvent<unknown>) => void) | null = null;
+      onerror: ((event: ErrorEvent) => void) | null = null;
+
+      postMessage(): void {
+        this.onmessage?.({ data: { analysis_method: 'unexpected' } } as MessageEvent<unknown>);
+      }
+
+      terminate(): void {}
+    }
+
+    vi.stubGlobal('Worker', WorkerStub);
+
+    await expect(detectFraudForDocument(cleanDocument, {
+      credentialType: 'DEGREE',
+    })).resolves.toEqual(unknownFraudDetectionResult());
+  });
+
   it('returns unknown gracefully when the worker cannot run', async () => {
     vi.mocked(getFlag).mockResolvedValueOnce(true);
 
@@ -119,7 +178,7 @@ describe('SCRUM-1955 fraud detection worker integration', () => {
   });
 
   it('produces low risk for a known-clean document without server input', async () => {
-    const { analyzeDocumentBytes } = await import('../workers/fraud-detection.worker');
+    const { analyzeDocumentBytes, handleFraudWorkerMessage } = await import('../workers/fraud-detection.worker');
     const result = analyzeDocumentBytes(await cleanDocument.arrayBuffer(), {
       credentialType: 'DEGREE',
       metadataHints: { issuerName: 'University of Michigan' },
@@ -129,5 +188,7 @@ describe('SCRUM-1955 fraud detection worker integration', () => {
     expect(result.analysis_method).toBe('client_side_worker_v2');
     expect(result.fraud_score).toBeGreaterThanOrEqual(0);
     expect(result.fraud_score).toBeLessThanOrEqual(1);
+    expect(handleFraudWorkerMessage({ documentBytes: 'not-bytes', credentialType: 'DEGREE' }))
+      .toEqual(unknownFraudDetectionResult());
   });
 });
