@@ -22,6 +22,8 @@ import { logger } from '../../utils/logger.js';
 import { ensureAnchorCreditAvailable } from '../../utils/anchorCreditGate.js';
 import { ensureAnchorQuotaAvailable } from '../../utils/anchorQuotaGate.js';
 import { ensureOrgNotSuspended } from '../../utils/orgSuspensionGuard.js';
+import { submitJob } from '../../utils/jobQueue.js';
+import { buildProfessionalEducationJobPayload } from '../../compliance/professional-education.js';
 
 const router = Router();
 
@@ -188,7 +190,7 @@ router.post('/', async (req: Request, res: Response) => {
     const { data: anchor, error: insertError } = await db
       .from('anchors')
       .insert(insertPayload)
-      .select('public_id, fingerprint, status, created_at')
+      .select('id, public_id, fingerprint, status, created_at, credential_type, metadata')
       .single();
 
     if (insertError) {
@@ -206,11 +208,43 @@ router.post('/', async (req: Request, res: Response) => {
     };
 
     logger.info({ publicId, fingerprint: fingerprint.slice(0, 12) }, 'Anchor submitted via API');
+    enqueueProfessionalEducationExtraction({
+      id: anchor.id,
+      public_id: anchor.public_id ?? publicId,
+      fingerprint: anchor.fingerprint,
+      credential_type: anchor.credential_type ?? credentialType,
+      org_id: orgId,
+      user_id: req.apiKey.userId,
+      metadata: (anchor.metadata as Record<string, unknown> | null | undefined) ?? publicSafeCredentialEvidenceMetadata,
+    });
     res.status(201).json(receipt);
   } catch (error) {
     logger.error({ error }, 'Anchor submission failed');
     res.status(500).json({ error: 'Internal server error' });
   }
 });
+
+function enqueueProfessionalEducationExtraction(anchor: {
+  id?: string;
+  public_id: string | null;
+  fingerprint: string | null;
+  credential_type: string | null;
+  org_id: string | null;
+  user_id: string | null;
+  metadata: Record<string, unknown> | null;
+}): void {
+  if (!anchor.id) return;
+  const payload = buildProfessionalEducationJobPayload({ ...anchor, id: anchor.id });
+  if (!payload) return;
+
+  void submitJob({
+    type: 'professional_education.metadata_extraction',
+    payload,
+    priority: 25,
+    max_attempts: 5,
+  }).catch((error: unknown) => {
+    logger.warn({ error, anchorId: anchor.id }, 'Failed to enqueue professional education extraction job');
+  });
+}
 
 export { router as anchorSubmitRouter };

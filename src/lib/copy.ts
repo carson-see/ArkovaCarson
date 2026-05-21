@@ -59,6 +59,7 @@ export const CREDENTIAL_TYPE_LABELS = {
   CERTIFICATE: 'Certificate',
   TRANSCRIPT: 'Transcript',
   PROFESSIONAL: 'Professional Credential',
+  CPE: 'CPE Credit',
   CLE: 'CLE Credit',
   BADGE: 'Digital Badge',
   ATTESTATION: 'Attestation',

@@ -268,7 +268,7 @@ async function _processBatchAnchorsInner(opts: ProcessBatchAnchorOptions = {}): 
       oldestQuery
         .order('created_at', { ascending: true })
         .limit(1)
-        .single(),
+        .maybeSingle(),
       getPendingTriggerProbe(orgId ?? undefined),
     ]);
 

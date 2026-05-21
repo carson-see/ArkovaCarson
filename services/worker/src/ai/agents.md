@@ -2,6 +2,12 @@
 
 _Last updated: 2026-05-16_
 
+## 2026-05-20 Gemini Golden Lane Updates
+
+- `fallback-chain.ts` emits sanitized `provider_fallback` observer events when a retriable provider failure routes to the next provider. Events include provider names and a classified reason only; never prompt text, stripped text, fingerprints, or raw provider error bodies.
+- `eval/eval-gates.ts` defines explicit fail-closed merge gates for SCRUM-1962 (CPE) and SCRUM-1963 (CLE ethics hours). Missing Phase 5 dataset coverage fails the gate instead of producing an implicit pass.
+- Server-side visual fraud image analysis is disabled at `api/v1/ai-fraud-visual.ts`; SCRUM-1955 owns the client-side worker path that may send structured fraud findings server-side.
+
 ## What This Folder Contains
 
 AI provider abstraction layer for credential metadata extraction, fraud detection, embeddings, and compliance intelligence. All providers receive only PII-stripped metadata (Constitution 1.6 / 4A).
