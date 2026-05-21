@@ -241,6 +241,12 @@ describe('aiFeatureGate middleware', () => {
       expect(await isVisualFraudDetectionEnabled()).toBe(false);
     });
 
+    it('stays off by default when no DB row or env override exists', async () => {
+      delete process.env.ENABLE_VISUAL_FRAUD_DETECTION;
+      mockFlagQuery('ENABLE_VISUAL_FRAUD_DETECTION', null, { code: 'PGRST116', message: 'not found' });
+      expect(await isVisualFraudDetectionEnabled()).toBe(false);
+    });
+
     it('middleware itself returns 503 (not next) under DB-error fail-closed path', async () => {
       delete process.env.ENABLE_VISUAL_FRAUD_DETECTION;
       mockFlagQuery('ENABLE_VISUAL_FRAUD_DETECTION', null, new Error('db down'));

@@ -41,6 +41,7 @@ import { FileUpload } from '@/components/anchor/FileUpload';
 import { AIFieldSuggestions } from '@/components/anchor/AIFieldSuggestions';
 import { MetadataFieldRenderer } from '@/components/credentials/MetadataFieldRenderer';
 import { runExtraction, type ExtractionField, type ExtractionProgress } from '@/lib/aiExtraction';
+import { detectFraudForDocument, fraudResultToMetadata } from '@/lib/fraudDetection';
 import { isAIExtractionEnabled } from '@/lib/switchboard';
 import { useCanIssueCredential } from '@/hooks/useCanIssueCredential';
 import { useIssueCredentialSplit } from '@/hooks/useIssueCredentialSplit';
@@ -379,7 +380,16 @@ export function IssueCredentialForm({
     setError(null);
 
     try {
-      const metadata = buildMetadata();
+      const metadataEntries = buildMetadata() ?? {};
+      const fraudResult = await detectFraudForDocument(file, {
+        credentialType,
+        metadataHints: Object.fromEntries(
+          Object.entries(metadataEntries)
+            .filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
+        ),
+      });
+      Object.assign(metadataEntries, fraudResultToMetadata(fraudResult));
+      const metadata = Object.keys(metadataEntries).length > 0 ? metadataEntries : null;
 
       const validated = validateAnchorCreate({
         fingerprint,
