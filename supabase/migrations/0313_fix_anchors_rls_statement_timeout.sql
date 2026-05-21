@@ -1,3 +1,7 @@
+-- Jira: SCRUM-1966
+-- Purpose: fix anchors/attestations SELECT RLS statement_timeout by
+-- consolidating ORed policies into InitPlan-friendly policy predicates.
+--
 -- ROLLBACK: Re-create original three separate policies (see bottom of file)
 --
 -- Fix: anchors_select_platform_admin RLS policy causes full-table scan
@@ -76,6 +80,9 @@ COMMIT;
 --
 -- BEGIN;
 -- DROP POLICY IF EXISTS "anchors_select" ON "public"."anchors";
+-- DROP POLICY IF EXISTS "anchors_select_own" ON "public"."anchors";
+-- DROP POLICY IF EXISTS "anchors_select_org" ON "public"."anchors";
+-- DROP POLICY IF EXISTS "anchors_select_platform_admin" ON "public"."anchors";
 -- CREATE POLICY "anchors_select_own" ON "public"."anchors"
 --   FOR SELECT TO "authenticated"
 --   USING (user_id = (SELECT auth.uid()));
@@ -87,6 +94,7 @@ COMMIT;
 --   USING (public.is_current_user_platform_admin());
 --
 -- DROP POLICY IF EXISTS "attestations_select" ON "public"."attestations";
+-- DROP POLICY IF EXISTS "attestations_select_platform_admin" ON "public"."attestations";
 -- CREATE POLICY "attestations_select" ON "public"."attestations"
 --   FOR SELECT TO "authenticated"
 --   USING (attester_user_id = (SELECT auth.uid())
