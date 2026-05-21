@@ -270,7 +270,7 @@ const ConfigSchema = z.object({
   enableRuleActionDispatcher: boolFlag(true),
   /** ENABLE_ALLOCATION_ROLLOVER — monthly credit rollover cron. Default false (PAY work). */
   enableAllocationRollover: boolFlag(false),
-  /** ENABLE_VISUAL_FRAUD_DETECTION — gates /ai/fraud/visual (off-device image bytes per §1.6 carve-out). SCRUM-1269 default false. */
+  /** ENABLE_VISUAL_FRAUD_DETECTION — gates legacy /ai/fraud/visual, which now fails closed pending SCRUM-1955 client-side worker. */
   enableVisualFraudDetection: boolFlag(false),
   /** ENABLE_GRC_INTEGRATIONS — Vanta/Drata/Anecdotes oauth + push. Default false. */
   enableGrcIntegrations: boolFlag(false),

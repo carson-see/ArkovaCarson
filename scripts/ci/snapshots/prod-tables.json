@@ -105,7 +105,10 @@
     "in_migrations_only": [
       { "name": "activation_tokens", "reason": "created in 0023, evidently dropped out-of-band — needs investigation" },
       { "name": "ats_webhook_nonces", "reason": "created in 0135, not present in prod — likely never deployed" },
+      { "name": "cle_provider_registry", "reason": "PR #841 migration 0314 held back from prod until review/soak and operator-applied ledger reconciliation" },
+      { "name": "cpe_provider_registry", "reason": "PR #841 migration 0314 held back from prod until review/soak and operator-applied ledger reconciliation" },
       { "name": "drive_webhook_nonces", "reason": "created in 0258 family, not present in prod — likely never deployed" },
+      { "name": "legally_binding_attestations", "reason": "PR #841 migration 0313 held back from prod until review/soak and operator-applied ledger reconciliation" },
       { "name": "merkle_batches", "reason": "created in 0113, dropped out-of-band — needs investigation" },
       { "name": "training_metrics", "reason": "created in 0114, dropped out-of-band — needs investigation" },
       { "name": "webhook_idempotency", "reason": "created in 0116, dropped out-of-band — needs investigation" }

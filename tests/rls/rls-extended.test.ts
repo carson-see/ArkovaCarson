@@ -323,6 +323,7 @@ describe('RLS: Webhook Endpoints', () => {
   it('ORG_ADMIN can insert webhook endpoints for their org', async () => {
     const { data, error } = await adminClient.from('webhook_endpoints').insert({
       org_id: ARKOVA_ORG_ID,
+      public_id: '',
       url: `https://example.com/webhook-rls-${Date.now()}`,
       events: ['anchor.secured'],
       is_active: true,
@@ -342,6 +343,7 @@ describe('RLS: Webhook Endpoints', () => {
     // Insert via service client
     const { data: inserted } = await serviceClient.from('webhook_endpoints').insert({
       org_id: ARKOVA_ORG_ID,
+      public_id: '',
       url: `https://example.com/webhook-read-${Date.now()}`,
       events: ['anchor.secured'],
       is_active: true,
@@ -366,6 +368,7 @@ describe('RLS: Webhook Endpoints', () => {
     // Insert endpoint for Beta Corp via service client
     const { data: inserted } = await serviceClient.from('webhook_endpoints').insert({
       org_id: BETA_ORG_ID,
+      public_id: '',
       url: `https://example.com/webhook-cross-${Date.now()}`,
       events: ['anchor.secured'],
       is_active: true,
@@ -396,6 +399,7 @@ describe('RLS: Webhook Endpoints', () => {
   it('INDIVIDUAL user cannot insert webhook endpoints', async () => {
     const { error } = await userClient.from('webhook_endpoints').insert({
       org_id: ARKOVA_ORG_ID,
+      public_id: '',
       url: 'https://example.com/unauthorized',
       events: ['anchor.secured'],
       is_active: true,

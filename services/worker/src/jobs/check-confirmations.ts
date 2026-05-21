@@ -81,6 +81,12 @@ type SubmittedTxCandidateFetchResult = {
   error: unknown | null;
 };
 
+type DrainSubmittedToSecuredResult = {
+  updated?: number;
+  anchors?: unknown;
+  capped?: boolean;
+};
+
 interface SubmittedTxCandidateScanState {
   rows: SubmittedTxCandidateRow[];
   uniqueTxIds: Set<string>;
@@ -880,7 +886,7 @@ async function checkSubmittedConfirmationsUnlocked(): Promise<{ checked: number;
             p_batch_size: 100,
             p_max_iterations: 5,
           });
-          const data = rpcRes.data;
+          const data = rpcRes.data as DrainSubmittedToSecuredResult | null;
           const error = rpcRes.error;
 
           if (error) {

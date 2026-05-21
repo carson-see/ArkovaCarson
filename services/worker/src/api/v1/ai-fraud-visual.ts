@@ -3,17 +3,15 @@
  *
  * POST /api/v1/ai/fraud/visual
  *
- * Accepts a PII-stripped document image and returns visual fraud analysis.
- * Uses Gemini 2.0 Flash vision to detect tampering indicators.
+ * Deprecated server-side visual fraud endpoint.
  *
- * Constitution 4A: Only PII-stripped images should be sent.
- * The client is responsible for stripping PII before upload.
+ * Constitution 4A: document/image bytes must never be sent server-side for
+ * fraud detection. SCRUM-1955 replaces this with a client-side Web Worker
+ * that returns only structured findings.
  */
 
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
-import { analyzeDocumentImage } from '../../ai/visualFraudDetector.js';
-import { logger } from '../../utils/logger.js';
 
 const router = Router();
 
@@ -29,19 +27,9 @@ const VisualFraudRequestSchema = z.object({
 /**
  * POST /api/v1/ai/fraud/visual
  *
- * Analyze a document image for visual fraud indicators.
- *
- * Request body:
- * - imageBase64: Base64-encoded image (max ~7.5MB)
- * - mimeType: image/png, image/jpeg, image/webp, image/gif
- * - credentialType: Type of credential (DEGREE, LICENSE, etc.)
- *
- * Response:
- * - riskLevel: LOW | MEDIUM | HIGH | CRITICAL
- * - riskScore: 0-100
- * - signals: Array of detected fraud signals
- * - summary: Human-readable summary
- * - recommendations: Array of action items
+ * This route intentionally fails closed. Keeping validation first preserves
+ * existing client error behavior for malformed requests, but valid image
+ * payloads are never forwarded to Gemini or any other server-side model.
  */
 router.post('/', async (req: Request, res: Response) => {
   const parsed = VisualFraudRequestSchema.safeParse(req.body);
@@ -53,31 +41,11 @@ router.post('/', async (req: Request, res: Response) => {
     return;
   }
 
-  const { imageBase64, mimeType, credentialType } = parsed.data;
-
-  try {
-    const result = await analyzeDocumentImage(
-      imageBase64,
-      mimeType,
-      credentialType,
-    );
-
-    res.json({
-      riskLevel: result.riskLevel,
-      riskScore: result.riskScore,
-      signals: result.signals,
-      summary: result.summary,
-      recommendations: result.recommendations,
-      model: result.model,
-      processingTimeMs: result.processingTimeMs,
-    });
-  } catch (err) {
-    logger.error({ error: err, credentialType }, 'Visual fraud analysis endpoint failed');
-    res.status(500).json({
-      error: 'Visual fraud analysis failed',
-      message: err instanceof Error ? err.message : 'Internal error',
-    });
-  }
+  res.status(410).json({
+    error: 'server_side_visual_fraud_disabled',
+    message: 'Visual fraud detection must run in the client-side worker. Server-side image analysis is disabled by Constitution 4A.',
+    requiredArchitecture: 'client_side_worker_v2',
+  });
 });
 
 export { router as aiFraudVisualRouter };

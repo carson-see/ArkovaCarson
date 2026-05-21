@@ -6,10 +6,9 @@
  *   - ENABLE_SEMANTIC_SEARCH: Controls semantic search endpoints
  *   - ENABLE_AI_FRAUD: Controls AI fraud detection (text-based)
  *   - ENABLE_AI_REPORTS: Controls AI report generation
- *   - ENABLE_VISUAL_FRAUD_DETECTION: Controls /api/v1/ai/fraud/visual.
- *     Distinct from ENABLE_AI_FRAUD because the visual path ships document
- *     image bytes off-device (CLAUDE.md §1.6 carve-out — must be opted-in
- *     per tenant via Confluence-documented decision before flipping on).
+ *   - ENABLE_VISUAL_FRAUD_DETECTION: Controls legacy /api/v1/ai/fraud/visual.
+ *     That route now fails closed with 410 because SCRUM-1955 moves visual
+ *     fraud analysis to a client-side worker.
  *
  * All flags default to false (fail-closed). Uses TTL-based cache (60s)
  * to avoid per-request DB queries. Same pattern as featureGate.ts (P4.5-TS-12).
