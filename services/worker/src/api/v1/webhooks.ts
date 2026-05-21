@@ -225,6 +225,7 @@ router.post('/', async (req, res) => {
       .from('webhook_endpoints')
       .insert({
         org_id: req.apiKey.orgId,
+        public_id: '',
         url,
         secret_hash: secret,
         events,

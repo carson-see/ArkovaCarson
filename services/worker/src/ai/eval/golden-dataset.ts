@@ -1961,6 +1961,7 @@ import { GOLDEN_DATASET_PHASE17 } from './golden-dataset-phase17-expansion.js';
 import { GOLDEN_DATASET_PHASE18_V7 } from './golden-dataset-phase18-v7-expansion.js';
 import { GOLDEN_DATASET_PHASE23_CONTRACTS } from './golden-dataset-phase23-contracts.js';
 import { GOLDEN_DATASET_PHASE24_CONTRACT_REASONING } from './golden-dataset-phase24-contract-reasoning.js';
+import { GOLDEN_DATASET_PROFESSIONAL_EDUCATION } from './golden-dataset-professional-education.js';
 
 /** Full golden dataset: core through phase18 (~2679) + phase23 contracts (1040) + phase24 contract reasoning (600) = ~4319 entries */
 export const FULL_GOLDEN_DATASET: GoldenDatasetEntry[] = [
@@ -1983,6 +1984,7 @@ export const FULL_GOLDEN_DATASET: GoldenDatasetEntry[] = [
   // ...GOLDEN_DATASET_PHASE16, // TODO: uncomment when file created
   ...GOLDEN_DATASET_PHASE17,
   ...GOLDEN_DATASET_PHASE18_V7,
+  ...GOLDEN_DATASET_PROFESSIONAL_EDUCATION,
   ...GOLDEN_DATASET_PHASE23_CONTRACTS,
   ...GOLDEN_DATASET_PHASE24_CONTRACT_REASONING,
 ];

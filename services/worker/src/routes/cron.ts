@@ -40,6 +40,7 @@ import { processAttestationAnchoring } from '../jobs/attestationAnchor.js';
 import { checkAttestationExpiry } from '../jobs/attestationExpiry.js';
 import { fetchDapipInstitutions } from '../jobs/dapipFetcher.js';
 import { processBatchAnchors } from '../jobs/batch-anchor.js';
+import { processProfessionalEducationExtractionJobs } from '../jobs/professional-education-extraction.js';
 import { fetchAcncCharities } from '../jobs/acncFetcher.js';
 import { fetchStateBills, fetchMultipleStateBills } from '../jobs/openStatesFetcher.js';
 import { fetchCalBarAttorneys } from '../jobs/calbarFetcher.js';
@@ -240,6 +241,19 @@ cronRouter.post('/batch-anchors', async (req, res) => {
     res.json(result);
   } catch (error) {
     logger.error({ error }, 'Batch anchor processing failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+cronRouter.post('/professional-education-extraction', async (req, res) => {
+  try {
+    const maxJobs = req.body?.maxJobs
+      ? Math.min(Math.max(parseInt(String(req.body.maxJobs), 10) || 10, 1), 100)
+      : 10;
+    const result = await processProfessionalEducationExtractionJobs(maxJobs);
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'Professional education extraction processing failed');
     res.status(500).json({ error: 'Processing failed' });
   }
 });

@@ -25,12 +25,14 @@ import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 import { deductOrgCredit } from '../../utils/orgCredits.js';
 import { ensureOrgNotSuspended } from '../../utils/orgSuspensionGuard.js';
+import { submitJob } from '../../utils/jobQueue.js';
+import { buildProfessionalEducationJobPayload } from '../../compliance/professional-education.js';
 
 const router = Router();
 
 const FINGERPRINT_REGEX = /^[a-fA-F0-9]{64}$/;
 
-const CREDENTIAL_TYPES = ['DEGREE', 'LICENSE', 'CERTIFICATE', 'TRANSCRIPT', 'PROFESSIONAL', 'OTHER'] as const;
+const CREDENTIAL_TYPES = ['DEGREE', 'LICENSE', 'CERTIFICATE', 'TRANSCRIPT', 'PROFESSIONAL', 'CPE', 'CLE', 'OTHER'] as const;
 
 const DUPLICATE_STRATEGIES = ['skip', 'supersede', 'link', 'fail'] as const;
 
@@ -247,7 +249,7 @@ router.post('/', async (req: Request, res: Response) => {
           status: 'PENDING',
           metadata,
         })
-        .select('public_id, fingerprint, created_at')
+        .select('id, public_id, fingerprint, created_at, credential_type, metadata')
         .single();
 
       if (error || !data) {
@@ -264,6 +266,16 @@ router.post('/', async (req: Request, res: Response) => {
         matter_or_case_ref: row.matter_or_case_ref ?? null,
         external_id: row.external_id ?? null,
         anchored_at: data.created_at, // AC2: anchored_at is distinct from original_document_date
+      });
+
+      enqueueProfessionalEducationExtraction({
+        id: data.id,
+        public_id: data.public_id,
+        fingerprint: data.fingerprint,
+        credential_type: data.credential_type ?? row.credential_type ?? null,
+        org_id: orgId,
+        user_id: req.apiKey.userId,
+        metadata: (data.metadata as Record<string, unknown> | null | undefined) ?? metadata,
       });
     } catch (err) {
       errors.push({
@@ -296,6 +308,29 @@ function buildMetadata(row: BulkAnchorRow, batchId: string | undefined): Record<
   if (batchId) meta.batch_id = batchId;
   meta.bulk_source = 'haki-req-02';
   return meta;
+}
+
+function enqueueProfessionalEducationExtraction(anchor: {
+  id?: string;
+  public_id: string | null;
+  fingerprint: string | null;
+  credential_type: string | null;
+  org_id: string | null;
+  user_id: string | null;
+  metadata: Record<string, unknown> | null;
+}): void {
+  if (!anchor.id) return;
+  const payload = buildProfessionalEducationJobPayload({ ...anchor, id: anchor.id });
+  if (!payload) return;
+
+  void submitJob({
+    type: 'professional_education.metadata_extraction',
+    payload,
+    priority: 20,
+    max_attempts: 5,
+  }).catch((error: unknown) => {
+    logger.warn({ error, anchorId: anchor.id }, 'Failed to enqueue professional education extraction job');
+  });
 }
 
 export { router as anchorBulkRouter };

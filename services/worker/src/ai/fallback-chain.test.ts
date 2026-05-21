@@ -8,7 +8,7 @@
  * - Does NOT fall back on validation/parse errors (those are content issues, not model issues)
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { FallbackChainProvider } from './fallback-chain.js';
 import type { IAIProvider, ExtractionRequest, ExtractionResult, EmbeddingResult, ProviderHealth } from './types.js';
 
@@ -160,5 +160,31 @@ describe('GME-19: FallbackChainProvider', () => {
     const health = await chain.healthCheck();
     expect(health.healthy).toBe(true); // at least one is up
     expect(health.provider).toBe('fallback-chain');
+  });
+
+  it('emits sanitized fallback events without document content or fingerprints', async () => {
+    const onFallback = vi.fn();
+    const chain = new FallbackChainProvider(
+      [
+        makeMockProvider('gemini', 'fail-429'),
+        makeMockProvider('openai', 'succeed'),
+      ],
+      { onFallback },
+    );
+
+    const request = makeRequest();
+    await chain.extractMetadata(request);
+
+    expect(onFallback).toHaveBeenCalledWith({
+      event: 'provider_fallback',
+      fromProvider: 'gemini',
+      toProvider: 'openai',
+      reason: 'rate_limit',
+    });
+
+    const serialized = JSON.stringify(onFallback.mock.calls[0][0]);
+    expect(serialized).not.toContain(request.strippedText);
+    expect(serialized).not.toContain(request.fingerprint);
+    expect(serialized).not.toContain('Rate limited');
   });
 });
