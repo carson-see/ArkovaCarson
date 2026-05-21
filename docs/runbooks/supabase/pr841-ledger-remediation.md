@@ -54,7 +54,23 @@ ledger matches the cleaned order:
 - `0314 / legally_binding_attestations`
 - `0315 / professional_education_foundations`
 
-Then run the required T2/T3 staging soak from the cleaned state.
+Ledger parity is not enough by itself. Because
+`0313_anchors_index_consolidation.sql` is a ledger marker with manual
+`DROP INDEX CONCURRENTLY` instructions, a reset database can record the
+correct `0313` row while still retaining indexes that production already
+dropped. Before claiming merge-grade staging evidence, capture one of these
+explicit states:
+
+- **Index-parity evidence:** run the 0313 concurrent index drops manually
+  against the staging project, then verify the drop-target indexes are absent
+  before applying or repairing the `0314` and `0315` rows.
+- **Schema-order-only evidence:** state clearly in the PR evidence that the
+  soak validates only the #841 schema order and does not validate SCRUM-1286
+  anchor-index parity. Do not use this narrower evidence to unblock PR #838's
+  index behavior.
+
+Then run the required T2/T3 staging soak from the cleaned and accurately scoped
+state.
 
 ## #838 follow-up
 
