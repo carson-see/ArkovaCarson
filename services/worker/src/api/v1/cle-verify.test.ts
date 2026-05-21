@@ -56,7 +56,10 @@ const { mockFrom, queries } = vi.hoisted(() => {
     const record: LocalQueryRecord = { table };
     queries.push(record);
 
-    const builder: Record<string, ReturnType<typeof vi.fn>> = {};
+    const builder = Promise.resolve({ data: rowsFor(table), error: null }) as unknown as Record<
+      string,
+      ReturnType<typeof vi.fn>
+    >;
     builder.select = vi.fn((arg?: string) => {
       record.selectArg = arg;
       return builder;
@@ -68,9 +71,6 @@ const { mockFrom, queries } = vi.hoisted(() => {
     builder.limit = vi.fn(() => builder);
     builder.gte = vi.fn(() => builder);
     builder.lte = vi.fn(() => builder);
-    builder.then = vi.fn((onFulfilled: (value: unknown) => unknown, onRejected?: (reason: unknown) => unknown) => (
-      Promise.resolve({ data: rowsFor(table), error: null }).then(onFulfilled, onRejected)
-    ));
     return builder;
   }
 

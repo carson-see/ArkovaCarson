@@ -124,7 +124,10 @@ const { mockFrom, queries, insertedRows, signMock } = vi.hoisted(() => {
     const record = { table, filters };
     queries.push(record);
 
-    const builder: Record<string, ReturnType<typeof vi.fn>> = {};
+    const builder = Promise.resolve({ data: null, error: null }) as unknown as Record<
+      string,
+      ReturnType<typeof vi.fn>
+    >;
     builder.select = vi.fn(() => builder);
     builder.eq = vi.fn((column: string, value: unknown) => {
       filters.push({ op: 'eq', column, value });
@@ -141,9 +144,6 @@ const { mockFrom, queries, insertedRows, signMock } = vi.hoisted(() => {
       return builder;
     });
     builder.update = vi.fn(() => builder);
-    builder.then = vi.fn((onFulfilled: (value: unknown) => unknown, onRejected?: (reason: unknown) => unknown) => (
-      Promise.resolve({ data: null, error: null }).then(onFulfilled, onRejected)
-    ));
     return builder;
   }
 
