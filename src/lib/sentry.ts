@@ -183,17 +183,13 @@ export function initSentry(): void {
     release: import.meta.env.VITE_APP_VERSION ?? '0.1.0',
     integrations: [
       Sentry.browserTracingIntegration(),
-      Sentry.replayIntegration({
-        // Mask all text and block all media for privacy (Constitution 1.6)
-        maskAllText: true,
-        blockAllMedia: true,
-      }),
+      // replayIntegration removed — rrweb uses new Function() internally for CSS
+      // reconstruction, which violates the production CSP (script-src without
+      // 'unsafe-eval'). See ARKOVA-FRONTEND-9.
     ],
 
     // Performance sampling
     tracesSampleRate: environment === 'production' ? 0.1 : 1.0,
-    replaysSessionSampleRate: 0,
-    replaysOnErrorSampleRate: environment === 'production' ? 0.1 : 1.0,
 
     // PII scrubbing — mandatory (Constitution 1.4 + 1.6)
     beforeSend(event) {

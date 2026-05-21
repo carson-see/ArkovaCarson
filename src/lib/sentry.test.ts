@@ -123,6 +123,24 @@ describe('Frontend scrubPiiFromEvent', () => {
   });
 });
 
+describe('initSentry CSP safety', () => {
+  it('does not include replayIntegration (ARKOVA-FRONTEND-9: rrweb eval violates CSP)', async () => {
+    const fs = await import('fs');
+    const path = await import('path');
+    const sentrySource = fs.readFileSync(
+      path.resolve(__dirname, './sentry.ts'),
+      'utf-8',
+    );
+    // Guard: replayIntegration must not appear as an active call
+    const activeReplayCalls = sentrySource
+      .split('\n')
+      .filter((line: string) => !line.trimStart().startsWith('//') && !line.trimStart().startsWith('*'))
+      .filter((line: string) => /replayIntegration\s*\(/.test(line));
+
+    expect(activeReplayCalls).toHaveLength(0);
+  });
+});
+
 describe('Frontend scrubPiiFromBreadcrumb', () => {
   it('strips tokens from URLs in fetch breadcrumbs', () => {
     const breadcrumb = {
