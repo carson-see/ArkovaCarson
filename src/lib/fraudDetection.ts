@@ -8,12 +8,17 @@ export const FRAUD_DETECTION_SAMPLE_BYTES = 32_768;
 
 export type FraudRiskLevel = 'low' | 'medium' | 'high' | 'critical';
 export type FraudRiskLevelWithFallback = FraudRiskLevel | 'unknown';
+export type FraudSignalType =
+  | 'future_date'
+  | 'binary_or_corrupt_text_sample'
+  | 'layout_spacing_anomaly'
+  | 'issuer_hint_missing';
+export type FraudSignalField = 'issuedDate' | 'issuerName';
 
 export interface FraudSignal {
-  signal_type: string;
+  signal_type: FraudSignalType;
   score: number;
-  reason: string;
-  field_affected: string | null;
+  field_affected: FraudSignalField | null;
 }
 
 export interface FraudDetectionResult {
@@ -34,19 +39,23 @@ interface FraudWorkerRequest extends FraudDetectionOptions {
 }
 
 const FraudSignalSchema = z.object({
-  signal_type: z.string(),
-  score: z.number(),
-  reason: z.string(),
-  field_affected: z.string().nullable(),
-});
+  signal_type: z.enum([
+    'future_date',
+    'binary_or_corrupt_text_sample',
+    'layout_spacing_anomaly',
+    'issuer_hint_missing',
+  ]),
+  score: z.number().min(0).max(1),
+  field_affected: z.enum(['issuedDate', 'issuerName']).nullable(),
+}).strict();
 
 const FraudDetectionResultSchema = z.object({
   fraud_risk_level: z.enum(['low', 'medium', 'high', 'critical', 'unknown']),
-  fraud_score: z.number(),
+  fraud_score: z.number().min(0).max(1),
   fraud_signals: z.array(FraudSignalSchema),
   analysis_method: z.literal(FRAUD_ANALYSIS_METHOD),
-  processing_time_ms: z.number(),
-});
+  processing_time_ms: z.number().min(0),
+}).strict();
 
 export function unknownFraudDetectionResult(): FraudDetectionResult {
   return {

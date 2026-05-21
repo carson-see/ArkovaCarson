@@ -131,6 +131,39 @@ describe('SCRUM-1955 fraud detection worker integration', () => {
     })).resolves.toEqual(unknownFraudDetectionResult());
   });
 
+  it('rejects freeform fraud signal fields before metadata persistence', async () => {
+    vi.mocked(getFlag).mockResolvedValueOnce(true);
+    const workerResult = {
+      fraud_risk_level: 'medium',
+      fraud_score: 0.35,
+      fraud_signals: [{
+        signal_type: 'future_date',
+        score: 0.35,
+        reason: 'Document contains future year 2099 for Jane Doe.',
+        field_affected: 'issuedDate',
+      }],
+      analysis_method: 'client_side_worker_v2',
+      processing_time_ms: 4,
+    };
+
+    class WorkerStub {
+      onmessage: ((event: MessageEvent<unknown>) => void) | null = null;
+      onerror: ((event: ErrorEvent) => void) | null = null;
+
+      postMessage(): void {
+        this.onmessage?.({ data: workerResult } as MessageEvent<unknown>);
+      }
+
+      terminate(): void {}
+    }
+
+    vi.stubGlobal('Worker', WorkerStub);
+
+    await expect(detectFraudForDocument(cleanDocument, {
+      credentialType: 'DEGREE',
+    })).resolves.toEqual(unknownFraudDetectionResult());
+  });
+
   it('returns unknown gracefully when the worker cannot run', async () => {
     vi.mocked(getFlag).mockResolvedValueOnce(true);
 
@@ -190,5 +223,26 @@ describe('SCRUM-1955 fraud detection worker integration', () => {
     expect(result.fraud_score).toBeLessThanOrEqual(1);
     expect(handleFraudWorkerMessage({ documentBytes: 'not-bytes', credentialType: 'DEGREE' }))
       .toEqual(unknownFraudDetectionResult());
+  });
+
+  it('emits only enum/template fraud signal fields from the worker', async () => {
+    const { analyzeDocumentBytes } = await import('../workers/fraud-detection.worker');
+    const riskyDocument = new File(
+      ['University of Michigan\nBachelor of Science\nIssued May 2099'],
+      'future-degree.txt',
+      { type: 'text/plain' },
+    );
+
+    const result = analyzeDocumentBytes(await riskyDocument.arrayBuffer(), {
+      credentialType: 'DEGREE',
+      metadataHints: { issuerName: 'University of Michigan' },
+    });
+
+    expect(result.fraud_signals).toContainEqual({
+      signal_type: 'future_date',
+      score: 0.35,
+      field_affected: 'issuedDate',
+    });
+    expect(result.fraud_signals[0]).not.toHaveProperty('reason');
   });
 });
