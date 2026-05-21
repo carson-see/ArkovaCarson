@@ -22,35 +22,41 @@ const mockLoggerInfo = vi.hoisted(() => vi.fn());
 
 vi.mock('../../utils/db.js', () => {
   type QueryResult = { data: Array<Record<string, unknown>>; error: null };
+  type MockMethod = ReturnType<typeof vi.fn>;
+  type MockQuery = Promise<QueryResult> & {
+    select: MockMethod;
+    eq: MockMethod;
+    in: MockMethod;
+    ilike: MockMethod;
+    order: MockMethod;
+    gte: MockMethod;
+    lte: MockMethod;
+    limit: MockMethod;
+    insert: MockMethod;
+    single: MockMethod;
+  };
 
-  class MockQuery implements PromiseLike<QueryResult> {
-    readonly select = vi.fn(() => this);
-    readonly eq = vi.fn(() => this);
-    readonly in = vi.fn(() => this);
-    readonly ilike = vi.fn(() => this);
-    readonly order = vi.fn(() => this);
-    readonly gte = vi.fn(() => this);
-    readonly lte = vi.fn(() => this);
-    readonly limit = vi.fn(() => this);
-    readonly insert = vi.fn((payload: Record<string, unknown>) => {
+  function createQuery(table: string): MockQuery {
+    const query = Promise.resolve().then(() => {
+      const data = table === 'attestations' ? mockTables.attestationRows : mockTables.anchorsRows;
+      return { data, error: null };
+    }) as MockQuery;
+
+    query.select = vi.fn(() => query);
+    query.eq = vi.fn(() => query);
+    query.in = vi.fn(() => query);
+    query.ilike = vi.fn(() => query);
+    query.order = vi.fn(() => query);
+    query.gte = vi.fn(() => query);
+    query.lte = vi.fn(() => query);
+    query.limit = vi.fn(() => query);
+    query.insert = vi.fn((payload: Record<string, unknown>) => {
       mockTables.insertedPayload = payload;
-      return this;
+      return query;
     });
-    readonly single = vi.fn(() => Promise.resolve({ data: mockTables.insertedAnchor, error: null }));
+    query.single = vi.fn(() => Promise.resolve({ data: mockTables.insertedAnchor, error: null }));
 
-    constructor(private readonly table: string) {}
-
-    then<TResult1 = QueryResult, TResult2 = never>(
-      onFulfilled?: ((value: QueryResult) => TResult1 | PromiseLike<TResult1>) | null,
-      onRejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null,
-    ): Promise<TResult1 | TResult2> {
-      const data = this.table === 'attestations' ? mockTables.attestationRows : mockTables.anchorsRows;
-      return Promise.resolve({ data, error: null }).then(onFulfilled, onRejected);
-    }
-  }
-
-  function createQuery(table: string) {
-    return new MockQuery(table);
+    return query;
   }
 
   return {

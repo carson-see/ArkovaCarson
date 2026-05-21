@@ -189,7 +189,10 @@ router.get('/verify', async (req: Request, res: Response) => {
       if (!requestedJurisdiction) {
         return true;
       }
-      return String(meta?.jurisdiction ?? '').toLowerCase().includes(requestedJurisdiction);
+      const recordJurisdiction = typeof meta?.jurisdiction === 'string'
+        ? meta.jurisdiction.toLowerCase()
+        : '';
+      return recordJurisdiction.includes(requestedJurisdiction);
     });
 
     // Also check attestations
@@ -373,7 +376,7 @@ router.post('/submit', async (req: Request, res: Response) => {
           submitted_via: 'api',
         },
       })
-      .select('id, public_id')
+      .select('public_id')
       .single();
 
     if (insertError) {
