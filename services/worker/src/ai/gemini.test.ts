@@ -42,6 +42,7 @@ vi.mock('@google/generative-ai', () => {
 
 import { GeminiProvider } from './gemini.js';
 import type { ExtractionRequest } from './types.js';
+import { logger } from '../utils/logger.js';
 
 describe('GeminiProvider', () => {
   beforeEach(() => {
@@ -302,6 +303,64 @@ describe('GeminiProvider', () => {
         outputDimensionality: 768,
         content: { parts: [{ text: 'DEGREE University of Michigan' }] },
       });
+      fetchSpy.mockRestore();
+    });
+
+    it('does not log raw batch embedding error bodies that may contain PII', async () => {
+      const piiErrorBody = JSON.stringify({
+        error: {
+          message: 'Invalid text: Jane Doe jane.doe@example.com SSN 123-45-6789',
+          echoedRequest: 'Jane Doe credential text',
+        },
+      });
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => (
+        new Response(piiErrorBody, {
+          status: 500,
+          headers: {
+            'Content-Type': 'application/json',
+            'Content-Length': String(piiErrorBody.length),
+          },
+        })
+      ));
+
+      const provider = new GeminiProvider('test-key');
+      await expect(provider.generateEmbeddings([
+        { text: 'Jane Doe credential text' },
+      ])).rejects.toThrow('Batch embedding generation failed (status 500)');
+
+      expect(logger.error).toHaveBeenCalledWith(
+        expect.objectContaining({
+          status: 500,
+          contentLength: String(piiErrorBody.length),
+          model: 'gemini-embedding-001',
+        }),
+        'Gemini batch embedding API error',
+      );
+      for (const call of vi.mocked(logger.error).mock.calls) {
+        expect(JSON.stringify(call)).not.toContain('Jane Doe');
+        expect(JSON.stringify(call)).not.toContain('jane.doe@example.com');
+        expect(JSON.stringify(call)).not.toContain('123-45-6789');
+        expect(JSON.stringify(call)).not.toContain('echoedRequest');
+        expect(JSON.stringify(call)).not.toContain(piiErrorBody);
+      }
+      fetchSpy.mockRestore();
+    });
+
+    it('passes an abort timeout signal to batch embedding fetch', async () => {
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+        new Response(JSON.stringify({
+          embeddings: [{ values: new Array(768).fill(0.1) }],
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      );
+
+      const provider = new GeminiProvider('test-key');
+      await provider.generateEmbeddings([{ text: 'DEGREE University of Michigan' }]);
+
+      const init = fetchSpy.mock.calls[0]?.[1] as RequestInit | undefined;
+      expect(init?.signal).toBeInstanceOf(AbortSignal);
       fetchSpy.mockRestore();
     });
   });

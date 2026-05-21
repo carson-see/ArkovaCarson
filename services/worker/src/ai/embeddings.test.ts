@@ -8,20 +8,44 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { IAIProvider, EmbeddingResult } from './types.js';
 
+const mockDb = vi.hoisted(() => {
+  const credentialEmbeddingSnapshotFilter = vi.fn().mockResolvedValue({
+    data: [],
+    error: null,
+  });
+  const credentialEmbeddingSingle = vi.fn().mockResolvedValue({
+    data: { org_id: 'org-123', metadata: { issuerName: 'Test University' } },
+    error: null,
+  });
+  const credentialEmbeddingEq = vi.fn().mockReturnValue({
+    single: credentialEmbeddingSingle,
+  });
+  const credentialEmbeddingDeleteFilter = vi.fn().mockResolvedValue({ error: null });
+
+  return {
+    credentialEmbeddingUpsert: vi.fn().mockResolvedValue({ error: null }),
+    credentialEmbeddingSelect: vi.fn().mockReturnValue({
+      eq: credentialEmbeddingEq,
+      in: credentialEmbeddingSnapshotFilter,
+    }),
+    credentialEmbeddingSnapshotFilter,
+    credentialEmbeddingEq,
+    credentialEmbeddingSingle,
+    credentialEmbeddingDelete: vi.fn().mockReturnValue({
+      in: credentialEmbeddingDeleteFilter,
+    }),
+    credentialEmbeddingDeleteFilter,
+  };
+});
+
 // Mock the db module before importing the service
 vi.mock('../utils/db.js', () => ({
   db: {
     from: vi.fn().mockReturnValue({
       insert: vi.fn().mockReturnValue({ error: null }),
-      upsert: vi.fn().mockReturnValue({ error: null }),
-      select: vi.fn().mockReturnValue({
-        eq: vi.fn().mockReturnValue({
-          single: vi.fn().mockResolvedValue({
-            data: { org_id: 'org-123', metadata: { issuerName: 'Test University' } },
-            error: null,
-          }),
-        }),
-      }),
+      upsert: mockDb.credentialEmbeddingUpsert,
+      delete: mockDb.credentialEmbeddingDelete,
+      select: mockDb.credentialEmbeddingSelect,
     }),
     rpc: vi.fn().mockResolvedValue({ data: [], error: null }),
   },
@@ -90,6 +114,26 @@ describe('embeddings', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockDb.credentialEmbeddingUpsert.mockResolvedValue({ error: null });
+    mockDb.credentialEmbeddingSelect.mockReturnValue({
+      eq: mockDb.credentialEmbeddingEq,
+      in: mockDb.credentialEmbeddingSnapshotFilter,
+    });
+    mockDb.credentialEmbeddingSnapshotFilter.mockResolvedValue({
+      data: [],
+      error: null,
+    });
+    mockDb.credentialEmbeddingEq.mockReturnValue({
+      single: mockDb.credentialEmbeddingSingle,
+    });
+    mockDb.credentialEmbeddingSingle.mockResolvedValue({
+      data: { org_id: 'org-123', metadata: { issuerName: 'Test University' } },
+      error: null,
+    });
+    mockDb.credentialEmbeddingDelete.mockReturnValue({
+      in: mockDb.credentialEmbeddingDeleteFilter,
+    });
+    mockDb.credentialEmbeddingDeleteFilter.mockResolvedValue({ error: null });
     mockProvider = createMockProvider();
   });
 
@@ -237,6 +281,24 @@ describe('embeddings', () => {
       expect(result.success).toBe(false);
       expect(result.error).toContain('Provider down');
     });
+
+    it('rejects invalid embedding rows before storing them', async () => {
+      vi.mocked(mockProvider.generateEmbedding).mockResolvedValueOnce({
+        embedding: [Number.NaN],
+        model: 'gemini-embedding-001',
+      });
+
+      const result = await generateAndStoreEmbedding(mockProvider, {
+        anchorId: 'anchor-123',
+        orgId: 'org-123',
+        metadata: { credentialType: 'DEGREE' },
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('Invalid credential embedding row');
+      expect(mockDb.credentialEmbeddingUpsert).not.toHaveBeenCalled();
+      expect(deductAICredits).not.toHaveBeenCalled();
+    });
   });
 
   describe('batchReEmbed', () => {
@@ -341,6 +403,103 @@ describe('embeddings', () => {
       expect(batchProvider.generateEmbeddings).not.toHaveBeenCalled();
       expect(batchProvider.generateEmbedding).not.toHaveBeenCalled();
       expect(deductAICredits).not.toHaveBeenCalled();
+    });
+
+    it('rejects invalid native batch rows before storing them', async () => {
+      const batchProvider = createBatchMockProvider();
+      vi.mocked(batchProvider.generateEmbeddings!).mockResolvedValueOnce({
+        embeddings: [
+          { embedding: new Array(768).fill(0.1), model: 'gemini-embedding-001' },
+          { embedding: [Number.NaN], model: 'gemini-embedding-001' },
+          { embedding: new Array(768).fill(0.3), model: 'gemini-embedding-001' },
+        ],
+        model: 'gemini-embedding-001',
+      });
+
+      const results = await batchReEmbed(batchProvider, 'org-123', [
+        { anchorId: 'a1', metadata: { credentialType: 'DEGREE' } },
+        { anchorId: 'a2', metadata: { credentialType: 'CERTIFICATE' } },
+        { anchorId: 'a3', metadata: { credentialType: 'LICENSE' } },
+      ], 'user-123');
+
+      expect(results).toMatchObject({
+        total: 3,
+        succeeded: 0,
+        failed: 3,
+      });
+      expect(results.errors).toEqual([
+        { anchorId: 'a1', error: expect.stringContaining('Invalid credential embedding row') },
+        { anchorId: 'a2', error: expect.stringContaining('Invalid credential embedding row') },
+        { anchorId: 'a3', error: expect.stringContaining('Invalid credential embedding row') },
+      ]);
+      expect(mockDb.credentialEmbeddingUpsert).not.toHaveBeenCalled();
+      expect(deductAICredits).not.toHaveBeenCalled();
+    });
+
+    it('rolls back native batch rows when credit deduction fails after storage', async () => {
+      const batchProvider = createBatchMockProvider();
+      vi.mocked(deductAICredits).mockRejectedValueOnce(new Error('Credit ledger unavailable'));
+
+      const results = await batchReEmbed(batchProvider, 'org-123', [
+        { anchorId: 'a1', metadata: { credentialType: 'DEGREE' } },
+        { anchorId: 'a2', metadata: { credentialType: 'CERTIFICATE' } },
+        { anchorId: 'a3', metadata: { credentialType: 'LICENSE' } },
+      ], 'user-123');
+
+      expect(results).toMatchObject({
+        total: 3,
+        succeeded: 0,
+        failed: 3,
+      });
+      expect(results.errors).toEqual([
+        { anchorId: 'a1', error: 'Credit ledger unavailable' },
+        { anchorId: 'a2', error: 'Credit ledger unavailable' },
+        { anchorId: 'a3', error: 'Credit ledger unavailable' },
+      ]);
+      expect(mockDb.credentialEmbeddingUpsert).toHaveBeenCalledTimes(1);
+      expect(mockDb.credentialEmbeddingDelete).toHaveBeenCalledTimes(1);
+      expect(mockDb.credentialEmbeddingDeleteFilter).toHaveBeenCalledWith('anchor_id', [
+        'a1',
+        'a2',
+        'a3',
+      ]);
+    });
+
+    it('restores previous native batch rows when credit deduction fails after replacing them', async () => {
+      const batchProvider = createBatchMockProvider();
+      const previousRow = {
+        anchor_id: 'a1',
+        org_id: 'org-123',
+        embedding: new Array(768).fill(0.9),
+        model_version: 'previous-model',
+        source_text_hash: 'a'.repeat(64),
+      };
+      mockDb.credentialEmbeddingSnapshotFilter.mockResolvedValueOnce({
+        data: [previousRow],
+        error: null,
+      });
+      vi.mocked(deductAICredits).mockRejectedValueOnce(new Error('Credit ledger unavailable'));
+
+      const results = await batchReEmbed(batchProvider, 'org-123', [
+        { anchorId: 'a1', metadata: { credentialType: 'DEGREE' } },
+        { anchorId: 'a2', metadata: { credentialType: 'CERTIFICATE' } },
+        { anchorId: 'a3', metadata: { credentialType: 'LICENSE' } },
+      ], 'user-123');
+
+      expect(results).toMatchObject({
+        total: 3,
+        succeeded: 0,
+        failed: 3,
+      });
+      expect(mockDb.credentialEmbeddingUpsert).toHaveBeenCalledTimes(2);
+      expect(mockDb.credentialEmbeddingDeleteFilter).toHaveBeenCalledWith('anchor_id', [
+        'a2',
+        'a3',
+      ]);
+      expect(mockDb.credentialEmbeddingUpsert).toHaveBeenLastCalledWith(
+        [previousRow],
+        { onConflict: 'anchor_id' },
+      );
     });
 
     it('processes multiple anchors', async () => {
