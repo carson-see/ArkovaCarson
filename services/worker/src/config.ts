@@ -272,6 +272,8 @@ const ConfigSchema = z.object({
   enableAllocationRollover: boolFlag(false),
   /** ENABLE_VISUAL_FRAUD_DETECTION — gates legacy /ai/fraud/visual, which now fails closed pending SCRUM-1955 client-side worker. */
   enableVisualFraudDetection: boolFlag(false),
+  /** ENABLE_PROFESSIONAL_EDUCATION_SCHEMA_READY — unlocks PR #841 CPE/CLE runtime paths only after schema + ledger reconciliation. */
+  enableProfessionalEducationSchemaReady: boolFlag(false),
   /** ENABLE_GRC_INTEGRATIONS — Vanta/Drata/Anecdotes oauth + push. Default false. */
   enableGrcIntegrations: boolFlag(false),
   /** ENABLE_ADES_SIGNATURES — Phase III electronic signature (eIDAS). Default false. */
@@ -631,6 +633,7 @@ function loadConfig(): Config {
     enableRuleActionDispatcher: process.env.ENABLE_RULE_ACTION_DISPATCHER,
     enableAllocationRollover: process.env.ENABLE_ALLOCATION_ROLLOVER,
     enableVisualFraudDetection: process.env.ENABLE_VISUAL_FRAUD_DETECTION,
+    enableProfessionalEducationSchemaReady: process.env.ENABLE_PROFESSIONAL_EDUCATION_SCHEMA_READY,
     enableGrcIntegrations: process.env.ENABLE_GRC_INTEGRATIONS,
     enableAdesSignatures: process.env.ENABLE_ADES_SIGNATURES,
     enableDemoInjector: process.env.ENABLE_DEMO_INJECTOR,

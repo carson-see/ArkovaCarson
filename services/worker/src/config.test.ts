@@ -165,6 +165,10 @@ describe('config singleton', () => {
     expect(config.enableProdNetworkAnchoring).toBe(false);
   });
 
+  it('defaults professional education schema readiness to false', () => {
+    expect(config.enableProfessionalEducationSchemaReady).toBe(false);
+  });
+
   it('defaults bitcoinNetwork to signet', () => {
     expect(config.bitcoinNetwork).toBe('signet');
   });

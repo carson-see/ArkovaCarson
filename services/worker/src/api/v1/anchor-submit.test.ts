@@ -18,7 +18,10 @@ const { mockSelectChain, mockInsertChain, mockInsert, mockLogger, mockConfig } =
   // Mock the worker config so transitive import (anchor-submit → orgCredits →
   // config.js) doesn't try to load required env vars in the test env and
   // throw "Invalid worker configuration" before any test runs.
-  const mockConfig = { enableOrgCreditEnforcement: false };
+  const mockConfig = {
+    enableOrgCreditEnforcement: false,
+    enableProfessionalEducationSchemaReady: true,
+  };
   return { mockSelectChain, mockInsertChain, mockInsert, mockLogger, mockConfig };
 });
 
@@ -105,6 +108,7 @@ function expectPrivateSourceUrlRejection(res: request.Response) {
 describe('POST /api/v1/anchor — Zod validation', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockConfig.enableProfessionalEducationSchemaReady = true;
     mockInsert.mockImplementation(() => ({ select: vi.fn(() => ({ single: mockInsertChain.single })) }));
     mockSelectChain.maybeSingle.mockResolvedValue({ data: null, error: null });
     mockInsertChain.single.mockResolvedValue({
@@ -213,6 +217,57 @@ describe('POST /api/v1/anchor — Zod validation', () => {
       }),
       max_attempts: 5,
     }));
+  });
+
+  it('503s CPE submissions before any DB call when professional education schema is not ready', async () => {
+    mockConfig.enableProfessionalEducationSchemaReady = false;
+
+    const res = await request(makeApp()).post('/v1/anchor').send({
+      fingerprint: VALID_FINGERPRINT,
+      credential_type: 'CPE',
+      metadata: {
+        credential_title: 'Advanced Tax Planning CPE',
+      },
+    });
+
+    expect(res.status).toBe(503);
+    expect(res.body.error).toBe('professional_education_schema_unavailable');
+    expect(res.body.message).toContain('Professional education schema is not ready');
+    expect(mockSelectChain.maybeSingle).not.toHaveBeenCalled();
+    expect(mockInsert).not.toHaveBeenCalled();
+    expect(submitJob).not.toHaveBeenCalled();
+  });
+
+  it('keeps existing CLE anchoring available but skips extraction enqueue when schema is not ready', async () => {
+    mockConfig.enableProfessionalEducationSchemaReady = false;
+    mockInsertChain.single.mockResolvedValueOnce({
+      data: {
+        id: '550e8400-e29b-41d4-a716-446655440001',
+        public_id: 'ARK-2026-CLE12345',
+        fingerprint: VALID_FINGERPRINT,
+        status: 'PENDING',
+        credential_type: 'CLE',
+        metadata: {
+          credential_title: 'Ethics CLE',
+          source_provider: 'westlaw',
+        },
+        created_at: '2026-04-27T00:00:00Z',
+      },
+      error: null,
+    });
+
+    const res = await request(makeApp()).post('/v1/anchor').send({
+      fingerprint: VALID_FINGERPRINT,
+      credential_type: 'CLE',
+      metadata: {
+        credential_title: 'Ethics CLE',
+        source_provider: 'westlaw',
+      },
+    });
+
+    expect(res.status).toBe(201);
+    expect(mockInsert).toHaveBeenCalledWith(expect.objectContaining({ credential_type: 'CLE' }));
+    expect(submitJob).not.toHaveBeenCalled();
   });
 
   it('accepts BADGE credential type and persists public-safe evidence metadata', async () => {
