@@ -5,7 +5,7 @@
  * Resolves UX-3: BillingOverview exists but had no dedicated page.
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
@@ -25,8 +25,13 @@ export function BillingPage() {
   const [billingInfo, setBillingInfo] = useState<BillingInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const latestRequestIdRef = useRef(0);
 
   const fetchBillingInfo = useCallback(async () => {
+    const requestId = latestRequestIdRef.current + 1;
+    latestRequestIdRef.current = requestId;
+    const isLatestRequest = () => latestRequestIdRef.current === requestId;
+
     setLoading(true);
     setLoadError(null);
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
@@ -49,13 +54,19 @@ export function BillingPage() {
       }
 
       const data = await response.json() as BillingInfo;
-      setBillingInfo(data);
+      if (isLatestRequest()) {
+        setBillingInfo(data);
+      }
     } catch {
-      setBillingInfo(null);
-      setLoadError(BILLING_PAGE_LABELS.DATA_UNAVAILABLE_TITLE);
+      if (isLatestRequest()) {
+        setBillingInfo(null);
+        setLoadError(BILLING_PAGE_LABELS.DATA_UNAVAILABLE_TITLE);
+      }
     } finally {
       if (timeoutId) clearTimeout(timeoutId);
-      setLoading(false);
+      if (isLatestRequest()) {
+        setLoading(false);
+      }
     }
   }, []);
 

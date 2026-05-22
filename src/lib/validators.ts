@@ -298,6 +298,31 @@ export const ProfileUpdateSchema = z.object({
 export type ProfileUpdate = z.infer<typeof ProfileUpdateSchema>;
 
 // =============================================================================
+// INVITATION SCHEMAS
+// =============================================================================
+
+const inviteRoleSchema = z.enum(['INDIVIDUAL', 'ORG_ADMIN'], {
+  error: 'Please select a valid member role.',
+});
+
+export const InviteMemberSchema = z.object({
+  email: z
+    .string()
+    .trim()
+    .email('Please enter a valid email address.')
+    .transform((value) => value.toLowerCase()),
+  role: inviteRoleSchema,
+  orgId: z.string().uuid('Please select a valid organization.'),
+  orgName: z.string().trim().min(1, 'Organization name is required.'),
+  inviterName: z.preprocess(
+    (value) => (typeof value === 'string' && value.trim() === '' ? undefined : value),
+    z.string().trim().min(1, 'Inviter name is required.').optional(),
+  ),
+});
+
+export type InviteMemberInput = z.input<typeof InviteMemberSchema>;
+
+// =============================================================================
 // AUDIT EVENT SCHEMAS
 // =============================================================================
 

@@ -29,7 +29,7 @@ import { useInviteMember } from './useInviteMember';
 const defaultOptions = {
   email: 'test@example.com',
   role: 'INDIVIDUAL' as const,
-  orgId: 'org-123',
+  orgId: '11111111-1111-4111-8111-111111111111',
   orgName: 'Test Org',
 };
 
@@ -54,7 +54,7 @@ describe('useInviteMember', () => {
     expect(mockRpc).toHaveBeenCalledWith('invite_member', {
       invitee_email: 'test@example.com',
       invitee_role: 'INDIVIDUAL',
-      target_org_id: 'org-123',
+      target_org_id: '11111111-1111-4111-8111-111111111111',
     });
     expect(result.current.error).toBeNull();
   });
@@ -113,7 +113,7 @@ describe('useInviteMember', () => {
     expect(result.current.error).toContain('permission');
   });
 
-  it('should handle invalid email error', async () => {
+  it('should handle an invalid email error from the invite RPC', async () => {
     mockRpc.mockResolvedValue({
       data: null,
       error: { message: 'invalid email format' },
@@ -123,11 +123,39 @@ describe('useInviteMember', () => {
 
     let success: boolean;
     await act(async () => {
-      success = await result.current.inviteMember({ ...defaultOptions, email: 'bad-email' });
+      success = await result.current.inviteMember({ ...defaultOptions, email: 'valid@example.com' });
     });
 
     expect(success!).toBe(false);
     expect(result.current.error).toContain('valid email');
+  });
+
+  it('should reject an invalid invite payload before creating the invitation record', async () => {
+    const { result } = renderHook(() => useInviteMember());
+
+    let success: boolean;
+    await act(async () => {
+      success = await result.current.inviteMember({ ...defaultOptions, email: 'bad-email' });
+    });
+
+    expect(success!).toBe(false);
+    expect(mockRpc).not.toHaveBeenCalled();
+    expect(mockFetch).not.toHaveBeenCalled();
+    expect(result.current.error).toContain('valid email');
+  });
+
+  it('should reject an invalid organization id before creating the invitation record', async () => {
+    const { result } = renderHook(() => useInviteMember());
+
+    let success: boolean;
+    await act(async () => {
+      success = await result.current.inviteMember({ ...defaultOptions, orgId: 'org-123' });
+    });
+
+    expect(success!).toBe(false);
+    expect(mockRpc).not.toHaveBeenCalled();
+    expect(mockFetch).not.toHaveBeenCalled();
+    expect(result.current.error).toContain('valid organization');
   });
 
   it('should fail when the invitation email endpoint rejects after RPC success', async () => {
