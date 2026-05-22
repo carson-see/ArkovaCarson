@@ -111,7 +111,7 @@ CREATE POLICY vr_org_select ON public.version_reviews
     )
   );
 
--- Org members: INSERT reviews for versions in their org
+-- Org admins/owners: INSERT reviews for versions in their org
 DROP POLICY IF EXISTS vr_org_insert ON public.version_reviews;
 CREATE POLICY vr_org_insert ON public.version_reviews
   FOR INSERT TO authenticated
@@ -121,6 +121,7 @@ CREATE POLICY vr_org_insert ON public.version_reviews
       JOIN org_members om ON om.org_id = edv.org_id
       WHERE edv.id = version_reviews.version_id
         AND om.user_id = (SELECT auth.uid())
+        AND om.role IN ('admin', 'owner')
     )
   );
 

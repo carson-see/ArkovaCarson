@@ -16,9 +16,10 @@ vi.mock('../utils/logger.js', () => ({
 
 const mockSelectEq = vi.fn();
 const mockSelectEq2 = vi.fn();
+const mockSelectEqStatus = vi.fn();
 const mockInsert = vi.fn();
 
-// Minimal db mock that chains .from().select().eq().eq().single()
+// Minimal db mock that chains .from().select().eq().eq().eq().single()
 const mockDb = {
   from: vi.fn(),
 };
@@ -39,7 +40,8 @@ const FINGERPRINT_B = 'sha256-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
 const EXISTING_ANCHOR_ID = '44444444-4444-4444-8444-444444444444';
 
 function wireAnchorsQuery(result: { data: unknown; error: unknown }) {
-  mockSelectEq2.mockReturnValue({ single: () => Promise.resolve(result) });
+  mockSelectEqStatus.mockReturnValue({ single: () => Promise.resolve(result) });
+  mockSelectEq2.mockReturnValue({ eq: mockSelectEqStatus });
   mockSelectEq.mockReturnValue({ eq: mockSelectEq2 });
   mockDb.from.mockImplementation((table: string) => {
     if (table === 'anchors') {
@@ -124,6 +126,7 @@ describe('detectVersionConflict', () => {
     expect(mockDb.from).toHaveBeenCalledWith('anchors');
     expect(mockSelectEq).toHaveBeenCalledWith('org_id', ORG_ID);
     expect(mockSelectEq2).toHaveBeenCalledWith('external_file_id', EXTERNAL_FILE_ID);
+    expect(mockSelectEqStatus).toHaveBeenCalledWith('status', 'SECURED');
   });
 });
 

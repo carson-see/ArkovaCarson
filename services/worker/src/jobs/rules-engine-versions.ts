@@ -53,13 +53,13 @@ export async function detectVersionConflict(
   newFingerprint: string,
 ): Promise<ConflictResult> {
   try {
-    // Look for an existing SECURED anchor with this external_file_id in the org
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data, error } = await (db as any)
       .from('anchors')
       .select('id, fingerprint')
       .eq('org_id', orgId)
       .eq('external_file_id', externalFileId)
+      .eq('status', 'SECURED')
       .single();
 
     if (error || !data) {

@@ -75,7 +75,7 @@ function EmptyState() {
   );
 }
 
-function ErrorDisplay({ message, onRetry }: { message: string; onRetry: () => void }) {
+function ErrorDisplay({ message: _message, onRetry }: { message: string; onRetry: () => void }) {
   return (
     <Alert variant="destructive" data-testid="version-conflicts-error">
       <AlertTriangle className="h-4 w-4" />
