@@ -18,4 +18,14 @@ describe('resolveSafeWorkerEndpoint', () => {
     expect(() => resolveSafeWorkerEndpoint('http://worker.example.test', '/api/status'))
       .toThrow('Worker endpoint must use HTTPS outside localhost.');
   });
+
+  it('rejects absolute endpoint paths that would override the worker host', () => {
+    expect(() => resolveSafeWorkerEndpoint('https://worker.example.test', 'https://evil.example.test/api/status'))
+      .toThrow('Worker endpoint path must stay on the configured worker origin.');
+  });
+
+  it('rejects protocol-relative endpoint paths that would override the worker host', () => {
+    expect(() => resolveSafeWorkerEndpoint('https://worker.example.test', '//evil.example.test/api/status'))
+      .toThrow('Worker endpoint path must stay on the configured worker origin.');
+  });
 });
