@@ -407,7 +407,31 @@ async function batchReEmbedNative(
     errors: [],
   };
 
-  const credits = await checkAICredits(orgId, userId);
+  const anchorIdCounts = new Map<string, number>();
+  for (const item of prepared) {
+    anchorIdCounts.set(item.anchorId, (anchorIdCounts.get(item.anchorId) ?? 0) + 1);
+  }
+  if ([...anchorIdCounts.values()].some((count) => count > 1)) {
+    result.failed = items.length;
+    result.errors = items.map((item) => ({
+      anchorId: item.anchorId,
+      error: 'Duplicate anchorId in batch',
+    }));
+    return result;
+  }
+
+  let credits: Awaited<ReturnType<typeof checkAICredits>>;
+  try {
+    credits = await checkAICredits(orgId, userId);
+  } catch (err) {
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    result.failed = items.length;
+    result.errors = items.map((item) => ({
+      anchorId: item.anchorId,
+      error: errorMessage || 'Insufficient AI credits for embedding batch',
+    }));
+    return result;
+  }
   if (!credits?.hasCredits || credits.remaining < items.length) {
     result.failed = items.length;
     result.errors = items.map((item) => ({

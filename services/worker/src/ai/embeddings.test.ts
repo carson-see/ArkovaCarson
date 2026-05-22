@@ -423,6 +423,54 @@ describe('embeddings', () => {
       expect(deductAICredits).not.toHaveBeenCalled();
     });
 
+    it('returns batch errors when the native credit pre-check rejects', async () => {
+      const batchProvider = createBatchMockProvider();
+      vi.mocked(checkAICredits).mockRejectedValueOnce(new Error('credit service unavailable'));
+
+      const results = await batchReEmbed(batchProvider, 'org-123', [
+        { anchorId: 'a1', metadata: { credentialType: 'DEGREE' } },
+        { anchorId: 'a2', metadata: { credentialType: 'CERTIFICATE' } },
+      ], 'user-123');
+
+      expect(results).toMatchObject({
+        total: 2,
+        succeeded: 0,
+        failed: 2,
+      });
+      expect(results.errors).toEqual([
+        { anchorId: 'a1', error: 'credit service unavailable' },
+        { anchorId: 'a2', error: 'credit service unavailable' },
+      ]);
+      expect(batchProvider.generateEmbeddings).not.toHaveBeenCalled();
+      expect(mockDb.credentialEmbeddingUpsert).not.toHaveBeenCalled();
+      expect(deductAICredits).not.toHaveBeenCalled();
+    });
+
+    it('rejects duplicate anchor IDs before native embedding generation', async () => {
+      const batchProvider = createBatchMockProvider();
+
+      const results = await batchReEmbed(batchProvider, 'org-123', [
+        { anchorId: 'a1', metadata: { credentialType: 'DEGREE' } },
+        { anchorId: 'a1', metadata: { credentialType: 'CERTIFICATE' } },
+        { anchorId: 'a2', metadata: { credentialType: 'LICENSE' } },
+      ], 'user-123');
+
+      expect(results).toMatchObject({
+        total: 3,
+        succeeded: 0,
+        failed: 3,
+      });
+      expect(results.errors).toEqual([
+        { anchorId: 'a1', error: 'Duplicate anchorId in batch' },
+        { anchorId: 'a1', error: 'Duplicate anchorId in batch' },
+        { anchorId: 'a2', error: 'Duplicate anchorId in batch' },
+      ]);
+      expect(checkAICredits).not.toHaveBeenCalled();
+      expect(batchProvider.generateEmbeddings).not.toHaveBeenCalled();
+      expect(mockDb.credentialEmbeddingUpsert).not.toHaveBeenCalled();
+      expect(deductAICredits).not.toHaveBeenCalled();
+    });
+
     it('rejects invalid native batch rows before storing them', async () => {
       const batchProvider = createBatchMockProvider();
       vi.mocked(batchProvider.generateEmbeddings!).mockResolvedValueOnce({
