@@ -23,7 +23,7 @@ Idempotent — safe to re-run. Each step uses `describe || create` so repeats do
 | 03 | Log bucket `arkova-audit` in `us-central1`, 2555-day retention | Pass `LOCK_LOG_BUCKET=true` to lock the retention policy (irreversible). |
 | 03 | Service account `audit-logging-writer-sa@arkova1.iam.gserviceaccount.com` with `roles/logging.logWriter` | The worker uses this SA to write audit entries. |
 | 02 | BigQuery dataset `arkova_analytics` in `us-central1` | Starter tables `anchors`, `verifications`, `audit_events`, day-partitioned on `created_at`. |
-| 04 | Monitoring service `arkova-worker` + 3 SLOs | Availability 99.9/28d, p95 latency ≤ 500ms / 95% / 7d, batch-anchor success 99% / 24h. |
+| 04 | Monitoring service `arkova-worker` + 4 SLOs | Worker availability 99.9/28d, worker p95 latency ≤ 500ms / 95% / 7d, batch-anchor success 99% / 24h, Verification API p95 latency ≤ 200ms / 95% / 7d. Run `scripts/gcp-setup/apply-monitoring.sh` after notification channels exist. |
 
 ---
 
@@ -42,26 +42,60 @@ The SA exists after provisioning, but the 611-line `GeminiProvider` is still cal
 5. Flip the flag in prod after parity is confirmed.
 6. Retire `GEMINI_API_KEY` in a follow-up.
 
-### GCP-MAX-04: Alert policies
+### GCP-MAX-04: Monitoring-as-code
 
-SLOs are declarative; alert policies need a **notification channel ID** per environment (PagerDuty integration, Slack webhook channel, email list). Creating them automatically requires values we don't hardcode.
+SCRUM-1064 now lives as repo-managed config plus operator-provided channel IDs:
 
-**Do this manually after provision.sh runs:**
+| Artifact | Path | Notes |
+|---|---|---|
+| SLO YAML | `scripts/gcp-setup/slos/` | Human-readable SLO definitions for review. |
+| SLO REST payloads | `scripts/gcp-setup/slos-json/` | Consumed by `apply-monitoring.sh`; avoids relying on unavailable stable `gcloud monitoring services/slos` commands. |
+| Metric descriptors | `scripts/gcp-setup/metrics/` | Custom metrics for batch-anchor results, Gemini token burn, and Verification API latency. |
+| Dashboard | `scripts/gcp-setup/dashboards/arkova-ops-health.json` | Cloud Run worker, edge availability, batch anchor, and Gemini token burn widgets. |
+| Alert policies | `scripts/gcp-setup/alert-policies/` | 1x info + 2x page SLO burn policies for every SLO. |
+| Synthetic burn harness | `scripts/gcp-setup/synthetic-burn.sh` | Operator-gated Cloud Monitoring metric injection for alert-path proof. |
+
+**One-time: create or locate the Slack notification channel.**
 
 ```bash
-# One-time: create a Slack notification channel
-gcloud monitoring channels create \
-  --display-name="Arkova ops Slack" \
-  --type=slack \
-  --channel-labels=channel_name=#ops-alerts \
-  --channel-labels=auth_token=$(gcloud secrets versions access latest --secret=slack-ops-webhook)
-
-# List channels to grab the ID (projects/arkova1/notificationChannels/XXXX)
-gcloud monitoring channels list
-
-# Then for each SLO, create an alert policy with burn-rate threshold 2x
-# (details in Cloud Monitoring → SLOs → <slo> → Create alerting policy)
+gcloud monitoring channels list \
+  --project=arkova1 \
+  --filter='displayName="Arkova ops Slack"'
 ```
+
+If the channel does not exist, create it through the Cloud Monitoring UI or an operator-approved channel creation flow. Do not commit Slack/PagerDuty tokens or channel IDs to repo.
+
+**Apply monitoring config after channel IDs are known.**
+
+```bash
+SLACK_OPS_ALERTS_CHANNEL="projects/arkova1/notificationChannels/XXXX" \
+PAGERDUTY_NOTIFICATION_CHANNEL="projects/arkova1/notificationChannels/YYYY" \
+GCP_PROJECT_ID=arkova1 \
+GCP_REGION=us-central1 \
+bash scripts/gcp-setup/apply-monitoring.sh
+```
+
+`PAGERDUTY_NOTIFICATION_CHANNEL` is optional. `SLACK_OPS_ALERTS_CHANNEL` is required because the parent story requires Slack `#ops-alerts` burn notifications.
+
+**Error budget policy.**
+
+- 1x burn alert: informational investigation in Slack `#ops-alerts`.
+- 2x burn alert: page on-call and start incident triage.
+- If remaining error budget is `<= 20%`, pause non-critical deploys until the budget recovers or the incident commander grants an explicit exception.
+- SLO burn alerts are not a substitute for Sentry application exceptions; they are the operational budget signal.
+
+**Synthetic burn proof.**
+
+Run only in an approved project/environment:
+
+```bash
+ALLOW_SYNTHETIC_SLO_BURN=true \
+ARKOVA_MONITORING_ENVIRONMENT=staging \
+GCP_PROJECT_ID=arkova1 \
+bash scripts/gcp-setup/synthetic-burn.sh
+```
+
+Capture the command output, timestamp, Cloud Monitoring incident/policy evidence, and Slack `#ops-alerts` delivery proof before transitioning SCRUM-1064 or SCRUM-1991 to Done.
 
 ### GCP-MAX-05: VPC Service Controls + CMEK
 
@@ -110,6 +144,15 @@ gcloud scheduler jobs create http cloud-logging-drain \
   --http-method=POST \
   --oidc-service-account-email=270018525501-compute@developer.gserviceaccount.com \
   --oidc-token-audience="https://arkova-worker-270018525501.us-central1.run.app"
+```
+
+Monitoring config is separate from the audit drain:
+
+```bash
+SLACK_OPS_ALERTS_CHANNEL="projects/arkova1/notificationChannels/XXXX" \
+GCP_PROJECT_ID=arkova1 \
+GCP_REGION=us-central1 \
+bash scripts/gcp-setup/apply-monitoring.sh
 ```
 
 ---
