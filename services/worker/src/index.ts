@@ -343,9 +343,9 @@ const integrationsAuthGate = (req: Request, res: Response, next: NextFunction) =
   if (req.path.endsWith('/oauth/callback')) return next();
   return requireAuthMw(req, res, next);
 };
+app.use('/api/v1/integrations', corsMiddleware);
 app.use(
   '/api/v1/integrations',
-  corsMiddleware,
   pathScopedKillSwitch('/google_drive', 'ENABLE_DRIVE_OAUTH'),
   pathScopedMiddleware('/google_drive', rateLimiters.api),
   pathScopedMiddleware('/google_drive', integrationsAuthGate),
@@ -353,7 +353,6 @@ app.use(
 );
 app.use(
   '/api/v1/integrations',
-  corsMiddleware,
   pathScopedKillSwitch('/docusign', 'ENABLE_DOCUSIGN_OAUTH'),
   pathScopedMiddleware('/docusign', rateLimiters.api),
   pathScopedMiddleware('/docusign', integrationsAuthGate),
