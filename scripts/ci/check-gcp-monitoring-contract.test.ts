@@ -144,7 +144,8 @@ describe('GCP-MAX-04 monitoring contract', () => {
 
     expect(harness).toContain('ALLOW_SYNTHETIC_SLO_BURN');
     expect(harness).toContain('GCP_PROJECT_ID must be set explicitly');
-    expect(harness).toContain('SLO_DRIVING_SYNTHETIC_LABEL="false"');
+    expect(harness).toContain('BATCH_METRIC_SYNTHETIC_LABEL="false"');
+    expect(harness).toContain('so Cloud Monitoring includes it in the SLO filter');
     expect(harness).toContain('synthetic');
     expect(harness).toContain('custom.googleapis.com/arkova/batch_anchor_run_result');
     expect(harness).toContain('custom.googleapis.com/arkova/gemini_token_burn');

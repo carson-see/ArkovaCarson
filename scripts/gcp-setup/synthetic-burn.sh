@@ -10,7 +10,8 @@ PROJECT_ID="${GCP_PROJECT_ID:-}"
 ENVIRONMENT="${ARKOVA_MONITORING_ENVIRONMENT:-staging}"
 BATCH_FAILURES="${SYNTHETIC_BATCH_FAILURES:-10}"
 GEMINI_TOKENS="${SYNTHETIC_GEMINI_TOKENS:-100000}"
-SLO_DRIVING_SYNTHETIC_LABEL="false"
+# Batch metric uses synthetic="false" so Cloud Monitoring includes it in the SLO filter.
+BATCH_METRIC_SYNTHETIC_LABEL="false"
 
 require_command() {
   command -v "$1" >/dev/null 2>&1 || {
@@ -60,7 +61,7 @@ cat >"$PAYLOAD" <<JSON
         "labels": {
           "result": "failed",
           "environment": "${ENVIRONMENT}",
-          "synthetic": "${SLO_DRIVING_SYNTHETIC_LABEL}"
+          "synthetic": "${BATCH_METRIC_SYNTHETIC_LABEL}"
         }
       },
       "resource": {
