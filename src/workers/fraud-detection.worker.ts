@@ -1,4 +1,5 @@
 import type { FraudDetectionResult, FraudSignal } from '../lib/fraudDetection';
+import { z } from 'zod';
 
 const FRAUD_ANALYSIS_METHOD = 'client_side_worker_v2';
 
@@ -124,28 +125,33 @@ function toArrayBuffer(value: unknown): ArrayBuffer | null {
   return null;
 }
 
+const FraudWorkerRequestSchema = z.object({
+  documentBytes: z.union([
+    z.instanceof(ArrayBuffer),
+    z.custom<ArrayBufferView>((value) => ArrayBuffer.isView(value)),
+  ]).transform((value, ctx) => {
+    const documentBytes = toArrayBuffer(value);
+    if (!documentBytes) {
+      ctx.addIssue({ code: 'custom', message: 'documentBytes must be binary data' });
+      return z.NEVER;
+    }
+    return documentBytes;
+  }),
+  credentialType: z.string(),
+  metadataHints: z.preprocess(
+    (value) => {
+      if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+        return value;
+      }
+      return Object.fromEntries(Object.entries(value as Record<string, unknown>));
+    },
+    z.record(z.string(), z.string()),
+  ).optional(),
+}).strict();
+
 function parseWorkerRequest(value: unknown): FraudWorkerRequest | null {
-  if (typeof value !== 'object' || value === null) return null;
-  const record = value as Record<string, unknown>;
-  const documentBytes = toArrayBuffer(record.documentBytes);
-  if (!documentBytes || typeof record.credentialType !== 'string') return null;
-
-  const metadataHints = record.metadataHints;
-  if (metadataHints !== undefined) {
-    if (typeof metadataHints !== 'object' || metadataHints === null || Array.isArray(metadataHints)) {
-      return null;
-    }
-    const entries = Object.entries(metadataHints);
-    if (!entries.every(([key, val]) => typeof key === 'string' && typeof val === 'string')) {
-      return null;
-    }
-  }
-
-  return {
-    documentBytes,
-    credentialType: record.credentialType,
-    metadataHints: metadataHints as Record<string, string> | undefined,
-  };
+  const parsed = FraudWorkerRequestSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
 }
 
 export function handleFraudWorkerMessage(value: unknown): FraudDetectionResult {

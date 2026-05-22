@@ -18,7 +18,7 @@ import { render, screen, cleanup, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { IssueCredentialForm } from './IssueCredentialForm';
-import { CREDENTIAL_TYPE_LABELS, ISSUE_CREDENTIAL_LABELS } from '@/lib/copy';
+import { CREDENTIAL_TYPE_LABELS, ISSUE_CREDENTIAL_LABELS, METADATA_FIELD_LABELS } from '@/lib/copy';
 import { detectFraudForDocument } from '@/lib/fraudDetection';
 
 const mockProfile: { id: string; role: string; org_id: string | null } = {
@@ -372,6 +372,29 @@ describe('SCRUM-1755 IssueCredentialForm split + proof_url', () => {
       fraud_processing_time_ms: 4,
     });
     expect(JSON.stringify(payload)).not.toContain('raw-issue-credential-bytes-that-must-not-leak');
+  });
+
+  it('keeps recipient email out of fraud metadata hints', async () => {
+    const user = userEvent.setup();
+    mockSplitEnabled.mockResolvedValue(false);
+    renderForm();
+
+    await waitForUploadReady(true);
+    await chooseCertificate(user);
+    await user.type(
+      screen.getByLabelText(new RegExp(METADATA_FIELD_LABELS.RECIPIENT_EMAIL, 'i')),
+      'learner@example.test',
+    );
+    await user.click(screen.getByRole('button', { name: ISSUE_CREDENTIAL_LABELS.ISSUE_BUTTON }));
+
+    await waitFor(() => expect(mockAnchorInsert).toHaveBeenCalledTimes(1));
+    expect(detectFraudForDocument).toHaveBeenCalledWith(
+      expect.any(File),
+      expect.objectContaining({
+        credentialType: 'CERTIFICATE',
+        metadataHints: {},
+      }),
+    );
   });
 
   it('honors an explicit null role instead of falling back to the profile role', async () => {
