@@ -176,6 +176,10 @@ export function classifyMigrationRow(row: MigrationRow): ArtifactClassification 
     }
   }
 
+  if (version === CANONICAL_INIT_VERSION) {
+    return { row, reason: `init version (${version}) with non-canonical name (${name})` };
+  }
+
   // Timestamp-format version (14+ digits, but not a canonical init row).
   if (TIMESTAMP_VERSION_RE.test(version)) {
     return { row, reason: `timestamp version (${version}) — likely preview-branch or staging-only` };

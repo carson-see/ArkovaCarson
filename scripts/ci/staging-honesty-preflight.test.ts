@@ -118,6 +118,13 @@ describe('classifyMigrationRow', () => {
     expect(result).not.toBeNull();
     expect(result!.reason).toMatch(/pr695_/);
   });
+
+  it('flags a non-canonical init row with a specific reason', () => {
+    const result = classifyMigrationRow({ version: '00000000000000', name: 'sneaky_but_no_staging_prefix' });
+    expect(result).not.toBeNull();
+    expect(result!.reason).toMatch(/init version/i);
+    expect(result!.reason).toMatch(/non-canonical name/i);
+  });
 });
 
 // ---------------------------------------------------------------------------
