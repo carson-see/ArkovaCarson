@@ -10,12 +10,12 @@
  * AUDIT-07: RouteErrorBoundary wraps route sections for graceful sub-route errors.
  */
 
-import React, { Suspense, useEffect } from 'react';
+import React, { Suspense, useEffect, useRef } from 'react';
 import { QueryClientProvider } from '@tanstack/react-query';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { Loader2 } from 'lucide-react';
 import { ArkovaLogo } from '@/components/layout/ArkovaLogo';
-import { Toaster } from 'sonner';
+import { Toaster, toast } from 'sonner';
 import { queryClient } from '@/lib/queryClient';
 import { useTheme } from '@/hooks/useTheme';
 import { useAuth } from '@/hooks/useAuth';
@@ -27,6 +27,7 @@ import { ErrorBoundary } from '@/components/layout/ErrorBoundary';
 import { RouteErrorBoundary } from '@/components/layout/RouteErrorBoundary';
 import { ROUTES, MAIN_APP_DESTINATIONS, destinationToRoute } from '@/lib/routes';
 import { prefetchCriticalRoutes } from '@/lib/prefetch';
+import { TOAST_DURATIONS_MS } from '@/lib/toastConfig';
 
 // ── Lazy-loaded page components (AUDIT-13: route-level code splitting) ──────
 const LoginPage = React.lazy(() => import('@/pages/LoginPage').then(m => ({ default: m.LoginPage })));
@@ -148,6 +149,21 @@ export function isSearchSubdomain(): boolean {
   return typeof window !== 'undefined' && window.location.hostname === 'search.arkova.ai';
 }
 
+function ToastNavigationReset() {
+  const location = useLocation();
+  const hasMounted = useRef(false);
+
+  useEffect(() => {
+    if (hasMounted.current) {
+      toast.dismiss();
+    } else {
+      hasMounted.current = true;
+    }
+  }, [location.pathname, location.search]);
+
+  return null;
+}
+
 export function App() {
   // Apply theme at app root so all routes (including public/auth) get dark mode
   useTheme();
@@ -168,8 +184,9 @@ export function App() {
       <QueryClientProvider client={queryClient}>
       <AuditorModeContext.Provider value={auditorMode}>
       <BrowserRouter>
+        <ToastNavigationReset />
         <ProfileProvider>
-        <Toaster position="top-right" richColors closeButton />
+        <Toaster position="top-right" richColors closeButton duration={TOAST_DURATIONS_MS.default} />
         <Suspense fallback={<RouteFallback />}>
         {searchOnly ? (
         <Routes>
