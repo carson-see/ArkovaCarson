@@ -363,6 +363,38 @@ describe('GeminiProvider', () => {
       expect(init?.signal).toBeInstanceOf(AbortSignal);
       fetchSpy.mockRestore();
     });
+
+    it('rejects malformed native batch embedding vectors', async () => {
+      const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => (
+        new Response(JSON.stringify({
+          embeddings: [
+            { values: new Array(768).fill(0.1) },
+            { values: [0.2, Number.POSITIVE_INFINITY] },
+          ],
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      ));
+
+      const provider = new GeminiProvider('test-key');
+      await expect(provider.generateEmbeddings([
+        { text: 'DEGREE University of Michigan' },
+        { text: 'CERTIFICATE Example Academy' },
+      ])).rejects.toThrow('Batch embedding generation returned malformed embedding data');
+
+      expect(logger.error).toHaveBeenCalledWith(
+        expect.objectContaining({
+          index: 1,
+          expectedDim: 768,
+          actualDim: 2,
+          valuesType: 'array',
+          model: 'gemini-embedding-001',
+        }),
+        'Gemini batch embedding API returned malformed embedding data',
+      );
+      fetchSpy.mockRestore();
+    });
   });
 
   describe('healthCheck', () => {

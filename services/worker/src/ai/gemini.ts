@@ -51,6 +51,7 @@ import {
 } from './gemini-config.js';
 const MAX_RETRIES = 3;
 const BASE_DELAY_MS = 500;
+const GEMINI_EMBEDDING_DIMENSIONS = 768;
 const STRING_EXTRACTION_FIELDS = new Set([
   'credentialType',
   'subType',
@@ -87,6 +88,34 @@ const STRING_EXTRACTION_FIELDS = new Set([
 const NUMBER_EXTRACTION_FIELDS = new Set(['creditHours']);
 const STRING_ARRAY_EXTRACTION_FIELDS = new Set(['fraudSignals', 'concerns']);
 const BOOLEAN_EXTRACTION_FIELDS = new Set(['issuerVerified']);
+
+function validateGeminiBatchEmbeddingValues(
+  embeddings: Array<{ values?: unknown }>,
+  model: string,
+): Array<{ values: number[] }> {
+  return embeddings.map((embedding, index) => {
+    const values = embedding.values;
+    const isValid = Array.isArray(values)
+      && values.length === GEMINI_EMBEDDING_DIMENSIONS
+      && values.every((value) => typeof value === 'number' && Number.isFinite(value));
+
+    if (!isValid) {
+      logger.error(
+        {
+          index,
+          expectedDim: GEMINI_EMBEDDING_DIMENSIONS,
+          actualDim: Array.isArray(values) ? values.length : undefined,
+          valuesType: Array.isArray(values) ? 'array' : typeof values,
+          model,
+        },
+        'Gemini batch embedding API returned malformed embedding data',
+      );
+      throw new Error('Batch embedding generation returned malformed embedding data');
+    }
+
+    return { values };
+  });
+}
 
 // Vertex AI tuned model config (Gemini Golden fine-tune)
 // Set GEMINI_TUNED_MODEL to the Vertex AI endpoint resource path to enable.
@@ -516,7 +545,7 @@ export class GeminiProvider implements IAIProvider {
             throw new Error(`Batch embedding generation failed (status ${response.status})`);
           }
 
-          const data = (await response.json()) as { embeddings?: Array<{ values: number[] }> };
+          const data = (await response.json()) as { embeddings?: Array<{ values?: unknown }> };
           if (!Array.isArray(data.embeddings) || data.embeddings.length !== inputs.length) {
             logger.error(
               { expected: inputs.length, actual: data.embeddings?.length ?? 0, model },
@@ -525,7 +554,7 @@ export class GeminiProvider implements IAIProvider {
             throw new Error('Batch embedding generation returned an unexpected embedding count');
           }
 
-          return data.embeddings;
+          return validateGeminiBatchEmbeddingValues(data.embeddings, model);
         },
       );
     });

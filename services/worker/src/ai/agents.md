@@ -1,6 +1,11 @@
 # agents.md — services/worker/src/ai/
 
-_Last updated: 2026-05-20_
+_Last updated: 2026-05-22_
+
+## 2026-05-22 Batch Embedding Review Hardening
+
+- `embeddings.ts` rejects duplicate native batch `anchorId` values before provider calls or bulk upserts, and converts native credit pre-check failures into per-item `BatchReEmbedResult` errors.
+- `gemini.ts` validates every `batchEmbedContents` vector as a finite 768-dimensional number array before returning embeddings.
 
 ## 2026-05-20 Gemini Golden Lane Updates
 
