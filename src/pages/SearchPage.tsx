@@ -61,6 +61,7 @@ export function SearchPage() {
   const [searchType, setSearchType] = useState<SearchType>('issuer');
   const [, setSearchMode] = useState<SearchMode>('issuers');
   const [hasSearched, setHasSearched] = useState(false);
+  const [lastSubmittedQuery, setLastSubmittedQuery] = useState('');
   const { issuerResults, searching, error, searchIssuers } = usePublicSearch();
 
   const [fpResult, setFpResult] = useState<FingerprintResult | null>(null);
@@ -230,6 +231,7 @@ export function SearchPage() {
     }
 
     setHasSearched(true);
+    setLastSubmittedQuery(trimmed);
 
     if (detected === 'fingerprint') {
       setSearchType('fingerprint');
@@ -303,6 +305,12 @@ export function SearchPage() {
 
   const isSearching = searching || fpSearching || personSearching || verifyingFile;
   const displayError = error || fpError || personError;
+  const hasDisplayableResults =
+    issuerResults.length > 0 ||
+    personResults.length > 0 ||
+    (searchType === 'fingerprint' && fpResult !== null);
+  const showSearchLoading = isSearching && !verifyingFile && !hasDisplayableResults;
+  const noResultsTitle = SEARCH_LABELS.NO_RESULTS_FOR.replace('{query}', lastSubmittedQuery);
 
   return (
     <div
@@ -351,13 +359,13 @@ export function SearchPage() {
               />
               <Button
                 onClick={handleSearch}
-                disabled={isSearching || !query.trim()}
+                disabled={showSearchLoading || !query.trim()}
                 type="button"
-                aria-label={isSearching ? 'Searching' : 'Search'}
+                aria-label={showSearchLoading ? 'Searching' : 'Search'}
                 size="icon"
                 className="absolute right-1.5 top-1/2 -translate-y-1/2 bg-[#00d4ff] text-[#0d141b] hover:bg-[#00d4ff]/90 rounded-full shadow-glow-sm hover:shadow-glow-md h-9 w-9"
               >
-                {isSearching ? (
+                {showSearchLoading ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
                 ) : (
                   <Search className="h-4 w-4" />
@@ -418,7 +426,7 @@ export function SearchPage() {
         {/* Results area */}
         <div className="max-w-xl mx-auto">
           {/* Issuer results */}
-          {(searchType === 'issuer' || searchType === 'person') && hasSearched && !searching && !displayError && (
+          {(searchType === 'issuer' || searchType === 'person') && hasSearched && issuerResults.length > 0 && !displayError && (
             <div className="space-y-3">
               {issuerResults.length > 0 && issuerResults.map((issuer, i) => (
                 <div key={issuer.org_id} className={`stagger-${Math.min(i + 2, 8)}`}>
@@ -429,12 +437,12 @@ export function SearchPage() {
           )}
 
           {/* Fingerprint results */}
-          {searchType === 'fingerprint' && hasSearched && !fpSearching && !verifyingFile && fpResult && (
+          {searchType === 'fingerprint' && hasSearched && !verifyingFile && fpResult && (
             <FingerprintResultCard result={fpResult} fileName={verifyFileName} onViewRecord={(id) => navigate(verifyPath(id))} />
           )}
 
           {/* Credential results */}
-          {hasSearched && !personSearching && personResults.length > 0 && searchType !== 'fingerprint' && (
+          {hasSearched && personResults.length > 0 && searchType !== 'fingerprint' && (
             <div className="space-y-3 mt-4">
               <p className="text-xs text-muted-foreground uppercase tracking-wider">
                 {SEARCH_LABELS.PERSON_CREDENTIALS}
@@ -482,17 +490,17 @@ export function SearchPage() {
           )}
 
           {/* No results state */}
-          {hasSearched && !isSearching && !displayError && searchType === 'issuer'
+          {hasSearched && !showSearchLoading && !displayError && searchType === 'issuer'
             && issuerResults.length === 0 && personResults.length === 0 && (
             <div className="text-center py-12">
               <Building2 className="mx-auto h-8 w-8 text-muted-foreground/30 mb-3" />
-              <p className="text-sm text-muted-foreground">{SEARCH_LABELS.NO_RESULTS}</p>
+              <p className="text-sm text-muted-foreground">{lastSubmittedQuery ? noResultsTitle : SEARCH_LABELS.NO_RESULTS}</p>
               <p className="text-xs text-muted-foreground mt-1">{SEARCH_LABELS.NO_RESULTS_DESC}</p>
             </div>
           )}
 
           {/* Loading state */}
-          {isSearching && !verifyingFile && (
+          {showSearchLoading && (
             <div className="flex justify-center py-12">
               <Loader2 className="h-6 w-6 animate-spin text-[#00d4ff]" />
             </div>

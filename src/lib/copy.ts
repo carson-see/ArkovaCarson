@@ -807,6 +807,7 @@ export const SEARCH_LABELS = {
   FINGERPRINT_PLACEHOLDER: 'Paste a 64-character document fingerprint...',
   SEARCH_BUTTON: 'Search',
   NO_RESULTS: 'No credentials found',
+  NO_RESULTS_FOR: 'No results for "{query}"',
   NO_RESULTS_DESC: 'No public credentials match your search.',
   NO_ISSUERS: 'No issuers found',
   NO_ISSUERS_DESC: 'No public issuers match your search.',
