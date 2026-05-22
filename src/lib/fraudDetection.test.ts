@@ -19,6 +19,48 @@ const cleanDocument = new File(
   { type: 'text/plain' },
 );
 
+type WorkerStubInstance = {
+  onmessage: ((event: MessageEvent<unknown>) => void) | null;
+  onerror: ((event: ErrorEvent) => void) | null;
+};
+
+function createWorkerStub(config: {
+  response?: unknown;
+  shouldError?: boolean;
+  postMessage?: (
+    instance: WorkerStubInstance,
+    message: unknown,
+    transfer?: Transferable[],
+  ) => void;
+  postMessageSpy?: ReturnType<typeof vi.fn>;
+  terminateSpy?: ReturnType<typeof vi.fn>;
+} = {}) {
+  const hasResponse = Object.prototype.hasOwnProperty.call(config, 'response');
+  const postMessage = config.postMessageSpy ?? vi.fn();
+  const terminate = config.terminateSpy ?? vi.fn();
+
+  return class WorkerStub {
+    onmessage: ((event: MessageEvent<unknown>) => void) | null = null;
+    onerror: ((event: ErrorEvent) => void) | null = null;
+
+    postMessage = postMessage.mockImplementation((message: unknown, transfer?: Transferable[]) => {
+      if (config.postMessage) {
+        config.postMessage(this, message, transfer);
+        return;
+      }
+      if (config.shouldError) {
+        this.onerror?.(new ErrorEvent('error', { message: 'worker failed' }));
+        return;
+      }
+      if (hasResponse) {
+        this.onmessage?.({ data: config.response } as MessageEvent<unknown>);
+      }
+    });
+
+    terminate = terminate;
+  };
+}
+
 describe('SCRUM-1955 fraud detection worker integration', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -50,18 +92,11 @@ describe('SCRUM-1955 fraud detection worker integration', () => {
     const postMessage = vi.fn();
     const terminate = vi.fn();
 
-    class WorkerStub {
-      onmessage: ((event: MessageEvent<FraudDetectionResult>) => void) | null = null;
-      onerror: ((event: ErrorEvent) => void) | null = null;
-
-      postMessage = postMessage.mockImplementation(() => {
-        this.onmessage?.({ data: workerResult } as MessageEvent<FraudDetectionResult>);
-      });
-
-      terminate = terminate;
-    }
-
-    vi.stubGlobal('Worker', WorkerStub);
+    vi.stubGlobal('Worker', createWorkerStub({
+      response: workerResult,
+      postMessageSpy: postMessage,
+      terminateSpy: terminate,
+    }));
 
     const result = await detectFraudForDocument(cleanDocument, {
       credentialType: 'DEGREE',
@@ -89,18 +124,10 @@ describe('SCRUM-1955 fraud detection worker integration', () => {
     };
     const postMessage = vi.fn();
 
-    class WorkerStub {
-      onmessage: ((event: MessageEvent<FraudDetectionResult>) => void) | null = null;
-      onerror: ((event: ErrorEvent) => void) | null = null;
-
-      postMessage = postMessage.mockImplementation(() => {
-        this.onmessage?.({ data: workerResult } as MessageEvent<FraudDetectionResult>);
-      });
-
-      terminate(): void {}
-    }
-
-    vi.stubGlobal('Worker', WorkerStub);
+    vi.stubGlobal('Worker', createWorkerStub({
+      response: workerResult,
+      postMessageSpy: postMessage,
+    }));
 
     await detectFraudForDocument(largeDocument, {
       credentialType: 'DEGREE',
@@ -113,18 +140,9 @@ describe('SCRUM-1955 fraud detection worker integration', () => {
   it('returns unknown gracefully when the worker posts an invalid response', async () => {
     vi.mocked(getFlag).mockResolvedValueOnce(true);
 
-    class WorkerStub {
-      onmessage: ((event: MessageEvent<unknown>) => void) | null = null;
-      onerror: ((event: ErrorEvent) => void) | null = null;
-
-      postMessage(): void {
-        this.onmessage?.({ data: { analysis_method: 'unexpected' } } as MessageEvent<unknown>);
-      }
-
-      terminate(): void {}
-    }
-
-    vi.stubGlobal('Worker', WorkerStub);
+    vi.stubGlobal('Worker', createWorkerStub({
+      response: { analysis_method: 'unexpected' },
+    }));
 
     await expect(detectFraudForDocument(cleanDocument, {
       credentialType: 'DEGREE',
@@ -146,18 +164,7 @@ describe('SCRUM-1955 fraud detection worker integration', () => {
       processing_time_ms: 4,
     };
 
-    class WorkerStub {
-      onmessage: ((event: MessageEvent<unknown>) => void) | null = null;
-      onerror: ((event: ErrorEvent) => void) | null = null;
-
-      postMessage(): void {
-        this.onmessage?.({ data: workerResult } as MessageEvent<unknown>);
-      }
-
-      terminate(): void {}
-    }
-
-    vi.stubGlobal('Worker', WorkerStub);
+    vi.stubGlobal('Worker', createWorkerStub({ response: workerResult }));
 
     await expect(detectFraudForDocument(cleanDocument, {
       credentialType: 'DEGREE',
@@ -167,18 +174,7 @@ describe('SCRUM-1955 fraud detection worker integration', () => {
   it('returns unknown gracefully when the worker cannot run', async () => {
     vi.mocked(getFlag).mockResolvedValueOnce(true);
 
-    class WorkerStub {
-      onmessage: ((event: MessageEvent<FraudDetectionResult>) => void) | null = null;
-      onerror: ((event: ErrorEvent) => void) | null = null;
-
-      postMessage(): void {
-        this.onerror?.(new ErrorEvent('error', { message: 'worker failed' }));
-      }
-
-      terminate(): void {}
-    }
-
-    vi.stubGlobal('Worker', WorkerStub);
+    vi.stubGlobal('Worker', createWorkerStub({ shouldError: true }));
 
     await expect(detectFraudForDocument(cleanDocument, {
       credentialType: 'DEGREE',
@@ -189,16 +185,7 @@ describe('SCRUM-1955 fraud detection worker integration', () => {
     vi.useFakeTimers();
     vi.mocked(getFlag).mockResolvedValueOnce(true);
 
-    class WorkerStub {
-      onmessage: ((event: MessageEvent<FraudDetectionResult>) => void) | null = null;
-      onerror: ((event: ErrorEvent) => void) | null = null;
-
-      postMessage(): void {}
-
-      terminate(): void {}
-    }
-
-    vi.stubGlobal('Worker', WorkerStub);
+    vi.stubGlobal('Worker', createWorkerStub());
 
     const pending = detectFraudForDocument(cleanDocument, {
       credentialType: 'DEGREE',
@@ -223,6 +210,19 @@ describe('SCRUM-1955 fraud detection worker integration', () => {
     expect(result.fraud_score).toBeLessThanOrEqual(1);
     expect(handleFraudWorkerMessage({ documentBytes: 'not-bytes', credentialType: 'DEGREE' }))
       .toEqual(unknownFraudDetectionResult());
+  });
+
+  it('ignores inherited metadata hint properties at the worker boundary', async () => {
+    const { handleFraudWorkerMessage } = await import('../workers/fraud-detection.worker');
+    const inheritedHints = Object.create({ issuerName: 'Mallory University' }) as Record<string, string>;
+
+    const result = handleFraudWorkerMessage({
+      documentBytes: await cleanDocument.arrayBuffer(),
+      credentialType: 'DEGREE',
+      metadataHints: inheritedHints,
+    });
+
+    expect(result.fraud_signals).toEqual([]);
   });
 
   it('emits only enum/template fraud signal fields from the worker', async () => {

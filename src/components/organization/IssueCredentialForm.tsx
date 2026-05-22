@@ -85,11 +85,22 @@ interface CreatedAnchor {
   publicId: string;
 }
 
+const ALLOWED_FRAUD_METADATA_HINT_KEYS = new Set(['issuerName', 'jurisdiction']);
+
 /** Format file size for display */
 function formatFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function buildFraudMetadataHints(metadataEntries: Record<string, unknown>): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(metadataEntries).filter(
+      (entry): entry is [string, string] =>
+        ALLOWED_FRAUD_METADATA_HINT_KEYS.has(entry[0]) && typeof entry[1] === 'string',
+    ),
+  );
 }
 
 export function IssueCredentialForm({
@@ -383,10 +394,7 @@ export function IssueCredentialForm({
       const metadataEntries = buildMetadata() ?? {};
       const fraudResult = await detectFraudForDocument(file, {
         credentialType,
-        metadataHints: Object.fromEntries(
-          Object.entries(metadataEntries)
-            .filter((entry): entry is [string, string] => typeof entry[1] === 'string'),
-        ),
+        metadataHints: buildFraudMetadataHints(metadataEntries),
       });
       Object.assign(metadataEntries, fraudResultToMetadata(fraudResult));
       const metadata = Object.keys(metadataEntries).length > 0 ? metadataEntries : null;
