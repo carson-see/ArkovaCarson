@@ -52,8 +52,8 @@ Agent-ready REST surface for search, fingerprint verification, public anchor loo
 | `read:search` | 1,000 req/min | `/search`, `/organizations`, `/records`, `/fingerprints`, `/documents` |
 | `read:records` | 500 req/min | `/verify/{fingerprint}`, `/anchors/{public_id}`, `/records/{public_id}`, `/fingerprints/{fingerprint}`, `/documents/{public_id}` |
 | `read:orgs` | 500 req/min | `/orgs`, `/organizations/{public_id}` |
-| `write:anchors` | 100 req/min | Reserved for v2 write endpoints |
-| `admin:rules` | 50 req/min | Reserved for v2 admin endpoints |
+| `write:anchors` | 100 req/min | `POST /api/v1/anchor`, compatibility alias `POST /api/v1/anchor/submit`, and future v2 write endpoints |
+| `admin:rules` | 50 req/min | Reserved for org-admin automation/BPMN rules endpoints; currently pre-GA |
 
 Search endpoints return `public_id` values that can be passed directly to the matching detail endpoint. Detail responses are public-id keyed and omit internal database identifiers such as `id`, `org_id`, and `user_id`.
 
@@ -68,6 +68,8 @@ Search endpoints return `public_id` values that can be passed directly to the ma
 | API v2 REST | `read:records`, `read:orgs`, `read:search`, `write:anchors`, `admin:rules` |
 | Legacy v1 compatibility | `verify`, `verify:batch`, `usage:read`, `keys:manage` |
 | Compliance and operations | `compliance:read`, `compliance:write`, `oracle:read`, `oracle:write`, `anchor:write`, `anchor:read`, `attestations:write`, `attestations:read`, `webhooks:manage`, `agents:manage`, `keys:read` |
+
+`POST /api/v1/anchor` accepts either `anchor:write` or `write:anchors`. `GET /api/v1/usage` requires `usage:read`; read/search scopes do not include usage analytics.
 
 ### 3. TypeScript SDK — `@arkova/sdk`
 
@@ -161,8 +163,8 @@ API keys are scoped to a single organization. RLS enforces isolation server-side
 | Anonymous | 100 req/min per IP | Public verify without API key |
 | Authenticated | 1,000 req/min per API key | Most authenticated endpoints |
 | API v2 `read:records` / `read:orgs` | 500 req/min per API key per scope | v2 record and organization tools |
-| API v2 `write:anchors` | 100 req/min per API key per scope | v2 write endpoints |
-| API v2 `admin:rules` | 50 req/min per API key per scope | v2 admin endpoints |
+| API v2 `write:anchors` | 100 req/min per API key per scope | Anchor submit and v2 write endpoints |
+| API v2 `admin:rules` | 50 req/min per API key per scope | Pre-GA org-admin rules endpoints |
 | Batch | 10 req/min per API key | `POST /verify/batch`, webhook CRUD, batch attestations |
 | AI | 30 req/min per user | Nessie query, AI extraction, semantic search |
 

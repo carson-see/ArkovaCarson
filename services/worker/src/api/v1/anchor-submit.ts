@@ -53,13 +53,7 @@ interface AnchorReceipt {
   record_uri: string;
 }
 
-/**
- * POST /api/v1/anchor
- *
- * Submit a fingerprint for blockchain anchoring.
- * The fingerprint must be a 64-character hex SHA-256 hash.
- */
-router.post('/', async (req: Request, res: Response) => {
+async function handleAnchorSubmit(req: Request, res: Response) {
   // Require API key
   if (!req.apiKey) {
     res.status(401).json({ error: 'API key required. Include X-API-Key header.' });
@@ -231,7 +225,16 @@ router.post('/', async (req: Request, res: Response) => {
     logger.error({ error }, 'Anchor submission failed');
     res.status(500).json({ error: 'Internal server error' });
   }
-});
+}
+
+/**
+ * POST /api/v1/anchor
+ *
+ * Submit a fingerprint for blockchain anchoring.
+ * The fingerprint must be a 64-character hex SHA-256 hash.
+ */
+router.post('/', handleAnchorSubmit);
+router.post('/submit', handleAnchorSubmit);
 
 function enqueueProfessionalEducationExtraction(anchor: {
   id?: string;

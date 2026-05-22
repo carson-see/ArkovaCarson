@@ -11,4 +11,13 @@ describe('api v1 router attestation batch routes', () => {
     expect(attestationsSource).toMatch(/router\.post\(\s*['"]\/batch-create['"]\s*,\s*attestationBatchRateLimiter\s*,/);
     expect(attestationsSource).toMatch(/router\.post\(\s*['"]\/batch-verify['"]\s*,\s*requireScope\(['"]verify:batch['"]\)\s*,\s*attestationBatchRateLimiter\s*,/);
   });
+
+  it('does not register middleware-only verify scope on all anchor traffic before writes', () => {
+    const routerSource = readFileSync(new URL('./router.ts', import.meta.url), 'utf8');
+
+    expect(routerSource).toMatch(/req\.method !== ['"]GET['"]/);
+    expect(routerSource).not.toMatch(
+      /router\.use\(\s*['"]\/anchor['"]\s*,\s*requireScope\(['"]verify['"]\)\s*,\s*anchorExtractionManifestRouter\s*\)/,
+    );
+  });
 });
