@@ -52,9 +52,9 @@ describe('useInviteMember', () => {
 
     expect(success!).toBe(true);
     expect(mockRpc).toHaveBeenCalledWith('invite_member', {
-      invite_email: 'test@example.com',
-      invite_role: 'INDIVIDUAL',
-      org_id: 'org-123',
+      invitee_email: 'test@example.com',
+      invitee_role: 'INDIVIDUAL',
+      target_org_id: 'org-123',
     });
     expect(result.current.error).toBeNull();
   });
