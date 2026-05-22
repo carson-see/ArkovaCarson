@@ -56,22 +56,28 @@ export function useInviteMember(): UseInviteMemberReturn {
         }
       }
 
-      // Step 2: Send invitation email via worker API (non-blocking)
+      // Step 2: Send invitation email via worker API
       try {
         const { data: { session } } = await supabase.auth.getSession();
-        if (session?.access_token) {
-          await fetch(`${WORKER_URL}/api/send-invitation-email`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              Authorization: `Bearer ${session.access_token}`,
-            },
-            body: JSON.stringify({ email, orgId, orgName, role, inviterName }),
-          });
+        if (!session?.access_token) {
+          throw new Error('No active session');
+        }
+
+        const emailResponse = await fetch(`${WORKER_URL}/api/send-invitation-email`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${session.access_token}`,
+          },
+          body: JSON.stringify({ email, orgId, orgName, role, inviterName }),
+        });
+
+        if (!emailResponse.ok) {
+          throw new Error(`Invitation email endpoint returned ${emailResponse.status}`);
         }
       } catch (emailErr) {
-        // Email failure is non-fatal — invitation record was created
         console.warn('Invitation email send failed (invitation still created):', emailErr);
+        throw new Error('Invitation was created, but the email could not be sent. Please try again.');
       }
 
       return true;

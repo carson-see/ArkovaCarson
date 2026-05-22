@@ -130,9 +130,9 @@ describe('useInviteMember', () => {
     expect(result.current.error).toContain('valid email');
   });
 
-  it('should succeed even if email send fails (non-blocking)', async () => {
+  it('should fail when the invitation email endpoint rejects after RPC success', async () => {
     mockRpc.mockResolvedValue({ data: 'invite-uuid', error: null });
-    mockFetch.mockRejectedValueOnce(new Error('Network error'));
+    mockFetch.mockResolvedValueOnce({ ok: false, status: 403, json: async () => ({ error: { code: 'forbidden' } }) });
 
     const { result } = renderHook(() => useInviteMember());
 
@@ -141,8 +141,8 @@ describe('useInviteMember', () => {
       success = await result.current.inviteMember(defaultOptions);
     });
 
-    // Invitation should still succeed even though email failed
-    expect(success!).toBe(true);
+    expect(success!).toBe(false);
+    expect(result.current.error).toContain('email could not be sent');
   });
 
   it('should clear error when clearError is called', async () => {
