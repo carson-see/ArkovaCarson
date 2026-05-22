@@ -465,6 +465,7 @@ describe('mapManagementProdFacts', () => {
 
 describe('queryManagementApi', () => {
   it('uses a timeout signal and returns object rows only', async () => {
+    const timeoutSpy = vi.spyOn(globalThis.AbortSignal, 'timeout');
     const fetchMock = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) => new Response(JSON.stringify([
       { version: '0294' },
       null,
@@ -480,6 +481,7 @@ describe('queryManagementApi', () => {
     ]);
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(timeoutSpy).toHaveBeenCalledWith(30_000);
     const [, init] = fetchMock.mock.calls[0];
     expect(init?.signal).toBeInstanceOf(AbortSignal);
   });
