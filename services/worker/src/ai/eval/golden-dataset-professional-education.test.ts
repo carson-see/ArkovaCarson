@@ -36,7 +36,7 @@ describe('golden-dataset-professional-education', () => {
     expect(GOLDEN_DATASET_PROFESSIONAL_EDUCATION.length).toBeGreaterThanOrEqual(60);
     expect(cpeEntries.length).toBeGreaterThanOrEqual(20);
     expect(cleEntries.length).toBeGreaterThanOrEqual(20);
-    expect(courseIdOnlyEntries.length).toBeGreaterThanOrEqual(20);
+    expect(courseIdOnlyEntries.length).toBeGreaterThanOrEqual(PROFESSIONAL_EDUCATION_GATE_MINIMUMS.courseIdOnly);
   });
 
   it('keeps professional education gate entries field-complete', () => {

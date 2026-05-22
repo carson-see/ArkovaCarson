@@ -1040,7 +1040,7 @@ function professionalEducationId(sequence: number): string {
 
 export const GOLDEN_DATASET_PROFESSIONAL_EDUCATION: GoldenDatasetEntry[] = [
   ...BASE_PROFESSIONAL_EDUCATION_ENTRIES,
-  ...ADDITIONAL_CPE_FIXTURES.map(cpeEntry),
-  ...ADDITIONAL_CLE_FIXTURES.map(cleEntry),
-  ...ADDITIONAL_COURSE_ID_FIXTURES.map(courseIdEntry),
+  ...ADDITIONAL_CPE_FIXTURES.map((fixture, index) => cpeEntry(fixture, index)),
+  ...ADDITIONAL_CLE_FIXTURES.map((fixture, index) => cleEntry(fixture, index)),
+  ...ADDITIONAL_COURSE_ID_FIXTURES.map((fixture, index) => courseIdEntry(fixture, index)),
 ];
