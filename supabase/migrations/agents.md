@@ -10,9 +10,8 @@ This directory now starts with the Path C baseline, `00000000000000_baseline_at_
 
 - **0311_scrum1599_public_anchor_provenance.sql**: Replaces `get_public_anchor` so public verification can return `SUPERSEDED` records and CSI-03 source provenance fields from sanitized anchor metadata.
 
-## Recent migrations (PR #841 / PR #840 / PR #788)
+## Recent migrations (PR #841 / PR #788)
 
-- **0315_org_integrations_token_secret_name_schema_reload.sql**: Compensating SCRUM-1101 follow-up for the merged 0312 DocuSign token secret column; refreshes the PostgREST schema cache and documents rollback without editing the merged migration.
 - **0314_professional_education_foundations.sql**: Adds CPE/CLE metadata
   columns on `anchors`, service-role-only CPE/CLE provider registries with RLS
   + `FORCE ROW LEVEL SECURITY`, static seed entries, and secured-anchor
