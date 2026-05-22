@@ -2,6 +2,10 @@
 
 _Last updated: 2026-05-19 (SCRUM-1599 badge endpoint)_
 
+## 2026-05-22 Anchor Write Scope Compatibility
+
+- `apiScopes.ts` treats `anchor:write` and `write:anchors` as equivalent write-capable anchor scopes. Keep this central in `scopeSatisfies()` instead of duplicating route-specific aliases.
+
 ## What This Folder Contains
 
 Express route handlers for the worker's HTTP API. Covers admin endpoints, anchor operations, proof packets, audit events, compliance, rules CRUD, treasury, and the v1/v2 versioned sub-APIs.
