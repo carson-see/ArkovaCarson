@@ -11,6 +11,8 @@ import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
 import { AppShell } from '@/components/layout';
 import { BillingOverview, type BillingInfo } from '@/components/billing/BillingOverview';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent } from '@/components/ui/card';
 import { BILLING_PAGE_LABELS } from '@/lib/copy';
 import { ROUTES } from '@/lib/routes';
 import { WORKER_URL } from '@/lib/workerClient';
@@ -22,61 +24,37 @@ export function BillingPage() {
   const { profile, loading: profileLoading } = useProfile();
   const [billingInfo, setBillingInfo] = useState<BillingInfo | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const fetchBillingInfo = useCallback(async () => {
-    /** Count user's anchors from Supabase as a reliable fallback */
-    const countAnchorsFromDb = async (): Promise<number> => {
-      try {
-        const { count } = await supabase
-          .from('anchors')
-          .select('id', { count: 'exact', head: true })
-          .in('status', ['SECURED', 'SUBMITTED', 'PENDING', 'BROADCASTING']);
-        return count ?? 0;
-      } catch {
-        return 0;
-      }
-    };
-
+    setLoading(true);
+    setLoadError(null);
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
     try {
       const { data: { session } } = await supabase.auth.getSession();
-      if (!session) return;
+      if (!session) {
+        throw new Error('missing_session');
+      }
 
       const workerUrl = WORKER_URL;
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 8000);
+      timeoutId = setTimeout(() => controller.abort(), 5000);
       const response = await fetch(`${workerUrl}/api/billing/status`, {
         headers: { Authorization: `Bearer ${session.access_token}` },
         signal: controller.signal,
       });
-      clearTimeout(timeoutId);
 
-      if (response.ok) {
-        const data = await response.json();
-        // SCRUM-353: Beta override — force unlimited quota display
-        if (data?.usage) {
-          data.usage.recordsLimit = null;
-        }
-        setBillingInfo(data);
-      } else {
-        // Fallback: count from Supabase so metrics stay consistent with Dashboard
-        const recordsUsed = await countAnchorsFromDb();
-        setBillingInfo({
-          plan: { name: 'Beta', recordsIncluded: 'unlimited' },
-          usage: { recordsUsed, recordsLimit: null },
-          billing: { status: 'active' },
-          status: 'active',
-        });
+      if (!response.ok) {
+        throw new Error(`billing_status_${response.status}`);
       }
+
+      const data = await response.json() as BillingInfo;
+      setBillingInfo(data);
     } catch {
-      // Fallback for beta — count from Supabase
-      const recordsUsed = await countAnchorsFromDb();
-      setBillingInfo({
-        plan: { name: 'Beta', recordsIncluded: 'unlimited' },
-        usage: { recordsUsed, recordsLimit: null },
-        billing: { status: 'active' },
-        status: 'active',
-      });
+      setBillingInfo(null);
+      setLoadError(BILLING_PAGE_LABELS.DATA_UNAVAILABLE_TITLE);
     } finally {
+      if (timeoutId) clearTimeout(timeoutId);
       setLoading(false);
     }
   }, []);
@@ -111,12 +89,26 @@ export function BillingPage() {
         </p>
       </div>
 
-      <BillingOverview
-        billingInfo={billingInfo}
-        loading={loading}
-        onManageBilling={handleManageBilling}
-        onUpgrade={handleUpgrade}
-      />
+      {loadError && !loading ? (
+        <Card>
+          <CardContent className="py-8 text-center">
+            <p className="text-sm font-medium">{loadError}</p>
+            <p className="mt-2 text-sm text-muted-foreground">
+              {BILLING_PAGE_LABELS.DATA_UNAVAILABLE_DESC}
+            </p>
+            <Button type="button" variant="outline" size="sm" className="mt-4" onClick={fetchBillingInfo}>
+              {BILLING_PAGE_LABELS.RETRY}
+            </Button>
+          </CardContent>
+        </Card>
+      ) : (
+        <BillingOverview
+          billingInfo={billingInfo}
+          loading={loading}
+          onManageBilling={handleManageBilling}
+          onUpgrade={handleUpgrade}
+        />
+      )}
     </AppShell>
   );
 }

@@ -1976,6 +1976,9 @@ export const REVOKED_EXPIRED_ACTIONS = {
 export const BILLING_PAGE_LABELS = {
   PAGE_TITLE: 'Billing & Subscription',
   PAGE_SUBTITLE: 'Manage your plan, view usage, and update payment methods.',
+  DATA_UNAVAILABLE_TITLE: 'Unable to load billing data',
+  DATA_UNAVAILABLE_DESC: 'We could not confirm your billing status. Refresh the page or try again.',
+  RETRY: 'Retry',
 } as const;
 
 export const SYSTEM_HEALTH_LABELS = {
