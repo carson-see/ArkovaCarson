@@ -264,7 +264,7 @@ function normalizeMigrationVersion(value: unknown): string | null {
 function normalizeMigrationName(value: unknown): string {
   if (value == null) return '';
   if (typeof value !== 'string' && typeof value !== 'number') return '';
-  return String(value);
+  return String(value).trim();
 }
 
 export function mapManagementMigrationRows(rows: readonly Record<string, unknown>[]): MigrationRow[] {

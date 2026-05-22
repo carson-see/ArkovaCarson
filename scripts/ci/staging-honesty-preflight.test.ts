@@ -400,7 +400,7 @@ describe('isSupabaseMigrationsSchemaUnavailable', () => {
 describe('mapManagementMigrationRows', () => {
   it('normalizes raw Management API rows into MigrationRow objects', () => {
     expect(mapManagementMigrationRows([
-      { version: 294, name: '0294_refund_org_credit' },
+      { version: 294, name: ' 0294_refund_org_credit ' },
       { version: '20260505010337', name: null },
       { name: 'ignored_missing_version' },
       { version: {}, name: 'ignored_object_version' },
