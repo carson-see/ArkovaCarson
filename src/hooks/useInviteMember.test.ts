@@ -8,6 +8,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // Hoist the mock function
 const mockRpc = vi.hoisted(() => vi.fn());
 const mockGetSession = vi.hoisted(() => vi.fn());
+const mockResolveSafeWorkerEndpoint = vi.hoisted(() => vi.fn());
 
 vi.mock('@/lib/supabase', () => ({
   supabase: {
@@ -16,6 +17,10 @@ vi.mock('@/lib/supabase', () => ({
       getSession: mockGetSession,
     },
   },
+}));
+
+vi.mock('@/lib/workerUrlSafety', () => ({
+  resolveSafeWorkerEndpoint: mockResolveSafeWorkerEndpoint,
 }));
 
 // Mock fetch for worker email endpoint
@@ -36,6 +41,7 @@ const defaultOptions = {
 describe('useInviteMember', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockResolveSafeWorkerEndpoint.mockReturnValue(new URL('http://localhost:3001/api/send-invitation-email'));
     mockGetSession.mockResolvedValue({ data: { session: { access_token: 'test-token' } } });
     mockFetch.mockResolvedValue({ ok: true, json: async () => ({ sent: true }) });
   });
@@ -156,6 +162,25 @@ describe('useInviteMember', () => {
     expect(mockRpc).not.toHaveBeenCalled();
     expect(mockFetch).not.toHaveBeenCalled();
     expect(result.current.error).toContain('valid organization');
+  });
+
+  it('should not create an invitation or read the bearer token when the worker URL is unsafe', async () => {
+    mockResolveSafeWorkerEndpoint.mockImplementation(() => {
+      throw new Error('Worker endpoint must use HTTPS outside localhost.');
+    });
+
+    const { result } = renderHook(() => useInviteMember());
+
+    let success: boolean;
+    await act(async () => {
+      success = await result.current.inviteMember(defaultOptions);
+    });
+
+    expect(success!).toBe(false);
+    expect(mockRpc).not.toHaveBeenCalled();
+    expect(mockGetSession).not.toHaveBeenCalled();
+    expect(mockFetch).not.toHaveBeenCalled();
+    expect(result.current.error).toContain('HTTPS outside localhost');
   });
 
   it('should fail when the invitation email endpoint rejects after RPC success', async () => {

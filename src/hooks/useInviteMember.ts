@@ -12,6 +12,7 @@ import { supabase } from '@/lib/supabase';
 import { useAsyncAction } from './useAsyncAction';
 import { TOAST } from '@/lib/copy';
 import { InviteMemberSchema, type InviteMemberInput } from '@/lib/validators';
+import { resolveSafeWorkerEndpoint } from '@/lib/workerUrlSafety';
 
 interface UseInviteMemberReturn {
   inviteMember: (options: InviteMemberInput) => Promise<boolean>;
@@ -31,6 +32,7 @@ export function useInviteMember(): UseInviteMemberReturn {
       }
 
       const { email, role, orgId, orgName, inviterName } = parsedOptions.data;
+      const emailEndpoint = resolveSafeWorkerEndpoint(WORKER_URL, '/api/send-invitation-email');
 
       // Step 1: Create invitation record via RPC
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -59,7 +61,7 @@ export function useInviteMember(): UseInviteMemberReturn {
           throw new Error('No active session');
         }
 
-        const emailResponse = await fetch(`${WORKER_URL}/api/send-invitation-email`, {
+        const emailResponse = await fetch(emailEndpoint.toString(), {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',

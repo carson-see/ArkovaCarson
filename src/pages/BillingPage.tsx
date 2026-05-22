@@ -17,6 +17,7 @@ import { BILLING_PAGE_LABELS } from '@/lib/copy';
 import { ROUTES } from '@/lib/routes';
 import { WORKER_URL } from '@/lib/workerClient';
 import { supabase } from '@/lib/supabase';
+import { resolveSafeWorkerEndpoint } from '@/lib/workerUrlSafety';
 
 export function BillingPage() {
   const navigate = useNavigate();
@@ -36,15 +37,15 @@ export function BillingPage() {
     setLoadError(null);
     let timeoutId: ReturnType<typeof setTimeout> | undefined;
     try {
+      const billingStatusEndpoint = resolveSafeWorkerEndpoint(WORKER_URL, '/api/billing/status');
       const { data: { session } } = await supabase.auth.getSession();
       if (!session) {
         throw new Error('missing_session');
       }
 
-      const workerUrl = WORKER_URL;
       const controller = new AbortController();
       timeoutId = setTimeout(() => controller.abort(), 5000);
-      const response = await fetch(`${workerUrl}/api/billing/status`, {
+      const response = await fetch(billingStatusEndpoint.toString(), {
         headers: { Authorization: `Bearer ${session.access_token}` },
         signal: controller.signal,
       });
