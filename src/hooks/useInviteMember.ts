@@ -11,19 +11,10 @@ import { toast } from 'sonner';
 import { supabase } from '@/lib/supabase';
 import { useAsyncAction } from './useAsyncAction';
 import { TOAST } from '@/lib/copy';
-
-type InviteRole = 'INDIVIDUAL' | 'ORG_ADMIN';
-
-interface InviteOptions {
-  email: string;
-  role: InviteRole;
-  orgId: string;
-  orgName: string;
-  inviterName?: string;
-}
+import { InviteMemberSchema, type InviteMemberInput } from '@/lib/validators';
 
 interface UseInviteMemberReturn {
-  inviteMember: (options: InviteOptions) => Promise<boolean>;
+  inviteMember: (options: InviteMemberInput) => Promise<boolean>;
   loading: boolean;
   error: string | null;
   clearError: () => void;
@@ -33,8 +24,13 @@ const WORKER_URL = import.meta.env.VITE_WORKER_URL || 'http://localhost:3001';
 
 export function useInviteMember(): UseInviteMemberReturn {
   const inviteImpl = useCallback(
-    async (options: InviteOptions): Promise<boolean> => {
-      const { email, role, orgId, orgName, inviterName } = options;
+    async (options: InviteMemberInput): Promise<boolean> => {
+      const parsedOptions = InviteMemberSchema.safeParse(options);
+      if (!parsedOptions.success) {
+        throw new Error(parsedOptions.error.issues[0]?.message ?? 'Failed to send invitation.');
+      }
+
+      const { email, role, orgId, orgName, inviterName } = parsedOptions.data;
 
       // Step 1: Create invitation record via RPC
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -88,7 +84,7 @@ export function useInviteMember(): UseInviteMemberReturn {
   const { execute, loading, error, clearError } = useAsyncAction(inviteImpl);
 
   const inviteMember = useCallback(
-    async (options: InviteOptions): Promise<boolean> => {
+    async (options: InviteMemberInput): Promise<boolean> => {
       try {
         const result = await execute(options);
         toast.success(TOAST.MEMBER_INVITED);
