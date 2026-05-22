@@ -53,6 +53,7 @@ export const ROUTES = {
   ORG_PROFILE: '/organizations/:orgId',
   ORGANIZATION: '/organization',
   MEMBER_DETAIL: '/organization/member/:memberId',
+  PROFILE: '/profile',
   SETTINGS: '/settings',
   SETTINGS_API_KEYS: '/settings/api-keys',
   SETTINGS_WEBHOOKS: '/settings/webhooks',

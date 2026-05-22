@@ -235,6 +235,7 @@ export function App() {
           <Route path={ROUTES.ORG_PROFILE} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="OrgProfile"><OrgProfilePage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
           <Route path={ROUTES.ORGANIZATION} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="Organization"><OrganizationPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
           <Route path={ROUTES.MEMBER_DETAIL} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="MemberDetail"><MemberDetailPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
+          <Route path={ROUTES.PROFILE} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><Navigate to={ROUTES.SETTINGS} replace /></RouteGuard></AuthGuard>} />
           <Route path={ROUTES.SETTINGS} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="Settings"><SettingsPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
           <Route path={ROUTES.SETTINGS_API_KEYS} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="ApiKeys"><ApiKeySettingsPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
           <Route path={ROUTES.SETTINGS_WEBHOOKS} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="Webhooks"><WebhookSettingsPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
