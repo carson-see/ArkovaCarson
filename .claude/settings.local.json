@@ -166,7 +166,8 @@
       "Bash(export PATH=\"/opt/homebrew/bin:/usr/local/bin:$PATH\")",
       "Bash(git rebase:*)",
       "mcp__52fad70b-47fd-4f28-948d-155ddb7ec81a__searchJiraIssuesUsingJql",
-      "mcp__1ae86eb5-9b90-481b-9355-7535904e24f3__execute_sql"
+      "mcp__1ae86eb5-9b90-481b-9355-7535904e24f3__execute_sql",
+      "mcp__chrome-devtools__new_page"
     ]
   },
   "enableAllProjectMcpServers": true,
