@@ -10,6 +10,7 @@ Integration and infrastructure test suites that cross-cut the codebase: migratio
 - `drop-search-overload.test.ts` — validates the migration that drops a broken `search_public_credentials` overload
 - `jurisdiction-rules-coverage.test.ts` — asserts `jurisdiction_rules` table shape survives baseline collapse (SCRUM-907)
 - `migration-drift-logic.test.ts` — unit-tests the diff algorithm used by the migration-drift CI workflow (SCRUM-908)
+- `legal-attestations-migration.test.ts` — static checks for the 0314 legal attestation foundation migration, including no raw document storage, RLS, and state-machine triggers.
 - `rls-performance.test.ts` — checks RLS performance indexes exist in the baseline schema (SCRUM-348..352)
 
 ## Subdirectories

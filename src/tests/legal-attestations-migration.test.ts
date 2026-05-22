@@ -3,24 +3,18 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const migrationsDir = path.resolve(process.cwd(), 'supabase/migrations');
+const legalAttestationsMigration = '0314_legally_binding_attestations.sql';
 
 function readLegalAttestationsMigration(): string {
-  const migration = fs
-    .readdirSync(migrationsDir)
-    .filter((file) => file.endsWith('.sql'))
-    .find((file) => {
-      const sql = fs.readFileSync(path.join(migrationsDir, file), 'utf8');
-      return sql.includes('legally_binding_attestations');
-    });
-
-  if (!migration) {
+  const migrationPath = path.join(migrationsDir, legalAttestationsMigration);
+  if (!fs.existsSync(migrationPath)) {
     throw new Error('Missing legally_binding_attestations migration');
   }
 
-  return fs.readFileSync(path.join(migrationsDir, migration), 'utf8');
+  return fs.readFileSync(migrationPath, 'utf8');
 }
 
-describe('SCRUM-1871 legally binding attestations migration', () => {
+describe('SCRUM-1871 0314 legally binding attestations migration', () => {
   const sql = readLegalAttestationsMigration();
 
   it('creates the legal attestation foundation table with no raw document storage', () => {

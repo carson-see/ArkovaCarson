@@ -10,12 +10,19 @@ This directory now starts with the Path C baseline, `00000000000000_baseline_at_
 
 - **0311_scrum1599_public_anchor_provenance.sql**: Replaces `get_public_anchor` so public verification can return `SUPERSEDED` records and CSI-03 source provenance fields from sanitized anchor metadata.
 
-## Recent migrations (PR #788)
+## Recent migrations (PR #841 remediation)
 
-- **0314_professional_education_foundations.sql**: Adds CPE/CLE metadata
+- **0314_legally_binding_attestations.sql**: Adds legal-attestation
+  foundation table, RLS/FORCE RLS, org-scoped policies, state-machine
+  triggers, and DocuSign envelope idempotency.
+
+- **0315_professional_education_foundations.sql**: Adds CPE/CLE metadata
   columns on `anchors`, service-role-only CPE/CLE provider registries with RLS
   + `FORCE ROW LEVEL SECURITY`, static seed entries, and secured-anchor
-  immutability protection for the new metadata fields.
+  immutability protection for the new metadata fields. Renumbered after prod's
+  existing `0313` ledger row (`anchors_index_consolidation`).
+
+## Recent migrations (PR #788)
 
 - **0307_fix_anchors_rls_statement_timeout.sql**: Consolidated three separate `anchors` SELECT RLS policies into one with scalar subquery wrappers for InitPlan evaluation. Same pattern applied to `attestations` (5 branches including `status='ACTIVE'`).
 - **0308_seed_arkova_org_credits.sql**: Seeds `org_credits` for Arkova prod org with `EXISTS` guard for idempotency.
