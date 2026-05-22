@@ -285,6 +285,7 @@ export function isStagingToolingOnly(files: string[]): StagingFilesOnlyResult {
     /^scripts\/staging\//,
     /^scripts\/ci\/check-staging-evidence(\.test)?\.ts$/,
     /^scripts\/ci\/check-staging-gcloud-policy(\.test)?\.ts$/,
+    /^scripts\/ci\/staging-honesty-preflight(\.test)?\.ts$/,
     /^scripts\/ci\/lib\//,
     // Operator-setup tooling lives next to the rig conceptually — same
     // category of meta-infra (script the operator runs once to wire up

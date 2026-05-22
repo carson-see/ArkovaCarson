@@ -385,6 +385,8 @@ describe('check-staging-evidence', () => {
           'scripts/staging/seed.ts',
           'scripts/ci/check-staging-evidence.ts',
           'scripts/ci/check-staging-gcloud-policy.ts',
+          'scripts/ci/staging-honesty-preflight.ts',
+          'scripts/ci/staging-honesty-preflight.test.ts',
           '.github/workflows/ci.yml',
           'CLAUDE.md',
           'docs/staging/README.md',
