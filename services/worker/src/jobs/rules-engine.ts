@@ -25,6 +25,7 @@
  *   - release_claimed_rule_events() flips CLAIMED → PENDING/FAILED on worker
  *     errors so custom-rule events are not stranded forever.
  */
+import crypto from 'node:crypto';
 import { db } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
 import {
@@ -73,6 +74,27 @@ interface MatchInsert {
   org_id: string;
   match_reason: string;
   needs_semantic_match: boolean;
+  event: EventRow;
+}
+
+function sha256Lower(value: string): string {
+  return crypto.createHash('sha256').update(value.trim().toLowerCase(), 'utf8').digest('hex');
+}
+
+function buildExecutionInputPayload(insert: MatchInsert): Record<string, unknown> {
+  const event = insert.event;
+  return {
+    match_reason: insert.match_reason,
+    needs_semantic_match: insert.needs_semantic_match,
+    trigger_type: event.trigger_type,
+    vendor: event.vendor ?? null,
+    external_file_id: event.external_file_id ?? null,
+    filename: event.filename ?? null,
+    folder_path: event.folder_path ?? null,
+    subject: event.subject ?? null,
+    sender_email_sha256: event.sender_email ? sha256Lower(event.sender_email) : null,
+    payload: event.payload ?? {},
+  };
 }
 
 async function claimPendingEvents(): Promise<EventRow[]> {
@@ -211,10 +233,7 @@ async function persistMatches(inserts: MatchInsert[]): Promise<{ recorded: numbe
           trigger_event_id: i.event_id,
           org_id: i.org_id,
           status: i.needs_semantic_match ? 'AWAITING_SEMANTIC_MATCH' : 'PENDING',
-          input_payload: {
-            match_reason: i.match_reason,
-            needs_semantic_match: i.needs_semantic_match,
-          },
+          input_payload: buildExecutionInputPayload(i),
         })),
         { onConflict: 'rule_id,trigger_event_id', ignoreDuplicates: true },
       );
@@ -255,6 +274,7 @@ function buildMatchInserts(
         org_id: ev.org_id,
         match_reason: match.reason,
         needs_semantic_match: match.needs_semantic_match,
+        event: ev,
       })));
     }
   }

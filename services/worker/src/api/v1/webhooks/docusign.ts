@@ -66,12 +66,22 @@ async function findIntegration(accountId: string): Promise<DocusignIntegrationRo
   return rows[0];
 }
 
+function documentHashes(event: DocusignCompletedEnvelope): string[] {
+  const sha256Hex = /^[a-f0-9]{64}$/;
+  return [...new Set(
+    event.envelopeDocuments
+      .map((doc) => doc.sha256?.trim().toLowerCase())
+      .filter((hash): hash is string => Boolean(hash && sha256Hex.test(hash))),
+  )];
+}
+
 async function enqueueRuleEvent(args: {
   integration: DocusignIntegrationRow;
   event: DocusignCompletedEnvelope;
   payloadHash: string;
 }): Promise<string> {
   const canonical = adaptDocusign(args.event, { org_id: args.integration.org_id });
+  const hashes = documentHashes(args.event);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { data, error } = await (db.rpc as any)('enqueue_rule_event', {
     p_org_id: canonical.org_id,
@@ -88,6 +98,8 @@ async function enqueueRuleEvent(args: {
       account_id: args.event.accountId,
       envelope_id: args.event.envelopeId,
       document_ids: args.event.envelopeDocuments.map((doc) => doc.documentId),
+      ...(hashes.length > 0 ? { document_hashes: hashes } : {}),
+      ...(hashes.length === 1 ? { document_sha256: hashes[0] } : {}),
       generated_at: args.event.generatedDateTime ?? null,
       payload_hash: args.payloadHash,
     },
