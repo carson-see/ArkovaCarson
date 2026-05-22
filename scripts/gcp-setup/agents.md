@@ -3,6 +3,7 @@
 One-shot GCP infrastructure provisioning scripts. Idempotent; safe to re-run.
 
 ## Files
+
 - **`provision.sh`** — provisions GCP infra: Vertex AI service account, BigQuery dataset, Cloud Logging bucket (7-year retention), and points operators to `apply-monitoring.sh` for GCP-MAX-04. Addresses GCP-MAX-01 through GCP-MAX-04.
 - **`apply-monitoring.sh`** — applies SCRUM-1064 monitoring-as-code: metric descriptors, Cloud Monitoring service/SLOs, dashboard, and SLO burn alert policies once notification channel IDs are known.
 - **`synthetic-burn.sh`** — operator-gated synthetic Cloud Monitoring metric injector for SCRUM-1064 alert-path proof. Requires `ALLOW_SYNTHETIC_SLO_BURN=true`.
@@ -15,6 +16,7 @@ One-shot GCP infrastructure provisioning scripts. Idempotent; safe to re-run.
 - **`alert-policies/`** — Cloud Monitoring SLO burn alert policy templates. `${SLACK_OPS_ALERTS_CHANNEL}` is rendered by `apply-monitoring.sh`.
 
 ## Conventions
+
 - Requires `gcloud auth login` with project-admin role on `arkova1`.
 - BigQuery location is `US` (multi-region), not `us-central1`.
 - VPC Service Controls and SCC are documented but NOT auto-provisioned.

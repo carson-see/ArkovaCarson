@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
 # scripts/gcp-setup/synthetic-burn.sh
 #
-# Operator-only SCRUM-1064 synthetic metric injection. This writes labeled
-# Cloud Monitoring custom-metric points so the alert path can be tested without
-# sending real traffic through customer workflows.
+# Operator-only SCRUM-1064 synthetic metric injection. The batch point is
+# intentionally SLO-driving, so run only in an approved staging/isolated project.
 
 set -euo pipefail
 
-PROJECT_ID="${GCP_PROJECT_ID:-arkova1}"
+PROJECT_ID="${GCP_PROJECT_ID:-}"
 ENVIRONMENT="${ARKOVA_MONITORING_ENVIRONMENT:-staging}"
 BATCH_FAILURES="${SYNTHETIC_BATCH_FAILURES:-10}"
 GEMINI_TOKENS="${SYNTHETIC_GEMINI_TOKENS:-100000}"
+SLO_DRIVING_SYNTHETIC_LABEL="false"
 
 require_command() {
   command -v "$1" >/dev/null 2>&1 || {
@@ -25,6 +25,11 @@ Refusing to write synthetic burn metrics.
 Set ALLOW_SYNTHETIC_SLO_BURN=true and target an approved project/environment.
 Do not run this against production without explicit operator approval.
 MSG
+  exit 1
+fi
+
+if [[ -z "$PROJECT_ID" ]]; then
+  echo "ERROR: GCP_PROJECT_ID must be set explicitly." >&2
   exit 1
 fi
 
@@ -55,7 +60,7 @@ cat >"$PAYLOAD" <<JSON
         "labels": {
           "result": "failed",
           "environment": "${ENVIRONMENT}",
-          "synthetic": "true"
+          "synthetic": "${SLO_DRIVING_SYNTHETIC_LABEL}"
         }
       },
       "resource": {
@@ -113,6 +118,11 @@ cat >"$PAYLOAD" <<JSON
 JSON
 
 curl --fail --silent --show-error \
+  --connect-timeout 10 \
+  --max-time 60 \
+  --retry 3 \
+  --retry-delay 2 \
+  --retry-connrefused \
   --header "Authorization: Bearer ${ACCESS_TOKEN}" \
   --header "Content-Type: application/json" \
   --request POST \

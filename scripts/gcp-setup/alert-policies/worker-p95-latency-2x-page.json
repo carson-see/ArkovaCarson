@@ -1,7 +1,7 @@
 {
   "displayName": "Arkova SLO burn 2x page: worker-p95-latency",
   "documentation": {
-    "content": "SCRUM-1064: worker p95 latency SLO budget is burning at or above 2x over 60m. Page on-call; pause non-critical deploys if remaining budget is <= 20%.",
+    "content": "SCRUM-1064: worker p95 latency SLO budget is burning above 2x over 60m. Page on-call; pause non-critical deploys if remaining budget is <= 20%.",
     "mimeType": "text/markdown"
   },
   "userLabels": {
@@ -11,7 +11,7 @@
   },
   "conditions": [
     {
-      "displayName": "worker-p95-latency burn >= 2x",
+      "displayName": "worker-p95-latency burn > 2x",
       "conditionThreshold": {
         "filter": "select_slo_burn_rate(\"projects/${PROJECT_ID}/services/${SERVICE_ID}/serviceLevelObjectives/worker-p95-latency\", \"60m\")",
         "comparison": "COMPARISON_GT",

@@ -1,7 +1,7 @@
 {
   "displayName": "Arkova SLO burn 1x info: batch-anchor-success",
   "documentation": {
-    "content": "SCRUM-1064: batch anchor success SLO budget is burning at or above 1x over 60m. Inspect batch-anchor cron results, chain provider health, and treasury readiness.",
+    "content": "SCRUM-1064: batch anchor success SLO budget is burning above 1x over 60m. Inspect batch-anchor cron results, chain provider health, and treasury readiness.",
     "mimeType": "text/markdown"
   },
   "userLabels": {
@@ -11,7 +11,7 @@
   },
   "conditions": [
     {
-      "displayName": "batch-anchor-success burn >= 1x",
+      "displayName": "batch-anchor-success burn > 1x",
       "conditionThreshold": {
         "filter": "select_slo_burn_rate(\"projects/${PROJECT_ID}/services/${SERVICE_ID}/serviceLevelObjectives/batch-anchor-success\", \"60m\")",
         "comparison": "COMPARISON_GT",

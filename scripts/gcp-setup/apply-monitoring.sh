@@ -10,7 +10,6 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "$0")/../.." && pwd -P)"
 GCP_SETUP_DIR="${ROOT_DIR}/scripts/gcp-setup"
 PROJECT_ID="${GCP_PROJECT_ID:-arkova1}"
-REGION="${GCP_REGION:-us-central1}"
 SERVICE_ID="${ARKOVA_MONITORING_SERVICE_ID:-arkova-worker}"
 SLACK_OPS_ALERTS_CHANNEL="${SLACK_OPS_ALERTS_CHANNEL:-}"
 PAGERDUTY_NOTIFICATION_CHANNEL="${PAGERDUTY_NOTIFICATION_CHANNEL:-}"
@@ -160,7 +159,8 @@ ensure_alert_policies() {
   trap 'rm -rf "$tmpdir"' EXIT
 
   for policy in "${GCP_SETUP_DIR}"/alert-policies/*.json; do
-    local rendered="${tmpdir}/$(basename "$policy")"
+    local rendered
+    rendered="${tmpdir}/$(basename "$policy")"
     render_policy "$policy" "$rendered"
 
     local display_name
@@ -173,7 +173,11 @@ ensure_alert_policies() {
       --limit=1)"
 
     if [[ -n "$existing" ]]; then
-      echo "Alert policy exists: ${display_name} (${existing})"
+      gcloud monitoring policies update "$existing" \
+        --policy-from-file="$rendered" \
+        --project="$PROJECT_ID" \
+        --quiet >/dev/null
+      echo "Alert policy updated: ${display_name} (${existing})"
     else
       gcloud monitoring policies create --policy-from-file="$rendered" --project="$PROJECT_ID" --quiet >/dev/null
       echo "Alert policy created: ${display_name}"

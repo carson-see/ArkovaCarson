@@ -1,7 +1,7 @@
 {
   "displayName": "Arkova SLO burn 1x info: worker-p95-latency",
   "documentation": {
-    "content": "SCRUM-1064: worker p95 latency SLO budget is burning at or above 1x over 60m. Inspect Cloud Run latency, database timeouts, and queue pressure.",
+    "content": "SCRUM-1064: worker p95 latency SLO budget is burning above 1x over 60m. Inspect Cloud Run latency, database timeouts, and queue pressure.",
     "mimeType": "text/markdown"
   },
   "userLabels": {
@@ -11,7 +11,7 @@
   },
   "conditions": [
     {
-      "displayName": "worker-p95-latency burn >= 1x",
+      "displayName": "worker-p95-latency burn > 1x",
       "conditionThreshold": {
         "filter": "select_slo_burn_rate(\"projects/${PROJECT_ID}/services/${SERVICE_ID}/serviceLevelObjectives/worker-p95-latency\", \"60m\")",
         "comparison": "COMPARISON_GT",

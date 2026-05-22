@@ -53,7 +53,7 @@ SCRUM-1064 now lives as repo-managed config plus operator-provided channel IDs:
 | Metric descriptors | `scripts/gcp-setup/metrics/` | Custom metrics for batch-anchor results, Gemini token burn, and Verification API latency. |
 | Dashboard | `scripts/gcp-setup/dashboards/arkova-ops-health.json` | Cloud Run worker, edge availability, batch anchor, and Gemini token burn widgets. |
 | Alert policies | `scripts/gcp-setup/alert-policies/` | 1x info + 2x page SLO burn policies for every SLO. |
-| Synthetic burn harness | `scripts/gcp-setup/synthetic-burn.sh` | Operator-gated Cloud Monitoring metric injection for alert-path proof. |
+| Synthetic burn harness | `scripts/gcp-setup/synthetic-burn.sh` | Operator-gated Cloud Monitoring metric injection for alert-path proof in an approved staging/isolated project. |
 
 **One-time: create or locate the Slack notification channel.**
 
@@ -86,7 +86,7 @@ bash scripts/gcp-setup/apply-monitoring.sh
 
 **Synthetic burn proof.**
 
-Run only in an approved project/environment:
+Run only in an approved project/environment. The harness writes a batch-anchor failure point that is included by the batch SLO so the burn alert path can actually fire; do not run it against production without explicit operator approval.
 
 ```bash
 ALLOW_SYNTHETIC_SLO_BURN=true \
