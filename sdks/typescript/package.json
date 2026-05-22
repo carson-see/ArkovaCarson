@@ -1,6 +1,6 @@
 {
   "name": "@arkova/sdk",
-  "version": "0.1.0",
+  "version": "2.2.0",
   "description": "Arkova SDK — Anchor and verify data integrity on Bitcoin",
   "type": "module",
   "main": "dist/index.js",
