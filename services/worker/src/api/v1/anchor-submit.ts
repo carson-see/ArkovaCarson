@@ -24,6 +24,10 @@ import { ensureAnchorQuotaAvailable } from '../../utils/anchorQuotaGate.js';
 import { ensureOrgNotSuspended } from '../../utils/orgSuspensionGuard.js';
 import { submitJob } from '../../utils/jobQueue.js';
 import { buildProfessionalEducationJobPayload } from '../../compliance/professional-education.js';
+import {
+  isProfessionalEducationSchemaReady,
+  professionalEducationSchemaUnavailableBody,
+} from '../../utils/professionalEducationSchemaGate.js';
 
 const router = Router();
 
@@ -75,6 +79,11 @@ router.post('/', async (req: Request, res: Response) => {
     return;
   }
   const body: AnchorSubmitRequest = parsed.data;
+
+  if (body.credential_type === 'CPE' && !isProfessionalEducationSchemaReady()) {
+    res.status(503).json(professionalEducationSchemaUnavailableBody('anchor-submit:cpe'));
+    return;
+  }
 
   const fingerprint = body.fingerprint.toLowerCase();
   const parsedCredentialEvidenceMetadata = parsePublicCredentialEvidenceMetadataResult(body.metadata);
@@ -234,6 +243,8 @@ function enqueueProfessionalEducationExtraction(anchor: {
   metadata: Record<string, unknown> | null;
 }): void {
   if (!anchor.id) return;
+  if (!isProfessionalEducationSchemaReady()) return;
+
   const payload = buildProfessionalEducationJobPayload({ ...anchor, id: anchor.id });
   if (!payload) return;
 

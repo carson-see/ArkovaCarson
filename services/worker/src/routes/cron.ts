@@ -70,6 +70,10 @@ import { detectReorgs, monitorStuckTransactions, rebroadcastDroppedTransactions,
 import { runRegulatoryChangeScan } from '../jobs/regulatory-change-scan.js';
 import { runCalibrationRefit } from '../jobs/calibration-refit.js';
 import { withCronMonitoring } from '../utils/sentry.js';
+import {
+  isProfessionalEducationSchemaReady,
+  professionalEducationSchemaUnavailableBody,
+} from '../utils/professionalEducationSchemaGate.js';
 import { recoverStuckBroadcasts } from '../jobs/broadcast-recovery.js';
 import { refreshTreasuryCache } from '../jobs/treasury-cache.js';
 import { runTreasuryAlertCheck } from '../jobs/treasury-alert.js';
@@ -247,6 +251,11 @@ cronRouter.post('/batch-anchors', async (req, res) => {
 
 cronRouter.post('/professional-education-extraction', async (req, res) => {
   try {
+    if (!isProfessionalEducationSchemaReady()) {
+      res.status(503).json(professionalEducationSchemaUnavailableBody('cron:professional-education-extraction'));
+      return;
+    }
+
     const maxJobs = req.body?.maxJobs
       ? Math.min(Math.max(parseInt(String(req.body.maxJobs), 10) || 10, 1), 100)
       : 10;

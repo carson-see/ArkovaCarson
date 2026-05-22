@@ -17,6 +17,7 @@ import {
 import { db } from '../utils/db.js';
 import { claimJob, completeJob, failJob, type Job } from '../utils/jobQueue.js';
 import { logger } from '../utils/logger.js';
+import { isProfessionalEducationSchemaReady } from '../utils/professionalEducationSchemaGate.js';
 
 export interface ProfessionalEducationExtractionJobRunResult {
   claimed: number;
@@ -25,16 +26,24 @@ export interface ProfessionalEducationExtractionJobRunResult {
   manualReview: number;
 }
 
+type ProfessionalEducationProvider = Parameters<typeof extractAndPersistProfessionalEducationMetadata>[0]['provider'];
+
 export async function processProfessionalEducationExtractionJobs(
   maxJobs = 10,
 ): Promise<ProfessionalEducationExtractionJobRunResult> {
-  const provider = createExtractionProvider('pipeline');
   const result: ProfessionalEducationExtractionJobRunResult = {
     claimed: 0,
     processed: 0,
     failed: 0,
     manualReview: 0,
   };
+
+  if (!isProfessionalEducationSchemaReady()) {
+    logger.warn('Professional education extraction skipped because schema is not ready');
+    return result;
+  }
+
+  const provider = createExtractionProvider('pipeline');
 
   for (let i = 0; i < maxJobs; i++) {
     const job = await claimJob(PROFESSIONAL_EDUCATION_EXTRACTION_JOB_TYPE);
@@ -59,9 +68,14 @@ export async function processProfessionalEducationExtractionJobs(
 
 export async function processProfessionalEducationExtractionJob(
   job: Job<unknown>,
-  provider = createExtractionProvider('pipeline'),
+  provider?: ProfessionalEducationProvider,
 ): Promise<ProfessionalEducationExtractionResult> {
+  if (!isProfessionalEducationSchemaReady()) {
+    throw new Error('professional education schema is not ready');
+  }
+
   const payload = ProfessionalEducationExtractionJobPayloadSchema.parse(job.payload);
+  const extractionProvider = provider ?? createExtractionProvider('pipeline');
   const { data, error } = await db
     .from('anchors')
     .select('id, public_id, credential_type, fingerprint, org_id, user_id, metadata, cpe_metadata, cle_metadata')
@@ -91,7 +105,7 @@ export async function processProfessionalEducationExtractionJob(
 
   return extractAndPersistProfessionalEducationMetadata({
     db,
-    provider,
+    provider: extractionProvider,
     anchor,
     educationKind: payload.educationKind,
     evidence: payload.evidence ?? anchor.metadata ?? undefined,

@@ -398,6 +398,7 @@ GEMINI_LITE_MODEL=                  # GEM lite/cheaper model for low-latency cal
 GEMINI_VISION_MODEL=                # vision-capable Gemini model for image extraction
 ENABLE_MULTIMODAL_EMBEDDINGS=false  # multimodal (text+image) embedding gate
 ENABLE_NESSIE_RAG_RECOMMENDATIONS=false  # Nessie RAG recommendation experiment gate
+ENABLE_PROFESSIONAL_EDUCATION_SCHEMA_READY=false # PR #841 CPE/CLE runtime paths; keep false until prod schema + ledger reconciliation is complete
 ENABLE_DEMO_INJECTOR=false          # synthetic demo data injector for sales/QA
 EVAL_VERBOSE=false                  # extra logging in eval scripts (test-only)
 CF_AI_BINDING=                      # Cloudflare AI binding name (peripheral, edge worker)
