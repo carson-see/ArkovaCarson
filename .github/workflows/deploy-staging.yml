@@ -1,0 +1,126 @@
+name: Deploy to Staging
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'PR number (used for Cloud Run tag and lease check)'
+        required: true
+        type: string
+      source_ref:
+        description: 'Git ref to build from (branch name or SHA)'
+        required: true
+        type: string
+      service:
+        description: 'Cloud Run service to deploy to'
+        required: false
+        type: string
+        default: 'arkova-worker-staging'
+      force_reason:
+        description: 'If set, bypasses lease check (must start with SCRUM-NNNN:)'
+        required: false
+        type: string
+        default: ''
+
+concurrency:
+  group: deploy-staging-pr-${{ inputs.pr_number }}
+  cancel-in-progress: false
+
+env:
+  PROJECT_ID: arkova1
+  REGION: us-central1
+  REGISTRY: us-central1-docker.pkg.dev
+  REPOSITORY: arkova-worker-images
+
+jobs:
+  build-and-deploy:
+    name: Build & Deploy PR #${{ inputs.pr_number }} to staging
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ inputs.source_ref }}
+
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v4
+        with:
+          node-version: 20
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f # v2
+
+      - name: Login to Artifact Registry
+        run: gcloud auth print-access-token | docker login -u oauth2accesstoken --password-stdin ${{ env.REGISTRY }}
+
+      - name: Resolve build SHA
+        id: sha
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Build Docker image
+        working-directory: services/worker
+        run: |
+          IMAGE_TAG="pr-${{ inputs.pr_number }}-$(echo ${{ steps.sha.outputs.sha }} | cut -c1-8)"
+          IMAGE_REF="${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/arkova-worker:${IMAGE_TAG}"
+          echo "IMAGE_TAG=${IMAGE_TAG}" >> "$GITHUB_ENV"
+          echo "IMAGE_REF=${IMAGE_REF}" >> "$GITHUB_ENV"
+          docker build \
+            --build-arg BUILD_SHA=${{ steps.sha.outputs.sha }} \
+            --tag "${IMAGE_REF}" \
+            .
+
+      - name: Push Docker image
+        run: docker push "${IMAGE_REF}"
+
+      - name: Fetch staging secrets
+        id: secrets
+        run: |
+          echo "staging_url=$(gcloud secrets versions access latest --secret=supabase-url-staging --project=${{ env.PROJECT_ID }})" >> "$GITHUB_OUTPUT"
+          echo "::add-mask::$(gcloud secrets versions access latest --secret=supabase-service-role-key-staging --project=${{ env.PROJECT_ID }})"
+          echo "staging_key=$(gcloud secrets versions access latest --secret=supabase-service-role-key-staging --project=${{ env.PROJECT_ID }})" >> "$GITHUB_OUTPUT"
+
+      - name: Deploy to staging
+        env:
+          STAGING_SUPABASE_URL: ${{ steps.secrets.outputs.staging_url }}
+          STAGING_SUPABASE_SERVICE_ROLE_KEY: ${{ steps.secrets.outputs.staging_key }}
+          STAGING_CLOUD_RUN_SERVICE: ${{ inputs.service }}
+        run: |
+          FORCE_FLAG=""
+          if [ -n "${{ inputs.force_reason }}" ]; then
+            FORCE_FLAG="--force \"${{ inputs.force_reason }}\""
+          fi
+          bash scripts/staging/deploy.sh \
+            --pr ${{ inputs.pr_number }} \
+            --image "${IMAGE_REF}" \
+            --build-sha ${{ steps.sha.outputs.sha }} \
+            ${FORCE_FLAG}
+
+      - name: Summary
+        run: |
+          SERVICE="${{ inputs.service }}"
+          TAG="pr-${{ inputs.pr_number }}"
+          RAW_URL=$(gcloud run services describe "${SERVICE}" \
+            --region="${{ env.REGION }}" --project="${{ env.PROJECT_ID }}" \
+            --format="value(status.url)")
+          TAG_URL="${RAW_URL/https:\/\//https://${TAG}---}"
+          REVISION=$(gcloud run services describe "${SERVICE}" \
+            --region="${{ env.REGION }}" --project="${{ env.PROJECT_ID }}" \
+            --format="value(status.latestCreatedRevisionName)")
+          echo "## Staging Deploy Summary" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Field | Value |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|---|---|" >> "$GITHUB_STEP_SUMMARY"
+          echo "| PR | #${{ inputs.pr_number }} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Source ref | \`${{ inputs.source_ref }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Build SHA | \`${{ steps.sha.outputs.sha }}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Image | \`${IMAGE_REF}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Revision | \`${REVISION}\` |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Tag URL | ${TAG_URL} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| Service | \`${SERVICE}\` |" >> "$GITHUB_STEP_SUMMARY"
