@@ -138,7 +138,7 @@ test.describe('Billing', () => {
 
       await expect(individualPage.getByRole('heading', { name: /Monthly Usage/i })).toBeVisible();
       await expect(individualPage.getByText('Records secured')).toBeVisible();
-      await expect(individualPage.getByText(/^\d+$/).first()).toBeVisible();
+      await expect(individualPage.getByText('3 / 25')).toBeVisible();
     });
 
     test('fee account section shows payment method state', async ({ individualPage }) => {
