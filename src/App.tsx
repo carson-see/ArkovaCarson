@@ -28,6 +28,7 @@ import { RouteErrorBoundary } from '@/components/layout/RouteErrorBoundary';
 import { ROUTES, MAIN_APP_DESTINATIONS, destinationToRoute } from '@/lib/routes';
 import { prefetchCriticalRoutes } from '@/lib/prefetch';
 import { TOAST_DURATIONS_MS } from '@/lib/toastConfig';
+import { shouldDismissToastsForLocationChange, type ToastLocation } from '@/lib/toastNavigation';
 
 // ── Lazy-loaded page components (AUDIT-13: route-level code splitting) ──────
 const LoginPage = React.lazy(() => import('@/pages/LoginPage').then(m => ({ default: m.LoginPage })));
@@ -151,14 +152,19 @@ export function isSearchSubdomain(): boolean {
 
 function ToastNavigationReset() {
   const location = useLocation();
-  const hasMounted = useRef(false);
+  const previousLocationRef = useRef<ToastLocation | null>(null);
 
   useEffect(() => {
-    if (hasMounted.current) {
+    const currentLocation = { pathname: location.pathname, search: location.search };
+
+    if (
+      previousLocationRef.current
+      && shouldDismissToastsForLocationChange(previousLocationRef.current, currentLocation)
+    ) {
       toast.dismiss();
-    } else {
-      hasMounted.current = true;
     }
+
+    previousLocationRef.current = currentLocation;
   }, [location.pathname, location.search]);
 
   return null;
