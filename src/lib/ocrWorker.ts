@@ -12,7 +12,7 @@
 export interface OCRResult {
   text: string;
   pageCount: number;
-  method: 'pdfjs' | 'tesseract';
+  method: 'pdfjs' | 'tesseract' | 'mammoth' | 'text';
   durationMs: number;
 }
 
@@ -113,6 +113,33 @@ export async function extractTextFromImage(
 }
 
 /**
+ * Extract text from a Word document (.docx/.doc) using mammoth.js.
+ * Runs entirely in the browser — no network calls.
+ *
+ * BUG-2026-05-22-007: .docx is a ZIP-based format; the old fallback
+ * read it as plain text via file.text(), producing garbage output.
+ * mammoth.js properly unzips and parses the Office Open XML structure.
+ */
+async function extractTextFromDocx(
+  file: File,
+  onProgress?: (progress: OCRProgress) => void,
+): Promise<OCRResult> {
+  const start = Date.now();
+  onProgress?.({ stage: 'loading', progress: 10 });
+  const mammoth = await import('mammoth');
+  const arrayBuffer = await file.arrayBuffer();
+  onProgress?.({ stage: 'processing', progress: 50 });
+  const result = await mammoth.extractRawText({ arrayBuffer });
+  onProgress?.({ stage: 'complete', progress: 100 });
+  return {
+    text: result.value,
+    pageCount: 1,
+    method: 'mammoth',
+    durationMs: Date.now() - start,
+  };
+}
+
+/**
  * Extract text from a plain text file by reading it directly.
  * No OCR needed — just read the file contents.
  */
@@ -144,9 +171,16 @@ const TEXT_EXTENSIONS = new Set([
   '.txt', '.csv', '.md', '.json', '.xml', '.html', '.htm', '.log', '.rtf',
 ]);
 
+/** Word document MIME types */
+const DOCX_TYPES = new Set([
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'application/msword',
+]);
+const DOCX_EXTENSIONS = new Set(['.docx', '.doc']);
+
 /**
  * Auto-detect file type and run appropriate text extraction.
- * Supports PDFs (PDF.js), images (Tesseract OCR), and text files (direct read).
+ * Supports PDFs (PDF.js), Word documents (mammoth.js), images (Tesseract OCR), and text files (direct read).
  */
 export async function extractText(
   file: File,
@@ -156,20 +190,24 @@ export async function extractText(
     return extractTextFromPDF(file, onProgress);
   }
 
+  // Word documents — extract via mammoth.js (must check before image/text fallback)
+  const ext = '.' + file.name.split('.').pop()?.toLowerCase();
+  if (DOCX_TYPES.has(file.type) || DOCX_EXTENSIONS.has(ext)) {
+    return extractTextFromDocx(file, onProgress);
+  }
+
   if (file.type.startsWith('image/')) {
     return extractTextFromImage(file, onProgress);
   }
 
   // Text-based files — read directly, no OCR needed
-  const ext = '.' + file.name.split('.').pop()?.toLowerCase();
   if (TEXT_TYPES.has(file.type) || TEXT_EXTENSIONS.has(ext)) {
     return extractTextFromTextFile(file, onProgress);
   }
 
-  // Fallback: try to read as text (covers .docx plain text content, etc.)
-  try {
-    return await extractTextFromTextFile(file, onProgress);
-  } catch {
-    throw new Error(`Unsupported file type: ${file.type}. Supported: PDF, images, text files.`);
-  }
+  throw new Error(
+    `Unsupported file type for text extraction: ${file.type || ext}. ` +
+    'Supported: PDF, Word (.docx/.doc), images, and text files. ' +
+    'The document can still be secured without AI metadata.',
+  );
 }
