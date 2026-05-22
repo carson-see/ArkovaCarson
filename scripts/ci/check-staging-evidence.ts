@@ -448,6 +448,7 @@ export function isStagingToolingOnly(files: string[]): StagingFilesOnlyResult {
     /^docs\/reference\/STAGING_RIG\.md$/,
     /^\.github\/workflows\/ci\.yml$/,
     /^\.github\/workflows\/staging-evidence\.yml$/,
+    /^\.github\/workflows\/deploy-staging\.yml$/,
     /^CLAUDE\.md$/,
     /^HANDOFF\.md$/,
     /^\.gitignore$/,
