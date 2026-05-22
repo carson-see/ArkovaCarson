@@ -37,7 +37,7 @@ import {
 import { ROUTES, recordDetailPath } from '@/lib/routes';
 import { isPlatformAdmin } from '@/lib/platform';
 import { DASHBOARD_STATS_LABELS, RECORDS_LIST_LABELS, ONBOARDING_GUIDANCE_LABELS, SECURE_DIALOG_LABELS, DISCLAIMER_LABELS, ISSUE_CREDENTIAL_LABELS } from '@/lib/copy';
-import { resolveDashboardStatsState } from '@/lib/dashboardStats';
+import { resolveDashboardStatsRequest, resolveDashboardStatsState } from '@/lib/dashboardStats';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { CreditUsageWidget } from '@/components/dashboard/CreditUsageWidget';
 import { ComplianceScoreCard } from '@/components/compliance/ComplianceScoreCard';
@@ -198,17 +198,21 @@ export function DashboardPage() {
   const [orgStats, setOrgStats] = useState<{ total: number; secured: number; pending: number } | null>(null);
   const [statsError, setStatsError] = useState<string | null>(null);
   useEffect(() => {
-    if (!user) return;
+    const statsRequest = resolveDashboardStatsRequest({
+      userId: user?.id,
+      profileLoading,
+      profileRole: profile?.role,
+      profileOrgId: profile?.org_id,
+    });
+    if (!statsRequest) return;
+
+    const activeStatsRequest = statsRequest;
+    let cancelled = false;
     async function fetchStats() {
       setStatsError(null);
-      const rpcName = profile?.role === 'ORG_ADMIN' && profile?.org_id
-        ? 'get_org_anchor_stats'
-        : 'get_user_anchor_stats';
-      const rpcParam = profile?.role === 'ORG_ADMIN' && profile?.org_id
-        ? { p_org_id: profile.org_id }
-        : { p_user_id: user!.id };
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data, error: rpcError } = await (supabase as any).rpc(rpcName, rpcParam);
+      const { data, error: rpcError } = await (supabase as any).rpc(activeStatsRequest.rpcName, activeStatsRequest.rpcParam);
+      if (cancelled) return;
       if (rpcError) {
         console.error('Dashboard stats RPC error:', rpcError);
         setOrgStats(null);
@@ -224,7 +228,10 @@ export function DashboardPage() {
       });
     }
     fetchStats();
-  }, [profile?.role, profile?.org_id, user]);
+    return () => {
+      cancelled = true;
+    };
+  }, [profileLoading, profile?.role, profile?.org_id, user?.id]);
 
   const statsState = resolveDashboardStatsState({ rpcStats: orgStats, records, statsError });
   const stats = statsState.stats ?? { total: 0, secured: 0, pending: 0 };

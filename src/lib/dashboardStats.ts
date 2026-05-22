@@ -19,6 +19,42 @@ interface DashboardStatsState {
   error: string | null;
 }
 
+interface DashboardStatsRequestInput {
+  userId: string | undefined;
+  profileLoading: boolean;
+  profileRole: string | null | undefined;
+  profileOrgId: string | null | undefined;
+}
+
+interface DashboardStatsRequest {
+  rpcName: 'get_org_anchor_stats' | 'get_user_anchor_stats';
+  rpcParam: { p_org_id: string } | { p_user_id: string };
+  requestKey: string;
+}
+
+export function resolveDashboardStatsRequest({
+  userId,
+  profileLoading,
+  profileRole,
+  profileOrgId,
+}: DashboardStatsRequestInput): DashboardStatsRequest | null {
+  if (!userId || profileLoading) return null;
+
+  if (profileRole === 'ORG_ADMIN' && profileOrgId) {
+    return {
+      rpcName: 'get_org_anchor_stats',
+      rpcParam: { p_org_id: profileOrgId },
+      requestKey: `get_org_anchor_stats:${profileOrgId}`,
+    };
+  }
+
+  return {
+    rpcName: 'get_user_anchor_stats',
+    rpcParam: { p_user_id: userId },
+    requestKey: `get_user_anchor_stats:${userId}`,
+  };
+}
+
 export function resolveDashboardStatsState({
   rpcStats,
   records,

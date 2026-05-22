@@ -20,6 +20,7 @@ import { handleAccountDelete } from '../api/account-delete.js';
 import { handleAccountExport } from '../api/account-export.js';
 import { sendEmail } from '../email/sender.js';
 import { buildInvitationEmail } from '../email/templates.js';
+import { isCallerOrgAdmin } from '../api/_org-auth.js';
 
 export const anchorRouter = Router();
 
@@ -143,20 +144,7 @@ anchorRouter.post('/send-invitation-email', rateLimiters.checkout, async (req, r
   }
 
   try {
-    // Verify the caller is an org admin.
-    // PR #753 (no-shortcuts): the table is `memberships` not `org_memberships`.
-    // The wrong-table-name bug was inherited across both org-admin call sites
-    // (here + anchor-revoke.ts) and silently 403'd every invite-email request
-    // in prod. Surfaced during PR #753's T3 staging soak.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data: membership } = await (db as any)
-      .from('memberships')
-      .select('role')
-      .eq('user_id', userId)
-      .eq('org_id', orgId)
-      .single();
-
-    if (!membership || membership.role !== 'ORG_ADMIN') {
+    if (!(await isCallerOrgAdmin(userId, orgId))) {
       sendError(res, 403, 'forbidden', 'Only organization admins can send invitation emails');
       return;
     }
