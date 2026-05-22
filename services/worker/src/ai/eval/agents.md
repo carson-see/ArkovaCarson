@@ -1,6 +1,10 @@
 # agents.md — services/worker/src/ai/eval/
 
-_Last updated: 2026-05-16_
+_Last updated: 2026-05-22_
+
+## 2026-05-22 Professional Education Phase 5 Dataset
+
+- `golden-dataset-professional-education.ts` owns SCRUM-1953 fixtures for CPE, CLE, and course-ID extraction coverage. Keep entries synthetic/PII-stripped and keep CPE/CLE counts aligned with the 20-entry fail-closed gate minimums in `eval-gates.ts`.
 
 ## 2026-05-20 Explicit Eval Gates
 
@@ -20,6 +24,7 @@ AI extraction evaluation framework — golden datasets, scoring engine, calibrat
 | `calibration.ts` | Confidence calibration analysis — bucketed, Pearson, ECE, isotonic regression |
 | `golden-dataset.ts` | Base golden dataset with manually labeled ground truth entries |
 | `golden-dataset-phase*.ts` | Phase-specific golden dataset expansions (phases 2-24) |
+| `golden-dataset-professional-education.ts` | Phase 5 professional education fixtures for SCRUM-1953/1962/1963 CPE, CLE, and course-ID coverage |
 | `golden-dataset-subtype-backfill.ts` | Backfill sub-type labels across existing golden entries |
 | `intelligence-eval.ts` | Nessie compliance intelligence eval — citation accuracy, faithfulness, relevance |
 | `intelligence-eval-dataset.ts` | Test dataset for intelligence eval queries |
