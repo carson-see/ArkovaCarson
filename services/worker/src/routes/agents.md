@@ -4,6 +4,7 @@ Express routers + scheduler wiring. Two flavors of cron: in-process (dev/test ba
 
 ## Files
 - `cron.ts` — HTTP-triggered cron endpoints. Cloud Scheduler hits these. Includes `POST /jobs/anchor-expiry-sweep` (SCRUM-1736).
+- `cron.ts` — PR #841 containment: `POST /jobs/professional-education-extraction` returns 503 while `ENABLE_PROFESSIONAL_EDUCATION_SCHEMA_READY=false` so prod cannot query missing CPE/CLE schema objects.
 - **`scheduled.ts`** — in-process backup `cron.schedule()` calls. Includes the `ANCHOR_TABLE_IN_PROCESS_JOBS` allowlist that gates which jobs are skipped in production when `DISABLE_IN_PROCESS_ANCHOR_CRON=true`. **SCRUM-1736 added `anchor-expiry-sweep` (daily `0 3 * * *`)** to both the schedule and the allowlist; without the allowlist entry the in-process job would still fire even with the maintenance flag on, defeating the point.
 - `lifecycle.ts` — graceful-shutdown tracking via `trackOperation()`.
 - `agents.ts`, `webhooks.ts`, `attestations.ts`, etc. — domain routers.

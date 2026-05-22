@@ -27,6 +27,10 @@ import { deductOrgCredit } from '../../utils/orgCredits.js';
 import { ensureOrgNotSuspended } from '../../utils/orgSuspensionGuard.js';
 import { submitJob } from '../../utils/jobQueue.js';
 import { buildProfessionalEducationJobPayload } from '../../compliance/professional-education.js';
+import {
+  isProfessionalEducationSchemaReady,
+  professionalEducationSchemaUnavailableBody,
+} from '../../utils/professionalEducationSchemaGate.js';
 
 const router = Router();
 
@@ -131,6 +135,11 @@ router.post('/', async (req: Request, res: Response) => {
   }
 
   const body: BulkAnchorRequest = parsed.data;
+
+  if (!isProfessionalEducationSchemaReady() && body.anchors.some((row) => row.credential_type === 'CPE')) {
+    res.status(503).json(professionalEducationSchemaUnavailableBody('anchor-bulk:cpe'));
+    return;
+  }
 
   // ── Intra-batch duplicate detection (AC4 first pass) ────────────────
   const inBatchSeen = new Map<string, number>(); // fingerprint → first row index
@@ -320,6 +329,8 @@ function enqueueProfessionalEducationExtraction(anchor: {
   metadata: Record<string, unknown> | null;
 }): void {
   if (!anchor.id) return;
+  if (!isProfessionalEducationSchemaReady()) return;
+
   const payload = buildProfessionalEducationJobPayload({ ...anchor, id: anchor.id });
   if (!payload) return;
 

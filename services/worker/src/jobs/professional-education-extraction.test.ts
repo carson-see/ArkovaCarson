@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { Job } from '../utils/jobQueue.js';
 
 const {
   mockClaimJob,
@@ -7,8 +8,12 @@ const {
   mockDbFrom,
   mockProvider,
   mockLogger,
+  mockConfig,
   state,
 } = vi.hoisted(() => {
+  const mockConfig = {
+    enableProfessionalEducationSchemaReady: true,
+  };
   const state = {
     anchorError: null as { message: string } | null,
     anchorUpdates: [] as Record<string, unknown>[],
@@ -81,9 +86,11 @@ const {
       })),
     },
     mockLogger: { warn: vi.fn(), error: vi.fn(), info: vi.fn(), debug: vi.fn() },
+    mockConfig,
   };
 });
 
+vi.mock('../config.js', () => ({ config: mockConfig }));
 vi.mock('../utils/db.js', () => ({ db: { from: mockDbFrom } }));
 vi.mock('../utils/jobQueue.js', () => ({
   claimJob: (...args: unknown[]) => mockClaimJob(...args),
@@ -95,9 +102,12 @@ vi.mock('../ai/factory.js', () => ({
 }));
 vi.mock('../utils/logger.js', () => ({ logger: mockLogger }));
 
-import { processProfessionalEducationExtractionJobs } from './professional-education-extraction.js';
+import {
+  processProfessionalEducationExtractionJob,
+  processProfessionalEducationExtractionJobs,
+} from './professional-education-extraction.js';
 
-const JOB = {
+const JOB: Job<unknown> = {
   id: 'job-1',
   type: 'professional_education.metadata_extraction',
   payload: {
@@ -126,6 +136,7 @@ describe('professional education extraction job', () => {
     mockCompleteJob.mockReset();
     mockFailJob.mockReset();
     mockProvider.extractMetadata.mockClear();
+    mockConfig.enableProfessionalEducationSchemaReady = true;
     state.anchorError = null;
     state.anchorUpdates = [];
     state.auditEvents = [];
@@ -140,6 +151,27 @@ describe('professional education extraction job', () => {
     expect(state.auditEvents[0]).toMatchObject({ event_type: 'cpe_metadata.extracted' });
     expect(mockCompleteJob).toHaveBeenCalledWith('job-1');
     expect(mockFailJob).not.toHaveBeenCalled();
+  });
+
+  it('does not claim queued work when professional education schema is not ready', async () => {
+    mockConfig.enableProfessionalEducationSchemaReady = false;
+
+    const result = await processProfessionalEducationExtractionJobs(5);
+
+    expect(result).toEqual({ claimed: 0, processed: 0, failed: 0, manualReview: 0 });
+    expect(mockClaimJob).not.toHaveBeenCalled();
+    expect(mockDbFrom).not.toHaveBeenCalled();
+    expect(mockProvider.extractMetadata).not.toHaveBeenCalled();
+  });
+
+  it('rejects direct job processing before fetching anchors when schema is not ready', async () => {
+    mockConfig.enableProfessionalEducationSchemaReady = false;
+
+    await expect(processProfessionalEducationExtractionJob(JOB)).rejects.toThrow(
+      'professional education schema is not ready',
+    );
+    expect(mockDbFrom).not.toHaveBeenCalled();
+    expect(mockProvider.extractMetadata).not.toHaveBeenCalled();
   });
 
   it('marks the job failed when the anchor cannot be fetched', async () => {

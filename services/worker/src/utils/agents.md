@@ -11,6 +11,7 @@ Shared utilities consumed across the worker. Each file is small and single-purpo
 - `orgCredits.ts` — `deductOrgCredit()` wraps the `deduct_org_credit` RPC. Returns `{allowed, error?, balance?, required?}` shape that v1 anchor-submit consumes.
 - `anchorCreditGate.ts` (SCRUM-1631 PR #680) — shared 402/503 response helper around `deductOrgCredit`. Returns `false` when a response has been written; caller early-returns.
 - **`anchorQuotaGate.ts` (SCRUM-1740, PR #738)** — sandbox quota gate. Reads `org_credits.{is_test, anchor_quota}` and counts non-deleted anchors for the org. Returns 402 problem+json (`type=https://arkova.ai/errors/quota-exhausted`) when at/over cap. No-op for prod orgs (anchor_quota IS NULL). **Fails OPEN** on transient DB read errors — sandbox quota is a soft cap, not a security boundary; 8 unit tests cover every branch including fail-open.
+- `professionalEducationSchemaGate.ts` — PR #841 containment helper. Centralizes the default-off schema-readiness flag and shared 503 body for CPE/CLE runtime paths while prod lacks the #841 schema.
 - `orgSuspensionGuard.ts` (SCRUM-1667) — sub-org suspension check.
 - Various: `sentry.ts`, `telemetry.ts`, `correlationId.ts`, `cors.ts`, `rateLimit.ts` (legacy v1), `validation.ts`, `urls.ts`, etc.
 

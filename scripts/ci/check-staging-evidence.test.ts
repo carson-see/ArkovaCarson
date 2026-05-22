@@ -18,6 +18,14 @@ Queue rewrite.
 - Tier: T3
 - Staging branch: arkova-staging
 - Worker revision: arkova-worker-staging-00012-abc
+- PR head SHA: 1234567890abcdef1234567890abcdef12345678
+- Base SHA: abcdef1234567890abcdef1234567890abcdef12
+- Staging project ref: ujtlwnoqfhtitcmsnrpq
+- Cloud Run service/tag URL: https://pr-123---arkova-worker-staging.example.run.app
+- Image digest: sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+- Evidence scope: merge-grade shared staging
+- Preflight timestamp: 2026-05-04 13:55 UTC
+- Preflight result: environment_type=clean_mirror
 - Soak start: 2026-05-04 14:00 UTC
 - Soak end: 2026-05-06 14:00 UTC
 - E2E result: 312/312 green
@@ -256,6 +264,14 @@ describe('check-staging-evidence', () => {
 - Tier: T2
 - Staging branch: arkova-staging
 - Worker revision: arkova-worker-staging-00099-xyz
+- PR head SHA: 1234567890abcdef1234567890abcdef12345678
+- Base SHA: abcdef1234567890abcdef1234567890abcdef12
+- Staging project ref: ujtlwnoqfhtitcmsnrpq
+- Cloud Run service/tag URL: https://pr-999---arkova-worker-staging.example.run.app
+- Image digest: sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+- Evidence scope: merge-grade shared staging
+- Preflight timestamp: 2026-05-09 13:55 UTC
+- Preflight result: environment_type=clean_mirror
 - Soak start: ${start}
 - Soak end: ${end}
 - E2E result: 50/50 green
@@ -385,6 +401,8 @@ describe('check-staging-evidence', () => {
           'scripts/staging/seed.ts',
           'scripts/ci/check-staging-evidence.ts',
           'scripts/ci/check-staging-gcloud-policy.ts',
+          'scripts/ci/staging-honesty-preflight.ts',
+          'scripts/ci/staging-honesty-preflight.test.ts',
           '.github/workflows/ci.yml',
           'CLAUDE.md',
           'docs/staging/README.md',
@@ -495,6 +513,126 @@ describe('check-staging-evidence', () => {
         files: ['src/components/Foo.tsx'],
       });
       expect(r.ok).toBe(true);
+    });
+
+    it('fails completed T2 evidence when the shared-staging preflight is not clean', () => {
+      const body = `## Staging Soak Evidence
+- Tier: T2
+- Staging branch: arkova-staging
+- Worker revision: arkova-worker-staging-00099-xyz
+- PR head SHA: 1234567890abcdef1234567890abcdef12345678
+- Base SHA: abcdef1234567890abcdef1234567890abcdef12
+- Staging project ref: ujtlwnoqfhtitcmsnrpq
+- Cloud Run service/tag URL: https://pr-999---arkova-worker-staging.example.run.app
+- Image digest: sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+- Evidence scope: merge-grade shared staging
+- Preflight timestamp: 2026-05-09 13:55 UTC
+- Preflight result: environment_type=soak_artifact; duplicate migration names found
+- Soak start: 2026-05-09 14:00 UTC
+- Soak end: 2026-05-10 02:00 UTC
+- E2E result: 50/50 green
+- Migration applied: none
+- Rollback rehearsed: n/a
+- Staging deploy log id: 142
+`;
+      const r = check({
+        body,
+        files: ['services/worker/src/api/v1/docusign.ts'],
+        headSha: '1234567890abcdef1234567890abcdef12345678',
+        baseSha: 'abcdef1234567890abcdef1234567890abcdef12',
+      });
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/clean_mirror/i);
+    });
+
+    it('fails completed T2 evidence copied from an older PR head', () => {
+      const body = `## Staging Soak Evidence
+- Tier: T2
+- Staging branch: arkova-staging
+- Worker revision: arkova-worker-staging-00099-xyz
+- PR head SHA: 1234567890abcdef1234567890abcdef12345678
+- Base SHA: abcdef1234567890abcdef1234567890abcdef12
+- Staging project ref: ujtlwnoqfhtitcmsnrpq
+- Cloud Run service/tag URL: https://pr-999---arkova-worker-staging.example.run.app
+- Image digest: sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+- Evidence scope: merge-grade shared staging
+- Preflight timestamp: 2026-05-09 13:55 UTC
+- Preflight result: environment_type=clean_mirror
+- Soak start: 2026-05-09 14:00 UTC
+- Soak end: 2026-05-10 02:00 UTC
+- E2E result: 50/50 green
+- Migration applied: none
+- Rollback rehearsed: n/a
+- Staging deploy log id: 142
+`;
+      const r = check({
+        body,
+        files: ['services/worker/src/api/v1/docusign.ts'],
+        headSha: '9999999990abcdef1234567890abcdef12345678',
+        baseSha: 'abcdef1234567890abcdef1234567890abcdef12',
+      });
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/PR head SHA/i);
+    });
+
+    it('fails completed T2 evidence copied from an older base SHA', () => {
+      const body = `## Staging Soak Evidence
+- Tier: T2
+- Staging branch: arkova-staging
+- Worker revision: arkova-worker-staging-00099-xyz
+- PR head SHA: 1234567890abcdef1234567890abcdef12345678
+- Base SHA: abcdef1234567890abcdef1234567890abcdef12
+- Staging project ref: ujtlwnoqfhtitcmsnrpq
+- Cloud Run service/tag URL: https://pr-999---arkova-worker-staging.example.run.app
+- Image digest: sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+- Evidence scope: merge-grade shared staging
+- Preflight timestamp: 2026-05-09 13:55 UTC
+- Preflight result: environment_type=clean_mirror
+- Soak start: 2026-05-09 14:00 UTC
+- Soak end: 2026-05-10 02:00 UTC
+- E2E result: 50/50 green
+- Migration applied: none
+- Rollback rehearsed: n/a
+- Staging deploy log id: 142
+`;
+      const r = check({
+        body,
+        files: ['services/worker/src/api/v1/docusign.ts'],
+        headSha: '1234567890abcdef1234567890abcdef12345678',
+        baseSha: '9999991234567890abcdef1234567890abcdef12',
+      });
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/Base SHA/i);
+    });
+
+    it('fails completed T2 evidence with an unsupported evidence scope', () => {
+      const body = `## Staging Soak Evidence
+- Tier: T2
+- Staging branch: arkova-staging
+- Worker revision: arkova-worker-staging-00099-xyz
+- PR head SHA: 1234567890abcdef1234567890abcdef12345678
+- Base SHA: abcdef1234567890abcdef1234567890abcdef12
+- Staging project ref: ujtlwnoqfhtitcmsnrpq
+- Cloud Run service/tag URL: https://pr-999---arkova-worker-staging.example.run.app
+- Image digest: sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+- Evidence scope: shared staging smoke
+- Preflight timestamp: 2026-05-09 13:55 UTC
+- Preflight result: environment_type=clean_mirror
+- Soak start: 2026-05-09 14:00 UTC
+- Soak end: 2026-05-10 02:00 UTC
+- E2E result: 50/50 green
+- Migration applied: none
+- Rollback rehearsed: n/a
+- Staging deploy log id: 142
+`;
+      const r = check({
+        body,
+        files: ['services/worker/src/api/v1/docusign.ts'],
+        headSha: '1234567890abcdef1234567890abcdef12345678',
+        baseSha: 'abcdef1234567890abcdef1234567890abcdef12',
+      });
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/Evidence scope/i);
     });
 
     it('SCRUM-1208: HANDOFF.md and .gitignore are now in the staging-tooling allowlist (PR #733 follow-up)', () => {

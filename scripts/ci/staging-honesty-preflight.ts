@@ -100,7 +100,9 @@ export interface ParsedArgs {
 // Constants
 // ---------------------------------------------------------------------------
 
-const DEFAULT_PROD_VERSIONS = ['00000000000000', '0294', '0295', '0296', '0297'];
+const CANONICAL_INIT_VERSION = '00000000000000';
+const CANONICAL_INIT_NAMES = new Set([CANONICAL_INIT_VERSION, 'baseline_at_main_HEAD']);
+const DEFAULT_PROD_VERSIONS = [CANONICAL_INIT_VERSION, '0294', '0295', '0296', '0297'];
 
 /** Names that are categorically known artifacts from prior soak runs. */
 const KNOWN_ARTIFACT_NAMES = new Set([
@@ -133,6 +135,7 @@ const TIMESTAMP_VERSION_RE = /^\d{14,}$/;
 const SEED_ORG_PREFIXES = ['stg', 'staging_seed_', 'test_org_'];
 
 const MANAGEMENT_API_BASE_URL = 'https://api.supabase.com/v1';
+const MANAGEMENT_API_TIMEOUT_MS = 30_000;
 const MIGRATION_LEDGER_QUERY = `
   select version, name
   from supabase_migrations.schema_migrations
@@ -162,13 +165,8 @@ const REFRESH_FUNCTION_EXISTS_QUERY = `
 export function classifyMigrationRow(row: MigrationRow): ArtifactClassification | null {
   const { version, name } = row;
 
-  // The init row is always canonical.
-  if (version === '00000000000000') return null;
-
-  // Timestamp-format version (14+ digits, but not the init row).
-  if (TIMESTAMP_VERSION_RE.test(version)) {
-    return { row, reason: `timestamp version (${version}) — likely preview-branch or staging-only` };
-  }
+  // Only the canonical init/baseline rows get the init-version exemption.
+  if (version === CANONICAL_INIT_VERSION && CANONICAL_INIT_NAMES.has(name)) return null;
 
   // Known staging/PR prefixes in name.
   const lowerName = name.toLowerCase();
@@ -176,6 +174,15 @@ export function classifyMigrationRow(row: MigrationRow): ArtifactClassification 
     if (lowerName.startsWith(prefix)) {
       return { row, reason: `name starts with ${prefix}` };
     }
+  }
+
+  if (version === CANONICAL_INIT_VERSION) {
+    return { row, reason: `init version (${version}) with non-canonical name (${name})` };
+  }
+
+  // Timestamp-format version (14+ digits, but not a canonical init row).
+  if (TIMESTAMP_VERSION_RE.test(version)) {
+    return { row, reason: `timestamp version (${version}) — likely preview-branch or staging-only` };
   }
 
   return null;
@@ -249,11 +256,19 @@ function normalizeMigrationVersion(value: unknown): string | null {
   if (typeof value !== 'string' && typeof value !== 'number') return null;
   const raw = String(value).trim();
   if (!raw) return null;
-  if (raw === '00000000000000') return raw;
+  if (raw === CANONICAL_INIT_VERSION) return raw;
+  // Supabase stores canonical short migrations as four-digit strings in prod.
+  // Management API numeric rows such as 294 must compare as "0294".
   if (/^\d+$/.test(raw) && raw.length < 14) {
     return raw.padStart(4, '0');
   }
   return raw;
+}
+
+function normalizeMigrationName(value: unknown): string {
+  if (value == null) return '';
+  if (typeof value !== 'string' && typeof value !== 'number') return '';
+  return String(value).trim();
 }
 
 export function mapManagementMigrationRows(rows: readonly Record<string, unknown>[]): MigrationRow[] {
@@ -262,7 +277,7 @@ export function mapManagementMigrationRows(rows: readonly Record<string, unknown
     if (!version) return [];
     return [{
       version,
-      name: String(row.name ?? ''),
+      name: normalizeMigrationName(row.name),
     }];
   });
 }
@@ -284,8 +299,12 @@ export function mapManagementProdFacts(
     : [];
   return {
     cronJobNames,
-    functionExists: functionRows[0]?.function_exists === true,
+    functionExists: isTruthyManagementValue(functionRows[0]?.function_exists),
   };
+}
+
+function isTruthyManagementValue(value: unknown): boolean {
+  return value === true || value === 'true' || value === 't' || value === '1' || value === 1;
 }
 
 /**
@@ -613,7 +632,7 @@ function formatText(report: PreflightReport): string {
 // Main (DB-connected)
 // ---------------------------------------------------------------------------
 
-async function queryManagementApi(projectRef: string, managementApiToken: string, query: string): Promise<Record<string, unknown>[]> {
+export async function queryManagementApi(projectRef: string, managementApiToken: string, query: string): Promise<Record<string, unknown>[]> {
   const response = await fetch(`${MANAGEMENT_API_BASE_URL}/projects/${encodeURIComponent(projectRef)}/database/query/read-only`, {
     method: 'POST',
     headers: {
@@ -621,6 +640,7 @@ async function queryManagementApi(projectRef: string, managementApiToken: string
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({ query }),
+    signal: AbortSignal.timeout(MANAGEMENT_API_TIMEOUT_MS),
   });
 
   if (!response.ok) {
