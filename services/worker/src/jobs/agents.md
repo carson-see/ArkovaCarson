@@ -35,15 +35,15 @@ Affected jobs and their concurrency model:
 | Job | Strategy | Rationale |
 |---|---|---|
 | `revocation.ts` | **Sequential** (unchanged) | UTXO selection from a shared treasury wallet is not safe under concurrency — double-spend risk |
-| `broadcast-recovery.ts` | Bounded concurrency via `runWithConcurrency` | DB fan-out only; no chain interaction during recovery reset |
+| `broadcast-recovery.ts` | `Promise.allSettled` in chunks of 100 | DB fan-out only; no chain interaction during recovery reset. Per-anchor metadata preserved. |
 | `cloud-logging-drain` | Bulk RPC (`bump_cloud_logging_retry_counts`) | Read-modify-write loops replaced with single atomic DB call |
-| `attestationExpiry` | Bounded concurrency via `runWithConcurrency` | DB fan-out only; attestation expiry does not touch chain |
+| `attestationExpiry` | Bulk insert (chunked 100) + ordering fix | Webhooks collected then bulk-inserted BEFORE status update to prevent permanent loss |
 
 Key implementation patterns:
 
-- **`runWithConcurrency`** (from `../utils/concurrency.ts`): codebase utility for bounded-parallel async work. Used instead of `p-limit` — deliberate choice to avoid the external dependency.
+- **Chunked `Promise.allSettled`**: `broadcast-recovery` fires up to 100 concurrent DB updates per chunk. Per-anchor metadata is preserved in each update payload.
 - **Chunked `.in()` queries**: Supabase `.in()` filter calls are chunked at **100 IDs per batch** to stay within PostgREST query-string limits and avoid request-size failures on large result sets.
-- **`bump_cloud_logging_retry_counts` RPC** (migration `0309`, `SECURITY DEFINER`): Atomically increments retry counts for a batch of IDs in a single DB round-trip, replacing the prior read-modify-write loop. Accepts an array of IDs; returns updated count.
+- **`bump_cloud_logging_retry_counts` RPC** (migration `0315`, `SECURITY DEFINER`): Atomically increments retry counts for a batch of IDs in a single DB round-trip, replacing the prior read-modify-write loop. Accepts an array of IDs; returns updated count.
 - **Bulk updates with per-anchor metadata**: `broadcast-recovery` preserves per-anchor `recovery_metadata` in bulk update payloads — each anchor retains its own failure context even within a batched write.
 
 ## Open work
