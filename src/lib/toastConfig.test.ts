@@ -1,3 +1,4 @@
+/* eslint-disable arkova/require-error-code-assertion -- Duration config has an `error` severity key; these tests do not exercise a failing request. */
 import { describe, expect, it } from 'vitest';
 import { TOAST_DURATIONS_MS } from './toastConfig';
 
