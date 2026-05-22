@@ -1063,6 +1063,7 @@ export const ORG_PAGE_LABELS = {
   SECURE_DOCUMENT_MOBILE: 'Secure',
   ISSUE_CREDENTIAL: 'Issue Credential',
   ISSUE_CREDENTIAL_MOBILE: 'Issue',
+  FOUNDED: 'Founded',
   /** @deprecated SCRUM-1755 — Secure Document auto-detects bulk; do not render a separate Bulk Upload button. */
   BULK_UPLOAD: 'Bulk Upload',
   /** @deprecated SCRUM-1755 — Secure Document auto-detects bulk; do not render a separate Bulk Upload dialog. */
