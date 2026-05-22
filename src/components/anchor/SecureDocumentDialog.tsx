@@ -286,7 +286,7 @@ export function SecureDocumentDialog({
       });
 
       // Merge AI tags from template reconstruction into metadata
-      const metadata: Record<string, Json | undefined> = { ...acceptedFields } as Record<string, Json | undefined>;
+      const metadata: Record<string, Json> = { ...acceptedFields } as Record<string, Json>;
       if (initialJurisdiction && !metadata.jurisdiction) {
         metadata.jurisdiction = initialJurisdiction;
       }
@@ -308,7 +308,8 @@ export function SecureDocumentDialog({
       });
       Object.assign(metadata, fraudResultToMetadata(fraudResult));
 
-      const { data: inserted, error: insertError } = await supabase
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- validated spread includes credential types that narrow type rejects
+      const { data: inserted, error: insertError } = await (supabase as any)
         .from('anchors')
         .insert({
           ...validated,
