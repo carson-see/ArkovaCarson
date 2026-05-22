@@ -21,7 +21,7 @@ export const REPO = resolve(import.meta.dirname, '..', '..', '..');
 // silently fails and downstream try/catches return [] / 0, no-op'ing the
 // gates. Fail closed instead — resolve to a real SHA via git rev-parse,
 // or exit 1 with a clear actionable message.
-function resolveBaseRefOrFail(ref: string): string {
+export function resolveCommitOrFail(ref: string, label = 'CI base ref'): string {
   try {
     const sha = execFileSync('git', ['rev-parse', '--verify', `${ref}^{commit}`], {
       cwd: REPO,
@@ -33,7 +33,7 @@ function resolveBaseRefOrFail(ref: string): string {
     }
     return sha;
   } catch (err) {
-    console.error(`::error::Cannot resolve CI base ref '${ref}' (R0 / SCRUM-1246).`);
+    console.error(`::error::Cannot resolve ${label} '${ref}' (R0 / SCRUM-1246).`);
     console.error('  This usually means a shallow checkout. Use `actions/checkout@v4 with: fetch-depth: 0`.');
     console.error(`  Underlying error: ${err instanceof Error ? err.message : String(err)}`);
     process.exit(1);
@@ -41,7 +41,7 @@ function resolveBaseRefOrFail(ref: string): string {
 }
 
 const RAW_BASE_REF = process.env.BASE_REF_SHA || process.env.BASE_REF || 'origin/main';
-export const baseRef = resolveBaseRefOrFail(RAW_BASE_REF);
+export const baseRef = resolveCommitOrFail(RAW_BASE_REF);
 export const prLabels = (process.env.PR_LABELS ?? '').split(',').map((s) => s.trim()).filter(Boolean);
 export const prTitle = process.env.PR_TITLE ?? '';
 export const prBody = process.env.PR_BODY ?? '';

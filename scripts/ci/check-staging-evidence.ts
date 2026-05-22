@@ -26,8 +26,10 @@ import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import {
   REPO,
+  baseRef,
   prBody,
   changedFiles,
+  resolveCommitOrFail,
 } from './lib/ciContext.js';
 
 export type Tier = 'T1' | 'T2' | 'T3';
@@ -60,6 +62,14 @@ export const TIER_SPECS: Record<Tier, TierSpec> = {
       'Tier:',
       'Staging branch:',
       'Worker revision:',
+      'PR head SHA:',
+      'Base SHA:',
+      'Staging project ref:',
+      'Cloud Run service/tag URL:',
+      'Image digest:',
+      'Evidence scope:',
+      'Preflight timestamp:',
+      'Preflight result:',
       'Soak start:',
       'Soak end:',
       'E2E result:',
@@ -77,6 +87,14 @@ export const TIER_SPECS: Record<Tier, TierSpec> = {
       'Tier:',
       'Staging branch:',
       'Worker revision:',
+      'PR head SHA:',
+      'Base SHA:',
+      'Staging project ref:',
+      'Cloud Run service/tag URL:',
+      'Image digest:',
+      'Evidence scope:',
+      'Preflight timestamp:',
+      'Preflight result:',
       'Soak start:',
       'Soak end:',
       'E2E result:',
@@ -161,6 +179,12 @@ export const PATH_RULES: PathRule[] = [
 ];
 
 const TIER_RANK: Record<Tier, number> = { T1: 1, T2: 2, T3: 3 };
+const SHA_RE = /\b[0-9a-f]{40}\b/i;
+const DECLARED_TIER_VALUES = new Set<Tier>(['T1', 'T2', 'T3']);
+const ALLOWED_EVIDENCE_SCOPES = new Set([
+  'merge-grade shared staging',
+  'merge-grade isolated staging',
+]);
 
 export function requiredTierFor(files: string[]): { tier: Tier; reason: string } {
   let best: Tier = 'T1';
@@ -177,7 +201,6 @@ export function requiredTierFor(files: string[]): { tier: Tier; reason: string }
 }
 
 const EVIDENCE_HEADER_RE = /^##\s+Staging\s+Soak\s+Evidence\s*$/im;
-const TIER_DECLARATION_RE = /^\s*[-*]?\s*(?:\[[ x]\]\s*)?Tier:\s*(T[123])\b/im;
 const UTC_TIMESTAMP_RE = /^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2})(?::(\d{2}))?\s*(?:UTC|Z)\b/i;
 
 function escapeRegExp(value: string): string {
@@ -185,8 +208,24 @@ function escapeRegExp(value: string): string {
 }
 
 export function extractDeclaredTier(body: string): Tier | null {
-  const m = TIER_DECLARATION_RE.exec(body);
-  return m ? (m[1] as Tier) : null;
+  for (const line of body.split(/\r?\n/)) {
+    let candidate = line.trimStart();
+    if (candidate.startsWith('-') || candidate.startsWith('*')) {
+      candidate = candidate.slice(1).trimStart();
+    }
+    if (candidate.startsWith('[x]') || candidate.startsWith('[ ]')) {
+      candidate = candidate.slice(3).trimStart();
+    }
+    if (!candidate.startsWith('Tier:')) continue;
+
+    const rest = candidate.slice('Tier:'.length).trimStart();
+    const value = rest.slice(0, 2);
+    const next = rest[2];
+    if (DECLARED_TIER_VALUES.has(value as Tier) && (next === undefined || !/[A-Za-z0-9_]/.test(next))) {
+      return value as Tier;
+    }
+  }
+  return null;
 }
 
 export function hasEvidenceSection(body: string): boolean {
@@ -269,6 +308,116 @@ export function soakDurationErrors(body: string, tier: Tier): string[] {
   return errors;
 }
 
+function extractShaField(body: string, field: string): string | null {
+  const value = extractEvidenceFieldValue(body, field);
+  if (value === null) return null;
+  const m = SHA_RE.exec(value);
+  return m ? m[0].toLowerCase() : null;
+}
+
+function normalizeSha(value: string | undefined): string | null {
+  if (!value) return null;
+  const m = SHA_RE.exec(value);
+  return m ? m[0].toLowerCase() : null;
+}
+
+function hasCleanMirrorPreflight(value: string): boolean {
+  const lower = value.toLowerCase();
+  if (/\b(?:soak_artifact|fixture_seeded)\b/.test(lower)) return false;
+  if (/\bdiagnostic[- ]?only\b/.test(lower)) return false;
+  return /["']?environment_type["']?\s*[:=]\s*["']?clean_mirror["']?/.test(lower);
+}
+
+function normalizeEvidenceScope(value: string): string {
+  return value.trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+function evidenceScopeErrors(body: string): string[] {
+  const evidenceScope = extractEvidenceFieldValue(body, 'Evidence scope:');
+  if (evidenceScope === null) {
+    return ['Evidence scope must be one of: merge-grade shared staging, merge-grade isolated staging.'];
+  }
+
+  const normalized = normalizeEvidenceScope(evidenceScope);
+  if (/\bdiagnostic[- ]?only\b/i.test(normalized)) {
+    return ['Evidence scope is diagnostic-only; diagnostic evidence is not merge-grade staging evidence.'];
+  }
+
+  if (ALLOWED_EVIDENCE_SCOPES.has(normalized)) return [];
+
+  return ['Evidence scope must be one of: merge-grade shared staging, merge-grade isolated staging.'];
+}
+
+function preflightResultErrors(body: string): string[] {
+  const preflightResult = extractEvidenceFieldValue(body, 'Preflight result:');
+  if (preflightResult === null || hasCleanMirrorPreflight(preflightResult)) return [];
+  return ['Preflight result must capture `environment_type=clean_mirror`; dirty or diagnostic preflight output is not merge-grade evidence.'];
+}
+
+function preflightTimestampErrors(body: string): string[] {
+  const preflightTimestampValue = extractEvidenceFieldValue(body, 'Preflight timestamp:');
+  if (preflightTimestampValue === null) return [];
+
+  const preflightMs = parseEvidenceTimestamp(preflightTimestampValue);
+  if (preflightMs === null) {
+    return [`Preflight timestamp could not parse as a timestamp: \`${preflightTimestampValue}\`.`];
+  }
+
+  const soakStartValue = extractEvidenceFieldValue(body, 'Soak start:');
+  const soakStartMs = soakStartValue === null ? null : parseEvidenceTimestamp(soakStartValue);
+  if (soakStartMs !== null && preflightMs > soakStartMs) {
+    return ['Preflight timestamp must be at or before Soak start.'];
+  }
+
+  return [];
+}
+
+function shaEvidenceErrors(opts: {
+  body: string;
+  field: string;
+  expectedSha?: string;
+  currentLabel: string;
+  staleMessage: string;
+}): string[] {
+  const evidenceSha = extractShaField(opts.body, opts.field);
+  if (!evidenceSha) return [`${opts.field} must contain a 40-character commit SHA.`];
+
+  const expectedSha = normalizeSha(opts.expectedSha);
+  if (!expectedSha || evidenceSha === expectedSha) return [];
+
+  return [
+    `${opts.field} \`${evidenceSha}\` does not match current ${opts.currentLabel} \`${expectedSha}\`; ${opts.staleMessage}`,
+  ];
+}
+
+function stagingIntegrityErrors(
+  body: string,
+  tier: Tier,
+  opts: { headSha?: string; baseSha?: string } = {},
+): string[] {
+  if (tier === 'T1') return [];
+
+  return [
+    ...evidenceScopeErrors(body),
+    ...preflightResultErrors(body),
+    ...preflightTimestampErrors(body),
+    ...shaEvidenceErrors({
+      body,
+      field: 'PR head SHA:',
+      expectedSha: opts.headSha,
+      currentLabel: 'PR head',
+      staleMessage: 'evidence cannot be copied across commits.',
+    }),
+    ...shaEvidenceErrors({
+      body,
+      field: 'Base SHA:',
+      expectedSha: opts.baseSha,
+      currentLabel: 'base',
+      staleMessage: 're-check merge-base drift before claiming merge-grade evidence.',
+    }),
+  ];
+}
+
 interface StagingFilesOnlyResult {
   pass: boolean;
   reason: string;
@@ -332,7 +481,7 @@ interface CheckResult {
   notes: string[];
 }
 
-export function check(opts: { body: string; files: string[] }): CheckResult {
+export function check(opts: { body: string; files: string[]; headSha?: string; baseSha?: string }): CheckResult {
   const { body, files } = opts;
   const result: CheckResult = { ok: true, errors: [], notes: [] };
 
@@ -386,12 +535,22 @@ export function check(opts: { body: string; files: string[] }): CheckResult {
     result.errors.push(...durationErrors);
   }
 
+  const integrityErrors = stagingIntegrityErrors(body, declared, opts);
+  if (integrityErrors.length > 0) {
+    result.ok = false;
+    result.errors.push(...integrityErrors);
+  }
+
   return result;
 }
 
 function main(): void {
   const files = changedFiles();
-  const result = check({ body: prBody, files });
+  const currentHeadSha = resolveCommitOrFail(
+    process.env.HEAD_REF_SHA || process.env.GITHUB_SHA || 'HEAD',
+    'CI head ref',
+  );
+  const result = check({ body: prBody, files, headSha: currentHeadSha, baseSha: baseRef });
 
   for (const note of result.notes) console.log(`ℹ️  ${note}`);
   if (result.ok) {

@@ -35,6 +35,7 @@ jobs:
       pull-requests: read
     env:
       BASE_REF_SHA: ${{ github.event.pull_request.base.sha }}
+      HEAD_REF_SHA: ${{ github.event.pull_request.head.sha }}
       PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
       PR_BODY: ${{ github.event.pull_request.body }}
       PR_TITLE: ${{ github.event.pull_request.title }}
