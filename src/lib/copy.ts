@@ -836,6 +836,18 @@ export const SEARCH_LABELS = {
 } as const;
 
 // =============================================================================
+// DASHBOARD
+// =============================================================================
+
+export const DASHBOARD_STATS_LABELS = {
+  TOTAL_RECORDS: 'Total Records',
+  SECURED: 'Secured',
+  PENDING: 'Pending',
+  UNAVAILABLE_VALUE: 'Unavailable',
+  ERROR_DESCRIPTION: 'Stats unavailable. Refresh to try again.',
+} as const;
+
+// =============================================================================
 // USAGE WIDGET (UF-06)
 // =============================================================================
 
