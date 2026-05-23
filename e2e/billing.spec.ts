@@ -40,13 +40,9 @@ async function mockBillingStatus(page: import('@playwright/test').Page) {
 }
 
 async function mockBillingUnavailable(page: import('@playwright/test').Page) {
-  await page.route('**/api/billing/status', async (route) => {
-    await route.fulfill({
-      status: 503,
-      contentType: 'application/json',
-      body: JSON.stringify({ error: 'billing unavailable' }),
-    });
-  });
+  await page.route(/\/api\/billing\/status/, (route) =>
+    route.fulfill({ status: 503, contentType: 'application/json', body: '{"error":"unavailable"}' }),
+  );
 }
 
 async function expectBillingOverview(page: import('@playwright/test').Page) {
@@ -229,6 +225,7 @@ test.describe('Billing', () => {
     });
 
     test('checkout cancel page navigates back to billing', async ({ individualPage }) => {
+      await mockBillingUnavailable(individualPage);
       await openAsIndividual(individualPage, '/billing/cancel');
 
       await expect(
