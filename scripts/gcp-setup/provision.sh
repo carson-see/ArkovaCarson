@@ -199,33 +199,21 @@ echo "BigQuery dataset ready: ${PROJECT_ID}:${BQ_DATASET}"
 echo ""
 echo "--- GCP-MAX-04: Monitoring SLOs + alert policies ---"
 
-# SLOs are defined declaratively under scripts/gcp-setup/slos/*.yaml.
-# gcloud monitoring uses the Services / SLO API — create the service first,
-# then attach SLOs.
-SERVICE_ID="arkova-worker"
-if ! gcloud monitoring services describe "$SERVICE_ID" --project="$PROJECT_ID" --quiet 2>/dev/null; then
-  gcloud monitoring services create \
-    --service-id="$SERVICE_ID" \
-    --display-name="Arkova Worker" \
-    --project="$PROJECT_ID" \
-    --quiet
-fi
+MONITORING_SLOS=(
+  worker-availability
+  worker-p95-latency
+  batch-anchor-success
+  verification-api-p95-latency
+)
 
-for SLO in worker-availability worker-p95-latency batch-anchor-success; do
-  if [[ -f "$(dirname "$0")/slos/${SLO}.yaml" ]]; then
-    gcloud monitoring slos create \
-      --service="$SERVICE_ID" \
-      --slo-from-file="$(dirname "$0")/slos/${SLO}.yaml" \
-      --project="$PROJECT_ID" \
-      --quiet || echo "SLO $SLO already exists or failed — check manually"
-  fi
-done
-
-# Alert policies are separately managed — pointer in the runbook.
-echo "SLOs created (or already existed) under service: $SERVICE_ID"
+echo "Monitoring SLO set: ${MONITORING_SLOS[*]}"
+echo "SCRUM-1064 monitoring is applied by scripts/gcp-setup/apply-monitoring.sh"
+echo "because this gcloud release does not expose stable services/SLO commands."
 echo ""
-echo "⚠  Alert policies NOT auto-created — requires Notification Channel IDs"
-echo "   that differ per environment. See docs/runbooks/gcp-max-setup.md."
+echo "After creating notification channels, run:"
+echo "  SLACK_OPS_ALERTS_CHANNEL=projects/$PROJECT_ID/notificationChannels/XXXX \\"
+echo "    GCP_PROJECT_ID=$PROJECT_ID GCP_REGION=$REGION \\"
+echo "    bash scripts/gcp-setup/apply-monitoring.sh"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Summary
@@ -251,4 +239,4 @@ echo "  5. Apply for SOC 2 CC7.1 evidence export:"
 echo "     gcloud logging read 'logName=\"projects/$PROJECT_ID/logs/$LOGGING_LOG_NAME\"' \\"
 echo "       --freshness=7d --format=json > audit-weekly.json"
 echo ""
-echo "  6. Alert policies require notification-channel IDs. See runbook."
+echo "  6. Create notification channels and run scripts/gcp-setup/apply-monitoring.sh"

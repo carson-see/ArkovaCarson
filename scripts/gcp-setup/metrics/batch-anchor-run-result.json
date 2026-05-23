@@ -1,0 +1,25 @@
+{
+  "type": "custom.googleapis.com/arkova/batch_anchor_run_result",
+  "metricKind": "DELTA",
+  "valueType": "INT64",
+  "unit": "1",
+  "displayName": "Arkova batch anchor run result",
+  "description": "Counts batch anchor job outcomes. result=success contributes to the SCRUM-1064 batch-anchor success SLO; synthetic=true is reserved for operator burn-test events.",
+  "labels": [
+    {
+      "key": "result",
+      "valueType": "STRING",
+      "description": "Job outcome: success or failed."
+    },
+    {
+      "key": "environment",
+      "valueType": "STRING",
+      "description": "Environment name, for example staging or production."
+    },
+    {
+      "key": "synthetic",
+      "valueType": "STRING",
+      "description": "true for operator-generated test events; false for worker-emitted production telemetry."
+    }
+  ]
+}

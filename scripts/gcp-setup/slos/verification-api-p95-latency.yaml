@@ -1,0 +1,16 @@
+# GCP Monitoring SLO — public Verification API p95 latency under 200ms
+# Target: 95% of Verification API requests complete in ≤ 200ms over a rolling
+# 7-day window. The metric descriptor is declared in
+# scripts/gcp-setup/metrics/verification-api-request-latency.json.
+
+displayName: "Verification API p95 latency ≤ 200ms (95% over 7d)"
+goal: 0.95
+rollingPeriod: 604800s  # 7 days
+serviceLevelIndicator:
+  requestBased:
+    distributionCut:
+      distributionFilter: >
+        metric.type = "custom.googleapis.com/arkova/verification_api_request_latency"
+        metric.labels.synthetic = "false"
+      range:
+        max: 200  # milliseconds

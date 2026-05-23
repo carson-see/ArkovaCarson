@@ -1,0 +1,17 @@
+{
+  "displayName": "Batch anchor success rate (99% over 24h)",
+  "goal": 0.99,
+  "rollingPeriod": "86400s",
+  "serviceLevelIndicator": {
+    "requestBased": {
+      "goodTotalRatio": {
+        "goodServiceFilter": "metric.type = \"custom.googleapis.com/arkova/batch_anchor_run_result\" metric.labels.result = \"success\" metric.labels.synthetic = \"false\"",
+        "totalServiceFilter": "metric.type = \"custom.googleapis.com/arkova/batch_anchor_run_result\" metric.labels.synthetic = \"false\""
+      }
+    }
+  },
+  "userLabels": {
+    "story": "scrum_1064",
+    "slo_id": "batch_anchor_success"
+  }
+}

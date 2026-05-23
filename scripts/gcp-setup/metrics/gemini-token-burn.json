@@ -1,0 +1,30 @@
+{
+  "type": "custom.googleapis.com/arkova/gemini_token_burn",
+  "metricKind": "DELTA",
+  "valueType": "INT64",
+  "unit": "1",
+  "displayName": "Arkova Gemini token burn",
+  "description": "Counts Gemini Golden tokens consumed by model, operation, environment, and synthetic/test status for SCRUM-1064 dashboarding and budget-burn visibility.",
+  "labels": [
+    {
+      "key": "model",
+      "valueType": "STRING",
+      "description": "Gemini model or tuned endpoint identifier."
+    },
+    {
+      "key": "operation",
+      "valueType": "STRING",
+      "description": "Call site or workload family, for example extraction or eval."
+    },
+    {
+      "key": "environment",
+      "valueType": "STRING",
+      "description": "Environment name, for example staging or production."
+    },
+    {
+      "key": "synthetic",
+      "valueType": "STRING",
+      "description": "true for operator-generated test events; false for worker-emitted production telemetry."
+    }
+  ]
+}
