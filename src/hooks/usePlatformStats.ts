@@ -7,7 +7,7 @@
  */
 
 import { useCallback } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { workerFetch } from '@/lib/workerClient';
 import { queryKeys } from '@/lib/queryClient';
 
@@ -36,12 +36,11 @@ async function fetchPlatformStatsData(): Promise<PlatformStats> {
 }
 
 export function usePlatformStats() {
-  const qc = useQueryClient();
-
   const {
     data: stats = null,
-    isLoading: loading,
+    isFetching: loading,
     error: queryError,
+    refetch,
   } = useQuery({
     queryKey: queryKeys.platformStats(),
     queryFn: fetchPlatformStatsData,
@@ -51,8 +50,8 @@ export function usePlatformStats() {
   });
 
   const fetchStats = useCallback(async () => {
-    await qc.refetchQueries({ queryKey: queryKeys.platformStats() });
-  }, [qc]);
+    await refetch();
+  }, [refetch]);
 
   return {
     stats,

@@ -8,18 +8,31 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { SearchPage } from './SearchPage';
 
 // Mock hooks
+const publicSearchMock = vi.hoisted(() => ({
+  state: {
+    issuerResults: [] as Array<{
+      org_id: string;
+      org_name: string;
+      org_domain: string | null;
+      credential_count: number;
+    }>,
+    searching: false,
+    error: null as string | null,
+  },
+  searchIssuers: vi.fn(),
+  clearResults: vi.fn(),
+}));
+
 vi.mock('@/hooks/usePublicSearch', () => ({
   usePublicSearch: () => ({
-    issuerResults: [],
-    searching: false,
-    error: null,
-    searchIssuers: vi.fn(),
-    clearResults: vi.fn(),
+    ...publicSearchMock.state,
+    searchIssuers: publicSearchMock.searchIssuers,
+    clearResults: publicSearchMock.clearResults,
   }),
 }));
 
@@ -80,6 +93,10 @@ function renderSearchPage() {
 describe('SearchPage', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    publicSearchMock.state.issuerResults = [];
+    publicSearchMock.state.searching = false;
+    publicSearchMock.state.error = null;
+    publicSearchMock.searchIssuers.mockResolvedValue(undefined);
   });
 
   it('renders the "Search & Verify" heading', () => {
@@ -107,5 +124,43 @@ describe('SearchPage', () => {
   it('renders back to dashboard link', () => {
     renderSearchPage();
     expect(screen.getByText(/back to dashboard/i)).toBeInTheDocument();
+  });
+
+  it('renders results instead of a lingering search spinner when results are already available', async () => {
+    const view = renderSearchPage();
+    fireEvent.change(screen.getByPlaceholderText(/search issuers/i), {
+      target: { value: 'Arkova' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /search/i }));
+
+    await waitFor(() => {
+      expect(publicSearchMock.searchIssuers).toHaveBeenCalledWith('Arkova');
+    });
+
+    publicSearchMock.state.searching = true;
+    publicSearchMock.state.issuerResults = [{
+      org_id: 'org-1',
+      org_name: 'Arkova',
+      org_domain: null,
+      credential_count: 3,
+    }];
+    view.rerender(
+      <MemoryRouter initialEntries={['/search']}>
+        <SearchPage />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByTestId('issuer-card')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Searching')).not.toBeInTheDocument();
+  });
+
+  it('renders a query-specific empty state after a zero-result search', async () => {
+    renderSearchPage();
+    fireEvent.change(screen.getByPlaceholderText(/search issuers/i), {
+      target: { value: 'No Such Org' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /search/i }));
+
+    expect(await screen.findByText('No results for "No Such Org"')).toBeInTheDocument();
   });
 });

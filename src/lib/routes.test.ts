@@ -5,7 +5,7 @@
  */
 
 import { afterEach, describe, it, expect, vi } from 'vitest';
-import { verifyPath, verifyUrl, getAppBaseUrl, memberDetailPath, issuerRegistryPath, publicProfilePath, recordDetailPath } from './routes';
+import { ROUTES, verifyPath, verifyUrl, getAppBaseUrl, memberDetailPath, issuerRegistryPath, publicProfilePath, recordDetailPath } from './routes';
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -30,6 +30,11 @@ describe('route path helpers', () => {
 
   it('publicProfilePath builds correct path', () => {
     expect(publicProfilePath('prof-123')).toBe('/profile/prof-123');
+  });
+
+  it('defines a bare profile route distinct from public profile URLs', () => {
+    expect(ROUTES.PROFILE).toBe('/profile');
+    expect(ROUTES.PROFILE).not.toBe(ROUTES.PUBLIC_PROFILE);
   });
 });
 

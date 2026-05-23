@@ -9,6 +9,7 @@
  */
 
 import { supabase } from './supabase';
+import { resolveSafeWorkerEndpoint } from './workerUrlSafety';
 
 /** Default request timeout in milliseconds (60 seconds). */
 const DEFAULT_TIMEOUT_MS = 60_000;
@@ -40,6 +41,7 @@ export async function workerFetch(
   options: RequestInit = {},
   timeoutMs: number = DEFAULT_TIMEOUT_MS,
 ): Promise<Response> {
+  const workerEndpoint = resolveSafeWorkerEndpoint(WORKER_URL, endpoint);
   const { data: { session } } = await supabase.auth.getSession();
   if (!session?.access_token) {
     throw new Error('No active session — please sign in again');
@@ -49,7 +51,7 @@ export async function workerFetch(
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
-    const response = await fetch(`${WORKER_URL}${endpoint}`, {
+    const response = await fetch(workerEndpoint.toString(), {
       ...options,
       signal: options.signal ?? controller.signal,
       headers: {

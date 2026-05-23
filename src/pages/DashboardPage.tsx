@@ -36,7 +36,8 @@ import {
 } from '@/components/ui/select';
 import { ROUTES, recordDetailPath } from '@/lib/routes';
 import { isPlatformAdmin } from '@/lib/platform';
-import { RECORDS_LIST_LABELS, ONBOARDING_GUIDANCE_LABELS, SECURE_DIALOG_LABELS, DISCLAIMER_LABELS, ISSUE_CREDENTIAL_LABELS } from '@/lib/copy';
+import { DASHBOARD_STATS_LABELS, RECORDS_LIST_LABELS, ONBOARDING_GUIDANCE_LABELS, SECURE_DIALOG_LABELS, DISCLAIMER_LABELS, ISSUE_CREDENTIAL_LABELS } from '@/lib/copy';
+import { resolveDashboardStatsRequest, resolveDashboardStatsState } from '@/lib/dashboardStats';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { CreditUsageWidget } from '@/components/dashboard/CreditUsageWidget';
 import { ComplianceScoreCard } from '@/components/compliance/ComplianceScoreCard';
@@ -195,22 +196,31 @@ export function DashboardPage() {
   // count queries through RLS. Single RPC call bypasses RLS, uses indexes,
   // returns in <100ms instead of 5s+ timeout on 1.4M row table.
   const [orgStats, setOrgStats] = useState<{ total: number; secured: number; pending: number } | null>(null);
+  const [statsError, setStatsError] = useState<string | null>(null);
   useEffect(() => {
-    if (!user) return;
+    const statsRequest = resolveDashboardStatsRequest({
+      userId: user?.id,
+      profileLoading,
+      profileRole: profile?.role,
+      profileOrgId: profile?.org_id,
+    });
+    if (!statsRequest) return;
+
+    const activeStatsRequest = statsRequest;
+    let cancelled = false;
     async function fetchStats() {
-      const rpcName = profile?.role === 'ORG_ADMIN' && profile?.org_id
-        ? 'get_org_anchor_stats'
-        : 'get_user_anchor_stats';
-      const rpcParam = profile?.role === 'ORG_ADMIN' && profile?.org_id
-        ? { p_org_id: profile.org_id }
-        : { p_user_id: user!.id };
+      setStatsError(null);
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { data, error: rpcError } = await (supabase as any).rpc(rpcName, rpcParam);
+      const { data, error: rpcError } = await (supabase as any).rpc(activeStatsRequest.rpcName, activeStatsRequest.rpcParam);
+      if (cancelled) return;
       if (rpcError) {
         console.error('Dashboard stats RPC error:', rpcError);
+        setOrgStats(null);
+        setStatsError(DASHBOARD_STATS_LABELS.ERROR_DESCRIPTION);
         return;
       }
       const result = data ?? {};
+      setStatsError(null);
       setOrgStats({
         total: result.total ?? 0,
         secured: result.secured ?? 0,
@@ -218,16 +228,18 @@ export function DashboardPage() {
       });
     }
     fetchStats();
-  }, [profile?.role, profile?.org_id, user]);
+    return () => {
+      cancelled = true;
+    };
+  }, [profileLoading, profile?.role, profile?.org_id, user?.id]);
 
-  const stats = orgStats ?? {
-    total: records.length,
-    secured: records.filter(r => r.status === 'SECURED').length,
-    pending: records.filter(r => r.status === 'PENDING').length,
-  };
+  const statsState = resolveDashboardStatsState({ rpcStats: orgStats, records, statsError });
+  const stats = statsState.stats ?? { total: 0, secured: 0, pending: 0 };
+  const statsUnavailable = Boolean(statsState.error);
+  const statsValue = statsUnavailable ? DASHBOARD_STATS_LABELS.UNAVAILABLE_VALUE : undefined;
   // PERF: Stat cards use their own loading state (RPC is <100ms).
   // Don't block on the records query which can take 5s+ through RLS.
-  const statsLoading = profileLoading || (!orgStats && recordsLoading);
+  const statsLoading = !statsUnavailable && (profileLoading || (!orgStats && recordsLoading));
 
   const loading = profileLoading || recordsLoading;
   const hasRecords = records.length > 0;
@@ -273,27 +285,30 @@ export function DashboardPage() {
       {/* Stats grid — clickable cards filter My Records */}
       <div className="grid gap-4 grid-cols-1 sm:grid-cols-3 mb-8">
         <StatCard
-          label="Total Records"
-          value={stats.total}
+          label={DASHBOARD_STATS_LABELS.TOTAL_RECORDS}
+          value={statsValue ?? stats.total}
           icon={FileText}
           variant="primary"
           loading={statsLoading}
+          description={statsUnavailable ? DASHBOARD_STATS_LABELS.ERROR_DESCRIPTION : undefined}
           onClick={() => handleStatClick('ALL')}
         />
         <StatCard
-          label="Secured"
-          value={stats.secured}
+          label={DASHBOARD_STATS_LABELS.SECURED}
+          value={statsValue ?? stats.secured}
           icon={CheckCircle}
           variant="success"
           loading={statsLoading}
+          description={statsUnavailable ? DASHBOARD_STATS_LABELS.ERROR_DESCRIPTION : undefined}
           onClick={() => handleStatClick('SECURED')}
         />
         <StatCard
-          label="Pending"
-          value={stats.pending}
+          label={DASHBOARD_STATS_LABELS.PENDING}
+          value={statsValue ?? stats.pending}
           icon={Clock}
           variant="warning"
           loading={statsLoading}
+          description={statsUnavailable ? DASHBOARD_STATS_LABELS.ERROR_DESCRIPTION : undefined}
           onClick={() => handleStatClick('PENDING')}
         />
       </div>

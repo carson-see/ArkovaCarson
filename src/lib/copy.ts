@@ -807,6 +807,7 @@ export const SEARCH_LABELS = {
   FINGERPRINT_PLACEHOLDER: 'Paste a 64-character document fingerprint...',
   SEARCH_BUTTON: 'Search',
   NO_RESULTS: 'No credentials found',
+  NO_RESULTS_FOR: 'No results for "{query}"',
   NO_RESULTS_DESC: 'No public credentials match your search.',
   NO_ISSUERS: 'No issuers found',
   NO_ISSUERS_DESC: 'No public issuers match your search.',
@@ -832,6 +833,18 @@ export const SEARCH_LABELS = {
   NO_PERSONS_DESC: 'No public credentials match this name.',
   PERSON_CREDENTIALS: 'Verified Credentials',
   SEARCH_ERROR: 'Search failed. Please try again.',
+} as const;
+
+// =============================================================================
+// DASHBOARD
+// =============================================================================
+
+export const DASHBOARD_STATS_LABELS = {
+  TOTAL_RECORDS: 'Total Records',
+  SECURED: 'Secured',
+  PENDING: 'Pending',
+  UNAVAILABLE_VALUE: 'Unavailable',
+  ERROR_DESCRIPTION: 'Stats unavailable. Refresh to try again.',
 } as const;
 
 // =============================================================================
@@ -1063,6 +1076,7 @@ export const ORG_PAGE_LABELS = {
   SECURE_DOCUMENT_MOBILE: 'Secure',
   ISSUE_CREDENTIAL: 'Issue Credential',
   ISSUE_CREDENTIAL_MOBILE: 'Issue',
+  FOUNDED: 'Founded',
   /** @deprecated SCRUM-1755 — Secure Document auto-detects bulk; do not render a separate Bulk Upload button. */
   BULK_UPLOAD: 'Bulk Upload',
   /** @deprecated SCRUM-1755 — Secure Document auto-detects bulk; do not render a separate Bulk Upload dialog. */
@@ -1974,6 +1988,9 @@ export const REVOKED_EXPIRED_ACTIONS = {
 export const BILLING_PAGE_LABELS = {
   PAGE_TITLE: 'Billing & Subscription',
   PAGE_SUBTITLE: 'Manage your plan, view usage, and update payment methods.',
+  DATA_UNAVAILABLE_TITLE: 'Unable to load billing data',
+  DATA_UNAVAILABLE_DESC: 'We could not confirm your billing status. Refresh the page or try again.',
+  RETRY: 'Retry',
 } as const;
 
 export const SYSTEM_HEALTH_LABELS = {
