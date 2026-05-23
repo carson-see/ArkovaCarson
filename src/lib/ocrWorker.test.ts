@@ -2,7 +2,7 @@
  * Tests for ocrWorker.ts — extractText routing logic.
  *
  * Validates that extractText dispatches to the correct handler based on
- * MIME type and file extension: mammoth for .docx/.doc, pdfjs for PDF,
+ * MIME type and file extension: mammoth for .docx, pdfjs for PDF,
  * text reader for plain text files, and throws for unsupported types.
  *
  * Heavy engines (Tesseract, real PDF.js, real mammoth) are mocked.
@@ -70,7 +70,7 @@ describe('extractText routing', () => {
   });
 
   // -------------------------------------------------------------------------
-  // .docx / .doc via mammoth
+  // .docx via mammoth (.doc is unsupported — mammoth only handles .docx)
   // -------------------------------------------------------------------------
 
   it('routes .docx files by MIME type to mammoth handler and returns method "mammoth"', async () => {
@@ -101,22 +101,18 @@ describe('extractText routing', () => {
     expect(mockExtractRawText).toHaveBeenCalledTimes(1);
   });
 
-  it('routes .doc files to mammoth handler', async () => {
+  it('rejects legacy .doc files (mammoth only supports .docx)', async () => {
     const file = fakeFile('legacy.doc', 'application/msword', 'binary-content');
 
-    const result = await extractText(file);
-
-    expect(result.method).toBe('mammoth');
-    expect(mockExtractRawText).toHaveBeenCalledTimes(1);
+    await expect(extractText(file)).rejects.toThrow(/Unsupported file type/);
+    expect(mockExtractRawText).not.toHaveBeenCalled();
   });
 
-  it('routes .doc files by extension alone (empty MIME) to mammoth handler', async () => {
+  it('rejects .doc files by extension alone', async () => {
     const file = fakeFile('old-file.doc', '', 'binary-content');
 
-    const result = await extractText(file);
-
-    expect(result.method).toBe('mammoth');
-    expect(mockExtractRawText).toHaveBeenCalledTimes(1);
+    await expect(extractText(file)).rejects.toThrow(/Unsupported file type/);
+    expect(mockExtractRawText).not.toHaveBeenCalled();
   });
 
   // -------------------------------------------------------------------------
@@ -146,8 +142,7 @@ describe('extractText routing', () => {
 
     const result = await extractText(file);
 
-    // extractTextFromTextFile currently sets method to 'pdfjs' (label quirk)
-    expect(result.method).toBe('pdfjs');
+    expect(result.method).toBe('text');
     expect(result.text).toBe('Hello, world!');
     expect(result.pageCount).toBe(1);
     // mammoth and pdfjs should NOT have been called

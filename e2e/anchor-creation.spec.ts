@@ -91,9 +91,41 @@ test.describe('Anchor Creation (Secure Document)', () => {
 
     await expect(dialog.getByText('Document Fingerprint')).toBeVisible({ timeout: 10000 });
 
-    // Click Continue to submit the document. The current product flow may
-    // go straight to anchoring when AI extraction is disabled.
+    // Click Continue — starts AI extraction (or skips to template/confirm)
     await dialog.locator('button').filter({ hasText: /Continue/i }).click();
+
+    // Navigate through extraction/template/confirm steps.
+    // The flow may land on: extracting (with fields), template, or confirm.
+    const nextStep = dialog.getByText('Ready to Secure')
+      .or(dialog.getByText(/Choose a template/i))
+      .or(dialog.getByText(/Skip AI Analysis/i))
+      .or(dialog.getByText(/Enter manually/i))
+      .or(dialog.locator('button').filter({ hasText: /Continue/i }));
+    await expect(nextStep).toBeVisible({ timeout: 20_000 });
+
+    // If extraction completed with fields, click Continue to advance
+    const continueBtn = dialog.locator('button').filter({ hasText: /Continue/i });
+    if (await continueBtn.isVisible().catch(() => false)) {
+      await continueBtn.click();
+    }
+
+    // If on extraction-failed, skip to secure without metadata
+    const skipBtn = dialog.locator('button').filter({ hasText: /Skip/i }).last();
+    if (await dialog.getByText(/Enter manually/i).isVisible().catch(() => false)) {
+      await skipBtn.click();
+    }
+
+    // If on template step, skip it
+    const skipTemplate = dialog.locator('button').filter({ hasText: /^Skip$/i });
+    if (await skipTemplate.isVisible().catch(() => false)) {
+      await skipTemplate.click();
+    }
+
+    // On confirm step — click the Secure Document button to create the anchor
+    const secureBtn = dialog.locator('button').filter({ hasText: /Secure Document/i });
+    if (await secureBtn.isVisible({ timeout: 5_000 }).catch(() => false)) {
+      await secureBtn.click();
+    }
 
     let createdAnchorId: string | null = null;
     await expect.poll(async () => {

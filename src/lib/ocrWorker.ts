@@ -113,7 +113,7 @@ export async function extractTextFromImage(
 }
 
 /**
- * Extract text from a Word document (.docx/.doc) using mammoth.js.
+ * Extract text from a Word document (.docx) using mammoth.js.
  * Runs entirely in the browser — no network calls.
  *
  * BUG-2026-05-22-007: .docx is a ZIP-based format; the old fallback
@@ -157,7 +157,7 @@ async function extractTextFromTextFile(
   return {
     text,
     pageCount: 1,
-    method: 'pdfjs', // Label doesn't matter for text files
+    method: 'text',
     durationMs: Date.now() - start,
   };
 }
@@ -171,12 +171,11 @@ const TEXT_EXTENSIONS = new Set([
   '.txt', '.csv', '.md', '.json', '.xml', '.html', '.htm', '.log', '.rtf',
 ]);
 
-/** Word document MIME types */
+/** Word document MIME types (mammoth.js supports .docx only, not legacy .doc) */
 const DOCX_TYPES = new Set([
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-  'application/msword',
 ]);
-const DOCX_EXTENSIONS = new Set(['.docx', '.doc']);
+const DOCX_EXTENSIONS = new Set(['.docx']);
 
 /**
  * Auto-detect file type and run appropriate text extraction.
@@ -207,7 +206,7 @@ export async function extractText(
 
   throw new Error(
     `Unsupported file type for text extraction: ${file.type || ext}. ` +
-    'Supported: PDF, Word (.docx/.doc), images, and text files. ' +
+    'Supported: PDF, Word (.docx), images, and text files. ' +
     'The document can still be secured without AI metadata.',
   );
 }
