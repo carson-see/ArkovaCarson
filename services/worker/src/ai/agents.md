@@ -1,6 +1,11 @@
 # agents.md — services/worker/src/ai/
 
-_Last updated: 2026-05-16_
+_Last updated: 2026-05-22_
+
+## 2026-05-22 Batch Embedding Review Hardening
+
+- `embeddings.ts` rejects duplicate native batch `anchorId` values before provider calls or bulk upserts, and converts native credit pre-check failures into per-item `BatchReEmbedResult` errors.
+- `gemini.ts` validates every `batchEmbedContents` vector as a finite 768-dimensional number array before returning embeddings.
 
 ## 2026-05-20 Gemini Golden Lane Updates
 
@@ -39,7 +44,7 @@ AI provider abstraction layer for credential metadata extraction, fraud detectio
 | `report-generator.ts` | Analytics report generation (integrity, accuracy, compliance) |
 | `cost-tracker.ts` | AI credit usage tracking per org (Free 50 / Pro 500 / Enterprise 5000 monthly) |
 | `batch-processing.ts` | Concurrent batch extraction with per-item failure isolation |
-| `embeddings.ts` | 768-dim vector embedding service stored in `credential_embeddings` |
+| `embeddings.ts` | 768-dim vector embedding service stored in `credential_embeddings`; uses provider-native batch embedding when available |
 | `multimodal-embedding.ts` | Gemini multimodal embedding for document images (gated by feature flag) |
 | `hybrid-search.ts` | BM25 + dense retrieval with Reciprocal Rank Fusion |
 | `extraction-manifest.ts` | Cryptographic binding of AI output to source document hash (SHA-256 manifest) |
@@ -67,3 +72,4 @@ AI provider abstraction layer for credential metadata extraction, fraud detectio
 - **DO NOT** use Replicate in production (hard-blocked, QA-only)
 - **DO NOT** use Cloudflare as primary provider (fallback-only, gated by `ENABLE_AI_FALLBACK`)
 - **DO NOT** hardcode model names — use `gemini-config.ts` centralized pins
+- **DO** prefer `IAIProvider.generateEmbeddings()` for bulk credential embeddings so Gemini requests are grouped through `batchEmbedContents` instead of per-credential fan-out.
