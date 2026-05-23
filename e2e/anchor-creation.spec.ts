@@ -91,10 +91,16 @@ test.describe('Anchor Creation (Secure Document)', () => {
 
     await expect(dialog.getByText('Document Fingerprint')).toBeVisible({ timeout: 10000 });
 
-    // Click Continue to submit. When AI extraction is off (CI default),
-    // this creates the anchor immediately. When AI is on, it starts
-    // extraction — but the anchor is still created before the dialog closes.
     await dialog.locator('button').filter({ hasText: /Continue/i }).click();
+
+    // When AI extraction is enabled (seed default), Continue starts extraction
+    // which will fail in CI (no AI service). The dialog shows a recovery step
+    // with a "Skip" option that creates the anchor without metadata.
+    // When AI is off, the anchor is created immediately.
+    const skipBtn = dialog.locator('button').filter({ hasText: /Skip/i });
+    if (await skipBtn.isVisible({ timeout: 20_000 }).catch(() => false)) {
+      await skipBtn.click();
+    }
 
     let createdAnchorId: string | null = null;
     await expect.poll(async () => {
@@ -106,7 +112,7 @@ test.describe('Anchor Creation (Secure Document)', () => {
         .maybeSingle();
       createdAnchorId = data?.id ?? null;
       return createdAnchorId;
-    }, { timeout: 10_000 }).not.toBeNull();
+    }, { timeout: 15_000 }).not.toBeNull();
 
     if (createdAnchorId) {
       await cleanupAnchor(createdAnchorId);
