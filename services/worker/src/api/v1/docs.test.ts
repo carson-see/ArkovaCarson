@@ -141,6 +141,13 @@ describe('OpenAPI spec', () => {
     expect(openApiSpec.paths['/usage'].get['x-arkova-required-scopes']).toEqual(['usage:read']);
   });
 
+  it('/anchor/submit requestBody mirrors /anchor requestBody', () => {
+    const anchorBody = openApiSpec.paths['/anchor'].post.requestBody;
+    const submitBody = openApiSpec.paths['/anchor/submit'].post.requestBody;
+    expect(submitBody).toBeDefined();
+    expect(submitBody).toEqual(anchorBody);
+  });
+
   it('has all four tags', () => {
     const tagNames = openApiSpec.tags.map((t: { name: string }) => t.name);
     expect(tagNames).toContain('Verification');

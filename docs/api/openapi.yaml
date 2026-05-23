@@ -289,6 +289,24 @@ paths:
         - write:anchors
       security:
         - apiKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [fingerprint]
+              properties:
+                fingerprint:
+                  type: string
+                  description: SHA-256 hash of the document
+                  pattern: "^[a-fA-F0-9]{64}$"
+                credential_type:
+                  type: string
+                  enum: [DEGREE, LICENSE, CERTIFICATE, TRANSCRIPT, CLE, PROFESSIONAL, BADGE, ATTESTATION, FINANCIAL, LEGAL, INSURANCE, SEC_FILING, PATENT, REGULATION, PUBLICATION, OTHER]
+                description:
+                  type: string
+                  maxLength: 500
       responses:
         "200":
           description: Anchor already exists

@@ -351,7 +351,7 @@ router.use('/oracle', requireScope('verify'), oracleRouter);
 // both public per SCRUM-896 — anonymous gets a public-safe projection; API
 // key with org scope adds actor_public_id. Same anon-allow shape as /verify.
 const anchorAnonAllow = (req: Request, res: Response, next: NextFunction) => {
-  if (req.method !== 'GET' || !req.apiKey) {
+  if ((req.method !== 'GET' && req.method !== 'HEAD') || !req.apiKey) {
     next();
     return;
   }

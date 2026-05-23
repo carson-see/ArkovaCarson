@@ -500,9 +500,26 @@ export const openApiSpec: Record<string, any> = {
         'x-arkova-alias-for': '/anchor',
         'x-arkova-required-scopes': ['anchor:write', 'write:anchors'],
         security: [{ ApiKeyBearer: [] }, { ApiKeyHeader: [] }],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['fingerprint', 'label'],
+                properties: {
+                  fingerprint: { type: 'string', description: 'SHA-256 document fingerprint (64-char hex)', pattern: '^[a-f0-9]{64}$' },
+                  label: { type: 'string', description: 'Human-readable credential label' },
+                  credential_type: { type: 'string', enum: ['DIPLOMA', 'CERTIFICATE', 'LICENSE', 'BADGE', 'OTHER'] },
+                  metadata: { type: 'object', description: 'PII-stripped metadata fields', additionalProperties: { type: 'string' } },
+                },
+              },
+            },
+          },
+        },
         responses: {
-          '200': { description: 'Anchor already exists (idempotent)' },
-          '201': { description: 'Anchor created' },
+          '200': { description: 'Anchor already exists (idempotent)', content: { 'application/json': { schema: { type: 'object', properties: { public_id: { type: 'string' }, status: { type: 'string' }, already_exists: { type: 'boolean' } } } } } },
+          '201': { description: 'Anchor created', content: { 'application/json': { schema: { type: 'object', properties: { public_id: { type: 'string' }, status: { type: 'string', enum: ['PENDING'] } } } } } },
           '400': { $ref: '#/components/responses/BadRequest' },
           '401': { $ref: '#/components/responses/Unauthorized' },
           '402': { description: 'Payment required (x402)', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
