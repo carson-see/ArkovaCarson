@@ -24,6 +24,7 @@ export const FLAGS = {
   ENABLE_AI_EXTRACTION: true,
   ENABLE_SEMANTIC_SEARCH: true,
   ENABLE_AI_FRAUD: true,
+  ENABLE_FRAUD_DETECTION: false,
   ENABLE_AI_REPORTS: true,
   ENABLE_ATTESTATION_ANCHORING: true,
   ENABLE_PUBLIC_RECORDS_INGESTION: true,
@@ -203,6 +204,14 @@ export async function isSemanticSearchEnabled(): Promise<boolean> {
  */
 export async function isAIFraudEnabled(): Promise<boolean> {
   return getFlag('ENABLE_AI_FRAUD');
+}
+
+/**
+ * SCRUM-1955 — client-only fraud detection. Default-off until the worker path
+ * is explicitly enabled; document bytes never leave the browser.
+ */
+export async function isFraudDetectionEnabled(): Promise<boolean> {
+  return getFlag('ENABLE_FRAUD_DETECTION');
 }
 
 /**

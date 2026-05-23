@@ -37,6 +37,7 @@ import { supabase } from '@/lib/supabase';
 import { validateAnchorCreate } from '@/lib/validators';
 import { logAuditEvent } from '@/lib/auditLog';
 import { runExtraction, fetchTemplateReconstruction, type ExtractionField, type ExtractionProgress, type TemplateReconstructionResult } from '@/lib/aiExtraction';
+import { detectFraudForDocument, fraudResultToMetadata } from '@/lib/fraudDetection';
 import { applyTemplate } from '@/lib/templateMapper';
 import { isAIExtractionEnabled } from '@/lib/switchboard';
 import { useAuth } from '@/hooks/useAuth';
@@ -298,6 +299,14 @@ export function SecureDocumentDialog({
       if (templateResult?.documentType) {
         metadata.ai_document_type = templateResult.documentType;
       }
+      const fraudResult = await detectFraudForDocument(fileData.file, {
+        credentialType: selectedTemplate?.credential_type ?? acceptedFields.credentialType ?? 'OTHER',
+        metadataHints: {
+          ...(acceptedFields.issuerName ? { issuerName: acceptedFields.issuerName } : {}),
+          ...(initialJurisdiction ? { jurisdiction: initialJurisdiction } : {}),
+        },
+      });
+      Object.assign(metadata, fraudResultToMetadata(fraudResult));
 
       const { data: inserted, error: insertError } = await supabase
         .from('anchors')

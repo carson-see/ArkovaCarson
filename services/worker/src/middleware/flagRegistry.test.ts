@@ -26,6 +26,7 @@ vi.mock('../utils/db.js', () => ({
             { flag_key: 'ENABLE_AI_EXTRACTION', enabled: false },
             { flag_key: 'ENABLE_SEMANTIC_SEARCH', enabled: true },
             { flag_key: 'ENABLE_AI_FRAUD', enabled: false },
+            { flag_key: 'ENABLE_FRAUD_DETECTION', enabled: false },
             { flag_key: 'ENABLE_AI_REPORTS', enabled: false },
           ],
           error: null,
@@ -61,6 +62,7 @@ describe('FeatureFlagRegistry', () => {
     expect(flagRegistry.getFlag('ENABLE_VERIFICATION_API')).toBe(true);
     expect(flagRegistry.getFlag('ENABLE_AI_EXTRACTION')).toBe(false);
     expect(flagRegistry.getFlag('ENABLE_SEMANTIC_SEARCH')).toBe(true);
+    expect(flagRegistry.getFlag('ENABLE_FRAUD_DETECTION')).toBe(false);
   });
 
   it('returns false for unknown flags', async () => {

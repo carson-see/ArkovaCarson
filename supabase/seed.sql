@@ -202,6 +202,7 @@ INSERT INTO switchboard_flags (flag_key, enabled, description) VALUES
   ('ENABLE_AI_EXTRACTION', true, 'Enable AI-powered credential metadata extraction (P8)'),
   ('ENABLE_SEMANTIC_SEARCH', true, 'Enable semantic search with vector embeddings (P8)'),
   ('ENABLE_AI_FRAUD', true, 'Enable AI-powered fraud detection (P8)'),
+  ('ENABLE_FRAUD_DETECTION', false, 'Enable client-side deterministic fraud detection Web Worker; document bytes remain in-browser'),
   ('ENABLE_VERIFICATION_API', true, 'Enable Verification API v1 endpoints (P4.5)'),
   ('ENABLE_AI_REPORTS', true, 'Enable AI-powered report generation (P8)'),
   ('ENABLE_X402_PAYMENTS', false, 'Enable x402 USDC pay-per-request on Base L2'),
