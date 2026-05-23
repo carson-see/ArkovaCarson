@@ -18,7 +18,7 @@ import {
 import { detectFraudForDocument } from '@/lib/fraudDetection';
 import { supabase } from '@/lib/supabase';
 import { isAIExtractionEnabled } from '@/lib/switchboard';
-import { runExtraction } from '@/lib/aiExtraction';
+import { runExtraction, fetchTemplateReconstruction } from '@/lib/aiExtraction';
 import { applyTemplate } from '@/lib/templateMapper';
 
 type FileUploadMockProps = {
@@ -274,6 +274,9 @@ describe('SecureDocumentDialog — extraction-failed recovery + toast behavior',
       mappedFields: [],
       unmappedFields: [],
     } as unknown as Awaited<ReturnType<typeof applyTemplate>>);
+    // Non-blocking enrichment fire-and-forget — must return a Promise so
+    // the `.then().catch()` chain doesn't throw on undefined.
+    vi.mocked(fetchTemplateReconstruction).mockResolvedValue(null);
   });
 
   function fileSelectAndContinue(): Promise<void> {
@@ -283,6 +286,17 @@ describe('SecureDocumentDialog — extraction-failed recovery + toast behavior',
     });
     return act(async () => {
       screen.getByTestId('secure-document-continue').click();
+    });
+  }
+
+  // The dialog reads isAIExtractionEnabled() in a useEffect, so aiEnabled
+  // starts false and flips true only after the Promise resolves. Drain
+  // microtasks before exercising the file-select + Continue flow so the
+  // tests don't race against the initial render's effect.
+  async function flushAiEnabledState(): Promise<void> {
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
     });
   }
 
@@ -306,6 +320,7 @@ describe('SecureDocumentDialog — extraction-failed recovery + toast behavior',
     } as unknown as Awaited<ReturnType<typeof runExtraction>>);
 
     render(<SecureDocumentDialog open={true} onOpenChange={() => {}} />);
+    await flushAiEnabledState();
     await fileSelectAndContinue();
 
     expect(toast.warning).not.toHaveBeenCalled();
@@ -316,6 +331,7 @@ describe('SecureDocumentDialog — extraction-failed recovery + toast behavior',
     vi.mocked(runExtraction).mockResolvedValueOnce(null);
 
     render(<SecureDocumentDialog open={true} onOpenChange={() => {}} />);
+    await flushAiEnabledState();
     await fileSelectAndContinue();
 
     expect(toast.warning).toHaveBeenCalledWith(
@@ -336,6 +352,7 @@ describe('SecureDocumentDialog — extraction-failed recovery + toast behavior',
     vi.mocked(runExtraction).mockResolvedValueOnce(null);
 
     render(<SecureDocumentDialog open={true} onOpenChange={() => {}} />);
+    await flushAiEnabledState();
     await fileSelectAndContinue();
 
     expect(insert).not.toHaveBeenCalled();
