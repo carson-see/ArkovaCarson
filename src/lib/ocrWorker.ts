@@ -9,6 +9,8 @@
  * metadata may be sent to the server.
  */
 
+import { OCR_LABELS } from './copy';
+
 export interface OCRResult {
   text: string;
   pageCount: number;
@@ -204,9 +206,5 @@ export async function extractText(
     return extractTextFromTextFile(file, onProgress);
   }
 
-  throw new Error(
-    `Unsupported file type for text extraction: ${file.type || ext}. ` +
-    'Supported: PDF, Word (.docx), images, and text files. ' +
-    'The document can still be secured without AI metadata.',
-  );
+  throw new Error(OCR_LABELS.UNSUPPORTED_FILE_TYPE(file.type || ext));
 }

@@ -95,9 +95,10 @@ test.describe('Anchor Creation (Secure Document)', () => {
 
     // When AI extraction is enabled (seed default), Continue starts extraction
     // which will fail in CI (no AI service). The dialog shows a recovery step
-    // with a "Skip" option that creates the anchor without metadata.
-    // When AI is off, the anchor is created immediately.
-    const skipBtn = dialog.locator('button').filter({ hasText: /Skip/i });
+    // with a "Skip — Anchor Without Metadata" button that creates the anchor
+    // without metadata. When AI is off, the anchor is created immediately.
+    // Match the unique recovery-step text to disambiguate from "Skip AI Analysis".
+    const skipBtn = dialog.locator('button').filter({ hasText: /Anchor Without Metadata/i });
     if (await skipBtn.isVisible({ timeout: 20_000 }).catch(() => false)) {
       await skipBtn.click();
     }
