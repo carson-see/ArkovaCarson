@@ -466,6 +466,9 @@ export function isStagingToolingOnly(files: string[]): StagingFilesOnlyResult {
     // Changes here affect CI's lint step, not the deployed worker.
     /^eslint-rules\//,
     /(^|\/)eslint\.config\.(js|cjs|mjs)$/,
+    // E2E specs are test infrastructure — they never deploy to prod and
+    // have nothing to soak.
+    /^e2e\//,
   ];
   for (const f of files) {
     if (!ALLOW.some((re) => re.test(f))) {
