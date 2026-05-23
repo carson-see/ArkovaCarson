@@ -87,9 +87,8 @@ function stripSqlLineComment(line: string): string {
 }
 
 function markerHasReason(line: string): boolean {
-  const markerAt = line.indexOf(JUSTIFICATION_MARKER);
-  if (markerAt === -1) return false;
-  return line.slice(markerAt + JUSTIFICATION_MARKER.length).trim().length > 0;
+  const match = line.match(/^\s*--\s*anchor-index-justification:\s*(.+)$/i);
+  return match !== null && match[1].trim().length > 0;
 }
 
 function hasNearbyJustification(lines: string[], createLineIndex: number): boolean {

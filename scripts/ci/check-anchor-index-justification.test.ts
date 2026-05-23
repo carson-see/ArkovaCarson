@@ -91,6 +91,17 @@ describe('check-anchor-index-justification', () => {
     );
   });
 
+  it('rejects marker inside a SQL string literal (not a comment)', () => {
+    expectOneViolation(
+      'supabase/migrations/0311_example.sql',
+      [
+        "SELECT 'anchor-index-justification: this is fake';",
+        'CREATE INDEX idx_anchors_fake_literal ON public.anchors (created_at);',
+      ].join('\n'),
+      2,
+    );
+  });
+
   it('ignores non-anchor indexes and commented SQL examples', () => {
     expectNoViolations(
       'supabase/migrations/0311_example.sql',
