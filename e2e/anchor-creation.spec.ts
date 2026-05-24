@@ -93,14 +93,14 @@ test.describe('Anchor Creation (Secure Document)', () => {
 
     await dialog.locator('button').filter({ hasText: /Continue/i }).click();
 
-    // When AI extraction is enabled (seed default), Continue starts extraction
-    // which will fail in CI (no AI service). The dialog shows a recovery step
-    // with a "Skip — Anchor Without Metadata" button that creates the anchor
-    // without metadata. When AI is off, the anchor is created immediately.
-    // Match the unique recovery-step text to disambiguate from "Skip AI Analysis".
+    // AI extraction is on by default (seed). In CI it fails (no AI service),
+    // showing a recovery step. waitFor handles the async wait that isVisible() cannot.
     const skipBtn = dialog.locator('button').filter({ hasText: /Anchor Without Metadata/i });
-    if (await skipBtn.isVisible({ timeout: 20_000 }).catch(() => false)) {
+    try {
+      await skipBtn.waitFor({ state: 'visible', timeout: 25_000 });
       await skipBtn.click();
+    } catch {
+      // AI was off — anchor already created by Continue click
     }
 
     let createdAnchorId: string | null = null;
