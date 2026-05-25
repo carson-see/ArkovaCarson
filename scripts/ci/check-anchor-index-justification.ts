@@ -44,41 +44,32 @@ export function collectMigrationFiles(repo: string): string[] {
     .sort(comparePath);
 }
 
-function stripSqlLineComment(line: string): string {
-  let inSingleQuote = false;
-  let inDoubleQuote = false;
+/**
+ * Advance past a quoted region (single- or double-quoted SQL identifier/string).
+ * Returns the index of the closing quote, or `line.length` if unterminated.
+ */
+function skipQuotedRegion(line: string, start: number, quoteChar: string): number {
+  for (let i = start + 1; i < line.length; i += 1) {
+    if (line[i] === quoteChar) {
+      // Doubled quote is an escape — skip it and continue.
+      if (line[i + 1] === quoteChar) {
+        i += 1;
+        continue;
+      }
+      return i;
+    }
+  }
+  return line.length;
+}
 
+function stripSqlLineComment(line: string): string {
   for (let index = 0; index < line.length; index += 1) {
     const char = line[index];
-    const next = line[index + 1];
-
-    if (inSingleQuote) {
-      if (char === "'" && next === "'") {
-        index += 1;
-        continue;
-      }
-      if (char === "'") inSingleQuote = false;
+    if (char === "'" || char === '"') {
+      index = skipQuotedRegion(line, index, char);
       continue;
     }
-
-    if (inDoubleQuote) {
-      if (char === '"' && next === '"') {
-        index += 1;
-        continue;
-      }
-      if (char === '"') inDoubleQuote = false;
-      continue;
-    }
-
-    if (char === "'") {
-      inSingleQuote = true;
-      continue;
-    }
-    if (char === '"') {
-      inDoubleQuote = true;
-      continue;
-    }
-    if (char === '-' && next === '-') {
+    if (char === '-' && line[index + 1] === '-') {
       return line.slice(0, index).trimEnd();
     }
   }
@@ -86,8 +77,10 @@ function stripSqlLineComment(line: string): string {
   return line;
 }
 
+const MARKER_RE = /^\s*--\s*anchor-index-justification:\s*(.+)$/i;
+
 function markerHasReason(line: string): boolean {
-  const match = line.match(/^\s*--\s*anchor-index-justification:\s*(.+)$/i);
+  const match = MARKER_RE.exec(line);
   return match !== null && match[1].trim().length > 0;
 }
 
@@ -103,11 +96,24 @@ function normalizeSql(sql: string): string {
   return sql.replace(/\s+/g, ' ').trim();
 }
 
+/**
+ * Extract the index name from a CREATE INDEX statement.
+ * Split into two steps to keep regex complexity within SonarCloud limits:
+ * 1. Strip the CREATE [UNIQUE] INDEX [CONCURRENTLY] [IF NOT EXISTS] prefix.
+ * 2. Match the optional schema-qualified name from the remainder.
+ */
+const CREATE_INDEX_PREFIX_RE =
+  /\bCREATE\s+(?:UNIQUE\s+)?INDEX\s+(?:CONCURRENTLY\s+)?(?:IF\s+NOT\s+EXISTS\s+)?/i;
+
+const INDEX_NAME_RE =
+  /^(?:(?:"[^"]+"|[a-zA-Z_]\w*)\s*\.\s*)?(?:"([^"]+)"|([a-zA-Z_]\w*))/;
+
 function extractIndexName(statement: string): string | null {
-  const match = statement.match(
-    /\bCREATE\s+(?:UNIQUE\s+)?INDEX\s+(?:CONCURRENTLY\s+)?(?:IF\s+NOT\s+EXISTS\s+)?(?:(?:"[^"]+"|[a-zA-Z_][\w$]*)\s*\.\s*)?(?:"([^"]+)"|([a-zA-Z_][\w$]*))/i,
-  );
-  return match?.[1] ?? match?.[2] ?? null;
+  const prefixMatch = CREATE_INDEX_PREFIX_RE.exec(statement);
+  if (!prefixMatch) return null;
+  const remainder = statement.slice(prefixMatch.index + prefixMatch[0].length);
+  const nameMatch = INDEX_NAME_RE.exec(remainder);
+  return nameMatch?.[1] ?? nameMatch?.[2] ?? null;
 }
 
 function createsAnchorIndex(statement: string): boolean {
