@@ -150,13 +150,17 @@ export async function bumpRetryCounts(auditIds: string[], errorMsg?: string): Pr
   const truncatedError = errorMsg?.slice(0, 1000) ?? null;
 
   // Try RPC first (single SQL statement: UPDATE ... SET retry_count = least(retry_count + 1, 99) WHERE audit_id = ANY($1))
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { error: rpcErr } = await (db.rpc as any)('bump_cloud_logging_retry_counts', {
-    p_audit_ids: auditIds,
-    p_error_msg: truncatedError,
-  });
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { error: rpcErr } = await (db.rpc as any)('bump_cloud_logging_retry_counts', {
+      p_audit_ids: auditIds,
+      p_error_msg: truncatedError,
+    });
 
-  if (!rpcErr) return;
+    if (!rpcErr) return;
+  } catch {
+    // RPC unavailable (function not deployed yet, or network failure) — fall through to chunked fallback
+  }
 
   // Fallback: chunked .in() update — still O(1) per chunk vs O(N) per row.
   // We need each row's current retry_count to increment it. Read all rows,
@@ -176,11 +180,15 @@ export async function bumpRetryCounts(auditIds: string[], errorMsg?: string): Pr
 
     if (readErr || !rows) {
       // If we can't read, at least set last_error so it's visible
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      await (db as any)
-        .from('cloud_logging_queue')
-        .update({ last_error: truncatedError })
-        .in('audit_id', chunk);
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        await (db as any)
+          .from('cloud_logging_queue')
+          .update({ last_error: truncatedError })
+          .in('audit_id', chunk);
+      } catch {
+        // Best-effort — if this also fails, continue to next chunk
+      }
       continue;
     }
 
@@ -195,10 +203,13 @@ export async function bumpRetryCounts(auditIds: string[], errorMsg?: string): Pr
 
     for (const [currentCount, ids] of byCount) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      await (db as any)
+      const { error: updateErr } = await (db as any)
         .from('cloud_logging_queue')
         .update({ retry_count: currentCount + 1, last_error: truncatedError })
         .in('audit_id', ids);
+      if (updateErr) {
+        logger.warn({ error: updateErr, count: ids.length }, 'bumpRetryCounts: chunk update failed');
+      }
     }
   }
 }

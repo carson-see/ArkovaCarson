@@ -74,6 +74,13 @@ export async function handleListVersions(
   const orgId = getOrgId(req);
   const orgRole = getOrgRole(req);
 
+  if (!orgId) {
+    res.status(403).json({
+      error: { code: 'forbidden', message: 'Organization context required' },
+    });
+    return;
+  }
+
   if (!isAdmin(orgRole)) {
     res.status(403).json({
       error: { code: 'forbidden', message: 'Organization admin role required' },
@@ -93,7 +100,7 @@ export async function handleListVersions(
     const { data, error } = await untypedDb
       .from('external_document_versions')
       .select('id, external_file_id, source, fingerprint, version_number, status, metadata, detected_at')
-      .eq('org_id', orgId!)
+      .eq('org_id', orgId)
       .eq('status', statusFilter)
       .order('detected_at', { ascending: false })
       .limit(50);
@@ -136,6 +143,13 @@ export async function handleResolveVersion(
   const orgId = getOrgId(req);
   const orgRole = getOrgRole(req);
 
+  if (!orgId) {
+    res.status(403).json({
+      error: { code: 'forbidden', message: 'Organization context required' },
+    });
+    return;
+  }
+
   if (!isAdmin(orgRole)) {
     res.status(403).json({
       error: { code: 'forbidden', message: 'Organization admin role required' },
@@ -165,7 +179,7 @@ export async function handleResolveVersion(
       .from('external_document_versions')
       .select('id, external_file_id, fingerprint, org_id, source, metadata, status')
       .eq('id', versionId)
-      .eq('org_id', orgId!)
+      .eq('org_id', orgId)
       .eq('status', 'pending_review')
       .maybeSingle();
 
@@ -197,7 +211,7 @@ export async function handleResolveVersion(
       .from('external_document_versions')
       .update({ status: newStatus, updated_at: new Date().toISOString() })
       .eq('id', versionId)
-      .eq('org_id', orgId!);
+      .eq('org_id', orgId);
 
     if (updateError) {
       logger.error({ error: updateError, versionId }, 'Version status update failed');
@@ -234,7 +248,7 @@ export async function handleResolveVersion(
           .from('external_document_versions')
           .update({ status: 'pending_review', updated_at: new Date().toISOString() })
           .eq('id', versionId)
-          .eq('org_id', orgId!);
+          .eq('org_id', orgId);
         res.status(500).json({
           error: { code: 'internal', message: 'Failed to create anchor for approved version' },
         });
