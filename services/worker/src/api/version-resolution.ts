@@ -15,7 +15,7 @@ import { db } from '../utils/db.js';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { logger } from '../utils/logger.js';
 
-// Tables created by migration 0316 are not yet in generated types.
+// Tables created by migration 0317 are not yet in generated types.
 // Use untyped accessor until next `gen:types` run.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const untypedDb = db as unknown as SupabaseClient<any, 'public', any>;
@@ -159,12 +159,14 @@ export async function handleResolveVersion(
   const { decision, notes } = parsed.data;
 
   try {
-    // Look up the version — filter by org_id ensures cross-tenant isolation
+    // Look up the version — filter by org_id ensures cross-tenant isolation.
+    // Only pending_review items can be resolved (prevents duplicate processing).
     const { data: version, error: lookupError } = await untypedDb
       .from('external_document_versions')
-      .select('id, external_file_id, fingerprint, org_id, source, metadata')
+      .select('id, external_file_id, fingerprint, org_id, source, metadata, status')
       .eq('id', versionId)
       .eq('org_id', orgId!)
+      .eq('status', 'pending_review')
       .maybeSingle();
 
     if (lookupError) {
@@ -205,7 +207,8 @@ export async function handleResolveVersion(
       return;
     }
 
-    // On approve: create a PENDING anchor for the new fingerprint
+    // On approve: create a PENDING anchor for the new fingerprint.
+    // If anchor creation fails, revert the status update to avoid partial writes.
     if (decision === 'approve') {
       const { error: anchorError } = await db
         .from('anchors')
@@ -226,6 +229,16 @@ export async function handleResolveVersion(
 
       if (anchorError) {
         logger.error({ error: anchorError, versionId }, 'Anchor creation failed during version approval');
+        // Revert status to pending_review to avoid inconsistent state
+        await untypedDb
+          .from('external_document_versions')
+          .update({ status: 'pending_review', updated_at: new Date().toISOString() })
+          .eq('id', versionId)
+          .eq('org_id', orgId!);
+        res.status(500).json({
+          error: { code: 'internal', message: 'Failed to create anchor for approved version' },
+        });
+        return;
       }
     }
 

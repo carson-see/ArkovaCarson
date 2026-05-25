@@ -163,12 +163,26 @@ rulesTemplatesRouter.get('/', (_req, res) => {
 
 /** GET /:templateId — Get a single template by ID */
 rulesTemplatesRouter.get('/:templateId', (req, res) => {
-  const template = TEMPLATES_BY_ID.get(req.params.templateId);
+  const templateId = req.params.templateId;
+
+  // Validate templateId format — alphanumeric + hyphens only, max 100 chars.
+  // Prevents reflected XSS (SonarCloud S5131) and log injection.
+  if (!templateId || !/^[a-z0-9-]{1,100}$/.test(templateId)) {
+    res.status(400).json({
+      error: {
+        code: 'invalid_request',
+        message: 'Invalid template ID format',
+      },
+    });
+    return;
+  }
+
+  const template = TEMPLATES_BY_ID.get(templateId);
   if (!template) {
     res.status(404).json({
       error: {
         code: 'not_found',
-        message: `Template '${req.params.templateId}' not found`,
+        message: 'Template not found',
       },
     });
     return;

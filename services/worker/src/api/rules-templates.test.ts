@@ -109,6 +109,30 @@ describe('GET /api/v1/rules/templates/:templateId', () => {
 
     expect(res.status).toBe(404);
   });
+
+  it('returns 400 for template ID with invalid characters (XSS prevention)', async () => {
+    const res = await request(app).get('/api/v1/rules/templates/UPPER-CASE');
+
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe('invalid_request');
+  });
+
+  it('returns 400 for template ID with special characters', async () => {
+    const res = await request(app).get(
+      '/api/v1/rules/templates/' + encodeURIComponent("test'OR'1'='1"),
+    );
+
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe('invalid_request');
+  });
+
+  it('returns 400 for template ID exceeding max length', async () => {
+    const longId = 'a'.repeat(101);
+    const res = await request(app).get(`/api/v1/rules/templates/${longId}`);
+
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe('invalid_request');
+  });
 });
 
 describe('RULE_TEMPLATES static data integrity', () => {
