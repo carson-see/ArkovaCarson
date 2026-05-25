@@ -25,7 +25,8 @@ declare global {
   // typecheck the transitive `services/edge/src/env.ts` import.
   interface R2Bucket { readonly __brand: 'R2Bucket' }
   interface Queue<_T = unknown> { readonly __brand: 'Queue' }
-  interface Ai { readonly __brand: 'Ai' }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  interface Ai { readonly __brand: 'Ai'; run(model: string, inputs: any): Promise<any> }
   interface MessageBatch<_T = unknown> { readonly __brand: 'MessageBatch' }
 }
 
