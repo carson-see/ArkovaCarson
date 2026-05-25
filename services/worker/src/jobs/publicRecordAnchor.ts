@@ -491,13 +491,18 @@ async function findExistingAnchor(
   ownerId: string,
   fingerprint: string,
 ): Promise<{ id: string; fingerprint: string } | null> {
-  const { data: existing } = await client
+  const { data: existing, error } = await client
     .from('anchors')
     .select('id, fingerprint')
     .eq('user_id', ownerId)
     .eq('fingerprint', fingerprint)
     .is('deleted_at', null)
-    .single();
+    .limit(1)
+    .maybeSingle();
+  if (error) {
+    logger.error({ error, ownerId, fingerprint }, 'findExistingAnchor query failed');
+    return null;
+  }
   return (existing as { id: string; fingerprint: string } | null) ?? null;
 }
 
