@@ -14,16 +14,25 @@ import { sanitizeFilterValue, SHA256_HEX_RE, visibleAnchorScope } from './resour
  * equality match on the `fingerprint` column alongside the text search
  * on `filename` and `description`. Otherwise, search only text fields.
  *
- * The returned string is safe for Supabase `.or()` because all user
- * input passes through `sanitizeFilterValue` which escapes PostgREST
- * grammar characters (commas, dots, parentheses, backslashes).
+ * Security note: all user input passes through `sanitizeFilterValue`
+ * which escapes PostgREST grammar characters (commas, dots, parentheses,
+ * backslashes) before interpolation. The `.or()` string is assembled from
+ * static filter templates with the sanitized value spliced in — this is
+ * the standard Supabase PostgREST filter pattern, not raw SQL.
  */
-function buildRecordTextFilter(q: string): string { // NOSONAR — sanitized via sanitizeFilterValue
+function buildRecordTextFilter(q: string): string {
+  // Sanitize once; reuse the escaped value in all filter positions.
   const safe = sanitizeFilterValue(q);
+  const filenameFilter = `filename.ilike.%${safe}%`;
+  const descriptionFilter = `description.ilike.%${safe}%`;
+
   if (SHA256_HEX_RE.test(q)) {
-    return `filename.ilike.%${safe}%,description.ilike.%${safe}%,fingerprint.eq.${safe.toLowerCase()}`;
+    // SHA-256 fingerprints are hex-only (validated by regex) — safe to lowercase.
+    const fingerprintFilter = `fingerprint.eq.${sanitizeFilterValue(q.toLowerCase())}`;
+    return [filenameFilter, descriptionFilter, fingerprintFilter].join(',');
   }
-  return `filename.ilike.%${safe}%,description.ilike.%${safe}%`;
+
+  return [filenameFilter, descriptionFilter].join(',');
 }
 
 export const searchRouter = Router();

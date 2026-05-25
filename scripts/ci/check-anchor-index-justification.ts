@@ -66,15 +66,17 @@ function skipQuotedRegion(line: string, start: number, quoteChar: string): numbe
 }
 
 function stripSqlLineComment(line: string): string {
-  for (let index = 0; index < line.length; index += 1) {
+  let index = 0;
+  while (index < line.length) {
     const char = line[index];
     if (char === "'" || char === '"') {
-      index = skipQuotedRegion(line, index, char);
+      index = skipQuotedRegion(line, index, char) + 1;
       continue;
     }
     if (char === '-' && line[index + 1] === '-') {
       return line.slice(0, index).trimEnd();
     }
+    index += 1;
   }
 
   return line;
@@ -103,12 +105,22 @@ function normalizeSql(sql: string): string {
  * Extract the index name from a CREATE INDEX statement.
  *
  * Strategy: normalize whitespace, strip known SQL keywords that appear
- * between CREATE INDEX and the name, then match the identifier. This
- * avoids a single high-complexity regex (SonarCloud S5843 limit is 20).
+ * between CREATE INDEX and the name, then match the identifier. Uses
+ * individual keyword regexes to keep each under the SonarCloud S5843
+ * complexity limit of 20.
  */
-const STRIP_KEYWORDS_RE = /\b(?:UNIQUE|CONCURRENTLY|IF NOT EXISTS)\b/gi;
+const STRIP_UNIQUE_RE = /\bUNIQUE\b/gi;
+const STRIP_CONCURRENTLY_RE = /\bCONCURRENTLY\b/gi;
+const STRIP_IF_NOT_EXISTS_RE = /\bIF NOT EXISTS\b/gi;
 const INDEX_NAME_RE =
   /^(?:(?:"[^"]+"|[a-zA-Z_]\w*)\s*\.\s*)?(?:"([^"]+)"|([a-zA-Z_]\w*))/;
+
+function stripIndexKeywords(sql: string): string {
+  return sql
+    .replace(STRIP_UNIQUE_RE, '')
+    .replace(STRIP_CONCURRENTLY_RE, '')
+    .replace(STRIP_IF_NOT_EXISTS_RE, '');
+}
 
 function extractIndexName(statement: string): string | null {
   // Normalize to single spaces and locate CREATE INDEX.
@@ -117,7 +129,7 @@ function extractIndexName(statement: string): string | null {
   if (createIdx === -1) return null;
   // Slice past "CREATE INDEX" then strip optional keywords.
   const afterCreate = normalized.slice(createIdx).replace(/^CREATE\s+INDEX\s+/i, '');
-  const stripped = afterCreate.replace(STRIP_KEYWORDS_RE, '').replace(/^\s+/, '');
+  const stripped = stripIndexKeywords(afterCreate).trimStart();
   const nameMatch = INDEX_NAME_RE.exec(stripped);
   return nameMatch?.[1] ?? nameMatch?.[2] ?? null;
 }
