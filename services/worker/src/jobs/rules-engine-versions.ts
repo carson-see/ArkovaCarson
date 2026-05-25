@@ -52,46 +52,51 @@ export async function detectVersionConflict(
   externalFileId: string,
   newFingerprint: string,
 ): Promise<ConflictResult> {
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data, error } = await (db as any)
-      .from('anchors')
-      .select('id, fingerprint')
-      .eq('org_id', orgId)
-      .eq('external_file_id', externalFileId)
-      .eq('status', 'SECURED')
-      .single();
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data, error } = await (db as any)
+    .from('anchors')
+    .select('id, fingerprint')
+    .eq('org_id', orgId)
+    .eq('external_file_id', externalFileId)
+    .eq('status', 'SECURED')
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
 
-    if (error || !data) {
-      // No existing anchor found — proceed normally
-      return { conflict: false };
-    }
-
-    const existingFingerprint = data.fingerprint as string;
-    const existingAnchorId = data.id as string;
-
-    if (existingFingerprint === newFingerprint) {
-      // Same fingerprint — idempotent, skip without creating a new anchor
-      logger.info(
-        { orgId, externalFileId, anchorId: existingAnchorId },
-        'Version conflict check: idempotent — same fingerprint already anchored',
-      );
-      return { conflict: false, idempotent: true, existingAnchorId };
-    }
-
-    // Different fingerprint — version conflict detected
-    logger.info(
-      { orgId, externalFileId, existingAnchorId, existingFingerprint, newFingerprint },
-      'Version conflict detected: different fingerprint for previously-anchored file',
-    );
-    return { conflict: true, existingAnchorId, existingFingerprint };
-  } catch (err) {
+  if (error) {
+    // Fail closed: query errors must not be swallowed as "no conflict"
     logger.error(
-      { error: err, orgId, externalFileId },
-      'detectVersionConflict threw — treating as no conflict (fail-open for anchor creation)',
+      { error, orgId, externalFileId },
+      'detectVersionConflict: query failed — failing closed',
     );
+    throw new Error(
+      `detectVersionConflict query failed for org=${orgId} file=${externalFileId}: ${error.message}`,
+    );
+  }
+
+  if (!data) {
+    // No existing anchor found — proceed normally
     return { conflict: false };
   }
+
+  const existingFingerprint = data.fingerprint as string;
+  const existingAnchorId = data.id as string;
+
+  if (existingFingerprint === newFingerprint) {
+    // Same fingerprint — idempotent, skip without creating a new anchor
+    logger.info(
+      { orgId, externalFileId, anchorId: existingAnchorId },
+      'Version conflict check: idempotent — same fingerprint already anchored',
+    );
+    return { conflict: false, idempotent: true, existingAnchorId };
+  }
+
+  // Different fingerprint — version conflict detected
+  logger.info(
+    { orgId, externalFileId, existingAnchorId, existingFingerprint, newFingerprint },
+    'Version conflict detected: different fingerprint for previously-anchored file',
+  );
+  return { conflict: true, existingAnchorId, existingFingerprint };
 }
 
 // ─── insertVersionRecord ────────────────────────────────────────────────────

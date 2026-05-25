@@ -40,7 +40,10 @@ const FINGERPRINT_B = 'sha256-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
 const EXISTING_ANCHOR_ID = '44444444-4444-4444-8444-444444444444';
 
 function wireAnchorsQuery(result: { data: unknown; error: unknown }) {
-  mockSelectEqStatus.mockReturnValue({ single: () => Promise.resolve(result) });
+  const mockMaybeSingle = vi.fn().mockResolvedValue(result);
+  const mockLimit = vi.fn().mockReturnValue({ maybeSingle: mockMaybeSingle });
+  const mockOrder = vi.fn().mockReturnValue({ limit: mockLimit });
+  mockSelectEqStatus.mockReturnValue({ order: mockOrder });
   mockSelectEq2.mockReturnValue({ eq: mockSelectEqStatus });
   mockSelectEq.mockReturnValue({ eq: mockSelectEq2 });
   mockDb.from.mockImplementation((table: string) => {
@@ -127,6 +130,14 @@ describe('detectVersionConflict', () => {
     expect(mockSelectEq).toHaveBeenCalledWith('org_id', ORG_ID);
     expect(mockSelectEq2).toHaveBeenCalledWith('external_file_id', EXTERNAL_FILE_ID);
     expect(mockSelectEqStatus).toHaveBeenCalledWith('status', 'SECURED');
+  });
+
+  it('throws on query error instead of failing open (reliability: fail closed)', async () => {
+    wireAnchorsQuery({ data: null, error: { message: 'PGRST116: multiple rows returned' } });
+
+    await expect(
+      detectVersionConflict(ORG_ID, EXTERNAL_FILE_ID, FINGERPRINT_A),
+    ).rejects.toThrow('detectVersionConflict query failed');
   });
 });
 
