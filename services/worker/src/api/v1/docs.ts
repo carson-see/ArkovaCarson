@@ -18,6 +18,34 @@ const router = Router();
 // is exactly the drift pattern SCRUM-1794 was filed to clean up.
 const WEBHOOK_EVENT_ENUM = [...VALID_WEBHOOK_EVENTS];
 
+// Shared anchor submit request/response schema — used by both /anchor and
+// /anchor/submit to avoid duplication (SonarCloud new_duplicated_lines_density).
+const ANCHOR_SUBMIT_REQUEST_BODY = {
+  required: true,
+  content: {
+    'application/json': {
+      schema: {
+        type: 'object',
+        required: ['fingerprint', 'label'],
+        properties: {
+          fingerprint: { type: 'string', description: 'SHA-256 document fingerprint (64-char hex)', pattern: '^[a-f0-9]{64}$' },
+          label: { type: 'string', description: 'Human-readable credential label' },
+          credential_type: { type: 'string', enum: ['DIPLOMA', 'CERTIFICATE', 'LICENSE', 'BADGE', 'OTHER'] },
+          metadata: { type: 'object', description: 'PII-stripped metadata fields', additionalProperties: { type: 'string' } },
+        },
+      },
+    },
+  },
+} as const;
+
+const ANCHOR_SUBMIT_RESPONSES = {
+  '200': { description: 'Anchor already exists (idempotent)', content: { 'application/json': { schema: { type: 'object', properties: { public_id: { type: 'string' }, status: { type: 'string' }, already_exists: { type: 'boolean' } } } } } },
+  '201': { description: 'Anchor created', content: { 'application/json': { schema: { type: 'object', properties: { public_id: { type: 'string' }, status: { type: 'string', enum: ['PENDING'] } } } } } },
+  '400': { $ref: '#/components/responses/BadRequest' },
+  '401': { $ref: '#/components/responses/Unauthorized' },
+  '402': { description: 'Payment required (x402)', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
+} as const;
+
 /** OpenAPI 3.0 specification for the Verification API */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export const openApiSpec: Record<string, any> = {
@@ -465,30 +493,8 @@ export const openApiSpec: Record<string, any> = {
         tags: ['Anchoring'],
         'x-arkova-required-scopes': ['anchor:write', 'write:anchors'],
         security: [{ ApiKeyBearer: [] }, { ApiKeyHeader: [] }],
-        requestBody: {
-          required: true,
-          content: {
-            'application/json': {
-              schema: {
-                type: 'object',
-                required: ['fingerprint', 'label'],
-                properties: {
-                  fingerprint: { type: 'string', description: 'SHA-256 document fingerprint (64-char hex)', pattern: '^[a-f0-9]{64}$' },
-                  label: { type: 'string', description: 'Human-readable credential label' },
-                  credential_type: { type: 'string', enum: ['DIPLOMA', 'CERTIFICATE', 'LICENSE', 'BADGE', 'OTHER'] },
-                  metadata: { type: 'object', description: 'PII-stripped metadata fields', additionalProperties: { type: 'string' } },
-                },
-              },
-            },
-          },
-        },
-        responses: {
-          '200': { description: 'Anchor already exists (idempotent)', content: { 'application/json': { schema: { type: 'object', properties: { public_id: { type: 'string' }, status: { type: 'string' }, already_exists: { type: 'boolean' } } } } } },
-          '201': { description: 'Anchor created', content: { 'application/json': { schema: { type: 'object', properties: { public_id: { type: 'string' }, status: { type: 'string', enum: ['PENDING'] } } } } } },
-          '400': { $ref: '#/components/responses/BadRequest' },
-          '401': { $ref: '#/components/responses/Unauthorized' },
-          '402': { description: 'Payment required (x402)', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
-        },
+        requestBody: ANCHOR_SUBMIT_REQUEST_BODY,
+        responses: ANCHOR_SUBMIT_RESPONSES,
       },
     },
     '/anchor/submit': {
@@ -500,30 +506,8 @@ export const openApiSpec: Record<string, any> = {
         'x-arkova-alias-for': '/anchor',
         'x-arkova-required-scopes': ['anchor:write', 'write:anchors'],
         security: [{ ApiKeyBearer: [] }, { ApiKeyHeader: [] }],
-        requestBody: {
-          required: true,
-          content: {
-            'application/json': {
-              schema: {
-                type: 'object',
-                required: ['fingerprint', 'label'],
-                properties: {
-                  fingerprint: { type: 'string', description: 'SHA-256 document fingerprint (64-char hex)', pattern: '^[a-f0-9]{64}$' },
-                  label: { type: 'string', description: 'Human-readable credential label' },
-                  credential_type: { type: 'string', enum: ['DIPLOMA', 'CERTIFICATE', 'LICENSE', 'BADGE', 'OTHER'] },
-                  metadata: { type: 'object', description: 'PII-stripped metadata fields', additionalProperties: { type: 'string' } },
-                },
-              },
-            },
-          },
-        },
-        responses: {
-          '200': { description: 'Anchor already exists (idempotent)', content: { 'application/json': { schema: { type: 'object', properties: { public_id: { type: 'string' }, status: { type: 'string' }, already_exists: { type: 'boolean' } } } } } },
-          '201': { description: 'Anchor created', content: { 'application/json': { schema: { type: 'object', properties: { public_id: { type: 'string' }, status: { type: 'string', enum: ['PENDING'] } } } } } },
-          '400': { $ref: '#/components/responses/BadRequest' },
-          '401': { $ref: '#/components/responses/Unauthorized' },
-          '402': { description: 'Payment required (x402)', content: { 'application/json': { schema: { $ref: '#/components/schemas/ApiError' } } } },
-        },
+        requestBody: ANCHOR_SUBMIT_REQUEST_BODY,
+        responses: ANCHOR_SUBMIT_RESPONSES,
       },
     },
     '/attestations': {
