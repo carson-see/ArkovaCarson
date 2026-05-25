@@ -36,26 +36,18 @@ vi.mock('../utils/db.js', () => ({
 // Helper: create chainable supabase mock
 function makeChainable(result: { data?: unknown; error?: unknown }) {
   const chainable: Record<string, unknown> = {};
-  const methods = ['select', 'eq', 'is', 'lt', 'lte', 'gte', 'not', 'in', 'limit', 'update', 'insert', 'single', 'maybeSingle', 'order'];
-  for (const m of methods) {
-    chainable[m] = vi.fn(() => chainable);
-  }
-  // Terminal call returns the result
-  chainable.then = undefined;
-  Object.defineProperty(chainable, 'then', {
-    get() {
-      return (resolve: (v: unknown) => void) => resolve(result);
-    },
-  });
-  // Make it thenable for await
-  (chainable as any)[Symbol.for('nodejs.util.promisify.custom')] = () => Promise.resolve(result);
-  // Return a promise-like
-  return new Proxy(chainable, {
+  const proxy: unknown = new Proxy(chainable, {
     get(target, prop) {
       if (prop === 'then') return (res: (v: unknown) => void) => res(result);
-      return target[prop as string] ?? vi.fn(() => target);
+      if (prop === 'catch' || prop === 'finally') return () => proxy;
+      return target[prop as string] ?? vi.fn(() => proxy);
     },
   });
+  const methods = ['select', 'eq', 'is', 'lt', 'lte', 'gte', 'not', 'in', 'limit', 'update', 'insert', 'single', 'maybeSingle', 'order'];
+  for (const m of methods) {
+    chainable[m] = vi.fn(() => proxy);
+  }
+  return proxy as Record<string, unknown>;
 }
 
 describe('SCRUM-1296: cloud-logging-drain bumpRetryCounts', () => {
@@ -132,41 +124,39 @@ describe('SCRUM-1296: cloud-logging-drain bumpRetryCounts', () => {
     mockDbFrom.mockImplementation(() => {
       _callIndex++;
       const chain: Record<string, unknown> = {};
-      const methods = ['eq', 'is', 'lt', 'lte', 'gte', 'not', 'in', 'limit', 'single', 'maybeSingle', 'order'];
-      for (const m of methods) {
-        chain[m] = vi.fn(() => chain);
-      }
-      chain['select'] = vi.fn(() => {
-        // Return selectResult for the SELECT call
-        return new Proxy(chain, {
-          get(target, prop) {
-            if (prop === 'then') return (res: (v: unknown) => void) => res(selectResult);
-            return target[prop as string] ?? vi.fn(() => target);
-          },
-        });
-      });
-      chain['update'] = vi.fn((payload: unknown) => {
-        updatePayloads.push(payload);
-        return new Proxy(chain, {
-          get(target, prop) {
-            if (prop === 'then') return (res: (v: unknown) => void) => res({ data: null, error: null });
-            return target[prop as string] ?? vi.fn(() => target);
-          },
-        });
-      });
-      // Default thenable
-      Object.defineProperty(chain, 'then', {
-        get() {
-          return (resolve: (v: unknown) => void) => resolve(selectResult);
-        },
-        configurable: true,
-      });
-      return new Proxy(chain, {
+
+      const selectProxy: unknown = new Proxy(chain, {
         get(target, prop) {
           if (prop === 'then') return (res: (v: unknown) => void) => res(selectResult);
-          return target[prop as string] ?? vi.fn(() => target);
+          return target[prop as string] ?? vi.fn(() => selectProxy);
         },
       });
+
+      const updateProxy = (payload: unknown) => {
+        updatePayloads.push(payload);
+        const uProxy: unknown = new Proxy(chain, {
+          get(target, prop) {
+            if (prop === 'then') return (res: (v: unknown) => void) => res({ data: null, error: null });
+            return target[prop as string] ?? vi.fn(() => uProxy);
+          },
+        });
+        return uProxy;
+      };
+
+      const baseProxy: unknown = new Proxy(chain, {
+        get(target, prop) {
+          if (prop === 'then') return (res: (v: unknown) => void) => res(selectResult);
+          if (prop === 'select') return vi.fn(() => selectProxy);
+          if (prop === 'update') return vi.fn(updateProxy);
+          return target[prop as string] ?? vi.fn(() => baseProxy);
+        },
+      });
+
+      const methods = ['eq', 'is', 'lt', 'lte', 'gte', 'not', 'in', 'limit', 'single', 'maybeSingle', 'order'];
+      for (const m of methods) {
+        chain[m] = vi.fn(() => baseProxy);
+      }
+      return baseProxy;
     });
 
     await bumpRetryCounts(auditIds, 'connection timeout');
