@@ -112,8 +112,10 @@ function normalizeSql(sql: string): string {
 const STRIP_UNIQUE_RE = /\bUNIQUE\b/gi;
 const STRIP_CONCURRENTLY_RE = /\bCONCURRENTLY\b/gi;
 const STRIP_IF_NOT_EXISTS_RE = /\bIF NOT EXISTS\b/gi;
-const INDEX_NAME_RE =
-  /^(?:(?:"[^"]+"|[a-zA-Z_]\w*)\s*\.\s*)?(?:"([^"]+)"|([a-zA-Z_]\w*))/;
+// Match a SQL identifier: either a quoted "name" or an unquoted name.
+const SQL_IDENT_RE = /^(?:"([^"]+)"|([a-zA-Z_]\w*))/;
+// Match an optional schema prefix (identifier followed by a dot).
+const SCHEMA_PREFIX_RE = /^(?:"[^"]+"|[a-zA-Z_]\w*)\s*\.\s*/;
 
 function stripIndexKeywords(sql: string): string {
   return sql
@@ -129,8 +131,14 @@ function extractIndexName(statement: string): string | null {
   if (createIdx === -1) return null;
   // Slice past "CREATE INDEX" then strip optional keywords.
   const afterCreate = normalized.slice(createIdx).replace(/^CREATE\s+INDEX\s+/i, '');
-  const stripped = stripIndexKeywords(afterCreate).trimStart();
-  const nameMatch = INDEX_NAME_RE.exec(stripped);
+  let remainder = stripIndexKeywords(afterCreate).trimStart();
+  // Strip optional schema prefix (e.g., "public".)
+  const schemaMatch = SCHEMA_PREFIX_RE.exec(remainder);
+  if (schemaMatch) {
+    remainder = remainder.slice(schemaMatch[0].length);
+  }
+  // Match the index name identifier.
+  const nameMatch = SQL_IDENT_RE.exec(remainder);
   return nameMatch?.[1] ?? nameMatch?.[2] ?? null;
 }
 
