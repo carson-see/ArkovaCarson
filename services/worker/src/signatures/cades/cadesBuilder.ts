@@ -150,8 +150,7 @@ function buildSignedAttributes(
   }));
 
   // Signing-certificate-v2 attribute (ETSI EN 319 122-1 requirement)
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- ASN.1 structure, shape validated at runtime
-  const certHash = params.signedAttributes.signingCertificateV2 as any;
+  const certHash = params.signedAttributes.signingCertificateV2 as { certHash?: string } | undefined;
   if (certHash?.certHash) {
     const hashValue = pvtsutils.Convert.FromHex(String(certHash.certHash));
     // ESSCertIDv2 ::= SEQUENCE { hashAlgorithm, certHash, issuerSerial }

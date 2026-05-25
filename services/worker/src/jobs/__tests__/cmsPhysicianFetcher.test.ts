@@ -4,8 +4,8 @@
  * TDD: Written before implementation.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const mockRpc = vi.fn();
 const mockFrom = vi.fn();

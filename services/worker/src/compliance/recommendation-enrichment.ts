@@ -139,6 +139,7 @@ function buildUserPrompt(recs: Recommendation[], gaps: AuditGap[]): string {
  * each /compliance/audit call reuses the same provider + circuit-breaker
  * state instead of constructing a new one.
  */
+
 let cachedProvider: { generateRAGResponse(system: string, user: string): Promise<{ text: string; tokensUsed?: number }> } | null = null;
 
 async function getProvider() {

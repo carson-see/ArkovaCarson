@@ -261,7 +261,7 @@ export class BaseChainClient implements ChainClient {
         account: this.account,
         chain: this.chain,
         transport,
-      });
+      }) as unknown as WalletClient;
     }
 
     // Log only the address, NEVER the private key (Constitution 1.4)
@@ -346,8 +346,7 @@ export class BaseChainClient implements ChainClient {
         value: 0n,
         data: calldata,
         gas: gasLimit,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- viem sendTransaction params require complex branded generics
-      } as any),
+      } as Parameters<WalletClient['sendTransaction']>[0]),
       'send transaction',
     );
 

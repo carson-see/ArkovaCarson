@@ -2,8 +2,8 @@
  * NCX-01: eCFR Regulatory Text Fetcher Tests
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const mockRpc = vi.fn();
 const mockLogger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
