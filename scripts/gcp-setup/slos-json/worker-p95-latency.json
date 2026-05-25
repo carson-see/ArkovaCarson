@@ -1,0 +1,19 @@
+{
+  "displayName": "Worker p95 latency ≤ 500ms (95% over 7d)",
+  "goal": 0.95,
+  "rollingPeriod": "604800s",
+  "serviceLevelIndicator": {
+    "requestBased": {
+      "distributionCut": {
+        "distributionFilter": "resource.type = \"cloud_run_revision\" resource.labels.service_name = \"arkova-worker\" metric.type = \"run.googleapis.com/request_latencies\"",
+        "range": {
+          "max": 500
+        }
+      }
+    }
+  },
+  "userLabels": {
+    "story": "scrum_1064",
+    "slo_id": "worker_p95_latency"
+  }
+}

@@ -13,6 +13,38 @@ import { test, expect, SEED_USERS } from './fixtures';
 
 test.use({ storageState: { cookies: [], origins: [] } });
 
+const mockBillingInfo = {
+  plan: {
+    name: 'Beta',
+    recordsIncluded: 25,
+  },
+  usage: {
+    recordsUsed: 3,
+    recordsLimit: 25,
+    percentUsed: 12,
+  },
+  billing: {
+    status: 'active',
+  },
+  status: 'active',
+};
+
+async function mockBillingStatus(page: import('@playwright/test').Page) {
+  await page.route('**/api/billing/status', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(mockBillingInfo),
+    });
+  });
+}
+
+async function mockBillingUnavailable(page: import('@playwright/test').Page) {
+  await page.route(/\/api\/billing\/status/, (route) =>
+    route.fulfill({ status: 503, contentType: 'application/json', body: '{"error":"unavailable"}' }),
+  );
+}
+
 async function expectBillingOverview(page: import('@playwright/test').Page) {
   await expect(
     page.getByRole('heading', { name: 'Billing & Subscription' })
@@ -25,6 +57,22 @@ async function expectBillingOverview(page: import('@playwright/test').Page) {
   await expect(
     page.getByRole('heading', { name: 'Current Plan' })
   ).toBeVisible({ timeout: 15000 });
+}
+
+async function expectBillingUnavailable(page: import('@playwright/test').Page) {
+  await expect(
+    page.getByRole('heading', { name: 'Billing & Subscription' })
+  ).toBeVisible({ timeout: 10000 });
+
+  await expect(
+    page.getByText('Unable to load billing data')
+  ).toBeVisible({ timeout: 15000 });
+
+  await expect(
+    page.getByText('We could not confirm your billing status. Refresh the page or try again.')
+  ).toBeVisible();
+
+  await expect(page.getByRole('button', { name: 'Retry' })).toBeVisible();
 }
 
 function userMenuButton(page: import('@playwright/test').Page) {
@@ -54,12 +102,14 @@ async function openAsIndividual(page: import('@playwright/test').Page, path: str
 test.describe('Billing', () => {
   test.describe('Billing Page', () => {
     test('billing page loads with heading and subtitle', async ({ individualPage }) => {
+      await mockBillingStatus(individualPage);
       await openAsIndividual(individualPage, '/billing');
 
       await expectBillingOverview(individualPage);
     });
 
     test('current plan details are displayed', async ({ individualPage }) => {
+      await mockBillingStatus(individualPage);
       await openAsIndividual(individualPage, '/billing');
       await expectBillingOverview(individualPage);
 
@@ -69,6 +119,7 @@ test.describe('Billing', () => {
     });
 
     test('billing action buttons are visible', async ({ individualPage }) => {
+      await mockBillingStatus(individualPage);
       await openAsIndividual(individualPage, '/billing');
       await expectBillingOverview(individualPage);
 
@@ -77,15 +128,17 @@ test.describe('Billing', () => {
     });
 
     test('usage section shows secured record usage', async ({ individualPage }) => {
+      await mockBillingStatus(individualPage);
       await openAsIndividual(individualPage, '/billing');
       await expectBillingOverview(individualPage);
 
       await expect(individualPage.getByRole('heading', { name: /Monthly Usage/i })).toBeVisible();
       await expect(individualPage.getByText('Records secured')).toBeVisible();
-      await expect(individualPage.getByText(/^\d+$/).first()).toBeVisible();
+      await expect(individualPage.getByText('3 / 25')).toBeVisible();
     });
 
     test('fee account section shows payment method state', async ({ individualPage }) => {
+      await mockBillingStatus(individualPage);
       await openAsIndividual(individualPage, '/billing');
       await expectBillingOverview(individualPage);
 
@@ -98,6 +151,7 @@ test.describe('Billing', () => {
     });
 
     test('billing history section is visible', async ({ individualPage }) => {
+      await mockBillingStatus(individualPage);
       await openAsIndividual(individualPage, '/billing');
       await expectBillingOverview(individualPage);
 
@@ -105,10 +159,19 @@ test.describe('Billing', () => {
       await expect(individualPage.getByText('View and download past receipts')).toBeVisible();
       await expect(individualPage.getByRole('button', { name: /View History/i })).toBeVisible();
     });
+
+    test('billing page shows retry state when billing status is unavailable', async ({ individualPage }) => {
+      await mockBillingUnavailable(individualPage);
+      await openAsIndividual(individualPage, '/billing');
+
+      await expectBillingUnavailable(individualPage);
+      await expect(individualPage.getByRole('heading', { name: 'Current Plan' })).not.toBeVisible();
+    });
   });
 
   test.describe('Billing Actions', () => {
     test('Manage Billing button keeps user on billing page when portal is unavailable', async ({ individualPage }) => {
+      await mockBillingStatus(individualPage);
       await openAsIndividual(individualPage, '/billing');
       await expectBillingOverview(individualPage);
 
@@ -118,6 +181,7 @@ test.describe('Billing', () => {
     });
 
     test('Upgrade Plan button keeps user on billing page when plan comparison is unavailable', async ({ individualPage }) => {
+      await mockBillingStatus(individualPage);
       await openAsIndividual(individualPage, '/billing');
       await expectBillingOverview(individualPage);
 
@@ -161,6 +225,7 @@ test.describe('Billing', () => {
     });
 
     test('checkout cancel page navigates back to billing', async ({ individualPage }) => {
+      await mockBillingUnavailable(individualPage);
       await openAsIndividual(individualPage, '/billing/cancel');
 
       await expect(
@@ -171,12 +236,13 @@ test.describe('Billing', () => {
         individualPage.waitForURL(/\/billing/, { timeout: 10000 }),
         individualPage.getByRole('link', { name: /Back to Plans/i }).click(),
       ]);
-      await expectBillingOverview(individualPage);
+      await expectBillingUnavailable(individualPage);
     });
   });
 
   test.describe('Navigation', () => {
     test('header settings menu item navigates to settings page', async ({ individualPage }) => {
+      await mockBillingStatus(individualPage);
       await openAsIndividual(individualPage, '/billing');
       await expectBillingOverview(individualPage);
 

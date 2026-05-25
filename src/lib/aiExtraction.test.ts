@@ -16,6 +16,11 @@ vi.mock('./piiStripper', () => ({
   stripPII: vi.fn(),
 }));
 
+// Mock enhancedPiiStripper
+vi.mock('./enhancedPiiStripper', () => ({
+  stripPIIEnhanced: vi.fn(),
+}));
+
 // Mock supabase
 vi.mock('./supabase', () => ({
   supabase: {
@@ -28,6 +33,7 @@ vi.mock('./supabase', () => ({
 import { AI_EXTRACTION_REQUEST_TIMEOUT_MS, runExtraction } from './aiExtraction';
 import { extractText } from './ocrWorker';
 import { stripPII } from './piiStripper';
+import { stripPIIEnhanced } from './enhancedPiiStripper';
 import { supabase } from './supabase';
 
 describe('aiExtraction orchestrator', () => {
@@ -38,6 +44,8 @@ describe('aiExtraction orchestrator', () => {
     (supabase.auth.getSession as ReturnType<typeof vi.fn>).mockResolvedValue({
       data: { session: { access_token: 'test-token' } },
     });
+
+    (stripPIIEnhanced as ReturnType<typeof vi.fn>).mockImplementation((text: string) => stripPII(text));
   });
 
   it('runs full pipeline: OCR → strip → API → fields', async () => {
@@ -82,6 +90,105 @@ describe('aiExtraction orchestrator', () => {
     expect(result!.creditsRemaining).toBe(49);
     expect(result!.ocrResult.method).toBe('pdfjs');
     expect(result!.strippingReport.piiFound).toContain('name');
+  });
+
+  it('sends a clean PII-stripped document summary to the worker and returns suggestions', async () => {
+    (extractText as ReturnType<typeof vi.fn>).mockResolvedValue({
+      text: 'University of Michigan\nBachelor of Science\nIssued May 2026',
+      pageCount: 1,
+      method: 'pdfjs',
+      durationMs: 180,
+    });
+
+    (stripPII as ReturnType<typeof vi.fn>).mockReturnValue({
+      strippedText: 'University of Michigan\nBachelor of Science\nIssued May 2026',
+      piiFound: [],
+      redactionCount: 0,
+      originalLength: 60,
+      strippedLength: 60,
+    });
+
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        fields: { credentialType: 'DEGREE', issuerName: 'University of Michigan' },
+        confidence: 0.94,
+        provider: 'gemini',
+        creditsRemaining: 48,
+      }),
+    });
+    global.fetch = mockFetch;
+
+    const file = new File(['local pdf bytes stay client-side'], 'clean-degree.pdf', { type: 'application/pdf' });
+    const result = await runExtraction(file, 'f'.repeat(64), 'DEGREE');
+
+    expect(stripPIIEnhanced).toHaveBeenCalledTimes(1);
+    expect(stripPIIEnhanced).toHaveBeenCalledWith(
+      'University of Michigan\nBachelor of Science\nIssued May 2026',
+      expect.objectContaining({ enableNER: true }),
+    );
+    expect(result?.fields).toEqual([
+      { key: 'credentialType', value: 'DEGREE', confidence: 0.94, status: 'suggested' },
+      { key: 'issuerName', value: 'University of Michigan', confidence: 0.94, status: 'suggested' },
+    ]);
+    expect(mockFetch).toHaveBeenCalledWith(
+      expect.stringContaining('/api/v1/ai/extract'),
+      expect.objectContaining({
+        method: 'POST',
+        body: expect.any(String),
+      }),
+    );
+  });
+
+  it('never sends raw OCR text or document bytes in the Constitution 4A worker payload', async () => {
+    const rawOcrText = 'Jane Doe\nSSN 123-45-6789\nUniversity of Michigan\nBachelor of Science';
+    const strippedText = '[NAME_REDACTED]\n[SSN_REDACTED]\nUniversity of Michigan\nBachelor of Science';
+    const localDocumentBytes = 'binary-pdf-containing-Jane-Doe-and-123-45-6789';
+
+    (extractText as ReturnType<typeof vi.fn>).mockResolvedValue({
+      text: rawOcrText,
+      pageCount: 1,
+      method: 'pdfjs',
+      durationMs: 160,
+    });
+
+    (stripPII as ReturnType<typeof vi.fn>).mockReturnValue({
+      strippedText,
+      piiFound: ['name', 'ssn'],
+      redactionCount: 2,
+      originalLength: rawOcrText.length,
+      strippedLength: strippedText.length,
+    });
+
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        fields: { credentialType: 'DEGREE' },
+        confidence: 0.9,
+        provider: 'gemini',
+        creditsRemaining: 47,
+      }),
+    });
+    global.fetch = mockFetch;
+
+    const file = new File([localDocumentBytes], 'private-degree.pdf', { type: 'application/pdf' });
+    await runExtraction(file, 'e'.repeat(64), 'DEGREE');
+
+    const requestBody = JSON.parse(String(mockFetch.mock.calls[0][1].body)) as Record<string, unknown>;
+    const serializedBody = JSON.stringify(requestBody);
+
+    expect(requestBody).toEqual({
+      strippedText,
+      credentialType: 'DEGREE',
+      fingerprint: 'e'.repeat(64),
+    });
+    expect(serializedBody).not.toContain('Jane Doe');
+    expect(serializedBody).not.toContain('123-45-6789');
+    expect(serializedBody).not.toContain(localDocumentBytes);
+    expect(requestBody).not.toHaveProperty('rawText');
+    expect(requestBody).not.toHaveProperty('ocrText');
+    expect(requestBody).not.toHaveProperty('file');
+    expect(requestBody).not.toHaveProperty('imageBase64');
   });
 
   it('returns null when OCR finds no text', async () => {

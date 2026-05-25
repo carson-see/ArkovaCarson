@@ -1,0 +1,19 @@
+{
+  "displayName": "Verification API p95 latency ≤ 200ms (95% over 7d)",
+  "goal": 0.95,
+  "rollingPeriod": "604800s",
+  "serviceLevelIndicator": {
+    "requestBased": {
+      "distributionCut": {
+        "distributionFilter": "metric.type = \"custom.googleapis.com/arkova/verification_api_request_latency\" metric.labels.synthetic = \"false\"",
+        "range": {
+          "max": 200
+        }
+      }
+    }
+  },
+  "userLabels": {
+    "story": "scrum_1064",
+    "slo_id": "verification_api_p95_latency"
+  }
+}

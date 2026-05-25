@@ -32,6 +32,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ROUTES, issuerRegistryPath } from '@/lib/routes';
 import { ORG_PAGE_LABELS, ORG_LOGO_LABELS, SUB_ORG_LABELS, INDUSTRY_TAG_OPTIONS, CONNECTIONS_LABELS } from '@/lib/copy';
 import { isPlatformAdmin } from '@/lib/platform';
+import { getOrganizationFoundedDisplay } from '@/lib/organizationDates';
 import { OrgVerification } from '@/components/org/OrgVerification';
 import { ManageSubOrgs } from '@/components/org/ManageSubOrgs';
 import { RequestAffiliationDialog } from '@/components/org/RequestAffiliationDialog';
@@ -256,6 +257,7 @@ export function OrgProfilePage() {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const orgPrefix = (organization as any)?.org_prefix as string | null;
   const orgLogoUrl = (organization as Record<string, unknown>)?.logo_url as string | null;
+  const orgFoundedDisplay = getOrganizationFoundedDisplay(organization);
   const _isOwner = userRole === 'owner' || isPlatformAdmin(user?.email);
 
   useEffect(() => {
@@ -476,10 +478,12 @@ export function OrgProfilePage() {
                 {orgPrefix}
               </span>
             )}
-            <span className="flex items-center gap-1.5">
-              <Calendar className="h-3.5 w-3.5" />
-              Founded {organization?.created_at ? new Date(organization.created_at).toLocaleDateString('en-US', { month: 'long', year: 'numeric' }) : '—'}
-            </span>
+            {orgFoundedDisplay && (
+              <span className="flex items-center gap-1.5">
+                <Calendar className="h-3.5 w-3.5" />
+                {ORG_PAGE_LABELS.FOUNDED} {orgFoundedDisplay}
+              </span>
+            )}
           </div>
 
           {/* Stats row — LinkedIn-style follower/connection counts */}

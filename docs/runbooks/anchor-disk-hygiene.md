@@ -105,6 +105,22 @@ RESET lock_timeout;
 
 Keep `idx_anchors_pending_claim`; it is the surviving copy of the duplicate pending index.
 
+### SCRUM-1286 follow-up cleanup
+
+SCRUM-1286 adds a second manual cleanup for five redundant or invalid
+`public.anchors` indexes in
+`supabase/migrations/0313_anchors_index_consolidation.sql`. These drops were
+applied to production on 2026-05-20 with `DROP INDEX CONCURRENTLY` one
+statement at a time, then recorded in the production migration ledger as
+`0313 / anchors_index_consolidation`.
+
+Do not treat `idx_anchors_filename_trgm` or
+`idx_anchors_description_trgm` as redundant. SCRUM-1976 captured production
+`EXPLAIN (ANALYZE, BUFFERS)` evidence that public and v2 filename/description
+searches use both GINs; see
+`docs/confluence/18_anchors_trigram_search_decision.md`. Do not drop those GINs
+unless the product search path is replaced and re-baselined.
+
 ## Verification queries
 
 Check `anchors` storage settings:

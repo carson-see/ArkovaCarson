@@ -14,5 +14,7 @@ serviceLevelIndicator:
       goodServiceFilter: >
         metric.type = "custom.googleapis.com/arkova/batch_anchor_run_result"
         metric.labels.result = "success"
+        metric.labels.synthetic = "false"
       totalServiceFilter: >
         metric.type = "custom.googleapis.com/arkova/batch_anchor_run_result"
+        metric.labels.synthetic = "false"

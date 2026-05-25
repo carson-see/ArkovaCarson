@@ -18,7 +18,8 @@ import { render, screen, cleanup, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { IssueCredentialForm } from './IssueCredentialForm';
-import { CREDENTIAL_TYPE_LABELS, ISSUE_CREDENTIAL_LABELS } from '@/lib/copy';
+import { CREDENTIAL_TYPE_LABELS, ISSUE_CREDENTIAL_LABELS, METADATA_FIELD_LABELS } from '@/lib/copy';
+import { detectFraudForDocument } from '@/lib/fraudDetection';
 
 const mockProfile: { id: string; role: string; org_id: string | null } = {
   id: 'user-1',
@@ -82,7 +83,7 @@ vi.mock('@/components/anchor/FileUpload', () => ({
       data-testid="mock-file-upload"
       disabled={disabled}
       onClick={() => onFileSelect(
-        new File(['credential'], 'credential.pdf', { type: 'application/pdf' }),
+        new File(['raw-issue-credential-bytes-that-must-not-leak'], 'credential.pdf', { type: 'application/pdf' }),
         'fingerprint-123',
       )}
     >
@@ -101,6 +102,17 @@ vi.mock('@/lib/auditLog', () => ({
 
 vi.mock('@/lib/aiExtraction', () => ({
   runExtraction: vi.fn(),
+}));
+
+vi.mock('@/lib/fraudDetection', () => ({
+  detectFraudForDocument: vi.fn(async () => null),
+  fraudResultToMetadata: vi.fn((result) => result ? ({
+    fraud_risk_level: result.fraud_risk_level,
+    fraud_score: result.fraud_score,
+    fraud_signals: result.fraud_signals,
+    fraud_analysis_method: result.analysis_method,
+    fraud_processing_time_ms: result.processing_time_ms,
+  }) : {}),
 }));
 
 vi.mock('@/lib/fileHasher', () => ({
@@ -228,6 +240,7 @@ describe('SCRUM-1755 IssueCredentialForm split + proof_url', () => {
     selectController.onValueChange = undefined;
     anchorInsertPayloads.length = 0;
     mockSplitEnabled.mockResolvedValue(false);
+    vi.mocked(detectFraudForDocument).mockResolvedValue(null);
     mockProfile.org_id = 'org-unverified';
     // Default org row: UNVERIFIED root, not a sub-org.
     mockOrgGateResult.data = {
@@ -325,6 +338,63 @@ describe('SCRUM-1755 IssueCredentialForm split + proof_url', () => {
 
     await waitFor(() => expect(mockAnchorInsert).toHaveBeenCalledTimes(1));
     expect(anchorInsertPayloads[0]).toMatchObject({ org_id: 'viewed-org' });
+  });
+
+  it('stores only structured fraud findings in issued credential metadata', async () => {
+    const user = userEvent.setup();
+    mockSplitEnabled.mockResolvedValue(false);
+    vi.mocked(detectFraudForDocument).mockResolvedValue({
+      fraud_risk_level: 'low',
+      fraud_score: 0.01,
+      fraud_signals: [],
+      analysis_method: 'client_side_worker_v2',
+      processing_time_ms: 4,
+    });
+    renderForm();
+
+    await waitForUploadReady(true);
+    await submitCertificate(user);
+
+    await waitFor(() => expect(mockAnchorInsert).toHaveBeenCalledTimes(1));
+    expect(detectFraudForDocument).toHaveBeenCalledWith(
+      expect.any(File),
+      expect.objectContaining({
+        credentialType: 'CERTIFICATE',
+        metadataHints: {},
+      }),
+    );
+    const payload = anchorInsertPayloads[0];
+    expect(payload.metadata).toMatchObject({
+      fraud_risk_level: 'low',
+      fraud_score: 0.01,
+      fraud_signals: [],
+      fraud_analysis_method: 'client_side_worker_v2',
+      fraud_processing_time_ms: 4,
+    });
+    expect(JSON.stringify(payload)).not.toContain('raw-issue-credential-bytes-that-must-not-leak');
+  });
+
+  it('keeps recipient email out of fraud metadata hints', async () => {
+    const user = userEvent.setup();
+    mockSplitEnabled.mockResolvedValue(false);
+    renderForm();
+
+    await waitForUploadReady(true);
+    await chooseCertificate(user);
+    await user.type(
+      screen.getByLabelText(new RegExp(METADATA_FIELD_LABELS.RECIPIENT_EMAIL, 'i')),
+      'learner@example.test',
+    );
+    await user.click(screen.getByRole('button', { name: ISSUE_CREDENTIAL_LABELS.ISSUE_BUTTON }));
+
+    await waitFor(() => expect(mockAnchorInsert).toHaveBeenCalledTimes(1));
+    expect(detectFraudForDocument).toHaveBeenCalledWith(
+      expect.any(File),
+      expect.objectContaining({
+        credentialType: 'CERTIFICATE',
+        metadataHints: {},
+      }),
+    );
   });
 
   it('honors an explicit null role instead of falling back to the profile role', async () => {

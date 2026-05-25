@@ -13,7 +13,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import express from 'express';
 import request from 'supertest';
-import type { ApiKeyMeta } from '../../middleware/apiKeyAuth.js';
 
 const { mockDispatchWebhookEvent, mockAuditInsert, mockAnchorsSelect, mockOrgsSelect } =
   vi.hoisted(() => ({
@@ -75,7 +74,7 @@ function buildApp(apiKeyId: string | null = 'agent-key-1') {
   app.use(express.json());
   app.use((req, _res, next) => {
     if (apiKeyId) {
-      req.apiKey = { keyId: apiKeyId } as unknown as ApiKeyMeta;
+      (req as unknown as { apiKey: { keyId: string } }).apiKey = { keyId: apiKeyId };
     }
     next();
   });

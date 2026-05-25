@@ -20,6 +20,7 @@ Public v1 API surface — frozen contract per CLAUDE.md §1.8. Additive nullable
 - `verify.ts` — `GET /api/v1/verify/:public_id`. Anonymous-allowed.
 - `credentials-ctdl.ts` — `GET /api/v1/credentials/:publicId/ctdl`. Anonymous-allowed, public-safe CTDL JSON-LD projection.
 - `anchor-bulk.ts`, `attestations.ts`, `oracle.ts`, `cle-verify.ts`, etc. — additional v1 surfaces.
+- `cle-verify.ts` — CLE public responses must stay allowlisted. Never return raw `metadata`, `claims`, `filename`, `chain_tx_id`, internal `id`, bar numbers, or attorney names. Submit logs also omit attorney identifiers and internal anchor UUIDs.
 
 ## Scope mapping (verified 2026-05-08)
 | Endpoint | Scope |

@@ -21,6 +21,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { supabase } from '@/lib/supabase';
 import { TOAST, REALTIME_TOAST_LABELS } from '@/lib/copy';
+import { TOAST_DURATIONS_MS } from '@/lib/toastConfig';
 import { queryKeys } from '@/lib/queryClient';
 import { getExplorerBaseUrl } from '@/components/ui/ExplorerLink';
 import { useAuth } from './useAuth';
@@ -127,7 +128,7 @@ export function useAnchors(): UseAnchorsReturn {
           label: 'View on Explorer',
           onClick: () => window.open(explorerUrl, '_blank', 'noopener,noreferrer'),
         },
-        duration: 15000,
+        duration: TOAST_DURATIONS_MS.status,
       });
     } else if (next === 'SECURED') {
       const explorerUrl = newRow.chain_tx_id
@@ -141,7 +142,7 @@ export function useAnchors(): UseAnchorsReturn {
             onClick: () => window.open(explorerUrl, '_blank', 'noopener,noreferrer'),
           },
         }),
-        duration: 10000,
+        duration: TOAST_DURATIONS_MS.success,
       });
     } else if (next === 'REVOKED') {
       toast.error(REALTIME_TOAST_LABELS.REVOKED, { description: newRow.filename });

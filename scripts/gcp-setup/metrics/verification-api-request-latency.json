@@ -1,0 +1,25 @@
+{
+  "type": "custom.googleapis.com/arkova/verification_api_request_latency",
+  "metricKind": "DELTA",
+  "valueType": "DISTRIBUTION",
+  "unit": "ms",
+  "displayName": "Arkova Verification API request latency",
+  "description": "Distribution of public Verification API request latency in milliseconds for the SCRUM-1064 verification-api-p95-latency SLO.",
+  "labels": [
+    {
+      "key": "endpoint",
+      "valueType": "STRING",
+      "description": "Verification API endpoint family, not raw URL path."
+    },
+    {
+      "key": "environment",
+      "valueType": "STRING",
+      "description": "Environment name, for example staging or production."
+    },
+    {
+      "key": "synthetic",
+      "valueType": "STRING",
+      "description": "true for operator-generated test events; false for worker-emitted production telemetry."
+    }
+  ]
+}

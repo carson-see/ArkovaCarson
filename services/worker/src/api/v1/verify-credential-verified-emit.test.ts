@@ -242,10 +242,9 @@ describe('GET /api/v1/verify/:publicId — credential.verified emit', () => {
     await request(app).get('/api/v1/verify/ARK-2026-VRF-001');
     for (let i = 0; i < 10; i++) await Promise.resolve();
 
-    const calls = mockAuditInsert.mock.calls.map((c: unknown[]) => c[0]);
+    const calls = mockAuditInsert.mock.calls.map((c: unknown[]) => c[0]) as Array<Record<string, unknown>>;
     const queryRow = calls.find(
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- scanning vi.fn().mock.calls which returns any[][]
-      (row: any) => row?.event_type === 'VERIFICATION_QUERIED',
+      (row) => row?.event_type === 'VERIFICATION_QUERIED',
     ) as { details: string } | undefined;
     expect(queryRow).toBeDefined();
     const details = JSON.parse(queryRow!.details);
@@ -262,10 +261,9 @@ describe('GET /api/v1/verify/:publicId — credential.verified emit', () => {
     await request(app).get('/api/v1/verify/ARK-2026-VRF-001');
     for (let i = 0; i < 10; i++) await Promise.resolve();
 
-    const calls = mockAuditInsert.mock.calls.map((c: unknown[]) => c[0]);
+    const calls = mockAuditInsert.mock.calls.map((c: unknown[]) => c[0]) as Array<Record<string, unknown>>;
     const queryRow = calls.find(
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- scanning vi.fn().mock.calls which returns any[][]
-      (row: any) => row?.event_type === 'VERIFICATION_QUERIED',
+      (row) => row?.event_type === 'VERIFICATION_QUERIED',
     ) as { details: string } | undefined;
     expect(queryRow).toBeDefined();
     const details = JSON.parse(queryRow!.details);
@@ -280,10 +278,9 @@ describe('GET /api/v1/verify/:publicId — credential.verified emit', () => {
     await request(app).get('/api/v1/verify/ARK-2026-VRF-001');
     for (let i = 0; i < 10; i++) await Promise.resolve();
 
-    const calls = mockAuditInsert.mock.calls.map((c: unknown[]) => c[0]);
+    const calls = mockAuditInsert.mock.calls.map((c: unknown[]) => c[0]) as Array<Record<string, unknown>>;
     const queryRow = calls.find(
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- scanning vi.fn().mock.calls which returns any[][]
-      (row: any) => row?.event_type === 'VERIFICATION_QUERIED',
+      (row) => row?.event_type === 'VERIFICATION_QUERIED',
     ) as { details: string } | undefined;
     expect(queryRow).toBeDefined();
     const details = JSON.parse(queryRow!.details);

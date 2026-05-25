@@ -66,6 +66,7 @@ const FLAG_CATEGORIES: Record<string, { label: string; icon: any; flags: string[
     flags: [
       'ENABLE_AI_EXTRACTION',
       'ENABLE_AI_FRAUD',
+      'ENABLE_FRAUD_DETECTION',
       'ENABLE_AI_REPORTS',
       'ENABLE_SEMANTIC_SEARCH',
     ],

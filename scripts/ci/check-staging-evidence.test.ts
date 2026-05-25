@@ -443,6 +443,15 @@ describe('check-staging-evidence', () => {
       ).toBe(true);
     });
 
+    it('passes for E2E test specs (test infrastructure, not deployed code)', () => {
+      expect(
+        isStagingToolingOnly(['e2e/billing.spec.ts']).pass,
+      ).toBe(true);
+      expect(
+        isStagingToolingOnly(['e2e/nested/deep/test.spec.ts']).pass,
+      ).toBe(true);
+    });
+
     it('fails when any file is outside the allowlist', () => {
       expect(
         isStagingToolingOnly([

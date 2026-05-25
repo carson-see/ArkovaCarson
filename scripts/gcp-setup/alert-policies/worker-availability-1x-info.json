@@ -1,0 +1,34 @@
+{
+  "displayName": "Arkova SLO burn 1x info: worker-availability",
+  "documentation": {
+    "content": "SCRUM-1064: worker availability error budget is burning above 1x over 60m. Inspect Cloud Run errors, recent deploys, and upstream dependency health.",
+    "mimeType": "text/markdown"
+  },
+  "userLabels": {
+    "story": "scrum_1064",
+    "slo_id": "worker_availability",
+    "burn": "1x_info"
+  },
+  "conditions": [
+    {
+      "displayName": "worker-availability burn > 1x",
+      "conditionThreshold": {
+        "filter": "select_slo_burn_rate(\"projects/${PROJECT_ID}/services/${SERVICE_ID}/serviceLevelObjectives/worker-availability\", \"60m\")",
+        "comparison": "COMPARISON_GT",
+        "thresholdValue": 1,
+        "duration": "300s",
+        "trigger": {
+          "count": 1
+        },
+        "evaluationMissingData": "EVALUATION_MISSING_DATA_INACTIVE"
+      }
+    }
+  ],
+  "combiner": "OR",
+  "enabled": true,
+  "notificationChannels": ["${SLACK_OPS_ALERTS_CHANNEL}"],
+  "alertStrategy": {
+    "autoClose": "3600s"
+  },
+  "severity": "WARNING"
+}

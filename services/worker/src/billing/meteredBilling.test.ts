@@ -80,7 +80,7 @@ beforeEach(() => {
 describe('recordMeteredUsage', () => {
   it('inserts usage record into billing_events', async () => {
     const mockInsert = vi.fn().mockResolvedValue({ error: null });
-    dbFromMock().mockReturnValue({ insert: mockInsert });
+    (db.from as ReturnType<typeof vi.fn>).mockReturnValue({ insert: mockInsert });
 
     await recordMeteredUsage({
       org_id: 'org-1',
@@ -98,7 +98,7 @@ describe('recordMeteredUsage', () => {
   });
 
   it('throws on DB error', async () => {
-    dbFromMock().mockReturnValue({
+    (db.from as ReturnType<typeof vi.fn>).mockReturnValue({
       insert: vi.fn().mockResolvedValue({ error: { message: 'DB error' } }),
     });
 
@@ -114,7 +114,7 @@ describe('recordMeteredUsage', () => {
 
 describe('getMeteredUsage', () => {
   it('aggregates usage quantities', async () => {
-    dbFromMock().mockReturnValue({
+    (db.from as ReturnType<typeof vi.fn>).mockReturnValue({
       select: vi.fn().mockReturnValue({
         eq: vi.fn().mockReturnValue({
           eq: vi.fn().mockReturnValue({
@@ -138,7 +138,7 @@ describe('getMeteredUsage', () => {
   });
 
   it('returns 0 on error', async () => {
-    dbFromMock().mockReturnValue({
+    (db.from as ReturnType<typeof vi.fn>).mockReturnValue({
       select: vi.fn().mockReturnValue({
         eq: vi.fn().mockReturnValue({
           eq: vi.fn().mockReturnValue({
@@ -157,7 +157,7 @@ describe('getMeteredUsage', () => {
 
 describe('reportMeteredUsageToStripe', () => {
   it('returns empty when no metered subscriptions', async () => {
-    dbFromMock().mockReturnValue({
+    (db.from as ReturnType<typeof vi.fn>).mockReturnValue({
       select: vi.fn().mockReturnValue({
         in: vi.fn().mockResolvedValue({ data: [], error: null }),
       }),

@@ -1,6 +1,6 @@
 # Long-running migrations runbook
 
-**Last updated:** 2026-04-24
+**Last updated:** 2026-05-20
 
 Supabase's connection pooler enforces a hard **statement timeout (~2 min)**
 that `SET LOCAL statement_timeout = '…'` inside a migration **cannot
@@ -20,15 +20,20 @@ Move the slow DDL out of the transactional migration file and into a
 
 Prior art in the repo: [`0255_deferred_slow_indexes.sql`](../../../supabase/migrations/0255_deferred_slow_indexes.sql).
 
-## Applying the deferred SQL
+## Applying deferred SQL
 
-1. Open Supabase Dashboard → project `vzwyaatejekddvltxyye` → **SQL
-   Editor**. The dashboard editor bypasses the pooler's hard timeout.
-2. Copy the SQL from the header comment of the deferred-index migration.
-3. Run each `CREATE INDEX` statement one at a time. Two options:
+1. Copy the SQL from the header comment of the deferred-index migration.
+2. Use a direct `psql` session on the project database for work that can wait
+   longer than the Dashboard SQL Editor timeout. The Dashboard SQL Editor can
+   still be used for quick statements, but long waits on hot objects should use
+   a direct session connection on port 5432.
+3. Run each `CREATE INDEX` or `DROP INDEX` statement one at a time. Two options:
    - **`CREATE INDEX CONCURRENTLY` (default)** — non-blocking, takes
      2-3× longer but doesn't lock the table against writes. Cannot run
      inside a `BEGIN/COMMIT` transaction.
+   - **`DROP INDEX CONCURRENTLY`** — removes an index without taking the
+     stronger table locks of a plain drop. Cannot run inside a
+     `BEGIN/COMMIT` transaction and should be run one statement at a time.
    - **Plain `CREATE INDEX` (maintenance window only)** — takes an
      ACCESS EXCLUSIVE lock on the table for the duration of the build,
      which blocks all concurrent writes. Faster total time. Only use
@@ -47,6 +52,35 @@ Prior art in the repo: [`0255_deferred_slow_indexes.sql`](../../../supabase/migr
    ```
 5. Post a comment on the originating Jira story (e.g. SCRUM-1124) with
    the applied timestamp + execution duration.
+
+## Pattern — concurrent index drops
+
+For a hot table index cleanup such as SCRUM-1286:
+
+1. Capture index sizes and `idx_scan` counts before the drop.
+2. Copy the `DROP INDEX CONCURRENTLY IF EXISTS public.<index_name>;`
+   statements from the migration header.
+3. Run each drop as a standalone statement outside any transaction.
+4. Record the migration ledger using the migration's no-op marker after the
+   manual SQL succeeds.
+5. Rerun the relevant `EXPLAIN (ANALYZE, BUFFERS)` plans and compare them with
+   the pre-drop baseline.
+6. For `public.anchors`, track daily table and index size:
+
+   ```sql
+   select
+     pg_size_pretty(pg_relation_size('public.anchors')) as anchors_table_size,
+     pg_size_pretty(pg_indexes_size('public.anchors')) as anchors_index_size,
+     now() as observed_at;
+   ```
+
+### SCRUM-1286 anchors checklist
+
+Do not drop `idx_anchors_filename_trgm` or
+`idx_anchors_description_trgm` as part of SCRUM-1286. On 2026-05-20, SCRUM-1976
+captured production `EXPLAIN (ANALYZE, BUFFERS)` evidence proving that public
+and v2 filename/description searches use both trigram GINs. Drop those GINs only
+after replacing the product search path and re-baselining the production plans.
 
 ## Alternative — direct psql via non-pooler connection
 

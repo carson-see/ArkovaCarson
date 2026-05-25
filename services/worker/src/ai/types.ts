@@ -97,6 +97,19 @@ export interface EmbeddingResult {
   model: string;
 }
 
+/** Input for a provider-native batch embedding request. */
+export interface BatchEmbeddingInput {
+  text: string;
+  taskType?: EmbeddingTaskType;
+  title?: string;
+}
+
+/** Result of a provider-native batch embedding request. */
+export interface BatchEmbeddingResult {
+  embeddings: EmbeddingResult[];
+  model: string;
+}
+
 /** Provider health status. */
 export interface ProviderHealth {
   healthy: boolean;
@@ -128,6 +141,16 @@ export interface IAIProvider {
    * Optional taskType optimizes the embedding space for the specific use case.
    */
   generateEmbedding(text: string, taskType?: EmbeddingTaskType): Promise<EmbeddingResult>;
+
+  /**
+   * Generate multiple embedding vectors in a single provider request when the
+   * backing model supports it. Callers must fall back to generateEmbedding
+   * when this optional capability is absent.
+   */
+  generateEmbeddings?(
+    inputs: BatchEmbeddingInput[],
+    taskType?: EmbeddingTaskType,
+  ): Promise<BatchEmbeddingResult>;
 
   /** Check provider availability and latency. */
   healthCheck(): Promise<ProviderHealth>;

@@ -632,6 +632,7 @@ describe('runDriveChanges (orchestrator) — direct tests for skip + happy paths
           }),
         }),
       }),
+
       rpc: vi.fn(),
     };
     const integration: DriveIntegrationRow = {
@@ -677,6 +678,7 @@ describe('runDriveChanges (orchestrator) — direct tests for skip + happy paths
           }),
         }),
       }),
+
       rpc: vi.fn(),
     };
     const integration: DriveIntegrationRow = {

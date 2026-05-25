@@ -5,8 +5,8 @@
  * error handling, and pagination. All HTTP calls mocked.
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 const mockRpc = vi.fn();
 const mockFrom = vi.fn();
