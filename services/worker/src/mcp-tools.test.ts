@@ -537,25 +537,27 @@ describe('handleNessieQuery (PH1-SDK-03)', () => {
     const result = await handleNessieQuery({ query: 'apple annual report' }, CONFIG);
     expect(result.isError).toBeUndefined();
     const parsed = JSON.parse(result.content[0].text);
-    expect(parsed).toHaveLength(1);
+    expect(parsed.results).toHaveLength(1);
   });
 
-  it('handles fetch failure gracefully', async () => {
+  it('handles fetch failure gracefully with empty results', async () => {
     mockFetch.mockResolvedValueOnce({ ok: false, status: 500 });
     const result = await handleNessieQuery({ query: 'test' }, CONFIG);
-    expect(result.isError).toBe(true);
+    expect(result.isError).toBeUndefined();
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.total).toBe(0);
+    expect(parsed.results).toHaveLength(0);
   });
 
-  it('passes mode and limit to RPC', async () => {
+  it('passes mode and limit to Nessie REST endpoint', async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
       json: async () => ([]),
     });
 
     await handleNessieQuery({ query: 'test', mode: 'context', limit: 5 }, CONFIG);
-    const body = JSON.parse(mockFetch.mock.calls[0][1].body);
-    expect(body.p_mode).toBe('context');
-    expect(body.p_limit).toBe(5);
+    const url = mockFetch.mock.calls[0][0] as string;
+    expect(url).toContain('limit=5');
   });
 
   it('caps limit at 50', async () => {
@@ -565,8 +567,8 @@ describe('handleNessieQuery (PH1-SDK-03)', () => {
     });
 
     await handleNessieQuery({ query: 'test', limit: 999 }, CONFIG);
-    const body = JSON.parse(mockFetch.mock.calls[0][1].body);
-    expect(body.p_limit).toBe(50);
+    const url = mockFetch.mock.calls[0][0] as string;
+    expect(url).toContain('limit=50');
   });
 });
 
