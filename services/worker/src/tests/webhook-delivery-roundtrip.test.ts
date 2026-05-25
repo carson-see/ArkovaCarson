@@ -364,15 +364,15 @@ describe('Webhook Delivery Round-Trip (SCRUM-1729)', () => {
 
   describe('HMAC signature verification', () => {
     it('produces verifiable HMAC-SHA256 signature', () => {
-      const secret = 'test-secret-key';
+      const signingKey = crypto.createHash('sha256').update('test-signing-seed').digest('hex');
       const timestamp = '1716000000';
       const body = '{"event_type":"anchor.secured"}';
       const payload = `${timestamp}.${body}`;
 
-      const sig = signPayload(payload, secret);
+      const sig = signPayload(payload, signingKey);
 
       const expected = crypto
-        .createHmac('sha256', secret)
+        .createHmac('sha256', signingKey)
         .update(payload)
         .digest('hex');
       expect(sig).toBe(expected);
@@ -381,8 +381,10 @@ describe('Webhook Delivery Round-Trip (SCRUM-1729)', () => {
 
     it('different secrets produce different signatures', () => {
       const payload = '1716000000.{"test":true}';
-      const sig1 = signPayload(payload, 'secret-a');
-      const sig2 = signPayload(payload, 'secret-b');
+      const keyA = crypto.createHash('sha256').update('seed-a').digest('hex');
+      const keyB = crypto.createHash('sha256').update('seed-b').digest('hex');
+      const sig1 = signPayload(payload, keyA);
+      const sig2 = signPayload(payload, keyB);
       expect(sig1).not.toBe(sig2);
     });
   });
