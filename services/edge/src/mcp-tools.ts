@@ -809,7 +809,7 @@ export async function handleAgentSearch(
 export async function handleNessieQuery(
   input: NessieQueryInput,
   config: SupabaseConfig,
-  ai?: { run: (model: string, inputs: Record<string, unknown>) => Promise<unknown> },
+  ai?: { run(model: string, inputs: any): Promise<any> },
 ): Promise<ToolResult> {
   if (!input.query || input.query.trim().length === 0) {
     return errorResult('Error: query is required');
@@ -853,7 +853,7 @@ async function nessieVectorSearch(
   _mode: string,
   matchCount: number,
   config: SupabaseConfig,
-  ai: { run: (model: string, inputs: Record<string, unknown>) => Promise<unknown> },
+  ai: { run(model: string, inputs: any): Promise<any> },
 ): Promise<ToolResult> {
   // Generate embedding — same model as cloudflare-crawler.ts
   const embResult = (await ai.run('@cf/baai/bge-base-en-v1.5', { text: query })) as {
