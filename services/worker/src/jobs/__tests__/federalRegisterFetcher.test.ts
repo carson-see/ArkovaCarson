@@ -3,6 +3,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { createMockSupabase } from './__testHelpers.js';
 
 // ---- Hoisted mocks ----
 const { mockRpc, mockInsert, mockSelectChain, mockLogger } = vi.hoisted(() => {
@@ -33,14 +34,14 @@ vi.mock('../../utils/logger.js', () => ({
   logger: mockLogger,
 }));
 
-function createMockSupabase() {
-  return {
-    rpc: mockRpc,
-    from: vi.fn((_table: string) => ({
+function makeMock() {
+  return createMockSupabase({
+    rpcMock: mockRpc,
+    fromImpl: vi.fn((_table: string) => ({
       select: vi.fn(() => mockSelectChain.chain),
       insert: mockInsert,
     })),
-  };
+  });
 }
 
 beforeEach(() => {
@@ -53,8 +54,7 @@ describe('federalRegisterFetcher', () => {
     mockRpc.mockResolvedValue({ data: false });
 
     const { fetchFederalRegisterDocuments } = await import('../federalRegisterFetcher.js');
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await fetchFederalRegisterDocuments(createMockSupabase() as any);
+    await fetchFederalRegisterDocuments(makeMock().client);
 
     expect(mockRpc).toHaveBeenCalledWith('get_flag', {
       p_flag_key: 'ENABLE_PUBLIC_RECORDS_INGESTION',
@@ -93,8 +93,7 @@ describe('federalRegisterFetcher', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockResponse));
 
     const { fetchFederalRegisterDocuments } = await import('../federalRegisterFetcher.js');
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await fetchFederalRegisterDocuments(createMockSupabase() as any);
+    await fetchFederalRegisterDocuments(makeMock().client);
 
     expect(fetch).toHaveBeenCalled();
     expect(mockInsert).toHaveBeenCalled();
@@ -116,8 +115,7 @@ describe('federalRegisterFetcher', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockResponse));
 
     const { fetchFederalRegisterDocuments } = await import('../federalRegisterFetcher.js');
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await fetchFederalRegisterDocuments(createMockSupabase() as any);
+    await fetchFederalRegisterDocuments(makeMock().client);
 
     expect(mockInsert).not.toHaveBeenCalled();
   });

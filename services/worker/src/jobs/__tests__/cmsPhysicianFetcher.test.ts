@@ -4,8 +4,8 @@
  * TDD: Written before implementation.
  */
 
-import type { SupabaseClient } from '@supabase/supabase-js';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { createMockSupabase } from './__testHelpers.js';
 
 const mockRpc = vi.fn();
 const mockFrom = vi.fn();
@@ -18,7 +18,7 @@ vi.mock('../../config.js', () => ({
 vi.mock('../../utils/logger.js', () => ({ logger: mockLogger }));
 vi.mock('../../utils/db.js', () => ({ db: {} }));
 
-function createMockSupabase() {
+function makeMock() {
   const selectChain = {
     eq: vi.fn().mockReturnThis(),
     order: vi.fn().mockReturnThis(),
@@ -26,14 +26,13 @@ function createMockSupabase() {
     in: vi.fn().mockResolvedValue({ data: [] }),
   };
 
-  return {
-    rpc: mockRpc,
-    from: mockFrom.mockReturnValue({
-      select: vi.fn().mockReturnValue(selectChain),
-      upsert: vi.fn().mockResolvedValue({ error: null }),
-      insert: vi.fn().mockResolvedValue({ error: null }),
-    }),
-  };
+  mockFrom.mockReturnValue({
+    select: vi.fn().mockReturnValue(selectChain),
+    upsert: vi.fn().mockResolvedValue({ error: null }),
+    insert: vi.fn().mockResolvedValue({ error: null }),
+  });
+
+  return createMockSupabase({ rpcMock: mockRpc, fromImpl: mockFrom });
 }
 
 beforeEach(() => {
@@ -45,7 +44,7 @@ describe('CMS Physician Compare Fetcher', () => {
   it('returns empty when ENABLE_PUBLIC_RECORDS_INGESTION is disabled', async () => {
     mockRpc.mockResolvedValue({ data: false });
     const { fetchCmsPhysicians } = await import('../cmsPhysicianFetcher.js');
-    const result = await fetchCmsPhysicians(createMockSupabase() as unknown as SupabaseClient);
+    const result = await fetchCmsPhysicians(makeMock().client);
     expect(result.inserted).toBe(0);
     expect(result.skipped).toBe(0);
     expect(result.errors).toBe(0);
@@ -76,7 +75,7 @@ describe('CMS Physician Compare Fetcher', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockResponse));
 
     const { fetchCmsPhysicians } = await import('../cmsPhysicianFetcher.js');
-    const result = await fetchCmsPhysicians(createMockSupabase() as unknown as SupabaseClient, { maxPerRun: 1 });
+    const result = await fetchCmsPhysicians(makeMock().client, { maxPerRun: 1 });
 
     expect(fetch).toHaveBeenCalled();
     const calledUrl = vi.mocked(fetch).mock.calls[0][0] as string;
@@ -89,7 +88,7 @@ describe('CMS Physician Compare Fetcher', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 500 }));
 
     const { fetchCmsPhysicians } = await import('../cmsPhysicianFetcher.js');
-    const result = await fetchCmsPhysicians(createMockSupabase() as unknown as SupabaseClient, { maxPerRun: 1 });
+    const result = await fetchCmsPhysicians(makeMock().client, { maxPerRun: 1 });
 
     expect(result.errors).toBeGreaterThan(0);
   });
@@ -98,7 +97,7 @@ describe('CMS Physician Compare Fetcher', () => {
     mockRpc.mockResolvedValue({ data: true });
 
     const insertedRecords: Record<string, unknown>[] = [];
-    const mockSb = createMockSupabase();
+    const { client: mockSb } = makeMock();
     mockFrom.mockReturnValue({
       select: vi.fn().mockReturnValue({
         eq: vi.fn().mockReturnThis(),
@@ -131,7 +130,7 @@ describe('CMS Physician Compare Fetcher', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockResponse));
 
     const { fetchCmsPhysicians } = await import('../cmsPhysicianFetcher.js');
-    await fetchCmsPhysicians(mockSb as unknown as SupabaseClient, { maxPerRun: 1 });
+    await fetchCmsPhysicians(mockSb, { maxPerRun: 1 });
 
     if (insertedRecords.length > 0) {
       expect((insertedRecords[0].metadata as Record<string, unknown>).credential_type).toBe('MEDICAL');
@@ -143,7 +142,7 @@ describe('State Medical Board Fetcher', () => {
   it('returns empty when ENABLE_PUBLIC_RECORDS_INGESTION is disabled', async () => {
     mockRpc.mockResolvedValue({ data: false });
     const { fetchStateMedicalBoards } = await import('../cmsPhysicianFetcher.js');
-    const result = await fetchStateMedicalBoards(createMockSupabase() as unknown as SupabaseClient);
+    const result = await fetchStateMedicalBoards(makeMock().client);
     expect(result.inserted).toBe(0);
     expect(result.skipped).toBe(0);
     expect(result.errors).toBe(0);
@@ -172,7 +171,7 @@ describe('State Medical Board Fetcher', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockResponse));
 
     const { fetchStateMedicalBoards } = await import('../cmsPhysicianFetcher.js');
-    const result = await fetchStateMedicalBoards(createMockSupabase() as unknown as SupabaseClient, {
+    const result = await fetchStateMedicalBoards(makeMock().client, {
       states: ['CA'],
       maxPerRun: 10,
     });
@@ -185,7 +184,7 @@ describe('State Medical Board Fetcher', () => {
     mockRpc.mockResolvedValue({ data: true });
 
     const insertedRecords: Record<string, unknown>[] = [];
-    const mockSb = createMockSupabase();
+    const { client: mockSb } = makeMock();
     mockFrom.mockReturnValue({
       select: vi.fn().mockReturnValue({
         eq: vi.fn().mockReturnThis(),
@@ -219,7 +218,7 @@ describe('State Medical Board Fetcher', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockResponse));
 
     const { fetchStateMedicalBoards } = await import('../cmsPhysicianFetcher.js');
-    await fetchStateMedicalBoards(mockSb as unknown as SupabaseClient, { states: ['CA'], maxPerRun: 1 });
+    await fetchStateMedicalBoards(mockSb, { states: ['CA'], maxPerRun: 1 });
 
     if (insertedRecords.length > 0) {
       expect(insertedRecords[0].metadata).toHaveProperty('disciplinary_action');

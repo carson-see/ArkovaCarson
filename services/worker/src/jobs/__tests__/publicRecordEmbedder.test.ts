@@ -3,6 +3,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { createMockSupabase } from './__testHelpers.js';
 
 // ---- Hoisted mocks ----
 const { mockRpc, mockInsert, mockSelectChain, mockLogger, mockAiProvider } = vi.hoisted(() => {
@@ -46,17 +47,17 @@ vi.mock('../../ai/factory.js', () => ({
   createEmbeddingProvider: () => mockAiProvider,
 }));
 
-function createMockSupabase(records: Array<Record<string, unknown>> = []) {
+function makeMock(records: Array<Record<string, unknown>> = []) {
   mockSelectChain.limit.mockResolvedValue({ data: records, error: null });
   mockInsert.mockResolvedValue({ error: null });
 
-  return {
-    rpc: mockRpc,
-    from: vi.fn((_table: string) => ({
+  return createMockSupabase({
+    rpcMock: mockRpc,
+    fromImpl: vi.fn((_table: string) => ({
       select: vi.fn(() => mockSelectChain.chain),
       insert: mockInsert,
     })),
-  };
+  });
 }
 
 beforeEach(() => {
@@ -73,8 +74,7 @@ describe('publicRecordEmbedder', () => {
     mockRpc.mockResolvedValue({ data: false });
 
     const { embedPublicRecords } = await import('../publicRecordEmbedder.js');
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const result = await embedPublicRecords(createMockSupabase() as any);
+    const result = await embedPublicRecords(makeMock().client);
 
     expect(result.total).toBe(0);
     expect(mockRpc).toHaveBeenCalledWith('get_flag', {
@@ -84,13 +84,11 @@ describe('publicRecordEmbedder', () => {
 
   it('handles empty result set', async () => {
     mockRpc
-      .mockResolvedValueOnce({ data: true })   // get_flag
-      .mockResolvedValueOnce({ data: [], error: null }); // get_unembedded_public_records
-    const mockSupa = createMockSupabase([]);
+      .mockResolvedValueOnce({ data: true })
+      .mockResolvedValueOnce({ data: [], error: null });
 
     const { embedPublicRecords } = await import('../publicRecordEmbedder.js');
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const result = await embedPublicRecords(mockSupa as any);
+    const result = await embedPublicRecords(makeMock([]).client);
 
     expect(result.total).toBe(0);
     expect(result.succeeded).toBe(0);
@@ -107,17 +105,15 @@ describe('publicRecordEmbedder', () => {
       },
     ];
     mockRpc
-      .mockResolvedValueOnce({ data: true })   // get_flag
-      .mockResolvedValueOnce({ data: records, error: null }); // get_unembedded_public_records
-    const mockSupa = createMockSupabase(records);
+      .mockResolvedValueOnce({ data: true })
+      .mockResolvedValueOnce({ data: records, error: null });
 
     mockAiProvider.generateEmbedding.mockResolvedValue({
       embedding: new Array(768).fill(0.1),
     });
 
     const { embedPublicRecords } = await import('../publicRecordEmbedder.js');
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const result = await embedPublicRecords(mockSupa as any);
+    const result = await embedPublicRecords(makeMock(records).client);
 
     expect(result.total).toBe(1);
     expect(result.succeeded).toBe(1);
