@@ -13,7 +13,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import express from 'express';
 import request from 'supertest';
-import type { ApiKeyMeta } from '../../middleware/apiKeyAuth.js';
 
 const { mockDispatchWebhookEvent, mockAuditInsert, mockAnchorsSelect, mockOrgsSelect } =
   vi.hoisted(() => ({
