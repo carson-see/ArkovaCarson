@@ -165,6 +165,12 @@ export async function enforceOriginAllowlist(
         return { ok: false, reason: 'challenge', retryable: true };
       }
       entry = parsed.data;
+    } else {
+      // No per-key KV entry. Caller already passed API key auth
+      // (apiKeyId is non-null) so they hold a valid, active key.
+      // Default to allow — KV allowlist is opt-in restriction for
+      // pinning keys to CIDRs/origins, not block-all-by-default.
+      return { ok: true, reason: 'no_kv_binding' };
     }
   } catch (err) {
     console.error('[mcp-origin-allowlist] KV read failed; fail-safe to challenge:', err);
