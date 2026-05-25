@@ -1,4 +1,4 @@
-// PR #583 follow-up: Define ExecutionContext locally instead of pulling
+// Define ExecutionContext locally instead of pulling
 // @cloudflare/workers-types via /// <reference />. The directive leaks
 // workers-types into the root TS project — src/tests/edge/
 // mcp-security.test.ts imports from this file, so the directive
