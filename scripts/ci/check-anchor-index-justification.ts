@@ -49,14 +49,17 @@ export function collectMigrationFiles(repo: string): string[] {
  * Returns the index of the closing quote, or `line.length` if unterminated.
  */
 function skipQuotedRegion(line: string, start: number, quoteChar: string): number {
-  for (let i = start + 1; i < line.length; i += 1) {
+  let i = start + 1;
+  while (i < line.length) {
     if (line[i] === quoteChar) {
-      // Doubled quote is an escape — skip it and continue.
+      // Doubled quote is an escape — skip past the pair.
       if (line[i + 1] === quoteChar) {
-        i += 1;
-        continue;
+        i += 2;
+      } else {
+        return i;
       }
-      return i;
+    } else {
+      i += 1;
     }
   }
   return line.length;
@@ -98,21 +101,24 @@ function normalizeSql(sql: string): string {
 
 /**
  * Extract the index name from a CREATE INDEX statement.
- * Split into two steps to keep regex complexity within SonarCloud limits:
- * 1. Strip the CREATE [UNIQUE] INDEX [CONCURRENTLY] [IF NOT EXISTS] prefix.
- * 2. Match the optional schema-qualified name from the remainder.
+ *
+ * Strategy: normalize whitespace, strip known SQL keywords that appear
+ * between CREATE INDEX and the name, then match the identifier. This
+ * avoids a single high-complexity regex (SonarCloud S5843 limit is 20).
  */
-const CREATE_INDEX_PREFIX_RE =
-  /\bCREATE\s+(?:UNIQUE\s+)?INDEX\s+(?:CONCURRENTLY\s+)?(?:IF\s+NOT\s+EXISTS\s+)?/i;
-
+const STRIP_KEYWORDS_RE = /\b(?:UNIQUE|CONCURRENTLY|IF NOT EXISTS)\b/gi;
 const INDEX_NAME_RE =
   /^(?:(?:"[^"]+"|[a-zA-Z_]\w*)\s*\.\s*)?(?:"([^"]+)"|([a-zA-Z_]\w*))/;
 
 function extractIndexName(statement: string): string | null {
-  const prefixMatch = CREATE_INDEX_PREFIX_RE.exec(statement);
-  if (!prefixMatch) return null;
-  const remainder = statement.slice(prefixMatch.index + prefixMatch[0].length);
-  const nameMatch = INDEX_NAME_RE.exec(remainder);
+  // Normalize to single spaces and locate CREATE INDEX.
+  const normalized = normalizeSql(statement);
+  const createIdx = normalized.search(/\bCREATE\s+INDEX\b/i);
+  if (createIdx === -1) return null;
+  // Slice past "CREATE INDEX" then strip optional keywords.
+  const afterCreate = normalized.slice(createIdx).replace(/^CREATE\s+INDEX\s+/i, '');
+  const stripped = afterCreate.replace(STRIP_KEYWORDS_RE, '').replace(/^\s+/, '');
+  const nameMatch = INDEX_NAME_RE.exec(stripped);
   return nameMatch?.[1] ?? nameMatch?.[2] ?? null;
 }
 

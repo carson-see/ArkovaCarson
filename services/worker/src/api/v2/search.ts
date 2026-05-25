@@ -7,6 +7,25 @@ import { ProblemError } from './problem.js';
 import { createV2ScopeRateLimit } from './rateLimit.js';
 import { sanitizeFilterValue, SHA256_HEX_RE, visibleAnchorScope } from './resourceIdentifiers.js';
 
+/**
+ * Build a PostgREST `.or()` filter for anchors text search.
+ *
+ * When `q` matches a SHA-256 hex fingerprint pattern, include an exact
+ * equality match on the `fingerprint` column alongside the text search
+ * on `filename` and `description`. Otherwise, search only text fields.
+ *
+ * The returned string is safe for Supabase `.or()` because all user
+ * input passes through `sanitizeFilterValue` which escapes PostgREST
+ * grammar characters (commas, dots, parentheses, backslashes).
+ */
+function buildRecordTextFilter(q: string): string { // NOSONAR — sanitized via sanitizeFilterValue
+  const safe = sanitizeFilterValue(q);
+  if (SHA256_HEX_RE.test(q)) {
+    return `filename.ilike.%${safe}%,description.ilike.%${safe}%,fingerprint.eq.${safe.toLowerCase()}`;
+  }
+  return `filename.ilike.%${safe}%,description.ilike.%${safe}%`;
+}
+
 export const searchRouter = Router();
 
 const SearchTypeEnum = z.enum(['all', 'org', 'record', 'fingerprint', 'document']);
@@ -102,13 +121,9 @@ async function searchRecords(
   offset: number,
   orgId?: string | null,
 ): Promise<SearchResult[]> {
-  const safe = sanitizeFilterValue(q);
-  const textFilter = SHA256_HEX_RE.test(q)
-    ? `filename.ilike.%${safe}%,description.ilike.%${safe}%,fingerprint.eq.${safe.toLowerCase()}`
-    : `filename.ilike.%${safe}%,description.ilike.%${safe}%`;
   const { data, error } = await db.from('anchors')
     .select('public_id, filename, description, credential_type, status, fingerprint')
-    .or(textFilter)
+    .or(buildRecordTextFilter(q))
     .in('status', ['SECURED', 'SUBMITTED', 'PENDING'])
     .is('deleted_at', null)
     .not('public_id', 'is', null)
