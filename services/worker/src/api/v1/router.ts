@@ -351,7 +351,7 @@ router.use('/oracle', requireScope('verify'), oracleRouter);
 // both public per SCRUM-896 — anonymous gets a public-safe projection; API
 // key with org scope adds actor_public_id. Same anon-allow shape as /verify.
 const anchorAnonAllow = (req: Request, res: Response, next: NextFunction) => {
-  if (!req.apiKey && req.method === 'GET') {
+  if ((req.method !== 'GET' && req.method !== 'HEAD') || !req.apiKey) {
     next();
     return;
   }
@@ -359,7 +359,7 @@ const anchorAnonAllow = (req: Request, res: Response, next: NextFunction) => {
 };
 router.use('/anchor', anchorAnonAllow, anchorLifecycleRouter);
 router.use('/anchor', anchorAnonAllow, anchorEvidenceRouter);
-router.use('/anchor', requireScope('verify'), anchorExtractionManifestRouter);
+router.use('/anchor', anchorAnonAllow, anchorExtractionManifestRouter);
 router.use('/credentials', anchorAnonAllow, credentialsCtdlRouter);
 
 // ─── Anchor submission — Agent SDK (Phase 1.5 Priority 4) ───

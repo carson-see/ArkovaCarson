@@ -180,6 +180,17 @@ describe('POST /api/v1/anchor — Zod validation', () => {
     expect(submitJob).not.toHaveBeenCalled();
   });
 
+  it('accepts the compatibility submit path with the canonical write:anchors scope', async () => {
+    const res = await request(makeApp(['write:anchors'])).post('/v1/anchor/submit').send({
+      fingerprint: VALID_FINGERPRINT,
+      credential_type: 'DEGREE',
+    });
+
+    expect(res.status).toBe(201);
+    expect(res.body.public_id).toBeDefined();
+    expect(res.body.status).toBe('PENDING');
+  });
+
   it('accepts CPE credential type and enqueues async professional education extraction', async () => {
     mockInsertChain.single.mockResolvedValueOnce({
       data: {

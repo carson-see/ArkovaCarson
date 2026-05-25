@@ -81,4 +81,9 @@ describe('scopeSatisfies', () => {
     expect(scopeSatisfies(['verify'], 'attestations:write')).toBe(false);
     expect(scopeSatisfies(['verify'], 'compliance:read')).toBe(false);
   });
+
+  it('treats canonical anchor write scopes as equivalent', () => {
+    expect(scopeSatisfies(['write:anchors'], 'anchor:write')).toBe(true);
+    expect(scopeSatisfies(['anchor:write'], 'write:anchors')).toBe(true);
+  });
 });
