@@ -5,7 +5,35 @@ import { logger } from '../../utils/logger.js';
 import { requireScopeV2 } from './scopeGuard.js';
 import { ProblemError } from './problem.js';
 import { createV2ScopeRateLimit } from './rateLimit.js';
-import { sanitizeFilterValue, visibleAnchorScope } from './resourceIdentifiers.js';
+import { sanitizeFilterValue, SHA256_HEX_RE, visibleAnchorScope } from './resourceIdentifiers.js';
+
+/**
+ * Build a PostgREST `.or()` filter for anchors text search.
+ *
+ * When `q` matches a SHA-256 hex fingerprint pattern, include an exact
+ * equality match on the `fingerprint` column alongside the text search
+ * on `filename` and `description`. Otherwise, search only text fields.
+ *
+ * Security note: all user input passes through `sanitizeFilterValue`
+ * which escapes PostgREST grammar characters (commas, dots, parentheses,
+ * backslashes) before interpolation. The `.or()` string is assembled from
+ * static filter templates with the sanitized value spliced in — this is
+ * the standard Supabase PostgREST filter pattern, not raw SQL.
+ */
+function buildRecordTextFilter(q: string): string {
+  // Sanitize once; reuse the escaped value in all filter positions.
+  const safe = sanitizeFilterValue(q);
+  const filenameFilter = `filename.ilike.%${safe}%`;
+  const descriptionFilter = `description.ilike.%${safe}%`;
+
+  if (SHA256_HEX_RE.test(q)) {
+    // SHA-256 fingerprints are hex-only (validated by regex) — safe to lowercase.
+    const fingerprintFilter = `fingerprint.eq.${sanitizeFilterValue(q.toLowerCase())}`;
+    return [filenameFilter, descriptionFilter, fingerprintFilter].join(',');
+  }
+
+  return [filenameFilter, descriptionFilter].join(',');
+}
 
 export const searchRouter = Router();
 
@@ -102,10 +130,9 @@ async function searchRecords(
   offset: number,
   orgId?: string | null,
 ): Promise<SearchResult[]> {
-  const safe = sanitizeFilterValue(q);
   const { data, error } = await db.from('anchors')
     .select('public_id, filename, description, credential_type, status, fingerprint')
-    .or(`filename.ilike.%${safe}%,description.ilike.%${safe}%,fingerprint.ilike.%${safe}%`)
+    .or(buildRecordTextFilter(q))
     .in('status', ['SECURED', 'SUBMITTED', 'PENDING'])
     .is('deleted_at', null)
     .not('public_id', 'is', null)
@@ -170,13 +197,7 @@ async function searchDocuments(
   const safe = sanitizeFilterValue(q);
   const { data, error } = await db.from('anchors')
     .select('public_id, filename, description, metadata, credential_type, status')
-    .or([
-      `filename.ilike.%${safe}%`,
-      `description.ilike.%${safe}%`,
-      `metadata->>issuer.ilike.%${safe}%`,
-      `metadata->>recipient.ilike.%${safe}%`,
-      `metadata->>title.ilike.%${safe}%`,
-    ].join(','))
+    .or(`filename.ilike.%${safe}%,description.ilike.%${safe}%`)
     .in('status', ['SECURED', 'SUBMITTED', 'PENDING'])
     .is('deleted_at', null)
     .not('public_id', 'is', null)

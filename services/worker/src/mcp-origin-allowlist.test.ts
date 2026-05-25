@@ -179,6 +179,10 @@ describe('enforceOriginAllowlist', () => {
   });
 
   it('defaults to allow when no KV entry exists for an authenticated API key', async () => {
+    // Authenticated callers (apiKeyId non-null) with no per-key KV entry
+    // are allowed through — the KV allowlist is opt-in restriction, not
+    // block-all-by-default. Without this, every new API key is dead on
+    // arrival until an operator creates a signed KV entry.
     const env = makeEnv({});
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const result = await enforceOriginAllowlist(env as any, 'key-unknown', makeReq());

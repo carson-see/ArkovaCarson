@@ -146,6 +146,7 @@ describe('Oracle endpoint', () => {
 
   describe('OracleQuerySchema validation', () => {
     it('rejects empty public_ids array', () => {
+      // z imported at top level
       const schema = z.object({
         public_ids: z.array(z.string().min(3).max(64)).min(1).max(25),
       });
@@ -153,6 +154,7 @@ describe('Oracle endpoint', () => {
     });
 
     it('rejects more than 25 public_ids', () => {
+      // z imported at top level
       const schema = z.object({
         public_ids: z.array(z.string().min(3).max(64)).min(1).max(25),
       });
@@ -161,6 +163,7 @@ describe('Oracle endpoint', () => {
     });
 
     it('accepts valid public_ids', () => {
+      // z imported at top level
       const schema = z.object({
         public_ids: z.array(z.string().min(3).max(64)).min(1).max(25),
       });

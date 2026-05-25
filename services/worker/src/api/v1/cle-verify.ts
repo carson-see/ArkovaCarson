@@ -13,6 +13,7 @@
  * Pricing: $0.005 per verification query (x402)
  */
 
+import { createHash } from 'node:crypto';
 import { Router, Request, Response } from 'express';
 import { z } from 'zod';
 import { db } from '../../utils/db.js';
@@ -68,6 +69,69 @@ const CleSubmitSchema = z.object({
   course_number: z.string().max(100).optional(),
 });
 
+type CleSubmitInput = z.infer<typeof CleSubmitSchema>;
+
+function cleMetadata(row: Record<string, unknown>): Record<string, unknown> {
+  return row.metadata && typeof row.metadata === 'object' && !Array.isArray(row.metadata)
+    ? row.metadata as Record<string, unknown>
+    : {};
+}
+
+function publicString(value: unknown): string | null {
+  return typeof value === 'string' && value.length > 0 ? value : null;
+}
+
+function publicNumber(value: unknown): number {
+  const parsed = Number(value ?? 0);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function toPublicCleRecord(row: Record<string, unknown>): Record<string, unknown> {
+  const meta = cleMetadata(row);
+  const record: Record<string, unknown> = {
+    public_id: publicString(row.public_id),
+    course_title: publicString(meta.course_title),
+    provider_name: publicString(meta.provider_name),
+    credit_hours: publicNumber(meta.credit_hours),
+    credit_category: publicString(meta.credit_category) ?? 'General',
+    delivery_method: publicString(meta.delivery_method),
+    completion_date: publicString(meta.completion_date),
+    anchor_status: publicString(row.status),
+    anchored_at: publicString(row.created_at),
+  };
+  const jurisdiction = publicString(meta.jurisdiction);
+  if (jurisdiction) {
+    record.jurisdiction = jurisdiction;
+  }
+  return record;
+}
+
+function toPublicCleAttestation(row: Record<string, unknown>): Record<string, unknown> {
+  return {
+    public_id: publicString(row.public_id),
+    attestation_type: publicString(row.attestation_type),
+    status: publicString(row.status),
+    created_at: publicString(row.created_at),
+  };
+}
+
+function safeFilenameSegment(value: string): string {
+  return value.replace(/[^a-zA-Z0-9-]/g, '_').slice(0, 48) || 'CLE';
+}
+
+function buildCleSubmissionFingerprint(data: CleSubmitInput): string {
+  return createHash('sha256')
+    .update(JSON.stringify({
+      bar_number: data.bar_number,
+      course_title: data.course_title,
+      provider_name: data.provider_name,
+      jurisdiction: data.jurisdiction,
+      completion_date: data.completion_date,
+      course_number: data.course_number ?? null,
+    }))
+    .digest('hex');
+}
+
 // ─── CLE Compliance Requirements by State (subset of major states) ──────────
 
 const CLE_REQUIREMENTS: Record<string, {
@@ -109,23 +173,33 @@ router.get('/verify', async (req: Request, res: Response) => {
     // Find all CLE anchors for this bar number
     const { data: anchors } = await db
       .from('anchors')
-      .select('id, filename, credential_type, metadata, status, created_at, chain_tx_id, chain_block_height')
+      .select('public_id, credential_type, metadata, status, created_at')
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       .eq('credential_type', 'CLE' as any)
       .eq('status', 'SECURED')
       .order('created_at', { ascending: false });
 
     // Filter by bar_number in metadata
+    const requestedJurisdiction = jurisdiction?.toLowerCase();
     const cleRecords = (anchors ?? []).filter((a: Record<string, unknown>) => {
       const meta = a.metadata as Record<string, unknown> | null;
-      return meta?.bar_number === sanitizedBarNumber;
+      if (meta?.bar_number !== sanitizedBarNumber) {
+        return false;
+      }
+      if (!requestedJurisdiction) {
+        return true;
+      }
+      const recordJurisdiction = typeof meta?.jurisdiction === 'string'
+        ? meta.jurisdiction.toLowerCase()
+        : '';
+      return recordJurisdiction.includes(requestedJurisdiction);
     });
 
     // Also check attestations
     // eslint-disable-next-line arkova/missing-org-filter -- public verification endpoint
     const { data: attestations } = await dbAny
       .from('attestations')
-      .select('id, public_id, attestation_type, claims, status, created_at')
+      .select('public_id, attestation_type, status, created_at')
       .eq('status', 'ACTIVE')
       .ilike('subject_identifier', `%${sanitizedBarNumber}%`)
       .limit(50);
@@ -166,9 +240,7 @@ router.get('/verify', async (req: Request, res: Response) => {
       ) ? 'compliant' : 'deficient';
     }
 
-    res.json({
-      bar_number,
-      jurisdiction: jurisdiction ?? null,
+    const response: Record<string, unknown> = {
       compliance_status: complianceStatus,
       summary: {
         total_cle_hours: totalHours,
@@ -178,17 +250,14 @@ router.get('/verify', async (req: Request, res: Response) => {
         total_attestations: cleAttestations.length,
       },
       requirements,
-      records: cleRecords.slice(0, 20).map((r: Record<string, unknown>) => ({
-        id: r.id,
-        filename: r.filename,
-        metadata: r.metadata,
-        status: r.status,
-        chain_tx_id: r.chain_tx_id,
-        created_at: r.created_at,
-      })),
-      attestations: cleAttestations.slice(0, 10),
+      records: cleRecords.slice(0, 20).map(toPublicCleRecord),
+      attestations: cleAttestations.slice(0, 10).map(toPublicCleAttestation),
       verified_at: new Date().toISOString(),
-    });
+    };
+    if (jurisdiction) {
+      response.jurisdiction = jurisdiction;
+    }
+    res.json(response);
   } catch (err) {
     logger.error({ error: err }, 'cle-verify: unexpected error');
     res.status(500).json({ error: 'CLE verification failed' });
@@ -210,7 +279,7 @@ router.get('/credits', async (req: Request, res: Response) => {
   try {
     let query = db
       .from('anchors')
-      .select('id, filename, credential_type, metadata, status, created_at, chain_tx_id, public_id')
+      .select('public_id, credential_type, metadata, status, created_at')
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       .eq('credential_type', 'CLE' as any)
       .in('status', ['SECURED', 'SUBMITTED', 'PENDING'])
@@ -235,29 +304,22 @@ router.get('/credits', async (req: Request, res: Response) => {
     if (jurisdiction) {
       credits = credits.filter((a: Record<string, unknown>) => {
         const meta = a.metadata as Record<string, unknown> | null;
-        return (meta?.jurisdiction as string ?? '').toLowerCase().includes(jurisdiction.toLowerCase());
+        const metadataJurisdiction = meta?.jurisdiction;
+        const publicJurisdiction = typeof metadataJurisdiction === 'string'
+          ? metadataJurisdiction
+          : '';
+        return publicJurisdiction.toLowerCase().includes(jurisdiction.toLowerCase());
       });
     }
 
-    res.json({
-      bar_number,
-      jurisdiction: jurisdiction ?? null,
+    const response: Record<string, unknown> = {
       total_credits: credits.length,
-      credits: credits.map((c: Record<string, unknown>) => ({
-        id: c.id,
-        public_id: c.public_id,
-        course_title: (c.metadata as Record<string, unknown>)?.course_title ?? c.filename,
-        provider_name: (c.metadata as Record<string, unknown>)?.provider_name ?? null,
-        credit_hours: Number((c.metadata as Record<string, unknown>)?.credit_hours ?? 0),
-        credit_category: (c.metadata as Record<string, unknown>)?.credit_category ?? 'General',
-        delivery_method: (c.metadata as Record<string, unknown>)?.delivery_method ?? null,
-        completion_date: (c.metadata as Record<string, unknown>)?.completion_date ?? null,
-        jurisdiction: (c.metadata as Record<string, unknown>)?.jurisdiction ?? null,
-        anchor_status: c.status,
-        chain_tx_id: c.chain_tx_id,
-        anchored_at: c.created_at,
-      })),
-    });
+      credits: credits.map(toPublicCleRecord),
+    };
+    if (jurisdiction) {
+      response.jurisdiction = jurisdiction;
+    }
+    res.json(response);
   } catch (err) {
     logger.error({ error: err }, 'cle-credits: unexpected error');
     res.status(500).json({ error: 'CLE credit lookup failed' });
@@ -292,13 +354,14 @@ router.post('/submit', async (req: Request, res: Response) => {
   const data = parsed.data;
 
   try {
+    const fingerprint = buildCleSubmissionFingerprint(data);
     // Create anchor with CLE metadata
     const { data: anchor, error: insertError } = await db
       .from('anchors')
       .insert({
         user_id: userId,
-        fingerprint: `cle_${data.bar_number}_${data.course_title}_${data.completion_date}`.replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 64).padEnd(64, '0'),
-        filename: `CLE_${data.jurisdiction}_${data.bar_number}_${data.completion_date}.json`,
+        fingerprint,
+        filename: `CLE_${safeFilenameSegment(data.jurisdiction)}_${data.completion_date}_${fingerprint.slice(0, 12)}.json`,
         file_size: 0,
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         credential_type: 'CLE' as any,
@@ -317,7 +380,7 @@ router.post('/submit', async (req: Request, res: Response) => {
           submitted_via: 'api',
         },
       })
-      .select('id, public_id')
+      .select('public_id')
       .single();
 
     if (insertError) {
@@ -327,19 +390,16 @@ router.post('/submit', async (req: Request, res: Response) => {
     }
 
     logger.info({
-      bar_number: data.bar_number,
       jurisdiction: data.jurisdiction,
       credit_hours: data.credit_hours,
-      anchor_id: anchor.id,
+      public_id: anchor.public_id,
     }, 'cle.credit.submitted');
 
     res.status(201).json({
-      id: anchor.id,
       public_id: anchor.public_id,
       status: 'PENDING',
       message: 'CLE credit submitted for anchoring. Will be included in next batch.',
       credit: {
-        bar_number: data.bar_number,
         course_title: data.course_title,
         credit_hours: data.credit_hours,
         credit_category: data.credit_category,

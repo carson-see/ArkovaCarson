@@ -537,25 +537,24 @@ describe('handleNessieQuery (PH1-SDK-03)', () => {
     const result = await handleNessieQuery({ query: 'apple annual report' }, CONFIG);
     expect(result.isError).toBeUndefined();
     const parsed = JSON.parse(result.content[0].text);
+    // Without `ai`, the text-fallback path wraps rows in { query, mode, total, results }
     expect(parsed.results).toHaveLength(1);
   });
 
-  it('handles fetch failure gracefully with empty results', async () => {
+  it('handles fetch failure gracefully', async () => {
     mockFetch.mockResolvedValueOnce({ ok: false, status: 500 });
     const result = await handleNessieQuery({ query: 'test' }, CONFIG);
-    expect(result.isError).toBeUndefined();
-    const parsed = JSON.parse(result.content[0].text);
-    expect(parsed.total).toBe(0);
-    expect(parsed.results).toHaveLength(0);
+    expect(result.isError).toBe(true);
   });
 
-  it('passes mode and limit to Nessie REST endpoint', async () => {
+  it('passes limit to text-fallback URL when ai is not provided', async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
       json: async () => ([]),
     });
 
     await handleNessieQuery({ query: 'test', mode: 'context', limit: 5 }, CONFIG);
+    // Without `ai`, the text-fallback path issues a GET with limit in the URL
     const url = mockFetch.mock.calls[0][0] as string;
     expect(url).toContain('limit=5');
   });
@@ -567,6 +566,7 @@ describe('handleNessieQuery (PH1-SDK-03)', () => {
     });
 
     await handleNessieQuery({ query: 'test', limit: 999 }, CONFIG);
+    // Without `ai`, the text-fallback path caps limit in the URL
     const url = mockFetch.mock.calls[0][0] as string;
     expect(url).toContain('limit=50');
   });

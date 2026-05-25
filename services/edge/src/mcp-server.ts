@@ -391,7 +391,7 @@ function createMcpServer(config: ScopedConfig, telemetry: RequestTelemetryContex
     },
     withTelemetry(
       'nessie_query',
-      async ({ query, mode, limit }) => handleNessieQuery({ query, mode, limit }, config, telemetry.env.ARKOVA_AI as unknown as { run(model: string, inputs: any): Promise<any> }),
+      async ({ query, mode, limit }) => handleNessieQuery({ query, mode, limit }, config, telemetry.env.ARKOVA_AI),
       telemetry,
     ),
   );
@@ -1021,8 +1021,11 @@ export async function handleMcpRequest(
   try {
     const mcpServer = createMcpServer(config, telemetry);
 
-    // Cloudflare Workers are stateless per-request; session IDs across
-    // requests cause mcp-remote "session not found" 404s. Disable.
+    // Cloudflare Workers are stateless — each HTTP request is a fresh
+    // isolate with no memory of prior requests. Session IDs across
+    // requests break because request 2's transport doesn't know request
+    // 1's session. Disable session management so every request is
+    // self-contained.
     const transport = new WebStandardStreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
       enableJsonResponse: true,
