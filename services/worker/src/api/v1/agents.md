@@ -2,6 +2,11 @@
 
 Public v1 API surface — frozen contract per CLAUDE.md §1.8. Additive nullable fields only; breaking changes require `v2+` prefix and 12-month deprecation.
 
+## 2026-05-22 Anchor Submit Scope Fix
+
+- `POST /api/v1/anchor` is the canonical submit route; `POST /api/v1/anchor/submit` is a compatibility alias that reuses the same handler.
+- Anchor submit accepts API keys with either `anchor:write` or `write:anchors`. Read-only `/api/v1/anchor/:publicId/*` middleware must skip non-GET requests so submit reaches the write scope guard.
+
 ## 2026-05-20 Fraud Visual Endpoint Status
 
 - `ai-fraud-visual.ts` is retained for back-compat but now fails closed with HTTP 410 after request validation. It must not call Gemini or any server-side image-analysis provider because SCRUM-1955 requires fraud document/image analysis to run in a client-side worker and send only structured findings server-side.
@@ -20,7 +25,7 @@ Public v1 API surface — frozen contract per CLAUDE.md §1.8. Additive nullable
 ## Scope mapping (verified 2026-05-08)
 | Endpoint | Scope |
 |---|---|
-| `POST /api/v1/anchor` | `anchor:write` |
+| `POST /api/v1/anchor`, `POST /api/v1/anchor/submit` | `anchor:write` or `write:anchors` |
 | `GET /api/v1/verify/<id>` | anonymous OR `verify` |
 | `POST /api/v1/batch-verify` | `verify:batch` |
 | `GET /api/v1/credentials/<id>/ctdl` | anonymous OR `verify` |

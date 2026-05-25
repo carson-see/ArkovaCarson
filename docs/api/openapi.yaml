@@ -236,8 +236,11 @@ paths:
     post:
       operationId: anchorDocument
       summary: Submit a document fingerprint for anchoring
-      description: Submits a SHA-256 fingerprint to be anchored to Bitcoin via Merkle batch.
+      description: Submits a SHA-256 fingerprint to be anchored to Bitcoin via Merkle batch. Requires anchor:write or write:anchors.
       tags: [Anchoring]
+      x-arkova-required-scopes:
+        - anchor:write
+        - write:anchors
       security:
         - apiKey: []
       requestBody:
@@ -273,6 +276,42 @@ paths:
                     enum: [PENDING]
                   fingerprint:
                     type: string
+
+  /anchor/submit:
+    post:
+      operationId: anchorDocumentAlias
+      summary: Submit a document fingerprint for anchoring
+      description: Compatibility alias for POST /anchor. New integrations should use POST /anchor.
+      tags: [Anchoring]
+      x-arkova-alias-for: /anchor
+      x-arkova-required-scopes:
+        - anchor:write
+        - write:anchors
+      security:
+        - apiKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [fingerprint]
+              properties:
+                fingerprint:
+                  type: string
+                  description: SHA-256 hash of the document
+                  pattern: "^[a-fA-F0-9]{64}$"
+                credential_type:
+                  type: string
+                  enum: [DEGREE, LICENSE, CERTIFICATE, TRANSCRIPT, CLE, PROFESSIONAL, BADGE, ATTESTATION, FINANCIAL, LEGAL, INSURANCE, SEC_FILING, PATENT, REGULATION, PUBLICATION, OTHER]
+                description:
+                  type: string
+                  maxLength: 500
+      responses:
+        "200":
+          description: Anchor already exists
+        "201":
+          description: Anchor created
 
   /ai/extract:
     post:
@@ -409,6 +448,8 @@ paths:
       operationId: getUsage
       summary: Get API usage statistics
       tags: [Usage]
+      x-arkova-required-scopes:
+        - usage:read
       security:
         - apiKey: []
       responses:
