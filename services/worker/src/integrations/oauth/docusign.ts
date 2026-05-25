@@ -313,8 +313,8 @@ export async function provisionConnectListener(args: {
     );
   }
 
-  const hmacSecret = env.DOCUSIGN_CONNECT_HMAC_SECRET ?? '';
-  if (!hmacSecret) {
+  const connectHmacSecret = env.DOCUSIGN_CONNECT_HMAC_SECRET ?? '';
+  if (!connectHmacSecret) {
     throw new DocusignConfigError(
       'DOCUSIGN_CONNECT_HMAC_SECRET is required to provision a secure Connect listener',
     );
@@ -370,14 +370,14 @@ export async function provisionConnectListener(args: {
     enableLog: 'true',
     allUsers: 'true',
     includeHMAC: 'true',
+    // DocuSign must sign deliveries with the same key the webhook verifier uses.
+    // Never log this Connect payload.
+    hmacSecret: connectHmacSecret, // NOSONAR
     includeDocumentFields: 'true',
     requiresAcknowledgement: 'true',
     envelopeEvents: ['Completed'],
     events: ['envelope-completed'],
     eventData: { format: 'json', version: 'restv2.1' },
-    // Shared-secret provisioning remains in place for the existing Arkova
-    // Connect flow; includeHMAC above enables DocuSign delivery signing.
-    ...(hmacSecret ? { hmacSecret } : {}), // NOSONAR — intentional Arkova Connect shared secret
   };
 
   const method = existing ? 'PUT' : 'POST';

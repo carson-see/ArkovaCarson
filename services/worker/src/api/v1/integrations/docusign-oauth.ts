@@ -36,10 +36,57 @@ import {
   resolveDocusignSecretManagerProjectId,
   type DocusignRefreshTokenStore,
 } from '../../../integrations/connectors/docusign-token-store.js';
+import type { TypeSafeDatabase } from '../../../types/database-overrides.js';
 
-// org_integrations landed after generated worker DB types.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type DbClient = any;
+type OrgMemberRow = TypeSafeDatabase['public']['Tables']['org_members']['Row'];
+type OrgIntegrationRow = TypeSafeDatabase['public']['Tables']['org_integrations']['Row'];
+type OrgIntegrationInsert = TypeSafeDatabase['public']['Tables']['org_integrations']['Insert'];
+type OrgIntegrationUpdate = TypeSafeDatabase['public']['Tables']['org_integrations']['Update'];
+type IntegrationEventInsert = TypeSafeDatabase['public']['Tables']['integration_events']['Insert'];
+type OrgMemberRoleRow = Pick<OrgMemberRow, 'role'>;
+type DocusignIntegrationIdRow = Pick<OrgIntegrationRow, 'id'>;
+type DocusignIntegrationLookupRow = Pick<OrgIntegrationRow, 'id' | 'token_secret_name'>;
+type DocusignIntegrationUpsert = Pick<
+  OrgIntegrationInsert,
+  | 'org_id'
+  | 'provider'
+  | 'account_id'
+  | 'account_label'
+  | 'base_uri'
+  | 'encrypted_tokens'
+  | 'token_kms_key_id'
+  | 'token_secret_name'
+  | 'scope'
+  | 'connected_at'
+  | 'revoked_at'
+  | 'updated_at'
+>;
+
+interface DbQueryResult<T> {
+  data: T | null;
+  error: unknown;
+}
+
+interface DbFilterQuery<T> extends PromiseLike<DbQueryResult<T>> {
+  select(columns?: string): DbFilterQuery<T>;
+  eq(field: string, value: unknown): DbFilterQuery<T>;
+  is(field: string, value: unknown): DbFilterQuery<T>;
+  single(): Promise<DbQueryResult<T extends Array<infer Row> ? Row : T>>;
+  maybeSingle(): Promise<DbQueryResult<T extends Array<infer Row> ? Row : T>>;
+}
+
+interface DbTableQuery<T> {
+  select(columns?: string): DbFilterQuery<T>;
+  update(value: OrgIntegrationUpdate): DbFilterQuery<DocusignIntegrationIdRow[]>;
+  insert(value: IntegrationEventInsert): PromiseLike<DbQueryResult<unknown>>;
+  upsert(value: DocusignIntegrationUpsert, options?: { onConflict?: string }): DbFilterQuery<DocusignIntegrationIdRow>;
+}
+
+interface DbClient {
+  from(table: 'org_members'): DbTableQuery<OrgMemberRoleRow>;
+  from(table: 'org_integrations'): DbTableQuery<DocusignIntegrationLookupRow[]>;
+  from(table: 'integration_events'): DbTableQuery<unknown>;
+}
 
 interface DocusignOAuthDeps {
   db?: DbClient;
@@ -168,7 +215,7 @@ async function recordIntegrationEvent(db: DbClient, args: {
   integrationId?: string | null;
   eventType: string;
   status: 'success' | 'warning' | 'error';
-  details?: Record<string, unknown>;
+  details?: IntegrationEventInsert['details'];
 }): Promise<void> {
   const { error } = await db.from('integration_events').insert({
     org_id: args.orgId,
@@ -185,7 +232,7 @@ async function recordIntegrationEvent(db: DbClient, args: {
 
 export function createDocusignOAuthRouter(deps: DocusignOAuthDeps = {}): Router {
   const router = Router();
-  const db = deps.db ?? defaultDb;
+  const db = (deps.db ?? defaultDb) as DbClient;
 
   router.post('/docusign/oauth/start', async (req: Request, res: Response) => {
     const userId = getUserId(req);
@@ -303,12 +350,18 @@ export function createDocusignOAuthRouter(deps: DocusignOAuthDeps = {}): Router 
         value: tokens.refresh_token,
       });
 
+      // SCRUM-1101 handoff: Secret Manager must be written first because
+      // Postgres stores only the resulting secret resource name. If the DB
+      // upsert fails, best-effort cleanup below logs any stranded secret for
+      // operator handoff.
       const { data: integration, error: upsertError } = await db
         .from('org_integrations')
         .upsert({
           org_id: payload.orgId,
           provider: Provider,
           account_id: account.account_id,
+          // Prefer DocuSign's account name; fall back to account_id rather
+          // than user email so org-wide settings do not expose personal PII.
           account_label: account.account_name ?? account.account_id ?? null,
           base_uri: account.base_uri,
           encrypted_tokens: toPostgresBytea(encrypted.ciphertext),
@@ -325,7 +378,10 @@ export function createDocusignOAuthRouter(deps: DocusignOAuthDeps = {}): Router 
       if (upsertError) {
         logger.error({ error: upsertError, orgId: payload.orgId }, 'DocuSign integration upsert failed');
         await refreshTokenStore.delete({ name: tokenSecretName }).catch((deleteError) => {
-          logger.warn({ error: deleteError, orgId: payload.orgId }, 'DocuSign refresh-token secret cleanup failed after upsert error');
+          logger.warn(
+            { error: deleteError, orgId: payload.orgId, tokenSecretName },
+            'DocuSign refresh-token secret cleanup failed after upsert error',
+          );
         });
         res.redirect(302, appendResult(returnTo, 'docusign_error', 'save_failed'));
         return;
@@ -337,7 +393,7 @@ export function createDocusignOAuthRouter(deps: DocusignOAuthDeps = {}): Router 
         eventType: 'oauth_connected',
         status: 'success',
         details: {
-          account_label: account.account_name ?? null,
+          account_label: account.account_name ?? account.account_id ?? null,
           account_id: account.account_id,
         },
       });
@@ -413,13 +469,53 @@ export function createDocusignOAuthRouter(deps: DocusignOAuthDeps = {}): Router 
     }
 
     const now = (deps.now?.() ?? new Date()).toISOString();
-    const { data: existing } = await db
+    const { data: existing, error: existingError } = await db
       .from('org_integrations')
       .select('id, token_secret_name')
       .eq('org_id', orgId)
       .eq('provider', Provider)
       .is('revoked_at', null);
 
+    if (existingError) {
+      logger.error({ error: existingError, orgId }, 'DocuSign disconnect existing integration lookup failed');
+      res.status(500).json({ error: 'Failed to disconnect DocuSign' });
+      return;
+    }
+
+    const existingRows = existing ?? [];
+    const tokenSecretNames = existingRows
+      .map((row) => row.token_secret_name)
+      .filter((name): name is string => typeof name === 'string' && name.length > 0);
+
+    const refreshTokenStore = deps.refreshTokenStore ?? createGcpSecretManagerRefreshTokenStore({
+      env: deps.env,
+      fetchImpl: deps.fetchImpl,
+    });
+    const deleteResults = await Promise.allSettled(
+      tokenSecretNames.map((name) => refreshTokenStore.delete({ name })),
+    );
+    const failedTokenSecretNames = deleteResults.flatMap((result, index) =>
+      result.status === 'rejected' ? [tokenSecretNames[index]] : [],
+    );
+    if (failedTokenSecretNames.length > 0) {
+      logger.error(
+        {
+          orgId,
+          tokenSecretNames: failedTokenSecretNames,
+          errors: deleteResults.flatMap((result) =>
+            result.status === 'rejected'
+              ? [result.reason instanceof Error ? result.reason.message : String(result.reason)]
+              : [],
+          ),
+        },
+        'DocuSign refresh-token secret deletion failed during disconnect',
+      );
+      res.status(500).json({ error: 'Failed to delete DocuSign refresh token secret' });
+      return;
+    }
+
+    // Secret Manager delete treats 404 as success, so if this DB update fails
+    // the still-connected row can be retried and reconciled by rerunning disconnect.
     const { data, error } = await db
       .from('org_integrations')
       .update({
@@ -437,25 +533,6 @@ export function createDocusignOAuthRouter(deps: DocusignOAuthDeps = {}): Router 
     if (error) {
       logger.error({ error, orgId }, 'DocuSign disconnect failed');
       res.status(500).json({ error: 'Failed to disconnect DocuSign' });
-      return;
-    }
-
-    const refreshTokenStore = deps.refreshTokenStore ?? createGcpSecretManagerRefreshTokenStore({
-      env: deps.env,
-      fetchImpl: deps.fetchImpl,
-    });
-    const deleteResults = await Promise.allSettled(
-      ((existing ?? []) as Array<{ token_secret_name?: string | null }>).flatMap((row) =>
-        row.token_secret_name ? [refreshTokenStore.delete({ name: row.token_secret_name })] : [],
-      ),
-    );
-    const failedDeletes = deleteResults.filter((result) => result.status === 'rejected');
-    if (failedDeletes.length > 0) {
-      logger.error(
-        { orgId, failedDeleteCount: failedDeletes.length },
-        'DocuSign refresh-token secret deletion failed during disconnect',
-      );
-      res.status(500).json({ error: 'Failed to delete DocuSign refresh token secret' });
       return;
     }
 

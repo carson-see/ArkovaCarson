@@ -291,10 +291,11 @@ DOCUSIGN_INTEGRATION_KEY=
 DOCUSIGN_CLIENT_SECRET=
 ENABLE_DOCUSIGN_OAUTH=false         # DocuSign OAuth routes; default off pending org-scale launch validation
 
-# DocuSign Connect HMAC secret. The worker verifies X-DocuSign-Signature-1
-# over the raw body before parsing or enqueueing events.
+# DocuSign Connect HMAC secret. Listener provisioning sends this shared key to
+# DocuSign; the worker verifies X-DocuSign-Signature-1 over the raw body.
 DOCUSIGN_CONNECT_HMAC_SECRET=
 ENABLE_DOCUSIGN_WEBHOOK=false       # /webhooks/docusign intake; default off until org-wide Connect testing passes
+WORKER_PUBLIC_URL=                  # Public worker origin used when provisioning DocuSign Connect listener URLs
 
 # Sandbox vs production DocuSign account server. Default true. Only a literal
 # "false" flips to production account.docusign.com.
