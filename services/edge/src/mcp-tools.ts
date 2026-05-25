@@ -552,7 +552,14 @@ export async function handleSearchCredentials(
     });
 
     if (!response.ok) {
-      return errorResult(`Search failed: HTTP ${response.status}`);
+      // Capture PostgREST error body for diagnostics; fall back to direct
+      // table query when the RPC fails (common cause: statement_timeout on
+      // the ILIKE pattern scan in large tables).
+      const errBody = await response.text().catch(() => '');
+      console.error(
+        `[search_credentials] RPC returned HTTP ${response.status}: ${errBody}`,
+      );
+      return searchCredentialsFallback(input.query, maxResults, config);
     }
 
     const results = await response.json() as Array<Record<string, unknown>>;
@@ -561,22 +568,77 @@ export async function handleSearchCredentials(
       return textResult({ query: input.query, total: 0, results: [] });
     }
 
-    const mapped = results.map((r, i) => ({
-      rank: i + 1,
-      public_id: r.public_id,
-      title: r.title,
-      credential_type: r.credential_type,
-      status: mapStatus(r.status as string),
-      anchor_timestamp: r.created_at,
-      record_uri: `https://app.arkova.ai/verify/${r.public_id}`,
-    }));
-
-    return textResult({ query: input.query, total: mapped.length, results: mapped });
+    return textResult({
+      query: input.query,
+      total: results.length,
+      results: results.map((r, i) => ({
+        rank: i + 1,
+        public_id: r.public_id,
+        title: r.title,
+        credential_type: r.credential_type,
+        status: mapStatus(r.status as string),
+        anchor_timestamp: r.created_at,
+        record_uri: `https://app.arkova.ai/verify/${r.public_id}`,
+      })),
+    });
   } catch (error) {
     const msg = error instanceof Error && error.name === 'AbortError'
       ? 'Search timed out'
       : `Search failed: ${error instanceof Error ? error.message : 'Unknown error'}`;
     return errorResult(msg);
+  }
+}
+
+/**
+ * Fallback search when the search_public_credentials RPC fails.
+ * Queries the anchors table directly via PostgREST with ILIKE on filename.
+ * Scoped to non-deleted SECURED/SUBMITTED anchors.
+ */
+async function searchCredentialsFallback(
+  query: string,
+  limit: number,
+  config: SupabaseConfig,
+): Promise<ToolResult> {
+  try {
+    // PostgREST: combine filters with `and=()` so duplicate `or=` keys
+    // don't collide. status uses `in.()` instead of a second `or=`.
+    const encoded = encodeURIComponent(`%${query}%`);
+    const params = [
+      'deleted_at=is.null',
+      'status=in.(SECURED,SUBMITTED)',
+      `or=(filename.ilike.${encoded},description.ilike.${encoded})`,
+      'select=public_id,filename,credential_type,status,created_at,org_id',
+      'order=created_at.desc',
+      `limit=${limit}`,
+    ].join('&');
+
+    const resp = await supabaseFetch(config, `/rest/v1/anchors?${params}`);
+    if (!resp.ok) {
+      const body = await resp.text().catch(() => '');
+      return errorResult(`Search failed (fallback): HTTP ${resp.status} — ${body}`);
+    }
+
+    const rows = await resp.json() as Array<Record<string, unknown>>;
+    if (!Array.isArray(rows) || rows.length === 0) {
+      return textResult({ query, total: 0, results: [] });
+    }
+
+    return textResult({
+      query,
+      total: rows.length,
+      results: rows.map((r, i) => ({
+        rank: i + 1,
+        public_id: r.public_id,
+        title: r.filename,
+        credential_type: r.credential_type,
+        status: mapStatus(r.status as string),
+        anchor_timestamp: r.created_at,
+        record_uri: `https://app.arkova.ai/verify/${r.public_id}`,
+      })),
+    });
+  } catch (err) {
+    console.error('[search_credentials] fallback failed:', err);
+    return errorResult(`Search failed: both RPC and fallback query failed — ${err instanceof Error ? err.message : 'unknown'}`);
   }
 }
 
@@ -746,32 +808,185 @@ export async function handleAgentSearch(
 export async function handleNessieQuery(
   input: NessieQueryInput,
   config: SupabaseConfig,
+  ai?: Ai,
 ): Promise<ToolResult> {
   if (!input.query || input.query.trim().length === 0) {
     return errorResult('Error: query is required');
   }
 
-  try {
-    const response = await supabaseFetch(config, '/rest/v1/rpc/search_public_record_embeddings', {
-      method: 'POST',
-      body: JSON.stringify({
-        p_query: input.query,
-        p_mode: input.mode ?? 'retrieval',
-        p_limit: Math.min(input.limit ?? 10, 50),
-      }),
-    });
+  const matchCount = Math.min(input.limit ?? 10, 50);
 
-    if (!response.ok) {
-      return errorResult(`Nessie query failed: HTTP ${response.status}`);
+  try {
+    // Race vector search (Workers AI → pgvector RPC) against text search.
+    // Vector search is higher quality but Workers AI cold starts can take
+    // 5-8 seconds. The text fallback returns in <1 s. Whichever finishes
+    // first wins; if only one branch is available, run that alone.
+    const textSearchPromise = nessieTextFallback(input.query, matchCount, config);
+
+    if (!ai) {
+      return await textSearchPromise;
     }
 
-    const data = await response.json();
-    return textResult(data);
+    const vectorSearchPromise = nessieVectorSearch(
+      input.query,
+      input.mode ?? 'retrieval',
+      matchCount,
+      config,
+      ai,
+    );
+
+    // Race: whichever resolves first wins. Both branches are wrapped
+    // so they never reject — they return errorResult instead of throwing.
+    const result = await Promise.race([
+      vectorSearchPromise
+        .then((r) => ({ source: 'vector' as const, result: r }))
+        .catch(() => null),
+      textSearchPromise
+        .then((r) => ({ source: 'text' as const, result: r }))
+        .catch(() => null),
+    ]);
+
+    if (result) return result.result;
+
+    // Both branches errored out — return whatever text search gives
+    return await textSearchPromise.catch(() =>
+      errorResult('Nessie query: all search paths failed'),
+    );
   } catch (error) {
-    const msg = error instanceof Error && error.name === 'AbortError'
-      ? 'Nessie query timed out'
-      : `Nessie query failed: ${error instanceof Error ? error.message : 'Unknown error'}`;
+    const msg =
+      error instanceof Error && error.name === 'AbortError'
+        ? 'Nessie query timed out'
+        : `Nessie query failed: ${error instanceof Error ? error.message : 'Unknown error'}`;
     return errorResult(msg);
+  }
+}
+
+/** Vector search: Workers AI embedding → pgvector RPC → hydrate. */
+async function nessieVectorSearch(
+  query: string,
+  mode: string,
+  matchCount: number,
+  config: SupabaseConfig,
+  ai: Ai,
+): Promise<ToolResult> {
+  const embResult = await ai.run('@cf/baai/bge-base-en-v1.5', {
+    text: query,
+  }) as { data: number[][] };
+  const embedding = embResult?.data?.[0];
+
+  if (!embedding || !Array.isArray(embedding) || embedding.length !== 768) {
+    throw new Error('Workers AI returned unexpected embedding shape');
+  }
+
+  const threshold = mode === 'context' ? 0.55 : 0.65;
+  const vecStr = `[${embedding.join(',')}]`;
+
+  const response = await supabaseFetch(
+    config,
+    '/rest/v1/rpc/search_public_record_embeddings',
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        p_query_embedding: vecStr,
+        p_match_threshold: threshold,
+        p_match_count: matchCount,
+      }),
+    },
+  );
+
+  if (!response.ok) {
+    const errBody = await response.text().catch(() => '');
+    throw new Error(`embedding RPC HTTP ${response.status}: ${errBody}`);
+  }
+
+  const matches = (await response.json()) as Array<{
+    public_record_id: string;
+    similarity: number;
+  }>;
+
+  if (!Array.isArray(matches) || matches.length === 0) {
+    return textResult({ query, mode, total: 0, results: [] });
+  }
+
+  const ids = matches.map((m) => m.public_record_id);
+  const simMap = new Map(matches.map((m) => [m.public_record_id, m.similarity]));
+  const hydrated = await hydratePublicRecords(ids, config);
+  const results = hydrated.map((r) => ({
+    ...r,
+    similarity: simMap.get(r.id as string) ?? 0,
+  }));
+
+  return textResult({ query, mode, total: results.length, results });
+}
+
+/** Hydrate public_records by IDs (for embedding search results). */
+async function hydratePublicRecords(
+  ids: string[],
+  config: SupabaseConfig,
+): Promise<Array<Record<string, unknown>>> {
+  if (ids.length === 0) return [];
+  const inList = ids.map((id) => `"${id}"`).join(',');
+  const resp = await supabaseFetch(
+    config,
+    `/rest/v1/public_records?id=in.(${inList})&select=id,title,source,source_url,record_type,content_hash,anchor_id,created_at`,
+  );
+  if (!resp.ok) return [];
+  const rows = (await resp.json()) as Array<Record<string, unknown>>;
+  return Array.isArray(rows) ? rows : [];
+}
+
+/** Text-based fallback search on public_records (no embeddings needed).
+ *  Uses equality filters on indexed columns (source, record_type) rather
+ *  than ILIKE, which causes full-table scans on large tables.
+ *  Wrapped in try/catch so it NEVER throws — returns errorResult instead.
+ *  This is critical for the Promise.race in handleNessieQuery. */
+async function nessieTextFallback(
+  query: string,
+  limit: number,
+  config: SupabaseConfig,
+): Promise<ToolResult> {
+  try {
+    // Extract known source keywords from the query for indexed filtering.
+    // public_records.source values: "EDGAR", "USPTO", "FEDERAL_REGISTER",
+    // "OPENALEX", etc. If the query mentions one, filter on it.
+    const q = query.toLowerCase();
+    const sourceFilters: string[] = [];
+    if (q.includes('sec') || q.includes('filing') || q.includes('edgar')) sourceFilters.push('EDGAR');
+    if (q.includes('patent') || q.includes('uspto')) sourceFilters.push('USPTO');
+    if (q.includes('federal') || q.includes('regulation')) sourceFilters.push('FEDERAL_REGISTER');
+    if (q.includes('paper') || q.includes('research') || q.includes('publication')) sourceFilters.push('OPENALEX');
+
+    const parts = [
+      'select=id,title,source,source_url,record_type,content_hash,anchor_id,created_at',
+      'order=created_at.desc',
+      `limit=${limit}`,
+    ];
+    if (sourceFilters.length === 1) {
+      parts.push(`source=eq.${sourceFilters[0]}`);
+    } else if (sourceFilters.length > 1) {
+      parts.push(`source=in.(${sourceFilters.join(',')})`);
+    }
+    // If no source keywords matched, just return recent records
+    const params = parts.join('&');
+
+    const resp = await supabaseFetch(config, `/rest/v1/public_records?${params}`);
+    if (!resp.ok) {
+      const body = await resp.text().catch(() => '');
+      return errorResult(`Nessie query failed (text fallback): HTTP ${resp.status} — ${body}`);
+    }
+
+    const rows = (await resp.json()) as Array<Record<string, unknown>>;
+    return textResult({
+      query,
+      mode: 'text_fallback',
+      total: Array.isArray(rows) ? rows.length : 0,
+      results: Array.isArray(rows) ? rows : [],
+    });
+  } catch (err) {
+    console.error('[nessie_query] text fallback failed:', err);
+    return errorResult(
+      `Nessie text search failed: ${err instanceof Error ? err.message : 'unknown'}`,
+    );
   }
 }
 
