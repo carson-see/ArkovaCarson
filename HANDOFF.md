@@ -14,16 +14,18 @@
 
 ## Now
 
-### 2026-05-25 — 96-hour sprint: 21 PRs merged, worker redeployed
+### 2026-05-25 — 96-hour sprint: 23 PRs merged, worker redeployed
 
-**Window:** 2026-05-21 through 2026-05-25. 21 PRs merged to `main`. Final production revision built from git_sha `3f5baaeacbb3e511269b68170f1154b5a62e8aed` (merge commit of PR #850). Worker healthy: database ok, anchoring ok, kms ok.
+**Window:** 2026-05-21 through 2026-05-25. 23 PRs merged to `main`. Final production revision built from git_sha `5874a96c` (merge commit of PR #859). Worker healthy: database ok, anchoring ok, kms ok. Edge worker (edge.arkova.ai) redeployed with MCP search tool fixes.
 
-**Deploy evidence:** https://github.com/carson-see/ArkovaCarson/actions/runs/26414193114
+**Deploy evidence:** https://github.com/carson-see/ArkovaCarson/actions/runs/26417619643
 
 **PRs merged this window:**
 
 | PR | Title | Merged | Jira |
 |---|---|---|---|
+| #876 | fix(edge): MCP server 403 + search tools | 2026-05-25 | — |
+| #859 | Fix v1 anchor submit scope routing | 2026-05-25 | — |
 | #875 | fix(ci): add e2e/ to staging-tooling allowlist | 2026-05-25 | — |
 | #870 | infra: add staging deploy workflow (dispatch-triggered) | 2026-05-25 | — |
 | #850 | Sanitize CLE public API responses | 2026-05-25 | SCRUM-1868 ✅ |
@@ -50,23 +52,21 @@
 
 **Confluence pages created:** [SCRUM-1846](https://arkova.atlassian.net/wiki/spaces/A/pages/61210626), [SCRUM-1868](https://arkova.atlassian.net/wiki/spaces/A/pages/61341697), [SCRUM-1964](https://arkova.atlassian.net/wiki/spaces/A/pages/61374465).
 
-**Open PRs (11):**
+**Open PRs (9):**
 
 | PR | Title | Blocker |
 |---|---|---|
 | #877 | rescue(SCRUM-1296): worker N+1 fan-out fix | T2 soak not started |
-| #876 | fix(edge): MCP server 403 + search tools | Merge conflicts (20h soak done) |
 | #867 | rescue(SCRUM-1649): DocuSign action modes | T3 soak not started |
 | #866 | fix: .docx fingerprint timeout + SecureDocumentDialog | — |
 | #865 | test(SCRUM-1729): webhook roundtrip test | T2 soak not started |
 | #863 | chore: workspace hygiene guardrails | Draft |
 | #862 | fix: CTDL R0 public contract hardening | Draft |
 | #861 | SCRUM-1953 Phase 5 professional education | Draft |
-| #859 | Fix v1 anchor submit scope routing | Merge conflicts (12h soak done) |
 | #858 | chore: bump package versions to 2.2.0 | T1 soak not started |
 | #844 | fix: /api/queue/pending 500 (auth.uid null) | T2 soak not started, staging rebuild needed |
 
-_Last refreshed: 2026-05-25 by Carson — claims verified against `git log origin/main` (HEAD `3f5baae`), `gh pr list --state merged`, deploy run 26414193114, Jira MCP transitions._
+_Last refreshed: 2026-05-25 by Carson — claims verified against `git log origin/main` (HEAD `5874a96c`), `gh pr list --state merged`, deploy run 26417619643, Jira MCP transitions._
 
 ---
 
