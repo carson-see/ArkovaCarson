@@ -391,7 +391,7 @@ function createMcpServer(config: ScopedConfig, telemetry: RequestTelemetryContex
     },
     withTelemetry(
       'nessie_query',
-      async ({ query, mode, limit }) => handleNessieQuery({ query, mode, limit }, config, telemetry.env.ARKOVA_AI as { run(model: string, inputs: any): Promise<any> }),
+      async ({ query, mode, limit }) => handleNessieQuery({ query, mode, limit }, config, telemetry.env.ARKOVA_AI as unknown as { run(model: string, inputs: any): Promise<any> }),
       telemetry,
     ),
   );
