@@ -28,4 +28,5 @@ Core anchor (document-securing) UI components: upload, confirm, AI extraction, l
 - DO NOT: Upload raw document bytes to the server; only fingerprints + PII-stripped metadata flow server-side
 
 ## Recent Changes
+- 2026-05-26 SCRUM-2013: `SecureDocumentDialog.tsx` AI fuzzy type map expanded to cover all 27 canonical credential types including COMPLIANCE, LEGAL, CPE, FINANCIAL.
 - 2026-05-19 SCRUM-1599: `AssetDetailView.tsx` uses `SourceProvenanceDisplay` for internal record source provenance so internal and public views share URL sanitization/evidence-level rendering. `AnchorLifecycleTimeline.tsx` now treats `SUPERSEDED` as a visible terminal state.

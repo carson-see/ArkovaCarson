@@ -14,7 +14,7 @@
 
 ## Now
 
-### 2026-05-28 — PR #924 SOC 2 hardening: CI green, awaiting merge
+### 2026-05-28 — PR #924 SOC 2 hardening: merged + prod deployed
 
 **PR:** [#924](https://github.com/carson-see/ArkovaCarson/pull/924) on `fix/scrum-2039-2040-2041-soc2-hardening` (13 commits). All required CI checks green (only Vercel email-mismatch fails — pre-existing, non-blocking).
 
@@ -31,6 +31,29 @@
 _Last refreshed: 2026-05-28 by Claude — claims verified against gcloud/MCP/CI output: [CI run 26572327599](https://github.com/carson-see/ArkovaCarson/actions/runs/26572327599) (all required checks green), [staging gate](https://github.com/carson-see/ArkovaCarson/actions/runs/26572327599) (SUCCESS), `git log --oneline fix/scrum-2039-2040-2041-soc2-hardening` (13 commits)._
 
 ---
+
+### 2026-05-26 — SCRUM-2013/2014 credential type drift + anchor 500 (PR #886)
+
+**Context:** External API tester Anson Parker reported two bugs: (1) HTTP 400 on `credential_type: "COMPLIANCE"` — valid type rejected by drifted enums, (2) HTTP 500 "Failed to create anchor record" on `credential_type: "LEGAL"` — unhandled insert failure when profile row missing for API-key user.
+
+**PR [#886](https://github.com/carson-see/ArkovaCarson/pull/886)** — branch `fix/scrum-2013-2014-credential-type-drift-and-anchor-500`. 10 files changed + 7 agents.md + ci.yml drift guard.
+
+**SCRUM-2013 (enum drift):** 6 locations had fewer credential types than the canonical 27 in `ANCHOR_CREDENTIAL_TYPES`. Fixed: `validators.ts` (23→27), `csvParser.ts` (23→27), `anchor-bulk.ts` (8→27), `render.ts` (22→27), `SecureDocumentDialog.tsx` (AI map expanded), `useHipaaMfaGate.ts` (phantom types removed). CI drift guard `check-credential-type-drift.ts` wired into `dependency-scan` job.
+
+**SCRUM-2014 (anchor 500):** `anchor-submit.ts` now catches insert failures with structured responses — duplicate fingerprint → 409, other errors → 500 with `anchor_insert_failed` code. 3 TDD tests.
+
+**Jira:** SCRUM-2013 + SCRUM-2014 transitioned to In Progress (+ 12 subtasks). Confluence bug tracker updated with BUG-2026-05-26-001 and BUG-2026-05-26-002.
+
+**Soak:** T1 for enum drift, T2 for anchor insert error handling. Not started — needs staging deploy.
+
+**Pre-existing test failures (17 worker suites):** All share one root cause — missing `@sentry-internal/node-cpu-profiler` native binary for `darwin-arm64-141` (Electron v33 / Node 20.18). Worker tests that import Sentry integration fail locally on Apple Silicon. CI (linux-amd64) is unaffected.
+
+**Open PRs (10):** #886 (this), #883, #880, #877, #867, #866, #865, #862, #858, #844.
+
+_Last refreshed: 2026-05-26 by Carson — claims verified against `git log fix/scrum-2013-2014-credential-type-drift-and-anchor-500` (HEAD `68184f9d`), `gh pr view 886`, Jira MCP transitions._
+
+---
+
 ### 2026-05-25 — 96-hour sprint: 23 PRs merged, worker redeployed
 
 **Window:** 2026-05-21 through 2026-05-25. 23 PRs merged to `main`. Final production revision built from git_sha `5874a96c` (merge commit of PR #859). Worker healthy: database ok, anchoring ok, kms ok. Edge worker (edge.arkova.ai) redeployed with MCP search tool fixes.

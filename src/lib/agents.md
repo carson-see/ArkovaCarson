@@ -24,6 +24,9 @@ Core utility modules shared across the frontend. Every write path uses Zod valid
 - `csvExport.ts` / `csvParser.ts` / `xlsxParser.ts` — data import/export utilities
 - `sourceProvenance.ts` / `badgeSvg.ts` — SCRUM-1599 public-safe source provenance helpers, evidence-level validation, badge URL construction, and fail-closed badge SVG status mapping
 
+## Recent Changes
+- 2026-05-26 SCRUM-2013: `validators.ts` CREDENTIAL_TYPES expanded 23→27 (added COMPLIANCE, LEGAL, CPE, FINANCIAL). `csvParser.ts` VALID_CREDENTIAL_TYPES expanded 23→27 to match.
+
 ## Do / Don't Rules
 - DO: Validate with Zod before any Supabase write
 - DO: Put all UI-visible strings in `copy.ts`, not inline JSX

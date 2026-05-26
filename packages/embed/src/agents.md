@@ -12,6 +12,9 @@ Source code for the `@arkova/embed` verification widget (INT-03 / SCRUM-644).
 - **`report-block.ts`** — renders the verification report detail block.
 - **`*.test.ts`** — colocated unit tests for each module.
 
+## Recent Changes
+- 2026-05-26 SCRUM-2013: `render.ts` CREDENTIAL_LABELS expanded 22→27 (added COMPLIANCE, LEGAL, CPE, FINANCIAL, MEDICAL_DEVICE).
+
 ## Conventions
 - No external dependencies; Web Crypto + DOM APIs only.
 - Pure render functions (no DOM mutation) for testability.

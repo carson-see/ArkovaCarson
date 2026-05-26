@@ -45,5 +45,13 @@ Public v1 API surface — frozen contract per CLAUDE.md §1.8. Additive nullable
 - Response shape: never include `id`, `org_id`, `user_id`, `fingerprint`, `agent_id`, `key_id` (CLAUDE.md §6 banned-field list — enforced runtime in `services/worker/src/api/v2/mcpParity.ts`).
 - 402 problem+json shape: `{type, title, status, error, message}` plus per-error context.
 
+## 2026-05-26 SCRUM-2014 Anchor Insert Error Handling
+
+- `anchor-submit.ts` now catches insert failures with structured error responses: duplicate fingerprint returns 409 with `public_id`; other insert errors return 500 with `anchor_insert_failed` code instead of unhandled exception. Three TDD tests added.
+
+## 2026-05-26 SCRUM-2013 Credential Type Enum Drift Fix
+
+- `anchor-bulk.ts` CREDENTIAL_TYPES expanded 8→27 to match canonical `ANCHOR_CREDENTIAL_TYPES`.
+
 ## Open work
 - SCRUM-1740 (PR #738) — quota gate awaits Carson merge + Mon deploy.
