@@ -32,8 +32,11 @@ fi
 repo_root=$(cd "$repo_root" && pwd -P)
 
 if [[ "$repo_root" != "$canonical_physical" ]]; then
+  # Approved worktree patterns — one per line for readability.
   case "$repo_root" in
-    "$workspace_physical"/worktrees/*|"$workspace_physical"/arkova-docusign-cors|/Users/carson/.config/superpowers/worktrees/arkova-mvpcopy-main/*)
+    "$workspace_physical"/worktrees/* | \
+    "$workspace_physical"/arkova-docusign-cors | \
+    /Users/carson/.config/superpowers/worktrees/arkova-mvpcopy-main/*)
       if [[ "${ARKOVA_ALLOW_WORKTREE:-}" != "1" ]]; then
         die "currently in non-canonical worktree ${repo_root}. Re-run with ARKOVA_ALLOW_WORKTREE=1 only when this exact worktree is intentional."
       fi
@@ -45,10 +48,18 @@ if [[ "$repo_root" != "$canonical_physical" ]]; then
   esac
 fi
 
+# Accept HTTPS (with or without .git suffix) and SSH origin URLs for the same repo.
 remote=$(git -C "$repo_root" remote get-url origin 2>/dev/null || true)
-if [[ "$remote" != "https://github.com/carson-see/ArkovaCarson.git" ]]; then
-  die "unexpected origin remote for ${repo_root}: ${remote:-<none>}"
-fi
+case "$remote" in
+  https://github.com/carson-see/ArkovaCarson.git | \
+  https://github.com/carson-see/ArkovaCarson | \
+  git@github.com:carson-see/ArkovaCarson.git | \
+  git@github.com:carson-see/ArkovaCarson)
+    ;; # valid origin
+  *)
+    die "unexpected origin remote for ${repo_root}: ${remote:-<none>}"
+    ;;
+esac
 
 branch=$(git -C "$repo_root" branch --show-current 2>/dev/null || true)
 if [[ -z "$branch" ]]; then

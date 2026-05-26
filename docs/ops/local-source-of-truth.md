@@ -1,6 +1,6 @@
 # Arkova Local Source Of Truth
 
-Last updated: 2026-05-15
+Last updated: 2026-05-26
 
 ## Canonical Local Checkout
 
