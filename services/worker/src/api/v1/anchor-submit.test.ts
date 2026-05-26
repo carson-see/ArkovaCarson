@@ -427,4 +427,69 @@ describe('POST /api/v1/anchor — Zod validation', () => {
     expect(res.body.error).toBe('insufficient_scope');
     expect(res.body.required).toBe('anchor:write');
   });
+
+  describe('SCRUM-2014 insert error handling', () => {
+    it('returns structured error with db_code when Supabase insert fails (FK violation)', async () => {
+      mockInsertChain.single.mockResolvedValueOnce({
+        data: null,
+        error: {
+          code: '23503',
+          message: 'insert or update on table "anchors" violates foreign key constraint "anchors_user_id_fkey"',
+          details: 'Key (user_id)=(missing-user-id) is not present in table "profiles".',
+          hint: null,
+        },
+      });
+
+      const res = await request(makeApp()).post('/v1/anchor').send({
+        fingerprint: VALID_FINGERPRINT,
+        credential_type: 'LEGAL',
+      });
+
+      expect(res.status).toBe(500);
+      expect(res.body.error).toBe('anchor_creation_failed');
+      expect(res.body.message).toBeDefined();
+      expect(res.body.db_code).toBe('23503');
+    });
+
+    it('returns 409 on unique constraint violation (duplicate public_id race)', async () => {
+      mockInsertChain.single.mockResolvedValueOnce({
+        data: null,
+        error: {
+          code: '23505',
+          message: 'duplicate key value violates unique constraint "anchors_public_id_key"',
+          details: 'Key (public_id)=(ARK-2026-ABCD1234) already exists.',
+          hint: null,
+        },
+      });
+
+      const res = await request(makeApp()).post('/v1/anchor').send({
+        fingerprint: VALID_FINGERPRINT,
+        credential_type: 'LEGAL',
+      });
+
+      expect(res.status).toBe(409);
+      expect(res.body.error).toBe('anchor_creation_conflict');
+    });
+
+    it('returns structured error on NOT NULL violation', async () => {
+      mockInsertChain.single.mockResolvedValueOnce({
+        data: null,
+        error: {
+          code: '23502',
+          message: 'null value in column "org_id" violates not-null constraint',
+          details: 'Failing row contains (null, ...)',
+          hint: null,
+        },
+      });
+
+      const res = await request(makeApp()).post('/v1/anchor').send({
+        fingerprint: VALID_FINGERPRINT,
+        credential_type: 'LEGAL',
+      });
+
+      expect(res.status).toBe(500);
+      expect(res.body.error).toBe('anchor_creation_failed');
+      expect(res.body.db_code).toBe('23502');
+    });
+  });
 });
