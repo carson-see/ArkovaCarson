@@ -356,7 +356,7 @@ export function SecureDocumentDialog({
         const msg = err instanceof Error
           ? err.message
           : (typeof err === 'object' && err !== null && 'message' in err)
-            ? String((err as { message: unknown }).message)
+            ? String(err.message)
             : 'Failed to secure document. Please try again.';
         // Detect duplicate fingerprint constraint violation
         if (msg.includes('idx_anchors_user_fingerprint_unique') || msg.includes('duplicate key')) {

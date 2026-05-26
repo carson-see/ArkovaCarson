@@ -429,7 +429,7 @@ describe('POST /api/v1/anchor — Zod validation', () => {
   });
 
   describe('SCRUM-2014 insert error handling', () => {
-    it('returns structured error with db_code when Supabase insert fails (FK violation)', async () => {
+    it('returns structured error without leaking db_code when Supabase insert fails (FK violation)', async () => {
       mockInsertChain.single.mockResolvedValueOnce({
         data: null,
         error: {
@@ -448,7 +448,13 @@ describe('POST /api/v1/anchor — Zod validation', () => {
       expect(res.status).toBe(500);
       expect(res.body.error).toBe('anchor_creation_failed');
       expect(res.body.message).toBeDefined();
-      expect(res.body.db_code).toBe('23503');
+      // db_code must NOT be exposed to API clients (SonarCloud security hotspot)
+      expect(res.body).not.toHaveProperty('db_code');
+      // Postgres error code is logged server-side for debugging
+      expect(mockLogger.error).toHaveBeenCalledWith(
+        expect.objectContaining({ pgCode: '23503' }),
+        expect.any(String),
+      );
     });
 
     it('returns 409 on unique constraint violation (duplicate public_id race)', async () => {
@@ -469,9 +475,10 @@ describe('POST /api/v1/anchor — Zod validation', () => {
 
       expect(res.status).toBe(409);
       expect(res.body.error).toBe('anchor_creation_conflict');
+      expect(res.body).not.toHaveProperty('db_code');
     });
 
-    it('returns structured error on NOT NULL violation', async () => {
+    it('returns structured error on NOT NULL violation without leaking db_code', async () => {
       mockInsertChain.single.mockResolvedValueOnce({
         data: null,
         error: {
@@ -489,7 +496,13 @@ describe('POST /api/v1/anchor — Zod validation', () => {
 
       expect(res.status).toBe(500);
       expect(res.body.error).toBe('anchor_creation_failed');
-      expect(res.body.db_code).toBe('23502');
+      // db_code must NOT be exposed to API clients
+      expect(res.body).not.toHaveProperty('db_code');
+      // Postgres error code is logged server-side for debugging
+      expect(mockLogger.error).toHaveBeenCalledWith(
+        expect.objectContaining({ pgCode: '23502' }),
+        expect.any(String),
+      );
     });
   });
 });

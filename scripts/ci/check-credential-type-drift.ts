@@ -9,8 +9,8 @@
  * Exit 0 = all in sync. Exit 1 = drift detected.
  */
 
-import { readFileSync } from 'fs';
-import { resolve } from 'path';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 const ROOT = resolve(import.meta.dirname, '..', '..');
 
@@ -45,15 +45,15 @@ const LOCATIONS: SourceLocation[] = [
 ];
 
 function extractTypes(content: string, pattern: RegExp): string[] {
-  const match = content.match(pattern);
+  const match = pattern.exec(content);
   if (!match?.[1]) return [];
   const raw = match[1];
   return [...raw.matchAll(/'([A-Z_]+)'/g)].map(m => m[1]);
 }
 
 function extractRecordKeys(content: string, varName: string): string[] {
-  const pattern = new RegExp(`${varName}[^=]*=\\s*\\{([\\s\\S]*?)\\};`);
-  const match = content.match(pattern);
+  const pattern = new RegExp(String.raw`${varName}[^=]*=\s*\{([\s\S]*?)\};`);
+  const match = pattern.exec(content);
   if (!match?.[1]) return [];
   return [...match[1].matchAll(/^\s*([A-Z_]+)\s*:/gm)].map(m => m[1]);
 }

@@ -197,21 +197,7 @@ async function handleAnchorSubmit(req: Request, res: Response) {
       .single();
 
     if (insertError) {
-      logger.error({ error: insertError, fingerprint, orgId }, 'Failed to create anchor');
-      const pgCode = (insertError as { code?: string }).code;
-      if (pgCode === '23505') {
-        res.status(409).json({
-          error: 'anchor_creation_conflict',
-          message: 'A conflicting anchor record already exists. Retry the request.',
-          db_code: pgCode,
-        });
-        return;
-      }
-      res.status(500).json({
-        error: 'anchor_creation_failed',
-        message: 'Failed to create anchor record. Contact support if this persists.',
-        db_code: pgCode ?? null,
-      });
+      handleInsertError(insertError, fingerprint, orgId, res);
       return;
     }
 
@@ -248,6 +234,34 @@ async function handleAnchorSubmit(req: Request, res: Response) {
  */
 router.post('/', handleAnchorSubmit);
 router.post('/submit', handleAnchorSubmit);
+
+/**
+ * Handle Supabase insert errors for anchor creation.
+ *
+ * Logs the full Postgres error code server-side for debugging but never
+ * exposes it to the API client (SonarCloud security hotspot: leaking
+ * internal database identifiers via db_code).
+ */
+function handleInsertError(
+  insertError: unknown,
+  fingerprint: string,
+  orgId: string | null,
+  res: Response,
+): void {
+  const pgCode = (insertError as { code?: string }).code;
+  logger.error({ error: insertError, fingerprint, orgId, pgCode }, 'Failed to create anchor');
+  if (pgCode === '23505') {
+    res.status(409).json({
+      error: 'anchor_creation_conflict',
+      message: 'A conflicting anchor record already exists. Retry the request.',
+    });
+    return;
+  }
+  res.status(500).json({
+    error: 'anchor_creation_failed',
+    message: 'Failed to create anchor record. Contact support if this persists.',
+  });
+}
 
 function enqueueProfessionalEducationExtraction(anchor: {
   id?: string;
