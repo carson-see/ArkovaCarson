@@ -388,7 +388,11 @@ if [ $DRY_RUN -eq 1 ]; then
 fi
 
 check_image_exists
-check_recent_revision_collision
+if [ $FORCE -eq 1 ]; then
+  info "WARN: skipping collision check (--force)."
+else
+  check_recent_revision_collision
+fi
 
 # ─── 3. Deploy with tag, no traffic shift by default ─────────────────
 GCLOUD_FLAGS=(
