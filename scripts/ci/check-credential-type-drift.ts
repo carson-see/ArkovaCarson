@@ -108,7 +108,10 @@ const embedFile = 'packages/embed/src/render.ts';
 const embedContent = readFileSync(resolve(ROOT, embedFile), 'utf-8');
 const embedKeys = extractRecordKeys(embedContent, 'CREDENTIAL_LABELS');
 
-if (embedKeys.length > 0) {
+if (embedKeys.length === 0) {
+  failures++;
+  console.error(`\nFAIL: Could not extract CREDENTIAL_LABELS keys from ${embedFile} — treating as drift (fail-closed).`);
+} else {
   const embedSet = new Set(embedKeys);
   const missing = canonicalTypes.filter(t => !embedSet.has(t));
   const extra = embedKeys.filter(t => !canonicalSet.has(t));

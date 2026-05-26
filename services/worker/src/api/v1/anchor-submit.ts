@@ -248,8 +248,9 @@ function handleInsertError(
   orgId: string | null,
   res: Response,
 ): void {
-  const pgCode = (insertError as { code?: string }).code;
-  logger.error({ error: insertError, fingerprint, orgId, pgCode }, 'Failed to create anchor');
+  const pgCode = (insertError as { code?: string }).code ?? null;
+  const pgConstraint = (insertError as { constraint?: string }).constraint ?? null;
+  logger.error({ pgCode, pgConstraint, orgId, fingerprintPrefix: fingerprint.slice(0, 12) }, 'Failed to create anchor');
   if (pgCode === '23505') {
     res.status(409).json({
       error: 'anchor_creation_conflict',
