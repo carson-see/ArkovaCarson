@@ -20,6 +20,8 @@ CI gate scripts. Each one fails the build with a structured exit code + actionab
 - `pr841-ledger-remediation.test.ts` — incident regression test pinning the cleaned 0313-0315 migration order after production used `0313` for anchors index consolidation.
 - `feedback-rules/` — orchestrator + per-rule scripts (R0-7 / SCRUM-1253) for `memory/feedback_*.md` rules.
 
+- **`check-credential-type-drift.ts`** (SCRUM-2013) — compares every file containing credential type enums against the canonical `ANCHOR_CREDENTIAL_TYPES` in `services/worker/src/lib/credential-evidence.ts`. Fails the build when any location has fewer values than the source of truth.
+
 - **`staging-honesty-preflight.ts`** (SCRUM-1668) — queries a Supabase staging database and reports whether the environment is a clean mirror, has soak artifacts, or is fixture-seeded. 8 checks: (1) PR-only / staging-only migration rows, (2) duplicate names, (3) duplicate versions, (4) known artifact rows, (5) missing SUBMITTED anchors, (6) prod ledger divergence, (7) org topology — single-tenant prod vs multi-org staging seeds, (8) prod facts — pg_cron vacuum-anchors exists, refresh_pipeline_dashboard_cache exists, and refresh-pipeline-dashboard-cache is scheduled. The migration ledger falls back to the Supabase Management API when `supabase_migrations` is hidden from PostgREST; `--prod-project-ref` + `--management-api-token` / `SUPABASE_ACCESS_TOKEN` query the live prod ledger and prod facts. Checks 7–8 are optional (backward-compatible), with `--prod-facts` CLI fallback. 66 tests in `staging-honesty-preflight.test.ts`.
 
 ## Conventions

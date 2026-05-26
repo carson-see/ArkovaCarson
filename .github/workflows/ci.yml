@@ -114,6 +114,9 @@ jobs:
       - name: Block API scope vocabulary drift (SCRUM-1581)
         run: npm run ci:api-scope-vocabulary
 
+      - name: Block credential type enum drift (SCRUM-2013)
+        run: npx tsx scripts/ci/check-credential-type-drift.ts
+
       - name: Block CREATE VIEW without security_invoker (SCRUM-1276)
         env:
           PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
