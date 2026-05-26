@@ -9,36 +9,12 @@
 # entry. Carson can still block any PR by adding those labels.
 
 # ---------------------------------------------------------------------------
-# Scopes — independent merge lanes by path
+# Scopes — disabled until basic queue is proven working
 # ---------------------------------------------------------------------------
-# PRs touching only one scope merge independently from other scopes.
-# PRs touching multiple scopes fall into the default (unscoped) lane.
-# Migrations are intentionally excluded from scopes — they must serialize.
-
-scopes:
-  source:
-    files:
-      frontend:
-        include:
-          - src/**/*
-        exclude:
-          - src/tests/rls/**/*
-      worker:
-        include:
-          - services/worker/**/*
-        exclude:
-          - services/worker/src/chain/**/*
-      infra:
-        include:
-          - .github/**/*
-          - scripts/ci/**/*
-          - wrangler.*
-      docs:
-        include:
-          - docs/**/*
-          - "*.md"
-        exclude:
-          - CLAUDE.md
+# Path-based scopes (frontend, worker, infra, docs) were causing all PRs to
+# block on `scopes-available` — Mergify waits for scope computation that
+# never completes. Re-enable once the single-lane queue is merging reliably.
+# Original config preserved in git history (commit before this change).
 
 # ---------------------------------------------------------------------------
 # Priority rules — hotfixes jump the queue
