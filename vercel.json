@@ -3,11 +3,13 @@
   "git": {
     "deploymentEnabled": {
       "main": true,
-      "claude/*": false,
-      "fix/*": false,
-      "security/*": false,
-      "feature/*": false,
-      "*": false
+      "claude/*": true,
+      "fix/*": true,
+      "codex/*": true,
+      "rescue/*": true,
+      "feature/*": true,
+      "security/*": true,
+      "chore/*": true
     }
   },
   "headers": [

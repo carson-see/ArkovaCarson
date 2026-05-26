@@ -1910,6 +1910,13 @@ export const EXTRACTION_RECOVERY_LABELS = {
   SKIP: 'Skip \u2014 Anchor Without Metadata',
 } as const;
 
+export const OCR_LABELS = {
+  UNSUPPORTED_FILE_TYPE: (typeOrExt: string) =>
+    `Unsupported file type for text extraction: ${typeOrExt}. ` +
+    'Supported: PDF, Word (.docx), images, and text files. ' +
+    'The document can still be secured without AI metadata.',
+} as const;
+
 export const CONFIRMATION_PROGRESS_LABELS = {
   IN_PROGRESS: 'Anchoring in progress \u2014 your record will be permanently verified in ~10 minutes.',
   NOTIFICATION_NOTE: 'You\u2019ll receive a notification when anchoring is complete. You can safely close this dialog.',
