@@ -286,7 +286,7 @@ export function SecureDocumentDialog({
       });
 
       // Merge AI tags from template reconstruction into metadata
-      const metadata: Record<string, Json | undefined> = { ...acceptedFields } as Record<string, Json | undefined>;
+      const metadata: Record<string, Json> = { ...acceptedFields } as Record<string, Json>;
       if (initialJurisdiction && !metadata.jurisdiction) {
         metadata.jurisdiction = initialJurisdiction;
       }
@@ -308,7 +308,8 @@ export function SecureDocumentDialog({
       });
       Object.assign(metadata, fraudResultToMetadata(fraudResult));
 
-      const { data: inserted, error: insertError } = await supabase
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- validated spread includes credential types that narrow type rejects
+      const { data: inserted, error: insertError } = await (supabase as any)
         .from('anchors')
         .insert({
           ...validated,
@@ -412,20 +413,20 @@ export function SecureDocumentDialog({
       );
       setExtractedFields(autoAccepted);
 
-      // One-click flow: skip confirm, go straight to anchoring
-      // Pass fields directly to avoid stale closure (React state not yet updated)
-      handleConfirm(autoAccepted);
+      // Let the user review extracted fields before confirming.
+      // The extracting step with stage=complete shows the field list
+      // and a Continue button that navigates to confirm or template.
       return;
     } else {
-      // AI analysis is core enrichment, but it must not hold the secure-document hot path hostage.
-      // Continue with the record when the analysis service is unavailable.
+      // AI extraction failed — show recovery step so the user can retry,
+      // enter metadata manually, or skip. Never silently save with zero metadata.
       toast.warning(AI_EXTRACTION_LABELS.EXTRACTION_FAILED_TOAST);
       setExtractionProgress(null);
       await autoSelectTemplate('OTHER');
-      handleConfirm([]);
+      setStep('extraction-failed');
       return;
     }
-  }, [fileData, selectedTemplate, autoSelectTemplate, handleConfirm, secureOrgId]);
+  }, [fileData, selectedTemplate, autoSelectTemplate, secureOrgId]);
 
   // Handle proceeding from upload step — always run AI extraction
   const handleUploadContinue = useCallback(async () => {

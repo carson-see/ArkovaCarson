@@ -60,6 +60,20 @@ export default defineConfig({
           },
           dependencies: ['setup'],
         },
+        // BUG-2026-05-22-007 / SCRUM-1985 — iOS Safari upload coverage.
+        // The "AI extraction unavailable" toast was first reported on iOS
+        // Safari. Scoped to upload/extraction specs only to keep CI cost
+        // bounded; expand testMatch if other mobile-WebKit-sensitive flows
+        // emerge (PDF.js worker, Tesseract WASM, fetch keepalive).
+        {
+          name: 'mobile-safari',
+          use: {
+            ...devices['iPhone 13'],
+            storageState: '.auth/individual.json',
+          },
+          testMatch: /(secure-document|anchor-creation)\.spec\.ts/,
+          dependencies: ['setup'],
+        },
       ]
     : [
         // Setup project: logs in seed users and saves storageState

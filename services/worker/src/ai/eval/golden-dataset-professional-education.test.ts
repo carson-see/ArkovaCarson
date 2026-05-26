@@ -6,6 +6,14 @@ import {
 } from './golden-dataset-professional-education.js';
 
 describe('golden-dataset-professional-education', () => {
+  const cpeEntries = GOLDEN_DATASET_PROFESSIONAL_EDUCATION.filter((entry) => entry.tags.includes('cpe'));
+  const cleEntries = GOLDEN_DATASET_PROFESSIONAL_EDUCATION.filter(
+    (entry) => entry.tags.includes('cle') && !entry.tags.includes('cpe'),
+  );
+  const courseIdOnlyEntries = GOLDEN_DATASET_PROFESSIONAL_EDUCATION.filter(
+    (entry) => entry.tags.includes('course-id') && !entry.tags.includes('cpe') && !entry.tags.includes('cle'),
+  );
+
   it('covers SCRUM-1953 professional education extraction scenarios', () => {
     const tags = new Set(GOLDEN_DATASET_PROFESSIONAL_EDUCATION.flatMap((entry) => entry.tags));
 
@@ -20,13 +28,28 @@ describe('golden-dataset-professional-education', () => {
   });
 
   it('keeps CPE and CLE coverage aligned to SCRUM-1962/1963 gate minimum fixtures', () => {
-    const cpeEntries = GOLDEN_DATASET_PROFESSIONAL_EDUCATION.filter((entry) => entry.tags.includes('cpe'));
-    const cleEntries = GOLDEN_DATASET_PROFESSIONAL_EDUCATION.filter(
-      (entry) => entry.tags.includes('cle') && !entry.tags.includes('cpe'),
-    );
-
     expect(cpeEntries.length).toBeGreaterThanOrEqual(PROFESSIONAL_EDUCATION_GATE_MINIMUMS.cpe);
     expect(cleEntries.length).toBeGreaterThanOrEqual(PROFESSIONAL_EDUCATION_GATE_MINIMUMS.cle);
+  });
+
+  it('contains the Phase 5 coverage volume required by SCRUM-1953', () => {
+    expect(GOLDEN_DATASET_PROFESSIONAL_EDUCATION.length).toBeGreaterThanOrEqual(60);
+    expect(cpeEntries.length).toBeGreaterThanOrEqual(PROFESSIONAL_EDUCATION_GATE_MINIMUMS.cpe);
+    expect(cleEntries.length).toBeGreaterThanOrEqual(PROFESSIONAL_EDUCATION_GATE_MINIMUMS.cle);
+    expect(courseIdOnlyEntries.length).toBeGreaterThanOrEqual(PROFESSIONAL_EDUCATION_GATE_MINIMUMS.courseIdOnly);
+  });
+
+  it('keeps professional education gate entries field-complete', () => {
+    expect(cpeEntries.every((entry) => entry.groundTruth.creditHours !== undefined)).toBe(true);
+    expect(cpeEntries.every((entry) => entry.groundTruth.fieldOfStudy !== undefined)).toBe(true);
+    expect(cpeEntries.every((entry) => entry.groundTruth.deliveryMethod !== undefined)).toBe(true);
+    expect(cpeEntries.every((entry) => entry.groundTruth.courseId !== undefined)).toBe(true);
+
+    expect(cleEntries.every((entry) => entry.groundTruth.creditHours !== undefined)).toBe(true);
+    expect(cleEntries.every((entry) => entry.groundTruth.ethicsHours !== undefined)).toBe(true);
+    expect(cleEntries.every((entry) => entry.groundTruth.courseId !== undefined)).toBe(true);
+
+    expect(courseIdOnlyEntries.every((entry) => entry.groundTruth.courseId !== undefined)).toBe(true);
   });
 
   it('labels professional education fields used by gates and manual review expectations', () => {

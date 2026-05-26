@@ -116,6 +116,44 @@ describe('check-staging-evidence', () => {
         requiredTierFor(['services/worker/src/api/v1/anchor.ts']).tier,
       ).toBe('T2');
     });
+
+    it('excludes staging-tooling files from tier calculation', () => {
+      expect(
+        requiredTierFor(['services/worker/src/webhooks/agents.md']).tier,
+      ).toBe('T1');
+      expect(
+        requiredTierFor(['services/worker/src/billing/agents.md']).tier,
+      ).toBe('T1');
+      expect(
+        requiredTierFor([
+          'services/worker/src/tests/webhook-delivery-roundtrip.test.ts',
+          'services/worker/src/webhooks/agents.md',
+        ]).tier,
+      ).toBe('T1');
+    });
+
+    it('excludes test/spec files from tier calculation', () => {
+      expect(
+        requiredTierFor(['services/worker/src/api/queue-resolution.test.ts']).tier,
+      ).toBe('T1');
+      expect(
+        requiredTierFor(['services/worker/src/api/v1/credentials-ctdl.test.ts']).tier,
+      ).toBe('T1');
+      expect(
+        requiredTierFor(['services/worker/src/chain/broadcast.spec.ts']).tier,
+      ).toBe('T1');
+      // production file still triggers T2
+      expect(
+        requiredTierFor(['services/worker/src/api/queue-resolution.ts']).tier,
+      ).toBe('T2');
+      // mix of test + production uses production tier
+      expect(
+        requiredTierFor([
+          'services/worker/src/api/queue-resolution.test.ts',
+          'services/worker/src/api/queue-resolution.ts',
+        ]).tier,
+      ).toBe('T2');
+    });
   });
 
   describe('extractDeclaredTier', () => {
@@ -450,6 +488,18 @@ describe('check-staging-evidence', () => {
       expect(
         isStagingToolingOnly(['e2e/nested/deep/test.spec.ts']).pass,
       ).toBe(true);
+    });
+
+    it('passes for services/edge/package.json (Cloudflare edge worker, not Cloud Run)', () => {
+      expect(
+        isStagingToolingOnly(['services/edge/package.json']).pass,
+      ).toBe(true);
+    });
+
+    it('fails for services/worker/package.json (prod dependency bump requires soak)', () => {
+      expect(
+        isStagingToolingOnly(['services/worker/package.json']).pass,
+      ).toBe(false);
     });
 
     it('fails when any file is outside the allowlist', () => {

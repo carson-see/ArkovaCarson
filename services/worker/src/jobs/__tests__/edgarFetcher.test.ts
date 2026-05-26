@@ -3,6 +3,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { createMockSupabase } from './__testHelpers.js';
 
 // ---- Hoisted mocks ----
 const { mockRpc, mockInsert, mockSelectChain, mockLogger } = vi.hoisted(() => {
@@ -33,14 +34,14 @@ vi.mock('../../utils/logger.js', () => ({
   logger: mockLogger,
 }));
 
-function createMockSupabase() {
-  return {
-    rpc: mockRpc,
-    from: vi.fn((_table: string) => ({
+function makeMock() {
+  return createMockSupabase({
+    rpcMock: mockRpc,
+    fromImpl: vi.fn((_table: string) => ({
       select: vi.fn(() => mockSelectChain.chain),
       insert: mockInsert,
     })),
-  };
+  });
 }
 
 beforeEach(() => {
@@ -53,8 +54,7 @@ describe('edgarFetcher', () => {
     mockRpc.mockResolvedValue({ data: false });
 
     const { fetchEdgarFilings } = await import('../edgarFetcher.js');
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const result = await fetchEdgarFilings(createMockSupabase() as any);
+    const result = await fetchEdgarFilings(makeMock().client);
 
     expect(mockRpc).toHaveBeenCalledWith('get_flag', {
       p_flag_key: 'ENABLE_PUBLIC_RECORDS_INGESTION',
@@ -95,8 +95,7 @@ describe('edgarFetcher', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockResponse));
 
     const { fetchEdgarFilings } = await import('../edgarFetcher.js');
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await fetchEdgarFilings(createMockSupabase() as any);
+    await fetchEdgarFilings(makeMock().client);
 
     expect(fetch).toHaveBeenCalled();
     // Verify User-Agent header is set
@@ -135,8 +134,7 @@ describe('edgarFetcher', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockResponse));
 
     const { fetchEdgarFilings } = await import('../edgarFetcher.js');
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const result = await fetchEdgarFilings(createMockSupabase() as any);
+    const result = await fetchEdgarFilings(makeMock().client);
 
     expect(result.inserted).toBe(0);
     expect(result.errors).toBe(0);
@@ -149,8 +147,7 @@ describe('edgarFetcher', () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('Network failure')));
 
     const { fetchEdgarFilings } = await import('../edgarFetcher.js');
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const result = await fetchEdgarFilings(createMockSupabase() as any);
+    const result = await fetchEdgarFilings(makeMock().client);
 
     // Should handle error gracefully without throwing
     expect(result).toBeDefined();
@@ -187,8 +184,7 @@ describe('edgarFetcher', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockResponse));
 
     const { fetchEdgarFilings } = await import('../edgarFetcher.js');
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const result = await fetchEdgarFilings(createMockSupabase() as any);
+    const result = await fetchEdgarFilings(makeMock().client);
 
     // Should count the error
     expect(result).toBeDefined();
@@ -211,8 +207,7 @@ describe('edgarFetcher', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockResponse));
 
     const { fetchEdgarFilings } = await import('../edgarFetcher.js');
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await fetchEdgarFilings(createMockSupabase() as any);
+    await fetchEdgarFilings(makeMock().client);
 
     // Should have fetched with the resume date
     expect(fetch).toHaveBeenCalled();
@@ -224,8 +219,7 @@ describe('fetchEdgarHistoricalBackfill', () => {
     mockRpc.mockResolvedValue({ data: false });
 
     const { fetchEdgarHistoricalBackfill } = await import('../edgarFetcher.js');
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const result = await fetchEdgarHistoricalBackfill(createMockSupabase() as any, 0);
+    const result = await fetchEdgarHistoricalBackfill(makeMock().client, 0);
 
     expect(result).toEqual({
       inserted: 0,
@@ -241,8 +235,7 @@ describe('fetchEdgarHistoricalBackfill', () => {
     mockRpc.mockResolvedValue({ data: true });
 
     const { fetchEdgarHistoricalBackfill } = await import('../edgarFetcher.js');
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const result = await fetchEdgarHistoricalBackfill(createMockSupabase() as any, 9999);
+    const result = await fetchEdgarHistoricalBackfill(makeMock().client, 9999);
 
     expect(result.companiesProcessed).toBe(0);
     expect(result.batchIndex).toBe(9999);
@@ -263,8 +256,7 @@ describe('fetchEdgarHistoricalBackfill', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockResponse));
 
     const { fetchEdgarHistoricalBackfill } = await import('../edgarFetcher.js');
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const result = await fetchEdgarHistoricalBackfill(createMockSupabase() as any, 0);
+    const result = await fetchEdgarHistoricalBackfill(makeMock().client, 0);
 
     expect(result).toBeDefined();
     expect(result.batchIndex).toBe(0);
@@ -277,8 +269,7 @@ describe('fetchEdgarBulk', () => {
     mockRpc.mockResolvedValue({ data: false });
 
     const { fetchEdgarBulk } = await import('../edgarFetcher.js');
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const result = await fetchEdgarBulk(createMockSupabase() as any, {});
+    const result = await fetchEdgarBulk(makeMock().client, {});
 
     expect(result).toEqual({
       inserted: 0,
@@ -306,8 +297,7 @@ describe('fetchEdgarBulk', () => {
     mockInsert.mockResolvedValue({ error: null });
 
     const { fetchEdgarBulk } = await import('../edgarFetcher.js');
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const result = await fetchEdgarBulk(createMockSupabase() as any, {
+    const result = await fetchEdgarBulk(makeMock().client, {
       maxQueriesPerInvocation: 2,
       startYear: 2024,
       endYear: 2024,
@@ -333,8 +323,7 @@ describe('fetchEdgarBulk', () => {
     mockInsert.mockResolvedValue({ error: null });
 
     const { fetchEdgarBulk } = await import('../edgarFetcher.js');
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const result = await fetchEdgarBulk(createMockSupabase() as any);
+    const result = await fetchEdgarBulk(makeMock().client);
 
     expect(result).toBeDefined();
     expect(result.formTypesProcessed).toBeDefined();
@@ -357,8 +346,7 @@ describe('fetchEdgarBulk', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(mockResponse));
 
     const { fetchEdgarBulk } = await import('../edgarFetcher.js');
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const result = await fetchEdgarBulk(createMockSupabase() as any, {
+    const result = await fetchEdgarBulk(makeMock().client, {
       formTypes: ['10-K'],
       startYear: 2024,
       endYear: 2024,

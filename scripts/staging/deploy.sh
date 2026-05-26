@@ -308,11 +308,10 @@ check_recent_revision_collision() {
     traffic='{}'
   fi
 
-  conflicts=$(jq -nr \
+  conflicts=$(echo "$revisions" | jq -r \
     --arg pr "$PR" \
     --argjson now "$now" \
     --argjson window "$window" \
-    --argjson revisions "$revisions" \
     --argjson traffic "$traffic" '
     def epoch:
       if type == "string" then (sub("\\.[0-9]+Z$"; "Z") | fromdateiso8601?)
@@ -325,7 +324,7 @@ check_recent_revision_collision() {
       | from_entries) as $pr_by_revision
     |
     [
-      $revisions[]?
+      .[]?
       | .metadata as $m
       | ($m.creationTimestamp | epoch) as $created
       | ($m.labels.pr // $pr_by_revision[$m.name] // "unlabeled") as $revision_pr
@@ -389,7 +388,11 @@ if [ $DRY_RUN -eq 1 ]; then
 fi
 
 check_image_exists
-check_recent_revision_collision
+if [ $FORCE -eq 1 ]; then
+  info "WARN: skipping collision check (--force)."
+else
+  check_recent_revision_collision
+fi
 
 # ─── 3. Deploy with tag, no traffic shift by default ─────────────────
 GCLOUD_FLAGS=(

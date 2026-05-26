@@ -2,8 +2,8 @@
  * NCX-01: eCFR Regulatory Text Fetcher Tests
  */
 
-import type { SupabaseClient } from '@supabase/supabase-js';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { createMockSupabase } from './__testHelpers.js';
 
 const mockRpc = vi.fn();
 const mockLogger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
@@ -12,21 +12,8 @@ vi.mock('../../config.js', () => ({ config: { logLevel: 'info', nodeEnv: 'test' 
 vi.mock('../../utils/logger.js', () => ({ logger: mockLogger }));
 vi.mock('../../utils/db.js', () => ({ db: {} }));
 
-function createMockSupabase() {
-  return {
-    rpc: mockRpc,
-    from: vi.fn(() => ({
-      select: vi.fn(() => ({
-        eq: vi.fn(() => ({
-          eq: vi.fn(() => ({
-            limit: vi.fn().mockResolvedValue({ data: [] }),
-          })),
-          limit: vi.fn().mockResolvedValue({ data: [] }),
-        })),
-      })),
-      upsert: vi.fn().mockResolvedValue({ error: null }),
-    })),
-  };
+function makeMock() {
+  return createMockSupabase({ rpcMock: mockRpc });
 }
 
 beforeEach(() => {
@@ -37,7 +24,7 @@ describe('eCFR Fetcher (NCX-01)', () => {
   it('returns early when flag is disabled', async () => {
     mockRpc.mockResolvedValue({ data: false });
     const { fetchEcfrRegulations } = await import('../ecfrFetcher.js');
-    const result = await fetchEcfrRegulations(createMockSupabase() as unknown as SupabaseClient);
+    const result = await fetchEcfrRegulations(makeMock().client);
     expect(result.inserted).toBe(0);
     expect(result.titlesProcessed).toBe(0);
   });
@@ -72,7 +59,7 @@ describe('eCFR Fetcher (NCX-01)', () => {
     vi.stubGlobal('fetch', mockFetch);
 
     const { fetchEcfrRegulations } = await import('../ecfrFetcher.js');
-    const result = await fetchEcfrRegulations(createMockSupabase() as unknown as SupabaseClient);
+    const result = await fetchEcfrRegulations(makeMock().client);
 
     expect(mockFetch).toHaveBeenCalled();
     expect(result.inserted + result.skipped).toBeGreaterThan(0);

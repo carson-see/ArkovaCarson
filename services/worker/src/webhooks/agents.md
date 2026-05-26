@@ -10,7 +10,7 @@ Owner of the **outbound** webhook system. Inbound receivers (DocuSign, Adobe Sig
 | `payload-schemas.test.ts` | Locks the contract for every emitted event type. Banned fields (`anchor_id`, `fingerprint`, `user_id`, `org_id`) are explicitly rejected per schema. New event types MUST land with their own banned-field rejection cases. |
 | `delivery.ts` | Delivery engine. HMAC-SHA256 signing (`X-Arkova-Signature`, `X-Arkova-Timestamp`, `X-Arkova-Event` headers), exponential backoff (5 max attempts, 1s base), idempotency keys, circuit breaker (DH-04, 5 consecutive failures → open, 60s half-open), DLQ (DH-12), SSRF protection with DNS rebinding mitigation (ARK-SEC-002, INJ-02), replay (SCRUM-1172). Gated by `ENABLE_OUTBOUND_WEBHOOKS` flag. |
 | `compliance.ts` | Compliance metadata + tagging hooks for outbound events used in audit reporting. |
-| `*.test.ts` | Unit + integration coverage for each module. |
+| `*.test.ts` | Unit + integration coverage for each module. `webhook-delivery-roundtrip.test.ts` (in `tests/`) verifies the full dispatch pipeline end-to-end: anchor lifecycle events, schema enforcement, HMAC signing, SSRF protection, multi-endpoint fan-out, circuit breaker. |
 
 ## Supported event types
 

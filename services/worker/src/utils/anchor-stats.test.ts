@@ -217,4 +217,27 @@ describe('fetchAnchorStats — pipeline dashboard cache path (SCRUM-1786)', () =
 
     expect(stats.last_24h_count).toBe(250);
   });
+
+  it('anchors queries that hang beyond timeout return sentinels instead of blocking', async () => {
+    mockPipelineCacheSelect.mockResolvedValue({
+      data: { cache_value: { SECURED: 500, PENDING: 10, total: 510 } },
+      error: null,
+    });
+    mockSelectLastSeen.mockImplementation(
+      () => new Promise((resolve) => setTimeout(resolve, 60_000)),
+    );
+    mockSelectLast24.mockImplementation(
+      () => new Promise((resolve) => setTimeout(resolve, 60_000)),
+    );
+    mockAnchorTxStats.mockResolvedValue({
+      data: { distinct_tx_count: 1, anchors_with_tx: 1 },
+      error: null,
+    });
+
+    const stats = await fetchAnchorStats();
+
+    expect(stats.total_secured).toBe(500);
+    expect(stats.last_secured_at).toBeNull();
+    expect(stats.last_24h_count).toBe(-1);
+  }, 20_000);
 });
