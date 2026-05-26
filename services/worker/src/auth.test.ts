@@ -89,7 +89,7 @@ describe('verifyAuthToken', () => {
     });
   });
 
-  describe('OIDC token detection — skips Supabase auth call', () => {
+  describe('OIDC token detection — skips Supabase auth call (with secret)', () => {
     const config = {
       supabaseJwtSecret: TEST_SECRET,
       supabaseUrl: 'https://test.supabase.co',
@@ -97,6 +97,35 @@ describe('verifyAuthToken', () => {
     };
 
     it('returns null without calling Supabase auth for Google OIDC tokens', async () => {
+      const key = new TextEncoder().encode('google-oidc-key-not-supabase');
+      const oidcToken = await new SignJWT({ sub: '12345', iss: 'https://accounts.google.com', aud: 'my-audience' })
+        .setProtectedHeader({ alg: 'HS256' })
+        .setIssuedAt()
+        .setExpirationTime('1h')
+        .sign(key);
+
+      const getUser = vi.fn();
+      vi.doMock('./utils/db.js', () => ({
+        getDb: () => ({ auth: { getUser } }),
+      }));
+
+      const result = await verifyAuthToken(oidcToken, config, mockLogger);
+
+      expect(result).toBeNull();
+      expect(getUser).not.toHaveBeenCalled();
+
+      vi.doUnmock('./utils/db.js');
+    });
+  });
+
+  describe('OIDC token detection — without supabaseJwtSecret', () => {
+    const config = {
+      // No supabaseJwtSecret — the OIDC short-circuit must still fire
+      supabaseUrl: 'https://test.supabase.co',
+      supabaseServiceKey: 'test-service-key',
+    };
+
+    it('returns null without calling Supabase auth for Google OIDC tokens even when JWT secret is missing', async () => {
       const key = new TextEncoder().encode('google-oidc-key-not-supabase');
       const oidcToken = await new SignJWT({ sub: '12345', iss: 'https://accounts.google.com', aud: 'my-audience' })
         .setProtectedHeader({ alg: 'HS256' })
