@@ -78,12 +78,13 @@ function toNullableString(value: unknown): string | null {
 const ANCHOR_QUERY_TIMEOUT_MS = 15_000;
 
 function withTimeout<T>(promise: Promise<T>, ms = ANCHOR_QUERY_TIMEOUT_MS): Promise<T> {
-  return Promise.race([
-    promise,
-    new Promise<never>((_resolve, reject) =>
-      setTimeout(() => reject(new Error(`anchor-stats query timed out after ${ms}ms`)), ms),
-    ),
-  ]);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => reject(new Error(`anchor-stats query timed out after ${ms}ms`)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
 }
 
 function statusBucketOrNull(value: number): number | null {
