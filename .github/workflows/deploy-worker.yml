@@ -129,26 +129,13 @@ jobs:
       - name: Set up Cloud SDK
         uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f # v2
 
-      - name: Login to Artifact Registry
-        run: gcloud auth print-access-token | docker login -u oauth2accesstoken --password-stdin ${{ env.REGISTRY }}
-
-      - name: Build Docker image
-        working-directory: services/worker
-        # SCRUM-1247 (R0-1): pass --build-arg BUILD_SHA so the image's
-        # /health endpoint can report the deployed git SHA. Without this
-        # arg the Dockerfile defaults BUILD_SHA=unknown which is what
-        # the revision-drift workflow expects to alert on.
+      - name: Build & push image (Cloud Build)
         run: |
-          docker build \
-            --build-arg BUILD_SHA=${{ github.sha }} \
-            --tag "${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.SERVICE_NAME }}:${{ github.sha }}" \
-            --tag "${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.SERVICE_NAME }}:latest" \
-            .
-
-      - name: Push Docker image
-        run: |
-          docker push "${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.SERVICE_NAME }}:${{ github.sha }}"
-          docker push "${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.SERVICE_NAME }}:latest"
+          gcloud builds submit services/worker \
+            --config services/worker/cloudbuild.yaml \
+            --substitutions=_COMMIT_SHA=${{ github.sha }},_IMAGE_TAG=${{ github.sha }},_REGISTRY=${{ env.REGISTRY }},_REPOSITORY=${{ env.REPOSITORY }},_SERVICE_NAME=${{ env.SERVICE_NAME }} \
+            --project ${{ env.PROJECT_ID }} \
+            --quiet
 
       - name: Clear conflicting env/secret types
         run: |
