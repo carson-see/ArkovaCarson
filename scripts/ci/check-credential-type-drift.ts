@@ -65,7 +65,11 @@ function extractRecordKeys(content: string, varName: string): string[] {
   const pattern = new RegExp(String.raw`${safeVarName}[^=]*=\s*\{([\s\S]*?)\};`);
   const match = pattern.exec(content);
   if (!match?.[1]) return [];
-  return [...match[1].matchAll(/^\s*([A-Z_]+)\s*:/gm)].map(m => m[1]);
+  return match[1]
+    .split('\n')
+    .map(line => line.trim())
+    .filter(line => /^[A-Z_]+:/.test(line))
+    .map(line => line.split(':')[0]);
 }
 
 let failures = 0;
