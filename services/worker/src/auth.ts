@@ -9,13 +9,28 @@
  * Constitution 1.4: Never log tokens, secrets, or user identifiers.
  */
 
-import { jwtVerify, type JWTPayload } from 'jose';
+import { jwtVerify, decodeJwt, type JWTPayload } from 'jose';
 import type { Logger } from './utils/logger.js';
 
 export interface AuthConfig {
   supabaseJwtSecret?: string;
   supabaseUrl?: string;
   supabaseServiceKey?: string;
+}
+
+const NON_SUPABASE_ISSUERS = ['https://accounts.google.com', 'accounts.google.com'];
+
+/**
+ * Detect non-Supabase JWTs (e.g. Google OIDC tokens from Cloud Scheduler)
+ * by inspecting the `iss` claim without full verification.
+ */
+function isNonSupabaseJwt(token: string): boolean {
+  try {
+    const { iss } = decodeJwt(token);
+    return typeof iss === 'string' && NON_SUPABASE_ISSUERS.includes(iss);
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -37,7 +52,16 @@ export async function verifyAuthToken(
   if (config.supabaseJwtSecret) {
     const localResult = await verifyJwtLocally(token, config.supabaseJwtSecret, logger);
     if (localResult) return localResult;
-    // Local verification failed — fall back to Supabase API (secret may be stale/wrong)
+  }
+
+  // If the token is a non-Supabase JWT (e.g. Google OIDC from Cloud Scheduler),
+  // skip the Supabase auth.getUser() fallback — it produces a spurious 403 that
+  // Sentry traces capture as "Failed HTTP Operation".
+  // This check runs regardless of whether supabaseJwtSecret is configured,
+  // so OIDC tokens are always short-circuited before hitting Supabase.
+  if (isNonSupabaseJwt(token)) return null;
+
+  if (config.supabaseJwtSecret) {
     logger.warn('Local JWT verification failed — falling back to Supabase API');
   }
 
