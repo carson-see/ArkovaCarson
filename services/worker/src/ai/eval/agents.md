@@ -4,7 +4,7 @@ _Last updated: 2026-05-22_
 
 ## 2026-05-22 Professional Education Phase 5 Dataset
 
-- `golden-dataset-professional-education.ts` owns SCRUM-1953 fixtures for CPE, CLE, and course-ID extraction coverage. Keep entries synthetic/PII-stripped and keep CPE/CLE counts aligned with the 20-entry fail-closed gate minimums in `eval-gates.ts`.
+- `golden-dataset-professional-education.ts` owns SCRUM-1953 fixtures for CPE, CLE, and course-ID extraction coverage. Keep entries synthetic/PII-stripped and keep CPE/CLE/course-ID-only counts aligned with the 20-entry fail-closed gate minimums in `eval-gates.ts`.
 
 ## 2026-05-20 Explicit Eval Gates
 

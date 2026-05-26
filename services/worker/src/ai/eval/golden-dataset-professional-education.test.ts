@@ -34,8 +34,8 @@ describe('golden-dataset-professional-education', () => {
 
   it('contains the Phase 5 coverage volume required by SCRUM-1953', () => {
     expect(GOLDEN_DATASET_PROFESSIONAL_EDUCATION.length).toBeGreaterThanOrEqual(60);
-    expect(cpeEntries.length).toBeGreaterThanOrEqual(20);
-    expect(cleEntries.length).toBeGreaterThanOrEqual(20);
+    expect(cpeEntries.length).toBeGreaterThanOrEqual(PROFESSIONAL_EDUCATION_GATE_MINIMUMS.cpe);
+    expect(cleEntries.length).toBeGreaterThanOrEqual(PROFESSIONAL_EDUCATION_GATE_MINIMUMS.cle);
     expect(courseIdOnlyEntries.length).toBeGreaterThanOrEqual(PROFESSIONAL_EDUCATION_GATE_MINIMUMS.courseIdOnly);
   });
 
