@@ -106,6 +106,9 @@ jobs:
       - name: Push Docker image
         run: docker push "${IMAGE_REF}"
 
+      - name: Use deploy script from main
+        run: git fetch origin main && git checkout origin/main -- scripts/staging/deploy.sh
+
       - name: Fetch staging secrets
         id: secrets
         run: |
