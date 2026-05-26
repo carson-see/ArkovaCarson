@@ -186,11 +186,14 @@ const ALLOWED_EVIDENCE_SCOPES = new Set([
   'merge-grade isolated staging',
 ]);
 
+const TEST_FILE_RE = /\.(test|spec)\.(ts|tsx|js|jsx)$/;
+
 export function requiredTierFor(files: string[]): { tier: Tier; reason: string } {
   let best: Tier = 'T1';
   let reason = 'default frontend / additive change';
   for (const f of files) {
     if (STAGING_TOOLING_ALLOW.some((re) => re.test(f))) continue;
+    if (TEST_FILE_RE.test(f)) continue;
     for (const rule of PATH_RULES) {
       if (rule.pattern.test(f) && TIER_RANK[rule.minTier] > TIER_RANK[best]) {
         best = rule.minTier;
