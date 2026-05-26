@@ -1,5 +1,5 @@
 # agents.md — components/anchor
-_Last updated: 2026-05-19 (SCRUM-1599 source provenance)_
+_Last updated: 2026-05-26 (SCRUM-2013 credential type drift fix)_
 
 ## What This Folder Contains
 Core anchor (document-securing) UI components: upload, confirm, AI extraction, lifecycle timeline, sharing, and verification walkthrough.

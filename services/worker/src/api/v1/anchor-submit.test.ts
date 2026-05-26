@@ -450,11 +450,15 @@ describe('POST /api/v1/anchor — Zod validation', () => {
       expect(res.body.message).toBeDefined();
       // db_code must NOT be exposed to API clients (SonarCloud security hotspot)
       expect(res.body).not.toHaveProperty('db_code');
-      // Postgres error code is logged server-side for debugging
+      // Postgres error code is logged server-side for debugging (sanitized — no raw fingerprint or error object)
       expect(mockLogger.error).toHaveBeenCalledWith(
         expect.objectContaining({ pgCode: '23503' }),
         expect.any(String),
       );
+      const [fkLogPayload] = mockLogger.error.mock.calls.at(-1) as [Record<string, unknown>, string];
+      expect(fkLogPayload).not.toHaveProperty('fingerprint');
+      expect(fkLogPayload).not.toHaveProperty('error');
+      expect(fkLogPayload).toHaveProperty('fingerprintPrefix');
     });
 
     it('returns 409 on unique constraint violation (duplicate public_id race)', async () => {
@@ -498,11 +502,15 @@ describe('POST /api/v1/anchor — Zod validation', () => {
       expect(res.body.error).toBe('anchor_creation_failed');
       // db_code must NOT be exposed to API clients
       expect(res.body).not.toHaveProperty('db_code');
-      // Postgres error code is logged server-side for debugging
+      // Postgres error code is logged server-side for debugging (sanitized — no raw fingerprint or error object)
       expect(mockLogger.error).toHaveBeenCalledWith(
         expect.objectContaining({ pgCode: '23502' }),
         expect.any(String),
       );
+      const [nnLogPayload] = mockLogger.error.mock.calls.at(-1) as [Record<string, unknown>, string];
+      expect(nnLogPayload).not.toHaveProperty('fingerprint');
+      expect(nnLogPayload).not.toHaveProperty('error');
+      expect(nnLogPayload).toHaveProperty('fingerprintPrefix');
     });
   });
 });
