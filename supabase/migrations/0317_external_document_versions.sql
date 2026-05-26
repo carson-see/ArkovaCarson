@@ -132,6 +132,9 @@ CREATE POLICY vr_org_insert ON public.version_reviews
 GRANT ALL ON public.external_document_versions TO service_role;
 GRANT ALL ON public.version_reviews TO service_role;
 
+GRANT SELECT ON public.external_document_versions TO authenticated;
+GRANT SELECT, INSERT ON public.version_reviews TO authenticated;
+
 NOTIFY pgrst, 'reload schema';
 
 COMMIT;

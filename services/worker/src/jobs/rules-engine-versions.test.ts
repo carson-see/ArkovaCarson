@@ -128,7 +128,7 @@ describe('detectVersionConflict', () => {
 
     expect(mockDb.from).toHaveBeenCalledWith('anchors');
     expect(mockSelectEq).toHaveBeenCalledWith('org_id', ORG_ID);
-    expect(mockSelectEq2).toHaveBeenCalledWith('external_file_id', EXTERNAL_FILE_ID);
+    expect(mockSelectEq2).toHaveBeenCalledWith('metadata->>external_file_id', EXTERNAL_FILE_ID);
     expect(mockSelectEqStatus).toHaveBeenCalledWith('status', 'SECURED');
   });
 
