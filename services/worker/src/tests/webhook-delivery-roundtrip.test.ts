@@ -178,6 +178,7 @@ describe('Webhook Delivery Round-Trip (SCRUM-1729)', () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
   });
 
   describe('anchor.secured event', () => {
@@ -235,7 +236,7 @@ describe('Webhook Delivery Round-Trip (SCRUM-1729)', () => {
           ...SECURED_PAYLOAD,
           anchor_id: 'leaked-internal-uuid',
         }),
-      ).rejects.toThrow();
+      ).rejects.toThrow(/unrecognized_keys|anchor_id/i);
 
       expect(mockFetch).not.toHaveBeenCalled();
     });
@@ -248,7 +249,7 @@ describe('Webhook Delivery Round-Trip (SCRUM-1729)', () => {
           ...SECURED_PAYLOAD,
           fingerprint: 'leaked-document-hash',
         }),
-      ).rejects.toThrow();
+      ).rejects.toThrow(/unrecognized_keys|fingerprint/i);
 
       expect(mockFetch).not.toHaveBeenCalled();
     });
@@ -282,6 +283,11 @@ describe('Webhook Delivery Round-Trip (SCRUM-1729)', () => {
       expect(body.data.status).toBe('REVOKED');
       expect(body.data.revoked_at).toBe('2026-05-16T11:00:00.000Z');
       expect(body.data.revocation_reason).toBe('credential_superseded');
+      // Banned fields must NOT be present
+      expect(body.data.anchor_id).toBeUndefined();
+      expect(body.data.fingerprint).toBeUndefined();
+      expect(body.data.org_id).toBeUndefined();
+      expect(body.data.user_id).toBeUndefined();
     });
   });
 
@@ -315,6 +321,11 @@ describe('Webhook Delivery Round-Trip (SCRUM-1729)', () => {
       expect(body.data.expired_at).toBe('2026-05-16T00:01:00.000Z');
       expect(body.data.chain_tx_id).toBeTruthy();
       expect(body.data.chain_block_height).toBeGreaterThan(0);
+      // Banned fields must NOT be present
+      expect(body.data.anchor_id).toBeUndefined();
+      expect(body.data.fingerprint).toBeUndefined();
+      expect(body.data.org_id).toBeUndefined();
+      expect(body.data.user_id).toBeUndefined();
     });
 
     it('rejects anchor.expired with null chain_tx_id (on-chain invariant)', async () => {
@@ -325,7 +336,7 @@ describe('Webhook Delivery Round-Trip (SCRUM-1729)', () => {
           ...EXPIRED_PAYLOAD,
           chain_tx_id: null,
         }),
-      ).rejects.toThrow();
+      ).rejects.toThrow(/chain_tx_id/i);
 
       expect(mockFetch).not.toHaveBeenCalled();
     });
