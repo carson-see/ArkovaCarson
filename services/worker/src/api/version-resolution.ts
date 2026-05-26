@@ -169,7 +169,14 @@ export async function handleResolveVersion(
     return;
   }
 
-  const { versionId } = req.params;
+  const versionIdParsed = z.string().uuid().safeParse(req.params.versionId);
+  if (!versionIdParsed.success) {
+    res.status(400).json({
+      error: { code: 'invalid_request', message: 'Invalid versionId: must be a UUID' },
+    });
+    return;
+  }
+  const versionId = versionIdParsed.data;
   const { decision, notes } = parsed.data;
 
   try {
@@ -206,12 +213,14 @@ export async function handleResolveVersion(
     };
     const newStatus = statusMap[decision];
 
-    // Update version status
+    // Update version status — include status predicate to prevent double-resolution
+    // if two admins race to approve the same version concurrently.
     const { error: updateError } = await untypedDb
       .from('external_document_versions')
       .update({ status: newStatus, updated_at: new Date().toISOString() })
       .eq('id', versionId)
-      .eq('org_id', orgId);
+      .eq('org_id', orgId)
+      .eq('status', 'pending_review');
 
     if (updateError) {
       logger.error({ error: updateError, versionId }, 'Version status update failed');

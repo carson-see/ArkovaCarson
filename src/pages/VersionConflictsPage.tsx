@@ -161,7 +161,11 @@ function VersionConflictsInner() {
   const [resolving, setResolving] = useState(false);
 
   useEffect(() => {
-    void fetchPending();
+    fetchPending().catch((err: unknown) => {
+      // Error is surfaced via the `error` state from useVersionResolution
+      // eslint-disable-next-line no-console
+      console.error('fetchPending failed:', err);
+    });
   }, [fetchPending]);
 
   const groups = useMemo(() => groupByExternalFile(items), [items]);

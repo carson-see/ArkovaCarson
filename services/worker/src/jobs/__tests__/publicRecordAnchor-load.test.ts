@@ -98,6 +98,78 @@ function makeRecord(i: number, source: string) {
   };
 }
 
+/** Mock `profiles` table accessor with concurrency tracking. */
+function makeProfilesMock(
+  trackedDbCall: <T>(r: T) => Promise<T>,
+) {
+  return {
+    select: vi.fn(() => ({
+      eq: vi.fn(() => ({
+        single: vi.fn(() =>
+          trackedDbCall({ data: { id: 'admin-user-id', org_id: 'admin-org-id' }, error: null }),
+        ),
+      })),
+    })),
+  };
+}
+
+/** Mock `anchors` table accessor with concurrency tracking. */
+function makeAnchorsMock(
+  anchorRows: ReturnType<typeof makeRecord>[],
+  claimedRows: ReturnType<typeof makeRecord>[],
+  firstAnchorResult: { id: string; fingerprint: string },
+  trackedDbCall: <T>(r: T) => Promise<T>,
+) {
+  return {
+    select: vi.fn(() => ({
+      in: vi.fn(() => ({
+        is: vi.fn(() => trackedDbCall({ data: anchorRows, error: null })),
+      })),
+    })),
+    insert: vi.fn(() => ({
+      select: vi.fn(() => ({
+        single: vi.fn(() => trackedDbCall({ data: firstAnchorResult, error: null })),
+      })),
+    })),
+    update: vi.fn(() => ({
+      in: vi.fn(() => ({
+        eq: vi.fn(() => ({
+          select: vi.fn(() => trackedDbCall({ data: claimedRows, error: null })),
+        })),
+      })),
+    })),
+  };
+}
+
+/** Mock `public_records` query builder that tracks calls and slices source-specific records. */
+function makePublicRecordsMock(
+  recordsBySource: Record<string, ReturnType<typeof makeRecord>[]>,
+  trackedDbCall: <T>(r: T) => Promise<T>,
+) {
+  return {
+    select: vi.fn(() => {
+      const chain: Record<string, unknown> = {};
+      let selectedSource: string | null = null;
+      let isNonPriority = false;
+
+      chain.is = vi.fn(() => chain);
+      chain.eq = vi.fn((field: string, value: string) => {
+        if (field === 'source') selectedSource = value;
+        return chain;
+      });
+      chain.not = vi.fn(() => { isNonPriority = true; return chain; });
+      chain.order = vi.fn(() => chain);
+      chain.range = vi.fn((_from: number, _to: number) => {
+        if (isNonPriority) return trackedDbCall({ data: [], error: null });
+        const src = selectedSource ?? 'edgar';
+        const slice = (recordsBySource[src] ?? []).slice(_from, _to + 1);
+        return trackedDbCall({ data: slice, error: null });
+      });
+      return chain;
+    }),
+  };
+}
+
 /**
  * Creates a mock Supabase client that tracks concurrent calls.
  * Distributes records across priority sources to test parallel fetching.
@@ -149,81 +221,10 @@ function createLoadMockSupabase(totalRecords: number) {
   const client = {
     rpc: mockRpc,
     from: vi.fn((table: string) => {
-      if (table === 'profiles') {
-        return {
-          select: vi.fn(() => ({
-            eq: vi.fn(() => ({
-              single: vi.fn(() => trackedDbCall({
-                data: { id: 'admin-user-id', org_id: 'admin-org-id' },
-                error: null,
-              })),
-            })),
-          })),
-        };
-      }
-      if (table === 'anchors') {
-        return {
-          select: vi.fn(() => ({
-            in: vi.fn(() => ({
-              is: vi.fn(() => trackedDbCall({ data: anchorRows, error: null })),
-            })),
-          })),
-          insert: vi.fn(() => ({
-            select: vi.fn(() => ({
-              single: vi.fn(() => trackedDbCall({
-                data: anchorResults[0],
-                error: null,
-              })),
-            })),
-          })),
-          update: vi.fn(() => ({
-            in: vi.fn(() => ({
-              eq: vi.fn(() => ({
-                select: vi.fn(() => trackedDbCall({ data: claimedRows, error: null })),
-              })),
-            })),
-          })),
-        };
-      }
-      if (table === 'anchor_proofs') {
-        return {
-          upsert: vi.fn(() => trackedDbCall({ error: null })),
-        };
-      }
-      // public_records table — this is where the parallelization matters
-      if (table === 'public_records') {
-        return {
-          select: vi.fn(() => {
-            // Build a chainable query builder that tracks calls
-            const chain: Record<string, unknown> = {};
-            let selectedSource: string | null = null;
-            let isNonPriority = false;
-
-            chain.is = vi.fn(() => chain);
-            chain.eq = vi.fn((field: string, value: string) => {
-              if (field === 'source') selectedSource = value;
-              return chain;
-            });
-            chain.not = vi.fn(() => {
-              isNonPriority = true;
-              return chain;
-            });
-            chain.order = vi.fn(() => chain);
-            chain.range = vi.fn((_from: number, _to: number) => {
-              // Return source-specific records
-              if (isNonPriority) {
-                return trackedDbCall({ data: [], error: null });
-              }
-              const src = selectedSource ?? 'edgar';
-              const srcRecords = recordsBySource[src] ?? [];
-              const slice = srcRecords.slice(_from, _to + 1);
-              return trackedDbCall({ data: slice, error: null });
-            });
-
-            return chain;
-          }),
-        };
-      }
+      if (table === 'profiles') return makeProfilesMock(trackedDbCall);
+      if (table === 'anchors') return makeAnchorsMock(anchorRows as never, claimedRows as never, anchorResults[0], trackedDbCall);
+      if (table === 'anchor_proofs') return { upsert: vi.fn(() => trackedDbCall({ error: null })) };
+      if (table === 'public_records') return makePublicRecordsMock(recordsBySource, trackedDbCall);
       return {
         select: vi.fn(() => ({
           eq: vi.fn(() => ({
