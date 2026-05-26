@@ -9,6 +9,7 @@ Cross-cutting integration and chaos engineering test suites. These test the work
 - **chaos-embedding-pressure.test.ts** — Embedding pipeline pressure test. Validates backpressure and rate-limit handling under load.
 - **chaos-mempool-unavail.test.ts** — Mempool API unavailability simulation. Validates fallback behavior when Bitcoin mempool endpoints are down.
 - **chaos-webhook-idempotency.test.ts** — Webhook idempotency under concurrent duplicate delivery.
+- **webhook-delivery-roundtrip.test.ts** — Full outbound webhook pipeline round-trip test (SCRUM-1729/SCRUM-1737). Verifies dispatchWebhookEvent → endpoint lookup → schema validation → HMAC signing → HTTP delivery → idempotency → retry → circuit breaker across all three anchor lifecycle events (secured, revoked, expired) plus SSRF protection and multi-endpoint fan-out.
 
 ## Rules
 
