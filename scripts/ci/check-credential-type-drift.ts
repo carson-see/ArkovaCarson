@@ -51,8 +51,18 @@ function extractTypes(content: string, pattern: RegExp): string[] {
   return [...raw.matchAll(/'([A-Z_]+)'/g)].map(m => m[1]);
 }
 
+/**
+ * Escape special regex metacharacters in a string so it can be safely
+ * interpolated into a RegExp constructor without risk of regex injection
+ * (SonarCloud S2631).
+ */
+function escapeRegExp(str: string): string {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 function extractRecordKeys(content: string, varName: string): string[] {
-  const pattern = new RegExp(String.raw`${varName}[^=]*=\s*\{([\s\S]*?)\};`);
+  const safeVarName = escapeRegExp(varName);
+  const pattern = new RegExp(String.raw`${safeVarName}[^=]*=\s*\{([\s\S]*?)\};`);
   const match = pattern.exec(content);
   if (!match?.[1]) return [];
   return [...match[1].matchAll(/^\s*([A-Z_]+)\s*:/gm)].map(m => m[1]);
