@@ -928,8 +928,19 @@ jobs:
       - name: Detect E2E-relevant changes
         id: e2e-changed
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha || 'HEAD~1' }}
+          # PR events: diff the whole PR against its base tip.
+          # Push events: diff the FULL pushed range (before -> HEAD), not just
+          # HEAD~1 — a multi-commit push whose tip is docs-only must still run
+          # E2E if an earlier commit in the same push touched app code. An
+          # empty/all-zero/unreachable base (first push, force-push) makes the
+          # git cat-file check below fail, which fails safe to running E2E.
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
         run: |
+          if [ -z "$BASE_SHA" ] || ! git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null; then
+            echo "Base ref '$BASE_SHA' empty or unreachable — running E2E to be safe"
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           if ! CHANGED=$(git diff --name-only "$BASE_SHA" HEAD); then
             echo "Could not compute diff against $BASE_SHA — running E2E to be safe"
             echo "changed=true" >> "$GITHUB_OUTPUT"
