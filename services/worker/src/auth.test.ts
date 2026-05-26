@@ -89,6 +89,35 @@ describe('verifyAuthToken', () => {
     });
   });
 
+  describe('OIDC token detection — skips Supabase auth call', () => {
+    const config = {
+      supabaseJwtSecret: TEST_SECRET,
+      supabaseUrl: 'https://test.supabase.co',
+      supabaseServiceKey: 'test-service-key',
+    };
+
+    it('returns null without calling Supabase auth for Google OIDC tokens', async () => {
+      const key = new TextEncoder().encode('google-oidc-key-not-supabase');
+      const oidcToken = await new SignJWT({ sub: '12345', iss: 'https://accounts.google.com', aud: 'my-audience' })
+        .setProtectedHeader({ alg: 'HS256' })
+        .setIssuedAt()
+        .setExpirationTime('1h')
+        .sign(key);
+
+      const getUser = vi.fn();
+      vi.doMock('./utils/db.js', () => ({
+        getDb: () => ({ auth: { getUser } }),
+      }));
+
+      const result = await verifyAuthToken(oidcToken, config, mockLogger);
+
+      expect(result).toBeNull();
+      expect(getUser).not.toHaveBeenCalled();
+
+      vi.doUnmock('./utils/db.js');
+    });
+  });
+
   describe('Supabase API fallback (no supabaseJwtSecret)', () => {
     const config = {
       // No supabaseJwtSecret — triggers fallback
