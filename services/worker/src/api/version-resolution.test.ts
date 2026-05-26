@@ -242,13 +242,17 @@ describe('handleListVersions', () => {
   });
 });
 
+// Fixed-format UUIDs for test fixtures (required after Zod UUID validation was added).
+const VERSION_UUID = '11111111-1111-4111-a111-111111111111';
+const VERSION_UUID_2 = '22222222-2222-4222-a222-222222222222';
+
 describe('handleResolveVersion', () => {
   beforeEach(() => fromMock.mockReset());
   afterEach(() => vi.restoreAllMocks());
 
   it('returns 401 without auth', async () => {
     const { res, status, json } = mockRes();
-    await handleResolveVersion(mockReq({ params: { versionId: 'v-1' } }), res);
+    await handleResolveVersion(mockReq({ params: { versionId: VERSION_UUID } }), res);
 
     expect(status).toHaveBeenCalledWith(401);
     expect(json).toHaveBeenCalledWith({ error: 'Authentication required' });
@@ -257,7 +261,7 @@ describe('handleResolveVersion', () => {
   it('returns 403 for non-admin', async () => {
     const { res, status, json } = mockRes();
     await handleResolveVersion(
-      mockReq({ userId: 'user-1', orgId: 'org-1', orgRole: 'member', params: { versionId: 'v-1' } }),
+      mockReq({ userId: 'user-1', orgId: 'org-1', orgRole: 'member', params: { versionId: VERSION_UUID } }),
       res,
     );
 
@@ -267,6 +271,25 @@ describe('handleResolveVersion', () => {
     });
   });
 
+  it('returns 400 for invalid versionId (not a UUID)', async () => {
+    const { res, status, json } = mockRes();
+    await handleResolveVersion(
+      mockReq({
+        userId: 'user-1',
+        orgId: 'org-1',
+        orgRole: 'admin',
+        params: { versionId: 'not-a-uuid' },
+        body: { decision: 'approve' },
+      }),
+      res,
+    );
+
+    expect(status).toHaveBeenCalledWith(400);
+    expect(json).toHaveBeenCalledWith(expect.objectContaining({
+      error: expect.objectContaining({ code: 'invalid_request' }),
+    }));
+  });
+
   it('returns 400 for invalid body', async () => {
     const { res, status, json } = mockRes();
     await handleResolveVersion(
@@ -274,7 +297,7 @@ describe('handleResolveVersion', () => {
         userId: 'user-1',
         orgId: 'org-1',
         orgRole: 'admin',
-        params: { versionId: 'v-1' },
+        params: { versionId: VERSION_UUID },
         body: { decision: 'destroy' },
       }),
       res,
@@ -296,7 +319,7 @@ describe('handleResolveVersion', () => {
         userId: 'user-1',
         orgId: 'org-1',
         orgRole: 'admin',
-        params: { versionId: 'v-nonexistent' },
+        params: { versionId: VERSION_UUID_2 },
         body: { decision: 'approve' },
       }),
       res,
@@ -319,7 +342,7 @@ describe('handleResolveVersion', () => {
         userId: 'user-1',
         orgId: 'org-1',
         orgRole: 'admin',
-        params: { versionId: 'v-other-org' },
+        params: { versionId: VERSION_UUID_2 },
         body: { decision: 'approve' },
       }),
       res,
@@ -333,7 +356,7 @@ describe('handleResolveVersion', () => {
 
   it('approve: updates status and creates anchor', async () => {
     const versionRow = {
-      id: 'v-1',
+      id: VERSION_UUID,
       external_file_id: 'file-abc',
       fingerprint: 'fp-new-123',
       org_id: 'org-1',
@@ -362,7 +385,7 @@ describe('handleResolveVersion', () => {
         userId: 'user-1',
         orgId: 'org-1',
         orgRole: 'admin',
-        params: { versionId: 'v-1' },
+        params: { versionId: VERSION_UUID },
         body: { decision: 'approve' },
       }),
       res,
@@ -371,7 +394,7 @@ describe('handleResolveVersion', () => {
     expect(json).toHaveBeenCalledWith({
       success: true,
       decision: 'approve',
-      version_id: 'v-1',
+      version_id: VERSION_UUID,
     });
     // Verify anchor was created
     expect(fromMock).toHaveBeenCalledWith('anchors');
@@ -381,7 +404,7 @@ describe('handleResolveVersion', () => {
 
   it('skip: updates status without anchor creation', async () => {
     const versionRow = {
-      id: 'v-1',
+      id: VERSION_UUID,
       external_file_id: 'file-abc',
       fingerprint: 'fp-new-123',
       org_id: 'org-1',
@@ -407,7 +430,7 @@ describe('handleResolveVersion', () => {
         userId: 'user-1',
         orgId: 'org-1',
         orgRole: 'admin',
-        params: { versionId: 'v-1' },
+        params: { versionId: VERSION_UUID },
         body: { decision: 'skip' },
       }),
       res,
@@ -416,7 +439,7 @@ describe('handleResolveVersion', () => {
     expect(json).toHaveBeenCalledWith({
       success: true,
       decision: 'skip',
-      version_id: 'v-1',
+      version_id: VERSION_UUID,
     });
     // Should NOT have called anchors insert
     const anchorsCalls = fromMock.mock.calls.filter((c) => c[0] === 'anchors');
@@ -425,7 +448,7 @@ describe('handleResolveVersion', () => {
 
   it('flag: updates status without anchor creation', async () => {
     const versionRow = {
-      id: 'v-1',
+      id: VERSION_UUID,
       external_file_id: 'file-abc',
       fingerprint: 'fp-new-123',
       org_id: 'org-1',
@@ -451,7 +474,7 @@ describe('handleResolveVersion', () => {
         userId: 'user-1',
         orgId: 'org-1',
         orgRole: 'admin',
-        params: { versionId: 'v-1' },
+        params: { versionId: VERSION_UUID },
         body: { decision: 'flag', notes: 'Looks suspicious' },
       }),
       res,
@@ -460,7 +483,7 @@ describe('handleResolveVersion', () => {
     expect(json).toHaveBeenCalledWith({
       success: true,
       decision: 'flag',
-      version_id: 'v-1',
+      version_id: VERSION_UUID,
     });
     // Should NOT have called anchors insert
     const anchorsCalls = fromMock.mock.calls.filter((c) => c[0] === 'anchors');
