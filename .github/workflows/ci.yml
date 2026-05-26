@@ -76,6 +76,8 @@ jobs:
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: '20'
+          cache: npm
+          cache-dependency-path: package-lock.json
 
       - name: Install dependencies
         # Dependency scanning does not execute the app. Suppress package
@@ -172,6 +174,10 @@ jobs:
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: '20'
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            services/worker/package-lock.json
 
       - name: Install root dependencies
         run: npm ci --ignore-scripts
@@ -233,6 +239,10 @@ jobs:
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: '20'
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            services/worker/package-lock.json
 
       - name: Install dependencies
         run: npm ci --ignore-scripts
@@ -243,13 +253,11 @@ jobs:
           SONARCLOUD_TOKEN: ${{ steps.sonarcloud-token.outputs.token }}
         run: npm run ci:sonar-quality-gate
 
-  # SCRUM-1249 (R0-3): coverage thresholds monotonic enforcement.
-  # Fails PR if any per-file coverage threshold in vitest.config.ts or
-  # services/worker/vitest.config.ts has decreased vs origin/main, unless
-  # the PR is labeled `coverage-drop-allowed` AND its body links a
-  # `coverage-restoration` Jira ticket (`Linked Jira: SCRUM-NNNN`).
-  coverage-monotonic:
-    name: Coverage Monotonic Enforcement
+  # Consolidated policy lints — 5 lightweight checks that share identical
+  # setup (checkout, Node, npm ci). Running them sequentially in one job
+  # eliminates 4 runner spin-ups (~8 min/PR saved).
+  policy-lints:
+    name: Policy Lints
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -263,67 +271,42 @@ jobs:
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: '20'
+          cache: npm
+          cache-dependency-path: package-lock.json
 
       - name: Install dependencies
         run: npm ci --ignore-scripts
 
-      - name: Check coverage thresholds monotonic
+      - name: Aggregate commit messages
+        id: commits
         env:
-          # On PR events, BASE_REF_SHA is the merge target; on push to main, fall back to HEAD~1
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ -n "$BASE_SHA" ]; then
+            MSGS=$(git log --format=%B "$BASE_SHA"..HEAD)
+          else
+            MSGS=$(git log --format=%B -1)
+          fi
+          {
+            echo 'msgs<<EOF'
+            echo "$MSGS"
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Coverage monotonic enforcement
+        env:
           BASE_REF_SHA: ${{ github.event.pull_request.base.sha || 'HEAD~1' }}
           PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
           PR_BODY: ${{ github.event.pull_request.body }}
         run: npx tsx scripts/ci/check-coverage-monotonic.ts
 
-  # SCRUM-1254 (R0-8): count: 'exact' baseline drift check.
-  # Stops new count: 'exact' calls from sneaking into worker code.
-  count-exact-baseline:
-    name: count:'exact' Baseline
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      pull-requests: read
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          fetch-depth: 0
-      - name: Setup Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
-        with:
-          node-version: '20'
-      - name: Install dependencies
-        run: npm ci --ignore-scripts
-      - name: Compare count:'exact' baseline
+      - name: "count:'exact' baseline"
         env:
-          # Code-review issue #N (PR #563): no `'HEAD~1'` literal fallback —
-          # ciContext.ts now resolves BASE_REF via git rev-parse and exits 1
-          # (fail-closed) if the ref doesn't exist. On push events where
-          # pull_request.base.sha is empty, the ciContext default
-          # `origin/main` is used (always present given fetch-depth: 0).
           BASE_REF_SHA: ${{ github.event.pull_request.base.sha }}
           PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
         run: npx tsx scripts/ci/check-count-exact-baseline.ts
 
-  # SCRUM-1253 (R0-7): feedback_*.md memory rules to CI lint.
-  # Orchestrator runs every script in scripts/ci/feedback-rules/. Each rule
-  # has its own override label; see memory/README.md for the index.
-  feedback-rules:
-    name: Memory Feedback Rules
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      pull-requests: read
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          fetch-depth: 0
-      - name: Setup Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
-        with:
-          node-version: '20'
-      - name: Install dependencies
-        run: npm ci --ignore-scripts
-      - name: Run feedback rules orchestrator
+      - name: Feedback rules
         env:
           BASE_REF_SHA: ${{ github.event.pull_request.base.sha }}
           PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
@@ -331,107 +314,27 @@ jobs:
           GITHUB_HEAD_REF: ${{ github.head_ref }}
         run: npx tsx scripts/ci/check-feedback-rules.ts
 
-  # SCRUM-1252 (R0-6): HANDOFF.md verification-artifact lint.
-  # Fails PR if HANDOFF.md claims prod state (revision numbers, "deployed
-  # healthy", "applied on prod", "verified via", etc.) without a linked
-  # verification artifact (gcloud output, MCP query, log line, or GH Actions
-  # run URL) in the PR description or a commit body. Override label:
-  # `handoff-narrative-only` (for prose-style retrospectives only).
-  handoff-claims:
-    name: HANDOFF.md Verification Lint
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      pull-requests: read
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          fetch-depth: 0
-      - name: Setup Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
-        with:
-          node-version: '20'
-      - name: Install dependencies
-        run: npm ci --ignore-scripts
-      # Code-review issue #B (PR #563): the previous version passed
-      # `commits_url` (an API URL string) as PR_COMMITS_MSGS, so commit-body
-      # artifact links never reached the lint. Resolve the actual commit
-      # messages here via `git log` (cheap; checkout above is fetch-depth: 0).
-      - name: Aggregate commit messages
-        id: commits
+      - name: HANDOFF.md verification lint
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: |
-          if [ -n "$BASE_SHA" ]; then
-            MSGS=$(git log --format=%B "$BASE_SHA"..HEAD)
-          else
-            MSGS=$(git log --format=%B -1)
-          fi
-          {
-            echo 'msgs<<EOF'
-            echo "$MSGS"
-            echo 'EOF'
-          } >> "$GITHUB_OUTPUT"
-      - name: Check HANDOFF.md claims
-        env:
-          # No `'HEAD~1'` fallback (code-review issue #N).
           BASE_REF_SHA: ${{ github.event.pull_request.base.sha }}
           PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
           PR_BODY: ${{ github.event.pull_request.body }}
           PR_COMMITS_MSGS: ${{ steps.commits.outputs.msgs }}
         run: npx tsx scripts/ci/check-handoff-claims.ts
 
-  # SCRUM-1207 (AUDIT-26): Confluence-drift guard.
-  # Parses PR title/body/commit messages for SCRUM-NNNN refs and verifies
-  # each has a matching Confluence page in space A. Warn-only by default;
-  # set FAIL_ON_MISSING_CONFLUENCE=true to upgrade to a blocking gate once
-  # the long-tail backfill (SCRUM-1199) completes. Override label:
-  # `confluence-drift-skip`.
-  confluence-coverage:
-    name: Confluence Page Coverage
-    runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
-    permissions:
-      contents: read
-      pull-requests: read
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          fetch-depth: 0
-      - name: Setup Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
-        with:
-          node-version: '20'
-      - name: Install dependencies
-        run: npm ci --ignore-scripts
-      - name: Aggregate commit messages
-        id: commits
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: |
-          if [ -n "$BASE_SHA" ]; then
-            MSGS=$(git log --format=%B "$BASE_SHA"..HEAD)
-          else
-            MSGS=$(git log --format=%B -1)
-          fi
-          {
-            echo 'msgs<<EOF'
-            echo "$MSGS"
-            echo 'EOF'
-          } >> "$GITHUB_OUTPUT"
-      - name: Check Confluence page coverage
+      - name: Confluence page coverage
+        if: github.event_name == 'pull_request'
         env:
           BASE_REF_SHA: ${{ github.event.pull_request.base.sha }}
           PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
           PR_TITLE: ${{ github.event.pull_request.title }}
           PR_BODY: ${{ github.event.pull_request.body }}
           PR_COMMITS_MSGS: ${{ steps.commits.outputs.msgs }}
-          # JIRA_EMAIL + JIRA_API_TOKEN reuse the existing Atlassian creds
-          # already wired for Jira automation. Missing creds → warn + skip.
           JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
           JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
           FAIL_ON_MISSING_CONFLUENCE: 'false'
         run: npx tsx scripts/ci/check-confluence-coverage.ts
+
 
   # TDD enforcement — production code changes must include test changes.
   # Actual enforcement runs only on pull_request events: TDD is a gate for
@@ -470,6 +373,10 @@ jobs:
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: '20'
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            services/worker/package-lock.json
 
       - name: Install dependencies
         run: npm ci --ignore-scripts
@@ -529,6 +436,8 @@ jobs:
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: '20'
+          cache: npm
+          cache-dependency-path: package-lock.json
 
       - name: Install dependencies
         run: npm ci --ignore-scripts
@@ -587,6 +496,8 @@ jobs:
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: '20'
+          cache: npm
+          cache-dependency-path: package-lock.json
 
       - name: Install dependencies
         run: npm ci --ignore-scripts
@@ -716,6 +627,10 @@ jobs:
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: '20'
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            services/worker/package-lock.json
 
       - name: Install worker dependencies
         if: steps.ai-changed.outputs.changed == 'true'
@@ -767,6 +682,10 @@ jobs:
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: '20'
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            services/worker/package-lock.json
 
       - name: Install worker dependencies
         if: steps.golden-changed.outputs.changed == 'true'
@@ -860,6 +779,8 @@ jobs:
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: '20'
+          cache: npm
+          cache-dependency-path: package-lock.json
 
       - name: Install dependencies
         if: steps.tla-changed.outputs.changed == 'true'
@@ -1004,6 +925,10 @@ jobs:
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: '20'
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            services/worker/package-lock.json
 
       - name: Install dependencies
         run: npm ci --ignore-scripts
@@ -1116,6 +1041,8 @@ jobs:
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: '20'
+          cache: npm
+          cache-dependency-path: package-lock.json
 
       - name: Install dependencies
         run: npm ci --ignore-scripts
@@ -1162,6 +1089,10 @@ jobs:
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: '20'
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            services/worker/package-lock.json
       - name: Install dependencies
         run: npm ci --ignore-scripts
       - name: Generate frontend SBOM (CycloneDX)
