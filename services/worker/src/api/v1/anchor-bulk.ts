@@ -268,7 +268,18 @@ router.post('/', async (req: Request, res: Response) => {
         .single();
 
       if (error || !data) {
-        errors.push({ row: i, code: 'insert_failed', message: error?.message ?? 'unknown' });
+        // Log full Postgres error server-side for debugging but never expose
+        // internal database identifiers (table names, constraint names, pg
+        // error codes) to API clients — SonarCloud security hotspot.
+        const pgCode = (error as { code?: string } | null)?.code;
+        logger.error(
+          { error, fingerprint: row.fingerprint, orgId, pgCode, batchRow: i },
+          'bulk-anchor: insert failed',
+        );
+        const clientMessage = pgCode === '23505'
+          ? 'A conflicting anchor record already exists.'
+          : 'Failed to create anchor record.';
+        errors.push({ row: i, code: 'insert_failed', message: clientMessage });
         continue;
       }
 
@@ -293,10 +304,12 @@ router.post('/', async (req: Request, res: Response) => {
         metadata: (data.metadata as Record<string, unknown> | null | undefined) ?? metadata,
       });
     } catch (err) {
+      // Log full error server-side; never leak internal details to API clients.
+      logger.error({ err, fingerprint: row.fingerprint, orgId, batchRow: i }, 'bulk-anchor: unexpected insert error');
       errors.push({
         row: i,
         code: 'unexpected_error',
-        message: err instanceof Error ? err.message : 'unknown',
+        message: 'An unexpected error occurred. Contact support if this persists.',
       });
     }
   }
