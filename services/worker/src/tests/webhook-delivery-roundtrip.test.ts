@@ -173,6 +173,7 @@ function setupFailedDelivery(status = 500) {
 describe('Webhook Delivery Round-Trip (SCRUM-1729)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.stubGlobal('fetch', mockFetch);
     resetCircuitBreakers();
   });
 
