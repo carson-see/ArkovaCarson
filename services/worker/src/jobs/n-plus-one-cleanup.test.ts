@@ -34,23 +34,31 @@ vi.mock('../utils/db.js', () => ({
 }));
 
 // Helper: create chainable supabase mock.
-// `then` is defined as non-enumerable so static analysers do not flag the
-// object as an unintentional thenable while still allowing `await chain`.
+// Uses a Proxy to delegate `then`/`catch`/`finally` to a real Promise so the
+// object is awaitable without directly adding `then` to a plain object
+// (which triggers SonarCloud S7739).
 function makeChainable(result: { data?: unknown; error?: unknown }) {
   const promise = Promise.resolve(result);
-  const chainable: Record<string, unknown> = {};
-  // Non-enumerable `then` delegates to a real Promise so the object is a
-  // proper PromiseLike without triggering S6836 / thenable-detection rules.
-  Object.defineProperty(chainable, 'then', {
-    enumerable: false,
-    configurable: true,
-    value: promise.then.bind(promise),
+  const methods: Record<string, unknown> = {};
+  const chainMethodNames = ['select', 'eq', 'is', 'lt', 'lte', 'gte', 'not', 'in', 'limit', 'update', 'insert', 'single', 'maybeSingle', 'order'];
+
+  const proxy: Record<string, unknown> = new Proxy(methods, {
+    get(target, prop) {
+      // Delegate Promise protocol to the backing promise
+      if (prop === 'then') return promise.then.bind(promise);
+      if (prop === 'catch') return promise.catch.bind(promise);
+      if (prop === 'finally') return promise.finally.bind(promise);
+      // Return chain methods from target
+      if (prop in target) return target[prop as string];
+      return undefined;
+    },
   });
-  const methods = ['select', 'eq', 'is', 'lt', 'lte', 'gte', 'not', 'in', 'limit', 'update', 'insert', 'single', 'maybeSingle', 'order'];
-  for (const m of methods) {
-    chainable[m] = vi.fn(() => chainable);
+
+  for (const m of chainMethodNames) {
+    methods[m] = vi.fn(() => proxy);
   }
-  return chainable as Record<string, unknown>;
+
+  return proxy;
 }
 
 describe('SCRUM-1296: cloud-logging-drain bumpRetryCounts', () => {
