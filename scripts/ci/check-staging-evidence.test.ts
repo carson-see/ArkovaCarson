@@ -116,6 +116,21 @@ describe('check-staging-evidence', () => {
         requiredTierFor(['services/worker/src/api/v1/anchor.ts']).tier,
       ).toBe('T2');
     });
+
+    it('excludes staging-tooling files from tier calculation', () => {
+      expect(
+        requiredTierFor(['services/worker/src/webhooks/agents.md']).tier,
+      ).toBe('T1');
+      expect(
+        requiredTierFor(['services/worker/src/billing/agents.md']).tier,
+      ).toBe('T1');
+      expect(
+        requiredTierFor([
+          'services/worker/src/tests/webhook-delivery-roundtrip.test.ts',
+          'services/worker/src/webhooks/agents.md',
+        ]).tier,
+      ).toBe('T1');
+    });
   });
 
   describe('extractDeclaredTier', () => {
