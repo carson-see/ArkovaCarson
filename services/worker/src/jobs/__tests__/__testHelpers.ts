@@ -11,6 +11,17 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { vi } from 'vitest';
 
 /**
+ * Minimal interface covering only the methods our job code calls on a
+ * SupabaseClient.  Using this instead of a bare object literal lets
+ * TypeScript catch shape mismatches between the mock and real call-sites
+ * while keeping the cast surface small and explicit.
+ */
+interface MockSupabaseClient {
+  rpc: ReturnType<typeof vi.fn>;
+  from: ReturnType<typeof vi.fn>;
+}
+
+/**
  * Chain method names supported by the mock builder. Each method either
  * continues the chain (returns `this`) or terminates it (resolves a promise).
  */
@@ -139,19 +150,24 @@ export function buildSelectChain(opts: {
     }
   }
 
-  // `.in()` — sometimes terminal (resolves), sometimes chainable. We make it
-  // resolve AND return the chain so both patterns work.
+  // ── Dual-nature (Promise + chainable) methods ──────────────────────
+  // Some PostgREST chain methods can appear as either a terminal (awaited for
+  // their result) or mid-chain (followed by `.limit()`, `.order()`, etc.).
+  // `Object.assign(Promise.resolve(result), chain)` produces a real Promise
+  // whose `.then` resolves via the microtask queue, but which also exposes
+  // every chain method so callers can continue building the query.  This lets
+  // tests do both:
+  //   `await supabase.from("t").select().in("id", ids)`          (terminal)
+  //   `await supabase.from("t").select().in("id", ids).limit(5)` (mid-chain)
+
   chain.in = vi.fn(() => Object.assign(Promise.resolve(inResult), chain));
 
-  // Terminal `.limit()` — resolves the list payload but remains chainable
   const mockLimit = vi.fn(() => Object.assign(Promise.resolve(selectResult), chain));
   chain.limit = mockLimit;
 
-  // Terminal `.order()` — resolves list payload, also chainable to `.limit()`
   const mockOrder = vi.fn(() => Object.assign(Promise.resolve(selectResult), chain));
   chain.order = mockOrder;
 
-  // Terminal `.range()` — resolves range payload
   const mockRange = vi.fn(() => Object.assign(Promise.resolve(rangeResult), chain));
   chain.range = mockRange;
 
@@ -206,9 +222,12 @@ export function createMockSupabase(opts: CreateMockSupabaseOptions = {}): MockSu
 
   const from = opts.fromImpl ?? vi.fn(() => fromReturn);
 
-  const mock = { rpc, from };
+  const mock: MockSupabaseClient = { rpc, from };
 
   return {
+    // MockSupabaseClient is structurally compatible with the subset of
+    // SupabaseClient that job code uses.  The single narrowing cast here
+    // replaces ~35 scattered `as unknown as SupabaseClient` across tests.
     client: mock as unknown as SupabaseClient,
     rpc,
     from,
