@@ -27,5 +27,8 @@ CI gate scripts. Each one fails the build with a structured exit code + actionab
 - Tests colocate as `<name>.test.ts` and run in the main worker vitest config.
 - Fail messages must tell the operator (a) what failed, (b) why it matters, (c) how to fix or override.
 
+## Recent Changes
+- 2026-05-26 PR #884: added `services/edge/package.json` to staging-tooling allowlist (edge-only, not worker).
+
 ## Open work
 - PR #733 (`destroy-staging-soak-skip`) — still in flight; awaits merge.
