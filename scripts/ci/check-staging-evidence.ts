@@ -444,6 +444,7 @@ const STAGING_TOOLING_ALLOW = [
   /^\.github\/workflows\/deploy-staging\.yml$/,
   /^CLAUDE\.md$/,
   /^HANDOFF\.md$/,
+  /^\.mergify\.yml$/,
   /^\.gitignore$/,
   /^\.claude\/settings\.json$/,
   /^\.claude\/hooks\//,
