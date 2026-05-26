@@ -57,7 +57,7 @@ export async function detectVersionConflict(
     .from('anchors')
     .select('id, fingerprint')
     .eq('org_id', orgId)
-    .eq('external_file_id', externalFileId)
+    .eq('metadata->>external_file_id', externalFileId)
     .eq('status', 'SECURED')
     .order('created_at', { ascending: false })
     .limit(1)
