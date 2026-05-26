@@ -6,22 +6,35 @@
  */
 
 /**
- * Read file as ArrayBuffer using FileReader (more reliable than file.arrayBuffer()
- * for files selected via native file picker).
+ * Read file as ArrayBuffer.
+ * Primary: file.arrayBuffer() (modern Promise API — works reliably for all file
+ * types including .docx picked via native file dialog).
+ * Fallback: FileReader (for legacy browsers that lack Blob.arrayBuffer()).
+ *
+ * BUG-2026-05-22-007: FileReader.readAsArrayBuffer() hangs on .docx files in some
+ * browsers — the onload/onerror callbacks never fire, causing the 30-second
+ * timeout to hit even on a 14 KB file. file.arrayBuffer() does not have this issue.
  */
 function readAsArrayBuffer(file: File): Promise<ArrayBuffer> {
+  // Modern path (Chrome 76+, Firefox 69+, Safari 14.1+)
+  if (typeof file.arrayBuffer === 'function') {
+    return file.arrayBuffer();
+  }
+
+  // Legacy fallback — FileReader
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(reader.result as ArrayBuffer);
     reader.onerror = () => reject(new Error(`FileReader error: ${reader.error?.message ?? 'unknown'}`));
+    reader.onabort = () => reject(new Error('FileReader aborted'));
     reader.readAsArrayBuffer(file);
   });
 }
 
 /**
  * Generate SHA-256 fingerprint for a file
- * Uses FileReader + Web Crypto API (crypto.subtle.digest).
- * 30-second timeout for very large files.
+ * Uses file.arrayBuffer() + Web Crypto API (crypto.subtle.digest).
+ * 30-second timeout as safety net for very large files.
  *
  * @param file - The file to hash
  * @returns Promise<string> - Hex-encoded SHA-256 hash

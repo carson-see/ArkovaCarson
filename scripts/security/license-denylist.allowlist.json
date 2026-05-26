@@ -44,6 +44,11 @@
       "name": "wasmcurves",
       "version": "0.2.2",
       "reason": "Legacy transitive snarkjs stack. Keep allowlisted until zk dependency replacement is scheduled; do not add new GPL packages."
+    },
+    {
+      "name": "jszip",
+      "version": "3.10.1",
+      "reason": "Dual-licensed (MIT OR GPL-3.0-or-later); used under MIT. Transitive dependency of mammoth.js for .docx extraction."
     }
   ]
 }

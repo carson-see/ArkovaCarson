@@ -8,10 +8,18 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { act, render, screen } from '@testing-library/react';
+import { toast } from 'sonner';
 import { SecureDocumentDialog } from './SecureDocumentDialog';
-import { SECURE_DIALOG_LABELS } from '@/lib/copy';
+import {
+  SECURE_DIALOG_LABELS,
+  AI_EXTRACTION_LABELS,
+  EXTRACTION_RECOVERY_LABELS,
+} from '@/lib/copy';
 import { detectFraudForDocument } from '@/lib/fraudDetection';
 import { supabase } from '@/lib/supabase';
+import { isAIExtractionEnabled } from '@/lib/switchboard';
+import { runExtraction, fetchTemplateReconstruction } from '@/lib/aiExtraction';
+import { applyTemplate } from '@/lib/templateMapper';
 
 type FileUploadMockProps = {
   onFileSelect?: (file: File, fingerprint: string) => void;
@@ -233,5 +241,120 @@ describe('SCRUM-949 SecureDocumentDialog — Continue disabled when no file', ()
       fraud_processing_time_ms: 3,
     });
     expect(JSON.stringify(payload)).not.toContain('raw-document-bytes-that-must-not-leak');
+  });
+});
+
+// BUG-2026-05-22-007 / SCRUM-1985 — pins the "AI extraction unavailable" toast
+// behavior. Pre-fix, the dialog mocked isAIExtractionEnabled=false and silently
+// dead-coded the toast branch. Post-fix, the toast still warns the user, but the
+// dialog must NOT silently anchor with zero metadata — it must surface the
+// extraction-failed recovery step (retry / enter manually / skip).
+describe('SecureDocumentDialog — extraction-failed recovery + toast behavior', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    lastFileUploadProps = null;
+    mockProfileOrgId.current = null;
+    vi.mocked(detectFraudForDocument).mockResolvedValue(null);
+    vi.mocked(supabase.auth.getSession).mockResolvedValue({
+      data: { session: { access_token: 'token' } },
+      error: null,
+    } as Awaited<ReturnType<typeof supabase.auth.getSession>>);
+    vi.mocked(supabase.from).mockReturnValue({
+      insert: vi.fn(() => ({
+        select: vi.fn(() => ({
+          single: vi.fn(async () => ({
+            data: { id: 'anchor-id', public_id: 'public-id' },
+            error: null,
+          })),
+        })),
+      })),
+      select: createTemplateSelectMock(),
+    } as unknown as ReturnType<typeof supabase.from>);
+    vi.mocked(applyTemplate).mockResolvedValue({
+      mappedFields: [],
+      unmappedFields: [],
+    } as unknown as Awaited<ReturnType<typeof applyTemplate>>);
+    // Non-blocking enrichment fire-and-forget — must return a Promise so
+    // the `.then().catch()` chain doesn't throw on undefined.
+    vi.mocked(fetchTemplateReconstruction).mockResolvedValue(null);
+  });
+
+  function fileSelectAndContinue(): Promise<void> {
+    const file = new File(['x'], 'd.pdf', { type: 'application/pdf' });
+    act(() => {
+      lastFileUploadProps?.onFileSelect?.(file, 'a'.repeat(64));
+    });
+    return act(async () => {
+      screen.getByTestId('secure-document-continue').click();
+    });
+  }
+
+  // The dialog reads isAIExtractionEnabled() in a useEffect, so aiEnabled
+  // starts false and flips true only after the Promise resolves. Drain
+  // microtasks before exercising the file-select + Continue flow so the
+  // tests don't race against the initial render's effect.
+  async function flushAiEnabledState(): Promise<void> {
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+  }
+
+  it('does NOT warn when AI extraction returns a valid result', async () => {
+    vi.mocked(isAIExtractionEnabled).mockResolvedValue(true);
+    vi.mocked(runExtraction).mockResolvedValueOnce({
+      fields: [
+        { key: 'credentialType', value: 'DEGREE', confidence: 0.9, status: 'suggested' },
+      ],
+      overallConfidence: 0.9,
+      provider: 'gemini',
+      creditsRemaining: 49,
+      ocrResult: { text: 'x', pageCount: 1, method: 'pdfjs', durationMs: 1 },
+      strippingReport: {
+        strippedText: 'x',
+        piiFound: [],
+        redactionCount: 0,
+        originalLength: 1,
+        strippedLength: 1,
+      },
+    } as unknown as Awaited<ReturnType<typeof runExtraction>>);
+
+    render(<SecureDocumentDialog open={true} onOpenChange={() => {}} />);
+    await flushAiEnabledState();
+    await fileSelectAndContinue();
+
+    expect(toast.warning).not.toHaveBeenCalled();
+  });
+
+  it('warns with EXTRACTION_FAILED_TOAST and renders the extraction-failed recovery step when runExtraction returns null', async () => {
+    vi.mocked(isAIExtractionEnabled).mockResolvedValue(true);
+    vi.mocked(runExtraction).mockResolvedValueOnce(null);
+
+    render(<SecureDocumentDialog open={true} onOpenChange={() => {}} />);
+    await flushAiEnabledState();
+    await fileSelectAndContinue();
+
+    expect(toast.warning).toHaveBeenCalledWith(
+      AI_EXTRACTION_LABELS.EXTRACTION_FAILED_TOAST,
+    );
+    expect(screen.getByText(EXTRACTION_RECOVERY_LABELS.TITLE)).toBeInTheDocument();
+    expect(screen.getByText(EXTRACTION_RECOVERY_LABELS.RETRY)).toBeInTheDocument();
+    expect(screen.getByText(EXTRACTION_RECOVERY_LABELS.ENTER_MANUALLY)).toBeInTheDocument();
+  });
+
+  it('does NOT silently insert an anchor when AI extraction fails — user must choose recovery action', async () => {
+    const insert = vi.fn();
+    vi.mocked(supabase.from).mockReturnValue({
+      insert,
+      select: createTemplateSelectMock(),
+    } as unknown as ReturnType<typeof supabase.from>);
+    vi.mocked(isAIExtractionEnabled).mockResolvedValue(true);
+    vi.mocked(runExtraction).mockResolvedValueOnce(null);
+
+    render(<SecureDocumentDialog open={true} onOpenChange={() => {}} />);
+    await flushAiEnabledState();
+    await fileSelectAndContinue();
+
+    expect(insert).not.toHaveBeenCalled();
   });
 });

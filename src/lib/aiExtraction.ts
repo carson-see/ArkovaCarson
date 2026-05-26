@@ -16,7 +16,7 @@ import { stripPIIEnhanced, type EnhancedStrippingReport } from './enhancedPiiStr
 import { supabase } from './supabase';
 import { WORKER_URL } from './workerClient';
 
-export const AI_EXTRACTION_REQUEST_TIMEOUT_MS = 5_500;
+export const AI_EXTRACTION_REQUEST_TIMEOUT_MS = 15_000;
 
 export interface ExtractionField {
   key: string;

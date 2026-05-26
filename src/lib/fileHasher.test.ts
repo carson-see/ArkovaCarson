@@ -47,6 +47,8 @@ describe('generateFingerprint', () => {
     // Covers the `reader.onerror` branch in readAsArrayBuffer — previously
     // uncovered, which left branch coverage at 66.66% and failed the 80%
     // CI threshold.
+    // BUG-2026-05-22-007: readAsArrayBuffer now prefers file.arrayBuffer();
+    // remove it so the FileReader fallback path is exercised.
     const OriginalFileReader = globalThis.FileReader;
     class ErroringFileReader extends OriginalFileReader {
       readAsArrayBuffer(_blob: Blob) {
@@ -65,6 +67,8 @@ describe('generateFingerprint', () => {
 
     try {
       const file = new File(['x'], 'x.bin');
+      // Remove arrayBuffer so the legacy FileReader fallback is used
+      Object.defineProperty(file, 'arrayBuffer', { value: undefined });
       await expect(generateFingerprint(file)).rejects.toThrow(/FileReader error: simulated read error/);
     } finally {
       globalThis.FileReader = OriginalFileReader;
@@ -74,23 +78,19 @@ describe('generateFingerprint', () => {
   it('rejects with timeout message when hashing exceeds 30s', async () => {
     // Covers the timeout race branch in generateFingerprint. Uses fake
     // timers so the test completes instantly.
+    // BUG-2026-05-22-007: readAsArrayBuffer now prefers file.arrayBuffer();
+    // mock it to never resolve so the timeout wins the race.
     vi.useFakeTimers();
-    const OriginalFileReader = globalThis.FileReader;
-    // Stub FileReader to never resolve so the timeout wins.
-    class StallingFileReader extends OriginalFileReader {
-      readAsArrayBuffer(_blob: Blob) {
-        // never call onload / onerror
-      }
-    }
-    globalThis.FileReader = StallingFileReader as unknown as typeof FileReader;
 
     try {
       const file = new File(['x'], 'x.bin');
+      Object.defineProperty(file, 'arrayBuffer', {
+        value: () => new Promise<ArrayBuffer>(() => { /* never resolves */ }),
+      });
       const assertion = expect(generateFingerprint(file)).rejects.toThrow(/timed out/i);
       await vi.advanceTimersByTimeAsync(30_001);
       await assertion;
     } finally {
-      globalThis.FileReader = OriginalFileReader;
       vi.useRealTimers();
     }
   });

@@ -116,6 +116,44 @@ describe('check-staging-evidence', () => {
         requiredTierFor(['services/worker/src/api/v1/anchor.ts']).tier,
       ).toBe('T2');
     });
+
+    it('excludes staging-tooling files from tier calculation', () => {
+      expect(
+        requiredTierFor(['services/worker/src/webhooks/agents.md']).tier,
+      ).toBe('T1');
+      expect(
+        requiredTierFor(['services/worker/src/billing/agents.md']).tier,
+      ).toBe('T1');
+      expect(
+        requiredTierFor([
+          'services/worker/src/tests/webhook-delivery-roundtrip.test.ts',
+          'services/worker/src/webhooks/agents.md',
+        ]).tier,
+      ).toBe('T1');
+    });
+
+    it('excludes test/spec files from tier calculation', () => {
+      expect(
+        requiredTierFor(['services/worker/src/api/queue-resolution.test.ts']).tier,
+      ).toBe('T1');
+      expect(
+        requiredTierFor(['services/worker/src/api/v1/credentials-ctdl.test.ts']).tier,
+      ).toBe('T1');
+      expect(
+        requiredTierFor(['services/worker/src/chain/broadcast.spec.ts']).tier,
+      ).toBe('T1');
+      // production file still triggers T2
+      expect(
+        requiredTierFor(['services/worker/src/api/queue-resolution.ts']).tier,
+      ).toBe('T2');
+      // mix of test + production uses production tier
+      expect(
+        requiredTierFor([
+          'services/worker/src/api/queue-resolution.test.ts',
+          'services/worker/src/api/queue-resolution.ts',
+        ]).tier,
+      ).toBe('T2');
+    });
   });
 
   describe('extractDeclaredTier', () => {

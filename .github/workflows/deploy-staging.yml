@@ -81,15 +81,11 @@ jobs:
       - name: Set up Cloud SDK
         uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f # v2
 
-      - name: Login to Artifact Registry
-        run: gcloud auth print-access-token | docker login -u oauth2accesstoken --password-stdin ${{ env.REGISTRY }}
-
       - name: Resolve build SHA
         id: sha
         run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
-      - name: Build Docker image
-        working-directory: services/worker
+      - name: Build & push image (Cloud Build)
         env:
           INPUT_PR_NUMBER: ${{ inputs.pr_number }}
           BUILD_SHA: ${{ steps.sha.outputs.sha }}
@@ -98,13 +94,14 @@ jobs:
           IMAGE_REF="${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/arkova-worker:${IMAGE_TAG}"
           echo "IMAGE_TAG=${IMAGE_TAG}" >> "$GITHUB_ENV"
           echo "IMAGE_REF=${IMAGE_REF}" >> "$GITHUB_ENV"
-          docker build \
-            --build-arg "BUILD_SHA=${BUILD_SHA}" \
-            --tag "${IMAGE_REF}" \
-            .
+          gcloud builds submit services/worker \
+            --config services/worker/cloudbuild.yaml \
+            --substitutions="_COMMIT_SHA=${BUILD_SHA},_IMAGE_TAG=${IMAGE_TAG},_REGISTRY=${{ env.REGISTRY }},_REPOSITORY=${{ env.REPOSITORY }},_SERVICE_NAME=arkova-worker" \
+            --project ${{ env.PROJECT_ID }} \
+            --quiet
 
-      - name: Push Docker image
-        run: docker push "${IMAGE_REF}"
+      - name: Use deploy script from main
+        run: git fetch origin main && git checkout origin/main -- scripts/staging/deploy.sh
 
       - name: Fetch staging secrets
         id: secrets
