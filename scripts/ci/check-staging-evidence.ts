@@ -456,6 +456,7 @@ const STAGING_TOOLING_ALLOW = [
   /^package\.json$/,
   /^package-lock\.json$/,
   /^packages\/[^/]+\/package-lock\.json$/,
+  /^services\/edge\/package\.json$/,
   /^services\/[^/]+\/package-lock\.json$/,
   /agents\.md$/,
   /^eslint-rules\//,

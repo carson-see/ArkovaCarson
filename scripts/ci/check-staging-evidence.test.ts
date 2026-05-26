@@ -490,6 +490,18 @@ describe('check-staging-evidence', () => {
       ).toBe(true);
     });
 
+    it('passes for services/edge/package.json (Cloudflare edge worker, not Cloud Run)', () => {
+      expect(
+        isStagingToolingOnly(['services/edge/package.json']).pass,
+      ).toBe(true);
+    });
+
+    it('fails for services/worker/package.json (prod dependency bump requires soak)', () => {
+      expect(
+        isStagingToolingOnly(['services/worker/package.json']).pass,
+      ).toBe(false);
+    });
+
     it('fails when any file is outside the allowlist', () => {
       expect(
         isStagingToolingOnly([
