@@ -119,18 +119,18 @@ export async function fetchAnchorStats(): Promise<AnchorStats> {
         .select('cache_value')
         .eq('cache_key', 'anchor_status_counts')
         .single(),
-      withTimeout(db.from('anchors')
+      withTimeout(Promise.resolve(db.from('anchors')
         .select('chain_timestamp')
         .eq('status', 'SECURED')
         .is('deleted_at', null)
         .order('chain_timestamp', { ascending: false })
-        .limit(1)),
-      withTimeout(db.from('anchors')
+        .limit(1))),
+      withTimeout(Promise.resolve(db.from('anchors')
         .select('id', { head: false })
         .is('deleted_at', null)
         .gte('created_at', new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())
         .order('created_at', { ascending: false })
-        .limit(1000)),
+        .limit(1000))),
       db.rpc('get_anchor_tx_stats'),
     ]);
 
