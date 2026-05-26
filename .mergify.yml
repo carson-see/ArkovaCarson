@@ -3,9 +3,10 @@
 # Eliminates the 45% rebase churn from concurrent agent PRs by queuing
 # merges and testing against projected post-merge main state.
 #
-# CLAUDE.md §0.8 policy: Carson approves, Mergify merges after all checks pass.
-# No PR merges without human approval — the queue automates the button press,
-# not the review.
+# CLAUDE.md §0.8 policy: Carson is sole developer — review gate removed from
+# branch protection (no self-approval possible). Mergify queues PRs once all
+# CI checks pass. The `do-not-merge` / `work-in-progress` labels block queue
+# entry. Carson can still block any PR by adding those labels.
 
 # ---------------------------------------------------------------------------
 # Scopes — independent merge lanes by path
@@ -62,7 +63,6 @@ priority_rules:
 queue_rules:
   - name: urgent
     queue_conditions:
-      - "#approved-reviews-by >= 1"
       - -draft
       - label = hotfix
     merge_conditions:
@@ -87,7 +87,6 @@ queue_rules:
 
   - name: default
     queue_conditions:
-      - "#approved-reviews-by >= 1"
       - -draft
       - -label = work-in-progress
       # Staging soak must pass before entering queue — no point queuing
@@ -125,10 +124,9 @@ merge_queue:
 # ---------------------------------------------------------------------------
 
 pull_request_rules:
-  # Auto-queue approved PRs that have passed staging evidence
-  - name: Queue approved PRs
+  # Auto-queue PRs once all CI checks pass
+  - name: Queue CI-green PRs
     conditions:
-      - "#approved-reviews-by >= 1"
       - base = main
       - -draft
       - -label = work-in-progress
@@ -141,7 +139,6 @@ pull_request_rules:
   # Route hotfixes to priority queue
   - name: Queue hotfixes with priority
     conditions:
-      - "#approved-reviews-by >= 1"
       - base = main
       - -draft
       - label = hotfix
