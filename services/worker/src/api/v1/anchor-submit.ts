@@ -197,8 +197,21 @@ async function handleAnchorSubmit(req: Request, res: Response) {
       .single();
 
     if (insertError) {
-      logger.error({ error: insertError, fingerprint }, 'Failed to create anchor');
-      res.status(500).json({ error: 'Failed to create anchor record' });
+      logger.error({ error: insertError, fingerprint, orgId }, 'Failed to create anchor');
+      const pgCode = (insertError as { code?: string }).code;
+      if (pgCode === '23505') {
+        res.status(409).json({
+          error: 'anchor_creation_conflict',
+          message: 'A conflicting anchor record already exists. Retry the request.',
+          db_code: pgCode,
+        });
+        return;
+      }
+      res.status(500).json({
+        error: 'anchor_creation_failed',
+        message: 'Failed to create anchor record. Contact support if this persists.',
+        db_code: pgCode ?? null,
+      });
       return;
     }
 
