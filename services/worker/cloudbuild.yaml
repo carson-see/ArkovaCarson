@@ -1,0 +1,23 @@
+steps:
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '--build-arg'
+      - 'BUILD_SHA=$_COMMIT_SHA'
+      - '--tag'
+      - '$_REGISTRY/$PROJECT_ID/$_REPOSITORY/$_SERVICE_NAME:$_IMAGE_TAG'
+      - '--tag'
+      - '$_REGISTRY/$PROJECT_ID/$_REPOSITORY/$_SERVICE_NAME:latest'
+      - '.'
+images:
+  - '$_REGISTRY/$PROJECT_ID/$_REPOSITORY/$_SERVICE_NAME:$_IMAGE_TAG'
+  - '$_REGISTRY/$PROJECT_ID/$_REPOSITORY/$_SERVICE_NAME:latest'
+options:
+  logging: CLOUD_LOGGING_ONLY
+substitutions:
+  _REGISTRY: us-central1-docker.pkg.dev
+  _REPOSITORY: arkova-worker-images
+  _SERVICE_NAME: arkova-worker
+  _COMMIT_SHA: unknown
+  _IMAGE_TAG: unknown
+timeout: 600s
