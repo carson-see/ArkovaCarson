@@ -40,18 +40,32 @@ jobs:
       PR_BODY: ${{ github.event.pull_request.body }}
       PR_TITLE: ${{ github.event.pull_request.title }}
     steps:
+      # Mergify merge queue creates speculative draft PRs (branch mq-main-*)
+      # whose body doesn't carry the original PR's staging evidence section.
+      # The original PR already passed this gate before entering the queue,
+      # so re-checking the speculative merge is redundant and always fails.
+      - name: Skip for Mergify merge queue
+        if: startsWith(github.head_ref, 'mq-main-')
+        run: |
+          echo "Mergify merge queue speculative check — skipping staging evidence gate."
+          echo "The original PR passed this gate before entering the queue."
+
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        if: "!startsWith(github.head_ref, 'mq-main-')"
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
 
       - name: Setup Node.js
+        if: "!startsWith(github.head_ref, 'mq-main-')"
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: '20'
 
       - name: Install root dependencies (typescript + tsx + supabase-js)
+        if: "!startsWith(github.head_ref, 'mq-main-')"
         run: npm ci --ignore-scripts --no-audit --no-fund --prefer-offline
 
       - name: Run staging-evidence check
+        if: "!startsWith(github.head_ref, 'mq-main-')"
         run: npx tsx scripts/ci/check-staging-evidence.ts
