@@ -27,7 +27,7 @@ interface ConflictGroup {
 function groupByExternalFile(items: VersionConflictItem[]): ConflictGroup[] {
   const byKey = new Map<string, VersionConflictItem[]>();
   for (const item of items) {
-    const key = item.external_file_id ?? `__noid:${item.public_id}`;
+    const key = item.external_file_id ?? `__noid:${item.id}`;
     const arr = byKey.get(key) ?? [];
     arr.push(item);
     byKey.set(key, arr);
@@ -96,7 +96,7 @@ function ConflictCard({
   resolving,
 }: {
   group: ConflictGroup;
-  onResolve: (externalFileId: string, selectedPublicId: string) => void;
+  onResolve: (versionId: string) => void;
   resolving: boolean;
 }) {
   const filename = group.oldest.filename ?? 'Unnamed document';
@@ -119,7 +119,7 @@ function ConflictCard({
         <div className="space-y-3">
           {group.rows.map((item) => (
             <div
-              key={item.public_id}
+              key={item.id}
               className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-3 rounded-md border bg-muted/30"
             >
               <div className="min-w-0">
@@ -135,7 +135,7 @@ function ConflictCard({
                   size="sm"
                   variant="default"
                   disabled={resolving}
-                  onClick={() => onResolve(group.external_file_id, item.public_id)}
+                  onClick={() => onResolve(item.id)}
                 >
                   {resolving ? (
                     <Loader2 className="h-3 w-3 animate-spin mr-1" />
@@ -163,7 +163,6 @@ function VersionConflictsInner() {
   useEffect(() => {
     fetchPending().catch((err: unknown) => {
       // Error is surfaced via the `error` state from useVersionResolution
-      // eslint-disable-next-line no-console
       console.error('fetchPending failed:', err);
     });
   }, [fetchPending]);
@@ -171,9 +170,9 @@ function VersionConflictsInner() {
   const groups = useMemo(() => groupByExternalFile(items), [items]);
 
   const handleResolve = useCallback(
-    async (externalFileId: string, selectedPublicId: string) => {
+    async (versionId: string) => {
       setResolving(true);
-      await resolve(externalFileId, selectedPublicId);
+      await resolve(versionId, 'approve');
       setResolving(false);
     },
     [resolve],

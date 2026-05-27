@@ -21,20 +21,49 @@ global.fetch = mockFetch;
 
 const mockItems = [
   {
-    public_id: 'pub-1',
+    id: '11111111-1111-4111-8111-111111111111',
+    external_file_id: 'ext-file-1',
+    source: 'google_drive',
+    fingerprint: 'abc123',
+    version_number: 1,
+    status: 'pending_review',
+    metadata: { filename: 'contract.pdf' },
+    detected_at: '2026-05-15T10:00:00Z',
+  },
+  {
+    id: '22222222-2222-4222-8222-222222222222',
+    external_file_id: 'ext-file-1',
+    source: 'google_drive',
+    fingerprint: 'def456',
+    version_number: 2,
+    status: 'pending_review',
+    metadata: { filename: 'contract.pdf' },
+    detected_at: '2026-05-15T11:00:00Z',
+  },
+];
+
+const mappedItems = [
+  {
+    id: '11111111-1111-4111-8111-111111111111',
     external_file_id: 'ext-file-1',
     filename: 'contract.pdf',
     fingerprint: 'abc123',
     created_at: '2026-05-15T10:00:00Z',
-    sibling_count: 3,
+    sibling_count: 0,
+    source: 'google_drive',
+    status: 'pending_review',
+    version_number: 1,
   },
   {
-    public_id: 'pub-2',
+    id: '22222222-2222-4222-8222-222222222222',
     external_file_id: 'ext-file-1',
     filename: 'contract.pdf',
     fingerprint: 'def456',
     created_at: '2026-05-15T11:00:00Z',
-    sibling_count: 3,
+    sibling_count: 0,
+    source: 'google_drive',
+    status: 'pending_review',
+    version_number: 2,
   },
 ];
 
@@ -53,7 +82,7 @@ describe('useVersionResolution', () => {
   it('fetches pending conflicts successfully', async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
-      json: async () => ({ items: mockItems }),
+      json: async () => ({ versions: mockItems }),
     });
 
     const { result } = renderHook(() => useVersionResolution());
@@ -62,7 +91,7 @@ describe('useVersionResolution', () => {
       await result.current.fetchPending();
     });
 
-    expect(result.current.items).toEqual(mockItems);
+    expect(result.current.items).toEqual(mappedItems);
     expect(result.current.loading).toBe(false);
     expect(result.current.error).toBeNull();
   });
@@ -88,7 +117,7 @@ describe('useVersionResolution', () => {
     // First fetch items
     mockFetch.mockResolvedValueOnce({
       ok: true,
-      json: async () => ({ items: mockItems }),
+      json: async () => ({ versions: mockItems }),
     });
 
     const { result } = renderHook(() => useVersionResolution());
@@ -107,11 +136,16 @@ describe('useVersionResolution', () => {
 
     let success: boolean | undefined;
     await act(async () => {
-      success = await result.current.resolve('ext-file-1', 'pub-1', 'Canonical version');
+      success = await result.current.resolve(
+        '11111111-1111-4111-8111-111111111111',
+        'approve',
+        'Canonical version',
+      );
     });
 
     expect(success).toBe(true);
-    expect(result.current.items).toHaveLength(0);
+    expect(result.current.items).toHaveLength(1);
+    expect(result.current.items[0].id).toBe('22222222-2222-4222-8222-222222222222');
   });
 
   it('handles resolve error', async () => {
@@ -125,7 +159,7 @@ describe('useVersionResolution', () => {
 
     let success: boolean | undefined;
     await act(async () => {
-      success = await result.current.resolve('ext-file-1', 'pub-1');
+      success = await result.current.resolve('11111111-1111-4111-8111-111111111111');
     });
 
     expect(success).toBe(false);
