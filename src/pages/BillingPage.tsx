@@ -5,16 +5,19 @@
  * Resolves UX-3: BillingOverview exists but had no dedicated page.
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
 import { AppShell } from '@/components/layout';
 import { BillingOverview, type BillingInfo } from '@/components/billing/BillingOverview';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent } from '@/components/ui/card';
 import { BILLING_PAGE_LABELS } from '@/lib/copy';
 import { ROUTES } from '@/lib/routes';
 import { WORKER_URL } from '@/lib/workerClient';
 import { supabase } from '@/lib/supabase';
+import { resolveSafeWorkerEndpoint } from '@/lib/workerUrlSafety';
 
 export function BillingPage() {
   const navigate = useNavigate();
@@ -22,62 +25,49 @@ export function BillingPage() {
   const { profile, loading: profileLoading } = useProfile();
   const [billingInfo, setBillingInfo] = useState<BillingInfo | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const latestRequestIdRef = useRef(0);
 
   const fetchBillingInfo = useCallback(async () => {
-    /** Count user's anchors from Supabase as a reliable fallback */
-    const countAnchorsFromDb = async (): Promise<number> => {
-      try {
-        const { count } = await supabase
-          .from('anchors')
-          .select('id', { count: 'exact', head: true })
-          .in('status', ['SECURED', 'SUBMITTED', 'PENDING', 'BROADCASTING']);
-        return count ?? 0;
-      } catch {
-        return 0;
-      }
-    };
+    const requestId = latestRequestIdRef.current + 1;
+    latestRequestIdRef.current = requestId;
+    const isLatestRequest = () => latestRequestIdRef.current === requestId;
 
+    setLoading(true);
+    setLoadError(null);
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
     try {
+      const billingStatusEndpoint = resolveSafeWorkerEndpoint(WORKER_URL, '/api/billing/status');
       const { data: { session } } = await supabase.auth.getSession();
-      if (!session) return;
+      if (!session) {
+        throw new Error('missing_session');
+      }
 
-      const workerUrl = WORKER_URL;
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 8000);
-      const response = await fetch(`${workerUrl}/api/billing/status`, {
+      timeoutId = setTimeout(() => controller.abort(), 5000);
+      const response = await fetch(billingStatusEndpoint.toString(), {
         headers: { Authorization: `Bearer ${session.access_token}` },
         signal: controller.signal,
       });
-      clearTimeout(timeoutId);
 
-      if (response.ok) {
-        const data = await response.json();
-        // SCRUM-353: Beta override — force unlimited quota display
-        if (data?.usage) {
-          data.usage.recordsLimit = null;
-        }
+      if (!response.ok) {
+        throw new Error(`billing_status_${response.status}`);
+      }
+
+      const data = await response.json() as BillingInfo;
+      if (isLatestRequest()) {
         setBillingInfo(data);
-      } else {
-        // Fallback: count from Supabase so metrics stay consistent with Dashboard
-        const recordsUsed = await countAnchorsFromDb();
-        setBillingInfo({
-          plan: { name: 'Beta', recordsIncluded: 'unlimited' },
-          usage: { recordsUsed, recordsLimit: null },
-          billing: { status: 'active' },
-          status: 'active',
-        });
       }
     } catch {
-      // Fallback for beta — count from Supabase
-      const recordsUsed = await countAnchorsFromDb();
-      setBillingInfo({
-        plan: { name: 'Beta', recordsIncluded: 'unlimited' },
-        usage: { recordsUsed, recordsLimit: null },
-        billing: { status: 'active' },
-        status: 'active',
-      });
+      if (isLatestRequest()) {
+        setBillingInfo(null);
+        setLoadError(BILLING_PAGE_LABELS.DATA_UNAVAILABLE_TITLE);
+      }
     } finally {
-      setLoading(false);
+      if (timeoutId) clearTimeout(timeoutId);
+      if (isLatestRequest()) {
+        setLoading(false);
+      }
     }
   }, []);
 
@@ -111,12 +101,26 @@ export function BillingPage() {
         </p>
       </div>
 
-      <BillingOverview
-        billingInfo={billingInfo}
-        loading={loading}
-        onManageBilling={handleManageBilling}
-        onUpgrade={handleUpgrade}
-      />
+      {loadError && !loading ? (
+        <Card>
+          <CardContent className="py-8 text-center">
+            <p className="text-sm font-medium">{loadError}</p>
+            <p className="mt-2 text-sm text-muted-foreground">
+              {BILLING_PAGE_LABELS.DATA_UNAVAILABLE_DESC}
+            </p>
+            <Button type="button" variant="outline" size="sm" className="mt-4" onClick={fetchBillingInfo}>
+              {BILLING_PAGE_LABELS.RETRY}
+            </Button>
+          </CardContent>
+        </Card>
+      ) : (
+        <BillingOverview
+          billingInfo={billingInfo}
+          loading={loading}
+          onManageBilling={handleManageBilling}
+          onUpgrade={handleUpgrade}
+        />
+      )}
     </AppShell>
   );
 }

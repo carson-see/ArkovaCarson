@@ -196,6 +196,39 @@ describe('GET /api/v2/search', () => {
     expect(res.body.next_cursor).toBeTruthy();
   });
 
+  it('SCRUM-1976 keeps record text search off unindexed fingerprint substring scans', async () => {
+    mockOrder.mockResolvedValueOnce({
+      data: [{ id: '1', public_id: 'pk_1', filename: 'Contract.pdf', credential_type: 'LEGAL', status: 'SECURED', fingerprint: 'fp1' }],
+      error: null,
+    });
+
+    const app = buildApp();
+    const res = await request(app).get('/search?q=Contract&type=record');
+
+    expect(res.status).toBe(200);
+    const orFilters = mockOr.mock.calls.map(([filter]) => String(filter));
+    expect(orFilters).toContain('filename.ilike.%Contract%,description.ilike.%Contract%');
+    expect(orFilters.some(filter => filter.includes('fingerprint.ilike'))).toBe(false);
+  });
+
+  it('SCRUM-1976 keeps record fingerprint lookup exact when q is a SHA-256 fingerprint', async () => {
+    const fingerprint = 'a'.repeat(64);
+    mockOrder.mockResolvedValueOnce({
+      data: [{ id: '1', public_id: 'pk_1', filename: 'Contract.pdf', credential_type: 'LEGAL', status: 'SECURED', fingerprint }],
+      error: null,
+    });
+
+    const app = buildApp();
+    const res = await request(app).get(`/search?q=${fingerprint}&type=record`);
+
+    expect(res.status).toBe(200);
+    const searchFilter = mockOr.mock.calls
+      .map(([filter]) => String(filter))
+      .find(filter => filter.includes('filename.ilike'));
+    expect(searchFilter).toContain(`fingerprint.eq.${fingerprint}`);
+    expect(searchFilter).not.toContain('fingerprint.ilike');
+  });
+
   it('returns null cursor when results < limit', async () => {
     mockOrder.mockResolvedValueOnce({
       data: [{ id: '1', public_id: 'pk_1', filename: 'Only One.pdf', credential_type: 'LICENSE', status: 'SECURED', fingerprint: 'fp1' }],
@@ -303,7 +336,22 @@ describe('GET /api/v2/search', () => {
     expect(mockIn).toHaveBeenCalledWith('status', ['SECURED', 'SUBMITTED', 'PENDING']);
     expect(mockIs).toHaveBeenCalledWith('deleted_at', null);
     expect(mockOr).toHaveBeenCalledWith('status.eq.SECURED,org_id.eq.org1');
-    expect(mockOr).toHaveBeenCalledWith(expect.stringContaining('metadata->>issuer.ilike'));
+    expect(mockOr).toHaveBeenCalledWith('filename.ilike.%Contract%,description.ilike.%Contract%');
+  });
+
+  it('SCRUM-1976 keeps document search on indexed filename and description text paths', async () => {
+    mockOrder.mockResolvedValueOnce({
+      data: [{ id: '2', public_id: 'pk_2', filename: 'Contract.pdf', credential_type: 'LEGAL', status: 'PENDING' }],
+      error: null,
+    });
+
+    const app = buildApp();
+    const res = await request(app).get('/search?q=Contract&type=document');
+
+    expect(res.status).toBe(200);
+    const orFilters = mockOr.mock.calls.map(([filter]) => String(filter));
+    expect(orFilters).toContain('filename.ilike.%Contract%,description.ilike.%Contract%');
+    expect(orFilters.some(filter => filter.includes('metadata->>'))).toBe(false);
   });
 
   it('keeps synthetic 10K-row p95 latency below 200ms', async () => {

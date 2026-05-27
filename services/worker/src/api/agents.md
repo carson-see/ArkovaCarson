@@ -1,6 +1,10 @@
 # agents.md — services/worker/src/api/
 
-_Last updated: 2026-05-19 (SCRUM-1599 badge endpoint)_
+_Last updated: 2026-05-23 (PR #859 anchor submit scope routing fixes)_
+
+## 2026-05-22 Anchor Write Scope Compatibility
+
+- `apiScopes.ts` treats `anchor:write` and `write:anchors` as equivalent write-capable anchor scopes. Keep this central in `scopeSatisfies()` instead of duplicating route-specific aliases.
 
 ## What This Folder Contains
 

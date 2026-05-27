@@ -132,6 +132,22 @@ describe('OpenAPI spec', () => {
     expect(createdScopes['x-arkova-canonical-scopes']).toEqual(API_KEY_SCOPES);
   });
 
+  it('documents required scopes for anchor submit and usage endpoints', () => {
+    expect(openApiSpec.paths['/anchor'].post['x-arkova-required-scopes']).toEqual([
+      'anchor:write',
+      'write:anchors',
+    ]);
+    expect(openApiSpec.paths['/anchor/submit'].post['x-arkova-alias-for']).toBe('/anchor');
+    expect(openApiSpec.paths['/usage'].get['x-arkova-required-scopes']).toEqual(['usage:read']);
+  });
+
+  it('/anchor/submit requestBody mirrors /anchor requestBody', () => {
+    const anchorBody = openApiSpec.paths['/anchor'].post.requestBody;
+    const submitBody = openApiSpec.paths['/anchor/submit'].post.requestBody;
+    expect(submitBody).toBeDefined();
+    expect(submitBody).toEqual(anchorBody);
+  });
+
   it('has all four tags', () => {
     const tagNames = openApiSpec.tags.map((t: { name: string }) => t.name);
     expect(tagNames).toContain('Verification');

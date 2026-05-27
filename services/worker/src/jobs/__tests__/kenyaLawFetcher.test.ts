@@ -3,32 +3,18 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { SupabaseClient } from '@supabase/supabase-js';
+import { createMockSupabase } from './__testHelpers.js';
 
 const mockRpc = vi.fn();
-const mockUpsert = vi.fn();
+const mockUpsert = vi.fn().mockResolvedValue({ error: null });
 const mockLogger = { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() };
 
 vi.mock('../../config.js', () => ({ config: { logLevel: 'info', nodeEnv: 'test' } }));
 vi.mock('../../utils/logger.js', () => ({ logger: mockLogger }));
 vi.mock('../../utils/db.js', () => ({ db: {} }));
 
-function createMockSupabase() {
-  return {
-    rpc: mockRpc,
-    from: vi.fn(() => ({
-      select: vi.fn(() => ({
-        eq: vi.fn(() => ({
-          // getExistingSourceIds calls .in(); jurisdiction-filter path uses .eq().limit().
-          in: vi.fn().mockResolvedValue({ data: [] }),
-          eq: vi.fn(() => ({
-            limit: vi.fn().mockResolvedValue({ data: [] }),
-          })),
-        })),
-      })),
-      upsert: mockUpsert.mockResolvedValue({ error: null }),
-    })),
-  };
+function makeMock() {
+  return createMockSupabase({ rpcMock: mockRpc, upsertMock: mockUpsert });
 }
 
 beforeEach(() => {
@@ -39,7 +25,7 @@ describe('Kenya Compliance Data Fetcher (KAU-01/02)', () => {
   it('returns early when flag is disabled', async () => {
     mockRpc.mockResolvedValue({ data: false });
     const { fetchKenyaComplianceData } = await import('../kenyaLawFetcher.js');
-    const result = await fetchKenyaComplianceData(createMockSupabase() as unknown as SupabaseClient);
+    const result = await fetchKenyaComplianceData(makeMock().client);
     expect(result.statutesInserted).toBe(0);
     expect(result.casesInserted).toBe(0);
   });
@@ -54,7 +40,7 @@ describe('Kenya Compliance Data Fetcher (KAU-01/02)', () => {
     }));
 
     const { fetchKenyaComplianceData } = await import('../kenyaLawFetcher.js');
-    const result = await fetchKenyaComplianceData(createMockSupabase() as unknown as SupabaseClient);
+    const result = await fetchKenyaComplianceData(makeMock().client);
 
     // Should insert statute sections (18 sections across 3 statutes)
     expect(result.statutesInserted).toBeGreaterThan(0);

@@ -1,0 +1,17 @@
+{
+  "displayName": "Worker availability (99.9% over 28d)",
+  "goal": 0.999,
+  "rollingPeriod": "2419200s",
+  "serviceLevelIndicator": {
+    "requestBased": {
+      "goodTotalRatio": {
+        "goodServiceFilter": "resource.type = \"cloud_run_revision\" resource.labels.service_name = \"arkova-worker\" metric.type = \"run.googleapis.com/request_count\" metric.labels.response_code_class = \"2xx\"",
+        "totalServiceFilter": "resource.type = \"cloud_run_revision\" resource.labels.service_name = \"arkova-worker\" metric.type = \"run.googleapis.com/request_count\""
+      }
+    }
+  },
+  "userLabels": {
+    "story": "scrum_1064",
+    "slo_id": "worker_availability"
+  }
+}

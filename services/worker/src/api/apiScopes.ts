@@ -55,8 +55,13 @@ export function isComplianceScope(scope: string): boolean {
   return (COMPLIANCE_API_SCOPES as readonly string[]).includes(scope);
 }
 
+const ANCHOR_WRITE_SCOPES = new Set(['anchor:write', 'write:anchors']);
+
 export function scopeSatisfies(granted: string[], required: string): boolean {
   if (granted.includes(required)) return true;
+  if (ANCHOR_WRITE_SCOPES.has(required)) {
+    return granted.some((scope) => ANCHOR_WRITE_SCOPES.has(scope));
+  }
   // Legacy `verify` is a superset of `anchor:read` + `oracle:read` for keys
   // issued before SCRUM-1272. Treat the back-compat case explicitly so that
   // the old grants don't quietly stop working when handlers pivot to the new

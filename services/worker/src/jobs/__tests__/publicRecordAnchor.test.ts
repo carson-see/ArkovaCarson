@@ -4,6 +4,7 @@
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { readMigration } from '../../test-utils/migrations.js';
+import { createMockSupabase as _createMockSupabase } from './__testHelpers.js';
 
 // ---- Hoisted mocks ----
 const {
@@ -24,7 +25,7 @@ const {
 
   const mockSingle = vi.fn();
   const mockLimit = vi.fn();
-  const mockRange = vi.fn(() => ({ data: [], error: null }));
+  const mockRange = vi.fn(() => ({ data: [] as Record<string, unknown>[], error: null }));
   const mockOrder = vi.fn(() => ({ limit: mockLimit, range: mockRange }));
   const selectChain: Record<string, unknown> = {};
   selectChain.eq = vi.fn(() => selectChain);
@@ -71,8 +72,7 @@ vi.mock('../../chain/client.js', () => ({
   }),
 }));
 
-function createMockSupabase(records: Array<Record<string, unknown>> = []) {
-  const _updateEq = vi.fn().mockResolvedValue({ error: null });
+function makeMock(records: Array<Record<string, unknown>> = []) {
   const anchorRows = records.map((record, i) => ({
     id: `anchor-uuid-${i}`,
     fingerprint: record.content_hash,
@@ -104,10 +104,8 @@ function createMockSupabase(records: Array<Record<string, unknown>> = []) {
     }),
   });
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  mockSelectChain.limit.mockResolvedValue({ data: records as any, error: null });
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  mockSelectChain.range.mockResolvedValue({ data: records as any, error: null });
+  mockSelectChain.limit.mockResolvedValue({ data: records, error: null });
+  mockSelectChain.range.mockResolvedValue({ data: records, error: null });
 
   const anchorsSelectByIds = {
     in: vi.fn(() => ({
@@ -127,9 +125,9 @@ function createMockSupabase(records: Array<Record<string, unknown>> = []) {
     })),
   };
 
-  return {
-    rpc: mockRpc,
-    from: vi.fn((table: string) => {
+  return _createMockSupabase({
+    rpcMock: mockRpc,
+    fromImpl: vi.fn((table: string) => {
       if (table === 'profiles') {
         return {
           select: vi.fn(() => ({
@@ -162,7 +160,7 @@ function createMockSupabase(records: Array<Record<string, unknown>> = []) {
         update: mockUpdate,
       };
     }),
-  };
+  });
 }
 
 beforeEach(() => {
@@ -175,8 +173,7 @@ describe('publicRecordAnchor', () => {
     mockRpc.mockResolvedValue({ data: false });
 
     const { processPublicRecordAnchoring } = await import('../publicRecordAnchor.js');
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const result = await processPublicRecordAnchoring(createMockSupabase() as any);
+    const result = await processPublicRecordAnchoring(makeMock().client);
 
     expect(result.processed).toBe(0);
     expect(mockRpc).toHaveBeenCalledWith('get_flag', {
@@ -186,11 +183,10 @@ describe('publicRecordAnchor', () => {
 
   it('skips batch when no unanchored records exist', async () => {
     mockRpc.mockResolvedValue({ data: true });
-    const mockSupa = createMockSupabase([]);
+    const { client: mockSupa } = makeMock([]);
 
     const { processPublicRecordAnchoring } = await import('../publicRecordAnchor.js');
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const result = await processPublicRecordAnchoring(mockSupa as any);
+    const result = await processPublicRecordAnchoring(mockSupa);
 
     expect(result.processed).toBe(0);
     expect(mockSubmitFingerprint).not.toHaveBeenCalled();
@@ -269,7 +265,7 @@ describe('publicRecordAnchor', () => {
       .mockResolvedValueOnce({ data: anchorResults })  // batch_insert_anchors
       .mockResolvedValueOnce({ data: { records_updated: records.length, anchors_updated: records.length } });  // finalize
 
-    const mockSupa = createMockSupabase(records);
+    const { client: mockSupa } = makeMock(records);
 
     mockSubmitFingerprint.mockResolvedValue({
       receiptId: 'tx_mock_123',
@@ -279,8 +275,7 @@ describe('publicRecordAnchor', () => {
     });
 
     const { processPublicRecordAnchoring } = await import('../publicRecordAnchor.js');
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const result = await processPublicRecordAnchoring(mockSupa as any);
+    const result = await processPublicRecordAnchoring(mockSupa);
 
     expect(mockSubmitFingerprint).toHaveBeenCalledOnce();
     expect(result.merkleRoot).toBeTruthy();
@@ -315,8 +310,7 @@ describe('publicRecordAnchor', () => {
     });
 
     const { processPublicRecordAnchoring } = await import('../publicRecordAnchor.js');
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await processPublicRecordAnchoring(createMockSupabase(records) as any);
+    await processPublicRecordAnchoring(makeMock(records).client);
 
     expect(mockAnchorProofsUpsert).toHaveBeenCalledOnce();
     expect(mockAnchorProofsUpsert).toHaveBeenCalledWith(

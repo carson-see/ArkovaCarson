@@ -17,6 +17,8 @@ import type {
   ExtractionRequest,
   ExtractionResult,
   EmbeddingResult,
+  BatchEmbeddingInput,
+  BatchEmbeddingResult,
   EmbeddingTaskType,
   ProviderHealth,
 } from './types.js';
@@ -49,6 +51,7 @@ import {
 } from './gemini-config.js';
 const MAX_RETRIES = 3;
 const BASE_DELAY_MS = 500;
+const GEMINI_EMBEDDING_DIMENSIONS = 768;
 const STRING_EXTRACTION_FIELDS = new Set([
   'credentialType',
   'subType',
@@ -85,6 +88,34 @@ const STRING_EXTRACTION_FIELDS = new Set([
 const NUMBER_EXTRACTION_FIELDS = new Set(['creditHours']);
 const STRING_ARRAY_EXTRACTION_FIELDS = new Set(['fraudSignals', 'concerns']);
 const BOOLEAN_EXTRACTION_FIELDS = new Set(['issuerVerified']);
+
+function validateGeminiBatchEmbeddingValues(
+  embeddings: Array<{ values?: unknown }>,
+  model: string,
+): Array<{ values: number[] }> {
+  return embeddings.map((embedding, index) => {
+    const values = embedding.values;
+    const isValid = Array.isArray(values)
+      && values.length === GEMINI_EMBEDDING_DIMENSIONS
+      && values.every((value) => typeof value === 'number' && Number.isFinite(value));
+
+    if (!isValid) {
+      logger.error(
+        {
+          index,
+          expectedDim: GEMINI_EMBEDDING_DIMENSIONS,
+          actualDim: Array.isArray(values) ? values.length : undefined,
+          valuesType: Array.isArray(values) ? 'array' : typeof values,
+          model,
+        },
+        'Gemini batch embedding API returned malformed embedding data',
+      );
+      throw new Error('Batch embedding generation returned malformed embedding data');
+    }
+
+    return { values };
+  });
+}
 
 // Vertex AI tuned model config (Gemini Golden fine-tune)
 // Set GEMINI_TUNED_MODEL to the Vertex AI endpoint resource path to enable.
@@ -455,6 +486,84 @@ export class GeminiProvider implements IAIProvider {
 
     return {
       embedding: result.values,
+      model: this.embeddingModelName,
+    };
+  }
+
+  async generateEmbeddings(
+    inputs: BatchEmbeddingInput[],
+    taskType?: EmbeddingTaskType,
+  ): Promise<BatchEmbeddingResult> {
+    this.checkCircuit();
+
+    if (inputs.length === 0) {
+      return { embeddings: [], model: this.embeddingModelName };
+    }
+
+    const result = await this.withRetry(async () => {
+      const apiKey = this.apiKey;
+      const model = this.embeddingModelName;
+      const requests = inputs.map((input) => {
+        const request: Record<string, unknown> = {
+          model: `models/${model}`,
+          content: { parts: [{ text: input.text }] },
+          outputDimensionality: 768,
+        };
+        const resolvedTaskType = input.taskType ?? taskType;
+        if (resolvedTaskType) request.taskType = resolvedTaskType;
+        if (input.title) request.title = input.title;
+        return request;
+      });
+
+      return await traceAiProviderCall<Array<{ values: number[] }>>(
+        {
+          provider: 'gemini',
+          operation: 'batchEmbed',
+          model,
+          inputCharacterCount: inputs.reduce((sum, input) => sum + input.text.length, 0),
+        },
+        async () => {
+          const response = await fetch(
+            `https://generativelanguage.googleapis.com/v1beta/models/${model}:batchEmbedContents`,
+            {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'x-goog-api-key': apiKey!,
+              },
+              body: JSON.stringify({ requests }),
+              signal: AbortSignal.timeout(30_000),
+            },
+          );
+
+          if (!response.ok) {
+            // Discard raw error body — it may echo request content containing PII.
+            // Log only HTTP status and content-length for debugging.
+            const contentLength = response.headers.get('content-length');
+            await response.text(); // drain body
+            logger.error({ status: response.status, contentLength, model }, 'Gemini batch embedding API error');
+            throw new Error(`Batch embedding generation failed (status ${response.status})`);
+          }
+
+          const data = (await response.json()) as { embeddings?: Array<{ values?: unknown }> };
+          if (!Array.isArray(data.embeddings) || data.embeddings.length !== inputs.length) {
+            logger.error(
+              { expected: inputs.length, actual: data.embeddings?.length ?? 0, model },
+              'Gemini batch embedding API returned unexpected embedding count',
+            );
+            throw new Error('Batch embedding generation returned an unexpected embedding count');
+          }
+
+          return validateGeminiBatchEmbeddingValues(data.embeddings, model);
+        },
+      );
+    });
+
+    return {
+      embeddings: result.map((embedding) => ({
+        embedding: embedding.values,
+        model: this.embeddingModelName,
+      })),
       model: this.embeddingModelName,
     };
   }

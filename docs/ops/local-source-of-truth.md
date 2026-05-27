@@ -1,6 +1,6 @@
 # Arkova Local Source Of Truth
 
-Last updated: 2026-05-15
+Last updated: 2026-05-26
 
 ## Canonical Local Checkout
 
@@ -11,6 +11,16 @@ The canonical local Arkova checkout is:
 ```
 
 This checkout should be the normal place to run `git status`, create branches, install dependencies, run tests, and prepare commits. It is the local source of truth for the Arkova repository on this Mac.
+
+Before starting code work, run:
+
+```bash
+cd /Volumes/Extreme/Arkova/arkova-mvpcopy-main
+scripts/ops/workspace-preflight.sh
+```
+
+The preflight blocks accidental work from the workspace container and requires
+an explicit `ARKOVA_ALLOW_WORKTREE=1` override for non-canonical worktrees.
 
 Expected clean state:
 
@@ -63,6 +73,16 @@ git worktree prune
 ```
 
 If a worktree has changed files, untracked evidence, a detached commit, or a matching open PR, preserve it until that branch is resolved.
+
+Do not trust worktree directory names as evidence. Trust only
+`git worktree list` and `git status --short --branch`. Misleading worktree
+names must be corrected with `git worktree move`, not raw filesystem moves.
+
+Current inventory snapshot:
+
+```bash
+docs/ops/worktree-inventory-2026-05-22.md
+```
 
 ## Backups
 

@@ -1,6 +1,6 @@
 {
   "name": "@arkova/embed",
-  "version": "0.1.0",
+  "version": "2.2.0",
   "description": "Arkova embeddable verification widget — single script tag, vanilla JS, no dependencies",
   "type": "module",
   "main": "dist/embed.umd.js",

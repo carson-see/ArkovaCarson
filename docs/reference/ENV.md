@@ -291,10 +291,11 @@ DOCUSIGN_INTEGRATION_KEY=
 DOCUSIGN_CLIENT_SECRET=
 ENABLE_DOCUSIGN_OAUTH=false         # DocuSign OAuth routes; default off pending org-scale launch validation
 
-# DocuSign Connect HMAC secret. The worker verifies X-DocuSign-Signature-1
-# over the raw body before parsing or enqueueing events.
+# DocuSign Connect HMAC secret. Listener provisioning sends this shared key to
+# DocuSign; the worker verifies X-DocuSign-Signature-1 over the raw body.
 DOCUSIGN_CONNECT_HMAC_SECRET=
 ENABLE_DOCUSIGN_WEBHOOK=false       # /webhooks/docusign intake; default off until org-wide Connect testing passes
+WORKER_PUBLIC_URL=                  # Public worker origin used when provisioning DocuSign Connect listener URLs
 
 # Sandbox vs production DocuSign account server. Default true. Only a literal
 # "false" flips to production account.docusign.com.
@@ -412,6 +413,7 @@ fail closed (default false) per CLAUDE.md §0 rule 2.
 ENABLE_AI_EXTRACTION=false          # /api/v1/ai/extract — server-side OCR/structuring (CLAUDE.md §1.6 — gated)
 ENABLE_SEMANTIC_SEARCH=false        # /api/v1/ai/search semantic embeddings
 ENABLE_AI_FRAUD=false               # /api/v1/ai/integrity, /ai/review (text-based fraud signals)
+ENABLE_FRAUD_DETECTION=false        # Browser-only deterministic fraud Web Worker; sends structured findings only
 ENABLE_AI_REPORTS=false             # /api/v1/ai/reports
 ENABLE_VISUAL_FRAUD_DETECTION=false # /api/v1/ai/fraud/visual — SCRUM-1269 §1.6 carve-out gate;
                                     # ships document image bytes off-device. Requires per-tenant

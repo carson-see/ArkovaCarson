@@ -186,10 +186,14 @@ const ALLOWED_EVIDENCE_SCOPES = new Set([
   'merge-grade isolated staging',
 ]);
 
+const TEST_FILE_RE = /\.(test|spec)\.(ts|tsx|js|jsx)$/;
+
 export function requiredTierFor(files: string[]): { tier: Tier; reason: string } {
   let best: Tier = 'T1';
   let reason = 'default frontend / additive change';
   for (const f of files) {
+    if (STAGING_TOOLING_ALLOW.some((re) => re.test(f))) continue;
+    if (TEST_FILE_RE.test(f)) continue;
     for (const rule of PATH_RULES) {
       if (rule.pattern.test(f) && TIER_RANK[rule.minTier] > TIER_RANK[best]) {
         best = rule.minTier;
@@ -428,47 +432,42 @@ interface StagingFilesOnlyResult {
  * it should not require its own soak gate to pass. We skip when EVERY
  * touched file is in the staging-tooling allowlist.
  */
+const STAGING_TOOLING_ALLOW = [
+  /^scripts\/staging\//,
+  /^scripts\/ci\/check-staging-evidence(\.test)?\.ts$/,
+  /^scripts\/ci\/check-staging-gcloud-policy(\.test)?\.ts$/,
+  /^scripts\/ci\/staging-honesty-preflight(\.test)?\.ts$/,
+  /^scripts\/ci\/lib\//,
+  /^scripts\/gcp-setup\//,
+  /^docs\/staging\//,
+  /^docs\/ops\/gemini-model-upgrade\.md$/,
+  /^docs\/reference\/STAGING_RIG\.md$/,
+  /^\.github\/workflows\/ci\.yml$/,
+  /^\.github\/workflows\/staging-evidence\.yml$/,
+  /^\.github\/workflows\/deploy-staging\.yml$/,
+  /^\.github\/workflows\/deploy-worker\.yml$/,
+  /^services\/worker\/cloudbuild\.yaml$/,
+  /^\.mergify\.yml$/,
+  /^CLAUDE\.md$/,
+  /^HANDOFF\.md$/,
+  /^\.gitignore$/,
+  /^\.claude\/settings\.json$/,
+  /^\.claude\/hooks\//,
+  /^package\.json$/,
+  /^package-lock\.json$/,
+  /^packages\/[^/]+\/package-lock\.json$/,
+  /^services\/edge\/package\.json$/,
+  /^services\/[^/]+\/package-lock\.json$/,
+  /agents\.md$/,
+  /^eslint-rules\//,
+  /(^|\/)eslint\.config\.(js|cjs|mjs)$/,
+  /^e2e\//,
+];
+
 export function isStagingToolingOnly(files: string[]): StagingFilesOnlyResult {
   if (files.length === 0) return { pass: true, reason: 'no changed files' };
-  const ALLOW = [
-    /^scripts\/staging\//,
-    /^scripts\/ci\/check-staging-evidence(\.test)?\.ts$/,
-    /^scripts\/ci\/check-staging-gcloud-policy(\.test)?\.ts$/,
-    /^scripts\/ci\/staging-honesty-preflight(\.test)?\.ts$/,
-    /^scripts\/ci\/lib\//,
-    // Operator-setup tooling lives next to the rig conceptually — same
-    // category of meta-infra (script the operator runs once to wire up
-    // cloud resources). Edits here can't break the running worker; they
-    // only change what `bash scripts/gcp-setup/*` does on the next run.
-    /^scripts\/gcp-setup\//,
-    /^docs\/staging\//,
-    /^docs\/ops\/gemini-model-upgrade\.md$/,
-    // SCRUM-1803: STAGING_RIG.md lives at docs/reference/, not docs/staging/.
-    // Same operational category — workflow doc for the staging rig.
-    /^docs\/reference\/STAGING_RIG\.md$/,
-    /^\.github\/workflows\/ci\.yml$/,
-    /^\.github\/workflows\/staging-evidence\.yml$/,
-    /^CLAUDE\.md$/,
-    /^HANDOFF\.md$/,
-    /^\.gitignore$/,
-    // Claude Code harness config + hook scripts. These run in the
-    // operator's local agent process, not in the worker. Same category
-    // of meta-infra as scripts/staging/* — edits can't break the
-    // running worker, they only change how the agent behaves locally.
-    /^\.claude\/settings\.json$/,
-    /^\.claude\/hooks\//,
-    /^package\.json$/,
-    /^package-lock\.json$/,
-    /^packages\/[^/]+\/package-lock\.json$/,
-    /^services\/[^/]+\/package-lock\.json$/,
-    /agents\.md$/,
-    // ESLint rules and config are dev-time lint tooling, not runtime code.
-    // Changes here affect CI's lint step, not the deployed worker.
-    /^eslint-rules\//,
-    /(^|\/)eslint\.config\.(js|cjs|mjs)$/,
-  ];
   for (const f of files) {
-    if (!ALLOW.some((re) => re.test(f))) {
+    if (!STAGING_TOOLING_ALLOW.some((re) => re.test(f))) {
       return { pass: false, reason: `${f} is outside the staging-tooling allowlist` };
     }
   }

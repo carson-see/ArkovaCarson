@@ -807,6 +807,7 @@ export const SEARCH_LABELS = {
   FINGERPRINT_PLACEHOLDER: 'Paste a 64-character document fingerprint...',
   SEARCH_BUTTON: 'Search',
   NO_RESULTS: 'No credentials found',
+  NO_RESULTS_FOR: 'No results for "{query}"',
   NO_RESULTS_DESC: 'No public credentials match your search.',
   NO_ISSUERS: 'No issuers found',
   NO_ISSUERS_DESC: 'No public issuers match your search.',
@@ -832,6 +833,18 @@ export const SEARCH_LABELS = {
   NO_PERSONS_DESC: 'No public credentials match this name.',
   PERSON_CREDENTIALS: 'Verified Credentials',
   SEARCH_ERROR: 'Search failed. Please try again.',
+} as const;
+
+// =============================================================================
+// DASHBOARD
+// =============================================================================
+
+export const DASHBOARD_STATS_LABELS = {
+  TOTAL_RECORDS: 'Total Records',
+  SECURED: 'Secured',
+  PENDING: 'Pending',
+  UNAVAILABLE_VALUE: 'Unavailable',
+  ERROR_DESCRIPTION: 'Stats unavailable. Refresh to try again.',
 } as const;
 
 // =============================================================================
@@ -1063,6 +1076,7 @@ export const ORG_PAGE_LABELS = {
   SECURE_DOCUMENT_MOBILE: 'Secure',
   ISSUE_CREDENTIAL: 'Issue Credential',
   ISSUE_CREDENTIAL_MOBILE: 'Issue',
+  FOUNDED: 'Founded',
   /** @deprecated SCRUM-1755 — Secure Document auto-detects bulk; do not render a separate Bulk Upload button. */
   BULK_UPLOAD: 'Bulk Upload',
   /** @deprecated SCRUM-1755 — Secure Document auto-detects bulk; do not render a separate Bulk Upload dialog. */
@@ -1136,6 +1150,7 @@ export const CONNECTIONS_LABELS = {
   DISCONNECTING: 'Disconnecting…',
   STATUS_CONNECTED: 'Connected',
   STATUS_NOT_CONNECTED: 'Not connected',
+  STATUS_CHECKING: 'Checking',
   CONNECT_FAILED: 'Could not start the connection. Please try again.',
   DISCONNECT_FAILED: 'Could not disconnect. Please try again.',
   TOAST_CONNECTED: 'DocuSign connected. Completed envelopes will now trigger rules.',
@@ -1895,6 +1910,13 @@ export const EXTRACTION_RECOVERY_LABELS = {
   SKIP: 'Skip \u2014 Anchor Without Metadata',
 } as const;
 
+export const OCR_LABELS = {
+  UNSUPPORTED_FILE_TYPE: (typeOrExt: string) =>
+    `Unsupported file type for text extraction: ${typeOrExt}. ` +
+    'Supported: PDF, Word (.docx), images, and text files. ' +
+    'The document can still be secured without AI metadata.',
+} as const;
+
 export const CONFIRMATION_PROGRESS_LABELS = {
   IN_PROGRESS: 'Anchoring in progress \u2014 your record will be permanently verified in ~10 minutes.',
   NOTIFICATION_NOTE: 'You\u2019ll receive a notification when anchoring is complete. You can safely close this dialog.',
@@ -1974,6 +1996,9 @@ export const REVOKED_EXPIRED_ACTIONS = {
 export const BILLING_PAGE_LABELS = {
   PAGE_TITLE: 'Billing & Subscription',
   PAGE_SUBTITLE: 'Manage your plan, view usage, and update payment methods.',
+  DATA_UNAVAILABLE_TITLE: 'Unable to load billing data',
+  DATA_UNAVAILABLE_DESC: 'We could not confirm your billing status. Refresh the page or try again.',
+  RETRY: 'Retry',
 } as const;
 
 export const SYSTEM_HEALTH_LABELS = {

@@ -1,4 +1,4 @@
-// PR #583 follow-up: Define ExecutionContext locally instead of pulling
+// Define ExecutionContext locally instead of pulling
 // @cloudflare/workers-types via /// <reference />. The directive leaks
 // workers-types into the root TS project — src/tests/edge/
 // mcp-security.test.ts imports from this file, so the directive
@@ -391,7 +391,7 @@ function createMcpServer(config: ScopedConfig, telemetry: RequestTelemetryContex
     },
     withTelemetry(
       'nessie_query',
-      async ({ query, mode, limit }) => handleNessieQuery({ query, mode, limit }, config),
+      async ({ query, mode, limit }) => handleNessieQuery({ query, mode, limit }, config, telemetry.env.ARKOVA_AI),
       telemetry,
     ),
   );
@@ -1021,8 +1021,13 @@ export async function handleMcpRequest(
   try {
     const mcpServer = createMcpServer(config, telemetry);
 
+    // Cloudflare Workers are stateless — each HTTP request is a fresh
+    // isolate with no memory of prior requests. Session IDs across
+    // requests break because request 2's transport doesn't know request
+    // 1's session. Disable session management so every request is
+    // self-contained.
     const transport = new WebStandardStreamableHTTPServerTransport({
-      sessionIdGenerator: () => crypto.randomUUID(),
+      sessionIdGenerator: undefined,
       enableJsonResponse: true,
     });
 

@@ -91,9 +91,17 @@ test.describe('Anchor Creation (Secure Document)', () => {
 
     await expect(dialog.getByText('Document Fingerprint')).toBeVisible({ timeout: 10000 });
 
-    // Click Continue to submit the document. The current product flow may
-    // go straight to anchoring when AI extraction is disabled.
     await dialog.locator('button').filter({ hasText: /Continue/i }).click();
+
+    // AI extraction is on by default (seed). In CI it fails (no AI service),
+    // showing a recovery step. waitFor handles the async wait that isVisible() cannot.
+    const skipBtn = dialog.locator('button').filter({ hasText: /Anchor Without Metadata/i });
+    try {
+      await skipBtn.waitFor({ state: 'visible', timeout: 25_000 });
+      await skipBtn.click();
+    } catch {
+      // AI was off — anchor already created by Continue click
+    }
 
     let createdAnchorId: string | null = null;
     await expect.poll(async () => {
@@ -105,7 +113,7 @@ test.describe('Anchor Creation (Secure Document)', () => {
         .maybeSingle();
       createdAnchorId = data?.id ?? null;
       return createdAnchorId;
-    }, { timeout: 10_000 }).not.toBeNull();
+    }, { timeout: 15_000 }).not.toBeNull();
 
     if (createdAnchorId) {
       await cleanupAnchor(createdAnchorId);

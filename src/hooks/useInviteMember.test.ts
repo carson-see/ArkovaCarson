@@ -8,6 +8,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // Hoist the mock function
 const mockRpc = vi.hoisted(() => vi.fn());
 const mockGetSession = vi.hoisted(() => vi.fn());
+const mockResolveSafeWorkerEndpoint = vi.hoisted(() => vi.fn());
 
 vi.mock('@/lib/supabase', () => ({
   supabase: {
@@ -16,6 +17,10 @@ vi.mock('@/lib/supabase', () => ({
       getSession: mockGetSession,
     },
   },
+}));
+
+vi.mock('@/lib/workerUrlSafety', () => ({
+  resolveSafeWorkerEndpoint: mockResolveSafeWorkerEndpoint,
 }));
 
 // Mock fetch for worker email endpoint
@@ -29,13 +34,14 @@ import { useInviteMember } from './useInviteMember';
 const defaultOptions = {
   email: 'test@example.com',
   role: 'INDIVIDUAL' as const,
-  orgId: 'org-123',
+  orgId: '11111111-1111-4111-8111-111111111111',
   orgName: 'Test Org',
 };
 
 describe('useInviteMember', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockResolveSafeWorkerEndpoint.mockReturnValue(new URL('http://localhost:3001/api/send-invitation-email'));
     mockGetSession.mockResolvedValue({ data: { session: { access_token: 'test-token' } } });
     mockFetch.mockResolvedValue({ ok: true, json: async () => ({ sent: true }) });
   });
@@ -52,9 +58,9 @@ describe('useInviteMember', () => {
 
     expect(success!).toBe(true);
     expect(mockRpc).toHaveBeenCalledWith('invite_member', {
-      invite_email: 'test@example.com',
-      invite_role: 'INDIVIDUAL',
-      org_id: 'org-123',
+      invitee_email: 'test@example.com',
+      invitee_role: 'INDIVIDUAL',
+      target_org_id: '11111111-1111-4111-8111-111111111111',
     });
     expect(result.current.error).toBeNull();
   });
@@ -113,7 +119,7 @@ describe('useInviteMember', () => {
     expect(result.current.error).toContain('permission');
   });
 
-  it('should handle invalid email error', async () => {
+  it('should handle an invalid email error from the invite RPC', async () => {
     mockRpc.mockResolvedValue({
       data: null,
       error: { message: 'invalid email format' },
@@ -123,16 +129,45 @@ describe('useInviteMember', () => {
 
     let success: boolean;
     await act(async () => {
-      success = await result.current.inviteMember({ ...defaultOptions, email: 'bad-email' });
+      success = await result.current.inviteMember({ ...defaultOptions, email: 'valid@example.com' });
     });
 
     expect(success!).toBe(false);
     expect(result.current.error).toContain('valid email');
   });
 
-  it('should succeed even if email send fails (non-blocking)', async () => {
-    mockRpc.mockResolvedValue({ data: 'invite-uuid', error: null });
-    mockFetch.mockRejectedValueOnce(new Error('Network error'));
+  it('should reject an invalid invite payload before creating the invitation record', async () => {
+    const { result } = renderHook(() => useInviteMember());
+
+    let success: boolean;
+    await act(async () => {
+      success = await result.current.inviteMember({ ...defaultOptions, email: 'bad-email' });
+    });
+
+    expect(success!).toBe(false);
+    expect(mockRpc).not.toHaveBeenCalled();
+    expect(mockFetch).not.toHaveBeenCalled();
+    expect(result.current.error).toContain('valid email');
+  });
+
+  it('should reject an invalid organization id before creating the invitation record', async () => {
+    const { result } = renderHook(() => useInviteMember());
+
+    let success: boolean;
+    await act(async () => {
+      success = await result.current.inviteMember({ ...defaultOptions, orgId: 'org-123' });
+    });
+
+    expect(success!).toBe(false);
+    expect(mockRpc).not.toHaveBeenCalled();
+    expect(mockFetch).not.toHaveBeenCalled();
+    expect(result.current.error).toContain('valid organization');
+  });
+
+  it('should not create an invitation or read the bearer token when the worker URL is unsafe', async () => {
+    mockResolveSafeWorkerEndpoint.mockImplementation(() => {
+      throw new Error('Worker endpoint must use HTTPS outside localhost.');
+    });
 
     const { result } = renderHook(() => useInviteMember());
 
@@ -141,8 +176,26 @@ describe('useInviteMember', () => {
       success = await result.current.inviteMember(defaultOptions);
     });
 
-    // Invitation should still succeed even though email failed
-    expect(success!).toBe(true);
+    expect(success!).toBe(false);
+    expect(mockRpc).not.toHaveBeenCalled();
+    expect(mockGetSession).not.toHaveBeenCalled();
+    expect(mockFetch).not.toHaveBeenCalled();
+    expect(result.current.error).toContain('HTTPS outside localhost');
+  });
+
+  it('should fail when the invitation email endpoint rejects after RPC success', async () => {
+    mockRpc.mockResolvedValue({ data: 'invite-uuid', error: null });
+    mockFetch.mockResolvedValueOnce({ ok: false, status: 403, json: async () => ({ error: { code: 'forbidden' } }) });
+
+    const { result } = renderHook(() => useInviteMember());
+
+    let success: boolean;
+    await act(async () => {
+      success = await result.current.inviteMember(defaultOptions);
+    });
+
+    expect(success!).toBe(false);
+    expect(result.current.error).toContain('email could not be sent');
   });
 
   it('should clear error when clearError is called', async () => {

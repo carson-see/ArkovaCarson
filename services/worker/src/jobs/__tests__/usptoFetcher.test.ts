@@ -10,6 +10,7 @@ import { execSync } from 'node:child_process';
 import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { createMockSupabase } from './__testHelpers.js';
 
 // ---- Hoisted mocks ----
 const { mockRpc, mockUpsert, mockSelectChain, mockLogger } = vi.hoisted(() => {
@@ -40,14 +41,14 @@ vi.mock('../../utils/logger.js', () => ({
   logger: mockLogger,
 }));
 
-function createMockSupabase() {
-  return {
-    rpc: mockRpc,
-    from: vi.fn((_table: string) => ({
+function makeMock() {
+  return createMockSupabase({
+    rpcMock: mockRpc,
+    fromImpl: vi.fn((_table: string) => ({
       select: vi.fn(() => mockSelectChain.chain),
       upsert: mockUpsert,
     })),
-  };
+  });
 }
 
 /**
@@ -77,8 +78,7 @@ describe('usptoFetcher', () => {
     mockRpc.mockResolvedValue({ data: false });
 
     const { fetchUsptoPAtents } = await import('../usptoFetcher.js');
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const result = await fetchUsptoPAtents(createMockSupabase() as any);
+    const result = await fetchUsptoPAtents(makeMock().client);
 
     expect(result.status).toBe('disabled');
     expect(mockRpc).toHaveBeenCalledWith('get_flag', {
@@ -88,7 +88,6 @@ describe('usptoFetcher', () => {
 
   it('fetches and inserts patents from bulk TSV ZIP', async () => {
     mockRpc.mockResolvedValue({ data: true });
-    // No existing records — resume from 2020-01-01
     mockSelectChain.limit.mockResolvedValue({ data: [] });
     mockUpsert.mockResolvedValue({ error: null });
 
@@ -98,7 +97,6 @@ describe('usptoFetcher', () => {
       ['11234569', '2026-01-17', 'Test Patent Three', 'Abstract for patent three', 'design'],
     ]);
 
-    // Mock fetch to return our ZIP buffer as a ReadableStream
     const webStream = new ReadableStream({
       start(controller) {
         controller.enqueue(new Uint8Array(zipBuffer));
@@ -113,15 +111,13 @@ describe('usptoFetcher', () => {
     }));
 
     const { fetchUsptoPAtents } = await import('../usptoFetcher.js');
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const result = await fetchUsptoPAtents(createMockSupabase() as any);
+    const result = await fetchUsptoPAtents(makeMock().client);
 
     expect(fetch).toHaveBeenCalled();
     expect(result.status).toBe('complete');
     expect(result.inserted).toBe(3);
     expect(result.errors).toBe(0);
 
-    // Verify upsert was called with correct structure
     expect(mockUpsert).toHaveBeenCalled();
     const insertedRows = mockUpsert.mock.calls[0][0] as Array<Record<string, unknown>>;
     expect(insertedRows[0]).toMatchObject({
@@ -139,7 +135,6 @@ describe('usptoFetcher', () => {
 
   it('skips patents before resume date', async () => {
     mockRpc.mockResolvedValue({ data: true });
-    // Existing record with patent_date 2026-01-16
     mockSelectChain.limit.mockResolvedValue({
       data: [{ metadata: { patent_date: '2026-01-16' } }],
     });
@@ -165,8 +160,7 @@ describe('usptoFetcher', () => {
     }));
 
     const { fetchUsptoPAtents } = await import('../usptoFetcher.js');
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const result = await fetchUsptoPAtents(createMockSupabase() as any);
+    const result = await fetchUsptoPAtents(makeMock().client);
 
     expect(result.inserted).toBe(1);
     expect(result.skipped).toBe(2);
@@ -183,8 +177,7 @@ describe('usptoFetcher', () => {
     }));
 
     const { fetchUsptoPAtents } = await import('../usptoFetcher.js');
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const result = await fetchUsptoPAtents(createMockSupabase() as any);
+    const result = await fetchUsptoPAtents(makeMock().client);
 
     expect(result.status).toBe('download_failed');
     expect(result.inserted).toBe(0);
@@ -197,8 +190,7 @@ describe('usptoFetcher', () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('Network timeout')));
 
     const { fetchUsptoPAtents } = await import('../usptoFetcher.js');
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const result = await fetchUsptoPAtents(createMockSupabase() as any);
+    const result = await fetchUsptoPAtents(makeMock().client);
 
     expect(result.status).toBe('download_failed');
     expect(result.inserted).toBe(0);

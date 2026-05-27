@@ -2,6 +2,12 @@
 
 Developer-facing API documentation. Engineering mirrors and guides for the Arkova Verification API.
 
+## 2026-05-22 Scope Notes
+
+- Document anchor submit with both accepted write scopes: `anchor:write` and `write:anchors`.
+- `POST /api/v1/anchor/submit` is a compatibility alias for `POST /api/v1/anchor`; new integrations should prefer `/anchor`.
+- `GET /api/v1/usage` requires `usage:read`. General read/search scopes do not include usage analytics.
+
 ## Files
 - **`openapi.yaml`** — frozen OpenAPI 3.0.3 spec for API v1 (authentication, rate limits, all endpoints).
 - **`v2-migration.md`** — v1-to-v2 migration guide with deprecation calendar (v1 sunset 2027-04-23).

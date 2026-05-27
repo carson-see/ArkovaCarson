@@ -1,0 +1,195 @@
+# Mergify configuration for Arkova monorepo
+#
+# Eliminates the 45% rebase churn from concurrent agent PRs by queuing
+# merges and testing against projected post-merge main state.
+#
+# CLAUDE.md §0.8 policy: Carson is sole developer — review gate removed from
+# branch protection (no self-approval possible). Mergify queues PRs once all
+# CI checks pass. The `do-not-merge` / `work-in-progress` labels block queue
+# entry. Carson can still block any PR by adding those labels.
+
+# ---------------------------------------------------------------------------
+# Scopes — disabled until basic queue is proven working
+# ---------------------------------------------------------------------------
+# Path-based scopes (frontend, worker, infra, docs) were causing all PRs to
+# block on `scopes-available` — Mergify waits for scope computation that
+# never completes. Re-enable once the single-lane queue is merging reliably.
+# Original config preserved in git history (commit before this change).
+
+# ---------------------------------------------------------------------------
+# Priority rules — hotfixes jump the queue
+# ---------------------------------------------------------------------------
+
+priority_rules:
+  - name: hotfix
+    conditions:
+      - label = hotfix
+    priority: high
+    allow_checks_interruption: true
+
+  - name: default
+    conditions:
+      - -label = hotfix
+    priority: medium
+
+# ---------------------------------------------------------------------------
+# Queue rules — what must pass before Mergify merges
+# ---------------------------------------------------------------------------
+
+queue_rules:
+  - name: urgent
+    queue_conditions:
+      - -draft
+      - label = hotfix
+    merge_conditions:
+      # All 13 required status checks from branch protection
+      - check-success = TypeCheck & Lint
+      - check-success = Tests
+      - check-success = Generated Types Check
+      - check-success = Migration Safety Check
+      - check-success = Lockfile Integrity
+      - check-success = Secret Scanning
+      - check-success = Dependency Scanning
+      - check-success = TDD Enforcement
+      - check-success = TLA+ Verification
+      - check-success = Check supabase/migrations vs prod
+      - check-success = AI Eval Regression Gate
+      - check-success = SonarCloud Code Analysis
+      - check-success = E2E Tests
+      # Staging soak gate (CLAUDE.md §1.11)
+      - check-success = Staging Soak Evidence Gate
+    merge_method: merge
+    batch_size: 1
+
+  - name: default
+    queue_conditions:
+      - -draft
+      - -label = work-in-progress
+      # Staging soak must pass before entering queue — no point queuing
+      # a PR that hasn't completed its soak period yet
+      - check-success = Staging Soak Evidence Gate
+    merge_conditions:
+      - check-success = TypeCheck & Lint
+      - check-success = Tests
+      - check-success = Generated Types Check
+      - check-success = Migration Safety Check
+      - check-success = Lockfile Integrity
+      - check-success = Secret Scanning
+      - check-success = Dependency Scanning
+      - check-success = TDD Enforcement
+      - check-success = TLA+ Verification
+      - check-success = Check supabase/migrations vs prod
+      - check-success = AI Eval Regression Gate
+      - check-success = SonarCloud Code Analysis
+      - check-success = E2E Tests
+      - check-success = Staging Soak Evidence Gate
+    merge_method: merge
+    batch_size: 3
+    batch_max_wait_time: 5 min
+    batch_max_failure_resolution_attempts: 3
+
+# ---------------------------------------------------------------------------
+# Merge queue settings
+# ---------------------------------------------------------------------------
+
+merge_queue:
+  max_parallel_checks: 2
+
+# ---------------------------------------------------------------------------
+# Pull request rules — automation triggers
+# ---------------------------------------------------------------------------
+
+pull_request_rules:
+  # Auto-queue PRs once all CI checks pass
+  - name: Queue CI-green PRs
+    conditions:
+      - base = main
+      - -draft
+      - -label = work-in-progress
+      - -label = do-not-merge
+      - check-success = Staging Soak Evidence Gate
+    actions:
+      queue:
+        name: default
+
+  # Route hotfixes to priority queue
+  - name: Queue hotfixes with priority
+    conditions:
+      - base = main
+      - -draft
+      - label = hotfix
+      - check-success = Staging Soak Evidence Gate
+    actions:
+      queue:
+        name: urgent
+
+  # Auto-label by area (helps with scope routing + PR triage)
+  - name: Label frontend changes
+    conditions:
+      - files~=^src/
+      - -files~=^src/tests/rls/
+    actions:
+      label:
+        add:
+          - frontend
+
+  - name: Label worker changes
+    conditions:
+      - files~=^services/worker/
+    actions:
+      label:
+        add:
+          - backend
+
+  - name: Label chain/treasury changes
+    conditions:
+      - files~=^services/worker/src/chain/
+    actions:
+      label:
+        add:
+          - chain
+          - backend
+
+  - name: Label migration changes
+    conditions:
+      - files~=^supabase/migrations/
+    actions:
+      label:
+        add:
+          - migration
+
+  - name: Label infra changes
+    conditions:
+      - files~=^\.github/
+    actions:
+      label:
+        add:
+          - infra
+
+  - name: Label docs-only changes
+    conditions:
+      - -files~=\.(ts|tsx|js|jsx|sql|yml|toml|json)$
+    actions:
+      label:
+        add:
+          - docs-only
+
+  # Warn on PRs that touch migrations — these serialize and can't batch
+  - name: Comment on migration PRs about queue serialization
+    conditions:
+      - files~=^supabase/migrations/
+      - -label = migration-acked
+    actions:
+      comment:
+        message: |
+          This PR touches `supabase/migrations/`. Migration PRs are serialized
+          in the merge queue (they cannot batch with other migration PRs) because
+          migration ordering matters. This is expected and not a bottleneck unless
+          multiple migration PRs stack up.
+
+          Add the `migration-acked` label to suppress this notice.
+      label:
+        add:
+          - migration
+merge_protections_settings:
+  reporting_method: check-runs

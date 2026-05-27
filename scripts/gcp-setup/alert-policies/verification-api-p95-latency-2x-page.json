@@ -1,0 +1,34 @@
+{
+  "displayName": "Arkova SLO burn 2x page: verification-api-p95-latency",
+  "documentation": {
+    "content": "SCRUM-1064: Verification API p95 latency SLO budget is burning above 2x over 60m. Page on-call; pause non-critical deploys if remaining budget is <= 20%.",
+    "mimeType": "text/markdown"
+  },
+  "userLabels": {
+    "story": "scrum_1064",
+    "slo_id": "verification_api_p95_latency",
+    "burn": "2x_page"
+  },
+  "conditions": [
+    {
+      "displayName": "verification-api-p95-latency burn > 2x",
+      "conditionThreshold": {
+        "filter": "select_slo_burn_rate(\"projects/${PROJECT_ID}/services/${SERVICE_ID}/serviceLevelObjectives/verification-api-p95-latency\", \"60m\")",
+        "comparison": "COMPARISON_GT",
+        "thresholdValue": 2,
+        "duration": "300s",
+        "trigger": {
+          "count": 1
+        },
+        "evaluationMissingData": "EVALUATION_MISSING_DATA_INACTIVE"
+      }
+    }
+  ],
+  "combiner": "OR",
+  "enabled": true,
+  "notificationChannels": ["${SLACK_OPS_ALERTS_CHANNEL}"],
+  "alertStrategy": {
+    "autoClose": "3600s"
+  },
+  "severity": "CRITICAL"
+}

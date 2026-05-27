@@ -12,22 +12,43 @@ import {
   createGcpSecretManagerRefreshTokenStore,
   type DocusignRefreshTokenStore,
 } from '../integrations/connectors/docusign-token-store.js';
+import type { TypeSafeDatabase } from '../types/database-overrides.js';
 
 export const DOCUSIGN_ENVELOPE_COMPLETED_JOB_TYPE = 'docusign.envelope_completed';
 const DEFAULT_DOCUSIGN_ENVELOPE_JOB_LIMIT = 10;
 const MAX_DOCUSIGN_ENVELOPE_JOB_LIMIT = 100;
 
-// org_integrations landed after generated worker DB types.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type DbClient = any;
+type OrgIntegrationRow = TypeSafeDatabase['public']['Tables']['org_integrations']['Row'];
 
-interface DocusignIntegrationRow {
-  id: string;
-  org_id: string;
-  account_id: string | null;
-  base_uri: string | null;
-  token_secret_name: string | null;
+interface DbQueryResult<T> {
+  data: T | null;
+  error: unknown;
 }
+
+interface DbSelectQuery<T> {
+  select(columns?: string): DbSelectQuery<T>;
+  eq(field: string, value: unknown): DbSelectQuery<T>;
+  is(field: string, value: unknown): DbSelectQuery<T>;
+  maybeSingle(): Promise<DbQueryResult<T>>;
+}
+
+interface DbInsertQuery<T> {
+  insert(value: Record<string, unknown>): {
+    select(columns?: string): {
+      single(): Promise<DbQueryResult<T>>;
+    };
+  };
+}
+
+interface DbClient {
+  from(table: 'org_integrations'): DbSelectQuery<DocusignIntegrationRow>;
+  from(table: 'integration_events'): DbInsertQuery<{ id?: string }>;
+}
+
+type DocusignIntegrationRow = Pick<
+  OrgIntegrationRow,
+  'id' | 'org_id' | 'account_id' | 'base_uri' | 'token_secret_name'
+>;
 
 export interface DocusignEnvelopeJobRuntimeDeps {
   db?: DbClient;
@@ -85,7 +106,7 @@ async function fetchIntegration(
 export function makeDocusignEnvelopeJobDeps(
   deps: DocusignEnvelopeJobRuntimeDeps = {},
 ): DocusignEnvelopeJobDeps {
-  const db = deps.db ?? defaultDb;
+  const db = deps.db ?? (defaultDb as unknown as DbClient);
   const refreshTokenStore = getRefreshTokenStore(deps);
 
   return {

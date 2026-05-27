@@ -14,6 +14,62 @@
 
 ## Now
 
+### 2026-05-25 — 96-hour sprint: 23 PRs merged, worker redeployed
+
+**Window:** 2026-05-21 through 2026-05-25. 23 PRs merged to `main`. Final production revision built from git_sha `5874a96c` (merge commit of PR #859). Worker healthy: database ok, anchoring ok, kms ok. Edge worker (edge.arkova.ai) redeployed with MCP search tool fixes.
+
+**Deploy evidence:** https://github.com/carson-see/ArkovaCarson/actions/runs/26417619643
+
+**PRs merged this window:**
+
+| PR | Title | Merged | Jira |
+|---|---|---|---|
+| #876 | fix(edge): MCP server 403 + search tools | 2026-05-25 | — |
+| #859 | Fix v1 anchor submit scope routing | 2026-05-25 | — |
+| #875 | fix(ci): add e2e/ to staging-tooling allowlist | 2026-05-25 | — |
+| #870 | infra: add staging deploy workflow (dispatch-triggered) | 2026-05-25 | — |
+| #850 | Sanitize CLE public API responses | 2026-05-25 | SCRUM-1868 ✅ |
+| #840 | fix(docusign): harden token secret cleanup after #812 | 2026-05-25 | — |
+| #838 | SCRUM-1286/SCRUM-1976 anchors index consolidation | 2026-05-25 | SCRUM-1286 ✅, SCRUM-1976 ✅ |
+| #874 | fix(e2e): make billing cancel→overview test deterministic | 2026-05-23 | — |
+| #873 | chore(deps): bump qs 6.15.1→6.15.2 | 2026-05-23 | — |
+| #872 | chore(deps-edge): bump qs 6.15.0→6.15.2 | 2026-05-23 | — |
+| #871 | chore(deps-worker): bump qs 6.15.1→6.15.2 | 2026-05-23 | — |
+| #869 | Sprint 1: stop the bleeding UX + reliability fixes | 2026-05-23 | SCRUM-1846 ✅ |
+| #864 | SCRUM-1064 GCP monitoring hardening | 2026-05-23 | SCRUM-1064 ✅ |
+| #856 | fix(SCRUM-1286): reconcile PR #841 migration ledger | 2026-05-23 | — |
+| #852 | feat(ai): add client fraud detection worker | 2026-05-23 | SCRUM-1964 ✅ |
+| #847 | feat(worker): batch credential embeddings | 2026-05-23 | SCRUM-1955 ✅ |
+| #857 | fix(SCRUM-1668): enforce staging integrity evidence | 2026-05-22 | SCRUM-1668 ✅ |
+| #846 | fix(ci): harden staging honesty after #839 review | 2026-05-22 | — |
+| #855 | fix(worker): quarantine PR #841 professional education paths | 2026-05-21 | — |
+| #854 | fix(worker): resolve batch-anchor 406 + embedder silent 500 | 2026-05-21 | — |
+| #853 | fix(frontend): remove replayIntegration to fix CSP unsafe-eval | 2026-05-21 | — |
+| #841 | Close compliance R0 foundations | 2026-05-21 | SCRUM-1909 ✅ |
+| #813 | fix(worker): resolve remaining worker lint | 2026-05-25 | SCRUM-1909 |
+
+**Jira transitions to Done:** SCRUM-1064, SCRUM-1286, SCRUM-1668, SCRUM-1846 (+ subtasks 1850–1853), SCRUM-1868 (+ subtasks 1877–1880), SCRUM-1909, SCRUM-1955, SCRUM-1964, SCRUM-1976.
+
+**Confluence pages created:** [SCRUM-1846](https://arkova.atlassian.net/wiki/spaces/A/pages/61210626), [SCRUM-1868](https://arkova.atlassian.net/wiki/spaces/A/pages/61341697), [SCRUM-1964](https://arkova.atlassian.net/wiki/spaces/A/pages/61374465).
+
+**Open PRs (9):**
+
+| PR | Title | Blocker |
+|---|---|---|
+| #877 | rescue(SCRUM-1296): worker N+1 fan-out fix | T2 soak not started |
+| #867 | rescue(SCRUM-1649): DocuSign action modes | T3 soak not started |
+| #866 | fix: .docx fingerprint timeout + SecureDocumentDialog | — |
+| #865 | test(SCRUM-1729): webhook roundtrip test | T2 soak not started |
+| #863 | chore: workspace hygiene guardrails | Draft |
+| #862 | fix: CTDL R0 public contract hardening | Draft |
+| #861 | SCRUM-1953 Phase 5 professional education | Draft |
+| #858 | chore: bump package versions to 2.2.0 | T1 soak not started |
+| #844 | fix: /api/queue/pending 500 (auth.uid null) | T2 soak not started, staging rebuild needed |
+
+_Last refreshed: 2026-05-25 by Carson — claims verified against `git log origin/main` (HEAD `5874a96c`), `gh pr list --state merged`, deploy run 26417619643, Jira MCP transitions._
+
+---
+
 ### 2026-05-18 — PR #803 type-safe CHECK constraint overrides MERGED
 
 **PR [#803](https://github.com/carson-see/ArkovaCarson/pull/803) merged** to `main` at 2026-05-18 (merge commit `3cae7141`). Type-safe overrides for all 34 CHECK-constrained TEXT columns across 22 tables.

@@ -10,12 +10,12 @@
  * AUDIT-07: RouteErrorBoundary wraps route sections for graceful sub-route errors.
  */
 
-import React, { Suspense, useEffect } from 'react';
+import React, { Suspense, useEffect, useRef } from 'react';
 import { QueryClientProvider } from '@tanstack/react-query';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { Loader2 } from 'lucide-react';
 import { ArkovaLogo } from '@/components/layout/ArkovaLogo';
-import { Toaster } from 'sonner';
+import { Toaster, toast } from 'sonner';
 import { queryClient } from '@/lib/queryClient';
 import { useTheme } from '@/hooks/useTheme';
 import { useAuth } from '@/hooks/useAuth';
@@ -27,6 +27,8 @@ import { ErrorBoundary } from '@/components/layout/ErrorBoundary';
 import { RouteErrorBoundary } from '@/components/layout/RouteErrorBoundary';
 import { ROUTES, MAIN_APP_DESTINATIONS, destinationToRoute } from '@/lib/routes';
 import { prefetchCriticalRoutes } from '@/lib/prefetch';
+import { TOAST_DURATIONS_MS } from '@/lib/toastConfig';
+import { shouldDismissToastsForLocationChange, type ToastLocation } from '@/lib/toastNavigation';
 
 // ── Lazy-loaded page components (AUDIT-13: route-level code splitting) ──────
 const LoginPage = React.lazy(() => import('@/pages/LoginPage').then(m => ({ default: m.LoginPage })));
@@ -148,6 +150,26 @@ export function isSearchSubdomain(): boolean {
   return typeof window !== 'undefined' && window.location.hostname === 'search.arkova.ai';
 }
 
+function ToastNavigationReset() {
+  const location = useLocation();
+  const previousLocationRef = useRef<ToastLocation | null>(null);
+
+  useEffect(() => {
+    const currentLocation = { pathname: location.pathname, search: location.search };
+
+    if (
+      previousLocationRef.current
+      && shouldDismissToastsForLocationChange(previousLocationRef.current, currentLocation)
+    ) {
+      toast.dismiss();
+    }
+
+    previousLocationRef.current = currentLocation;
+  }, [location.pathname, location.search]);
+
+  return null;
+}
+
 export function App() {
   // Apply theme at app root so all routes (including public/auth) get dark mode
   useTheme();
@@ -168,8 +190,9 @@ export function App() {
       <QueryClientProvider client={queryClient}>
       <AuditorModeContext.Provider value={auditorMode}>
       <BrowserRouter>
+        <ToastNavigationReset />
         <ProfileProvider>
-        <Toaster position="top-right" richColors closeButton />
+        <Toaster position="top-right" richColors closeButton duration={TOAST_DURATIONS_MS.default} />
         <Suspense fallback={<RouteFallback />}>
         {searchOnly ? (
         <Routes>
@@ -235,6 +258,7 @@ export function App() {
           <Route path={ROUTES.ORG_PROFILE} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="OrgProfile"><OrgProfilePage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
           <Route path={ROUTES.ORGANIZATION} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="Organization"><OrganizationPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
           <Route path={ROUTES.MEMBER_DETAIL} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="MemberDetail"><MemberDetailPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
+          <Route path={ROUTES.PROFILE} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><Navigate to={ROUTES.SETTINGS} replace /></RouteGuard></AuthGuard>} />
           <Route path={ROUTES.SETTINGS} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="Settings"><SettingsPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
           <Route path={ROUTES.SETTINGS_API_KEYS} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="ApiKeys"><ApiKeySettingsPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
           <Route path={ROUTES.SETTINGS_WEBHOOKS} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="Webhooks"><WebhookSettingsPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />

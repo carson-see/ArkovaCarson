@@ -11,19 +11,11 @@ import { toast } from 'sonner';
 import { supabase } from '@/lib/supabase';
 import { useAsyncAction } from './useAsyncAction';
 import { TOAST } from '@/lib/copy';
-
-type InviteRole = 'INDIVIDUAL' | 'ORG_ADMIN';
-
-interface InviteOptions {
-  email: string;
-  role: InviteRole;
-  orgId: string;
-  orgName: string;
-  inviterName?: string;
-}
+import { InviteMemberSchema, type InviteMemberInput } from '@/lib/validators';
+import { resolveSafeWorkerEndpoint } from '@/lib/workerUrlSafety';
 
 interface UseInviteMemberReturn {
-  inviteMember: (options: InviteOptions) => Promise<boolean>;
+  inviteMember: (options: InviteMemberInput) => Promise<boolean>;
   loading: boolean;
   error: string | null;
   clearError: () => void;
@@ -33,15 +25,21 @@ const WORKER_URL = import.meta.env.VITE_WORKER_URL || 'http://localhost:3001';
 
 export function useInviteMember(): UseInviteMemberReturn {
   const inviteImpl = useCallback(
-    async (options: InviteOptions): Promise<boolean> => {
-      const { email, role, orgId, orgName, inviterName } = options;
+    async (options: InviteMemberInput): Promise<boolean> => {
+      const parsedOptions = InviteMemberSchema.safeParse(options);
+      if (!parsedOptions.success) {
+        throw new Error(parsedOptions.error.issues[0]?.message ?? 'Failed to send invitation.');
+      }
+
+      const { email, role, orgId, orgName, inviterName } = parsedOptions.data;
+      const emailEndpoint = resolveSafeWorkerEndpoint(WORKER_URL, '/api/send-invitation-email');
 
       // Step 1: Create invitation record via RPC
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { error: rpcError } = await (supabase as any).rpc('invite_member', {
-        invite_email: email,
-        invite_role: role,
-        org_id: orgId,
+        invitee_email: email,
+        invitee_role: role,
+        target_org_id: orgId,
       });
 
       if (rpcError) {
@@ -56,22 +54,28 @@ export function useInviteMember(): UseInviteMemberReturn {
         }
       }
 
-      // Step 2: Send invitation email via worker API (non-blocking)
+      // Step 2: Send invitation email via worker API
       try {
         const { data: { session } } = await supabase.auth.getSession();
-        if (session?.access_token) {
-          await fetch(`${WORKER_URL}/api/send-invitation-email`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              Authorization: `Bearer ${session.access_token}`,
-            },
-            body: JSON.stringify({ email, orgId, orgName, role, inviterName }),
-          });
+        if (!session?.access_token) {
+          throw new Error('No active session');
+        }
+
+        const emailResponse = await fetch(emailEndpoint.toString(), {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${session.access_token}`,
+          },
+          body: JSON.stringify({ email, orgId, orgName, role, inviterName }),
+        });
+
+        if (!emailResponse.ok) {
+          throw new Error(`Invitation email endpoint returned ${emailResponse.status}`);
         }
       } catch (emailErr) {
-        // Email failure is non-fatal — invitation record was created
         console.warn('Invitation email send failed (invitation still created):', emailErr);
+        throw new Error('Invitation was created, but the email could not be sent. Please try again.');
       }
 
       return true;
@@ -82,7 +86,7 @@ export function useInviteMember(): UseInviteMemberReturn {
   const { execute, loading, error, clearError } = useAsyncAction(inviteImpl);
 
   const inviteMember = useCallback(
-    async (options: InviteOptions): Promise<boolean> => {
+    async (options: InviteMemberInput): Promise<boolean> => {
       try {
         const result = await execute(options);
         toast.success(TOAST.MEMBER_INVITED);

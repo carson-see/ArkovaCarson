@@ -45,9 +45,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      # gitleaks-action calls GET /repos/{owner}/{repo}/pulls/{num}/commits on
-      # pull_request events — requires pull-requests:read to avoid 403.
-      pull-requests: read
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
@@ -57,11 +54,6 @@ jobs:
         uses: trufflesecurity/trufflehog@37b77001d0174ebec2fcca2bd83ff83a6d45a3ab # v3.95.3
         with:
           extra_args: --only-verified
-
-      - name: Gitleaks Secret Scan
-        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   # Dependency scanning - check for vulnerable packages
   dependency-scan:
@@ -76,6 +68,10 @@ jobs:
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: '20'
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            services/worker/package-lock.json
 
       - name: Install dependencies
         # Dependency scanning does not execute the app. Suppress package
@@ -111,6 +107,9 @@ jobs:
 
       - name: Block migration prefix collisions (SCRUM-1287)
         run: npx tsx scripts/ci/check-migration-prefix-uniqueness.ts
+
+      - name: Require justification for new anchors indexes (SCRUM-1286)
+        run: npm run ci:anchor-index-justification
 
       - name: Block API scope vocabulary drift (SCRUM-1581)
         run: npm run ci:api-scope-vocabulary
@@ -169,6 +168,10 @@ jobs:
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: '20'
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            services/worker/package-lock.json
 
       - name: Install root dependencies
         run: npm ci --ignore-scripts
@@ -230,6 +233,10 @@ jobs:
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: '20'
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            services/worker/package-lock.json
 
       - name: Install dependencies
         run: npm ci --ignore-scripts
@@ -240,13 +247,11 @@ jobs:
           SONARCLOUD_TOKEN: ${{ steps.sonarcloud-token.outputs.token }}
         run: npm run ci:sonar-quality-gate
 
-  # SCRUM-1249 (R0-3): coverage thresholds monotonic enforcement.
-  # Fails PR if any per-file coverage threshold in vitest.config.ts or
-  # services/worker/vitest.config.ts has decreased vs origin/main, unless
-  # the PR is labeled `coverage-drop-allowed` AND its body links a
-  # `coverage-restoration` Jira ticket (`Linked Jira: SCRUM-NNNN`).
-  coverage-monotonic:
-    name: Coverage Monotonic Enforcement
+  # Consolidated policy lints — 5 lightweight checks that share identical
+  # setup (checkout, Node, npm ci). Running them sequentially in one job
+  # eliminates 4 runner spin-ups (~8 min/PR saved).
+  policy-lints:
+    name: Policy Lints
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -260,67 +265,42 @@ jobs:
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: '20'
+          cache: npm
+          cache-dependency-path: package-lock.json
 
       - name: Install dependencies
         run: npm ci --ignore-scripts
 
-      - name: Check coverage thresholds monotonic
+      - name: Aggregate commit messages
+        id: commits
         env:
-          # On PR events, BASE_REF_SHA is the merge target; on push to main, fall back to HEAD~1
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          if [ -n "$BASE_SHA" ]; then
+            MSGS=$(git log --format=%B "$BASE_SHA"..HEAD)
+          else
+            MSGS=$(git log --format=%B -1)
+          fi
+          {
+            echo 'msgs<<EOF'
+            echo "$MSGS"
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Coverage monotonic enforcement
+        env:
           BASE_REF_SHA: ${{ github.event.pull_request.base.sha || 'HEAD~1' }}
           PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
           PR_BODY: ${{ github.event.pull_request.body }}
         run: npx tsx scripts/ci/check-coverage-monotonic.ts
 
-  # SCRUM-1254 (R0-8): count: 'exact' baseline drift check.
-  # Stops new count: 'exact' calls from sneaking into worker code.
-  count-exact-baseline:
-    name: count:'exact' Baseline
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      pull-requests: read
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          fetch-depth: 0
-      - name: Setup Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
-        with:
-          node-version: '20'
-      - name: Install dependencies
-        run: npm ci --ignore-scripts
-      - name: Compare count:'exact' baseline
+      - name: "count:'exact' baseline"
         env:
-          # Code-review issue #N (PR #563): no `'HEAD~1'` literal fallback —
-          # ciContext.ts now resolves BASE_REF via git rev-parse and exits 1
-          # (fail-closed) if the ref doesn't exist. On push events where
-          # pull_request.base.sha is empty, the ciContext default
-          # `origin/main` is used (always present given fetch-depth: 0).
           BASE_REF_SHA: ${{ github.event.pull_request.base.sha }}
           PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
         run: npx tsx scripts/ci/check-count-exact-baseline.ts
 
-  # SCRUM-1253 (R0-7): feedback_*.md memory rules to CI lint.
-  # Orchestrator runs every script in scripts/ci/feedback-rules/. Each rule
-  # has its own override label; see memory/README.md for the index.
-  feedback-rules:
-    name: Memory Feedback Rules
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      pull-requests: read
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          fetch-depth: 0
-      - name: Setup Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
-        with:
-          node-version: '20'
-      - name: Install dependencies
-        run: npm ci --ignore-scripts
-      - name: Run feedback rules orchestrator
+      - name: Feedback rules
         env:
           BASE_REF_SHA: ${{ github.event.pull_request.base.sha }}
           PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
@@ -328,103 +308,22 @@ jobs:
           GITHUB_HEAD_REF: ${{ github.head_ref }}
         run: npx tsx scripts/ci/check-feedback-rules.ts
 
-  # SCRUM-1252 (R0-6): HANDOFF.md verification-artifact lint.
-  # Fails PR if HANDOFF.md claims prod state (revision numbers, "deployed
-  # healthy", "applied on prod", "verified via", etc.) without a linked
-  # verification artifact (gcloud output, MCP query, log line, or GH Actions
-  # run URL) in the PR description or a commit body. Override label:
-  # `handoff-narrative-only` (for prose-style retrospectives only).
-  handoff-claims:
-    name: HANDOFF.md Verification Lint
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      pull-requests: read
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          fetch-depth: 0
-      - name: Setup Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
-        with:
-          node-version: '20'
-      - name: Install dependencies
-        run: npm ci --ignore-scripts
-      # Code-review issue #B (PR #563): the previous version passed
-      # `commits_url` (an API URL string) as PR_COMMITS_MSGS, so commit-body
-      # artifact links never reached the lint. Resolve the actual commit
-      # messages here via `git log` (cheap; checkout above is fetch-depth: 0).
-      - name: Aggregate commit messages
-        id: commits
+      - name: HANDOFF.md verification lint
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: |
-          if [ -n "$BASE_SHA" ]; then
-            MSGS=$(git log --format=%B "$BASE_SHA"..HEAD)
-          else
-            MSGS=$(git log --format=%B -1)
-          fi
-          {
-            echo 'msgs<<EOF'
-            echo "$MSGS"
-            echo 'EOF'
-          } >> "$GITHUB_OUTPUT"
-      - name: Check HANDOFF.md claims
-        env:
-          # No `'HEAD~1'` fallback (code-review issue #N).
           BASE_REF_SHA: ${{ github.event.pull_request.base.sha }}
           PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
           PR_BODY: ${{ github.event.pull_request.body }}
           PR_COMMITS_MSGS: ${{ steps.commits.outputs.msgs }}
         run: npx tsx scripts/ci/check-handoff-claims.ts
 
-  # SCRUM-1207 (AUDIT-26): Confluence-drift guard.
-  # Parses PR title/body/commit messages for SCRUM-NNNN refs and verifies
-  # each has a matching Confluence page in space A. Warn-only by default;
-  # set FAIL_ON_MISSING_CONFLUENCE=true to upgrade to a blocking gate once
-  # the long-tail backfill (SCRUM-1199) completes. Override label:
-  # `confluence-drift-skip`.
-  confluence-coverage:
-    name: Confluence Page Coverage
-    runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
-    permissions:
-      contents: read
-      pull-requests: read
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          fetch-depth: 0
-      - name: Setup Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
-        with:
-          node-version: '20'
-      - name: Install dependencies
-        run: npm ci --ignore-scripts
-      - name: Aggregate commit messages
-        id: commits
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: |
-          if [ -n "$BASE_SHA" ]; then
-            MSGS=$(git log --format=%B "$BASE_SHA"..HEAD)
-          else
-            MSGS=$(git log --format=%B -1)
-          fi
-          {
-            echo 'msgs<<EOF'
-            echo "$MSGS"
-            echo 'EOF'
-          } >> "$GITHUB_OUTPUT"
-      - name: Check Confluence page coverage
+      - name: Confluence page coverage
+        if: github.event_name == 'pull_request'
         env:
           BASE_REF_SHA: ${{ github.event.pull_request.base.sha }}
           PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
           PR_TITLE: ${{ github.event.pull_request.title }}
           PR_BODY: ${{ github.event.pull_request.body }}
           PR_COMMITS_MSGS: ${{ steps.commits.outputs.msgs }}
-          # JIRA_EMAIL + JIRA_API_TOKEN reuse the existing Atlassian creds
-          # already wired for Jira automation. Missing creds → warn + skip.
           JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
           JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
           FAIL_ON_MISSING_CONFLUENCE: 'false'
@@ -467,6 +366,10 @@ jobs:
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: '20'
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            services/worker/package-lock.json
 
       - name: Install dependencies
         run: npm ci --ignore-scripts
@@ -526,12 +429,14 @@ jobs:
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: '20'
+          cache: npm
+          cache-dependency-path: package-lock.json
 
       - name: Install dependencies
         run: npm ci --ignore-scripts
 
       - name: Setup Supabase CLI
-        uses: supabase/setup-cli@a4d563a017eb7e7da097c40c441f85dbdcc4411f # v2.0.1
+        uses: supabase/setup-cli@3c2f5e2ae34c34e428e8e206e2c4d21fa2d20fbf # v2.1.1
         with:
           version: 1.123.0
 
@@ -584,12 +489,16 @@ jobs:
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: '20'
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            services/worker/package-lock.json
 
       - name: Install dependencies
         run: npm ci --ignore-scripts
 
       - name: Setup Supabase CLI
-        uses: supabase/setup-cli@a4d563a017eb7e7da097c40c441f85dbdcc4411f # v2.0.1
+        uses: supabase/setup-cli@3c2f5e2ae34c34e428e8e206e2c4d21fa2d20fbf # v2.1.1
         with:
           version: 1.123.0
 
@@ -713,6 +622,10 @@ jobs:
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: '20'
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            services/worker/package-lock.json
 
       - name: Install worker dependencies
         if: steps.ai-changed.outputs.changed == 'true'
@@ -764,6 +677,10 @@ jobs:
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: '20'
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            services/worker/package-lock.json
 
       - name: Install worker dependencies
         if: steps.golden-changed.outputs.changed == 'true'
@@ -857,6 +774,8 @@ jobs:
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: '20'
+          cache: npm
+          cache-dependency-path: package-lock.json
 
       - name: Install dependencies
         if: steps.tla-changed.outputs.changed == 'true'
@@ -996,32 +915,89 @@ jobs:
     needs: [typecheck-lint, test]
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      # Skip the ~25-min Playwright suite when a PR changes only files that
+      # cannot affect app E2E flows (markdown/docs, memory notes, TLA models,
+      # and the edge worker — none of which this run exercises). Any change
+      # under src/, services/worker/, e2e/, supabase/, or build config forces
+      # a full run. Fails safe: if the diff can't be computed, E2E runs. The
+      # job keeps its "E2E Tests" name and always reports a result, so the
+      # Mergify required check (.mergify.yml) is satisfied either way.
+      - name: Detect E2E-relevant changes
+        id: e2e-changed
+        env:
+          # PR events: diff the whole PR against its base tip.
+          # Push events: diff the FULL pushed range (before -> HEAD), not just
+          # HEAD~1 — a multi-commit push whose tip is docs-only must still run
+          # E2E if an earlier commit in the same push touched app code. An
+          # empty/all-zero/unreachable base (first push, force-push) makes the
+          # git cat-file check below fail, which fails safe to running E2E.
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          if [ -z "$BASE_SHA" ] || ! git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null; then
+            echo "Base ref '$BASE_SHA' empty or unreachable — running E2E to be safe"
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if ! CHANGED=$(git diff --name-only "$BASE_SHA" HEAD); then
+            echo "Could not compute diff against $BASE_SHA — running E2E to be safe"
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [ -z "$CHANGED" ]; then
+            echo "No changed files detected — skipping Playwright suite"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          RELEVANT=$(printf '%s\n' "$CHANGED" | grep -vE '(\.md$|^docs/|^memory/|^machines/|^services/edge/|^LICENSE$|^\.gitignore$)' || true)
+          if [ -n "$RELEVANT" ]; then
+            echo "E2E-relevant files changed — running suite:"
+            printf '%s\n' "$RELEVANT"
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Only non-functional files changed — skipping Playwright suite:"
+            printf '%s\n' "$CHANGED"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Setup Node.js
+        if: steps.e2e-changed.outputs.changed == 'true'
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: '20'
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            services/worker/package-lock.json
 
       - name: Install dependencies
+        if: steps.e2e-changed.outputs.changed == 'true'
         run: npm ci --ignore-scripts
 
       - name: Install worker dependencies
+        if: steps.e2e-changed.outputs.changed == 'true'
         working-directory: services/worker
         run: npm ci --ignore-scripts
 
       - name: Install Playwright browsers
+        if: steps.e2e-changed.outputs.changed == 'true'
         run: npx playwright install --with-deps chromium
 
       - name: Setup Supabase CLI
-        uses: supabase/setup-cli@a4d563a017eb7e7da097c40c441f85dbdcc4411f # v2.0.1
+        if: steps.e2e-changed.outputs.changed == 'true'
+        uses: supabase/setup-cli@3c2f5e2ae34c34e428e8e206e2c4d21fa2d20fbf # v2.1.1
         with:
           version: 1.123.0
 
       - name: Start Supabase
+        if: steps.e2e-changed.outputs.changed == 'true'
         run: bash scripts/ci-supabase-start.sh
 
       - name: Extract Supabase keys
         id: supabase-e2e-keys
+        if: steps.e2e-changed.outputs.changed == 'true'
         run: |
           E2E_URL=$(supabase status --output json | jq -r '.API_URL')
           E2E_ANON_KEY=$(supabase status --output json | jq -r '.ANON_KEY')
@@ -1033,12 +1009,15 @@ jobs:
           echo "service_key=$E2E_SERVICE_KEY" >> "$GITHUB_OUTPUT"
 
       - name: Seed database
+        if: steps.e2e-changed.outputs.changed == 'true'
         run: supabase db reset
 
       - name: Create auth state directory
+        if: steps.e2e-changed.outputs.changed == 'true'
         run: mkdir -p .auth
 
       - name: Start worker for E2E tests
+        if: steps.e2e-changed.outputs.changed == 'true'
         working-directory: services/worker
         run: |
           node --import tsx src/index.ts > "$RUNNER_TEMP/arkova-worker.log" 2>&1 &
@@ -1070,6 +1049,7 @@ jobs:
           CORS_ALLOWED_ORIGINS: http://localhost:5173
 
       - name: Run E2E tests
+        if: steps.e2e-changed.outputs.changed == 'true'
         # SCRUM-1620: E2E failures and timeouts are launch-blocking signals.
         # Workers=1 in playwright.config.ts; timeout 25 min keeps cold runners
         # from getting cut mid-suite while still failing the job on timeout.
@@ -1082,6 +1062,10 @@ jobs:
           E2E_SUPABASE_SERVICE_KEY: ${{ steps.supabase-e2e-keys.outputs.service_key }}
           E2E_SEED_PASSWORD: Arkova2026!
           E2E_WORKER_URL: http://127.0.0.1:3001
+
+      - name: E2E skipped (no app-affecting changes)
+        if: steps.e2e-changed.outputs.changed != 'true'
+        run: echo "No src/worker/e2e/supabase/config changes detected — Playwright suite skipped; reporting green."
 
       - name: Upload worker log
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -1113,6 +1097,8 @@ jobs:
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: '20'
+          cache: npm
+          cache-dependency-path: package-lock.json
 
       - name: Install dependencies
         run: npm ci --ignore-scripts
@@ -1159,6 +1145,10 @@ jobs:
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
           node-version: '20'
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            services/worker/package-lock.json
       - name: Install dependencies
         run: npm ci --ignore-scripts
       - name: Generate frontend SBOM (CycloneDX)

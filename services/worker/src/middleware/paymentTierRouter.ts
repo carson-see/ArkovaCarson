@@ -26,6 +26,25 @@ export interface PaymentResolution {
   reason?: string;
 }
 
+interface PaymentRequest extends Request {
+  userId?: string;
+  orgId?: string;
+  paymentResolution?: PaymentResolution;
+}
+
+interface UntypedX402QueryBuilder {
+  select(columns: string): UntypedX402QueryBuilder;
+  update(row: Record<string, unknown>): UntypedX402QueryBuilder;
+  eq(col: string, val: unknown): UntypedX402QueryBuilder;
+  is(col: string, val: unknown): UntypedX402QueryBuilder;
+  maybeSingle(): Promise<{ data: Record<string, unknown> | null; error: unknown }>;
+  then: Promise<{ data: unknown; error: unknown }>['then'];
+}
+
+interface UntypedX402Client {
+  from(table: string): UntypedX402QueryBuilder;
+}
+
 /** Cost in credits per endpoint (1 credit = 1 API call) */
 const CREDIT_COSTS: Record<string, number> = {
   '/api/v1/verify': 1,
@@ -138,8 +157,7 @@ async function tryX402(req: Request): Promise<PaymentResolution | null> {
   }
 
   // Check for verified, unconsumed payment — mark as consumed atomically
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data } = await (db as any)
+  const { data } = await (db as unknown as UntypedX402Client)
     .from('x402_payments')
     .select('id, tx_hash')
     .eq('tx_hash', paymentHeader)
@@ -150,11 +168,10 @@ async function tryX402(req: Request): Promise<PaymentResolution | null> {
   if (!data) return null;
 
   // Mark payment as consumed to prevent replay
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- table not yet in generated database.types.ts
-  await (db as any)
+  await (db as unknown as UntypedX402Client)
     .from('x402_payments')
     .update({ consumed_at: new Date().toISOString() })
-    .eq('id', data.id)
+    .eq('id', (data as { id: string }).id)
     .is('consumed_at', null); // optimistic lock
 
   return {
@@ -217,8 +234,9 @@ export function paymentTierRouter() {
       return;
     }
 
-    const userId = req.userId;
-    const orgId = req.orgId;
+    const payReq = req as PaymentRequest;
+    const userId = payReq.userId;
+    const orgId = payReq.orgId;
 
     if (!userId) {
       // No auth context — let auth middleware handle it
@@ -229,14 +247,14 @@ export function paymentTierRouter() {
     // 0. Admin/beta bypass
     const admin = await tryAdminBypass(userId);
     if (admin) {
-      req.paymentResolution = admin;
+      payReq.paymentResolution = admin;
       next();
       return;
     }
 
     const beta = await tryBetaUnlimited();
     if (beta) {
-      req.paymentResolution = beta;
+      payReq.paymentResolution = beta;
       next();
       return;
     }
@@ -247,7 +265,7 @@ export function paymentTierRouter() {
     if (orgId) {
       const credits = await tryCredits(orgId, userId, creditCost);
       if (credits) {
-        req.paymentResolution = credits;
+        payReq.paymentResolution = credits;
         res.setHeader('X-Credits-Remaining', String(credits.creditsRemaining ?? 0));
         next();
         return;
@@ -258,7 +276,7 @@ export function paymentTierRouter() {
     if (orgId) {
       const stripe = await tryStripeMetered(userId, orgId);
       if (stripe) {
-        req.paymentResolution = stripe;
+        payReq.paymentResolution = stripe;
         next();
         return;
       }
@@ -267,7 +285,7 @@ export function paymentTierRouter() {
     // 3. x402 on-chain payment
     const x402 = await tryX402(req);
     if (x402) {
-      req.paymentResolution = x402;
+      payReq.paymentResolution = x402;
       next();
       return;
     }

@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { readMigration } from './migrations.js';
 
-const migration = readMigration('0314_professional_education_foundations.sql');
+const migration = readMigration('0315_professional_education_foundations.sql');
 
-describe('0314 professional education foundations migration', () => {
+describe('0315 professional education foundations migration', () => {
   it('adds CPE and CLE metadata columns with object-shape checks', () => {
     expect(migration).toContain("ALTER TYPE public.credential_type ADD VALUE IF NOT EXISTS 'CPE'");
     expect(migration).toContain('ADD COLUMN IF NOT EXISTS cpe_metadata jsonb');
