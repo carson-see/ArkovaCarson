@@ -87,8 +87,12 @@ beforeEach(() => {
 });
 
 describe('POST /webhooks/docusign', () => {
-  it('returns 503 when HMAC secret is not configured', async () => {
+  it('returns 503 when HMAC secret is not configured and integration has no keys', async () => {
     delete process.env.DOCUSIGN_CONNECT_HMAC_SECRET;
+    // SCRUM-2043: lookup-first — integration lookup happens before HMAC check
+    dbFromMock.mockReturnValueOnce(
+      integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1', hmac_keys: null }),
+    );
     const body = validBody();
     const res = await request(createApp())
       .post('/webhooks/docusign')
@@ -99,7 +103,12 @@ describe('POST /webhooks/docusign', () => {
     expect(res.status).toBe(503);
   });
 
-  it('rejects tampered payloads before any DB write', async () => {
+  it('rejects tampered payloads after integration lookup', async () => {
+    // SCRUM-2043: lookup-first order means DB lookup happens before HMAC check.
+    // Integration lookup IS called, but no nonce/rule/job writes happen.
+    dbFromMock.mockReturnValueOnce(
+      integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1', hmac_keys: null }),
+    );
     const body = validBody();
     const res = await request(createApp())
       .post('/webhooks/docusign')
@@ -108,7 +117,7 @@ describe('POST /webhooks/docusign', () => {
       .send(body.replace('env-1', 'env-2'));
 
     expect(res.status).toBe(401);
-    expect(dbFromMock).not.toHaveBeenCalled();
+    expect(dbFromMock).toHaveBeenCalledTimes(1); // integration lookup only
     expect(rpcMock).not.toHaveBeenCalled();
     expect(submitJobMock).not.toHaveBeenCalled();
   });
@@ -129,7 +138,7 @@ describe('POST /webhooks/docusign', () => {
 
   it('enqueues a sanitized rules event and retryable document-fetch job', async () => {
     dbFromMock.mockReturnValueOnce(
-      integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1' }),
+      integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1', hmac_keys: null }),
     );
     dbFromMock.mockReturnValueOnce(nonceInsert());
     rpcMock.mockResolvedValueOnce({ data: '22222222-2222-4222-8222-222222222222', error: null });
@@ -172,7 +181,7 @@ describe('POST /webhooks/docusign', () => {
 
   it('returns 500 when the retryable job cannot be queued', async () => {
     dbFromMock.mockReturnValueOnce(
-      integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1' }),
+      integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1', hmac_keys: null }),
     );
     dbFromMock.mockReturnValueOnce(nonceInsert());
     rpcMock.mockResolvedValueOnce({ data: 'evt-1', error: null });
@@ -193,7 +202,7 @@ describe('POST /webhooks/docusign', () => {
     // (envelope_id, event_id, generated_at) constraint and is acknowledged
     // without enqueueing another rule event or fetch job.
     dbFromMock.mockReturnValueOnce(
-      integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1' }),
+      integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1', hmac_keys: null }),
     );
     dbFromMock.mockReturnValueOnce(
       nonceInsert({ code: '23505', message: 'duplicate key value violates unique constraint' }),
@@ -215,8 +224,8 @@ describe('POST /webhooks/docusign', () => {
   it('returns 500 when DocuSign accountId is connected to multiple orgs (cross-tenant guard)', async () => {
     dbFromMock.mockReturnValueOnce(
       integrationLookup([
-        { id: 'int-1', org_id: ORG_ID, account_id: 'acct-1' },
-        { id: 'int-2', org_id: '33333333-3333-4333-8333-333333333333', account_id: 'acct-1' },
+        { id: 'int-1', org_id: ORG_ID, account_id: 'acct-1', hmac_keys: null },
+        { id: 'int-2', org_id: '33333333-3333-4333-8333-333333333333', account_id: 'acct-1', hmac_keys: null },
       ]),
     );
     const body = validBody();
@@ -234,7 +243,7 @@ describe('POST /webhooks/docusign', () => {
 
   it('returns 500 when the nonce insert fails for a non-duplicate reason', async () => {
     dbFromMock.mockReturnValueOnce(
-      integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1' }),
+      integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1', hmac_keys: null }),
     );
     dbFromMock.mockReturnValueOnce(
       nonceInsert({ code: '08006', message: 'connection failure' }),
@@ -262,7 +271,7 @@ describe('POST /webhooks/docusign', () => {
   it('captures envelopes from multiple senders sharing one DocuSign accountId (DS-01)', async () => {
     // Sender 1 — Mercy
     dbFromMock.mockReturnValueOnce(
-      integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1' }),
+      integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1', hmac_keys: null }),
     );
     dbFromMock.mockReturnValueOnce(nonceInsert());
     rpcMock.mockResolvedValueOnce({ data: 'evt-mercy', error: null });
@@ -296,7 +305,7 @@ describe('POST /webhooks/docusign', () => {
 
     // Sender 2 — Kevin, same DocuSign accountId, same Arkova org/integration
     dbFromMock.mockReturnValueOnce(
-      integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1' }),
+      integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1', hmac_keys: null }),
     );
     dbFromMock.mockReturnValueOnce(nonceInsert());
     rpcMock.mockResolvedValueOnce({ data: 'evt-kevin', error: null });

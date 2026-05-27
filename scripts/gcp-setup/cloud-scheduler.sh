@@ -45,6 +45,10 @@ JOBS=(
   # SCRUM-2041 (SOC 2 CC7.1): connector health check every 15 min.
   # Evaluates all org integrations, fires Sentry alerts on state transitions.
   "connector-health-check|*/15 * * * *|/jobs/connector-health-check|30s,120s,2"
+  # SCRUM-2042 (SOC 2 CC7.2): DocuSign retry exhaustion reconciliation daily
+  # at 06:00 UTC. Polls Envelopes API, diffs against webhook nonces, inserts
+  # gap rows, fires Sentry per gap. Also keeps OAuth tokens alive (30-day expiry).
+  "docusign-reconciliation|0 6 * * *|/cron/docusign-reconciliation|30s,120s,2"
 )
 # SCRUM-1727 (one-shot historical backfill) is INTENTIONALLY NOT in JOBS.
 # It's a manual operator endpoint at /jobs/bq-export-backfill?table=<name>.

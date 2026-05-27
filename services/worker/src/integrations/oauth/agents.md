@@ -1,6 +1,6 @@
 # agents.md — services/worker/src/integrations/oauth/
 
-_Last updated: 2026-05-16_
+_Last updated: 2026-05-27_
 
 ## What This Folder Contains
 
@@ -13,6 +13,8 @@ Shared OAuth infrastructure — token encryption, HMAC webhook verification, and
 | `drive.ts` | Google Drive OAuth client — token exchange, refresh, changes.watch, files.get, channels.stop |
 | `docusign.ts` | DocuSign OAuth client — consent URLs, token refresh, UserInfo discovery, envelope document fetch, Connect HMAC |
 | `adobe-sign.ts` | Adobe Sign webhook HMAC verification helpers |
+| `docusign-hmac.ts` | SCRUM-2043: multi-key HMAC verifier + signature header extractor for dual-key rotation |
+| `docusign-hmac.test.ts` | Tests for multi-key HMAC verification |
 
 ## Do / Don't Rules
 

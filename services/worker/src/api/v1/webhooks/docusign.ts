@@ -17,9 +17,13 @@ import { DOCUSIGN_ENVELOPE_COMPLETED_JOB_TYPE } from '../../../jobs/docusign-env
 import { adaptDocusign } from '../../../integrations/connectors/adapters.js';
 import {
   parseDocusignConnectPayload,
-  verifyDocusignConnectHmac,
   type DocusignCompletedEnvelope,
 } from '../../../integrations/oauth/docusign.js';
+import {
+  verifyDocusignConnectHmacMultiKey,
+  extractDocusignSignatures,
+} from '../../../integrations/oauth/docusign-hmac.js';
+import { resolveHmacKeys, type HmacKeyEntry } from './docusign-hmac-helpers.js';
 
 export const docusignWebhookRouter = Router();
 
@@ -27,6 +31,7 @@ interface DocusignIntegrationRow {
   id: string;
   org_id: string;
   account_id: string | null;
+  hmac_keys: HmacKeyEntry[] | null;
 }
 
 function getRawBody(req: Request): Buffer | null {
@@ -34,16 +39,11 @@ function getRawBody(req: Request): Buffer | null {
   return Buffer.isBuffer(rawBody) ? rawBody : null;
 }
 
-function signatureHeader(req: Request): string | undefined {
-  const header = req.headers['x-docusign-signature-1'];
-  return Array.isArray(header) ? header[0] : header;
-}
-
 async function findIntegration(accountId: string): Promise<DocusignIntegrationRow | null> {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any, arkova/missing-org-filter -- webhook ingress: resolving org from external provider ID
   const { data, error } = await (db as any)
     .from('org_integrations')
-    .select('id, org_id, account_id')
+    .select('id, org_id, account_id, hmac_keys')
     .eq('provider', 'docusign')
     .eq('account_id', accountId)
     .is('revoked_at', null);
@@ -128,13 +128,6 @@ async function enqueueFetchJob(args: {
 }
 
 docusignWebhookRouter.post('/', async (req: Request, res: Response) => {
-  const secret = process.env.DOCUSIGN_CONNECT_HMAC_SECRET;
-  if (!secret) {
-    logger.error('DOCUSIGN_CONNECT_HMAC_SECRET not set — webhook rejected');
-    res.status(503).json({ error: { code: 'webhook_unconfigured' } });
-    return;
-  }
-
   const rawBody = getRawBody(req);
   if (!rawBody) {
     logger.error({ path: req.path }, 'DocuSign webhook: rawBody missing — raw parser must be mounted');
@@ -142,11 +135,8 @@ docusignWebhookRouter.post('/', async (req: Request, res: Response) => {
     return;
   }
 
-  if (!verifyDocusignConnectHmac({ rawBody, signature: signatureHeader(req), secret })) {
-    res.status(401).json({ error: { code: 'invalid_signature' } });
-    return;
-  }
-
+  // SCRUM-2043: lookup-first order — parse body to get accountId, then
+  // resolve integration (+ per-org HMAC keys), then verify HMAC.
   let event: DocusignCompletedEnvelope;
   try {
     event = parseDocusignConnectPayload(rawBody);
@@ -161,6 +151,23 @@ docusignWebhookRouter.post('/', async (req: Request, res: Response) => {
     if (!integration) {
       logger.warn({ accountId: event.accountId }, 'DocuSign webhook: unknown connected account');
       res.status(200).json({ ok: true, orphaned: true });
+      return;
+    }
+
+    // SCRUM-2043: resolve HMAC keys — per-org keys take priority, env var is fallback
+    const hmacKeys = resolveHmacKeys(
+      integration.hmac_keys,
+      process.env.DOCUSIGN_CONNECT_HMAC_SECRET,
+    );
+    if (hmacKeys.length === 0) {
+      logger.error({ integrationId: integration.id }, 'No HMAC keys configured — webhook rejected');
+      res.status(503).json({ error: { code: 'webhook_unconfigured' } });
+      return;
+    }
+
+    const signatures = extractDocusignSignatures(req.headers as Record<string, string | string[] | undefined>);
+    if (!verifyDocusignConnectHmacMultiKey({ rawBody, signatures, keys: hmacKeys })) {
+      res.status(401).json({ error: { code: 'invalid_signature' } });
       return;
     }
 
