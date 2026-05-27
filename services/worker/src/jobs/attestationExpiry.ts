@@ -11,6 +11,7 @@ import { logger } from '../utils/logger.js';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const dbAny = db as any;
+const CHUNK_SIZE = 100;
 
 interface ExpiryResult {
   checked: number;
@@ -122,7 +123,6 @@ export async function checkAttestationExpiry(): Promise<ExpiryResult> {
       // If webhook insert fails, attestations stay ACTIVE and will be retried
       // next tick. Previously, status was updated first — if webhook insert
       // then failed, those events were permanently lost (cron queries status = 'ACTIVE').
-      const CHUNK_SIZE = 100;
 
       // Bulk insert webhooks in chunks (PostgREST ~8KB URL limit on .in() filters)
       if (webhookInserts.length > 0) {
@@ -181,7 +181,6 @@ export async function checkAttestationExpiry(): Promise<ExpiryResult> {
       }
     } else if (webhookInserts.length > 0) {
       // Expiring (but not yet expired) webhook events — insert in chunks
-      const CHUNK_SIZE = 100;
       for (let i = 0; i < webhookInserts.length; i += CHUNK_SIZE) {
         const chunk = webhookInserts.slice(i, i + CHUNK_SIZE);
         const { error: insertErr } = await dbAny

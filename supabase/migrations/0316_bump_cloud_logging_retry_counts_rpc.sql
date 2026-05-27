@@ -21,5 +21,8 @@ BEGIN
 END;
 $$;
 
+REVOKE ALL ON FUNCTION bump_cloud_logging_retry_counts(text[], text) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION bump_cloud_logging_retry_counts(text[], text) TO service_role;
+
 -- Reload PostgREST schema cache so .rpc() calls discover the new function immediately
 NOTIFY pgrst, 'reload schema';

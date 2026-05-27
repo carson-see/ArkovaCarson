@@ -75,7 +75,7 @@ function EmptyState() {
   );
 }
 
-function ErrorDisplay({ message, onRetry }: { message: string; onRetry: () => void }) {
+function ErrorDisplay({ message, onRetry }: Readonly<{ message: string; onRetry: () => void }>) {
   return (
     <Alert variant="destructive" data-testid="version-conflicts-error">
       <AlertTriangle className="h-4 w-4" />
@@ -94,11 +94,11 @@ function ConflictCard({
   group,
   onResolve,
   resolving,
-}: {
+}: Readonly<{
   group: ConflictGroup;
   onResolve: (versionId: string) => void;
   resolving: boolean;
-}) {
+}>) {
   const filename = group.oldest.filename ?? 'Unnamed document';
   const age = formatAge(group.oldest.created_at);
 

@@ -180,14 +180,16 @@ export async function bumpRetryCounts(auditIds: string[], errorMsg?: string): Pr
 
     if (readErr || !rows) {
       // If we can't read, at least set last_error so it's visible
-      try {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        await (db as any)
-          .from('cloud_logging_queue')
-          .update({ last_error: truncatedError })
-          .in('audit_id', chunk);
-      } catch {
-        // Best-effort — if this also fails, continue to next chunk
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { error: lastErrorUpdateErr } = await (db as any)
+        .from('cloud_logging_queue')
+        .update({ last_error: truncatedError })
+        .in('audit_id', chunk);
+      if (lastErrorUpdateErr) {
+        logger.warn(
+          { error: lastErrorUpdateErr, count: chunk.length },
+          'bumpRetryCounts: failed to persist last_error after queue read failure',
+        );
       }
       continue;
     }

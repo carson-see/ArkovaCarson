@@ -17,7 +17,7 @@ vi.mock('../lib/supabase', () => ({
 }));
 
 const mockFetch = vi.fn();
-global.fetch = mockFetch;
+globalThis.fetch = mockFetch as unknown as typeof fetch;
 
 const mockItems = [
   {

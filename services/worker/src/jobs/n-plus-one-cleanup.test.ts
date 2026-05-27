@@ -401,6 +401,6 @@ describe('SCRUM-1296: revocation sequential processing (UTXO safety)', () => {
     const result = await runWithConcurrency(tasks, 2);
     expect(result.fulfilled).toHaveLength(5);
     expect(result.rejected).toHaveLength(0);
-    expect(result.fulfilled.sort((a, b) => a - b)).toEqual([2, 4, 6, 8, 10]);
+    expect([...result.fulfilled].sort((a, b) => a - b)).toEqual([2, 4, 6, 8, 10]);
   });
 });
