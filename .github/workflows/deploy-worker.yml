@@ -142,7 +142,7 @@ jobs:
           IMAGE="${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.SERVICE_NAME }}:${{ github.sha }}"
           LATEST="${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.SERVICE_NAME }}:latest"
           docker build \
-            --build-arg BUILD_SHA=${{ github.sha }} \
+            --build-arg BUILD_SHA="${{ github.sha }}" \
             --tag "${IMAGE}" \
             --tag "${LATEST}" \
             services/worker
