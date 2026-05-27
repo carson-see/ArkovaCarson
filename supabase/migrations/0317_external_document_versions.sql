@@ -120,6 +120,7 @@ CREATE POLICY vr_org_insert ON public.version_reviews
       SELECT 1 FROM public.external_document_versions edv
       JOIN org_members om ON om.org_id = edv.org_id
       WHERE edv.id = version_reviews.version_id
+        AND version_reviews.reviewer_id = (SELECT auth.uid())
         AND om.user_id = (SELECT auth.uid())
         AND om.role IN ('admin', 'owner')
     )
