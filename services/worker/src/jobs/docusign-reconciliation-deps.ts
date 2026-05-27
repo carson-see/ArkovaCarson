@@ -74,41 +74,60 @@ export function makeReconciliationDeps(
     async listCompletedEnvelopes(args): Promise<EnvelopeSummary[]> {
       let base = args.baseUri;
       while (base.endsWith('/')) base = base.slice(0, -1);
-      const url = `${base}/restapi/v2.1/accounts/${encodeURIComponent(args.accountId)}/envelopes?from_date=${encodeURIComponent(args.fromDate)}&status=completed&count=100`;
 
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 30_000);
-      try {
-        const res = await fetchImpl(url, {
-          headers: { Authorization: `Bearer ${args.accessToken}` },
-          signal: controller.signal,
-        });
-        if (!res.ok) {
-          const body = await res.text().catch(() => '');
-          throw new Error(`envelopes_api_${res.status}: ${body.slice(0, 200)}`);
+      const MAX_PAGES = 10;
+      const allEnvelopes: EnvelopeSummary[] = [];
+      let nextUrl: string | null =
+        `${base}/restapi/v2.1/accounts/${encodeURIComponent(args.accountId)}/envelopes?from_date=${encodeURIComponent(args.fromDate)}&status=completed&count=100`;
+
+      for (let page = 0; page < MAX_PAGES && nextUrl; page++) {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 30_000);
+        try {
+          const res = await fetchImpl(nextUrl, {
+            headers: { Authorization: `Bearer ${args.accessToken}` },
+            signal: controller.signal,
+          });
+          if (!res.ok) {
+            const body = await res.text().catch(() => '');
+            throw new Error(`envelopes_api_${res.status}: ${body.slice(0, 200)}`);
+          }
+          const json = (await res.json()) as {
+            envelopes?: Array<{
+              envelopeId?: string;
+              status?: string;
+              completedDateTime?: string;
+            }>;
+            nextUri?: string;
+          };
+
+          const pageEnvelopes = (json.envelopes ?? [])
+            .filter((e) => e.envelopeId && e.completedDateTime)
+            .map((e) => ({
+              envelopeId: e.envelopeId!,
+              status: e.status ?? 'completed',
+              completedDateTime: e.completedDateTime!,
+            }));
+          allEnvelopes.push(...pageEnvelopes);
+
+          if (json.nextUri) {
+            nextUrl = json.nextUri.startsWith('http')
+              ? json.nextUri
+              : `${base}${json.nextUri}`;
+          } else {
+            nextUrl = null;
+          }
+        } catch (err) {
+          if (err instanceof Error && err.name === 'AbortError') {
+            throw new Error('envelopes_api_timeout');
+          }
+          throw err;
+        } finally {
+          clearTimeout(timeout);
         }
-        const json = (await res.json()) as {
-          envelopes?: Array<{
-            envelopeId?: string;
-            status?: string;
-            completedDateTime?: string;
-          }>;
-        };
-        return (json.envelopes ?? [])
-          .filter((e) => e.envelopeId && e.completedDateTime)
-          .map((e) => ({
-            envelopeId: e.envelopeId!,
-            status: e.status ?? 'completed',
-            completedDateTime: e.completedDateTime!,
-          }));
-      } catch (err) {
-        if (err instanceof Error && err.name === 'AbortError') {
-          throw new Error('envelopes_api_timeout');
-        }
-        throw err;
-      } finally {
-        clearTimeout(timeout);
       }
+
+      return allEnvelopes;
     },
 
     async getReceivedEnvelopeIds(
