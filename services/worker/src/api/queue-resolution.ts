@@ -59,6 +59,12 @@ function metadataExternalFileId(metadata: unknown): string | null {
   return typeof externalFileId === 'string' ? externalFileId : null;
 }
 
+function parsePendingLimit(rawLimit: unknown): number {
+  const parsed = typeof rawLimit === 'string' ? Number.parseInt(rawLimit, 10) : Number.NaN;
+  const requested = Number.isNaN(parsed) ? 100 : parsed;
+  return Math.min(Math.max(requested, 1), 500);
+}
+
 /**
  * GET /api/queue/pending
  * Returns anchors currently in PENDING_RESOLUTION for the caller's org.
@@ -73,10 +79,7 @@ export async function handleListPendingResolution(
   req: Request,
   res: Response,
 ): Promise<void> {
-  const limit = Math.min(
-    Math.max(parseInt((req.query.limit as string) ?? '100', 10) || 100, 1),
-    500,
-  );
+  const limit = parsePendingLimit(req.query.limit);
 
   try {
     const profile = await getCallerProfile(userId);
@@ -109,9 +112,38 @@ export async function handleListPendingResolution(
     const pendingAnchors = Array.isArray(data) ? data : [];
     const siblingCounts = new Map<string, number>();
     const externalFileIds = pendingAnchors.map((r) => metadataExternalFileId(r.metadata));
-    for (const externalFileId of externalFileIds) {
-      if (externalFileId !== null) {
-        siblingCounts.set(externalFileId, (siblingCounts.get(externalFileId) ?? 0) + 1);
+    const uniqueExternalFileIds = [...new Set(externalFileIds.filter((id): id is string => id !== null))];
+    if (uniqueExternalFileIds.length > 0) {
+      const pageSize = 1000;
+      let offset = 0;
+      for (;;) {
+        const { data: siblingData, error: siblingError } = await db
+          .from('anchors')
+          .select('metadata')
+          .eq('org_id', orgId)
+          .eq('status', 'PENDING_RESOLUTION')
+          .is('deleted_at', null)
+          .in('metadata->>external_file_id', uniqueExternalFileIds)
+          .range(offset, offset + pageSize - 1);
+
+        if (siblingError) {
+          logger.error({ error: siblingError }, 'anchors sibling count query for pending resolution failed');
+          res.status(500).json({ error: { code: 'query_failed', message: 'Failed to list pending resolutions' } });
+          return;
+        }
+
+        const siblingRows = Array.isArray(siblingData) ? siblingData : [];
+        for (const siblingRow of siblingRows) {
+          const externalFileId = metadataExternalFileId(siblingRow.metadata);
+          if (externalFileId !== null) {
+            siblingCounts.set(externalFileId, (siblingCounts.get(externalFileId) ?? 0) + 1);
+          }
+        }
+
+        if (siblingRows.length < pageSize) {
+          break;
+        }
+        offset += pageSize;
       }
     }
 
