@@ -242,15 +242,19 @@ cronRouter.post('/batch-anchors', async (req, res) => {
     // ?force=true bypasses the size/age trigger (daily 3am EST sweep).
     const force = req.query.force === 'true' || req.query.force === '1';
     const rawOrgId = req.query.org_id ?? req.body?.org_id;
-    const orgId = typeof rawOrgId === 'string' && rawOrgId.trim().length > 0
-      ? rawOrgId.trim()
-      : undefined;
-    if (orgId) {
+    let orgId: string | undefined;
+    if (rawOrgId !== undefined) {
+      if (typeof rawOrgId !== 'string') {
+        res.status(400).json({ error: 'Invalid org_id' });
+        return;
+      }
+      orgId = rawOrgId.trim();
       const parsedOrgId = z.string().uuid().safeParse(orgId);
       if (!parsedOrgId.success) {
         res.status(400).json({ error: 'Invalid org_id' });
         return;
       }
+      orgId = parsedOrgId.data;
     }
     const result = await processBatchAnchors({ force, orgId });
     res.json(result);
