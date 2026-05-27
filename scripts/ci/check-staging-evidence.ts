@@ -172,6 +172,17 @@ export const PATH_RULES: PathRule[] = [
     reason: 'edge worker',
   },
   {
+    // The prod worker deploy workflow defines runtime config directly
+    // (min-instances, cpu/memory, --set-env-vars, --set-secrets, image).
+    // A push to main touching it triggers a prod redeploy, so any change
+    // is prod-bound. T2 floor; reviewers must bump to T3 when the change
+    // touches anchor/treasury/billing env (e.g. ENABLE_PROD_NETWORK_ANCHORING,
+    // BATCH_ANCHOR_MAX_SIZE, KMS config).
+    pattern: /^\.github\/workflows\/deploy-worker\.yml$/,
+    minTier: 'T2',
+    reason: 'worker deploy config (prod runtime: min-instances, env, secrets, image)',
+  },
+  {
     pattern: /^src\/(components|pages|hooks|lib)\//,
     minTier: 'T1',
     reason: 'frontend code',
@@ -445,7 +456,9 @@ const STAGING_TOOLING_ALLOW = [
   /^\.github\/workflows\/ci\.yml$/,
   /^\.github\/workflows\/staging-evidence\.yml$/,
   /^\.github\/workflows\/deploy-staging\.yml$/,
-  /^\.github\/workflows\/deploy-worker\.yml$/,
+  // NOTE: .github/workflows/deploy-worker.yml is intentionally NOT here — it
+  // defines prod runtime config and is gated as T2 via PATH_RULES. See the
+  // 2026-05-27 incident where a min-instances change merged without a soak.
   /^services\/worker\/cloudbuild\.yaml$/,
   /^\.mergify\.yml$/,
   /^CLAUDE\.md$/,

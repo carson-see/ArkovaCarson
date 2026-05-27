@@ -117,6 +117,12 @@ describe('check-staging-evidence', () => {
       ).toBe('T2');
     });
 
+    it('returns T2 for the worker deploy workflow (prod runtime config)', () => {
+      expect(
+        requiredTierFor(['.github/workflows/deploy-worker.yml']).tier,
+      ).toBe('T2');
+    });
+
     it('excludes staging-tooling files from tier calculation', () => {
       expect(
         requiredTierFor(['services/worker/src/webhooks/agents.md']).tier,
@@ -499,6 +505,12 @@ describe('check-staging-evidence', () => {
     it('fails for services/worker/package.json (prod dependency bump requires soak)', () => {
       expect(
         isStagingToolingOnly(['services/worker/package.json']).pass,
+      ).toBe(false);
+    });
+
+    it('fails for the worker deploy workflow (defines prod runtime config)', () => {
+      expect(
+        isStagingToolingOnly(['.github/workflows/deploy-worker.yml']).pass,
       ).toBe(false);
     });
 
