@@ -14,6 +14,32 @@
 
 ## Now
 
+### 2026-05-27 — Sprint 2 DocuSign epic (SCRUM-1866): 3 stories code-complete, PR #927 open
+
+**Window:** 2026-05-27. Sprint 2 of the DocuSign Integration epic (SCRUM-1866) delivers 3 stories: SCRUM-2042 (reconciliation cron), SCRUM-2043 (dual HMAC key rotation), SCRUM-2044 (member-level DocuSign spec). All code-complete. PR [#927](https://github.com/carson-see/ArkovaCarson/pull/927) open on branch `feat/scrum-2042-2043-2044-docusign-sprint2` targeting `main`.
+
+**Test/lint state:** 429/429 test files, 5758/5758 tests, 0 lint errors, typecheck clean.
+
+**Stories:**
+
+| Story | Summary | Status | Confluence |
+|---|---|---|---|
+| SCRUM-2042 | Connect retry exhaustion reconciliation cron (SOC 2 CC7.2) | Code complete, In Progress | [page 62947329](https://arkova.atlassian.net/wiki/spaces/A/pages/62947329) |
+| SCRUM-2043 | Dual HMAC key rotation (SOC 2 CC6.1) | Code complete, In Progress | [page 62980097](https://arkova.atlassian.net/wiki/spaces/A/pages/62980097) |
+| SCRUM-2044 | Member-level DocuSign (spec only) | Spec complete, In Progress | [page 63012865](https://arkova.atlassian.net/wiki/spaces/A/pages/63012865) |
+
+**Migrations:** `0318_docusign_reconciliation_gaps.sql` (gap table + RLS), `0319_org_integrations_hmac_keys.sql` (hmac_keys column).
+
+**Breaking change:** SCRUM-2043 flips webhook handler order from HMAC→parse→lookup to parse→lookup→HMAC (lookup-first). Required to resolve per-org HMAC keys before verification.
+
+**Soak tier:** T2 (migration + new cron + webhook handler change). 12h soak + rollback rehearsal required before merge.
+
+**Next:** T2 staging soak on PR #927, then merge.
+
+_Last refreshed: 2026-05-27 by Carson — claims verified against `git log` on branch `feat/scrum-2042-2043-2044-docusign-sprint2`, Jira MCP transitions (SCRUM-2042/2043/2044 → In Progress), Confluence page creation (62947329, 62980097, 63012865), PR #927._
+
+---
+
 ### 2026-05-25 — 96-hour sprint: 23 PRs merged, worker redeployed
 
 **Window:** 2026-05-21 through 2026-05-25. 23 PRs merged to `main`. Final production revision built from git_sha `5874a96c` (merge commit of PR #859). Worker healthy: database ok, anchoring ok, kms ok. Edge worker (edge.arkova.ai) redeployed with MCP search tool fixes.
