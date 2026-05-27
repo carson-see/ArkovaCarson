@@ -88,6 +88,7 @@ import { runSubscriptionRenewal } from '../jobs/workspace-subscription-renewal.j
 import { runMainnetMigration, getMigrationStatus } from '../jobs/mainnet-migration.js';
 import { checkPipelineHealth } from '../jobs/pipeline-health.js';
 import { GRACE_EXPIRY_SWEEP_CRON, runGraceExpirySweep } from '../jobs/grace-expiry-sweep.js';
+import { sweepExpiredNonces, makeNonceSweepDb } from '../jobs/nonce-sweep.js';
 import { MONTHLY_ALLOCATION_ROLLOVER_CRON, runAllocationRollover } from '../jobs/monthly-allocation-rollover.js';
 import { runStripeAnchorReconciliation, generateFinancialReport, processFailedPaymentRecovery } from '../billing/reconciliation.js';
 import { logHeapStatus } from '../utils/heapMonitor.js';
@@ -1404,6 +1405,22 @@ cronRouter.post('/cleanup-retention', async (_req, res) => {
     res.json({ result });
   } catch (error) {
     logger.error({ error }, 'Data retention cleanup failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+// ─── SCRUM-2040: Webhook nonce sweep (SOC 2 CC7.4) ───
+cronRouter.post('/nonce-sweep', async (_req, res) => {
+  try {
+    const adapter = makeNonceSweepDb(db);
+    const result = await sweepExpiredNonces(adapter);
+    if (!result.ok) {
+      res.status(207).json(result);
+      return;
+    }
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'Nonce sweep failed');
     res.status(500).json({ error: 'Processing failed' });
   }
 });
