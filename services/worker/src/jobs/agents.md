@@ -32,3 +32,4 @@ Background workers for anchor lifecycle, billing reconciliation, drive ingestion
 - SCRUM-1736 (PR #734) — anchorExpirySweep producer; awaiting Carson merge + Mon 2026-05-11 deploy.
 - SCRUM-1737 [Verify] — HakiChain receiver round-trip + Tier 3 48h soak post-merge.
 - SCRUM-1738 [Close-out] — Confluence Webhooks topic page update post-merge.
+- SCRUM-2040 — `nonce-sweep.ts` sweeps all 4 webhook nonce tables (14-day retention). Migration 0316 adds `sweep_webhook_nonces` RPC with table allowlist. Cron route `/nonce-sweep` in `cron.ts`.
