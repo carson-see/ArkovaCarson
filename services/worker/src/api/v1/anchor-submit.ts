@@ -197,7 +197,7 @@ async function handleAnchorSubmit(req: Request, res: Response) {
       .single();
 
     if (insertError) {
-      handleInsertError(insertError, fingerprint, orgId, res);
+      handleInsertError(insertError, orgId, res);
       return;
     }
 
@@ -209,7 +209,7 @@ async function handleAnchorSubmit(req: Request, res: Response) {
       record_uri: buildVerifyUrl(anchor.public_id ?? publicId),
     };
 
-    logger.info({ publicId, fingerprint: fingerprint.slice(0, 12) }, 'Anchor submitted via API');
+    logger.info({ publicId }, 'Anchor submitted via API');
     enqueueProfessionalEducationExtraction({
       id: anchor.id,
       public_id: anchor.public_id ?? publicId,
@@ -244,13 +244,12 @@ router.post('/submit', handleAnchorSubmit);
  */
 function handleInsertError(
   insertError: unknown,
-  fingerprint: string,
   orgId: string | null,
   res: Response,
 ): void {
   const pgCode = (insertError as { code?: string }).code ?? null;
   const pgConstraint = (insertError as { constraint?: string }).constraint ?? null;
-  logger.error({ pgCode, pgConstraint, orgId, fingerprintPrefix: fingerprint.slice(0, 12) }, 'Failed to create anchor');
+  logger.error({ pgCode, pgConstraint, orgId }, 'Failed to create anchor');
   if (pgCode === '23505') {
     res.status(409).json({
       error: 'anchor_creation_conflict',

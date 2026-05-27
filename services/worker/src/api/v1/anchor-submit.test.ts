@@ -457,8 +457,8 @@ describe('POST /api/v1/anchor — Zod validation', () => {
       );
       const [fkLogPayload] = mockLogger.error.mock.calls.at(-1) as [Record<string, unknown>, string];
       expect(fkLogPayload).not.toHaveProperty('fingerprint');
+      expect(fkLogPayload).not.toHaveProperty('fingerprintPrefix');
       expect(fkLogPayload).not.toHaveProperty('error');
-      expect(fkLogPayload).toHaveProperty('fingerprintPrefix');
     });
 
     it('returns 409 on unique constraint violation (duplicate public_id race)', async () => {
@@ -509,8 +509,8 @@ describe('POST /api/v1/anchor — Zod validation', () => {
       );
       const [nnLogPayload] = mockLogger.error.mock.calls.at(-1) as [Record<string, unknown>, string];
       expect(nnLogPayload).not.toHaveProperty('fingerprint');
+      expect(nnLogPayload).not.toHaveProperty('fingerprintPrefix');
       expect(nnLogPayload).not.toHaveProperty('error');
-      expect(nnLogPayload).toHaveProperty('fingerprintPrefix');
     });
   });
 });
