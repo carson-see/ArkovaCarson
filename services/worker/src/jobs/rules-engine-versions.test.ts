@@ -139,6 +139,14 @@ describe('detectVersionConflict', () => {
       detectVersionConflict(ORG_ID, EXTERNAL_FILE_ID, FINGERPRINT_A),
     ).rejects.toThrow('detectVersionConflict query failed');
   });
+
+  it('does not include internal identifiers or database details in the thrown query error', async () => {
+    wireAnchorsQuery({ data: null, error: { message: 'PGRST116: multiple rows returned' } });
+
+    await expect(
+      detectVersionConflict(ORG_ID, EXTERNAL_FILE_ID, FINGERPRINT_A),
+    ).rejects.toThrow(/^detectVersionConflict query failed$/);
+  });
 });
 
 describe('insertVersionRecord', () => {

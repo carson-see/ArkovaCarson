@@ -75,12 +75,12 @@ function EmptyState() {
   );
 }
 
-function ErrorDisplay({ message: _message, onRetry }: { message: string; onRetry: () => void }) {
+function ErrorDisplay({ message, onRetry }: { message: string; onRetry: () => void }) {
   return (
     <Alert variant="destructive" data-testid="version-conflicts-error">
       <AlertTriangle className="h-4 w-4" />
       <AlertDescription className="flex items-center justify-between">
-        <span>{VERSION_RESOLUTION_LABELS.ERROR}</span>
+        <span>{message || VERSION_RESOLUTION_LABELS.ERROR}</span>
         <Button variant="outline" size="sm" onClick={onRetry}>
           <RefreshCw className="h-3 w-3 mr-1" />
           Retry
@@ -172,8 +172,15 @@ function VersionConflictsInner() {
   const handleResolve = useCallback(
     async (versionId: string) => {
       setResolving(true);
-      await resolve(versionId, 'approve');
-      setResolving(false);
+      try {
+        await resolve(versionId, 'approve');
+      } catch (err) {
+        // Error state is normally set by useVersionResolution; this protects
+        // the page from unexpected rejected promises in tests or future callers.
+        console.error('resolve version conflict failed:', err);
+      } finally {
+        setResolving(false);
+      }
     },
     [resolve],
   );

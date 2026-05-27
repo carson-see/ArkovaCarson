@@ -254,7 +254,7 @@ export async function handleResolveVersion(
     // On approve: create a PENDING anchor for the new fingerprint.
     // If anchor creation fails, revert the status update to avoid partial writes.
     if (decision === 'approve') {
-      const { error: anchorError } = await db
+      const { data: anchor, error: anchorError } = await db
         .from('anchors')
         .insert({
           org_id: orgId,
@@ -283,6 +283,22 @@ export async function handleResolveVersion(
           error: { code: 'internal', message: 'Failed to create anchor for approved version' },
         });
         return;
+      }
+
+      if (anchor?.id) {
+        const { error: anchorLinkError } = await untypedDb
+          .from('external_document_versions')
+          .update({ anchor_id: anchor.id, updated_at: new Date().toISOString() })
+          .eq('id', versionId)
+          .eq('org_id', orgId);
+
+        if (anchorLinkError) {
+          logger.error({ error: anchorLinkError, versionId }, 'Approved version anchor link update failed');
+          res.status(500).json({
+            error: { code: 'internal', message: 'Failed to link approved version to anchor' },
+          });
+          return;
+        }
       }
     }
 

@@ -389,13 +389,16 @@ describe('handleResolveVersion', () => {
     const updateChain = mockUpdateChain({ ...versionRow, status: 'approved' });
     // 3rd call: from('anchors').insert() -> create anchor
     const anchorInsertChain = mockInsertChain({ id: 'anchor-new', public_id: 'pid_new1' });
-    // 4th call: from('version_reviews').insert() -> record review
+    // 4th call: link created anchor back to external_document_versions
+    const anchorLinkUpdateChain = mockUpdateChain({ ...versionRow, status: 'approved', anchor_id: 'anchor-new' });
+    // 5th call: from('version_reviews').insert() -> record review
     const reviewInsertChain = mockInsertChain();
 
     fromMock
       .mockReturnValueOnce(lookupChain)
       .mockReturnValueOnce(updateChain)
       .mockReturnValueOnce(anchorInsertChain)
+      .mockReturnValueOnce(anchorLinkUpdateChain)
       .mockReturnValueOnce(reviewInsertChain);
 
     const { res, json } = mockRes();
@@ -419,6 +422,48 @@ describe('handleResolveVersion', () => {
     expect(fromMock).toHaveBeenCalledWith('anchors');
     // Verify review was recorded
     expect(fromMock).toHaveBeenCalledWith('version_reviews');
+  });
+
+  it('approve: stores the created anchor id on the approved version', async () => {
+    const versionRow = {
+      id: VERSION_UUID,
+      external_file_id: 'file-abc',
+      fingerprint: 'fp-new-123',
+      org_id: 'org-1',
+      source: 'google_drive',
+      metadata: {},
+    };
+
+    const lookupChain = mockMaybeSingleChain(versionRow);
+    const statusUpdateChain = mockUpdateChain({ ...versionRow, status: 'approved' });
+    const anchorInsertChain = mockInsertChain({ id: 'anchor-new', public_id: 'pid_new1' });
+    const anchorLinkUpdateChain = mockUpdateChain({ ...versionRow, status: 'approved', anchor_id: 'anchor-new' });
+    const reviewInsertChain = mockInsertChain();
+
+    fromMock
+      .mockReturnValueOnce(lookupChain)
+      .mockReturnValueOnce(statusUpdateChain)
+      .mockReturnValueOnce(anchorInsertChain)
+      .mockReturnValueOnce(anchorLinkUpdateChain)
+      .mockReturnValueOnce(reviewInsertChain);
+
+    const { res } = mockRes();
+    await handleResolveVersion(
+      mockReq({
+        userId: 'user-1',
+        orgId: 'org-1',
+        orgRole: 'admin',
+        params: { versionId: VERSION_UUID },
+        body: { decision: 'approve' },
+      }),
+      res,
+    );
+
+    expect(anchorLinkUpdateChain.update).toHaveBeenCalledWith(
+      expect.objectContaining({ anchor_id: 'anchor-new' }),
+    );
+    expect(anchorLinkUpdateChain.eq).toHaveBeenCalledWith('id', VERSION_UUID);
+    expect(anchorLinkUpdateChain.eq).toHaveBeenCalledWith('org_id', 'org-1');
   });
 
   it('skip: updates status without anchor creation', async () => {

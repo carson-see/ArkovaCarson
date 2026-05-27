@@ -79,7 +79,7 @@ export async function detectVersionConflict(
       { error, orgId, externalFileId },
       'detectVersionConflict: query failed — failing closed',
     );
-    throw new Error(`detectVersionConflict query failed: ${error.message}`);
+    throw new Error('detectVersionConflict query failed');
   }
 
   if (!data) {
