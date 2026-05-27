@@ -87,6 +87,7 @@ import { runDbHealthMonitor } from '../jobs/db-health-monitor.js';
 import { runSubscriptionRenewal } from '../jobs/workspace-subscription-renewal.js';
 import { runMainnetMigration, getMigrationStatus } from '../jobs/mainnet-migration.js';
 import { checkPipelineHealth } from '../jobs/pipeline-health.js';
+import { decideConnectorAlert, createSentryConnectorAlertDispatcher, type ConnectorHealthSnapshot, type ConnectorAlertState } from '../jobs/connector-health-alert.js';
 import { GRACE_EXPIRY_SWEEP_CRON, runGraceExpirySweep } from '../jobs/grace-expiry-sweep.js';
 import { sweepExpiredNonces, makeNonceSweepDb } from '../jobs/nonce-sweep.js';
 import { MONTHLY_ALLOCATION_ROLLOVER_CRON, runAllocationRollover } from '../jobs/monthly-allocation-rollover.js';
@@ -1463,6 +1464,94 @@ cronRouter.post('/db-health', async (_req, res) => {
   } catch (error) {
     logger.error({ error }, 'db-health-monitor failed');
     res.status(500).json({ error: 'db-health-monitor failed' });
+  }
+});
+
+// ─── SCRUM-2041: Connector health check (SOC 2 CC7.1) ───
+cronRouter.post('/connector-health-check', async (_req, res) => {
+  try {
+    const now = new Date();
+    const dispatcher = createSentryConnectorAlertDispatcher();
+
+    // Load all active (non-revoked) integrations across all orgs
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: integrations, error: intError } = await (db as any)
+      .from('org_integrations')
+      .select('org_id, provider, revoked_at')
+      .is('revoked_at', null);
+
+    if (intError) {
+      logger.error({ error: intError }, 'Connector health check: failed to load integrations');
+      res.status(500).json({ error: 'Processing failed' });
+      return;
+    }
+
+    // Load prior alert states
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data: priorStates } = await (db as any)
+      .from('connector_alert_state')
+      .select('connector_id, org_id, last_state, last_alerted_at');
+
+    const stateMap = new Map<string, ConnectorAlertState>();
+    for (const s of (priorStates ?? []) as ConnectorAlertState[]) {
+      stateMap.set(`${s.connector_id}:${s.org_id}`, s);
+    }
+
+    // Build snapshots from integration rows
+    const snapshots: ConnectorHealthSnapshot[] = (integrations ?? []).map(
+      (row: { org_id: string; provider: string; revoked_at: string | null }) => ({
+        connector_id: row.provider,
+        org_id: row.org_id,
+        state: row.revoked_at ? 'disconnected' as const : 'connected' as const,
+        health_reason: row.revoked_at ? 'vendor_auth_revoked' as const : 'none' as const,
+        last_error: null,
+      }),
+    );
+
+    let alertsFired = 0;
+    const upserts: Array<{ connector_id: string; org_id: string; last_state: string; last_alerted_at: string | null }> = [];
+
+    for (const snap of snapshots) {
+      const key = `${snap.connector_id}:${snap.org_id}`;
+      const prior = stateMap.get(key) ?? null;
+      const decision = decideConnectorAlert(snap, prior, now);
+
+      if (decision.should_fire) {
+        dispatcher.captureAlert(decision);
+        alertsFired++;
+        upserts.push({
+          connector_id: snap.connector_id,
+          org_id: snap.org_id,
+          last_state: snap.state,
+          last_alerted_at: now.toISOString(),
+        });
+      } else {
+        upserts.push({
+          connector_id: snap.connector_id,
+          org_id: snap.org_id,
+          last_state: snap.state,
+          last_alerted_at: prior?.last_alerted_at ?? null,
+        });
+      }
+    }
+
+    // Batch upsert alert state
+    if (upserts.length > 0) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { error: upsertError } = await (db as any)
+        .from('connector_alert_state')
+        .upsert(upserts.map(u => ({ ...u, updated_at: now.toISOString() })), {
+          onConflict: 'connector_id,org_id',
+        });
+      if (upsertError) {
+        logger.error({ error: upsertError }, 'Connector health check: failed to persist alert state');
+      }
+    }
+
+    res.json({ ok: true, checked: snapshots.length, alertsFired });
+  } catch (error) {
+    logger.error({ error }, 'Connector health check failed');
+    res.status(500).json({ error: 'Processing failed' });
   }
 });
 
