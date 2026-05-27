@@ -1,6 +1,6 @@
 # agents.md — services/worker/src/api/v1/integrations/
 
-_Last updated: 2026-05-16_
+_Last updated: 2026-05-27_
 
 ## What This Folder Contains
 
@@ -18,4 +18,5 @@ User-facing OAuth flow endpoints for third-party integrations. Each integration 
 
 - **DO** encrypt tokens with the OAuth crypto helper before storage (cleartext never in Postgres)
 - **DO** use timing-safe comparison for HMAC state parameters
+- **DO** write to `audit_events` (event_category `SECURITY`) on disconnect, not just `integration_events` — SOC 2 CC7.2 requires audit trail for all integration lifecycle events (SCRUM-2039)
 - **DO NOT** log cleartext access/refresh tokens
