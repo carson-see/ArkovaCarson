@@ -167,6 +167,7 @@ describe('handleListPendingResolution', () => {
     profileError: unknown = null,
     anchorError: unknown = null,
     allSiblingAnchors: unknown[] = anchors,
+    siblingError: unknown = null,
   ) {
     // First call: profiles lookup
     const profileMaybeSingle = vi.fn().mockResolvedValue({ data: profile, error: profileError });
@@ -183,8 +184,9 @@ describe('handleListPendingResolution', () => {
 
     // Third call: unpaginated-by-loop sibling count query for visible
     // external_file_id values.
-    const siblingRange = vi.fn().mockResolvedValue({ data: allSiblingAnchors, error: null });
-    const siblingIn = vi.fn().mockReturnValue({ range: siblingRange });
+    const siblingRange = vi.fn().mockResolvedValue({ data: allSiblingAnchors, error: siblingError });
+    const siblingOrder = vi.fn().mockReturnValue({ range: siblingRange });
+    const siblingIn = vi.fn().mockReturnValue({ order: siblingOrder, range: siblingRange });
     const siblingIs = vi.fn().mockReturnValue({ in: siblingIn });
     const siblingEqStatus = vi.fn().mockReturnValue({ is: siblingIs });
     const siblingEqOrg = vi.fn().mockReturnValue({ eq: siblingEqStatus });
@@ -195,7 +197,7 @@ describe('handleListPendingResolution', () => {
       .mockReturnValueOnce({ select: anchorSelect })
       .mockReturnValueOnce({ select: siblingSelect });
 
-    return { profileEq, anchorEqOrg, anchorEqStatus, anchorLimit, siblingIn, siblingRange };
+    return { profileEq, anchorEqOrg, anchorEqStatus, anchorLimit, siblingIn, siblingOrder, siblingRange };
   }
 
   it('returns items + count when caller has an org', async () => {
@@ -276,6 +278,16 @@ describe('handleListPendingResolution', () => {
     );
   });
 
+  it('returns 500 when the profile lookup fails', async () => {
+    mockProfileAndAnchors(null, [], { message: 'profiles unavailable' });
+    const { res, status, json } = mockRes();
+    await handleListPendingResolution('user-1', mockReq(), res);
+    expect(status).toHaveBeenCalledWith(500);
+    expect(json).toHaveBeenCalledWith(
+      expect.objectContaining({ error: expect.objectContaining({ code: 'internal_error' }) }),
+    );
+  });
+
   it('returns empty list when no anchors match', async () => {
     mockProfileAndAnchors({ org_id: 'org-1' }, []);
     const { res, json } = mockRes();
@@ -285,6 +297,31 @@ describe('handleListPendingResolution', () => {
 
   it('returns 500 when anchors query fails', async () => {
     mockProfileAndAnchors({ org_id: 'org-1' }, [], null, { message: 'db error' });
+    const { res, status, json } = mockRes();
+    await handleListPendingResolution('user-1', mockReq(), res);
+    expect(status).toHaveBeenCalledWith(500);
+    expect(json).toHaveBeenCalledWith(
+      expect.objectContaining({ error: expect.objectContaining({ code: 'query_failed' }) }),
+    );
+  });
+
+  it('returns 500 when sibling count query fails', async () => {
+    mockProfileAndAnchors(
+      { org_id: 'org-1' },
+      [
+        {
+          public_id: 'pid_acmemsa1',
+          metadata: { external_file_id: 'drive-123' },
+          filename: 'f.pdf',
+          fingerprint: 'fp',
+          created_at: '2026-01-01T00:00:00Z',
+        },
+      ],
+      null,
+      null,
+      [],
+      { message: 'sibling query failed' },
+    );
     const { res, status, json } = mockRes();
     await handleListPendingResolution('user-1', mockReq(), res);
     expect(status).toHaveBeenCalledWith(500);
@@ -336,6 +373,7 @@ describe('handleListPendingResolution', () => {
     await handleListPendingResolution('user-1', mockReq({ query: { limit: '1' } }), res);
 
     expect(mocks.siblingIn).toHaveBeenCalledWith('metadata->>external_file_id', ['drive-123']);
+    expect(mocks.siblingOrder).toHaveBeenCalledWith('id', { ascending: true });
     expect(json).toHaveBeenCalledWith({
       count: 1,
       items: [
