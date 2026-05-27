@@ -367,13 +367,12 @@ docusignWebhookRouter.post('/', async (req: Request, res: Response) => {
 
     const payloadHash = crypto.createHash('sha256').update(rawBody).digest('hex');
     const ruleEventId = await enqueueRuleEvent({ integration, event, payloadHash });
-    const jobId = await enqueueFetchJob({ integration, event, ruleEventId });
+    await enqueueFetchJob({ integration, event, ruleEventId });
 
     // SCRUM-1872: Check for notary data and enqueue notarization job (non-fatal)
-    let notarizationJobId: string | null = null;
     const notaryData = extractNotaryData(rawBody);
     if (notaryData) {
-      notarizationJobId = await enqueueNotarizationJob({
+      await enqueueNotarizationJob({
         integration,
         event,
         ruleEventId,

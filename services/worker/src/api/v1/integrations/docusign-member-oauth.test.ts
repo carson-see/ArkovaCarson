@@ -34,7 +34,6 @@ vi.mock('../../../utils/db.js', () => ({
 }));
 
 import { createDocusignMemberOAuthRouter } from './docusign-member-oauth.js';
-import { logger } from '../../../utils/logger.js';
 
 type MemberOAuthDeps = NonNullable<Parameters<typeof createDocusignMemberOAuthRouter>[0]>;
 
