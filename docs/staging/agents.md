@@ -4,7 +4,7 @@ Staging rig documentation and soak evidence artifacts. Required by CLAUDE.md 1.1
 
 ## Files
 - **`README.md`** — staging rig setup guide: Supabase preview branch, Cloud Run service, cost estimates.
-- **`PR_TEMPLATE.md`** — staging soak evidence PR body template with tier matrix fields.
+- **`PR_TEMPLATE.md`** — risk-tiered staging evidence PR body template with tier matrix fields.
 - **`PATH_C_*.md`** — path-C cutover verification records.
 - **`soak-pr*.json`** — machine-readable soak evidence for specific PRs.
 - **`staging-only-rpcs.sql`** — staging-specific RPCs (not applied to prod).
@@ -12,6 +12,6 @@ Staging rig documentation and soak evidence artifacts. Required by CLAUDE.md 1.1
 - **`evidence/`** — subdirectory of soak evidence screenshots and logs.
 
 ## Conventions
-- Every prod-bound PR must include a `## Staging Soak Evidence` block with `Tier: T[123]`.
+- T0 docs/tests/CI/tooling-only PRs need CI only; T1/T2/T3 prod-bound PRs must include a `## Staging Soak Evidence` block with the exact fields in `PR_TEMPLATE.md`.
 - Soak JSON files are append-only evidence; do not modify after creation.
 - These are engineering artifacts, not documentation (Confluence is the doc source of truth).
