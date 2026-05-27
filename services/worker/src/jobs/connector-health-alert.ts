@@ -149,7 +149,7 @@ export function createSentryConnectorAlertDispatcher(): ConnectorAlertDispatcher
           },
           extra: {
             org_id: decision.org_id,
-            last_error: decision.last_error,
+            last_error: decision.last_error ? '[redacted]' : null,
           },
         });
       } catch (err) {
