@@ -3,6 +3,7 @@
 Source code for the `@arkova/embed` verification widget (INT-03 / SCRUM-644).
 
 ## Files
+
 - **`index.ts`** — entry point: auto-init scans for `data-arkova-credential` attributes; exposes `window.ArkovaEmbed.mount()`.
 - **`web-component.ts`** — `<arkova-verify>` custom element with `credential`, `mode`, `theme`, `api-base` attributes.
 - **`render.ts`** — pure rendering functions returning HTMLElement subtrees (loading, error, widget states).
@@ -13,8 +14,10 @@ Source code for the `@arkova/embed` verification widget (INT-03 / SCRUM-644).
 - **`*.test.ts`** — colocated unit tests for each module.
 
 ## Recent Changes
-- 2026-05-26 SCRUM-2013: `render.ts` CREDENTIAL_LABELS expanded 22→27 (added COMPLIANCE, LEGAL, CPE, FINANCIAL, MEDICAL_DEVICE).
+
+- 2026-05-26 SCRUM-2013: `render.ts` CREDENTIAL_LABELS expanded to 27 canonical credential types, including `CPE`, `ACCREDITATION`, `CONTRACT_PRESIGNING`, and `CONTRACT_POSTSIGNING`.
 
 ## Conventions
+
 - No external dependencies; Web Crypto + DOM APIs only.
 - Pure render functions (no DOM mutation) for testability.

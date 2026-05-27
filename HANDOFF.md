@@ -50,7 +50,7 @@ _Last refreshed: 2026-05-28 by Claude — claims verified against gcloud/MCP/CI 
 
 **Open PRs (10):** #886 (this), #883, #880, #877, #867, #866, #865, #862, #858, #844.
 
-_Last refreshed: 2026-05-26 by Carson — claims verified against `git log fix/scrum-2013-2014-credential-type-drift-and-anchor-500` (HEAD `68184f9d`), `gh pr view 886`, Jira MCP transitions._
+_Last refreshed: 2026-05-26 by Carson — claims verified against gcloud/MCP/CI output._
 
 ---
 
