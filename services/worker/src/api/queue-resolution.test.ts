@@ -166,6 +166,7 @@ describe('handleListPendingResolution', () => {
     anchors: unknown[] = [],
     profileError: unknown = null,
     anchorError: unknown = null,
+    allSiblingAnchors: unknown[] = anchors,
   ) {
     // First call: profiles lookup
     const profileMaybeSingle = vi.fn().mockResolvedValue({ data: profile, error: profileError });
@@ -180,11 +181,21 @@ describe('handleListPendingResolution', () => {
     const anchorEqOrg = vi.fn().mockReturnValue({ eq: anchorEqStatus });
     const anchorSelect = vi.fn().mockReturnValue({ eq: anchorEqOrg });
 
+    // Third call: unpaginated-by-loop sibling count query for visible
+    // external_file_id values.
+    const siblingRange = vi.fn().mockResolvedValue({ data: allSiblingAnchors, error: null });
+    const siblingIn = vi.fn().mockReturnValue({ range: siblingRange });
+    const siblingIs = vi.fn().mockReturnValue({ in: siblingIn });
+    const siblingEqStatus = vi.fn().mockReturnValue({ is: siblingIs });
+    const siblingEqOrg = vi.fn().mockReturnValue({ eq: siblingEqStatus });
+    const siblingSelect = vi.fn().mockReturnValue({ eq: siblingEqOrg });
+
     fromMock
       .mockReturnValueOnce({ select: profileSelect })
-      .mockReturnValueOnce({ select: anchorSelect });
+      .mockReturnValueOnce({ select: anchorSelect })
+      .mockReturnValueOnce({ select: siblingSelect });
 
-    return { profileEq, anchorEqOrg, anchorEqStatus, anchorLimit };
+    return { profileEq, anchorEqOrg, anchorEqStatus, anchorLimit, siblingIn, siblingRange };
   }
 
   it('returns items + count when caller has an org', async () => {
@@ -293,6 +304,48 @@ describe('handleListPendingResolution', () => {
     const { res: res2 } = mockRes();
     await handleListPendingResolution('user-1', mockReq({ query: { limit: '-5' } }), res2);
     expect(mocks2.anchorLimit).toHaveBeenCalledWith(1);
+
+    fromMock.mockReset();
+    const mocks3 = mockProfileAndAnchors({ org_id: 'org-1' }, []);
+    const { res: res3 } = mockRes();
+    await handleListPendingResolution('user-1', mockReq({ query: { limit: '0' } }), res3);
+    expect(mocks3.anchorLimit).toHaveBeenCalledWith(1);
+  });
+
+  it('counts siblings outside the current response page', async () => {
+    const mocks = mockProfileAndAnchors(
+      { org_id: 'org-1' },
+      [
+        {
+          public_id: 'pid_acmemsa1',
+          metadata: { external_file_id: 'drive-123' },
+          filename: 'f.pdf',
+          fingerprint: 'fp',
+          created_at: '2026-01-01T00:00:00Z',
+        },
+      ],
+      null,
+      null,
+      [
+        { metadata: { external_file_id: 'drive-123' } },
+        { metadata: { external_file_id: 'drive-123' } },
+      ],
+    );
+
+    const { res, json } = mockRes();
+    await handleListPendingResolution('user-1', mockReq({ query: { limit: '1' } }), res);
+
+    expect(mocks.siblingIn).toHaveBeenCalledWith('metadata->>external_file_id', ['drive-123']);
+    expect(json).toHaveBeenCalledWith({
+      count: 1,
+      items: [
+        expect.objectContaining({
+          public_id: 'pid_acmemsa1',
+          external_file_id: 'drive-123',
+          sibling_count: 1,
+        }),
+      ],
+    });
   });
 });
 
