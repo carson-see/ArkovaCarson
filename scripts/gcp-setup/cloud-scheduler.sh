@@ -26,7 +26,7 @@ JOBS=(
   # for the alert rules to create in the Sentry UI (admin step — alert
   # creation is not script-automatable). Tight retry policy so a transient
   # error doesn't suppress the next 5-min slot.
-  "db-health-monitor|*/5 * * * *|/cron/db-health|30s,120s,2"
+  "db-health-monitor|*/5 * * * *|/jobs/db-health|30s,120s,2"
   # SCRUM-1723: BigQuery export — incremental sync every 5 min for the three
   # append-only tables (anchors, verifications, audit_events). Endpoint at
   # services/worker/src/routes/cron.ts. Watermark-driven; failure does not
@@ -41,10 +41,10 @@ JOBS=(
   "bq-export-snapshot|0 2 * * *|/jobs/bq-export-snapshot|NO_RETRY"
   # SCRUM-2040 (SOC 2 CC7.4): sweep expired webhook nonces daily at 04:00 UTC.
   # 14-day retention. Partial failures return 207; idempotent re-runs are safe.
-  "nonce-sweep|0 4 * * *|/cron/nonce-sweep|30s,120s,2"
+  "nonce-sweep|0 4 * * *|/jobs/nonce-sweep|30s,120s,2"
   # SCRUM-2041 (SOC 2 CC7.1): connector health check every 15 min.
   # Evaluates all org integrations, fires Sentry alerts on state transitions.
-  "connector-health-check|*/15 * * * *|/cron/connector-health-check|30s,120s,2"
+  "connector-health-check|*/15 * * * *|/jobs/connector-health-check|30s,120s,2"
 )
 # SCRUM-1727 (one-shot historical backfill) is INTENTIONALLY NOT in JOBS.
 # It's a manual operator endpoint at /jobs/bq-export-backfill?table=<name>.
