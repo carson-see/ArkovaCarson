@@ -809,6 +809,57 @@ describe('processBatchAnchors', () => {
     expect(pendingResets.length).toBe(1);
   });
 
+  // ---- Credit refund failure (double-billing safety) ----
+
+  it('logs CRITICAL double-billing warning when chain fails AND credit refund fails', async () => {
+    mockPendingBacklogReady();
+    mockDbRpc
+      .mockResolvedValueOnce({ data: [DOCUSIGN_QUEUE_ANCHOR], error: null }) // claim
+      .mockResolvedValueOnce({ data: { success: true, balance: 4, deducted: 1 }, error: null }) // deduct_org_credit
+      .mockResolvedValueOnce({ data: null, error: { code: 'PGRST500', message: 'refund RPC down' } }); // refund_org_credit fails
+    setUpdateResult({ error: null, count: 1 }); // metadata update succeeds
+
+    mockSubmitFingerprint.mockRejectedValue(new Error('chain unavailable'));
+
+    const result = await processBatchAnchors({
+      force: true,
+      orgId: DOCUSIGN_QUEUE_ANCHOR.org_id,
+    });
+
+    expect(result.processed).toBe(0);
+
+    const criticalCalls = mockLogger.error.mock.calls.filter(
+      (call: unknown[]) => typeof call[1] === 'string' && call[1].includes('DOUBLE_BILLING_RISK'),
+    );
+    expect(criticalCalls.length).toBeGreaterThan(0);
+    expect(criticalCalls[0][0]).toEqual(expect.objectContaining({
+      failedRefunds: expect.arrayContaining([
+        expect.objectContaining({ id: DOCUSIGN_QUEUE_ANCHOR.id }),
+      ]),
+    }));
+  });
+
+  it('does not log double-billing warning when credit refund succeeds after chain failure', async () => {
+    mockPendingBacklogReady();
+    mockDbRpc
+      .mockResolvedValueOnce({ data: [DOCUSIGN_QUEUE_ANCHOR], error: null }) // claim
+      .mockResolvedValueOnce({ data: { success: true, balance: 4, deducted: 1 }, error: null }) // deduct_org_credit
+      .mockResolvedValueOnce({ data: { success: true }, error: null }); // refund_org_credit succeeds
+    setUpdateResult({ error: null, count: 1 });
+
+    mockSubmitFingerprint.mockRejectedValue(new Error('chain unavailable'));
+
+    await processBatchAnchors({
+      force: true,
+      orgId: DOCUSIGN_QUEUE_ANCHOR.org_id,
+    });
+
+    const criticalCalls = mockLogger.error.mock.calls.filter(
+      (call: unknown[]) => typeof call[1] === 'string' && call[1].includes('DOUBLE_BILLING_RISK'),
+    );
+    expect(criticalCalls.length).toBe(0);
+  });
+
   // ---- Batch ID generation ----
 
   it('generates batch ID with timestamp and count', async () => {

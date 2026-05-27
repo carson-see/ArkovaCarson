@@ -156,7 +156,8 @@ function queueRunCreditReason(anchor: ClaimedAnchor): string | null {
   return null;
 }
 
-async function refundQueueRunCredits(charged: ChargedQueueAnchor[], failure: string): Promise<void> {
+async function refundQueueRunCredits(charged: ChargedQueueAnchor[], failure: string): Promise<ChargedQueueAnchor[]> {
+  const failed: ChargedQueueAnchor[] = [];
   await Promise.all(charged.map(async (item) => {
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -172,14 +173,23 @@ async function refundQueueRunCredits(charged: ChargedQueueAnchor[], failure: str
           { error, result: data, anchorId: item.id, orgId: item.orgId, failure },
           'Queue-run credit refund failed after pre-broadcast failure',
         );
+        failed.push(item);
       }
     } catch (err) {
       logger.error(
         { error: err, anchorId: item.id, orgId: item.orgId, failure },
         'Queue-run credit refund threw after pre-broadcast failure',
       );
+      failed.push(item);
     }
   }));
+  if (failed.length > 0) {
+    logger.error(
+      { failedRefunds: failed, failure, totalCharged: charged.length, totalFailed: failed.length },
+      'DOUBLE_BILLING_RISK: credit refunds failed — anchors reverted to PENDING will be re-charged on next batch pass',
+    );
+  }
+  return failed;
 }
 
 async function markQueueCreditCharged(
