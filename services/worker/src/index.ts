@@ -38,6 +38,7 @@ import { orgSubOrgsRouter } from './api/v1/orgSubOrgs.js';
 import { orgKybRouter } from './api/v1/org-kyb.js';
 import { driveOAuthRouter } from './api/v1/integrations/drive-oauth.js';
 import { docusignOAuthRouter } from './api/v1/integrations/docusign-oauth.js';
+import { docusignMemberOAuthRouter } from './api/v1/integrations/docusign-member-oauth.js';
 import { middeskWebhookRouter } from './api/v1/webhooks/middesk.js';
 import { docusignWebhookRouter } from './api/v1/webhooks/docusign.js';
 import { adobeSignWebhookRouter } from './api/v1/webhooks/adobe-sign.js';
@@ -211,7 +212,7 @@ app.use(
   killSwitch('ENABLE_DOCUSIGN_WEBHOOK'),
   rateLimiters.stripeWebhook,
   ruleEventBackpressure, // SCRUM-1024: 503 + Retry-After if rule_events queue overloaded
-  express.raw({ type: 'application/json' }),
+  express.raw({ type: 'application/json', limit: '1mb' }),
   (req, _res, next) => {
     (req as unknown as { rawBody: Buffer }).rawBody = req.body as Buffer;
     next();
@@ -355,6 +356,15 @@ app.use(
   pathScopedMiddleware('/docusign', rateLimiters.api),
   pathScopedMiddleware('/docusign', integrationsAuthGate),
   pathScopedMiddleware('/docusign', docusignOAuthRouter),
+);
+// SCRUM-2044: Member-level DocuSign OAuth — same kill switch + auth gate as org-level.
+// /member/oauth/callback is public (provider redirect), other routes require auth.
+app.use(
+  '/api/v1/integrations',
+  pathScopedKillSwitch('/docusign', 'ENABLE_DOCUSIGN_OAUTH'),
+  pathScopedMiddleware('/docusign', rateLimiters.api),
+  pathScopedMiddleware('/docusign', integrationsAuthGate),
+  pathScopedMiddleware('/docusign', docusignMemberOAuthRouter),
 );
 
 // Payment-state enforcement: suspended/cancelled orgs get 402 (SCRUM-1221).

@@ -6,17 +6,12 @@
  * Fetches attestation data from the worker API and displays verification result.
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import {
   Shield,
-  CheckCircle,
   XCircle,
-  Clock,
   Ban,
-  Copy,
-  Check,
-  ExternalLink,
   FileCheck,
   AlertTriangle,
   Loader2,
@@ -25,10 +20,12 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
-import { PUBLIC_ATTESTATION_VERIFY_LABELS } from '@/lib/copy';
+import { PUBLIC_ATTESTATION_VERIFY_LABELS, ATTESTATION_LABELS } from '@/lib/copy';
 import { ROUTES, verifyPath } from '@/lib/routes';
 import { WORKER_URL } from '@/lib/workerClient';
 import { AnchorDisclaimerDark } from '@/components/anchor/AnchorDisclaimer';
+import { AttestationStatusCard } from '@/components/attestation/AttestationStatusCard';
+import { VerificationResultDisplay } from '@/components/attestation/VerificationResultDisplay';
 
 interface AttestationVerifyData {
   public_id: string;
@@ -91,22 +88,11 @@ interface AttestationVerifyData {
   created_at: string;
 }
 
-const STATUS_CONFIG: Record<string, { icon: typeof CheckCircle; color: string; bg: string; label: string }> = {
-  ACTIVE: { icon: CheckCircle, color: 'text-emerald-400', bg: 'bg-emerald-500/10 border-emerald-500/20', label: 'Verified & Active' },
-  PENDING: { icon: Clock, color: 'text-amber-400', bg: 'bg-amber-500/10 border-amber-500/20', label: 'Anchoring in Progress' },
-  REVOKED: { icon: Ban, color: 'text-red-400', bg: 'bg-red-500/10 border-red-500/20', label: 'Revoked' },
-  EXPIRED: { icon: XCircle, color: 'text-muted-foreground', bg: 'bg-muted', label: 'Expired' },
-  CHALLENGED: { icon: AlertTriangle, color: 'text-orange-400', bg: 'bg-orange-500/10 border-orange-500/20', label: 'Challenged' },
-  DRAFT: { icon: Clock, color: 'text-muted-foreground', bg: 'bg-muted', label: 'Draft' },
-};
-
 export function PublicAttestationVerifyPage() {
   const { publicId } = useParams<{ publicId: string }>();
   const [attestation, setAttestation] = useState<AttestationVerifyData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [copiedField, setCopiedField] = useState<string | null>(null);
-
   useEffect(() => {
     if (!publicId) return;
 
@@ -128,13 +114,6 @@ export function PublicAttestationVerifyPage() {
       .finally(() => setLoading(false));
   }, [publicId]);
 
-  const handleCopy = useCallback((text: string, field: string) => {
-    navigator.clipboard.writeText(text);
-    setCopiedField(field);
-    setTimeout(() => setCopiedField(null), 2000);
-  }, []);
-
-  const statusConfig = attestation ? STATUS_CONFIG[attestation.status] ?? STATUS_CONFIG.PENDING : null;
 
   return (
     <div className="min-h-screen flex flex-col bg-[#0d141b] text-[#dce3ed]">
@@ -194,22 +173,14 @@ export function PublicAttestationVerifyPage() {
             </Card>
           )}
 
-          {attestation && statusConfig && (
+          {attestation && (
             <div className="space-y-6">
-              {/* Status Banner */}
-              <Card className={`border ${statusConfig.bg}`}>
-                <CardContent className="flex items-center gap-4 py-5">
-                  <div className={`flex h-12 w-12 items-center justify-center rounded-full ${statusConfig.bg}`}>
-                    <statusConfig.icon className={`h-6 w-6 ${statusConfig.color}`} />
-                  </div>
-                  <div>
-                    <p className={`font-bold text-lg ${statusConfig.color}`}>{statusConfig.label}</p>
-                    <p className="text-sm text-[#bbc9cf]">
-                      ID: <code className="font-mono text-[#00d4ff]">{attestation.public_id}</code>
-                    </p>
-                  </div>
-                </CardContent>
-              </Card>
+              {/* Status Card */}
+              <AttestationStatusCard
+                status={attestation.status}
+                publicId={attestation.public_id}
+                attestationType={attestation.attestation_type.replace(/_/g, ' ')}
+              />
 
               {/* Expiry Notice */}
               {attestation.status === 'EXPIRED' && attestation.expires_at && (
@@ -260,7 +231,7 @@ export function PublicAttestationVerifyPage() {
                 </CardHeader>
                 <CardContent className="space-y-5">
                   <div>
-                    <span className="text-[10px] uppercase tracking-wider text-[#bbc9cf] font-semibold">Subject</span>
+                    <span className="text-[10px] uppercase tracking-wider text-[#bbc9cf] font-semibold">{ATTESTATION_LABELS.SUBJECT}</span>
                     <p className="text-sm font-medium mt-0.5">{attestation.subject_identifier}</p>
                     <div className="flex items-center gap-2 mt-1">
                       <Badge variant="secondary" className="text-[10px]">
@@ -276,19 +247,19 @@ export function PublicAttestationVerifyPage() {
 
                   <div className="grid gap-3 sm:grid-cols-3">
                     <div>
-                      <span className="text-[10px] uppercase tracking-wider text-[#bbc9cf] font-semibold">Attester</span>
+                      <span className="text-[10px] uppercase tracking-wider text-[#bbc9cf] font-semibold">{ATTESTATION_LABELS.ATTESTER}</span>
                       <p className="text-sm font-medium mt-0.5">{attestation.attester.name}</p>
                       {attestation.attester.title && (
                         <p className="text-xs text-[#bbc9cf]">{attestation.attester.title}</p>
                       )}
                     </div>
                     <div>
-                      <span className="text-[10px] uppercase tracking-wider text-[#bbc9cf] font-semibold">Attester Type</span>
+                      <span className="text-[10px] uppercase tracking-wider text-[#bbc9cf] font-semibold">{ATTESTATION_LABELS.ATTESTER_TYPE}</span>
                       <p className="text-sm mt-0.5">{attestation.attester.type.replace(/_/g, ' ')}</p>
                     </div>
                     {attestation.jurisdiction && (
                       <div>
-                        <span className="text-[10px] uppercase tracking-wider text-[#bbc9cf] font-semibold">Jurisdiction</span>
+                        <span className="text-[10px] uppercase tracking-wider text-[#bbc9cf] font-semibold">{ATTESTATION_LABELS.JURISDICTION}</span>
                         <p className="text-sm mt-0.5">{attestation.jurisdiction}</p>
                       </div>
                     )}
@@ -299,7 +270,7 @@ export function PublicAttestationVerifyPage() {
                   {/* Claims */}
                   <div>
                     <span className="text-[10px] uppercase tracking-wider text-[#bbc9cf] font-semibold">
-                      Claims ({(attestation.claims ?? []).length})
+                      {ATTESTATION_LABELS.CLAIMS} ({(attestation.claims ?? []).length})
                     </span>
                     <div className="mt-2 space-y-2">
                       {(attestation.claims ?? []).map((c, i) => (
@@ -315,7 +286,7 @@ export function PublicAttestationVerifyPage() {
                     <>
                       <Separator className="bg-[#bbc9cf]/10" />
                       <div>
-                        <span className="text-[10px] uppercase tracking-wider text-[#bbc9cf] font-semibold">Summary</span>
+                        <span className="text-[10px] uppercase tracking-wider text-[#bbc9cf] font-semibold">{ATTESTATION_LABELS.SUMMARY}</span>
                         <p className="text-sm text-[#bbc9cf] mt-1">{attestation.summary}</p>
                       </div>
                     </>
@@ -323,111 +294,60 @@ export function PublicAttestationVerifyPage() {
                 </CardContent>
               </Card>
 
-              {/* Cryptographic Proof */}
-              <Card className="border-[#00d4ff]/10 bg-[#192028]">
-                <CardHeader>
-                  <CardTitle className="text-base flex items-center gap-2">
-                    <Shield className="h-5 w-5 text-[#00d4ff]" />
-                    Cryptographic Proof
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  {attestation.fingerprint && (
-                    <div>
-                      <span className="text-[10px] uppercase tracking-wider text-[#bbc9cf] font-semibold">Fingerprint</span>
-                      <div className="flex items-center gap-2 mt-0.5">
-                        <code className="text-xs font-mono text-[#00d4ff] break-all">{attestation.fingerprint}</code>
-                        <button
-                          onClick={() => handleCopy(attestation.fingerprint!, 'fp')}
-                          className="text-[#bbc9cf] hover:text-[#dce3ed] shrink-0"
-                        >
-                          {copiedField === 'fp' ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
-                        </button>
-                      </div>
-                    </div>
-                  )}
+              {/* Verification Result (fingerprint + chain proof) */}
+              <VerificationResultDisplay
+                status={attestation.status}
+                fingerprint={attestation.fingerprint}
+                chainProof={attestation.chain_proof}
+              />
 
-                  {attestation.chain_proof && (
-                    <div>
-                      <span className="text-[10px] uppercase tracking-wider text-[#bbc9cf] font-semibold">Network Receipt</span>
-                      <div className="flex items-center gap-2 mt-0.5">
-                        {attestation.chain_proof.explorer_url && attestation.chain_proof.explorer_url.startsWith('https://') ? (
-                          <a
-                            href={attestation.chain_proof.explorer_url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-xs font-mono text-[#00d4ff] hover:text-[#a8e8ff] flex items-center gap-1"
-                          >
-                            <ExternalLink className="h-3 w-3" />
-                            {attestation.chain_proof.tx_id.slice(0, 20)}...
-                          </a>
-                        ) : (
-                          <code className="text-xs font-mono text-[#bbc9cf]">{attestation.chain_proof.tx_id.slice(0, 20)}...</code>
-                        )}
-                        <button
-                          onClick={() => handleCopy(attestation.chain_proof!.tx_id, 'tx')}
-                          className="text-[#bbc9cf] hover:text-[#dce3ed] shrink-0"
-                        >
-                          {copiedField === 'tx' ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
-                        </button>
+              {/* Evidence + Lifecycle */}
+              {((attestation.evidence ?? []).length > 0 || attestation.evidence_count > 0) && (
+                <Card className="border-[#00d4ff]/10 bg-[#192028]">
+                  <CardContent className="space-y-4 pt-5">
+                    {(attestation.evidence ?? []).length > 0 && (
+                      <div>
+                        <span className="text-[10px] uppercase tracking-wider text-[#bbc9cf] font-semibold">
+                          {PUBLIC_ATTESTATION_VERIFY_LABELS.EVIDENCE}
+                        </span>
+                        <div className="mt-2 space-y-2">
+                          {attestation.evidence.map((item) => (
+                            <div key={item.public_id} className="rounded-sm border border-[#00d4ff]/10 bg-[#111820] p-3">
+                              <div className="flex items-center justify-between gap-3">
+                                <div className="min-w-0">
+                                  <p className="text-sm text-[#dce3ed]">{item.evidence_type}</p>
+                                  <code className="text-[10px] text-[#00d4ff] break-all">{item.fingerprint}</code>
+                                </div>
+                                <FileCheck className="h-4 w-4 shrink-0 text-emerald-400" />
+                              </div>
+                              <div className="mt-1 flex flex-wrap gap-2 text-[10px] text-[#bbc9cf]">
+                                <span>{item.public_id}</span>
+                                {item.mime && <span>{item.mime}</span>}
+                                {item.size !== null && <span>{item.size.toLocaleString()}{PUBLIC_ATTESTATION_VERIFY_LABELS.BYTES_SUFFIX}</span>}
+                              </div>
+                              {item.description && (
+                                <p className="mt-1 text-xs text-[#bbc9cf]">{item.description}</p>
+                              )}
+                            </div>
+                          ))}
+                        </div>
                       </div>
-                      {attestation.chain_proof.block_height && (
-                        <p className="text-xs text-[#bbc9cf] mt-1">
-                          Block: {attestation.chain_proof.block_height.toLocaleString()}
-                        </p>
+                    )}
+
+                    {/* Lifecycle */}
+                    <Separator className="bg-[#bbc9cf]/10" />
+                    <div className="text-xs text-[#bbc9cf] space-y-1">
+                      <p>{ATTESTATION_LABELS.ISSUED}: {new Date(attestation.issued_at).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })}</p>
+                      {attestation.expires_at && (
+                        <p>{ATTESTATION_LABELS.EXPIRES}: {new Date(attestation.expires_at).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })}</p>
+                      )}
+                      {attestation.evidence_count > 0 && (
+                        <p>{ATTESTATION_LABELS.EVIDENCE_COUNT}: {attestation.evidence_count}</p>
                       )}
                     </div>
-                  )}
-
-                  {!attestation.chain_proof && attestation.status === 'PENDING' && (
-                    <div className="flex items-center gap-2 text-sm text-amber-400">
-                      <Clock className="h-4 w-4" />
-                      <span>Anchoring in progress — network receipt will appear once confirmed</span>
-                    </div>
-                  )}
-
-                  {(attestation.evidence ?? []).length > 0 && (
-                    <div>
-                      <span className="text-[10px] uppercase tracking-wider text-[#bbc9cf] font-semibold">
-                        {PUBLIC_ATTESTATION_VERIFY_LABELS.EVIDENCE}
-                      </span>
-                      <div className="mt-2 space-y-2">
-                        {attestation.evidence.map((item) => (
-                          <div key={item.public_id} className="rounded border border-[#00d4ff]/10 bg-[#111820] p-3">
-                            <div className="flex items-center justify-between gap-3">
-                              <div className="min-w-0">
-                                <p className="text-sm text-[#dce3ed]">{item.evidence_type}</p>
-                                <code className="text-[10px] text-[#00d4ff] break-all">{item.fingerprint}</code>
-                              </div>
-                              <FileCheck className="h-4 w-4 shrink-0 text-emerald-400" />
-                            </div>
-                            <div className="mt-1 flex flex-wrap gap-2 text-[10px] text-[#bbc9cf]">
-                              <span>{item.public_id}</span>
-                              {item.mime && <span>{item.mime}</span>}
-                              {item.size !== null && <span>{item.size.toLocaleString()}{PUBLIC_ATTESTATION_VERIFY_LABELS.BYTES_SUFFIX}</span>}
-                            </div>
-                            {item.description && (
-                              <p className="mt-1 text-xs text-[#bbc9cf]">{item.description}</p>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Lifecycle */}
-                  <Separator className="bg-[#bbc9cf]/10" />
-                  <div className="text-xs text-[#bbc9cf] space-y-1">
-                    <p>Issued: {new Date(attestation.issued_at).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })}</p>
-                    {attestation.expires_at && (
-                      <p>Expires: {new Date(attestation.expires_at).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })}</p>
-                    )}
-                    {attestation.evidence_count > 0 && (
-                      <p>Supporting evidence files: {attestation.evidence_count}</p>
-                    )}
-                  </div>
-                </CardContent>
-              </Card>
+                  </CardContent>
+                </Card>
+              )}
 
               {/* Linked Credential */}
               {attestation.linked_credential && (

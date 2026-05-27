@@ -59,6 +59,7 @@ import { anchorExtractionManifestRouter } from './anchor-extraction-manifest.js'
 import { anchorPreSigningRouter } from './contracts/anchor-pre-signing.js';
 import { anchorPostSigningRouter } from './contracts/anchor-post-signing.js';
 import { attestationsRouter } from './attestations.js';
+import { attestationVerifyRouter } from './verify/attestation.js';
 import { entityVerifyRouter } from './entity-verify.js';
 import { complianceCheckRouter } from './compliance-check.js';
 import { regulatoryLookupRouter } from './regulatory-lookup.js';
@@ -206,6 +207,10 @@ const batchRateLimiter = rateLimit({
 // ─── Mount routes ───
 // Agentic verification search — MUST be before /verify to avoid route shadowing (P8-S19)
 router.use('/verify/search', aiSemanticSearchGate(), aiVerifySearchRouter);
+
+// SCRUM-1873: Legally binding attestation verification — public, anonymous GET
+// MUST be before /verify to avoid route shadowing (same pattern as search/batch)
+router.use('/verify/attestation', attestationVerifyRouter);
 
 // Batch verification — API key required, stricter rate limit
 router.use('/verify/batch', requireScope('verify:batch'), batchRateLimiter, batchRouter);

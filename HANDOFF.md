@@ -14,6 +14,31 @@
 
 ## Now
 
+### 2026-05-27 — Sprint 3 Day 1: DocuSign re-smoke PASS, sandbox re-provisioned
+
+**Re-smoke gate (Sprint 3 prerequisite):** DocuSign was last verified on 2026-05-15 against revision `arkova-worker-00559-n9t` (SHA `6899f10a`). 23 PRs merged since then, including PR #840 (token path changes). Re-smoke on current prod required before any Sprint 3 work.
+
+**Re-provisioning:** Both prior sandbox `org_integrations` rows (org `cd1a847b` and `40383eb2`) were revoked on 2026-05-20. New OAuth flow completed 2026-05-27T17:35:04Z for org `40383eb2` / account `cf5cfb61` / label "Arkova" / base_uri `https://demo.docusign.net`. Active row confirmed via Supabase MCP.
+
+**Smoke results (2026-05-27T17:36Z):**
+
+| Check | Status | HTTP | Code |
+|---|---|---|---|
+| invalid_hmac_rejected | PASS | 401 | invalid_signature |
+| signed_unknown_account_orphaned | PASS | 200 | orphaned |
+| signed_known_account_accepted | PASS | 202 | ok |
+| duplicate_delivery_deduped | PASS | 200 | duplicate |
+
+- Worker SHA: `ef58aad029f3ea17a4550ab7c5f7dcb2cec5c18f`
+- Worker deployed: 2026-05-27T16:34Z (deploy workflow run 26524684389)
+- `/health`: status healthy, database ok, anchoring ok, kms ok
+
+**Sprint 3 unblocked.** Open PR soaks continuing: #924 (T2, ends ~05-28T04:00Z), #927 (T2, ends ~05-28T05:00Z), #867 (T3, ends ~05-29T12:45Z). Hands-off per Carson — worked elsewhere.
+
+_Last refreshed: 2026-05-27 by Carson — claims verified against `/health` curl, Supabase MCP `execute_sql` (org_integrations row), `npm run smoke:docusign` output (orphan + accepted-duplicate modes), deploy workflow run 26524684389._
+
+---
+
 ### 2026-05-27 — Sprint 2 DocuSign epic (SCRUM-1866): 3 stories code-complete, PR #927 open
 
 **Window:** 2026-05-27. Sprint 2 of the DocuSign Integration epic (SCRUM-1866) delivers 3 stories: SCRUM-2042 (reconciliation cron), SCRUM-2043 (dual HMAC key rotation), SCRUM-2044 (member-level DocuSign spec). All code-complete. PR [#927](https://github.com/carson-see/ArkovaCarson/pull/927) open on branch `feat/scrum-2042-2043-2044-docusign-sprint2` targeting `main`.
