@@ -37,11 +37,12 @@ describe('GME-20: Model Version Pinning', () => {
     });
 
     it('no pin uses a bare alias without version suffix', () => {
-      // Aliases like "gemini-flash" or just "gemini-3-flash" without -preview/-001 etc.
-      // are too vague. We need at least a version qualifier.
+      // Aliases like "gemini-flash" or just "gemini-flash" without a version
+      // are too vague. We need at least a version qualifier. Accepted forms:
+      //   -001 / -004 style suffix, -preview, embedding-N, OR an embedded
+      //   semantic version like the "2.5" in gemini-2.5-flash (SCRUM-1993).
       for (const [role, pin] of Object.entries(MODEL_VERSION_PINS)) {
-        // Must have at least one version qualifier (preview, 001, 004, etc.)
-        const hasVersion = /(-\d{3}|-preview|embedding-\d+)/.test(pin.modelId);
+        const hasVersion = /(-\d{3}|-preview|embedding-\d+|\d+\.\d+)/.test(pin.modelId);
         expect(hasVersion, `${role} model "${pin.modelId}" should have a version qualifier`).toBe(true);
       }
     });
