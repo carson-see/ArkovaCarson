@@ -15,7 +15,7 @@ Source code for the `@arkova/embed` verification widget (INT-03 / SCRUM-644).
 
 ## Recent Changes
 
-- 2026-05-26 SCRUM-2013: `render.ts` CREDENTIAL_LABELS expanded to 27 canonical credential types, including `CPE`, `ACCREDITATION`, `CONTRACT_PRESIGNING`, and `CONTRACT_POSTSIGNING`.
+- 2026-05-26 SCRUM-2013: `render.ts` CREDENTIAL_LABELS expanded to 27 canonical credential types, including `COMPLIANCE`, `LEGAL`, `CPE`, `FINANCIAL`, `MEDICAL_DEVICE`, `ACCREDITATION`, `CONTRACT_PRESIGNING`, and `CONTRACT_POSTSIGNING`.
 
 ## Conventions
 

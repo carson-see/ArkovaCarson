@@ -480,6 +480,10 @@ describe('POST /api/v1/anchor — Zod validation', () => {
       expect(res.status).toBe(409);
       expect(res.body.error).toBe('anchor_creation_conflict');
       expect(res.body).not.toHaveProperty('db_code');
+      expect(mockLogger.error).toHaveBeenCalledWith(
+        expect.objectContaining({ pgCode: '23505' }),
+        expect.any(String),
+      );
     });
 
     it('returns structured error on NOT NULL violation without leaking db_code', async () => {
