@@ -1,10 +1,11 @@
 /**
- * DocuSign Connect webhook handler (SCRUM-1101).
+ * DocuSign Connect webhook handler (SCRUM-1101 / SCRUM-1872).
  *
  * Receives HMAC-verified `envelope-completed` events, resolves the connected
  * org integration by DocuSign account id, and queues both:
  *   1. a sanitized rules-engine event (`ESIGN_COMPLETED`)
  *   2. a retryable document-fetch job for the signed envelope
+ *   3. (SCRUM-1872) if notary data is present, a `docusign.notarization_completed` job
  *
  * Raw Connect payloads and signed documents are never persisted here.
  */
@@ -14,6 +15,7 @@ import { db } from '../../../utils/db.js';
 import { logger } from '../../../utils/logger.js';
 import { submitJob } from '../../../utils/jobQueue.js';
 import { DOCUSIGN_ENVELOPE_COMPLETED_JOB_TYPE } from '../../../jobs/docusign-envelope-completed.js';
+import { DOCUSIGN_NOTARIZATION_COMPLETED_JOB_TYPE } from '../../../jobs/docusign-notarization-completed.js';
 import { adaptDocusign } from '../../../integrations/connectors/adapters.js';
 import {
   parseDocusignConnectPayload,
@@ -39,32 +41,70 @@ function getRawBody(req: Request): Buffer | null {
   return Buffer.isBuffer(rawBody) ? rawBody : null;
 }
 
+/**
+ * SCRUM-2044: Dual-table integration lookup.
+ *
+ * Resolution order (per spec):
+ *   1. org_integrations by account_id — org-level takes precedence
+ *   2. member_integrations by account_id — fallback for personal accounts
+ *
+ * Same ambiguity guard applies to both tables: if the same account_id
+ * appears in multiple orgs within a table, reject to prevent cross-tenant leak.
+ */
 async function findIntegration(accountId: string): Promise<DocusignIntegrationRow | null> {
+  // Step 1: Check org_integrations first (existing behavior, org-level wins)
   // eslint-disable-next-line @typescript-eslint/no-explicit-any, arkova/missing-org-filter -- webhook ingress: resolving org from external provider ID
-  const { data, error } = await (db as any)
+  const { data: orgData, error: orgError } = await (db as any)
     .from('org_integrations')
     .select('id, org_id, account_id, hmac_keys')
     .eq('provider', 'docusign')
     .eq('account_id', accountId)
     .is('revoked_at', null);
 
-  if (error) {
-    logger.error({ error, accountId }, 'DocuSign webhook integration lookup failed');
+  if (orgError) {
+    logger.error({ error: orgError, accountId }, 'DocuSign webhook org integration lookup failed');
     throw new Error('integration_lookup_failed');
   }
 
-  const rows = data as DocusignIntegrationRow[] | null;
-  if (!rows || rows.length === 0) return null;
-
-  if (rows.length > 1) {
+  const orgRows = orgData as DocusignIntegrationRow[] | null;
+  if (orgRows && orgRows.length > 1) {
     logger.error(
-      { accountId, orgIds: rows.map(r => r.org_id) },
-      'DocuSign webhook: ambiguous lookup — same accountId connected to multiple orgs, rejecting to prevent cross-tenant leak',
+      { accountId, orgIds: orgRows.map(r => r.org_id) },
+      'DocuSign webhook: ambiguous org lookup — same accountId connected to multiple orgs, rejecting to prevent cross-tenant leak',
     );
     throw new Error('ambiguous_integration_lookup');
   }
 
-  return rows[0];
+  if (orgRows && orgRows.length === 1) {
+    return orgRows[0];
+  }
+
+  // Step 2: Fall back to member_integrations (SCRUM-2044)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- webhook ingress: resolving org from external provider ID
+  const { data: memberData, error: memberError } = await (db as any)
+    .from('member_integrations')
+    .select('id, org_id, account_id, hmac_keys')
+    .eq('provider', 'docusign')
+    .eq('account_id', accountId)
+    .is('revoked_at', null);
+
+  if (memberError) {
+    logger.error({ error: memberError, accountId }, 'DocuSign webhook member integration lookup failed');
+    throw new Error('integration_lookup_failed');
+  }
+
+  const memberRows = memberData as DocusignIntegrationRow[] | null;
+  if (!memberRows || memberRows.length === 0) return null;
+
+  if (memberRows.length > 1) {
+    logger.error(
+      { accountId, orgIds: memberRows.map(r => r.org_id) },
+      'DocuSign webhook: ambiguous member lookup — same accountId connected across multiple orgs, rejecting to prevent cross-tenant leak',
+    );
+    throw new Error('ambiguous_integration_lookup');
+  }
+
+  return memberRows[0];
 }
 
 async function enqueueRuleEvent(args: {
@@ -125,6 +165,131 @@ async function enqueueFetchJob(args: {
     throw new Error('document_job_enqueue_failed');
   }
   return jobId;
+}
+
+// ── SCRUM-1872: Notary data extraction ──────────────────────────────
+
+export interface NotaryData {
+  notary_name: string | null;
+  notary_commission_state: string | null;
+  notary_commission_number: string | null;
+  notarization_completed_at: string;
+}
+
+/**
+ * Extract notary metadata from a DocuSign Connect raw payload.
+ *
+ * DocuSign Notary embeds notary signer info in the envelope's recipients.
+ * The notary appears as a recipient with `recipientType: 'notary'` or
+ * `roleName` containing 'notary'. Returns null if no notary data found.
+ */
+export function extractNotaryData(rawBody: Buffer | string): NotaryData | null {
+  try {
+    const text = Buffer.isBuffer(rawBody) ? rawBody.toString('utf8') : rawBody;
+    const json = JSON.parse(text) as Record<string, unknown>;
+
+    // Check for notary recipients in the envelope summary
+    const summary = (json.envelopeSummary ?? json.data ?? json) as Record<string, unknown>;
+    const recipients = summary.recipients as Record<string, unknown> | undefined;
+
+    if (!recipients) return null;
+
+    // DocuSign groups recipients by type: signers[], notaries[], inPersonSigners[], etc.
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const notaries = (recipients as any).notaries as Array<Record<string, unknown>> | undefined;
+    // Also check signers for recipientType === 'notary'
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const signers = (recipients as any).signers as Array<Record<string, unknown>> | undefined;
+
+    let notaryInfo: Record<string, unknown> | null = null;
+
+    if (notaries && notaries.length > 0) {
+      notaryInfo = notaries[0];
+    } else if (signers) {
+      const notarySigner = signers.find(
+        (s) =>
+          String(s.recipientType ?? '').toLowerCase() === 'notary' ||
+          String(s.roleName ?? '').toLowerCase().includes('notary'),
+      );
+      if (notarySigner) notaryInfo = notarySigner;
+    }
+
+    if (!notaryInfo) return null;
+
+    const name = typeof notaryInfo.name === 'string' ? notaryInfo.name.trim() : null;
+    const commState =
+      typeof notaryInfo.notaryCommissionState === 'string'
+        ? notaryInfo.notaryCommissionState.trim()
+        : typeof notaryInfo.jurisdiction === 'string'
+          ? notaryInfo.jurisdiction.trim()
+          : null;
+    const commNumber =
+      typeof notaryInfo.notaryCommissionNumber === 'string'
+        ? notaryInfo.notaryCommissionNumber.trim()
+        : typeof notaryInfo.commissionNumber === 'string'
+          ? notaryInfo.commissionNumber.trim()
+          : null;
+
+    // Use completedDateTime from the notary or fall back to the envelope generatedDateTime
+    const completedAt =
+      typeof notaryInfo.completedDateTime === 'string'
+        ? notaryInfo.completedDateTime
+        : typeof (summary as Record<string, unknown>).completedDateTime === 'string'
+          ? (summary as Record<string, unknown>).completedDateTime as string
+          : new Date().toISOString();
+
+    return {
+      notary_name: name || null,
+      notary_commission_state: commState || null,
+      notary_commission_number: commNumber || null,
+      notarization_completed_at: completedAt,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * SCRUM-1872: Enqueue notarization job if notary data is present.
+ * Non-fatal — failure here does not block the standard eSign flow.
+ */
+async function enqueueNotarizationJob(args: {
+  integration: DocusignIntegrationRow;
+  event: DocusignCompletedEnvelope;
+  ruleEventId: string;
+  notaryData: NotaryData;
+}): Promise<string | null> {
+  try {
+    const jobId = await submitJob({
+      type: DOCUSIGN_NOTARIZATION_COMPLETED_JOB_TYPE,
+      max_attempts: 5,
+      priority: 10,
+      payload: {
+        org_id: args.integration.org_id,
+        integration_id: args.integration.id,
+        account_id: args.event.accountId,
+        envelope_id: args.event.envelopeId,
+        rule_event_id: args.ruleEventId,
+        notary_name: args.notaryData.notary_name,
+        notary_commission_state: args.notaryData.notary_commission_state,
+        notary_commission_number: args.notaryData.notary_commission_number,
+        notarization_completed_at: args.notaryData.notarization_completed_at,
+      },
+    });
+    if (jobId) {
+      logger.info(
+        { envelopeId: args.event.envelopeId, notarizationJobId: jobId },
+        'DocuSign notarization job enqueued',
+      );
+    }
+    return jobId;
+  } catch (err) {
+    logger.warn(
+      { error: err, envelopeId: args.event.envelopeId },
+      'DocuSign notarization job enqueue failed — non-fatal',
+    );
+    return null;
+  }
 }
 
 docusignWebhookRouter.post('/', async (req: Request, res: Response) => {
@@ -204,7 +369,19 @@ docusignWebhookRouter.post('/', async (req: Request, res: Response) => {
     const ruleEventId = await enqueueRuleEvent({ integration, event, payloadHash });
     const jobId = await enqueueFetchJob({ integration, event, ruleEventId });
 
-    res.status(202).json({ ok: true, rule_event_id: ruleEventId, job_id: jobId });
+    // SCRUM-1872: Check for notary data and enqueue notarization job (non-fatal)
+    let notarizationJobId: string | null = null;
+    const notaryData = extractNotaryData(rawBody);
+    if (notaryData) {
+      notarizationJobId = await enqueueNotarizationJob({
+        integration,
+        event,
+        ruleEventId,
+        notaryData,
+      });
+    }
+
+    res.status(202).json({ ok: true });
   } catch (err) {
     logger.error({ error: err, accountId: event.accountId }, 'DocuSign webhook processing failed');
     res.status(500).json({ error: { code: 'webhook_processing_failed' } });

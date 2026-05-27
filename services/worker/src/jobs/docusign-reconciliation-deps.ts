@@ -36,14 +36,26 @@ export function makeReconciliationDeps(
 
   return {
     async listActiveIntegrations(): Promise<ActiveIntegration[]> {
-      const { data, error } = await db
+      // Org-level integrations (existing)
+      const { data: orgData, error: orgError } = await db
         .from('org_integrations')
         .select('id, org_id, account_id, base_uri, token_secret_name')
         .eq('provider', 'docusign')
         .is('revoked_at', null);
 
-      if (error) throw new Error(`integration_list_failed: ${error.message ?? error}`);
-      return (data ?? []).filter(
+      if (orgError) throw new Error(`integration_list_failed: ${orgError.message ?? orgError}`);
+
+      // SCRUM-2044: Member-level integrations
+      const { data: memberData, error: memberError } = await db
+        .from('member_integrations')
+        .select('id, org_id, account_id, base_uri, token_secret_name')
+        .eq('provider', 'docusign')
+        .is('revoked_at', null);
+
+      if (memberError) throw new Error(`member_integration_list_failed: ${memberError.message ?? memberError}`);
+
+      const allRows = [...(orgData ?? []), ...(memberData ?? [])];
+      return allRows.filter(
         (row: any) => row.account_id && row.base_uri && row.token_secret_name,
       );
     },
@@ -111,9 +123,13 @@ export function makeReconciliationDeps(
           allEnvelopes.push(...pageEnvelopes);
 
           if (json.nextUri) {
-            nextUrl = json.nextUri.startsWith('http')
-              ? json.nextUri
-              : `${base}${json.nextUri}`;
+            if (json.nextUri.startsWith('http')) {
+              const nextOrigin = new URL(json.nextUri).origin;
+              const expectedOrigin = new URL(base).origin;
+              nextUrl = nextOrigin === expectedOrigin ? json.nextUri : null;
+            } else {
+              nextUrl = `${base}${json.nextUri}`;
+            }
           } else {
             nextUrl = null;
           }

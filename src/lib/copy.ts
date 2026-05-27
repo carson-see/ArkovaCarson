@@ -898,6 +898,76 @@ export const PUBLIC_ATTESTATION_VERIFY_LABELS = {
 export const EVIDENCE_PAYLOAD_ERROR = 'Evidence metadata is invalid. Check fingerprints, file names, and descriptions.';
 
 // =============================================================================
+// ATTESTATION UI (SCRUM-1874 — DocuSign integration attestation display)
+// =============================================================================
+
+export const ATTESTATION_LABELS = {
+  // Status card
+  STATUS_CARD_TITLE: 'Attestation Status',
+  STATUS_DRAFT: 'Draft',
+  STATUS_DRAFT_DESC: 'This attestation is in draft and has not been submitted.',
+  STATUS_PENDING: 'Pending',
+  STATUS_PENDING_DESC: 'This attestation has been submitted and is awaiting network confirmation.',
+  STATUS_ACTIVE: 'Active',
+  STATUS_ACTIVE_DESC: 'This attestation is verified and currently active.',
+  STATUS_REVOKED: 'Revoked',
+  STATUS_REVOKED_DESC: 'This attestation has been revoked and is no longer valid.',
+  STATUS_EXPIRED: 'Expired',
+  STATUS_EXPIRED_DESC: 'This attestation has passed its expiration date.',
+  STATUS_CHALLENGED: 'Challenged',
+  STATUS_CHALLENGED_DESC: 'This attestation has been challenged and is under review.',
+
+  // Notarization badge
+  NOTARIZED: 'Notarized',
+  NOTARIZED_VIA_DOCUSIGN: 'Notarized via DocuSign',
+  NOTARIZATION_PENDING: 'Notarization Pending',
+  NOTARIZATION_COMPLETED: 'Notarization Completed',
+  NOTARY_NAME: 'Notary',
+  NOTARY_COMMISSION: 'Commission',
+  NOTARY_STATE: 'State',
+  NOTARIZED_ON: 'Notarized on',
+  ENVELOPE_ID: 'Envelope ID',
+  ESIGN_COMPLETED: 'E-Signature Completed',
+  ESIGN_COMPLETED_ON: 'Completed on',
+
+  // Verification result
+  VERIFICATION_RESULT_TITLE: 'Verification Result',
+  VERIFICATION_PASSED: 'Verification Passed',
+  VERIFICATION_PASSED_DESC: 'This attestation has been verified against the network record.',
+  VERIFICATION_FAILED: 'Verification Failed',
+  VERIFICATION_FAILED_DESC: 'This attestation could not be verified against the network record.',
+  VERIFICATION_PENDING: 'Verification Pending',
+  VERIFICATION_PENDING_DESC: 'Network confirmation is in progress. Check back shortly.',
+  NETWORK_RECEIPT: 'Network Receipt',
+  NETWORK_CHECKPOINT: 'Network Checkpoint',
+  NETWORK_OBSERVED_TIME: 'Network Observed Time',
+  FINGERPRINT: 'Document Fingerprint',
+  COPY_FINGERPRINT: 'Copy fingerprint',
+  COPY_RECEIPT: 'Copy network receipt',
+  COPIED: 'Copied',
+
+  // Detail labels
+  ATTESTATION_TYPE: 'Attestation Type',
+  SUBJECT: 'Subject',
+  ATTESTER: 'Attester',
+  ATTESTER_TYPE: 'Attester Type',
+  JURISDICTION: 'Jurisdiction',
+  CLAIMS: 'Claims',
+  SUMMARY: 'Summary',
+  ISSUED: 'Issued',
+  EXPIRES: 'Expires',
+  CREATED: 'Created',
+  PUBLIC_ID: 'Verification ID',
+  EVIDENCE_COUNT: 'Supporting Evidence',
+  VIEW_VERIFICATION: 'View Verification',
+
+  // Empty state
+  NO_ATTESTATIONS: 'No attestations yet',
+  NO_ATTESTATIONS_DESC: 'Create an attestation to verify, endorse, or audit a credential.',
+  CREATE_ATTESTATION: 'Create Attestation',
+} as const;
+
+// =============================================================================
 // MY CREDENTIALS / RECIPIENT INBOX (UF-03)
 // =============================================================================
 

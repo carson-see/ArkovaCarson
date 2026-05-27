@@ -44,9 +44,6 @@ import {
   XCircle,
   Clock,
   AlertTriangle,
-  ExternalLink,
-  Copy,
-  Check,
   Trash2,
   X,
   Ban,
@@ -69,10 +66,12 @@ import { EducationVerificationForm } from '@/components/attestation/EducationVer
 import { EvidenceUpload } from '@/components/attestation/EvidenceUpload';
 import type { EvidenceItem } from '@/components/attestation/EvidenceUpload';
 import { BulkIssuanceWizard } from '@/components/attestation/BulkIssuanceWizard';
+import { AttestationStatusCard } from '@/components/attestation/AttestationStatusCard';
+import { VerificationResultDisplay } from '@/components/attestation/VerificationResultDisplay';
 import { Briefcase, GraduationCap, FileSpreadsheet } from 'lucide-react';
 import { CreatePortfolioDialog } from '@/components/portfolio';
 import { AttestationEvidencePayloadSchema } from '@/lib/validators';
-import { EVIDENCE_PAYLOAD_ERROR } from '@/lib/copy';
+import { EVIDENCE_PAYLOAD_ERROR, ATTESTATION_LABELS } from '@/lib/copy';
 
 const ATTESTATION_TYPES = [
   { value: 'VERIFICATION', label: 'Verification', desc: 'Verify a credential or document is authentic' },
@@ -176,7 +175,6 @@ export function AttestationsPage() {
 
   // Detail state
   const [selectedAttestation, setSelectedAttestation] = useState<Attestation | null>(null);
-  const [copiedField, setCopiedField] = useState<string | null>(null);
 
   // Portfolio dialog state
   const [showPortfolioDialog, setShowPortfolioDialog] = useState(false);
@@ -228,12 +226,6 @@ export function AttestationsPage() {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- async data fetch; setState is post-await
     fetchAttestations();
   }, [fetchAttestations]);
-
-  const handleCopy = useCallback((text: string, field: string) => {
-    navigator.clipboard.writeText(text);
-    setCopiedField(field);
-    setTimeout(() => setCopiedField(null), 2000);
-  }, []);
 
   const handleRevoke = useCallback(async () => {
     if (!revokeTarget || revokeConfirm.toLowerCase() !== 'revoke') return;
@@ -707,137 +699,107 @@ export function AttestationsPage() {
 
         {/* Detail Panel */}
         {selectedAttestation && (
-          <Card className="border-[#00d4ff]/20 bg-[#0d141b]/80 animate-in fade-in slide-in-from-top-2 duration-200">
-            <CardHeader>
-              <div className="flex items-start justify-between">
-                <div>
-                  <CardTitle className="text-base">{selectedAttestation.subject_identifier}</CardTitle>
-                  <div className="flex items-center gap-2 mt-1">
-                    <Badge className={STATUS_COLORS[selectedAttestation.status] ?? ''}>
-                      {selectedAttestation.status}
-                    </Badge>
-                    <Badge variant="secondary" className="text-[10px]">
-                      {selectedAttestation.attestation_type.replace(/_/g, ' ')}
-                    </Badge>
-                    <span className="text-xs text-muted-foreground">{selectedAttestation.subject_type}</span>
+          <div className="space-y-4 animate-in fade-in slide-in-from-top-2 duration-200">
+            {/* Close button row */}
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-bold truncate">{selectedAttestation.subject_identifier}</h2>
+              <Button variant="ghost" size="sm" className="h-7 w-7 p-0 shrink-0" onClick={() => setSelectedAttestation(null)}>
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+
+            {/* Status Card */}
+            <AttestationStatusCard
+              status={selectedAttestation.status}
+              publicId={selectedAttestation.public_id}
+              attestationType={selectedAttestation.attestation_type.replace(/_/g, ' ')}
+            />
+
+            {/* Verification Result */}
+            <VerificationResultDisplay
+              status={selectedAttestation.status}
+              fingerprint={selectedAttestation.fingerprint}
+              chainProof={selectedAttestation.chain_tx_id ? {
+                tx_id: selectedAttestation.chain_tx_id,
+                block_height: null,
+                timestamp: null,
+                explorer_url: `https://mempool.space/signet/tx/${selectedAttestation.chain_tx_id}`,
+              } : null}
+            />
+
+            {/* Attester + Claims detail card */}
+            <Card className="border-[#00d4ff]/20 bg-[#0d141b]/80">
+              <CardContent className="space-y-4 pt-5">
+                {/* Attester */}
+                <div className="grid gap-3 sm:grid-cols-3">
+                  <div>
+                    <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">{ATTESTATION_LABELS.ATTESTER}</span>
+                    <p className="text-sm font-medium mt-0.5">{selectedAttestation.attester_name}</p>
+                    {selectedAttestation.attester_title && (
+                      <p className="text-xs text-muted-foreground">{selectedAttestation.attester_title}</p>
+                    )}
                   </div>
-                </div>
-                <Button variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={() => setSelectedAttestation(null)}>
-                  <X className="h-4 w-4" />
-                </Button>
-              </div>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              {/* Attester */}
-              <div className="grid gap-3 sm:grid-cols-3">
-                <div>
-                  <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Attester</span>
-                  <p className="text-sm font-medium mt-0.5">{selectedAttestation.attester_name}</p>
-                  {selectedAttestation.attester_title && (
-                    <p className="text-xs text-muted-foreground">{selectedAttestation.attester_title}</p>
+                  <div>
+                    <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">{ATTESTATION_LABELS.ATTESTER_TYPE}</span>
+                    <p className="text-sm mt-0.5">{selectedAttestation.attester_type}</p>
+                  </div>
+                  {selectedAttestation.jurisdiction && (
+                    <div>
+                      <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">{ATTESTATION_LABELS.JURISDICTION}</span>
+                      <p className="text-sm mt-0.5">{selectedAttestation.jurisdiction}</p>
+                    </div>
                   )}
                 </div>
+
+                {/* Claims */}
                 <div>
-                  <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Type</span>
-                  <p className="text-sm mt-0.5">{selectedAttestation.attester_type}</p>
+                  <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">{ATTESTATION_LABELS.CLAIMS}</span>
+                  <div className="mt-2 space-y-2">
+                    {(selectedAttestation.claims ?? []).map((c, i) => (
+                      <div key={i} className="rounded-sm border border-border/50 px-3 py-2">
+                        <p className="text-sm">{c.claim}</p>
+                        {c.evidence && <p className="text-xs text-muted-foreground mt-1">Evidence: {c.evidence}</p>}
+                      </div>
+                    ))}
+                  </div>
                 </div>
-                {selectedAttestation.jurisdiction && (
+
+                {/* Summary */}
+                {selectedAttestation.summary && (
                   <div>
-                    <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Jurisdiction</span>
-                    <p className="text-sm mt-0.5">{selectedAttestation.jurisdiction}</p>
+                    <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">{ATTESTATION_LABELS.SUMMARY}</span>
+                    <p className="text-sm text-muted-foreground mt-1">{selectedAttestation.summary}</p>
                   </div>
                 )}
-              </div>
 
-              {/* Claims */}
-              <div>
-                <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Claims</span>
-                <div className="mt-2 space-y-2">
-                  {(selectedAttestation.claims ?? []).map((c, i) => (
-                    <div key={i} className="rounded-lg border border-border/50 px-3 py-2">
-                      <p className="text-sm">{c.claim}</p>
-                      {c.evidence && <p className="text-xs text-muted-foreground mt-1">Evidence: {c.evidence}</p>}
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Summary */}
-              {selectedAttestation.summary && (
-                <div>
-                  <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Summary</span>
-                  <p className="text-sm text-muted-foreground mt-1">{selectedAttestation.summary}</p>
-                </div>
-              )}
-
-              {/* Fingerprint + Chain */}
-              <div className="grid gap-3 sm:grid-cols-2 border-t border-border/50 pt-3">
-                {selectedAttestation.fingerprint && (
-                  <div>
-                    <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Fingerprint</span>
-                    <div className="flex items-center gap-2 mt-0.5">
-                      <code className="text-xs font-mono text-[#00d4ff] break-all">{selectedAttestation.fingerprint}</code>
-                      <button onClick={() => handleCopy(selectedAttestation.fingerprint!, 'fp')} className="text-muted-foreground hover:text-foreground shrink-0">
-                        {copiedField === 'fp' ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
-                      </button>
-                    </div>
-                  </div>
-                )}
-                <div>
-                  <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Public ID</span>
-                  <div className="flex items-center gap-2 mt-0.5">
-                    <code className="text-xs font-mono">{selectedAttestation.public_id}</code>
-                    <button onClick={() => handleCopy(selectedAttestation.public_id, 'pid')} className="text-muted-foreground hover:text-foreground shrink-0">
-                      {copiedField === 'pid' ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
-                    </button>
-                  </div>
-                </div>
-              </div>
-
-              {selectedAttestation.chain_tx_id && (
-                <div className="border-t border-border/50 pt-3">
-                  <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Network Receipt</span>
-                  <div className="flex items-center gap-2 mt-0.5">
-                    <a
-                      href={`https://mempool.space/signet/tx/${selectedAttestation.chain_tx_id}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-xs font-mono text-[#00d4ff] hover:text-[#00d4ff]/80 flex items-center gap-1"
+                {/* Action buttons */}
+                <div className="flex items-center gap-2 border-t border-border/50 pt-3">
+                  <Link to={`/verify/attestation/${selectedAttestation.public_id}`} target="_blank">
+                    <Button variant="outline" size="sm" className="border-[#00d4ff]/20 text-xs">
+                      <Link2 className="h-3.5 w-3.5 mr-1.5" />
+                      {ATTESTATION_LABELS.VIEW_VERIFICATION}
+                    </Button>
+                  </Link>
+                  {selectedAttestation.status !== 'REVOKED' && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="border-red-500/20 text-red-400 hover:bg-red-500/10 text-xs"
+                      onClick={() => { setRevokeTarget(selectedAttestation); setRevokeError(null); }}
                     >
-                      <ExternalLink className="h-3 w-3" />
-                      {selectedAttestation.chain_tx_id.slice(0, 20)}...
-                    </a>
-                  </div>
+                      <Ban className="h-3.5 w-3.5 mr-1.5" />
+                      Revoke
+                    </Button>
+                  )}
                 </div>
-              )}
 
-              {/* Action buttons */}
-              <div className="flex items-center gap-2 border-t border-border/50 pt-3">
-                <Link to={`/verify/attestation/${selectedAttestation.public_id}`} target="_blank">
-                  <Button variant="outline" size="sm" className="border-[#00d4ff]/20 text-xs">
-                    <Link2 className="h-3.5 w-3.5 mr-1.5" />
-                    Public Verification Link
-                  </Button>
-                </Link>
-                {selectedAttestation.status !== 'REVOKED' && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="border-red-500/20 text-red-400 hover:bg-red-500/10 text-xs"
-                    onClick={() => { setRevokeTarget(selectedAttestation); setRevokeError(null); }}
-                  >
-                    <Ban className="h-3.5 w-3.5 mr-1.5" />
-                    Revoke
-                  </Button>
-                )}
-              </div>
-
-              <div className="text-xs text-muted-foreground pt-2">
-                Issued: {new Date(selectedAttestation.issued_at).toLocaleString()}
-                {selectedAttestation.expires_at && ` · Expires: ${new Date(selectedAttestation.expires_at).toLocaleString()}`}
-              </div>
-            </CardContent>
-          </Card>
+                <div className="text-xs text-muted-foreground pt-2">
+                  {ATTESTATION_LABELS.ISSUED}: {new Date(selectedAttestation.issued_at).toLocaleString()}
+                  {selectedAttestation.expires_at && ` · ${ATTESTATION_LABELS.EXPIRES}: ${new Date(selectedAttestation.expires_at).toLocaleString()}`}
+                </div>
+              </CardContent>
+            </Card>
+          </div>
         )}
 
         {/* Revoke Dialog */}
