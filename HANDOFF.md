@@ -14,6 +14,24 @@
 
 ## Now
 
+### 2026-05-27 — SCRUM-1993: Gemini preview-SKU latency outage reverted (PR #918 open)
+
+**Incident:** `gemini-3-flash-preview` (generation+vision pin, set 2026-04-12, never re-verified — `verifiedAt == pinnedAt`) breached the worker's 4500ms `AI_EXTRACTION_LATENCY_BUDGET_MS` on ~100% of extraction calls from 2026-05-15. Every extraction silently fell to the heuristic fast-fallback (no AI metadata) → the "document will be secured without metadata" toast on the client.
+
+**Stopped via** Cloud Run env-var hotfix on `arkova-worker` (revision `00630-bmr`, `GEMINI_MODEL=gemini-2.5-flash`) — operator-applied by Carson; reported serving 100% per console screenshot, **not** independently re-verified by this session via gcloud/MCP.
+
+**Durable code fix:** branch `fix/scrum-1993-gemini-pin-stable`, commit `d6e9354`, pushed. Reverts `DEFAULT_GENERATION_MODEL`+`DEFAULT_VISION_MODEL` to `gemini-2.5-flash` in `gemini-config.ts`, plus pin metadata, tests, and the `docs/ops/gemini-model-upgrade.md` incident note (6 files). `distillation`+`lite` pins stay on preview (off the extraction hot path). **PR [#918](https://github.com/carson-see/ArkovaCarson/pull/918)** open (base `main`, declared T2).
+
+**PR image built:** `…/arkova-worker-images/arkova-worker:pr-918-d6e9354` @ `sha256:b6c1b58747…9ba9829` (Cloud Build `bad6114e-7368-4021-991a-ed56190bb042`, SUCCESS). This also cleared the `arkova1_cloudbuild` 403 — it only needed the build run as the **owner** account, not `arkova-cli@`. (A parallel session's proposal to grant `serviceUsageConsumer` to `GCP_SERVICE_ACCOUNT` was wrong: prod `deploy-worker.yml` uses `docker build`/`docker push`, never Cloud Build, so that SA never touches the bucket.)
+
+**BLOCKER for 918's soak evidence:** shared staging `ujtlwnoqfhtitcmsnrpq` is **not `clean_mirror`** — 61,260 anchors (latest `2026-05-23`) + 6 active leases (862, 866, 867-T3, 885, 886, 888) → `soak_artifact` per CLAUDE.md §1.11A. But 918 is code-only with **zero DB surface** (touches no anchors/migrations/cron/queue/chain), so it cannot be contaminated — strong candidate for a **Carson-approved residual-risk exception**; otherwise isolated project or wait for clean shared staging. Migration ledger is clean (298 rows, 0 dups).
+
+**Left (next session):** (1) decide residual-risk / isolated / wait — gates the rest; (2) confirm no merge conflict — `origin/main` advanced to `9fcd18c` after branch point `6e3cdba`; (3) reconsider T1-vs-T2 (no DB writes → path detector likely allows T1, 2h + E2E); (4) deploy `pr-918` image to its staging tag URL + run the soak — **needs gcloud owner auth, no lease created for 918 yet**; (5) fill PR #918 `## Staging Soak Evidence` block + release lease; (6) Jira/Confluence/bug-log gates for SCRUM-1993; (7) **SCRUM-1951** owns the eval-validated GA `gemini-3` upgrade before the **2026-06-17** `gemini-2.5-flash` sunset.
+
+_Last refreshed: 2026-05-27 by Carson (agent session) — code/PR claims verified against `git ls-remote origin fix/scrum-1993-gemini-pin-stable` (@ `d6e9354`), PR #918, Cloud Build id `bad6114e-7368-4021-991a-ed56190bb042`; staging state via Supabase MCP query on `ujtlwnoqfhtitcmsnrpq` (lease + anchor/migration counts); prod hotfix revision operator-reported via console screenshot, not independently re-verified._
+
+---
+
 ### 2026-05-25 — 96-hour sprint: 23 PRs merged, worker redeployed
 
 **Window:** 2026-05-21 through 2026-05-25. 23 PRs merged to `main`. Final production revision built from git_sha `5874a96c` (merge commit of PR #859). Worker healthy: database ok, anchoring ok, kms ok. Edge worker (edge.arkova.ai) redeployed with MCP search tool fixes.
