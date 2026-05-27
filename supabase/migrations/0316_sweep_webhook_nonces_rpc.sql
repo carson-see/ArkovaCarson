@@ -45,4 +45,9 @@ $$;
 COMMENT ON FUNCTION public.sweep_webhook_nonces IS
   'SCRUM-2040: deletes webhook nonces older than retention_days from the named table. Allowlisted tables only.';
 
+-- Lock down execute to service_role only (worker cron).
+-- Default Postgres grants EXECUTE to PUBLIC; revoke it.
+REVOKE ALL ON FUNCTION public.sweep_webhook_nonces(TEXT, INTEGER) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.sweep_webhook_nonces(TEXT, INTEGER) TO service_role;
+
 NOTIFY pgrst, 'reload schema';
