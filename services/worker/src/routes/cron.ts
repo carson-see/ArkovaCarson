@@ -1416,7 +1416,10 @@ cronRouter.post('/nonce-sweep', async (_req, res) => {
     const adapter = makeNonceSweepDb(db);
     const result = await sweepExpiredNonces(adapter);
     if (!result.ok) {
-      res.status(207).json(result);
+      res.status(207).json({
+        ...result,
+        message: `Partial failure: ${result.errors.length} of ${Object.keys(result.swept).length} tables failed`,
+      });
       return;
     }
     res.json(result);

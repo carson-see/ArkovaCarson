@@ -57,7 +57,7 @@ export async function sweepExpiredNonces(
   return { ok: errors.length === 0, swept, totalDeleted, errors };
 }
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any -- Supabase rpc() is typed to literal function names; sweep_webhook_nonces is added by migration 0316 and won't exist in generated types until next `gen:types` run
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- sweep_webhook_nonces RPC not in generated types until migration 0316 lands + gen:types
 export function makeNonceSweepDb(supabaseDb: { rpc: (...args: any[]) => PromiseLike<{ data: any; error: any }> }): NonceSweepDb {
   return {
     async deleteOlderThan(table: string, retentionDays: number) {

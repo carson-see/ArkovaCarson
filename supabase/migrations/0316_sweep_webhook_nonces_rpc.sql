@@ -3,7 +3,8 @@
 -- Deletes rows older than `retention_days` from the specified nonce table.
 -- Returns the count of deleted rows. Callable only by service_role (worker).
 --
--- ROLLBACK: DROP FUNCTION IF EXISTS public.sweep_webhook_nonces;
+-- ROLLBACK:
+--   DROP FUNCTION IF EXISTS public.sweep_webhook_nonces(TEXT, INTEGER);
 
 CREATE OR REPLACE FUNCTION public.sweep_webhook_nonces(
   target_table TEXT,

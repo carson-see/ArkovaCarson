@@ -167,8 +167,11 @@ interface ConnectorHealthCheckResult {
   alertsFired: number;
 }
 
+// Supabase client — typed interface impractical due to deeply generic SupabaseClient types.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export async function runConnectorHealthCheck(db: any): Promise<ConnectorHealthCheckResult> {
+type SupabaseDb = { from(table: string): any };
+
+export async function runConnectorHealthCheck(db: SupabaseDb): Promise<ConnectorHealthCheckResult> {
   const now = new Date();
   const dispatcher = createSentryConnectorAlertDispatcher();
 
