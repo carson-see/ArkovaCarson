@@ -39,12 +39,12 @@ test.describe('Version Conflicts Page', () => {
     const page = orgAdminPage;
 
     // Intercept the API to delay response so we can observe loading state
-    await page.route('**/api/queue/pending*', async (route) => {
+    await page.route('**/api/v1/versions*', async (route) => {
       await new Promise((resolve) => setTimeout(resolve, 2000));
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify({ items: [] }),
+        body: JSON.stringify({ versions: [] }),
       });
     });
 
