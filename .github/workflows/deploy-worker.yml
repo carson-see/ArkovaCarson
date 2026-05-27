@@ -148,10 +148,6 @@ jobs:
 
       - name: Deploy canary (no traffic)
         run: |
-          # min-instances=1 (was 2): one warm instance covers pre-pilot
-          # traffic; Cloud Run replaces a recycling instance and
-          # max-instances=10 absorbs bursts. Raise if webhook/cron cold
-          # starts appear.
           gcloud run deploy ${{ env.SERVICE_NAME }} \
             --image "${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.SERVICE_NAME }}:${{ github.sha }}" \
             --region ${{ env.REGION }} \
@@ -160,7 +156,7 @@ jobs:
             --port 3001 \
             --cpu 2 \
             --memory 2Gi \
-            --min-instances 1 \
+            --min-instances 2 \
             --max-instances 10 \
             --timeout 3600 \
             --tag canary \
