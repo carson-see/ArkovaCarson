@@ -134,6 +134,11 @@ jobs:
 
       - name: Build & push image
         run: |
+          # Build on the runner instead of Cloud Build. GitHub's WIF principal
+          # can push to Artifact Registry, but `gcloud builds submit` requires
+          # source-upload access to the project Cloud Build bucket and has
+          # repeatedly failed before a build can start.
+          set -euo pipefail
           IMAGE="${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.SERVICE_NAME }}:${{ github.sha }}"
           LATEST="${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.SERVICE_NAME }}:latest"
           docker build \

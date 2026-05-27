@@ -93,6 +93,9 @@ jobs:
           INPUT_PR_NUMBER: ${{ inputs.pr_number }}
           BUILD_SHA: ${{ steps.sha.outputs.sha }}
         run: |
+          # Keep staging on the same source-upload-free path as production:
+          # runner-side Docker build, then Artifact Registry push.
+          set -euo pipefail
           IMAGE_TAG="pr-${INPUT_PR_NUMBER}-$(echo "${BUILD_SHA}" | cut -c1-8)"
           IMAGE_REF="${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/arkova-worker:${IMAGE_TAG}"
           LATEST_REF="${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/arkova-worker:latest"
