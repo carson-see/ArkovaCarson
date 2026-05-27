@@ -17,7 +17,7 @@ vi.mock('../utils/logger.js', () => ({
 const mockSelectEq = vi.fn();
 const mockSelectEq2 = vi.fn();
 const mockSelectEqStatus = vi.fn();
-const mockInsert = vi.fn();
+const mockUpsert = vi.fn();
 
 // Minimal db mock that chains .from().select().eq().eq().eq().single()
 const mockDb = {
@@ -53,7 +53,7 @@ function wireAnchorsQuery(result: { data: unknown; error: unknown }) {
       };
     }
     if (table === 'external_document_versions') {
-      return { insert: mockInsert };
+      return { upsert: mockUpsert };
     }
     throw new Error(`unexpected table: ${table}`);
   });
@@ -61,7 +61,7 @@ function wireAnchorsQuery(result: { data: unknown; error: unknown }) {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockInsert.mockResolvedValue({ error: null });
+  mockUpsert.mockResolvedValue({ error: null });
 });
 
 describe('detectVersionConflict', () => {
@@ -153,7 +153,7 @@ describe('insertVersionRecord', () => {
     });
 
     expect(mockDb.from).toHaveBeenCalledWith('external_document_versions');
-    expect(mockInsert).toHaveBeenCalledWith(
+    expect(mockUpsert).toHaveBeenCalledWith(
       expect.objectContaining({
         org_id: ORG_ID,
         external_file_id: EXTERNAL_FILE_ID,
@@ -161,12 +161,16 @@ describe('insertVersionRecord', () => {
         source: 'google_drive',
         status: 'pending_review',
       }),
+      {
+        onConflict: 'org_id,external_file_id,fingerprint',
+        ignoreDuplicates: true,
+      },
     );
   });
 
   it('returns success:true on insert without error', async () => {
     wireAnchorsQuery({ data: null, error: null });
-    mockInsert.mockResolvedValue({ error: null });
+    mockUpsert.mockResolvedValue({ error: null });
 
     const result = await insertVersionRecord({
       orgId: ORG_ID,
@@ -180,7 +184,7 @@ describe('insertVersionRecord', () => {
 
   it('returns success:false with error message on insert failure', async () => {
     wireAnchorsQuery({ data: null, error: null });
-    mockInsert.mockResolvedValue({ error: { message: 'unique_violation' } });
+    mockUpsert.mockResolvedValue({ error: { message: 'unique_violation' } });
 
     const result = await insertVersionRecord({
       orgId: ORG_ID,
@@ -190,5 +194,19 @@ describe('insertVersionRecord', () => {
     });
 
     expect(result).toEqual({ success: false, error: 'unique_violation' });
+  });
+
+  it('validates the record before writing', async () => {
+    wireAnchorsQuery({ data: null, error: null });
+
+    const result = await insertVersionRecord({
+      orgId: 'not-a-uuid',
+      externalFileId: EXTERNAL_FILE_ID,
+      fingerprint: FINGERPRINT_B,
+      source: 'google_drive',
+    });
+
+    expect(result).toEqual({ success: false, error: 'invalid version record' });
+    expect(mockUpsert).not.toHaveBeenCalled();
   });
 });

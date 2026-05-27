@@ -14,6 +14,7 @@
  * The rules engine (`rules-engine.ts`) calls detectVersionConflict() after a
  * rule matches but before creating an anchor execution.
  */
+import { z } from 'zod';
 import { db } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
 
@@ -36,6 +37,15 @@ export interface InsertVersionRecordResult {
   success: boolean;
   error?: string;
 }
+
+const VersionRecordInsertSchema = z.object({
+  org_id: z.string().uuid(),
+  external_file_id: z.string().min(1),
+  fingerprint: z.string().min(1),
+  source: z.string().min(1),
+  status: z.literal('pending_review'),
+  metadata: z.record(z.string(), z.unknown()),
+});
 
 // ─── detectVersionConflict ──────────────────────────────────────────────────
 
@@ -108,16 +118,29 @@ export async function insertVersionRecord(
   params: InsertVersionRecordParams,
 ): Promise<InsertVersionRecordResult> {
   try {
+    const row = {
+      org_id: params.orgId,
+      external_file_id: params.externalFileId,
+      fingerprint: params.fingerprint,
+      source: params.source,
+      status: 'pending_review',
+      metadata: params.metadata ?? {},
+    };
+    const parsed = VersionRecordInsertSchema.safeParse(row);
+    if (!parsed.success) {
+      logger.warn(
+        { validationIssues: parsed.error.issues.map(issue => issue.path.join('.')) },
+        'insertVersionRecord: invalid version record',
+      );
+      return { success: false, error: 'invalid version record' };
+    }
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { error } = await (db as any)
       .from('external_document_versions')
-      .insert({
-        org_id: params.orgId,
-        external_file_id: params.externalFileId,
-        fingerprint: params.fingerprint,
-        source: params.source,
-        status: 'pending_review',
-        metadata: params.metadata ?? {},
+      .upsert(parsed.data, {
+        onConflict: 'org_id,external_file_id,fingerprint',
+        ignoreDuplicates: true,
       });
 
     if (error) {
