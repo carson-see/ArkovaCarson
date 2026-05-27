@@ -85,20 +85,29 @@ jobs:
         id: sha
         run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
-      - name: Build & push image (Cloud Build)
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ env.REGISTRY }} --quiet
+
+      - name: Build & push image
         env:
           INPUT_PR_NUMBER: ${{ inputs.pr_number }}
           BUILD_SHA: ${{ steps.sha.outputs.sha }}
         run: |
+          # Keep staging on the same source-upload-free path as production:
+          # runner-side Docker build, then Artifact Registry push.
+          set -euo pipefail
           IMAGE_TAG="pr-${INPUT_PR_NUMBER}-$(echo "${BUILD_SHA}" | cut -c1-8)"
           IMAGE_REF="${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/arkova-worker:${IMAGE_TAG}"
+          LATEST_REF="${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/arkova-worker:latest"
           echo "IMAGE_TAG=${IMAGE_TAG}" >> "$GITHUB_ENV"
           echo "IMAGE_REF=${IMAGE_REF}" >> "$GITHUB_ENV"
-          gcloud builds submit services/worker \
-            --config services/worker/cloudbuild.yaml \
-            --substitutions="_COMMIT_SHA=${BUILD_SHA},_IMAGE_TAG=${IMAGE_TAG},_REGISTRY=${{ env.REGISTRY }},_REPOSITORY=${{ env.REPOSITORY }},_SERVICE_NAME=arkova-worker" \
-            --project ${{ env.PROJECT_ID }} \
-            --quiet
+          docker build \
+            --build-arg BUILD_SHA="${BUILD_SHA}" \
+            --tag "${IMAGE_REF}" \
+            --tag "${LATEST_REF}" \
+            services/worker
+          docker push "${IMAGE_REF}"
+          docker push "${LATEST_REF}"
 
       - name: Use deploy script from main
         run: git fetch origin main && git checkout origin/main -- scripts/staging/deploy.sh
