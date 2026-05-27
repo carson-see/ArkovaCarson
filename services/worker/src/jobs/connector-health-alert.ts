@@ -13,6 +13,7 @@
  * Demo connectors are excluded (their state is synthetic).
  */
 
+import * as Sentry from '@sentry/node';
 import { logger } from '../utils/logger.js';
 
 export const RE_FIRE_WINDOW_MS = 60 * 60 * 1000; // 1 hour
@@ -139,7 +140,6 @@ export function createSentryConnectorAlertDispatcher(): ConnectorAlertDispatcher
   return {
     captureAlert(decision: ConnectorAlertDecision) {
       try {
-        const Sentry = require('@sentry/node');
         Sentry.captureMessage(decision.reason, {
           level: decision.severity,
           tags: {
@@ -157,4 +157,87 @@ export function createSentryConnectorAlertDispatcher(): ConnectorAlertDispatcher
       }
     },
   };
+}
+
+// ─── Cron entry point ───
+
+interface ConnectorHealthCheckResult {
+  ok: boolean;
+  checked: number;
+  alertsFired: number;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export async function runConnectorHealthCheck(db: any): Promise<ConnectorHealthCheckResult> {
+  const now = new Date();
+  const dispatcher = createSentryConnectorAlertDispatcher();
+
+  const { data: integrations, error: intError } = await db
+    .from('org_integrations')
+    .select('org_id, provider, revoked_at')
+    .is('revoked_at', null);
+
+  if (intError) {
+    logger.error({ error: intError }, 'Connector health check: failed to load integrations');
+    throw new Error('Failed to load integrations');
+  }
+
+  const { data: priorStates } = await db
+    .from('connector_alert_state')
+    .select('connector_id, org_id, last_state, last_alerted_at');
+
+  const stateMap = new Map<string, ConnectorAlertState>();
+  for (const s of (priorStates ?? []) as ConnectorAlertState[]) {
+    stateMap.set(`${s.connector_id}:${s.org_id}`, s);
+  }
+
+  const snapshots: ConnectorHealthSnapshot[] = (integrations ?? []).map(
+    (row: { org_id: string; provider: string; revoked_at: string | null }) => ({
+      connector_id: row.provider,
+      org_id: row.org_id,
+      state: row.revoked_at ? 'disconnected' as const : 'connected' as const,
+      health_reason: row.revoked_at ? 'vendor_auth_revoked' as const : 'none' as const,
+      last_error: null,
+    }),
+  );
+
+  let alertsFired = 0;
+  const upserts: Array<{ connector_id: string; org_id: string; last_state: string; last_alerted_at: string | null }> = [];
+
+  for (const snap of snapshots) {
+    const key = `${snap.connector_id}:${snap.org_id}`;
+    const prior = stateMap.get(key) ?? null;
+    const decision = decideConnectorAlert(snap, prior, now);
+
+    if (decision.should_fire) {
+      dispatcher.captureAlert(decision);
+      alertsFired++;
+      upserts.push({
+        connector_id: snap.connector_id,
+        org_id: snap.org_id,
+        last_state: snap.state,
+        last_alerted_at: now.toISOString(),
+      });
+    } else {
+      upserts.push({
+        connector_id: snap.connector_id,
+        org_id: snap.org_id,
+        last_state: snap.state,
+        last_alerted_at: prior?.last_alerted_at ?? null,
+      });
+    }
+  }
+
+  if (upserts.length > 0) {
+    const { error: upsertError } = await db
+      .from('connector_alert_state')
+      .upsert(upserts.map(u => ({ ...u, updated_at: now.toISOString() })), {
+        onConflict: 'connector_id,org_id',
+      });
+    if (upsertError) {
+      logger.error({ error: upsertError }, 'Connector health check: failed to persist alert state');
+    }
+  }
+
+  return { ok: true, checked: snapshots.length, alertsFired };
 }

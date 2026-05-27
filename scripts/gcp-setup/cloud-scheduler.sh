@@ -39,6 +39,12 @@ JOBS=(
   # delete-then-insert and double-pays the BQ DML cost; manual re-trigger
   # via /jobs/bq-export-snapshot if a run fails.
   "bq-export-snapshot|0 2 * * *|/jobs/bq-export-snapshot|NO_RETRY"
+  # SCRUM-2040 (SOC 2 CC7.4): sweep expired webhook nonces daily at 04:00 UTC.
+  # 14-day retention. Partial failures return 207; idempotent re-runs are safe.
+  "nonce-sweep|0 4 * * *|/cron/nonce-sweep|30s,120s,2"
+  # SCRUM-2041 (SOC 2 CC7.1): connector health check every 15 min.
+  # Evaluates all org integrations, fires Sentry alerts on state transitions.
+  "connector-health-check|*/15 * * * *|/cron/connector-health-check|30s,120s,2"
 )
 # SCRUM-1727 (one-shot historical backfill) is INTENTIONALLY NOT in JOBS.
 # It's a manual operator endpoint at /jobs/bq-export-backfill?table=<name>.
