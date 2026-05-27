@@ -121,7 +121,7 @@ const ConfigSchema = z.object({
   // AI Intelligence (P8)
   /** Gemini API key for AI extraction (Constitution 4A: PII-stripped metadata only) */
   geminiApiKey: z.string().optional(),
-  /** Gemini model for extraction (default from gemini-config.ts: gemini-3-flash-preview) */
+  /** Gemini model for extraction (default from gemini-config.ts: gemini-2.5-flash) */
   geminiModel: z.string().optional(),
   /** Gemini embedding model (default from gemini-config.ts: text-embedding-004) */
   geminiEmbeddingModel: z.string().optional(),
