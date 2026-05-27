@@ -82,7 +82,15 @@ export async function handleListPendingResolution(
   const limit = parsePendingLimit(req.query.limit);
 
   try {
-    const profile = await getCallerProfile(userId);
+    let profile: CallerProfile | null;
+    try {
+      profile = await getCallerProfile(userId);
+    } catch (err) {
+      logger.error({ error: err }, 'profiles lookup failed for pending resolution');
+      res.status(500).json({ error: { code: 'internal_error', message: 'Profile lookup failed' } });
+      return;
+    }
+
     if (!profile) {
       res.status(403).json({ error: { code: 'forbidden', message: 'Profile not found' } });
       return;
@@ -124,6 +132,7 @@ export async function handleListPendingResolution(
           .eq('status', 'PENDING_RESOLUTION')
           .is('deleted_at', null)
           .in('metadata->>external_file_id', uniqueExternalFileIds)
+          .order('id', { ascending: true })
           .range(offset, offset + pageSize - 1);
 
         if (siblingError) {
@@ -248,7 +257,7 @@ async function getCallerProfile(userId: string): Promise<CallerProfile | null> {
 
   if (error) {
     logger.warn({ error, userId }, 'profiles lookup failed for queue run');
-    return null;
+    throw new Error('Profile lookup failed');
   }
 
   return (data as CallerProfile | null) ?? null;
