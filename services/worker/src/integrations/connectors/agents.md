@@ -1,6 +1,6 @@
 # agents.md — services/worker/src/integrations/connectors/
 
-_Last updated: 2026-05-16_
+_Last updated: 2026-05-27_
 
 ## What This Folder Contains
 
@@ -12,6 +12,7 @@ Vendor connector services and canonical event adapters. Each connector owns OAut
 | `adapters.ts` | Pure-function adapters: vendor payload -> canonical `TriggerEvent` for rules engine |
 | `googleDrive.ts` | Google Drive connector — OAuth, Secret Manager tokens, 7-day watch channels, event shaping |
 | `docusign.ts` | DocuSign connector — retryable signed-document fetch, account token resolution |
+| `docusign-token-store.ts` | DocuSign refresh-token Secret Manager store — org + member-level naming (SCRUM-2044) |
 | `drive-changes-processor.ts` | Drive changes feed processor — paginated, deduped, folder-matched event emission |
 | `drive-changes-runner.ts` | Webhook-to-processor glue — token refresh, watched-folder-id resolution |
 | `drive-folder-resolver.ts` | Drive parent-chain folder path resolver (20-level depth cap, 15-min TTL cache) |

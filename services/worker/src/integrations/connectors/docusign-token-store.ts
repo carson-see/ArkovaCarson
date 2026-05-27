@@ -52,6 +52,21 @@ export function buildDocusignRefreshTokenSecretName(args: {
   return `projects/${projectId}/secrets/arkova-docusign-${orgId}-${accountHash}-refresh-token`;
 }
 
+/**
+ * SCRUM-2044 — Build member-level refresh token secret name.
+ * Naming: arkova-docusign-member-{userId}-{accountHash}-refresh-token
+ */
+export function buildDocusignMemberRefreshTokenSecretName(args: {
+  projectId: string;
+  userId: string;
+  accountId: string;
+}): string {
+  const projectId = assertSafeSegment(args.projectId, 'projectId', SAFE_PROJECT_RE);
+  const userId = assertSafeSegment(args.userId, 'userId', SAFE_ORG_RE);
+  const accountHash = createHash('sha256').update(args.accountId, 'utf8').digest('hex').slice(0, 32);
+  return `projects/${projectId}/secrets/arkova-docusign-member-${userId}-${accountHash}-refresh-token`;
+}
+
 function parseSecretName(name: string): { projectId: string; secretId: string } {
   const match = SECRET_NAME_RE.exec(name);
   if (!match) {

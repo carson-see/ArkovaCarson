@@ -142,6 +142,7 @@ export const CheckrReportCompleted = z.object({
 export const ConnectorCanonicalEvent = z.object({
   trigger_type: z.enum([
     'ESIGN_COMPLETED',
+    'ESIGN_NOTARIZED',
     'WORKSPACE_FILE_MODIFIED',
     'CONNECTOR_DOCUMENT_RECEIVED',
     'MANUAL_UPLOAD',
