@@ -174,8 +174,7 @@ export async function runConnectorHealthCheck(db: any): Promise<ConnectorHealthC
 
   const { data: integrations, error: intError } = await db
     .from('org_integrations')
-    .select('org_id, provider, revoked_at')
-    .is('revoked_at', null);
+    .select('org_id, provider, revoked_at');
 
   if (intError) {
     logger.error({ error: intError }, 'Connector health check: failed to load integrations');
