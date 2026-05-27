@@ -65,6 +65,7 @@ queue_rules:
     queue_conditions:
       - -draft
       - -label = work-in-progress
+      - -label = hotfix
       # Staging evidence must pass before entering queue. T0/T1 can move fast,
       # while T2/T3 must complete merge-grade evidence before queueing.
       - check-success = Staging Soak Evidence Gate
@@ -107,6 +108,7 @@ pull_request_rules:
       - -draft
       - -label = work-in-progress
       - -label = do-not-merge
+      - -label = hotfix
       - check-success = Staging Soak Evidence Gate
     actions:
       queue:

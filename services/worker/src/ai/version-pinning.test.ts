@@ -14,6 +14,66 @@ import {
 } from './gemini-config.js';
 import { buildExtractionManifest } from './extraction-manifest.js';
 
+const MAX_MODEL_ID_LENGTH = 120;
+
+function isNonEmptyDigits(value: string): boolean {
+  if (value.length === 0) {
+    return false;
+  }
+
+  for (let index = 0; index < value.length; index += 1) {
+    const charCode = value.charCodeAt(index);
+    if (charCode < 48 || charCode > 57) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function isEmbeddingVersionSegment(value: string): boolean {
+  const [version, revision, extra] = value.split('@');
+  if (extra !== undefined || !isNonEmptyDigits(version)) {
+    return false;
+  }
+
+  return revision === undefined || isNonEmptyDigits(revision);
+}
+
+function hasVersionQualifier(modelId: string): boolean {
+  if (modelId.length === 0 || modelId.length > MAX_MODEL_ID_LENGTH) {
+    return false;
+  }
+
+  const segments = modelId.split('-');
+
+  for (let index = 0; index < segments.length; index += 1) {
+    const segment = segments[index];
+    if (segment === 'preview') {
+      return true;
+    }
+
+    if (segment.length === 3 && isNonEmptyDigits(segment)) {
+      return true;
+    }
+
+    if (segment === 'embedding' && isEmbeddingVersionSegment(segments[index + 1] ?? '')) {
+      return true;
+    }
+
+    const versionParts = segment.split('.');
+    if (
+      versionParts.length === 2 &&
+      isNonEmptyDigits(versionParts[0]) &&
+      isNonEmptyDigits(versionParts[1])
+    ) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 describe('GME-20: Model Version Pinning', () => {
   describe('MODEL_VERSION_PINS', () => {
     it('has entries for all active model roles', () => {
@@ -37,12 +97,15 @@ describe('GME-20: Model Version Pinning', () => {
     });
 
     it('no pin uses a bare alias without version suffix', () => {
-      // Aliases like "gemini-flash" or just "gemini-3-flash" without -preview/-001 etc.
-      // are too vague. We need at least a version qualifier.
+      // Aliases like "gemini-flash" or just "gemini-flash" without a version
+      // are too vague. We need at least a version qualifier. Accepted forms:
+      //   -001 / -004 style suffix, -preview, embedding-N, OR an embedded
+      //   semantic version like the "2.5" in gemini-2.5-flash (SCRUM-1993).
       for (const [role, pin] of Object.entries(MODEL_VERSION_PINS)) {
-        // Must have at least one version qualifier (preview, 001, 004, etc.)
-        const hasVersion = /(-\d{3}|-preview|embedding-\d+)/.test(pin.modelId);
-        expect(hasVersion, `${role} model "${pin.modelId}" should have a version qualifier`).toBe(true);
+        expect(
+          hasVersionQualifier(pin.modelId),
+          `${role} model "${pin.modelId}" should have a version qualifier`,
+        ).toBe(true);
       }
     });
   });
