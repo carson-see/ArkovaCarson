@@ -5,7 +5,10 @@ import { buildCredentialsCtdlRouter, type CredentialsCtdlLookup } from './creden
 import type { CtdlAnchor } from '../../ctdl/ctdl-serializer.js';
 import { validateCtdlJsonLd } from '../../ctdl/ctdl-validation.js';
 
-const insertAudit = vi.fn();
+const { insertAudit, loggerWarn } = vi.hoisted(() => ({
+  insertAudit: vi.fn(),
+  loggerWarn: vi.fn(),
+}));
 
 vi.mock('../../utils/db.js', () => ({
   db: {
@@ -17,7 +20,7 @@ vi.mock('../../utils/db.js', () => ({
 }));
 
 vi.mock('../../utils/logger.js', () => ({
-  logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+  logger: { info: vi.fn(), warn: loggerWarn, error: vi.fn(), debug: vi.fn() },
 }));
 
 vi.mock('../../config.js', () => ({
@@ -58,6 +61,7 @@ function buildApp(lookup: CredentialsCtdlLookup) {
 describe('GET /credentials/:publicId/ctdl', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    insertAudit.mockReturnValue({ error: null });
   });
 
   it('returns CTDL JSON-LD for a secured credential without auth', async () => {
@@ -94,6 +98,41 @@ describe('GET /credentials/:publicId/ctdl', () => {
       request_id: 'req-ctdl-001',
       credential_status: 'SECURED',
       credential_type: 'DEGREE',
+    });
+  });
+
+  it('still returns CTDL JSON-LD when audit logging fails', async () => {
+    insertAudit.mockRejectedValueOnce(new Error('audit insert unavailable'));
+    const lookup: CredentialsCtdlLookup = {
+      lookupByPublicId: vi.fn().mockResolvedValue(anchor()),
+    };
+
+    const res = await request(buildApp(lookup)).get('/ARK-2026-CTDL-001/ctdl');
+
+    expect(res.status).toBe(200);
+    expect(res.body['@type']).toBe('ceterms:BachelorDegree');
+    await vi.waitFor(() => {
+      expect(loggerWarn).toHaveBeenCalledWith(expect.objectContaining({
+        public_id: 'ARK-2026-CTDL-001',
+        error: 'audit insert unavailable',
+      }), 'Failed to write CTDL request audit event');
+    });
+  });
+
+  it('logs Supabase audit insert errors without blocking the public response', async () => {
+    insertAudit.mockResolvedValueOnce({ error: { message: 'audit row rejected' } });
+    const lookup: CredentialsCtdlLookup = {
+      lookupByPublicId: vi.fn().mockResolvedValue(anchor()),
+    };
+
+    const res = await request(buildApp(lookup)).get('/ARK-2026-CTDL-001/ctdl');
+
+    expect(res.status).toBe(200);
+    await vi.waitFor(() => {
+      expect(loggerWarn).toHaveBeenCalledWith(expect.objectContaining({
+        public_id: 'ARK-2026-CTDL-001',
+        error: 'audit row rejected',
+      }), 'Failed to write CTDL request audit event');
     });
   });
 
