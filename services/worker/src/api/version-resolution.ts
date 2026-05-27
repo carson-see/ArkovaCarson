@@ -14,6 +14,7 @@ import { z } from 'zod';
 import { db } from '../utils/db.js';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { logger } from '../utils/logger.js';
+import { getCallerProfile, isCallerOrgAdmin } from './_org-auth.js';
 
 // Tables created by migration 0317 are not yet in generated types.
 // Use untyped accessor until next `gen:types` run.
@@ -53,6 +54,28 @@ function isAdmin(role: string | null): boolean {
   return role === 'admin' || role === 'owner';
 }
 
+async function resolveOrgAdminContext(
+  req: Request,
+  userId: string,
+): Promise<{ orgId: string | null; isAdmin: boolean }> {
+  const requestOrgId = getOrgId(req);
+  const requestRole = getOrgRole(req);
+  if (requestOrgId && requestRole !== null) {
+    return { orgId: requestOrgId, isAdmin: isAdmin(requestRole) };
+  }
+  if (requestOrgId) {
+    return { orgId: requestOrgId, isAdmin: await isCallerOrgAdmin(userId, requestOrgId) };
+  }
+
+  const profile = await getCallerProfile(userId);
+  const profileOrgId = profile?.org_id ?? null;
+  if (!profileOrgId) return { orgId: null, isAdmin: false };
+  return {
+    orgId: profileOrgId,
+    isAdmin: await isCallerOrgAdmin(userId, profileOrgId, profile),
+  };
+}
+
 // ─── Handlers ────���─────────────────────────────────────────────────────────────
 
 /**
@@ -71,8 +94,7 @@ export async function handleListVersions(
     return;
   }
 
-  const orgId = getOrgId(req);
-  const orgRole = getOrgRole(req);
+  const { orgId, isAdmin: isOrgAdmin } = await resolveOrgAdminContext(req, userId);
 
   if (!orgId) {
     res.status(403).json({
@@ -81,7 +103,7 @@ export async function handleListVersions(
     return;
   }
 
-  if (!isAdmin(orgRole)) {
+  if (!isOrgAdmin) {
     res.status(403).json({
       error: { code: 'forbidden', message: 'Organization admin role required' },
     });
@@ -140,8 +162,7 @@ export async function handleResolveVersion(
     return;
   }
 
-  const orgId = getOrgId(req);
-  const orgRole = getOrgRole(req);
+  const { orgId, isAdmin: isOrgAdmin } = await resolveOrgAdminContext(req, userId);
 
   if (!orgId) {
     res.status(403).json({
@@ -150,7 +171,7 @@ export async function handleResolveVersion(
     return;
   }
 
-  if (!isAdmin(orgRole)) {
+  if (!isOrgAdmin) {
     res.status(403).json({
       error: { code: 'forbidden', message: 'Organization admin role required' },
     });

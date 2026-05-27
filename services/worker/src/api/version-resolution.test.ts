@@ -204,6 +204,25 @@ describe('handleListVersions', () => {
     expect(chain.eq).toHaveBeenCalledWith('status', 'pending_review');
   });
 
+  it('resolves org admin context when middleware only supplies userId', async () => {
+    const versions = [{ id: 'v-1', external_file_id: 'file-abc' }];
+    const versionsChain = mockSelectChain(versions);
+    fromMock
+      .mockReturnValueOnce(mockMaybeSingleChain({
+        org_id: 'org-1',
+        role: 'ORG_ADMIN',
+        is_platform_admin: false,
+      }))
+      .mockReturnValueOnce(mockMaybeSingleChain({ role: 'admin' }))
+      .mockReturnValueOnce(versionsChain);
+
+    const { res, json } = mockRes();
+    await handleListVersions(mockReq({ userId: 'user-1' }), res);
+
+    expect(versionsChain.eq).toHaveBeenCalledWith('org_id', 'org-1');
+    expect(json).toHaveBeenCalledWith({ versions });
+  });
+
   it('returns 401 without auth (no userId)', async () => {
     const { res, status, json } = mockRes();
     await handleListVersions(mockReq(), res);
