@@ -90,6 +90,8 @@ import { checkPipelineHealth } from '../jobs/pipeline-health.js';
 import { runConnectorHealthCheck } from '../jobs/connector-health-alert.js';
 import { GRACE_EXPIRY_SWEEP_CRON, runGraceExpirySweep } from '../jobs/grace-expiry-sweep.js';
 import { sweepExpiredNonces, makeNonceSweepDb } from '../jobs/nonce-sweep.js';
+import { reconcileDocusignGaps } from '../jobs/docusign-reconciliation.js';
+import { makeReconciliationDeps } from '../jobs/docusign-reconciliation-deps.js';
 import { MONTHLY_ALLOCATION_ROLLOVER_CRON, runAllocationRollover } from '../jobs/monthly-allocation-rollover.js';
 import { runStripeAnchorReconciliation, generateFinancialReport, processFailedPaymentRecovery } from '../billing/reconciliation.js';
 import { logHeapStatus } from '../utils/heapMonitor.js';
@@ -1416,7 +1418,7 @@ cronRouter.post('/nonce-sweep', async (_req, res) => {
     const adapter = makeNonceSweepDb(db);
     const result = await sweepExpiredNonces(adapter);
     if (!result.ok) {
-      res.status(207).json({
+      res.status(500).json({
         ...result,
         message: `Partial failure: ${result.errors.length} of ${Object.keys(result.swept).length} tables failed`,
       });
@@ -1481,6 +1483,22 @@ cronRouter.post('/connector-health-check', async (_req, res) => {
     res.json(result);
   } catch (error) {
     logger.error({ error }, 'Connector health check failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+// ─── SCRUM-2042: DocuSign reconciliation (SOC 2 CC7.2) ───
+cronRouter.post('/docusign-reconciliation', async (_req, res) => {
+  try {
+    const deps = makeReconciliationDeps();
+    const result = await reconcileDocusignGaps(deps);
+    if (!result.ok) {
+      res.status(500).json(result);
+      return;
+    }
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'DocuSign reconciliation failed');
     res.status(500).json({ error: 'Processing failed' });
   }
 });
