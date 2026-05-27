@@ -69,9 +69,7 @@ export async function detectVersionConflict(
       { error, orgId, externalFileId },
       'detectVersionConflict: query failed — failing closed',
     );
-    throw new Error(
-      `detectVersionConflict query failed for org=${orgId} file=${externalFileId}: ${error.message}`,
-    );
+    throw new Error(`detectVersionConflict query failed: ${error.message}`);
   }
 
   if (!data) {
