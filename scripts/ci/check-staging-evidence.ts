@@ -183,6 +183,13 @@ export const PATH_RULES: PathRule[] = [
     reason: 'worker deploy config (prod runtime: min-instances, env, secrets, image)',
   },
   {
+    // Cloud Build config shapes the production worker image artifact itself.
+    // Treat it as prod-bound deploy config, not staging-tooling-only plumbing.
+    pattern: /^services\/worker\/cloudbuild\.yaml$/,
+    minTier: 'T2',
+    reason: 'worker image build config',
+  },
+  {
     pattern: /^src\/(components|pages|hooks|lib)\//,
     minTier: 'T1',
     reason: 'frontend code',
@@ -459,7 +466,8 @@ const STAGING_TOOLING_ALLOW = [
   // NOTE: .github/workflows/deploy-worker.yml is intentionally NOT here — it
   // defines prod runtime config and is gated as T2 via PATH_RULES. See the
   // 2026-05-27 incident where a min-instances change merged without a soak.
-  /^services\/worker\/cloudbuild\.yaml$/,
+  // services/worker/cloudbuild.yaml is also intentionally NOT here because it
+  // shapes the production worker image artifact.
   /^\.mergify\.yml$/,
   /^CLAUDE\.md$/,
   /^HANDOFF\.md$/,

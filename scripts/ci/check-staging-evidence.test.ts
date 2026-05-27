@@ -123,6 +123,12 @@ describe('check-staging-evidence', () => {
       ).toBe('T2');
     });
 
+    it('returns T2 for the worker Cloud Build config (prod image artifact)', () => {
+      expect(
+        requiredTierFor(['services/worker/cloudbuild.yaml']).tier,
+      ).toBe('T2');
+    });
+
     it('excludes staging-tooling files from tier calculation', () => {
       expect(
         requiredTierFor(['services/worker/src/webhooks/agents.md']).tier,
@@ -511,6 +517,12 @@ describe('check-staging-evidence', () => {
     it('fails for the worker deploy workflow (defines prod runtime config)', () => {
       expect(
         isStagingToolingOnly(['.github/workflows/deploy-worker.yml']).pass,
+      ).toBe(false);
+    });
+
+    it('fails for the worker Cloud Build config (defines prod image artifact)', () => {
+      expect(
+        isStagingToolingOnly(['services/worker/cloudbuild.yaml']).pass,
       ).toBe(false);
     });
 
