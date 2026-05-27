@@ -129,13 +129,20 @@ jobs:
       - name: Set up Cloud SDK
         uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f # v2
 
-      - name: Build & push image (Cloud Build)
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker ${{ env.REGISTRY }} --quiet
+
+      - name: Build & push image
         run: |
-          gcloud builds submit services/worker \
-            --config services/worker/cloudbuild.yaml \
-            --substitutions=_COMMIT_SHA=${{ github.sha }},_IMAGE_TAG=${{ github.sha }},_REGISTRY=${{ env.REGISTRY }},_REPOSITORY=${{ env.REPOSITORY }},_SERVICE_NAME=${{ env.SERVICE_NAME }} \
-            --project ${{ env.PROJECT_ID }} \
-            --quiet
+          IMAGE="${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.SERVICE_NAME }}:${{ github.sha }}"
+          LATEST="${{ env.REGISTRY }}/${{ env.PROJECT_ID }}/${{ env.REPOSITORY }}/${{ env.SERVICE_NAME }}:latest"
+          docker build \
+            --build-arg BUILD_SHA=${{ github.sha }} \
+            --tag "${IMAGE}" \
+            --tag "${LATEST}" \
+            services/worker
+          docker push "${IMAGE}"
+          docker push "${LATEST}"
 
       - name: Clear conflicting env/secret types
         run: |
