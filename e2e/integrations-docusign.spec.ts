@@ -18,20 +18,36 @@ type DocusignConnectionFixture = {
   scope: string;
 } | null;
 
-async function routeDocusignConnection(page: Page, connection: DocusignConnectionFixture) {
+async function routeDocusignConnection(page: Page, orgId: string, connection: DocusignConnectionFixture) {
   await page.route('**/rest/v1/org_integrations*', async (route) => {
-    const url = route.request().url();
-    if (url.includes('provider=eq.docusign')) {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify(connection),
-        headers: connection ? undefined : { 'content-range': '*/0' },
-      });
+    const url = new URL(route.request().url());
+    const isDocusignQuery = url.searchParams.get('provider') === 'eq.docusign'
+      || url.searchParams.get('select')?.includes('account_id');
+
+    if (!isDocusignQuery) {
+      await route.continue();
       return;
     }
 
-    await route.continue();
+    const expectedFilters = {
+      org_id: `eq.${orgId}`,
+      provider: 'eq.docusign',
+      revoked_at: 'is.null',
+    };
+    const missingFilters = Object.entries(expectedFilters)
+      .filter(([key, value]) => url.searchParams.get(key) !== value)
+      .map(([key]) => key);
+
+    if (missingFilters.length > 0) {
+      throw new Error(`DocuSign integration query missing expected filter(s): ${missingFilters.join(', ')}`);
+    }
+
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(connection),
+      headers: connection ? undefined : { 'content-range': '*/0' },
+    });
   });
 }
 
@@ -70,7 +86,7 @@ test.describe('DocuSign integration', () => {
     });
 
     test('disconnected state shows Connect button', async ({ orgAdminPage }, testInfo) => {
-      await routeDocusignConnection(orgAdminPage, null);
+      await routeDocusignConnection(orgAdminPage, orgId, null);
 
       await orgAdminPage.goto(`/organizations/${orgId}?tab=settings`);
       const docusignCard = orgAdminPage.locator('[data-testid="docusign-card"]');
@@ -80,7 +96,7 @@ test.describe('DocuSign integration', () => {
     });
 
     test('connected state shows account label and badge and Disconnect button', async ({ orgAdminPage }) => {
-      await routeDocusignConnection(orgAdminPage, {
+      await routeDocusignConnection(orgAdminPage, orgId, {
         id: 'int-e2e-1',
         account_label: 'Arkova Demo',
         account_id: 'acct-e2e-001',
@@ -96,7 +112,7 @@ test.describe('DocuSign integration', () => {
     });
 
     test('org admin can disconnect a connected DocuSign account', async ({ orgAdminPage }) => {
-      await routeDocusignConnection(orgAdminPage, {
+      await routeDocusignConnection(orgAdminPage, orgId, {
         id: 'int-e2e-disconnect',
         account_label: 'Arkova Demo',
         account_id: 'acct-e2e-disconnect',
@@ -104,9 +120,7 @@ test.describe('DocuSign integration', () => {
         scope: 'signature extended openid email',
       });
 
-      let disconnectPayload: unknown;
       await orgAdminPage.route('http://localhost:3001/api/v1/integrations/docusign/disconnect', async (route) => {
-        disconnectPayload = route.request().postDataJSON();
         await route.fulfill({
           status: 200,
           contentType: 'application/json',
@@ -118,9 +132,15 @@ test.describe('DocuSign integration', () => {
       const docusignCard = orgAdminPage.locator('[data-testid="docusign-card"]');
       await expect(docusignCard.getByText('Connected')).toBeVisible();
 
-      await docusignCard.getByRole('button', { name: 'Disconnect' }).click();
+      const [disconnectRequest] = await Promise.all([
+        orgAdminPage.waitForRequest((request) => (
+          request.url() === 'http://localhost:3001/api/v1/integrations/docusign/disconnect'
+          && request.method() === 'POST'
+        )),
+        docusignCard.getByRole('button', { name: 'Disconnect' }).click(),
+      ]);
 
-      expect(disconnectPayload).toEqual({ org_id: orgId });
+      expect(disconnectRequest.postDataJSON()).toEqual({ org_id: orgId });
       await expect(orgAdminPage.getByText('DocuSign disconnected.').first()).toBeVisible();
       await expect(docusignCard.getByText('Not connected')).toBeVisible();
       await expect(docusignCard.getByRole('button', { name: 'Connect' })).toBeVisible();
@@ -129,7 +149,7 @@ test.describe('DocuSign integration', () => {
     test('org admin can start the mocked OAuth happy path', async ({ orgAdminPage }) => {
       const callbackUrl = `http://localhost:3001/api/v1/integrations/docusign/oauth/callback?code=mock-code&state=e2e-state`;
 
-      await routeDocusignConnection(orgAdminPage, null);
+      await routeDocusignConnection(orgAdminPage, orgId, null);
 
       // Mock OAuth start endpoint
       await orgAdminPage.route('http://localhost:3001/api/v1/integrations/docusign/oauth/start', async (route) => {
@@ -175,7 +195,7 @@ test.describe('DocuSign integration', () => {
     });
 
     test('Connect button triggers redirect to DocuSign domain', async ({ orgAdminPage }) => {
-      await routeDocusignConnection(orgAdminPage, null);
+      await routeDocusignConnection(orgAdminPage, orgId, null);
 
       // Mock OAuth start endpoint — returns the authorizationUrl
       await orgAdminPage.route('http://localhost:3001/api/v1/integrations/docusign/oauth/start', async (route) => {
@@ -211,7 +231,7 @@ test.describe('DocuSign integration', () => {
     });
 
     test('error state renders gracefully when worker returns an error', async ({ orgAdminPage }) => {
-      await routeDocusignConnection(orgAdminPage, null);
+      await routeDocusignConnection(orgAdminPage, orgId, null);
 
       // Mock worker returning a 403
       await orgAdminPage.route('http://localhost:3001/api/v1/integrations/docusign/oauth/start', async (route) => {
@@ -253,7 +273,7 @@ test.describe('DocuSign integration', () => {
     test.use({ viewport: { width: 375, height: 667 } });
 
     test('DocuSign card is visible and functional at mobile width', async ({ orgAdminPage }, testInfo) => {
-      await routeDocusignConnection(orgAdminPage, null);
+      await routeDocusignConnection(orgAdminPage, orgId, null);
 
       await orgAdminPage.goto(`/organizations/${orgId}?tab=settings`);
       const docusignCard = orgAdminPage.locator('[data-testid="docusign-card"]');
@@ -263,7 +283,7 @@ test.describe('DocuSign integration', () => {
     });
 
     test('connected state renders account label at mobile width', async ({ orgAdminPage }) => {
-      await routeDocusignConnection(orgAdminPage, {
+      await routeDocusignConnection(orgAdminPage, orgId, {
         id: 'int-e2e-mobile',
         account_label: 'Mobile Test Org',
         account_id: 'acct-mobile-001',
