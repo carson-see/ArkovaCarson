@@ -7,7 +7,40 @@
  * Mirrors integrations-drive.spec.ts pattern.
  */
 
+import type { Page, TestInfo } from '@playwright/test';
 import { test, expect, getServiceClient, SEED_USERS } from './fixtures';
+
+type DocusignConnectionFixture = {
+  id: string;
+  account_label: string;
+  account_id: string;
+  connected_at: string;
+  scope: string;
+} | null;
+
+async function routeDocusignConnection(page: Page, connection: DocusignConnectionFixture) {
+  await page.route('**/rest/v1/org_integrations*', async (route) => {
+    const url = route.request().url();
+    if (url.includes('provider=eq.docusign')) {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify(connection),
+        headers: connection ? undefined : { 'content-range': '*/0' },
+      });
+      return;
+    }
+
+    await route.continue();
+  });
+}
+
+async function attachFullPageScreenshot(page: Page, name: string, testInfo: TestInfo) {
+  await testInfo.attach(name, {
+    body: await page.screenshot({ fullPage: true }),
+    contentType: 'image/png',
+  });
+}
 
 test.describe('DocuSign integration', () => {
   let orgId: string;
@@ -36,47 +69,23 @@ test.describe('DocuSign integration', () => {
       await expect(orgAdminPage.getByText('DocuSign')).toBeVisible();
     });
 
-    test('disconnected state shows Connect button', async ({ orgAdminPage }) => {
-      // Mock Supabase org_integrations returning no rows
-      await orgAdminPage.route('**/rest/v1/org_integrations*', async (route) => {
-        const url = route.request().url();
-        if (url.includes('provider=eq.docusign')) {
-          await route.fulfill({
-            status: 200,
-            contentType: 'application/json',
-            body: JSON.stringify(null),
-            headers: { 'content-range': '*/0' },
-          });
-        } else {
-          await route.continue();
-        }
-      });
+    test('disconnected state shows Connect button', async ({ orgAdminPage }, testInfo) => {
+      await routeDocusignConnection(orgAdminPage, null);
 
       await orgAdminPage.goto(`/organizations/${orgId}?tab=settings`);
       const docusignCard = orgAdminPage.locator('[data-testid="docusign-card"]');
       await expect(docusignCard.getByText('Not connected')).toBeVisible();
       await expect(docusignCard.getByRole('button', { name: 'Connect' })).toBeVisible();
+      await attachFullPageScreenshot(orgAdminPage, 'docusign-settings-desktop-1280', testInfo);
     });
 
     test('connected state shows account label and badge and Disconnect button', async ({ orgAdminPage }) => {
-      // Mock Supabase org_integrations returning a connected row
-      await orgAdminPage.route('**/rest/v1/org_integrations*', async (route) => {
-        const url = route.request().url();
-        if (url.includes('provider=eq.docusign')) {
-          await route.fulfill({
-            status: 200,
-            contentType: 'application/json',
-            body: JSON.stringify({
-              id: 'int-e2e-1',
-              account_label: 'Arkova Demo',
-              account_id: 'acct-e2e-001',
-              connected_at: '2026-05-01T00:00:00Z',
-              scope: 'signature extended openid email',
-            }),
-          });
-        } else {
-          await route.continue();
-        }
+      await routeDocusignConnection(orgAdminPage, {
+        id: 'int-e2e-1',
+        account_label: 'Arkova Demo',
+        account_id: 'acct-e2e-001',
+        connected_at: '2026-05-01T00:00:00Z',
+        scope: 'signature extended openid email',
       });
 
       await orgAdminPage.goto(`/organizations/${orgId}?tab=settings`);
@@ -86,23 +95,41 @@ test.describe('DocuSign integration', () => {
       await expect(docusignCard.getByRole('button', { name: 'Disconnect' })).toBeVisible();
     });
 
+    test('org admin can disconnect a connected DocuSign account', async ({ orgAdminPage }) => {
+      await routeDocusignConnection(orgAdminPage, {
+        id: 'int-e2e-disconnect',
+        account_label: 'Arkova Demo',
+        account_id: 'acct-e2e-disconnect',
+        connected_at: '2026-05-01T00:00:00Z',
+        scope: 'signature extended openid email',
+      });
+
+      let disconnectPayload: unknown;
+      await orgAdminPage.route('http://localhost:3001/api/v1/integrations/docusign/disconnect', async (route) => {
+        disconnectPayload = route.request().postDataJSON();
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ ok: true }),
+        });
+      });
+
+      await orgAdminPage.goto(`/organizations/${orgId}?tab=settings`);
+      const docusignCard = orgAdminPage.locator('[data-testid="docusign-card"]');
+      await expect(docusignCard.getByText('Connected')).toBeVisible();
+
+      await docusignCard.getByRole('button', { name: 'Disconnect' }).click();
+
+      expect(disconnectPayload).toEqual({ org_id: orgId });
+      await expect(orgAdminPage.getByText('DocuSign disconnected.').first()).toBeVisible();
+      await expect(docusignCard.getByText('Not connected')).toBeVisible();
+      await expect(docusignCard.getByRole('button', { name: 'Connect' })).toBeVisible();
+    });
+
     test('org admin can start the mocked OAuth happy path', async ({ orgAdminPage }) => {
       const callbackUrl = `http://localhost:3001/api/v1/integrations/docusign/oauth/callback?code=mock-code&state=e2e-state`;
 
-      // Mock disconnected state initially
-      await orgAdminPage.route('**/rest/v1/org_integrations*', async (route) => {
-        const url = route.request().url();
-        if (url.includes('provider=eq.docusign')) {
-          await route.fulfill({
-            status: 200,
-            contentType: 'application/json',
-            body: JSON.stringify(null),
-            headers: { 'content-range': '*/0' },
-          });
-        } else {
-          await route.continue();
-        }
-      });
+      await routeDocusignConnection(orgAdminPage, null);
 
       // Mock OAuth start endpoint
       await orgAdminPage.route('http://localhost:3001/api/v1/integrations/docusign/oauth/start', async (route) => {
@@ -148,20 +175,7 @@ test.describe('DocuSign integration', () => {
     });
 
     test('Connect button triggers redirect to DocuSign domain', async ({ orgAdminPage }) => {
-      // Mock disconnected state
-      await orgAdminPage.route('**/rest/v1/org_integrations*', async (route) => {
-        const url = route.request().url();
-        if (url.includes('provider=eq.docusign')) {
-          await route.fulfill({
-            status: 200,
-            contentType: 'application/json',
-            body: JSON.stringify(null),
-            headers: { 'content-range': '*/0' },
-          });
-        } else {
-          await route.continue();
-        }
-      });
+      await routeDocusignConnection(orgAdminPage, null);
 
       // Mock OAuth start endpoint — returns the authorizationUrl
       await orgAdminPage.route('http://localhost:3001/api/v1/integrations/docusign/oauth/start', async (route) => {
@@ -197,20 +211,7 @@ test.describe('DocuSign integration', () => {
     });
 
     test('error state renders gracefully when worker returns an error', async ({ orgAdminPage }) => {
-      // Mock disconnected state
-      await orgAdminPage.route('**/rest/v1/org_integrations*', async (route) => {
-        const url = route.request().url();
-        if (url.includes('provider=eq.docusign')) {
-          await route.fulfill({
-            status: 200,
-            contentType: 'application/json',
-            body: JSON.stringify(null),
-            headers: { 'content-range': '*/0' },
-          });
-        } else {
-          await route.continue();
-        }
-      });
+      await routeDocusignConnection(orgAdminPage, null);
 
       // Mock worker returning a 403
       await orgAdminPage.route('http://localhost:3001/api/v1/integrations/docusign/oauth/start', async (route) => {
@@ -251,47 +252,23 @@ test.describe('DocuSign integration', () => {
   test.describe('mobile viewport (375px)', () => {
     test.use({ viewport: { width: 375, height: 667 } });
 
-    test('DocuSign card is visible and functional at mobile width', async ({ orgAdminPage }) => {
-      // Mock disconnected state
-      await orgAdminPage.route('**/rest/v1/org_integrations*', async (route) => {
-        const url = route.request().url();
-        if (url.includes('provider=eq.docusign')) {
-          await route.fulfill({
-            status: 200,
-            contentType: 'application/json',
-            body: JSON.stringify(null),
-            headers: { 'content-range': '*/0' },
-          });
-        } else {
-          await route.continue();
-        }
-      });
+    test('DocuSign card is visible and functional at mobile width', async ({ orgAdminPage }, testInfo) => {
+      await routeDocusignConnection(orgAdminPage, null);
 
       await orgAdminPage.goto(`/organizations/${orgId}?tab=settings`);
       const docusignCard = orgAdminPage.locator('[data-testid="docusign-card"]');
       await expect(docusignCard.getByText('DocuSign')).toBeVisible();
       await expect(docusignCard.getByRole('button', { name: 'Connect' })).toBeVisible();
+      await attachFullPageScreenshot(orgAdminPage, 'docusign-settings-mobile-375', testInfo);
     });
 
     test('connected state renders account label at mobile width', async ({ orgAdminPage }) => {
-      // Mock connected state
-      await orgAdminPage.route('**/rest/v1/org_integrations*', async (route) => {
-        const url = route.request().url();
-        if (url.includes('provider=eq.docusign')) {
-          await route.fulfill({
-            status: 200,
-            contentType: 'application/json',
-            body: JSON.stringify({
-              id: 'int-e2e-mobile',
-              account_label: 'Mobile Test Org',
-              account_id: 'acct-mobile-001',
-              connected_at: '2026-05-01T00:00:00Z',
-              scope: 'signature openid',
-            }),
-          });
-        } else {
-          await route.continue();
-        }
+      await routeDocusignConnection(orgAdminPage, {
+        id: 'int-e2e-mobile',
+        account_label: 'Mobile Test Org',
+        account_id: 'acct-mobile-001',
+        connected_at: '2026-05-01T00:00:00Z',
+        scope: 'signature openid',
       });
 
       await orgAdminPage.goto(`/organizations/${orgId}?tab=settings`);
