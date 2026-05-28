@@ -461,13 +461,11 @@ describe('check-staging-evidence', () => {
           'docs/ops/gemini-model-upgrade.md',
           '.github/workflows/staging-evidence.yml',
           'scripts/gcp-setup/cloud-scheduler.sh',
-          'scripts/ops/reconcile-migration-ledger.ts',
-          'scripts/ops/reconcile-migration-ledger.test.ts',
         ]).pass,
       ).toBe(true);
     });
 
-    it('passes for the migration ledger reconciliation PR surface as T0 tooling', () => {
+    it('does not treat apply-capable migration ledger reconciliation as T0 tooling', () => {
       const r = check({
         body: '',
         files: [
@@ -479,8 +477,8 @@ describe('check-staging-evidence', () => {
         ],
       });
 
-      expect(r.ok).toBe(true);
-      expect(r.notes.join(' ')).toMatch(/T0/);
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/missing a tier declaration/);
     });
 
     it('passes for eslint config and rule files', () => {

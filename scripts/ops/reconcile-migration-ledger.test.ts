@@ -121,7 +121,9 @@ describe('SQL builders', () => {
     expect(sql).toContain("SET version = '0307'");
     expect(sql).toContain("version = '20260516114615'");
     expect(sql).toContain("name IS NOT DISTINCT FROM '0307_fix_o''clock'");
-    expect(sql).toContain('RETURNING version, name;');
+    expect(sql).toContain('GET DIAGNOSTICS updated_count = ROW_COUNT;');
+    expect(sql).toContain('IF updated_count <> 1 THEN');
+    expect(sql).toContain('RAISE EXCEPTION');
   });
 
   it('wraps dry-run SQL in a transaction that operators can inspect', () => {
@@ -137,6 +139,7 @@ describe('SQL builders', () => {
     expect(sql).toContain('BEGIN;');
     expect(sql).toContain('COMMIT;');
     expect(sql).toContain('-- 0307_fix_anchors_rls_statement_timeout');
+    expect(sql).toContain('GET DIAGNOSTICS updated_count = ROW_COUNT;');
   });
 });
 
@@ -188,9 +191,13 @@ describe('run', () => {
   });
 
   it('applies the same transaction SQL only in apply mode', async () => {
-    const fetchLedger = vi.fn(async (): Promise<LedgerMigrationRow[]> => [
-      { version: '20260516114615', name: '0307_fix_anchors_rls_statement_timeout' },
-    ]);
+    const fetchLedger = vi.fn()
+      .mockResolvedValueOnce([
+        { version: '20260516114615', name: '0307_fix_anchors_rls_statement_timeout' },
+      ] satisfies LedgerMigrationRow[])
+      .mockResolvedValueOnce([
+        { version: '0307', name: '0307_fix_anchors_rls_statement_timeout' },
+      ] satisfies LedgerMigrationRow[]);
     const executeSql = vi.fn(async () => [{ version: '0307', name: '0307_fix_anchors_rls_statement_timeout' }]);
     const readLocalMigrations = vi.fn(async () => [local('0307_fix_anchors_rls_statement_timeout')]);
 
@@ -206,7 +213,30 @@ describe('run', () => {
     );
 
     expect(executeSql).toHaveBeenCalledOnce();
+    expect(fetchLedger).toHaveBeenCalledTimes(2);
     const executeCall = executeSql.mock.calls[0] as unknown[] | undefined;
     expect(executeCall?.[2]).toContain("SET version = '0307'");
+  });
+
+  it('fails closed when apply verification still finds pending ledger updates', async () => {
+    const fetchLedger = vi.fn(async (): Promise<LedgerMigrationRow[]> => [
+      { version: '20260516114615', name: '0307_fix_anchors_rls_statement_timeout' },
+    ]);
+    const executeSql = vi.fn(async () => []);
+    const readLocalMigrations = vi.fn(async () => [local('0307_fix_anchors_rls_statement_timeout')]);
+
+    await expect(run(
+      {
+        mode: 'apply',
+        projectRef: 'project-ref',
+        accessToken: 'token',
+        repoRoot: '/repo',
+        confirmProjectRef: 'project-ref',
+      },
+      { fetchLedger, executeSql, readLocalMigrations },
+    )).rejects.toThrow('apply verification failed');
+
+    expect(executeSql).toHaveBeenCalledOnce();
+    expect(fetchLedger).toHaveBeenCalledTimes(2);
   });
 });

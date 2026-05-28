@@ -614,7 +614,6 @@ const STAGING_TOOLING_ALLOW = [
   /^scripts\/ci\/check-staging-gcloud-policy(\.test)?\.ts$/,
   /^scripts\/ci\/staging-honesty-preflight(\.test)?\.ts$/,
   /^scripts\/ci\/lib\//,
-  /^scripts\/ops\/reconcile-migration-ledger(\.test)?\.ts$/,
   /^scripts\/gcp-setup\//,
   /^docs\/staging\//,
   /^docs\/ops\/gemini-model-upgrade\.md$/,

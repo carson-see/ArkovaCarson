@@ -185,16 +185,25 @@ export function buildReconciliationPlan(
 export function buildLedgerUpdateSql(update: LedgerUpdate): string {
   return [
     `-- ${update.localBasename}`,
-    'UPDATE supabase_migrations.schema_migrations',
-    `SET version = ${quoteSqlLiteral(update.targetVersion)}`,
-    `WHERE version = ${quoteSqlLiteral(update.currentVersion)}`,
-    `  AND name IS NOT DISTINCT FROM ${quoteSqlLiteral(update.currentName)}`,
-    `  AND NOT EXISTS (
+    'DO $ledger_reconcile$',
+    'DECLARE',
+    '  updated_count integer;',
+    'BEGIN',
+    '  UPDATE supabase_migrations.schema_migrations',
+    `  SET version = ${quoteSqlLiteral(update.targetVersion)}`,
+    `  WHERE version = ${quoteSqlLiteral(update.currentVersion)}`,
+    `    AND name IS NOT DISTINCT FROM ${quoteSqlLiteral(update.currentName)}`,
+    `    AND NOT EXISTS (
     SELECT 1
     FROM supabase_migrations.schema_migrations existing
     WHERE existing.version = ${quoteSqlLiteral(update.targetVersion)}
-  )`,
-    'RETURNING version, name;',
+  );`,
+    '  GET DIAGNOSTICS updated_count = ROW_COUNT;',
+    '  IF updated_count <> 1 THEN',
+    `    RAISE EXCEPTION 'Migration ledger reconciliation expected exactly 1 row for %, updated %', ${quoteSqlLiteral(update.localBasename)}, updated_count;`,
+    '  END IF;',
+    'END;',
+    '$ledger_reconcile$;',
   ].join('\n');
 }
 
@@ -348,6 +357,15 @@ export async function run(
   }
 
   const applyResult = await dependencies.executeSql(options.projectRef, options.accessToken, sql);
+  const verifiedLedgerRows = await dependencies.fetchLedger(options.projectRef, options.accessToken);
+  const remainingPlan = buildReconciliationPlan(localMigrations, verifiedLedgerRows);
+  if (remainingPlan.updates.length > 0) {
+    const remaining = remainingPlan.updates
+      .map((update) => update.localBasename)
+      .join(', ');
+    throw new Error(`Migration ledger reconciliation apply verification failed; pending updates remain: ${remaining}`);
+  }
+
   return { updates: plan.updates, sql, applyResult };
 }
 
