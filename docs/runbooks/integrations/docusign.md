@@ -105,7 +105,7 @@ rows, job rows, or audit evidence during incident response.
 | Trigger | Impact | First action |
 |---|---|---|
 | Invalid or missing `DOCUSIGN_CONNECT_HMAC_SECRET` | Connect deliveries fail or retry. | Rotate/restore the Secret Manager value, redeploy worker, run orphan smoke. |
-| HMAC-valid payloads fail validation | Permanent vendor schema mismatch or bad account configuration. | Confirm `webhook_dlq` rows contain only provider, reason, external id, and payload hash; do not persist raw payloads. |
+| HMAC-valid payloads fail validation | Permanent vendor schema mismatch or bad account configuration. | Capture smoke output plus worker logs/Sentry errors; do not persist raw Connect payloads. |
 | OAuth token refresh fails for connected accounts | Completed envelopes cannot fetch signed documents. | Pause DocuSign webhook intake if retries accelerate, then validate token secret and OAuth app credentials. |
 | eSignature API returns sustained `429` or `5xx` | Document-fetch jobs retry and may park as `dead`. | Keep jobs queued, reduce cron/job concurrency, respect `Retry-After`, and avoid manual replay storms. |
 | Same DocuSign account maps to multiple Arkova orgs | Cross-tenant routing risk. | Leave webhook failing closed, page engineering lead, and do not manually choose an org. |
@@ -195,8 +195,8 @@ Recovery is not complete until all applicable checks pass:
 3. Known connected account returns accepted response and creates exactly one
    sanitized `ESIGN_COMPLETED` event plus one retryable document-fetch job.
 4. Exact replay returns `200 duplicate`.
-5. `webhook_dlq` contains only sanitized failure metadata; no raw Connect body,
-   signed PDF bytes, refresh tokens, or sender PII beyond approved fields.
+5. Worker logs/Sentry and connector health show the failure mode and recovery;
+   DocuSign does not write `webhook_dlq` rows in this branch.
 6. Queued document-fetch failures either recover or park according to the
    `job_queue` retry policy without manual data deletion.
 7. Dashboard/Sentry alerts clear or are explicitly linked to a follow-up Jira
@@ -212,7 +212,8 @@ For SOC 2 CC7.3 closeout, attach the following to Jira and Confluence:
 - Feature-flag or rollback command output.
 - Smoke command output with secrets redacted.
 - Counts for accepted, orphaned, duplicate, failed, and dead DocuSign jobs.
-- Any `webhook_dlq` row ids needed for investigation, with sanitized reasons.
+- Worker log/Sentry event links, connector health state, and relevant
+  `organization_rule_events`, `job_queue`, or `integration_events` ids.
 - Owner who approved re-enable/replay.
 - Follow-up Jira links for any unresolved defects or policy exceptions.
 
