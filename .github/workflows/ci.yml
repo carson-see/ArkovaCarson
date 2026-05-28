@@ -814,10 +814,11 @@ jobs:
         # pin unless the official tlaplus/tlaplus release body also changed.
         if: steps.tla-changed.outputs.changed == 'true'
         env:
-          # Pin updated 2026-05-19 — upstream re-uploaded the v1.8.0
-          # pre-release asset again. Verified by direct download from the
-          # official tlaplus/tlaplus release URL.
-          TLA2TOOLS_SHA256: 71546dff3897a01b0ee4fa64135d9f5e9384d2b7e47b3cc20a16b655b0eb4f86
+          # Pin updated 2026-05-28 — upstream re-uploaded the v1.8.0
+          # pre-release asset again. Verified against the official
+          # tlaplus/tlaplus GitHub release API asset digest plus direct
+          # download SHA256 from the official release URL.
+          TLA2TOOLS_SHA256: 237332bdcc79a35c7d26efa7b82c77c85c2744591c5598673a8a45085ff2a4fb
         run: |
           mkdir -p "$HOME/.tla"
           curl -fsSL -o "$HOME/.tla/tla2tools.jar" \
