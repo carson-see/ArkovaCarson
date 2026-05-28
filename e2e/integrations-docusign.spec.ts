@@ -35,7 +35,8 @@ test.describe('DocuSign integration', () => {
     test('DocuSign card is visible on org settings page', async ({ orgAdminPage }) => {
       await orgAdminPage.goto(`/organizations/${orgId}?tab=settings`);
       await expect(orgAdminPage.getByRole('heading', { name: 'Organization Settings' })).toBeVisible();
-      await expect(orgAdminPage.getByText('DocuSign')).toBeVisible();
+      const docusignCard = orgAdminPage.locator('[data-testid="docusign-card"]');
+      await expect(docusignCard.getByText('DocuSign')).toBeVisible();
     });
 
     test('disconnected state shows Connect button', async ({ orgAdminPage }) => {
@@ -202,13 +203,13 @@ test.describe('DocuSign integration', () => {
       const callbackUrl = `http://localhost:3001/api/v1/integrations/docusign/oauth/callback?code=mock-code&state=e2e-state`;
       let integrationQueryCount = 0;
 
-      // First query returns disconnected; subsequent queries return connected
-      // (simulates the re-fetch after OAuth callback redirect)
+      // First queries return disconnected; after OAuth redirect, return connected.
+      // Threshold is 2 to tolerate React StrictMode double-mount in dev.
       await orgAdminPage.route('**/rest/v1/org_integrations*', async (route) => {
         const url = route.request().url();
         if (url.includes('provider=eq.docusign')) {
           integrationQueryCount += 1;
-          if (integrationQueryCount <= 1) {
+          if (integrationQueryCount <= 2) {
             // Initial load: not connected
             await route.fulfill({
               status: 200,

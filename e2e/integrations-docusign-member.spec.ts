@@ -55,8 +55,8 @@ test.describe('Member-level DocuSign integration (SCRUM-2044)', () => {
       await expect(orgAdminPage.getByRole('heading', { name: 'Organization Settings' })).toBeVisible();
 
       const memberCard = orgAdminPage.locator('[data-testid="member-docusign-card"]');
-      await expect(memberCard.getByText('Personal DocuSign')).toBeVisible();
-      await expect(memberCard.getByText('Not connected')).toBeVisible();
+      await expect(memberCard.getByRole('heading', { name: 'Personal DocuSign' })).toBeVisible();
+      await expect(memberCard.getByText('Not connected')).toBeVisible({ timeout: 10000 });
       await expect(memberCard.getByRole('button', { name: 'Connect' })).toBeVisible();
     });
 
@@ -64,12 +64,13 @@ test.describe('Member-level DocuSign integration (SCRUM-2044)', () => {
       const callbackUrl = `http://localhost:3001/api/v1/integrations/docusign/member/oauth/callback?code=mock-member-code&state=e2e-member-state`;
       let integrationQueryCount = 0;
 
-      // First query returns disconnected; subsequent returns connected
+      // First queries return disconnected; after OAuth redirect, return connected.
+      // Threshold is 2 to tolerate React StrictMode double-mount in dev.
       await orgAdminPage.route('**/rest/v1/member_integrations*', async (route) => {
         const url = route.request().url();
         if (url.includes('provider=eq.docusign')) {
           integrationQueryCount += 1;
-          if (integrationQueryCount <= 1) {
+          if (integrationQueryCount <= 2) {
             await route.fulfill({
               status: 200,
               contentType: 'application/json',
@@ -127,8 +128,8 @@ test.describe('Member-level DocuSign integration (SCRUM-2044)', () => {
       await orgAdminPage.goto(`/organizations/${orgId}?tab=settings`);
       const memberCard = orgAdminPage.locator('[data-testid="member-docusign-card"]');
 
-      // Starts disconnected
-      await expect(memberCard.getByText('Not connected')).toBeVisible();
+      // Starts disconnected — wait for Supabase query to resolve through route mock
+      await expect(memberCard.getByText('Not connected')).toBeVisible({ timeout: 10000 });
       await memberCard.getByRole('button', { name: 'Connect' }).click();
 
       // After mocked OAuth round-trip, verify success toast
@@ -164,7 +165,7 @@ test.describe('Member-level DocuSign integration (SCRUM-2044)', () => {
 
       await orgAdminPage.goto(`/organizations/${orgId}?tab=settings`);
       const memberCard = orgAdminPage.locator('[data-testid="member-docusign-card"]');
-      await expect(memberCard.getByText('Connected')).toBeVisible();
+      await expect(memberCard.getByText('Connected')).toBeVisible({ timeout: 10000 });
       await expect(memberCard.getByText(/Account: Connected Member Acct/)).toBeVisible();
       await expect(memberCard.getByRole('button', { name: 'Disconnect' })).toBeVisible();
     });
@@ -209,7 +210,7 @@ test.describe('Member-level DocuSign integration (SCRUM-2044)', () => {
 
       await orgAdminPage.goto(`/organizations/${orgId}?tab=settings`);
       const memberCard = orgAdminPage.locator('[data-testid="member-docusign-card"]');
-      await expect(memberCard.getByText('Connected')).toBeVisible();
+      await expect(memberCard.getByText('Connected')).toBeVisible({ timeout: 10000 });
 
       await memberCard.getByRole('button', { name: 'Disconnect' }).click();
 
@@ -273,7 +274,7 @@ test.describe('Member-level DocuSign integration (SCRUM-2044)', () => {
 
       await orgAdminPage.goto(`/organizations/${orgId}?tab=settings`);
       const memberCard = orgAdminPage.locator('[data-testid="member-docusign-card"]');
-      await expect(memberCard.getByText('Personal DocuSign')).toBeVisible();
+      await expect(memberCard.getByRole('heading', { name: 'Personal DocuSign' })).toBeVisible();
       await expect(memberCard.getByRole('button', { name: 'Connect' })).toBeVisible();
     });
 
