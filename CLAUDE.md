@@ -50,6 +50,8 @@ Feature branches only **for code, migrations, RLS policies, CI scripts, GitHub A
 
 When the carve-out applies, the workflow is just `git commit` + `git push origin main` (or `gh pr merge --admin --merge --delete-branch` for branches that are already pushed). No multi-job CI wait, no review threads, no body-format dance.
 
+**Migration ownership:** Each migration file is owned by exactly one PR. If two PRs need the same schema change, the earlier PR owns the migration file; the later PR rebases after merge. Never duplicate a migration file across branches — it creates ledger ambiguity and drift-check debt.
+
 ### 9. Deploy gate ≡ CI lint job (R0-4 / SCRUM-1250)
 `deploy-worker.yml` worker-lint step and `ci.yml` `Lint worker (deploy-gate parity)` step BOTH invoke `npm run lint` from `services/worker/` — the script in `services/worker/package.json`. Drift between them caused the 2026-04-25 12-hour deploy blackout (deploy gate ran a stricter eslint than CI). `scripts/ci/check-deploy-lint-parity.ts` enforces this at PR time. Override via PR label `ci-config-change` only. Followup R4 story drives worker eslint warnings to zero so we can re-add `--max-warnings 0` everywhere.
 
@@ -261,6 +263,7 @@ Current epic health snapshot lives in HANDOFF.md and is updated at the end of ev
 | Deploying DB function changes without `NOTIFY pgrst, 'reload schema'` | Always reload schema cache |
 | Adding rolling narrative to CLAUDE.md | Put it in HANDOFF.md |
 | `.md` file as "documentation" | Confluence page, with the `.md` either deleted or demoted to internal notes |
+| Duplicating migration files across PRs | One PR owns each migration; later PRs rebase after merge |
 
 ---
 
