@@ -99,7 +99,7 @@ export function createDocusignRateLimitedFetch(
         });
       }
       const response = await fetchImpl(input, init);
-      if (accountId && (response.status === 429 || response.status >= 500)) {
+      if (accountId && response.status === 429 && attempt === 0) {
         releaseDocusignAccountApiSlot(accountId);
       }
       if (response.status !== 429 || attempt === 1) return response;

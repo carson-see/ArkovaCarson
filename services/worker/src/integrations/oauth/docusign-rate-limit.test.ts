@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   claimDocusignAccountApiSlot,
   createDocusignRateLimitedFetch,
+  DocusignRateLimitError,
   resetDocusignAccountRateLimitStoreForTests,
 } from './docusign-rate-limit.js';
 
@@ -60,5 +61,27 @@ describe('createDocusignRateLimitedFetch', () => {
     expect(response.status).toBe(200);
     expect(fetchImpl).toHaveBeenCalledTimes(2);
     expect(sleep).toHaveBeenCalledWith(1000);
+  });
+
+  it('counts non-retried server errors against the local account budget', async () => {
+    const accountId = 'account-server-error';
+    const now = () => new Date('2026-05-28T12:00:00.000Z');
+    for (let i = 0; i < 2_999; i += 1) {
+      claimDocusignAccountApiSlot({ accountId, now });
+    }
+    const fetchImpl = vi.fn().mockResolvedValue(new Response('unavailable', { status: 503 }));
+    const rateLimitedFetch = createDocusignRateLimitedFetch({
+      accountId,
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      now,
+    });
+
+    const response = await rateLimitedFetch('https://account-d.docusign.com/oauth/token', {
+      method: 'POST',
+    });
+
+    expect(response.status).toBe(503);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(() => claimDocusignAccountApiSlot({ accountId, now })).toThrow(DocusignRateLimitError);
   });
 });
