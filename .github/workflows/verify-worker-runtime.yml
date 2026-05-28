@@ -62,9 +62,11 @@ jobs:
 
       - name: Verify staging tag health
         if: inputs.pr_number != ''
+        env:
+          PR_NUMBER: ${{ inputs.pr_number }}
         run: |
           set -euo pipefail
-          PR="${{ inputs.pr_number }}"
+          PR="${PR_NUMBER}"
           case "$PR" in
             *[!0-9]*|"") echo "::error::pr_number must be numeric"; exit 2 ;;
           esac
