@@ -42,19 +42,28 @@ Queue rewrite.
 describe('check-staging-evidence', () => {
   describe('TIER_SPECS', () => {
     it('pins the current minimum soak windows', () => {
-      expect(TIER_SPECS.T1.soakHours).toBe(2);
+      expect(TIER_SPECS.T0.soakHours).toBe(0);
+      expect(TIER_SPECS.T1.soakHours).toBe(0);
       expect(TIER_SPECS.T2.soakHours).toBe(12);
       expect(TIER_SPECS.T3.soakHours).toBe(48);
     });
   });
 
   describe('requiredTierFor', () => {
+    it('returns T0 for docs-only changes', () => {
+      expect(requiredTierFor(['docs/staging/README.md']).tier).toBe('T0');
+    });
+
+    it('returns T0 for unit-test-only changes', () => {
+      expect(requiredTierFor(['services/worker/src/api/v1/anchor.test.ts']).tier).toBe('T0');
+    });
+
     it('returns T1 for plain frontend file', () => {
       expect(requiredTierFor(['src/components/Foo.tsx']).tier).toBe('T1');
     });
 
-    it('returns T2 when migration is touched', () => {
-      expect(requiredTierFor(['supabase/migrations/0288_x.sql']).tier).toBe('T2');
+    it('returns T3 when migration is touched', () => {
+      expect(requiredTierFor(['supabase/migrations/0288_x.sql']).tier).toBe('T3');
     });
 
     it('returns T3 when chain hot path is touched', () => {
@@ -118,31 +127,46 @@ describe('check-staging-evidence', () => {
       ).toBe('T2');
     });
 
+    it('keeps auth, public contracts, AI, queues, anchoring, billing, and security out of T1', () => {
+      expect(requiredTierFor(['services/worker/src/auth/session.ts']).tier).toBe('T2');
+      expect(requiredTierFor(['docs/api/openapi.yaml']).tier).toBe('T2');
+      expect(requiredTierFor(['services/worker/src/ai/riskScoring.ts']).tier).toBe('T2');
+      expect(requiredTierFor(['services/worker/src/jobs/sendEmail.ts']).tier).toBe('T2');
+      expect(requiredTierFor(['src/components/anchor/AnchorStatus.tsx']).tier).toBe('T2');
+      expect(requiredTierFor(['src/components/billing/BillingPlan.tsx']).tier).toBe('T2');
+      expect(requiredTierFor(['services/worker/src/security/audit.ts']).tier).toBe('T3');
+    });
+
+    it('treats worker deploy config as T2 production runtime surface', () => {
+      expect(requiredTierFor(['.github/workflows/deploy-worker.yml']).tier).toBe('T2');
+      expect(requiredTierFor(['services/worker/cloudbuild.yaml']).tier).toBe('T2');
+    });
+
     it('excludes staging-tooling files from tier calculation', () => {
       expect(
         requiredTierFor(['services/worker/src/webhooks/agents.md']).tier,
-      ).toBe('T1');
+      ).toBe('T0');
       expect(
         requiredTierFor(['services/worker/src/billing/agents.md']).tier,
-      ).toBe('T1');
+      ).toBe('T0');
       expect(
         requiredTierFor([
           'services/worker/src/tests/webhook-delivery-roundtrip.test.ts',
           'services/worker/src/webhooks/agents.md',
         ]).tier,
-      ).toBe('T1');
+      ).toBe('T0');
     });
 
     it('excludes test/spec files from tier calculation', () => {
       expect(
         requiredTierFor(['services/worker/src/api/queue-resolution.test.ts']).tier,
-      ).toBe('T1');
+      ).toBe('T0');
       expect(
         requiredTierFor(['services/worker/src/api/v1/credentials-ctdl.test.ts']).tier,
-      ).toBe('T1');
+      ).toBe('T0');
       expect(
         requiredTierFor(['services/worker/src/chain/broadcast.spec.ts']).tier,
-      ).toBe('T1');
+      ).toBe('T0');
       // production file still triggers T2
       expect(
         requiredTierFor(['services/worker/src/api/queue-resolution.ts']).tier,
@@ -160,6 +184,10 @@ describe('check-staging-evidence', () => {
   describe('extractDeclaredTier', () => {
     it('finds T3 declaration', () => {
       expect(extractDeclaredTier(T3_BODY)).toBe('T3');
+    });
+
+    it('finds T0 declaration', () => {
+      expect(extractDeclaredTier('Tier: T0\n')).toBe('T0');
     });
 
     it('returns null when no declaration', () => {
@@ -238,11 +266,13 @@ describe('check-staging-evidence', () => {
     it('recognizes fields prefixed with markdown checkbox [x]', () => {
       const body = `## Staging Soak Evidence
 - [x] Tier: T1
-- [x] Staging branch: arkova-staging
-- [x] Worker revision: arkova-worker-staging-00099-xyz
-- [x] Soak start: 2026-05-09 14:00 UTC
-- [x] Soak end: 2026-05-09 16:00 UTC
-- [x] E2E result: green
+- [x] PR head SHA: 1234567890abcdef1234567890abcdef12345678
+- [x] Staging tag URL or N/A explanation: https://pr-999---arkova-worker-staging.example.run.app
+- [x] Health/smoke result: health ok, smoke green
+- [x] CI/E2E green: green
+- [x] Rollback plan: revert PR
+- [x] Risk rationale: low-risk frontend copy change
+- [x] Human approver: Carson
 `;
       expect(missingFields(body, 'T1')).toEqual([]);
     });
@@ -250,11 +280,13 @@ describe('check-staging-evidence', () => {
     it('recognizes fields prefixed with unchecked checkbox [ ]', () => {
       const body = `## Staging Soak Evidence
 - [ ] Tier: T1
-- [ ] Staging branch: arkova-staging
-- [ ] Worker revision: arkova-worker-staging-00099-xyz
-- [ ] Soak start: 2026-05-09 14:00 UTC
-- [ ] Soak end: 2026-05-09 16:00 UTC
-- [ ] E2E result: green
+- [ ] PR head SHA: 1234567890abcdef1234567890abcdef12345678
+- [ ] Staging tag URL or N/A explanation: https://pr-999---arkova-worker-staging.example.run.app
+- [ ] Health/smoke result: health ok, smoke green
+- [ ] CI/E2E green: green
+- [ ] Rollback plan: revert PR
+- [ ] Risk rationale: low-risk frontend copy change
+- [ ] Human approver: Carson
 `;
       expect(missingFields(body, 'T1')).toEqual([]);
     });
@@ -297,7 +329,7 @@ describe('check-staging-evidence', () => {
 
   describe('minimum soak duration enforcement', () => {
     const t1Files = ['src/components/Foo.tsx'];
-    const t2Files = ['supabase/migrations/0300_example.sql'];
+    const t2Files = ['services/worker/src/api/v1/example.ts'];
 
     const completeT2Body = (start: string, end: string) => `## Staging Soak Evidence
 - Tier: T2
@@ -319,13 +351,15 @@ describe('check-staging-evidence', () => {
 - Staging deploy log id: 142
 `;
 
-    const completeT1Body = (start: string, end: string) => `## Staging Soak Evidence
+    const completeT1Body = () => `## Staging Soak Evidence
 - Tier: T1
-- Staging branch: arkova-staging
-- Worker revision: arkova-worker-staging-00099-xyz
-- Soak start: ${start}
-- Soak end: ${end}
-- E2E result: green
+- PR head SHA: 1234567890abcdef1234567890abcdef12345678
+- Staging tag URL or N/A explanation: https://pr-999---arkova-worker-staging.example.run.app
+- Health/smoke result: health ok, targeted smoke green
+- CI/E2E green: TypeCheck, Tests, E2E Tests green on current head
+- Rollback plan: revert this PR and redeploy previous worker image
+- Risk rationale: low-risk copy-only frontend change, no API/auth/billing/queue/anchoring/security surface
+- Human approver: Carson
 `;
 
     const expectEvidencePasses = (body: string, files: string[]) => {
@@ -355,22 +389,16 @@ describe('check-staging-evidence', () => {
         t2Files,
       ],
       [
-        'T1 at exactly 2 hours',
-        completeT1Body('2026-05-09 14:00 UTC', '2026-05-09 16:00 UTC'),
-        t1Files,
-      ],
-      [
-        'T1 ISO 8601 timestamps',
-        completeT1Body('2026-05-09T14:00:00Z', '2026-05-09T16:00:00Z'),
-        t1Files,
-      ],
-      [
-        'T1 one minute above 2 hours',
-        completeT1Body('2026-05-09 14:00 UTC', '2026-05-09 16:01 UTC'),
+        'T1 expedited evidence with no soak window',
+        completeT1Body(),
         t1Files,
       ],
     ])('passes %s', (_label, body, files) => {
-      expectEvidencePasses(body, files);
+      expect(check({
+        body,
+        files,
+        headSha: '1234567890abcdef1234567890abcdef12345678',
+      }).ok).toBe(true);
     });
 
     it.each([
@@ -385,18 +413,6 @@ describe('check-staging-evidence', () => {
         completeT2Body('2026-05-09 14:00 UTC', '2026-05-10 01:59 UTC'),
         t2Files,
         /below the 12h minimum/,
-      ],
-      [
-        'T1 shorter than 2 hours',
-        completeT1Body('2026-05-09 14:00 UTC', '2026-05-09 15:00 UTC'),
-        t1Files,
-        /below the 2h minimum/,
-      ],
-      [
-        'T1 one minute below 2 hours',
-        completeT1Body('2026-05-09 14:00 UTC', '2026-05-09 15:59 UTC'),
-        t1Files,
-        /below the 2h minimum/,
       ],
       [
         'non-parseable prod-affecting timestamps',
@@ -414,18 +430,6 @@ describe('check-staging-evidence', () => {
         'T2 end before start',
         completeT2Body('2026-05-09 14:00 UTC', '2026-05-09 13:59 UTC'),
         t2Files,
-        /Soak end must be after Soak start/,
-      ],
-      [
-        'T1 end equal to start',
-        completeT1Body('2026-05-09 14:00 UTC', '2026-05-09 14:00 UTC'),
-        t1Files,
-        /Soak end must be after Soak start/,
-      ],
-      [
-        'T1 end before start',
-        completeT1Body('2026-05-09 14:00 UTC', '2026-05-09 13:59 UTC'),
-        t1Files,
         /Soak end must be after Soak start/,
       ],
     ])('fails %s', (_label, body, files, pattern) => {
@@ -503,6 +507,15 @@ describe('check-staging-evidence', () => {
       ).toBe(false);
     });
 
+    it('fails for worker deploy config because it affects production runtime', () => {
+      expect(
+        isStagingToolingOnly(['.github/workflows/deploy-worker.yml']).pass,
+      ).toBe(false);
+      expect(
+        isStagingToolingOnly(['services/worker/cloudbuild.yaml']).pass,
+      ).toBe(false);
+    });
+
     it('fails when any file is outside the allowlist', () => {
       expect(
         isStagingToolingOnly([
@@ -514,12 +527,21 @@ describe('check-staging-evidence', () => {
   });
 
   describe('check (integration)', () => {
-    it('passes for staging-tooling-only PR with no body', () => {
+    it('passes for T0 staging-tooling PR with no body', () => {
       const r = check({
         body: '',
         files: ['scripts/staging/seed.ts', 'docs/staging/README.md'],
       });
       expect(r.ok).toBe(true);
+    });
+
+    it('passes for T0 docs/tests/CI-only PR with no staging evidence', () => {
+      const r = check({
+        body: '',
+        files: ['docs/staging/README.md', '.github/workflows/staging-evidence.yml'],
+      });
+      expect(r.ok).toBe(true);
+      expect(r.notes.join(' ')).toMatch(/T0/i);
     });
 
     it('fails when tier missing on prod-affecting PR', () => {
@@ -562,17 +584,80 @@ describe('check-staging-evidence', () => {
     it('passes a complete T1 PR with checkbox-prefixed fields', () => {
       const body = `## Staging Soak Evidence
 - [x] Tier: T1
-- [x] Staging branch: arkova-staging
-- [x] Worker revision: arkova-worker-staging-00099-xyz
-- [x] Soak start: 2026-05-09 14:00 UTC
-- [x] Soak end: 2026-05-09 16:00 UTC
-- [x] E2E result: green
+- [x] PR head SHA: 1234567890abcdef1234567890abcdef12345678
+- [x] Staging tag URL or N/A explanation: not applicable - docs-only worker image was not built
+- [x] Health/smoke result: current-head smoke green
+- [x] CI/E2E green: green
+- [x] Rollback plan: revert PR
+- [x] Risk rationale: frontend copy-only change, no restricted surfaces
+- [x] Human approver: Carson
 `;
       const r = check({
         body,
         files: ['src/components/Foo.tsx'],
+        headSha: '1234567890abcdef1234567890abcdef12345678',
       });
       expect(r.ok).toBe(true);
+    });
+
+    it('fails T1 expedited evidence copied from an older PR head', () => {
+      const body = `## Staging Soak Evidence
+- Tier: T1
+- PR head SHA: 1234567890abcdef1234567890abcdef12345678
+- Staging tag URL or N/A explanation: https://pr-999---arkova-worker-staging.example.run.app
+- Health/smoke result: health ok, smoke green
+- CI/E2E green: green
+- Rollback plan: revert PR
+- Risk rationale: low-risk frontend copy change
+- Human approver: Carson
+`;
+      const r = check({
+        body,
+        files: ['src/components/Foo.tsx'],
+        headSha: '9999999990abcdef1234567890abcdef12345678',
+      });
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/PR head SHA/i);
+    });
+
+    it('fails T1 expedited evidence when auditable fields are empty', () => {
+      const body = `## Staging Soak Evidence
+- Tier: T1
+- PR head SHA: 1234567890abcdef1234567890abcdef12345678
+- Staging tag URL or N/A explanation:
+- Health/smoke result: health ok
+- CI/E2E green: green
+- Rollback plan: revert PR
+- Risk rationale: low-risk frontend copy change
+- Human approver: Carson
+`;
+      const r = check({
+        body,
+        files: ['src/components/Foo.tsx'],
+        headSha: '1234567890abcdef1234567890abcdef12345678',
+      });
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/Staging tag URL or N\/A explanation/i);
+    });
+
+    it('fails public API contract work that tries to use the expedited T1 path', () => {
+      const body = `## Staging Soak Evidence
+- Tier: T1
+- PR head SHA: 1234567890abcdef1234567890abcdef12345678
+- Staging tag URL or N/A explanation: https://pr-999---arkova-worker-staging.example.run.app
+- Health/smoke result: health ok, smoke green
+- CI/E2E green: green
+- Rollback plan: revert PR
+- Risk rationale: API docs only
+- Human approver: Carson
+`;
+      const r = check({
+        body,
+        files: ['docs/api/openapi.yaml'],
+        headSha: '1234567890abcdef1234567890abcdef12345678',
+      });
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/below required tier T2/);
     });
 
     it('fails completed T2 evidence when the shared-staging preflight is not clean', () => {
@@ -695,18 +780,18 @@ describe('check-staging-evidence', () => {
       expect(r.errors.join(' ')).toMatch(/Evidence scope/i);
     });
 
-    it('SCRUM-1208: HANDOFF.md and .gitignore are now in the staging-tooling allowlist (PR #733 follow-up)', () => {
+    it('SCRUM-1208: HANDOFF.md and .gitignore are now in the T0 allowlist (PR #733 follow-up)', () => {
       // Codex review on PR #733 flagged these as missing from the allowlist
       // even though the PR's own diff included them. Without them, the PR
-      // that REMOVED the staging-soak-skip override couldn't itself self-skip,
-      // forcing a circular evidence requirement. Adding them here keeps the
-      // self-skip honest for the meta-PR pattern (CI/agent config + state docs).
+      // that removed the deleted staging-soak-skip override could not require
+      // its own runtime evidence. This keeps the T0 meta-PR pattern honest for
+      // CI/agent config + state docs.
       const r = check({
         body: '',
         files: ['HANDOFF.md', '.gitignore', '.claude/settings.json', '.claude/hooks/check-staging-evidence-pre-merge.sh'],
       });
       expect(r.ok).toBe(true);
-      expect(r.notes.join(' ')).toMatch(/staging-tooling-only/i);
+      expect(r.notes.join(' ')).toMatch(/T0 CI-only/i);
     });
 
     it('passes T2 with non-clean preflight when a structured residual-risk exception is present', () => {

@@ -24,8 +24,9 @@ describe('gemini-config', () => {
   });
 
   it('exports correct default generation model', async () => {
+    // SCRUM-1993: reverted from gemini-3-flash-preview to the stable GA model.
     const { GEMINI_GENERATION_MODEL } = await import('./gemini-config.js');
-    expect(GEMINI_GENERATION_MODEL).toBe('gemini-3-flash-preview');
+    expect(GEMINI_GENERATION_MODEL).toBe('gemini-2.5-flash');
   });
 
   it('exports correct default embedding model', async () => {
@@ -35,7 +36,7 @@ describe('gemini-config', () => {
 
   it('exports correct default vision model (same as generation)', async () => {
     const { GEMINI_VISION_MODEL } = await import('./gemini-config.js');
-    expect(GEMINI_VISION_MODEL).toBe('gemini-3-flash-preview');
+    expect(GEMINI_VISION_MODEL).toBe('gemini-2.5-flash');
   });
 
   it('exports null for tuned model when env not set', async () => {
@@ -47,9 +48,9 @@ describe('gemini-config', () => {
     const { getGeminiConfig } = await import('./gemini-config.js');
     const config = getGeminiConfig();
     expect(config).toEqual({
-      generationModel: 'gemini-3-flash-preview',
+      generationModel: 'gemini-2.5-flash',
       embeddingModel: 'gemini-embedding-001',
-      visionModel: 'gemini-3-flash-preview',
+      visionModel: 'gemini-2.5-flash',
       tunedModel: null,
       liteModel: 'gemini-3-flash-lite-preview',
     });

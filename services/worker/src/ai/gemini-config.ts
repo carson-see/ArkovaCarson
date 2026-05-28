@@ -10,19 +10,29 @@
  *
  * Deprecation timeline:
  *   - gemini-2.0-flash: shut down June 1, 2026
- *   - gemini-2.5-flash: shuts down June 17, 2026
- *   - Migrated to: gemini-3-flash-preview (GME-02, 2026-04-12)
+ *   - gemini-2.5-flash: shuts down June 17, 2026 (current pin — see SCRUM-1993)
+ *
+ * SCRUM-1993 (2026-05-27): reverted generation + vision off the
+ * gemini-3-flash-preview SKU. The preview model exceeded the worker's
+ * 4500ms latency budget on ~100% of extraction calls from 2026-05-15
+ * onward, so every extraction silently fell to the heuristic fast-fallback
+ * (no AI metadata). gemini-2.5-flash is the prior known-good GA model and
+ * matches the live prod hotfix (revision arkova-worker-00630-bmr).
+ * NOTE: 2.5-flash sunsets 2026-06-17 — SCRUM-1951 owns the eval-validated
+ * upgrade to a GA gemini-3 model before that date.
  */
 
 // ─── Default model versions ────────────────────────────────────────
-// GME-02: Migrated from gemini-2.5-flash to gemini-3-flash-preview (2026-04-12)
-// Previous: gemini-2.5-flash (deprecated June 17, 2026)
-const DEFAULT_GENERATION_MODEL = 'gemini-3-flash-preview';
+// SCRUM-1993: pinned to gemini-2.5-flash (stable GA) after gemini-3-flash-preview
+// breached the latency budget in prod. Re-verify before any further change.
+const DEFAULT_GENERATION_MODEL = 'gemini-2.5-flash';
 // GME-03: text-embedding-004 does NOT exist in Gemini API (was hallucinated model name).
 // Available: gemini-embedding-001 (GA), gemini-embedding-2-preview (preview).
 // Using gemini-embedding-001 (stable GA) as default.
 const DEFAULT_EMBEDDING_MODEL = 'gemini-embedding-001';
-const DEFAULT_VISION_MODEL = 'gemini-3-flash-preview';
+// SCRUM-1993: vision shares the generation model; reverted off preview alongside it
+// (fraud-vision calls hit the same latency-budget timeout on the preview SKU).
+const DEFAULT_VISION_MODEL = 'gemini-2.5-flash';
 // Distillation also migrated to Gemini 3 (was gemini-2.0-flash, shut down June 1):
 const DEFAULT_DISTILLATION_MODEL = 'gemini-3-flash-preview';
 // GME-18: Lighter model for low-stakes tasks (tags, classification)
@@ -84,9 +94,9 @@ export interface ModelVersionPin {
 export const MODEL_VERSION_PINS: Record<string, ModelVersionPin> = {
   generation: {
     modelId: DEFAULT_GENERATION_MODEL,
-    pinnedAt: '2026-04-12',
-    verifiedAt: '2026-04-12',
-    notes: 'GME-02: migrated from gemini-2.5-flash; preview until GA release',
+    pinnedAt: '2026-05-27',
+    verifiedAt: '2026-05-27',
+    notes: 'SCRUM-1993: reverted from gemini-3-flash-preview (breached 4500ms latency budget, 100% fast-fallback from 2026-05-15). Verified live on prod rev arkova-worker-00630-bmr. Sunsets 2026-06-17 — SCRUM-1951 owns GA-gemini-3 upgrade.',
   },
   embedding: {
     modelId: DEFAULT_EMBEDDING_MODEL,
@@ -96,9 +106,9 @@ export const MODEL_VERSION_PINS: Record<string, ModelVersionPin> = {
   },
   vision: {
     modelId: DEFAULT_VISION_MODEL,
-    pinnedAt: '2026-04-12',
-    verifiedAt: '2026-04-12',
-    notes: 'Shares generation model; multimodal fraud detection',
+    pinnedAt: '2026-05-27',
+    verifiedAt: '2026-05-27',
+    notes: 'SCRUM-1993: shares generation model; reverted off preview alongside it (fraud-vision hit the same latency-budget timeout).',
   },
   distillation: {
     modelId: DEFAULT_DISTILLATION_MODEL,

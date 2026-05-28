@@ -2,15 +2,15 @@ name: Staging Soak Evidence
 
 # Required PR-only gate. CLAUDE.md §1.11 / §1.12.
 #
-# Validates that every PR declares a soak tier in its body and provides
-# the evidence fields appropriate for that tier. Path-based detector
-# blocks under-declaration (e.g. PR touches services/worker/src/chain/
-# but declares T1).
+# Validates that prod-affecting PRs declare a risk tier in the PR body and
+# provide the evidence fields appropriate for that tier. T0 docs/tests/CI/
+# tooling-only PRs run CI only. Path-based detector blocks under-declaration
+# (e.g. PR touches services/worker/src/chain/ but declares T1).
 #
 # No override label — the `staging-soak-skip` label was destroyed 2026-05-07.
-# The only remaining self-skip path is the staging-tooling allowlist inside
-# scripts/ci/check-staging-evidence.ts (PRs whose every touched file is staging
-# tooling). Every other prod-bound PR must produce real evidence.
+# The only CI-only path is T0 inside scripts/ci/check-staging-evidence.ts.
+# Every other prod-bound PR must produce real evidence; T1 expedited evidence
+# still requires exact head SHA, health/smoke, rollback, rationale, and approval.
 
 on:
   pull_request:

@@ -26,11 +26,15 @@ describe('GME-04: Golden Tuned Model Migration', () => {
     // It points at a Vertex AI endpoint, not a model name
     const config = getGeminiConfig();
     expect(config.tunedModel).toBeNull(); // Only set in production
-    expect(config.generationModel).toBe('gemini-3-flash-preview');
+    expect(config.generationModel).toBe('gemini-2.5-flash');
   });
 
-  it('base model has been migrated to Gemini 3 (GME-02)', () => {
-    expect(GEMINI_GENERATION_MODEL).toBe('gemini-3-flash-preview');
+  it('base model reverted to stable GA after preview latency incident (SCRUM-1993)', () => {
+    // GME-02 migrated to gemini-3-flash-preview, but that preview SKU breached
+    // the worker's 4500ms latency budget (100% fast-fallback from 2026-05-15),
+    // so SCRUM-1993 reverted to the stable GA model. SCRUM-1951 owns the
+    // eval-validated upgrade to a GA gemini-3 model before the 2026-06-17 sunset.
+    expect(GEMINI_GENERATION_MODEL).toBe('gemini-2.5-flash');
   });
 
   it('documents migration strategy and fallback plan', () => {
