@@ -80,7 +80,12 @@ describe('OpenAPI spec', () => {
       'ceterms:credentialStatusType',
       'ceterms:dateEffective',
       'ceterms:verificationServiceProfile',
+      'ceterms:identifier',
     ]));
+    expect(schema.properties['ceterms:identifier'].required).toEqual([
+      'ceterms:identifierType',
+      'ceterms:identifierValue',
+    ]);
     expect(JSON.stringify(schema)).not.toContain('org_id');
     expect(JSON.stringify(schema)).not.toContain('user_id');
     expect(JSON.stringify(schema)).not.toContain('fingerprint');

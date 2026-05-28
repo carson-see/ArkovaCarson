@@ -1265,6 +1265,7 @@ export const openApiSpec: Record<string, any> = {
           'ceterms:credentialStatusType',
           'ceterms:dateEffective',
           'ceterms:verificationServiceProfile',
+          'ceterms:identifier',
         ],
         additionalProperties: true,
         properties: {
@@ -1309,6 +1310,7 @@ export const openApiSpec: Record<string, any> = {
           },
           'ceterms:identifier': {
             type: 'object',
+            required: ['ceterms:identifierType', 'ceterms:identifierValue'],
             additionalProperties: false,
             properties: {
               'ceterms:identifierType': { type: 'string' },
