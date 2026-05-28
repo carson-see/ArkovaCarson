@@ -43,7 +43,7 @@ describe('check-staging-evidence', () => {
   describe('TIER_SPECS', () => {
     it('pins the current minimum soak windows', () => {
       expect(TIER_SPECS.T0.soakHours).toBe(0);
-      expect(TIER_SPECS.T1.soakHours).toBe(0);
+      expect(TIER_SPECS.T1.soakHours).toBe(2);
       expect(TIER_SPECS.T2.soakHours).toBe(12);
       expect(TIER_SPECS.T3.soakHours).toBe(48);
     });
@@ -270,6 +270,8 @@ describe('check-staging-evidence', () => {
 - [x] Staging tag URL or N/A explanation: https://pr-999---arkova-worker-staging.example.run.app
 - [x] Health/smoke result: health ok, smoke green
 - [x] CI/E2E green: green
+- [x] Soak start: 2026-05-09 14:00 UTC
+- [x] Soak end: 2026-05-09 16:00 UTC
 - [x] Rollback plan: revert PR
 - [x] Risk rationale: low-risk frontend copy change
 - [x] Human approver: Carson
@@ -284,6 +286,8 @@ describe('check-staging-evidence', () => {
 - [ ] Staging tag URL or N/A explanation: https://pr-999---arkova-worker-staging.example.run.app
 - [ ] Health/smoke result: health ok, smoke green
 - [ ] CI/E2E green: green
+- [ ] Soak start: 2026-05-09 14:00 UTC
+- [ ] Soak end: 2026-05-09 16:00 UTC
 - [ ] Rollback plan: revert PR
 - [ ] Risk rationale: low-risk frontend copy change
 - [ ] Human approver: Carson
@@ -357,14 +361,12 @@ describe('check-staging-evidence', () => {
 - Staging tag URL or N/A explanation: https://pr-999---arkova-worker-staging.example.run.app
 - Health/smoke result: health ok, targeted smoke green
 - CI/E2E green: TypeCheck, Tests, E2E Tests green on current head
+- Soak start: 2026-05-09 14:00 UTC
+- Soak end: 2026-05-09 16:00 UTC
 - Rollback plan: revert this PR and redeploy previous worker image
 - Risk rationale: low-risk copy-only frontend change, no API/auth/billing/queue/anchoring/security surface
 - Human approver: Carson
 `;
-
-    const expectEvidencePasses = (body: string, files: string[]) => {
-      expect(check({ body, files }).ok).toBe(true);
-    };
 
     const expectEvidenceFails = (body: string, files: string[], pattern: RegExp) => {
       const r = check({ body, files });
@@ -389,7 +391,7 @@ describe('check-staging-evidence', () => {
         t2Files,
       ],
       [
-        'T1 expedited evidence with no soak window',
+        'T1 expedited evidence with a 2 hour smoke window',
         completeT1Body(),
         t1Files,
       ],
@@ -402,6 +404,12 @@ describe('check-staging-evidence', () => {
     });
 
     it.each([
+      [
+        'T1 shorter than 2 hours',
+        completeT1Body().replace('2026-05-09 16:00 UTC', '2026-05-09 15:59 UTC'),
+        t1Files,
+        /below the 2h minimum/,
+      ],
       [
         'T2 shorter than 12 hours',
         completeT2Body('2026-05-09 14:00 UTC', '2026-05-09 18:00 UTC'),
@@ -447,13 +455,32 @@ describe('check-staging-evidence', () => {
           'scripts/ci/staging-honesty-preflight.ts',
           'scripts/ci/staging-honesty-preflight.test.ts',
           '.github/workflows/ci.yml',
+          '.github/workflows/migration-drift.yml',
           'CLAUDE.md',
           'docs/staging/README.md',
           'docs/ops/gemini-model-upgrade.md',
           '.github/workflows/staging-evidence.yml',
           'scripts/gcp-setup/cloud-scheduler.sh',
+          'scripts/ops/reconcile-migration-ledger.ts',
+          'scripts/ops/reconcile-migration-ledger.test.ts',
         ]).pass,
       ).toBe(true);
+    });
+
+    it('passes for the migration ledger reconciliation PR surface as T0 tooling', () => {
+      const r = check({
+        body: '',
+        files: [
+          '.github/workflows/migration-drift.yml',
+          'CLAUDE.md',
+          'scripts/ops/agents.md',
+          'scripts/ops/reconcile-migration-ledger.ts',
+          'scripts/ops/reconcile-migration-ledger.test.ts',
+        ],
+      });
+
+      expect(r.ok).toBe(true);
+      expect(r.notes.join(' ')).toMatch(/T0/);
     });
 
     it('passes for eslint config and rule files', () => {
@@ -588,6 +615,8 @@ describe('check-staging-evidence', () => {
 - [x] Staging tag URL or N/A explanation: not applicable - docs-only worker image was not built
 - [x] Health/smoke result: current-head smoke green
 - [x] CI/E2E green: green
+- [x] Soak start: 2026-05-09 14:00 UTC
+- [x] Soak end: 2026-05-09 16:00 UTC
 - [x] Rollback plan: revert PR
 - [x] Risk rationale: frontend copy-only change, no restricted surfaces
 - [x] Human approver: Carson
@@ -607,6 +636,8 @@ describe('check-staging-evidence', () => {
 - Staging tag URL or N/A explanation: https://pr-999---arkova-worker-staging.example.run.app
 - Health/smoke result: health ok, smoke green
 - CI/E2E green: green
+- Soak start: 2026-05-09 14:00 UTC
+- Soak end: 2026-05-09 16:00 UTC
 - Rollback plan: revert PR
 - Risk rationale: low-risk frontend copy change
 - Human approver: Carson
@@ -627,6 +658,8 @@ describe('check-staging-evidence', () => {
 - Staging tag URL or N/A explanation:
 - Health/smoke result: health ok
 - CI/E2E green: green
+- Soak start: 2026-05-09 14:00 UTC
+- Soak end: 2026-05-09 16:00 UTC
 - Rollback plan: revert PR
 - Risk rationale: low-risk frontend copy change
 - Human approver: Carson
