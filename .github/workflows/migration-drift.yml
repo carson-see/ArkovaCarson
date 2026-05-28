@@ -219,7 +219,11 @@ jobs:
           # anchors_index_consolidation. These migrations remain intentionally
           # held back from prod until fresh staging evidence and operator
           # reconciliation complete. Remove after prod has 0314/0315 applied.
-          exempt_regex='^(0314_legally_binding_attestations|0315_professional_education_foundations)$'
+          # 0318–0321: PR #947 DocuSign Sprint 2+3 (reconciliation gaps,
+          # HMAC keys, member integrations, account uniqueness index). These
+          # remain exempt only until the post-merge prod migration apply and
+          # ledger verification are complete.
+          exempt_regex='^(0314_legally_binding_attestations|0315_professional_education_foundations|0318_docusign_reconciliation_gaps|0319_org_integrations_hmac_keys|0320_member_integrations|0321_member_integrations_account_uniqueness)$'
           filtered_missing=$(echo "$missing" | grep -vE "$exempt_regex" || true)
 
           missing_count=$(echo "$filtered_missing" | grep -c . || true)
