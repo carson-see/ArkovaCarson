@@ -1,6 +1,6 @@
 # agents.md — services/worker/src/api/v1/webhooks/
 
-_Last updated: 2026-05-28_
+_Last updated: 2026-05-28 (post-review)_
 
 ## What This Folder Contains
 
