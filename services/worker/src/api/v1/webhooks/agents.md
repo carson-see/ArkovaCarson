@@ -1,6 +1,6 @@
 # agents.md — services/worker/src/api/v1/webhooks/
 
-_Last updated: 2026-05-27_
+_Last updated: 2026-05-28 (post-review)_
 
 ## What This Folder Contains
 
@@ -9,7 +9,9 @@ Inbound webhook handlers for third-party integrations. Each handler verifies HMA
 | File | Purpose |
 |------|---------|
 | `adobe-sign.ts` | Adobe Sign `AGREEMENT_WORKFLOW_COMPLETED` handler — HMAC-SHA256 base64, `adaptAdobeSign` normalization |
-| `docusign.ts` | DocuSign Connect `envelope-completed` handler — HMAC verify, sanitized event + document-fetch job. SCRUM-1649: carries single-document SHA-256 into rule-event payloads via `document_hashes` / `document_sha256` for downstream post-signing anchor materialization |
+| `docusign.ts` | DocuSign Connect `envelope-completed` handler — lookup-first HMAC verify (SCRUM-2043), HMAC verified for unknown accounts too (env-var key), dual-table lookup: org_integrations then member_integrations (SCRUM-2044), sanitized event + document-fetch job + SCRUM-1872 notarization detection. SCRUM-1649: carries single-document SHA-256 into rule-event payloads via `document_hashes` / `document_sha256` for downstream post-signing anchor materialization |
+| `docusign-hmac-helpers.ts` | SCRUM-2043: resolves HMAC keys from per-org `hmac_keys` JSONB or env-var fallback |
+| `docusign-hmac-rotation.test.ts` | Tests for multi-key HMAC verification flow and key resolution |
 | `drive.ts` | Google Drive push notification handler — headers-only signal, channel-token verification |
 | `ats.ts` | ATS webhook handler (Greenhouse, Lever) — HMAC verify, attestation verification response |
 | `checkr.ts` | Checkr `report.completed` handler — HMAC-SHA256 hex, nonce replay protection, DLQ on failure |

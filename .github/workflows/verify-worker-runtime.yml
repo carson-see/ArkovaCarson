@@ -1,0 +1,97 @@
+name: Verify Worker Runtime
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'Optional PR number for authenticated staging tag health'
+        required: false
+        type: string
+        default: ''
+
+env:
+  PROJECT_ID: arkova1
+  REGION: us-central1
+  PROD_SERVICE: arkova-worker
+  STAGING_SERVICE: arkova-worker-staging
+
+jobs:
+  verify:
+    name: Verify Cloud Run worker runtime
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f # v2
+
+      - name: Verify production worker
+        id: prod
+        run: |
+          set -euo pipefail
+          SERVICE_JSON="$(gcloud run services describe "${PROD_SERVICE}" \
+            --region="${REGION}" \
+            --project="${PROJECT_ID}" \
+            --format=json)"
+          REVISION="$(jq -r '.status.latestReadyRevisionName' <<<"${SERVICE_JSON}")"
+          TRAFFIC="$(jq -r '.status.traffic[]? | select(.revisionName == "'"${REVISION}"'") | .percent // 0' <<<"${SERVICE_JSON}" | head -n 1)"
+          GEMINI_MODEL="$(jq -r '.spec.template.spec.containers[0].env[]? | select(.name == "GEMINI_MODEL") | .value // empty' <<<"${SERVICE_JSON}")"
+          HEALTH="$(curl -fsS 'https://arkova-worker-270018525501.us-central1.run.app/health?detailed=true')"
+          HEALTH_SHA="$(jq -r '.git_sha' <<<"${HEALTH}")"
+          DB="$(jq -r '.checks.database.status' <<<"${HEALTH}")"
+          ANCHORING="$(jq -r '.checks.anchoring.status' <<<"${HEALTH}")"
+          KMS="$(jq -r '.checks.kms.status' <<<"${HEALTH}")"
+
+          echo "revision=${REVISION}" >> "$GITHUB_OUTPUT"
+          echo "traffic=${TRAFFIC:-0}" >> "$GITHUB_OUTPUT"
+          echo "gemini_model=${GEMINI_MODEL}" >> "$GITHUB_OUTPUT"
+          echo "git_sha=${HEALTH_SHA}" >> "$GITHUB_OUTPUT"
+
+          test "${TRAFFIC:-0}" = "100"
+          test "${GEMINI_MODEL}" = "gemini-2.5-flash"
+          test "${DB}" = "ok"
+          test "${ANCHORING}" = "ok"
+          test "${KMS}" = "ok"
+
+      - name: Verify staging tag health
+        if: inputs.pr_number != ''
+        env:
+          PR_NUMBER: ${{ inputs.pr_number }}
+        run: |
+          set -euo pipefail
+          PR="${PR_NUMBER}"
+          case "$PR" in
+            *[!0-9]*|"") echo "::error::pr_number must be numeric"; exit 2 ;;
+          esac
+          RAW_URL="$(gcloud run services describe "${STAGING_SERVICE}" \
+            --region="${REGION}" \
+            --project="${PROJECT_ID}" \
+            --format='value(status.url)')"
+          TAG_URL="${RAW_URL/https:\/\//https://pr-${PR}---}"
+          TOKEN="$(gcloud auth print-identity-token --audiences="${TAG_URL}")"
+          HEALTH="$(curl -fsS -H "Authorization: Bearer ${TOKEN}" "${TAG_URL}/health?detailed=true")"
+          echo "${HEALTH}" | jq .
+          test "$(jq -r '.status' <<<"${HEALTH}")" = "healthy"
+          test "$(jq -r '.checks.database.status' <<<"${HEALTH}")" = "ok"
+          test "$(jq -r '.checks.anchoring.status' <<<"${HEALTH}")" = "ok"
+          test "$(jq -r '.checks.kms.status' <<<"${HEALTH}")" = "ok"
+
+      - name: Summary
+        run: |
+          {
+            echo "## Worker Runtime Verification"
+            echo
+            echo "| Field | Value |"
+            echo "|---|---|"
+            echo "| Prod revision | \`${{ steps.prod.outputs.revision }}\` |"
+            echo "| Prod traffic | \`${{ steps.prod.outputs.traffic }}%\` |"
+            echo "| Prod health git_sha | \`${{ steps.prod.outputs.git_sha }}\` |"
+            echo "| GEMINI_MODEL | \`${{ steps.prod.outputs.gemini_model }}\` |"
+          } >> "$GITHUB_STEP_SUMMARY"

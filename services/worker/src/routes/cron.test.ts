@@ -300,6 +300,18 @@ vi.mock('../jobs/docusign-envelope-completed.js', () => ({
   runDocusignEnvelopeCompletedJobs: (...args: unknown[]) => mockRunDocusignEnvelopeCompletedJobs(...args),
 }));
 
+const mockRunDocusignNotarizationCompletedJobs = vi.fn().mockResolvedValue({
+  claimed: 2,
+  completed: 2,
+  failed: 0,
+  dead: 0,
+  updateFailed: 0,
+  jobIds: ['notary-job-1', 'notary-job-2'],
+});
+vi.mock('../jobs/docusign-notarization-completed.js', () => ({
+  runDocusignNotarizationCompletedJobs: (...args: unknown[]) => mockRunDocusignNotarizationCompletedJobs(...args),
+}));
+
 // ─── Import after mocks ───
 import { cronRouter } from './cron.js';
 import { config } from '../config.js';
@@ -1983,6 +1995,51 @@ describe('cron routes', () => {
       mockRunRegulatoryChangeScan.mockRejectedValueOnce(new Error('scan failed'));
       const app = createApp();
       const res = await request(app).post('/cron/regulatory-change-scan');
+      expect(res.status).toBe(500);
+      expect(res.body.error).toBe('Processing failed');
+    });
+  });
+
+  describe('POST /docusign-notarization-completed', () => {
+    it('runs the notarization queue processor and forwards the optional limit', async () => {
+      const app = createApp();
+      const res = await request(app).post('/cron/docusign-notarization-completed?limit=5');
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({
+        claimed: 2,
+        completed: 2,
+        failed: 0,
+        dead: 0,
+        updateFailed: 0,
+        jobIds: ['notary-job-1', 'notary-job-2'],
+      });
+      expect(mockRunDocusignNotarizationCompletedJobs).toHaveBeenCalledWith({ limit: 5 });
+    });
+
+    it('rejects invalid limit values', async () => {
+      const app = createApp();
+      const res = await request(app).post('/cron/docusign-notarization-completed?limit=not-a-number');
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe('Invalid request');
+      expect(mockRunDocusignNotarizationCompletedJobs).not.toHaveBeenCalled();
+    });
+
+    it('rejects out-of-range limit values', async () => {
+      const app = createApp();
+      const res = await request(app).post('/cron/docusign-notarization-completed?limit=101');
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe('Invalid request');
+      expect(mockRunDocusignNotarizationCompletedJobs).not.toHaveBeenCalled();
+    });
+
+    it('returns 500 when the notarization processor throws', async () => {
+      mockRunDocusignNotarizationCompletedJobs.mockRejectedValueOnce(new Error('notary boom'));
+      const app = createApp();
+      const res = await request(app).post('/cron/docusign-notarization-completed');
+
       expect(res.status).toBe(500);
       expect(res.body.error).toBe('Processing failed');
     });

@@ -83,11 +83,16 @@ import { runOrgQueueScheduler } from '../jobs/org-queue-scheduler.js';
 import { runRulesEngine } from '../jobs/rules-engine.js';
 import { runRuleActionDispatcher } from '../jobs/rule-action-dispatcher.js';
 import { runDocusignEnvelopeCompletedJobs } from '../jobs/docusign-envelope-completed.js';
+import { runDocusignNotarizationCompletedJobs } from '../jobs/docusign-notarization-completed.js';
 import { runDbHealthMonitor } from '../jobs/db-health-monitor.js';
 import { runSubscriptionRenewal } from '../jobs/workspace-subscription-renewal.js';
 import { runMainnetMigration, getMigrationStatus } from '../jobs/mainnet-migration.js';
 import { checkPipelineHealth } from '../jobs/pipeline-health.js';
+import { runConnectorHealthCheck } from '../jobs/connector-health-alert.js';
 import { GRACE_EXPIRY_SWEEP_CRON, runGraceExpirySweep } from '../jobs/grace-expiry-sweep.js';
+import { sweepExpiredNonces, makeNonceSweepDb } from '../jobs/nonce-sweep.js';
+import { reconcileDocusignGaps } from '../jobs/docusign-reconciliation.js';
+import { makeReconciliationDeps } from '../jobs/docusign-reconciliation-deps.js';
 import { MONTHLY_ALLOCATION_ROLLOVER_CRON, runAllocationRollover } from '../jobs/monthly-allocation-rollover.js';
 import { runStripeAnchorReconciliation, generateFinancialReport, processFailedPaymentRecovery } from '../billing/reconciliation.js';
 import { logHeapStatus } from '../utils/heapMonitor.js';
@@ -442,6 +447,27 @@ cronRouter.post('/docusign-envelope-completed', async (req, res) => {
     res.json(result);
   } catch (error) {
     logger.error({ error }, 'DocuSign completed-envelope queue pass failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+// ─── SCRUM-1872: DocuSign notarization completed job queue ───
+cronRouter.post('/docusign-notarization-completed', async (req, res) => {
+  try {
+    const rawLimit = req.query.limit ?? req.body?.limit;
+    const parsedLimit = rawLimit === undefined
+      ? undefined
+      : DocusignEnvelopeCompletedLimitSchema.safeParse(rawLimit);
+    if (parsedLimit && !parsedLimit.success) {
+      res.status(400).json({ error: 'Invalid request', details: parsedLimit.error.flatten() });
+      return;
+    }
+    const result = await runDocusignNotarizationCompletedJobs({
+      limit: parsedLimit?.data,
+    });
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'DocuSign notarization-completed queue pass failed');
     res.status(500).json({ error: 'Processing failed' });
   }
 });
@@ -1423,6 +1449,25 @@ cronRouter.post('/cleanup-retention', async (_req, res) => {
   }
 });
 
+// ─── SCRUM-2040: Webhook nonce sweep (SOC 2 CC7.4) ───
+cronRouter.post('/nonce-sweep', async (_req, res) => {
+  try {
+    const adapter = makeNonceSweepDb(db);
+    const result = await sweepExpiredNonces(adapter);
+    if (!result.ok) {
+      res.status(500).json({
+        ...result,
+        message: `Partial failure: ${result.errors.length} of ${Object.keys(result.swept).length} tables failed`,
+      });
+      return;
+    }
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'Nonce sweep failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
 // ─── Metered Usage Reporting (PAY-02) ───
 
 cronRouter.post('/report-metered-usage', async (_req, res) => {
@@ -1461,6 +1506,37 @@ cronRouter.post('/db-health', async (_req, res) => {
   } catch (error) {
     logger.error({ error }, 'db-health-monitor failed');
     res.status(500).json({ error: 'db-health-monitor failed' });
+  }
+});
+
+// ─── SCRUM-2041: Connector health check (SOC 2 CC7.1) ───
+cronRouter.post('/connector-health-check', async (_req, res) => {
+  try {
+    const result = await runConnectorHealthCheck(db);
+    if (!result.ok) {
+      res.status(500).json(result);
+      return;
+    }
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'Connector health check failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+// ─── SCRUM-2042: DocuSign reconciliation (SOC 2 CC7.2) ───
+cronRouter.post('/docusign-reconciliation', async (_req, res) => {
+  try {
+    const deps = makeReconciliationDeps();
+    const result = await reconcileDocusignGaps(deps);
+    if (!result.ok) {
+      res.status(500).json(result);
+      return;
+    }
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'DocuSign reconciliation failed');
+    res.status(500).json({ error: 'Processing failed' });
   }
 });
 

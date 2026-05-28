@@ -48,6 +48,13 @@ THRESHOLD_SECONDS=$((OLDER_THAN_DAYS * 24 * 60 * 60))
 
 info() { echo "[cleanup-orphan-tags] $*" >&2; }
 
+AUTH_GUARD="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/scripts/ops/gcloud-auth-preflight.sh"
+if [[ -f "$AUTH_GUARD" ]]; then
+  # shellcheck source=scripts/ops/gcloud-auth-preflight.sh
+  source "$AUTH_GUARD"
+  arkova_require_enterprise_gcloud_auth "staging tag cleanup" "gcloud"
+fi
+
 closed_epoch_for_pr() {
   local pr="$1" pr_json
   if ! pr_json=$(gh api "repos/${REPO}/pulls/${pr}" 2>/dev/null); then

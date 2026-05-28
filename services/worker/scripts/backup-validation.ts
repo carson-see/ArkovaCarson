@@ -91,6 +91,7 @@ async function checkRlsEnabled(
   if (error) {
     // Try direct query via pg_tables (service_role can read it)
     const { data: pgData, error: pgError } = await supabase
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       .from('pg_tables' as any)
       .select('rowsecurity')
       .eq('schemaname', 'public')

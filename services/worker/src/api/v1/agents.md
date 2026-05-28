@@ -22,11 +22,19 @@ Public v1 API surface — frozen contract per CLAUDE.md §1.8. Additive nullable
 - `anchor-bulk.ts`, `attestations.ts`, `oracle.ts`, `cle-verify.ts`, etc. — additional v1 surfaces.
 - `cle-verify.ts` — CLE public responses must stay allowlisted. Never return raw `metadata`, `claims`, `filename`, `chain_tx_id`, internal `id`, bar numbers, or attorney names. Submit logs also omit attorney identifiers and internal anchor UUIDs.
 
+## 2026-05-27 Attestation Verification Endpoint (SCRUM-1873)
+
+- `GET /api/v1/verify/attestation/:attestationId` verifies legally binding attestations from `legally_binding_attestations` table (SCRUM-1871/1872/1873 chain).
+- Public, anonymous-allowed. Uses `ARK-ATT-*` public IDs only. Separate from `GET /api/v1/attestations/:publicId` which handles general `attestations` table.
+- Mounted BEFORE the generic `/verify` catch-all in router.ts to avoid route shadowing.
+- Response never includes `attestation_statement` (private per migration 0314 COMMENT).
+
 ## Scope mapping (verified 2026-05-08)
 | Endpoint | Scope |
 |---|---|
 | `POST /api/v1/anchor`, `POST /api/v1/anchor/submit` | `anchor:write` or `write:anchors` |
 | `GET /api/v1/verify/<id>` | anonymous OR `verify` |
+| `GET /api/v1/verify/attestation/<id>` | anonymous (SCRUM-1873) |
 | `POST /api/v1/batch-verify` | `verify:batch` |
 | `GET /api/v1/credentials/<id>/ctdl` | anonymous OR `verify` |
 | `GET /api/v1/usage` | `usage:read` |

@@ -43,6 +43,7 @@ type OrgIntegrationRow = TypeSafeDatabase['public']['Tables']['org_integrations'
 type OrgIntegrationInsert = TypeSafeDatabase['public']['Tables']['org_integrations']['Insert'];
 type OrgIntegrationUpdate = TypeSafeDatabase['public']['Tables']['org_integrations']['Update'];
 type IntegrationEventInsert = TypeSafeDatabase['public']['Tables']['integration_events']['Insert'];
+type AuditEventInsert = TypeSafeDatabase['public']['Tables']['audit_events']['Insert'];
 type OrgMemberRoleRow = Pick<OrgMemberRow, 'role'>;
 type DocusignIntegrationIdRow = Pick<OrgIntegrationRow, 'id'>;
 type DocusignIntegrationLookupRow = Pick<OrgIntegrationRow, 'id' | 'token_secret_name'>;
@@ -82,10 +83,15 @@ interface DbTableQuery<T> {
   upsert(value: DocusignIntegrationUpsert, options?: { onConflict?: string }): DbFilterQuery<DocusignIntegrationIdRow>;
 }
 
+interface DbAuditTableQuery {
+  insert(value: AuditEventInsert): PromiseLike<DbQueryResult<unknown>>;
+}
+
 interface DbClient {
   from(table: 'org_members'): DbTableQuery<OrgMemberRoleRow>;
   from(table: 'org_integrations'): DbTableQuery<DocusignIntegrationLookupRow[]>;
   from(table: 'integration_events'): DbTableQuery<unknown>;
+  from(table: 'audit_events'): DbAuditTableQuery;
 }
 
 interface DocusignOAuthDeps {
@@ -541,6 +547,24 @@ export function createDocusignOAuthRouter(deps: DocusignOAuthDeps = {}): Router 
       integrationId: data?.[0]?.id,
       eventType: 'oauth_disconnected',
       status: 'success',
+    });
+
+    // SOC 2 CC7.2 — audit trail for integration disconnect (SCRUM-2039)
+    const integrationId = data?.[0]?.id ?? null;
+    void Promise.resolve(
+      db.from('audit_events').insert({
+        event_type: 'integration.docusign_disconnected',
+        event_category: 'SECURITY',
+        actor_id: userId,
+        org_id: orgId,
+        target_type: 'integration',
+        target_id: integrationId,
+        details: JSON.stringify({ provider: Provider, integration_id: integrationId }),
+      }),
+    ).then(({ error: auditErr }) => {
+      if (auditErr) logger.error({ error: auditErr, orgId }, 'Failed to write DocuSign disconnect audit event');
+    }).catch((err: unknown) => {
+      logger.error({ error: err, orgId }, 'Failed to write DocuSign disconnect audit event (transport)');
     });
 
     res.json({ disconnected: true });

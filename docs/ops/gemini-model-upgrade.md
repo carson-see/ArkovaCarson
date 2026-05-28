@@ -1,6 +1,20 @@
 # Ops Runbook: Gemini Model Version Upgrade
 
-> **GME-20** | Last updated: 2026-04-12 | Owner: Engineering
+> **GME-20** | Last updated: 2026-05-27 | Owner: Engineering
+
+## Incident history
+
+- **2026-05-27 (SCRUM-1993):** Emergency revert of `generation` + `vision`
+  pins from `gemini-3-flash-preview` back to the stable GA `gemini-2.5-flash`.
+  The preview SKU (pinned 2026-04-12, never re-verified) breached the worker's
+  4500ms latency budget on ~100% of extraction calls from 2026-05-15 onward, so
+  every extraction silently fell to the heuristic fast-fallback (no AI metadata).
+  Hotfix applied first via Cloud Run env var (`GEMINI_MODEL=gemini-2.5-flash`,
+  rev `arkova-worker-00630-bmr`), then made durable in code. **`gemini-2.5-flash`
+  sunsets 2026-06-17** — SCRUM-1951 owns the eval-validated upgrade to a GA
+  `gemini-3` model before that date. Lesson: a `verifiedAt` equal to `pinnedAt`
+  (same-day) means the pin was never independently validated — treat that as a
+  monitoring gap, and wire a fast-fallback-rate alarm so silent degradation pages.
 
 ## When to Use
 

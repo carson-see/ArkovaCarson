@@ -887,15 +887,161 @@ export const VERIFICATION_DISPLAY_LABELS = {
 // =============================================================================
 
 export const PUBLIC_ATTESTATION_VERIFY_LABELS = {
+  BRAND: 'Arkova',
+  SIGN_IN: 'Sign in',
+  PAGE_TITLE: 'Attestation Verification',
+  PAGE_SUBTITLE: 'Verify the authenticity and status of an attestation',
+  VERIFYING: 'Verifying attestation...',
+  NOT_FOUND: 'Attestation Not Found',
+  TRY_ANOTHER: 'Try Another Verification',
+  EXPIRED_NOTICE: 'This attestation has expired',
+  REVOKED_NOTICE: 'This attestation has been revoked',
+  REASON_PREFIX: 'Reason:',
+  DETAILS_TITLE: 'Attestation Details',
+  EVIDENCE_PREFIX: 'Evidence:',
   EVIDENCE: 'Evidence',
   LINKED_CREDENTIAL: 'Linked Credential',
   ATTESTOR_CREDENTIAL_CHAIN: 'Attestor Credential Chain',
   VERIFY_CREDENTIAL: 'Verify Credential',
   VERIFY: 'Verify',
   BYTES_SUFFIX: ' bytes',
+  FOOTER_TAGLINE: 'Arkova — Secure document verification platform',
+  FOOTER_PRIVACY: 'Privacy',
+  FOOTER_TERMS: 'Terms',
 } as const;
 
 export const EVIDENCE_PAYLOAD_ERROR = 'Evidence metadata is invalid. Check fingerprints, file names, and descriptions.';
+
+// =============================================================================
+// ATTESTATION UI (SCRUM-1874 — DocuSign integration attestation display)
+// =============================================================================
+
+export const ATTESTATION_LABELS = {
+  // Status card
+  STATUS_CARD_TITLE: 'Attestation Status',
+  STATUS_DRAFT: 'Draft',
+  STATUS_DRAFT_DESC: 'This attestation is in draft and has not been submitted.',
+  STATUS_PENDING: 'Pending',
+  STATUS_PENDING_DESC: 'This attestation has been submitted and is awaiting network confirmation.',
+  STATUS_ACTIVE: 'Active',
+  STATUS_ACTIVE_DESC: 'This attestation is verified and currently active.',
+  STATUS_REVOKED: 'Revoked',
+  STATUS_REVOKED_DESC: 'This attestation has been revoked and is no longer valid.',
+  STATUS_EXPIRED: 'Expired',
+  STATUS_EXPIRED_DESC: 'This attestation has passed its expiration date.',
+  STATUS_CHALLENGED: 'Challenged',
+  STATUS_CHALLENGED_DESC: 'This attestation has been challenged and is under review.',
+
+  // Notarization badge
+  NOTARIZED: 'Notarized',
+  NOTARIZED_VIA_DOCUSIGN: 'Notarized via DocuSign',
+  NOTARIZATION_PENDING: 'Notarization Pending',
+  NOTARIZATION_COMPLETED: 'Notarization Completed',
+  NOTARY_NAME: 'Notary',
+  NOTARY_COMMISSION: 'Commission',
+  NOTARY_STATE: 'State',
+  NOTARIZED_ON: 'Notarized on',
+  ENVELOPE_ID: 'Envelope ID',
+  ESIGN_COMPLETED: 'E-Signature Completed',
+  ESIGN_COMPLETED_ON: 'Completed on',
+
+  // Verification result
+  VERIFICATION_RESULT_TITLE: 'Verification Result',
+  VERIFICATION_PASSED: 'Verification Passed',
+  VERIFICATION_PASSED_DESC: 'This attestation has been verified against the network record.',
+  VERIFICATION_FAILED: 'Verification Failed',
+  VERIFICATION_FAILED_DESC: 'This attestation could not be verified against the network record.',
+  VERIFICATION_PENDING: 'Verification Pending',
+  VERIFICATION_PENDING_DESC: 'Network confirmation is in progress. Check back shortly.',
+  NETWORK_RECEIPT: 'Network Receipt',
+  NETWORK_CHECKPOINT: 'Network Checkpoint',
+  NETWORK_OBSERVED_TIME: 'Network Observed Time',
+  FINGERPRINT: 'Document Fingerprint',
+  COPY_FINGERPRINT: 'Copy fingerprint',
+  COPY_RECEIPT: 'Copy network receipt',
+  COPIED: 'Copied',
+
+  // Detail labels
+  ATTESTATION_TYPE: 'Attestation Type',
+  SUBJECT: 'Subject',
+  ATTESTER: 'Attester',
+  ATTESTER_TYPE: 'Attester Type',
+  JURISDICTION: 'Jurisdiction',
+  CLAIMS: 'Claims',
+  SUMMARY: 'Summary',
+  ISSUED: 'Issued',
+  EXPIRES: 'Expires',
+  CREATED: 'Created',
+  PUBLIC_ID: 'Verification ID',
+  EVIDENCE_COUNT: 'Supporting Evidence',
+  VIEW_VERIFICATION: 'View Verification',
+
+  // Empty state
+  NO_ATTESTATIONS: 'No attestations yet',
+  NO_ATTESTATIONS_DESC: 'Create an attestation to verify, endorse, or audit a credential.',
+  CREATE_ATTESTATION: 'Create Attestation',
+
+  // Page chrome
+  PAGE_TITLE: 'Attestations',
+  PAGE_SUBTITLE: 'Create and manage immutable attestations anchored to the network',
+  CREATE_PORTFOLIO: 'Create Portfolio',
+  BULK_ISSUE: 'Bulk Issue',
+  NEW_ATTESTATION: 'New Attestation',
+  CREATE_NEW_ATTESTATION: 'Create New Attestation',
+  YOUR_ATTESTATIONS: 'Your Attestations',
+  EMPTY_CTA: 'Create your first attestation to anchor a verifiable claim',
+
+  // Form labels
+  SUBJECT_TYPE: 'Subject Type',
+  SUBJECT_REQUIRED: 'Subject *',
+  SUBJECT_HINT: 'What is being attested (auto-generates ID like ARK-UMI-VER-A3F2B1)',
+  ATTESTER_NAME_REQUIRED: 'Attester Name *',
+  TITLE_ROLE: 'Title / Role',
+  CLAIMS_REQUIRED: 'Claims *',
+  ADD_CLAIM: 'Add Claim',
+  EXPIRES_AT_OPTIONAL: 'Expires At (optional)',
+  CREATING: 'Creating...',
+
+  // Form placeholders
+  PLACEHOLDER_ATTESTER_NAME: 'Your name or organization',
+  PLACEHOLDER_TITLE: 'e.g., General Counsel, CPA',
+  PLACEHOLDER_CLAIM: 'Claim statement',
+  PLACEHOLDER_EVIDENCE: 'Supporting evidence (optional)',
+  PLACEHOLDER_SUMMARY: 'Brief description of this attestation',
+  PLACEHOLDER_JURISDICTION: 'e.g., US, EU, UK',
+
+  // Subject type options
+  SUBJECT_CREDENTIAL: 'Credential',
+  SUBJECT_ENTITY: 'Entity / Organization',
+  SUBJECT_PROCESS: 'Process / Procedure',
+  SUBJECT_ASSET: 'Asset / Document',
+
+  // Templates
+  TEMPLATE_PROMPT: 'Choose a template or create a custom attestation',
+  TEMPLATE_EMPLOYMENT: 'Employment Verification',
+  TEMPLATE_EMPLOYMENT_DESC: 'Verify employment dates, title, and status',
+  TEMPLATE_EDUCATION: 'Education Credential',
+  TEMPLATE_EDUCATION_DESC: 'Issue tamper-proof degree or certification',
+  TEMPLATE_CUSTOM: 'Custom Attestation',
+  TEMPLATE_CUSTOM_DESC: 'Create any type of attestation',
+
+  // Revoke dialog
+  REVOKE: 'Revoke',
+  REVOKE_TITLE: 'Revoke Attestation',
+  REVOKE_WARNING: 'This action is permanent. The attestation will be marked as revoked and its verification status will reflect this change.',
+  REVOKE_REASON_LABEL: 'Reason for Revocation *',
+  REVOKE_REASON_HINT: 'Minimum 3 characters required',
+  REVOKE_REASON_PLACEHOLDER: 'Describe why this attestation is being revoked',
+  REVOKE_CONFIRM_LABEL: 'to confirm',
+  REVOKING: 'Revoking...',
+
+  // Table headers
+  TABLE_ID: 'ID',
+  TABLE_SUBJECT: 'Subject',
+  TABLE_ATTESTER: 'Attester',
+  TABLE_STATUS: 'Status',
+  TABLE_CREATED: 'Created',
+} as const;
 
 // =============================================================================
 // MY CREDENTIALS / RECIPIENT INBOX (UF-03)
@@ -1157,6 +1303,10 @@ export const CONNECTIONS_LABELS = {
   TOAST_DISCONNECTED: 'DocuSign disconnected.',
   TOAST_ERROR_PREFIX: 'DocuSign connection failed: ',
   ACCOUNT_LABEL_PREFIX: 'Account: ',
+  MEMBER_DOCUSIGN_NAME: 'Personal DocuSign',
+  MEMBER_DOCUSIGN_DESC: 'Connect your personal DocuSign account for member-level signing',
+  MEMBER_TOAST_CONNECTED: 'DocuSign connected.',
+  MEMBER_TOAST_DISCONNECTED: 'Personal DocuSign disconnected.',
 } as const;
 
 // =============================================================================

@@ -41,6 +41,7 @@ queue_rules:
     queue_conditions:
       - -draft
       - label = hotfix
+      - "#changes-requested-reviews-by = 0"
     merge_conditions:
       # All 13 required status checks from branch protection
       - check-success = TypeCheck & Lint
@@ -56,7 +57,7 @@ queue_rules:
       - check-success = AI Eval Regression Gate
       - check-success = SonarCloud Code Analysis
       - check-success = E2E Tests
-      # Staging soak gate (CLAUDE.md §1.11)
+      # Risk-tiered staging evidence gate (CLAUDE.md §1.11)
       - check-success = Staging Soak Evidence Gate
     merge_method: merge
     batch_size: 1
@@ -65,8 +66,11 @@ queue_rules:
     queue_conditions:
       - -draft
       - -label = work-in-progress
-      # Staging soak must pass before entering queue — no point queuing
-      # a PR that hasn't completed its soak period yet
+      - -label = do-not-merge
+      - -label = hotfix
+      - "#changes-requested-reviews-by = 0"
+      # Staging evidence must pass before entering queue. T0/T1 can move fast,
+      # while T2/T3 must complete merge-grade evidence before queueing.
       - check-success = Staging Soak Evidence Gate
     merge_conditions:
       - check-success = TypeCheck & Lint
@@ -107,6 +111,8 @@ pull_request_rules:
       - -draft
       - -label = work-in-progress
       - -label = do-not-merge
+      - -label = hotfix
+      - "#changes-requested-reviews-by = 0"
       - check-success = Staging Soak Evidence Gate
     actions:
       queue:

@@ -163,7 +163,7 @@ export const checks: Check[] = [
         detail: ok ? "service-account context present" : "no GOOGLE_APPLICATION_CREDENTIALS / K_SERVICE / GCP_KMS_PROJECT_ID",
       };
     },
-    remediation: "Locally: `gcloud auth application-default login`. On Cloud Run: Workload Identity auto-mounts.",
+    remediation: "Use GitHub Workload Identity Federation, Cloud Run service identity, or enterprise external-account ADC. Do not use local interactive gcloud auth for worker operations.",
   },
   {
     name: "jira",

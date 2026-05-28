@@ -1,0 +1,32 @@
+[2026-05-27T17:04:38Z] Starting PR #927 soak: 200 iterations, 5s delay
+[2026-05-27T17:04:38Z] Worker: https://arkova-worker-pr840-staging-kvojbeutfa-uc.a.run.app
+[2026-05-27T17:04:38Z] Phase 1: Security edge cases
+[2026-05-27T17:04:38Z] OK bad HMAC rejected: 401
+[2026-05-27T17:04:39Z] OK duplicate detection: first=202, replay=200
+[2026-05-27T17:04:39Z] Phase 2: Synthetic load (200 iterations)
+[2026-05-27T17:05:32Z] Progress: 10/200 — ok=21 fail=0
+[2026-05-27T17:05:48Z] FAIL webhook #13: HTTP 500
+[2026-05-27T17:05:54Z] FAIL webhook #14: HTTP 500
+[2026-05-27T17:06:30Z] Progress: 20/200 — ok=37 fail=2
+[2026-05-27T17:07:28Z] Progress: 30/200 — ok=55 fail=2
+[2026-05-27T17:08:26Z] Progress: 40/200 — ok=73 fail=2
+[2026-05-27T17:09:24Z] Progress: 50/200 — ok=91 fail=2
+[2026-05-27T17:10:23Z] Progress: 60/200 — ok=109 fail=2
+[2026-05-27T17:11:22Z] Progress: 70/200 — ok=127 fail=2
+[2026-05-27T17:12:22Z] Progress: 80/200 — ok=145 fail=2
+[2026-05-27T17:13:20Z] Progress: 90/200 — ok=163 fail=2
+[2026-05-27T17:14:19Z] Progress: 100/200 — ok=181 fail=2
+[2026-05-27T17:15:19Z] Progress: 110/200 — ok=199 fail=2
+[2026-05-27T17:16:17Z] Progress: 120/200 — ok=217 fail=2
+[2026-05-27T17:17:15Z] Progress: 130/200 — ok=235 fail=2
+[2026-05-27T17:18:14Z] Progress: 140/200 — ok=253 fail=2
+[2026-05-27T17:19:12Z] Progress: 150/200 — ok=271 fail=2
+[2026-05-27T17:20:10Z] Progress: 160/200 — ok=289 fail=2
+[2026-05-27T17:21:08Z] Progress: 170/200 — ok=307 fail=2
+[2026-05-27T17:22:06Z] Progress: 180/200 — ok=325 fail=2
+[2026-05-27T17:23:04Z] Progress: 190/200 — ok=343 fail=2
+[2026-05-27T17:24:02Z] Progress: 200/200 — ok=361 fail=2
+[2026-05-27T17:24:07Z] Phase 3: Final cron trigger
+[2026-05-27T17:24:08Z] === SOAK COMPLETE ===
+[2026-05-27T17:24:08Z] Total: 367, OK: 365, FAIL: 2
+[2026-05-27T17:24:08Z] STATUS: FAILED
