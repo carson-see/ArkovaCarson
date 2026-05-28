@@ -32,3 +32,5 @@ Background workers for anchor lifecycle, billing reconciliation, drive ingestion
 - SCRUM-1736 (PR #734) — anchorExpirySweep producer; awaiting Carson merge + Mon 2026-05-11 deploy.
 - SCRUM-1737 [Verify] — HakiChain receiver round-trip + Tier 3 48h soak post-merge.
 - SCRUM-1738 [Close-out] — Confluence Webhooks topic page update post-merge.
+- SCRUM-2040 — `nonce-sweep.ts` sweeps all 4 webhook nonce tables (14-day retention). Migration 0316 adds `sweep_webhook_nonces` RPC (service_role only, REVOKE PUBLIC). Cron route `/nonce-sweep` in `cron.ts`. Scheduler: daily 04:00 UTC.
+- SCRUM-2041 — `connector-health-alert.ts` pure decision function + `runConnectorHealthCheck(db)`. Fires Sentry alerts on connector state transitions (connected/degraded/disconnected), 1h cooldown, recovery notifications. Migration 0317 adds `connector_alert_state` table (RLS deny-all for anon+authenticated). Scheduler: every 15 min. **V1 limitation:** classifies health from `revoked_at` only — does not use `classify()` from `connector-health.ts` for degraded states (subscription_expiry, processing_failure). Future work to integrate full health inputs.
