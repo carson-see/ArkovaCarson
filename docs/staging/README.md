@@ -83,7 +83,7 @@ npm run staging:load -- --mode steady --rate 50 --duration 30   # T1 smoke
 ## What goes in `## Staging Soak Evidence`
 
 Use [PR_TEMPLATE.md](./PR_TEMPLATE.md). Fields are line-anchored, so format matters — `Tier: T3` works, `tier=T3` does not.
-T1 is the only expedited path and still requires exact PR head SHA, staging tag URL or N/A explanation, health/smoke result, CI/E2E green, rollback plan, risk rationale, and human approver. The checker rejects T1 for migrations, public API contracts, auth, billing, anchoring, worker behavior, queues/concurrency, chain/treasury, and security-sensitive paths.
+T1 is the only expedited path and still requires a 2-hour smoke window, exact PR head SHA, staging tag URL or N/A explanation, health/smoke result, CI/E2E green, rollback plan, risk rationale, and human approver. The checker rejects T1 for migrations, public API contracts, auth, billing, anchoring, worker behavior, queues/concurrency, chain/treasury, and security-sensitive paths.
 
 ## Cost controls
 
