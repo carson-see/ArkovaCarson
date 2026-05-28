@@ -137,6 +137,11 @@ describe('check-staging-evidence', () => {
       expect(requiredTierFor(['services/worker/src/security/audit.ts']).tier).toBe('T3');
     });
 
+    it('treats worker deploy config as T2 production runtime surface', () => {
+      expect(requiredTierFor(['.github/workflows/deploy-worker.yml']).tier).toBe('T2');
+      expect(requiredTierFor(['services/worker/cloudbuild.yaml']).tier).toBe('T2');
+    });
+
     it('excludes staging-tooling files from tier calculation', () => {
       expect(
         requiredTierFor(['services/worker/src/webhooks/agents.md']).tier,
@@ -499,6 +504,15 @@ describe('check-staging-evidence', () => {
     it('fails for services/worker/package.json (prod dependency bump requires soak)', () => {
       expect(
         isStagingToolingOnly(['services/worker/package.json']).pass,
+      ).toBe(false);
+    });
+
+    it('fails for worker deploy config because it affects production runtime', () => {
+      expect(
+        isStagingToolingOnly(['.github/workflows/deploy-worker.yml']).pass,
+      ).toBe(false);
+      expect(
+        isStagingToolingOnly(['services/worker/cloudbuild.yaml']).pass,
       ).toBe(false);
     });
 
