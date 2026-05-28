@@ -188,6 +188,16 @@ export const PATH_RULES: PathRule[] = [
     reason: 'edge worker',
   },
   {
+    pattern: /^\.github\/workflows\/deploy-worker\.yml$/,
+    minTier: 'T2',
+    reason: 'worker deploy config (prod runtime: min-instances, env, secrets, image)',
+  },
+  {
+    pattern: /^services\/worker\/cloudbuild\.yaml$/,
+    minTier: 'T2',
+    reason: 'worker image build config',
+  },
+  {
     pattern: /^services\/worker\/src\/auth\//,
     minTier: 'T2',
     reason: 'auth-sensitive worker logic',
@@ -238,8 +248,10 @@ const DOCS_ONLY_RE = /^(?:docs\/|README\.md|ARKOVA_WORKSPACE_README\.md|WORKSPAC
 
 function isT0OnlyFile(file: string): boolean {
   if (PUBLIC_CONTRACT_DOC_RE.test(file)) return false;
-  return TEST_FILE_RE.test(file)
-    || STAGING_TOOLING_ALLOW.some((re) => re.test(file))
+  if (TEST_FILE_RE.test(file) || /agents\.md$/.test(file)) return true;
+  if (/^(?:package-lock\.json|packages\/[^/]+\/package-lock\.json|services\/[^/]+\/package-lock\.json)$/.test(file)) return true;
+  if (PATH_RULES.some((rule) => rule.pattern.test(file))) return false;
+  return STAGING_TOOLING_ALLOW.some((re) => re.test(file))
     || DOCS_ONLY_RE.test(file)
     || /^\.github\/(?:workflows\/|ISSUE_TEMPLATE\/|pull_request_template\.md|CONTRIBUTING\.md|dependabot\.yml)/.test(file);
 }
@@ -570,8 +582,6 @@ const STAGING_TOOLING_ALLOW = [
   /^\.github\/workflows\/ci\.yml$/,
   /^\.github\/workflows\/staging-evidence\.yml$/,
   /^\.github\/workflows\/deploy-staging\.yml$/,
-  /^\.github\/workflows\/deploy-worker\.yml$/,
-  /^services\/worker\/cloudbuild\.yaml$/,
   /^\.mergify\.yml$/,
   /^CLAUDE\.md$/,
   /^HANDOFF\.md$/,
