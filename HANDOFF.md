@@ -14,6 +14,23 @@
 
 ## Now
 
+### 2026-05-28 — PR #924 SOC 2 hardening: CI green, awaiting merge
+
+**PR:** [#924](https://github.com/carson-see/ArkovaCarson/pull/924) on `fix/scrum-2039-2040-2041-soc2-hardening` (13 commits). All required CI checks green (only Vercel email-mismatch fails — pre-existing, non-blocking).
+
+**Stories:** SCRUM-2039 (DocuSign disconnect audit), SCRUM-2040 (nonce sweep), SCRUM-2041 (connector health alerting). Migrations 0316 + 0317. Two new cron routes. Cloud Scheduler entries for nonce-sweep (daily 04:00 UTC) and connector-health-check (every 15 min). Fixed scheduler path bug: `/cron/` → `/jobs/` for 3 entries.
+
+**Code review fix (2026-05-28):** connector-health-check now fail-closes on state read/persist errors (was silently returning ok:true). Alert state read failure throws; upsert failure returns ok:false + 500.
+
+**CI gate enhancement:** `check-staging-evidence.ts` now supports residual-risk exceptions via structured `### Residual-risk note` section (5 required sub-fields). Implements CLAUDE.md §1.11A escape valve.
+
+**Staging soak:** T2 12h soak PASS (cron 720/720, 0% error, 115k requests at 2.7/s). Rollback rehearsed for both migrations. Residual-risk exception for staging `soak_artifact` contamination (7 concurrent PR leases prevented cleanup).
+
+**Post-merge TODO:** Jira transitions (SCRUM-2039/2040/2041 → Done) + Confluence pages.
+
+_Last refreshed: 2026-05-28 by Claude — claims verified against `gh pr checks 924` (all required green), `git log` (13 commits), CI run 26572327599 (staging gate SUCCESS)._
+
+---
 ### 2026-05-25 — 96-hour sprint: 23 PRs merged, worker redeployed
 
 **Window:** 2026-05-21 through 2026-05-25. 23 PRs merged to `main`. Final production revision built from git_sha `5874a96c` (merge commit of PR #859). Worker healthy: database ok, anchoring ok, kms ok. Edge worker (edge.arkova.ai) redeployed with MCP search tool fixes.
