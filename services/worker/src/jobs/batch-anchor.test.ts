@@ -20,6 +20,8 @@ const {
   mockLogger,
   setUpdateResult,
   _setUpdateResultQueue,
+  setSelectResult,
+  getSelectResult,
 } = vi.hoisted(() => {
   const mockSubmitFingerprint = vi.fn();
   const mockEstimateCurrentFee = vi.fn();
@@ -60,6 +62,10 @@ const {
     error: vi.fn(),
     debug: vi.fn(),
   };
+  let selectResult: Record<string, unknown> = { data: [], error: null };
+  const setSelectResult = (result: Record<string, unknown>) => {
+    selectResult = result;
+  };
 
   return {
     mockSubmitFingerprint,
@@ -71,6 +77,8 @@ const {
     mockLogger,
     setUpdateResult,
     _setUpdateResultQueue: setUpdateResultQueue,
+    setSelectResult,
+    getSelectResult: () => selectResult,
   };
 });
 
@@ -122,7 +130,7 @@ vi.mock('../utils/db.js', () => {
     error: null,
   });
   selectChain.then = (resolve?: (v: unknown) => unknown, reject?: (e: unknown) => unknown) => (
-    Promise.resolve({ data: [], error: null }).then(resolve, reject)
+    Promise.resolve(getSelectResult()).then(resolve, reject)
   );
 
   return {
@@ -234,6 +242,7 @@ describe('processBatchAnchors', () => {
       estimateCurrentFee: mockEstimateCurrentFee,
     });
     setUpdateResult({ error: null, count: 1 });
+    setSelectResult({ data: [], error: null });
   });
 
   // ---- No pending anchors ----
@@ -526,6 +535,36 @@ describe('processBatchAnchors', () => {
     expect(mockSubmitFingerprint).toHaveBeenCalledTimes(1);
   });
 
+  it('does not broadcast when queue credit metadata fails schema validation', async () => {
+    mockPendingBacklogReady();
+    mockDbRpc
+      .mockResolvedValueOnce({ data: [DOCUSIGN_QUEUE_ANCHOR], error: null }) // claim
+      .mockResolvedValueOnce({ data: { success: true, balance: Number.NaN, deducted: 1 }, error: null }) // deduct_org_credit
+      .mockResolvedValueOnce({ data: { success: true }, error: null }); // refund_org_credit
+
+    const result = await processBatchAnchors({
+      force: true,
+      orgId: DOCUSIGN_QUEUE_ANCHOR.org_id,
+    });
+
+    expect(result).toEqual({ processed: 0, batchId: null, merkleRoot: null, txId: null });
+    expect(mockSubmitFingerprint).not.toHaveBeenCalled();
+    expect(mockDbRpc).not.toHaveBeenCalledWith('submit_batch_anchors', expect.anything());
+    expect(mockAnchorsUpdate).toHaveBeenCalledWith(expect.objectContaining({
+      status: 'PENDING',
+      metadata: expect.objectContaining({
+        credit_denial_reason: 'credit_metadata_update_failed',
+      }),
+    }));
+    expect(mockLogger.error).toHaveBeenCalledWith(
+      expect.objectContaining({
+        anchorId: DOCUSIGN_QUEUE_ANCHOR.id,
+        metadataContext: 'queue_credit_charged',
+      }),
+      'Queue-run credit metadata failed schema validation',
+    );
+  });
+
   it('keeps credit-denied DocuSign queue items pending when org credits are insufficient', async () => {
     mockPendingBacklogReady();
     mockDbRpc
@@ -574,6 +613,36 @@ describe('processBatchAnchors', () => {
     expect(mockDbRpc).not.toHaveBeenCalledWith('deduct_org_credit', expect.anything());
     expect(mockDbRpc).toHaveBeenCalledWith('submit_batch_anchors', expect.objectContaining({
       p_anchor_ids: [DOCUSIGN_PAID_FAST_TRACK_ANCHOR.id],
+    }));
+  });
+
+  it('enforces DocuSign queue-run credits in the legacy claim-RPC fallback path', async () => {
+    mockPendingBacklogReady();
+    mockDbRpc
+      .mockResolvedValueOnce({
+        data: null,
+        error: {
+          code: 'PGRST202',
+          message: 'Could not find the function public.claim_pending_anchors in the schema cache',
+        },
+      }) // claim_pending_anchors
+      .mockResolvedValueOnce({ data: { success: true, balance: 3, deducted: 1 }, error: null }) // deduct_org_credit
+      .mockResolvedValueOnce({ data: 1, error: null }); // submit_batch_anchors
+    setSelectResult({ data: [DOCUSIGN_QUEUE_ANCHOR], error: null });
+
+    const result = await processBatchAnchors({
+      force: true,
+      orgId: DOCUSIGN_QUEUE_ANCHOR.org_id,
+    });
+
+    expect(result.processed).toBe(1);
+    expect(mockDbRpc).toHaveBeenCalledWith('deduct_org_credit', expect.objectContaining({
+      p_org_id: DOCUSIGN_QUEUE_ANCHOR.org_id,
+      p_reason: 'rule.auto_anchor_queue_run',
+      p_reference_id: DOCUSIGN_QUEUE_ANCHOR.id,
+    }));
+    expect(mockDbRpc).toHaveBeenCalledWith('submit_batch_anchors', expect.objectContaining({
+      p_anchor_ids: [DOCUSIGN_QUEUE_ANCHOR.id],
     }));
   });
 

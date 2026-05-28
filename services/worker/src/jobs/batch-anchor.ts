@@ -14,6 +14,7 @@
  *   - 1.9: ENABLE_BATCH_ANCHORING gates batch processing
  */
 
+import { z } from 'zod';
 import { db, withDbTimeout } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
 import { getChainClientAsync } from '../chain/client.js';
@@ -21,6 +22,7 @@ import { buildMerkleTree } from '../utils/merkle.js';
 import { getComplianceControlIds } from '../utils/complianceMapping.js';
 import { config } from '../config.js';
 import { deductOrgCredit, type DeductionResult } from '../utils/orgCredits.js';
+import type { Json } from '../types/database.types.js';
 
 /**
  * Max anchors per batch transaction (BTC-001).
@@ -92,6 +94,44 @@ interface ClaimedAnchor {
 interface ChargedQueueAnchor {
   id: string;
   orgId: string;
+}
+
+const QueueAnchorMetadataSchema = z.object({
+  credit_denial_reason: z.string().nullable().optional(),
+  queue_credit_source: z.literal('org_credits').optional(),
+  queue_credit_reason: z.string().min(1).optional(),
+  queue_credit_charged_at: z.string().min(1).optional(),
+  queue_credit_balance_after: z.number().finite().nullable().optional(),
+  queue_credit_denied_at: z.string().min(1).optional(),
+  queue_credit_required: z.number().finite().nonnegative().optional(),
+  queue_credit_balance: z.number().finite().nullable().optional(),
+}).passthrough();
+
+function sanitizedZodIssues(issues: z.ZodIssue[]): Array<{ code: string; path: string[] }> {
+  return issues.map((issue) => ({
+    code: issue.code,
+    path: issue.path.map(String),
+  }));
+}
+
+function validateQueueAnchorMetadata(
+  anchor: ClaimedAnchor,
+  metadata: Record<string, unknown>,
+  metadataContext: string,
+): Record<string, unknown> | null {
+  const parsed = QueueAnchorMetadataSchema.safeParse(metadata);
+  if (parsed.success) return parsed.data;
+
+  logger.error(
+    {
+      anchorId: anchor.id,
+      orgId: anchor.org_id,
+      metadataContext,
+      issues: sanitizedZodIssues(parsed.error.issues),
+    },
+    'Queue-run credit metadata failed schema validation',
+  );
+  return null;
 }
 
 function claimErrorSummary(error: unknown): string {
@@ -196,22 +236,25 @@ async function markQueueCreditCharged(
   anchor: ClaimedAnchor,
   reason: string,
   deduction: DeductionResult,
+  expectedStatus: 'BROADCASTING' | 'PENDING' = 'BROADCASTING',
 ): Promise<boolean> {
   const metadata = readMetadata(anchor.metadata);
-  const nextMetadata = {
+  const nextMetadata = validateQueueAnchorMetadata(anchor, {
     ...metadata,
     credit_denial_reason: null,
     queue_credit_source: 'org_credits',
     queue_credit_reason: reason,
     queue_credit_charged_at: new Date().toISOString(),
     queue_credit_balance_after: deduction.balance ?? null,
-  };
+  }, 'queue_credit_charged');
+
+  if (!nextMetadata) return false;
 
   const { error } = await db
     .from('anchors')
-    .update({ metadata: nextMetadata })
+    .update({ metadata: nextMetadata as Json })
     .eq('id', anchor.id)
-    .eq('status', 'BROADCASTING');
+    .eq('status', expectedStatus);
 
   if (error) {
     logger.error(
@@ -227,24 +270,27 @@ async function releaseQueueCreditDeniedAnchor(
   anchor: ClaimedAnchor,
   reason: string,
   deduction?: DeductionResult,
+  expectedStatus: 'BROADCASTING' | 'PENDING' = 'BROADCASTING',
 ): Promise<void> {
   const metadata = clearClaimMetadata(readMetadata(anchor.metadata));
-  const nextMetadata = {
+  const nextMetadata = validateQueueAnchorMetadata(anchor, {
     ...metadata,
     credit_denial_reason: reason,
     queue_credit_denied_at: new Date().toISOString(),
     queue_credit_required: deduction?.required ?? 1,
     queue_credit_balance: deduction?.balance ?? null,
-  };
+  }, 'queue_credit_denied');
+
+  if (!nextMetadata) return;
 
   const { error } = await db
     .from('anchors')
     .update({
       status: 'PENDING' as const,
-      metadata: nextMetadata,
+      metadata: nextMetadata as Json,
     })
     .eq('id', anchor.id)
-    .eq('status', 'BROADCASTING');
+    .eq('status', expectedStatus);
 
   if (error) {
     logger.error(
@@ -256,6 +302,7 @@ async function releaseQueueCreditDeniedAnchor(
 
 async function applyQueueRunCreditGate(
   claimedAnchors: ClaimedAnchor[],
+  expectedStatus: 'BROADCASTING' | 'PENDING' = 'BROADCASTING',
 ): Promise<{ eligibleAnchors: ClaimedAnchor[]; chargedAnchors: ChargedQueueAnchor[] }> {
   const eligibleAnchors: ClaimedAnchor[] = [];
   const chargedAnchors: ChargedQueueAnchor[] = [];
@@ -268,7 +315,7 @@ async function applyQueueRunCreditGate(
     }
 
     if (!anchor.org_id) {
-      await releaseQueueCreditDeniedAnchor(anchor, 'missing_org_id');
+      await releaseQueueCreditDeniedAnchor(anchor, 'missing_org_id', undefined, expectedStatus);
       continue;
     }
 
@@ -280,7 +327,7 @@ async function applyQueueRunCreditGate(
         { error: err, anchorId: anchor.id, orgId: anchor.org_id, reason },
         'Queue-run credit deduction threw',
       );
-      await releaseQueueCreditDeniedAnchor(anchor, 'credit_rpc_failure');
+      await releaseQueueCreditDeniedAnchor(anchor, 'credit_rpc_failure', undefined, expectedStatus);
       continue;
     }
 
@@ -291,15 +338,16 @@ async function applyQueueRunCreditGate(
           ? 'insufficient_credits'
           : deduction.error ?? 'credit_denied',
         deduction,
+        expectedStatus,
       );
       continue;
     }
 
     if (deduction.reason !== 'feature_disabled') {
-      const marked = await markQueueCreditCharged(anchor, reason, deduction);
+      const marked = await markQueueCreditCharged(anchor, reason, deduction, expectedStatus);
       if (!marked) {
         await refundQueueRunCredits([{ id: anchor.id, orgId: anchor.org_id }], 'queue credit metadata update failed');
-        await releaseQueueCreditDeniedAnchor(anchor, 'credit_metadata_update_failed');
+        await releaseQueueCreditDeniedAnchor(anchor, 'credit_metadata_update_failed', undefined, expectedStatus);
         continue;
       }
       chargedAnchors.push({ id: anchor.id, orgId: anchor.org_id });
@@ -902,7 +950,7 @@ async function bulkRevertToPending(anchorIds: string[]): Promise<void> {
 async function legacyProcessBatchAnchors(orgId?: string): Promise<BatchAnchorResult> {
   let pendingQuery = db
     .from('anchors')
-    .select('id, fingerprint, metadata, credential_type')
+    .select('id, fingerprint, metadata, credential_type, org_id, user_id, public_id')
     .eq('status', 'PENDING')
     .is('deleted_at', null)
     .is('chain_tx_id', null);
@@ -921,7 +969,17 @@ async function legacyProcessBatchAnchors(orgId?: string): Promise<BatchAnchorRes
     return { processed: 0, batchId: null, merkleRoot: null, txId: null };
   }
 
-  const fingerprints = pendingAnchors.map((a) => a.fingerprint);
+  const { eligibleAnchors: broadcastAnchors, chargedAnchors } = await applyQueueRunCreditGate(
+    pendingAnchors as ClaimedAnchor[],
+    'PENDING',
+  );
+
+  if (broadcastAnchors.length < MIN_BATCH_SIZE) {
+    await refundQueueRunCredits(chargedAnchors, 'legacy batch below minimum after queue credit gate');
+    return { processed: 0, batchId: null, merkleRoot: null, txId: null };
+  }
+
+  const fingerprints = broadcastAnchors.map((a) => a.fingerprint);
   const tree = buildMerkleTree(fingerprints);
 
   let receipt;
@@ -933,11 +991,12 @@ async function legacyProcessBatchAnchors(orgId?: string): Promise<BatchAnchorRes
     });
   } catch (error) {
     logger.error({ error, merkleRoot: tree.root }, 'Legacy batch chain submission failed');
+    await refundQueueRunCredits(chargedAnchors, 'legacy chain submission failed');
     return { processed: 0, batchId: null, merkleRoot: tree.root, txId: null };
   }
 
-  const batchId = `batch_${Date.now()}_${pendingAnchors.length}`;
-  const anchorIds = pendingAnchors.map((a) => a.id);
+  const batchId = `batch_${Date.now()}_${broadcastAnchors.length}`;
+  const anchorIds = broadcastAnchors.map((a) => a.id);
 
   // Bulk update all anchors PENDING → SUBMITTED in one RPC call
   // (Individual PostgREST updates timeout under load — use DB-side bulk function)
@@ -956,7 +1015,7 @@ async function legacyProcessBatchAnchors(orgId?: string): Promise<BatchAnchorRes
     logger.warn({ error: bulkError }, 'submit_batch_anchors RPC failed in legacy path — falling back to individual updates');
     let updatedCount = 0;
 
-    for (const anchor of pendingAnchors) {
+    for (const anchor of broadcastAnchors) {
       const { error: updateError, count: updateCount } = await db
         .from('anchors')
         .update({
@@ -985,14 +1044,14 @@ async function legacyProcessBatchAnchors(orgId?: string): Promise<BatchAnchorRes
       updatedCount++;
     }
 
-    logger.info({ batchId, count: updatedCount, total: pendingAnchors.length, merkleRoot: tree.root, txId: receipt.receiptId }, 'Legacy batch anchor processing complete (fallback)');
+    logger.info({ batchId, count: updatedCount, total: broadcastAnchors.length, merkleRoot: tree.root, txId: receipt.receiptId }, 'Legacy batch anchor processing complete (fallback)');
     return { processed: updatedCount, batchId, merkleRoot: tree.root, txId: receipt.receiptId };
   }
 
-  const processed = typeof bulkCount === 'number' ? bulkCount : pendingAnchors.length;
+  const processed = typeof bulkCount === 'number' ? bulkCount : broadcastAnchors.length;
 
   logger.info(
-    { batchId, count: processed, total: pendingAnchors.length, merkleRoot: tree.root, txId: receipt.receiptId },
+    { batchId, count: processed, total: broadcastAnchors.length, merkleRoot: tree.root, txId: receipt.receiptId },
     'Legacy batch anchor processing complete',
   );
 

@@ -355,6 +355,7 @@ function extractAnchorQueueSource(exec: ExecutionRow): AnchorQueueSource | null 
   const senderEmailCandidate = normalizeHex64(input.sender_email_sha256);
   const senderEmailSha256 =
     senderEmailCandidate ?? (rawSenderEmail ? sha256Lower(rawSenderEmail) : null);
+  const accountIdSha256Candidate = normalizeHex64(payload.account_id_sha256);
   const accountId = readString(payload.account_id);
 
   return {
@@ -364,7 +365,7 @@ function extractAnchorQueueSource(exec: ExecutionRow): AnchorQueueSource | null 
     connectorSource: vendor,
     sourceEnvelopeId: readString(payload.envelope_id),
     senderEmailSha256,
-    accountIdSha256: accountId ? sha256Lower(accountId) : null,
+    accountIdSha256: accountIdSha256Candidate ?? (accountId ? sha256Lower(accountId) : null),
     fingerprintSource: fingerprint.source,
   };
 }

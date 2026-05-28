@@ -43,6 +43,8 @@ const EVENT = {
     account_id: 'acct-1',
     envelope_id: 'env-1',
     document_sha256: 'a'.repeat(64),
+    recipient_email: 'recipient@example.com',
+    raw_payload: { unsafe: 'keep me out' },
   },
 };
 
@@ -113,13 +115,19 @@ describe('runRulesEngine', () => {
             filename: 'msa.pdf',
             payload: expect.objectContaining({
               integration_id: 'int-1',
+              envelope_id: 'env-1',
               document_sha256: 'a'.repeat(64),
+              account_id_sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
             }),
           }),
         }),
       ],
       { onConflict: 'rule_id,trigger_event_id', ignoreDuplicates: true },
     );
+    const payload = mockUpsert.mock.calls[0][0][0].input_payload.payload;
+    expect(payload).not.toHaveProperty('account_id');
+    expect(payload).not.toHaveProperty('recipient_email');
+    expect(payload).not.toHaveProperty('raw_payload');
     expect(mockRpc).toHaveBeenCalledWith('complete_claimed_rule_events', {
       p_event_ids: [EVENT.id],
     });

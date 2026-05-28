@@ -481,6 +481,34 @@ describe('rule-action-dispatcher MVP (SCRUM-1142)', () => {
     expect(out.anchor_public_id).toBe('ARK-2026-ABCD1234');
   });
 
+  it('AUTO_ANCHOR (DS-07): accepts pre-hashed account metadata without raw account id retention', async () => {
+    const accountIdSha256 = 'b'.repeat(64);
+    setScenario({
+      executions: [
+        {
+          ...defaultExec,
+          input_payload: {
+            ...defaultExec.input_payload,
+            payload: {
+              source: 'docusign_connect',
+              integration_id: 'int-1',
+              account_id_sha256: accountIdSha256,
+              envelope_id: 'env-1',
+              document_sha256: 'a'.repeat(64),
+            },
+          },
+        },
+      ],
+      rule: { ...defaultRule, action_type: 'AUTO_ANCHOR', action_config: {} },
+    });
+
+    const result = await runRuleActionDispatcher();
+
+    expect(result.succeeded).toBe(1);
+    expect(dbState.anchorInserts[0].metadata.account_id_sha256).toBe(accountIdSha256);
+    expect(JSON.stringify(dbState.anchorInserts[0].metadata)).not.toContain('acct-1');
+  });
+
   it('FAST_TRACK_ANCHOR (DS-06) with credits: deducts via RPC and submits anchor job', async () => {
     setScenario({
       rule: { ...defaultRule, action_type: 'FAST_TRACK_ANCHOR', action_config: {} },

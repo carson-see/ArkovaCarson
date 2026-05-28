@@ -81,6 +81,42 @@ function sha256Lower(value: string): string {
   return crypto.createHash('sha256').update(value.trim().toLowerCase(), 'utf8').digest('hex');
 }
 
+function readString(value: unknown): string | null {
+  return typeof value === 'string' && value.trim().length > 0 ? value : null;
+}
+
+function normalizeHex64(value: unknown): string | null {
+  const candidate = readString(value);
+  return candidate && /^[a-f0-9]{64}$/i.test(candidate) ? candidate.toLowerCase() : null;
+}
+
+function sanitizeExecutionProviderPayload(payload: EventRow['payload']): Record<string, unknown> {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return {};
+
+  const sanitized: Record<string, unknown> = {};
+  for (const key of ['source', 'integration_id', 'envelope_id', 'file_id', 'external_file_id'] as const) {
+    const value = readString(payload[key]);
+    if (value) sanitized[key] = value;
+  }
+
+  for (const key of ['document_sha256', 'combined_document_sha256', 'sha256'] as const) {
+    const value = normalizeHex64(payload[key]);
+    if (value) sanitized[key] = value;
+  }
+
+  const documentHashes = Array.isArray(payload.document_hashes)
+    ? payload.document_hashes.map(normalizeHex64).filter((value): value is string => Boolean(value))
+    : [];
+  if (documentHashes.length > 0) sanitized.document_hashes = [...new Set(documentHashes)];
+
+  const accountId = readString(payload.account_id);
+  const accountIdSha256 = normalizeHex64(payload.account_id_sha256)
+    ?? (accountId ? sha256Lower(accountId) : null);
+  if (accountIdSha256) sanitized.account_id_sha256 = accountIdSha256;
+
+  return sanitized;
+}
+
 function buildExecutionInputPayload(insert: MatchInsert): Record<string, unknown> {
   const event = insert.event;
   return {
@@ -93,7 +129,7 @@ function buildExecutionInputPayload(insert: MatchInsert): Record<string, unknown
     folder_path: event.folder_path ?? null,
     subject: event.subject ?? null,
     sender_email_sha256: event.sender_email ? sha256Lower(event.sender_email) : null,
-    payload: event.payload ?? {},
+    payload: sanitizeExecutionProviderPayload(event.payload),
   };
 }
 
