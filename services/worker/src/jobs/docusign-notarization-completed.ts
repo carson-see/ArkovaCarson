@@ -221,7 +221,10 @@ export async function runDocusignNotarizationCompletedJobs(
     const processed = await processNextJob(
       DOCUSIGN_NOTARIZATION_COMPLETED_JOB_TYPE,
       async (job) => {
-        await processDocusignNotarizationCompletedJob(job.payload);
+        const jobResult = await processDocusignNotarizationCompletedJob(job.payload);
+        if (!jobResult.success) {
+          throw new Error(`notarization_${jobResult.reason ?? 'unknown'}`);
+        }
       },
     );
     if (!processed.claimed) break;

@@ -122,8 +122,25 @@ describe('POST /webhooks/docusign', () => {
     expect(submitJobMock).not.toHaveBeenCalled();
   });
 
-  it('returns 200 orphaned for a valid event from an unknown connected account', async () => {
-    // SCRUM-2044: dual-table lookup — both org and member tables return no match
+  it('returns 401 for unknown account when HMAC signature is invalid', async () => {
+    // SCRUM-2044: dual-table lookup — both org and member tables return no match.
+    // Even for unknown accounts, HMAC must be verified with the env-var key.
+    dbFromMock.mockReturnValueOnce(integrationLookup(null));
+    dbFromMock.mockReturnValueOnce(integrationLookup(null));
+    const body = validBody();
+
+    const res = await request(createApp())
+      .post('/webhooks/docusign')
+      .set('Content-Type', 'application/json')
+      .set('X-DocuSign-Signature-1', 'bad-signature')
+      .send(body);
+
+    expect(res.status).toBe(401);
+  });
+
+  it('returns 200 orphaned for unknown account when HMAC signature is valid', async () => {
+    // SCRUM-2044: dual-table lookup — both org and member tables return no match.
+    // Valid HMAC with env-var key proves the request came from DocuSign.
     dbFromMock.mockReturnValueOnce(integrationLookup(null));
     dbFromMock.mockReturnValueOnce(integrationLookup(null));
     const body = validBody();
@@ -136,6 +153,21 @@ describe('POST /webhooks/docusign', () => {
 
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ ok: true, orphaned: true });
+  });
+
+  it('returns 503 for unknown account when no env-var HMAC key is configured', async () => {
+    delete process.env.DOCUSIGN_CONNECT_HMAC_SECRET;
+    dbFromMock.mockReturnValueOnce(integrationLookup(null));
+    dbFromMock.mockReturnValueOnce(integrationLookup(null));
+    const body = validBody();
+
+    const res = await request(createApp())
+      .post('/webhooks/docusign')
+      .set('Content-Type', 'application/json')
+      .set('X-DocuSign-Signature-1', sign(body))
+      .send(body);
+
+    expect(res.status).toBe(503);
   });
 
   it('enqueues a sanitized rules event and retryable document-fetch job', async () => {
