@@ -348,6 +348,93 @@ describe('DocuSign OAuth router', () => {
     });
   });
 
+  it('writes audit_events on successful disconnect (SCRUM-2039, SOC 2 CC7.2)', async () => {
+    const auditInserts: unknown[] = [];
+    const db = {
+      from: vi.fn((table: string) => {
+        if (table === 'org_members') return mockQuery({ data: { role: 'admin' }, error: null });
+        if (table === 'org_integrations') {
+          return mockQuery({
+            data: [{
+              id: 'integration-1',
+              token_secret_name: 'projects/test-project/secrets/arkova-docusign-refresh-token',
+            }],
+            error: null,
+          });
+        }
+        if (table === 'integration_events') return mockQuery({ data: null, error: null });
+        if (table === 'audit_events') {
+          return mockQuery({ data: null, error: null }, (method, value) => {
+            if (method === 'insert') auditInserts.push(value);
+          });
+        }
+        return mockQuery({ data: null, error: null });
+      }),
+    };
+    const app = createApp(db, {
+      refreshTokenStore: {
+        async put() { return undefined; },
+        async get() { return null; },
+        async delete() { /* no-op */ },
+      },
+    });
+
+    const res = await request(app)
+      .post('/api/v1/integrations/docusign/disconnect')
+      .send({ org_id: TEST_ORG_ID });
+
+    expect(res.status).toBe(200);
+    expect(res.body.disconnected).toBe(true);
+    expect(auditInserts).toHaveLength(1);
+    expect(auditInserts[0]).toMatchObject({
+      event_type: 'integration.docusign_disconnected',
+      event_category: 'SECURITY',
+      actor_id: TEST_USER_ID,
+      org_id: TEST_ORG_ID,
+      target_type: 'integration',
+      target_id: 'integration-1',
+    });
+    const details = JSON.parse((auditInserts[0] as Record<string, string>).details);
+    expect(details.provider).toBe('docusign');
+  });
+
+  it('logs but does not fail disconnect when audit_events insert errors (SCRUM-2039)', async () => {
+    const db = {
+      from: vi.fn((table: string) => {
+        if (table === 'org_members') return mockQuery({ data: { role: 'admin' }, error: null });
+        if (table === 'org_integrations') {
+          return mockQuery({
+            data: [{ id: 'integration-1', token_secret_name: 'projects/p/secrets/s' }],
+            error: null,
+          });
+        }
+        if (table === 'integration_events') return mockQuery({ data: null, error: null });
+        if (table === 'audit_events') return mockQuery({ data: null, error: { message: 'DB write failed' } });
+        return mockQuery({ data: null, error: null });
+      }),
+    };
+    const app = createApp(db, {
+      refreshTokenStore: {
+        async put() { return undefined; },
+        async get() { return null; },
+        async delete() { /* no-op */ },
+      },
+    });
+
+    const res = await request(app)
+      .post('/api/v1/integrations/docusign/disconnect')
+      .send({ org_id: TEST_ORG_ID });
+
+    expect(res.status).toBe(200);
+    expect(res.body.disconnected).toBe(true);
+    // Wait for the fire-and-forget .then() to settle
+    await new Promise((r) => setTimeout(r, 10));
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.objectContaining({ orgId: TEST_ORG_ID }),
+      'Failed to write DocuSign disconnect audit event',
+    );
+  });
+
   it('surfaces refresh-token secret deletion failures during disconnect', async () => {
     const captured: Record<string, unknown[]> = {};
     const capture = (method: string, value: unknown) => {

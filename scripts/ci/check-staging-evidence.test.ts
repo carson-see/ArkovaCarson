@@ -3,6 +3,7 @@ import {
   check,
   extractDeclaredTier,
   hasEvidenceSection,
+  hasResidualRiskException,
   isStagingToolingOnly,
   missingFields,
   requiredTierFor,
@@ -777,6 +778,138 @@ describe('check-staging-evidence', () => {
       });
       expect(r.ok).toBe(true);
       expect(r.notes.join(' ')).toMatch(/T0 CI-only/i);
+    });
+
+    it('passes T2 with non-clean preflight when a structured residual-risk exception is present', () => {
+      const body = `## Staging Soak Evidence
+- Tier: T2
+- Staging branch: arkova-staging
+- Worker revision: arkova-worker-staging-00190-diz
+- PR head SHA: 1234567890abcdef1234567890abcdef12345678
+- Base SHA: abcdef1234567890abcdef1234567890abcdef12
+- Staging project ref: ujtlwnoqfhtitcmsnrpq
+- Cloud Run service/tag URL: https://pr-924---arkova-worker-staging-kvojbeutfa-uc.a.run.app
+- Image digest: sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+- Evidence scope: merge-grade shared staging
+- Preflight timestamp: 2026-05-27 15:32 UTC
+- Preflight result: environment_type=soak_artifact (residual-risk exception approved)
+- Soak start: 2026-05-27 15:52 UTC
+- Soak end: 2026-05-28 03:52 UTC
+- E2E result: cron mode 720/720 (0% error rate)
+- Migration applied: 0316 + 0317
+- Rollback rehearsed: YES
+- Staging deploy log id: 114
+
+### Residual-risk note (preflight non-clean_mirror)
+- Contamination type: soak_artifact
+- Affected rows: 15 timestamp-versioned migration ledger rows from prior PR soaks
+- Impact on this PR: none — PR #924 migrations (0316, 0317) are net-new additive DDL
+- Reason not cleaned: 7 other PRs hold active staging leases; cleaning would invalidate their evidence
+- Approved by: Carson (2026-05-27)
+`;
+      const r = check({
+        body,
+        files: ['services/worker/src/api/v1/docusign.ts'],
+        headSha: '1234567890abcdef1234567890abcdef12345678',
+        baseSha: 'abcdef1234567890abcdef1234567890abcdef12',
+      });
+      expect(r.ok).toBe(true);
+      expect(r.notes.join(' ')).toMatch(/residual-risk/i);
+    });
+
+    it('still fails non-clean preflight without a residual-risk section', () => {
+      const body = `## Staging Soak Evidence
+- Tier: T2
+- Staging branch: arkova-staging
+- Worker revision: arkova-worker-staging-00099-xyz
+- PR head SHA: 1234567890abcdef1234567890abcdef12345678
+- Base SHA: abcdef1234567890abcdef1234567890abcdef12
+- Staging project ref: ujtlwnoqfhtitcmsnrpq
+- Cloud Run service/tag URL: https://pr-999---arkova-worker-staging.example.run.app
+- Image digest: sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+- Evidence scope: merge-grade shared staging
+- Preflight timestamp: 2026-05-09 13:55 UTC
+- Preflight result: environment_type=soak_artifact
+- Soak start: 2026-05-09 14:00 UTC
+- Soak end: 2026-05-10 02:00 UTC
+- E2E result: 50/50 green
+- Migration applied: none
+- Rollback rehearsed: n/a
+- Staging deploy log id: 142
+`;
+      const r = check({
+        body,
+        files: ['services/worker/src/api/v1/docusign.ts'],
+        headSha: '1234567890abcdef1234567890abcdef12345678',
+        baseSha: 'abcdef1234567890abcdef1234567890abcdef12',
+      });
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/clean_mirror/i);
+    });
+
+    it('fails residual-risk section missing required sub-fields', () => {
+      const body = `## Staging Soak Evidence
+- Tier: T2
+- Staging branch: arkova-staging
+- Worker revision: arkova-worker-staging-00099-xyz
+- PR head SHA: 1234567890abcdef1234567890abcdef12345678
+- Base SHA: abcdef1234567890abcdef1234567890abcdef12
+- Staging project ref: ujtlwnoqfhtitcmsnrpq
+- Cloud Run service/tag URL: https://pr-999---arkova-worker-staging.example.run.app
+- Image digest: sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+- Evidence scope: merge-grade shared staging
+- Preflight timestamp: 2026-05-09 13:55 UTC
+- Preflight result: environment_type=soak_artifact (residual-risk exception approved)
+- Soak start: 2026-05-09 14:00 UTC
+- Soak end: 2026-05-10 02:00 UTC
+- E2E result: 50/50 green
+- Migration applied: none
+- Rollback rehearsed: n/a
+- Staging deploy log id: 142
+
+### Residual-risk note (preflight non-clean_mirror)
+- Contamination type: soak_artifact
+- Approved by: Carson (2026-05-09)
+`;
+      const r = check({
+        body,
+        files: ['services/worker/src/api/v1/docusign.ts'],
+        headSha: '1234567890abcdef1234567890abcdef12345678',
+        baseSha: 'abcdef1234567890abcdef1234567890abcdef12',
+      });
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/residual-risk.*missing/i);
+    });
+  });
+
+  describe('hasResidualRiskException', () => {
+    it('returns true for a complete residual-risk section', () => {
+      const body = `### Residual-risk note (preflight non-clean_mirror)
+- Contamination type: soak_artifact
+- Affected rows: 15 timestamp-versioned migration ledger rows
+- Impact on this PR: none — net-new additive DDL
+- Reason not cleaned: 7 other PRs hold active staging leases
+- Approved by: Carson (2026-05-27)
+`;
+      expect(hasResidualRiskException(body)).toEqual({ valid: true, missing: [] });
+    });
+
+    it('returns false when the section header is missing', () => {
+      const body = `Some other content without the header`;
+      const result = hasResidualRiskException(body);
+      expect(result.valid).toBe(false);
+    });
+
+    it('returns missing fields when sub-fields are absent', () => {
+      const body = `### Residual-risk note (preflight non-clean_mirror)
+- Contamination type: soak_artifact
+`;
+      const result = hasResidualRiskException(body);
+      expect(result.valid).toBe(false);
+      expect(result.missing).toContain('Affected rows:');
+      expect(result.missing).toContain('Impact on this PR:');
+      expect(result.missing).toContain('Reason not cleaned:');
+      expect(result.missing).toContain('Approved by:');
     });
   });
 });
