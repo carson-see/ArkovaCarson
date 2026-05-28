@@ -676,9 +676,11 @@ describe('chain client singleton throws when uninitialized', () => {
     expect(() => fresh.getChainClient()).toThrow(/before initChainClient/);
   });
 
-  it('getChainClientAsync throws before init in a fresh module instance', async () => {
+  it('getChainClientAsync initializes lazily before startup init completes', async () => {
     vi.resetModules();
     const fresh = await import('./client.js');
-    await expect(fresh.getChainClientAsync()).rejects.toThrow(/not initialized/);
+    const client = await fresh.getChainClientAsync();
+    expect(client).toBeDefined();
+    expect(typeof client.submitFingerprint).toBe('function');
   });
 });
