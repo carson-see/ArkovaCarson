@@ -108,6 +108,37 @@ function createApp(db: unknown, overrides: Partial<DocusignRouterDeps> = {}) {
   return app;
 }
 
+function createUnauthenticatedApp(db: unknown, overrides: Partial<DocusignRouterDeps> = {}) {
+  const app = express();
+  app.use(express.json());
+  app.use(
+    '/api/v1/integrations',
+    createDocusignOAuthRouter({
+      db: db as unknown as DocusignRouterDeps['db'],
+      env: {
+        DOCUSIGN_INTEGRATION_KEY: 'docusign-client',
+        DOCUSIGN_CLIENT_SECRET: 'docusign-client-secret',
+        DOCUSIGN_DEMO: 'true',
+        GCP_SECRET_MANAGER_PROJECT_ID: 'test-project',
+        GCP_KMS_INTEGRATION_TOKEN_KEY: 'projects/p/locations/l/keyRings/r/cryptoKeys/k',
+      },
+      stateSecret: 'test-state-secret',
+      frontendUrl: 'http://localhost:5173',
+      now: () => new Date('2026-04-24T12:00:00.000Z'),
+      kms: {
+        async encrypt() {
+          return Buffer.from('encrypted-token-payload');
+        },
+        async decrypt() {
+          return Buffer.from('{}');
+        },
+      } satisfies KmsClient,
+      ...overrides,
+    }),
+  );
+  return app;
+}
+
 describe('DocuSign OAuth router', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -947,5 +978,125 @@ describe('DocuSign OAuth router', () => {
     expect(captured.insert?.some((event) =>
       (event as Record<string, unknown>).event_type === 'connect_listener_reprovisioned',
     )).toBe(true);
+  });
+
+  it('rejects unauthenticated Connect reprovision requests', async () => {
+    const db = {
+      from: vi.fn(() => mockQuery({ data: null, error: null })),
+    };
+    const app = createUnauthenticatedApp(db);
+
+    const res = await request(app)
+      .post('/api/v1/integrations/docusign/connect/reprovision')
+      .send({ org_id: TEST_ORG_ID });
+
+    expect(res.status).toBe(401);
+    expect(res.body.error).toBe('Authentication required');
+    expect(db.from).not.toHaveBeenCalled();
+  });
+
+  it('rejects Connect reprovision requests from non-org-admin members', async () => {
+    const db = {
+      from: vi.fn(() => mockQuery({ data: { role: 'member' }, error: null })),
+    };
+    const app = createApp(db);
+
+    const res = await request(app)
+      .post('/api/v1/integrations/docusign/connect/reprovision')
+      .send({ org_id: TEST_ORG_ID });
+
+    expect(res.status).toBe(403);
+    expect(res.body.error).toContain('org admin');
+    expect(db.from).toHaveBeenCalledTimes(1);
+  });
+
+  it('returns zero attempted reprovisions when the org has no active DocuSign integrations', async () => {
+    const getRefreshToken = vi.fn();
+    const db = {
+      from: vi.fn((table: string) => {
+        if (table === 'org_members') return mockQuery({ data: { role: 'owner' }, error: null });
+        if (table === 'org_integrations') return mockQuery({ data: [], error: null });
+        return mockQuery({ data: null, error: null });
+      }),
+    };
+    const app = createApp(db, {
+      refreshTokenStore: {
+        async put() { return undefined; },
+        get: getRefreshToken,
+        async delete() { return undefined; },
+      },
+    });
+
+    const res = await request(app)
+      .post('/api/v1/integrations/docusign/connect/reprovision')
+      .send({ org_id: TEST_ORG_ID });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      attempted: 0,
+      succeeded: 0,
+      failed: 0,
+      results: [],
+    });
+    expect(getRefreshToken).not.toHaveBeenCalled();
+  });
+
+  it('returns 502 and records failure events when every active Connect reprovision fails', async () => {
+    const captured: Record<string, unknown[]> = {};
+    const capture = (method: string, value: unknown) => {
+      captured[method] = [...(captured[method] ?? []), value];
+    };
+    const db = {
+      from: vi.fn((table: string) => {
+        if (table === 'org_members') return mockQuery({ data: { role: 'admin' }, error: null });
+        if (table === 'org_integrations') {
+          return mockQuery({
+            data: [{
+              id: 'integration-1',
+              account_id: 'docusign-account-1',
+              base_uri: 'https://demo.docusign.net',
+              token_secret_name: 'projects/test-project/secrets/arkova-docusign-refresh-token',
+            }],
+            error: null,
+          }, capture);
+        }
+        if (table === 'integration_events') return mockQuery({ data: null, error: null }, capture);
+        return mockQuery({ data: null, error: null }, capture);
+      }),
+    };
+    const app = createApp(db, {
+      refreshTokenStore: {
+        async put() { return undefined; },
+        async get() { return null; },
+        async delete() { return undefined; },
+      },
+    });
+
+    const res = await request(app)
+      .post('/api/v1/integrations/docusign/connect/reprovision')
+      .send({ org_id: TEST_ORG_ID });
+
+    expect(res.status).toBe(502);
+    expect(res.body).toMatchObject({
+      attempted: 1,
+      succeeded: 0,
+      failed: 1,
+      results: [{
+        integration_id: 'integration-1',
+        status: 'error',
+        error: 'DocuSign refresh-token secret is empty or missing',
+      }],
+    });
+    expect(captured.update).toBeUndefined();
+    expect(captured.insert?.[0]).toMatchObject({
+      org_id: TEST_ORG_ID,
+      integration_id: 'integration-1',
+      provider: 'docusign',
+      event_type: 'connect_listener_reprovision_failed',
+      status: 'error',
+      details: {
+        error: 'DocuSign refresh-token secret is empty or missing',
+      },
+    });
   });
 });
