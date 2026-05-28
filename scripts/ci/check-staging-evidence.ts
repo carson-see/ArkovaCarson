@@ -701,8 +701,13 @@ export function check(opts: { body: string; files: string[]; headSha?: string; b
 
   const durationErrors = soakDurationErrors(body, declared);
   if (durationErrors.length > 0) {
-    result.ok = false;
-    result.errors.push(...durationErrors);
+    const riskException = hasResidualRiskException(body);
+    if (riskException.valid) {
+      result.notes.push(`Soak duration below ${TIER_SPECS[declared].soakHours}h minimum; residual-risk exception accepted.`);
+    } else {
+      result.ok = false;
+      result.errors.push(...durationErrors);
+    }
   }
 
   const valueErrors = requiredValueErrors(body, declared);
