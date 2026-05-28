@@ -1474,6 +1474,10 @@ cronRouter.post('/db-health', async (_req, res) => {
 cronRouter.post('/connector-health-check', async (_req, res) => {
   try {
     const result = await runConnectorHealthCheck(db);
+    if (!result.ok) {
+      res.status(500).json(result);
+      return;
+    }
     res.json(result);
   } catch (error) {
     logger.error({ error }, 'Connector health check failed');

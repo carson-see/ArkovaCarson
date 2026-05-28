@@ -15,6 +15,7 @@ vi.mock('../utils/logger.js', () => ({
 
 import {
   decideConnectorAlert,
+  runConnectorHealthCheck,
   type ConnectorHealthSnapshot,
   type ConnectorAlertState,
 } from './connector-health-alert.js';
@@ -130,5 +131,65 @@ describe('decideConnectorAlert', () => {
 
     expect(decision.should_fire).toBe(true);
     expect(decision.reason).toContain('degraded');
+  });
+});
+
+function mockDb(overrides: Record<string, { data?: unknown; error?: unknown }> = {}) {
+  const defaults: Record<string, { data: unknown; error: unknown }> = {
+    org_integrations: { data: [], error: null },
+    connector_alert_state: { data: [], error: null },
+  };
+  const tables = { ...defaults, ...overrides };
+  return {
+    from(table: string) {
+      const t = tables[table] ?? { data: [], error: null };
+      return {
+        select: () => Promise.resolve(t),
+        upsert: () => Promise.resolve(t),
+      };
+    },
+  };
+}
+
+describe('runConnectorHealthCheck', () => {
+  it('throws when alert state read fails (fail-close)', async () => {
+    const db = mockDb({
+      org_integrations: {
+        data: [{ org_id: 'org-1', provider: 'docusign', revoked_at: null }],
+        error: null,
+      },
+      connector_alert_state: {
+        data: null,
+        error: { message: 'permission denied for table connector_alert_state' },
+      },
+    });
+
+    await expect(runConnectorHealthCheck(db)).rejects.toThrow(/alert state/i);
+  });
+
+  it('returns ok:false when alert state upsert fails', async () => {
+    const upsertError = { message: 'RLS violation' };
+    const db = {
+      from(table: string) {
+        if (table === 'org_integrations') {
+          return {
+            select: () => Promise.resolve({
+              data: [{ org_id: 'org-1', provider: 'docusign', revoked_at: null }],
+              error: null,
+            }),
+          };
+        }
+        if (table === 'connector_alert_state') {
+          return {
+            select: () => Promise.resolve({ data: [], error: null }),
+            upsert: () => Promise.resolve({ error: upsertError }),
+          };
+        }
+        return { select: () => Promise.resolve({ data: [], error: null }) };
+      },
+    };
+
+    const result = await runConnectorHealthCheck(db);
+    expect(result.ok).toBe(false);
   });
 });

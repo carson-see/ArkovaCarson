@@ -184,9 +184,14 @@ export async function runConnectorHealthCheck(db: SupabaseDb): Promise<Connector
     throw new Error('Failed to load integrations');
   }
 
-  const { data: priorStates } = await db
+  const { data: priorStates, error: stateError } = await db
     .from('connector_alert_state')
     .select('connector_id, org_id, last_state, last_alerted_at');
+
+  if (stateError) {
+    logger.error({ error: stateError }, 'Connector health check: failed to read alert state');
+    throw new Error('Failed to read alert state');
+  }
 
   const stateMap = new Map<string, ConnectorAlertState>();
   for (const s of (priorStates ?? []) as ConnectorAlertState[]) {
@@ -238,6 +243,7 @@ export async function runConnectorHealthCheck(db: SupabaseDb): Promise<Connector
       });
     if (upsertError) {
       logger.error({ error: upsertError }, 'Connector health check: failed to persist alert state');
+      return { ok: false, checked: snapshots.length, alertsFired };
     }
   }
 
