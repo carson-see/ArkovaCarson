@@ -31,6 +31,7 @@ import { createDocusignOAuthRouter } from './docusign-oauth.js';
 import { logger } from '../../../utils/logger.js';
 
 type DocusignRouterDeps = NonNullable<Parameters<typeof createDocusignOAuthRouter>[0]>;
+type FetchInput = string | URL | Request;
 
 interface QueryResult {
   data?: unknown;
@@ -73,6 +74,10 @@ function mockQuery(result: QueryResult, capture?: (method: string, value: unknow
   return chain;
 }
 
+function asTestDb(db: unknown): DocusignRouterDeps['db'] {
+  return db as DocusignRouterDeps['db'];
+}
+
 function createApp(db: unknown, overrides: Partial<DocusignRouterDeps> = {}) {
   const app = express();
   app.use(express.json());
@@ -83,7 +88,7 @@ function createApp(db: unknown, overrides: Partial<DocusignRouterDeps> = {}) {
   app.use(
     '/api/v1/integrations',
     createDocusignOAuthRouter({
-      db: db as unknown as DocusignRouterDeps['db'],
+      db: asTestDb(db),
       env: {
         DOCUSIGN_INTEGRATION_KEY: 'docusign-client',
         DOCUSIGN_CLIENT_SECRET: 'docusign-client-secret',
@@ -114,7 +119,7 @@ function createUnauthenticatedApp(db: unknown, overrides: Partial<DocusignRouter
   app.use(
     '/api/v1/integrations',
     createDocusignOAuthRouter({
-      db: db as unknown as DocusignRouterDeps['db'],
+      db: asTestDb(db),
       env: {
         DOCUSIGN_INTEGRATION_KEY: 'docusign-client',
         DOCUSIGN_CLIENT_SECRET: 'docusign-client-secret',
@@ -198,7 +203,7 @@ describe('DocuSign OAuth router', () => {
       }),
     };
 
-    const fetchImpl = vi.fn(async (input: string | URL | Request) => {
+    const fetchImpl = vi.fn(async (input: FetchInput) => {
       const url = String(input);
       if (url === 'https://account-d.docusign.com/oauth/token') {
         return new Response(JSON.stringify({
@@ -230,7 +235,7 @@ describe('DocuSign OAuth router', () => {
       next();
     });
     const deps = {
-      db: db as unknown as DocusignRouterDeps['db'],
+      db: asTestDb(db),
       env: {
         DOCUSIGN_INTEGRATION_KEY: 'docusign-client',
         DOCUSIGN_CLIENT_SECRET: 'docusign-client-secret',
@@ -492,7 +497,7 @@ describe('DocuSign OAuth router', () => {
       next();
     });
     app.use('/api/v1/integrations', createDocusignOAuthRouter({
-      db: db as unknown as DocusignRouterDeps['db'],
+      db: asTestDb(db),
       env: {
         DOCUSIGN_INTEGRATION_KEY: 'docusign-client',
         DOCUSIGN_CLIENT_SECRET: 'docusign-client-secret',
@@ -581,7 +586,7 @@ describe('DocuSign OAuth router', () => {
       }),
     };
 
-    const fetchImpl = vi.fn(async (input: string | URL | Request) => {
+    const fetchImpl = vi.fn(async (input: FetchInput) => {
       const url = String(input);
       if (url === 'https://account-d.docusign.com/oauth/token') {
         return new Response(JSON.stringify({
@@ -614,7 +619,7 @@ describe('DocuSign OAuth router', () => {
       next();
     });
     app.use('/api/v1/integrations', createDocusignOAuthRouter({
-      db: db as unknown as DocusignRouterDeps['db'],
+      db: asTestDb(db),
       env: {
         DOCUSIGN_INTEGRATION_KEY: 'docusign-client',
         DOCUSIGN_CLIENT_SECRET: 'docusign-client-secret',
@@ -680,7 +685,7 @@ describe('DocuSign OAuth router', () => {
       }),
     };
 
-    const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+    const fetchImpl = vi.fn(async (input: FetchInput, init?: RequestInit) => {
       const url = String(input);
       if (url === 'https://account-d.docusign.com/oauth/token') {
         return new Response(JSON.stringify({
@@ -721,7 +726,7 @@ describe('DocuSign OAuth router', () => {
       next();
     });
     app.use('/api/v1/integrations', createDocusignOAuthRouter({
-      db: db as unknown as DocusignRouterDeps['db'],
+      db: asTestDb(db),
       env: {
         DOCUSIGN_INTEGRATION_KEY: 'docusign-client',
         DOCUSIGN_CLIENT_SECRET: 'docusign-client-secret',
@@ -795,7 +800,7 @@ describe('DocuSign OAuth router', () => {
       }),
     };
 
-    const fetchImpl = vi.fn(async (input: string | URL | Request) => {
+    const fetchImpl = vi.fn(async (input: FetchInput) => {
       const url = String(input);
       if (url === 'https://account-d.docusign.com/oauth/token') {
         return new Response(JSON.stringify({
@@ -835,7 +840,7 @@ describe('DocuSign OAuth router', () => {
       next();
     });
     app.use('/api/v1/integrations', createDocusignOAuthRouter({
-      db: db as unknown as DocusignRouterDeps['db'],
+      db: asTestDb(db),
       env: {
         DOCUSIGN_INTEGRATION_KEY: 'docusign-client',
         DOCUSIGN_CLIENT_SECRET: 'docusign-client-secret',
@@ -912,12 +917,14 @@ describe('DocuSign OAuth router', () => {
       }),
     };
     const secretReads: string[] = [];
-    const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+    const secretWrites: Array<{ name: string; value: string }> = [];
+    const fetchImpl = vi.fn(async (input: FetchInput, init?: RequestInit) => {
       const url = String(input);
       if (url === 'https://account-d.docusign.com/oauth/token') {
         return new Response(JSON.stringify({
           access_token: 'access-token-reprovision',
           expires_in: 3600,
+          refresh_token: 'refresh-token-rotated',
           scope: 'signature extended',
           token_type: 'Bearer',
         }), { status: 200 });
@@ -954,7 +961,9 @@ describe('DocuSign OAuth router', () => {
       },
       fetchImpl: fetchImpl as unknown as typeof fetch,
       refreshTokenStore: {
-        async put() { return undefined; },
+        async put({ name, value }: { name: string; value: string }) {
+          secretWrites.push({ name, value });
+        },
         async get({ name }: { name: string }) {
           secretReads.push(name);
           return 'refresh-token-reprovision';
@@ -970,11 +979,16 @@ describe('DocuSign OAuth router', () => {
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ attempted: 1, succeeded: 1, failed: 0 });
     expect(secretReads).toEqual(['projects/test-project/secrets/arkova-docusign-refresh-token']);
+    expect(secretWrites).toEqual([{
+      name: 'projects/test-project/secrets/arkova-docusign-refresh-token',
+      value: 'refresh-token-rotated',
+    }]);
     expect(captured.update?.[0]).toMatchObject({
       base_uri: 'https://demo.docusign.net',
       token_secret_name: 'projects/test-project/secrets/arkova-docusign-refresh-token',
     });
     expect(JSON.stringify(captured.update?.[0])).not.toContain('access-token-reprovision');
+    expect(JSON.stringify(captured.update?.[0])).not.toContain('refresh-token-rotated');
     expect(captured.insert?.some((event) =>
       (event as Record<string, unknown>).event_type === 'connect_listener_reprovisioned',
     )).toBe(true);
