@@ -138,7 +138,7 @@ test.describe('Member-level DocuSign integration (SCRUM-2044)', () => {
       ).toBeVisible();
 
       // Card transitions to connected with member account details
-      await expect(memberCard.getByText('Connected')).toBeVisible();
+      await expect(memberCard.getByText('Connected', { exact: true })).toBeVisible();
       await expect(memberCard.getByText(/Account: Jane Member DS/)).toBeVisible();
     });
 
@@ -165,7 +165,7 @@ test.describe('Member-level DocuSign integration (SCRUM-2044)', () => {
 
       await orgAdminPage.goto(`/organizations/${orgId}?tab=settings`);
       const memberCard = orgAdminPage.locator('[data-testid="member-docusign-card"]');
-      await expect(memberCard.getByText('Connected')).toBeVisible({ timeout: 10000 });
+      await expect(memberCard.getByText('Connected', { exact: true })).toBeVisible({ timeout: 10000 });
       await expect(memberCard.getByText(/Account: Connected Member Acct/)).toBeVisible();
       await expect(memberCard.getByRole('button', { name: 'Disconnect' })).toBeVisible();
     });
@@ -210,7 +210,7 @@ test.describe('Member-level DocuSign integration (SCRUM-2044)', () => {
 
       await orgAdminPage.goto(`/organizations/${orgId}?tab=settings`);
       const memberCard = orgAdminPage.locator('[data-testid="member-docusign-card"]');
-      await expect(memberCard.getByText('Connected')).toBeVisible({ timeout: 10000 });
+      await expect(memberCard.getByText('Connected', { exact: true })).toBeVisible({ timeout: 10000 });
 
       await memberCard.getByRole('button', { name: 'Disconnect' }).click();
 
