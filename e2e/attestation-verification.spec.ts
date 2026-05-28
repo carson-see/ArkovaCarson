@@ -163,7 +163,7 @@ test.describe('Attestation verification (SCRUM-1873/1874)', () => {
       });
 
       await orgAdminPage.goto('/attestations');
-      await expect(orgAdminPage.getByRole('heading', { name: /Attestations/i })).toBeVisible({ timeout: 10000 });
+      await expect(orgAdminPage.locator('#main-content').getByRole('heading', { name: 'Attestations', exact: true })).toBeVisible({ timeout: 10000 });
 
       // Verify each status badge is rendered
       await expect(orgAdminPage.getByText('Active', { exact: true }).first()).toBeVisible();
@@ -201,7 +201,7 @@ test.describe('Attestation verification (SCRUM-1873/1874)', () => {
       });
 
       await orgAdminPage.goto('/attestations');
-      await expect(orgAdminPage.getByRole('heading', { name: /Attestations/i })).toBeVisible({ timeout: 10000 });
+      await expect(orgAdminPage.locator('#main-content').getByRole('heading', { name: 'Attestations', exact: true })).toBeVisible({ timeout: 10000 });
 
       // Notarization badge should be visible on the attestation row/card
       await expect(orgAdminPage.getByTestId('notarization-badge').first()).toBeVisible();
@@ -227,7 +227,7 @@ test.describe('Attestation verification (SCRUM-1873/1874)', () => {
       });
 
       await orgAdminPage.goto('/attestations');
-      await expect(orgAdminPage.getByRole('heading', { name: /Attestations/i })).toBeVisible({ timeout: 10000 });
+      await expect(orgAdminPage.locator('#main-content').getByRole('heading', { name: 'Attestations', exact: true })).toBeVisible({ timeout: 10000 });
 
       // Notarization badge should NOT be present
       await expect(orgAdminPage.getByTestId('notarization-badge')).not.toBeVisible();
@@ -261,19 +261,19 @@ test.describe('Attestation verification (SCRUM-1873/1874)', () => {
 
       // Stage 0: PENDING
       await orgAdminPage.goto('/attestations');
-      await expect(orgAdminPage.getByRole('heading', { name: /Attestations/i })).toBeVisible({ timeout: 10000 });
+      await expect(orgAdminPage.locator('#main-content').getByRole('heading', { name: 'Attestations', exact: true })).toBeVisible({ timeout: 10000 });
       await expect(orgAdminPage.getByText('Pending', { exact: true }).first()).toBeVisible();
 
       // Stage 1: ACTIVE
       stageIndex = 1;
       await orgAdminPage.reload();
-      await expect(orgAdminPage.getByRole('heading', { name: /Attestations/i })).toBeVisible({ timeout: 10000 });
+      await expect(orgAdminPage.locator('#main-content').getByRole('heading', { name: 'Attestations', exact: true })).toBeVisible({ timeout: 10000 });
       await expect(orgAdminPage.getByText('Active', { exact: true }).first()).toBeVisible();
 
       // Stage 2: ACTIVE + notarized
       stageIndex = 2;
       await orgAdminPage.reload();
-      await expect(orgAdminPage.getByRole('heading', { name: /Attestations/i })).toBeVisible({ timeout: 10000 });
+      await expect(orgAdminPage.locator('#main-content').getByRole('heading', { name: 'Attestations', exact: true })).toBeVisible({ timeout: 10000 });
       await expect(orgAdminPage.getByText('Active', { exact: true }).first()).toBeVisible();
       await expect(orgAdminPage.getByText(/Notarized/i).first()).toBeVisible();
     });
@@ -391,7 +391,7 @@ test.describe('Attestation verification (SCRUM-1873/1874)', () => {
       });
 
       await orgAdminPage.goto('/attestations');
-      await expect(orgAdminPage.getByRole('heading', { name: /Attestations/i })).toBeVisible({ timeout: 10000 });
+      await expect(orgAdminPage.locator('#main-content').getByRole('heading', { name: 'Attestations', exact: true })).toBeVisible({ timeout: 10000 });
 
       // Both status badges should be visible at mobile width
       await expect(orgAdminPage.getByText('Active', { exact: true }).first()).toBeVisible();
@@ -416,7 +416,7 @@ test.describe('Attestation verification (SCRUM-1873/1874)', () => {
 
       await page.goto(`/verify/attestation/${publicId}`);
       await expect(page.getByText('Active', { exact: true }).first()).toBeVisible({ timeout: 10000 });
-      await expect(page.getByText(/Notarized/i).first()).toBeVisible();
+      await expect(page.getByText(/Notarized/i).first()).toBeVisible({ timeout: 10000 });
       await expect(page.getByText('CERT-VERIFY-001')).toBeVisible();
     });
   });
