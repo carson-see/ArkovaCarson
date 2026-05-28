@@ -28,11 +28,16 @@ export class DocusignRateLimitError extends Error {
 }
 
 function accountIdFromFetchInput(input: Parameters<typeof fetch>[0]): string | undefined {
-  const rawUrl = typeof input === 'string'
-    ? input
-    : input instanceof URL
-      ? input.toString()
-      : input.url;
+  // OAuth/token endpoints do not carry an account path segment; callers for those
+  // routes must provide options.accountId so the guard stays active.
+  let rawUrl: string;
+  if (typeof input === 'string') {
+    rawUrl = input;
+  } else if (input instanceof URL) {
+    rawUrl = input.toString();
+  } else {
+    rawUrl = input.url;
+  }
   try {
     const url = new URL(rawUrl);
     const segments = url.pathname.split('/').filter(Boolean);
@@ -72,6 +77,13 @@ export function claimDocusignAccountApiSlot(args: {
   docusignAccountRateLimitStore.set(args.accountId, entry);
 }
 
+function releaseDocusignAccountApiSlot(accountId: string): void {
+  const entry = docusignAccountRateLimitStore.get(accountId);
+  if (!entry) return;
+  entry.count = Math.max(0, entry.count - 1);
+  docusignAccountRateLimitStore.set(accountId, entry);
+}
+
 export function createDocusignRateLimitedFetch(
   options: DocusignRateLimitedFetchOptions,
 ): typeof fetch {
@@ -87,13 +99,16 @@ export function createDocusignRateLimitedFetch(
         });
       }
       const response = await fetchImpl(input, init);
+      if (accountId && (response.status === 429 || response.status >= 500)) {
+        releaseDocusignAccountApiSlot(accountId);
+      }
       if (response.status !== 429 || attempt === 1) return response;
 
       const nowMs = (options.now ?? (() => new Date()))().getTime();
       const delayMs = retryAfterMs(response.headers.get('Retry-After'), nowMs) ?? 1000;
       await sleep(delayMs);
     }
-    return fetchImpl(input, init);
+    throw new Error('unreachable_docusign_rate_limit_retry_state');
   };
 }
 

@@ -101,7 +101,7 @@ async function fetchIntegration(
   if (!data) {
     throw new Error('docusign_integration_not_found');
   }
-  return data as DocusignIntegrationRow;
+  return data;
 }
 
 export function makeDocusignEnvelopeJobDeps(
