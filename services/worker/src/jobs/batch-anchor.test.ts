@@ -880,7 +880,7 @@ describe('processBatchAnchors', () => {
 
   // ---- Credit refund failure (double-billing safety) ----
 
-  it('logs CRITICAL double-billing warning when chain fails AND credit refund fails', async () => {
+  it('fails closed and keeps claimed anchors out of retry when credit refund fails', async () => {
     mockPendingBacklogReady();
     mockDbRpc
       .mockResolvedValueOnce({ data: [DOCUSIGN_QUEUE_ANCHOR], error: null }) // claim
@@ -890,12 +890,10 @@ describe('processBatchAnchors', () => {
 
     mockSubmitFingerprint.mockRejectedValue(new Error('chain unavailable'));
 
-    const result = await processBatchAnchors({
+    await expect(processBatchAnchors({
       force: true,
       orgId: DOCUSIGN_QUEUE_ANCHOR.org_id,
-    });
-
-    expect(result.processed).toBe(0);
+    })).rejects.toThrow(/refundQueueRunCredits.*refund_org_credit.*anchor-docusign-queue/);
 
     const criticalCalls = mockLogger.error.mock.calls.filter(
       (call: unknown[]) => typeof call[1] === 'string' && call[1].includes('DOUBLE_BILLING_RISK'),
@@ -906,6 +904,11 @@ describe('processBatchAnchors', () => {
         expect.objectContaining({ id: DOCUSIGN_QUEUE_ANCHOR.id }),
       ]),
     }));
+
+    const pendingResets = mockAnchorsUpdate.mock.calls.filter(
+      (call: unknown[]) => (call[0] as Record<string, unknown> | undefined)?.status === 'PENDING',
+    );
+    expect(pendingResets.length).toBe(0);
   });
 
   it('does not log double-billing warning when credit refund succeeds after chain failure', async () => {

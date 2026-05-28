@@ -96,6 +96,11 @@ interface ChargedQueueAnchor {
   orgId: string;
 }
 
+interface FailedQueueCreditRefund extends ChargedQueueAnchor {
+  error: unknown;
+  result?: unknown;
+}
+
 const QueueAnchorMetadataSchema = z.object({
   credit_denial_reason: z.string().nullable().optional(),
   queue_credit_source: z.literal('org_credits').optional(),
@@ -196,8 +201,15 @@ function queueRunCreditReason(anchor: ClaimedAnchor): string | null {
   return null;
 }
 
-async function refundQueueRunCredits(charged: ChargedQueueAnchor[], failure: string): Promise<ChargedQueueAnchor[]> {
-  const failed: ChargedQueueAnchor[] = [];
+function buildQueueRefundError(failed: FailedQueueCreditRefund[], failure: string): Error {
+  const failedRefs = failed.map((item) => `${item.id}/${item.orgId}`).join(', ');
+  return new Error(
+    `refundQueueRunCredits refund_org_credit failed for ${failedRefs} after ${failure}; leaving charged anchors out of normal retry`,
+  );
+}
+
+async function refundQueueRunCredits(charged: ChargedQueueAnchor[], failure: string): Promise<void> {
+  const failed: FailedQueueCreditRefund[] = [];
   await Promise.all(charged.map(async (item) => {
     try {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -213,23 +225,23 @@ async function refundQueueRunCredits(charged: ChargedQueueAnchor[], failure: str
           { error, result: data, anchorId: item.id, orgId: item.orgId, failure },
           'Queue-run credit refund failed after pre-broadcast failure',
         );
-        failed.push(item);
+        failed.push({ ...item, error, result: data });
       }
     } catch (err) {
       logger.error(
         { error: err, anchorId: item.id, orgId: item.orgId, failure },
         'Queue-run credit refund threw after pre-broadcast failure',
       );
-      failed.push(item);
+      failed.push({ ...item, error: err });
     }
   }));
   if (failed.length > 0) {
     logger.error(
       { failedRefunds: failed, failure, totalCharged: charged.length, totalFailed: failed.length },
-      'DOUBLE_BILLING_RISK: credit refunds failed — anchors reverted to PENDING will be re-charged on next batch pass',
+      'DOUBLE_BILLING_RISK: credit refunds failed — charged anchors must stay out of automatic retry',
     );
+    throw buildQueueRefundError(failed, failure);
   }
-  return failed;
 }
 
 async function markQueueCreditCharged(
@@ -654,8 +666,8 @@ async function _processBatchAnchorsInner(opts: ProcessBatchAnchorOptions = {}): 
 
   if (broadcastAnchors.length < MIN_BATCH_SIZE) {
     if (broadcastAnchors.length > 0) {
-      await bulkRevertToPending(broadcastAnchors.map(a => a.id));
       await refundQueueRunCredits(chargedAnchors, 'below minimum batch size after queue credit gate');
+      await bulkRevertToPending(broadcastAnchors.map(a => a.id));
     }
     return { processed: 0, batchId: null, merkleRoot: null, txId: null };
   }
@@ -680,15 +692,15 @@ async function _processBatchAnchorsInner(opts: ProcessBatchAnchorOptions = {}): 
     });
   } catch (error) {
     logger.error({ error, merkleRoot: tree.root, count: broadcastAnchors.length }, 'Batch anchor chain submission failed — bulk reverting claims');
-    await bulkRevertToPending(broadcastAnchors.map(a => a.id));
     await refundQueueRunCredits(chargedAnchors, 'chain submission failed');
+    await bulkRevertToPending(broadcastAnchors.map(a => a.id));
     return { processed: 0, batchId: null, merkleRoot: tree.root, txId: null };
   }
 
   if (!receipt || !receipt.receiptId) {
     logger.error({ merkleRoot: tree.root }, 'Batch chain broadcast returned empty receipt — bulk reverting claims');
-    await bulkRevertToPending(broadcastAnchors.map(a => a.id));
     await refundQueueRunCredits(chargedAnchors, 'chain submission returned empty receipt');
+    await bulkRevertToPending(broadcastAnchors.map(a => a.id));
     return { processed: 0, batchId: null, merkleRoot: tree.root, txId: null };
   }
 
