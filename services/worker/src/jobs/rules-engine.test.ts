@@ -39,10 +39,10 @@ const EVENT = {
   subject: null,
   payload: {
     source: 'docusign_connect',
-    integration_id: 'int-1',
+    integration_id: ' int-1 ',
     account_id: 'acct-1',
-    envelope_id: 'env-1',
-    document_sha256: 'a'.repeat(64),
+    envelope_id: ' env-1 ',
+    document_sha256: ` ${'a'.repeat(64)} `,
     recipient_email: 'recipient@example.com',
     raw_payload: { unsafe: 'keep me out' },
   },
