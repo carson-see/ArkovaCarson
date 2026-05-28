@@ -4,22 +4,32 @@ Copy the appropriate block into your PR description. The CI gate `staging-eviden
 
 ---
 
-## T1 — Smoke (frontend / additive read-only / no DB; 2h minimum)
+## T0 — CI-only (docs / tests / CI / tooling only; no soak)
+
+No `## Staging Soak Evidence` block is required when every touched file is T0. The checker computes this from changed files; labels do not bypass the gate.
+
+---
+
+## T1 — Expedited smoke (low-risk config or code-only; no soak)
 
 ```markdown
 ## Staging Soak Evidence
 
 - Tier: T1
-- Staging branch: arkova-staging
-- Worker revision: arkova-worker-staging-NNNNN-xxx
-- Soak start: YYYY-MM-DD HH:MM UTC
-- Soak end: YYYY-MM-DD HH:MM UTC
-- E2E result: N/N green
+- PR head SHA: 40-character current PR head SHA
+- Staging tag URL or N/A explanation: https://pr-NNN---arkova-worker-staging-... or not applicable - explain why
+- Health/smoke result: health ok, targeted smoke green
+- CI/E2E green: TypeCheck, Tests, E2E Tests green on current head
+- Rollback plan: revert PR and redeploy previous worker image / config
+- Risk rationale: explain why this is low risk and does not touch API/auth/billing/anchoring/queue/security/migrations
+- Human approver: Carson
 ```
+
+T1 is not a casual bypass. It is blocked for migrations, public API contracts, auth, billing, anchoring, worker behavior, queue/concurrency, chain/treasury, and security-sensitive changes.
 
 ---
 
-## T2 — Standard (migration / API surface / webhook / SDK; 12h minimum)
+## T2 — Standard merge-grade soak (public API / worker behavior / webhook / SDK / AI; 12h minimum)
 
 ```markdown
 ## Staging Soak Evidence
@@ -45,7 +55,7 @@ Copy the appropriate block into your PR description. The CI gate `staging-eviden
 
 ---
 
-## T3 — Critical (anchors / batch / treasury / cron-on-anchors / billing; 48h minimum)
+## T3 — Critical isolated/clean soak (migrations / data integrity / concurrency / security / chain / treasury; 48h minimum)
 
 ```markdown
 ## Staging Soak Evidence
