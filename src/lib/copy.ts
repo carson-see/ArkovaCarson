@@ -1227,6 +1227,10 @@ export const CONNECTIONS_LABELS = {
   TOAST_DISCONNECTED: 'DocuSign disconnected.',
   TOAST_ERROR_PREFIX: 'DocuSign connection failed: ',
   ACCOUNT_LABEL_PREFIX: 'Account: ',
+  MEMBER_DOCUSIGN_NAME: 'Personal DocuSign',
+  MEMBER_DOCUSIGN_DESC: 'Connect your personal DocuSign account for member-level signing',
+  MEMBER_TOAST_CONNECTED: 'DocuSign connected.',
+  MEMBER_TOAST_DISCONNECTED: 'Personal DocuSign disconnected.',
 } as const;
 
 // =============================================================================
