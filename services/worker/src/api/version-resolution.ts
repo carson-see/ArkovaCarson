@@ -16,7 +16,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { logger } from '../utils/logger.js';
 import { getCallerProfile, isCallerOrgAdmin } from './_org-auth.js';
 
-// Tables created by migration 0317 are not yet in generated types.
+// Tables created by migration 0323 are not yet in generated types.
 // Use untyped accessor until next `gen:types` run.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const untypedDb = db as unknown as SupabaseClient<any, 'public', any>;
