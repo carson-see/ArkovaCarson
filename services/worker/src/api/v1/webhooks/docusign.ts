@@ -407,11 +407,9 @@ docusignWebhookRouter.post('/', async (req: Request, res: Response) => {
     // Replay protection: dedupe on (envelope_id, event_id, generated_at).
     // DocuSign retries on any non-2xx response, so a duplicate must return
     // 200 to stop the retry loop. Migration 0256 creates the nonce table.
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any, arkova/missing-org-filter -- webhook ingress: resolving org from external provider ID
     const nonceKey = nonceKeyForEvent(event);
-    const { error: nonceErr } = await (db as any)
-      .from('docusign_webhook_nonces')
-      .insert(nonceKey);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any, arkova/missing-org-filter -- webhook replay marker write has no tenant key; nonce tuple prevents duplicate provider delivery
+    const { error: nonceErr } = await (db as any).from('docusign_webhook_nonces').insert(nonceKey);
     if (nonceErr) {
       // Postgres unique_violation — duplicate delivery, ack so retries stop.
       if ((nonceErr as { code?: string }).code === '23505') {

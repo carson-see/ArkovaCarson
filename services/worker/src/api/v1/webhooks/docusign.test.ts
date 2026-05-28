@@ -72,13 +72,6 @@ function postSignedBody(body: string | Buffer) {
     .send(body);
 }
 
-function expectNoDispatchAfterDlq() {
-  expect(dbFromMock).toHaveBeenCalledTimes(1);
-  expect(dbFromMock).toHaveBeenCalledWith('webhook_dlq');
-  expect(rpcMock).not.toHaveBeenCalled();
-  expect(submitJobMock).not.toHaveBeenCalled();
-}
-
 function integrationLookup(data: unknown, error: unknown = null) {
   const rows = data === null ? [] : Array.isArray(data) ? data : [data];
   return {
@@ -108,7 +101,9 @@ function nonceDelete(error: { code: string; message?: string } | null = null) {
 const webhookDlqInsert = insertResult;
 
 beforeEach(() => {
-  vi.clearAllMocks();
+  dbFromMock.mockReset();
+  rpcMock.mockReset();
+  submitJobMock.mockReset();
   process.env.DOCUSIGN_CONNECT_HMAC_SECRET = TEST_HMAC_KEY;
 });
 
@@ -309,6 +304,58 @@ describe('POST /webhooks/docusign', () => {
     const res = await postSignedBody(body);
 
     expect(res.status).toBe(500);
+  });
+
+  it('rolls back the nonce when document-fetch enqueue fails so DocuSign retry is not deduped', async () => {
+    const rollback = nonceDelete();
+    const body = JSON.stringify({
+      event: 'envelope-completed',
+      eventId: 'evt-retry-1',
+      envelopeId: 'env-retry-1',
+      accountId: 'acct-1',
+      status: 'completed',
+      generatedDateTime: '2026-05-28T14:05:00.000Z',
+      sender: { email: 'legal@example.com' },
+      envelopeDocuments: [{ documentId: 'combined', name: 'retry.pdf' }],
+    });
+
+    dbFromMock.mockReturnValueOnce(
+      integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1' }),
+    );
+    dbFromMock.mockReturnValueOnce(nonceInsert());
+    rpcMock.mockResolvedValueOnce({ data: 'evt-first', error: null });
+    submitJobMock.mockResolvedValueOnce(null);
+    dbFromMock.mockReturnValueOnce(rollback);
+    dbFromMock.mockReturnValueOnce(webhookDlqInsert());
+
+    const first = await postSignedBody(body);
+
+    expect(first.status).toBe(500);
+    expect(rollback.delete).toHaveBeenCalledTimes(1);
+    expect(rollback.match).toHaveBeenCalledWith({
+      envelope_id: 'env-retry-1',
+      event_id: 'evt-retry-1',
+      generated_at: '2026-05-28T14:05:00.000Z',
+    });
+
+    dbFromMock.mockReturnValueOnce(
+      integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1' }),
+    );
+    dbFromMock.mockReturnValueOnce(nonceInsert());
+    rpcMock.mockResolvedValueOnce({ data: 'evt-second', error: null });
+    submitJobMock.mockResolvedValueOnce('job-second');
+
+    const retry = await postSignedBody(body);
+
+    expect(retry.status).toBe(202);
+    expect(rpcMock).toHaveBeenCalledTimes(2);
+    expect(submitJobMock).toHaveBeenCalledTimes(2);
+    expect(submitJobMock).toHaveBeenLastCalledWith(expect.objectContaining({
+      payload: expect.objectContaining({
+        envelope_id: 'env-retry-1',
+        rule_event_id: 'evt-second',
+      }),
+    }));
   });
 
   it('returns 200 duplicate when the same envelope event is delivered twice', async () => {
