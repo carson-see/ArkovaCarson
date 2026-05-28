@@ -368,14 +368,13 @@ async function main(): Promise<void> {
     console.log(result.sql);
     if (result.applyResult) {
       console.log('');
-      console.log('Apply result:');
-      console.log(JSON.stringify(result.applyResult, null, 2));
+      console.log('Apply completed. Re-run dry-run to verify no updates remain.');
     } else {
       console.log('');
       console.log('Dry run only. Re-run with --apply --confirm-project-ref <ref> to execute.');
     }
-  } catch (error) {
-    console.error(error instanceof Error ? error.message : String(error));
+  } catch {
+    console.error('Migration ledger reconciliation failed. Review the command arguments and Supabase Management API access.');
     process.exit(1);
   }
 }
