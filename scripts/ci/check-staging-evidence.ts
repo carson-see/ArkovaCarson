@@ -379,39 +379,58 @@ function extractShaField(body: string, field: string): string | null {
   return m ? m[0].toLowerCase() : null;
 }
 
+function validateNonEmptyEvidenceField(body: string, field: string): string | null {
+  const value = extractEvidenceFieldValue(body, field);
+  if (value === null || value.trim().length > 0) return null;
+  return `${field} must include auditable evidence, not an empty value.`;
+}
+
+function validateStagingTagEvidence(body: string): string | null {
+  const field = 'Staging tag URL or N/A explanation:';
+  const value = extractEvidenceFieldValue(body, field);
+  if (value === null || value.trim().length === 0) return null;
+
+  const hasUrl = /\bhttps?:\/\/\S+/i.test(value);
+  const hasExplanation = /\b(?:n\/a|not applicable|no staging tag|not needed)\b/i.test(value);
+  return hasUrl || hasExplanation
+    ? null
+    : `${field} must contain a staging URL or an explicit N/A explanation.`;
+}
+
+function validatePassingEvidenceField(
+  body: string,
+  field: string,
+  passPattern: RegExp,
+  message: string,
+): string | null {
+  const value = extractEvidenceFieldValue(body, field);
+  if (value === null || value.trim().length === 0 || passPattern.test(value)) return null;
+  return message;
+}
+
 function requiredValueErrors(body: string, tier: Tier): string[] {
-  const errors: string[] = [];
+  if (tier !== 'T1') return [];
 
-  if (tier !== 'T1') return errors;
+  const emptyFieldErrors = TIER_SPECS.T1.requiredFields
+    .filter((field) => field !== 'Tier:' && field !== 'PR head SHA:')
+    .map((field) => validateNonEmptyEvidenceField(body, field));
 
-  for (const field of TIER_SPECS.T1.requiredFields) {
-    if (field === 'Tier:' || field === 'PR head SHA:') continue;
-    const value = extractEvidenceFieldValue(body, field);
-    if (value !== null && value.trim().length === 0) {
-      errors.push(`${field} must include auditable evidence, not an empty value.`);
-    }
-  }
-
-  const stagingTag = extractEvidenceFieldValue(body, 'Staging tag URL or N/A explanation:');
-  if (stagingTag !== null && stagingTag.trim().length > 0) {
-    const hasUrl = /\bhttps?:\/\/\S+/i.test(stagingTag);
-    const hasExplanation = /\b(?:n\/a|not applicable|no staging tag|not needed)\b/i.test(stagingTag);
-    if (!hasUrl && !hasExplanation) {
-      errors.push('Staging tag URL or N/A explanation: must contain a staging URL or an explicit N/A explanation.');
-    }
-  }
-
-  const smoke = extractEvidenceFieldValue(body, 'Health/smoke result:');
-  if (smoke !== null && smoke.trim().length > 0 && !/\b(?:green|pass(?:ed|es)?|ok|healthy)\b/i.test(smoke)) {
-    errors.push('Health/smoke result: must state a passing health/smoke result.');
-  }
-
-  const ci = extractEvidenceFieldValue(body, 'CI/E2E green:');
-  if (ci !== null && ci.trim().length > 0 && !/\b(?:green|pass(?:ed|es)?|success(?:ful)?)\b/i.test(ci)) {
-    errors.push('CI/E2E green: must state that CI/E2E is green.');
-  }
-
-  return errors;
+  return [
+    ...emptyFieldErrors,
+    validateStagingTagEvidence(body),
+    validatePassingEvidenceField(
+      body,
+      'Health/smoke result:',
+      /\b(?:green|pass(?:ed|es)?|ok|healthy)\b/i,
+      'Health/smoke result: must state a passing health/smoke result.',
+    ),
+    validatePassingEvidenceField(
+      body,
+      'CI/E2E green:',
+      /\b(?:green|pass(?:ed|es)?|success(?:ful)?)\b/i,
+      'CI/E2E green: must state that CI/E2E is green.',
+    ),
+  ].filter((error): error is string => error !== null);
 }
 
 function normalizeSha(value: string | undefined): string | null {
