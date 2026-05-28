@@ -42,6 +42,7 @@ type VerificationState = 'passed' | 'failed' | 'pending';
 
 function resolveVerificationState(status: string, chainProof: ChainProof | null): VerificationState {
   if (status === 'REVOKED' || status === 'EXPIRED') return 'failed';
+  if (status === 'CHALLENGED') return 'failed';
   if (status === 'PENDING' || status === 'DRAFT' || !chainProof) return 'pending';
   return 'passed';
 }

@@ -105,8 +105,7 @@ interface AuditEventInsert {
 interface DbTableQuery<T> {
   select(columns?: string): DbFilterQuery<T>;
   update(value: Record<string, unknown>): DbFilterQuery<MemberIntegrationIdRow[]>;
-  insert(value: IntegrationEventInsert | AuditEventInsert): PromiseLike<DbQueryResult<unknown>>;
-  upsert(value: MemberIntegrationUpsert, options?: { onConflict?: string }): DbFilterQuery<MemberIntegrationIdRow>;
+  insert(value: IntegrationEventInsert | AuditEventInsert | MemberIntegrationUpsert): DbFilterQuery<MemberIntegrationIdRow>;
 }
 
 interface DbClient {
@@ -390,9 +389,22 @@ export function createDocusignMemberOAuthRouter(deps: DocusignMemberOAuthDeps = 
         value: tokens.refresh_token,
       });
 
-      const { data: integration, error: upsertError } = await db
+      // Soft-revoke any existing active row before inserting the new one.
+      // Cannot use upsert: the partial unique index (WHERE revoked_at IS NULL)
+      // is not usable as a PostgREST conflict target.
+      const now = (deps.now?.() ?? new Date()).toISOString();
+      await db
         .from('member_integrations')
-        .upsert({
+        .update({ revoked_at: now, updated_at: now })
+        .eq('user_id', payload.userId)
+        .eq('org_id', payload.orgId)
+        .eq('provider', Provider)
+        .eq('account_id', account.account_id)
+        .is('revoked_at', null);
+
+      const { data: integration, error: insertError } = await db
+        .from('member_integrations')
+        .insert({
           user_id: payload.userId,
           org_id: payload.orgId,
           provider: Provider,
@@ -403,15 +415,15 @@ export function createDocusignMemberOAuthRouter(deps: DocusignMemberOAuthDeps = 
           token_kms_key_id: encrypted.keyId,
           token_secret_name: tokenSecretName,
           scope: tokens.scope ?? null,
-          connected_at: (deps.now?.() ?? new Date()).toISOString(),
+          connected_at: now,
           revoked_at: null,
-          updated_at: (deps.now?.() ?? new Date()).toISOString(),
-        }, { onConflict: 'user_id,org_id,provider,account_id' })
+          updated_at: now,
+        })
         .select('id')
         .single();
 
-      if (upsertError) {
-        logger.error({ error: upsertError, orgId: payload.orgId, userId: payload.userId }, 'DocuSign member integration upsert failed');
+      if (insertError) {
+        logger.error({ error: insertError, orgId: payload.orgId, userId: payload.userId }, 'DocuSign member integration insert failed');
         await refreshTokenStore.delete({ name: tokenSecretName }).catch((deleteError) => {
           logger.warn(
             { error: deleteError, orgId: payload.orgId, tokenSecretName },
@@ -616,4 +628,6 @@ export function createDocusignMemberOAuthRouter(deps: DocusignMemberOAuthDeps = 
   return router;
 }
 
-export const docusignMemberOAuthRouter = createDocusignMemberOAuthRouter();
+export const docusignMemberOAuthRouter = createDocusignMemberOAuthRouter({
+  stateSecret: config.supabaseJwtSecret,
+});

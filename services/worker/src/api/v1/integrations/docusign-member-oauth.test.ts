@@ -301,19 +301,22 @@ describe('Member-level DocuSign OAuth router (SCRUM-2044)', () => {
       expect(tablesWritten).toContain('member_integrations');
       expect(tablesWritten).not.toContain('org_integrations');
 
-      const upsert = captured.upsert?.[0] as Record<string, unknown>;
-      expect(upsert.provider).toBe('docusign');
-      expect(upsert.account_id).toBe('docusign-member-acct-1');
-      expect(upsert.user_id).toBe(TEST_USER_ID);
-      expect(upsert.org_id).toBe(TEST_ORG_ID);
+      // Soft-revoke update fires before insert (partial unique index compat)
+      expect(captured.update).toBeDefined();
+
+      const inserted = captured.insert?.[0] as Record<string, unknown>;
+      expect(inserted.provider).toBe('docusign');
+      expect(inserted.account_id).toBe('docusign-member-acct-1');
+      expect(inserted.user_id).toBe(TEST_USER_ID);
+      expect(inserted.org_id).toBe(TEST_ORG_ID);
 
       // Secret name uses member-level naming convention
-      expect(upsert.token_secret_name).toMatch(/arkova-docusign-member-/);
+      expect(inserted.token_secret_name).toMatch(/arkova-docusign-member-/);
 
       // Refresh token goes to Secret Manager, not DB
       expect(secretWrites).toHaveLength(1);
       expect(secretWrites[0].value).toBe('refresh-token-member');
-      expect(JSON.stringify(upsert)).not.toContain('refresh-token-member');
+      expect(JSON.stringify(inserted)).not.toContain('refresh-token-member');
     });
 
     it('redirects with invalid_state when the state token is forged', async () => {

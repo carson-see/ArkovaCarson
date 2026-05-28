@@ -71,6 +71,17 @@ describe('VerificationResultDisplay', () => {
     expect(screen.getByText(ATTESTATION_LABELS.VERIFICATION_FAILED)).toBeInTheDocument();
   });
 
+  it('renders failed status for CHALLENGED attestation (not passed)', () => {
+    render(
+      <VerificationResultDisplay
+        status="CHALLENGED"
+        fingerprint="aabbcc1122334455"
+        chainProof={chainProof}
+      />,
+    );
+    expect(screen.getByText(ATTESTATION_LABELS.VERIFICATION_FAILED)).toBeInTheDocument();
+  });
+
   it('renders fingerprint when provided', () => {
     render(
       <VerificationResultDisplay
