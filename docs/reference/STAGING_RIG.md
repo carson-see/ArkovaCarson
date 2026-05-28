@@ -61,9 +61,9 @@ A standalone Supabase project applies migrations via `npx supabase db push --lin
 ## Authorization model
 
 * The project itself: created via Supabase MCP `create_project` after `get_cost` + `confirm_cost`. Carson authorized the $10/mo on 2026-05-04.
-* CLI access: requires `supabase login` (Carson interactive) before `supabase link --project-ref ujtlwnoqfhtitcmsnrpq`.
+* CLI access: use Supabase MCP or an approved non-interactive token path. Do not make merge readiness depend on an operator's local interactive Supabase login.
 * Service role + anon keys: pull via Supabase MCP `get_publishable_keys`. Never check service role key into the repo.
-* Cloud Run worker: `arkova-worker-staging` deploy needs `gcloud auth login` (Carson interactive) + `gcloud config set project arkova1`.
+* Cloud Run worker: use the WIF-backed `Deploy to Staging` workflow. Local `gcloud auth login` is not an acceptable dependency for merge readiness.
 
 ## How to populate / re-populate the schema
 
