@@ -183,7 +183,7 @@ describe('parseDocusignConnectPayload', () => {
 
     expect(event.envelopeId).toBe('env-1');
     expect(event.accountId).toBe('acct-1');
-    expect(event.sender?.email).toBe('LEGAL@acme.com');
+    expect(event.sender?.email).toBe('legal@acme.com');
   });
 
   it('normalizes Connect 2.0 data envelopes', () => {
@@ -206,6 +206,32 @@ describe('parseDocusignConnectPayload', () => {
         }),
       ),
     ).toThrow(/completed envelope/i);
+  });
+
+  it('rejects completed events missing the DocuSign account id', () => {
+    expect(() =>
+      parseDocusignConnectPayload(
+        JSON.stringify({
+          event: 'envelope-completed',
+          envelopeId: 'env-2',
+          status: 'completed',
+        }),
+      ),
+    ).toThrow(/completed envelope/i);
+  });
+
+  it('rejects completed events with invalid generatedDateTime', () => {
+    expect(() =>
+      parseDocusignConnectPayload(
+        JSON.stringify({
+          event: 'envelope-completed',
+          envelopeId: 'env-2',
+          accountId: 'acct-2',
+          status: 'completed',
+          generatedDateTime: 'not-a-date',
+        }),
+      ),
+    ).toThrow();
   });
 });
 

@@ -36,6 +36,12 @@ interface DocusignIntegrationRow {
   hmac_keys: HmacKeyEntry[] | null;
 }
 
+interface DocusignNonceKey {
+  envelope_id: string;
+  event_id: string;
+  generated_at: string;
+}
+
 function getRawBody(req: Request): Buffer | null {
   const rawBody = (req as unknown as { rawBody?: Buffer }).rawBody ?? req.body;
   return Buffer.isBuffer(rawBody) ? rawBody : null;
@@ -165,6 +171,51 @@ async function enqueueFetchJob(args: {
     throw new Error('document_job_enqueue_failed');
   }
   return jobId;
+}
+
+function nonceKeyForEvent(event: DocusignCompletedEnvelope): DocusignNonceKey {
+  return {
+    envelope_id: event.envelopeId,
+    event_id: event.eventId ?? event.event,
+    generated_at: event.generatedDateTime ?? new Date().toISOString(),
+  };
+}
+
+async function rollbackNonceAfterEnqueueFailure(nonceKey: DocusignNonceKey): Promise<void> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any, arkova/missing-org-filter -- webhook replay marker rollback scoped by nonce unique key
+  const { error } = await (db as any)
+    .from('docusign_webhook_nonces')
+    .delete()
+    .match(nonceKey);
+
+  if (error) {
+    logger.error(
+      { error, envelopeId: nonceKey.envelope_id, eventId: nonceKey.event_id },
+      'DocuSign webhook: nonce rollback failed after enqueue failure',
+    );
+    throw new Error('nonce_rollback_failed');
+  }
+}
+
+async function dlqInsert(args: {
+  reason: string;
+  externalId: string | null;
+  payloadHash: string;
+}): Promise<void> {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { error } = await (db as any).from('webhook_dlq').insert({
+      provider: 'docusign',
+      reason: args.reason.slice(0, 500),
+      external_id: args.externalId,
+      payload_hash: args.payloadHash,
+    });
+    if (error) {
+      logger.warn({ error }, 'DocuSign webhook: DLQ insert failed (non-fatal)');
+    }
+  } catch (err) {
+    logger.warn({ error: err }, 'DocuSign webhook: DLQ insert threw (non-fatal)');
+  }
 }
 
 // ── SCRUM-1872: Notary data extraction ──────────────────────────────
@@ -300,6 +351,8 @@ docusignWebhookRouter.post('/', async (req: Request, res: Response) => {
     return;
   }
 
+  const payloadHash = crypto.createHash('sha256').update(rawBody).digest('hex');
+
   // SCRUM-2043: lookup-first order — parse body to get accountId, then
   // resolve integration (+ per-org HMAC keys), then verify HMAC.
   let event: DocusignCompletedEnvelope;
@@ -356,13 +409,10 @@ docusignWebhookRouter.post('/', async (req: Request, res: Response) => {
     // DocuSign retries on any non-2xx response, so a duplicate must return
     // 200 to stop the retry loop. Migration 0256 creates the nonce table.
     // eslint-disable-next-line @typescript-eslint/no-explicit-any, arkova/missing-org-filter -- webhook ingress: resolving org from external provider ID
+    const nonceKey = nonceKeyForEvent(event);
     const { error: nonceErr } = await (db as any)
       .from('docusign_webhook_nonces')
-      .insert({
-        envelope_id: event.envelopeId,
-        event_id: event.eventId ?? event.event,
-        generated_at: event.generatedDateTime ?? new Date().toISOString(),
-      });
+      .insert(nonceKey);
     if (nonceErr) {
       // Postgres unique_violation — duplicate delivery, ack so retries stop.
       if ((nonceErr as { code?: string }).code === '23505') {
@@ -381,24 +431,30 @@ docusignWebhookRouter.post('/', async (req: Request, res: Response) => {
       return;
     }
 
-    const payloadHash = crypto.createHash('sha256').update(rawBody).digest('hex');
-    const ruleEventId = await enqueueRuleEvent({ integration, event, payloadHash });
-    await enqueueFetchJob({ integration, event, ruleEventId });
+    try {
+      const ruleEventId = await enqueueRuleEvent({ integration, event, payloadHash });
+      await enqueueFetchJob({ integration, event, ruleEventId });
 
-    // SCRUM-1872: Check for notary data and enqueue notarization job (non-fatal)
-    const notaryData = extractNotaryData(rawBody);
-    if (notaryData) {
-      await enqueueNotarizationJob({
-        integration,
-        event,
-        ruleEventId,
-        notaryData,
-      });
+      // SCRUM-1872: Check for notary data and enqueue notarization job (non-fatal)
+      const notaryData = extractNotaryData(rawBody);
+      if (notaryData) {
+        await enqueueNotarizationJob({
+          integration,
+          event,
+          ruleEventId,
+          notaryData,
+        });
+      }
+    } catch (enqueueErr) {
+      await rollbackNonceAfterEnqueueFailure(nonceKey);
+      throw enqueueErr;
     }
 
     res.status(202).json({ ok: true });
   } catch (err) {
+    const message = err instanceof Error ? err.message : 'unexpected';
     logger.error({ error: err, accountId: event.accountId }, 'DocuSign webhook processing failed');
+    await dlqInsert({ reason: message, externalId: event.envelopeId, payloadHash });
     res.status(500).json({ error: { code: 'webhook_processing_failed' } });
   }
 });

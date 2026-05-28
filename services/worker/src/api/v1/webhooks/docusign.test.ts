@@ -81,6 +81,19 @@ function nonceInsert(error: { code: string; message?: string } | null = null) {
   };
 }
 
+function nonceDelete(error: { code: string; message?: string } | null = null) {
+  return {
+    delete: vi.fn().mockReturnThis(),
+    match: vi.fn().mockResolvedValue({ data: null, error }),
+  };
+}
+
+function webhookDlqInsert(error: { code: string; message?: string } | null = null) {
+  return {
+    insert: vi.fn().mockResolvedValue({ data: null, error }),
+  };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   process.env.DOCUSIGN_CONNECT_HMAC_SECRET = TEST_HMAC_KEY;
@@ -118,6 +131,25 @@ describe('POST /webhooks/docusign', () => {
 
     expect(res.status).toBe(401);
     expect(dbFromMock).toHaveBeenCalledTimes(1); // integration lookup only
+    expect(rpcMock).not.toHaveBeenCalled();
+    expect(submitJobMock).not.toHaveBeenCalled();
+  });
+
+  it('returns 401 for malformed HMAC-valid bodies without dispatching', async () => {
+    const body = JSON.stringify({
+      event: 'envelope-completed',
+      envelopeId: 'env-1',
+      status: 'completed',
+    });
+
+    const res = await request(createApp())
+      .post('/webhooks/docusign')
+      .set('Content-Type', 'application/json')
+      .set('X-DocuSign-Signature-1', sign(body))
+      .send(body);
+
+    expect(res.status).toBe(401);
+    expect(dbFromMock).not.toHaveBeenCalled();
     expect(rpcMock).not.toHaveBeenCalled();
     expect(submitJobMock).not.toHaveBeenCalled();
   });
@@ -213,11 +245,49 @@ describe('POST /webhooks/docusign', () => {
     }));
   });
 
+  it('accepts DocuSign payloads with extra fields after schema validation', async () => {
+    dbFromMock.mockReturnValueOnce(
+      integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1', hmac_keys: null }),
+    );
+    dbFromMock.mockReturnValueOnce(nonceInsert());
+    rpcMock.mockResolvedValueOnce({ data: '22222222-2222-4222-8222-222222222222', error: null });
+    submitJobMock.mockResolvedValueOnce('job-1');
+    const body = JSON.stringify({
+      event: 'envelope-completed',
+      envelopeId: 'env-extra-1',
+      accountId: 'acct-1',
+      status: 'completed',
+      generatedDateTime: '2026-05-28T14:05:00.000Z',
+      sender: { email: 'legal@example.com' },
+      envelopeDocuments: [{ documentId: 'combined', name: 'msa.pdf' }],
+      unexpectedDocuSignField: { retained: 'for vendor compatibility' },
+    });
+
+    const res = await request(createApp())
+      .post('/webhooks/docusign')
+      .set('Content-Type', 'application/json')
+      .set('X-DocuSign-Signature-1', sign(body))
+      .send(body);
+
+    expect(res.status).toBe(202);
+    expect(rpcMock).toHaveBeenCalledWith('enqueue_rule_event', expect.objectContaining({
+      p_external_file_id: 'env-extra-1',
+      p_payload: expect.objectContaining({
+        generated_at: '2026-05-28T14:05:00.000Z',
+      }),
+    }));
+    expect(submitJobMock).toHaveBeenCalledWith(expect.objectContaining({
+      payload: expect.objectContaining({ envelope_id: 'env-extra-1' }),
+    }));
+  });
+
   it('returns 500 when the retryable job cannot be queued', async () => {
     dbFromMock.mockReturnValueOnce(
       integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1', hmac_keys: null }),
     );
     dbFromMock.mockReturnValueOnce(nonceInsert());
+    dbFromMock.mockReturnValueOnce(nonceDelete());
+    dbFromMock.mockReturnValueOnce(webhookDlqInsert());
     rpcMock.mockResolvedValueOnce({ data: 'evt-1', error: null });
     submitJobMock.mockResolvedValueOnce(null);
     const body = validBody();

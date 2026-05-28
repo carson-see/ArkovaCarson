@@ -11,6 +11,7 @@
  * the caller for KMS encryption; never log response bodies from this module.
  */
 import { z } from 'zod';
+import { DocusignEnvelopeCompleted as DocusignEnvelopeCompletedSchema } from '../connectors/schemas.js';
 import { verifyHmacSha256Base64 } from './hmac.js';
 
 const DOCUSIGN_DEMO_AUTH_BASE = 'https://account-d.docusign.com';
@@ -81,16 +82,7 @@ export interface DocusignClientDeps {
 export type DocusignTokenResponseT = z.infer<typeof DocusignTokenResponse>;
 export type DocusignUserInfoT = z.infer<typeof DocusignUserInfo>;
 
-export interface DocusignCompletedEnvelope {
-  event: 'envelope-completed';
-  eventId?: string;
-  envelopeId: string;
-  accountId: string;
-  status: 'completed';
-  sender?: { email?: string };
-  envelopeDocuments: Array<z.infer<typeof EnvelopeDocument>>;
-  generatedDateTime?: string;
-}
+export type DocusignCompletedEnvelope = z.infer<typeof DocusignEnvelopeCompletedSchema>;
 
 export class DocusignConfigError extends Error {
   constructor(message: string) {
@@ -425,7 +417,7 @@ export function parseDocusignConnectPayload(rawBody: Buffer | string): DocusignC
     throw new Error('DocuSign Connect payload is not a completed envelope event');
   }
 
-  return {
+  return DocusignEnvelopeCompletedSchema.parse({
     event: 'envelope-completed',
     eventId: parsed.eventId,
     envelopeId,
@@ -434,5 +426,5 @@ export function parseDocusignConnectPayload(rawBody: Buffer | string): DocusignC
     sender: parsed.sender ?? parsed.envelopeSummary?.sender,
     envelopeDocuments: parsed.envelopeDocuments ?? parsed.envelopeSummary?.envelopeDocuments ?? [],
     generatedDateTime: parsed.generatedDateTime,
-  };
+  });
 }
