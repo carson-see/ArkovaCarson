@@ -622,8 +622,9 @@ describe('worker server', () => {
   describe('OPTIONS /api/v1/integrations OAuth routes (CORS preflight)', () => {
     it('relies on the global CORS middleware instead of a duplicate integrations mount', () => {
       const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
+      const duplicateIntegrationsCorsMount = /app\s*\.\s*use\s*\(\s*['"`]\/api\/v1\/integrations['"`]\s*,\s*corsMiddleware\b/;
 
-      expect(source).not.toContain("app.use('/api/v1/integrations', corsMiddleware)");
+      expect(source).not.toMatch(duplicateIntegrationsCorsMount);
     });
 
     it.each([

@@ -4,10 +4,10 @@
  * GET  /api/queue/pending       → list PENDING_RESOLUTION anchors for caller's org
  * POST /api/queue/resolve       → admin picks terminal version; siblings → REVOKED
  *
- * The heavy lifting lives in the DB RPCs `list_pending_resolution_anchors`
- * and `resolve_anchor_queue` (migration 0228). The endpoints here are thin
- * wrappers: authenticate via Supabase JWT, forward to the RPC under the
- * user's role, shape the response, map RPC exceptions to HTTP codes.
+ * GET /api/queue/pending derives the caller org from their profile, then
+ * queries anchors directly so the service-role worker does not depend on
+ * auth.uid(). POST /api/queue/resolve still delegates terminal-version
+ * resolution to the queue RPC and maps RPC exceptions to HTTP codes.
  */
 import type { Request, Response } from 'express';
 import { z } from 'zod';
@@ -300,7 +300,15 @@ export async function handleRunOrgAnchorQueue(
   _req: Request,
   res: Response,
 ): Promise<void> {
-  const profile = await getCallerProfile(userId);
+  let profile: CallerProfile | null;
+  try {
+    profile = await getCallerProfile(userId);
+  } catch (err) {
+    logger.error({ error: err, userId }, 'profiles lookup failed for manual org queue run');
+    res.status(500).json({ error: { code: 'internal_error', message: 'Profile lookup failed' } });
+    return;
+  }
+
   const orgId = profile?.org_id ?? null;
   if (!orgId) {
     res.status(403).json({
