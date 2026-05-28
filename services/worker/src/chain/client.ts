@@ -146,10 +146,21 @@ let _initPromise: Promise<ChainClient> | null = null;
  * the async wrapper.
  */
 export async function initChainClient(): Promise<ChainClient> {
-  _initPromise = createChainClient();
-  _chainClient = await _initPromise;
-  _initPromise = null;
-  return _chainClient;
+  if (_chainClient) return _chainClient;
+  if (_initPromise) return _initPromise;
+
+  _initPromise = createChainClient()
+    .then((client) => {
+      _chainClient = client;
+      _initPromise = null;
+      return client;
+    })
+    .catch((error: unknown) => {
+      _initPromise = null;
+      throw error;
+    });
+
+  return _initPromise;
 }
 
 /**

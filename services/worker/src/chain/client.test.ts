@@ -683,4 +683,17 @@ describe('chain client singleton throws when uninitialized', () => {
     expect(client).toBeDefined();
     expect(typeof client.submitFingerprint).toBe('function');
   });
+
+  it('shares one initialization when cron lazy init races startup init', async () => {
+    vi.resetModules();
+    const fresh = await import('./client.js');
+
+    const [cronClient, startupClient] = await Promise.all([
+      fresh.getChainClientAsync(),
+      fresh.initChainClient(),
+    ]);
+
+    expect(cronClient).toBe(startupClient);
+    expect(await fresh.getChainClientAsync()).toBe(cronClient);
+  });
 });
