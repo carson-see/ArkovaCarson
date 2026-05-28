@@ -203,8 +203,7 @@ async function dlqInsert(args: {
   payloadHash: string;
 }): Promise<void> {
   try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { error } = await (db as any).from('webhook_dlq').insert({
+    const { error } = await db.from('webhook_dlq').insert({
       provider: 'docusign',
       reason: args.reason.slice(0, 500),
       external_id: args.externalId,
@@ -449,7 +448,6 @@ docusignWebhookRouter.post('/', async (req: Request, res: Response) => {
       await rollbackNonceAfterEnqueueFailure(nonceKey);
       throw enqueueErr;
     }
-
     res.status(202).json({ ok: true });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'unexpected';

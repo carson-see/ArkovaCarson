@@ -90,11 +90,13 @@ function integrationLookup(data: unknown, error: unknown = null) {
   };
 }
 
-function nonceInsert(error: { code: string; message?: string } | null = null) {
+function insertResult(error: { code: string; message?: string } | null = null) {
   return {
     insert: vi.fn().mockResolvedValue({ data: null, error }),
   };
 }
+
+const nonceInsert = insertResult;
 
 function nonceDelete(error: { code: string; message?: string } | null = null) {
   return {
@@ -103,11 +105,7 @@ function nonceDelete(error: { code: string; message?: string } | null = null) {
   };
 }
 
-function webhookDlqInsert(error: { code: string; message?: string } | null = null) {
-  return {
-    insert: vi.fn().mockResolvedValue({ data: null, error }),
-  };
-}
+const webhookDlqInsert = insertResult;
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -233,6 +231,7 @@ describe('POST /webhooks/docusign', () => {
     const res = await postSignedBody(body);
 
     expect(res.status).toBe(202);
+    expect(res.body).toEqual({ ok: true });
     expect(rpcMock).toHaveBeenCalledWith('enqueue_rule_event', expect.objectContaining({
       p_org_id: ORG_ID,
       p_trigger_type: 'ESIGN_COMPLETED',
