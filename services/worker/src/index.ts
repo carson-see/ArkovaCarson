@@ -343,7 +343,6 @@ const integrationsAuthGate = (req: Request, res: Response, next: NextFunction) =
   if (req.path.endsWith('/oauth/callback')) return next();
   return requireAuthMw(req, res, next);
 };
-app.use('/api/v1/integrations', corsMiddleware);
 app.use(
   '/api/v1/integrations',
   pathScopedKillSwitch('/google_drive', 'ENABLE_DRIVE_OAUTH'),

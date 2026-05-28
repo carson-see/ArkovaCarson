@@ -12,6 +12,7 @@
 import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vitest';
 import type { Express } from 'express';
 import supertest from 'supertest';
+import { readFileSync } from 'node:fs';
 
 // ---- Hoisted mocks ----
 
@@ -619,6 +620,12 @@ describe('worker server', () => {
   });
 
   describe('OPTIONS /api/v1/integrations OAuth routes (CORS preflight)', () => {
+    it('relies on the global CORS middleware instead of a duplicate integrations mount', () => {
+      const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
+
+      expect(source).not.toContain("app.use('/api/v1/integrations', corsMiddleware)");
+    });
+
     it.each([
       '/api/v1/integrations/docusign/oauth/start',
       '/api/v1/integrations/google_drive/oauth/start',
