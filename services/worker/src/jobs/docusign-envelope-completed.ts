@@ -41,7 +41,7 @@ interface DbInsertQuery<T> {
 }
 
 interface DbClient {
-  from(table: 'org_integrations'): DbSelectQuery<DocusignIntegrationRow>;
+  from(table: 'org_integrations' | 'member_integrations'): DbSelectQuery<DocusignIntegrationRow>;
   from(table: 'integration_events'): DbInsertQuery<{ id?: string }>;
 }
 
@@ -83,8 +83,8 @@ async function fetchIntegration(
   db: DbClient,
   payload: DocusignEnvelopeCompletedJobPayloadT,
 ): Promise<DocusignIntegrationRow> {
-  const { data, error } = await db
-    .from('org_integrations')
+  const queryIntegration = (table: 'org_integrations' | 'member_integrations') => db
+    .from(table)
     .select('id, org_id, account_id, base_uri, token_secret_name')
     .eq('id', payload.integration_id)
     .eq('org_id', payload.org_id)
@@ -93,14 +93,30 @@ async function fetchIntegration(
     .is('revoked_at', null)
     .maybeSingle();
 
-  if (error) {
-    logger.error({ error, integrationId: payload.integration_id }, 'DocuSign job integration lookup failed');
+  const orgResult = await queryIntegration('org_integrations');
+  if (orgResult.error) {
+    logger.error(
+      { error: orgResult.error, integrationId: payload.integration_id },
+      'DocuSign job org integration lookup failed',
+    );
     throw new Error('docusign_integration_lookup_failed');
   }
-  if (!data) {
-    throw new Error('docusign_integration_not_found');
+  if (orgResult.data) {
+    return orgResult.data as DocusignIntegrationRow;
   }
-  return data as DocusignIntegrationRow;
+
+  const memberResult = await queryIntegration('member_integrations');
+  if (memberResult.error) {
+    logger.error(
+      { error: memberResult.error, integrationId: payload.integration_id },
+      'DocuSign job member integration lookup failed',
+    );
+    throw new Error('docusign_integration_lookup_failed');
+  }
+  if (memberResult.data) {
+    return memberResult.data as DocusignIntegrationRow;
+  }
+  throw new Error('docusign_integration_not_found');
 }
 
 export function makeDocusignEnvelopeJobDeps(

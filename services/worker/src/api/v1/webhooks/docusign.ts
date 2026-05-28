@@ -428,8 +428,9 @@ docusignWebhookRouter.post('/', async (req: Request, res: Response) => {
       return;
     }
 
+    let ruleEventId: string | null = null;
     try {
-      const ruleEventId = await enqueueRuleEvent({ integration, event, payloadHash });
+      ruleEventId = await enqueueRuleEvent({ integration, event, payloadHash });
       await enqueueFetchJob({ integration, event, ruleEventId });
 
       // SCRUM-1872: Check for notary data and enqueue notarization job (non-fatal)
@@ -443,7 +444,9 @@ docusignWebhookRouter.post('/', async (req: Request, res: Response) => {
         });
       }
     } catch (enqueueErr) {
-      await rollbackNonceAfterEnqueueFailure(nonceKey);
+      if (!ruleEventId) {
+        await rollbackNonceAfterEnqueueFailure(nonceKey);
+      }
       throw enqueueErr;
     }
     res.status(202).json({ ok: true });

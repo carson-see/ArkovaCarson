@@ -295,7 +295,6 @@ describe('POST /webhooks/docusign', () => {
       integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1', hmac_keys: null }),
     );
     dbFromMock.mockReturnValueOnce(nonceInsert());
-    dbFromMock.mockReturnValueOnce(nonceDelete());
     dbFromMock.mockReturnValueOnce(webhookDlqInsert());
     rpcMock.mockResolvedValueOnce({ data: 'evt-1', error: null });
     submitJobMock.mockResolvedValueOnce(null);
@@ -306,8 +305,7 @@ describe('POST /webhooks/docusign', () => {
     expect(res.status).toBe(500);
   });
 
-  it('rolls back the nonce when document-fetch enqueue fails so DocuSign retry is not deduped', async () => {
-    const rollback = nonceDelete();
+  it('keeps the nonce when document-fetch enqueue fails after rule-event enqueue', async () => {
     const body = JSON.stringify({
       event: 'envelope-completed',
       eventId: 'evt-retry-1',
@@ -325,37 +323,43 @@ describe('POST /webhooks/docusign', () => {
     dbFromMock.mockReturnValueOnce(nonceInsert());
     rpcMock.mockResolvedValueOnce({ data: 'evt-first', error: null });
     submitJobMock.mockResolvedValueOnce(null);
-    dbFromMock.mockReturnValueOnce(rollback);
     dbFromMock.mockReturnValueOnce(webhookDlqInsert());
 
     const first = await postSignedBody(body);
 
     expect(first.status).toBe(500);
-    expect(rollback.delete).toHaveBeenCalledTimes(1);
-    expect(rollback.match).toHaveBeenCalledWith({
-      envelope_id: 'env-retry-1',
-      event_id: 'evt-retry-1',
-      generated_at: '2026-05-28T14:05:00.000Z',
-    });
 
     dbFromMock.mockReturnValueOnce(
       integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1' }),
     );
-    dbFromMock.mockReturnValueOnce(nonceInsert());
-    rpcMock.mockResolvedValueOnce({ data: 'evt-second', error: null });
-    submitJobMock.mockResolvedValueOnce('job-second');
+    dbFromMock.mockReturnValueOnce(
+      nonceInsert({ code: '23505', message: 'duplicate key value violates unique constraint' }),
+    );
 
     const retry = await postSignedBody(body);
 
-    expect(retry.status).toBe(202);
-    expect(rpcMock).toHaveBeenCalledTimes(2);
-    expect(submitJobMock).toHaveBeenCalledTimes(2);
-    expect(submitJobMock).toHaveBeenLastCalledWith(expect.objectContaining({
-      payload: expect.objectContaining({
-        envelope_id: 'env-retry-1',
-        rule_event_id: 'evt-second',
-      }),
-    }));
+    expect(retry.status).toBe(200);
+    expect(retry.body).toMatchObject({ ok: true, duplicate: true });
+    expect(rpcMock).toHaveBeenCalledTimes(1);
+    expect(submitJobMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('rolls back the nonce when rule-event enqueue fails before a rule event exists', async () => {
+    const rollback = nonceDelete();
+    dbFromMock.mockReturnValueOnce(
+      integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1' }),
+    );
+    dbFromMock.mockReturnValueOnce(nonceInsert());
+    dbFromMock.mockReturnValueOnce(rollback);
+    dbFromMock.mockReturnValueOnce(webhookDlqInsert());
+    rpcMock.mockResolvedValueOnce({ data: null, error: { message: 'db unavailable' } });
+    const body = validBody();
+
+    const res = await postSignedBody(body);
+
+    expect(res.status).toBe(500);
+    expect(rollback.delete).toHaveBeenCalledTimes(1);
+    expect(submitJobMock).not.toHaveBeenCalled();
   });
 
   it('returns 200 duplicate when the same envelope event is delivered twice', async () => {
