@@ -41,6 +41,7 @@ queue_rules:
     queue_conditions:
       - -draft
       - label = hotfix
+      - "#changes-requested-reviews-by = 0"
     merge_conditions:
       # All 13 required status checks from branch protection
       - check-success = TypeCheck & Lint
@@ -65,6 +66,8 @@ queue_rules:
     queue_conditions:
       - -draft
       - -label = work-in-progress
+      - -label = do-not-merge
+      - "#changes-requested-reviews-by = 0"
       # Staging soak must pass before entering queue — no point queuing
       # a PR that hasn't completed its soak period yet
       - check-success = Staging Soak Evidence Gate
@@ -107,6 +110,7 @@ pull_request_rules:
       - -draft
       - -label = work-in-progress
       - -label = do-not-merge
+      - "#changes-requested-reviews-by = 0"
       - check-success = Staging Soak Evidence Gate
     actions:
       queue:
