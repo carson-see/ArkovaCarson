@@ -533,7 +533,7 @@ test.describe('DocuSign integration', () => {
       });
 
       await orgAdminPage.goto('/attestations');
-      await expect(orgAdminPage.getByRole('heading', { name: /Attestations/i })).toBeVisible({ timeout: 10000 });
+      await expect(orgAdminPage.locator('#main-content').getByRole('heading', { name: 'Attestations', exact: true })).toBeVisible({ timeout: 10000 });
 
       // Notarization badge must be present
       await expect(orgAdminPage.getByText(/Notarized/i).first()).toBeVisible();
@@ -577,7 +577,7 @@ test.describe('DocuSign integration', () => {
       });
 
       await orgAdminPage.goto('/attestations');
-      await expect(orgAdminPage.getByRole('heading', { name: /Attestations/i })).toBeVisible({ timeout: 10000 });
+      await expect(orgAdminPage.locator('#main-content').getByRole('heading', { name: 'Attestations', exact: true })).toBeVisible({ timeout: 10000 });
 
       // Non-notarized envelope should NOT show notarization badge
       await expect(orgAdminPage.getByTestId('notarization-badge')).not.toBeVisible();
