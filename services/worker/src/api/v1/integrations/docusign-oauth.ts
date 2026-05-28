@@ -23,6 +23,7 @@ import {
   exchangeDocusignCode,
   getDocusignUserInfo,
   provisionConnectListener,
+  refreshDocusignAccessToken,
   type DocusignClientDeps,
 } from '../../../integrations/oauth/docusign.js';
 import {
@@ -46,7 +47,10 @@ type IntegrationEventInsert = TypeSafeDatabase['public']['Tables']['integration_
 type AuditEventInsert = TypeSafeDatabase['public']['Tables']['audit_events']['Insert'];
 type OrgMemberRoleRow = Pick<OrgMemberRow, 'role'>;
 type DocusignIntegrationIdRow = Pick<OrgIntegrationRow, 'id'>;
-type DocusignIntegrationLookupRow = Pick<OrgIntegrationRow, 'id' | 'token_secret_name'>;
+type DocusignIntegrationLookupRow = Pick<
+  OrgIntegrationRow,
+  'id' | 'account_id' | 'base_uri' | 'token_secret_name'
+>;
 type DocusignIntegrationUpsert = Pick<
   OrgIntegrationInsert,
   | 'org_id'
@@ -119,6 +123,7 @@ const StartSchema = z.object({
   org_id: z.string().uuid(),
   return_to: z.string().url().optional(),
 });
+const OrgScopedSchema = StartSchema.pick({ org_id: true });
 
 function getUserId(req: Request): string | undefined {
   return (req as unknown as { userId?: string }).userId;
@@ -568,6 +573,151 @@ export function createDocusignOAuthRouter(deps: DocusignOAuthDeps = {}): Router 
     });
 
     res.json({ disconnected: true });
+  });
+
+  router.post('/docusign/connect/reprovision', async (req: Request, res: Response) => {
+    const userId = getUserId(req);
+    if (!userId) {
+      res.status(401).json({ error: 'Authentication required' });
+      return;
+    }
+
+    const parsed = OrgScopedSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: 'Invalid request', details: parsed.error.flatten() });
+      return;
+    }
+
+    const orgId = parsed.data.org_id;
+    if (!(await requireOrgAdmin(db, userId, orgId))) {
+      res.status(403).json({ error: 'Must be org admin to reprovision DocuSign Connect' });
+      return;
+    }
+
+    const { data: integrations, error: lookupError } = await db
+      .from('org_integrations')
+      .select('id, account_id, base_uri, token_secret_name')
+      .eq('org_id', orgId)
+      .eq('provider', Provider)
+      .is('revoked_at', null);
+
+    if (lookupError) {
+      logger.error({ error: lookupError, orgId }, 'DocuSign Connect reprovision integration lookup failed');
+      res.status(500).json({ error: 'Failed to reprovision DocuSign Connect' });
+      return;
+    }
+
+    const refreshTokenStore = deps.refreshTokenStore ?? createGcpSecretManagerRefreshTokenStore({
+      env: deps.env,
+      fetchImpl: deps.fetchImpl,
+    });
+    const docusignDeps: DocusignClientDeps = { env: deps.env, fetchImpl: deps.fetchImpl };
+    const kms = deps.kms ?? await createDefaultKmsClient();
+    const nowIso = (deps.now?.() ?? new Date()).toISOString();
+    const results: Array<{
+      integration_id: string;
+      status: 'success' | 'error';
+      action?: 'created' | 'updated';
+      connect_id?: string;
+      error?: string;
+    }> = [];
+
+    for (const integration of integrations ?? []) {
+      const integrationId = integration.id;
+      try {
+        if (!integration.account_id || !integration.token_secret_name) {
+          throw new Error('active DocuSign integration is missing account or refresh-token secret');
+        }
+        const refreshToken = await refreshTokenStore.get({ name: integration.token_secret_name });
+        if (!refreshToken) {
+          throw new Error('DocuSign refresh-token secret is empty or missing');
+        }
+        const tokens = await refreshDocusignAccessToken({
+          refreshToken,
+          deps: docusignDeps,
+        });
+        if (tokens.refresh_token) {
+          await refreshTokenStore.put({
+            name: integration.token_secret_name,
+            value: tokens.refresh_token,
+          });
+        }
+        const info = await getDocusignUserInfo({
+          accessToken: tokens.access_token,
+          deps: docusignDeps,
+        });
+        const account = info.accounts.find((candidate) => candidate.account_id === integration.account_id);
+        if (!account) {
+          throw new Error('DocuSign userinfo did not include the stored account');
+        }
+        const expiresAt = new Date(
+          (deps.now?.() ?? new Date()).getTime() + tokens.expires_in * 1000,
+        ).toISOString();
+        const encrypted = await encryptTokens({
+          access_token: tokens.access_token,
+          token_type: tokens.token_type,
+          expires_at: expiresAt,
+          scope: tokens.scope,
+        }, { kms, env: deps.env });
+        const { error: updateError } = await db
+          .from('org_integrations')
+          .update({
+            base_uri: account.base_uri,
+            encrypted_tokens: toPostgresBytea(encrypted.ciphertext),
+            token_kms_key_id: encrypted.keyId,
+            token_secret_name: integration.token_secret_name,
+            scope: tokens.scope ?? null,
+            updated_at: nowIso,
+          })
+          .eq('id', integrationId)
+          .eq('org_id', orgId);
+        if (updateError) {
+          throw new Error('DocuSign integration metadata update failed');
+        }
+        const provisionResult = await provisionConnectListener({
+          accessToken: tokens.access_token,
+          baseUri: account.base_uri,
+          accountId: integration.account_id,
+          deps: docusignDeps,
+        });
+        await recordIntegrationEvent(db, {
+          orgId,
+          integrationId,
+          eventType: 'connect_listener_reprovisioned',
+          status: 'success',
+          details: {
+            connect_id: provisionResult.connectId,
+            action: provisionResult.action,
+          },
+        });
+        results.push({
+          integration_id: integrationId,
+          status: 'success',
+          connect_id: provisionResult.connectId,
+          action: provisionResult.action,
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Unknown error';
+        logger.error({ error: message, orgId, integrationId }, 'DocuSign Connect reprovision failed');
+        await recordIntegrationEvent(db, {
+          orgId,
+          integrationId,
+          eventType: 'connect_listener_reprovision_failed',
+          status: 'error',
+          details: { error: message },
+        });
+        results.push({ integration_id: integrationId, status: 'error', error: message });
+      }
+    }
+
+    const succeeded = results.filter((result) => result.status === 'success').length;
+    const failed = results.length - succeeded;
+    res.status(failed > 0 && succeeded === 0 && results.length > 0 ? 502 : 200).json({
+      attempted: results.length,
+      succeeded,
+      failed,
+      results,
+    });
   });
 
   return router;
