@@ -124,13 +124,13 @@ export function PublicAttestationVerifyPage() {
             <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-[#00d4ff]">
               <Shield className="h-5 w-5 text-[#003642]" />
             </div>
-            <span className="text-lg font-black text-[#00d4ff] tracking-tighter">Arkova</span>
+            <span className="text-lg font-black text-[#00d4ff] tracking-tighter">{PUBLIC_ATTESTATION_VERIFY_LABELS.BRAND}</span>
           </Link>
           <Link
             to={ROUTES.LOGIN}
             className="text-sm text-[#bbc9cf] hover:text-[#00d4ff] transition-colors"
           >
-            Sign in
+            {PUBLIC_ATTESTATION_VERIFY_LABELS.SIGN_IN}
           </Link>
         </div>
       </header>
@@ -140,10 +140,10 @@ export function PublicAttestationVerifyPage() {
         <div className="max-w-2xl mx-auto">
           <div className="text-center mb-8">
             <h1 className="text-3xl font-black tracking-tighter mb-2">
-              Attestation Verification
+              {PUBLIC_ATTESTATION_VERIFY_LABELS.PAGE_TITLE}
             </h1>
             <p className="text-[#bbc9cf] text-sm">
-              Verify the authenticity and status of an attestation
+              {PUBLIC_ATTESTATION_VERIFY_LABELS.PAGE_SUBTITLE}
             </p>
           </div>
 
@@ -151,7 +151,7 @@ export function PublicAttestationVerifyPage() {
             <Card className="border-[#00d4ff]/10 bg-[#192028]">
               <CardContent className="flex flex-col items-center justify-center py-16">
                 <Loader2 className="h-8 w-8 animate-spin text-[#00d4ff] mb-4" />
-                <p className="text-sm text-[#bbc9cf]">Verifying attestation...</p>
+                <p className="text-sm text-[#bbc9cf]">{PUBLIC_ATTESTATION_VERIFY_LABELS.VERIFYING}</p>
               </CardContent>
             </Card>
           )}
@@ -162,11 +162,11 @@ export function PublicAttestationVerifyPage() {
                 <div className="flex h-16 w-16 items-center justify-center rounded-full bg-red-500/10 mb-4">
                   <AlertTriangle className="h-8 w-8 text-red-400" />
                 </div>
-                <h2 className="text-xl font-bold mb-2">Attestation Not Found</h2>
+                <h2 className="text-xl font-bold mb-2">{PUBLIC_ATTESTATION_VERIFY_LABELS.NOT_FOUND}</h2>
                 <p className="text-sm text-[#bbc9cf] mb-6">{error}</p>
                 <Link to={ROUTES.VERIFY_FORM}>
                   <Button variant="outline" className="border-[#00d4ff]/20">
-                    Try Another Verification
+                    {PUBLIC_ATTESTATION_VERIFY_LABELS.TRY_ANOTHER}
                   </Button>
                 </Link>
               </CardContent>
@@ -189,7 +189,7 @@ export function PublicAttestationVerifyPage() {
                     <div className="flex items-start gap-3">
                       <XCircle className="h-5 w-5 text-muted-foreground mt-0.5 shrink-0" />
                       <div>
-                        <p className="font-semibold text-muted-foreground">This attestation has expired</p>
+                        <p className="font-semibold text-muted-foreground">{PUBLIC_ATTESTATION_VERIFY_LABELS.EXPIRED_NOTICE}</p>
                         <p className="text-xs text-[#bbc9cf] mt-1">
                           Expired: {new Date(attestation.expires_at).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })}
                         </p>
@@ -206,9 +206,9 @@ export function PublicAttestationVerifyPage() {
                     <div className="flex items-start gap-3">
                       <Ban className="h-5 w-5 text-red-400 mt-0.5 shrink-0" />
                       <div>
-                        <p className="font-semibold text-red-400">This attestation has been revoked</p>
+                        <p className="font-semibold text-red-400">{PUBLIC_ATTESTATION_VERIFY_LABELS.REVOKED_NOTICE}</p>
                         {attestation.revocation_reason && (
-                          <p className="text-sm text-[#bbc9cf] mt-1">Reason: {attestation.revocation_reason}</p>
+                          <p className="text-sm text-[#bbc9cf] mt-1">{PUBLIC_ATTESTATION_VERIFY_LABELS.REASON_PREFIX} {attestation.revocation_reason}</p>
                         )}
                         {attestation.revoked_at && (
                           <p className="text-xs text-[#bbc9cf] mt-1">
@@ -226,7 +226,7 @@ export function PublicAttestationVerifyPage() {
                 <CardHeader>
                   <CardTitle className="text-base flex items-center gap-2">
                     <FileCheck className="h-5 w-5 text-[#00d4ff]" />
-                    Attestation Details
+                    {PUBLIC_ATTESTATION_VERIFY_LABELS.DETAILS_TITLE}
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-5">
@@ -276,7 +276,7 @@ export function PublicAttestationVerifyPage() {
                       {(attestation.claims ?? []).map((c, i) => (
                         <div key={i} className="rounded-lg border border-[#bbc9cf]/10 px-3 py-2 bg-[#0d141b]/50">
                           <p className="text-sm">{c.claim}</p>
-                          {c.evidence && <p className="text-xs text-[#bbc9cf] mt-1">Evidence: {c.evidence}</p>}
+                          {c.evidence && <p className="text-xs text-[#bbc9cf] mt-1">{PUBLIC_ATTESTATION_VERIFY_LABELS.EVIDENCE_PREFIX} {c.evidence}</p>}
                         </div>
                       ))}
                     </div>
@@ -431,10 +431,10 @@ export function PublicAttestationVerifyPage() {
       {/* Footer */}
       <footer className="border-t border-[#bbc9cf]/15 py-6 px-4">
         <div className="container flex flex-col sm:flex-row justify-between items-center gap-4 text-xs text-[#bbc9cf]">
-          <span>Arkova — Secure document verification platform</span>
+          <span>{PUBLIC_ATTESTATION_VERIFY_LABELS.FOOTER_TAGLINE}</span>
           <div className="flex gap-4">
-            <Link to="/privacy" className="hover:text-[#00d4ff] transition-colors">Privacy</Link>
-            <Link to="/terms" className="hover:text-[#00d4ff] transition-colors">Terms</Link>
+            <Link to="/privacy" className="hover:text-[#00d4ff] transition-colors">{PUBLIC_ATTESTATION_VERIFY_LABELS.FOOTER_PRIVACY}</Link>
+            <Link to="/terms" className="hover:text-[#00d4ff] transition-colors">{PUBLIC_ATTESTATION_VERIFY_LABELS.FOOTER_TERMS}</Link>
           </div>
         </div>
       </footer>

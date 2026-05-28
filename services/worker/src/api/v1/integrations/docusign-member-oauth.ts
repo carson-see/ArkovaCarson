@@ -157,9 +157,8 @@ function hmacSign(input: string, secret: string): string {
 }
 
 function getStateSecret(deps: DocusignMemberOAuthDeps): string {
-  const secret = deps.stateSecret ?? config.supabaseJwtSecret;
-  if (!secret) throw new Error('STATE_SECRET or SUPABASE_JWT_SECRET required for member OAuth state signing');
-  return secret;
+  if (!deps.stateSecret) throw new Error('STATE_SECRET required for member OAuth state signing');
+  return deps.stateSecret;
 }
 
 function signState(payload: MemberStatePayload, deps: DocusignMemberOAuthDeps): string {
@@ -539,6 +538,30 @@ export function createDocusignMemberOAuthRouter(deps: DocusignMemberOAuthDeps = 
       .map((row) => row.token_secret_name)
       .filter((name): name is string => typeof name === 'string' && name.length > 0);
 
+    // Revoke DB row FIRST — if secret deletion later fails, the row is already
+    // revoked (safe state) and secrets can be retried. The reverse (delete
+    // secrets first) leaves an active-looking row with missing tokens.
+    const { data, error } = await db
+      .from('member_integrations')
+      .update({
+        revoked_at: now,
+        encrypted_tokens: null,
+        token_kms_key_id: null,
+        token_secret_name: null,
+        updated_at: now,
+      })
+      .eq('user_id', userId)
+      .eq('org_id', orgId)
+      .eq('provider', Provider)
+      .is('revoked_at', null)
+      .select('id');
+
+    if (error) {
+      logger.error({ error, orgId, userId }, 'DocuSign member disconnect failed');
+      res.status(500).json({ error: 'Failed to disconnect DocuSign member account' });
+      return;
+    }
+
     const refreshTokenStore = deps.refreshTokenStore ?? createGcpSecretManagerRefreshTokenStore({
       env: deps.env,
       fetchImpl: deps.fetchImpl,
@@ -561,31 +584,8 @@ export function createDocusignMemberOAuthRouter(deps: DocusignMemberOAuthDeps = 
               : [],
           ),
         },
-        'DocuSign member refresh-token secret deletion failed during disconnect',
+        'DocuSign member refresh-token secret deletion failed during disconnect (row already revoked)',
       );
-      res.status(500).json({ error: 'Failed to delete DocuSign member refresh token secret' });
-      return;
-    }
-
-    const { data, error } = await db
-      .from('member_integrations')
-      .update({
-        revoked_at: now,
-        encrypted_tokens: null,
-        token_kms_key_id: null,
-        token_secret_name: null,
-        updated_at: now,
-      })
-      .eq('user_id', userId)
-      .eq('org_id', orgId)
-      .eq('provider', Provider)
-      .is('revoked_at', null)
-      .select('id');
-
-    if (error) {
-      logger.error({ error, orgId, userId }, 'DocuSign member disconnect failed');
-      res.status(500).json({ error: 'Failed to disconnect DocuSign member account' });
-      return;
     }
 
     await recordIntegrationEvent(db, {

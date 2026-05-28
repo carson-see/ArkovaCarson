@@ -887,12 +887,27 @@ export const VERIFICATION_DISPLAY_LABELS = {
 // =============================================================================
 
 export const PUBLIC_ATTESTATION_VERIFY_LABELS = {
+  BRAND: 'Arkova',
+  SIGN_IN: 'Sign in',
+  PAGE_TITLE: 'Attestation Verification',
+  PAGE_SUBTITLE: 'Verify the authenticity and status of an attestation',
+  VERIFYING: 'Verifying attestation...',
+  NOT_FOUND: 'Attestation Not Found',
+  TRY_ANOTHER: 'Try Another Verification',
+  EXPIRED_NOTICE: 'This attestation has expired',
+  REVOKED_NOTICE: 'This attestation has been revoked',
+  REASON_PREFIX: 'Reason:',
+  DETAILS_TITLE: 'Attestation Details',
+  EVIDENCE_PREFIX: 'Evidence:',
   EVIDENCE: 'Evidence',
   LINKED_CREDENTIAL: 'Linked Credential',
   ATTESTOR_CREDENTIAL_CHAIN: 'Attestor Credential Chain',
   VERIFY_CREDENTIAL: 'Verify Credential',
   VERIFY: 'Verify',
   BYTES_SUFFIX: ' bytes',
+  FOOTER_TAGLINE: 'Arkova — Secure document verification platform',
+  FOOTER_PRIVACY: 'Privacy',
+  FOOTER_TERMS: 'Terms',
 } as const;
 
 export const EVIDENCE_PAYLOAD_ERROR = 'Evidence metadata is invalid. Check fingerprints, file names, and descriptions.';
@@ -965,6 +980,67 @@ export const ATTESTATION_LABELS = {
   NO_ATTESTATIONS: 'No attestations yet',
   NO_ATTESTATIONS_DESC: 'Create an attestation to verify, endorse, or audit a credential.',
   CREATE_ATTESTATION: 'Create Attestation',
+
+  // Page chrome
+  PAGE_TITLE: 'Attestations',
+  PAGE_SUBTITLE: 'Create and manage immutable attestations anchored to the network',
+  CREATE_PORTFOLIO: 'Create Portfolio',
+  BULK_ISSUE: 'Bulk Issue',
+  NEW_ATTESTATION: 'New Attestation',
+  CREATE_NEW_ATTESTATION: 'Create New Attestation',
+  YOUR_ATTESTATIONS: 'Your Attestations',
+  EMPTY_CTA: 'Create your first attestation to anchor a verifiable claim',
+
+  // Form labels
+  SUBJECT_TYPE: 'Subject Type',
+  SUBJECT_REQUIRED: 'Subject *',
+  SUBJECT_HINT: 'What is being attested (auto-generates ID like ARK-UMI-VER-A3F2B1)',
+  ATTESTER_NAME_REQUIRED: 'Attester Name *',
+  TITLE_ROLE: 'Title / Role',
+  CLAIMS_REQUIRED: 'Claims *',
+  ADD_CLAIM: 'Add Claim',
+  EXPIRES_AT_OPTIONAL: 'Expires At (optional)',
+  CREATING: 'Creating...',
+
+  // Form placeholders
+  PLACEHOLDER_ATTESTER_NAME: 'Your name or organization',
+  PLACEHOLDER_TITLE: 'e.g., General Counsel, CPA',
+  PLACEHOLDER_CLAIM: 'Claim statement',
+  PLACEHOLDER_EVIDENCE: 'Supporting evidence (optional)',
+  PLACEHOLDER_SUMMARY: 'Brief description of this attestation',
+  PLACEHOLDER_JURISDICTION: 'e.g., US, EU, UK',
+
+  // Subject type options
+  SUBJECT_CREDENTIAL: 'Credential',
+  SUBJECT_ENTITY: 'Entity / Organization',
+  SUBJECT_PROCESS: 'Process / Procedure',
+  SUBJECT_ASSET: 'Asset / Document',
+
+  // Templates
+  TEMPLATE_PROMPT: 'Choose a template or create a custom attestation',
+  TEMPLATE_EMPLOYMENT: 'Employment Verification',
+  TEMPLATE_EMPLOYMENT_DESC: 'Verify employment dates, title, and status',
+  TEMPLATE_EDUCATION: 'Education Credential',
+  TEMPLATE_EDUCATION_DESC: 'Issue tamper-proof degree or certification',
+  TEMPLATE_CUSTOM: 'Custom Attestation',
+  TEMPLATE_CUSTOM_DESC: 'Create any type of attestation',
+
+  // Revoke dialog
+  REVOKE: 'Revoke',
+  REVOKE_TITLE: 'Revoke Attestation',
+  REVOKE_WARNING: 'This action is permanent. The attestation will be marked as revoked and its verification status will reflect this change.',
+  REVOKE_REASON_LABEL: 'Reason for Revocation *',
+  REVOKE_REASON_HINT: 'Minimum 3 characters required',
+  REVOKE_REASON_PLACEHOLDER: 'Describe why this attestation is being revoked',
+  REVOKE_CONFIRM_LABEL: 'to confirm',
+  REVOKING: 'Revoking...',
+
+  // Table headers
+  TABLE_ID: 'ID',
+  TABLE_SUBJECT: 'Subject',
+  TABLE_ATTESTER: 'Attester',
+  TABLE_STATUS: 'Status',
+  TABLE_CREATED: 'Created',
 } as const;
 
 // =============================================================================

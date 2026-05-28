@@ -306,8 +306,10 @@ docusignWebhookRouter.post('/', async (req: Request, res: Response) => {
   try {
     event = parseDocusignConnectPayload(rawBody);
   } catch (err) {
+    // Return 401 (not 400) to prevent oracle: attackers must not distinguish
+    // parse failure from HMAC failure (P0 review finding 2026-05-28).
     logger.warn({ err: err instanceof Error ? err.message : String(err) }, 'DocuSign webhook: malformed body');
-    res.status(400).json({ error: { code: 'invalid_body' } });
+    res.status(401).json({ error: { code: 'invalid_signature' } });
     return;
   }
 
