@@ -198,8 +198,13 @@ export async function runConnectorHealthCheck(db: SupabaseDb): Promise<Connector
     stateMap.set(`${s.connector_id}:${s.org_id}`, s);
   }
 
-  const snapshots: ConnectorHealthSnapshot[] = (integrations ?? []).map(
-    (row: { org_id: string; provider: string; revoked_at: string | null }) => ({
+  const dedupMap = new Map<string, { org_id: string; provider: string; revoked_at: string | null }>();
+  for (const row of (integrations ?? []) as Array<{ org_id: string; provider: string; revoked_at: string | null }>) {
+    dedupMap.set(`${row.provider}:${row.org_id}`, row);
+  }
+
+  const snapshots: ConnectorHealthSnapshot[] = [...dedupMap.values()].map(
+    (row) => ({
       connector_id: row.provider,
       org_id: row.org_id,
       state: row.revoked_at ? 'disconnected' as const : 'connected' as const,
@@ -209,6 +214,7 @@ export async function runConnectorHealthCheck(db: SupabaseDb): Promise<Connector
   );
 
   let alertsFired = 0;
+  const pendingAlerts: ConnectorAlertDecision[] = [];
   const upserts: Array<{ connector_id: string; org_id: string; last_state: string; last_alerted_at: string | null }> = [];
 
   for (const snap of snapshots) {
@@ -217,8 +223,7 @@ export async function runConnectorHealthCheck(db: SupabaseDb): Promise<Connector
     const decision = decideConnectorAlert(snap, prior, now);
 
     if (decision.should_fire) {
-      dispatcher.captureAlert(decision);
-      alertsFired++;
+      pendingAlerts.push(decision);
       upserts.push({
         connector_id: snap.connector_id,
         org_id: snap.org_id,
@@ -245,6 +250,11 @@ export async function runConnectorHealthCheck(db: SupabaseDb): Promise<Connector
       logger.error({ error: upsertError }, 'Connector health check: failed to persist alert state');
       return { ok: false, checked: snapshots.length, alertsFired };
     }
+  }
+
+  for (const decision of pendingAlerts) {
+    dispatcher.captureAlert(decision);
+    alertsFired++;
   }
 
   return { ok: true, checked: snapshots.length, alertsFired };

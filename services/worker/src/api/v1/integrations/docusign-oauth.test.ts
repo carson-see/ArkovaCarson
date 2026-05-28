@@ -427,12 +427,10 @@ describe('DocuSign OAuth router', () => {
 
     expect(res.status).toBe(200);
     expect(res.body.disconnected).toBe(true);
-    // Wait for the fire-and-forget .then() to settle
-    await new Promise((r) => setTimeout(r, 10));
-    expect(logger.error).toHaveBeenCalledWith(
+    await vi.waitFor(() => expect(logger.error).toHaveBeenCalledWith(
       expect.objectContaining({ orgId: TEST_ORG_ID }),
       'Failed to write DocuSign disconnect audit event',
-    );
+    ));
   });
 
   it('surfaces refresh-token secret deletion failures during disconnect', async () => {

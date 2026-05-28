@@ -16,6 +16,7 @@ Express routers + scheduler wiring. Two flavors of cron: in-process (dev/test ba
 - In-process schedules are conditional: `chainInitialized` guard for chain-touching jobs; `disableInProcessAnchorCron` guard for `anchors`-table jobs.
 
 ## Recent changes
+
 - PR #924 (SCRUM-2040/2041): added `/nonce-sweep` and `/connector-health-check` cron routes. Connector health route now checks `result.ok` and returns 500 on persist failure (fail-close, matching docusign-reconciliation pattern).
 
 ## Open work

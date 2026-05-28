@@ -551,7 +551,7 @@ export function createDocusignOAuthRouter(deps: DocusignOAuthDeps = {}): Router 
 
     // SOC 2 CC7.2 — audit trail for integration disconnect (SCRUM-2039)
     const integrationId = data?.[0]?.id ?? null;
-    db.from('audit_events').insert({
+    void db.from('audit_events').insert({
       event_type: 'integration.docusign_disconnected',
       event_category: 'SECURITY',
       actor_id: userId,
@@ -561,6 +561,8 @@ export function createDocusignOAuthRouter(deps: DocusignOAuthDeps = {}): Router 
       details: JSON.stringify({ provider: Provider, integration_id: integrationId }),
     }).then(({ error: auditErr }) => {
       if (auditErr) logger.error({ error: auditErr, orgId }, 'Failed to write DocuSign disconnect audit event');
+    }).catch((err: unknown) => {
+      logger.error({ error: err, orgId }, 'Failed to write DocuSign disconnect audit event (transport)');
     });
 
     res.json({ disconnected: true });

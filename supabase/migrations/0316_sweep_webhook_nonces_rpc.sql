@@ -24,6 +24,14 @@ DECLARE
   ];
   deleted_count INTEGER;
 BEGIN
+  IF target_table IS NULL OR btrim(target_table) = '' THEN
+    RAISE EXCEPTION 'sweep_webhook_nonces: target_table must not be NULL or empty';
+  END IF;
+
+  IF retention_days IS NULL THEN
+    RAISE EXCEPTION 'sweep_webhook_nonces: retention_days must not be NULL';
+  END IF;
+
   IF target_table != ALL(allowed_tables) THEN
     RAISE EXCEPTION 'sweep_webhook_nonces: table "%" not in allowlist', target_table;
   END IF;

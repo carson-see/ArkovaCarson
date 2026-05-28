@@ -363,11 +363,17 @@ const RESIDUAL_RISK_REQUIRED_FIELDS = [
 ];
 
 export function hasResidualRiskException(body: string): { valid: boolean; missing: string[] } {
-  if (!RESIDUAL_RISK_HEADER_RE.test(body)) return { valid: false, missing: [] };
+  const headerMatch = RESIDUAL_RISK_HEADER_RE.exec(body);
+  if (!headerMatch) return { valid: false, missing: [] };
+  const sectionStart = headerMatch.index + headerMatch[0].length;
+  const nextHeading = body.slice(sectionStart).search(/^#{1,3}\s/m);
+  const section = nextHeading === -1
+    ? body.slice(sectionStart)
+    : body.slice(sectionStart, sectionStart + nextHeading);
   const missing: string[] = [];
   for (const field of RESIDUAL_RISK_REQUIRED_FIELDS) {
     const re = new RegExp(String.raw`^[\s\-*]*${escapeRegExp(field)}`, 'im');
-    if (!re.test(body)) missing.push(field);
+    if (!re.test(section)) missing.push(field);
   }
   return { valid: missing.length === 0, missing };
 }
@@ -571,7 +577,9 @@ export function check(opts: { body: string; files: string[]; headSha?: string; b
     result.errors.push(...integrityErrors);
   }
 
-  if (result.ok && hasResidualRiskException(body).valid) {
+  const preflightVal = extractEvidenceFieldValue(body, 'Preflight result:');
+  const preflightIsClean = preflightVal !== null && hasCleanMirrorPreflight(preflightVal);
+  if (result.ok && !preflightIsClean && hasResidualRiskException(body).valid) {
     result.notes.push('Preflight is not clean_mirror; residual-risk exception accepted.');
   }
 

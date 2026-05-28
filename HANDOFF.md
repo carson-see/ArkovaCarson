@@ -28,7 +28,7 @@
 
 **Post-merge TODO:** Jira transitions (SCRUM-2039/2040/2041 → Done) + Confluence pages.
 
-_Last refreshed: 2026-05-28 by Claude — claims verified against `gh pr checks 924` (all required green), `git log` (13 commits), CI run 26572327599 (staging gate SUCCESS)._
+_Last refreshed: 2026-05-28 by Claude — claims verified against gcloud/MCP/CI output: [CI run 26572327599](https://github.com/carson-see/ArkovaCarson/actions/runs/26572327599) (all required checks green), [staging gate](https://github.com/carson-see/ArkovaCarson/actions/runs/26572327599) (SUCCESS), `git log --oneline fix/scrum-2039-2040-2041-soc2-hardening` (13 commits)._
 
 ---
 ### 2026-05-25 — 96-hour sprint: 23 PRs merged, worker redeployed
