@@ -303,10 +303,11 @@ test.describe('DocuSign integration', () => {
       });
 
       await orgAdminPage.goto(`/organizations/${orgId}?tab=settings`);
+      await expect(orgAdminPage.getByRole('heading', { name: 'Organization Settings' })).toBeVisible({ timeout: 10000 });
       const docusignCard = orgAdminPage.locator('[data-testid="docusign-card"]');
 
-      // Starts disconnected
-      await expect(docusignCard.getByText('Not connected')).toBeVisible();
+      // Starts disconnected — wait for Supabase query to resolve through route mock
+      await expect(docusignCard.getByText('Not connected')).toBeVisible({ timeout: 10000 });
       await docusignCard.getByRole('button', { name: 'Connect' }).click();
 
       // After OAuth round-trip, toast confirms provisioning-backed connection
