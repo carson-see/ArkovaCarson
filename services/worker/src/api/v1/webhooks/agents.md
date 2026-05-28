@@ -30,4 +30,4 @@ Inbound webhook handlers for third-party integrations. Each handler verifies HMA
 - Unknown external accounts are acknowledged without cross-tenant data leakage.
 - Ambiguous account-to-org mappings fail closed.
 - Sanitized rule-event payloads may include provider IDs needed for idempotency, but not raw documents or raw webhook bodies.
-- Connector payloads that carry PII should hash values before storing long-lived operational metadata.
+- Connector payloads that carry PII must hash values before storing long-lived operational metadata. PII scrubbing is mandatory; do not persist emails, document fingerprints, or API keys.
