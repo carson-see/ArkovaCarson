@@ -23,8 +23,10 @@ vi.mock('../utils/logger.js', () => ({
 import {
   handleListVersions,
   handleResolveVersion,
+  requireVersionOrgAdminContext,
   ResolveVersionInput,
 } from './version-resolution.js';
+import { logger } from '../utils/logger.js';
 
 function mockRes(): { res: Response; status: ReturnType<typeof vi.fn>; json: ReturnType<typeof vi.fn> } {
   const json = vi.fn();
@@ -93,6 +95,7 @@ function mockUpdateChain(data: unknown, error: unknown = null) {
     update: vi.fn(),
     eq: vi.fn(),
     select: vi.fn(),
+    maybeSingle: vi.fn().mockResolvedValue({ data, error }),
     single: vi.fn().mockResolvedValue({ data, error }),
   };
   chain.update.mockReturnValue(chain);
@@ -261,6 +264,47 @@ describe('handleListVersions', () => {
   });
 });
 
+describe('requireVersionOrgAdminContext', () => {
+  beforeEach(() => fromMock.mockReset());
+  afterEach(() => vi.restoreAllMocks());
+
+  it('attaches org admin context when only requireAuth userId is present', async () => {
+    fromMock
+      .mockReturnValueOnce(mockMaybeSingleChain({
+        org_id: 'org-1',
+        role: 'ORG_ADMIN',
+        is_platform_admin: false,
+      }))
+      .mockReturnValueOnce(mockMaybeSingleChain({ role: 'admin' }));
+
+    const req = mockReq({ userId: 'user-1' });
+    const { res, status } = mockRes();
+    const next = vi.fn();
+
+    await requireVersionOrgAdminContext(req, res, next);
+
+    expect(status).not.toHaveBeenCalled();
+    expect(next).toHaveBeenCalledTimes(1);
+    expect((req as unknown as { orgId?: string }).orgId).toBe('org-1');
+    expect((req as unknown as { orgRole?: string }).orgRole).toBe('admin');
+  });
+
+  it('fails closed when user has no organization context', async () => {
+    fromMock.mockReturnValueOnce(mockMaybeSingleChain({ org_id: null, role: null, is_platform_admin: false }));
+
+    const { res, status, json } = mockRes();
+    const next = vi.fn();
+
+    await requireVersionOrgAdminContext(mockReq({ userId: 'user-1' }), res, next);
+
+    expect(next).not.toHaveBeenCalled();
+    expect(status).toHaveBeenCalledWith(403);
+    expect(json).toHaveBeenCalledWith({
+      error: { code: 'forbidden', message: 'Organization context required' },
+    });
+  });
+});
+
 // Fixed-format UUIDs for test fixtures (required after Zod UUID validation was added).
 const VERSION_UUID = '11111111-1111-4111-a111-111111111111';
 const VERSION_UUID_2 = '22222222-2222-4222-a222-222222222222';
@@ -422,6 +466,78 @@ describe('handleResolveVersion', () => {
     expect(fromMock).toHaveBeenCalledWith('anchors');
     // Verify review was recorded
     expect(fromMock).toHaveBeenCalledWith('version_reviews');
+  });
+
+  it('returns 409 when the pending version update affects no rows', async () => {
+    const versionRow = {
+      id: VERSION_UUID,
+      external_file_id: 'file-abc',
+      fingerprint: 'fp-new-123',
+      org_id: 'org-1',
+      source: 'google_drive',
+      metadata: {},
+    };
+
+    fromMock
+      .mockReturnValueOnce(mockMaybeSingleChain(versionRow))
+      .mockReturnValueOnce(mockUpdateChain(null));
+
+    const { res, status, json } = mockRes();
+    await handleResolveVersion(
+      mockReq({
+        userId: 'user-1',
+        orgId: 'org-1',
+        orgRole: 'admin',
+        params: { versionId: VERSION_UUID },
+        body: { decision: 'approve' },
+      }),
+      res,
+    );
+
+    expect(status).toHaveBeenCalledWith(409);
+    expect(json).toHaveBeenCalledWith({
+      error: { code: 'conflict', message: 'Version was already resolved' },
+    });
+    expect(fromMock.mock.calls.some((c) => c[0] === 'anchors')).toBe(false);
+  });
+
+  it('logs when rollback fails after anchor creation failure', async () => {
+    const versionRow = {
+      id: VERSION_UUID,
+      external_file_id: 'file-abc',
+      fingerprint: 'fp-new-123',
+      org_id: 'org-1',
+      source: 'google_drive',
+      metadata: {},
+    };
+
+    fromMock
+      .mockReturnValueOnce(mockMaybeSingleChain(versionRow))
+      .mockReturnValueOnce(mockUpdateChain({ id: VERSION_UUID }))
+      .mockReturnValueOnce(mockInsertChain(null, { message: 'anchor insert failed' }))
+      .mockReturnValueOnce(mockUpdateChain(null, { message: 'rollback failed' }));
+
+    const { res, status } = mockRes();
+    await handleResolveVersion(
+      mockReq({
+        userId: 'user-1',
+        orgId: 'org-1',
+        orgRole: 'admin',
+        params: { versionId: VERSION_UUID },
+        body: { decision: 'approve' },
+      }),
+      res,
+    );
+
+    expect(status).toHaveBeenCalledWith(500);
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.objectContaining({
+        error: expect.objectContaining({ message: 'rollback failed' }),
+        versionId: VERSION_UUID,
+        rollbackRestored: false,
+      }),
+      'Version status rollback failed after anchor creation failure',
+    );
   });
 
   it('approve: stores the created anchor id on the approved version', async () => {

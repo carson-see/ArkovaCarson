@@ -9,7 +9,7 @@
  * fingerprint, skip it, or flag it for further investigation.
  */
 import { Router } from 'express';
-import type { Request, Response } from 'express';
+import type { NextFunction, Request, Response } from 'express';
 import { z } from 'zod';
 import { db } from '../utils/db.js';
 import type { SupabaseClient } from '@supabase/supabase-js';
@@ -74,6 +74,39 @@ async function resolveOrgAdminContext(
     orgId: profileOrgId,
     isAdmin: await isCallerOrgAdmin(userId, profileOrgId, profile),
   };
+}
+
+export async function requireVersionOrgAdminContext(
+  req: Request,
+  res: Response,
+  next: NextFunction,
+): Promise<void> {
+  const userId = getUserId(req);
+  if (!userId) {
+    res.status(401).json({ error: 'Authentication required' });
+    return;
+  }
+
+  const { orgId, isAdmin: isOrgAdmin } = await resolveOrgAdminContext(req, userId);
+  if (!orgId) {
+    res.status(403).json({
+      error: { code: 'forbidden', message: 'Organization context required' },
+    });
+    return;
+  }
+
+  if (!isOrgAdmin) {
+    res.status(403).json({
+      error: { code: 'forbidden', message: 'Organization admin role required' },
+    });
+    return;
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (req as any).orgId = orgId;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (req as any).orgRole = 'admin';
+  next();
 }
 
 // ─── Handlers ────���─────────────────────────────────────────────────────────────
@@ -236,17 +269,26 @@ export async function handleResolveVersion(
 
     // Update version status — include status predicate to prevent double-resolution
     // if two admins race to approve the same version concurrently.
-    const { error: updateError } = await untypedDb
+    const { data: updatedVersion, error: updateError } = await untypedDb
       .from('external_document_versions')
       .update({ status: newStatus, updated_at: new Date().toISOString() })
       .eq('id', versionId)
       .eq('org_id', orgId)
-      .eq('status', 'pending_review');
+      .eq('status', 'pending_review')
+      .select('id')
+      .maybeSingle();
 
     if (updateError) {
       logger.error({ error: updateError, versionId }, 'Version status update failed');
       res.status(500).json({
         error: { code: 'internal', message: 'Failed to update version status' },
+      });
+      return;
+    }
+
+    if (!updatedVersion) {
+      res.status(409).json({
+        error: { code: 'conflict', message: 'Version was already resolved' },
       });
       return;
     }
@@ -274,11 +316,19 @@ export async function handleResolveVersion(
       if (anchorError) {
         logger.error({ error: anchorError, versionId }, 'Anchor creation failed during version approval');
         // Revert status to pending_review to avoid inconsistent state
-        await untypedDb
+        const { data: rollbackVersion, error: rollbackError } = await untypedDb
           .from('external_document_versions')
           .update({ status: 'pending_review', updated_at: new Date().toISOString() })
           .eq('id', versionId)
-          .eq('org_id', orgId);
+          .eq('org_id', orgId)
+          .select('id')
+          .maybeSingle();
+        if (rollbackError || !rollbackVersion) {
+          logger.error(
+            { error: rollbackError, versionId, rollbackRestored: Boolean(rollbackVersion) },
+            'Version status rollback failed after anchor creation failure',
+          );
+        }
         res.status(500).json({
           error: { code: 'internal', message: 'Failed to create anchor for approved version' },
         });
@@ -332,5 +382,6 @@ export async function handleResolveVersion(
 // ─── Router ──────���────────────────────────────────���────────────────────────────
 
 export const versionResolutionRouter = Router();
+versionResolutionRouter.use(requireVersionOrgAdminContext);
 versionResolutionRouter.get('/', handleListVersions);
 versionResolutionRouter.post('/:versionId/resolve', handleResolveVersion);
