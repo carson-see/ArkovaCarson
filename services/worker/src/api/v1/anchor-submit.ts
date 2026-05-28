@@ -238,9 +238,8 @@ router.post('/submit', handleAnchorSubmit);
 /**
  * Handle Supabase insert errors for anchor creation.
  *
- * Logs the full Postgres error code server-side for debugging but never
- * exposes it to the API client (SonarCloud security hotspot: leaking
- * internal database identifiers via db_code).
+ * Logs the Postgres error class server-side for debugging but never exposes
+ * schema internals such as constraint names to logs or API clients.
  */
 function handleInsertError(
   insertError: unknown,
@@ -248,8 +247,7 @@ function handleInsertError(
   res: Response,
 ): void {
   const pgCode = (insertError as { code?: string }).code ?? null;
-  const pgConstraint = (insertError as { constraint?: string }).constraint ?? null;
-  logger.error({ pgCode, pgConstraint, orgId }, 'Failed to create anchor');
+  logger.error({ pgCode, orgId }, 'Failed to create anchor');
   if (pgCode === '23505') {
     res.status(409).json({
       error: 'anchor_creation_conflict',

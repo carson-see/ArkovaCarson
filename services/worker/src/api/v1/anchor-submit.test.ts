@@ -459,6 +459,7 @@ describe('POST /api/v1/anchor — Zod validation', () => {
       expect(fkLogPayload).not.toHaveProperty('fingerprint');
       expect(fkLogPayload).not.toHaveProperty('fingerprintPrefix');
       expect(fkLogPayload).not.toHaveProperty('error');
+      expect(fkLogPayload).not.toHaveProperty('pgConstraint');
     });
 
     it('returns 409 on unique constraint violation (duplicate public_id race)', async () => {
@@ -491,6 +492,7 @@ describe('POST /api/v1/anchor — Zod validation', () => {
         data: null,
         error: {
           code: '23502',
+          constraint: 'anchors_org_id_not_null',
           message: 'null value in column "org_id" violates not-null constraint',
           details: 'Failing row contains (null, ...)',
           hint: null,
@@ -515,6 +517,7 @@ describe('POST /api/v1/anchor — Zod validation', () => {
       expect(nnLogPayload).not.toHaveProperty('fingerprint');
       expect(nnLogPayload).not.toHaveProperty('fingerprintPrefix');
       expect(nnLogPayload).not.toHaveProperty('error');
+      expect(nnLogPayload).not.toHaveProperty('pgConstraint');
     });
   });
 });

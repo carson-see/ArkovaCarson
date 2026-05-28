@@ -48,6 +48,7 @@ Public v1 API surface — frozen contract per CLAUDE.md §1.8. Additive nullable
 ## 2026-05-26 SCRUM-2014 Anchor Insert Error Handling
 
 - `anchor-submit.ts` now catches insert failures with structured error responses: duplicate fingerprint returns 409 with `public_id`; other insert errors return 500 with `anchor_insert_failed` code instead of unhandled exception. Three TDD tests added.
+- Insert-error diagnostics may log coarse Postgres error code + org context only; do not log raw error objects, fingerprints, or schema identifiers such as constraint names.
 
 ## 2026-05-26 SCRUM-2013 Credential Type Enum Drift Fix
 
