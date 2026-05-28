@@ -2,8 +2,9 @@
 /**
  * Staging soak evidence gate (CLAUDE.md §1.11 / §1.12).
  *
- * Every PR declares a soak tier (T1 / T2 / T3) in its body. The tier
- * dictates required soak length and required evidence fields. CI fails
+ * Every prod-affecting PR declares a risk tier (T1 / T2 / T3) in its
+ * body. T0 docs/tests/CI/tooling-only PRs run CI only. The tier dictates
+ * required evidence fields and, for T2/T3, required soak length. CI fails
  * the PR if:
  *
  *   1. The declared tier is missing.
@@ -16,10 +17,8 @@
  * conservative — when in doubt it pushes you up a tier rather than down.
  *
  * No override label exists. The previous `staging-soak-skip` override
- * was removed on 2026-05-07 — every prod-bound PR must produce real
- * staging evidence per CLAUDE.md §1.11. The only remaining "skip" is
- * the `isStagingToolingOnly` allowlist below for PRs that exclusively
- * touch staging-tooling files (which by definition can't affect prod).
+ * was removed on 2026-05-07. The only CI-only path is T0, computed from
+ * changed files rather than labels.
  */
 
 import { existsSync } from 'node:fs';
@@ -32,7 +31,7 @@ import {
   resolveCommitOrFail,
 } from './lib/ciContext.js';
 
-export type Tier = 'T1' | 'T2' | 'T3';
+export type Tier = 'T0' | 'T1' | 'T2' | 'T3';
 
 interface TierSpec {
   tier: Tier;
@@ -43,16 +42,23 @@ interface TierSpec {
 }
 
 export const TIER_SPECS: Record<Tier, TierSpec> = {
+  T0: {
+    tier: 'T0',
+    soakHours: 0,
+    requiredFields: ['Tier:'],
+  },
   T1: {
     tier: 'T1',
-    soakHours: 2,
+    soakHours: 0,
     requiredFields: [
       'Tier:',
-      'Staging branch:',
-      'Worker revision:',
-      'Soak start:',
-      'Soak end:',
-      'E2E result:',
+      'PR head SHA:',
+      'Staging tag URL or N/A explanation:',
+      'Health/smoke result:',
+      'CI/E2E green:',
+      'Rollback plan:',
+      'Risk rationale:',
+      'Human approver:',
     ],
   },
   T2: {
@@ -128,8 +134,13 @@ interface PathRule {
 export const PATH_RULES: PathRule[] = [
   {
     pattern: /^supabase\/migrations\//,
-    minTier: 'T2',
-    reason: 'migration touches the schema',
+    minTier: 'T3',
+    reason: 'migration touches schema/data integrity',
+  },
+  {
+    pattern: /^services\/worker\/src\/security\//,
+    minTier: 'T3',
+    reason: 'security-sensitive worker logic',
   },
   {
     pattern: /^services\/worker\/src\/chain\//,
@@ -152,6 +163,11 @@ export const PATH_RULES: PathRule[] = [
     reason: 'entitlement / billing logic',
   },
   {
+    pattern: /^src\/components\/admin\/treasury\//,
+    minTier: 'T3',
+    reason: 'treasury administration surface',
+  },
+  {
     pattern: /^services\/worker\/src\/stripe\//,
     minTier: 'T2',
     reason: 'Stripe handler',
@@ -172,28 +188,72 @@ export const PATH_RULES: PathRule[] = [
     reason: 'edge worker',
   },
   {
+    pattern: /^services\/worker\/src\/auth\//,
+    minTier: 'T2',
+    reason: 'auth-sensitive worker logic',
+  },
+  {
+    pattern: /^services\/worker\/src\/(?:ai|agents|nessie|llm|model)\//,
+    minTier: 'T2',
+    reason: 'AI behavior',
+  },
+  {
+    pattern: /^services\/worker\/src\/(?:jobs|queues?|concurrency)\//,
+    minTier: 'T2',
+    reason: 'worker queue/concurrency behavior',
+  },
+  {
+    pattern: /^services\/worker\/src\//,
+    minTier: 'T2',
+    reason: 'worker behavior',
+  },
+  {
+    pattern: /^(?:docs\/api\/|docs\/guides\/API_GUIDE\.md|sdks\/|packages\/(?:arkova-py|embed|mcp-server|typescript|langchain))/,
+    minTier: 'T2',
+    reason: 'public API contract / SDK surface',
+  },
+  {
+    pattern: /^src\/components\/(?:anchor|api|auth|billing|public|verification|verify)\//,
+    minTier: 'T2',
+    reason: 'sensitive user-facing contract surface',
+  },
+  {
     pattern: /^src\/(components|pages|hooks|lib)\//,
     minTier: 'T1',
     reason: 'frontend code',
   },
 ];
 
-const TIER_RANK: Record<Tier, number> = { T1: 1, T2: 2, T3: 3 };
+const TIER_RANK: Record<Tier, number> = { T0: 0, T1: 1, T2: 2, T3: 3 };
 const SHA_RE = /\b[0-9a-f]{40}\b/i;
-const DECLARED_TIER_VALUES = new Set<Tier>(['T1', 'T2', 'T3']);
+const DECLARED_TIER_VALUES = new Set<Tier>(['T0', 'T1', 'T2', 'T3']);
 const ALLOWED_EVIDENCE_SCOPES = new Set([
   'merge-grade shared staging',
   'merge-grade isolated staging',
 ]);
 
 const TEST_FILE_RE = /\.(test|spec)\.(ts|tsx|js|jsx)$/;
+const PUBLIC_CONTRACT_DOC_RE = /^docs\/(?:api\/|guides\/API_GUIDE\.md)/;
+const DOCS_ONLY_RE = /^(?:docs\/|README\.md|ARKOVA_WORKSPACE_README\.md|WORKSPACE_STATUS\.md|memory\/.*\.md$)/;
+
+function isT0OnlyFile(file: string): boolean {
+  if (PUBLIC_CONTRACT_DOC_RE.test(file)) return false;
+  return TEST_FILE_RE.test(file)
+    || STAGING_TOOLING_ALLOW.some((re) => re.test(file))
+    || DOCS_ONLY_RE.test(file)
+    || /^\.github\/(?:workflows\/|ISSUE_TEMPLATE\/|pull_request_template\.md|CONTRIBUTING\.md|dependabot\.yml)/.test(file);
+}
 
 export function requiredTierFor(files: string[]): { tier: Tier; reason: string } {
+  if (files.length === 0) return { tier: 'T0', reason: 'no changed files' };
+  if (files.every(isT0OnlyFile)) {
+    return { tier: 'T0', reason: 'docs/tests/CI/tooling-only' };
+  }
+
   let best: Tier = 'T1';
   let reason = 'default frontend / additive change';
   for (const f of files) {
-    if (STAGING_TOOLING_ALLOW.some((re) => re.test(f))) continue;
-    if (TEST_FILE_RE.test(f)) continue;
+    if (isT0OnlyFile(f)) continue;
     for (const rule of PATH_RULES) {
       if (rule.pattern.test(f) && TIER_RANK[rule.minTier] > TIER_RANK[best]) {
         best = rule.minTier;
@@ -319,6 +379,60 @@ function extractShaField(body: string, field: string): string | null {
   return m ? m[0].toLowerCase() : null;
 }
 
+function validateNonEmptyEvidenceField(body: string, field: string): string | null {
+  const value = extractEvidenceFieldValue(body, field);
+  if (value === null || value.trim().length > 0) return null;
+  return `${field} must include auditable evidence, not an empty value.`;
+}
+
+function validateStagingTagEvidence(body: string): string | null {
+  const field = 'Staging tag URL or N/A explanation:';
+  const value = extractEvidenceFieldValue(body, field);
+  if (value === null || value.trim().length === 0) return null;
+
+  const hasUrl = /\bhttps?:\/\/\S+/i.test(value);
+  const hasExplanation = /\b(?:n\/a|not applicable|no staging tag|not needed)\b/i.test(value);
+  return hasUrl || hasExplanation
+    ? null
+    : `${field} must contain a staging URL or an explicit N/A explanation.`;
+}
+
+function validatePassingEvidenceField(
+  body: string,
+  field: string,
+  passPattern: RegExp,
+  message: string,
+): string | null {
+  const value = extractEvidenceFieldValue(body, field);
+  if (value === null || value.trim().length === 0 || passPattern.test(value)) return null;
+  return message;
+}
+
+function requiredValueErrors(body: string, tier: Tier): string[] {
+  if (tier !== 'T1') return [];
+
+  const emptyFieldErrors = TIER_SPECS.T1.requiredFields
+    .filter((field) => field !== 'Tier:' && field !== 'PR head SHA:')
+    .map((field) => validateNonEmptyEvidenceField(body, field));
+
+  return [
+    ...emptyFieldErrors,
+    validateStagingTagEvidence(body),
+    validatePassingEvidenceField(
+      body,
+      'Health/smoke result:',
+      /\b(?:green|pass(?:ed|es)?|ok|healthy)\b/i,
+      'Health/smoke result: must state a passing health/smoke result.',
+    ),
+    validatePassingEvidenceField(
+      body,
+      'CI/E2E green:',
+      /\b(?:green|pass(?:ed|es)?|success(?:ful)?)\b/i,
+      'CI/E2E green: must state that CI/E2E is green.',
+    ),
+  ].filter((error): error is string => error !== null);
+}
+
 function normalizeSha(value: string | undefined): string | null {
   if (!value) return null;
   const m = SHA_RE.exec(value);
@@ -399,7 +513,19 @@ function stagingIntegrityErrors(
   tier: Tier,
   opts: { headSha?: string; baseSha?: string } = {},
 ): string[] {
-  if (tier === 'T1') return [];
+  if (tier === 'T0') return [];
+
+  if (tier === 'T1') {
+    return [
+      ...shaEvidenceErrors({
+        body,
+        field: 'PR head SHA:',
+        expectedSha: opts.headSha,
+        currentLabel: 'PR head',
+        staleMessage: 'expedited evidence cannot be copied across commits.',
+      }),
+    ];
+  }
 
   return [
     ...evidenceScopeErrors(body),
@@ -428,9 +554,8 @@ interface StagingFilesOnlyResult {
 }
 
 /**
- * The rig PR itself (this PR) only adds staging tooling and CI gates —
- * it should not require its own soak gate to pass. We skip when EVERY
- * touched file is in the staging-tooling allowlist.
+ * T0 changes cannot affect production runtime behavior. They run the normal
+ * CI suite but do not need staging evidence.
  */
 const STAGING_TOOLING_ALLOW = [
   /^scripts\/staging\//,
@@ -467,11 +592,11 @@ const STAGING_TOOLING_ALLOW = [
 export function isStagingToolingOnly(files: string[]): StagingFilesOnlyResult {
   if (files.length === 0) return { pass: true, reason: 'no changed files' };
   for (const f of files) {
-    if (!STAGING_TOOLING_ALLOW.some((re) => re.test(f))) {
-      return { pass: false, reason: `${f} is outside the staging-tooling allowlist` };
+    if (!isT0OnlyFile(f)) {
+      return { pass: false, reason: `${f} is outside the T0 docs/tests/CI/tooling allowlist` };
     }
   }
-  return { pass: true, reason: 'all touched files are staging-tooling-only' };
+  return { pass: true, reason: 'all touched files are T0 docs/tests/CI/tooling-only' };
 }
 
 interface CheckResult {
@@ -484,13 +609,12 @@ export function check(opts: { body: string; files: string[]; headSha?: string; b
   const { body, files } = opts;
   const result: CheckResult = { ok: true, errors: [], notes: [] };
 
-  const tooling = isStagingToolingOnly(files);
-  if (tooling.pass) {
-    result.notes.push(`Staging-tooling PR (${tooling.reason}) — gate self-skips.`);
+  const required = requiredTierFor(files);
+  if (required.tier === 'T0') {
+    result.notes.push(`T0 CI-only PR (${required.reason}) — no staging soak evidence required.`);
     return result;
   }
 
-  const required = requiredTierFor(files);
   const declared = extractDeclaredTier(body);
 
   if (!declared) {
@@ -532,6 +656,12 @@ export function check(opts: { body: string; files: string[]; headSha?: string; b
   if (durationErrors.length > 0) {
     result.ok = false;
     result.errors.push(...durationErrors);
+  }
+
+  const valueErrors = requiredValueErrors(body, declared);
+  if (valueErrors.length > 0) {
+    result.ok = false;
+    result.errors.push(...valueErrors);
   }
 
   const integrityErrors = stagingIntegrityErrors(body, declared, opts);

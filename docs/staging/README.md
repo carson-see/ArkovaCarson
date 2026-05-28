@@ -53,12 +53,12 @@ Estimated all-in: **$80–$120/month** at typical utilization.
   --pr 1234 \
   --image us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker:<your-sha>
 
-# 4. Drive load for the soak window.
+# 4. Drive load for the soak window, when the tier requires one.
 npm run staging:load -- --mode oscillate --duration 2880  # T3
 # or
 npm run staging:load -- --mode burst --count 12000        # T3 trigger A
 # or
-npm run staging:load -- --mode steady --rate 50 --duration 120  # T1 smoke
+npm run staging:load -- --mode steady --rate 50 --duration 30   # T1 smoke
 
 # 5. Capture evidence in PR body under `## Staging Soak Evidence`.
 #    See PR_TEMPLATE.md.
@@ -71,9 +71,11 @@ npm run staging:load -- --mode steady --rate 50 --duration 120  # T1 smoke
 
 | Change | Tier | Why |
 |---|---|---|
-| Copy fix in `src/lib/copy.ts` | T1 | Frontend-only, no DB, no worker logic |
+| Docs, tests, CI, or staging-tooling only | T0 | CI-only; no staging evidence block |
+| Copy fix in `src/lib/copy.ts` | T1 | Frontend-only, no DB, no worker/API/auth/billing/queue/security logic |
 | New v1 read endpoint with no DB write | T2 | Public API surface |
-| New SECURITY DEFINER function migration | T2 | Schema change |
+| Worker behavior, webhook, SDK, or AI behavior change | T2 | Merge-grade staging soak at exact PR head |
+| New SECURITY DEFINER function migration | T3 | Schema/data-integrity change |
 | Rewrite of `batch-anchor.ts` triggers | T3 | Anchor lifecycle |
 | New cron that polls `anchors` every 5 min | T3 | Cron on chain hot path |
 | Stripe webhook handler change | T3 | Entitlements |
@@ -81,6 +83,7 @@ npm run staging:load -- --mode steady --rate 50 --duration 120  # T1 smoke
 ## What goes in `## Staging Soak Evidence`
 
 Use [PR_TEMPLATE.md](./PR_TEMPLATE.md). Fields are line-anchored, so format matters — `Tier: T3` works, `tier=T3` does not.
+T1 is the only expedited path and still requires exact PR head SHA, staging tag URL or N/A explanation, health/smoke result, CI/E2E green, rollback plan, risk rationale, and human approver. The checker rejects T1 for migrations, public API contracts, auth, billing, anchoring, worker behavior, queues/concurrency, chain/treasury, and security-sensitive paths.
 
 ## Cost controls
 
