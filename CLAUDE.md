@@ -50,6 +50,8 @@ Feature branches only **for code, migrations, RLS policies, CI scripts, GitHub A
 
 When the carve-out applies, the workflow is just `git commit` + `git push origin main` (or `gh pr merge --admin --merge --delete-branch` for branches that are already pushed). No multi-job CI wait, no review threads, no body-format dance.
 
+**Migration ownership:** Each migration file is owned by exactly one PR. If two PRs need the same schema change, the earlier PR owns the migration file; the later PR rebases after merge. Never duplicate a migration file across branches — it creates ledger ambiguity and drift-check debt.
+
 ### 9. Deploy gate ≡ CI lint job (R0-4 / SCRUM-1250)
 `deploy-worker.yml` worker-lint step and `ci.yml` `Lint worker (deploy-gate parity)` step BOTH invoke `npm run lint` from `services/worker/` — the script in `services/worker/package.json`. Drift between them caused the 2026-04-25 12-hour deploy blackout (deploy gate ran a stricter eslint than CI). `scripts/ci/check-deploy-lint-parity.ts` enforces this at PR time. Override via PR label `ci-config-change` only. Followup R4 story drives worker eslint warnings to zero so we can re-add `--max-warnings 0` everywhere.
 
@@ -170,7 +172,7 @@ Every prod-affecting PR declares its tier in the body. The path-based detector i
 | Tier | Touches | Min soak | Required evidence |
 |---|---|---|---|
 | **T0** CI-only | Docs, tests, CI, or tooling-only | 0 h | No staging evidence block required; CI must be green |
-| **T1** Expedited smoke | Low-risk config or code-only changes with no migration, public API contract, auth, billing, anchoring, queue/concurrency, worker behavior, chain/treasury, or security-sensitive surface | 0 h | Tier, exact PR head SHA, staging tag URL or N/A explanation, health/smoke result, CI/E2E green, rollback plan, risk rationale, human approver |
+| **T1** Expedited smoke | Low-risk config or code-only changes with no migration, public API contract, auth, billing, anchoring, queue/concurrency, worker behavior, chain/treasury, or security-sensitive surface | 2 h | Tier, exact PR head SHA, staging tag URL or N/A explanation, health/smoke result, CI/E2E green, soak start/end, rollback plan, risk rationale, human approver |
 | **T2** Standard | Public API, worker behavior, queues, AI behavior, anchoring, billing, webhooks, SDK/contract surface | 12 h soak + rollback rehearsal | Merge-grade staging evidence with exact PR head SHA/base SHA, clean preflight, deploy log id, E2E result, rollback rehearsal |
 | **T3** Critical | Migrations, data integrity, concurrency/fan-out, security, chain/treasury, anchor lifecycle, cron-on-anchors | 48 h soak + multiple trigger cycles + clean-mirror or isolated staging | T2 fields + Trigger A fires, Trigger B fires, Daily flush observation, Per-org isolation check |
 
@@ -261,6 +263,7 @@ Current epic health snapshot lives in HANDOFF.md and is updated at the end of ev
 | Deploying DB function changes without `NOTIFY pgrst, 'reload schema'` | Always reload schema cache |
 | Adding rolling narrative to CLAUDE.md | Put it in HANDOFF.md |
 | `.md` file as "documentation" | Confluence page, with the `.md` either deleted or demoted to internal notes |
+| Duplicating migration files across PRs | One PR owns each migration; later PRs rebase after merge |
 
 ---
 
