@@ -21,6 +21,8 @@ const ENV = {
   DOCUSIGN_CLIENT_SECRET: 'client_secret',
 };
 
+type FetchInput = string | URL | Request;
+
 function sign(body: string | Buffer, secret: string): string {
   return crypto.createHmac('sha256', secret).update(body).digest('base64');
 }
@@ -52,7 +54,7 @@ describe('buildDocusignAuthorizationUrl', () => {
 describe('DocuSign token flows', () => {
   it('exchanges authorization codes with Basic auth', async () => {
     let authHeader = '';
-    const fetchImpl = async (_url: string | URL | Request, init?: RequestInit) => {
+    const fetchImpl = async (_url: FetchInput, init?: RequestInit) => {
       authHeader = String(init?.headers && (init.headers as Record<string, string>).Authorization);
       return new Response(
         JSON.stringify({
@@ -119,7 +121,7 @@ describe('getDocusignUserInfo', () => {
 describe('fetchDocusignCombinedDocument', () => {
   it('downloads the combined PDF bytes from the eSignature REST API', async () => {
     let requestedUrl = '';
-    const fetchImpl = async (url: string | URL | Request) => {
+    const fetchImpl = async (url: FetchInput) => {
       requestedUrl = String(url);
       return new Response(new Uint8Array([37, 80, 68, 70]), {
         status: 200,
@@ -247,7 +249,7 @@ describe('provisionConnectListener', () => {
     let postAuthHeader = '';
     const requestedUrls: string[] = [];
 
-    const fetchImpl = async (input: string | URL | Request, init?: RequestInit) => {
+    const fetchImpl = async (input: FetchInput, init?: RequestInit) => {
       const url = String(input);
       requestedUrls.push(url);
 
@@ -307,7 +309,7 @@ describe('provisionConnectListener', () => {
     let putBody: unknown = null;
     let method: string | undefined;
 
-    const fetchImpl = async (_input: string | URL | Request, init?: RequestInit) => {
+    const fetchImpl = async (_input: FetchInput, init?: RequestInit) => {
       // GET list — one existing listener with matching URL
       if (!init?.method || init.method === 'GET') {
         return new Response(
@@ -354,7 +356,7 @@ describe('provisionConnectListener', () => {
   });
 
   it('throws DocusignApiError when the Connect API returns an error', async () => {
-    const fetchImpl = async (_input: string | URL | Request, init?: RequestInit) => {
+    const fetchImpl = async (_input: FetchInput, init?: RequestInit) => {
       // GET list succeeds (no existing)
       if (!init?.method || init.method === 'GET') {
         return new Response(JSON.stringify({ configurations: [] }), { status: 200 });

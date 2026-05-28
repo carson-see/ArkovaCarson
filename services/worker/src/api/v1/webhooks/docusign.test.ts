@@ -64,6 +64,21 @@ function validBody(): string {
   });
 }
 
+function postSignedBody(body: string | Buffer) {
+  return request(createApp())
+    .post('/webhooks/docusign')
+    .set('Content-Type', 'application/json')
+    .set('X-DocuSign-Signature-1', sign(body))
+    .send(body);
+}
+
+function expectNoDispatchAfterDlq() {
+  expect(dbFromMock).toHaveBeenCalledTimes(1);
+  expect(dbFromMock).toHaveBeenCalledWith('webhook_dlq');
+  expect(rpcMock).not.toHaveBeenCalled();
+  expect(submitJobMock).not.toHaveBeenCalled();
+}
+
 function integrationLookup(data: unknown, error: unknown = null) {
   const rows = data === null ? [] : Array.isArray(data) ? data : [data];
   return {
@@ -107,11 +122,7 @@ describe('POST /webhooks/docusign', () => {
       integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1', hmac_keys: null }),
     );
     const body = validBody();
-    const res = await request(createApp())
-      .post('/webhooks/docusign')
-      .set('Content-Type', 'application/json')
-      .set('X-DocuSign-Signature-1', sign(body))
-      .send(body);
+    const res = await postSignedBody(body);
 
     expect(res.status).toBe(503);
   });
@@ -142,11 +153,7 @@ describe('POST /webhooks/docusign', () => {
       status: 'completed',
     });
 
-    const res = await request(createApp())
-      .post('/webhooks/docusign')
-      .set('Content-Type', 'application/json')
-      .set('X-DocuSign-Signature-1', sign(body))
-      .send(body);
+    const res = await postSignedBody(body);
 
     expect(res.status).toBe(401);
     expect(dbFromMock).not.toHaveBeenCalled();
@@ -170,6 +177,22 @@ describe('POST /webhooks/docusign', () => {
     expect(res.status).toBe(401);
   });
 
+  it('returns 401 for wrong completed-event field types without dispatching', async () => {
+    const body = JSON.stringify({
+      event: 'envelope-completed',
+      envelopeId: 'env-1',
+      accountId: 'acct-1',
+      status: { value: 'completed' },
+    });
+
+    const res = await postSignedBody(body);
+
+    expect(res.status).toBe(401);
+    expect(dbFromMock).not.toHaveBeenCalled();
+    expect(rpcMock).not.toHaveBeenCalled();
+    expect(submitJobMock).not.toHaveBeenCalled();
+  });
+
   it('returns 200 orphaned for unknown account when HMAC signature is valid', async () => {
     // SCRUM-2044: dual-table lookup — both org and member tables return no match.
     // Valid HMAC with env-var key proves the request came from DocuSign.
@@ -177,11 +200,7 @@ describe('POST /webhooks/docusign', () => {
     dbFromMock.mockReturnValueOnce(integrationLookup(null));
     const body = validBody();
 
-    const res = await request(createApp())
-      .post('/webhooks/docusign')
-      .set('Content-Type', 'application/json')
-      .set('X-DocuSign-Signature-1', sign(body))
-      .send(body);
+    const res = await postSignedBody(body);
 
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ ok: true, orphaned: true });
@@ -211,11 +230,7 @@ describe('POST /webhooks/docusign', () => {
     submitJobMock.mockResolvedValueOnce('job-1');
     const body = validBody();
 
-    const res = await request(createApp())
-      .post('/webhooks/docusign')
-      .set('Content-Type', 'application/json')
-      .set('X-DocuSign-Signature-1', sign(body))
-      .send(body);
+    const res = await postSignedBody(body);
 
     expect(res.status).toBe(202);
     expect(rpcMock).toHaveBeenCalledWith('enqueue_rule_event', expect.objectContaining({
@@ -292,11 +307,7 @@ describe('POST /webhooks/docusign', () => {
     submitJobMock.mockResolvedValueOnce(null);
     const body = validBody();
 
-    const res = await request(createApp())
-      .post('/webhooks/docusign')
-      .set('Content-Type', 'application/json')
-      .set('X-DocuSign-Signature-1', sign(body))
-      .send(body);
+    const res = await postSignedBody(body);
 
     expect(res.status).toBe(500);
   });
@@ -313,11 +324,7 @@ describe('POST /webhooks/docusign', () => {
     );
     const body = validBody();
 
-    const res = await request(createApp())
-      .post('/webhooks/docusign')
-      .set('Content-Type', 'application/json')
-      .set('X-DocuSign-Signature-1', sign(body))
-      .send(body);
+    const res = await postSignedBody(body);
 
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ ok: true, duplicate: true });
@@ -334,11 +341,7 @@ describe('POST /webhooks/docusign', () => {
     );
     const body = validBody();
 
-    const res = await request(createApp())
-      .post('/webhooks/docusign')
-      .set('Content-Type', 'application/json')
-      .set('X-DocuSign-Signature-1', sign(body))
-      .send(body);
+    const res = await postSignedBody(body);
 
     expect(res.status).toBe(500);
     expect(rpcMock).not.toHaveBeenCalled();
@@ -354,11 +357,7 @@ describe('POST /webhooks/docusign', () => {
     );
     const body = validBody();
 
-    const res = await request(createApp())
-      .post('/webhooks/docusign')
-      .set('Content-Type', 'application/json')
-      .set('X-DocuSign-Signature-1', sign(body))
-      .send(body);
+    const res = await postSignedBody(body);
 
     expect(res.status).toBe(500);
     expect(rpcMock).not.toHaveBeenCalled();

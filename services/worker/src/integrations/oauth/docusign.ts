@@ -285,19 +285,16 @@ function parseConnectConfigResponse(
   }
 }
 
-/**
- * Provisions (or updates) a DocuSign Connect listener for this account.
- * Idempotent: if a listener with the matching webhook URL already exists, it is updated.
- */
-export async function provisionConnectListener(args: {
-  accessToken: string;
-  baseUri: string;
-  accountId: string;
-  deps?: DocusignClientDeps;
-}): Promise<ProvisionConnectResult> {
-  const env = args.deps?.env ?? process.env;
-  const fetchImpl = args.deps?.fetchImpl ?? fetch;
+function trimTrailingSlashes(value: string): string {
+  let trimmed = value;
+  while (trimmed.endsWith('/')) trimmed = trimmed.slice(0, -1);
+  return trimmed;
+}
 
+function requireConnectConfig(env: NodeJS.ProcessEnv): {
+  connectHmacSecret: string;
+  workerPublicUrl: string;
+} {
   const workerPublicUrl = env.WORKER_PUBLIC_URL;
   if (!workerPublicUrl) {
     throw new DocusignConfigError(
@@ -311,51 +308,50 @@ export async function provisionConnectListener(args: {
       'DOCUSIGN_CONNECT_HMAC_SECRET is required to provision a secure Connect listener',
     );
   }
-  // Strip trailing slashes without regex (avoids SonarCloud S5852 false positive)
-  let trimmedUrl = workerPublicUrl;
-  while (trimmedUrl.endsWith('/')) trimmedUrl = trimmedUrl.slice(0, -1);
-  const webhookUrl = `${trimmedUrl}/webhooks/docusign`;
-  let base = args.baseUri;
-  while (base.endsWith('/')) base = base.slice(0, -1);
-  const connectBase = `${base}/restapi/v2.1/accounts/${encodeURIComponent(args.accountId)}/connect`;
-  const authHeaders = { Authorization: `Bearer ${args.accessToken}` };
 
-  // List existing listeners to find one with matching URL
-  const listController = new AbortController();
-  const listTimeout = setTimeout(() => listController.abort(), 10_000);
-  let listRes: Response;
-  let listJson: unknown;
+  return { connectHmacSecret, workerPublicUrl };
+}
+
+async function fetchConnectJson(
+  fetchImpl: typeof fetch,
+  input: string,
+  init: RequestInit,
+): Promise<{ json: unknown; response: Response }> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10_000);
   try {
-    listRes = await fetchImpl(connectBase, { headers: authHeaders, signal: listController.signal });
-    listJson = await parseJsonResponse(listRes);
+    const response = await fetchImpl(input, { ...init, signal: controller.signal });
+    return { json: await parseJsonResponse(response), response };
   } catch (err) {
     if (err instanceof DOMException && err.name === 'AbortError') {
       throw new DocusignApiError('DocuSign Connect API request timed out after 10s', 408, undefined);
     }
     throw err;
   } finally {
-    clearTimeout(listTimeout);
+    clearTimeout(timeout);
   }
-  if (!listRes.ok) {
-    throw new DocusignApiError('DocuSign Connect list failed', listRes.status, listJson);
+}
+
+function parseConnectList(json: unknown, status: number): z.infer<typeof ConnectListResponse> {
+  if (json === null || json === undefined) return { configurations: [] };
+  try {
+    return ConnectListResponse.parse(json);
+  } catch (e) {
+    throw new DocusignApiError(
+      `DocuSign Connect list response schema mismatch: ${e instanceof Error ? e.message : 'unknown'}`,
+      status,
+      json,
+    );
   }
+}
 
-  // DocuSign may return null or empty body — treat as no existing listeners
-  const listData = (() => {
-    if (listJson === null || listJson === undefined) return { configurations: [] };
-    try { return ConnectListResponse.parse(listJson); }
-    catch (e) {
-      throw new DocusignApiError(
-        `DocuSign Connect list response schema mismatch: ${e instanceof Error ? e.message : 'unknown'}`,
-        listRes.status, listJson,
-      );
-    }
-  })();
-
-  const existing = listData.configurations.find((cfg) => cfg.urlToPublishTo === webhookUrl);
-
-  const payload: Record<string, unknown> = {
-    urlToPublishTo: webhookUrl,
+function buildConnectPayload(args: {
+  connectHmacSecret: string;
+  existingConnectId?: string;
+  webhookUrl: string;
+}): Record<string, unknown> {
+  return {
+    urlToPublishTo: args.webhookUrl,
     name: 'Arkova Connect',
     configurationType: 'custom',
     allowEnvelopePublish: 'true',
@@ -364,43 +360,67 @@ export async function provisionConnectListener(args: {
     includeHMAC: 'true',
     // DocuSign must sign deliveries with the same key the webhook verifier uses.
     // Never log this Connect payload.
-    hmacSecret: connectHmacSecret, // NOSONAR
+    hmacSecret: args.connectHmacSecret, // NOSONAR
     includeDocumentFields: 'true',
     requiresAcknowledgement: 'true',
     envelopeEvents: ['Completed'],
     events: ['envelope-completed'],
     eventData: { format: 'json', version: 'restv2.1' },
+    ...(args.existingConnectId ? { connectId: args.existingConnectId } : {}),
   };
+}
 
+/**
+ * Provisions (or updates) a DocuSign Connect listener for this account.
+ * Idempotent: if a listener with the matching webhook URL already exists, it is updated.
+ */
+export async function provisionConnectListener(args: {
+  accessToken: string;
+  baseUri: string;
+  accountId: string;
+  deps?: DocusignClientDeps;
+}): Promise<ProvisionConnectResult> {
+  const env = args.deps?.env ?? process.env;
+  const fetchImpl = args.deps?.fetchImpl ?? fetch;
+  const { connectHmacSecret, workerPublicUrl } = requireConnectConfig(env);
+
+  const webhookUrl = `${trimTrailingSlashes(workerPublicUrl)}/webhooks/docusign`;
+  const base = trimTrailingSlashes(args.baseUri);
+  const connectBase = `${base}/restapi/v2.1/accounts/${encodeURIComponent(args.accountId)}/connect`;
+  const authHeaders = { Authorization: `Bearer ${args.accessToken}` };
+
+  const list = await fetchConnectJson(fetchImpl, connectBase, { headers: authHeaders });
+  if (!list.response.ok) {
+    throw new DocusignApiError('DocuSign Connect list failed', list.response.status, list.json);
+  }
+
+  // DocuSign may return null or empty body — treat as no existing listeners
+  const listData = parseConnectList(list.json, list.response.status);
+  const existing = listData.configurations.find((cfg) => cfg.urlToPublishTo === webhookUrl);
   const method = existing ? 'PUT' : 'POST';
   const action: 'updated' | 'created' = existing ? 'updated' : 'created';
-  if (existing) payload.connectId = existing.connectId;
+  const payload = buildConnectPayload({
+    connectHmacSecret,
+    existingConnectId: existing?.connectId,
+    webhookUrl,
+  });
 
-  const mutateController = new AbortController();
-  const mutateTimeout = setTimeout(() => mutateController.abort(), 10_000);
-  let res: Response;
-  let resJson: unknown;
-  try {
-    res = await fetchImpl(connectBase, {
-      method,
-      headers: { ...authHeaders, 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-      signal: mutateController.signal,
-    });
-    resJson = await parseJsonResponse(res);
-  } catch (err) {
-    if (err instanceof DOMException && err.name === 'AbortError') {
-      throw new DocusignApiError('DocuSign Connect API request timed out after 10s', 408, undefined);
-    }
-    throw err;
-  } finally {
-    clearTimeout(mutateTimeout);
-  }
-  if (!res.ok) {
-    throw new DocusignApiError(`DocuSign Connect ${action === 'updated' ? 'update' : 'create'} failed`, res.status, resJson);
+  const mutation = await fetchConnectJson(fetchImpl, connectBase, {
+    method,
+    headers: { ...authHeaders, 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!mutation.response.ok) {
+    const operation = action === 'updated' ? 'update' : 'create';
+    throw new DocusignApiError(
+      `DocuSign Connect ${operation} failed`,
+      mutation.response.status,
+      mutation.json,
+    );
   }
 
-  const result = parseConnectConfigResponse(resJson, res.status, action === 'updated' ? 'update' : 'create');
+  const operation = action === 'updated' ? 'update' : 'create';
+  const result = parseConnectConfigResponse(mutation.json, mutation.response.status, operation);
   return { connectId: result.connectId, action };
 }
 
