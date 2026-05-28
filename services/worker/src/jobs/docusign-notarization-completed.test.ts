@@ -477,4 +477,53 @@ describe('runDocusignNotarizationCompletedJobs', () => {
     // Should only loop up to max 100
     expect(mockProcessNextJob).toHaveBeenCalledTimes(1); // stops after first idle
   });
+
+  it('throws inside handler when processor returns success:false so processNextJob marks job failed', async () => {
+    // Captures the handler function passed to processNextJob and verifies
+    // it throws on processor failure — this is the contract that prevents
+    // false-completion of failing notarization jobs.
+    let capturedHandler: ((job: unknown) => Promise<void>) | undefined;
+    mockProcessNextJob.mockImplementation(async (_type: string, handler: (job: unknown) => Promise<void>) => {
+      capturedHandler = handler;
+      return { claimed: false, status: 'idle' as const };
+    });
+
+    await runDocusignNotarizationCompletedJobs({ limit: 1 });
+
+    expect(capturedHandler).toBeDefined();
+
+    // Mock a processor that returns success: false (lba_not_found)
+    const selectChain = {
+      select: vi.fn().mockReturnThis(),
+      eq: vi.fn().mockReturnThis(),
+      maybeSingle: vi.fn().mockResolvedValue({ data: null, error: null }),
+    };
+    mockDbFrom.mockImplementation((table: string) => {
+      if (table === 'legally_binding_attestations') return selectChain;
+      return { insert: vi.fn().mockResolvedValue({ data: null, error: null }) };
+    });
+
+    const fakeJob = {
+      id: 'job-fail-test',
+      type: 'docusign.notarization_completed',
+      payload: {
+        org_id: '11111111-1111-4111-8111-111111111111',
+        integration_id: 'int-1',
+        account_id: 'acct-1',
+        envelope_id: 'env-missing',
+        rule_event_id: 'evt-1',
+        notarization_completed_at: '2026-05-27T12:00:00Z',
+      },
+      status: 'processing',
+      priority: 10,
+      attempts: 1,
+      max_attempts: 5,
+      last_error: null,
+      created_at: '2026-05-27T12:00:00Z',
+      updated_at: '2026-05-27T12:00:00Z',
+      scheduled_for: null,
+    };
+
+    await expect(capturedHandler!(fakeJob)).rejects.toThrow('notarization_lba_not_found');
+  });
 });

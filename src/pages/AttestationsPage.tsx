@@ -68,6 +68,7 @@ import type { EvidenceItem } from '@/components/attestation/EvidenceUpload';
 import { BulkIssuanceWizard } from '@/components/attestation/BulkIssuanceWizard';
 import { AttestationStatusCard } from '@/components/attestation/AttestationStatusCard';
 import { VerificationResultDisplay } from '@/components/attestation/VerificationResultDisplay';
+import { NotarizationBadge } from '@/components/attestation/NotarizationBadge';
 import { Briefcase, GraduationCap, FileSpreadsheet } from 'lucide-react';
 import { CreatePortfolioDialog } from '@/components/portfolio';
 import { AttestationEvidencePayloadSchema } from '@/lib/validators';
@@ -120,6 +121,10 @@ interface Attestation {
   issued_at: string;
   expires_at: string | null;
   created_at: string;
+  notarized_at?: string | null;
+  notary_name?: string | null;
+  notary_commission_state?: string | null;
+  docusign_envelope_id?: string | null;
 }
 
 interface ClaimInput {
@@ -725,6 +730,14 @@ export function AttestationsPage() {
                 timestamp: null,
                 explorer_url: `https://mempool.space/signet/tx/${selectedAttestation.chain_tx_id}`,
               } : null}
+            />
+
+            {/* Notarization Badge */}
+            <NotarizationBadge
+              notarizationCompletedAt={selectedAttestation.notarized_at}
+              notaryName={selectedAttestation.notary_name}
+              notaryCommissionState={selectedAttestation.notary_commission_state}
+              docusignEnvelopeId={selectedAttestation.docusign_envelope_id}
             />
 
             {/* Attester + Claims detail card */}

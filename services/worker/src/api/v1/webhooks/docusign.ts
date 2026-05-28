@@ -314,6 +314,20 @@ docusignWebhookRouter.post('/', async (req: Request, res: Response) => {
   try {
     const integration = await findIntegration(event.accountId);
     if (!integration) {
+      // Unknown account — verify HMAC with env-var key before acking.
+      // Without this, an attacker can probe which accounts are connected
+      // by comparing response codes for known vs unknown account IDs.
+      const envKey = process.env.DOCUSIGN_CONNECT_HMAC_SECRET;
+      if (!envKey) {
+        logger.error('DocuSign webhook: unknown account and no env HMAC key — cannot verify');
+        res.status(503).json({ error: { code: 'webhook_unconfigured' } });
+        return;
+      }
+      const orphanSigs = extractDocusignSignatures(req.headers as Record<string, string | string[] | undefined>);
+      if (!verifyDocusignConnectHmacMultiKey({ rawBody, signatures: orphanSigs, keys: [envKey] })) {
+        res.status(401).json({ error: { code: 'invalid_signature' } });
+        return;
+      }
       logger.warn({ accountId: event.accountId }, 'DocuSign webhook: unknown connected account');
       res.status(200).json({ ok: true, orphaned: true });
       return;
