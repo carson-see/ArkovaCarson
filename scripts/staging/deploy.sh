@@ -145,6 +145,13 @@ require_env() {
 require_env STAGING_SUPABASE_URL
 require_env STAGING_SUPABASE_SERVICE_ROLE_KEY
 
+AUTH_GUARD="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/scripts/ops/gcloud-auth-preflight.sh"
+if [ -f "$AUTH_GUARD" ]; then
+  # shellcheck source=scripts/ops/gcloud-auth-preflight.sh
+  source "$AUTH_GUARD"
+  arkova_require_enterprise_gcloud_auth "staging worker deploy" "gcloud"
+fi
+
 PG_REST="${STAGING_SUPABASE_URL}/rest/v1"
 AUTH=( -H "apikey: ${STAGING_SUPABASE_SERVICE_ROLE_KEY}"
        -H "Authorization: Bearer ${STAGING_SUPABASE_SERVICE_ROLE_KEY}" )

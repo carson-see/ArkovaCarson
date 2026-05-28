@@ -11,7 +11,7 @@
 #   ./scripts/deploy-worker.sh --rollback   # roll back to previous revision
 #
 # Requirements:
-#   - gcloud CLI authenticated with arkova1 project access
+#   - Enterprise GCP identity: GitHub WIF, service account, or external-account ADC
 #   - Current directory must be the repo root (or services/worker/)
 
 set -euo pipefail
@@ -142,6 +142,13 @@ if ! command -v "$GCLOUD" &>/dev/null; then
     error "gcloud CLI not found. Install: https://cloud.google.com/sdk/docs/install"
     exit 1
   fi
+fi
+
+AUTH_GUARD="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/scripts/ops/gcloud-auth-preflight.sh"
+if [[ -f "$AUTH_GUARD" ]]; then
+  # shellcheck source=scripts/ops/gcloud-auth-preflight.sh
+  source "$AUTH_GUARD"
+  arkova_require_enterprise_gcloud_auth "production worker deploy" "$GCLOUD"
 fi
 
 # Verify project access
