@@ -352,10 +352,41 @@ function evidenceScopeErrors(body: string): string[] {
   return ['Evidence scope must be one of: merge-grade shared staging, merge-grade isolated staging.'];
 }
 
+const RESIDUAL_RISK_HEADER_RE = /^###\s+Residual-risk\s+note\b/im;
+
+const RESIDUAL_RISK_REQUIRED_FIELDS = [
+  'Contamination type:',
+  'Affected rows:',
+  'Impact on this PR:',
+  'Reason not cleaned:',
+  'Approved by:',
+];
+
+export function hasResidualRiskException(body: string): { valid: boolean; missing: string[] } {
+  if (!RESIDUAL_RISK_HEADER_RE.test(body)) return { valid: false, missing: [] };
+  const missing: string[] = [];
+  for (const field of RESIDUAL_RISK_REQUIRED_FIELDS) {
+    const re = new RegExp(String.raw`^[\s\-*]*${escapeRegExp(field)}`, 'im');
+    if (!re.test(body)) missing.push(field);
+  }
+  return { valid: missing.length === 0, missing };
+}
+
 function preflightResultErrors(body: string): string[] {
   const preflightResult = extractEvidenceFieldValue(body, 'Preflight result:');
   if (preflightResult === null || hasCleanMirrorPreflight(preflightResult)) return [];
-  return ['Preflight result must capture `environment_type=clean_mirror`; dirty or diagnostic preflight output is not merge-grade evidence.'];
+
+  const riskException = hasResidualRiskException(body);
+  if (riskException.valid) return [];
+  if (riskException.missing.length > 0) {
+    return [
+      `Preflight is not clean_mirror but the residual-risk note is missing required sub-fields: `
+      + riskException.missing.map((f) => `\`${f}\``).join(', ')
+      + `. Add a \`### Residual-risk note\` section with all required fields.`,
+    ];
+  }
+
+  return ['Preflight result must capture `environment_type=clean_mirror`; dirty or diagnostic preflight output is not merge-grade evidence. Alternatively, add a `### Residual-risk note` section documenting the exception (see CLAUDE.md §1.11A).'];
 }
 
 function preflightTimestampErrors(body: string): string[] {
@@ -538,6 +569,10 @@ export function check(opts: { body: string; files: string[]; headSha?: string; b
   if (integrityErrors.length > 0) {
     result.ok = false;
     result.errors.push(...integrityErrors);
+  }
+
+  if (result.ok && hasResidualRiskException(body).valid) {
+    result.notes.push('Preflight is not clean_mirror; residual-risk exception accepted.');
   }
 
   return result;
