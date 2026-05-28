@@ -1,7 +1,7 @@
 -- SCRUM-1296: Bulk retry-count bump for cloud_logging_queue.
 -- Replaces N read-modify-write round-trips with a single SQL statement.
 --
--- ROLLBACK: DROP FUNCTION IF EXISTS bump_cloud_logging_retry_counts;
+-- ROLLBACK: DROP FUNCTION IF EXISTS public.bump_cloud_logging_retry_counts(text[], text);
 
 CREATE OR REPLACE FUNCTION bump_cloud_logging_retry_counts(
   p_audit_ids text[],

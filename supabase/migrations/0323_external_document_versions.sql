@@ -9,7 +9,7 @@
 -- created with status 'pending_review' instead of automatically anchoring.
 -- Org admins then approve/skip/flag the version via version_reviews.
 --
--- ROLLBACK: DROP TABLE version_reviews; DROP TABLE external_document_versions;
+-- ROLLBACK: DROP TABLE IF EXISTS public.version_reviews; DROP TABLE IF EXISTS public.external_document_versions;
 
 BEGIN;
 SET LOCAL lock_timeout = '5s';
