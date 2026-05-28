@@ -1,0 +1,24 @@
+[2026-05-27T19:30:44Z] Starting PR #927 soak: 100 iterations, 5s delay
+[2026-05-27T19:30:44Z] Worker: https://arkova-worker-pr840-staging-kvojbeutfa-uc.a.run.app
+[2026-05-27T19:30:44Z] Phase 1: Security edge cases
+[2026-05-27T19:30:45Z] OK bad HMAC rejected: 401
+[2026-05-27T19:30:46Z] OK duplicate detection: first=202, replay=200
+[2026-05-27T19:30:46Z] Phase 2: Synthetic load (100 iterations)
+[2026-05-27T19:31:41Z] Progress: 10/100 — ok=21 fail=0
+[2026-05-27T19:32:42Z] Progress: 20/100 — ok=39 fail=0
+[2026-05-27T19:33:43Z] Progress: 30/100 — ok=57 fail=0
+[2026-05-27T19:34:44Z] Progress: 40/100 — ok=75 fail=0
+[2026-05-27T19:35:45Z] Progress: 50/100 — ok=93 fail=0
+[2026-05-27T19:36:46Z] Progress: 60/100 — ok=111 fail=0
+[2026-05-27T19:37:47Z] Progress: 70/100 — ok=129 fail=0
+[2026-05-27T19:38:46Z] Progress: 80/100 — ok=147 fail=0
+[2026-05-27T19:39:46Z] Progress: 90/100 — ok=165 fail=0
+[2026-05-27T19:40:46Z] Progress: 100/100 — ok=183 fail=0
+[2026-05-27T19:40:51Z] Phase 3: Sprint 3 endpoint validation
+[2026-05-27T19:40:51Z] OK attestation verification 404 for non-existent
+[2026-05-27T19:40:51Z] OK attestation verification 400 for invalid format
+[2026-05-27T19:40:51Z] OK member OAuth connect auth gate: 401
+[2026-05-27T19:40:51Z] Phase 4: Final cron trigger
+[2026-05-27T19:40:53Z] === SOAK COMPLETE ===
+[2026-05-27T19:40:53Z] Total: 190, OK: 190, FAIL: 0
+[2026-05-27T19:40:53Z] STATUS: PASSED

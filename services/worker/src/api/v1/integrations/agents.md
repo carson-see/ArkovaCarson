@@ -13,6 +13,10 @@ User-facing OAuth flow endpoints for third-party integrations. Each integration 
 | `drive-oauth.ts` | Google Drive OAuth start/callback/disconnect routes (SCRUM-1168) |
 | `drive-oauth.test.ts` | Tests for Drive OAuth flows |
 | `drive-oauth-webhook-url.test.ts` | Tests for Drive webhook URL construction |
+| `docusign-member-oauth.ts` | SCRUM-2044: Member-level DocuSign OAuth start/callback/disconnect routes |
+| `docusign-member-oauth.test.ts` | Tests for member-level DocuSign OAuth flows |
+| `docusign-hmac-rotation.ts` | SCRUM-2043: pure rotate/retire functions for HMAC key lifecycle (DI pattern) |
+| `docusign-hmac-rotation.test.ts` | Tests for HMAC key rotation and retirement |
 
 ## Do / Don't Rules
 

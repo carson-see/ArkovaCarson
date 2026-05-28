@@ -30,7 +30,7 @@ vi.mock('../../../utils/logger.js', () => ({
   },
 }));
 
-import { docusignWebhookRouter } from './docusign.js';
+import { docusignWebhookRouter, extractNotaryData } from './docusign.js';
 
 const TEST_HMAC_KEY = 'fixture-key-not-a-secret-aaaa';
 const ORG_ID = '11111111-1111-4111-8111-111111111111';
@@ -87,8 +87,12 @@ beforeEach(() => {
 });
 
 describe('POST /webhooks/docusign', () => {
-  it('returns 503 when HMAC secret is not configured', async () => {
+  it('returns 503 when HMAC secret is not configured and integration has no keys', async () => {
     delete process.env.DOCUSIGN_CONNECT_HMAC_SECRET;
+    // SCRUM-2043: lookup-first — integration lookup happens before HMAC check
+    dbFromMock.mockReturnValueOnce(
+      integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1', hmac_keys: null }),
+    );
     const body = validBody();
     const res = await request(createApp())
       .post('/webhooks/docusign')
@@ -99,7 +103,12 @@ describe('POST /webhooks/docusign', () => {
     expect(res.status).toBe(503);
   });
 
-  it('rejects tampered payloads before any DB write', async () => {
+  it('rejects tampered payloads after integration lookup', async () => {
+    // SCRUM-2043: lookup-first order means DB lookup happens before HMAC check.
+    // Integration lookup IS called, but no nonce/rule/job writes happen.
+    dbFromMock.mockReturnValueOnce(
+      integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1', hmac_keys: null }),
+    );
     const body = validBody();
     const res = await request(createApp())
       .post('/webhooks/docusign')
@@ -108,12 +117,31 @@ describe('POST /webhooks/docusign', () => {
       .send(body.replace('env-1', 'env-2'));
 
     expect(res.status).toBe(401);
-    expect(dbFromMock).not.toHaveBeenCalled();
+    expect(dbFromMock).toHaveBeenCalledTimes(1); // integration lookup only
     expect(rpcMock).not.toHaveBeenCalled();
     expect(submitJobMock).not.toHaveBeenCalled();
   });
 
-  it('returns 200 orphaned for a valid event from an unknown connected account', async () => {
+  it('returns 401 for unknown account when HMAC signature is invalid', async () => {
+    // SCRUM-2044: dual-table lookup — both org and member tables return no match.
+    // Even for unknown accounts, HMAC must be verified with the env-var key.
+    dbFromMock.mockReturnValueOnce(integrationLookup(null));
+    dbFromMock.mockReturnValueOnce(integrationLookup(null));
+    const body = validBody();
+
+    const res = await request(createApp())
+      .post('/webhooks/docusign')
+      .set('Content-Type', 'application/json')
+      .set('X-DocuSign-Signature-1', 'bad-signature')
+      .send(body);
+
+    expect(res.status).toBe(401);
+  });
+
+  it('returns 200 orphaned for unknown account when HMAC signature is valid', async () => {
+    // SCRUM-2044: dual-table lookup — both org and member tables return no match.
+    // Valid HMAC with env-var key proves the request came from DocuSign.
+    dbFromMock.mockReturnValueOnce(integrationLookup(null));
     dbFromMock.mockReturnValueOnce(integrationLookup(null));
     const body = validBody();
 
@@ -127,9 +155,24 @@ describe('POST /webhooks/docusign', () => {
     expect(res.body).toMatchObject({ ok: true, orphaned: true });
   });
 
+  it('returns 503 for unknown account when no env-var HMAC key is configured', async () => {
+    delete process.env.DOCUSIGN_CONNECT_HMAC_SECRET;
+    dbFromMock.mockReturnValueOnce(integrationLookup(null));
+    dbFromMock.mockReturnValueOnce(integrationLookup(null));
+    const body = validBody();
+
+    const res = await request(createApp())
+      .post('/webhooks/docusign')
+      .set('Content-Type', 'application/json')
+      .set('X-DocuSign-Signature-1', sign(body))
+      .send(body);
+
+    expect(res.status).toBe(503);
+  });
+
   it('enqueues a sanitized rules event and retryable document-fetch job', async () => {
     dbFromMock.mockReturnValueOnce(
-      integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1' }),
+      integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1', hmac_keys: null }),
     );
     dbFromMock.mockReturnValueOnce(nonceInsert());
     rpcMock.mockResolvedValueOnce({ data: '22222222-2222-4222-8222-222222222222', error: null });
@@ -172,7 +215,7 @@ describe('POST /webhooks/docusign', () => {
 
   it('returns 500 when the retryable job cannot be queued', async () => {
     dbFromMock.mockReturnValueOnce(
-      integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1' }),
+      integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1', hmac_keys: null }),
     );
     dbFromMock.mockReturnValueOnce(nonceInsert());
     rpcMock.mockResolvedValueOnce({ data: 'evt-1', error: null });
@@ -193,7 +236,7 @@ describe('POST /webhooks/docusign', () => {
     // (envelope_id, event_id, generated_at) constraint and is acknowledged
     // without enqueueing another rule event or fetch job.
     dbFromMock.mockReturnValueOnce(
-      integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1' }),
+      integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1', hmac_keys: null }),
     );
     dbFromMock.mockReturnValueOnce(
       nonceInsert({ code: '23505', message: 'duplicate key value violates unique constraint' }),
@@ -215,8 +258,8 @@ describe('POST /webhooks/docusign', () => {
   it('returns 500 when DocuSign accountId is connected to multiple orgs (cross-tenant guard)', async () => {
     dbFromMock.mockReturnValueOnce(
       integrationLookup([
-        { id: 'int-1', org_id: ORG_ID, account_id: 'acct-1' },
-        { id: 'int-2', org_id: '33333333-3333-4333-8333-333333333333', account_id: 'acct-1' },
+        { id: 'int-1', org_id: ORG_ID, account_id: 'acct-1', hmac_keys: null },
+        { id: 'int-2', org_id: '33333333-3333-4333-8333-333333333333', account_id: 'acct-1', hmac_keys: null },
       ]),
     );
     const body = validBody();
@@ -234,7 +277,7 @@ describe('POST /webhooks/docusign', () => {
 
   it('returns 500 when the nonce insert fails for a non-duplicate reason', async () => {
     dbFromMock.mockReturnValueOnce(
-      integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1' }),
+      integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1', hmac_keys: null }),
     );
     dbFromMock.mockReturnValueOnce(
       nonceInsert({ code: '08006', message: 'connection failure' }),
@@ -262,7 +305,7 @@ describe('POST /webhooks/docusign', () => {
   it('captures envelopes from multiple senders sharing one DocuSign accountId (DS-01)', async () => {
     // Sender 1 — Mercy
     dbFromMock.mockReturnValueOnce(
-      integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1' }),
+      integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1', hmac_keys: null }),
     );
     dbFromMock.mockReturnValueOnce(nonceInsert());
     rpcMock.mockResolvedValueOnce({ data: 'evt-mercy', error: null });
@@ -296,7 +339,7 @@ describe('POST /webhooks/docusign', () => {
 
     // Sender 2 — Kevin, same DocuSign accountId, same Arkova org/integration
     dbFromMock.mockReturnValueOnce(
-      integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1' }),
+      integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1', hmac_keys: null }),
     );
     dbFromMock.mockReturnValueOnce(nonceInsert());
     rpcMock.mockResolvedValueOnce({ data: 'evt-kevin', error: null });
@@ -353,5 +396,325 @@ describe('POST /webhooks/docusign', () => {
         }),
       }),
     );
+  });
+
+  // ─── SCRUM-2044: Dual-table lookup (member_integrations fallback) ───
+
+  it('falls back to member_integrations when org_integrations has no match (SCRUM-2044)', async () => {
+    // First call: org_integrations lookup — no match
+    dbFromMock.mockReturnValueOnce(integrationLookup(null));
+    // Second call: member_integrations lookup — match found
+    dbFromMock.mockReturnValueOnce(
+      integrationLookup({ id: 'member-int-1', org_id: ORG_ID, account_id: 'acct-1', hmac_keys: null }),
+    );
+    // Third call: nonce insert
+    dbFromMock.mockReturnValueOnce(nonceInsert());
+    rpcMock.mockResolvedValueOnce({ data: 'evt-member-1', error: null });
+    submitJobMock.mockResolvedValueOnce('job-member-1');
+    const body = validBody();
+
+    const res = await request(createApp())
+      .post('/webhooks/docusign')
+      .set('Content-Type', 'application/json')
+      .set('X-DocuSign-Signature-1', sign(body))
+      .send(body);
+
+    expect(res.status).toBe(202);
+    // Verify two from() calls happened — org_integrations then member_integrations
+    expect(dbFromMock).toHaveBeenCalledTimes(3); // org_integrations + member_integrations + nonce
+    expect(rpcMock).toHaveBeenCalledWith('enqueue_rule_event', expect.objectContaining({
+      p_org_id: ORG_ID,
+    }));
+  });
+
+  it('uses org_integrations match even when member_integrations also has a match (org wins)', async () => {
+    // Org-level match found — member_integrations should never be queried
+    dbFromMock.mockReturnValueOnce(
+      integrationLookup({ id: 'int-org', org_id: ORG_ID, account_id: 'acct-1', hmac_keys: null }),
+    );
+    dbFromMock.mockReturnValueOnce(nonceInsert());
+    rpcMock.mockResolvedValueOnce({ data: 'evt-org', error: null });
+    submitJobMock.mockResolvedValueOnce('job-org');
+    const body = validBody();
+
+    const res = await request(createApp())
+      .post('/webhooks/docusign')
+      .set('Content-Type', 'application/json')
+      .set('X-DocuSign-Signature-1', sign(body))
+      .send(body);
+
+    expect(res.status).toBe(202);
+    // Only 2 from() calls: org_integrations + nonce (no member_integrations)
+    expect(dbFromMock).toHaveBeenCalledTimes(2);
+    expect(rpcMock).toHaveBeenCalledWith('enqueue_rule_event', expect.objectContaining({
+      p_payload: expect.objectContaining({
+        integration_id: 'int-org',
+      }),
+    }));
+  });
+
+  it('returns 200 orphaned when neither org nor member integrations match (SCRUM-2044)', async () => {
+    // org_integrations — no match
+    dbFromMock.mockReturnValueOnce(integrationLookup(null));
+    // member_integrations — no match
+    dbFromMock.mockReturnValueOnce(integrationLookup(null));
+    const body = validBody();
+
+    const res = await request(createApp())
+      .post('/webhooks/docusign')
+      .set('Content-Type', 'application/json')
+      .set('X-DocuSign-Signature-1', sign(body))
+      .send(body);
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ ok: true, orphaned: true });
+  });
+
+  it('rejects when member_integrations has same accountId in multiple orgs (cross-tenant guard)', async () => {
+    // org_integrations — no match
+    dbFromMock.mockReturnValueOnce(integrationLookup(null));
+    // member_integrations — ambiguous match
+    dbFromMock.mockReturnValueOnce(
+      integrationLookup([
+        { id: 'mi-1', org_id: ORG_ID, account_id: 'acct-1', hmac_keys: null },
+        { id: 'mi-2', org_id: '33333333-3333-4333-8333-333333333333', account_id: 'acct-1', hmac_keys: null },
+      ]),
+    );
+    const body = validBody();
+
+    const res = await request(createApp())
+      .post('/webhooks/docusign')
+      .set('Content-Type', 'application/json')
+      .set('X-DocuSign-Signature-1', sign(body))
+      .send(body);
+
+    expect(res.status).toBe(500);
+    expect(rpcMock).not.toHaveBeenCalled();
+  });
+
+  // ─── SCRUM-1872: Notarization detection ──────────────────────────
+
+  it('enqueues notarization job when notary data is present in the payload', async () => {
+    dbFromMock.mockReturnValueOnce(
+      integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1', hmac_keys: null }),
+    );
+    dbFromMock.mockReturnValueOnce(nonceInsert());
+    rpcMock.mockResolvedValueOnce({ data: 'evt-notary', error: null });
+    // First submitJob for envelope-completed, second for notarization
+    submitJobMock
+      .mockResolvedValueOnce('job-envelope')
+      .mockResolvedValueOnce('job-notarized');
+
+    const notarizedBody = JSON.stringify({
+      event: 'envelope-completed',
+      envelopeId: 'env-notarized-1',
+      accountId: 'acct-1',
+      status: 'completed',
+      sender: { email: 'signer@example.com' },
+      envelopeDocuments: [{ documentId: 'combined', name: 'affidavit.pdf' }],
+      envelopeSummary: {
+        recipients: {
+          notaries: [{
+            name: 'Jane Public',
+            notaryCommissionState: 'CA',
+            notaryCommissionNumber: '2468135',
+            completedDateTime: '2026-05-27T12:00:00Z',
+          }],
+        },
+      },
+    });
+
+    const res = await request(createApp())
+      .post('/webhooks/docusign')
+      .set('Content-Type', 'application/json')
+      .set('X-DocuSign-Signature-1', sign(notarizedBody))
+      .send(notarizedBody);
+
+    expect(res.status).toBe(202);
+    expect(res.body.ok).toBe(true);
+    expect(res.body.notarization_job_id).toBeUndefined();
+    expect(submitJobMock).toHaveBeenCalledTimes(2);
+    expect(submitJobMock).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      type: 'docusign.notarization_completed',
+      payload: expect.objectContaining({
+        org_id: ORG_ID,
+        envelope_id: 'env-notarized-1',
+        notary_name: 'Jane Public',
+        notary_commission_state: 'CA',
+        notary_commission_number: '2468135',
+        notarization_completed_at: '2026-05-27T12:00:00Z',
+      }),
+    }));
+  });
+
+  it('does not enqueue notarization job for standard (non-notarized) envelopes', async () => {
+    dbFromMock.mockReturnValueOnce(
+      integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1', hmac_keys: null }),
+    );
+    dbFromMock.mockReturnValueOnce(nonceInsert());
+    rpcMock.mockResolvedValueOnce({ data: 'evt-plain', error: null });
+    submitJobMock.mockResolvedValueOnce('job-plain');
+    const body = validBody();
+
+    const res = await request(createApp())
+      .post('/webhooks/docusign')
+      .set('Content-Type', 'application/json')
+      .set('X-DocuSign-Signature-1', sign(body))
+      .send(body);
+
+    expect(res.status).toBe(202);
+    expect(res.body.ok).toBe(true);
+    // Only one submitJob call — the standard envelope-completed job
+    expect(submitJobMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('still returns 202 when notarization job enqueue fails (non-fatal)', async () => {
+    dbFromMock.mockReturnValueOnce(
+      integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1', hmac_keys: null }),
+    );
+    dbFromMock.mockReturnValueOnce(nonceInsert());
+    rpcMock.mockResolvedValueOnce({ data: 'evt-notary-fail', error: null });
+    // First submitJob succeeds, second (notarization) fails
+    submitJobMock
+      .mockResolvedValueOnce('job-envelope')
+      .mockResolvedValueOnce(null);
+
+    const notarizedBody = JSON.stringify({
+      event: 'envelope-completed',
+      envelopeId: 'env-notarized-2',
+      accountId: 'acct-1',
+      status: 'completed',
+      sender: { email: 'signer@example.com' },
+      envelopeDocuments: [{ documentId: 'combined', name: 'affidavit.pdf' }],
+      envelopeSummary: {
+        recipients: {
+          signers: [{
+            name: 'Signer Person',
+          }],
+          notaries: [{
+            name: 'Bob Notary',
+            completedDateTime: '2026-05-27T14:00:00Z',
+          }],
+        },
+      },
+    });
+
+    const res = await request(createApp())
+      .post('/webhooks/docusign')
+      .set('Content-Type', 'application/json')
+      .set('X-DocuSign-Signature-1', sign(notarizedBody))
+      .send(notarizedBody);
+
+    expect(res.status).toBe(202);
+    expect(res.body.ok).toBe(true);
+  });
+});
+
+// ── extractNotaryData unit tests (SCRUM-1872) ───────────────────────
+
+describe('extractNotaryData', () => {
+  it('extracts notary from envelopeSummary.recipients.notaries', () => {
+    const body = JSON.stringify({
+      event: 'envelope-completed',
+      envelopeSummary: {
+        recipients: {
+          notaries: [{
+            name: 'Jane Public',
+            notaryCommissionState: 'California',
+            notaryCommissionNumber: 'CA-12345',
+            completedDateTime: '2026-05-27T10:00:00Z',
+          }],
+        },
+      },
+    });
+    const result = extractNotaryData(body);
+    expect(result).not.toBeNull();
+    expect(result!.notary_name).toBe('Jane Public');
+    expect(result!.notary_commission_state).toBe('California');
+    expect(result!.notary_commission_number).toBe('CA-12345');
+    expect(result!.notarization_completed_at).toBe('2026-05-27T10:00:00Z');
+  });
+
+  it('extracts notary from signers with recipientType notary', () => {
+    const body = JSON.stringify({
+      event: 'envelope-completed',
+      envelopeSummary: {
+        recipients: {
+          signers: [
+            { name: 'Regular Signer', recipientType: 'signer' },
+            {
+              name: 'Notary Person',
+              recipientType: 'notary',
+              jurisdiction: 'Texas',
+              commissionNumber: 'TX-67890',
+              completedDateTime: '2026-05-27T11:00:00Z',
+            },
+          ],
+        },
+      },
+    });
+    const result = extractNotaryData(body);
+    expect(result).not.toBeNull();
+    expect(result!.notary_name).toBe('Notary Person');
+    expect(result!.notary_commission_state).toBe('Texas');
+    expect(result!.notary_commission_number).toBe('TX-67890');
+  });
+
+  it('returns null for non-notarized envelopes', () => {
+    const body = JSON.stringify({
+      event: 'envelope-completed',
+      envelopeId: 'env-1',
+      accountId: 'acct-1',
+      status: 'completed',
+      envelopeDocuments: [{ documentId: 'combined' }],
+    });
+    expect(extractNotaryData(body)).toBeNull();
+  });
+
+  it('returns null for empty recipients', () => {
+    const body = JSON.stringify({
+      event: 'envelope-completed',
+      envelopeSummary: {
+        recipients: {},
+      },
+    });
+    expect(extractNotaryData(body)).toBeNull();
+  });
+
+  it('returns null for invalid JSON', () => {
+    expect(extractNotaryData('not json')).toBeNull();
+  });
+
+  it('handles Buffer input', () => {
+    const body = Buffer.from(JSON.stringify({
+      event: 'envelope-completed',
+      envelopeSummary: {
+        recipients: {
+          notaries: [{
+            name: 'Buffer Notary',
+            completedDateTime: '2026-05-27T15:00:00Z',
+          }],
+        },
+      },
+    }));
+    const result = extractNotaryData(body);
+    expect(result).not.toBeNull();
+    expect(result!.notary_name).toBe('Buffer Notary');
+  });
+
+  it('returns null notary fields when metadata is missing but notary entry exists', () => {
+    const body = JSON.stringify({
+      event: 'envelope-completed',
+      envelopeSummary: {
+        recipients: {
+          notaries: [{ completedDateTime: '2026-05-27T16:00:00Z' }],
+        },
+      },
+    });
+    const result = extractNotaryData(body);
+    expect(result).not.toBeNull();
+    expect(result!.notary_name).toBeNull();
+    expect(result!.notary_commission_state).toBeNull();
+    expect(result!.notary_commission_number).toBeNull();
   });
 });

@@ -1,0 +1,47 @@
+npm warn Unknown user config "min-release-age". This will stop working in the next major version of npm.
+npm warn Unknown user config "minimum-release-age". This will stop working in the next major version of npm.
+▶ load-harness mixed mode at 2026-05-27T12:58:26.131Z
+  api_base=https://arkova-worker-pr877-staging-kvojbeutfa-uc.a.run.app  duration=2880min  endAt=2026-05-29T12:58:26.131Z
+  cron_secret=set  api_key=unset (anchor synthetic; reads anonymous)
+
+[t+61s] total=165 rate=2.7/s
+  events     ok=0 fail=100 err=100.0% p50=53ms p95=201ms p99=1331ms statuses[401=6 429=94]
+  reads      ok=0 fail=50 err=100.0% p50=52ms p95=128ms p99=695ms statuses[401=1 429=47 503=2]
+  webhook    ok=0 fail=10 err=100.0% p50=56ms p95=359ms p99=359ms statuses[401=2 429=2 503=6]
+  cron       ok=5 fail=0 err=0.0% p50=397ms p95=673ms p99=673ms statuses[200=5]
+
+[t+121s] total=325 rate=2.7/s
+  events     ok=0 fail=200 err=100.0% p50=53ms p95=143ms p99=757ms statuses[401=7 429=193]
+  reads      ok=0 fail=100 err=100.0% p50=54ms p95=128ms p99=695ms statuses[401=1 429=96 503=3]
+  webhook    ok=0 fail=20 err=100.0% p50=56ms p95=359ms p99=359ms statuses[401=4 429=3 503=13]
+  cron       ok=5 fail=0 err=0.0% p50=397ms p95=673ms p99=673ms statuses[200=5]
+
+[t+181s] total=484 rate=2.7/s
+  events     ok=0 fail=299 err=100.0% p50=53ms p95=130ms p99=446ms statuses[401=9 429=290]
+  reads      ok=0 fail=150 err=100.0% p50=52ms p95=128ms p99=532ms statuses[401=1 429=145 503=4]
+  webhook    ok=0 fail=30 err=100.0% p50=56ms p95=281ms p99=359ms statuses[401=6 429=4 503=20]
+  cron       ok=5 fail=0 err=0.0% p50=397ms p95=673ms p99=673ms statuses[200=5]
+
+[t+241s] total=644 rate=2.7/s
+  events     ok=0 fail=399 err=100.0% p50=53ms p95=126ms p99=246ms statuses[401=12 429=387]
+  reads      ok=0 fail=200 err=100.0% p50=52ms p95=124ms p99=532ms statuses[401=2 429=194 503=4]
+  webhook    ok=0 fail=40 err=100.0% p50=55ms p95=281ms p99=359ms statuses[401=8 429=5 503=27]
+  cron       ok=5 fail=0 err=0.0% p50=397ms p95=673ms p99=673ms statuses[200=5]
+
+[t+301s] total=804 rate=2.7/s
+  events     ok=0 fail=499 err=100.0% p50=53ms p95=134ms p99=226ms statuses[401=15 429=484]
+  reads      ok=0 fail=250 err=100.0% p50=52ms p95=99ms p99=237ms statuses[401=2 429=243 503=5]
+  webhook    ok=0 fail=50 err=100.0% p50=58ms p95=359ms p99=633ms statuses[401=10 429=6 503=34]
+  cron       ok=5 fail=0 err=0.0% p50=397ms p95=673ms p99=673ms statuses[200=5]
+
+[t+361s] total=969 rate=2.7/s
+  events     ok=0 fail=599 err=100.0% p50=53ms p95=131ms p99=226ms statuses[401=18 429=581]
+  reads      ok=0 fail=300 err=100.0% p50=52ms p95=99ms p99=328ms statuses[401=2 429=292 503=6]
+  webhook    ok=0 fail=60 err=100.0% p50=56ms p95=359ms p99=633ms statuses[401=12 429=7 503=41]
+  cron       ok=10 fail=0 err=0.0% p50=410ms p95=857ms p99=857ms statuses[200=10]
+
+[t+421s] total=1129 rate=2.7/s
+  events     ok=0 fail=699 err=100.0% p50=53ms p95=125ms p99=226ms statuses[401=21 429=678]
+  reads      ok=0 fail=350 err=100.0% p50=52ms p95=99ms p99=237ms statuses[401=3 429=340 503=7]
+  webhook    ok=0 fail=70 err=100.0% p50=55ms p95=281ms p99=633ms statuses[401=14 429=9 503=47]
+  cron       ok=10 fail=0 err=0.0% p50=410ms p95=857ms p99=857ms statuses[200=10]

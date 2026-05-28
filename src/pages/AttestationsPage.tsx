@@ -44,9 +44,6 @@ import {
   XCircle,
   Clock,
   AlertTriangle,
-  ExternalLink,
-  Copy,
-  Check,
   Trash2,
   X,
   Ban,
@@ -69,10 +66,13 @@ import { EducationVerificationForm } from '@/components/attestation/EducationVer
 import { EvidenceUpload } from '@/components/attestation/EvidenceUpload';
 import type { EvidenceItem } from '@/components/attestation/EvidenceUpload';
 import { BulkIssuanceWizard } from '@/components/attestation/BulkIssuanceWizard';
+import { AttestationStatusCard } from '@/components/attestation/AttestationStatusCard';
+import { VerificationResultDisplay } from '@/components/attestation/VerificationResultDisplay';
+import { NotarizationBadge } from '@/components/attestation/NotarizationBadge';
 import { Briefcase, GraduationCap, FileSpreadsheet } from 'lucide-react';
 import { CreatePortfolioDialog } from '@/components/portfolio';
 import { AttestationEvidencePayloadSchema } from '@/lib/validators';
-import { EVIDENCE_PAYLOAD_ERROR } from '@/lib/copy';
+import { EVIDENCE_PAYLOAD_ERROR, ATTESTATION_LABELS, PUBLIC_ATTESTATION_VERIFY_LABELS } from '@/lib/copy';
 
 const ATTESTATION_TYPES = [
   { value: 'VERIFICATION', label: 'Verification', desc: 'Verify a credential or document is authentic' },
@@ -121,6 +121,10 @@ interface Attestation {
   issued_at: string;
   expires_at: string | null;
   created_at: string;
+  notarized_at?: string | null;
+  notary_name?: string | null;
+  notary_commission_state?: string | null;
+  docusign_envelope_id?: string | null;
 }
 
 interface ClaimInput {
@@ -176,7 +180,6 @@ export function AttestationsPage() {
 
   // Detail state
   const [selectedAttestation, setSelectedAttestation] = useState<Attestation | null>(null);
-  const [copiedField, setCopiedField] = useState<string | null>(null);
 
   // Portfolio dialog state
   const [showPortfolioDialog, setShowPortfolioDialog] = useState(false);
@@ -228,12 +231,6 @@ export function AttestationsPage() {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- async data fetch; setState is post-await
     fetchAttestations();
   }, [fetchAttestations]);
-
-  const handleCopy = useCallback((text: string, field: string) => {
-    navigator.clipboard.writeText(text);
-    setCopiedField(field);
-    setTimeout(() => setCopiedField(null), 2000);
-  }, []);
 
   const handleRevoke = useCallback(async () => {
     if (!revokeTarget || revokeConfirm.toLowerCase() !== 'revoke') return;
@@ -419,9 +416,9 @@ export function AttestationsPage() {
         {/* Header */}
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-bold font-display tracking-tight">Attestations</h1>
+            <h1 className="text-2xl font-bold font-display tracking-tight">{ATTESTATION_LABELS.PAGE_TITLE}</h1>
             <p className="text-sm text-muted-foreground mt-1">
-              Create and manage immutable attestations anchored to the network
+              {ATTESTATION_LABELS.PAGE_SUBTITLE}
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -430,14 +427,14 @@ export function AttestationsPage() {
               className="border-[#00d4ff]/20"
               onClick={() => setShowPortfolioDialog(true)}
             >
-              <Briefcase className="mr-2 h-4 w-4" /> Create Portfolio
+              <Briefcase className="mr-2 h-4 w-4" /> {ATTESTATION_LABELS.CREATE_PORTFOLIO}
             </Button>
             <Button
               variant="outline"
               className="border-[#00d4ff]/20"
               onClick={() => setShowBulkWizard(true)}
             >
-              <FileSpreadsheet className="mr-2 h-4 w-4" /> Bulk Issue
+              <FileSpreadsheet className="mr-2 h-4 w-4" /> {ATTESTATION_LABELS.BULK_ISSUE}
             </Button>
             <Button
               onClick={() => { setShowForm(!showForm); if (!showForm) resetForm(); }}
@@ -446,7 +443,7 @@ export function AttestationsPage() {
               {showForm ? (
                 <><X className="mr-2 h-4 w-4" /> Cancel</>
               ) : (
-                <><Plus className="mr-2 h-4 w-4" /> New Attestation</>
+                <><Plus className="mr-2 h-4 w-4" /> {ATTESTATION_LABELS.NEW_ATTESTATION}</>
               )}
             </Button>
           </div>
@@ -458,7 +455,7 @@ export function AttestationsPage() {
             <CardHeader>
               <CardTitle className="text-base flex items-center gap-2">
                 <FileCheck className="h-5 w-5 text-[#00d4ff]" />
-                Create New Attestation
+                {ATTESTATION_LABELS.CREATE_NEW_ATTESTATION}
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-6">
@@ -471,31 +468,31 @@ export function AttestationsPage() {
               {/* Template Selection */}
               {formMode === 'template' && (
                 <div className="space-y-4">
-                  <p className="text-sm text-muted-foreground">Choose a template or create a custom attestation</p>
+                  <p className="text-sm text-muted-foreground">{ATTESTATION_LABELS.TEMPLATE_PROMPT}</p>
                   <div className="grid gap-3 sm:grid-cols-3">
                     <button
                       className="rounded-lg border border-[#00d4ff]/20 p-4 text-left hover:border-[#00d4ff]/40 hover:bg-[#00d4ff]/5 transition-colors"
                       onClick={() => setFormMode('employment')}
                     >
                       <Briefcase className="h-5 w-5 text-[#00d4ff] mb-2" />
-                      <div className="font-medium text-sm">Employment Verification</div>
-                      <p className="text-xs text-muted-foreground mt-1">Verify employment dates, title, and status</p>
+                      <div className="font-medium text-sm">{ATTESTATION_LABELS.TEMPLATE_EMPLOYMENT}</div>
+                      <p className="text-xs text-muted-foreground mt-1">{ATTESTATION_LABELS.TEMPLATE_EMPLOYMENT_DESC}</p>
                     </button>
                     <button
                       className="rounded-lg border border-[#00d4ff]/20 p-4 text-left hover:border-[#00d4ff]/40 hover:bg-[#00d4ff]/5 transition-colors"
                       onClick={() => setFormMode('education')}
                     >
                       <GraduationCap className="h-5 w-5 text-[#00d4ff] mb-2" />
-                      <div className="font-medium text-sm">Education Credential</div>
-                      <p className="text-xs text-muted-foreground mt-1">Issue tamper-proof degree or certification</p>
+                      <div className="font-medium text-sm">{ATTESTATION_LABELS.TEMPLATE_EDUCATION}</div>
+                      <p className="text-xs text-muted-foreground mt-1">{ATTESTATION_LABELS.TEMPLATE_EDUCATION_DESC}</p>
                     </button>
                     <button
                       className="rounded-lg border border-border/50 p-4 text-left hover:border-[#00d4ff]/20 hover:bg-[#00d4ff]/5 transition-colors"
                       onClick={() => setFormMode('custom')}
                     >
                       <FileCheck className="h-5 w-5 text-muted-foreground mb-2" />
-                      <div className="font-medium text-sm">Custom Attestation</div>
-                      <p className="text-xs text-muted-foreground mt-1">Create any type of attestation</p>
+                      <div className="font-medium text-sm">{ATTESTATION_LABELS.TEMPLATE_CUSTOM}</div>
+                      <p className="text-xs text-muted-foreground mt-1">{ATTESTATION_LABELS.TEMPLATE_CUSTOM_DESC}</p>
                     </button>
                   </div>
                 </div>
@@ -527,7 +524,7 @@ export function AttestationsPage() {
                   {/* Attestation Type */}
                   <div className="grid gap-4 sm:grid-cols-2">
                     <div className="space-y-2">
-                      <Label>Attestation Type</Label>
+                      <Label>{ATTESTATION_LABELS.ATTESTATION_TYPE}</Label>
                       <Select value={attestationType} onValueChange={setAttestationType}>
                         <SelectTrigger className="bg-transparent border-[#00d4ff]/20">
                           <SelectValue />
@@ -544,16 +541,16 @@ export function AttestationsPage() {
                     </div>
 
                     <div className="space-y-2">
-                      <Label>Subject Type</Label>
+                      <Label>{ATTESTATION_LABELS.SUBJECT_TYPE}</Label>
                       <Select value={subjectType} onValueChange={setSubjectType}>
                         <SelectTrigger className="bg-transparent border-[#00d4ff]/20">
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="credential">Credential</SelectItem>
-                          <SelectItem value="entity">Entity / Organization</SelectItem>
-                          <SelectItem value="process">Process / Procedure</SelectItem>
-                          <SelectItem value="asset">Asset / Document</SelectItem>
+                          <SelectItem value="credential">{ATTESTATION_LABELS.SUBJECT_CREDENTIAL}</SelectItem>
+                          <SelectItem value="entity">{ATTESTATION_LABELS.SUBJECT_ENTITY}</SelectItem>
+                          <SelectItem value="process">{ATTESTATION_LABELS.SUBJECT_PROCESS}</SelectItem>
+                          <SelectItem value="asset">{ATTESTATION_LABELS.SUBJECT_ASSET}</SelectItem>
                         </SelectContent>
                       </Select>
                     </div>
@@ -561,7 +558,7 @@ export function AttestationsPage() {
 
                   {/* Subject */}
                   <div className="space-y-2">
-                    <Label>Subject *</Label>
+                    <Label>{ATTESTATION_LABELS.SUBJECT_REQUIRED}</Label>
                     <Input
                       placeholder={subjectType === 'credential' ? 'e.g., Bachelor of Science in Computer Science' :
                         subjectType === 'entity' ? 'e.g., Acme Corporation, University of Michigan' :
@@ -572,23 +569,23 @@ export function AttestationsPage() {
                       className="bg-transparent border-[#00d4ff]/20"
                     />
                     <p className="text-xs text-muted-foreground">
-                      What is being attested (auto-generates ID like ARK-UMI-VER-A3F2B1)
+                      {ATTESTATION_LABELS.SUBJECT_HINT}
                     </p>
                   </div>
 
                   {/* Attester Info */}
                   <div className="grid gap-4 sm:grid-cols-3">
                     <div className="space-y-2">
-                      <Label>Attester Name *</Label>
+                      <Label>{ATTESTATION_LABELS.ATTESTER_NAME_REQUIRED}</Label>
                       <Input
-                        placeholder="Your name or organization"
+                        placeholder={ATTESTATION_LABELS.PLACEHOLDER_ATTESTER_NAME}
                         value={attesterName}
                         onChange={(e) => setAttesterName(e.target.value)}
                         className="bg-transparent border-[#00d4ff]/20"
                       />
                     </div>
                     <div className="space-y-2">
-                      <Label>Attester Type</Label>
+                      <Label>{ATTESTATION_LABELS.ATTESTER_TYPE}</Label>
                       <Select value={attesterType} onValueChange={setAttesterType}>
                         <SelectTrigger className="bg-transparent border-[#00d4ff]/20">
                           <SelectValue />
@@ -601,9 +598,9 @@ export function AttestationsPage() {
                       </Select>
                     </div>
                     <div className="space-y-2">
-                      <Label>Title / Role</Label>
+                      <Label>{ATTESTATION_LABELS.TITLE_ROLE}</Label>
                       <Input
-                        placeholder="e.g., General Counsel, CPA"
+                        placeholder={ATTESTATION_LABELS.PLACEHOLDER_TITLE}
                         value={attesterTitle}
                         onChange={(e) => setAttesterTitle(e.target.value)}
                         className="bg-transparent border-[#00d4ff]/20"
@@ -614,22 +611,22 @@ export function AttestationsPage() {
                   {/* Claims */}
                   <div className="space-y-3">
                     <div className="flex items-center justify-between">
-                      <Label>Claims *</Label>
+                      <Label>{ATTESTATION_LABELS.CLAIMS_REQUIRED}</Label>
                       <Button variant="outline" size="sm" onClick={addClaim} className="border-[#00d4ff]/20 text-xs">
-                        <Plus className="h-3 w-3 mr-1" /> Add Claim
+                        <Plus className="h-3 w-3 mr-1" /> {ATTESTATION_LABELS.ADD_CLAIM}
                       </Button>
                     </div>
                     {claims.map((claim, i) => (
                       <div key={i} className="flex gap-2">
                         <div className="flex-1 space-y-1">
                           <Input
-                            placeholder="Claim statement"
+                            placeholder={ATTESTATION_LABELS.PLACEHOLDER_CLAIM}
                             value={claim.claim}
                             onChange={(e) => updateClaim(i, 'claim', e.target.value)}
                             className="bg-transparent border-[#00d4ff]/20"
                           />
                           <Input
-                            placeholder="Supporting evidence (optional)"
+                            placeholder={ATTESTATION_LABELS.PLACEHOLDER_EVIDENCE}
                             value={claim.evidence}
                             onChange={(e) => updateClaim(i, 'evidence', e.target.value)}
                             className="bg-transparent border-[#00d4ff]/20 text-xs"
@@ -647,18 +644,18 @@ export function AttestationsPage() {
                   {/* Summary + Jurisdiction */}
                   <div className="grid gap-4 sm:grid-cols-2">
                     <div className="space-y-2">
-                      <Label>Summary</Label>
+                      <Label>{ATTESTATION_LABELS.SUMMARY}</Label>
                       <Input
-                        placeholder="Brief description of this attestation"
+                        placeholder={ATTESTATION_LABELS.PLACEHOLDER_SUMMARY}
                         value={summary}
                         onChange={(e) => setSummary(e.target.value)}
                         className="bg-transparent border-[#00d4ff]/20"
                       />
                     </div>
                     <div className="space-y-2">
-                      <Label>Jurisdiction</Label>
+                      <Label>{ATTESTATION_LABELS.JURISDICTION}</Label>
                       <Input
-                        placeholder="e.g., US, EU, UK"
+                        placeholder={ATTESTATION_LABELS.PLACEHOLDER_JURISDICTION}
                         value={jurisdiction}
                         onChange={(e) => setJurisdiction(e.target.value)}
                         className="bg-transparent border-[#00d4ff]/20"
@@ -669,7 +666,7 @@ export function AttestationsPage() {
                   {/* Expiry */}
                   <div className="w-full sm:w-1/3">
                     <div className="space-y-2">
-                      <Label>Expires At (optional)</Label>
+                      <Label>{ATTESTATION_LABELS.EXPIRES_AT_OPTIONAL}</Label>
                       <Input
                         type="datetime-local"
                         value={expiresAt}
@@ -693,9 +690,9 @@ export function AttestationsPage() {
                     </Button>
                     <Button onClick={handleSubmit} disabled={submitting}>
                       {submitting ? (
-                        <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Creating...</>
+                        <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> {ATTESTATION_LABELS.CREATING}</>
                       ) : (
-                        <><Shield className="mr-2 h-4 w-4" /> Create Attestation</>
+                        <><Shield className="mr-2 h-4 w-4" /> {ATTESTATION_LABELS.CREATE_ATTESTATION}</>
                       )}
                     </Button>
                   </div>
@@ -707,137 +704,115 @@ export function AttestationsPage() {
 
         {/* Detail Panel */}
         {selectedAttestation && (
-          <Card className="border-[#00d4ff]/20 bg-[#0d141b]/80 animate-in fade-in slide-in-from-top-2 duration-200">
-            <CardHeader>
-              <div className="flex items-start justify-between">
-                <div>
-                  <CardTitle className="text-base">{selectedAttestation.subject_identifier}</CardTitle>
-                  <div className="flex items-center gap-2 mt-1">
-                    <Badge className={STATUS_COLORS[selectedAttestation.status] ?? ''}>
-                      {selectedAttestation.status}
-                    </Badge>
-                    <Badge variant="secondary" className="text-[10px]">
-                      {selectedAttestation.attestation_type.replace(/_/g, ' ')}
-                    </Badge>
-                    <span className="text-xs text-muted-foreground">{selectedAttestation.subject_type}</span>
+          <div className="space-y-4 animate-in fade-in slide-in-from-top-2 duration-200">
+            {/* Close button row */}
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-bold truncate">{selectedAttestation.subject_identifier}</h2>
+              <Button variant="ghost" size="sm" className="h-7 w-7 p-0 shrink-0" onClick={() => setSelectedAttestation(null)}>
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+
+            {/* Status Card */}
+            <AttestationStatusCard
+              status={selectedAttestation.status}
+              publicId={selectedAttestation.public_id}
+              attestationType={selectedAttestation.attestation_type.replace(/_/g, ' ')}
+            />
+
+            {/* Verification Result */}
+            <VerificationResultDisplay
+              status={selectedAttestation.status}
+              fingerprint={selectedAttestation.fingerprint}
+              chainProof={selectedAttestation.chain_tx_id ? {
+                tx_id: selectedAttestation.chain_tx_id,
+                block_height: null,
+                timestamp: null,
+                explorer_url: `https://mempool.space/signet/tx/${selectedAttestation.chain_tx_id}`,
+              } : null}
+            />
+
+            {/* Notarization Badge */}
+            <NotarizationBadge
+              notarizationCompletedAt={selectedAttestation.notarized_at}
+              notaryName={selectedAttestation.notary_name}
+              notaryCommissionState={selectedAttestation.notary_commission_state}
+              docusignEnvelopeId={selectedAttestation.docusign_envelope_id}
+            />
+
+            {/* Attester + Claims detail card */}
+            <Card className="border-[#00d4ff]/20 bg-[#0d141b]/80">
+              <CardContent className="space-y-4 pt-5">
+                {/* Attester */}
+                <div className="grid gap-3 sm:grid-cols-3">
+                  <div>
+                    <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">{ATTESTATION_LABELS.ATTESTER}</span>
+                    <p className="text-sm font-medium mt-0.5">{selectedAttestation.attester_name}</p>
+                    {selectedAttestation.attester_title && (
+                      <p className="text-xs text-muted-foreground">{selectedAttestation.attester_title}</p>
+                    )}
                   </div>
-                </div>
-                <Button variant="ghost" size="sm" className="h-7 w-7 p-0" onClick={() => setSelectedAttestation(null)}>
-                  <X className="h-4 w-4" />
-                </Button>
-              </div>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              {/* Attester */}
-              <div className="grid gap-3 sm:grid-cols-3">
-                <div>
-                  <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Attester</span>
-                  <p className="text-sm font-medium mt-0.5">{selectedAttestation.attester_name}</p>
-                  {selectedAttestation.attester_title && (
-                    <p className="text-xs text-muted-foreground">{selectedAttestation.attester_title}</p>
+                  <div>
+                    <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">{ATTESTATION_LABELS.ATTESTER_TYPE}</span>
+                    <p className="text-sm mt-0.5">{selectedAttestation.attester_type}</p>
+                  </div>
+                  {selectedAttestation.jurisdiction && (
+                    <div>
+                      <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">{ATTESTATION_LABELS.JURISDICTION}</span>
+                      <p className="text-sm mt-0.5">{selectedAttestation.jurisdiction}</p>
+                    </div>
                   )}
                 </div>
+
+                {/* Claims */}
                 <div>
-                  <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Type</span>
-                  <p className="text-sm mt-0.5">{selectedAttestation.attester_type}</p>
+                  <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">{ATTESTATION_LABELS.CLAIMS}</span>
+                  <div className="mt-2 space-y-2">
+                    {(selectedAttestation.claims ?? []).map((c, i) => (
+                      <div key={i} className="rounded-sm border border-border/50 px-3 py-2">
+                        <p className="text-sm">{c.claim}</p>
+                        {c.evidence && <p className="text-xs text-muted-foreground mt-1">{PUBLIC_ATTESTATION_VERIFY_LABELS.EVIDENCE_PREFIX} {c.evidence}</p>}
+                      </div>
+                    ))}
+                  </div>
                 </div>
-                {selectedAttestation.jurisdiction && (
+
+                {/* Summary */}
+                {selectedAttestation.summary && (
                   <div>
-                    <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Jurisdiction</span>
-                    <p className="text-sm mt-0.5">{selectedAttestation.jurisdiction}</p>
+                    <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">{ATTESTATION_LABELS.SUMMARY}</span>
+                    <p className="text-sm text-muted-foreground mt-1">{selectedAttestation.summary}</p>
                   </div>
                 )}
-              </div>
 
-              {/* Claims */}
-              <div>
-                <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Claims</span>
-                <div className="mt-2 space-y-2">
-                  {(selectedAttestation.claims ?? []).map((c, i) => (
-                    <div key={i} className="rounded-lg border border-border/50 px-3 py-2">
-                      <p className="text-sm">{c.claim}</p>
-                      {c.evidence && <p className="text-xs text-muted-foreground mt-1">Evidence: {c.evidence}</p>}
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Summary */}
-              {selectedAttestation.summary && (
-                <div>
-                  <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Summary</span>
-                  <p className="text-sm text-muted-foreground mt-1">{selectedAttestation.summary}</p>
-                </div>
-              )}
-
-              {/* Fingerprint + Chain */}
-              <div className="grid gap-3 sm:grid-cols-2 border-t border-border/50 pt-3">
-                {selectedAttestation.fingerprint && (
-                  <div>
-                    <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Fingerprint</span>
-                    <div className="flex items-center gap-2 mt-0.5">
-                      <code className="text-xs font-mono text-[#00d4ff] break-all">{selectedAttestation.fingerprint}</code>
-                      <button onClick={() => handleCopy(selectedAttestation.fingerprint!, 'fp')} className="text-muted-foreground hover:text-foreground shrink-0">
-                        {copiedField === 'fp' ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
-                      </button>
-                    </div>
-                  </div>
-                )}
-                <div>
-                  <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Public ID</span>
-                  <div className="flex items-center gap-2 mt-0.5">
-                    <code className="text-xs font-mono">{selectedAttestation.public_id}</code>
-                    <button onClick={() => handleCopy(selectedAttestation.public_id, 'pid')} className="text-muted-foreground hover:text-foreground shrink-0">
-                      {copiedField === 'pid' ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
-                    </button>
-                  </div>
-                </div>
-              </div>
-
-              {selectedAttestation.chain_tx_id && (
-                <div className="border-t border-border/50 pt-3">
-                  <span className="text-[10px] uppercase tracking-wider text-muted-foreground font-semibold">Network Receipt</span>
-                  <div className="flex items-center gap-2 mt-0.5">
-                    <a
-                      href={`https://mempool.space/signet/tx/${selectedAttestation.chain_tx_id}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="text-xs font-mono text-[#00d4ff] hover:text-[#00d4ff]/80 flex items-center gap-1"
+                {/* Action buttons */}
+                <div className="flex items-center gap-2 border-t border-border/50 pt-3">
+                  <Link to={`/verify/attestation/${selectedAttestation.public_id}`} target="_blank">
+                    <Button variant="outline" size="sm" className="border-[#00d4ff]/20 text-xs">
+                      <Link2 className="h-3.5 w-3.5 mr-1.5" />
+                      {ATTESTATION_LABELS.VIEW_VERIFICATION}
+                    </Button>
+                  </Link>
+                  {selectedAttestation.status !== 'REVOKED' && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="border-red-500/20 text-red-400 hover:bg-red-500/10 text-xs"
+                      onClick={() => { setRevokeTarget(selectedAttestation); setRevokeError(null); }}
                     >
-                      <ExternalLink className="h-3 w-3" />
-                      {selectedAttestation.chain_tx_id.slice(0, 20)}...
-                    </a>
-                  </div>
+                      <Ban className="h-3.5 w-3.5 mr-1.5" />
+                      {ATTESTATION_LABELS.REVOKE}
+                    </Button>
+                  )}
                 </div>
-              )}
 
-              {/* Action buttons */}
-              <div className="flex items-center gap-2 border-t border-border/50 pt-3">
-                <Link to={`/verify/attestation/${selectedAttestation.public_id}`} target="_blank">
-                  <Button variant="outline" size="sm" className="border-[#00d4ff]/20 text-xs">
-                    <Link2 className="h-3.5 w-3.5 mr-1.5" />
-                    Public Verification Link
-                  </Button>
-                </Link>
-                {selectedAttestation.status !== 'REVOKED' && (
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="border-red-500/20 text-red-400 hover:bg-red-500/10 text-xs"
-                    onClick={() => { setRevokeTarget(selectedAttestation); setRevokeError(null); }}
-                  >
-                    <Ban className="h-3.5 w-3.5 mr-1.5" />
-                    Revoke
-                  </Button>
-                )}
-              </div>
-
-              <div className="text-xs text-muted-foreground pt-2">
-                Issued: {new Date(selectedAttestation.issued_at).toLocaleString()}
-                {selectedAttestation.expires_at && ` · Expires: ${new Date(selectedAttestation.expires_at).toLocaleString()}`}
-              </div>
-            </CardContent>
-          </Card>
+                <div className="text-xs text-muted-foreground pt-2">
+                  {ATTESTATION_LABELS.ISSUED}: {new Date(selectedAttestation.issued_at).toLocaleString()}
+                  {selectedAttestation.expires_at && ` · ${ATTESTATION_LABELS.EXPIRES}: ${new Date(selectedAttestation.expires_at).toLocaleString()}`}
+                </div>
+              </CardContent>
+            </Card>
+          </div>
         )}
 
         {/* Revoke Dialog */}
@@ -848,7 +823,7 @@ export function AttestationsPage() {
                 <div className="flex h-10 w-10 items-center justify-center rounded-full bg-destructive/10">
                   <AlertTriangle className="h-5 w-5 text-destructive" />
                 </div>
-                <AlertDialogTitle>Revoke Attestation</AlertDialogTitle>
+                <AlertDialogTitle>{ATTESTATION_LABELS.REVOKE_TITLE}</AlertDialogTitle>
               </div>
               <AlertDialogDescription className="space-y-3">
                 <p>
@@ -856,7 +831,7 @@ export function AttestationsPage() {
                   <span className="font-medium text-foreground font-mono">{revokeTarget?.public_id}</span>.
                 </p>
                 <p>
-                  This action is permanent. The attestation will be marked as revoked and its verification status will reflect this change.
+                  {ATTESTATION_LABELS.REVOKE_WARNING}
                 </p>
               </AlertDialogDescription>
             </AlertDialogHeader>
@@ -868,12 +843,12 @@ export function AttestationsPage() {
                 </div>
               )}
               <div className="space-y-2">
-                <Label>Reason for Revocation *</Label>
-                <p className="text-xs text-muted-foreground">Minimum 3 characters required</p>
+                <Label>{ATTESTATION_LABELS.REVOKE_REASON_LABEL}</Label>
+                <p className="text-xs text-muted-foreground">{ATTESTATION_LABELS.REVOKE_REASON_HINT}</p>
                 <Textarea
                   value={revokeReason}
                   onChange={(e) => setRevokeReason(e.target.value)}
-                  placeholder="Describe why this attestation is being revoked"
+                  placeholder={ATTESTATION_LABELS.REVOKE_REASON_PLACEHOLDER}
                   disabled={revoking}
                   maxLength={2000}
                   rows={3}
@@ -881,7 +856,7 @@ export function AttestationsPage() {
               </div>
               <div className="space-y-2">
                 <Label>
-                  Type <span className="font-mono font-semibold">revoke</span> to confirm
+                  Type <span className="font-mono font-semibold">revoke</span> {ATTESTATION_LABELS.REVOKE_CONFIRM_LABEL}
                 </Label>
                 <Input
                   value={revokeConfirm}
@@ -900,9 +875,9 @@ export function AttestationsPage() {
                 className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
               >
                 {revoking ? (
-                  <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Revoking...</>
+                  <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> {ATTESTATION_LABELS.REVOKING}</>
                 ) : (
-                  'Revoke Attestation'
+                  ATTESTATION_LABELS.REVOKE_TITLE
                 )}
               </AlertDialogAction>
             </AlertDialogFooter>
@@ -912,7 +887,7 @@ export function AttestationsPage() {
         {/* Attestations List */}
         <Card className="border-[#00d4ff]/10 bg-transparent">
           <CardHeader>
-            <CardTitle className="text-base">Your Attestations</CardTitle>
+            <CardTitle className="text-base">{ATTESTATION_LABELS.YOUR_ATTESTATIONS}</CardTitle>
           </CardHeader>
           <CardContent>
             {loading ? (
@@ -922,10 +897,10 @@ export function AttestationsPage() {
             ) : attestations.length === 0 ? (
               <div className="text-center py-12">
                 <FileCheck className="mx-auto h-10 w-10 text-muted-foreground mb-3" />
-                <p className="text-sm text-muted-foreground">No attestations yet</p>
-                <p className="text-xs text-muted-foreground mt-1">Create your first attestation to anchor a verifiable claim</p>
+                <p className="text-sm text-muted-foreground">{ATTESTATION_LABELS.NO_ATTESTATIONS}</p>
+                <p className="text-xs text-muted-foreground mt-1">{ATTESTATION_LABELS.EMPTY_CTA}</p>
                 <Button variant="outline" className="mt-4" onClick={() => setShowForm(true)}>
-                  <Plus className="mr-2 h-4 w-4" /> Create Attestation
+                  <Plus className="mr-2 h-4 w-4" /> {ATTESTATION_LABELS.CREATE_ATTESTATION}
                 </Button>
               </div>
             ) : (
@@ -933,11 +908,11 @@ export function AttestationsPage() {
                 <Table>
                   <TableHeader>
                     <TableRow className="border-border/50 hover:bg-transparent">
-                      <TableHead className="text-xs font-semibold">ID</TableHead>
-                      <TableHead className="text-xs font-semibold">Subject</TableHead>
-                      <TableHead className="text-xs font-semibold hidden md:table-cell">Attester</TableHead>
-                      <TableHead className="text-xs font-semibold">Status</TableHead>
-                      <TableHead className="text-xs font-semibold hidden md:table-cell">Created</TableHead>
+                      <TableHead className="text-xs font-semibold">{ATTESTATION_LABELS.TABLE_ID}</TableHead>
+                      <TableHead className="text-xs font-semibold">{ATTESTATION_LABELS.TABLE_SUBJECT}</TableHead>
+                      <TableHead className="text-xs font-semibold hidden md:table-cell">{ATTESTATION_LABELS.TABLE_ATTESTER}</TableHead>
+                      <TableHead className="text-xs font-semibold">{ATTESTATION_LABELS.TABLE_STATUS}</TableHead>
+                      <TableHead className="text-xs font-semibold hidden md:table-cell">{ATTESTATION_LABELS.TABLE_CREATED}</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
