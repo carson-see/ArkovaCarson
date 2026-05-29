@@ -9,6 +9,15 @@
  *
  * Embeddings are stored in `credential_embeddings` table (migration 0060)
  * and searched via `search_credential_embeddings` RPC using cosine similarity.
+ *
+ * NOTE — two distinct embedding tables, do not conflate them:
+ *   - `credential_embeddings` (this module): one row per anchored credential,
+ *     written at issuance. A low/zero row count here means few credentials have
+ *     been embedded yet — it does NOT mean "embeddings are unpopulated."
+ *   - `public_record_embeddings` (separate public-records pipeline, migration
+ *     0080): bulk-embedded public records, populated independently of this path.
+ * SCRUM-2190's `credential_embeddings = 0` reading is accurate for this table
+ * only; the public-record path is separately populated and unrelated.
  */
 
 import { z } from 'zod';
