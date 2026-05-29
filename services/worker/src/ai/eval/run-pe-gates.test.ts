@@ -10,6 +10,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { runEval } from './runner.js';
 import { evaluateEvalGates } from './eval-gates.js';
+import { resolveRequestedGates, resolveOutputDir } from './run-pe-gates.js';
 import { GOLDEN_DATASET_PROFESSIONAL_EDUCATION } from './golden-dataset-professional-education.js';
 import type { ExtractionResult, IAIProvider } from '../types.js';
 
@@ -53,6 +54,42 @@ describe('professional-education gate path', () => {
       expect(gate.matchingEntries).toBeGreaterThanOrEqual(20);
       expect(gate.fieldResults.every((field) => field.passed)).toBe(true);
     }
+  });
+
+  it('fails closed when --gates is provided but empty (no vacuous pass)', () => {
+    // `--gates ""` must NOT silently select zero gates — that would make
+    // `gateResults.every(...)` vacuously true and bypass every merge gate.
+    expect(resolveRequestedGates('')).toEqual({ error: expect.stringContaining('empty') });
+    expect(resolveRequestedGates('   ')).toEqual({ error: expect.stringContaining('empty') });
+    expect(resolveRequestedGates(',,')).toEqual({ error: expect.stringContaining('empty') });
+  });
+
+  it('selects all gates when --gates is omitted (undefined)', () => {
+    expect(resolveRequestedGates(undefined)).toEqual({
+      gates: ['SCRUM-1962', 'SCRUM-1963', 'SCRUM-2187'],
+    });
+  });
+
+  it('rejects unknown gate ids', () => {
+    expect(resolveRequestedGates('SCRUM-9999')).toEqual({
+      error: expect.stringContaining('SCRUM-9999'),
+    });
+  });
+
+  it('selects an explicit valid subset', () => {
+    expect(resolveRequestedGates('SCRUM-1962,SCRUM-2187')).toEqual({
+      gates: ['SCRUM-1962', 'SCRUM-2187'],
+    });
+  });
+
+  it('defaults the report dir inside the current repo, not a parent', () => {
+    const dir = resolveOutputDir(undefined, '/repo/root');
+    expect(dir).toBe('/repo/root/docs/eval');
+    expect(dir).not.toContain('..');
+  });
+
+  it('honors an explicit --output override', () => {
+    expect(resolveOutputDir('/tmp/custom', '/repo/root')).toBe('/tmp/custom');
   });
 
   it('fails closed for every gate when the provider extracts nothing', async () => {

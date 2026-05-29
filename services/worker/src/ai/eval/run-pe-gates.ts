@@ -20,8 +20,9 @@
  * gemini → real F1 against Gemini (GEMINI_API_KEY) or Vertex (GEMINI_TUNED_MODEL + ADC).
  */
 
-import { mkdirSync, writeFileSync } from 'fs';
-import { resolve } from 'path';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { GOLDEN_DATASET_PROFESSIONAL_EDUCATION } from './golden-dataset-professional-education.js';
 import { runEval, getPromptVersionHash, type EntryExtractor } from './runner.js';
 import { createPeEntryExtractor } from './pe-eval-extraction.js';
@@ -33,28 +34,51 @@ import {
 } from './eval-gates.js';
 import type { IAIProvider } from '../types.js';
 
-const args = process.argv.slice(2);
+const ALL_GATE_IDS = EVAL_GATE_CONFIGS.map((gate) => gate.gateId);
 
-function argValue(flag: string, fallback?: string): string | undefined {
+type RequestedGates = Array<EvalGateConfig['gateId']>;
+
+/**
+ * Resolve the --gates argument into the gate set to evaluate. Fail-closed:
+ * an omitted flag means "all gates", but an explicitly-provided-but-empty value
+ * (`--gates ""`, whitespace, or only commas) is an error — never an empty set,
+ * which would make `gateResults.every(...)` vacuously pass and bypass the gates.
+ */
+export function resolveRequestedGates(
+  rawGatesArg: string | undefined,
+): { gates: RequestedGates } | { error: string } {
+  if (rawGatesArg === undefined) {
+    return { gates: [...ALL_GATE_IDS] };
+  }
+  const parsed = rawGatesArg
+    .split(',')
+    .map((id) => id.trim())
+    .filter(Boolean);
+  if (parsed.length === 0) {
+    return { error: `--gates was provided but empty. Known: ${ALL_GATE_IDS.join(', ')}` };
+  }
+  const unknownGate = parsed.find((id) => !ALL_GATE_IDS.includes(id as EvalGateConfig['gateId']));
+  if (unknownGate) {
+    return { error: `Unknown gate "${unknownGate}". Known: ${ALL_GATE_IDS.join(', ')}` };
+  }
+  return { gates: parsed as RequestedGates };
+}
+
+/**
+ * Default the report directory to `<repo>/docs/eval` relative to the current
+ * working directory — NOT `../../docs/eval`, which climbs out of the repo when
+ * the CLI is run from the repository root. An explicit --output always wins.
+ */
+export function resolveOutputDir(outputArg: string | undefined, cwd: string): string {
+  return outputArg ?? resolve(cwd, 'docs', 'eval');
+}
+
+function argValue(args: string[], flag: string, fallback?: string): string | undefined {
   const idx = args.indexOf(flag);
   return idx >= 0 ? args[idx + 1] : fallback;
 }
 
-const providerArg = argValue('--provider', 'mock') ?? 'mock';
-const outputDir = argValue('--output') ?? resolve(process.cwd(), '../../docs/eval');
-const modelOverride = argValue('--model');
-
-const ALL_GATE_IDS = EVAL_GATE_CONFIGS.map((gate) => gate.gateId);
-const requestedGates = (argValue('--gates')?.split(',').map((id) => id.trim()).filter(Boolean) ??
-  ALL_GATE_IDS) as Array<EvalGateConfig['gateId']>;
-
-const unknownGate = requestedGates.find((id) => !ALL_GATE_IDS.includes(id));
-if (unknownGate) {
-  console.error(`ERROR: Unknown gate "${unknownGate}". Known: ${ALL_GATE_IDS.join(', ')}`);
-  process.exit(2);
-}
-
-async function buildProvider(): Promise<IAIProvider> {
+async function buildProvider(providerArg: string, modelOverride: string | undefined): Promise<IAIProvider> {
   if (providerArg === 'mock') {
     const { MockAIProvider } = await import('../mock.js');
     return new MockAIProvider();
@@ -99,7 +123,7 @@ const echoGroundTruthExtractor: EntryExtractor = async (_provider, entry) => ({
   tokensUsed: 0,
 });
 
-function selectExtractor(): EntryExtractor {
+function selectExtractor(providerArg: string): EntryExtractor {
   return providerArg === 'mock' ? echoGroundTruthExtractor : createPeEntryExtractor();
 }
 
@@ -156,6 +180,26 @@ function formatGateReport(
 }
 
 async function main(): Promise<void> {
+  const args = process.argv.slice(2);
+  const providerArg = argValue(args, '--provider', 'mock') ?? 'mock';
+  const outputDir = resolveOutputDir(argValue(args, '--output'), process.cwd());
+  const modelOverride = argValue(args, '--model');
+
+  // Launch-gate parity (Constitution §1.6): the eval extraction flow is an
+  // AI-extraction code path and must fail closed when the flag is off — the
+  // mock provider (no model call) is exempt so the gate-wiring smoke stays green.
+  if (providerArg !== 'mock' && process.env.ENABLE_AI_EXTRACTION !== 'true') {
+    console.error('ERROR: ENABLE_AI_EXTRACTION must be "true" to run live PE eval extraction.');
+    process.exit(2);
+  }
+
+  const gateSelection = resolveRequestedGates(argValue(args, '--gates'));
+  if ('error' in gateSelection) {
+    console.error(`ERROR: ${gateSelection.error}`);
+    process.exit(2);
+  }
+  const requestedGates = gateSelection.gates;
+
   console.log('\n🔬 Professional-Education Eval Gate Runner (SCRUM-2188)');
   console.log(`   Provider: ${providerArg}`);
   console.log(`   PE dataset: ${GOLDEN_DATASET_PROFESSIONAL_EDUCATION.length} entries`);
@@ -163,13 +207,13 @@ async function main(): Promise<void> {
   console.log(`   Prompt version: ${getPromptVersionHash()}`);
   console.log('');
 
-  const provider = await buildProvider();
+  const provider = await buildProvider(providerArg, modelOverride);
 
   const result = await runEval({
     provider,
     entries: GOLDEN_DATASET_PROFESSIONAL_EDUCATION,
     concurrency: providerArg === 'gemini' ? 1 : 10,
-    extract: selectExtractor(),
+    extract: selectExtractor(providerArg),
     onProgress: (completed, total) => {
       const pct = ((completed / total) * 100).toFixed(0);
       process.stdout.write(`\r   Progress: ${completed}/${total} (${pct}%)`);
@@ -213,7 +257,13 @@ async function main(): Promise<void> {
   process.exit(allPassed ? 0 : 1);
 }
 
-main().catch((err) => {
-  console.error('PE gate runner failed:', err);
-  process.exit(1);
-});
+// Run only as a CLI entrypoint — importing this module (e.g. for unit-testing
+// the pure helpers above) must not execute the runner or call process.exit.
+const invokedPath = process.argv[1];
+const isEntrypoint = invokedPath !== undefined && import.meta.url === pathToFileURL(invokedPath).href;
+if (isEntrypoint) {
+  main().catch((err) => {
+    console.error('PE gate runner failed:', err);
+    process.exit(1);
+  });
+}

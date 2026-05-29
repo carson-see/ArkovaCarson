@@ -339,6 +339,13 @@ export class GeminiProvider implements IAIProvider {
     systemPrompt: string;
     userPrompt: string;
   }): Promise<{ text: string; tokensUsed?: number }> {
+    // Launch-gate parity (Constitution §1.6): the raw extraction path is still
+    // an AI-extraction code path, so it must fail closed when the flag is off —
+    // no "raw mode" bypass. Prod sets ENABLE_AI_EXTRACTION=true via deploy;
+    // off-prod defaults false.
+    if (process.env.ENABLE_AI_EXTRACTION !== 'true') {
+      throw new Error('AI extraction is disabled (ENABLE_AI_EXTRACTION is not "true")');
+    }
     this.checkCircuit();
 
     return this.withRetry(async () => {
