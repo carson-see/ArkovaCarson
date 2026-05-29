@@ -41,7 +41,7 @@ function SimilarityBadge({ score }: { score: number }) {
 
   return (
     <span
-      className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium ${color}`}
+      className={`inline-flex items-center gap-1 whitespace-nowrap rounded-full border px-2 py-0.5 text-xs font-medium ${color}`}
       title={matchStrengthLabel(score)}
       aria-label={matchStrengthLabel(score)}
     >
@@ -57,8 +57,8 @@ function SearchResultCard({ result }: { result: SemanticSearchResult }) {
       className="glass-card group block rounded-xl border border-white/10 p-4 transition-all hover:shadow-card-hover hover:-translate-y-0.5"
     >
       <div className="flex items-start justify-between gap-3">
-        <div className="flex items-start gap-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-primary/15 to-primary/5">
+        <div className="flex min-w-0 flex-1 items-start gap-3">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-primary/15 to-primary/5">
             <FileText className="h-5 w-5 text-primary" />
           </div>
           <div className="min-w-0">
@@ -77,7 +77,7 @@ function SearchResultCard({ result }: { result: SemanticSearchResult }) {
             )}
           </div>
         </div>
-        <div className="flex flex-col items-end gap-1.5">
+        <div className="flex shrink-0 flex-col items-end gap-1.5">
           <SimilarityBadge score={result.similarity} />
           <span
             className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${
