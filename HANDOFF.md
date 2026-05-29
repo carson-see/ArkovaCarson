@@ -14,6 +14,24 @@
 
 ## Now
 
+### 2026-05-29 — UAT bug closeout: SCRUM-1982 (profile redirect) + SCRUM-1983 (billing) + SCRUM-1984 (admin overview)
+
+Picked up the three 2026-05-22 UAT bugs. Each had a same-day frontend hotfix but the tickets stayed open; two still had gaps:
+
+- **SCRUM-1982** (`/profile` → `/settings`): redirect already on `main` (`5269e62b`; `App.tsx` `<Navigate to={ROUTES.SETTINGS} replace />`). Gap = **no regression test** (only the route *constant* was unit-tested). Backfilled three E2E guards in `e2e/route-guards.spec.ts` (authenticated redirect lands on a functioning Settings page, `replace` history semantics, unauthenticated → `/auth`). → **[PR #970](https://github.com/carson-see/ArkovaCarson/pull/970)** (T0 test-only; CI-gated; awaiting Carson merge).
+- **SCRUM-1983** (billing spinner): already fully fixed on `main` (`40a03a1b`: 5s AbortController timeout + error/retry) **and** E2E-covered (`e2e/billing.spec.ts`). No new code — closeout only.
+- **SCRUM-1984** (admin overview all-zeros): frontend fetch-on-mount already on `main` (`1e285930`), but the **worker** still under-counted orgs. Root cause: `admin-stats.ts` filtered `.is('deleted_at', null)` on `organizations`, which has no such column (soft-deletes via `suspended`, §1.2) — PostgREST resolves with `count: null` so Total Orgs always read 0. Fixed (drop phantom filter) + TDD regression test + `api/agents.md` gotcha note. → **[PR #969](https://github.com/carson-see/ArkovaCarson/pull/969)** (T2; **12h staging soak PENDING** — not started this session to avoid disturbing the 7 in-flight shared-staging soaks; stays **draft** until soak; Carson merges).
+
+**Prod data (confirms #1984 is a real bug, not cosmetic):** prod ref `vzwyaatejekddvltxyye` has 3 organizations; the buggy endpoint reported 0. A background audit of the worker API found this is the *only* phantom-column filter — no sibling bugs.
+
+**UAT note (honest):** a live authenticated browser UAT of the three was not feasible this session — all three routes are `AuthGuard`-gated and the local checkout has no `.env`/Supabase config to create a session (agent never handles credentials). Verification rests on the automated specs (E2E in CI for #1982/#1983; worker unit test for #1984) plus the original ship-time UAT on the frontend hotfixes.
+
+**Open (Carson-gated):** merge #970 (then #1982 DoD §1.7 is met); run #969's T2 soak in a clean staging window, then merge (#1984 worker half). #1982/#1984 stay open until their PRs land; #1983 is closeout-ready pending its gate check.
+
+_Last refreshed: 2026-05-29 by Claude — claims verified against MCP/CI/git output: prod `organizations` count = 3 via Supabase MCP `execute_sql` on ref `vzwyaatejekddvltxyye`; hotfix commits `5269e62b` / `40a03a1b` / `1e285930` confirmed on `origin/main` via `git log`; PR #969 (draft, base `d0ff8519`, head `968939dc`) + PR #970 opened via `gh pr create`; local worker suite 5827/5827, `tsc` 0 errors, worker `lint` 0 errors._
+
+---
+
 ### 2026-05-29 — Prod flag `ENABLE_SEMANTIC_SEARCH` flipped OFF; PR #964 now merges dormant
 
 **Prod change (Carson-approved, inert path):** `switchboard_flags.ENABLE_SEMANTIC_SEARCH` flipped `true`→`false` at **2026-05-29 21:09:10 UTC** on prod ref `vzwyaatejekddvltxyye` (before/after via Supabase MCP `execute_sql`). It had been `true` since 2026-03-20 while `credential_embeddings` is empty — a billed-no-op liability (each gated hit charged a credit to return nothing). `ENABLE_VERIFICATION_API` left `true` (untouched).
