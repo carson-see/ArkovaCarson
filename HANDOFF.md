@@ -14,6 +14,20 @@
 
 ## Now
 
+### 2026-05-29 — Prod flag `ENABLE_SEMANTIC_SEARCH` flipped OFF; PR #964 now merges dormant
+
+**Prod change (Carson-approved, inert path):** `switchboard_flags.ENABLE_SEMANTIC_SEARCH` flipped `true`→`false` at **2026-05-29 21:09:10 UTC** on prod ref `vzwyaatejekddvltxyye` (before/after via Supabase MCP `execute_sql`). It had been `true` since 2026-03-20 while `credential_embeddings` is empty — a billed-no-op liability (each gated hit charged a credit to return nothing). `ENABLE_VERIFICATION_API` left `true` (untouched).
+
+**Why safe:** flag is shared with the frozen public `/api/v1/verify/search` (§1.8), but consumer check was clean — prod `api_keys` = 3 total / 2 active, **0 ever used** (`last_used_at` all null); `/verify/search` 401s without a key; `ai_usage_events` 90d = 0 `embedding` events; both gated RPCs read the empty `credential_embeddings`. Flipping off removed zero working behavior. (Cloud Run log read blocked — CLI SA lacks `logging.viewer`; key table is the authoritative signal for a key-gated endpoint.)
+
+**Effect:** [PR #964](https://github.com/carson-see/ArkovaCarson/pull/964) (SCRUM-1958 semantic-search UI) now lands as **inert** dormant code (fail-closed panel renders nothing); merge remains human-gated (Carson). Body updated to the inert-path state. **Activation deferred** to SCRUM-1964 embeddings backfill → T2 staging soak → deliberate canary flip-on.
+
+**Tracking:** remediation logged on bug **SCRUM-2190**. Earlier PR-body claim that prod was "gated off" was wrong (prod was `true`) — corrected, then the row was deliberately flipped to match.
+
+_Last refreshed: 2026-05-29 by Claude — claims verified against MCP output: prod ref `vzwyaatejekddvltxyye` `switchboard_flags` SELECT before (enabled=true, updated 2026-03-20 16:50 UTC) + UPDATE…RETURNING after (enabled=false, updated 2026-05-29 21:09:10 UTC) + confirming SELECT; `api_keys` count (total=3/active=2/ever_used=0); `ai_usage_events` 90d embedding=0. PR #964 body edit pushed via `gh pr edit`._
+
+---
+
 ### 2026-05-29 — PR #959 migration drift reconciliation (0314–0321) merged
 
 **PR:** [#959](https://github.com/carson-see/ArkovaCarson/pull/959) merged to `main` at merge commit `87029a17` (branch `chore/migration-0314-0321-prod-reconciliation`). Prod-green: main CI run [26649359558](https://github.com/carson-see/ArkovaCarson/actions/runs/26649359558) succeeded, including the `Check supabase/migrations vs prod` job.
