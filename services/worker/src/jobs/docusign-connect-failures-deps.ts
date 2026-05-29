@@ -20,7 +20,6 @@
  */
 
 import { z } from 'zod';
-import { db as defaultDb } from '../utils/db.js';
 import {
   createGcpSecretManagerRefreshTokenStore,
   type DocusignRefreshTokenStore,
@@ -70,7 +69,6 @@ export interface ConnectFailuresDepOptions extends ReconciliationDepOptions {
 export function makeConnectFailuresDeps(
   options: ConnectFailuresDepOptions = {},
 ): ConnectFailuresDeps {
-  const db = options.db ?? (defaultDb as unknown as ReconciliationDepOptions['db']);
   const env = options.env ?? process.env;
   const fetchImpl = options.fetchImpl ?? fetch;
   const refreshTokenStore =
@@ -78,8 +76,14 @@ export function makeConnectFailuresDeps(
     createGcpSecretManagerRefreshTokenStore({ env, fetchImpl });
 
   // Reuse the SCRUM-2042 reconciliation deps for the shared methods —
-  // listActiveIntegrations / getAccessToken / insertGap are identical.
-  const shared = makeReconciliationDeps({ db, env, fetchImpl, refreshTokenStore });
+  // listActiveIntegrations / getAccessToken / insertGap are identical. db is
+  // forwarded as-is; makeReconciliationDeps applies the default-db fallback.
+  const shared = makeReconciliationDeps({
+    db: options.db,
+    env,
+    fetchImpl,
+    refreshTokenStore,
+  });
 
   return {
     listActiveIntegrations: shared.listActiveIntegrations,

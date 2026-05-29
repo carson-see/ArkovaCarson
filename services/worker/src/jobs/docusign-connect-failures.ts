@@ -77,6 +77,134 @@ export interface ConnectFailuresResult {
   token_refreshes: number;
 }
 
+/**
+ * Records a per-integration failure (token refresh or API poll) on the result.
+ * Centralised so the two failure sites share one log/error/flag shape.
+ */
+function recordIntegrationError(
+  result: ConnectFailuresResult,
+  integrationId: string,
+  kind: string,
+  err: unknown,
+): void {
+  const msg = err instanceof Error ? err.message : String(err);
+  logger.error({ integrationId, error: msg }, `Connect failures: ${kind} failed`);
+  result.errors.push({ integration_id: integrationId, error: `${kind}: ${msg}` });
+  result.ok = false;
+}
+
+/** Fires a Sentry warning for a NEW gap. Never throws — Sentry is best-effort. */
+function alertNewGap(integration: ActiveIntegration, failure: ConnectFailureGap): void {
+  try {
+    Sentry.captureMessage(
+      `DocuSign Connect failure gap: envelope ${failure.envelope_id} reported as a failed webhook delivery`,
+      {
+        level: 'warning',
+        tags: {
+          integration_id: integration.id,
+          envelope_status: failure.envelope_status,
+        },
+        extra: {
+          org_id: integration.org_id,
+          account_id: integration.account_id,
+          completed_at: failure.completed_at,
+          detected_at: new Date().toISOString(),
+          source: 'connect_failures_api',
+        },
+      },
+    );
+  } catch (sentryErr) {
+    logger.error(
+      { error: sentryErr, envelopeId: failure.envelope_id },
+      'Connect failures: Sentry alert failed',
+    );
+  }
+}
+
+/**
+ * Inserts a single gap row, updating result counters. Duplicates are skipped
+ * silently; only genuinely NEW gaps fire a Sentry alert.
+ */
+async function recordGap(
+  deps: ConnectFailuresDeps,
+  integration: ActiveIntegration,
+  failure: ConnectFailureGap,
+  result: ConnectFailuresResult,
+): Promise<void> {
+  const insertResult = await deps.insertGap({
+    org_id: integration.org_id,
+    integration_id: integration.id,
+    account_id: integration.account_id,
+    envelope_id: failure.envelope_id,
+    envelope_status: failure.envelope_status,
+    completed_at: failure.completed_at,
+  });
+
+  if (insertResult.error) {
+    logger.error(
+      {
+        integrationId: integration.id,
+        envelopeId: failure.envelope_id,
+        error: insertResult.error,
+      },
+      'Connect failures: gap insert failed',
+    );
+    result.errors.push({
+      integration_id: integration.id,
+      error: `gap_insert(${failure.envelope_id}): ${insertResult.error}`,
+    });
+    result.ok = false;
+    return;
+  }
+
+  if (insertResult.duplicate) {
+    result.duplicates_skipped++;
+    return;
+  }
+
+  result.gaps_inserted++;
+  alertNewGap(integration, failure);
+}
+
+/**
+ * Polls one integration: refresh token → list Connect failures → record each
+ * as a gap. Failures are isolated per integration (logged + recorded, never
+ * thrown) so one bad integration never halts the whole sweep.
+ */
+async function processIntegration(
+  deps: ConnectFailuresDeps,
+  integration: ActiveIntegration,
+  fromDate: string,
+  result: ConnectFailuresResult,
+): Promise<void> {
+  let accessToken: string;
+  try {
+    accessToken = await deps.getAccessToken(integration);
+    result.token_refreshes++;
+  } catch (err) {
+    recordIntegrationError(result, integration.id, 'token_refresh', err);
+    return;
+  }
+
+  let failures: ConnectFailureGap[];
+  try {
+    failures = await deps.listConnectFailures({
+      baseUri: integration.base_uri,
+      accountId: integration.account_id,
+      accessToken,
+      fromDate,
+    });
+  } catch (err) {
+    recordIntegrationError(result, integration.id, 'connect_failures_api', err);
+    return;
+  }
+
+  result.failures_polled += failures.length;
+  for (const failure of failures) {
+    await recordGap(deps, integration, failure, result);
+  }
+}
+
 export async function pollDocusignConnectFailures(
   deps: ConnectFailuresDeps,
   lookbackHours: number = DEFAULT_LOOKBACK_HOURS,
@@ -104,103 +232,7 @@ export async function pollDocusignConnectFailures(
 
   for (const integration of integrations) {
     result.integrations_checked++;
-
-    let accessToken: string;
-    try {
-      accessToken = await deps.getAccessToken(integration);
-      result.token_refreshes++;
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      logger.error(
-        { integrationId: integration.id, error: msg },
-        'Connect failures: token refresh failed',
-      );
-      result.errors.push({ integration_id: integration.id, error: `token_refresh: ${msg}` });
-      result.ok = false;
-      continue;
-    }
-
-    let failures: ConnectFailureGap[];
-    try {
-      failures = await deps.listConnectFailures({
-        baseUri: integration.base_uri,
-        accountId: integration.account_id,
-        accessToken,
-        fromDate,
-      });
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      logger.error(
-        { integrationId: integration.id, error: msg },
-        'Connect failures: Connect Failures API poll failed',
-      );
-      result.errors.push({ integration_id: integration.id, error: `connect_failures_api: ${msg}` });
-      result.ok = false;
-      continue;
-    }
-
-    result.failures_polled += failures.length;
-    if (failures.length === 0) continue;
-
-    for (const failure of failures) {
-      const insertResult = await deps.insertGap({
-        org_id: integration.org_id,
-        integration_id: integration.id,
-        account_id: integration.account_id,
-        envelope_id: failure.envelope_id,
-        envelope_status: failure.envelope_status,
-        completed_at: failure.completed_at,
-      });
-
-      if (insertResult.error) {
-        logger.error(
-          {
-            integrationId: integration.id,
-            envelopeId: failure.envelope_id,
-            error: insertResult.error,
-          },
-          'Connect failures: gap insert failed',
-        );
-        result.errors.push({
-          integration_id: integration.id,
-          error: `gap_insert(${failure.envelope_id}): ${insertResult.error}`,
-        });
-        result.ok = false;
-        continue;
-      }
-
-      if (insertResult.duplicate) {
-        result.duplicates_skipped++;
-        continue;
-      }
-
-      result.gaps_inserted++;
-
-      try {
-        Sentry.captureMessage(
-          `DocuSign Connect failure gap: envelope ${failure.envelope_id} reported as a failed webhook delivery`,
-          {
-            level: 'warning',
-            tags: {
-              integration_id: integration.id,
-              envelope_status: failure.envelope_status,
-            },
-            extra: {
-              org_id: integration.org_id,
-              account_id: integration.account_id,
-              completed_at: failure.completed_at,
-              detected_at: new Date().toISOString(),
-              source: 'connect_failures_api',
-            },
-          },
-        );
-      } catch (sentryErr) {
-        logger.error(
-          { error: sentryErr, envelopeId: failure.envelope_id },
-          'Connect failures: Sentry alert failed',
-        );
-      }
-    }
+    await processIntegration(deps, integration, fromDate, result);
   }
 
   if (result.gaps_inserted > 0) {

@@ -160,7 +160,7 @@ describe('makeConnectFailuresDeps — listConnectFailures', () => {
     const gaps = await deps.listConnectFailures(POLL_ARGS);
 
     // Only the three safe fields are propagated — no PII keys.
-    expect(Object.keys(gaps[0]).sort()).toEqual(
+    expect(Object.keys(gaps[0]).sort((a, b) => a.localeCompare(b))).toEqual(
       ['completed_at', 'envelope_id', 'envelope_status'],
     );
   });
