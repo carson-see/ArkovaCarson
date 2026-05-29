@@ -3,7 +3,6 @@ import { logger } from '../utils/logger.js';
 import { processNextJob } from '../utils/jobQueue.js';
 import {
   processDocusignEnvelopeCompletedJob,
-  type DocusignEnvelopeCompletedJobPayloadT,
   type DocusignEnvelopeJobDeps,
   type DocusignDocumentSinkResult,
 } from '../integrations/connectors/docusign.js';
@@ -13,6 +12,10 @@ import {
   type DocusignRefreshTokenStore,
 } from '../integrations/connectors/docusign-token-store.js';
 import { createDocusignRateLimitedFetch } from '../integrations/oauth/docusign-rate-limit.js';
+import {
+  resolveEffectiveDocusignConnection,
+  type DocusignConnectionRow,
+} from '../integrations/connectors/docusign-connection-resolver.js';
 import type { TypeSafeDatabase } from '../types/database-overrides.js';
 
 export const DOCUSIGN_ENVELOPE_COMPLETED_JOB_TYPE = 'docusign.envelope_completed';
@@ -50,6 +53,7 @@ interface DbInsertQuery<T> {
 
 interface DbClient {
   from(table: 'org_integrations' | 'member_integrations'): DbSelectQuery<DocusignIntegrationRow>;
+  from(table: 'organizations'): DbSelectQuery<{ parent_org_id: string | null }>;
   from(table: 'integration_events'): DbInsertQuery<{ id?: string }>;
 }
 
@@ -57,6 +61,150 @@ type DocusignIntegrationRow = Pick<
   OrgIntegrationRow,
   'id' | 'org_id' | 'account_id' | 'base_uri' | 'token_secret_name'
 >;
+
+type DocusignOrgIntegrationRow = DocusignIntegrationRow &
+  Pick<OrgIntegrationRow, 'inherited_from_org_id'>;
+
+// Base columns exist on BOTH org_integrations and member_integrations.
+const DOCUSIGN_BASE_COLUMNS = 'id, org_id, account_id, base_uri, token_secret_name';
+// inherited_from_org_id is an org_integrations-only column (SCRUM-2045) — never
+// select it from member_integrations.
+const DOCUSIGN_ORG_COLUMNS = `${DOCUSIGN_BASE_COLUMNS}, inherited_from_org_id`;
+
+function toConnectionRow(
+  row: DocusignIntegrationRow,
+  inheritedFromOrgId: string | null,
+): DocusignConnectionRow {
+  return {
+    id: row.id,
+    org_id: row.org_id,
+    account_id: row.account_id ?? null,
+    base_uri: row.base_uri ?? null,
+    token_secret_name: row.token_secret_name ?? null,
+    inherited_from_org_id: inheritedFromOrgId,
+  };
+}
+
+function normalizeLimit(rawLimit: number | undefined): number {
+  if (rawLimit === undefined || !Number.isFinite(rawLimit)) {
+    return DEFAULT_DOCUSIGN_ENVELOPE_JOB_LIMIT;
+  }
+
+  return Math.min(MAX_DOCUSIGN_ENVELOPE_JOB_LIMIT, Math.max(1, Math.trunc(rawLimit)));
+}
+
+function getRefreshTokenStore(deps: DocusignEnvelopeJobRuntimeDeps): DocusignRefreshTokenStore {
+  return deps.refreshTokenStore ?? createGcpSecretManagerRefreshTokenStore({
+    env: deps.env,
+    fetchImpl: deps.fetchImpl,
+  });
+}
+
+// A "direct" connection is one this org owns itself — either an org-level
+// (org_integrations) or a per-member (member_integrations) DocuSign connection
+// matching the payload's integration id + account. This is the SCRUM-2045
+// resolver's "own" lookup and preserves the member_integrations fallback
+// behavior unchanged. Inheritance is only consulted when this returns null.
+async function fetchDirectDocusignRow(
+  db: DbClient,
+  args: { orgId: string; accountId: string; integrationId: string },
+): Promise<DocusignConnectionRow | null> {
+  const queryIntegration = (table: 'org_integrations' | 'member_integrations') => db
+    .from(table)
+    .select(DOCUSIGN_BASE_COLUMNS)
+    .eq('id', args.integrationId)
+    .eq('org_id', args.orgId)
+    .eq('provider', 'docusign')
+    .eq('account_id', args.accountId)
+    .is('revoked_at', null)
+    .maybeSingle();
+
+  const orgResult = await queryIntegration('org_integrations');
+  if (orgResult.error) {
+    logger.error(
+      { error: orgResult.error, integrationId: args.integrationId },
+      'DocuSign job org integration lookup failed',
+    );
+    throw new Error('docusign_integration_lookup_failed');
+  }
+  if (orgResult.data) {
+    return toConnectionRow(orgResult.data as DocusignIntegrationRow, null);
+  }
+
+  const memberResult = await queryIntegration('member_integrations');
+  if (memberResult.error) {
+    logger.error(
+      { error: memberResult.error, integrationId: args.integrationId },
+      'DocuSign job member integration lookup failed',
+    );
+    throw new Error('docusign_integration_lookup_failed');
+  }
+  if (memberResult.data) {
+    return toConnectionRow(memberResult.data as DocusignIntegrationRow, null);
+  }
+  return null;
+}
+
+// Inheritance marker: the org's single active account_id-NULL docusign row
+// (uniqueness guaranteed by idx_org_integrations_org_provider_active_null_account).
+async function fetchInheritanceMarker(
+  db: DbClient,
+  orgId: string,
+): Promise<{ id: string; org_id: string; inherited_from_org_id: string | null } | null> {
+  const { data, error } = await db
+    .from('org_integrations')
+    .select(DOCUSIGN_ORG_COLUMNS)
+    .eq('org_id', orgId)
+    .eq('provider', 'docusign')
+    .is('account_id', null)
+    .is('revoked_at', null)
+    .maybeSingle();
+
+  if (error) {
+    logger.error({ error, orgId }, 'DocuSign inheritance marker lookup failed');
+    throw new Error('docusign_integration_lookup_failed');
+  }
+  const row = data as DocusignOrgIntegrationRow | null;
+  if (!row || !row.inherited_from_org_id) {
+    return null;
+  }
+  return { id: row.id, org_id: row.org_id, inherited_from_org_id: row.inherited_from_org_id };
+}
+
+async function fetchParentOrgId(db: DbClient, orgId: string): Promise<string | null> {
+  const { data, error } = await db
+    .from('organizations')
+    .select('parent_org_id')
+    .eq('id', orgId)
+    .maybeSingle();
+
+  if (error) {
+    logger.error({ error, orgId }, 'DocuSign parent-org lookup failed');
+    throw new Error('docusign_integration_lookup_failed');
+  }
+  return data?.parent_org_id ?? null;
+}
+
+async function fetchParentOwnDocusignRow(
+  db: DbClient,
+  parentOrgId: string,
+): Promise<DocusignConnectionRow | null> {
+  const { data, error } = await db
+    .from('org_integrations')
+    .select(DOCUSIGN_ORG_COLUMNS)
+    .eq('org_id', parentOrgId)
+    .eq('provider', 'docusign')
+    .is('revoked_at', null)
+    .is('inherited_from_org_id', null)
+    .maybeSingle();
+
+  if (error) {
+    logger.error({ error, parentOrgId }, 'DocuSign parent connection lookup failed');
+    throw new Error('docusign_integration_lookup_failed');
+  }
+  const row = data as DocusignOrgIntegrationRow | null;
+  return row ? toConnectionRow(row, row.inherited_from_org_id ?? null) : null;
+}
 
 export interface DocusignEnvelopeJobRuntimeDeps {
   db?: DbClient;
@@ -80,61 +228,6 @@ export interface DocusignEnvelopeJobRunResult {
   jobIds: string[];
 }
 
-function normalizeLimit(rawLimit: number | undefined): number {
-  if (rawLimit === undefined || !Number.isFinite(rawLimit)) {
-    return DEFAULT_DOCUSIGN_ENVELOPE_JOB_LIMIT;
-  }
-
-  return Math.min(MAX_DOCUSIGN_ENVELOPE_JOB_LIMIT, Math.max(1, Math.trunc(rawLimit)));
-}
-
-function getRefreshTokenStore(deps: DocusignEnvelopeJobRuntimeDeps): DocusignRefreshTokenStore {
-  return deps.refreshTokenStore ?? createGcpSecretManagerRefreshTokenStore({
-    env: deps.env,
-    fetchImpl: deps.fetchImpl,
-  });
-}
-
-async function fetchIntegration(
-  db: DbClient,
-  payload: DocusignEnvelopeCompletedJobPayloadT,
-): Promise<DocusignIntegrationRow> {
-  const queryIntegration = (table: 'org_integrations' | 'member_integrations') => db
-    .from(table)
-    .select('id, org_id, account_id, base_uri, token_secret_name')
-    .eq('id', payload.integration_id)
-    .eq('org_id', payload.org_id)
-    .eq('provider', 'docusign')
-    .eq('account_id', payload.account_id)
-    .is('revoked_at', null)
-    .maybeSingle();
-
-  const orgResult = await queryIntegration('org_integrations');
-  if (orgResult.error) {
-    logger.error(
-      { error: orgResult.error, integrationId: payload.integration_id },
-      'DocuSign job org integration lookup failed',
-    );
-    throw new Error('docusign_integration_lookup_failed');
-  }
-  if (orgResult.data) {
-    return orgResult.data as DocusignIntegrationRow;
-  }
-
-  const memberResult = await queryIntegration('member_integrations');
-  if (memberResult.error) {
-    logger.error(
-      { error: memberResult.error, integrationId: payload.integration_id },
-      'DocuSign job member integration lookup failed',
-    );
-    throw new Error('docusign_integration_lookup_failed');
-  }
-  if (memberResult.data) {
-    return memberResult.data as DocusignIntegrationRow;
-  }
-  throw new Error('docusign_integration_not_found');
-}
-
 export function makeDocusignEnvelopeJobDeps(
   deps: DocusignEnvelopeJobRuntimeDeps = {},
 ): DocusignEnvelopeJobDeps {
@@ -154,15 +247,25 @@ export function makeDocusignEnvelopeJobDeps(
     fetchImpl: docusignFetch,
 
     async resolveConnection(payload) {
-      const integration = await fetchIntegration(db, payload);
-      if (!integration.base_uri) {
+      const effective = await resolveEffectiveDocusignConnection({
+        orgId: payload.org_id,
+        accountId: payload.account_id,
+        integrationId: payload.integration_id,
+        deps: {
+          fetchOwnConnection: (a) => fetchDirectDocusignRow(db, a),
+          fetchInheritanceMarker: (orgId) => fetchInheritanceMarker(db, orgId),
+          fetchParentOrgId: (orgId) => fetchParentOrgId(db, orgId),
+          fetchParentOwnConnection: (parentOrgId) => fetchParentOwnDocusignRow(db, parentOrgId),
+        },
+      });
+      if (!effective.baseUri) {
         throw new Error('docusign_integration_missing_base_uri');
       }
-      if (!integration.token_secret_name) {
+      if (!effective.tokenSecretName) {
         throw new Error('docusign_integration_missing_refresh_token_secret');
       }
 
-      const refreshToken = await refreshTokenStore.get({ name: integration.token_secret_name });
+      const refreshToken = await refreshTokenStore.get({ name: effective.tokenSecretName });
       if (!refreshToken) {
         throw new Error('docusign_refresh_token_secret_missing');
       }
@@ -183,14 +286,14 @@ export function makeDocusignEnvelopeJobDeps(
       })();
       if (refreshed.refresh_token && refreshed.refresh_token !== refreshToken) {
         await refreshTokenStore.put({
-          name: integration.token_secret_name,
+          name: effective.tokenSecretName,
           value: refreshed.refresh_token,
         });
       }
 
       return {
         accessToken: refreshed.access_token,
-        baseUri: integration.base_uri,
+        baseUri: effective.baseUri,
       };
     },
 
@@ -232,14 +335,10 @@ function recordProcessedJob(
   if (processed.jobId) {
     result.jobIds.push(processed.jobId);
   }
-
-  if (isCountedQueueStatus(processed.status)) {
-    result[QUEUE_STATUS_COUNTERS[processed.status]] += 1;
+  const counterKey = QUEUE_STATUS_COUNTERS[processed.status as QueueStatus];
+  if (counterKey) {
+    result[counterKey] += 1;
   }
-}
-
-function isCountedQueueStatus(status: string): status is QueueStatus {
-  return status in QUEUE_STATUS_COUNTERS;
 }
 
 export async function runDocusignEnvelopeCompletedJobs(
