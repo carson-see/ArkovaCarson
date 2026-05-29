@@ -7,30 +7,10 @@ export type Json =
   | Json[]
 
 export type Database = {
-  graphql_public: {
-    Tables: {
-      [_ in never]: never
-    }
-    Views: {
-      [_ in never]: never
-    }
-    Functions: {
-      graphql: {
-        Args: {
-          extensions?: Json
-          operationName?: string
-          query?: string
-          variables?: Json
-        }
-        Returns: Json
-      }
-    }
-    Enums: {
-      [_ in never]: never
-    }
-    CompositeTypes: {
-      [_ in never]: never
-    }
+  // Allows to automatically instantiate createClient with right options
+  // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
+  __InternalSupabase: {
+    PostgrestVersion: "14.1"
   }
   public: {
     Tables: {
@@ -1515,6 +1495,45 @@ export type Database = {
           },
         ]
       }
+      connector_alert_state: {
+        Row: {
+          connector_id: string
+          last_alerted_at: string | null
+          last_state: string
+          org_id: string
+          updated_at: string
+        }
+        Insert: {
+          connector_id: string
+          last_alerted_at?: string | null
+          last_state?: string
+          org_id: string
+          updated_at?: string
+        }
+        Update: {
+          connector_id?: string
+          last_alerted_at?: string | null
+          last_state?: string
+          org_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "connector_alert_state_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "connector_alert_state_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "public_org_profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       connector_subscriptions: {
         Row: {
           created_at: string
@@ -1908,6 +1927,51 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      docusign_reconciliation_gaps: {
+        Row: {
+          account_id: string
+          completed_at: string
+          created_at: string
+          detected_at: string
+          envelope_id: string
+          envelope_status: string
+          id: string
+          integration_id: string
+          org_id: string
+          resolution: string
+          resolved_at: string | null
+          sentry_event_id: string | null
+        }
+        Insert: {
+          account_id: string
+          completed_at: string
+          created_at?: string
+          detected_at?: string
+          envelope_id: string
+          envelope_status?: string
+          id?: string
+          integration_id: string
+          org_id: string
+          resolution?: string
+          resolved_at?: string | null
+          sentry_event_id?: string | null
+        }
+        Update: {
+          account_id?: string
+          completed_at?: string
+          created_at?: string
+          detected_at?: string
+          envelope_id?: string
+          envelope_status?: string
+          id?: string
+          integration_id?: string
+          org_id?: string
+          resolution?: string
+          resolved_at?: string | null
+          sentry_event_id?: string | null
+        }
+        Relationships: []
       }
       docusign_webhook_nonces: {
         Row: {
@@ -3092,6 +3156,78 @@ export type Database = {
           },
         ]
       }
+      member_integrations: {
+        Row: {
+          account_id: string
+          account_label: string | null
+          base_uri: string | null
+          connected_at: string
+          created_at: string
+          encrypted_tokens: string | null
+          hmac_keys: Json | null
+          id: string
+          org_id: string
+          provider: string
+          revoked_at: string | null
+          scope: string | null
+          token_kms_key_id: string | null
+          token_secret_name: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          account_id: string
+          account_label?: string | null
+          base_uri?: string | null
+          connected_at?: string
+          created_at?: string
+          encrypted_tokens?: string | null
+          hmac_keys?: Json | null
+          id?: string
+          org_id: string
+          provider: string
+          revoked_at?: string | null
+          scope?: string | null
+          token_kms_key_id?: string | null
+          token_secret_name?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          account_id?: string
+          account_label?: string | null
+          base_uri?: string | null
+          connected_at?: string
+          created_at?: string
+          encrypted_tokens?: string | null
+          hmac_keys?: Json | null
+          id?: string
+          org_id?: string
+          provider?: string
+          revoked_at?: string | null
+          scope?: string | null
+          token_kms_key_id?: string | null
+          token_secret_name?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "member_integrations_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "member_integrations_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "public_org_profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       memberships: {
         Row: {
           created_at: string
@@ -3379,6 +3515,7 @@ export type Database = {
           connected_at: string
           created_at: string
           encrypted_tokens: string | null
+          hmac_keys: Json | null
           id: string
           last_page_token: string | null
           last_renewal_at: string | null
@@ -3402,6 +3539,7 @@ export type Database = {
           connected_at?: string
           created_at?: string
           encrypted_tokens?: string | null
+          hmac_keys?: Json | null
           id?: string
           last_page_token?: string | null
           last_renewal_at?: string | null
@@ -3425,6 +3563,7 @@ export type Database = {
           connected_at?: string
           created_at?: string
           encrypted_tokens?: string | null
+          hmac_keys?: Json | null
           id?: string
           last_page_token?: string | null
           last_renewal_at?: string | null
@@ -6586,6 +6725,10 @@ export type Database = {
         }
         Returns: Json
       }
+      sweep_webhook_nonces: {
+        Args: { retention_days?: number; target_table: string }
+        Returns: number
+      }
       try_advisory_lock: { Args: { lock_id: number }; Returns: boolean }
       unsuspend_suborg: {
         Args: { p_parent_org_id: string; p_sub_org_id: string }
@@ -6890,9 +7033,6 @@ export type CompositeTypes<
     : never
 
 export const Constants = {
-  graphql_public: {
-    Enums: {},
-  },
   public: {
     Enums: {
       agent_status: ["active", "suspended", "revoked"],
@@ -7068,3 +7208,4 @@ export const Constants = {
     },
   },
 } as const
+
