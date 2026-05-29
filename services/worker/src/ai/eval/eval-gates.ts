@@ -43,6 +43,10 @@ export const EVAL_GATE_CONFIGS: EvalGateConfig[] = [
       { field: 'creditHours', minimumF1: 0.85 },
       { field: 'fieldOfStudy', minimumF1: 0.8 },
       { field: 'deliveryMethod', minimumF1: 0.8 },
+      // courseId is scored on the CPE gate too: a regression that stops reading
+      // course IDs off CPE documents must fail here, not slip through because the
+      // SCRUM-2187 course-id gate only covers course-id-only fixtures.
+      { field: 'courseId', minimumF1: 0.75 },
     ],
     matchesEntry: (entry) => hasTag(entry, 'cpe'),
   },
@@ -55,6 +59,10 @@ export const EVAL_GATE_CONFIGS: EvalGateConfig[] = [
     requiredFields: [
       { field: 'creditHours', minimumF1: 0.8 },
       { field: 'ethicsHours', minimumF1: 0.8 },
+      // courseId is scored on the CLE gate too, mirroring SCRUM-1962: a regression
+      // that stops reading course IDs off CLE documents must fail here, not slip
+      // through the SCRUM-2187 gate's course-id-only coverage.
+      { field: 'courseId', minimumF1: 0.75 },
     ],
     matchesEntry: (entry) => hasTag(entry, 'cle') && !hasTag(entry, 'cpe'),
   },

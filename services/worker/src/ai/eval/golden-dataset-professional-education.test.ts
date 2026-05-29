@@ -80,7 +80,9 @@ describe('golden-dataset-professional-education', () => {
   it('keeps strippedText free of raw PII per Constitution §1.6', () => {
     // strippedText models the on-device-stripped payload that actually leaves the
     // browser. Raw PII must never appear in it — only redaction placeholders.
-    const EMAIL = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i;
+    // Linear-time form: the dot separator is not in the repeated label class, so
+    // there is no overlapping-quantifier backtracking (no ReDoS).
+    const EMAIL = /[A-Z0-9._%+-]+@[A-Z0-9-]+(?:\.[A-Z0-9-]+)+/i;
     const SSN = /\b\d{3}-\d{2}-\d{4}\b/;
     const PHONE = /\b(?:\(\d{3}\)\s*|\d{3}[-.])\d{3}[-.]\d{4}\b/;
     const PERSON_LABEL = /\b(participant|attendee|licensee|student|candidate|registrant|recipient)\s*:\s*(\S+)/gi;
