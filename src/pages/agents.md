@@ -10,6 +10,7 @@ _Last updated: 2026-05-19_
 Top-level page components rendered by react-router-dom routes. Each page composes layout (AppShell) with domain-specific hooks and components.
 
 ## Recent Changes
+- 2026-05-29 SCRUM-1958 (subtask-4): `DashboardPage.tsx` now mounts `SemanticSearchPanel` (from `@/components/search`) above the My Records card, shown only when the user has records. The panel self-gates on `ENABLE_SEMANTIC_SEARCH` (renders nothing when off), so no extra page-level flag check is needed. AI "smart search" over the user's secured documents; results, empty, and error copy all live in `SEMANTIC_SEARCH_LABELS` (`src/lib/copy.ts`). E2E coverage in `e2e/semantic-search.spec.ts`.
 - 2026-05-19 SCRUM-1599: removed `BadgePage.tsx` from the SPA route table. Badge SVGs are served by the worker at `/api/badge/:publicId` so status cannot be spoofed from frontend query parameters.
 - 2026-05-19 SCRUM-1247 closeout: `PrivacyPage.tsx` and `TermsPage.tsx` render their policy-update notices from `LEGAL_PAGE_LABELS` in `src/lib/copy.ts`; keep legal/public page copy centralized and covered by `e2e/legal-pages.spec.ts`.
 - 2026-05-03 SCRUM-897: `PublicAttestationVerifyPage.tsx` fetches `/api/v1/attestations/{publicId}?include=credentials` so public attestation verification can show evidence metadata and the bounded attestor credential chain. Evidence cards must use `public_id`, `fingerprint`, `mime`, and `size`; never render internal evidence UUIDs.

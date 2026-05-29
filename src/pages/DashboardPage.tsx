@@ -22,6 +22,7 @@ import { StatCard, EmptyState, ProfileCard } from '@/components/dashboard';
 import { SecureDocumentDialog } from '@/components/anchor';
 import { IssueCredentialForm } from '@/components/organization';
 import { RecordsList, type Record } from '@/components/records';
+import { SemanticSearchPanel } from '@/components/search';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
@@ -354,6 +355,18 @@ export function DashboardPage() {
             <Button variant="ghost" size="sm" onClick={clearRevokeError}>Dismiss</Button>
           </AlertDescription>
         </Alert>
+      )}
+
+      {/* SCRUM-1958 — AI smart search across the user's secured documents.
+          Self-gates on ENABLE_SEMANTIC_SEARCH (renders nothing when off). */}
+      {hasRecords && (
+        <div className="mb-8">
+          <Card className="border-white/[0.06] bg-white/[0.015]">
+            <CardContent className="pt-6">
+              <SemanticSearchPanel />
+            </CardContent>
+          </Card>
+        </div>
       )}
 
       {/* Records section — collapsible */}

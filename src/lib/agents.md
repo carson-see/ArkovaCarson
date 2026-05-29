@@ -24,6 +24,9 @@ Core utility modules shared across the frontend. Every write path uses Zod valid
 - `csvExport.ts` / `csvParser.ts` / `xlsxParser.ts` — data import/export utilities
 - `sourceProvenance.ts` / `badgeSvg.ts` — SCRUM-1599 public-safe source provenance helpers, evidence-level validation, badge URL construction, and fail-closed badge SVG status mapping
 
+## Recent Changes
+- 2026-05-29 SCRUM-1958 (subtask-4): `switchboard.ts` — flipped the **code default** of `ENABLE_SEMANTIC_SEARCH` to `false` so non-prod (local dev / preview) hides smart search until the `credential_embeddings` backfill lands. Production is driven by the `switchboard_flags` row, not this default (DB row untouched in this change). `copy.ts` — added `SEMANTIC_SEARCH_LABELS` (heading, placeholder, friendly match-strength labels, honest empty state, and 402/503/network/generic error copy). No client audit call for the search query — the worker records AI usage server-side (§1.6).
+
 ## Do / Don't Rules
 - DO: Validate with Zod before any Supabase write
 - DO: Put all UI-visible strings in `copy.ts`, not inline JSX
