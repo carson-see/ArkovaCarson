@@ -13,6 +13,7 @@ import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vite
 import type { Express } from 'express';
 import supertest from 'supertest';
 import { readFileSync } from 'node:fs';
+import ts from 'typescript';
 
 // ---- Hoisted mocks ----
 
@@ -622,9 +623,31 @@ describe('worker server', () => {
   describe('OPTIONS /api/v1/integrations OAuth routes (CORS preflight)', () => {
     it('relies on the global CORS middleware instead of a duplicate integrations mount', () => {
       const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
-      const duplicateIntegrationsCorsMount = /app\s*\.\s*use\s*\(\s*['"`]\/api\/v1\/integrations['"`]\s*,\s*corsMiddleware\b/;
+      const ast = ts.createSourceFile('index.ts', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+      let hasDuplicateIntegrationsCorsMount = false;
 
-      expect(source).not.toMatch(duplicateIntegrationsCorsMount);
+      const visit = (node: ts.Node): void => {
+        if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression)) {
+          const callee = node.expression;
+          const [pathArg, middlewareArg] = node.arguments;
+          if (
+            callee.expression.getText(ast) === 'app' &&
+            callee.name.text === 'use' &&
+            ts.isStringLiteral(pathArg) &&
+            pathArg.text === '/api/v1/integrations' &&
+            ts.isIdentifier(middlewareArg) &&
+            middlewareArg.text === 'corsMiddleware'
+          ) {
+            hasDuplicateIntegrationsCorsMount = true;
+          }
+        }
+
+        ts.forEachChild(node, visit);
+      };
+
+      visit(ast);
+
+      expect(hasDuplicateIntegrationsCorsMount).toBe(false);
     });
 
     it.each([
