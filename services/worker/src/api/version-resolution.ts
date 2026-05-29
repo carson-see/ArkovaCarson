@@ -382,6 +382,5 @@ export async function handleResolveVersion(
 // ─── Router ──────���────────────────────────────────���────────────────────────────
 
 export const versionResolutionRouter = Router();
-versionResolutionRouter.use(requireVersionOrgAdminContext);
 versionResolutionRouter.get('/', handleListVersions);
 versionResolutionRouter.post('/:versionId/resolve', handleResolveVersion);

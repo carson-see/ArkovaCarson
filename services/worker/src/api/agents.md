@@ -6,6 +6,10 @@ _Last updated: 2026-05-23 (PR #859 anchor submit scope routing fixes)_
 
 - `apiScopes.ts` treats `anchor:write` and `write:anchors` as equivalent write-capable anchor scopes. Keep this central in `scopeSatisfies()` instead of duplicating route-specific aliases.
 
+## 2026-05-29 Version Resolution Context
+
+- `version-resolution.ts` exports `requireVersionOrgAdminContext`, but `index.ts` owns mounting it before `versionResolutionRouter`; keep the router itself free of implicit org-context middleware so app-level route order stays testable.
+
 ## What This Folder Contains
 
 Express route handlers for the worker's HTTP API. Covers admin endpoints, anchor operations, proof packets, audit events, compliance, rules CRUD, treasury, and the v1/v2 versioned sub-APIs.

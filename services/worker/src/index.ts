@@ -377,8 +377,15 @@ app.use('/api/v1/rules/templates', verificationApiGate(), rateLimiters.api, rule
 // Version resolution (SCRUM-1971) — org admin reviews document version conflicts.
 // Must also precede apiV1Router to avoid its auth gate.
 // Gated behind ENABLE_VERIFICATION_API per Constitution 1.9.
-import { versionResolutionRouter } from './api/version-resolution.js';
-app.use('/api/v1/versions', verificationApiGate(), rateLimiters.api, requireAuthMw, versionResolutionRouter);
+import { requireVersionOrgAdminContext, versionResolutionRouter } from './api/version-resolution.js';
+app.use(
+  '/api/v1/versions',
+  verificationApiGate(),
+  rateLimiters.api,
+  requireAuthMw,
+  requireVersionOrgAdminContext,
+  versionResolutionRouter,
+);
 
 // Payment-state enforcement: suspended/cancelled orgs get 402 (SCRUM-1221).
 app.use('/api/v1', requirePaymentCurrent());
