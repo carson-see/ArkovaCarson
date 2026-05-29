@@ -6,7 +6,7 @@ export interface EvalGateFieldRequirement {
 }
 
 export interface EvalGateConfig {
-  gateId: 'SCRUM-1962' | 'SCRUM-1963';
+  gateId: 'SCRUM-1962' | 'SCRUM-1963' | 'SCRUM-2187';
   label: string;
   blocksStory: string;
   minimumEntries: number;
@@ -57,6 +57,16 @@ export const EVAL_GATE_CONFIGS: EvalGateConfig[] = [
       { field: 'ethicsHours', minimumF1: 0.8 },
     ],
     matchesEntry: (entry) => hasTag(entry, 'cle') && !hasTag(entry, 'cpe'),
+  },
+  {
+    gateId: 'SCRUM-2187',
+    label: 'Course-ID extraction merge gate',
+    blocksStory: 'SCRUM-1921',
+    minimumEntries: 20,
+    minimumWeightedF1: 0.75,
+    requiredFields: [{ field: 'courseId', minimumF1: 0.75 }],
+    matchesEntry: (entry) =>
+      hasTag(entry, 'course-id') && !hasTag(entry, 'cpe') && !hasTag(entry, 'cle'),
   },
 ];
 

@@ -326,6 +326,63 @@ export class GeminiProvider implements IAIProvider {
   }
 
   /**
+   * Raw JSON generate with an explicit system + user prompt (PeRawModel).
+   *
+   * Bypasses the generic EXTRACTION_SYSTEM_PROMPT and the per-type field strip so
+   * the professional-education eval can measure the model's raw ability to read
+   * gate fields (deliveryMethod / nasbaStatus / ethicsHours / courseId) off the
+   * document. Routes to the tuned Vertex endpoint when GEMINI_TUNED_MODEL is set,
+   * otherwise the base Gemini model. Returns the raw model text — parsing/scoring
+   * is the caller's job. Not part of the production extraction path.
+   */
+  async generateExtractionJson(args: {
+    systemPrompt: string;
+    userPrompt: string;
+  }): Promise<{ text: string; tokensUsed?: number }> {
+    this.checkCircuit();
+
+    return this.withRetry(async () => {
+      if (this.tunedModelPath) {
+        return this.callTunedModel(args.systemPrompt, args.userPrompt);
+      }
+
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 30_000);
+      try {
+        const model = this.client.getGenerativeModel({
+          model: this.modelName,
+          systemInstruction: args.systemPrompt,
+          generationConfig: {
+            responseMimeType: 'application/json',
+            temperature: 0.1,
+            maxOutputTokens: 2048,
+          },
+        });
+        const response = await traceAiProviderCall(
+          {
+            provider: 'gemini',
+            operation: 'generate',
+            model: this.modelName,
+            inputCharacterCount: args.userPrompt.length,
+          },
+          () =>
+            model.generateContent(
+              { contents: [{ role: 'user', parts: [{ text: args.userPrompt }] }] },
+              { signal: controller.signal },
+            ),
+          (generated) => ({ tokensUsed: generated.response.usageMetadata?.totalTokenCount }),
+        );
+        return {
+          text: response.response.text(),
+          tokensUsed: response.response.usageMetadata?.totalTokenCount,
+        };
+      } finally {
+        clearTimeout(timeout);
+      }
+    });
+  }
+
+  /**
    * Extract metadata using ensemble confidence scoring.
    * Runs 3 extractions with different prompt framings and measures agreement.
    * Produces better-calibrated confidence scores (target r > 0.70).

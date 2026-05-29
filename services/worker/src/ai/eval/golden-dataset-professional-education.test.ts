@@ -77,6 +77,35 @@ describe('golden-dataset-professional-education', () => {
     });
   });
 
+  it('keeps strippedText free of raw PII per Constitution §1.6', () => {
+    // strippedText models the on-device-stripped payload that actually leaves the
+    // browser. Raw PII must never appear in it — only redaction placeholders.
+    const EMAIL = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i;
+    const SSN = /\b\d{3}-\d{2}-\d{4}\b/;
+    const PHONE = /\b(?:\(\d{3}\)\s*|\d{3}[-.])\d{3}[-.]\d{4}\b/;
+    const PERSON_LABEL = /\b(participant|attendee|licensee|student|candidate|registrant|recipient)\s*:\s*(\S+)/gi;
+
+    for (const entry of GOLDEN_DATASET_PROFESSIONAL_EDUCATION) {
+      const text = entry.strippedText;
+      expect(EMAIL.test(text), `${entry.id} leaks an email address`).toBe(false);
+      expect(SSN.test(text), `${entry.id} leaks an SSN`).toBe(false);
+      expect(PHONE.test(text), `${entry.id} leaks a phone number`).toBe(false);
+
+      // Any individual-name label must be followed by a redaction placeholder.
+      for (const match of text.matchAll(PERSON_LABEL)) {
+        expect(match[2].startsWith('['), `${entry.id} exposes a raw name after "${match[1]}:"`).toBe(true);
+      }
+    }
+  });
+
+  it('redacts participant names where they appear', () => {
+    const named = GOLDEN_DATASET_PROFESSIONAL_EDUCATION.filter((entry) =>
+      /\bparticipant\s*:/i.test(entry.strippedText),
+    );
+    expect(named.length).toBeGreaterThan(0);
+    expect(named.every((entry) => /\[NAME_REDACTED\]/.test(entry.strippedText))).toBe(true);
+  });
+
   it('compares professional education-specific extraction fields', () => {
     const entry = GOLDEN_DATASET_PROFESSIONAL_EDUCATION[0];
     const results = compareFields(entry.groundTruth, {
