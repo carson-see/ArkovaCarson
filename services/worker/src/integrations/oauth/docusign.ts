@@ -268,6 +268,64 @@ export interface ProvisionConnectResult {
   action: 'created' | 'updated';
 }
 
+/**
+ * Canonical Arkova Connect listener configuration (SCRUM-1718 provisioning +
+ * SCRUM-2098 drift detection share this single source of truth).
+ *
+ * `provisionConnectListener` builds its POST/PUT payload from these values, and
+ * the daily drift job (`docusign-listener-drift.ts`) compares the live listener
+ * against them. Keeping both paths reading from `buildArkovaConnectConfig`
+ * guarantees the drift check never diverges from what we actually provision.
+ */
+export interface ArkovaConnectConfig {
+  /** Webhook URL: `${WORKER_PUBLIC_URL}/webhooks/docusign` (trailing slashes stripped). */
+  urlToPublishTo: string;
+  /** Envelope-level events Arkova subscribes (DocuSign capitalization). */
+  envelopeEvents: string[];
+  /** Connect events Arkova subscribes. */
+  events: string[];
+  /** Whether HMAC signing is enabled on deliveries. */
+  hmacEnabled: boolean;
+  /** Payload/event-data format. */
+  payloadFormat: string;
+  /** Event-data version Arkova requests. */
+  payloadVersion: string;
+}
+
+/** Compute Arkova's webhook publish URL from WORKER_PUBLIC_URL (no trailing slash). */
+function arkovaWebhookUrl(env: NodeJS.ProcessEnv): string {
+  const workerPublicUrl = env.WORKER_PUBLIC_URL;
+  if (!workerPublicUrl) {
+    throw new DocusignConfigError(
+      'WORKER_PUBLIC_URL not set — cannot derive DocuSign Connect listener URL.',
+    );
+  }
+  // Strip trailing slashes without regex (avoids SonarCloud S5852 false positive)
+  let trimmedUrl = workerPublicUrl;
+  while (trimmedUrl.endsWith('/')) trimmedUrl = trimmedUrl.slice(0, -1);
+  return `${trimmedUrl}/webhooks/docusign`;
+}
+
+/**
+ * The single source of truth for Arkova's expected DocuSign Connect listener
+ * config. Both provisioning (write path) and drift detection (read path) call
+ * this so they can never disagree.
+ *
+ * Throws DocusignConfigError if WORKER_PUBLIC_URL is unset.
+ */
+export function buildArkovaConnectConfig(
+  env: NodeJS.ProcessEnv = process.env,
+): ArkovaConnectConfig {
+  return {
+    urlToPublishTo: arkovaWebhookUrl(env),
+    envelopeEvents: ['Completed'],
+    events: ['envelope-completed'],
+    hmacEnabled: true,
+    payloadFormat: 'json',
+    payloadVersion: 'restv2.1',
+  };
+}
+
 /** Parse and validate a Connect API response, throwing DocusignApiError on mismatch. */
 function parseConnectConfigResponse(
   json: unknown,
@@ -382,9 +440,11 @@ export async function provisionConnectListener(args: {
 }): Promise<ProvisionConnectResult> {
   const env = args.deps?.env ?? process.env;
   const fetchImpl = args.deps?.fetchImpl ?? fetch;
-  const { connectHmacSecret, workerPublicUrl } = requireConnectConfig(env);
+  const { connectHmacSecret } = requireConnectConfig(env);
 
-  const webhookUrl = `${trimTrailingSlashes(workerPublicUrl)}/webhooks/docusign`;
+  // SCRUM-2098: single source of truth — provisioning and drift detection both
+  // read the webhook URL from buildArkovaConnectConfig so they cannot disagree.
+  const webhookUrl = buildArkovaConnectConfig(env).urlToPublishTo;
   const base = trimTrailingSlashes(args.baseUri);
   const connectBase = `${base}/restapi/v2.1/accounts/${encodeURIComponent(args.accountId)}/connect`;
   const authHeaders = { Authorization: `Bearer ${args.accessToken}` };

@@ -93,6 +93,8 @@ import { GRACE_EXPIRY_SWEEP_CRON, runGraceExpirySweep } from '../jobs/grace-expi
 import { sweepExpiredNonces, makeNonceSweepDb } from '../jobs/nonce-sweep.js';
 import { reconcileDocusignGaps } from '../jobs/docusign-reconciliation.js';
 import { makeReconciliationDeps } from '../jobs/docusign-reconciliation-deps.js';
+import { reconcileListenerDrift } from '../jobs/docusign-listener-drift.js';
+import { makeListenerDriftDeps } from '../jobs/docusign-listener-drift-deps.js';
 import { MONTHLY_ALLOCATION_ROLLOVER_CRON, runAllocationRollover } from '../jobs/monthly-allocation-rollover.js';
 import { runStripeAnchorReconciliation, generateFinancialReport, processFailedPaymentRecovery } from '../billing/reconciliation.js';
 import { logHeapStatus } from '../utils/heapMonitor.js';
@@ -1536,6 +1538,29 @@ cronRouter.post('/docusign-reconciliation', async (_req, res) => {
     res.json(result);
   } catch (error) {
     logger.error({ error }, 'DocuSign reconciliation failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+// ─── SCRUM-2098 [DS-LISTEN-01]: DocuSign Connect listener config drift ───
+// Daily check that each active integration's live Connect listener config
+// (publish URL, envelope/Connect events, HMAC, payload format) still matches
+// the config Arkova provisions. Detection-only: fires a Sentry warning per
+// drifting integration. Cloud Scheduler triggers daily at 06:00 UTC.
+cronRouter.post('/docusign-listener-drift', async (_req, res) => {
+  try {
+    const result = await withCronMonitoring(
+      'docusign-listener-drift',
+      '0 6 * * *',
+      () => reconcileListenerDrift(makeListenerDriftDeps()),
+    )();
+    if (!result.ok) {
+      res.status(500).json(result);
+      return;
+    }
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'DocuSign Connect listener drift check failed');
     res.status(500).json({ error: 'Processing failed' });
   }
 });

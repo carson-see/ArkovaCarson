@@ -1,0 +1,217 @@
+/**
+ * SCRUM-2098 [DS-LISTEN-01] — Production wiring for DocuSign Connect listener
+ * drift reconciliation.
+ *
+ * Adapts Supabase DB + DocuSign Connect API (GET /connect "getConfigurations")
+ * + token store + Sentry into the ListenerDriftDeps interface consumed by the
+ * pure reconcileListenerDrift().
+ *
+ * Mirrors makeReconciliationDeps (docusign-reconciliation-deps.ts) for
+ * listActiveIntegrations + getAccessToken so the two jobs see the same set of
+ * active integrations and token-refresh behavior.
+ *
+ * The expected config comes from buildArkovaConnectConfig() — the SAME helper
+ * provisionConnectListener uses — so the drift check never diverges from what
+ * Arkova actually provisions.
+ */
+
+import { z } from 'zod';
+import * as Sentry from '@sentry/node';
+
+import { db as defaultDb } from '../utils/db.js';
+import { logger } from '../utils/logger.js';
+import {
+  refreshDocusignAccessToken,
+  buildArkovaConnectConfig,
+} from '../integrations/oauth/docusign.js';
+import {
+  createGcpSecretManagerRefreshTokenStore,
+  type DocusignRefreshTokenStore,
+} from '../integrations/connectors/docusign-token-store.js';
+import type {
+  ListenerDriftDeps,
+  ActualConnectListener,
+  ExpectedConnectConfig,
+  DriftInfo,
+} from './docusign-listener-drift.js';
+import type { ActiveIntegration } from './docusign-reconciliation.js';
+
+const CONNECT_API_TIMEOUT_MS = 30_000;
+
+/**
+ * Zod shape for DocuSign's GET /connect "getConfigurations" response. We parse
+ * defensively (`.passthrough()`, optional fields) because DocuSign returns a
+ * large object and may add fields; we only need the drift-relevant ones. A
+ * missing/empty body is treated as "no listeners configured".
+ */
+const ConnectListenerSchema = z
+  .object({
+    connectId: z.string().or(z.number()).transform(String),
+    name: z.string().optional(),
+    urlToPublishTo: z.string().optional(),
+    allowEnvelopePublish: z.string().optional(),
+    includeHMAC: z.string().optional(),
+    envelopeEvents: z.array(z.string()).optional(),
+    events: z.array(z.string()).optional(),
+    eventData: z
+      .object({ format: z.string().optional(), version: z.string().optional() })
+      .passthrough()
+      .optional(),
+  })
+  .passthrough();
+
+const ConnectConfigurationsResponseSchema = z
+  .object({
+    configurations: z.array(ConnectListenerSchema).default([]),
+  })
+  .passthrough();
+
+export interface ListenerDriftDepOptions {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  db?: { from: (table: string) => any; rpc?: (...args: any[]) => any };
+  env?: NodeJS.ProcessEnv;
+  fetchImpl?: typeof fetch;
+  refreshTokenStore?: DocusignRefreshTokenStore;
+}
+
+export function makeListenerDriftDeps(
+  options: ListenerDriftDepOptions = {},
+): ListenerDriftDeps {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const db = options.db ?? (defaultDb as any);
+  const env = options.env ?? process.env;
+  const fetchImpl = options.fetchImpl ?? fetch;
+  const refreshTokenStore =
+    options.refreshTokenStore ??
+    createGcpSecretManagerRefreshTokenStore({ env, fetchImpl });
+
+  return {
+    async listActiveIntegrations(): Promise<ActiveIntegration[]> {
+      // Org-level integrations
+      const { data: orgData, error: orgError } = await db
+        .from('org_integrations')
+        .select('id, org_id, account_id, base_uri, token_secret_name')
+        .eq('provider', 'docusign')
+        .is('revoked_at', null);
+
+      if (orgError) throw new Error(`integration_list_failed: ${orgError.message ?? orgError}`);
+
+      // SCRUM-2044: Member-level integrations
+      const { data: memberData, error: memberError } = await db
+        .from('member_integrations')
+        .select('id, org_id, account_id, base_uri, token_secret_name')
+        .eq('provider', 'docusign')
+        .is('revoked_at', null);
+
+      if (memberError) {
+        throw new Error(`member_integration_list_failed: ${memberError.message ?? memberError}`);
+      }
+
+      const allRows = [...(orgData ?? []), ...(memberData ?? [])];
+      return allRows.filter(
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (row: any) => row.account_id && row.base_uri && row.token_secret_name,
+      );
+    },
+
+    async getAccessToken(integration: ActiveIntegration): Promise<string> {
+      const refreshToken = await refreshTokenStore.get({
+        name: integration.token_secret_name,
+      });
+      if (!refreshToken) {
+        throw new Error('refresh_token_not_found');
+      }
+
+      const result = await refreshDocusignAccessToken({
+        refreshToken,
+        deps: { env, fetchImpl },
+      });
+
+      if (result.refresh_token && result.refresh_token !== refreshToken) {
+        await refreshTokenStore.put({
+          name: integration.token_secret_name,
+          value: result.refresh_token,
+        });
+      }
+
+      return result.access_token;
+    },
+
+    async getConnectConfigurations(args): Promise<ActualConnectListener[]> {
+      let base = args.baseUri;
+      while (base.endsWith('/')) base = base.slice(0, -1);
+      const url = `${base}/restapi/v2.1/accounts/${encodeURIComponent(args.accountId)}/connect`;
+
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), CONNECT_API_TIMEOUT_MS);
+      try {
+        const res = await fetchImpl(url, {
+          headers: { Authorization: `Bearer ${args.accessToken}` },
+          signal: controller.signal,
+        });
+        if (!res.ok) {
+          const body = await res.text().catch(() => '');
+          throw new Error(`connect_api_${res.status}: ${body.slice(0, 200)}`);
+        }
+
+        // DocuSign may return null/empty body when no listeners exist.
+        const text = await res.text();
+        if (!text) return [];
+        let json: unknown;
+        try {
+          json = JSON.parse(text);
+        } catch {
+          throw new Error('connect_api_invalid_json');
+        }
+
+        const parsed = ConnectConfigurationsResponseSchema.safeParse(json);
+        if (!parsed.success) {
+          throw new Error(`connect_api_schema_mismatch: ${parsed.error.message}`);
+        }
+        return parsed.data.configurations as ActualConnectListener[];
+      } catch (err) {
+        if (err instanceof Error && err.name === 'AbortError') {
+          throw new Error('connect_api_timeout', { cause: err });
+        }
+        throw err;
+      } finally {
+        clearTimeout(timeout);
+      }
+    },
+
+    getExpectedConfig(): ExpectedConnectConfig {
+      const cfg = buildArkovaConnectConfig(env);
+      return {
+        urlToPublishTo: cfg.urlToPublishTo,
+        requiredEnvelopeEvents: cfg.envelopeEvents,
+        requiredEvents: cfg.events,
+        hmacEnabled: cfg.hmacEnabled,
+        payloadFormat: cfg.payloadFormat,
+      };
+    },
+
+    reportDrift(drift: DriftInfo): void {
+      // No tokens/secrets/PII in the event — only org/account/integration ids
+      // and the human-readable drift reasons.
+      Sentry.captureMessage(
+        `DocuSign Connect listener drift detected for integration ${drift.integration_id}: ${drift.reasons.length} issue(s)`,
+        {
+          level: 'warning',
+          tags: {
+            integration_id: drift.integration_id,
+            org_id: drift.org_id,
+          },
+          extra: {
+            account_id: drift.account_id,
+            reasons: drift.reasons,
+            detected_at: new Date().toISOString(),
+          },
+        },
+      );
+      logger.warn(
+        { integrationId: drift.integration_id, reasons: drift.reasons },
+        'DocuSign Connect listener drift',
+      );
+    },
+  };
+}
