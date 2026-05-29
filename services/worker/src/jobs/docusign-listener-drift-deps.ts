@@ -6,9 +6,9 @@
  * + token store + Sentry into the ListenerDriftDeps interface consumed by the
  * pure reconcileListenerDrift().
  *
- * Mirrors makeReconciliationDeps (docusign-reconciliation-deps.ts) for
+ * Reuses makeReconciliationDeps (docusign-reconciliation-deps.ts) for
  * listActiveIntegrations + getAccessToken so the two jobs see the same set of
- * active integrations and token-refresh behavior.
+ * active integrations and token-refresh behavior (single source, no drift).
  *
  * The expected config comes from buildArkovaConnectConfig() — the SAME helper
  * provisionConnectListener uses — so the drift check never diverges from what
@@ -18,12 +18,8 @@
 import { z } from 'zod';
 import * as Sentry from '@sentry/node';
 
-import { db as defaultDb } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
-import {
-  refreshDocusignAccessToken,
-  buildArkovaConnectConfig,
-} from '../integrations/oauth/docusign.js';
+import { buildArkovaConnectConfig } from '../integrations/oauth/docusign.js';
 import {
   createGcpSecretManagerRefreshTokenStore,
   type DocusignRefreshTokenStore,
@@ -34,7 +30,7 @@ import type {
   ExpectedConnectConfig,
   DriftInfo,
 } from './docusign-listener-drift.js';
-import type { ActiveIntegration } from './docusign-reconciliation.js';
+import { makeReconciliationDeps } from './docusign-reconciliation-deps.js';
 
 const CONNECT_API_TIMEOUT_MS = 30_000;
 
@@ -77,65 +73,24 @@ export interface ListenerDriftDepOptions {
 export function makeListenerDriftDeps(
   options: ListenerDriftDepOptions = {},
 ): ListenerDriftDeps {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const db = options.db ?? (defaultDb as any);
   const env = options.env ?? process.env;
   const fetchImpl = options.fetchImpl ?? fetch;
   const refreshTokenStore =
     options.refreshTokenStore ??
     createGcpSecretManagerRefreshTokenStore({ env, fetchImpl });
+  // listActiveIntegrations + getAccessToken are identical to the SCRUM-2042
+  // reconciliation job; reuse that factory so both jobs share one active-
+  // integration query and token-refresh path (no duplicated wiring to drift).
+  const shared = makeReconciliationDeps({
+    db: options.db,
+    env,
+    fetchImpl,
+    refreshTokenStore,
+  });
 
   return {
-    async listActiveIntegrations(): Promise<ActiveIntegration[]> {
-      // Org-level integrations
-      const { data: orgData, error: orgError } = await db
-        .from('org_integrations')
-        .select('id, org_id, account_id, base_uri, token_secret_name')
-        .eq('provider', 'docusign')
-        .is('revoked_at', null);
-
-      if (orgError) throw new Error(`integration_list_failed: ${orgError.message ?? orgError}`);
-
-      // SCRUM-2044: Member-level integrations
-      const { data: memberData, error: memberError } = await db
-        .from('member_integrations')
-        .select('id, org_id, account_id, base_uri, token_secret_name')
-        .eq('provider', 'docusign')
-        .is('revoked_at', null);
-
-      if (memberError) {
-        throw new Error(`member_integration_list_failed: ${memberError.message ?? memberError}`);
-      }
-
-      const allRows = [...(orgData ?? []), ...(memberData ?? [])];
-      return allRows.filter(
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (row: any) => row.account_id && row.base_uri && row.token_secret_name,
-      );
-    },
-
-    async getAccessToken(integration: ActiveIntegration): Promise<string> {
-      const refreshToken = await refreshTokenStore.get({
-        name: integration.token_secret_name,
-      });
-      if (!refreshToken) {
-        throw new Error('refresh_token_not_found');
-      }
-
-      const result = await refreshDocusignAccessToken({
-        refreshToken,
-        deps: { env, fetchImpl },
-      });
-
-      if (result.refresh_token && result.refresh_token !== refreshToken) {
-        await refreshTokenStore.put({
-          name: integration.token_secret_name,
-          value: result.refresh_token,
-        });
-      }
-
-      return result.access_token;
-    },
+    listActiveIntegrations: shared.listActiveIntegrations,
+    getAccessToken: shared.getAccessToken,
 
     async getConnectConfigurations(args): Promise<ActualConnectListener[]> {
       let base = args.baseUri;

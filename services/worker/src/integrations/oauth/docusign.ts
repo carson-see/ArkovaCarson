@@ -406,24 +406,27 @@ function parseConnectList(json: unknown, status: number): z.infer<typeof Connect
 function buildConnectPayload(args: {
   connectHmacSecret: string;
   existingConnectId?: string;
-  webhookUrl: string;
+  config: ArkovaConnectConfig;
 }): Record<string, unknown> {
+  // SCRUM-2098: every field the drift job compares is sourced from the SAME
+  // ArkovaConnectConfig the drift job reads, so provisioning and drift detection
+  // can never disagree on URL, events, HMAC, or payload format/version.
   return {
-    urlToPublishTo: args.webhookUrl,
+    urlToPublishTo: args.config.urlToPublishTo,
     name: 'Arkova Connect',
     configurationType: 'custom',
     allowEnvelopePublish: 'true',
     enableLog: 'true',
     allUsers: 'true',
-    includeHMAC: 'true',
+    includeHMAC: args.config.hmacEnabled ? 'true' : 'false',
     // DocuSign must sign deliveries with the same key the webhook verifier uses.
     // Never log this Connect payload.
     hmacSecret: args.connectHmacSecret, // NOSONAR
     includeDocumentFields: 'true',
     requiresAcknowledgement: 'true',
-    envelopeEvents: ['Completed'],
-    events: ['envelope-completed'],
-    eventData: { format: 'json', version: 'restv2.1' },
+    envelopeEvents: args.config.envelopeEvents,
+    events: args.config.events,
+    eventData: { format: args.config.payloadFormat, version: args.config.payloadVersion },
     ...(args.existingConnectId ? { connectId: args.existingConnectId } : {}),
   };
 }
@@ -443,8 +446,9 @@ export async function provisionConnectListener(args: {
   const { connectHmacSecret } = requireConnectConfig(env);
 
   // SCRUM-2098: single source of truth — provisioning and drift detection both
-  // read the webhook URL from buildArkovaConnectConfig so they cannot disagree.
-  const webhookUrl = buildArkovaConnectConfig(env).urlToPublishTo;
+  // read from buildArkovaConnectConfig so they cannot disagree on any compared field.
+  const expectedConfig = buildArkovaConnectConfig(env);
+  const webhookUrl = expectedConfig.urlToPublishTo;
   const base = trimTrailingSlashes(args.baseUri);
   const connectBase = `${base}/restapi/v2.1/accounts/${encodeURIComponent(args.accountId)}/connect`;
   const authHeaders = { Authorization: `Bearer ${args.accessToken}` };
@@ -462,7 +466,7 @@ export async function provisionConnectListener(args: {
   const payload = buildConnectPayload({
     connectHmacSecret,
     existingConnectId: existing?.connectId,
-    webhookUrl,
+    config: expectedConfig,
   });
 
   const mutation = await fetchConnectJson(fetchImpl, connectBase, {

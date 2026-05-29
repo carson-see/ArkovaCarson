@@ -171,6 +171,73 @@ export function detectDrift(
   return reasons;
 }
 
+/** Log + record a per-integration failure without aborting the whole run. */
+function recordListenerDriftError(
+  result: ListenerDriftResult,
+  integrationId: string,
+  kind: string,
+  err: unknown,
+): void {
+  const msg = err instanceof Error ? err.message : String(err);
+  logger.error({ integrationId, error: msg }, `Listener drift: ${kind} failed`);
+  result.errors.push({ integration_id: integrationId, error: `${kind}: ${msg}` });
+  result.ok = false;
+}
+
+/**
+ * Check one integration: refresh token → fetch live listeners → diff → report.
+ * Mutates `result`. Any failure is recorded and isolated to this integration.
+ */
+async function processIntegrationDrift(
+  deps: ListenerDriftDeps,
+  integration: ActiveIntegration,
+  expected: ExpectedConnectConfig,
+  result: ListenerDriftResult,
+): Promise<void> {
+  let accessToken: string;
+  try {
+    accessToken = await deps.getAccessToken(integration);
+  } catch (err) {
+    recordListenerDriftError(result, integration.id, 'token_refresh', err);
+    return;
+  }
+
+  let listeners: ActualConnectListener[];
+  try {
+    listeners = await deps.getConnectConfigurations({
+      baseUri: integration.base_uri,
+      accountId: integration.account_id,
+      accessToken,
+    });
+  } catch (err) {
+    recordListenerDriftError(result, integration.id, 'connect_api', err);
+    return;
+  }
+
+  const reasons = detectDrift(listeners, expected);
+  if (reasons.length === 0) {
+    result.in_sync++;
+    return;
+  }
+
+  result.drift_detected++;
+  result.drifts.push({ integration_id: integration.id, reasons });
+
+  try {
+    deps.reportDrift({
+      integration_id: integration.id,
+      org_id: integration.org_id,
+      account_id: integration.account_id,
+      reasons,
+    });
+  } catch (sentryErr) {
+    logger.error(
+      { error: sentryErr, integrationId: integration.id },
+      'Listener drift: Sentry alert failed',
+    );
+  }
+}
+
 /**
  * Orchestration: for each active DocuSign integration, fetch the live Connect
  * listeners, diff against the expected config via detectDrift(), and report any
@@ -201,62 +268,7 @@ export async function reconcileListenerDrift(
 
   for (const integration of integrations) {
     result.integrations_checked++;
-
-    let accessToken: string;
-    try {
-      accessToken = await deps.getAccessToken(integration);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      logger.error(
-        { integrationId: integration.id, error: msg },
-        'Listener drift: token refresh failed',
-      );
-      result.errors.push({ integration_id: integration.id, error: `token_refresh: ${msg}` });
-      result.ok = false;
-      continue;
-    }
-
-    let listeners: ActualConnectListener[];
-    try {
-      listeners = await deps.getConnectConfigurations({
-        baseUri: integration.base_uri,
-        accountId: integration.account_id,
-        accessToken,
-      });
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      logger.error(
-        { integrationId: integration.id, error: msg },
-        'Listener drift: Connect API fetch failed',
-      );
-      result.errors.push({ integration_id: integration.id, error: `connect_api: ${msg}` });
-      result.ok = false;
-      continue;
-    }
-
-    const reasons = detectDrift(listeners, expected);
-
-    if (reasons.length === 0) {
-      result.in_sync++;
-      continue;
-    }
-
-    result.drift_detected++;
-    result.drifts.push({ integration_id: integration.id, reasons });
-
-    try {
-      deps.reportDrift({
-        integration_id: integration.id,
-        org_id: integration.org_id,
-        account_id: integration.account_id,
-        reasons,
-      });
-    } catch (sentryErr) {
-      logger.error(
-        { error: sentryErr, integrationId: integration.id },
-        'Listener drift: Sentry alert failed',
-      );
-    }
+    await processIntegrationDrift(deps, integration, expected, result);
   }
 
   if (result.drift_detected > 0) {
