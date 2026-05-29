@@ -57,8 +57,8 @@ export function setup() {
 }
 
 export default function () {
-  const scenario = pickScenario(Math.random(), DEFAULT_MIX);
-  const withNotary = scenario === 'docusign' && NOTARY_RATE > 0 && Math.random() < NOTARY_RATE;
+  const scenario = pickScenario(Math.random(), DEFAULT_MIX); // NOSONAR S2245: weighted load-distribution sampling in a k6 client script — not a security context
+  const withNotary = scenario === 'docusign' && NOTARY_RATE > 0 && Math.random() < NOTARY_RATE; // NOSONAR S2245: notary sampling fraction — not a security context
 
   const res = executeScenario(scenario, {
     workerUrl: WORKER_URL,

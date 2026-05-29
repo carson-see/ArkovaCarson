@@ -58,7 +58,7 @@ export const options = {
 };
 
 export default function () {
-  let scenario = pickScenario(Math.random(), MIX);
+  let scenario = pickScenario(Math.random(), MIX); // NOSONAR S2245: weighted load-distribution sampling in a k6 client script — not a security context
   // No signing key configured → do not fire unsigned webhook traffic; fall back
   // to /health so the run stays within its error-rate threshold.
   if (scenario === 'docusign' && !DOCUSIGN_HMAC_KEY) scenario = 'health';
