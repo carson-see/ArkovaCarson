@@ -25,6 +25,8 @@ Background workers for anchor lifecycle, billing reconciliation, drive ingestion
 
 ## Architecture Decisions
 
+- **Batch-anchor chain client startup race (2026-05-29, PR #885):** `batch-anchor.ts` uses `getChainClientAsync()` for UTXO checks and Merkle-root broadcasts so cold-start cron requests wait for, or lazily start, chain client initialization instead of throwing before `initChainClient()` completes.
+
 - **Treasury cache sentinel guard** (SCRUM-1786): Before upserting, if any of `total_secured`, `total_pending`, `last_24h_count` is -1, read existing cache row and preserve last-good values. Defense-in-depth against upstream failures.
 - **Anchor stats from pipeline_dashboard_cache** (SCRUM-1786): `fetchAnchorStats()` reads from `pipeline_dashboard_cache` instead of the `get_anchor_status_counts_fast` RPC. The RPC's 1s per-status timeouts produced -1 sentinels on the 2.9M-row anchors table.
 

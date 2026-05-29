@@ -25,6 +25,8 @@ Bitcoin chain client implementation for anchoring document fingerprints on-chain
 
 ## Recent Changes
 
+- **2026-05-29 PR #885 soak failure fix:** `getChainClientAsync()` now safely shares startup initialization and lazily initializes if a cron request reaches the worker before the `app.listen` startup callback finishes. The deprecated sync `getChainClient()` still throws before init; cron/job paths should use the async accessor.
+
 - **2026-04-26 SCRUM-1262 R1-8 /simplify carry-over:** `GetBlockHybridProvider.listUnspent()` RPC-fallback Sentry breadcrumb + structured warn log pair extracted to `emitRpcFallback()` in `services/worker/src/utils/sentry.ts`. Future RPC-fallback sites (`getrawtransaction` / `getblockheader` / fee estimation) can now reuse the same locked field shape (`chain_rpc_fallback`, `method`, `provider`, `reason`) so Cloud Logging + Arize + db-health dashboards see one canonical event signature.
 
 - **Session 38 (2026-04-09):** Added `estimateCurrentFee()` to `ChainClient` interface (`types.ts`) and `BitcoinChainClient` (`signet.ts`). Exposes fee estimator for pre-claim fee checks in batch anchor scaling (SCALE-4).
