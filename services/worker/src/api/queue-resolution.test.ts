@@ -177,7 +177,8 @@ describe('handleListPendingResolution', () => {
     // Second call: anchors query
     const anchorLimit = vi.fn().mockResolvedValue({ data: anchors, error: anchorError });
     const anchorOrder = vi.fn().mockReturnValue({ limit: anchorLimit });
-    const anchorIs = vi.fn().mockReturnValue({ order: anchorOrder });
+    const anchorNot = vi.fn().mockReturnValue({ order: anchorOrder });
+    const anchorIs = vi.fn().mockReturnValue({ not: anchorNot, order: anchorOrder });
     const anchorEqStatus = vi.fn().mockReturnValue({ is: anchorIs });
     const anchorEqOrg = vi.fn().mockReturnValue({ eq: anchorEqStatus });
     const anchorSelect = vi.fn().mockReturnValue({ eq: anchorEqOrg });
@@ -187,7 +188,8 @@ describe('handleListPendingResolution', () => {
     const siblingRange = vi.fn().mockResolvedValue({ data: allSiblingAnchors, error: siblingError });
     const siblingOrder = vi.fn().mockReturnValue({ range: siblingRange });
     const siblingIn = vi.fn().mockReturnValue({ order: siblingOrder, range: siblingRange });
-    const siblingIs = vi.fn().mockReturnValue({ in: siblingIn });
+    const siblingNot = vi.fn().mockReturnValue({ in: siblingIn });
+    const siblingIs = vi.fn().mockReturnValue({ not: siblingNot, in: siblingIn });
     const siblingEqStatus = vi.fn().mockReturnValue({ is: siblingIs });
     const siblingEqOrg = vi.fn().mockReturnValue({ eq: siblingEqStatus });
     const siblingSelect = vi.fn().mockReturnValue({ eq: siblingEqOrg });
@@ -197,7 +199,17 @@ describe('handleListPendingResolution', () => {
       .mockReturnValueOnce({ select: anchorSelect })
       .mockReturnValueOnce({ select: siblingSelect });
 
-    return { profileEq, anchorEqOrg, anchorEqStatus, anchorLimit, siblingIn, siblingOrder, siblingRange };
+    return {
+      profileEq,
+      anchorEqOrg,
+      anchorEqStatus,
+      anchorNot,
+      anchorLimit,
+      siblingNot,
+      siblingIn,
+      siblingOrder,
+      siblingRange,
+    };
   }
 
   it('returns items + count when caller has an org', async () => {
@@ -381,6 +393,39 @@ describe('handleListPendingResolution', () => {
           public_id: 'pid_acmemsa1',
           external_file_id: 'drive-123',
           sibling_count: 1,
+        }),
+      ],
+    });
+  });
+
+  it('excludes rows without public_id from pending queue and sibling counts', async () => {
+    const mocks = mockProfileAndAnchors(
+      { org_id: 'org-1' },
+      [
+        {
+          public_id: 'pid_acmemsa1',
+          metadata: { external_file_id: 'drive-123' },
+          filename: 'f.pdf',
+          fingerprint: 'fp',
+          created_at: '2026-01-01T00:00:00Z',
+        },
+      ],
+      null,
+      null,
+      [{ metadata: { external_file_id: 'drive-123' } }],
+    );
+
+    const { res, json } = mockRes();
+    await handleListPendingResolution('user-1', mockReq(), res);
+
+    expect(mocks.anchorNot).toHaveBeenCalledWith('public_id', 'is', null);
+    expect(mocks.siblingNot).toHaveBeenCalledWith('public_id', 'is', null);
+    expect(json).toHaveBeenCalledWith({
+      count: 1,
+      items: [
+        expect.objectContaining({
+          public_id: 'pid_acmemsa1',
+          sibling_count: 0,
         }),
       ],
     });

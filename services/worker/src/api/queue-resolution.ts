@@ -108,6 +108,7 @@ export async function handleListPendingResolution(
       .eq('org_id', orgId)
       .eq('status', 'PENDING_RESOLUTION')
       .is('deleted_at', null)
+      .not('public_id', 'is', null)
       .order('created_at', { ascending: false })
       .limit(limit);
 
@@ -131,6 +132,7 @@ export async function handleListPendingResolution(
           .eq('org_id', orgId)
           .eq('status', 'PENDING_RESOLUTION')
           .is('deleted_at', null)
+          .not('public_id', 'is', null)
           .in('metadata->>external_file_id', uniqueExternalFileIds)
           .order('id', { ascending: true })
           .range(offset, offset + pageSize - 1);
