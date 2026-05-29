@@ -55,8 +55,8 @@ _Last refreshed: 2026-05-28 by Claude — claims verified against gcloud/MCP/CI 
 | #869 | Sprint 1: stop the bleeding UX + reliability fixes | 2026-05-23 | SCRUM-1846 ✅ |
 | #864 | SCRUM-1064 GCP monitoring hardening | 2026-05-23 | SCRUM-1064 ✅ |
 | #856 | fix(SCRUM-1286): reconcile PR #841 migration ledger | 2026-05-23 | — |
-| #852 | feat(ai): add client fraud detection worker | 2026-05-23 | SCRUM-1964 ✅ |
-| #847 | feat(worker): batch credential embeddings | 2026-05-23 | SCRUM-1955 ✅ |
+| #852 | feat(ai): add client fraud detection worker | 2026-05-23 | SCRUM-1955 ✅ |
+| #847 | feat(worker): batch credential embeddings | 2026-05-23 | SCRUM-1964 ✅ |
 | #857 | fix(SCRUM-1668): enforce staging integrity evidence | 2026-05-22 | SCRUM-1668 ✅ |
 | #846 | fix(ci): harden staging honesty after #839 review | 2026-05-22 | — |
 | #855 | fix(worker): quarantine PR #841 professional education paths | 2026-05-21 | — |
