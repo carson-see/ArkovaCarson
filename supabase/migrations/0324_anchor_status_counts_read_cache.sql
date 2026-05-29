@@ -30,7 +30,7 @@ DECLARE
 BEGIN
   IF NOT (
     get_caller_role() = 'service_role'
-    OR EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND is_platform_admin = true)
+    OR EXISTS (SELECT 1 FROM profiles WHERE id = (SELECT auth.uid()) AND is_platform_admin = true)
   ) THEN
     RAISE EXCEPTION 'Access denied: platform admin required';
   END IF;
