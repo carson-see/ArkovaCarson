@@ -5,31 +5,31 @@
 --   ALTER TABLE public.anchors DROP CONSTRAINT IF EXISTS anchors_cpe_metadata_is_object;
 --   ALTER TABLE public.anchors DROP COLUMN IF EXISTS cle_metadata;
 --   ALTER TABLE public.anchors DROP COLUMN IF EXISTS cpe_metadata;
---
--- PROD-SAFE APPLICATION NOTE (SCRUM-2044 migration-integrity sprint, 2026-05-29):
---   public.anchors is a hot ~3M-row / 22GB table in production. An inline
---   ADD CONSTRAINT ... CHECK validates every existing row under an ACCESS
---   EXCLUSIVE lock (multi-minute full scan that blocks all anchoring traffic).
---   To avoid that, this migration:
---     * sets a lock_timeout guard so DDL fails fast instead of queue-blocking,
---     * runs the anchors DDL LAST so the brief ACCESS EXCLUSIVE lock is held
---       only until COMMIT,
---     * adds the CHECK constraints NOT VALID (no historical scan), then
---     * VALIDATEs them in a phase that takes only SHARE UPDATE EXCLUSIVE
---       (does not block reads/writes).
---   On small databases (local/staging/db reset) the VALIDATE statements below
---   run inline in milliseconds. On the 22GB prod table the VALIDATE was run as
---   a separate out-of-transaction phase (statement_timeout raised) so the
---   ACCESS EXCLUSIVE lock from the NOT VALID add was already released.
 
 BEGIN;
-
-SET LOCAL lock_timeout = '8s';
 
 ALTER TYPE public.credential_type ADD VALUE IF NOT EXISTS 'CPE';
 
 COMMENT ON TYPE public.credential_type IS
   'Classification of anchored credential documents. CPE = Continuing Professional Education; CLE = Continuing Legal Education credit.';
+
+ALTER TABLE public.anchors
+  ADD COLUMN IF NOT EXISTS cpe_metadata jsonb,
+  ADD COLUMN IF NOT EXISTS cle_metadata jsonb;
+
+ALTER TABLE public.anchors
+  DROP CONSTRAINT IF EXISTS anchors_cpe_metadata_is_object,
+  ADD CONSTRAINT anchors_cpe_metadata_is_object
+    CHECK (cpe_metadata IS NULL OR jsonb_typeof(cpe_metadata) = 'object'),
+  DROP CONSTRAINT IF EXISTS anchors_cle_metadata_is_object,
+  ADD CONSTRAINT anchors_cle_metadata_is_object
+    CHECK (cle_metadata IS NULL OR jsonb_typeof(cle_metadata) = 'object');
+
+COMMENT ON COLUMN public.anchors.cpe_metadata IS
+  'R-CPE-01 structured CPE compliance metadata. Same row-level visibility as anchors.metadata; write via worker typed accessors.';
+
+COMMENT ON COLUMN public.anchors.cle_metadata IS
+  'R-LEGAL-01 structured CLE compliance metadata. Same row-level visibility as anchors.metadata; write via worker typed accessors.';
 
 CREATE TABLE IF NOT EXISTS public.cpe_provider_registry (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -250,32 +250,6 @@ $$;
 
 COMMENT ON FUNCTION public.prevent_metadata_edit_after_secured() IS
   'Prevents metadata, CPE/CLE metadata, and description edits on non-PENDING anchors for regular users. Service role (pipeline) is exempt.';
-
--- anchors DDL runs LAST: the brief ACCESS EXCLUSIVE lock is held only until COMMIT.
--- Constraints are added NOT VALID (no historical scan); VALIDATE follows.
-ALTER TABLE public.anchors
-  ADD COLUMN IF NOT EXISTS cpe_metadata jsonb,
-  ADD COLUMN IF NOT EXISTS cle_metadata jsonb;
-
-ALTER TABLE public.anchors
-  DROP CONSTRAINT IF EXISTS anchors_cpe_metadata_is_object,
-  ADD CONSTRAINT anchors_cpe_metadata_is_object
-    CHECK (cpe_metadata IS NULL OR jsonb_typeof(cpe_metadata) = 'object') NOT VALID,
-  DROP CONSTRAINT IF EXISTS anchors_cle_metadata_is_object,
-  ADD CONSTRAINT anchors_cle_metadata_is_object
-    CHECK (cle_metadata IS NULL OR jsonb_typeof(cle_metadata) = 'object') NOT VALID;
-
-COMMENT ON COLUMN public.anchors.cpe_metadata IS
-  'R-CPE-01 structured CPE compliance metadata. Same row-level visibility as anchors.metadata; write via worker typed accessors.';
-
-COMMENT ON COLUMN public.anchors.cle_metadata IS
-  'R-LEGAL-01 structured CLE compliance metadata. Same row-level visibility as anchors.metadata; write via worker typed accessors.';
-
--- Validate the new CHECK constraints. On small DBs this is instant. On the prod
--- anchors table this was executed as a separate out-of-transaction phase (see
--- PROD-SAFE APPLICATION NOTE above) so it did not hold ACCESS EXCLUSIVE.
-ALTER TABLE public.anchors VALIDATE CONSTRAINT anchors_cpe_metadata_is_object;
-ALTER TABLE public.anchors VALIDATE CONSTRAINT anchors_cle_metadata_is_object;
 
 NOTIFY pgrst, 'reload schema';
 
