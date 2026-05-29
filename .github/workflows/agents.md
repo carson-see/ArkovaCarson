@@ -21,6 +21,7 @@
 
 - Workflows use pinned action SHAs (not `@v4` tags) for supply-chain safety.
 - External downloads (e.g. `tla2tools.jar`) MUST verify SHA256. See ci.yml's `Pin TLA2TOOLS_JAR` step for the canonical pattern (SCRUM-1248 / R0-2); when the upstream release binary changes, refresh the pin with a local `curl -fsSL <release-url> | shasum -a 256` check and update the inline date.
+- 2026-05-29: v1.8.0 `tla2tools.jar` was re-uploaded upstream again; CI pin refreshed from a direct official-release download for PR #885 after the TLA gate failed before model checking.
 - `migration-drift.yml` is read-only — it never applies or modifies anything.
 - Exempt-list changes in `migration-drift.yml` require a code comment + Jira ticket.
 - Temporary PR #841 remediation exemptions are only for the renumbered 0314/0315 schema work after production already claimed 0313 for anchors index consolidation; remove them after operator-applied prod reconciliation.
