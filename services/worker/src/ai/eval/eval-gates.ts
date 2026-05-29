@@ -48,7 +48,7 @@ export const EVAL_GATE_CONFIGS: EvalGateConfig[] = [
       // SCRUM-2187 course-id gate only covers course-id-only fixtures.
       { field: 'courseId', minimumF1: 0.75 },
     ],
-    matchesEntry: (entry) => hasTag(entry, 'cpe'),
+    matchesEntry: (entry) => hasTag(entry, 'cpe') && !hasTag(entry, 'held-out'),
   },
   {
     gateId: 'SCRUM-1963',
@@ -64,7 +64,7 @@ export const EVAL_GATE_CONFIGS: EvalGateConfig[] = [
       // through the SCRUM-2187 gate's course-id-only coverage.
       { field: 'courseId', minimumF1: 0.75 },
     ],
-    matchesEntry: (entry) => hasTag(entry, 'cle') && !hasTag(entry, 'cpe'),
+    matchesEntry: (entry) => hasTag(entry, 'cle') && !hasTag(entry, 'cpe') && !hasTag(entry, 'held-out'),
   },
   {
     gateId: 'SCRUM-2187',
@@ -74,7 +74,10 @@ export const EVAL_GATE_CONFIGS: EvalGateConfig[] = [
     minimumWeightedF1: 0.75,
     requiredFields: [{ field: 'courseId', minimumF1: 0.75 }],
     matchesEntry: (entry) =>
-      hasTag(entry, 'course-id') && !hasTag(entry, 'cpe') && !hasTag(entry, 'cle'),
+      hasTag(entry, 'course-id') &&
+      !hasTag(entry, 'cpe') &&
+      !hasTag(entry, 'cle') &&
+      !hasTag(entry, 'held-out'),
   },
 ];
 
