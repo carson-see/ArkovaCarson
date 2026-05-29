@@ -191,4 +191,54 @@ describe('handlePlatformStats', () => {
     expect(body.subscriptions.byPlan.Starter).toBe(2);
     expect(body.subscriptions.byPlan.Professional).toBe(1);
   });
+
+  // SCRUM-1984: the organizations table has NO `deleted_at` column in prod.
+  // The original query filtered `.is('deleted_at', null)` on it; PostgREST
+  // resolves (does not throw) with `{ count: null, error: <column missing> }`,
+  // so the handler silently reported Total Orgs = 0 despite real orgs existing.
+  it('counts all organizations and does not filter a non-existent deleted_at column (SCRUM-1984)', async () => {
+    mockIsPlatformAdmin.mockResolvedValue(true);
+
+    mockDbRpc.mockImplementation((name: string) => {
+      if (name === 'get_anchor_status_counts_fast') {
+        return { data: { SECURED: 100, total: 100, PENDING: 0, SUBMITTED: 0, BROADCASTING: 0, REVOKED: 0 }, error: null };
+      }
+      return { data: {}, error: null };
+    });
+
+    // Simulate prod: an organizations query that applies `.is('deleted_at', …)`
+    // errors and yields count: null; an unfiltered organizations query yields
+    // the real count (3). profiles/anchors DO have deleted_at, so they count fine.
+    mockDbFrom.mockImplementation((table: string) => {
+      let deletedAtFiltered = false;
+      const chain = {
+        select: vi.fn().mockReturnThis(),
+        is: vi.fn((col: string) => {
+          if (col === 'deleted_at') deletedAtFiltered = true;
+          return chain;
+        }),
+        gte: vi.fn().mockReturnThis(),
+        eq: vi.fn().mockReturnThis(),
+        in: vi.fn().mockReturnThis(),
+        then: (resolve: (v: unknown) => void) => {
+          if (table === 'organizations') {
+            return resolve(
+              deletedAtFiltered
+                ? { count: null, data: null, error: { message: 'column organizations.deleted_at does not exist' } }
+                : { count: 3, data: [], error: null },
+            );
+          }
+          return resolve({ count: 7, data: [], error: null });
+        },
+      };
+      return chain;
+    });
+
+    const res = mockRes();
+    await handlePlatformStats('admin-user', mockReq(), res);
+
+    expect(res.statusCode).toBe(200);
+    const body = res.body as { organizations: { total: number } };
+    expect(body.organizations.total).toBe(3);
+  });
 });
