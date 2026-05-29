@@ -127,6 +127,89 @@ describe('SemanticSearch (presentational)', () => {
     expect(screen.queryByText(/0\.8234/)).not.toBeInTheDocument();
   });
 
+  // Match-strength threshold boundaries (pct = Math.round(score*100)):
+  //   pct >= 90 -> STRONG, pct >= 75 -> GOOD, else -> FAIR.
+  // Lock down the exact-boundary and just-below-boundary cases.
+  it('labels similarity 0.90 as a Strong match (exactly at the Strong boundary)', () => {
+    mockResults = [
+      {
+        anchorId: 'a1',
+        publicId: 'p1',
+        fileName: 'diploma.pdf',
+        credentialType: 'DEGREE',
+        metadata: {},
+        status: 'SECURED',
+        createdAt: '2025-01-01T00:00:00Z',
+        similarity: 0.9,
+      },
+    ];
+    renderComponent();
+    expect(screen.getByText('90% match')).toBeInTheDocument();
+    expect(
+      screen.getByLabelText(SEMANTIC_SEARCH_LABELS.MATCH_STRENGTH_STRONG),
+    ).toBeInTheDocument();
+  });
+
+  it('labels similarity 0.89 as a Good match (just below the Strong boundary)', () => {
+    mockResults = [
+      {
+        anchorId: 'a1',
+        publicId: 'p1',
+        fileName: 'diploma.pdf',
+        credentialType: 'DEGREE',
+        metadata: {},
+        status: 'SECURED',
+        createdAt: '2025-01-01T00:00:00Z',
+        similarity: 0.89,
+      },
+    ];
+    renderComponent();
+    expect(screen.getByText('89% match')).toBeInTheDocument();
+    expect(
+      screen.getByLabelText(SEMANTIC_SEARCH_LABELS.MATCH_STRENGTH_GOOD),
+    ).toBeInTheDocument();
+  });
+
+  it('labels similarity 0.75 as a Good match (exactly at the Good boundary)', () => {
+    mockResults = [
+      {
+        anchorId: 'a1',
+        publicId: 'p1',
+        fileName: 'diploma.pdf',
+        credentialType: 'DEGREE',
+        metadata: {},
+        status: 'SECURED',
+        createdAt: '2025-01-01T00:00:00Z',
+        similarity: 0.75,
+      },
+    ];
+    renderComponent();
+    expect(screen.getByText('75% match')).toBeInTheDocument();
+    expect(
+      screen.getByLabelText(SEMANTIC_SEARCH_LABELS.MATCH_STRENGTH_GOOD),
+    ).toBeInTheDocument();
+  });
+
+  it('labels similarity 0.74 as a Fair match (just below the Good boundary)', () => {
+    mockResults = [
+      {
+        anchorId: 'a1',
+        publicId: 'p1',
+        fileName: 'diploma.pdf',
+        credentialType: 'DEGREE',
+        metadata: {},
+        status: 'SECURED',
+        createdAt: '2025-01-01T00:00:00Z',
+        similarity: 0.74,
+      },
+    ];
+    renderComponent();
+    expect(screen.getByText('74% match')).toBeInTheDocument();
+    expect(
+      screen.getByLabelText(SEMANTIC_SEARCH_LABELS.MATCH_STRENGTH_FAIR),
+    ).toBeInTheDocument();
+  });
+
   it('shows loading shimmer during search', () => {
     mockIsSearching = true;
     const { container } = renderComponent();
@@ -235,7 +318,22 @@ describe('SemanticSearchPanel (flag-gated mount)', () => {
         screen.queryByText(SEMANTIC_SEARCH_LABELS.HEADING),
       ).not.toBeInTheDocument();
     });
+    // Regression lock for the empty-Card-chrome bug: the Card chrome must live
+    // INSIDE SemanticSearchPanel (not in DashboardPage), so flag-off returns
+    // null and yields a truly empty DOM — no orphaned/empty Card wrapper.
     expect(container).toBeEmptyDOMElement();
+  });
+
+  it('renders a contentful container (not an empty wrapper) when the flag is on', async () => {
+    vi.mocked(isSemanticSearchEnabled).mockResolvedValue(true);
+    const { container } = renderPanel();
+    // Panel owns its own chrome now: when on, it renders real content, not an
+    // empty shell. Complements the flag-off empty-DOM regression lock above.
+    await screen.findByText(SEMANTIC_SEARCH_LABELS.HEADING);
+    expect(container).not.toBeEmptyDOMElement();
+    expect(
+      screen.getByPlaceholderText(SEMANTIC_SEARCH_LABELS.PLACEHOLDER),
+    ).toBeInTheDocument();
   });
 
   it('fails closed (renders nothing) when the flag lookup throws', async () => {

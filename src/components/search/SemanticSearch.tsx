@@ -21,6 +21,7 @@ import { Link } from 'react-router-dom';
 import { ROUTES } from '../../lib/routes';
 import { SEMANTIC_SEARCH_LABELS } from '../../lib/copy';
 import { isSemanticSearchEnabled } from '../../lib/switchboard';
+import { Card, CardContent } from '@/components/ui/card';
 
 /** Map a 0..1 similarity score to a friendly, non-technical strength label. */
 function matchStrengthLabel(score: number): string {
@@ -66,12 +67,12 @@ function SearchResultCard({ result }: { result: SemanticSearchResult }) {
               {result.fileName || result.credentialType || 'Document'}
             </p>
             {result.credentialType && (
-              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground truncate">
                 {result.credentialType}
               </p>
             )}
             {result.metadata?.issuerName && (
-              <p className="text-sm text-muted-foreground mt-0.5">
+              <p className="text-sm text-muted-foreground mt-0.5 truncate">
                 {result.metadata.issuerName}
               </p>
             )}
@@ -202,7 +203,7 @@ export function SemanticSearch() {
 
       {/* Results */}
       {!isSearching && results.length > 0 && (
-        <div className="space-y-2 animate-in-view">
+        <div className="space-y-2 animate-in-view" aria-live="polite">
           <p className="text-xs text-muted-foreground">
             {SEMANTIC_SEARCH_LABELS.RESULTS_COUNT
               .replace('{count}', String(results.length))
@@ -268,7 +269,17 @@ export function SemanticSearchPanel() {
   }, []);
 
   // Fail-closed: render nothing while loading (null) or when disabled (false).
+  // The Card chrome lives here (not in the page) so that nothing — not even an
+  // empty bordered card — renders when the flag is off, which is the prod default.
   if (!enabled) return null;
 
-  return <SemanticSearch />;
+  return (
+    <div className="mb-8">
+      <Card className="border-white/[0.06] bg-white/[0.015]">
+        <CardContent className="pt-6">
+          <SemanticSearch />
+        </CardContent>
+      </Card>
+    </div>
+  );
 }
