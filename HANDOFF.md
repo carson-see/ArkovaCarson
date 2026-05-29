@@ -14,6 +14,21 @@
 
 ## Now
 
+### 2026-05-29 — PR #959 migration drift reconciliation (0314–0321) merged
+
+**PR:** [#959](https://github.com/carson-see/ArkovaCarson/pull/959) merged to `main` at merge commit `87029a17` (branch `chore/migration-0314-0321-prod-reconciliation`). Prod-green: main CI run [26649359558](https://github.com/carson-see/ArkovaCarson/actions/runs/26649359558) succeeded, including the `Check supabase/migrations vs prod` job.
+
+**What it fixed (SOC 2 CC8.1 change-mgmt gap):** migrations `0314`–`0321` (DocuSign sprint #947) had been applied to prod out-of-band; `migration-drift.yml` `exempt_regex` hid them and the repo migration files had diverged from prod. #959 reconciled the repo migration artifacts to prod-applied form, narrowed the drift-gate exemption, and regenerated `database.types.ts`.
+
+**Tracking:** Bug **SCRUM-2191** ([BUG-2026-05-29-003](https://arkova.atlassian.net/wiki/spaces/A/pages/28115270)) logs the drift; **closure is blocked by the reporter≠resolver automation rule (reporter = carson) — Carson must make the Done transition himself.** Pre-existing ledger hygiene (54 historical timestamp/dup-name rows + 0302/0303 duplicate) is non-blocking and tracked separately as **SCRUM-2192** (Task, To Do).
+
+**Docs:** prod-apply runbook [page 66093057](https://arkova.atlassian.net/wiki/spaces/A/pages/66093057); Data Model [page 786471](https://arkova.atlassian.net/wiki/spaces/A/pages/786471) v21 flipped 0314–0321 pending→applied.
+
+**Residual (non-blocking):** `anchors` NOT VALID CHECK constraints still need a `VALIDATE CONSTRAINT` pass via direct psql (`statement_timeout=0`) in a quiet window; future writes already enforce. Region-migration WIP (`us-central1`→`us-east1`) is parked on branch `chore/worker-region-us-east1-migration` — do NOT deploy until the us-east1 worker URL serves; `vercel.json` CSP/rewrite changes need their own PR + soak.
+
+_Last refreshed: 2026-05-29 by Claude — claims verified against gcloud/MCP/CI output: origin/main tip `87029a17` (#959 merge) confirmed via `git log`; main CI run [26649359558](https://github.com/carson-see/ArkovaCarson/actions/runs/26649359558) success including migrations-vs-prod job; SCRUM-2191/2192 created and linked via MCP._
+
+---
 ### 2026-05-28 — PR #924 SOC 2 hardening: CI green, awaiting merge
 
 **PR:** [#924](https://github.com/carson-see/ArkovaCarson/pull/924) on `fix/scrum-2039-2040-2041-soc2-hardening` (13 commits). All required CI checks green (only Vercel email-mismatch fails — pre-existing, non-blocking).
