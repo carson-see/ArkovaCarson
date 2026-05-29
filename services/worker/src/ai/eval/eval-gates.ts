@@ -48,7 +48,7 @@ export const EVAL_GATE_CONFIGS: EvalGateConfig[] = [
       // SCRUM-2187 course-id gate only covers course-id-only fixtures.
       { field: 'courseId', minimumF1: 0.75 },
     ],
-    matchesEntry: (entry) => hasTag(entry, 'cpe') && !hasTag(entry, 'held-out'),
+    matchesEntry: (entry) => hasTag(entry, 'cpe') && isGateFixture(entry),
   },
   {
     gateId: 'SCRUM-1963',
@@ -64,7 +64,7 @@ export const EVAL_GATE_CONFIGS: EvalGateConfig[] = [
       // through the SCRUM-2187 gate's course-id-only coverage.
       { field: 'courseId', minimumF1: 0.75 },
     ],
-    matchesEntry: (entry) => hasTag(entry, 'cle') && !hasTag(entry, 'cpe') && !hasTag(entry, 'held-out'),
+    matchesEntry: (entry) => hasTag(entry, 'cle') && !hasTag(entry, 'cpe') && isGateFixture(entry),
   },
   {
     gateId: 'SCRUM-2187',
@@ -74,10 +74,7 @@ export const EVAL_GATE_CONFIGS: EvalGateConfig[] = [
     minimumWeightedF1: 0.75,
     requiredFields: [{ field: 'courseId', minimumF1: 0.75 }],
     matchesEntry: (entry) =>
-      hasTag(entry, 'course-id') &&
-      !hasTag(entry, 'cpe') &&
-      !hasTag(entry, 'cle') &&
-      !hasTag(entry, 'held-out'),
+      hasTag(entry, 'course-id') && !hasTag(entry, 'cpe') && !hasTag(entry, 'cle') && isGateFixture(entry),
   },
 ];
 
@@ -148,6 +145,19 @@ function buildGateResult(
 
 function hasTag(entry: EntryEvalResult, tag: string): boolean {
   return entry.tags.some((entryTag) => entryTag.toLowerCase() === tag);
+}
+
+/**
+ * Tags that mark an entry as belonging to a non-gate split. Gates score only
+ * the curated gate fixtures; the held-out TEST set and the synthetic TRAIN set
+ * must never be scored as merge-gate evidence, even if their arrays are ever
+ * concatenated into a single eval run. This is the train/test contamination
+ * guard (SCRUM-2200).
+ */
+const NON_GATE_SPLIT_TAGS = ['held-out', 'synthetic-train'] as const;
+
+function isGateFixture(entry: EntryEvalResult): boolean {
+  return !NON_GATE_SPLIT_TAGS.some((tag) => hasTag(entry, tag));
 }
 
 function computeFieldF1(entries: EntryEvalResult[], field: string): number {
