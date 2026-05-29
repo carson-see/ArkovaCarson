@@ -358,16 +358,10 @@ export function DashboardPage() {
       )}
 
       {/* SCRUM-1958 — AI smart search across the user's secured documents.
-          Self-gates on ENABLE_SEMANTIC_SEARCH (renders nothing when off). */}
-      {hasRecords && (
-        <div className="mb-8">
-          <Card className="border-white/[0.06] bg-white/[0.015]">
-            <CardContent className="pt-6">
-              <SemanticSearchPanel />
-            </CardContent>
-          </Card>
-        </div>
-      )}
+          SemanticSearchPanel self-gates on ENABLE_SEMANTIC_SEARCH and owns its
+          own Card chrome, so nothing (not even an empty card) renders when the
+          flag is off. */}
+      {hasRecords && <SemanticSearchPanel />}
 
       {/* Records section — collapsible */}
       <div ref={recordsSectionRef}>
