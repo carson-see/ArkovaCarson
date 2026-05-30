@@ -16,6 +16,7 @@ import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { ROUTES, getAppBaseUrl } from '@/lib/routes';
 import { supabase } from '@/lib/supabase';
+import { getStatusLabel } from '@/lib/statusDisplay';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const dbAny = supabase as any;
@@ -279,7 +280,7 @@ export function PublicPortfolioPage() {
                             {att.attestation_type}
                           </Badge>
                           <Badge className={STATUS_BADGE[att.status] || 'bg-muted text-muted-foreground'}>
-                            {att.status}
+                            {getStatusLabel(att.status)}
                           </Badge>
                         </div>
                         <p className="text-xs text-muted-foreground mt-2">
@@ -344,7 +345,7 @@ export function PublicPortfolioPage() {
                             {anc.credential_type || 'Document'}
                           </Badge>
                           <Badge className={STATUS_BADGE[anc.status] || 'bg-muted text-muted-foreground'}>
-                            {anc.status}
+                            {getStatusLabel(anc.status)}
                           </Badge>
                         </div>
                         {anc.chain_tx_id && (

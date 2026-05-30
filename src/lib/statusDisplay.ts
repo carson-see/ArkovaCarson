@@ -58,25 +58,44 @@ const EMPTY_PLACEHOLDER = '—';
 const SAFE_UNKNOWN_LABEL = 'Unknown Status';
 
 /**
- * §1.3 banned-term detectors applied to the unknown-value fallback ONLY. These
- * mirror the canonical list in `scripts/check-copy-terms.ts`
- * (`FORBIDDEN_TERMS`); the few patterns whose word boundaries are
- * UI/error-leak specific (worker service, service_role, postgrest, issue
- * credential) are intentionally omitted — they cannot be produced by
- * title-casing an UPPER_SNAKE status token. Kept as a local copy so this pure
- * module has zero dependency on the build-tooling script.
+ * §1.3 banned-term detectors applied to the unknown-value fallback ONLY.
+ *
+ * These are a deliberate SUPERSET of the canonical copy-lint matchers in
+ * `scripts/check-copy-terms.ts` (`FORBIDDEN_TERMS`), replicated locally so this
+ * module keeps its zero-dependency / browser-safe purity (importing that script
+ * would drag `node:fs`/`node:path` into the client bundle).
+ *
+ * Match semantics are kept BYTE-FOR-BYTE equivalent to the canonical terms so
+ * the fallback can never emit a substring the canonical rule would flag:
+ *  - `wallet`, `gas`, `transaction`, `crypto`/`cryptocurrency`, `bitcoin`,
+ *    `blockchain`, `mining` are canonically BARE substrings (no boundaries),
+ *    so an input like `GASEOUS` / `TRANSACTIONAL` / `WALLETED` /
+ *    `CRYPTOGRAPHIC_PENDING` IS a violation and is scrubbed. A naive `\b`-only
+ *    fallback used to let these through.
+ *  - `hash`, `block` (incl. `block height`/`block hash`) and `token` carry the
+ *    canonical `(?<![-\w])…(?![-\w])` boundaries, so e.g. `BLOCKADE` is NOT a
+ *    violation and survives as a normal title-cased label — matching the lint.
+ *
+ * Infra-leak patterns from the canonical list (`worker service`,
+ * `service_role`, `postgrest`, `issue credential`) are omitted: they contain
+ * spaces/underscores that title-casing an UPPER_SNAKE status token can never
+ * reproduce as user-visible copy.
  */
 const FALLBACK_BANNED_PATTERNS: readonly RegExp[] = [
-  /\bwallet\b/i,
-  /\bgas\b/i,
-  /\bhash\b/i,
-  /\bblock\b/i,
-  /\btransaction\b/i,
-  /\bcrypto(currency)?\b/i,
-  /\bbitcoin\b/i,
-  /\bblockchain\b/i,
-  /\bmining\b/i,
-  /\btoken\b/i,
+  // --- bare substrings (canonical: no boundaries) ---
+  /wallet/i,
+  /gas/i,
+  /transaction/i,
+  /crypto/i, // also covers `cryptocurrency`
+  /bitcoin/i,
+  /blockchain/i,
+  /mining/i,
+  // --- boundary-bounded (canonical: (?<![-\w])…(?![-\w])) ---
+  /(?<![-\w])block height(?![-\w])/i,
+  /(?<![-\w])block hash(?![-\w])/i,
+  /(?<![-\w])hash(?![-\w])/i,
+  /(?<![-\w])block(?![-\w])/i,
+  /(?<![-\w])token(?![-\w])/i,
 ];
 
 /** True when a candidate fallback label would surface a §1.3 banned term. */

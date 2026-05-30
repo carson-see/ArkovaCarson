@@ -1,5 +1,5 @@
 # agents.md — pages
-_Last updated: 2026-05-19_
+_Last updated: 2026-05-30_
 
 ## SCRUM-1755 — Secure Document vs Issue Credential split
 
@@ -10,6 +10,7 @@ _Last updated: 2026-05-19_
 Top-level page components rendered by react-router-dom routes. Each page composes layout (AppShell) with domain-specific hooks and components.
 
 ## Recent Changes
+- 2026-05-30 SCRUM-2003 (review fixes): wired the remaining raw-enum status leak sites through `getStatusLabel` from `@/lib/statusDisplay` — `PublicPortfolioPage.tsx` (`att.status` + `anc.status`, both **public/unauth**), `PublicAttestationVerifyPage.tsx` attestor-credential `credential.status`, and `AttestationsPage.tsx` table `att.status`. Existing `STATUS_BADGE`/`STATUS_ICON`/`STATUS_COLORS` maps and icon conditionals stay keyed by the **raw** enum; only the visible Badge *text* is wrapped. NOT wired: `PublicAttestationVerifyPage.tsx` `linked_credential.verification_status` — that is org-identity verification status (`VERIFIED`/`UNVERIFIED`), a different enum domain than `anchor_status`/`attestation_status`, so it is intentionally left raw (forcing it through the anchor/attestation map would mislabel it).
 - 2026-05-19 SCRUM-1599: removed `BadgePage.tsx` from the SPA route table. Badge SVGs are served by the worker at `/api/badge/:publicId` so status cannot be spoofed from frontend query parameters.
 - 2026-05-19 SCRUM-1247 closeout: `PrivacyPage.tsx` and `TermsPage.tsx` render their policy-update notices from `LEGAL_PAGE_LABELS` in `src/lib/copy.ts`; keep legal/public page copy centralized and covered by `e2e/legal-pages.spec.ts`.
 - 2026-05-03 SCRUM-897: `PublicAttestationVerifyPage.tsx` fetches `/api/v1/attestations/{publicId}?include=credentials` so public attestation verification can show evidence metadata and the bounded attestor credential chain. Evidence cards must use `public_id`, `fingerprint`, `mime`, and `size`; never render internal evidence UUIDs.

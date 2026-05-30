@@ -73,6 +73,7 @@ import { Briefcase, GraduationCap, FileSpreadsheet } from 'lucide-react';
 import { CreatePortfolioDialog } from '@/components/portfolio';
 import { AttestationEvidencePayloadSchema } from '@/lib/validators';
 import { EVIDENCE_PAYLOAD_ERROR, ATTESTATION_LABELS, PUBLIC_ATTESTATION_VERIFY_LABELS } from '@/lib/copy';
+import { getStatusLabel } from '@/lib/statusDisplay';
 
 const ATTESTATION_TYPES = [
   { value: 'VERIFICATION', label: 'Verification', desc: 'Verify a credential or document is authentic' },
@@ -943,7 +944,7 @@ export function AttestationsPage() {
                             {att.status === 'PENDING' && <Clock className="h-3 w-3 mr-1" />}
                             {att.status === 'REVOKED' && <XCircle className="h-3 w-3 mr-1" />}
                             {att.status === 'CHALLENGED' && <AlertTriangle className="h-3 w-3 mr-1" />}
-                            {att.status}
+                            {getStatusLabel(att.status)}
                           </Badge>
                         </TableCell>
                         <TableCell className="py-2 hidden md:table-cell">

@@ -165,6 +165,17 @@ describe('getStatusDisplay — §1.3 banned-term invariant', () => {
     'BITCOIN_PENDING',
     'TOKEN_EXPIRED',
     'unknown_future_state',
+    // Substring-leak adversaries: the canonical FORBIDDEN_TERMS match
+    // bitcoin/blockchain/crypto/wallet/gas/transaction/mining as BARE
+    // substrings (no word boundaries), so a fallback that only scrubbed
+    // \b-bounded whole words would emit a banned substring here while the
+    // canonical copy-lint flagged it. These pin canonical-equivalent scrubbing.
+    'GASEOUS',
+    'WALLETED',
+    'TRANSACTIONAL',
+    'CRYPTOGRAPHIC_PENDING',
+    'MINING_REWARD',
+    'BLOCKCHAINED',
     '',
   ];
 
@@ -178,6 +189,36 @@ describe('getStatusDisplay — §1.3 banned-term invariant', () => {
         `label "${label}" for input "${input}" matched forbidden term /${FORBIDDEN_TERMS[i]}/`,
       ).toBe(false);
     }
+  });
+});
+
+describe('getStatusDisplay — fallback scrub is canonical-equivalent (bare substrings)', () => {
+  // The canonical scrub in scripts/check-copy-terms.ts matches
+  // bitcoin / blockchain / crypto / wallet / gas / transaction / mining as
+  // BARE substrings (no \b / no custom boundary). A \b-only fallback would let
+  // these through unscrubbed — passing the module's own guard but violating the
+  // canonical §1.3 rule. The unknown-value fallback must be a true superset of
+  // the canonical rule so it can never emit any canonical banned substring.
+  it.each([
+    ['GASEOUS'],
+    ['WALLETED'],
+    ['TRANSACTIONAL'],
+    ['CRYPTOGRAPHIC_PENDING'],
+    ['MINING_REWARD'],
+    ['BLOCKCHAINED'],
+    ['BITCOINESQUE'],
+  ])('scrubs the substring-leak input %p to the safe label', (input) => {
+    expect(getStatusLabel(input)).toBe('Unknown Status');
+  });
+
+  it('still title-cases an unknown value with no banned substring', () => {
+    // Regression guard: the wider scrub must not over-trigger on clean inputs.
+    expect(getStatusLabel('QUARANTINED')).toBe('Quarantined');
+    expect(getStatusLabel('on-hold')).toBe('On Hold');
+    // "BLOCKADE" contains "block" but the canonical `block` term carries
+    // (?<![-\w])…(?![-\w]) boundaries, so it is NOT a bare-substring leak and
+    // must survive as a normal title-cased label.
+    expect(getStatusLabel('BLOCKADE')).toBe('Blockade');
   });
 });
 
