@@ -31,6 +31,7 @@ CI gate scripts. Each one fails the build with a structured exit code + actionab
 - Fail messages must tell the operator (a) what failed, (b) why it matters, (c) how to fix or override.
 
 ## Recent Changes
+- 2026-05-30 PR #867: refreshed `snapshots/prod-tables.json` after prod 0326 added `org_credit_deductions`.
 - 2026-05-30 PR #980: closed two defense-in-depth gaps in `check-staging-evidence.ts` — T2/T3 deploy-evidence fields are now value-checked (not just label-present), and the residual-risk `Approved by:` must name a real approver. T1 logic unchanged; no existing check loosened. 14 new tests (90/90 green).
 - 2026-05-26 PR #884: added `services/edge/package.json` to staging-tooling allowlist (edge-only, not worker).
 
