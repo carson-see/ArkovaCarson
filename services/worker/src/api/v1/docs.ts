@@ -137,6 +137,47 @@ export const openApiSpec: Record<string, any> = {
         },
       },
     },
+    '/credentials/{publicId}/ctdl': {
+      get: {
+        summary: 'Get CTDL JSON-LD for a credential',
+        description:
+          'Returns the public Credential Transparency Description Language JSON-LD projection for a publishable Arkova credential.',
+        operationId: 'getCredentialCtdl',
+        tags: ['Verification'],
+        security: [{ ApiKeyBearer: [] }, { ApiKeyHeader: [] }, {}],
+        parameters: [
+          {
+            name: 'publicId',
+            in: 'path',
+            required: true,
+            description: 'The public ID of the credential (e.g., ARK-2026-TEST-001)',
+            schema: { type: 'string', minLength: 3, maxLength: 128 },
+          },
+        ],
+        responses: {
+          '200': {
+            description: 'CTDL JSON-LD document for an active credential',
+            content: {
+              'application/ld+json': {
+                schema: { $ref: '#/components/schemas/CtdlCredential' },
+              },
+            },
+          },
+          '400': { $ref: '#/components/responses/BadRequest' },
+          '404': { $ref: '#/components/responses/NotFound' },
+          '410': {
+            description: 'CTDL JSON-LD document for a revoked credential',
+            content: {
+              'application/ld+json': {
+                schema: { $ref: '#/components/schemas/CtdlCredential' },
+              },
+            },
+          },
+          '429': { $ref: '#/components/responses/RateLimited' },
+          '503': { $ref: '#/components/responses/ServiceUnavailable' },
+        },
+      },
+    },
     '/verify/batch': {
       post: {
         summary: 'Batch verify credentials',
@@ -1210,6 +1251,76 @@ export const openApiSpec: Record<string, any> = {
             description: 'API-RICH-02 fine-grained credential subtype from anchors.sub_type.',
           },
           error: { type: 'string' },
+        },
+      },
+      CtdlCredential: {
+        type: 'object',
+        description: 'Public CTDL JSON-LD credential projection.',
+        required: [
+          '@context',
+          '@type',
+          'ceterms:name',
+          'ceterms:ctid',
+          'ceterms:offeredBy',
+          'ceterms:credentialStatusType',
+          'ceterms:dateEffective',
+          'ceterms:verificationServiceProfile',
+          'ceterms:identifier',
+        ],
+        additionalProperties: true,
+        properties: {
+          '@context': {
+            type: 'string',
+            enum: ['https://credreg.net/ctdl/schema/context/json'],
+          },
+          '@type': {
+            type: 'string',
+            pattern: '^ceterms:[A-Za-z][A-Za-z]*$',
+          },
+          'ceterms:name': { type: 'string' },
+          'ceterms:ctid': {
+            type: 'string',
+            pattern: '^ce-.+',
+          },
+          'ceterms:offeredBy': {
+            type: 'object',
+            required: ['@type', 'ceterms:name'],
+            additionalProperties: true,
+            properties: {
+              '@type': { type: 'string', enum: ['ceterms:Organization'] },
+              'ceterms:name': { type: 'string' },
+              'ceterms:ctid': { type: 'string' },
+              'ceterms:subjectWebpage': { type: 'string', format: 'uri' },
+            },
+          },
+          'ceterms:credentialStatusType': {
+            type: 'string',
+            enum: ['ceterms:Active', 'ceterms:Revoked', 'ceterms:Expired', 'ceterms:Superseded'],
+          },
+          'ceterms:dateEffective': { type: 'string', format: 'date-time' },
+          'ceterms:verificationServiceProfile': {
+            type: 'object',
+            required: ['@type', 'ceterms:name', 'ceterms:verificationService'],
+            additionalProperties: true,
+            properties: {
+              '@type': { type: 'string', enum: ['ceterms:VerificationServiceProfile'] },
+              'ceterms:name': { type: 'string' },
+              'ceterms:verificationService': { type: 'string', format: 'uri' },
+            },
+          },
+          'ceterms:identifier': {
+            type: 'object',
+            required: ['ceterms:identifierType', 'ceterms:identifierValue'],
+            additionalProperties: false,
+            properties: {
+              'ceterms:identifierType': { type: 'string' },
+              'ceterms:identifierValue': { type: 'string' },
+            },
+          },
+          'ceterms:description': { type: 'string' },
+          'ceterms:expirationDate': { type: 'string', format: 'date-time' },
+          'ceterms:revocationDate': { type: 'string', format: 'date-time' },
+          'ceterms:revocationReason': { type: 'string' },
         },
       },
       BatchResponse: {
