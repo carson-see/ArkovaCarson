@@ -42,10 +42,28 @@ function userAgent(req: Request): string | null {
   return typeof agent === 'string' ? agent.slice(0, 200) : null;
 }
 
+function auditErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (error && typeof error === 'object' && 'message' in error) {
+    const message = (error as { message?: unknown }).message;
+    if (typeof message === 'string' && message.trim()) return message;
+  }
+  return String(error);
+}
+
+function warnAuditFailure(args: AuditArgs, error: unknown): void {
+  logger.warn({
+    public_id: args.publicId,
+    outcome: args.outcome,
+    http_status: args.httpStatus,
+    error: auditErrorMessage(error),
+  }, 'Failed to write CTDL request audit event');
+}
+
 function logCtdlRequested(args: AuditArgs): void {
-  void db.from('audit_events').insert({
+  const payload = {
     event_type: 'ctdl.requested',
-    event_category: 'VERIFICATION',
+    event_category: 'VERIFICATION' as const,
     target_type: 'credential',
     target_id: args.publicId,
     org_id: args.orgId ?? null,
@@ -59,7 +77,18 @@ function logCtdlRequested(args: AuditArgs): void {
       querying_agent: userAgent(args.req),
       api_key_id: args.req.apiKey?.keyId ?? null,
     }),
-  });
+  };
+
+  try {
+    // eslint-disable-next-line arkova/missing-org-filter -- audit insert writes a new event; org_id is set when the credential is found.
+    void Promise.resolve(db.from('audit_events').insert(payload))
+      .then(({ error }) => {
+        if (error) throw error;
+      })
+      .catch((error: unknown) => warnAuditFailure(args, error));
+  } catch (error) {
+    warnAuditFailure(args, error);
+  }
 }
 
 function normalizeAnchorRow(row: Record<string, unknown>): CtdlAnchor {
@@ -90,8 +119,7 @@ function normalizeAnchorRow(row: Record<string, unknown>): CtdlAnchor {
 
 export const defaultCredentialsCtdlLookup: CredentialsCtdlLookup = {
   async lookupByPublicId(publicId: string) {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data, error } = await (db as any)
+    const { data, error } = await db
       .from('anchors')
       .select(
         'public_id, status, credential_type, sub_type, label, description, metadata, ' +
@@ -103,7 +131,7 @@ export const defaultCredentialsCtdlLookup: CredentialsCtdlLookup = {
       .single();
 
     if (error || !data) return null;
-    return normalizeAnchorRow(data as Record<string, unknown>);
+    return normalizeAnchorRow(data as unknown as Record<string, unknown>);
   },
 };
 
