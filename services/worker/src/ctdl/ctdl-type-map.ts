@@ -16,7 +16,7 @@ export const CTDL_TYPE_MAP = {
   PROFESSIONAL: 'ceterms:ProfessionalCertification',
   CPE: 'ceterms:Certificate',
   CLE: 'ceterms:Certificate',
-  BADGE: 'ceterms:DigitalBadge',
+  BADGE: 'ceterms:OpenBadge',
   ATTESTATION: 'ceterms:Certification',
   FINANCIAL: 'ceterms:Credential',
   LEGAL: 'ceterms:Credential',

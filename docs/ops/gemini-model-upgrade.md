@@ -16,6 +16,31 @@
   (same-day) means the pin was never independently validated — treat that as a
   monitoring gap, and wire a fast-fallback-rate alarm so silent degradation pages.
 
+## Model pin vs. tuning base — two different `gemini-*` strings
+
+Two distinct model identifiers live in this codebase and they are **not** the
+same knob. Conflating them has produced doc/spec mismatches; this section is the
+disambiguation.
+
+| Concern | Identifier | Where it lives | Who consumes it |
+|---|---|---|---|
+| **Prod inference pin** | `gemini-2.5-flash` | `services/worker/src/ai/gemini-config.ts` (`DEFAULT_GENERATION_MODEL` + `DEFAULT_VISION_MODEL`), and the `GEMINI_MODEL` env var set in `.github/workflows/deploy-worker.yml`; asserted by `.github/workflows/verify-worker-runtime.yml` | The live worker — every extraction / vision call at request time |
+| **Vertex fine-tuning base** | `models/gemini-2.0-flash-001` | `services/worker/src/ai/training/gemini-tuning-orchestrator.ts` (`baseModel` default) and `services/worker/scripts/{submit-training,run-training}.ts` (`base_model`) | The offline Golden-model tuning track only — never the request path |
+
+Key points:
+
+- The **inference pin** is what the runbook's "Update the Version Pin" step
+  changes. It is the model that serves production traffic. As of 2026-05-27
+  (SCRUM-1993) it is `gemini-2.5-flash`, which **sunsets 2026-06-17**;
+  SCRUM-1951 owns the eval-validated upgrade to a GA `gemini-3` model.
+- `gemini-2.0-flash-001` is **only** the base checkpoint that Vertex AI tunes
+  *from* when (re)building the Golden model. It is an offline-training input,
+  not a serving model, and it is gated behind the Golden track. Seeing it in
+  the worker tree does **not** mean prod inference runs on a 2.0 model.
+- Upgrading the inference pin (this runbook) and bumping the tuning base are
+  independent changes with independent eval gates. Do not assume changing one
+  implies the other; they touch different files and different pipelines.
+
 ## When to Use
 
 - Google announces a new Gemini model version (e.g., `gemini-3-flash-001` GA)

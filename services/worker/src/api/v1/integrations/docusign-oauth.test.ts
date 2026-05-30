@@ -4,6 +4,7 @@ import request from 'supertest';
 import type { KmsClient } from '../../../integrations/oauth/crypto.js';
 
 const TEST_ORG_ID = '11111111-1111-4111-8111-111111111111';
+const TEST_ORG_PUBLIC_ID = 'ORG-ARKOVA-TEST';
 const TEST_USER_ID = '22222222-2222-4222-8222-222222222222';
 
 vi.mock('../../../config.js', () => ({
@@ -31,6 +32,7 @@ import { createDocusignOAuthRouter } from './docusign-oauth.js';
 import { logger } from '../../../utils/logger.js';
 
 type DocusignRouterDeps = NonNullable<Parameters<typeof createDocusignOAuthRouter>[0]>;
+type FetchInput = string | URL | Request;
 
 interface QueryResult {
   data?: unknown;
@@ -73,6 +75,10 @@ function mockQuery(result: QueryResult, capture?: (method: string, value: unknow
   return chain;
 }
 
+function asTestDb(db: unknown): DocusignRouterDeps['db'] {
+  return db as DocusignRouterDeps['db'];
+}
+
 function createApp(db: unknown, overrides: Partial<DocusignRouterDeps> = {}) {
   const app = express();
   app.use(express.json());
@@ -83,7 +89,38 @@ function createApp(db: unknown, overrides: Partial<DocusignRouterDeps> = {}) {
   app.use(
     '/api/v1/integrations',
     createDocusignOAuthRouter({
-      db: db as unknown as DocusignRouterDeps['db'],
+      db: asTestDb(db),
+      env: {
+        DOCUSIGN_INTEGRATION_KEY: 'docusign-client',
+        DOCUSIGN_CLIENT_SECRET: 'docusign-client-secret',
+        DOCUSIGN_DEMO: 'true',
+        GCP_SECRET_MANAGER_PROJECT_ID: 'test-project',
+        GCP_KMS_INTEGRATION_TOKEN_KEY: 'projects/p/locations/l/keyRings/r/cryptoKeys/k',
+      },
+      stateSecret: 'test-state-secret',
+      frontendUrl: 'http://localhost:5173',
+      now: () => new Date('2026-04-24T12:00:00.000Z'),
+      kms: {
+        async encrypt() {
+          return Buffer.from('encrypted-token-payload');
+        },
+        async decrypt() {
+          return Buffer.from('{}');
+        },
+      } satisfies KmsClient,
+      ...overrides,
+    }),
+  );
+  return app;
+}
+
+function createUnauthenticatedApp(db: unknown, overrides: Partial<DocusignRouterDeps> = {}) {
+  const app = express();
+  app.use(express.json());
+  app.use(
+    '/api/v1/integrations',
+    createDocusignOAuthRouter({
+      db: asTestDb(db),
       env: {
         DOCUSIGN_INTEGRATION_KEY: 'docusign-client',
         DOCUSIGN_CLIENT_SECRET: 'docusign-client-secret',
@@ -167,7 +204,7 @@ describe('DocuSign OAuth router', () => {
       }),
     };
 
-    const fetchImpl = vi.fn(async (input: string | URL | Request) => {
+    const fetchImpl = vi.fn(async (input: FetchInput) => {
       const url = String(input);
       if (url === 'https://account-d.docusign.com/oauth/token') {
         return new Response(JSON.stringify({
@@ -199,7 +236,7 @@ describe('DocuSign OAuth router', () => {
       next();
     });
     const deps = {
-      db: db as unknown as DocusignRouterDeps['db'],
+      db: asTestDb(db),
       env: {
         DOCUSIGN_INTEGRATION_KEY: 'docusign-client',
         DOCUSIGN_CLIENT_SECRET: 'docusign-client-secret',
@@ -461,7 +498,7 @@ describe('DocuSign OAuth router', () => {
       next();
     });
     app.use('/api/v1/integrations', createDocusignOAuthRouter({
-      db: db as unknown as DocusignRouterDeps['db'],
+      db: asTestDb(db),
       env: {
         DOCUSIGN_INTEGRATION_KEY: 'docusign-client',
         DOCUSIGN_CLIENT_SECRET: 'docusign-client-secret',
@@ -550,7 +587,7 @@ describe('DocuSign OAuth router', () => {
       }),
     };
 
-    const fetchImpl = vi.fn(async (input: string | URL | Request) => {
+    const fetchImpl = vi.fn(async (input: FetchInput) => {
       const url = String(input);
       if (url === 'https://account-d.docusign.com/oauth/token') {
         return new Response(JSON.stringify({
@@ -583,7 +620,7 @@ describe('DocuSign OAuth router', () => {
       next();
     });
     app.use('/api/v1/integrations', createDocusignOAuthRouter({
-      db: db as unknown as DocusignRouterDeps['db'],
+      db: asTestDb(db),
       env: {
         DOCUSIGN_INTEGRATION_KEY: 'docusign-client',
         DOCUSIGN_CLIENT_SECRET: 'docusign-client-secret',
@@ -649,7 +686,7 @@ describe('DocuSign OAuth router', () => {
       }),
     };
 
-    const fetchImpl = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
+    const fetchImpl = vi.fn(async (input: FetchInput, init?: RequestInit) => {
       const url = String(input);
       if (url === 'https://account-d.docusign.com/oauth/token') {
         return new Response(JSON.stringify({
@@ -690,7 +727,7 @@ describe('DocuSign OAuth router', () => {
       next();
     });
     app.use('/api/v1/integrations', createDocusignOAuthRouter({
-      db: db as unknown as DocusignRouterDeps['db'],
+      db: asTestDb(db),
       env: {
         DOCUSIGN_INTEGRATION_KEY: 'docusign-client',
         DOCUSIGN_CLIENT_SECRET: 'docusign-client-secret',
@@ -764,7 +801,7 @@ describe('DocuSign OAuth router', () => {
       }),
     };
 
-    const fetchImpl = vi.fn(async (input: string | URL | Request) => {
+    const fetchImpl = vi.fn(async (input: FetchInput) => {
       const url = String(input);
       if (url === 'https://account-d.docusign.com/oauth/token') {
         return new Response(JSON.stringify({
@@ -804,7 +841,7 @@ describe('DocuSign OAuth router', () => {
       next();
     });
     app.use('/api/v1/integrations', createDocusignOAuthRouter({
-      db: db as unknown as DocusignRouterDeps['db'],
+      db: asTestDb(db),
       env: {
         DOCUSIGN_INTEGRATION_KEY: 'docusign-client',
         DOCUSIGN_CLIENT_SECRET: 'docusign-client-secret',
@@ -855,5 +892,333 @@ describe('DocuSign OAuth router', () => {
       );
       expect(failEvent).toBeDefined();
     }, { timeout: 2000 });
+  });
+
+  it('reprovisions an active Connect listener with a refreshed token and base URI', async () => {
+    const captured: Record<string, unknown[]> = {};
+    const capture = (method: string, value: unknown) => {
+      captured[method] = [...(captured[method] ?? []), value];
+    };
+    const db = {
+      from: vi.fn((table: string) => {
+        if (table === 'organizations') return mockQuery({ data: { id: TEST_ORG_ID }, error: null }, capture);
+        if (table === 'org_members') return mockQuery({ data: { role: 'owner' }, error: null });
+        if (table === 'org_integrations') {
+          return mockQuery({
+            data: [{
+              id: 'integration-1',
+              account_id: 'docusign-account-1',
+              base_uri: null,
+              token_secret_name: 'projects/test-project/secrets/arkova-docusign-refresh-token',
+            }],
+            error: null,
+          }, capture);
+        }
+        if (table === 'integration_events') return mockQuery({ data: null, error: null }, capture);
+        return mockQuery({ data: null, error: null }, capture);
+      }),
+    };
+    const secretReads: string[] = [];
+    const secretWrites: Array<{ name: string; value: string }> = [];
+    const outboundSignals: AbortSignal[] = [];
+    const fetchImpl = vi.fn(async (input: FetchInput, init?: RequestInit) => {
+      const url = String(input);
+      if (url === 'https://account-d.docusign.com/oauth/token' || url === 'https://account-d.docusign.com/oauth/userinfo') {
+        outboundSignals.push(init?.signal as AbortSignal);
+      }
+      if (url === 'https://account-d.docusign.com/oauth/token') {
+        return new Response(JSON.stringify({
+          access_token: 'access-token-reprovision',
+          expires_in: 3600,
+          refresh_token: 'refresh-token-rotated',
+          scope: 'signature extended',
+          token_type: 'Bearer',
+        }), { status: 200 });
+      }
+      if (url === 'https://account-d.docusign.com/oauth/userinfo') {
+        return new Response(JSON.stringify({
+          sub: 'docusign-sub-1',
+          email: 'admin@example.com',
+          accounts: [{
+            account_id: 'docusign-account-1',
+            account_name: 'Acme Legal',
+            base_uri: 'https://demo.docusign.net',
+            is_default: true,
+          }],
+        }), { status: 200 });
+      }
+      if (url.includes('/connect') && (!init?.method || init.method === 'GET')) {
+        return new Response(JSON.stringify({ configurations: [] }), { status: 200 });
+      }
+      if (url.includes('/connect') && init?.method === 'POST') {
+        return new Response(JSON.stringify({ connectId: 'connect-123' }), { status: 201 });
+      }
+      return new Response('{}', { status: 404 });
+    });
+    const app = createApp(db, {
+      env: {
+        DOCUSIGN_INTEGRATION_KEY: 'docusign-client',
+        DOCUSIGN_CLIENT_SECRET: 'docusign-client-secret',
+        DOCUSIGN_DEMO: 'true',
+        DOCUSIGN_CONNECT_HMAC_SECRET: 'hmac-secret-123',
+        WORKER_PUBLIC_URL: 'https://arkova-worker.example.com',
+        GCP_SECRET_MANAGER_PROJECT_ID: 'test-project',
+        GCP_KMS_INTEGRATION_TOKEN_KEY: 'projects/p/locations/l/keyRings/r/cryptoKeys/k',
+      },
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      refreshTokenStore: {
+        async put({ name, value }: { name: string; value: string }) {
+          secretWrites.push({ name, value });
+        },
+        async get({ name }: { name: string }) {
+          secretReads.push(name);
+          return 'refresh-token-reprovision';
+        },
+        async delete() { return undefined; },
+      },
+    });
+
+    const res = await request(app)
+      .post('/api/v1/integrations/docusign/connect/reprovision')
+      .send({ org_public_id: TEST_ORG_PUBLIC_ID });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({ attempted: 1, succeeded: 1, failed: 0 });
+    expect(outboundSignals).toHaveLength(2);
+    expect(outboundSignals.every((signal) => signal instanceof AbortSignal)).toBe(true);
+    expect(secretReads).toEqual(['projects/test-project/secrets/arkova-docusign-refresh-token']);
+    expect(secretWrites).toEqual([{
+      name: 'projects/test-project/secrets/arkova-docusign-refresh-token',
+      value: 'refresh-token-rotated',
+    }]);
+    expect(captured.update?.[0]).toMatchObject({
+      base_uri: 'https://demo.docusign.net',
+      token_secret_name: 'projects/test-project/secrets/arkova-docusign-refresh-token',
+    });
+    expect(JSON.stringify(captured.update?.[0])).not.toContain('access-token-reprovision');
+    expect(JSON.stringify(captured.update?.[0])).not.toContain('refresh-token-rotated');
+    expect(captured.insert?.some((event) =>
+      (event as Record<string, unknown>).event_type === 'connect_listener_reprovisioned',
+    )).toBe(true);
+  });
+
+  it('rejects unauthenticated Connect reprovision requests', async () => {
+    const db = {
+      from: vi.fn(() => mockQuery({ data: null, error: null })),
+    };
+    const app = createUnauthenticatedApp(db);
+
+    const res = await request(app)
+      .post('/api/v1/integrations/docusign/connect/reprovision')
+      .send({ org_public_id: TEST_ORG_PUBLIC_ID });
+
+    expect(res.status).toBe(401);
+    expect(res.body.error).toBe('Authentication required');
+    expect(db.from).not.toHaveBeenCalled();
+  });
+
+  it('blocks Connect reprovision with no DB access when ENABLE_VERIFICATION_API is false', async () => {
+    const db = {
+      from: vi.fn(() => mockQuery({ data: null, error: null })),
+    };
+    const app = createApp(db, {
+      env: {
+        DOCUSIGN_INTEGRATION_KEY: 'docusign-client',
+        DOCUSIGN_CLIENT_SECRET: 'docusign-client-secret',
+        DOCUSIGN_DEMO: 'true',
+        ENABLE_VERIFICATION_API: 'false',
+        GCP_SECRET_MANAGER_PROJECT_ID: 'test-project',
+        GCP_KMS_INTEGRATION_TOKEN_KEY: 'projects/p/locations/l/keyRings/r/cryptoKeys/k',
+      },
+    });
+
+    const res = await request(app)
+      .post('/api/v1/integrations/docusign/connect/reprovision')
+      .send({ org_public_id: TEST_ORG_PUBLIC_ID });
+
+    expect(res.status).toBe(404);
+    expect(res.body.error).toBe('Not found');
+    expect(db.from).not.toHaveBeenCalled();
+  });
+
+  it('rejects Connect reprovision requests from non-org-admin members', async () => {
+    const db = {
+      from: vi.fn((table: string) => {
+        if (table === 'organizations') return mockQuery({ data: { id: TEST_ORG_ID }, error: null });
+        if (table === 'org_members') return mockQuery({ data: { role: 'member' }, error: null });
+        return mockQuery({ data: null, error: null });
+      }),
+    };
+    const app = createApp(db);
+
+    const res = await request(app)
+      .post('/api/v1/integrations/docusign/connect/reprovision')
+      .send({ org_public_id: TEST_ORG_PUBLIC_ID });
+
+    expect(res.status).toBe(403);
+    expect(res.body.error).toContain('org admin');
+    expect(db.from).toHaveBeenCalledTimes(2);
+  });
+
+  it('returns zero attempted reprovisions when the org has no active DocuSign integrations', async () => {
+    const getRefreshToken = vi.fn();
+    const db = {
+      from: vi.fn((table: string) => {
+        if (table === 'organizations') return mockQuery({ data: { id: TEST_ORG_ID }, error: null });
+        if (table === 'org_members') return mockQuery({ data: { role: 'owner' }, error: null });
+        if (table === 'org_integrations') return mockQuery({ data: [], error: null });
+        return mockQuery({ data: null, error: null });
+      }),
+    };
+    const app = createApp(db, {
+      refreshTokenStore: {
+        async put() { return undefined; },
+        get: getRefreshToken,
+        async delete() { return undefined; },
+      },
+    });
+
+    const res = await request(app)
+      .post('/api/v1/integrations/docusign/connect/reprovision')
+      .send({ org_public_id: TEST_ORG_PUBLIC_ID });
+
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual({
+      attempted: 0,
+      succeeded: 0,
+      failed: 0,
+      results: [],
+    });
+    expect(getRefreshToken).not.toHaveBeenCalled();
+  });
+
+  it('returns 502 when DocuSign token refresh hangs during Connect reprovision', async () => {
+    const captured: Record<string, unknown[]> = {};
+    const capture = (method: string, value: unknown) => {
+      captured[method] = [...(captured[method] ?? []), value];
+    };
+    const db = {
+      from: vi.fn((table: string) => {
+        if (table === 'organizations') return mockQuery({ data: { id: TEST_ORG_ID }, error: null }, capture);
+        if (table === 'org_members') return mockQuery({ data: { role: 'admin' }, error: null });
+        if (table === 'org_integrations') {
+          return mockQuery({
+            data: [{
+              id: 'integration-1',
+              account_id: 'docusign-account-1',
+              token_secret_name: 'projects/test-project/secrets/arkova-docusign-refresh-token',
+            }],
+            error: null,
+          }, capture);
+        }
+        if (table === 'integration_events') return mockQuery({ data: null, error: null }, capture);
+        return mockQuery({ data: null, error: null }, capture);
+      }),
+    };
+    const fetchImpl = vi.fn((input: FetchInput, init?: RequestInit) => {
+      const url = String(input);
+      if (url === 'https://account-d.docusign.com/oauth/token') {
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => {
+            reject(new DOMException('Aborted', 'AbortError'));
+          });
+        });
+      }
+      return Promise.resolve(new Response('{}', { status: 404 }));
+    });
+    const app = createApp(db, {
+      env: {
+        DOCUSIGN_INTEGRATION_KEY: 'docusign-client',
+        DOCUSIGN_CLIENT_SECRET: 'docusign-client-secret',
+        DOCUSIGN_DEMO: 'true',
+        DOCUSIGN_REPROVISION_TIMEOUT_MS: '25',
+        ENABLE_VERIFICATION_API: 'true',
+        GCP_SECRET_MANAGER_PROJECT_ID: 'test-project',
+        GCP_KMS_INTEGRATION_TOKEN_KEY: 'projects/p/locations/l/keyRings/r/cryptoKeys/k',
+      },
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+      refreshTokenStore: {
+        async put() { return undefined; },
+        async get() { return 'refresh-token-reprovision'; },
+        async delete() { return undefined; },
+      },
+    });
+
+    const res = await request(app)
+      .post('/api/v1/integrations/docusign/connect/reprovision')
+      .send({ org_public_id: TEST_ORG_PUBLIC_ID });
+
+    expect(res.status).toBe(502);
+    expect(res.body.results[0]).toMatchObject({
+      integration_id: 'integration-1',
+      status: 'error',
+      error: 'DocuSign token refresh request timed out after 0.025s',
+    });
+    expect(captured.insert?.[0]).toMatchObject({
+      event_type: 'connect_listener_reprovision_failed',
+      details: {
+        error: 'DocuSign token refresh request timed out after 0.025s',
+      },
+    });
+  });
+
+  it('returns 502 and records failure events when every active Connect reprovision fails', async () => {
+    const captured: Record<string, unknown[]> = {};
+    const capture = (method: string, value: unknown) => {
+      captured[method] = [...(captured[method] ?? []), value];
+    };
+    const db = {
+      from: vi.fn((table: string) => {
+        if (table === 'organizations') return mockQuery({ data: { id: TEST_ORG_ID }, error: null }, capture);
+        if (table === 'org_members') return mockQuery({ data: { role: 'admin' }, error: null });
+        if (table === 'org_integrations') {
+          return mockQuery({
+            data: [{
+              id: 'integration-1',
+              account_id: 'docusign-account-1',
+              base_uri: 'https://demo.docusign.net',
+              token_secret_name: 'projects/test-project/secrets/arkova-docusign-refresh-token',
+            }],
+            error: null,
+          }, capture);
+        }
+        if (table === 'integration_events') return mockQuery({ data: null, error: null }, capture);
+        return mockQuery({ data: null, error: null }, capture);
+      }),
+    };
+    const app = createApp(db, {
+      refreshTokenStore: {
+        async put() { return undefined; },
+        async get() { return null; },
+        async delete() { return undefined; },
+      },
+    });
+
+    const res = await request(app)
+      .post('/api/v1/integrations/docusign/connect/reprovision')
+      .send({ org_public_id: TEST_ORG_PUBLIC_ID });
+
+    expect(res.status).toBe(502);
+    expect(res.body).toMatchObject({
+      attempted: 1,
+      succeeded: 0,
+      failed: 1,
+      results: [{
+        integration_id: 'integration-1',
+        status: 'error',
+        error: 'DocuSign refresh-token secret is empty or missing',
+      }],
+    });
+    expect(captured.update).toBeUndefined();
+    expect(captured.insert?.[0]).toMatchObject({
+      org_id: TEST_ORG_ID,
+      integration_id: 'integration-1',
+      provider: 'docusign',
+      event_type: 'connect_listener_reprovision_failed',
+      status: 'error',
+      details: {
+        error: 'DocuSign refresh-token secret is empty or missing',
+      },
+    });
   });
 });

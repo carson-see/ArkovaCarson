@@ -8,7 +8,7 @@ User-facing OAuth flow endpoints for third-party integrations. Each integration 
 
 | File | Purpose |
 |------|---------|
-| `docusign-oauth.ts` | DocuSign OAuth start/callback/disconnect routes (SCRUM-1101) |
+| `docusign-oauth.ts` | DocuSign OAuth start/callback/disconnect routes plus org-admin Connect listener reprovisioning (SCRUM-1101/SCRUM-2069) |
 | `docusign-oauth.test.ts` | Tests for DocuSign OAuth flows |
 | `drive-oauth.ts` | Google Drive OAuth start/callback/disconnect routes (SCRUM-1168) |
 | `drive-oauth.test.ts` | Tests for Drive OAuth flows |
