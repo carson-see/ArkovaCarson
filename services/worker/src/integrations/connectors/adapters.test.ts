@@ -20,6 +20,7 @@ describe('INT-12 — DocuSign adapter', () => {
       {
         event: 'envelope-completed',
         envelopeId: 'env-42',
+        accountId: 'acct-42',
         status: 'completed',
         sender: { email: 'HR@acme.com' },
         envelopeDocuments: [{ documentId: 'd1', name: 'msa.pdf' }],

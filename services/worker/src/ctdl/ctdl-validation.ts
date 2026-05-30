@@ -13,11 +13,15 @@ const SAFE_CTLD_STATUS_TYPES = new Set([
 ]);
 
 const UNSAFE_PUBLIC_KEYS = new Set([
+  'anchor_id',
+  'anchorId',
   'fingerprint',
   'recipient_email',
   'recipientEmail',
   'filename',
   'file_name',
+  'source_filename',
+  'sourceFilename',
   'user_id',
   'userId',
   'org_id',

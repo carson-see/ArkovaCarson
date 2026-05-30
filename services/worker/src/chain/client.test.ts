@@ -661,9 +661,9 @@ describe('getChainClientAsync', () => {
   });
 });
 
-// ─── module-isolated throws (SCRUM-1545 coverage) ─────────────────
+// ─── module-isolated singleton behavior (SCRUM-1545 coverage) ─────
 
-describe('chain client singleton throws when uninitialized', () => {
+describe('chain client singleton behavior before startup init', () => {
   it('getInitializedChainClient throws before init in a fresh module instance', async () => {
     vi.resetModules();
     const fresh = await import('./client.js');
@@ -682,6 +682,8 @@ describe('chain client singleton throws when uninitialized', () => {
     const client = await fresh.getChainClientAsync();
     expect(client).toBeDefined();
     expect(typeof client.submitFingerprint).toBe('function');
+    expect(typeof client.verifyFingerprint).toBe('function');
+    expect(fresh.getChainClient()).toBe(client);
   });
 
   it('shares one initialization when cron lazy init races startup init', async () => {
