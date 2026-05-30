@@ -65,6 +65,13 @@ describe('eval gates', () => {
     });
   });
 
+  it('defines a fail-closed course-id gate blocking SCRUM-1921', () => {
+    const gate = getEvalGateConfig('SCRUM-2187');
+    expect(gate?.blocksStory).toBe('SCRUM-1921');
+    expect(gate?.minimumEntries).toBeGreaterThan(0);
+    expect(gate?.requiredFields).toContainEqual({ field: 'courseId', minimumF1: 0.75 });
+  });
+
   it('fails closed when Phase 5 dataset coverage is missing', () => {
     const result = evaluateEvalGates(makeEvalResult([]), ['SCRUM-1962', 'SCRUM-1963']);
 
@@ -82,6 +89,7 @@ describe('eval gates', () => {
           { field: 'creditHours', correct: true },
           { field: 'fieldOfStudy', correct: true },
           { field: 'deliveryMethod', correct: true },
+          { field: 'courseId', correct: true },
         ])
       ))),
       ['SCRUM-1962'],
@@ -94,12 +102,39 @@ describe('eval gates', () => {
     });
   });
 
+  it('fails the CPE gate when courseId regresses even if CPE-native fields pass', () => {
+    const result = evaluateEvalGates(
+      makeEvalResult(Array.from({ length: 20 }, (_, index) => (
+        makeEntry(`cpe-${index + 1}`, ['cpe', 'phase-5'], [
+          { field: 'creditHours', correct: true },
+          { field: 'fieldOfStudy', correct: true },
+          { field: 'deliveryMethod', correct: true },
+          { field: 'courseId', correct: index < 5 },
+        ])
+      ))),
+      ['SCRUM-1962'],
+    );
+
+    expect(result[0]).toMatchObject({
+      gateId: 'SCRUM-1962',
+      passed: false,
+      reason: 'field_threshold_failed',
+    });
+    expect(result[0].fieldResults).toContainEqual({
+      field: 'courseId',
+      f1: expect.any(Number),
+      minimumF1: 0.75,
+      passed: false,
+    });
+  });
+
   it('fails the CLE gate when ethicsHours is below threshold even if other fields pass', () => {
     const result = evaluateEvalGates(
       makeEvalResult(Array.from({ length: 20 }, (_, index) => (
         makeEntry(`cle-${index + 1}`, ['cle', 'phase-5'], [
           { field: 'creditHours', correct: true },
           { field: 'ethicsHours', correct: false },
+          { field: 'courseId', correct: true },
         ])
       ))),
       ['SCRUM-1963'],
@@ -116,6 +151,46 @@ describe('eval gates', () => {
       minimumF1: 0.8,
       passed: false,
     });
+  });
+
+  it('passes the course-id gate only when courseId F1 clears 0.75', () => {
+    const passing = evaluateEvalGates(
+      makeEvalResult(Array.from({ length: 20 }, (_, index) => (
+        makeEntry(`course-${index + 1}`, ['course-id', 'phase-5'], [
+          { field: 'courseId', correct: true },
+        ])
+      ))),
+      ['SCRUM-2187'],
+    );
+    expect(passing[0]).toMatchObject({ gateId: 'SCRUM-2187', passed: true, matchingEntries: 20 });
+
+    const failing = evaluateEvalGates(
+      makeEvalResult(Array.from({ length: 20 }, (_, index) => (
+        makeEntry(`course-${index + 1}`, ['course-id', 'phase-5'], [
+          { field: 'courseId', correct: index < 10 },
+        ])
+      ))),
+      ['SCRUM-2187'],
+    );
+    expect(failing[0]).toMatchObject({ gateId: 'SCRUM-2187', passed: false });
+  });
+
+  it('keeps the course-id gate disjoint from CPE/CLE entries', () => {
+    const courseGate = EVAL_GATE_CONFIGS.find((gate) => gate.gateId === 'SCRUM-2187');
+
+    const courseOnly = makeEntry('course-only', ['course-id', 'course-id-only'], [
+      { field: 'courseId', correct: true },
+    ]);
+    const cpeWithCourse = makeEntry('cpe-course', ['cpe', 'course-id'], [
+      { field: 'courseId', correct: true },
+    ]);
+    const cleWithCourse = makeEntry('cle-course', ['cle', 'course-id'], [
+      { field: 'courseId', correct: true },
+    ]);
+
+    expect(courseGate?.matchesEntry(courseOnly)).toBe(true);
+    expect(courseGate?.matchesEntry(cpeWithCourse)).toBe(false);
+    expect(courseGate?.matchesEntry(cleWithCourse)).toBe(false);
   });
 
   it('matches professional education CPE and CLE entries against separate gates', () => {
