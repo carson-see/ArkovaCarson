@@ -300,6 +300,20 @@ check_image_exists() {
       sleep "$delay"
     fi
   done
+  # The AR API `describe` view is not just slow to index — for the CI deploy
+  # service account it never resolves a freshly-pushed manifest within the
+  # window (every CI deploy failed here; all successful deploys were local).
+  # The Docker registry v2 API, however, is immediately consistent and is the
+  # exact path the push went through, so the identity that just pushed can
+  # always read the manifest back. Fall back to it before giving up.
+  if command -v docker >/dev/null 2>&1; then
+    info "AR describe did not resolve; falling back to docker manifest inspect..."
+    if docker manifest inspect "$IMAGE" >/dev/null 2>&1; then
+      info "image confirmed via Docker registry manifest inspect."
+      return 0
+    fi
+    info "docker manifest inspect could not read the image either."
+  fi
   echo "ERROR: image does not exist or is not readable after ${attempts} attempts: $IMAGE" >&2
   echo "       Build/push the worker image before running the staging deploy wrapper." >&2
   exit 1
