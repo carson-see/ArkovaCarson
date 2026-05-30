@@ -109,7 +109,25 @@ interface PipelineJobControl {
   disabledReason?: string;
 }
 
-const PAGE_SIZE = 25;
+// SCRUM-2006: the records browser spans 120K+ pages at the default size, so a
+// page-size selector + a direct "go to page" jump are required alongside the
+// existing prev/next walk. DEFAULT_PAGE_SIZE preserves the prior 25/page view.
+const DEFAULT_PAGE_SIZE = 25;
+const PAGE_SIZE_OPTIONS = [25, 50, 100] as const;
+
+// New UI strings live as local constants: src/lib/copy.ts is owned by other
+// in-flight PRs this sprint. None contain §1.3 banned terms ("page"/"go"/"per"
+// are all allowed). lint:copy scans src/pages/**, so these are checked there.
+const PAGINATION_LABELS = {
+  GO_TO_PAGE_PLACEHOLDER: 'Page #',
+  GO_TO_PAGE_ARIA: 'Go to page number',
+  GO: 'Go',
+  PER_PAGE: 'per page',
+  PAGE_SIZE_ARIA: 'Records per page',
+  PREVIOUS_PAGE_ARIA: 'Previous page',
+  NEXT_PAGE_ARIA: 'Next page',
+} as const;
+
 const PIPELINE_CACHE_STALE_MS = 10 * 60 * 1000;
 
 const OPERATIONAL_STATUS_FILTERS: Array<{ value: AnchorOperationalStatus | 'unlinked'; label: string }> = [
@@ -578,6 +596,11 @@ export function PipelineAdminPage() {
   const [recordsLoading, setRecordsLoading] = useState(false);
   const [recordsTotal, setRecordsTotal] = useState(0);
   const [recordsPage, setRecordsPage] = useState(0);
+  // SCRUM-2006: page size is now user-selectable; the go-to-page box keeps its
+  // own raw input string so we can validate/clamp on submit rather than on
+  // every keystroke.
+  const [pageSize, setPageSize] = useState<number>(DEFAULT_PAGE_SIZE);
+  const [pageJumpInput, setPageJumpInput] = useState('');
   const [filters, setFilters] = useState<RecordFilters>({
     source: 'all',
     recordType: 'all',
@@ -648,13 +671,13 @@ export function PipelineAdminPage() {
   // left the records table blank with no message and no retry path.
   const [recordsError, setRecordsError] = useState<string | null>(null);
 
-  const fetchRecords = useCallback(async (page: number, currentFilters: RecordFilters) => {
+  const fetchRecords = useCallback(async (page: number, currentFilters: RecordFilters, size: number) => {
     setRecordsLoading(true);
     try {
       // Use server-side paginated RPC to avoid RLS timeout on 1.4M row table (migration 0175)
       const { data: rpcResult, error: rpcError } = await dbAny.rpc('get_public_records_page', {
         p_page: page + 1, // RPC uses 1-based pages
-        p_page_size: PAGE_SIZE,
+        p_page_size: size,
         p_source: currentFilters.source !== 'all' ? currentFilters.source : null,
         p_record_type: currentFilters.recordType !== 'all' ? currentFilters.recordType : null,
         p_anchor_status: currentFilters.anchorStatus !== 'all' ? currentFilters.anchorStatus : null,
@@ -677,13 +700,13 @@ export function PipelineAdminPage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Re-fetch records when filters or page change
+  // Re-fetch records when filters, page, or page size change
   useEffect(() => {
     if (isAdmin) {
       // eslint-disable-next-line react-hooks/set-state-in-effect -- async data fetch; setState is post-await
-      fetchRecords(recordsPage, filters);
+      fetchRecords(recordsPage, filters, pageSize);
     }
-  }, [isAdmin, recordsPage, filters, fetchRecords]);
+  }, [isAdmin, recordsPage, filters, pageSize, fetchRecords]);
 
   const handleFilterChange = (key: keyof RecordFilters, value: string) => {
     setRecordsPage(0);
@@ -695,7 +718,32 @@ export function PipelineAdminPage() {
     setFilters((prev) => ({ ...prev, search: searchInput }));
   };
 
-  const totalPages = Math.ceil(recordsTotal / PAGE_SIZE);
+  const totalPages = Math.ceil(recordsTotal / pageSize);
+
+  // SCRUM-2006: page size is selectable. A larger/smaller page changes the page
+  // count, so reset to page 1 (the prior page index could now be out of range)
+  // and let the effect re-query. No-op if the size is unchanged.
+  const handlePageSizeChange = (value: string) => {
+    const next = Number(value);
+    if (!PAGE_SIZE_OPTIONS.includes(next as (typeof PAGE_SIZE_OPTIONS)[number])) return;
+    if (next === pageSize) return;
+    setRecordsPage(0);
+    setPageSize(next);
+  };
+
+  // SCRUM-2006: direct page jump. Reject non-numeric / empty / fractional /
+  // signed input (the ^\d+$ test excludes "", "abc", "1.5", "-2", "+3", NaN,
+  // Infinity); clamp valid integers into [1, totalPages] so the box can never
+  // navigate past the real bounds. The effect re-queries on the page change.
+  const handleGoToPage = () => {
+    const raw = pageJumpInput.trim();
+    if (!/^\d+$/.test(raw)) return; // empty or non-integer → no-op
+    const requested = Number(raw);
+    const lastPage = Math.max(totalPages, 1);
+    const clamped = Math.min(Math.max(requested, 1), lastPage);
+    setRecordsPage(clamped - 1); // state is 0-based
+    setPageJumpInput('');
+  };
 
   if (!isAdmin) {
     return (
@@ -1250,7 +1298,7 @@ export function PipelineAdminPage() {
                 data-testid="pipeline-records-error"
                 title={DATA_ERROR_LABELS.RECORDS_FETCH_FAILED_TITLE}
                 message={recordsError}
-                onRetry={() => fetchRecords(recordsPage, filters)}
+                onRetry={() => fetchRecords(recordsPage, filters, pageSize)}
                 spacing="mb-3"
               />
             )}
@@ -1558,30 +1606,82 @@ export function PipelineAdminPage() {
                   </div>
                 )}
 
-                {/* Pagination */}
-                <div className="flex items-center justify-between mt-4">
-                  <p className="text-xs text-muted-foreground">
-                    {PIPELINE_LABELS.RECORDS_SHOWING}{' '}
-                    <span className="font-mono">{recordsPage * PAGE_SIZE + 1}–{Math.min((recordsPage + 1) * PAGE_SIZE, recordsTotal)}</span>
-                    {' '}{PIPELINE_LABELS.RECORDS_OF}{' '}
-                    <span className="font-mono">{recordsTotal.toLocaleString()}</span>
-                  </p>
-                  <div className="flex items-center gap-2">
+                {/* Pagination (SCRUM-2006: + page-size selector + go-to-page) */}
+                <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mt-4">
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <p className="text-xs text-muted-foreground">
+                      {PIPELINE_LABELS.RECORDS_SHOWING}{' '}
+                      <span className="font-mono">{recordsPage * pageSize + 1}–{Math.min((recordsPage + 1) * pageSize, recordsTotal)}</span>
+                      {' '}{PIPELINE_LABELS.RECORDS_OF}{' '}
+                      <span className="font-mono">{recordsTotal.toLocaleString()}</span>
+                    </p>
+                    {/* Page-size selector — resets to page 1 on change. */}
+                    <div className="flex items-center gap-1.5">
+                      <Select
+                        value={String(pageSize)}
+                        onValueChange={handlePageSizeChange}
+                        data-testid="pipeline-page-size"
+                      >
+                        <SelectTrigger
+                          aria-label={PAGINATION_LABELS.PAGE_SIZE_ARIA}
+                          className="h-8 w-[72px] bg-transparent border-[#00d4ff]/20 text-xs"
+                        >
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {PAGE_SIZE_OPTIONS.map((opt) => (
+                            <SelectItem key={opt} value={String(opt)}>{opt}</SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <span className="text-xs text-muted-foreground">{PAGINATION_LABELS.PER_PAGE}</span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {/* Go-to-page jump — clamps to [1, totalPages]; invalid input is a no-op. */}
+                    <div className="flex items-center gap-1.5">
+                      <Input
+                        type="number"
+                        min={1}
+                        max={totalPages || 1}
+                        inputMode="numeric"
+                        data-testid="pipeline-page-jump-input"
+                        aria-label={PAGINATION_LABELS.GO_TO_PAGE_ARIA}
+                        placeholder={PAGINATION_LABELS.GO_TO_PAGE_PLACEHOLDER}
+                        value={pageJumpInput}
+                        onChange={(e) => setPageJumpInput(e.target.value)}
+                        onKeyDown={(e) => { if (e.key === 'Enter') handleGoToPage(); }}
+                        className="h-8 w-[84px] bg-transparent border-[#00d4ff]/20 text-xs"
+                      />
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        data-testid="pipeline-page-jump-go"
+                        onClick={handleGoToPage}
+                        className="h-8 px-3 border-[#00d4ff]/20 text-xs"
+                      >
+                        {PAGINATION_LABELS.GO}
+                      </Button>
+                    </div>
                     <Button
                       variant="outline"
                       size="sm"
+                      data-testid="pipeline-page-prev"
+                      aria-label={PAGINATION_LABELS.PREVIOUS_PAGE_ARIA}
                       disabled={recordsPage === 0}
                       onClick={() => setRecordsPage((p) => p - 1)}
                       className="h-8 w-8 p-0 border-[#00d4ff]/20"
                     >
                       <ChevronLeft className="h-4 w-4" />
                     </Button>
-                    <span className="text-xs font-mono text-muted-foreground">
+                    <span data-testid="pipeline-page-indicator" className="text-xs font-mono text-muted-foreground">
                       {recordsPage + 1} / {totalPages || 1}
                     </span>
                     <Button
                       variant="outline"
                       size="sm"
+                      data-testid="pipeline-page-next"
+                      aria-label={PAGINATION_LABELS.NEXT_PAGE_ARIA}
                       disabled={recordsPage >= totalPages - 1}
                       onClick={() => setRecordsPage((p) => p + 1)}
                       className="h-8 w-8 p-0 border-[#00d4ff]/20"
