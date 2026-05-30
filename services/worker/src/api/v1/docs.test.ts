@@ -59,6 +59,39 @@ describe('OpenAPI spec', () => {
     expect(security).toContainEqual({});
   });
 
+  it('documents the public CTDL credential endpoint without internal identifiers', () => {
+    const ctdlPath = openApiSpec.paths['/credentials/{publicId}/ctdl'];
+    expect(ctdlPath).toBeDefined();
+    expect(ctdlPath.get.security).toContainEqual({});
+    expect(ctdlPath.get.responses['200'].content['application/ld+json'].schema).toEqual({
+      $ref: '#/components/schemas/CtdlCredential',
+    });
+    expect(ctdlPath.get.responses['410'].content['application/ld+json'].schema).toEqual({
+      $ref: '#/components/schemas/CtdlCredential',
+    });
+
+    const schema = openApiSpec.components.schemas.CtdlCredential;
+    expect(schema.required).toEqual(expect.arrayContaining([
+      '@context',
+      '@type',
+      'ceterms:name',
+      'ceterms:ctid',
+      'ceterms:offeredBy',
+      'ceterms:credentialStatusType',
+      'ceterms:dateEffective',
+      'ceterms:verificationServiceProfile',
+      'ceterms:identifier',
+    ]));
+    expect(schema.properties['ceterms:identifier'].required).toEqual([
+      'ceterms:identifierType',
+      'ceterms:identifierValue',
+    ]);
+    expect(JSON.stringify(schema)).not.toContain('org_id');
+    expect(JSON.stringify(schema)).not.toContain('user_id');
+    expect(JSON.stringify(schema)).not.toContain('fingerprint');
+    expect(JSON.stringify(schema)).not.toContain('recipient_email');
+  });
+
   it('batch endpoint requires API key', () => {
     const batchPath = openApiSpec.paths['/verify/batch'];
     const security = batchPath.post.security;
