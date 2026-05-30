@@ -143,3 +143,127 @@ billingRouter.post('/billing/portal', rateLimiters.checkout, async (req, res) =>
     sendError(res, 500, 'internal_error', 'Failed to create billing portal session');
   }
 });
+
+/** Allowed subscription statuses in the public BillingInfo contract. */
+const SUBSCRIPTION_STATUSES = new Set<string>(['active', 'trialing', 'past_due', 'canceled']);
+type SubscriptionStatus = 'active' | 'trialing' | 'past_due' | 'canceled';
+
+function normalizeStatus(raw: string | null | undefined): SubscriptionStatus {
+  return raw && SUBSCRIPTION_STATUSES.has(raw) ? (raw as SubscriptionStatus) : 'canceled';
+}
+
+/**
+ * GET /api/billing/status
+ *
+ * Returns the caller's current BillingInfo (subscription status + plan + usage),
+ * matching the shape `src/components/billing/BillingOverview.tsx` consumes.
+ *
+ * SCRUM-2210: the frontend BillingPage has always fetched this endpoint, but it
+ * was never implemented in the worker (`billingRouter` only had /checkout/session
+ * and /billing/portal) → 404 → the billing page could not load. This handler fills
+ * that contract.
+ *
+ * Resilience (the lesson from SCRUM-1983 / SCRUM-2213): this endpoint ALWAYS
+ * returns 200 with a usable BillingInfo. A caller with no subscription gets a
+ * free-tier default, and the usage count is best-effort (recordsUsed falls back
+ * to 0 if the count errors or times out) — a downstream query failure must never
+ * brick the billing page.
+ */
+export async function handleBillingStatus(
+  req: import('express').Request,
+  res: import('express').Response,
+): Promise<void> {
+  const userId = await extractAuthUserId(req);
+  if (!userId) {
+    sendError(res, 401, 'authentication_required', 'Authentication required');
+    return;
+  }
+
+  try {
+    const { data: sub, error: subError } = await db
+      .from('subscriptions')
+      .select('status, plan_id, org_id, current_period_start, current_period_end')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    if (subError) {
+      logger.error({ error: subError, userId }, 'billing/status: subscription lookup failed');
+      sendError(res, 500, 'internal_error', 'Failed to load billing status');
+      return;
+    }
+
+    // No subscription → safe free-tier default so the page always renders.
+    if (!sub) {
+      res.json({
+        status: 'canceled',
+        plan: { name: 'Free', recordsIncluded: 0 },
+        usage: { recordsUsed: 0, recordsLimit: null },
+        billing: { status: 'canceled' },
+      });
+      return;
+    }
+
+    const { data: plan } = await db
+      .from('plans')
+      .select('name, price_cents, billing_period, records_per_month')
+      .eq('id', sub.plan_id)
+      .maybeSingle();
+
+    const recordsLimit =
+      plan?.records_per_month && plan.records_per_month > 0 ? plan.records_per_month : null;
+
+    // Usage is best-effort: a slow or failing count must not 500 the page.
+    let recordsUsed = 0;
+    if (sub.org_id) {
+      try {
+        let usageQuery = db
+          .from('anchors')
+          .select('*', { count: 'exact', head: true })
+          .eq('org_id', sub.org_id);
+        if (sub.current_period_start) {
+          usageQuery = usageQuery.gte('created_at', sub.current_period_start);
+        }
+        const { count, error: usageError } = await usageQuery;
+        if (!usageError && typeof count === 'number') {
+          recordsUsed = count;
+        } else if (usageError) {
+          logger.warn({ error: usageError, userId }, 'billing/status: usage count failed (non-fatal)');
+        }
+      } catch (usageErr) {
+        logger.warn({ error: usageErr, userId }, 'billing/status: usage count threw (non-fatal)');
+      }
+    }
+
+    const status = normalizeStatus(sub.status);
+
+    res.json({
+      status,
+      plan: {
+        name: plan?.name ?? 'Unknown',
+        price: plan ? plan.price_cents / 100 : undefined,
+        period: plan ? (plan.billing_period === 'year' ? 'year' : 'month') : undefined,
+        recordsIncluded: recordsLimit ?? 'unlimited',
+      },
+      usage: {
+        recordsUsed,
+        recordsLimit,
+        percentUsed:
+          recordsLimit && recordsLimit > 0
+            ? Math.min(100, Math.round((recordsUsed / recordsLimit) * 100))
+            : undefined,
+      },
+      billing: {
+        status,
+        currentPeriodEnd: sub.current_period_end ?? undefined,
+        nextBillingDate: sub.current_period_end ?? undefined,
+      },
+    });
+  } catch (error) {
+    logger.error({ error, userId }, 'Failed to load billing status');
+    sendError(res, 500, 'internal_error', 'Failed to load billing status');
+  }
+}
+
+billingRouter.get('/billing/status', rateLimiters.api, handleBillingStatus);
