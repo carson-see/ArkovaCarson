@@ -420,28 +420,125 @@ function validatePassingEvidenceField(
   return message;
 }
 
+// "Not filled in yet" markers — never acceptable as evidence on any tier.
+// Anchored to the whole (trimmed) value so a legitimate sentence that merely
+// mentions one of these words is not falsely rejected.
+const INCOMPLETE_VALUE_RE =
+  /^(?:pending|tbd|to[\s-]?be[\s-]?(?:determined|announced|filled(?:[\s-]?in)?)|tba|todo|to[\s-]?do|fixme|wip|work[\s-]?in[\s-]?progress|fill[\s-]?in|placeholder|coming[\s-]?soon|see[\s-]?above|xxx+|\?+|-+|_+|\.{2,}|…|<[^>]*>)\.?$/i;
+
+// "Not applicable" markers — legitimate for some fields (e.g. `Migration
+// applied: none`) but never for a concrete deploy artifact.
+const NOT_APPLICABLE_VALUE_RE = /^(?:n\/?a|n\.?a\.?|none|not[\s-]?applicable|null|nil)\.?$/i;
+
+function isIncompletePlaceholder(value: string): boolean {
+  return INCOMPLETE_VALUE_RE.test(value.trim());
+}
+
+function isNotApplicablePlaceholder(value: string): boolean {
+  return NOT_APPLICABLE_VALUE_RE.test(value.trim());
+}
+
+/**
+ * Non-empty AND not a "not filled in yet" placeholder (PENDING/TBD/…).
+ * N/A-style answers are allowed — use {@link validateArtifactEvidenceField}
+ * for fields where N/A is also unacceptable.
+ */
+function validateFilledEvidenceField(body: string, field: string): string | null {
+  const value = extractEvidenceFieldValue(body, field);
+  if (value === null) return null; // label absent → missingFields() owns this
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return `${field} must include auditable evidence, not an empty value.`;
+  if (isIncompletePlaceholder(trimmed)) {
+    return `${field} is a placeholder (\`${trimmed}\`), not auditable evidence — fill in the real value from the staging deploy.`;
+  }
+  return null;
+}
+
+/**
+ * A concrete artifact that a real T2/T3 soak necessarily produces (worker
+ * revision, image digest, deploy-log id, Cloud Run URL). Neither a "not filled
+ * in" placeholder nor an "N/A" is acceptable here.
+ */
+function validateArtifactEvidenceField(body: string, field: string): string | null {
+  const filled = validateFilledEvidenceField(body, field);
+  if (filled !== null) return filled;
+  const value = extractEvidenceFieldValue(body, field);
+  if (value !== null && isNotApplicablePlaceholder(value)) {
+    return `${field} must reference a real staging deploy artifact; \`${value.trim()}\` is not auditable evidence for a T2/T3 soak.`;
+  }
+  return null;
+}
+
+function validateCloudRunUrlEvidence(body: string): string | null {
+  const field = 'Cloud Run service/tag URL:';
+  const artifact = validateArtifactEvidenceField(body, field);
+  if (artifact !== null) return artifact;
+  const value = extractEvidenceFieldValue(body, field);
+  if (value === null || value.trim().length === 0) return null;
+  return /\bhttps?:\/\/\S+/i.test(value)
+    ? null
+    : `${field} must contain the Cloud Run service or tag URL.`;
+}
+
+// Concrete deploy artifacts: a placeholder or N/A here means the deploy did
+// not actually happen for this evidence.
+const T2_T3_ARTIFACT_FIELDS = [
+  'Worker revision:',
+  'Image digest:',
+  'Staging deploy log id:',
+];
+
+// Remaining evidence fields that must at least be filled in (PENDING/TBD/empty
+// rejected). N/A-style answers stay allowed where legitimate (e.g. `Migration
+// applied: none`). T3-only fields are simply absent from a T2 body —
+// validateFilledEvidenceField no-ops on a missing label.
+const T2_T3_FILLED_FIELDS = [
+  'Staging branch:',
+  'Staging project ref:',
+  'E2E result:',
+  'Migration applied:',
+  'Rollback rehearsed:',
+  'Trigger A fires:',
+  'Trigger B fires:',
+  'Daily flush observation:',
+  'Per-org isolation check:',
+];
+
 function requiredValueErrors(body: string, tier: Tier): string[] {
-  if (tier !== 'T1') return [];
+  if (tier === 'T0') return [];
 
-  const emptyFieldErrors = TIER_SPECS.T1.requiredFields
-    .filter((field) => field !== 'Tier:' && field !== 'PR head SHA:')
-    .map((field) => validateNonEmptyEvidenceField(body, field));
+  if (tier === 'T1') {
+    const emptyFieldErrors = TIER_SPECS.T1.requiredFields
+      .filter((field) => field !== 'Tier:' && field !== 'PR head SHA:')
+      .map((field) => validateNonEmptyEvidenceField(body, field));
 
+    return [
+      ...emptyFieldErrors,
+      validateStagingTagEvidence(body),
+      validatePassingEvidenceField(
+        body,
+        'Health/smoke result:',
+        /\b(?:green|pass(?:ed|es)?|ok|healthy)\b/i,
+        'Health/smoke result: must state a passing health/smoke result.',
+      ),
+      validatePassingEvidenceField(
+        body,
+        'CI/E2E green:',
+        /\b(?:green|pass(?:ed|es)?|success(?:ful)?)\b/i,
+        'CI/E2E green: must state that CI/E2E is green.',
+      ),
+    ].filter((error): error is string => error !== null);
+  }
+
+  // T2 / T3 — the stricter, symmetric analog of the T1 checks above. Deploy
+  // evidence must carry real, auditable values; the SHA / scope / preflight /
+  // soak fields have their own dedicated validators and are skipped here to
+  // avoid duplicate errors (CLAUDE.md §1.11A: PENDING deploy evidence on dirty
+  // staging must not pass CI).
   return [
-    ...emptyFieldErrors,
-    validateStagingTagEvidence(body),
-    validatePassingEvidenceField(
-      body,
-      'Health/smoke result:',
-      /\b(?:green|pass(?:ed|es)?|ok|healthy)\b/i,
-      'Health/smoke result: must state a passing health/smoke result.',
-    ),
-    validatePassingEvidenceField(
-      body,
-      'CI/E2E green:',
-      /\b(?:green|pass(?:ed|es)?|success(?:ful)?)\b/i,
-      'CI/E2E green: must state that CI/E2E is green.',
-    ),
+    ...T2_T3_ARTIFACT_FIELDS.map((field) => validateArtifactEvidenceField(body, field)),
+    validateCloudRunUrlEvidence(body),
+    ...T2_T3_FILLED_FIELDS.map((field) => validateFilledEvidenceField(body, field)),
   ].filter((error): error is string => error !== null);
 }
 
@@ -500,6 +597,17 @@ export function hasResidualRiskException(body: string): { valid: boolean; missin
   for (const field of RESIDUAL_RISK_REQUIRED_FIELDS) {
     const re = new RegExp(String.raw`^[\s\-*]*${escapeRegExp(field)}`, 'im');
     if (!re.test(section)) missing.push(field);
+  }
+  // `Approved by:` must name a real approver. A present-but-empty or
+  // placeholder value (pending/tbd/n/a) is a self-waiver and does NOT grant
+  // the exception, which would otherwise bypass both the clean_mirror preflight
+  // and the soak-duration minimum (CLAUDE.md §1.11A).
+  if (!missing.includes('Approved by:')) {
+    const approver = extractEvidenceFieldValue(section, 'Approved by:');
+    const trimmed = approver?.trim() ?? '';
+    if (trimmed.length === 0 || isIncompletePlaceholder(trimmed) || isNotApplicablePlaceholder(trimmed)) {
+      missing.push('Approved by: (must name a real approver, not a blank or placeholder)');
+    }
   }
   return { valid: missing.length === 0, missing };
 }
