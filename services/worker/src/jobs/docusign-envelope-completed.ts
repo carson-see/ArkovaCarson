@@ -18,8 +18,15 @@ import type { TypeSafeDatabase } from '../types/database-overrides.js';
 export const DOCUSIGN_ENVELOPE_COMPLETED_JOB_TYPE = 'docusign.envelope_completed';
 const DEFAULT_DOCUSIGN_ENVELOPE_JOB_LIMIT = 10;
 const MAX_DOCUSIGN_ENVELOPE_JOB_LIMIT = 100;
+const QUEUE_STATUS_COUNTERS = {
+  completed: 'completed',
+  failed: 'failed',
+  dead: 'dead',
+  update_failed: 'updateFailed',
+} as const;
 
 type OrgIntegrationRow = TypeSafeDatabase['public']['Tables']['org_integrations']['Row'];
+type QueueStatus = keyof typeof QUEUE_STATUS_COUNTERS;
 
 interface DbQueryResult<T> {
   data: T | null;
@@ -42,7 +49,7 @@ interface DbInsertQuery<T> {
 }
 
 interface DbClient {
-  from(table: 'org_integrations'): DbSelectQuery<DocusignIntegrationRow>;
+  from(table: 'org_integrations' | 'member_integrations'): DbSelectQuery<DocusignIntegrationRow>;
   from(table: 'integration_events'): DbInsertQuery<{ id?: string }>;
 }
 
@@ -73,6 +80,14 @@ export interface DocusignEnvelopeJobRunResult {
   jobIds: string[];
 }
 
+function normalizeLimit(rawLimit: number | undefined): number {
+  if (rawLimit === undefined || !Number.isFinite(rawLimit)) {
+    return DEFAULT_DOCUSIGN_ENVELOPE_JOB_LIMIT;
+  }
+
+  return Math.min(MAX_DOCUSIGN_ENVELOPE_JOB_LIMIT, Math.max(1, Math.trunc(rawLimit)));
+}
+
 function getRefreshTokenStore(deps: DocusignEnvelopeJobRuntimeDeps): DocusignRefreshTokenStore {
   return deps.refreshTokenStore ?? createGcpSecretManagerRefreshTokenStore({
     env: deps.env,
@@ -84,8 +99,8 @@ async function fetchIntegration(
   db: DbClient,
   payload: DocusignEnvelopeCompletedJobPayloadT,
 ): Promise<DocusignIntegrationRow> {
-  const { data, error } = await db
-    .from('org_integrations')
+  const queryIntegration = (table: 'org_integrations' | 'member_integrations') => db
+    .from(table)
     .select('id, org_id, account_id, base_uri, token_secret_name')
     .eq('id', payload.integration_id)
     .eq('org_id', payload.org_id)
@@ -94,14 +109,30 @@ async function fetchIntegration(
     .is('revoked_at', null)
     .maybeSingle();
 
-  if (error) {
-    logger.error({ error, integrationId: payload.integration_id }, 'DocuSign job integration lookup failed');
+  const orgResult = await queryIntegration('org_integrations');
+  if (orgResult.error) {
+    logger.error(
+      { error: orgResult.error, integrationId: payload.integration_id },
+      'DocuSign job org integration lookup failed',
+    );
     throw new Error('docusign_integration_lookup_failed');
   }
-  if (!data) {
-    throw new Error('docusign_integration_not_found');
+  if (orgResult.data) {
+    return orgResult.data as DocusignIntegrationRow;
   }
-  return data;
+
+  const memberResult = await queryIntegration('member_integrations');
+  if (memberResult.error) {
+    logger.error(
+      { error: memberResult.error, integrationId: payload.integration_id },
+      'DocuSign job member integration lookup failed',
+    );
+    throw new Error('docusign_integration_lookup_failed');
+  }
+  if (memberResult.data) {
+    return memberResult.data as DocusignIntegrationRow;
+  }
+  throw new Error('docusign_integration_not_found');
 }
 
 export function makeDocusignEnvelopeJobDeps(
@@ -188,18 +219,33 @@ export function makeDocusignEnvelopeJobDeps(
         throw new Error('docusign_signed_document_sink_failed');
       }
 
-      return { queuedId: data?.id ?? input.ruleEventId };
+      return { queuedId: data && data.id ? data.id : input.ruleEventId };
     },
   };
+}
+
+function recordProcessedJob(
+  result: DocusignEnvelopeJobRunResult,
+  processed: { status: string; jobId?: string },
+): void {
+  result.claimed += 1;
+  if (processed.jobId) {
+    result.jobIds.push(processed.jobId);
+  }
+
+  if (isCountedQueueStatus(processed.status)) {
+    result[QUEUE_STATUS_COUNTERS[processed.status]] += 1;
+  }
+}
+
+function isCountedQueueStatus(status: string): status is QueueStatus {
+  return status in QUEUE_STATUS_COUNTERS;
 }
 
 export async function runDocusignEnvelopeCompletedJobs(
   options: DocusignEnvelopeJobRunOptions = {},
 ): Promise<DocusignEnvelopeJobRunResult> {
-  const rawLimit = options.limit ?? DEFAULT_DOCUSIGN_ENVELOPE_JOB_LIMIT;
-  const limit = Number.isFinite(rawLimit)
-    ? Math.min(MAX_DOCUSIGN_ENVELOPE_JOB_LIMIT, Math.max(1, Math.trunc(rawLimit)))
-    : DEFAULT_DOCUSIGN_ENVELOPE_JOB_LIMIT;
+  const limit = normalizeLimit(options.limit);
   const jobDeps = options.jobDeps ?? makeDocusignEnvelopeJobDeps(options);
   const result: DocusignEnvelopeJobRunResult = {
     claimed: 0,
@@ -216,12 +262,7 @@ export async function runDocusignEnvelopeCompletedJobs(
     });
     if (!processed.claimed) break;
 
-    result.claimed += 1;
-    if (processed.jobId) result.jobIds.push(processed.jobId);
-    if (processed.status === 'completed') result.completed += 1;
-    if (processed.status === 'failed') result.failed += 1;
-    if (processed.status === 'dead') result.dead += 1;
-    if (processed.status === 'update_failed') result.updateFailed += 1;
+    recordProcessedJob(result, processed);
   }
 
   return result;
