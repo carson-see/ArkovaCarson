@@ -276,7 +276,7 @@ function isJsxVisibleText(line: string, matchIndex: number): boolean {
   const lastLt = before.lastIndexOf('<');
   // The most recent angle bracket before the match is a tag-close `>` (so we are
   // inside element content, not inside a tag), and another tag opens after it.
-  return lastGt > lastLt && line.indexOf('<', matchIndex) !== -1;
+  return lastGt > lastLt && line.includes('<', matchIndex);
 }
 
 /** `<Hash …>` (component) or `</Hash>` (closing tag) — never user copy. */
@@ -291,7 +291,7 @@ function isJsxComponentName(line: string, matchIndex: number, prev: string): boo
  * ("…secure. Bitcoin is…") is NOT masked.
  */
 function isPropertyAccess(line: string, matchIndex: number, prev: string): boolean {
-  return prev === '.' && matchIndex >= 2 && /[A-Za-z0-9_]/.test(line[matchIndex - 2]);
+  return prev === '.' && matchIndex >= 2 && /\w/.test(line[matchIndex - 2]);
 }
 
 /**
@@ -332,7 +332,7 @@ function isUrlSegment(line: string, matchIndex: number, prev: string): boolean {
  */
 function isBareValueString(matchIndex: number, prev: string, after: string, line: string): boolean {
   if (prev !== '"' && prev !== "'" && prev !== '`') return false;
-  if (after[0] !== prev) return false; // closing quote must immediately follow
+  if (!after.startsWith(prev)) return false; // closing quote must immediately follow
   const beforeQuote = matchIndex >= 2 ? line[matchIndex - 2] : '';
   return beforeQuote !== '=';
 }

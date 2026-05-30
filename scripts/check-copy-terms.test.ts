@@ -36,11 +36,11 @@ function findTerm(substring: string): string {
   const stripBoundaries = (t: string): string =>
     t
       // character-class boundaries: (?<![-\w]) / (?![A-Za-z0-9]) etc.
-      .replace(/\(\?<!\[[^\]]+\]\)/g, '')
-      .replace(/\(\?!\[[^\]]+\]\)/g, '')
+      .replaceAll(/\(\?<!\[[^\]]+\]\)/g, '')
+      .replaceAll(/\(\?!\[[^\]]+\]\)/g, '')
       // word boundaries (SCRUM-2149 review B1): (?<!\w) / (?!\w)
-      .replace(/\(\?<!\\w\)/g, '')
-      .replace(/\(\?!\\w\)/g, '')
+      .replaceAll(/\(\?<!\\w\)/g, '')
+      .replaceAll(/\(\?!\\w\)/g, '')
       .trim();
   const exactToken = FORBIDDEN_TERMS.find((t) => stripBoundaries(t) === substring);
   const term = exactToken ?? FORBIDDEN_TERMS.find((t) => t.includes(substring));
