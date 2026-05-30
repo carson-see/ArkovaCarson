@@ -14,6 +14,20 @@
 
 ## Now
 
+### 2026-05-30 — SCRUM-2200 Track A PE eval moat (PR #975) + staging-deploy race fix (PR #976)
+
+**SCRUM-2200 Track A — professional-education eval moat** is committed on `feat/scrum-2200-pe-heldout-eval` (head `74865449`) and open as **[PR #975](https://github.com/carson-see/ArkovaCarson/pull/975)** (draft). Contents: merge gates (CPE/CLE/course-id field F1) over curated fixtures; a hard 18-entry held-out TEST split with a gate-contamination guard; a synthetic TRAIN generator + Vertex Gemini tuning-JSONL exporter; and a held-out runner that measures generalization F1 **reported-only, never gated** (gating the test set would make it a training signal). Live held-out run against tuned golden-v5 = **weighted F1 82.2%** (report under `services/worker/docs/eval/`); Vertex endpoint **undeployed immediately** after (fleet at 0 deployed models, §7). Local gates green: typecheck clean, worker tests 400/400, `lint` exit 0 (sole pre-existing error in untouched `stripe/handlers.ts`).
+
+**Tier:** path detector forces **T2** ("AI behavior", anything under `services/worker/src/ai/`) even though the diff is eval/tooling-only and the one prod-file change (`gemini.ts` `generateExtractionJson`) is off the production extraction path + fails closed on `ENABLE_AI_EXTRACTION`. Carson approved **option (b)** — residual-risk waiver + minimal staging deploy. Note is drafted in the PR (Approved-by left for Carson to confirm in-thread).
+
+**⛔ #975's staging deploy is blocked on a real CI bug.** The only sanctioned (WIF) deploy path, `deploy-staging.yml`, runs `scripts/staging/deploy.sh` **from main**, which did a single `gcloud artifacts docker images describe` right after `docker push`. Artifact Registry doesn't index a fresh manifest synchronously and the workflow's build→deploy gap is ~9s, so the readability check **failed deterministically** (observed on two consecutive #975 deploy-staging runs; image pushed fine, `describe` NOT_FOUND ~9s later, readable minutes after). Local deploy also blocked (arkova-cli lacks `actAs` on the runtime SA; deployer-SA impersonation denied; IAM changes prohibited). Fix = **[PR #976](https://github.com/carson-see/ArkovaCarson/pull/976)** (`fix/staging-deploy-ar-readability-retry`, T0): bounded retry loop (8×5s, env-tunable) + 2 regression tests; `deploy.test.sh` 26/26 pass under `GITHUB_ACTIONS=true`.
+
+**Open (Carson-gated), in order:** (1) merge **#976** → unblocks the deploy path; (2) re-run `deploy-staging.yml -f pr_number=975 -f source_ref=74865449…`, fill #975's PENDING evidence fields from the run summary; (3) mark #975 Ready, merge (hook-gated). Staging lease for #975 was **released** (deploy blocked, no point holding the shared rig). Downstream gates (Jira transition, Confluence page) stay parked until #975 lands per the no-premature-transition rule.
+
+_Last refreshed: 2026-05-30 by Claude — claims verified against gcloud/gh/test output: AR `describe` for `arkova-worker:pr-975-74865449` → digest `sha256:df574de9…` (readable now); `deploy.test.sh` 26 pass / 0 fail under `GITHUB_ACTIONS=true SKIP_LIVE_TESTS=1`; PR #976 opened via `gh pr create` (head `4cc4abb7`); PR #975 body updated via `gh pr edit`; staging lease released via `claim.sh release 975`._
+
+---
+
 ### 2026-05-29 — UAT bug closeout: SCRUM-1982 (profile redirect) + SCRUM-1983 (billing) + SCRUM-1984 (admin overview)
 
 Picked up the three 2026-05-22 UAT bugs. Each had a same-day frontend hotfix but the tickets stayed open; two still had gaps:
