@@ -10,7 +10,7 @@
  * Pure + dependency-injected: it performs no DB/IO itself. The caller supplies
  * the three lookups, which makes every branch — including the cross-tenant guard
  * and the no-chaining rule — unit-testable without a database. The DB-level
- * trigger added in migration 0326 enforces the same parent-linkage invariant at
+ * trigger added in migration 0327 enforces the same parent-linkage invariant at
  * write time; the read-time guard here is defense-in-depth against parent
  * reassignment after the marker was created.
  */
