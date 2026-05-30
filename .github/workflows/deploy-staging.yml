@@ -144,6 +144,7 @@ jobs:
           INPUT_SERVICE: ${{ inputs.service }}
           INPUT_PR_NUMBER: ${{ inputs.pr_number }}
           BUILD_SHA: ${{ steps.sha.outputs.sha }}
+          DEPLOY_SA: ${{ secrets.GCP_SERVICE_ACCOUNT }}
         run: |
           set -euo pipefail
           TAG="pr-${INPUT_PR_NUMBER}"
@@ -151,7 +152,17 @@ jobs:
             --region="${{ env.REGION }}" --project="${{ env.PROJECT_ID }}" \
             --format="value(status.url)")
           TAG_URL="${RAW_URL/https:\/\//https://${TAG}---}"
-          TOKEN=$(gcloud auth print-identity-token --audiences="${TAG_URL}")
+          # Mint the Cloud Run ID token via SA impersonation: under Workload
+          # Identity Federation the active credential cannot self-sign an ID
+          # token, so `print-identity-token` must impersonate the deploy SA
+          # (the WIF principal holds roles/iam.serviceAccountTokenCreator on
+          # it). Audience MUST be the base service URL (RAW_URL), not the tag
+          # URL — Cloud Run validates `aud` against the base URL and rejects a
+          # tag-audience token with HTTP 401.
+          TOKEN=$(gcloud auth print-identity-token \
+            --impersonate-service-account="${DEPLOY_SA}" \
+            --audiences="${RAW_URL}" \
+            --include-email)
           BODY=$(curl -fsS --max-time 20 \
             -H "Authorization: Bearer ${TOKEN}" \
             "${TAG_URL}/health?detailed=true")
