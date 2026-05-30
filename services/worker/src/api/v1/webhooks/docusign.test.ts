@@ -291,10 +291,12 @@ describe('POST /webhooks/docusign', () => {
   });
 
   it('returns 500 when the retryable job cannot be queued', async () => {
+    const rollback = nonceDelete();
     dbFromMock.mockReturnValueOnce(
       integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1', hmac_keys: null }),
     );
     dbFromMock.mockReturnValueOnce(nonceInsert());
+    dbFromMock.mockReturnValueOnce(rollback);
     dbFromMock.mockReturnValueOnce(webhookDlqInsert());
     rpcMock.mockResolvedValueOnce({ data: 'evt-1', error: null });
     submitJobMock.mockResolvedValueOnce(null);
@@ -303,9 +305,11 @@ describe('POST /webhooks/docusign', () => {
     const res = await postSignedBody(body);
 
     expect(res.status).toBe(500);
+    expect(rollback.delete).toHaveBeenCalledTimes(1);
   });
 
-  it('keeps the nonce when document-fetch enqueue fails after rule-event enqueue', async () => {
+  it('rolls back the nonce when document-fetch enqueue fails after rule-event enqueue', async () => {
+    const rollback = nonceDelete();
     const body = JSON.stringify({
       event: 'envelope-completed',
       eventId: 'evt-retry-1',
@@ -323,25 +327,27 @@ describe('POST /webhooks/docusign', () => {
     dbFromMock.mockReturnValueOnce(nonceInsert());
     rpcMock.mockResolvedValueOnce({ data: 'evt-first', error: null });
     submitJobMock.mockResolvedValueOnce(null);
+    dbFromMock.mockReturnValueOnce(rollback);
     dbFromMock.mockReturnValueOnce(webhookDlqInsert());
 
     const first = await postSignedBody(body);
 
     expect(first.status).toBe(500);
+    expect(rollback.delete).toHaveBeenCalledTimes(1);
 
     dbFromMock.mockReturnValueOnce(
       integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1' }),
     );
-    dbFromMock.mockReturnValueOnce(
-      nonceInsert({ code: '23505', message: 'duplicate key value violates unique constraint' }),
-    );
+    dbFromMock.mockReturnValueOnce(nonceInsert());
+    rpcMock.mockResolvedValueOnce({ data: 'evt-second', error: null });
+    submitJobMock.mockResolvedValueOnce('job-retry');
 
     const retry = await postSignedBody(body);
 
-    expect(retry.status).toBe(200);
-    expect(retry.body).toMatchObject({ ok: true, duplicate: true });
-    expect(rpcMock).toHaveBeenCalledTimes(1);
-    expect(submitJobMock).toHaveBeenCalledTimes(1);
+    expect(retry.status).toBe(202);
+    expect(retry.body).toEqual({ ok: true });
+    expect(rpcMock).toHaveBeenCalledTimes(2);
+    expect(submitJobMock).toHaveBeenCalledTimes(2);
   });
 
   it('rolls back the nonce when rule-event enqueue fails before a rule event exists', async () => {

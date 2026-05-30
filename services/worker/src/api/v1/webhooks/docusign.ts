@@ -203,7 +203,8 @@ async function dlqInsert(args: {
   payloadHash: string;
 }): Promise<void> {
   try {
-    const { error } = await db.from('webhook_dlq').insert({
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- webhook_dlq is migration-owned and not present in generated Supabase types yet
+    const { error } = await (db as any).from('webhook_dlq').insert({
       provider: 'docusign',
       reason: args.reason.slice(0, 500),
       external_id: args.externalId,
@@ -444,9 +445,7 @@ docusignWebhookRouter.post('/', async (req: Request, res: Response) => {
         });
       }
     } catch (enqueueErr) {
-      if (!ruleEventId) {
-        await rollbackNonceAfterEnqueueFailure(nonceKey);
-      }
+      await rollbackNonceAfterEnqueueFailure(nonceKey);
       throw enqueueErr;
     }
     res.status(202).json({ ok: true });
