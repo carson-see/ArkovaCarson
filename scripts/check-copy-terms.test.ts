@@ -12,7 +12,13 @@ import { describe, it, expect } from 'vitest';
 import {
   FORBIDDEN_TERMS,
   LAUNCH_BLOCKER_COPY_TERMS,
+  RISKY_ENUM_FIELDS,
+  type BaselineEntry,
+  type Violation,
+  findRawEnumRenders,
   findTermViolations,
+  partitionAgainstBaseline,
+  shouldCheck,
   shouldSkipLine,
   stripClassNameAttributes,
 } from './check-copy-terms.js';
@@ -203,5 +209,325 @@ describe('LAUNCH_BLOCKER_COPY_TERMS — public legal placeholder copy', () => {
     expect(
       findTermViolations(line, 7, 'src/pages/TermsPage.tsx').map((violation) => violation.term),
     ).toEqual(['following legal review', 'prior to production launch']);
+  });
+});
+
+// =============================================================================
+// SCRUM-2149 — coverage expansion (src/lib, src/hooks, packages/embed/src)
+// =============================================================================
+
+describe('shouldCheck — coverage expansion (SCRUM-2149)', () => {
+  it('scans src/components and src/pages (existing scope)', () => {
+    expect(shouldCheck('src/components/anchor/AssetDetailView.tsx')).toBe(true);
+    expect(shouldCheck('src/pages/DashboardPage.tsx')).toBe(true);
+  });
+
+  it('now scans src/lib (the previously-blind shared utility layer)', () => {
+    expect(shouldCheck('src/lib/explorer.ts')).toBe(true);
+    expect(shouldCheck('src/lib/proofPackage.ts')).toBe(true);
+  });
+
+  it('still excludes the copy.ts vocabulary file itself', () => {
+    expect(shouldCheck('src/lib/copy.ts')).toBe(false);
+  });
+
+  it('now scans src/hooks (previously blind)', () => {
+    expect(shouldCheck('src/hooks/useActiveOrg.ts')).toBe(true);
+  });
+
+  it('now scans the PUBLIC embeddable widget (packages/embed/src)', () => {
+    expect(shouldCheck('packages/embed/src/report-block.ts')).toBe(true);
+    expect(shouldCheck('packages/embed/src/web-component.ts')).toBe(true);
+  });
+
+  it('keeps excluding tests, ui primitives, and treasury admin', () => {
+    expect(shouldCheck('src/lib/explorer.test.ts')).toBe(false);
+    expect(shouldCheck('packages/embed/src/render.test.ts')).toBe(false);
+    expect(shouldCheck('src/components/ui/button.tsx')).toBe(false);
+    expect(shouldCheck('src/components/admin/treasury/TreasuryPanel.tsx')).toBe(false);
+  });
+
+  it('does not scan unrelated source roots (e.g. services/worker, supabase)', () => {
+    expect(shouldCheck('services/worker/src/index.ts')).toBe(false);
+    expect(shouldCheck('supabase/migrations/0001_init.sql')).toBe(false);
+    expect(shouldCheck('src/tests/rls/helpers.ts')).toBe(false);
+  });
+});
+
+// =============================================================================
+// SCRUM-2149 (b) — §1.3 term parity: testnet / mainnet / utxo / broadcast
+// =============================================================================
+
+describe('FORBIDDEN_TERMS — §1.3 chain-enum parity (SCRUM-2149b)', () => {
+  it.each(['testnet', 'mainnet', 'utxo', 'broadcast'])(
+    'flags "%s" in user-visible JSX text (case-insensitive)',
+    (word) => {
+      const term = findTerm(word);
+      expect(matches(term, `<p>Anchored on the ${word} network</p>`)).toBe(true);
+      expect(matches(term, `<p>Anchored on the ${word.toUpperCase()} network</p>`)).toBe(true);
+    },
+  );
+
+  it('does not match these terms as a substring of a longer identifier', () => {
+    // (?<![-\w]) / (?![-\w]) boundaries keep them off camel/snake identifiers.
+    expect(matches(findTerm('mainnet'), 'const mainnetConfig = {}')).toBe(false);
+    expect(matches(findTerm('testnet'), 'type TestnetParams = {}')).toBe(false);
+    expect(matches(findTerm('broadcast'), 'function broadcastTx() {}')).toBe(false);
+    expect(matches(findTerm('utxo'), 'const utxoSet = []')).toBe(false);
+  });
+
+  it('flags each new term through findTermViolations on a real JSX-text line', () => {
+    const terms = findTermViolations(
+      '<span>Your document was anchored to the mainnet via broadcast.</span>',
+      10,
+      'src/pages/PublicVerifyPage.tsx',
+    ).map((v) => v.term.toLowerCase());
+    expect(terms).toContain('mainnet');
+    expect(terms).toContain('broadcast');
+  });
+});
+
+// =============================================================================
+// SCRUM-2149 (d) — identifier / type-union / object-key / URL / bare-value
+// false-positive suppression. Only user-visible words must flag.
+// =============================================================================
+
+describe('findTermViolations — structural false-positive suppression (SCRUM-2149d)', () => {
+  it('does not flag a banned word inside a camelCase type/identifier name', () => {
+    // "Bitcoin" inside "BitcoinNetwork"; "crypto" inside "Cryptographic".
+    expect(
+      findTermViolations("type BitcoinNetwork = 'a' | 'b';", 11, 'src/lib/explorer.ts'),
+    ).toHaveLength(0);
+    expect(
+      findTermViolations("const x = 'Cryptographic Proof';", 1, 'src/lib/generateAuditReport.ts')
+        .map((v) => v.term.toLowerCase()),
+    ).not.toContain('crypto');
+  });
+
+  it('does not flag a banned word inside an UPPER_SNAKE identifier', () => {
+    expect(
+      findTermViolations("BITCOIN_NETWORK: env.VITE_BITCOIN_NETWORK || 'x',", 41, 'src/lib/env.ts')
+        .map((v) => v.term.toLowerCase()),
+    ).not.toContain('bitcoin');
+  });
+
+  it('does not flag string-literal members of a TS type-union declaration', () => {
+    const v = findTermViolations(
+      "type Net = 'testnet4' | 'testnet' | 'signet' | 'mainnet';",
+      11,
+      'src/lib/explorer.ts',
+    );
+    expect(v).toHaveLength(0);
+  });
+
+  it('does not flag a banned word in object-key position', () => {
+    // Record/object keys are config, not copy: `testnet: '...'`, `mainnet: '...'`.
+    const v = findTermViolations("  mainnet: 'https://example.com',", 17, 'src/lib/explorer.ts');
+    expect(v.map((x) => x.term.toLowerCase())).not.toContain('mainnet');
+  });
+
+  it('does not flag a banned word inside a URL string or URL path template', () => {
+    expect(
+      findTermViolations("  testnet: 'https://mempool.space/testnet',", 15, 'src/lib/explorer.ts'),
+    ).toHaveLength(0);
+    expect(
+      findTermViolations('  return `${base}/block/${blockHeight}`;', 59, 'src/lib/explorer.ts')
+        .map((v) => v.term.toLowerCase()),
+    ).not.toContain('block');
+  });
+
+  it('does not flag a bare-value string literal (enum/list member) in code', () => {
+    // `'token'` as a Set/array element; `|| 'mainnet'` as a fallback value.
+    expect(
+      findTermViolations("  'token',", 51, 'src/lib/sourceProvenance.ts')
+        .map((v) => v.term.toLowerCase()),
+    ).not.toContain('token');
+    expect(
+      findTermViolations("const net = cfg.net || 'mainnet';", 41, 'src/lib/env.ts')
+        .map((v) => v.term.toLowerCase()),
+    ).not.toContain('mainnet');
+  });
+
+  it('STILL flags a banned word that is a JSX/HTML attribute value (=" / =\')', () => {
+    // The bare-value skip must NOT apply to attribute copy — only to code values.
+    expect(
+      findTermViolations('<input placeholder="Wallet address" />', 1, 'src/components/X.tsx')
+        .map((v) => v.term.toLowerCase()),
+    ).toContain('wallet');
+  });
+
+  it('STILL flags a banned word embedded mid-phrase in a quoted UI string', () => {
+    // Genuine copy: the banned word is part of a longer phrase, not a bare value.
+    const v = findTermViolations(
+      "  fingerprint: 'A SHA-256 hash of the document contents.',",
+      160,
+      'src/lib/proofPackage.ts',
+    ).map((x) => x.term.toLowerCase());
+    expect(v).toContain('hash');
+  });
+
+  it('STILL flags free-standing banned copy in JSX text (regression guard)', () => {
+    const v = findTermViolations(
+      '<p className="text-xs">Block Height</p>',
+      5,
+      'src/components/X.tsx',
+    ).map((x) => x.term.toLowerCase());
+    expect(v.some((t) => t.includes('block'))).toBe(true);
+  });
+});
+
+// =============================================================================
+// SCRUM-2149 (c) — raw DB-enum render heuristic. A bare {X.<riskyfield>} as a
+// JSX expression-child dumps a DB enum to users without a display mapper.
+// =============================================================================
+
+describe('findRawEnumRenders — raw enum JSX-child detection (SCRUM-2149c)', () => {
+  it('exposes a small, curated set of risky fields', () => {
+    expect(RISKY_ENUM_FIELDS).toEqual(
+      expect.arrayContaining(['status', 'anchor_status', 'network', 'credential_type']),
+    );
+    // Keep the set small/conservative.
+    expect(RISKY_ENUM_FIELDS.length).toBeLessThanOrEqual(8);
+  });
+
+  it('flags a bare {x.status} JSX expression child on its own line', () => {
+    const v = findRawEnumRenders('            {result.status}', 72, 'src/components/search/Foo.tsx');
+    expect(v).toHaveLength(1);
+    expect(v[0].term).toContain('result.status');
+    expect(v[0].line).toBe(72);
+  });
+
+  it('flags an inline >{x.credential_type}< JSX child', () => {
+    const v = findRawEnumRenders(
+      '          <Badge className="text-[10px]">{r.credential_type}</Badge>',
+      427,
+      'src/pages/AdminUserDetailPage.tsx',
+    );
+    expect(v).toHaveLength(1);
+    expect(v[0].term).toContain('credential_type');
+  });
+
+  it('flags optional-chained {x?.anchor_status} children', () => {
+    const v = findRawEnumRenders('  {anchor?.anchor_status}', 5, 'src/components/X.tsx');
+    expect(v).toHaveLength(1);
+  });
+
+  it('does NOT flag a template-literal interpolation ${res.status} (HTTP code)', () => {
+    expect(
+      findRawEnumRenders('  throw new Error(`HTTP ${res.status}`);', 63, 'src/components/X.tsx'),
+    ).toHaveLength(0);
+    expect(
+      findRawEnumRenders('  setError(`Request failed (${response.status})`);', 9, 'src/components/X.tsx'),
+    ).toHaveLength(0);
+  });
+
+  it('does NOT flag a JSX attribute pass-through status={x.status}', () => {
+    // Passing the enum into a mapper component is the CORRECT pattern.
+    expect(
+      findRawEnumRenders('        <StatusBadge status={job.status} />', 110, 'src/components/X.tsx'),
+    ).toHaveLength(0);
+    expect(
+      findRawEnumRenders('  variant={subscription.status === "active" ? "a" : "b"}', 1, 'src/components/X.tsx'),
+    ).toHaveLength(0);
+  });
+
+  it('does NOT flag fields outside the curated risky set', () => {
+    expect(findRawEnumRenders('  {item.public_id}', 1, 'src/components/X.tsx')).toHaveLength(0);
+    expect(findRawEnumRenders('  {user.email}', 1, 'src/components/X.tsx')).toHaveLength(0);
+  });
+
+  it('does NOT flag in non-.tsx files (heuristic is JSX-only)', () => {
+    expect(findRawEnumRenders('  {x.status}', 1, 'src/lib/helper.ts')).toHaveLength(0);
+    expect(findRawEnumRenders('  {x.status}', 1, 'packages/embed/src/report-block.ts')).toHaveLength(0);
+  });
+
+  it('integrates into findTermViolations for .tsx files', () => {
+    // findTermViolations is the single per-line entry point checkFile uses.
+    const v = findTermViolations('            {result.status}', 72, 'src/pages/Foo.tsx');
+    expect(v.some((x) => x.term.includes('result.status'))).toBe(true);
+  });
+});
+
+// =============================================================================
+// SCRUM-2148 — grandfather baseline partitioning. The hardened linter must
+// PASS on recorded pre-existing violations and FAIL only on NEW ones.
+// =============================================================================
+
+describe('partitionAgainstBaseline — grandfather logic (SCRUM-2148)', () => {
+  const baseline: BaselineEntry[] = [
+    { file: 'src/pages/A.tsx', line: 10, term: 'hash', reason: 'locked by PR #964' },
+    { file: 'src/pages/B.tsx', line: 20, term: 'raw enum render: {x.status}', reason: 'SCRUM-2003 track' },
+  ];
+
+  const v = (file: string, line: number, term: string): Violation => ({ file, line, term, context: '' });
+
+  it('classifies a violation present in the baseline as grandfathered (not new)', () => {
+    const { fresh, grandfathered, stale } = partitionAgainstBaseline(
+      [v('src/pages/A.tsx', 10, 'hash')],
+      baseline,
+    );
+    expect(fresh).toHaveLength(0);
+    expect(grandfathered).toHaveLength(1);
+    expect(stale).toHaveLength(1); // B.tsx:20 was expected but not seen this run
+  });
+
+  it('classifies an unrecorded violation as NEW (fails the build)', () => {
+    const { fresh } = partitionAgainstBaseline(
+      [v('src/pages/A.tsx', 10, 'hash'), v('src/pages/C.tsx', 99, 'wallet')],
+      baseline,
+    );
+    expect(fresh.map((x) => x.file)).toEqual(['src/pages/C.tsx']);
+  });
+
+  it('treats a baselined file at a DIFFERENT line as a new violation (line drift)', () => {
+    const { fresh } = partitionAgainstBaseline([v('src/pages/A.tsx', 11, 'hash')], baseline);
+    expect(fresh).toHaveLength(1);
+    expect(fresh[0].line).toBe(11);
+  });
+
+  it('matches on file+line only — term text is informational, not part of the key', () => {
+    // The recorded term differs (e.g. heuristic message wording changes) but
+    // the same file:line should still be recognised as grandfathered.
+    const { fresh, grandfathered } = partitionAgainstBaseline(
+      [v('src/pages/B.tsx', 20, 'raw enum render: {x.anchor_status}')],
+      baseline,
+    );
+    expect(fresh).toHaveLength(0);
+    expect(grandfathered).toHaveLength(1);
+  });
+
+  it('reports baseline entries with no matching current violation as STALE', () => {
+    const { stale } = partitionAgainstBaseline([], baseline);
+    expect(stale).toHaveLength(2);
+    expect(stale.map((e) => e.file).sort()).toEqual(['src/pages/A.tsx', 'src/pages/B.tsx']);
+  });
+
+  it('normalises path separators so OS-specific paths still match', () => {
+    const { fresh } = partitionAgainstBaseline(
+      [v('src\\pages\\A.tsx', 10, 'hash')],
+      baseline,
+    );
+    expect(fresh).toHaveLength(0);
+  });
+});
+
+describe('copy-terms-baseline.json — shipped baseline is well-formed (SCRUM-2148)', () => {
+  it('every entry has file, line, term, and a non-empty reason', async () => {
+    const { readFileSync } = await import('node:fs');
+    const { fileURLToPath } = await import('node:url');
+    const { dirname, join } = await import('node:path');
+    const here = dirname(fileURLToPath(import.meta.url));
+    const raw = readFileSync(join(here, 'ci/snapshots/copy-terms-baseline.json'), 'utf-8');
+    const parsed = JSON.parse(raw) as { violations: BaselineEntry[] };
+    expect(Array.isArray(parsed.violations)).toBe(true);
+    expect(parsed.violations.length).toBeGreaterThan(0);
+    for (const e of parsed.violations) {
+      expect(typeof e.file).toBe('string');
+      expect(e.file.length).toBeGreaterThan(0);
+      expect(Number.isInteger(e.line)).toBe(true);
+      expect(typeof e.term).toBe('string');
+      expect(typeof e.reason).toBe('string');
+      expect(e.reason.trim().length).toBeGreaterThan(0);
+    }
   });
 });
