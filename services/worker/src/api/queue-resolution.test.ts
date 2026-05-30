@@ -35,7 +35,6 @@ vi.mock('../jobs/org-queue-scheduler.js', () => ({
 }));
 
 import {
-  handleListPendingResolution,
   handleResolveQueue,
   handleRunOrgAnchorQueue,
   ResolveQueueInput,
@@ -147,59 +146,12 @@ describe('mapRpcErrorToStatus', () => {
   });
 });
 
-describe('handleListPendingResolution', () => {
-  beforeEach(() => rpcMock.mockReset());
-  afterEach(() => vi.restoreAllMocks());
-
-  it('returns items + count on success', async () => {
-    rpcMock.mockResolvedValue({
-      data: [
-        { public_id: 'pid_acmemsa1', external_file_id: 'drive-123', filename: 'f.pdf', fingerprint: 'fp', created_at: 't', sibling_count: 2 },
-      ],
-      error: null,
-    });
-    const { res, status, json } = mockRes();
-    await handleListPendingResolution(mockReq(), res);
-    expect(status).not.toHaveBeenCalled();
-    expect(json).toHaveBeenCalledWith(
-      expect.objectContaining({ count: 1, items: expect.any(Array) }),
-    );
-  });
-
-  it('clamps limit to [1, 500]', async () => {
-    rpcMock.mockResolvedValue({ data: [], error: null });
-    const { res } = mockRes();
-    await handleListPendingResolution(mockReq({ query: { limit: '10000' } }), res);
-    expect(rpcMock).toHaveBeenCalledWith(
-      'list_pending_resolution_anchors_v2',
-      { p_limit: 500 },
-    );
-
-    rpcMock.mockReset();
-    rpcMock.mockResolvedValue({ data: [], error: null });
-    const { res: res2 } = mockRes();
-    await handleListPendingResolution(mockReq({ query: { limit: '-5' } }), res2);
-    expect(rpcMock).toHaveBeenCalledWith(
-      'list_pending_resolution_anchors_v2',
-      { p_limit: 1 },
-    );
-  });
-
-  it('returns 500 when RPC errors', async () => {
-    rpcMock.mockResolvedValue({ data: null, error: { message: 'boom' } });
-    const { res, status, json } = mockRes();
-    await handleListPendingResolution(mockReq(), res);
-    expect(status).toHaveBeenCalledWith(500);
-    expect(json).toHaveBeenCalledWith(expect.objectContaining({ error: expect.any(Object) }));
-  });
-
-  it('coerces non-array data to empty list', async () => {
-    rpcMock.mockResolvedValue({ data: null, error: null });
-    const { res, json } = mockRes();
-    await handleListPendingResolution(mockReq(), res);
-    expect(json).toHaveBeenCalledWith({ items: [], count: 0 });
-  });
-});
+// SCRUM-2213: handleListPendingResolution was rewritten to resolve the caller's
+// org from the authenticated userId and query `anchors` org-scoped directly,
+// instead of the `auth.uid()`-dependent RPC `list_pending_resolution_anchors_v2`
+// (which always failed under the worker's service-role client → 500). Its tests
+// now live in `queue-resolution-pending.test.ts` (profiles + anchors mocks, 6
+// cases). The prior RPC-mock tests for it have been removed as obsolete.
 
 describe('handleResolveQueue', () => {
   beforeEach(() => {
