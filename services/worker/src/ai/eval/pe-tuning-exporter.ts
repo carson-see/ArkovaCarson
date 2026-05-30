@@ -81,6 +81,15 @@ export function buildVertexTuningExample(entry: GoldenDatasetEntry): VertexTunin
       `Refusing to export held-out entry ${entry.id} as TRAIN data — train/test contamination guard.`,
     );
   }
+  // Fail closed: only the explicit synthetic TRAIN split is exportable. The
+  // curated gate fixtures and held-out set are eval evidence — without this
+  // guard a caller could pass a gate fixture and silently train on the exact
+  // data that scores the merge gate, inflating future F1.
+  if (!hasTag(entry, 'synthetic-train')) {
+    throw new Error(
+      `Refusing to export entry ${entry.id} without the 'synthetic-train' split tag — only the synthetic TRAIN split may be exported as tuning data.`,
+    );
+  }
   return {
     systemInstruction: { role: 'system', parts: [{ text: PE_EVAL_SYSTEM_PROMPT }] },
     contents: [
@@ -92,7 +101,8 @@ export function buildVertexTuningExample(entry: GoldenDatasetEntry): VertexTunin
 
 /** Serialize entries to Vertex tuning JSONL (one object per line, trailing newline). */
 export function toTuningJsonl(entries: GoldenDatasetEntry[]): string {
-  return entries.map((entry) => JSON.stringify(buildVertexTuningExample(entry))).join('\n') + '\n';
+  if (entries.length === 0) return '';
+  return `${entries.map((entry) => JSON.stringify(buildVertexTuningExample(entry))).join('\n')}\n`;
 }
 
 /**

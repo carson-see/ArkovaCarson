@@ -78,6 +78,25 @@ function argValue(args: string[], flag: string, fallback?: string): string | und
   return idx >= 0 ? args[idx + 1] : fallback;
 }
 
+/**
+ * Gemini selects its tuned Vertex endpoint from GEMINI_TUNED_MODEL, read at
+ * construction time (gemini.ts) — not from a constructor arg. So `--model` for
+ * the gemini provider must flow through the env, mirroring run-pe-heldout.ts.
+ * Without this, `--provider gemini --model <endpoint>` silently scored whatever
+ * endpoint was already in env (or the base model), producing gate evidence for
+ * the wrong endpoint. nessie/together take the override as a constructor arg
+ * instead, so this is a no-op for them.
+ */
+export function applyGeminiModelOverride(
+  providerArg: string,
+  modelOverride: string | undefined,
+  env: NodeJS.ProcessEnv = process.env,
+): void {
+  if (providerArg === 'gemini' && modelOverride) {
+    env.GEMINI_TUNED_MODEL = modelOverride;
+  }
+}
+
 async function buildProvider(providerArg: string, modelOverride: string | undefined): Promise<IAIProvider> {
   if (providerArg === 'mock') {
     const { MockAIProvider } = await import('../mock.js');
@@ -192,6 +211,10 @@ async function main(): Promise<void> {
     console.error('ERROR: ENABLE_AI_EXTRACTION must be "true" to run live PE eval extraction.');
     process.exit(2);
   }
+
+  // Route --model to the gemini provider via GEMINI_TUNED_MODEL before the
+  // provider is constructed (gemini reads the endpoint from env at construction).
+  applyGeminiModelOverride(providerArg, modelOverride);
 
   const gateSelection = resolveRequestedGates(argValue(args, '--gates'));
   if ('error' in gateSelection) {

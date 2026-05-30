@@ -10,7 +10,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import { runEval } from './runner.js';
 import { evaluateEvalGates } from './eval-gates.js';
-import { resolveRequestedGates, resolveOutputDir } from './run-pe-gates.js';
+import {
+  resolveRequestedGates,
+  resolveOutputDir,
+  applyGeminiModelOverride,
+} from './run-pe-gates.js';
 import { GOLDEN_DATASET_PROFESSIONAL_EDUCATION } from './golden-dataset-professional-education.js';
 import type { ExtractionResult, IAIProvider } from '../types.js';
 
@@ -90,6 +94,27 @@ describe('professional-education gate path', () => {
 
   it('honors an explicit --output override', () => {
     expect(resolveOutputDir('/opt/custom-report', '/repo/root')).toBe('/opt/custom-report');
+  });
+
+  it('routes --model to the gemini tuned endpoint via GEMINI_TUNED_MODEL', () => {
+    // Carson's blocking review finding: `--provider gemini --model <endpoint>`
+    // must select that endpoint, not silently score whatever is already in env.
+    const env: NodeJS.ProcessEnv = {};
+    applyGeminiModelOverride('gemini', 'projects/p/locations/us/endpoints/123', env);
+    expect(env.GEMINI_TUNED_MODEL).toBe('projects/p/locations/us/endpoints/123');
+  });
+
+  it('does not touch GEMINI_TUNED_MODEL for non-gemini providers', () => {
+    const env: NodeJS.ProcessEnv = { GEMINI_TUNED_MODEL: 'preexisting' };
+    applyGeminiModelOverride('nessie', 'some-nessie-model', env);
+    applyGeminiModelOverride('together', 'some-together-model', env);
+    expect(env.GEMINI_TUNED_MODEL).toBe('preexisting');
+  });
+
+  it('leaves GEMINI_TUNED_MODEL untouched when --model is omitted', () => {
+    const env: NodeJS.ProcessEnv = { GEMINI_TUNED_MODEL: 'preexisting' };
+    applyGeminiModelOverride('gemini', undefined, env);
+    expect(env.GEMINI_TUNED_MODEL).toBe('preexisting');
   });
 
   it('fails closed for every gate when the provider extracts nothing', async () => {

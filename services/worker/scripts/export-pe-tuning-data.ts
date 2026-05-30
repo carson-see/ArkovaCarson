@@ -44,6 +44,19 @@ function main(): void {
     console.error(`ERROR: --count must be a positive integer (got "${count}")`);
     process.exit(2);
   }
+  if (!Number.isInteger(seed) || seed < 0) {
+    console.error(`ERROR: --seed must be a non-negative integer (got "${seed}")`);
+    process.exit(2);
+  }
+  if (mix) {
+    const inRange = (n: number): boolean => Number.isFinite(n) && n >= 0 && n <= 1;
+    if (!inRange(mix.cpe) || !inRange(mix.cle) || Math.abs(mix.cpe + mix.cle - 1) > 1e-9) {
+      console.error(
+        `ERROR: --cpe and --cle must each be in [0,1] and sum to 1 (got cpe=${mix.cpe}, cle=${mix.cle})`,
+      );
+      process.exit(2);
+    }
+  }
 
   const outputPath = argValue(args, '--output')
     ? resolve(argValue(args, '--output')!)

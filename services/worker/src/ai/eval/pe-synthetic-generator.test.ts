@@ -10,6 +10,18 @@ describe('pe-synthetic-generator (SCRUM-2200 Track A — scaled synthetic TRAIN 
     expect(generatePeSyntheticDataset({ count: 250, seed: 1 }).length).toBe(250);
   });
 
+  it('rejects invalid count/mix inputs instead of emitting malformed output', () => {
+    expect(() => generatePeSyntheticDataset({ count: -1, seed: 1 })).toThrow(RangeError);
+    expect(() => generatePeSyntheticDataset({ count: 2.5, seed: 1 })).toThrow(RangeError);
+    expect(() => generatePeSyntheticDataset({ count: Number.NaN, seed: 1 })).toThrow(RangeError);
+    expect(() =>
+      generatePeSyntheticDataset({ count: 10, seed: 1, mix: { cpe: -0.5, cle: 1.5 } }),
+    ).toThrow(RangeError);
+    expect(() =>
+      generatePeSyntheticDataset({ count: 10, seed: 1, mix: { cpe: Number.NaN, cle: 0.5 } }),
+    ).toThrow(RangeError);
+  });
+
   it('is deterministic for a given seed', () => {
     const a = generatePeSyntheticDataset({ count: 120, seed: 7 });
     const b = generatePeSyntheticDataset({ count: 120, seed: 7 });

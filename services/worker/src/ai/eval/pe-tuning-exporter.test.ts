@@ -55,6 +55,20 @@ describe('pe-tuning-exporter (SCRUM-2200 Track A — Vertex Gemini supervised-tu
     expect(() => buildVertexTuningExample(heldOut)).toThrow(/held-out/i);
   });
 
+  it('fails closed for any entry missing the synthetic-train split tag', () => {
+    // Even a non-held-out entry must carry the explicit TRAIN-split tag, so a
+    // curated gate fixture can never be silently exported as training data.
+    const notTrainSplit = {
+      ...sample(),
+      tags: ['synthetic', 'professional-education', 'cpe'],
+    };
+    expect(() => buildVertexTuningExample(notTrainSplit)).toThrow(/synthetic-train/i);
+  });
+
+  it('returns an empty string for empty input (no lone blank JSONL line)', () => {
+    expect(toTuningJsonl([])).toBe('');
+  });
+
   it('emits one valid JSONL line per entry with a trailing newline', () => {
     const entries = generatePeSyntheticDataset({ count: 30, seed: 23 });
     const jsonl = toTuningJsonl(entries);

@@ -333,6 +333,17 @@ function generateCleEntry(rng: () => number, index: number): GoldenDatasetEntry 
  */
 export function generatePeSyntheticDataset(options: PeSyntheticOptions): GoldenDatasetEntry[] {
   const { count, seed = 0xa11ce, mix = { cpe: 0.5, cle: 0.5 } } = options;
+  if (!Number.isInteger(count) || count < 0) {
+    throw new RangeError(`count must be a non-negative integer (got ${String(count)})`);
+  }
+  if (
+    !Number.isFinite(mix.cpe) ||
+    !Number.isFinite(mix.cle) ||
+    mix.cpe < 0 ||
+    mix.cle < 0
+  ) {
+    throw new RangeError('mix.cpe and mix.cle must be finite non-negative numbers');
+  }
   const rng = mulberry32(seed);
   const total = mix.cpe + mix.cle;
   const cpeShare = total > 0 ? mix.cpe / total : 0.5;

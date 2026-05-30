@@ -51,6 +51,12 @@ describe('pe-eval-extraction', () => {
     expect(parsed.confidence).toBeCloseTo(0.92);
   });
 
+  it('clamps out-of-range confidence into [0, 1]', () => {
+    expect(parsePeExtraction('{"confidence": 1.4}').confidence).toBe(1);
+    expect(parsePeExtraction('{"confidence": -0.2}').confidence).toBe(0);
+    expect(parsePeExtraction('{"creditHours": 8}').confidence).toBe(0.5);
+  });
+
   it('detects providers that expose the raw-generate capability', () => {
     const withCap: PeRawModel = { generateExtractionJson: vi.fn() };
     expect(supportsPeRawModel(withCap)).toBe(true);

@@ -167,7 +167,9 @@ export function parsePeExtraction(text: string): {
   }
 
   const confidence = coerceNumber(rawConfidence);
-  return { fields, confidence: confidence ?? 0.5 };
+  const boundedConfidence =
+    confidence === undefined ? 0.5 : Math.max(0, Math.min(1, confidence));
+  return { fields, confidence: boundedConfidence };
 }
 
 /**
