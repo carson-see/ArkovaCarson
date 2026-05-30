@@ -215,12 +215,16 @@ export async function handleBillingStatus(
       plan?.records_per_month && plan.records_per_month > 0 ? plan.records_per_month : null;
 
     // Usage is best-effort: a slow or failing count must not 500 the page.
+    // Uses the planner-estimate count mode deliberately — an exact count is
+    // banned on large tables (R0-8 / SCRUM-1254: exact counts full-scan `anchors`
+    // and hit the 60s PostgREST timeout). An approximate usage figure is fine for
+    // the meter, and with the try/catch below it can never brick billing.
     let recordsUsed = 0;
     if (sub.org_id) {
       try {
         let usageQuery = db
           .from('anchors')
-          .select('*', { count: 'exact', head: true })
+          .select('*', { count: 'estimated', head: true })
           .eq('org_id', sub.org_id);
         if (sub.current_period_start) {
           usageQuery = usageQuery.gte('created_at', sub.current_period_start);
