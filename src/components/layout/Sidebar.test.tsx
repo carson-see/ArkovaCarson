@@ -4,12 +4,19 @@
  * SCRUM-1787: Logo navigates to role-aware home route via useProfile destination.
  * Previous behavior (GAP-04): Logo linked to /search for all users.
  * New behavior: Logo links to /dashboard for authenticated users with roles.
+ *
+ * SCRUM-2004 ([GA-S2/E5] Sidebar discoverability audit and refresh):
+ * Key destinations (Records, Organization, Billing, API Keys, Settings) existed
+ * as routes but were reachable only by typing the URL — they were absent from the
+ * sidebar nav. These tests assert the surfaced destinations render, respect the
+ * existing role/permission gating, and highlight the active route.
  */
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { Sidebar } from './Sidebar';
+import { ROUTES } from '@/lib/routes';
 import type { RouteDestination } from '@/hooks/useProfile';
 
 // Mock ArkovaLogo
@@ -22,11 +29,15 @@ vi.mock('@/components/layout/ArkovaLogo', () => ({
   ),
 }));
 
-// Mock useProfile — controls the logo destination
+// Mock useProfile — controls the logo destination AND the profile role used for
+// role-based nav gating (SCRUM-2004). Both are configurable per test.
 const mockDestination = vi.fn<() => RouteDestination>(() => '/dashboard');
+const mockProfile = vi.fn<() => { role: string | null; org_id: string | null }>(
+  () => ({ role: 'ORG_ADMIN', org_id: 'org-1' }),
+);
 vi.mock('@/hooks/useProfile', () => ({
   useProfile: () => ({
-    profile: { role: 'INDIVIDUAL', org_id: null },
+    profile: mockProfile(),
     loading: false,
     updating: false,
     error: null,
@@ -36,13 +47,18 @@ vi.mock('@/hooks/useProfile', () => ({
   }),
 }));
 
-function renderSidebar(props = {}) {
+function renderSidebar(props = {}, initialEntries = ['/dashboard']) {
   return render(
-    <MemoryRouter initialEntries={['/dashboard']}>
+    <MemoryRouter initialEntries={initialEntries}>
       <Sidebar {...props} />
     </MemoryRouter>,
   );
 }
+
+beforeEach(() => {
+  mockDestination.mockReturnValue('/dashboard');
+  mockProfile.mockReturnValue({ role: 'ORG_ADMIN', org_id: 'org-1' });
+});
 
 describe('Sidebar', () => {
   it('renders the ArkovaLogo', () => {
@@ -83,32 +99,129 @@ describe('Sidebar', () => {
     expectLogoHref('/review-pending', '/review-pending');
   });
 
-  it('renders simplified main navigation (UAT Session 40 redesign)', () => {
+  // ──────────────────────────────────────────────────────────────────────
+  // SCRUM-2004: discoverability — surface buried destinations in the sidebar
+  // ──────────────────────────────────────────────────────────────────────
+
+  function hrefSet() {
+    return screen
+      .getAllByRole('link')
+      .map((a) => a.getAttribute('href'));
+  }
+
+  it('SCRUM-2004: surfaces Dashboard + Search primary destinations', () => {
     renderSidebar();
-    expect(screen.getAllByText('Dashboard').length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText('Search').length).toBeGreaterThanOrEqual(1);
-    expect(screen.queryByText('Documents')).toBeNull();
-    expect(screen.queryByText('Settings')).toBeNull();
-    expect(screen.queryByText('Developers')).toBeNull();
+    const hrefs = hrefSet();
+    expect(hrefs).toContain(ROUTES.DASHBOARD);
+    expect(hrefs).toContain(ROUTES.SEARCH);
   });
 
-  it('does not render Help or Billing in sidebar (moved to dropdown)', () => {
+  it('SCRUM-2004: surfaces Documents in the sidebar nav', () => {
     renderSidebar();
-    expect(screen.queryByText('Help')).toBeNull();
-    expect(screen.queryByText('Billing & Plans')).toBeNull();
+    expect(screen.getAllByText('Documents').length).toBeGreaterThanOrEqual(1);
+    expect(hrefSet()).toContain(ROUTES.DOCUMENTS);
   });
 
-  it('does not render Compliance in main sidebar (admin section only)', () => {
+  it('SCRUM-2004: surfaces Settings in the sidebar nav', () => {
     renderSidebar();
-    expect(screen.queryByText('Compliance')).toBeNull();
+    expect(screen.getAllByText('Settings').length).toBeGreaterThanOrEqual(1);
+    expect(hrefSet()).toContain(ROUTES.SETTINGS);
   });
 
-  it('does not render My Records, My Credentials, or Attestations as separate items', () => {
+  it('SCRUM-2004: surfaces Billing in the sidebar nav', () => {
     renderSidebar();
-    expect(screen.queryByText('My Records')).toBeNull();
-    expect(screen.queryByText('My Credentials')).toBeNull();
-    expect(screen.queryByText('Attestations')).toBeNull();
+    expect(hrefSet()).toContain(ROUTES.BILLING);
   });
+
+  it('SCRUM-2004: surfaces API Keys in the sidebar nav', () => {
+    renderSidebar();
+    expect(hrefSet()).toContain(ROUTES.SETTINGS_API_KEYS);
+  });
+
+  it('SCRUM-2004: API Keys nav label is §1.3-clean (no banned terms)', () => {
+    renderSidebar();
+    const apiKeysLink = screen
+      .getAllByRole('link')
+      .find((a) => a.getAttribute('href') === ROUTES.SETTINGS_API_KEYS);
+    expect(apiKeysLink).toBeTruthy();
+    expect(apiKeysLink?.textContent ?? '').toMatch(/api keys/i);
+  });
+
+  // ── Organization is gated by org affiliation (role/permission preserved) ──
+
+  it('SCRUM-2004: surfaces Organization for ORG_ADMIN users', () => {
+    mockProfile.mockReturnValue({ role: 'ORG_ADMIN', org_id: 'org-1' });
+    renderSidebar();
+    expect(screen.getAllByText('Organization').length).toBeGreaterThanOrEqual(1);
+    expect(hrefSet()).toContain(ROUTES.ORGANIZATION);
+  });
+
+  it('SCRUM-2004: surfaces Organization for ORG_MEMBER users', () => {
+    mockProfile.mockReturnValue({ role: 'ORG_MEMBER', org_id: 'org-1' });
+    renderSidebar();
+    expect(hrefSet()).toContain(ROUTES.ORGANIZATION);
+  });
+
+  it('SCRUM-2004: hides Organization for INDIVIDUAL users (no org affiliation)', () => {
+    mockProfile.mockReturnValue({ role: 'INDIVIDUAL', org_id: null });
+    renderSidebar();
+    expect(hrefSet()).not.toContain(ROUTES.ORGANIZATION);
+    expect(screen.queryByText('Organization')).toBeNull();
+  });
+
+  it('SCRUM-2004: hides Organization when profile is not yet loaded (null role)', () => {
+    mockProfile.mockReturnValue({ role: null, org_id: null });
+    renderSidebar();
+    expect(hrefSet()).not.toContain(ROUTES.ORGANIZATION);
+  });
+
+  it('SCRUM-2004: account destinations (Billing, API Keys) are visible to INDIVIDUAL users', () => {
+    mockProfile.mockReturnValue({ role: 'INDIVIDUAL', org_id: null });
+    renderSidebar();
+    const hrefs = hrefSet();
+    expect(hrefs).toContain(ROUTES.BILLING);
+    expect(hrefs).toContain(ROUTES.SETTINGS_API_KEYS);
+    expect(hrefs).toContain(ROUTES.DOCUMENTS);
+    expect(hrefs).toContain(ROUTES.SETTINGS);
+  });
+
+  // ── Active-route highlighting ──
+
+  it('SCRUM-2004: highlights the active Documents route', () => {
+    renderSidebar({}, [ROUTES.DOCUMENTS]);
+    const docsLink = screen
+      .getAllByRole('link')
+      .find((a) => a.getAttribute('href') === ROUTES.DOCUMENTS);
+    expect(docsLink?.className).toMatch(/border-\[#00d4ff\]/);
+  });
+
+  it('SCRUM-2004: highlights the active Billing route', () => {
+    renderSidebar({}, [ROUTES.BILLING]);
+    const billingLink = screen
+      .getAllByRole('link')
+      .find((a) => a.getAttribute('href') === ROUTES.BILLING);
+    expect(billingLink?.className).toMatch(/border-\[#00d4ff\]/);
+  });
+
+  it('SCRUM-2004: highlights the active API Keys route (nested under settings)', () => {
+    renderSidebar({}, [ROUTES.SETTINGS_API_KEYS]);
+    const apiKeysLink = screen
+      .getAllByRole('link')
+      .find((a) => a.getAttribute('href') === ROUTES.SETTINGS_API_KEYS);
+    expect(apiKeysLink?.className).toMatch(/border-\[#00d4ff\]/);
+  });
+
+  it('SCRUM-2004: Settings is NOT highlighted when on the API Keys sub-route', () => {
+    // /settings/api-keys must not also light up the top-level Settings item,
+    // otherwise two items appear active at once.
+    renderSidebar({}, [ROUTES.SETTINGS_API_KEYS]);
+    const settingsLink = screen
+      .getAllByRole('link')
+      .find((a) => a.getAttribute('href') === ROUTES.SETTINGS);
+    expect(settingsLink?.className).not.toMatch(/border-\[#00d4ff\]/);
+  });
+
+  // ── Admin section (unchanged role gating) ──
 
   it('shows admin section only for platform admin emails', () => {
     renderSidebar({ userEmail: 'user@example.com' });

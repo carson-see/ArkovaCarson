@@ -1,19 +1,26 @@
 /**
  * Sidebar Navigation Component
  *
- * Radically simplified sidebar (Session 10+):
- * - Max 5 items: Dashboard, Documents, Organization, Search, Settings
- * - Billing/Help/Developers moved to Header user dropdown
- * - Compliance moved to admin section (monitoring tool, not primary nav)
- * - Admin section behind collapsible toggle, only for platform admins
+ * Discoverability refresh (SCRUM-2004 — [GA-S2/E5]):
+ * The earlier "Dashboard + Search only" sidebar left key destinations
+ * (Documents, Organization, Settings, Billing, API Keys) reachable ONLY by
+ * typing the URL. They now appear in the sidebar nav:
+ * - Primary nav (max 5, per components/layout agents.md): Dashboard, Documents,
+ *   Organization (org-affiliated users only), Search, Settings.
+ * - Account section (labelled, like the Admin section): Billing, API Keys —
+ *   previously only in the Header user dropdown.
+ * - Admin section behind collapsible toggle, only for platform admins.
  *
- * @see MVP-07, Session 10 Sprint A
+ * Permission gating is preserved: Organization is shown only for ORG_ADMIN /
+ * ORG_MEMBER (profile.role); the Admin section only for platform-admin emails.
+ *
+ * @see MVP-07, Session 10 Sprint A, SCRUM-2004
  */
 
 import { useState, useEffect } from 'react';
 import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
 import { Link, useLocation } from 'react-router-dom';
-import { LayoutDashboard, Building2, ChevronLeft, ChevronRight, X, Search, Landmark, Moon, Sun, Monitor, BarChart3, Activity, Database, DollarSign, ChevronDown, ChevronUp, Users, FileCheck, ToggleRight } from 'lucide-react';
+import { LayoutDashboard, Building2, ChevronLeft, ChevronRight, X, Search, Landmark, Moon, Sun, Monitor, BarChart3, Activity, Database, DollarSign, ChevronDown, ChevronUp, Users, FileCheck, ToggleRight, FileText, Settings as SettingsIcon, CreditCard, KeyRound } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { ArkovaLogo } from '@/components/layout/ArkovaLogo';
 import { ROUTES, destinationToRoute } from '@/lib/routes';
@@ -35,12 +42,42 @@ interface NavItem {
   to: string;
 }
 
-// Simplified nav — Dashboard + Search only (UAT Session 40 redesign)
-// Documents, Developers, Settings folded into Dashboard or accessible via header dropdown
+// Labels for destinations that have no constant in the (locked) NAV_LABELS map.
+// §1.3-clean — none of these contain banned UI terminology.
+const ACCOUNT_NAV_LABELS = {
+  BILLING: 'Billing',
+  API_KEYS: 'API Keys',
+} as const;
+
+// Section header for the Account group (parallels the "Admin" group label).
+const ACCOUNT_SECTION_LABEL = 'Account';
+
+// Primary nav (SCRUM-2004) — capped at 5 per components/layout agents.md.
+// Organization is appended conditionally for org-affiliated users (see below).
 const BASE_NAV_ITEMS: NavItem[] = [
   { label: NAV_LABELS.DASHBOARD, icon: LayoutDashboard, to: ROUTES.DASHBOARD },
+  { label: NAV_LABELS.DOCUMENTS, icon: FileText, to: ROUTES.DOCUMENTS },
   { label: NAV_LABELS.SEARCH, icon: Search, to: ROUTES.SEARCH },
+  { label: NAV_LABELS.SETTINGS, icon: SettingsIcon, to: ROUTES.SETTINGS },
 ];
+
+// Organization — shown only for users affiliated with an org (SCRUM-2004).
+// INDIVIDUAL users have no org context, so the destination would be empty.
+const ORG_NAV_ITEM: NavItem = {
+  label: NAV_LABELS.ORGANIZATION,
+  icon: Building2,
+  to: ROUTES.ORGANIZATION,
+};
+
+// Account section (SCRUM-2004) — destinations previously reachable only via the
+// Header user dropdown or by typing the URL. Visible to all authenticated users.
+const accountNavItems: NavItem[] = [
+  { label: ACCOUNT_NAV_LABELS.BILLING, icon: CreditCard, to: ROUTES.BILLING },
+  { label: ACCOUNT_NAV_LABELS.API_KEYS, icon: KeyRound, to: ROUTES.SETTINGS_API_KEYS },
+];
+
+/** Org roles that should see the Organization destination. */
+const ORG_ROLES = new Set(['ORG_ADMIN', 'ORG_MEMBER']);
 
 import { isPlatformAdmin as checkPlatformAdmin } from '@/lib/platform';
 
@@ -168,13 +205,18 @@ interface SidebarProps {
 
 export function Sidebar({ className, mobileOpen, onMobileClose, orgName, userEmail }: Readonly<SidebarProps>) {
   const isPlatformAdmin = checkPlatformAdmin(userEmail);
-  const { destination } = useProfile();
+  const { destination, profile } = useProfile();
   const homeRoute = destinationToRoute(destination);
   const [collapsed, setCollapsed] = useState(false);
   const [adminExpanded, setAdminExpanded] = useState(false);
   const location = useLocation();
 
-  // Simplified: Dashboard + Search only (UAT Session 40).
+  // SCRUM-2004: surface the Organization destination only for org-affiliated
+  // users (ORG_ADMIN / ORG_MEMBER). INDIVIDUAL users have no org context.
+  const showOrg = ORG_ROLES.has(profile?.role ?? '');
+  const primaryNavItems: NavItem[] = showOrg
+    ? [...BASE_NAV_ITEMS, ORG_NAV_ITEM]
+    : BASE_NAV_ITEMS;
 
   // Close mobile sidebar on navigation
   useEffect(() => {
@@ -200,6 +242,13 @@ export function Sidebar({ className, mobileOpen, onMobileClose, orgName, userEma
       return location.pathname === ROUTES.COMPLIANCE_DASHBOARD
         || location.pathname === ROUTES.REVIEW_QUEUE
         || location.pathname === ROUTES.AI_REPORTS;
+    }
+    if (item.to === ROUTES.SETTINGS) {
+      // SCRUM-2004: exact match only. The Settings sub-routes (/settings/api-keys,
+      // /settings/webhooks, …) are surfaced as their own nav entries, so the
+      // top-level Settings item must NOT also light up on them — otherwise two
+      // items would appear active at once.
+      return location.pathname === ROUTES.SETTINGS;
     }
     return location.pathname === item.to || location.pathname.startsWith(item.to + '/');
   };
@@ -264,10 +313,27 @@ export function Sidebar({ className, mobileOpen, onMobileClose, orgName, userEma
 
       {/* Scrollable nav area */}
       <div className="flex-1 overflow-y-auto min-h-0">
-        {/* Main Navigation — max 5 items */}
+        {/* Main Navigation — max 5 items (Organization shown for org members) */}
         <nav className="space-y-1 p-3">
-          {BASE_NAV_ITEMS
-            .map((item) => (
+          {primaryNavItems.map((item) => (
+            <SidebarNavLink
+              key={item.label}
+              item={item}
+              collapsed={collapsed}
+              active={isNavActive(item)}
+            />
+          ))}
+
+          {/* Account section (SCRUM-2004) — Billing + API Keys, all users.
+              These previously lived only in the Header dropdown / direct URL. */}
+          {!collapsed ? (
+            <p className="px-3 pt-4 pb-1 font-mono text-[10px] font-medium uppercase tracking-widest text-[#859398]">
+              {ACCOUNT_SECTION_LABEL}
+            </p>
+          ) : (
+            <div className="my-2 border-t border-white/[0.06]" />
+          )}
+          {accountNavItems.map((item) => (
             <SidebarNavLink
               key={item.label}
               item={item}
