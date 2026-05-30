@@ -1,5 +1,7 @@
 const DOCUSIGN_DEFAULT_ACCOUNT_RATE_LIMIT_PER_HOUR = 3_000;
 const DOCUSIGN_RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000;
+const DOCUSIGN_MAX_RETRY_AFTER_MS = 30_000;
+const DOCUSIGN_RATE_LIMIT_SWEEP_INTERVAL = 256;
 
 interface DocusignAccountRateLimitEntry {
   count: number;
@@ -14,6 +16,7 @@ interface DocusignRateLimitedFetchOptions {
 }
 
 const docusignAccountRateLimitStore = new Map<string, DocusignAccountRateLimitEntry>();
+let docusignAccountRateLimitClaimsSinceSweep = 0;
 
 export class DocusignRateLimitError extends Error {
   readonly accountId: string;
@@ -58,12 +61,38 @@ function retryAfterMs(value: string | null, nowMs: number): number | undefined {
   return undefined;
 }
 
+function sweepExpiredDocusignAccountRateLimitEntries(nowMs: number): void {
+  for (const [accountId, entry] of docusignAccountRateLimitStore) {
+    if (entry.resetAtMs <= nowMs) {
+      docusignAccountRateLimitStore.delete(accountId);
+    }
+  }
+}
+
+function assertReplayableFetchInput(input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]): void {
+  if (typeof Request !== 'undefined' && input instanceof Request) {
+    throw new TypeError('DocuSign rate-limited fetch cannot retry Request inputs; pass a URL and replayable init body');
+  }
+  if (typeof ReadableStream !== 'undefined' && init?.body instanceof ReadableStream) {
+    throw new TypeError('DocuSign rate-limited fetch cannot retry non-replayable ReadableStream bodies');
+  }
+}
+
 export function claimDocusignAccountApiSlot(args: {
   accountId: string;
   now?: () => Date;
 }): void {
   const nowMs = (args.now ?? (() => new Date()))().getTime();
   const existing = docusignAccountRateLimitStore.get(args.accountId);
+  if (existing && existing.resetAtMs <= nowMs) {
+    docusignAccountRateLimitStore.delete(args.accountId);
+  }
+  docusignAccountRateLimitClaimsSinceSweep += 1;
+  if (docusignAccountRateLimitClaimsSinceSweep >= DOCUSIGN_RATE_LIMIT_SWEEP_INTERVAL) {
+    docusignAccountRateLimitClaimsSinceSweep = 0;
+    sweepExpiredDocusignAccountRateLimitEntries(nowMs);
+  }
+
   const entry = existing && existing.resetAtMs > nowMs
     ? existing
     : { count: 0, resetAtMs: nowMs + DOCUSIGN_RATE_LIMIT_WINDOW_MS };
@@ -83,6 +112,7 @@ export function createDocusignRateLimitedFetch(
   const fetchImpl = options.fetchImpl ?? fetch;
   const sleep = options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   return async (input, init) => {
+    assertReplayableFetchInput(input, init);
     const accountId = accountIdFromFetchInput(input) ?? options.accountId;
     if (accountId) {
       claimDocusignAccountApiSlot({
@@ -96,7 +126,7 @@ export function createDocusignRateLimitedFetch(
 
       const nowMs = (options.now ?? (() => new Date()))().getTime();
       const delayMs = retryAfterMs(response.headers.get('Retry-After'), nowMs) ?? 1000;
-      await sleep(delayMs);
+      await sleep(Math.min(delayMs, DOCUSIGN_MAX_RETRY_AFTER_MS));
     }
     throw new Error('unreachable_docusign_rate_limit_retry_state');
   };
@@ -104,4 +134,9 @@ export function createDocusignRateLimitedFetch(
 
 export function resetDocusignAccountRateLimitStoreForTests(): void {
   docusignAccountRateLimitStore.clear();
+  docusignAccountRateLimitClaimsSinceSweep = 0;
+}
+
+export function getDocusignAccountRateLimitStoreSizeForTests(): number {
+  return docusignAccountRateLimitStore.size;
 }
