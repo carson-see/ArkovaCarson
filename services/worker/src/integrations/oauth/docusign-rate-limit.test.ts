@@ -34,7 +34,7 @@ describe('createDocusignRateLimitedFetch', () => {
     expect(sleep).toHaveBeenCalledWith(2000);
   });
 
-  it('does not let a Retry-After retry get blocked by the local slot counter', async () => {
+  it('reuses the original local slot reservation for a Retry-After retry', async () => {
     const accountId = 'account-boundary';
     const now = () => new Date('2026-05-28T12:00:00.000Z');
     for (let i = 0; i < 2_999; i += 1) {
@@ -61,6 +61,7 @@ describe('createDocusignRateLimitedFetch', () => {
     expect(response.status).toBe(200);
     expect(fetchImpl).toHaveBeenCalledTimes(2);
     expect(sleep).toHaveBeenCalledWith(1000);
+    expect(() => claimDocusignAccountApiSlot({ accountId, now })).toThrow(DocusignRateLimitError);
   });
 
   it('counts non-retried server errors against the local account budget', async () => {

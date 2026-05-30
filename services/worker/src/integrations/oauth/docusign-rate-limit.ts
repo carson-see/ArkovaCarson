@@ -77,13 +77,6 @@ export function claimDocusignAccountApiSlot(args: {
   docusignAccountRateLimitStore.set(args.accountId, entry);
 }
 
-function releaseDocusignAccountApiSlot(accountId: string): void {
-  const entry = docusignAccountRateLimitStore.get(accountId);
-  if (!entry) return;
-  entry.count = Math.max(0, entry.count - 1);
-  docusignAccountRateLimitStore.set(accountId, entry);
-}
-
 export function createDocusignRateLimitedFetch(
   options: DocusignRateLimitedFetchOptions,
 ): typeof fetch {
@@ -91,17 +84,14 @@ export function createDocusignRateLimitedFetch(
   const sleep = options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
   return async (input, init) => {
     const accountId = accountIdFromFetchInput(input) ?? options.accountId;
+    if (accountId) {
+      claimDocusignAccountApiSlot({
+        accountId,
+        now: options.now,
+      });
+    }
     for (let attempt = 0; attempt < 2; attempt++) {
-      if (accountId) {
-        claimDocusignAccountApiSlot({
-          accountId,
-          now: options.now,
-        });
-      }
       const response = await fetchImpl(input, init);
-      if (accountId && response.status === 429 && attempt === 0) {
-        releaseDocusignAccountApiSlot(accountId);
-      }
       if (response.status !== 429 || attempt === 1) return response;
 
       const nowMs = (options.now ?? (() => new Date()))().getTime();
