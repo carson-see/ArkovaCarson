@@ -89,7 +89,7 @@ describe('professional-education gate path', () => {
   });
 
   it('honors an explicit --output override', () => {
-    expect(resolveOutputDir('/tmp/custom', '/repo/root')).toBe('/tmp/custom');
+    expect(resolveOutputDir('/opt/custom-report', '/repo/root')).toBe('/opt/custom-report');
   });
 
   it('fails closed for every gate when the provider extracts nothing', async () => {

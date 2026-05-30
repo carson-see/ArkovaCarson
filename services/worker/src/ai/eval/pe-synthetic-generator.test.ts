@@ -103,7 +103,7 @@ describe('pe-synthetic-generator (SCRUM-2200 Track A — scaled synthetic TRAIN 
   });
 
   it('keeps strippedText free of raw PII per Constitution §1.6', () => {
-    const EMAIL = /[A-Z0-9._%+-]+@[A-Z0-9-]+(?:\.[A-Z0-9-]+)+/i;
+    const EMAIL = /[A-Z0-9._%+-]{1,64}@[A-Z0-9-]{1,63}(?:\.[A-Z0-9-]{1,63}){1,8}/i;
     const SSN = /\b\d{3}-\d{2}-\d{4}\b/;
     const PHONE = /\b(?:\(\d{3}\)\s*|\d{3}[-.])\d{3}[-.]\d{4}\b/;
     const PERSON_LABEL =

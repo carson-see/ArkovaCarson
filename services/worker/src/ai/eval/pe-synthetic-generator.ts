@@ -159,7 +159,7 @@ function ocrNoise(rng: () => number, text: string): string {
 function makeCourseId(rng: () => number, code: string, topic: string, year: number): string {
   const serial = PAD(randInt(rng, 1, 999), 3);
   const delimiter = pick(rng, ['-', '-', '-', '/', '.']); // mostly hyphen
-  return [code, topic, year, serial].join(delimiter === '-' ? '-' : '-').replace(/-(\d{3})$/, `${delimiter}$1`);
+  return [code, topic, year, serial].join('-').replace(/-(\d{3})$/, `${delimiter}$1`);
 }
 
 function formatDate(rng: () => number, year: number): { display: string; iso: string } {

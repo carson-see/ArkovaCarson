@@ -79,7 +79,7 @@ describe('pe-tuning-exporter (SCRUM-2200 Track A — Vertex Gemini supervised-tu
   });
 
   it('keeps the serialized tuning data free of raw PII (Constitution §1.6)', () => {
-    const EMAIL = /[A-Z0-9._%+-]+@[A-Z0-9-]+(?:\.[A-Z0-9-]+)+/i;
+    const EMAIL = /[A-Z0-9._%+-]{1,64}@[A-Z0-9-]{1,63}(?:\.[A-Z0-9-]{1,63}){1,8}/i;
     const SSN = /\b\d{3}-\d{2}-\d{4}\b/;
     const { jsonl } = exportPeTuningDataset({ count: 200, seed: 25 });
     expect(EMAIL.test(jsonl)).toBe(false);
