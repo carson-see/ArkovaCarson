@@ -34,8 +34,11 @@ const MaybeEmail = z.string().trim().toLowerCase().email().optional();
 /** DocuSign Connect envelope-completed payload — fields we care about. */
 export const DocusignEnvelopeCompleted = z.object({
   event: z.literal('envelope-completed'),
+  eventId: NonEmptyString.optional(),
   envelopeId: NonEmptyString,
+  accountId: NonEmptyString,
   status: z.literal('completed'),
+  generatedDateTime: z.string().datetime().optional(),
   sender: z
     .object({ email: MaybeEmail })
     .partial()
@@ -51,7 +54,7 @@ export const DocusignEnvelopeCompleted = z.object({
       }),
     )
     .max(100)
-    .optional(),
+    .default([]),
 });
 
 /** Adobe Sign agreement-signed payload — simplified shape. */
