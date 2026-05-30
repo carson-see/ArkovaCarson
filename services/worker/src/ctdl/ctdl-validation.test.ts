@@ -66,18 +66,28 @@ describe('validateCtdlJsonLd', () => {
 
     const unsafe = {
       ...jsonLd,
+      anchor_id: 'internal-anchor-id',
+      anchorId: 'internal-anchor-id',
       org_id: 'internal-org-id',
+      user_id: 'internal-user-id',
       'ceterms:identifier': {
         ...jsonLd['ceterms:identifier'],
         fingerprint: 'a'.repeat(64),
+        source_filename: 'transcript.pdf',
+        sourceFilename: 'transcript.pdf',
       },
     };
 
     expect(validateCtdlJsonLd(unsafe)).toEqual({
       valid: false,
       errors: [
+        'unsafe public CTDL key: anchor_id',
+        'unsafe public CTDL key: anchorId',
         'unsafe public CTDL key: org_id',
+        'unsafe public CTDL key: user_id',
         'unsafe public CTDL key: ceterms:identifier.fingerprint',
+        'unsafe public CTDL key: ceterms:identifier.source_filename',
+        'unsafe public CTDL key: ceterms:identifier.sourceFilename',
       ],
     });
   });
