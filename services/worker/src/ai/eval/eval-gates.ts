@@ -6,7 +6,7 @@ export interface EvalGateFieldRequirement {
 }
 
 export interface EvalGateConfig {
-  gateId: 'SCRUM-1962' | 'SCRUM-1963';
+  gateId: 'SCRUM-1962' | 'SCRUM-1963' | 'SCRUM-2187';
   label: string;
   blocksStory: string;
   minimumEntries: number;
@@ -43,8 +43,12 @@ export const EVAL_GATE_CONFIGS: EvalGateConfig[] = [
       { field: 'creditHours', minimumF1: 0.85 },
       { field: 'fieldOfStudy', minimumF1: 0.8 },
       { field: 'deliveryMethod', minimumF1: 0.8 },
+      // courseId is scored on the CPE gate too: a regression that stops reading
+      // course IDs off CPE documents must fail here, not slip through because the
+      // SCRUM-2187 course-id gate only covers course-id-only fixtures.
+      { field: 'courseId', minimumF1: 0.75 },
     ],
-    matchesEntry: (entry) => hasTag(entry, 'cpe'),
+    matchesEntry: (entry) => hasTag(entry, 'cpe') && isGateFixture(entry),
   },
   {
     gateId: 'SCRUM-1963',
@@ -55,8 +59,22 @@ export const EVAL_GATE_CONFIGS: EvalGateConfig[] = [
     requiredFields: [
       { field: 'creditHours', minimumF1: 0.8 },
       { field: 'ethicsHours', minimumF1: 0.8 },
+      // courseId is scored on the CLE gate too, mirroring SCRUM-1962: a regression
+      // that stops reading course IDs off CLE documents must fail here, not slip
+      // through the SCRUM-2187 gate's course-id-only coverage.
+      { field: 'courseId', minimumF1: 0.75 },
     ],
-    matchesEntry: (entry) => hasTag(entry, 'cle') && !hasTag(entry, 'cpe'),
+    matchesEntry: (entry) => hasTag(entry, 'cle') && !hasTag(entry, 'cpe') && isGateFixture(entry),
+  },
+  {
+    gateId: 'SCRUM-2187',
+    label: 'Course-ID extraction merge gate',
+    blocksStory: 'SCRUM-1921',
+    minimumEntries: 20,
+    minimumWeightedF1: 0.75,
+    requiredFields: [{ field: 'courseId', minimumF1: 0.75 }],
+    matchesEntry: (entry) =>
+      hasTag(entry, 'course-id') && !hasTag(entry, 'cpe') && !hasTag(entry, 'cle') && isGateFixture(entry),
   },
 ];
 
@@ -127,6 +145,19 @@ function buildGateResult(
 
 function hasTag(entry: EntryEvalResult, tag: string): boolean {
   return entry.tags.some((entryTag) => entryTag.toLowerCase() === tag);
+}
+
+/**
+ * Tags that mark an entry as belonging to a non-gate split. Gates score only
+ * the curated gate fixtures; the held-out TEST set and the synthetic TRAIN set
+ * must never be scored as merge-gate evidence, even if their arrays are ever
+ * concatenated into a single eval run. This is the train/test contamination
+ * guard (SCRUM-2200).
+ */
+const NON_GATE_SPLIT_TAGS = ['held-out', 'synthetic-train'] as const;
+
+function isGateFixture(entry: EntryEvalResult): boolean {
+  return !NON_GATE_SPLIT_TAGS.some((tag) => hasTag(entry, tag));
 }
 
 function computeFieldF1(entries: EntryEvalResult[], field: string): number {

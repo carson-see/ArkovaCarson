@@ -35,6 +35,39 @@ export function getPromptVersionHash(): string {
     .substring(0, 12);
 }
 
+/** Per-entry extraction output consumed by the eval scorer. */
+export interface EntryExtraction {
+  fields: Record<string, unknown>;
+  confidence: number;
+  tokensUsed?: number;
+}
+
+/**
+ * Pluggable per-entry extraction strategy. Defaults to provider.extractMetadata
+ * (the generic path). The professional-education gate runner injects a PE-aware
+ * extractor (pe-eval-extraction.ts) that routes dedicated prompts through a raw
+ * generate, because the generic path cannot emit the PE gate fields.
+ */
+export type EntryExtractor = (
+  provider: IAIProvider,
+  entry: GoldenDatasetEntry,
+) => Promise<EntryExtraction>;
+
+const defaultExtractor: EntryExtractor = async (provider, entry) => {
+  const request: ExtractionRequest = {
+    strippedText: entry.strippedText,
+    credentialType: entry.credentialTypeHint,
+    fingerprint: fakeFingerprint(entry.id),
+    issuerHint: entry.issuerHint,
+  };
+  const result = await provider.extractMetadata(request);
+  return {
+    fields: result.fields as Record<string, unknown>,
+    confidence: result.confidence,
+    tokensUsed: result.tokensUsed ?? 0,
+  };
+};
+
 export interface EvalRunOptions {
   /** Provider to test */
   provider: IAIProvider;
@@ -44,6 +77,8 @@ export interface EvalRunOptions {
   concurrency?: number;
   /** Callback for progress reporting */
   onProgress?: (completed: number, total: number) => void;
+  /** Override per-entry extraction (defaults to provider.extractMetadata). */
+  extract?: EntryExtractor;
 }
 
 /**
@@ -52,14 +87,8 @@ export interface EvalRunOptions {
 async function evaluateEntry(
   provider: IAIProvider,
   entry: GoldenDatasetEntry,
+  extract: EntryExtractor,
 ): Promise<EntryEvalResult> {
-  const request: ExtractionRequest = {
-    strippedText: entry.strippedText,
-    credentialType: entry.credentialTypeHint,
-    fingerprint: fakeFingerprint(entry.id),
-    issuerHint: entry.issuerHint,
-  };
-
   const start = Date.now();
   let extractedFields: Record<string, unknown>;
   let confidence: number;
@@ -67,8 +96,8 @@ async function evaluateEntry(
 
   let extractionError: string | undefined;
   try {
-    const result = await provider.extractMetadata(request);
-    extractedFields = result.fields as Record<string, unknown>;
+    const result = await extract(provider, entry);
+    extractedFields = result.fields;
     confidence = result.confidence;
     tokensUsed = result.tokensUsed ?? 0;
   } catch (err) {
@@ -116,7 +145,7 @@ async function evaluateEntry(
  * Run extraction eval against the golden dataset.
  */
 export async function runEval(options: EvalRunOptions): Promise<EvalRunResult> {
-  const { provider, entries, concurrency = 5, onProgress } = options;
+  const { provider, entries, concurrency = 5, onProgress, extract = defaultExtractor } = options;
   const entryResults: EntryEvalResult[] = [];
   let completed = 0;
 
@@ -124,7 +153,7 @@ export async function runEval(options: EvalRunOptions): Promise<EvalRunResult> {
   for (let i = 0; i < entries.length; i += concurrency) {
     const batch = entries.slice(i, i + concurrency);
     const batchResults = await Promise.all(
-      batch.map(entry => evaluateEntry(provider, entry)),
+      batch.map(entry => evaluateEntry(provider, entry, extract)),
     );
     entryResults.push(...batchResults);
     completed += batchResults.length;
