@@ -153,6 +153,40 @@ function normalizeStatus(raw: string | null | undefined): SubscriptionStatus {
 }
 
 /**
+ * Best-effort count of the caller's anchors in the current billing period.
+ *
+ * Org subscriptions scope by `org_id`; individual/free subscriptions (no
+ * `org_id`) scope by `user_id` — matching how the frontend `useEntitlements`
+ * hook counts usage (SCRUM-2210 review). Uses `count: 'estimated'` (planner
+ * estimate) deliberately — an exact count is banned on the large `anchors`
+ * table (R0-8 / SCRUM-1254: exact counts full-scan it and hit the 60s
+ * PostgREST timeout). Never throws: a slow or failing count returns 0 so it
+ * can never brick the billing page.
+ */
+async function countAnchorUsage(
+  scope: { orgId: string | null; userId: string; periodStart: string | null },
+): Promise<number> {
+  try {
+    let usageQuery = db.from('anchors').select('*', { count: 'estimated', head: true });
+    usageQuery = scope.orgId
+      ? usageQuery.eq('org_id', scope.orgId)
+      : usageQuery.eq('user_id', scope.userId);
+    if (scope.periodStart) {
+      usageQuery = usageQuery.gte('created_at', scope.periodStart);
+    }
+    const { count, error } = await usageQuery;
+    if (error) {
+      logger.warn({ error, userId: scope.userId }, 'billing/status: usage count failed (non-fatal)');
+      return 0;
+    }
+    return typeof count === 'number' ? count : 0;
+  } catch (err) {
+    logger.warn({ error: err, userId: scope.userId }, 'billing/status: usage count threw (non-fatal)');
+    return 0;
+  }
+}
+
+/**
  * GET /api/billing/status
  *
  * Returns the caller's current BillingInfo (subscription status + plan + usage),
@@ -163,11 +197,12 @@ function normalizeStatus(raw: string | null | undefined): SubscriptionStatus {
  * and /billing/portal) → 404 → the billing page could not load. This handler fills
  * that contract.
  *
- * Resilience (the lesson from SCRUM-1983 / SCRUM-2213): this endpoint ALWAYS
- * returns 200 with a usable BillingInfo. A caller with no subscription gets a
- * free-tier default, and the usage count is best-effort (recordsUsed falls back
- * to 0 if the count errors or times out) — a downstream query failure must never
- * brick the billing page.
+ * Resilience (the lesson from SCRUM-1983 / SCRUM-2213): the endpoint returns 200
+ * with a usable BillingInfo on every normal path — a caller with no subscription
+ * gets a free-tier default, and the usage count is best-effort (recordsUsed falls
+ * back to 0 if the count errors or times out) so a downstream query failure can't
+ * brick the page. The only 500 is a hard failure of the primary subscription
+ * lookup itself.
  */
 export async function handleBillingStatus(
   req: import('express').Request,
@@ -214,31 +249,13 @@ export async function handleBillingStatus(
     const recordsLimit =
       plan?.records_per_month && plan.records_per_month > 0 ? plan.records_per_month : null;
 
-    // Usage is best-effort: a slow or failing count must not 500 the page.
-    // Uses the planner-estimate count mode deliberately — an exact count is
-    // banned on large tables (R0-8 / SCRUM-1254: exact counts full-scan `anchors`
-    // and hit the 60s PostgREST timeout). An approximate usage figure is fine for
-    // the meter, and with the try/catch below it can never brick billing.
-    let recordsUsed = 0;
-    if (sub.org_id) {
-      try {
-        let usageQuery = db
-          .from('anchors')
-          .select('*', { count: 'estimated', head: true })
-          .eq('org_id', sub.org_id);
-        if (sub.current_period_start) {
-          usageQuery = usageQuery.gte('created_at', sub.current_period_start);
-        }
-        const { count, error: usageError } = await usageQuery;
-        if (!usageError && typeof count === 'number') {
-          recordsUsed = count;
-        } else if (usageError) {
-          logger.warn({ error: usageError, userId }, 'billing/status: usage count failed (non-fatal)');
-        }
-      } catch (usageErr) {
-        logger.warn({ error: usageErr, userId }, 'billing/status: usage count threw (non-fatal)');
-      }
-    }
+    // Best-effort usage count — scoped by org_id, or by user_id for individual
+    // (non-org) subscriptions so the meter is correct on individual/free plans.
+    const recordsUsed = await countAnchorUsage({
+      orgId: sub.org_id,
+      userId,
+      periodStart: sub.current_period_start,
+    });
 
     const status = normalizeStatus(sub.status);
 

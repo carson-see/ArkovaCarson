@@ -133,6 +133,34 @@ describe('handleBillingStatus (GET /api/billing/status)', () => {
     expect(body.billing.currentPeriodEnd).toBe('2026-06-01T00:00:00Z');
   });
 
+  it('counts usage by user_id for an individual (no-org) subscription', async () => {
+    routeTables({
+      subscriptions: {
+        data: {
+          status: 'active',
+          plan_id: 'plan-individual',
+          org_id: null,
+          current_period_start: '2026-05-01T00:00:00Z',
+          current_period_end: '2026-06-01T00:00:00Z',
+        },
+        error: null,
+      },
+      plans: {
+        data: { name: 'Individual', price_cents: 1900, billing_period: 'month', records_per_month: 100 },
+        error: null,
+      },
+      anchors: { count: 30, error: null },
+    });
+
+    const res = mockRes();
+    await handleBillingStatus(mockReq(), res);
+
+    expect(res.statusCode).toBe(200);
+    const body = res.body as { usage: { recordsUsed: number; recordsLimit: number | null; percentUsed?: number } };
+    // org_id is null → usage must still be counted (by user_id), never forced to 0.
+    expect(body.usage).toEqual({ recordsUsed: 30, recordsLimit: 100, percentUsed: 30 });
+  });
+
   it('returns a free-tier default (200, not 404) when the caller has no subscription', async () => {
     routeTables({ subscriptions: { data: null, error: null } });
     const res = mockRes();
