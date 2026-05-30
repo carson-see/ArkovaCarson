@@ -12,6 +12,7 @@ import {
   createGcpSecretManagerRefreshTokenStore,
   type DocusignRefreshTokenStore,
 } from '../integrations/connectors/docusign-token-store.js';
+import { createDocusignRateLimitedFetch } from '../integrations/oauth/docusign-rate-limit.js';
 import type { TypeSafeDatabase } from '../types/database-overrides.js';
 
 export const DOCUSIGN_ENVELOPE_COMPLETED_JOB_TYPE = 'docusign.envelope_completed';
@@ -100,7 +101,7 @@ async function fetchIntegration(
   if (!data) {
     throw new Error('docusign_integration_not_found');
   }
-  return data as DocusignIntegrationRow;
+  return data;
 }
 
 export function makeDocusignEnvelopeJobDeps(
@@ -108,10 +109,18 @@ export function makeDocusignEnvelopeJobDeps(
 ): DocusignEnvelopeJobDeps {
   const db = deps.db ?? (defaultDb as unknown as DbClient);
   const refreshTokenStore = getRefreshTokenStore(deps);
+  let tokenRefreshAccountId: string | undefined;
+  const docusignFetch = createDocusignRateLimitedFetch({
+    fetchImpl: deps.fetchImpl,
+    now: deps.now,
+    get accountId() {
+      return tokenRefreshAccountId;
+    },
+  });
 
   return {
     env: deps.env,
-    fetchImpl: deps.fetchImpl,
+    fetchImpl: docusignFetch,
 
     async resolveConnection(payload) {
       const integration = await fetchIntegration(db, payload);
@@ -127,13 +136,20 @@ export function makeDocusignEnvelopeJobDeps(
         throw new Error('docusign_refresh_token_secret_missing');
       }
 
-      const refreshed = await refreshDocusignAccessToken({
-        refreshToken,
-        deps: {
-          env: deps.env,
-          fetchImpl: deps.fetchImpl,
-        },
-      });
+      const refreshed = await (async () => {
+        tokenRefreshAccountId = payload.account_id;
+        try {
+          return await refreshDocusignAccessToken({
+            refreshToken,
+            deps: {
+              env: deps.env,
+              fetchImpl: docusignFetch,
+            },
+          });
+        } finally {
+          tokenRefreshAccountId = undefined;
+        }
+      })();
       if (refreshed.refresh_token && refreshed.refresh_token !== refreshToken) {
         await refreshTokenStore.put({
           name: integration.token_secret_name,
