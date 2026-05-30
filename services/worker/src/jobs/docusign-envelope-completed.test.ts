@@ -21,6 +21,7 @@ import {
   runDocusignEnvelopeCompletedJobs,
   type DocusignEnvelopeJobRuntimeDeps,
 } from './docusign-envelope-completed.js';
+import { logger } from '../utils/logger.js';
 import {
   claimDocusignAccountApiSlot,
   resetDocusignAccountRateLimitStoreForTests,
@@ -160,6 +161,131 @@ describe('runDocusignEnvelopeCompletedJobs', () => {
       byte_length: 12,
     });
     expect(inserted?.details).not.toHaveProperty('document_sha256');
+  });
+
+  it('resolves member_integrations when no org_integrations row matches', async () => {
+    const queriedTables: string[] = [];
+    const memberRow = {
+      id: 'member-int-1',
+      org_id: '11111111-1111-4111-8111-111111111111',
+      account_id: 'account-1',
+      base_uri: 'https://demo.docusign.net',
+      token_secret_name: 'secret/member-int-1',
+    };
+    const db = {
+      from: vi.fn((table: string) => {
+        queriedTables.push(table);
+        const query = {
+          select: vi.fn(() => query),
+          eq: vi.fn(() => query),
+          is: vi.fn(() => query),
+          maybeSingle: vi.fn().mockResolvedValue({
+            data: table === 'member_integrations' ? memberRow : null,
+            error: null,
+          }),
+          insert: vi.fn(() => ({
+            select: vi.fn(() => ({
+              single: vi.fn().mockResolvedValue({ data: null, error: null }),
+            })),
+          })),
+        };
+        return query;
+      }),
+    };
+    const refreshTokenStore = {
+      get: vi.fn().mockResolvedValue('refresh-token-1'),
+      put: vi.fn().mockResolvedValue(undefined),
+      delete: vi.fn().mockResolvedValue(undefined),
+    };
+    const fetchImpl = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({
+        access_token: 'access-token-1',
+        refresh_token: 'refresh-token-2',
+        token_type: 'Bearer',
+        expires_in: 3600,
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    ) as unknown as typeof fetch;
+    const deps = makeDocusignEnvelopeJobDeps({
+      db,
+      refreshTokenStore,
+      fetchImpl,
+      env: {
+        DOCUSIGN_INTEGRATION_KEY: 'integration-key',
+        DOCUSIGN_CLIENT_SECRET: 'client-secret',
+        DOCUSIGN_AUTH_BASE: 'https://account-d.docusign.com',
+      },
+    });
+
+    const connection = await deps.resolveConnection({
+      org_id: '11111111-1111-4111-8111-111111111111',
+      integration_id: 'member-int-1',
+      account_id: 'account-1',
+      envelope_id: 'envelope-1',
+      rule_event_id: 'rule-event-1',
+      document_ids: ['combined'],
+    });
+
+    expect(queriedTables).toEqual(['org_integrations', 'member_integrations']);
+    expect(connection).toEqual({
+      accessToken: 'access-token-1',
+      baseUri: 'https://demo.docusign.net',
+    });
+    expect(refreshTokenStore.get).toHaveBeenCalledWith({ name: 'secret/member-int-1' });
+    expect(refreshTokenStore.put).toHaveBeenCalledWith({
+      name: 'secret/member-int-1',
+      value: 'refresh-token-2',
+    });
+  });
+
+  it('throws when member_integrations lookup fails after no org_integrations row matches', async () => {
+    const queriedTables: string[] = [];
+    const memberLookupError = new Error('lookup failed');
+    const db = {
+      from: vi.fn((table: string) => {
+        queriedTables.push(table);
+        const query = {
+          select: vi.fn(() => query),
+          eq: vi.fn(() => query),
+          is: vi.fn(() => query),
+          maybeSingle: vi.fn().mockResolvedValue({
+            data: null,
+            error: table === 'member_integrations' ? memberLookupError : null,
+          }),
+          insert: vi.fn(() => ({
+            select: vi.fn(() => ({
+              single: vi.fn().mockResolvedValue({ data: null, error: null }),
+            })),
+          })),
+        };
+        return query;
+      }),
+    };
+    const refreshTokenStore = {
+      get: vi.fn().mockResolvedValue('refresh-token-1'),
+      put: vi.fn().mockResolvedValue(undefined),
+      delete: vi.fn().mockResolvedValue(undefined),
+    };
+    const deps = makeDocusignEnvelopeJobDeps({ db, refreshTokenStore });
+
+    await expect(deps.resolveConnection({
+      org_id: '11111111-1111-4111-8111-111111111111',
+      integration_id: 'member-int-1',
+      account_id: 'account-1',
+      envelope_id: 'envelope-1',
+      rule_event_id: 'rule-event-1',
+      document_ids: ['combined'],
+    })).rejects.toThrow('docusign_integration_lookup_failed');
+
+    expect(queriedTables).toEqual(['org_integrations', 'member_integrations']);
+    expect(logger.error).toHaveBeenCalledWith(
+      { error: memberLookupError, integrationId: 'member-int-1' },
+      'DocuSign job member integration lookup failed',
+    );
+    expect(refreshTokenStore.get).not.toHaveBeenCalled();
+    expect(refreshTokenStore.put).not.toHaveBeenCalled();
   });
 
   it('blocks token refresh when the DocuSign account hourly API budget is exhausted', async () => {
