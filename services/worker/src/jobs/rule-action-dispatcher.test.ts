@@ -38,11 +38,26 @@ interface AnchorInsert {
   metadata: Record<string, unknown>;
 }
 
+interface AnchorLookupRow {
+  public_id: string;
+  status: string;
+}
+
+interface JobQueueRow {
+  id: string;
+  type: string;
+  payload: Record<string, unknown>;
+  status: string;
+  created_at: string;
+}
+
 const dbState = {
   executions: [] as ExecutionRow[],
   rules: new Map<string, RuleRow>(),
   finalUpdates: new Map<string, Record<string, unknown>>(),
   anchorInserts: [] as AnchorInsert[],
+  existingAnchors: [] as AnchorLookupRow[],
+  jobQueueRows: [] as JobQueueRow[],
   anchorInsertError: null as { message: string; code?: string } | null,
   orgMembers: [{ user_id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', role: 'owner' }],
 };
@@ -114,8 +129,17 @@ vi.mock('../utils/db.js', () => {
     }),
   });
 
-  const buildAnchorsBuilder = () => ({
-    insert: (payload: AnchorInsert) => ({
+  const buildAnchorsBuilder = () => {
+    const selectChain = {
+      select: () => selectChain,
+      eq: () => selectChain,
+      is: () => selectChain,
+      neq: () => selectChain,
+      maybeSingle: async () => ({ data: dbState.existingAnchors[0] ?? null, error: null }),
+    };
+    return {
+      select: () => selectChain,
+      insert: (payload: AnchorInsert) => ({
       select: () => ({
         single: async () => {
           if (dbState.anchorInsertError) {
@@ -134,8 +158,31 @@ vi.mock('../utils/db.js', () => {
           };
         },
       }),
-    }),
-  });
+      }),
+    };
+  };
+
+  const buildJobQueueBuilder = () => {
+    let executionId: string | null = null;
+    let type: string | null = null;
+    const chain = {
+      select: () => chain,
+      eq: (col: string, val: unknown) => {
+        if (col === 'type') type = String(val);
+        if (col === 'payload->>execution_id') executionId = String(val);
+        return chain;
+      },
+      order: () => chain,
+      limit: () => chain,
+      maybeSingle: async () => ({
+        data: dbState.jobQueueRows.find((row) =>
+          row.type === type && row.payload.execution_id === executionId
+        ) ?? null,
+        error: null,
+      }),
+    };
+    return chain;
+  };
 
   const buildOrgMembersBuilder = () => {
     const chain = {
@@ -156,6 +203,7 @@ vi.mock('../utils/db.js', () => {
         if (table === 'organization_rules') return buildRulesBuilder();
         if (table === 'anchors') return buildAnchorsBuilder();
         if (table === 'org_members') return buildOrgMembersBuilder();
+        if (table === 'job_queue') return buildJobQueueBuilder();
         throw new Error(`unexpected table: ${table}`);
       },
       rpc: (...args: unknown[]) => mockDbRpc(...args),
@@ -214,6 +262,8 @@ function setScenario(opts: { executions?: ExecutionRow[]; rule?: RuleRow | null 
   }
   dbState.finalUpdates = new Map();
   dbState.anchorInserts = [];
+  dbState.existingAnchors = [];
+  dbState.jobQueueRows = [];
   dbState.anchorInsertError = null;
   dbState.orgMembers = [{ user_id: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd', role: 'owner' }];
 }
@@ -558,6 +608,44 @@ describe('rule-action-dispatcher MVP (SCRUM-1142)', () => {
     expect(out.routed_to).toBe('anchor_pipeline');
     expect(out.anchor_materialized).toBe(true);
     expect(out.anchor_public_id).toBe('ARK-2026-ABCD1234');
+  });
+
+  it('FAST_TRACK_ANCHOR (DS-06): retry after prior enqueue reuses the existing job', async () => {
+    mockDbRpc.mockResolvedValueOnce({
+      data: { success: true, balance: 99, deducted: 0, idempotent: true },
+      error: null,
+    });
+    setScenario({
+      rule: { ...defaultRule, action_type: 'FAST_TRACK_ANCHOR', action_config: {} },
+    });
+    dbState.anchorInsertError = { code: '23505', message: 'duplicate key value violates unique constraint' };
+    dbState.existingAnchors = [{ public_id: 'ARK-2026-EXISTING', status: 'PENDING' }];
+    dbState.jobQueueRows = [{
+      id: 'job-existing-fast-track',
+      type: 'anchor.fast_track',
+      payload: { execution_id: EXEC_ID },
+      status: 'pending',
+      created_at: '2026-05-30T12:00:00.000Z',
+    }];
+
+    const result = await runRuleActionDispatcher();
+
+    expect(result.succeeded).toBe(1);
+    expect(mockSubmitJob).not.toHaveBeenCalled();
+    const final = dbState.finalUpdates.get(EXEC_ID);
+    expect(final?.status).toBe('SUCCEEDED');
+    const out = final?.output_payload as {
+      anchor_public_id?: string;
+      duplicate_anchor?: boolean;
+      fast_track_job_id?: string;
+      reused_fast_track_job?: boolean;
+      deduction_idempotent?: boolean;
+    };
+    expect(out.anchor_public_id).toBe('ARK-2026-EXISTING');
+    expect(out.duplicate_anchor).toBe(true);
+    expect(out.fast_track_job_id).toBe('job-existing-fast-track');
+    expect(out.reused_fast_track_job).toBe(true);
+    expect(out.deduction_idempotent).toBe(true);
   });
 
   it('FAST_TRACK_ANCHOR (DS-06): recomputes invalid sender_email_sha256 input before anchor metadata', async () => {

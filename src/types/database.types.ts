@@ -7,10 +7,30 @@ export type Json =
   | Json[]
 
 export type Database = {
-  // Allows to automatically instantiate createClient with right options
-  // instead of createClient<Database, { PostgrestVersion: 'XX' }>(URL, KEY)
-  __InternalSupabase: {
-    PostgrestVersion: "14.1"
+  graphql_public: {
+    Tables: {
+      [_ in never]: never
+    }
+    Views: {
+      [_ in never]: never
+    }
+    Functions: {
+      graphql: {
+        Args: {
+          extensions?: Json
+          operationName?: string
+          query?: string
+          variables?: Json
+        }
+        Returns: Json
+      }
+    }
+    Enums: {
+      [_ in never]: never
+    }
+    CompositeTypes: {
+      [_ in never]: never
+    }
   }
   public: {
     Tables: {
@@ -3408,6 +3428,51 @@ export type Database = {
           {
             foreignKeyName: "org_credit_allocations_parent_org_id_fkey"
             columns: ["parent_org_id"]
+            isOneToOne: false
+            referencedRelation: "public_org_profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      org_credit_deductions: {
+        Row: {
+          amount: number
+          balance_after: number
+          created_at: string
+          id: string
+          org_id: string
+          reason: string
+          reference_id: string
+        }
+        Insert: {
+          amount: number
+          balance_after: number
+          created_at?: string
+          id?: string
+          org_id: string
+          reason: string
+          reference_id: string
+        }
+        Update: {
+          amount?: number
+          balance_after?: number
+          created_at?: string
+          id?: string
+          org_id?: string
+          reason?: string
+          reference_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "org_credit_deductions_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "org_credit_deductions_org_id_fkey"
+            columns: ["org_id"]
             isOneToOne: false
             referencedRelation: "public_org_profiles"
             referencedColumns: ["id"]
@@ -7033,6 +7098,9 @@ export type CompositeTypes<
     : never
 
 export const Constants = {
+  graphql_public: {
+    Enums: {},
+  },
   public: {
     Enums: {
       agent_status: ["active", "suspended", "revoked"],

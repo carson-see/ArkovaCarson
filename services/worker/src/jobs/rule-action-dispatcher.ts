@@ -11,10 +11,10 @@
  *   - FORWARD_TO_URL    → signed outbound HTTP POST + retry on transient err
  *   - AUTO_ANCHOR / FAST_TRACK_ANCHOR / unknown → fail-closed visible failure
  *
- * Idempotency is provided by the `(rule_id, trigger_event_id)` unique index
- * on the executions table — the matcher (rules-engine.ts) cannot insert two
- * rows for the same trigger, so the dispatcher safely retries side effects
- * on the same row without spawning duplicates.
+ * Idempotency starts with the `(rule_id, trigger_event_id)` unique index on
+ * the executions table. Side-effecting action modes add their own retry guard;
+ * FAST_TRACK_ANCHOR uses the execution id as the org-credit reference key and
+ * reuses an existing anchor.fast_track job on dispatcher retry.
  *
  * Concurrency: the MVP runs as a single Cloud Scheduler instance. A second
  * dispatcher started in parallel would race on the SELECT-then-UPDATE step
@@ -516,6 +516,24 @@ async function materializeAnchorQueueItem(args: {
   return insertAnchorQueueItem(await buildAnchorInsertPayload(args));
 }
 
+async function findExistingFastTrackJob(executionId: string): Promise<string | null> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data, error } = await (db as any)
+    .from('job_queue')
+    .select('id')
+    .eq('type', 'anchor.fast_track')
+    .eq('payload->>execution_id', executionId)
+    .order('created_at', { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`anchor.fast_track job lookup failed: ${(error as { message?: string }).message ?? 'unknown'}`);
+  }
+
+  return readString((data as { id?: unknown } | null)?.id);
+}
+
 // SCRUM-1649 DS-AUTO-02 — Anchor action routing.
 // Two outcome shapes share `routed_to=anchor_queue`: (a) AUTO_ANCHOR (DS-07,
 // queue mode) emits one with credit_denial_reason=null, no credit movement;
@@ -639,19 +657,33 @@ async function dispatchFastTrackAnchor(rule: RuleRow, exec: ExecutionRow): Promi
         error: err,
       });
     }
-    const jobId = await submitJob({
-      type: 'anchor.fast_track',
-      max_attempts: 5,
-      priority: 5,
-      payload: {
-        org_id: rule.org_id,
-        rule_id: rule.id,
-        execution_id: exec.id,
-        trigger_event_id: exec.trigger_event_id,
-        anchor_public_id: materialization.anchorPublicId,
-        duplicate_anchor: materialization.duplicate,
-      },
-    });
+    let reusedFastTrackJob: boolean;
+    let jobId: string | null;
+    try {
+      const existingJobId = await findExistingFastTrackJob(exec.id);
+      reusedFastTrackJob = existingJobId != null;
+      jobId = existingJobId ?? await submitJob({
+        type: 'anchor.fast_track',
+        max_attempts: 5,
+        priority: 5,
+        payload: {
+          org_id: rule.org_id,
+          rule_id: rule.id,
+          execution_id: exec.id,
+          trigger_event_id: exec.trigger_event_id,
+          anchor_public_id: materialization.anchorPublicId,
+          duplicate_anchor: materialization.duplicate,
+        },
+      });
+    } catch (err) {
+      return compensateFastTrackCreditFailure({
+        rule,
+        exec,
+        deduction: result,
+        failure: err instanceof Error ? err.message : 'anchor.fast_track job lookup failed',
+        error: err,
+      });
+    }
     if (!jobId) {
       return compensateFastTrackCreditFailure({
         rule,
@@ -668,6 +700,9 @@ async function dispatchFastTrackAnchor(rule: RuleRow, exec: ExecutionRow): Promi
         anchor_materialized: materialization.materialized,
         anchor_public_id: materialization.anchorPublicId,
         duplicate_anchor: materialization.duplicate,
+        fast_track_job_id: jobId,
+        reused_fast_track_job: reusedFastTrackJob,
+        deduction_idempotent: result.idempotent === true,
         ...(result.balance != null ? { balance: result.balance } : {}),
       },
     };
