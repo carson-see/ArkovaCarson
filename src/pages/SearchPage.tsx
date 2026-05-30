@@ -309,7 +309,13 @@ export function SearchPage() {
     issuerResults.length > 0 ||
     personResults.length > 0 ||
     (searchType === 'fingerprint' && fpResult !== null);
-  const showSearchLoading = isSearching && !verifyingFile && !hasDisplayableResults;
+  // SCRUM-1980: the results spinner is a "nothing to show yet" indicator. It must
+  // clear the moment we have anything to render — results OR an error — even if a
+  // parallel search leg (issuer vs. credential RPC resolve at different times) is
+  // still in flight. Without the `!displayError` guard the spinner lingered below
+  // the error card / results when the faster leg finished first (UAT 2026-05-22).
+  const showSearchLoading =
+    isSearching && !verifyingFile && !hasDisplayableResults && !displayError;
   const noResultsTitle = SEARCH_LABELS.NO_RESULTS_FOR.replace('{query}', lastSubmittedQuery);
 
   return (
@@ -501,7 +507,12 @@ export function SearchPage() {
 
           {/* Loading state */}
           {showSearchLoading && (
-            <div className="flex justify-center py-12">
+            <div
+              className="flex justify-center py-12"
+              role="status"
+              aria-label={SEARCH_LABELS.LOADING}
+              data-testid="search-loading-spinner"
+            >
               <Loader2 className="h-6 w-6 animate-spin text-[#00d4ff]" />
             </div>
           )}
