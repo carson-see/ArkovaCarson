@@ -536,6 +536,34 @@ describe('cron routes', () => {
       const res = await request(app).post('/cron/batch-anchors');
       expect(res.status).toBe(200);
       expect(res.body).toEqual({ batched: 100 });
+      expect(mockProcessBatchAnchors).toHaveBeenCalledWith({ force: false, orgId: undefined });
+    });
+
+    it('supports an authenticated org-scoped forced batch run for isolated scheduler soaks', async () => {
+      const app = createApp();
+      const orgId = '11111111-1111-4111-8111-111111111111';
+      const res = await request(app).post(`/cron/batch-anchors?force=true&org_id=${orgId}`);
+      expect(res.status).toBe(200);
+      expect(mockProcessBatchAnchors).toHaveBeenCalledWith({ force: true, orgId });
+    });
+
+    it('rejects malformed org_id values', async () => {
+      const app = createApp();
+      const res = await request(app).post('/cron/batch-anchors?force=true&org_id=not-a-uuid');
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe('Invalid org_id');
+      expect(mockProcessBatchAnchors).not.toHaveBeenCalled();
+    });
+
+    it('rejects repeated org_id values instead of falling back to a global run', async () => {
+      const app = createApp();
+      const orgId = '11111111-1111-4111-8111-111111111111';
+      const res = await request(app)
+        .post(`/cron/batch-anchors?force=true&org_id=${orgId}&org_id=22222222-2222-4222-8222-222222222222`);
+
+      expect(res.status).toBe(400);
+      expect(res.body.error).toBe('Invalid org_id');
+      expect(mockProcessBatchAnchors).not.toHaveBeenCalled();
     });
 
     it('returns 500 on job failure', async () => {
