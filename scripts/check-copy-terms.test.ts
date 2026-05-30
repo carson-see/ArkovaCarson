@@ -35,8 +35,12 @@ function findTerm(substring: string): string {
   // specific "block hash" pattern.
   const stripBoundaries = (t: string): string =>
     t
+      // character-class boundaries: (?<![-\w]) / (?![A-Za-z0-9]) etc.
       .replace(/\(\?<!\[[^\]]+\]\)/g, '')
       .replace(/\(\?!\[[^\]]+\]\)/g, '')
+      // word boundaries (SCRUM-2149 review B1): (?<!\w) / (?!\w)
+      .replace(/\(\?<!\\w\)/g, '')
+      .replace(/\(\?!\\w\)/g, '')
       .trim();
   const exactToken = FORBIDDEN_TERMS.find((t) => stripBoundaries(t) === substring);
   const term = exactToken ?? FORBIDDEN_TERMS.find((t) => t.includes(substring));
@@ -377,6 +381,176 @@ describe('findTermViolations — structural false-positive suppression (SCRUM-21
 });
 
 // =============================================================================
+// SCRUM-2149 review B1 — hyphenated banned phrases in visible copy MUST flag.
+// The `(?<![-\w])X(?![-\w])` boundary excluded a trailing/leading hyphen, so
+// hero/marketing copy like `Bitcoin-anchored` slipped through. The hyphen
+// carve-out is only needed for `block`/`gas` (CSS `inline-block`); the chain
+// terms switch to a word-style boundary that still flags a hyphen-adjacent hit.
+// =============================================================================
+
+describe('FORBIDDEN_TERMS — hyphen-adjacent banned phrases flag (SCRUM-2149 review B1)', () => {
+  it.each([
+    ['<p>Bitcoin-anchored</p>', 'bitcoin'],
+    ['<p>Blockchain-based</p>', 'blockchain'],
+    ['<p>Crypto-secured</p>', 'crypto'],
+    ['<p>UTXO-based</p>', 'utxo'],
+    ['<p>Re-broadcast the receipt</p>', 'broadcast'],
+  ])('flags %s (hyphen no longer masks the banned word)', (line, expected) => {
+    const terms = findTermViolations(line, 1, 'src/components/X.tsx').map((v) =>
+      v.term.toLowerCase(),
+    );
+    expect(terms).toContain(expected);
+  });
+
+  it('flags each chain term directly through its regex when hyphen-adjacent', () => {
+    expect(matches(findTerm('bitcoin'), 'Bitcoin-anchored')).toBe(true);
+    expect(matches(findTerm('blockchain'), 'Blockchain-based')).toBe(true);
+    expect(matches(findTerm('crypto'), 'Crypto-secured')).toBe(true);
+    expect(matches(findTerm('cryptocurrency'), 'Cryptocurrency-native')).toBe(true);
+    expect(matches(findTerm('testnet'), 'Testnet-only feature')).toBe(true);
+    expect(matches(findTerm('mainnet'), 'mainnet-ready')).toBe(true);
+    expect(matches(findTerm('utxo'), 'UTXO-based ledger')).toBe(true);
+    expect(matches(findTerm('broadcast'), 'Re-broadcast')).toBe(true);
+  });
+
+  it('does NOT flag the `inline-block` Tailwind token (className stripped)', () => {
+    const v = findTermViolations(
+      '<p className="inline-block text-block-fg">Network Checkpoint</p>',
+      1,
+      'src/components/X.tsx',
+    ).map((x) => x.term.toLowerCase());
+    expect(v.some((t) => t.includes('block'))).toBe(false);
+  });
+
+  it('does NOT flag the `BitcoinNetwork` type identifier', () => {
+    expect(
+      findTermViolations("type BitcoinNetwork = 'a' | 'b';", 1, 'src/lib/explorer.ts'),
+    ).toHaveLength(0);
+    // ...even outside a type-decl line: `crypto` inside `Cryptographic` stays clean.
+    expect(
+      findTermViolations("const label = 'Cryptographic Proof';", 1, 'src/lib/x.ts').map((v) =>
+        v.term.toLowerCase(),
+      ),
+    ).not.toContain('crypto');
+  });
+
+  it('still keeps the hyphen guard for `block` and `gas` (CSS-token false positives)', () => {
+    // Bare `block`/`gas` adjacent to a hyphen in visible text is intentionally
+    // NOT flagged — these collide with Tailwind utilities (inline-block, etc.).
+    expect(matches(findTerm('block('), 'inline-block')).toBe(false);
+    expect(matches(findTerm('gas'), 'no-gas-zone')).toBe(false);
+  });
+});
+
+// =============================================================================
+// SCRUM-2149 review N2 — suppression bleed. The URL-path and bare-quoted-value
+// suppressions must NOT fire on text that is clearly JSX-visible (between `>`
+// and `<`). `<p>Testnet/Mainnet</p>` previously suppressed "Mainnet" (slash);
+// `<p>"Bitcoin"</p>` / `<button>'Broadcast'</button>` suppressed the term.
+// =============================================================================
+
+describe('findTermViolations — JSX-visible suppression bleed (SCRUM-2149 review N2)', () => {
+  it('flags BOTH terms in `<p>Testnet/Mainnet</p>` (URL-path suppression gated)', () => {
+    const terms = findTermViolations('<p>Testnet/Mainnet</p>', 1, 'src/components/X.tsx').map((v) =>
+      v.term.toLowerCase(),
+    );
+    expect(terms).toContain('testnet');
+    expect(terms).toContain('mainnet');
+  });
+
+  it('flags a double-quoted-for-emphasis banned word in JSX text (`<p>"Bitcoin"</p>`)', () => {
+    const terms = findTermViolations('<p>"Bitcoin"</p>', 1, 'src/components/X.tsx').map((v) =>
+      v.term.toLowerCase(),
+    );
+    expect(terms).toContain('bitcoin');
+  });
+
+  it('flags a single-quoted-for-emphasis banned word in JSX text (`<button>\'Broadcast\'</button>`)', () => {
+    const terms = findTermViolations(
+      "<button>'Broadcast'</button>",
+      1,
+      'src/components/X.tsx',
+    ).map((v) => v.term.toLowerCase());
+    expect(terms).toContain('broadcast');
+  });
+
+  it('STILL suppresses a genuine bare in-code value string (not JSX-visible)', () => {
+    // The N2 gate must only lift suppression for JSX-visible text — bare code
+    // values like `|| 'mainnet'` and `'token'` must remain suppressed.
+    expect(
+      findTermViolations("const net = cfg.net || 'mainnet';", 1, 'src/lib/env.ts').map((v) =>
+        v.term.toLowerCase(),
+      ),
+    ).not.toContain('mainnet');
+    expect(
+      findTermViolations("  'token',", 51, 'src/lib/sourceProvenance.ts').map((v) =>
+        v.term.toLowerCase(),
+      ),
+    ).not.toContain('token');
+  });
+
+  it('STILL suppresses a banned word inside a quoted URL value (not JSX-visible)', () => {
+    expect(
+      findTermViolations("  testnet: 'https://mempool.space/testnet',", 1, 'src/lib/explorer.ts'),
+    ).toHaveLength(0);
+  });
+});
+
+// =============================================================================
+// SCRUM-2149 review N1 — raw-enum heuristic must catch leading text before the
+// expression: `<div>Label: {row.status}</div>` is a JSX child even though text
+// precedes the `{`. Clean false-positives (attr / template / key / comparison)
+// must still NOT flag.
+// =============================================================================
+
+describe('findRawEnumRenders — leading-text JSX child (SCRUM-2149 review N1)', () => {
+  it('flags `<div>Label: {row.status}</div>` (text precedes the expression)', () => {
+    const v = findRawEnumRenders('<div>Label: {row.status}</div>', 1, 'src/components/X.tsx');
+    expect(v).toHaveLength(1);
+    expect(v[0].term).toContain('row.status');
+  });
+
+  it('flags a leading-text child with trailing text too (`>Type: {x.credential_type} (beta)<`)', () => {
+    const v = findRawEnumRenders(
+      '          <span>Type: {x.credential_type} (beta)</span>',
+      1,
+      'src/components/X.tsx',
+    );
+    expect(v).toHaveLength(1);
+    expect(v[0].term).toContain('credential_type');
+  });
+
+  it('integrates through findTermViolations for a leading-text .tsx child', () => {
+    const v = findTermViolations('<div>Label: {row.status}</div>', 1, 'src/pages/Foo.tsx');
+    expect(v.some((x) => x.term.includes('row.status'))).toBe(true);
+  });
+
+  it('does NOT flag attribute pass-through even with leading text on the line', () => {
+    expect(
+      findRawEnumRenders('  <div>Status</div> <StatusBadge status={x.status} />', 1, 'src/components/X.tsx'),
+    ).toHaveLength(0);
+  });
+
+  it('does NOT flag a template interpolation even with leading JSX on the line', () => {
+    expect(
+      findRawEnumRenders('  <p>x</p>; throw new Error(`HTTP ${res.status}`);', 1, 'src/components/X.tsx'),
+    ).toHaveLength(0);
+  });
+
+  it('does NOT flag a key={x.status} prop with leading text', () => {
+    expect(
+      findRawEnumRenders('  <ul><li key={x.status}>{x.label}</li></ul>', 1, 'src/components/X.tsx'),
+    ).toHaveLength(0);
+  });
+
+  it('does NOT flag an `x.status === ...` comparison (no brace-wrapped child)', () => {
+    expect(
+      findRawEnumRenders('  {x.status === "active" ? <A/> : <B/>}', 1, 'src/components/X.tsx'),
+    ).toHaveLength(0);
+  });
+});
+
+// =============================================================================
 // SCRUM-2149 (c) — raw DB-enum render heuristic. A bare {X.<riskyfield>} as a
 // JSX expression-child dumps a DB enum to users without a display mapper.
 // =============================================================================
@@ -499,12 +673,15 @@ describe('partitionAgainstBaseline — grandfather logic (SCRUM-2148)', () => {
   it('reports baseline entries with no matching current violation as STALE', () => {
     const { stale } = partitionAgainstBaseline([], baseline);
     expect(stale).toHaveLength(2);
-    expect(stale.map((e) => e.file).sort()).toEqual(['src/pages/A.tsx', 'src/pages/B.tsx']);
+    expect(stale.map((e) => e.file).sort((a, b) => a.localeCompare(b))).toEqual([
+      'src/pages/A.tsx',
+      'src/pages/B.tsx',
+    ]);
   });
 
   it('normalises path separators so OS-specific paths still match', () => {
     const { fresh } = partitionAgainstBaseline(
-      [v('src\\pages\\A.tsx', 10, 'hash')],
+      [v(String.raw`src\pages\A.tsx`, 10, 'hash')],
       baseline,
     );
     expect(fresh).toHaveLength(0);

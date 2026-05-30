@@ -14,9 +14,20 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-// Forbidden terms (case-insensitive)
-// Use custom boundaries (?<![-\w]) / (?![-\w]) rather than \b so that hyphenated
-// CSS values like "inline-block" / "flex-block" are NOT flagged as the word "block".
+// Forbidden terms (case-insensitive). Two boundary styles are used deliberately:
+//
+//   HYPHEN-GUARDED  `(?<![-\w])X(?![-\w])` — a hyphen adjacent to the term blocks
+//     the match. Used ONLY for `block` and `gas`, which collide with Tailwind/CSS
+//     utilities (`inline-block`, `text-block-fg`, …). The hyphen carve-out is
+//     needed there and nowhere else.
+//   WORD-BOUNDARY   `(?<!\w)X(?!\w)` — a hyphen adjacent to the term STILL flags.
+//     Used for the chain/marketing terms (`bitcoin`, `blockchain`, `crypto`,
+//     `cryptocurrency`, `testnet`, `mainnet`, `utxo`, `broadcast`) because
+//     hyphenated hero copy like `Bitcoin-anchored` / `Crypto-secured` /
+//     `UTXO-based` / `Re-broadcast` is exactly the §1.3 violation we must catch
+//     (SCRUM-2149 review B1). className values are already stripped by
+//     stripClassNameAttributes() and identifier/type positions are dropped by
+//     isCodeIdentifier(), so the hyphen guard is unnecessary for these.
 export const FORBIDDEN_TERMS = [
   String.raw`(?<![-\w])wallet(?![-\w])`,
   String.raw`(?<![-\w])gas(?![-\w])`,
@@ -25,26 +36,27 @@ export const FORBIDDEN_TERMS = [
   String.raw`(?<![-\w])hash(?![-\w])`,
   String.raw`(?<![-\w])block(?![-\w])`,
   String.raw`(?<![-\w])transaction(?![-\w])`,
-  // SCRUM-2149(d): boundaries on crypto/bitcoin/blockchain so they NO LONGER
-  // match inside identifiers/type-names. Pre-2149 these were bare strings and
-  // false-positived on `BitcoinNetwork`, `Cryptographic`, `BITCOIN_NETWORK`.
-  // `cryptographic` (the allowed adjective) also dies on the right boundary.
-  String.raw`(?<![-\w])crypto(?![-\w])`,
-  String.raw`(?<![-\w])cryptocurrency(?![-\w])`,
-  String.raw`(?<![-\w])bitcoin(?![-\w])`,
-  String.raw`(?<![-\w])blockchain(?![-\w])`,
+  // SCRUM-2149(d) + review B1: word boundaries so these NO LONGER match inside
+  // identifiers/type-names (`BitcoinNetwork`, `Cryptographic`, `BITCOIN_NETWORK`)
+  // — those positions are dropped by isCodeIdentifier() — yet a hyphen-adjacent
+  // occurrence in visible copy (`Bitcoin-anchored`, `Crypto-secured`) DOES flag.
+  // `cryptographic` (the allowed adjective) is exempted on the shouldSkipLine path.
+  String.raw`(?<!\w)crypto(?!\w)`,
+  String.raw`(?<!\w)cryptocurrency(?!\w)`,
+  String.raw`(?<!\w)bitcoin(?!\w)`,
+  String.raw`(?<!\w)blockchain(?!\w)`,
   String.raw`(?<![-\w])mining(?![-\w])`,
   String.raw`(?<![-\w])token(?![-\w])`,
 
   // SCRUM-2149(b): §1.3 parity — Testnet / Mainnet / UTXO / Broadcast were in
-  // the constitution's banned list but missing here. Same hyphen/word
-  // boundaries so they don't match inside `mainnetConfig`, `broadcastTx`, etc.
-  // (the structural-position filter additionally drops type-union members,
-  // object keys, URL segments, and bare code values — see classifyMatch).
-  String.raw`(?<![-\w])testnet(?![-\w])`,
-  String.raw`(?<![-\w])mainnet(?![-\w])`,
-  String.raw`(?<![-\w])utxo(?![-\w])`,
-  String.raw`(?<![-\w])broadcast(?![-\w])`,
+  // the constitution's banned list but missing here. Word boundaries (review
+  // B1) so they don't match inside `mainnetConfig`, `broadcastTx`, etc. (those
+  // identifier/type/key positions are dropped by isCodeIdentifier) while a
+  // hyphen-adjacent occurrence in visible copy (`UTXO-based`) still flags.
+  String.raw`(?<!\w)testnet(?!\w)`,
+  String.raw`(?<!\w)mainnet(?!\w)`,
+  String.raw`(?<!\w)utxo(?!\w)`,
+  String.raw`(?<!\w)broadcast(?!\w)`,
 
   // UX-03 (SCRUM-1029): engineering-copy leaks seen in 2026-04-18 UAT.
   // API-keys page surfaced a raw error "Ensure the worker service is running"
@@ -199,36 +211,11 @@ export function shouldSkipLine(line: string, trimmed: string): boolean {
   return false;
 }
 
-function stripIgnoredAttributeValues(line: string): string {
-  return line.replaceAll(/\bclassName\s*=\s*(?:"[^"]*"|'[^']*'|`[^`]*`|\{[^}]*\})/g, 'className=');
-}
-
-function hasInlineJsxText(line: string): boolean {
-  let searchFrom = 0;
-
-  while (searchFrom < line.length) {
-    const closeTagStart = line.indexOf('>', searchFrom);
-    if (closeTagStart === -1) return false;
-
-    const nextOpenTag = line.indexOf('<', closeTagStart + 1);
-    if (nextOpenTag === -1) return false;
-
-    const text = line.slice(closeTagStart + 1, nextOpenTag).trimStart();
-    if (text.length > 0 && !text.startsWith('{')) {
-      return true;
-    }
-
-    searchFrom = nextOpenTag + 1;
-  }
-
-  return false;
-}
-
 /**
  * Sanitises a JSX/TS line so the term scan only sees user-visible copy.
  * Strips className/class attribute values (Tailwind utilities like
- * "inline-block" are noise) and JSX comments `{/* … *​/}` (so engineering
- * notes can mention banned terms without tripping the lint).
+ * "inline-block" are noise) and JSX comments (so engineering notes can mention
+ * banned terms without tripping the lint).
  *
  * Exported for unit tests.
  */
@@ -277,76 +264,111 @@ function isTypeDeclarationLine(line: string): boolean {
 }
 
 /**
- * Structural-position classifier (SCRUM-2149(d)). Returns true when the matched
- * term sits in a code position that is NEVER user-visible copy, so it must not
- * be flagged. Covers the four categories the ticket names — identifiers, type
- * unions, object keys, property access — plus URL segments and bare in-code
- * value strings. Only flags genuine copy: JSX text and quoted display strings.
+ * True when the match sits in JSX element text — i.e. between a tag-close `>`
+ * and a following tag-open `<` on the same line. SCRUM-2149 review N2: such
+ * text is user-visible copy, so the URL-path and bare-quoted-value suppressions
+ * (which are correct for in-code positions) must NOT fire on it. Examples that
+ * MUST stay visible: `<p>Testnet/Mainnet</p>`, `<p>"Bitcoin"</p>`.
+ */
+function isJsxVisibleText(line: string, matchIndex: number): boolean {
+  const before = line.slice(0, matchIndex);
+  const lastGt = before.lastIndexOf('>');
+  const lastLt = before.lastIndexOf('<');
+  // The most recent angle bracket before the match is a tag-close `>` (so we are
+  // inside element content, not inside a tag), and another tag opens after it.
+  return lastGt > lastLt && line.indexOf('<', matchIndex) !== -1;
+}
+
+/** `<Hash …>` (component) or `</Hash>` (closing tag) — never user copy. */
+function isJsxComponentName(line: string, matchIndex: number, prev: string): boolean {
+  if (prev === '<') return true;
+  return prev === '/' && matchIndex >= 2 && line[matchIndex - 2] === '<';
+}
+
+/**
+ * `obj.bitcoin` — property access. Requires an identifier char before the dot
+ * so a sentence-ending `.` followed by a banned word in the next sentence
+ * ("…secure. Bitcoin is…") is NOT masked.
+ */
+function isPropertyAccess(line: string, matchIndex: number, prev: string): boolean {
+  return prev === '.' && matchIndex >= 2 && /[A-Za-z0-9_]/.test(line[matchIndex - 2]);
+}
+
+/**
+ * Object-key position: `mainnet:` / `'mainnet':` / `"mainnet":` where the colon
+ * begins a value (not `::`, not the `?:` ternary). An optional closing quote
+ * between the term and the colon is accepted (quoted keys). Guards against a
+ * ternary THEN-branch value by requiring the term to START the segment after
+ * the nearest `{`, `,`, `;`, or line start.
+ */
+function isObjectKey(line: string, matchIndex: number, after: string): boolean {
+  if (!/^["']?\s*:(?![:=])/.test(after)) return false;
+  const before = line.slice(0, matchIndex);
+  const lastSep = Math.max(
+    before.lastIndexOf('{'),
+    before.lastIndexOf(','),
+    before.lastIndexOf(';'),
+  );
+  const segment = before.slice(lastSep + 1).trim();
+  return segment === '' || segment === '"' || segment === "'";
+}
+
+/**
+ * URL segment: a `/term` path segment whose slash is part of a URL (the char
+ * before the slash is a host/segment char or `}` from a `${…}` template) —
+ * chain-explorer URLs render `/block/`, `/tx/`, `/testnet`.
+ */
+function isUrlSegment(line: string, matchIndex: number, prev: string): boolean {
+  if (prev !== '/' || matchIndex < 2) return false;
+  return /[A-Za-z0-9.}/]/.test(line[matchIndex - 2]);
+}
+
+/**
+ * Bare in-code value string: the match is wrapped in quotes whose ENTIRE
+ * content is exactly the term (a discrete enum/list/config value, e.g.
+ * `'token'`, `|| 'mainnet'`, `['utxo']`). EXCLUSION: a JSX/HTML attribute value
+ * (`attr="…"`, char before the opening quote is `=`) IS user-visible copy and
+ * must still flag (`placeholder="Wallet address"`).
+ */
+function isBareValueString(matchIndex: number, prev: string, after: string, line: string): boolean {
+  if (prev !== '"' && prev !== "'" && prev !== '`') return false;
+  if (after[0] !== prev) return false; // closing quote must immediately follow
+  const beforeQuote = matchIndex >= 2 ? line[matchIndex - 2] : '';
+  return beforeQuote !== '=';
+}
+
+/**
+ * Structural-position filter (SCRUM-2149(d)). Returns true when the matched term
+ * sits in a code position that is NEVER user-visible copy, so it must not be
+ * flagged. Composed of small named predicates (review N3, keeps cognitive
+ * complexity low): JSX component/closing-tag names, property access, TS
+ * type/interface declaration lines (union members), object-key position, URL
+ * segments, and bare in-code value strings. Only genuine copy — JSX text and
+ * quoted display strings — flags.
+ *
+ * Review N2: the URL-segment and bare-value suppressions are themselves gated
+ * on `!isJsxVisibleText`, so they cannot mask a banned word sitting in visible
+ * JSX element text (`<p>Testnet/Mainnet</p>`, `<p>"Bitcoin"</p>`).
  *
  * @param line        the className-stripped line
  * @param matchIndex  start index of the matched term
  * @param matchLength length of the matched term
  */
 function isCodeIdentifier(line: string, matchIndex: number, matchLength: number): boolean {
-  // Whole-line exemption: TS type/interface declarations.
   if (isTypeDeclarationLine(line)) return true;
 
   const prev = matchIndex > 0 ? line[matchIndex - 1] : '';
   const after = line.slice(matchIndex + matchLength);
 
-  // `<Hash …>` — JSX component name.
-  if (prev === '<') return true;
-  // `</Hash>` — closing tag.
-  if (prev === '/' && matchIndex >= 2 && line[matchIndex - 2] === '<') return true;
-  // `obj.bitcoin` — property access. Require an identifier char before the
-  // dot so a sentence-ending `.` followed by a banned word in the next
-  // sentence ("…secure. Bitcoin is…") doesn't get masked.
-  if (prev === '.' && matchIndex >= 2 && /[A-Za-z0-9_]/.test(line[matchIndex - 2])) return true;
+  if (isJsxComponentName(line, matchIndex, prev)) return true;
+  if (isPropertyAccess(line, matchIndex, prev)) return true;
+  if (isObjectKey(line, matchIndex, after)) return true;
 
-  // Object-key position: `mainnet:` or `'mainnet':` / `"mainnet":` followed by
-  // a colon (not `::` and not the `?:` ternary — require the colon to begin a
-  // value, i.e. it is immediately followed by whitespace/quote/brace/value,
-  // and the key is not part of a larger expression). We accept an optional
-  // closing quote between the term and the colon (quoted keys).
-  if (/^["']?\s*:(?![:=])/.test(after)) {
-    // Guard against ternary `cond ? 'mainnet' : x` where the term is the
-    // THEN-branch value: that has a `?` earlier with no colon between. The
-    // colon here would be the ternary's. Only treat as a key when the term
-    // starts the (trimmed) segment after `{`, `,`, or line start.
-    const before = line.slice(0, matchIndex);
-    const lastSep = Math.max(before.lastIndexOf('{'), before.lastIndexOf(','), before.lastIndexOf(';'));
-    const segment = before.slice(lastSep + 1).trim();
-    // segment is empty (term starts the key) or just an opening quote.
-    if (segment === '' || segment === '"' || segment === "'") return true;
-  }
-
-  // URL context: the term is part of a URL literal. Either an explicit scheme
-  // appears before it inside the current string, or the term is a path segment
-  // (`/term`) — chain-explorer URLs render `/block/`, `/tx/`, `/testnet`.
-  if (prev === '/') {
-    // `/block/...` or `https://host/testnet` — preceded by a slash that is part
-    // of a path (the char before the slash is not whitespace/`<`, i.e. it is a
-    // URL host/segment char or `}` from a `${…}` template).
-    if (matchIndex >= 2) {
-      const beforeSlash = line[matchIndex - 2];
-      if (/[A-Za-z0-9.}/]/.test(beforeSlash)) return true;
-    }
-  }
-
-  // Bare in-code value string: the match is wrapped in quotes whose ENTIRE
-  // content is exactly the term (a discrete enum/list/config value, e.g.
-  // `'token'`, `|| 'mainnet'`, `['utxo']`). Such a string is not a sentence of
-  // copy. EXCLUSION: when the quote is a JSX/HTML attribute value (`attr="…"`),
-  // i.e. the char before the opening quote is `=`, it IS user-visible copy and
-  // must still flag (`placeholder="Wallet address"`).
-  const quote = prev;
-  if (quote === '"' || quote === "'" || quote === '`') {
-    const closer = after[0];
-    if (closer === quote) {
-      // opening quote is at matchIndex-1; char before it decides attr vs value.
-      const beforeQuote = matchIndex >= 2 ? line[matchIndex - 2] : '';
-      if (beforeQuote !== '=') return true;
-    }
+  // These two suppressions are correct for in-code positions but would bleed
+  // onto visible JSX text, so they are skipped when the match is JSX-visible.
+  if (!isJsxVisibleText(line, matchIndex)) {
+    if (isUrlSegment(line, matchIndex, prev)) return true;
+    if (isBareValueString(matchIndex, prev, after, line)) return true;
   }
 
   return false;
@@ -379,15 +401,36 @@ const RAW_ENUM_CHILD_RE = new RegExp(
   String.raw`(^|[^$=\w.])\{\s*[A-Za-z_$][\w$]*\??\.(?:${RISKY_ENUM_FIELDS.join('|')})\s*\}`,
 );
 
+// Strips the leading `{…}` brace expression so the remainder of the line can be
+// inspected for the next JSX tag. `[^}]*` is greedy but bounded by the excluded
+// `}` delimiter — linear, no super-linear backtracking (cf. SonarCloud S5852).
+const LEADING_BRACE_EXPR_RE = /^\{[^}]*\}/;
+// Captures the brace-expression body (e.g. `row.status`) for the violation
+// message. Non-lazy `[^}]*` (review B3 / S6594: no lazy `*?`, consumed via
+// RegExp.exec); the captured body is .trim()'d afterwards rather than peeling
+// surrounding whitespace with a `\s*` group, keeping the pattern flat.
+const ENUM_FIELD_RE = /^\{([^}]*)\}/;
+
 /**
  * Detects a raw DB-enum render: a bare `{X.<riskyfield>}` used as a JSX
- * expression CHILD (between `>` and `<`, or alone on an indented line) rather
- * than passed into a display component. Conservative by construction:
+ * expression CHILD rather than passed into a display component. A child is
+ * either the whole (trimmed) line, or embedded in element content — a tag has
+ * closed (`>`) earlier on the line and another tag (`<`) follows the
+ * expression. Review N1: leading text before the `{` (`<div>Label:
+ * {row.status}</div>`) no longer defeats detection. Conservative by
+ * construction — attribute (`=`) and template (`$`) positions are excluded by
+ * RAW_ENUM_CHILD_RE's leading boundary class:
  *
- *   FLAGS    `{result.status}` (child), `>{r.credential_type}<`
+ *   FLAGS    `{result.status}` (child), `>{r.credential_type}<`,
+ *            `<div>Label: {row.status}</div>` (leading text)
  *   IGNORES  `${res.status}` (template/HTTP code), `status={x.status}` (attr),
- *            `{x.public_id}` (field not in the risky set), and anything in a
- *            non-`.tsx` file (the pattern is JSX-specific).
+ *            `key={x.status}` (attr), `{x.public_id}` (field not in the risky
+ *            set), and anything in a non-`.tsx` file (the pattern is JSX-specific).
+ *
+ * Known deliberate blind spots (documented in scripts/agents.md): a defaulted
+ * child `{x.status || ''}`, a call-result child `{getX().status}`, and a
+ * template-literal child are NOT matched — the regex targets the bare
+ * `{ident.field}` shape only, by design, to keep false positives near zero.
  *
  * Exported for unit tests.
  */
@@ -401,16 +444,17 @@ export function findRawEnumRenders(line: string, lineNum: number, filePath: stri
   const trimmed = line.trim();
   const exprOnly = /^\{\s*[A-Za-z_$][\w$]*\??\.[A-Za-z_]+\s*\}$/.test(trimmed);
 
-  // Inline JSX child: the expression is immediately preceded (ignoring space)
-  // by `>` and immediately followed (ignoring space) by `<`.
-  const before = line.slice(0, exprStart).replace(/\s+$/, '');
-  const afterExpr = line.slice(exprStart).replace(/^\{[^}]*\}/, '').replace(/^\s+/, '');
-  const inlineChild = before.endsWith('>') && afterExpr.startsWith('<');
+  // JSX expression child: a tag closed (`>`) before the `{…}` on this line AND
+  // another tag (`<`) follows it. .trimEnd()/.indexOf avoid the super-linear
+  // `\s+$` regex flagged by SonarCloud S5852 (review B3).
+  const beforeExpr = line.slice(0, exprStart).trimEnd();
+  const afterExpr = line.slice(exprStart).replace(LEADING_BRACE_EXPR_RE, '');
+  const inJsxChild = beforeExpr.includes('>') && afterExpr.includes('<');
 
-  if (!exprOnly && !inlineChild) return [];
+  if (!exprOnly && !inJsxChild) return [];
 
-  const expr = line.slice(exprStart).match(/^\{\s*([^}]*?)\s*\}/);
-  const field = expr ? expr[1] : line.slice(exprStart);
+  const fieldMatch = ENUM_FIELD_RE.exec(line.slice(exprStart));
+  const field = fieldMatch ? fieldMatch[1].trim() : line.slice(exprStart).trim();
   return [
     {
       file: filePath,
