@@ -14,6 +14,19 @@
 
 ## Now
 
+### 2026-05-30 — SCRUM-2189 (PR #962) + SCRUM-1980 Part 2 (PR #963) migrations merged + prod-verified
+
+Two migration PRs landed on `main` and are live in prod (`vzwyaatejekddvltxyye`):
+
+- **SCRUM-2189 / [PR #962](https://github.com/carson-see/ArkovaCarson/pull/962)** (merge `d881abe1`): migration `0324_anchor_status_counts_read_cache.sql` redefines `get_anchor_status_counts_fast()` to **read `pipeline_dashboard_cache` (key `anchor_status_counts`)** — the cache the SCRUM-1708 cron already maintains — instead of running per-status `count(*)` over the ~3.3M-row `anchors` table under a 1s sub-budget (every bucket timed out → `-1` sentinels → dashboard showed "—"). Access guard + frozen 6-key JSON shape preserved; `-1` fallback only when the cache row is absent. **Unblocks SCRUM-1707.** Prod-verified: `reads_cache=true`, guard `auth.uid()` wrapped as `(SELECT auth.uid())`, no bare `uid()`.
+- **SCRUM-1980 Part 2 / [PR #963](https://github.com/carson-see/ArkovaCarson/pull/963)** (merge `f9281194`): migration `0325_public_search_min_length_and_timeouts.sql` — `search_public_credentials` now requires `length(trim(p_query)) >= 3` (the trigram floor), and `search_public_record_embeddings` + `search_public_credential_embeddings` carry a defensive `statement_timeout`. Prod-verified live. **Part 1 (frontend loading-state reset on RPC error) is NOT shipped — SCRUM-1980 stays OPEN** for that frontend half.
+
+**Close-out:** bug tracker (Confluence [page 28115270](https://arkova.atlassian.net/wiki/spaces/A/pages/28115270), now v45) marks BUG-2026-05-29-001 (SCRUM-2189) fixed and BUG-2026-05-22-005 (SCRUM-1980) Part-2-fixed with Part 1 noted open; BUG-2026-05-08-001 regression note updated to "re-fixed via 0324". Jira transitions stay parked (SCRUM-2189 done-pending Carson; SCRUM-1980 stays open for Part 1).
+
+_Last refreshed: 2026-05-30 by Claude — claims verified against MCP/git output: prod ref `vzwyaatejekddvltxyye` migration ledger has rows `0324` + `0325` (Supabase MCP `execute_sql`); `get_anchor_status_counts_fast` body confirmed reads_cache=true + wrapped `auth.uid()` (no bare); `search_public_credentials` min-length-3 guard + both embedding RPC `statement_timeout` confirmed via `pg_get_functiondef`; merge commits `d881abe1` (#962) + `f9281194` (#963) on `origin/main` via `git log`._
+
+---
+
 ### 2026-05-30 — SCRUM-2200 Track A PE eval moat (PR #975) + staging-deploy race fix (PR #976)
 
 **SCRUM-2200 Track A — professional-education eval moat** is committed on `feat/scrum-2200-pe-heldout-eval` (head `74865449`) and open as **[PR #975](https://github.com/carson-see/ArkovaCarson/pull/975)** (draft). Contents: merge gates (CPE/CLE/course-id field F1) over curated fixtures; a hard 18-entry held-out TEST split with a gate-contamination guard; a synthetic TRAIN generator + Vertex Gemini tuning-JSONL exporter; and a held-out runner that measures generalization F1 **reported-only, never gated** (gating the test set would make it a training signal). Live held-out run against tuned golden-v5 = **weighted F1 82.2%** (report under `services/worker/docs/eval/`); Vertex endpoint **undeployed immediately** after (fleet at 0 deployed models, §7). Local gates green: typecheck clean, worker tests 400/400, `lint` exit 0 (sole pre-existing error in untouched `stripe/handlers.ts`).
