@@ -77,6 +77,10 @@ jobs:
           # to avoid ${{ }} script-injection.
           GEMINI_TUNED_MODEL: ${{ inputs.endpoint }}
           PE_GATES: ${{ inputs.gates }}
+          # Required: the live (non-mock) harness path hard-errors without this
+          # (run-pe-gates.ts + gemini.ts gate on ENABLE_AI_EXTRACTION; it defaults
+          # false off-prod per §1.6). This is an out-of-band eval, not prod traffic.
+          ENABLE_AI_EXTRACTION: 'true'
         run: |
           npx tsx src/ai/eval/run-pe-gates.ts \
             --provider gemini \
