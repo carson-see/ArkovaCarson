@@ -211,7 +211,7 @@ describe('handlePlatformStats', () => {
     // the real count (3). profiles/anchors DO have deleted_at, so they count fine.
     mockDbFrom.mockImplementation((table: string) => {
       let deletedAtFiltered = false;
-      const chain = {
+      const chain: Record<string, unknown> = {
         select: vi.fn().mockReturnThis(),
         is: vi.fn((col: string) => {
           if (col === 'deleted_at') deletedAtFiltered = true;
@@ -220,7 +220,10 @@ describe('handlePlatformStats', () => {
         gte: vi.fn().mockReturnThis(),
         eq: vi.fn().mockReturnThis(),
         in: vi.fn().mockReturnThis(),
-        then: (resolve: (v: unknown) => void) => {
+      };
+      // Intentional thenable mock matching Supabase's PostgREST builder (awaitable mid-chain).
+      Object.defineProperty(chain, 'then', { // NOSONAR — intentional thenable for Supabase mock
+        value: (resolve: (v: unknown) => void) => {
           if (table === 'organizations') {
             return resolve(
               deletedAtFiltered
@@ -230,7 +233,9 @@ describe('handlePlatformStats', () => {
           }
           return resolve({ count: 7, data: [], error: null });
         },
-      };
+        configurable: true,
+        writable: true,
+      });
       return chain;
     });
 
