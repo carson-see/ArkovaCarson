@@ -57,9 +57,9 @@ export async function handlePlatformStats(
       db.from('profiles').select('*', { count: 'exact', head: true })
         .is('deleted_at', null)
         .gte('created_at', new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()),
-      // 2: Total orgs
-      db.from('organizations').select('*', { count: 'exact', head: true })
-        .is('deleted_at', null),
+      // 2: Total orgs — organizations has no deleted_at column (SCRUM-1984);
+      // filtering on it made PostgREST return count: null → Total Orgs showed 0.
+      db.from('organizations').select('*', { count: 'exact', head: true }),
       // 3: Anchor status counts via fast RPC (reltuples + exact small-status counts)
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (db as any).rpc('get_anchor_status_counts_fast'),

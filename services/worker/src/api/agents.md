@@ -1,6 +1,11 @@
 # agents.md — services/worker/src/api/
 
-_Last updated: 2026-05-23 (PR #859 anchor submit scope routing fixes)_
+_Last updated: 2026-05-29 (SCRUM-1984 admin-stats phantom-column fix)_
+
+## 2026-05-29 Phantom-column filters silently zero out counts (SCRUM-1984)
+
+- `admin-stats.ts` filtered `.is('deleted_at', null)` on `organizations`, which has **no** `deleted_at` column. PostgREST does not throw on a filter against a missing column — it resolves with `{ count: null, error: <column missing> }`. Under `Promise.allSettled` the promise is *fulfilled* (carrying the error), so `val(i)?.count ?? 0` collapsed to `0` and Total Orgs always showed 0 despite real orgs existing.
+- Before filtering soft-deletes, confirm the table actually has `deleted_at`. `organizations` soft-deletes via `suspended`, not `deleted_at` (CLAUDE.md §1.2). `profiles` and `anchors` do have `deleted_at`.
 
 ## 2026-05-22 Anchor Write Scope Compatibility
 

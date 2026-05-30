@@ -52,6 +52,18 @@ test.describe('Route Guards', () => {
         page.getByText(/Authentication Required/i).or(page.getByLabel('Email address'))
       ).toBeVisible({ timeout: 5000 });
     });
+
+    // SCRUM-1982: bare /profile is a guarded legacy alias (App.tsx wraps it in
+    // AuthGuard before the redirect), so an unauthenticated hit must bounce to
+    // auth — not leak the redirect target or render anything.
+    test('redirects /profile to /auth when not logged in', async ({ page }) => {
+      await page.goto('/profile');
+      await expect(page).toHaveURL(/\/(auth|login)(\/|\?|$)/);
+
+      await expect(
+        page.getByText(/Authentication Required/i).or(page.getByLabel('Email address'))
+      ).toBeVisible({ timeout: 5000 });
+    });
   });
 
   test.describe('Authenticated Routing', () => {
@@ -65,6 +77,38 @@ test.describe('Route Guards', () => {
         /My Records|Secure Document|Total Records/i,
         { timeout: 10000 },
       );
+    });
+  });
+
+  // SCRUM-1982: the bare /profile route renders <Navigate to={ROUTES.SETTINGS}
+  // replace /> (App.tsx). Pre-fix it rendered a profile page and the URL stayed
+  // /profile; this describe pins the redirect so it cannot silently regress.
+  test.describe('Profile Redirect (SCRUM-1982)', () => {
+    test.use({ storageState: '.auth/individual.json' });
+
+    test('redirects /profile to /settings for authenticated users', async ({ page }) => {
+      await page.goto('/profile');
+
+      // URL lands on /settings (not /profile, not 404).
+      await expect(page).toHaveURL(/\/settings(\/|\?|$)/, { timeout: 10000 });
+
+      // And it is the real, functioning Settings page — not a blank shell.
+      await expect(
+        page.locator('#main-content').getByRole('heading', { name: 'Settings' }).first(),
+      ).toBeVisible({ timeout: 10000 });
+    });
+
+    test('uses replace so back navigation skips /profile', async ({ page }) => {
+      await page.goto('/dashboard');
+      await expect(page).toHaveURL(/\/dashboard(\/|\?|$)/, { timeout: 10000 });
+
+      await page.goto('/profile');
+      await expect(page).toHaveURL(/\/settings(\/|\?|$)/, { timeout: 10000 });
+
+      // `replace` means the /profile entry is gone from history, so going back
+      // returns to /dashboard rather than bouncing through /profile again.
+      await page.goBack();
+      await expect(page).toHaveURL(/\/dashboard(\/|\?|$)/, { timeout: 10000 });
     });
   });
 

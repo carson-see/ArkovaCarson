@@ -14,6 +14,124 @@
 
 ## Now
 
+### 2026-05-30 — Staging soak-evidence gate hardened (PR #980): T2/T3 deploy-field value checks + residual-risk approver
+
+**[PR #980](https://github.com/carson-see/ArkovaCarson/pull/980)** (`fix/staging-evidence-t2t3-value-gate`, T0 / `ci-config-change`) is **merged to `main`** at merge commit `a80915ee` — auto-merged by Mergify's *Queue CI-green PRs* rule once all 14 required checks went green, not a manual merge. It closes two defense-in-depth gaps in `scripts/ci/check-staging-evidence.ts` (the CLAUDE.md §1.11 / §1.11A soak-evidence gate) that together let a T2/T3 PR go green on dirty staging with all-`PENDING` deploy evidence plus a self-authored residual-risk note:
+
+- **Gap 1 — T2/T3 deploy fields were never value-checked.** `requiredValueErrors()` began with `if (tier !== 'T1') return []`, so it ran only for T1; at T2/T3 `missingFields()` checked field *labels* only. T2/T3 now run the stricter analog — deploy artifacts (`Worker revision`, `Image digest`, `Staging deploy log id`, `Cloud Run service/tag URL`) reject empty / `PENDING`-style / `N/A`; the URL must also contain a URL; remaining evidence fields reject empty + placeholders while still allowing legitimate `N/A`/`none`.
+- **Gap 2 — residual-risk `Approved by:` was label-presence only.** A blank/placeholder approver waived both the `clean_mirror` preflight and the soak-duration minimum. It now must carry a non-empty, non-placeholder value.
+
+T1 logic is byte-for-byte unchanged and **no existing check was loosened** — the change only *adds* T2/T3 validation and tightens the approver. TDD: 14 new tests, full suite **90/90 green**. `scripts/ci/agents.md` updated to match. Closeout complete — tracked as **[SCRUM-2202](https://arkova.atlassian.net/browse/SCRUM-2202)** (Done, under epic SCRUM-1246), Confluence spec [page 67862538](https://arkova.atlassian.net/wiki/spaces/A/pages/67862538) (DoD ticked), and a bug-log footer comment on the [Bug Tracker — Master Log](https://arkova.atlassian.net/wiki/spaces/A/pages/28115270); main CI on the docs commit `e6025778` is green.
+
+_Last refreshed: 2026-05-30 by Claude — claims verified against git/gh/test output: PR #980 merge commit `a80915ee` on `origin/main` (`git log --grep 980`); merged `scripts/ci/check-staging-evidence.ts` on `origin/main` contains `INCOMPLETE_VALUE_RE` / `validateArtifactEvidenceField` / `T2_T3_ARTIFACT_FIELDS` / the "must name a real approver" guard (`git show origin/main:…`); `vitest run scripts/ci/check-staging-evidence.test.ts` = 90/90 pass; PR state MERGED 2026-05-30T15:41:57Z via Mergify CI-green queue (`gh pr view 980`); closeout artifacts SCRUM-2202 = Done (`transitionJiraIssue` → status 10004), Confluence page 67862538 v2, bug-tracker footer comment 67928065, main CI run 26690542656 on `e6025778` = success (`gh run view`)._
+
+---
+
+### 2026-05-30 — SCRUM-1984 (PR #969) admin-overview orgs-count fix MERGED + prod-deployed + ticket Done
+
+**[PR #969](https://github.com/carson-see/ArkovaCarson/pull/969)** (the SCRUM-1984 *worker* half) is **merged to `main`** at merge commit `a1cd5e27` and **live in prod** (deploy-worker run [26688409350](https://github.com/carson-see/ArkovaCarson/actions/runs/26688409350) green on that SHA). It drops the phantom `.is('deleted_at', null)` filter on the `organizations` count in `services/worker/src/api/admin-stats.ts` — `organizations` has no `deleted_at` column (soft-deletes via `suspended`, §1.2), so PostgREST resolved that count query with `count: null` and `val(i)?.count ?? 0` silently collapsed Total Orgs to 0. Carried a SonarCloud S7739 thenable-assertion fix in the unit test.
+
+**Prod-verified** (`vzwyaatejekddvltxyye`): `organizations` has no `deleted_at` (the 42703 cause); **Total Orgs now = 3**; `profiles` + `anchors` both *do* have `deleted_at` (their filtered counts were always valid) and both aggregation RPCs (`get_anchor_status_counts_fast`, `get_anchor_tx_stats`) are present — so `organizations` was the **sole** phantom-column casualty and every admin card now resolves to real data. **SCRUM-1984 transitioned To Do → Done** (resolution Done) with a prod-evidence comment.
+
+Remaining for the UAT-bug trio: SCRUM-1982 (#970, test-only) + SCRUM-1983 (closeout-ready) per the 2026-05-29 entry below. Bug-tracker row BUG-2026-05-22-003 (Confluence [page 28115270](https://arkova.atlassian.net/wiki/spaces/A/pages/28115270)) still reads `open`/`—`: Jira is the authoritative status SoT (now Done) and the bug is already logged, so the cosmetic cell-flip is the one open mechanical item — full-body replace of the ~52KB canonical page is not safely round-trippable from the agent (Read truncates mid-body; a partial emit would drop the page tail), so it is deferred to a safe partial-edit channel rather than risked.
+
+_Last refreshed: 2026-05-30 by Claude — claims verified against gh/MCP/git output: PR #969 = `origin/main` HEAD merge commit `a1cd5e27` (`git log`); deploy-worker.yml run 26688409350 conclusion=success on SHA `a1cd5e2759…` (`gh run list`); prod ref `vzwyaatejekddvltxyye` via Supabase MCP `execute_sql` — `organizations` deleted_at column count=0, `profiles`/`anchors` deleted_at count=1 each, `get_anchor_status_counts_fast`/`get_anchor_tx_stats` pg_proc count=1 each, `organizations` count=3; SCRUM-1984 status Done via Atlassian MCP._
+
+---
+
+### 2026-05-30 — SCRUM-2189 (PR #962) + SCRUM-1980 Part 2 (PR #963) migrations merged + prod-verified
+
+Two migration PRs landed on `main` and are live in prod (`vzwyaatejekddvltxyye`):
+
+- **SCRUM-2189 / [PR #962](https://github.com/carson-see/ArkovaCarson/pull/962)** (merge `d881abe1`): migration `0324_anchor_status_counts_read_cache.sql` redefines `get_anchor_status_counts_fast()` to **read `pipeline_dashboard_cache` (key `anchor_status_counts`)** — the cache the SCRUM-1708 cron already maintains — instead of running per-status `count(*)` over the ~3.3M-row `anchors` table under a 1s sub-budget (every bucket timed out → `-1` sentinels → dashboard showed "—"). Access guard + frozen 6-key JSON shape preserved; `-1` fallback only when the cache row is absent. **Unblocks SCRUM-1707.** Prod-verified: `reads_cache=true`, guard `auth.uid()` wrapped as `(SELECT auth.uid())`, no bare `uid()`.
+- **SCRUM-1980 Part 2 / [PR #963](https://github.com/carson-see/ArkovaCarson/pull/963)** (merge `f9281194`): migration `0325_public_search_min_length_and_timeouts.sql` — `search_public_credentials` now requires `length(trim(p_query)) >= 3` (the trigram floor), and `search_public_record_embeddings` + `search_public_credential_embeddings` carry a defensive `statement_timeout`. Prod-verified live. **Part 1 (frontend loading-state reset on RPC error) is NOT shipped — SCRUM-1980 stays OPEN** for that frontend half.
+
+**Close-out:** bug tracker (Confluence [page 28115270](https://arkova.atlassian.net/wiki/spaces/A/pages/28115270), now v45) marks BUG-2026-05-29-001 (SCRUM-2189) fixed and BUG-2026-05-22-005 (SCRUM-1980) Part-2-fixed with Part 1 noted open; BUG-2026-05-08-001 regression note updated to "re-fixed via 0324". Jira transitions stay parked (SCRUM-2189 done-pending Carson; SCRUM-1980 stays open for Part 1).
+
+_Last refreshed: 2026-05-30 by Claude — claims verified against MCP/git output: prod ref `vzwyaatejekddvltxyye` migration ledger has rows `0324` + `0325` (Supabase MCP `execute_sql`); `get_anchor_status_counts_fast` body confirmed reads_cache=true + wrapped `auth.uid()` (no bare); `search_public_credentials` min-length-3 guard + both embedding RPC `statement_timeout` confirmed via `pg_get_functiondef`; merge commits `d881abe1` (#962) + `f9281194` (#963) on `origin/main` via `git log`._
+
+---
+
+### 2026-05-30 — SCRUM-2200 Track A PE eval moat (PR #975) + staging-deploy race fix (PR #976)
+
+**SCRUM-2200 Track A — professional-education eval moat** is committed on `feat/scrum-2200-pe-heldout-eval` (head `74865449`) and open as **[PR #975](https://github.com/carson-see/ArkovaCarson/pull/975)** (draft). Contents: merge gates (CPE/CLE/course-id field F1) over curated fixtures; a hard 18-entry held-out TEST split with a gate-contamination guard; a synthetic TRAIN generator + Vertex Gemini tuning-JSONL exporter; and a held-out runner that measures generalization F1 **reported-only, never gated** (gating the test set would make it a training signal). Live held-out run against tuned golden-v5 = **weighted F1 82.2%** (report under `services/worker/docs/eval/`); Vertex endpoint **undeployed immediately** after (fleet at 0 deployed models, §7). Local gates green: typecheck clean, worker tests 400/400, `lint` exit 0 (sole pre-existing error in untouched `stripe/handlers.ts`).
+
+**Tier:** path detector forces **T2** ("AI behavior", anything under `services/worker/src/ai/`) even though the diff is eval/tooling-only and the one prod-file change (`gemini.ts` `generateExtractionJson`) is off the production extraction path + fails closed on `ENABLE_AI_EXTRACTION`. Carson approved **option (b)** — residual-risk waiver + minimal staging deploy. Note is drafted in the PR (Approved-by left for Carson to confirm in-thread).
+
+**⛔ #975's staging deploy is blocked on a real CI bug.** The only sanctioned (WIF) deploy path, `deploy-staging.yml`, runs `scripts/staging/deploy.sh` **from main**, which did a single `gcloud artifacts docker images describe` right after `docker push`. Artifact Registry doesn't index a fresh manifest synchronously and the workflow's build→deploy gap is ~9s, so the readability check **failed deterministically** (observed on two consecutive #975 deploy-staging runs; image pushed fine, `describe` NOT_FOUND ~9s later, readable minutes after). Local deploy also blocked (arkova-cli lacks `actAs` on the runtime SA; deployer-SA impersonation denied; IAM changes prohibited). Fix = **[PR #976](https://github.com/carson-see/ArkovaCarson/pull/976)** (`fix/staging-deploy-ar-readability-retry`, T0): bounded retry loop (8×5s, env-tunable) + 2 regression tests; `deploy.test.sh` 26/26 pass under `GITHUB_ACTIONS=true`.
+
+**Open (Carson-gated), in order:** (1) merge **#976** → unblocks the deploy path; (2) re-run `deploy-staging.yml -f pr_number=975 -f source_ref=74865449…`, fill #975's PENDING evidence fields from the run summary; (3) mark #975 Ready, merge (hook-gated). Staging lease for #975 was **released** (deploy blocked, no point holding the shared rig). Downstream gates (Jira transition, Confluence page) stay parked until #975 lands per the no-premature-transition rule.
+
+_Last refreshed: 2026-05-30 by Claude — claims verified against gcloud/gh/test output: AR `describe` for `arkova-worker:pr-975-74865449` → digest `sha256:df574de9…` (readable now); `deploy.test.sh` 26 pass / 0 fail under `GITHUB_ACTIONS=true SKIP_LIVE_TESTS=1`; PR #976 opened via `gh pr create` (head `4cc4abb7`); PR #975 body updated via `gh pr edit`; staging lease released via `claim.sh release 975`._
+
+---
+
+### 2026-05-29 — UAT bug closeout: SCRUM-1982 (profile redirect) + SCRUM-1983 (billing) + SCRUM-1984 (admin overview)
+
+Picked up the three 2026-05-22 UAT bugs. Each had a same-day frontend hotfix but the tickets stayed open; two still had gaps:
+
+- **SCRUM-1982** (`/profile` → `/settings`): redirect already on `main` (`5269e62b`; `App.tsx` `<Navigate to={ROUTES.SETTINGS} replace />`). Gap = **no regression test** (only the route *constant* was unit-tested). Backfilled three E2E guards in `e2e/route-guards.spec.ts` (authenticated redirect lands on a functioning Settings page, `replace` history semantics, unauthenticated → `/auth`). → **[PR #970](https://github.com/carson-see/ArkovaCarson/pull/970)** (T0 test-only; CI-gated; awaiting Carson merge).
+- **SCRUM-1983** (billing spinner): already fully fixed on `main` (`40a03a1b`: 5s AbortController timeout + error/retry) **and** E2E-covered (`e2e/billing.spec.ts`). No new code — closeout only.
+- **SCRUM-1984** (admin overview all-zeros): frontend fetch-on-mount already on `main` (`1e285930`), but the **worker** still under-counted orgs. Root cause: `admin-stats.ts` filtered `.is('deleted_at', null)` on `organizations`, which has no such column (soft-deletes via `suspended`, §1.2) — PostgREST resolves with `count: null` so Total Orgs always read 0. Fixed (drop phantom filter) + TDD regression test + `api/agents.md` gotcha note. → **[PR #969](https://github.com/carson-see/ArkovaCarson/pull/969)** (T2; **12h staging soak PENDING** — not started this session to avoid disturbing the 7 in-flight shared-staging soaks; stays **draft** until soak; Carson merges).
+
+**Prod data (confirms #1984 is a real bug, not cosmetic):** prod ref `vzwyaatejekddvltxyye` has 3 organizations; the buggy endpoint reported 0. A background audit of the worker API found this is the *only* phantom-column filter — no sibling bugs.
+
+**UAT note (honest):** a live authenticated browser UAT of the three was not feasible this session — all three routes are `AuthGuard`-gated and the local checkout has no `.env`/Supabase config to create a session (agent never handles credentials). Verification rests on the automated specs (E2E in CI for #1982/#1983; worker unit test for #1984) plus the original ship-time UAT on the frontend hotfixes.
+
+**Open (Carson-gated):** merge #970 (then #1982 DoD §1.7 is met); run #969's T2 soak in a clean staging window, then merge (#1984 worker half). #1982/#1984 stay open until their PRs land; #1983 is closeout-ready pending its gate check.
+
+_Last refreshed: 2026-05-29 by Claude — claims verified against MCP/CI/git output: prod `organizations` count = 3 via Supabase MCP `execute_sql` on ref `vzwyaatejekddvltxyye`; hotfix commits `5269e62b` / `40a03a1b` / `1e285930` confirmed on `origin/main` via `git log`; PR #969 (draft, base `d0ff8519`, head `968939dc`) + PR #970 opened via `gh pr create`; local worker suite 5827/5827, `tsc` 0 errors, worker `lint` 0 errors._
+
+---
+
+### 2026-05-29 — Prod flag `ENABLE_SEMANTIC_SEARCH` flipped OFF; PR #964 now merges dormant
+
+**Prod change (Carson-approved, inert path):** `switchboard_flags.ENABLE_SEMANTIC_SEARCH` flipped `true`→`false` at **2026-05-29 21:09:10 UTC** on prod ref `vzwyaatejekddvltxyye` (before/after via Supabase MCP `execute_sql`). It had been `true` since 2026-03-20 while `credential_embeddings` is empty — a billed-no-op liability (each gated hit charged a credit to return nothing). `ENABLE_VERIFICATION_API` left `true` (untouched).
+
+**Why safe:** flag is shared with the frozen public `/api/v1/verify/search` (§1.8), but consumer check was clean — prod `api_keys` = 3 total / 2 active, **0 ever used** (`last_used_at` all null); `/verify/search` 401s without a key; `ai_usage_events` 90d = 0 `embedding` events; both gated RPCs read the empty `credential_embeddings`. Flipping off removed zero working behavior. (Cloud Run log read blocked — CLI SA lacks `logging.viewer`; key table is the authoritative signal for a key-gated endpoint.)
+
+**Effect:** [PR #964](https://github.com/carson-see/ArkovaCarson/pull/964) (SCRUM-1958 semantic-search UI) now lands as **inert** dormant code (fail-closed panel renders nothing); merge remains human-gated (Carson). Body updated to the inert-path state. **Activation deferred** to SCRUM-1964 embeddings backfill → T2 staging soak → deliberate canary flip-on.
+
+**Tracking:** remediation logged on bug **SCRUM-2190**. Earlier PR-body claim that prod was "gated off" was wrong (prod was `true`) — corrected, then the row was deliberately flipped to match.
+
+_Last refreshed: 2026-05-29 by Claude — claims verified against MCP output: prod ref `vzwyaatejekddvltxyye` `switchboard_flags` SELECT before (enabled=true, updated 2026-03-20 16:50 UTC) + UPDATE…RETURNING after (enabled=false, updated 2026-05-29 21:09:10 UTC) + confirming SELECT; `api_keys` count (total=3/active=2/ever_used=0); `ai_usage_events` 90d embedding=0. PR #964 body edit pushed via `gh pr edit`._
+
+---
+
+### 2026-05-29 — PR #959 migration drift reconciliation (0314–0321) merged
+
+**PR:** [#959](https://github.com/carson-see/ArkovaCarson/pull/959) merged to `main` at merge commit `87029a17` (branch `chore/migration-0314-0321-prod-reconciliation`). Prod-green: main CI run [26649359558](https://github.com/carson-see/ArkovaCarson/actions/runs/26649359558) succeeded, including the `Check supabase/migrations vs prod` job.
+
+**What it fixed (SOC 2 CC8.1 change-mgmt gap):** migrations `0314`–`0321` (DocuSign sprint #947) had been applied to prod out-of-band; `migration-drift.yml` `exempt_regex` hid them and the repo migration files had diverged from prod. #959 reconciled the repo migration artifacts to prod-applied form, narrowed the drift-gate exemption, and regenerated `database.types.ts`.
+
+**Tracking:** Bug **SCRUM-2191** ([BUG-2026-05-29-003](https://arkova.atlassian.net/wiki/spaces/A/pages/28115270)) logs the drift; **closure is blocked by the reporter≠resolver automation rule (reporter = carson) — Carson must make the Done transition himself.** Pre-existing ledger hygiene (54 historical timestamp/dup-name rows + 0302/0303 duplicate) is non-blocking and tracked separately as **SCRUM-2192** (Task, To Do).
+
+**Docs:** prod-apply runbook [page 66093057](https://arkova.atlassian.net/wiki/spaces/A/pages/66093057); Data Model [page 786471](https://arkova.atlassian.net/wiki/spaces/A/pages/786471) v21 flipped 0314–0321 pending→applied.
+
+**Residual (non-blocking):** `anchors` NOT VALID CHECK constraints still need a `VALIDATE CONSTRAINT` pass via direct psql (`statement_timeout=0`) in a quiet window; future writes already enforce. Region-migration WIP (`us-central1`→`us-east1`) is parked on branch `chore/worker-region-us-east1-migration` — do NOT deploy until the us-east1 worker URL serves; `vercel.json` CSP/rewrite changes need their own PR + soak.
+
+_Last refreshed: 2026-05-29 by Claude — claims verified against gcloud/MCP/CI output: origin/main tip `87029a17` (#959 merge) confirmed via `git log`; main CI run [26649359558](https://github.com/carson-see/ArkovaCarson/actions/runs/26649359558) success including migrations-vs-prod job; SCRUM-2191/2192 created and linked via MCP._
+
+---
+### 2026-05-28 — SCRUM-1596 CSI epic sprint planning + researcher finding
+
+**Planning session outcome:** sprint plan for [SCRUM-1596 R-CSI-01 Credential Source Import & Issuer Anchoring](https://arkova.atlassian.net/browse/SCRUM-1596) reviewed against the [PRD](https://docs.google.com/document/d/1F0V2OHbfS--UFs79bKJ9dJKmKewP1VaEgBDZ-uJ0-zY). Epic structure verified clean: 7 stories (3 Done: SCRUM-1597/1598/1599; 4 To Do: SCRUM-1600/1601/2084/2085), every open story has parent + subtasks per CLAUDE.md §5.1, all 5 Confluence pages exist (63438849, 62914562, 63471618, 62521357, 62849034). No structural Jira gaps.
+
+**Sprint 0 Task created:** [SCRUM-2126](https://arkova.atlassian.net/browse/SCRUM-2126) + 5 subtasks ([SCRUM-2127](https://arkova.atlassian.net/browse/SCRUM-2127)..[2131](https://arkova.atlassian.net/browse/SCRUM-2131)) — mirrors PRD §9 Sprint 0: land PR #886 (now merged), validate CSI-01/02/03 in prod, smoke-test URL import E2E, review migration 0320 (landed via PR #947), kick off issuer-partnership program registrations with Credly/Accredible/Udemy Business.
+
+**Critical research finding (cited):** None of Credly, Accredible, or Udemy offer a public consumer OAuth program. Credly OAuth is `client_credentials`-only per-issuer-organization; Accredible is API-key auth only; Udemy Affiliate API was discontinued 2025-01-01 and only Udemy Business xAPI exists (enterprise tenant scope). [SCRUM-1600](https://arkova.atlassian.net/browse/SCRUM-1600) [CSI-04] re-scoped from "consumer OAuth Account Linking" to "Issuer-Partnership Credential Ingestion" — individual users continue with URL-paste/PDF-upload (CSI-01/02/03 already shipped), issuer organizations onboard via partnership program. Subtasks SCRUM-1611/1612/1613/2082 renamed; Confluence page [62914562](https://arkova.atlassian.net/wiki/spaces/A/pages/62914562) rewritten to v2; research-citations comments posted on SCRUM-1596 and SCRUM-1600.
+
+**Research-driven Sprint 1 recommendations:** (1) Drop user-facing OAuth UX for these 3 providers; reframe as issuer partnerships. (2) Use `@digitalbazaar/vc` + `@digitalbazaar/eddsa-rdfc-2022-cryptosuite` — OB3 is a W3C VC 2.0 profile, one library. (3) Envelope encryption: per-row DEK + KEK in GCP KMS + `kek_version` column; implement RFC 9700 refresh-token-on-every-use rotation. (4) Webhook ingestion: HMAC-SHA256 on raw body before parse, `UNIQUE(provider, event_id)` 24h dedup, ACK 200 then worker process. (5) One Bitcoin anchor pipeline, dual-trigger batching (N=500 OR 10min).
+
+**PRD gap identified (epic AC #2 vs. reality):** PRD §14 AC "OAuth account linking works for at least 2 providers" is unreachable as written — none of the 3 providers offer consumer OAuth. Either rewrite the AC to "Issuer-partnership ingestion works for at least 2 providers" or accept the AC will not close at v1.0. Flagged on SCRUM-1596 comment for PM decision.
+
+**SOC 2 Type II honest status:** feature-level controls (CC6.1, CC6.6, CC7.2, CC8.1) are designed per PRD §7.4 and partially implemented in CSI-01/02/03, but the "mapped with evidence artifacts" deliverable is [SCRUM-2085](https://arkova.atlassian.net/browse/SCRUM-2085) CSI-07 — To Do. Even when CSI-07 ships, evidence must accumulate over the org-level observation window ([SCRUM-959](https://arkova.atlassian.net/browse/SCRUM-959) TRUST-01). Feature does NOT meet SOC 2 Type II today; on track to.
+
+**Stale DocuSign work parked:** Earlier in this same session I mis-identified the PRD as DocuSign-focused and created 8 stories + 24 subtasks (SCRUM-2094..2125) + 8 Confluence pages under SCRUM-1048 [CONNECTORS-V2]. Per PM decision they remain queued under SCRUM-1048 for later — they don't conflict with SCRUM-1596 and are legitimate DocuSign Sprint 4+ candidates.
+
+_Last refreshed: 2026-05-28 by Claude — claims verified against MCP/CI output: Jira MCP `createJiraIssue` returned SCRUM-2126..2131 with parent SCRUM-1596; Jira MCP `editJiraIssue` updated SCRUM-1600 summary + 4 subtask summaries (SCRUM-1611/1612/1613/2082); Confluence MCP `updateConfluencePage` returned v2 of page 62914562; `gh pr view 886/924/927/947` queried PR state; researcher findings cited Credly/Accredible/Udemy/W3C/RFC sources in SCRUM-1600 comment. Narrative-only — no prod state assertions._
+
+---
 ### 2026-05-28 — PR #924 SOC 2 hardening: CI green, awaiting merge
 
 **PR:** [#924](https://github.com/carson-see/ArkovaCarson/pull/924) on `fix/scrum-2039-2040-2041-soc2-hardening` (13 commits). All required CI checks green (only Vercel email-mismatch fails — pre-existing, non-blocking).
@@ -55,8 +173,8 @@ _Last refreshed: 2026-05-28 by Claude — claims verified against gcloud/MCP/CI 
 | #869 | Sprint 1: stop the bleeding UX + reliability fixes | 2026-05-23 | SCRUM-1846 ✅ |
 | #864 | SCRUM-1064 GCP monitoring hardening | 2026-05-23 | SCRUM-1064 ✅ |
 | #856 | fix(SCRUM-1286): reconcile PR #841 migration ledger | 2026-05-23 | — |
-| #852 | feat(ai): add client fraud detection worker | 2026-05-23 | SCRUM-1964 ✅ |
-| #847 | feat(worker): batch credential embeddings | 2026-05-23 | SCRUM-1955 ✅ |
+| #852 | feat(ai): add client fraud detection worker | 2026-05-23 | SCRUM-1955 ✅ |
+| #847 | feat(worker): batch credential embeddings | 2026-05-23 | SCRUM-1964 ✅ |
 | #857 | fix(SCRUM-1668): enforce staging integrity evidence | 2026-05-22 | SCRUM-1668 ✅ |
 | #846 | fix(ci): harden staging honesty after #839 review | 2026-05-22 | — |
 | #855 | fix(worker): quarantine PR #841 professional education paths | 2026-05-21 | — |
