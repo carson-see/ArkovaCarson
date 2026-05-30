@@ -14,6 +14,18 @@
 
 ## Now
 
+### 2026-05-30 — SCRUM-1984 (PR #969) admin-overview orgs-count fix MERGED + prod-deployed + ticket Done
+
+**[PR #969](https://github.com/carson-see/ArkovaCarson/pull/969)** (the SCRUM-1984 *worker* half) is **merged to `main`** at merge commit `a1cd5e27` and **live in prod** (deploy-worker run [26688409350](https://github.com/carson-see/ArkovaCarson/actions/runs/26688409350) green on that SHA). It drops the phantom `.is('deleted_at', null)` filter on the `organizations` count in `services/worker/src/api/admin-stats.ts` — `organizations` has no `deleted_at` column (soft-deletes via `suspended`, §1.2), so PostgREST resolved that count query with `count: null` and `val(i)?.count ?? 0` silently collapsed Total Orgs to 0. Carried a SonarCloud S7739 thenable-assertion fix in the unit test.
+
+**Prod-verified** (`vzwyaatejekddvltxyye`): `organizations` has no `deleted_at` (the 42703 cause); **Total Orgs now = 3**; `profiles` + `anchors` both *do* have `deleted_at` (their filtered counts were always valid) and both aggregation RPCs (`get_anchor_status_counts_fast`, `get_anchor_tx_stats`) are present — so `organizations` was the **sole** phantom-column casualty and every admin card now resolves to real data. **SCRUM-1984 transitioned To Do → Done** (resolution Done) with a prod-evidence comment.
+
+Remaining for the UAT-bug trio: SCRUM-1982 (#970, test-only) + SCRUM-1983 (closeout-ready) per the 2026-05-29 entry below. Bug-tracker row BUG-2026-05-22-003 (Confluence [page 28115270](https://arkova.atlassian.net/wiki/spaces/A/pages/28115270)) still reads `open`/`—`: Jira is the authoritative status SoT (now Done) and the bug is already logged, so the cosmetic cell-flip is the one open mechanical item — full-body replace of the ~52KB canonical page is not safely round-trippable from the agent (Read truncates mid-body; a partial emit would drop the page tail), so it is deferred to a safe partial-edit channel rather than risked.
+
+_Last refreshed: 2026-05-30 by Claude — claims verified against gh/MCP/git output: PR #969 = `origin/main` HEAD merge commit `a1cd5e27` (`git log`); deploy-worker.yml run 26688409350 conclusion=success on SHA `a1cd5e2759…` (`gh run list`); prod ref `vzwyaatejekddvltxyye` via Supabase MCP `execute_sql` — `organizations` deleted_at column count=0, `profiles`/`anchors` deleted_at count=1 each, `get_anchor_status_counts_fast`/`get_anchor_tx_stats` pg_proc count=1 each, `organizations` count=3; SCRUM-1984 status Done via Atlassian MCP._
+
+---
+
 ### 2026-05-30 — SCRUM-2189 (PR #962) + SCRUM-1980 Part 2 (PR #963) migrations merged + prod-verified
 
 Two migration PRs landed on `main` and are live in prod (`vzwyaatejekddvltxyye`):
