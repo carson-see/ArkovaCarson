@@ -14,6 +14,19 @@
 
 ## Now
 
+### 2026-05-30 — Staging soak-evidence gate hardened (PR #980): T2/T3 deploy-field value checks + residual-risk approver
+
+**[PR #980](https://github.com/carson-see/ArkovaCarson/pull/980)** (`fix/staging-evidence-t2t3-value-gate`, T0 / `ci-config-change`) is **merged to `main`** at merge commit `a80915ee` — auto-merged by Mergify's *Queue CI-green PRs* rule once all 14 required checks went green, not a manual merge. It closes two defense-in-depth gaps in `scripts/ci/check-staging-evidence.ts` (the CLAUDE.md §1.11 / §1.11A soak-evidence gate) that together let a T2/T3 PR go green on dirty staging with all-`PENDING` deploy evidence plus a self-authored residual-risk note:
+
+- **Gap 1 — T2/T3 deploy fields were never value-checked.** `requiredValueErrors()` began with `if (tier !== 'T1') return []`, so it ran only for T1; at T2/T3 `missingFields()` checked field *labels* only. T2/T3 now run the stricter analog — deploy artifacts (`Worker revision`, `Image digest`, `Staging deploy log id`, `Cloud Run service/tag URL`) reject empty / `PENDING`-style / `N/A`; the URL must also contain a URL; remaining evidence fields reject empty + placeholders while still allowing legitimate `N/A`/`none`.
+- **Gap 2 — residual-risk `Approved by:` was label-presence only.** A blank/placeholder approver waived both the `clean_mirror` preflight and the soak-duration minimum. It now must carry a non-empty, non-placeholder value.
+
+T1 logic is byte-for-byte unchanged and **no existing check was loosened** — the change only *adds* T2/T3 validation and tightens the approver. TDD: 14 new tests, full suite **90/90 green**. `scripts/ci/agents.md` updated to match. Follow-up closeout (Jira ticket + bug-tracker row) tracked below.
+
+_Last refreshed: 2026-05-30 by Claude — claims verified against git/gh/test output: PR #980 merge commit `a80915ee` on `origin/main` (`git log --grep 980`); merged `scripts/ci/check-staging-evidence.ts` on `origin/main` contains `INCOMPLETE_VALUE_RE` / `validateArtifactEvidenceField` / `T2_T3_ARTIFACT_FIELDS` / the "must name a real approver" guard (`git show origin/main:…`); `vitest run scripts/ci/check-staging-evidence.test.ts` = 90/90 pass; PR state MERGED 2026-05-30T15:41:57Z via Mergify CI-green queue (`gh pr view 980`)._
+
+---
+
 ### 2026-05-30 — SCRUM-1984 (PR #969) admin-overview orgs-count fix MERGED + prod-deployed + ticket Done
 
 **[PR #969](https://github.com/carson-see/ArkovaCarson/pull/969)** (the SCRUM-1984 *worker* half) is **merged to `main`** at merge commit `a1cd5e27` and **live in prod** (deploy-worker run [26688409350](https://github.com/carson-see/ArkovaCarson/actions/runs/26688409350) green on that SHA). It drops the phantom `.is('deleted_at', null)` filter on the `organizations` count in `services/worker/src/api/admin-stats.ts` — `organizations` has no `deleted_at` column (soft-deletes via `suspended`, §1.2), so PostgREST resolved that count query with `count: null` and `val(i)?.count ?? 0` silently collapsed Total Orgs to 0. Carried a SonarCloud S7739 thenable-assertion fix in the unit test.
