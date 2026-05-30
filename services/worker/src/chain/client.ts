@@ -152,12 +152,10 @@ export async function initChainClient(): Promise<ChainClient> {
   _initPromise = createChainClient()
     .then((client) => {
       _chainClient = client;
-      _initPromise = null;
       return client;
     })
-    .catch((error: unknown) => {
+    .finally(() => {
       _initPromise = null;
-      throw error;
     });
 
   return _initPromise;

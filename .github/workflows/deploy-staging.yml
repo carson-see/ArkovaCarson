@@ -139,21 +139,50 @@ jobs:
             --build-sha "${BUILD_SHA}" \
             ${FORCE_FLAG} ${FORCE_VALUE:+"${FORCE_VALUE}"}
 
-      - name: Verify exact-head staging health
+      - name: Resolve staging base URL
+        id: staging_url
         env:
           INPUT_SERVICE: ${{ inputs.service }}
-          INPUT_PR_NUMBER: ${{ inputs.pr_number }}
-          BUILD_SHA: ${{ steps.sha.outputs.sha }}
         run: |
           set -euo pipefail
-          TAG="pr-${INPUT_PR_NUMBER}"
           RAW_URL=$(gcloud run services describe "${INPUT_SERVICE}" \
             --region="${{ env.REGION }}" --project="${{ env.PROJECT_ID }}" \
             --format="value(status.url)")
+          echo "raw_url=${RAW_URL}" >> "$GITHUB_OUTPUT"
+
+      # Mint the Cloud Run ID token through the auth action, not gcloud. Under
+      # Workload Identity Federation the ADC credential is already the deploy SA
+      # *via* impersonation, so `gcloud auth print-identity-token` either can't
+      # self-sign (no --impersonate) or triggers a second, self-impersonation
+      # hop that needs tokenCreator-on-self (which we don't grant). The auth
+      # action instead calls iamcredentials.generateIdToken with the *federated*
+      # principal as the caller — and the WIF principalSet already holds
+      # roles/iam.serviceAccountTokenCreator on the deploy SA, so no extra IAM
+      # grant is required. Audience MUST be the base service URL (RAW_URL): Cloud
+      # Run validates `aud` against the base URL and rejects a tag-audience token
+      # with HTTP 401.
+      - name: Mint Cloud Run ID token
+        id: id_token
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+          token_format: 'id_token'
+          id_token_audience: ${{ steps.staging_url.outputs.raw_url }}
+          id_token_include_email: true
+
+      - name: Verify exact-head staging health
+        env:
+          INPUT_PR_NUMBER: ${{ inputs.pr_number }}
+          BUILD_SHA: ${{ steps.sha.outputs.sha }}
+          RAW_URL: ${{ steps.staging_url.outputs.raw_url }}
+          ID_TOKEN: ${{ steps.id_token.outputs.id_token }}
+        run: |
+          set -euo pipefail
+          TAG="pr-${INPUT_PR_NUMBER}"
           TAG_URL="${RAW_URL/https:\/\//https://${TAG}---}"
-          TOKEN=$(gcloud auth print-identity-token --audiences="${TAG_URL}")
           BODY=$(curl -fsS --max-time 20 \
-            -H "Authorization: Bearer ${TOKEN}" \
+            -H "Authorization: Bearer ${ID_TOKEN}" \
             "${TAG_URL}/health?detailed=true")
           echo "${BODY}" | jq .
           echo "${BODY}" | jq -e --arg sha "${BUILD_SHA}" '

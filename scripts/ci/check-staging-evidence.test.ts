@@ -925,5 +925,196 @@ describe('check-staging-evidence', () => {
       expect(result.missing).toContain('Reason not cleaned:');
       expect(result.missing).toContain('Approved by:');
     });
+
+    // Gap 2: a self-written `Approved by:` with no value (or a placeholder)
+    // must NOT satisfy the exception. Before the fix the sub-field check was
+    // label-presence only, so a blank approver waived both the clean_mirror
+    // preflight and the soak-duration minimum on dirty staging.
+    it('returns invalid when Approved by has a label but no value', () => {
+      const body = `### Residual-risk note (preflight non-clean_mirror)
+- Contamination type: soak_artifact
+- Affected rows: 15 ledger rows
+- Impact on this PR: none — net-new additive DDL
+- Reason not cleaned: other PRs hold active staging leases
+- Approved by:
+`;
+      const result = hasResidualRiskException(body);
+      expect(result.valid).toBe(false);
+      expect(result.missing.join(' ')).toMatch(/Approved by/i);
+    });
+
+    it.each(['pending', 'TBD', 'tbd', 'TODO', 'n/a', 'N/A', 'none', 'tba'])(
+      'returns invalid when Approved by is the placeholder %s',
+      (placeholder) => {
+        const body = `### Residual-risk note (preflight non-clean_mirror)
+- Contamination type: soak_artifact
+- Affected rows: 15 ledger rows
+- Impact on this PR: none
+- Reason not cleaned: other PRs hold active staging leases
+- Approved by: ${placeholder}
+`;
+        const result = hasResidualRiskException(body);
+        expect(result.valid).toBe(false);
+        expect(result.missing.join(' ')).toMatch(/Approved by/i);
+      },
+    );
+
+    it('still returns valid for an email approver', () => {
+      const body = `### Residual-risk note (preflight non-clean_mirror)
+- Contamination type: soak_artifact
+- Affected rows: 15 ledger rows
+- Impact on this PR: none
+- Reason not cleaned: other PRs hold active staging leases
+- Approved by: carson@arkova.io
+`;
+      expect(hasResidualRiskException(body)).toEqual({ valid: true, missing: [] });
+    });
+  });
+
+  // Gap 1: at T2/T3 the deploy-evidence fields (Worker revision, Cloud Run
+  // service/tag URL, Image digest, Staging deploy log id, …) were never
+  // value-checked — only their labels were required. A PR could go green with
+  // every artifact left as "PENDING". These exercise the symmetric, stricter
+  // analog of the T1 auditable-value checks for T2 and T3.
+  describe('T2/T3 deploy-evidence value validation (defense-in-depth)', () => {
+    const headSha = '1234567890abcdef1234567890abcdef12345678';
+    const baseSha = 'abcdef1234567890abcdef1234567890abcdef12';
+
+    it('Gap 1: T2 fails when deploy-evidence fields are PENDING placeholders', () => {
+      const body = `## Staging Soak Evidence
+- Tier: T2
+- Staging branch: arkova-staging
+- Worker revision: PENDING
+- PR head SHA: ${headSha}
+- Base SHA: ${baseSha}
+- Staging project ref: ujtlwnoqfhtitcmsnrpq
+- Cloud Run service/tag URL: PENDING
+- Image digest: PENDING
+- Evidence scope: merge-grade shared staging
+- Preflight timestamp: 2026-05-09 13:55 UTC
+- Preflight result: environment_type=clean_mirror
+- Soak start: 2026-05-09 14:00 UTC
+- Soak end: 2026-05-10 02:00 UTC
+- E2E result: 50/50 green
+- Migration applied: none
+- Rollback rehearsed: yes
+- Staging deploy log id: PENDING
+`;
+      const r = check({
+        body,
+        files: ['services/worker/src/api/v1/docusign.ts'],
+        headSha,
+        baseSha,
+      });
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/Worker revision/i);
+      expect(r.errors.join(' ')).toMatch(/placeholder/i);
+    });
+
+    it('Gap 1: T3 fails when deploy-evidence fields are PENDING placeholders', () => {
+      const body = `## Staging Soak Evidence
+- Tier: T3
+- Staging branch: arkova-staging
+- Worker revision: PENDING
+- PR head SHA: ${headSha}
+- Base SHA: ${baseSha}
+- Staging project ref: ujtlwnoqfhtitcmsnrpq
+- Cloud Run service/tag URL: PENDING
+- Image digest: PENDING
+- Evidence scope: merge-grade shared staging
+- Preflight timestamp: 2026-05-04 13:55 UTC
+- Preflight result: environment_type=clean_mirror
+- Soak start: 2026-05-04 14:00 UTC
+- Soak end: 2026-05-06 14:00 UTC
+- E2E result: 312/312 green
+- Migration applied: 0288_x.sql
+- Rollback rehearsed: yes
+- Staging deploy log id: PENDING
+- Trigger A fires: PENDING
+- Trigger B fires: PENDING
+- Daily flush observation: PENDING
+- Per-org isolation check: PENDING
+`;
+      const r = check({
+        body,
+        files: ['supabase/migrations/0288_x.sql'],
+        headSha,
+        baseSha,
+      });
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/placeholder/i);
+    });
+
+    it('Gap 1: T2 with real deploy values and a metric-only E2E result still passes', () => {
+      // Guards against over-strict enforcement: a real passing E2E result is
+      // sometimes reported as a ratio with no "green"/"pass" keyword.
+      const body = `## Staging Soak Evidence
+- Tier: T2
+- Staging branch: arkova-staging
+- Worker revision: arkova-worker-staging-00099-xyz
+- PR head SHA: ${headSha}
+- Base SHA: ${baseSha}
+- Staging project ref: ujtlwnoqfhtitcmsnrpq
+- Cloud Run service/tag URL: https://pr-999---arkova-worker-staging.example.run.app
+- Image digest: sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+- Evidence scope: merge-grade shared staging
+- Preflight timestamp: 2026-05-09 13:55 UTC
+- Preflight result: environment_type=clean_mirror
+- Soak start: 2026-05-09 14:00 UTC
+- Soak end: 2026-05-10 02:00 UTC
+- E2E result: cron mode 720/720 (0% error rate)
+- Migration applied: none
+- Rollback rehearsed: yes
+- Staging deploy log id: 142
+`;
+      const r = check({
+        body,
+        files: ['services/worker/src/api/v1/docusign.ts'],
+        headSha,
+        baseSha,
+      });
+      expect(r.ok).toBe(true);
+    });
+
+    it('Gap 1+2: dirty-staging T2 with PENDING artifacts and a self-blank Approved by stays red', () => {
+      // The combined exploit: dirty preflight + short soak + all-PENDING deploy
+      // evidence, "waived" by a self-authored residual-risk note whose
+      // Approved by carries no real approver. Both gaps must fail it.
+      const body = `## Staging Soak Evidence
+- Tier: T2
+- Staging branch: arkova-staging
+- Worker revision: PENDING
+- PR head SHA: ${headSha}
+- Base SHA: ${baseSha}
+- Staging project ref: ujtlwnoqfhtitcmsnrpq
+- Cloud Run service/tag URL: PENDING
+- Image digest: PENDING
+- Evidence scope: merge-grade shared staging
+- Preflight timestamp: 2026-05-09 13:55 UTC
+- Preflight result: environment_type=soak_artifact
+- Soak start: 2026-05-09 14:00 UTC
+- Soak end: 2026-05-09 18:00 UTC
+- E2E result: 50/50 green
+- Migration applied: none
+- Rollback rehearsed: yes
+- Staging deploy log id: PENDING
+
+### Residual-risk note (preflight non-clean_mirror)
+- Contamination type: soak_artifact
+- Affected rows: some
+- Impact on this PR: none
+- Reason not cleaned: lazy
+- Approved by:
+`;
+      const r = check({
+        body,
+        files: ['services/worker/src/api/v1/docusign.ts'],
+        headSha,
+        baseSha,
+      });
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/placeholder/i);
+      expect(r.errors.join(' ')).toMatch(/clean_mirror|residual-risk/i);
+    });
   });
 });

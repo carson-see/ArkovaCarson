@@ -34,6 +34,7 @@ import { docusignWebhookRouter, extractNotaryData } from './docusign.js';
 
 const TEST_HMAC_KEY = 'fixture-key-not-a-secret-aaaa';
 const ORG_ID = '11111111-1111-4111-8111-111111111111';
+const VALID_DOC_SHA256 = 'b'.repeat(64);
 
 function createApp() {
   const app = express();
@@ -60,8 +61,16 @@ function validBody(): string {
     accountId: 'acct-1',
     status: 'completed',
     sender: { email: 'legal@example.com' },
-    envelopeDocuments: [{ documentId: 'combined', name: 'msa.pdf' }],
+    envelopeDocuments: [{ documentId: 'combined', name: 'msa.pdf', sha256: VALID_DOC_SHA256 }],
   });
+}
+
+function postSignedBody(body: string | Buffer) {
+  return request(createApp())
+    .post('/webhooks/docusign')
+    .set('Content-Type', 'application/json')
+    .set('X-DocuSign-Signature-1', sign(body))
+    .send(body);
 }
 
 function integrationLookup(data: unknown, error: unknown = null) {
@@ -75,14 +84,27 @@ function integrationLookup(data: unknown, error: unknown = null) {
   };
 }
 
-function nonceInsert(error: { code: string; message?: string } | null = null) {
+function insertResult(error: { code: string; message?: string } | null = null) {
   return {
     insert: vi.fn().mockResolvedValue({ data: null, error }),
   };
 }
 
+const nonceInsert = insertResult;
+
+function nonceDelete(error: { code: string; message?: string } | null = null) {
+  return {
+    delete: vi.fn().mockReturnThis(),
+    match: vi.fn().mockResolvedValue({ data: null, error }),
+  };
+}
+
+const webhookDlqInsert = insertResult;
+
 beforeEach(() => {
-  vi.clearAllMocks();
+  dbFromMock.mockReset();
+  rpcMock.mockReset();
+  submitJobMock.mockReset();
   process.env.DOCUSIGN_CONNECT_HMAC_SECRET = TEST_HMAC_KEY;
 });
 
@@ -94,11 +116,7 @@ describe('POST /webhooks/docusign', () => {
       integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1', hmac_keys: null }),
     );
     const body = validBody();
-    const res = await request(createApp())
-      .post('/webhooks/docusign')
-      .set('Content-Type', 'application/json')
-      .set('X-DocuSign-Signature-1', sign(body))
-      .send(body);
+    const res = await postSignedBody(body);
 
     expect(res.status).toBe(503);
   });
@@ -122,6 +140,21 @@ describe('POST /webhooks/docusign', () => {
     expect(submitJobMock).not.toHaveBeenCalled();
   });
 
+  it('returns 401 for malformed HMAC-valid bodies without dispatching', async () => {
+    const body = JSON.stringify({
+      event: 'envelope-completed',
+      envelopeId: 'env-1',
+      status: 'completed',
+    });
+
+    const res = await postSignedBody(body);
+
+    expect(res.status).toBe(401);
+    expect(dbFromMock).not.toHaveBeenCalled();
+    expect(rpcMock).not.toHaveBeenCalled();
+    expect(submitJobMock).not.toHaveBeenCalled();
+  });
+
   it('returns 401 for unknown account when HMAC signature is invalid', async () => {
     // SCRUM-2044: dual-table lookup — both org and member tables return no match.
     // Even for unknown accounts, HMAC must be verified with the env-var key.
@@ -138,6 +171,22 @@ describe('POST /webhooks/docusign', () => {
     expect(res.status).toBe(401);
   });
 
+  it('returns 401 for wrong completed-event field types without dispatching', async () => {
+    const body = JSON.stringify({
+      event: 'envelope-completed',
+      envelopeId: 'env-1',
+      accountId: 'acct-1',
+      status: { value: 'completed' },
+    });
+
+    const res = await postSignedBody(body);
+
+    expect(res.status).toBe(401);
+    expect(dbFromMock).not.toHaveBeenCalled();
+    expect(rpcMock).not.toHaveBeenCalled();
+    expect(submitJobMock).not.toHaveBeenCalled();
+  });
+
   it('returns 200 orphaned for unknown account when HMAC signature is valid', async () => {
     // SCRUM-2044: dual-table lookup — both org and member tables return no match.
     // Valid HMAC with env-var key proves the request came from DocuSign.
@@ -145,11 +194,7 @@ describe('POST /webhooks/docusign', () => {
     dbFromMock.mockReturnValueOnce(integrationLookup(null));
     const body = validBody();
 
-    const res = await request(createApp())
-      .post('/webhooks/docusign')
-      .set('Content-Type', 'application/json')
-      .set('X-DocuSign-Signature-1', sign(body))
-      .send(body);
+    const res = await postSignedBody(body);
 
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ ok: true, orphaned: true });
@@ -179,13 +224,10 @@ describe('POST /webhooks/docusign', () => {
     submitJobMock.mockResolvedValueOnce('job-1');
     const body = validBody();
 
-    const res = await request(createApp())
-      .post('/webhooks/docusign')
-      .set('Content-Type', 'application/json')
-      .set('X-DocuSign-Signature-1', sign(body))
-      .send(body);
+    const res = await postSignedBody(body);
 
     expect(res.status).toBe(202);
+    expect(res.body).toEqual({ ok: true });
     expect(rpcMock).toHaveBeenCalledWith('enqueue_rule_event', expect.objectContaining({
       p_org_id: ORG_ID,
       p_trigger_type: 'ESIGN_COMPLETED',
@@ -198,6 +240,8 @@ describe('POST /webhooks/docusign', () => {
         integration_id: 'int-1',
         envelope_id: 'env-1',
         document_ids: ['combined'],
+        document_hashes: [VALID_DOC_SHA256],
+        document_sha256: VALID_DOC_SHA256,
         payload_hash: expect.stringMatching(/^[a-f0-9]{64}$/),
       }),
     }));
@@ -213,14 +257,24 @@ describe('POST /webhooks/docusign', () => {
     }));
   });
 
-  it('returns 500 when the retryable job cannot be queued', async () => {
+  it('deduplicates repeated DocuSign document hashes before deriving document_sha256', async () => {
     dbFromMock.mockReturnValueOnce(
-      integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1', hmac_keys: null }),
+      integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1' }),
     );
     dbFromMock.mockReturnValueOnce(nonceInsert());
-    rpcMock.mockResolvedValueOnce({ data: 'evt-1', error: null });
-    submitJobMock.mockResolvedValueOnce(null);
-    const body = validBody();
+    rpcMock.mockResolvedValueOnce({ data: '33333333-3333-4333-8333-333333333333', error: null });
+    submitJobMock.mockResolvedValueOnce('job-dup-hash');
+    const body = JSON.stringify({
+      event: 'envelope-completed',
+      envelopeId: 'env-dup-hash',
+      accountId: 'acct-1',
+      status: 'completed',
+      sender: { email: 'legal@example.com' },
+      envelopeDocuments: [
+        { documentId: '1', name: 'msa.pdf', sha256: VALID_DOC_SHA256.toUpperCase() },
+        { documentId: 'combined', name: 'combined.pdf', sha256: VALID_DOC_SHA256 },
+      ],
+    });
 
     const res = await request(createApp())
       .post('/webhooks/docusign')
@@ -228,7 +282,128 @@ describe('POST /webhooks/docusign', () => {
       .set('X-DocuSign-Signature-1', sign(body))
       .send(body);
 
+    expect(res.status).toBe(202);
+    expect(rpcMock).toHaveBeenCalledWith('enqueue_rule_event', expect.objectContaining({
+      p_external_file_id: 'env-dup-hash',
+      p_payload: expect.objectContaining({
+        document_hashes: [VALID_DOC_SHA256],
+        document_sha256: VALID_DOC_SHA256,
+      }),
+    }));
+  });
+
+  it('accepts DocuSign payloads with extra fields after schema validation', async () => {
+    dbFromMock.mockReturnValueOnce(
+      integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1', hmac_keys: null }),
+    );
+    dbFromMock.mockReturnValueOnce(nonceInsert());
+    rpcMock.mockResolvedValueOnce({ data: '22222222-2222-4222-8222-222222222222', error: null });
+    submitJobMock.mockResolvedValueOnce('job-1');
+    const body = JSON.stringify({
+      event: 'envelope-completed',
+      envelopeId: 'env-extra-1',
+      accountId: 'acct-1',
+      status: 'completed',
+      generatedDateTime: '2026-05-28T14:05:00.000Z',
+      sender: { email: 'legal@example.com' },
+      envelopeDocuments: [{ documentId: 'combined', name: 'msa.pdf' }],
+      unexpectedDocuSignField: { retained: 'for vendor compatibility' },
+    });
+
+    const res = await request(createApp())
+      .post('/webhooks/docusign')
+      .set('Content-Type', 'application/json')
+      .set('X-DocuSign-Signature-1', sign(body))
+      .send(body);
+
+    expect(res.status).toBe(202);
+    expect(rpcMock).toHaveBeenCalledWith('enqueue_rule_event', expect.objectContaining({
+      p_external_file_id: 'env-extra-1',
+      p_payload: expect.objectContaining({
+        generated_at: '2026-05-28T14:05:00.000Z',
+      }),
+    }));
+    expect(submitJobMock).toHaveBeenCalledWith(expect.objectContaining({
+      payload: expect.objectContaining({ envelope_id: 'env-extra-1' }),
+    }));
+  });
+
+  it('returns 500 when the retryable job cannot be queued', async () => {
+    const rollback = nonceDelete();
+    dbFromMock.mockReturnValueOnce(
+      integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1', hmac_keys: null }),
+    );
+    dbFromMock.mockReturnValueOnce(nonceInsert());
+    dbFromMock.mockReturnValueOnce(rollback);
+    dbFromMock.mockReturnValueOnce(webhookDlqInsert());
+    rpcMock.mockResolvedValueOnce({ data: 'evt-1', error: null });
+    submitJobMock.mockResolvedValueOnce(null);
+    const body = validBody();
+
+    const res = await postSignedBody(body);
+
     expect(res.status).toBe(500);
+    expect(rollback.delete).toHaveBeenCalledTimes(1);
+  });
+
+  it('rolls back the nonce when document-fetch enqueue fails after rule-event enqueue', async () => {
+    const rollback = nonceDelete();
+    const body = JSON.stringify({
+      event: 'envelope-completed',
+      eventId: 'evt-retry-1',
+      envelopeId: 'env-retry-1',
+      accountId: 'acct-1',
+      status: 'completed',
+      generatedDateTime: '2026-05-28T14:05:00.000Z',
+      sender: { email: 'legal@example.com' },
+      envelopeDocuments: [{ documentId: 'combined', name: 'retry.pdf' }],
+    });
+
+    dbFromMock.mockReturnValueOnce(
+      integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1' }),
+    );
+    dbFromMock.mockReturnValueOnce(nonceInsert());
+    rpcMock.mockResolvedValueOnce({ data: 'evt-first', error: null });
+    submitJobMock.mockResolvedValueOnce(null);
+    dbFromMock.mockReturnValueOnce(rollback);
+    dbFromMock.mockReturnValueOnce(webhookDlqInsert());
+
+    const first = await postSignedBody(body);
+
+    expect(first.status).toBe(500);
+    expect(rollback.delete).toHaveBeenCalledTimes(1);
+
+    dbFromMock.mockReturnValueOnce(
+      integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1' }),
+    );
+    dbFromMock.mockReturnValueOnce(nonceInsert());
+    rpcMock.mockResolvedValueOnce({ data: 'evt-second', error: null });
+    submitJobMock.mockResolvedValueOnce('job-retry');
+
+    const retry = await postSignedBody(body);
+
+    expect(retry.status).toBe(202);
+    expect(retry.body).toEqual({ ok: true });
+    expect(rpcMock).toHaveBeenCalledTimes(2);
+    expect(submitJobMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('rolls back the nonce when rule-event enqueue fails before a rule event exists', async () => {
+    const rollback = nonceDelete();
+    dbFromMock.mockReturnValueOnce(
+      integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1' }),
+    );
+    dbFromMock.mockReturnValueOnce(nonceInsert());
+    dbFromMock.mockReturnValueOnce(rollback);
+    dbFromMock.mockReturnValueOnce(webhookDlqInsert());
+    rpcMock.mockResolvedValueOnce({ data: null, error: { message: 'db unavailable' } });
+    const body = validBody();
+
+    const res = await postSignedBody(body);
+
+    expect(res.status).toBe(500);
+    expect(rollback.delete).toHaveBeenCalledTimes(1);
+    expect(submitJobMock).not.toHaveBeenCalled();
   });
 
   it('returns 200 duplicate when the same envelope event is delivered twice', async () => {
@@ -243,16 +418,46 @@ describe('POST /webhooks/docusign', () => {
     );
     const body = validBody();
 
-    const res = await request(createApp())
-      .post('/webhooks/docusign')
-      .set('Content-Type', 'application/json')
-      .set('X-DocuSign-Signature-1', sign(body))
-      .send(body);
+    const res = await postSignedBody(body);
 
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ ok: true, duplicate: true });
     expect(rpcMock).not.toHaveBeenCalled();
     expect(submitJobMock).not.toHaveBeenCalled();
+  });
+
+  it('uses the payload hash as the nonce fallback when DocuSign omits event metadata', async () => {
+    const firstNonce = nonceInsert();
+    const secondNonce = nonceInsert({ code: '23505', message: 'duplicate key value violates unique constraint' });
+    dbFromMock.mockReturnValueOnce(
+      integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1', hmac_keys: null }),
+    );
+    dbFromMock.mockReturnValueOnce(firstNonce);
+    rpcMock.mockResolvedValueOnce({ data: 'evt-1', error: null });
+    submitJobMock.mockResolvedValueOnce('job-1');
+
+    const body = validBody();
+    const expectedPayloadHash = crypto.createHash('sha256').update(body).digest('hex');
+    const first = await postSignedBody(body);
+
+    dbFromMock.mockReturnValueOnce(
+      integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1', hmac_keys: null }),
+    );
+    dbFromMock.mockReturnValueOnce(secondNonce);
+    const retry = await postSignedBody(body);
+
+    expect(first.status).toBe(202);
+    expect(retry.status).toBe(200);
+    expect(firstNonce.insert).toHaveBeenCalledWith({
+      envelope_id: 'env-1',
+      event_id: 'envelope-completed',
+      generated_at: expectedPayloadHash,
+    });
+    expect(secondNonce.insert).toHaveBeenCalledWith({
+      envelope_id: 'env-1',
+      event_id: 'envelope-completed',
+      generated_at: expectedPayloadHash,
+    });
   });
 
   it('returns 500 when DocuSign accountId is connected to multiple orgs (cross-tenant guard)', async () => {
@@ -264,11 +469,7 @@ describe('POST /webhooks/docusign', () => {
     );
     const body = validBody();
 
-    const res = await request(createApp())
-      .post('/webhooks/docusign')
-      .set('Content-Type', 'application/json')
-      .set('X-DocuSign-Signature-1', sign(body))
-      .send(body);
+    const res = await postSignedBody(body);
 
     expect(res.status).toBe(500);
     expect(rpcMock).not.toHaveBeenCalled();
@@ -284,11 +485,7 @@ describe('POST /webhooks/docusign', () => {
     );
     const body = validBody();
 
-    const res = await request(createApp())
-      .post('/webhooks/docusign')
-      .set('Content-Type', 'application/json')
-      .set('X-DocuSign-Signature-1', sign(body))
-      .send(body);
+    const res = await postSignedBody(body);
 
     expect(res.status).toBe(500);
     expect(rpcMock).not.toHaveBeenCalled();
