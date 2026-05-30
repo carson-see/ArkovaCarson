@@ -61,6 +61,25 @@ _Last refreshed: 2026-05-29 by Claude — claims verified against MCP output: pr
 _Last refreshed: 2026-05-29 by Claude — claims verified against gcloud/MCP/CI output: origin/main tip `87029a17` (#959 merge) confirmed via `git log`; main CI run [26649359558](https://github.com/carson-see/ArkovaCarson/actions/runs/26649359558) success including migrations-vs-prod job; SCRUM-2191/2192 created and linked via MCP._
 
 ---
+### 2026-05-28 — SCRUM-1596 CSI epic sprint planning + researcher finding
+
+**Planning session outcome:** sprint plan for [SCRUM-1596 R-CSI-01 Credential Source Import & Issuer Anchoring](https://arkova.atlassian.net/browse/SCRUM-1596) reviewed against the [PRD](https://docs.google.com/document/d/1F0V2OHbfS--UFs79bKJ9dJKmKewP1VaEgBDZ-uJ0-zY). Epic structure verified clean: 7 stories (3 Done: SCRUM-1597/1598/1599; 4 To Do: SCRUM-1600/1601/2084/2085), every open story has parent + subtasks per CLAUDE.md §5.1, all 5 Confluence pages exist (63438849, 62914562, 63471618, 62521357, 62849034). No structural Jira gaps.
+
+**Sprint 0 Task created:** [SCRUM-2126](https://arkova.atlassian.net/browse/SCRUM-2126) + 5 subtasks ([SCRUM-2127](https://arkova.atlassian.net/browse/SCRUM-2127)..[2131](https://arkova.atlassian.net/browse/SCRUM-2131)) — mirrors PRD §9 Sprint 0: land PR #886 (now merged), validate CSI-01/02/03 in prod, smoke-test URL import E2E, review migration 0320 (landed via PR #947), kick off issuer-partnership program registrations with Credly/Accredible/Udemy Business.
+
+**Critical research finding (cited):** None of Credly, Accredible, or Udemy offer a public consumer OAuth program. Credly OAuth is `client_credentials`-only per-issuer-organization; Accredible is API-key auth only; Udemy Affiliate API was discontinued 2025-01-01 and only Udemy Business xAPI exists (enterprise tenant scope). [SCRUM-1600](https://arkova.atlassian.net/browse/SCRUM-1600) [CSI-04] re-scoped from "consumer OAuth Account Linking" to "Issuer-Partnership Credential Ingestion" — individual users continue with URL-paste/PDF-upload (CSI-01/02/03 already shipped), issuer organizations onboard via partnership program. Subtasks SCRUM-1611/1612/1613/2082 renamed; Confluence page [62914562](https://arkova.atlassian.net/wiki/spaces/A/pages/62914562) rewritten to v2; research-citations comments posted on SCRUM-1596 and SCRUM-1600.
+
+**Research-driven Sprint 1 recommendations:** (1) Drop user-facing OAuth UX for these 3 providers; reframe as issuer partnerships. (2) Use `@digitalbazaar/vc` + `@digitalbazaar/eddsa-rdfc-2022-cryptosuite` — OB3 is a W3C VC 2.0 profile, one library. (3) Envelope encryption: per-row DEK + KEK in GCP KMS + `kek_version` column; implement RFC 9700 refresh-token-on-every-use rotation. (4) Webhook ingestion: HMAC-SHA256 on raw body before parse, `UNIQUE(provider, event_id)` 24h dedup, ACK 200 then worker process. (5) One Bitcoin anchor pipeline, dual-trigger batching (N=500 OR 10min).
+
+**PRD gap identified (epic AC #2 vs. reality):** PRD §14 AC "OAuth account linking works for at least 2 providers" is unreachable as written — none of the 3 providers offer consumer OAuth. Either rewrite the AC to "Issuer-partnership ingestion works for at least 2 providers" or accept the AC will not close at v1.0. Flagged on SCRUM-1596 comment for PM decision.
+
+**SOC 2 Type II honest status:** feature-level controls (CC6.1, CC6.6, CC7.2, CC8.1) are designed per PRD §7.4 and partially implemented in CSI-01/02/03, but the "mapped with evidence artifacts" deliverable is [SCRUM-2085](https://arkova.atlassian.net/browse/SCRUM-2085) CSI-07 — To Do. Even when CSI-07 ships, evidence must accumulate over the org-level observation window ([SCRUM-959](https://arkova.atlassian.net/browse/SCRUM-959) TRUST-01). Feature does NOT meet SOC 2 Type II today; on track to.
+
+**Stale DocuSign work parked:** Earlier in this same session I mis-identified the PRD as DocuSign-focused and created 8 stories + 24 subtasks (SCRUM-2094..2125) + 8 Confluence pages under SCRUM-1048 [CONNECTORS-V2]. Per PM decision they remain queued under SCRUM-1048 for later — they don't conflict with SCRUM-1596 and are legitimate DocuSign Sprint 4+ candidates.
+
+_Last refreshed: 2026-05-28 by Claude — claims verified against MCP/CI output: Jira MCP `createJiraIssue` returned SCRUM-2126..2131 with parent SCRUM-1596; Jira MCP `editJiraIssue` updated SCRUM-1600 summary + 4 subtask summaries (SCRUM-1611/1612/1613/2082); Confluence MCP `updateConfluencePage` returned v2 of page 62914562; `gh pr view 886/924/927/947` queried PR state; researcher findings cited Credly/Accredible/Udemy/W3C/RFC sources in SCRUM-1600 comment. Narrative-only — no prod state assertions._
+
+---
 ### 2026-05-28 — PR #924 SOC 2 hardening: CI green, awaiting merge
 
 **PR:** [#924](https://github.com/carson-see/ArkovaCarson/pull/924) on `fix/scrum-2039-2040-2041-soc2-hardening` (13 commits). All required CI checks green (only Vercel email-mismatch fails — pre-existing, non-blocking).
