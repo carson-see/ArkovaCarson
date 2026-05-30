@@ -6,11 +6,13 @@
  * - Invalid verification ID
  * - Expired/cleared session redirect
  * - Malformed URLs
+ * - SCRUM-1999: data-fetch failure surfaces an explicit error state (not a
+ *   silent empty table) on the org registry.
  *
  * @created 2026-03-10 11:45 PM EST
  */
 
-import { test, expect } from './fixtures';
+import { test, expect, getServiceClient, getSeedUserOrgId, SEED_USERS } from './fixtures';
 
 test.describe('Error States', () => {
   test.describe('Non-Existent Record', () => {
@@ -79,6 +81,39 @@ test.describe('Error States', () => {
       await expect(
         individualPage.getByLabel('Email address')
       ).toBeVisible({ timeout: 10000 });
+    });
+  });
+
+  test.describe('Org Registry Data-Fetch Failure (SCRUM-1999)', () => {
+    test('registry shows an explicit error state — not a silent empty table — when the records fetch fails', async ({ orgAdminPage }) => {
+      const orgId = await getSeedUserOrgId(getServiceClient(), SEED_USERS.orgAdmin.id);
+
+      // Force the org registry's PostgREST `anchors` read to fail.
+      await orgAdminPage.route('**/rest/v1/anchors*', async (route) => {
+        if (route.request().method() === 'GET') {
+          await route.fulfill({
+            status: 500,
+            contentType: 'application/json',
+            body: JSON.stringify({ message: 'Internal Server Error' }),
+          });
+          return;
+        }
+        await route.continue();
+      });
+
+      await orgAdminPage.goto(`/organizations/${orgId}`);
+
+      // The registry must show the explicit error state with a retry affordance,
+      // and must NOT show the misleading "No records found" empty state.
+      await expect(
+        orgAdminPage.getByText(/couldn.?t load records/i).first()
+      ).toBeVisible({ timeout: 10000 });
+      await expect(
+        orgAdminPage.getByRole('button', { name: /try again/i }).first()
+      ).toBeVisible();
+      await expect(orgAdminPage.getByText(/no records found/i)).toHaveCount(0);
+
+      await orgAdminPage.unroute('**/rest/v1/anchors*');
     });
   });
 
