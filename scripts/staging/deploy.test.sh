@@ -206,8 +206,23 @@ exit 0
 EOF
 chmod +x "${FAKEBIN}/gcloud"
 
+# Fake docker for the manifest-inspect fallback. STAGING_FAKE_DOCKER_MANIFEST_RC
+# controls whether `docker manifest inspect` "reads" the image.
+cat >"${FAKEBIN}/docker" <<'EOF'
+#!/usr/bin/env bash
+args="$*"
+printf 'docker %s\n' "$args" >>"${STAGING_FAKE_DOCKER_LOG:-/dev/null}"
+if [[ "$args" == *"manifest inspect"* ]]; then
+  exit "${STAGING_FAKE_DOCKER_MANIFEST_RC:-0}"
+fi
+exit 0
+EOF
+chmod +x "${FAKEBIN}/docker"
+
 GCLOUD_LOG="${TMP_DIR}/gcloud.log"
+# AR describe fails all attempts AND docker manifest inspect fails -> blocked.
 out=$(PATH="${FAKEBIN}:$PATH" STAGING_FAKE_GCLOUD_LOG="${GCLOUD_LOG}" STAGING_FAKE_IMAGE_RC=1 \
+      STAGING_FAKE_DOCKER_MANIFEST_RC=1 \
       IMAGE_READABILITY_ATTEMPTS=3 IMAGE_READABILITY_DELAY_SECONDS=0 \
       STAGING_SUPABASE_URL=https://staging.example STAGING_SUPABASE_SERVICE_ROLE_KEY=test \
       $DEPLOY --pr 742 --image us-central1-docker.pkg.dev/arkova1/worker/missing:tag 2>&1); rc=$?
@@ -270,6 +285,46 @@ out=$(PATH="${FAKEBIN}:$PATH" STAGING_FAKE_GCLOUD_LOG="${GCLOUD_LOG}" \
       $DEPLOY --pr 742 --image us-central1-docker.pkg.dev/arkova1/worker/existing:tag 2>&1); rc=$?
 assert_exit  "image precheck passes after AR indexing lag" 0 "$rc"
 assert_match "retry loop reports retry attempt" "image not indexed yet" "$out"
+
+# ─── docker manifest inspect fallback (CI deploy-SA AR-read gap) ──
+# The CI deploy service account pushes images via the Docker registry API but
+# its AR-API `describe` view never resolves the manifest in-window, so every CI
+# deploy failed even after the retry loop. deploy.sh falls back to
+# `docker manifest inspect` (the immediately-consistent registry path) before
+# giving up. This fake gcloud fails describe on every attempt; the fake docker
+# (above) reads the manifest, so the deploy proceeds.
+cat >"${FAKEBIN}/gcloud" <<'EOF'
+#!/usr/bin/env bash
+args="$*"
+printf '%s\n' "$args" >>"${STAGING_FAKE_GCLOUD_LOG}"
+if [[ "$args" == *"artifacts docker images describe"* ]]; then exit 1; fi
+if [[ "$args" == *"run revisions list"* ]]; then printf '[]\n'; exit 0; fi
+if [[ "$args" == *"run services describe"* && "$args" == *"status.url"* ]]; then
+  printf 'https://arkova-worker-staging-270018525501.us-central1.run.app\n'; exit 0; fi
+if [[ "$args" == *"run services describe"* && "$args" == *"latestCreatedRevisionName"* ]]; then
+  printf 'arkova-worker-staging-00088-test\n'; exit 0; fi
+exit 0
+EOF
+chmod +x "${FAKEBIN}/gcloud"
+
+GCLOUD_LOG="${TMP_DIR}/gcloud-docker-fallback.log"
+DOCKER_LOG="${TMP_DIR}/docker-fallback.log"
+out=$(PATH="${FAKEBIN}:$PATH" STAGING_FAKE_GCLOUD_LOG="${GCLOUD_LOG}" \
+      STAGING_FAKE_DOCKER_LOG="${DOCKER_LOG}" STAGING_FAKE_DOCKER_MANIFEST_RC=0 \
+      IMAGE_READABILITY_ATTEMPTS=2 IMAGE_READABILITY_DELAY_SECONDS=0 \
+      STAGING_DEPLOY_NOW_EPOCH=1778760150 \
+      STAGING_SUPABASE_URL=https://staging.example STAGING_SUPABASE_SERVICE_ROLE_KEY=test \
+      $DEPLOY --pr 742 --image us-central1-docker.pkg.dev/arkova1/worker/existing:tag 2>&1); rc=$?
+assert_exit  "docker manifest fallback unblocks deploy when AR describe never resolves" 0 "$rc"
+assert_match "fallback announces docker manifest inspect" "falling back to docker manifest inspect" "$out"
+assert_match "fallback confirms via registry" "confirmed via Docker registry manifest inspect" "$out"
+if grep -q "manifest inspect" "${DOCKER_LOG}"; then
+  echo "  PASS  fallback actually invoked docker manifest inspect"
+  PASS=$((PASS + 1))
+else
+  echo "  FAIL  fallback did not invoke docker manifest inspect"
+  FAIL=$((FAIL + 1))
+fi
 
 echo ""
 echo "─── summary ─────────────────────────────────────────────────"
