@@ -67,7 +67,7 @@ function argValue(args: string[], flag: string, fallback?: string): string | und
   return idx >= 0 ? args[idx + 1] : fallback;
 }
 
-async function buildProvider(providerArg: string, modelOverride: string | undefined): Promise<IAIProvider> {
+async function buildProvider(providerArg: string): Promise<IAIProvider> {
   if (providerArg === 'mock') {
     const { MockAIProvider } = await import('../mock.js');
     return new MockAIProvider();
@@ -109,7 +109,7 @@ async function main(): Promise<void> {
   console.log('   NOTE: held-out F1 is generalization evidence, NOT a merge gate.');
   console.log('');
 
-  const provider = await buildProvider(providerArg, modelOverride);
+  const provider = await buildProvider(providerArg);
   const extract: EntryExtractor =
     providerArg === 'mock' ? echoHeldoutGroundTruthExtractor : createPeEntryExtractor();
 
