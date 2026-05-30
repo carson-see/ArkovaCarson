@@ -235,6 +235,64 @@ describe('SearchPage', () => {
       expect(screen.queryByTestId('search-loading-spinner')).not.toBeInTheDocument();
     });
 
+    it('clears a stale fingerprint error when a subsequent issuer search runs', async () => {
+      // Cross-mode regression (review finding B2): a fingerprint search that
+      // errors leaves `fpError` set. `displayError = error || fpError ||
+      // personError`, and the spinner / issuer-results block are both gated on
+      // `!displayError`. Without clearing the other-mode channels on a new
+      // submit, the stale fingerprint error (a) suppresses the in-flight
+      // spinner of the new issuer search and (b) hides the issuer results on
+      // success — leaving the user staring at a stale error card.
+      const { supabase } = await import('@/lib/supabase');
+      const fpLimitMock = (supabase.from('anchors') as unknown as {
+        select: () => { eq: () => { in: () => { is: () => { limit: ReturnType<typeof vi.fn> } } } };
+      }).select().eq().in().is().limit as unknown as ReturnType<typeof vi.fn>;
+      // First `.limit()` (the fingerprint query) errors → sets fpError.
+      fpLimitMock.mockResolvedValueOnce({ data: null, error: { message: 'fp boom' } });
+
+      const view = renderSearchPage();
+      const input = screen.getByPlaceholderText(/search issuers/i);
+
+      // 1) Fingerprint search (64-hex) errors → error card shown.
+      fireEvent.change(input, { target: { value: 'a'.repeat(64) } });
+      fireEvent.click(screen.getByRole('button', { name: /search/i }));
+      expect(await screen.findByText('Search failed. Please try again.')).toBeInTheDocument();
+
+      // 2) Now run an issuer/name search while the credential leg stays in
+      //    flight (never resolves) so `personSearching` stays true.
+      supabaseMock.rpc.mockReturnValue(new Promise(() => { /* never resolves */ }));
+      fireEvent.change(input, { target: { value: 'Arkova' } });
+      fireEvent.click(screen.getByRole('button', { name: /search/i }));
+
+      await waitFor(() => {
+        expect(publicSearchMock.searchIssuers).toHaveBeenCalledWith('Arkova');
+      });
+
+      // The stale fingerprint error must be cleared: the in-flight spinner
+      // shows and the stale error card is gone.
+      await waitFor(() => {
+        expect(screen.getByTestId('search-loading-spinner')).toBeInTheDocument();
+      });
+      expect(screen.queryByText('Search failed. Please try again.')).not.toBeInTheDocument();
+
+      // 3) Issuer leg resolves with a result → issuer card renders, no error.
+      publicSearchMock.state.searching = false;
+      publicSearchMock.state.issuerResults = [{
+        org_id: 'org-1',
+        org_name: 'Arkova',
+        org_domain: null,
+        credential_count: 3,
+      }];
+      view.rerender(
+        <MemoryRouter initialEntries={['/search']}>
+          <SearchPage />
+        </MemoryRouter>,
+      );
+
+      expect(screen.getByTestId('issuer-card')).toBeInTheDocument();
+      expect(screen.queryByText('Search failed. Please try again.')).not.toBeInTheDocument();
+    });
+
     it('clears loading and surfaces an error when the credential search rejects', async () => {
       // RPC rejects AND the RLS fallback (`.from(...).limit()`) also rejects, so
       // the error path is exercised end-to-end.
