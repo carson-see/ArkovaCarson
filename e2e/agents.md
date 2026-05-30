@@ -1,5 +1,5 @@
 # agents.md — e2e/
-_Last updated: 2026-05-19_
+_Last updated: 2026-05-30_
 
 ## What This Folder Contains
 
@@ -44,6 +44,35 @@ Tests that need unauthenticated state (e.g., `auth.spec.ts`, `route-guards.spec.
 | `performance.spec.ts` | Frontend performance smoke: dashboard load <5s, stats render <3s, verification page <3s, navigation <3s, org admin <5s | 5 | `test`, `expect`, `individualPage`, `orgAdminPage` |
 | `legal-pages.spec.ts` | Public privacy and terms routes: update notices present, launch-blocker placeholder copy absent | 2 | `@playwright/test`, unauthenticated empty storageState |
 | `integrations-docusign.spec.ts` | DocuSign org settings connector: status, connect, disconnect, error states, non-admin boundary, 1280px + 375px screenshot attachments | 11 | `test`, `expect`, `getServiceClient`, `SEED_USERS`, `orgAdminPage`, `individualPage` |
+| `route-screenshot-baseline.spec.ts` | **Route matrix + screenshot baseline (SCRUM-1998 / GA-S2 / E3).** Enumerates the app's routes (derived from the LOCKED `src/lib/routes.ts` `ROUTES` map) and captures a deterministic full-page screenshot of each at BOTH 1280px desktop + 375px mobile. 57 route cases × 2 viewports = 114 shots/project. | 57 | `test`, `expect`, `getServiceClient`, `getSeedUserOrgId`, `createTestAnchor`, `deleteTestAnchor`, `SEED_USERS`, `acceptDisclaimerIfVisible`, `ROUTES` |
+
+## Route Screenshot Baseline — Matrix (SCRUM-1998)
+
+`route-screenshot-baseline.spec.ts` is the GA visual baseline harness. The route
+matrix is **derived from `src/lib/routes.ts`** (every entry references a `ROUTES.*`
+constant, so it tracks the LOCKED route table). Each route is captured at both GA
+baseline viewports and the result is (a) attached to the Playwright report via
+`testInfo.attach()` and (b) written to `ROUTE_BASELINE_DIR` (default
+`test-results/route-baseline/`; set `ROUTE_BASELINE_DIR=docs/screenshots/baseline`
+to curate a committed snapshot per the ticket).
+
+| Bucket | Auth | Count | Notes |
+|--------|------|-------|-------|
+| Public routes | none (empty storageState) | 20 | login, signup, verify form, search, marketing/legal pages, developer/API pages; param-public routes use a deterministic unknown id → graceful not-found surface |
+| Individual user routes | `individual` storageState | 12 | dashboard, documents, records, my-credentials, settings (+ api-keys/webhooks/templates), help, billing, attestations |
+| Org admin routes | `orgAdmin` storageState | 23 | organizations/organization, review-queue, AI/compliance pages, rules, anchor-queue, signature-compliance, auditor-batch + the platform-admin `/admin/*` console |
+| Parameterized detail routes | individual / orgAdmin | 2 | `/records/:id` (seeded SECURED anchor) + `/organizations/:orgId` (seeded org); each skips gracefully if its seed row is absent |
+
+**Determinism:** animations disabled per shot (`animations: 'disabled'`); dynamic
+regions masked (`[data-dynamic]`, `[data-testid="relative-time"]`, `<time>`); each
+route waits on an explicit ready signal (heading / `#main-content` / error surface)
+— never a fixed timeout. **Visual-diff posture:** baselines are attachment-based,
+NOT `toHaveScreenshot()` pixel diffs (the repo has no committed golden images;
+pixel diffs are brittle across OS/CI). The gate is route *rendering* (the ready
+signal), not pixel equality. `playwright.config.ts` carries `expect.toHaveScreenshot`
+defaults + a `snapshotPathTemplate` for any future opt-in golden-image spec.
+**Local note:** the authed buckets need the `auth.setup.ts` sessions, which require
+Supabase creds — exercised in CI, not on a credential-less local checkout (repo norm).
 
 ## Do / Don't Rules
 
@@ -82,3 +111,4 @@ Tests that need unauthenticated state (e.g., `auth.spec.ts`, `route-guards.spec.
 | 2026-04-26 | SCRUM-1302: Replaced per-test UI login with Playwright `storageState` setup project. Auth setup runs once, all specs reuse saved session. Specs needing unauthenticated state override with empty storageState. Removed `continue-on-error: true` from CI E2E step. Increased `webServer.timeout` to 120s. |
 | 2026-05-19 | SCRUM-1247 closeout: Added `legal-pages.spec.ts` for public `/privacy` and `/terms` notices without seeded auth dependencies. |
 | 2026-05-28 | SCRUM-2133: Extended `integrations-docusign.spec.ts` with disconnect success-path coverage and attached desktop 1280px/mobile 375px screenshots for connector readiness evidence. |
+| 2026-05-30 | SCRUM-1998 (GA-S2 / E3): Added `route-screenshot-baseline.spec.ts` — route matrix (derived from `src/lib/routes.ts`) capturing a deterministic full-page screenshot of all 57 route cases at 1280px + 375px (114 shots/project), attached to the report and written to `ROUTE_BASELINE_DIR`. Added `expect.toHaveScreenshot` defaults + `snapshotPathTemplate` to `playwright.config.ts` for future opt-in golden-image specs. |

@@ -38,6 +38,21 @@ export default defineConfig({
   workers: process.env.CI ? 1 : undefined,
   reporter: process.env.CI ? 'list' : 'html',
   timeout: 30_000,
+  // Deterministic visual-diff config for any opt-in `toHaveScreenshot` /
+  // `toMatchSnapshot` spec. The route screenshot baseline harness
+  // (`route-screenshot-baseline.spec.ts`) writes attachment-based baselines and
+  // does NOT gate on pixel diffs, but these settings keep any future
+  // golden-image spec stable across CI by disabling animations and the caret
+  // and allowing a small anti-aliasing tolerance. Snapshots resolve under
+  // `e2e/__screenshots__/` rather than next to each spec.
+  expect: {
+    toHaveScreenshot: {
+      animations: 'disabled',
+      caret: 'hide',
+      maxDiffPixelRatio: 0.02,
+    },
+  },
+  snapshotPathTemplate: '{testDir}/__screenshots__/{testFilePath}/{arg}{ext}',
   use: {
     baseURL: 'http://localhost:5173',
     trace: 'on-first-retry',
