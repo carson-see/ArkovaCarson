@@ -97,7 +97,12 @@ interface RouteCase {
   key: string;
   /** Concrete URL to visit (params already substituted). */
   path: string;
-  /** Which session to use. */
+  /**
+   * Which session this route is rendered under. Descriptive metadata — the
+   * actual page is selected by the describe block that owns the case (public /
+   * individual blocks pass `page`; the org-admin block passes `orgAdminPage`),
+   * so only org-admin cases instantiate the org-admin browser context.
+   */
   auth: AuthMode;
   /**
    * Ready-signal assertion. Resolves once the route has meaningfully rendered
@@ -109,9 +114,37 @@ interface RouteCase {
 
 // ── Ready-signal helpers ────────────────────────────────────────────────────
 
-/** Generic: the app shell's main content region has painted. */
+/**
+ * Authed-shell signal: `#main-content` lives only inside the authenticated
+ * AppShell, so this is the strong, authoritative gate for authed routes. It is
+ * NOT a valid signal for public/marketing/legal pages (they render outside the
+ * AppShell and have no `#main-content`) — those use `publicContentReady`.
+ */
 async function mainContentReady(page: Page): Promise<void> {
   await expect(page.locator('#main-content')).toBeVisible({ timeout: 15_000 });
+}
+
+/**
+ * Public-page signal: assert that the page has actually *painted real content*,
+ * not merely that `<body>` exists. A blank/white-screen public route (broken
+ * marketing/legal page, crashed lazy chunk, error boundary that rendered
+ * nothing) still has a visible `<body>`, so a `body`-visible check is a
+ * no-op that always passes. Instead we require:
+ *   1. a visible primary content region — `<main>` / `[role="main"]` where the
+ *      page provides one, else the mounted React root's first child
+ *      (`#root > *`) for the few public pages that render without a `<main>`
+ *      (e.g. the activation card); and
+ *   2. that region carries non-empty text — so a mounted-but-empty (white)
+ *      screen fails the gate rather than silently passing.
+ * This makes the public-route ready signal authoritative: a genuinely broken
+ * public route fails the test.
+ */
+async function publicContentReady(page: Page): Promise<void> {
+  const content = page.locator('main, [role="main"], #root > *').first();
+  await expect(content).toBeVisible({ timeout: 15_000 });
+  // Non-empty paint check: a blank page has no rendered text in its content
+  // region. `toHaveText(/\S/)` retries until text appears or the timeout trips.
+  await expect(content).toHaveText(/\S/, { timeout: 15_000 });
 }
 
 /** A visible heading whose text matches `re`. */
@@ -121,17 +154,25 @@ function headingReady(re: RegExp) {
   };
 }
 
-/** Either of two ready signals (covers routes that render content OR an empty/error state). */
+/**
+ * Race several ready signals, but stay authoritative on failure. If any check
+ * settles first the route is ready. If NONE settle, we await the LAST check
+ * directly (no `.catch`), so its assertion error propagates and fails the test.
+ * Callers therefore pass the authoritative content signal LAST (e.g.
+ * `anyReady(headingReady(/…/), publicContentReady)`): a tight heading match is
+ * preferred, but a route that renders different copy still passes as long as it
+ * painted real content — while a blank/broken page fails. There is no
+ * `body`-visible escape hatch.
+ */
 function anyReady(...checks: Array<(page: Page) => Promise<void>>) {
   return async (page: Page) => {
     const settled = await Promise.race(
       checks.map((c) => c(page).then(() => true).catch(() => false)),
     );
     if (!settled) {
-      // Fall back to body visibility so a route that renders an unexpected (but
-      // non-blank) surface still produces a baseline shot rather than failing
-      // the whole matrix. The per-route `ready` above is the primary gate.
-      await expect(page.locator('body')).toBeVisible({ timeout: 15_000 });
+      // No signal won the race → assert the authoritative (last) check so a
+      // genuinely unrendered route throws here instead of passing silently.
+      await checks[checks.length - 1](page);
     }
   };
 }
@@ -151,26 +192,26 @@ async function authedAppReady(page: Page): Promise<void> {
 const PUBLIC_ROUTES: RouteCase[] = [
   { key: 'login', path: ROUTES.LOGIN, auth: 'public', ready: headingReady(/sign in|log in|welcome/i) },
   { key: 'signup', path: ROUTES.SIGNUP, auth: 'public', ready: headingReady(/sign up|create|get started/i) },
-  { key: 'verify-form', path: ROUTES.VERIFY_FORM, auth: 'public', ready: anyReady(headingReady(/verify/i), mainContentReady) },
-  { key: 'search', path: ROUTES.SEARCH, auth: 'public', ready: anyReady(headingReady(/search/i), mainContentReady) },
-  { key: 'about', path: ROUTES.ABOUT, auth: 'public', ready: anyReady(headingReady(/about/i), mainContentReady) },
+  { key: 'verify-form', path: ROUTES.VERIFY_FORM, auth: 'public', ready: anyReady(headingReady(/verify/i), publicContentReady) },
+  { key: 'search', path: ROUTES.SEARCH, auth: 'public', ready: anyReady(headingReady(/search/i), publicContentReady) },
+  { key: 'about', path: ROUTES.ABOUT, auth: 'public', ready: anyReady(headingReady(/about/i), publicContentReady) },
   { key: 'privacy', path: ROUTES.PRIVACY, auth: 'public', ready: headingReady(/privacy/i) },
   { key: 'terms', path: ROUTES.TERMS, auth: 'public', ready: headingReady(/terms/i) },
-  { key: 'contact', path: ROUTES.CONTACT, auth: 'public', ready: anyReady(headingReady(/contact/i), mainContentReady) },
-  { key: 'developers', path: ROUTES.DEVELOPERS, auth: 'public', ready: anyReady(headingReady(/develop|api/i), mainContentReady) },
-  { key: 'api-sandbox', path: ROUTES.API_SANDBOX, auth: 'public', ready: anyReady(headingReady(/sandbox|api/i), mainContentReady) },
-  { key: 'cle-api', path: ROUTES.CLE_API, auth: 'public', ready: anyReady(headingReady(/cle|bar|api/i), mainContentReady) },
-  { key: 'how-it-works', path: ROUTES.HOW_IT_WORKS, auth: 'public', ready: anyReady(headingReady(/how it works/i), mainContentReady) },
-  { key: 'use-cases', path: ROUTES.USE_CASES, auth: 'public', ready: anyReady(headingReady(/use case/i), mainContentReady) },
-  { key: 'enterprise', path: ROUTES.ENTERPRISE, auth: 'public', ready: anyReady(headingReady(/enterprise/i), mainContentReady) },
-  { key: 'independent-verify', path: ROUTES.INDEPENDENT_VERIFY, auth: 'public', ready: anyReady(headingReady(/verif|independent/i), mainContentReady) },
-  { key: 'data-retention', path: ROUTES.DATA_RETENTION, auth: 'public', ready: anyReady(headingReady(/retention|data/i), mainContentReady) },
-  { key: 'activate', path: ROUTES.ACTIVATE, auth: 'public', ready: anyReady(headingReady(/activate|account/i), mainContentReady) },
+  { key: 'contact', path: ROUTES.CONTACT, auth: 'public', ready: anyReady(headingReady(/contact/i), publicContentReady) },
+  { key: 'developers', path: ROUTES.DEVELOPERS, auth: 'public', ready: anyReady(headingReady(/develop/i), publicContentReady) },
+  { key: 'api-sandbox', path: ROUTES.API_SANDBOX, auth: 'public', ready: anyReady(headingReady(/sandbox/i), publicContentReady) },
+  { key: 'cle-api', path: ROUTES.CLE_API, auth: 'public', ready: anyReady(headingReady(/cle|attorney/i), publicContentReady) },
+  { key: 'how-it-works', path: ROUTES.HOW_IT_WORKS, auth: 'public', ready: anyReady(headingReady(/how it works/i), publicContentReady) },
+  { key: 'use-cases', path: ROUTES.USE_CASES, auth: 'public', ready: anyReady(headingReady(/use case/i), publicContentReady) },
+  { key: 'enterprise', path: ROUTES.ENTERPRISE, auth: 'public', ready: anyReady(headingReady(/enterprise/i), publicContentReady) },
+  { key: 'independent-verify', path: ROUTES.INDEPENDENT_VERIFY, auth: 'public', ready: anyReady(headingReady(/verif|independent/i), publicContentReady) },
+  { key: 'data-retention', path: ROUTES.DATA_RETENTION, auth: 'public', ready: anyReady(headingReady(/retention|data/i), publicContentReady) },
+  { key: 'activate', path: ROUTES.ACTIVATE, auth: 'public', ready: anyReady(headingReady(/activate|activation/i), publicContentReady) },
   // Param-public routes use a deterministic non-existent id → graceful "not found"
   // surface (these pages must never blank-screen or stack-trace for anon visitors).
-  { key: 'verify-public-notfound', path: ROUTES.VERIFY.replace(':publicId', 'baseline-unknown-id'), auth: 'public', ready: anyReady(headingReady(/verif|not found|invalid/i), mainContentReady) },
-  { key: 'issuer-registry-notfound', path: ROUTES.ISSUER_REGISTRY.replace(':orgId', '00000000-0000-0000-0000-000000000000'), auth: 'public', ready: anyReady(headingReady(/not found|organization/i), mainContentReady) },
-  { key: 'embed-verify-notfound', path: ROUTES.EMBED_VERIFY.replace(':publicId', 'baseline-unknown-id'), auth: 'public', ready: anyReady(headingReady(/verif|not found|invalid/i), mainContentReady) },
+  { key: 'verify-public-notfound', path: ROUTES.VERIFY.replace(':publicId', 'baseline-unknown-id'), auth: 'public', ready: anyReady(headingReady(/verif|not found|invalid/i), publicContentReady) },
+  { key: 'issuer-registry-notfound', path: ROUTES.ISSUER_REGISTRY.replace(':orgId', '00000000-0000-0000-0000-000000000000'), auth: 'public', ready: anyReady(headingReady(/not found|organization/i), publicContentReady) },
+  { key: 'embed-verify-notfound', path: ROUTES.EMBED_VERIFY.replace(':publicId', 'baseline-unknown-id'), auth: 'public', ready: anyReady(headingReady(/verif|not found|invalid/i), publicContentReady) },
 ];
 
 /** Authenticated routes rendered as the individual (demo-user) session. */
@@ -250,26 +291,19 @@ async function captureBaseline(
 }
 
 /**
- * Resolve a page for the given auth mode. `public` and `individual` reuse the
- * spec's default `page` (whose storageState is set per-describe-block below);
- * `orgAdmin` always uses the dedicated org-admin context fixture.
+ * Run one route through both baseline viewports against the already-resolved
+ * `target` page. The caller selects `target` from the right session: the public
+ * and individual blocks pass their default `page`; the org-admin block passes
+ * the dedicated `orgAdminPage` context fixture. Keeping the page selection at
+ * the call site means blocks that never touch the org-admin surface (the ~20
+ * public + ~12 individual cases) do not instantiate — and tear down — an
+ * `orgAdminPage` browser context they would never use.
  */
-function pageForCase(
-  routeCase: RouteCase,
-  page: Page,
-  orgAdminPage: Page,
-): Page {
-  return routeCase.auth === 'orgAdmin' ? orgAdminPage : page;
-}
-
-/** Run one route through both baseline viewports. */
 async function screenshotRouteAtBothViewports(
   routeCase: RouteCase,
-  page: Page,
-  orgAdminPage: Page,
+  target: Page,
   testInfo: TestInfo,
 ): Promise<void> {
-  const target = pageForCase(routeCase, page, orgAdminPage);
   for (const viewport of VIEWPORTS) {
     await target.setViewportSize({ width: viewport.width, height: viewport.height });
     await target.goto(routeCase.path, { waitUntil: 'domcontentloaded' });
@@ -288,26 +322,31 @@ test.describe('Route screenshot baseline — public routes (1280 + 375)', () => 
   // Anonymous visitor: no stored session.
   test.use({ storageState: { cookies: [], origins: [] } });
 
+  // Public cases never touch the org-admin surface, so they take `{ page }`
+  // only — the `orgAdminPage` fixture (a full browser context + teardown) is
+  // intentionally NOT destructured here so it is never instantiated for them.
   for (const routeCase of PUBLIC_ROUTES) {
-    test(`${routeCase.key} (${routeCase.path})`, async ({ page, orgAdminPage }, testInfo) => {
-      await screenshotRouteAtBothViewports(routeCase, page, orgAdminPage, testInfo);
+    test(`${routeCase.key} (${routeCase.path})`, async ({ page }, testInfo) => {
+      await screenshotRouteAtBothViewports(routeCase, page, testInfo);
     });
   }
 });
 
 test.describe('Route screenshot baseline — individual user routes (1280 + 375)', () => {
   // Uses the project-default `individual` storageState from auth.setup.ts.
+  // Individual cases also take `{ page }` only — no `orgAdminPage` context.
   for (const routeCase of INDIVIDUAL_ROUTES) {
-    test(`${routeCase.key} (${routeCase.path})`, async ({ page, orgAdminPage }, testInfo) => {
-      await screenshotRouteAtBothViewports(routeCase, page, orgAdminPage, testInfo);
+    test(`${routeCase.key} (${routeCase.path})`, async ({ page }, testInfo) => {
+      await screenshotRouteAtBothViewports(routeCase, page, testInfo);
     });
   }
 });
 
 test.describe('Route screenshot baseline — org admin routes (1280 + 375)', () => {
+  // Org-admin cases use the dedicated org-admin context fixture.
   for (const routeCase of ORG_ADMIN_ROUTES) {
-    test(`${routeCase.key} (${routeCase.path})`, async ({ page, orgAdminPage }, testInfo) => {
-      await screenshotRouteAtBothViewports(routeCase, page, orgAdminPage, testInfo);
+    test(`${routeCase.key} (${routeCase.path})`, async ({ orgAdminPage }, testInfo) => {
+      await screenshotRouteAtBothViewports(routeCase, orgAdminPage, testInfo);
     });
   }
 });
@@ -325,6 +364,11 @@ test.describe('Route screenshot baseline — parameterized detail routes (1280 +
     const service = getServiceClient();
 
     // A SECURED record owned by the individual user → /records/:id.
+    // NOTE: this is a *synthetic* SECURED row — `createTestAnchor(status:'SECURED')`
+    // service-role-inserts the anchor and fills in fabricated chain fields
+    // (chain_tx_id, chain_block_height, chain_timestamp). It is NOT a
+    // worker-produced anchor and the captured /records/:id shot does not imply a
+    // real on-network receipt; it exists only to render the record-detail layout.
     try {
       const anchor = await createTestAnchor(service, {
         userId: SEED_USERS.individual.id,
@@ -352,21 +396,21 @@ test.describe('Route screenshot baseline — parameterized detail routes (1280 +
     }
   });
 
-  test('record-detail (/records/:id)', async ({ page, orgAdminPage }, testInfo) => {
+  // Individual-owned record → default `page`; no org-admin context needed.
+  test('record-detail (/records/:id)', async ({ page }, testInfo) => {
     test.skip(!recordDetailPath, 'No seeded record available for /records/:id baseline');
     await screenshotRouteAtBothViewports(
       { key: 'record-detail', path: recordDetailPath!, auth: 'individual', ready: authedAppReady },
       page,
-      orgAdminPage,
       testInfo,
     );
   });
 
-  test('org-profile (/organizations/:orgId)', async ({ page, orgAdminPage }, testInfo) => {
+  // Org-admin-scoped org profile → the dedicated org-admin context fixture.
+  test('org-profile (/organizations/:orgId)', async ({ orgAdminPage }, testInfo) => {
     test.skip(!orgProfilePath, 'No seeded org available for /organizations/:orgId baseline');
     await screenshotRouteAtBothViewports(
       { key: 'org-profile', path: orgProfilePath!, auth: 'orgAdmin', ready: authedAppReady },
-      page,
       orgAdminPage,
       testInfo,
     );

@@ -65,14 +65,34 @@ to curate a committed snapshot per the ticket).
 
 **Determinism:** animations disabled per shot (`animations: 'disabled'`); dynamic
 regions masked (`[data-dynamic]`, `[data-testid="relative-time"]`, `<time>`); each
-route waits on an explicit ready signal (heading / `#main-content` / error surface)
-— never a fixed timeout. **Visual-diff posture:** baselines are attachment-based,
-NOT `toHaveScreenshot()` pixel diffs (the repo has no committed golden images;
-pixel diffs are brittle across OS/CI). The gate is route *rendering* (the ready
-signal), not pixel equality. `playwright.config.ts` carries `expect.toHaveScreenshot`
-defaults + a `snapshotPathTemplate` for any future opt-in golden-image spec.
-**Local note:** the authed buckets need the `auth.setup.ts` sessions, which require
-Supabase creds — exercised in CI, not on a credential-less local checkout (repo norm).
+route waits on an explicit ready signal — never a fixed timeout. **Ready signals are
+authoritative — there is no `body`-visible escape hatch.** Authed routes gate on
+`#main-content` (it exists only inside the authenticated AppShell). Public routes
+gate on `publicContentReady`: a visible primary-content region (`main` /
+`[role="main"]`, else the mounted React root's first child for the few public pages
+without a `<main>`) **with non-empty text**, so a blank/white-screen public page
+fails the test rather than passing on a visible-but-empty `<body>`. Heading regexes
+are kept tight (a miss is a real failure, not a silent pass); a route that paints
+different copy still passes via the content check. **Visual-diff posture:** baselines
+are attachment-based, NOT `toHaveScreenshot()` pixel diffs (the repo has no committed
+golden images; pixel diffs are brittle across OS/CI). The gate is route *rendering*
+(the ready signal), not pixel equality. `playwright.config.ts` carries
+`expect.toHaveScreenshot` defaults + a `snapshotPathTemplate` for any future opt-in
+golden-image spec. **Local note:** the authed buckets need the `auth.setup.ts`
+sessions, which require Supabase creds — exercised in CI, not on a credential-less
+local checkout (repo norm).
+
+**CI time budget (NB3):** this spec adds **114 full-page captures per browser
+project** (57 cases × 2 viewports) to a suite that runs serialized in CI
+(`workers: 1`) with `retries: 2`, under the ~25-min E2E job cap. CI runs the
+`chromium` project only for this matrix, so the expected steady-state added runtime
+is roughly **8–12 min** of wall-clock (≈4–6 s/capture incl. nav + `networkidle`
+settle), with retries pushing a flaky run higher. The `orgAdminPage` browser context
+is now instantiated only for the ~25 org-admin/org-profile cases (not all 57), which
+trims context-setup overhead. **If the E2E budget tightens, this spec is the first
+candidate to split into its own CI shard / job** (it is self-contained — one spec
+file, `ROUTE_BASELINE_DIR`-scoped output — so sharding it off the critical-path E2E
+job is low-risk).
 
 ## Do / Don't Rules
 
@@ -84,6 +104,8 @@ Supabase creds — exercised in CI, not on a credential-less local checkout (rep
 - **DON'T** hardcode Supabase URLs, keys, or passwords in spec files
 - **DON'T** create cross-spec dependencies — each spec is isolated
 - **DON'T** use `page.waitForTimeout()` — use proper `waitForURL()` or `expect().toBeVisible()`
+- **DON'T** gate a screenshot/route assertion on `body` being visible — `<body>` is visible even on a blank/white-screen page, so it is a no-op that always passes. Assert a primary content region (`main` / `[role="main"]` / `#main-content`) **with non-empty text** so a broken page actually fails (see `publicContentReady` / `mainContentReady` in `route-screenshot-baseline.spec.ts`).
+- **DON'T** instantiate a context fixture (`orgAdminPage`, `orgBAdminPage`) in a test that doesn't use it — each eagerly opens a browser context + teardown. Destructure only the fixtures the block actually drives.
 
 ## Dependencies
 
@@ -112,3 +134,4 @@ Supabase creds — exercised in CI, not on a credential-less local checkout (rep
 | 2026-05-19 | SCRUM-1247 closeout: Added `legal-pages.spec.ts` for public `/privacy` and `/terms` notices without seeded auth dependencies. |
 | 2026-05-28 | SCRUM-2133: Extended `integrations-docusign.spec.ts` with disconnect success-path coverage and attached desktop 1280px/mobile 375px screenshots for connector readiness evidence. |
 | 2026-05-30 | SCRUM-1998 (GA-S2 / E3): Added `route-screenshot-baseline.spec.ts` — route matrix (derived from `src/lib/routes.ts`) capturing a deterministic full-page screenshot of all 57 route cases at 1280px + 375px (114 shots/project), attached to the report and written to `ROUTE_BASELINE_DIR`. Added `expect.toHaveScreenshot` defaults + `snapshotPathTemplate` to `playwright.config.ts` for future opt-in golden-image specs. |
+| 2026-05-30 | SCRUM-1998 review fixes (PR #998): (NB1) made the public-route ready gate authoritative — removed the `body`-visible fallback no-op, added `publicContentReady` (visible `main`/`[role="main"]`/`#root>*` **with non-empty text** so a blank page fails), and tightened the broadest heading regexes (`/cle\|bar\|api/`→`/cle\|attorney/`, `/sandbox\|api/`→`/sandbox/`, `/activate\|account/`→`/activate\|activation/`, `/develop\|api/`→`/develop/`); authed `#main-content` gate unchanged. (NB2) `orgAdminPage` now instantiated only for the ~25 org-admin/org-profile cases — public/individual blocks take `{ page }` only (no eager context for ~32 cases). (NB3) documented CI runtime budget + shard candidacy above. (NB4) commented the synthetic-SECURED record fixture. |
