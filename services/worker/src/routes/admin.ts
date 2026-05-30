@@ -197,7 +197,7 @@ adminRouter.get('/queue/pending', async (req, res) => {
   const userId = await extractAuthUserId(req);
   if (!userId) { res.status(401).json({ error: 'Authentication required' }); return; }
   try {
-    await handleListPendingResolution(req, res);
+    await handleListPendingResolution(req, res, userId);
   } catch (error) {
     logger.error({ error }, 'Queue pending request failed');
     res.status(500).json({ error: 'Internal server error' });
