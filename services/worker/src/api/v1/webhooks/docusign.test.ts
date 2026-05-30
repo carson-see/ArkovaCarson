@@ -388,6 +388,40 @@ describe('POST /webhooks/docusign', () => {
     expect(submitJobMock).not.toHaveBeenCalled();
   });
 
+  it('uses the payload hash as the nonce fallback when DocuSign omits event metadata', async () => {
+    const firstNonce = nonceInsert();
+    const secondNonce = nonceInsert({ code: '23505', message: 'duplicate key value violates unique constraint' });
+    dbFromMock.mockReturnValueOnce(
+      integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1', hmac_keys: null }),
+    );
+    dbFromMock.mockReturnValueOnce(firstNonce);
+    rpcMock.mockResolvedValueOnce({ data: 'evt-1', error: null });
+    submitJobMock.mockResolvedValueOnce('job-1');
+
+    const body = validBody();
+    const expectedPayloadHash = crypto.createHash('sha256').update(body).digest('hex');
+    const first = await postSignedBody(body);
+
+    dbFromMock.mockReturnValueOnce(
+      integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1', hmac_keys: null }),
+    );
+    dbFromMock.mockReturnValueOnce(secondNonce);
+    const retry = await postSignedBody(body);
+
+    expect(first.status).toBe(202);
+    expect(retry.status).toBe(200);
+    expect(firstNonce.insert).toHaveBeenCalledWith({
+      envelope_id: 'env-1',
+      event_id: 'envelope-completed',
+      generated_at: expectedPayloadHash,
+    });
+    expect(secondNonce.insert).toHaveBeenCalledWith({
+      envelope_id: 'env-1',
+      event_id: 'envelope-completed',
+      generated_at: expectedPayloadHash,
+    });
+  });
+
   it('returns 500 when DocuSign accountId is connected to multiple orgs (cross-tenant guard)', async () => {
     dbFromMock.mockReturnValueOnce(
       integrationLookup([

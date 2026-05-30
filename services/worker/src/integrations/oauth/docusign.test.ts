@@ -233,7 +233,7 @@ describe('parseDocusignConnectPayload', () => {
           generatedDateTime: 'not-a-date',
         }),
       ),
-    ).toThrow();
+    ).toThrow(/Invalid ISO datetime/i);
   });
 });
 

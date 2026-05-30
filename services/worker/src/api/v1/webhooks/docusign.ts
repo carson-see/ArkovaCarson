@@ -173,11 +173,11 @@ async function enqueueFetchJob(args: {
   return jobId;
 }
 
-function nonceKeyForEvent(event: DocusignCompletedEnvelope): DocusignNonceKey {
+function nonceKeyForEvent(event: DocusignCompletedEnvelope, payloadHash: string): DocusignNonceKey {
   return {
     envelope_id: event.envelopeId,
     event_id: event.eventId ?? event.event,
-    generated_at: event.generatedDateTime ?? new Date().toISOString(),
+    generated_at: event.generatedDateTime ?? payloadHash,
   };
 }
 
@@ -408,7 +408,7 @@ docusignWebhookRouter.post('/', async (req: Request, res: Response) => {
     // Replay protection: dedupe on (envelope_id, event_id, generated_at).
     // DocuSign retries on any non-2xx response, so a duplicate must return
     // 200 to stop the retry loop. Migration 0256 creates the nonce table.
-    const nonceKey = nonceKeyForEvent(event);
+    const nonceKey = nonceKeyForEvent(event, payloadHash);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any, arkova/missing-org-filter -- webhook replay marker write has no tenant key; nonce tuple prevents duplicate provider delivery
     const { error: nonceErr } = await (db as any).from('docusign_webhook_nonces').insert(nonceKey);
     if (nonceErr) {

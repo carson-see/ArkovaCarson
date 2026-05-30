@@ -20,6 +20,7 @@ import {
   makeDocusignEnvelopeJobDeps,
   runDocusignEnvelopeCompletedJobs,
 } from './docusign-envelope-completed.js';
+import { logger } from '../utils/logger.js';
 
 describe('runDocusignEnvelopeCompletedJobs', () => {
   beforeEach(() => {
@@ -230,5 +231,53 @@ describe('runDocusignEnvelopeCompletedJobs', () => {
       name: 'secret/member-int-1',
       value: 'refresh-token-2',
     });
+  });
+
+  it('throws when member_integrations lookup fails after no org_integrations row matches', async () => {
+    const queriedTables: string[] = [];
+    const memberLookupError = new Error('lookup failed');
+    const db = {
+      from: vi.fn((table: string) => {
+        queriedTables.push(table);
+        const query = {
+          select: vi.fn(() => query),
+          eq: vi.fn(() => query),
+          is: vi.fn(() => query),
+          maybeSingle: vi.fn().mockResolvedValue({
+            data: null,
+            error: table === 'member_integrations' ? memberLookupError : null,
+          }),
+          insert: vi.fn(() => ({
+            select: vi.fn(() => ({
+              single: vi.fn().mockResolvedValue({ data: null, error: null }),
+            })),
+          })),
+        };
+        return query;
+      }),
+    };
+    const refreshTokenStore = {
+      get: vi.fn().mockResolvedValue('refresh-token-1'),
+      put: vi.fn().mockResolvedValue(undefined),
+      delete: vi.fn().mockResolvedValue(undefined),
+    };
+    const deps = makeDocusignEnvelopeJobDeps({ db, refreshTokenStore });
+
+    await expect(deps.resolveConnection({
+      org_id: '11111111-1111-4111-8111-111111111111',
+      integration_id: 'member-int-1',
+      account_id: 'account-1',
+      envelope_id: 'envelope-1',
+      rule_event_id: 'rule-event-1',
+      document_ids: ['combined'],
+    })).rejects.toThrow('docusign_integration_lookup_failed');
+
+    expect(queriedTables).toEqual(['org_integrations', 'member_integrations']);
+    expect(logger.error).toHaveBeenCalledWith(
+      { error: memberLookupError, integrationId: 'member-int-1' },
+      'DocuSign job member integration lookup failed',
+    );
+    expect(refreshTokenStore.get).not.toHaveBeenCalled();
+    expect(refreshTokenStore.put).not.toHaveBeenCalled();
   });
 });
