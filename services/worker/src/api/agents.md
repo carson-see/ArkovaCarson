@@ -1,6 +1,11 @@
 # agents.md — services/worker/src/api/
 
-_Last updated: 2026-05-29 (SCRUM-1984 admin-stats phantom-column fix)_
+_Last updated: 2026-05-30 (SCRUM-2213 queue/pending auth.uid()-via-service-role fix)_
+
+## 2026-05-30 RPCs that read `auth.uid()` fail when called from the worker (SCRUM-2213)
+
+- `handleListPendingResolution` (`queue-resolution.ts`) called RPC `list_pending_resolution_anchors_v2`, which resolves the caller via `SELECT … FROM profiles WHERE id = auth.uid()` and raises `'Profile not found'` otherwise. But the worker invokes RPCs through the **service-role** `db` client, where `auth.uid()` is **NULL** → the RPC raised on every call → `/api/queue/pending` returned **500** every time (Review Queue page hung on "Loading…"). A perfect index (`idx_anchors_org_status_created`) existed, so it was never a timeout — purely an auth-context mismatch.
+- **Rule:** never call an `auth.uid()`-dependent RPC from the worker's service-role client. Resolve the caller's org from the authenticated userId (passed by the route via `extractAuthUserId`) and query org-scoped directly, or pass an explicit `p_user_id` into the RPC. Fix: the handler now takes `callerUserId`, resolves `profiles.org_id`, queries `anchors` org-scoped (`.eq('org_id', …).eq('status','PENDING_RESOLUTION')`), and computes `sibling_count` in TS — no `auth.uid()` dependency and no exact-count scan (the R0-8 planner-safe rule).
 
 ## 2026-05-29 Phantom-column filters silently zero out counts (SCRUM-1984)
 
