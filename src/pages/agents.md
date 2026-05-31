@@ -10,6 +10,7 @@ _Last updated: 2026-05-19_
 Top-level page components rendered by react-router-dom routes. Each page composes layout (AppShell) with domain-specific hooks and components.
 
 ## Recent Changes
+- 2026-05-16 SCRUM-1126: `VersionConflictsPage.tsx` — org-admin version conflict review UI. Groups pending versions by `external_file_id`, displays fingerprint previews + age, approve action creates PENDING anchor via worker API. Uses `useVersionResolution` hook + `OrgRequiredGate`. Responsive at 1280px + 375px.
 - 2026-05-19 SCRUM-1599: removed `BadgePage.tsx` from the SPA route table. Badge SVGs are served by the worker at `/api/badge/:publicId` so status cannot be spoofed from frontend query parameters.
 - 2026-05-19 SCRUM-1247 closeout: `PrivacyPage.tsx` and `TermsPage.tsx` render their policy-update notices from `LEGAL_PAGE_LABELS` in `src/lib/copy.ts`; keep legal/public page copy centralized and covered by `e2e/legal-pages.spec.ts`.
 - 2026-05-03 SCRUM-897: `PublicAttestationVerifyPage.tsx` fetches `/api/v1/attestations/{publicId}?include=credentials` so public attestation verification can show evidence metadata and the bounded attestor credential chain. Evidence cards must use `public_id`, `fingerprint`, `mime`, and `size`; never render internal evidence UUIDs.

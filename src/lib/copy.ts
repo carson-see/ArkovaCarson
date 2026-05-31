@@ -2838,3 +2838,20 @@ export const EVIDENCE_LEVEL_DESCRIPTIONS = {
   captured_url: 'Captured from a public URL. The content was fetched and fingerprinted at the recorded time.',
   ai_captured: 'Extracted using AI from an uploaded document. Content was parsed and structured automatically.',
 } as const satisfies Record<EvidenceLevel, string>;
+
+// =============================================================================
+// VERSION RESOLUTION (SCRUM-1126)
+// =============================================================================
+
+export const VERSION_RESOLUTION_LABELS = {
+  PAGE_TITLE: 'Version Conflicts',
+  PAGE_SUBTITLE: 'Review and resolve documents with multiple pending versions.',
+  EMPTY: 'No version conflicts pending review.',
+  LOADING: 'Loading version conflicts…',
+  ERROR: 'Unable to load version conflicts. Please try again.',
+  SIBLING_COUNT_LABEL: 'Versions',
+  actions: {
+    APPROVE: 'Select as canonical',
+    SKIP: 'Skip',
+  },
+} as const;

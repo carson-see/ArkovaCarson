@@ -16,6 +16,10 @@ _Last updated: 2026-05-30 (SCRUM-2213 queue/pending auth.uid()-via-service-role 
 
 - `apiScopes.ts` treats `anchor:write` and `write:anchors` as equivalent write-capable anchor scopes. Keep this central in `scopeSatisfies()` instead of duplicating route-specific aliases.
 
+## 2026-05-29 Version Resolution Context
+
+- `version-resolution.ts` exports `requireVersionOrgAdminContext`, but `index.ts` owns mounting it before `versionResolutionRouter`; keep the router itself free of implicit org-context middleware so app-level route order stays testable.
+
 ## What This Folder Contains
 
 Express route handlers for the worker's HTTP API. Covers admin endpoints, anchor operations, proof packets, audit events, compliance, rules CRUD, treasury, and the v1/v2 versioned sub-APIs.
@@ -34,6 +38,8 @@ Express route handlers for the worker's HTTP API. Covers admin endpoints, anchor
 | `admin-actions.ts` / `admin-health.ts` | Admin action + health check endpoints |
 | `rules-crud.ts` / `rules-draft.ts` | Rules engine CRUD and draft management |
 | `queue-resolution.ts` | Review queue resolution endpoint |
+| `rules-templates.ts` | Public rules templates discovery endpoint (SCRUM-1973) |
+| `version-resolution.ts` | Version conflict resolution API — list/resolve for org admins (SCRUM-1971) |
 | `recipients.ts` | Credential recipient management |
 | `treasury.ts` | Treasury balance and fee account endpoints |
 | `apiScopes.ts` | API key scope definitions and validation |
