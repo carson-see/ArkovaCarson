@@ -360,13 +360,13 @@ export function SearchPage() {
               />
               <Button
                 onClick={handleSearch}
-                disabled={showSearchLoading || !query.trim()}
+                disabled={isSearching || !query.trim()}
                 type="button"
-                aria-label={showSearchLoading ? 'Searching' : 'Search'}
+                aria-label={isSearching ? 'Searching' : 'Search'}
                 size="icon"
                 className="absolute right-1.5 top-1/2 -translate-y-1/2 bg-[#00d4ff] text-[#0d141b] hover:bg-[#00d4ff]/90 rounded-full shadow-glow-sm hover:shadow-glow-md h-9 w-9"
               >
-                {showSearchLoading ? (
+                {isSearching ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
                 ) : (
                   <Search className="h-4 w-4" />
@@ -484,11 +484,11 @@ export function SearchPage() {
                         </Badge>
                       </div>
                     </CardContent>
-
+                  </Card>
                 );
               })}
             </div>
-          )}
+
 
           {/* No results state */}
           {hasSearched && !showSearchLoading && !displayError && searchType === 'issuer'
