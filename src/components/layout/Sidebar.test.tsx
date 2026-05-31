@@ -162,6 +162,52 @@ describe('Sidebar', () => {
     expect(hrefSet()).toContain(ROUTES.ORGANIZATION);
   });
 
+  // ── Primary-nav ORDER (CodeRabbit: Organization must be 3rd, not last) ──
+  //
+  // Canonical order per the file header + components/layout agents.md is
+  // Dashboard, Documents, Organization, Search, Settings. Read the links
+  // inside the primary <nav> in DOM order and keep only the primary routes
+  // (the logo link lives outside <nav>; Account/Admin destinations are
+  // excluded by the route filter). Two sidebar instances render (desktop +
+  // mobile overlay) — take the first nav so the order list isn't duplicated.
+  function primaryNavOrder() {
+    const primaryRoutes: readonly string[] = [
+      ROUTES.DASHBOARD,
+      ROUTES.DOCUMENTS,
+      ROUTES.ORGANIZATION,
+      ROUTES.SEARCH,
+      ROUTES.SETTINGS,
+    ];
+    const nav = document.querySelector('nav');
+    if (!nav) return [];
+    return Array.from(nav.querySelectorAll('a'))
+      .map((a) => a.getAttribute('href'))
+      .filter((href): href is string => href !== null && primaryRoutes.includes(href));
+  }
+
+  it('SCRUM-2004: primary nav order is Dashboard, Documents, Organization, Search, Settings (org user)', () => {
+    mockProfile.mockReturnValue({ role: 'ORG_ADMIN', org_id: 'org-1' });
+    renderSidebar();
+    expect(primaryNavOrder()).toEqual([
+      ROUTES.DASHBOARD,
+      ROUTES.DOCUMENTS,
+      ROUTES.ORGANIZATION,
+      ROUTES.SEARCH,
+      ROUTES.SETTINGS,
+    ]);
+  });
+
+  it('SCRUM-2004: primary nav order without Organization is Dashboard, Documents, Search, Settings (INDIVIDUAL user)', () => {
+    mockProfile.mockReturnValue({ role: 'INDIVIDUAL', org_id: null });
+    renderSidebar();
+    expect(primaryNavOrder()).toEqual([
+      ROUTES.DASHBOARD,
+      ROUTES.DOCUMENTS,
+      ROUTES.SEARCH,
+      ROUTES.SETTINGS,
+    ]);
+  });
+
   it('SCRUM-2004: hides Organization for INDIVIDUAL users (no org affiliation)', () => {
     mockProfile.mockReturnValue({ role: 'INDIVIDUAL', org_id: null });
     renderSidebar();

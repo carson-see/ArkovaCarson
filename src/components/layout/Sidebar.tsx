@@ -44,6 +44,7 @@ interface NavItem {
 
 // Labels for destinations that have no constant in the (locked) NAV_LABELS map.
 // §1.3-clean — none of these contain banned UI terminology.
+// TODO: centralize into src/lib/copy.ts once unlocked (CLAUDE.md §1.3)
 const ACCOUNT_NAV_LABELS = {
   BILLING: 'Billing',
   API_KEYS: 'API Keys',
@@ -213,9 +214,11 @@ export function Sidebar({ className, mobileOpen, onMobileClose, orgName, userEma
 
   // SCRUM-2004: surface the Organization destination only for org-affiliated
   // users (ORG_ADMIN / ORG_MEMBER). INDIVIDUAL users have no org context.
+  // Canonical order (file header + components/layout agents.md) places
+  // Organization 3rd — between Documents and Search — not appended last.
   const showOrg = ORG_ROLES.has(profile?.role ?? '');
   const primaryNavItems: NavItem[] = showOrg
-    ? [...BASE_NAV_ITEMS, ORG_NAV_ITEM]
+    ? [...BASE_NAV_ITEMS.slice(0, 2), ORG_NAV_ITEM, ...BASE_NAV_ITEMS.slice(2)]
     : BASE_NAV_ITEMS;
 
   // Close mobile sidebar on navigation
