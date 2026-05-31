@@ -53,40 +53,108 @@ function rpcErrorCodeForStatus(status: number): 'forbidden' | 'not_found' | 'con
   return 'internal';
 }
 
+/** Safely read a string field from an anchor's `metadata` JSON blob. */
+function metadataString(metadata: unknown, key: string): string | null {
+  if (metadata && typeof metadata === 'object' && !Array.isArray(metadata)) {
+    const v = (metadata as Record<string, unknown>)[key];
+    if (typeof v === 'string') return v;
+  }
+  return null;
+}
+
 /**
  * GET /api/queue/pending
  * Returns anchors currently in PENDING_RESOLUTION for the caller's org,
  * with a `sibling_count` per row so the UI can badge collisions.
  *
- * Caller is authenticated upstream via `requireAuth` middleware — userId
- * is available on req but isn't forwarded here (the RPC reads `auth.uid()`).
+ * SCRUM-2213: the previous implementation called the RPC
+ * `list_pending_resolution_anchors_v2`, which resolves the caller via
+ * `auth.uid()`. But the worker invokes RPCs through the **service-role** client,
+ * where `auth.uid()` is NULL → the RPC raised "Profile not found" → this endpoint
+ * 500'd on every request and the Review Queue page hung. We now resolve the
+ * caller's org explicitly from the authenticated `callerUserId` (passed by the
+ * route, which already validated the JWT) and query org-scoped directly — no
+ * `auth.uid()` dependency, and bounded/indexed (no full-table scan).
  */
 export async function handleListPendingResolution(
   req: Request,
   res: Response,
+  callerUserId?: string,
 ): Promise<void> {
   const limit = Math.min(
     Math.max(parseInt((req.query.limit as string) ?? '100', 10) || 100, 1),
     500,
   );
 
-  try {
-    const { data, error } = await callRpc<PendingResolutionAnchor[]>(
-      db,
-      'list_pending_resolution_anchors_v2',
-      { p_limit: limit },
-    );
+  if (!callerUserId) {
+    res.status(401).json({ error: { code: 'authentication_required', message: 'Authentication required' } });
+    return;
+  }
 
-    if (error) {
-      logger.error({ error }, 'list_pending_resolution_anchors RPC failed');
-      res.status(500).json({ error: { code: 'rpc_failed', message: 'Failed to list pending resolutions' } });
+  try {
+    const { data: profile, error: profileError } = await db
+      .from('profiles')
+      .select('org_id')
+      .eq('id', callerUserId)
+      .maybeSingle();
+
+    if (profileError) {
+      logger.error({ error: profileError, userId: callerUserId }, 'queue/pending: profile lookup failed');
+      res.status(500).json({ error: { code: 'internal', message: 'Failed to list pending resolutions' } });
       return;
     }
 
-    const rows = Array.isArray(data) ? (data as PendingResolutionAnchor[]) : [];
-    res.json({ items: rows, count: rows.length });
+    // No profile or no org → empty queue (renders an empty state, never an error).
+    if (!profile?.org_id) {
+      res.json({ items: [], count: 0 });
+      return;
+    }
+
+    // Org-scoped PENDING_RESOLUTION fetch. Uses idx_anchors_org_status_created
+    // (org_id, status, created_at DESC) WHERE deleted_at IS NULL — bounded + fast.
+    // Fetch up to the 500 cap so sibling_count reflects the full pending set
+    // before the display `limit` is applied (matching the prior RPC's window).
+    const { data: rows, error: rowsError } = await db
+      .from('anchors')
+      .select('public_id, metadata, filename, fingerprint, created_at')
+      .eq('org_id', profile.org_id)
+      .eq('status', 'PENDING_RESOLUTION')
+      .is('deleted_at', null)
+      .not('public_id', 'is', null)
+      .order('created_at', { ascending: false })
+      .limit(500);
+
+    if (rowsError) {
+      logger.error({ error: rowsError, userId: callerUserId }, 'queue/pending: anchors query failed');
+      res.status(500).json({ error: { code: 'internal', message: 'Failed to list pending resolutions' } });
+      return;
+    }
+
+    const pending = rows ?? [];
+
+    // sibling_count = number of OTHER pending anchors sharing the same
+    // external_file_id (collision badge), computed over the full pending set.
+    const countByFileId = new Map<string, number>();
+    for (const r of pending) {
+      const fid = metadataString(r.metadata, 'external_file_id');
+      if (fid) countByFileId.set(fid, (countByFileId.get(fid) ?? 0) + 1);
+    }
+
+    const items: PendingResolutionAnchor[] = pending.slice(0, limit).map((r) => {
+      const externalFileId = metadataString(r.metadata, 'external_file_id');
+      return {
+        public_id: r.public_id as string,
+        external_file_id: externalFileId,
+        filename: r.filename ?? null,
+        fingerprint: r.fingerprint,
+        created_at: r.created_at,
+        sibling_count: externalFileId ? Math.max((countByFileId.get(externalFileId) ?? 1) - 1, 0) : 0,
+      };
+    });
+
+    res.json({ items, count: items.length });
   } catch (err) {
-    logger.error({ error: err }, 'handleListPendingResolution unexpected error');
+    logger.error({ error: err, userId: callerUserId }, 'handleListPendingResolution unexpected error');
     res.status(500).json({ error: { code: 'internal', message: 'Internal server error' } });
   }
 }

@@ -1,11 +1,13 @@
 # agents.md — lib
-_Last updated: 2026-05-19_
+
+_Last updated: 2026-05-26_
 
 ## What This Folder Contains
 
 Core utility modules shared across the frontend. Every write path uses Zod validation; all UI copy lives in `copy.ts`. Client-side processing modules (`piiStripper`, `fileHasher`, `aiExtraction`, `mlRuntime`, `ocrWorker`) must NEVER be imported in `services/worker/`.
 
 ## Key Files
+
 - `supabase.ts` — typed Supabase client (anon key only, never service role)
 - `routes.ts` — named route constants consumed by App.tsx and navigation
 - `copy.ts` — all user-facing strings, including legal-page notices; enforces banned-term vocabulary (Constitution 1.3)
@@ -24,7 +26,12 @@ Core utility modules shared across the frontend. Every write path uses Zod valid
 - `csvExport.ts` / `csvParser.ts` / `xlsxParser.ts` — data import/export utilities
 - `sourceProvenance.ts` / `badgeSvg.ts` — SCRUM-1599 public-safe source provenance helpers, evidence-level validation, badge URL construction, and fail-closed badge SVG status mapping
 
+## Recent Changes
+
+- 2026-05-26 SCRUM-2013: `validators.ts` and `csvParser.ts` credential type lists expanded to 27 canonical values, adding `CPE`, `ACCREDITATION`, `CONTRACT_PRESIGNING`, and `CONTRACT_POSTSIGNING`.
+
 ## Do / Don't Rules
+
 - DO: Validate with Zod before any Supabase write
 - DO: Put all UI-visible strings in `copy.ts`, not inline JSX
 - DON'T: Import `piiStripper`, `fileHasher`, `aiExtraction`, `mlRuntime`, or `ocrWorker` in `services/worker/`
