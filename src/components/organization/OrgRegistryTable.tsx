@@ -26,6 +26,9 @@ import {
   CalendarIcon,
   GraduationCap,
   X,
+  AlertTriangle,
+  Lock,
+  RefreshCw,
 } from 'lucide-react';
 import { CREDENTIAL_TYPE_LABELS, SHARE_LABELS, ORG_PAGE_LABELS } from '@/lib/copy';
 import { verifyUrl } from '@/lib/routes';
@@ -117,6 +120,46 @@ const statusConfig = {
 
 const PAGE_SIZE = 10;
 
+/**
+ * SCRUM-1999 — explicit fetch-failure state.
+ * `'none'` = no error. `'load'` = transient/server failure (retryable).
+ * `'permission'` = RLS/role denial (not retryable).
+ */
+type FetchErrorKind = 'none' | 'load' | 'permission';
+
+/**
+ * Local copy constants. `src/lib/copy.ts` is the canonical home for UI strings
+ * (CLAUDE.md §1.3) but is locked under concurrent PRs for this change, so these
+ * registry-specific state strings live here and stay free of banned terms.
+ * Promote into `copy.ts` (e.g. an `ORG_REGISTRY_STATE` group) when that file
+ * is next touched.
+ */
+const REGISTRY_STATE_COPY = {
+  LOAD_ERROR_TITLE: "Couldn't load records",
+  LOAD_ERROR_DESC: 'Something went wrong while loading this registry. Please try again.',
+  PERMISSION_TITLE: 'You don’t have access to these records',
+  PERMISSION_DESC: 'Your account is not permitted to view this organization’s records. Contact an administrator if you believe this is a mistake.',
+  RETRY: 'Try Again',
+} as const;
+
+/**
+ * Classify a Supabase error as an RLS/role permission denial.
+ * Mirrors the detection used in `useRevokeAnchor.ts` so behaviour is
+ * consistent across the app (PostgREST surfaces `42501` /
+ * `insufficient_privilege`).
+ */
+function isPermissionError(error: { code?: string | null; message?: string | null } | null): boolean {
+  if (!error) return false;
+  const code = (error.code ?? '').toLowerCase();
+  const msg = (error.message ?? '').toLowerCase();
+  return (
+    code === '42501' ||
+    code === 'insufficient_privilege' ||
+    msg.includes('insufficient_privilege') ||
+    msg.includes('permission')
+  );
+}
+
 /** Extract recipient display name from anchor metadata or label */
 function getRecipientDisplay(anchor: Anchor): string | null {
   const meta = anchor.metadata as Record<string, unknown> | null;
@@ -131,6 +174,44 @@ function getRecipientDisplay(anchor: Anchor): string | null {
   return anchor.label || null;
 }
 
+/**
+ * SCRUM-1999 — explicit error / permission-denied banner for the registry.
+ * Rendered in place of the rows (and in place of the empty state) when a fetch
+ * fails. `kind === 'load'` is retryable; `'permission'` is not.
+ */
+function RegistryStateMessage({
+  kind,
+  onRetry,
+  retrying,
+}: Readonly<{ kind: Exclude<FetchErrorKind, 'none'>; onRetry: () => void; retrying: boolean }>) {
+  const isPermission = kind === 'permission';
+  const Icon = isPermission ? Lock : AlertTriangle;
+  const title = isPermission ? REGISTRY_STATE_COPY.PERMISSION_TITLE : REGISTRY_STATE_COPY.LOAD_ERROR_TITLE;
+  const desc = isPermission ? REGISTRY_STATE_COPY.PERMISSION_DESC : REGISTRY_STATE_COPY.LOAD_ERROR_DESC;
+  return (
+    <div
+      role="alert"
+      className="flex flex-col items-center justify-center gap-3 px-4 py-12 text-center"
+    >
+      <div
+        className={`flex h-12 w-12 items-center justify-center rounded-full ${isPermission ? 'bg-muted' : 'bg-amber-500/10'}`}
+      >
+        <Icon className={`h-6 w-6 ${isPermission ? 'text-muted-foreground' : 'text-amber-500'}`} />
+      </div>
+      <div className="space-y-1">
+        <p className="text-sm font-semibold text-foreground">{title}</p>
+        <p className="text-sm text-muted-foreground max-w-sm">{desc}</p>
+      </div>
+      {!isPermission && (
+        <Button variant="outline" size="sm" onClick={onRetry} disabled={retrying}>
+          <RefreshCw className={`mr-2 h-4 w-4 ${retrying ? 'animate-spin' : ''}`} />
+          {REGISTRY_STATE_COPY.RETRY}
+        </Button>
+      )}
+    </div>
+  );
+}
+
 export function OrgRegistryTable({
   orgId,
   onViewAnchor,
@@ -139,6 +220,7 @@ export function OrgRegistryTable({
 }: Readonly<OrgRegistryTableProps>) {
   const [anchors, setAnchors] = useState<Anchor[]>([]);
   const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState<FetchErrorKind>('none');
   const [totalCount, setTotalCount] = useState(0);
   const [currentPage, setCurrentPage] = useState(1);
   const [searchQuery, setSearchQuery] = useState('');
@@ -195,8 +277,15 @@ export function OrgRegistryTable({
 
     if (error) {
       console.error('Error fetching anchors:', error);
+      // SCRUM-1999: surface the failure explicitly instead of silently falling
+      // through to the "No records found" empty state, which masked outages and
+      // permission denials behind a benign-looking empty table.
+      setFetchError(isPermissionError(error) ? 'permission' : 'load');
+      setAnchors([]);
+      setTotalCount(0);
     } else {
       // Pipeline records already excluded at DB level via metadata->pipeline_source IS NULL
+      setFetchError('none');
       setAnchors((data || []) as typeof anchors);
       setTotalCount(count || 0);
     }
@@ -272,6 +361,10 @@ export function OrgRegistryTable({
       year: 'numeric',
     });
   };
+
+  const handleRetry = useCallback(() => {
+    void fetchAnchors();
+  }, [fetchAnchors]);
 
   return (
     <div className="space-y-4">
@@ -382,6 +475,10 @@ export function OrgRegistryTable({
               <Skeleton className="h-3 w-20" />
             </div>
           ))
+        ) : fetchError !== 'none' ? (
+          <div className="rounded-lg border">
+            <RegistryStateMessage kind={fetchError} onRetry={handleRetry} retrying={loading} />
+          </div>
         ) : anchors.length === 0 ? (
           <div className="rounded-lg border p-8 text-center text-muted-foreground">
             No records found
@@ -519,7 +616,13 @@ export function OrgRegistryTable({
                   <TableCell><Skeleton className="h-8 w-8" /></TableCell>
                 </TableRow>
               ))
-            ) : (anchors.length === 0 ? (
+            ) : (fetchError !== 'none' ? (
+              <TableRow>
+                <TableCell colSpan={8} className="p-0">
+                  <RegistryStateMessage kind={fetchError} onRetry={handleRetry} retrying={loading} />
+                </TableCell>
+              </TableRow>
+            ) : anchors.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={8} className="h-24 text-center text-muted-foreground">
                   No records found
