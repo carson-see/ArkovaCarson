@@ -81,7 +81,10 @@ describe('ApiKeySettingsPage', () => {
 
   it('renders the page heading', () => {
     renderPage();
-    expect(screen.getByText('API Keys')).toBeInTheDocument();
+    // Scope to the heading role: "API Keys" is also a sidebar nav link
+    // (SCRUM-2004 surfaced it in the Account section), so a bare getByText
+    // would match both. The page heading is the only <h1>.
+    expect(screen.getByRole('heading', { name: /API Keys/i })).toBeInTheDocument();
   });
 
   it('renders the create button', () => {
