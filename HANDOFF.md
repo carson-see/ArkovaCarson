@@ -14,6 +14,18 @@
 
 ## Now
 
+### 2026-05-31 — SCRUM-2214 (PR #1002) ManageSubOrgs initial-load error state MERGED
+
+**[PR #1002](https://github.com/carson-see/ArkovaCarson/pull/1002)** (`fix/manage-suborgs-load-error-state`, T1) is **merged to `main`** at merge commit `f4063934` — Mergify auto-merge after its speculative `Tests`+`E2E` on draft #1009 passed. Bounded sibling of SCRUM-1999: `src/components/org/ManageSubOrgs.tsx` swallowed its initial sub-orgs load failure (`if (!response.ok) return;` + empty `catch`), so an outage/denial rendered the same empty list as "no affiliates yet" — the silent-empty anti-pattern the SCRUM-1999 state-matrix flagged as the next bounded gap. Fix: explicit `loadError` state + `role="alert"` banner with Retry, gated to the initial-load/Retry path via `fetchSubOrgs(isInitialLoad)` so create/approve/revoke refetch failures stay on toast (CodeRabbit caught the original leak into the action path; fixed in `2651a6da` with a regression test). Local `SUB_ORG_STATE_COPY` (copy.ts locked by open PRs #1007/#964/#877), banned-term-free. Frontend-only — no migration/worker/API/auth surface.
+
+**Tracking:** **[SCRUM-2214](https://arkova.atlassian.net/browse/SCRUM-2214)** (Story under epic SCRUM-2012, In Progress) + subtask SCRUM-2215; Confluence [page 68419586](https://arkova.atlassian.net/wiki/spaces/A/pages/68419586); bug **BUG-2026-05-31-001** on the Master Log. **SCRUM-2214 → Done is parked for Carson** — the Atlassian MCP authenticates as carson (= reporter), so the reporter≠resolver rule blocks a self-resolve — and awaits Vercel prod-build verification (frontend deploys via Vercel on merge to `main`; the PR's failing Vercel check is the known commit-email-mismatch, non-blocking).
+
+TDD: 5 new Vitest+RTL tests (red→green) + 4 existing action tests still green (9/9); typecheck/eslint/lint:copy clean. All 14 required CI checks green.
+
+_Last refreshed: 2026-05-31 by Claude — claims verified against git/gh/CI output: PR #1002 merge commit `f4063934` is `origin/main` tip (`git merge-base --is-ancestor` + `git log -1 origin/main`); Mergify auto-merge confirmed by its queue-status bot comment (speculative draft #1009, merged 17:18:52Z via `gh pr view`); SCRUM-2214/2215 + Confluence 68419586 + bug-tracker footer comment 67928070 created via Atlassian MCP; ManageSubOrgs suite 9/9 (`vitest run`). Frontend-only — no prod worker/DB state asserted._
+
+---
+
 ### 2026-05-30 (PO reconciliation pass) — full doc/PR/Jira/prod re-sync; no-soak sprint launched
 
 A six-specialist reconciliation (6 Google Docs, all open PRs, Jira SCRUM board + comments, prod Cloud Run, prod+staging DB) re-synced state against ACTUAL prod. Local `main` fast-forwarded to `7af0ad9a`.
