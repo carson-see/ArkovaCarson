@@ -24,6 +24,7 @@ import { Badge } from '@/components/ui/badge';
 import { IssuerCard } from '@/components/search/IssuerCard';
 import { usePublicSearch } from '@/hooks/usePublicSearch';
 import { SEARCH_LABELS, CREDENTIAL_TYPE_LABELS } from '@/lib/copy';
+import { getStatusLabel } from '@/lib/statusDisplay';
 import { verifyPath, ROUTES } from '@/lib/routes';
 import { supabase } from '@/lib/supabase';
 import { generateFingerprint } from '@/lib/fileHasher';
@@ -479,11 +480,11 @@ export function SearchPage() {
                           variant={result.status === 'SECURED' ? 'default' : 'secondary'}
                           className={result.status === 'SECURED' ? 'bg-green-600' : ''}
                         >
-                          {result.status === 'SECURED' ? 'Verified' : result.status}
+                          {getStatusLabel(result.status)}
                         </Badge>
                       </div>
                     </CardContent>
-                  </Card>
+
                 );
               })}
             </div>

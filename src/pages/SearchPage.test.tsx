@@ -154,6 +154,38 @@ describe('SearchPage', () => {
     expect(screen.queryByLabelText('Searching')).not.toBeInTheDocument();
   });
 
+  it('renders human-readable status labels for credential results (SCRUM-2003)', async () => {
+    // Make the RPC return one result with PENDING status so the credential
+    // results section renders.  The status badge must show "Processing", not
+    // the raw "PENDING" enum.
+    const { supabase: mockSupabase } = await import('@/lib/supabase');
+    (mockSupabase.rpc as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      data: [
+        {
+          public_id: 'ARK-TEST-001',
+          title: 'Test Credential',
+          credential_type: 'DEGREE',
+          status: 'PENDING',
+          anchored_at: '2025-01-01T00:00:00Z',
+          issuer_public_id: 'issuer-1',
+        },
+      ],
+      error: null,
+    });
+
+    renderSearchPage();
+    fireEvent.change(screen.getByPlaceholderText(/search issuers/i), {
+      target: { value: 'Test University' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: /search/i }));
+
+    // Human-readable label must appear; raw enum must not.
+    await waitFor(() => {
+      expect(screen.getByText('Processing')).toBeInTheDocument();
+    });
+    expect(screen.queryByText('PENDING')).not.toBeInTheDocument();
+  });
+
   it('renders a query-specific empty state after a zero-result search', async () => {
     renderSearchPage();
     fireEvent.change(screen.getByPlaceholderText(/search issuers/i), {

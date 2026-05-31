@@ -12,6 +12,7 @@ import { Search, Sparkles, FileText, Clock, AlertCircle } from 'lucide-react';
 import { useSemanticSearch, type SemanticSearchResult } from '../../hooks/useSemanticSearch';
 import { Link } from 'react-router-dom';
 import { ROUTES } from '../../lib/routes';
+import { getStatusLabel } from '../../lib/statusDisplay';
 
 function SimilarityBadge({ score }: { score: number }) {
   const pct = Math.round(score * 100);
@@ -69,7 +70,7 @@ function SearchResultCard({ result }: { result: SemanticSearchResult }) {
                   : 'bg-gray-500/10 text-gray-400'
             }`}
           >
-            {result.status}
+            {getStatusLabel(result.status)}
           </span>
         </div>
       </div>
