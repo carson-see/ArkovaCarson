@@ -37,3 +37,6 @@ Core utility modules shared across the frontend. Every write path uses Zod valid
 - DON'T: Import `piiStripper`, `fileHasher`, `aiExtraction`, `mlRuntime`, or `ocrWorker` in `services/worker/`
 - DON'T: Expose service role key, raw API keys, or user emails in any module
 - DON'T: Cast `verification_level` strings directly; use `parseVerificationLevel()` so unknown values disappear instead of rendering misleading evidence labels
+
+## Copy-lint coverage (SCRUM-2149)
+`src/lib/**` is now scanned by `npm run lint:copy` (`scripts/check-copy-terms.ts`) for banned §1.3 terms in **user-visible strings** — JSX text and quoted display/error copy that reaches users (e.g. proof-package glossary text, Zod validation messages). The linter does NOT flag code positions (type unions, object keys, property access, URL segments, bare in-code enum/config values like `'mainnet'`), so internal chain/network identifiers in `explorer.ts`/`env.ts` are fine; only display strings must use approved vocabulary. `copy.ts` itself is excluded (it documents the rules). 2026-05-30: reworded `proofPackage.ts` proof_glossary ("SHA-256 hash" → "SHA-256 fingerprint", §1.3 Hash→Fingerprint).

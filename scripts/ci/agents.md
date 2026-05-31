@@ -28,6 +28,11 @@ CI gate scripts. Each one fails the build with a structured exit code + actionab
 
 - **`staging-honesty-preflight.ts`** (SCRUM-1668) — queries a Supabase staging database and reports whether the environment is a clean mirror, has soak artifacts, or is fixture-seeded. 8 checks: (1) PR-only / staging-only migration rows, (2) duplicate names, (3) duplicate versions, (4) known artifact rows, (5) missing SUBMITTED anchors, (6) prod ledger divergence, (7) org topology — single-tenant prod vs multi-org staging seeds, (8) prod facts — pg_cron vacuum-anchors exists, refresh_pipeline_dashboard_cache exists, and refresh-pipeline-dashboard-cache is scheduled. The migration ledger falls back to the Supabase Management API when `supabase_migrations` is hidden from PostgREST; `--prod-project-ref` + `--management-api-token` / `SUPABASE_ACCESS_TOKEN` query the live prod ledger and prod facts. Checks 7–8 are optional (backward-compatible), with `--prod-facts` CLI fallback. 66 tests in `staging-honesty-preflight.test.ts`.
 
+## `snapshots/`
+Baseline/snapshot data consumed by gate scripts (one source-of-truth fixture per gate).
+- `prod-tables.json`, `worker-env-adhoc-baseline.json`, `rls-policy-coverage-baseline.json`, `views-security-invoker-baseline.json`, `migration-prefix-baseline.json` — see the gate that reads each.
+- **`copy-terms-baseline.json`** (SCRUM-2148 / SCRUM-2149) — grandfather baseline for `scripts/check-copy-terms.ts` (`npm run lint:copy`, defined one level up in `scripts/`). Records ONLY pre-existing copy-term/raw-enum violations that can't be fixed in their PR (locked file or another in-flight track). The linter fails on NEW violations only; match key = `file`+`line`. Each entry needs a `reason`. Full protocol in `scripts/agents.md` → "Copy-term linter". Never baseline a self-introduced violation.
+
 ## Conventions
 
 - Exit 0 = pass; exit 1 = fail with actionable error to stderr.
@@ -35,6 +40,7 @@ CI gate scripts. Each one fails the build with a structured exit code + actionab
 - Fail messages must tell the operator (a) what failed, (b) why it matters, (c) how to fix or override.
 
 ## Recent Changes
+- 2026-05-30 SCRUM-2149/2148: hardened `scripts/check-copy-terms.ts` (coverage → src/lib + src/hooks + packages/embed/src; §1.3 term parity testnet/mainnet/utxo/broadcast; structural false-positive filter; raw DB-enum render heuristic) and added `snapshots/copy-terms-baseline.json` (14 grandfathered pre-existing violations). 33 new unit tests; `lint:copy` green via at-source fixes + baseline.
 - 2026-05-30 PR #867: refreshed `snapshots/prod-tables.json` after prod 0326 added `org_credit_deductions`.
 - 2026-05-30 PR #980: closed two defense-in-depth gaps in `check-staging-evidence.ts` — T2/T3 deploy-evidence fields are now value-checked (not just label-present), and the residual-risk `Approved by:` must name a real approver. T1 logic unchanged; no existing check loosened. 14 new tests (90/90 green).
 - 2026-05-26 PR #884: added `services/edge/package.json` to staging-tooling allowlist (edge-only, not worker).
