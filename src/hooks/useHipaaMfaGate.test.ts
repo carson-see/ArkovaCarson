@@ -14,12 +14,12 @@ describe('isHealthcareCredentialType — REG-05', () => {
     expect(isHealthcareCredentialType('MEDICAL')).toBe(true);
   });
 
-  it('returns true for MEDICAL_LICENSE', () => {
-    expect(isHealthcareCredentialType('MEDICAL_LICENSE')).toBe(true);
+  it('returns false for phantom MEDICAL_LICENSE (not a real credential type)', () => {
+    expect(isHealthcareCredentialType('MEDICAL_LICENSE')).toBe(false);
   });
 
-  it('returns true for IMMUNIZATION', () => {
-    expect(isHealthcareCredentialType('IMMUNIZATION')).toBe(true);
+  it('returns false for phantom IMMUNIZATION (not a real credential type)', () => {
+    expect(isHealthcareCredentialType('IMMUNIZATION')).toBe(false);
   });
 
   it('returns false for DEGREE (education type)', () => {
