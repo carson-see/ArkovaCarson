@@ -29,6 +29,15 @@ Public v1 API surface — frozen contract per CLAUDE.md §1.8. Additive nullable
 - Mounted BEFORE the generic `/verify` catch-all in router.ts to avoid route shadowing.
 - Response never includes `attestation_statement` (private per migration 0314 COMMENT).
 
+## 2026-05-31 CPE compliance-log export (SCRUM-1848 / SCRUM-1859 + SCRUM-1860)
+
+- `POST /api/v1/exports/cpe-log` — JWT-authed (mounted behind `requireAuth`), per-user **10 requests/hour** rate limit (`cpeLogExportRateLimiter`, in-memory `rateLimit()` bucket keyed `cpe-log-export:<userId>`; 11th → 429 + `Retry-After`). Body `{ user_id, period_start, period_end, format: 'pdf'|'json' }` (Zod `.strict()`, `period_start<=period_end`). Generates **both** PDF + JSON synchronously, uploads to Supabase Storage (bucket `EXPORTS_STORAGE_BUCKET`, default `exports`), and returns a signed URL for each (1h TTL) plus `request_id` + `record_count`.
+- Org/user scope: a caller may export only **their own** records. `user_id !== req.authUserId` → 403; no org membership → 403. The worker query is filtered by BOTH `user_id` AND `org_id` (defense in depth); `org_id` is resolved from the caller's `profiles` row, never trusted from the body.
+- Worker logic lives in `services/worker/src/exports/cpe-log-export.ts` (DI `db`/`storage`/`logger` — no Storage *migration* required; bucket is provisioned as an ops step, keeping this T2 not T3). `cpe_log_v1` JSON schema is `.strict()` + frozen-friendly. Per-credential fields: title, provider, NASBA status, CPE hours, field of study, delivery method, completion date, Arkova verification URL (`${frontendUrl}/verify/<public_id>`), anchor timestamp (`chain_timestamp` = Network Observed Time), evidence level. **`extraction_confidence` / `extraction_source` are deliberately NOT exported.**
+- PDF carries the mandatory NASBA non-affiliation disclaimer **verbatim** (`NASBA_DISCLAIMER_TEXT`).
+- `cpe_log.exported` audit event (category `ADMIN`) carries **metadata only** — `actor_id`, `org_id`, `period_start`, `period_end`, `format`, `record_count`, `request_id`; **no export body content** (CC7 — covered by a dedicated leak test). Audit failure is non-fatal.
+- The export **UI (SCRUM-1861) is intentionally deferred** — `src/pages/*` / `src/lib/copy.ts` are locked by other in-flight PRs; this story ships backend-only.
+
 ## Scope mapping (verified 2026-05-08)
 | Endpoint | Scope |
 |---|---|
@@ -39,6 +48,7 @@ Public v1 API surface — frozen contract per CLAUDE.md §1.8. Additive nullable
 | `GET /api/v1/credentials/<id>/ctdl` | anonymous OR `verify` |
 | `GET /api/v1/usage` | `usage:read` |
 | `/api/v1/anchor/bulk`, `/api/v1/contracts` | `anchor:write` |
+| `POST /api/v1/exports/cpe-log` | Supabase JWT (own records only) |
 
 ## Conventions
 - Request validation: Zod `safeParse` with structured `details: [{path, code, message}]` 400 response.
