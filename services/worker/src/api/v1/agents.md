@@ -16,7 +16,7 @@ Public v1 API surface — frozen contract per CLAUDE.md §1.8. Additive nullable
 ## Files
 
 - `router.ts` — mounts every v1 endpoint with its `requireScope(...)` gate. Anonymous-GET allow on `/verify` is intentional (Constitution §1.10 zero-friction public verification, rate-limited 100/min).
-- **`anchor-submit.ts`** — `POST /api/v1/anchor`. Frozen Zod request shape. Idempotent on duplicate fingerprint (returns existing public_id with HTTP 200). Now wired (SCRUM-1740 commit 9fdaed23) to `ensureAnchorQuotaAvailable` → 402 problem+json `quota_exhausted` for sandbox orgs over their `anchor_quota`. Gate runs AFTER dedup so re-anchoring an existing fingerprint doesn't burn quota.
+- **`anchor-submit.ts`** — `POST /api/v1/anchor`. Frozen Zod request shape. Duplicate fingerprint handling: pre-insert dedup returns existing public_id with HTTP 200 (idempotent); insert-race unique constraint violation (23505) returns HTTP 409 `anchor_creation_conflict`; other insert errors return 500 `anchor_creation_failed`. Now wired (SCRUM-1740 commit 9fdaed23) to `ensureAnchorQuotaAvailable` → 402 problem+json `quota_exhausted` for sandbox orgs over their `anchor_quota`. Gate runs AFTER dedup so re-anchoring an existing fingerprint doesn't burn quota.
 - `verify.ts` — `GET /api/v1/verify/:public_id`. Anonymous-allowed.
 - `credentials-ctdl.ts` — `GET /api/v1/credentials/:publicId/ctdl`. Anonymous-allowed, public-safe CTDL JSON-LD projection.
 - `anchor-bulk.ts`, `attestations.ts`, `oracle.ts`, `cle-verify.ts`, etc. — additional v1 surfaces.
@@ -44,6 +44,15 @@ Public v1 API surface — frozen contract per CLAUDE.md §1.8. Additive nullable
 - Request validation: Zod `safeParse` with structured `details: [{path, code, message}]` 400 response.
 - Response shape: never include `id`, `org_id`, `user_id`, `fingerprint`, `agent_id`, `key_id` (CLAUDE.md §6 banned-field list — enforced runtime in `services/worker/src/api/v2/mcpParity.ts`).
 - 402 problem+json shape: `{type, title, status, error, message}` plus per-error context.
+
+## 2026-05-26 SCRUM-2014 Anchor Insert Error Handling
+
+- `anchor-submit.ts` now catches insert failures with structured error responses: duplicate fingerprint returns 409 with `public_id`; other insert errors return 500 with `anchor_insert_failed` code instead of unhandled exception. Three TDD tests added.
+- Insert-error diagnostics may log coarse Postgres error code + org context only; do not log raw error objects, fingerprints, or schema identifiers such as constraint names.
+
+## 2026-05-26 SCRUM-2013 Credential Type Enum Drift Fix
+
+- `anchor-bulk.ts` CREDENTIAL_TYPES expanded 8→27 to match canonical `ANCHOR_CREDENTIAL_TYPES`.
 
 ## Open work
 - SCRUM-1740 (PR #738) — quota gate awaits Carson merge + Mon deploy.

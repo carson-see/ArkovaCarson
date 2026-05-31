@@ -30,6 +30,8 @@ const {
   mockSupabaseGetUser,
   mockCallRpc,
   mockEstimateFee,
+  mockRequireVersionOrgAdminContext,
+  mockVersionResolutionRouter,
 } = vi.hoisted(() => {
   const mockProcessPendingAnchors = vi.fn().mockResolvedValue({ processed: 0, failed: 0 });
   const mockCheckSubmittedConfirmations = vi.fn().mockResolvedValue({ checked: 0, confirmed: 0 });
@@ -66,6 +68,8 @@ const {
   const mockSupabaseGetUser = vi.fn();
   const mockCallRpc = vi.fn();
   const mockEstimateFee = vi.fn();
+  const mockRequireVersionOrgAdminContext = vi.fn((_req, _res, next) => next());
+  const mockVersionResolutionRouter = vi.fn((_req, res) => res.status(200).json({ ok: true }));
 
   return {
     mockProcessPendingAnchors,
@@ -82,6 +86,8 @@ const {
     mockSupabaseGetUser,
     mockCallRpc,
     mockEstimateFee,
+    mockRequireVersionOrgAdminContext,
+    mockVersionResolutionRouter,
   };
 });
 
@@ -154,6 +160,11 @@ vi.mock('./chain/fee-estimator.js', () => ({
   createFeeEstimator: () => ({
     estimateFee: mockEstimateFee,
   }),
+}));
+
+vi.mock('./api/version-resolution.js', () => ({
+  requireVersionOrgAdminContext: mockRequireVersionOrgAdminContext,
+  versionResolutionRouter: mockVersionResolutionRouter,
 }));
 
 vi.mock('@supabase/supabase-js', () => ({
@@ -1073,6 +1084,24 @@ describe('worker server', () => {
         .post('/api/v1/integrations/docusign/oauth/start')
         .send({ org_id: 'org-1' });
       expect(start.status).toBe(401);
+    });
+
+    it('attaches org admin context before dispatching version-resolution routes', async () => {
+      mockCallRpc.mockResolvedValue({ data: true, error: null });
+      mockSupabaseGetUser.mockResolvedValue({ data: { user: { id: 'user-1' } }, error: null });
+      mockRequireVersionOrgAdminContext.mockClear();
+      mockVersionResolutionRouter.mockClear();
+
+      const res = await supertest(app)
+        .get('/api/v1/versions')
+        .set('Authorization', 'Bearer valid-token');
+
+      expect(res.status).toBe(200);
+      expect(mockRequireVersionOrgAdminContext).toHaveBeenCalledOnce();
+      expect(mockVersionResolutionRouter).toHaveBeenCalledOnce();
+      expect(mockRequireVersionOrgAdminContext.mock.invocationCallOrder[0]).toBeLessThan(
+        mockVersionResolutionRouter.mock.invocationCallOrder[0],
+      );
     });
   });
 });

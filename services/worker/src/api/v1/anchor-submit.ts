@@ -197,8 +197,7 @@ async function handleAnchorSubmit(req: Request, res: Response) {
       .single();
 
     if (insertError) {
-      logger.error({ error: insertError, fingerprint }, 'Failed to create anchor');
-      res.status(500).json({ error: 'Failed to create anchor record' });
+      handleInsertError(insertError, orgId, res);
       return;
     }
 
@@ -210,7 +209,7 @@ async function handleAnchorSubmit(req: Request, res: Response) {
       record_uri: buildVerifyUrl(anchor.public_id ?? publicId),
     };
 
-    logger.info({ publicId, fingerprint: fingerprint.slice(0, 12) }, 'Anchor submitted via API');
+    logger.info({ publicId }, 'Anchor submitted via API');
     enqueueProfessionalEducationExtraction({
       id: anchor.id,
       public_id: anchor.public_id ?? publicId,
@@ -235,6 +234,32 @@ async function handleAnchorSubmit(req: Request, res: Response) {
  */
 router.post('/', handleAnchorSubmit);
 router.post('/submit', handleAnchorSubmit);
+
+/**
+ * Handle Supabase insert errors for anchor creation.
+ *
+ * Logs the Postgres error class server-side for debugging but never exposes
+ * schema internals such as constraint names to logs or API clients.
+ */
+function handleInsertError(
+  insertError: unknown,
+  orgId: string | null,
+  res: Response,
+): void {
+  const pgCode = (insertError as { code?: string }).code ?? null;
+  logger.error({ pgCode, orgId }, 'Failed to create anchor');
+  if (pgCode === '23505') {
+    res.status(409).json({
+      error: 'anchor_creation_conflict',
+      message: 'A conflicting anchor record already exists. Retry the request.',
+    });
+    return;
+  }
+  res.status(500).json({
+    error: 'anchor_creation_failed',
+    message: 'Failed to create anchor record. Contact support if this persists.',
+  });
+}
 
 function enqueueProfessionalEducationExtraction(anchor: {
   id?: string;
