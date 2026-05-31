@@ -76,10 +76,19 @@ const SAFE_UNKNOWN_LABEL = 'Unknown Status';
  *    canonical `(?<![-\w])…(?![-\w])` boundaries, so e.g. `BLOCKADE` is NOT a
  *    violation and survives as a normal title-cased label — matching the lint.
  *
- * Infra-leak patterns from the canonical list (`worker service`,
- * `service_role`, `postgrest`, `issue credential`) are omitted: they contain
- * spaces/underscores that title-casing an UPPER_SNAKE status token can never
- * reproduce as user-visible copy.
+ * Infra-leak / §1.3-restricted patterns from the canonical list (`worker
+ * service`, `service_role` / `service role`, `postgrest`, `issue credential`)
+ * ARE included. The earlier revision omitted them on the (incorrect) assumption
+ * that their spaces/underscores could never be reproduced by title-casing an
+ * UPPER_SNAKE token — but `titleCaseFallback` rewrites every `_` separator as a
+ * SPACE, so `ISSUE_CREDENTIAL` → "Issue Credential" (a §1.3-restricted phrase
+ * outside the verified-org issuance flow), `WORKER_SERVICE` → "Worker Service",
+ * `SERVICE_ROLE` → "Service Role", and `POSTGREST_ERROR` → "Postgrest Error" —
+ * exactly the spaced infra/banned forms the canonical rule flags. So the
+ * fallback must scrub them too. Boundary semantics mirror canonical: the spaced
+ * terms use `(?<![-\w])…(?![-\w])`; `service role` and `postgrest` use the
+ * canonical ASCII-alnum left boundary so an identifier-style continuation is
+ * still caught while a clean unrelated word would not false-positive.
  */
 const FALLBACK_BANNED_PATTERNS: readonly RegExp[] = [
   // --- bare substrings (canonical: no boundaries) ---
@@ -96,6 +105,15 @@ const FALLBACK_BANNED_PATTERNS: readonly RegExp[] = [
   /(?<![-\w])hash(?![-\w])/i,
   /(?<![-\w])block(?![-\w])/i,
   /(?<![-\w])token(?![-\w])/i,
+  // --- infra-leak / §1.3-restricted spaced+identifier terms ---
+  // (canonical FORBIDDEN_TERMS lines 39/44–45/50/55 in check-copy-terms.ts).
+  // titleCaseFallback turns each `_` into a space, so an unknown UPPER_SNAKE
+  // status can reproduce these exact user-visible forms — scrub them.
+  /(?<![-\w])worker service(?![-\w])/i,
+  /(?<![A-Za-z0-9])service_role(?![A-Za-z0-9])/i,
+  /(?<![A-Za-z0-9])service role(?![A-Za-z0-9])/i,
+  /(?<![A-Za-z0-9])postgrest/i,
+  /(?<![-\w])issue credential(?![-\w])/i,
 ];
 
 /** True when a candidate fallback label would surface a §1.3 banned term. */

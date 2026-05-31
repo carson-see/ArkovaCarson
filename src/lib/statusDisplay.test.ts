@@ -222,6 +222,51 @@ describe('getStatusDisplay — fallback scrub is canonical-equivalent (bare subs
   });
 });
 
+describe('getStatusDisplay — fallback scrub is canonical-equivalent (infra / §1.3 spaced terms)', () => {
+  // Codex P2 / SHOULD-FIX: title-casing an UPPER_SNAKE token turns each `_` into
+  // a SPACE, so an unknown status like ISSUE_CREDENTIAL / WORKER_SERVICE /
+  // SERVICE_ROLE / POSTGREST_ERROR reproduces EXACTLY the spaced infra-leak
+  // forms the canonical FORBIDDEN_TERMS list bans
+  // (`issue credential`, `worker service`, `service role`, `postgrest`). The
+  // earlier fallback omitted these (its comment wrongly claimed title-casing
+  // could never reproduce a spaced/identifier term), so it would emit
+  // "Issue Credential" (§1.3-restricted), "Worker Service", "Service Role", or
+  // "Postgrest Error" as user-facing copy. The scrub must catch them too.
+  it.each([
+    ['ISSUE_CREDENTIAL'],
+    ['WORKER_SERVICE'],
+    ['SERVICE_ROLE'],
+    ['POSTGREST_ERROR'],
+  ])('scrubs the infra/§1.3 leak input %p to the safe label', (input) => {
+    expect(getStatusLabel(input)).toBe('Unknown Status');
+  });
+
+  // The label must contain NONE of the canonical forbidden terms — asserted
+  // against the imported FORBIDDEN_TERMS so it stays locked to §1.3 enforcement
+  // and can never drift from the canonical infra/banned matchers.
+  const forbiddenRegexes = FORBIDDEN_TERMS.map((t) => new RegExp(t, 'i'));
+  it.each([
+    ['ISSUE_CREDENTIAL'],
+    ['WORKER_SERVICE'],
+    ['SERVICE_ROLE'],
+    ['POSTGREST_ERROR'],
+  ])('emits no canonical infra/§1.3 term for input %p', (input) => {
+    const { label } = getStatusDisplay(input);
+    for (let i = 0; i < forbiddenRegexes.length; i++) {
+      expect(
+        forbiddenRegexes[i].test(label),
+        `label "${label}" for input "${input}" matched forbidden term /${FORBIDDEN_TERMS[i]}/`,
+      ).toBe(false);
+    }
+  });
+
+  it('still title-cases a clean control with no infra/banned term', () => {
+    // Control: a benign two-word unknown that shares no banned substring must
+    // survive title-casing — proves the wider scrub does not over-trigger.
+    expect(getStatusLabel('AWAITING_REVIEW')).toBe('Awaiting Review');
+  });
+});
+
 describe('getStatusDisplay — purity / idempotency', () => {
   it('returns equal output for repeated calls (deterministic)', () => {
     const a = getStatusDisplay('SECURED');
