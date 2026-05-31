@@ -64,12 +64,6 @@ jobs:
       - name: Set up gcloud
         uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f # v2
 
-      - name: Fetch Gemini API key (constructor requirement; tuned path uses ADC)
-        run: |
-          KEY="$(gcloud secrets versions access latest --secret=gemini-api-key --project=arkova1)"
-          echo "::add-mask::${KEY}"
-          echo "GEMINI_API_KEY=${KEY}" >> "$GITHUB_ENV"
-
       - name: Run PE gate eval against tuned golden-v5
         working-directory: services/worker
         env:
@@ -81,6 +75,19 @@ jobs:
           # (run-pe-gates.ts + gemini.ts gate on ENABLE_AI_EXTRACTION; it defaults
           # false off-prod per §1.6). This is an out-of-band eval, not prod traffic.
           ENABLE_AI_EXTRACTION: 'true'
+          # The tuned-endpoint path authenticates via ADC (WIF), so the real
+          # Gemini API key is never used here — GEMINI_API_KEY is only a
+          # GeminiProvider constructor formality (see SCRUM-2211). A placeholder
+          # avoids granting the CI SA secretmanager access for a value the tuned
+          # eval doesn't consume.
+          GEMINI_API_KEY: 'unused-tuned-endpoint-eval'
+          # loadConfig() validates the whole worker env at import. This eval only
+          # calls the tuned Vertex endpoint (via ADC) and never touches Supabase or
+          # Stripe, so these are schema-satisfying placeholders, not real creds.
+          SUPABASE_URL: 'https://placeholder.supabase.co'
+          SUPABASE_SERVICE_ROLE_KEY: 'placeholder-not-used-in-eval'
+          STRIPE_SECRET_KEY: 'sk_test_placeholder_not_used_in_eval'
+          STRIPE_WEBHOOK_SECRET: 'whsec_placeholder_not_used_in_eval'
         run: |
           npx tsx src/ai/eval/run-pe-gates.ts \
             --provider gemini \
