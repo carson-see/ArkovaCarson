@@ -427,4 +427,97 @@ describe('POST /api/v1/anchor — Zod validation', () => {
     expect(res.body.error).toBe('insufficient_scope');
     expect(res.body.required).toBe('anchor:write');
   });
+
+  describe('SCRUM-2014 insert error handling', () => {
+    it('returns structured error without leaking db_code when Supabase insert fails (FK violation)', async () => {
+      mockInsertChain.single.mockResolvedValueOnce({
+        data: null,
+        error: {
+          code: '23503',
+          message: 'insert or update on table "anchors" violates foreign key constraint "anchors_user_id_fkey"',
+          details: 'Key (user_id)=(missing-user-id) is not present in table "profiles".',
+          hint: null,
+        },
+      });
+
+      const res = await request(makeApp()).post('/v1/anchor').send({
+        fingerprint: VALID_FINGERPRINT,
+        credential_type: 'LEGAL',
+      });
+
+      expect(res.status).toBe(500);
+      expect(res.body.error).toBe('anchor_creation_failed');
+      expect(res.body.message).toBeDefined();
+      // db_code must NOT be exposed to API clients (SonarCloud security hotspot)
+      expect(res.body).not.toHaveProperty('db_code');
+      // Postgres error code is logged server-side for debugging (sanitized — no raw fingerprint or error object)
+      expect(mockLogger.error).toHaveBeenCalledWith(
+        expect.objectContaining({ pgCode: '23503' }),
+        expect.any(String),
+      );
+      const [fkLogPayload] = mockLogger.error.mock.calls.at(-1) as [Record<string, unknown>, string];
+      expect(fkLogPayload).not.toHaveProperty('fingerprint');
+      expect(fkLogPayload).not.toHaveProperty('fingerprintPrefix');
+      expect(fkLogPayload).not.toHaveProperty('error');
+      expect(fkLogPayload).not.toHaveProperty('pgConstraint');
+    });
+
+    it('returns 409 on unique constraint violation (duplicate public_id race)', async () => {
+      mockInsertChain.single.mockResolvedValueOnce({
+        data: null,
+        error: {
+          code: '23505',
+          message: 'duplicate key value violates unique constraint "anchors_public_id_key"',
+          details: 'Key (public_id)=(ARK-2026-ABCD1234) already exists.',
+          hint: null,
+        },
+      });
+
+      const res = await request(makeApp()).post('/v1/anchor').send({
+        fingerprint: VALID_FINGERPRINT,
+        credential_type: 'LEGAL',
+      });
+
+      expect(res.status).toBe(409);
+      expect(res.body.error).toBe('anchor_creation_conflict');
+      expect(res.body).not.toHaveProperty('db_code');
+      expect(mockLogger.error).toHaveBeenCalledWith(
+        expect.objectContaining({ pgCode: '23505' }),
+        expect.any(String),
+      );
+    });
+
+    it('returns structured error on NOT NULL violation without leaking db_code', async () => {
+      mockInsertChain.single.mockResolvedValueOnce({
+        data: null,
+        error: {
+          code: '23502',
+          constraint: 'anchors_org_id_not_null',
+          message: 'null value in column "org_id" violates not-null constraint',
+          details: 'Failing row contains (null, ...)',
+          hint: null,
+        },
+      });
+
+      const res = await request(makeApp()).post('/v1/anchor').send({
+        fingerprint: VALID_FINGERPRINT,
+        credential_type: 'LEGAL',
+      });
+
+      expect(res.status).toBe(500);
+      expect(res.body.error).toBe('anchor_creation_failed');
+      // db_code must NOT be exposed to API clients
+      expect(res.body).not.toHaveProperty('db_code');
+      // Postgres error code is logged server-side for debugging (sanitized — no raw fingerprint or error object)
+      expect(mockLogger.error).toHaveBeenCalledWith(
+        expect.objectContaining({ pgCode: '23502' }),
+        expect.any(String),
+      );
+      const [nnLogPayload] = mockLogger.error.mock.calls.at(-1) as [Record<string, unknown>, string];
+      expect(nnLogPayload).not.toHaveProperty('fingerprint');
+      expect(nnLogPayload).not.toHaveProperty('fingerprintPrefix');
+      expect(nnLogPayload).not.toHaveProperty('error');
+      expect(nnLogPayload).not.toHaveProperty('pgConstraint');
+    });
+  });
 });

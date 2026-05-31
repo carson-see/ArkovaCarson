@@ -14,13 +14,18 @@ const mockConfig = vi.hoisted(() => ({
   enableProfessionalEducationSchemaReady: true,
 }));
 const mockSubmitJob = vi.hoisted(() => vi.fn().mockResolvedValue('job-1'));
+const mockLogger = vi.hoisted(() => ({
+  info: vi.fn(),
+  warn: vi.fn(),
+  error: vi.fn(),
+}));
 
 vi.mock('../../config.js', () => ({ config: mockConfig }));
 vi.mock('../../utils/db.js', () => ({
   db: { from: vi.fn() },
 }));
 vi.mock('../../utils/logger.js', () => ({
-  logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+  logger: mockLogger,
 }));
 vi.mock('../../utils/orgCredits.js', () => ({
   deductOrgCredit: vi.fn(),
@@ -205,6 +210,38 @@ describe('POST /api/v1/anchor/bulk (SCRUM-1171)', () => {
       .expect(402);
     expect(res.body.error).toBe('insufficient_credits');
     expect(res.body.required).toBe(2);
+  });
+
+  it('reports insert failures using the original request row after duplicate filtering', async () => {
+    vi.mocked(db.from).mockImplementation(() => {
+      const builder = makeBuilder({
+        selectData: [{ fingerprint: FP(1) }],
+      });
+      builder.single = vi.fn(() => Promise.resolve({
+        data: null,
+        error: { code: '23505', message: 'duplicate key value violates unique constraint' },
+      })) as unknown as Builder['single'];
+      return builder as unknown as never;
+    });
+
+    const res = await request(buildApp())
+      .post('/api/v1/anchor/bulk')
+      .send({
+        duplicate_strategy: 'skip',
+        anchors: [
+          { fingerprint: FP(1) },
+          { fingerprint: FP(2) },
+        ],
+      })
+      .expect(201);
+
+    expect(res.body.errors).toEqual([
+      expect.objectContaining({ row: 1, code: 'insert_failed' }),
+    ]);
+    const [logPayload] = mockLogger.error.mock.calls.at(-1) as [Record<string, unknown>, string];
+    expect(logPayload).toMatchObject({ pgCode: '23505', batchRow: 1 });
+    expect(logPayload).not.toHaveProperty('fingerprint');
+    expect(logPayload).not.toHaveProperty('error');
   });
 
   it('503s CPE bulk submissions before duplicate checks or inserts when professional education schema is not ready', async () => {
