@@ -34,13 +34,13 @@
     },
     {
       "file": "src/lib/validators.ts",
-      "line": 140,
+      "line": 148,
       "term": "hash",
       "reason": "LOCKED by open PR #964 — Zod error message 'Fingerprint must be a valid SHA-256 hash'. Reword to 'fingerprint' once #964 lands. SCRUM-2148 follow-up."
     },
     {
       "file": "src/lib/validators.ts",
-      "line": 180,
+      "line": 188,
       "term": "hash",
       "reason": "LOCKED by open PR #964 — second Zod error message with the same 'SHA-256 hash' phrasing. SCRUM-2148 follow-up once #964 lands."
     },
