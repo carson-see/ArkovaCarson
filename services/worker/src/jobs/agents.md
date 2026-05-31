@@ -29,9 +29,27 @@ Background workers for anchor lifecycle, billing reconciliation, drive ingestion
 
 - **Treasury cache sentinel guard** (SCRUM-1786): Before upserting, if any of `total_secured`, `total_pending`, `last_24h_count` is -1, read existing cache row and preserve last-good values. Defense-in-depth against upstream failures.
 - **Anchor stats from pipeline_dashboard_cache** (SCRUM-1786): `fetchAnchorStats()` reads from `pipeline_dashboard_cache` instead of the `get_anchor_status_counts_fast` RPC. The RPC's 1s per-status timeouts produced -1 sentinels on the 2.9M-row anchors table.
+- **N+1 fan-out elimination** (SCRUM-1296): Sequential per-row DB round-trips replaced with bounded concurrency or bulk operations in hot-path jobs. Pattern details below.
 - **DocuSign anchor materialization** (SCRUM-1649): Rule execution outputs are no longer the only queue marker. Dispatcher writes a real pending anchor using the DocuSign document SHA-256 supplied through the webhook/rules-engine path. Metadata stores hashed sender/account identifiers only; raw sender email, raw DocuSign account ID, rule ID, and execution ID are not copied to anchor metadata.
 - **Queue-run credit gate parity** (SCRUM-1649): The legacy batch-anchor fallback path must enforce the same org credit gate as the claim-RPC path before broadcasting anchors. Queue credit metadata writes are Zod-validated before updating `anchors.metadata`; if validation or credit marking fails, the anchor is released to `PENDING` and is not broadcast. Refund failures throw before claimed anchors are reverted, keeping charged rows out of automatic retry until an operator can reconcile.
 
+### N+1 Cleanup Patterns (SCRUM-1296)
+
+Affected jobs and their concurrency model:
+
+| Job | Strategy | Rationale |
+|---|---|---|
+| `revocation.ts` | **Sequential** (unchanged) | UTXO selection from a shared treasury wallet is not safe under concurrency — double-spend risk |
+| `broadcast-recovery.ts` | `Promise.allSettled` in chunks of 100 | DB fan-out only; no chain interaction during recovery reset. Per-anchor metadata preserved. |
+| `cloud-logging-drain` | Bulk RPC (`bump_cloud_logging_retry_counts`) | Read-modify-write loops replaced with single atomic DB call |
+| `attestationExpiry` | Bulk insert (chunked 100) + ordering fix | Webhooks collected then bulk-inserted BEFORE status update to prevent permanent loss |
+
+Key implementation patterns:
+
+- **Chunked `Promise.allSettled`**: `broadcast-recovery` fires up to 100 concurrent DB updates per chunk. Per-anchor metadata is preserved in each update payload.
+- **Chunked `.in()` queries**: Supabase `.in()` filter calls are chunked at **100 IDs per batch** to stay within PostgREST query-string limits and avoid request-size failures on large result sets.
+- **`bump_cloud_logging_retry_counts` RPC** (migration `0316`, `SECURITY DEFINER`): Atomically increments retry counts for a batch of IDs in a single DB round-trip, replacing the prior read-modify-write loop. Accepts an array of IDs; returns updated count.
+- **Bulk updates with per-anchor metadata**: `broadcast-recovery` preserves per-anchor `recovery_metadata` in bulk update payloads — each anchor retains its own failure context even within a batched write.
 
 ## Open work
 - SCRUM-1736 (PR #734) — anchorExpirySweep producer; awaiting Carson merge + Mon 2026-05-11 deploy.
