@@ -655,4 +655,53 @@ describe('PipelineAdminPage — records pagination (SCRUM-2006)', () => {
     fireEvent.click(screen.getByTestId('pipeline-page-prev'));
     await waitFor(() => expect(lastRecordsPageCall()).toMatchObject({ p_page: 1 }));
   });
+
+  // SCRUM-2006 (Codex P2): the backend RPC get_public_records_page caps p_page at
+  // v_max_page = 10000 (supabase/migrations/0305_pipeline_operational_status_filters.sql).
+  // The client-side totalPages math (recordsTotal / pageSize) can exceed 10000 at
+  // small page sizes, so an unclamped jump to e.g. page 50000 used to set the page
+  // indicator + prev/next to 50000 while the RPC silently served page 10000 — a
+  // page-state↔served-data desync. The client must never claim a page the backend
+  // won't serve, so any jump/indicator past 10000 is capped at 10000.
+  describe('caps the client page at the backend RPC page ceiling (10000)', () => {
+    beforeEach(async () => {
+      vi.clearAllMocks();
+      // 300,000 records @ default page size 25 → 12,000 client pages, well past the
+      // RPC's 10,000-page ceiling. This is the reachable-at-small-page-size case.
+      mockSupabaseRpc({ recordPage: multiPageRecordPage(300_000) });
+      const { useAuth } = await import('@/hooks/useAuth');
+      vi.mocked(useAuth).mockReturnValue(mockAuthState('carson@arkova.ai', 'user-1'));
+    });
+
+    it('clamps a go-to-page beyond 10000 to page 10000 (matching the served page)', async () => {
+      await renderAndWaitForRecords();
+
+      const input = screen.getByTestId('pipeline-page-jump-input');
+      fireEvent.change(input, { target: { value: '50000' } });
+      fireEvent.click(screen.getByTestId('pipeline-page-jump-go'));
+
+      await waitFor(() => {
+        // Without the cap this would be p_page: 50000, but the RPC only serves up
+        // to page 10000 — the client must request exactly the page it will get.
+        expect(lastRecordsPageCall()).toMatchObject({ p_page: 10000, p_page_size: 25 });
+      });
+      // The indicator denominator is the served ceiling (10000), not 12000, and the
+      // current page is the clamped 10000 — no 50000 desync.
+      expect(screen.getByTestId('pipeline-page-indicator')).toHaveTextContent('10000 / 10000');
+    });
+
+    it('caps the Next button so prev/next cannot walk the client past page 10000', async () => {
+      await renderAndWaitForRecords();
+
+      // Jump exactly to the ceiling; Next must be disabled there even though the raw
+      // totalPages (12000) would otherwise leave 1,999 pages of headroom.
+      fireEvent.change(screen.getByTestId('pipeline-page-jump-input'), { target: { value: '10000' } });
+      fireEvent.click(screen.getByTestId('pipeline-page-jump-go'));
+      await waitFor(() => expect(lastRecordsPageCall()).toMatchObject({ p_page: 10000 }));
+
+      expect(screen.getByTestId('pipeline-page-next')).toBeDisabled();
+      expect(screen.getByTestId('pipeline-page-prev')).not.toBeDisabled();
+      expect(screen.getByTestId('pipeline-page-indicator')).toHaveTextContent('10000 / 10000');
+    });
+  });
 });

@@ -115,6 +115,18 @@ interface PipelineJobControl {
 const DEFAULT_PAGE_SIZE = 25;
 const PAGE_SIZE_OPTIONS = [25, 50, 100] as const;
 
+// SCRUM-2006 (Codex P2): the get_public_records_page RPC hard-caps the requested
+// page at v_max_page = 10000, independent of page size
+// (supabase/migrations/0305_pipeline_operational_status_filters.sql:
+// `v_page := LEAST(GREATEST(COALESCE(p_page, 1), 1), v_max_page)`). At small page
+// sizes the client-side page count (recordsTotal / pageSize) can exceed that, so
+// every UI bound (go-to-page clamp, Next-button disable, indicator denominator)
+// must respect this ceiling — otherwise the page indicator + prev/next claim a
+// page the backend silently never serves (it serves page 10000 instead) and the
+// shown page number desyncs from the rendered rows. Keep in sync with the
+// migration's v_max_page.
+const MAX_PAGE = 10000;
+
 // New UI strings live as local constants: src/lib/copy.ts is owned by other
 // in-flight PRs this sprint. None contain §1.3 banned terms ("page"/"go"/"per"
 // are all allowed). lint:copy scans src/pages/**, so these are checked there.
@@ -720,6 +732,14 @@ export function PipelineAdminPage() {
 
   const totalPages = Math.ceil(recordsTotal / pageSize);
 
+  // SCRUM-2006 (Codex P2): the page the backend will actually serve is capped at
+  // MAX_PAGE (RPC v_max_page = 10000), so the *navigable* ceiling is the smaller
+  // of the client-derived page count and MAX_PAGE. Every UI bound below uses this
+  // (1-based) value so page state can never exceed what get_public_records_page
+  // returns — no page-indicator↔served-data desync. `|| 1` keeps an empty result
+  // set at a single page.
+  const effectiveMaxPage = Math.min(Math.max(totalPages, 1), MAX_PAGE);
+
   // SCRUM-2006: page size is selectable. A larger/smaller page changes the page
   // count, so reset to page 1 (the prior page index could now be out of range)
   // and let the effect re-query. No-op if the size is unchanged.
@@ -733,14 +753,15 @@ export function PipelineAdminPage() {
 
   // SCRUM-2006: direct page jump. Reject non-numeric / empty / fractional /
   // signed input (the ^\d+$ test excludes "", "abc", "1.5", "-2", "+3", NaN,
-  // Infinity); clamp valid integers into [1, totalPages] so the box can never
-  // navigate past the real bounds. The effect re-queries on the page change.
+  // Infinity); clamp valid integers into [1, effectiveMaxPage] so the box can
+  // never navigate past either the real page count OR the RPC's MAX_PAGE ceiling
+  // (Codex P2 — a jump to e.g. 50000 must request the page the backend actually
+  // serves, page 10000, not 50000). The effect re-queries on the page change.
   const handleGoToPage = () => {
     const raw = pageJumpInput.trim();
     if (!/^\d+$/.test(raw)) return; // empty or non-integer → no-op
     const requested = Number(raw);
-    const lastPage = Math.max(totalPages, 1);
-    const clamped = Math.min(Math.max(requested, 1), lastPage);
+    const clamped = Math.min(Math.max(requested, 1), effectiveMaxPage);
     setRecordsPage(clamped - 1); // state is 0-based
     setPageJumpInput('');
   };
@@ -1638,12 +1659,12 @@ export function PipelineAdminPage() {
                     </div>
                   </div>
                   <div className="flex items-center gap-2 flex-wrap">
-                    {/* Go-to-page jump — clamps to [1, totalPages]; invalid input is a no-op. */}
+                    {/* Go-to-page jump — clamps to [1, effectiveMaxPage] (the RPC-served ceiling); invalid input is a no-op. */}
                     <div className="flex items-center gap-1.5">
                       <Input
                         type="number"
                         min={1}
-                        max={totalPages || 1}
+                        max={effectiveMaxPage}
                         inputMode="numeric"
                         data-testid="pipeline-page-jump-input"
                         aria-label={PAGINATION_LABELS.GO_TO_PAGE_ARIA}
@@ -1675,14 +1696,14 @@ export function PipelineAdminPage() {
                       <ChevronLeft className="h-4 w-4" />
                     </Button>
                     <span data-testid="pipeline-page-indicator" className="text-xs font-mono text-muted-foreground">
-                      {recordsPage + 1} / {totalPages || 1}
+                      {recordsPage + 1} / {effectiveMaxPage}
                     </span>
                     <Button
                       variant="outline"
                       size="sm"
                       data-testid="pipeline-page-next"
                       aria-label={PAGINATION_LABELS.NEXT_PAGE_ARIA}
-                      disabled={recordsPage >= totalPages - 1}
+                      disabled={recordsPage >= effectiveMaxPage - 1}
                       onClick={() => setRecordsPage((p) => p + 1)}
                       className="h-8 w-8 p-0 border-[#00d4ff]/20"
                     >
