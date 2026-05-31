@@ -9,18 +9,6 @@
   ],
   "violations": [
     {
-      "file": "src/components/portfolio/CreatePortfolioDialog.tsx",
-      "line": 321,
-      "term": "raw enum render: {att.status}",
-      "reason": "Pre-existing raw attestation-status enum render. Fix = route through an attestation-status display mapper in src/lib/copy.ts (LOCKED by PR #877) — belongs to the SCRUM-2003 human-readable-status-labels track. SCRUM-2148 follow-up."
-    },
-    {
-      "file": "src/components/portfolio/CreatePortfolioDialog.tsx",
-      "line": 362,
-      "term": "raw enum render: {anc.status}",
-      "reason": "Pre-existing raw anchor-status enum render. Fix = ANCHOR_STATUS_LABELS mapper; mapper map edits land via the SCRUM-2003 status-label track. SCRUM-2148 follow-up."
-    },
-    {
       "file": "src/components/reports/AIReportsPanel.tsx",
       "line": 331,
       "term": "raw enum render: {report.status}",
@@ -31,6 +19,12 @@
       "line": 72,
       "term": "raw enum render: {result.status}",
       "reason": "LOCKED by open PR #886 (semantic-search UI). Do not edit. SCRUM-2148 follow-up once #886 lands."
+    },
+    {
+      "file": "src/lib/statusDisplay.ts",
+      "line": 98,
+      "term": "crypto",
+      "reason": "Scrub-regex pattern (/crypto/i) in the status-label fallback scrubber — necessarily contains the term it removes; pre-existing (PR #991), surfaced by SCRUM-2149 expanded scope. False-positive grandfather; not user-facing copy."
     },
     {
       "file": "src/lib/validators.ts",
@@ -46,21 +40,15 @@
     },
     {
       "file": "src/pages/AdminUserDetailPage.tsx",
-      "line": 382,
+      "line": 384,
       "term": "raw enum render: {subscription.status}",
       "reason": "Pre-existing raw subscription-status enum render. Needs a subscription-status display mapper (new map in LOCKED src/lib/copy.ts). SCRUM-2148 follow-up."
     },
     {
       "file": "src/pages/AdminUserDetailPage.tsx",
-      "line": 427,
+      "line": 429,
       "term": "raw enum render: {r.credential_type}",
       "reason": "Pre-existing raw credential_type enum render. Fix = formatCredentialType() from src/lib/copy.ts; bundle with the SCRUM-2003 status-label track to avoid colliding with that branch. SCRUM-2148 follow-up."
-    },
-    {
-      "file": "src/pages/AttestationsPage.tsx",
-      "line": 946,
-      "term": "raw enum render: {att.status}",
-      "reason": "Pre-existing raw attestation-status enum render. Needs an attestation-status display mapper in LOCKED src/lib/copy.ts. SCRUM-2148 follow-up."
     },
     {
       "file": "src/pages/PaymentAnalyticsPage.tsx",
@@ -70,27 +58,9 @@
     },
     {
       "file": "src/pages/PublicAttestationVerifyPage.tsx",
-      "line": 398,
+      "line": 399,
       "term": "raw enum render: {credential.credential_type}",
       "reason": "PUBLIC verify page — pre-existing raw credential_type render. Fix = formatCredentialType() from src/lib/copy.ts; coordinate with the SCRUM-2003 status-label track. SCRUM-2148 follow-up (public-surface priority)."
-    },
-    {
-      "file": "src/pages/PublicAttestationVerifyPage.tsx",
-      "line": 403,
-      "term": "raw enum render: {credential.status}",
-      "reason": "PUBLIC verify page — pre-existing raw attestation-status render. Needs an attestation-status display mapper in LOCKED src/lib/copy.ts. SCRUM-2148 follow-up (public-surface priority)."
-    },
-    {
-      "file": "src/pages/PublicPortfolioPage.tsx",
-      "line": 282,
-      "term": "raw enum render: {att.status}",
-      "reason": "PUBLIC portfolio page — pre-existing raw attestation-status render. Needs an attestation-status display mapper in LOCKED src/lib/copy.ts. SCRUM-2148 follow-up (public-surface priority)."
-    },
-    {
-      "file": "src/pages/PublicPortfolioPage.tsx",
-      "line": 347,
-      "term": "raw enum render: {anc.status}",
-      "reason": "PUBLIC portfolio page — pre-existing raw anchor-status render. Fix = ANCHOR_STATUS_LABELS mapper from src/lib/copy.ts; coordinate with the SCRUM-2003 status-label track. SCRUM-2148 follow-up (public-surface priority)."
     }
   ]
 }
