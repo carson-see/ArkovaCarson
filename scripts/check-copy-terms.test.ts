@@ -659,15 +659,34 @@ describe('partitionAgainstBaseline — grandfather logic (SCRUM-2148)', () => {
     expect(fresh[0].line).toBe(11);
   });
 
-  it('matches on file+line only — term text is informational, not part of the key', () => {
-    // The recorded term differs (e.g. heuristic message wording changes) but
-    // the same file:line should still be recognised as grandfathered.
+  it('treats a DIFFERENT term on a grandfathered file:line as a FRESH violation (same-line blind-spot regression)', () => {
+    // P1 fix (SCRUM-2149 review): including `term` in the match key means a
+    // second (or different) violation on an already-baselined line is reported
+    // as NEW and fails the build — closing the silent-toleration blind spot.
     const { fresh, grandfathered } = partitionAgainstBaseline(
       [v('src/pages/B.tsx', 20, 'raw enum render: {x.anchor_status}')],
       baseline,
     );
-    expect(fresh).toHaveLength(0);
+    expect(fresh).toHaveLength(1);
+    expect(fresh[0].term).toBe('raw enum render: {x.anchor_status}');
+    expect(grandfathered).toHaveLength(0);
+  });
+
+  it('grandfathers the exact baselined term and passes a second different term on the same line as fresh', () => {
+    // If a line already has a grandfathered violation AND a new violation appears
+    // on the same line (e.g. a forbidden term added to a line that already had a
+    // raw-enum render), only the baselined one is tolerated; the new one fails.
+    const { fresh, grandfathered } = partitionAgainstBaseline(
+      [
+        v('src/pages/B.tsx', 20, 'raw enum render: {x.status}'), // exact baseline term — grandfathered
+        v('src/pages/B.tsx', 20, 'wallet'),                       // new violation on same line — fresh
+      ],
+      baseline,
+    );
     expect(grandfathered).toHaveLength(1);
+    expect(grandfathered[0].term).toBe('raw enum render: {x.status}');
+    expect(fresh).toHaveLength(1);
+    expect(fresh[0].term).toBe('wallet');
   });
 
   it('reports baseline entries with no matching current violation as STALE', () => {

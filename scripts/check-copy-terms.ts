@@ -482,8 +482,8 @@ function normaliseFile(file: string): string {
   return rel.split(/[\\/]/).join('/');
 }
 
-function baselineKey(file: string, line: number): string {
-  return `${normaliseFile(file)}:${line}`;
+function baselineKey(file: string, line: number, term: string): string {
+  return `${normaliseFile(file)}:${line}:${term.toLowerCase().trim()}`;
 }
 
 /**
@@ -516,22 +516,25 @@ export interface BaselinePartition {
 
 /**
  * Split current violations into {fresh, grandfathered} against the baseline and
- * surface {stale} baseline entries. Match key = normalised file + line; the
- * recorded `term` is informational (heuristic wording may evolve), so it is not
- * part of the key. Pure — exported for unit tests.
+ * surface {stale} baseline entries. Match key = normalised file + line +
+ * normalised (lowercased, trimmed) term. Including the term means a DIFFERENT
+ * violation on an already-grandfathered file:line is treated as fresh and fails
+ * the build — closing the blind spot where a new forbidden term or a second raw
+ * enum render on the same line was silently tolerated. Pure — exported for unit
+ * tests.
  */
 export function partitionAgainstBaseline(
   violations: Violation[],
   baseline: BaselineEntry[],
 ): BaselinePartition {
-  const baselineKeys = new Set(baseline.map((e) => baselineKey(e.file, e.line)));
+  const baselineKeys = new Set(baseline.map((e) => baselineKey(e.file, e.line, e.term)));
   const matchedKeys = new Set<string>();
 
   const fresh: Violation[] = [];
   const grandfathered: Violation[] = [];
 
   for (const v of violations) {
-    const key = baselineKey(v.file, v.line);
+    const key = baselineKey(v.file, v.line, v.term);
     if (baselineKeys.has(key)) {
       grandfathered.push(v);
       matchedKeys.add(key);
@@ -540,7 +543,7 @@ export function partitionAgainstBaseline(
     }
   }
 
-  const stale = baseline.filter((e) => !matchedKeys.has(baselineKey(e.file, e.line)));
+  const stale = baseline.filter((e) => !matchedKeys.has(baselineKey(e.file, e.line, e.term)));
   return { fresh, grandfathered, stale };
 }
 
