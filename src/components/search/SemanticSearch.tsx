@@ -19,9 +19,34 @@ import { Search, Sparkles, FileText, Clock, AlertCircle } from 'lucide-react';
 import { useSemanticSearch, type SemanticSearchResult } from '../../hooks/useSemanticSearch';
 import { Link } from 'react-router-dom';
 import { ROUTES } from '../../lib/routes';
-import { SEMANTIC_SEARCH_LABELS } from '../../lib/copy';
+import { ANCHOR_STATUS_LABELS, SEMANTIC_SEARCH_LABELS } from '../../lib/copy';
 import { isSemanticSearchEnabled } from '../../lib/switchboard';
 import { Card, CardContent } from '@/components/ui/card';
+
+/**
+ * Map an anchor status string to a display-safe { color, label } object.
+ * Both tone and label are derived from the same lookup so they cannot drift.
+ */
+function getStatusDisplay(status: string): { color: string; label: string } {
+  const label =
+    (ANCHOR_STATUS_LABELS as Record<string, string>)[status] ?? status;
+  let color: string;
+  switch (status) {
+    case 'SECURED':
+      color = 'bg-emerald-500/10 text-emerald-400';
+      break;
+    case 'PENDING':
+    case 'SUBMITTED':
+      color = 'bg-amber-500/10 text-amber-400';
+      break;
+    case 'REVOKED':
+      color = 'bg-red-500/10 text-red-400';
+      break;
+    default:
+      color = 'bg-gray-500/10 text-gray-400';
+  }
+  return { color, label };
+}
 
 /** Map a 0..1 similarity score to a friendly, non-technical strength label. */
 function matchStrengthLabel(score: number): string {
@@ -52,6 +77,7 @@ function SimilarityBadge({ score }: { score: number }) {
 }
 
 function SearchResultCard({ result }: { result: SemanticSearchResult }) {
+  const statusDisplay = getStatusDisplay(result.status);
   return (
     <Link
       to={ROUTES.RECORD_DETAIL.replace(':id', result.anchorId)}
@@ -81,19 +107,13 @@ function SearchResultCard({ result }: { result: SemanticSearchResult }) {
         <div className="flex shrink-0 flex-col items-end gap-1.5">
           <SimilarityBadge score={result.similarity} />
           <span
-            className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${
-              result.status === 'SECURED'
-                ? 'bg-emerald-500/10 text-emerald-400'
-                : result.status === 'PENDING'
-                  ? 'bg-amber-500/10 text-amber-400'
-                  : 'bg-gray-500/10 text-gray-400'
-            }`}
+            className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${statusDisplay.color}`}
           >
-            {result.status}
+            {statusDisplay.label}
           </span>
         </div>
       </div>
-      {result.createdAt && (
+
         <div className="mt-2 flex items-center gap-1 text-xs text-muted-foreground">
           <Clock className="h-3 w-3" />
           {new Date(result.createdAt).toLocaleDateString()}
