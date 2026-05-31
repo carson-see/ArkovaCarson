@@ -36,7 +36,13 @@ const router = Router();
 
 const FINGERPRINT_REGEX = /^[a-fA-F0-9]{64}$/;
 
-const CREDENTIAL_TYPES = ['DEGREE', 'LICENSE', 'CERTIFICATE', 'TRANSCRIPT', 'PROFESSIONAL', 'CPE', 'CLE', 'OTHER'] as const;
+const CREDENTIAL_TYPES = [
+  'DEGREE', 'LICENSE', 'CERTIFICATE', 'TRANSCRIPT', 'PROFESSIONAL', 'CPE', 'CLE',
+  'BADGE', 'ATTESTATION', 'FINANCIAL', 'LEGAL', 'INSURANCE', 'SEC_FILING', 'PATENT',
+  'REGULATION', 'PUBLICATION', 'CHARITY', 'ACCREDITATION', 'FINANCIAL_ADVISOR',
+  'BUSINESS_ENTITY', 'RESUME', 'MEDICAL', 'MILITARY', 'IDENTITY',
+  'CONTRACT_PRESIGNING', 'CONTRACT_POSTSIGNING', 'OTHER',
+] as const;
 
 const DUPLICATE_STRATEGIES = ['skip', 'supersede', 'link', 'fail'] as const;
 
@@ -206,11 +212,13 @@ router.post('/', async (req: Request, res: Response) => {
   const dropRowsAtBatchIndex = new Set<number>(intraBatchDuplicates.map((d) => d.row));
   const dbDupFingerprints = new Set<string>(dbDuplicates.map((d) => d.fingerprint.toLowerCase()));
 
-  const queueable = body.anchors.filter((r, i) => {
-    if (dropRowsAtBatchIndex.has(i)) return false;
-    if (dbDupFingerprints.has(r.fingerprint.toLowerCase())) return false;
-    return true;
-  });
+  const queueable = body.anchors
+    .map((row, originalRow) => ({ row, originalRow }))
+    .filter(({ row, originalRow }) => {
+      if (dropRowsAtBatchIndex.has(originalRow)) return false;
+      if (dbDupFingerprints.has(row.fingerprint.toLowerCase())) return false;
+      return true;
+    });
 
   // ── Dry-run short-circuit (AC3) ─────────────────────────────────────
   if (body.dry_run) {
@@ -244,7 +252,7 @@ router.post('/', async (req: Request, res: Response) => {
   const inserted: NonNullable<BulkAnchorResponse['anchors']> = [];
 
   for (let i = 0; i < queueable.length; i++) {
-    const row = queueable[i];
+    const { row, originalRow } = queueable[i];
     try {
       const metadata = buildMetadata(row, body.batch_id);
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -262,7 +270,18 @@ router.post('/', async (req: Request, res: Response) => {
         .single();
 
       if (error || !data) {
-        errors.push({ row: i, code: 'insert_failed', message: error?.message ?? 'unknown' });
+        // Log sanitized Postgres diagnostics server-side for debugging but never expose
+        // internal database identifiers (table names, constraint names, pg
+        // error codes) to API clients — SonarCloud security hotspot.
+        const pgCode = (error as { code?: string } | null)?.code;
+        logger.error(
+          { pgCode, orgId, batchRow: originalRow },
+          'bulk-anchor: insert failed',
+        );
+        const clientMessage = pgCode === '23505'
+          ? 'A conflicting anchor record already exists.'
+          : 'Failed to create anchor record.';
+        errors.push({ row: originalRow, code: 'insert_failed', message: clientMessage });
         continue;
       }
 
@@ -287,10 +306,13 @@ router.post('/', async (req: Request, res: Response) => {
         metadata: (data.metadata as Record<string, unknown> | null | undefined) ?? metadata,
       });
     } catch (err) {
+      // Log only sanitized diagnostics; never leak fingerprint/error details.
+      const errorName = err instanceof Error ? err.name : typeof err;
+      logger.error({ errorName, orgId, batchRow: originalRow }, 'bulk-anchor: unexpected insert error');
       errors.push({
-        row: i,
+        row: originalRow,
         code: 'unexpected_error',
-        message: err instanceof Error ? err.message : 'unknown',
+        message: 'An unexpected error occurred. Contact support if this persists.',
       });
     }
   }

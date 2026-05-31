@@ -12,8 +12,6 @@ import { supabase } from '@/lib/supabase';
 const HEALTHCARE_CREDENTIAL_TYPES = [
   'INSURANCE',
   'MEDICAL',
-  'MEDICAL_LICENSE',
-  'IMMUNIZATION',
 ] as const;
 
 export type HipaaMfaStatus = 'loading' | 'not_required' | 'mfa_enrolled' | 'mfa_needed';

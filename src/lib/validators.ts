@@ -49,6 +49,7 @@ export const CREDENTIAL_TYPES = [
   'CERTIFICATE',
   'TRANSCRIPT',
   'PROFESSIONAL',
+  'CPE',
   'CLE',
   'BADGE',
   'ATTESTATION',
@@ -60,12 +61,15 @@ export const CREDENTIAL_TYPES = [
   'REGULATION',
   'PUBLICATION',
   'CHARITY',
+  'ACCREDITATION',
   'FINANCIAL_ADVISOR',
   'BUSINESS_ENTITY',
   'RESUME',
   'MEDICAL',
   'MILITARY',
   'IDENTITY',
+  'CONTRACT_PRESIGNING',
+  'CONTRACT_POSTSIGNING',
   'OTHER',
 ] as const;
 
@@ -100,6 +104,10 @@ export const CREDENTIAL_SUB_TYPES: Record<CredentialType, readonly string[]> = {
   MEDICAL: ['npi_registration', 'dea_registration', 'state_medical_license', 'board_certification', 'clinical_privilege'],
   MILITARY: ['dd214', 'service_record', 'va_disability', 'military_id'],
   IDENTITY: ['passport', 'drivers_license', 'national_id', 'birth_certificate', 'social_security'],
+  CONTRACT_PRESIGNING: ['nda', 'mou', 'amendment'],
+  CONTRACT_POSTSIGNING: ['nda', 'mou', 'amendment'],
+  CPE: ['continuing_education'],
+  ACCREDITATION: ['institutional', 'regional', 'national'],
   OTHER: ['unclassified'],
 };
 

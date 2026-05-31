@@ -114,6 +114,9 @@ jobs:
       - name: Block API scope vocabulary drift (SCRUM-1581)
         run: npm run ci:api-scope-vocabulary
 
+      - name: Block credential type enum drift (SCRUM-2013)
+        run: npx tsx scripts/ci/check-credential-type-drift.ts
+
       - name: Block CREATE VIEW without security_invoker (SCRUM-1276)
         env:
           PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
@@ -811,9 +814,10 @@ jobs:
         # pin unless the official tlaplus/tlaplus release body also changed.
         if: steps.tla-changed.outputs.changed == 'true'
         env:
-          # Pin updated 2026-05-19 — upstream re-uploaded the v1.8.0
-          # pre-release asset again. Verified by direct download from the
-          # official tlaplus/tlaplus release URL.
+          # Pin updated 2026-05-28 — upstream re-uploaded the v1.8.0
+          # pre-release asset again. Verified against the official
+          # tlaplus/tlaplus GitHub release API asset digest plus direct
+          # download SHA256 from the official release URL.
           TLA2TOOLS_SHA256: 237332bdcc79a35c7d26efa7b82c77c85c2744591c5598673a8a45085ff2a4fb
         run: |
           mkdir -p "$HOME/.tla"
