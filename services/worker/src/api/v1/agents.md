@@ -38,6 +38,16 @@ Public v1 API surface — frozen contract per CLAUDE.md §1.8. Additive nullable
 - `cpe_log.exported` audit event (category `ADMIN`) carries **metadata only** — `actor_id`, `org_id`, `period_start`, `period_end`, `format`, `record_count`, `request_id`; **no export body content** (CC7 — covered by a dedicated leak test). Audit failure is non-fatal.
 - The export **UI (SCRUM-1861) is intentionally deferred** — `src/pages/*` / `src/lib/copy.ts` are locked by other in-flight PRs; this story ships backend-only.
 
+## 2026-05-31 CLE compliance-log export (SCRUM-1870)
+
+- `POST /api/v1/exports/cle-log` — JWT-authed (mounted behind `requireAuth`), per-user **10 requests/hour** rate limit (`cleLogExportRateLimiter`, in-memory `rateLimit()` bucket keyed `cle-log-export:<userId>`; **separate `scope` from the CPE limiter** so the two exports don't share a budget; 11th → 429 + `Retry-After`). Body `{ user_id, jurisdiction (US state code), period_start, period_end, format: 'pdf'|'json' }` (Zod `.strict()`, `period_start<=period_end`, `jurisdiction` validated via `normalizeJurisdiction`). Generates **both** PDF + JSON synchronously, uploads to Supabase Storage (bucket `EXPORTS_STORAGE_BUCKET`, default `exports`), returns a signed URL for each (1h TTL) plus `request_id` + `record_count` + `jurisdiction`.
+- Org/user scope: a caller may export only **their own** records. `user_id !== req.authUserId` → 403; no org membership → 403. The worker query is filtered by BOTH `user_id` AND `org_id`; `org_id` is resolved from the caller's `profiles` row, never trusted from the body.
+- Worker logic lives in `services/worker/src/exports/cle-log-export.ts` (DI `db`/`storage`/`logger`; **reuses the CPE Storage adapter** — no Storage *migration* required, bucket provisioned as an ops step → T2 not T3). `cle_log_v1` JSON schema is `.strict()` + frozen-friendly. **Ethics hours are a SEPARATE subtotal** (per-record `ethics_hours` + `summary.ethics_hours`), never combined with `summary.total_credit_hours`. Per-credential fields from `cle_metadata`: title, provider (`approved_provider_name`), `provider_approval_status`, total `credit_hours`, **`ethics_hours`**, `jurisdiction`, `delivery_format`, completion date (`issued_at`), Arkova verification URL, anchor timestamp (`chain_timestamp` = Network Observed Time), evidence level. **`extraction_confidence` / `extraction_source` are deliberately NOT exported (allowlist mapper).**
+- Jurisdiction filter accepts a bare state code (`CA`) or the `US-`prefixed ISO form (`US-CA`); query matches `cle_metadata->>'jurisdiction'` against both. `credential_type = 'CLE'` (confirmed valid prod enum value) + `deleted_at IS NULL`, period on `issued_at`, 5000-record cap (mirrors CPE).
+- PDF carries the mandatory CLE non-affiliation disclaimer **verbatim** (`CLE_DISCLAIMER_TEXT`). ⚠️ AC text reads "state bar **of accountancy** or bar association" — flagged to the PO as a likely CPE/NASBA copy-paste artifact; shipped verbatim pending Carson's confirmation (test asserts the literal text).
+- `cle_log.exported` audit event (category `ADMIN`) carries **metadata only** — `actor_id`, `org_id`, `jurisdiction`, `period_start`, `period_end`, `format`, `record_count`, `request_id`; **no export body content** (CC7 — dedicated leak test). Audit failure is non-fatal.
+- The export **UI is intentionally deferred** — `src/pages/*` / `src/lib/copy.ts` are locked by other in-flight PRs; this story ships backend-only.
+
 ## Scope mapping (verified 2026-05-08)
 | Endpoint | Scope |
 |---|---|
@@ -49,6 +59,7 @@ Public v1 API surface — frozen contract per CLAUDE.md §1.8. Additive nullable
 | `GET /api/v1/usage` | `usage:read` |
 | `/api/v1/anchor/bulk`, `/api/v1/contracts` | `anchor:write` |
 | `POST /api/v1/exports/cpe-log` | Supabase JWT (own records only) |
+| `POST /api/v1/exports/cle-log` | Supabase JWT (own records only) |
 
 ## Conventions
 - Request validation: Zod `safeParse` with structured `details: [{path, code, message}]` 400 response.
