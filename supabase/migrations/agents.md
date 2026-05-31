@@ -40,3 +40,7 @@ _Rollback rehearsed: 2026-05-16 on staging (ujtlwnoqfhtitcmsnrpq). Both tables d
 ## Recent migrations (SCRUM-1649)
 
 - **0326_scrum1649_deduct_org_credit_idempotency.sql**: Adds `org_credit_deductions`, a service-role idempotency ledger keyed by `(org_id, reference_id, reason)`, and updates `deduct_org_credit` / `refund_org_credit` so FAST_TRACK_ANCHOR retries do not double-charge after worker crash or execution-finalization retry.
+
+## Recent migrations (SCRUM-1847 / SCRUM-1869)
+
+- **0329_scrum1847_1869_public_anchor_cpe_cle_metadata.sql**: `CREATE OR REPLACE get_public_anchor` — adds additive-nullable `cpe_metadata` / `cle_metadata` keys (from the `anchors` jsonb columns), stripping `extraction_confidence` + `extraction_source` server-side (defense in depth, matches the frontend display allowlist in PRs #1023/#1025). Body byte-identical to the prod/0311 definition otherwise; preserves SECURITY DEFINER + `search_path` + status filter + `deleted_at` guard + recipient SHA-256 hash. §1.8 additive — no API version bump. (0327/0328 reserved by open PRs #971/#1022, so this took 0329.)
