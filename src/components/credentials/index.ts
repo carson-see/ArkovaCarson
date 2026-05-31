@@ -8,6 +8,13 @@ export type { CpeMetadataSectionProps, CpeMetadataView } from './CpeMetadataSect
 export { CPE_COMPLIANCE_COPY } from './cpeComplianceCopy';
 export type { NasbaStatus } from './cpeComplianceCopy';
 export { extractCpeMetadataView } from './cpeMetadataView';
+export { CleProviderBadge } from './CleProviderBadge';
+export type { CleProviderBadgeProps } from './CleProviderBadge';
+export { CleMetadataSection } from './CleMetadataSection';
+export type { CleMetadataSectionProps, CleMetadataView } from './CleMetadataSection';
+export { CLE_COMPLIANCE_COPY } from './cleComplianceCopy';
+export type { CleProviderApprovalStatus } from './cleComplianceCopy';
+export { extractCleMetadataView } from './cleMetadataView';
 export { MetadataFieldRenderer } from './MetadataFieldRenderer';
 export { CredentialSourceImportDialog } from './CredentialSourceImportDialog';
 export { TemplateSchemaBuilder } from './TemplateSchemaBuilder';

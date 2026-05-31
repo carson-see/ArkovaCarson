@@ -23,6 +23,7 @@ import { VerificationWalkthrough } from './VerificationWalkthrough';
 import { AnchorDisclaimer } from './AnchorDisclaimer';
 import { CredentialRenderer } from '@/components/credentials/CredentialRenderer';
 import { extractCpeMetadataView } from '@/components/credentials/cpeMetadataView';
+import { extractCleMetadataView } from '@/components/credentials/cleMetadataView';
 import { SourceProvenanceDisplay } from '@/components/verification/SourceProvenanceDisplay';
 import { useCredentialTemplate } from '@/hooks/useCredentialTemplate';
 import { formatFingerprint } from '@/lib/fileHasher';
@@ -78,6 +79,9 @@ interface AnchorRecord {
   /** CPE-R1 (SCRUM-1847): structured CPE metadata, when present on the anchor.
    * Populated from the `cpe_metadata` column by the parent page. */
   cpeMetadata?: Record<string, unknown> | null;
+  /** CLE-R1 (SCRUM-1869): structured CLE metadata, when present on the anchor.
+   * Populated from the `cle_metadata` column by the parent page. */
+  cleMetadata?: Record<string, unknown> | null;
   issuerName?: string;
   /** Chain transaction ID for explorer link (BETA-11) */
   chainTxId?: string | null;
@@ -247,6 +251,13 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
   const cpeMetadataView = extractCpeMetadataView(anchor.cpeMetadata, {
     provider: metadataString(anchor.metadata, 'source_provider'),
     title: anchor.filename,
+    completion_date: anchor.issuedAt,
+    evidence_level: metadataString(anchor.metadata, 'verification_level'),
+  });
+  // CLE-R1 (SCRUM-1869): same gating as CPE — the section self-hides when the
+  // entitlement gate is false or there is no CLE metadata.
+  const cleMetadataView = extractCleMetadataView(anchor.cleMetadata, {
+    course_title: anchor.filename,
     completion_date: anchor.issuedAt,
     evidence_level: metadataString(anchor.metadata, 'verification_level'),
   });
@@ -719,6 +730,7 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
           issuedDate={anchor.issuedAt}
           expiryDate={anchor.expiresAt}
           cpeMetadata={cpeMetadataView}
+          cleMetadata={cleMetadataView}
           hasImportEntitlement={hasImportEntitlement}
         />
       )}
