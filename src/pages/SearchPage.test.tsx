@@ -40,29 +40,37 @@ vi.mock('@/hooks/usePublicSearch', () => ({
 // Controllable supabase mock — the credential RPC (`search_public_credentials`)
 // is held in a hoisted ref so individual tests can hand it a deferred promise
 // and freeze the person-search leg "in flight" while asserting spinner state.
-const supabaseMock = vi.hoisted(() => ({
-  // Default: resolve to no rows so the RPC settles immediately.
-  rpc: vi.fn().mockResolvedValue({ data: [], error: null }),
-}));
-
-vi.mock('@/lib/supabase', () => {
-  // `.from(...)` chain used by the fingerprint query and the RLS fallback.
-  const terminal = () => ({ data: [], error: null });
-  const chain = {
-    select: vi.fn(() => chain),
-    eq: vi.fn(() => chain),
-    in: vi.fn(() => chain),
-    is: vi.fn(() => chain),
-    ilike: vi.fn(() => chain),
-    limit: vi.fn().mockResolvedValue(terminal()),
+//
+// FIX C (CodeRabbit): `vi.clearAllMocks()` resets call history but does NOT
+// drain a `mockResolvedValueOnce` / `mockRejectedValueOnce` queue or restore a
+// default implementation. The fingerprint query and the RLS fallback both walk
+// the SAME `.from(...)` chain, so a one-shot queued by one test would leak into
+// the next. `resetSupabase()` (called in beforeEach) re-creates every chain mock
+// from scratch each test, draining any leftover queue and restoring defaults.
+const supabaseMock = vi.hoisted(() => {
+  const rpc = vi.fn();
+  // `chain` identity is stable (`from()` always returns it); only the method
+  // mocks on it are swapped out on reset.
+  const chain = {} as Record<string, ReturnType<typeof vi.fn>>;
+  const resetSupabase = () => {
+    rpc.mockReset();
+    rpc.mockResolvedValue({ data: [], error: null });
+    for (const method of ['select', 'eq', 'in', 'is', 'ilike']) {
+      chain[method] = vi.fn(() => chain);
+    }
+    // Default: resolve to no rows so the query settles immediately.
+    chain.limit = vi.fn().mockResolvedValue({ data: [], error: null });
   };
-  return {
-    supabase: {
-      from: vi.fn(() => chain),
-      rpc: (...args: unknown[]) => supabaseMock.rpc(...args),
-    },
-  };
+  resetSupabase();
+  return { rpc, chain, resetSupabase };
 });
+
+vi.mock('@/lib/supabase', () => ({
+  supabase: {
+    from: vi.fn(() => supabaseMock.chain),
+    rpc: (...args: unknown[]) => supabaseMock.rpc(...args),
+  },
+}));
 
 // Mock IssuerCard
 vi.mock('@/components/search/IssuerCard', () => ({
@@ -107,7 +115,9 @@ describe('SearchPage', () => {
     publicSearchMock.state.searching = false;
     publicSearchMock.state.error = null;
     publicSearchMock.searchIssuers.mockResolvedValue(undefined);
-    supabaseMock.rpc.mockResolvedValue({ data: [], error: null });
+    // FIX C: fully re-create the supabase chain + rpc mocks (drains any
+    // mockResolvedValueOnce/mockRejectedValueOnce queue left by a prior test).
+    supabaseMock.resetSupabase();
   });
 
   it('renders the "Search & Verify" heading', () => {
@@ -162,7 +172,12 @@ describe('SearchPage', () => {
     );
 
     expect(screen.getByTestId('issuer-card')).toBeInTheDocument();
-    expect(screen.queryByLabelText('Searching')).not.toBeInTheDocument();
+    // The results-area spinner must clear the moment results render. (Asserts
+    // the bottom spinner, not the button: after FIX A the Search button's
+    // label/disabled track `buttonSearching` — which stays true while a search
+    // leg is genuinely in flight — so the button, not the spinner, is the wrong
+    // thing to assert here.)
+    expect(screen.queryByTestId('search-loading-spinner')).not.toBeInTheDocument();
   });
 
   it('renders a query-specific empty state after a zero-result search', async () => {
@@ -314,6 +329,73 @@ describe('SearchPage', () => {
       await waitFor(() => {
         expect(screen.queryByTestId('search-loading-spinner')).not.toBeInTheDocument();
       });
+    });
+
+    it('keeps the Search button disabled while one leg is still in flight even after the other errors (FIX A)', async () => {
+      // Regression: the Search button used to share `showSearchLoading` with the
+      // results spinner. When the issuer leg errored (or returned) first,
+      // `displayError`/`hasDisplayableResults` flipped `showSearchLoading` false
+      // — re-enabling the button mid-flight. A second overlapping query B could
+      // then fire, and query A's late credential RPC would write stale rows into
+      // `personResults`. FIX A drives the button from `buttonSearching =
+      // isSearching && !verifyingFile`, which stays true while ANY leg is in
+      // flight, so no overlapping submit is possible.
+
+      // Freeze the credential leg "in flight" (never settles) → personSearching
+      // stays true → isSearching stays true.
+      supabaseMock.rpc.mockReturnValue(new Promise(() => { /* never resolves */ }));
+
+      const view = renderSearchPage();
+      fireEvent.change(screen.getByPlaceholderText(/search issuers/i), {
+        target: { value: 'Race Condition' },
+      });
+      fireEvent.click(screen.getByRole('button', { name: /search/i }));
+
+      await waitFor(() => {
+        expect(publicSearchMock.searchIssuers).toHaveBeenCalledWith('Race Condition');
+      });
+
+      // The issuer leg has errored while the credential leg is still resolving.
+      publicSearchMock.state.searching = false;
+      publicSearchMock.state.error = 'Search failed. Please try again.';
+      view.rerender(
+        <MemoryRouter initialEntries={['/search']}>
+          <SearchPage />
+        </MemoryRouter>,
+      );
+
+      // Precondition: the error card is shown (one leg has errored)…
+      expect(screen.getByText('Search failed. Please try again.')).toBeInTheDocument();
+      // …yet the button stays disabled because the credential leg is in flight,
+      // so a second overlapping search cannot be submitted.
+      expect(screen.getByRole('button', { name: /search/i })).toBeDisabled();
+    });
+
+    it('renders a §1.3-safe status label for a non-SECURED credential, never the raw enum (FIX B)', async () => {
+      // Public, unauthenticated surface: the credential badge must never leak the
+      // raw anchor_status enum (PENDING / REVOKED / EXPIRED / …) to visitors.
+      supabaseMock.rpc.mockResolvedValue({
+        data: [{
+          public_id: 'cred-pending-1',
+          title: 'Pending Credential',
+          credential_type: 'professional_certification',
+          status: 'PENDING',
+          anchored_at: '2026-05-01T00:00:00Z',
+          issuer_public_id: 'org-pub-1',
+        }],
+        error: null,
+      });
+
+      renderSearchPage();
+      fireEvent.change(screen.getByPlaceholderText(/search issuers/i), {
+        target: { value: 'Pending Credential' },
+      });
+      fireEvent.click(screen.getByRole('button', { name: /search/i }));
+
+      // The friendly label renders…
+      expect(await screen.findByText('Processing')).toBeInTheDocument();
+      // …and the raw enum token must NOT appear anywhere on the page.
+      expect(screen.queryByText('PENDING')).not.toBeInTheDocument();
     });
   });
 });

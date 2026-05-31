@@ -48,6 +48,35 @@ interface FingerprintResult {
   publicId?: string;
 }
 
+// SCRUM-1980 (review FIX B): public/unauthenticated surface — the credential
+// badge must never leak a raw `anchor_status` enum (PENDING / BROADCASTING /
+// SUBMITTED / REVOKED / EXPIRED / SUPERSEDED / PENDING_RESOLUTION) to visitors.
+// Maps every status to a Constitution §1.3-safe label.
+// TODO(post-#991): consolidate to getStatusLabel from src/lib/statusDisplay.ts once that lands.
+const PUBLIC_STATUS_LABELS: Record<string, string> = {
+  PENDING: 'Processing',
+  BROADCASTING: 'Processing',
+  SUBMITTED: 'Submitted',
+  SECURED: 'Verified',
+  REVOKED: 'Revoked',
+  EXPIRED: 'Expired',
+  SUPERSEDED: 'Superseded',
+  PENDING_RESOLUTION: 'Needs Review',
+};
+
+/**
+ * Maps an anchor status to a public, §1.3-safe display label. Unknown/future
+ * statuses fall back to a title-cased form (e.g. `FOO_BAR` -> `Foo Bar`) so we
+ * never echo a raw uppercase ENUM token to an unauthenticated visitor.
+ */
+function publicStatusLabel(status: string): string {
+  const known = PUBLIC_STATUS_LABELS[status];
+  if (known) return known;
+  const cleaned = status.replace(/_/g, ' ').trim().toLowerCase();
+  if (!cleaned) return 'Processing';
+  return cleaned.replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
 
 export function SearchPage() {
   const navigate = useNavigate();
@@ -328,13 +357,24 @@ export function SearchPage() {
     issuerResults.length > 0 ||
     personResults.length > 0 ||
     (searchType === 'fingerprint' && fpResult !== null);
-  // SCRUM-1980: the results spinner is a "nothing to show yet" indicator. It must
-  // clear the moment we have anything to render — results OR an error — even if a
-  // parallel search leg (issuer vs. credential RPC resolve at different times) is
-  // still in flight. Without the `!displayError` guard the spinner lingered below
-  // the error card / results when the faster leg finished first (UAT 2026-05-22).
-  const showSearchLoading =
+  // SCRUM-1980: the results-area spinner is a "nothing to show yet" indicator. It
+  // must clear the moment we have anything to render — results OR an error — even
+  // if a parallel search leg (issuer vs. credential RPC resolve at different
+  // times) is still in flight. Without the `!displayError` guard the spinner
+  // lingered below the error card / results when the faster leg finished first
+  // (UAT 2026-05-22). This drives ONLY the results-area spinner + the no-results
+  // guard below — NOT the Search button (see `buttonSearching`).
+  const showBottomSpinner =
     isSearching && !verifyingFile && !hasDisplayableResults && !displayError;
+  // SCRUM-1980 (review FIX A): the Search button's disabled/label/icon must track
+  // whether ANY search leg is genuinely in flight — independent of whether the
+  // faster leg has already produced results or an error. Sharing `showBottomSpinner`
+  // re-enabled the button mid-flight the instant one `Promise.all` leg errored or
+  // returned (displayError/hasDisplayableResults flipping the spinner off), which
+  // let a second overlapping query fire while the first leg's late credential RPC
+  // was still writing into `personResults`. Keying the button on `isSearching`
+  // (minus the file-hash phase, which has its own affordance) closes that window.
+  const buttonSearching = isSearching && !verifyingFile;
   const noResultsTitle = SEARCH_LABELS.NO_RESULTS_FOR.replace('{query}', lastSubmittedQuery);
 
   return (
@@ -384,13 +424,13 @@ export function SearchPage() {
               />
               <Button
                 onClick={handleSearch}
-                disabled={showSearchLoading || !query.trim()}
+                disabled={buttonSearching || !query.trim()}
                 type="button"
-                aria-label={showSearchLoading ? 'Searching' : 'Search'}
+                aria-label={buttonSearching ? 'Searching' : 'Search'}
                 size="icon"
                 className="absolute right-1.5 top-1/2 -translate-y-1/2 bg-[#00d4ff] text-[#0d141b] hover:bg-[#00d4ff]/90 rounded-full shadow-glow-sm hover:shadow-glow-md h-9 w-9"
               >
-                {showSearchLoading ? (
+                {buttonSearching ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
                 ) : (
                   <Search className="h-4 w-4" />
@@ -504,7 +544,7 @@ export function SearchPage() {
                           variant={result.status === 'SECURED' ? 'default' : 'secondary'}
                           className={result.status === 'SECURED' ? 'bg-green-600' : ''}
                         >
-                          {result.status === 'SECURED' ? 'Verified' : result.status}
+                          {publicStatusLabel(result.status)}
                         </Badge>
                       </div>
                     </CardContent>
@@ -515,7 +555,7 @@ export function SearchPage() {
           )}
 
           {/* No results state */}
-          {hasSearched && !showSearchLoading && !displayError && searchType === 'issuer'
+          {hasSearched && !showBottomSpinner && !displayError && searchType === 'issuer'
             && issuerResults.length === 0 && personResults.length === 0 && (
             <div className="text-center py-12">
               <Building2 className="mx-auto h-8 w-8 text-muted-foreground/30 mb-3" />
@@ -524,8 +564,8 @@ export function SearchPage() {
             </div>
           )}
 
-          {/* Loading state */}
-          {showSearchLoading && (
+          {/* Loading state (results-area spinner) */}
+          {showBottomSpinner && (
             <div
               className="flex justify-center py-12"
               role="status"
