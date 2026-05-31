@@ -22,8 +22,17 @@ function setListResult(next: QueryResult) {
   listResult = next;
 }
 
+// When set, `await query` REJECTS (thrown error / network failure / abort /
+// client throw) instead of resolving with an `{ error }` object — the failure
+// mode SCRUM-1999's resolved-with-error branch does NOT cover.
+let listRejection: unknown = null;
+function setListRejection(reason: unknown) {
+  listRejection = reason;
+}
+
 // Controllable Supabase mock. `.from('reports').select().order().limit()` is
-// awaited directly; the builder is a thenable resolving to `listResult`.
+// awaited directly; the builder is a thenable resolving to `listResult`, or
+// rejecting when `listRejection` is set.
 vi.mock('@/lib/supabase', () => {
   const builder: Record<string, unknown> = {};
   const passthrough = () => builder;
@@ -33,7 +42,11 @@ vi.mock('@/lib/supabase', () => {
   builder.then = (
     resolve: (value: QueryResult) => unknown,
     reject?: (reason: unknown) => unknown,
-  ) => Promise.resolve(listResult).then(resolve, reject);
+  ) =>
+    (listRejection !== null
+      ? Promise.reject(listRejection)
+      : Promise.resolve(listResult)
+    ).then(resolve, reject);
   return {
     supabase: {
       from: () => builder,
@@ -48,6 +61,7 @@ describe('ReportsList', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     setListResult({ data: [], error: null });
+    setListRejection(null);
   });
 
   it('shows the empty state when the fetch succeeds with no reports', async () => {
@@ -65,6 +79,30 @@ describe('ReportsList', () => {
 
     const alert = await screen.findByRole('alert');
     expect(alert.textContent ?? '').toMatch(/couldn.?t load|unable to load|something went wrong/i);
+
+    // The misleading empty state must NOT be shown.
+    expect(screen.queryByText(/no reports generated yet/i)).toBeNull();
+
+    // A retry affordance is offered.
+    expect(screen.getByRole('button', { name: /try again|retry/i })).toBeTruthy();
+  });
+
+  // Regression — CodeRabbit Critical / Carson P1: the resolved-with-`{error}`
+  // branch only covers errors Supabase *returns*. A THROWN/REJECTED promise
+  // (network failure, abort, client throw) bypassed `setLoadError` AND the
+  // trailing `setLoading(false)`, leaving the loading spinner stuck forever.
+  it('shows the error state and clears the loading spinner when the fetch REJECTS', async () => {
+    setListRejection(new TypeError('Failed to fetch'));
+    const { container } = render(<ReportsList />);
+
+    // The error alert renders. While `loading` is true the component returns a
+    // spinner-only card with no alert, so finding the alert proves loading
+    // cleared.
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent ?? '').toMatch(/couldn.?t load|unable to load|something went wrong/i);
+
+    // The loading spinner has cleared.
+    expect(container.querySelectorAll('.animate-spin').length).toBe(0);
 
     // The misleading empty state must NOT be shown.
     expect(screen.queryByText(/no reports generated yet/i)).toBeNull();

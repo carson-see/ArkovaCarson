@@ -86,32 +86,46 @@ export function ReportsList({ hasReportsEntitlement = true }: Readonly<ReportsLi
 
   const fetchReports = useCallback(async () => {
     setLoading(true);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data, error } = await (supabase as any)
-      .from('reports')
-      .select('*')
-      .order('created_at', { ascending: false })
-      .limit(50);
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data, error } = await (supabase as any)
+        .from('reports')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(50);
 
-    if (error) {
-      console.error('Failed to fetch reports:', error);
-      // SCRUM-1999: surface the failure explicitly instead of silently falling
-      // through to the "No reports generated yet" empty state.
+      if (error) {
+        console.error('Failed to fetch reports:', error);
+        // SCRUM-1999: surface the failure explicitly instead of silently falling
+        // through to the "No reports generated yet" empty state.
+        setLoadError(true);
+        setReports([]);
+      } else {
+        setLoadError(false);
+        setReports(data || []);
+      }
+    } catch (err) {
+      // SCRUM-1999 (CodeRabbit Critical / Carson P1): a THROWN/REJECTED query
+      // (network failure, abort, client throw) never reaches the resolved
+      // `{ error }` branch. Without this catch the function exited before
+      // setting `loadError` or clearing `loading`, leaving the loading spinner
+      // stuck forever.
+      console.error('Failed to fetch reports:', err);
       setLoadError(true);
       setReports([]);
-    } else {
-      setLoadError(false);
-      setReports(data || []);
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   }, []);
 
   useEffect(() => {
     // Mount-fetch: `fetchReports` is a useCallback whose body is an awaited
     // async function — setLoading / setReports land after the effect returns,
-    // so the rule's cascading-render concern doesn't apply here.
+    // so the rule's cascading-render concern doesn't apply here. It handles its
+    // own errors (try/catch/finally) and never rejects; `.catch` keeps the
+    // no-floating-promises lint happy without `void`.
     // eslint-disable-next-line react-hooks/set-state-in-effect -- async callback batches its own state updates
-    void fetchReports();
+    fetchReports().catch(() => {});
   }, [fetchReports]);
 
   async function generateReport() {
@@ -272,7 +286,7 @@ export function ReportsList({ hasReportsEntitlement = true }: Readonly<ReportsLi
               <p className="text-sm font-semibold text-foreground">{REPORTS_STATE_COPY.LOAD_ERROR_TITLE}</p>
               <p className="text-sm text-muted-foreground max-w-sm">{REPORTS_STATE_COPY.LOAD_ERROR_DESC}</p>
             </div>
-            <Button variant="outline" size="sm" onClick={() => { void fetchReports(); }} disabled={loading}>
+            <Button variant="outline" size="sm" onClick={() => { fetchReports().catch(() => {}); }} disabled={loading}>
               <RefreshCw className={`mr-2 h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
               {REPORTS_STATE_COPY.RETRY}
             </Button>

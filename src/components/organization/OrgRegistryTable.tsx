@@ -273,24 +273,37 @@ export function OrgRegistryTable({
       query = query.lte('created_at', `${dateTo}T23:59:59Z`);
     }
 
-    const { data, error, count } = await query;
+    try {
+      const { data, error, count } = await query;
 
-    if (error) {
-      console.error('Error fetching anchors:', error);
-      // SCRUM-1999: surface the failure explicitly instead of silently falling
-      // through to the "No records found" empty state, which masked outages and
-      // permission denials behind a benign-looking empty table.
-      setFetchError(isPermissionError(error) ? 'permission' : 'load');
+      if (error) {
+        console.error('Error fetching anchors:', error);
+        // SCRUM-1999: surface the failure explicitly instead of silently falling
+        // through to the "No records found" empty state, which masked outages and
+        // permission denials behind a benign-looking empty table.
+        setFetchError(isPermissionError(error) ? 'permission' : 'load');
+        setAnchors([]);
+        setTotalCount(0);
+      } else {
+        // Pipeline records already excluded at DB level via metadata->pipeline_source IS NULL
+        setFetchError('none');
+        setAnchors((data || []) as typeof anchors);
+        setTotalCount(count || 0);
+      }
+    } catch (err) {
+      // SCRUM-1999 (CodeRabbit Critical / Carson P1): a THROWN/REJECTED query
+      // (network failure, abort, client throw) never reaches the resolved
+      // `{ error }` branch above. Without this catch the function exited before
+      // setting any error state or clearing `loading`, leaving the UI stuck in
+      // the loading skeleton forever. A thrown error has no PostgREST code, so
+      // it defaults to the retryable 'load' kind.
+      console.error('Error fetching anchors:', err);
+      setFetchError('load');
       setAnchors([]);
       setTotalCount(0);
-    } else {
-      // Pipeline records already excluded at DB level via metadata->pipeline_source IS NULL
-      setFetchError('none');
-      setAnchors((data || []) as typeof anchors);
-      setTotalCount(count || 0);
+    } finally {
+      setLoading(false);
     }
-
-    setLoading(false);
   }, [orgId, currentPage, statusFilter, searchQuery, dateFrom, dateTo]);
 
   useEffect(() => {
@@ -363,7 +376,9 @@ export function OrgRegistryTable({
   };
 
   const handleRetry = useCallback(() => {
-    void fetchAnchors();
+    // `fetchAnchors` handles its own errors (try/catch/finally) and never
+    // rejects; `.catch` satisfies the no-floating-promises lint without `void`.
+    fetchAnchors().catch(() => {});
   }, [fetchAnchors]);
 
   return (

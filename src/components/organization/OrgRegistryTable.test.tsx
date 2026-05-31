@@ -29,17 +29,30 @@ function setQueryResult(next: QueryResult) {
   queryResult = next;
 }
 
+// When set, `await query` REJECTS (thrown error / network failure / abort /
+// client throw) instead of resolving with an `{ error }` object. This is the
+// distinct failure mode SCRUM-1999's resolved-with-error branch does NOT cover.
+let queryRejection: unknown = null;
+function setQueryRejection(reason: unknown) {
+  queryRejection = reason;
+}
+
 vi.mock('@/lib/supabase', () => {
   const builder: Record<string, unknown> = {};
   const passthrough = () => builder;
   for (const method of ['select', 'eq', 'is', 'filter', 'order', 'range', 'or', 'gte', 'lte']) {
     builder[method] = passthrough;
   }
-  // Make the builder awaitable — `await query` resolves to the current result.
+  // Make the builder awaitable — `await query` resolves to the current result,
+  // or rejects when `queryRejection` is set.
   builder.then = (
     resolve: (value: QueryResult) => unknown,
     reject?: (reason: unknown) => unknown,
-  ) => Promise.resolve(queryResult).then(resolve, reject);
+  ) =>
+    (queryRejection !== null
+      ? Promise.reject(queryRejection)
+      : Promise.resolve(queryResult)
+    ).then(resolve, reject);
   return {
     supabase: {
       from: () => builder,
@@ -73,6 +86,7 @@ describe('OrgRegistryTable', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     setQueryResult({ data: [], count: 0, error: null });
+    setQueryRejection(null);
   });
 
   it('renders without crashing', () => {
@@ -111,6 +125,31 @@ describe('OrgRegistryTable', () => {
     expect(screen.queryByText(/no records found/i)).toBeNull();
 
     // A retry affordance is offered.
+    expect(screen.getAllByRole('button', { name: /try again|retry/i }).length).toBeGreaterThan(0);
+  });
+
+  // Regression — CodeRabbit Critical / Carson P1: the resolved-with-`{error}`
+  // branch only covers errors Supabase *returns*. A THROWN/REJECTED promise
+  // (network failure, abort, client throw) bypassed every error setter AND the
+  // trailing `setLoading(false)`, so the table was stuck in the loading
+  // skeleton forever — the exact failure this state matrix is meant to kill.
+  it('shows the error state and clears the loading skeleton when the fetch REJECTS', async () => {
+    setQueryRejection(new TypeError('Failed to fetch'));
+    const { container } = renderTable();
+
+    // The error alert is rendered (proves `loading` was set false — the banner
+    // is gated behind `!loading`).
+    const alerts = await screen.findAllByRole('alert');
+    expect(alerts.length).toBeGreaterThan(0);
+    expect(alerts[0].textContent ?? '').toMatch(/couldn.?t load|unable to load|something went wrong/i);
+
+    // The loading skeleton has cleared — no skeleton placeholders remain.
+    expect(container.querySelectorAll('.animate-pulse').length).toBe(0);
+
+    // The misleading empty state must NOT be shown.
+    expect(screen.queryByText(/no records found/i)).toBeNull();
+
+    // A thrown error defaults to the retryable 'load' kind, so Retry is offered.
     expect(screen.getAllByRole('button', { name: /try again|retry/i }).length).toBeGreaterThan(0);
   });
 
