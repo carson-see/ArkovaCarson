@@ -6,7 +6,7 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
-import { FileText, Download, Loader2, Calendar, AlertCircle, Plus } from 'lucide-react';
+import { FileText, Download, Loader2, Calendar, AlertCircle, AlertTriangle, RefreshCw, Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Card,
@@ -65,36 +65,67 @@ const REPORT_TYPE_LABELS: Record<ReportType, string> = {
   billing_history: 'Billing History',
 };
 
+/**
+ * SCRUM-1999 — local copy constants for the reports load-error state.
+ * `src/lib/copy.ts` is the canonical home (CLAUDE.md §1.3) but is locked under
+ * concurrent PRs for this change; these strings are free of banned terms.
+ */
+const REPORTS_STATE_COPY = {
+  LOAD_ERROR_TITLE: "Couldn't load reports",
+  LOAD_ERROR_DESC: 'Something went wrong while loading your reports. Please try again.',
+  RETRY: 'Try Again',
+} as const;
+
 export function ReportsList({ hasReportsEntitlement = true }: Readonly<ReportsListProps>) {
   const [reports, setReports] = useState<Report[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
   const [generating, setGenerating] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [selectedType, setSelectedType] = useState<ReportType>('anchor_summary');
 
   const fetchReports = useCallback(async () => {
     setLoading(true);
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data, error } = await (supabase as any)
-      .from('reports')
-      .select('*')
-      .order('created_at', { ascending: false })
-      .limit(50);
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data, error } = await (supabase as any)
+        .from('reports')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(50);
 
-    if (error) {
-      console.error('Failed to fetch reports:', error);
-    } else {
-      setReports(data || []);
+      if (error) {
+        console.error('Failed to fetch reports:', error);
+        // SCRUM-1999: surface the failure explicitly instead of silently falling
+        // through to the "No reports generated yet" empty state.
+        setLoadError(true);
+        setReports([]);
+      } else {
+        setLoadError(false);
+        setReports(data || []);
+      }
+    } catch (err) {
+      // SCRUM-1999 (CodeRabbit Critical / Carson P1): a THROWN/REJECTED query
+      // (network failure, abort, client throw) never reaches the resolved
+      // `{ error }` branch. Without this catch the function exited before
+      // setting `loadError` or clearing `loading`, leaving the loading spinner
+      // stuck forever.
+      console.error('Failed to fetch reports:', err);
+      setLoadError(true);
+      setReports([]);
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   }, []);
 
   useEffect(() => {
     // Mount-fetch: `fetchReports` is a useCallback whose body is an awaited
     // async function — setLoading / setReports land after the effect returns,
-    // so the rule's cascading-render concern doesn't apply here.
+    // so the rule's cascading-render concern doesn't apply here. It handles its
+    // own errors (try/catch/finally) and never rejects; `.catch` keeps the
+    // no-floating-promises lint happy without `void`.
     // eslint-disable-next-line react-hooks/set-state-in-effect -- async callback batches its own state updates
-    void fetchReports();
+    fetchReports().catch(() => {});
   }, [fetchReports]);
 
   async function generateReport() {
@@ -243,7 +274,24 @@ export function ReportsList({ hasReportsEntitlement = true }: Readonly<ReportsLi
           </div>
         )}
 
-        {reports.length === 0 ? (
+        {loadError ? (
+          <div
+            role="alert"
+            className="flex flex-col items-center justify-center gap-3 py-8 text-center"
+          >
+            <div className="flex h-12 w-12 items-center justify-center rounded-full bg-amber-500/10">
+              <AlertTriangle className="h-6 w-6 text-amber-500" />
+            </div>
+            <div className="space-y-1">
+              <p className="text-sm font-semibold text-foreground">{REPORTS_STATE_COPY.LOAD_ERROR_TITLE}</p>
+              <p className="text-sm text-muted-foreground max-w-sm">{REPORTS_STATE_COPY.LOAD_ERROR_DESC}</p>
+            </div>
+            <Button variant="outline" size="sm" onClick={() => { fetchReports().catch(() => {}); }} disabled={loading}>
+              <RefreshCw className={`mr-2 h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+              {REPORTS_STATE_COPY.RETRY}
+            </Button>
+          </div>
+        ) : reports.length === 0 ? (
           <div className="text-center py-8 text-muted-foreground">
             <FileText className="mx-auto h-12 w-12 mb-4 opacity-50" />
             <p>No reports generated yet.</p>

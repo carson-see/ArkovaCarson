@@ -10,6 +10,7 @@ import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
 import { useAuth } from '@/hooks/useAuth';
 import { supabase } from '@/lib/supabase';
 import { getAppBaseUrl } from '@/lib/routes';
+import { getStatusLabel } from '@/lib/statusDisplay';
 import {
   Dialog,
   DialogContent,
@@ -318,7 +319,7 @@ export function CreatePortfolioDialog({ open, onOpenChange, onCreated }: CreateP
                                 : 'border-border/50'
                             }`}
                           >
-                            {att.status}
+                            {getStatusLabel(att.status)}
                           </Badge>
                         </label>
                       ))}
@@ -359,7 +360,7 @@ export function CreatePortfolioDialog({ open, onOpenChange, onCreated }: CreateP
                                 : 'border-border/50'
                             }`}
                           >
-                            {anc.status}
+                            {getStatusLabel(anc.status)}
                           </Badge>
                         </label>
                       ))}
