@@ -1,5 +1,5 @@
 # agents.md — pages
-_Last updated: 2026-05-19_
+_Last updated: 2026-05-30_
 
 ## SCRUM-1755 — Secure Document vs Issue Credential split
 
@@ -11,6 +11,7 @@ Top-level page components rendered by react-router-dom routes. Each page compose
 
 ## Recent Changes
 - 2026-05-30 SCRUM-2006: `PipelineAdminPage.tsx` records browser gained a **go-to-page** jump (numeric `Input` + Go button, Enter-to-submit) and a **page-size selector** (`PAGE_SIZE_OPTIONS = [25, 50, 100]`) beside the existing prev/next. `PAGE_SIZE` const became `pageSize` state; `fetchRecords(page, filters, size)` takes the size; the fetch effect deps include `pageSize`. Go-to-page validates with `^\d+$` (rejects empty/`abc`/`1.5`/`-2`) then clamps into `[1, totalPages]`; page-size change is allowlist-guarded and resets to page 1. New strings are local `PAGINATION_LABELS` constants (copy.ts is owned by other in-flight PRs; `lint:copy` still scans `src/pages/**`). **Testing gotcha:** Radix `Select` can't be driven in jsdom (pointer-capture/portals), so `PipelineAdminPage.test.tsx` mocks `@/components/ui/select` as a native `<select>`. The mock renders each option's **value** as visible text (not the human label) on purpose — rendering labels leaked filter strings like "Secured / Confirmed" into the DOM and tripped the record-row status assertions. Drive selects via `fireEvent.change`, assert RPC args via the `lastRecordsPageCall()` helper.
+- 2026-05-30 SCRUM-2008: `BillingPage.tsx` now Zod-validates the `/api/billing/status` 200 body (`billingStatusSchema`, mirrors the `BillingInfo` contract) before treating it as real data. A malformed/empty/error-envelope 200 throws into the existing catch → explicit "Unable to load billing data" card + Retry, never a silent placeholder/"Beta"/empty plan display. Builds on SCRUM-1983's AbortController timeout + error/retry (don't undo it). Pattern: any page that renders trust-bearing data from a fetch should validate the success body against a shape contract, not blind-cast `as T` — a 200 is not proof the payload is confirmed.
 - 2026-05-16 SCRUM-1126: `VersionConflictsPage.tsx` — org-admin version conflict review UI. Groups pending versions by `external_file_id`, displays fingerprint previews + age, approve action creates PENDING anchor via worker API. Uses `useVersionResolution` hook + `OrgRequiredGate`. Responsive at 1280px + 375px.
 - 2026-05-19 SCRUM-1599: removed `BadgePage.tsx` from the SPA route table. Badge SVGs are served by the worker at `/api/badge/:publicId` so status cannot be spoofed from frontend query parameters.
 - 2026-05-19 SCRUM-1247 closeout: `PrivacyPage.tsx` and `TermsPage.tsx` render their policy-update notices from `LEGAL_PAGE_LABELS` in `src/lib/copy.ts`; keep legal/public page copy centralized and covered by `e2e/legal-pages.spec.ts`.

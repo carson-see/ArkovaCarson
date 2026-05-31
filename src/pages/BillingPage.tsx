@@ -7,6 +7,7 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { z } from 'zod';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
 import { AppShell } from '@/components/layout';
@@ -18,6 +19,40 @@ import { ROUTES } from '@/lib/routes';
 import { WORKER_URL } from '@/lib/workerClient';
 import { supabase } from '@/lib/supabase';
 import { resolveSafeWorkerEndpoint } from '@/lib/workerUrlSafety';
+
+/**
+ * Shape contract for the worker `/api/billing/status` response.
+ *
+ * SCRUM-2008: billing data is shown as real ONLY when it comes from a confirmed
+ * source. A 200 response with a malformed/empty/error-envelope body is NOT a
+ * confirmed billing payload — validating it here forces such responses into the
+ * explicit "Data unavailable" state instead of silently rendering a placeholder
+ * (the old "Beta"/empty fallback that misled users into trusting fabricated data).
+ *
+ * Mirrors the `BillingInfo` interface in BillingOverview. Unknown extra keys are
+ * tolerated (additive worker fields) so this stays compatible with §1.8.
+ */
+const billingStatusSchema = z.object({
+  plan: z.object({
+    name: z.string().min(1),
+    price: z.number().optional(),
+    period: z.enum(['month', 'year']).optional(),
+    recordsIncluded: z.union([z.number(), z.literal('unlimited')]),
+  }),
+  usage: z.object({
+    recordsUsed: z.number(),
+    recordsLimit: z.number().nullable(),
+    percentUsed: z.number().optional(),
+  }),
+  billing: z.object({
+    nextBillingDate: z.string().optional(),
+    paymentMethod: z.string().optional(),
+    lastFourDigits: z.string().optional(),
+    status: z.enum(['active', 'trialing', 'past_due', 'canceled']).optional(),
+    currentPeriodEnd: z.string().optional(),
+  }),
+  status: z.enum(['active', 'trialing', 'past_due', 'canceled']),
+});
 
 export function BillingPage() {
   const navigate = useNavigate();
@@ -54,7 +89,12 @@ export function BillingPage() {
         throw new Error(`billing_status_${response.status}`);
       }
 
-      const data = await response.json() as BillingInfo;
+      // Only treat the payload as real billing data when it parses against the
+      // confirmed-source contract. A malformed/empty/error-envelope 200 body
+      // falls through to the explicit unavailable state (SCRUM-2008) — never a
+      // silent placeholder plan display.
+      const parsed = billingStatusSchema.parse(await response.json());
+      const data: BillingInfo = parsed;
       if (isLatestRequest()) {
         setBillingInfo(data);
       }
