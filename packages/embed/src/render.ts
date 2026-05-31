@@ -32,6 +32,7 @@ const CREDENTIAL_LABELS: Record<string, string> = {
   CERTIFICATE: 'Certificate',
   TRANSCRIPT: 'Transcript',
   PROFESSIONAL: 'Professional Credential',
+  CPE: 'CPE Credit',
   CLE: 'CLE Credit',
   BADGE: 'Digital Badge',
   ATTESTATION: 'Attestation',
@@ -43,12 +44,15 @@ const CREDENTIAL_LABELS: Record<string, string> = {
   REGULATION: 'Regulation',
   PUBLICATION: 'Publication',
   CHARITY: 'Charity',
+  ACCREDITATION: 'Accreditation',
   FINANCIAL_ADVISOR: 'Financial Advisor',
   BUSINESS_ENTITY: 'Business Entity',
   RESUME: 'Resume / CV',
   MEDICAL: 'Medical Record',
   MILITARY: 'Military Record',
   IDENTITY: 'Identity Document',
+  CONTRACT_PRESIGNING: 'Contract (Pre-Signing)',
+  CONTRACT_POSTSIGNING: 'Contract (Post-Signing)',
   OTHER: 'Other',
 };
 

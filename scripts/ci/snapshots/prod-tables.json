@@ -115,7 +115,9 @@
       { "name": "legally_binding_attestations", "reason": "PR #841 migration 0314 held back from prod until review/soak and operator-applied ledger reconciliation" },
       { "name": "merkle_batches", "reason": "created in 0113, dropped out-of-band — needs investigation" },
       { "name": "training_metrics", "reason": "created in 0114, dropped out-of-band — needs investigation" },
-      { "name": "webhook_idempotency", "reason": "created in 0116, dropped out-of-band — needs investigation" }
+      { "name": "webhook_idempotency", "reason": "created in 0116, dropped out-of-band — needs investigation" },
+      { "name": "external_document_versions", "reason": "PR #868/#877 migration 0323 — rescue/scrum-1296 version conflict detection, pending staging soak + prod deploy" },
+      { "name": "version_reviews", "reason": "PR #868/#877 migration 0323 — rescue/scrum-1296 version conflict review workflow, pending staging soak + prod deploy" }
     ],
     "in_prod_only": [
       { "name": "org_credits", "reason": "created in prod via timestamp-prefixed migration 20260427150859_scrum_1170_org_credits_and_allocations; corresponding numbered migration ships in PR #603" },
