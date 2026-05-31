@@ -14,6 +14,14 @@
 
 ## Now
 
+### 2026-05-31 — SCRUM-2216: git commit-email fix (Vercel deploy attribution)
+
+Repo-local git `user.email` set to the carson-see GitHub noreply `257869717+carson-see@users.noreply.github.com` (name stays `carson`). Root cause: `carson@arkova.ai` is **not** a verified email on the GitHub account, so Vercel rejected locally-authored commits — "No GitHub account was found matching the commit author email address" — and their prod/preview deploys failed (e.g. docs commit `89001140`). GitHub-authored merge commits (noreply) always deployed fine. **This very commit is the validation:** authored with the noreply, its Production deploy succeeding confirms the fix. Tracked as [SCRUM-2216](https://arkova.atlassian.net/browse/SCRUM-2216) + BUG-2026-05-31-002. Alternative (keeps `arkova.ai` on commits): add+verify it at github.com/settings/emails.
+
+_Last refreshed: 2026-05-31 by Claude — root cause verified via `git log --format='%ae / %ce'`: success `f4063934` = `…@users.noreply.github.com` / `noreply@github.com`, failure `89001140` = `carson@arkova.ai` (both). Fix = `git config --local user.email`; deploy validation = this commit's Production build (checked post-push)._
+
+---
+
 ### 2026-05-31 — SCRUM-2214 (PR #1002) ManageSubOrgs initial-load error state MERGED
 
 **[PR #1002](https://github.com/carson-see/ArkovaCarson/pull/1002)** (`fix/manage-suborgs-load-error-state`, T1) is **merged to `main`** at merge commit `f4063934` — Mergify auto-merge after its speculative `Tests`+`E2E` on draft #1009 passed. Bounded sibling of SCRUM-1999: `src/components/org/ManageSubOrgs.tsx` swallowed its initial sub-orgs load failure (`if (!response.ok) return;` + empty `catch`), so an outage/denial rendered the same empty list as "no affiliates yet" — the silent-empty anti-pattern the SCRUM-1999 state-matrix flagged as the next bounded gap. Fix: explicit `loadError` state + `role="alert"` banner with Retry, gated to the initial-load/Retry path via `fetchSubOrgs(isInitialLoad)` so create/approve/revoke refetch failures stay on toast (CodeRabbit caught the original leak into the action path; fixed in `2651a6da` with a regression test). Local `SUB_ORG_STATE_COPY` (copy.ts locked by open PRs #1007/#964/#877), banned-term-free. Frontend-only — no migration/worker/API/auth surface.
