@@ -482,8 +482,25 @@ function normaliseFile(file: string): string {
   return rel.split(/[\\/]/).join('/');
 }
 
-function baselineKey(file: string, line: number): string {
-  return `${normaliseFile(file)}:${line}`;
+/**
+ * Normalise a term for the baseline match key. Literal forbidden matches keep
+ * the source casing of the matched substring (`Hash` vs `hash`), so the key
+ * lower-cases and trims to stay stable across casing/whitespace. The dynamic
+ * `raw enum render: {field}` term is already deterministic; lower-casing it is
+ * harmless.
+ */
+function normaliseTerm(term: string): string {
+  return term.trim().toLowerCase();
+}
+
+// Match key = normalised file + line + normalised term. SCRUM-2149 fix2:
+// `term` is part of the key (NUL-separated so it can never collide with the
+// `:line` segment) so that a NEW, *different* banned term/raw-enum added to an
+// already-grandfathered line is reported as `fresh` (→ fails CI) instead of
+// being silently tolerated as "existing". A violation is grandfathered only
+// when file + line + term all match a recorded baseline entry.
+function baselineKey(file: string, line: number, term: string): string {
+  return `${normaliseFile(file)}:${line} ${normaliseTerm(term)}`;
 }
 
 /**
@@ -516,22 +533,25 @@ export interface BaselinePartition {
 
 /**
  * Split current violations into {fresh, grandfathered} against the baseline and
- * surface {stale} baseline entries. Match key = normalised file + line; the
- * recorded `term` is informational (heuristic wording may evolve), so it is not
- * part of the key. Pure — exported for unit tests.
+ * surface {stale} baseline entries. Match key = normalised file + line + term
+ * (SCRUM-2149 fix2): a violation is grandfathered ONLY when its file, line, and
+ * term all match a recorded entry. A *different* banned term/raw-enum on an
+ * already-baselined line is therefore reported as `fresh` (fails CI) rather than
+ * silently tolerated — closing the blind spot where the term was excluded from
+ * the key. Pure — exported for unit tests.
  */
 export function partitionAgainstBaseline(
   violations: Violation[],
   baseline: BaselineEntry[],
 ): BaselinePartition {
-  const baselineKeys = new Set(baseline.map((e) => baselineKey(e.file, e.line)));
+  const baselineKeys = new Set(baseline.map((e) => baselineKey(e.file, e.line, e.term)));
   const matchedKeys = new Set<string>();
 
   const fresh: Violation[] = [];
   const grandfathered: Violation[] = [];
 
   for (const v of violations) {
-    const key = baselineKey(v.file, v.line);
+    const key = baselineKey(v.file, v.line, v.term);
     if (baselineKeys.has(key)) {
       grandfathered.push(v);
       matchedKeys.add(key);
@@ -540,7 +560,7 @@ export function partitionAgainstBaseline(
     }
   }
 
-  const stale = baseline.filter((e) => !matchedKeys.has(baselineKey(e.file, e.line)));
+  const stale = baseline.filter((e) => !matchedKeys.has(baselineKey(e.file, e.line, e.term)));
   return { fresh, grandfathered, stale };
 }
 

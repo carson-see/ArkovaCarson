@@ -659,11 +659,50 @@ describe('partitionAgainstBaseline — grandfather logic (SCRUM-2148)', () => {
     expect(fresh[0].line).toBe(11);
   });
 
-  it('matches on file+line only — term text is informational, not part of the key', () => {
-    // The recorded term differs (e.g. heuristic message wording changes) but
-    // the same file:line should still be recognised as grandfathered.
+  it('keeps the SAME term on the SAME baselined line grandfathered (SCRUM-2149 fix2)', () => {
+    // file + line + term all match the recorded entry → tolerated, not fresh.
+    const { fresh, grandfathered } = partitionAgainstBaseline(
+      [v('src/pages/B.tsx', 20, 'raw enum render: {x.status}')],
+      baseline,
+    );
+    expect(fresh).toHaveLength(0);
+    expect(grandfathered).toHaveLength(1);
+  });
+
+  it('reports a DIFFERENT banned term on a baselined line as NEW (SCRUM-2149 fix2 — blind-spot close)', () => {
+    // The blind spot the PR claims to close: a NEW, different banned term added
+    // to an already-grandfathered file:line must NOT be silently tolerated.
+    // baseline B.tsx:20 records `{x.status}` — a different enum field is a NEW
+    // violation that must fail CI.
     const { fresh, grandfathered } = partitionAgainstBaseline(
       [v('src/pages/B.tsx', 20, 'raw enum render: {x.anchor_status}')],
+      baseline,
+    );
+    expect(grandfathered).toHaveLength(0);
+    expect(fresh).toHaveLength(1);
+    expect(fresh[0].term).toBe('raw enum render: {x.anchor_status}');
+  });
+
+  it('reports a different LITERAL banned term on a baselined line as NEW (SCRUM-2149 fix2)', () => {
+    // baseline A.tsx:10 records `hash`. Adding `wallet` to that same line is a
+    // distinct new violation, not a continuation of the grandfathered one.
+    const { fresh, grandfathered, stale } = partitionAgainstBaseline(
+      [v('src/pages/A.tsx', 10, 'wallet')],
+      baseline,
+    );
+    expect(fresh).toHaveLength(1);
+    expect(fresh[0].term).toBe('wallet');
+    expect(grandfathered).toHaveLength(0);
+    // The recorded `hash` entry was not matched this run → surfaced as stale.
+    expect(stale.some((e) => e.file === 'src/pages/A.tsx' && e.line === 10)).toBe(true);
+  });
+
+  it('grandfathers a baselined term regardless of source-side casing (SCRUM-2149 fix2)', () => {
+    // The literal-term match preserves source casing (`Hash`), while the
+    // baseline records lowercase `hash`. The key must be case-insensitive on
+    // term so a re-cased identical term stays grandfathered.
+    const { fresh, grandfathered } = partitionAgainstBaseline(
+      [v('src/pages/A.tsx', 10, 'Hash')],
       baseline,
     );
     expect(fresh).toHaveLength(0);
