@@ -1,0 +1,4 @@
+
+# Append-only agent notes: union-merge so parallel PRs touching the same agents.md
+# do not pairwise-conflict (was a merge-cascade across in-flight PRs). Keeps both sides.
+agents.md merge=union
