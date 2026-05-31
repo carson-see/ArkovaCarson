@@ -14,6 +14,32 @@
 
 ## Now
 
+### 2026-05-30 (PO reconciliation pass) — full doc/PR/Jira/prod re-sync; no-soak sprint launched
+
+A six-specialist reconciliation (6 Google Docs, all open PRs, Jira SCRUM board + comments, prod Cloud Run, prod+staging DB) re-synced state against ACTUAL prod. Local `main` fast-forwarded to `7af0ad9a`.
+
+**Prod truth (self-verified):** worker rev `arkova-worker-00811-duc` @ `git_sha 7af0ad9a` (PR #867 merge, SCRUM-1649), `/health` = healthy, `network=mainnet`, checks `{database:ok, anchoring:ok, kms:ok}`; last `deploy-worker.yml` run [26691941246](https://github.com/carson-see/ArkovaCarson/actions/runs/26691941246) = success @ 18:45Z. Prod DB (`vzwyaatejekddvltxyye`): RLS enabled+forced on all checked tables, **0 advisor ERRORs**, SECURITY DEFINER `search_path` 100% clean (148 funcs), migration head `0326`. `switchboard_flags`: AI_EXTRACTION/VERIFICATION_API/PROD_NETWORK_ANCHORING=`true`, SEMANTIC_SEARCH=`false`.
+
+**HANDOFF was stale** — these merged + are prod-live but were not recorded: PR #867 (SCRUM-1649 DocuSign action modes — prior entry said "T3 soak not started"), #975 (SCRUM-2200 PE eval moat — prior entry said "draft, deploy-blocked"), #984 (staging health WIF token audience), migration `0326_scrum1649_deduct_org_credit_idempotency`.
+
+**Jira reconciled:** **SCRUM-2072** (DocuSign webhook Zod validation) In Progress → **Done** (PR #945 merged `3f9a00a0`, both subtasks Done, prod-verified). **SCRUM-1649** found already Done (its `[Verify]` subtask SCRUM-1658 still To Do — left for human close-out, not flipped without DoD evidence). **SCRUM-1729** still mislabeled In Progress — Carson's own triage says it should be Needs Human (partner HakiChain round-trip unverified); left for Carson.
+
+**Findings flagged for Carson (NOT acted on — outside no-soak scope this session):**
+- **Bitcoin broadcast drift:** prod env `BITCOIN_UTXO_PROVIDER=mempool` → tx broadcast goes via **mempool.space**, NOT GetBlock. CLAUDE.md §1.1 + `memory/project_bitcoin_signing_paths` assert GetBlock-sovereign-since-2026-04-25. The `GetBlockHybridProvider` path is built and `BITCOIN_RPC_URL` secret is mounted but selecting it needs `BITCOIN_UTXO_PROVIDER=getblock`. Flip = chain-touching T3. Confirm intended posture.
+- **Flag env/DB divergence (fail-open hazard):** `ENABLE_SEMANTIC_SEARCH` + `ENABLE_AI_FRAUD` are OFF in DB (authoritative via `aiFeatureGate.ts`) but ON in Cloud Run env; a transient Supabase read failure trips the env fallback and silently re-enables both. Re-sync env→DB.
+- **SCRUM-2203 (active prod incident):** `embed-public-records` Scheduler 500s every ~2 min (statement timeout on `get_unembedded_public_records`) since ~05-21. P2 likely under-rated.
+- **SCRUM-1791:** `subscriptions.current_period_*` never rolls forward → entitlement gates fire on stale rows (paid-org billing correctness).
+- **SCRUM-2193:** 2 `anchors` CHECK constraints (`cpe/cle_metadata_is_object`) are NOT VALID in prod while repo migration 0314/0315 declare them VALID — needs `VALIDATE CONSTRAINT` (`statement_timeout=0`) in a Carson psql window.
+- `api_keys` active drifted 2→3 since 2026-05-29 (still 0 ever-used).
+
+**Soaking / hands-off (untouched):** **#885** is the only PR actively mid-soak (T3, exact-head `ca4ee34e`, ends 2026-05-31T15:29Z). **#886** + **#877** have elapsed clocks but stale-head evidence + `soak_artifact` preflight → not merge-grade as-is. All 10 open PRs are off-limits this session.
+
+**No-soak sprint launched (collision-free, PO-coordinated specialist agents, draft PRs only):** SCRUM-2149 (close the copy-lint blind spot — `check-copy-terms.ts` only scanned `src/components`+`src/pages`; expand to `src/lib`/`src/hooks`/`packages/embed`, add missing §1.3 terms testnet/mainnet/utxo/broadcast, add dynamic-enum render detection) + SCRUM-2148 (public-surface banned-term audit); and SCRUM-2003 (human-readable status labels via a new `getStatusDisplay`). **No staging soak started by design.**
+
+_Last refreshed: 2026-05-30 by Claude (PO reconciliation pass) — claims verified: prod `/health` git_sha=7af0ad9a network=mainnet db/anchoring/kms=ok (self-curled `arkova-worker-kvojbeutfa-uc.a.run.app/health`); deploy-worker run [26691941246](https://github.com/carson-see/ArkovaCarson/actions/runs/26691941246) conclusion=success on 7af0ad9a (`gh run view`); SCRUM-2072 → Done via Atlassian MCP transitionJiraIssue (status 10004); prod DB via Supabase MCP on ref `vzwyaatejekddvltxyye` (pg_class relforcerowsecurity, get_advisors 0 ERROR, list_migrations head 0326, switchboard_flags SELECT); Cloud Run rev/env via `gcloud run services describe arkova-worker`._
+
+---
+
 ### 2026-05-30 — Staging soak-evidence gate hardened (PR #980): T2/T3 deploy-field value checks + residual-risk approver
 
 **[PR #980](https://github.com/carson-see/ArkovaCarson/pull/980)** (`fix/staging-evidence-t2t3-value-gate`, T0 / `ci-config-change`) is **merged to `main`** at merge commit `a80915ee` — auto-merged by Mergify's *Queue CI-green PRs* rule once all 14 required checks went green, not a manual merge. It closes two defense-in-depth gaps in `scripts/ci/check-staging-evidence.ts` (the CLAUDE.md §1.11 / §1.11A soak-evidence gate) that together let a T2/T3 PR go green on dirty staging with all-`PENDING` deploy evidence plus a self-authored residual-risk note:

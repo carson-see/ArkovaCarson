@@ -219,6 +219,11 @@ export async function processRevokedAnchors(): Promise<{ processed: number; fail
 
   logger.info({ count: anchors.length }, 'Found revoked anchors needing chain revocation');
 
+  // UTXO selection is not safe under concurrency — treasury wallet UTXOs are shared state.
+  // Each processRevocation call broadcasts a chain transaction that consumes UTXOs from the
+  // same treasury wallet. Concurrent calls would all see the same unspent set via listUnspent(),
+  // attempt to spend the same outputs, and all but one would fail at broadcast with
+  // "inputs-missingorspent". Sequential processing ensures each tx sees the post-spend state.
   let processed = 0;
   let failed = 0;
 

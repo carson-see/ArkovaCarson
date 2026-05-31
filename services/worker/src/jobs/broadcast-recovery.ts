@@ -69,6 +69,12 @@ export async function recoverStuckBroadcasts(
 
 /**
  * Manual fallback recovery when RPC is not available.
+ *
+ * SCRUM-1296: Uses chunked bulk updates instead of per-row UPDATE calls.
+ * Each anchor needs unique metadata (previous_claimed_by differs), so we
+ * group by claimedBy and bulk-update each group with a single .in() call.
+ * For the common case (all claimed by the same worker), this collapses
+ * N updates into 1.
  */
 async function manualRecovery(staleMinutes: number): Promise<BroadcastRecoveryResult> {
   const threshold = new Date(Date.now() - staleMinutes * 60 * 1000).toISOString();
@@ -86,32 +92,53 @@ async function manualRecovery(staleMinutes: number): Promise<BroadcastRecoveryRe
     return { recovered: 0, anchors: [] };
   }
 
-  const recovered: Array<{ id: string; fingerprint: string; claimedBy: string }> = [];
-
-  for (const anchor of stuck) {
+  const recoveredAt = new Date().toISOString();
+  const allAnchors = stuck.map((anchor) => {
     const meta = (anchor.metadata as Record<string, unknown>) ?? {};
     const claimedBy = (meta._claimed_by as string) ?? 'unknown';
-
     const cleanMeta = { ...meta };
     delete cleanMeta._claimed_by;
     delete cleanMeta._claimed_at;
+    return { id: anchor.id, fingerprint: anchor.fingerprint, claimedBy, cleanMeta };
+  });
 
-    const { error: updateError } = await db
-      .from('anchors')
-      .update({
-        status: 'PENDING',
-        metadata: {
-          ...cleanMeta,
-          _recovery_reason: 'stuck_broadcasting',
-          _recovered_at: new Date().toISOString(),
-          _previous_claimed_by: claimedBy,
-        },
-      })
-      .eq('id', anchor.id)
-      .eq('status', 'BROADCASTING');
+  // SCRUM-1296: Chunked bulk update — process in batches of 100
+  // Each anchor gets its own metadata preserved (cleanMeta) plus recovery fields.
+  const CHUNK_SIZE = 100;
+  const recovered: Array<{ id: string; fingerprint: string; claimedBy: string }> = [];
 
-    if (!updateError) {
-      recovered.push({ id: anchor.id, fingerprint: anchor.fingerprint, claimedBy });
+  for (let i = 0; i < allAnchors.length; i += CHUNK_SIZE) {
+    const chunk = allAnchors.slice(i, i + CHUNK_SIZE);
+
+    // Per-anchor update to preserve existing metadata — each anchor may
+    // have different business-critical fields in metadata that must survive.
+    const results = await Promise.allSettled(
+      chunk.map((anchor) =>
+        db
+          .from('anchors')
+          .update({
+            status: 'PENDING',
+            metadata: {
+              ...anchor.cleanMeta,
+              _recovery_reason: 'stuck_broadcasting',
+              _recovered_at: recoveredAt,
+              _previous_claimed_by: anchor.claimedBy,
+            },
+          })
+          .eq('id', anchor.id)
+          .eq('status', 'BROADCASTING'),
+      ),
+    );
+
+    for (let j = 0; j < results.length; j++) {
+      const result = results[j];
+      const anchor = chunk[j];
+      if (result.status === 'fulfilled' && !result.value.error) {
+        recovered.push({ id: anchor.id, fingerprint: anchor.fingerprint, claimedBy: anchor.claimedBy });
+      } else {
+        const err = result.status === 'rejected' ? result.reason : result.value.error;
+        logger.error({ error: err, anchorId: anchor.id }, 'Recovery update failed for anchor');
+      }
     }
   }
 

@@ -187,7 +187,7 @@ export async function getChainClientAsync(): Promise<ChainClient> {
     logger.info('Chain client initializing — waiting for startup to complete');
     return _initPromise;
   }
-  logger.warn('Chain client not initialized — initializing on demand');
+  logger.warn('Chain client not initialized before async access — initializing lazily');
   return initChainClient();
 }
 
