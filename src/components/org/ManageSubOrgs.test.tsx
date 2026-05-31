@@ -293,4 +293,37 @@ describe('ManageSubOrgs', () => {
     expect(await screen.findByText(/no affiliated organizations yet/i)).toBeInTheDocument();
     expect(screen.queryByRole('alert')).toBeNull();
   });
+
+  it('does not raise the load-error banner when a post-action refetch fails (action errors stay on toast)', async () => {
+    let getCount = 0;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = requestUrl(input);
+      const method = init?.method ?? 'GET';
+      if (url === 'https://worker.test/api/v1/org/sub-orgs?orgId=org-parent' && method === 'GET') {
+        getCount += 1;
+        // Initial load succeeds; the post-approve refetch fails transiently.
+        return getCount === 1 ? jsonResponse({ subOrgs }) : jsonResponse({ error: 'boom' }, 500);
+      }
+      if (url === 'https://worker.test/api/v1/org/sub-orgs/approve' && method === 'POST') {
+        return jsonResponse({ status: 'APPROVED', childOrgId: 'child-pending' });
+      }
+      return jsonResponse({ error: `unexpected ${method} ${url}` }, 500);
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const user = userEvent.setup();
+
+    render(<ManageSubOrgs orgId="org-parent" />);
+    await screen.findByText('Pending Clinic');
+
+    await user.click(screen.getByRole('button', { name: /Approve/i }));
+
+    // The action succeeded (toast); the failed refetch must NOT wipe the list or
+    // raise the full-panel error banner — that path is initial-load/Retry only.
+    await waitFor(() => {
+      expect(mocks.toastSuccess).toHaveBeenCalledWith('Organization approved as affiliate.');
+    });
+    expect(screen.queryByRole('alert')).toBeNull();
+    expect(screen.getByText('Approved Clinic')).toBeInTheDocument();
+    expect(getCount).toBe(2);
+  });
 });

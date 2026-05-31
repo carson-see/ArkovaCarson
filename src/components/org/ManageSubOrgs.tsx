@@ -68,7 +68,11 @@ export function ManageSubOrgs({ orgId }: ManageSubOrgsProps) {
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
 
-  const fetchSubOrgs = useCallback(async () => {
+  // `isInitialLoad` gates the full-panel error state to the mount fetch and the
+  // explicit Retry. Action refetches (create/approve/revoke) pass `false`: a
+  // transient post-action refetch failure must not wipe the list or raise the
+  // banner — those errors are surfaced by the action handlers via toast.
+  const fetchSubOrgs = useCallback(async (isInitialLoad = true) => {
     try {
       const headers = await getAuthHeaders();
       const url = `${WORKER_URL}/api/v1/org/sub-orgs?orgId=${encodeURIComponent(orgId)}`;
@@ -77,18 +81,22 @@ export function ManageSubOrgs({ orgId }: ManageSubOrgsProps) {
         // SCRUM-1999 sibling: surface the load failure explicitly instead of
         // silently returning, which left an empty list with no signal — the
         // outage/denial masqueraded as the "no affiliates yet" empty state.
-        setLoadError(true);
-        setSubOrgs([]);
+        if (isInitialLoad) {
+          setLoadError(true);
+          setSubOrgs([]);
+        }
         return;
       }
       const data = await response.json() as { subOrgs: SubOrg[] };
       setLoadError(false);
       setSubOrgs(data.subOrgs);
     } catch {
-      // Network/parse failure on the initial load — show the explicit error
-      // state rather than swallowing it. Action errors still surface via toast.
-      setLoadError(true);
-      setSubOrgs([]);
+      // Network/parse failure on the load — show the explicit error state only
+      // for the initial load / Retry; action refetches keep using toast.
+      if (isInitialLoad) {
+        setLoadError(true);
+        setSubOrgs([]);
+      }
     } finally {
       setLoading(false);
     }
@@ -137,7 +145,7 @@ export function ManageSubOrgs({ orgId }: ManageSubOrgsProps) {
       setAffiliateLegalName('');
       setAffiliateDomain('');
       setAffiliateAdminEmail('');
-      await fetchSubOrgs();
+      await fetchSubOrgs(false);
     } catch {
       toast.error(SUB_ORG_LABELS.CREATE_FAILED);
     } finally {
@@ -160,7 +168,7 @@ export function ManageSubOrgs({ orgId }: ManageSubOrgsProps) {
         return;
       }
       toast.success(SUB_ORG_LABELS.APPROVE_SUCCESS);
-      await fetchSubOrgs();
+      await fetchSubOrgs(false);
     } catch {
       toast.error(SUB_ORG_LABELS.APPROVE_FAILED);
     } finally {
@@ -183,7 +191,7 @@ export function ManageSubOrgs({ orgId }: ManageSubOrgsProps) {
         return;
       }
       toast.success(SUB_ORG_LABELS.REVOKE_SUCCESS);
-      await fetchSubOrgs();
+      await fetchSubOrgs(false);
     } catch {
       toast.error(SUB_ORG_LABELS.REVOKE_FAILED);
     } finally {
