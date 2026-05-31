@@ -96,7 +96,7 @@ describe('resolveEffectiveDocusignConnection', () => {
       baseUri: 'https://na2.docusign.net',
       tokenSecretName: 'projects/p/secrets/parent-refresh',
     });
-    expect(deps.fetchParentOwnConnection).toHaveBeenCalledWith(PARENT_ORG);
+    expect(deps.fetchParentOwnConnection).toHaveBeenCalledWith(PARENT_ORG, 'acct-sub');
   });
 
   it('throws not_found when there is neither an own connection nor a marker', async () => {
@@ -156,6 +156,62 @@ describe('resolveEffectiveDocusignConnection', () => {
     await expect(resolveEffectiveDocusignConnection({ ...REQUEST, deps })).rejects.toMatchObject({
       code: 'docusign_inherited_parent_not_own',
     });
+  });
+
+  it('passes the payload accountId to fetchParentOwnConnection so a parent with multiple accounts selects the correct one', async () => {
+    const PARENT_ACCOUNT_A = 'acct-parent-A';
+    const PARENT_ACCOUNT_B = 'acct-parent-B';
+
+    const parentRowA = {
+      id: 'parent-int-A',
+      org_id: PARENT_ORG,
+      account_id: PARENT_ACCOUNT_A,
+      base_uri: 'https://na1.docusign.net',
+      token_secret_name: 'projects/p/secrets/parent-A-refresh',
+      inherited_from_org_id: null as string | null,
+    };
+    const parentRowB = {
+      id: 'parent-int-B',
+      org_id: PARENT_ORG,
+      account_id: PARENT_ACCOUNT_B,
+      base_uri: 'https://na2.docusign.net',
+      token_secret_name: 'projects/p/secrets/parent-B-refresh',
+      inherited_from_org_id: null as string | null,
+    };
+
+    // Simulate a DB-level filtered lookup: only returns the row matching accountId.
+    const fetchParentOwnConnection = vi.fn().mockImplementation(
+      (_parentOrgId: string, accountId: string) =>
+        Promise.resolve(accountId === PARENT_ACCOUNT_A ? parentRowA : accountId === PARENT_ACCOUNT_B ? parentRowB : null),
+    );
+
+    const depsA = makeDeps({
+      fetchInheritanceMarker: vi.fn().mockResolvedValue(MARKER_ROW),
+      fetchParentOrgId: vi.fn().mockResolvedValue(PARENT_ORG),
+      fetchParentOwnConnection,
+    });
+
+    // Request carrying account A should resolve to parent row A.
+    const resultA = await resolveEffectiveDocusignConnection({
+      orgId: SUB_ORG,
+      accountId: PARENT_ACCOUNT_A,
+      integrationId: 'some-int',
+      deps: depsA,
+    });
+    expect(resultA.accountId).toBe(PARENT_ACCOUNT_A);
+    expect(resultA.integrationId).toBe('parent-int-A');
+    expect(fetchParentOwnConnection).toHaveBeenCalledWith(PARENT_ORG, PARENT_ACCOUNT_A);
+
+    // Request carrying account B should resolve to parent row B.
+    const resultB = await resolveEffectiveDocusignConnection({
+      orgId: SUB_ORG,
+      accountId: PARENT_ACCOUNT_B,
+      integrationId: 'some-int',
+      deps: depsA,
+    });
+    expect(resultB.accountId).toBe(PARENT_ACCOUNT_B);
+    expect(resultB.integrationId).toBe('parent-int-B');
+    expect(fetchParentOwnConnection).toHaveBeenCalledWith(PARENT_ORG, PARENT_ACCOUNT_B);
   });
 
   it('exposes the error type for instanceof checks', async () => {

@@ -188,12 +188,14 @@ async function fetchParentOrgId(db: DbClient, orgId: string): Promise<string | n
 async function fetchParentOwnDocusignRow(
   db: DbClient,
   parentOrgId: string,
+  accountId: string,
 ): Promise<DocusignConnectionRow | null> {
   const { data, error } = await db
     .from('org_integrations')
     .select(DOCUSIGN_ORG_COLUMNS)
     .eq('org_id', parentOrgId)
     .eq('provider', 'docusign')
+    .eq('account_id', accountId)
     .is('revoked_at', null)
     .is('inherited_from_org_id', null)
     .maybeSingle();
@@ -255,11 +257,11 @@ export function makeDocusignEnvelopeJobDeps(
           fetchOwnConnection: (a) => fetchDirectDocusignRow(db, a),
           fetchInheritanceMarker: (orgId) => fetchInheritanceMarker(db, orgId),
           fetchParentOrgId: (orgId) => fetchParentOrgId(db, orgId),
-          fetchParentOwnConnection: (parentOrgId) => fetchParentOwnDocusignRow(db, parentOrgId),
+          fetchParentOwnConnection: (parentOrgId, accountId) => fetchParentOwnDocusignRow(db, parentOrgId, accountId),
         },
       });
       if (!effective.baseUri) {
-        throw new Error('docusign_integration_missing_base_uri');
+
       }
       if (!effective.tokenSecretName) {
         throw new Error('docusign_integration_missing_refresh_token_secret');

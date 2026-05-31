@@ -240,6 +240,130 @@ describe('runDocusignEnvelopeCompletedJobs', () => {
     });
   });
 
+  it('filters parent connection lookup by payload account_id when resolving inheritance for a parent with multiple active DocuSign accounts', async () => {
+    const SUB_ORG = '22222222-2222-4222-8222-222222222222';
+    const PARENT_ORG = '11111111-1111-4111-8111-111111111111';
+    const TARGET_ACCOUNT = 'acct-parent-B';
+
+    // parent-B row — the one the payload's account_id should select
+    const parentRowB = {
+      id: 'parent-int-B',
+      org_id: PARENT_ORG,
+      account_id: TARGET_ACCOUNT,
+      base_uri: 'https://na2.docusign.net',
+      token_secret_name: 'projects/p/secrets/parent-B-refresh',
+      inherited_from_org_id: null,
+    };
+    // inheritance marker for SUB_ORG pointing at PARENT_ORG
+    const markerRow = {
+      id: 'marker-int',
+      org_id: SUB_ORG,
+      account_id: null,
+      base_uri: null,
+      token_secret_name: null,
+      inherited_from_org_id: PARENT_ORG,
+    };
+
+    // Track account_id values passed to .eq() for parent org_integrations queries
+    const parentAccountIdFilters: unknown[] = [];
+
+    let fromCallCount = 0;
+    const db = {
+      from: vi.fn((table: string) => {
+        const callIndex = fromCallCount++;
+        const localEqFilters: Array<[string, unknown]> = [];
+
+        const query = {
+          select: vi.fn(() => query),
+          eq: vi.fn((field: string, value: unknown) => {
+            localEqFilters.push([field, value]);
+            return query;
+          }),
+          is: vi.fn(() => query),
+          maybeSingle: vi.fn().mockImplementation(async () => {
+            if (table === 'organizations') {
+              return { data: { parent_org_id: PARENT_ORG }, error: null };
+            }
+            const orgIdFilter = localEqFilters.find(([f]) => f === 'org_id')?.[1];
+            const accountIdFilter = localEqFilters.find(([f]) => f === 'account_id')?.[1];
+
+            if (table === 'org_integrations') {
+              // own-connection lookup for sub-org: org_id=SUB_ORG + account_id=TARGET_ACCOUNT → no match
+              if (orgIdFilter === SUB_ORG && accountIdFilter !== null) {
+                return { data: null, error: null };
+              }
+              // inheritance marker lookup: org_id=SUB_ORG, no account_id filter (account_id IS NULL)
+              if (orgIdFilter === SUB_ORG && accountIdFilter === undefined) {
+                return { data: markerRow, error: null };
+              }
+              // parent own-connection lookup: org_id=PARENT_ORG, filtered by account_id
+              if (orgIdFilter === PARENT_ORG) {
+                parentAccountIdFilters.push(accountIdFilter);
+                // Simulate DB: only return a row if account_id matches the target
+                if (accountIdFilter === TARGET_ACCOUNT) {
+                  return { data: parentRowB, error: null };
+                }
+                return { data: null, error: null };
+              }
+            }
+            // member_integrations own-connection lookup → no match
+            return { data: null, error: null };
+          }),
+          insert: vi.fn(() => ({
+            select: vi.fn(() => ({
+              single: vi.fn().mockResolvedValue({ data: null, error: null }),
+            })),
+          })),
+        };
+        void callIndex; // suppress unused-variable lint
+        return query;
+      }),
+    };
+
+    const refreshTokenStore = {
+      get: vi.fn().mockResolvedValue('refresh-token'),
+      put: vi.fn().mockResolvedValue(undefined),
+      delete: vi.fn().mockResolvedValue(undefined),
+    };
+    const fetchImpl = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({
+        access_token: 'access-token-B',
+        refresh_token: 'new-refresh-token',
+        token_type: 'Bearer',
+        expires_in: 3600,
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    ) as unknown as typeof fetch;
+
+    const deps = makeDocusignEnvelopeJobDeps({
+      db: db as unknown as DocusignEnvelopeJobRuntimeDeps['db'],
+      refreshTokenStore,
+      fetchImpl,
+      env: {
+        DOCUSIGN_INTEGRATION_KEY: 'integration-key',
+        DOCUSIGN_CLIENT_SECRET: 'client-secret',
+        DOCUSIGN_AUTH_BASE: 'https://account-d.docusign.com',
+      },
+    });
+
+    const connection = await deps.resolveConnection({
+      org_id: SUB_ORG,
+      integration_id: 'marker-int',
+      account_id: TARGET_ACCOUNT,
+      envelope_id: 'env-1',
+      rule_event_id: 'evt-1',
+      document_ids: ['combined'],
+    });
+
+    // The parent own-connection query must have filtered by the payload's account_id
+    expect(parentAccountIdFilters).toEqual([TARGET_ACCOUNT]);
+    // The connection returned should use parent-B credentials, not parent-A
+    expect(connection.baseUri).toBe('https://na2.docusign.net');
+    expect(refreshTokenStore.get).toHaveBeenCalledWith({ name: 'projects/p/secrets/parent-B-refresh' });
+  });
+
   it('throws when member_integrations lookup fails after no org_integrations row matches', async () => {
     const queriedTables: string[] = [];
     const memberLookupError = new Error('lookup failed');
