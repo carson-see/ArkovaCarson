@@ -106,7 +106,7 @@ describe('SemanticSearch (presentational)', () => {
     expect(
       screen.getByLabelText(SEMANTIC_SEARCH_LABELS.MATCH_STRENGTH_STRONG),
     ).toBeInTheDocument();
-    expect(screen.getByText('Secured')).toBeInTheDocument();
+    expect(screen.getByText('Verified')).toBeInTheDocument();
   });
 
   it('never renders a raw vector score', () => {

@@ -19,33 +19,28 @@ import { Search, Sparkles, FileText, Clock, AlertCircle } from 'lucide-react';
 import { useSemanticSearch, type SemanticSearchResult } from '../../hooks/useSemanticSearch';
 import { Link } from 'react-router-dom';
 import { ROUTES } from '../../lib/routes';
-import { ANCHOR_STATUS_LABELS, SEMANTIC_SEARCH_LABELS } from '../../lib/copy';
+import { SEMANTIC_SEARCH_LABELS } from '../../lib/copy';
 import { isSemanticSearchEnabled } from '../../lib/switchboard';
 import { Card, CardContent } from '@/components/ui/card';
 
+// SCRUM-2003 display contract: status strings mapped to user-visible labels.
+// Keep in sync with getStatusDisplay/getStatusLabel in the shared status
+// helper once SCRUM-2003 lands. This local table is the interim alignment.
+const STATUS_DISPLAY: Record<string, { color: string; label: string }> = {
+  SECURED:   { color: 'bg-emerald-500/10 text-emerald-400', label: 'Verified' },
+  PENDING:   { color: 'bg-amber-500/10 text-amber-400',     label: 'Processing' },
+  SUBMITTED: { color: 'bg-amber-500/10 text-amber-400',     label: 'Awaiting Confirmation' },
+  REVOKED:   { color: 'bg-red-500/10 text-red-400',         label: 'Revoked' },
+  EXPIRED:   { color: 'bg-gray-500/10 text-gray-400',       label: 'Expired' },
+};
+
 /**
  * Map an anchor status string to a display-safe { color, label } object.
- * Both tone and label are derived from the same lookup so they cannot drift.
+ * Labels follow the SCRUM-2003 display contract so this surface stays aligned
+ * with the rest of the app.
  */
 function getStatusDisplay(status: string): { color: string; label: string } {
-  const label =
-    (ANCHOR_STATUS_LABELS as Record<string, string>)[status] ?? status;
-  let color: string;
-  switch (status) {
-    case 'SECURED':
-      color = 'bg-emerald-500/10 text-emerald-400';
-      break;
-    case 'PENDING':
-    case 'SUBMITTED':
-      color = 'bg-amber-500/10 text-amber-400';
-      break;
-    case 'REVOKED':
-      color = 'bg-red-500/10 text-red-400';
-      break;
-    default:
-      color = 'bg-gray-500/10 text-gray-400';
-  }
-  return { color, label };
+  return STATUS_DISPLAY[status] ?? { color: 'bg-gray-500/10 text-gray-400', label: status };
 }
 
 /** Map a 0..1 similarity score to a friendly, non-technical strength label. */
@@ -118,7 +113,6 @@ function SearchResultCard({ result }: { result: SemanticSearchResult }) {
           <Clock className="h-3 w-3" />
           {new Date(result.createdAt).toLocaleDateString()}
         </div>
-      )}
     </Link>
   );
 }
