@@ -14,6 +14,26 @@
 
 ## Now
 
+### 2026-05-31 — SCRUM-2216: git commit-email fix (Vercel deploy attribution)
+
+Repo-local git `user.email` set to the carson-see GitHub noreply `257869717+carson-see@users.noreply.github.com` (name stays `carson`). Root cause: `carson@arkova.ai` is **not** a verified email on the GitHub account, so Vercel rejected locally-authored commits — "No GitHub account was found matching the commit author email address" — and their prod/preview deploys failed (e.g. docs commit `89001140`). GitHub-authored merge commits (noreply) always deployed fine. **Validated** against Vercel deployment records (project `arkova-26`): this commit (noreply author) had its Vercel author **resolved to `carson-see`** and was **no longer `BLOCKED`** — it shows `CANCELED` only because a newer `main` deploy superseded it mid-build (benign). The old `carson@arkova.ai` commits were `BLOCKED` with no resolved author. Tracked as [SCRUM-2216](https://arkova.atlassian.net/browse/SCRUM-2216) (Done) + BUG-2026-05-31-002. Alternative (keeps `arkova.ai` on commits): add+verify it at github.com/settings/emails.
+
+_Last refreshed: 2026-05-31 by Claude — root cause + fix verified via `git log --format='%ae / %ce'` (success `f4063934`=noreply, failures `89001140`/`e1ca3269`=`carson@arkova.ai`) and Vercel `list_deployments` on `arkova-26`: arkova.ai commits `state=BLOCKED` + unresolved author; noreply commit `e6379fde` resolved `githubCommitAuthorLogin=carson-see`, `state=CANCELED` (superseded, not blocked). Fix = `git config --local user.email`._
+
+---
+
+### 2026-05-31 — SCRUM-2214 (PR #1002) ManageSubOrgs initial-load error state MERGED
+
+**[PR #1002](https://github.com/carson-see/ArkovaCarson/pull/1002)** (`fix/manage-suborgs-load-error-state`, T1) is **merged to `main`** at merge commit `f4063934` — Mergify auto-merge after its speculative `Tests`+`E2E` on draft #1009 passed. Bounded sibling of SCRUM-1999: `src/components/org/ManageSubOrgs.tsx` swallowed its initial sub-orgs load failure (`if (!response.ok) return;` + empty `catch`), so an outage/denial rendered the same empty list as "no affiliates yet" — the silent-empty anti-pattern the SCRUM-1999 state-matrix flagged as the next bounded gap. Fix: explicit `loadError` state + `role="alert"` banner with Retry, gated to the initial-load/Retry path via `fetchSubOrgs(isInitialLoad)` so create/approve/revoke refetch failures stay on toast (CodeRabbit caught the original leak into the action path; fixed in `2651a6da` with a regression test). Local `SUB_ORG_STATE_COPY` (copy.ts locked by open PRs #1007/#964/#877), banned-term-free. Frontend-only — no migration/worker/API/auth surface.
+
+**Tracking:** **[SCRUM-2214](https://arkova.atlassian.net/browse/SCRUM-2214)** (Story under epic SCRUM-2012, In Progress) + subtask SCRUM-2215; Confluence [page 68419586](https://arkova.atlassian.net/wiki/spaces/A/pages/68419586); bug **BUG-2026-05-31-001** on the Master Log. **SCRUM-2214 + subtask SCRUM-2215 → Done** (2026-05-31) — Vercel prod build verified: the GitHub Production deployment for merge commit `f4063934` = success (17:19:26Z), so the fix is serving in prod. The reporter≠resolver rule did **not** block the MCP-driven Done transition. (The later docs-commit `89001140` Production deploy failed on the known commit-email-mismatch — cosmetic; HANDOFF.md isn't in the app build, so prod stays on `f4063934`.)
+
+TDD: 5 new Vitest+RTL tests (red→green) + 4 existing action tests still green (9/9); typecheck/eslint/lint:copy clean. All 14 required CI checks green.
+
+_Last refreshed: 2026-05-31 by Claude — claims verified against git/gh/CI output: PR #1002 merge commit `f4063934` is `origin/main` tip (`git merge-base --is-ancestor` + `git log -1 origin/main`); Mergify auto-merge confirmed by its queue-status bot comment (speculative draft #1009, merged 17:18:52Z via `gh pr view`); SCRUM-2214/2215 + Confluence 68419586 + bug-tracker footer comment 67928070 created via Atlassian MCP; ManageSubOrgs suite 9/9 (`vitest run`). Frontend-only — no prod worker/DB state asserted._
+
+---
+
 ### 2026-05-30 (PO reconciliation pass) — full doc/PR/Jira/prod re-sync; no-soak sprint launched
 
 A six-specialist reconciliation (6 Google Docs, all open PRs, Jira SCRUM board + comments, prod Cloud Run, prod+staging DB) re-synced state against ACTUAL prod. Local `main` fast-forwarded to `7af0ad9a`.
