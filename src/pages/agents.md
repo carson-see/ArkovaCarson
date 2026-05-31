@@ -1,5 +1,11 @@
 # agents.md — pages
-_Last updated: 2026-05-19_
+_Last updated: 2026-05-30_
+
+## SCRUM-1980 — Search spinner persists below results (loading-state reset)
+
+`SearchPage.tsx` runs the issuer (`usePublicSearch`) and credential (`search_public_credentials` RPC) legs together via `Promise.all`; they resolve at different times. The bottom "searching" spinner (`showSearchLoading`) is a "nothing to show yet" indicator and must clear the moment we have anything to render. The pre-fix guard (`!hasDisplayableResults`, added in `6af45e5c`) covered only the results sub-case and left the spinner lingering **below the error card** when the faster leg errored while the slower leg was still in flight (UAT 2026-05-22). Fix: also gate on `!displayError`. The spinner container now carries `role="status"` + `aria-live="polite"` + `aria-label={SEARCH_LABELS.LOADING}` + `data-testid="search-loading-spinner"` so the reset is assertable (matches the `AuditMyOrganizationButton` house style). Do NOT touch the semantic-search lane (`useSemanticSearch.ts` / `SemanticSearch.tsx`) — different surface, owned by PR #964.
+
+**Review fix B2 (cross-mode stale error):** `displayError = error || fpError || personError`, and BOTH the spinner gate (`showSearchLoading … && !displayError`) and the issuer-results block are gated on `!displayError`. Each search path only cleared *its own* error channel (issuer/person path didn't clear `fpError`; the fingerprint path didn't clear the hook's `error` or `personError`), so a leftover error from a *different* mode (a) suppressed the in-flight spinner of the new search and (b) hid successful results behind the stale error card. Fix: `resetSearchState()` (calls the hook's `clearResults()` for `error`+`issuerResults`, plus clears `fpError`/`fpResult`/`personError`/`personResults`) runs at the start of every submit — `handleSearch` and the drag-to-verify `handleFileDrop` — so `displayError` only ever reflects the search currently in flight. When adding a new search mode here, clear its channel in `resetSearchState` too.
 
 ## SCRUM-1755 — Secure Document vs Issue Credential split
 

@@ -62,7 +62,7 @@ export function SearchPage() {
   const [, setSearchMode] = useState<SearchMode>('issuers');
   const [hasSearched, setHasSearched] = useState(false);
   const [lastSubmittedQuery, setLastSubmittedQuery] = useState('');
-  const { issuerResults, searching, error, searchIssuers } = usePublicSearch();
+  const { issuerResults, searching, error, searchIssuers, clearResults } = usePublicSearch();
 
   const [fpResult, setFpResult] = useState<FingerprintResult | null>(null);
   const [fpSearching, setFpSearching] = useState(false);
@@ -219,6 +219,23 @@ export function SearchPage() {
     }
   }, []);
 
+  // SCRUM-1980 (review B2): clear every search mode's error + stale results
+  // before dispatching a new search. `displayError = error || fpError ||
+  // personError` and both the results spinner and the issuer-results block are
+  // gated on `!displayError`. A leftover error from a *different* mode (e.g. a
+  // failed fingerprint lookup) would otherwise suppress the in-flight spinner
+  // and hide successful results of the new search behind a stale error card.
+  // `clearResults()` owns the hook-internal `error` + `issuerResults`; the rest
+  // are local. Keeping this in one place means `displayError` only ever
+  // reflects the search currently in flight.
+  const resetSearchState = useCallback(() => {
+    clearResults();
+    setFpError(null);
+    setFpResult(null);
+    setPersonError(null);
+    setPersonResults([]);
+  }, [clearResults]);
+
   const handleSearch = useCallback(async () => {
     const trimmed = query.trim();
     if (!trimmed) return;
@@ -232,6 +249,7 @@ export function SearchPage() {
 
     setHasSearched(true);
     setLastSubmittedQuery(trimmed);
+    resetSearchState();
 
     if (detected === 'fingerprint') {
       setSearchType('fingerprint');
@@ -246,7 +264,7 @@ export function SearchPage() {
       searchIssuers(trimmed),
       searchPerson(trimmed),
     ]);
-  }, [query, navigate, searchIssuers, searchFingerprint, searchPerson]);
+  }, [query, navigate, searchIssuers, searchFingerprint, searchPerson, resetSearchState]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -262,8 +280,9 @@ export function SearchPage() {
     setSearchMode('verify');
     setHasSearched(true);
     setSearchType('fingerprint');
-    setFpResult(null);
-    setFpError(null);
+    // Clear every mode's error/results (incl. a stale issuer/person error from a
+    // prior name search) so the verify result is not hidden behind it (B2).
+    resetSearchState();
 
     try {
       const fingerprint = await generateFingerprint(file);
@@ -274,7 +293,7 @@ export function SearchPage() {
     } finally {
       setVerifyingFile(false);
     }
-  }, [searchFingerprint]);
+  }, [searchFingerprint, resetSearchState]);
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -309,7 +328,13 @@ export function SearchPage() {
     issuerResults.length > 0 ||
     personResults.length > 0 ||
     (searchType === 'fingerprint' && fpResult !== null);
-  const showSearchLoading = isSearching && !verifyingFile && !hasDisplayableResults;
+  // SCRUM-1980: the results spinner is a "nothing to show yet" indicator. It must
+  // clear the moment we have anything to render — results OR an error — even if a
+  // parallel search leg (issuer vs. credential RPC resolve at different times) is
+  // still in flight. Without the `!displayError` guard the spinner lingered below
+  // the error card / results when the faster leg finished first (UAT 2026-05-22).
+  const showSearchLoading =
+    isSearching && !verifyingFile && !hasDisplayableResults && !displayError;
   const noResultsTitle = SEARCH_LABELS.NO_RESULTS_FOR.replace('{query}', lastSubmittedQuery);
 
   return (
@@ -501,7 +526,13 @@ export function SearchPage() {
 
           {/* Loading state */}
           {showSearchLoading && (
-            <div className="flex justify-center py-12">
+            <div
+              className="flex justify-center py-12"
+              role="status"
+              aria-live="polite"
+              aria-label={SEARCH_LABELS.LOADING}
+              data-testid="search-loading-spinner"
+            >
               <Loader2 className="h-6 w-6 animate-spin text-[#00d4ff]" />
             </div>
           )}

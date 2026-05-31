@@ -1,4 +1,5 @@
 /* eslint-disable arkova/no-unscoped-service-test -- Frontend: RLS enforced server-side by Supabase JWT, not manual query scoping */
+/* eslint-disable arkova/require-error-code-assertion -- SearchPage maps every RPC/fallback failure to one user-facing copy string (SEARCH_LABELS.SEARCH_ERROR); these tests assert that rendered message, not the wire error code. Specific codes are covered in usePublicSearch.test.ts / RLS suites. */
 /**
  * Tests for SearchPage
  *
@@ -36,23 +37,32 @@ vi.mock('@/hooks/usePublicSearch', () => ({
   }),
 }));
 
-// Mock supabase — factory must not reference outer variables (hoisting)
-vi.mock('@/lib/supabase', () => ({
-  supabase: {
-    from: vi.fn().mockReturnValue({
-      select: vi.fn().mockReturnValue({
-        eq: vi.fn().mockReturnValue({
-          in: vi.fn().mockReturnValue({
-            is: vi.fn().mockReturnValue({
-              limit: vi.fn().mockResolvedValue({ data: [], error: null }),
-            }),
-          }),
-        }),
-      }),
-    }),
-    rpc: vi.fn().mockResolvedValue({ data: [], error: null }),
-  },
+// Controllable supabase mock — the credential RPC (`search_public_credentials`)
+// is held in a hoisted ref so individual tests can hand it a deferred promise
+// and freeze the person-search leg "in flight" while asserting spinner state.
+const supabaseMock = vi.hoisted(() => ({
+  // Default: resolve to no rows so the RPC settles immediately.
+  rpc: vi.fn().mockResolvedValue({ data: [], error: null }),
 }));
+
+vi.mock('@/lib/supabase', () => {
+  // `.from(...)` chain used by the fingerprint query and the RLS fallback.
+  const terminal = () => ({ data: [], error: null });
+  const chain = {
+    select: vi.fn(() => chain),
+    eq: vi.fn(() => chain),
+    in: vi.fn(() => chain),
+    is: vi.fn(() => chain),
+    ilike: vi.fn(() => chain),
+    limit: vi.fn().mockResolvedValue(terminal()),
+  };
+  return {
+    supabase: {
+      from: vi.fn(() => chain),
+      rpc: (...args: unknown[]) => supabaseMock.rpc(...args),
+    },
+  };
+});
 
 // Mock IssuerCard
 vi.mock('@/components/search/IssuerCard', () => ({
@@ -97,6 +107,7 @@ describe('SearchPage', () => {
     publicSearchMock.state.searching = false;
     publicSearchMock.state.error = null;
     publicSearchMock.searchIssuers.mockResolvedValue(undefined);
+    supabaseMock.rpc.mockResolvedValue({ data: [], error: null });
   });
 
   it('renders the "Search & Verify" heading', () => {
@@ -162,5 +173,147 @@ describe('SearchPage', () => {
     fireEvent.click(screen.getByRole('button', { name: /search/i }));
 
     expect(await screen.findByText('No results for "No Such Org"')).toBeInTheDocument();
+  });
+
+  // ── SCRUM-1980: search loading-state reset (spinner persists below results) ──
+  describe('SCRUM-1980 loading-state reset', () => {
+    it('clears the results spinner once the credential search resolves with results', async () => {
+      // Person/credential leg resolves with one result; issuer leg stays empty.
+      supabaseMock.rpc.mockResolvedValue({
+        data: [{
+          public_id: 'cred-1',
+          title: 'Jane Doe — RN License',
+          credential_type: 'professional_certification',
+          status: 'SECURED',
+          anchored_at: '2026-05-01T00:00:00Z',
+          issuer_public_id: 'org-pub-1',
+        }],
+        error: null,
+      });
+
+      renderSearchPage();
+      fireEvent.change(screen.getByPlaceholderText(/search issuers/i), {
+        target: { value: 'Jane Doe' },
+      });
+      fireEvent.click(screen.getByRole('button', { name: /search/i }));
+
+      // The credential result renders…
+      expect(await screen.findByText('Jane Doe — RN License')).toBeInTheDocument();
+      // …and the bottom results spinner must be gone (loading state was reset).
+      await waitFor(() => {
+        expect(screen.queryByTestId('search-loading-spinner')).not.toBeInTheDocument();
+      });
+    });
+
+    it('does not keep a spinner below the error card when one search leg fails', async () => {
+      // Freeze the credential leg "in flight" with a promise that never settles,
+      // so `personSearching` stays true for the duration of the assertion.
+      supabaseMock.rpc.mockReturnValue(new Promise(() => { /* never resolves */ }));
+
+      const view = renderSearchPage();
+      fireEvent.change(screen.getByPlaceholderText(/search issuers/i), {
+        target: { value: 'Broken Search' },
+      });
+      fireEvent.click(screen.getByRole('button', { name: /search/i }));
+
+      await waitFor(() => {
+        expect(publicSearchMock.searchIssuers).toHaveBeenCalledWith('Broken Search');
+      });
+
+      // Issuer leg has errored; the credential leg is still resolving.
+      publicSearchMock.state.searching = false;
+      publicSearchMock.state.error = 'Search failed. Please try again.';
+      view.rerender(
+        <MemoryRouter initialEntries={['/search']}>
+          <SearchPage />
+        </MemoryRouter>,
+      );
+
+      // Error card is shown…
+      expect(screen.getByText('Search failed. Please try again.')).toBeInTheDocument();
+      // …and the loading spinner must NOT linger beneath it.
+      expect(screen.queryByTestId('search-loading-spinner')).not.toBeInTheDocument();
+    });
+
+    it('clears a stale fingerprint error when a subsequent issuer search runs', async () => {
+      // Cross-mode regression (review finding B2): a fingerprint search that
+      // errors leaves `fpError` set. `displayError = error || fpError ||
+      // personError`, and the spinner / issuer-results block are both gated on
+      // `!displayError`. Without clearing the other-mode channels on a new
+      // submit, the stale fingerprint error (a) suppresses the in-flight
+      // spinner of the new issuer search and (b) hides the issuer results on
+      // success — leaving the user staring at a stale error card.
+      const { supabase } = await import('@/lib/supabase');
+      const fpLimitMock = (supabase.from('anchors') as unknown as {
+        select: () => { eq: () => { in: () => { is: () => { limit: ReturnType<typeof vi.fn> } } } };
+      }).select().eq().in().is().limit as unknown as ReturnType<typeof vi.fn>;
+      // First `.limit()` (the fingerprint query) errors → sets fpError.
+      fpLimitMock.mockResolvedValueOnce({ data: null, error: { message: 'fp boom' } });
+
+      const view = renderSearchPage();
+      const input = screen.getByPlaceholderText(/search issuers/i);
+
+      // 1) Fingerprint search (64-hex) errors → error card shown.
+      fireEvent.change(input, { target: { value: 'a'.repeat(64) } });
+      fireEvent.click(screen.getByRole('button', { name: /search/i }));
+      expect(await screen.findByText('Search failed. Please try again.')).toBeInTheDocument();
+
+      // 2) Now run an issuer/name search while the credential leg stays in
+      //    flight (never resolves) so `personSearching` stays true.
+      supabaseMock.rpc.mockReturnValue(new Promise(() => { /* never resolves */ }));
+      fireEvent.change(input, { target: { value: 'Arkova' } });
+      fireEvent.click(screen.getByRole('button', { name: /search/i }));
+
+      await waitFor(() => {
+        expect(publicSearchMock.searchIssuers).toHaveBeenCalledWith('Arkova');
+      });
+
+      // The stale fingerprint error must be cleared: the in-flight spinner
+      // shows and the stale error card is gone.
+      await waitFor(() => {
+        expect(screen.getByTestId('search-loading-spinner')).toBeInTheDocument();
+      });
+      expect(screen.queryByText('Search failed. Please try again.')).not.toBeInTheDocument();
+
+      // 3) Issuer leg resolves with a result → issuer card renders, no error.
+      publicSearchMock.state.searching = false;
+      publicSearchMock.state.issuerResults = [{
+        org_id: 'org-1',
+        org_name: 'Arkova',
+        org_domain: null,
+        credential_count: 3,
+      }];
+      view.rerender(
+        <MemoryRouter initialEntries={['/search']}>
+          <SearchPage />
+        </MemoryRouter>,
+      );
+
+      expect(screen.getByTestId('issuer-card')).toBeInTheDocument();
+      expect(screen.queryByText('Search failed. Please try again.')).not.toBeInTheDocument();
+    });
+
+    it('clears loading and surfaces an error when the credential search rejects', async () => {
+      // RPC rejects AND the RLS fallback (`.from(...).limit()`) also rejects, so
+      // the error path is exercised end-to-end.
+      supabaseMock.rpc.mockRejectedValue(new Error('rpc boom'));
+      const { supabase } = await import('@/lib/supabase');
+      const limitMock = (supabase.from('anchors') as unknown as {
+        select: () => { is: () => { in: () => { ilike: () => { limit: ReturnType<typeof vi.fn> } } } };
+      }).select().is().in().ilike().limit as unknown as ReturnType<typeof vi.fn>;
+      limitMock.mockRejectedValueOnce(new Error('fallback boom'));
+
+      renderSearchPage();
+      fireEvent.change(screen.getByPlaceholderText(/search issuers/i), {
+        target: { value: 'Error Path' },
+      });
+      fireEvent.click(screen.getByRole('button', { name: /search/i }));
+
+      // Error copy appears and the spinner is cleared (loading reset on error).
+      expect(await screen.findByText('Search failed. Please try again.')).toBeInTheDocument();
+      await waitFor(() => {
+        expect(screen.queryByTestId('search-loading-spinner')).not.toBeInTheDocument();
+      });
+    });
   });
 });
