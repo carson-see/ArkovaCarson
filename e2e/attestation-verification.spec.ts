@@ -165,11 +165,14 @@ test.describe('Attestation verification (SCRUM-1873/1874)', () => {
       await orgAdminPage.goto('/attestations');
       await expect(orgAdminPage.locator('#main-content').getByRole('heading', { name: 'Attestations', exact: true })).toBeVisible({ timeout: 10000 });
 
-      // Verify each status badge is rendered
-      await expect(orgAdminPage.getByText('ACTIVE', { exact: true }).first()).toBeVisible();
-      await expect(orgAdminPage.getByText('PENDING', { exact: true }).first()).toBeVisible();
-      await expect(orgAdminPage.getByText('REVOKED', { exact: true }).first()).toBeVisible();
-      await expect(orgAdminPage.getByText('EXPIRED', { exact: true }).first()).toBeVisible();
+      // Verify each status badge renders the human-readable label (SCRUM-2003:
+      // the AttestationsPage list badge now uses getStatusLabel, not the raw
+      // enum). Per src/lib/statusDisplay.ts: PENDING -> "Processing",
+      // ACTIVE -> "Active", REVOKED -> "Revoked", EXPIRED -> "Expired".
+      await expect(orgAdminPage.getByText('Active', { exact: true }).first()).toBeVisible();
+      await expect(orgAdminPage.getByText('Processing', { exact: true }).first()).toBeVisible();
+      await expect(orgAdminPage.getByText('Revoked', { exact: true }).first()).toBeVisible();
+      await expect(orgAdminPage.getByText('Expired', { exact: true }).first()).toBeVisible();
     });
 
     test('attestation detail shows notarization badge when notarized', async ({ orgAdminPage }) => {
@@ -265,22 +268,22 @@ test.describe('Attestation verification (SCRUM-1873/1874)', () => {
         });
       });
 
-      // Stage 0: PENDING
+      // Stage 0: PENDING -> rendered as "Processing" (SCRUM-2003 label map)
       await orgAdminPage.goto('/attestations');
       await expect(orgAdminPage.locator('#main-content').getByRole('heading', { name: 'Attestations', exact: true })).toBeVisible({ timeout: 10000 });
-      await expect(orgAdminPage.getByText('PENDING', { exact: true }).first()).toBeVisible();
+      await expect(orgAdminPage.getByText('Processing', { exact: true }).first()).toBeVisible();
 
-      // Stage 1: ACTIVE
+      // Stage 1: ACTIVE -> rendered as "Active"
       stageIndex = 1;
       await orgAdminPage.reload();
       await expect(orgAdminPage.locator('#main-content').getByRole('heading', { name: 'Attestations', exact: true })).toBeVisible({ timeout: 10000 });
-      await expect(orgAdminPage.getByText('ACTIVE', { exact: true }).first()).toBeVisible();
+      await expect(orgAdminPage.getByText('Active', { exact: true }).first()).toBeVisible();
 
-      // Stage 2: ACTIVE + notarized
+      // Stage 2: ACTIVE + notarized -> still "Active"
       stageIndex = 2;
       await orgAdminPage.reload();
       await expect(orgAdminPage.locator('#main-content').getByRole('heading', { name: 'Attestations', exact: true })).toBeVisible({ timeout: 10000 });
-      await expect(orgAdminPage.getByText('ACTIVE', { exact: true }).first()).toBeVisible();
+      await expect(orgAdminPage.getByText('Active', { exact: true }).first()).toBeVisible();
       // Click into detail to see notarization badge
       await orgAdminPage.getByText('pub-transition').first().click();
       await expect(orgAdminPage.getByText(/Notarized/i).first()).toBeVisible({ timeout: 10000 });
@@ -403,9 +406,10 @@ test.describe('Attestation verification (SCRUM-1873/1874)', () => {
       await orgAdminPage.goto('/attestations');
       await expect(orgAdminPage.locator('#main-content').getByRole('heading', { name: 'Attestations', exact: true })).toBeVisible({ timeout: 10000 });
 
-      // Both status badges should be visible at mobile width
-      await expect(orgAdminPage.getByText('ACTIVE', { exact: true }).first()).toBeVisible();
-      await expect(orgAdminPage.getByText('PENDING', { exact: true }).first()).toBeVisible();
+      // Both status badges should be visible at mobile width, rendered as the
+      // human-readable labels (SCRUM-2003): ACTIVE -> "Active", PENDING -> "Processing".
+      await expect(orgAdminPage.getByText('Active', { exact: true }).first()).toBeVisible();
+      await expect(orgAdminPage.getByText('Processing', { exact: true }).first()).toBeVisible();
     });
 
     test('public attestation verification page renders at 375px', async ({ page }) => {
