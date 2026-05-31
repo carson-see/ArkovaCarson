@@ -24,6 +24,7 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
+import { getStatusDisplay } from '@/lib/statusDisplay';
 import {
   Select,
   SelectContent,
@@ -277,17 +278,35 @@ export function AdminRecordsPage() {
   );
 }
 
+// Tailwind classes per semantic tone for statuses without a bespoke colour
+// (e.g. EXPIRED / SUPERSEDED / BROADCASTING / PENDING_RESOLUTION, which
+// previously fell through to a raw-enum outline badge).
+const STATUS_TONE_CLASS: Record<string, string> = {
+  positive: 'bg-green-500/10 text-green-700 border-green-500/30',
+  warning: 'bg-amber-500/10 text-amber-700 border-amber-500/30',
+  neutral: '',
+};
+
 function RecordStatusBadge({ status }: Readonly<{ status: string }>) {
+  // SCRUM-2003: human-readable label for every status, never the raw enum.
+  const { label, tone } = getStatusDisplay(status);
+
+  // Preserve the established per-status colour treatment for the common
+  // anchor statuses; fall back to a tone-derived class otherwise.
   switch (status) {
     case 'SECURED':
-      return <Badge className="bg-green-500/10 text-green-700 border-green-500/30">Secured</Badge>;
+      return <Badge className="bg-green-500/10 text-green-700 border-green-500/30">{label}</Badge>;
     case 'PENDING':
-      return <Badge className="bg-amber-500/10 text-amber-700 border-amber-500/30">Pending</Badge>;
+      return <Badge className="bg-amber-500/10 text-amber-700 border-amber-500/30">{label}</Badge>;
     case 'SUBMITTED':
-      return <Badge className="bg-blue-500/10 text-blue-700 border-blue-500/30">Submitted</Badge>;
+      return <Badge className="bg-blue-500/10 text-blue-700 border-blue-500/30">{label}</Badge>;
     case 'REVOKED':
-      return <Badge variant="destructive">Revoked</Badge>;
-    default:
-      return <Badge variant="outline">{status}</Badge>;
+      return <Badge variant="destructive">{label}</Badge>;
+    default: {
+      const toneClass = STATUS_TONE_CLASS[tone] ?? '';
+      return toneClass
+        ? <Badge className={toneClass}>{label}</Badge>
+        : <Badge variant="outline">{label}</Badge>;
+    }
   }
 }

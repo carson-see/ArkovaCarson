@@ -44,6 +44,7 @@ Domain-specific React components organized by feature area. Each subfolder has a
 - DO: Place new components in the correct domain subfolder with barrel export
 - DO: Use hooks from `@/hooks/` for data — never `useState` for DB-backed data
 - DO: Source all UI strings from `@/lib/copy.ts`
+- DO: Render anchor/attestation status via `getStatusDisplay`/`getStatusLabel` from `@/lib/statusDisplay` (SCRUM-2003) — never put a raw status enum (`{anchor.status}`, `{att.status}`) in JSX, and don't add a new inline status→label map.
 - DON'T: Edit files in `ui/` — they are managed by shadcn
 - DON'T: Use banned terminology in user-visible strings (see Constitution 1.3)
 - DON'T: Hardcode routes — use `@/lib/routes.ts` constants

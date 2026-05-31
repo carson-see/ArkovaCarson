@@ -22,6 +22,7 @@ import { Button } from '@/components/ui/button';
 import { Separator } from '@/components/ui/separator';
 import { PUBLIC_ATTESTATION_VERIFY_LABELS, ATTESTATION_LABELS } from '@/lib/copy';
 import { ROUTES, verifyPath } from '@/lib/routes';
+import { getStatusLabel } from '@/lib/statusDisplay';
 import { WORKER_URL } from '@/lib/workerClient';
 import { AnchorDisclaimerDark } from '@/components/anchor/AnchorDisclaimer';
 import { AttestationStatusCard } from '@/components/attestation/AttestationStatusCard';
@@ -400,7 +401,7 @@ export function PublicAttestationVerifyPage() {
                               <Badge className={credential.is_current
                                 ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
                                 : 'bg-muted text-muted-foreground'}>
-                                {credential.status}
+                                {getStatusLabel(credential.status)}
                               </Badge>
                               {credential.version_number !== null && (
                                 <Badge variant="outline" className="text-[10px]">v{credential.version_number}</Badge>
