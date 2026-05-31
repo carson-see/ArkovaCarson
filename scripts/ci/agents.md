@@ -3,6 +3,7 @@
 CI gate scripts. Each one fails the build with a structured exit code + actionable message when a guardrail trips. Run via `npx tsx scripts/ci/<name>.ts` from a CI workflow.
 
 ## Files
+
 - **`check-staging-evidence.ts`** — enforces CLAUDE.md §1.11 / §1.12 staging soak evidence on every PR. Path-based detector classifies the touched files into Tier T1/T2/T3, then verifies the PR body declares the required tier and includes the matching required fields. Field regexes accept optional markdown checkbox prefixes (`- [x]` / `- [ ]`) and use `[^\S\n]*` for horizontal-only whitespace to prevent cross-line value capture (PR #801).
   - **Staging integrity fields (T2/T3):** PR body evidence must name `PR head SHA`, `Base SHA`, `Staging project ref`, `Cloud Run service/tag URL`, `Image digest`, `Evidence scope`, `Preflight timestamp`, and `Preflight result`. The gate rejects copied evidence when the PR head/base SHA differs, rejects diagnostic-only scope, and requires the captured preflight result to include `environment_type=clean_mirror`.
   - **`isStagingToolingOnly()` allowlist** (per-tool meta-PRs that don't need a soak): `scripts/staging/`, `scripts/ci/check-staging-evidence(.test).ts`, `scripts/ci/check-staging-gcloud-policy(.test).ts`, `scripts/ci/lib/`, `scripts/gcp-setup/`, `docs/staging/`, `docs/ops/gemini-model-upgrade.md`, `.github/workflows/ci.yml`, `.github/workflows/staging-evidence.yml`, `CLAUDE.md`, `HANDOFF.md`, `.gitignore`, `.claude/settings.json`, `.claude/hooks/`, `package.json`, `package-lock.json`, `agents.md`.
@@ -23,6 +24,8 @@ CI gate scripts. Each one fails the build with a structured exit code + actionab
 - `pr841-ledger-remediation.test.ts` — incident regression test pinning the cleaned 0313-0315 migration order after production used `0313` for anchors index consolidation.
 - `feedback-rules/` — orchestrator + per-rule scripts (R0-7 / SCRUM-1253) for `memory/feedback_*.md` rules.
 
+- **`check-credential-type-drift.ts`** (SCRUM-2013) — compares every file containing credential type enums against the canonical `ANCHOR_CREDENTIAL_TYPES` in `services/worker/src/lib/credential-evidence.ts`, including `SecureDocumentDialog.tsx` fuzzy AI type-map target values. Fails the build when any location has missing or extra values compared with the source of truth.
+
 - **`staging-honesty-preflight.ts`** (SCRUM-1668) — queries a Supabase staging database and reports whether the environment is a clean mirror, has soak artifacts, or is fixture-seeded. 8 checks: (1) PR-only / staging-only migration rows, (2) duplicate names, (3) duplicate versions, (4) known artifact rows, (5) missing SUBMITTED anchors, (6) prod ledger divergence, (7) org topology — single-tenant prod vs multi-org staging seeds, (8) prod facts — pg_cron vacuum-anchors exists, refresh_pipeline_dashboard_cache exists, and refresh-pipeline-dashboard-cache is scheduled. The migration ledger falls back to the Supabase Management API when `supabase_migrations` is hidden from PostgREST; `--prod-project-ref` + `--management-api-token` / `SUPABASE_ACCESS_TOKEN` query the live prod ledger and prod facts. Checks 7–8 are optional (backward-compatible), with `--prod-facts` CLI fallback. 66 tests in `staging-honesty-preflight.test.ts`.
 
 ## `snapshots/`
@@ -31,6 +34,7 @@ Baseline/snapshot data consumed by gate scripts (one source-of-truth fixture per
 - **`copy-terms-baseline.json`** (SCRUM-2148 / SCRUM-2149) — grandfather baseline for `scripts/check-copy-terms.ts` (`npm run lint:copy`, defined one level up in `scripts/`). Records ONLY pre-existing copy-term/raw-enum violations that can't be fixed in their PR (locked file or another in-flight track). The linter fails on NEW violations only; match key = `file`+`line`. Each entry needs a `reason`. Full protocol in `scripts/agents.md` → "Copy-term linter". Never baseline a self-introduced violation.
 
 ## Conventions
+
 - Exit 0 = pass; exit 1 = fail with actionable error to stderr.
 - Tests colocate as `<name>.test.ts` and run in the main worker vitest config.
 - Fail messages must tell the operator (a) what failed, (b) why it matters, (c) how to fix or override.
@@ -42,4 +46,5 @@ Baseline/snapshot data consumed by gate scripts (one source-of-truth fixture per
 - 2026-05-26 PR #884: added `services/edge/package.json` to staging-tooling allowlist (edge-only, not worker).
 
 ## Open work
+
 - PR #733 (`destroy-staging-soak-skip`) — still in flight; awaits merge.

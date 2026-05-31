@@ -1,5 +1,6 @@
 # agents.md — hooks
-_Last updated: 2026-05-15_
+_Last updated: 2026-05-30_
+_Last updated: 2026-05-26_
 
 ## What This Folder Contains
 
@@ -8,7 +9,9 @@ React hooks for data fetching and mutations against Supabase. Each hook encapsul
 ## Recent Changes
 
 - 2026-05-30 SCRUM-2149: `src/hooks/**` is now in scope for `npm run lint:copy` (banned §1.3 terms in user-visible strings). `useCanIssueCredential.ts` — reworded an internal guard error ("Issue Credential gate query" → "credential issuance gate query") so the §1.3-restricted phrase doesn't trip the now-expanded linter; no behavior change. Internal/dev-facing strings still must avoid banned UI terms once a file is scanned.
+- 2026-05-30 SCRUM-1979: `useInviteMember.ts` — the outer `inviteMember` wrapper had a bare `catch {}` (no binding) that discarded the specific actionable message and always toasted the generic `TOAST.MEMBER_INVITE_FAILED`. Fix: curated messages (the 4 RPC-branch strings, the email-send-failed string, and Zod validation messages) are now thrown as a typed `ActionableInviteError` and surfaced verbatim via toast; anything else (incl. raw `rpcError.message`) maps to the generic fallback. The unknown RPC branch no longer rethrows raw DB text (§1.4 — no DB internals / constraint names / PG DETAIL / org-or-user identifiers to the UI). Pattern note: prefer a typed user-safe-error marker over surfacing arbitrary thrown `.message` to the UI.
 - 2026-05-15 SCRUM-1651 ORG-HIER-01 verification: Expanded `useActiveOrg.test.ts` from 10 to 56 tests with full cross-tenant negative test matrix (SCRUM-1651 ORG-12). Matrix covers URL-based attacks, session-poisoning attacks, profile-drift attacks, combined attacks, parent/sub-org isolation for dual-membership users, and the operation-scoped invariant proving resolved orgId is always in membershipOrgIds or null. All 56 tests green.
+- 2026-05-26 SCRUM-2013: `useHipaaMfaGate.ts` removed phantom credential types MEDICAL_LICENSE and IMMUNIZATION that never existed in the canonical enum. Tests updated.
 - 2026-05-15 Tech-debt (CodeRabbit #689): `useActiveOrg.ts` — extracted `membershipOrgIds` into a value-stable `useMemo` keyed on sorted org ID string. Prevents unnecessary `resolveActiveOrg` recalculation on background React Query refetches when org IDs haven't changed.
 - 2026-05-05 SCRUM-1755: Created `useCanIssueCredential.ts` (+ 15 resolver tests) — gate hook for the Issue Credential UI surface. Pure `resolveIssueGate()` carries the logic; React wrapper pulls `organizations.verification_status` / `suspended` / `parent_org_id` / `parent_approval_status` and the parent-org row when present. Returns a discriminated `IssueGate` so UI surfaces can render the right gate-blocked banner copy. Replaces the prior implicit "ORG_ADMIN ⇒ may issue" assumption.
 - 2026-04-26 SCRUM-1260 R1-6 /simplify carry-over: Extracted `useVisibilityPolling.ts` — page-visibility-aware polling with `(cb, intervalMs)` contract. Replaces three near-identical inline copies in `AnchorQueuePage`, `useTreasuryBalance`, `PipelineAdminPage`. `useTreasuryBalance.ts` also gained `Promise.all` parallelization for the worker + mempool legs (16s → ~8s worst case) plus equality guards on `setBalance` / `setFeeRates` / `setReceipts` so identical poll payloads don't churn the consumer tree.

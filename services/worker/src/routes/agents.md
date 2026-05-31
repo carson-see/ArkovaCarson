@@ -17,6 +17,7 @@ Express routers + scheduler wiring. Two flavors of cron: in-process (dev/test ba
 
 ## Recent changes
 
+- SCRUM-2210 (`billing.ts`): added `GET /api/billing/status` → `handleBillingStatus`. This is the `BillingInfo` endpoint the frontend `BillingPage` has always fetched but that was never implemented (`billingRouter` only had `/checkout/session` + `/billing/portal`) → 404 → billing page bricked. **Returns 200 on every normal path** with a usable `BillingInfo` — a free-tier default when the caller has no subscription, and a best-effort usage count (scoped by `org_id`, or by `user_id` for individual/non-org plans; `recordsUsed` falls back to 0 if the `anchors` count errors/times out) so a downstream failure can't brick billing (the SCRUM-1983 / SCRUM-2213 lesson). **The only 500 is a hard failure of the primary subscription lookup itself.** Read-only; uses `rateLimiters.api` (60/min).
 - PR #924 (SCRUM-2040/2041): added `/nonce-sweep` and `/connector-health-check` cron routes. Connector health route now checks `result.ok` and returns 500 on persist failure (fail-close, matching docusign-reconciliation pattern).
 
 ## Open work

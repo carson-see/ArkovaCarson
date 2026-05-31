@@ -61,6 +61,7 @@ WORKER_PORT=3001
 NODE_ENV=development
 LOG_LEVEL=info
 FRONTEND_URL=http://localhost:5173  # REQUIRED in production (SCRUM-534 / PR #347) — worker fails loudly if NODE_ENV=production and FRONTEND_URL is unset
+WORKER_PUBLIC_URL=                  # Cloud Run service URL; required for DocuSign Connect auto-provisioning (SCRUM-1718)
 USE_MOCKS=false
 ENABLE_PROD_NETWORK_ANCHORING=false
 ENABLE_ORG_CREDIT_ENFORCEMENT=false # launch-gated org credit ledger enforcement for instant anchors

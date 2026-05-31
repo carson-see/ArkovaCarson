@@ -23,12 +23,45 @@ interface UseInviteMemberReturn {
 
 const WORKER_URL = import.meta.env.VITE_WORKER_URL || 'http://localhost:3001';
 
+/**
+ * Generic, user-safe fallback shown for any unrecognized failure.
+ * Kept local (not in the locked `copy.ts`) and intentionally identical in spirit
+ * to `TOAST.MEMBER_INVITE_FAILED` so the unknown-error path never differs.
+ */
+const GENERIC_INVITE_FAILURE = TOAST.MEMBER_INVITE_FAILED;
+
+/**
+ * Error marked safe to display to the user.
+ *
+ * SCRUM-1979 / §1.4: only messages we author (curated RPC-branch strings, the
+ * email-send-failed message, and the curated Zod validation messages) are
+ * user-safe. Raw RPC/DB error text is NEVER wrapped in this — it is replaced by
+ * {@link GENERIC_INVITE_FAILURE} before it can reach the `error` state or a toast.
+ * `inviteMember` surfaces `message` verbatim only when the thrown value is an
+ * `ActionableInviteError`; anything else falls back to the generic message.
+ */
+class ActionableInviteError extends Error {
+  readonly userSafe = true as const;
+
+  constructor(message: string) {
+    super(message);
+    this.name = 'ActionableInviteError';
+  }
+}
+
+function isActionableInviteError(err: unknown): err is ActionableInviteError {
+  return err instanceof ActionableInviteError;
+}
+
 export function useInviteMember(): UseInviteMemberReturn {
   const inviteImpl = useCallback(
     async (options: InviteMemberInput): Promise<boolean> => {
       const parsedOptions = InviteMemberSchema.safeParse(options);
       if (!parsedOptions.success) {
-        throw new Error(parsedOptions.error.issues[0]?.message ?? 'Failed to send invitation.');
+        // Zod messages here are author-curated + user-safe (validators.ts).
+        throw new ActionableInviteError(
+          parsedOptions.error.issues[0]?.message ?? GENERIC_INVITE_FAILURE,
+        );
       }
 
       const { email, role, orgId, orgName, inviterName } = parsedOptions.data;
@@ -43,14 +76,17 @@ export function useInviteMember(): UseInviteMemberReturn {
       });
 
       if (rpcError) {
-        if (rpcError.message.includes('already a member')) {
-          throw new Error('This person is already a member of the organization.');
-        } else if (rpcError.message.includes('insufficient_privilege')) {
-          throw new Error('You do not have permission to invite members.');
-        } else if (rpcError.message.includes('invalid email')) {
-          throw new Error('Please enter a valid email address.');
+        const rpcMessage = typeof rpcError.message === 'string' ? rpcError.message : '';
+        if (rpcMessage.includes('already a member')) {
+          throw new ActionableInviteError('This person is already a member of the organization.');
+        } else if (rpcMessage.includes('insufficient_privilege')) {
+          throw new ActionableInviteError('You do not have permission to invite members.');
+        } else if (rpcMessage.includes('invalid email')) {
+          throw new ActionableInviteError('Please enter a valid email address.');
         } else {
-          throw new Error(rpcError.message || 'Failed to send invitation.');
+          // §1.4: do NOT surface raw rpcError.message — it can carry DB internals,
+          // constraint names, PG DETAIL, or org/user identifiers. Map to generic.
+          throw new Error(GENERIC_INVITE_FAILURE);
         }
       }
 
@@ -75,7 +111,9 @@ export function useInviteMember(): UseInviteMemberReturn {
         }
       } catch (emailErr) {
         console.warn('Invitation email send failed (invitation still created):', emailErr);
-        throw new Error('Invitation was created, but the email could not be sent. Please try again.');
+        throw new ActionableInviteError(
+          'Invitation was created, but the email could not be sent. Please try again.',
+        );
       }
 
       return true;
@@ -83,7 +121,10 @@ export function useInviteMember(): UseInviteMemberReturn {
     [],
   );
 
-  const { execute, loading, error, clearError } = useAsyncAction(inviteImpl);
+  const { execute, loading, error, clearError } = useAsyncAction(
+    inviteImpl,
+    GENERIC_INVITE_FAILURE,
+  );
 
   const inviteMember = useCallback(
     async (options: InviteMemberInput): Promise<boolean> => {
@@ -91,8 +132,12 @@ export function useInviteMember(): UseInviteMemberReturn {
         const result = await execute(options);
         toast.success(TOAST.MEMBER_INVITED);
         return result;
-      } catch {
-        toast.error(TOAST.MEMBER_INVITE_FAILED);
+      } catch (err) {
+        // Surface the specific, actionable message only when it was explicitly
+        // marked user-safe; otherwise fall back to the generic message so no raw
+        // DB/RPC text ever reaches the user (SCRUM-1979 / §1.4).
+        const message = isActionableInviteError(err) ? err.message : GENERIC_INVITE_FAILURE;
+        toast.error(message);
         return false;
       }
     },

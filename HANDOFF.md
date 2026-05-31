@@ -14,6 +14,52 @@
 
 ## Now
 
+### 2026-05-31 — SCRUM-2216: git commit-email fix (Vercel deploy attribution)
+
+Repo-local git `user.email` set to the carson-see GitHub noreply `257869717+carson-see@users.noreply.github.com` (name stays `carson`). Root cause: `carson@arkova.ai` is **not** a verified email on the GitHub account, so Vercel rejected locally-authored commits — "No GitHub account was found matching the commit author email address" — and their prod/preview deploys failed (e.g. docs commit `89001140`). GitHub-authored merge commits (noreply) always deployed fine. **Validated** against Vercel deployment records (project `arkova-26`): this commit (noreply author) had its Vercel author **resolved to `carson-see`** and was **no longer `BLOCKED`** — it shows `CANCELED` only because a newer `main` deploy superseded it mid-build (benign). The old `carson@arkova.ai` commits were `BLOCKED` with no resolved author. Tracked as [SCRUM-2216](https://arkova.atlassian.net/browse/SCRUM-2216) (Done) + BUG-2026-05-31-002. Alternative (keeps `arkova.ai` on commits): add+verify it at github.com/settings/emails.
+
+_Last refreshed: 2026-05-31 by Claude — root cause + fix verified via `git log --format='%ae / %ce'` (success `f4063934`=noreply, failures `89001140`/`e1ca3269`=`carson@arkova.ai`) and Vercel `list_deployments` on `arkova-26`: arkova.ai commits `state=BLOCKED` + unresolved author; noreply commit `e6379fde` resolved `githubCommitAuthorLogin=carson-see`, `state=CANCELED` (superseded, not blocked). Fix = `git config --local user.email`._
+
+---
+
+### 2026-05-31 — SCRUM-2214 (PR #1002) ManageSubOrgs initial-load error state MERGED
+
+**[PR #1002](https://github.com/carson-see/ArkovaCarson/pull/1002)** (`fix/manage-suborgs-load-error-state`, T1) is **merged to `main`** at merge commit `f4063934` — Mergify auto-merge after its speculative `Tests`+`E2E` on draft #1009 passed. Bounded sibling of SCRUM-1999: `src/components/org/ManageSubOrgs.tsx` swallowed its initial sub-orgs load failure (`if (!response.ok) return;` + empty `catch`), so an outage/denial rendered the same empty list as "no affiliates yet" — the silent-empty anti-pattern the SCRUM-1999 state-matrix flagged as the next bounded gap. Fix: explicit `loadError` state + `role="alert"` banner with Retry, gated to the initial-load/Retry path via `fetchSubOrgs(isInitialLoad)` so create/approve/revoke refetch failures stay on toast (CodeRabbit caught the original leak into the action path; fixed in `2651a6da` with a regression test). Local `SUB_ORG_STATE_COPY` (copy.ts locked by open PRs #1007/#964/#877), banned-term-free. Frontend-only — no migration/worker/API/auth surface.
+
+**Tracking:** **[SCRUM-2214](https://arkova.atlassian.net/browse/SCRUM-2214)** (Story under epic SCRUM-2012, In Progress) + subtask SCRUM-2215; Confluence [page 68419586](https://arkova.atlassian.net/wiki/spaces/A/pages/68419586); bug **BUG-2026-05-31-001** on the Master Log. **SCRUM-2214 + subtask SCRUM-2215 → Done** (2026-05-31) — Vercel prod build verified: the GitHub Production deployment for merge commit `f4063934` = success (17:19:26Z), so the fix is serving in prod. The reporter≠resolver rule did **not** block the MCP-driven Done transition. (The later docs-commit `89001140` Production deploy failed on the known commit-email-mismatch — cosmetic; HANDOFF.md isn't in the app build, so prod stays on `f4063934`.)
+
+TDD: 5 new Vitest+RTL tests (red→green) + 4 existing action tests still green (9/9); typecheck/eslint/lint:copy clean. All 14 required CI checks green.
+
+_Last refreshed: 2026-05-31 by Claude — claims verified against git/gh/CI output: PR #1002 merge commit `f4063934` is `origin/main` tip (`git merge-base --is-ancestor` + `git log -1 origin/main`); Mergify auto-merge confirmed by its queue-status bot comment (speculative draft #1009, merged 17:18:52Z via `gh pr view`); SCRUM-2214/2215 + Confluence 68419586 + bug-tracker footer comment 67928070 created via Atlassian MCP; ManageSubOrgs suite 9/9 (`vitest run`). Frontend-only — no prod worker/DB state asserted._
+
+---
+
+### 2026-05-30 (PO reconciliation pass) — full doc/PR/Jira/prod re-sync; no-soak sprint launched
+
+A six-specialist reconciliation (6 Google Docs, all open PRs, Jira SCRUM board + comments, prod Cloud Run, prod+staging DB) re-synced state against ACTUAL prod. Local `main` fast-forwarded to `7af0ad9a`.
+
+**Prod truth (self-verified):** worker rev `arkova-worker-00811-duc` @ `git_sha 7af0ad9a` (PR #867 merge, SCRUM-1649), `/health` = healthy, `network=mainnet`, checks `{database:ok, anchoring:ok, kms:ok}`; last `deploy-worker.yml` run [26691941246](https://github.com/carson-see/ArkovaCarson/actions/runs/26691941246) = success @ 18:45Z. Prod DB (`vzwyaatejekddvltxyye`): RLS enabled+forced on all checked tables, **0 advisor ERRORs**, SECURITY DEFINER `search_path` 100% clean (148 funcs), migration head `0326`. `switchboard_flags`: AI_EXTRACTION/VERIFICATION_API/PROD_NETWORK_ANCHORING=`true`, SEMANTIC_SEARCH=`false`.
+
+**HANDOFF was stale** — these merged + are prod-live but were not recorded: PR #867 (SCRUM-1649 DocuSign action modes — prior entry said "T3 soak not started"), #975 (SCRUM-2200 PE eval moat — prior entry said "draft, deploy-blocked"), #984 (staging health WIF token audience), migration `0326_scrum1649_deduct_org_credit_idempotency`.
+
+**Jira reconciled:** **SCRUM-2072** (DocuSign webhook Zod validation) In Progress → **Done** (PR #945 merged `3f9a00a0`, both subtasks Done, prod-verified). **SCRUM-1649** found already Done (its `[Verify]` subtask SCRUM-1658 still To Do — left for human close-out, not flipped without DoD evidence). **SCRUM-1729** still mislabeled In Progress — Carson's own triage says it should be Needs Human (partner HakiChain round-trip unverified); left for Carson.
+
+**Findings flagged for Carson (NOT acted on — outside no-soak scope this session):**
+- **Bitcoin broadcast drift:** prod env `BITCOIN_UTXO_PROVIDER=mempool` → tx broadcast goes via **mempool.space**, NOT GetBlock. CLAUDE.md §1.1 + `memory/project_bitcoin_signing_paths` assert GetBlock-sovereign-since-2026-04-25. The `GetBlockHybridProvider` path is built and `BITCOIN_RPC_URL` secret is mounted but selecting it needs `BITCOIN_UTXO_PROVIDER=getblock`. Flip = chain-touching T3. Confirm intended posture.
+- **Flag env/DB divergence (fail-open hazard):** `ENABLE_SEMANTIC_SEARCH` + `ENABLE_AI_FRAUD` are OFF in DB (authoritative via `aiFeatureGate.ts`) but ON in Cloud Run env; a transient Supabase read failure trips the env fallback and silently re-enables both. Re-sync env→DB.
+- **SCRUM-2203 (active prod incident):** `embed-public-records` Scheduler 500s every ~2 min (statement timeout on `get_unembedded_public_records`) since ~05-21. P2 likely under-rated.
+- **SCRUM-1791:** `subscriptions.current_period_*` never rolls forward → entitlement gates fire on stale rows (paid-org billing correctness).
+- **SCRUM-2193:** 2 `anchors` CHECK constraints (`cpe/cle_metadata_is_object`) are NOT VALID in prod while repo migration 0314/0315 declare them VALID — needs `VALIDATE CONSTRAINT` (`statement_timeout=0`) in a Carson psql window.
+- `api_keys` active drifted 2→3 since 2026-05-29 (still 0 ever-used).
+
+**Soaking / hands-off (untouched):** **#885** is the only PR actively mid-soak (T3, exact-head `ca4ee34e`, ends 2026-05-31T15:29Z). **#886** + **#877** have elapsed clocks but stale-head evidence + `soak_artifact` preflight → not merge-grade as-is. All 10 open PRs are off-limits this session.
+
+**No-soak sprint launched (collision-free, PO-coordinated specialist agents, draft PRs only):** SCRUM-2149 (close the copy-lint blind spot — `check-copy-terms.ts` only scanned `src/components`+`src/pages`; expand to `src/lib`/`src/hooks`/`packages/embed`, add missing §1.3 terms testnet/mainnet/utxo/broadcast, add dynamic-enum render detection) + SCRUM-2148 (public-surface banned-term audit); and SCRUM-2003 (human-readable status labels via a new `getStatusDisplay`). **No staging soak started by design.**
+
+_Last refreshed: 2026-05-30 by Claude (PO reconciliation pass) — claims verified: prod `/health` git_sha=7af0ad9a network=mainnet db/anchoring/kms=ok (self-curled `arkova-worker-kvojbeutfa-uc.a.run.app/health`); deploy-worker run [26691941246](https://github.com/carson-see/ArkovaCarson/actions/runs/26691941246) conclusion=success on 7af0ad9a (`gh run view`); SCRUM-2072 → Done via Atlassian MCP transitionJiraIssue (status 10004); prod DB via Supabase MCP on ref `vzwyaatejekddvltxyye` (pg_class relforcerowsecurity, get_advisors 0 ERROR, list_migrations head 0326, switchboard_flags SELECT); Cloud Run rev/env via `gcloud run services describe arkova-worker`._
+
+---
+
 ### 2026-05-30 — Staging soak-evidence gate hardened (PR #980): T2/T3 deploy-field value checks + residual-risk approver
 
 **[PR #980](https://github.com/carson-see/ArkovaCarson/pull/980)** (`fix/staging-evidence-t2t3-value-gate`, T0 / `ci-config-change`) is **merged to `main`** at merge commit `a80915ee` — auto-merged by Mergify's *Queue CI-green PRs* rule once all 14 required checks went green, not a manual merge. It closes two defense-in-depth gaps in `scripts/ci/check-staging-evidence.ts` (the CLAUDE.md §1.11 / §1.11A soak-evidence gate) that together let a T2/T3 PR go green on dirty staging with all-`PENDING` deploy evidence plus a self-authored residual-risk note:
