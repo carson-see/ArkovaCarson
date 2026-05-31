@@ -126,6 +126,80 @@ describe('BillingPage', () => {
     expect(mockFetch).toHaveBeenCalledTimes(2);
   });
 
+  it('renders a legitimate free-tier payload as real data, not an error', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        plan: { name: 'Free', recordsIncluded: 3 },
+        usage: { recordsUsed: 0, recordsLimit: 3 },
+        billing: { status: 'active' },
+        status: 'active',
+      }),
+    });
+
+    renderBillingPage();
+
+    expect(await screen.findByText('Free')).toBeInTheDocument();
+    expect(screen.getByTestId('billing-overview')).toHaveAttribute('data-loading', 'false');
+    expect(screen.queryByText('Unable to load billing data')).not.toBeInTheDocument();
+  });
+
+  it('shows the explicit unavailable state when a 200 response has a malformed body', async () => {
+    // Worker replied 200 OK but the body is not a confirmed billing payload.
+    // This must NOT render a silent placeholder plan — it is an unconfirmed source.
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({}),
+    });
+
+    renderBillingPage();
+
+    expect(await screen.findByText('Unable to load billing data')).toBeInTheDocument();
+    expect(screen.queryByText('Beta')).not.toBeInTheDocument();
+    expect(screen.queryByText('no billing info')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('billing-overview')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+  });
+
+  it('shows the explicit unavailable state when a 200 response body is null', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: async () => null,
+    });
+
+    renderBillingPage();
+
+    expect(await screen.findByText('Unable to load billing data')).toBeInTheDocument();
+    expect(screen.queryByTestId('billing-overview')).not.toBeInTheDocument();
+  });
+
+  it('shows the explicit unavailable state when a 200 response is an error envelope', async () => {
+    // Some upstreams return an error object with HTTP 200; treat as unconfirmed.
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: async () => ({ error: { code: 'billing_unavailable', message: 'nope' } }),
+    });
+
+    renderBillingPage();
+
+    expect(await screen.findByText('Unable to load billing data')).toBeInTheDocument();
+    expect(screen.queryByTestId('billing-overview')).not.toBeInTheDocument();
+  });
+
+  it('shows the explicit unavailable state when a 200 body is not valid JSON', async () => {
+    mockFetch.mockResolvedValue({
+      ok: true,
+      json: async () => {
+        throw new SyntaxError('Unexpected token < in JSON');
+      },
+    });
+
+    renderBillingPage();
+
+    expect(await screen.findByText('Unable to load billing data')).toBeInTheDocument();
+    expect(screen.queryByTestId('billing-overview')).not.toBeInTheDocument();
+  });
+
   it('keeps the latest billing retry result when an older request resolves last', async () => {
     const staleRetry = createDeferredResponse();
     mockFetch
