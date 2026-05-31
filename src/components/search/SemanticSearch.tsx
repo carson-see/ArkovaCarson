@@ -51,7 +51,23 @@ function SimilarityBadge({ score }: { score: number }) {
   );
 }
 
+function statusLabel(status: string): string {
+  if (status === 'SECURED') return SEMANTIC_SEARCH_LABELS.STATUS_SECURED;
+  if (status === 'PENDING') return SEMANTIC_SEARCH_LABELS.STATUS_PENDING;
+  return SEMANTIC_SEARCH_LABELS.STATUS_UNAVAILABLE;
+}
+
+function statusClassName(status: string): string {
+  if (status === 'SECURED') return 'bg-emerald-500/10 text-emerald-400';
+  if (status === 'PENDING') return 'bg-amber-500/10 text-amber-400';
+  return 'bg-gray-500/10 text-gray-400';
+}
+
 function SearchResultCard({ result }: { result: SemanticSearchResult }) {
+  const resultTitle =
+    result.fileName || result.credentialType || SEMANTIC_SEARCH_LABELS.DOCUMENT_LABEL;
+  const friendlyStatusLabel = statusLabel(result.status);
+
   return (
     <Link
       to={ROUTES.RECORD_DETAIL.replace(':id', result.anchorId)}
@@ -64,7 +80,7 @@ function SearchResultCard({ result }: { result: SemanticSearchResult }) {
           </div>
           <div className="min-w-0">
             <p className="font-medium text-foreground truncate">
-              {result.fileName || result.credentialType || 'Document'}
+              {resultTitle}
             </p>
             {result.credentialType && (
               <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground truncate">
@@ -81,15 +97,11 @@ function SearchResultCard({ result }: { result: SemanticSearchResult }) {
         <div className="flex shrink-0 flex-col items-end gap-1.5">
           <SimilarityBadge score={result.similarity} />
           <span
-            className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${
-              result.status === 'SECURED'
-                ? 'bg-emerald-500/10 text-emerald-400'
-                : result.status === 'PENDING'
-                  ? 'bg-amber-500/10 text-amber-400'
-                  : 'bg-gray-500/10 text-gray-400'
-            }`}
+            className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${statusClassName(
+              result.status,
+            )}`}
           >
-            {result.status}
+            {friendlyStatusLabel}
           </span>
         </div>
       </div>

@@ -29,6 +29,8 @@ const LABELS = {
   HEADING: 'Smart Search',
   PLACEHOLDER: 'Describe what you are looking for…',
   EMPTY_TITLE: 'No matching documents',
+  MATCH_STRENGTH_STRONG: 'Strong match',
+  STATUS_SECURED: 'Secured',
   ERROR_NO_CREDITS:
     'You are out of AI credits. Upgrade your plan to keep using smart search.',
   ERROR_UNAVAILABLE:
@@ -40,6 +42,18 @@ const LABELS = {
 /** Force the ENABLE_SEMANTIC_SEARCH flag value the page reads via get_flag RPC. */
 async function mockFlag(page: Page, enabled: boolean): Promise<void> {
   await page.route('**/rest/v1/rpc/get_flag*', async (route) => {
+    let payload: { p_flag_key?: string } | null = null;
+    try {
+      payload = route.request().postDataJSON() as { p_flag_key?: string };
+    } catch {
+      payload = null;
+    }
+
+    if (payload?.p_flag_key !== 'ENABLE_SEMANTIC_SEARCH') {
+      await route.continue();
+      return;
+    }
+
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -156,6 +170,13 @@ test.describe('Semantic Search panel', () => {
     });
     // Friendly percentage, never a raw vector score.
     await expect(individualPage.getByText('92% match')).toBeVisible();
+    await expect(
+      individualPage.getByLabel(LABELS.MATCH_STRENGTH_STRONG),
+    ).toBeVisible();
+    await expect(individualPage.getByText(LABELS.STATUS_SECURED)).toBeVisible();
+    await expect(
+      individualPage.getByText('SECURED', { exact: true }),
+    ).toHaveCount(0);
     await expect(individualPage.getByText(/0\.92/)).toHaveCount(0);
   });
 

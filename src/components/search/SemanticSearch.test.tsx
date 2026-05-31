@@ -53,6 +53,12 @@ function renderPanel() {
   );
 }
 
+function submitSearchForm(input: HTMLElement) {
+  const form = input.closest('form');
+  if (!form) throw new Error('Semantic search form not found');
+  fireEvent.submit(form);
+}
+
 describe('SemanticSearch (presentational)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -77,7 +83,7 @@ describe('SemanticSearch (presentational)', () => {
     renderComponent();
     const input = screen.getByPlaceholderText(SEMANTIC_SEARCH_LABELS.PLACEHOLDER);
     fireEvent.change(input, { target: { value: 'computer science degree' } });
-    fireEvent.submit(input.closest('form')!);
+    submitSearchForm(input);
 
     expect(mockSearch).toHaveBeenCalledWith('computer science degree');
   });
@@ -106,7 +112,52 @@ describe('SemanticSearch (presentational)', () => {
     expect(
       screen.getByLabelText(SEMANTIC_SEARCH_LABELS.MATCH_STRENGTH_STRONG),
     ).toBeInTheDocument();
-    expect(screen.getByText('SECURED')).toBeInTheDocument();
+    expect(
+      screen.getByText(SEMANTIC_SEARCH_LABELS.STATUS_SECURED),
+    ).toBeInTheDocument();
+    expect(screen.queryByText('SECURED')).not.toBeInTheDocument();
+  });
+
+  it('renders a friendly pending status label instead of the raw enum', () => {
+    mockResults = [
+      {
+        anchorId: 'a1',
+        publicId: 'p1',
+        fileName: 'diploma.pdf',
+        credentialType: 'DEGREE',
+        metadata: {},
+        status: 'PENDING',
+        createdAt: '2025-01-01T00:00:00Z',
+        similarity: 0.8,
+      },
+    ];
+
+    renderComponent();
+    expect(
+      screen.getByText(SEMANTIC_SEARCH_LABELS.STATUS_PENDING),
+    ).toBeInTheDocument();
+    expect(screen.queryByText('PENDING')).not.toBeInTheDocument();
+  });
+
+  it('does not render unknown raw status values', () => {
+    mockResults = [
+      {
+        anchorId: 'a1',
+        publicId: 'p1',
+        fileName: 'diploma.pdf',
+        credentialType: 'DEGREE',
+        metadata: {},
+        status: 'INTERNAL_RETRY',
+        createdAt: '2025-01-01T00:00:00Z',
+        similarity: 0.8,
+      },
+    ];
+
+    renderComponent();
+    expect(
+      screen.getByText(SEMANTIC_SEARCH_LABELS.STATUS_UNAVAILABLE),
+    ).toBeInTheDocument();
+    expect(screen.queryByText('INTERNAL_RETRY')).not.toBeInTheDocument();
   });
 
   it('never renders a raw vector score', () => {
@@ -267,7 +318,7 @@ describe('SemanticSearch (presentational)', () => {
     renderComponent();
     const input = screen.getByPlaceholderText(SEMANTIC_SEARCH_LABELS.PLACEHOLDER);
     fireEvent.change(input, { target: { value: 'nonexistent doc' } });
-    fireEvent.submit(input.closest('form')!);
+    submitSearchForm(input);
 
     expect(
       screen.getByText(SEMANTIC_SEARCH_LABELS.EMPTY_TITLE),
@@ -283,7 +334,7 @@ describe('SemanticSearch (presentational)', () => {
     renderComponent();
     const input = screen.getByPlaceholderText(SEMANTIC_SEARCH_LABELS.PLACEHOLDER);
     fireEvent.change(input, { target: { value: 'anything' } });
-    fireEvent.submit(input.closest('form')!);
+    submitSearchForm(input);
 
     expect(
       screen.queryByText(SEMANTIC_SEARCH_LABELS.EMPTY_TITLE),
