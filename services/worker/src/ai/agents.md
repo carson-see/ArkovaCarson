@@ -7,6 +7,11 @@ _Last updated: 2026-05-22_
 - `embeddings.ts` rejects duplicate native batch `anchorId` values before provider calls or bulk upserts, and converts native credit pre-check failures into per-item `BatchReEmbedResult` errors.
 - `gemini.ts` validates every `batchEmbedContents` vector as a finite 768-dimensional number array before returning embeddings.
 
+## 2026-06-01 SCRUM-2190 Embedding Table Isolation
+
+- `embeddings.ts` writes anchored credential vectors to `credential_embeddings` only. A low or zero row count there means few credentials have been embedded; it does not describe the separate public-record embedding pipeline.
+- `public_record_embeddings` is populated independently by the public-records pipeline and must not be used as a fallback target for credential embedding writes.
+
 ## 2026-05-20 Gemini Golden Lane Updates
 
 - `fallback-chain.ts` emits sanitized `provider_fallback` observer events when a retriable provider failure routes to the next provider. Events include provider names and a classified reason only; never prompt text, stripped text, fingerprints, or raw provider error bodies.
