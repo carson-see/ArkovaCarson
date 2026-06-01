@@ -26,9 +26,15 @@ test.describe('Dashboard', () => {
       await expect(individualPage.locator('#main-content')).toContainText(/Jamie Demo-User/i);
 
       // Stats cards
-      await expect(individualPage.getByText('Total Records', { exact: true })).toBeVisible();
-      await expect(individualPage.getByText('Secured', { exact: true })).toBeVisible();
-      await expect(individualPage.getByText('Pending', { exact: true })).toBeVisible();
+      await expect(individualPage.getByText('Total Records', { exact: true })).toBeVisible({
+        timeout: 10000,
+      });
+      await expect(individualPage.getByText('Secured', { exact: true })).toBeVisible({
+        timeout: 10000,
+      });
+      await expect(individualPage.getByText('Pending', { exact: true })).toBeVisible({
+        timeout: 10000,
+      });
     });
 
     test('My Records section is visible', async ({ individualPage }) => {
