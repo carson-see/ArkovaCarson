@@ -1,6 +1,15 @@
 {
-  "registry_version": "1.0.0",
-  "updated_at": "2026-04-27T00:00:00Z",
-  "_comment": "SCRUM-900 PROOF-SIG-01 — public proof-bundle signing keys. Retired keys stay listed so historical bundles remain verifiable. Rotate by editing this file + redeploying the worker; the /.well-known/arkova-keys.json endpoint serves it. Active key PEMs MUST come from `gcloud kms keys versions get-public-key` after the underlying KMS key is provisioned in arkova1 — do NOT commit prod-active keys until that step is done.",
-  "keys": []
+  "registry_version": "1.1.0",
+  "updated_at": "2026-06-01T00:00:00Z",
+  "_comment": "SCRUM-900 PROOF-SIG-01 / SCRUM-1922 — public proof-bundle + did:web signing keys. Retired keys stay listed so historical bundles remain verifiable. Rotate by editing this file + redeploying the worker; /.well-known/arkova-keys.json and /.well-known/did.json serve it. Active key PEM is the PUBLIC half of arkova1 KMS key projects/arkova1/locations/global/keyRings/arkova-signing/cryptoKeys/proof-signing version 1 (EC_SIGN_ED25519); the private key never leaves KMS. Exported via `gcloud kms keys versions get-public-key`.",
+  "keys": [
+    {
+      "id": "arkova-proof-2026-q2",
+      "alg": "Ed25519",
+      "status": "active",
+      "public_key_pem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAE95nHQxUy2VbBqdFSiVmmbz5Y1ChmF5LLekUikHtX2I=\n-----END PUBLIC KEY-----\n",
+      "created_at": "2026-06-01T00:00:00Z",
+      "notes": "PUBLIC key of arkova1 KMS projects/arkova1/locations/global/keyRings/arkova-signing/cryptoKeys/proof-signing/cryptoKeyVersions/1 (EC_SIGN_ED25519). Private key is non-exportable, KMS-resident. Wire PROOF_SIGNING_KMS_KEY to this resource + PROOF_SIGNING_KEY_ID=arkova-proof-2026-q2 for signed proof bundles."
+    }
+  ]
 }
