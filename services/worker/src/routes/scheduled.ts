@@ -20,6 +20,7 @@ import { processMonthlyCredits } from '../jobs/credit-expiry.js';
 import { sweepExpiredAnchors, makeAnchorExpirySweepDb } from '../jobs/anchorExpirySweep.js';
 import { detectReorgs, monitorStuckTransactions, rebroadcastDroppedTransactions, consolidateUtxos, monitorFeeRates } from '../jobs/chain-maintenance.js';
 import { recoverStuckBroadcasts } from '../jobs/broadcast-recovery.js';
+import { runStuckAnchorCheck } from '../jobs/stuck-anchor-monitor.js';
 import { trackOperation } from './lifecycle.js';
 import { withCronMonitoring } from '../utils/sentry.js';
 
@@ -34,6 +35,10 @@ const ANCHOR_TABLE_IN_PROCESS_JOBS = new Set([
   'detect-reorgs',
   'monitor-stuck-transactions',
   'rebroadcast-dropped-transactions',
+  // SCRUM-2226: reads the anchors table (oldest-PENDING probe). Skipped under
+  // the maintenance flag alongside the other anchor-table jobs so a paused
+  // pipeline during a migration window doesn't trip a spurious stall page.
+  'check-stuck-anchors',
 ]);
 
 function scheduleInProcess(jobName: string, expression: string, task: CronTask): void {
@@ -159,6 +164,23 @@ export function setupScheduledJobs(chainInitialized: boolean): void {
       logger.info(result, 'Anchor expiry sweep complete');
     } catch (error) {
       logger.error({ error }, 'Anchor expiry sweep failed');
+    }
+  });
+
+  // SCRUM-2226: stuck anchor monitor — hourly. Pages (error log + Sentry) when
+  // the oldest non-deleted PENDING anchor exceeds STUCK_ANCHOR_ALERT_HOURS
+  // (default 24h). In-process backup; prod runs via Cloud Scheduler hitting
+  // /jobs/check-stuck-anchors. The 2026-06-01 daily-flush 401 blackout drained
+  // nothing for ~6 weeks with no alert — this is the missing watchdog.
+  scheduleInProcess('check-stuck-anchors', '0 * * * *', async () => {
+    logger.debug('Running stuck anchor monitor');
+    try {
+      const result = await trackOperation(runStuckAnchorCheck(db));
+      if (!result.healthy) {
+        logger.warn(result, 'Stuck anchor monitor: pipeline stall detected');
+      }
+    } catch (error) {
+      logger.error({ error }, 'Stuck anchor monitor cron failed');
     }
   });
 

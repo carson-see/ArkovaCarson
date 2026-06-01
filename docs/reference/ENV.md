@@ -247,6 +247,12 @@ TREASURY_ALERT_EMAIL=                # single recipient address
 # Default 50. Read by both cron dispatcher + /api/treasury/health endpoint.
 TREASURY_LOW_BALANCE_USD=50
 
+# SCRUM-2226 — stuck anchor monitor (2026-06-01 daily-flush blackout incident).
+# Age (hours) above which the oldest non-deleted PENDING anchor trips an
+# error-level log + Sentry page from /jobs/check-stuck-anchors (and the hourly
+# in-process backup). Default 24. Invalid / non-positive values fall back to 24.
+STUCK_ANCHOR_ALERT_HOURS=24
+
 # ─── SCRUM-1162 — Middesk KYB (organization verification) ───
 # Per 2026-04-24 decision these routes are NOT behind a feature flag.
 # Missing MIDDESK_API_KEY surfaces as 503 at POST /api/v1/org-kyb/:orgId/start.
