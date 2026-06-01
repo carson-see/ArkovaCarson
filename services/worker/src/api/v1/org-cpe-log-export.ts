@@ -118,7 +118,7 @@ export const orgCpeLogExportRateLimiter = rateLimit({
   windowMs: 60 * 60 * 1000,
   maxRequests: 10,
   scope: 'org-cpe-log-export',
-  keyGenerator: (req: Request) => `org-cpe-log-export:${req.authUserId ?? req.ip ?? 'unknown'}`,
+  keyGenerator: (req: Request) => req.authUserId ?? req.ip ?? 'unknown',
 });
 
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
