@@ -111,6 +111,8 @@ export interface ExportPdfRecord {
 
 const RECORD_CELL_SEPARATOR = '   |   ';
 const PDF_PAGE_BREAK_Y = 255;
+/** Vertical advance per rendered title line (pt), used to wrap multi-line titles. */
+const TITLE_LINE_HEIGHT = 5;
 
 /**
  * Shared jsPDF scaffolding for the compliance-log exporters. Owns the
@@ -193,8 +195,14 @@ export class ExportPdfBuilder {
 
       this.doc.setFontSize(11);
       this.doc.setFont('helvetica', 'bold');
-      this.doc.text(title || '(untitled)', this.margin, this.y, { maxWidth: this.contentWidth });
-      this.y += 5;
+      // Wrap the title explicitly and advance `y` by the rendered line count so a
+      // long multi-line title does not overlap the detail lines below it.
+      // `maxWidth` alone wraps the glyphs but does NOT report how many lines were
+      // drawn, leaving the cursor under the first line (mirrors the CPE export's
+      // standalone fix — PR #1029).
+      const titleLines: string[] = this.doc.splitTextToSize(title || '(untitled)', this.contentWidth);
+      this.doc.text(titleLines, this.margin, this.y);
+      this.y += titleLines.length * TITLE_LINE_HEIGHT;
 
       this.doc.setFontSize(8);
       this.doc.setFont('helvetica', 'normal');
