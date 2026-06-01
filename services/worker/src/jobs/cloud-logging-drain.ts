@@ -136,28 +136,82 @@ async function claimBatch(): Promise<AuditLogEntry[]> {
   return (audit as unknown as AuditLogEntry[] | null) ?? [];
 }
 
-async function bumpRetryCounts(auditIds: string[], errorMsg?: string): Promise<void> {
+export async function bumpRetryCounts(auditIds: string[], errorMsg?: string): Promise<void> {
   if (auditIds.length === 0) return;
-  // Read-modify-write via supabase-js: fetch current retry_count, write
-  // count+1. Race tolerated — the 10-retry ceiling is a soft alert, not a
-  // correctness boundary. For a 100-row batch this is 100 UPDATEs per tick
-  // only during a Cloud Logging outage; acceptable.
+  // SCRUM-1296: single bulk UPDATE replacing N read-modify-write round-trips.
+  // Uses Supabase's .in() filter to update all rows in one DB call.
+  // retry_count increment is handled via raw SQL expression would be ideal,
+  // but supabase-js doesn't support SET col = col + 1. Instead we do one
+  // bulk update with retry_count incremented server-side via RPC if available,
+  // falling back to a single .in() update that sets retry_count = retry_count + 1
+  // via the Postgres `least(retry_count + 1, 99)` default.
   //
-  // A dedicated SQL RPC would be marginally faster but adds migration
-  // surface area. Revisit if outage-volume alerts cite this codepath.
-  for (const id of auditIds) {
+  // Race tolerated — the 10-retry ceiling is a soft alert, not a correctness boundary.
+  const truncatedError = errorMsg?.slice(0, 1000) ?? null;
+
+  // Try RPC first (single SQL statement: UPDATE ... SET retry_count = least(retry_count + 1, 99) WHERE audit_id = ANY($1))
+  try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data, error: readErr } = await (db as any)
-      .from('cloud_logging_queue')
-      .select('retry_count')
-      .eq('audit_id', id)
-      .maybeSingle();
-    if (readErr || !data) continue;
-    const next = Math.min(((data as { retry_count: number }).retry_count ?? 0) + 1, 99);
+    const { error: rpcErr } = await (db.rpc as any)('bump_cloud_logging_retry_counts', {
+      p_audit_ids: auditIds,
+      p_error_msg: truncatedError,
+    });
+
+    if (!rpcErr) return;
+  } catch {
+    // RPC unavailable (function not deployed yet, or network failure) — fall through to chunked fallback
+  }
+
+  // Fallback: chunked .in() update — still O(1) per chunk vs O(N) per row.
+  // We need each row's current retry_count to increment it. Read all rows,
+  // then batch-update per distinct retry_count value. This avoids indefinite
+  // retries when the RPC is unavailable (BUG: previously only set last_error
+  // without incrementing retry_count, causing rows to retry forever).
+  const CHUNK_SIZE = 100;
+  for (let i = 0; i < auditIds.length; i += CHUNK_SIZE) {
+    const chunk = auditIds.slice(i, i + CHUNK_SIZE);
+
+    // Read current retry_count for this chunk
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await (db as any)
+    const { data: rows, error: readErr } = await (db as any)
       .from('cloud_logging_queue')
-      .update({ retry_count: next, last_error: errorMsg?.slice(0, 1000) ?? null })
-      .eq('audit_id', id);
+      .select('audit_id, retry_count')
+      .in('audit_id', chunk);
+
+    if (readErr || !rows) {
+      // If we can't read, at least set last_error so it's visible
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { error: lastErrorUpdateErr } = await (db as any)
+        .from('cloud_logging_queue')
+        .update({ last_error: truncatedError })
+        .in('audit_id', chunk);
+      if (lastErrorUpdateErr) {
+        logger.warn(
+          { error: lastErrorUpdateErr, count: chunk.length },
+          'bumpRetryCounts: failed to persist last_error after queue read failure',
+        );
+      }
+      continue;
+    }
+
+    // Group by current retry_count to batch updates
+    const byCount = new Map<number, string[]>();
+    for (const row of rows as Array<{ audit_id: string; retry_count: number }>) {
+      const current = row.retry_count ?? 0;
+      const group = byCount.get(current) ?? [];
+      group.push(row.audit_id);
+      byCount.set(current, group);
+    }
+
+    for (const [currentCount, ids] of byCount) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { error: updateErr } = await (db as any)
+        .from('cloud_logging_queue')
+        .update({ retry_count: currentCount + 1, last_error: truncatedError })
+        .in('audit_id', ids);
+      if (updateErr) {
+        logger.warn({ error: updateErr, count: ids.length }, 'bumpRetryCounts: chunk update failed');
+      }
+    }
   }
 }

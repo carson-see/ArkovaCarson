@@ -53,6 +53,18 @@ describe('deductOrgCredit (SCRUM-1170-B)', () => {
     });
   });
 
+  it('surfaces idempotent=true when the RPC reused an existing deduction', async () => {
+    mockConfig.enableOrgCreditEnforcement = true;
+    mockRpc.mockResolvedValueOnce({
+      data: { success: true, balance: 99, deducted: 0, idempotent: true },
+      error: null,
+    });
+
+    const out = await deductOrgCredit(db, ORG, 1, 'rule.fast_track_anchor', 'execution-id');
+
+    expect(out).toEqual({ allowed: true, balance: 99, idempotent: true });
+  });
+
   it('surfaces insufficient_credits with balance + required for the API 402 body', async () => {
     mockConfig.enableOrgCreditEnforcement = true;
     mockRpc.mockResolvedValueOnce({

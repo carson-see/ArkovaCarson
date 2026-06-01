@@ -441,11 +441,16 @@ async function fetchNonPriorityRecords(
 }
 
 async function fetchUnanchoredPublicRecords(client: SupabaseClient): Promise<PipelinePublicRecord[]> {
-  const records: PipelinePublicRecord[] = [];
-  for (const source of PRIORITY_SOURCES) {
-    if (records.length >= PUBLIC_RECORD_BATCH_SIZE) break;
-    records.push(...await fetchRecordsForSource(client, source, PUBLIC_RECORD_BATCH_SIZE - records.length));
-  }
+  // Fetch all priority sources in parallel (SCRUM-1296 N+1 fan-out cleanup).
+  // Each source is independent, so we use Promise.all instead of sequential loop.
+  // Cap per-source at a fair share of the batch size to avoid over-fetching.
+  const perSourceCap = Math.ceil(PUBLIC_RECORD_BATCH_SIZE / PRIORITY_SOURCES.length);
+  const sourceResults = await Promise.all(
+    PRIORITY_SOURCES.map((source) => fetchRecordsForSource(client, source, perSourceCap)),
+  );
+
+  // Merge and cap total at PUBLIC_RECORD_BATCH_SIZE
+  const records: PipelinePublicRecord[] = sourceResults.flat().slice(0, PUBLIC_RECORD_BATCH_SIZE);
 
   if (records.length < PUBLIC_RECORD_BATCH_SIZE) {
     records.push(...await fetchNonPriorityRecords(client, PUBLIC_RECORD_BATCH_SIZE - records.length));
@@ -486,13 +491,18 @@ async function findExistingAnchor(
   ownerId: string,
   fingerprint: string,
 ): Promise<{ id: string; fingerprint: string } | null> {
-  const { data: existing } = await client
+  const { data: existing, error } = await client
     .from('anchors')
     .select('id, fingerprint')
     .eq('user_id', ownerId)
     .eq('fingerprint', fingerprint)
     .is('deleted_at', null)
-    .single();
+    .limit(1)
+    .maybeSingle();
+  if (error) {
+    logger.error({ error, ownerId, fingerprint }, 'findExistingAnchor query failed');
+    return null;
+  }
   return (existing as { id: string; fingerprint: string } | null) ?? null;
 }
 

@@ -24,6 +24,8 @@ export interface DeductionResult {
   error?: 'insufficient_credits' | 'org_not_initialized' | 'rpc_failure';
   /** Remaining balance after the deduction, or current balance on failure. */
   balance?: number;
+  /** True when the RPC reused a prior deduction for the same reference id. */
+  idempotent?: boolean;
   /** Amount that was requested. Echoed back for the API response body. */
   required?: number;
   /** When `error === 'rpc_failure'`, the underlying message (sanitized). */
@@ -36,6 +38,7 @@ interface DeductOrgCreditRpcRow {
   success: boolean;
   balance?: number;
   deducted?: number;
+  idempotent?: boolean;
   required?: number;
   error?: string;
 }
@@ -85,7 +88,11 @@ export async function deductOrgCredit(
     return { allowed: false, error: 'rpc_failure', message: 'empty response' };
   }
   if (row.success === true) {
-    return { allowed: true, balance: row.balance };
+    return {
+      allowed: true,
+      balance: row.balance,
+      ...(row.idempotent === true ? { idempotent: true } : {}),
+    };
   }
   if (row.error === 'insufficient_credits') {
     return {

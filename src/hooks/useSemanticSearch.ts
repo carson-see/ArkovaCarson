@@ -9,6 +9,7 @@
 import { useState, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 import { WORKER_URL } from '../lib/workerClient';
+import { SEMANTIC_SEARCH_LABELS } from '../lib/copy';
 
 export interface SemanticSearchResult {
   anchorId: string;
@@ -57,7 +58,7 @@ export function useSemanticSearch(): UseSemanticSearchReturn {
         } = await supabase.auth.getSession();
 
         if (!session?.access_token) {
-          setError('Authentication required');
+          setError(SEMANTIC_SEARCH_LABELS.ERROR_AUTH);
           return;
         }
 
@@ -77,19 +78,25 @@ export function useSemanticSearch(): UseSemanticSearchReturn {
           },
         );
 
+        // 402 — org has run out of AI credits (worker `insufficient_credits`).
         if (response.status === 402) {
-          setError('No AI credits remaining. Upgrade your plan for more credits.');
+          setError(SEMANTIC_SEARCH_LABELS.ERROR_NO_CREDITS);
           return;
         }
 
+        // 503 — the aiSemanticSearchGate middleware returns service_unavailable
+        // when the flag is off OR the flag lookup fails closed (and a downstream
+        // AI provider outage would surface the same way). Keep the copy honest:
+        // it's temporarily unavailable, without asserting a specific cause.
         if (response.status === 503) {
-          setError('Semantic search is not currently enabled.');
+          setError(SEMANTIC_SEARCH_LABELS.ERROR_UNAVAILABLE);
           return;
         }
 
         if (!response.ok) {
-          const body = await response.json().catch(() => ({}));
-          setError(body.message ?? 'Search failed');
+          // Do NOT surface raw worker error bodies — they can leak engineering
+          // copy (banned per Constitution §1.3). Use friendly generic copy.
+          setError(SEMANTIC_SEARCH_LABELS.ERROR_GENERIC);
           return;
         }
 
@@ -97,10 +104,13 @@ export function useSemanticSearch(): UseSemanticSearchReturn {
         setResults(data.results);
         setCreditsRemaining(data.creditsRemaining);
       } catch (err) {
-        if (err instanceof TypeError && err.message.includes('fetch')) {
-          setError('Unable to connect to the server. Please check your connection and try again.');
+        // A failed fetch surfaces as a TypeError in browsers ("Failed to
+        // fetch" / "NetworkError"). Treat any TypeError as a connectivity
+        // problem; never echo a raw error message into user-visible copy.
+        if (err instanceof TypeError) {
+          setError(SEMANTIC_SEARCH_LABELS.ERROR_NETWORK);
         } else {
-          setError(err instanceof Error ? err.message : 'Search failed');
+          setError(SEMANTIC_SEARCH_LABELS.ERROR_GENERIC);
         }
       } finally {
         setIsSearching(false);

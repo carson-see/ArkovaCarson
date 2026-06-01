@@ -3,11 +3,14 @@
 CI gate scripts. Each one fails the build with a structured exit code + actionable message when a guardrail trips. Run via `npx tsx scripts/ci/<name>.ts` from a CI workflow.
 
 ## Files
+
 - **`check-staging-evidence.ts`** — enforces CLAUDE.md §1.11 / §1.12 staging soak evidence on every PR. Path-based detector classifies the touched files into Tier T1/T2/T3, then verifies the PR body declares the required tier and includes the matching required fields. Field regexes accept optional markdown checkbox prefixes (`- [x]` / `- [ ]`) and use `[^\S\n]*` for horizontal-only whitespace to prevent cross-line value capture (PR #801).
   - **Staging integrity fields (T2/T3):** PR body evidence must name `PR head SHA`, `Base SHA`, `Staging project ref`, `Cloud Run service/tag URL`, `Image digest`, `Evidence scope`, `Preflight timestamp`, and `Preflight result`. The gate rejects copied evidence when the PR head/base SHA differs, rejects diagnostic-only scope, and requires the captured preflight result to include `environment_type=clean_mirror`.
   - **`isStagingToolingOnly()` allowlist** (per-tool meta-PRs that don't need a soak): `scripts/staging/`, `scripts/ci/check-staging-evidence(.test).ts`, `scripts/ci/check-staging-gcloud-policy(.test).ts`, `scripts/ci/lib/`, `scripts/gcp-setup/`, `docs/staging/`, `docs/ops/gemini-model-upgrade.md`, `.github/workflows/ci.yml`, `.github/workflows/staging-evidence.yml`, `CLAUDE.md`, `HANDOFF.md`, `.gitignore`, `.claude/settings.json`, `.claude/hooks/`, `package.json`, `package-lock.json`, `agents.md`.
   - Also allowlisted (PR #798): `eslint-rules/`, `**/eslint.config.(js|cjs|mjs)` — lint config is dev-time tooling with no runtime impact.
   - **Residual-risk exception (PR #924):** when preflight is not `clean_mirror`, a `### Residual-risk note` section with 5 required sub-fields (Contamination type, Affected rows, Impact on this PR, Reason not cleaned, Approved by) satisfies the gate. Implements the CLAUDE.md §1.11A escape valve that was previously uncodified.
+  - **T2/T3 deploy-evidence value validation (PR #980):** `requiredValueErrors()` previously began with `if (tier !== 'T1') return []`, so it ran only for T1 — at T2/T3 the deploy fields were label-presence-only (via `missingFields()`) and a PR could pass with every artifact left as `PENDING`. T2/T3 now run the stricter analog: concrete deploy artifacts (`Worker revision`, `Image digest`, `Staging deploy log id`, `Cloud Run service/tag URL`) reject empty, `PENDING`/`TBD`-style placeholders, **and** `N/A`; `Cloud Run service/tag URL` must additionally contain a URL; remaining evidence fields (`Staging branch`, `Staging project ref`, `E2E result`, `Migration applied`, `Rollback rehearsed`, and the T3 trigger/flush/isolation fields) reject empty + placeholders while still allowing legitimate `N/A`/`none` (e.g. `Migration applied: none`). Fields with dedicated validators (SHAs, evidence scope, preflight, soak timestamps) are skipped here to avoid duplicate errors. T1 logic is byte-for-byte unchanged.
+  - **Residual-risk `Approved by:` must be real (PR #980):** `hasResidualRiskException()` previously checked `Approved by:` for label presence only, so a blank or placeholder approver satisfied the exception and waived both the `clean_mirror` preflight and the soak-duration minimum. It now requires a non-empty, non-placeholder value (rejects empty, `pending`/`tbd`, and `n/a`-style answers).
   - **No override label exists.** The `staging-soak-skip` label was destroyed 2026-05-07 (PR #733). Real CI/agent-config-only PRs must list every touched file in the allowlist or they fail the gate.
 - **`check-npm-install-policy.ts`** — blocks `npm ci` / `npm install` in GitHub Actions workflows and shell deploy helpers unless lifecycle scripts are suppressed with `--ignore-scripts` or a nearby `install-scripts-ok:` comment gives an explicit exception reason.
 - **`check-anchor-index-justification.ts`** — blocks new `public.anchors` indexes in Supabase migrations unless the migration has an adjacent `anchor-index-justification:` comment with a concrete reason.
@@ -21,15 +24,27 @@ CI gate scripts. Each one fails the build with a structured exit code + actionab
 - `pr841-ledger-remediation.test.ts` — incident regression test pinning the cleaned 0313-0315 migration order after production used `0313` for anchors index consolidation.
 - `feedback-rules/` — orchestrator + per-rule scripts (R0-7 / SCRUM-1253) for `memory/feedback_*.md` rules.
 
+- **`check-credential-type-drift.ts`** (SCRUM-2013) — compares every file containing credential type enums against the canonical `ANCHOR_CREDENTIAL_TYPES` in `services/worker/src/lib/credential-evidence.ts`, including `SecureDocumentDialog.tsx` fuzzy AI type-map target values. Fails the build when any location has missing or extra values compared with the source of truth.
+
 - **`staging-honesty-preflight.ts`** (SCRUM-1668) — queries a Supabase staging database and reports whether the environment is a clean mirror, has soak artifacts, or is fixture-seeded. 8 checks: (1) PR-only / staging-only migration rows, (2) duplicate names, (3) duplicate versions, (4) known artifact rows, (5) missing SUBMITTED anchors, (6) prod ledger divergence, (7) org topology — single-tenant prod vs multi-org staging seeds, (8) prod facts — pg_cron vacuum-anchors exists, refresh_pipeline_dashboard_cache exists, and refresh-pipeline-dashboard-cache is scheduled. The migration ledger falls back to the Supabase Management API when `supabase_migrations` is hidden from PostgREST; `--prod-project-ref` + `--management-api-token` / `SUPABASE_ACCESS_TOKEN` query the live prod ledger and prod facts. Checks 7–8 are optional (backward-compatible), with `--prod-facts` CLI fallback. 66 tests in `staging-honesty-preflight.test.ts`.
 
+## `snapshots/`
+Baseline/snapshot data consumed by gate scripts (one source-of-truth fixture per gate).
+- `prod-tables.json`, `worker-env-adhoc-baseline.json`, `rls-policy-coverage-baseline.json`, `views-security-invoker-baseline.json`, `migration-prefix-baseline.json` — see the gate that reads each.
+- **`copy-terms-baseline.json`** (SCRUM-2148 / SCRUM-2149) — grandfather baseline for `scripts/check-copy-terms.ts` (`npm run lint:copy`, defined one level up in `scripts/`). Records ONLY pre-existing copy-term/raw-enum violations that can't be fixed in their PR (locked file or another in-flight track). The linter fails on NEW violations only; match key = `file`+`line`. Each entry needs a `reason`. Full protocol in `scripts/agents.md` → "Copy-term linter". Never baseline a self-introduced violation.
+
 ## Conventions
+
 - Exit 0 = pass; exit 1 = fail with actionable error to stderr.
 - Tests colocate as `<name>.test.ts` and run in the main worker vitest config.
 - Fail messages must tell the operator (a) what failed, (b) why it matters, (c) how to fix or override.
 
 ## Recent Changes
+- 2026-05-30 SCRUM-2149/2148: hardened `scripts/check-copy-terms.ts` (coverage → src/lib + src/hooks + packages/embed/src; §1.3 term parity testnet/mainnet/utxo/broadcast; structural false-positive filter; raw DB-enum render heuristic) and added `snapshots/copy-terms-baseline.json` (14 grandfathered pre-existing violations). 33 new unit tests; `lint:copy` green via at-source fixes + baseline.
+- 2026-05-30 PR #867: refreshed `snapshots/prod-tables.json` after prod 0326 added `org_credit_deductions`.
+- 2026-05-30 PR #980: closed two defense-in-depth gaps in `check-staging-evidence.ts` — T2/T3 deploy-evidence fields are now value-checked (not just label-present), and the residual-risk `Approved by:` must name a real approver. T1 logic unchanged; no existing check loosened. 14 new tests (90/90 green).
 - 2026-05-26 PR #884: added `services/edge/package.json` to staging-tooling allowlist (edge-only, not worker).
 
 ## Open work
+
 - PR #733 (`destroy-staging-soak-skip`) — still in flight; awaits merge.

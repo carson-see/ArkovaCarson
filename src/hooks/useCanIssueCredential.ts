@@ -189,7 +189,7 @@ async function fetchOrgGateRow(orgId: string): Promise<OrgGateRow | null> {
 
 function requireQueryId(id: string | null | undefined, label: string): string {
   if (!id) {
-    throw new Error(`Missing ${label} id for Issue Credential gate query`);
+    throw new Error(`Missing ${label} id for credential issuance gate query`);
   }
   return id;
 }

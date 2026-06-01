@@ -280,14 +280,43 @@ require_promote_authorization() {
 }
 
 check_image_exists() {
-  info "checking Artifact Registry image exists..."
-  if ! gcloud artifacts docker images describe "$IMAGE" \
-    --project="$PROJECT" \
-    --format="value(image_summary.fully_qualified_digest)" >/dev/null 2>&1; then
-    echo "ERROR: image does not exist or is not readable: $IMAGE" >&2
-    echo "       Build/push the worker image before running the staging deploy wrapper." >&2
-    exit 1
+  # Artifact Registry does not index a freshly-pushed multi-arch/attestation
+  # manifest synchronously: a `describe` issued in the few seconds after `docker
+  # push` returns NOT_FOUND even though the push succeeded. The deploy-staging
+  # workflow's build->deploy gap is ~9s, so a single check fails deterministically
+  # on every fresh push. Retry over a bounded window to absorb the indexing lag.
+  local attempts="${IMAGE_READABILITY_ATTEMPTS:-8}"
+  local delay="${IMAGE_READABILITY_DELAY_SECONDS:-5}"
+  local i
+  info "checking Artifact Registry image exists (up to ${attempts} attempts)..."
+  for ((i = 1; i <= attempts; i++)); do
+    if gcloud artifacts docker images describe "$IMAGE" \
+      --project="$PROJECT" \
+      --format="value(image_summary.fully_qualified_digest)" >/dev/null 2>&1; then
+      return 0
+    fi
+    if [ "$i" -lt "$attempts" ]; then
+      info "image not indexed yet (attempt ${i}/${attempts}); retrying in ${delay}s..."
+      sleep "$delay"
+    fi
+  done
+  # The AR API `describe` view is not just slow to index — for the CI deploy
+  # service account it never resolves a freshly-pushed manifest within the
+  # window (every CI deploy failed here; all successful deploys were local).
+  # The Docker registry v2 API, however, is immediately consistent and is the
+  # exact path the push went through, so the identity that just pushed can
+  # always read the manifest back. Fall back to it before giving up.
+  if command -v docker >/dev/null 2>&1; then
+    info "AR describe did not resolve; falling back to docker manifest inspect..."
+    if docker manifest inspect "$IMAGE" >/dev/null 2>&1; then
+      info "image confirmed via Docker registry manifest inspect."
+      return 0
+    fi
+    info "docker manifest inspect could not read the image either."
   fi
+  echo "ERROR: image does not exist or is not readable after ${attempts} attempts: $IMAGE" >&2
+  echo "       Build/push the worker image before running the staging deploy wrapper." >&2
+  exit 1
 }
 
 check_recent_revision_collision() {

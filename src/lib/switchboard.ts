@@ -22,7 +22,10 @@ export const FLAGS = {
   MAINTENANCE_MODE: false,
   ENABLE_BATCH_ANCHORING: false,
   ENABLE_AI_EXTRACTION: true,
-  ENABLE_SEMANTIC_SEARCH: true,
+  // SCRUM-1958 — default OFF in code so non-prod (local dev / preview) hides
+  // smart search until the credential_embeddings backfill lands. Production is
+  // controlled by the switchboard_flags row, not this code default.
+  ENABLE_SEMANTIC_SEARCH: false,
   ENABLE_AI_FRAUD: true,
   ENABLE_FRAUD_DETECTION: false,
   ENABLE_AI_REPORTS: true,

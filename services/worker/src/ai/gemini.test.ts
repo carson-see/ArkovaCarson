@@ -67,6 +67,39 @@ describe('GeminiProvider', () => {
     });
   });
 
+  describe('generateExtractionJson (ENABLE_AI_EXTRACTION gate)', () => {
+    it('throws when AI extraction is disabled (no raw-mode bypass)', async () => {
+      const original = process.env.ENABLE_AI_EXTRACTION;
+      process.env.ENABLE_AI_EXTRACTION = 'false';
+      try {
+        const provider = new GeminiProvider('test-key');
+        await expect(
+          provider.generateExtractionJson({ systemPrompt: 'sys', userPrompt: 'user' }),
+        ).rejects.toThrow('ENABLE_AI_EXTRACTION');
+        // The model must never be invoked when the gate is closed.
+        expect(mockGenerateContent).not.toHaveBeenCalled();
+      } finally {
+        process.env.ENABLE_AI_EXTRACTION = original;
+      }
+    });
+
+    it('runs when AI extraction is enabled', async () => {
+      const original = process.env.ENABLE_AI_EXTRACTION;
+      process.env.ENABLE_AI_EXTRACTION = 'true';
+      mockGenerateContent.mockResolvedValue({
+        response: { text: () => '{"courseId":"X"}', usageMetadata: { totalTokenCount: 12 } },
+      });
+      try {
+        const provider = new GeminiProvider('test-key');
+        const out = await provider.generateExtractionJson({ systemPrompt: 'sys', userPrompt: 'user' });
+        expect(out.text).toContain('courseId');
+        expect(mockGenerateContent).toHaveBeenCalledTimes(1);
+      } finally {
+        process.env.ENABLE_AI_EXTRACTION = original;
+      }
+    });
+  });
+
   describe('extractMetadata', () => {
     const request: ExtractionRequest = {
       strippedText: 'University of Michigan\nBachelor of Science\nComputer Science\nIssued: 2024-05-15',

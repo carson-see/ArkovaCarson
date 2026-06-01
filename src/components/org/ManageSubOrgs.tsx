@@ -7,7 +7,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import {
-  Building2, Check, X, Loader2, Link2, Plus, Users2,
+  Building2, Check, X, Loader2, Link2, Plus, Users2, AlertTriangle, RefreshCw,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
@@ -34,6 +34,19 @@ interface ManageSubOrgsProps {
   orgId: string;
 }
 
+/**
+ * SCRUM-1999 sibling — local copy constants for the sub-orgs load-error state.
+ * `src/lib/copy.ts` (the canonical home for UI strings, CLAUDE.md §1.3) is locked
+ * under a concurrent PR for this change, so these strings live here and stay free
+ * of banned terms (`npm run lint:copy` clean). Promote into `SUB_ORG_LABELS` when
+ * that file is next touched.
+ */
+const SUB_ORG_STATE_COPY = {
+  LOAD_ERROR_TITLE: "Couldn't load affiliated organizations",
+  LOAD_ERROR_DESC: 'Something went wrong while loading affiliated organizations. Please try again.',
+  RETRY: 'Try Again',
+} as const;
+
 async function getAuthHeaders(): Promise<Record<string, string>> {
   const { data: { session } } = await supabase.auth.getSession();
   if (!session?.access_token) throw new Error('Not authenticated');
@@ -50,23 +63,50 @@ export function ManageSubOrgs({ orgId }: ManageSubOrgsProps) {
   const [affiliateDomain, setAffiliateDomain] = useState('');
   const [affiliateAdminEmail, setAffiliateAdminEmail] = useState('');
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
+  const [retrying, setRetrying] = useState(false);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
 
-  const fetchSubOrgs = useCallback(async () => {
+  // `isInitialLoad` gates the full-panel error state to the mount fetch and the
+  // explicit Retry. Action refetches (create/approve/revoke) pass `false`: a
+  // transient post-action refetch failure must not wipe the list or raise the
+  // banner — those errors are surfaced by the action handlers via toast.
+  const fetchSubOrgs = useCallback(async (isInitialLoad = true) => {
     try {
       const headers = await getAuthHeaders();
       const url = `${WORKER_URL}/api/v1/org/sub-orgs?orgId=${encodeURIComponent(orgId)}`;
       const response = await fetch(url, { headers });
-      if (!response.ok) return;
+      if (!response.ok) {
+        // SCRUM-1999 sibling: surface the load failure explicitly instead of
+        // silently returning, which left an empty list with no signal — the
+        // outage/denial masqueraded as the "no affiliates yet" empty state.
+        if (isInitialLoad) {
+          setLoadError(true);
+          setSubOrgs([]);
+        }
+        return;
+      }
       const data = await response.json() as { subOrgs: SubOrg[] };
+      setLoadError(false);
       setSubOrgs(data.subOrgs);
     } catch {
-      // Silently handle fetch errors on load
+      // Network/parse failure on the load — show the explicit error state only
+      // for the initial load / Retry; action refetches keep using toast.
+      if (isInitialLoad) {
+        setLoadError(true);
+        setSubOrgs([]);
+      }
     } finally {
       setLoading(false);
     }
   }, [orgId]);
+
+  const handleRetry = useCallback(async () => {
+    setRetrying(true);
+    await fetchSubOrgs();
+    setRetrying(false);
+  }, [fetchSubOrgs]);
 
   useEffect(() => {
     async function run() { await fetchSubOrgs(); }
@@ -105,7 +145,7 @@ export function ManageSubOrgs({ orgId }: ManageSubOrgsProps) {
       setAffiliateLegalName('');
       setAffiliateDomain('');
       setAffiliateAdminEmail('');
-      await fetchSubOrgs();
+      await fetchSubOrgs(false);
     } catch {
       toast.error(SUB_ORG_LABELS.CREATE_FAILED);
     } finally {
@@ -128,7 +168,7 @@ export function ManageSubOrgs({ orgId }: ManageSubOrgsProps) {
         return;
       }
       toast.success(SUB_ORG_LABELS.APPROVE_SUCCESS);
-      await fetchSubOrgs();
+      await fetchSubOrgs(false);
     } catch {
       toast.error(SUB_ORG_LABELS.APPROVE_FAILED);
     } finally {
@@ -151,7 +191,7 @@ export function ManageSubOrgs({ orgId }: ManageSubOrgsProps) {
         return;
       }
       toast.success(SUB_ORG_LABELS.REVOKE_SUCCESS);
-      await fetchSubOrgs();
+      await fetchSubOrgs(false);
     } catch {
       toast.error(SUB_ORG_LABELS.REVOKE_FAILED);
     } finally {
@@ -264,7 +304,24 @@ export function ManageSubOrgs({ orgId }: ManageSubOrgsProps) {
         <Separator />
 
         {/* Sub-org list */}
-        {subOrgs.length === 0 ? (
+        {loadError ? (
+          <div
+            role="alert"
+            className="flex flex-col items-center justify-center gap-3 py-8 text-center"
+          >
+            <div className="flex h-12 w-12 items-center justify-center rounded-full bg-amber-500/10">
+              <AlertTriangle className="h-6 w-6 text-amber-500" />
+            </div>
+            <div className="space-y-1">
+              <p className="text-sm font-semibold text-foreground">{SUB_ORG_STATE_COPY.LOAD_ERROR_TITLE}</p>
+              <p className="text-sm text-muted-foreground max-w-sm">{SUB_ORG_STATE_COPY.LOAD_ERROR_DESC}</p>
+            </div>
+            <Button variant="outline" size="sm" onClick={() => { void handleRetry(); }} disabled={retrying}>
+              <RefreshCw className={`mr-2 h-4 w-4 ${retrying ? 'animate-spin' : ''}`} />
+              {SUB_ORG_STATE_COPY.RETRY}
+            </Button>
+          </div>
+        ) : subOrgs.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-8 text-center">
             <Building2 className="h-10 w-10 text-muted-foreground mb-3" />
             <p className="text-sm text-muted-foreground">{SUB_ORG_LABELS.EMPTY_STATE}</p>

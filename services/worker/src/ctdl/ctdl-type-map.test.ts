@@ -21,6 +21,17 @@ describe('CTDL_TYPE_MAP', () => {
     }
   });
 
+  it('pins the registry-facing mappings called out by SCRUM-1875', () => {
+    expect(resolveCtdlType('BADGE')).toBe('ceterms:OpenBadge');
+    expect(resolveCtdlType('ATTESTATION')).toBe('ceterms:Certification');
+    expect(resolveCtdlType('CERTIFICATE')).toBe('ceterms:Certificate');
+    expect(resolveCtdlType('LICENSE')).toBe('ceterms:License');
+
+    // CTDL models CEU as creditUnit:ContinuingEducationUnit, not a credential @type.
+    expect(resolveCtdlType('CLE')).toBe('ceterms:Certificate');
+    expect(resolveCtdlType('CPE')).toBe('ceterms:Certificate');
+  });
+
   it('derives specific CTDL degree classes from Arkova sub_type', () => {
     expect(resolveCtdlType('DEGREE', 'bachelor')).toBe('ceterms:BachelorDegree');
     expect(resolveCtdlType('DEGREE', 'master')).toBe('ceterms:MasterDegree');

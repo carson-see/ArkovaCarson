@@ -9,7 +9,7 @@ Inbound webhook handlers for third-party integrations. Each handler verifies HMA
 | File | Purpose |
 |------|---------|
 | `adobe-sign.ts` | Adobe Sign `AGREEMENT_WORKFLOW_COMPLETED` handler — HMAC-SHA256 base64, `adaptAdobeSign` normalization |
-| `docusign.ts` | DocuSign Connect `envelope-completed` handler — lookup-first HMAC verify (SCRUM-2043), HMAC verified for unknown accounts too (env-var key), dual-table lookup: org_integrations then member_integrations (SCRUM-2044), sanitized event + document-fetch job + SCRUM-1872 notarization detection |
+| `docusign.ts` | DocuSign Connect `envelope-completed` handler — lookup-first HMAC verify (SCRUM-2043), HMAC verified for unknown accounts too (env-var key), dual-table lookup: org_integrations then member_integrations (SCRUM-2044), sanitized event + document-fetch job + SCRUM-1872 notarization detection. SCRUM-1649: carries single-document SHA-256 into rule-event payloads via `document_hashes` / `document_sha256` for downstream post-signing anchor materialization |
 | `docusign-hmac-helpers.ts` | SCRUM-2043: resolves HMAC keys from per-org `hmac_keys` JSONB or env-var fallback |
 | `docusign-hmac-rotation.test.ts` | Tests for multi-key HMAC verification flow and key resolution |
 | `drive.ts` | Google Drive push notification handler — headers-only signal, channel-token verification |
@@ -25,3 +25,11 @@ Inbound webhook handlers for third-party integrations. Each handler verifies HMA
 - **DO** use nonce/idempotency tables to prevent replay attacks
 - **DO NOT** persist raw webhook payloads — only sanitized canonical events reach the database
 - **DO NOT** log webhook bodies that may contain PII (EIN, addresses, etc.)
+
+## Conventions
+
+- Signature/channel validation happens before any DB write.
+- Unknown external accounts are acknowledged without cross-tenant data leakage.
+- Ambiguous account-to-org mappings fail closed.
+- Sanitized rule-event payloads may include provider IDs needed for idempotency, but not raw documents or raw webhook bodies.
+- Connector payloads that carry PII must hash values before storing long-lived operational metadata. PII scrubbing is mandatory; do not persist emails, document fingerprints, or API keys.

@@ -9,6 +9,15 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const mockRpc = vi.hoisted(() => vi.fn());
 const mockGetSession = vi.hoisted(() => vi.fn());
 const mockResolveSafeWorkerEndpoint = vi.hoisted(() => vi.fn());
+const mockToastSuccess = vi.hoisted(() => vi.fn());
+const mockToastError = vi.hoisted(() => vi.fn());
+
+vi.mock('sonner', () => ({
+  toast: {
+    success: mockToastSuccess,
+    error: mockToastError,
+  },
+}));
 
 vi.mock('@/lib/supabase', () => ({
   supabase: {
@@ -217,5 +226,152 @@ describe('useInviteMember', () => {
     });
 
     expect(result.current.error).toBeNull();
+  });
+});
+
+/**
+ * SCRUM-1979 — Invitation fails with generic error, no actionable feedback.
+ *
+ * The outer `inviteMember` wrapper used a bare `catch {}` with no error binding,
+ * so it discarded the specific actionable message thrown by the inner impl and
+ * always surfaced the generic `TOAST.MEMBER_INVITE_FAILED` toast. These tests
+ * assert that:
+ *   - known/curated failures surface their SPECIFIC actionable toast, and
+ *   - unknown/unexpected errors surface a SAFE generic toast with no raw DB text.
+ */
+describe('useInviteMember — actionable error surfacing (SCRUM-1979)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockResolveSafeWorkerEndpoint.mockReturnValue(new URL('http://localhost:3001/api/send-invitation-email'));
+    mockGetSession.mockResolvedValue({ data: { session: { access_token: 'test-token' } } });
+    mockFetch.mockResolvedValue({ ok: true, json: async () => ({ sent: true }) });
+  });
+
+  it('shows the success toast (not the failure toast) on success', async () => {
+    mockRpc.mockResolvedValue({ data: 'invite-uuid', error: null });
+
+    const { result } = renderHook(() => useInviteMember());
+
+    await act(async () => {
+      await result.current.inviteMember(defaultOptions);
+    });
+
+    expect(mockToastSuccess).toHaveBeenCalledWith('Invitation sent successfully.');
+    expect(mockToastError).not.toHaveBeenCalled();
+  });
+
+  it('surfaces the SPECIFIC "already a member" toast', async () => {
+    mockRpc.mockResolvedValue({
+      data: null,
+      error: { message: 'User is already a member of this organization' },
+    });
+
+    const { result } = renderHook(() => useInviteMember());
+
+    await act(async () => {
+      await result.current.inviteMember(defaultOptions);
+    });
+
+    expect(mockToastError).toHaveBeenCalledWith('This person is already a member of the organization.');
+    expect(mockToastError).not.toHaveBeenCalledWith('Failed to send invitation. Please try again.');
+  });
+
+  it('surfaces the SPECIFIC "no permission" toast', async () => {
+    mockRpc.mockResolvedValue({
+      data: null,
+      error: { message: 'insufficient_privilege: Only org admins can invite' },
+    });
+
+    const { result } = renderHook(() => useInviteMember());
+
+    await act(async () => {
+      await result.current.inviteMember({ ...defaultOptions, role: 'ORG_ADMIN' });
+    });
+
+    expect(mockToastError).toHaveBeenCalledWith('You do not have permission to invite members.');
+  });
+
+  it('surfaces the SPECIFIC "valid email" toast from the RPC error', async () => {
+    mockRpc.mockResolvedValue({
+      data: null,
+      error: { message: 'invalid email format' },
+    });
+
+    const { result } = renderHook(() => useInviteMember());
+
+    await act(async () => {
+      await result.current.inviteMember({ ...defaultOptions, email: 'valid@example.com' });
+    });
+
+    expect(mockToastError).toHaveBeenCalledWith('Please enter a valid email address.');
+  });
+
+  it('surfaces the SPECIFIC email-send-failed toast when the email endpoint rejects', async () => {
+    mockRpc.mockResolvedValue({ data: 'invite-uuid', error: null });
+    mockFetch.mockResolvedValueOnce({ ok: false, status: 403, json: async () => ({ error: { code: 'forbidden' } }) });
+
+    const { result } = renderHook(() => useInviteMember());
+
+    await act(async () => {
+      await result.current.inviteMember(defaultOptions);
+    });
+
+    expect(mockToastError).toHaveBeenCalledWith('Invitation was created, but the email could not be sent. Please try again.');
+  });
+
+  it('surfaces the SPECIFIC validation toast for a malformed email payload (pre-RPC)', async () => {
+    const { result } = renderHook(() => useInviteMember());
+
+    await act(async () => {
+      await result.current.inviteMember({ ...defaultOptions, email: 'bad-email' });
+    });
+
+    // Zod surfaces a curated, user-safe validation message; it must reach the toast verbatim.
+    const calls = mockToastError.mock.calls;
+    const surfaced = calls[calls.length - 1]?.[0] as string;
+    expect(surfaced).toMatch(/valid email/i);
+    expect(surfaced).not.toBe('Failed to send invitation. Please try again.');
+  });
+
+  it('falls back to the SAFE generic toast for an UNKNOWN error and never leaks raw DB text', async () => {
+    const rawDbText =
+      'duplicate key value violates unique constraint "invitations_pkey" DETAIL: Key (id)=(abc) already exists. (org_id 7f3a9c2e-...)';
+    mockRpc.mockResolvedValue({
+      data: null,
+      error: { message: rawDbText },
+    });
+
+    const { result } = renderHook(() => useInviteMember());
+
+    await act(async () => {
+      await result.current.inviteMember(defaultOptions);
+    });
+
+    // §1.4: the raw DB string (constraint name, PG DETAIL, org UUID) must NEVER reach the UI.
+    expect(mockToastError).toHaveBeenCalledWith('Failed to send invitation. Please try again.');
+    expect(mockToastError).not.toHaveBeenCalledWith(rawDbText);
+    const surfaced = mockToastError.mock.calls.map((c) => String(c[0])).join('\n');
+    expect(surfaced).not.toContain('constraint');
+    expect(surfaced).not.toContain('DETAIL');
+    expect(surfaced).not.toContain('invitations_pkey');
+  });
+
+  it('keeps the hook error state free of raw DB text for an UNKNOWN error', async () => {
+    const rawDbText = 'relation "public.invitations" does not exist (SQLSTATE 42P01)';
+    mockRpc.mockResolvedValue({
+      data: null,
+      error: { message: rawDbText },
+    });
+
+    const { result } = renderHook(() => useInviteMember());
+
+    await act(async () => {
+      await result.current.inviteMember(defaultOptions);
+    });
+
+    // The error state is also user-facing (modal Alert + future surfaces); it must not leak.
+    expect(result.current.error).toBe('Failed to send invitation. Please try again.');
+    expect(result.current.error).not.toContain('SQLSTATE');
+    expect(result.current.error).not.toContain('relation');
   });
 });
