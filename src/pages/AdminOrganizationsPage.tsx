@@ -2,11 +2,14 @@
  * Admin Organizations Page (SN2)
  *
  * Platform admin page showing all organizations with member count,
- * anchor count, search, and pagination. Click-through to org detail.
+ * anchor count, free-tier testing cap, search, and pagination.
+ * Click-through to org detail. Platform admins can set each org's free
+ * testing allowance inline (SCRUM-2225).
  */
 
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
+import { toast } from 'sonner';
 import {
   Building2,
   Search,
@@ -16,6 +19,7 @@ import {
   ArrowLeft,
   Users,
   FileText,
+  SlidersHorizontal,
 } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
@@ -26,6 +30,17 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Label } from '@/components/ui/label';
+import { Switch } from '@/components/ui/switch';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { workerFetch } from '@/lib/workerClient';
 import { ROUTES } from '@/lib/routes';
 import { isPlatformAdmin } from '@/lib/platform';
 
@@ -38,8 +53,12 @@ interface AdminOrganization {
   verification_status: string;
   member_count: number;
   anchor_count: number;
+  is_test: boolean;
+  anchor_quota: number | null;
   created_at: string;
 }
+
+const DEFAULT_FREE_QUOTA = 10;
 
 export function AdminOrganizationsPage() {
   const navigate = useNavigate();
@@ -49,6 +68,12 @@ export function AdminOrganizationsPage() {
   const { items, total, page, limit, loading, error, fetchList } = useAdminList<AdminOrganization>('/api/admin/organizations');
 
   const [searchInput, setSearchInput] = useState(searchParams.get('search') ?? '');
+
+  // SCRUM-2225 — free-tier cap editor state.
+  const [editingOrg, setEditingOrg] = useState<AdminOrganization | null>(null);
+  const [capEnabled, setCapEnabled] = useState(true);
+  const [quotaInput, setQuotaInput] = useState(String(DEFAULT_FREE_QUOTA));
+  const [saving, setSaving] = useState(false);
 
   const isAdmin = isPlatformAdmin(user?.email);
 
@@ -73,6 +98,61 @@ export function AdminOrganizationsPage() {
   const handleSignOut = async () => {
     await signOut();
     navigate(ROUTES.LOGIN);
+  };
+
+  const openCap = (org: AdminOrganization) => {
+    setEditingOrg(org);
+    setCapEnabled(org.is_test && org.anchor_quota != null);
+    setQuotaInput(String(org.anchor_quota ?? DEFAULT_FREE_QUOTA));
+  };
+
+  const saveCap = async () => {
+    if (!editingOrg) return;
+    const quotaNum = parseInt(quotaInput, 10);
+    if (capEnabled && (!Number.isInteger(quotaNum) || quotaNum < 0)) {
+      toast.error('Enter a whole number of free actions (0 or more).');
+      return;
+    }
+    setSaving(true);
+    try {
+      const res = await workerFetch(`/api/admin/organizations/${encodeURIComponent(editingOrg.id)}/quota`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(
+          capEnabled
+            ? { anchor_quota: quotaNum, is_test: true }
+            : { anchor_quota: null, is_test: false },
+        ),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        toast.error(data.error ?? 'Failed to update cap');
+        return;
+      }
+      toast.success(
+        capEnabled
+          ? `${editingOrg.display_name}: capped at ${quotaNum} free testing action${quotaNum === 1 ? '' : 's'}.`
+          : `${editingOrg.display_name}: uncapped (billable).`,
+      );
+      setEditingOrg(null);
+      doFetch(page);
+    } catch {
+      toast.error('Failed to update cap');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const renderCap = (org: AdminOrganization) => {
+    if (org.is_test && org.anchor_quota != null) {
+      const over = org.anchor_count >= org.anchor_quota;
+      return (
+        <Badge variant={over ? 'destructive' : 'secondary'} className="text-[10px]">
+          {org.anchor_count}/{org.anchor_quota} free
+        </Badge>
+      );
+    }
+    return <span className="text-xs text-muted-foreground">Uncapped</span>;
   };
 
   if (!profileLoading && !isAdmin) {
@@ -176,8 +256,19 @@ export function AdminOrganizationsPage() {
                       <span className="flex items-center gap-1"><FileText className="h-3 w-3" /> {org.anchor_count}</span>
                       {org.domain && <span>{org.domain}</span>}
                     </div>
-                    <div className="text-xs text-muted-foreground mt-1">
-                      Joined {new Date(org.created_at).toLocaleDateString()}
+                    <div className="flex items-center justify-between mt-2">
+                      <span className="flex items-center gap-2">
+                        <span className="text-xs text-muted-foreground">Free tier:</span>
+                        {renderCap(org)}
+                      </span>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-7"
+                        onClick={(e) => { e.stopPropagation(); openCap(org); }}
+                      >
+                        <SlidersHorizontal className="h-3.5 w-3.5 mr-1" /> Set cap
+                      </Button>
                     </div>
                   </div>
                 ))}
@@ -193,6 +284,7 @@ export function AdminOrganizationsPage() {
                       <th className="pb-2 pr-4">Domain</th>
                       <th className="pb-2 pr-4">Members</th>
                       <th className="pb-2 pr-4">Records</th>
+                      <th className="pb-2 pr-4">Free tier</th>
                       <th className="pb-2">Created</th>
                     </tr>
                   </thead>
@@ -229,6 +321,20 @@ export function AdminOrganizationsPage() {
                             {org.anchor_count}
                           </span>
                         </td>
+                        <td className="py-3 pr-4" onClick={(e) => e.stopPropagation()}>
+                          <div className="flex items-center gap-2">
+                            {renderCap(org)}
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-7 w-7"
+                              title="Set free-tier cap"
+                              onClick={(e) => { e.stopPropagation(); openCap(org); }}
+                            >
+                              <SlidersHorizontal className="h-3.5 w-3.5" />
+                            </Button>
+                          </div>
+                        </td>
                         <td className="py-3 text-muted-foreground">
                           {new Date(org.created_at).toLocaleDateString()}
                         </td>
@@ -258,6 +364,45 @@ export function AdminOrganizationsPage() {
           )}
         </CardContent>
       </Card>
+
+      {/* SCRUM-2225 — free-tier cap editor */}
+      <Dialog open={!!editingOrg} onOpenChange={(open) => { if (!open) setEditingOrg(null); }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Free testing cap</DialogTitle>
+            <DialogDescription>
+              {editingOrg?.display_name} — how many documents this organization can secure for free before it must upgrade.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <Label htmlFor="cap-toggle">Capped free tier</Label>
+                <p className="text-xs text-muted-foreground">Off = uncapped, billable account.</p>
+              </div>
+              <Switch id="cap-toggle" checked={capEnabled} onCheckedChange={setCapEnabled} />
+            </div>
+            {capEnabled && (
+              <div className="space-y-1.5">
+                <Label htmlFor="cap-quota">Free testing actions</Label>
+                <Input
+                  id="cap-quota"
+                  type="number"
+                  min={0}
+                  value={quotaInput}
+                  onChange={(e) => setQuotaInput(e.target.value)}
+                  className="w-32"
+                />
+                <p className="text-xs text-muted-foreground">New signups default to {DEFAULT_FREE_QUOTA}.</p>
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setEditingOrg(null)} disabled={saving}>Cancel</Button>
+            <Button onClick={saveCap} disabled={saving}>{saving ? 'Saving…' : 'Save'}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </AppShell>
   );
 }
