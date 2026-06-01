@@ -54,7 +54,6 @@ type LooseClient = {
   };
 };
 
-const ARKOVA_ADMIN_USER_ID = '00000000-0000-0000-0000-000000000001'; // matches seed
 const ROW_TAG_PREFIX = 'rls-test-csi-04a-';
 
 describe('SCRUM-1611 — member_integrations widened for credential-source providers (CSI-04A)', () => {
@@ -62,12 +61,20 @@ describe('SCRUM-1611 — member_integrations widened for credential-source provi
   let adminClient: TypedClient;
   let betaAdminClient: TypedClient;
   let userClient: TypedClient;
+  let arkovaAdminUserId: string;
+  let betaAdminUserId: string;
 
   beforeAll(async () => {
     serviceClient = createServiceClient() as unknown as LooseClient;
     adminClient = await withUser(DEMO_CREDENTIALS.adminEmail, 'ORG_ADMIN');
     betaAdminClient = await withUser(DEMO_CREDENTIALS.betaAdminEmail, 'ORG_ADMIN');
     userClient = await withIndividualUser();
+
+    const { data: arkovaAdminProfile } = await adminClient.auth.getUser();
+    arkovaAdminUserId = arkovaAdminProfile.user?.id ?? '';
+
+    const { data: betaAdminProfile } = await betaAdminClient.auth.getUser();
+    betaAdminUserId = betaAdminProfile.user?.id ?? '';
   });
 
   afterAll(async () => {
@@ -97,7 +104,7 @@ describe('SCRUM-1611 — member_integrations widened for credential-source provi
   describe('CHECK constraint widening', () => {
     it('accepts provider="credly" via service_role insert', async () => {
       const { error } = await serviceClient.from('member_integrations').insert({
-        user_id: ARKOVA_ADMIN_USER_ID,
+        user_id: arkovaAdminUserId,
         org_id: ARKOVA_ORG_ID,
         provider: 'credly',
         account_id: `${ROW_TAG_PREFIX}credly-arkova`,
@@ -108,7 +115,7 @@ describe('SCRUM-1611 — member_integrations widened for credential-source provi
 
     it('accepts provider="accredible" via service_role insert', async () => {
       const { error } = await serviceClient.from('member_integrations').insert({
-        user_id: ARKOVA_ADMIN_USER_ID,
+        user_id: arkovaAdminUserId,
         org_id: ARKOVA_ORG_ID,
         provider: 'accredible',
         account_id: `${ROW_TAG_PREFIX}accredible-arkova`,
@@ -119,7 +126,7 @@ describe('SCRUM-1611 — member_integrations widened for credential-source provi
 
     it('accepts provider="udemy" via service_role insert', async () => {
       const { error } = await serviceClient.from('member_integrations').insert({
-        user_id: ARKOVA_ADMIN_USER_ID,
+        user_id: arkovaAdminUserId,
         org_id: ARKOVA_ORG_ID,
         provider: 'udemy',
         account_id: `${ROW_TAG_PREFIX}udemy-arkova`,
@@ -130,7 +137,7 @@ describe('SCRUM-1611 — member_integrations widened for credential-source provi
 
     it('still rejects unknown providers (defence-in-depth)', async () => {
       const { error } = await serviceClient.from('member_integrations').insert({
-        user_id: ARKOVA_ADMIN_USER_ID,
+        user_id: arkovaAdminUserId,
         org_id: ARKOVA_ORG_ID,
         provider: 'linkedin', // not in the enum
         account_id: `${ROW_TAG_PREFIX}rejected`,
@@ -142,7 +149,7 @@ describe('SCRUM-1611 — member_integrations widened for credential-source provi
 
     it('still accepts the original docusign provider (back-compat)', async () => {
       const { error } = await serviceClient.from('member_integrations').insert({
-        user_id: ARKOVA_ADMIN_USER_ID,
+        user_id: arkovaAdminUserId,
         org_id: ARKOVA_ORG_ID,
         provider: 'docusign',
         account_id: `${ROW_TAG_PREFIX}docusign-backcompat`,
@@ -183,7 +190,7 @@ describe('SCRUM-1611 — member_integrations widened for credential-source provi
     beforeAll(async () => {
       // Seed a beta-org credly row to test cross-org isolation
       await serviceClient.from('member_integrations').insert({
-        user_id: ARKOVA_ADMIN_USER_ID,
+        user_id: betaAdminUserId,
         org_id: BETA_ORG_ID,
         provider: 'credly',
         account_id: `${ROW_TAG_PREFIX}credly-beta`,
@@ -216,7 +223,7 @@ describe('SCRUM-1611 — member_integrations widened for credential-source provi
       const { error } = await (userClient as unknown as LooseClient)
         .from('member_integrations')
         .insert({
-          user_id: ARKOVA_ADMIN_USER_ID,
+          user_id: arkovaAdminUserId,
           org_id: ARKOVA_ORG_ID,
           provider: 'credly',
           account_id: `${ROW_TAG_PREFIX}should-fail`,
