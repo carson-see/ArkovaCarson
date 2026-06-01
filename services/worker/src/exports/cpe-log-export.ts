@@ -26,6 +26,7 @@ import { jsPDF } from 'jspdf';
 import { z } from 'zod';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Logger } from '../utils/logger.js';
+import { asString, asNumber, asDateOnly, stripTrailingSlashes, formatUtc } from './export-format-helpers.js';
 
 /** Stable, versioned JSON export schema tag. */
 export const CPE_LOG_SCHEMA_VERSION = 'cpe_log_v1' as const;
@@ -183,43 +184,8 @@ export interface CpeLogExportResult {
 }
 
 // ─── Field mapping helpers ───────────────────────────
-function asString(value: unknown): string | null {
-  return typeof value === 'string' && value.trim() ? value.trim() : null;
-}
-
-function asNumber(value: unknown): number | null {
-  if (typeof value === 'number' && Number.isFinite(value)) return value;
-  if (typeof value === 'string' && value.trim() !== '') {
-    const n = Number(value);
-    return Number.isFinite(n) ? n : null;
-  }
-  return null;
-}
-
-/** Reduce an ISO date-time / date string to YYYY-MM-DD (or null). */
-function asDateOnly(value: unknown): string | null {
-  const s = asString(value);
-  if (!s) return null;
-  const dateOnly = s.slice(0, 10);
-  return /^\d{4}-\d{2}-\d{2}$/.test(dateOnly) ? dateOnly : null;
-}
-
-/**
- * Strip any trailing slashes from a base URL before appending a path.
- *
- * A linear character scan, deliberately not a `/\/+$/` regex: SonarCloud's
- * S5852 ReDoS heuristic flags the `+`-then-`$` regex shape even though this
- * single-character pattern is backtrack-free. The scan is provably linear and
- * carries no backtracking, so it keeps the export Quality Gate green without a
- * per-line analyzer suppression.
- */
-function stripTrailingSlashes(url: string): string {
-  let end = url.length;
-  while (end > 0 && url.charCodeAt(end - 1) === 47 /* '/' */) {
-    end -= 1;
-  }
-  return url.slice(0, end);
-}
+// asString / asNumber / asDateOnly / stripTrailingSlashes / formatUtc are
+// shared with the CLE exporter and live in ./export-format-helpers.ts.
 
 /**
  * Map a single anchor row to a public-safe CPE log record.
@@ -272,15 +238,6 @@ export function buildCpeLogRecord(
 }
 
 // ─── PDF rendering ───────────────────────────────────
-function formatUtc(value: string | null): string {
-  if (!value) return '—';
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return value;
-  return (
-    d.toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'UTC' }) + ' UTC'
-  );
-}
-
 function generateCpeLogPdf(
   records: CpeLogRecord[],
   periodStart: string,
