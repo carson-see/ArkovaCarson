@@ -14,6 +14,14 @@
 
 ## Now
 
+### 2026-06-01 — audit-export org-lookup error classification (#1056, T2 draft — soak PENDING)
+
+`services/worker/src/api/v1/audit-export.ts` misclassified a Supabase/operational failure on the `profiles.org_id` lookup as `403 Organization membership required`, hiding a 500-class fault. Both handlers (`POST /audit-export`, `POST /audit-export/batch`) used `.single()` without inspecting the returned `error`. Fix (mirrors `cpe-log-export.ts` / #1029): `.maybeSingle()` + an explicit `if (profileError) → 500` (coarse `message`/`code` log only, §1.4), reserving 403 for a successful query with a null `org_id`. Same CodeRabbit bug class #1029 fixed for the CPE endpoint. TDD: two new regression cases (DB error → 500, not 403), one per handler, red→green; local check sweep clean (vitest, tsc, eslint, lint:copy). Parent feature: CML-03 / [SCRUM-267](https://arkova.atlassian.net/browse/SCRUM-267) (audit-ready GRC export, COMPLETE).
+
+**Status:** **[#1056](https://github.com/carson-see/ArkovaCarson/pull/1056)** draft, **T2 — 12h staging soak PENDING**. No soak started this session: shared staging `ujtlwnoqfhtitcmsnrpq` has in-flight soaks (§1.11A — parallel shared-staging soaks are valid only on a truthfully-shared clean state); this session does not disturb them. Stays draft until a clean staging window; Carson merges. No migration/RLS/schema/cron/queue surface → a clean shared-staging window suffices (no isolated project needed). Jira bug ticket + Confluence page + Bug Tracker (Master Log) row still outstanding (Atlassian MCP not connected this session).
+
+_Last refreshed: 2026-06-01 by Claude — no prod or live-state asserted; in-flight draft PR only. Local checks (vitest / tsc --noEmit / eslint / lint:copy) clean; CI re-runs on #1056. claims verified against gcloud/MCP/CI output: none asserted (narrative-only, in-flight)._
+
 ### 2026-05-31 — SCRUM-2216: git commit-email fix (Vercel deploy attribution)
 
 Repo-local git `user.email` set to the carson-see GitHub noreply `257869717+carson-see@users.noreply.github.com` (name stays `carson`). Root cause: `carson@arkova.ai` is **not** a verified email on the GitHub account, so Vercel rejected locally-authored commits — "No GitHub account was found matching the commit author email address" — and their prod/preview deploys failed (e.g. docs commit `89001140`). GitHub-authored merge commits (noreply) always deployed fine. **Validated** against Vercel deployment records (project `arkova-26`): this commit (noreply author) had its Vercel author **resolved to `carson-see`** and was **no longer `BLOCKED`** — it shows `CANCELED` only because a newer `main` deploy superseded it mid-build (benign). The old `carson@arkova.ai` commits were `BLOCKED` with no resolved author. Tracked as [SCRUM-2216](https://arkova.atlassian.net/browse/SCRUM-2216) (Done) + BUG-2026-05-31-002. Alternative (keeps `arkova.ai` on commits): add+verify it at github.com/settings/emails.
