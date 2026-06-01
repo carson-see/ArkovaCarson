@@ -19,9 +19,10 @@
  * / admin-actions.ts): the worker `db` client uses service_role and bypasses RLS,
  * and EVERY endpoint is gated with isPlatformAdmin(userId). No RLS/schema change.
  *
- * The roster intentionally reads `profiles` scoped by `org_id` — the SAME source
- * the non-admin client path (`useOrgMembers`) uses — so platform admins see an
- * identical roster to org members, not a divergent `org_members`-join view.
+ * The roster reads `org_members` first, then fetches profile details. This keeps
+ * multi-org memberships visible: add-member inserts `org_members` and only
+ * backfills `profiles.org_id` when it is currently null, so `profiles.org_id`
+ * alone is not a complete membership source.
  *
  * Add-member writes go through the service_role client directly (insert into
  * org_members + backfill profiles + audit row). We deliberately do NOT call the
@@ -54,6 +55,23 @@ const PROFILE_ROLE_TO_MEMBER_ROLE: Record<'INDIVIDUAL' | 'ORG_ADMIN', 'member' |
   ORG_ADMIN: 'admin',
 };
 
+function memberRoleToProfileRole(role: unknown): 'ORG_ADMIN' | 'INDIVIDUAL' {
+  return role === 'owner' || role === 'admin' ? 'ORG_ADMIN' : 'INDIVIDUAL';
+}
+
+interface OrgMemberRow {
+  user_id: string;
+  role: 'owner' | 'admin' | 'member';
+  joined_at: string;
+}
+
+interface ProfileRow {
+  id: string;
+  email: string;
+  full_name: string | null;
+  avatar_url: string | null;
+}
+
 // ─── GET /api/admin/organizations/:id/members ────────────────────────────────
 
 export async function handleAdminOrgMembers(
@@ -73,30 +91,52 @@ export async function handleAdminOrgMembers(
   }
 
   try {
-    // Mirror useOrgMembers: roster = profiles scoped to the org, newest-last.
-    const { data: rows, error } = await db
-      .from('profiles')
-      .select('id, email, full_name, avatar_url, role, created_at')
+    const { data: memberRows, error: memberError } = await db
+      .from('org_members')
+      .select('user_id, role, joined_at')
       .eq('org_id', orgId)
-      .is('deleted_at', null)
-      .order('created_at', { ascending: true })
+      .order('joined_at', { ascending: true })
       .limit(500);
 
-    if (error) {
-      logger.error({ error, orgId }, 'Admin org members query failed');
+    if (memberError) {
+      logger.error({ error: memberError, orgId }, 'Admin org members membership query failed');
       res.status(500).json({ error: 'Query failed' });
       return;
     }
 
-    const members = (rows ?? []).map((p) => ({
-      id: p.id,
-      email: p.email,
-      fullName: p.full_name,
-      avatarUrl: p.avatar_url ?? null,
-      role: (p.role as 'ORG_ADMIN' | 'INDIVIDUAL') ?? 'INDIVIDUAL',
-      joinedAt: p.created_at,
-      status: 'active' as const,
-    }));
+    const memberships = (memberRows ?? []) as OrgMemberRow[];
+    const userIds = memberships.map((m) => m.user_id);
+    if (userIds.length === 0) {
+      res.json({ members: [] });
+      return;
+    }
+
+    const { data: profileRows, error: profileError } = await db
+      .from('profiles')
+      .select('id, email, full_name, avatar_url')
+      .in('id', userIds)
+      .is('deleted_at', null);
+
+    if (profileError) {
+      logger.error({ error: profileError, orgId }, 'Admin org members profile query failed');
+      res.status(500).json({ error: 'Query failed' });
+      return;
+    }
+
+    const profilesById = new Map((profileRows ?? []).map((p) => [p.id, p as ProfileRow]));
+    const members = memberships.flatMap((membership) => {
+      const profile = profilesById.get(membership.user_id);
+      if (!profile) return [];
+      return [{
+        id: profile.id,
+        email: profile.email,
+        fullName: profile.full_name,
+        avatarUrl: profile.avatar_url ?? null,
+        role: memberRoleToProfileRole(membership.role),
+        joinedAt: membership.joined_at,
+        status: 'active' as const,
+      }];
+    });
 
     res.json({ members });
   } catch (error) {

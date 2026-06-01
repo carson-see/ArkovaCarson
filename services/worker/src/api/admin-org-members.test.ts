@@ -110,44 +110,63 @@ describe('Admin Org Members API', () => {
   });
 
   describe('handleAdminOrgMembers (roster)', () => {
-    it('returns the org roster mapped to Member shape', async () => {
+    it('returns the org_members roster mapped to Member shape', async () => {
       mockIsPlatformAdmin.mockResolvedValue(true);
 
-      const rows = [
+      const memberships = [
+        {
+          user_id: 'u1',
+          role: 'owner',
+          joined_at: '2026-01-03T00:00:00Z',
+        },
+        {
+          user_id: 'u2',
+          role: 'member',
+          joined_at: '2026-01-04T00:00:00Z',
+        },
+      ];
+      const profiles = [
         {
           id: 'u1',
           email: 'owner@acme.com',
           full_name: 'Owner One',
           avatar_url: null,
-          role: 'ORG_ADMIN',
-          created_at: '2026-01-01T00:00:00Z',
         },
         {
           id: 'u2',
           email: 'member@acme.com',
           full_name: null,
           avatar_url: 'https://x/y.png',
-          role: 'INDIVIDUAL',
-          created_at: '2026-01-02T00:00:00Z',
         },
       ];
 
-      const query = {
+      const membershipQuery = {
         select: vi.fn().mockReturnThis(),
         eq: vi.fn().mockReturnThis(),
-        is: vi.fn().mockReturnThis(),
         order: vi.fn().mockReturnThis(),
-        limit: vi.fn().mockResolvedValue({ data: rows, error: null }),
+        limit: vi.fn().mockResolvedValue({ data: memberships, error: null }),
       };
-      mockDbFrom.mockReturnValue(query);
+      const profileQuery = {
+        select: vi.fn().mockReturnThis(),
+        in: vi.fn().mockReturnThis(),
+        is: vi.fn().mockResolvedValue({ data: profiles, error: null }),
+      };
+      mockDbFrom.mockImplementation((table: string) => {
+        if (table === 'org_members') return membershipQuery;
+        if (table === 'profiles') return profileQuery;
+        throw new Error(`unexpected table ${table}`);
+      });
 
       const res = mockRes();
       await handleAdminOrgMembers('admin-1', ORG_ID, mockReq(), res);
 
       expect(res.statusCode).toBe(200);
-      // Scoped to the requested org and excludes soft-deleted rows
-      expect(query.eq).toHaveBeenCalledWith('org_id', ORG_ID);
-      expect(query.is).toHaveBeenCalledWith('deleted_at', null);
+      // Membership is the source of truth; profiles.org_id alone can miss
+      // multi-org users whose profile belongs to a different primary org.
+      expect(membershipQuery.eq).toHaveBeenCalledWith('org_id', ORG_ID);
+      expect(membershipQuery.order).toHaveBeenCalledWith('joined_at', { ascending: true });
+      expect(profileQuery.in).toHaveBeenCalledWith('id', ['u1', 'u2']);
+      expect(profileQuery.is).toHaveBeenCalledWith('deleted_at', null);
 
       const body = res.body as { members: Array<Record<string, unknown>> };
       expect(body.members).toHaveLength(2);
@@ -157,7 +176,7 @@ describe('Admin Org Members API', () => {
         fullName: 'Owner One',
         avatarUrl: null,
         role: 'ORG_ADMIN',
-        joinedAt: '2026-01-01T00:00:00Z',
+        joinedAt: '2026-01-03T00:00:00Z',
         status: 'active',
       });
       expect(body.members[1].role).toBe('INDIVIDUAL');
