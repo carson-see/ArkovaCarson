@@ -30,12 +30,21 @@
  */
 import { randomUUID } from 'node:crypto';
 import { Buffer } from 'node:buffer';
-import { jsPDF } from 'jspdf';
 import { z } from 'zod';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Logger } from '../utils/logger.js';
 import { SIGNED_URL_TTL_SECONDS, type CpeExportStorage } from './cpe-log-export.js';
-import { asString, asNumber, asDateOnly, stripTrailingSlashes, formatUtc } from './export-format-helpers.js';
+import {
+  asString,
+  asNumber,
+  asDateOnly,
+  stripTrailingSlashes,
+  formatUtc,
+  uploadAndSignExportArtifacts,
+  emitExportAuditEvent,
+  ExportPdfBuilder,
+  type ExportPdfRecord,
+} from './export-format-helpers.js';
 import { US_STATE_CODES } from '../compliance/professional-education.js';
 
 // Re-export the shared Storage seam so callers (and tests) can import either
@@ -297,6 +306,42 @@ export function computeCleSummary(records: CleLogRecord[]): CleLogSummary {
 }
 
 // ─── PDF rendering ───────────────────────────────────
+/**
+ * Map one CLE record to the bold title + detail lines the shared
+ * `ExportPdfBuilder.records()` loop renders. Credit hours and ethics hours are
+ * rendered as two SEPARATE cells (never combined). The verification link is a
+ * tinted line, omitted when absent.
+ */
+function cleRecordToPdfRecord(r: CleLogRecord): ExportPdfRecord {
+  const lines: ExportPdfRecord['lines'] = [
+    {
+      cells: [
+        `Provider: ${r.provider ?? '—'}`,
+        `Approval: ${r.provider_approval_status ?? '—'}`,
+        `Jurisdiction: ${r.jurisdiction ?? '—'}`,
+      ],
+    },
+    {
+      cells: [
+        `Credit Hours: ${r.credit_hours ?? '—'}`,
+        `Ethics Hours: ${r.ethics_hours ?? '—'}`,
+        `Delivery: ${r.delivery_format ?? '—'}`,
+      ],
+    },
+    {
+      cells: [
+        `Completion: ${r.completion_date ?? '—'}`,
+        `Evidence Level: ${r.evidence_level ?? '—'}`,
+        `Network Observed Time: ${formatUtc(r.anchor_timestamp)}`,
+      ],
+    },
+  ];
+  if (r.verification_url) {
+    lines.push({ cells: [`Verify: ${r.verification_url}`], color: [40, 90, 160] });
+  }
+  return { title: r.title ?? '', lines };
+}
+
 function generateCleLogPdf(
   records: CleLogRecord[],
   summary: CleLogSummary,
@@ -304,124 +349,56 @@ function generateCleLogPdf(
   periodStart: string,
   periodEnd: string,
 ): Buffer {
-  const doc = new jsPDF();
-  const pageWidth = doc.internal.pageSize.getWidth();
-  const margin = 20;
-  const contentWidth = pageWidth - margin * 2;
-  let y = margin;
-
-  // ── Title ──
-  doc.setFontSize(20);
-  doc.setFont('helvetica', 'bold');
-  doc.text('Arkova CLE Compliance Log', margin, y);
-  y += 9;
-
-  doc.setFontSize(9);
-  doc.setFont('helvetica', 'normal');
-  doc.setTextColor(100, 100, 100);
-  doc.text(`Generated: ${formatUtc(new Date().toISOString())}`, margin, y);
-  y += 4;
-  doc.text(`Jurisdiction: ${jurisdiction}`, margin, y);
-  y += 4;
-  doc.text(`Reporting Period: ${periodStart} to ${periodEnd}`, margin, y);
-  y += 4;
-  doc.text(`Records: ${records.length}`, margin, y);
-  y += 8;
-
-  // ── Summary (ethics hours shown as a SEPARATE subtotal) ──
-  doc.setTextColor(0, 0, 0);
-  doc.setFontSize(12);
-  doc.setFont('helvetica', 'bold');
-  doc.text('Summary', margin, y);
-  y += 6;
-  doc.setFontSize(9);
-  doc.setFont('helvetica', 'normal');
-  doc.setTextColor(50, 50, 50);
-  doc.text(`Total CLE Credit Hours: ${summary.total_credit_hours}`, margin, y);
-  y += 4;
-  // Ethics is a distinct line item, never merged into the total above.
-  doc.text(`Ethics Hours (subtotal): ${summary.ethics_hours}`, margin, y);
-  y += 4;
-  doc.text(
-    `Approved Provider Hours: ${summary.approved_provider_hours}   |   Unverified Provider Hours: ${summary.unverified_provider_hours}`,
-    margin,
-    y,
-  );
-  y += 4;
-  const byFormat = Object.entries(summary.hours_by_delivery_format);
-  if (byFormat.length > 0) {
-    const formatLine = byFormat.map(([fmt, hrs]) => `${fmt}: ${hrs}`).join('   |   ');
-    const formatLines = doc.splitTextToSize(`Hours by Delivery Format — ${formatLine}`, contentWidth);
-    doc.text(formatLines, margin, y);
-    y += formatLines.length * 4;
-  }
-  y += 4;
-
-  // ── Mandatory CLE disclaimer (verbatim) ──
-  doc.setDrawColor(200, 200, 200);
-  doc.line(margin, y, margin + contentWidth, y);
-  y += 6;
-  doc.setFontSize(8);
-  doc.setFont('helvetica', 'italic');
-  doc.setTextColor(90, 90, 90);
-  const disclaimerLines = doc.splitTextToSize(CLE_DISCLAIMER_TEXT, contentWidth);
-  doc.text(disclaimerLines, margin, y);
-  y += disclaimerLines.length * 4 + 4;
-  doc.setDrawColor(200, 200, 200);
-  doc.line(margin, y, margin + contentWidth, y);
-  y += 8;
-
-  // ── Records ──
-  doc.setTextColor(0, 0, 0);
-  for (const r of records) {
-    if (y > 255) {
-      doc.addPage();
-      y = margin;
-    }
-
-    doc.setFontSize(11);
-    doc.setFont('helvetica', 'bold');
-    doc.text(r.title ?? '(untitled)', margin, y, { maxWidth: contentWidth });
-    y += 5;
-
-    doc.setFontSize(8);
-    doc.setFont('helvetica', 'normal');
-    doc.setTextColor(70, 70, 70);
-    const line1 = [
-      `Provider: ${r.provider ?? '—'}`,
-      `Approval: ${r.provider_approval_status ?? '—'}`,
-      `Jurisdiction: ${r.jurisdiction ?? '—'}`,
-    ].join('   |   ');
-    doc.text(line1, margin, y, { maxWidth: contentWidth });
-    y += 4;
-    // Credit hours and ethics hours rendered as two separate values.
-    const line2 = [
-      `Credit Hours: ${r.credit_hours ?? '—'}`,
-      `Ethics Hours: ${r.ethics_hours ?? '—'}`,
-      `Delivery: ${r.delivery_format ?? '—'}`,
-    ].join('   |   ');
-    doc.text(line2, margin, y, { maxWidth: contentWidth });
-    y += 4;
-    const line3 = [
-      `Completion: ${r.completion_date ?? '—'}`,
-      `Evidence Level: ${r.evidence_level ?? '—'}`,
-      `Network Observed Time: ${formatUtc(r.anchor_timestamp)}`,
-    ].join('   |   ');
-    doc.text(line3, margin, y, { maxWidth: contentWidth });
-    y += 4;
-    if (r.verification_url) {
-      doc.setTextColor(40, 90, 160);
-      doc.text(`Verify: ${r.verification_url}`, margin, y, { maxWidth: contentWidth });
-      doc.setTextColor(70, 70, 70);
+  return new ExportPdfBuilder()
+    .header('Arkova CLE Compliance Log', [
+      `Generated: ${formatUtc(new Date().toISOString())}`,
+      `Jurisdiction: ${jurisdiction}`,
+      `Reporting Period: ${periodStart} to ${periodEnd}`,
+      `Records: ${records.length}`,
+    ])
+    // CLE-specific Summary block: ethics hours rendered as a SEPARATE subtotal,
+    // never folded into the total credit-hours figure (SCRUM-1870 AC).
+    .section((doc, { margin, contentWidth, y: startY }) => {
+      let y = startY;
+      doc.setTextColor(0, 0, 0);
+      doc.setFontSize(12);
+      doc.setFont('helvetica', 'bold');
+      doc.text('Summary', margin, y);
+      y += 6;
+      doc.setFontSize(9);
+      doc.setFont('helvetica', 'normal');
+      doc.setTextColor(50, 50, 50);
+      doc.text(`Total CLE Credit Hours: ${summary.total_credit_hours}`, margin, y);
       y += 4;
-    }
-    y += 3;
-  }
-
-  return Buffer.from(doc.output('arraybuffer'));
+      doc.text(`Ethics Hours (subtotal): ${summary.ethics_hours}`, margin, y);
+      y += 4;
+      doc.text(
+        `Approved Provider Hours: ${summary.approved_provider_hours}   |   Unverified Provider Hours: ${summary.unverified_provider_hours}`,
+        margin,
+        y,
+      );
+      y += 4;
+      const byFormat = Object.entries(summary.hours_by_delivery_format);
+      if (byFormat.length > 0) {
+        const formatLine = byFormat.map(([fmt, hrs]) => `${fmt}: ${hrs}`).join('   |   ');
+        const formatLines = doc.splitTextToSize(`Hours by Delivery Format — ${formatLine}`, contentWidth);
+        doc.text(formatLines, margin, y);
+        y += formatLines.length * 4;
+      }
+      return y + 4;
+    })
+    .disclaimer(CLE_DISCLAIMER_TEXT)
+    .records(records, cleRecordToPdfRecord)
+    .toBuffer();
 }
 
 // ─── Audit event (METADATA ONLY — CC7) ───────────────
+/**
+ * Emit the `cle_log.exported` audit event. This wrapper owns the CC7-sensitive
+ * `details` allowlist (no titles, providers, public_ids, URLs, or any
+ * per-credential content — verified by the CC7 leak test); the generic
+ * `emitExportAuditEvent` helper performs the non-fatal insert.
+ */
 async function emitCleLogExportedAudit(
   deps: CleLogExportDeps,
   args: {
@@ -434,41 +411,23 @@ async function emitCleLogExportedAudit(
     requestId: string;
   },
 ): Promise<void> {
-  // Only the allowed metadata keys. No titles, providers, public_ids, URLs,
-  // or any per-credential content — verified by the CC7 leak test.
-  const details = {
-    jurisdiction: args.jurisdiction,
-    period_start: args.periodStart,
-    period_end: args.periodEnd,
-    format: 'pdf+json',
-    record_count: args.recordCount,
-    request_id: args.requestId,
-  };
-
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any, arkova/missing-org-filter -- audit insert writes a new event row; org_id + actor_id are set on the row (not a tenant-leaking read).
-    const result = await (deps.db.from('audit_events') as any).insert({
-      event_type: 'cle_log.exported',
-      event_category: 'ADMIN',
-      actor_id: args.userId,
-      org_id: args.orgId,
-      target_type: 'cle_log_export',
-      details: JSON.stringify(details),
-    });
-    if (result?.error) {
-      // Audit failure is non-fatal — the export still succeeded. Log coarse
-      // context only (no PII), consistent with worker job conventions.
-      deps.logger.warn(
-        { orgId: args.orgId, requestId: args.requestId, code: result.error.code },
-        'cle_log.exported audit insert failed (non-fatal)',
-      );
-    }
-  } catch (err) {
-    deps.logger.warn(
-      { requestId: args.requestId, error: err instanceof Error ? err.message : 'unknown' },
-      'cle_log.exported audit insert threw (non-fatal)',
-    );
-  }
+  await emitExportAuditEvent(deps.db, deps.logger, {
+    eventType: 'cle_log.exported',
+    eventCategory: 'ADMIN',
+    targetType: 'cle_log_export',
+    actorId: args.userId,
+    orgId: args.orgId,
+    requestId: args.requestId,
+    // Allowed metadata keys only (incl. jurisdiction per AC).
+    details: {
+      jurisdiction: args.jurisdiction,
+      period_start: args.periodStart,
+      period_end: args.periodEnd,
+      format: 'pdf+json',
+      record_count: args.recordCount,
+      request_id: args.requestId,
+    },
+  });
 }
 
 // ─── Orchestration ───────────────────────────────────
@@ -540,29 +499,19 @@ export async function generateCleLogExport(
   const jsonBody = JSON.stringify(CleLogV1Schema.parse(jsonDoc), null, 2);
   const pdfBody = generateCleLogPdf(records, summary, jurisdiction, args.periodStart, args.periodEnd);
 
-  // 3. Upload both to Storage under an org/user-scoped, unguessable path.
+  // 3+4. Upload both artifacts to an org/user-scoped, unguessable base path and
+  //      sign each — via the shared generic upload/sign seam (single source of
+  //      truth in export-format-helpers.ts; not duplicated per exporter).
   const base = `cle-log/${args.orgId}/${args.userId}/${requestId}`;
-  const pdfPath = `${base}.pdf`;
-  const jsonPath = `${base}.json`;
-
-  const pdfUpload = await deps.storage.upload(bucket, pdfPath, new Uint8Array(pdfBody), 'application/pdf');
-  if (pdfUpload.error) {
-    throw new Error(`failed to upload CLE log PDF: ${pdfUpload.error.message}`);
-  }
-  const jsonUpload = await deps.storage.upload(bucket, jsonPath, jsonBody, 'application/json');
-  if (jsonUpload.error) {
-    throw new Error(`failed to upload CLE log JSON: ${jsonUpload.error.message}`);
-  }
-
-  // 4. Sign both.
-  const pdfSigned = await deps.storage.createSignedUrl(bucket, pdfPath, SIGNED_URL_TTL_SECONDS);
-  if (pdfSigned.error || !pdfSigned.signedUrl) {
-    throw new Error(`failed to sign CLE log PDF URL: ${pdfSigned.error?.message ?? 'no url'}`);
-  }
-  const jsonSigned = await deps.storage.createSignedUrl(bucket, jsonPath, SIGNED_URL_TTL_SECONDS);
-  if (jsonSigned.error || !jsonSigned.signedUrl) {
-    throw new Error(`failed to sign CLE log JSON URL: ${jsonSigned.error?.message ?? 'no url'}`);
-  }
+  const exports = await uploadAndSignExportArtifacts({
+    storage: deps.storage,
+    bucket,
+    basePath: base,
+    pdfBody: new Uint8Array(pdfBody),
+    jsonBody,
+    expiresIn: SIGNED_URL_TTL_SECONDS,
+    label: 'CLE',
+  });
 
   // 5. Audit (metadata only — non-fatal).
   await emitCleLogExportedAudit(deps, {
@@ -585,9 +534,6 @@ export async function generateCleLogExport(
     record_count: recordCount,
     jurisdiction,
     disclaimer: CLE_DISCLAIMER_TEXT,
-    exports: {
-      pdf: { signed_url: pdfSigned.signedUrl, path: pdfPath, expires_in: SIGNED_URL_TTL_SECONDS },
-      json: { signed_url: jsonSigned.signedUrl, path: jsonPath, expires_in: SIGNED_URL_TTL_SECONDS },
-    },
+    exports,
   };
 }
