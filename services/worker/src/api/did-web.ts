@@ -225,7 +225,12 @@ async function defaultLookupOrg(publicId: string): Promise<DidWebOrgRow | null> 
     .select('public_id, display_name, website_url, suspended')
     .eq('public_id', publicId)
     .maybeSingle();
-  if (error || !data) return null;
+  // Distinguish a DB/query error (transient — caller should 503) from a genuine
+  // no-row result (permanent — caller should 404). Collapsing both into null would
+  // let a Supabase outage produce cacheable 404s, making a valid issuer DID appear
+  // nonexistent for the CDN TTL after the outage clears.
+  if (error) throw new Error(`org lookup failed: ${error.message ?? 'unknown error'}`);
+  if (!data) return null;
   return data as unknown as DidWebOrgRow;
 }
 
@@ -285,11 +290,21 @@ export function createDidWebRouter(deps: DidWebRouterDeps = {}): Router {
       return;
     }
 
-    const org = await lookupOrg(orgPublicId);
+    let org: DidWebOrgRow | null;
+    try {
+      org = await lookupOrg(orgPublicId);
+    } catch {
+      // A thrown error means the DB query itself failed (transient infrastructure
+      // fault). Return 503 so CDNs / resolvers do NOT cache the response — a
+      // valid org's DID must not be made unresolvable for the CDN TTL window
+      // just because of a momentary Supabase hiccup.
+      res.status(503).json({ error: 'Organization lookup temporarily unavailable.' });
+      return;
+    }
     // 404 for unknown OR suspended orgs — a suspended org has no resolvable,
     // advertisable W3C identity, and 404 (vs 403) avoids confirming existence.
     if (!org || org.suspended) {
-      res.status(404).json({ error: 'No DID document for this organization.' });
+
       return;
     }
 

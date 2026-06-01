@@ -101,10 +101,10 @@ describe('SCRUM-1922 did:web default org lookup (real db path)', () => {
     expect(res.status).toBe(404);
   });
 
-  it('returns 404 when the db returns an error', async () => {
+  it('returns 503 when the db returns an error (transient fault must not produce a cacheable 404)', async () => {
     maybeSingle.mockResolvedValue({ data: null, error: { message: 'boom' } });
     const res = await request(app).get('/orgs/ORG-ERR/.well-known/did.json');
-    expect(res.status).toBe(404);
+    expect(res.status).toBe(503);
   });
 
   it('returns 404 for a suspended org from the db', async () => {
