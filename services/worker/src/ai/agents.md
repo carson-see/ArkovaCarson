@@ -1,6 +1,6 @@
 # agents.md — services/worker/src/ai/
 
-_Last updated: 2026-05-22_
+_Last updated: 2026-06-01_
 
 ## 2026-05-22 Batch Embedding Review Hardening
 
