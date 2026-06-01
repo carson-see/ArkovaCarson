@@ -1,6 +1,12 @@
 # agents.md — services/worker/src/api/
 
-_Last updated: 2026-05-30 (SCRUM-2213 queue/pending auth.uid()-via-service-role fix)_
+_Last updated: 2026-06-01 (platform-admin org roster/search/add — admin-org-members.ts)_
+
+## 2026-06-01 Platform-admin org roster + add member (RLS-bypass via service_role)
+
+- `admin-org-members.ts` adds three platform-admin-gated endpoints behind the org profile UI: `GET /api/admin/organizations/:id/members` (roster), `GET /api/admin/users/search?email=` (find a user for the add flow), `POST /api/admin/organizations/:id/members` (add member). The browser-side org views query Supabase directly under RLS, and `org_members` / `profiles` SELECT policies have **no platform-admin bypass** — a platform admin viewing an org they are not a member of saw "0 members" and "No user found". These use the service_role `db` client (bypasses RLS) and gate EVERY endpoint with `isPlatformAdmin(userId)` first (DB is never touched before the gate — asserted in tests).
+- The roster intentionally reads **`profiles` scoped by `org_id`** (the same source as the client `useOrgMembers` hook), so platform admins see an identical roster to org members — not a divergent `org_members`-join view.
+- Add-member writes go **directly** through service_role (insert `org_members` + backfill `profiles.org_id` when null + `audit_events` MEMBER_ADDED row). We deliberately do **NOT** call the `add_org_member` RPC: it resolves the caller via `auth.uid()`, which is NULL under the worker's service_role client (same SCRUM-2213 trap below) → it would raise on every call. `org_members.role` is the `org_member_role` enum (owner/admin/member); map the UI's INDIVIDUAL/ORG_ADMIN → member/admin (owner is never assignable here).
 
 ## 2026-05-30 RPCs that read `auth.uid()` fail when called from the worker (SCRUM-2213)
 
@@ -35,6 +41,7 @@ Express route handlers for the worker's HTTP API. Covers admin endpoints, anchor
 | `proof-keys.ts` | Proof signing key management |
 | `audit-event.ts` | Audit event creation and query |
 | `admin-stats.ts` / `admin-lists.ts` / `admin-pipeline-stats.ts` | Admin dashboard data endpoints |
+| `admin-org-members.ts` | Platform-admin org roster + user-search + add-member (service_role, RLS-bypass; backs the org profile UI when an admin views a non-member org) |
 | `admin-actions.ts` / `admin-health.ts` | Admin action + health check endpoints |
 | `rules-crud.ts` / `rules-draft.ts` | Rules engine CRUD and draft management |
 | `queue-resolution.ts` | Review queue resolution endpoint |
