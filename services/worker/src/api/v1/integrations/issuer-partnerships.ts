@@ -196,7 +196,7 @@ function createDefaultRowStore(db: typeof defaultDb): MemberIntegrationRowDeps {
             kek_version: number;
           }
         | undefined;
-      if (!row || !row.encrypted_tokens || !row.token_kms_key_id) return null;
+      if (!row?.encrypted_tokens || !row.token_kms_key_id) return null;
       return {
         ciphertext: Buffer.from(row.encrypted_tokens),
         kmsKeyName: row.token_kms_key_id,

@@ -75,7 +75,7 @@ export function IssuerPartnershipsPage({
   }, [api, orgId]);
 
   useEffect(() => {
-    void reload();
+    reload().catch(() => undefined);
   }, [reload]);
 
   const activeRows = useMemo(() => rows.filter((r) => !r.revoked_at), [rows]);

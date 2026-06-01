@@ -131,7 +131,10 @@ describe('SCRUM-2082 — IssuerPartnershipsPage', () => {
     await screen.findByText(ISSUER_PARTNERSHIP_LABELS.EMPTY_TITLE);
 
     await user.click(screen.getByTestId('connect-issuer-cta'));
-    await user.selectOptions(screen.getByLabelText(/Issuer/i), 'accredible');
+    await user.selectOptions(
+      screen.getByRole('combobox', { name: /^Issuer$/i }),
+      'accredible',
+    );
 
     expect(screen.getByLabelText(/API key/i)).toBeInTheDocument();
     expect(screen.queryByLabelText(/Client secret/i)).not.toBeInTheDocument();
