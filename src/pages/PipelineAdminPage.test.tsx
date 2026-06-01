@@ -642,7 +642,7 @@ describe('PipelineAdminPage — records pagination (SCRUM-2006)', () => {
     fireEvent.click(screen.getByTestId('pipeline-page-jump-go'));
     await waitFor(() => expect(lastRecordsPageCall()).toMatchObject({ p_page: 10 }));
 
-    expect(screen.getByTestId('pipeline-page-next')).toBeDisabled();
+    await waitFor(() => expect(screen.getByTestId('pipeline-page-next')).toBeDisabled());
     expect(screen.getByTestId('pipeline-page-prev')).not.toBeDisabled();
   });
 
