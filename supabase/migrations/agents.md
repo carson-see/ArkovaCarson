@@ -5,6 +5,23 @@ This directory now starts with the Path C baseline, `00000000000000_baseline_at_
 - Do not split the baseline away from `docs/migrations-archive/`; the baseline and archive are one atomic migration-history rewrite for SCRUM-1668.
 - Do not edit an already-merged migration. Add a new forward migration with the next available numeric prefix. The only exception in this directory is the dated PR #841 remediation, which renumbers schema work that was merged but not safely applied to production because production already owned version 0313.
 - Treat migrations as prod-bound: a migration PR is not Done until prod Supabase schema/ledger evidence is captured.
+- **Before claiming a numeric prefix, add a row to the reservation table below in the same PR.** The 2026-06-01 three-way `0327` collision (#971/#1038/#1047) happened because parallel sessions skipped this step.
+
+## In-flight migration reservations (0327–0331) — recorded 2026-06-01
+
+`main` HEAD is **0326** (`0326_scrum1649_deduct_org_credit_idempotency.sql`); the next free prefix is `0327`. Canonical assignment for the currently-open migration PRs:
+
+| Prefix | PR | Story | File | Status |
+|---|---|---|---|---|
+| `0327` | #1047 | SCRUM-2225 | `0327_scrum2225_free_tier_quota.sql` | **keep** — actively soaking on its isolated project; do not renumber |
+| `0328` | #971 | SCRUM-2045 | `0328_org_integrations_suborg_inheritance.sql` | renumber `0327→0328` |
+| `0329` | #1038 | SCRUM-1611 | `0329_member_integrations_credential_providers.sql` | renumber `0327→0329` |
+| `0330` | #1022 | SCRUM-2203 | `0330_scrum2203_unembedded_records_query_perf.sql` | renumbered ✓ (head `2a8d1b1c`) |
+| `0331` | #1031 | SCRUM-1847/1869 | `0331_scrum1847_1869_public_anchor_cpe_cle_metadata.sql` | renumbered ✓ (head `431ddbff`) |
+
+- **Merge order must follow prefix order** (`0327→0331`): migrations apply monotonically, so merging a higher prefix before a lower one strands the lower one as out-of-order.
+- Each of these soaks on its **own dedicated isolated Supabase project**, never shared staging — `main` is at `0326`, so applying any unmerged prefix to shared staging would gap the ledger and contaminate every parallel soak.
+- Remove a row once its PR merges to `main` and gets a permanent `## Recent migrations` entry below.
 
 ## Recent migrations (PR #817)
 
