@@ -432,6 +432,35 @@ function addField(
 
 const ANCHOR_SELECT = 'id, public_id, filename, fingerprint, credential_type, status, created_at, issued_at, expires_at, revoked_at, revocation_reason, chain_tx_id, chain_block_height, chain_timestamp, chain_confirmations, file_size, compliance_controls, metadata, org_id';
 
+type AuditOrgLookupResult =
+  | { status: 'ok'; orgId: string }
+  | { status: 'forbidden' }
+  | { status: 'error' };
+
+async function resolveAuditExportOrgId(userId: string, logContext: string): Promise<AuditOrgLookupResult> {
+  // Use `.maybeSingle()` so an absent profile resolves to { data: null,
+  // error: null } instead of raising PGRST116. A real operational failure
+  // returns { data: null, error } and must surface as 500, not be hidden as
+  // "no org membership".
+  const { data: profile, error: profileError } = await db
+    .from('profiles')
+    .select('org_id')
+    .eq('id', userId)
+    .maybeSingle();
+
+  if (profileError) {
+    // Log coarse message/code only — never row contents or PII (§1.4).
+    logger.error({ error: profileError.message, code: profileError.code }, logContext);
+    return { status: 'error' };
+  }
+
+  if (!profile?.org_id) {
+    return { status: 'forbidden' };
+  }
+
+  return { status: 'ok', orgId: profile.org_id };
+}
+
 /** POST / — Single anchor audit export (PDF or CSV) */
 router.post('/', async (req: Request, res: Response) => {
   const userId = req.authUserId;
@@ -447,26 +476,12 @@ router.post('/', async (req: Request, res: Response) => {
   }
 
   try {
-    // Get user's org. Use `.maybeSingle()` so an absent profile resolves to
-    // { data: null, error: null } instead of raising PGRST116, and inspect
-    // `error`: an operational failure (e.g. PGRST301 connection error) returns
-    // { data: null, error } and MUST surface as 500. Falling through to a 403
-    // "no org membership" would mask a 500-class fault. Only a successful query
-    // with a null org_id is a genuine 403.
-    const { data: profile, error: profileError } = await db
-      .from('profiles')
-      .select('org_id')
-      .eq('id', userId)
-      .maybeSingle();
-
-    if (profileError) {
-      // Log coarse message/code only — never the row contents or PII (§1.4).
-      logger.error({ error: profileError.message, code: profileError.code }, 'Audit export: profile lookup failed');
+    const orgLookup = await resolveAuditExportOrgId(userId, 'Audit export: profile lookup failed');
+    if (orgLookup.status === 'error') {
       res.status(500).json({ error: 'Failed to generate audit export' });
       return;
     }
-
-    if (!profile?.org_id) {
+    if (orgLookup.status === 'forbidden') {
       res.status(403).json({ error: 'Organization membership required' });
       return;
     }
@@ -487,7 +502,7 @@ router.post('/', async (req: Request, res: Response) => {
     const anchorRow = anchor as AnchorRow;
 
     // Org authorization
-    if (anchorRow.org_id !== profile.org_id) {
+    if (anchorRow.org_id !== orgLookup.orgId) {
       res.status(403).json({ error: 'Unauthorized — anchor belongs to a different organization' });
       return;
     }
@@ -533,21 +548,12 @@ router.post('/batch', async (req: Request, res: Response) => {
   }
 
   try {
-    // See the single-export handler above: `.maybeSingle()` + an explicit
-    // `error` check so a DB failure is a 500, not a misclassified 403.
-    const { data: profile, error: profileError } = await db
-      .from('profiles')
-      .select('org_id')
-      .eq('id', userId)
-      .maybeSingle();
-
-    if (profileError) {
-      logger.error({ error: profileError.message, code: profileError.code }, 'Batch audit export: profile lookup failed');
+    const orgLookup = await resolveAuditExportOrgId(userId, 'Batch audit export: profile lookup failed');
+    if (orgLookup.status === 'error') {
       res.status(500).json({ error: 'Failed to generate batch audit export' });
       return;
     }
-
-    if (!profile?.org_id) {
+    if (orgLookup.status === 'forbidden') {
       res.status(403).json({ error: 'Organization membership required' });
       return;
     }
@@ -560,7 +566,7 @@ router.post('/batch', async (req: Request, res: Response) => {
     let query = (db as any)
       .from('anchors')
       .select(ANCHOR_SELECT)
-      .eq('org_id', profile.org_id)
+      .eq('org_id', orgLookup.orgId)
       .eq('status', status)
       .order('created_at', { ascending: false })
       .limit(limit);
