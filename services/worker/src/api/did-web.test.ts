@@ -2,8 +2,8 @@
  * SCRUM-1922 R-CTDL-FR9 — did:web endpoint tests.
  *
  * Exercises the public DID document resolver for:
- *   - Arkova platform DID  (did:web:arkova.xyz)
- *   - Issuing-org sub-DIDs (did:web:arkova.xyz:orgs:{public_id})
+ *   - Arkova platform DID  (did:web:app.arkova.ai)
+ *   - Issuing-org sub-DIDs (did:web:app.arkova.ai:orgs:{public_id})
  *
  * The published Ed25519 verification key is sourced from the SAME static
  * registry the proof-bundle endpoint serves (services/worker/proof-keys.public.json).
@@ -31,7 +31,7 @@ import {
   type DidWebOrgRow,
 } from './did-web.js';
 
-const ARKOVA_DID = 'did:web:arkova.xyz';
+const ARKOVA_DID = 'did:web:app.arkova.ai';
 const KEY_ID = 'arkova-proof-2026-q2';
 
 /** Build a real Ed25519 keypair and return the SPKI PEM + its expected JWK. */
@@ -134,7 +134,7 @@ describe('SCRUM-1922 did:web router', () => {
         (s: { type: string }) => s.type === 'LinkedDomains',
       );
       expect(svc).toBeDefined();
-      expect(svc.serviceEndpoint).toBe('https://arkova.xyz');
+      expect(svc.serviceEndpoint).toBe('https://app.arkova.ai');
     });
 
     it('responds with Content-Type application/did+json and a cache header', async () => {
@@ -211,12 +211,28 @@ describe('SCRUM-1922 did:web router', () => {
 
   // ─── Issuing-org sub-DID ─────────────────────────────────────────────
 
-  describe('GET /orgs/:orgPublicId/.well-known/did.json (org DID)', () => {
+  describe('GET /orgs/:orgPublicId/did.json (org DID)', () => {
+    // W3C did:web spec: did:web:host:orgs:{id} resolves to /orgs/{id}/did.json
+    // (path-segment DIDs use a plain did.json, NOT .well-known). Only the
+    // bare-host DID (did:web:host) uses /.well-known/did.json.
+    it('serves the org DID document at /orgs/:id/did.json (not under .well-known)', async () => {
+      await writeRegistry([activeKeyEntry()]);
+      const app = appWith({ lookupOrg: async () => SAMPLE_ORG });
+
+      const ok = await request(app).get('/orgs/ORG-MI-CLE/did.json');
+      expect(ok.status).toBe(200);
+      expect(ok.body.id).toBe(`${ARKOVA_DID}:orgs:ORG-MI-CLE`);
+
+      // The legacy .well-known org path must NOT resolve (no route registered).
+      const legacy = await request(app).get('/orgs/ORG-MI-CLE/.well-known/did.json');
+      expect(legacy.status).toBe(404);
+    });
+
     it('serves a valid org DID document controlled by the Arkova DID', async () => {
       await writeRegistry([activeKeyEntry()]);
       const res = await request(
         appWith({ lookupOrg: async () => SAMPLE_ORG }),
-      ).get('/orgs/ORG-MI-CLE/.well-known/did.json');
+      ).get('/orgs/ORG-MI-CLE/did.json');
 
       expect(res.status).toBe(200);
       const doc = res.body;
@@ -235,7 +251,7 @@ describe('SCRUM-1922 did:web router', () => {
       await writeRegistry([activeKeyEntry()]);
       const res = await request(
         appWith({ lookupOrg: async () => SAMPLE_ORG }),
-      ).get('/orgs/ORG-MI-CLE/.well-known/did.json');
+      ).get('/orgs/ORG-MI-CLE/did.json');
 
       expect(res.body.name).toBe('Michigan Legal Education Board');
       const svc = res.body.service.find(
@@ -250,7 +266,7 @@ describe('SCRUM-1922 did:web router', () => {
         appWith({
           lookupOrg: async () => ({ ...SAMPLE_ORG, website_url: null }),
         }),
-      ).get('/orgs/ORG-MI-CLE/.well-known/did.json');
+      ).get('/orgs/ORG-MI-CLE/did.json');
 
       expect(res.status).toBe(200);
       const services = res.body.service ?? [];
@@ -265,7 +281,7 @@ describe('SCRUM-1922 did:web router', () => {
       await writeRegistry([activeKeyEntry()]);
       const res = await request(
         appWith({ lookupOrg: async () => SAMPLE_ORG }),
-      ).get('/orgs/ORG-MI-CLE/.well-known/did.json');
+      ).get('/orgs/ORG-MI-CLE/did.json');
 
       expect(res.headers['content-type']).toContain('application/did+json');
     });
@@ -274,7 +290,7 @@ describe('SCRUM-1922 did:web router', () => {
       await writeRegistry([activeKeyEntry()]);
       const res = await request(
         appWith({ lookupOrg: async () => null }),
-      ).get('/orgs/ORG-DOES-NOT-EXIST/.well-known/did.json');
+      ).get('/orgs/ORG-DOES-NOT-EXIST/did.json');
 
       expect(res.status).toBe(404);
       expect(res.body.error).toBeDefined();
@@ -284,7 +300,7 @@ describe('SCRUM-1922 did:web router', () => {
       await writeRegistry([activeKeyEntry()]);
       const res = await request(
         appWith({ lookupOrg: async () => ({ ...SAMPLE_ORG, suspended: true }) }),
-      ).get('/orgs/ORG-MI-CLE/.well-known/did.json');
+      ).get('/orgs/ORG-MI-CLE/did.json');
 
       expect(res.status).toBe(404);
     });
@@ -293,7 +309,7 @@ describe('SCRUM-1922 did:web router', () => {
       __testOverridePath(join(workerRoot, 'does-not-exist.json'));
       const res = await request(
         appWith({ lookupOrg: async () => SAMPLE_ORG }),
-      ).get('/orgs/ORG-MI-CLE/.well-known/did.json');
+      ).get('/orgs/ORG-MI-CLE/did.json');
 
       expect(res.status).toBe(503);
     });
@@ -312,7 +328,7 @@ describe('SCRUM-1922 did:web router', () => {
       ]);
       const res = await request(
         appWith({ lookupOrg: async () => SAMPLE_ORG }),
-      ).get('/orgs/ORG-MI-CLE/.well-known/did.json');
+      ).get('/orgs/ORG-MI-CLE/did.json');
 
       expect(res.status).toBe(503);
     });
@@ -327,7 +343,7 @@ describe('SCRUM-1922 did:web router', () => {
             return SAMPLE_ORG;
           },
         }),
-      ).get('/orgs/' + encodeURIComponent('bad id:with:colons') + '/.well-known/did.json');
+      ).get('/orgs/' + encodeURIComponent('bad id:with:colons') + '/did.json');
 
       expect(res.status).toBe(400);
       expect(lookupCalled).toBe(false);
@@ -343,7 +359,7 @@ describe('SCRUM-1922 did:web router', () => {
       await writeRegistry([activeKeyEntry()]);
       const res = await request(
         appWith({ lookupOrg: async () => SAMPLE_ORG }),
-      ).get(`/orgs/${badId}/.well-known/did.json`);
+      ).get(`/orgs/${badId}/did.json`);
 
       expect(res.status).toBe(400);
     });
@@ -354,7 +370,7 @@ describe('SCRUM-1922 did:web router', () => {
         appWith({
           lookupOrg: async (publicId: string) => ({ ...SAMPLE_ORG, public_id: publicId }),
         }),
-      ).get('/orgs/AEV-ABC123DEF456/.well-known/did.json');
+      ).get('/orgs/AEV-ABC123DEF456/did.json');
 
       expect(res.status).toBe(200);
       expect(res.body.id).toBe(`${ARKOVA_DID}:orgs:AEV-ABC123DEF456`);

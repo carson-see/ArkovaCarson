@@ -4,7 +4,8 @@
  * The main suite (did-web.test.ts) injects `lookupOrg` to keep the route logic
  * pure. This suite mocks `../utils/db.js` so the DEFAULT (production) org lookup
  * path — a service-role `organizations` read by `public_id` — is exercised end
- * to end, including the supabase query-builder shape and the error/no-row guard.
+ * to end, including the supabase query-builder shape, the no-row 404, and the
+ * error-becomes-5xx guard (a DB error must never be masked as a 404).
  */
 
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
@@ -24,7 +25,7 @@ vi.mock('../utils/db.js', () => ({ db: { from } }));
 
 import { didWebRouter, __testOverridePath } from './did-web.js';
 
-const ARKOVA_DID = 'did:web:arkova.xyz';
+const ARKOVA_DID = 'did:web:app.arkova.ai';
 const KEY_ID = 'arkova-proof-2026-q2';
 
 function makePem(): { pem: string; x: string } {
@@ -85,7 +86,7 @@ describe('SCRUM-1922 did:web default org lookup (real db path)', () => {
       error: null,
     });
 
-    const res = await request(app).get('/orgs/ORG-MI-CLE/.well-known/did.json');
+    const res = await request(app).get('/orgs/ORG-MI-CLE/did.json');
 
     expect(res.status).toBe(200);
     expect(res.body.id).toBe(`${ARKOVA_DID}:orgs:ORG-MI-CLE`);
@@ -97,14 +98,18 @@ describe('SCRUM-1922 did:web default org lookup (real db path)', () => {
 
   it('returns 404 when the db returns no row', async () => {
     maybeSingle.mockResolvedValue({ data: null, error: null });
-    const res = await request(app).get('/orgs/ORG-NONE/.well-known/did.json');
+    const res = await request(app).get('/orgs/ORG-NONE/did.json');
     expect(res.status).toBe(404);
   });
 
-  it('returns 404 when the db returns an error', async () => {
+  it('returns 5xx (not 404) when the db read errors', async () => {
+    // A DB error is NOT "no such org" — masking it as 404 hides an outage and
+    // lets resolvers cache a false negative. The default lookup throws on
+    // `error`, and the route surfaces it as a 503 (mirrors badge.ts).
     maybeSingle.mockResolvedValue({ data: null, error: { message: 'boom' } });
-    const res = await request(app).get('/orgs/ORG-ERR/.well-known/did.json');
-    expect(res.status).toBe(404);
+    const res = await request(app).get('/orgs/ORG-ERR/did.json');
+    expect(res.status).toBeGreaterThanOrEqual(500);
+    expect(res.status).toBeLessThan(600);
   });
 
   it('returns 404 for a suspended org from the db', async () => {
@@ -117,7 +122,7 @@ describe('SCRUM-1922 did:web default org lookup (real db path)', () => {
       },
       error: null,
     });
-    const res = await request(app).get('/orgs/ORG-SUS/.well-known/did.json');
+    const res = await request(app).get('/orgs/ORG-SUS/did.json');
     expect(res.status).toBe(404);
   });
 });

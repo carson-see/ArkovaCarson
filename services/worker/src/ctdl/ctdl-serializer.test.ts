@@ -109,6 +109,6 @@ describe('buildCtdlJsonLd', () => {
     // line means the validator accepted the DID. Double-check the value shape.
     const sameAs = jsonLd['ceterms:offeredBy']['ceterms:sameAs'];
     expect(Array.isArray(sameAs)).toBe(true);
-    expect(sameAs?.[0]).toMatch(/^did:web:arkova\.xyz:orgs:/);
+    expect(sameAs?.[0]).toMatch(/^did:web:app\.arkova\.ai:orgs:/);
   });
 });

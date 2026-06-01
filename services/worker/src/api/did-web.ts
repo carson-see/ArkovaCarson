@@ -2,18 +2,21 @@
  * SCRUM-1922 R-CTDL-FR9 — did:web identity endpoints.
  *
  * Serves W3C DID Core documents over did:web for:
- *   - Arkova platform:  did:web:arkova.xyz
+ *   - Arkova platform:  did:web:app.arkova.ai
  *       GET /.well-known/did.json
- *   - Issuing orgs:     did:web:arkova.xyz:orgs:{org-public-id}
- *       GET /orgs/{org-public-id}/.well-known/did.json
+ *   - Issuing orgs:     did:web:app.arkova.ai:orgs:{org-public-id}
+ *       GET /orgs/{org-public-id}/did.json
  *
- * A did:web resolver maps the DID to an HTTPS fetch:
- *   did:web:arkova.xyz            -> https://arkova.xyz/.well-known/did.json
- *   did:web:arkova.xyz:orgs:{id}  -> https://arkova.xyz/orgs/{id}/.well-known/did.json
+ * A did:web resolver maps the DID to an HTTPS fetch (W3C did:web spec): the
+ * bare-host DID uses /.well-known/did.json, while a path-segment (sub-)DID
+ * drops .well-known and serves a plain did.json under the path:
+ *   did:web:app.arkova.ai            -> https://app.arkova.ai/.well-known/did.json
+ *   did:web:app.arkova.ai:orgs:{id}  -> https://app.arkova.ai/orgs/{id}/did.json
  *
- * OPS PREREQUISITE: the `arkova.xyz` domain (and `/orgs/*`) must be routed to
- * this worker by the edge (Cloudflare/Vercel). The routes are built + tested
- * here; the domain wiring is a deploy-time step, not a code change.
+ * OPS PREREQUISITE: app.arkova.ai is the public verification host; the edge
+ * routes that host (and `/orgs/*`) to this worker so the DIDs resolve. The
+ * routes are built + tested here; the domain wiring is a deploy-time step,
+ * not a code change.
  *
  * Key source: the SAME published Ed25519 key the proof-bundle registry serves
  * (services/worker/proof-keys.public.json, `status: "active"`). The public PEM
@@ -36,9 +39,10 @@ import { z } from 'zod';
 import type { ProofKey, ProofKeyRegistry } from './proof-keys.js';
 
 // ─── Domain / DID constants ──────────────────────────────────────────────
-// Per the SCRUM-1922 FR9 design the public DID domain is arkova.xyz. There is
-// no env var for this today; the edge routes this host to the worker (ops step).
-export const DID_WEB_DOMAIN = 'arkova.xyz';
+// app.arkova.ai is the public verification host the edge routes to this worker.
+// It is the did:web authority for the platform DID and all org sub-DIDs. There
+// is no env var for this today; the host routing is a deploy-time ops step.
+export const DID_WEB_DOMAIN = 'app.arkova.ai';
 export const ARKOVA_DID = `did:web:${DID_WEB_DOMAIN}`;
 const ARKOVA_HOMEPAGE = `https://${DID_WEB_DOMAIN}`;
 
@@ -167,8 +171,13 @@ export interface DidWebOrgRow {
 /**
  * Build an issuing-org sub-DID document. Reuses the platform key; `controller`
  * is the Arkova DID (Arkova controls org sub-DIDs). The org homepage is a
- * LinkedDomains service (omitted when null) and the display name is carried as
- * a top-level `name` (a permitted DID-Core extension property).
+ * LinkedDomains service (omitted when null).
+ *
+ * The org's display name is carried as a top-level `name`. This is NOT a
+ * DID-Core core property — it is a permitted human-readable extension, present
+ * so a resolver can render the controlling org without a second fetch. It is
+ * advisory metadata only: trust derives from the controller + verification
+ * method, never from this label.
  */
 export function buildOrgDidDocument(org: DidWebOrgRow, activeKey: ProofKey): DidDocument {
   const jwk = pemToEd25519Jwk(activeKey.public_key_pem);
@@ -225,8 +234,25 @@ async function defaultLookupOrg(publicId: string): Promise<DidWebOrgRow | null> 
     .select('public_id, display_name, website_url, suspended')
     .eq('public_id', publicId)
     .maybeSingle();
-  if (error || !data) return null;
+  // A DB error is an outage, NOT "no such org". Throw so the route surfaces a
+  // 5xx (resolvers retry) instead of masking it as a 404 (resolvers cache a
+  // false negative). 404 is reserved for `data === null` — a real missing row.
+  // Mirrors badge.ts `defaultLookupPublicAnchor`.
+  if (error) {
+    throw new Error(error.message ?? 'Failed to load organization DID');
+  }
+  if (!data) return null;
   return data as unknown as DidWebOrgRow;
+}
+
+/** Best-effort structured log for an org-lookup failure (mirrors badge.ts). */
+async function logOrgLookupError(err: unknown, publicId: string): Promise<void> {
+  try {
+    const { logger } = await import('../utils/logger.js');
+    logger.error({ err, publicId }, 'Failed to resolve org did:web document');
+  } catch {
+    // If config-bound logging is unavailable, still return the safe HTTP error.
+  }
 }
 
 // ─── Router ───────────────────────────────────────────────────────────────
@@ -236,8 +262,11 @@ export interface DidWebRouterDeps {
 
 function setDidJson(res: Response): void {
   res.type('application/did+json');
-  // Long cache: the published key rotates only on redeploy, so the doc is
-  // stable until then. CDNs / resolvers can hold it aggressively.
+  // 5-minute fresh window (max-age=300) + 1h stale-while-revalidate. The doc is
+  // effectively stable (the key rotates only on redeploy, org rows change
+  // rarely), but the short max-age bounds how long a CDN/resolver serves a
+  // stale doc after a key rotation or org suspension — a deliberate tradeoff
+  // over a multi-day TTL. Mirrors badge.ts.
   res.set('Cache-Control', 'public, max-age=300, stale-while-revalidate=3600');
 }
 
@@ -267,7 +296,10 @@ export function createDidWebRouter(deps: DidWebRouterDeps = {}): Router {
   });
 
   // ─── Issuing-org sub-DID ───
-  router.get('/orgs/:orgPublicId/.well-known/did.json', async (req: Request, res: Response) => {
+  // W3C did:web: did:web:app.arkova.ai:orgs:{id} resolves to /orgs/{id}/did.json
+  // (path-segment DIDs use a plain did.json; only the bare-host DID lives under
+  // /.well-known/did.json).
+  router.get('/orgs/:orgPublicId/did.json', async (req: Request, res: Response) => {
     // Validate the public id BEFORE any DB round-trip (injection / path safety).
     const parsed = orgPublicIdSchema.safeParse(req.params.orgPublicId);
     if (!parsed.success) {
@@ -285,7 +317,16 @@ export function createDidWebRouter(deps: DidWebRouterDeps = {}): Router {
       return;
     }
 
-    const org = await lookupOrg(orgPublicId);
+    let org: DidWebOrgRow | null;
+    try {
+      org = await lookupOrg(orgPublicId);
+    } catch (err) {
+      // The lookup throws on a DB/transport error (not on a missing row). Surface
+      // a 503 so resolvers retry, rather than masking the outage as a 404.
+      void logOrgLookupError(err, orgPublicId);
+      res.status(503).json({ error: 'Organization DID is temporarily unavailable.' });
+      return;
+    }
     // 404 for unknown OR suspended orgs — a suspended org has no resolvable,
     // advertisable W3C identity, and 404 (vs 403) avoids confirming existence.
     if (!org || org.suspended) {

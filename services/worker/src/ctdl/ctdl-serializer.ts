@@ -173,7 +173,7 @@ export function buildCtdlJsonLd(anchor: CtdlAnchor, options: BuildCtdlOptions): 
     offeredBy['ceterms:ctid'] = ctidFromPublicId(anchor.issuer.publicId);
     // SCRUM-1922 R-CTDL-FR9 — link the org's did:web identity. The public_id
     // is the same value the did:web resolver keys on, so this resolves to
-    // https://arkova.xyz/orgs/{public_id}/.well-known/did.json.
+    // https://app.arkova.ai/orgs/{public_id}/did.json.
     offeredBy['ceterms:sameAs'] = [`${ARKOVA_DID}:orgs:${anchor.issuer.publicId}`];
   }
 
