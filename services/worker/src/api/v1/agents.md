@@ -38,6 +38,16 @@ Public v1 API surface — frozen contract per CLAUDE.md §1.8. Additive nullable
 - `cpe_log.exported` audit event (category `ADMIN`) carries **metadata only** — `actor_id`, `org_id`, `period_start`, `period_end`, `format`, `record_count`, `request_id`; **no export body content** (CC7 — covered by a dedicated leak test). Audit failure is non-fatal.
 - The export **UI (SCRUM-1861) is intentionally deferred** — `src/pages/*` / `src/lib/copy.ts` are locked by other in-flight PRs; this story ships backend-only.
 
+## 2026-06-01 ORG-ADMIN per-member CPE export (SCRUM-1849 / SCRUM-1863 — CPE-R3, stacked on #1029)
+
+- `POST /api/v1/exports/org/cpe-log` — JWT-authed (router `requireAuth`), per-**admin** **10 requests/hour** rate limit on a SEPARATE bucket (`orgCpeLogExportRateLimiter`, `scope: 'org-cpe-log-export'`) so org exports don't share the R2 own-user budget (`scope: 'cpe-log-export'`). Body `{ user_id, period_start, period_end, format: 'pdf'|'json' }` where **`user_id` is the MEMBER to export** (not the caller). Zod `.strict()` (rejects any body-supplied `org_id`/extra fields), `period_start<=period_end`.
+- Sibling of the CPE-R2 own-user export — **reuses** `generateCpeLogExport` + the Storage seam from `services/worker/src/exports/cpe-log-export.ts` (no duplication, base unchanged). Only the AUTHZ model differs: own-user-only → **ORG_ADMIN-acts-on-member**.
+- **Authorization (all application-code — worker is service_role / RLS-bypassed, so these ARE the tenant boundary):** (1) authenticated; (2) caller belongs to an org (`getCallerOrgId`) else 403; (3) caller is ORG_ADMIN of that org (`isCallerOrgAdmin`) else 403; (4) target `user_id` is a member of the **caller's resolved org** (`isUserMemberOfOrg(target, callerOrgId)`) else **403 (cross-org)**. Org is ALWAYS resolved from the caller, **never from the body** — admin of org A can never reach a member of org B. The reused worker re-filters by BOTH `user_id` AND `org_id` (defense in depth).
+- **Cross-org isolation is the key deliverable.** Enforced + tested in `org-cpe-log-export.test.ts`: admin of A → member of B = 403 (named `org-cpe-export.cross-org.POST.returns.403`), admin → non-member = 403, admin → own-org member = 200. INDIVIDUAL/non-admin = 403. The worker uses service_role (RLS bypassed), so these are **application-code authz tests with mocked membership lookups** (`isCallerOrgAdmin`/`isUserMemberOfOrg` mocked); the membership-resolver DB behavior is unit-tested separately in `api/_org-auth.test.ts`. `npm run test:rls` (frontend Vitest harness) does not cover worker service-role endpoints.
+- **Membership model:** `isUserMemberOfOrg` (added to the canonical `src/api/_org-auth.ts` seam) returns true if EITHER an `org_members(user_id, org_id)` row exists OR `profiles.org_id === orgId` — mirroring `isCallerOrgAdmin`'s dual-source precedence. Fails closed on lookup error / empty inputs.
+- **Audit:** the reused worker emits its own metadata-only `cpe_log.exported` row (actor = the exported member). Because an admin action must record the ADMIN + target member, the endpoint emits an ADDITIONAL `cpe_log.exported` row with `actor_id = admin`, `org_id = caller org`, `target_type = 'org_cpe_log_export'`, and metadata-only `details` (`target_member_id`, `acting_as: 'ORG_ADMIN'`, period, format, record_count, request_id) — **no export body content (CC7, covered by a leak test)**. Non-fatal.
+- **No migration** — reuses `audit_events` + Storage + `rateLimit` + the existing `org_members`/`profiles` membership model. **T2** (public API surface, worker behavior; no schema/RLS/migration). Org CPE dashboard **UI (subtask SCRUM-1862) deferred** — `src/pages/*`/`src/lib/copy.ts` locked.
+
 ## Scope mapping (verified 2026-05-08)
 | Endpoint | Scope |
 |---|---|
@@ -49,6 +59,7 @@ Public v1 API surface — frozen contract per CLAUDE.md §1.8. Additive nullable
 | `GET /api/v1/usage` | `usage:read` |
 | `/api/v1/anchor/bulk`, `/api/v1/contracts` | `anchor:write` |
 | `POST /api/v1/exports/cpe-log` | Supabase JWT (own records only) |
+| `POST /api/v1/exports/org/cpe-log` | Supabase JWT + ORG_ADMIN (own-org members only) |
 
 ## Conventions
 - Request validation: Zod `safeParse` with structured `details: [{path, code, message}]` 400 response.

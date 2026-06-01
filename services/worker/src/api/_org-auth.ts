@@ -64,3 +64,42 @@ export async function isCallerOrgAdmin(
   const profile = preloadedProfile ?? (await getCallerProfile(userId));
   return profile?.role === 'ORG_ADMIN' || profile?.is_platform_admin === true;
 }
+
+/**
+ * Membership predicate: is `targetUserId` a member of `orgId`?
+ *
+ * Used when an org admin acts ON another member (e.g. exporting that member's
+ * compliance log). The worker runs as service_role and bypasses RLS, so this
+ * is the single source of truth for the "target belongs to my org" gate that
+ * prevents cross-org access. Fails closed: any lookup error → not a member.
+ *
+ * Honors BOTH membership signals the codebase uses, mirroring
+ * `isCallerOrgAdmin`'s dual-source precedence:
+ *   1. an `org_members` row for (targetUserId, orgId), OR
+ *   2. the target's `profiles.org_id` equals `orgId`.
+ *
+ * Either signal alone is sufficient — a member linked only via `profiles.org_id`
+ * (as the R2 own-user export relied on) is still recognized.
+ */
+export async function isUserMemberOfOrg(
+  targetUserId: string,
+  orgId: string,
+): Promise<boolean> {
+  if (!targetUserId || !orgId) return false;
+
+  const { data: membership, error: memberError } = await db
+    .from('org_members')
+    .select('user_id')
+    .eq('user_id', targetUserId)
+    .eq('org_id', orgId)
+    .maybeSingle();
+  if (memberError) {
+    logger.warn({ error: memberError, targetUserId }, 'org-auth: membership lookup failed');
+    return false;
+  }
+  if (membership) return true;
+
+  // Fallback: profiles.org_id linkage (no org_members row required).
+  const profile = await getCallerProfile(targetUserId);
+  return profile?.org_id === orgId;
+}

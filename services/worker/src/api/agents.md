@@ -26,7 +26,7 @@ Express route handlers for the worker's HTTP API. Covers admin endpoints, anchor
 
 | File | Purpose |
 |------|---------|
-| `_org-auth.ts` | Shared org-auth helpers for service_role handlers (single source of truth for org_id scoping) |
+| `_org-auth.ts` | Shared org-auth helpers for service_role handlers (single source of truth for org_id scoping). `getCallerProfile`/`getCallerOrgId`, `isCallerOrgAdmin` (org_members owner/admin OR profile ORG_ADMIN/platform-admin), and `isUserMemberOfOrg(target, org)` (SCRUM-1863 — the cross-org gate for admin-acts-on-member flows; true if an `org_members` row OR `profiles.org_id` matches; fails closed). Tested in `_org-auth.test.ts`. |
 | `badge.ts` | Public `/api/badge/:publicId` SVG endpoint; resolves status from `get_public_anchor` and fails closed for unknown states |
 | `anchor-lineage.ts` | Anchor parent/child lineage traversal endpoint |
 | `anchor-revoke.ts` | Anchor revocation endpoint |
