@@ -15,7 +15,7 @@
  *   p_limit rows — the Seq Scan and the Sort both disappear (prod EXPLAIN:
  *   Limit cost 0.85..170.94 for 100 rows).
  *
- * These assertions read migration 0328 directly (the compensating migration),
+ * These assertions read migration 0330 directly (the compensating migration),
  * mirroring the baseline-content test convention in rls-performance.test.ts and
  * scrum-1980-public-search-perf.test.ts. There is no local DB; the prod EXPLAIN
  * plan diff in the PR body is the behavioral evidence, this file is the content
@@ -28,7 +28,7 @@ import * as path from 'node:path';
 
 const MIGRATION_PATH = path.join(
   process.cwd(),
-  'supabase/migrations/0328_scrum2203_unembedded_records_query_perf.sql',
+  'supabase/migrations/0330_scrum2203_unembedded_records_query_perf.sql',
 );
 
 function migration(): string {
@@ -45,7 +45,7 @@ function functionBlock(sql: string): string {
 }
 
 describe('SCRUM-2203: get_unembedded_public_records query performance', () => {
-  it('migration 0328 redefines the function', () => {
+  it('migration 0330 redefines the function', () => {
     const sql = migration();
     expect(sql).toMatch(
       /CREATE OR REPLACE FUNCTION[\s\S]*get_unembedded_public_records/,
