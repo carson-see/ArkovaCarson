@@ -1364,6 +1364,20 @@ ${note}
       expect(r.errors.join(' ')).toMatch(/CI\/E2E green:/i);
     });
 
+    // Regression (PR #1051 MEDIUM finding): the label is PRESENT but its value
+    // is EMPTY (`- CI/E2E green:` with nothing after the colon). missingFields
+    // is satisfied (label present), and validatePassingEvidenceField
+    // short-circuits to PASS on an empty value — so before the fix a frontend-T2
+    // body could attest *nothing* for CI/E2E-green, weaker than the T1 path
+    // which runs validateNonEmptyEvidenceField over every required field. The
+    // frontend-T2 path must reject an empty value, mirroring T1.
+    it('Scenario 3i: frontend-only T2 with an EMPTY CI/E2E-green value FAILS', () => {
+      const body = frontendT2Body({ ciGreen: '' });
+      const r = check({ body, files: frontendOnlyT2Files, headSha });
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/CI\/E2E green:/i);
+    });
+
     // Under-declaration must still fail: a T2-required frontend-only PR that
     // declares T1 is blocked exactly as before (the frontend path does NOT
     // weaken classification — it only changes which evidence T2 accepts).

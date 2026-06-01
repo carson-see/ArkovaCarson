@@ -623,6 +623,12 @@ function frontendT2Errors(body: string): string[] {
   errors.push(validateVercelUrlEvidence(body));
   errors.push(validateFilledEvidenceField(body, 'E2E result:'));
   errors.push(validateNonEmptyEvidenceField(body, 'Rollback plan:'));
+  // `CI/E2E green:` must be non-empty AND state a passing result. The
+  // non-empty check runs first because validatePassingEvidenceField
+  // short-circuits to PASS on an empty value — without it a bare
+  // `- CI/E2E green:` line would attest nothing, weaker than the T1 path
+  // (which runs validateNonEmptyEvidenceField over every required field).
+  errors.push(validateNonEmptyEvidenceField(body, 'CI/E2E green:'));
   errors.push(
     validatePassingEvidenceField(
       body,
