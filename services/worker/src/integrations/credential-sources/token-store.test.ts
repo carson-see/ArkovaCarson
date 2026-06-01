@@ -13,10 +13,13 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   storeCredentialProviderTokens,
   readCredentialProviderTokens,
+  storeIssuerCredentials,
+  readIssuerCredentials,
   type CredentialProvider,
+  type IssuerCredentials,
   type MemberIntegrationRowDeps,
 } from './token-store.js';
-import type { OAuthTokens } from '../oauth/crypto.js';
+import type { KmsClient, OAuthTokens } from '../oauth/crypto.js';
 
 const ARKOVA_ORG_ID = '00000000-0000-0000-0000-000000000001';
 const ARKOVA_USER_ID = '00000000-0000-0000-0000-000000000010';
@@ -32,15 +35,15 @@ const sampleTokens: OAuthTokens = {
 };
 
 function makeFakeKms(): {
-  encrypt: ReturnType<typeof vi.fn>;
-  decrypt: ReturnType<typeof vi.fn>;
+  encrypt: ReturnType<typeof vi.fn<KmsClient['encrypt']>>;
+  decrypt: ReturnType<typeof vi.fn<KmsClient['decrypt']>>;
 } {
   // Simulate KMS: ciphertext = plaintext reversed (deterministic, non-trivial).
   return {
-    encrypt: vi.fn(async ({ plaintext }: { plaintext: Buffer }) => {
+    encrypt: vi.fn<KmsClient['encrypt']>(async ({ plaintext }) => {
       return Buffer.from(plaintext).reverse();
     }),
-    decrypt: vi.fn(async ({ ciphertext }: { ciphertext: Buffer }) => {
+    decrypt: vi.fn<KmsClient['decrypt']>(async ({ ciphertext }) => {
       return Buffer.from(ciphertext).reverse();
     }),
   };
@@ -281,12 +284,6 @@ describe('SCRUM-1611 — credential-source token-store', () => {
 // ---------------------------------------------------------------------------
 // SCRUM-1612 CSI-04B — issuer credentials (client_credentials grant)
 // ---------------------------------------------------------------------------
-
-import {
-  storeIssuerCredentials,
-  readIssuerCredentials,
-  type IssuerCredentials,
-} from './token-store.js';
 
 const sampleIssuerCredentials: IssuerCredentials = {
   client_id: 'credly-issuer-app-12345',
