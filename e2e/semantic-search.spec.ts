@@ -165,15 +165,17 @@ test.describe('Semantic Search panel', () => {
 
     await runSearch(individualPage, 'diploma');
 
-    await expect(individualPage.getByText('e2e-diploma.pdf')).toBeVisible({
+    const resultCard = individualPage.getByRole('link', {
+      name: /e2e-diploma\.pdf/i,
+    });
+
+    await expect(resultCard).toBeVisible({
       timeout: 10_000,
     });
     // Friendly percentage, never a raw vector score.
-    await expect(individualPage.getByText('92% match')).toBeVisible();
-    await expect(
-      individualPage.getByLabel(LABELS.MATCH_STRENGTH_STRONG),
-    ).toBeVisible();
-    await expect(individualPage.getByText(LABELS.STATUS_SECURED)).toBeVisible();
+    await expect(resultCard.getByText('92% match')).toBeVisible();
+    await expect(resultCard.getByLabel(LABELS.MATCH_STRENGTH_STRONG)).toBeVisible();
+    await expect(resultCard.getByText(LABELS.STATUS_SECURED)).toBeVisible();
     await expect(
       individualPage.getByText('SECURED', { exact: true }),
     ).toHaveCount(0);
