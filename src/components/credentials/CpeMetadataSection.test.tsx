@@ -21,6 +21,19 @@ import { CpeMetadataSection, type CpeMetadataView } from './CpeMetadataSection';
 import { CPE_COMPLIANCE_COPY } from './cpeComplianceCopy';
 
 /**
+ * Normalize React `useId()` values (e.g. `_r_e_`, `:r3:`) to a stable token so
+ * the public-view snapshot is not fragile across React versions or across the
+ * number of useId-using components rendered earlier in this file (addresses the
+ * review's P3 nit on snapshot id fragility). Structure + copy are still asserted.
+ */
+const REACT_USE_ID_RE = /(_r_[a-z0-9]+_|:r[a-z0-9]+:)/gi;
+
+/** RTL container HTML with React-generated ids normalized to a stable token. */
+function stableHtml(container: HTMLElement): string {
+  return container.innerHTML.replace(REACT_USE_ID_RE, '_rid_');
+}
+
+/**
  * Udemy import fixture — mirrors the worker `CpeMetadataSchema`
  * (services/worker/src/compliance/professional-education.ts) plus the
  * display-only fields (provider/title/completion_date/evidence_level)
@@ -123,6 +136,29 @@ describe('CpeMetadataSection — detail view', () => {
     });
   });
 
+  describe('malformed-blob robustness', () => {
+    it('omits the completion date row on an unparseable date (never "Invalid Date")', () => {
+      const { container } = render(
+        <CpeMetadataSection
+          cpeMetadata={{ ...UDEMY_FIXTURE, completion_date: 'not-a-date' }}
+          hasImportEntitlement
+        />,
+      );
+      // The literal JS "Invalid Date" string must never reach the DOM…
+      expect(container.textContent).not.toContain('Invalid Date');
+      // …and the Completion Date row is dropped entirely rather than shown blank.
+      expect(screen.queryByText(CPE_COMPLIANCE_COPY.FIELD_LABELS.completion_date)).toBeNull();
+      // The rest of the section still renders.
+      expect(screen.getByText(CPE_COMPLIANCE_COPY.SECTION_TITLE)).toBeInTheDocument();
+      expect(screen.getByText('Advanced Cloud Security for CPAs')).toBeInTheDocument();
+    });
+
+    it('still renders a valid completion date (guard does not regress the happy path)', () => {
+      render(<CpeMetadataSection cpeMetadata={UDEMY_FIXTURE} hasImportEntitlement />);
+      expect(screen.getByText(/May 18, 2026/)).toBeInTheDocument();
+    });
+  });
+
   describe('extraction_confidence is internal-only', () => {
     it('never renders the extraction_confidence value in the detail view', () => {
       const { container } = render(
@@ -160,7 +196,7 @@ describe('CpeMetadataSection — public verification view', () => {
     // the public surface — neither the value nor a "confidence" label.
     expect(container.textContent).not.toContain('0.97');
     expect(container.textContent?.toLowerCase()).not.toContain('confidence');
-    expect(container).toMatchSnapshot();
+    expect(stableHtml(container)).toMatchSnapshot();
   });
 
   it('omits extraction_source and reporting period internals from the public view', () => {

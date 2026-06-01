@@ -75,9 +75,15 @@ function isPresent(value: unknown): boolean {
   return value !== null && value !== undefined && value !== '';
 }
 
-/** Format a YYYY-MM-DD / ISO date as a UTC human date (no off-by-one). */
-function formatDate(dateStr: string): string {
-  return new Date(dateStr).toLocaleDateString('en-US', {
+/**
+ * Format a YYYY-MM-DD / ISO date as a UTC human date (no off-by-one).
+ * Returns null for an unparseable date so the caller can drop the row instead
+ * of rendering the literal "Invalid Date" from a malformed upstream blob.
+ */
+function formatDate(dateStr: string): string | null {
+  const d = new Date(dateStr);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toLocaleDateString('en-US', {
     year: 'numeric',
     month: 'long',
     day: 'numeric',
@@ -145,11 +151,15 @@ export function CpeMetadataSection({
     });
   }
   if (isPresent(cpeMetadata.completion_date)) {
-    rows.push({
-      key: 'completion_date',
-      label: labels.completion_date,
-      value: formatDate(String(cpeMetadata.completion_date)),
-    });
+    // Drop the row entirely on an unparseable date — never surface "Invalid Date".
+    const formatted = formatDate(String(cpeMetadata.completion_date));
+    if (formatted) {
+      rows.push({
+        key: 'completion_date',
+        label: labels.completion_date,
+        value: formatted,
+      });
+    }
   }
   if (isPresent(cpeMetadata.evidence_level)) {
     rows.push({

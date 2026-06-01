@@ -24,8 +24,16 @@ function str(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value : null;
 }
 
-function num(value: unknown): number | null {
-  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+/**
+ * Coerce to a finite number, optionally enforcing a minimum. A value below
+ * `min` is rejected to `null` — used to reject a non-sensical negative
+ * `credit_hours` from a malformed upstream blob (so the UI never renders
+ * "-3.0 CPE credits"). Defaults to no lower bound.
+ */
+function num(value: unknown, min = -Infinity): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value >= min
+    ? value
+    : null;
 }
 
 function nasba(value: unknown): NasbaStatus | null {
@@ -52,7 +60,9 @@ export function extractCpeMetadataView(
   if (!raw || typeof raw !== 'object') return null;
 
   const view: CpeMetadataView = {
-    credit_hours: num(raw.credit_hours),
+    // credit_hours must be >= 0 — reject a negative (malformed) value to null so
+    // the renderer never shows "-3.0 CPE credits".
+    credit_hours: num(raw.credit_hours, 0),
     field_of_study: str(raw.field_of_study),
     delivery_method: str(raw.delivery_method),
     nasba_status: nasba(raw.nasba_status),

@@ -76,4 +76,22 @@ describe('extractCpeMetadataView', () => {
     expect(view).not.toBeNull();
     expect(view!.requires_manual_review).toBe(true);
   });
+
+  it('rejects a negative credit_hours to null (no "-3.0 CPE credits")', () => {
+    const view = extractCpeMetadataView({ ...RAW, credit_hours: -3 });
+    // Other fields still map, so the view is not null…
+    expect(view).not.toBeNull();
+    // …but the bad credit_hours is dropped rather than carried through.
+    expect(view!.credit_hours).toBeNull();
+  });
+
+  it('preserves a zero credit_hours (>= 0 is valid)', () => {
+    const view = extractCpeMetadataView({ ...RAW, credit_hours: 0 });
+    expect(view!.credit_hours).toBe(0);
+  });
+
+  it('rejects a non-finite credit_hours (NaN/Infinity) to null', () => {
+    expect(extractCpeMetadataView({ ...RAW, credit_hours: Number.NaN })!.credit_hours).toBeNull();
+    expect(extractCpeMetadataView({ ...RAW, credit_hours: Infinity })!.credit_hours).toBeNull();
+  });
 });
