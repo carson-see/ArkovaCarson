@@ -9,7 +9,7 @@
  * The frontend (open draft PRs #1023/#1025) reads data.cpe_metadata /
  * data.cle_metadata and self-hides when absent, allowlisting display fields.
  *
- * Migration 0329 redefines get_public_anchor to ALSO return:
+ * Migration 0331 redefines get_public_anchor to ALSO return:
  *   - cpe_metadata: a.cpe_metadata with extraction_confidence/extraction_source
  *     stripped (NULL when the column is NULL)
  *   - cle_metadata: same strip
@@ -18,7 +18,7 @@
  * internal extraction signals must never reach the public payload even if a
  * client forgets to filter them.
  *
- * These assertions read migration 0329 directly (content-guard), mirroring
+ * These assertions read migration 0331 directly (content-guard), mirroring
  * the convention in scrum-2189-rpc-reads-cache.test.ts and
  * scrum-1980-public-search-perf.test.ts.
  */
@@ -29,7 +29,7 @@ import * as path from 'node:path';
 
 const MIGRATION_PATH = path.join(
   process.cwd(),
-  'supabase/migrations/0329_scrum1847_1869_public_anchor_cpe_cle_metadata.sql',
+  'supabase/migrations/0331_scrum1847_1869_public_anchor_cpe_cle_metadata.sql',
 );
 
 function migration(): string {
@@ -47,7 +47,7 @@ function functionBlock(sql: string): string {
 }
 
 describe('SCRUM-1847/1869: get_public_anchor surfaces cpe/cle_metadata', () => {
-  it('migration 0329 redefines get_public_anchor', () => {
+  it('migration 0331 redefines get_public_anchor', () => {
     expect(migration()).toMatch(
       /CREATE OR REPLACE FUNCTION\s+public\.get_public_anchor/,
     );
