@@ -220,6 +220,7 @@ describe('embeddings', () => {
       expect(result.model).toBe('gemini-embedding-001');
       expect(mockProvider.generateEmbedding).toHaveBeenCalled();
       expect(db.from).toHaveBeenCalledWith('credential_embeddings');
+      expect(db.from).not.toHaveBeenCalledWith('public_record_embeddings');
     });
 
     it('checks and deducts AI credits', async () => {
