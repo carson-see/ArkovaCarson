@@ -836,6 +836,42 @@ export const SEARCH_LABELS = {
 } as const;
 
 // =============================================================================
+// SEMANTIC SEARCH (SCRUM-1958 — AI natural-language credential search)
+// =============================================================================
+// User-visible copy for the authenticated, AI-powered semantic search panel on
+// the dashboard. Gated behind ENABLE_SEMANTIC_SEARCH. Respects Constitution
+// §1.3 terminology bans (no Wallet/Hash/Transaction/etc.) — "Fingerprint" is
+// the approved term and match strength is shown as a friendly percentage, never
+// a raw vector score.
+export const SEMANTIC_SEARCH_LABELS = {
+  HEADING: 'Smart Search',
+  SUBHEADING: 'Find your secured documents by describing them in your own words.',
+  PLACEHOLDER: 'Describe what you are looking for…',
+  SEARCH_BUTTON: 'Search',
+  SEARCHING: 'Searching…',
+  RESULTS_COUNT: '{count} result{plural} found',
+  CREDITS_REMAINING: '{count} AI credit{plural} remaining',
+  DOCUMENT_LABEL: 'Document',
+  MATCH_LABEL: '{percent}% match',
+  MATCH_STRENGTH_STRONG: 'Strong match',
+  MATCH_STRENGTH_GOOD: 'Good match',
+  MATCH_STRENGTH_FAIR: 'Fair match',
+  STATUS_SECURED: 'Secured',
+  STATUS_PENDING: 'Pending',
+  STATUS_UNAVAILABLE: 'Unavailable',
+  // Honest empty state — embeddings may legitimately return nothing.
+  EMPTY_TITLE: 'No matching documents',
+  EMPTY_DESC: 'Try describing the document differently, or search by issuer or fingerprint instead.',
+  CLEAR_BUTTON: 'Clear search',
+  // Error states — friendly, non-technical copy.
+  ERROR_AUTH: 'Please sign in to search your documents.',
+  ERROR_NO_CREDITS: 'You are out of AI credits. Upgrade your plan to keep using smart search.',
+  ERROR_UNAVAILABLE: 'Smart search is temporarily unavailable. Please try again in a few minutes.',
+  ERROR_NETWORK: 'Could not reach the service. Check your connection and try again.',
+  ERROR_GENERIC: 'Search failed. Please try again.',
+} as const;
+
+// =============================================================================
 // DASHBOARD
 // =============================================================================
 

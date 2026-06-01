@@ -15,12 +15,6 @@
       "reason": "Pre-existing raw AI-report-status enum render. Needs a report-status display mapper (new map in LOCKED src/lib/copy.ts). SCRUM-2148 follow-up."
     },
     {
-      "file": "src/components/search/SemanticSearch.tsx",
-      "line": 72,
-      "term": "raw enum render: {result.status}",
-      "reason": "LOCKED by open PR #886 (semantic-search UI). Do not edit. SCRUM-2148 follow-up once #886 lands."
-    },
-    {
       "file": "src/lib/statusDisplay.ts",
       "line": 98,
       "term": "crypto",
