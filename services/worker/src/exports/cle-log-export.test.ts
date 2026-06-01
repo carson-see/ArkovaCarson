@@ -216,6 +216,21 @@ describe('cle_log_v1 schema + record mapping', () => {
     expect(Object.keys(record)).toContain('credit_hours');
   });
 
+  it('trims trailing slashes on the frontend URL before appending /verify/<public_id>', () => {
+    // A frontendUrl with one or many trailing slashes must not produce a
+    // double-slash in the verification URL (e.g. .../verify/... not ...//verify/...).
+    expect(buildCleLogRecord(makeAnchor(), 'https://app.arkova.io/').verification_url).toBe(
+      'https://app.arkova.io/verify/ARK-CLE-0001',
+    );
+    expect(buildCleLogRecord(makeAnchor(), 'https://app.arkova.io///').verification_url).toBe(
+      'https://app.arkova.io/verify/ARK-CLE-0001',
+    );
+    // No trailing slash is unchanged.
+    expect(buildCleLogRecord(makeAnchor(), 'https://app.arkova.io').verification_url).toBe(
+      'https://app.arkova.io/verify/ARK-CLE-0001',
+    );
+  });
+
   it('NEVER includes extraction_confidence or extraction_source (internal-only allowlist)', () => {
     const record = buildCleLogRecord(makeAnchor(), 'https://app.arkova.io');
     const keys = Object.keys(record);

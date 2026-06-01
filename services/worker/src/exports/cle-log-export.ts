@@ -35,6 +35,7 @@ import { z } from 'zod';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Logger } from '../utils/logger.js';
 import { SIGNED_URL_TTL_SECONDS, type CpeExportStorage } from './cpe-log-export.js';
+import { asString, asNumber, asDateOnly, stripTrailingSlashes, formatUtc } from './export-format-helpers.js';
 import { US_STATE_CODES } from '../compliance/professional-education.js';
 
 // Re-export the shared Storage seam so callers (and tests) can import either
@@ -199,26 +200,8 @@ export interface CleLogExportResult {
 }
 
 // ─── Field mapping helpers ───────────────────────────
-function asString(value: unknown): string | null {
-  return typeof value === 'string' && value.trim() ? value.trim() : null;
-}
-
-function asNumber(value: unknown): number | null {
-  if (typeof value === 'number' && Number.isFinite(value)) return value;
-  if (typeof value === 'string' && value.trim() !== '') {
-    const n = Number(value);
-    return Number.isFinite(n) ? n : null;
-  }
-  return null;
-}
-
-/** Reduce an ISO date-time / date string to YYYY-MM-DD (or null). */
-function asDateOnly(value: unknown): string | null {
-  const s = asString(value);
-  if (!s) return null;
-  const dateOnly = s.slice(0, 10);
-  return /^\d{4}-\d{2}-\d{2}$/.test(dateOnly) ? dateOnly : null;
-}
+// asString / asNumber / asDateOnly / stripTrailingSlashes / formatUtc are
+// shared with the CPE exporter and live in ./export-format-helpers.ts.
 
 /**
  * Map a single anchor row to a public-safe CLE log record.
@@ -253,7 +236,7 @@ export function buildCleLogRecord(
     asString(cle.course_title) ?? asString(anchor.label) ?? asString(anchor.filename);
   const completion = asDateOnly(anchor.issued_at) ?? asDateOnly(meta.credential_issued_at);
   const verificationUrl = anchor.public_id
-    ? `${frontendUrl.replace(/\/+$/, '')}/verify/${anchor.public_id}`
+    ? `${stripTrailingSlashes(frontendUrl)}/verify/${anchor.public_id}`
     : null;
 
   return {
@@ -314,15 +297,6 @@ export function computeCleSummary(records: CleLogRecord[]): CleLogSummary {
 }
 
 // ─── PDF rendering ───────────────────────────────────
-function formatUtc(value: string | null): string {
-  if (!value) return '—';
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return value;
-  return (
-    d.toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'UTC' }) + ' UTC'
-  );
-}
-
 function generateCleLogPdf(
   records: CleLogRecord[],
   summary: CleLogSummary,
