@@ -130,7 +130,7 @@ export function credlyBadgeToEvidence(
       // NOT source_signed even if `proof` is present (deferred to v1.1).
       verificationLevel: 'account_linked',
       extractionMethod: 'issuer_api',
-      confidence: 1.0,
+      confidence: 1,
     },
   };
 

@@ -4,7 +4,7 @@
  * No real HTTP traffic — every test injects a `fetch`-shaped fake and a
  * deterministic clock.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
 
 import {
   createCredlyClient,
@@ -34,16 +34,27 @@ function makeErrResponse(status: number): ReturnType<FetchLike> {
   });
 }
 
+type FetchInit = NonNullable<Parameters<FetchLike>[1]> & {
+  headers: Record<string, string>;
+};
+
+function getFetchInit(call: Parameters<FetchLike>): FetchInit {
+  const init = call[1];
+  expect(init).toBeDefined();
+  expect(init?.headers).toBeDefined();
+  return init as FetchInit;
+}
+
 describe('SCRUM-1612 — Credly OAuth client_credentials', () => {
-  let fetchMock: ReturnType<typeof vi.fn>;
+  let fetchMock: Mock<FetchLike>;
   let nowValue: number;
   let deps: CredlyClientDeps;
 
   beforeEach(() => {
     nowValue = FIXED_NOW_MS;
-    fetchMock = vi.fn();
+    fetchMock = vi.fn<FetchLike>();
     deps = {
-      fetch: fetchMock as unknown as FetchLike,
+      fetch: fetchMock,
       now: () => nowValue,
     };
   });
@@ -68,7 +79,8 @@ describe('SCRUM-1612 — Credly OAuth client_credentials', () => {
 
       expect(token).toBe('tok-abc');
       expect(fetchMock).toHaveBeenCalledTimes(1);
-      const [url, init] = fetchMock.mock.calls[0];
+      const [url] = fetchMock.mock.calls[0];
+      const init = getFetchInit(fetchMock.mock.calls[0]);
       expect(url).toBe(`${DEFAULT_CREDLY_API_BASE}/oauth/token`);
       expect(init.method).toBe('POST');
       expect(init.headers['Content-Type']).toBe(
@@ -152,12 +164,13 @@ describe('SCRUM-1612 — Credly OAuth client_credentials', () => {
       });
 
       expect(fetchMock).toHaveBeenCalledTimes(1);
-      const [url, init] = fetchMock.mock.calls[0];
+      const [url] = fetchMock.mock.calls[0];
+      const init = getFetchInit(fetchMock.mock.calls[0]);
       expect(url).toMatch(
         new RegExp(
           `^${DEFAULT_CREDLY_API_BASE.replace(
             /[.\\+*?^$(){}|[\]/]/g,
-            '\\$&',
+            String.raw`\$&`,
           )}/v1/organizations/org-12345/badges`,
         ),
       );
