@@ -176,6 +176,7 @@ describe('makeListenerDriftDeps — getExpectedConfig', () => {
     expect(expected.requiredEvents).toEqual(['envelope-completed']);
     expect(expected.hmacEnabled).toBe(true);
     expect(expected.payloadFormat).toBe('json');
+    expect(expected.payloadVersion).toBe('restv2.1');
   });
 });
 
