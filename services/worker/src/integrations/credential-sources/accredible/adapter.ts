@@ -117,7 +117,7 @@ export function accredibleCredentialToEvidence(
       // v1.0 trust boundary — same discipline as the Credly adapter.
       verificationLevel: 'account_linked',
       extractionMethod: 'issuer_api',
-      confidence: 1.0,
+      confidence: 1,
     },
   };
 

@@ -2,7 +2,7 @@
  * Accredible HTTP client tests — SCRUM-1613 CSI-04C.
  * No real HTTP — every test injects a `fetch`-shaped fake.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
 
 import {
   createAccredibleClient,
@@ -29,13 +29,24 @@ function err(status: number): ReturnType<FetchLike> {
   });
 }
 
+type FetchInit = NonNullable<Parameters<FetchLike>[1]> & {
+  headers: Record<string, string>;
+};
+
+function getFetchInit(call: Parameters<FetchLike>): FetchInit {
+  const init = call[1];
+  expect(init).toBeDefined();
+  expect(init?.headers).toBeDefined();
+  return init as FetchInit;
+}
+
 describe('SCRUM-1613 — Accredible API-key client', () => {
-  let fetchMock: ReturnType<typeof vi.fn>;
+  let fetchMock: Mock<FetchLike>;
   let deps: AccredibleClientDeps;
 
   beforeEach(() => {
-    fetchMock = vi.fn();
-    deps = { fetch: fetchMock as unknown as FetchLike };
+    fetchMock = vi.fn<FetchLike>();
+    deps = { fetch: fetchMock };
   });
 
   describe('listIssuedCredentials', () => {
@@ -51,12 +62,13 @@ describe('SCRUM-1613 — Accredible API-key client', () => {
       await client.listIssuedCredentials({ apiKey: 'ak-12345' });
 
       expect(fetchMock).toHaveBeenCalledTimes(1);
-      const [url, init] = fetchMock.mock.calls[0];
+      const [url] = fetchMock.mock.calls[0];
+      const init = getFetchInit(fetchMock.mock.calls[0]);
       expect(url).toMatch(
         new RegExp(
           `^${DEFAULT_ACCREDIBLE_API_BASE.replace(
             /[.\\+*?^$(){}|[\]/]/g,
-            '\\$&',
+            String.raw`\$&`,
           )}/credentials`,
         ),
       );

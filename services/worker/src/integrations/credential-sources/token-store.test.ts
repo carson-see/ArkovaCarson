@@ -15,8 +15,11 @@ import {
   readCredentialProviderTokens,
   storeIssuerCredentials,
   readIssuerCredentials,
+  storeApiKeyCredentials,
+  readApiKeyCredentials,
   type CredentialProvider,
   type IssuerCredentials,
+  type ApiKeyCredentials,
   type MemberIntegrationRowDeps,
 } from './token-store.js';
 import type { KmsClient, OAuthTokens } from '../oauth/crypto.js';
@@ -431,12 +434,6 @@ describe('SCRUM-1612 — issuer credentials (client_credentials grant)', () => {
 // ---------------------------------------------------------------------------
 // SCRUM-1613 CSI-04C — API-key credentials (Accredible / Udemy Business)
 // ---------------------------------------------------------------------------
-
-import {
-  storeApiKeyCredentials,
-  readApiKeyCredentials,
-  type ApiKeyCredentials,
-} from './token-store.js';
 
 const sampleApiKeyCredentials: ApiKeyCredentials = {
   api_key: 'ak-DO-NOT-LOG-1234567890abcdef',
