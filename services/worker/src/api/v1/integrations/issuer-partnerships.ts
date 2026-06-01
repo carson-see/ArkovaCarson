@@ -363,14 +363,14 @@ export function createIssuerPartnershipsRouter(
         res.status(404).json({ error: { code: 'not_found' } });
         return;
       }
-      if (row.revoked_at) {
-        res.status(200).json({ data: { id: rowId, revoked: true } });
-        return;
-      }
-
       const ok = await isOrgAdmin(db, userId, row.org_id);
       if (!ok) {
         res.status(403).json({ error: { code: 'forbidden' } });
+        return;
+      }
+
+      if (row.revoked_at) {
+        res.status(200).json({ data: { id: rowId, revoked: true } });
         return;
       }
 
