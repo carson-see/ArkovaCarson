@@ -343,3 +343,156 @@ describe('SCRUM-1611 — credential-source token-store', () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// SCRUM-1612 CSI-04B — issuer credentials (client_credentials grant)
+// ---------------------------------------------------------------------------
+
+import {
+  storeIssuerCredentials,
+  readIssuerCredentials,
+  type IssuerCredentials,
+} from './token-store.js';
+
+const sampleIssuerCredentials: IssuerCredentials = {
+  client_id: 'credly-issuer-app-12345',
+  client_secret: 'super-secret-DO-NOT-LOG-abcdef',
+  scope: 'issued_badges',
+};
+
+describe('SCRUM-1612 — issuer credentials (client_credentials grant)', () => {
+  let fakeKms: ReturnType<typeof makeFakeKms>;
+  let store: ReturnType<typeof makeFakeStore>;
+
+  beforeEach(() => {
+    fakeKms = makeFakeKms();
+    store = makeFakeStore();
+  });
+
+  describe('storeIssuerCredentials', () => {
+    it('encrypts and writes a member_integrations row for credly', async () => {
+      await storeIssuerCredentials(
+        {
+          userId: ARKOVA_USER_ID,
+          orgId: ARKOVA_ORG_ID,
+          provider: 'credly',
+          accountId: 'credly-org-1',
+          credentials: sampleIssuerCredentials,
+        },
+        { kms: fakeKms, keyName: TEST_KEY_NAME, rowStore: store.deps },
+      );
+
+      expect(fakeKms.encrypt).toHaveBeenCalledTimes(1);
+      expect(store.rows).toHaveLength(1);
+      const row = store.rows[0];
+      expect(row.provider).toBe('credly');
+      expect(row.kek_version).toBe(1);
+      // The client_secret must NEVER appear in the stored ciphertext as plaintext
+      expect(row.encrypted_tokens?.toString('utf8')).not.toContain('super-secret');
+      expect(row.encrypted_tokens?.toString('utf8')).not.toContain('credly-issuer-app');
+    });
+
+    it('rejects unsupported providers at the runtime boundary', async () => {
+      await expect(
+        storeIssuerCredentials(
+          {
+            userId: ARKOVA_USER_ID,
+            orgId: ARKOVA_ORG_ID,
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            provider: 'linkedin' as any,
+            accountId: 'x',
+            credentials: sampleIssuerCredentials,
+          },
+          { kms: fakeKms, keyName: TEST_KEY_NAME, rowStore: store.deps },
+        ),
+      ).rejects.toThrow(/unsupported credential provider/i);
+      expect(fakeKms.encrypt).not.toHaveBeenCalled();
+    });
+
+    it('rejects missing client_secret (Zod parse fails before KMS call)', async () => {
+      await expect(
+        storeIssuerCredentials(
+          {
+            userId: ARKOVA_USER_ID,
+            orgId: ARKOVA_ORG_ID,
+            provider: 'credly',
+            accountId: 'credly-org-1',
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            credentials: { client_id: 'only-id' } as any,
+          },
+          { kms: fakeKms, keyName: TEST_KEY_NAME, rowStore: store.deps },
+        ),
+      ).rejects.toThrow();
+      expect(fakeKms.encrypt).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('readIssuerCredentials', () => {
+    it('round-trips: store → fetch → decrypt yields original credentials', async () => {
+      await storeIssuerCredentials(
+        {
+          userId: ARKOVA_USER_ID,
+          orgId: ARKOVA_ORG_ID,
+          provider: 'credly',
+          accountId: 'credly-org-1',
+          credentials: sampleIssuerCredentials,
+        },
+        { kms: fakeKms, keyName: TEST_KEY_NAME, rowStore: store.deps },
+      );
+
+      const result = await readIssuerCredentials(
+        {
+          userId: ARKOVA_USER_ID,
+          orgId: ARKOVA_ORG_ID,
+          provider: 'credly',
+          accountId: 'credly-org-1',
+        },
+        { kms: fakeKms, rowStore: store.deps },
+      );
+
+      expect(result).not.toBeNull();
+      expect(result?.client_id).toBe(sampleIssuerCredentials.client_id);
+      expect(result?.client_secret).toBe(sampleIssuerCredentials.client_secret);
+      expect(result?.scope).toBe('issued_badges');
+    });
+
+    it('returns null when no row exists', async () => {
+      const result = await readIssuerCredentials(
+        {
+          userId: ARKOVA_USER_ID,
+          orgId: ARKOVA_ORG_ID,
+          provider: 'credly',
+          accountId: 'never-existed',
+        },
+        { kms: fakeKms, rowStore: store.deps },
+      );
+      expect(result).toBeNull();
+    });
+
+    it('throws on corrupted JSON (defence-in-depth)', async () => {
+      // Insert a row whose plaintext (after our fake KMS reverse-decrypt)
+      // is not valid JSON.
+      await store.deps.upsertEncryptedRow({
+        userId: ARKOVA_USER_ID,
+        orgId: ARKOVA_ORG_ID,
+        provider: 'credly',
+        accountId: 'credly-org-1',
+        ciphertext: Buffer.from('not valid json').reverse(),
+        kmsKeyName: TEST_KEY_NAME,
+        kekVersion: 1,
+      });
+
+      await expect(
+        readIssuerCredentials(
+          {
+            userId: ARKOVA_USER_ID,
+            orgId: ARKOVA_ORG_ID,
+            provider: 'credly',
+            accountId: 'credly-org-1',
+          },
+          { kms: fakeKms, rowStore: store.deps },
+        ),
+      ).rejects.toThrow(/not valid JSON/);
+    });
+  });
+});
