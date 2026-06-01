@@ -39,6 +39,8 @@ import { orgKybRouter } from './api/v1/org-kyb.js';
 import { driveOAuthRouter } from './api/v1/integrations/drive-oauth.js';
 import { docusignOAuthRouter } from './api/v1/integrations/docusign-oauth.js';
 import { docusignMemberOAuthRouter } from './api/v1/integrations/docusign-member-oauth.js';
+// SCRUM-2082 CSI-04D — Issuer Partners admin API.
+import { createIssuerPartnershipsRouter } from './api/v1/integrations/issuer-partnerships.js';
 import { middeskWebhookRouter } from './api/v1/webhooks/middesk.js';
 import { docusignWebhookRouter } from './api/v1/webhooks/docusign.js';
 import { adobeSignWebhookRouter } from './api/v1/webhooks/adobe-sign.js';
@@ -365,6 +367,14 @@ app.use(
   pathScopedMiddleware('/docusign', rateLimiters.api),
   pathScopedMiddleware('/docusign', integrationsAuthGate),
   pathScopedMiddleware('/docusign', docusignMemberOAuthRouter),
+);
+// SCRUM-2082 CSI-04D — Issuer Partners admin API. Auth-gated; all handlers
+// additionally verify org_admin / owner role before reads / mutations.
+app.use(
+  '/api/v1/integrations/issuer-partnerships',
+  rateLimiters.api,
+  integrationsAuthGate,
+  createIssuerPartnershipsRouter(),
 );
 
 // Rule templates discovery (SCRUM-1126) — public, no auth required.

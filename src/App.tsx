@@ -81,6 +81,9 @@ const AdminRecordsPage = React.lazy(() => import('@/pages/AdminRecordsPage').the
 const AdminSubscriptionsPage = React.lazy(() => import('@/pages/AdminSubscriptionsPage').then(m => ({ default: m.AdminSubscriptionsPage })));
 const AdminUserDetailPage = React.lazy(() => import('@/pages/AdminUserDetailPage').then(m => ({ default: m.AdminUserDetailPage })));
 const AdminOrganizationsPage = React.lazy(() => import('@/pages/AdminOrganizationsPage').then(m => ({ default: m.AdminOrganizationsPage })));
+// SCRUM-2082 CSI-04D — Issuer Partners admin page. Uses a route-level container
+// that resolves the active org id + default API client (fetch-based).
+const IssuerPartnershipsPageLazy = React.lazy(() => import('@/pages/IssuerPartnershipsPageRoute').then(m => ({ default: m.IssuerPartnershipsPageRoute })));
 const PlatformControlsPage = React.lazy(() => import('@/pages/PlatformControlsPage').then(m => ({ default: m.PlatformControlsPage })));
 const OrganizationsListPage = React.lazy(() => import('@/pages/OrganizationsListPage').then(m => ({ default: m.OrganizationsListPage })));
 const OrgProfilePage = React.lazy(() => import('@/pages/OrgProfilePage').then(m => ({ default: m.OrgProfilePage })));
@@ -308,6 +311,8 @@ export function App() {
           <Route path={ROUTES.ADMIN_ORGANIZATIONS} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="Admin Organizations"><AdminOrganizationsPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
           <Route path={ROUTES.ADMIN_USER_DETAIL} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="Admin User Detail"><AdminUserDetailPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
           <Route path={ROUTES.ADMIN_CONTROLS} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="Platform Controls"><PlatformControlsPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
+          {/* SCRUM-2082 CSI-04D — Issuer Partners admin */}
+          <Route path={ROUTES.ADMIN_ISSUER_PARTNERSHIPS} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="Issuer Partners"><IssuerPartnershipsPageLazy /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
 
           {/* Billing routes */}
           <Route path={ROUTES.BILLING} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="Billing"><BillingPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />

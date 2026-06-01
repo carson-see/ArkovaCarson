@@ -2855,3 +2855,57 @@ export const VERSION_RESOLUTION_LABELS = {
     SKIP: 'Skip',
   },
 } as const;
+
+// ---------------------------------------------------------------------------
+// SCRUM-2082 CSI-04D — Issuer Partners admin page
+// ---------------------------------------------------------------------------
+
+export const ISSUER_PARTNERSHIP_LABELS = {
+  PAGE_TITLE: 'Issuer Partners',
+  PAGE_SUBTITLE:
+    'Manage connections to credential issuers. Each partner sends Arkova the credentials they issue so we can secure them on your behalf.',
+  EMPTY_TITLE: 'No issuer partners connected',
+  EMPTY_BODY:
+    'Connect Credly or Accredible to start importing credentials your organisation issues. Setup keys are provided by the issuer’s admin tools.',
+  EMPTY_PRIMARY_CTA: 'Connect an issuer',
+  TABLE_HEADER_ISSUER: 'Issuer',
+  TABLE_HEADER_ACCOUNT: 'Account',
+  TABLE_HEADER_CONNECTED_AT: 'Connected',
+  TABLE_HEADER_LAST_SYNC: 'Last sync',
+  TABLE_HEADER_CREDENTIALS: 'Credentials',
+  TABLE_HEADER_ACTIONS: 'Actions',
+  ROW_LAST_SYNC_NEVER: 'Never',
+  ROW_CREDENTIAL_COUNT_PENDING: '—',
+  ROW_REVOKED_BADGE: 'Disconnected',
+  DISCONNECT_CTA: 'Disconnect',
+  DISCONNECT_DIALOG_TITLE: 'Disconnect issuer partner?',
+  DISCONNECT_DIALOG_BODY:
+    'New credentials from this issuer will stop importing. Existing secured records stay verified.',
+  DISCONNECT_DIALOG_CONFIRM: 'Yes, disconnect',
+  DISCONNECT_DIALOG_CANCEL: 'Cancel',
+  CONNECT_CTA: 'Connect issuer',
+  CONNECT_DIALOG_TITLE: 'Connect an issuer partner',
+  CONNECT_DIALOG_BODY:
+    'Choose the issuer you want to connect and paste the keys from their developer console.',
+  CONNECT_FIELD_PROVIDER: 'Issuer',
+  CONNECT_FIELD_PROVIDER_HELP:
+    'Each issuer uses a different key shape. Pick yours below.',
+  CONNECT_FIELD_ACCOUNT_ID: 'Account identifier',
+  CONNECT_FIELD_ACCOUNT_LABEL: 'Friendly name (optional)',
+  CONNECT_FIELD_CLIENT_ID: 'Client ID (Credly)',
+  CONNECT_FIELD_CLIENT_SECRET: 'Client secret (Credly)',
+  CONNECT_FIELD_API_KEY: 'API key',
+  CONNECT_FIELD_KEY_LABEL: 'Key label (optional)',
+  CONNECT_SUBMIT: 'Connect',
+  CONNECT_CANCEL: 'Cancel',
+  CONNECT_SUCCESS: 'Issuer partner connected.',
+  CONNECT_ERROR: 'Unable to connect this issuer. Check the keys and try again.',
+  LOADING: 'Loading issuer partners…',
+  ERROR_LOAD: 'Unable to load issuer partners. Please refresh.',
+  ERROR_DISCONNECT: 'Unable to disconnect. Please try again.',
+  PROVIDER_NAMES: {
+    credly: 'Credly',
+    accredible: 'Accredible',
+    udemy: 'Udemy',
+  } as const,
+} as const;
