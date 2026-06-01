@@ -96,7 +96,46 @@ describe('resolveEffectiveDocusignConnection', () => {
       baseUri: 'https://na2.docusign.net',
       tokenSecretName: 'projects/p/secrets/parent-refresh',
     });
-    expect(deps.fetchParentOwnConnection).toHaveBeenCalledWith(PARENT_ORG);
+    expect(deps.fetchParentOwnConnection).toHaveBeenCalledWith({
+      parentOrgId: PARENT_ORG,
+      accountId: 'acct-sub',
+    });
+  });
+
+  it('passes accountId to the parent lookup so multi-account parents resolve the requested account', async () => {
+    const parentB = {
+      ...PARENT_ROW,
+      id: 'parent-int-b',
+      account_id: 'acct-parent-b',
+      base_uri: 'https://na3.docusign.net',
+      token_secret_name: 'projects/p/secrets/parent-b-refresh',
+    };
+    const fetchParentOwnConnection = vi.fn().mockImplementation(
+      ({ accountId }: { parentOrgId: string; accountId: string }) =>
+        Promise.resolve(accountId === parentB.account_id ? parentB : null),
+    );
+    const deps = makeDeps({
+      fetchInheritanceMarker: vi.fn().mockResolvedValue(MARKER_ROW),
+      fetchParentOrgId: vi.fn().mockResolvedValue(PARENT_ORG),
+      fetchParentOwnConnection,
+    });
+
+    const result = await resolveEffectiveDocusignConnection({
+      ...REQUEST,
+      accountId: parentB.account_id,
+      deps,
+    });
+
+    expect(result).toMatchObject({
+      source: 'inherited',
+      integrationId: 'parent-int-b',
+      accountId: 'acct-parent-b',
+      baseUri: 'https://na3.docusign.net',
+    });
+    expect(fetchParentOwnConnection).toHaveBeenCalledWith({
+      parentOrgId: PARENT_ORG,
+      accountId: 'acct-parent-b',
+    });
   });
 
   it('throws not_found when there is neither an own connection nor a marker', async () => {

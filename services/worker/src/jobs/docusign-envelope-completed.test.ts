@@ -288,6 +288,115 @@ describe('runDocusignEnvelopeCompletedJobs', () => {
     expect(refreshTokenStore.put).not.toHaveBeenCalled();
   });
 
+  it('filters inherited parent connection lookup by the requested DocuSign account', async () => {
+    const parentOrgId = '11111111-1111-4111-8111-111111111111';
+    const subOrgId = '22222222-2222-4222-8222-222222222222';
+    const accountId = 'acct-parent-a';
+    const parentRow = {
+      id: 'parent-int-a',
+      org_id: parentOrgId,
+      account_id: accountId,
+      base_uri: 'https://na1.docusign.net',
+      token_secret_name: 'projects/test/secrets/parent-a-refresh',
+      inherited_from_org_id: null,
+    };
+    const lookups: Array<{ table: string; filters: Record<string, unknown> }> = [];
+    const db = {
+      from: vi.fn((table: string) => {
+        const filters: Record<string, unknown> = {};
+        const query = {
+          select: vi.fn(() => query),
+          eq: vi.fn((field: string, value: unknown) => {
+            filters[field] = value;
+            return query;
+          }),
+          is: vi.fn((field: string, value: unknown) => {
+            filters[field] = value;
+            return query;
+          }),
+          maybeSingle: vi.fn().mockImplementation(async () => {
+            lookups.push({ table, filters: { ...filters } });
+            if (table === 'org_integrations' && filters.org_id === subOrgId && filters.account_id === null) {
+              return {
+                data: {
+                  id: 'marker-int',
+                  org_id: subOrgId,
+                  account_id: null,
+                  base_uri: null,
+                  token_secret_name: null,
+                  inherited_from_org_id: parentOrgId,
+                },
+                error: null,
+              };
+            }
+            if (table === 'org_integrations' && filters.org_id === parentOrgId && filters.account_id === accountId) {
+              return { data: parentRow, error: null };
+            }
+            if (table === 'org_integrations' && filters.org_id === parentOrgId && filters.account_id === undefined) {
+              return { data: null, error: new Error('multiple rows returned') };
+            }
+            if (table === 'organizations') {
+              return { data: { parent_org_id: parentOrgId }, error: null };
+            }
+            return { data: null, error: null };
+          }),
+          insert: vi.fn(() => ({
+            select: vi.fn(() => ({
+              single: vi.fn().mockResolvedValue({ data: null, error: null }),
+            })),
+          })),
+        };
+        return query;
+      }),
+    };
+    const refreshTokenStore = {
+      get: vi.fn().mockResolvedValue('refresh-token-1'),
+      put: vi.fn().mockResolvedValue(undefined),
+      delete: vi.fn().mockResolvedValue(undefined),
+    };
+    const fetchImpl = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({
+        access_token: 'access-token-1',
+        token_type: 'Bearer',
+        expires_in: 3600,
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }),
+    ) as unknown as typeof fetch;
+    const deps = makeDocusignEnvelopeJobDeps({
+      db: db as unknown as DocusignEnvelopeJobRuntimeDeps['db'],
+      refreshTokenStore,
+      fetchImpl,
+      env: {
+        DOCUSIGN_INTEGRATION_KEY: 'integration-key',
+        DOCUSIGN_CLIENT_SECRET: 'client-secret',
+        DOCUSIGN_AUTH_BASE: 'https://account-d.docusign.com',
+      },
+    });
+
+    const connection = await deps.resolveConnection({
+      org_id: subOrgId,
+      integration_id: 'marker-int',
+      account_id: accountId,
+      envelope_id: 'envelope-1',
+      rule_event_id: 'rule-event-1',
+      document_ids: ['combined'],
+    });
+
+    expect(connection).toEqual({
+      accessToken: 'access-token-1',
+      baseUri: 'https://na1.docusign.net',
+    });
+    const parentLookup = lookups.find(
+      (lookup) => lookup.table === 'org_integrations' && lookup.filters.org_id === parentOrgId,
+    );
+    expect(parentLookup?.filters.account_id).toBe(accountId);
+    expect(refreshTokenStore.get).toHaveBeenCalledWith({
+      name: 'projects/test/secrets/parent-a-refresh',
+    });
+  });
+
   it('blocks token refresh when the DocuSign account hourly API budget is exhausted', async () => {
     let nowMs = Date.UTC(2026, 4, 28, 12, 0, 0);
     const makeIntegrationQuery = () => {
