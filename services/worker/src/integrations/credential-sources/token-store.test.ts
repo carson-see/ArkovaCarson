@@ -164,7 +164,7 @@ describe('SCRUM-1611 — credential-source token-store', () => {
           { kms: fakeKms, keyName: TEST_KEY_NAME, rowStore: store.deps },
         );
       }
-      expect(store.rows.map((r) => r.provider).sort()).toEqual([
+      expect(store.rows.map((r) => r.provider).sort((a, b) => a.localeCompare(b))).toEqual([
         'accredible',
         'credly',
         'udemy',
