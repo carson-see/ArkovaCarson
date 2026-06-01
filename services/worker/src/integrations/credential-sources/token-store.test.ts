@@ -13,7 +13,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   storeCredentialProviderTokens,
   readCredentialProviderTokens,
+  storeIssuerCredentials,
+  readIssuerCredentials,
   type CredentialProvider,
+  type IssuerCredentials,
   type MemberIntegrationRowDeps,
 } from './token-store.js';
 import type { KmsClient, OAuthTokens } from '../oauth/crypto.js';
@@ -347,12 +350,6 @@ describe('SCRUM-1611 — credential-source token-store', () => {
 // ---------------------------------------------------------------------------
 // SCRUM-1612 CSI-04B — issuer credentials (client_credentials grant)
 // ---------------------------------------------------------------------------
-
-import {
-  storeIssuerCredentials,
-  readIssuerCredentials,
-  type IssuerCredentials,
-} from './token-store.js';
 
 const sampleIssuerCredentials: IssuerCredentials = {
   client_id: 'credly-issuer-app-12345',
