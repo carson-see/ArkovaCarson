@@ -10,10 +10,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   CPE_LOG_SCHEMA_VERSION,
   CpeLogV1Schema,
+  assertExportsBucketReady,
   buildCpeLogRecord,
   generateCpeLogExport,
   NASBA_DISCLAIMER_TEXT,
   type CpeExportAnchorRow,
+  type CpeExportStorage,
   type CpeLogExportDeps,
 } from './cpe-log-export.js';
 
@@ -67,6 +69,8 @@ function makeDeps(opts: {
   anchors?: CpeExportAnchorRow[];
   uploadError?: boolean;
   signError?: boolean;
+  /** Override the bucket guard result. Defaults to a private, existing bucket. */
+  bucket?: { exists?: boolean; isPublic?: boolean | null; error?: Error | null };
 } = {}): {
   deps: CpeLogExportDeps;
   uploads: UploadCall[];
@@ -134,6 +138,13 @@ function makeDeps(opts: {
             error: null,
           });
         },
+      ),
+      getBucket: vi.fn().mockImplementation(() =>
+        Promise.resolve({
+          exists: opts.bucket?.exists ?? true,
+          isPublic: opts.bucket?.isPublic ?? false,
+          error: opts.bucket?.error ?? null,
+        }),
       ),
     },
     logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -328,6 +339,19 @@ describe('generateCpeLogExport', () => {
     await expect(generateCpeLogExport(BASE_ARGS, deps)).rejects.toThrow();
   });
 
+  it('fails loud (and uploads NOTHING) when the exports bucket is missing', async () => {
+    const { deps, uploads } = makeDeps({ bucket: { exists: false, isPublic: null } });
+    await expect(generateCpeLogExport(BASE_ARGS, deps)).rejects.toThrow(/does not exist/i);
+    // Guard runs before any artifact is written.
+    expect(uploads).toHaveLength(0);
+  });
+
+  it('fails loud (and uploads NOTHING) when the exports bucket is PUBLIC', async () => {
+    const { deps, uploads } = makeDeps({ bucket: { exists: true, isPublic: true } });
+    await expect(generateCpeLogExport(BASE_ARGS, deps)).rejects.toThrow(/PUBLIC/i);
+    expect(uploads).toHaveLength(0);
+  });
+
   it('PERF: generates a 200-record export (PDF + JSON) in under 10 seconds', async () => {
     const anchors = Array.from({ length: 200 }, (_, i) =>
       makeAnchor({ id: `anchor-${i}`, public_id: `ARK-CPE-${i.toString().padStart(4, '0')}` }),
@@ -339,4 +363,43 @@ describe('generateCpeLogExport', () => {
     expect(result.record_count).toBe(200);
     expect(elapsedMs).toBeLessThan(10_000);
   }, 15_000);
+});
+
+// ─── Fail-loud bucket guard ──────────────────────────
+describe('assertExportsBucketReady', () => {
+  function storageReturning(
+    res: { exists: boolean; isPublic: boolean | null; error: Error | null },
+  ): CpeExportStorage {
+    return {
+      upload: vi.fn(),
+      createSignedUrl: vi.fn(),
+      getBucket: vi.fn().mockResolvedValue(res),
+    } as unknown as CpeExportStorage;
+  }
+
+  it('resolves for an existing private bucket', async () => {
+    const storage = storageReturning({ exists: true, isPublic: false, error: null });
+    await expect(assertExportsBucketReady(storage, 'exports')).resolves.toBeUndefined();
+  });
+
+  it('throws when the bucket does not exist', async () => {
+    const storage = storageReturning({ exists: false, isPublic: null, error: null });
+    await expect(assertExportsBucketReady(storage, 'exports')).rejects.toThrow(/does not exist/i);
+  });
+
+  it('throws (with the underlying message) when the lookup itself errors and the bucket is absent', async () => {
+    const storage = storageReturning({
+      exists: false,
+      isPublic: null,
+      error: new Error('connection refused'),
+    });
+    await expect(assertExportsBucketReady(storage, 'exports')).rejects.toThrow(
+      /unavailable.*connection refused/i,
+    );
+  });
+
+  it('throws when the bucket is PUBLIC (would leak unsigned bodies)', async () => {
+    const storage = storageReturning({ exists: true, isPublic: true, error: null });
+    await expect(assertExportsBucketReady(storage, 'exports')).rejects.toThrow(/PUBLIC/i);
+  });
 });

@@ -121,6 +121,15 @@ export interface CpeExportStorage {
     path: string,
     expiresIn: number,
   ): Promise<{ signedUrl: string | null; error: Error | null }>;
+  /**
+   * Inspect a bucket's existence + visibility. Returns `exists: false` when the
+   * bucket is absent so the fail-loud guard can raise a clear error instead of
+   * a confusing downstream upload 500, and `isPublic` so a misconfigured PUBLIC
+   * bucket — which would expose unsigned export bodies (CC7) — is rejected too.
+   */
+  getBucket(
+    bucket: string,
+  ): Promise<{ exists: boolean; isPublic: boolean | null; error: Error | null }>;
 }
 
 /** Default Storage adapter backed by the Supabase service-role client. */
@@ -133,6 +142,8 @@ export function createSupabaseStorageAdapter(db: SupabaseClient): CpeExportStora
       createSignedUrl(path: string, expiresIn: number):
         Promise<{ data: { signedUrl: string } | null; error: Error | null }>;
     };
+    getBucket(bucket: string):
+      Promise<{ data: { public: boolean } | null; error: Error | null }>;
   } }).storage;
 
   return {
@@ -146,7 +157,45 @@ export function createSupabaseStorageAdapter(db: SupabaseClient): CpeExportStora
       const { data, error } = await storage.from(bucket).createSignedUrl(path, expiresIn);
       return { signedUrl: data?.signedUrl ?? null, error };
     },
+    async getBucket(bucket) {
+      const { data, error } = await storage.getBucket(bucket);
+      // A missing bucket comes back as `data: null` (often with a "not found"
+      // error). Surface existence + visibility; the caller's guard decides.
+      return { exists: data != null, isPublic: data?.public ?? null, error };
+    },
   };
+}
+
+/**
+ * Fail-loud precondition: the exports bucket MUST exist and MUST be private.
+ *
+ * Provisioning the bucket is an ops step (see agents.md) — this guard does NOT
+ * create it. It exists so a missing bucket fails with a clear, actionable error
+ * (rather than a confusing upload 500 deeper in the flow), and so a bucket that
+ * was accidentally made PUBLIC is rejected before any export body is written —
+ * a public bucket would expose unsigned export contents and break the CC7
+ * no-content-leak guarantee.
+ */
+export async function assertExportsBucketReady(
+  storage: CpeExportStorage,
+  bucket: string,
+): Promise<void> {
+  const { exists, isPublic, error } = await storage.getBucket(bucket);
+  if (error && !exists) {
+    throw new Error(
+      `exports Storage bucket "${bucket}" is unavailable (provision it as a private bucket): ${error.message}`,
+    );
+  }
+  if (!exists) {
+    throw new Error(
+      `exports Storage bucket "${bucket}" does not exist — provision it as a private bucket before exporting`,
+    );
+  }
+  if (isPublic) {
+    throw new Error(
+      `exports Storage bucket "${bucket}" is PUBLIC — exports must use a private bucket so signed URLs are the only access path`,
+    );
+  }
 }
 
 export interface CpeLogExportDeps {
@@ -289,8 +338,14 @@ function generateCpeLogPdf(
 
     doc.setFontSize(11);
     doc.setFont('helvetica', 'bold');
-    doc.text(r.title ?? '(untitled)', margin, y, { maxWidth: contentWidth });
-    y += 5;
+    // Wrap the title explicitly and advance y by the rendered line count, so a
+    // long multi-line title does not overlap the Provider line below (mirrors
+    // how the disclaimer is rendered). `maxWidth` alone wraps the glyphs but
+    // does not tell us how many lines were drawn.
+    const titleLines: string[] = doc.splitTextToSize(r.title ?? '(untitled)', contentWidth);
+    const TITLE_LINE_HEIGHT = 5;
+    doc.text(titleLines, margin, y);
+    y += titleLines.length * TITLE_LINE_HEIGHT;
 
     doc.setFontSize(8);
     doc.setFont('helvetica', 'normal');
@@ -384,6 +439,11 @@ export async function generateCpeLogExport(
 ): Promise<CpeLogExportResult> {
   const requestId = args.requestId ?? randomUUID();
   const bucket = deps.bucket ?? DEFAULT_EXPORTS_BUCKET;
+
+  // 0. Fail loud if the destination bucket is missing or public BEFORE we do any
+  //    work — a missing/public bucket is an ops misconfiguration, not a per-user
+  //    error, and must not silently 500 mid-upload or leak unsigned bodies.
+  await assertExportsBucketReady(deps.storage, bucket);
 
   // 1. Fetch the caller's CPE anchors in the reporting period. Service-role
   //    client; scope is enforced by the explicit user_id + org_id filters.

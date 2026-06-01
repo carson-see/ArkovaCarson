@@ -2,10 +2,10 @@
  * Shared field-mapping + formatting primitives for the compliance-log exporters
  * (CPE — SCRUM-1848, CLE — SCRUM-1870, and any future per-domain export).
  *
- * These four helpers are byte-identical across the export modules; keeping a
- * single definition here is the canonical de-duplication (SonarCloud
- * `new_duplicated_lines_density`) and the single source of truth for how raw
- * anchor/metadata values are coerced into auditor-safe record fields.
+ * This module is the single definition the export modules import (rather than
+ * each keeping its own copy), so it is the one place to change how raw
+ * anchor/metadata values are coerced into auditor-safe record fields, and it
+ * keeps the SonarCloud `new_duplicated_lines_density` gate green.
  *
  * Constitution refs:
  *   - 1.5 : timestamps rendered in UTC ("Network Observed Time" framing).

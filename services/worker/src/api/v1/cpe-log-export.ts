@@ -18,9 +18,12 @@
  * `cpeLogExportRateLimiter` (in-memory bucket keyed on the user id), mirroring
  * the existing `/credits` and `/ai/*` per-user limiters.
  *
- * Both formats are always generated and returned (the AC requires a signed URL
- * for BOTH PDF and JSON); `format` records the caller's primary intent for the
- * audit trail and future single-format optimisation.
+ * `format` is ADVISORY ONLY. Both artifacts are always generated and returned
+ * (the AC requires a signed URL for BOTH PDF and JSON, and the response always
+ * carries `exports.pdf` and `exports.json`). The validated `format` value is
+ * echoed back as `requested_format` to record the caller's primary intent for
+ * the audit trail and a possible future single-format optimisation; it does NOT
+ * select or filter which artifacts are built or returned.
  */
 import { Router, Request, Response } from 'express';
 import { randomUUID } from 'node:crypto';
@@ -150,6 +153,8 @@ router.post('/', async (req: Request, res: Response) => {
     res.status(200).json({
       request_id: result.request_id,
       record_count: result.record_count,
+      // Advisory echo only — both `exports.pdf` and `exports.json` are always
+      // present regardless of `format`; this just records the caller's intent.
       requested_format: format,
       exports: result.exports,
     });
