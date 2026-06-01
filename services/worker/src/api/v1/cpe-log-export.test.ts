@@ -62,6 +62,21 @@ function mockProfile(orgId: string | null) {
 }
 
 /**
+ * Profile lookup that fails operationally (DB unreachable / query error). The
+ * handler must surface this as 500, NOT misclassify it as a 403 "no org"
+ * (CodeRabbit major-bug finding). Mirrors the `.maybeSingle()` chain shape.
+ */
+function mockProfileError() {
+  const chain: Record<string, unknown> = {};
+  chain.select = vi.fn().mockReturnValue(chain);
+  chain.eq = vi.fn().mockReturnValue(chain);
+  const errResult = { data: null, error: { message: 'connection refused', code: 'PGRST301' } };
+  chain.single = vi.fn().mockResolvedValue(errResult);
+  chain.maybeSingle = vi.fn().mockResolvedValue(errResult);
+  return chain;
+}
+
+/**
  * Build an app that injects a fixed authenticated user (mirrors the real
  * `requireAuth` middleware that sets req.authUserId). When `userId` is
  * undefined the route must self-reject with 401.
@@ -110,6 +125,17 @@ describe('POST /exports/cpe-log — auth + scope', () => {
     (db.from as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => mockProfile(null));
     const res = await request(createApp('user-1')).post('/exports/cpe-log').send(VALID_BODY);
     expect(res.status).toBe(403);
+  });
+
+  it('returns 500 (not 403) when the profile lookup fails operationally, and does not generate', async () => {
+    (db.from as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => mockProfileError());
+    const res = await request(createApp('user-1')).post('/exports/cpe-log').send(VALID_BODY);
+    // A DB error must NOT be misread as "no org membership" (403). It is an
+    // operational failure → 500 with a request_id, and the worker is never
+    // invoked.
+    expect(res.status).toBe(500);
+    expect(typeof res.body.request_id).toBe('string');
+    expect(generateCpeLogExport).not.toHaveBeenCalled();
   });
 });
 

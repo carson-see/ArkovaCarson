@@ -284,11 +284,23 @@ describe('generateCpeLogExport', () => {
     expect(serialized.toLowerCase()).not.toContain('https://storage.example');
   });
 
-  it('only queries the caller org/user anchors (org-scope enforced in the query)', async () => {
+  it('only queries the caller org/user anchors (cross-tenant scope enforced in the query)', async () => {
     const { deps } = makeDeps();
     await generateCpeLogExport(BASE_ARGS, deps);
     const fromMock = deps.db.from as unknown as ReturnType<typeof vi.fn>;
     expect(fromMock).toHaveBeenCalledWith('anchors');
+
+    // The anchors SELECT must be filtered by BOTH user_id AND org_id — these
+    // are the cross-tenant isolation guarantees, not just "some query on the
+    // anchors table". Assert the .eq() filters were applied with the caller's
+    // own identifiers (BASE_ARGS.userId / BASE_ARGS.orgId).
+    const anchorsResult = fromMock.mock.results.find(
+      (r) => r.type === 'return' && typeof (r.value as { eq?: unknown })?.eq === 'function',
+    );
+    expect(anchorsResult).toBeDefined();
+    const eqMock = (anchorsResult!.value as { eq: ReturnType<typeof vi.fn> }).eq;
+    expect(eqMock).toHaveBeenCalledWith('user_id', BASE_ARGS.userId);
+    expect(eqMock).toHaveBeenCalledWith('org_id', BASE_ARGS.orgId);
   });
 
   it('throws when Storage upload fails (so the endpoint can 500 cleanly)', async () => {

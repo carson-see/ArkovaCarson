@@ -45,8 +45,11 @@ const router = Router();
 export const cpeLogExportRateLimiter = rateLimit({
   windowMs: 60 * 60 * 1000,
   maxRequests: 10,
+  // `scope` already namespaces the bucket (rateLimit() prepends `${scope}:`),
+  // so the keyGenerator returns only the caller identifier — otherwise the key
+  // becomes `cpe-log-export:cpe-log-export:<user>`. Mirrors batchRateLimiter.
   scope: 'cpe-log-export',
-  keyGenerator: (req: Request) => `cpe-log-export:${req.authUserId ?? req.ip ?? 'unknown'}`,
+  keyGenerator: (req: Request) => req.authUserId ?? req.ip ?? 'unknown',
 });
 
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
@@ -100,11 +103,29 @@ router.post('/', async (req: Request, res: Response) => {
   }
 
   try {
-    const { data: profile } = await db
+    // `.maybeSingle()` (not `.single()`) so a genuinely-absent profile resolves
+    // to `data: null` rather than raising PGRST116 "0 rows". We MUST inspect
+    // `error`: a DB/operational failure is a 500, not a 403 — masking it as
+    // "no org membership" hides the real fault. Only a successful query that
+    // returns a null org_id is a true 403.
+    const { data: profile, error: profileError } = await db
       .from('profiles')
       .select('org_id')
       .eq('id', userId)
-      .single();
+      .maybeSingle();
+
+    if (profileError) {
+      // Log message only (no PII / no profile row contents).
+      logger.error(
+        { error: profileError.message, requestId },
+        'CPE log export: profile lookup failed',
+      );
+      res.status(500).json({
+        error: 'Failed to generate CPE compliance log',
+        request_id: requestId,
+      });
+      return;
+    }
 
     const orgId = (profile as { org_id: string | null } | null)?.org_id ?? null;
     if (!orgId) {
