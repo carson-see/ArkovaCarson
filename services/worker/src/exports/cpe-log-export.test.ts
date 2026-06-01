@@ -174,6 +174,21 @@ describe('cpe_log_v1 schema + record mapping', () => {
     });
   });
 
+  it('trims trailing slashes on the frontend URL before appending /verify/<public_id>', () => {
+    // A frontendUrl with one or many trailing slashes must not produce a
+    // double-slash in the verification URL (e.g. .../verify/... not ...//verify/...).
+    expect(buildCpeLogRecord(makeAnchor(), 'https://app.arkova.io/').verification_url).toBe(
+      'https://app.arkova.io/verify/ARK-CPE-0001',
+    );
+    expect(buildCpeLogRecord(makeAnchor(), 'https://app.arkova.io///').verification_url).toBe(
+      'https://app.arkova.io/verify/ARK-CPE-0001',
+    );
+    // No trailing slash is unchanged.
+    expect(buildCpeLogRecord(makeAnchor(), 'https://app.arkova.io').verification_url).toBe(
+      'https://app.arkova.io/verify/ARK-CPE-0001',
+    );
+  });
+
   it('NEVER includes extraction_confidence or extraction_source (internal-only)', () => {
     const record = buildCpeLogRecord(makeAnchor(), 'https://app.arkova.io');
     const keys = Object.keys(record);

@@ -205,6 +205,23 @@ function asDateOnly(value: unknown): string | null {
 }
 
 /**
+ * Strip any trailing slashes from a base URL before appending a path.
+ *
+ * A linear character scan, deliberately not a `/\/+$/` regex: SonarCloud's
+ * S5852 ReDoS heuristic flags the `+`-then-`$` regex shape even though this
+ * single-character pattern is backtrack-free. The scan is provably linear and
+ * carries no backtracking, so it keeps the export Quality Gate green without a
+ * per-line analyzer suppression.
+ */
+function stripTrailingSlashes(url: string): string {
+  let end = url.length;
+  while (end > 0 && url.charCodeAt(end - 1) === 47 /* '/' */) {
+    end -= 1;
+  }
+  return url.slice(0, end);
+}
+
+/**
  * Map a single anchor row to a public-safe CPE log record.
  *
  * Field sources (per SCRUM-1848 AC):
@@ -235,7 +252,7 @@ export function buildCpeLogRecord(
   const provider = asString(meta.credential_issuer) ?? asString(meta.source_provider);
   const completion = asDateOnly(anchor.issued_at) ?? asDateOnly(meta.credential_issued_at);
   const verificationUrl = anchor.public_id
-    ? `${frontendUrl.replace(/\/+$/, '')}/verify/${anchor.public_id}`
+    ? `${stripTrailingSlashes(frontendUrl)}/verify/${anchor.public_id}`
     : null;
 
   return {
