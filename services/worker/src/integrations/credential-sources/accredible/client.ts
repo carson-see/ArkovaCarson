@@ -100,8 +100,18 @@ export interface AccredibleClient {
   }): Promise<AccredibleCredentialPage>;
 }
 
+function trimTrailingSlashes(value: string): string {
+  let end = value.length;
+  while (end > 0 && value.charCodeAt(end - 1) === 47) {
+    end -= 1;
+  }
+  return value.slice(0, end);
+}
+
 export function createAccredibleClient(deps: AccredibleClientDeps): AccredibleClient {
-  const apiBase = (deps.apiBase ?? DEFAULT_ACCREDIBLE_API_BASE).replace(/\/+$/, '');
+  const apiBase = trimTrailingSlashes(
+    deps.apiBase ?? DEFAULT_ACCREDIBLE_API_BASE,
+  );
 
   async function listIssuedCredentials({
     apiKey,
