@@ -152,6 +152,33 @@ describe('POST /audit-export', () => {
     expect(res.status).toBe(403);
   });
 
+  it('returns 500 (not 403) when the profile lookup fails operationally', async () => {
+    // A Supabase/operational failure (e.g. PGRST301 connection error) returns
+    // { data: null, error } — it must surface as a 500, NOT be misclassified as
+    // a 403 "no org membership", which would hide a 500-class fault. Mirrors
+    // the cpe-log-export.test.ts mockProfileError pattern.
+    const profileQuery = mockQuery({ data: null, error: { message: 'connection refused', code: 'PGRST301' } });
+    const anchorQuery = mockQuery({ data: MOCK_ANCHOR });
+
+    vi.mocked(db.from).mockImplementation((table: string) => {
+      if (table === 'profiles') return profileQuery as never;
+      if (table === 'anchors') return anchorQuery as never;
+      return mockQuery({ data: null }) as never;
+    });
+
+    const res = await request(app)
+      .post('/audit-export')
+      .set('x-test-user-id', 'user-1')
+      .send({ anchorId: 'pub_abc123' });
+
+    expect(res.status).toBe(500);
+    expect(res.status).not.toBe(403);
+    expect(res.body.error).toMatch(/Failed to generate audit export/i);
+    // Short-circuits before the anchor is ever fetched.
+    const queriedTables = vi.mocked(db.from).mock.calls.map((c) => c[0]);
+    expect(queriedTables).not.toContain('anchors');
+  });
+
   it('returns PDF for valid SECURED anchor', async () => {
     const profileQuery = mockQuery({ data: { org_id: 'org-uuid-1' } });
     const anchorQuery = mockQuery({ data: MOCK_ANCHOR });
@@ -256,6 +283,31 @@ describe('POST /audit-export/batch', () => {
       .send({});
 
     expect(res.status).toBe(403);
+  });
+
+  it('returns 500 (not 403) when the profile lookup fails operationally', async () => {
+    // Same bug class as the single handler: a DB error on the org lookup must
+    // be a 500, not a 403 that hides the real operational fault.
+    const profileQuery = mockQuery({ data: null, error: { message: 'connection refused', code: 'PGRST301' } });
+    const anchorsQuery = mockQuery({ data: [MOCK_ANCHOR] });
+
+    vi.mocked(db.from).mockImplementation((table: string) => {
+      if (table === 'profiles') return profileQuery as never;
+      if (table === 'anchors') return anchorsQuery as never;
+      return mockQuery({ data: null }) as never;
+    });
+
+    const res = await request(app)
+      .post('/audit-export/batch')
+      .set('x-test-user-id', 'user-1')
+      .send({ format: 'csv' });
+
+    expect(res.status).toBe(500);
+    expect(res.status).not.toBe(403);
+    expect(res.body.error).toMatch(/Failed to generate batch audit export/i);
+    // Short-circuits before the org anchors are ever fetched.
+    const queriedTables = vi.mocked(db.from).mock.calls.map((c) => c[0]);
+    expect(queriedTables).not.toContain('anchors');
   });
 
   it('returns CSV batch export for org SECURED anchors', async () => {

@@ -447,12 +447,24 @@ router.post('/', async (req: Request, res: Response) => {
   }
 
   try {
-    // Get user's org
-    const { data: profile } = await db
+    // Get user's org. Use `.maybeSingle()` so an absent profile resolves to
+    // { data: null, error: null } instead of raising PGRST116, and inspect
+    // `error`: an operational failure (e.g. PGRST301 connection error) returns
+    // { data: null, error } and MUST surface as 500. Falling through to a 403
+    // "no org membership" would mask a 500-class fault. Only a successful query
+    // with a null org_id is a genuine 403.
+    const { data: profile, error: profileError } = await db
       .from('profiles')
       .select('org_id')
       .eq('id', userId)
-      .single();
+      .maybeSingle();
+
+    if (profileError) {
+      // Log coarse message/code only — never the row contents or PII (§1.4).
+      logger.error({ error: profileError.message, code: profileError.code }, 'Audit export: profile lookup failed');
+      res.status(500).json({ error: 'Failed to generate audit export' });
+      return;
+    }
 
     if (!profile?.org_id) {
       res.status(403).json({ error: 'Organization membership required' });
@@ -521,11 +533,19 @@ router.post('/batch', async (req: Request, res: Response) => {
   }
 
   try {
-    const { data: profile } = await db
+    // See the single-export handler above: `.maybeSingle()` + an explicit
+    // `error` check so a DB failure is a 500, not a misclassified 403.
+    const { data: profile, error: profileError } = await db
       .from('profiles')
       .select('org_id')
       .eq('id', userId)
-      .single();
+      .maybeSingle();
+
+    if (profileError) {
+      logger.error({ error: profileError.message, code: profileError.code }, 'Batch audit export: profile lookup failed');
+      res.status(500).json({ error: 'Failed to generate batch audit export' });
+      return;
+    }
 
     if (!profile?.org_id) {
       res.status(403).json({ error: 'Organization membership required' });
