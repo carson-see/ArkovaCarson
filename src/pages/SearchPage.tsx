@@ -488,11 +488,11 @@ export function SearchPage() {
                 );
               })}
             </div>
-
+          )}
 
           {/* No results state */}
           {hasSearched && !showSearchLoading && !displayError && searchType === 'issuer'
-            && issuerResults.length === 0 && personResults.length === 0 && (
+
             <div className="text-center py-12">
               <Building2 className="mx-auto h-8 w-8 text-muted-foreground/30 mb-3" />
               <p className="text-sm text-muted-foreground">{lastSubmittedQuery ? noResultsTitle : SEARCH_LABELS.NO_RESULTS}</p>
