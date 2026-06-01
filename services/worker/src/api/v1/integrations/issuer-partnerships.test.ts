@@ -14,8 +14,8 @@ import {
 } from './issuer-partnerships.js';
 import type { MemberIntegrationRowDeps } from '../../../integrations/credential-sources/token-store.js';
 
-const ARKOVA_ORG_ID = '00000000-0000-0000-0000-000000000001';
-const BETA_ORG_ID = '00000000-0000-0000-0000-000000000002';
+const ARKOVA_ORG_ID = '00000000-0000-4000-8000-000000000001';
+const BETA_ORG_ID = '00000000-0000-4000-8000-000000000002';
 const ARKOVA_ADMIN_USER_ID = '00000000-0000-0000-0000-000000000010';
 const ARKOVA_MEMBER_USER_ID = '00000000-0000-0000-0000-000000000011';
 
@@ -105,6 +105,7 @@ function makeFakeDb(rows: {
         state.limitN = n;
         return Promise.resolve(materialise());
       },
+      // NOSONAR - the test Supabase chain must stay awaitable.
       then(onFulfilled: (v: unknown) => unknown) {
         return Promise.resolve(materialise()).then(onFulfilled);
       },
@@ -163,8 +164,12 @@ function makeFakeDb(rows: {
           const col = state.order.column;
           const asc = state.order.ascending;
           filtered = [...filtered].sort((a, b) => {
-            const av = String(a[col] ?? '');
-            const bv = String(b[col] ?? '');
+            const av = String(
+              (a[col] as string | number | boolean | null | undefined) ?? '',
+            );
+            const bv = String(
+              (b[col] as string | number | boolean | null | undefined) ?? '',
+            );
             return asc ? av.localeCompare(bv) : bv.localeCompare(av);
           });
         }
