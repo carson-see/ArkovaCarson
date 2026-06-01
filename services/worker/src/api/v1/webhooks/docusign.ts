@@ -91,6 +91,54 @@ function requireUnambiguousIntegrationRows(
   return rows[0];
 }
 
+async function lookupInheritedSubOrgMarkers(
+  parentIntegration: DocusignIntegrationRow,
+): Promise<DocusignIntegrationRow[] | null> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any, arkova/missing-org-filter -- webhook ingress: resolving child marker from parent-owned provider ID before tenant attribution exists
+  const { data, error } = await (db as any)
+    .from('org_integrations')
+    .select('id, org_id, account_id, hmac_keys')
+    .eq('provider', 'docusign')
+    .eq('inherited_from_org_id', parentIntegration.org_id)
+    .is('account_id', null)
+    .is('revoked_at', null);
+
+  if (error) {
+    logger.error(
+      { error, parentOrgId: parentIntegration.org_id },
+      'DocuSign webhook inherited sub-org marker lookup failed',
+    );
+    throw new Error('integration_lookup_failed');
+  }
+
+  return data as DocusignIntegrationRow[] | null;
+}
+
+function resolveInheritedAttribution(
+  parentIntegration: DocusignIntegrationRow,
+  markers: DocusignIntegrationRow[] | null,
+): DocusignIntegrationRow {
+  if (!markers || markers.length === 0) {
+    return parentIntegration;
+  }
+
+  if (markers.length > 1) {
+    logger.error(
+      { parentOrgId: parentIntegration.org_id, childOrgIds: markers.map(marker => marker.org_id) },
+      'DocuSign webhook: ambiguous inherited sub-org attribution — rejecting to prevent cross-tenant leak',
+    );
+    throw new Error('ambiguous_inherited_integration_lookup');
+  }
+
+  const marker = markers[0];
+  return {
+    id: marker.id,
+    org_id: marker.org_id,
+    account_id: parentIntegration.account_id,
+    hmac_keys: parentIntegration.hmac_keys,
+  };
+}
+
 /**
  * SCRUM-2044: Dual-table integration lookup.
  *
@@ -109,7 +157,10 @@ async function findIntegration(accountId: string): Promise<DocusignIntegrationRo
     'DocuSign webhook: ambiguous org lookup — same accountId connected to multiple orgs, rejecting to prevent cross-tenant leak',
   );
   if (orgIntegration) {
-    return orgIntegration;
+    return resolveInheritedAttribution(
+      orgIntegration,
+      await lookupInheritedSubOrgMarkers(orgIntegration),
+    );
   }
 
   // Step 2: Fall back to member_integrations (SCRUM-2044)
