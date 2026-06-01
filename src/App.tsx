@@ -102,6 +102,9 @@ const AuditorBatchPage = lazyWithRetry(() => import('@/pages/AuditorBatchPage').
 const ComplianceTrendPage = lazyWithRetry(() => import('@/pages/ComplianceTrendPage').then(m => ({ default: m.ComplianceTrendPage })));
 const ComplianceScorecardPage = lazyWithRetry(() => import('@/pages/ComplianceScorecardPage').then(m => ({ default: m.ComplianceScorecardPage })));
 const VersionConflictsPage = lazyWithRetry(() => import('@/pages/VersionConflictsPage').then(m => ({ default: m.VersionConflictsPage })));
+// SCRUM-2082 CSI-04D — Issuer Partners admin page. Uses a route-level container
+// that resolves the active org id + default API client (fetch-based).
+const IssuerPartnershipsPageLazy = lazyWithRetry(() => import('@/pages/IssuerPartnershipsPageRoute').then(m => ({ default: m.IssuerPartnershipsPageRoute })));
 
 /**
  * Redirect authenticated users away from login/signup.
@@ -309,6 +312,8 @@ export function App() {
           <Route path={ROUTES.ADMIN_ORGANIZATIONS} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="Admin Organizations"><AdminOrganizationsPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
           <Route path={ROUTES.ADMIN_USER_DETAIL} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="Admin User Detail"><AdminUserDetailPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
           <Route path={ROUTES.ADMIN_CONTROLS} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="Platform Controls"><PlatformControlsPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
+          {/* SCRUM-2082 CSI-04D — Issuer Partners admin */}
+          <Route path={ROUTES.ADMIN_ISSUER_PARTNERSHIPS} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="Issuer Partners"><IssuerPartnershipsPageLazy /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
 
           {/* Billing routes */}
           <Route path={ROUTES.BILLING} element={<AuthGuard><RouteGuard allow={MAIN_APP_DESTINATIONS}><RouteErrorBoundary section="Billing"><BillingPage /></RouteErrorBoundary></RouteGuard></AuthGuard>} />
