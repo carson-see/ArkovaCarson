@@ -87,6 +87,9 @@ function makeFakeDb(rows: {
       },
       eq(col: string, val: unknown) {
         state.filters.push([col, val]);
+        if (state.action === 'update') {
+          return Promise.resolve(materialise());
+        }
         return chain;
       },
       is(col: string, val: unknown) {
@@ -99,15 +102,11 @@ function makeFakeDb(rows: {
       },
       order(col: string, opts: { ascending: boolean }) {
         state.order = { column: col, ascending: opts.ascending };
-        return chain;
+        return Promise.resolve(materialise());
       },
       limit(n: number) {
         state.limitN = n;
         return Promise.resolve(materialise());
-      },
-      // NOSONAR - the test Supabase chain must stay awaitable.
-      then(onFulfilled: (v: unknown) => unknown) {
-        return Promise.resolve(materialise()).then(onFulfilled);
       },
     };
 
@@ -460,6 +459,31 @@ describe('SCRUM-2082 — DELETE /api/v1/integrations/issuer-partnerships/:rowId'
           org_id: ARKOVA_ORG_ID,
           provider: 'credly',
           revoked_at: null,
+        },
+      ],
+    });
+    const app = makeApp(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      { db: db as any, kms: fakeKms, rowStore: makeFakeRowStore() },
+      ARKOVA_MEMBER_USER_ID,
+    );
+    const res = await request(app).delete(
+      `/api/v1/integrations/issuer-partnerships/${VALID_UUID}`,
+    );
+    expect(res.status).toBe(403);
+  });
+
+  it('403 when non-admin probes an already-revoked row', async () => {
+    const db = makeFakeDb({
+      org_members: [
+        { org_id: ARKOVA_ORG_ID, user_id: ARKOVA_MEMBER_USER_ID, role: 'member' },
+      ],
+      member_integrations: [
+        {
+          id: VALID_UUID,
+          org_id: ARKOVA_ORG_ID,
+          provider: 'credly',
+          revoked_at: '2026-04-01T00:00:00Z',
         },
       ],
     });
