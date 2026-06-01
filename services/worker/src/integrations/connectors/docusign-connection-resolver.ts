@@ -52,7 +52,10 @@ export interface DocusignConnectionResolverDeps {
   }) => Promise<DocusignConnectionRow | null>;
   fetchInheritanceMarker: (orgId: string) => Promise<DocusignInheritanceMarkerRow | null>;
   fetchParentOrgId: (orgId: string) => Promise<string | null>;
-  fetchParentOwnConnection: (parentOrgId: string) => Promise<DocusignConnectionRow | null>;
+  fetchParentOwnConnection: (args: {
+    parentOrgId: string;
+    accountId: string;
+  }) => Promise<DocusignConnectionRow | null>;
 }
 
 export type DocusignConnectionResolutionErrorCode =
@@ -109,7 +112,7 @@ export async function resolveEffectiveDocusignConnection(
     throw new DocusignConnectionResolutionError('docusign_inherited_parent_mismatch');
   }
 
-  const parent = await deps.fetchParentOwnConnection(actualParentOrgId);
+  const parent = await deps.fetchParentOwnConnection({ parentOrgId: actualParentOrgId, accountId });
   if (!parent) {
     throw new DocusignConnectionResolutionError('docusign_inherited_parent_not_connected');
   }
