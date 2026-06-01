@@ -40,6 +40,7 @@ const EXPECTED: ExpectedConnectConfig = {
   requiredEvents: ['envelope-completed'],
   hmacEnabled: true,
   payloadFormat: 'json',
+  payloadVersion: 'restv2.1',
 };
 
 /** A fully in-sync actual listener (matches EXPECTED on every checked axis). */
@@ -108,6 +109,15 @@ describe('detectDrift (pure comparison)', () => {
     };
     const reasons = detectDrift([wrongFormat], EXPECTED);
     expect(reasons.some((r) => /format|payload/i.test(r))).toBe(true);
+  });
+
+  it('flags a wrong payload version', () => {
+    const wrongVersion = {
+      ...inSyncListener(),
+      eventData: { format: 'json', version: 'legacy' },
+    };
+    const reasons = detectDrift([wrongVersion], EXPECTED);
+    expect(reasons.some((r) => /version|restv2\.1/i.test(r))).toBe(true);
   });
 
   it('accumulates multiple drift reasons on a badly-misconfigured listener', () => {

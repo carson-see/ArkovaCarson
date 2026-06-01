@@ -142,6 +142,7 @@ export function makeListenerDriftDeps(
         requiredEvents: cfg.events,
         hmacEnabled: cfg.hmacEnabled,
         payloadFormat: cfg.payloadFormat,
+        payloadVersion: cfg.payloadVersion,
       };
     },
 

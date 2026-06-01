@@ -39,6 +39,8 @@ export interface ExpectedConnectConfig {
   hmacEnabled: boolean;
   /** Required payload/event-data format (e.g. `'json'`). */
   payloadFormat: string;
+  /** Required payload/event-data version (e.g. `'restv2.1'`). */
+  payloadVersion: string;
 }
 
 /**
@@ -93,7 +95,7 @@ export interface ListenerDriftResult {
 
 const DOCUSIGN_TRUE = 'true';
 
-/** Normalize a publish URL for comparison: trim trailing slashes + lowercase host-insensitively-safe trim. */
+/** Normalize a publish URL for comparison: trim surrounding whitespace and trailing slashes. */
 function normalizeUrl(url: string | undefined): string {
   if (!url) return '';
   let u = url.trim();
@@ -114,7 +116,7 @@ function normalizeUrl(url: string | undefined): string {
  *     - includeHMAC must be 'true' (when expected) (deliveries signed)
  *     - every required envelope event subscribed
  *     - every required Connect event subscribed
- *     - eventData.format must equal the expected payload format
+ *     - eventData.format/version must equal the expected payload shape
  */
 export function detectDrift(
   listeners: ActualConnectListener[],
@@ -165,6 +167,13 @@ export function detectDrift(
   if (actualFormat !== expected.payloadFormat) {
     reasons.push(
       `Wrong payload format (eventData.format=${String(actualFormat)}, expected "${expected.payloadFormat}").`,
+    );
+  }
+
+  const actualVersion = match.eventData?.version;
+  if (actualVersion !== expected.payloadVersion) {
+    reasons.push(
+      `Wrong payload version (eventData.version=${String(actualVersion)}, expected "${expected.payloadVersion}").`,
     );
   }
 
