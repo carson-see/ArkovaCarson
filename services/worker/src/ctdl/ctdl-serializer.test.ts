@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildCtdlJsonLd, type CtdlAnchor } from './ctdl-serializer.js';
+import { ARKOVA_DID } from '../api/did-web.js';
 
 const baseAnchor: CtdlAnchor = {
   publicId: 'ARK-2026-CTDL-001',
@@ -77,5 +78,37 @@ describe('buildCtdlJsonLd', () => {
     }, {
       verifyUrl: 'https://app.arkova.ai/verify/ARK-2026-CTDL-001',
     })).toThrow(/non-publishable status/);
+  });
+
+  // SCRUM-1922 R-CTDL-FR9 — offeredBy carries the issuing org's did:web DID.
+  it('links the issuer DID via ceterms:sameAs when the org has a public id', () => {
+    const jsonLd = buildCtdlJsonLd(baseAnchor, {
+      verifyUrl: 'https://app.arkova.ai/verify/ARK-2026-CTDL-001',
+    });
+
+    expect(jsonLd['ceterms:offeredBy']['ceterms:sameAs']).toEqual([
+      `${ARKOVA_DID}:orgs:ORG-MI-CLE`,
+    ]);
+  });
+
+  it('omits ceterms:sameAs when the issuer has no public id', () => {
+    const jsonLd = buildCtdlJsonLd(
+      { ...baseAnchor, issuer: { name: 'Unidentified Board' } },
+      { verifyUrl: 'https://app.arkova.ai/verify/ARK-2026-CTDL-001' },
+    );
+
+    expect(jsonLd['ceterms:offeredBy']['ceterms:sameAs']).toBeUndefined();
+  });
+
+  it('keeps the CTDL body valid with the DID added (sameAs is not an unsafe key)', () => {
+    const jsonLd = buildCtdlJsonLd(baseAnchor, {
+      verifyUrl: 'https://app.arkova.ai/verify/ARK-2026-CTDL-001',
+    });
+
+    // buildCtdlJsonLd calls assertValidCtdlJsonLd internally, so reaching this
+    // line means the validator accepted the DID. Double-check the value shape.
+    const sameAs = jsonLd['ceterms:offeredBy']['ceterms:sameAs'];
+    expect(Array.isArray(sameAs)).toBe(true);
+    expect(sameAs?.[0]).toMatch(/^did:web:arkova\.xyz:orgs:/);
   });
 });

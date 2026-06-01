@@ -6,6 +6,9 @@ import {
   type CtdlType,
 } from './ctdl-type-map.js';
 import { assertValidCtdlJsonLd } from './ctdl-validation.js';
+// SCRUM-1922 R-CTDL-FR9 — keep the issuer DID format in lockstep with the
+// did:web resolver so the CTDL `sameAs` link resolves to the org's DID doc.
+import { ARKOVA_DID } from '../api/did-web.js';
 
 export interface CtdlIssuer {
   name?: string | null;
@@ -47,6 +50,12 @@ export interface CtdlJsonLd {
     'ceterms:name': string;
     'ceterms:ctid'?: string;
     'ceterms:subjectWebpage'?: string;
+    /**
+     * SCRUM-1922 R-CTDL-FR9 — equivalent identifier(s) for the issuing org.
+     * Carries the org's did:web DID so a CTDL consumer can resolve the org's
+     * W3C DID document (key + homepage). Additive + frozen-schema-safe (§1.8).
+     */
+    'ceterms:sameAs'?: string[];
   };
   'ceterms:credentialStatusType': CtdlStatusType;
   'ceterms:dateEffective': string;
@@ -162,6 +171,10 @@ export function buildCtdlJsonLd(anchor: CtdlAnchor, options: BuildCtdlOptions): 
 
   if (anchor.issuer?.publicId) {
     offeredBy['ceterms:ctid'] = ctidFromPublicId(anchor.issuer.publicId);
+    // SCRUM-1922 R-CTDL-FR9 — link the org's did:web identity. The public_id
+    // is the same value the did:web resolver keys on, so this resolves to
+    // https://arkova.xyz/orgs/{public_id}/.well-known/did.json.
+    offeredBy['ceterms:sameAs'] = [`${ARKOVA_DID}:orgs:${anchor.issuer.publicId}`];
   }
 
   const subjectWebpage = isPublicHttpUrl(anchor.issuer?.websiteUrl);

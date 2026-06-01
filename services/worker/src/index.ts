@@ -26,6 +26,7 @@ import { apiV1Router } from './api/v1/router.js';
 import { v1DeprecationHeaders } from './api/v1/deprecation.js';
 import { docsRouter } from './api/v1/docs.js';
 import { badgeRouter } from './api/badge.js';
+import { didWebRouter } from './api/did-web.js';
 
 // Extracted routers (ARCH-1)
 import { billingRouter } from './routes/billing.js';
@@ -313,6 +314,13 @@ app.use('/api/docs', docsRouter);
 app.get('/.well-known/openapi.json', (_req, res) => {
   res.redirect(301, '/api/docs/spec.json');
 });
+
+// SCRUM-1922 R-CTDL-FR9 — did:web identity documents (public, no auth).
+//   GET /.well-known/did.json                       -> did:web:arkova.xyz
+//   GET /orgs/:orgPublicId/.well-known/did.json      -> did:web:arkova.xyz:orgs:{id}
+// OPS: the edge must route arkova.xyz (+ /orgs/*) to this worker for the DIDs
+// to resolve; the routes themselves are served here.
+app.use(didWebRouter);
 
 // 2026-04-26 — bug-bounty F4. Spec was already publicly inlined in
 // `/api/docs/swagger-ui-init.js`, but `/api/v1/openapi.json` returned 401
