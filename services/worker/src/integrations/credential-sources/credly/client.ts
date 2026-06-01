@@ -149,8 +149,16 @@ export interface CredlyClient {
   }): Promise<CredlyIssuedBadgePage>;
 }
 
+function trimTrailingSlashes(value: string): string {
+  let end = value.length;
+  while (end > 0 && value.charCodeAt(end - 1) === 47) {
+    end -= 1;
+  }
+  return value.slice(0, end);
+}
+
 export function createCredlyClient(deps: CredlyClientDeps): CredlyClient {
-  const apiBase = (deps.apiBase ?? DEFAULT_CREDLY_API_BASE).replace(/\/+$/, '');
+  const apiBase = trimTrailingSlashes(deps.apiBase ?? DEFAULT_CREDLY_API_BASE);
 
   // In-memory token cache keyed by client_id.
   const tokenCache = new Map<string, { token: string; expiresAtMs: number }>();
