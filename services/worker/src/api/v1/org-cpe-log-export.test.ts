@@ -39,15 +39,17 @@ vi.mock('../../exports/cpe-log-export.js', async (importOriginal) => {
 
 // Org-auth helpers are mocked so each test can drive the admin/membership
 // decision directly. (Their own DB-level behavior is covered in
-// api/_org-auth.test.ts.)
-const isCallerOrgAdmin = vi.fn();
-const isUserMemberOfOrg = vi.fn();
-const getCallerOrgId = vi.fn();
+// api/_org-auth.test.ts.) The endpoint uses the `*Result` variants so it can
+// tell a definitive negative (403) from a DB/operational error (500); these
+// mocks resolve `{ value, error }`.
+const isCallerOrgAdminResult = vi.fn();
+const isUserMemberOfOrgResult = vi.fn();
+const getCallerOrgIdResult = vi.fn();
 
 vi.mock('../_org-auth.js', () => ({
-  isCallerOrgAdmin: (...args: unknown[]) => isCallerOrgAdmin(...args),
-  isUserMemberOfOrg: (...args: unknown[]) => isUserMemberOfOrg(...args),
-  getCallerOrgId: (...args: unknown[]) => getCallerOrgId(...args),
+  isCallerOrgAdminResult: (...args: unknown[]) => isCallerOrgAdminResult(...args),
+  isUserMemberOfOrgResult: (...args: unknown[]) => isUserMemberOfOrgResult(...args),
+  getCallerOrgIdResult: (...args: unknown[]) => getCallerOrgIdResult(...args),
 }));
 
 vi.mock('../../utils/db.js', () => ({
@@ -119,9 +121,9 @@ const VALID_BODY = {
 
 /** Default: caller is admin of org-A; target is a member of org-A. */
 function asAdminOfOrgAWithTargetInOrgA() {
-  getCallerOrgId.mockResolvedValue('org-A');
-  isCallerOrgAdmin.mockResolvedValue(true);
-  isUserMemberOfOrg.mockResolvedValue(true);
+  getCallerOrgIdResult.mockResolvedValue({ value: 'org-A', error: false });
+  isCallerOrgAdminResult.mockResolvedValue({ value: true, error: false });
+  isUserMemberOfOrgResult.mockResolvedValue({ value: true, error: false });
 }
 
 beforeEach(() => {
@@ -144,17 +146,52 @@ describe('POST /exports/org/cpe-log — auth + ORG_ADMIN gate', () => {
   });
 
   it('returns 403 when the caller belongs to no organization', async () => {
-    getCallerOrgId.mockResolvedValue(null);
+    getCallerOrgIdResult.mockResolvedValue({ value: null, error: false });
     const res = await request(createApp('admin-A')).post('/exports/org/cpe-log').send(VALID_BODY);
     expect(res.status).toBe(403);
     expect(generateCpeLogExport).not.toHaveBeenCalled();
   });
 
   it('returns 403 when the caller is NOT an org admin (INDIVIDUAL/member)', async () => {
-    isCallerOrgAdmin.mockResolvedValue(false);
+    isCallerOrgAdminResult.mockResolvedValue({ value: false, error: false });
     const res = await request(createApp('member-X')).post('/exports/org/cpe-log').send(VALID_BODY);
     expect(res.status).toBe(403);
     expect(generateCpeLogExport).not.toHaveBeenCalled();
+  });
+});
+
+// ─── 403 vs 500: operational lookup errors must NOT masquerade as 403 ─
+describe('POST /exports/org/cpe-log — DB/operational errors return 500, not 403', () => {
+  it('returns 500 when the org-resolution lookup hits a DB error', async () => {
+    // error:true means the lookup could not be determined — an operational
+    // fault, NOT a definitive "no org" → must be 500, never a misleading 403.
+    getCallerOrgIdResult.mockResolvedValue({ value: null, error: true });
+    const res = await request(createApp('admin-A')).post('/exports/org/cpe-log').send(VALID_BODY);
+    expect(res.status).toBe(500);
+    expect(generateCpeLogExport).not.toHaveBeenCalled();
+  });
+
+  it('returns 500 when the admin-role lookup hits a DB error', async () => {
+    isCallerOrgAdminResult.mockResolvedValue({ value: false, error: true });
+    const res = await request(createApp('admin-A')).post('/exports/org/cpe-log').send(VALID_BODY);
+    expect(res.status).toBe(500);
+    expect(generateCpeLogExport).not.toHaveBeenCalled();
+  });
+
+  it('returns 500 when the target-membership lookup hits a DB error', async () => {
+    isUserMemberOfOrgResult.mockResolvedValue({ value: false, error: true });
+    const res = await request(createApp('admin-A')).post('/exports/org/cpe-log').send(VALID_BODY);
+    expect(res.status).toBe(500);
+    expect(generateCpeLogExport).not.toHaveBeenCalled();
+  });
+
+  it('still returns 403 (not 500) for a definitive negative — error:false', async () => {
+    // Sanity: a clean negative is a 403; only error:true escalates to 500.
+    isUserMemberOfOrgResult.mockResolvedValue({ value: false, error: false });
+    const res = await request(createApp('admin-A'))
+      .post('/exports/org/cpe-log')
+      .send({ ...VALID_BODY, user_id: 'member-B' });
+    expect(res.status).toBe(403);
   });
 });
 
@@ -163,20 +200,20 @@ describe('POST /exports/org/cpe-log — cross-org isolation', () => {
   // Named per SCRUM-1863: org-cpe-export.cross-org.POST.returns.403
   it('org-cpe-export.cross-org.POST.returns.403 — admin of org A cannot export a member of org B', async () => {
     // Caller IS a valid admin of org-A, but the target is NOT in org-A.
-    isCallerOrgAdmin.mockResolvedValue(true);
-    isUserMemberOfOrg.mockResolvedValue(false); // member-B is not in org-A
+    isCallerOrgAdminResult.mockResolvedValue({ value: true, error: false });
+    isUserMemberOfOrgResult.mockResolvedValue({ value: false, error: false }); // member-B is not in org-A
     const res = await request(createApp('admin-A'))
       .post('/exports/org/cpe-log')
       .send({ ...VALID_BODY, user_id: 'member-B' });
     expect(res.status).toBe(403);
     expect(generateCpeLogExport).not.toHaveBeenCalled();
     // The membership check was scoped to the CALLER's resolved org, never the body.
-    expect(isUserMemberOfOrg).toHaveBeenCalledWith('member-B', 'org-A');
+    expect(isUserMemberOfOrgResult).toHaveBeenCalledWith('member-B', 'org-A');
   });
 
   it('returns 403 when the target user is a member of NO org (non-member)', async () => {
-    isCallerOrgAdmin.mockResolvedValue(true);
-    isUserMemberOfOrg.mockResolvedValue(false);
+    isCallerOrgAdminResult.mockResolvedValue({ value: true, error: false });
+    isUserMemberOfOrgResult.mockResolvedValue({ value: false, error: false });
     const res = await request(createApp('admin-A'))
       .post('/exports/org/cpe-log')
       .send({ ...VALID_BODY, user_id: 'stranger' });
@@ -185,7 +222,7 @@ describe('POST /exports/org/cpe-log — cross-org isolation', () => {
   });
 
   it('does NOT trust an org_id from the request body (no body org override)', async () => {
-    isUserMemberOfOrg.mockResolvedValue(false);
+    isUserMemberOfOrgResult.mockResolvedValue({ value: false, error: false });
     const res = await request(createApp('admin-A'))
       .post('/exports/org/cpe-log')
       .send({ ...VALID_BODY, user_id: 'member-B', org_id: 'org-B' });
@@ -237,7 +274,9 @@ describe('POST /exports/org/cpe-log — success (admin exports own-org member)',
     expect(res.body.exports.json.signed_url).toMatch(/^https:\/\//);
     expect(typeof res.body.request_id).toBe('string');
     expect(res.body.record_count).toBe(3);
-    expect(res.body.member_id).toBe('member-A');
+    // The raw target member user_id is intentionally NOT echoed back on the
+    // frozen v1 contract (PR #1045 review) — the caller already supplied it.
+    expect(res.body.member_id).toBeUndefined();
     expect(generateCpeLogExport).toHaveBeenCalledTimes(1);
   });
 
@@ -301,7 +340,7 @@ describe('POST /exports/org/cpe-log — admin audit event (cpe_log.exported)', (
   });
 
   it('does not emit the admin audit row on a cross-org 403 (export never ran)', async () => {
-    isUserMemberOfOrg.mockResolvedValue(false);
+    isUserMemberOfOrgResult.mockResolvedValue({ value: false, error: false });
     await request(createApp('admin-A'))
       .post('/exports/org/cpe-log')
       .send({ ...VALID_BODY, user_id: 'member-B' });

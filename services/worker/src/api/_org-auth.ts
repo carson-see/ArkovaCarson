@@ -5,6 +5,20 @@
  * cross-tenant write must explicitly scope by `org_id = caller's org`. These
  * helpers are the single source of truth for that lookup so handlers don't
  * each re-implement (and drift on) the auth fallback rules.
+ *
+ * Two flavours of each lookup:
+ *   - The plain `boolean` / `string | null` helpers (`getCallerOrgId`,
+ *     `isCallerOrgAdmin`, `isUserMemberOfOrg`) FAIL CLOSED: a DB/operational
+ *     error collapses to "not authorized" (falsy). Most handlers want this —
+ *     a transient lookup failure should never grant access.
+ *   - The `*Result` variants additionally surface whether the lookup hit a
+ *     DB/operational `error`, so a handler that needs to distinguish a *true*
+ *     negative (→ 403) from an *operational* failure (→ 500) can do so without
+ *     masking the fault as a 403. (Mirrors the own-user CPE export endpoint,
+ *     which inspects the Supabase `error` and maps it to 500 — PR #1029.)
+ *
+ * The boolean helpers delegate to the `*Result` variants and drop the error
+ * flag, so there is a single query/precedence implementation per lookup.
  */
 import { db } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
@@ -16,12 +30,25 @@ interface CallerProfile {
 }
 
 /**
- * Single profile fetch covering the columns every callsite needs (org id,
- * role, platform-admin flag). Returns null if profile is missing or the
- * lookup errors — callers MUST treat null as fail-closed (403) to avoid
- * leaking the no-org case as success.
+ * A lookup outcome plus whether the lookup hit a DB/operational error.
+ * `error: true` means "could not determine" (treat as 500-worthy); the value
+ * field is still fail-closed (falsy) so callers that ignore `error` stay safe.
  */
-export async function getCallerProfile(userId: string): Promise<CallerProfile | null> {
+interface OrgAuthResult<T> {
+  value: T;
+  /** True when a Supabase/DB error prevented a definitive answer. */
+  error: boolean;
+}
+
+/**
+ * Internal: single profile fetch covering the columns every callsite needs
+ * (org id, role, platform-admin flag), surfacing whether the lookup errored.
+ * A missing profile is `{ profile: null, error: false }` (true negative); a DB
+ * failure is `{ profile: null, error: true }` (operational).
+ */
+async function loadCallerProfile(
+  userId: string,
+): Promise<{ profile: CallerProfile | null; error: boolean }> {
   const { data, error } = await db
     .from('profiles')
     .select('org_id, role, is_platform_admin')
@@ -29,14 +56,35 @@ export async function getCallerProfile(userId: string): Promise<CallerProfile | 
     .maybeSingle();
   if (error) {
     logger.warn({ error, userId }, 'org-auth: profile lookup failed');
-    return null;
+    return { profile: null, error: true };
   }
-  return (data as CallerProfile | null) ?? null;
+  return { profile: (data as CallerProfile | null) ?? null, error: false };
+}
+
+/**
+ * Single profile fetch covering the columns every callsite needs (org id,
+ * role, platform-admin flag). Returns null if profile is missing or the
+ * lookup errors — callers MUST treat null as fail-closed (403) to avoid
+ * leaking the no-org case as success.
+ */
+export async function getCallerProfile(userId: string): Promise<CallerProfile | null> {
+  const { profile } = await loadCallerProfile(userId);
+  return profile;
+}
+
+/**
+ * Resolve the caller's org id, surfacing whether the profile lookup hit a
+ * DB/operational error. `{ orgId: null, error: false }` is a true "no org on
+ * profile" (→ 403); `{ orgId: null, error: true }` is an operational failure
+ * (→ 500).
+ */
+export async function getCallerOrgIdResult(userId: string): Promise<OrgAuthResult<string | null>> {
+  const { profile, error } = await loadCallerProfile(userId);
+  return { value: profile?.org_id ?? null, error };
 }
 
 export async function getCallerOrgId(userId: string): Promise<string | null> {
-  const profile = await getCallerProfile(userId);
-  return profile?.org_id ?? null;
+  return (await getCallerOrgIdResult(userId)).value;
 }
 
 /**
@@ -44,25 +92,57 @@ export async function getCallerOrgId(userId: string): Promise<string | null> {
  *   1. `org_members.role` is owner/admin → admin.
  *   2. Profile role = 'ORG_ADMIN' or `is_platform_admin = true` → admin.
  *
+ * Surfaces `error: true` when EITHER underlying lookup (the `org_members` row
+ * or the profile fallback) hit a DB/operational error AND no positive admin
+ * signal was found — so a handler can return 500 instead of masking the fault
+ * as a 403. A definitive non-admin answer is `{ isAdmin: false, error: false }`.
+ *
  * Pass an already-loaded profile to avoid a redundant `profiles` query when
  * the caller has just resolved the org id via `getCallerProfile`.
  */
-export async function isCallerOrgAdmin(
+export async function isCallerOrgAdminResult(
   userId: string,
   orgId: string,
   preloadedProfile?: CallerProfile | null,
-): Promise<boolean> {
-  const { data: membership } = await db
+): Promise<OrgAuthResult<boolean>> {
+  // Capture the `org_members` error explicitly (was previously dropped) so a DB
+  // failure here is fail-closed AND observable, not silently swallowed.
+  const { data: membership, error: memberError } = await db
     .from('org_members')
     .select('role')
     .eq('user_id', userId)
     .eq('org_id', orgId)
     .maybeSingle();
+  if (memberError) {
+    logger.warn({ error: memberError, userId, orgId }, 'org-auth: admin membership lookup failed');
+  }
   const role = (membership as { role?: string } | null)?.role;
-  if (role === 'owner' || role === 'admin') return true;
+  if (role === 'owner' || role === 'admin') return { value: true, error: false };
 
-  const profile = preloadedProfile ?? (await getCallerProfile(userId));
-  return profile?.role === 'ORG_ADMIN' || profile?.is_platform_admin === true;
+  // Profile fallback (role = ORG_ADMIN or platform admin). Reuse a non-null
+  // preloaded profile to avoid a redundant round-trip; otherwise fetch (this
+  // matches the original `preloadedProfile ?? (await getCallerProfile(...))`
+  // semantics, which also re-fetched when an explicit `null` was passed).
+  let profile = preloadedProfile ?? null;
+  let profileError = false;
+  if (preloadedProfile == null) {
+    const loaded = await loadCallerProfile(userId);
+    profile = loaded.profile;
+    profileError = loaded.error;
+  }
+  const isAdmin = profile?.role === 'ORG_ADMIN' || profile?.is_platform_admin === true;
+
+  // Only report an operational error when we did NOT find a positive signal:
+  // an admin answer is definitive regardless of a later lookup hiccup.
+  return { value: isAdmin, error: isAdmin ? false : memberError != null || profileError };
+}
+
+export async function isCallerOrgAdmin(
+  userId: string,
+  orgId: string,
+  preloadedProfile?: CallerProfile | null,
+): Promise<boolean> {
+  return (await isCallerOrgAdminResult(userId, orgId, preloadedProfile)).value;
 }
 
 /**
@@ -80,12 +160,15 @@ export async function isCallerOrgAdmin(
  *
  * Either signal alone is sufficient — a member linked only via `profiles.org_id`
  * (as the R2 own-user export relied on) is still recognized.
+ *
+ * The `*Result` variant additionally reports whether a DB/operational error
+ * blocked a definitive answer (so the caller can 500 instead of 403).
  */
-export async function isUserMemberOfOrg(
+export async function isUserMemberOfOrgResult(
   targetUserId: string,
   orgId: string,
-): Promise<boolean> {
-  if (!targetUserId || !orgId) return false;
+): Promise<OrgAuthResult<boolean>> {
+  if (!targetUserId || !orgId) return { value: false, error: false };
 
   const { data: membership, error: memberError } = await db
     .from('org_members')
@@ -94,12 +177,22 @@ export async function isUserMemberOfOrg(
     .eq('org_id', orgId)
     .maybeSingle();
   if (memberError) {
-    logger.warn({ error: memberError, targetUserId }, 'org-auth: membership lookup failed');
-    return false;
+    logger.warn({ error: memberError, targetUserId, orgId }, 'org-auth: membership lookup failed');
   }
-  if (membership) return true;
+  if (membership) return { value: true, error: false };
 
   // Fallback: profiles.org_id linkage (no org_members row required).
-  const profile = await getCallerProfile(targetUserId);
-  return profile?.org_id === orgId;
+  const { profile, error: profileError } = await loadCallerProfile(targetUserId);
+  if (profile?.org_id === orgId) return { value: true, error: false };
+
+  // Definitive non-member only when NEITHER lookup errored; otherwise the
+  // negative might be a masked operational failure.
+  return { value: false, error: memberError != null || profileError };
+}
+
+export async function isUserMemberOfOrg(
+  targetUserId: string,
+  orgId: string,
+): Promise<boolean> {
+  return (await isUserMemberOfOrgResult(targetUserId, orgId)).value;
 }

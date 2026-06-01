@@ -13,12 +13,17 @@
  * may export the compliance log of any MEMBER OF THEIR OWN ORG.
  *
  * Authorization (all in application code — the worker runs as service_role and
- * bypasses RLS, so these checks ARE the tenant boundary):
+ * bypasses RLS, so these checks ARE the tenant boundary). Each lookup
+ * distinguishes a *definitive* negative (→ 403) from a DB/operational error
+ * (→ 500) via the `*Result` org-auth helpers, so an operational fault is never
+ * masked as a misleading "forbidden" (mirrors PR #1029):
  *   1. Caller is authenticated (req.authUserId set by router `requireAuth`).
- *   2. Caller belongs to an org    → else 403.
- *   3. Caller is an ORG_ADMIN of that org (`isCallerOrgAdmin`) → else 403.
+ *   2. Caller belongs to an org    → else 403 (lookup error → 500).
+ *   3. Caller is an ORG_ADMIN of that org (`isCallerOrgAdminResult`) → else 403
+ *      (lookup error → 500).
  *   4. The target `user_id` is a member of the CALLER'S org
- *      (`isUserMemberOfOrg(target, callerOrgId)`) → else 403 (CROSS-ORG).
+ *      (`isUserMemberOfOrgResult(target, callerOrgId)`) → else 403 (CROSS-ORG;
+ *      lookup error → 500).
  *
  * The org scope is ALWAYS resolved from the caller's own profile/membership —
  * never trusted from the request body — so an admin of org A can never reach a
@@ -45,7 +50,11 @@ import { db } from '../../utils/db.js';
 import { logger } from '../../utils/logger.js';
 import { config } from '../../config.js';
 import { rateLimit } from '../../utils/rateLimit.js';
-import { getCallerOrgId, isCallerOrgAdmin, isUserMemberOfOrg } from '../_org-auth.js';
+import {
+  getCallerOrgIdResult,
+  isCallerOrgAdminResult,
+  isUserMemberOfOrgResult,
+} from '../_org-auth.js';
 import {
   generateCpeLogExport,
   createSupabaseStorageAdapter,
@@ -163,16 +172,30 @@ router.post('/', async (req: Request, res: Response) => {
   const { user_id: targetUserId, period_start, period_end, format } = parsed.data;
 
   try {
-    // 3. Resolve the CALLER's org (never from the body).
-    const orgId = await getCallerOrgId(adminUserId);
+    // 3. Resolve the CALLER's org (never from the body). Each authz lookup
+    //    returns an explicit `error` flag: a DB/operational failure is a 500,
+    //    NOT a 403 — masking an operational fault as "forbidden" hides the real
+    //    error and is misleading to the admin (mirrors the own-user CPE export
+    //    endpoint's profile-error → 500 handling, PR #1029). Only a *definitive*
+    //    negative (lookup succeeded, no org / not admin / not a member) is 403.
+    const orgResult = await getCallerOrgIdResult(adminUserId);
+    if (orgResult.error) {
+      res.status(500).json({ error: 'Failed to generate CPE compliance log', request_id: requestId });
+      return;
+    }
+    const orgId = orgResult.value;
     if (!orgId) {
       res.status(403).json({ error: 'Organization membership required', request_id: requestId });
       return;
     }
 
     // 4. Caller must be an ORG_ADMIN of that org.
-    const callerIsAdmin = await isCallerOrgAdmin(adminUserId, orgId);
-    if (!callerIsAdmin) {
+    const adminResult = await isCallerOrgAdminResult(adminUserId, orgId);
+    if (adminResult.error) {
+      res.status(500).json({ error: 'Failed to generate CPE compliance log', request_id: requestId });
+      return;
+    }
+    if (!adminResult.value) {
       res.status(403).json({
         error: 'Organization administrator role required',
         request_id: requestId,
@@ -180,9 +203,14 @@ router.post('/', async (req: Request, res: Response) => {
       return;
     }
 
-    // 5. Target must be a member of the CALLER'S org (cross-org → 403).
-    const targetInOrg = await isUserMemberOfOrg(targetUserId, orgId);
-    if (!targetInOrg) {
+    // 5. Target must be a member of the CALLER'S org (definitive negative →
+    //    403 cross-org; operational lookup error → 500).
+    const memberResult = await isUserMemberOfOrgResult(targetUserId, orgId);
+    if (memberResult.error) {
+      res.status(500).json({ error: 'Failed to generate CPE compliance log', request_id: requestId });
+      return;
+    }
+    if (!memberResult.value) {
       res.status(403).json({
         error: 'The requested member is not part of your organization',
         request_id: requestId,
@@ -222,9 +250,13 @@ router.post('/', async (req: Request, res: Response) => {
       requestId: result.request_id,
     });
 
+    // Response intentionally omits the target member's raw `user_id`: the
+    // caller already supplied it in the request, it adds nothing, and echoing a
+    // raw internal user_id back on the frozen v1 contract is avoidable exposure
+    // (PR #1045 review). The admin-attributed audit row still records the
+    // target member id server-side.
     res.status(200).json({
       request_id: result.request_id,
-      member_id: targetUserId,
       record_count: result.record_count,
       requested_format: format,
       exports: result.exports,
