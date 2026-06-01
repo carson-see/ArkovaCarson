@@ -45,14 +45,17 @@ const router = Router();
 /**
  * Per-user hourly rate limiter. Exported so it can be mounted in the v1 router
  * (and exercised directly in tests). Window = 1 hour, max = 10 → the 11th
- * request in the hour 429s. Bucket scope (`cle-log-export`) keeps it separate
- * from the CPE limiter sharing the same user key.
+ * request in the hour 429s. The `scope` (`cle-log-export`) is what keeps this
+ * bucket separate from the CPE limiter sharing the same user key — `rateLimit`
+ * prefixes the final key with `${scope}:` (see utils/rateLimit.ts), so the
+ * keyGenerator returns ONLY the user id; prefixing it again here would produce
+ * a redundant `cle-log-export:cle-log-export:<user>` key.
  */
 export const cleLogExportRateLimiter = rateLimit({
   windowMs: 60 * 60 * 1000,
   maxRequests: 10,
   scope: 'cle-log-export',
-  keyGenerator: (req: Request) => `cle-log-export:${req.authUserId ?? req.ip ?? 'unknown'}`,
+  keyGenerator: (req: Request) => req.authUserId ?? req.ip ?? 'unknown',
 });
 
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
@@ -112,11 +115,27 @@ router.post('/', async (req: Request, res: Response) => {
   }
 
   try {
-    const { data: profile } = await db
+    // Use maybeSingle() + capture the error: a DB/operational failure here is a
+    // server error (500), NOT "no org membership" (403). single() throws on
+    // 0-rows and the previous code dropped the error entirely, so any DB fault
+    // was silently misclassified as a 403 (CodeRabbit — same bug as CPE sibling).
+    const { data: profile, error: profileError } = await db
       .from('profiles')
       .select('org_id')
       .eq('id', userId)
-      .single();
+      .maybeSingle();
+
+    if (profileError) {
+      // Operational failure — log the message only (no PII), return a generic
+      // 500 with the request id so the caller can't tell apart "no org" from
+      // "DB down" and no DB internals leak.
+      logger.error(
+        { error: profileError.message, requestId },
+        'CLE log export profile lookup failed',
+      );
+      res.status(500).json({ error: 'Failed to generate CLE compliance log', request_id: requestId });
+      return;
+    }
 
     const orgId = (profile as { org_id: string | null } | null)?.org_id ?? null;
     if (!orgId) {

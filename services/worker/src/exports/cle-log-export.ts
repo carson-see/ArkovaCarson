@@ -34,16 +34,16 @@ import { jsPDF } from 'jspdf';
 import { z } from 'zod';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Logger } from '../utils/logger.js';
-import {
-  createSupabaseStorageAdapter,
-  SIGNED_URL_TTL_SECONDS,
-  type CpeExportStorage,
-} from './cpe-log-export.js';
+import { SIGNED_URL_TTL_SECONDS, type CpeExportStorage } from './cpe-log-export.js';
 import { US_STATE_CODES } from '../compliance/professional-education.js';
 
 // Re-export the shared Storage seam so callers (and tests) can import either
 // from the CLE module or the CPE module without reaching across domains.
-export { createSupabaseStorageAdapter, SIGNED_URL_TTL_SECONDS };
+// `createSupabaseStorageAdapter` is not used inside this module, so it is
+// re-exported directly with `export ... from` (no import-then-re-export); the
+// other two are imported above because they are also referenced locally.
+export { createSupabaseStorageAdapter } from './cpe-log-export.js';
+export { SIGNED_URL_TTL_SECONDS };
 export type { CpeExportStorage };
 
 /** Stable, versioned JSON export schema tag. */
@@ -244,8 +244,10 @@ export function buildCleLogRecord(
   anchor: CleExportAnchorRow,
   frontendUrl: string,
 ): CleLogRecord {
-  const meta = (anchor.metadata ?? {}) as Record<string, unknown>;
-  const cle = (anchor.cle_metadata ?? {}) as Record<string, unknown>;
+  // metadata / cle_metadata are typed `Record<string, unknown> | null`, so the
+  // `?? {}` already narrows to `Record<string, unknown>` — no cast needed.
+  const meta = anchor.metadata ?? {};
+  const cle = anchor.cle_metadata ?? {};
 
   const title =
     asString(cle.course_title) ?? asString(anchor.label) ?? asString(anchor.filename);

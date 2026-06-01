@@ -53,12 +53,23 @@ const SUCCESS_RESULT = {
   },
 };
 
-function mockProfile(orgId: string | null) {
+/**
+ * Build a chainable mock of `db.from('profiles').select(...).eq(...).maybeSingle()`.
+ * - `orgId` non-null → resolves `{ data: { org_id }, error: null }` (member).
+ * - `orgId` null     → resolves `{ data: null, error: null }` (query succeeded,
+ *   caller has no org → endpoint must 403).
+ * - `error` set      → resolves `{ data: null, error }` (operational DB failure
+ *   → endpoint must 500, NOT 403 — the bug CodeRabbit flagged).
+ * Both `single` and `maybeSingle` are wired so the helper is robust to either
+ * terminal, but production now calls `.maybeSingle()`.
+ */
+function mockProfile(orgId: string | null, error: { message: string; code?: string } | null = null) {
+  const result = { data: orgId ? { org_id: orgId } : null, error };
   const chain: Record<string, unknown> = {};
   chain.select = vi.fn().mockReturnValue(chain);
   chain.eq = vi.fn().mockReturnValue(chain);
-  chain.single = vi.fn().mockResolvedValue({ data: orgId ? { org_id: orgId } : null, error: null });
-  chain.maybeSingle = vi.fn().mockResolvedValue({ data: orgId ? { org_id: orgId } : null, error: null });
+  chain.single = vi.fn().mockResolvedValue(result);
+  chain.maybeSingle = vi.fn().mockResolvedValue(result);
   return chain;
 }
 
@@ -111,10 +122,28 @@ describe('POST /exports/cle-log — auth + scope', () => {
     expect(generateCleLogExport).not.toHaveBeenCalled();
   });
 
-  it('returns 403 when the caller has no organization membership', async () => {
+  it('returns 403 when the profile lookup succeeds but the caller has no organization membership', async () => {
+    // maybeSingle resolves { data: null, error: null } → genuine no-org case.
     (db.from as unknown as ReturnType<typeof vi.fn>).mockImplementation(() => mockProfile(null));
     const res = await request(createApp('user-1')).post('/exports/cle-log').send(VALID_BODY);
     expect(res.status).toBe(403);
+    expect(generateCleLogExport).not.toHaveBeenCalled();
+  });
+
+  it('returns 500 (not 403) when the profile lookup itself errors (operational DB failure)', async () => {
+    // maybeSingle resolves { data: null, error: {...} } → a DB failure must NOT
+    // be misclassified as "no org membership" (403). It is a server error (500).
+    (db.from as unknown as ReturnType<typeof vi.fn>).mockImplementation(() =>
+      mockProfile(null, { message: 'connection terminated unexpectedly', code: '57P01' }),
+    );
+    const res = await request(createApp('user-1')).post('/exports/cle-log').send(VALID_BODY);
+    expect(res.status).toBe(500);
+    // Generic message + request_id only — no DB internals leaked to the caller.
+    expect(res.body.request_id).toBeDefined();
+    expect(JSON.stringify(res.body)).not.toContain('connection terminated');
+    expect(JSON.stringify(res.body)).not.toContain('57P01');
+    // The export worker must never run when scope resolution failed.
+    expect(generateCleLogExport).not.toHaveBeenCalled();
   });
 });
 

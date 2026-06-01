@@ -79,6 +79,7 @@ function makeDeps(opts: {
   uploads: UploadCall[];
   signs: SignedUrlCall[];
   audits: Array<Record<string, unknown>>;
+  anchorQuery: Record<string, unknown>;
 } {
   const uploads: UploadCall[] = [];
   const signs: SignedUrlCall[] = [];
@@ -150,7 +151,7 @@ function makeDeps(opts: {
     bucket: 'exports',
   };
 
-  return { deps, uploads, signs, audits };
+  return { deps, uploads, signs, audits, anchorQuery };
 }
 
 const BASE_ARGS = {
@@ -413,10 +414,28 @@ describe('generateCleLogExport', () => {
   });
 
   it('filters by org/user/jurisdiction (scope + jurisdiction enforced in the query)', async () => {
-    const { deps } = makeDeps();
+    const { deps, anchorQuery } = makeDeps();
     await generateCleLogExport(BASE_ARGS, deps);
+
     const fromMock = deps.db.from as unknown as ReturnType<typeof vi.fn>;
     expect(fromMock).toHaveBeenCalledWith('anchors');
+
+    // Tenant/owner scope MUST be applied in the query itself (defense in depth,
+    // CLAUDE.md §1.4) — assert both the user_id and org_id equality filters, not
+    // merely that `anchors` was queried.
+    const eq = anchorQuery.eq as unknown as ReturnType<typeof vi.fn>;
+    expect(eq).toHaveBeenCalledWith('user_id', 'user-1');
+    expect(eq).toHaveBeenCalledWith('org_id', 'org-1');
+    // Only CLE credentials, and soft-deleted rows excluded.
+    expect(eq).toHaveBeenCalledWith('credential_type', 'CLE');
+    const is = anchorQuery.is as unknown as ReturnType<typeof vi.fn>;
+    expect(is).toHaveBeenCalledWith('deleted_at', null);
+    // Jurisdiction filter matches the bare code OR the US- prefixed form.
+    const or = anchorQuery.or as unknown as ReturnType<typeof vi.fn>;
+    expect(or).toHaveBeenCalledTimes(1);
+    const orFilter = or.mock.calls[0][0] as string;
+    expect(orFilter).toContain('cle_metadata->>jurisdiction.eq.CA');
+    expect(orFilter).toContain('cle_metadata->>jurisdiction.eq.US-CA');
   });
 
   it('throws when Storage upload fails (so the endpoint can 500 cleanly)', async () => {
