@@ -32,7 +32,7 @@ import {
 
 /**
  * Supported credential-source providers. Mirrors the widened CHECK constraint
- * established by migration 0327. Adding a new provider requires:
+ * established by migration 0329. Adding a new provider requires:
  *   1. A new migration that widens the CHECK constraint
  *   2. Updating this union (and the runtime guard below)
  */
@@ -82,7 +82,7 @@ export interface MemberIntegrationRowDeps {
   } | null>;
 }
 
-/** Default KEK version for new rows. Migration 0327 sets the same default. */
+/** Default KEK version for new rows. Migration 0329 sets the same default. */
 const DEFAULT_KEK_VERSION = 1;
 
 export interface StoreTokensInput {
@@ -91,7 +91,7 @@ export interface StoreTokensInput {
   provider: CredentialProvider;
   accountId: string;
   tokens: OAuthTokens;
-  /** Optional override. Defaults to 1 — matches migration 0327. */
+  /** Optional override. Defaults to 1 — matches migration 0329. */
   kekVersion?: number;
 }
 
@@ -107,7 +107,7 @@ export interface StoreTokensDeps {
  * Encrypt and persist a credential-source provider's OAuth tokens.
  *
  * Validates `provider` against the supported enum (defence-in-depth alongside
- * the migration 0327 CHECK constraint).
+ * the migration 0329 CHECK constraint).
  *
  * Stores `kek_version` so a future KMS key rotation can identify which key
  * wrapped each row without forcing an immediate re-encrypt sweep

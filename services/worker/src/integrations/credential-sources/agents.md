@@ -15,7 +15,7 @@ Issuer-partnership credential ingestion for the SCRUM-1596 epic. Stores tokens/k
 
 `oauth/crypto.ts` is the generic KMS encrypt/decrypt module (SCRUM-1168). This folder is the **credential-source-specific** layer that adds:
 
-- Provider whitelisting (`'credly' | 'accredible' | 'udemy'`) — matches the widened `member_integrations.provider` CHECK constraint from migration `0327`.
+- Provider whitelisting (`'credly' | 'accredible' | 'udemy'`) — matches the widened `member_integrations.provider` CHECK constraint from migration `0329`.
 - Member-integration row shape — `(user_id, org_id, provider, account_id)` lookup keys plus `kek_version` tracking.
 
 Sprint 1 follow-ups (CSI-04B, CSI-04C, CSI-04D) will add provider-specific issuer adapters on top of this foundation.
@@ -29,7 +29,7 @@ Sprint 1 follow-ups (CSI-04B, CSI-04C, CSI-04D) will add provider-specific issue
 
 ## Related References
 
-- Migration: `supabase/migrations/0327_member_integrations_credential_providers.sql`
+- Migration: `supabase/migrations/0329_member_integrations_credential_providers.sql`
 - KMS module: `services/worker/src/integrations/oauth/crypto.ts` (SCRUM-1168)
 - DocuSign precedent: same `member_integrations` table established by `0320_member_integrations.sql` (SCRUM-2044)
 - Jira: [SCRUM-1611](https://arkova.atlassian.net/browse/SCRUM-1611) / parent [SCRUM-1600](https://arkova.atlassian.net/browse/SCRUM-1600) / epic [SCRUM-1596](https://arkova.atlassian.net/browse/SCRUM-1596)

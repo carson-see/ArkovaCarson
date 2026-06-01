@@ -1,7 +1,7 @@
 /**
  * Credential-Source Provider RLS Tests — SCRUM-1611 CSI-04A.
  *
- * After migration 0327, the `member_integrations` table accepts
+ * After migration 0329, the `member_integrations` table accepts
  * `provider IN ('docusign', 'credly', 'accredible', 'udemy')`. Other values
  * are rejected. RLS policies established by migration 0320 (member reads own
  * rows; org admin reads all org rows; deny writes) remain in force for the
@@ -19,7 +19,7 @@
  * Prerequisites:
  *   - Supabase running locally (supabase start)
  *   - Database reset with seed data (supabase db reset)
- *   - Migration 0327 applied
+ *   - Migration 0329 applied
  *
  * Pattern mirrored from tests/rls/docusign-integrations.test.ts.
  */
