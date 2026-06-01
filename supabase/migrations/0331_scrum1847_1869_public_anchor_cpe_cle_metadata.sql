@@ -16,13 +16,27 @@
 -- NULL is returned when the column is NULL (extraction is new; ~0 prod anchors
 -- carry this metadata today — the path is built ahead of the data).
 --
--- DEFENSE IN DEPTH (§1.4): the internal extraction signals
--- 'extraction_confidence' and 'extraction_source' are stripped server-side
--- (jsonb '-' key removal) so they can never reach the public payload even if a
--- client forgets to allowlist them. This matches the frontend display allowlist.
--- Everything else in get_public_anchor is reproduced byte-identical to the
--- live prod definition (SECURITY DEFINER, search_path, status filter,
--- deleted_at guard, sanitized metadata, recipient-identifier SHA-256 hash).
+-- DEFENSE IN DEPTH (§1.4): cpe_metadata / cle_metadata are built from an
+-- EXPLICIT public ALLOWLIST via jsonb_build_object — the public payload carries
+-- ONLY the keys the public verify UI renders, sourced from the stored jsonb.
+-- This is strictly safer than a denylist: internal fields that are NOT on the
+-- allowlist — sponsor_id, reporting_period_start/end (CPE), course_id,
+-- reporting_period_start/end (CLE), and the extraction_confidence /
+-- extraction_source signals — can never reach ANONYMOUS callers (get_public_anchor
+-- is anon-granted), and any FUTURE internal field added to the worker's
+-- CpeMetadataSchema / CleMetadataSchema is excluded by default rather than
+-- auto-leaked. The allowlist mirrors the worker Zod schemas in
+-- services/worker/src/compliance/professional-education.ts and the frontend
+-- display allowlists (cpeMetadataView / cleMetadataView, in unmerged #1023/#1025).
+--   CPE public keys: credit_hours, field_of_study, delivery_method, nasba_status,
+--     nasba_lookup_date, requires_manual_review.
+--   CLE public keys: credit_hours, ethics_hours, jurisdiction, approved_provider_name,
+--     provider_approval_status, provider_lookup_date, delivery_format, course_title,
+--     requires_manual_review.
+-- Everything else in get_public_anchor (SECURITY DEFINER, search_path, status
+-- filter, deleted_at guard, sanitized metadata, recipient-identifier SHA-256
+-- hash) is reproduced unchanged from the live prod / 0311 definition; only the
+-- two additive cpe_metadata / cle_metadata keys are new.
 --
 -- ROLLBACK: restore the prior get_public_anchor body — i.e. re-run the
 -- definition from 0311_scrum1599_public_anchor_provenance.sql (the immediately
@@ -92,17 +106,48 @@ BEGIN
       'evidence_package_hash', a.metadata->>'evidence_package_hash',
       'source_payload_hash', a.metadata->>'source_payload_hash',
       'fetched_at', COALESCE(a.metadata->>'fetched_at', a.metadata->>'source_fetched_at'),
-      -- SCRUM-1847 (CPE-R1): structured CPE compliance metadata, with internal
-      -- extraction signals stripped server-side (defense in depth, §1.4).
+      -- SCRUM-1847 (CPE-R1): structured CPE compliance metadata, built from an
+      -- EXPLICIT public ALLOWLIST (defense in depth, §1.4). Only the keys the
+      -- public verify UI renders are projected; everything else in the stored
+      -- a.cpe_metadata jsonb — sponsor_id, reporting_period_start/end,
+      -- extraction_confidence, extraction_source, and any FUTURE internal field
+      -- — is dropped because it is not named here. Allowlist matches the worker
+      -- CpeMetadataSchema (services/worker/src/compliance/professional-education.ts)
+      -- and the frontend cpeMetadataView allowlist (#1023). Sourced with -> (not
+      -- ->>) so jsonb types are preserved; jsonb_strip_nulls drops keys whose
+      -- stored value is null/absent, keeping the additive-nullable shape (§1.8 —
+      -- a sub-key is present only when the column carries it; the frontend reads
+      -- each key null-tolerantly).
       'cpe_metadata', CASE
         WHEN a.cpe_metadata IS NOT NULL
-        THEN (a.cpe_metadata - 'extraction_confidence' - 'extraction_source')
+        THEN jsonb_strip_nulls(jsonb_build_object(
+          'credit_hours', a.cpe_metadata -> 'credit_hours',
+          'field_of_study', a.cpe_metadata -> 'field_of_study',
+          'delivery_method', a.cpe_metadata -> 'delivery_method',
+          'nasba_status', a.cpe_metadata -> 'nasba_status',
+          'nasba_lookup_date', a.cpe_metadata -> 'nasba_lookup_date',
+          'requires_manual_review', a.cpe_metadata -> 'requires_manual_review'
+        ))
         ELSE NULL
       END,
-      -- SCRUM-1869 (CLE-R1): structured CLE compliance metadata, same strip.
+      -- SCRUM-1869 (CLE-R1): structured CLE compliance metadata, same EXPLICIT
+      -- public ALLOWLIST approach. Excludes course_id, reporting_period_start/end,
+      -- extraction_confidence, extraction_source (all internal-only). Allowlist
+      -- matches the worker CleMetadataSchema and the frontend cleMetadataView
+      -- allowlist (#1025).
       'cle_metadata', CASE
         WHEN a.cle_metadata IS NOT NULL
-        THEN (a.cle_metadata - 'extraction_confidence' - 'extraction_source')
+        THEN jsonb_strip_nulls(jsonb_build_object(
+          'credit_hours', a.cle_metadata -> 'credit_hours',
+          'ethics_hours', a.cle_metadata -> 'ethics_hours',
+          'jurisdiction', a.cle_metadata -> 'jurisdiction',
+          'approved_provider_name', a.cle_metadata -> 'approved_provider_name',
+          'provider_approval_status', a.cle_metadata -> 'provider_approval_status',
+          'provider_lookup_date', a.cle_metadata -> 'provider_lookup_date',
+          'delivery_format', a.cle_metadata -> 'delivery_format',
+          'course_title', a.cle_metadata -> 'course_title',
+          'requires_manual_review', a.cle_metadata -> 'requires_manual_review'
+        ))
         ELSE NULL
       END
     )
@@ -138,4 +183,4 @@ $$;
 NOTIFY pgrst, 'reload schema';
 
 COMMENT ON FUNCTION public.get_public_anchor(p_public_id text)
-  IS 'Returns redacted anchor info for public verification with CSI-03 source provenance and CPE/CLE compliance metadata (SCRUM-1847/1869). cpe_metadata/cle_metadata strip extraction_confidence + extraction_source server-side. Returns SECURED/ACTIVE, REVOKED, EXPIRED, SUPERSEDED, PENDING, SUBMITTED.';
+  IS 'Returns redacted anchor info for public verification with CSI-03 source provenance and CPE/CLE compliance metadata (SCRUM-1847/1869). cpe_metadata/cle_metadata are built from an explicit public allowlist (jsonb_build_object) — only public display keys are projected; sponsor_id/course_id/reporting_period_*/extraction_confidence/extraction_source and any future internal field are excluded by default. Returns SECURED/ACTIVE, REVOKED, EXPIRED, SUPERSEDED, PENDING, SUBMITTED.';
