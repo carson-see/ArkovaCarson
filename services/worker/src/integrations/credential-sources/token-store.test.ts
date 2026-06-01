@@ -430,3 +430,165 @@ describe('SCRUM-1612 — issuer credentials (client_credentials grant)', () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// SCRUM-1613 CSI-04C — API-key credentials (Accredible / Udemy Business)
+// ---------------------------------------------------------------------------
+
+import {
+  storeApiKeyCredentials,
+  readApiKeyCredentials,
+  type ApiKeyCredentials,
+} from './token-store.js';
+
+const sampleApiKeyCredentials: ApiKeyCredentials = {
+  api_key: 'ak-DO-NOT-LOG-1234567890abcdef',
+  key_label: 'prod 2026-Q2',
+};
+
+describe('SCRUM-1613 — API-key credentials (Accredible / Udemy Business)', () => {
+  let fakeKms: ReturnType<typeof makeFakeKms>;
+  let store: ReturnType<typeof makeFakeStore>;
+
+  beforeEach(() => {
+    fakeKms = makeFakeKms();
+    store = makeFakeStore();
+  });
+
+  describe('storeApiKeyCredentials', () => {
+    it('encrypts and writes a member_integrations row for accredible', async () => {
+      await storeApiKeyCredentials(
+        {
+          userId: ARKOVA_USER_ID,
+          orgId: ARKOVA_ORG_ID,
+          provider: 'accredible',
+          accountId: 'accredible-org-1',
+          credentials: sampleApiKeyCredentials,
+        },
+        { kms: fakeKms, keyName: TEST_KEY_NAME, rowStore: store.deps },
+      );
+
+      expect(fakeKms.encrypt).toHaveBeenCalledTimes(1);
+      expect(store.rows).toHaveLength(1);
+      const row = store.rows[0];
+      expect(row.provider).toBe('accredible');
+      expect(row.kek_version).toBe(1);
+      // api_key must NEVER appear in ciphertext as plaintext
+      expect(row.encrypted_tokens?.toString('utf8')).not.toContain('ak-DO-NOT-LOG');
+    });
+
+    it('also works for udemy (deferred to enterprise SKU but shape is supported)', async () => {
+      await storeApiKeyCredentials(
+        {
+          userId: ARKOVA_USER_ID,
+          orgId: ARKOVA_ORG_ID,
+          provider: 'udemy',
+          accountId: 'udemy-tenant-1',
+          credentials: { api_key: 'xapi-tenant-key' },
+        },
+        { kms: fakeKms, keyName: TEST_KEY_NAME, rowStore: store.deps },
+      );
+      expect(store.rows[0].provider).toBe('udemy');
+    });
+
+    it('rejects unsupported providers at the runtime boundary', async () => {
+      await expect(
+        storeApiKeyCredentials(
+          {
+            userId: ARKOVA_USER_ID,
+            orgId: ARKOVA_ORG_ID,
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            provider: 'linkedin' as any,
+            accountId: 'x',
+            credentials: sampleApiKeyCredentials,
+          },
+          { kms: fakeKms, keyName: TEST_KEY_NAME, rowStore: store.deps },
+        ),
+      ).rejects.toThrow(/unsupported credential provider/i);
+      expect(fakeKms.encrypt).not.toHaveBeenCalled();
+    });
+
+    it('rejects missing api_key (Zod parse fails before KMS call)', async () => {
+      await expect(
+        storeApiKeyCredentials(
+          {
+            userId: ARKOVA_USER_ID,
+            orgId: ARKOVA_ORG_ID,
+            provider: 'accredible',
+            accountId: 'a',
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            credentials: { key_label: 'no-key' } as any,
+          },
+          { kms: fakeKms, keyName: TEST_KEY_NAME, rowStore: store.deps },
+        ),
+      ).rejects.toThrow();
+      expect(fakeKms.encrypt).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('readApiKeyCredentials', () => {
+    it('round-trips: store → fetch → decrypt yields original credentials', async () => {
+      await storeApiKeyCredentials(
+        {
+          userId: ARKOVA_USER_ID,
+          orgId: ARKOVA_ORG_ID,
+          provider: 'accredible',
+          accountId: 'accredible-org-1',
+          credentials: sampleApiKeyCredentials,
+        },
+        { kms: fakeKms, keyName: TEST_KEY_NAME, rowStore: store.deps },
+      );
+
+      const result = await readApiKeyCredentials(
+        {
+          userId: ARKOVA_USER_ID,
+          orgId: ARKOVA_ORG_ID,
+          provider: 'accredible',
+          accountId: 'accredible-org-1',
+        },
+        { kms: fakeKms, rowStore: store.deps },
+      );
+
+      expect(result).not.toBeNull();
+      expect(result?.api_key).toBe(sampleApiKeyCredentials.api_key);
+      expect(result?.key_label).toBe('prod 2026-Q2');
+    });
+
+    it('returns null when no row exists', async () => {
+      const result = await readApiKeyCredentials(
+        {
+          userId: ARKOVA_USER_ID,
+          orgId: ARKOVA_ORG_ID,
+          provider: 'accredible',
+          accountId: 'never-existed',
+        },
+        { kms: fakeKms, rowStore: store.deps },
+      );
+      expect(result).toBeNull();
+    });
+
+    it('throws on corrupted JSON', async () => {
+      await store.deps.upsertEncryptedRow({
+        userId: ARKOVA_USER_ID,
+        orgId: ARKOVA_ORG_ID,
+        provider: 'accredible',
+        accountId: 'accredible-org-1',
+        ciphertext: Buffer.from('not valid json').reverse(),
+        kmsKeyName: TEST_KEY_NAME,
+        kekVersion: 1,
+      });
+
+      await expect(
+        readApiKeyCredentials(
+          {
+            userId: ARKOVA_USER_ID,
+            orgId: ARKOVA_ORG_ID,
+            provider: 'accredible',
+            accountId: 'accredible-org-1',
+          },
+          { kms: fakeKms, rowStore: store.deps },
+        ),
+      ).rejects.toThrow(/not valid JSON/);
+    });
+  });
+});
