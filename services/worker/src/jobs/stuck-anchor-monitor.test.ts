@@ -11,8 +11,12 @@
 
 import { describe, it, expect, vi } from 'vitest';
 
+const mockConfig = vi.hoisted(() => ({
+  stuckAnchorAlertHours: 24,
+}));
+
 vi.mock('../config.js', () => ({
-  config: {},
+  config: mockConfig,
 }));
 
 vi.mock('../utils/logger.js', () => ({
@@ -237,8 +241,8 @@ describe('runStuckAnchorCheck', () => {
 
   it('reads the threshold from STUCK_ANCHOR_ALERT_HOURS when no override is given', async () => {
     mockCaptureMessage.mockClear();
-    const prev = process.env.STUCK_ANCHOR_ALERT_HOURS;
-    process.env.STUCK_ANCHOR_ALERT_HOURS = '2';
+    const prev = mockConfig.stuckAnchorAlertHours;
+    mockConfig.stuckAnchorAlertHours = 2;
     try {
       const threeHoursAgo = new Date(NOW.getTime() - 3 * 60 * 60 * 1000).toISOString();
       const db = mockDb({ oldest: { data: [{ created_at: threeHoursAgo }], error: null } });
@@ -249,21 +253,19 @@ describe('runStuckAnchorCheck', () => {
       expect(result.healthy).toBe(false);
       expect(result.alertFired).toBe(true);
     } finally {
-      if (prev === undefined) delete process.env.STUCK_ANCHOR_ALERT_HOURS;
-      else process.env.STUCK_ANCHOR_ALERT_HOURS = prev;
+      mockConfig.stuckAnchorAlertHours = prev;
     }
   });
 
-  it('falls back to the default threshold on an invalid env value', async () => {
-    const prev = process.env.STUCK_ANCHOR_ALERT_HOURS;
-    process.env.STUCK_ANCHOR_ALERT_HOURS = 'garbage';
+  it('falls back to the default threshold on an invalid config value', async () => {
+    const prev = mockConfig.stuckAnchorAlertHours;
+    mockConfig.stuckAnchorAlertHours = Number.NaN;
     try {
       const db = mockDb({ oldest: { data: [], error: null } });
       const result = await runStuckAnchorCheck(db, { now: NOW });
       expect(result.thresholdHours).toBe(DEFAULT_STUCK_ANCHOR_ALERT_HOURS);
     } finally {
-      if (prev === undefined) delete process.env.STUCK_ANCHOR_ALERT_HOURS;
-      else process.env.STUCK_ANCHOR_ALERT_HOURS = prev;
+      mockConfig.stuckAnchorAlertHours = prev;
     }
   });
 });

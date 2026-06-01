@@ -42,6 +42,7 @@
 
 import { logger } from '../utils/logger.js';
 import { Sentry } from '../utils/sentry.js';
+import { config } from '../config.js';
 
 export const DEFAULT_STUCK_ANCHOR_ALERT_HOURS = 24;
 
@@ -133,16 +134,15 @@ export function decideStuckAnchorAlert(
 }
 
 /**
- * Resolve the alert threshold (hours) from `STUCK_ANCHOR_ALERT_HOURS`, falling
- * back to the default on an unset/invalid/non-positive value.
+ * Resolve the alert threshold (hours) from typed worker config. Config schema
+ * handles unset/invalid/non-positive env values by falling back to the default.
  */
 export function resolveStuckAnchorThresholdHours(
-  raw: string | undefined = process.env.STUCK_ANCHOR_ALERT_HOURS,
+  configuredHours: number | undefined = config.stuckAnchorAlertHours,
 ): number {
-  if (raw === undefined || raw.trim() === '') return DEFAULT_STUCK_ANCHOR_ALERT_HOURS;
-  const parsed = Number(raw);
-  if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_STUCK_ANCHOR_ALERT_HOURS;
-  return parsed;
+  return Number.isFinite(configuredHours) && configuredHours > 0
+    ? configuredHours
+    : DEFAULT_STUCK_ANCHOR_ALERT_HOURS;
 }
 
 // ─── Cron entry point ───
