@@ -1,6 +1,13 @@
 export { CredentialTemplatesManager } from './CredentialTemplatesManager';
 export { CredentialRenderer } from './CredentialRenderer';
 export type { CredentialRendererProps } from './CredentialRenderer';
+export { NasbaStatusBadge } from './NasbaStatusBadge';
+export type { NasbaStatusBadgeProps } from './NasbaStatusBadge';
+export { CpeMetadataSection } from './CpeMetadataSection';
+export type { CpeMetadataSectionProps, CpeMetadataView } from './CpeMetadataSection';
+export { CPE_COMPLIANCE_COPY } from './cpeComplianceCopy';
+export type { NasbaStatus } from './cpeComplianceCopy';
+export { extractCpeMetadataView } from './cpeMetadataView';
 export { MetadataFieldRenderer } from './MetadataFieldRenderer';
 export { CredentialSourceImportDialog } from './CredentialSourceImportDialog';
 export { TemplateSchemaBuilder } from './TemplateSchemaBuilder';
