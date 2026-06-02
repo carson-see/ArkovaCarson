@@ -10,6 +10,17 @@
  * budget (< 10s).
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+// The export worker reads the default bucket via the worker config module
+// (SCRUM-1258 — no ad-hoc process.env reads). Mock config so importing the
+// module under test (which also transitively imports the CPE export module)
+// does not trigger full worker config validation. The mocked
+// `exportsStorageBucket: 'exports'` matches the prior default
+// (`process.env.EXPORTS_STORAGE_BUCKET || 'exports'` with the var unset).
+vi.mock('../config.js', () => ({
+  config: { exportsStorageBucket: 'exports' },
+}));
+
 import {
   CLE_LOG_SCHEMA_VERSION,
   CleLogV1Schema,
