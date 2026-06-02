@@ -71,6 +71,7 @@ import { driveWebhookRouter } from './webhooks/drive.js';
 import { API_V1_PREFIX, WEBHOOK_PATHS, relativeTo } from '../../constants/webhook-paths.js';
 import { auditExportRouter } from './audit-export.js';
 import { cpeLogExportRouter, cpeLogExportRateLimiter } from './cpe-log-export.js';
+import { cleLogExportRouter, cleLogExportRateLimiter } from './cle-log-export.js';
 import { aiProvenanceRouter } from './ai-provenance.js';
 import { aiAccountabilityReportRouter } from './ai-accountability-report.js';
 import { grcRouter } from './grc.js';
@@ -323,6 +324,10 @@ router.use('/audit-export', requireAuth, auditExportRouter);
 // ─── CPE compliance-log export — PDF + JSON signed URLs (CPE-R2 / SCRUM-1848) ───
 // JWT auth + per-user 10/hour rate limit (Constitution 1.10).
 router.use('/exports/cpe-log', requireAuth, cpeLogExportRateLimiter, cpeLogExportRouter);
+
+// ─── CLE compliance-log export — PDF + JSON signed URLs (CLE-R2 / SCRUM-1870) ───
+// JWT auth + per-user 10/hour rate limit (separate bucket scope from CPE).
+router.use('/exports/cle-log', requireAuth, cleLogExportRateLimiter, cleLogExportRouter);
 
 // ─── GRC platform integrations — Vanta, Drata, Anecdotes (CML-05) ───
 import { killSwitch } from '../../middleware/integrationKillSwitch.js';
