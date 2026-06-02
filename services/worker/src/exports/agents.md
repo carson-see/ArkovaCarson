@@ -10,6 +10,15 @@ Worker-side document/report **export generators**. Pure-ish modules (DI'd `db`/`
   - `cpe_log.exported` audit event (`event_category='ADMIN'`) carries **metadata only** — actor, org, period, format, record_count, request_id — **no export body content** (CC7). Audit failure is non-fatal.
   - Org/user scope is enforced in the query (filtered by BOTH `user_id` AND `org_id`); the endpoint also rejects cross-user `user_id` before calling.
   - The endpoint's `format` param is **advisory only** — both PDF and JSON are always built and returned (`exports.pdf` + `exports.json`); `format` is echoed back as `requested_format` to record intent, it does not select/filter artifacts.
+  - **Exports the shared Storage seam** (`createSupabaseStorageAdapter`, `CpeExportStorage`, `SIGNED_URL_TTL_SECONDS`) reused by `cle-log-export.ts` — do NOT duplicate the adapter.
+
+- **`cle-log-export.ts` (SCRUM-1870 — CLE-R2)** — `generateCleLogExport()` builds an attorney's CLE compliance log for one US-state jurisdiction over a reporting period in BOTH PDF (jspdf) and JSON, uploads each to Storage, returns a 1h signed URL per format. **Imports the Storage seam from `cpe-log-export.ts`** (no duplication).
+  - `cle_log_v1` is the frozen/additive JSON schema (`CleLogV1Schema`, `.strict()`). Per-credential fields mapped from `cle_metadata` (canonical shape = `CleMetadataSchema` in `compliance/professional-education.ts`): title (`course_title`→label→filename), provider (`approved_provider_name`), `provider_approval_status`, total `credit_hours`, **`ethics_hours` (separate)**, `jurisdiction`, `delivery_format`, completion date (`issued_at`), Arkova verification URL, anchor timestamp (`chain_timestamp`), evidence level (`metadata.verification_level`). **Allowlist mapper — `extraction_confidence` / `extraction_source` are never exported.**
+  - **Ethics hours are a SEPARATE subtotal** in BOTH PDF and JSON (`summary.ethics_hours`), never folded into `summary.total_credit_hours`. The JSON `summary` block also reports approved vs unverified provider hours and hours-by-delivery-format. `computeCleSummary()` is the pure aggregator.
+  - Jurisdiction filter: `normalizeJurisdiction()` accepts a bare state code (`CA`) or the `US-`prefixed ISO form (`US-CA`); the query matches `cle_metadata->>'jurisdiction'` against both. Invalid jurisdiction throws (the endpoint rejects it at 400 first).
+  - PDF embeds the mandatory CLE non-affiliation disclaimer **verbatim** (`CLE_DISCLAIMER_TEXT`): "Arkova is not affiliated with any state bar or bar association." (The earlier draft's "state bar **of accountancy** or bar association" was a CPE/NASBA copy-paste artifact — accountancy = CPA, not attorneys — corrected per PR #1034 review.)
+  - `cle_log.exported` audit event (`event_category='ADMIN'`) carries **metadata only** — actor, org, **jurisdiction**, period, format, record_count, request_id — **no export body content** (CC7). Audit failure is non-fatal.
+  - Org/user scope enforced in the query (filtered by BOTH `user_id` AND `org_id`); the endpoint also rejects cross-user `user_id` before calling.
 
 ## Conventions
 
