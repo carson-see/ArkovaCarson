@@ -28,6 +28,7 @@ import {
 import { ROUTES } from '@/lib/routes';
 import { workerFetch } from '@/lib/workerClient';
 import { isPlatformAdmin } from '@/lib/platform';
+import { getStatusLabel } from '@/lib/statusDisplay';
 
 interface UserProfile {
   id: string;
@@ -82,7 +83,8 @@ function StatusBadge({ status }: Readonly<{ status: string }>) {
     REVOKED: 'bg-red-500/10 text-red-600 border-red-500/30',
     EXPIRED: 'bg-muted text-muted-foreground',
   };
-  return <Badge className={colors[status] ?? ''}>{status}</Badge>;
+  // SCRUM-2003: render the human-readable label, never the raw enum token.
+  return <Badge className={colors[status] ?? ''}>{getStatusLabel(status)}</Badge>;
 }
 
 export function AdminUserDetailPage() {

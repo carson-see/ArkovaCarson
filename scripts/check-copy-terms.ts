@@ -14,23 +14,49 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-// Forbidden terms (case-insensitive)
-// Use custom boundaries (?<![-\w]) / (?![-\w]) rather than \b so that hyphenated
-// CSS values like "inline-block" / "flex-block" are NOT flagged as the word "block".
+// Forbidden terms (case-insensitive). Two boundary styles are used deliberately:
+//
+//   HYPHEN-GUARDED  `(?<![-\w])X(?![-\w])` — a hyphen adjacent to the term blocks
+//     the match. Used ONLY for `block` and `gas`, which collide with Tailwind/CSS
+//     utilities (`inline-block`, `text-block-fg`, …). The hyphen carve-out is
+//     needed there and nowhere else.
+//   WORD-BOUNDARY   `(?<!\w)X(?!\w)` — a hyphen adjacent to the term STILL flags.
+//     Used for the chain/marketing terms (`bitcoin`, `blockchain`, `crypto`,
+//     `cryptocurrency`, `testnet`, `mainnet`, `utxo`, `broadcast`) because
+//     hyphenated hero copy like `Bitcoin-anchored` / `Crypto-secured` /
+//     `UTXO-based` / `Re-broadcast` is exactly the §1.3 violation we must catch
+//     (SCRUM-2149 review B1). className values are already stripped by
+//     stripClassNameAttributes() and identifier/type positions are dropped by
+//     isCodeIdentifier(), so the hyphen guard is unnecessary for these.
 export const FORBIDDEN_TERMS = [
-  'wallet',
-  'gas',
+  String.raw`(?<![-\w])wallet(?![-\w])`,
+  String.raw`(?<![-\w])gas(?![-\w])`,
   String.raw`(?<![-\w])block height(?![-\w])`,
   String.raw`(?<![-\w])block hash(?![-\w])`,
   String.raw`(?<![-\w])hash(?![-\w])`,
   String.raw`(?<![-\w])block(?![-\w])`,
-  'transaction',
-  'crypto',
-  'cryptocurrency',
-  'bitcoin',
-  'blockchain',
-  'mining',
+  String.raw`(?<![-\w])transaction(?![-\w])`,
+  // SCRUM-2149(d) + review B1: word boundaries so these NO LONGER match inside
+  // identifiers/type-names (`BitcoinNetwork`, `Cryptographic`, `BITCOIN_NETWORK`)
+  // — those positions are dropped by isCodeIdentifier() — yet a hyphen-adjacent
+  // occurrence in visible copy (`Bitcoin-anchored`, `Crypto-secured`) DOES flag.
+  // `cryptographic` (the allowed adjective) is exempted on the shouldSkipLine path.
+  String.raw`(?<!\w)crypto(?!\w)`,
+  String.raw`(?<!\w)cryptocurrency(?!\w)`,
+  String.raw`(?<!\w)bitcoin(?!\w)`,
+  String.raw`(?<!\w)blockchain(?!\w)`,
+  String.raw`(?<![-\w])mining(?![-\w])`,
   String.raw`(?<![-\w])token(?![-\w])`,
+
+  // SCRUM-2149(b): §1.3 parity — Testnet / Mainnet / UTXO / Broadcast were in
+  // the constitution's banned list but missing here. Word boundaries (review
+  // B1) so they don't match inside `mainnetConfig`, `broadcastTx`, etc. (those
+  // identifier/type/key positions are dropped by isCodeIdentifier) while a
+  // hyphen-adjacent occurrence in visible copy (`UTXO-based`) still flags.
+  String.raw`(?<!\w)testnet(?!\w)`,
+  String.raw`(?<!\w)mainnet(?!\w)`,
+  String.raw`(?<!\w)utxo(?!\w)`,
+  String.raw`(?<!\w)broadcast(?!\w)`,
 
   // UX-03 (SCRUM-1029): engineering-copy leaks seen in 2026-04-18 UAT.
   // API-keys page surfaced a raw error "Ensure the worker service is running"
@@ -63,14 +89,17 @@ export const LAUNCH_BLOCKER_COPY_TERMS = [
   'legal-reviewed copy before production launch',
 ];
 
-// File patterns to check (UI-facing files)
-// These patterns define which files are scanned for UI copy
-const _INCLUDE_PATTERNS = [
-  'src/components/**/*.tsx',
-  'src/components/**/*.ts',
-  'src/pages/**/*.tsx',
-  'src/pages/**/*.ts',
-  // Exclude the copy.ts file itself (it documents forbidden terms)
+// Directory prefixes scanned for UI copy. SCRUM-2149(a): the pre-2149 scope was
+// ONLY src/components + src/pages, leaving src/lib, src/hooks, and the PUBLIC
+// embeddable widget (packages/embed/src) unscanned — banned terms there reached
+// users while `lint:copy` stayed green. These are the roots `shouldCheck()`
+// admits and the roots `main()` walks (kept in sync — see collectCandidateFiles).
+const INCLUDE_ROOTS = [
+  'src/components/',
+  'src/pages/',
+  'src/lib/',
+  'src/hooks/',
+  'packages/embed/src/',
 ];
 
 // Files/patterns to exclude
@@ -84,11 +113,19 @@ const EXCLUDE_PATTERNS = [
   'src/components/admin/treasury/**', // Internal ops dashboard — uses technical terms by design
 ];
 
-interface Violation {
+export interface Violation {
   file: string;
   line: number;
   term: string;
   context: string;
+}
+
+/** One recorded pre-existing violation in scripts/ci/snapshots/copy-terms-baseline.json. */
+export interface BaselineEntry {
+  file: string;
+  line: number;
+  term: string;
+  reason: string;
 }
 
 function globToRegex(pattern: string): RegExp {
@@ -119,22 +156,25 @@ function getAllFiles(dir: string, files: string[] = []): string[] {
   return files;
 }
 
-function shouldCheck(filePath: string): boolean {
-  const relativePath = path.relative(process.cwd(), filePath);
+/**
+ * True when `filePath` is in scope for the copy-term scan. Exported for unit
+ * tests. Accepts absolute or repo-relative paths and normalises to POSIX
+ * separators so the prefix/glob checks behave identically on Windows.
+ */
+export function shouldCheck(filePath: string): boolean {
+  const relativePath = (
+    path.isAbsolute(filePath) ? path.relative(process.cwd(), filePath) : filePath
+  ).split(path.sep).join('/');
 
-  // Check exclusions first
+  // Check exclusions first (copy.ts vocabulary file, tests, ui primitives,
+  // treasury admin, node_modules/dist).
   for (const pattern of EXCLUDE_PATTERNS) {
     if (globToRegex(pattern).test(relativePath)) {
       return false;
     }
   }
 
-  // For now, check all .tsx files in src/components and src/pages
-  if (relativePath.startsWith('src/components/') || relativePath.startsWith('src/pages/')) {
-    return true;
-  }
-
-  return false;
+  return INCLUDE_ROOTS.some((root) => relativePath.startsWith(root));
 }
 
 // Pre-compile once. Building a new RegExp per line × 13 terms × 224 files was
@@ -171,36 +211,11 @@ export function shouldSkipLine(line: string, trimmed: string): boolean {
   return false;
 }
 
-function stripIgnoredAttributeValues(line: string): string {
-  return line.replaceAll(/\bclassName\s*=\s*(?:"[^"]*"|'[^']*'|`[^`]*`|\{[^}]*\})/g, 'className=');
-}
-
-function hasInlineJsxText(line: string): boolean {
-  let searchFrom = 0;
-
-  while (searchFrom < line.length) {
-    const closeTagStart = line.indexOf('>', searchFrom);
-    if (closeTagStart === -1) return false;
-
-    const nextOpenTag = line.indexOf('<', closeTagStart + 1);
-    if (nextOpenTag === -1) return false;
-
-    const text = line.slice(closeTagStart + 1, nextOpenTag).trimStart();
-    if (text.length > 0 && !text.startsWith('{')) {
-      return true;
-    }
-
-    searchFrom = nextOpenTag + 1;
-  }
-
-  return false;
-}
-
 /**
  * Sanitises a JSX/TS line so the term scan only sees user-visible copy.
  * Strips className/class attribute values (Tailwind utilities like
- * "inline-block" are noise) and JSX comments `{/* … *​/}` (so engineering
- * notes can mention banned terms without tripping the lint).
+ * "inline-block" are noise) and JSX comments (so engineering notes can mention
+ * banned terms without tripping the lint).
  *
  * Exported for unit tests.
  */
@@ -238,23 +253,315 @@ function stripBraceExpressions(line: string): string {
 }
 
 /**
- * Returns true when the matched term is a JSX component name (`<Hash …>`,
- * `</Hash>`) or an object property access (`health.checks.bitcoin.network`)
- * rather than user-visible copy. `/hash-help` in JSX text MUST NOT match —
- * a bare `/` is therefore not a sufficient prefix; only `</` (the JSX
- * closing-tag form) is.
+ * True for `type X = …` / `interface X …` declaration lines. SCRUM-2149(d):
+ * a string-literal union member (`'testnet' | 'mainnet'`) or a type name
+ * (`BitcoinNetwork`) is never user-visible copy, so the whole line is exempt.
+ * Pre-compiled (module scope) to keep the per-line cost bounded.
  */
-function isCodeIdentifier(line: string, matchIndex: number): boolean {
-  if (matchIndex === 0) return false;
-  const prev = line[matchIndex - 1];
+const TYPE_DECL_LINE_RE = /^\s*(?:export\s+)?(?:declare\s+)?(?:type|interface)\s+[A-Za-z_$]/;
+function isTypeDeclarationLine(line: string): boolean {
+  return TYPE_DECL_LINE_RE.test(line);
+}
+
+/**
+ * True when the match sits in JSX element text — i.e. between a tag-close `>`
+ * and a following tag-open `<` on the same line. SCRUM-2149 review N2: such
+ * text is user-visible copy, so the URL-path and bare-quoted-value suppressions
+ * (which are correct for in-code positions) must NOT fire on it. Examples that
+ * MUST stay visible: `<p>Testnet/Mainnet</p>`, `<p>"Bitcoin"</p>`.
+ */
+function isJsxVisibleText(line: string, matchIndex: number): boolean {
+  const before = line.slice(0, matchIndex);
+  const lastGt = before.lastIndexOf('>');
+  const lastLt = before.lastIndexOf('<');
+  // The most recent angle bracket before the match is a tag-close `>` (so we are
+  // inside element content, not inside a tag), and another tag opens after it.
+  return lastGt > lastLt && line.includes('<', matchIndex);
+}
+
+/** `<Hash …>` (component) or `</Hash>` (closing tag) — never user copy. */
+function isJsxComponentName(line: string, matchIndex: number, prev: string): boolean {
   if (prev === '<') return true;
-  // `</Hash>` — closing tag.
-  if (prev === '/' && matchIndex >= 2 && line[matchIndex - 2] === '<') return true;
-  // `obj.bitcoin` — property access. Require an identifier char before the
-  // dot so a sentence-ending `.` followed by a banned word in the next
-  // sentence ("…secure. Bitcoin is…") doesn't get masked.
-  if (prev === '.' && matchIndex >= 2 && /[A-Za-z0-9_]/.test(line[matchIndex - 2])) return true;
+  return prev === '/' && matchIndex >= 2 && line[matchIndex - 2] === '<';
+}
+
+/**
+ * `obj.bitcoin` — property access. Requires an identifier char before the dot
+ * so a sentence-ending `.` followed by a banned word in the next sentence
+ * ("…secure. Bitcoin is…") is NOT masked.
+ */
+function isPropertyAccess(line: string, matchIndex: number, prev: string): boolean {
+  return prev === '.' && matchIndex >= 2 && /\w/.test(line[matchIndex - 2]);
+}
+
+/**
+ * Object-key position: `mainnet:` / `'mainnet':` / `"mainnet":` where the colon
+ * begins a value (not `::`, not the `?:` ternary). An optional closing quote
+ * between the term and the colon is accepted (quoted keys). Guards against a
+ * ternary THEN-branch value by requiring the term to START the segment after
+ * the nearest `{`, `,`, `;`, or line start.
+ */
+function isObjectKey(line: string, matchIndex: number, after: string): boolean {
+  if (!/^["']?\s*:(?![:=])/.test(after)) return false;
+  const before = line.slice(0, matchIndex);
+  const lastSep = Math.max(
+    before.lastIndexOf('{'),
+    before.lastIndexOf(','),
+    before.lastIndexOf(';'),
+  );
+  const segment = before.slice(lastSep + 1).trim();
+  return segment === '' || segment === '"' || segment === "'";
+}
+
+/**
+ * URL segment: a `/term` path segment whose slash is part of a URL (the char
+ * before the slash is a host/segment char or `}` from a `${…}` template) —
+ * chain-explorer URLs render `/block/`, `/tx/`, `/testnet`.
+ */
+function isUrlSegment(line: string, matchIndex: number, prev: string): boolean {
+  if (prev !== '/' || matchIndex < 2) return false;
+  return /[A-Za-z0-9.}/]/.test(line[matchIndex - 2]);
+}
+
+/**
+ * Bare in-code value string: the match is wrapped in quotes whose ENTIRE
+ * content is exactly the term (a discrete enum/list/config value, e.g.
+ * `'token'`, `|| 'mainnet'`, `['utxo']`). EXCLUSION: a JSX/HTML attribute value
+ * (`attr="…"`, char before the opening quote is `=`) IS user-visible copy and
+ * must still flag (`placeholder="Wallet address"`).
+ */
+function isBareValueString(matchIndex: number, prev: string, after: string, line: string): boolean {
+  if (prev !== '"' && prev !== "'" && prev !== '`') return false;
+  if (!after.startsWith(prev)) return false; // closing quote must immediately follow
+  const beforeQuote = matchIndex >= 2 ? line[matchIndex - 2] : '';
+  return beforeQuote !== '=';
+}
+
+/**
+ * Structural-position filter (SCRUM-2149(d)). Returns true when the matched term
+ * sits in a code position that is NEVER user-visible copy, so it must not be
+ * flagged. Composed of small named predicates (review N3, keeps cognitive
+ * complexity low): JSX component/closing-tag names, property access, TS
+ * type/interface declaration lines (union members), object-key position, URL
+ * segments, and bare in-code value strings. Only genuine copy — JSX text and
+ * quoted display strings — flags.
+ *
+ * Review N2: the URL-segment and bare-value suppressions are themselves gated
+ * on `!isJsxVisibleText`, so they cannot mask a banned word sitting in visible
+ * JSX element text (`<p>Testnet/Mainnet</p>`, `<p>"Bitcoin"</p>`).
+ *
+ * @param line        the className-stripped line
+ * @param matchIndex  start index of the matched term
+ * @param matchLength length of the matched term
+ */
+function isCodeIdentifier(line: string, matchIndex: number, matchLength: number): boolean {
+  if (isTypeDeclarationLine(line)) return true;
+
+  const prev = matchIndex > 0 ? line[matchIndex - 1] : '';
+  const after = line.slice(matchIndex + matchLength);
+
+  if (isJsxComponentName(line, matchIndex, prev)) return true;
+  if (isPropertyAccess(line, matchIndex, prev)) return true;
+  if (isObjectKey(line, matchIndex, after)) return true;
+
+  // These two suppressions are correct for in-code positions but would bleed
+  // onto visible JSX text, so they are skipped when the match is JSX-visible.
+  if (!isJsxVisibleText(line, matchIndex)) {
+    if (isUrlSegment(line, matchIndex, prev)) return true;
+    if (isBareValueString(matchIndex, prev, after, line)) return true;
+  }
+
   return false;
+}
+
+// =============================================================================
+// SCRUM-2149(c) — raw DB-enum render heuristic.
+// =============================================================================
+
+/**
+ * Curated, deliberately-small set of DB/status enum field names that must be
+ * routed through a display mapper (e.g. ANCHOR_STATUS_LABELS / formatCredentialType
+ * in src/lib/copy.ts) before reaching the user. Rendering one of these RAW as a
+ * JSX expression child (`{anchor.status}`) dumps the DB enum value (SECURED,
+ * REVOKED, …) straight into the UI — the core SCRUM-2149 concern that literal
+ * term-scanning cannot see. Keep this list short to avoid false positives;
+ * widen only with a documented reason.
+ */
+export const RISKY_ENUM_FIELDS = [
+  'status',
+  'anchor_status',
+  'network',
+  'credential_type',
+] as const;
+
+const RAW_ENUM_CHILD_RE = new RegExp(
+  // (1) a boundary char that is NOT `$` (template literal) and NOT `=` (JSX
+  //     attribute) and NOT an identifier char (property continuation); then
+  // (2) `{ ident(?.|.)<field> }` with only the curated fields.
+  String.raw`(^|[^$=\w.])\{\s*[A-Za-z_$][\w$]*\??\.(?:${RISKY_ENUM_FIELDS.join('|')})\s*\}`,
+);
+
+// Strips the leading `{…}` brace expression so the remainder of the line can be
+// inspected for the next JSX tag. `[^}]*` is greedy but bounded by the excluded
+// `}` delimiter — linear, no super-linear backtracking (cf. SonarCloud S5852).
+const LEADING_BRACE_EXPR_RE = /^\{[^}]*\}/;
+// Captures the brace-expression body (e.g. `row.status`) for the violation
+// message. Non-lazy `[^}]*` (review B3 / S6594: no lazy `*?`, consumed via
+// RegExp.exec); the captured body is .trim()'d afterwards rather than peeling
+// surrounding whitespace with a `\s*` group, keeping the pattern flat.
+const ENUM_FIELD_RE = /^\{([^}]*)\}/;
+
+/**
+ * Detects a raw DB-enum render: a bare `{X.<riskyfield>}` used as a JSX
+ * expression CHILD rather than passed into a display component. A child is
+ * either the whole (trimmed) line, or embedded in element content — a tag has
+ * closed (`>`) earlier on the line and another tag (`<`) follows the
+ * expression. Review N1: leading text before the `{` (`<div>Label:
+ * {row.status}</div>`) no longer defeats detection. Conservative by
+ * construction — attribute (`=`) and template (`$`) positions are excluded by
+ * RAW_ENUM_CHILD_RE's leading boundary class:
+ *
+ *   FLAGS    `{result.status}` (child), `>{r.credential_type}<`,
+ *            `<div>Label: {row.status}</div>` (leading text)
+ *   IGNORES  `${res.status}` (template/HTTP code), `status={x.status}` (attr),
+ *            `key={x.status}` (attr), `{x.public_id}` (field not in the risky
+ *            set), and anything in a non-`.tsx` file (the pattern is JSX-specific).
+ *
+ * Known deliberate blind spots (documented in scripts/agents.md): a defaulted
+ * child `{x.status || ''}`, a call-result child `{getX().status}`, and a
+ * template-literal child are NOT matched — the regex targets the bare
+ * `{ident.field}` shape only, by design, to keep false positives near zero.
+ *
+ * Exported for unit tests.
+ */
+export function findRawEnumRenders(line: string, lineNum: number, filePath: string): Violation[] {
+  if (!filePath.endsWith('.tsx')) return [];
+
+  const m = RAW_ENUM_CHILD_RE.exec(line);
+  if (!m) return [];
+
+  const exprStart = m.index + m[1].length; // index of the `{`
+  const trimmed = line.trim();
+  const exprOnly = /^\{\s*[A-Za-z_$][\w$]*\??\.[A-Za-z_]+\s*\}$/.test(trimmed);
+
+  // JSX expression child: a tag closed (`>`) before the `{…}` on this line AND
+  // another tag (`<`) follows it. .trimEnd()/.indexOf avoid the super-linear
+  // `\s+$` regex flagged by SonarCloud S5852 (review B3).
+  const beforeExpr = line.slice(0, exprStart).trimEnd();
+  const afterExpr = line.slice(exprStart).replace(LEADING_BRACE_EXPR_RE, '');
+  const inJsxChild = beforeExpr.includes('>') && afterExpr.includes('<');
+
+  if (!exprOnly && !inJsxChild) return [];
+
+  const fieldMatch = ENUM_FIELD_RE.exec(line.slice(exprStart));
+  const field = fieldMatch ? fieldMatch[1].trim() : line.slice(exprStart).trim();
+  return [
+    {
+      file: filePath,
+      line: lineNum,
+      term: `raw enum render: {${field}}`,
+      context: trimmed.substring(0, 80),
+    },
+  ];
+}
+
+// =============================================================================
+// SCRUM-2148 — grandfather baseline.
+// =============================================================================
+
+const BASELINE_PATH = path.join(
+  path.dirname(fileURLToPath(import.meta.url)),
+  'ci',
+  'snapshots',
+  'copy-terms-baseline.json',
+);
+
+/** Normalise to repo-relative POSIX separators so the key is OS-stable. */
+function normaliseFile(file: string): string {
+  const rel = path.isAbsolute(file) ? path.relative(process.cwd(), file) : file;
+  return rel.split(/[\\/]/).join('/');
+}
+
+/**
+ * Normalise a term for the baseline match key. Literal forbidden matches keep
+ * the source casing of the matched substring (`Hash` vs `hash`), so the key
+ * lower-cases and trims to stay stable across casing/whitespace. The dynamic
+ * `raw enum render: {field}` term is already deterministic; lower-casing it is
+ * harmless.
+ */
+function normaliseTerm(term: string): string {
+  return term.trim().toLowerCase();
+}
+
+// Match key = normalised file + line + normalised term. SCRUM-2149 fix2:
+// `term` is part of the key (NUL-separated so it can never collide with the
+// `:line` segment) so that a NEW, *different* banned term/raw-enum added to an
+// already-grandfathered line is reported as `fresh` (→ fails CI) instead of
+// being silently tolerated as "existing". A violation is grandfathered only
+// when file + line + term all match a recorded baseline entry.
+function baselineKey(file: string, line: number, term: string): string {
+  return `${normaliseFile(file)}:${line} ${normaliseTerm(term)}`;
+}
+
+/**
+ * Load the shipped grandfather baseline. Returns [] (and the linter therefore
+ * fails on every violation) if the file is missing or malformed — fail-closed,
+ * never fail-open on a corrupted baseline.
+ */
+export function loadBaseline(baselinePath: string = BASELINE_PATH): BaselineEntry[] {
+  try {
+    const raw = fs.readFileSync(baselinePath, 'utf-8');
+    const parsed = JSON.parse(raw) as { violations?: BaselineEntry[] };
+    if (!parsed || !Array.isArray(parsed.violations)) return [];
+    return parsed.violations.filter(
+      (e): e is BaselineEntry =>
+        !!e && typeof e.file === 'string' && Number.isInteger(e.line) && typeof e.term === 'string',
+    );
+  } catch {
+    return [];
+  }
+}
+
+export interface BaselinePartition {
+  /** New violations not in the baseline — these fail the build. */
+  fresh: Violation[];
+  /** Violations matched to a baseline entry — tolerated. */
+  grandfathered: Violation[];
+  /** Baseline entries with no matching current violation — likely fixed; prompt cleanup. */
+  stale: BaselineEntry[];
+}
+
+/**
+ * Split current violations into {fresh, grandfathered} against the baseline and
+ * surface {stale} baseline entries. Match key = normalised file + line + term
+ * (SCRUM-2149 fix2): a violation is grandfathered ONLY when its file, line, and
+ * term all match a recorded entry. A *different* banned term/raw-enum on an
+ * already-baselined line is therefore reported as `fresh` (fails CI) rather than
+ * silently tolerated — closing the blind spot where the term was excluded from
+ * the key. Pure — exported for unit tests.
+ */
+export function partitionAgainstBaseline(
+  violations: Violation[],
+  baseline: BaselineEntry[],
+): BaselinePartition {
+  const baselineKeys = new Set(baseline.map((e) => baselineKey(e.file, e.line, e.term)));
+  const matchedKeys = new Set<string>();
+
+  const fresh: Violation[] = [];
+  const grandfathered: Violation[] = [];
+
+  for (const v of violations) {
+    const key = baselineKey(v.file, v.line, v.term);
+    if (baselineKeys.has(key)) {
+      grandfathered.push(v);
+      matchedKeys.add(key);
+    } else {
+      fresh.push(v);
+    }
+  }
+
+  const stale = baseline.filter((e) => !matchedKeys.has(baselineKey(e.file, e.line, e.term)));
+  return { fresh, grandfathered, stale };
 }
 
 export function findTermViolations(line: string, lineNum: number, filePath: string): Violation[] {
@@ -274,6 +581,11 @@ export function findTermViolations(line: string, lineNum: number, filePath: stri
     }
   }
 
+  // SCRUM-2149(c): raw DB-enum render heuristic (JSX-child {X.status}). Runs on
+  // the cleaned line (so className braces are already neutralised) and is gated
+  // to .tsx inside findRawEnumRenders.
+  results.push(...findRawEnumRenders(cleaned, lineNum, filePath));
+
   // Quote/JSX context is a per-line property; computing it once per term
   // saves 6×n includes() calls when the line has many term matches.
   const hasString = cleaned.includes('"') || cleaned.includes("'") || cleaned.includes('`');
@@ -284,7 +596,7 @@ export function findTermViolations(line: string, lineNum: number, filePath: stri
     regex.lastIndex = 0;
     let match: RegExpExecArray | null;
     while ((match = regex.exec(cleaned)) !== null) {
-      if (isCodeIdentifier(cleaned, match.index)) continue;
+      if (isCodeIdentifier(cleaned, match.index, match[0].length)) continue;
       results.push({
         file: filePath,
         line: lineNum,
@@ -326,15 +638,38 @@ function checkFile(filePath: string): Violation[] {
   return violations;
 }
 
+/**
+ * Walk every INCLUDE_ROOT and return the de-duplicated set of in-scope files.
+ * SCRUM-2149(a): `packages/embed/src` lives OUTSIDE `src/`, so a single
+ * `getAllFiles('src')` walk (the pre-2149 behaviour) could never reach the
+ * public widget. We derive the walk roots from INCLUDE_ROOTS so coverage and
+ * the `shouldCheck()` predicate can never silently drift apart.
+ */
+function collectCandidateFiles(): string[] {
+  const seen = new Set<string>();
+  // Distinct top-level dirs to walk (`src` once, `packages/embed/src` once).
+  const walkDirs = new Set(
+    INCLUDE_ROOTS.map((root) => root.split('/')[0]).map((top) => path.join(process.cwd(), top)),
+  );
+  const out: string[] = [];
+  for (const dir of walkDirs) {
+    for (const f of getAllFiles(dir)) {
+      if (!seen.has(f) && shouldCheck(f)) {
+        seen.add(f);
+        out.push(f);
+      }
+    }
+  }
+  return out;
+}
+
 function main(): void {
   console.log('Checking UI copy for forbidden terms...\n');
 
-  const srcDir = path.join(process.cwd(), 'src');
-  const allFiles = getAllFiles(srcDir);
-  const filesToCheck = allFiles.filter(shouldCheck);
+  const filesToCheck = collectCandidateFiles();
 
   if (filesToCheck.length === 0) {
-    console.log('No UI files to check (src/components or src/pages).');
+    console.log('No UI files to check (src/components, src/pages, src/lib, src/hooks, packages/embed/src).');
     console.log('This is expected if no UI components exist yet.\n');
     process.exit(0);
   }
@@ -348,14 +683,36 @@ function main(): void {
     allViolations.push(...violations);
   }
 
-  if (allViolations.length === 0) {
-    console.log('No forbidden terms found. UI copy is compliant.\n');
+  // SCRUM-2148: partition against the grandfather baseline. Only NEW (fresh)
+  // violations fail the build; recorded pre-existing ones are tolerated.
+  const baseline = loadBaseline();
+  const { fresh, grandfathered, stale } = partitionAgainstBaseline(allViolations, baseline);
+
+  if (grandfathered.length > 0) {
+    console.log(
+      `Tolerating ${grandfathered.length} grandfathered violation(s) from copy-terms-baseline.json (pre-existing; SCRUM-2148 follow-up).\n`,
+    );
+  }
+
+  // A stale baseline entry means the underlying violation was fixed (or moved):
+  // surface it as a non-fatal nudge to keep the baseline from rotting. Do NOT
+  // fail the build on stale entries — line drift from unrelated edits is common.
+  if (stale.length > 0) {
+    console.log(`⚠️  ${stale.length} stale baseline entr(y/ies) — no longer violating, please remove from copy-terms-baseline.json:`);
+    for (const e of stale) {
+      console.log(`    - ${e.file}:${e.line} ("${e.term}")`);
+    }
+    console.log('');
+  }
+
+  if (fresh.length === 0) {
+    console.log('No NEW forbidden terms found. UI copy is compliant.\n');
     process.exit(0);
   }
 
-  console.log(`Found ${allViolations.length} violation(s):\n`);
+  console.log(`Found ${fresh.length} NEW violation(s):\n`);
 
-  for (const v of allViolations) {
+  for (const v of fresh) {
     const relativePath = path.relative(process.cwd(), v.file);
     console.log(`  ${relativePath}:${v.line}`);
     console.log(`    Term: "${v.term}"`);
@@ -364,13 +721,17 @@ function main(): void {
   }
 
   console.log('Forbidden terms in UI copy:');
-  console.log('  - wallet → use "vault"');
+  console.log('  - wallet → use "Fee Account" / "Billing Account"');
   console.log('  - hash → use "fingerprint"');
-  console.log('  - block, transaction → use "record"');
-  console.log('  - crypto, bitcoin, blockchain → remove or rephrase');
+  console.log('  - block, transaction → use "record" / "Network Receipt"');
+  console.log('  - crypto, bitcoin, blockchain, testnet, mainnet, utxo, broadcast → remove or rephrase');
+  console.log('  - raw enum render ({x.status} / {x.credential_type} …) → route through a display mapper in src/lib/copy.ts');
   console.log('  - public launch blocker copy → remove placeholder/legal-review disclaimers from public UI');
   console.log('');
-  console.log('See src/lib/copy.ts for approved terminology.\n');
+  console.log('See src/lib/copy.ts for approved terminology.');
+  console.log('If a violation is genuinely pre-existing and cannot be fixed here (e.g. a file');
+  console.log('locked by another open PR), add it to scripts/ci/snapshots/copy-terms-baseline.json');
+  console.log('with a file:line + reason. NEVER baseline a violation you are introducing.\n');
 
   process.exit(1);
 }

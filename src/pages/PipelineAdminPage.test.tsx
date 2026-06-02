@@ -54,6 +54,67 @@ vi.mock('@/lib/workerClient', () => ({
   }),
 }));
 
+// Radix Select uses pointer-capture + portals that jsdom can't drive. Render a
+// faithful native <select> instead so EVERY Select on the page (the source /
+// type / status filters AND the SCRUM-2006 page-size selector) stays fully
+// interactive via fireEvent.change. Multi-instance safe (no shared controller).
+//
+// Each <option>'s VISIBLE text is its value (not the human label). Radix only
+// portals the selected item's label into the DOM when closed, so rendering the
+// full label set as text would leak strings like "Secured / Confirmed" from the
+// status-filter dropdown and trip pre-existing record-row assertions. Driving
+// the select via fireEvent.change keys off the value, so this is sufficient.
+vi.mock('@/components/ui/select', async () => {
+  const React = await import('react');
+  type Node = React.ReactNode;
+  // Walk children to collect <SelectItem> values for the <option>s.
+  const collect = (children: Node, out: string[]) => {
+    React.Children.forEach(children, (child) => {
+      if (!React.isValidElement(child)) return;
+      const props = child.props as { value?: string; children?: Node };
+      if (typeof props.value === 'string') {
+        out.push(props.value);
+      } else if (props.children) {
+        collect(props.children, out);
+      }
+    });
+  };
+  return {
+    Select: ({
+      children,
+      value,
+      onValueChange,
+      disabled,
+      'data-testid': testId,
+    }: {
+      children: Node;
+      value?: string;
+      onValueChange?: (v: string) => void;
+      disabled?: boolean;
+      'data-testid'?: string;
+    }) => {
+      const values: string[] = [];
+      collect(children, values);
+      return (
+        <select
+          data-testid={testId}
+          value={value}
+          disabled={disabled}
+          onChange={(e) => onValueChange?.(e.target.value)}
+        >
+          {values.map((v) => (
+            <option key={v} value={v}>{v}</option>
+          ))}
+        </select>
+      );
+    },
+    SelectTrigger: ({ children }: { children: Node }) => <>{children}</>,
+    SelectValue: () => null,
+    SelectContent: ({ children }: { children: Node }) => <>{children}</>,
+    SelectItem: () => null,
+  };
+});
+
 import { PipelineAdminPage } from './PipelineAdminPage';
 import { workerFetch } from '@/lib/workerClient';
 import { supabase } from '@/lib/supabase';
@@ -103,6 +164,38 @@ const submittedRecordPage = {
     chain_tx_id: 'b'.repeat(64),
   }],
 };
+
+// SCRUM-2006: a multi-page record set so the go-to-page + page-size controls
+// have boundaries to clamp against. `total` is what drives totalPages; the row
+// payload itself is irrelevant to the pagination math, so a single stub row is
+// enough.
+function multiPageRecordPage(total: number) {
+  return {
+    total,
+    data: [{
+      id: 'record-1',
+      source: 'edgar',
+      source_id: 'SRC-1',
+      source_url: null,
+      record_type: 'filing',
+      title: 'Filing 1',
+      content_hash: 'a'.repeat(64),
+      anchor_id: null,
+      metadata: {},
+      created_at: '2026-05-12T10:00:00Z',
+      updated_at: '2026-05-12T10:00:00Z',
+      anchor_status: null,
+      chain_tx_id: null,
+    }],
+  };
+}
+
+/** Returns the args of the most recent `get_public_records_page` RPC call. */
+function lastRecordsPageCall(): Record<string, unknown> | undefined {
+  const mock = supabase.rpc as unknown as ReturnType<typeof vi.fn>;
+  const calls = mock.mock.calls.filter((c) => c[0] === 'get_public_records_page');
+  return calls.length ? (calls[calls.length - 1][1] as Record<string, unknown>) : undefined;
+}
 
 function mockSupabaseRpc(overrides?: Record<string, unknown>) {
   (supabase.rpc as unknown as ReturnType<typeof vi.fn>).mockImplementation((name: string) => {
@@ -418,5 +511,197 @@ describe('PipelineAdminPage', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+// ─── SCRUM-2006: Pipeline pagination — go-to-page + page-size selector ───────
+describe('PipelineAdminPage — records pagination (SCRUM-2006)', () => {
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    // 250 records @ default page size 25 → 10 pages of headroom to jump within.
+    mockSupabaseRpc({ recordPage: multiPageRecordPage(250) });
+    const { useAuth } = await import('@/hooks/useAuth');
+    vi.mocked(useAuth).mockReturnValue(mockAuthState('carson@arkova.ai', 'user-1'));
+  });
+
+  async function renderAndWaitForRecords() {
+    render(
+      <MemoryRouter>
+        <PipelineAdminPage />
+      </MemoryRouter>,
+    );
+    // Wait for the records table (and therefore the pagination controls) to render.
+    await screen.findByTestId('pipeline-page-jump-input');
+  }
+
+  it('jumps directly to a valid page and re-queries that page (1-based RPC)', async () => {
+    await renderAndWaitForRecords();
+
+    const input = screen.getByTestId('pipeline-page-jump-input');
+    fireEvent.change(input, { target: { value: '7' } });
+    fireEvent.click(screen.getByTestId('pipeline-page-jump-go'));
+
+    // RPC p_page is 1-based; UI page 7 → p_page 7.
+    await waitFor(() => {
+      expect(lastRecordsPageCall()).toMatchObject({ p_page: 7, p_page_size: 25 });
+    });
+    // Indicator reflects the new current page.
+    expect(screen.getByTestId('pipeline-page-indicator')).toHaveTextContent('7 / 10');
+  });
+
+  it('supports Enter to jump from the go-to-page input', async () => {
+    await renderAndWaitForRecords();
+
+    const input = screen.getByTestId('pipeline-page-jump-input');
+    fireEvent.change(input, { target: { value: '4' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    await waitFor(() => {
+      expect(lastRecordsPageCall()).toMatchObject({ p_page: 4 });
+    });
+  });
+
+  it('clamps an above-range jump to the last page', async () => {
+    await renderAndWaitForRecords();
+
+    const input = screen.getByTestId('pipeline-page-jump-input');
+    fireEvent.change(input, { target: { value: '999' } });
+    fireEvent.click(screen.getByTestId('pipeline-page-jump-go'));
+
+    await waitFor(() => {
+      // 250 / 25 = 10 pages → clamp to page 10 → p_page 10.
+      expect(lastRecordsPageCall()).toMatchObject({ p_page: 10 });
+    });
+    expect(screen.getByTestId('pipeline-page-indicator')).toHaveTextContent('10 / 10');
+  });
+
+  it('clamps a below-range jump (0 or negative) to the first page', async () => {
+    await renderAndWaitForRecords();
+
+    // Move off page 1 first so a clamp-to-1 is observable as a real change.
+    fireEvent.change(screen.getByTestId('pipeline-page-jump-input'), { target: { value: '5' } });
+    fireEvent.click(screen.getByTestId('pipeline-page-jump-go'));
+    await waitFor(() => expect(lastRecordsPageCall()).toMatchObject({ p_page: 5 }));
+
+    fireEvent.change(screen.getByTestId('pipeline-page-jump-input'), { target: { value: '0' } });
+    fireEvent.click(screen.getByTestId('pipeline-page-jump-go'));
+    await waitFor(() => expect(lastRecordsPageCall()).toMatchObject({ p_page: 1 }));
+    expect(screen.getByTestId('pipeline-page-indicator')).toHaveTextContent('1 / 10');
+  });
+
+  it('rejects a non-numeric / empty jump without changing the page', async () => {
+    await renderAndWaitForRecords();
+
+    // Go to page 3 first.
+    fireEvent.change(screen.getByTestId('pipeline-page-jump-input'), { target: { value: '3' } });
+    fireEvent.click(screen.getByTestId('pipeline-page-jump-go'));
+    await waitFor(() => expect(lastRecordsPageCall()).toMatchObject({ p_page: 3 }));
+
+    const rpc = supabase.rpc as unknown as ReturnType<typeof vi.fn>;
+    const callsBefore = rpc.mock.calls.filter((c) => c[0] === 'get_public_records_page').length;
+
+    // Garbage + empty inputs must be no-ops (no new fetch, page stays at 3).
+    fireEvent.change(screen.getByTestId('pipeline-page-jump-input'), { target: { value: 'abc' } });
+    fireEvent.click(screen.getByTestId('pipeline-page-jump-go'));
+    fireEvent.change(screen.getByTestId('pipeline-page-jump-input'), { target: { value: '' } });
+    fireEvent.click(screen.getByTestId('pipeline-page-jump-go'));
+
+    const callsAfter = rpc.mock.calls.filter((c) => c[0] === 'get_public_records_page').length;
+    expect(callsAfter).toBe(callsBefore);
+    expect(screen.getByTestId('pipeline-page-indicator')).toHaveTextContent('3 / 10');
+  });
+
+  it('changing page size re-queries with the new size and resets to page 1', async () => {
+    await renderAndWaitForRecords();
+
+    // Navigate to page 6 first so the reset-to-1 is observable.
+    fireEvent.change(screen.getByTestId('pipeline-page-jump-input'), { target: { value: '6' } });
+    fireEvent.click(screen.getByTestId('pipeline-page-jump-go'));
+    await waitFor(() => expect(lastRecordsPageCall()).toMatchObject({ p_page: 6, p_page_size: 25 }));
+
+    // Bump page size to 100.
+    fireEvent.change(screen.getByTestId('pipeline-page-size'), { target: { value: '100' } });
+
+    await waitFor(() => {
+      // Re-query with new size AND reset to first page.
+      expect(lastRecordsPageCall()).toMatchObject({ p_page: 1, p_page_size: 100 });
+    });
+    // 250 / 100 = 3 pages now.
+    expect(screen.getByTestId('pipeline-page-indicator')).toHaveTextContent('1 / 3');
+  });
+
+  it('disables Previous on the first page and Next on the last page', async () => {
+    await renderAndWaitForRecords();
+
+    // First page: Previous disabled, Next enabled.
+    expect(screen.getByTestId('pipeline-page-prev')).toBeDisabled();
+    expect(screen.getByTestId('pipeline-page-next')).not.toBeDisabled();
+
+    // Jump to last page: Next disabled, Previous enabled.
+    fireEvent.change(screen.getByTestId('pipeline-page-jump-input'), { target: { value: '10' } });
+    fireEvent.click(screen.getByTestId('pipeline-page-jump-go'));
+    await waitFor(() => expect(lastRecordsPageCall()).toMatchObject({ p_page: 10 }));
+
+    await waitFor(() => expect(screen.getByTestId('pipeline-page-next')).toBeDisabled());
+    expect(screen.getByTestId('pipeline-page-prev')).not.toBeDisabled();
+  });
+
+  it('preserves existing Previous/Next behavior', async () => {
+    await renderAndWaitForRecords();
+
+    fireEvent.click(screen.getByTestId('pipeline-page-next'));
+    await waitFor(() => expect(lastRecordsPageCall()).toMatchObject({ p_page: 2 }));
+
+    fireEvent.click(screen.getByTestId('pipeline-page-prev'));
+    await waitFor(() => expect(lastRecordsPageCall()).toMatchObject({ p_page: 1 }));
+  });
+
+  // SCRUM-2006 (Codex P2): the backend RPC get_public_records_page caps p_page at
+  // v_max_page = 10000 (supabase/migrations/0305_pipeline_operational_status_filters.sql).
+  // The client-side totalPages math (recordsTotal / pageSize) can exceed 10000 at
+  // small page sizes, so an unclamped jump to e.g. page 50000 used to set the page
+  // indicator + prev/next to 50000 while the RPC silently served page 10000 — a
+  // page-state↔served-data desync. The client must never claim a page the backend
+  // won't serve, so any jump/indicator past 10000 is capped at 10000.
+  describe('caps the client page at the backend RPC page ceiling (10000)', () => {
+    beforeEach(async () => {
+      vi.clearAllMocks();
+      // 300,000 records @ default page size 25 → 12,000 client pages, well past the
+      // RPC's 10,000-page ceiling. This is the reachable-at-small-page-size case.
+      mockSupabaseRpc({ recordPage: multiPageRecordPage(300_000) });
+      const { useAuth } = await import('@/hooks/useAuth');
+      vi.mocked(useAuth).mockReturnValue(mockAuthState('carson@arkova.ai', 'user-1'));
+    });
+
+    it('clamps a go-to-page beyond 10000 to page 10000 (matching the served page)', async () => {
+      await renderAndWaitForRecords();
+
+      const input = screen.getByTestId('pipeline-page-jump-input');
+      fireEvent.change(input, { target: { value: '50000' } });
+      fireEvent.click(screen.getByTestId('pipeline-page-jump-go'));
+
+      await waitFor(() => {
+        // Without the cap this would be p_page: 50000, but the RPC only serves up
+        // to page 10000 — the client must request exactly the page it will get.
+        expect(lastRecordsPageCall()).toMatchObject({ p_page: 10000, p_page_size: 25 });
+      });
+      // The indicator denominator is the served ceiling (10000), not 12000, and the
+      // current page is the clamped 10000 — no 50000 desync.
+      expect(screen.getByTestId('pipeline-page-indicator')).toHaveTextContent('10000 / 10000');
+    });
+
+    it('caps the Next button so prev/next cannot walk the client past page 10000', async () => {
+      await renderAndWaitForRecords();
+
+      // Jump exactly to the ceiling; Next must be disabled there even though the raw
+      // totalPages (12000) would otherwise leave 1,999 pages of headroom.
+      fireEvent.change(screen.getByTestId('pipeline-page-jump-input'), { target: { value: '10000' } });
+      fireEvent.click(screen.getByTestId('pipeline-page-jump-go'));
+      await waitFor(() => expect(lastRecordsPageCall()).toMatchObject({ p_page: 10000 }));
+
+      expect(screen.getByTestId('pipeline-page-next')).toBeDisabled();
+      expect(screen.getByTestId('pipeline-page-prev')).not.toBeDisabled();
+      expect(screen.getByTestId('pipeline-page-indicator')).toHaveTextContent('10000 / 10000');
+    });
   });
 });

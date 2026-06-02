@@ -75,6 +75,7 @@ import {
   orgCpeLogExportRouter,
   orgCpeLogExportRateLimiter,
 } from './org-cpe-log-export.js';
+import { cleLogExportRouter, cleLogExportRateLimiter } from './cle-log-export.js';
 import { aiProvenanceRouter } from './ai-provenance.js';
 import { aiAccountabilityReportRouter } from './ai-accountability-report.js';
 import { grcRouter } from './grc.js';
@@ -340,6 +341,10 @@ router.use(
   orgCpeLogExportRateLimiter,
   orgCpeLogExportRouter,
 );
+
+// ─── CLE compliance-log export — PDF + JSON signed URLs (CLE-R2 / SCRUM-1870) ───
+// JWT auth + per-user 10/hour rate limit (separate bucket scope from CPE).
+router.use('/exports/cle-log', requireAuth, cleLogExportRateLimiter, cleLogExportRouter);
 
 // ─── GRC platform integrations — Vanta, Drata, Anecdotes (CML-05) ───
 import { killSwitch } from '../../middleware/integrationKillSwitch.js';

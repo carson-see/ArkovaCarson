@@ -157,7 +157,7 @@ export function generateProofPackage(
     },
 
     proof_glossary: {
-      fingerprint: 'A SHA-256 hash of the document contents. Two identical documents always produce the same fingerprint.',
+      fingerprint: 'A SHA-256 fingerprint of the document contents. Two identical documents always produce the same fingerprint.',
       network_proof_id: 'The unique identifier for the network record that contains this document\'s proof.',
       verification_tree_root: 'The root of the Merkle tree that groups multiple documents into a single network record.',
       proof_path: 'The cryptographic path from this document\'s fingerprint to the verification tree root.',

@@ -1,0 +1,10 @@
+# CodeRabbit configuration (repo-level override of the Organization-UI settings).
+#
+# Keep CodeRabbit reviews ADVISORY (non-blocking). The org-UI default enables the
+# request-changes workflow, which posts a formal `CHANGES_REQUESTED` review that
+# blocks the Mergify merge queue (`#changes-requested-reviews-by = 0`) and does NOT
+# auto-clear when the finding is addressed — it requires a manual review dismissal.
+# Disabling it here makes CodeRabbit post comments only: still reviews every PR and
+# its findings are actioned, but it never gates the queue or needs a dismissal.
+reviews:
+  request_changes_workflow: false

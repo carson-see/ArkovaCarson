@@ -33,6 +33,7 @@ Express route handlers for the worker's HTTP API. Covers admin endpoints, anchor
 | `verify-anchor.ts` | Public anchor verification endpoint |
 | `proof-packet.ts` | Proof package generation (Bitcoin TX + metadata + timestamps) |
 | `proof-keys.ts` | Proof signing key management |
+| `did-web.ts` | did:web identity docs — `GET /.well-known/did.json` (Arkova) + `GET /orgs/:id/.well-known/did.json` (issuing orgs). Public, no auth. Reuses the active proof key (PEM→Ed25519 JWK); org sub-DIDs are controlled by the Arkova DID. Strict org-public-id charset guard before lookup (SCRUM-1922) |
 | `audit-event.ts` | Audit event creation and query |
 | `admin-stats.ts` / `admin-lists.ts` / `admin-pipeline-stats.ts` | Admin dashboard data endpoints |
 | `admin-actions.ts` / `admin-health.ts` | Admin action + health check endpoints |

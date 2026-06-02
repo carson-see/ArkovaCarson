@@ -1,0 +1,60 @@
+{
+  "_comment": "SCRUM-2148 / SCRUM-2149 grandfather baseline for `npm run lint:copy` (scripts/check-copy-terms.ts). Records ONLY pre-existing copy-term violations that the hardened linter (expanded coverage + new §1.3 terms + raw-enum heuristic, SCRUM-2149) surfaced on the 2026-05-30 audit of main@7af0ad9a. The linter PASSES on these exact entries and FAILS on any NEW violation. This is NOT a license to add new violations — every entry must be retired, not extended. Match key = `file` + `line` + `term` (all normalised; term lower-cased, SCRUM-2149 fix2) — a DIFFERENT banned term/raw-enum on an already-baselined line is a NEW violation that fails CI, so `term` is required and load-bearing on every entry. See scripts/agents.md → 'Copy-term grandfather baseline'.",
+  "_protocol": [
+    "ADD an entry only for a genuinely pre-existing violation that cannot be fixed at source in this PR (locked file, or a fix that belongs to another in-flight track).",
+    "REMOVE an entry the moment the underlying violation is fixed — a stale entry (file:line no longer violating) is reported as a non-fatal warning by the linter to prompt cleanup.",
+    "NEVER add an entry to silence a NEW violation you are introducing — fix it at source or route the value through a display mapper in src/lib/copy.ts.",
+    "Line numbers drift when a file is edited above a baselined line; that intentionally turns the entry into a 'new' violation and forces a fix-or-rebaseline decision.",
+    "The `term` is part of the match key (SCRUM-2149 fix2): a DIFFERENT banned term/raw-enum field appearing on an already-baselined line is a NEW violation (the recorded entry goes stale). Re-baseline ONLY if the new term is itself genuinely pre-existing and unfixable here — never to absorb a term you are introducing."
+  ],
+  "violations": [
+    {
+      "file": "src/components/reports/AIReportsPanel.tsx",
+      "line": 331,
+      "term": "raw enum render: {report.status}",
+      "reason": "Pre-existing raw AI-report-status enum render. Needs a report-status display mapper (new map in LOCKED src/lib/copy.ts). SCRUM-2148 follow-up."
+    },
+    {
+      "file": "src/lib/statusDisplay.ts",
+      "line": 98,
+      "term": "crypto",
+      "reason": "Scrub-regex pattern (/crypto/i) in the status-label fallback scrubber — necessarily contains the term it removes; pre-existing (PR #991), surfaced by SCRUM-2149 expanded scope. False-positive grandfather; not user-facing copy."
+    },
+    {
+      "file": "src/lib/validators.ts",
+      "line": 148,
+      "term": "hash",
+      "reason": "LOCKED by open PR #964 — Zod error message 'Fingerprint must be a valid SHA-256 hash'. Reword to 'fingerprint' once #964 lands. SCRUM-2148 follow-up."
+    },
+    {
+      "file": "src/lib/validators.ts",
+      "line": 188,
+      "term": "hash",
+      "reason": "LOCKED by open PR #964 — second Zod error message with the same 'SHA-256 hash' phrasing. SCRUM-2148 follow-up once #964 lands."
+    },
+    {
+      "file": "src/pages/AdminUserDetailPage.tsx",
+      "line": 384,
+      "term": "raw enum render: {subscription.status}",
+      "reason": "Pre-existing raw subscription-status enum render. Needs a subscription-status display mapper (new map in LOCKED src/lib/copy.ts). SCRUM-2148 follow-up."
+    },
+    {
+      "file": "src/pages/AdminUserDetailPage.tsx",
+      "line": 429,
+      "term": "raw enum render: {r.credential_type}",
+      "reason": "Pre-existing raw credential_type enum render. Fix = formatCredentialType() from src/lib/copy.ts; bundle with the SCRUM-2003 status-label track to avoid colliding with that branch. SCRUM-2148 follow-up."
+    },
+    {
+      "file": "src/pages/PaymentAnalyticsPage.tsx",
+      "line": 269,
+      "term": "raw enum render: {payment.network}",
+      "reason": "Pre-existing raw payment card-network render (Visa/Mastercard/etc.). Needs a card-network display mapper in LOCKED src/lib/copy.ts. SCRUM-2148 follow-up."
+    },
+    {
+      "file": "src/pages/PublicAttestationVerifyPage.tsx",
+      "line": 399,
+      "term": "raw enum render: {credential.credential_type}",
+      "reason": "PUBLIC verify page — pre-existing raw credential_type render. Fix = formatCredentialType() from src/lib/copy.ts; coordinate with the SCRUM-2003 status-label track. SCRUM-2148 follow-up (public-surface priority)."
+    }
+  ]
+}

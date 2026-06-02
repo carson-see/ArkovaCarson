@@ -22,6 +22,8 @@ import { AnchorLifecycleTimeline } from './AnchorLifecycleTimeline';
 import { VerificationWalkthrough } from './VerificationWalkthrough';
 import { AnchorDisclaimer } from './AnchorDisclaimer';
 import { CredentialRenderer } from '@/components/credentials/CredentialRenderer';
+import { extractCpeMetadataView } from '@/components/credentials/cpeMetadataView';
+import { extractCleMetadataView } from '@/components/credentials/cleMetadataView';
 import { SourceProvenanceDisplay } from '@/components/verification/SourceProvenanceDisplay';
 import { useCredentialTemplate } from '@/hooks/useCredentialTemplate';
 import { formatFingerprint } from '@/lib/fileHasher';
@@ -74,6 +76,12 @@ interface AnchorRecord {
   credentialType?: string;
   orgId?: string;
   metadata?: Record<string, unknown> | null;
+  /** CPE-R1 (SCRUM-1847): structured CPE metadata, when present on the anchor.
+   * Populated from the `cpe_metadata` column by the parent page. */
+  cpeMetadata?: Record<string, unknown> | null;
+  /** CLE-R1 (SCRUM-1869): structured CLE metadata, when present on the anchor.
+   * Populated from the `cle_metadata` column by the parent page. */
+  cleMetadata?: Record<string, unknown> | null;
   issuerName?: string;
   /** Chain transaction ID for explorer link (BETA-11) */
   chainTxId?: string | null;
@@ -103,6 +111,14 @@ interface AssetDetailViewProps {
   canRevoke?: boolean;
   /** Called after a successful revoke so the parent can refresh the anchor. */
   onRevoked?: () => void;
+  /**
+   * CPE-R1 (SCRUM-1847) — whether the viewer holds the
+   * `credential_source_import` entitlement. The parent resolves it read-only
+   * via `useHasCredentialImportEntitlement` (page-level concern, mirrors how
+   * `canRevoke` is parent-computed). When false/omitted the CPE section is
+   * suppressed. Defaults false (fail-closed).
+   */
+  hasImportEntitlement?: boolean;
 }
 
 type VerificationState = 'idle' | 'verifying' | 'match' | 'mismatch';
@@ -211,7 +227,7 @@ const statusConfig = {
   },
 };
 
-export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadProofJson, onRenameFile, canRevoke = false, onRevoked }: Readonly<AssetDetailViewProps>) {
+export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadProofJson, onRenameFile, canRevoke = false, onRevoked, hasImportEntitlement = false }: Readonly<AssetDetailViewProps>) {
   const [copied, setCopied] = useState(false);
   const [verificationState, setVerificationState] = useState<VerificationState>('idle');
   const [showVerifyDropzone, setShowVerifyDropzone] = useState(false);
@@ -229,6 +245,22 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
   const sourceProvenance = buildAnchorSourceProvenance(anchor.metadata);
   const credentialMetadata = anchor.metadata ?? undefined;
   const visibleMetadata = buildAnchorCredentialMetadata(anchor.metadata);
+  // CPE-R1 (SCRUM-1847): the CPE section is gated on the credential_source_import
+  // entitlement, resolved by the parent page and passed via hasImportEntitlement.
+  // The section self-hides when the gate is false or there is no CPE metadata.
+  const cpeMetadataView = extractCpeMetadataView(anchor.cpeMetadata, {
+    provider: metadataString(anchor.metadata, 'source_provider'),
+    title: anchor.filename,
+    completion_date: anchor.issuedAt,
+    evidence_level: metadataString(anchor.metadata, 'verification_level'),
+  });
+  // CLE-R1 (SCRUM-1869): same gating as CPE — the section self-hides when the
+  // entitlement gate is false or there is no CLE metadata.
+  const cleMetadataView = extractCleMetadataView(anchor.cleMetadata, {
+    course_title: anchor.filename,
+    completion_date: anchor.issuedAt,
+    evidence_level: metadataString(anchor.metadata, 'verification_level'),
+  });
   const hasSourceProvenance = Boolean(
     sanitizeSourceUrl(sourceProvenance.source_url) ||
     sourceProvenance.source_provider ||
@@ -697,6 +729,9 @@ export function AssetDetailView({ anchor, onBack, onDownloadProof, onDownloadPro
           filename={anchor.filename}
           issuedDate={anchor.issuedAt}
           expiryDate={anchor.expiresAt}
+          cpeMetadata={cpeMetadataView}
+          cleMetadata={cleMetadataView}
+          hasImportEntitlement={hasImportEntitlement}
         />
       )}
 

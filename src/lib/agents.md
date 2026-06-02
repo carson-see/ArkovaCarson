@@ -22,6 +22,7 @@ Core utility modules shared across the frontend. Every write path uses Zod valid
 - `proofPackage.ts` — proof package generation and validation for anchor verification
 - `complianceMapping.ts` — static credential-type-to-regulatory-control mapping
 - `explorer.ts` — mempool.space URL builder (uses approved terminology)
+- `statusDisplay.ts` — SCRUM-2003 single source of truth for human-readable anchor/attestation status labels. Pure (no React/Supabase, mirrors `formatters.ts`). `getStatusDisplay(status) → { label, tone }` / `getStatusLabel(status) → string`. Maps every `anchor_status` (PENDING/BROADCASTING→"Processing", SUBMITTED, SECURED→"Verified", REVOKED, EXPIRED, SUPERSEDED, PENDING_RESOLUTION→"Needs Review") and `attestation_status` (DRAFT, ACTIVE, CHALLENGED + shared PENDING/REVOKED/EXPIRED) value to a §1.3-compliant label with a fail-safe title-cased fallback that is also banned-term-scrubbed. The fallback scrub (`FALLBACK_BANNED_PATTERNS`) is a deliberate SUPERSET of `scripts/check-copy-terms.ts` `FORBIDDEN_TERMS` — bare-substring terms (wallet/gas/transaction/crypto/bitcoin/blockchain/mining) match without boundaries so e.g. `GASEOUS`/`WALLETED`/`TRANSACTIONAL` are scrubbed, while boundary-bounded terms (hash/block/token) keep the canonical `(?<![-\w])…(?![-\w])` boundaries so `BLOCKADE` survives — replicated locally (not imported) to keep the module browser-safe (no `node:fs`). Use this instead of rendering a raw status enum in JSX or hand-rolling another inline `statusConfig` map.
 - `mlRuntime.ts` — WebGPU detection and VRAM budget for in-browser ML (2 GB cap)
 - `csvExport.ts` / `csvParser.ts` / `xlsxParser.ts` — data import/export utilities
 - `sourceProvenance.ts` / `badgeSvg.ts` — SCRUM-1599 public-safe source provenance helpers, evidence-level validation, badge URL construction, and fail-closed badge SVG status mapping
@@ -29,6 +30,7 @@ Core utility modules shared across the frontend. Every write path uses Zod valid
 ## Recent Changes
 
 - 2026-05-26 SCRUM-2013: `validators.ts` and `csvParser.ts` credential type lists expanded to 27 canonical values, adding `CPE`, `ACCREDITATION`, `CONTRACT_PRESIGNING`, and `CONTRACT_POSTSIGNING`.
+- 2026-05-29 SCRUM-1958 (subtask-4): `switchboard.ts` — flipped the **code default** of `ENABLE_SEMANTIC_SEARCH` to `false` so non-prod (local dev / preview) hides smart search until the `credential_embeddings` backfill lands. Production is driven by the `switchboard_flags` row, not this default (DB row untouched in this change). `copy.ts` — added `SEMANTIC_SEARCH_LABELS` (heading, placeholder, friendly match-strength labels, honest empty state, and 402/503/network/generic error copy). No client audit call for the search query — the worker records AI usage server-side (§1.6).
 
 ## Do / Don't Rules
 
@@ -37,3 +39,6 @@ Core utility modules shared across the frontend. Every write path uses Zod valid
 - DON'T: Import `piiStripper`, `fileHasher`, `aiExtraction`, `mlRuntime`, or `ocrWorker` in `services/worker/`
 - DON'T: Expose service role key, raw API keys, or user emails in any module
 - DON'T: Cast `verification_level` strings directly; use `parseVerificationLevel()` so unknown values disappear instead of rendering misleading evidence labels
+
+## Copy-lint coverage (SCRUM-2149)
+`src/lib/**` is now scanned by `npm run lint:copy` (`scripts/check-copy-terms.ts`) for banned §1.3 terms in **user-visible strings** — JSX text and quoted display/error copy that reaches users (e.g. proof-package glossary text, Zod validation messages). The linter does NOT flag code positions (type unions, object keys, property access, URL segments, bare in-code enum/config values like `'mainnet'`), so internal chain/network identifiers in `explorer.ts`/`env.ts` are fine; only display strings must use approved vocabulary. `copy.ts` itself is excluded (it documents the rules). 2026-05-30: reworded `proofPackage.ts` proof_glossary ("SHA-256 hash" → "SHA-256 fingerprint", §1.3 Hash→Fingerprint).
