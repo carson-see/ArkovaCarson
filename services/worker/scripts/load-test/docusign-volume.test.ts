@@ -60,6 +60,18 @@ describe('docusign-volume profile', () => {
     expect(profile.parseNotaryRate('0.25')).toBe(0.25);
   });
 
+  it('thresholds unexpected 5xx checks instead of automatic http_req_failed', async () => {
+    const profile = await importProfile({ DOCUSIGN_HMAC_KEY: 'secret' });
+
+    expect(profile.options.thresholds).toMatchObject({
+      http_req_duration: ['p(99)<300'],
+      'http_req_duration{scenario:docusign}': ['p(99)<300'],
+      'checks{check:no 5xx (except intentional 503)}': ['rate>0.999'],
+    });
+    expect(Object.keys(profile.options.thresholds)).not.toContain('http_req_failed{intentional_503:no}');
+    expect(Object.keys(profile.options.thresholds)).not.toContain('http_req_failed{scenario:docusign}');
+  });
+
   it('selects a docusign scenario and samples notary when NOTARY_RATE is positive', async () => {
     synth.pickScenario.mockReturnValue('docusign');
     vi.spyOn(Math, 'random')

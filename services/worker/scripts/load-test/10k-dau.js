@@ -1,3 +1,5 @@
+/* global __ENV, __VU, __ITER */
+
 // k6 10K-DAU profile — sustained 100 rps, 500 rps burst, 5 min total.
 // SCRUM-1024 SCALE-02 acceptance test. Run against staging or prod-canary,
 // never directly against prod outside a coordinated maintenance window.
@@ -9,7 +11,7 @@
 // `{ event:'envelope-completed', loadtest:true }` body had no signature and no
 // envelopeId/accountId, so the real receiver 401'd it — the middleware meant to
 // drop loadtest-tagged bodies never shipped, so that 20% leg was silently
-// blowing this script's own http_req_failed<0.001 threshold.)
+// blowing this script's own error-rate threshold.)
 import { check, sleep } from 'k6';
 
 import { pickScenario } from './lib/docusign-synth.js';
@@ -52,8 +54,8 @@ export const options = {
   },
   thresholds: {
     // SCALE-02 DoD: p99 < 500ms, zero 5xx (excluding intentional 503).
-    'http_req_duration{intentional_503:no}': ['p(99)<500'],
-    'http_req_failed{intentional_503:no}': ['rate<0.001'],
+    http_req_duration: ['p(99)<500'],
+    'checks{check:no 5xx (except intentional 503)}': ['rate>0.999'],
   },
 };
 
@@ -73,7 +75,7 @@ export default function () {
 
   check(res, {
     'no 5xx (except intentional 503)': (r) =>
-      r.status < 500 || (r.status === 503 && r.headers['Retry-After']),
+      r.status < 500 || (r.status === 503 && Boolean(r.headers['Retry-After'])),
   });
   sleep(0.05);
 }

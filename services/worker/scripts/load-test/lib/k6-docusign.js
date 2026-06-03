@@ -61,25 +61,25 @@ export function buildSignedConnectPost({ accountId, key, vu, iter, withNotary = 
 /**
  * Fire one request for the chosen scenario and return the k6 http response.
  * Centralizes route + tag assignment so every profile tags traffic the same
- * way (`scenario:health|verify|docusign`, `intentional_503:no`).
+ * way (`scenario:health|verify|docusign`).
  * @param {'health'|'verify'|'docusign'} scenario
  */
 export function executeScenario(scenario, { workerUrl, key, accountId, vu, iter, withNotary = false }) {
   if (scenario === 'verify') {
     return http.get(`${workerUrl}${VERIFY_PATH}`, {
       headers: LOADTEST_HEADERS,
-      tags: { intentional_503: 'no', scenario: 'verify' },
+      tags: { scenario: 'verify' },
     });
   }
   if (scenario === 'docusign') {
     const { body, headers } = buildSignedConnectPost({ accountId, key, vu, iter, withNotary });
     return http.post(`${workerUrl}/webhooks/docusign`, body, {
       headers,
-      tags: { intentional_503: 'no', scenario: 'docusign' },
+      tags: { scenario: 'docusign' },
     });
   }
   return http.get(`${workerUrl}/health`, {
     headers: LOADTEST_HEADERS,
-    tags: { intentional_503: 'no', scenario: 'health' },
+    tags: { scenario: 'health' },
   });
 }

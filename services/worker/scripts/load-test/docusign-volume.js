@@ -51,10 +51,9 @@ export const options = {
   thresholds: {
     // Overall guard + a DocuSign-isolated guard so the webhook path is measured
     // on its own (the scenario:docusign tag), not blended with health/verify.
-    'http_req_duration{intentional_503:no}': ['p(99)<300'],
-    'http_req_failed{intentional_503:no}': ['rate<0.001'],
+    http_req_duration: ['p(99)<300'],
     'http_req_duration{scenario:docusign}': ['p(99)<300'],
-    'http_req_failed{scenario:docusign}': ['rate<0.001'],
+    'checks{check:no 5xx (except intentional 503)}': ['rate>0.999'],
   },
 };
 

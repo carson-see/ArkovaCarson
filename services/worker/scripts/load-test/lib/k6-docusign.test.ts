@@ -63,7 +63,7 @@ describe('k6 DocuSign glue', () => {
     expect(res).toEqual(expect.objectContaining({ method: 'GET' }));
     expect(http.get).toHaveBeenCalledWith('https://worker.test/health', {
       headers: { 'x-arkova-loadtest': '1' },
-      tags: { intentional_503: 'no', scenario: 'health' },
+      tags: { scenario: 'health' },
     });
   });
 
@@ -80,7 +80,7 @@ describe('k6 DocuSign glue', () => {
       'https://worker.test/api/v1/verify/anchor/00000000-0000-0000-0000-000000000000',
       {
         headers: { 'x-arkova-loadtest': '1' },
-        tags: { intentional_503: 'no', scenario: 'verify' },
+        tags: { scenario: 'verify' },
       },
     );
   });
@@ -104,7 +104,7 @@ describe('k6 DocuSign glue', () => {
         'content-type': 'application/json',
         'X-DocuSign-Signature-1': 'signature-base64',
       },
-      tags: { intentional_503: 'no', scenario: 'docusign' },
+      tags: { scenario: 'docusign' },
     });
   });
 });

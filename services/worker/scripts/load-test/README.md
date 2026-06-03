@@ -81,10 +81,10 @@ The k6 scripts encode the SCRUM-1024 DoD thresholds:
 - **Reality check (SCRUM-2094):** earlier revisions of this harness POSTed an
   unsigned `{ event:'envelope-completed', loadtest:true }` body tagged
   `x-arkova-loadtest: 1`, relying on a `services/worker/src/middleware/loadTestGuard.ts`
-  to drop it before side effects. **That middleware was never shipped**, so the
-  real receiver 401'd every such request — the DocuSign leg measured auth
-  rejections, not the intake path, and silently violated the `http_req_failed`
-  threshold. The leg now sends real HMAC-signed payloads (see "DocuSign signed
+	  to drop it before side effects. **That middleware was never shipped**, so the
+	  real receiver 401'd every such request — the DocuSign leg measured auth
+	  rejections, not the intake path, and silently violated the error-rate
+	  threshold. The leg now sends real HMAC-signed payloads (see "DocuSign signed
   traffic" above) and degrades to `/health` when no key is configured. The
   `x-arkova-loadtest: 1` marker remains on GET health/verify traffic as an inert
   log filter only; it is **not** on the signed POST.
