@@ -14,6 +14,16 @@
 
 ## Now
 
+### 2026-06-03 — PR queue truth + local-doc hygiene
+
+**GitHub queue:** [PR #1078](https://github.com/carson-see/ArkovaCarson/pull/1078) (`docs: clarify copy-term baseline key`) merged via Mergify at 2026-06-03T13:36Z, merge commit `63c404cb`. [PR #1073](https://github.com/carson-see/ArkovaCarson/pull/1073) is the only non-protected open lane left: non-draft, `MERGEABLE`, and code/E2E checks passed; the only red job was `SonarCloud Quality Gate Config` with the known external 403. Failed-only rerun triggered on run `26887149910`; no code action unless the rerun exposes a real failure.
+
+**Protected/no-touch PRs:** #1022, #1031, #1047, #1052, #1055, #1056, #967, #966, #971, #1038, #1039, #1040, #1041, #968, #958, plus #1071/#1072 evidence-gated worker dependency PRs. Treat #958 as draft/big-change prep despite docs-only label. Do not restart or invalidate any soaking/evidence PR from queue hygiene work.
+
+**Stale PR closures (audited, not blanket stale-trust):** #1049 closed because the useful DID:web DB-error behavior is already on `main` via #1043 and the branch would regress missing/suspended-org 404s; #1016 closed after salvaging its one still-relevant doc correction into merged #1078; #1014/#1044 closed because the SearchPage bot chain did not compile and `main` already has the valid busy-state/no-results fixes; #1030 closed because it targeted a closed bot base and would move current SemanticSearch/status-display code backward. Cherry-pick nothing else from those PRs.
+
+**Local-doc hygiene:** `docs/WORK_ITEMS.md` is demoted to a historical archive pointer; Jira remains the only live story/work-status source and Confluence remains the only live documentation source. Use `HANDOFF.md` only for current operational snapshot, not long-lived status tables.
+
 ### 2026-06-02 — Hygiene/reconciliation run: git sync, local-disk cleanup, HANDOFF trim
 
 Cross-system hygiene pass via three parallel read-only audits (git/GitHub, Jira/Confluence, Mac-mini disk). **No prod state changed; no PRs merged; no Jira transitions.**
@@ -115,4 +125,4 @@ _Last refreshed: 2026-05-30 by Claude (PO reconciliation) — prod `/health` git
 
 ---
 
-_Last refreshed: 2026-06-02 by Claude (hygiene run) — claims verified against gcloud/MCP/CI output: git via fetch/log/worktree-list (origin/main ce407c3f, local main fast-forwarded clean, 67 worktrees), PRs via gh (27 open), Jira/Confluence drift via Atlassian MCP (SCRUM-1958 no page, SCRUM-1922 page 64258050 stale, 56 In Progress), disk reclaim via df (38→43 GiB free). No new prod state asserted this session; the 2026-05-30 prod snapshot is carried forward, not re-curled._
+_Last refreshed: 2026-06-03 by Codex (queue/docs hygiene) — claims verified against `gh pr view/list`, `gh run view 26887149910`, and GitHub PR closure comments for #1049/#1016/#1014/#1044/#1030. No prod state asserted._

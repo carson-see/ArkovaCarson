@@ -1,4 +1,10 @@
-# Arkova Worktree Inventory - 2026-05-22
+# Arkova Worktree Inventory - 2026-05-22 Historical Snapshot
+
+> Historical evidence only. This file records the worktree state observed on
+> 2026-05-22. It is not a current inventory and must not be used to decide
+> whether a worktree or PR is still open. Regenerate current state from
+> `git worktree list`, per-worktree `git status --short --branch`, and
+> `gh pr list`.
 
 This inventory was captured from the canonical checkout:
 

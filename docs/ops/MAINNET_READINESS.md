@@ -1,5 +1,10 @@
 # Bitcoin Mainnet Window — Readiness Checklist
 
+> Historical mainnet-window notes from March 2026. Do not use this file as the
+> current Bitcoin/KMS/prod readiness source of truth. Current operational truth
+> lives in Jira/Confluence, `HANDOFF.md`, `CLAUDE.md`, and verified Cloud Run /
+> Supabase / Secret Manager state.
+
 > **Purpose:** Step-by-step operational guide for the temporary mainnet anchoring window.
 > **Status:** Code READY, KMS PROVISIONED, WIF CONFIGURED, treasury funding PENDING
 > **Created:** 2026-03-24
