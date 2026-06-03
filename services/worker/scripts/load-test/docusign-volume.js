@@ -1,3 +1,5 @@
+/* global __ENV, __VU, __ITER */
+
 // k6 DocuSign Connect volume profile — SCRUM-2094 [DS-VOL-01] / verify subtask
 // SCRUM-2104. Sustained 100 rps for 30 min at the 15% production-observed
 // DocuSign mix, firing REAL HMAC-signed Connect payloads through the webhook
@@ -17,10 +19,22 @@ import { check, sleep } from 'k6';
 import { DEFAULT_MIX, pickScenario } from './lib/docusign-synth.js';
 import { executeScenario } from './lib/k6-docusign.js';
 
-const WORKER_URL = __ENV.WORKER_URL || 'http://localhost:3001';
-const DOCUSIGN_HMAC_KEY = __ENV.DOCUSIGN_HMAC_KEY || '';
-const DOCUSIGN_ACCOUNT_ID = __ENV.DOCUSIGN_ACCOUNT_ID || 'loadtest-account';
-const NOTARY_RATE = Number(__ENV.DOCUSIGN_NOTARY_RATE || '0');
+const K6_ENV = typeof __ENV === 'undefined' ? {} : __ENV;
+const WORKER_URL = K6_ENV.WORKER_URL || 'http://localhost:3001';
+const DOCUSIGN_HMAC_KEY = K6_ENV.DOCUSIGN_HMAC_KEY || '';
+const DOCUSIGN_ACCOUNT_ID = K6_ENV.DOCUSIGN_ACCOUNT_ID || 'loadtest-account';
+
+export function parseNotaryRate(raw = K6_ENV.DOCUSIGN_NOTARY_RATE) {
+  if (raw === undefined || raw === null || String(raw).trim() === '') return 0;
+
+  const rate = Number(String(raw).trim());
+  if (!Number.isFinite(rate) || rate < 0 || rate > 1) {
+    throw new Error('DOCUSIGN_NOTARY_RATE must be a finite number in [0,1].');
+  }
+  return rate;
+}
+
+const NOTARY_RATE = parseNotaryRate();
 
 export const options = {
   scenarios: {
@@ -64,14 +78,14 @@ export default function () {
     workerUrl: WORKER_URL,
     key: DOCUSIGN_HMAC_KEY,
     accountId: DOCUSIGN_ACCOUNT_ID,
-    vu: __VU,
-    iter: __ITER,
+    vu: typeof __VU === 'undefined' ? 0 : __VU,
+    iter: typeof __ITER === 'undefined' ? 0 : __ITER,
     withNotary,
   });
 
   check(res, {
     'no 5xx (except intentional 503)': (r) =>
-      r.status < 500 || (r.status === 503 && r.headers['Retry-After']),
+      r.status < 500 || (r.status === 503 && Boolean(r.headers['Retry-After'])),
   });
   sleep(0.05);
 }
