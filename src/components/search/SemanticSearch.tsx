@@ -19,7 +19,7 @@ import { Search, Sparkles, FileText, Clock, AlertCircle } from 'lucide-react';
 import { useSemanticSearch, type SemanticSearchResult } from '../../hooks/useSemanticSearch';
 import { Link } from 'react-router-dom';
 import { ROUTES } from '../../lib/routes';
-import { ANCHOR_STATUS_DISPLAY_LABELS, SEMANTIC_SEARCH_LABELS } from '../../lib/copy';
+import { SEMANTIC_SEARCH_LABELS } from '../../lib/copy';
 import { isSemanticSearchEnabled } from '../../lib/switchboard';
 import { Card, CardContent } from '@/components/ui/card';
 
@@ -27,11 +27,11 @@ import { Card, CardContent } from '@/components/ui/card';
 // Keep in sync with getStatusDisplay/getStatusLabel in the shared status
 // helper once SCRUM-2003 lands. This local table is the interim alignment.
 const STATUS_DISPLAY: Record<string, { color: string; label: string }> = {
-  SECURED:   { color: 'bg-emerald-500/10 text-emerald-400', label: ANCHOR_STATUS_DISPLAY_LABELS.SECURED },
-  PENDING:   { color: 'bg-amber-500/10 text-amber-400',     label: ANCHOR_STATUS_DISPLAY_LABELS.PENDING },
-  SUBMITTED: { color: 'bg-amber-500/10 text-amber-400',     label: ANCHOR_STATUS_DISPLAY_LABELS.SUBMITTED },
-  REVOKED:   { color: 'bg-red-500/10 text-red-400',         label: ANCHOR_STATUS_DISPLAY_LABELS.REVOKED },
-  EXPIRED:   { color: 'bg-gray-500/10 text-gray-400',       label: ANCHOR_STATUS_DISPLAY_LABELS.EXPIRED },
+  SECURED:   { color: 'bg-emerald-500/10 text-emerald-400', label: 'Verified' },
+  PENDING:   { color: 'bg-amber-500/10 text-amber-400',     label: 'Processing' },
+  SUBMITTED: { color: 'bg-amber-500/10 text-amber-400',     label: 'Awaiting Confirmation' },
+  REVOKED:   { color: 'bg-red-500/10 text-red-400',         label: 'Revoked' },
+  EXPIRED:   { color: 'bg-gray-500/10 text-gray-400',       label: 'Expired' },
 };
 
 /**
