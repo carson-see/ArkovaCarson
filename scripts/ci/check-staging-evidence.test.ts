@@ -380,10 +380,6 @@ describe('check-staging-evidence', () => {
 - Human approver: Carson
 `;
 
-    const expectEvidencePasses = (body: string, files: string[]) => {
-      expect(check({ body, files }).ok).toBe(true);
-    };
-
     const expectEvidenceFails = (body: string, files: string[], pattern: RegExp) => {
       const r = check({ body, files });
       expect(r.ok).toBe(false);
