@@ -44,7 +44,7 @@ describe('check-staging-evidence', () => {
   describe('TIER_SPECS', () => {
     it('pins the current minimum soak windows', () => {
       expect(TIER_SPECS.T0.soakHours).toBe(0);
-      expect(TIER_SPECS.T1.soakHours).toBe(0);
+      expect(TIER_SPECS.T1.soakHours).toBe(2);
       expect(TIER_SPECS.T2.soakHours).toBe(12);
       expect(TIER_SPECS.T3.soakHours).toBe(48);
     });
@@ -61,6 +61,17 @@ describe('check-staging-evidence', () => {
 
     it('returns T1 for plain frontend file', () => {
       expect(requiredTierFor(['src/components/Foo.tsx']).tier).toBe('T1');
+    });
+
+    it('returns T0 for worker load-test tooling scripts', () => {
+      expect(
+        requiredTierFor([
+          'services/worker/scripts/load-test/10k-dau.js',
+          'services/worker/scripts/load-test/lib/docusign-synth.js',
+          'services/worker/scripts/load-test/lib/k6-docusign.test.ts',
+          'services/worker/scripts/load-test/README.md',
+        ]).tier,
+      ).toBe('T0');
     });
 
     it('returns T3 when migration is touched', () => {
@@ -270,6 +281,8 @@ describe('check-staging-evidence', () => {
 - [x] PR head SHA: 1234567890abcdef1234567890abcdef12345678
 - [x] Staging tag URL or N/A explanation: https://pr-999---arkova-worker-staging.example.run.app
 - [x] Health/smoke result: health ok, smoke green
+- [x] Soak start: 2026-05-09 14:00 UTC
+- [x] Soak end: 2026-05-09 16:00 UTC
 - [x] CI/E2E green: green
 - [x] Rollback plan: revert PR
 - [x] Risk rationale: low-risk frontend copy change
@@ -284,6 +297,8 @@ describe('check-staging-evidence', () => {
 - [ ] PR head SHA: 1234567890abcdef1234567890abcdef12345678
 - [ ] Staging tag URL or N/A explanation: https://pr-999---arkova-worker-staging.example.run.app
 - [ ] Health/smoke result: health ok, smoke green
+- [ ] Soak start: 2026-05-09 14:00 UTC
+- [ ] Soak end: 2026-05-09 16:00 UTC
 - [ ] CI/E2E green: green
 - [ ] Rollback plan: revert PR
 - [ ] Risk rationale: low-risk frontend copy change
@@ -352,20 +367,18 @@ describe('check-staging-evidence', () => {
 - Staging deploy log id: 142
 `;
 
-    const completeT1Body = () => `## Staging Soak Evidence
+    const completeT1Body = (start: string, end: string) => `## Staging Soak Evidence
 - Tier: T1
 - PR head SHA: 1234567890abcdef1234567890abcdef12345678
 - Staging tag URL or N/A explanation: https://pr-999---arkova-worker-staging.example.run.app
 - Health/smoke result: health ok, targeted smoke green
+- Soak start: ${start}
+- Soak end: ${end}
 - CI/E2E green: TypeCheck, Tests, E2E Tests green on current head
 - Rollback plan: revert this PR and redeploy previous worker image
 - Risk rationale: low-risk copy-only frontend change, no API/auth/billing/queue/anchoring/security surface
 - Human approver: Carson
 `;
-
-    const expectEvidencePasses = (body: string, files: string[]) => {
-      expect(check({ body, files }).ok).toBe(true);
-    };
 
     const expectEvidenceFails = (body: string, files: string[], pattern: RegExp) => {
       const r = check({ body, files });
@@ -390,8 +403,8 @@ describe('check-staging-evidence', () => {
         t2Files,
       ],
       [
-        'T1 expedited evidence with no soak window',
-        completeT1Body(),
+        'T1 expedited evidence at exactly 2 hours',
+        completeT1Body('2026-05-09 14:00 UTC', '2026-05-09 16:00 UTC'),
         t1Files,
       ],
     ])('passes %s', (_label, body, files) => {
@@ -403,6 +416,27 @@ describe('check-staging-evidence', () => {
     });
 
     it.each([
+      [
+        'T1 expedited evidence with no soak window',
+        `## Staging Soak Evidence
+- Tier: T1
+- PR head SHA: 1234567890abcdef1234567890abcdef12345678
+- Staging tag URL or N/A explanation: https://pr-999---arkova-worker-staging.example.run.app
+- Health/smoke result: health ok, targeted smoke green
+- CI/E2E green: TypeCheck, Tests, E2E Tests green on current head
+- Rollback plan: revert this PR and redeploy previous worker image
+- Risk rationale: low-risk copy-only frontend change, no API/auth/billing/queue/anchoring/security surface
+- Human approver: Carson
+`,
+        t1Files,
+        /missing required fields.*Soak start:.*Soak end:/,
+      ],
+      [
+        'T1 shorter than 2 hours',
+        completeT1Body('2026-05-09 14:00 UTC', '2026-05-09 15:59 UTC'),
+        t1Files,
+        /below the 2h minimum/,
+      ],
       [
         'T2 shorter than 12 hours',
         completeT2Body('2026-05-09 14:00 UTC', '2026-05-09 18:00 UTC'),
@@ -451,6 +485,10 @@ describe('check-staging-evidence', () => {
           'CLAUDE.md',
           'docs/staging/README.md',
           'docs/ops/gemini-model-upgrade.md',
+          'services/worker/scripts/load-test/docusign-volume.js',
+          'services/worker/scripts/load-test/lib/docusign-synth.test.ts',
+          'tests/k6/verify-api-load.js',
+          'tests/load/webhook-delivery.test.ts',
           '.github/workflows/staging-evidence.yml',
           'scripts/gcp-setup/cloud-scheduler.sh',
         ]).pass,
@@ -588,6 +626,8 @@ describe('check-staging-evidence', () => {
 - [x] PR head SHA: 1234567890abcdef1234567890abcdef12345678
 - [x] Staging tag URL or N/A explanation: not applicable - docs-only worker image was not built
 - [x] Health/smoke result: current-head smoke green
+- [x] Soak start: 2026-05-09 14:00 UTC
+- [x] Soak end: 2026-05-09 16:00 UTC
 - [x] CI/E2E green: green
 - [x] Rollback plan: revert PR
 - [x] Risk rationale: frontend copy-only change, no restricted surfaces
@@ -607,6 +647,8 @@ describe('check-staging-evidence', () => {
 - PR head SHA: 1234567890abcdef1234567890abcdef12345678
 - Staging tag URL or N/A explanation: https://pr-999---arkova-worker-staging.example.run.app
 - Health/smoke result: health ok, smoke green
+- Soak start: 2026-05-09 14:00 UTC
+- Soak end: 2026-05-09 16:00 UTC
 - CI/E2E green: green
 - Rollback plan: revert PR
 - Risk rationale: low-risk frontend copy change
@@ -627,6 +669,8 @@ describe('check-staging-evidence', () => {
 - PR head SHA: 1234567890abcdef1234567890abcdef12345678
 - Staging tag URL or N/A explanation:
 - Health/smoke result: health ok
+- Soak start: 2026-05-09 14:00 UTC
+- Soak end: 2026-05-09 16:00 UTC
 - CI/E2E green: green
 - Rollback plan: revert PR
 - Risk rationale: low-risk frontend copy change
@@ -647,6 +691,8 @@ describe('check-staging-evidence', () => {
 - PR head SHA: 1234567890abcdef1234567890abcdef12345678
 - Staging tag URL or N/A explanation: https://pr-999---arkova-worker-staging.example.run.app
 - Health/smoke result: health ok, smoke green
+- Soak start: 2026-05-09 14:00 UTC
+- Soak end: 2026-05-09 16:00 UTC
 - CI/E2E green: green
 - Rollback plan: revert PR
 - Risk rationale: API docs only

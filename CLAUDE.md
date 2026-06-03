@@ -170,7 +170,7 @@ Every prod-affecting PR declares its tier in the body. The path-based detector i
 | Tier | Touches | Min soak | Required evidence |
 |---|---|---|---|
 | **T0** CI-only | Docs, tests, CI, or tooling-only | 0 h | No staging evidence block required; CI must be green |
-| **T1** Expedited smoke | Low-risk config or code-only changes with no migration, public API contract, auth, billing, anchoring, queue/concurrency, worker behavior, chain/treasury, or security-sensitive surface | 0 h | Tier, exact PR head SHA, staging tag URL or N/A explanation, health/smoke result, CI/E2E green, rollback plan, risk rationale, human approver |
+| **T1** Expedited smoke | Low-risk config or code-only changes with no migration, public API contract, auth, billing, anchoring, queue/concurrency, worker behavior, chain/treasury, or security-sensitive surface | 2 h soak | Tier, exact PR head SHA, staging tag URL or N/A explanation, health/smoke result, soak start/end, CI/E2E green, rollback plan, risk rationale, human approver |
 | **T2** Standard | Public API, worker behavior, queues, AI behavior, anchoring, billing, webhooks, SDK/contract surface | 12 h soak + rollback rehearsal | Merge-grade staging evidence with exact PR head SHA/base SHA, clean preflight, deploy log id, E2E result, rollback rehearsal |
 | **T3** Critical | Migrations, data integrity, concurrency/fan-out, security, chain/treasury, anchor lifecycle, cron-on-anchors | 48 h soak + multiple trigger cycles + clean-mirror or isolated staging | T2 fields + Trigger A fires, Trigger B fires, Daily flush observation, Per-org isolation check |
 
