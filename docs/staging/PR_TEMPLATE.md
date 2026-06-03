@@ -10,7 +10,7 @@ No `## Staging Soak Evidence` block is required when every touched file is T0. T
 
 ---
 
-## T1 — Expedited smoke (low-risk config or code-only; no soak)
+## T1 — Expedited smoke (low-risk config or code-only; 2h minimum)
 
 ```markdown
 ## Staging Soak Evidence
@@ -19,13 +19,15 @@ No `## Staging Soak Evidence` block is required when every touched file is T0. T
 - PR head SHA: 40-character current PR head SHA
 - Staging tag URL or N/A explanation: https://pr-NNN---arkova-worker-staging-... or not applicable - explain why
 - Health/smoke result: health ok, targeted smoke green
+- Soak start: YYYY-MM-DD HH:MM UTC
+- Soak end: YYYY-MM-DD HH:MM UTC (at least 2h after Soak start)
 - CI/E2E green: TypeCheck, Tests, E2E Tests green on current head
 - Rollback plan: revert PR and redeploy previous worker image / config
 - Risk rationale: explain why this is low risk and does not touch API/auth/billing/anchoring/queue/security/migrations
 - Human approver: Carson
 ```
 
-T1 is not a casual bypass. It is blocked for migrations, public API contracts, auth, billing, anchoring, worker behavior, queue/concurrency, chain/treasury, and security-sensitive changes.
+T1 is not a casual bypass or zero-soak lane. It is blocked for migrations, public API contracts, auth, billing, anchoring, worker behavior, queue/concurrency, chain/treasury, and security-sensitive changes.
 
 ---
 

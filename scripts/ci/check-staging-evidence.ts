@@ -59,12 +59,14 @@ export const TIER_SPECS: Record<Tier, TierSpec> = {
   },
   T1: {
     tier: 'T1',
-    soakHours: 0,
+    soakHours: 2,
     requiredFields: [
       'Tier:',
       'PR head SHA:',
       'Staging tag URL or N/A explanation:',
       'Health/smoke result:',
+      'Soak start:',
+      'Soak end:',
       'CI/E2E green:',
       'Rollback plan:',
       'Risk rationale:',
@@ -258,7 +260,7 @@ const DOCS_ONLY_RE = /^(?:docs\/|README\.md|ARKOVA_WORKSPACE_README\.md|WORKSPAC
 
 function isT0OnlyFile(file: string): boolean {
   if (PUBLIC_CONTRACT_DOC_RE.test(file)) return false;
-  if (TEST_FILE_RE.test(file) || /agents\.md$/.test(file)) return true;
+  if (TEST_FILE_RE.test(file) || file.endsWith('agents.md')) return true;
   if (/^(?:package-lock\.json|packages\/[^/]+\/package-lock\.json|services\/[^/]+\/package-lock\.json)$/.test(file)) return true;
   if (PATH_RULES.some((rule) => rule.pattern.test(file))) return false;
   return STAGING_TOOLING_ALLOW.some((re) => re.test(file))
@@ -318,7 +320,7 @@ const NON_FRONTEND_SURFACE_RE: RegExp[] = [
 export function isFrontendOnlyChange(files: string[]): boolean {
   if (files.length === 0) return false;
   return files.every(
-    (f) => /^src\//.test(f) && !NON_FRONTEND_SURFACE_RE.some((re) => re.test(f)),
+    (f) => f.startsWith('src/') && !NON_FRONTEND_SURFACE_RE.some((re) => re.test(f)),
   );
 }
 
@@ -343,7 +345,7 @@ export function extractDeclaredTier(body: string): Tier | null {
     const rest = candidate.slice('Tier:'.length).trimStart();
     const value = rest.slice(0, 2);
     const next = rest[2];
-    if (DECLARED_TIER_VALUES.has(value as Tier) && (next === undefined || !/[A-Za-z0-9_]/.test(next))) {
+    if (DECLARED_TIER_VALUES.has(value as Tier) && (next === undefined || !/\w/.test(next))) {
       return value as Tier;
     }
   }
@@ -475,15 +477,36 @@ function validatePassingEvidenceField(
 // "Not filled in yet" markers — never acceptable as evidence on any tier.
 // Anchored to the whole (trimmed) value so a legitimate sentence that merely
 // mentions one of these words is not falsely rejected.
-const INCOMPLETE_VALUE_RE =
-  /^(?:pending|tbd|to[\s-]?be[\s-]?(?:determined|announced|filled(?:[\s-]?in)?)|tba|todo|to[\s-]?do|fixme|wip|work[\s-]?in[\s-]?progress|fill[\s-]?in|placeholder|coming[\s-]?soon|see[\s-]?above|xxx+|\?+|-+|_+|\.{2,}|…|<[^>]*>)\.?$/i;
+const INCOMPLETE_VALUE_PATTERNS = [
+  /^pending\.?$/i,
+  /^tbd\.?$/i,
+  /^to[\s-]?be[\s-]?(?:determined|announced|filled(?:[\s-]?in)?)\.?$/i,
+  /^tba\.?$/i,
+  /^todo\.?$/i,
+  /^to[\s-]?do\.?$/i,
+  /^fixme\.?$/i,
+  /^wip\.?$/i,
+  /^work[\s-]?in[\s-]?progress\.?$/i,
+  /^fill[\s-]?in\.?$/i,
+  /^placeholder\.?$/i,
+  /^coming[\s-]?soon\.?$/i,
+  /^see[\s-]?above\.?$/i,
+  /^xxx+\.?$/i,
+  /^\?+\.?$/i,
+  /^-+\.?$/i,
+  /^_+\.?$/i,
+  /^\.{2,}\.?$/i,
+  /^…\.?$/i,
+  /^<[^>]*>\.?$/i,
+];
 
 // "Not applicable" markers — legitimate for some fields (e.g. `Migration
 // applied: none`) but never for a concrete deploy artifact.
 const NOT_APPLICABLE_VALUE_RE = /^(?:n\/?a|n\.?a\.?|none|not[\s-]?applicable|null|nil)\.?$/i;
 
 function isIncompletePlaceholder(value: string): boolean {
-  return INCOMPLETE_VALUE_RE.test(value.trim());
+  const trimmed = value.trim();
+  return INCOMPLETE_VALUE_PATTERNS.some((re) => re.test(trimmed));
 }
 
 function isNotApplicablePlaceholder(value: string): boolean {
@@ -619,24 +642,23 @@ function frontendT2Errors(body: string): string[] {
     );
   }
 
-  // Auditable values.
-  errors.push(validateVercelUrlEvidence(body));
-  errors.push(validateFilledEvidenceField(body, 'E2E result:'));
-  errors.push(validateNonEmptyEvidenceField(body, 'Rollback plan:'));
   // `CI/E2E green:` must be non-empty AND state a passing result. The
   // non-empty check runs first because validatePassingEvidenceField
   // short-circuits to PASS on an empty value — without it a bare
   // `- CI/E2E green:` line would attest nothing, weaker than the T1 path
   // (which runs validateNonEmptyEvidenceField over every required field).
-  errors.push(validateNonEmptyEvidenceField(body, 'CI/E2E green:'));
-  errors.push(
+  errors.push(...[
+    validateVercelUrlEvidence(body),
+    validateFilledEvidenceField(body, 'E2E result:'),
+    validateNonEmptyEvidenceField(body, 'Rollback plan:'),
+    validateNonEmptyEvidenceField(body, 'CI/E2E green:'),
     validatePassingEvidenceField(
       body,
       'CI/E2E green:',
       /\b(?:green|pass(?:ed|es)?|success(?:ful)?)\b/i,
       'CI/E2E green: must state that CI/E2E is green.',
     ),
-  );
+  ]);
 
   // A frontend-T2 PR substitutes a residual-risk note for the worker
   // artifacts. The note's sub-fields are frontend-specific (attest no worker
@@ -908,6 +930,9 @@ const STAGING_TOOLING_ALLOW = [
   /^scripts\/ci\/staging-honesty-preflight(\.test)?\.ts$/,
   /^scripts\/ci\/lib\//,
   /^scripts\/gcp-setup\//,
+  /^services\/worker\/scripts\/load-test\//,
+  /^tests\/k6\//,
+  /^tests\/load\//,
   /^docs\/staging\//,
   /^docs\/ops\/gemini-model-upgrade\.md$/,
   /^docs\/reference\/STAGING_RIG\.md$/,
@@ -947,6 +972,95 @@ interface CheckResult {
   notes: string[];
 }
 
+function addErrors(result: CheckResult, errors: string[]): void {
+  if (errors.length === 0) return;
+  result.ok = false;
+  result.errors.push(...errors);
+}
+
+function tierDeclarationErrors(declared: Tier, required: { tier: Tier; reason: string }): string[] {
+  if (TIER_RANK[declared] >= TIER_RANK[required.tier]) return [];
+  return [
+    `Declared tier ${declared} is below required tier ${required.tier} `
+    + `for the touched files. Reason: ${required.reason}.`,
+  ];
+}
+
+function isFrontendT2EvidencePath(declared: Tier, required: Tier, files: string[]): boolean {
+  return declared === 'T2'
+    && required === 'T2'
+    && isFrontendOnlyChange(files);
+}
+
+function frontendT2Result(body: string, headSha?: string): CheckResult {
+  const result: CheckResult = { ok: true, errors: [], notes: [] };
+  const feErrors = frontendT2Errors(body);
+  // Exact-head integrity still applies: frontend evidence cannot be copied
+  // across commits any more than worker evidence can.
+  const headShaErrors = shaEvidenceErrors({
+    body,
+    field: 'PR head SHA:',
+    expectedSha: headSha,
+    currentLabel: 'PR head',
+    staleMessage: 'frontend evidence cannot be copied across commits.',
+  });
+
+  addErrors(result, [...feErrors, ...headShaErrors]);
+  if (result.ok) {
+    result.notes.push(
+      'frontend-T2 evidence path accepted (frontend-only change; no worker '
+      + 'artifacts producible — Vercel deployment + view-E2E + residual-risk '
+      + 'note satisfy T2).',
+    );
+  }
+  return result;
+}
+
+function durationValidation(body: string, declared: Tier): { errors: string[]; notes: string[] } {
+  const errors = soakDurationErrors(body, declared);
+  if (errors.length === 0) return { errors: [], notes: [] };
+
+  const riskException = hasResidualRiskException(body);
+  if (riskException.valid) {
+    return {
+      errors: [],
+      notes: [`Soak duration below ${TIER_SPECS[declared].soakHours}h minimum; residual-risk exception accepted.`],
+    };
+  }
+  return { errors, notes: [] };
+}
+
+function standardEvidenceErrors(
+  body: string,
+  declared: Tier,
+  opts: { headSha?: string; baseSha?: string },
+): { errors: string[]; notes: string[] } {
+  const errors: string[] = [];
+  const notes: string[] = [];
+
+  const missing = missingFields(body, declared);
+  if (missing.length > 0) {
+    errors.push(
+      `\`## Staging Soak Evidence\` section is missing required fields for ${declared}: `
+      + missing.map((f) => `\`${f}\``).join(', ') + '.',
+    );
+  }
+
+  const duration = durationValidation(body, declared);
+  errors.push(...duration.errors);
+  notes.push(...duration.notes);
+  errors.push(...requiredValueErrors(body, declared));
+  errors.push(...stagingIntegrityErrors(body, declared, opts));
+
+  const preflightVal = extractEvidenceFieldValue(body, 'Preflight result:');
+  const preflightIsClean = preflightVal !== null && hasCleanMirrorPreflight(preflightVal);
+  if (errors.length === 0 && !preflightIsClean && hasResidualRiskException(body).valid) {
+    notes.push('Preflight is not clean_mirror; residual-risk exception accepted.');
+  }
+
+  return { errors, notes };
+}
+
 export function check(opts: { body: string; files: string[]; headSha?: string; baseSha?: string }): CheckResult {
   const { body, files } = opts;
   const result: CheckResult = { ok: true, errors: [], notes: [] };
@@ -958,108 +1072,44 @@ export function check(opts: { body: string; files: string[]; headSha?: string; b
   }
 
   const declared = extractDeclaredTier(body);
-
   if (!declared) {
-    result.ok = false;
-    result.errors.push(
-      `PR body is missing a tier declaration. Add a line \`Tier: ${required.tier}\` under a `
-      + `\`## Staging Soak Evidence\` section. Required tier: ${required.tier} (${required.reason}).`,
-    );
-    return result;
+    return {
+      ok: false,
+      errors: [
+        `PR body is missing a tier declaration. Add a line \`Tier: ${required.tier}\` under a `
+        + `\`## Staging Soak Evidence\` section. Required tier: ${required.tier} (${required.reason}).`,
+      ],
+      notes: [],
+    };
   }
 
-  if (TIER_RANK[declared] < TIER_RANK[required.tier]) {
-    result.ok = false;
-    result.errors.push(
-      `Declared tier ${declared} is below required tier ${required.tier} `
-      + `for the touched files. Reason: ${required.reason}.`,
-    );
-  }
+  addErrors(result, tierDeclarationErrors(declared, required));
 
   // ── Frontend-T2 evidence path (decision (a)) ──
   // Activates ONLY when the PR is T2 by requirement AND declaration AND every
-  // changed file is purely frontend (isFrontendOnlyChange). Such a PR cannot
-  // produce worker artifacts, so it satisfies T2 with a Vercel deployment URL +
-  // view-E2E + a residual-risk note instead. Tier classification is unchanged;
-  // this only swaps which evidence T2 accepts for this narrow case. Every other
-  // T2/T3 PR (any worker/migration/SDK/contract file) falls through to the
-  // unchanged standard flow below.
-  if (
-    declared === 'T2'
-    && required.tier === 'T2'
-    && isFrontendOnlyChange(files)
-  ) {
-    const feErrors = frontendT2Errors(body);
-    // Exact-head integrity still applies: frontend evidence cannot be copied
-    // across commits any more than worker evidence can.
-    const headShaErrors = shaEvidenceErrors({
-      body,
-      field: 'PR head SHA:',
-      expectedSha: opts.headSha,
-      currentLabel: 'PR head',
-      staleMessage: 'frontend evidence cannot be copied across commits.',
-    });
-    const allErrors = [...feErrors, ...headShaErrors];
-    if (allErrors.length > 0) {
-      result.ok = false;
-      result.errors.push(...allErrors);
-    } else {
-      result.notes.push(
-        'frontend-T2 evidence path accepted (frontend-only change; no worker '
-        + 'artifacts producible — Vercel deployment + view-E2E + residual-risk '
-        + 'note satisfy T2).',
-      );
-    }
+  // changed file is purely frontend. Tier classification is unchanged; this
+  // only swaps which evidence T2 accepts for that narrow case.
+  if (isFrontendT2EvidencePath(declared, required.tier, files)) {
+    const frontendResult = frontendT2Result(body, opts.headSha);
+    addErrors(result, frontendResult.errors);
+    result.notes.push(...frontendResult.notes);
     return result;
   }
 
   if (!hasEvidenceSection(body)) {
-    result.ok = false;
-    result.errors.push(
-      'PR body is missing a `## Staging Soak Evidence` section. '
-      + 'Use docs/staging/PR_TEMPLATE.md as a starting point.',
-    );
-    return result;
+    return {
+      ok: false,
+      errors: [
+        'PR body is missing a `## Staging Soak Evidence` section. '
+        + 'Use docs/staging/PR_TEMPLATE.md as a starting point.',
+      ],
+      notes: result.notes,
+    };
   }
 
-  const missing = missingFields(body, declared);
-  if (missing.length > 0) {
-    result.ok = false;
-    result.errors.push(
-      `\`## Staging Soak Evidence\` section is missing required fields for ${declared}: `
-      + missing.map((f) => `\`${f}\``).join(', ') + '.',
-    );
-  }
-
-  const durationErrors = soakDurationErrors(body, declared);
-  if (durationErrors.length > 0) {
-    const riskException = hasResidualRiskException(body);
-    if (riskException.valid) {
-      result.notes.push(`Soak duration below ${TIER_SPECS[declared].soakHours}h minimum; residual-risk exception accepted.`);
-    } else {
-      result.ok = false;
-      result.errors.push(...durationErrors);
-    }
-  }
-
-  const valueErrors = requiredValueErrors(body, declared);
-  if (valueErrors.length > 0) {
-    result.ok = false;
-    result.errors.push(...valueErrors);
-  }
-
-  const integrityErrors = stagingIntegrityErrors(body, declared, opts);
-  if (integrityErrors.length > 0) {
-    result.ok = false;
-    result.errors.push(...integrityErrors);
-  }
-
-  const preflightVal = extractEvidenceFieldValue(body, 'Preflight result:');
-  const preflightIsClean = preflightVal !== null && hasCleanMirrorPreflight(preflightVal);
-  if (result.ok && !preflightIsClean && hasResidualRiskException(body).valid) {
-    result.notes.push('Preflight is not clean_mirror; residual-risk exception accepted.');
-  }
-
+  const standard = standardEvidenceErrors(body, declared, opts);
+  addErrors(result, standard.errors);
+  result.notes.push(...standard.notes);
   return result;
 }
 
