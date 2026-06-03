@@ -23,6 +23,14 @@ export const ANCHOR_STATUS_LABELS = {
   SUPERSEDED: 'Superseded',
 } as const;
 
+export const ANCHOR_STATUS_DISPLAY_LABELS = {
+  SECURED: 'Verified',
+  PENDING: 'Processing',
+  SUBMITTED: 'Awaiting Confirmation',
+  REVOKED: 'Revoked',
+  EXPIRED: 'Expired',
+} as const;
+
 export const ANCHOR_STATUS_DESCRIPTIONS = {
   PENDING: 'Your record is being secured. This typically completes within a few minutes.',
   SUBMITTED: 'Your record has been submitted to the network and is awaiting confirmation.',
