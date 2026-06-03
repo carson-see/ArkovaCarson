@@ -1277,6 +1277,31 @@ describe('cron routes', () => {
     });
   });
 
+  describe('POST /docusign-connect-failures-poll', () => {
+    it('returns the poll result and wires the production dependencies', async () => {
+      const pollResult = { ok: true, inserted: 0, errors: 0 };
+      mockPollDocusignConnectFailures.mockResolvedValueOnce(pollResult);
+
+      const app = createApp();
+      const res = await request(app).post('/cron/docusign-connect-failures-poll');
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual(pollResult);
+      expect(mockMakeConnectFailuresDeps).toHaveBeenCalledTimes(1);
+      expect(mockPollDocusignConnectFailures).toHaveBeenCalledWith({ deps: 'connect-failures' });
+    });
+
+    it('returns 500 when the poller throws', async () => {
+      mockPollDocusignConnectFailures.mockRejectedValueOnce(new Error('docusign down'));
+
+      const app = createApp();
+      const res = await request(app).post('/cron/docusign-connect-failures-poll');
+
+      expect(res.status).toBe(500);
+      expect(res.body).toEqual({ error: 'Processing failed' });
+    });
+  });
+
   describe('POST /reconcile-stripe', () => {
     it('returns result', async () => {
       const app = createApp();
