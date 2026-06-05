@@ -588,6 +588,7 @@ describe('PipelineAdminPage — records pagination (SCRUM-2006)', () => {
     fireEvent.change(screen.getByTestId('pipeline-page-jump-input'), { target: { value: '5' } });
     fireEvent.click(screen.getByTestId('pipeline-page-jump-go'));
     await waitFor(() => expect(lastRecordsPageCall()).toMatchObject({ p_page: 5 }));
+    await expectPageIndicator('5 / 10');
 
     fireEvent.change(screen.getByTestId('pipeline-page-jump-input'), { target: { value: '0' } });
     fireEvent.click(screen.getByTestId('pipeline-page-jump-go'));
@@ -602,6 +603,7 @@ describe('PipelineAdminPage — records pagination (SCRUM-2006)', () => {
     fireEvent.change(screen.getByTestId('pipeline-page-jump-input'), { target: { value: '3' } });
     fireEvent.click(screen.getByTestId('pipeline-page-jump-go'));
     await waitFor(() => expect(lastRecordsPageCall()).toMatchObject({ p_page: 3 }));
+    await expectPageIndicator('3 / 10');
 
     const rpc = supabase.rpc as unknown as ReturnType<typeof vi.fn>;
     const callsBefore = rpc.mock.calls.filter((c) => c[0] === 'get_public_records_page').length;
@@ -624,6 +626,7 @@ describe('PipelineAdminPage — records pagination (SCRUM-2006)', () => {
     fireEvent.change(screen.getByTestId('pipeline-page-jump-input'), { target: { value: '6' } });
     fireEvent.click(screen.getByTestId('pipeline-page-jump-go'));
     await waitFor(() => expect(lastRecordsPageCall()).toMatchObject({ p_page: 6, p_page_size: 25 }));
+    await expectPageIndicator('6 / 10');
 
     // Bump page size to 100.
     fireEvent.change(screen.getByTestId('pipeline-page-size'), { target: { value: '100' } });
@@ -657,6 +660,7 @@ describe('PipelineAdminPage — records pagination (SCRUM-2006)', () => {
 
     fireEvent.click(screen.getByTestId('pipeline-page-next'));
     await waitFor(() => expect(lastRecordsPageCall()).toMatchObject({ p_page: 2 }));
+    await expectPageIndicator('2 / 10');
 
     fireEvent.click(screen.getByTestId('pipeline-page-prev'));
     await waitFor(() => expect(lastRecordsPageCall()).toMatchObject({ p_page: 1 }));
@@ -705,7 +709,7 @@ describe('PipelineAdminPage — records pagination (SCRUM-2006)', () => {
       fireEvent.click(screen.getByTestId('pipeline-page-jump-go'));
       await waitFor(() => expect(lastRecordsPageCall()).toMatchObject({ p_page: 10000 }));
 
-      expect(screen.getByTestId('pipeline-page-next')).toBeDisabled();
+      await waitFor(() => expect(screen.getByTestId('pipeline-page-next')).toBeDisabled());
       expect(screen.getByTestId('pipeline-page-prev')).not.toBeDisabled();
       await expectPageIndicator('10000 / 10000');
     });
