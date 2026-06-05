@@ -14,6 +14,18 @@
 
 ## Now
 
+### 2026-06-05 — Session close: #1022/#1031 merged, prod migrations + ledger reconciled, soak rig torn down
+
+**12 session PRs merged to `main`** (origin/main tip `303b5fe42fdc` = PR #1031 merge): #1022 (SCRUM-2203 unembedded-records query perf), #1031 (SCRUM-1847/1869 public-anchor CPE/CLE metadata), #1023, #1025, #1029, #1034, #1043, #1045, #1050, #1051, #1061, #1066 (all confirmed merged via `gh pr list --state merged`). All 16 merged session feature branches deleted from the remote; dependabot/codex merged branches were already auto-pruned.
+
+**Prod migrations applied + ledger reconciled to numeric versions** (verified via Supabase MCP `execute_sql` on prod `vzwyaatejekddvltxyye` `supabase_migrations.schema_migrations`): `0330_scrum2203_unembedded_records_query_perf` and `0331_scrum1847_1869_public_anchor_cpe_cle_metadata` are both in prod under their **numeric** versions (0330, 0331); the earlier `0322_bump_cloud_logging_retry_counts_rpc` + `0323_external_document_versions` catch-up are also present under numeric versions 0322/0323. Ledger reads clean numeric for 0320-0326, 0330, 0331 — no timestamp/duplicate rows in that range. (Consequence: the migration-drift gate `exempt_regex` 0322/0323 entries are now stale — see CLAUDE.md proposals below.)
+
+**Ephemeral T3 migration-soak rig torn down** (both #1022/#1031 merged → rig no longer needed): Cloud Run `arkova-worker-migration-soak` deleted (`gcloud run services delete`, confirmed gone in `gcloud run services list`); all 4 scheduler jobs deleted (`soak-migration-health`, `soak-migration-1022-embed`, `soak-migration-1031-cpe`, `soak-migration-1031-cle`). The rig's isolated Supabase project `kihdcwoturustgpzyflj` (`arkova-migration-soak`, region us-east-2, separate from prod) could **not** be auto-paused — MCP `pause_project` requires a free-tier downgrade first (project is paid, ~$10/mo) → **flagged for Carson** to pause/delete via the Supabase dashboard. Cloud Run traffic to it is already zero.
+
+**Endpoint hygiene (§7) — action needed:** post-teardown `gcloud run services list --project=arkova1` shows prod `arkova-worker` + 5 OTHER isolated-soak/staging services from prior sessions — `arkova-worker-staging` (PR #1045 label), `arkova-worker-pr-1052/1055/1056-staging` (open/active PRs), `arkova-worker-pr-967-staging` (PR #967). **Not deleted — flagged for Carson** (out of this session's scope; some back open PRs). `gcloud ai endpoints list --region=us-central1 --project=arkova1` shows **6 deployed Vertex endpoints — over the §7 steady-state target of 1-2**: 1× `arkova-golden-v5-reasoning-pro-20260415` + **5× duplicate `arkova-gemini-fraud-v1`** (endpoint IDs 3265.., 7543.., 7044.., 1842.., 563..). The 5 fraud-v1 duplicates are cold-spare drift; **flagged for Carson** to prune (NOT touched here — fraud detection is gated per GEMB2/Gemini-Golden state; deletes need owner sign-off).
+
+_Last refreshed: 2026-06-05 by Claude (carson@arkova.io) — claims verified against gcloud/MCP/CI output: PRs via `gh pr list --state merged` (origin/main `303b5fe42fdc`); branch deletions via `gh api -X DELETE git/refs/heads`; prod ledger via Supabase MCP `execute_sql` on `vzwyaatejekddvltxyye` (0330/0331/0322/0323 present under numeric versions); soak rig via `gcloud run services delete` + `gcloud scheduler jobs delete` (service+4 jobs gone, confirmed by `gcloud run services list`); Vertex via `gcloud ai endpoints list --region=us-central1 --project=arkova1` (6 deployed: 1 golden + 5 duplicate fraud-v1, flagged not touched). No new prod schema/worker state asserted beyond the migrations already merged + verified above._
+
 ### 2026-06-03 — PR queue truth + local-doc hygiene
 
 **GitHub queue:** [PR #1078](https://github.com/carson-see/ArkovaCarson/pull/1078) (`docs: clarify copy-term baseline key`) merged via Mergify at 2026-06-03T13:36Z, merge commit `63c404cb`. [PR #1073](https://github.com/carson-see/ArkovaCarson/pull/1073) merged via Mergify at 2026-06-03T14:26Z, merge commit `0c9b891e`, after E2E and the failed-only `SonarCloud Quality Gate Config` rerun passed. Remaining open PRs are protected/evidence/draft lanes unless explicitly reclassified.
@@ -47,20 +59,6 @@ _Last refreshed: 2026-06-02 by Claude (hygiene run) — git claims verified agai
 **Status:** **[#1056](https://github.com/carson-see/ArkovaCarson/pull/1056)** draft, **T2 — 12h staging soak PENDING**. No soak started: shared staging `ujtlwnoqfhtitcmsnrpq` has in-flight soaks (§1.11A). Stays draft until a clean staging window; Carson merges. No migration/RLS/schema/cron/queue surface → a clean shared-staging window suffices. Jira bug ticket + Confluence page + Bug Tracker row still outstanding.
 
 _Last refreshed: 2026-06-01 by Claude — no prod or live-state asserted; in-flight draft PR only. Local checks (vitest / tsc --noEmit / eslint / lint:copy) clean; CI re-runs on #1056._
-
-### 2026-05-31 — SCRUM-2216: git commit-email fix (Vercel deploy attribution)
-
-Repo-local git `user.email` set to the carson-see GitHub noreply `257869717+carson-see@users.noreply.github.com` (name stays `carson`). Root cause: `carson@arkova.ai` is **not** a verified email on the GitHub account, so Vercel rejected locally-authored commits — "No GitHub account was found matching the commit author email address" — and their prod/preview deploys failed (e.g. docs commit `89001140`). GitHub-authored merge commits (noreply) always deployed fine. **Validated** against Vercel deployment records (project `arkova-26`): the noreply-author commit resolved its Vercel author to `carson-see` and was no longer `BLOCKED`. Tracked as [SCRUM-2216](https://arkova.atlassian.net/browse/SCRUM-2216) (Done) + BUG-2026-05-31-002. Alternative (keeps `arkova.ai` on commits): add+verify it at github.com/settings/emails.
-
-_Last refreshed: 2026-05-31 by Claude — root cause established using `git log --format='%ae / %ce'` (success `f4063934`=noreply, failures `89001140`/`e1ca3269`=`carson@arkova.ai`) and Vercel `list_deployments` on `arkova-26` (arkova.ai commits `state=BLOCKED`; noreply commit `e6379fde` resolved `githubCommitAuthorLogin=carson-see`). Fix = `git config --local user.email`._
-
-### 2026-05-31 — SCRUM-2214 (PR #1002) ManageSubOrgs initial-load error state MERGED
-
-**[PR #1002](https://github.com/carson-see/ArkovaCarson/pull/1002)** (`fix/manage-suborgs-load-error-state`, T1) is **merged to `main`** at merge commit `f4063934` (Mergify auto-merge after speculative `Tests`+`E2E` on draft #1009 passed). Bounded sibling of SCRUM-1999: `src/components/org/ManageSubOrgs.tsx` swallowed its initial sub-orgs load failure, rendering an outage as "no affiliates yet". Fix: explicit `loadError` state + `role="alert"` banner with Retry, gated to the initial-load/Retry path via `fetchSubOrgs(isInitialLoad)` so action refetch failures stay on toast. Frontend-only — no migration/worker/API/auth surface.
-
-**Tracking:** **[SCRUM-2214](https://arkova.atlassian.net/browse/SCRUM-2214)** + subtask SCRUM-2215 → **Done** (2026-05-31); Confluence [page 68419586](https://arkova.atlassian.net/wiki/spaces/A/pages/68419586); bug **BUG-2026-05-31-001**. Vercel prod build for merge commit `f4063934` = success (17:19:26Z), fix serving in prod. TDD: 9/9 ManageSubOrgs tests green; all 14 required CI checks green.
-
-_Last refreshed: 2026-05-31 by Claude — PR #1002 merge `f4063934` confirmed `origin/main` tip; Mergify auto-merge via queue-status bot (draft #1009); SCRUM-2214/2215 + Confluence 68419586 via Atlassian MCP; suite 9/9 (`vitest run`). Frontend-only — no prod worker/DB state asserted._
 
 ### 2026-05-30 (PO reconciliation pass) — last full prod-verified snapshot
 
@@ -125,4 +123,4 @@ _Last refreshed: 2026-05-30 by Claude (PO reconciliation) — prod `/health` git
 
 ---
 
-_Last refreshed: 2026-06-03 by Codex (queue/docs hygiene) — claims verified against `gh pr view/list`, `gh run view 26887149910`, and GitHub PR closure comments for #1049/#1016/#1014/#1044/#1030. No prod state asserted._
+_Last refreshed: 2026-06-05 by Claude (carson@arkova.io) — claims verified against gcloud/MCP/CI output._
