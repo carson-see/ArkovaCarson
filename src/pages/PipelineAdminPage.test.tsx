@@ -3,7 +3,7 @@
  * Pipeline Admin Page Tests (PH1-DATA-05)
  */
 
-import { beforeEach, describe, it, expect, vi } from 'vitest';
+import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 
@@ -511,6 +511,152 @@ describe('PipelineAdminPage', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+// ─── SCRUM-2245 (HARDEN-1-B): get_distinct_record_types thenable .catch crash ──
+//
+// FRONTEND-1/4/5 in Sentry: the record-type filter effect called `.catch()` on a
+// Supabase RPC *builder* — a thenable, not a Promise. A PostgREST builder has
+// `.then` but no `.catch`, so `dbAny.rpc('get_distinct_record_types').catch(...)`
+// threw "rpc(...).catch is not a function" inside the async IIFE, surfacing as an
+// unhandled rejection and leaving the type filter permanently empty with no path
+// to recover. The fix (PipelineAdminPage.tsx ~L666) uses the two-arg
+// `.then(onOk, onErr)` form, which every thenable supports.
+//
+// These tests mock `get_distinct_record_types` to return a builder *without*
+// `.catch` (a plain thenable). Against the old `.catch()` code this throws;
+// against the fix it resolves cleanly. We also fail the test if any unhandled
+// rejection escapes during the render.
+describe('PipelineAdminPage — record-type filter RPC is a thenable, not a Promise (SCRUM-2245)', () => {
+  /**
+   * A PostgREST-style builder: it is thenable (has `.then(onOk, onErr)`) but has
+   * NO `.catch` method — exactly the shape that broke `.rpc(...).catch(...)`.
+   */
+  function thenableBuilder(result: { data: unknown; error: unknown }) {
+    return {
+      then(onFulfilled: (r: { data: unknown; error: unknown }) => unknown) {
+        // Resolve asynchronously like the real client.
+        return Promise.resolve(result).then(onFulfilled);
+      },
+      // Deliberately NO `catch` — calling `.catch` on this throws TypeError,
+      // reproducing FRONTEND-1/4/5.
+    };
+  }
+
+  /** Wire supabase.rpc so get_distinct_record_types returns a thenable builder. */
+  function mockDistinctTypesAsThenable(result: { data: unknown; error: unknown }) {
+    (supabase.rpc as unknown as ReturnType<typeof vi.fn>).mockImplementation((name: string) => {
+      if (name === 'get_distinct_record_types') {
+        return thenableBuilder(result);
+      }
+      if (name === 'get_public_records_page') {
+        return Promise.resolve({ data: defaultRecordPage, error: null });
+      }
+      if (name === 'get_pipeline_stats') {
+        return Promise.resolve({
+          data: {
+            total_records: 10000,
+            pending_bitcoin_records: 1000,
+            embedded_records: 8000,
+            pending_record_links: 500,
+            pending_anchor_records: 450,
+            broadcasting_records: 50,
+            submitted_records: 7000,
+            secured_records: 2000,
+            cache_updated_at: '2026-04-24T12:00:00Z',
+          },
+          error: null,
+        });
+      }
+      return Promise.resolve({ data: [], error: null });
+    });
+  }
+
+  let unhandled: unknown[] = [];
+  const onUnhandled = (e: PromiseRejectionEvent) => {
+    unhandled.push(e.reason);
+    // Prevent the rejection from failing the whole vitest worker.
+    e.preventDefault?.();
+  };
+
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    unhandled = [];
+    window.addEventListener('unhandledrejection', onUnhandled);
+    const { useAuth } = await import('@/hooks/useAuth');
+    vi.mocked(useAuth).mockReturnValue(mockAuthState('carson@arkova.ai', 'user-1'));
+  });
+
+  afterEach(() => {
+    window.removeEventListener('unhandledrejection', onUnhandled);
+  });
+
+  it('does not throw "catch is not a function" and populates the type filter when the builder resolves with data', async () => {
+    mockDistinctTypesAsThenable({
+      data: [{ record_type: 'filing' }, { record_type: 'charity' }],
+      error: null,
+    });
+
+    render(
+      <MemoryRouter>
+        <PipelineAdminPage />
+      </MemoryRouter>,
+    );
+
+    await screen.findByText('Records Anchored');
+
+    // The mocked Select renders each record_type value as a visible <option>.
+    // With the .catch() bug the effect threw before setAvailableTypes ran, so
+    // these options never appeared.
+    await waitFor(() => {
+      expect(screen.getByRole('option', { name: 'filing' })).toBeInTheDocument();
+    });
+    expect(screen.getByRole('option', { name: 'charity' })).toBeInTheDocument();
+
+    // No "catch is not a function" (or any other) unhandled rejection escaped.
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(unhandled).toEqual([]);
+  });
+
+  it('yields an empty type list (no crash) when the RPC resolves with an error', async () => {
+    mockDistinctTypesAsThenable({
+      data: null,
+      error: { message: 'RLS denied' },
+    });
+
+    render(
+      <MemoryRouter>
+        <PipelineAdminPage />
+      </MemoryRouter>,
+    );
+
+    await screen.findByText('Records Anchored');
+
+    // The fix's onError path / null-data guard collapses to availableTypes: [] —
+    // only the static "all types" option remains, no per-type options, and crucially
+    // no unhandled rejection from a missing `.catch`.
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(screen.queryByRole('option', { name: 'filing' })).not.toBeInTheDocument();
+    expect(unhandled).toEqual([]);
+  });
+
+  it('guards a builder with no .catch — calling .catch on it would throw (red against the old code)', () => {
+    // This documents the exact failure mode: the builder is a thenable but
+    // .catch is not a function. The production code must therefore never call
+    // .rpc(...).catch(...).
+    const builder = thenableBuilder({ data: [], error: null }) as {
+      then: unknown;
+      catch?: unknown;
+    };
+    expect(typeof builder.then).toBe('function');
+    expect(builder.catch).toBeUndefined();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect(() => (builder as any).catch(() => undefined)).toThrow(TypeError);
   });
 });
 
