@@ -166,7 +166,13 @@ vi.stubGlobal('fetch', mockFetch);
 // We need to import the internal helpers too for direct testing.
 // Since signPayload and getRetryDelay are not exported, we test them
 // indirectly through deliverToEndpoint and processWebhookRetries.
-import { dispatchWebhookEvent, processWebhookRetries } from './delivery.js';
+import {
+  dispatchWebhookEvent,
+  processWebhookRetries,
+  deriveResourceKey,
+  __resetSequenceForTest,
+  resetCircuitBreakers,
+} from './delivery.js';
 
 // We also need direct access for HMAC verification — import crypto
 import crypto from 'node:crypto';
@@ -1120,5 +1126,201 @@ describe('processWebhookRetries', () => {
     await processWebhookRetries();
 
     expect(retryLogsSelect.limit).toHaveBeenCalledWith(50);
+  });
+});
+
+// ================================================================
+// SCRUM-2250 (BUG-2026-05-16-001) — per-resource webhook ordering
+// ================================================================
+
+describe('deriveResourceKey (SCRUM-2250)', () => {
+  it('derives a family-namespaced key from data.public_id', () => {
+    expect(deriveResourceKey('anchor.secured', { public_id: 'pub-001' })).toBe('anchor:pub-001');
+    expect(deriveResourceKey('credential.issued', { public_id: 'pub-001' })).toBe(
+      'credential:pub-001',
+    );
+  });
+
+  it('namespaces by event family so anchor and credential with same slug differ', () => {
+    expect(deriveResourceKey('anchor.secured', { public_id: 'X' })).not.toBe(
+      deriveResourceKey('credential.issued', { public_id: 'X' }),
+    );
+  });
+
+  it('returns null for events with no single resource (no public_id)', () => {
+    expect(deriveResourceKey('anchor.batch_secured', { public_ids: ['a', 'b'] })).toBeNull();
+    expect(deriveResourceKey('anchor.secured', { public_id: '' })).toBeNull();
+  });
+});
+
+describe('dispatchWebhookEvent ordering metadata (SCRUM-2250)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    __resetSequenceForTest();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-03-10T12:00:00Z'));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  async function dispatchOnce(eventId: string, data: Record<string, unknown>) {
+    mockRpc.mockResolvedValue({ data: true });
+    endpointsSelect.contains.mockResolvedValue({ data: [MOCK_ENDPOINT], error: null });
+    deliveryLogSelect.single.mockResolvedValue({ data: null, error: null });
+    deliveryLogInsert.single.mockResolvedValue({ data: { id: `log-${eventId}` }, error: null });
+    mockFetch.mockResolvedValue({ ok: true, status: 200, text: () => Promise.resolve('OK') });
+    deliveryLogUpdate.eq.mockResolvedValue({ error: null });
+    setupDbRouting();
+    await dispatchWebhookEvent('org-001', 'anchor.secured', eventId, data);
+  }
+
+  it('stamps resource_key + monotonic sequence into the delivered payload', async () => {
+    await dispatchOnce('evt-1', MOCK_PAYLOAD_DATA);
+
+    const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+    expect(body.resource_key).toBe('anchor:pub-001');
+    expect(typeof body.sequence).toBe('number');
+  });
+
+  it('assigns a strictly greater sequence to a later event for the SAME document', async () => {
+    // Event 1 (earlier) then event 2 (later) for the same public_id.
+    await dispatchOnce('evt-1', MOCK_PAYLOAD_DATA);
+    const seq1 = JSON.parse(mockFetch.mock.calls[0][1].body).sequence;
+
+    mockFetch.mockClear();
+    await dispatchOnce('evt-2', MOCK_PAYLOAD_DATA);
+    const seq2 = JSON.parse(mockFetch.mock.calls[0][1].body).sequence;
+
+    // Same resource_key, strictly increasing sequence → consumer can order
+    // them even if event 1 is later RE-delivered (retry) after event 2.
+    expect(seq2).toBeGreaterThan(seq1);
+  });
+
+  it('persists ordering metadata into the delivery_log payload (frozen for retries)', async () => {
+    await dispatchOnce('evt-1', MOCK_PAYLOAD_DATA);
+    const insertCalls = deliveryLogInsert.insert.mock.calls as unknown as Array<
+      [{ payload: { resource_key?: unknown; sequence?: unknown } }]
+    >;
+    const inserted = insertCalls[0]?.[0];
+    expect(inserted?.payload.resource_key).toBe('anchor:pub-001');
+    expect(typeof inserted?.payload.sequence).toBe('number');
+  });
+});
+
+describe('processWebhookRetries per-resource ordering (SCRUM-2250)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    __resetSequenceForTest();
+    resetCircuitBreakers();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-03-10T12:00:00Z'));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function retryRow(id: string, opts: {
+    resourceKey: string | null;
+    sequence: number | null;
+    attempt?: number;
+    endpoint?: typeof MOCK_ENDPOINT;
+  }) {
+    return {
+      id,
+      attempt_number: opts.attempt ?? 1,
+      payload: {
+        event_type: 'anchor.secured',
+        event_id: id,
+        timestamp: '2026-03-10T11:55:00Z',
+        data: MOCK_PAYLOAD_DATA,
+        resource_key: opts.resourceKey,
+        sequence: opts.sequence,
+      },
+      webhook_endpoints: opts.endpoint ?? RETRY_ENDPOINT,
+    };
+  }
+
+  // Literal public IP (TEST-NET-2) so deliverToEndpoint's SSRF guard skips DNS
+  // resolution — vi.clearAllMocks() wipes the node:dns mock impls, which would
+  // otherwise fail-closed and block delivery intermittently under concurrency.
+  const RETRY_ENDPOINT = { ...MOCK_ENDPOINT, url: 'https://198.51.100.1/cb' };
+
+  /** Route DB so the retry query returns `rows` and deliverToEndpoint works. */
+  function routeRetry(rows: unknown[]) {
+    retryLogsSelect.limit.mockResolvedValue({ data: rows, error: null });
+    deliveryLogSelect.single.mockResolvedValue({ data: null, error: null });
+    deliveryLogInsert.single.mockResolvedValue({ data: { id: 'log-retry' }, error: null });
+    mockFetch.mockResolvedValue({ ok: true, status: 200, text: () => Promise.resolve('OK') });
+    deliveryLogUpdate.eq.mockResolvedValue({ error: null });
+
+    mockDbFrom.mockImplementation((table: string) => {
+      if (table === 'webhook_delivery_logs') {
+        return {
+          select: (...args: string[]) => {
+            if (args[0]?.includes('webhook_endpoints')) {
+              return { eq: retryLogsSelect.eq };
+            }
+            return { eq: vi.fn(() => ({ single: deliveryLogSelect.single })) };
+          },
+          insert: deliveryLogInsert.insert,
+          update: deliveryLogUpdate.update,
+        };
+      }
+      return {};
+    });
+  }
+
+  it('delivers ONLY the lower-sequence (older) event for a resource, holding the newer one', async () => {
+    // Two retrying events for the SAME document: event 1 (seq 100, older) and
+    // event 2 (seq 200, newer). The sweep must NOT fire the newer event while
+    // the older one is still outstanding.
+    const older = retryRow('evt-1', { resourceKey: 'anchor:pub-001', sequence: 100 });
+    const newer = retryRow('evt-2', { resourceKey: 'anchor:pub-001', sequence: 200 });
+    // Intentionally return newer first to prove order-independence.
+    routeRetry([newer, older]);
+
+    const result = await processWebhookRetries();
+
+    // Exactly one head-of-line delivery for the resource this sweep.
+    expect(result).toBe(1);
+    expect(mockFetch).toHaveBeenCalledOnce();
+    // And it must be the OLDER event (event_id evt-1), not the newer.
+    const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+    expect(body.event_id).toBe('evt-1');
+    expect(body.sequence).toBe(100);
+  });
+
+  it('delivers events for DIFFERENT documents concurrently (no global serialization)', async () => {
+    const docA = retryRow('evt-a', { resourceKey: 'anchor:pub-A', sequence: 100 });
+    const docB = retryRow('evt-b', {
+      resourceKey: 'anchor:pub-B',
+      sequence: 110,
+      endpoint: { ...MOCK_ENDPOINT, id: 'ep-002', url: 'https://198.51.100.2/cb' },
+    });
+    routeRetry([docA, docB]);
+
+    const result = await processWebhookRetries();
+
+    // Both distinct resources delivered in the same sweep.
+    expect(result).toBe(2);
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    const ids = mockFetch.mock.calls.map((c) => JSON.parse(c[1].body).event_id).sort();
+    expect(ids).toEqual(['evt-a', 'evt-b']);
+  });
+
+  it('does not block legacy rows (no resource_key) against each other', async () => {
+    // Pre-SCRUM-2250 payloads have no resource_key/sequence — they must keep
+    // the old concurrent behavior, never head-of-line-blocked.
+    const legacy1 = retryRow('evt-l1', { resourceKey: null, sequence: null });
+    const legacy2 = retryRow('evt-l2', { resourceKey: null, sequence: null });
+    routeRetry([legacy1, legacy2]);
+
+    const result = await processWebhookRetries();
+
+    expect(result).toBe(2);
+    expect(mockFetch).toHaveBeenCalledTimes(2);
   });
 });

@@ -211,6 +211,22 @@ interface WebhookPayload {
   event_id: string;
   timestamp: string;
   data: Record<string, unknown>;
+  // ─── SCRUM-2250 (BUG-2026-05-16-001) per-resource ordering ───────────
+  // `resource_key` identifies the logical resource a lifecycle event belongs
+  // to (a document/anchor/attestation `public_id`). `sequence` is a strictly
+  // monotonic integer assigned at dispatch time. Together they let a consumer
+  // detect/reject out-of-order delivery for the SAME resource: if a retried
+  // earlier event (lower `sequence`) arrives AFTER a later one (higher
+  // `sequence`) for the same `resource_key`, the consumer can drop the stale
+  // update. Both are ADDITIVE + NULLABLE (CLAUDE.md §1.8 frozen-API: no v2
+  // bump) — `resource_key` is null for events with no single resource
+  // identity (e.g. anchor.batch_secured), and older payloads replayed from
+  // the DB simply omit them. They are derived from existing data (no schema
+  // column), so the change stays no-migration / T2. The values are frozen
+  // into `webhook_delivery_logs.payload`, so a retry preserves the original
+  // dispatch-time `sequence` even when delivered later.
+  resource_key?: string | null;
+  sequence?: number | null;
 }
 
 interface WebhookEndpoint {
@@ -541,6 +557,53 @@ async function deliverToEndpoint(
   }
 }
 
+// ─── SCRUM-2250 per-resource ordering helpers ───────────────────────────
+//
+// `nextSequence()` returns a strictly-monotonic-increasing integer for the
+// lifetime of the worker process. Wall-clock ms (Date.now()) is the base so
+// the value is meaningful across restarts (a fresh process picks up where the
+// clock is), but a per-process counter guarantees STRICT monotonicity even
+// when two events for the same resource dispatch within the same millisecond
+// (Date.now() alone would collide and break ordering). Consumers only rely on
+// the relative order of `sequence` values for a given `resource_key`, never on
+// the absolute magnitude, so this is safe across restarts: a later event
+// always carries a strictly greater sequence than an earlier one dispatched in
+// the same process, and across restarts the clock advances.
+let __lastSequence = 0;
+function nextSequence(): number {
+  const now = Date.now();
+  __lastSequence = now > __lastSequence ? now : __lastSequence + 1;
+  return __lastSequence;
+}
+
+/** Exported for testing — reset the monotonic sequence counter. */
+export function __resetSequenceForTest(): void {
+  __lastSequence = 0;
+}
+
+/**
+ * Derive the per-resource ordering key from an event's data block. The
+ * resource identity for every anchor/credential/attestation lifecycle event
+ * is its `public_id` (the document/anchor/attestation slug). Aggregate events
+ * with no single resource (e.g. anchor.batch_secured carries `public_ids[]`)
+ * return null — they are not ordered against any one resource. Returning null
+ * means the retry-sweep guard treats them as un-keyed and never serializes
+ * them against per-resource events.
+ */
+export function deriveResourceKey(
+  eventType: string,
+  data: Record<string, unknown>,
+): string | null {
+  const pid = data.public_id;
+  if (typeof pid === 'string' && pid.length > 0) {
+    // Namespace by event family so an anchor and a credential that happen to
+    // share a public_id slug are still ordered independently.
+    const family = eventType.split('.')[0] || 'event';
+    return `${family}:${pid}`;
+  }
+  return null;
+}
+
 /**
  * Dispatch an event to all matching endpoints
  */
@@ -618,9 +681,16 @@ export async function dispatchWebhookEvent(
     event_id: eventId,
     timestamp: new Date().toISOString(),
     data,
+    // SCRUM-2250: stamp ordering metadata at dispatch time so it is frozen
+    // into webhook_delivery_logs.payload and preserved verbatim across retries.
+    resource_key: deriveResourceKey(eventType, data),
+    sequence: nextSequence(),
   };
 
-  // Deliver to all endpoints (in parallel)
+  // Deliver to all endpoints (in parallel). Different resources, and multiple
+  // endpoints for the same event, still fan out concurrently — the ordering
+  // guarantee is enforced per-resource in the retry sweep, not by serializing
+  // the happy-path dispatch.
   await Promise.all(endpoints.map((endpoint) => deliverToEndpoint(endpoint, payload)));
 }
 
@@ -876,19 +946,81 @@ export async function processWebhookRetries(): Promise<number> {
     return 0;
   }
 
-  let retried = 0;
-
-  for (const log of logs) {
-    const endpoint = log.webhook_endpoints as WebhookEndpoint;
-    if (!endpoint?.is_active) continue;
-
-    await deliverToEndpoint(
-      endpoint,
-      log.payload as unknown as WebhookPayload,
-      log.attempt_number + 1
-    );
-    retried++;
+  // ─── SCRUM-2250 (BUG-2026-05-16-001) per-resource ordering guard ─────
+  //
+  // Before this fix, the sweep delivered every `retrying` row in whatever
+  // arbitrary order the query returned them. For the SAME document that meant
+  // a retried earlier event (event 1, failed) could be re-fired AFTER a later
+  // event (event 2) had already been delivered — corrupting consumer state.
+  //
+  // Fix: partition rows by `(endpoint_id, resource_key)`. Within each resource
+  // group, only the SINGLE lowest-`sequence` outstanding event is delivered
+  // this sweep (head-of-line). The newer events for that resource wait until
+  // the older one drains (succeeds → leaves 'retrying', or exhausts retries →
+  // 'failed'), so a newer event is never delivered while an older one for the
+  // same resource is still outstanding. Different resources (and rows with no
+  // resource_key — legacy payloads or aggregate events) are NOT serialized
+  // against each other: each forms its own group and all groups are delivered
+  // concurrently, so throughput across distinct documents is preserved.
+  interface RetryRow {
+    id: string;
+    attempt_number: number;
+    payload: WebhookPayload;
+    webhook_endpoints: WebhookEndpoint | null;
   }
 
-  return retried;
+  const groups = new Map<string, RetryRow[]>();
+  let ungroupedCounter = 0;
+  for (const raw of logs as unknown as RetryRow[]) {
+    const endpoint = raw.webhook_endpoints;
+    if (!endpoint?.is_active) continue;
+
+    const payload = raw.payload as WebhookPayload;
+    const resourceKey = payload?.resource_key;
+    // Rows with a resource_key are serialized within their group. Rows without
+    // one (legacy payloads predating SCRUM-2250, or aggregate events) get a
+    // unique group so they are never head-of-line-blocked by, or block, any
+    // other row — preserving the pre-fix concurrent behavior for them.
+    const groupKey =
+      resourceKey != null
+        ? `${endpoint.id}::${resourceKey}`
+        : `__ungrouped__::${endpoint.id}::${ungroupedCounter++}`;
+
+    const bucket = groups.get(groupKey);
+    if (bucket) bucket.push(raw);
+    else groups.set(groupKey, [raw]);
+  }
+
+  // For each group, pick the head-of-line row: the lowest `sequence`. Rows
+  // without a sequence (legacy) sort first (treated as oldest) so they always
+  // drain before any sequenced event for the same resource.
+  const headRows: RetryRow[] = [];
+  for (const bucket of groups.values()) {
+    bucket.sort((a, b) => {
+      const sa = a.payload?.sequence ?? Number.NEGATIVE_INFINITY;
+      const sb = b.payload?.sequence ?? Number.NEGATIVE_INFINITY;
+      if (sa !== sb) return sa - sb;
+      // Deterministic tie-break when sequences collide (shouldn't, but legacy
+      // rows can both be -Infinity): older attempt first, then id.
+      if (a.attempt_number !== b.attempt_number) return a.attempt_number - b.attempt_number;
+      return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+    });
+    headRows.push(bucket[0]);
+  }
+
+  // Deliver one head row per resource concurrently — distinct documents do
+  // not serialize against each other. allSettled so a single delivery throwing
+  // never aborts the sweep for the other resources.
+  await Promise.allSettled(
+    headRows.map((row) =>
+      deliverToEndpoint(
+        row.webhook_endpoints as WebhookEndpoint,
+        row.payload,
+        row.attempt_number + 1,
+      ),
+    ),
+  );
+
+  // Count of resource head-rows attempted this sweep.
+  return headRows.length;
 }
