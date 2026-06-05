@@ -28,6 +28,7 @@ import {
 } from '@/components/ui/select';
 import { z } from 'zod';
 import { supabase } from '@/lib/supabase';
+import { workerFetch } from '@/lib/workerClient';
 
 const addMemberSchema = z.object({
   userId: z.string().uuid(),
@@ -48,6 +49,14 @@ interface AddExistingMemberModalProps {
   onOpenChange: (open: boolean) => void;
   orgId: string;
   onMemberAdded: () => void;
+  /**
+   * When true, search + add go through the service_role worker admin endpoints
+   * instead of the browser's RLS-scoped Supabase queries. Set by OrgProfilePage
+   * when the viewer is a platform admin who is NOT a member of this org — their
+   * RLS-scoped `profiles`/`org_members` reads return 0 rows, so the client-side
+   * path can't find users or detect existing members.
+   */
+  useAdminEndpoints?: boolean;
 }
 
 export function AddExistingMemberModal({
@@ -55,6 +64,7 @@ export function AddExistingMemberModal({
   onOpenChange,
   orgId,
   onMemberAdded,
+  useAdminEndpoints = false,
 }: Readonly<AddExistingMemberModalProps>) {
   const [searchEmail, setSearchEmail] = useState('');
   const [role, setRole] = useState<MemberRole>('INDIVIDUAL');
@@ -97,7 +107,30 @@ export function AddExistingMemberModal({
     setSuccess(false);
 
     try {
-      // Search for user by email
+      if (useAdminEndpoints) {
+        // Platform admin viewing a foreign org: RLS hides profiles/org_members
+        // from them, so search via the service_role worker endpoint. The
+        // endpoint also tells us if the user already belongs (its add path
+        // returns 409), but we surface the cleaner "already a member" message
+        // up-front by relying on the add call's response.
+        const res = await workerFetch(
+          `/api/admin/users/search?email=${encodeURIComponent(trimmed)}`,
+          { method: 'GET' },
+        );
+        if (!res.ok) {
+          setError('Search failed. Please try again.');
+          return;
+        }
+        const body = (await res.json().catch(() => ({}))) as { user: FoundUser | null };
+        if (!body.user) {
+          setError('No user found with that email. Use "Invite Member" to send them an invitation instead.');
+          return;
+        }
+        setFoundUser(body.user);
+        return;
+      }
+
+      // Standard org-member path: search for user by email
       const { data: profiles, error: searchError } = await supabase
         .from('profiles')
         .select('id, email, full_name')
@@ -114,10 +147,14 @@ export function AddExistingMemberModal({
         return;
       }
 
-      // Check if already a member
+      // Check if already a member.
+      // The table is `org_members` (id, user_id, org_id, role, joined_at,
+      // invited_by) — NOT `org_memberships`, which does not exist and returned
+      // PGRST205 "table not found" (silently swallowed, so the guard never
+      // fired).
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { data: existing } = await (supabase as any)
-        .from('org_memberships')
+        .from('org_members')
         .select('id')
         .eq('user_id', profiles[0].id)
         .eq('org_id', orgId)
@@ -134,7 +171,7 @@ export function AddExistingMemberModal({
     } finally {
       setSearching(false);
     }
-  }, [searchEmail, orgId]);
+  }, [searchEmail, orgId, useAdminEndpoints]);
 
   const handleAdd = useCallback(async () => {
     if (!foundUser) return;
@@ -155,17 +192,32 @@ export function AddExistingMemberModal({
     setError(null);
 
     try {
-      // Add user to organization via SECURITY DEFINER RPC — no direct insert fallback
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const { error: addError } = await (supabase as any).rpc('add_org_member', {
-        p_user_id: parsed.data.userId,
-        p_org_id: parsed.data.orgId,
-        p_role: parsed.data.role,
-      });
+      if (useAdminEndpoints) {
+        // Platform-admin path: the add_org_member RPC checks auth.uid() against
+        // org_members and would reject a platform admin who isn't a member of
+        // this org. Use the service_role worker endpoint instead.
+        const res = await workerFetch(`/api/admin/organizations/${parsed.data.orgId}/members`, {
+          method: 'POST',
+          body: JSON.stringify({ user_id: parsed.data.userId, role: parsed.data.role }),
+        });
+        if (!res.ok) {
+          const body = (await res.json().catch(() => ({}))) as { error?: string };
+          setError(body.error || 'Failed to add member.');
+          return;
+        }
+      } else {
+        // Standard org-admin path: add via SECURITY DEFINER RPC — no direct insert fallback
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { error: addError } = await (supabase as any).rpc('add_org_member', {
+          p_user_id: parsed.data.userId,
+          p_org_id: parsed.data.orgId,
+          p_role: parsed.data.role,
+        });
 
-      if (addError) {
-        setError(addError.message || 'Failed to add member.');
-        return;
+        if (addError) {
+          setError(addError.message || 'Failed to add member.');
+          return;
+        }
       }
 
       setSuccess(true);
@@ -180,7 +232,7 @@ export function AddExistingMemberModal({
     } finally {
       setAdding(false);
     }
-  }, [foundUser, orgId, role, onMemberAdded, handleOpenChange]);
+  }, [foundUser, orgId, role, onMemberAdded, handleOpenChange, useAdminEndpoints]);
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
@@ -244,6 +296,7 @@ export function AddExistingMemberModal({
               <Button
                 type="button"
                 variant="outline"
+                aria-label="Search"
                 onClick={handleSearch}
                 disabled={searching || adding || !searchEmail.trim() || success}
               >

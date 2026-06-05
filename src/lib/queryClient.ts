@@ -39,6 +39,7 @@ export const queryKeys = {
   credits: (userId: string) => ['credits', userId] as const,
   billing: (userId: string) => ['billing', userId] as const,
   orgMembers: (orgId: string) => ['orgMembers', orgId] as const,
+  adminOrgMembers: (orgId: string) => ['adminOrgMembers', orgId] as const,
   credentialTemplates: (orgId: string) => ['credentialTemplates', orgId] as const,
   myCredentials: (userId: string) => ['myCredentials', userId] as const,
   checklist: (userId: string, orgId?: string | null) => ['checklist', userId, orgId ?? 'none'] as const,
