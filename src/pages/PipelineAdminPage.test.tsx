@@ -534,6 +534,12 @@ describe('PipelineAdminPage — records pagination (SCRUM-2006)', () => {
     await screen.findByTestId('pipeline-page-jump-input');
   }
 
+  async function expectPageIndicator(text: string) {
+    await waitFor(() => {
+      expect(screen.getByTestId('pipeline-page-indicator')).toHaveTextContent(text);
+    });
+  }
+
   it('jumps directly to a valid page and re-queries that page (1-based RPC)', async () => {
     await renderAndWaitForRecords();
 
@@ -546,7 +552,7 @@ describe('PipelineAdminPage — records pagination (SCRUM-2006)', () => {
       expect(lastRecordsPageCall()).toMatchObject({ p_page: 7, p_page_size: 25 });
     });
     // Indicator reflects the new current page.
-    expect(screen.getByTestId('pipeline-page-indicator')).toHaveTextContent('7 / 10');
+    await expectPageIndicator('7 / 10');
   });
 
   it('supports Enter to jump from the go-to-page input', async () => {
@@ -572,7 +578,7 @@ describe('PipelineAdminPage — records pagination (SCRUM-2006)', () => {
       // 250 / 25 = 10 pages → clamp to page 10 → p_page 10.
       expect(lastRecordsPageCall()).toMatchObject({ p_page: 10 });
     });
-    expect(screen.getByTestId('pipeline-page-indicator')).toHaveTextContent('10 / 10');
+    await expectPageIndicator('10 / 10');
   });
 
   it('clamps a below-range jump (0 or negative) to the first page', async () => {
@@ -586,7 +592,7 @@ describe('PipelineAdminPage — records pagination (SCRUM-2006)', () => {
     fireEvent.change(screen.getByTestId('pipeline-page-jump-input'), { target: { value: '0' } });
     fireEvent.click(screen.getByTestId('pipeline-page-jump-go'));
     await waitFor(() => expect(lastRecordsPageCall()).toMatchObject({ p_page: 1 }));
-    expect(screen.getByTestId('pipeline-page-indicator')).toHaveTextContent('1 / 10');
+    await expectPageIndicator('1 / 10');
   });
 
   it('rejects a non-numeric / empty jump without changing the page', async () => {
@@ -608,7 +614,7 @@ describe('PipelineAdminPage — records pagination (SCRUM-2006)', () => {
 
     const callsAfter = rpc.mock.calls.filter((c) => c[0] === 'get_public_records_page').length;
     expect(callsAfter).toBe(callsBefore);
-    expect(screen.getByTestId('pipeline-page-indicator')).toHaveTextContent('3 / 10');
+    await expectPageIndicator('3 / 10');
   });
 
   it('changing page size re-queries with the new size and resets to page 1', async () => {
@@ -627,7 +633,7 @@ describe('PipelineAdminPage — records pagination (SCRUM-2006)', () => {
       expect(lastRecordsPageCall()).toMatchObject({ p_page: 1, p_page_size: 100 });
     });
     // 250 / 100 = 3 pages now.
-    expect(screen.getByTestId('pipeline-page-indicator')).toHaveTextContent('1 / 3');
+    await expectPageIndicator('1 / 3');
   });
 
   it('disables Previous on the first page and Next on the last page', async () => {
@@ -687,7 +693,7 @@ describe('PipelineAdminPage — records pagination (SCRUM-2006)', () => {
       });
       // The indicator denominator is the served ceiling (10000), not 12000, and the
       // current page is the clamped 10000 — no 50000 desync.
-      expect(screen.getByTestId('pipeline-page-indicator')).toHaveTextContent('10000 / 10000');
+      await expectPageIndicator('10000 / 10000');
     });
 
     it('caps the Next button so prev/next cannot walk the client past page 10000', async () => {
@@ -701,7 +707,7 @@ describe('PipelineAdminPage — records pagination (SCRUM-2006)', () => {
 
       expect(screen.getByTestId('pipeline-page-next')).toBeDisabled();
       expect(screen.getByTestId('pipeline-page-prev')).not.toBeDisabled();
-      expect(screen.getByTestId('pipeline-page-indicator')).toHaveTextContent('10000 / 10000');
+      await expectPageIndicator('10000 / 10000');
     });
   });
 });
