@@ -104,13 +104,14 @@ export function credlyBadgeToEvidence(
     : undefined;
 
   const proofDetected = badge.proof !== undefined && badge.proof !== null;
+  const credentialIdHash = sha256Hex(badge.id);
 
   const evidence: CredentialEvidenceHashInput = {
     schemaVersion: CREDENTIAL_EVIDENCE_SCHEMA_VERSION,
     source: {
       provider: CREDLY_SOURCE_PROVIDER_SLUG,
       url: source_url,
-      id: badge.id,
+      id: `sha256:${credentialIdHash}`,
       fetchedAt: deps.fetchedAt,
       payloadHash: deps.payloadHash,
       payloadContentType: 'application/json',
@@ -122,7 +123,7 @@ export function credlyBadgeToEvidence(
       issuerName: badge.badge_template?.owner?.name,
       issuedAt: badge.issued_at,
       expiresAt: badge.expires_at ?? undefined,
-      credentialIdHash: sha256Hex(badge.id),
+      credentialIdHash,
       recipientIdentifierHash,
     },
     evidence: {

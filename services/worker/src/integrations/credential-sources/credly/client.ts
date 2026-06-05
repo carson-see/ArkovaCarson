@@ -49,7 +49,7 @@ export const CredlyIssuedBadgeSchema = z
   .object({
     id: z.string().min(1),
     issued_at: z.string().optional(),
-    expires_at: z.string().nullable().optional(),
+    expires_at: z.string().datetime({ offset: true }).nullable().optional(),
     public_url: z.string().url().optional(),
     image_url: z.string().url().optional(),
     /** Recipient block — Credly redacts email behind a hash for non-issuers. */
@@ -57,7 +57,6 @@ export const CredlyIssuedBadgeSchema = z
       .object({
         email: z.string().email().optional(),
       })
-      .passthrough()
       .optional(),
     badge_template: z
       .object({
@@ -68,10 +67,8 @@ export const CredlyIssuedBadgeSchema = z
           .object({
             name: z.string().optional(),
           })
-          .passthrough()
           .optional(),
       })
-      .passthrough()
       .optional(),
     /**
      * Open Badges 3.0 — when Credly returns the OB3-formatted credential,
@@ -81,7 +78,7 @@ export const CredlyIssuedBadgeSchema = z
     proof: z.unknown().optional(),
     '@context': z.unknown().optional(),
   })
-  .passthrough();
+  .strip();
 export type CredlyIssuedBadge = z.infer<typeof CredlyIssuedBadgeSchema>;
 
 export const CredlyIssuedBadgePageSchema = z.object({
@@ -93,7 +90,6 @@ export const CredlyIssuedBadgePageSchema = z.object({
       total_pages: z.number().int().nonnegative().optional(),
       per_page: z.number().int().positive().optional(),
     })
-    .passthrough()
     .optional(),
 });
 export type CredlyIssuedBadgePage = z.infer<typeof CredlyIssuedBadgePageSchema>;
@@ -105,6 +101,7 @@ export type FetchLike = (
     method?: string;
     headers?: Record<string, string>;
     body?: string;
+    signal?: AbortSignal;
   },
 ) => Promise<{
   ok: boolean;
@@ -115,6 +112,8 @@ export type FetchLike = (
 
 /** Skew window subtracted from `expires_in` so we re-mint before expiry. */
 const TOKEN_REFRESH_SKEW_MS = 60_000;
+const REQUEST_TIMEOUT_MS = 15_000;
+const ERROR_DETAIL_MAX_LENGTH = 160;
 
 export interface CredlyClientDeps {
   fetch: FetchLike;
@@ -162,6 +161,32 @@ export function createCredlyClient(deps: CredlyClientDeps): CredlyClient {
 
   // In-memory token cache keyed by client_id.
   const tokenCache = new Map<string, { token: string; expiresAtMs: number }>();
+  const tokenRefreshes = new Map<string, Promise<string>>();
+
+  function timeoutSignal(): AbortSignal {
+    return AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+  }
+
+  async function boundedErrorDetail(resp: { text(): Promise<string> }) {
+    const raw = await resp.text().catch(() => '');
+    if (!raw) return '';
+    const redacted = raw
+      .replace(/"client_secret"\s*:\s*"[^"]*"/gi, '"client_secret":"[redacted]"')
+      .replace(/client_secret=[^&\s"]+/gi, 'client_secret=[redacted]');
+    return redacted.slice(0, ERROR_DETAIL_MAX_LENGTH);
+  }
+
+  async function throwCredlyHttpError(
+    label: string,
+    resp: { status: number; text(): Promise<string> },
+  ): Promise<never> {
+    const detail = await boundedErrorDetail(resp);
+    throw new Error(
+      detail
+        ? `${label}: HTTP ${resp.status}: ${detail}`
+        : `${label}: HTTP ${resp.status}`,
+    );
+  }
 
   async function getAccessToken({
     clientId,
@@ -177,6 +202,23 @@ export function createCredlyClient(deps: CredlyClientDeps): CredlyClient {
       return cached.token;
     }
 
+    const inFlight = tokenRefreshes.get(clientId);
+    if (inFlight) return inFlight;
+
+    const refresh = mintAccessToken(clientId, clientSecret, scope);
+    tokenRefreshes.set(clientId, refresh);
+    try {
+      return await refresh;
+    } finally {
+      tokenRefreshes.delete(clientId);
+    }
+  }
+
+  async function mintAccessToken(
+    clientId: string,
+    clientSecret: string,
+    scope?: string,
+  ): Promise<string> {
     // Credly's documented form: POST /oauth/token with Basic auth + form body.
     const basic = Buffer.from(`${clientId}:${clientSecret}`).toString('base64');
     const body = new URLSearchParams({ grant_type: 'client_credentials' });
@@ -190,11 +232,10 @@ export function createCredlyClient(deps: CredlyClientDeps): CredlyClient {
         Accept: 'application/json',
       },
       body: body.toString(),
+      signal: timeoutSignal(),
     });
     if (!resp.ok) {
-      throw new Error(
-        `Credly OAuth token request failed: HTTP ${resp.status}`,
-      );
+      await throwCredlyHttpError('Credly OAuth token request failed', resp);
     }
     const parsed = CredlyTokenResponseSchema.parse(await resp.json());
     const expiresAtMs = deps.now() + parsed.expires_in * 1000;
@@ -221,6 +262,8 @@ export function createCredlyClient(deps: CredlyClientDeps): CredlyClient {
     url.searchParams.set('page[number]', String(page));
     url.searchParams.set('page[size]', String(perPage));
     if (recipientEmail) {
+      // Credly's issuer API exposes recipient filtering only as a
+      // server-to-server query parameter. We never log the full URL.
       url.searchParams.set('filter[recipient_email]', recipientEmail);
     }
 
@@ -230,11 +273,10 @@ export function createCredlyClient(deps: CredlyClientDeps): CredlyClient {
         Authorization: `Bearer ${accessToken}`,
         Accept: 'application/json',
       },
+      signal: timeoutSignal(),
     });
     if (!resp.ok) {
-      throw new Error(
-        `Credly issued_badges request failed: HTTP ${resp.status}`,
-      );
+      await throwCredlyHttpError('Credly issued_badges request failed', resp);
     }
     return CredlyIssuedBadgePageSchema.parse(await resp.json());
   }
