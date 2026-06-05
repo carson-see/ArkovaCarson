@@ -1875,6 +1875,12 @@ export const ERROR_BOUNDARY_LABELS = {
   RETRY: 'Try Again',
   GO_HOME: 'Dashboard',
   SKIP_TO_CONTENT: 'Skip to main content',
+  // SCRUM-2246: shown when a page failed to load because a new version was
+  // deployed while this tab was open. Refreshing pulls the newest files.
+  STALE_VERSION_TITLE: 'A new version is available',
+  STALE_VERSION_DESCRIPTION:
+    'This page could not load because the app was updated while you were away. Refresh to get the newest version.',
+  STALE_VERSION_REFRESH: 'Refresh',
 } as const;
 
 // =============================================================================
