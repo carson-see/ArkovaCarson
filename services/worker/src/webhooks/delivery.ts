@@ -423,6 +423,23 @@ async function deliverToEndpoint(
       },
     );
     logger.error({ error: logError }, 'Failed to create delivery log');
+
+    // SCRUM-2244 (HARDEN-1-A): when the delivery_log write fails persistently
+    // (after the single transient retry + duplicate-key recovery above), the
+    // audit row for this event would otherwise be silently dropped — a SOC2
+    // audit-integrity SEV1. The existing DLQ only covered HTTP-delivery
+    // failure; here we route the *log-write* failure to the same durable
+    // dead-letter queue so the event is preserved (keyed by idempotency_key)
+    // and can be reconciled/replayed. No new table, no PII beyond what the
+    // table already stores. The drop signal is propagated to the caller via
+    // the `false` return (observed by processWebhookRetries; dispatchWebhook-
+    // Event fans out best-effort and does not gate on the boolean).
+    await moveToDeadLetterQueue(
+      endpoint,
+      payload,
+      `delivery_log write failed (audit-integrity): ${(logError as { message?: string })?.message ?? 'unknown'} [idempotency_key=${idempotencyKey}]`,
+      attempt,
+    );
     return false;
   }
 

@@ -24,6 +24,8 @@ const {
   endpointsSelect,
   // Retry logs query chain
   retryLogsSelect,
+  // SCRUM-2244: dead-letter-queue insert chain
+  dlqInsert,
   // RPC mock
   mockRpc,
 } = vi.hoisted(() => {
@@ -109,6 +111,15 @@ const {
     limit: retryLogsLimit,
   };
 
+  // SCRUM-2244: dead-letter-queue insert chain — .from(...).insert(...)
+  // returns a resolved promise so `await (db as any).from(...).insert(...)`
+  // works. dlqInsert lets tests assert the dropped-log row is preserved
+  // durably when the delivery-log write itself fails persistently.
+  const dlqInsert = vi.fn(
+    (_row?: unknown): Promise<{ data: unknown; error: unknown }> =>
+      Promise.resolve({ data: null, error: null }),
+  );
+
   const mockRpc = vi.fn();
 
   const mockFetch = vi.fn();
@@ -126,6 +137,7 @@ const {
     deliveryLogUpdate,
     endpointsSelect,
     retryLogsSelect,
+    dlqInsert,
     mockRpc,
   };
 });
@@ -225,6 +237,10 @@ function setupDbRouting(overrides: Record<string, unknown> = {}) {
       case 'webhook_endpoints':
         return {
           select: endpointsSelect.select,
+        };
+      case 'webhook_dead_letter_queue':
+        return {
+          insert: dlqInsert,
         };
       default:
         return {};
@@ -672,6 +688,64 @@ describe('deliverToEndpoint', () => {
       }),
     );
   });
+
+  it('SCRUM-2244: preserves the event in the dead-letter queue when the delivery_log write fails persistently (audit-integrity)', async () => {
+    vi.useRealTimers();
+
+    // Idempotency lookup: no existing row (first attempt, insert path).
+    deliveryLogSelect.single.mockResolvedValue({ data: null, error: null });
+    // Both the first insert AND the single transient retry fail with the same
+    // persistent transient error. Pre-fix: Sentry capture + return false, and
+    // the audit row is silently dropped (no durable record of the event).
+    deliveryLogInsert.single
+      .mockResolvedValueOnce({ data: null, error: { message: 'TypeError: fetch failed' } })
+      .mockResolvedValueOnce({ data: null, error: { message: 'TypeError: fetch failed' } });
+
+    mockRpc.mockResolvedValue({ data: true });
+    endpointsSelect.contains.mockResolvedValue({ data: [MOCK_ENDPOINT], error: null });
+    dlqInsert.mockClear();
+    dlqInsert.mockReturnValue(Promise.resolve({ data: { id: 'dlq-1' }, error: null }));
+    setupDbRouting();
+
+    await dispatchWebhookEvent('org-001', 'anchor.secured', 'evt-audit-001', MOCK_PAYLOAD_DATA);
+
+    // No HTTP delivery attempted — the log row never committed.
+    expect(mockFetch).not.toHaveBeenCalled();
+
+    // AUDIT-INTEGRITY CONTRACT: the event is NOT silently dropped. It is
+    // durably preserved in the dead-letter queue, keyed by the same
+    // idempotency_key the delivery-log row would have used, so it can be
+    // reconciled/replayed later.
+    expect(dlqInsert).toHaveBeenCalledTimes(1);
+    const dlqRow = dlqInsert.mock.calls[0][0] as unknown as {
+      endpoint_id: string;
+      org_id: string;
+      event_type: string;
+      event_id: string;
+      payload: { event_id: string; data: Record<string, unknown> };
+      error_message: string;
+    };
+    expect(dlqRow.endpoint_id).toBe('ep-001');
+    expect(dlqRow.org_id).toBe('org-001');
+    expect(dlqRow.event_type).toBe('anchor.secured');
+    expect(dlqRow.event_id).toBe('evt-audit-001');
+    // The full webhook payload is preserved so the event can be replayed.
+    expect(dlqRow.payload.event_id).toBe('evt-audit-001');
+    // The error_message records WHY it landed in the DLQ (log-write failure,
+    // not HTTP-delivery failure) and carries the idempotency key for dedupe.
+    expect(dlqRow.error_message).toMatch(/delivery_log/i);
+    expect(dlqRow.error_message).toContain('ep-001-anchor.secured-evt-audit-001');
+
+    // Still surfaced to Sentry for alerting (existing SCRUM-1805 behaviour).
+    expect(mockSentry.captureException).toHaveBeenCalledWith(
+      expect.any(Error),
+      expect.objectContaining({
+        tags: expect.objectContaining({ stage: 'delivery_log_insert' }),
+      }),
+    );
+
+    vi.useFakeTimers();
+  }, 10_000);
 
   it('retries delivery_log insert once on transient fetch failure', async () => {
     vi.useRealTimers();
