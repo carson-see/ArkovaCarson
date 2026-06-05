@@ -25,8 +25,14 @@ meaningless neighbours, so the tool silently degraded to `text_fallback`/total=0
   now retains the validated raw `X-API-Key` on `AuthResult.callerApiKey`
   (Bearer callers → `null`); it flows into `SupabaseConfig.callerApiKey` and is
   forwarded verbatim as `X-API-Key` to the worker. This preserves the caller's
-  org-scoping, scopes, and **per-caller rate limits** (the worker
-  `aiRateLimiter` buckets on the key) — NOT a shared service-account key. The
+  org-scoping, scopes, and **per-caller rate limits** — NOT a shared
+  service-account key. Per-caller limiting is enforced by the worker's
+  globally-mounted `keyedRateLimiter` (keyed on `req.apiKey.keyId`,
+  `router.ts:161-173`), driven by the forwarded key. NOTE: the `/nessie/query`
+  mount's `aiRateLimiter` does NOT provide per-caller isolation here — it keys
+  on `ai:${req.authUserId ?? req.ip}` and `req.authUserId` is only set by
+  `requireAuth` (JWT), which is NOT on the nessie mount, so for API-key callers
+  it buckets on the edge IP (shared), not the caller key. The
   key is NEVER logged: worker-proxy failures log status/`err.name` only, never
   the key or full URL. Bearer callers (no raw key) degrade to text fallback.
 - **Graceful degrade:** any worker network/HTTP/shape failure → `null` →
@@ -37,10 +43,22 @@ meaningless neighbours, so the tool silently degraded to `text_fallback`/total=0
   `wrangler deploy --var WORKER_BASE_URL:https://api.arkova.ai`.
 - **Tests (`mcp-tools.test.ts`, `describe('handleNessieQuery worker proxy')`):**
   (a) worker URL hit with forwarded caller `X-API-Key` (≠ service-role);
-  (b) worker hit maps to mode + non-zero total + results w/ similarity+citation;
-  (c) worker error → text fallback; (d) caller key never logged. Red→green.
+  (b) retrieval hit maps to mode + non-zero total + results w/ similarity+citation;
+  (b2) **mode=context** maps the worker's `{answer, citations, confidence}`
+  envelope (which has NO `results` field) → non-empty result carrying the
+  synthesized answer + citations (regression guard against the prior total:0
+  silent drop); (b3) context graceful-fallback (worker emits `results`) maps as
+  retrieval; (c) worker error → text fallback; (d) caller key never logged.
+  Fixture caller key uses the real `ak_live_*` prefix (worker `extractApiKey`
+  only recognizes `ak_`). Red→green.
+- **mode=context shape (`nessieWorkerQuery`):** the worker returns TWO shapes —
+  retrieval → `{results, count, query}`, context → `{answer, citations,
+  confidence, ...}` (NO `results`). `nessieWorkerQuery` branches on mode: context
+  maps answer+citations (total = citation count); retrieval (and the worker's
+  context→retrieval graceful-fallback that emits `results`) maps `results`.
 - **§1.6 / §1.10:** read-only RAG over already-public records (no document
-  processing); rate limits enforced by the worker on the forwarded caller key.
+  processing); per-caller rate limiting enforced by the worker's global
+  `keyedRateLimiter` on the forwarded caller key (see AUTH note above).
 
 ## Edge MCP Truthfulness PR-1 — anchor mapping + nessie casing + test harness (2026-06-05)
 

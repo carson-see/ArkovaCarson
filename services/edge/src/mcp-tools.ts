@@ -914,12 +914,55 @@ interface WorkerNessieResult {
 }
 
 /**
+ * Worker context-mode citation (mirror of services/worker NessieCitation).
+ * mode=context returns a synthesized answer + these citations, NOT `results`.
+ */
+interface WorkerNessieCitation {
+  record_id: string;
+  source: string;
+  source_url: string;
+  title: string | null;
+  relevance_score: number;
+  anchor_proof: Record<string, unknown> | null;
+  excerpt: string;
+}
+
+/**
+ * Worker mode=context response shape (mirror of services/worker
+ * NessieContextResponse). NOTE: there is NO `results` field — the synthesized
+ * answer lives in `answer` and the supporting documents in `citations`.
+ */
+interface WorkerNessieContextResponse {
+  answer: string;
+  citations: WorkerNessieCitation[];
+  confidence: number;
+  risks?: string[];
+  recommendations?: string[];
+  model?: string;
+  query?: string;
+  task_type?: string;
+  tokens_used?: number;
+  cached?: boolean;
+  // Present only on the worker's graceful-degradation fallback branch, where
+  // it falls back to retrieval and emits `results` instead of `answer`.
+  results?: WorkerNessieResult[];
+  fallback?: boolean;
+}
+
+/**
  * Vector search via the worker's Gemini-space endpoint (BUG-3a).
  *
  * Issues `GET {workerBaseUrl}/api/v1/nessie/query?q=&mode=&limit=` with the
  * caller's raw API key forwarded as `X-API-Key` (never the service-role key).
- * Maps the worker JSON → the MCP `{query, mode, total, results}` contract,
- * preserving `relevance_score` (as `similarity`) and the anchor citation.
+ *
+ * The worker returns TWO different shapes depending on `mode`:
+ *   - retrieval → `{results, count, query}` — mapped to the MCP
+ *     `{query, mode, total, results}` contract, preserving `relevance_score`
+ *     (as `similarity`) and the anchor citation.
+ *   - context  → `{answer, citations, confidence, ...}` with NO `results`
+ *     field — mapped to `{query, mode, answer, confidence, citations, total}`
+ *     so the synthesized answer + citations survive (previously dropped → the
+ *     edge silently returned total:0 for every context query).
  *
  * Returns `null` on any network/HTTP/shape failure so the caller can fall
  * back to the text path. NEVER logs `config.callerApiKey`.
@@ -961,11 +1004,51 @@ async function nessieWorkerQuery(
       return null;
     }
 
-    const body = (await response.json()) as {
+    const body = (await response.json()) as WorkerNessieContextResponse & {
       results?: WorkerNessieResult[];
       count?: number;
-      query?: string;
     };
+
+    // MODE: context — the worker returns a synthesized {answer, citations,
+    // confidence} envelope with NO top-level `results` field (see
+    // services/worker/src/api/v1/nessie-query.ts context branch). Mapping only
+    // `body.results` here would silently drop the answer + citations and
+    // report total:0. Preserve them into the MCP text contract instead.
+    //
+    // The one exception is the worker's graceful-degradation path: on a
+    // context-generation failure it falls back to retrieval and emits
+    // `{results, fallback:true}`. Detect that by the presence of `results`
+    // (and absence of a synthesized `answer`) and map it like retrieval.
+    const isContextEnvelope =
+      mode === 'context' && !Array.isArray(body.results) && typeof body.answer === 'string';
+
+    if (isContextEnvelope) {
+      const citations = Array.isArray(body.citations) ? body.citations : [];
+      const mappedCitations = citations.map((c) => ({
+        record_id: c.record_id,
+        title: c.title,
+        source: c.source,
+        source_url: c.source_url,
+        similarity: c.relevance_score,
+        anchor_proof: c.anchor_proof ?? null,
+        excerpt: c.excerpt,
+      }));
+
+      return textResult({
+        query,
+        mode,
+        answer: body.answer,
+        confidence: body.confidence,
+        citations: mappedCitations,
+        // `total` reflects citation count so context queries no longer report
+        // total:0 when a real synthesized answer was returned.
+        total: mappedCitations.length,
+        ...(body.risks ? { risks: body.risks } : {}),
+        ...(body.recommendations ? { recommendations: body.recommendations } : {}),
+      });
+    }
+
+    // MODE: retrieval (or context graceful-fallback emitting `results`).
     const workerResults = Array.isArray(body.results) ? body.results : [];
 
     const results = workerResults.map((r) => ({

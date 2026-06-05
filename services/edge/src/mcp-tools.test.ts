@@ -255,7 +255,7 @@ describe('handleNessieQuery worker proxy (BUG-3a)', () => {
   const PROXY_CONFIG: SupabaseConfig = {
     ...CONFIG,
     workerBaseUrl: 'https://worker.test.internal',
-    callerApiKey: 'ark_live_caller_secret_key',
+    callerApiKey: 'ak_live_caller_secret_key',
   };
 
   const workerResult = {
@@ -290,7 +290,7 @@ describe('handleNessieQuery worker proxy (BUG-3a)', () => {
     const init = mockFetch.mock.calls[0][1] as RequestInit;
     const headers = init.headers as Record<string, string>;
     // Forwarded caller key — NOT the supabase service-role key.
-    expect(headers['X-API-Key']).toBe('ark_live_caller_secret_key');
+    expect(headers['X-API-Key']).toBe('ak_live_caller_secret_key');
     expect(headers['X-API-Key']).not.toBe(CONFIG.supabaseKey);
     // Must NOT embed with Cloudflare bge-base anymore: no Supabase RPC hit.
     expect(url).not.toContain('search_public_record_embeddings');
@@ -318,6 +318,83 @@ describe('handleNessieQuery worker proxy (BUG-3a)', () => {
     expect(parsed.results[0].anchor_proof.verify_url).toBe(
       'https://app.arkova.ai/verify/ARK-DOC-XYZ',
     );
+  });
+
+  it('(b2) mode=context → maps worker {answer, citations, confidence} envelope (NOT total:0)', async () => {
+    // The worker's mode=context branch returns a synthesized answer + citations
+    // with NO top-level `results` field. The edge must preserve the answer +
+    // citations instead of reading only `results` (which silently dropped them).
+    const workerContextResponse = {
+      answer: 'Tesla reported total revenue of $96.8B in its FY2024 10-K filing.',
+      citations: [
+        {
+          record_id: 'rec-gemini-1',
+          source: 'edgar',
+          source_url: 'https://sec.gov/y',
+          title: 'Tesla Inc. 10-K',
+          relevance_score: 0.91,
+          anchor_proof: {
+            chain_tx_id: 'a'.repeat(64),
+            content_hash: 'b'.repeat(64),
+            explorer_url: 'https://mempool.space/tx/' + 'a'.repeat(64),
+            verify_url: 'https://app.arkova.ai/verify/ARK-DOC-XYZ',
+          },
+          excerpt: 'Total revenues were $96,773 million for the year ended December 31, 2024.',
+        },
+      ],
+      confidence: 0.87,
+      model: 'gemini-2.0',
+      query: 'Tesla revenue 2024',
+      task_type: 'compliance_qa',
+    };
+
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => workerContextResponse,
+    });
+
+    const result = await handleNessieQuery(
+      { query: 'Tesla revenue 2024', mode: 'context', limit: 5 },
+      PROXY_CONFIG,
+    );
+    expect(result.isError).toBeUndefined();
+
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.mode).toBe('context');
+    // Regression guard: the synthesized answer must survive (was dropped → empty).
+    expect(parsed.answer).toContain('$96.8B');
+    expect(parsed.confidence).toBe(0.87);
+    // Citations carry through with similarity + anchor proof + excerpt.
+    expect(parsed.citations).toHaveLength(1);
+    expect(parsed.citations[0].similarity).toBe(0.91);
+    expect(parsed.citations[0].anchor_proof.verify_url).toBe(
+      'https://app.arkova.ai/verify/ARK-DOC-XYZ',
+    );
+    expect(parsed.citations[0].excerpt).toContain('$96,773 million');
+    // Must NOT report total:0 when a real answer + citations were returned.
+    expect(parsed.total).toBe(1);
+    expect(parsed.total).not.toBe(0);
+  });
+
+  it('(b3) mode=context worker graceful-fallback (emits results) → maps as retrieval', async () => {
+    // The worker can fall back to retrieval inside context mode on a generation
+    // failure, emitting {results, fallback:true}. The edge must map those.
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ results: [workerResult], count: 1, query: 'Tesla filings', fallback: true }),
+    });
+
+    const result = await handleNessieQuery(
+      { query: 'Tesla filings', mode: 'context', limit: 5 },
+      PROXY_CONFIG,
+    );
+    expect(result.isError).toBeUndefined();
+
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.mode).toBe('context');
+    expect(parsed.total).toBe(1);
+    expect(parsed.results).toHaveLength(1);
+    expect(parsed.results[0].similarity).toBe(0.91);
   });
 
   it('(c) worker error → graceful text fallback (does not throw, returns text_fallback)', async () => {
@@ -356,7 +433,7 @@ describe('handleNessieQuery worker proxy (BUG-3a)', () => {
       .flat()
       .map((a) => (typeof a === 'string' ? a : JSON.stringify(a)))
       .join(' ');
-    expect(allLogged).not.toContain('ark_live_caller_secret_key');
+    expect(allLogged).not.toContain('ak_live_caller_secret_key');
 
     errSpy.mockRestore();
     logSpy.mockRestore();
