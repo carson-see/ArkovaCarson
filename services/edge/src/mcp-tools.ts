@@ -474,8 +474,12 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
  * When `publicId` is provided, the result includes a `public_id` echo key
  * (batch uses this to identify rows). When omitted, the single-record
  * contract is preserved.
+ *
+ * Exported for unit tests (SCRUM-2226). The export is test-surface only —
+ * no runtime behavior change; both `handleVerifyCredential` and
+ * `handleVerifyBatch` still call it internally.
  */
-function shapeAnchorRow(
+export function shapeAnchorRow(
   data: Record<string, unknown>,
   publicId?: string,
 ): Record<string, unknown> {
