@@ -18,6 +18,7 @@ This directory now starts with the Path C baseline, `00000000000000_baseline_at_
 | `0329` | #1038 | SCRUM-1611 | `0329_member_integrations_credential_providers.sql` | renumber `0327→0329` |
 | `0330` | #1022 | SCRUM-2203 | `0330_scrum2203_unembedded_records_query_perf.sql` | renumbered ✓ (head `2a8d1b1c`) |
 | `0331` | #1031 | SCRUM-1847/1869 | `0331_scrum1847_1869_public_anchor_cpe_cle_metadata.sql` | renumbered ✓ (head `431ddbff`) |
+| `0332` | (this PR) | SCRUM-2248 | `0332_scrum2248_sanitize_metadata_strip_underscore.sql` | **keep** — SEV1 anon metadata-leak fix (BUG-2026-06-05-001); soaks on its own isolated project, merge after 0327–0331 |
 
 - **Merge order must follow prefix order** (`0327→0331`): migrations apply monotonically, so merging a higher prefix before a lower one strands the lower one as out-of-order.
 - Each of these soaks on its **own dedicated isolated Supabase project**, never shared staging — `main` is at `0326`, so applying any unmerged prefix to shared staging would gap the ledger and contaminate every parallel soak.
