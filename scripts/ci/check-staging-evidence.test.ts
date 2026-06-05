@@ -4,6 +4,7 @@ import {
   extractDeclaredTier,
   hasEvidenceSection,
   hasResidualRiskException,
+  isFrontendOnlyChange,
   isStagingToolingOnly,
   missingFields,
   requiredTierFor,
@@ -43,7 +44,7 @@ describe('check-staging-evidence', () => {
   describe('TIER_SPECS', () => {
     it('pins the current minimum soak windows', () => {
       expect(TIER_SPECS.T0.soakHours).toBe(0);
-      expect(TIER_SPECS.T1.soakHours).toBe(0);
+      expect(TIER_SPECS.T1.soakHours).toBe(2);
       expect(TIER_SPECS.T2.soakHours).toBe(12);
       expect(TIER_SPECS.T3.soakHours).toBe(48);
     });
@@ -60,6 +61,17 @@ describe('check-staging-evidence', () => {
 
     it('returns T1 for plain frontend file', () => {
       expect(requiredTierFor(['src/components/Foo.tsx']).tier).toBe('T1');
+    });
+
+    it('returns T0 for worker load-test tooling scripts', () => {
+      expect(
+        requiredTierFor([
+          'services/worker/scripts/load-test/10k-dau.js',
+          'services/worker/scripts/load-test/lib/docusign-synth.js',
+          'services/worker/scripts/load-test/lib/k6-docusign.test.ts',
+          'services/worker/scripts/load-test/README.md',
+        ]).tier,
+      ).toBe('T0');
     });
 
     it('returns T3 when migration is touched', () => {
@@ -269,6 +281,8 @@ describe('check-staging-evidence', () => {
 - [x] PR head SHA: 1234567890abcdef1234567890abcdef12345678
 - [x] Staging tag URL or N/A explanation: https://pr-999---arkova-worker-staging.example.run.app
 - [x] Health/smoke result: health ok, smoke green
+- [x] Soak start: 2026-05-09 14:00 UTC
+- [x] Soak end: 2026-05-09 16:00 UTC
 - [x] CI/E2E green: green
 - [x] Rollback plan: revert PR
 - [x] Risk rationale: low-risk frontend copy change
@@ -283,6 +297,8 @@ describe('check-staging-evidence', () => {
 - [ ] PR head SHA: 1234567890abcdef1234567890abcdef12345678
 - [ ] Staging tag URL or N/A explanation: https://pr-999---arkova-worker-staging.example.run.app
 - [ ] Health/smoke result: health ok, smoke green
+- [ ] Soak start: 2026-05-09 14:00 UTC
+- [ ] Soak end: 2026-05-09 16:00 UTC
 - [ ] CI/E2E green: green
 - [ ] Rollback plan: revert PR
 - [ ] Risk rationale: low-risk frontend copy change
@@ -351,20 +367,18 @@ describe('check-staging-evidence', () => {
 - Staging deploy log id: 142
 `;
 
-    const completeT1Body = () => `## Staging Soak Evidence
+    const completeT1Body = (start: string, end: string) => `## Staging Soak Evidence
 - Tier: T1
 - PR head SHA: 1234567890abcdef1234567890abcdef12345678
 - Staging tag URL or N/A explanation: https://pr-999---arkova-worker-staging.example.run.app
 - Health/smoke result: health ok, targeted smoke green
+- Soak start: ${start}
+- Soak end: ${end}
 - CI/E2E green: TypeCheck, Tests, E2E Tests green on current head
 - Rollback plan: revert this PR and redeploy previous worker image
 - Risk rationale: low-risk copy-only frontend change, no API/auth/billing/queue/anchoring/security surface
 - Human approver: Carson
 `;
-
-    const expectEvidencePasses = (body: string, files: string[]) => {
-      expect(check({ body, files }).ok).toBe(true);
-    };
 
     const expectEvidenceFails = (body: string, files: string[], pattern: RegExp) => {
       const r = check({ body, files });
@@ -389,8 +403,8 @@ describe('check-staging-evidence', () => {
         t2Files,
       ],
       [
-        'T1 expedited evidence with no soak window',
-        completeT1Body(),
+        'T1 expedited evidence at exactly 2 hours',
+        completeT1Body('2026-05-09 14:00 UTC', '2026-05-09 16:00 UTC'),
         t1Files,
       ],
     ])('passes %s', (_label, body, files) => {
@@ -402,6 +416,27 @@ describe('check-staging-evidence', () => {
     });
 
     it.each([
+      [
+        'T1 expedited evidence with no soak window',
+        `## Staging Soak Evidence
+- Tier: T1
+- PR head SHA: 1234567890abcdef1234567890abcdef12345678
+- Staging tag URL or N/A explanation: https://pr-999---arkova-worker-staging.example.run.app
+- Health/smoke result: health ok, targeted smoke green
+- CI/E2E green: TypeCheck, Tests, E2E Tests green on current head
+- Rollback plan: revert this PR and redeploy previous worker image
+- Risk rationale: low-risk copy-only frontend change, no API/auth/billing/queue/anchoring/security surface
+- Human approver: Carson
+`,
+        t1Files,
+        /missing required fields.*Soak start:.*Soak end:/,
+      ],
+      [
+        'T1 shorter than 2 hours',
+        completeT1Body('2026-05-09 14:00 UTC', '2026-05-09 15:59 UTC'),
+        t1Files,
+        /below the 2h minimum/,
+      ],
       [
         'T2 shorter than 12 hours',
         completeT2Body('2026-05-09 14:00 UTC', '2026-05-09 18:00 UTC'),
@@ -450,6 +485,10 @@ describe('check-staging-evidence', () => {
           'CLAUDE.md',
           'docs/staging/README.md',
           'docs/ops/gemini-model-upgrade.md',
+          'services/worker/scripts/load-test/docusign-volume.js',
+          'services/worker/scripts/load-test/lib/docusign-synth.test.ts',
+          'tests/k6/verify-api-load.js',
+          'tests/load/webhook-delivery.test.ts',
           '.github/workflows/staging-evidence.yml',
           'scripts/gcp-setup/cloud-scheduler.sh',
         ]).pass,
@@ -587,6 +626,8 @@ describe('check-staging-evidence', () => {
 - [x] PR head SHA: 1234567890abcdef1234567890abcdef12345678
 - [x] Staging tag URL or N/A explanation: not applicable - docs-only worker image was not built
 - [x] Health/smoke result: current-head smoke green
+- [x] Soak start: 2026-05-09 14:00 UTC
+- [x] Soak end: 2026-05-09 16:00 UTC
 - [x] CI/E2E green: green
 - [x] Rollback plan: revert PR
 - [x] Risk rationale: frontend copy-only change, no restricted surfaces
@@ -606,6 +647,8 @@ describe('check-staging-evidence', () => {
 - PR head SHA: 1234567890abcdef1234567890abcdef12345678
 - Staging tag URL or N/A explanation: https://pr-999---arkova-worker-staging.example.run.app
 - Health/smoke result: health ok, smoke green
+- Soak start: 2026-05-09 14:00 UTC
+- Soak end: 2026-05-09 16:00 UTC
 - CI/E2E green: green
 - Rollback plan: revert PR
 - Risk rationale: low-risk frontend copy change
@@ -626,6 +669,8 @@ describe('check-staging-evidence', () => {
 - PR head SHA: 1234567890abcdef1234567890abcdef12345678
 - Staging tag URL or N/A explanation:
 - Health/smoke result: health ok
+- Soak start: 2026-05-09 14:00 UTC
+- Soak end: 2026-05-09 16:00 UTC
 - CI/E2E green: green
 - Rollback plan: revert PR
 - Risk rationale: low-risk frontend copy change
@@ -646,6 +691,8 @@ describe('check-staging-evidence', () => {
 - PR head SHA: 1234567890abcdef1234567890abcdef12345678
 - Staging tag URL or N/A explanation: https://pr-999---arkova-worker-staging.example.run.app
 - Health/smoke result: health ok, smoke green
+- Soak start: 2026-05-09 14:00 UTC
+- Soak end: 2026-05-09 16:00 UTC
 - CI/E2E green: green
 - Rollback plan: revert PR
 - Risk rationale: API docs only
@@ -1115,6 +1162,300 @@ describe('check-staging-evidence', () => {
       expect(r.ok).toBe(false);
       expect(r.errors.join(' ')).toMatch(/placeholder/i);
       expect(r.errors.join(' ')).toMatch(/clean_mirror|residual-risk/i);
+    });
+  });
+
+  // ───────────────────────────────────────────────────────────────────────
+  // Frontend-T2 evidence mode (decision (a)).
+  //
+  // A PR can be required-tier T2 purely by touching a sensitive *frontend*
+  // contract surface (src/components/{anchor,api,auth,billing,public,
+  // verification,verify}/). Such a PR ships no worker code, no migration, and
+  // no SDK/contract change — so it CANNOT produce the worker artifacts the
+  // standard T2 block demands (Worker revision, Image digest, Cloud Run URL,
+  // Staging deploy log id). The frontend-T2 mode lets that narrow case satisfy
+  // T2 with frontend-appropriate evidence (Vercel deployment URL + E2E on the
+  // affected view + a residual-risk note attesting no worker artifacts exist).
+  //
+  // CRITICAL backward-compat guard: this path activates ONLY when every changed
+  // file is purely frontend (src/** and not a worker/migration/SDK/contract
+  // path). Any worker- or migration-touching T2 PR keeps the unchanged
+  // worker-artifact requirements.
+  // ───────────────────────────────────────────────────────────────────────
+  describe('frontend-T2 evidence mode', () => {
+    const headSha = '1234567890abcdef1234567890abcdef12345678';
+
+    // The real #1023 fileset: sensitive frontend dirs (anchor, verification)
+    // → required tier T2, but every path is src/**.
+    const frontendOnlyT2Files = [
+      'src/components/anchor/AssetDetailView.tsx',
+      'src/components/verification/PublicVerification.tsx',
+      'src/components/credentials/CpeMetadataSection.tsx',
+      'src/hooks/useHasCredentialImportEntitlement.ts',
+    ];
+
+    const frontendT2Body = (overrides: Partial<{
+      tier: string;
+      vercel: string;
+      e2e: string;
+      ciGreen: string;
+      head: string;
+      rollback: string;
+      note: string;
+    }> = {}) => {
+      const {
+        tier = 'T2',
+        vercel = 'https://arkova-26-git-feat-cpe.vercel.app',
+        e2e = 'credential-detail + public-verification E2E 18/18 green on head',
+        ciGreen = 'Tests, E2E Tests, TypeCheck & Lint all green on current head',
+        head = headSha,
+        rollback = 'revert PR — additive display-only components, no data/schema/worker state',
+        note = `
+### Residual-risk note
+- No worker artifacts: frontend-only PR — no Cloud Run deploy, no worker revision, no image digest, no staging deploy-log id (no server code, no migration changed)
+- Surfaces touched: credential detail view + public verification view (src/components/{anchor,verification,credentials})
+- Approved by: Carson`,
+      } = overrides;
+      return `## Staging Soak Evidence
+- Tier: ${tier}
+- PR head SHA: ${head}
+- Vercel deployment URL: ${vercel}
+- E2E result: ${e2e}
+- CI/E2E green: ${ciGreen}
+- Rollback plan: ${rollback}
+${note}
+`;
+    };
+
+    describe('isFrontendOnlyChange', () => {
+      it('is true for an all-src/** fileset', () => {
+        expect(isFrontendOnlyChange(frontendOnlyT2Files)).toBe(true);
+      });
+
+      it('is true for a single frontend component', () => {
+        expect(isFrontendOnlyChange(['src/components/anchor/AssetDetailView.tsx'])).toBe(true);
+      });
+
+      it('is false when a worker file is present', () => {
+        expect(isFrontendOnlyChange([
+          'src/components/anchor/AssetDetailView.tsx',
+          'services/worker/src/api/v1/anchor.ts',
+        ])).toBe(false);
+      });
+
+      it('is false when a migration is present', () => {
+        expect(isFrontendOnlyChange([
+          'src/components/verification/PublicVerification.tsx',
+          'supabase/migrations/0331_x.sql',
+        ])).toBe(false);
+      });
+
+      it('is false when an SDK/package file is present', () => {
+        expect(isFrontendOnlyChange([
+          'src/components/api/ApiKeys.tsx',
+          'packages/typescript/src/index.ts',
+        ])).toBe(false);
+      });
+
+      it('is false when a public API contract doc is present', () => {
+        expect(isFrontendOnlyChange([
+          'src/components/api/ApiKeys.tsx',
+          'docs/api/openapi.yaml',
+        ])).toBe(false);
+      });
+
+      it('is false for an empty fileset (nothing to attest as frontend-only)', () => {
+        expect(isFrontendOnlyChange([])).toBe(false);
+      });
+
+      it('is false for a non-src frontend-ish path (e.g. a root config)', () => {
+        expect(isFrontendOnlyChange(['vite.config.ts'])).toBe(false);
+      });
+    });
+
+    // ── Scenario 1 (required): frontend-only T2 + frontend evidence → PASS ──
+    it('Scenario 1: frontend-only T2 with frontend evidence PASSES', () => {
+      const r = check({
+        body: frontendT2Body(),
+        files: frontendOnlyT2Files,
+        headSha,
+      });
+      expect(r.ok).toBe(true);
+      expect(r.notes.join(' ')).toMatch(/frontend-T2/i);
+    });
+
+    it('Scenario 1b: frontend-only T2 PASSES without any worker-artifact fields present at all', () => {
+      // Proves we are not silently requiring the worker fields for this path.
+      // Assert that the worker-artifact *list-item field lines* are absent. We
+      // check for the `- <Label>` form the standard T2 block uses (rather than a
+      // bare substring) because the residual-risk prose legitimately names the
+      // artifacts it attests are absent. Plain string matching — no regex — so
+      // there is no backtracking/ReDoS surface.
+      const body = frontendT2Body();
+      expect(body).not.toContain('- Worker revision:');
+      expect(body).not.toContain('- Image digest:');
+      expect(body).not.toContain('- Cloud Run service/tag URL:');
+      expect(body).not.toContain('- Staging deploy log id:');
+      const r = check({ body, files: frontendOnlyT2Files, headSha });
+      expect(r.ok).toBe(true);
+    });
+
+    // ── Scenario 2 (required): worker-touching T2 still FAILS without artifacts ──
+    it('Scenario 2: worker-touching T2 with ONLY frontend evidence still FAILS (worker artifacts unchanged)', () => {
+      const r = check({
+        body: frontendT2Body(),
+        // Same body, but the fileset now includes a worker file → NOT frontend-only.
+        files: ['src/components/anchor/AssetDetailView.tsx', 'services/worker/src/api/v1/docusign.ts'],
+        headSha,
+        baseSha: 'abcdef1234567890abcdef1234567890abcdef12',
+      });
+      expect(r.ok).toBe(false);
+      // It must demand the standard worker-artifact fields it lacks.
+      expect(r.errors.join(' ')).toMatch(/Worker revision:|Image digest:|Cloud Run|Staging deploy log id:/i);
+    });
+
+    it('Scenario 2b: a real worker T2 PR with a complete worker-artifact block still PASSES (no regression to the standard path)', () => {
+      const completeWorkerT2 = `## Staging Soak Evidence
+- Tier: T2
+- Staging branch: arkova-staging
+- Worker revision: arkova-worker-staging-00099-xyz
+- PR head SHA: ${headSha}
+- Base SHA: abcdef1234567890abcdef1234567890abcdef12
+- Staging project ref: ujtlwnoqfhtitcmsnrpq
+- Cloud Run service/tag URL: https://pr-999---arkova-worker-staging.example.run.app
+- Image digest: sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+- Evidence scope: merge-grade shared staging
+- Preflight timestamp: 2026-05-09 13:55 UTC
+- Preflight result: environment_type=clean_mirror
+- Soak start: 2026-05-09 14:00 UTC
+- Soak end: 2026-05-10 02:00 UTC
+- E2E result: 50/50 green
+- Migration applied: none
+- Rollback rehearsed: yes
+- Staging deploy log id: 142
+`;
+      const r = check({
+        body: completeWorkerT2,
+        files: ['services/worker/src/api/v1/docusign.ts'],
+        headSha,
+        baseSha: 'abcdef1234567890abcdef1234567890abcdef12',
+      });
+      expect(r.ok).toBe(true);
+    });
+
+    // ── Scenario 3 (required): frontend-only T2 WITHOUT frontend evidence → FAIL ──
+    it('Scenario 3: frontend-only T2 missing the Vercel deployment URL FAILS', () => {
+      const body = frontendT2Body().replace(/- Vercel deployment URL:.*\n/, '');
+      const r = check({ body, files: frontendOnlyT2Files, headSha });
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/Vercel deployment URL:/i);
+    });
+
+    it('Scenario 3b: frontend-only T2 with a non-URL Vercel field FAILS', () => {
+      const body = frontendT2Body({ vercel: 'deployed somewhere' });
+      const r = check({ body, files: frontendOnlyT2Files, headSha });
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/Vercel deployment URL/i);
+    });
+
+    it('Scenario 3c: frontend-only T2 with an empty E2E result FAILS', () => {
+      const body = frontendT2Body({ e2e: '' });
+      const r = check({ body, files: frontendOnlyT2Files, headSha });
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/E2E result/i);
+    });
+
+    it('Scenario 3d: frontend-only T2 with a PENDING E2E result FAILS (placeholder rejected)', () => {
+      const body = frontendT2Body({ e2e: 'PENDING' });
+      const r = check({ body, files: frontendOnlyT2Files, headSha });
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/placeholder/i);
+    });
+
+    it('Scenario 3e: frontend-only T2 with NO residual-risk note FAILS', () => {
+      const body = frontendT2Body({ note: '' });
+      const r = check({ body, files: frontendOnlyT2Files, headSha });
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/residual-risk/i);
+    });
+
+    it('Scenario 3f: frontend-only T2 whose residual-risk note has a blank Approved by FAILS', () => {
+      const body = frontendT2Body({
+        note: `
+### Residual-risk note
+- No worker artifacts: frontend-only — no Cloud Run deploy
+- Surfaces touched: credential detail view
+- Approved by:`,
+      });
+      const r = check({ body, files: frontendOnlyT2Files, headSha });
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/Approved by|residual-risk/i);
+    });
+
+    it('Scenario 3g: frontend-only T2 with a stale (mismatched) PR head SHA FAILS (exact-head integrity preserved)', () => {
+      const body = frontendT2Body();
+      const r = check({
+        body,
+        files: frontendOnlyT2Files,
+        headSha: '9999999990abcdef1234567890abcdef12345678',
+      });
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/PR head SHA/i);
+    });
+
+    it('Scenario 3h: frontend-only T2 missing the CI/E2E-green field FAILS', () => {
+      const body = frontendT2Body().replace(/- CI\/E2E green:.*\n/, '');
+      const r = check({ body, files: frontendOnlyT2Files, headSha });
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/CI\/E2E green:/i);
+    });
+
+    // Regression (PR #1051 MEDIUM finding): the label is PRESENT but its value
+    // is EMPTY (`- CI/E2E green:` with nothing after the colon). missingFields
+    // is satisfied (label present), and validatePassingEvidenceField
+    // short-circuits to PASS on an empty value — so before the fix a frontend-T2
+    // body could attest *nothing* for CI/E2E-green, weaker than the T1 path
+    // which runs validateNonEmptyEvidenceField over every required field. The
+    // frontend-T2 path must reject an empty value, mirroring T1.
+    it('Scenario 3i: frontend-only T2 with an EMPTY CI/E2E-green value FAILS', () => {
+      const body = frontendT2Body({ ciGreen: '' });
+      const r = check({ body, files: frontendOnlyT2Files, headSha });
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/CI\/E2E green:/i);
+    });
+
+    // Under-declaration must still fail: a T2-required frontend-only PR that
+    // declares T1 is blocked exactly as before (the frontend path does NOT
+    // weaken classification — it only changes which evidence T2 accepts).
+    it('does not let a frontend-only T2-required PR sneak through as a declared T1', () => {
+      const body = `## Staging Soak Evidence
+- Tier: T1
+- PR head SHA: ${headSha}
+- Staging tag URL or N/A explanation: N/A — frontend-only
+- Health/smoke result: green
+- CI/E2E green: green
+- Rollback plan: revert PR
+- Risk rationale: frontend-only
+- Human approver: Carson
+`;
+      const r = check({ body, files: frontendOnlyT2Files, headSha });
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/below required tier T2/i);
+    });
+
+    // A T3-required frontend surface (admin/treasury) must NOT get the
+    // frontend-T2 shortcut — that path is treasury-administration and stays
+    // full T3.
+    it('does not extend the frontend path to a T3 frontend surface (admin/treasury)', () => {
+      const body = frontendT2Body();
+      const r = check({
+        body,
+        files: ['src/components/admin/treasury/TreasuryPanel.tsx'],
+        headSha,
+      });
+      expect(r.ok).toBe(false);
+      // Declared T2 < required T3 → blocked; never reaches frontend-T2 acceptance.
+      expect(r.errors.join(' ')).toMatch(/below required tier T3/i);
     });
   });
 });

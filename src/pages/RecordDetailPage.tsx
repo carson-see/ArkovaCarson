@@ -15,6 +15,7 @@ import { Loader2, AlertCircle } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
 import { useAnchor } from '@/hooks/useAnchor';
+import { useHasCredentialImportEntitlement } from '@/hooks/useHasCredentialImportEntitlement';
 import { supabase } from '@/lib/supabase';
 import { AppShell } from '@/components/layout';
 import { AssetDetailView } from '@/components/anchor';
@@ -28,6 +29,15 @@ export function RecordDetailPage() {
   const { user, signOut } = useAuth();
   const { profile, loading: profileLoading } = useProfile();
   const { anchor, loading: anchorLoading, error, refreshAnchor } = useAnchor(id);
+  // CPE-R1 (SCRUM-1847): the credential-detail CPE section is gated on the
+  // `credential_source_import` entitlement, resolved read-only here (page-level
+  // concern, mirroring how `canRevoke` is computed at the page). Fails closed.
+  // NOTE: this gate is intentionally inert until the CSI track (SCRUM-1611)
+  // ships a writer for the `credential_source_import` entitlement_type — nothing
+  // writes that row today, so the hook returns false for everyone and the CPE
+  // section stays hidden. See useHasCredentialImportEntitlement for the
+  // org-wide grant semantics.
+  const hasImportEntitlement = useHasCredentialImportEntitlement();
 
   // Fetch version lineage when anchor has parent or version > 1
   const [lineage, setLineage] = useState<{ id: string; versionNumber: number; status: string; createdAt: string; filename: string }[]>([]);
@@ -167,6 +177,7 @@ export function RecordDetailPage() {
       <AssetDetailView
         canRevoke={profile?.role === 'ORG_ADMIN' && anchor.org_id === profile?.org_id}
         onRevoked={() => { void refreshAnchor(); }}
+        hasImportEntitlement={hasImportEntitlement}
         anchor={{
           id: anchor.id,
           publicId: anchor.public_id ?? undefined,
@@ -185,6 +196,10 @@ export function RecordDetailPage() {
           chainTxId: anchor.chain_tx_id ?? undefined,
           chainBlockHeight: anchor.chain_block_height ?? undefined,
           metadata: anchor.metadata as Record<string, unknown> | null ?? undefined,
+          // CPE-R1 (SCRUM-1847): pass the structured CPE blob through so
+          // AssetDetailView can render the (entitlement-gated) CPE section.
+          // `cpe_metadata` is selected by useAnchor (select('*')).
+          cpeMetadata: anchor.cpe_metadata as Record<string, unknown> | null ?? undefined,
           description: anchor.description ?? undefined,
           orgId: anchor.org_id ?? undefined,
           issuerName: (() => {

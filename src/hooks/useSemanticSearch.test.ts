@@ -5,6 +5,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useSemanticSearch } from './useSemanticSearch';
+import { SEMANTIC_SEARCH_LABELS } from '../lib/copy';
 
 // Mock supabase
 vi.mock('../lib/supabase', () => ({
@@ -85,7 +86,7 @@ describe('useSemanticSearch', () => {
     expect(result.current.creditsRemaining).toBe(49);
   });
 
-  it('handles 402 credit exhaustion', async () => {
+  it('handles 402 credit exhaustion with friendly copy', async () => {
     mockFetch.mockResolvedValueOnce({
       ok: false,
       status: 402,
@@ -98,10 +99,11 @@ describe('useSemanticSearch', () => {
       await result.current.search('test');
     });
 
-    expect(result.current.error).toContain('credits');
+    expect(result.current.error).toBe(SEMANTIC_SEARCH_LABELS.ERROR_NO_CREDITS);
+    expect(result.current.error).toContain('AI credits');
   });
 
-  it('handles 503 feature disabled', async () => {
+  it('handles 503 service unavailable (flag off / AI down)', async () => {
     mockFetch.mockResolvedValueOnce({
       ok: false,
       status: 503,
@@ -114,7 +116,55 @@ describe('useSemanticSearch', () => {
       await result.current.search('test');
     });
 
-    expect(result.current.error).toContain('not currently enabled');
+    expect(result.current.error).toBe(SEMANTIC_SEARCH_LABELS.ERROR_UNAVAILABLE);
+  });
+
+  it('handles a generic non-OK response without leaking the raw body', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: false,
+      status: 500,
+      json: () => Promise.resolve({ message: 'Ensure the worker service is running' }),
+    });
+
+    const { result } = renderHook(() => useSemanticSearch());
+
+    await act(async () => {
+      await result.current.search('test');
+    });
+
+    expect(result.current.error).toBe(SEMANTIC_SEARCH_LABELS.ERROR_GENERIC);
+    // Raw engineering copy must not reach the user.
+    expect(result.current.error).not.toContain('worker service');
+  });
+
+  it('handles a network failure (fetch throws TypeError)', async () => {
+    mockFetch.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+
+    const { result } = renderHook(() => useSemanticSearch());
+
+    await act(async () => {
+      await result.current.search('test');
+    });
+
+    expect(result.current.error).toBe(SEMANTIC_SEARCH_LABELS.ERROR_NETWORK);
+    expect(result.current.error).toContain('connection');
+  });
+
+  it('requires an authenticated session', async () => {
+    const supabaseModule = await import('../lib/supabase');
+    vi.mocked(supabaseModule.supabase.auth.getSession).mockResolvedValueOnce({
+      data: { session: null },
+      error: null,
+    } as Awaited<ReturnType<typeof supabaseModule.supabase.auth.getSession>>);
+
+    const { result } = renderHook(() => useSemanticSearch());
+
+    await act(async () => {
+      await result.current.search('test');
+    });
+
+    expect(result.current.error).toBe(SEMANTIC_SEARCH_LABELS.ERROR_AUTH);
+    expect(mockFetch).not.toHaveBeenCalled();
   });
 
   it('clears results', async () => {

@@ -13,6 +13,9 @@ import {
   findDuplicateVersions,
   detectKnownArtifacts,
   computeProdDivergence,
+  analyzeProdDivergence,
+  hasCanonicalBaseline,
+  parseRepoMigrationVersion,
   checkOrgTopology,
   checkProdFacts,
   isSupabaseMigrationsSchemaUnavailable,
@@ -232,6 +235,153 @@ describe('computeProdDivergence', () => {
 });
 
 // ---------------------------------------------------------------------------
+// parseRepoMigrationVersion
+// ---------------------------------------------------------------------------
+
+describe('parseRepoMigrationVersion', () => {
+  it('parses the NNNN prefix from a canonical migration filename', () => {
+    expect(parseRepoMigrationVersion('0294_org_queue_scheduler.sql')).toBe('0294');
+  });
+
+  it('parses the all-zero baseline prefix', () => {
+    expect(parseRepoMigrationVersion('00000000000000_baseline_at_main_HEAD.sql')).toBe('00000000000000');
+  });
+
+  it('returns null for files without a numeric prefix', () => {
+    expect(parseRepoMigrationVersion('_template.sql')).toBeNull();
+    expect(parseRepoMigrationVersion('README.md')).toBeNull();
+  });
+
+  it('ignores a leading directory path component', () => {
+    expect(parseRepoMigrationVersion('supabase/migrations/0310_idx.sql')).toBe('0310');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// hasCanonicalBaseline
+// ---------------------------------------------------------------------------
+
+describe('hasCanonicalBaseline', () => {
+  it('detects the squashed baseline row by name', () => {
+    expect(hasCanonicalBaseline([
+      { version: '00000000000000', name: 'baseline_at_main_HEAD' },
+      { version: '0327', name: '0327_something' },
+    ])).toBe(true);
+  });
+
+  it('detects the baseline row by the all-zero version/name', () => {
+    expect(hasCanonicalBaseline([
+      { version: '00000000000000', name: '00000000000000' },
+    ])).toBe(true);
+  });
+
+  it('returns false when no baseline row is present (shared-staging incremental ledger)', () => {
+    expect(hasCanonicalBaseline([
+      { version: '0294', name: '0294_refund_org_credit' },
+      { version: '0295', name: '0295_add_webhook_events' },
+    ])).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// analyzeProdDivergence — repo-files-as-source-of-truth verdict
+// ---------------------------------------------------------------------------
+
+describe('analyzeProdDivergence', () => {
+  // Prod ledger as it actually exists: baseline + recent migrations stored under
+  // timestamp/descriptive versions (the lettered-suffix / db-push reality), plus
+  // some pre-baseline history that the squash subsumes.
+  const PROD_VERSIONS = ['00000000000000', '0290', '0292', '0293', '0294', '20260510120000'];
+
+  // Repo migration files (NNNN prefixes), the source of truth.
+  const REPO_VERSIONS = new Set([
+    '00000000000000', '0294', '0295', '0296', '0297', '0330', '0331',
+  ]);
+
+  it('passes a clean baseline-squashed rig despite prod-historical and version-shape divergence', () => {
+    // Rig: canonical baseline + every repo NNNN migration. No synthetic rows.
+    const rigRows: MigrationRow[] = [
+      { version: '00000000000000', name: 'baseline_at_main_HEAD' },
+      { version: '0294', name: '0294_refund_org_credit' },
+      { version: '0295', name: '0295_add_webhook_events' },
+      { version: '0296', name: '0296_api_key_hmac' },
+      { version: '0297', name: '0297_audit_log_cleanup' },
+      { version: '0330', name: '0330_candidate_a' },
+      { version: '0331', name: '0331_candidate_b' },
+    ];
+    const result = analyzeProdDivergence(rigRows, PROD_VERSIONS, REPO_VERSIONS);
+    expect(result.baselinePresent).toBe(true);
+    expect(result.unexplainedExtras).toEqual([]);
+    expect(result.missingRepoMigrations).toEqual([]);
+    expect(result.passed).toBe(true);
+    // Prod-historical rows (0290/0292/0293) + version-shape rows (20260510120000)
+    // are reported as informational, not failures.
+    expect(result.prodMissing).toEqual(expect.arrayContaining(['0290', '0292', '0293', '20260510120000']));
+  });
+
+  it('FAILS when the rig carries an unexplained extra row (synthetic stg_ contamination)', () => {
+    const rigRows: MigrationRow[] = [
+      { version: '00000000000000', name: 'baseline_at_main_HEAD' },
+      { version: '0294', name: '0294_refund_org_credit' },
+      { version: '0295', name: '0295_add_webhook_events' },
+      { version: '0296', name: '0296_api_key_hmac' },
+      { version: '0297', name: '0297_audit_log_cleanup' },
+      { version: '0330', name: '0330_candidate_a' },
+      { version: '0331', name: '0331_candidate_b' },
+      { version: '99999999999999', name: 'stg_only_hotfix' },
+    ];
+    const result = analyzeProdDivergence(rigRows, PROD_VERSIONS, REPO_VERSIONS);
+    expect(result.unexplainedExtras).toContain('99999999999999');
+    expect(result.passed).toBe(false);
+  });
+
+  it('FAILS when the rig is missing a real repo migration (rig behind main)', () => {
+    const rigRows: MigrationRow[] = [
+      { version: '00000000000000', name: 'baseline_at_main_HEAD' },
+      { version: '0294', name: '0294_refund_org_credit' },
+      { version: '0295', name: '0295_add_webhook_events' },
+      { version: '0296', name: '0296_api_key_hmac' },
+      { version: '0297', name: '0297_audit_log_cleanup' },
+      // missing 0330, 0331 — rig is behind the repo
+    ];
+    const result = analyzeProdDivergence(rigRows, PROD_VERSIONS, REPO_VERSIONS);
+    expect(result.missingRepoMigrations).toEqual(expect.arrayContaining(['0330', '0331']));
+    expect(result.passed).toBe(false);
+  });
+
+  it('FAILS a NON-baseline rig that is missing prod versions (preserves shared-staging strictness)', () => {
+    // No baseline row → the baseline does not subsume pre-baseline history, so
+    // prod-missing rows are still failures (old strictness preserved).
+    const rigRows: MigrationRow[] = [
+      { version: '0294', name: '0294_refund_org_credit' },
+      { version: '0295', name: '0295_add_webhook_events' },
+      { version: '0296', name: '0296_api_key_hmac' },
+      { version: '0297', name: '0297_audit_log_cleanup' },
+      { version: '0330', name: '0330_candidate_a' },
+      { version: '0331', name: '0331_candidate_b' },
+    ];
+    const result = analyzeProdDivergence(rigRows, PROD_VERSIONS, REPO_VERSIONS);
+    expect(result.baselinePresent).toBe(false);
+    expect(result.prodMissing.length).toBeGreaterThan(0);
+    expect(result.passed).toBe(false);
+  });
+
+  it('does not classify the canonical baseline itself as an unexplained extra', () => {
+    // Prod ledger that happens to NOT carry the baseline version, repo that does.
+    const prodNoBaseline = ['0294', '0295'];
+    const repo = new Set(['00000000000000', '0294', '0295']);
+    const rigRows: MigrationRow[] = [
+      { version: '00000000000000', name: 'baseline_at_main_HEAD' },
+      { version: '0294', name: '0294_refund_org_credit' },
+      { version: '0295', name: '0295_add_webhook_events' },
+    ];
+    const result = analyzeProdDivergence(rigRows, prodNoBaseline, repo);
+    expect(result.unexplainedExtras).toEqual([]);
+    expect(result.passed).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // buildReport
 // ---------------------------------------------------------------------------
 
@@ -318,6 +468,88 @@ describe('buildReport', () => {
     });
     // ARTIFACT_ROWS has extra timestamp-versioned rows
     expect(report.extra_vs_prod.length).toBeGreaterThan(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildReport — baseline-squash-aware (repoVersions provided)
+// ---------------------------------------------------------------------------
+
+describe('buildReport with repoVersions (baseline-squash-aware)', () => {
+  // Prod ledger reality: baseline + pre-baseline history + recent migrations
+  // recorded under timestamp/descriptive version strings.
+  const PROD_VERSIONS = ['00000000000000', '0290', '0292', '0293', '0294', '20260510120000'];
+  const REPO_VERSIONS = new Set([
+    '00000000000000', '0294', '0295', '0296', '0297', '0330', '0331',
+  ]);
+  // Clean isolated rig: canonical baseline + every repo migration, nothing else.
+  const RIG_ROWS: MigrationRow[] = [
+    { version: '00000000000000', name: 'baseline_at_main_HEAD' },
+    { version: '0294', name: '0294_refund_org_credit' },
+    { version: '0295', name: '0295_add_webhook_events' },
+    { version: '0296', name: '0296_api_key_hmac' },
+    { version: '0297', name: '0297_audit_log_cleanup' },
+    { version: '0330', name: '0330_candidate_a' },
+    { version: '0331', name: '0331_candidate_b' },
+  ];
+
+  it('classifies a clean baseline-squashed isolated rig as clean_mirror', () => {
+    const report = buildReport({
+      projectRef: 'isolated-rig',
+      migrationRows: RIG_ROWS,
+      submittedAnchorCount: 5,
+      prodVersions: PROD_VERSIONS,
+      repoVersions: REPO_VERSIONS,
+    });
+    expect(report.environment_type).toBe('clean_mirror');
+    const divCheck = report.checks.find((c) => c.name === 'prod_divergence');
+    expect(divCheck).toBeDefined();
+    expect(divCheck!.passed).toBe(true);
+    expect(report.checks.every((c) => c.passed)).toBe(true);
+  });
+
+  it('still flags an unexplained extra row in a baseline rig as soak_artifact', () => {
+    const report = buildReport({
+      projectRef: 'isolated-rig',
+      migrationRows: [...RIG_ROWS, { version: '99999999999999', name: 'stg_only_hotfix' }],
+      submittedAnchorCount: 5,
+      prodVersions: PROD_VERSIONS,
+      repoVersions: REPO_VERSIONS,
+    });
+    // The synthetic row trips classifyMigrationRow (timestamp) AND prod_divergence
+    // (unexplained extra) — either way it must NOT be clean_mirror.
+    expect(report.environment_type).toBe('soak_artifact');
+    const divCheck = report.checks.find((c) => c.name === 'prod_divergence');
+    expect(divCheck!.passed).toBe(false);
+  });
+
+  it('fails a baseline rig that is missing a real repo migration', () => {
+    const incompleteRig = RIG_ROWS.filter((r) => r.version !== '0331');
+    const report = buildReport({
+      projectRef: 'isolated-rig',
+      migrationRows: incompleteRig,
+      submittedAnchorCount: 5,
+      prodVersions: PROD_VERSIONS,
+      repoVersions: REPO_VERSIONS,
+    });
+    const divCheck = report.checks.find((c) => c.name === 'prod_divergence');
+    expect(divCheck!.passed).toBe(false);
+    expect(divCheck!.details).toMatch(/0331/);
+    expect(report.environment_type).not.toBe('clean_mirror');
+  });
+
+  it('preserves old strictness when repoVersions is omitted (any divergence fails)', () => {
+    // Same rig, but no repoVersions supplied → legacy behavior: prod-historical
+    // rows count as missing-from-staging divergence and the env is NOT clean.
+    const report = buildReport({
+      projectRef: 'isolated-rig',
+      migrationRows: RIG_ROWS,
+      submittedAnchorCount: 5,
+      prodVersions: PROD_VERSIONS,
+    });
+    const divCheck = report.checks.find((c) => c.name === 'prod_divergence');
+    expect(divCheck!.passed).toBe(false);
+    expect(report.environment_type).toBe('soak_artifact');
   });
 });
 
