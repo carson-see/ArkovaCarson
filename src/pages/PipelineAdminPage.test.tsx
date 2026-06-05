@@ -535,7 +535,7 @@ describe('PipelineAdminPage — record-type filter RPC is a thenable, not a Prom
    */
   function thenableBuilder(result: { data: unknown; error: unknown }) {
     return {
-      then(onFulfilled: (r: { data: unknown; error: unknown }) => unknown) {
+      then(onFulfilled: (r: { data: unknown; error: unknown }) => unknown) { // NOSONAR - intentional Supabase RPC thenable test double without catch
         // Resolve asynchronously like the real client.
         return Promise.resolve(result).then(onFulfilled);
       },
