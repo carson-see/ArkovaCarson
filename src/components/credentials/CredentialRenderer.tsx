@@ -35,6 +35,8 @@ import {
   formatCredentialSubType,
 } from '@/lib/copy';
 import type { TemplateDisplayData } from '@/hooks/useCredentialTemplate';
+import { CpeMetadataSection, type CpeMetadataView } from './CpeMetadataSection';
+import { CleMetadataSection, type CleMetadataView } from './CleMetadataSection';
 
 /** Status badge color mapping */
 const STATUS_COLORS: Record<string, string> = {
@@ -194,6 +196,22 @@ export interface CredentialRendererProps {
   expiryDate?: string | null;
   showFingerprint?: boolean;
   compact?: boolean;
+  /**
+   * CPE metadata (SCRUM-1847). When present, mounts {@link CpeMetadataSection}.
+   * Detail view also requires `hasImportEntitlement`; public view passes
+   * `publicView` and the section renders without an entitlement gate.
+   */
+  cpeMetadata?: CpeMetadataView | null;
+  /**
+   * CLE metadata (SCRUM-1869). When present, mounts {@link CleMetadataSection}
+   * in its own region, separate from the CPE block. Shares the same
+   * `hasImportEntitlement` / `publicView` gating as CPE.
+   */
+  cleMetadata?: CleMetadataView | null;
+  /** Viewer holds the `credential_source_import` entitlement (detail view). */
+  hasImportEntitlement?: boolean;
+  /** Render CPE/CLE metadata in the public-verification variant. */
+  publicView?: boolean;
 }
 
 const METADATA_DISPLAY_HIDDEN_KEYS = new Set([
@@ -232,6 +250,10 @@ export function CredentialRenderer({
   expiryDate,
   showFingerprint = false,
   compact = false,
+  cpeMetadata,
+  cleMetadata,
+  hasImportEntitlement = false,
+  publicView = false,
 }: Readonly<CredentialRendererProps>) {
   const [copied, setCopied] = useState(false);
 
@@ -432,6 +454,30 @@ export function CredentialRenderer({
               </div>
             ))}
           </div>
+        )}
+
+        {/* CPE metadata section (SCRUM-1847). Self-gating: renders nothing
+            when cpeMetadata is absent, or (detail view) when the viewer lacks
+            the credential_source_import entitlement. The sibling CLE section
+            below lives in its own region — keep this CPE block localized. */}
+        {cpeMetadata && (
+          <CpeMetadataSection
+            cpeMetadata={cpeMetadata}
+            hasImportEntitlement={hasImportEntitlement}
+            publicView={publicView}
+          />
+        )}
+
+        {/* CLE metadata section (SCRUM-1869). Separate region from the CPE
+            block above. Same self-gating: renders nothing when cleMetadata is
+            absent, or (detail view) when the viewer lacks the
+            credential_source_import entitlement. */}
+        {cleMetadata && (
+          <CleMetadataSection
+            cleMetadata={cleMetadata}
+            hasImportEntitlement={hasImportEntitlement}
+            publicView={publicView}
+          />
         )}
 
         {/* No metadata fallback */}

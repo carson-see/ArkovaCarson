@@ -18,6 +18,8 @@ import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
 import { CheckCircle, XCircle, Fingerprint, Copy, Check, Ban, Clock, Flag, AlertTriangle } from 'lucide-react';
 import { AnchorLifecycleTimeline, type AnchorLifecycleData } from '@/components/anchor/AnchorLifecycleTimeline';
 import { CredentialRenderer } from '@/components/credentials/CredentialRenderer';
+import { extractCpeMetadataView } from '@/components/credentials/cpeMetadataView';
+import { extractCleMetadataView } from '@/components/credentials/cleMetadataView';
 import { ProvenanceTimeline } from '@/components/public/ProvenanceTimeline';
 import { RevocationDetails } from '@/components/verification/RevocationDetails';
 import { VerifierProofDownload } from '@/components/verification/VerifierProofDownload';
@@ -89,6 +91,14 @@ interface PublicAnchorData {
   evidence_package_hash?: string;
   source_payload_hash?: string;
   fetched_at?: string;
+  /** CPE-R1 (SCRUM-1847): structured CPE metadata, when present on the anchor.
+   * Surfaced by the `get_public_anchor` RPC. extraction_confidence is never
+   * rendered (CpeMetadataSection redacts it). */
+  cpe_metadata?: Record<string, unknown> | null;
+  /** CLE-R1 (SCRUM-1869): structured CLE metadata, when present on the anchor.
+   * Surfaced by the `get_public_anchor` RPC. extraction_confidence is never
+   * rendered (CleMetadataSection redacts it). */
+  cle_metadata?: Record<string, unknown> | null;
   error?: string;
 }
 
@@ -397,6 +407,18 @@ export function PublicVerification({ publicId }: Readonly<PublicVerificationProp
           issuedDate={data.issued_at ?? data.issued_date}
           expiryDate={data.expires_at ?? data.expiry_date}
           showFingerprint
+          publicView
+          cpeMetadata={extractCpeMetadataView(data.cpe_metadata, {
+            provider: data.source_provider,
+            title: data.filename,
+            completion_date: data.issued_at ?? data.issued_date,
+            evidence_level: data.verification_level ?? (data.metadata?.verification_level as string | undefined),
+          })}
+          cleMetadata={extractCleMetadataView(data.cle_metadata, {
+            course_title: data.filename,
+            completion_date: data.issued_at ?? data.issued_date,
+            evidence_level: data.verification_level ?? (data.metadata?.verification_level as string | undefined),
+          })}
         />
 
         {/* SECTION 2A: Description (BETA-12) */}

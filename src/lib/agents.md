@@ -30,6 +30,7 @@ Core utility modules shared across the frontend. Every write path uses Zod valid
 ## Recent Changes
 
 - 2026-05-26 SCRUM-2013: `validators.ts` and `csvParser.ts` credential type lists expanded to 27 canonical values, adding `CPE`, `ACCREDITATION`, `CONTRACT_PRESIGNING`, and `CONTRACT_POSTSIGNING`.
+- 2026-05-29 SCRUM-1958 (subtask-4): `switchboard.ts` — flipped the **code default** of `ENABLE_SEMANTIC_SEARCH` to `false` so non-prod (local dev / preview) hides smart search until the `credential_embeddings` backfill lands. Production is driven by the `switchboard_flags` row, not this default (DB row untouched in this change). `copy.ts` — added `SEMANTIC_SEARCH_LABELS` (heading, placeholder, friendly match-strength labels, honest empty state, and 402/503/network/generic error copy). No client audit call for the search query — the worker records AI usage server-side (§1.6).
 
 ## Do / Don't Rules
 
@@ -38,3 +39,6 @@ Core utility modules shared across the frontend. Every write path uses Zod valid
 - DON'T: Import `piiStripper`, `fileHasher`, `aiExtraction`, `mlRuntime`, or `ocrWorker` in `services/worker/`
 - DON'T: Expose service role key, raw API keys, or user emails in any module
 - DON'T: Cast `verification_level` strings directly; use `parseVerificationLevel()` so unknown values disappear instead of rendering misleading evidence labels
+
+## Copy-lint coverage (SCRUM-2149)
+`src/lib/**` is now scanned by `npm run lint:copy` (`scripts/check-copy-terms.ts`) for banned §1.3 terms in **user-visible strings** — JSX text and quoted display/error copy that reaches users (e.g. proof-package glossary text, Zod validation messages). The linter does NOT flag code positions (type unions, object keys, property access, URL segments, bare in-code enum/config values like `'mainnet'`), so internal chain/network identifiers in `explorer.ts`/`env.ts` are fine; only display strings must use approved vocabulary. `copy.ts` itself is excluded (it documents the rules). 2026-05-30: reworded `proofPackage.ts` proof_glossary ("SHA-256 hash" → "SHA-256 fingerprint", §1.3 Hash→Fingerprint).

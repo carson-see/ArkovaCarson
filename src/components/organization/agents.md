@@ -8,7 +8,7 @@ Organization-level admin components: credential issuance, member management, rev
 - `IssueCredentialForm.tsx` — ORG_ADMIN dialog to issue credentials with type, label, dynamic metadata fields from template, and optional recipient email
 - `MembersTable.tsx` — Organization members table with role, status, and management actions
 - `InviteMemberModal.tsx` — Invite new members by email
-- `AddExistingMemberModal.tsx` — Add existing Arkova users to the org
+- `AddExistingMemberModal.tsx` — Add existing Arkova users to the org. The membership guard queries `org_members` (NOT `org_memberships`, which does not exist — the old name returned PGRST205, silently swallowed, so the guard never fired). Accepts `useAdminEndpoints`: when true (platform admin viewing a foreign org), search + add route through the service_role worker endpoints (`GET /api/admin/users/search`, `POST /api/admin/organizations/:id/members`) instead of RLS-scoped Supabase queries / the `add_org_member` RPC (which checks `auth.uid()` and would reject a non-member admin). Standard org-admin path is unchanged.
 - `ReviewQueue.tsx` — Admin review queue for flagged credentials: approve/investigate/escalate/dismiss (EU AI Act human-in-the-loop)
 - `OrgRegistryTable.tsx` — Public registry of org-issued credentials. Handles all four states (SCRUM-1999): loading skeletons, empty ("No records found"), explicit fetch-error banner with Retry, and permission-denied banner (42501 / `insufficient_privilege`, no retry) — both rendered in the mobile and desktop layouts. Error copy lives in the local `REGISTRY_STATE_COPY` constant.
 - `CreateOrgDialog.tsx` — Organization creation dialog

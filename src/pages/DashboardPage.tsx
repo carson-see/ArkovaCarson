@@ -22,6 +22,7 @@ import { StatCard, EmptyState, ProfileCard } from '@/components/dashboard';
 import { SecureDocumentDialog } from '@/components/anchor';
 import { IssueCredentialForm } from '@/components/organization';
 import { RecordsList, type Record } from '@/components/records';
+import { SemanticSearchPanel } from '@/components/search';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
@@ -355,6 +356,12 @@ export function DashboardPage() {
           </AlertDescription>
         </Alert>
       )}
+
+      {/* SCRUM-1958 — AI smart search across the user's secured documents.
+          SemanticSearchPanel self-gates on ENABLE_SEMANTIC_SEARCH and owns its
+          own Card chrome, so nothing (not even an empty card) renders when the
+          flag is off. */}
+      {hasRecords && <SemanticSearchPanel />}
 
       {/* Records section — collapsible */}
       <div ref={recordsSectionRef}>

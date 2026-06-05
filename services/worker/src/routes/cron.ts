@@ -93,6 +93,8 @@ import { GRACE_EXPIRY_SWEEP_CRON, runGraceExpirySweep } from '../jobs/grace-expi
 import { sweepExpiredNonces, makeNonceSweepDb } from '../jobs/nonce-sweep.js';
 import { reconcileDocusignGaps } from '../jobs/docusign-reconciliation.js';
 import { makeReconciliationDeps } from '../jobs/docusign-reconciliation-deps.js';
+import { pollDocusignConnectFailures } from '../jobs/docusign-connect-failures.js';
+import { makeConnectFailuresDeps } from '../jobs/docusign-connect-failures-deps.js';
 import { MONTHLY_ALLOCATION_ROLLOVER_CRON, runAllocationRollover } from '../jobs/monthly-allocation-rollover.js';
 import { runStripeAnchorReconciliation, generateFinancialReport, processFailedPaymentRecovery } from '../billing/reconciliation.js';
 import { logHeapStatus } from '../utils/heapMonitor.js';
@@ -1536,6 +1538,28 @@ cronRouter.post('/docusign-reconciliation', async (_req, res) => {
     res.json(result);
   } catch (error) {
     logger.error({ error }, 'DocuSign reconciliation failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+// ─── SCRUM-2099 [DS-FAIL-01]: DocuSign Connect Failures hourly poller ───
+// Surgical complement to the 24h Envelopes reconciliation above: polls
+// DocuSign's own Connect Failures API hourly and dedups new gaps against the
+// shared docusign_reconciliation_gaps table. Catches gaps within ~1h.
+cronRouter.post('/docusign-connect-failures-poll', async (_req, res) => {
+  try {
+    const result = await withCronMonitoring(
+      'docusign-connect-failures-poll',
+      '0 * * * *',
+      () => pollDocusignConnectFailures(makeConnectFailuresDeps()),
+    )();
+    if (!result.ok) {
+      res.status(500).json(result);
+      return;
+    }
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'DocuSign Connect failures poll failed');
     res.status(500).json({ error: 'Processing failed' });
   }
 });
