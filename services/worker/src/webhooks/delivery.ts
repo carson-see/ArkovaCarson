@@ -429,16 +429,24 @@ async function deliverToEndpoint(
     // audit row for this event would otherwise be silently dropped — a SOC2
     // audit-integrity SEV1. The existing DLQ only covered HTTP-delivery
     // failure; here we route the *log-write* failure to the same durable
-    // dead-letter queue so the event is preserved (keyed by idempotency_key)
-    // and can be reconciled/replayed. No new table, no PII beyond what the
-    // table already stores. The drop signal is propagated to the caller via
-    // the `false` return (observed by processWebhookRetries; dispatchWebhook-
-    // Event fans out best-effort and does not gate on the boolean).
+    // dead-letter queue so the event is preserved best-effort (keyed by
+    // idempotency_key, deduped via the 0337 partial unique index) and can be
+    // reconciled/replayed. No new PII beyond what the table already stores.
+    //
+    // Honest residual risk: this is BEST-EFFORT preservation, not a guarantee.
+    // The `false` return is NOT a drop signal any caller acts on —
+    // processWebhookRetries ignores the boolean and dispatchWebhookEvent fans
+    // out via Promise.all without gating on it. Under a full-DB outage the DLQ
+    // upsert below ALSO fails (same outage), and the event is dropped with a
+    // Sentry alert (the captureException above) + the DLQ-write error log. The
+    // durable store is the audit-integrity backstop only when at least the DLQ
+    // table is reachable.
     await moveToDeadLetterQueue(
       endpoint,
       payload,
       `delivery_log write failed (audit-integrity): ${(logError as { message?: string })?.message ?? 'unknown'} [idempotency_key=${idempotencyKey}]`,
       attempt,
+      'log_write',
     );
     return false;
   }
@@ -509,7 +517,7 @@ async function deliverToEndpoint(
 
       // DH-12: Move to dead letter queue if permanently failed
       if (!shouldRetry) {
-        await moveToDeadLetterQueue(endpoint, payload, `HTTP ${response.status}`, attempt);
+        await moveToDeadLetterQueue(endpoint, payload, `HTTP ${response.status}`, attempt, 'http_delivery');
       }
 
       logger.warn(
@@ -546,7 +554,7 @@ async function deliverToEndpoint(
 
     // DH-12: Move to dead letter queue if permanently failed
     if (!shouldRetry) {
-      await moveToDeadLetterQueue(endpoint, payload, errorMessage, attempt);
+      await moveToDeadLetterQueue(endpoint, payload, errorMessage, attempt, 'http_delivery');
     }
 
     logger.error(
@@ -644,38 +652,73 @@ export async function dispatchWebhookEvent(
 // ─── Dead Letter Queue (DH-12) ─────────────────────────────────────────
 
 /**
+ * SCRUM-2244: the two legitimate reasons an event lands in the DLQ. They are
+ * separate audit facts about the same (endpoint, event_type, event_id):
+ * - `http_delivery`: the endpoint exhausted all retry attempts (HTTP error /
+ *   network failure on the final attempt).
+ * - `log_write`: the `webhook_delivery_logs` audit-row write itself failed
+ *   persistently (DB outage / schema mismatch), so the event would otherwise
+ *   be silently dropped.
+ * The partial unique index in migration 0337 keys on
+ * (endpoint_id, event_type, event_id, failure_kind) so re-DLQ of the SAME
+ * failure mode is a no-op, while the two distinct modes can each keep one row.
+ */
+type DlqFailureKind = 'http_delivery' | 'log_write';
+
+/**
  * Move permanently failed webhook deliveries to a dead letter queue
  * for manual inspection and retry.
+ *
+ * SCRUM-2244: idempotent. Uses an UPSERT with `ignoreDuplicates` on the
+ * (endpoint_id, event_type, event_id, failure_kind) partial unique index so
+ * the same event DLQ'd twice (e.g. retry/re-emit during a DB outage) produces
+ * exactly one row per failure mode — protecting audit integrity.
  */
 async function moveToDeadLetterQueue(
   endpoint: WebhookEndpoint,
   payload: WebhookPayload,
   errorMessage: string,
   lastAttempt: number,
+  failureKind: DlqFailureKind,
 ): Promise<void> {
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     await (db as any)
       .from('webhook_dead_letter_queue')
-      .insert({
-        endpoint_id: endpoint.id,
-        endpoint_url: endpoint.url,
-        org_id: endpoint.org_id,
-        event_type: payload.event_type,
-        event_id: payload.event_id,
-        payload: payload as unknown as Json,
-        error_message: errorMessage,
-        last_attempt: lastAttempt,
-        failed_at: new Date().toISOString(),
-      });
+      .upsert(
+        {
+          endpoint_id: endpoint.id,
+          endpoint_url: endpoint.url,
+          org_id: endpoint.org_id,
+          event_type: payload.event_type,
+          event_id: payload.event_id,
+          failure_kind: failureKind,
+          payload: payload as unknown as Json,
+          error_message: errorMessage,
+          last_attempt: lastAttempt,
+          failed_at: new Date().toISOString(),
+        },
+        {
+          // Dedup on the partial unique index from migration 0337. A duplicate
+          // re-DLQ of the same (endpoint, event_type, event_id, failure_kind)
+          // is ignored — the first row's error_message/failed_at is preserved.
+          onConflict: 'endpoint_id,event_type,event_id,failure_kind',
+          ignoreDuplicates: true,
+        },
+      );
 
     logger.info(
-      { endpointId: endpoint.id, eventId: payload.event_id, lastAttempt },
+      { endpointId: endpoint.id, eventId: payload.event_id, lastAttempt, failureKind },
       'Moved to dead letter queue',
     );
   } catch (dlqError) {
+    // SCRUM-2244 residual risk: under a FULL DB outage this DLQ write fails too
+    // (the same outage that broke the delivery_log write). There is no durable
+    // store left, so the event is genuinely dropped — we surface it loudly here
+    // (and the original log-write failure already fired Sentry) rather than
+    // pretending the event was preserved.
     logger.error(
-      { endpointId: endpoint.id, eventId: payload.event_id, error: dlqError },
+      { endpointId: endpoint.id, eventId: payload.event_id, error: dlqError, failureKind },
       'Failed to write to dead letter queue',
     );
   }

@@ -21,6 +21,7 @@ This directory now starts with the Path C baseline, `00000000000000_baseline_at_
 | `0332` | #1100 | SCRUM-2248 | `0332_scrum2248_sanitize_metadata_strip_underscore.sql` | reserved — T3, soak pending |
 | `0333` | #1101 | SCRUM-2193 | `0333_scrum2193_validate_anchors_metadata_constraints.sql` | reserved — T3, soak pending |
 | `0334` | (pending) | SCRUM-2229 | `0334_scrum2229_sub_org_credit_rollup.sql` | **reserved 2026-06-05** — sub-org credit allocation rollup RPC; PR not yet opened |
+| `0337` | #1107 | SCRUM-2244 | `0337_scrum2244_dlq_idempotency.sql` | **reserved 2026-06-05** — DLQ dedup: `failure_kind` discriminator column + partial unique index on `(endpoint_id, event_type, event_id, failure_kind) WHERE resolved = false`. Took 0337 (0335/0336 claimed by other in-flight sessions; 0337 unclaimed in any committed branch — SCRUM-2250 #1099 had not yet committed a migration file as of this reservation). If SCRUM-2250 later claims 0337, renumber per merge-order rule. |
 
 - **Merge order must follow prefix order** (`0327→0334`): migrations apply monotonically, so merging a higher prefix before a lower one strands the lower one as out-of-order.
 - Each of these soaks on its **own dedicated isolated Supabase project**, never shared staging — `main` is at `0326`, so applying any unmerged prefix to shared staging would gap the ledger and contaminate every parallel soak.
