@@ -45,13 +45,24 @@ const HARDENED = [
   'refresh_cache_record_types',
 ] as const;
 
-// Sub-refreshers that, on a budget hit, must PRESERVE the prior value and tag it
-// stale rather than overwrite with an empty/zero result.
-const STALE_PRESERVING = [
+// Sub-refreshers whose reader RPCs consume the BARE cache_value
+// (jsonb_array_elements / jsonb_array_elements_text / jsonb_each). On a budget
+// hit these MUST keep the cache value a bare array/object — never a wrapper that
+// would make the reader throw — by SKIPPING the write (ON CONFLICT DO NOTHING)
+// and leaving the prior bare value untouched.
+const BARE_VALUE_REFRESHERS = [
   'refresh_cache_anchor_type_counts',
   'refresh_cache_by_source',
   'refresh_cache_record_types',
 ] as const;
+
+// The exact bare-value shape each reader expects, and how the refresher seeds it
+// when no prior row exists (a bare empty array / object — NOT a wrapper).
+const BARE_SEED: Record<(typeof BARE_VALUE_REFRESHERS)[number], string> = {
+  refresh_cache_anchor_type_counts: "'[]'::jsonb",
+  refresh_cache_by_source: "'{}'::jsonb",
+  refresh_cache_record_types: "'[]'::jsonb",
+};
 
 describe('SCRUM-2236: dashboard cache refreshers are budgeted', () => {
   it('migration redefines all four slow sub-refreshers', () => {
@@ -112,16 +123,42 @@ describe('SCRUM-2236: dashboard cache refreshers are budgeted', () => {
     expect(block).toMatch(/reltuples/);
   });
 
-  describe.each(STALE_PRESERVING)('%s stale-marker on cancel', (fn) => {
-    it('marks the cache row stale instead of wiping it with an empty result', () => {
+  describe.each(BARE_VALUE_REFRESHERS)('%s keeps a bare value on cancel', (fn) => {
+    it('NEVER writes a stale-wrapper object (would break the bare-value reader)', () => {
       const block = functionBlock(migration(), fn);
-      expect(block).toMatch(/'stale_reason'\s*,\s*'budget'/);
-      expect(block).toMatch(/'stale'\s*,\s*true/);
-      // On conflict it preserves the prior value, never blindly EXCLUDED-overwrites.
-      expect(block).toMatch(
-        /COALESCE\(pipeline_dashboard_cache\.cache_value/,
-      );
+      // The previous (buggy) implementation wrote { stale, stale_reason, value }.
+      // That wrapper makes jsonb_array_elements / jsonb_each readers THROW. The
+      // fixed refresher must not introduce any such wrapper key.
+      expect(block).not.toMatch(/'stale_reason'/);
+      expect(block).not.toMatch(/'stale'\s*,\s*true/);
     });
+
+    it('preserves the prior bare value by SKIPPING the write (ON CONFLICT DO NOTHING)', () => {
+      const block = functionBlock(migration(), fn);
+      // The cancel branch leaves any existing bare value untouched.
+      expect(block).toMatch(/ON CONFLICT \(cache_key\) DO NOTHING/);
+    });
+
+    it('seeds only a bare empty array/object when no prior row exists', () => {
+      const block = functionBlock(migration(), fn);
+      const seed = BARE_SEED[fn].replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      // The cancel branch's INSERT seeds the bare empty value the reader handles...
+      const insertIdx = block.indexOf('ON CONFLICT (cache_key) DO NOTHING');
+      expect(insertIdx, 'has a DO NOTHING cancel-branch insert').toBeGreaterThan(-1);
+      // ...and that same insert carries the bare empty literal (no wrapper).
+      const insertSlice = block.slice(
+        Math.max(0, insertIdx - 200),
+        insertIdx,
+      );
+      expect(insertSlice).toMatch(new RegExp(seed));
+    });
+  });
+
+  it('does not introduce a wrapper-object shape anywhere in the migration', () => {
+    // Belt-and-braces: the {stale,stale_reason,value} wrapper that broke the three
+    // bare-value reader RPCs must not exist anywhere in the migration.
+    const sql = migration();
+    expect(sql).not.toMatch(/'stale_reason'/);
   });
 
   it('reloads the PostgREST schema cache', () => {
@@ -138,5 +175,14 @@ describe('SCRUM-2236: dashboard cache refreshers are budgeted', () => {
 
   it('carries the JIRA id in the header', () => {
     expect(migration()).toMatch(/SCRUM-2236/);
+  });
+
+  it('documents the durable fix: an operator-applied CONCURRENTLY index step', () => {
+    const sql = migration();
+    // The real fix for the ineffective inner-budget is index-resident scans.
+    expect(sql).toMatch(/CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_anchors_status_active_count/);
+    // It must be documented as non-transactional / operator-applied (CONCURRENTLY
+    // cannot run inside the txn supabase db push wraps a migration in).
+    expect(sql).toMatch(/NON-TRANSACTIONAL/i);
   });
 });
