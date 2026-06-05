@@ -2,6 +2,11 @@
 
 Public v1 API surface — frozen contract per CLAUDE.md §1.8. Additive nullable fields only; breaking changes require `v2+` prefix and 12-month deprecation.
 
+## 2026-06-01 Audit Export Org-Lookup Error Classification
+
+- `audit-export.ts` (both `POST /audit-export` and `POST /audit-export/batch`) now uses `.maybeSingle()` + an explicit `error` check for the `profiles.org_id` lookup. A Supabase/operational failure (e.g. PGRST301) returns 500 (`Failed to generate audit export` / `Failed to generate batch audit export`); only a successful query with a null `org_id` returns 403 `Organization membership required`. Previously `.single()` with no error inspection let a DB fault fall through to a misleading 403, masking a 500-class fault.
+- Same error-classification pattern as `cpe-log-export.ts` (PR #1029). Error logging is coarse `message` + `code` only — never row contents or PII (§1.4).
+
 ## 2026-05-22 Anchor Submit Scope Fix
 
 - `POST /api/v1/anchor` is the canonical submit route; `POST /api/v1/anchor/submit` is a compatibility alias that reuses the same handler.
