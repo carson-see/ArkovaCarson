@@ -2448,8 +2448,6 @@ export const ENTERPRISE_LABELS = {
   TRUST_ENCRYPTION_DESC: 'Documents never leave the user\'s device. Only cryptographic fingerprints are transmitted and stored.',
   TRUST_RLS_TITLE: 'Row-Level Security',
   TRUST_RLS_DESC: 'Every database query is scoped to the authenticated user\'s organization. Data isolation is enforced at the infrastructure level.',
-  TRUST_DPF_TITLE: 'EU-US Data Privacy Framework',
-  TRUST_DPF_DESC: 'Self-certified under the EU-US Data Privacy Framework for lawful transatlantic personal data transfers with individual redress mechanisms.',
   TRUST_INTL_TITLE: 'International Compliance',
   TRUST_INTL_DESC: 'Compliance controls spanning 13 regulatory frameworks across 10+ jurisdictions including GDPR, LGPD, PDPA, and LFPDPPP.',
   INTEGRATIONS_TITLE: 'Integrations',
