@@ -10,12 +10,12 @@
  * `_metadata_hash`, and any future `_`-prefixed internal. Those leak to ANONYMOUS
  * callers of the public verify path.
  *
- * Migration 0332 redefines sanitize_metadata_for_public to ALSO strip every
+ * Migration 0334 redefines sanitize_metadata_for_public to ALSO strip every
  * top-level key matching `^_` (via a key-filtered jsonb_object_agg), while
  * keeping the existing named PII denylist as defense in depth. The fix is a pure
  * function-body redefinition — no schema change, no data migration.
  *
- * These assertions read migration 0332 directly (content-guard), mirroring the
+ * These assertions read migration 0334 directly (content-guard), mirroring the
  * convention in scrum-1847-1869-public-anchor-cpe-cle-metadata.test.ts: no local
  * Supabase stack is assumed in CI, so the regression is enforced against the
  * migration SQL. The underscore-strip and PII denylist are both asserted, plus
@@ -28,7 +28,7 @@ import * as path from 'node:path';
 
 const MIGRATION_PATH = path.join(
   process.cwd(),
-  'supabase/migrations/0332_scrum2248_sanitize_metadata_strip_underscore.sql',
+  'supabase/migrations/0334_scrum2248_sanitize_metadata_strip_underscore.sql',
 );
 
 function migration(): string {
@@ -45,7 +45,7 @@ function functionBlock(sql: string): string {
 }
 
 describe('SCRUM-2248: sanitize_metadata_for_public strips `_`-prefixed internals', () => {
-  it('migration 0332 redefines sanitize_metadata_for_public', () => {
+  it('migration 0334 redefines sanitize_metadata_for_public', () => {
     expect(migration()).toMatch(
       /CREATE OR REPLACE FUNCTION\s+(?:"?public"?\.)?"?sanitize_metadata_for_public"?/,
     );
