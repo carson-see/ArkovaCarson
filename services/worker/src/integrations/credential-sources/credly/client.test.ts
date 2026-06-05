@@ -34,6 +34,18 @@ function makeErrResponse(status: number): ReturnType<FetchLike> {
   });
 }
 
+function makeErrResponseWithBody(
+  status: number,
+  body: string,
+): ReturnType<FetchLike> {
+  return Promise.resolve({
+    ok: false,
+    status,
+    json: async () => ({}),
+    text: async () => body,
+  });
+}
+
 type FetchInit = NonNullable<Parameters<FetchLike>[1]> & {
   headers: Record<string, string>;
 };
@@ -112,6 +124,22 @@ describe('SCRUM-1612 — Credly OAuth client_credentials', () => {
       expect(fetchMock).toHaveBeenCalledTimes(1); // cache hit
     });
 
+    it('deduplicates concurrent token refreshes for the same client', async () => {
+      fetchMock.mockReturnValueOnce(
+        makeOkResponse({ access_token: 'tok-1', expires_in: 7200 }),
+      );
+      const client = createCredlyClient(deps);
+
+      const [first, second] = await Promise.all([
+        client.getAccessToken({ clientId: 'cid-1', clientSecret: 'csec' }),
+        client.getAccessToken({ clientId: 'cid-1', clientSecret: 'csec' }),
+      ]);
+
+      expect(first).toBe('tok-1');
+      expect(second).toBe('tok-1');
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
     it('re-mints when the cached token is past expiry minus skew', async () => {
       fetchMock
         .mockReturnValueOnce(
@@ -134,17 +162,35 @@ describe('SCRUM-1612 — Credly OAuth client_credentials', () => {
       expect(fetchMock).toHaveBeenCalledTimes(2);
     });
 
-    it('throws a non-leaky error on token-endpoint failure', async () => {
-      fetchMock.mockReturnValueOnce(makeErrResponse(401));
+    it('throws a non-leaky error with bounded response detail on token-endpoint failure', async () => {
+      fetchMock.mockReturnValueOnce(
+        makeErrResponseWithBody(
+          401,
+          '{"error":"invalid_client","client_secret":"wrong"}',
+        ),
+      );
       const client = createCredlyClient(deps);
 
       await expect(
         client.getAccessToken({ clientId: 'cid-1', clientSecret: 'wrong' }),
-      ).rejects.toThrow(/Credly OAuth token request failed: HTTP 401/);
-      // Ensure the client_secret is NOT in the error message
+      ).rejects.toThrow(
+        /Credly OAuth token request failed: HTTP 401: .*invalid_client/,
+      );
       await expect(
-        client.getAccessToken({ clientId: 'cid-1', clientSecret: 'wrong' }),
+        client.getAccessToken({ clientId: 'cid-2', clientSecret: 'wrong' }),
       ).rejects.not.toThrow(/wrong/);
+    });
+
+    it('passes an AbortSignal to the token fetch for timeout enforcement', async () => {
+      fetchMock.mockReturnValueOnce(
+        makeOkResponse({ access_token: 'tok-1', expires_in: 7200 }),
+      );
+      const client = createCredlyClient(deps);
+
+      await client.getAccessToken({ clientId: 'cid-1', clientSecret: 'csec' });
+
+      const init = getFetchInit(fetchMock.mock.calls[0]);
+      expect(init.signal).toBeInstanceOf(AbortSignal);
     });
   });
 
@@ -232,8 +278,59 @@ describe('SCRUM-1612 — Credly OAuth client_credentials', () => {
       );
     });
 
-    it('throws on HTTP error from badges endpoint', async () => {
-      fetchMock.mockReturnValueOnce(makeErrResponse(503));
+    it('strips unknown badge fields from the parsed response', async () => {
+      fetchMock.mockReturnValueOnce(
+        makeOkResponse({
+          data: [
+            {
+              id: 'bdg-1',
+              issued_at: '2026-04-15T12:00:00Z',
+              expires_at: null,
+              public_url: 'https://www.credly.com/badges/bdg-1/public_url',
+              recipient: {
+                email: 'alex@example.com',
+                full_name: 'Alex Example',
+              },
+              badge_template: {
+                id: 'tpl-1',
+                name: 'Cloud Architecture Fundamentals',
+                owner: { name: 'Example Cloud', email: 'issuer@example.com' },
+                internal_notes: 'PII-ish partner payload',
+              },
+              recipient_email: 'alex@example.com',
+            },
+          ],
+          metadata: { count: 1, unexpected: 'ignored' },
+        }),
+      );
+      const client = createCredlyClient(deps);
+
+      const result = await client.listIssuedBadges({
+        accessToken: 't',
+        organisationId: 'org-1',
+      });
+
+      const serialised = JSON.stringify(result);
+      expect(serialised).not.toContain('recipient_email');
+      expect(serialised).not.toContain('full_name');
+      expect(serialised).not.toContain('issuer@example.com');
+      expect(serialised).not.toContain('internal_notes');
+      expect(serialised).not.toContain('unexpected');
+    });
+
+    it('rejects invalid expires_at values before they reach evidence mapping', async () => {
+      fetchMock.mockReturnValueOnce(
+        makeOkResponse({
+          data: [
+            {
+              id: 'bdg-1',
+              expires_at: 'not-a-date',
+              badge_template: { name: 'Cloud Architecture Fundamentals' },
+            },
+          ],
+          metadata: { count: 1 },
+        }),
+      );
       const client = createCredlyClient(deps);
 
       await expect(
@@ -241,7 +338,38 @@ describe('SCRUM-1612 — Credly OAuth client_credentials', () => {
           accessToken: 't',
           organisationId: 'org-1',
         }),
-      ).rejects.toThrow(/Credly issued_badges request failed: HTTP 503/);
+      ).rejects.toThrow();
+    });
+
+    it('passes an AbortSignal to the badges fetch for timeout enforcement', async () => {
+      fetchMock.mockReturnValueOnce(
+        makeOkResponse({ data: [], metadata: { count: 0 } }),
+      );
+      const client = createCredlyClient(deps);
+
+      await client.listIssuedBadges({
+        accessToken: 't',
+        organisationId: 'org-1',
+      });
+
+      const init = getFetchInit(fetchMock.mock.calls[0]);
+      expect(init.signal).toBeInstanceOf(AbortSignal);
+    });
+
+    it('throws on HTTP error from badges endpoint', async () => {
+      fetchMock.mockReturnValueOnce(
+        makeErrResponseWithBody(503, 'upstream unavailable'),
+      );
+      const client = createCredlyClient(deps);
+
+      await expect(
+        client.listIssuedBadges({
+          accessToken: 't',
+          organisationId: 'org-1',
+        }),
+      ).rejects.toThrow(
+        /Credly issued_badges request failed: HTTP 503: upstream unavailable/,
+      );
     });
   });
 });

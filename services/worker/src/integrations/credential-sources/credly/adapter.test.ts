@@ -125,6 +125,19 @@ describe('SCRUM-1612 — credlyBadgeToEvidence', () => {
     );
   });
 
+  it('uses a derived source id rather than copying the raw Credly badge id', () => {
+    const result = credlyBadgeToEvidence(PLAIN_BADGE, {
+      fetchedAt: '2026-05-01T00:00:00.000Z',
+      payloadHash: RAW_BYTES_HASH,
+    });
+    const expectedHash = createHash('sha256')
+      .update(PLAIN_BADGE.id, 'utf8')
+      .digest('hex');
+
+    expect(result.evidence.source.id).toBe(`sha256:${expectedHash}`);
+    expect(result.evidence.source.id).not.toBe(PLAIN_BADGE.id);
+  });
+
   it('does NOT leak the raw recipient email anywhere in the evidence package', () => {
     const result = credlyBadgeToEvidence(PLAIN_BADGE, {
       fetchedAt: '2026-05-01T00:00:00.000Z',
