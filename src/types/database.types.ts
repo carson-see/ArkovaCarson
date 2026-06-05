@@ -3186,6 +3186,7 @@ export type Database = {
           encrypted_tokens: string | null
           hmac_keys: Json | null
           id: string
+          kek_version: number
           org_id: string
           provider: string
           revoked_at: string | null
@@ -3204,6 +3205,7 @@ export type Database = {
           encrypted_tokens?: string | null
           hmac_keys?: Json | null
           id?: string
+          kek_version?: number
           org_id: string
           provider: string
           revoked_at?: string | null
@@ -3222,6 +3224,7 @@ export type Database = {
           encrypted_tokens?: string | null
           hmac_keys?: Json | null
           id?: string
+          kek_version?: number
           org_id?: string
           provider?: string
           revoked_at?: string | null
@@ -7276,4 +7279,3 @@ export const Constants = {
     },
   },
 } as const
-
