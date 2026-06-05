@@ -430,7 +430,7 @@ async function deliverToEndpoint(
     // audit-integrity SEV1. The existing DLQ only covered HTTP-delivery
     // failure; here we route the *log-write* failure to the same durable
     // dead-letter queue so the event is preserved best-effort (keyed by
-    // idempotency_key, deduped via the 0337 partial unique index) and can be
+    // idempotency_key, deduped via the 0338 partial unique index) and can be
     // reconciled/replayed. No new PII beyond what the table already stores.
     //
     // Honest residual risk: this is BEST-EFFORT preservation, not a guarantee.
@@ -659,7 +659,7 @@ export async function dispatchWebhookEvent(
  * - `log_write`: the `webhook_delivery_logs` audit-row write itself failed
  *   persistently (DB outage / schema mismatch), so the event would otherwise
  *   be silently dropped.
- * The partial unique index in migration 0337 keys on
+ * The partial unique index in migration 0338 keys on
  * (endpoint_id, event_type, event_id, failure_kind) so re-DLQ of the SAME
  * failure mode is a no-op, while the two distinct modes can each keep one row.
  */
@@ -699,7 +699,7 @@ async function moveToDeadLetterQueue(
           failed_at: new Date().toISOString(),
         },
         {
-          // Dedup on the partial unique index from migration 0337. A duplicate
+          // Dedup on the partial unique index from migration 0338. A duplicate
           // re-DLQ of the same (endpoint, event_type, event_id, failure_kind)
           // is ignored — the first row's error_message/failed_at is preserved.
           onConflict: 'endpoint_id,event_type,event_id,failure_kind',
