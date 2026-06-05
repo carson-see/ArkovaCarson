@@ -60,6 +60,7 @@ export interface RetryOptions {
 
 const DEFAULT_RETRIES = 2;
 const DEFAULT_BACKOFF_MS = 300;
+let storageUnavailableReloadSentinel = false;
 
 /**
  * Browser/bundler chunk-load failure signatures. Different engines word this
@@ -99,7 +100,7 @@ function readSentinel(): boolean {
     return globalThis.sessionStorage?.getItem(RETRY_SENTINEL_KEY) != null;
   } catch {
     // sessionStorage can throw in private mode / sandboxed iframes.
-    return false;
+    return storageUnavailableReloadSentinel;
   }
 }
 
@@ -107,11 +108,12 @@ function setSentinel(): void {
   try {
     globalThis.sessionStorage?.setItem(RETRY_SENTINEL_KEY, String(Date.now()));
   } catch {
-    /* best-effort */
+    storageUnavailableReloadSentinel = true;
   }
 }
 
 function clearSentinel(): void {
+  storageUnavailableReloadSentinel = false;
   try {
     globalThis.sessionStorage?.removeItem(RETRY_SENTINEL_KEY);
   } catch {

@@ -116,6 +116,48 @@ describe('loadWithRetry', () => {
     expect(reloadSpy).not.toHaveBeenCalled();
   });
 
+  it('does not reload-loop when sessionStorage is unavailable', async () => {
+    const originalSessionStorage = globalThis.sessionStorage;
+    Object.defineProperty(globalThis, 'sessionStorage', {
+      configurable: true,
+      value: {
+        getItem: vi.fn(() => {
+          throw new Error('storage unavailable');
+        }),
+        setItem: vi.fn(() => {
+          throw new Error('storage unavailable');
+        }),
+        removeItem: vi.fn(() => {
+          throw new Error('storage unavailable');
+        }),
+      },
+    });
+
+    try {
+      const firstLoader = vi.fn(async () => {
+        throw makeChunkError(CHROME_MSG);
+      });
+      void loadWithRetry(firstLoader, { retries: 0, backoffMs: 1 });
+
+      await vi.waitFor(() => {
+        expect(reloadSpy).toHaveBeenCalledTimes(1);
+      });
+
+      const secondError = makeChunkError(CHROME_MSG);
+      const secondLoader = vi.fn(async () => {
+        throw secondError;
+      });
+
+      await expect(loadWithRetry(secondLoader, { retries: 0, backoffMs: 1 })).rejects.toBe(secondError);
+      expect(reloadSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      Object.defineProperty(globalThis, 'sessionStorage', {
+        configurable: true,
+        value: originalSessionStorage,
+      });
+    }
+  });
+
   // (d) non-chunk error → no reload (and propagates without retrying past the limit)
   it('does not reload on a non-chunk error and propagates it', async () => {
     const err = makeChunkError('Cannot read properties of undefined (reading "x")');
