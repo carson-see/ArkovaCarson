@@ -24,6 +24,10 @@ import {
   handleAgentGetOrganization,
   TOOL_DEFINITIONS,
 } from '../../edge/src/mcp-tools.js';
+import {
+  realPublicAnchorRow,
+  pendingPublicAnchorRow,
+} from '../../edge/src/__fixtures__/publicAnchor.js';
 
 const CONFIG = {
   supabaseUrl: 'https://test.supabase.co',
@@ -132,12 +136,15 @@ describe('handleVerifyCredential', () => {
   it('returns verified result for SECURED anchor', async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
-      json: async () => ({
-        status: 'SECURED',
-        org_name: 'Test Org',
-        credential_type: 'DEGREE',
-        created_at: '2026-01-01',
-      }),
+      // get_public_anchor maps SECURED -> status:'ACTIVE' and emits the
+      // real provenance keys (see migration 0311); use the shared fixture
+      // so we assert the truthful mapped values, not masked defaults.
+      json: async () =>
+        realPublicAnchorRow({
+          issuer_name: 'Test Org',
+          credential_type: 'DEGREE',
+          network_receipt_id: 'tx-cred-1',
+        }),
     });
 
     const result = await handleVerifyCredential({ public_id: 'ARK-2026-001' }, CONFIG);
@@ -145,6 +152,9 @@ describe('handleVerifyCredential', () => {
     const parsed = JSON.parse(result.content[0].text);
     expect(parsed.verified).toBe(true);
     expect(parsed.status).toBe('ACTIVE');
+    expect(parsed.issuer_name).toBe('Test Org');
+    expect(parsed.network_receipt_id).toBe('tx-cred-1');
+    expect(parsed.anchor_timestamp).toBe('2026-04-11T10:00:00Z');
   });
 
   it('returns not found for failed lookup', async () => {
@@ -153,6 +163,18 @@ describe('handleVerifyCredential', () => {
     expect(result.isError).toBeUndefined();
     const parsed = JSON.parse(result.content[0].text);
     expect(parsed.verified).toBe(false);
+  });
+
+  it('returns unverified with null gated fields for a PENDING anchor', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => pendingPublicAnchorRow(),
+    });
+    const result = await handleVerifyCredential({ public_id: 'ARK-PENDING' }, CONFIG);
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.verified).toBe(false);
+    expect(parsed.network_receipt_id).toBeNull();
+    expect(parsed.anchor_timestamp).toBeNull();
   });
 });
 
@@ -361,30 +383,33 @@ describe('agent v2 MCP aliases', () => {
   it('get_anchor(public_id) delegates to public anchor lookup', async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
-      json: async () => ({
-        status: 'SECURED',
-        org_name: 'Test Org',
-        credential_type: 'LICENSE',
-        created_at: '2026-01-01',
-      }),
+      json: async () =>
+        realPublicAnchorRow({
+          public_id: 'ARK-LIC-ABC',
+          issuer_name: 'Test Org',
+          credential_type: 'LICENSE',
+        }),
     });
 
     const result = await handleAgentGetAnchor({ public_id: 'ARK-LIC-ABC' }, CONFIG);
     const parsed = JSON.parse(result.content[0].text);
     expect(parsed.verified).toBe(true);
+    expect(parsed.issuer_name).toBe('Test Org');
   });
 
   it('get_record (alias of handleAgentGetAnchor) returns the public-safe verify shape', async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
-      json: async () => ({
-        status: 'SECURED',
-        public_id: 'ARK-DOC-REC1',
-        org_name: 'Test Org',
-        credential_type: 'DOCUMENT',
-        created_at: '2026-01-01',
-        chain_tx_id: 'tx-receipt-123',
-      }),
+      json: async () =>
+        realPublicAnchorRow({
+          public_id: 'ARK-DOC-REC1',
+          issuer_name: 'Test Org',
+          credential_type: 'DOCUMENT',
+          network_receipt_id: 'tx-receipt-123',
+          // RPC may add internal id/record_id; the shaper must drop them.
+          id: 'internal-uuid',
+          record_id: 'internal-record-uuid',
+        } as never),
     });
 
     const result = await handleAgentGetAnchor({ public_id: 'ARK-DOC-REC1' }, CONFIG);
@@ -400,13 +425,12 @@ describe('agent v2 MCP aliases', () => {
   it('get_document (alias of handleAgentGetAnchor) returns the public-safe verify shape', async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
-      json: async () => ({
-        status: 'SECURED',
-        public_id: 'ARK-DOC-DOC1',
-        org_name: 'Test Org',
-        credential_type: 'DOCUMENT',
-        created_at: '2026-01-02',
-      }),
+      json: async () =>
+        realPublicAnchorRow({
+          public_id: 'ARK-DOC-DOC1',
+          issuer_name: 'Test Org',
+          credential_type: 'DOCUMENT',
+        }),
     });
 
     const result = await handleAgentGetAnchor({ public_id: 'ARK-DOC-DOC1' }, CONFIG);
@@ -734,13 +758,12 @@ describe('handleVerifyBatch (INT-02)', () => {
   it('verifies all credentials and returns results in input order', async () => {
     mockFetch.mockResolvedValue({
       ok: true,
-      json: async () => ({
-        status: 'SECURED',
-        org_name: 'University of Michigan',
-        credential_type: 'DEGREE',
-        created_at: '2026-04-11T10:00:00Z',
-        chain_tx_id: 'tx-1',
-      }),
+      json: async () =>
+        realPublicAnchorRow({
+          issuer_name: 'University of Michigan',
+          credential_type: 'DEGREE',
+          network_receipt_id: 'tx-1',
+        }),
     });
 
     const result = await handleVerifyBatch(
@@ -758,18 +781,18 @@ describe('handleVerifyBatch (INT-02)', () => {
     expect(parsed.results[0].verified).toBe(true);
     expect(parsed.results[0].status).toBe('ACTIVE');
     expect(parsed.results[0].issuer_name).toBe('University of Michigan');
+    expect(parsed.results[0].network_receipt_id).toBe('tx-1');
   });
 
   it('each batch result carries recipient_identifier field for shape parity with single handler', async () => {
     mockFetch.mockResolvedValue({
       ok: true,
-      json: async () => ({
-        status: 'SECURED',
-        org_name: 'Org',
-        credential_type: 'DEGREE',
-        created_at: '2026-04-11T10:00:00Z',
-        recipient_hash: 'hash-123',
-      }),
+      json: async () =>
+        realPublicAnchorRow({
+          issuer_name: 'Org',
+          credential_type: 'DEGREE',
+          recipient_identifier: 'hash-123',
+        }),
     });
     const result = await handleVerifyBatch({ public_ids: ['ARK-1'] }, CONFIG);
     const parsed = JSON.parse(result.content[0].text);
@@ -781,7 +804,7 @@ describe('handleVerifyBatch (INT-02)', () => {
     mockFetch.mockResolvedValueOnce({ ok: false, status: 404, json: async () => ({}) });
     mockFetch.mockResolvedValueOnce({
       ok: true,
-      json: async () => ({ status: 'SECURED', org_name: 'X', credential_type: 'DEGREE', created_at: '' }),
+      json: async () => realPublicAnchorRow({ issuer_name: 'X', credential_type: 'DEGREE' }),
     });
 
     const result = await handleVerifyBatch(
@@ -797,7 +820,7 @@ describe('handleVerifyBatch (INT-02)', () => {
   it('handles single-item batch', async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
-      json: async () => ({ status: 'SECURED', org_name: 'X', credential_type: 'DEGREE', created_at: '' }),
+      json: async () => realPublicAnchorRow({ issuer_name: 'X', credential_type: 'DEGREE' }),
     });
     const result = await handleVerifyBatch({ public_ids: ['ARK-1'] }, CONFIG);
     const parsed = JSON.parse(result.content[0].text);
@@ -807,7 +830,7 @@ describe('handleVerifyBatch (INT-02)', () => {
   it('handles 100-item batch (max allowed)', async () => {
     mockFetch.mockResolvedValue({
       ok: true,
-      json: async () => ({ status: 'SECURED', org_name: 'X', credential_type: 'DEGREE', created_at: '' }),
+      json: async () => realPublicAnchorRow({ issuer_name: 'X', credential_type: 'DEGREE' }),
     });
     const ids = Array.from({ length: 100 }, (_, i) => `ARK-${i}`);
     const result = await handleVerifyBatch({ public_ids: ids }, CONFIG);
@@ -835,7 +858,7 @@ describe('fetch signal', () => {
   it('passes AbortSignal to fetch calls', async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
-      json: async () => ({ status: 'SECURED', created_at: '2026-01-01' }),
+      json: async () => realPublicAnchorRow(),
     });
 
     await handleVerifyCredential({ public_id: 'ARK-001' }, CONFIG);
