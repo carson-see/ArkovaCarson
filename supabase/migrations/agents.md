@@ -21,6 +21,7 @@ This directory now starts with the Path C baseline, `00000000000000_baseline_at_
 | `0332` | #1100 | SCRUM-2248 | `0332_scrum2248_sanitize_metadata_strip_underscore.sql` | reserved — T3, soak pending |
 | `0333` | #1101 | SCRUM-2193 | `0333_scrum2193_validate_anchors_metadata_constraints.sql` | reserved — T3, soak pending |
 | `0334` | (pending) | SCRUM-2229 | `0334_scrum2229_sub_org_credit_rollup.sql` | **reserved 2026-06-05** — sub-org credit allocation rollup RPC; PR not yet opened |
+| `0335` | (pending) | SCRUM-2236 | `0335_scrum2236_dashboard_cache_budgets.sql` | **reserved 2026-06-05** — HARDEN-1: SCRUM-1256 budget+57014-sentinel pattern on the 4 unhardened dashboard cache refreshers (anchor_status_counts / anchor_type_counts / by_source / record_types); T3, soak pending |
 
 - **Merge order must follow prefix order** (`0327→0334`): migrations apply monotonically, so merging a higher prefix before a lower one strands the lower one as out-of-order.
 - Each of these soaks on its **own dedicated isolated Supabase project**, never shared staging — `main` is at `0326`, so applying any unmerged prefix to shared staging would gap the ledger and contaminate every parallel soak.
