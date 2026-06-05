@@ -10,6 +10,7 @@
 import * as Sentry from '@sentry/node';
 import { nodeProfilingIntegration } from '@sentry/profiling-node';
 import type { Event, ErrorEvent, Breadcrumb } from '@sentry/node';
+import { getBuildSha } from './buildInfo.js';
 
 // ---------------------------------------------------------------------------
 // PII patterns to scrub (Constitution 1.4 + 1.6)
@@ -23,6 +24,14 @@ const JWT_REGEX = /\beyJ[a-zA-Z0-9_-]+\.eyJ[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+/g;
 const PHONE_REGEX = /(?:\+\d{1,3}[\s.-]?)?\(?\d{2,4}\)?[\s.-]?\d{3,4}[\s.-]?\d{4}\b/g;
 const IPV4_REGEX = /\b(?:\d{1,3}\.){3}\d{1,3}\b/g;
 const URL_TOKEN_REGEX = /(access_token|token|key|secret|password|auth)=[^&\s]+/gi;
+// SCRUM-2249 (HARDEN-1-F): UUIDs are org_id/user_id/anchor.id identifiers that
+// leak through transaction names and request URLs. Collapsed to a stable
+// placeholder so Sentry issue grouping stays coherent.
+const UUID_REGEX =
+  /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi;
+// SCRUM-2249: auth-error / lock messages embed the prod Supabase project ref
+// (https://<ref>.supabase.co). Scrub to a stable host.
+const SUPABASE_REF_REGEX = /https:\/\/[a-z0-9]{20}\.supabase\.co/gi;
 
 const SENSITIVE_HEADERS = [
   'authorization',
@@ -57,11 +66,17 @@ function scrubString(str: string): string {
     .replace(API_KEY_REGEX, '[API_KEY]')
     .replace(JWT_REGEX, '[JWT]')
     .replace(PHONE_REGEX, '[PHONE]')
-    .replace(IPV4_REGEX, '[IP_ADDR]');
+    .replace(IPV4_REGEX, '[IP_ADDR]')
+    // SCRUM-2249: project-ref before generic identifier scrubbing.
+    .replace(SUPABASE_REF_REGEX, 'https://[SUPABASE_PROJECT].supabase.co')
+    .replace(UUID_REGEX, '[UUID]');
 }
 
 function scrubUrl(url: string): string {
-  return url.replace(URL_TOKEN_REGEX, '$1=[FILTERED]');
+  return url
+    .replace(URL_TOKEN_REGEX, '$1=[FILTERED]')
+    .replace(SUPABASE_REF_REGEX, 'https://[SUPABASE_PROJECT].supabase.co')
+    .replace(UUID_REGEX, '[UUID]');
 }
 
 /**
@@ -85,8 +100,19 @@ export function scrubPiiFromEvent(event: Event | null): Event | null {
     event.message = scrubString(event.message);
   }
 
+  // SCRUM-2249: transaction name carries the route, which embeds org_id UUIDs.
+  if (typeof event.transaction === 'string') {
+    event.transaction = scrubString(event.transaction);
+  }
+
   // Scrub request data
   if (event.request) {
+    // SCRUM-2249: request URL embeds org_id / anchor.id UUIDs and may carry
+    // the Supabase project ref — scrub both.
+    if (typeof event.request.url === 'string') {
+      event.request.url = scrubUrl(event.request.url);
+    }
+
     // Strip sensitive headers
     if (event.request.headers) {
       for (const header of SENSITIVE_HEADERS) {
@@ -165,6 +191,22 @@ export function scrubPiiFromBreadcrumb(breadcrumb: Breadcrumb | null): Breadcrum
 }
 
 // ---------------------------------------------------------------------------
+// Noise filters (SCRUM-2256 / HARDEN-1-F)
+// ---------------------------------------------------------------------------
+//
+// Benign, high-volume, non-actionable errors. Same intent as the frontend:
+//   - GoTrue Navigator LockManager contention from supabase-js token refresh.
+//   - Login/token AbortError when a request is aborted.
+// Exported for unit-testability.
+export const IGNORED_ERROR_PATTERNS: (string | RegExp)[] = [
+  /Navigator ?LockManager/i,
+  /Acquiring an exclusive Navigator LockManager lock/i,
+  /lock:.*-auth-token/i,
+  /AbortError: .*aborted/i,
+  'AbortError',
+];
+
+// ---------------------------------------------------------------------------
 // Sentry initialization
 // ---------------------------------------------------------------------------
 
@@ -172,14 +214,30 @@ export function initSentry(dsn: string | undefined, environment: string): void {
   if (!dsn) {
     // AUDIT-22: console.log intentional here — logger imports config, which
     // creates a circular dependency. These bootstrap messages fire once at startup.
-    console.log('[Sentry] No DSN configured — skipping initialization');  
+    console.log('[Sentry] No DSN configured — skipping initialization');
     return;
   }
+
+  // SCRUM-2254: real build SHA (BUILD_SHA baked at Docker build via
+  // --build-arg, same value /health exposes) instead of the package version.
+  // Falls back to npm_package_version, then '0.1.0' for local dev.
+  const buildSha = getBuildSha();
+  const release =
+    buildSha !== 'unknown' ? buildSha : process.env.npm_package_version ?? '0.1.0';
+
+  // SCRUM-2254: identify the deployment surface. Cloud Run sets K_REVISION
+  // (e.g. arkova-worker-00123-abc) and K_SERVICE; prefer those over the
+  // default 'localhost'.
+  const serverName =
+    process.env.K_REVISION ?? process.env.K_SERVICE ?? 'arkova-worker';
 
   Sentry.init({
     dsn,
     environment,
-    release: process.env.npm_package_version ?? '0.1.0',
+    release,
+    serverName,
+    // SCRUM-2256: drop benign GoTrue Navigator-lock + AbortError noise.
+    ignoreErrors: IGNORED_ERROR_PATTERNS,
     integrations: [nodeProfilingIntegration()],
 
     // Performance sampling
@@ -199,6 +257,43 @@ export function initSentry(dsn: string | undefined, environment: string): void {
   });
 
   console.log(`[Sentry] Initialized for ${environment}`);  
+}
+
+// ---------------------------------------------------------------------------
+// Stuck-anchor-monitor fingerprinting (SCRUM-2255 / HARDEN-1-F)
+// ---------------------------------------------------------------------------
+//
+// The stuck-anchor monitor runs hourly. Without an explicit fingerprint, each
+// run produces a fresh Sentry issue (default grouping keys on message + stack),
+// so a persistent stall floods the inbox with 20+ near-duplicate issues. A
+// fixed fingerprint collapses all re-fires into ONE issue that simply keeps
+// incrementing its event count.
+//
+// SEAM FOR PR #1055 (feat/stuck-anchor-monitor, SCRUM-2234): the monitor's
+// Sentry capture is NOT on main yet — it ships with #1055. That PR should call
+// `captureStuckAnchorAlert(...)` from `jobs/pipeline-health.ts` (or wherever the
+// stuck-anchor alert is raised) INSTEAD of a bare `Sentry.captureMessage`, so it
+// inherits the stable fingerprint below. Do not duplicate this helper there.
+export const STUCK_ANCHOR_FINGERPRINT = ['stuck-anchor-monitor'] as const;
+
+/**
+ * Capture a stuck-anchor-monitor alert with a stable fingerprint so hourly
+ * re-fires collapse into a single Sentry issue.
+ *
+ * @param message - Human-readable summary (e.g. "12 anchors stuck in SUBMITTED").
+ * @param extra   - Optional structured context (counts, statuses). Must be
+ *                  PII-free — the beforeSend scrubber still runs, but callers
+ *                  should pass aggregate metrics, never per-document data.
+ */
+export function captureStuckAnchorAlert(
+  message: string,
+  extra?: Record<string, unknown>,
+): void {
+  Sentry.captureMessage(message, {
+    level: 'warning',
+    fingerprint: [...STUCK_ANCHOR_FINGERPRINT],
+    ...(extra ? { extra } : {}),
+  });
 }
 
 // ---------------------------------------------------------------------------

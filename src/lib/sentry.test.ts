@@ -121,6 +121,56 @@ describe('Frontend scrubPiiFromEvent', () => {
   it('returns null for null events', () => {
     expect(scrubPiiFromEvent(null)).toBeNull();
   });
+
+  // SCRUM-2249 (HARDEN-1-F): identifier scrubbing
+  it('scrubs UUIDs in event.transaction (org_id leaks into transaction name)', () => {
+    const event = {
+      transaction: '/admin/organizations/3f8a9c2e-1b4d-4e7a-9c3f-2a1b8d5e6f70',
+    };
+
+    const scrubbed = scrubPiiFromEvent(event);
+    expect(scrubbed?.transaction).toBe('/admin/organizations/[UUID]');
+    expect(scrubbed?.transaction).not.toContain('3f8a9c2e');
+  });
+
+  it('does not over-scrub a normal route name in event.transaction', () => {
+    const event = { transaction: '/dashboard/anchors' };
+
+    const scrubbed = scrubPiiFromEvent(event);
+    expect(scrubbed?.transaction).toBe('/dashboard/anchors');
+  });
+
+  it('scrubs UUIDs in event.request.url', () => {
+    const event = {
+      request: {
+        url: 'https://app.arkova.io/admin/organizations/3f8a9c2e-1b4d-4e7a-9c3f-2a1b8d5e6f70/members',
+      },
+    };
+
+    const scrubbed = scrubPiiFromEvent(event);
+    expect(scrubbed?.request?.url).toBe('https://app.arkova.io/admin/organizations/[UUID]/members');
+  });
+
+  it('scrubs Supabase project-ref in auth-lock messages', () => {
+    const event = {
+      message:
+        'GoTrue Navigator lock contention against https://ujtlwnoqfhtitcmsnrpq.supabase.co/auth/v1/token',
+    };
+
+    const scrubbed = scrubPiiFromEvent(event);
+    expect(scrubbed?.message).toContain('https://[SUPABASE_PROJECT].supabase.co');
+    expect(scrubbed?.message).not.toContain('ujtlwnoqfhtitcmsnrpq');
+  });
+
+  it('scrubs UUIDs in event tags', () => {
+    const event = {
+      message: 'Test',
+      tags: { org: '3f8a9c2e-1b4d-4e7a-9c3f-2a1b8d5e6f70' },
+    };
+
+    const scrubbed = scrubPiiFromEvent(event);
+    expect(scrubbed?.tags?.org).toBe('[UUID]');
+  });
 });
 
 describe('initSentry CSP safety', () => {
@@ -152,6 +202,18 @@ describe('Frontend scrubPiiFromBreadcrumb', () => {
 
     const scrubbed = scrubPiiFromBreadcrumb(breadcrumb);
     expect(scrubbed?.data?.url).not.toContain('secret123');
+  });
+
+  it('scrubs UUIDs from URLs in fetch breadcrumbs (SCRUM-2249)', () => {
+    const breadcrumb = {
+      category: 'fetch',
+      data: {
+        url: 'https://app.arkova.io/admin/organizations/3f8a9c2e-1b4d-4e7a-9c3f-2a1b8d5e6f70',
+      },
+    };
+
+    const scrubbed = scrubPiiFromBreadcrumb(breadcrumb);
+    expect(scrubbed?.data?.url).toBe('https://app.arkova.io/admin/organizations/[UUID]');
   });
 
   it('removes body from fetch breadcrumbs', () => {
