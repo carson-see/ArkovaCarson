@@ -10,7 +10,7 @@ No `## Staging Soak Evidence` block is required when every touched file is T0. T
 
 ---
 
-## T1 — Expedited smoke (low-risk config or code-only; no soak)
+## T1 — Expedited smoke (low-risk config or code-only; 2h minimum)
 
 ```markdown
 ## Staging Soak Evidence
@@ -19,13 +19,15 @@ No `## Staging Soak Evidence` block is required when every touched file is T0. T
 - PR head SHA: 40-character current PR head SHA
 - Staging tag URL or N/A explanation: https://pr-NNN---arkova-worker-staging-... or not applicable - explain why
 - Health/smoke result: health ok, targeted smoke green
+- Soak start: YYYY-MM-DD HH:MM UTC
+- Soak end: YYYY-MM-DD HH:MM UTC (at least 2h after Soak start)
 - CI/E2E green: TypeCheck, Tests, E2E Tests green on current head
 - Rollback plan: revert PR and redeploy previous worker image / config
 - Risk rationale: explain why this is low risk and does not touch API/auth/billing/anchoring/queue/security/migrations
 - Human approver: Carson
 ```
 
-T1 is not a casual bypass. It is blocked for migrations, public API contracts, auth, billing, anchoring, worker behavior, queue/concurrency, chain/treasury, and security-sensitive changes.
+T1 is not a casual bypass or zero-soak lane. It is blocked for migrations, public API contracts, auth, billing, anchoring, worker behavior, queue/concurrency, chain/treasury, and security-sensitive changes.
 
 ---
 
@@ -51,6 +53,30 @@ T1 is not a casual bypass. It is blocked for migrations, public API contracts, a
 - Migration applied: NNNN_short_name.sql
 - Rollback rehearsed: yes — applied + rolled back via `-- ROLLBACK:` block + re-applied; app survived both transitions
 - Staging deploy log id: N (from `public.staging_deploy_log` via `scripts/staging/deploy.sh`)
+```
+
+---
+
+## T2 (frontend-only) — Vercel + view-E2E evidence (sensitive frontend surface; no worker artifacts)
+
+Use this variant **only** when the PR is required-tier T2 *and* every changed file is purely frontend (`src/**`, no `services/worker/`, no `supabase/migrations/`, no `packages/`/`sdks/`/API-contract files). The classifier still puts such a PR at T2 because it touches a sensitive user-facing contract surface (`src/components/{anchor,api,auth,billing,public,verification,verify}/`), but a frontend-only change ships no worker image, no migration, and no deploy-log row — so it cannot produce the standard T2 worker artifacts. It satisfies T2 with a Vercel deployment/preview URL, an E2E result on the affected view, and a residual-risk note attesting that no worker artifacts exist.
+
+If the PR touches *any* worker/migration/SDK/contract file, this variant does **not** apply — use the standard T2 (or T3) block above. Tier classification is unchanged; only the evidence form differs.
+
+```markdown
+## Staging Soak Evidence
+
+- Tier: T2
+- PR head SHA: 40-character current PR head SHA
+- Vercel deployment URL: https://<your-preview>.vercel.app
+- E2E result: <affected view(s)> E2E N/N green on head
+- CI/E2E green: Tests, E2E Tests, TypeCheck & Lint green on current head
+- Rollback plan: revert PR — additive display-only change, no data/schema/worker state to unwind
+
+### Residual-risk note
+- No worker artifacts: frontend-only PR — no Cloud Run deploy, no worker revision, no image digest, no staging deploy-log id (no server code, no migration changed)
+- Surfaces touched: <the frontend views/components this PR changes>
+- Approved by: <named human approver — not blank, not a placeholder>
 ```
 
 ---

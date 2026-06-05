@@ -1,6 +1,10 @@
-# Arkova Local Source Of Truth
+# Arkova Canonical Local Checkout
 
-Last updated: 2026-05-26
+Last updated: 2026-06-03
+
+> This page defines which local filesystem path to use on Carson's Mac. It is
+> not the project source of truth for status or documentation. Jira owns story
+> status/scope, Confluence owns documentation, and GitHub owns PR/merge state.
 
 ## Canonical Local Checkout
 
@@ -10,7 +14,9 @@ The canonical local Arkova checkout is:
 /Volumes/Extreme/Arkova/arkova-mvpcopy-main
 ```
 
-This checkout should be the normal place to run `git status`, create branches, install dependencies, run tests, and prepare commits. It is the local source of truth for the Arkova repository on this Mac.
+This checkout should be the normal place to run `git status`, create branches,
+install dependencies, run tests, and prepare commits. It is the canonical local
+checkout for the Arkova repository on this Mac.
 
 Before starting code work, run:
 
@@ -78,11 +84,15 @@ Do not trust worktree directory names as evidence. Trust only
 `git worktree list` and `git status --short --branch`. Misleading worktree
 names must be corrected with `git worktree move`, not raw filesystem moves.
 
-Current inventory snapshot:
+Historical inventory snapshot:
 
 ```bash
 docs/ops/worktree-inventory-2026-05-22.md
 ```
+
+Regenerate current inventory from `git worktree list`, per-worktree
+`git status --short --branch`, and `gh pr list`; do not treat a dated snapshot
+as current state.
 
 ## Backups
 

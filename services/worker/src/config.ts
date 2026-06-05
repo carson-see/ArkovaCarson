@@ -319,6 +319,16 @@ const ConfigSchema = z.object({
   treasuryLowBalanceUsd: z.coerce.number().nonnegative().default(50),
   /** STUCK_ANCHOR_ALERT_HOURS — oldest pending-anchor age threshold; invalid values fall back to 24. */
   stuckAnchorAlertHours: positiveNumberWithFallback(24),
+
+  // Compliance-log exports (SCRUM-1848 / SCRUM-1870)
+  /**
+   * EXPORTS_STORAGE_BUCKET — Supabase Storage bucket for generated CPE/CLE
+   * compliance-log exports. Defaults to `exports`. The loadConfig() mapping
+   * coalesces an empty string to undefined so the default still applies,
+   * preserving the original `process.env.EXPORTS_STORAGE_BUCKET || 'exports'`
+   * behavior (SCRUM-1258 — read via `config`, not ad-hoc `process.env`).
+   */
+  exportsStorageBucket: z.string().default('exports'),
 }).superRefine((cfg, ctx) => {
   // Fail fast: production must have at least one cron auth method configured
   if (cfg.nodeEnv === 'production' && !cfg.cronSecret && !cfg.cronOidcAudience) {
@@ -659,6 +669,11 @@ function loadConfig(): Config {
     treasuryAlertEmail: process.env.TREASURY_ALERT_EMAIL,
     treasuryLowBalanceUsd: process.env.TREASURY_LOW_BALANCE_USD,
     stuckAnchorAlertHours: process.env.STUCK_ANCHOR_ALERT_HOURS,
+
+    // Compliance-log exports (SCRUM-1848 / SCRUM-1870). `|| undefined` so an
+    // empty string falls through to the schema default 'exports', preserving
+    // the original `process.env.EXPORTS_STORAGE_BUCKET || 'exports'` behavior.
+    exportsStorageBucket: process.env.EXPORTS_STORAGE_BUCKET || undefined,
   });
 
   if (!result.success) {

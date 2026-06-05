@@ -36,7 +36,7 @@
 ## Staging Evidence Tier
 <!-- Pick the lowest truthful tier. The CI gate computes the minimum from changed files; labels do not bypass it. Copy the matching block from docs/staging/PR_TEMPLATE.md. -->
 - [ ] T0: docs/tests/CI/tooling-only; no staging evidence block required
-- [ ] T1: low-risk expedited path; exact PR head SHA + staging tag/N/A + health/smoke + CI/E2E green + rollback plan + risk rationale + human approver
+- [ ] T1: low-risk expedited path; 2h soak + exact PR head SHA + staging tag/N/A + health/smoke + CI/E2E green + rollback plan + risk rationale + human approver
 - [ ] T2: public API, worker behavior, queues, AI behavior, anchoring, billing; merge-grade staging soak with exact SHA evidence
 - [ ] T3: migrations, data integrity, concurrency/fan-out, security, chain/treasury; longer soak plus clean-mirror or isolated staging
 
