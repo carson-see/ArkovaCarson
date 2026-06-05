@@ -1,5 +1,46 @@
 # agents.md — services/edge
-_Last updated: 2026-06-05 (Edge MCP Truthfulness PR-1)._
+_Last updated: 2026-06-05 (Edge MCP Truthfulness PR-3)._
+
+## Edge MCP Truthfulness PR-3 — nessie_query → worker Gemini-space proxy + caller-key forwarding (BUG-3a) (2026-06-05)
+
+Stacked on PR-1. Closes BUG-3a: the edge used to embed `nessie_query` text with
+Cloudflare `@cf/baai/bge-base-en-v1.5` (768-dim) and hit the pgvector RPC
+directly — but the `public_record_embeddings` index is built in Gemini space
+(`gemini-embedding-001`). Querying a Gemini index with BGE vectors returns
+meaningless neighbours, so the tool silently degraded to `text_fallback`/total=0.
+
+- **Re-route, don't re-embed (`mcp-tools.ts`):** `handleNessieQuery` no longer
+  calls `nessieVectorSearch`/Workers-AI embeddings. When a worker base URL +
+  caller key are present it calls `nessieWorkerQuery`, which issues
+  `GET {WORKER_BASE_URL}/api/v1/nessie/query?q=&mode=&limit=` (param names match
+  the worker `NessieQuerySchema`) and maps the worker JSON
+  (`{results:[{record_id,source,...,relevance_score,anchor_proof}], count}`) →
+  the MCP `{query, mode, total, results}` contract (worker `relevance_score` →
+  edge `similarity`; `anchor_proof` citation preserved). The
+  `nessieVectorSearch`/`hydratePublicRecords` functions and the bge-base
+  embedding call are **removed** — the drift class is eliminated. The
+  `NESSIE_EMBEDDING_MODEL` constant remains exported only so the worker
+  drift-guard test keeps a target; it is no longer invoked.
+- **AUTH — forward the caller's raw key (`mcp-server.ts`):** `validateApiKey`
+  now retains the validated raw `X-API-Key` on `AuthResult.callerApiKey`
+  (Bearer callers → `null`); it flows into `SupabaseConfig.callerApiKey` and is
+  forwarded verbatim as `X-API-Key` to the worker. This preserves the caller's
+  org-scoping, scopes, and **per-caller rate limits** (the worker
+  `aiRateLimiter` buckets on the key) — NOT a shared service-account key. The
+  key is NEVER logged: worker-proxy failures log status/`err.name` only, never
+  the key or full URL. Bearer callers (no raw key) degrade to text fallback.
+- **Graceful degrade:** any worker network/HTTP/shape failure → `null` →
+  `nessieTextFallback` (PR-1 lowercase sources). The tool never throws.
+- **New env var `WORKER_BASE_URL`** (`env.ts`, `wrangler.toml`): OPTIONAL.
+  When unset (local dev / preview) nessie_query stays on text fallback. Set the
+  prod value at deploy — NOT hardcoded in source:
+  `wrangler deploy --var WORKER_BASE_URL:https://api.arkova.ai`.
+- **Tests (`mcp-tools.test.ts`, `describe('handleNessieQuery worker proxy')`):**
+  (a) worker URL hit with forwarded caller `X-API-Key` (≠ service-role);
+  (b) worker hit maps to mode + non-zero total + results w/ similarity+citation;
+  (c) worker error → text fallback; (d) caller key never logged. Red→green.
+- **§1.6 / §1.10:** read-only RAG over already-public records (no document
+  processing); rate limits enforced by the worker on the forwarded caller key.
 
 ## Edge MCP Truthfulness PR-1 — anchor mapping + nessie casing + test harness (2026-06-05)
 

@@ -228,3 +228,138 @@ describe('nessieTextFallback source casing (BUG-3b)', () => {
     expect(url).toContain('source=eq.federal_register');
   });
 });
+
+// ── BUG-3a (PR-3): re-route vector search through the worker (Gemini-space) ──
+//
+// The edge used to embed queries with Cloudflare bge-base and hit the
+// pgvector RPC directly — but the index is built in Gemini space, so those
+// neighbours were meaningless. PR-3 proxies the query to the worker's single
+// Gemini embedder and FORWARDS THE CALLER'S API KEY (org-scoping + per-caller
+// rate limits preserved — never a shared service-account key).
+
+describe('handleNessieQuery worker proxy (BUG-3a)', () => {
+  const seededRow = {
+    id: 'rec-1',
+    title: 'Apple Inc. 10-K',
+    source: 'edgar',
+    source_url: 'https://sec.gov/x',
+    record_type: '10-K',
+    content_hash: 'e'.repeat(64),
+    anchor_id: 'anchor-1',
+    created_at: '2026-01-01T00:00:00Z',
+  };
+
+  // Config carrying the worker base URL + the caller's raw API key. When
+  // `workerBaseUrl` is set the proxy path is active; the caller key is what
+  // the worker uses to org-scope + rate-limit.
+  const PROXY_CONFIG: SupabaseConfig = {
+    ...CONFIG,
+    workerBaseUrl: 'https://worker.test.internal',
+    callerApiKey: 'ark_live_caller_secret_key',
+  };
+
+  const workerResult = {
+    record_id: 'rec-gemini-1',
+    source: 'edgar',
+    source_url: 'https://sec.gov/y',
+    record_type: '10-K',
+    title: 'Tesla Inc. 10-K',
+    relevance_score: 0.91,
+    anchor_proof: {
+      chain_tx_id: 'a'.repeat(64),
+      content_hash: 'b'.repeat(64),
+      explorer_url: 'https://mempool.space/tx/' + 'a'.repeat(64),
+      verify_url: 'https://app.arkova.ai/verify/ARK-DOC-XYZ',
+    },
+    metadata: {},
+  };
+
+  it('(a) calls the worker /api/v1/nessie/query URL with the forwarded X-API-Key (caller key, not service-role)', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ results: [workerResult], count: 1, query: 'Tesla filings' }),
+    });
+
+    await handleNessieQuery({ query: 'Tesla filings' }, PROXY_CONFIG);
+
+    // The first call must be to the worker, not the Supabase RPC.
+    const url = String(mockFetch.mock.calls[0][0]);
+    expect(url).toContain('https://worker.test.internal/api/v1/nessie/query');
+    expect(url).toContain('q=Tesla');
+
+    const init = mockFetch.mock.calls[0][1] as RequestInit;
+    const headers = init.headers as Record<string, string>;
+    // Forwarded caller key — NOT the supabase service-role key.
+    expect(headers['X-API-Key']).toBe('ark_live_caller_secret_key');
+    expect(headers['X-API-Key']).not.toBe(CONFIG.supabaseKey);
+    // Must NOT embed with Cloudflare bge-base anymore: no Supabase RPC hit.
+    expect(url).not.toContain('search_public_record_embeddings');
+  });
+
+  it('(b) maps a worker hit with results → mode + non-zero total + results with citations/similarity', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ results: [workerResult], count: 1, query: 'Tesla filings' }),
+    });
+
+    const result = await handleNessieQuery(
+      { query: 'Tesla filings', mode: 'retrieval', limit: 5 },
+      PROXY_CONFIG,
+    );
+    expect(result.isError).toBeUndefined();
+
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.mode).toBe('retrieval');
+    expect(parsed.total).toBe(1);
+    expect(parsed.results).toHaveLength(1);
+    // Output contract: similarity + the anchor citation survive the mapping.
+    expect(parsed.results[0].similarity).toBe(0.91);
+    expect(parsed.results[0].source).toBe('edgar');
+    expect(parsed.results[0].anchor_proof.verify_url).toBe(
+      'https://app.arkova.ai/verify/ARK-DOC-XYZ',
+    );
+  });
+
+  it('(c) worker error → graceful text fallback (does not throw, returns text_fallback)', async () => {
+    // 1st call: worker proxy fails. 2nd call: text-fallback Supabase query.
+    mockFetch.mockReset();
+    mockFetch
+      .mockResolvedValueOnce({ ok: false, status: 502, text: async () => 'bad gateway' })
+      .mockResolvedValueOnce({ ok: true, json: async () => [seededRow] });
+
+    const result = await handleNessieQuery({ query: 'Apple SEC filing' }, PROXY_CONFIG);
+    expect(result.isError).toBeUndefined();
+
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.mode).toBe('text_fallback');
+    expect(parsed.total).toBe(1);
+
+    // The fallback call hit the Supabase public_records endpoint.
+    const fallbackUrl = String(mockFetch.mock.calls[1][0]);
+    expect(fallbackUrl).toContain('/rest/v1/public_records');
+  });
+
+  it('(d) never logs the caller API key', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    // Force the worker path to throw so error logging runs, then fall back.
+    mockFetch.mockReset();
+    mockFetch
+      .mockRejectedValueOnce(new Error('network down'))
+      .mockResolvedValueOnce({ ok: true, json: async () => [seededRow] });
+
+    await handleNessieQuery({ query: 'Apple SEC filing' }, PROXY_CONFIG);
+
+    const allLogged = [...errSpy.mock.calls, ...logSpy.mock.calls, ...warnSpy.mock.calls]
+      .flat()
+      .map((a) => (typeof a === 'string' ? a : JSON.stringify(a)))
+      .join(' ');
+    expect(allLogged).not.toContain('ark_live_caller_secret_key');
+
+    errSpy.mockRestore();
+    logSpy.mockRestore();
+    warnSpy.mockRestore();
+  });
+});

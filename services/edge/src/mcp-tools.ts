@@ -135,6 +135,23 @@ export interface SupabaseConfig {
   supabaseUrl: string;
   supabaseKey: string;
   userId: string;
+  /**
+   * Base URL of the Arkova worker (e.g. https://api.arkova.ai). When set,
+   * `handleNessieQuery` proxies the vector path to the worker's single
+   * Gemini embedder (`GET /api/v1/nessie/query`) instead of re-embedding
+   * with Cloudflare bge-base against a Gemini-space index (BUG-3a). When
+   * unset (local dev / preview without the binding), the edge degrades to
+   * the lowercase text fallback only.
+   */
+  workerBaseUrl?: string;
+  /**
+   * The RAW API key the caller presented on the inbound MCP request
+   * (X-API-Key auth only; absent for OAuth Bearer callers). Forwarded
+   * verbatim as `X-API-Key` to the worker nessie endpoint so the worker
+   * enforces the caller's org-scoping, scopes, and per-caller rate limits
+   * — NOT a shared service-account key. NEVER logged.
+   */
+  callerApiKey?: string;
 }
 
 const PUBLIC_ID_JSON_SCHEMA: ToolInputSchemaProperty = {
@@ -843,43 +860,38 @@ export async function handleNessieQuery(
   }
 
   const matchCount = Math.min(input.limit ?? 10, 50);
+  const mode = input.mode ?? 'retrieval';
 
   try {
-    // Race vector search (Workers AI → pgvector RPC) against text search.
-    // Vector search is higher quality but Workers AI cold starts can take
-    // 5-8 seconds. The text fallback returns in <1 s. Whichever finishes
-    // first wins; if only one branch is available, run that alone.
-    const textSearchPromise = nessieTextFallback(input.query, matchCount, config);
+    // BUG-3a: the edge no longer embeds the query itself. Embedding the
+    // query with Cloudflare bge-base (`NESSIE_EMBEDDING_MODEL`, 768-dim) and
+    // searching a Gemini-space index returned semantically meaningless
+    // neighbours, so this tool silently degraded to `text_fallback`/total=0.
+    // PR-3 proxies the vector path to the worker's SINGLE Gemini embedder
+    // (`GET {workerBaseUrl}/api/v1/nessie/query`) and forwards the caller's
+    // raw API key so the worker enforces org-scoping + per-caller rate limits.
+    //
+    // `ai` is retained in the signature for backwards-compat but is no longer
+    // used for embedding — the model lives entirely on the worker side now.
+    void ai;
 
-    if (!ai) {
-      return await textSearchPromise;
+    // No worker configured (local dev / preview): the truthful path is the
+    // lowercase text fallback (BUG-3b, PR-1). Don't pretend to do vector search.
+    if (!config.workerBaseUrl || !config.callerApiKey) {
+      return await nessieTextFallback(input.query, matchCount, config);
     }
 
-    const vectorSearchPromise = nessieVectorSearch(
+    const workerResult = await nessieWorkerQuery(
       input.query,
-      input.mode ?? 'retrieval',
+      mode,
       matchCount,
       config,
-      ai,
     );
+    if (workerResult) return workerResult;
 
-    // Race: whichever resolves first wins. Both branches are wrapped
-    // so they never reject — they return errorResult instead of throwing.
-    const result = await Promise.race([
-      vectorSearchPromise
-        .then((r) => ({ source: 'vector' as const, result: r }))
-        .catch(() => null),
-      textSearchPromise
-        .then((r) => ({ source: 'text' as const, result: r }))
-        .catch(() => null),
-    ]);
-
-    if (result) return result.result;
-
-    // Both branches errored out — return whatever text search gives
-    return await textSearchPromise.catch(() =>
-      errorResult('Nessie query: all search paths failed'),
-    );
+    // Worker unreachable / errored — degrade gracefully to text fallback
+    // (already PR-1-fixed to lowercase sources) instead of throwing.
+    return await nessieTextFallback(input.query, matchCount, config);
   } catch (error) {
     const msg =
       error instanceof Error && error.name === 'AbortError'
@@ -889,78 +901,93 @@ export async function handleNessieQuery(
   }
 }
 
-/** Vector search: Workers AI embedding → pgvector RPC → hydrate. */
-async function nessieVectorSearch(
+/** Single worker nessie result (mirror of services/worker NessieResult). */
+interface WorkerNessieResult {
+  record_id: string;
+  source: string;
+  source_url: string;
+  record_type: string;
+  title: string | null;
+  relevance_score: number;
+  anchor_proof: Record<string, unknown> | null;
+  metadata?: Record<string, unknown>;
+}
+
+/**
+ * Vector search via the worker's Gemini-space endpoint (BUG-3a).
+ *
+ * Issues `GET {workerBaseUrl}/api/v1/nessie/query?q=&mode=&limit=` with the
+ * caller's raw API key forwarded as `X-API-Key` (never the service-role key).
+ * Maps the worker JSON → the MCP `{query, mode, total, results}` contract,
+ * preserving `relevance_score` (as `similarity`) and the anchor citation.
+ *
+ * Returns `null` on any network/HTTP/shape failure so the caller can fall
+ * back to the text path. NEVER logs `config.callerApiKey`.
+ */
+async function nessieWorkerQuery(
   query: string,
   mode: string,
   matchCount: number,
   config: SupabaseConfig,
-  ai: Ai,
-): Promise<ToolResult> {
-  const embResult = await ai.run(NESSIE_EMBEDDING_MODEL, {
-    text: query,
-  }) as { data: number[][] };
-  const embedding = embResult?.data?.[0];
+): Promise<ToolResult | null> {
+  const base = (config.workerBaseUrl ?? '').replace(/\/+$/, '');
+  const callerKey = config.callerApiKey;
+  if (!base || !callerKey) return null;
 
-  if (!embedding || !Array.isArray(embedding) || embedding.length !== 768) {
-    throw new Error('Workers AI returned unexpected embedding shape');
+  const params = new URLSearchParams({
+    q: query,
+    mode,
+    limit: String(matchCount),
+  });
+  const url = `${base}/api/v1/nessie/query?${params.toString()}`;
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  try {
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        Accept: 'application/json',
+        // Forward the CALLER's key — preserves org-scoping, scopes, and the
+        // worker's per-caller rate limits. Do NOT log this value.
+        'X-API-Key': callerKey,
+      },
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      // Redacted log: status only, never the key or full URL with params.
+      console.warn(`[nessie_query] worker proxy HTTP ${response.status}; falling back to text search`);
+      return null;
+    }
+
+    const body = (await response.json()) as {
+      results?: WorkerNessieResult[];
+      count?: number;
+      query?: string;
+    };
+    const workerResults = Array.isArray(body.results) ? body.results : [];
+
+    const results = workerResults.map((r) => ({
+      record_id: r.record_id,
+      title: r.title,
+      source: r.source,
+      source_url: r.source_url,
+      record_type: r.record_type,
+      similarity: r.relevance_score,
+      anchor_proof: r.anchor_proof ?? null,
+      metadata: r.metadata ?? {},
+    }));
+
+    return textResult({ query, mode, total: results.length, results });
+  } catch (err) {
+    // AbortError or network failure — redacted (no key, no params).
+    const reason = err instanceof Error ? err.name : 'unknown';
+    console.warn(`[nessie_query] worker proxy failed (${reason}); falling back to text search`);
+    return null;
+  } finally {
+    clearTimeout(timer);
   }
-
-  const threshold = mode === 'context' ? 0.55 : 0.65;
-  const vecStr = `[${embedding.join(',')}]`;
-
-  const response = await supabaseFetch(
-    config,
-    '/rest/v1/rpc/search_public_record_embeddings',
-    {
-      method: 'POST',
-      body: JSON.stringify({
-        p_query_embedding: vecStr,
-        p_match_threshold: threshold,
-        p_match_count: matchCount,
-      }),
-    },
-  );
-
-  if (!response.ok) {
-    const errBody = await response.text().catch(() => '');
-    throw new Error(`embedding RPC HTTP ${response.status}: ${errBody}`);
-  }
-
-  const matches = (await response.json()) as Array<{
-    public_record_id: string;
-    similarity: number;
-  }>;
-
-  if (!Array.isArray(matches) || matches.length === 0) {
-    return textResult({ query, mode, total: 0, results: [] });
-  }
-
-  const ids = matches.map((m) => m.public_record_id);
-  const simMap = new Map(matches.map((m) => [m.public_record_id, m.similarity]));
-  const hydrated = await hydratePublicRecords(ids, config);
-  const results = hydrated.map((r) => ({
-    ...r,
-    similarity: simMap.get(r.id as string) ?? 0,
-  }));
-
-  return textResult({ query, mode, total: results.length, results });
-}
-
-/** Hydrate public_records by IDs (for embedding search results). */
-async function hydratePublicRecords(
-  ids: string[],
-  config: SupabaseConfig,
-): Promise<Array<Record<string, unknown>>> {
-  if (ids.length === 0) return [];
-  const inList = ids.map((id) => `"${id}"`).join(',');
-  const resp = await supabaseFetch(
-    config,
-    `/rest/v1/public_records?id=in.(${inList})&select=id,title,source,source_url,record_type,content_hash,anchor_id,created_at`,
-  );
-  if (!resp.ok) return [];
-  const rows = (await resp.json()) as Array<Record<string, unknown>>;
-  return Array.isArray(rows) ? rows : [];
 }
 
 /** Text-based fallback search on public_records (no embeddings needed).
