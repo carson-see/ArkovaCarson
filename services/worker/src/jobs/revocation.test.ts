@@ -6,6 +6,18 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { createHash } from 'node:crypto';
+
+// Canonical metadata hash — mirrors chain/base.ts canonicalMetadataJson +
+// hashMetadata (sorted keys → JSON.stringify → SHA-256 hex). Inlined here
+// instead of importing chain/base.ts, which transitively pulls in viem.
+function hashMetadata(metadata: Record<string, unknown>): string {
+  const sorted: Record<string, unknown> = {};
+  for (const key of Object.keys(metadata).sort()) {
+    sorted[key] = metadata[key];
+  }
+  return createHash('sha256').update(JSON.stringify(sorted)).digest('hex');
+}
 
 // ---- Hoisted mocks ----
 
@@ -17,6 +29,7 @@ const {
   mockGetInitializedChainClient,
   mockAnchorsSelectResult,
   mockAnchorsUpdateResult,
+  mockAnchorsUpdate,
   mockIsAnchoringEnabled,
   mockSendEmail,
   mockBuildRevocationEmail,
@@ -35,6 +48,9 @@ const {
 
   const mockAnchorsSelectResult: { data: unknown; error: unknown } = { data: [], error: null };
   const mockAnchorsUpdateResult: { error: unknown } = { error: null };
+  // SCRUM-2252: capture the exact payload passed to anchors.update() so tests
+  // can assert revocation_metadata / revocation_metadata_hash persistence.
+  const mockAnchorsUpdate = vi.fn();
   const mockIsAnchoringEnabled = vi.fn();
   const mockSendEmail = vi.fn();
   const mockBuildRevocationEmail = vi.fn();
@@ -47,6 +63,7 @@ const {
     mockGetInitializedChainClient,
     mockAnchorsSelectResult,
     mockAnchorsUpdateResult,
+    mockAnchorsUpdate,
     mockIsAnchoringEnabled,
     mockSendEmail,
     mockBuildRevocationEmail,
@@ -88,10 +105,21 @@ function makeChainableMock(result: { data?: unknown; error?: unknown }) {
   return chainable;
 }
 
+// Like makeChainableMock, but routes update() through mockAnchorsUpdate so the
+// payload is captured for assertions (SCRUM-2252).
+function makeAnchorsMock(result: { data?: unknown; error?: unknown }) {
+  const chainable = makeChainableMock(result);
+  chainable.update = vi.fn((payload: unknown) => {
+    mockAnchorsUpdate(payload);
+    return chainable;
+  });
+  return chainable;
+}
+
 vi.mock('../utils/db.js', () => ({
   db: {
     from: vi.fn((table: string) => {
-      if (table === 'anchors') return makeChainableMock(mockAnchorsSelectResult);
+      if (table === 'anchors') return makeAnchorsMock(mockAnchorsSelectResult);
       if (table === 'audit_events') {
         const mock = makeChainableMock({ error: null });
         mockAuditInsert.mockImplementation(() => mock);
@@ -143,11 +171,24 @@ const MOCK_ANCHOR = {
   revocation_block_height: null,
 };
 
+// The metadata processRevocation submits for MOCK_ANCHOR. The chain client
+// returns receipt.metadataHash = SHA-256 of the canonical (sorted-key) JSON of
+// this object. We precompute it here so the receipt mock is realistic and the
+// round-trip assertion has a fixed expectation.
+const EXPECTED_REVOCATION_METADATA = {
+  type: 'REVOKE',
+  original_tx_id: 'original-tx-id-abc123',
+};
+const EXPECTED_METADATA_HASH = createHash('sha256')
+  .update(JSON.stringify({ original_tx_id: 'original-tx-id-abc123', type: 'REVOKE' })) // sorted keys
+  .digest('hex');
+
 const MOCK_RECEIPT = {
   receiptId: 'revoke-tx-id-xyz789',
   blockHeight: 800100,
   blockTimestamp: '2026-03-17T12:00:00.000Z',
   confirmations: 0,
+  metadataHash: EXPECTED_METADATA_HASH,
 };
 
 describe('processRevocation', () => {
@@ -221,7 +262,79 @@ describe('processRevocation', () => {
 
     const result = await processRevocation('anchor-uuid-1');
     expect(result).toBe(true);
-    // The update call is chained — verified indirectly through success
+
+    expect(mockAnchorsUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        revocation_tx_id: MOCK_RECEIPT.receiptId,
+        revocation_block_height: MOCK_RECEIPT.blockHeight,
+      }),
+    );
+  });
+
+  // SCRUM-2252 (BUG-2026-05-16-003): the metadata object + receipt.metadataHash
+  // must be persisted, not discarded, so the on-chain hash is verifiable.
+  it('persists the exact revocation_metadata object submitted to the chain', async () => {
+    mockAnchorsSelectResult.data = MOCK_ANCHOR;
+    mockAnchorsSelectResult.error = null;
+
+    await processRevocation('anchor-uuid-1');
+
+    // The persisted metadata must equal the metadata sent to submitFingerprint.
+    const submitCall = mockSubmitFingerprint.mock.calls[0][0];
+    expect(mockAnchorsUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        revocation_metadata: EXPECTED_REVOCATION_METADATA,
+      }),
+    );
+    const updatePayload = mockAnchorsUpdate.mock.calls[0][0] as Record<string, unknown>;
+    expect(updatePayload.revocation_metadata).toEqual(submitCall.metadata);
+  });
+
+  it('persists receipt.metadataHash as revocation_metadata_hash', async () => {
+    mockAnchorsSelectResult.data = MOCK_ANCHOR;
+    mockAnchorsSelectResult.error = null;
+
+    await processRevocation('anchor-uuid-1');
+
+    expect(mockAnchorsUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        revocation_metadata_hash: MOCK_RECEIPT.metadataHash,
+      }),
+    );
+  });
+
+  it('stored hash recomputes from stored metadata (canonical-JSON round-trip)', async () => {
+    mockAnchorsSelectResult.data = MOCK_ANCHOR;
+    mockAnchorsSelectResult.error = null;
+
+    await processRevocation('anchor-uuid-1');
+
+    const updatePayload = mockAnchorsUpdate.mock.calls[0][0] as {
+      revocation_metadata: Record<string, string>;
+      revocation_metadata_hash: string;
+    };
+
+    // Recompute the canonical hash from the stored metadata and confirm it
+    // matches the stored hash — i.e. the on-chain commitment is reconstructible
+    // purely from our own records (the bug this story fixes).
+    const recomputed = hashMetadata(updatePayload.revocation_metadata);
+    expect(recomputed).toBe(updatePayload.revocation_metadata_hash);
+    expect(recomputed).toBe(EXPECTED_METADATA_HASH);
+  });
+
+  it('persists null revocation_metadata_hash when the chain returns no hash', async () => {
+    mockAnchorsSelectResult.data = MOCK_ANCHOR;
+    mockAnchorsSelectResult.error = null;
+    mockSubmitFingerprint.mockResolvedValue({ ...MOCK_RECEIPT, metadataHash: undefined });
+
+    await processRevocation('anchor-uuid-1');
+
+    expect(mockAnchorsUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        revocation_metadata: EXPECTED_REVOCATION_METADATA,
+        revocation_metadata_hash: null,
+      }),
+    );
   });
 
   it('logs audit event on successful revocation broadcast', async () => {
