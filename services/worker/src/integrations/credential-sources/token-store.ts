@@ -21,6 +21,8 @@
  *   - 1.4: KMS-backed encryption (not env-var symmetric keys); never log tokens.
  *   - 1.7: tests must not call real KMS — inject a fake `KmsClient`.
  */
+import { z } from 'zod';
+
 import {
   type KmsClient,
   type OAuthTokens,
@@ -85,6 +87,11 @@ export interface MemberIntegrationRowDeps {
 /** Default KEK version for new rows. Migration 0329 sets the same default. */
 const DEFAULT_KEK_VERSION = 1;
 
+const StoreCredentialProviderTokenIdsSchema = z.object({
+  userId: z.string().uuid(),
+  orgId: z.string().uuid(),
+});
+
 export interface StoreTokensInput {
   userId: string;
   orgId: string;
@@ -121,6 +128,11 @@ export async function storeCredentialProviderTokens(
   // assertion above (`as any` in callers) can slip through.
   assertSupportedProvider(input.provider);
 
+  const ids = StoreCredentialProviderTokenIdsSchema.parse({
+    userId: input.userId,
+    orgId: input.orgId,
+  });
+
   // Validate the token shape before we encrypt — saves a KMS round-trip
   // on malformed input.
   const parsed = OAuthTokensSchema.parse(input.tokens);
@@ -133,8 +145,8 @@ export async function storeCredentialProviderTokens(
   });
 
   return deps.rowStore.upsertEncryptedRow({
-    userId: input.userId,
-    orgId: input.orgId,
+    userId: ids.userId,
+    orgId: ids.orgId,
     provider: input.provider,
     accountId: input.accountId,
     ciphertext,

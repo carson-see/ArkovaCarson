@@ -18,8 +18,8 @@ import {
 } from './token-store.js';
 import type { OAuthTokens } from '../oauth/crypto.js';
 
-const ARKOVA_ORG_ID = '00000000-0000-0000-0000-000000000001';
-const ARKOVA_USER_ID = '00000000-0000-0000-0000-000000000010';
+const ARKOVA_ORG_ID = '11111111-1111-4111-8111-111111111111';
+const ARKOVA_USER_ID = '22222222-2222-4222-8222-222222222222';
 const TEST_KEY_NAME =
   'projects/test-arkova/locations/global/keyRings/test/cryptoKeys/integration-tokens';
 
@@ -189,6 +189,37 @@ describe('SCRUM-1611 — credential-source token-store', () => {
       expect(store.rows).toHaveLength(0);
     });
 
+    it('rejects non-UUID userId and orgId before encrypting', async () => {
+      await expect(
+        storeCredentialProviderTokens(
+          {
+            userId: 'not-a-uuid',
+            orgId: ARKOVA_ORG_ID,
+            provider: 'credly',
+            accountId: 'credly-acct-1',
+            tokens: sampleTokens,
+          },
+          { kms: fakeKms, keyName: TEST_KEY_NAME, rowStore: store.deps },
+        ),
+      ).rejects.toThrow(/uuid/i);
+
+      await expect(
+        storeCredentialProviderTokens(
+          {
+            userId: ARKOVA_USER_ID,
+            orgId: 'not-a-uuid',
+            provider: 'credly',
+            accountId: 'credly-acct-1',
+            tokens: sampleTokens,
+          },
+          { kms: fakeKms, keyName: TEST_KEY_NAME, rowStore: store.deps },
+        ),
+      ).rejects.toThrow(/uuid/i);
+
+      expect(fakeKms.encrypt).not.toHaveBeenCalled();
+      expect(store.rows).toHaveLength(0);
+    });
+
     it('records kek_version from the option (default 1)', async () => {
       await storeCredentialProviderTokens(
         {
@@ -274,6 +305,35 @@ describe('SCRUM-1611 — credential-source token-store', () => {
       expect(fakeKms.decrypt).toHaveBeenCalledWith(
         expect.objectContaining({ keyName: oldKey }),
       );
+    });
+
+    it('propagates KMS decrypt failures without returning tokens', async () => {
+      const kmsError = new Error('kms unavailable');
+      fakeKms.decrypt.mockRejectedValueOnce(kmsError);
+
+      await store.deps.upsertEncryptedRow({
+        userId: ARKOVA_USER_ID,
+        orgId: ARKOVA_ORG_ID,
+        provider: 'credly',
+        accountId: 'credly-acct-1',
+        ciphertext: Buffer.from('encrypted-token-payload'),
+        kmsKeyName: TEST_KEY_NAME,
+        kekVersion: 1,
+      });
+
+      await expect(
+        readCredentialProviderTokens(
+          {
+            userId: ARKOVA_USER_ID,
+            orgId: ARKOVA_ORG_ID,
+            provider: 'credly',
+            accountId: 'credly-acct-1',
+          },
+          { kms: fakeKms, rowStore: store.deps },
+        ),
+      ).rejects.toThrow('kms unavailable');
+
+      expect(fakeKms.decrypt).toHaveBeenCalledTimes(1);
     });
   });
 });

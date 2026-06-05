@@ -37,35 +37,19 @@ import {
 const ARKOVA_ORG_ID = ORG_IDS.arkova;
 const BETA_ORG_ID = ORG_IDS.betaCorp;
 
-/** Loose typing for member_integrations until database.types.ts is regenerated. */
-type LooseClient = {
-  from: (t: string) => {
-    select: (cols: string) => {
-      limit: (n: number) => Promise<{ data: unknown[] | null; error: { code?: string; message?: string } | null }>;
-      eq: (col: string, val: string) => {
-        eq: (col: string, val: string) => Promise<{ data: unknown[] | null; error: { code?: string; message?: string } | null }>;
-        limit: (n: number) => Promise<{ data: unknown[] | null; error: { code?: string; message?: string } | null }>;
-      };
-    };
-    insert: (row: Record<string, unknown>) => Promise<{ data: unknown[] | null; error: { code?: string; message?: string; details?: string } | null }>;
-    delete: () => {
-      eq: (col: string, val: string) => Promise<{ data: unknown[] | null; error: { code?: string; message?: string } | null }>;
-    };
-  };
-};
-
 const ROW_TAG_PREFIX = 'rls-test-csi-04a-';
 
 describe('SCRUM-1611 — member_integrations widened for credential-source providers (CSI-04A)', () => {
-  let serviceClient: LooseClient;
+  let serviceClient: TypedClient;
   let adminClient: TypedClient;
   let betaAdminClient: TypedClient;
   let userClient: TypedClient;
   let arkovaAdminUserId: string;
   let betaAdminUserId: string;
+  let memberUserId: string;
 
   beforeAll(async () => {
-    serviceClient = createServiceClient() as unknown as LooseClient;
+    serviceClient = createServiceClient();
     adminClient = await withUser(DEMO_CREDENTIALS.adminEmail, 'ORG_ADMIN');
     betaAdminClient = await withUser(DEMO_CREDENTIALS.betaAdminEmail, 'ORG_ADMIN');
     userClient = await withIndividualUser();
@@ -75,26 +59,17 @@ describe('SCRUM-1611 — member_integrations widened for credential-source provi
 
     const { data: betaAdminProfile } = await betaAdminClient.auth.getUser();
     betaAdminUserId = betaAdminProfile.user?.id ?? '';
+
+    const { data: memberProfile } = await userClient.auth.getUser();
+    memberUserId = memberProfile.user?.id ?? '';
   });
 
   afterAll(async () => {
-    // Cleanup every row we seeded — match the tag prefix.
+    // Cleanup every row seeded by this file in one pass.
     await serviceClient
       .from('member_integrations')
       .delete()
-      .eq('account_id', `${ROW_TAG_PREFIX}credly-arkova`);
-    await serviceClient
-      .from('member_integrations')
-      .delete()
-      .eq('account_id', `${ROW_TAG_PREFIX}credly-beta`);
-    await serviceClient
-      .from('member_integrations')
-      .delete()
-      .eq('account_id', `${ROW_TAG_PREFIX}accredible-arkova`);
-    await serviceClient
-      .from('member_integrations')
-      .delete()
-      .eq('account_id', `${ROW_TAG_PREFIX}udemy-arkova`);
+      .like('account_id', `${ROW_TAG_PREFIX}%`);
 
     await adminClient.auth.signOut();
     await betaAdminClient.auth.signOut();
@@ -165,18 +140,7 @@ describe('SCRUM-1611 — member_integrations widened for credential-source provi
 
   describe('kek_version default', () => {
     it('defaults to 1 when not explicitly set on insert', async () => {
-      const { data, error } = await (serviceClient as unknown as {
-        from: (t: string) => {
-          select: (c: string) => {
-            eq: (col: string, val: string) => {
-              limit: (n: number) => Promise<{
-                data: Array<{ kek_version: number }> | null;
-                error: { code?: string } | null;
-              }>;
-            };
-          };
-        };
-      })
+      const { data, error } = await serviceClient
         .from('member_integrations')
         .select('kek_version')
         .eq('account_id', `${ROW_TAG_PREFIX}credly-arkova`)
@@ -196,10 +160,29 @@ describe('SCRUM-1611 — member_integrations widened for credential-source provi
         account_id: `${ROW_TAG_PREFIX}credly-beta`,
         account_label: 'RLS Test Credly Beta',
       });
+
+      await serviceClient.from('member_integrations').insert({
+        user_id: memberUserId,
+        org_id: ARKOVA_ORG_ID,
+        provider: 'credly',
+        account_id: `${ROW_TAG_PREFIX}credly-member-own`,
+        account_label: 'RLS Test Credly Individual',
+      });
+    });
+
+    it('member can SELECT own credly row', async () => {
+      const { data, error } = await userClient
+        .from('member_integrations')
+        .select('*')
+        .eq('account_id', `${ROW_TAG_PREFIX}credly-member-own`);
+
+      expect(error).toBeNull();
+      expect(data).toHaveLength(1);
+      expect(data?.[0]?.user_id).toBe(memberUserId);
     });
 
     it('ORG_ADMIN can SELECT credly rows in own org', async () => {
-      const { data, error } = await (adminClient as unknown as LooseClient)
+      const { data, error } = await adminClient
         .from('member_integrations')
         .select('*')
         .eq('org_id', ARKOVA_ORG_ID)
@@ -210,7 +193,7 @@ describe('SCRUM-1611 — member_integrations widened for credential-source provi
     });
 
     it('ORG_ADMIN cannot SELECT credly rows in another org (cross-tenant blocked)', async () => {
-      const { data, error } = await (adminClient as unknown as LooseClient)
+      const { data, error } = await adminClient
         .from('member_integrations')
         .select('*')
         .eq('org_id', BETA_ORG_ID)
@@ -220,7 +203,7 @@ describe('SCRUM-1611 — member_integrations widened for credential-source provi
     });
 
     it('Individual user cannot INSERT credly row (deny-all write for authenticated)', async () => {
-      const { error } = await (userClient as unknown as LooseClient)
+      const { error } = await userClient
         .from('member_integrations')
         .insert({
           user_id: arkovaAdminUserId,
