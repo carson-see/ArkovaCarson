@@ -10,13 +10,16 @@
 -- fingerprint-keyed sibling of `get_public_anchor(text)` (the public_id-keyed
 -- RPC defined in 0311_scrum1599_public_anchor_provenance.sql, additively
 -- extended by 0331). It returns the EXACT same redacted jsonb shape/keys so
--- the edge `verify` response is the canonical worker-v2 anchor shape
--- (CLAUDE.md §1.8 fix-to-spec — approved by the PO; the endpoint is broken
--- today, so this is a repair, not a breaking change).
+-- the edge `verify` response matches the get_anchor / verify_credential
+-- (get_public_anchor) envelope (CLAUDE.md §1.8 fix-to-spec — approved by the
+-- PO; the endpoint is broken today, so this is a repair, not a breaking
+-- change). NOTE: this is the get_public_anchor envelope, NOT the worker's
+-- leaner /verify/:fingerprint shape.
 --
 -- Behaviour:
---   * input fingerprint is lowercased and matched case-insensitively
---     (`lower(a.fingerprint) = lower(p_fingerprint)`);
+--   * input fingerprint is lowercased and matched against the bare (already
+--     lowercase) `fingerprint` column (`a.fingerprint = lower(p_fingerprint)`),
+--     which keeps idx_anchors_fingerprint_lookup usable;
 --   * only non-deleted anchors in SECURED / SUBMITTED / PENDING are
 --     considered (the lifecycle states a fingerprint lookup should surface —
 --     mirrors get_public_anchor's public-verify intent);
@@ -52,10 +55,15 @@ BEGIN
   -- Resolve the latest non-deleted anchor for this fingerprint. Status set is
   -- intentionally narrower than get_public_anchor's (no REVOKED/EXPIRED/
   -- SUPERSEDED) — a fingerprint lookup surfaces the live securing state.
+  -- Fingerprints are stored lowercase (the worker writes them via
+  -- `.eq('fingerprint', fp.toLowerCase())`), so lowercase only the INPUT and
+  -- compare against the bare column. A column-side `lower(a.fingerprint)`
+  -- would defeat idx_anchors_fingerprint_lookup (a plain btree on
+  -- `fingerprint`); `a.fingerprint = lower(p_fingerprint)` lets it be used.
   SELECT a.public_id
     INTO v_public_id
   FROM anchors a
-  WHERE lower(a.fingerprint) = lower(p_fingerprint)
+  WHERE a.fingerprint = lower(p_fingerprint)
     AND a.status IN ('SECURED', 'SUBMITTED', 'PENDING')
     AND a.deleted_at IS NULL
   ORDER BY a.created_at DESC

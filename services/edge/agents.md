@@ -123,12 +123,16 @@ column set that does not match the table shape, so PostgREST 400'd every call.
 - **`handleVerifyDocument` (mcp-tools.ts)** now POSTs the RPC and maps through
   the PR-1-fixed `shapeAnchorRow` (passing `data.public_id` so the envelope
   echoes `public_id` and builds the correct `record_uri`). Verify now returns
-  the SAME canonical worker-v2 anchor shape as `get_anchor` /
-  `verify_credential` (§1.8 fix-to-spec, PO-approved). Unknown fingerprint →
-  `{verified:false, status:'UNKNOWN', public_id:null, network_receipt_id:null,
-  message}` at HTTP 200, never a 400/error result. The `message` is retained
-  so `handleAgentSearch(type:'fingerprint')`'s found-guard still treats a miss
-  as not-found.
+  the SAME shape as the `get_anchor` / `verify_credential` (`get_public_anchor`)
+  envelope (§1.8 fix-to-spec, PO-approved) — this is the get_public_anchor
+  envelope, NOT the worker's leaner `/verify/:fingerprint` shape. PENDING /
+  SUBMITTED are surfaced as first-class statuses (not collapsed to UNKNOWN) so a
+  genuinely-found in-flight anchor doesn't read not-found. Unknown fingerprint →
+  `{verified:false, status:'UNKNOWN', fingerprint:<lowercased>, public_id:null,
+  network_receipt_id:null, message}` at HTTP 200, never a 400/error result (the
+  `fingerprint` echo matches the worker's not-found body). The `message` is
+  retained so `handleAgentSearch(type:'fingerprint')`'s found-guard still treats
+  a miss as not-found.
 - **`handleAgentVerify`** keeps the `record_id` strip as defense-in-depth; the
   new `shapeAnchorRow` envelope never carries an internal id, so the strip is
   now belt-and-suspenders rather than load-bearing.

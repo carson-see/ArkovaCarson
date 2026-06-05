@@ -96,7 +96,9 @@ describe('shapeAnchorRow (BUG-2 key realignment)', () => {
     const shaped = shapeAnchorRow(row);
 
     expect(shaped.verified).toBe(false);
-    expect(shaped.status).toBe('UNKNOWN'); // PENDING not in mapStatus -> UNKNOWN
+    // PENDING is surfaced as a first-class in-flight status (not collapsed to
+    // UNKNOWN) so a genuinely-found in-flight anchor doesn't read not-found.
+    expect(shaped.status).toBe('PENDING');
     expect(shaped.network_receipt_id).toBeNull();
     expect(shaped.anchor_timestamp).toBeNull();
     // issuer/dates still present on the row even while gated fields are null
@@ -257,9 +259,24 @@ describe('handleVerifyDocument (BUG-1: RPC by fingerprint)', () => {
     expect(parsed.status).toBe('UNKNOWN');
     expect(parsed.network_receipt_id).toBeNull();
     expect(parsed.public_id).toBeNull();
+    // Contract parity with the worker's not-found body: echo the lowercased
+    // fingerprint that was looked up.
+    expect(parsed.fingerprint).toBe(FP);
   });
 
-  it('PENDING anchor → evidence fields gated to null per the RPC', async () => {
+  it('echoes the lowercased fingerprint on the UNKNOWN envelope (case-normalized)', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ error: 'Record not found' }),
+    });
+
+    const mixed = 'A'.repeat(32) + 'b'.repeat(32);
+    const result = await handleVerifyDocument({ content_hash: mixed }, CONFIG);
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.fingerprint).toBe(mixed.toLowerCase());
+  });
+
+  it('PENDING anchor → status PENDING (NOT UNKNOWN), evidence fields gated to null per the RPC', async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
       json: async () => pendingPublicAnchorRow({ public_id: 'ARK-PENDING' }),
@@ -268,8 +285,27 @@ describe('handleVerifyDocument (BUG-1: RPC by fingerprint)', () => {
     const result = await handleVerifyDocument({ content_hash: FP }, CONFIG);
     const parsed = JSON.parse(result.content[0].text);
     expect(parsed.verified).toBe(false);
+    // A genuinely-found in-flight anchor must surface PENDING, not collapse to
+    // UNKNOWN (which an agent reads as not-found).
+    expect(parsed.status).toBe('PENDING');
+    expect(parsed.public_id).toBe('ARK-PENDING');
     expect(parsed.network_receipt_id).toBeNull();
     expect(parsed.anchor_timestamp).toBeNull();
+  });
+
+  it('SUBMITTED anchor → status SUBMITTED (NOT UNKNOWN), still unverified', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () =>
+        pendingPublicAnchorRow({ public_id: 'ARK-SUBMITTED', status: 'SUBMITTED' }),
+    });
+
+    const result = await handleVerifyDocument({ content_hash: FP }, CONFIG);
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.verified).toBe(false);
+    expect(parsed.status).toBe('SUBMITTED');
+    expect(parsed.public_id).toBe('ARK-SUBMITTED');
+    expect(parsed.network_receipt_id).toBeNull();
   });
 });
 

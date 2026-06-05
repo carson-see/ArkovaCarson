@@ -817,7 +817,9 @@ export async function handleAgentSearch(
           type: 'fingerprint',
           public_id: parsed.public_id,
           score: 1,
-          snippet: parsed.title ?? parsed.content_hash ?? '',
+          // shapeAnchorRow carries no title/content_hash, so fall back to the
+          // public_id as the snippet (the only human-meaningful handle here).
+          snippet: parsed.public_id ?? '',
           metadata: { status: parsed.status ?? null },
         }] : [],
         next_cursor: null,
@@ -1308,6 +1310,7 @@ export async function handleVerifyDocument(
       return textResult({
         verified: false,
         status: 'UNKNOWN',
+        fingerprint,
         public_id: null,
         network_receipt_id: null,
         anchor_timestamp: null,
@@ -1519,6 +1522,10 @@ function mapStatus(status: string | null | undefined): string {
       return 'SUPERSEDED';
     case 'EXPIRED':
       return 'EXPIRED';
+    case 'PENDING':
+      return 'PENDING';
+    case 'SUBMITTED':
+      return 'SUBMITTED';
     default:
       return 'UNKNOWN';
   }
