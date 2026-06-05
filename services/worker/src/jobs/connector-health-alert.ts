@@ -175,6 +175,12 @@ export async function runConnectorHealthCheck(db: SupabaseDb): Promise<Connector
   const now = new Date();
   const dispatcher = createSentryConnectorAlertDispatcher();
 
+  // tenant-isolation suppressed: this is a service-role cron (invoked from
+  // src/routes/cron.ts) that intentionally enumerates org integrations across
+  // ALL tenants to produce a platform-wide connector-health snapshot. There is
+  // no per-org caller context; each row carries its own org_id used downstream
+  // for per-org dedup/alert keys. Org-agnostic system health monitor by design.
+  // eslint-disable-next-line arkova/missing-org-filter
   const { data: integrations, error: intError } = await db
     .from('org_integrations')
     .select('org_id, provider, revoked_at');

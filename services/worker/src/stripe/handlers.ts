@@ -49,6 +49,12 @@ async function lookupSubscriptionOrThrow<T>(
   eventName: string,
 ): Promise<T | null> {
 
+  // tenant-isolation suppressed: this runs inside a Stripe webhook handler
+  // (event already authenticated upstream via stripe.webhooks.constructEvent()).
+  // The lookup key `stripe_subscription_id` is a globally-unique Stripe id that
+  // maps 1:1 to a single subscription row — the org_id/user_id are the RESULT of
+  // this lookup, not available inputs, so there is no org to filter on here.
+  // eslint-disable-next-line arkova/missing-org-filter
   const { data, error } = await (db
     .from('subscriptions')
     .select(selectCols)

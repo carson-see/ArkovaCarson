@@ -161,14 +161,16 @@ describe('SCRUM-1296: cloud-logging-drain bumpRetryCounts', () => {
     expect(mockDbRpc).toHaveBeenCalledTimes(1);
     expect(mockDbFrom).toHaveBeenCalledWith('cloud_logging_queue');
     // Verify retry_count was incremented (not just last_error set)
+    const isRetryPayload = (p: unknown): p is { retry_count: number } =>
+      typeof p === 'object' && p !== null && 'retry_count' in p;
     const hasRetryIncrement = updatePayloads.some(
-      (p: any) => typeof p === 'object' && p !== null && 'retry_count' in p && p.retry_count > 0,
+      (p) => isRetryPayload(p) && p.retry_count > 0,
     );
     expect(hasRetryIncrement).toBe(true);
     // Verify the incremented values are correct (2+1=3 and 5+1=6)
     const retryValues = updatePayloads
-      .filter((p: any) => typeof p === 'object' && p !== null && 'retry_count' in p)
-      .map((p: any) => p.retry_count);
+      .filter(isRetryPayload)
+      .map((p) => p.retry_count);
     expect(retryValues).toContain(3); // 2 + 1
     expect(retryValues).toContain(6); // 5 + 1
   });

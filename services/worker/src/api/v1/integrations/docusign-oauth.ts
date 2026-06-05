@@ -254,7 +254,7 @@ async function callDocusignWithTimeout<T>(args: {
       (error instanceof DOMException && error.name === 'AbortError') ||
       (error instanceof Error && error.name === 'AbortError')
     ) {
-      throw new Error(`${args.label} timed out after ${(args.timeoutMs ?? DocusignApiTimeoutMs) / 1000}s`);
+      throw new Error(`${args.label} timed out after ${(args.timeoutMs ?? DocusignApiTimeoutMs) / 1000}s`, { cause: error });
     }
     throw error;
   } finally {
