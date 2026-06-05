@@ -98,18 +98,58 @@ const {
     contains: endpointsContains,
   };
 
-  // Retry logs chain: .select().eq().lte().limit()
+  // Retry logs chain: .select().eq().lte().order().limit()
+  // SCRUM-2250 review-fix (defect #2): processWebhookRetries now inserts an
+  // `.order('payload->sequence', { ascending: true, nullsFirst: true })` step
+  // between `.lte()` and `.limit()` so the 50-row window is the globally-oldest
+  // outstanding events (correct head-of-line under backlog). The mock chain
+  // must mirror that or `.order(...)` is undefined at runtime.
   const retryLogsLimit = vi.fn();
-  const retryLogsLte = vi.fn(() => ({ limit: retryLogsLimit }));
+  const retryLogsOrder = vi.fn(() => ({ limit: retryLogsLimit }));
+  const retryLogsLte = vi.fn(() => ({ order: retryLogsOrder }));
   const retryLogsEq = vi.fn(() => ({ lte: retryLogsLte }));
   const retryLogsSelect = {
     select: vi.fn((_columns?: string) => ({ eq: retryLogsEq })),
     eq: retryLogsEq,
     lte: retryLogsLte,
+    order: retryLogsOrder,
     limit: retryLogsLimit,
   };
 
-  const mockRpc = vi.fn();
+  // mockRpc is name-aware: the delivery engine now makes TWO kinds of RPC call
+  // — `get_flag` (feature flag) and `next_webhook_sequence` (SCRUM-2250
+  // replica-safe ordering source, migration 0337). A single
+  // `mockResolvedValue({ data: true })` would have made next_webhook_sequence
+  // return `true` → Number(true) === 1 for every dispatch, collapsing the
+  // sequence. Instead:
+  //   - `get_flag`              → rpcState.flag (default true)
+  //   - `next_webhook_sequence` → rpcState.seqOverride if set, else a
+  //                               strictly-increasing counter so two dispatches
+  //                               get distinct, ordered sequences.
+  const rpcState: {
+    flag: { data: unknown };
+    seq: number;
+    seqOverride: { data: unknown; error?: unknown } | null;
+  } = { flag: { data: true }, seq: 0, seqOverride: null };
+  const mockRpc = vi.fn((fn: string) => {
+    if (fn === 'next_webhook_sequence') {
+      if (rpcState.seqOverride) return Promise.resolve(rpcState.seqOverride);
+      rpcState.seq += 1;
+      return Promise.resolve({ data: rpcState.seq, error: null });
+    }
+    // get_flag (and any other rpc) → the flag slot. Tests drive this via
+    // mockRpc.mockResolvedValue(...) (legacy) which is bridged onto the flag.
+    return Promise.resolve(rpcState.flag);
+  });
+  // Bridge legacy `mockRpc.mockResolvedValue({ data: X })` (feature-flag setup)
+  // onto rpcState.flag WITHOUT clobbering the name-aware implementation above.
+  Object.assign(mockRpc, {
+    mockResolvedValue: (val: { data: unknown }) => {
+      rpcState.flag = val;
+      return mockRpc;
+    },
+  });
+  (mockRpc as unknown as { __rpcState: typeof rpcState }).__rpcState = rpcState;
 
   const mockFetch = vi.fn();
 
@@ -129,6 +169,22 @@ const {
     mockRpc,
   };
 });
+
+// Test helpers for the name-aware RPC mock (SCRUM-2250 review-fix). These read
+// the rpcState bridged onto mockRpc above.
+function rpcStateOf(): { flag: { data: unknown }; seq: number; seqOverride: { data: unknown; error?: unknown } | null } {
+  return (mockRpc as unknown as { __rpcState: { flag: { data: unknown }; seq: number; seqOverride: { data: unknown; error?: unknown } | null } }).__rpcState;
+}
+/** Reset the strictly-increasing next_webhook_sequence counter + override. */
+function resetRpcSequence(): void {
+  const s = rpcStateOf();
+  s.seq = 0;
+  s.seqOverride = null;
+}
+/** Force next_webhook_sequence to return a fixed value/error (replica-skew + failure tests). */
+function setRpcSequence(value: { data: unknown; error?: unknown } | null): void {
+  rpcStateOf().seqOverride = value;
+}
 
 // ---- Module mocks ----
 
@@ -1157,6 +1213,7 @@ describe('dispatchWebhookEvent ordering metadata (SCRUM-2250)', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     __resetSequenceForTest();
+    resetRpcSequence();
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-03-10T12:00:00Z'));
   });
@@ -1206,6 +1263,60 @@ describe('dispatchWebhookEvent ordering metadata (SCRUM-2250)', () => {
     const inserted = insertCalls[0]?.[0];
     expect(inserted?.payload.resource_key).toBe('anchor:pub-001');
     expect(typeof inserted?.payload.sequence).toBe('number');
+  });
+
+  it('sources sequence from the next_webhook_sequence RPC (DB-backed, not the clock)', async () => {
+    // REVIEW-FIX defect #1: prove the sequence comes from the RPC, not Date.now.
+    await dispatchOnce('evt-1', MOCK_PAYLOAD_DATA);
+    expect(mockRpc).toHaveBeenCalledWith('next_webhook_sequence');
+  });
+
+  it('CROSS-REPLICA SKEW: ordering follows the DB sequence even when the wall clock INVERTS', async () => {
+    // The SEV1 bug: two same-resource events emitted from DIFFERENT replicas.
+    // Replica A (event 1, the EARLIER event) has a clock skewed AHEAD; replica B
+    // (event 2, the LATER event) has a clock BEHIND. The old in-process
+    // Date.now() counter would have stamped event 1 with a HIGHER sequence than
+    // event 2 (clock-driven), inverting their order so the consumer drops the
+    // newer event. With the DB sequence, dispatch ORDER (not wall clock) decides
+    // the value: event 1 dispatched first → lower sequence, event 2 second →
+    // higher, regardless of the system clock each replica reports.
+
+    // Event 1: dispatched first, but on a replica whose clock is FAR AHEAD.
+    setRpcSequence(null); // use the strictly-increasing DB counter
+    vi.setSystemTime(new Date('2026-03-10T12:00:05Z')); // skewed +5s ahead
+    await dispatchOnce('evt-1', MOCK_PAYLOAD_DATA);
+    const ev1 = JSON.parse(mockFetch.mock.calls[0][1].body);
+
+    // Event 2: dispatched second, on a replica whose clock is BEHIND event 1's.
+    mockFetch.mockClear();
+    vi.setSystemTime(new Date('2026-03-10T12:00:00Z')); // 5s BEHIND event 1
+    await dispatchOnce('evt-2', MOCK_PAYLOAD_DATA);
+    const ev2 = JSON.parse(mockFetch.mock.calls[0][1].body);
+
+    // Same resource. Despite event 2's wall clock being EARLIER, its DB sequence
+    // is strictly GREATER because it was allocated later → consumer orders them
+    // correctly and does NOT drop event 2 as stale.
+    expect(ev1.resource_key).toBe('anchor:pub-001');
+    expect(ev2.resource_key).toBe('anchor:pub-001');
+    expect(ev2.sequence).toBeGreaterThan(ev1.sequence);
+  });
+
+  it('degrades to a NULL sequence (no false ordering) + Sentry when the RPC fails', async () => {
+    // If next_webhook_sequence errors, we must NOT fabricate a value (that could
+    // invert ordering). We stamp null (treated as "no ordering asserted") and
+    // surface to Sentry, but still deliver the event (liveness).
+    setRpcSequence({ data: null, error: { message: 'connection terminated' } });
+    await dispatchOnce('evt-1', MOCK_PAYLOAD_DATA);
+
+    const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+    expect(body.sequence).toBeNull();
+    expect(mockFetch).toHaveBeenCalledOnce(); // still delivered
+    expect(mockSentry.captureException).toHaveBeenCalledWith(
+      expect.any(Error),
+      expect.objectContaining({
+        tags: expect.objectContaining({ subsystem: 'webhooks', stage: 'sequence_alloc' }),
+      }),
+    );
   });
 });
 
@@ -1322,5 +1433,43 @@ describe('processWebhookRetries per-resource ordering (SCRUM-2250)', () => {
 
     expect(result).toBe(2);
     expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('REVIEW-FIX defect #2: orders the retry window by payload->sequence ASC (NULLS FIRST) before limit(50)', async () => {
+    // The limit(50) is applied to a backlog, so it MUST be ordered by sequence
+    // ascending — otherwise a newer event could enter the window while its older
+    // head-of-line sibling is excluded. Assert the exact ordering clause + that
+    // it precedes the limit in the chain.
+    routeRetry([]);
+
+    await processWebhookRetries();
+
+    expect(retryLogsSelect.order).toHaveBeenCalledWith('payload->sequence', {
+      ascending: true,
+      nullsFirst: true,
+    });
+    expect(retryLogsSelect.limit).toHaveBeenCalledWith(50);
+    // order() resolves to the object carrying limit() → ordering happens first.
+    const orderResult = retryLogsSelect.order.mock.results[0]?.value as { limit?: unknown };
+    expect(orderResult).toHaveProperty('limit');
+  });
+
+  it('BACKLOG WINDOW: picks the true per-resource head from the ordered window (older sibling NOT starved)', async () => {
+    // Simulate what the SQL ORDER BY guarantees: the window is the globally
+    // OLDEST outstanding events. For resource pub-001 the older event (seq 100)
+    // is present alongside the newer (seq 200); the sweep must fire only the
+    // older one. (Pre-fix, an arbitrary window order let the newer row win.)
+    const head = retryRow('evt-head', { resourceKey: 'anchor:pub-001', sequence: 100 });
+    const newer = retryRow('evt-newer', { resourceKey: 'anchor:pub-001', sequence: 200 });
+    // DB returns them sequence-ASC (as the new ORDER BY produces).
+    routeRetry([head, newer]);
+
+    const result = await processWebhookRetries();
+
+    expect(result).toBe(1);
+    expect(mockFetch).toHaveBeenCalledOnce();
+    const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+    expect(body.event_id).toBe('evt-head');
+    expect(body.sequence).toBe(100);
   });
 });

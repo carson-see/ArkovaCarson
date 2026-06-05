@@ -214,17 +214,20 @@ interface WebhookPayload {
   // ─── SCRUM-2250 (BUG-2026-05-16-001) per-resource ordering ───────────
   // `resource_key` identifies the logical resource a lifecycle event belongs
   // to (a document/anchor/attestation `public_id`). `sequence` is a strictly
-  // monotonic integer assigned at dispatch time. Together they let a consumer
-  // detect/reject out-of-order delivery for the SAME resource: if a retried
-  // earlier event (lower `sequence`) arrives AFTER a later one (higher
+  // monotonic integer assigned at dispatch time from a GLOBAL Postgres sequence
+  // (`next_webhook_sequence` RPC, migration 0337), so it is monotonic across
+  // ALL worker replicas — not just within one process. Together they let a
+  // consumer detect/reject out-of-order delivery for the SAME resource: if a
+  // retried earlier event (lower `sequence`) arrives AFTER a later one (higher
   // `sequence`) for the same `resource_key`, the consumer can drop the stale
-  // update. Both are ADDITIVE + NULLABLE (CLAUDE.md §1.8 frozen-API: no v2
-  // bump) — `resource_key` is null for events with no single resource
-  // identity (e.g. anchor.batch_secured), and older payloads replayed from
-  // the DB simply omit them. They are derived from existing data (no schema
-  // column), so the change stays no-migration / T2. The values are frozen
-  // into `webhook_delivery_logs.payload`, so a retry preserves the original
-  // dispatch-time `sequence` even when delivered later.
+  // update. Both fields are ADDITIVE + NULLABLE on the wire (CLAUDE.md §1.8
+  // frozen-API: no v2 bump) — `resource_key` is null for events with no single
+  // resource identity (e.g. anchor.batch_secured); `sequence` is null only when
+  // the sequence RPC was unreachable at dispatch (in which case NO ordering is
+  // asserted for that event), and older payloads replayed from the DB simply
+  // omit both. The values are frozen into `webhook_delivery_logs.payload`, so a
+  // retry preserves the original dispatch-time `sequence` even when delivered
+  // later.
   resource_key?: string | null;
   sequence?: number | null;
 }
@@ -559,26 +562,60 @@ async function deliverToEndpoint(
 
 // ─── SCRUM-2250 per-resource ordering helpers ───────────────────────────
 //
-// `nextSequence()` returns a strictly-monotonic-increasing integer for the
-// lifetime of the worker process. Wall-clock ms (Date.now()) is the base so
-// the value is meaningful across restarts (a fresh process picks up where the
-// clock is), but a per-process counter guarantees STRICT monotonicity even
-// when two events for the same resource dispatch within the same millisecond
-// (Date.now() alone would collide and break ordering). Consumers only rely on
-// the relative order of `sequence` values for a given `resource_key`, never on
-// the absolute magnitude, so this is safe across restarts: a later event
-// always carries a strictly greater sequence than an earlier one dispatched in
-// the same process, and across restarts the clock advances.
-let __lastSequence = 0;
-function nextSequence(): number {
-  const now = Date.now();
-  __lastSequence = now > __lastSequence ? now : __lastSequence + 1;
-  return __lastSequence;
+// `nextSequence()` returns a strictly-monotonic-increasing integer that is
+// globally monotonic across ALL worker replicas, sourced from a single
+// Postgres SEQUENCE via the `next_webhook_sequence` SECURITY DEFINER RPC
+// (migration 0337_scrum2250_webhook_event_sequence.sql).
+//
+// REVIEW-FIX (defect #1, the SEV1 root cause): the original implementation
+// used an in-process counter seeded from Date.now(). The worker runs 2-10
+// Cloud Run replicas, and same-resource lifecycle events
+// (anchor.submitted/secured/revoked) are emitted from DIFFERENT replicas.
+// With a per-process counter, replica A's clock could be skewed ahead of
+// replica B, so a LATER event dispatched on B got a LOWER `sequence` than an
+// EARLIER event on A — the consumer then drops the newer event as stale. That
+// is exactly BUG-2026-05-16-001. A Postgres sequence is atomic and globally
+// monotonic with no clock dependency, so nextval() is correct across every
+// replica and connection. The worker reaches Postgres only through PostgREST
+// (service_role), so the sequence is consumed via a SECURITY DEFINER RPC
+// rather than a raw `nextval` call. One DB round-trip per dispatch.
+//
+// Failure handling: if the RPC errors (transient DB blip), we MUST NOT
+// fabricate a sequence — a wrong value reintroduces the inversion bug.
+// Instead we return null. A null `sequence` is treated by both the consumer
+// contract and the retry sweep exactly like a legacy/pre-2250 payload: no
+// ordering is asserted for that event (it is never head-of-line-blocked and
+// never blocks others). The failure is surfaced to Sentry/logger so it is
+// visible rather than a silent ordering downgrade. This preserves liveness
+// (the event still delivers) without ever asserting a FALSE ordering.
+async function nextSequence(): Promise<number | null> {
+  const { data, error } = await db.rpc('next_webhook_sequence');
+  if (error || data == null) {
+    logger.error(
+      { error },
+      'next_webhook_sequence RPC failed — dispatching with null sequence (no ordering asserted for this event)',
+    );
+    Sentry.captureException(
+      error instanceof Error ? error : new Error('next_webhook_sequence RPC failed'),
+      {
+        tags: { subsystem: 'webhooks', stage: 'sequence_alloc' },
+        extra: { rpc_error: (error as { message?: string } | null)?.message ?? 'null data' },
+      },
+    );
+    return null;
+  }
+  return Number(data);
 }
 
-/** Exported for testing — reset the monotonic sequence counter. */
+/**
+ * Exported for testing — historically reset the in-process sequence counter.
+ * The sequence is now sourced from a global Postgres sequence (no in-process
+ * state), so this is a no-op kept only so existing test `beforeEach` blocks
+ * keep compiling. Tests control ordering by stubbing the
+ * `next_webhook_sequence` RPC return value.
+ */
 export function __resetSequenceForTest(): void {
-  __lastSequence = 0;
+  /* no in-process state to reset — sequence is DB-backed (migration 0337) */
 }
 
 /**
@@ -683,8 +720,12 @@ export async function dispatchWebhookEvent(
     data,
     // SCRUM-2250: stamp ordering metadata at dispatch time so it is frozen
     // into webhook_delivery_logs.payload and preserved verbatim across retries.
+    // `sequence` is allocated from a global Postgres sequence (replica-safe),
+    // so two same-resource events emitted from DIFFERENT replicas still receive
+    // strictly-ordered values. Awaited so the value is settled before the
+    // payload is signed and frozen into the delivery log.
     resource_key: deriveResourceKey(eventType, data),
-    sequence: nextSequence(),
+    sequence: await nextSequence(),
   };
 
   // Deliver to all endpoints (in parallel). Different resources, and multiple
@@ -929,12 +970,30 @@ export async function replayDelivery(
  * Process pending retries
  */
 export async function processWebhookRetries(): Promise<number> {
-  // Get logs that need retry
+  // Get logs that need retry.
+  //
+  // REVIEW-FIX (defect #2): the limit(50) is applied to a backlog, so the
+  // window MUST be ordered by `sequence` ascending — otherwise a newer event
+  // (higher sequence) for a resource could land inside the 50-row window while
+  // its older head-of-line sibling (lower sequence) sits OUTSIDE the window,
+  // and the JS grouping below would then wrongly treat the newer row as the
+  // head and re-fire it ahead of the older one — the exact out-of-order bug.
+  //
+  // Ordering by `payload->sequence` ASC (NULLS FIRST) makes the window the
+  // globally-OLDEST outstanding events. `payload->sequence` uses the jsonb `->`
+  // accessor (NOT `->>`), so Postgres compares the values numerically
+  // (3 < 20 < 100), not lexicographically. NULLS FIRST puts legacy/aggregate
+  // rows (no sequence) ahead of sequenced ones so they always drain promptly
+  // and are never starved. Consequence: if a resource's true head is excluded
+  // from the window, it is only because ≥50 strictly-older events (each the
+  // head of its own resource) are ahead of it and will drain first — which is
+  // exactly correct head-of-line behavior.
   const { data: logs, error } = await db
     .from('webhook_delivery_logs')
     .select('*, webhook_endpoints(*)')
     .eq('status', 'retrying')
     .lte('next_retry_at', new Date().toISOString())
+    .order('payload->sequence', { ascending: true, nullsFirst: true })
     .limit(50);
 
   if (error) {
@@ -1011,6 +1070,24 @@ export async function processWebhookRetries(): Promise<number> {
   // Deliver one head row per resource concurrently — distinct documents do
   // not serialize against each other. allSettled so a single delivery throwing
   // never aborts the sweep for the other resources.
+  //
+  // ─── Drop-to-DLQ ordering contract (defect #3) ──────────────────────
+  // The head-of-line row is delivered via deliverToEndpoint(), which on a
+  // successful response leaves the 'retrying' state; on a non-final failure
+  // stays 'retrying' with a later next_retry_at; and on the FINAL attempt
+  // (attempt >= MAX_RETRIES) transitions the row to 'failed' AND moves it to
+  // the dead-letter queue (moveToDeadLetterQueue). Once the head leaves
+  // 'retrying' by either path, it no longer matches this sweep's
+  // `status = 'retrying'` filter, so on the NEXT sweep the next-lowest-sequence
+  // event for that resource becomes the head and proceeds. A poison head that
+  // exhausts its retries therefore does NOT block its resource forever: it
+  // drops to the DLQ and the newer events advance in order. Consumers should
+  // treat a gap in the per-resource `sequence` (a missing intermediate event)
+  // as "an earlier event was dead-lettered" and reconcile via the DLQ, not as
+  // a reason to reject the newer event. This is the documented, intended
+  // liveness/ordering trade-off: strict per-resource order while the head is
+  // live, fail-forward (drop the dead head, deliver the rest in order) once it
+  // is dead-lettered.
   await Promise.allSettled(
     headRows.map((row) =>
       deliverToEndpoint(
