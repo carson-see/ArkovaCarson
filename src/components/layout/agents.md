@@ -12,7 +12,7 @@ App-level layout components: shell, sidebar, header, breadcrumbs, error boundari
 - `ArkovaLogo.tsx` — Arkova logo and icon components
 - `AuthLayout.tsx` — Layout wrapper for unauthenticated pages (login, signup)
 - `ErrorBoundary.tsx` — React class-based error boundary with recovery UI
-- `RouteErrorBoundary.tsx` — Route-level error boundary for react-router
+- `RouteErrorBoundary.tsx` — Route-level error boundary for react-router. SCRUM-2246: when the caught error is a chunk-load failure (`isChunkLoadError` from `@/lib/lazyWithRetry`), renders a dedicated "A new version is available / Refresh" affordance instead of the generic retry-in-place UI — the recovery for a stale chunk is a full reload, not a re-render.
 - `NotificationBell.tsx` — Notification indicator in the header
 - `index.ts` — Barrel exports
 
