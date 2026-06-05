@@ -15,6 +15,7 @@ import { useAuth } from '@/hooks/useAuth';
 import { useProfile } from '@/hooks/useProfile';
 import { useOrganization } from '@/hooks/useOrganization';
 import { useOrgMembers } from '@/hooks/useOrgMembers';
+import { useAdminOrgMembers } from '@/hooks/useAdminOrgMembers';
 import { useRevokeAnchor } from '@/hooks/useRevokeAnchor';
 import { useInviteMember } from '@/hooks/useInviteMember';
 import { supabase } from '@/lib/supabase';
@@ -54,7 +55,7 @@ export function OrgProfilePage() {
   const { user, signOut } = useAuth();
   const { profile, loading: profileLoading } = useProfile();
   const { organization, updating: orgUpdating, updateOrganization } = useOrganization(orgId ?? null);
-  const { members, loading: membersLoading } = useOrgMembers(orgId ?? null);
+  const { members: orgMembers, loading: orgMembersLoading, refreshMembers: refreshOrgMembers } = useOrgMembers(orgId ?? null);
   const { revokeAnchor } = useRevokeAnchor();
   const { inviteMember } = useInviteMember();
 
@@ -63,6 +64,19 @@ export function OrgProfilePage() {
   const [roleLoading, setRoleLoading] = useState(true);
   const isAdmin = userRole === 'owner' || userRole === 'admin' || isPlatformAdmin(user?.email);
   const issueCredentialRole = isAdmin ? 'ORG_ADMIN' : 'INDIVIDUAL';
+
+  // Platform-admin-viewing-a-foreign-org: the admin is NOT a member of this org,
+  // so the browser's RLS-scoped queries (useOrgMembers, profiles search) return 0
+  // rows. Route the roster + add-member flow through the service_role worker
+  // endpoints instead. Real org members keep the client-side path untouched.
+  const isForeignOrgAdmin = isPlatformAdmin(user?.email) && !roleLoading && !userRole;
+  const { members: adminMembers, loading: adminMembersLoading, refreshMembers: refreshAdminMembers } = useAdminOrgMembers(
+    orgId ?? null,
+    isForeignOrgAdmin,
+  );
+  const members = isForeignOrgAdmin ? adminMembers : orgMembers;
+  const membersLoading = isForeignOrgAdmin ? adminMembersLoading : orgMembersLoading;
+  const refreshMembers = isForeignOrgAdmin ? refreshAdminMembers : refreshOrgMembers;
 
   // Dialog state
   const [issueDialogOpen, setIssueDialogOpen] = useState(false);
@@ -918,7 +932,11 @@ export function OrgProfilePage() {
           open={addMemberOpen}
           onOpenChange={setAddMemberOpen}
           orgId={orgId}
-          onMemberAdded={() => setRefreshKey((k) => k + 1)}
+          useAdminEndpoints={isForeignOrgAdmin}
+          onMemberAdded={() => {
+            setRefreshKey((k) => k + 1);
+            void refreshMembers();
+          }}
         />
       )}
 
