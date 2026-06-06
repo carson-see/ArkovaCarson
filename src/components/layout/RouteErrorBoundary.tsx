@@ -8,10 +8,11 @@
 
 import { Component } from 'react';
 import type { ErrorInfo, ReactNode } from 'react';
-import { AlertTriangle, RefreshCw, Home } from 'lucide-react';
+import { AlertTriangle, RefreshCw, Home, Download } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ERROR_BOUNDARY_LABELS } from '@/lib/copy';
 import { ROUTES } from '@/lib/routes';
+import { isChunkLoadError } from '@/lib/lazyWithRetry';
 
 /** Maximum characters to display from error messages (prevents leaking internal details). */
 const MAX_ERROR_MESSAGE_LENGTH = 200;
@@ -74,8 +75,39 @@ export class RouteErrorBoundary extends Component<Props, State> {
     globalThis.location.href = ROUTES.DASHBOARD;
   };
 
+  private readonly handleRefresh = (): void => {
+    globalThis.location.reload();
+  };
+
   render(): ReactNode {
     if (this.state.hasError) {
+      // SCRUM-2246: a stale-chunk failure that survived lazyWithRetry's one-time
+      // reload lands here. Show a "new version available" affordance instead of a
+      // generic error — the recovery is a refresh, not a retry-in-place.
+      if (isChunkLoadError(this.state.error)) {
+        return (
+          <div className="flex min-h-[50vh] flex-col items-center justify-center p-8">
+            <div className="glass-card max-w-md rounded-xl p-8 text-center">
+              <div className="mx-auto mb-4 flex h-12 w-12 items-center justify-center rounded-full bg-sky-500/10">
+                <Download className="h-6 w-6 text-sky-500" />
+              </div>
+              <h2 className="mb-2 text-lg font-semibold">
+                {ERROR_BOUNDARY_LABELS.STALE_VERSION_TITLE}
+              </h2>
+              <p className="mb-6 text-sm text-muted-foreground">
+                {ERROR_BOUNDARY_LABELS.STALE_VERSION_DESCRIPTION}
+              </p>
+              <div className="flex justify-center gap-3">
+                <Button size="sm" onClick={this.handleRefresh}>
+                  <RefreshCw className="mr-2 h-4 w-4" />
+                  {ERROR_BOUNDARY_LABELS.STALE_VERSION_REFRESH}
+                </Button>
+              </div>
+            </div>
+          </div>
+        );
+      }
+
       return (
         <div className="flex min-h-[50vh] flex-col items-center justify-center p-8">
           <div className="glass-card max-w-md rounded-xl p-8 text-center">
