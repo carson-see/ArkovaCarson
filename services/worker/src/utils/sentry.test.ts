@@ -27,7 +27,7 @@ vi.mock('@sentry/profiling-node', () => ({
   nodeProfilingIntegration: vi.fn(() => ({})),
 }));
 
-import { scrubPiiFromEvent, scrubPiiFromBreadcrumb, emitRpcFallback, withCronMonitoring, captureStuckAnchorAlert, STUCK_ANCHOR_FINGERPRINT, Sentry } from './sentry.js';
+import { scrubPiiFromEvent, scrubPiiFromBreadcrumb, initSentry, emitRpcFallback, withCronMonitoring, captureStuckAnchorAlert, STUCK_ANCHOR_FINGERPRINT, Sentry } from './sentry.js';
 
 describe('scrubPiiFromEvent', () => {
   it('strips email addresses from exception messages', () => {
@@ -293,6 +293,28 @@ describe('scrubPiiFromBreadcrumb', () => {
 
     const scrubbed = scrubPiiFromBreadcrumb(breadcrumb);
     expect(scrubbed?.message).toBe('Application started');
+  });
+});
+
+describe('initSentry', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('uses typed Cloud Run revision config for Sentry serverName', () => {
+    const initSpy = vi.mocked(Sentry.init);
+    initSpy.mockClear();
+
+    initSentry('https://public@example.com/1', 'production', {
+      kRevision: 'arkova-worker-00123-abc',
+      kService: 'arkova-worker',
+    });
+
+    expect(initSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        serverName: 'arkova-worker-00123-abc',
+      }),
+    );
   });
 });
 

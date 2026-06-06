@@ -63,7 +63,10 @@ import { setIdempotencyStore } from './middleware/idempotency.js';
 import { createFeeEstimator } from './chain/fee-estimator.js';
 
 // Initialize Sentry BEFORE Express app — PII scrubbing mandatory (Constitution 1.4 + 1.6)
-initSentry(config.sentryDsn, config.nodeEnv);
+initSentry(config.sentryDsn, config.nodeEnv, {
+  kRevision: config.kRevision,
+  kService: config.kService,
+});
 
 // Static fee estimator singleton — avoids dynamic import on every /health request
 const feeEstimatorInstance = createFeeEstimator({

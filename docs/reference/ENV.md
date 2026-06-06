@@ -337,6 +337,7 @@ deferred to R1-4-followup sub-stories.
 ### Cloud Run injected (read-only — set by the platform)
 ```bash
 K_SERVICE=                          # Cloud Run service name; presence detects "running on Cloud Run"
+K_REVISION=                         # Cloud Run revision name; used for deployment-surface telemetry
 BUILD_SHA=                          # baked at Docker build via --build-arg (R0-1 SCRUM-1247); 40-char git sha
 PORT=                               # Cloud Run sets this; worker uses it OR WORKER_PORT, prefer PORT
 ```

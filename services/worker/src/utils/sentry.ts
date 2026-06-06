@@ -16,22 +16,22 @@ import { getBuildSha } from './buildInfo.js';
 // PII patterns to scrub (Constitution 1.4 + 1.6)
 // ---------------------------------------------------------------------------
 
-const EMAIL_REGEX = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
-const SHA256_REGEX = /\b[a-f0-9]{64}\b/gi;
-const SSN_REGEX = /\b\d{3}-\d{2}-\d{4}\b/g;
-const API_KEY_REGEX = /\bak_(live|test)_[a-zA-Z0-9]+/g;
-const JWT_REGEX = /\beyJ[a-zA-Z0-9_-]+\.eyJ[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+/g;
-const PHONE_REGEX = /(?:\+\d{1,3}[\s.-]?)?\(?\d{2,4}\)?[\s.-]?\d{3,4}[\s.-]?\d{4}\b/g;
-const IPV4_REGEX = /\b(?:\d{1,3}\.){3}\d{1,3}\b/g;
 const URL_TOKEN_REGEX = /(access_token|token|key|secret|password|auth)=[^&\s]+/gi;
-// SCRUM-2249 (HARDEN-1-F): UUIDs are org_id/user_id/anchor.id identifiers that
-// leak through transaction names and request URLs. Collapsed to a stable
-// placeholder so Sentry issue grouping stays coherent.
-const UUID_REGEX =
-  /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi;
-// SCRUM-2249: auth-error / lock messages embed the prod Supabase project ref
-// (https://<ref>.supabase.co). Scrub to a stable host.
-const SUPABASE_REF_REGEX = /https:\/\/[a-z0-9]{20}\.supabase\.co/gi;
+const TEXT_SCRUBBERS: Array<[RegExp, string]> = [
+  [/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g, '[EMAIL]'],
+  [/\b[a-f0-9]{64}\b/gi, '[FINGERPRINT]'],
+  [/\b\d{3}-\d{2}-\d{4}\b/g, '[SSN]'],
+  [/\bak_(live|test)_[a-zA-Z0-9]+/g, '[API_KEY]'],
+  [/\beyJ[a-zA-Z0-9_-]+\.eyJ[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+/g, '[JWT]'],
+  [/(?:\+\d{1,3}[\s.-]?)?\(?\d{2,4}\)?[\s.-]?\d{3,4}[\s.-]?\d{4}\b/g, '[PHONE]'],
+  [/\b(?:\d{1,3}\.){3}\d{1,3}\b/g, '[IP_ADDR]'],
+  // SCRUM-2249: project-ref before UUID scrubbing so the host is replaced whole.
+  [/https:\/\/[a-z0-9]{20}\.supabase\.co/gi, 'https://[SUPABASE_PROJECT].supabase.co'],
+  [
+    /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi,
+    '[UUID]',
+  ],
+];
 
 const SENSITIVE_HEADERS = [
   'authorization',
@@ -59,24 +59,13 @@ const SENSITIVE_EXTRA_KEYS = [
 // ---------------------------------------------------------------------------
 
 function scrubString(str: string): string {
-  return str
-    .replace(EMAIL_REGEX, '[EMAIL]')
-    .replace(SHA256_REGEX, '[FINGERPRINT]')
-    .replace(SSN_REGEX, '[SSN]')
-    .replace(API_KEY_REGEX, '[API_KEY]')
-    .replace(JWT_REGEX, '[JWT]')
-    .replace(PHONE_REGEX, '[PHONE]')
-    .replace(IPV4_REGEX, '[IP_ADDR]')
-    // SCRUM-2249: project-ref before generic identifier scrubbing.
-    .replace(SUPABASE_REF_REGEX, 'https://[SUPABASE_PROJECT].supabase.co')
-    .replace(UUID_REGEX, '[UUID]');
+  return TEXT_SCRUBBERS.reduce((value, [pattern, replacement]) => (
+    value.replace(pattern, replacement)
+  ), str);
 }
 
 function scrubUrl(url: string): string {
-  return url
-    .replace(URL_TOKEN_REGEX, '$1=[FILTERED]')
-    .replace(SUPABASE_REF_REGEX, 'https://[SUPABASE_PROJECT].supabase.co')
-    .replace(UUID_REGEX, '[UUID]');
+  return scrubString(url.replace(URL_TOKEN_REGEX, '$1=[FILTERED]'));
 }
 
 /**
@@ -210,7 +199,16 @@ export const IGNORED_ERROR_PATTERNS: (string | RegExp)[] = [
 // Sentry initialization
 // ---------------------------------------------------------------------------
 
-export function initSentry(dsn: string | undefined, environment: string): void {
+export interface SentryRuntimeConfig {
+  kRevision?: string;
+  kService?: string;
+}
+
+export function initSentry(
+  dsn: string | undefined,
+  environment: string,
+  runtime: SentryRuntimeConfig = {},
+): void {
   if (!dsn) {
     // AUDIT-22: console.log intentional here — logger imports config, which
     // creates a circular dependency. These bootstrap messages fire once at startup.
@@ -228,8 +226,7 @@ export function initSentry(dsn: string | undefined, environment: string): void {
   // SCRUM-2254: identify the deployment surface. Cloud Run sets K_REVISION
   // (e.g. arkova-worker-00123-abc) and K_SERVICE; prefer those over the
   // default 'localhost'.
-  const serverName =
-    process.env.K_REVISION ?? process.env.K_SERVICE ?? 'arkova-worker';
+  const serverName = runtime.kRevision ?? runtime.kService ?? 'arkova-worker';
 
   Sentry.init({
     dsn,
