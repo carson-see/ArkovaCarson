@@ -175,8 +175,8 @@ describe('Frontend scrubPiiFromEvent', () => {
 
 describe('initSentry CSP safety', () => {
   it('does not include replayIntegration (ARKOVA-FRONTEND-9: rrweb eval violates CSP)', async () => {
-    const fs = await import('fs');
-    const path = await import('path');
+    const fs = await import('node:fs');
+    const path = await import('node:path');
     const sentrySource = fs.readFileSync(
       path.resolve(__dirname, './sentry.ts'),
       'utf-8',

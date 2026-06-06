@@ -18,7 +18,7 @@ import { getBuildSha } from './buildInfo.js';
 
 const URL_TOKEN_REGEX = /(access_token|token|key|secret|password|auth)=[^&\s]+/gi;
 const TEXT_SCRUBBERS: Array<[RegExp, string]> = [
-  [/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g, '[EMAIL]'],
+  [/\b[A-Z0-9._%+-]{1,64}@[A-Z0-9.-]{1,253}\.[A-Z]{2,24}\b/gi, '[EMAIL]'],
   [/\b[a-f0-9]{64}\b/gi, '[FINGERPRINT]'],
   [/\b\d{3}-\d{2}-\d{4}\b/g, '[SSN]'],
   [/\bak_(live|test)_[a-zA-Z0-9]+/g, '[API_KEY]'],
@@ -221,7 +221,7 @@ export function initSentry(
   // Falls back to npm_package_version, then '0.1.0' for local dev.
   const buildSha = getBuildSha();
   const release =
-    buildSha !== 'unknown' ? buildSha : process.env.npm_package_version ?? '0.1.0';
+    buildSha === 'unknown' ? process.env.npm_package_version ?? '0.1.0' : buildSha;
 
   // SCRUM-2254: identify the deployment surface. Cloud Run sets K_REVISION
   // (e.g. arkova-worker-00123-abc) and K_SERVICE; prefer those over the

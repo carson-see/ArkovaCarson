@@ -103,7 +103,7 @@ app.get('/health', async (req, res) => {
 
   const deps: HealthCheckDeps = {
     isDbHealthy,
-    dbQuery: () => db.from('plans').select('id').limit(1) as unknown as Promise<{ data: unknown; error: { message: string } | null }>,
+    dbQuery: async () => db.from('plans').select('id').limit(1),
     recordDbSuccess,
     recordDbFailure,
     getDbCircuitState,
@@ -120,18 +120,18 @@ app.get('/health', async (req, res) => {
       bitcoinTreasuryWif: config.bitcoinTreasuryWif,
       enableProdNetworkAnchoring: config.enableProdNetworkAnchoring,
     },
-    getLastSecuredAnchor: () =>
+    getLastSecuredAnchor: async () =>
       db.from('anchors')
         .select('created_at')
         .eq('status', 'SECURED')
         .order('created_at', { ascending: false })
-        .limit(1) as unknown as Promise<{ data: Array<{ created_at: string }> | null; error: { message: string } | null }>,
-    getLastBatchAnchor: () =>
+        .limit(1),
+    getLastBatchAnchor: async () =>
       db.from('anchors')
         .select('updated_at')
         .eq('status', 'SUBMITTED')
         .order('updated_at', { ascending: false })
-        .limit(1) as unknown as Promise<{ data: Array<{ completed_at: string }> | null; error: { message: string } | null }>,
+        .limit(1),
     getPendingAnchorCount: async () => {
       // SCRUM-1259 (R1-5): swapped exact-count on bloated anchors table
       // for get_anchor_status_counts_fast RPC. /health?detailed=true must

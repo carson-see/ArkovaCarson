@@ -78,6 +78,63 @@ function scrubUrl(url: string): string {
     .replace(UUID_REGEX, '[UUID]');
 }
 
+function scrubEventText(event: Event): void {
+  event.exception?.values?.forEach((exception) => {
+    if (exception.value) {
+      exception.value = scrubString(exception.value);
+    }
+  });
+
+  if (event.message) {
+    event.message = scrubString(event.message);
+  }
+
+  if (typeof event.transaction === 'string') {
+    event.transaction = scrubString(event.transaction);
+  }
+}
+
+function scrubRequestContext(request: Event['request']): void {
+  if (!request) return;
+
+  if (typeof request.url === 'string') {
+    request.url = scrubUrl(request.url);
+  }
+
+  SENSITIVE_HEADERS
+    .filter((header) => request.headers?.[header])
+    .forEach((header) => {
+      request.headers![header] = '[FILTERED]';
+    });
+
+  if (request.data) {
+    request.data = '[FILTERED]';
+  }
+
+  delete request.cookies;
+}
+
+function scrubIdentityContext(event: Event): void {
+  delete event.user?.email;
+  delete event.user?.username;
+  delete event.user?.ip_address;
+
+  const extra = event.extra as Record<string, unknown> | undefined;
+  SENSITIVE_EXTRA_KEYS
+    .filter((key) => extra && key in extra)
+    .forEach((key) => {
+      extra![key] = '[FILTERED]';
+    });
+
+  const tags = event.tags as Record<string, string> | undefined;
+  Object.entries(tags ?? {}).forEach(([tagKey, tagValue]) => {
+    const scrubbed = scrubString(tagValue);
+    if (scrubbed !== tagValue) {
+      tags![tagKey] = scrubbed;
+    }
+  });
+}
+
 /**
  * Scrub PII from a Sentry event before it's sent.
  * Returns null to drop the event entirely.
@@ -85,81 +142,9 @@ function scrubUrl(url: string): string {
 export function scrubPiiFromEvent(event: Event | null): Event | null {
   if (!event) return null;
 
-  // Scrub exception messages
-  if (event.exception?.values) {
-    for (const exception of event.exception.values) {
-      if (exception.value) {
-        exception.value = scrubString(exception.value);
-      }
-    }
-  }
-
-  // Scrub top-level message
-  if (event.message) {
-    event.message = scrubString(event.message);
-  }
-
-  // SCRUM-2249: transaction name carries the route, which embeds org_id UUIDs
-  // (e.g. /admin/organizations/<uuid>). Scrub to keep grouping coherent.
-  if (typeof event.transaction === 'string') {
-    event.transaction = scrubString(event.transaction);
-  }
-
-  // Scrub request data
-  if (event.request) {
-    // SCRUM-2249: request URL embeds org_id / anchor.id UUIDs and may carry
-    // the Supabase project ref — scrub both.
-    if (typeof event.request.url === 'string') {
-      event.request.url = scrubUrl(event.request.url);
-    }
-
-    // Strip sensitive headers
-    if (event.request.headers) {
-      for (const header of SENSITIVE_HEADERS) {
-        if (event.request.headers[header]) {
-          event.request.headers[header] = '[FILTERED]';
-        }
-      }
-    }
-
-    // Strip request body entirely — may contain document data (Constitution 1.6)
-    if (event.request.data) {
-      event.request.data = '[FILTERED]';
-    }
-
-    // Strip cookies
-    if (event.request.cookies) {
-      delete event.request.cookies;
-    }
-  }
-
-  // Scrub user context — keep ID, strip email
-  if (event.user) {
-    delete event.user.email;
-    delete event.user.username;
-    delete event.user.ip_address;
-  }
-
-  // Scrub extra context
-  if (event.extra) {
-    for (const key of SENSITIVE_EXTRA_KEYS) {
-      if (key in event.extra) {
-        (event.extra as Record<string, unknown>)[key] = '[FILTERED]';
-      }
-    }
-  }
-
-  // PII-09: Scrub event tags
-  if (event.tags) {
-    for (const [tagKey, tagValue] of Object.entries(event.tags)) {
-      if (typeof tagValue === 'string') {
-        const scrubbed = scrubString(tagValue);
-        if (scrubbed !== tagValue) {
-          (event.tags as Record<string, string>)[tagKey] = scrubbed;
-        }
-      }
-    }
-  }
+  scrubEventText(event);
+  scrubRequestContext(event.request);
+  scrubIdentityContext(event);
 
   return event;
 }
