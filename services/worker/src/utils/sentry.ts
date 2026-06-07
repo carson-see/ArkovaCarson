@@ -159,41 +159,33 @@ export function scrubPiiFromEvent(event: Event | null): Event | null {
 export function scrubPiiFromBreadcrumb(breadcrumb: Breadcrumb | null): Breadcrumb | null {
   if (!breadcrumb) return null;
 
-  if (breadcrumb.data) {
-    // Scrub URLs containing tokens
-    if (breadcrumb.data.url && typeof breadcrumb.data.url === 'string') {
-      breadcrumb.data.url = scrubUrl(breadcrumb.data.url);
-    }
-
-    // Strip request bodies from fetch breadcrumbs
-    if (breadcrumb.data.body) {
-      delete breadcrumb.data.body;
-    }
+  const data = breadcrumb.data as
+    | (Record<string, unknown> & { url?: unknown; body?: unknown })
+    | undefined;
+  if (data?.url && typeof data.url === 'string') {
+    data.url = scrubUrl(data.url);
+  }
+  if (data?.body) {
+    delete data.body;
   }
 
-  // Scrub breadcrumb message
-  if (breadcrumb.message) {
-    breadcrumb.message = scrubString(breadcrumb.message);
-  }
+  breadcrumb.message = breadcrumb.message
+    ? scrubString(breadcrumb.message)
+    : breadcrumb.message;
 
   return breadcrumb;
 }
 
-// ---------------------------------------------------------------------------
-// Noise filters (SCRUM-2256 / HARDEN-1-F)
-// ---------------------------------------------------------------------------
-//
-// Benign, high-volume, non-actionable errors. Same intent as the frontend:
-//   - GoTrue Navigator LockManager contention from supabase-js token refresh.
-//   - Login/token AbortError when a request is aborted.
-// Exported for unit-testability.
-export const IGNORED_ERROR_PATTERNS: (string | RegExp)[] = [
+const WORKER_AUTH_NOISE_PATTERNS = [
   /Navigator ?LockManager/i,
   /Acquiring an exclusive Navigator LockManager lock/i,
   /lock:.*-auth-token/i,
   /AbortError: .*aborted/i,
   'AbortError',
-];
+] satisfies Array<string | RegExp>;
+
+// Benign, high-volume auth/lock noise; exported for init wiring and unit tests.
+export const IGNORED_ERROR_PATTERNS: (string | RegExp)[] = [...WORKER_AUTH_NOISE_PATTERNS];
 
 // ---------------------------------------------------------------------------
 // Sentry initialization
