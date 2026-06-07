@@ -1,5 +1,43 @@
 # agents.md — services/edge
-_Last updated: 2026-05-12 (routine dependency consolidation)._
+_Last updated: 2026-06-05 (Edge MCP Truthfulness PR-1)._
+
+## Edge MCP Truthfulness PR-1 — anchor mapping + nessie casing + test harness (2026-06-05)
+
+Part of the 3-PR "Edge MCP Truthfulness" stack (PR-1: BUG-2 + BUG-3b + test
+harness; PR-2: BUG-1 RPC; PR-3: nessie proxy through the worker).
+
+- **Test harness (Story D):** `services/edge` now has a Vitest runner —
+  `vitest` devDependency, `vitest.config.ts` (plain-node env, no Miniflare
+  needed for these pure-ish handler tests), `npm test` / `npm run test:watch`
+  scripts. First edge unit suite: `src/mcp-tools.test.ts`.
+- **Shared RPC fixture:** `src/__fixtures__/publicAnchor.ts` exports
+  `realPublicAnchorRow()` / `pendingPublicAnchorRow()` whose KEYS come
+  verbatim from `supabase/migrations/0311_scrum1599_public_anchor_provenance.sql`
+  (`get_public_anchor` `jsonb_build_object` body). This is the **only**
+  sanctioned source of RPC-shaped test rows for edge + worker MCP tests —
+  hand-authored mocks with wrong keys (`org_name`, `chain_tx_id`,
+  `recipient_hash`, `issued_at`, `expires_at`, `created_at`-as-anchor-time)
+  are what masked BUG-2. The worker `src/mcp-tools.test.ts` now imports the
+  same fixture.
+- **BUG-2 (`shapeAnchorRow`, mcp-tools.ts):** now reads the keys the RPC
+  actually emits — `issuer_name`, `network_receipt_id`, `anchor_timestamp`
+  (network-observed time, §1.5; defaults to **null** not `''`),
+  `recipient_identifier`, `issued_date`, `expiry_date`. Was reading six keys
+  the RPC never returns, so every field silently defaulted. Fixes
+  verify_credential / verify_batch / get_anchor / get_record / get_document
+  (all route through `shapeAnchorRow`). `shapeAnchorRow` is now exported for
+  direct unit testing.
+- **BUG-3b (`nessieTextFallback`, mcp-tools.ts):** source literals lowercased
+  (`edgar`/`uspto`/`federal_register`/`openalex`) to match what the worker
+  ingestion fetchers (`src/jobs/*Fetcher.ts`) actually insert. The previous
+  UPPERCASE `source=eq.EDGAR` filter never matched a row. Covers both the
+  single `source=eq.` and multi `source=in.(...)` branches.
+- **Cross-service drift guard (BUG-3a):** new
+  `NESSIE_EMBEDDING_MODEL` exported constant (`@cf/baai/bge-base-en-v1.5`).
+  Worker test `services/worker/src/nessie-embedding-drift.test.ts` asserts
+  the edge query model family differs from the worker index model
+  (Gemini `gemini-embedding-001`) — the tripwire for BUG-3a. Flip its `.not`
+  assertion to equality when PR-3 unifies the model.
 
 ## Routine dependency consolidation (2026-05-12)
 

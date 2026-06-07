@@ -647,6 +647,13 @@ export async function handlePaymentSucceeded(event: StripeEvent): Promise<void> 
     id: string;
     customer: string;
     subscription: StripeReference;
+    // SCRUM-1791: renewal invoices carry the authoritative billing period on
+    // the invoice line items (`lines.data[].period`). This is the canonical
+    // Stripe source for "what period did this payment cover" — never compute it
+    // locally from the prior period + interval.
+    lines?: {
+      data?: Array<{ period?: { start?: number | null; end?: number | null } | null }>;
+    };
   };
   const stripeSubscriptionId = stripeReferenceId(invoice.subscription);
 
@@ -663,10 +670,46 @@ export async function handlePaymentSucceeded(event: StripeEvent): Promise<void> 
   );
   if (!existingSub) return;
 
+  // SCRUM-1791 (HARDEN-1, SEV1): roll subscriptions.current_period_start/end
+  // forward on every successful renewal invoice. Root cause of the SEV1 was
+  // that ONLY handleSubscriptionUpdated wrote period fields; if a
+  // `customer.subscription.updated` event was missed or malformed, the row
+  // kept a stale `current_period_end` (the 18-day-stale prod row) and
+  // useEntitlements read a stale window → false over-limit gating.
+  //
+  // Period comes from the invoice line item (lines.data[0].period) — the
+  // authoritative Stripe source for the billed window. If it's absent
+  // (malformed/legacy payload, e.g. one-off non-subscription invoices), DO NOT
+  // throw and DO NOT compute locally: billing_events has already claim-first
+  // idempotency-locked this event, so a Stripe retry would hit the UNIQUE
+  // constraint and the event would be permanently lost. Instead apply the
+  // status update WITHOUT touching period fields, leaving prior valid values
+  // intact, and surface the gap in logs for operator action.
+  const linePeriod = invoice.lines?.data?.[0]?.period;
+  const periodFieldsValid =
+    linePeriod != null && linePeriod.start != null && linePeriod.end != null;
+
+  const updatePayload: TypeSafeTablesUpdate<'subscriptions'> = { status: 'active' };
+  if (periodFieldsValid) {
+    // timestamptz UTC (§1.5) — Stripe periods are Unix seconds.
+    updatePayload.current_period_start = new Date(linePeriod.start! * 1000).toISOString();
+    updatePayload.current_period_end = new Date(linePeriod.end! * 1000).toISOString();
+  } else {
+    logger.warn(
+      {
+        invoiceId: invoice.id,
+        subscriptionId: stripeSubscriptionId,
+        hasLines: invoice.lines != null,
+        linesCount: invoice.lines?.data?.length ?? 0,
+      },
+      'invoice.payment_succeeded missing lines[0].period.start/end — applying status update without rolling period fields forward (SCRUM-1791, claim-first idempotency means we cannot throw-to-retry)',
+    );
+  }
+
   // eslint-disable-next-line arkova/missing-org-filter -- service-role admin query
   const { error } = await db
     .from('subscriptions')
-    .update({ status: 'active' })
+    .update(updatePayload)
     .eq('stripe_subscription_id', stripeSubscriptionId);
 
   if (error) {

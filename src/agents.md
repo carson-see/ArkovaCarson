@@ -8,7 +8,7 @@ React 19 frontend application — TypeScript + Tailwind CSS 4 + shadcn/ui + Vite
 ## Architecture
 
 - **23 feature domain folders** in `src/components/` (e.g., anchors, billing, admin, auth)
-- **Route-level code splitting** via `React.lazy` — 60+ pages
+- **Route-level code splitting** via `lazyWithRetry` (`src/lib/lazyWithRetry.ts`, SCRUM-2246) — 60+ pages. Wraps `React.lazy` with stale-chunk retry + one-time reload so a post-deploy chunk 404 self-heals instead of crashing Suspense.
 - **State management:** Supabase-centric (no Redux/Zustand). Custom hooks (`useAnchors`, `useBilling`, etc.) query Supabase directly.
 - **Auth:** `useAuth()` + `useProfile()` React Context providers
 - **UI copy:** Centralized in `src/lib/copy.ts` — CI enforced via `npm run lint:copy`
@@ -26,7 +26,7 @@ React 19 frontend application — TypeScript + Tailwind CSS 4 + shadcn/ui + Vite
 - **DO** put all UI strings in `src/lib/copy.ts`
 - **DO** use Zod validators from `src/lib/validators.ts` before any DB write
 - **DO** query Supabase via custom hooks — never `useState` arrays for DB data
-- **DO** use `React.lazy` for new route-level pages
+- **DO** use `lazyWithRetry` (not raw `React.lazy`) for new route-level pages so stale-chunk deploys self-heal (SCRUM-2246)
 - **DON'T** add Redux, Zustand, or other global state libraries
 - **DON'T** use `supabase.auth.admin` or service role key in browser code
 - **DON'T** import `generateFingerprint` outside `src/` (client-side only)
@@ -35,6 +35,7 @@ React 19 frontend application — TypeScript + Tailwind CSS 4 + shadcn/ui + Vite
 
 ## Recent Changes
 
+- **SCRUM-2246 — Stale-chunk retry for lazy routes (HARDEN-1-C)** (2026-06-05): All ~70 `React.lazy(() => import(...))` route declarations in `App.tsx` migrated to `lazyWithRetry(...)` from `src/lib/lazyWithRetry.ts`. After a deploy, Vite emits new content-hashed chunk names; a client on a stale `index.html` would 404 the old chunk and crash Suspense (Sentry FRONTEND-3/8). The wrapper retries the import, then force-reloads once (sessionStorage-gated, no loop) to fetch a fresh index; a persistent failure renders a "new version available / Refresh" affordance via `RouteErrorBoundary`. No banned §1.3 terms in the new copy.
 - **SCRUM-694 / SCRUM-915 — React 19 + Tailwind CSS 4 dependency consolidation** (2026-05-12): Consolidates Dependabot PRs #767, #768, and #769 into one migration branch. React/React DOM and types are on 19.x; Tailwind now uses the CSS-first v4 entrypoint in `src/index.css`, `@tailwindcss/postcss`, and `@theme` tokens instead of `tailwind.config.ts`. Deprecated v3 focus/shrink utilities were migrated and the Nordic Vault token regression test now validates CSS theme tokens directly.
 - **Routine dependency consolidation** (2026-05-12): Root dependency batch from PRs #770/#771 updated Sentry React, React Query, Tailwind Merge, Playwright, Sentry Vite plugin, Workers types, TypeScript-ESLint, Vite, Vitest, Wrangler, and Node/V8 coverage types. `src/types/database.types.ts` now includes `org_credits`, matching the committed schema used by billing/quota code. `src/tests/drop-search-overload.test.ts` ignores generated `dist/` output so the root test suite stays green after worker builds.
 - **SCRUM-1787 — Role-aware home navigation** (2026-05-08): Sidebar logo uses `useProfile().destination` + `destinationToRoute()` for role-aware home routing. Previously hardcoded to `/search`. Now routes to `/dashboard`, `/onboarding/role`, `/onboarding/org`, or `/review-pending` based on user state. Implementation in `src/components/layout/Sidebar.tsx`.
