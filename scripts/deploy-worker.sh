@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 # deploy-worker.sh — Safe Cloud Run deploy with env var preservation
 #
-# SCRUM-544: Prevents the #1 production hazard where `gcloud run deploy`
-# resets BITCOIN_UTXO_PROVIDER to getblock (which fails because the
-# bitcoin-rpc-url secret in GCP Secret Manager is empty).
+# SCRUM-544 / 2026-06-05: pins critical chain env across deploys. Originally
+# forced BITCOIN_UTXO_PROVIDER=mempool because the bitcoin-rpc-url (GetBlock)
+# secret was empty/dead so getblock broadcast failed. The secret is now
+# populated + verified (synced mainnet node, sendrawtransaction reachable), so
+# the sovereign path is restored: BITCOIN_UTXO_PROVIDER=getblock = GetBlock RPC
+# broadcast + mempool UTXO/fees (CLAUDE.md §1.1). See HANDOFF + bug tracker 2026-06-05.
 #
 # Usage:
 #   ./scripts/deploy-worker.sh              # deploy from source
@@ -50,7 +53,7 @@ REQUIRED_KEYS=(
   "NODE_ENV"
 )
 REQUIRED_EXPECTED=(
-  "mempool"
+  "getblock"
   "mainnet"
   "true"
   "gcp"
