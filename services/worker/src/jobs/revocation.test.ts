@@ -13,7 +13,7 @@ import { createHash } from 'node:crypto';
 // instead of importing chain/base.ts, which transitively pulls in viem.
 function hashMetadata(metadata: Record<string, unknown>): string {
   const sorted: Record<string, unknown> = {};
-  for (const key of Object.keys(metadata).sort()) {
+  for (const key of Object.keys(metadata).sort((a, b) => a.localeCompare(b))) {
     sorted[key] = metadata[key];
   }
   return createHash('sha256').update(JSON.stringify(sorted)).digest('hex');
