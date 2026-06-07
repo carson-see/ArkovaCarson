@@ -7,9 +7,9 @@ This directory now starts with the Path C baseline, `00000000000000_baseline_at_
 - Treat migrations as prod-bound: a migration PR is not Done until prod Supabase schema/ledger evidence is captured.
 - **Before claiming a numeric prefix, add a row to the reservation table below in the same PR.** The 2026-06-01 three-way `0327` collision (#971/#1038/#1047) happened because parallel sessions skipped this step.
 
-## In-flight migration reservations (0327–0335) — recorded 2026-06-01, updated 2026-06-05
+## In-flight migration reservations (0327–0339) — recorded 2026-06-01, updated 2026-06-07
 
-`main` HEAD is **0331** as of 2026-06-05 (`0330`/`0331` merged ✓). The lowest unmerged prefix is `0327`. `0332`–`0334` are reserved (below); the next free prefix is **`0335`**. Canonical assignment for the currently-open / reserved migration PRs:
+`main` HEAD is **0331** as of 2026-06-07 (`0330`/`0331` merged). The lowest unmerged prefix is `0327`. `0332`–`0338` are reserved by earlier migration PRs; this branch now takes the tail slot **`0339`**. Canonical assignment for the currently-open / reserved migration PRs:
 
 | Prefix | PR | Story | File | Status |
 |---|---|---|---|---|
@@ -18,12 +18,16 @@ This directory now starts with the Path C baseline, `00000000000000_baseline_at_
 | `0329` | #1038 | SCRUM-1611 | `0329_member_integrations_credential_providers.sql` | renumber `0327→0329` |
 | `0330` | #1022 | SCRUM-2203 | `0330_scrum2203_unembedded_records_query_perf.sql` | merged ✓ |
 | `0331` | #1031 | SCRUM-1847/1869 | `0331_scrum1847_1869_public_anchor_cpe_cle_metadata.sql` | merged ✓ |
-| `0332` | #1100 | SCRUM-2248 | `0332_scrum2248_sanitize_metadata_strip_underscore.sql` | reserved — T3, soak pending |
+| `0332` | (reserved) | SCRUM-2229 | `0332_scrum2229_sub_org_credit_rollup.sql` | reserved by earlier lane; merge before this PR if still open |
 | `0333` | #1101 | SCRUM-2193 | `0333_scrum2193_validate_anchors_metadata_constraints.sql` | reserved — T3, soak pending |
-| `0334` | (pending) | SCRUM-2229 | `0334_scrum2229_sub_org_credit_rollup.sql` | **reserved 2026-06-05** — sub-org credit allocation rollup RPC; PR not yet opened |
-| `0335` | (Edge MCP Truthfulness PR-2) | BUG-1 | `0335_get_public_anchor_by_fingerprint.sql` | **reserved 2026-06-05** — verify-by-fingerprint DEFINER RPC; stacked on PR-1 (#1119); T3, soak pending |
+| `0334` | #1100 | SCRUM-2248 | `0334_scrum2248_sanitize_metadata_strip_underscore.sql` | reserved — T3, soak pending |
+| `0335` | #1111 | SCRUM-2236 | `0335_scrum2236_dashboard_cache_budgets.sql` | reserved — T3, soak pending; requires operator-applied concurrent index evidence |
+| `0336` | #1112 | SCRUM-2252 | `0336_scrum2252_revocation_observability.sql` | reserved — T3, soak pending |
+| `0337` | #1114 | SCRUM-2258 | `0337_scrum2258_webhook_delivery_observability.sql` | reserved — T3, soak pending |
+| `0338` | #1107 | SCRUM-2250 | `0338_scrum2250_webhook_delivery_backfill.sql` | reserved — T3, soak pending; after #1114 webhook delivery changes |
+| `0339` | #1122 | BUG-1 | `0339_get_public_anchor_by_fingerprint.sql` | **reserved 2026-06-07** — verify-by-fingerprint DEFINER RPC; T3, soak pending after 0332–0338 |
 
-- **Merge order must follow prefix order** (`0327→0335`): migrations apply monotonically, so merging a higher prefix before a lower one strands the lower one as out-of-order.
+- **Merge order must follow prefix order** (`0327→0339`): migrations apply monotonically, so merging a higher prefix before a lower one strands the lower one as out-of-order.
 - Each of these soaks on its **own dedicated isolated Supabase project**, never shared staging — `main` is at `0326`, so applying any unmerged prefix to shared staging would gap the ledger and contaminate every parallel soak.
 - Remove a row once its PR merges to `main` and gets a permanent `## Recent migrations` entry below.
 

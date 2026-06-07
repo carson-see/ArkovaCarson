@@ -107,7 +107,7 @@ HTTP 400 universally. `handleVerifyDocument` fetched
 column set that does not match the table shape, so PostgREST 400'd every call.
 
 - **New RPC `get_public_anchor_by_fingerprint(text)`** (migration
-  `0335_get_public_anchor_by_fingerprint.sql`, prefix 0335 — 0327–0334 were
+  `0339_get_public_anchor_by_fingerprint.sql`, prefix 0339 — 0327–0338 were
   already reserved). `LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path
   = public`. Lowercases input, matches `lower(a.fingerprint) =
   lower(p_fingerprint)`, filters `status IN ('SECURED','SUBMITTED','PENDING')
