@@ -1,5 +1,23 @@
 # agents.md — services/worker
 
+_Last updated: 2026-06-05 (Edge MCP Truthfulness PR-1)._
+
+## Edge MCP Truthfulness PR-1 — test realignment + embedding drift guard (2026-06-05)
+
+- **`src/mcp-tools.test.ts`** now imports the migration-pinned RPC fixture
+  `realPublicAnchorRow` / `pendingPublicAnchorRow` from
+  `../../edge/src/__fixtures__/publicAnchor.ts` instead of hand-authored
+  wrong-key mocks (`org_name`/`chain_tx_id`/`recipient_hash`/`issued_at`/
+  `expires_at`/`created_at`-as-anchor-time). Those wrong keys masked BUG-2
+  in the edge `shapeAnchorRow` mapper; assertions are now value-asserting
+  (issuer_name, network_receipt_id, anchor_timestamp) and fail if it regresses.
+- **`src/nessie-embedding-drift.test.ts`** (new): cross-service guard for
+  BUG-3a — asserts the edge nessie query model (`NESSIE_EMBEDDING_MODEL` =
+  `@cf/baai/bge-base-en-v1.5`) is a DIFFERENT family from the worker index
+  model `GEMINI_EMBEDDING_MODEL` (`gemini-embedding-001`). Added to the
+  worker `tsconfig.json` `exclude` list (alongside the other edge-importing
+  MCP tests) since it pulls edge source outside `rootDir`.
+
 _Last updated: 2026-05-15 (SCRUM-1909 lint warning cleanup)._
 
 ## What This Folder Contains
