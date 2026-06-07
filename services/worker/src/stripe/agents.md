@@ -17,3 +17,4 @@ Stripe SDK integration: client initialization, webhook event handling, and test 
 - Webhook handlers MUST call `stripe.webhooks.constructEvent()` for signature verification.
 - No real Stripe API calls in tests — use `mock.ts` (Constitution 1.7).
 - Payment data never logged in detail.
+- SCRUM-1791: `subscriptions.current_period_start/end` MUST be advanced on BOTH `customer.subscription.updated` (from `items.data[0].current_period_*`) AND `invoice.payment_succeeded` (from `lines.data[0].period`). `handleSubscriptionUpdated` alone is not sufficient — a missed/malformed `updated` event would otherwise strand the row on a stale period and fire false entitlement gates (`useEntitlements` reads `current_period_start`). Always read the period from the authoritative Stripe payload; never compute it locally. Under claim-first idempotency, missing period fields → log + apply the rest of the update, never throw-to-retry (the `billing_events` claim is already committed).
