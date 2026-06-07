@@ -217,7 +217,7 @@ function emitStuckAnchorAlert(decision: StuckAnchorAlertDecision): void {
       level: decision.severity,
       tags: {
         source: 'stuck-anchor-monitor',
-        story: 'SCRUM-2226',
+        story: 'SCRUM-2234',
       },
       extra: {
         oldest_age_hours: decision.oldest_age_hours,

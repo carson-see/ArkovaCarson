@@ -1527,7 +1527,7 @@ cronRouter.post('/connector-health-check', async (_req, res) => {
   }
 });
 
-// ─── SCRUM-2226: Stuck anchor monitor (2026-06-01 incident) ───
+// ─── SCRUM-2234: Stuck anchor monitor (2026-06-01 incident) ───
 //
 // Detects a stalled anchoring pipeline by the age of the oldest non-deleted
 // PENDING anchor. The daily-anchor-flush 401 blackout went undetected for ~6

@@ -206,6 +206,7 @@ describe('runStuckAnchorCheck', () => {
     expect(message).toMatch(/stuck/i);
     expect(opts.level).toBe('error');
     expect(opts.tags.source).toBe('stuck-anchor-monitor');
+    expect(opts.tags.story).toBe('SCRUM-2234');
     expect(opts.extra.oldest_age_hours).toBe(30);
     expect(opts.extra.pending_count).toBe(2962);
 

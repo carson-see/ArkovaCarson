@@ -35,7 +35,7 @@ const ANCHOR_TABLE_IN_PROCESS_JOBS = new Set([
   'detect-reorgs',
   'monitor-stuck-transactions',
   'rebroadcast-dropped-transactions',
-  // SCRUM-2226: reads the anchors table (oldest-PENDING probe). Skipped under
+  // SCRUM-2234: reads the anchors table (oldest-PENDING probe). Skipped under
   // the maintenance flag alongside the other anchor-table jobs so a paused
   // pipeline during a migration window doesn't trip a spurious stall page.
   'check-stuck-anchors',
@@ -167,7 +167,7 @@ export function setupScheduledJobs(chainInitialized: boolean): void {
     }
   });
 
-  // SCRUM-2226: stuck anchor monitor — hourly. Pages (error log + Sentry) when
+  // SCRUM-2234: stuck anchor monitor — hourly. Pages (error log + Sentry) when
   // the oldest non-deleted PENDING anchor exceeds STUCK_ANCHOR_ALERT_HOURS
   // (default 24h). In-process backup; prod runs via Cloud Scheduler hitting
   // /jobs/check-stuck-anchors. The 2026-06-01 daily-flush 401 blackout drained

@@ -312,7 +312,7 @@ vi.mock('../jobs/docusign-notarization-completed.js', () => ({
   runDocusignNotarizationCompletedJobs: (...args: unknown[]) => mockRunDocusignNotarizationCompletedJobs(...args),
 }));
 
-// SCRUM-2226: stuck anchor monitor cron route.
+// SCRUM-2234: stuck anchor monitor cron route.
 const mockRunStuckAnchorCheck = vi.fn().mockResolvedValue({
   healthy: true,
   alertFired: false,
@@ -2115,7 +2115,7 @@ describe('cron routes', () => {
   });
 
   // ═══════════════════════════════════════
-  // Stuck Anchor Monitor (SCRUM-2226)
+  // Stuck Anchor Monitor (SCRUM-2234)
   // ═══════════════════════════════════════
 
   describe('POST /check-stuck-anchors', () => {
