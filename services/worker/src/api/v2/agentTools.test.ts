@@ -110,6 +110,78 @@ describe('agentToolsRouter', () => {
     expect(res.body.type).toContain('/not-found');
   });
 
+  it('maps a SECURED public anchor from real get_public_anchor RPC keys', async () => {
+    // Row keys mirror supabase/migrations/0311_scrum1599_public_anchor_provenance.sql
+    // (issuer_name / network_receipt_id / anchor_timestamp / issued_date / expiry_date).
+    (db.rpc as ReturnType<typeof vi.fn>).mockResolvedValue({
+      data: {
+        verified: true,
+        status: 'ACTIVE',
+        issuer_name: 'Acme HR',
+        credential_type: 'PROFESSIONAL',
+        issued_date: '2026-04-01T00:00:00Z',
+        expiry_date: '2027-04-01T00:00:00Z',
+        anchor_timestamp: '2026-04-24T12:00:00Z',
+        network_receipt_id: 'tx-abc123',
+        public_id: 'ARK-DOC-ABC',
+        jurisdiction: 'US-DE',
+      },
+      error: null,
+    });
+
+    const res = await request(buildApp()).get('/anchors/ARK-DOC-ABC');
+
+    expect(res.status).toBe(200);
+    // Value-asserting: every field must carry the RPC value through, not null/Unknown.
+    expect(res.body).toMatchObject({
+      public_id: 'ARK-DOC-ABC',
+      verified: true,
+      status: 'ACTIVE',
+      issuer_name: 'Acme HR',
+      credential_type: 'PROFESSIONAL',
+      issued_date: '2026-04-01T00:00:00Z',
+      expiry_date: '2027-04-01T00:00:00Z',
+      anchor_timestamp: '2026-04-24T12:00:00Z',
+      network_receipt_id: 'tx-abc123',
+      jurisdiction: 'US-DE',
+      record_uri: 'https://app.arkova.ai/verify/ARK-DOC-ABC',
+    });
+    // Guard against the wrong-key regression (BUG-2026-06-02-001 worker-v2 twin).
+    expect(res.body.issuer_name).not.toBe('Unknown');
+    expect(res.body.network_receipt_id).not.toBeNull();
+    expect(res.body.anchor_timestamp).not.toBeNull();
+  });
+
+  it('passes through RPC-gated nulls for a PENDING anchor without collapsing status', async () => {
+    // 0311 gates anchor_timestamp / network_receipt_id to null while PENDING.
+    (db.rpc as ReturnType<typeof vi.fn>).mockResolvedValue({
+      data: {
+        verified: false,
+        status: 'PENDING',
+        issuer_name: 'Acme HR',
+        credential_type: 'PROFESSIONAL',
+        issued_date: '2026-04-01T00:00:00Z',
+        expiry_date: null,
+        anchor_timestamp: null,
+        network_receipt_id: null,
+        public_id: 'ARK-DOC-PEND',
+      },
+      error: null,
+    });
+
+    const res = await request(buildApp()).get('/anchors/ARK-DOC-PEND');
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({
+      public_id: 'ARK-DOC-PEND',
+      verified: false,
+      status: 'PENDING', // not collapsed to UNKNOWN/ACTIVE
+      issuer_name: 'Acme HR',
+      anchor_timestamp: null,
+      network_receipt_id: null,
+    });
+  });
+
   it('lists the API key organization context', async () => {
     const select = vi.fn().mockReturnThis();
     (db.from as ReturnType<typeof vi.fn>).mockReturnValue({

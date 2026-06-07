@@ -1238,6 +1238,113 @@ describe('handlePaymentSucceeded', () => {
 });
 
 // ================================================================
+// SCRUM-1791 (HARDEN-1): invoice.payment_succeeded rolls subscription
+// period fields forward from invoice line-item period (renewal path)
+// ================================================================
+
+// SCRUM-1791: invoice line items carry the authoritative billing period on
+// every renewal invoice. handlePaymentSucceeded must advance
+// subscriptions.current_period_start/end from lines.data[].period so that a
+// missed/malformed customer.subscription.updated event cannot strand the row
+// on a stale period (the 18-day-stale prod row that fired entitlement gates).
+function makeInvoiceLines(
+  start: number,
+  end: number,
+): { data: Array<{ period: { start: number; end: number } }> } {
+  return { data: [{ period: { start, end } }] };
+}
+
+describe('handlePaymentSucceeded — SCRUM-1791 period roll-forward', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    setupDefaults();
+  });
+
+  it('rolls current_period_start/end forward from invoice lines.data[].period', async () => {
+    const start = 1735689600; // 2025-01-01T00:00:00Z
+    const end = 1738368000; // 2025-02-01T00:00:00Z
+    const event = makeStripeEvent('invoice.payment_succeeded', {
+      id: 'inv_roll_001',
+      customer: 'cus_test_001',
+      subscription: 'sub_test_001',
+      lines: makeInvoiceLines(start, end),
+    });
+
+    await handlePaymentSucceeded(event);
+
+    expect(subscriptionsUpdate.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: 'active',
+        current_period_start: new Date(start * 1000).toISOString(),
+        current_period_end: new Date(end * 1000).toISOString(),
+      }),
+    );
+    expect(subscriptionsUpdate.eq).toHaveBeenCalledWith('stripe_subscription_id', 'sub_test_001');
+  });
+
+  it('writes timestamptz-compatible UTC ISO strings (§1.5)', async () => {
+    const start = 1751328000; // 2025-07-01T00:00:00Z
+    const end = 1754006400; // 2025-08-01T00:00:00Z
+    const event = makeStripeEvent('invoice.payment_succeeded', {
+      id: 'inv_roll_utc',
+      customer: 'cus_test_001',
+      subscription: 'sub_test_001',
+      lines: makeInvoiceLines(start, end),
+    });
+
+    await handlePaymentSucceeded(event);
+
+    const updateArg = (subscriptionsUpdate.update as ReturnType<typeof vi.fn>).mock
+      .calls[0][0] as Record<string, unknown>;
+    expect(updateArg.current_period_start).toBe('2025-07-01T00:00:00.000Z');
+    expect(updateArg.current_period_end).toBe('2025-08-01T00:00:00.000Z');
+  });
+
+  it('does not advance period when invoice has no line-item period (preserves prior values, no throw)', async () => {
+    // Bare PAYMENT_SUCCEEDED_EVENT has no `lines` — must still set status:active
+    // without touching period fields, and must not throw (claim-first idempotency).
+    await expect(handlePaymentSucceeded(PAYMENT_SUCCEEDED_EVENT)).resolves.toBeUndefined();
+    const updateArg = (subscriptionsUpdate.update as ReturnType<typeof vi.fn>).mock
+      .calls[0][0] as Record<string, unknown>;
+    expect(updateArg.status).toBe('active');
+    expect(updateArg).not.toHaveProperty('current_period_start');
+    expect(updateArg).not.toHaveProperty('current_period_end');
+  });
+
+  it('does not advance period when line period is partial (start without end)', async () => {
+    const event = makeStripeEvent('invoice.payment_succeeded', {
+      id: 'inv_roll_partial',
+      customer: 'cus_test_001',
+      subscription: 'sub_test_001',
+      lines: { data: [{ period: { start: 1735689600 } }] },
+    });
+
+    await handlePaymentSucceeded(event);
+
+    const updateArg = (subscriptionsUpdate.update as ReturnType<typeof vi.fn>).mock
+      .calls[0][0] as Record<string, unknown>;
+    expect(updateArg.status).toBe('active');
+    expect(updateArg).not.toHaveProperty('current_period_start');
+    expect(updateArg).not.toHaveProperty('current_period_end');
+  });
+
+  it('does not advance period when orphan-row guard skips the update (no double-write)', async () => {
+    subscriptionsSelect.maybeSingle.mockResolvedValue({ data: null });
+    const event = makeStripeEvent('invoice.payment_succeeded', {
+      id: 'inv_roll_orphan',
+      customer: 'cus_test_001',
+      subscription: 'sub_test_001',
+      lines: makeInvoiceLines(1735689600, 1738368000),
+    });
+
+    await handlePaymentSucceeded(event);
+
+    // SCRUM-1239 orphan guard must still short-circuit before any UPDATE.
+    expect(subscriptionsUpdate.update).not.toHaveBeenCalled();
+  });
+});
+
+// ================================================================
 // SCRUM-1267 (R2-4): items.data[0].current_period_* migration
 // ================================================================
 
