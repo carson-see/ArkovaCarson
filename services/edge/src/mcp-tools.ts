@@ -853,7 +853,7 @@ export async function handleAgentSearch(
 export async function handleNessieQuery(
   input: NessieQueryInput,
   config: SupabaseConfig,
-  ai?: Ai,
+  _ai?: Ai,
 ): Promise<ToolResult> {
   if (!input.query || input.query.trim().length === 0) {
     return errorResult('Error: query is required');
@@ -871,9 +871,8 @@ export async function handleNessieQuery(
     // (`GET {workerBaseUrl}/api/v1/nessie/query`) and forwards the caller's
     // raw API key so the worker enforces org-scoping + per-caller rate limits.
     //
-    // `ai` is retained in the signature for backwards-compat but is no longer
+    // `_ai` is retained in the signature for backwards-compat but is no longer
     // used for embedding — the model lives entirely on the worker side now.
-    void ai;
 
     // No worker configured (local dev / preview): the truthful path is the
     // lowercase text fallback (BUG-3b, PR-1). Don't pretend to do vector search.
@@ -973,7 +972,8 @@ async function nessieWorkerQuery(
   matchCount: number,
   config: SupabaseConfig,
 ): Promise<ToolResult | null> {
-  const base = (config.workerBaseUrl ?? '').replace(/\/+$/, '');
+  let base = config.workerBaseUrl ?? '';
+  while (base.endsWith('/')) base = base.slice(0, -1);
   const callerKey = config.callerApiKey;
   if (!base || !callerKey) return null;
 
