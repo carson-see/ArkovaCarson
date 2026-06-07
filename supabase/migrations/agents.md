@@ -28,7 +28,7 @@ This directory now starts with the Path C baseline, `00000000000000_baseline_at_
 | `0339` | #1122 | BUG-1 | `0339_get_public_anchor_by_fingerprint.sql` | **reserved 2026-06-07** — verify-by-fingerprint DEFINER RPC; T3, soak pending after 0332–0338 |
 
 - **Merge order must follow prefix order** (`0327→0339`): migrations apply monotonically, so merging a higher prefix before a lower one strands the lower one as out-of-order.
-- Each of these soaks on its **own dedicated isolated Supabase project**, never shared staging — `main` is at `0326`, so applying any unmerged prefix to shared staging would gap the ledger and contaminate every parallel soak.
+- Each of these soaks on its **own dedicated isolated Supabase project**, never shared staging — applying any unmerged prefix to shared staging would gap the ledger and contaminate every parallel soak.
 - Remove a row once its PR merges to `main` and gets a permanent `## Recent migrations` entry below.
 
 ## Recent migrations (PR #817)

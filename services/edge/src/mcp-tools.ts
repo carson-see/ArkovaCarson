@@ -1263,7 +1263,7 @@ export async function handleAnchorDocument(
  * Verify a document by its content hash / fingerprint (PH1-SDK-03, BUG-1).
  *
  * Calls the `get_public_anchor_by_fingerprint` SECURITY DEFINER RPC
- * (migration 0335) and maps the result through `shapeAnchorRow`, so verify
+ * (migration 0339) and maps the result through `shapeAnchorRow`, so verify
  * returns the SAME truthful, redacted anchor shape as `get_anchor` /
  * `verify_credential`. The prior implementation hit
  * `/rest/v1/public_records?...&select=...public_id...` with a column set that
