@@ -4,7 +4,7 @@ This is an engineering coordination artifact. Confluence/Jira remain the story/d
 
 ## Snapshot
 
-- Checked at: `2026-06-08T14:33:57Z` / `2026-06-08 10:33 EDT`
+- Checked at: `2026-06-08T15:40:45Z` / `2026-06-08 11:40 EDT`
 - Current `origin/main`: `bf40e389fd1644aea94557366e367b7b66df7616`
 - Production proof: Deploy Worker run `27112157154`, Revision Drift Alert run `27129992459`, `/health.git_sha=bf40e389fd1644aea94557366e367b7b66df7616`
 - There is no `prod` branch/ref; use deploy/revision-drift/health evidence for prod-active proof.
@@ -28,7 +28,7 @@ Active T2:
 |---|---|---|---|---|
 | #1121 | `7918753029aa9b8d761930e520695e44f29bc9af` | `bf40e389fd1644aea94557366e367b7b66df7616` | `/private/tmp/arkova-soaks/soak-pr-1121-mcp-context-redial-pvtqcpegmnoumsnklkvk-79187530-20260608T0517Z.jsonl` | `2026-06-08T17:17:41.305Z` |
 
-Latest #1121 read-only audit at `2026-06-08T14:33:57Z`: 1,552 rows; 517 health / 517 metadata / 517 `nessie_query_context`; zero bad rows/anomalies; zero parse/RPC/tool errors; zero timestamp gaps over 90s; latest context row `2026-06-08T14:33:08.227Z` HTTP 200, valid context true, 5 citations, confidence 0.79. Screen `arkova-t2-redial-1121-79187530` and child node runner are alive. Clock is not complete; finalization remains disallowed until `2026-06-08T17:17:41.305Z` plus final summary/rollback/check gates.
+Latest #1121 read-only audit at `2026-06-08T15:40:45Z`: 1,738 rows; 579 health / 579 metadata / 579 `nessie_query_context`; zero bad rows/anomalies; zero parse/RPC/tool errors; latest context row `2026-06-08T15:39:37.185Z` HTTP 200, valid context true, 5 citations, confidence 0.765. Screen `arkova-t2-redial-1121-79187530` and child node runner are alive. Clock is not complete; finalization remains disallowed until `2026-06-08T17:17:41.305Z` plus final summary/rollback/check gates.
 
 ## Open PR Queue
 
@@ -42,8 +42,8 @@ Latest #1121 read-only audit at `2026-06-08T14:33:57Z`: 1,552 rows; 517 health /
 | #1107 | T3 | pending/stale | migration train B, base `68671aec`, no deploy/preflight/smoke/rollback |
 | #1106 | T2 | dirty/stale | conflicting intentional red-test draft |
 | #1105 | T0/T1 | human decision | not a T2/T3 soak candidate until risk is decided |
-| #1101 | T3 | pending/stale | migration train B start, base `68671aec`, no deploy/preflight/smoke/rollback |
-| #1100 | T3 | pending/stale | migration train B, base `68671aec`, no deploy/preflight/smoke/rollback |
+| #1101 | T3 | pending/stale | migration `0333`, base `68671aec`, no deploy/preflight/smoke/rollback |
+| #1100 | T3 | pending/stale | migration `0334`, base `68671aec`, no deploy/preflight/smoke/rollback |
 | #1087 | T3 | do-not-merge | dependency bump, stale base `55e906cf` |
 | #1055 | T3 | blocked/no-start | must wait for #1121 merged and prod-active, then refresh on post-#1121 main |
 | #1047 | T3 | blocked/stale | old evidence stale, prod ledger 0327, after T2 lane closes |
@@ -71,7 +71,7 @@ Launch grouping:
 
 - Standalone first: #1055, after #1121 prod proof and #1055 refresh.
 - Migration train A: #1047 -> #971 -> #1038. #1039/#1040/#1041 remain stacked T2s behind #1038.
-- Migration train B: #1101 -> #1100 -> #1111 -> #1112 -> #1114 -> #1107 -> #1122.
+- Migration train B by actual migration files: #1101 (`0333`) -> #1100 (`0334`) -> #1111 (`0335`) -> #1112 (`0336`) -> #1114 (`0337`) -> #1107 (`0338`) -> #1122 (`0339`). No open PR currently owns `0332`; the stale `0332` ledger/reservation text must be corrected before this lane is merge-grade.
 - #1087 remains do-not-merge; #1105 remains T0/T1 human decision.
 
 ## Current Commands
