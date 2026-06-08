@@ -12,6 +12,13 @@ Cloudflare Worker (`arkova-edge`) — Zero-Trust edge layer for x402 facilitator
 - `mcp-audit-log.ts` — fire-and-forget audit log writer via `ctx.waitUntil(...)`.
 - `mcp-kill-switch.ts` — checks switchboard flag `ENABLE_MCP_SERVER`.
 
+## Nessie worker proxy timeout (2026-06-07)
+
+`mcp-tools.ts` keeps Supabase REST/RPC fetches on the 10s timeout, but
+worker-proxied `nessie_query` calls use a separate 30s timeout. Context-mode
+Gemini generation through the worker can exceed 10s; aborting it early forces
+the edge into `text_fallback`, invalidating MCP context/citation soak evidence.
+
 ## Auth chain (verified live 2026-05-08)
 1. `X-API-Key` header → `validateApiKey()` calls `validate_api_key` RPC (migration 0299 applied to prod + staging this session).
 2. RPC HMACs the raw key with `private.api_key_settings.hmac_secret` and looks up `api_keys.key_hash`.

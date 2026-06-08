@@ -61,11 +61,20 @@ ENABLE_X402_FACILITATOR = "false"
 # get an explicit failure instead of silently shipping `signed: false`
 # payloads. Dev/preview can leave unset to keep the soft-fail behavior.
 EDGE_REQUIRE_MCP_SIGNING = "true"
+# BUG-3a (PR-3): base URL of the Arkova worker. When set, the MCP
+# `nessie_query` tool proxies its vector path to the worker's single Gemini
+# embedder (GET /api/v1/nessie/query) and forwards the caller's X-API-Key,
+# instead of re-embedding with Cloudflare bge-base against a Gemini-space
+# index. When UNSET, nessie_query degrades to the lowercase text fallback.
+# NOT hardcoded here on purpose — set the prod value at deploy:
+#   wrangler deploy --var WORKER_BASE_URL:https://api.arkova.ai
+# (or via the Cloudflare dashboard Variables panel). No prod URL in source.
 
 # ── Secrets (set via `wrangler secret put`) ────────────────────────────
 # SUPABASE_URL
 # SUPABASE_SERVICE_ROLE_KEY
 # BASE_RPC_URL                    # Base L2 RPC endpoint (e.g., Alchemy, Infura)
+# WORKER_BASE_URL                 # Arkova worker base URL (BUG-3a nessie proxy); may also be set as a plain var at deploy
 
 # ── x402 Payment Facilitator ──────────────────────────────────────────
 # Route: /x402/verify — verifies USDC transfers on BASE chain

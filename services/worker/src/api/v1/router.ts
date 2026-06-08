@@ -431,6 +431,12 @@ router.use('/cle', x402PaymentGate('/api/v1/cle'), cleVerifyRouter);
 
 // Identity & org verification moved to index.ts (outside feature gate)
 
+// ─── Nessie RAG query (PH1-INT-02) ───
+// Keep this before the broad AdES compliance mounts below. Those routers are
+// mounted at `/` because their internals expose signature paths, and their JWT
+// guards would otherwise shadow this API-key/x402 endpoint.
+router.use('/nessie/query', x402PaymentGate('/api/v1/nessie/query'), aiRateLimiter, nessieQueryRouter);
+
 // ─── AdES Signatures — Phase III (PH3-ESIG-01) ───
 // Feature-gated + JWT auth required — signatures are org-managed resources
 router.use('/sign', adesSignatureGate(), requireAuth, signaturesRouter);
@@ -449,10 +455,6 @@ router.use('/compliance/trends', adesSignatureGate(), requireAuth, aiRateLimiter
 // ─── Audit Batch Verification — COMP-06 (ISA 530 sampling) ───
 // JWT auth required, batch rate limit (5 req/min)
 router.use('/audit/batch-verify', requireAuth, batchRateLimiter, auditBatchVerifyRouter);
-
-// ─── Nessie RAG query (PH1-INT-02) ───
-// x402 payment gate + AI rate limiting
-router.use('/nessie/query', x402PaymentGate('/api/v1/nessie/query'), aiRateLimiter, nessieQueryRouter);
 
 // ─── Regulatory change monitoring alerts (NMT-REG) ───
 router.use('/regulatory/alerts', aiRateLimiter, regulatoryAlertsRouter);
