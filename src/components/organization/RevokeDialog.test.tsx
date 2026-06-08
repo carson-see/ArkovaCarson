@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { RevokeDialog } from './RevokeDialog';
 
 describe('RevokeDialog', () => {
@@ -91,9 +91,11 @@ describe('RevokeDialog', () => {
   });
 
   it('should show loading state during confirmation', async () => {
-    const slowConfirm = vi.fn().mockImplementation(
-      () => new Promise((resolve) => setTimeout(resolve, 100))
-    );
+    let resolveConfirm: () => void = () => {};
+    const confirmPromise = new Promise<void>((resolve) => {
+      resolveConfirm = resolve;
+    });
+    const slowConfirm = vi.fn().mockImplementation(() => confirmPromise);
 
     render(<RevokeDialog {...defaultProps} onConfirm={slowConfirm} />);
 
@@ -105,6 +107,15 @@ describe('RevokeDialog', () => {
 
     await waitFor(() => {
       expect(screen.getByText('Revoking...')).toBeInTheDocument();
+    });
+
+    await act(async () => {
+      resolveConfirm();
+      await confirmPromise;
+    });
+
+    await waitFor(() => {
+      expect(defaultProps.onOpenChange).toHaveBeenCalledWith(false);
     });
   });
 
