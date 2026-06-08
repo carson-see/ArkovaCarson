@@ -41,7 +41,7 @@
  */
 
 import { logger } from '../utils/logger.js';
-import { Sentry } from '../utils/sentry.js';
+import { captureStuckAnchorAlert } from '../utils/sentry.js';
 import { config } from '../config.js';
 
 export const DEFAULT_STUCK_ANCHOR_ALERT_HOURS = 24;
@@ -213,18 +213,18 @@ async function fetchPendingCount(db: SupabaseDb): Promise<number | null> {
 
 function emitStuckAnchorAlert(decision: StuckAnchorAlertDecision): void {
   try {
-    Sentry.captureMessage(decision.reason, {
-      level: decision.severity,
-      tags: {
+    const alertLevel = decision.severity === 'error' ? 'error' : 'warning';
+    captureStuckAnchorAlert(
+      decision.reason,
+      {
         source: 'stuck-anchor-monitor',
         story: 'SCRUM-2234',
-      },
-      extra: {
         oldest_age_hours: decision.oldest_age_hours,
         pending_count: decision.pending_count,
         threshold_hours: decision.threshold_hours,
       },
-    });
+      alertLevel,
+    );
   } catch (err) {
     logger.error({ error: err }, 'Stuck anchor monitor: failed to emit Sentry alert');
   }

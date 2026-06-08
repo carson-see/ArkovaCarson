@@ -28,11 +28,9 @@ vi.mock('../utils/logger.js', () => ({
   },
 }));
 
-const mockCaptureMessage = vi.fn();
+const mockCaptureStuckAnchorAlert = vi.fn();
 vi.mock('../utils/sentry.js', () => ({
-  Sentry: {
-    captureMessage: (...args: unknown[]) => mockCaptureMessage(...args),
-  },
+  captureStuckAnchorAlert: (...args: unknown[]) => mockCaptureStuckAnchorAlert(...args),
 }));
 
 import {
@@ -158,7 +156,7 @@ function mockDb(opts: {
 
 describe('runStuckAnchorCheck', () => {
   it('returns healthy + does not alert when no PENDING anchors exist', async () => {
-    mockCaptureMessage.mockClear();
+    mockCaptureStuckAnchorAlert.mockClear();
     const db = mockDb({ oldest: { data: [], error: null } });
 
     const result = await runStuckAnchorCheck(db, { now: NOW, thresholdHours: 24 });
@@ -166,11 +164,11 @@ describe('runStuckAnchorCheck', () => {
     expect(result.healthy).toBe(true);
     expect(result.alertFired).toBe(false);
     expect(result.oldestAgeHours).toBeNull();
-    expect(mockCaptureMessage).not.toHaveBeenCalled();
+    expect(mockCaptureStuckAnchorAlert).not.toHaveBeenCalled();
   });
 
   it('returns healthy when the oldest PENDING anchor is within threshold', async () => {
-    mockCaptureMessage.mockClear();
+    mockCaptureStuckAnchorAlert.mockClear();
     const twoHoursAgo = new Date(NOW.getTime() - 2 * 60 * 60 * 1000).toISOString();
     const db = mockDb({ oldest: { data: [{ created_at: twoHoursAgo }], error: null } });
 
@@ -179,11 +177,11 @@ describe('runStuckAnchorCheck', () => {
     expect(result.healthy).toBe(true);
     expect(result.alertFired).toBe(false);
     expect(result.oldestAgeHours).toBe(2);
-    expect(mockCaptureMessage).not.toHaveBeenCalled();
+    expect(mockCaptureStuckAnchorAlert).not.toHaveBeenCalled();
   });
 
   it('logs at error level and fires a Sentry alert when stuck beyond threshold', async () => {
-    mockCaptureMessage.mockClear();
+    mockCaptureStuckAnchorAlert.mockClear();
     const thirtyHoursAgo = new Date(NOW.getTime() - 30 * 60 * 60 * 1000).toISOString();
     const db = mockDb({
       oldest: { data: [{ created_at: thirtyHoursAgo }], error: null },
@@ -197,18 +195,19 @@ describe('runStuckAnchorCheck', () => {
     expect(result.oldestAgeHours).toBe(30);
     expect(result.pendingCount).toBe(2962);
 
-    // Sentry alert carries the age + count context.
-    expect(mockCaptureMessage).toHaveBeenCalledTimes(1);
-    const [message, opts] = mockCaptureMessage.mock.calls[0] as [
+    // Sentry alert carries aggregate context through the stable-fingerprint helper.
+    expect(mockCaptureStuckAnchorAlert).toHaveBeenCalledTimes(1);
+    const [message, extra, level] = mockCaptureStuckAnchorAlert.mock.calls[0] as [
       string,
-      { level: string; tags: Record<string, unknown>; extra: Record<string, unknown> },
+      Record<string, unknown>,
+      string,
     ];
     expect(message).toMatch(/stuck/i);
-    expect(opts.level).toBe('error');
-    expect(opts.tags.source).toBe('stuck-anchor-monitor');
-    expect(opts.tags.story).toBe('SCRUM-2234');
-    expect(opts.extra.oldest_age_hours).toBe(30);
-    expect(opts.extra.pending_count).toBe(2962);
+    expect(level).toBe('error');
+    expect(extra.source).toBe('stuck-anchor-monitor');
+    expect(extra.story).toBe('SCRUM-2234');
+    expect(extra.oldest_age_hours).toBe(30);
+    expect(extra.pending_count).toBe(2962);
 
     // And an error-level structured log.
     expect(logger.error).toHaveBeenCalledWith(
@@ -218,7 +217,7 @@ describe('runStuckAnchorCheck', () => {
   });
 
   it('still alerts when the pending-count context read fails (count is best-effort)', async () => {
-    mockCaptureMessage.mockClear();
+    mockCaptureStuckAnchorAlert.mockClear();
     const thirtyHoursAgo = new Date(NOW.getTime() - 30 * 60 * 60 * 1000).toISOString();
     const db = mockDb({
       oldest: { data: [{ created_at: thirtyHoursAgo }], error: null },
@@ -230,7 +229,7 @@ describe('runStuckAnchorCheck', () => {
     expect(result.healthy).toBe(false);
     expect(result.alertFired).toBe(true);
     expect(result.pendingCount).toBeNull();
-    expect(mockCaptureMessage).toHaveBeenCalledTimes(1);
+    expect(mockCaptureStuckAnchorAlert).toHaveBeenCalledTimes(1);
   });
 
   it('throws when the oldest-PENDING query errors (Cloud Scheduler retries on 500)', async () => {
@@ -241,7 +240,7 @@ describe('runStuckAnchorCheck', () => {
   });
 
   it('reads the threshold from STUCK_ANCHOR_ALERT_HOURS when no override is given', async () => {
-    mockCaptureMessage.mockClear();
+    mockCaptureStuckAnchorAlert.mockClear();
     const prev = mockConfig.stuckAnchorAlertHours;
     mockConfig.stuckAnchorAlertHours = 2;
     try {
