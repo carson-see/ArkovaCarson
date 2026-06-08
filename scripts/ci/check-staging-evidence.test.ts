@@ -699,6 +699,15 @@ describe('check-staging-evidence', () => {
         expect(r.errors.join(' ')).toMatch(/local JSON file/i);
       });
 
+      it('fails when the RC manifest path attempts directory traversal', () => {
+        const r = runWithManifest(manifest(), `## Staging Soak Evidence
+- Tier: T3
+- RC manifest path: docs/staging/rc-manifests/../rc-evil.json
+`);
+        expect(r.ok).toBe(false);
+        expect(r.errors.join(' ')).toMatch(/local JSON file/i);
+      });
+
       it('fails when the RC manifest does not cover the current PR head', () => {
         const r = runWithManifest(manifest({
           included_prs: [{
@@ -723,6 +732,20 @@ describe('check-staging-evidence', () => {
         }));
         expect(r.ok).toBe(false);
         expect(r.errors.join(' ')).toMatch(/base SHA/i);
+      });
+
+      it('fails when the current PR entry lacks audit fields and migration file coverage', () => {
+        const r = runWithManifest(manifest({
+          included_prs: [{
+            number: 1047,
+            head_sha: headSha,
+            base_sha: baseSha,
+            risk_tier: 'T3',
+            rollback_note: 'rollback ready',
+          }],
+        }));
+        expect(r.ok).toBe(false);
+        expect(r.errors.join(' ')).toMatch(/owner|ci_summary|migration_files/i);
       });
 
       it('fails when RC preflight is dirty', () => {

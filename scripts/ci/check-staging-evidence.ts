@@ -1328,6 +1328,7 @@ function validateCoveredRcPr(
   includedPrs: unknown[],
   declared: Tier,
   required: { tier: Tier; reason: string },
+  files: string[],
   opts: CheckOptions,
   errors: string[],
 ): Record<string, unknown> | null {
@@ -1361,7 +1362,12 @@ function validateCoveredRcPr(
       errors.push(`RC manifest risk_tier ${manifestTier} is below declared tier ${declared}.`);
     }
   }
+  requireRcString(errors, coveredPr, 'owner', 'included_prs[].owner');
+  requireRcString(errors, coveredPr, 'ci_summary', 'included_prs[].ci_summary');
   requireRcString(errors, coveredPr, 'rollback_note', 'included_prs[].rollback_note');
+  if (files.some(touchesMigrationFile) && stringArrayAt(coveredPr, 'migration_files').length === 0) {
+    errors.push('RC manifest included_prs[].migration_files must list migration files for a migration-bearing PR.');
+  }
   return coveredPr;
 }
 
@@ -1470,7 +1476,7 @@ function rcManifestCoverage(
   if (parsed === null) return { errors, notes };
   validateRcManifestMetadata(parsed, opts, errors);
   const includedPrs = arrayAt(parsed, 'included_prs') ?? [];
-  const coveredPr = validateCoveredRcPr(parsed, includedPrs, declared, required, opts, errors);
+  const coveredPr = validateCoveredRcPr(parsed, includedPrs, declared, required, files, opts, errors);
   const effectiveTier = rcEffectiveTier(coveredPr, declared);
   validateRcEnvironment(parsed, errors);
   validateRcSoak(parsed, effectiveTier, opts, errors);

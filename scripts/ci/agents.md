@@ -52,4 +52,4 @@ Baseline/snapshot data consumed by gate scripts (one source-of-truth fixture per
 
 ## Open work
 
-- PR #733 (`destroy-staging-soak-skip`) — still in flight; awaits merge.
+- None currently.
