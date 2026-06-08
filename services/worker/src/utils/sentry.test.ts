@@ -27,7 +27,7 @@ vi.mock('@sentry/profiling-node', () => ({
   nodeProfilingIntegration: vi.fn(() => ({})),
 }));
 
-import { scrubPiiFromEvent, scrubPiiFromBreadcrumb, emitRpcFallback, withCronMonitoring, Sentry } from './sentry.js';
+import { scrubPiiFromEvent, scrubPiiFromBreadcrumb, initSentry, emitRpcFallback, withCronMonitoring, captureStuckAnchorAlert, STUCK_ANCHOR_FINGERPRINT, Sentry } from './sentry.js';
 
 describe('scrubPiiFromEvent', () => {
   it('strips email addresses from exception messages', () => {
@@ -218,6 +218,36 @@ describe('scrubPiiFromEvent', () => {
     const scrubbed = scrubPiiFromEvent(event);
     expect(scrubbed).toBeNull();
   });
+
+  // SCRUM-2249 (HARDEN-1-F): identifier scrubbing
+  it('scrubs UUIDs in event.transaction (org_id leaks into transaction name)', () => {
+    const event = { transaction: '/admin/organizations/3f8a9c2e-1b4d-4e7a-9c3f-2a1b8d5e6f70' };
+    const scrubbed = scrubPiiFromEvent(event);
+    expect(scrubbed?.transaction).toBe('/admin/organizations/[UUID]');
+  });
+
+  it('does not over-scrub a normal route name in event.transaction', () => {
+    const event = { transaction: 'cron:chain-maintenance' };
+    const scrubbed = scrubPiiFromEvent(event);
+    expect(scrubbed?.transaction).toBe('cron:chain-maintenance');
+  });
+
+  it('scrubs UUIDs in event.request.url', () => {
+    const event = {
+      request: { url: 'https://worker.arkova.io/internal/org/3f8a9c2e-1b4d-4e7a-9c3f-2a1b8d5e6f70/flush' },
+    };
+    const scrubbed = scrubPiiFromEvent(event);
+    expect(scrubbed?.request?.url).toBe('https://worker.arkova.io/internal/org/[UUID]/flush');
+  });
+
+  it('scrubs Supabase project-ref in auth-lock messages', () => {
+    const event = {
+      message: 'Auth lock against https://ujtlwnoqfhtitcmsnrpq.supabase.co/auth/v1/token',
+    };
+    const scrubbed = scrubPiiFromEvent(event);
+    expect(scrubbed?.message).toContain('https://[SUPABASE_PROJECT].supabase.co');
+    expect(scrubbed?.message).not.toContain('ujtlwnoqfhtitcmsnrpq');
+  });
 });
 
 describe('scrubPiiFromBreadcrumb', () => {
@@ -246,6 +276,15 @@ describe('scrubPiiFromBreadcrumb', () => {
     expect(scrubbed?.data?.body).toBeUndefined();
   });
 
+  it('scrubs UUIDs from URLs in breadcrumbs (SCRUM-2249)', () => {
+    const breadcrumb = {
+      category: 'fetch',
+      data: { url: 'https://worker.arkova.io/internal/org/3f8a9c2e-1b4d-4e7a-9c3f-2a1b8d5e6f70/flush' },
+    };
+    const scrubbed = scrubPiiFromBreadcrumb(breadcrumb);
+    expect(scrubbed?.data?.url).toBe('https://worker.arkova.io/internal/org/[UUID]/flush');
+  });
+
   it('passes through console breadcrumbs without data', () => {
     const breadcrumb = {
       category: 'console',
@@ -254,6 +293,28 @@ describe('scrubPiiFromBreadcrumb', () => {
 
     const scrubbed = scrubPiiFromBreadcrumb(breadcrumb);
     expect(scrubbed?.message).toBe('Application started');
+  });
+});
+
+describe('initSentry', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('uses typed Cloud Run revision config for Sentry serverName', () => {
+    const initSpy = vi.mocked(Sentry.init);
+    initSpy.mockClear();
+
+    initSentry('https://public@example.com/1', 'production', {
+      kRevision: 'arkova-worker-00123-abc',
+      kService: 'arkova-worker',
+    });
+
+    expect(initSpy).toHaveBeenCalledWith(
+      expect.objectContaining({
+        serverName: 'arkova-worker-00123-abc',
+      }),
+    );
   });
 });
 
@@ -358,5 +419,35 @@ describe('withCronMonitoring', () => {
       expect.objectContaining({ status: 'error' }),
     );
     expect(Sentry.flush).toHaveBeenCalledWith(2000);
+  });
+});
+
+// SCRUM-2249 / SCRUM-2255 (HARDEN-1-F): stuck-anchor-monitor fingerprinting.
+// The monitor capture itself ships with PR #1055 (feat/stuck-anchor-monitor,
+// SCRUM-2234). This helper is the stable seam #1055 wires into so hourly
+// re-fires collapse to a single Sentry issue instead of 20+.
+describe('captureStuckAnchorAlert (SCRUM-2255)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('captures with an explicit stable fingerprint so re-fires collapse to one issue', () => {
+    captureStuckAnchorAlert('12 anchors stuck in SUBMITTED (>30min)', { totalStuck: 12 });
+
+    expect(Sentry.captureMessage).toHaveBeenCalledTimes(1);
+    const [message, scope] = (Sentry.captureMessage as unknown as { mock: { calls: unknown[][] } })
+      .mock.calls[0];
+    expect(message).toBe('12 anchors stuck in SUBMITTED (>30min)');
+    expect(scope).toEqual(
+      expect.objectContaining({
+        level: 'warning',
+        fingerprint: STUCK_ANCHOR_FINGERPRINT,
+        extra: { totalStuck: 12 },
+      }),
+    );
+  });
+
+  it('exposes a single fixed fingerprint key', () => {
+    expect(STUCK_ANCHOR_FINGERPRINT).toEqual(['stuck-anchor-monitor']);
   });
 });
