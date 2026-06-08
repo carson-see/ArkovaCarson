@@ -16,3 +16,7 @@ interface ImportMetaEnv {
 interface ImportMeta {
   readonly env: ImportMetaEnv;
 }
+
+// SCRUM-2254: build-time-injected Sentry release identity (git commit SHA when
+// available). Defined via `define` in vite.config.ts.
+declare const __APP_RELEASE__: string;
