@@ -55,6 +55,16 @@ export interface Env {
   CF_AI_MODEL: string;
   SUPABASE_URL: string;
   SUPABASE_SERVICE_ROLE_KEY: string;
+
+  // BUG-3a (PR-3): base URL of the Arkova worker (e.g. https://api.arkova.ai).
+  // When set, the MCP `nessie_query` tool proxies its vector path to the
+  // worker's single Gemini embedder (`GET /api/v1/nessie/query`) and forwards
+  // the caller's API key, instead of re-embedding with Cloudflare bge-base
+  // against a Gemini-space index. OPTIONAL: when unset (local dev / preview),
+  // nessie_query degrades to the lowercase text fallback only. Provision as a
+  // wrangler var/secret at deploy — do NOT hardcode a prod URL in source.
+  WORKER_BASE_URL?: string;
+
   // SCRUM-926 / MCP-SEC-07: HS256 secret used to verify caller-supplied
   // bearer JWTs locally before round-tripping to /auth/v1/user. Required —
   // edge worker must reject all bearer auth if unset (fail-closed).
