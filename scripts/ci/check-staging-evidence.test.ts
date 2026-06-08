@@ -610,6 +610,165 @@ describe('check-staging-evidence', () => {
       expect(r.ok).toBe(true);
     });
 
+    describe('release-candidate manifest coverage', () => {
+      const headSha = '1234567890abcdef1234567890abcdef12345678';
+      const baseSha = 'abcdef1234567890abcdef1234567890abcdef12';
+      const rcPath = 'docs/staging/rc-manifests/rc-2026-06-08-queue-drain.json';
+      const rcBody = `## Staging Soak Evidence
+- Tier: T3
+- RC manifest path: ${rcPath}
+`;
+
+      const manifest = (overrides: Record<string, unknown> = {}) => ({
+        schema_version: 1,
+        rc_id: 'RC-2026-06-08-QUEUE-DRAIN',
+        created_at: '2026-06-08T19:00:00Z',
+        created_by: 'release-bot@arkova.io',
+        release_owner: 'Carson',
+        approval_status: 'approved',
+        approval_actor: 'Carson',
+        approval_time: '2026-06-08T19:05:00Z',
+        train_launch_sha: 'ffffffffffffffffffffffffffffffffffffffff',
+        target_main_sha: baseSha,
+        included_prs: [
+          {
+            number: 1047,
+            head_sha: headSha,
+            base_sha: baseSha,
+            risk_tier: 'T3',
+            owner: 'release',
+            ci_summary: 'required checks green',
+            rollback_note: 'revert PR and re-apply prior migration state',
+            migration_files: ['supabase/migrations/0332_free_tier_cap.sql'],
+          },
+        ],
+        environment: {
+          evidence_scope: 'merge-grade isolated staging',
+          staging_api_base: 'https://pr-1047---arkova-worker-staging.example.run.app',
+          staging_url: 'https://pr-1047---arkova-worker-staging.example.run.app',
+          cloud_run_service: 'arkova-worker-staging',
+          revision: 'arkova-worker-staging-00104-abc',
+          deploy_tag: 'pr-1047',
+          image_digest: 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+          supabase_project_ref: 'ujtlwnoqfhtitcmsnrpq',
+          deploy_log_id: '1047',
+          preflight_result: 'environment_type=clean_mirror',
+        },
+        soak: {
+          start: '2026-06-08T00:00:00Z',
+          end: '2026-06-10T00:00:00Z',
+          duration_hours: 48,
+          harness_version: 'scripts/staging/load-harness.ts@ffffffff',
+          result: 'green',
+          evidence_links: ['https://github.com/carson-see/ArkovaCarson/actions/runs/123'],
+          expires_at: '2026-06-12T00:00:00Z',
+        },
+        migration_plan: {
+          order: ['0332_free_tier_cap.sql'],
+          rollback_proof: 'rollback block rehearsed and health stayed green',
+          reapply_proof: 'migration re-applied and ledger verified',
+          stop_conditions: ['SHA mismatch', 'rollback failure'],
+        },
+        ...overrides,
+      });
+
+      const runWithManifest = (rc: unknown, body = rcBody) => check({
+        body,
+        files: ['supabase/migrations/0332_free_tier_cap.sql'],
+        headSha,
+        baseSha,
+        nowMs: Date.parse('2026-06-10T01:00:00Z'),
+        rcManifestLoader: (path) => {
+          expect(path).toBe(rcPath);
+          return JSON.stringify(rc);
+        },
+      });
+
+      it('passes when a valid RC manifest covers the exact PR head/base and tier', () => {
+        const r = runWithManifest(manifest());
+        expect(r.ok).toBe(true);
+        expect(r.notes.join(' ')).toMatch(/RC manifest/i);
+      });
+
+      it('fails when the RC manifest path is outside the approved local directory', () => {
+        const r = runWithManifest(manifest(), `## Staging Soak Evidence
+- Tier: T3
+- RC manifest path: https://example.com/rc.json
+`);
+        expect(r.ok).toBe(false);
+        expect(r.errors.join(' ')).toMatch(/local JSON file/i);
+      });
+
+      it('fails when the RC manifest does not cover the current PR head', () => {
+        const r = runWithManifest(manifest({
+          included_prs: [{
+            head_sha: '9999999990abcdef1234567890abcdef12345678',
+            base_sha: baseSha,
+            risk_tier: 'T3',
+            rollback_note: 'rollback ready',
+          }],
+        }));
+        expect(r.ok).toBe(false);
+        expect(r.errors.join(' ')).toMatch(/current PR head/i);
+      });
+
+      it('fails when the RC manifest base SHA is stale', () => {
+        const r = runWithManifest(manifest({
+          included_prs: [{
+            head_sha: headSha,
+            base_sha: '9999999990abcdef1234567890abcdef12345678',
+            risk_tier: 'T3',
+            rollback_note: 'rollback ready',
+          }],
+        }));
+        expect(r.ok).toBe(false);
+        expect(r.errors.join(' ')).toMatch(/base SHA/i);
+      });
+
+      it('fails when RC preflight is dirty', () => {
+        const r = runWithManifest(manifest({
+          environment: {
+            evidence_scope: 'merge-grade isolated staging',
+            staging_api_base: 'https://pr-1047---arkova-worker-staging.example.run.app',
+            revision: 'arkova-worker-staging-00104-abc',
+            deploy_tag: 'pr-1047',
+            image_digest: 'sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef',
+            supabase_project_ref: 'ujtlwnoqfhtitcmsnrpq',
+            deploy_log_id: '1047',
+            preflight_result: 'environment_type=soak_artifact',
+          },
+        }));
+        expect(r.ok).toBe(false);
+        expect(r.errors.join(' ')).toMatch(/clean_mirror/i);
+      });
+
+      it('fails when RC evidence is expired', () => {
+        const r = runWithManifest(manifest({
+          soak: {
+            start: '2026-06-08T00:00:00Z',
+            end: '2026-06-10T00:00:00Z',
+            duration_hours: 48,
+            harness_version: 'scripts/staging/load-harness.ts@ffffffff',
+            result: 'green',
+            evidence_links: ['https://github.com/carson-see/ArkovaCarson/actions/runs/123'],
+            expires_at: '2026-06-10T00:30:00Z',
+          },
+        }));
+        expect(r.ok).toBe(false);
+        expect(r.errors.join(' ')).toMatch(/expired/i);
+      });
+
+      it('fails migration PR coverage without rollback and reapply proof', () => {
+        const r = runWithManifest(manifest({
+          migration_plan: {
+            order: ['0332_free_tier_cap.sql'],
+          },
+        }));
+        expect(r.ok).toBe(false);
+        expect(r.errors.join(' ')).toMatch(/rollback_proof|reapply_proof/i);
+      });
+    });
+
     it('fails T3 PR with evidence section but missing required fields', () => {
       const incomplete = `## Staging Soak Evidence\n- Tier: T3\n`;
       const r = check({

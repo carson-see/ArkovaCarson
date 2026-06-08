@@ -108,3 +108,20 @@ If the PR touches *any* worker/migration/SDK/contract file, this variant does **
 - Daily flush observation: fired YYYY-MM-DD 08:00 UTC, drained N anchors across M orgs
 - Per-org isolation check: zero cross-org claims observed in the soak window
 ```
+
+---
+
+## Release-candidate manifest coverage — batched T2/T3 evidence
+
+Use this variant only when the release owner has approved a release candidate and the long soak evidence is captured in a local, machine-readable manifest. This keeps the same `Staging Soak Evidence Gate` required check name while moving long soak evidence from many mutable PR bodies into one audited RC artifact.
+
+The manifest must live under `docs/staging/rc-manifests/rc-*.json`. Do not point the PR body at external URLs or ad-hoc paths. The gate validates that the manifest covers the current PR head SHA, base/train SHA, risk tier, environment, clean preflight, soak window, approval, evidence TTL, and migration rollback/reapply proof when applicable.
+
+```markdown
+## Staging Soak Evidence
+
+- Tier: T2
+- RC manifest path: docs/staging/rc-manifests/rc-YYYY-MM-DD-short-name.json
+```
+
+For T3 or migration-bearing PRs, keep `Tier: T3`. The manifest must include the migration train order plus rollback and reapply proof.
