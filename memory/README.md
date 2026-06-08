@@ -52,3 +52,7 @@ and documented in the rule script. Examples:
 
 If you find yourself reaching for an override more than once, file a Jira
 sub-story to update the policy and remove the override path.
+
+## Operational notes
+
+- `t2_t3_rollout_sync_20260608.md` records the current T2/T3 rollout gate: six T2s prod-contained, #1121 active, and T3 clocks blocked until post-#1121 prod proof.
