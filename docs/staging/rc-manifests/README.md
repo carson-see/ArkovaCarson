@@ -13,7 +13,7 @@ Use this block after the release owner approves the RC:
 - RC manifest path: docs/staging/rc-manifests/rc-YYYY-MM-DD-short-name.json
 ```
 
-The path must match `docs/staging/rc-manifests/rc-*.json`. External URLs and arbitrary paths are rejected.
+The path must match `docs/staging/rc-manifests/rc-*.json`. External URLs and arbitrary paths are rejected. The manifest must be present in the checked-out PR tree, so queued PRs using a central release manifest must be restacked onto the release-process commit before the gate can consume it.
 
 ## Required Fields
 
@@ -30,4 +30,4 @@ The path must match `docs/staging/rc-manifests/rc-*.json`. External URLs and arb
 
 ## Gate Behavior
 
-If `RC manifest path:` is absent, the gate uses the existing per-PR evidence rules. If present, the gate validates the manifest and fails closed on stale heads, stale bases, dirty preflight, expired evidence, missing approval, missing deploy provenance, or missing migration rollback/reapply proof.
+If `RC manifest path:` is absent, the gate uses the existing per-PR evidence rules. If present, the gate validates the checked-out manifest and fails closed on stale heads, stale bases, dirty preflight, expired evidence, missing approval, missing deploy provenance, or missing migration rollback/reapply proof.

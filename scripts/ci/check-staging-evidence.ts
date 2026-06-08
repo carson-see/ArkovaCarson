@@ -31,9 +31,8 @@
  * worker-artifact requirements.
  */
 
-import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { resolve, sep } from 'node:path';
 import {
   REPO,
   baseRef,
@@ -648,7 +647,7 @@ function frontendT2Errors(body: string): string[] {
   // short-circuits to PASS on an empty value — without it a bare
   // `- CI/E2E green:` line would attest nothing, weaker than the T1 path
   // (which runs validateNonEmptyEvidenceField over every required field).
-  errors.push(...[
+  errors.push(
     validateVercelUrlEvidence(body),
     validateFilledEvidenceField(body, 'E2E result:'),
     validateNonEmptyEvidenceField(body, 'Rollback plan:'),
@@ -659,7 +658,7 @@ function frontendT2Errors(body: string): string[] {
       /\b(?:green|pass(?:ed|es)?|success(?:ful)?)\b/i,
       'CI/E2E green: must state that CI/E2E is green.',
     ),
-  ]);
+  );
 
   // A frontend-T2 PR substitutes a residual-risk note for the worker
   // artifacts. The note's sub-fields are frontend-specific (attest no worker
@@ -1060,10 +1059,12 @@ function standardEvidenceErrors(
   }
 
   const duration = durationValidation(body, declared);
-  errors.push(...duration.errors);
   notes.push(...duration.notes);
-  errors.push(...requiredValueErrors(body, declared));
-  errors.push(...stagingIntegrityErrors(body, declared, opts));
+  errors.push(
+    ...duration.errors,
+    ...requiredValueErrors(body, declared),
+    ...stagingIntegrityErrors(body, declared, opts),
+  );
 
   const preflightVal = extractEvidenceFieldValue(body, 'Preflight result:');
   const preflightIsClean = preflightVal !== null && hasCleanMirrorPreflight(preflightVal);
@@ -1076,24 +1077,18 @@ function standardEvidenceErrors(
 
 const RC_MANIFEST_FIELD = 'RC manifest path:';
 const RC_MANIFEST_PATH_RE = /^docs\/staging\/rc-manifests\/rc-[A-Za-z0-9][A-Za-z0-9._-]*\.json$/;
+const RC_MANIFEST_DIR = resolve(REPO, 'docs/staging/rc-manifests');
+
+function resolveRcManifestPath(path: string): string | null {
+  if (!RC_MANIFEST_PATH_RE.test(path)) return null;
+  const localPath = resolve(REPO, path);
+  return localPath.startsWith(`${RC_MANIFEST_DIR}${sep}`) ? localPath : null;
+}
 
 function defaultRcManifestLoader(path: string): string | null {
-  if (!RC_MANIFEST_PATH_RE.test(path)) return null;
-
-  const localPath = resolve(REPO, path);
-  if (existsSync(localPath)) {
-    return readFileSync(localPath, 'utf8');
-  }
-
-  try {
-    return execFileSync('git', ['show', `${baseRef}:${path}`], {
-      cwd: REPO,
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-  } catch {
-    return null;
-  }
+  const localPath = resolveRcManifestPath(path);
+  if (localPath === null || !existsSync(localPath)) return null;
+  return readFileSync(localPath, 'utf8');
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -1173,6 +1168,43 @@ function rcUrlErrors(value: string | null, label: string): string[] {
     : [`RC manifest ${label} must contain an HTTP(S) URL.`];
 }
 
+function rcSoakWindowErrors(
+  startMs: number | null,
+  endMs: number | null,
+  tier: Tier,
+  soak: Record<string, unknown>,
+): string[] {
+  if (startMs === null || endMs === null) return [];
+  if (endMs <= startMs) return ['RC manifest soak.end must be after soak.start.'];
+
+  const errors: string[] = [];
+  const minimumHours = TIER_SPECS[tier].soakHours;
+  const elapsedHours = (endMs - startMs) / 3_600_000;
+  if (elapsedHours < minimumHours) {
+    errors.push(
+      `RC manifest soak duration (${formatHours(elapsedHours)}h) is below the ${minimumHours}h minimum for ${tier}.`,
+    );
+  }
+
+  const declaredHours = numberAt(soak, 'duration_hours');
+  if (declaredHours !== null && declaredHours < minimumHours) {
+    errors.push(`RC manifest soak.duration_hours is below the ${minimumHours}h minimum for ${tier}.`);
+  }
+  return errors;
+}
+
+function rcPassingResultErrors(result: string | null): string[] {
+  if (result === null || /\b(?:green|pass(?:ed|es)?|success(?:ful)?|ok|healthy)\b/i.test(result)) {
+    return [];
+  }
+  return ['RC manifest soak.result must state a passing result.'];
+}
+
+function rcEvidenceTtlErrors(expiresAt: number | null, nowMs: number): string[] {
+  if (expiresAt === null || expiresAt > nowMs) return [];
+  return ['RC manifest evidence is expired; refresh the release-candidate evidence before merging.'];
+}
+
 function rcSoakDurationErrors(
   soak: Record<string, unknown>,
   tier: Tier,
@@ -1181,27 +1213,11 @@ function rcSoakDurationErrors(
   const errors: string[] = [];
   const startMs = requireRcTimestamp(errors, soak, 'start', 'soak.start');
   const endMs = requireRcTimestamp(errors, soak, 'end', 'soak.end');
-  if (startMs !== null && endMs !== null) {
-    if (endMs <= startMs) {
-      errors.push('RC manifest soak.end must be after soak.start.');
-    } else {
-      const elapsedHours = (endMs - startMs) / 3_600_000;
-      if (elapsedHours < TIER_SPECS[tier].soakHours) {
-        errors.push(
-          `RC manifest soak duration (${formatHours(elapsedHours)}h) is below the ${TIER_SPECS[tier].soakHours}h minimum for ${tier}.`,
-        );
-      }
-      const declaredHours = numberAt(soak, 'duration_hours');
-      if (declaredHours !== null && declaredHours < TIER_SPECS[tier].soakHours) {
-        errors.push(`RC manifest soak.duration_hours is below the ${TIER_SPECS[tier].soakHours}h minimum for ${tier}.`);
-      }
-    }
-  }
+  errors.push(...rcSoakWindowErrors(startMs, endMs, tier, soak));
 
   const result = requireRcString(errors, soak, 'result', 'soak.result');
-  if (result !== null && !/\b(?:green|pass(?:ed|es)?|success(?:ful)?|ok|healthy)\b/i.test(result)) {
-    errors.push('RC manifest soak.result must state a passing result.');
-  }
+  errors.push(...rcPassingResultErrors(result));
+
   requireRcString(errors, soak, 'harness_version', 'soak.harness_version');
   const evidenceLinks = stringArrayAt(soak, 'evidence_links');
   if (evidenceLinks.length === 0) {
@@ -1209,9 +1225,7 @@ function rcSoakDurationErrors(
   }
 
   const expiresAt = requireRcTimestamp(errors, soak, 'expires_at', 'soak.expires_at');
-  if (expiresAt !== null && expiresAt <= nowMs) {
-    errors.push('RC manifest evidence is expired; refresh the release-candidate evidence before merging.');
-  }
+  errors.push(...rcEvidenceTtlErrors(expiresAt, nowMs));
 
   return errors;
 }
@@ -1266,6 +1280,163 @@ function findCoveredRcPr(
   return null;
 }
 
+function parseRcManifest(path: string, raw: string, errors: string[]): Record<string, unknown> | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    errors.push(`RC manifest \`${path}\` is not valid JSON: ${err instanceof Error ? err.message : String(err)}.`);
+    return null;
+  }
+
+  if (!isRecord(parsed)) {
+    errors.push(`RC manifest \`${path}\` must be a JSON object.`);
+    return null;
+  }
+  return parsed;
+}
+
+function validateRcManifestMetadata(
+  manifest: Record<string, unknown>,
+  opts: CheckOptions,
+  errors: string[],
+): void {
+  const schemaVersion = numberAt(manifest, 'schema_version');
+  if (schemaVersion !== 1) {
+    errors.push('RC manifest schema_version must be 1.');
+  }
+
+  requireRcString(errors, manifest, 'rc_id', 'rc_id');
+  requireRcTimestamp(errors, manifest, 'created_at', 'created_at');
+  requireRcString(errors, manifest, 'created_by', 'created_by');
+  requireRcString(errors, manifest, 'release_owner', 'release_owner');
+  const approvalStatus = requireRcString(errors, manifest, 'approval_status', 'approval_status');
+  if (approvalStatus !== null && approvalStatus.trim().toLowerCase() !== 'approved') {
+    errors.push('RC manifest approval_status must be approved.');
+  }
+  requireRcString(errors, manifest, 'approval_actor', 'approval_actor');
+  requireRcTimestamp(errors, manifest, 'approval_time', 'approval_time');
+  requireRcString(errors, manifest, 'train_launch_sha', 'train_launch_sha');
+
+  if (!rcCurrentBaseCovered(manifest, opts.baseSha)) {
+    errors.push('RC manifest does not cover the current base SHA; update the manifest or re-check main drift.');
+  }
+}
+
+function validateCoveredRcPr(
+  manifest: Record<string, unknown>,
+  includedPrs: unknown[],
+  declared: Tier,
+  required: { tier: Tier; reason: string },
+  opts: CheckOptions,
+  errors: string[],
+): Record<string, unknown> | null {
+  if (includedPrs.length === 0) {
+    errors.push('RC manifest included_prs must list at least one PR.');
+  }
+
+  const coveredPr = findCoveredRcPr(includedPrs, opts);
+  if (coveredPr === null) {
+    errors.push('RC manifest does not include the current PR head SHA.');
+    return null;
+  }
+
+  const entryHead = normalizeSha(stringAt(coveredPr, 'head_sha') ?? undefined);
+  const currentHead = normalizeSha(opts.headSha);
+  if (currentHead !== null && entryHead !== currentHead) {
+    errors.push(`RC manifest current PR entry head SHA \`${entryHead ?? 'missing'}\` does not match current PR head \`${currentHead}\`.`);
+  }
+  if (!rcPrBaseCovered(manifest, coveredPr, opts.baseSha)) {
+    errors.push('RC manifest current PR entry base SHA does not match the current base, train launch SHA, target main SHA, or an allowed base SHA.');
+  }
+
+  const manifestTier = rcTier(stringAt(coveredPr, 'risk_tier'));
+  if (manifestTier === null) {
+    errors.push('RC manifest current PR entry risk_tier must be T1, T2, or T3.');
+  } else {
+    if (TIER_RANK[manifestTier] < TIER_RANK[required.tier]) {
+      errors.push(`RC manifest risk_tier ${manifestTier} is below required tier ${required.tier} for this PR. Reason: ${required.reason}.`);
+    }
+    if (TIER_RANK[manifestTier] < TIER_RANK[declared]) {
+      errors.push(`RC manifest risk_tier ${manifestTier} is below declared tier ${declared}.`);
+    }
+  }
+  requireRcString(errors, coveredPr, 'rollback_note', 'included_prs[].rollback_note');
+  return coveredPr;
+}
+
+function validateRcEnvironment(manifest: Record<string, unknown>, errors: string[]): void {
+  const environment = objectAt(manifest, 'environment');
+  if (environment === null) {
+    errors.push('RC manifest environment must be an object.');
+    return;
+  }
+
+  const scope = normalizeEvidenceScope(stringAt(environment, 'evidence_scope') ?? '');
+  if (!ALLOWED_EVIDENCE_SCOPES.has(scope)) {
+    errors.push('RC manifest environment.evidence_scope must be merge-grade shared staging or merge-grade isolated staging.');
+  }
+
+  const stagingApiBase = stringAt(environment, 'staging_api_base');
+  errors.push(...rcUrlErrors(stagingApiBase, 'environment.staging_api_base'));
+  if (stagingApiBase !== null && /https?:\/\/arkova-worker-staging[-.]/i.test(stagingApiBase)) {
+    errors.push('RC manifest environment.staging_api_base must not point at the main shared staging URL; use a PR tag URL or isolated service URL.');
+  }
+  errors.push(...rcUrlErrors(stringAt(environment, 'staging_url'), 'environment.staging_url'));
+  requireRcString(errors, environment, 'revision', 'environment.revision');
+  requireRcString(errors, environment, 'deploy_tag', 'environment.deploy_tag');
+  requireRcString(errors, environment, 'image_digest', 'environment.image_digest');
+  requireRcString(errors, environment, 'supabase_project_ref', 'environment.supabase_project_ref');
+  requireRcString(errors, environment, 'deploy_log_id', 'environment.deploy_log_id');
+
+  const preflight = requireRcString(errors, environment, 'preflight_result', 'environment.preflight_result');
+  if (preflight !== null && !hasCleanMirrorPreflight(preflight)) {
+    errors.push('RC manifest environment.preflight_result must capture `environment_type=clean_mirror`.');
+  }
+}
+
+function rcEffectiveTier(coveredPr: Record<string, unknown> | null, declared: Tier): Tier {
+  return coveredPr === null ? declared : rcTier(stringAt(coveredPr, 'risk_tier')) ?? declared;
+}
+
+function validateRcSoak(
+  manifest: Record<string, unknown>,
+  effectiveTier: Tier,
+  opts: CheckOptions,
+  errors: string[],
+): void {
+  const soak = objectAt(manifest, 'soak');
+  if (soak === null) {
+    errors.push('RC manifest soak must be an object.');
+    return;
+  }
+  errors.push(...rcSoakDurationErrors(soak, effectiveTier, opts.nowMs ?? Date.now()));
+}
+
+function touchesMigrationFile(file: string): boolean {
+  return file.startsWith('supabase/migrations/');
+}
+
+function validateRcMigrationPlan(
+  manifest: Record<string, unknown>,
+  effectiveTier: Tier,
+  files: string[],
+  errors: string[],
+): void {
+  if (!files.some(touchesMigrationFile) && effectiveTier !== 'T3') return;
+
+  const migrationPlan = objectAt(manifest, 'migration_plan');
+  if (migrationPlan === null) {
+    errors.push('RC manifest migration_plan is required for T3 or migration-bearing PRs.');
+    return;
+  }
+  if (stringArrayAt(migrationPlan, 'order').length === 0) {
+    errors.push('RC manifest migration_plan.order must list migration train order.');
+  }
+  requireRcString(errors, migrationPlan, 'rollback_proof', 'migration_plan.rollback_proof');
+  requireRcString(errors, migrationPlan, 'reapply_proof', 'migration_plan.reapply_proof');
+}
+
 function rcManifestCoverage(
   body: string,
   declared: Tier,
@@ -1282,7 +1453,7 @@ function rcManifestCoverage(
     errors.push('RC manifest coverage must be declared under a `## Staging Soak Evidence` section.');
   }
 
-  if (!RC_MANIFEST_PATH_RE.test(path)) {
+  if (resolveRcManifestPath(path) === null) {
     errors.push(
       'RC manifest path must be a local JSON file under `docs/staging/rc-manifests/rc-*.json`; arbitrary URLs or paths are not allowed.',
     );
@@ -1291,120 +1462,19 @@ function rcManifestCoverage(
 
   const raw = (opts.rcManifestLoader ?? defaultRcManifestLoader)(path);
   if (!raw) {
-    errors.push(`RC manifest \`${path}\` was not found in the PR head or current base.`);
+    errors.push(`RC manifest \`${path}\` was not found in the checked-out PR tree.`);
     return { errors, notes };
   }
 
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(raw);
-  } catch (err) {
-    errors.push(`RC manifest \`${path}\` is not valid JSON: ${err instanceof Error ? err.message : String(err)}.`);
-    return { errors, notes };
-  }
-
-  if (!isRecord(parsed)) {
-    errors.push(`RC manifest \`${path}\` must be a JSON object.`);
-    return { errors, notes };
-  }
-
-  const schemaVersion = numberAt(parsed, 'schema_version');
-  if (schemaVersion !== 1) {
-    errors.push('RC manifest schema_version must be 1.');
-  }
-
-  requireRcString(errors, parsed, 'rc_id', 'rc_id');
-  requireRcTimestamp(errors, parsed, 'created_at', 'created_at');
-  requireRcString(errors, parsed, 'created_by', 'created_by');
-  requireRcString(errors, parsed, 'release_owner', 'release_owner');
-  const approvalStatus = requireRcString(errors, parsed, 'approval_status', 'approval_status');
-  if (approvalStatus !== null && approvalStatus.trim().toLowerCase() !== 'approved') {
-    errors.push('RC manifest approval_status must be approved.');
-  }
-  requireRcString(errors, parsed, 'approval_actor', 'approval_actor');
-  requireRcTimestamp(errors, parsed, 'approval_time', 'approval_time');
-  requireRcString(errors, parsed, 'train_launch_sha', 'train_launch_sha');
-
-  if (!rcCurrentBaseCovered(parsed, opts.baseSha)) {
-    errors.push('RC manifest does not cover the current base SHA; update the manifest or re-check main drift.');
-  }
-
+  const parsed = parseRcManifest(path, raw, errors);
+  if (parsed === null) return { errors, notes };
+  validateRcManifestMetadata(parsed, opts, errors);
   const includedPrs = arrayAt(parsed, 'included_prs') ?? [];
-  if (includedPrs.length === 0) {
-    errors.push('RC manifest included_prs must list at least one PR.');
-  }
-  const coveredPr = findCoveredRcPr(includedPrs, opts);
-  if (coveredPr === null) {
-    errors.push('RC manifest does not include the current PR head SHA.');
-  } else {
-    const entryHead = normalizeSha(stringAt(coveredPr, 'head_sha') ?? undefined);
-    const currentHead = normalizeSha(opts.headSha);
-    if (currentHead !== null && entryHead !== currentHead) {
-      errors.push(`RC manifest current PR entry head SHA \`${entryHead ?? 'missing'}\` does not match current PR head \`${currentHead}\`.`);
-    }
-    if (!rcPrBaseCovered(parsed, coveredPr, opts.baseSha)) {
-      errors.push('RC manifest current PR entry base SHA does not match the current base, train launch SHA, target main SHA, or an allowed base SHA.');
-    }
-    const manifestTier = rcTier(stringAt(coveredPr, 'risk_tier'));
-    if (manifestTier === null) {
-      errors.push('RC manifest current PR entry risk_tier must be T1, T2, or T3.');
-    } else {
-      if (TIER_RANK[manifestTier] < TIER_RANK[required.tier]) {
-        errors.push(`RC manifest risk_tier ${manifestTier} is below required tier ${required.tier} for this PR. Reason: ${required.reason}.`);
-      }
-      if (TIER_RANK[manifestTier] < TIER_RANK[declared]) {
-        errors.push(`RC manifest risk_tier ${manifestTier} is below declared tier ${declared}.`);
-      }
-    }
-    requireRcString(errors, coveredPr, 'rollback_note', 'included_prs[].rollback_note');
-  }
-
-  const environment = objectAt(parsed, 'environment');
-  if (environment === null) {
-    errors.push('RC manifest environment must be an object.');
-  } else {
-    const scope = normalizeEvidenceScope(stringAt(environment, 'evidence_scope') ?? '');
-    if (!ALLOWED_EVIDENCE_SCOPES.has(scope)) {
-      errors.push('RC manifest environment.evidence_scope must be merge-grade shared staging or merge-grade isolated staging.');
-    }
-    const stagingApiBase = stringAt(environment, 'staging_api_base');
-    errors.push(...rcUrlErrors(stagingApiBase, 'environment.staging_api_base'));
-    if (stagingApiBase !== null && /https?:\/\/arkova-worker-staging[-.]/i.test(stagingApiBase)) {
-      errors.push('RC manifest environment.staging_api_base must not point at the main shared staging URL; use a PR tag URL or isolated service URL.');
-    }
-    errors.push(...rcUrlErrors(stringAt(environment, 'staging_url'), 'environment.staging_url'));
-    requireRcString(errors, environment, 'revision', 'environment.revision');
-    requireRcString(errors, environment, 'deploy_tag', 'environment.deploy_tag');
-    requireRcString(errors, environment, 'image_digest', 'environment.image_digest');
-    requireRcString(errors, environment, 'supabase_project_ref', 'environment.supabase_project_ref');
-    requireRcString(errors, environment, 'deploy_log_id', 'environment.deploy_log_id');
-    const preflight = requireRcString(errors, environment, 'preflight_result', 'environment.preflight_result');
-    if (preflight !== null && !hasCleanMirrorPreflight(preflight)) {
-      errors.push('RC manifest environment.preflight_result must capture `environment_type=clean_mirror`.');
-    }
-  }
-
-  const soak = objectAt(parsed, 'soak');
-  const effectiveTier = coveredPr === null ? declared : rcTier(stringAt(coveredPr, 'risk_tier')) ?? declared;
-  if (soak === null) {
-    errors.push('RC manifest soak must be an object.');
-  } else {
-    errors.push(...rcSoakDurationErrors(soak, effectiveTier, opts.nowMs ?? Date.now()));
-  }
-
-  const touchesMigration = files.some((file) => /^supabase\/migrations\//.test(file));
-  if (touchesMigration || effectiveTier === 'T3') {
-    const migrationPlan = objectAt(parsed, 'migration_plan');
-    if (migrationPlan === null) {
-      errors.push('RC manifest migration_plan is required for T3 or migration-bearing PRs.');
-    } else {
-      if (stringArrayAt(migrationPlan, 'order').length === 0) {
-        errors.push('RC manifest migration_plan.order must list migration train order.');
-      }
-      requireRcString(errors, migrationPlan, 'rollback_proof', 'migration_plan.rollback_proof');
-      requireRcString(errors, migrationPlan, 'reapply_proof', 'migration_plan.reapply_proof');
-    }
-  }
+  const coveredPr = validateCoveredRcPr(parsed, includedPrs, declared, required, opts, errors);
+  const effectiveTier = rcEffectiveTier(coveredPr, declared);
+  validateRcEnvironment(parsed, errors);
+  validateRcSoak(parsed, effectiveTier, opts, errors);
+  validateRcMigrationPlan(parsed, effectiveTier, files, errors);
 
   if (errors.length === 0) {
     const rcId = stringAt(parsed, 'rc_id') ?? path;

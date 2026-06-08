@@ -115,7 +115,7 @@ If the PR touches *any* worker/migration/SDK/contract file, this variant does **
 
 Use this variant only when the release owner has approved a release candidate and the long soak evidence is captured in a local, machine-readable manifest. This keeps the same `Staging Soak Evidence Gate` required check name while moving long soak evidence from many mutable PR bodies into one audited RC artifact.
 
-The manifest must live under `docs/staging/rc-manifests/rc-*.json`. Do not point the PR body at external URLs or ad-hoc paths. The gate validates that the manifest covers the current PR head SHA, base/train SHA, risk tier, environment, clean preflight, soak window, approval, evidence TTL, and migration rollback/reapply proof when applicable.
+The manifest must live under `docs/staging/rc-manifests/rc-*.json` in the checked-out PR tree. Do not point the PR body at external URLs or ad-hoc paths. Queue PRs using a central release manifest must be restacked onto the release-process commit first. The gate validates that the manifest covers the current PR head SHA, base/train SHA, risk tier, environment, clean preflight, soak window, approval, evidence TTL, and migration rollback/reapply proof when applicable.
 
 ```markdown
 ## Staging Soak Evidence
