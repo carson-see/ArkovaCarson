@@ -14,7 +14,7 @@
 
 ## Now
 
-### 2026-06-08 10:22 EDT - T2 closure, SSD sync, and T3 synchronized launch gate
+### 2026-06-08 10:31 EDT - T2 closure, SSD sync, and T3 synchronized launch gate
 
 **Local/GitHub hygiene:** Extreme clean `main` worktree `/Volumes/Extreme/Arkova/worktrees/hygiene-sync-20260603` and Crucial clean `main` checkout `/Volumes/Crucial X9/Arkova/arkova-mvpcopy-main` are both fast-forwarded to `origin/main` `bf40e389fd1644aea94557366e367b7b66df7616`. The active root checkout `/Volumes/Extreme/Arkova/arkova-mvpcopy-main` remains on its existing `codex/scrum-2070-docusign-rate-limit` branch with parked local coordination/evidence files; do not reset or clean it. Active #1121 soak worktree remains untouched.
 
@@ -22,7 +22,7 @@
 
 **T2s already merged and active in prod:** #1098 (`217a542d`), #1104 (`bf40e389`), #1108 (`b5110320`), #1110 (`f60ccef8`), #1119 (`68671aec`), and #1123 (`37d46d59`) are all merged, contained in current `origin/main`, and covered by the prod SHA above. Do not rerun those T2 soaks unless a new head/base invalidates them.
 
-**Only live soak right now:** #1121 is the only active screen/process. Session `arkova-t2-redial-1121-79187530` is alive with node runner `/private/tmp/arkova-soaks/run-pr-1121-mcp-context-soak-template.mjs`. Candidate head `7918753029aa9b8d761930e520695e44f29bc9af`, base `bf40e389fd1644aea94557366e367b7b66df7616`. Evidence `/private/tmp/arkova-soaks/soak-pr-1121-mcp-context-redial-pvtqcpegmnoumsnklkvk-79187530-20260608T0517Z.jsonl`; stdout `/private/tmp/arkova-soaks/soak-pr-1121-mcp-context-redial-pvtqcpegmnoumsnklkvk-79187530-20260608T0517Z.stdout.log`. Latest local status at `2026-06-08T14:22:36Z`: 1,522 rows, 507 health / 507 metadata / 507 `nessie_query_context`, zero bad rows, latest context HTTP 200 with valid context. Expected end is `2026-06-08T17:17:41.305Z` / `2026-06-08 13:17:41 EDT`. Final summary is not expected until completion.
+**Only live soak right now:** #1121 is the only active screen/process. Session `arkova-t2-redial-1121-79187530` is alive with node runner `/private/tmp/arkova-soaks/run-pr-1121-mcp-context-soak-template.mjs`. Candidate head `7918753029aa9b8d761930e520695e44f29bc9af`, base `bf40e389fd1644aea94557366e367b7b66df7616`. Evidence `/private/tmp/arkova-soaks/soak-pr-1121-mcp-context-redial-pvtqcpegmnoumsnklkvk-79187530-20260608T0517Z.jsonl`; stdout `/private/tmp/arkova-soaks/soak-pr-1121-mcp-context-redial-pvtqcpegmnoumsnklkvk-79187530-20260608T0517Z.stdout.log`. Latest local status at `2026-06-08T14:31:46Z`: 1,546 rows, 515 health / 515 metadata / 515 `nessie_query_context`, zero bad rows, latest context HTTP 200 with valid context, 5 citations, confidence 0.79. Expected end is `2026-06-08T17:17:41.305Z` / `2026-06-08 13:17:41 EDT`. Final summary is not expected until completion.
 
 **#1121 remaining gates before merge:** clock complete, final summary/audit, rollback proof, current required `Staging Soak Evidence Gate` green, PR body/Jira/Confluence closeout, queue/human/Mergify merge, deploy to prod, revision-drift/health proof on post-#1121 SHA, and production `nessie_query` smoke. Health evidence alone is not enough.
 
@@ -30,11 +30,13 @@
 
 **Synchronized T3 launch rule:** after #1121 prod proof exists, freeze `origin/main`, refresh or restack the eligible T3 PRs onto the same post-#1121 base/stack order, run clean-mirror or isolated preflight for each exact head, deploy exact heads with tag URL/revision/image digest, capture targeted smoke and rollback proof, then start 48h clocks as close together as the dependency graph permits. Do not start any T3 on current stale bases; that would produce non-merge-grade evidence when #1121 advances `main`.
 
+**#1055 first T3 prep:** #1055 remains blocked/no-start, but exact-head local prep is green. `RUN_LOCAL_TESTS=1 ./pr-1055-t3-runner.sh verify-local` passed typecheck plus 6 focused worker test files / 258 tests at `2026-06-08T14:28:50Z`; log `/private/tmp/arkova-soaks/pr-1055-t3-prep/logs/local-focused-tests.20260608T142837Z.log`. Guard checks correctly reject premature start without `PR1055_ALLOW_SOAK_START=1`, reject #1121 prod-proof build while #1121 is unmerged, and reject placeholder proof text.
+
 **Cross-system sync completed:** GitHub has rollout-sync comments on all 18 open PRs. Confluence T3 Migration Ledger Queue page `74022939` has a 2026-06-08 rollout section. Jira comments were added to SCRUM-2286 and SCRUM-2234. Confluence footer comments were added to SCRUM-2286 page `72613889` and SCRUM-2234 page `74055701`. Heartbeat automation `monitor-1104-t2-soak` was updated with the same state.
 
 **Detailed runbook:** `docs/staging/t2-t3-rollout-status-20260608.md` and `/private/tmp/arkova-soaks/pr-1055-t3-prep/POST_1121_T3_LAUNCH_RUNBOOK.md`.
 
-_Last refreshed: 2026-06-08 10:22 EDT by Codex using `git fetch/pull --ff-only`, `gh pr list/view/checks`, `screen -ls`, `ps`, #1121 evidence audit, prod `/health`, Deploy Worker run 27112157154, Revision Drift Alert run 27129992459, GitHub comment readback, Confluence readback, and Jira/Confluence write results._
+_Last refreshed: 2026-06-08 10:31 EDT by Codex using `git fetch/pull --ff-only`, `gh pr list/view/checks`, `screen -ls`, `ps`, #1121 evidence audit, #1055 guarded runner/local verification, prod `/health`, Deploy Worker run 27112157154, Revision Drift Alert run 27129992459, GitHub comment readback, Confluence readback, and Jira/Confluence write results._
 
 ### 2026-06-05 — Session close: #1022/#1031 merged, prod migrations + ledger reconciled, soak rig torn down
 

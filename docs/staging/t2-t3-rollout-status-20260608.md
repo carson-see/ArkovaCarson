@@ -4,7 +4,7 @@ This is an engineering coordination artifact. Confluence/Jira remain the story/d
 
 ## Snapshot
 
-- Checked at: `2026-06-08T14:22:36Z` / `2026-06-08 10:22 EDT`
+- Checked at: `2026-06-08T14:31:46Z` / `2026-06-08 10:31 EDT`
 - Current `origin/main`: `bf40e389fd1644aea94557366e367b7b66df7616`
 - Production proof: Deploy Worker run `27112157154`, Revision Drift Alert run `27129992459`, `/health.git_sha=bf40e389fd1644aea94557366e367b7b66df7616`
 - There is no `prod` branch/ref; use deploy/revision-drift/health evidence for prod-active proof.
@@ -28,7 +28,7 @@ Active T2:
 |---|---|---|---|---|
 | #1121 | `7918753029aa9b8d761930e520695e44f29bc9af` | `bf40e389fd1644aea94557366e367b7b66df7616` | `/private/tmp/arkova-soaks/soak-pr-1121-mcp-context-redial-pvtqcpegmnoumsnklkvk-79187530-20260608T0517Z.jsonl` | `2026-06-08T17:17:41.305Z` |
 
-Latest #1121 audit at `2026-06-08T14:22:36Z`: 1,522 rows, zero bad rows, latest context HTTP 200, valid context true.
+Latest #1121 audit at `2026-06-08T14:31:46Z`: 1,546 rows; 515 health / 515 metadata / 515 `nessie_query_context`; zero bad rows; latest context HTTP 200, valid context true, 5 citations, confidence 0.79. Screen `arkova-t2-redial-1121-79187530` and child node runner are alive. Clock is not complete; finalization remains disallowed until `2026-06-08T17:17:41.305Z` plus final summary/rollback/check gates.
 
 ## Open PR Queue
 
@@ -75,6 +75,12 @@ Launch grouping:
 - #1087 remains do-not-merge; #1105 remains T0/T1 human decision.
 
 ## Current Commands
+
+Current #1055 prep:
+
+- `RUN_LOCAL_TESTS=1 ./pr-1055-t3-runner.sh verify-local` passed typecheck and 6 focused worker test files / 258 tests at `2026-06-08T14:28:50Z`.
+- Log: `/private/tmp/arkova-soaks/pr-1055-t3-prep/logs/local-focused-tests.20260608T142837Z.log`.
+- Guard checks correctly fail before authorization/final proof: `start-soak` requires `PR1055_ALLOW_SOAK_START=1`; #1121 prod proof cannot build while #1121 is unmerged; placeholder proof text is rejected.
 
 Read-only status:
 
