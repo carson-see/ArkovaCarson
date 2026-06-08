@@ -151,6 +151,17 @@ API_V2_RATE_LIMIT_ADMIN_RULES_PER_MIN=50
 VITE_SENTRY_DSN=
 SENTRY_DSN=
 SENTRY_SAMPLE_RATE=0.1
+# Release tagging (SCRUM-2254 / HARDEN-1-F):
+#  Frontend `release` = real git commit SHA, injected at build into __APP_RELEASE__
+#  (vite.config.ts) from the first set of: VERCEL_GIT_COMMIT_SHA (Vercel) →
+#  GIT_COMMIT_SHA (other CI) → VITE_APP_VERSION → 'dev'. The Sentry Vite plugin
+#  uploads source maps under the same release name.
+VERCEL_GIT_COMMIT_SHA=               # set automatically by Vercel; commit SHA for FE Sentry release
+GIT_COMMIT_SHA=                      # optional fallback for non-Vercel FE builds
+VITE_APP_VERSION=                    # semver fallback for FE Sentry release
+VITE_APP_URL=                        # FE server_name tag (deployment surface); default 'arkova-frontend'
+#  Worker `release` = BUILD_SHA (see Worker section; same value /health exposes).
+#  Worker `serverName` = Cloud Run K_REVISION / K_SERVICE; default 'arkova-worker'.
 ```
 
 ## AI
@@ -332,6 +343,7 @@ deferred to R1-4-followup sub-stories.
 ### Cloud Run injected (read-only — set by the platform)
 ```bash
 K_SERVICE=                          # Cloud Run service name; presence detects "running on Cloud Run"
+K_REVISION=                         # Cloud Run revision name; used for deployment-surface telemetry
 BUILD_SHA=                          # baked at Docker build via --build-arg (R0-1 SCRUM-1247); 40-char git sha
 PORT=                               # Cloud Run sets this; worker uses it OR WORKER_PORT, prefer PORT
 ```

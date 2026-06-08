@@ -14,7 +14,7 @@ Core utility modules shared across the frontend. Every write path uses Zod valid
 - `validators.ts` — Zod schemas for fingerprints, anchors, profiles, API keys
 - `switchboard.ts` — feature flag definitions and client-side checking
 - `workerClient.ts` — fetch wrapper for frontend-to-worker API calls with auth injection
-- `sentry.ts` — Sentry init with mandatory PII scrubbing (Constitution 1.4)
+- `sentry.ts` — Sentry init with mandatory PII scrubbing (Constitution 1.4). SCRUM-2249: scrubbers also collapse UUID identifiers → `[UUID]` (incl. `event.transaction` + `event.request.url`) and the Supabase project-ref → `[SUPABASE_PROJECT]`. `release` is the real build SHA (`__APP_RELEASE__`, injected in vite.config.ts from `VERCEL_GIT_COMMIT_SHA`); `server_name` tag set via `initialScope`. `IGNORED_ERROR_PATTERNS` drops benign GoTrue Navigator-lock + login AbortError noise.
 - `auditLog.ts` — client-side audit event logger via POST /api/audit/event (never direct insert)
 - `fileHasher.ts` — SHA-256 fingerprinting via Web Crypto (client-side only)
 - `piiStripper.ts` / `enhancedPiiStripper.ts` — PII redaction before data leaves browser

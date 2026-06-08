@@ -4,7 +4,21 @@ import { sentryVitePlugin } from '@sentry/vite-plugin';
 import { visualizer } from 'rollup-plugin-visualizer';
 import path from 'node:path';
 
+// SCRUM-2249 (HARDEN-1-F / SCRUM-2254): Sentry release identity.
+// Prefer the real git commit SHA so the `release` tag matches the source maps
+// the Sentry Vite plugin uploads. Vercel exposes VERCEL_GIT_COMMIT_SHA at build
+// time; CI/other builds may pass GIT_COMMIT_SHA or fall back to VITE_APP_VERSION.
+const APP_RELEASE =
+  process.env.VERCEL_GIT_COMMIT_SHA ??
+  process.env.GIT_COMMIT_SHA ??
+  process.env.VITE_APP_VERSION ??
+  'dev';
+
 export default defineConfig({
+  define: {
+    // Inlined at build time; consumed by src/lib/sentry.ts initSentry().
+    __APP_RELEASE__: JSON.stringify(APP_RELEASE),
+  },
   build: {
     // Only generate source maps when Sentry can upload them.
     // When SENTRY_AUTH_TOKEN is set, the plugin uploads maps then deletes them
@@ -45,6 +59,9 @@ export default defineConfig({
       org: process.env.SENTRY_ORG ?? 'arkova',
       project: process.env.SENTRY_PROJECT ?? 'arkova-frontend',
       authToken: process.env.SENTRY_AUTH_TOKEN,
+      // SCRUM-2254: associate uploaded source maps with the same release the
+      // runtime tags events with (set via __APP_RELEASE__ in initSentry).
+      release: { name: APP_RELEASE },
       sourcemaps: {
         filesToDeleteAfterUpload: ['./dist/**/*.map'],
       },

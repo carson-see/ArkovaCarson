@@ -188,6 +188,8 @@ const ConfigSchema = z.object({
   // R1-4-followup sub-stories.
   /** Cloud Run service name (auto-injected). Useful as `isCloudRun` derived flag. */
   kService: z.string().optional(),
+  /** Cloud Run revision name (auto-injected). Used for deployment-surface telemetry. */
+  kRevision: z.string().optional(),
   /** Build SHA baked at Docker build via --build-arg (R0-1 SCRUM-1247). 40-char git SHA. */
   buildSha: z.string().regex(/^[0-9a-f]{40}$/i).or(z.literal('unknown')).optional(),
   /** OAuth state HMAC for Drive + GRC OAuth flows (SCRUM-1236). Worker fails closed if unset when ENABLE_DRIVE_OAUTH=true. */
@@ -616,6 +618,7 @@ function loadConfig(): Config {
     emailFrom: process.env.EMAIL_FROM,
     // SCRUM-1258 (R1-4) — critical absorption
     kService: process.env.K_SERVICE,
+    kRevision: process.env.K_REVISION,
     buildSha: process.env.BUILD_SHA,
     integrationStateHmacSecret: process.env.INTEGRATION_STATE_HMAC_SECRET,
     enableDriveOauth: process.env.ENABLE_DRIVE_OAUTH,
