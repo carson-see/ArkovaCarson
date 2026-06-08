@@ -10,8 +10,25 @@
  *     That route now fails closed with 410 because SCRUM-1955 moves visual
  *     fraud analysis to a client-side worker.
  *
- * All flags default to false (fail-closed). Uses TTL-based cache (60s)
- * to avoid per-request DB queries. Same pattern as featureGate.ts (P4.5-TS-12).
+ * Fail-direction (SCRUM-2247 / HARDEN-1-D): the DB switchboard row is the
+ * source of truth. When a DB read fails or returns no row, we resolve in this
+ * order:
+ *   1. Last-known-good DB value, if we have read one this process lifetime
+ *      (a transient Supabase blip must not flip a flag).
+ *   2. Otherwise the flag's *fail default*:
+ *      - Kill-switchable flags (SEMANTIC_SEARCH, AI_FRAUD, AI_REPORTS,
+ *        VISUAL_FRAUD_DETECTION) fail CLOSED (false). The env var is NOT a
+ *        re-open path: with env=true + DB=false, a blip must keep the feature
+ *        OFF, never silently re-enable it. (Pre-fix bug: returned envFallback
+ *        on any DB error → fail-OPEN. SEV1.)
+ *      - ENABLE_AI_EXTRACTION is launch-required (CLAUDE.md §1.6, default true
+ *        in prod). It is not a kill-switch, so its fail default is its launch
+ *        default (env value) — a blip keeps the launch path serving rather
+ *        than 503-ing it. An explicit DB=false still wins, and once read it
+ *        becomes the last-known-good.
+ *
+ * Uses TTL-based cache (60s) to avoid per-request DB queries. Same caching
+ * pattern as featureGate.ts (P4.5-TS-12).
  */
 
 import { Request, Response, NextFunction } from 'express';
@@ -36,9 +53,43 @@ const aiFlags: Record<string, FlagCache | null> = {
 type AIFlagKey = keyof typeof aiFlags;
 
 /**
+ * Last successfully-read DB value per flag (survives TTL expiry). Used so a
+ * transient DB blip after a good read holds the flag steady instead of
+ * snapping to a fail default. Cleared by _resetAIFlagCache().
+ */
+const lastKnownGoodDb: Partial<Record<AIFlagKey, boolean>> = {};
+
+/**
+ * Per-flag fail direction when no last-known-good DB value exists and the DB
+ * read fails. Kill-switchable flags fail CLOSED regardless of env (the env var
+ * is never a re-open path). ENABLE_AI_EXTRACTION is launch-required (§1.6) so
+ * it falls back to its launch default (env value).
+ */
+function failDefault(flagKey: AIFlagKey): boolean {
+  if (flagKey === 'ENABLE_AI_EXTRACTION') {
+    // Launch-required path: keep the launch default (env-driven, true in prod).
+    return process.env[flagKey] === 'true';
+  }
+  // Kill-switchable: fail CLOSED. Do not consult env — that is the SEV1 bug.
+  return false;
+}
+
+/**
+ * Resolve the value to use when the DB read does not yield a fresh row.
+ * Prefers last-known-good DB value, else the per-flag fail default.
+ */
+function resolveFallback(flagKey: AIFlagKey): boolean {
+  const lkg = lastKnownGoodDb[flagKey];
+  if (lkg !== undefined) return lkg;
+  return failDefault(flagKey);
+}
+
+/**
  * Read an AI feature flag with TTL caching.
- * Falls back to env var when DB flag can't be read (stabilizes gates
- * against transient DB issues). Env vars are set in Cloud Run deploy.
+ * The DB switchboard row is the source of truth. On a failed/empty DB read we
+ * resolve via resolveFallback() (last-known-good DB value, else the per-flag
+ * fail default) — never via a naive env-var fail-OPEN. See file header and
+ * SCRUM-2247 for the fail-direction contract.
  */
 async function readAIFlag(flagKey: AIFlagKey): Promise<boolean> {
   const now = Date.now();
@@ -47,11 +98,6 @@ async function readAIFlag(flagKey: AIFlagKey): Promise<boolean> {
   if (cached && cached.expiresAt > now) {
     return cached.value;
   }
-
-  // Env var fallback: if DB query fails, check env (set in Cloud Run deploy).
-  // The DB row is the source of truth; env var is a stabilizer for transient
-  // DB outages so a Supabase blip doesn't trip every gate to 503.
-  const envFallback = process.env[flagKey] === 'true';
 
   try {
     // Schema: switchboard_flags(id uuid, flag_key text, enabled boolean, ...).
@@ -68,18 +114,28 @@ async function readAIFlag(flagKey: AIFlagKey): Promise<boolean> {
       .single() as { data: { enabled: boolean } | null; error: unknown };
 
     if (error || !data) {
-      logger.warn({ error, flagKey, envFallback }, `Failed to read ${flagKey} flag from DB, falling back to env`);
-      aiFlags[flagKey] = { value: envFallback, expiresAt: now + FLAG_CACHE_TTL_MS };
-      return envFallback;
+      // No fresh row. Fail-direction resolution — NOT a blanket env fail-OPEN.
+      const fallback = resolveFallback(flagKey);
+      logger.warn(
+        { error, flagKey, fallback, lastKnownGood: lastKnownGoodDb[flagKey] },
+        `Failed to read ${flagKey} flag from DB, using fail-direction fallback`,
+      );
+      aiFlags[flagKey] = { value: fallback, expiresAt: now + FLAG_CACHE_TTL_MS };
+      return fallback;
     }
 
     const enabled = data.enabled === true;
+    lastKnownGoodDb[flagKey] = enabled;
     aiFlags[flagKey] = { value: enabled, expiresAt: now + FLAG_CACHE_TTL_MS };
     return enabled;
   } catch (err) {
-    logger.error({ error: err, flagKey, envFallback }, `Error reading ${flagKey} switchboard flag, falling back to env`);
-    aiFlags[flagKey] = { value: envFallback, expiresAt: now + FLAG_CACHE_TTL_MS };
-    return envFallback;
+    const fallback = resolveFallback(flagKey);
+    logger.error(
+      { error: err, flagKey, fallback, lastKnownGood: lastKnownGoodDb[flagKey] },
+      `Error reading ${flagKey} switchboard flag, using fail-direction fallback`,
+    );
+    aiFlags[flagKey] = { value: fallback, expiresAt: now + FLAG_CACHE_TTL_MS };
+    return fallback;
   }
 }
 
@@ -121,8 +177,21 @@ export const visualFraudDetectionGate = createAIGate(
   'Visual fraud detection',
 );
 
-/** Reset all AI flag caches — for testing only */
+/** Reset all AI flag caches AND last-known-good DB values — for testing only */
 export function _resetAIFlagCache(): void {
+  for (const key of Object.keys(aiFlags)) {
+    aiFlags[key] = null;
+  }
+  for (const key of Object.keys(lastKnownGoodDb)) {
+    delete lastKnownGoodDb[key as AIFlagKey];
+  }
+}
+
+/**
+ * Expire the TTL cache without clearing last-known-good DB values — for
+ * testing the "transient blip after a good read" path only.
+ */
+export function _expireAIFlagCache(): void {
   for (const key of Object.keys(aiFlags)) {
     aiFlags[key] = null;
   }

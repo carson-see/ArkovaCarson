@@ -14,7 +14,7 @@ Core utility modules shared across the frontend. Every write path uses Zod valid
 - `validators.ts` — Zod schemas for fingerprints, anchors, profiles, API keys
 - `switchboard.ts` — feature flag definitions and client-side checking
 - `workerClient.ts` — fetch wrapper for frontend-to-worker API calls with auth injection
-- `sentry.ts` — Sentry init with mandatory PII scrubbing (Constitution 1.4)
+- `sentry.ts` — Sentry init with mandatory PII scrubbing (Constitution 1.4). SCRUM-2249: scrubbers also collapse UUID identifiers → `[UUID]` (incl. `event.transaction` + `event.request.url`) and the Supabase project-ref → `[SUPABASE_PROJECT]`. `release` is the real build SHA (`__APP_RELEASE__`, injected in vite.config.ts from `VERCEL_GIT_COMMIT_SHA`); `server_name` tag set via `initialScope`. `IGNORED_ERROR_PATTERNS` drops benign GoTrue Navigator-lock + login AbortError noise.
 - `auditLog.ts` — client-side audit event logger via POST /api/audit/event (never direct insert)
 - `fileHasher.ts` — SHA-256 fingerprinting via Web Crypto (client-side only)
 - `piiStripper.ts` / `enhancedPiiStripper.ts` — PII redaction before data leaves browser
@@ -29,6 +29,7 @@ Core utility modules shared across the frontend. Every write path uses Zod valid
 
 ## Recent Changes
 
+- 2026-06-05 SCRUM-2246 (HARDEN-1-C): `lazyWithRetry.ts` — resilient `React.lazy` wrapper for route code-splitting. `loadWithRetry()` retries a `() => import()` loader N times (default 2, linear backoff) and, on a persistent CHUNK-LOAD error only, sets a `sessionStorage` sentinel (`arkova:chunk-reload`) and calls `location.reload()` ONCE to pick up a fresh `index.html` after a deploy renamed content-hashed chunks. If the sentinel is already set (reload already happened, chunk still missing) it rethrows so the route error boundary renders a graceful fallback instead of looping. Non-chunk errors fail fast and never reload. `isChunkLoadError()` matches a SET of Chrome/Firefox/Safari/Vite/webpack chunk-failure signatures, not one string. Sentinel clears on any successful load. `copy.ts` gained `ERROR_BOUNDARY_LABELS.STALE_VERSION_*`. Fixes Sentry FRONTEND-3/8 ("Failed to fetch dynamically imported module").
 - 2026-05-26 SCRUM-2013: `validators.ts` and `csvParser.ts` credential type lists expanded to 27 canonical values, adding `CPE`, `ACCREDITATION`, `CONTRACT_PRESIGNING`, and `CONTRACT_POSTSIGNING`.
 - 2026-05-29 SCRUM-1958 (subtask-4): `switchboard.ts` — flipped the **code default** of `ENABLE_SEMANTIC_SEARCH` to `false` so non-prod (local dev / preview) hides smart search until the `credential_embeddings` backfill lands. Production is driven by the `switchboard_flags` row, not this default (DB row untouched in this change). `copy.ts` — added `SEMANTIC_SEARCH_LABELS` (heading, placeholder, friendly match-strength labels, honest empty state, and 402/503/network/generic error copy). No client audit call for the search query — the worker records AI usage server-side (§1.6).
 

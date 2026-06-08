@@ -25,6 +25,23 @@
 /** Request timeout for all Supabase fetch calls (ms) */
 const FETCH_TIMEOUT_MS = 10_000;
 
+/**
+ * Embedding model used by the edge nessie vector-search path.
+ *
+ * WARNING (BUG-3a): this Workers AI model (`@cf/baai/bge-base-en-v1.5`,
+ * 768-dim) is NOT the same model family the public-record index was built
+ * with. The index is embedded by the worker with Gemini
+ * `gemini-embedding-001` (see `services/worker/src/ai/gemini-config.ts`
+ * `GEMINI_EMBEDDING_MODEL`). Querying a Gemini-built index with BGE vectors
+ * returns semantically meaningless nearest-neighbours. PR-3 re-routes the
+ * nessie vector path through the worker so both sides share ONE model.
+ * Until then the edge text-fallback (`nessieTextFallback`) is the truthful
+ * path. The cross-service drift-guard test
+ * (`services/worker/src/nessie-embedding-drift.test.ts`) fails if this
+ * literal diverges in family from the worker's index model.
+ */
+export const NESSIE_EMBEDDING_MODEL = '@cf/baai/bge-base-en-v1.5';
+
 /** SHA-256 hex pattern (64 hex chars). Exported so mcp-server.ts can
  *  reuse the single source of truth for its Zod input validator. */
 export const SHA256_HEX_RE = /^[a-fA-F0-9]{64}$/;
@@ -475,7 +492,18 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
  * (batch uses this to identify rows). When omitted, the single-record
  * contract is preserved.
  */
-function shapeAnchorRow(
+// BUG-2 (PR-1): keys MUST match what `get_public_anchor` actually emits
+// (migration 0311_scrum1599_public_anchor_provenance.sql,
+// jsonb_build_object body). The prior implementation read six keys the RPC
+// never returns — org_name / recipient_hash / issued_at / expires_at /
+// created_at(-as-anchor-time) / chain_tx_id — so every mapped field silently
+// fell back to its default ('Unknown', '', null) for SECURED anchors. The
+// correct RPC keys are issuer_name / recipient_identifier / issued_date /
+// expiry_date / anchor_timestamp / network_receipt_id.
+//
+// `anchor_timestamp` is the network-observed time (CLAUDE.md §1.5); the RPC
+// gates it to NULL for PENDING anchors, so default to null (NOT '') here.
+export function shapeAnchorRow(
   data: Record<string, unknown>,
   publicId?: string,
 ): Record<string, unknown> {
@@ -485,13 +513,13 @@ function shapeAnchorRow(
     ...(publicId !== undefined ? { public_id: publicId } : {}),
     verified: status === 'SECURED' || status === 'ACTIVE',
     status: mapStatus(status),
-    issuer_name: (data?.org_name as string) ?? 'Unknown',
-    recipient_identifier: (data?.recipient_hash as string) ?? '',
+    issuer_name: (data?.issuer_name as string) ?? 'Unknown',
+    recipient_identifier: (data?.recipient_identifier as string) ?? '',
     credential_type: (data?.credential_type as string) ?? 'UNKNOWN',
-    issued_date: (data?.issued_at as string | null) ?? null,
-    expiry_date: (data?.expires_at as string | null) ?? null,
-    anchor_timestamp: (data?.created_at as string) ?? '',
-    network_receipt_id: (data?.chain_tx_id as string | null) ?? null,
+    issued_date: (data?.issued_date as string | null) ?? null,
+    expiry_date: (data?.expiry_date as string | null) ?? null,
+    anchor_timestamp: (data?.anchor_timestamp as string | null) ?? null,
+    network_receipt_id: (data?.network_receipt_id as string | null) ?? null,
     record_uri: `https://app.arkova.ai/verify/${resolvedPublicId}`,
     ...(data?.jurisdiction ? { jurisdiction: data.jurisdiction as string } : {}),
   };
@@ -869,7 +897,7 @@ async function nessieVectorSearch(
   config: SupabaseConfig,
   ai: Ai,
 ): Promise<ToolResult> {
-  const embResult = await ai.run('@cf/baai/bge-base-en-v1.5', {
+  const embResult = await ai.run(NESSIE_EMBEDDING_MODEL, {
     text: query,
   }) as { data: number[][] };
   const embedding = embResult?.data?.[0];
@@ -947,14 +975,17 @@ async function nessieTextFallback(
 ): Promise<ToolResult> {
   try {
     // Extract known source keywords from the query for indexed filtering.
-    // public_records.source values: "EDGAR", "USPTO", "FEDERAL_REGISTER",
-    // "OPENALEX", etc. If the query mentions one, filter on it.
+    // BUG-3b (PR-1): ingestion fetchers insert LOWERCASE source values —
+    // 'edgar', 'uspto', 'federal_register', 'openalex' (verify in
+    // services/worker/src/jobs/*Fetcher.ts). The previous UPPERCASE literals
+    // ('EDGAR', ...) made `source=eq.EDGAR` never match any row, so every
+    // source-scoped nessie query silently returned the unfiltered recent set.
     const q = query.toLowerCase();
     const sourceFilters: string[] = [];
-    if (q.includes('sec') || q.includes('filing') || q.includes('edgar')) sourceFilters.push('EDGAR');
-    if (q.includes('patent') || q.includes('uspto')) sourceFilters.push('USPTO');
-    if (q.includes('federal') || q.includes('regulation')) sourceFilters.push('FEDERAL_REGISTER');
-    if (q.includes('paper') || q.includes('research') || q.includes('publication')) sourceFilters.push('OPENALEX');
+    if (q.includes('sec') || q.includes('filing') || q.includes('edgar')) sourceFilters.push('edgar');
+    if (q.includes('patent') || q.includes('uspto')) sourceFilters.push('uspto');
+    if (q.includes('federal') || q.includes('regulation')) sourceFilters.push('federal_register');
+    if (q.includes('paper') || q.includes('research') || q.includes('publication')) sourceFilters.push('openalex');
 
     const parts = [
       'select=id,title,source,source_url,record_type,content_hash,anchor_id,created_at',

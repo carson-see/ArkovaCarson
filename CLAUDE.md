@@ -15,7 +15,7 @@
 
 ---
 
-## 0. MANDATORY METHODOLOGY (8 rules)
+## 0. MANDATORY METHODOLOGY (10 rules)
 
 ### 1. TDD
 Red-Green-Refactor. Write a failing test before production code. No `test.skip`, no "will add later."
@@ -52,6 +52,9 @@ When the carve-out applies, the workflow is just `git commit` + `git push origin
 
 ### 9. Deploy gate ≡ CI lint job (R0-4 / SCRUM-1250)
 `deploy-worker.yml` worker-lint step and `ci.yml` `Lint worker (deploy-gate parity)` step BOTH invoke `npm run lint` from `services/worker/` — the script in `services/worker/package.json`. Drift between them caused the 2026-04-25 12-hour deploy blackout (deploy gate ran a stricter eslint than CI). `scripts/ci/check-deploy-lint-parity.ts` enforces this at PR time. Override via PR label `ci-config-change` only. Followup R4 story drives worker eslint warnings to zero so we can re-add `--max-warnings 0` everywhere.
+
+### 10. MCP `apply_migration` ledger reconciliation
+The Supabase MCP `apply_migration` records a timestamp-style `version` in `supabase_migrations.schema_migrations`, but the migration-drift gate's "PR numeric ledger drift" check requires the migration's **NUMERIC prefix** (`NNNN`) present in prod. After applying a PR-owned numeric migration via MCP, reconcile in-session: `UPDATE supabase_migrations.schema_migrations SET version='NNNN' WHERE name='<file>' AND version !~ '^[0-9]{4}$';` (operator-approved per §1.11A — this is the **one expected ledger write**, not a `migration repair`). Then confirm `list_migrations` shows the numeric head **before** declaring the migration done. Drop the `0322`/`0323` `exempt_regex` entries once in-flight migrations are reconciled.
 
 ---
 
@@ -261,12 +264,16 @@ Current epic health snapshot lives in HANDOFF.md and is updated at the end of ev
 | Deploying DB function changes without `NOTIFY pgrst, 'reload schema'` | Always reload schema cache |
 | Adding rolling narrative to CLAUDE.md | Put it in HANDOFF.md |
 | `.md` file as "documentation" | Confluence page, with the `.md` either deleted or demoted to internal notes |
+| Pushing to / editing a PR while it's in the Mergify queue | Check it's not queued first — a push resets queue progress + re-runs speculative checks (pure churn). Dequeue deliberately if a change is truly needed |
+| Two PRs each appending `## Recent migrations` at EOF of `supabase/migrations/agents.md` (collide → loser dequeued from Mergify; hit #1031 behind #1022) | Title each block `## Recent migrations (PR #NNNN)`, inserted in PR-number order (not blindly EOF); union-resolve as doc-only (no re-soak). Prefer per-PR notes in the PR description; shared `agents.md` carries only the durable post-merge summary |
 
 ---
 
 ## 7. ENVIRONMENT VARIABLES
 
 Moved out of this file. Canonical reference: [docs/reference/ENV.md](./docs/reference/ENV.md). Never commit actual values. Worker fails loudly in production when required vars are missing.
+
+**Periodic infra-cost sweep (release close / end-of-sprint):** beyond the per-run Vertex hygiene in §0 rule 7, run a standing sweep of BOTH `gcloud ai endpoints list` AND the Supabase staging-rig inventory (not only around tuning runs). This sprint's sweep found 6 empty Vertex endpoints + ~10 staging rigs. Tear down done/empty isolated soak rigs. NOTE: paid Supabase projects CANNOT be paused via MCP `pause_project` (it needs a free-tier downgrade first) — so either delete the rig, or flag it for Carson to pause/downgrade from the dashboard.
 
 ---
 
@@ -276,4 +283,4 @@ Moved to [HANDOFF.md](./HANDOFF.md). This file no longer carries a rolling narra
 
 ---
 
-_Directive version: 2026-04-21 (post-audit refactor). ≤300 lines by design. State → HANDOFF.md. Env → docs/reference/ENV.md. Status → Jira. Docs → Confluence. Mandates here._
+_Directive version: 2026-04-21 (post-audit refactor); amended 2026-06-05 (migration-merge retro: §0 rule 10 ledger reconciliation, §6 Mergify-queue + agents.md-union rows, §7 infra-cost sweep). ≤300 lines by design. State → HANDOFF.md. Env → docs/reference/ENV.md. Status → Jira. Docs → Confluence. Mandates here._
