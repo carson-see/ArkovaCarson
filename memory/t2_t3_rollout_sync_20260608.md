@@ -8,7 +8,10 @@ Operational rules for this lane:
 - #1121 must finish its 12h T2 soak, pass final evidence, merge, and prove prod-active before any #1055 T3 clock starts.
 - There is no `prod` branch/ref; prod-active proof is Deploy Worker + Revision Drift Alert + `/health.git_sha` + targeted prod smoke.
 - #1055 is guarded by `PR1055_T2_LANE_PROD_VERIFIED=1` and `PR1055_T2_LANE_PROD_PROOF`; do not override this guard before #1121 proof exists.
+- #1055 exact-head prep passed locally on 2026-06-08T14:28:50Z (`verify-local`: typecheck + 6 focused worker test files / 258 tests), but this is prep only, not soak evidence.
 - T3 migration chains cannot all be honestly soaked on stale bases. Refresh/restack after #1121, then start exact-head 48h windows as close together as dependency order and clean staging isolation allow.
 - Never count old #1055 12h mixed artifacts as current 48h T3 evidence.
+
+Latest durable checkpoint: 2026-06-08T14:33:57Z read-only #1121 audit had 1,552 rows, zero bad rows/anomalies, live screen/process, summary absent, and finalization disallowed until the 2026-06-08T17:17:41.305Z clock plus final gates.
 
 Detailed status: `docs/staging/t2-t3-rollout-status-20260608.md`.
