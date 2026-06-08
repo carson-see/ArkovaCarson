@@ -457,6 +457,19 @@ describe('SCRUM-1258 vendor connector cross-field guards', () => {
       expect(mod.config.buildSha).toBe(sha);
     });
   });
+
+  it('absorbs Cloud Run revision identity into typed config', async () => {
+    await withConfig(
+      {
+        K_REVISION: 'arkova-worker-00123-abc',
+        K_SERVICE: 'arkova-worker',
+      },
+      (mod) => {
+        expect(mod.config.kRevision).toBe('arkova-worker-00123-abc');
+        expect(mod.config.kService).toBe('arkova-worker');
+      },
+    );
+  });
 });
 
 // SCRUM-1258 (R1-4) batch 2 — feature flags, ARIZE, treasury alerts.
