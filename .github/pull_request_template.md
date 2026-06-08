@@ -42,6 +42,7 @@
 
 ## Staging Soak Evidence
 <!-- T0 may leave this section empty. T1/T2/T3 must use docs/staging/PR_TEMPLATE.md exactly. -->
+<!-- Approved release candidates may use `RC manifest path: docs/staging/rc-manifests/rc-*.json` instead of duplicating long soak evidence in each PR body. -->
 
 ## Screenshots
 <!-- For UI changes, include desktop (1280px) and mobile (375px) screenshots -->

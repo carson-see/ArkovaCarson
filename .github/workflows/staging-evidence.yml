@@ -38,6 +38,7 @@ jobs:
       HEAD_REF_SHA: ${{ github.event.pull_request.head.sha }}
       PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
       PR_BODY: ${{ github.event.pull_request.body }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
       PR_TITLE: ${{ github.event.pull_request.title }}
     steps:
       # Mergify merge queue creates speculative draft PRs (branch mergify/merge-queue/*)
