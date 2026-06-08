@@ -397,6 +397,75 @@ describe('handleNessieQuery worker proxy (BUG-3a)', () => {
     expect(parsed.results[0].similarity).toBe(0.91);
   });
 
+  it('(b4) allows worker context generation to exceed the Supabase fetch timeout', async () => {
+    vi.useFakeTimers();
+
+    const workerContextResponse = {
+      answer: 'Tesla reported total revenue of $96.8B in its FY2024 10-K filing.',
+      citations: [
+        {
+          record_id: 'rec-gemini-1',
+          source: 'edgar',
+          source_url: 'https://sec.gov/y',
+          title: 'Tesla Inc. 10-K',
+          relevance_score: 0.91,
+          anchor_proof: {
+            chain_tx_id: 'a'.repeat(64),
+            content_hash: 'b'.repeat(64),
+            explorer_url: 'https://mempool.space/tx/' + 'a'.repeat(64),
+            verify_url: 'https://app.arkova.ai/verify/ARK-DOC-XYZ',
+          },
+          excerpt: 'Total revenues were $96,773 million for the year ended December 31, 2024.',
+        },
+      ],
+      confidence: 0.87,
+      model: 'gemini-2.0',
+      query: 'Tesla revenue 2024',
+      task_type: 'compliance_qa',
+    };
+
+    mockFetch.mockImplementationOnce((_url, init?: RequestInit) => {
+      const signal = init?.signal;
+      return new Promise((resolve, reject) => {
+        let settled = false;
+        signal?.addEventListener('abort', () => {
+          if (settled) return;
+          settled = true;
+          const err = new Error('aborted');
+          err.name = 'AbortError';
+          reject(err);
+        });
+        setTimeout(() => {
+          if (settled) return;
+          settled = true;
+          resolve({
+            ok: true,
+            json: async () => workerContextResponse,
+          });
+        }, 14_000);
+      });
+    });
+
+    try {
+      const pending = handleNessieQuery(
+        { query: 'Tesla revenue 2024', mode: 'context', limit: 5 },
+        PROXY_CONFIG,
+      );
+
+      await vi.advanceTimersByTimeAsync(14_000);
+      const result = await pending;
+      expect(result.isError).toBeUndefined();
+
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.mode).toBe('context');
+      expect(parsed.total).toBe(1);
+      expect(parsed.citations).toHaveLength(1);
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('(c) worker error → graceful text fallback (does not throw, returns text_fallback)', async () => {
     // 1st call: worker proxy fails. 2nd call: text-fallback Supabase query.
     mockFetch.mockReset();

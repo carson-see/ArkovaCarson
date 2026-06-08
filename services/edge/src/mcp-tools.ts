@@ -22,8 +22,11 @@
  * edge handler context. Tracked as follow-up story INT-02b.
  */
 
-/** Request timeout for all Supabase fetch calls (ms) */
-const FETCH_TIMEOUT_MS = 10_000;
+/** Request timeout for Supabase fetch calls (ms). */
+const SUPABASE_FETCH_TIMEOUT_MS = 10_000;
+
+/** Request timeout for worker-proxied Nessie context generation (ms). */
+const NESSIE_WORKER_FETCH_TIMEOUT_MS = 30_000;
 
 /**
  * Embedding model used by the edge nessie vector-search path.
@@ -185,7 +188,7 @@ export function supabaseFetch(
   init?: RequestInit,
 ): Promise<Response> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), SUPABASE_FETCH_TIMEOUT_MS);
 
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -985,7 +988,7 @@ async function nessieWorkerQuery(
   const url = `${base}/api/v1/nessie/query?${params.toString()}`;
 
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), NESSIE_WORKER_FETCH_TIMEOUT_MS);
   try {
     const response = await fetch(url, {
       method: 'GET',
