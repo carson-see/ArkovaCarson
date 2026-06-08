@@ -735,6 +735,13 @@ interface AuthResult {
   tier: string;
   apiKeyId: string | null;
   scopes: string[];
+  /**
+   * The RAW API key the caller presented (X-API-Key auth only; null for
+   * OAuth Bearer). BUG-3a: forwarded edge→worker on the nessie_query proxy
+   * so the worker enforces the caller's org-scoping + per-caller rate limits.
+   * NEVER logged. Not used for any edge-local authorization decision.
+   */
+  callerApiKey: string | null;
 }
 
 const MCP_ANCHOR_WRITE_SCOPES = new Set(['write:anchors', 'anchor:write']);
@@ -793,6 +800,9 @@ async function validateApiKey(
           tier: data.tier,
           apiKeyId: data.api_key_id ?? data.id ?? null,
           scopes: Array.isArray(data.scopes) ? data.scopes : [],
+          // BUG-3a: retain the validated raw key so the nessie_query proxy
+          // can forward it edge→worker. Never logged.
+          callerApiKey: apiKey,
         };
       }
     }
@@ -847,7 +857,9 @@ export async function validateBearer(
       // Defence-in-depth: refuse if Supabase returns a different sub than
       // the JWT carried. Either side disagreeing is a hard fail.
       if (user.id !== local.userId) return null;
-      return { userId: user.id, tier: local.tier, apiKeyId: null, scopes: local.scopes };
+      // Bearer callers have no raw API key to forward — the worker nessie
+      // proxy requires X-API-Key, so these callers degrade to text fallback.
+      return { userId: user.id, tier: local.tier, apiKeyId: null, scopes: local.scopes, callerApiKey: null };
     }
   } catch {
     // Fall through
@@ -991,6 +1003,11 @@ export async function handleMcpRequest(
     supabaseUrl: env.SUPABASE_URL,
     supabaseKey: env.SUPABASE_SERVICE_ROLE_KEY,
     userId: auth.userId,
+    // BUG-3a: when both are present, nessie_query proxies to the worker's
+    // Gemini-space search forwarding the caller's key (preserves org-scoping
+    // + per-caller rate limits). Otherwise it degrades to the text fallback.
+    workerBaseUrl: env.WORKER_BASE_URL,
+    callerApiKey: auth.callerApiKey ?? undefined,
   };
 
   const clientIp = earlyClientIp;

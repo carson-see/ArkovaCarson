@@ -135,6 +135,8 @@ export interface NessieContextResponse {
   query: string;
   task_type?: IntelligenceMode;
   tokens_used?: number;
+  fallback?: boolean;
+  fallback_reason?: string;
 }
 
 // Intelligence system prompt is imported from prompts/intelligence.ts (NMT-07)
@@ -383,14 +385,8 @@ router.get('/', async (req: Request, res: Response) => {
       setCachedContext(cacheKey, contextResponse);
       res.json(contextResponse);
     } catch (contextError) {
-      // Graceful degradation: fall back to retrieval mode
-      logger.warn({ error: contextError }, 'Intelligence generation failed, falling back to retrieval');
-      res.json({
-        results,
-        count: results.length,
-        query: q,
-        fallback: true,
-      });
+      logger.warn({ error: contextError }, 'Intelligence generation failed, using deterministic context fallback');
+      res.json(buildDeterministicContextFallback(q, results, taskType, 'intelligence_generation_failed'));
     }
   } catch (error) {
     logger.error({ error }, 'Nessie query failed');
@@ -619,6 +615,74 @@ function parseIntelligenceResponse(
     task_type: taskType,
     tokens_used: tokensUsed,
   };
+}
+
+function buildDeterministicContextFallback(
+  query: string,
+  documents: NessieResult[],
+  taskType: IntelligenceMode,
+  fallbackReason: string,
+): NessieContextResponse {
+  const citedDocuments = documents.slice(0, 5);
+  const citations: NessieCitation[] = citedDocuments.map((doc) => ({
+    record_id: doc.record_id,
+    source: doc.source,
+    source_url: doc.source_url,
+    title: doc.title,
+    relevance_score: doc.relevance_score,
+    anchor_proof: doc.anchor_proof
+      ? {
+          chain_tx_id: doc.anchor_proof.chain_tx_id,
+          content_hash: doc.anchor_proof.content_hash,
+          explorer_url: doc.anchor_proof.explorer_url,
+          verify_url: doc.anchor_proof.verify_url,
+        }
+      : null,
+    excerpt: buildCitationExcerpt(doc),
+  }));
+
+  const sourceSummary = citations
+    .map((citation) => `${citation.source}${citation.title ? `: ${citation.title}` : ''}`)
+    .join('; ');
+  const answer = citations.length > 0
+    ? `Verified records matching "${query}" were retrieved from Arkova's public-record index. Review these citations directly because the live intelligence generator was unavailable for this response: ${sourceSummary}.`
+    : `No relevant verified documents were found for "${query}" while the live intelligence generator was unavailable.`;
+
+  const citedDocIds = new Set(citations.map((citation) => citation.record_id));
+  const anchoredCitationRate = citations.length > 0
+    ? citations.filter((citation) => citation.anchor_proof?.chain_tx_id).length / citations.length
+    : 0;
+  const uniqueSources = new Set(citations.map((citation) => citation.source));
+
+  return {
+    answer,
+    citations,
+    confidence: citations.length > 0 ? 0.35 : 0,
+    confidence_decomposition: {
+      citedDocumentCount: citedDocIds.size,
+      totalDocumentCount: documents.length,
+      anchoredCitationRate,
+      meanSourceAuthority: 1,
+      hasCorroboratingSources: uniqueSources.size >= 2,
+      taskType,
+    },
+    model: 'deterministic-context-fallback',
+    query,
+    task_type: taskType,
+    fallback: true,
+    fallback_reason: fallbackReason,
+  };
+}
+
+function buildCitationExcerpt(doc: NessieResult): string {
+  const meta = doc.metadata ?? {};
+  const abstract = typeof meta.abstract === 'string' ? meta.abstract.trim() : '';
+  if (abstract) return abstract.slice(0, 500);
+
+  const fullText = typeof meta.full_text === 'string' ? meta.full_text.trim() : '';
+  if (fullText) return fullText.slice(0, 500);
+
+  return `${doc.record_type}: ${doc.title ?? 'Untitled verified record'}`;
 }
 
 export { router as nessieQueryRouter };
