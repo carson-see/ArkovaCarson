@@ -334,14 +334,36 @@ describe('GET /nessie/query', () => {
       expect(res.body.citations).toHaveLength(0);
     });
 
-    it('falls back to retrieval mode when Gemini fails', async () => {
+    it('falls back to deterministic context when Gemini fails', async () => {
       mockGenerateContent.mockRejectedValue(new Error('Gemini unavailable'));
 
       const app = buildApp();
       const res = await request(app).get('/nessie/query?q=apple+report&mode=context');
 
       expect(res.status).toBe(200);
-      expect(res.body.results).toBeDefined();
+      expect(res.body.answer).toContain('Verified records matching');
+      expect(res.body.citations.length).toBeGreaterThan(0);
+      expect(res.body.citations[0].record_id).toBe('rec-1');
+      expect(res.body.model).toBe('deterministic-context-fallback');
+      expect(res.body.fallback).toBe(true);
+      expect(res.body.fallback_reason).toBe('intelligence_generation_failed');
+    });
+
+    it('falls back to deterministic context when Gemini returns malformed JSON', async () => {
+      mockGenerateContent.mockResolvedValue({
+        response: {
+          text: () => '{"answer":"truncated","citations":[',
+          usageMetadata: { totalTokenCount: 450 },
+        },
+      });
+
+      const app = buildApp();
+      const res = await request(app).get('/nessie/query?q=apple+report&mode=context');
+
+      expect(res.status).toBe(200);
+      expect(res.body.answer).toContain('Verified records matching');
+      expect(res.body.citations.length).toBeGreaterThan(0);
+      expect(res.body.confidence).toBeGreaterThan(0);
       expect(res.body.fallback).toBe(true);
     });
 
