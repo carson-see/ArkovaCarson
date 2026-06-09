@@ -121,7 +121,7 @@ Queue-drain rules:
 - Work one train at a time for migration/T3 risk.
 - Freeze the train launch SHA before soak evidence collection.
 - Do not start a downstream stacked PR until its upstream base and evidence state are known.
-- If `main` moves, recalculate risk and evidence impact before continuing.
+- If `main` moves, classify the drift before continuing. Main movement alone does not invalidate a soak. T0 docs/tests/CI/tooling-only drift may preserve evidence when the PR body records `Base drift impact:` with changed files, a no-runtime/schema/migration/staging/soak/deploy-impact assessment, and a named approver. Runtime, schema, migration, staging, deploy, or worker-image drift requires release-owner re-scope/retest.
 - Capture why each PR is allowed into the lane: risk tier, CI status, soak/evidence status, owner approval, and rollback posture.
 
 ETA assumptions:
@@ -151,7 +151,7 @@ Stop conditions:
 - A migration changes shared staging state outside the active train.
 - A rollback cannot be rehearsed or cannot be explained.
 - Soak evidence cannot prove which build was exercised.
-- `main` changes underneath an active train in a way that affects the target surface.
+- `main` changes underneath an active train in a way that affects the target surface. T0-only CI/tooling drift is not by itself a stop condition when documented with an approved impact assessment.
 - Production proof for #1121 is unavailable, stale, or contradictory.
 - A dependency update enters the train without a release owner decision.
 
@@ -181,6 +181,8 @@ Keep the required check name `Staging Soak Evidence Gate`. Teach the existing ga
 
 - Valid per-PR evidence for standalone PRs.
 - Valid RC manifest coverage proving the PR is included in an approved release candidate whose evidence covers the PR head SHA, risk tier, environment, and soak window.
+
+Evidence validity must be impact-based, not raw-SHA-panic-based. Exact PR head SHA remains mandatory: if the PR head changes, the tested artifact changed. Base SHA movement is different: when the intervening commits are T0 docs/tests/CI/tooling-only and do not affect runtime, schema, staging, deploy, worker image, or soak behavior, evidence can remain valid with a recorded `Base drift impact:` assessment and named approver. If the intervening commits touch runtime or migration surfaces, the gate must fail closed.
 
 Avoid required-check name churn. Renaming required checks creates branch protection churn, breaks queue expectations, and weakens audit continuity.
 

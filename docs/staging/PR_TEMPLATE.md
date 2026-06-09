@@ -41,6 +41,7 @@ T1 is not a casual bypass or zero-soak lane. It is blocked for migrations, publi
 - Worker revision: arkova-worker-staging-NNNNN-xxx
 - PR head SHA: 40-character commit SHA deployed/tested
 - Base SHA: 40-character `main`/base SHA used when evidence was captured
+- Base drift impact: optional; required only if `main` moved after evidence capture. Must list changed files, attest T0/CI-only no runtime/schema/migration/staging/soak/deploy impact, and name the approver.
 - Staging project ref: ujtlwnoqfhtitcmsnrpq or approved isolated project ref
 - Cloud Run service/tag URL: https://pr-NNN---arkova-worker-staging-...
 - Image digest: sha256:...
@@ -91,6 +92,7 @@ If the PR touches *any* worker/migration/SDK/contract file, this variant does **
 - Worker revision: arkova-worker-staging-NNNNN-xxx
 - PR head SHA: 40-character commit SHA deployed/tested
 - Base SHA: 40-character `main`/base SHA used when evidence was captured
+- Base drift impact: optional; required only if `main` moved after evidence capture. Must list changed files, attest T0/CI-only no runtime/schema/migration/staging/soak/deploy impact, and name the approver.
 - Staging project ref: ujtlwnoqfhtitcmsnrpq or approved isolated project ref
 - Cloud Run service/tag URL: https://pr-NNN---arkova-worker-staging-...
 - Image digest: sha256:...
@@ -115,7 +117,7 @@ If the PR touches *any* worker/migration/SDK/contract file, this variant does **
 
 Use this variant only when the release owner has approved a release candidate and the long soak evidence is captured in a local, machine-readable manifest. This keeps the same `Staging Soak Evidence Gate` required check name while moving long soak evidence from many mutable PR bodies into one audited RC artifact.
 
-The manifest must live under `docs/staging/rc-manifests/rc-*.json` in the checked-out PR tree. Do not point the PR body at external URLs or ad-hoc paths. Queue PRs using a central release manifest must be restacked onto the release-process commit first. The gate validates that the manifest covers the current PR head SHA, base/train SHA, risk tier, environment, clean preflight, soak window, approval, evidence TTL, and migration rollback/reapply proof when applicable.
+The manifest must live under `docs/staging/rc-manifests/rc-*.json` in the checked-out PR tree. Do not point the PR body at external URLs or ad-hoc paths. Queue PRs using a central release manifest must be restacked onto the release-process commit first. The gate validates that the manifest covers the current PR head SHA, base/train SHA, risk tier, environment, clean preflight, soak window, approval, evidence TTL, and migration rollback/reapply proof when applicable. If `main` moves after evidence capture, do not automatically restart the soak; first classify the drift. T0 docs/tests/CI/tooling-only drift can preserve evidence with an approved `Base drift impact:` note. Runtime, schema, migration, staging, deploy, or worker-image drift requires re-scope/retest.
 
 ```markdown
 ## Staging Soak Evidence
