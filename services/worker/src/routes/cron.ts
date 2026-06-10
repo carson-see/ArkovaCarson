@@ -89,6 +89,7 @@ import { runSubscriptionRenewal } from '../jobs/workspace-subscription-renewal.j
 import { runMainnetMigration, getMigrationStatus } from '../jobs/mainnet-migration.js';
 import { checkPipelineHealth } from '../jobs/pipeline-health.js';
 import { runConnectorHealthCheck } from '../jobs/connector-health-alert.js';
+import { runStuckAnchorCheck } from '../jobs/stuck-anchor-monitor.js';
 import { GRACE_EXPIRY_SWEEP_CRON, runGraceExpirySweep } from '../jobs/grace-expiry-sweep.js';
 import { sweepExpiredNonces, makeNonceSweepDb } from '../jobs/nonce-sweep.js';
 import { reconcileDocusignGaps } from '../jobs/docusign-reconciliation.js';
@@ -1522,6 +1523,27 @@ cronRouter.post('/connector-health-check', async (_req, res) => {
     res.json(result);
   } catch (error) {
     logger.error({ error }, 'Connector health check failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+// ─── SCRUM-2234: Stuck anchor monitor (2026-06-01 incident) ───
+//
+// Detects a stalled anchoring pipeline by the age of the oldest non-deleted
+// PENDING anchor. The daily-anchor-flush 401 blackout went undetected for ~6
+// weeks because nothing alerted on the queue not draining; this closes that
+// gap with an error-level log + Sentry page when the oldest PENDING anchor
+// exceeds STUCK_ANCHOR_ALERT_HOURS (default 24h). Cloud Scheduler ~hourly.
+//
+// A detected stall (healthy:false) is a SUCCESSFUL check → 200 (we do not
+// want Scheduler retrying a correct "pipeline is stuck" result). Only a DB
+// probe failure throws → 500 so Scheduler retries the broken probe.
+cronRouter.post('/check-stuck-anchors', async (_req, res) => {
+  try {
+    const result = await runStuckAnchorCheck(db);
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'Stuck anchor monitor failed');
     res.status(500).json({ error: 'Processing failed' });
   }
 });
