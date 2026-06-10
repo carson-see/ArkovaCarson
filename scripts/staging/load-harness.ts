@@ -36,14 +36,12 @@
  *   fill the PR's `## Staging Soak Evidence` block.
  *
  * Env:
- *   STAGING_API_BASE       default https://arkova-worker-staging-kvojbeutfa-uc.a.run.app
- *                          (the *main* URL — soaks ALL revisions in lockstep,
- *                          which is what caused the PR #742↔#755 collision on
- *                          2026-05-09). Per SCRUM-1803, prefer the per-PR
- *                          tag URL printed by `scripts/staging/deploy.sh`:
+ *   STAGING_API_BASE       REQUIRED per-PR tag URL printed by
+ *                          `scripts/staging/deploy.sh`:
  *                          https://pr-N---arkova-worker-staging-...run.app
  *                          That URL routes to your tagged revision only,
  *                          so parallel soaks don't contaminate each other.
+ *                          Shared/main staging URLs are refused.
  *   STAGING_CRON_SECRET    optional; without it, cron mode returns 401
  *   STAGING_API_KEY        optional; without it, anchor returns 401 and reads
  *                          use anonymous public probes plus auth-gated admin probes
@@ -69,6 +67,8 @@ import { dirname } from 'node:path';
 import { randomBytes, randomUUID, createHmac } from 'node:crypto';
 import { parseArgs } from 'node:util';
 
+import { resolveStagingApiBase } from './load-harness-env';
+
 const { values: args } = parseArgs({
   options: {
     mode: { type: 'string', default: 'mixed' },
@@ -81,8 +81,7 @@ const { values: args } = parseArgs({
   },
 });
 
-const API_BASE = process.env.STAGING_API_BASE
-  ?? 'https://arkova-worker-staging-kvojbeutfa-uc.a.run.app';
+let API_BASE = '';
 
 // --- IAM token (refresh every 30 min — tokens expire after 1h) ---
 
@@ -572,6 +571,7 @@ async function main(): Promise<void> {
   const durationMin = parsePositiveInt(args.duration, 15, 'duration');
   const concurrency = parsePositiveInt(args.concurrency, 10, 'concurrency');
   const evidencePath = args['evidence-out'];
+  API_BASE = resolveStagingApiBase(process.env);
 
   const stats = newStats();
   const startedHuman = new Date().toISOString();

@@ -979,6 +979,132 @@ describe('check-staging-evidence', () => {
       expect(r.errors.join(' ')).toMatch(/Base SHA/i);
     });
 
+    it('preserves completed T2 evidence when base drift is T0 CI-only and approved', () => {
+      const body = `## Staging Soak Evidence
+- Tier: T2
+- Staging branch: arkova-staging
+- Worker revision: arkova-worker-staging-00099-xyz
+- PR head SHA: 1234567890abcdef1234567890abcdef12345678
+- Base SHA: abcdef1234567890abcdef1234567890abcdef12
+- Base drift impact: T0 CI-only drift in .github/workflows/ci.yml; no runtime/schema/migration/staging/soak/deploy impact. Approved by: Carson 2026-06-09.
+- Staging project ref: ujtlwnoqfhtitcmsnrpq
+- Cloud Run service/tag URL: https://pr-999---arkova-worker-staging.example.run.app
+- Image digest: sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+- Evidence scope: merge-grade shared staging
+- Preflight timestamp: 2026-05-09 13:55 UTC
+- Preflight result: environment_type=clean_mirror
+- Soak start: 2026-05-09 14:00 UTC
+- Soak end: 2026-05-10 02:00 UTC
+- E2E result: 50/50 green
+- Migration applied: none
+- Rollback rehearsed: n/a
+- Staging deploy log id: 142
+`;
+      const r = check({
+        body,
+        files: ['services/worker/src/api/v1/docusign.ts'],
+        headSha: '1234567890abcdef1234567890abcdef12345678',
+        baseSha: '9999991234567890abcdef1234567890abcdef12',
+        baseDriftFiles: ['.github/workflows/ci.yml'],
+      });
+      expect(r.ok).toBe(true);
+    });
+
+    it('fails completed T2 evidence when base drift touches runtime code even with an impact note', () => {
+      const body = `## Staging Soak Evidence
+- Tier: T2
+- Staging branch: arkova-staging
+- Worker revision: arkova-worker-staging-00099-xyz
+- PR head SHA: 1234567890abcdef1234567890abcdef12345678
+- Base SHA: abcdef1234567890abcdef1234567890abcdef12
+- Base drift impact: T0 CI-only drift; no runtime/schema/migration/staging/soak/deploy impact. Approved by: Carson 2026-06-09.
+- Staging project ref: ujtlwnoqfhtitcmsnrpq
+- Cloud Run service/tag URL: https://pr-999---arkova-worker-staging.example.run.app
+- Image digest: sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+- Evidence scope: merge-grade shared staging
+- Preflight timestamp: 2026-05-09 13:55 UTC
+- Preflight result: environment_type=clean_mirror
+- Soak start: 2026-05-09 14:00 UTC
+- Soak end: 2026-05-10 02:00 UTC
+- E2E result: 50/50 green
+- Migration applied: none
+- Rollback rehearsed: n/a
+- Staging deploy log id: 142
+`;
+      const r = check({
+        body,
+        files: ['services/worker/src/api/v1/docusign.ts'],
+        headSha: '1234567890abcdef1234567890abcdef12345678',
+        baseSha: '9999991234567890abcdef1234567890abcdef12',
+        baseDriftFiles: ['services/worker/src/api/v1/docusign.ts'],
+      });
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/base SHA drift|T2 surface/i);
+    });
+
+    it('fails completed T2 evidence when T0 base drift lacks an approved impact note', () => {
+      const body = `## Staging Soak Evidence
+- Tier: T2
+- Staging branch: arkova-staging
+- Worker revision: arkova-worker-staging-00099-xyz
+- PR head SHA: 1234567890abcdef1234567890abcdef12345678
+- Base SHA: abcdef1234567890abcdef1234567890abcdef12
+- Staging project ref: ujtlwnoqfhtitcmsnrpq
+- Cloud Run service/tag URL: https://pr-999---arkova-worker-staging.example.run.app
+- Image digest: sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+- Evidence scope: merge-grade shared staging
+- Preflight timestamp: 2026-05-09 13:55 UTC
+- Preflight result: environment_type=clean_mirror
+- Soak start: 2026-05-09 14:00 UTC
+- Soak end: 2026-05-10 02:00 UTC
+- E2E result: 50/50 green
+- Migration applied: none
+- Rollback rehearsed: n/a
+- Staging deploy log id: 142
+`;
+      const r = check({
+        body,
+        files: ['services/worker/src/api/v1/docusign.ts'],
+        headSha: '1234567890abcdef1234567890abcdef12345678',
+        baseSha: '9999991234567890abcdef1234567890abcdef12',
+        baseDriftFiles: ['.github/workflows/ci.yml'],
+      });
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/Base drift impact/i);
+    });
+
+    it('fails completed T2 evidence when base drift approval is a placeholder', () => {
+      const body = `## Staging Soak Evidence
+- Tier: T2
+- Staging branch: arkova-staging
+- Worker revision: arkova-worker-staging-00099-xyz
+- PR head SHA: 1234567890abcdef1234567890abcdef12345678
+- Base SHA: abcdef1234567890abcdef1234567890abcdef12
+- Base drift impact: T0 CI-only drift in .github/workflows/ci.yml; no runtime/schema/migration/staging/soak/deploy impact. Approved by: TBD.
+- Staging project ref: ujtlwnoqfhtitcmsnrpq
+- Cloud Run service/tag URL: https://pr-999---arkova-worker-staging.example.run.app
+- Image digest: sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+- Evidence scope: merge-grade shared staging
+- Preflight timestamp: 2026-05-09 13:55 UTC
+- Preflight result: environment_type=clean_mirror
+- Soak start: 2026-05-09 14:00 UTC
+- Soak end: 2026-05-10 02:00 UTC
+- E2E result: 50/50 green
+- Migration applied: none
+- Rollback rehearsed: n/a
+- Staging deploy log id: 142
+`;
+      const r = check({
+        body,
+        files: ['services/worker/src/api/v1/docusign.ts'],
+        headSha: '1234567890abcdef1234567890abcdef12345678',
+        baseSha: '9999991234567890abcdef1234567890abcdef12',
+        baseDriftFiles: ['.github/workflows/ci.yml'],
+      });
+      expect(r.ok).toBe(false);
+      expect(r.errors.join(' ')).toMatch(/Base drift impact/i);
+    });
+
     it('fails completed T2 evidence with an unsupported evidence scope', () => {
       const body = `## Staging Soak Evidence
 - Tier: T2

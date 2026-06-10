@@ -177,6 +177,14 @@ allows the same set of files to coexist with non-canonical ledger entries.
    ```
 
    Other PRs' soaks hit their own tag URLs; your traffic is isolated to your revision.
+   The load harness refuses missing `STAGING_API_BASE`, shared/main staging
+   URLs, and untagged Cloud Run hosts so T2/T3 soaks cannot accidentally target
+   the mutable shared service.
+
+   Use `npm run staging:soak-lanes` for a read-only snapshot of active lanes,
+   latest local evidence summaries, missing final JSON, idle
+   T3/migration/soak-pending candidates, and blocked candidates carrying
+   labels such as `do-not-merge`.
 
    **Note on `STAGING_CRON_SECRET` (SCRUM-1808):** the staging worker binds its
    `CRON_SECRET` env var to the gcloud secret named **`cron-secret`** (the same
