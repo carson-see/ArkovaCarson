@@ -8,6 +8,64 @@ This is a time-boxed, risk-scoped change-management operating mode. It is not an
 
 ## Current State
 
+### Release queue unblocker #1141 - merged 2026-06-10
+
+PR #1141 (`fix(release): unblock parallel soak lanes`) merged via Mergify at
+2026-06-10T15:56:23Z. Merge commit:
+`3f678e7cb7b6f0bcb954141c75094730b49ef45e`.
+
+This makes impact-based base drift and isolated-lane visibility the active
+operating rule:
+
+- Exact PR head SHA movement still invalidates evidence.
+- Base SHA movement does not automatically invalidate a soak.
+- T0 docs/tests/CI/tooling-only drift may preserve evidence only with a
+  non-placeholder `Base drift impact:` note that lists changed files, states no
+  runtime/schema/migration/staging/soak/deploy/worker-image impact, and names
+  the approver.
+- Runtime, schema, migration, staging, deploy, soak-behavior, or worker-image
+  drift fails closed and requires release-owner re-scope/retest.
+- `scripts/staging/load-harness.ts` requires `STAGING_API_BASE` and refuses
+  shared/main staging URLs or untagged Cloud Run hosts.
+- `npm run staging:soak-lanes` is the read-only lane dashboard for active,
+  idle, and blocked soak candidates.
+
+Safe development posture after #1141:
+
+- Normal feature development may resume in isolated branches/worktrees.
+- Product/runtime/migration PRs still need isolated lane evidence appropriate to
+  their risk tier.
+- Do not mutate shared staging, Supabase data, deployments, Mergify, branch
+  protection, required checks, or existing release PR evidence outside an
+  approved lane.
+- #1141 does not make any product PR merge-ready by itself.
+
+SCRUM-2312 tracks adoption. Parent Epic: SCRUM-2313. Subtasks: SCRUM-2314
+through SCRUM-2318, plus SCRUM-2319 for the host-validation review follow-up.
+Non-secret lane-dashboard sample:
+`/Volumes/Extreme/Arkova/release-evidence/pr-1141/scrum-2312-soak-lanes-20260610T155859Z.txt`.
+
+Latest captured dashboard sample, 2026-06-10T15:59:01Z:
+
+- Active lane: PR #1055, detached screen, cron `2495 ok / 0 fail`, status
+  `200=2495`, final JSON missing as expected before the 48h completion gate.
+- Idle non-blocked T3/soak candidates: #1114, #1112, #1111, #1107, #1101,
+  #1100.
+- Blocked candidate: #1087 with `do-not-merge`.
+
+### Premortem - readiness source-of-truth failure modes
+
+Assume it is two weeks later and this source of truth failed to drive a clean
+PI or launch. The following are the failure modes this runbook is designed to
+prevent.
+
+| Failure mode | Trigger | Detection | Required mitigation | Owner |
+| --- | --- | --- | --- | --- |
+| PR #1141 is mistaken for launch readiness | #1141 merges and teams assume parallel lanes are safe by default | A lane lacks final JSON, exact SHA, image digest, rollback proof, or production proof | Treat #1141 as release-process tooling only; each lane still needs exact-head evidence and completion bundle | Tech Lead A + Architect |
+| Base drift is misclassified as harmless | Runtime/schema/migration/staging/deploy drift is labeled T0 docs/tests/CI/tooling-only | `Base drift impact:` lacks old/new base SHA, changed files, fail-closed category check, or named approver | Require explicit base-drift evidence; runtime/schema/migration/staging/deploy/worker-image drift always re-scopes/retests | Tech Lead A + Architect |
+| Wrong evidence layer is accepted | Merge is treated as production, production-contained as Done Done, stored secret as runtime-safe use, dashboard visibility as completed soak, or live endpoint as partner-ready output | Jira Done while subtasks remain open; no route evidence, UAT, cron smoke, final soak JSON, no-secret smoke, or partner validation | Keep states separate: merged, production-contained, prod-verified, Done Done; block closeout without matching evidence | PM + Architect + Tech Leads |
+| PR #1141 host-validation review issue is not resolved | Load harness accepts a host shaped like `pr-<number>---...` that is not an approved Cloud Run Arkova worker tag URL | Unresolved review thread or no test proving Cloud Run host constraints | Block #1141 as a readiness enabler until host validation is fixed or formally dispositioned | Tech Lead A + Architect |
+
 Before starting or approving a soak, run `npm run staging:soak-lanes`. It is a
 read-only lane dashboard that lists active `screen` soak sessions, latest local
 soak summaries, missing final JSON, and idle open PRs whose titles still look
