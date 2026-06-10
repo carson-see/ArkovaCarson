@@ -7,7 +7,8 @@ Tooling for the standing `arkova-staging` Supabase rig + `arkova-worker-staging`
 | File | Purpose |
 |---|---|
 | `seed.ts` | Synthesize prod-shape data on the staging rig. Tier flag (`--smoke` / `--standard` / `--full`) controls volume. Goes through the `staging_seed_auth_users` RPC (staging-only) so profiles satisfy the `auth.users` FK. Synthetic data only — never copies real customer rows. |
-| `load-harness.ts` | Drive sustained synthetic load against the worker. Modes: `anchor`, `burst`, `oscillate`, `webhooks`, `events`, `cron`, `reads`, `mixed` (default). Mixed runs all four pressure types concurrently. Set `STAGING_API_BASE` to the per-PR tag URL printed by `deploy.sh` so parallel soaks don't contaminate each other (SCRUM-1803). |
+| `load-harness.ts` | Drive sustained synthetic load against the worker. Modes: `anchor`, `burst`, `oscillate`, `webhooks`, `events`, `cron`, `reads`, `mixed` (default). Mixed runs all four pressure types concurrently. Requires `STAGING_API_BASE` to be the per-PR tag URL printed by `deploy.sh`; shared/main staging URLs are refused so parallel soaks don't contaminate each other (SCRUM-1803). |
+| `soak-lanes.ts` | Read-only active-lane dashboard. Lists active `screen` soak sessions, latest local evidence summaries, missing final JSON, idle open PRs whose titles indicate `T3`, `migration NNNN`, or `soak PENDING`, and blocked soak candidates with labels such as `do-not-merge`. |
 | `claim.sh` | Per-PR lease (multi-tenant after SCRUM-1803). Acquire / release / status the staging-rig lease. Posts to `#eng-staging` if `SLACK_WEBHOOK_URL` is set. |
 | `deploy.sh` | **Lease-enforced, tag-routed worker deploys (SCRUM-1803/SCRUM-1821).** Refuses to deploy without a `staging_lease` row for the PR (override with a structured `--force "<Jira>: <reason>"`). Checks image existence (retries to absorb Artifact Registry indexing lag on a fresh push — see below), blocks recent other-PR revisions, gates `--promote` behind the per-day Secret Manager token, deploys with `--tag pr-N --no-traffic`, and writes an audit row to `staging_deploy_log`. Replaces ad-hoc Cloud Run update calls. |
 | `cleanup-orphan-tags.sh` | Orphan tag janitor for `pr-*` Cloud Run traffic tags. Uses `gh api` to keep open PRs and removes tags for closed/merged PRs older than 7 days. Dry-run by default; live removal requires `--apply` for Cloud Scheduler / maintenance job use. |
@@ -19,7 +20,7 @@ Tooling for the standing `arkova-staging` Supabase rig + `arkova-worker-staging`
 
 - `STAGING_SUPABASE_URL` — `https://ujtlwnoqfhtitcmsnrpq.supabase.co`. Pull from `gcloud secrets versions access latest --secret=supabase-url-staging --project=arkova1`.
 - `STAGING_SUPABASE_SERVICE_ROLE_KEY` — `gcloud secrets versions access latest --secret=supabase-service-role-key-staging --project=arkova1`.
-- `STAGING_API_BASE` — load harness only. Default `https://arkova-worker-staging-kvojbeutfa-uc.a.run.app`.
+- `STAGING_API_BASE` — load harness only. Required per-PR tag URL from `deploy.sh` (for example `https://pr-<N>---arkova-worker-staging-...run.app`). The harness refuses missing values, shared/main staging URLs, and untagged Cloud Run hosts.
 - `STAGING_SUPABASE_DB_URL` — `teardown-and-reset.sh` only — for `supabase db push`.
 
 ## Optional env
@@ -93,8 +94,12 @@ npm run staging:seed -- --standard --reset
 
 # Drive load — 12-hour T2 soak with evidence file
 export STAGING_CRON_SECRET="$(gcloud secrets versions access latest --secret=cron-secret --project=arkova1)"
+export STAGING_API_BASE="https://pr-<N>---arkova-worker-staging-270018525501.us-central1.run.app"
 npm run staging:load -- --mode mixed --duration 720 \
   --evidence-out docs/staging/soak-pr-<N>-$(date +%Y%m%dT%H%M).json
+
+# Check active/idle/blocked soak lanes without mutating GitHub or staging
+npm run staging:soak-lanes
 
 # When done
 ./scripts/staging/claim.sh release <pr-number>

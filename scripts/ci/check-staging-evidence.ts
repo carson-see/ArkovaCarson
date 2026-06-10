@@ -32,6 +32,7 @@
  */
 
 import { existsSync, readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { resolve, sep } from 'node:path';
 import {
   REPO,
@@ -874,10 +875,92 @@ function shaEvidenceErrors(opts: {
   ];
 }
 
+const BASE_DRIFT_IMPACT_FIELD = 'Base drift impact:';
+const GIT_BIN = '/usr/bin/git';
+
+function changedFilesBetween(fromSha: string, toSha: string): string[] | null {
+  try {
+    return execFileSync(
+      GIT_BIN,
+      ['diff', '--name-only', `${fromSha}..${toSha}`],
+      { cwd: REPO, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+    ).split('\n').map((line) => line.trim()).filter(Boolean);
+  } catch {
+    return null;
+  }
+}
+
+function hasNamedApprover(value: string): boolean {
+  const match = /\bapproved by:\s*([^.;\n]+)/i.exec(value);
+  return match !== null && isFilledValue(match[1] ?? null);
+}
+
+function impactNoteAttestsNoRuntimeEffect(value: string): boolean {
+  const lower = value.toLowerCase();
+  return /\b(?:t0|ci[- ]?only|tooling[- ]?only|docs\/tests\/ci)\b/.test(lower)
+    && /\bno\b.*\b(?:runtime|schema|migration|staging|soak|deploy)\b.*\b(?:impact|change|effect)\b/.test(lower)
+    && hasNamedApprover(value);
+}
+
+function baseDriftImpactErrors(
+  body: string,
+  evidenceBaseSha: string,
+  currentBaseSha: string,
+  driftFilesOverride?: string[],
+): string[] {
+  const impact = extractEvidenceFieldValue(body, BASE_DRIFT_IMPACT_FIELD);
+  if (impact === null || !isFilledValue(impact)) {
+    return [
+      `Base SHA \`${evidenceBaseSha}\` differs from current base \`${currentBaseSha}\`. `
+      + `If the intervening main movement is harmless, add \`${BASE_DRIFT_IMPACT_FIELD}\` `
+      + 'with the changed files, the no-runtime/schema/staging-impact assessment, and a named approver; '
+      + 'otherwise refresh/re-scope the evidence.',
+    ];
+  }
+
+  if (!impactNoteAttestsNoRuntimeEffect(impact)) {
+    return [
+      `${BASE_DRIFT_IMPACT_FIELD} must state T0/CI-only drift, explicitly attest no runtime/schema/migration/staging/soak/deploy impact, and name an approver.`,
+    ];
+  }
+
+  const driftFiles = driftFilesOverride ?? changedFilesBetween(evidenceBaseSha, currentBaseSha);
+  if (driftFiles === null) {
+    return [
+      `Could not inspect changed files between evidence base \`${evidenceBaseSha}\` and current base \`${currentBaseSha}\`; `
+      + 'refresh/re-scope the evidence or run with enough git history to classify base drift.',
+    ];
+  }
+
+  const driftTier = requiredTierFor(driftFiles);
+  if (driftTier.tier !== 'T0') {
+    return [
+      `Base SHA drift from \`${evidenceBaseSha}\` to \`${currentBaseSha}\` touches ${driftTier.tier} surface `
+      + `(${driftTier.reason}); existing soak evidence cannot be preserved without release-owner re-scope/retest.`,
+    ];
+  }
+
+  return [];
+}
+
+function baseShaEvidenceErrors(
+  body: string,
+  expectedSha?: string,
+  driftFilesOverride?: string[],
+): string[] {
+  const evidenceSha = extractShaField(body, 'Base SHA:');
+  if (!evidenceSha) return ['Base SHA: must contain a 40-character commit SHA.'];
+
+  const expected = normalizeSha(expectedSha);
+  if (!expected || evidenceSha === expected) return [];
+
+  return baseDriftImpactErrors(body, evidenceSha, expected, driftFilesOverride);
+}
+
 function stagingIntegrityErrors(
   body: string,
   tier: Tier,
-  opts: { headSha?: string; baseSha?: string } = {},
+  opts: { headSha?: string; baseSha?: string; baseDriftFiles?: string[] } = {},
 ): string[] {
   if (tier === 'T0') return [];
 
@@ -904,13 +987,7 @@ function stagingIntegrityErrors(
       currentLabel: 'PR head',
       staleMessage: 'evidence cannot be copied across commits.',
     }),
-    ...shaEvidenceErrors({
-      body,
-      field: 'Base SHA:',
-      expectedSha: opts.baseSha,
-      currentLabel: 'base',
-      staleMessage: 're-check merge-base drift before claiming merge-grade evidence.',
-    }),
+    ...baseShaEvidenceErrors(body, opts.baseSha, opts.baseDriftFiles),
   ];
 }
 
@@ -979,6 +1056,7 @@ interface CheckOptions {
   files: string[];
   headSha?: string;
   baseSha?: string;
+  baseDriftFiles?: string[];
   prNumber?: number;
   nowMs?: number;
   rcManifestLoader?: RcManifestLoader;

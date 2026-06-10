@@ -9,7 +9,7 @@
 | `migration-drift.yml` | Read-only diff: local migrations vs prod applied set. Prevents the scorecard-outage class of bug. | SCRUM-908 |
 | `revision-drift.yml` | 10-min cron — fetch worker `/health.git_sha`, compare to `git rev-parse origin/main`, fire Sentry on drift > 1h or `missing-sha`. | SCRUM-1247 |
 
-`staging-evidence.yml` passes both `BASE_REF_SHA` and `HEAD_REF_SHA` into `scripts/ci/check-staging-evidence.ts`; the gate compares those exact SHAs against the PR-body evidence so copied or stale soak evidence cannot pass after a head/base move.
+`staging-evidence.yml` passes both `BASE_REF_SHA` and `HEAD_REF_SHA` into `scripts/ci/check-staging-evidence.ts`; the gate compares those SHAs against the PR-body evidence. Exact PR head SHA must always match. Base SHA movement is impact-assessed: T0 docs/tests/CI/tooling-only drift can preserve soak evidence with an approved `Base drift impact:` note, while runtime/schema/staging/deploy drift still fails closed.
 
 ## SCRUM-1068 — Sonatype SCA
 
