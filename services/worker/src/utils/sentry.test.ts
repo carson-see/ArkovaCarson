@@ -447,6 +447,20 @@ describe('captureStuckAnchorAlert (SCRUM-2255)', () => {
     );
   });
 
+  it('preserves caller severity when provided', () => {
+    captureStuckAnchorAlert('stuck anchor pipeline exceeds threshold', { totalStuck: 12 }, 'error');
+
+    expect(Sentry.captureMessage).toHaveBeenCalledTimes(1);
+    const [, scope] = (Sentry.captureMessage as unknown as { mock: { calls: unknown[][] } })
+      .mock.calls[0];
+    expect(scope).toEqual(
+      expect.objectContaining({
+        level: 'error',
+        fingerprint: STUCK_ANCHOR_FINGERPRINT,
+      }),
+    );
+  });
+
   it('exposes a single fixed fingerprint key', () => {
     expect(STUCK_ANCHOR_FINGERPRINT).toEqual(['stuck-anchor-monitor']);
   });

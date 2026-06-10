@@ -14,6 +14,11 @@ import { z } from 'zod';
 const boolEnv = (v: unknown) => v === 'true' || v === true;
 const boolEnvInverse = (v: unknown) => v !== 'false';
 const boolFlag = (def: boolean) => z.preprocess(boolEnv, z.boolean()).default(def);
+const positiveNumberWithFallback = (def: number) => z.preprocess((v) => {
+  if (v === undefined || v === null || v === '') return def;
+  const parsed = Number(v);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : def;
+}, z.number().positive());
 
 const ConfigSchema = z.object({
   // Server
@@ -314,6 +319,8 @@ const ConfigSchema = z.object({
   treasuryAlertEmail: z.string().email().optional(),
   /** TREASURY_LOW_BALANCE_USD — threshold in USD; defaults to 50. */
   treasuryLowBalanceUsd: z.coerce.number().nonnegative().default(50),
+  /** STUCK_ANCHOR_ALERT_HOURS — oldest pending-anchor age threshold; invalid values fall back to 24. */
+  stuckAnchorAlertHours: positiveNumberWithFallback(24),
 
   // Compliance-log exports (SCRUM-1848 / SCRUM-1870)
   /**
@@ -664,6 +671,7 @@ function loadConfig(): Config {
     slackTreasuryWebhookUrl: process.env.SLACK_TREASURY_WEBHOOK_URL,
     treasuryAlertEmail: process.env.TREASURY_ALERT_EMAIL,
     treasuryLowBalanceUsd: process.env.TREASURY_LOW_BALANCE_USD,
+    stuckAnchorAlertHours: process.env.STUCK_ANCHOR_ALERT_HOURS,
 
     // Compliance-log exports (SCRUM-1848 / SCRUM-1870). `|| undefined` so an
     // empty string falls through to the schema default 'exports', preserving

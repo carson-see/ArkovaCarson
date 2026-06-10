@@ -277,9 +277,10 @@ export const STUCK_ANCHOR_FINGERPRINT = ['stuck-anchor-monitor'] as const;
 export function captureStuckAnchorAlert(
   message: string,
   extra?: Record<string, unknown>,
+  level: 'warning' | 'error' = 'warning',
 ): void {
   Sentry.captureMessage(message, {
-    level: 'warning',
+    level,
     fingerprint: [...STUCK_ANCHOR_FINGERPRINT],
     ...(extra ? { extra } : {}),
   });

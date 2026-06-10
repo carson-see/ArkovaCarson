@@ -41,6 +41,9 @@ vi.mock('../jobs/anchorExpirySweep.js', () => ({
   sweepExpiredAnchors: vi.fn(),
   makeAnchorExpirySweepDb: vi.fn(() => ({})),
 }));
+vi.mock('../jobs/stuck-anchor-monitor.js', () => ({
+  runStuckAnchorCheck: vi.fn().mockResolvedValue({ healthy: true, alertFired: false }),
+}));
 vi.mock('./lifecycle.js', () => ({ trackOperation: vi.fn((operation) => operation) }));
 vi.mock('../utils/sentry.js', () => ({ withCronMonitoring: vi.fn((_name, _schedule, fn) => fn) }));
 
@@ -57,8 +60,9 @@ describe('setupScheduledJobs', () => {
 
     setupScheduledJobs(true);
 
-    // 13 = 12 pre-existing on main + 1 new (anchor-expiry-sweep, SCRUM-1736).
-    expect(mockCronSchedule).toHaveBeenCalledTimes(13);
+    // 14 = 12 pre-existing on main + anchor-expiry-sweep (SCRUM-1736)
+    //      + check-stuck-anchors (SCRUM-2234).
+    expect(mockCronSchedule).toHaveBeenCalledTimes(14);
     expect(mockLogger.warn).not.toHaveBeenCalled();
   });
 
@@ -78,7 +82,7 @@ describe('setupScheduledJobs', () => {
 
     setupScheduledJobs(true);
 
-    expect(mockCronSchedule).toHaveBeenCalledTimes(13);
+    expect(mockCronSchedule).toHaveBeenCalledTimes(14);
     expect(mockLogger.warn).not.toHaveBeenCalled();
   });
 
@@ -89,11 +93,11 @@ describe('setupScheduledJobs', () => {
 
     setupScheduledJobs(true);
 
-    // SCRUM-1736 added anchor-expiry-sweep to ANCHOR_TABLE_IN_PROCESS_JOBS
-    // (it operates on the anchors lifecycle), so under the maintenance
-    // flag it's also skipped. 5 unskipped schedules remain; 9 skip-warns fire.
+    // The anchor-table allowlist holds 9 jobs (SCRUM-1736's anchor-expiry-sweep
+    // + SCRUM-2234's check-stuck-anchors joined the 7 originals), so under the
+    // maintenance flag 9 schedules are skipped (9 warns) and 5 remain.
     expect(mockCronSchedule).toHaveBeenCalledTimes(5);
-    expect(mockLogger.warn).toHaveBeenCalledTimes(8);
+    expect(mockLogger.warn).toHaveBeenCalledTimes(9);
     expect(mockLogger.warn).toHaveBeenCalledWith(
       { jobName: 'anchor-expiry-sweep', expression: '0 3 * * *' },
       'Skipping in-process anchor cron in production because DISABLE_IN_PROCESS_ANCHOR_CRON=true',
@@ -117,5 +121,29 @@ describe('setupScheduledJobs', () => {
       .map((call) => (call[0] as { jobName: string }).jobName);
 
     expect(skippedJobNames).toContain('anchor-expiry-sweep');
+  });
+
+  it('registers check-stuck-anchors hourly (SCRUM-2234)', async () => {
+    const { setupScheduledJobs } = await import('./scheduled.js');
+
+    setupScheduledJobs(true);
+
+    // Hourly cron expression must be registered.
+    const expressions = mockCronSchedule.mock.calls.map((call) => call[0] as string);
+    expect(expressions).toContain('0 * * * *');
+  });
+
+  it('check-stuck-anchors is in the skipped set under maintenance mode (SCRUM-2234)', async () => {
+    mockConfig.nodeEnv = 'production';
+    mockConfig.disableInProcessAnchorCron = true;
+    const { setupScheduledJobs } = await import('./scheduled.js');
+
+    setupScheduledJobs(true);
+
+    const skippedJobNames = mockLogger.warn.mock.calls
+      .filter((call) => typeof (call[0] as { jobName?: string } | undefined)?.jobName === 'string')
+      .map((call) => (call[0] as { jobName: string }).jobName);
+
+    expect(skippedJobNames).toContain('check-stuck-anchors');
   });
 });
