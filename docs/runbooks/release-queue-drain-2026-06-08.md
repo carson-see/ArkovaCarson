@@ -8,6 +8,11 @@ This is a time-boxed, risk-scoped change-management operating mode. It is not an
 
 ## Current State
 
+Before starting or approving a soak, run `npm run staging:soak-lanes`. It is a
+read-only lane dashboard that lists active `screen` soak sessions, latest local
+soak summaries, missing final JSON, and idle open PRs whose titles still look
+like T3, migration, or soak-pending candidates.
+
 - Checked at: 2026-06-08T19:46:40Z.
 - Repository: `carson-see/ArkovaCarson`.
 - Live `main` SHA: `35023952a7657966c95e029ca480d38195507a14`.

@@ -876,11 +876,12 @@ function shaEvidenceErrors(opts: {
 }
 
 const BASE_DRIFT_IMPACT_FIELD = 'Base drift impact:';
+const GIT_BIN = '/usr/bin/git';
 
 function changedFilesBetween(fromSha: string, toSha: string): string[] | null {
   try {
     return execFileSync(
-      'git',
+      GIT_BIN,
       ['diff', '--name-only', `${fromSha}..${toSha}`],
       { cwd: REPO, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
     ).split('\n').map((line) => line.trim()).filter(Boolean);
