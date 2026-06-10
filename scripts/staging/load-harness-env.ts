@@ -22,7 +22,10 @@ function isPrTagHostname(hostname: string): boolean {
   const separatorIndex = hostname.indexOf(separator, prefix.length);
   if (separatorIndex <= prefix.length) return false;
   const prNumber = hostname.slice(prefix.length, separatorIndex);
-  return [...prNumber].every((char) => char >= '0' && char <= '9');
+  if (![...prNumber].every((char) => char >= '0' && char <= '9')) return false;
+
+  const routedHost = hostname.slice(separatorIndex + separator.length);
+  return routedHost.startsWith('arkova-worker-') && routedHost.endsWith('.run.app');
 }
 
 export function resolveStagingApiBase(env: { STAGING_API_BASE?: string }): string {

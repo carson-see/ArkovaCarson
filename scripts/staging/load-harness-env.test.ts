@@ -25,6 +25,22 @@ describe('resolveStagingApiBase', () => {
     ).toThrow(/tag-routed per-PR/);
   });
 
+  it('rejects tag-shaped hosts outside Cloud Run', () => {
+    expect(() =>
+      resolveStagingApiBase({
+        STAGING_API_BASE: 'https://pr-1055---arkova-worker-pr-1055-staging.example.com',
+      }),
+    ).toThrow(/tag-routed per-PR/);
+  });
+
+  it('rejects tag-shaped Cloud Run hosts that are not Arkova workers', () => {
+    expect(() =>
+      resolveStagingApiBase({
+        STAGING_API_BASE: 'https://pr-1055---not-arkova-worker-kvojbeutfa-uc.a.run.app',
+      }),
+    ).toThrow(/tag-routed per-PR/);
+  });
+
   it('accepts and normalizes a per-PR tag URL', () => {
     expect(
       resolveStagingApiBase({
