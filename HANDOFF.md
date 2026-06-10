@@ -14,6 +14,16 @@
 
 ## Now
 
+### 2026-06-10 — Release queue unblocker #1141 merged; dev may resume under isolated-lane rules
+
+**PR #1141 merged via Mergify** at 2026-06-10T15:56:23Z, merge commit `3f678e7cb7b6f0bcb954141c75094730b49ef45e`; `origin/main` now points at that SHA. The merged release-process change preserves exact PR-head evidence integrity while allowing release-owner-approved T0 docs/tests/CI/tooling-only base drift through a non-placeholder `Base drift impact:` note. Runtime, schema, migration, staging, deploy, soak-behavior, or worker-image drift still fails closed and requires re-scope/retest.
+
+**Safe development posture:** normal dev work may resume in isolated branches/worktrees. Do not mutate shared staging, Supabase data, deployments, Mergify, branch protection, required checks, or existing release PR evidence outside an approved lane. Product/runtime/migration PRs still need their own isolated lane evidence; #1141 does not make any product PR merge-ready by itself.
+
+**#1055 T3 soak remains active, not merge-ready:** as of 2026-06-10T15:59Z the read-only lane dashboard showed `cron ok=2495 fail=0 err=0.0% statuses[200=2495]`, final JSON missing as expected before the 48h gate completes at 2026-06-10T22:24:54Z. Main movement from #1139 was classified as T0 CI-only drift, not automatic soak invalidation; final approval still needs the evidence JSON, exact PR head verification, CI, base-drift impact approval, isolated environment verification, final preflight, and stuck-anchor smoke evidence.
+
+**SCRUM-2312 adoption track opened:** parent Epic [SCRUM-2313](https://arkova.atlassian.net/browse/SCRUM-2313), task [SCRUM-2312](https://arkova.atlassian.net/browse/SCRUM-2312), subtasks SCRUM-2314..SCRUM-2318 plus existing SCRUM-2319 host-validation tracker and SCRUM-2324 evidence-layer taxonomy. Non-secret `staging:soak-lanes` sample captured at `/Volumes/Extreme/Arkova/release-evidence/pr-1141/scrum-2312-soak-lanes-20260610T155859Z.txt`.
+
 ### 2026-06-05 — Session close: #1022/#1031 merged, prod migrations + ledger reconciled, soak rig torn down
 
 **12 session PRs merged to `main`** (origin/main tip `303b5fe42fdc` = PR #1031 merge): #1022 (SCRUM-2203 unembedded-records query perf), #1031 (SCRUM-1847/1869 public-anchor CPE/CLE metadata), #1023, #1025, #1029, #1034, #1043, #1045, #1050, #1051, #1061, #1066 (all confirmed merged via `gh pr list --state merged`). All 16 merged session feature branches deleted from the remote; dependabot/codex merged branches were already auto-pruned.
