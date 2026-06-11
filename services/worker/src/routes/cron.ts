@@ -1590,7 +1590,7 @@ cronRouter.post('/docusign-connect-failures-poll', async (_req, res) => {
 
 // ─── SCRUM-2098 [DS-LISTEN-01]: DocuSign listener config drift check ───
 // Detection only: reads DocuSign Connect config and emits alerts; no DocuSign
-// listener writes and no Scheduler binding changes in this cleanup lane.
+// listener writes. Cloud Scheduler binding lives in scripts/gcp-setup/cloud-scheduler.sh.
 cronRouter.post('/docusign-listener-drift', async (_req, res) => {
   try {
     const result = await reconcileListenerDrift(makeListenerDriftDeps());
