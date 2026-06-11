@@ -17,17 +17,79 @@ import type {
   EnvelopeSummary,
 } from './docusign-reconciliation.js';
 
+interface DbQueryResult<T> {
+  data: T | null;
+  error: { code?: string; message?: string } | string | null;
+}
+
+interface DbQuery<T> extends PromiseLike<DbQueryResult<T>> {
+  select(columns?: string): DbQuery<T>;
+  eq(field: string, value: unknown): DbQuery<T>;
+  is(field: string, value: unknown): DbQuery<T>;
+  in(field: string, values: readonly unknown[]): DbQuery<T>;
+  insert(value: Record<string, unknown>): PromiseLike<DbQueryResult<null>>;
+}
+
+type IntegrationRow = {
+  id?: unknown;
+  org_id?: unknown;
+  account_id?: unknown;
+  base_uri?: unknown;
+  token_secret_name?: unknown;
+};
+
+type NonceRow = {
+  envelope_id?: unknown;
+};
+
+interface DbClient {
+  from(table: 'org_integrations' | 'member_integrations'): DbQuery<IntegrationRow[]>;
+  from(table: 'docusign_webhook_nonces'): DbQuery<NonceRow[]>;
+  from(table: 'docusign_reconciliation_gaps'): DbQuery<null>;
+}
+
+function dbErrorMessage(error: DbQueryResult<unknown>['error']): string {
+  if (!error) return 'unknown_error';
+  if (typeof error === 'string') return error;
+  return error.message ?? String(error);
+}
+
+function dbErrorCode(error: DbQueryResult<unknown>['error']): string | null {
+  if (!error || typeof error === 'string') return null;
+  return error.code ?? null;
+}
+
 export interface ReconciliationDepOptions {
-  db?: { from: (table: string) => any; rpc?: (...args: any[]) => any };
+  db?: DbClient;
   env?: NodeJS.ProcessEnv;
   fetchImpl?: typeof fetch;
   refreshTokenStore?: DocusignRefreshTokenStore;
 }
 
+function toActiveIntegration(row: IntegrationRow): ActiveIntegration | null {
+  if (
+    typeof row.id !== 'string' ||
+    typeof row.org_id !== 'string' ||
+    typeof row.account_id !== 'string' ||
+    typeof row.base_uri !== 'string' ||
+    typeof row.token_secret_name !== 'string'
+  ) {
+    return null;
+  }
+
+  return {
+    id: row.id,
+    org_id: row.org_id,
+    account_id: row.account_id,
+    base_uri: row.base_uri,
+    token_secret_name: row.token_secret_name,
+  };
+}
+
 export function makeReconciliationDeps(
   options: ReconciliationDepOptions = {},
 ): ReconciliationDeps {
-  const db = options.db ?? (defaultDb as any);
+  const db = options.db ?? (defaultDb as unknown as DbClient);
   const env = options.env ?? process.env;
   const fetchImpl = options.fetchImpl ?? fetch;
   const refreshTokenStore =
@@ -37,13 +99,14 @@ export function makeReconciliationDeps(
   return {
     async listActiveIntegrations(): Promise<ActiveIntegration[]> {
       // Org-level integrations (existing)
+      // eslint-disable-next-line arkova/missing-org-filter -- scheduled reconciliation must scan all active DocuSign org integrations.
       const { data: orgData, error: orgError } = await db
         .from('org_integrations')
         .select('id, org_id, account_id, base_uri, token_secret_name')
         .eq('provider', 'docusign')
         .is('revoked_at', null);
 
-      if (orgError) throw new Error(`integration_list_failed: ${orgError.message ?? orgError}`);
+      if (orgError) throw new Error(`integration_list_failed: ${dbErrorMessage(orgError)}`);
 
       // SCRUM-2044: Member-level integrations
       const { data: memberData, error: memberError } = await db
@@ -52,12 +115,13 @@ export function makeReconciliationDeps(
         .eq('provider', 'docusign')
         .is('revoked_at', null);
 
-      if (memberError) throw new Error(`member_integration_list_failed: ${memberError.message ?? memberError}`);
+      if (memberError) throw new Error(`member_integration_list_failed: ${dbErrorMessage(memberError)}`);
 
       const allRows = [...(orgData ?? []), ...(memberData ?? [])];
-      return allRows.filter(
-        (row: any) => row.account_id && row.base_uri && row.token_secret_name,
-      );
+      return allRows.flatMap((row) => {
+        const integration = toActiveIntegration(row);
+        return integration ? [integration] : [];
+      });
     },
 
     async getAccessToken(integration: ActiveIntegration): Promise<string> {
@@ -135,7 +199,7 @@ export function makeReconciliationDeps(
           }
         } catch (err) {
           if (err instanceof Error && err.name === 'AbortError') {
-            throw new Error('envelopes_api_timeout');
+            throw new Error('envelopes_api_timeout', { cause: err });
           }
           throw err;
         } finally {
@@ -151,13 +215,16 @@ export function makeReconciliationDeps(
       envelopeIds: string[],
     ): Promise<Set<string>> {
       if (envelopeIds.length === 0) return new Set();
+      // eslint-disable-next-line arkova/missing-org-filter -- current nonce schema stores envelope_id/event_id only; lookup is constrained to DocuSign envelope ids from one active integration poll.
       const { data, error } = await db
         .from('docusign_webhook_nonces')
         .select('envelope_id')
         .in('envelope_id', envelopeIds);
 
-      if (error) throw new Error(`nonce_lookup_failed: ${error.message ?? error}`);
-      return new Set((data ?? []).map((r: { envelope_id: string }) => r.envelope_id));
+      if (error) throw new Error(`nonce_lookup_failed: ${dbErrorMessage(error)}`);
+      return new Set((data ?? [])
+        .map((row) => row.envelope_id)
+        .filter((value): value is string => typeof value === 'string'));
     },
 
     async insertGap(gap) {
@@ -171,14 +238,10 @@ export function makeReconciliationDeps(
       });
 
       if (error) {
-        if ((error as { code?: string }).code === '23505') {
+        if (dbErrorCode(error) === '23505') {
           return { inserted: false, duplicate: true, error: null };
         }
-        const msg =
-          typeof error === 'object' && error !== null && 'message' in error
-            ? String((error as { message: string }).message)
-            : String(error);
-        return { inserted: false, duplicate: false, error: msg };
+        return { inserted: false, duplicate: false, error: dbErrorMessage(error) };
       }
       return { inserted: true, duplicate: false, error: null };
     },

@@ -96,6 +96,8 @@ import { reconcileDocusignGaps } from '../jobs/docusign-reconciliation.js';
 import { makeReconciliationDeps } from '../jobs/docusign-reconciliation-deps.js';
 import { pollDocusignConnectFailures } from '../jobs/docusign-connect-failures.js';
 import { makeConnectFailuresDeps } from '../jobs/docusign-connect-failures-deps.js';
+import { reconcileListenerDrift } from '../jobs/docusign-listener-drift.js';
+import { makeListenerDriftDeps } from '../jobs/docusign-listener-drift-deps.js';
 import { MONTHLY_ALLOCATION_ROLLOVER_CRON, runAllocationRollover } from '../jobs/monthly-allocation-rollover.js';
 import { runStripeAnchorReconciliation, generateFinancialReport, processFailedPaymentRecovery } from '../billing/reconciliation.js';
 import { logHeapStatus } from '../utils/heapMonitor.js';
@@ -1582,6 +1584,23 @@ cronRouter.post('/docusign-connect-failures-poll', async (_req, res) => {
     res.json(result);
   } catch (error) {
     logger.error({ error }, 'DocuSign Connect failures poll failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+// ─── SCRUM-2098 [DS-LISTEN-01]: DocuSign listener config drift check ───
+// Detection only: reads DocuSign Connect config and emits alerts; no DocuSign
+// listener writes and no Scheduler binding changes in this cleanup lane.
+cronRouter.post('/docusign-listener-drift', async (_req, res) => {
+  try {
+    const result = await reconcileListenerDrift(makeListenerDriftDeps());
+    if (!result.ok) {
+      res.status(500).json(result);
+      return;
+    }
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'DocuSign listener drift reconciliation failed');
     res.status(500).json({ error: 'Processing failed' });
   }
 });
