@@ -24,6 +24,8 @@ const {
   endpointsSelect,
   // Retry logs query chain
   retryLogsSelect,
+  // SCRUM-2244: dead-letter-queue upsert chain
+  dlqUpsert,
   // RPC mock
   mockRpc,
 } = vi.hoisted(() => {
@@ -151,6 +153,18 @@ const {
   });
   (mockRpc as unknown as { __rpcState: typeof rpcState }).__rpcState = rpcState;
 
+  // SCRUM-2244: dead-letter-queue upsert chain — .from(...).upsert(row, opts)
+  // returns a resolved promise so `await (db as any).from(...).upsert(...)`
+  // works. The upsert (was a plain insert) dedupes on the partial unique index
+  // (endpoint_id, event_type, event_id, failure_kind) with ignoreDuplicates so
+  // re-DLQ of the same event (retry/re-emit during a DB outage) is a no-op and
+  // does NOT create a duplicate audit row. dlqUpsert lets tests assert both the
+  // durable-preservation contract and the onConflict/ignoreDuplicates options.
+  const dlqUpsert = vi.fn(
+    (_row?: unknown, _opts?: unknown): Promise<{ data: unknown; error: unknown }> =>
+      Promise.resolve({ data: null, error: null }),
+  );
+
   const mockFetch = vi.fn();
 
   // Build a from() router
@@ -166,6 +180,7 @@ const {
     deliveryLogUpdate,
     endpointsSelect,
     retryLogsSelect,
+    dlqUpsert,
     mockRpc,
   };
 });
@@ -287,6 +302,10 @@ function setupDbRouting(overrides: Record<string, unknown> = {}) {
       case 'webhook_endpoints':
         return {
           select: endpointsSelect.select,
+        };
+      case 'webhook_dead_letter_queue':
+        return {
+          upsert: dlqUpsert,
         };
       default:
         return {};
@@ -733,6 +752,185 @@ describe('deliverToEndpoint', () => {
         }),
       }),
     );
+  });
+
+  it('SCRUM-2244: preserves the event in the dead-letter queue when the delivery_log write fails persistently (audit-integrity)', async () => {
+    vi.useRealTimers();
+
+    // Idempotency lookup: no existing row (first attempt, insert path).
+    deliveryLogSelect.single.mockResolvedValue({ data: null, error: null });
+    // Both the first insert AND the single transient retry fail with the same
+    // persistent transient error. Pre-fix: Sentry capture + return false, and
+    // the audit row is silently dropped (no durable record of the event).
+    deliveryLogInsert.single
+      .mockResolvedValueOnce({ data: null, error: { message: 'TypeError: fetch failed' } })
+      .mockResolvedValueOnce({ data: null, error: { message: 'TypeError: fetch failed' } });
+
+    mockRpc.mockResolvedValue({ data: true });
+    endpointsSelect.contains.mockResolvedValue({ data: [MOCK_ENDPOINT], error: null });
+    dlqUpsert.mockClear();
+    dlqUpsert.mockReturnValue(Promise.resolve({ data: { id: 'dlq-1' }, error: null }));
+    setupDbRouting();
+
+    await dispatchWebhookEvent('org-001', 'anchor.secured', 'evt-audit-001', MOCK_PAYLOAD_DATA);
+
+    // No HTTP delivery attempted — the log row never committed.
+    expect(mockFetch).not.toHaveBeenCalled();
+
+    // AUDIT-INTEGRITY CONTRACT: the event is NOT silently dropped. It is
+    // durably preserved in the dead-letter queue, keyed by the same
+    // idempotency_key the delivery-log row would have used, so it can be
+    // reconciled/replayed later.
+    expect(dlqUpsert).toHaveBeenCalledTimes(1);
+    const dlqRow = dlqUpsert.mock.calls[0][0] as unknown as {
+      endpoint_id: string;
+      org_id: string;
+      event_type: string;
+      event_id: string;
+      failure_kind: string;
+      payload: { event_id: string; data: Record<string, unknown> };
+      error_message: string;
+    };
+    expect(dlqRow.endpoint_id).toBe('ep-001');
+    expect(dlqRow.org_id).toBe('org-001');
+    expect(dlqRow.event_type).toBe('anchor.secured');
+    expect(dlqRow.event_id).toBe('evt-audit-001');
+    // SCRUM-2244: this path is the log-write failure, distinct from HTTP failure.
+    expect(dlqRow.failure_kind).toBe('log_write');
+    // The full webhook payload is preserved so the event can be replayed.
+    expect(dlqRow.payload.event_id).toBe('evt-audit-001');
+    // The error_message records WHY it landed in the DLQ (log-write failure,
+    // not HTTP-delivery failure) and carries the idempotency key for dedupe.
+    expect(dlqRow.error_message).toMatch(/delivery_log/i);
+    expect(dlqRow.error_message).toContain('ep-001-anchor.secured-evt-audit-001');
+
+    // SCRUM-2244 dedup: the write is an UPSERT with ignoreDuplicates so a
+    // re-DLQ of the same event during a DB outage is a no-op (no duplicate row).
+    const dlqOpts = dlqUpsert.mock.calls[0][1] as unknown as {
+      onConflict?: string;
+      ignoreDuplicates?: boolean;
+    };
+    expect(dlqOpts.onConflict).toBe('endpoint_id,event_type,event_id,failure_kind');
+    expect(dlqOpts.ignoreDuplicates).toBe(true);
+
+    // Still surfaced to Sentry for alerting (existing SCRUM-1805 behaviour).
+    expect(mockSentry.captureException).toHaveBeenCalledWith(
+      expect.any(Error),
+      expect.objectContaining({
+        tags: expect.objectContaining({ stage: 'delivery_log_insert' }),
+      }),
+    );
+
+    vi.useFakeTimers();
+  }, 10_000);
+
+  it('SCRUM-2244: both the log-write AND the DLQ write fail (full DB outage) → event is dropped, Sentry fired (residual risk, no throw)', async () => {
+    // RESIDUAL-RISK CONTRACT (honest behavior): under a full-DB outage the
+    // delivery_log write fails AND the dead-letter-queue write fails too. There
+    // is no durable store left to preserve the event, so it is dropped. The
+    // honest, asserted behavior is: (1) no crash/throw escapes the dispatcher,
+    // (2) the loss is surfaced to Sentry for alerting, (3) no HTTP delivery.
+    vi.useRealTimers();
+
+    deliveryLogSelect.single.mockResolvedValue({ data: null, error: null });
+    deliveryLogInsert.single
+      .mockResolvedValueOnce({ data: null, error: { message: 'TypeError: fetch failed' } })
+      .mockResolvedValueOnce({ data: null, error: { message: 'TypeError: fetch failed' } });
+
+    // The DLQ write ALSO fails (same outage). moveToDeadLetterQueue catches and
+    // logs; the event is now genuinely lost — assert we don't pretend otherwise.
+    dlqUpsert.mockClear();
+    dlqUpsert.mockRejectedValue(new Error('DLQ unreachable: connection refused'));
+
+    mockRpc.mockResolvedValue({ data: true });
+    endpointsSelect.contains.mockResolvedValue({ data: [MOCK_ENDPOINT], error: null });
+    setupDbRouting();
+
+    // Must not throw — dispatch fans out best-effort.
+    await expect(
+      dispatchWebhookEvent('org-001', 'anchor.secured', 'evt-outage-001', MOCK_PAYLOAD_DATA),
+    ).resolves.toBeUndefined();
+
+    // No HTTP delivery (log row never committed).
+    expect(mockFetch).not.toHaveBeenCalled();
+    // The DLQ write was attempted (and failed).
+    expect(dlqUpsert).toHaveBeenCalledTimes(1);
+    // The original log-write failure was surfaced to Sentry (SCRUM-1805).
+    expect(mockSentry.captureException).toHaveBeenCalledWith(
+      expect.any(Error),
+      expect.objectContaining({
+        tags: expect.objectContaining({ stage: 'delivery_log_insert' }),
+      }),
+    );
+    // The DLQ-write failure (the actual data loss) is logged so an alert can
+    // trip — this is the honest residual-risk signal, not a silent drop.
+    expect(mockLogger.error).toHaveBeenCalledWith(
+      expect.objectContaining({ endpointId: 'ep-001', eventId: 'evt-outage-001' }),
+      'Failed to write to dead letter queue',
+    );
+
+    vi.useFakeTimers();
+  }, 10_000);
+
+  it('SCRUM-2244: HTTP-delivery permanent failure DLQs via upsert with http_delivery discriminator + dedup options', async () => {
+    // The OTHER DLQ path (permanent HTTP failure on the final attempt) must
+    // also be an idempotent upsert so a re-emit/retry does not duplicate the
+    // audit row. It uses failure_kind='http_delivery' so it is a distinct row
+    // from any log_write failure of the same event.
+    deliveryLogSelect.single.mockResolvedValue({ data: null, error: null });
+    deliveryLogInsert.single.mockResolvedValue({ data: { id: 'log-001' }, error: null });
+    // Final attempt (MAX_RETRIES = 5) so shouldRetry is false → permanent fail.
+    mockFetch.mockResolvedValue({ ok: false, status: 500, text: () => Promise.resolve('err') });
+    deliveryLogUpdate.eq.mockResolvedValue({ error: null });
+    dlqUpsert.mockClear();
+    dlqUpsert.mockReturnValue(Promise.resolve({ data: { id: 'dlq-http' }, error: null }));
+
+    // Drive deliverToEndpoint at the terminal attempt via processWebhookRetries.
+    retryLogsSelect.limit.mockResolvedValue({
+      data: [
+        {
+          id: 'log-001',
+          attempt_number: 5, // +1 → 5 = MAX_RETRIES, shouldRetry false
+          payload: {
+            event_type: 'anchor.secured',
+            event_id: 'evt-http-001',
+            timestamp: '2026-03-10T11:55:00Z',
+            data: MOCK_PAYLOAD_DATA,
+          },
+          webhook_endpoints: MOCK_ENDPOINT,
+        },
+      ],
+      error: null,
+    });
+
+    mockDbFrom.mockImplementation((table: string) => {
+      if (table === 'webhook_delivery_logs') {
+        return {
+          select: (...args: string[]) => {
+            if (args[0]?.includes('webhook_endpoints')) {
+              return { eq: retryLogsSelect.eq };
+            }
+            return { eq: vi.fn(() => ({ single: deliveryLogSelect.single })) };
+          },
+          insert: deliveryLogInsert.insert,
+          update: deliveryLogUpdate.update,
+        };
+      }
+      if (table === 'webhook_dead_letter_queue') {
+        return { upsert: dlqUpsert };
+      }
+      return {};
+    });
+
+    await processWebhookRetries();
+
+    expect(dlqUpsert).toHaveBeenCalledTimes(1);
+    const dlqRow = dlqUpsert.mock.calls[0][0] as unknown as { failure_kind: string; event_id: string };
+    expect(dlqRow.failure_kind).toBe('http_delivery');
+    expect(dlqRow.event_id).toBe('evt-http-001');
+    const dlqOpts = dlqUpsert.mock.calls[0][1] as unknown as { onConflict?: string; ignoreDuplicates?: boolean };
+    expect(dlqOpts.onConflict).toBe('endpoint_id,event_type,event_id,failure_kind');
+    expect(dlqOpts.ignoreDuplicates).toBe(true);
   });
 
   it('retries delivery_log insert once on transient fetch failure', async () => {
