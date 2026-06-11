@@ -132,6 +132,14 @@ Open decisions still on Carson: DISC-02 legal signoff, DISC-03 fee (rec OP_RETUR
 
 _Last refreshed: 2026-06-15 by Claude (carson@arkova.io) — rigs verified via Supabase MCP `list_projects` (both refs ACTIVE_HEALTHY, us-east-2, PG 17.6, created 18:15–18:16Z); branches via `git branch -a` (both on origin) + `git show --stat` (`d11deed3`, `5c914cbd`, migrations 0340/0341 in-diff); rig schema-head 0339 + `soak_artifact` preflight as reported by the OPS-01 build, not re-run this turn. No prod schema/worker state changed._
 
+### 2026-06-11 — Container-image CVE scan gate added to worker deploy (TVM/IVS) — PR open, T2, soak pending
+
+**Branch `chore/container-image-cve-scan` (off `origin/main` 3f906c99); PR open as Draft — not merged, not deployed.** Closes the CSA STAR / CAIQ TVM/IVS gap: dependency CVEs were scanned (`sonatype-scan.yml`, `npm audit`) but the worker container's OS/base-image layer was not. `deploy-worker.yml` now runs a pinned Trivy scan (`aquasecurity/trivy-action@ed142fd0` v0.36.0, `vuln-type: os`, fixable HIGH/CRITICAL → `exit-code 1`) between `docker build` and `docker push` — a vulnerable image never reaches Artifact Registry / Cloud Run. Library CVEs stay in sonatype's lane (no double-gating). Anti-regression guard `scripts/ci/check-image-scan-gate.ts` (+ unit tests) is wired into the `dependency-scan` CI job; no override label. `services/worker/Dockerfile` adds `apk upgrade --no-cache` so the shipped image picks up Alpine security patches. Control doc: `docs/compliance/container-image-scanning.md`; CAIQ rows IVS-04 + new TVM section.
+
+**Local check (not prod):** built the worker image and ran Trivy at the exact gate config — before the Dockerfile patch, 2 fixable HIGH OS CVEs (OpenSSL CVE-2026-45447 in libssl3/libcrypto3 3.5.6-r0→3.5.7-r0) blocked the gate (exit 1); after the patch, the OS layer is clean (exit 0).
+
+**Gates remaining:** (1) T2 staging soak — deploy-worker.yml edits classify T2; the modified pipeline must run against staging to fill the worker-artifact evidence (Carson runs the staging deploy). (2) Jira story + Confluence page for the control. (3) Separate worker dependency-bump PR for the library-layer CVEs the scan surfaced (glob/minimatch/tar).
+
 ### 2026-06-10 — Release queue unblocker #1141 merged; dev may resume under isolated-lane rules
 
 **PR #1141 merged via Mergify** at 2026-06-10T15:56:23Z, merge commit `3f678e7cb7b6f0bcb954141c75094730b49ef45e`; `origin/main` now points at that SHA. The merged release-process change preserves exact PR-head evidence integrity while allowing release-owner-approved T0 docs/tests/CI/tooling-only base drift through a non-placeholder `Base drift impact:` note. Runtime, schema, migration, staging, deploy, soak-behavior, or worker-image drift still fails closed and requires re-scope/retest.

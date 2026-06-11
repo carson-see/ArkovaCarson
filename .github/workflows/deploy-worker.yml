@@ -132,7 +132,8 @@ jobs:
       - name: Configure Docker for Artifact Registry
         run: gcloud auth configure-docker ${{ env.REGISTRY }} --quiet
 
-      - name: Build & push image
+      - name: Build image
+        id: build
         run: |
           # Build on the runner instead of Cloud Build. GitHub's WIF principal
           # can push to Artifact Registry, but `gcloud builds submit` requires
@@ -146,8 +147,36 @@ jobs:
             --tag "${IMAGE}" \
             --tag "${LATEST}" \
             services/worker
-          docker push "${IMAGE}"
-          docker push "${LATEST}"
+          echo "image=${IMAGE}" >> "$GITHUB_OUTPUT"
+          echo "latest=${LATEST}" >> "$GITHUB_OUTPUT"
+
+      # TVM/IVS (CSA STAR CAIQ): scan the built worker image for OS-layer /
+      # base-image CVEs BEFORE it is pushed or deployed. sonatype-scan.yml
+      # covers the npm dependency graph; this closes the base-image / OS-package
+      # gap flagged in the CAIQ self-assessment. Scanning before push means a
+      # vulnerable image never reaches Artifact Registry or Cloud Run. Fails the
+      # deploy on FIXABLE HIGH/CRITICAL OS CVEs (mirrors the CVSS>=7 fixable gate
+      # in sonatype-scan.yml). `ignore-unfixed: true` tracks — does not gate on —
+      # CVEs with no upstream patch, so an unpatchable base-image CVE cannot
+      # wedge every deploy. `vuln-type: os` keeps library CVEs in sonatype's lane
+      # (no double-gating). Control doc: docs/compliance/container-image-scanning.md.
+      # Invariant enforced at PR time by scripts/ci/check-image-scan-gate.ts.
+      - name: Scan image for base-image CVEs (Trivy)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ steps.build.outputs.image }}
+          scan-type: image
+          vuln-type: os
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
+          format: table
+
+      - name: Push image
+        run: |
+          set -euo pipefail
+          docker push "${{ steps.build.outputs.image }}"
+          docker push "${{ steps.build.outputs.latest }}"
 
       - name: Clear conflicting env/secret types
         run: |
