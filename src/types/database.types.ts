@@ -6622,6 +6622,7 @@ export type Database = {
         Returns: undefined
       }
       lookup_org_by_email_domain: { Args: { p_email: string }; Returns: Json }
+      next_webhook_sequence: { Args: never; Returns: number }
       record_msgraph_nonce_and_enqueue: {
         Args: {
           p_change_type: string
