@@ -27,6 +27,9 @@
 # Flags:
 #   --pr <N>             REQUIRED. Lease must exist for this PR (or --force).
 #   --image <REF>        REQUIRED. Full Artifact-Registry image reference.
+#   --lane <slug>        Optional. Use a named tag instead of pr-<N>, for
+#                        train-level lanes such as train-c-ce. The numeric PR
+#                        still owns the lease/audit row.
 #   --build-sha <SHA>    Optional. Sets BUILD_SHA env var on the revision.
 #                        Defaults to `git rev-parse HEAD`. "unknown" if not in a repo.
 #   --force "<reason>"   Bypass lease check. Reason must start with a Jira key,
@@ -63,7 +66,7 @@ case "$SERVICE" in
     ;;
 esac
 
-PR=""; IMAGE=""; BUILD_SHA=""; PROMOTE_TOKEN="${STAGING_PROMOTE_TOKEN:-}"
+PR=""; IMAGE=""; LANE=""; BUILD_SHA=""; PROMOTE_TOKEN="${STAGING_PROMOTE_TOKEN:-}"
 FORCE=0; FORCE_REASON=""
 PROMOTE=0; DRY_RUN=0
 
@@ -72,6 +75,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --pr)         PR="${2:?}"; shift 2 ;;
     --image)      IMAGE="${2:?}"; shift 2 ;;
+    --lane)       LANE="${2:?}"; shift 2 ;;
     --build-sha)  BUILD_SHA="${2:?}"; shift 2 ;;
     --force)      FORCE=1; FORCE_REASON="${2:-}"; shift 2 ;;
     --promote)    PROMOTE=1; shift ;;
@@ -90,13 +94,27 @@ done
 [ -n "$PR" ]    || { echo "ERROR: --pr is required" >&2; exit 2; }
 [ -n "$IMAGE" ] || { echo "ERROR: --image is required" >&2; exit 2; }
 
-# Tag URLs require lowercase + hyphenated. PR numbers are numeric, so just prefix.
-TAG="pr-${PR}"
-
 # Numeric guard
 case "$PR" in
   *[!0-9]*|"") echo "ERROR: --pr must be a numeric PR number, got: $PR" >&2; exit 2 ;;
 esac
+
+# Tag URLs require lowercase + hyphenated Cloud Run tags. PR numbers are
+# numeric, so the default tag stays pr-N. Named train lanes are explicitly
+# opt-in and still require a numeric PR lease/audit owner.
+if [ -n "$LANE" ]; then
+  if [[ ! "$LANE" =~ ^[a-z][a-z0-9-]{0,61}[a-z0-9]$ ]]; then
+    echo "ERROR: --lane must be a lowercase Cloud Run tag slug (letters, numbers, hyphens; max 63 chars)." >&2
+    exit 2
+  fi
+  if [[ ! "$LANE" =~ ^train-[a-z0-9-]+$ ]]; then
+    echo "ERROR: --lane must start with train- so named lanes stay clearly scoped." >&2
+    exit 2
+  fi
+  TAG="$LANE"
+else
+  TAG="pr-${PR}"
+fi
 
 if [ $FORCE -eq 1 ] && [ -z "$FORCE_REASON" ]; then
   echo "ERROR: --force requires a non-empty reason: --force \"<reason>\"" >&2
@@ -410,6 +428,7 @@ require_promote_authorization
 info "------------------------------------------------------------"
 info "  service:   $SERVICE  (project=$PROJECT  region=$REGION)"
 info "  PR:        #$PR"
+info "  lane:      ${LANE:-default pr lane}"
 info "  tag:       $TAG"
 info "  image:     $IMAGE"
 info "  build_sha: $BUILD_SHA"
@@ -435,7 +454,7 @@ GCLOUD_FLAGS=(
   --image="$IMAGE"
   --tag="$TAG"
   --update-env-vars=BUILD_SHA="$BUILD_SHA",BATCH_ANCHOR_MAX_SIZE="$STAGING_BATCH_ANCHOR_MAX_SIZE"
-  --update-labels=pr="$PR",deployed-by-script=deploy-sh,scrum1803=enforced
+  --update-labels=pr="$PR",lane="$TAG",deployed-by-script=deploy-sh,scrum1803=enforced
   --region="$REGION"
   --project="$PROJECT"
   --quiet
