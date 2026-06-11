@@ -17,47 +17,79 @@ import type {
   EnvelopeSummary,
 } from './docusign-reconciliation.js';
 
-/**
- * Minimal structural shape of the Supabase query builder this module uses.
- * The full SupabaseClient generic types are impractical to thread through a
- * test-injectable shim, so we model only the `from`/`rpc` surface. Each query
- * chain is a thenable PostgrestBuilder; we model it loosely and narrow the
- * awaited `{ data, error }` results at each call site.
- */
-type PostgrestLikeBuilder = {
-  select: (cols: string) => PostgrestLikeBuilder;
-  eq: (col: string, val: unknown) => PostgrestLikeBuilder;
-  is: (col: string, val: unknown) => PostgrestLikeBuilder;
-  in: (col: string, vals: readonly unknown[]) => PostgrestLikeBuilder;
-  insert: (row: Record<string, unknown>) => PromiseLike<{ error: unknown }>;
-  then: Promise<{ data: unknown; error: unknown }>['then'];
+interface DbQueryResult<T> {
+  data: T | null;
+  error: { code?: string; message?: string } | string | null;
+}
+
+interface DbQuery<T> extends PromiseLike<DbQueryResult<T>> {
+  select(columns?: string): DbQuery<T>;
+  eq(field: string, value: unknown): DbQuery<T>;
+  is(field: string, value: unknown): DbQuery<T>;
+  in(field: string, values: readonly unknown[]): DbQuery<T>;
+  insert(value: Record<string, unknown>): PromiseLike<DbQueryResult<null>>;
+}
+
+type IntegrationRow = {
+  id?: unknown;
+  org_id?: unknown;
+  account_id?: unknown;
+  base_uri?: unknown;
+  token_secret_name?: unknown;
 };
 
-type SupabaseQueryDb = {
-  from: (table: string) => PostgrestLikeBuilder;
-  rpc?: (...args: unknown[]) => unknown;
+type NonceRow = {
+  envelope_id?: unknown;
 };
+
+interface DbClient {
+  from(table: 'org_integrations' | 'member_integrations'): DbQuery<IntegrationRow[]>;
+  from(table: 'docusign_webhook_nonces'): DbQuery<NonceRow[]>;
+  from(table: 'docusign_reconciliation_gaps'): DbQuery<null>;
+}
+
+function dbErrorMessage(error: DbQueryResult<unknown>['error']): string {
+  if (!error) return 'unknown_error';
+  if (typeof error === 'string') return error;
+  return error.message ?? String(error);
+}
+
+function dbErrorCode(error: DbQueryResult<unknown>['error']): string | null {
+  if (!error || typeof error === 'string') return null;
+  return error.code ?? null;
+}
 
 export interface ReconciliationDepOptions {
-  db?: SupabaseQueryDb;
+  db?: DbClient;
   env?: NodeJS.ProcessEnv;
   fetchImpl?: typeof fetch;
   refreshTokenStore?: DocusignRefreshTokenStore;
 }
 
-/** Row shape returned by the integration listing queries. */
-interface IntegrationRow {
-  id: string;
-  org_id: string;
-  account_id: string | null;
-  base_uri: string | null;
-  token_secret_name: string | null;
+function toActiveIntegration(row: IntegrationRow): ActiveIntegration | null {
+  if (
+    typeof row.id !== 'string' ||
+    typeof row.org_id !== 'string' ||
+    typeof row.account_id !== 'string' ||
+    typeof row.base_uri !== 'string' ||
+    typeof row.token_secret_name !== 'string'
+  ) {
+    return null;
+  }
+
+  return {
+    id: row.id,
+    org_id: row.org_id,
+    account_id: row.account_id,
+    base_uri: row.base_uri,
+    token_secret_name: row.token_secret_name,
+  };
 }
 
 export function makeReconciliationDeps(
   options: ReconciliationDepOptions = {},
 ): ReconciliationDeps {
-  const db = options.db ?? (defaultDb as unknown as SupabaseQueryDb);
+  const db = options.db ?? (defaultDb as unknown as DbClient);
   const env = options.env ?? process.env;
   const fetchImpl = options.fetchImpl ?? fetch;
   const refreshTokenStore =
@@ -73,29 +105,29 @@ export function makeReconciliationDeps(
       // per-org caller context; each row carries its own org_id which scopes all
       // downstream work. Org-agnostic by design (SCRUM-2042 reconciliation job).
       // eslint-disable-next-line arkova/missing-org-filter
-      const { data: orgData, error: orgError } = (await db
+      const { data: orgData, error: orgError } = await db
         .from('org_integrations')
         .select('id, org_id, account_id, base_uri, token_secret_name')
         .eq('provider', 'docusign')
-        .is('revoked_at', null)) as { data: IntegrationRow[] | null; error: { message?: string } | null };
+        .is('revoked_at', null);
 
-      if (orgError) throw new Error(`integration_list_failed: ${orgError.message ?? orgError}`);
+      if (orgError) throw new Error(`integration_list_failed: ${dbErrorMessage(orgError)}`);
 
       // SCRUM-2044: Member-level integrations (member_integrations is not in the
       // multi-tenant table set; same cross-tenant cron rationale applies).
-      const { data: memberData, error: memberError } = (await db
+      const { data: memberData, error: memberError } = await db
         .from('member_integrations')
         .select('id, org_id, account_id, base_uri, token_secret_name')
         .eq('provider', 'docusign')
-        .is('revoked_at', null)) as { data: IntegrationRow[] | null; error: { message?: string } | null };
+        .is('revoked_at', null);
 
-      if (memberError) throw new Error(`member_integration_list_failed: ${memberError.message ?? memberError}`);
+      if (memberError) throw new Error(`member_integration_list_failed: ${dbErrorMessage(memberError)}`);
 
-      const allRows: IntegrationRow[] = [...(orgData ?? []), ...(memberData ?? [])];
-      return allRows.filter(
-        (row): row is ActiveIntegration =>
-          Boolean(row.account_id && row.base_uri && row.token_secret_name),
-      );
+      const allRows = [...(orgData ?? []), ...(memberData ?? [])];
+      return allRows.flatMap((row) => {
+        const integration = toActiveIntegration(row);
+        return integration ? [integration] : [];
+      });
     },
 
     async getAccessToken(integration: ActiveIntegration): Promise<string> {
@@ -195,16 +227,15 @@ export function makeReconciliationDeps(
       // no tenant column to filter on; the lookup is already scoped to a known,
       // bounded set of envelope_ids derived from one integration's envelopes.
       // eslint-disable-next-line arkova/missing-org-filter
-      const { data, error } = (await db
+      const { data, error } = await db
         .from('docusign_webhook_nonces')
         .select('envelope_id')
-        .in('envelope_id', envelopeIds)) as {
-        data: Array<{ envelope_id: string }> | null;
-        error: { message?: string } | null;
-      };
+        .in('envelope_id', envelopeIds);
 
-      if (error) throw new Error(`nonce_lookup_failed: ${error.message ?? error}`);
-      return new Set((data ?? []).map((r) => r.envelope_id));
+      if (error) throw new Error(`nonce_lookup_failed: ${dbErrorMessage(error)}`);
+      return new Set((data ?? [])
+        .map((row) => row.envelope_id)
+        .filter((value): value is string => typeof value === 'string'));
     },
 
     async insertGap(gap) {
@@ -218,14 +249,10 @@ export function makeReconciliationDeps(
       });
 
       if (error) {
-        if ((error as { code?: string }).code === '23505') {
+        if (dbErrorCode(error) === '23505') {
           return { inserted: false, duplicate: true, error: null };
         }
-        const msg =
-          typeof error === 'object' && error !== null && 'message' in error
-            ? String((error as { message: string }).message)
-            : String(error);
-        return { inserted: false, duplicate: false, error: msg };
+        return { inserted: false, duplicate: false, error: dbErrorMessage(error) };
       }
       return { inserted: true, duplicate: false, error: null };
     },
