@@ -63,6 +63,10 @@ export interface CtdlJsonLd {
     'ceterms:name': string;
     'ceterms:verificationService': string;
   };
+  'ceterms:identifier': {
+    'ceterms:identifierType': string;
+    'ceterms:identifierValue': string;
+  };
   'ceterms:description'?: string;
 }
 
@@ -97,15 +101,32 @@ const SSN_PATTERN = /\b\d{3}[-\s]?\d{2}[-\s]?\d{4}\b/;
 const PHONE_PATTERN = /(?:\+1\d{10}|\(\d{3}\)\s?\d{3}[-.]?\d{4}|\b\d{3}[-.\s]\d{3}[-.\s]\d{4}\b|\+(?:[2-9]\d)\d{7,11})/;
 const REAL_CTID_PATTERN = /^ce-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const TRANSCRIPT_SIGNAL_PATTERN = /\b(?:transcript|student record|academic record|learner record)\b/i;
-const LEARNER_NAME_PATTERN = /\b(?:for|learner|student|recipient|issued to|awarded to|completed by)\s+[A-Z][a-z]+(?:\s+[A-Z]\.?)?\s+[A-Z][a-z]+\b/;
+const NAME_TOKEN = String.raw`[A-Z][a-z]{1,}`;
+const OPTIONAL_MIDDLE = String.raw`(?:\s+(?:[A-Z]\.?|${NAME_TOKEN}))?`;
+const FULL_NAME = String.raw`${NAME_TOKEN}${OPTIONAL_MIDDLE}\s+${NAME_TOKEN}`;
+const CONTEXTUAL_LEARNER_NAME_PATTERN = new RegExp(
+  String.raw`\b(?:for|learner|student|recipient|issued to|awarded to|completed by|earned by|held by)\s+${FULL_NAME}\b`,
+);
+const NAME_FIRST_LEARNER_PATTERN = new RegExp(
+  String.raw`\b${FULL_NAME}(?:'s)?\s+(?:transcript|student record|learner record|certificate|credential|degree|completion)\b`,
+);
 
 function containsHighConfidencePii(value: string): boolean {
   return EMAIL_PATTERN.test(value) || SSN_PATTERN.test(value) || PHONE_PATTERN.test(value);
 }
 
+function normalizePublicText(value: string): string {
+  return stripControlChars(value).replace(/\s+/g, ' ').trim();
+}
+
+function containsLearnerNamePii(value: string): boolean {
+  const clean = normalizePublicText(value);
+  return CONTEXTUAL_LEARNER_NAME_PATTERN.test(clean) || NAME_FIRST_LEARNER_PATTERN.test(clean);
+}
+
 function cleanPublicFreeText(value: unknown, maxLength = 240): string | null {
   const clean = cleanPublicString(value, maxLength);
-  if (!clean || containsHighConfidencePii(clean)) return null;
+  if (!clean || containsHighConfidencePii(clean) || containsLearnerNamePii(clean)) return null;
   return clean;
 }
 
@@ -200,7 +221,7 @@ function assertCtdlPiiSafe(anchor: CtdlAnchor, metadata: Record<string, unknown>
     ...metadataTextValues(metadata),
   ].filter((value): value is string => typeof value === 'string');
 
-  if (freeTextValues.some((value) => LEARNER_NAME_PATTERN.test(stripControlChars(value).replace(/\s+/g, ' ').trim()))) {
+  if (freeTextValues.some((value) => containsLearnerNamePii(value))) {
     throw new CtdlPiiSafetyError();
   }
 }
@@ -243,6 +264,10 @@ export function buildCtdlJsonLd(anchor: CtdlAnchor, options: BuildCtdlOptions): 
       '@type': 'ceterms:VerificationServiceProfile',
       'ceterms:name': 'Arkova credential verification',
       'ceterms:verificationService': options.verifyUrl,
+    },
+    'ceterms:identifier': {
+      'ceterms:identifierType': 'Arkova public ID',
+      'ceterms:identifierValue': anchor.publicId,
     },
   };
 

@@ -1302,6 +1302,16 @@ export const openApiSpec: Record<string, any> = {
               'ceterms:verificationService': { type: 'string', format: 'uri' },
             },
           },
+          'ceterms:identifier': {
+            type: 'object',
+            required: ['ceterms:identifierType', 'ceterms:identifierValue'],
+            additionalProperties: false,
+            description: 'Public, non-PII identifier linking this CTDL body back to the requested Arkova credential.',
+            properties: {
+              'ceterms:identifierType': { type: 'string', enum: ['Arkova public ID'] },
+              'ceterms:identifierValue': { type: 'string', minLength: 3, maxLength: 128 },
+            },
+          },
           'ceterms:description': { type: 'string' },
         },
       },

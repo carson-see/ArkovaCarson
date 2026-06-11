@@ -80,9 +80,12 @@ describe('GET /credentials/:publicId/ctdl', () => {
     expect(res.body).not.toHaveProperty('ceterms:ctid');
     expect(res.body).not.toHaveProperty('ceterms:credentialStatusType');
     expect(res.body).not.toHaveProperty('ceterms:dateEffective');
-    expect(res.body).not.toHaveProperty('ceterms:identifier');
+    expect(res.body['ceterms:identifier']).toEqual({
+      'ceterms:identifierType': 'Arkova public ID',
+      'ceterms:identifierValue': 'ARK-2026-CTDL-001',
+    });
     expect(res.body['ceterms:verificationServiceProfile']['ceterms:verificationService']).toBe(
-      'https://app.arkova.ai/verify',
+      'https://app.arkova.ai/verify/ARK-2026-CTDL-001',
     );
     expect(validateCtdlJsonLd(res.body)).toEqual({ valid: true, errors: [] });
     expect(JSON.stringify(res.body)).not.toContain('recipient@example.com');
@@ -178,6 +181,29 @@ describe('GET /credentials/:publicId/ctdl', () => {
       http_status: 404,
       credential_status: 'SECURED',
       credential_type: 'DEGREE',
+    });
+  });
+
+  it('fails closed for name-first learner PII in transcript-like output', async () => {
+    const lookup: CredentialsCtdlLookup = {
+      lookupByPublicId: vi.fn().mockResolvedValue(anchor({
+        credentialType: 'DEGREE',
+        subType: 'transcript',
+        label: "Jane Q Student's transcript",
+        description: 'Official learner record.',
+        metadata: { document_type: 'official transcript' },
+      })),
+    };
+
+    const res = await request(buildApp(lookup)).get('/ARK-2026-CTDL-001/ctdl');
+
+    expect(res.status).toBe(404);
+    expect(res.body).toEqual({ error: 'not_found' });
+    expect(JSON.stringify(res.body)).not.toContain('Jane Q Student');
+    const auditPayload = insertAudit.mock.calls[0][0];
+    expect(JSON.parse(auditPayload.details)).toMatchObject({
+      outcome: 'safety_blocked',
+      http_status: 404,
     });
   });
 

@@ -35,10 +35,13 @@ describe('buildCtdlJsonLd', () => {
     expect(jsonLd['@type']).toBe('ceterms:Certificate');
     expect(jsonLd['ceterms:name']).toBe('Ethics CLE Completion');
     expect(jsonLd).not.toHaveProperty('ceterms:ctid');
+    expect(jsonLd['ceterms:identifier']).toEqual({
+      'ceterms:identifierType': 'Arkova public ID',
+      'ceterms:identifierValue': 'ARK-2026-CTDL-001',
+    });
     expect(jsonLd['ceterms:offeredBy']['ceterms:name']).toBe('Michigan Legal Education Board');
     expect(jsonLd).not.toHaveProperty('ceterms:credentialStatusType');
     expect(jsonLd).not.toHaveProperty('ceterms:dateEffective');
-    expect(jsonLd).not.toHaveProperty('ceterms:identifier');
     expect(jsonLd).not.toHaveProperty('ceterms:expirationDate');
     expect(jsonLd['ceterms:verificationServiceProfile']['ceterms:verificationService']).toBe(
       'https://app.arkova.ai/verify',
@@ -91,6 +94,41 @@ describe('buildCtdlJsonLd', () => {
     }, {
       verifyUrl: 'https://app.arkova.ai/verify/ARK-2026-CTDL-001',
     })).toThrow(/CTDL PII safety gate/);
+  });
+
+  it('fails closed for name-first transcript labels that previously evaded the learner-name gate', () => {
+    expect(() => buildCtdlJsonLd({
+      ...baseAnchor,
+      credentialType: 'DEGREE',
+      subType: 'academic_record',
+      label: "Jane Q Student's transcript",
+      description: 'Official academic record.',
+      metadata: {
+        document_type: 'transcript',
+      },
+    }, {
+      verifyUrl: 'https://app.arkova.ai/verify/ARK-2026-CTDL-001',
+    })).toThrow(/CTDL PII safety gate/);
+  });
+
+  it('suppresses learner-name free text across non-transcript credential types', () => {
+    const jsonLd = buildCtdlJsonLd({
+      ...baseAnchor,
+      credentialType: 'CLE',
+      subType: 'ethics_cle',
+      label: 'Certificate awarded to Jane Q Student',
+      description: 'Completion credential held by Jane Q Student',
+      metadata: {
+        courseTitle: 'Ethics and Professional Responsibility',
+      },
+    }, {
+      verifyUrl: 'https://app.arkova.ai/verify/ARK-2026-CTDL-001',
+    });
+    const body = JSON.stringify(jsonLd);
+
+    expect(jsonLd['ceterms:name']).toBe('Ethics and Professional Responsibility');
+    expect(jsonLd).not.toHaveProperty('ceterms:description');
+    expect(body).not.toContain('Jane Q Student');
   });
 
   it('omits issued revocation lifecycle fields from the CTDL class body', () => {

@@ -9,7 +9,7 @@
 import { Router, type Request } from 'express';
 import { buildCtdlJsonLd, CtdlPiiSafetyError, type CtdlAnchor } from '../../ctdl/ctdl-serializer.js';
 import { isCtdlPublishableStatus } from '../../ctdl/ctdl-type-map.js';
-import { buildVerificationServiceUrl } from '../../lib/urls.js';
+import { buildVerifyUrl } from '../../lib/urls.js';
 import { db } from '../../utils/db.js';
 import { getCorrelationId } from '../../utils/correlationId.js';
 import { logger } from '../../utils/logger.js';
@@ -170,7 +170,7 @@ export function buildCredentialsCtdlRouter(lookup: CredentialsCtdlLookup = defau
         return;
       }
 
-      const body = buildCtdlJsonLd(anchor, { verifyUrl: buildVerificationServiceUrl() });
+      const body = buildCtdlJsonLd(anchor, { verifyUrl: buildVerifyUrl(publicId) });
       const revoked = anchor.status === 'REVOKED';
       const httpStatus = revoked ? 410 : 200;
       logCtdlRequested({

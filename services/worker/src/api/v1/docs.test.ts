@@ -82,7 +82,11 @@ describe('OpenAPI spec', () => {
     expect(schema.required).not.toContain('ceterms:credentialStatusType');
     expect(schema.required).not.toContain('ceterms:dateEffective');
     expect(schema.required).not.toContain('ceterms:identifier');
-    expect(schema.properties).not.toHaveProperty('ceterms:identifier');
+    expect(schema.properties['ceterms:identifier']).toMatchObject({
+      type: 'object',
+      required: ['ceterms:identifierType', 'ceterms:identifierValue'],
+      description: expect.stringContaining('non-PII'),
+    });
     expect(schema.properties).not.toHaveProperty('ceterms:expirationDate');
     expect(schema.properties).not.toHaveProperty('ceterms:revocationDate');
     expect(JSON.stringify(schema)).not.toContain('org_id');
