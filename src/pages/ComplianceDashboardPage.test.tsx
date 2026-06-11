@@ -136,6 +136,7 @@ function makeQueryResult(table: string, selectClause: string | undefined) {
 
 function createSupabaseBuilder(table: string) {
   let selectClause: string | undefined;
+  const resolveResult = () => Promise.resolve(makeQueryResult(table, selectClause));
   const builder = {
     select: vi.fn((clause?: string) => {
       selectClause = clause;
@@ -150,9 +151,7 @@ function createSupabaseBuilder(table: string) {
     gte: vi.fn(() => builder),
     lte: vi.fn(() => builder),
     order: vi.fn(() => builder),
-    limit: vi.fn(() => builder),
-    then: (resolve: (value: unknown) => void, reject: (reason?: unknown) => void) =>
-      Promise.resolve(makeQueryResult(table, selectClause)).then(resolve, reject),
+    limit: vi.fn(resolveResult),
   };
   return builder;
 }
