@@ -59,6 +59,7 @@ meaningless neighbours, so the tool silently degraded to `text_fallback`/total=0
 - **§1.6 / §1.10:** read-only RAG over already-public records (no document
   processing); per-caller rate limiting enforced by the worker's global
   `keyedRateLimiter` on the forwarded caller key (see AUTH note above).
+_Last updated: 2026-06-05 (Edge MCP Truthfulness PR-2)._
 
 ## Edge MCP Truthfulness PR-1 — anchor mapping + nessie casing + test harness (2026-06-05)
 
@@ -97,6 +98,51 @@ harness; PR-2: BUG-1 RPC; PR-3: nessie proxy through the worker).
   the edge query model family differs from the worker index model
   (Gemini `gemini-embedding-001`) — the tripwire for BUG-3a. Flip its `.not`
   assertion to equality when PR-3 unifies the model.
+
+## Edge MCP Truthfulness PR-2 — verify-by-fingerprint via DEFINER RPC (2026-06-05)
+
+BUG-1: the `verify` / `verify_document` / `get_fingerprint` tools returned
+HTTP 400 universally. `handleVerifyDocument` fetched
+`/rest/v1/public_records?content_hash=eq...&select=id,public_id,...` — a
+column set that does not match the table shape, so PostgREST 400'd every call.
+
+- **New RPC `get_public_anchor_by_fingerprint(text)`** (migration
+  `0339_get_public_anchor_by_fingerprint.sql`, prefix 0339 — 0327–0338 were
+  already reserved). `LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path
+  = public`. Lowercases input, matches `lower(a.fingerprint) =
+  lower(p_fingerprint)`, filters `status IN ('SECURED','SUBMITTED','PENDING')
+  AND deleted_at IS NULL`, takes the LATEST by `created_at DESC LIMIT 1`, then
+  **delegates the whole jsonb projection to `get_public_anchor(public_id)`** so
+  redaction (recipient SHA-256 hash, provenance strip, PENDING evidence
+  gating, no `org_id`/internal id) lives in exactly one place. Unknown
+  fingerprint → `{"error":"Record not found"}`, same envelope as
+  `get_public_anchor`. Granted to `anon, authenticated`. Validated locally
+  (rolled-back txn): SECURED→ACTIVE w/ receipt, UPPERCASE input still matches,
+  PENDING gates receipt+anchor_ts to null, unknown/empty→error, latest-wins,
+  soft-deleted excluded.
+- **`handleVerifyDocument` (mcp-tools.ts)** now POSTs the RPC and maps through
+  the PR-1-fixed `shapeAnchorRow` (passing `data.public_id` so the envelope
+  echoes `public_id` and builds the correct `record_uri`). Verify now returns
+  the SAME shape as the `get_anchor` / `verify_credential` (`get_public_anchor`)
+  envelope (§1.8 fix-to-spec, PO-approved) — this is the get_public_anchor
+  envelope, NOT the worker's leaner `/verify/:fingerprint` shape. PENDING /
+  SUBMITTED are surfaced as first-class statuses (not collapsed to UNKNOWN) so a
+  genuinely-found in-flight anchor doesn't read not-found. Unknown fingerprint →
+  `{verified:false, status:'UNKNOWN', fingerprint:<lowercased>, public_id:null,
+  network_receipt_id:null, message}` at HTTP 200, never a 400/error result (the
+  `fingerprint` echo matches the worker's not-found body). The `message` is
+  retained so `handleAgentSearch(type:'fingerprint')`'s found-guard still treats
+  a miss as not-found.
+- **`handleAgentVerify`** keeps the `record_id` strip as defense-in-depth; the
+  new `shapeAnchorRow` envelope never carries an internal id, so the strip is
+  now belt-and-suspenders rather than load-bearing.
+- Tests in `src/mcp-tools.test.ts`: SECURED→verified+receipt+record_uri,
+  unknown→not-an-error, mixed-case→lowercased `p_fingerprint`, PENDING→gated,
+  and a negative guard that the call hits the RPC (not
+  `/rest/v1/public_records?...public_id`).
+- **Pending the soak:** migration is NOT applied to any DB; `gen:types` regen
+  is pending (the changed edge code consumes no `database.types.ts`, so the
+  RPC types entry only matters for future worker/frontend consumers).
 
 ## Routine dependency consolidation (2026-05-12)
 
