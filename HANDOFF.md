@@ -14,6 +14,14 @@
 
 ## Now
 
+### 2026-06-11 — DocuSign OAuth state HMAC fail-closed (audit H1) — PR #1152 open, T2, soak pending
+
+**Branch `fix/docusign-oauth-state-hmac-failclosed` (off `origin/main` 3f906c99); [PR #1152](https://github.com/carson-see/ArkovaCarson/pull/1152) open as Draft — not merged, not deployed.** Closes the DocuSign half of the 2026-04-24 forensic audit finding **H1** (resurfaced in the CSA STAR Level 1 assessment). The OAuth `state` HMAC in `docusign-oauth.ts` (org) and `docusign-member-oauth.ts` (member, SCRUM-2044) fell back to `SUPABASE_JWT_SECRET`/service-role key when `INTEGRATION_STATE_HMAC_SECRET` was unset — failing OPEN and collapsing the user-auth ↔ OAuth-CSRF trust boundaries. Drive (SCRUM-1236) and GRC (SCRUM-1238) already fail closed; DocuSign was the gap. Both routers now use `resolveStateSecret()` (dedicated secret, no fallback, throws when unset, lazy router export); `config.ts` boot guard now also requires the secret when `ENABLE_DOCUSIGN_OAUTH=true`. Docs updated: ENV.md, the H1 rotation runbook (corrected fail-closed rollback guidance), folder agents.md.
+
+**Local check (not prod):** full worker suite green (6305/6305), `tsc --noEmit` clean, ESLint clean on changed files (TDD red→green: 6 new fail-closed / no-JWT-fallback tests across both routers + config refinement).
+
+**Gates remaining:** (1) **T2 staging soak** — `services/worker/src/api/` classifies T2; Carson runs the staging deploy after provisioning `INTEGRATION_STATE_HMAC_SECRET` on `arkova-worker-staging` (per the rotation runbook). (2) **Jira** story under the Integration Hardening epic (sibling to SCRUM-1236/1238) — Atlassian MCP needs interactive auth, not creatable from this session. (3) **Confluence** per-story page + Identity & Access security doc. (4) **Bug tracker** — log the DocuSign half of H1.
+
 ### 2026-06-10 — Release queue unblocker #1141 merged; dev may resume under isolated-lane rules
 
 **PR #1141 merged via Mergify** at 2026-06-10T15:56:23Z, merge commit `3f678e7cb7b6f0bcb954141c75094730b49ef45e`; `origin/main` now points at that SHA. The merged release-process change preserves exact PR-head evidence integrity while allowing release-owner-approved T0 docs/tests/CI/tooling-only base drift through a non-placeholder `Base drift impact:` note. Runtime, schema, migration, staging, deploy, soak-behavior, or worker-image drift still fails closed and requires re-scope/retest.
@@ -133,4 +141,4 @@ _Last refreshed: 2026-05-30 by Claude (PO reconciliation) — prod `/health` git
 
 ---
 
-_Last refreshed: 2026-06-05 by Claude (carson@arkova.io) — claims verified against gcloud/MCP/CI output._
+_Last refreshed: 2026-06-11 by Claude (carson@arkova.io) — claims verified against gcloud/MCP/CI output._
