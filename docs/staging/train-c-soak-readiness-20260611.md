@@ -12,8 +12,8 @@ Latest dashboard sample after the train-lane parser fix:
 
 | Lane | Mode | OK | Fail | Status | Final JSON |
 | --- | --- | ---: | ---: | --- | --- |
-| train-a | cron | 155 | 0 | `200=155` | missing |
-| train-b | cron | 155 | 0 | `200=155` | missing |
+| train-a | cron | 165 | 0 | `200=165` | missing |
+| train-b | cron | 165 | 0 | `200=165` | missing |
 
 The 2026-06-11 08:15 EDT Train A/B attempts are superseded because the later 10:12 EDT logs explicitly mark them as discarded after platform no-available-instance 500s.
 
@@ -109,6 +109,30 @@ Required before soak start:
 6. Create the Drive PR/evidence checklist before implementation: page token, flags, queue materialization, folder matching, review/digest, smoke.
 7. Decide whether #1151 is product Train C scope or separate release-tooling hardening.
 8. After heads and scope are frozen, create the final `docs/staging/rc-manifests/rc-2026-06-11-train-c.json` only when the environment, approval, soak window, and rollback proof are real.
+
+## First Soak Packet Checklist
+
+Before any Train C lane starts, create a lane packet in the PR body or final RC manifest with:
+
+- Exact PR head SHA and base SHA.
+- Risk tier and why the tier is not lower.
+- Frozen merge grouping, especially whether the lane is standalone or stacked.
+- Isolated environment name, service/tag URL, Cloud Run revision, deploy log, image digest, and clean preflight output.
+- Mutable-state declaration: database, queue, Scheduler, secrets, and feature flags are read-only, exclusive, isolated, or N/A.
+- Targeted smoke command/result for the changed behavior.
+- Rollback command/procedure and stop conditions.
+- Evidence root and final JSON/log file names.
+- Human approval to start the lane.
+
+Per-lane additions:
+
+| Lane | Extra evidence before start |
+| --- | --- |
+| CE #1146/#1148 | Jeanne-aligned CTDL contract decision, no learner PII proof, fake-CTID rejection, expiration semantics, credit ConditionProfile/ValueProfile mapping, and CE Secret Manager/Graph Search smoke with redacted logs. |
+| DocuSign #1147 | Isolated Scheduler target, listener-drift smoke path, alert interpretation runbook, and explicit statement that no production Scheduler job was applied. |
+| CPE/CLE #1149/#1150 | 1280px and 375px UAT screenshots, role coverage, and a tier decision confirming whether the PR is UI-only or touches backend/API behavior. |
+| Google Drive | Feature flag state, page-token bootstrap proof, folder matching, queue materialization, review/digest output, and file-change-to-queue smoke. |
+| CSI/Accredible | Migration foundation status, importer source order, sandbox account evidence, conflict/rebase status for #1039, and an explicit decision not to include Udemy native adapter unless separately scoped. |
 
 ## Commands
 
