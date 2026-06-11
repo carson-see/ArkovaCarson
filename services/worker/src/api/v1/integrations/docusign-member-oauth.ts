@@ -38,6 +38,7 @@ import {
   resolveDocusignSecretManagerProjectId,
   type DocusignRefreshTokenStore,
 } from '../../../integrations/connectors/docusign-token-store.js';
+import { resolveIntegrationStateSecret, createLazyOAuthRouter } from './oauth-state.js';
 
 const Provider = 'docusign' as const;
 const StateTtlMs = 10 * 60 * 1000;
@@ -155,25 +156,6 @@ function hmacSign(input: string, secret: string): string {
   return createHmac('sha256', secret).update(input).digest('base64url');
 }
 
-/**
- * Resolve the dedicated HMAC secret for member OAuth state signing.
- *
- * 2026-04-24 forensic audit finding H1: the eager export below previously
- * hardcoded `stateSecret: config.supabaseJwtSecret`, collapsing the user-auth
- * and OAuth-CSRF trust boundaries exactly like the org router. We now require a
- * dedicated `INTEGRATION_STATE_HMAC_SECRET` env var (or an explicit `stateSecret`
- * override for tests) and NEVER fall back to the Supabase JWT/service-role
- * secret. Fail-closed if neither is provided. Mirrors drive-oauth.ts (SCRUM-1236).
- */
-function resolveStateSecret(deps: DocusignMemberOAuthDeps): string {
-  if (deps.stateSecret) return deps.stateSecret;
-  const envSecret = (deps.env ?? process.env).INTEGRATION_STATE_HMAC_SECRET;
-  if (envSecret && envSecret.length > 0) return envSecret;
-  throw new Error(
-    'INTEGRATION_STATE_HMAC_SECRET is required for DocuSign member OAuth state signing — fail-closed (audit H1)',
-  );
-}
-
 function signState(payload: MemberStatePayload, secret: string): string {
   const encoded = base64Url(JSON.stringify(payload));
   return `${encoded}.${hmacSign(encoded, secret)}`;
@@ -284,7 +266,7 @@ export function createDocusignMemberOAuthRouter(deps: DocusignMemberOAuthDeps = 
   const router = Router();
   const db = (deps.db ?? defaultDb) as DbClient;
   // Audit H1: resolve at construction time so a misconfigured deploy fails fast.
-  const stateSecret = resolveStateSecret(deps);
+  const stateSecret = resolveIntegrationStateSecret(deps, 'DocuSign member');
 
   // ─── POST /docusign/member/oauth/start ───
   router.post('/docusign/member/oauth/start', async (req: Request, res: Response) => {
@@ -644,13 +626,10 @@ export function createDocusignMemberOAuthRouter(deps: DocusignMemberOAuthDeps = 
   return router;
 }
 
-// Lazy router export — resolve INTEGRATION_STATE_HMAC_SECRET at the first
-// request, not module import, so tests importing this module without the env
-// var don't crash. Audit H1: NEVER fall back to config.supabaseJwtSecret (the
+// Lazy router export — defer construction (which validates
+// INTEGRATION_STATE_HMAC_SECRET and throws when missing) to the first request,
+// not module import. Audit H1: NEVER fall back to config.supabaseJwtSecret (the
 // previous eager export hardcoded it, collapsing two trust boundaries).
-let cachedMemberRouter: Router | null = null;
-export const docusignMemberOAuthRouter: Router = Router();
-docusignMemberOAuthRouter.use((req, res, next) => {
-  if (!cachedMemberRouter) cachedMemberRouter = createDocusignMemberOAuthRouter();
-  return cachedMemberRouter(req, res, next);
-});
+export const docusignMemberOAuthRouter: Router = createLazyOAuthRouter(
+  () => createDocusignMemberOAuthRouter(),
+);
