@@ -6,6 +6,7 @@ Staging rig documentation and soak evidence artifacts. Required by CLAUDE.md 1.1
 
 - **`README.md`** — staging rig setup guide: Supabase preview branch, Cloud Run service, cost estimates.
 - **`PR_TEMPLATE.md`** — risk-tiered staging evidence PR body template with tier matrix fields.
+- **`train-c-soak-readiness-*.md`** — non-authoritative release-prep notes that freeze candidate heads, tier assumptions, merge order, and start gates before a real RC manifest exists. These files do not approve a soak or replace `rc-manifests/rc-*.json`.
 - **`PATH_C_*.md`** — path-C cutover verification records.
 - **`soak-pr*.json`** — machine-readable soak evidence for specific PRs.
 - **`staging-only-rpcs.sql`** — staging-specific RPCs (not applied to prod).

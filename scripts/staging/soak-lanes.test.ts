@@ -22,8 +22,31 @@ There is a screen on:
 
     expect(sessions).toEqual([
       {
+        laneId: '#1055',
         prNumber: 1055,
         sessionName: 'pr1055-t3-cron-soak-20260608T222454Z',
+        state: 'Detached',
+      },
+    ]);
+  });
+
+  it('extracts active named release train soak sessions from screen output', () => {
+    const sessions = parseScreenSessions(`
+There are screens on:
+\t54600.train-a-t3-cron-soak-20260611T141256Z\t(Detached)
+\t54657.train-b-t3-cron-soak-20260611T141256Z\t(Detached)
+2 Sockets in /tmp/.screen.
+`);
+
+    expect(sessions).toEqual([
+      {
+        laneId: 'train-a',
+        sessionName: 'train-a-t3-cron-soak-20260611T141256Z',
+        state: 'Detached',
+      },
+      {
+        laneId: 'train-b',
+        sessionName: 'train-b-t3-cron-soak-20260611T141256Z',
         state: 'Detached',
       },
     ]);
@@ -62,6 +85,7 @@ There is a screen on:
       currentMainSha: '6779deb527f4de64ef183c438bc8b24dc9f0740a',
       activeLanes: [
         {
+          laneId: '#1055',
           prNumber: 1055,
           sessionName: 'pr1055-t3-cron-soak-20260608T222454Z',
           state: 'Detached',
@@ -127,6 +151,34 @@ There is a screen on:
     expect(dashboard.activeLanes[0].summary?.mode).toBe('cron');
     expect(dashboard.activeLanes[0].summary?.ok).toBe(2380);
     expect(dashboard.activeLanes[0].summary?.fail).toBe(0);
+  });
+
+  it('uses train evidence roots for named train screen sessions', () => {
+    const root = mkdtempSync(join(tmpdir(), 'soak-lanes-'));
+    const trainRoot = join(root, 'train-a');
+    mkdirSync(trainRoot);
+    writeFileSync(
+      join(trainRoot, 'soak-train-a-t3-cron-20260611T141256Z.stdout.log'),
+      '[t+6666s] total=115 rate=0.0/s\n  cron       ok=115 fail=0 err=0.0% p50=1ms p95=2ms p99=3ms statuses[200=115]\n',
+    );
+
+    const dashboard = buildSoakLaneDashboard({
+      screenOutput: '54600.train-a-t3-cron-soak-20260611T141256Z\t(Detached)\n',
+      openPullRequests: [],
+      evidenceRoot: root,
+      generatedAt: '2026-06-11T16:00:00Z',
+      currentMainSha: '3f906c991988f9b2ed6e71e1a70b64020cebd2fb',
+    });
+
+    expect(dashboard.activeLanes[0]).toMatchObject({
+      laneId: 'train-a',
+      summary: {
+        mode: 'cron',
+        ok: 115,
+        fail: 0,
+        statuses: '200=115',
+      },
+    });
   });
 
   it('moves blocked-label PRs out of the ready idle soak candidates', () => {
