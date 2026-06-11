@@ -26,6 +26,12 @@ This directory now starts with the Path C baseline, `00000000000000_baseline_at_
 - Each of these soaks on its **own dedicated isolated Supabase project**, never shared staging — `main` is at `0326`, so applying any unmerged prefix to shared staging would gap the ledger and contaminate every parallel soak.
 - Remove a row once its PR merges to `main` and gets a permanent `## Recent migrations` entry below.
 
+## In-flight migration reservations (0333) — recorded 2026-06-05
+
+| Prefix | PR | Story | File | Status |
+|---|---|---|---|---|
+| `0333` | (pending) | SCRUM-2193 | `0333_scrum2193_validate_anchors_metadata_constraints.sql` | **reserved** — validation-only forward migration; runs `VALIDATE CONSTRAINT` on `anchors_cpe_metadata_is_object` + `anchors_cle_metadata_is_object` to close repo↔prod NOT-VALID drift from 0315. No schema/column change. T3 (touches `supabase/migrations/`). Soaks on its **own isolated Supabase project** that reproduces prod's NOT VALID state — shared staging creates these VALID via 0315, so it cannot prove the NOT-VALID→VALID transition. Prefix `0332` left unclaimed by this PR. |
+
 ## Recent migrations (PR #817)
 
 - **0311_scrum1599_public_anchor_provenance.sql**: Replaces `get_public_anchor` so public verification can return `SUPERSEDED` records and CSI-03 source provenance fields from sanitized anchor metadata.
