@@ -94,6 +94,13 @@ export class CtdlPiiSafetyError extends Error {
   }
 }
 
+export class CtdlCreditMetadataError extends Error {
+  constructor(message = 'Invalid CTDL credit metadata') {
+    super(message);
+    this.name = 'CtdlCreditMetadataError';
+  }
+}
+
 function asRecord(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
   return value as Record<string, unknown>;
@@ -266,7 +273,7 @@ function readCreditValue(metadata: Record<string, unknown>, snakeKey: string, ca
   const value = metadata[snakeKey] ?? metadata[camelKey];
   if (value === undefined || value === null || value === '') return null;
   const parsed = positiveNumber(value);
-  if (!parsed) throw new Error(`Invalid CTDL credit value: ${label}`);
+  if (!parsed) throw new CtdlCreditMetadataError(`Invalid CTDL credit value: ${label}`);
   return parsed;
 }
 

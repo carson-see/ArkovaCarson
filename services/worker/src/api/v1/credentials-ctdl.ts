@@ -7,7 +7,12 @@
  */
 
 import { Router, type Request } from 'express';
-import { buildCtdlJsonLd, CtdlPiiSafetyError, type CtdlAnchor } from '../../ctdl/ctdl-serializer.js';
+import {
+  buildCtdlJsonLd,
+  CtdlCreditMetadataError,
+  CtdlPiiSafetyError,
+  type CtdlAnchor,
+} from '../../ctdl/ctdl-serializer.js';
 import { isCtdlPublishableStatus } from '../../ctdl/ctdl-type-map.js';
 import { buildVerifyUrl } from '../../lib/urls.js';
 import { db } from '../../utils/db.js';
@@ -23,7 +28,15 @@ export interface CredentialsCtdlLookup {
 interface AuditArgs {
   req: Request;
   publicId: string;
-  outcome: 'invalid' | 'not_found' | 'not_publishable' | 'safety_blocked' | 'published' | 'revoked' | 'error';
+  outcome:
+    | 'invalid'
+    | 'not_found'
+    | 'not_publishable'
+    | 'safety_blocked'
+    | 'invalid_credit_metadata'
+    | 'published'
+    | 'revoked'
+    | 'error';
   httpStatus: number;
   credentialStatus?: string | null;
   credentialType?: string | null;
@@ -196,6 +209,23 @@ export function buildCredentialsCtdlRouter(lookup: CredentialsCtdlLookup = defau
           req,
           publicId,
           outcome: 'safety_blocked',
+          httpStatus: 404,
+          credentialStatus: anchor?.status,
+          credentialType: anchor?.credentialType,
+          orgId: anchor?.orgId,
+        });
+        res.status(404).json({ error: 'not_found' });
+        return;
+      }
+      if (error instanceof CtdlCreditMetadataError) {
+        logger.warn({
+          public_id: publicId,
+          error: error.message,
+        }, 'Blocked CTDL response with invalid credit metadata');
+        logCtdlRequested({
+          req,
+          publicId,
+          outcome: 'invalid_credit_metadata',
           httpStatus: 404,
           credentialStatus: anchor?.status,
           credentialType: anchor?.credentialType,

@@ -281,6 +281,37 @@ describe('GET /credentials/:publicId/ctdl', () => {
     });
   });
 
+  it('fails closed without a 500 when credit metadata is invalid', async () => {
+    const lookup: CredentialsCtdlLookup = {
+      lookupByPublicId: vi.fn().mockResolvedValue(anchor({
+        credentialType: 'CPE',
+        metadata: {
+          cpe_metadata: {
+            credit_hours: 'not-a-number',
+            credit_type: 'NASBA CPE for jane.learner@example.edu',
+          },
+        },
+      })),
+    };
+
+    const res = await request(buildApp(lookup)).get('/ARK-2026-CTDL-001/ctdl');
+
+    expect(res.status).toBe(404);
+    expect(res.body).toEqual({ error: 'not_found' });
+    expect(JSON.stringify(res.body)).not.toContain('jane.learner@example.edu');
+    expect(loggerWarn).toHaveBeenCalledWith(expect.objectContaining({
+      public_id: 'ARK-2026-CTDL-001',
+      error: 'Invalid CTDL credit value: CPE credit hours',
+    }), 'Blocked CTDL response with invalid credit metadata');
+    const auditPayload = insertAudit.mock.calls[0][0];
+    expect(JSON.parse(auditPayload.details)).toMatchObject({
+      outcome: 'invalid_credit_metadata',
+      http_status: 404,
+      credential_status: 'SECURED',
+      credential_type: 'CPE',
+    });
+  });
+
   it('returns 410 with a revoked CTDL body for revoked credentials', async () => {
     const lookup: CredentialsCtdlLookup = {
       lookupByPublicId: vi.fn().mockResolvedValue(anchor({

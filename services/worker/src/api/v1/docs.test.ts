@@ -89,6 +89,39 @@ describe('OpenAPI spec', () => {
     });
     expect(schema.properties).not.toHaveProperty('ceterms:expirationDate');
     expect(schema.properties).not.toHaveProperty('ceterms:revocationDate');
+    expect(schema.properties['ceterms:requires']).toMatchObject({
+      type: 'array',
+      items: {
+        required: ['@type', 'ceterms:name', 'ceterms:creditValue'],
+        properties: {
+          '@type': { enum: ['ceterms:ConditionProfile'] },
+          'ceterms:creditValue': {
+            type: 'array',
+            minItems: 1,
+            items: {
+              required: [
+                '@type',
+                'schema:value',
+                'ceterms:creditUnitType',
+                'schema:description',
+              ],
+              properties: {
+                '@type': { enum: ['ceterms:ValueProfile'] },
+                'ceterms:creditUnitType': { enum: ['creditUnit:ContactHour'] },
+                'schema:description': {
+                  enum: [
+                    'CLE credit hours',
+                    'CLE ethics credit hours',
+                    'CPE credit hours',
+                    'CPE ethics credit hours',
+                  ],
+                },
+              },
+            },
+          },
+        },
+      },
+    });
     expect(JSON.stringify(schema)).not.toContain('org_id');
     expect(JSON.stringify(schema)).not.toContain('user_id');
     expect(JSON.stringify(schema)).not.toContain('fingerprint');

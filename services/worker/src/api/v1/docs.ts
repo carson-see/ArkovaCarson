@@ -1312,6 +1312,51 @@ export const openApiSpec: Record<string, any> = {
               'ceterms:identifierValue': { type: 'string', minLength: 3, maxLength: 128 },
             },
           },
+          'ceterms:requires': {
+            type: 'array',
+            description:
+              'CTDL credit requirements for public CLE/CPE records. Arkova maps credit hours only as ceterms:ConditionProfile -> ceterms:creditValue -> ceterms:ValueProfile.',
+            items: {
+              type: 'object',
+              required: ['@type', 'ceterms:name', 'ceterms:creditValue'],
+              additionalProperties: true,
+              properties: {
+                '@type': { type: 'string', enum: ['ceterms:ConditionProfile'] },
+                'ceterms:name': { type: 'string' },
+                'ceterms:creditValue': {
+                  type: 'array',
+                  minItems: 1,
+                  items: {
+                    type: 'object',
+                    required: [
+                      '@type',
+                      'schema:value',
+                      'ceterms:creditUnitType',
+                      'schema:description',
+                    ],
+                    additionalProperties: true,
+                    properties: {
+                      '@type': { type: 'string', enum: ['ceterms:ValueProfile'] },
+                      'schema:value': { type: 'number', minimum: 0, exclusiveMinimum: true },
+                      'ceterms:creditUnitType': {
+                        type: 'string',
+                        enum: ['creditUnit:ContactHour'],
+                      },
+                      'schema:description': {
+                        type: 'string',
+                        enum: [
+                          'CLE credit hours',
+                          'CLE ethics credit hours',
+                          'CPE credit hours',
+                          'CPE ethics credit hours',
+                        ],
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
           'ceterms:description': { type: 'string' },
         },
       },

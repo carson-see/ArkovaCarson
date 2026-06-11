@@ -80,6 +80,48 @@ describe('validateCtdlJsonLd', () => {
     });
   });
 
+  it('validates CTDL credit requirements and ValueProfiles', () => {
+    const valid = buildCtdlJsonLd({
+      ...baseAnchor,
+      credentialType: 'CLE',
+      metadata: {
+        cle_metadata: {
+          credit_hours: 6,
+          ethics_hours: 1,
+        },
+      },
+    }, {
+      verifyUrl: 'https://app.arkova.ai/verify/ARK-2026-CTDL-001',
+    });
+
+    expect(validateCtdlJsonLd(valid)).toEqual({ valid: true, errors: [] });
+
+    const invalid = {
+      ...valid,
+      'ceterms:requires': [{
+        '@type': 'ceterms:Credential',
+        'ceterms:name': '',
+        'ceterms:creditValue': [{
+          '@type': 'ceterms:Credential',
+          'schema:value': -1,
+          'ceterms:creditUnitType': 'creditUnit:DegreeCredit',
+        }],
+      }],
+    };
+
+    expect(validateCtdlJsonLd(invalid)).toEqual({
+      valid: false,
+      errors: [
+        'ceterms:requires[0].@type must be ceterms:ConditionProfile',
+        'ceterms:requires[0].ceterms:name is required',
+        'ceterms:requires[0].ceterms:creditValue[0].@type must be ceterms:ValueProfile',
+        'ceterms:requires[0].ceterms:creditValue[0].schema:value must be a positive number',
+        'ceterms:requires[0].ceterms:creditValue[0].ceterms:creditUnitType must be creditUnit:ContactHour',
+        'ceterms:requires[0].ceterms:creditValue[0].schema:description is required',
+      ],
+    });
+  });
+
   it('rejects unsafe public JSON-LD keys and internal values anywhere in the document', () => {
     const jsonLd = buildCtdlJsonLd(baseAnchor, {
       verifyUrl: 'https://app.arkova.ai/verify/ARK-2026-CTDL-001',

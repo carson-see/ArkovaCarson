@@ -60,6 +60,10 @@ function isIsoDateLike(value: unknown): boolean {
   return isNonEmptyString(value) && !Number.isNaN(Date.parse(value));
 }
 
+function isPositiveNumber(value: unknown): boolean {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0;
+}
+
 function addRequiredStringError(
   errors: string[],
   record: Record<string, unknown>,
@@ -89,6 +93,55 @@ function collectUnsafeKeys(value: unknown, errors: string[], path = ''): void {
 
 function unsafeDepth(error: string): number {
   return error.replace(/^unsafe public CTDL key: /, '').split('.').length;
+}
+
+function validateCreditRequirements(value: unknown, errors: string[]): void {
+  if (value === undefined) return;
+  if (!Array.isArray(value)) {
+    errors.push('ceterms:requires must be an array');
+    return;
+  }
+
+  value.forEach((condition, conditionIndex) => {
+    const conditionPath = `ceterms:requires[${conditionIndex}]`;
+    if (!isRecord(condition)) {
+      errors.push(`${conditionPath} must be an object`);
+      return;
+    }
+    if (condition['@type'] !== 'ceterms:ConditionProfile') {
+      errors.push(`${conditionPath}.@type must be ceterms:ConditionProfile`);
+    }
+    addRequiredStringError(errors, condition, 'ceterms:name', `${conditionPath}.ceterms:name`);
+
+    const creditValues = condition['ceterms:creditValue'];
+    if (!Array.isArray(creditValues) || creditValues.length === 0) {
+      errors.push(`${conditionPath}.ceterms:creditValue must be a non-empty array`);
+      return;
+    }
+
+    creditValues.forEach((creditValue, creditIndex) => {
+      const valuePath = `${conditionPath}.ceterms:creditValue[${creditIndex}]`;
+      if (!isRecord(creditValue)) {
+        errors.push(`${valuePath} must be an object`);
+        return;
+      }
+      if (creditValue['@type'] !== 'ceterms:ValueProfile') {
+        errors.push(`${valuePath}.@type must be ceterms:ValueProfile`);
+      }
+      if (!isPositiveNumber(creditValue['schema:value'])) {
+        errors.push(`${valuePath}.schema:value must be a positive number`);
+      }
+      if (creditValue['ceterms:creditUnitType'] !== 'creditUnit:ContactHour') {
+        errors.push(`${valuePath}.ceterms:creditUnitType must be creditUnit:ContactHour`);
+      }
+      addRequiredStringError(
+        errors,
+        creditValue,
+        'schema:description',
+        `${valuePath}.schema:description`,
+      );
+    });
+  });
 }
 
 export function validateCtdlJsonLd(value: unknown): CtdlValidationResult {
@@ -174,6 +227,8 @@ export function validateCtdlJsonLd(value: unknown): CtdlValidationResult {
   if (value['ceterms:revocationDate'] !== undefined && !isIsoDateLike(value['ceterms:revocationDate'])) {
     errors.push('ceterms:revocationDate must be a date string');
   }
+
+  validateCreditRequirements(value['ceterms:requires'], errors);
 
   const unsafeErrors: string[] = [];
   collectUnsafeKeys(value, unsafeErrors);
