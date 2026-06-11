@@ -333,17 +333,12 @@ describe('agent v2 MCP aliases', () => {
     const fingerprint = 'd'.repeat(64);
     mockFetch.mockResolvedValueOnce({
       ok: true,
-      json: async () => ([{
-        id: 'internal-record-id',
-        public_id: 'ARK-FP-ABC',
-        anchor_id: 'anchor-internal-id',
-        source: 'mcp',
-        source_url: null,
-        record_type: 'document',
-        title: 'Fingerprint.pdf',
-        content_hash: fingerprint,
-        metadata: {},
-      }]),
+      json: async () =>
+        realPublicAnchorRow({
+          public_id: 'ARK-FP-ABC',
+          fingerprint,
+          id: 'internal-record-id',
+        } as never),
     });
 
     const result = await handleAgentSearch({ q: fingerprint, type: 'fingerprint' }, CONFIG);
@@ -354,8 +349,8 @@ describe('agent v2 MCP aliases', () => {
         type: 'fingerprint',
         public_id: 'ARK-FP-ABC',
         score: 1,
-        snippet: 'Fingerprint.pdf',
-        metadata: { status: 'ANCHORED' },
+        snippet: 'ARK-FP-ABC',
+        metadata: { status: 'ACTIVE' },
       }],
       next_cursor: null,
     });
@@ -366,13 +361,7 @@ describe('agent v2 MCP aliases', () => {
     const validHash = 'c'.repeat(64);
     mockFetch.mockResolvedValueOnce({
       ok: true,
-      json: async () => ([{
-        id: 'rec-1',
-        source: 'mcp',
-        content_hash: validHash,
-        metadata: {},
-        anchor_id: null,
-      }]),
+      json: async () => pendingPublicAnchorRow({ fingerprint: validHash }),
     });
 
     const result = await handleAgentVerify({ fingerprint: validHash }, CONFIG);
@@ -518,17 +507,13 @@ describe('agent v2 MCP aliases', () => {
     const fingerprint = 'a'.repeat(64);
     mockFetch.mockResolvedValueOnce({
       ok: true,
-      json: async () => ([{
-        id: 'internal-record-id',
-        public_id: 'ARK-DOC-ABC',
-        anchor_id: 'anchor-internal-id',
-        source: 'mcp',
-        source_url: null,
-        record_type: 'document',
-        title: 'Some doc',
-        content_hash: fingerprint,
-        metadata: {},
-      }]),
+      json: async () =>
+        realPublicAnchorRow({
+          public_id: 'ARK-DOC-ABC',
+          fingerprint,
+          id: 'internal-record-id',
+          record_id: 'internal-record-id',
+        } as never),
     });
 
     const result = await handleAgentVerify({ fingerprint }, CONFIG);
@@ -694,42 +679,33 @@ describe('handleVerifyDocument (PH1-SDK-03)', () => {
   it('returns anchor proof when document is anchored', async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
-      json: async () => ([{
-        id: 'rec-1',
-        source: 'edgar',
-        source_url: 'https://sec.gov/filing/123',
-        record_type: '10-K',
-        title: 'Apple Annual Report',
-        content_hash: validHash,
-        metadata: { chain_tx_id: 'tx-123', merkle_root: 'root-abc' },
-        anchor_id: 'anchor-1',
-      }]),
+      json: async () =>
+        realPublicAnchorRow({
+          public_id: 'ARK-DOC-ANCHOR',
+          fingerprint: validHash,
+          network_receipt_id: 'tx-123',
+        }),
     });
 
     const result = await handleVerifyDocument({ content_hash: validHash }, CONFIG);
     const parsed = JSON.parse(result.content[0].text);
     expect(parsed.verified).toBe(true);
-    expect(parsed.status).toBe('ANCHORED');
-    expect(parsed.anchor_proof.chain_tx_id).toBe('tx-123');
+    expect(parsed.status).toBe('ACTIVE');
+    expect(parsed.network_receipt_id).toBe('tx-123');
   });
 
   it('returns PENDING when not yet anchored', async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
-      json: async () => ([{
-        id: 'rec-2',
-        source: 'mcp',
-        content_hash: validHash,
-        metadata: {},
-        anchor_id: null,
-      }]),
+      json: async () => pendingPublicAnchorRow({ fingerprint: validHash }),
     });
 
     const result = await handleVerifyDocument({ content_hash: validHash }, CONFIG);
     const parsed = JSON.parse(result.content[0].text);
     expect(parsed.verified).toBe(false);
     expect(parsed.status).toBe('PENDING');
-    expect(parsed.anchor_proof).toBeNull();
+    expect(parsed.network_receipt_id).toBeNull();
+    expect(parsed.anchor_timestamp).toBeNull();
   });
 });
 
