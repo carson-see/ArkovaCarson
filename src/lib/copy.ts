@@ -1557,6 +1557,34 @@ export const COMPLIANCE_LABELS = {
   GRC_NO_CONNECTIONS_DESC: 'Connect Vanta, Drata, or Anecdotes to automatically push compliance evidence.',
 } as const;
 
+export const PROFESSIONAL_EDUCATION_EXPORT_LABELS = {
+  TITLE: 'Professional Education Exports',
+  DESCRIPTION: 'Generate signed compliance logs for reporting periods.',
+  FORMAT_LABEL: 'Format',
+  FORMAT_PDF: 'PDF',
+  FORMAT_JSON: 'JSON',
+  CPE_TITLE: 'CPE Log',
+  CPE_DESCRIPTION: 'Export your continuing education records for accounting board review.',
+  CPE_PERIOD_START: 'CPE period start',
+  CPE_PERIOD_END: 'CPE period end',
+  CPE_EXPORT: 'Export CPE log',
+  CPE_EXPORTING: 'Exporting CPE log',
+  CLE_TITLE: 'CLE Log',
+  CLE_DESCRIPTION: 'Export legal education records for a selected jurisdiction.',
+  CLE_JURISDICTION: 'CLE jurisdiction',
+  CLE_JURISDICTION_PLACEHOLDER: 'US-CA',
+  CLE_PERIOD_START: 'CLE period start',
+  CLE_PERIOD_END: 'CLE period end',
+  CLE_EXPORT: 'Export CLE log',
+  CLE_EXPORTING: 'Exporting CLE log',
+  REQUIRED_FIELDS: 'Choose a valid reporting period before exporting.',
+  MISSING_URL: 'The export completed, but no download link was returned.',
+  UNSAFE_URL: 'The export completed, but the download link was not safe to open.',
+  GENERIC_ERROR: 'Unable to export the compliance log. Please try again.',
+  SUCCESS_CPE: (count: number) => `CPE log ready. ${count} ${count === 1 ? 'record' : 'records'} included.`,
+  SUCCESS_CLE: (count: number) => `CLE log ready. ${count} ${count === 1 ? 'record' : 'records'} included.`,
+} as const;
+
 // =============================================================================
 // RULE BUILDER WIZARD (ARK-108 / CIBA-HARDEN-04)
 // =============================================================================

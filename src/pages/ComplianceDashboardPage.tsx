@@ -38,6 +38,7 @@ import { GradeBadge } from '@/components/compliance/GradeBadge';
 import { MissingDocumentsCard } from '@/components/compliance/MissingDocumentsCard';
 import { ExpiringDocumentsCard } from '@/components/compliance/ExpiringDocumentsCard';
 import { RecommendationsCard } from '@/components/compliance/RecommendationsCard';
+import { ProfessionalEducationExportPanel } from '@/components/compliance/ProfessionalEducationExportPanel';
 import { useComplianceScore, useJurisdictionRules } from '@/hooks/useComplianceScore';
 
 type Attestation = Database['public']['Tables']['attestations']['Row'];
@@ -148,6 +149,7 @@ export function ComplianceDashboardPage() {
   const { user, signOut } = useAuth();
   const { profile, loading: profileLoading } = useProfile();
   const orgId = profile?.org_id;
+  const userId = user?.id;
 
   // SN2: Restrict to ORG_ADMIN and platform admins
   const isAdmin = profile?.role === 'ORG_ADMIN' || isPlatformAdmin(profile?.email);
@@ -467,6 +469,8 @@ export function ComplianceDashboardPage() {
             summary={gapData?.summary ?? 'Loading compliance analysis...'}
           />
         </div>
+
+        {userId && <ProfessionalEducationExportPanel userId={userId} />}
 
         {/* Section 0: Nessie Intelligence Query */}
         <NessieIntelligencePanel />
