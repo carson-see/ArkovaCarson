@@ -2,7 +2,6 @@ import {
   CTDL_CONTEXT,
   resolveCtdlType,
   toCtdlCredentialStatusType,
-  type CtdlStatusType,
   type CtdlType,
 } from './ctdl-type-map.js';
 import { assertValidCtdlJsonLd } from './ctdl-validation.js';
@@ -13,12 +12,14 @@ import { ARKOVA_DID } from '../api/did-web.js';
 export interface CtdlIssuer {
   name?: string | null;
   publicId?: string | null;
+  ctid?: string | null;
   websiteUrl?: string | null;
   domain?: string | null;
 }
 
 export interface CtdlAnchor {
   publicId: string;
+  ctid?: string | null;
   /** Internal audit context only. The serializer never emits this field. */
   orgId?: string | null;
   status: string;
@@ -44,7 +45,7 @@ export interface CtdlJsonLd {
   '@context': typeof CTDL_CONTEXT;
   '@type': CtdlType;
   'ceterms:name': string;
-  'ceterms:ctid': string;
+  'ceterms:ctid'?: string;
   'ceterms:offeredBy': {
     '@type': 'ceterms:Organization';
     'ceterms:name': string;
@@ -57,21 +58,19 @@ export interface CtdlJsonLd {
      */
     'ceterms:sameAs'?: string[];
   };
-  'ceterms:credentialStatusType': CtdlStatusType;
-  'ceterms:dateEffective': string;
   'ceterms:verificationServiceProfile': {
     '@type': 'ceterms:VerificationServiceProfile';
     'ceterms:name': string;
     'ceterms:verificationService': string;
   };
-  'ceterms:identifier': {
-    'ceterms:identifierType': 'Arkova public credential ID';
-    'ceterms:identifierValue': string;
-  };
   'ceterms:description'?: string;
-  'ceterms:expirationDate'?: string;
-  'ceterms:revocationDate'?: string;
-  'ceterms:revocationReason'?: string;
+}
+
+export class CtdlPiiSafetyError extends Error {
+  constructor(message = 'CTDL PII safety gate blocked public serialization') {
+    super(message);
+    this.name = 'CtdlPiiSafetyError';
+  }
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -93,9 +92,26 @@ function cleanPublicString(value: unknown, maxLength = 240): string | null {
   return clean.length <= maxLength ? clean : clean.slice(0, maxLength).trimEnd();
 }
 
+const EMAIL_PATTERN = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/i;
+const SSN_PATTERN = /\b\d{3}[-\s]?\d{2}[-\s]?\d{4}\b/;
+const PHONE_PATTERN = /(?:\+1\d{10}|\(\d{3}\)\s?\d{3}[-.]?\d{4}|\b\d{3}[-.\s]\d{3}[-.\s]\d{4}\b|\+(?:[2-9]\d)\d{7,11})/;
+const REAL_CTID_PATTERN = /^ce-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const TRANSCRIPT_SIGNAL_PATTERN = /\b(?:transcript|student record|academic record|learner record)\b/i;
+const LEARNER_NAME_PATTERN = /\b(?:for|learner|student|recipient|issued to|awarded to|completed by)\s+[A-Z][a-z]+(?:\s+[A-Z]\.?)?\s+[A-Z][a-z]+\b/;
+
+function containsHighConfidencePii(value: string): boolean {
+  return EMAIL_PATTERN.test(value) || SSN_PATTERN.test(value) || PHONE_PATTERN.test(value);
+}
+
+function cleanPublicFreeText(value: unknown, maxLength = 240): string | null {
+  const clean = cleanPublicString(value, maxLength);
+  if (!clean || containsHighConfidencePii(clean)) return null;
+  return clean;
+}
+
 function pickMetadataString(metadata: Record<string, unknown>, keys: readonly string[], maxLength?: number): string | null {
   for (const key of keys) {
-    const clean = cleanPublicString(metadata[key], maxLength);
+    const clean = cleanPublicFreeText(metadata[key], maxLength);
     if (clean) return clean;
   }
   return null;
@@ -115,7 +131,7 @@ function isPublicHttpUrl(value: unknown): string | null {
 
 function credentialName(anchor: CtdlAnchor, metadata: Record<string, unknown>): string {
   return (
-    cleanPublicString(anchor.label) ??
+    cleanPublicFreeText(anchor.label) ??
     pickMetadataString(metadata, [
       'credential_name',
       'credentialName',
@@ -128,14 +144,14 @@ function credentialName(anchor: CtdlAnchor, metadata: Record<string, unknown>): 
       'name',
       'title',
     ]) ??
-    cleanPublicString(anchor.description) ??
+    cleanPublicFreeText(anchor.description) ??
     `Arkova credential ${anchor.publicId}`
   );
 }
 
 function issuerName(anchor: CtdlAnchor, metadata: Record<string, unknown>): string {
   return (
-    cleanPublicString(anchor.issuer?.name) ??
+    cleanPublicFreeText(anchor.issuer?.name) ??
     pickMetadataString(metadata, [
       'issuer_name',
       'issuerName',
@@ -149,28 +165,64 @@ function issuerName(anchor: CtdlAnchor, metadata: Record<string, unknown>): stri
   );
 }
 
-function effectiveDate(anchor: CtdlAnchor): string {
-  return anchor.issuedAt ?? anchor.chainTimestamp ?? anchor.createdAt;
+function realCtid(value: unknown): string | null {
+  const clean = cleanPublicString(value, 80);
+  if (!clean || !REAL_CTID_PATTERN.test(clean)) return null;
+  return clean;
 }
 
-function ctidFromPublicId(publicId: string): string {
-  return `ce-${publicId}`;
+function metadataTextValues(value: unknown): string[] {
+  if (typeof value === 'string') return [value];
+  if (Array.isArray(value)) return value.flatMap(metadataTextValues);
+  if (!value || typeof value !== 'object') return [];
+  return Object.values(value as Record<string, unknown>).flatMap(metadataTextValues);
+}
+
+function isTranscriptLikeEducation(anchor: CtdlAnchor, metadata: Record<string, unknown>): boolean {
+  const credentialType = anchor.credentialType?.toUpperCase() ?? '';
+  if (credentialType !== 'DEGREE' && credentialType !== 'CERTIFICATE') return false;
+
+  const haystack = [
+    anchor.subType,
+    anchor.label,
+    anchor.description,
+    ...metadataTextValues(metadata),
+  ].filter((value): value is string => typeof value === 'string').join(' ');
+  return TRANSCRIPT_SIGNAL_PATTERN.test(haystack);
+}
+
+function assertCtdlPiiSafe(anchor: CtdlAnchor, metadata: Record<string, unknown>): void {
+  if (!isTranscriptLikeEducation(anchor, metadata)) return;
+
+  const freeTextValues = [
+    anchor.label,
+    anchor.description,
+    ...metadataTextValues(metadata),
+  ].filter((value): value is string => typeof value === 'string');
+
+  if (freeTextValues.some((value) => LEARNER_NAME_PATTERN.test(stripControlChars(value).replace(/\s+/g, ' ').trim()))) {
+    throw new CtdlPiiSafetyError();
+  }
 }
 
 export function buildCtdlJsonLd(anchor: CtdlAnchor, options: BuildCtdlOptions): CtdlJsonLd {
-  const statusType = toCtdlCredentialStatusType(anchor.status);
-  if (!statusType) {
+  if (!toCtdlCredentialStatusType(anchor.status)) {
     throw new Error(`Cannot serialize CTDL for non-publishable status: ${anchor.status}`);
   }
 
   const metadata = asRecord(anchor.metadata);
+  assertCtdlPiiSafe(anchor, metadata);
   const offeredBy: CtdlJsonLd['ceterms:offeredBy'] = {
     '@type': 'ceterms:Organization',
     'ceterms:name': issuerName(anchor, metadata),
   };
 
+  const issuerCtid = realCtid(anchor.issuer?.ctid);
+  if (issuerCtid) {
+    offeredBy['ceterms:ctid'] = issuerCtid;
+  }
+
   if (anchor.issuer?.publicId) {
-    offeredBy['ceterms:ctid'] = ctidFromPublicId(anchor.issuer.publicId);
     // SCRUM-1922 R-CTDL-FR9 — link the org's did:web identity. The public_id
     // is the same value the did:web resolver keys on, so this resolves to
     // https://app.arkova.ai/orgs/{public_id}/did.json.
@@ -186,29 +238,19 @@ export function buildCtdlJsonLd(anchor: CtdlAnchor, options: BuildCtdlOptions): 
     '@context': CTDL_CONTEXT,
     '@type': resolveCtdlType(anchor.credentialType, anchor.subType),
     'ceterms:name': credentialName(anchor, metadata),
-    'ceterms:ctid': ctidFromPublicId(anchor.publicId),
     'ceterms:offeredBy': offeredBy,
-    'ceterms:credentialStatusType': statusType,
-    'ceterms:dateEffective': effectiveDate(anchor),
     'ceterms:verificationServiceProfile': {
       '@type': 'ceterms:VerificationServiceProfile',
       'ceterms:name': 'Arkova credential verification',
       'ceterms:verificationService': options.verifyUrl,
     },
-    'ceterms:identifier': {
-      'ceterms:identifierType': 'Arkova public credential ID',
-      'ceterms:identifierValue': anchor.publicId,
-    },
   };
 
-  const description = cleanPublicString(anchor.description, 500);
+  const credentialCtid = realCtid(anchor.ctid);
+  if (credentialCtid) jsonLd['ceterms:ctid'] = credentialCtid;
+
+  const description = cleanPublicFreeText(anchor.description, 500);
   if (description) jsonLd['ceterms:description'] = description;
-  if (anchor.expiresAt) jsonLd['ceterms:expirationDate'] = anchor.expiresAt;
-  if (anchor.status === 'REVOKED') {
-    if (anchor.revokedAt) jsonLd['ceterms:revocationDate'] = anchor.revokedAt;
-    const reason = cleanPublicString(anchor.revocationReason, 500);
-    if (reason) jsonLd['ceterms:revocationReason'] = reason;
-  }
 
   assertValidCtdlJsonLd(jsonLd);
   return jsonLd;

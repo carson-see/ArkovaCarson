@@ -1,15 +1,15 @@
 /**
  * GET /api/v1/credentials/:publicId/ctdl
  *
- * Public CTDL JSON-LD projection for an anchored credential. The endpoint
+ * Public CTDL JSON-LD class projection resolved from an anchored credential. The endpoint
  * accepts Arkova public IDs only and intentionally returns no internal UUIDs,
  * fingerprints, raw metadata, recipient emails, or source filenames.
  */
 
 import { Router, type Request } from 'express';
-import { buildCtdlJsonLd, type CtdlAnchor } from '../../ctdl/ctdl-serializer.js';
+import { buildCtdlJsonLd, CtdlPiiSafetyError, type CtdlAnchor } from '../../ctdl/ctdl-serializer.js';
 import { isCtdlPublishableStatus } from '../../ctdl/ctdl-type-map.js';
-import { buildVerifyUrl } from '../../lib/urls.js';
+import { buildVerificationServiceUrl } from '../../lib/urls.js';
 import { db } from '../../utils/db.js';
 import { getCorrelationId } from '../../utils/correlationId.js';
 import { logger } from '../../utils/logger.js';
@@ -23,7 +23,7 @@ export interface CredentialsCtdlLookup {
 interface AuditArgs {
   req: Request;
   publicId: string;
-  outcome: 'invalid' | 'not_found' | 'not_publishable' | 'published' | 'revoked' | 'error';
+  outcome: 'invalid' | 'not_found' | 'not_publishable' | 'safety_blocked' | 'published' | 'revoked' | 'error';
   httpStatus: number;
   credentialStatus?: string | null;
   credentialType?: string | null;
@@ -146,8 +146,9 @@ export function buildCredentialsCtdlRouter(lookup: CredentialsCtdlLookup = defau
       return;
     }
 
+    let anchor: CtdlAnchor | null = null;
     try {
-      const anchor = await lookup.lookupByPublicId(publicId);
+      anchor = await lookup.lookupByPublicId(publicId);
       if (!anchor) {
         logCtdlRequested({ req, publicId, outcome: 'not_found', httpStatus: 404 });
         res.status(404).json({ error: 'not_found' });
@@ -169,7 +170,7 @@ export function buildCredentialsCtdlRouter(lookup: CredentialsCtdlLookup = defau
         return;
       }
 
-      const body = buildCtdlJsonLd(anchor, { verifyUrl: buildVerifyUrl(publicId) });
+      const body = buildCtdlJsonLd(anchor, { verifyUrl: buildVerificationServiceUrl() });
       const revoked = anchor.status === 'REVOKED';
       const httpStatus = revoked ? 410 : 200;
       logCtdlRequested({
@@ -183,6 +184,19 @@ export function buildCredentialsCtdlRouter(lookup: CredentialsCtdlLookup = defau
       });
       res.status(httpStatus).type('application/ld+json').json(body);
     } catch (error) {
+      if (error instanceof CtdlPiiSafetyError) {
+        logCtdlRequested({
+          req,
+          publicId,
+          outcome: 'safety_blocked',
+          httpStatus: 404,
+          credentialStatus: anchor?.status,
+          credentialType: anchor?.credentialType,
+          orgId: anchor?.orgId,
+        });
+        res.status(404).json({ error: 'not_found' });
+        return;
+      }
       logger.error({
         public_id: publicId,
         error: error instanceof Error ? error.message : String(error),
