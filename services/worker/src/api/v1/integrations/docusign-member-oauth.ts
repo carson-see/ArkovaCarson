@@ -155,21 +155,35 @@ function hmacSign(input: string, secret: string): string {
   return createHmac('sha256', secret).update(input).digest('base64url');
 }
 
-function getStateSecret(deps: DocusignMemberOAuthDeps): string {
-  if (!deps.stateSecret) throw new Error('STATE_SECRET required for member OAuth state signing');
-  return deps.stateSecret;
+/**
+ * Resolve the dedicated HMAC secret for member OAuth state signing.
+ *
+ * 2026-04-24 forensic audit finding H1: the eager export below previously
+ * hardcoded `stateSecret: config.supabaseJwtSecret`, collapsing the user-auth
+ * and OAuth-CSRF trust boundaries exactly like the org router. We now require a
+ * dedicated `INTEGRATION_STATE_HMAC_SECRET` env var (or an explicit `stateSecret`
+ * override for tests) and NEVER fall back to the Supabase JWT/service-role
+ * secret. Fail-closed if neither is provided. Mirrors drive-oauth.ts (SCRUM-1236).
+ */
+function resolveStateSecret(deps: DocusignMemberOAuthDeps): string {
+  if (deps.stateSecret) return deps.stateSecret;
+  const envSecret = (deps.env ?? process.env).INTEGRATION_STATE_HMAC_SECRET;
+  if (envSecret && envSecret.length > 0) return envSecret;
+  throw new Error(
+    'INTEGRATION_STATE_HMAC_SECRET is required for DocuSign member OAuth state signing — fail-closed (audit H1)',
+  );
 }
 
-function signState(payload: MemberStatePayload, deps: DocusignMemberOAuthDeps): string {
+function signState(payload: MemberStatePayload, secret: string): string {
   const encoded = base64Url(JSON.stringify(payload));
-  return `${encoded}.${hmacSign(encoded, getStateSecret(deps))}`;
+  return `${encoded}.${hmacSign(encoded, secret)}`;
 }
 
-function verifyState(state: string, deps: DocusignMemberOAuthDeps): MemberStatePayload | null {
+function verifyState(state: string, secret: string, deps: DocusignMemberOAuthDeps): MemberStatePayload | null {
   const [encoded, signature] = state.split('.');
   if (!encoded || !signature) return null;
 
-  const expected = hmacSign(encoded, getStateSecret(deps));
+  const expected = hmacSign(encoded, secret);
   const sigBuffer = Buffer.from(signature);
   const expectedBuffer = Buffer.from(expected);
   if (
@@ -269,6 +283,8 @@ async function recordIntegrationEvent(db: DbClient, args: {
 export function createDocusignMemberOAuthRouter(deps: DocusignMemberOAuthDeps = {}): Router {
   const router = Router();
   const db = (deps.db ?? defaultDb) as DbClient;
+  // Audit H1: resolve at construction time so a misconfigured deploy fails fast.
+  const stateSecret = resolveStateSecret(deps);
 
   // ─── POST /docusign/member/oauth/start ───
   router.post('/docusign/member/oauth/start', async (req: Request, res: Response) => {
@@ -300,7 +316,7 @@ export function createDocusignMemberOAuthRouter(deps: DocusignMemberOAuthDeps = 
         nonce: randomUUID(),
         returnTo,
         iat: (deps.now?.() ?? new Date()).getTime(),
-      }, deps);
+      }, stateSecret);
       const authorizationUrl = buildDocusignAuthorizationUrl({
         redirectUri,
         state,
@@ -319,7 +335,7 @@ export function createDocusignMemberOAuthRouter(deps: DocusignMemberOAuthDeps = 
     const state = typeof req.query.state === 'string' ? req.query.state : '';
     const code = typeof req.query.code === 'string' ? req.query.code : '';
     const errorParam = typeof req.query.error === 'string' ? req.query.error : '';
-    const payload = verifyState(state, deps);
+    const payload = verifyState(state, stateSecret, deps);
     const returnTo = payload?.returnTo ?? `${deps.frontendUrl ?? config.frontendUrl}/organizations`;
 
     if (!payload) {
@@ -628,6 +644,13 @@ export function createDocusignMemberOAuthRouter(deps: DocusignMemberOAuthDeps = 
   return router;
 }
 
-export const docusignMemberOAuthRouter = createDocusignMemberOAuthRouter({
-  stateSecret: config.supabaseJwtSecret,
+// Lazy router export — resolve INTEGRATION_STATE_HMAC_SECRET at the first
+// request, not module import, so tests importing this module without the env
+// var don't crash. Audit H1: NEVER fall back to config.supabaseJwtSecret (the
+// previous eager export hardcoded it, collapsing two trust boundaries).
+let cachedMemberRouter: Router | null = null;
+export const docusignMemberOAuthRouter: Router = Router();
+docusignMemberOAuthRouter.use((req, res, next) => {
+  if (!cachedMemberRouter) cachedMemberRouter = createDocusignMemberOAuthRouter();
+  return cachedMemberRouter(req, res, next);
 });

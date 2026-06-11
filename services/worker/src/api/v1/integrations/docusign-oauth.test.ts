@@ -150,6 +150,104 @@ describe('DocuSign OAuth router', () => {
     vi.clearAllMocks();
   });
 
+  // 2026-04-24 forensic audit finding H1 (same class as Drive SCRUM-1236 /
+  // AUDIT-0424-11): the OAuth `state` HMAC must come from a dedicated env var
+  // and fail closed when unset. The previous `?? config.supabaseJwtSecret ??
+  // config.supabaseServiceKey` fallback collapsed the user-auth and OAuth-CSRF
+  // trust boundaries — a leaked Supabase JWT secret would make every DocuSign
+  // OAuth `state` forgeable. Drive was fixed under SCRUM-1236; DocuSign was the
+  // remaining half of H1.
+  it('H1: fails closed when neither stateSecret nor INTEGRATION_STATE_HMAC_SECRET is set', () => {
+    const db = { from: vi.fn() };
+    expect(() =>
+      createDocusignOAuthRouter({
+        db: asTestDb(db),
+        // No stateSecret. Empty env (no INTEGRATION_STATE_HMAC_SECRET).
+        env: {
+          DOCUSIGN_INTEGRATION_KEY: 'docusign-client',
+          DOCUSIGN_CLIENT_SECRET: 'docusign-client-secret',
+          DOCUSIGN_DEMO: 'true',
+        },
+        frontendUrl: 'http://localhost:5173',
+      }),
+    ).toThrow(/INTEGRATION_STATE_HMAC_SECRET/);
+  });
+
+  it('H1: uses INTEGRATION_STATE_HMAC_SECRET from env when provided', async () => {
+    const db = {
+      from: vi.fn(() => mockQuery({ data: { role: 'admin' }, error: null })),
+    };
+    const app = express();
+    app.use(express.json());
+    app.use((req, _res, next) => {
+      (req as unknown as { userId: string }).userId = TEST_USER_ID;
+      next();
+    });
+    app.use('/api/v1/integrations', createDocusignOAuthRouter({
+      db: asTestDb(db),
+      env: {
+        DOCUSIGN_INTEGRATION_KEY: 'docusign-client',
+        DOCUSIGN_CLIENT_SECRET: 'docusign-client-secret',
+        DOCUSIGN_DEMO: 'true',
+        INTEGRATION_STATE_HMAC_SECRET: 'env-state-secret',
+      },
+      frontendUrl: 'http://localhost:5173',
+      now: () => new Date('2026-04-24T12:00:00.000Z'),
+    }));
+
+    const res = await request(app)
+      .post('/api/v1/integrations/docusign/oauth/start')
+      .set('host', 'worker.test')
+      .send({ org_id: TEST_ORG_ID });
+
+    expect(res.status).toBe(200);
+    expect(res.body.authorizationUrl).toContain('account-d.docusign.com');
+  });
+
+  it('H1: state HMAC does NOT fall back to supabaseJwtSecret', async () => {
+    // Build a state using supabaseJwtSecret (the old fallback) — verify should
+    // reject because the new code requires the dedicated secret.
+    const db = {
+      from: vi.fn(() => mockQuery({ data: { role: 'admin' }, error: null })),
+    };
+    const app = express();
+    app.use(express.json());
+    app.use((req, _res, next) => {
+      (req as unknown as { userId: string }).userId = TEST_USER_ID;
+      next();
+    });
+    app.use('/api/v1/integrations', createDocusignOAuthRouter({
+      db: asTestDb(db),
+      env: {
+        DOCUSIGN_INTEGRATION_KEY: 'docusign-client',
+        DOCUSIGN_CLIENT_SECRET: 'docusign-client-secret',
+        DOCUSIGN_DEMO: 'true',
+        INTEGRATION_STATE_HMAC_SECRET: 'dedicated-secret',
+      },
+      frontendUrl: 'http://localhost:5173',
+      now: () => new Date('2026-04-24T12:00:00.000Z'),
+    }));
+
+    // Forge a state signed by the old fallback (supabaseJwtSecret = 'jwt-secret').
+    const { createHmac } = await import('node:crypto');
+    const payload = Buffer.from(JSON.stringify({
+      orgId: TEST_ORG_ID, userId: TEST_USER_ID, nonce: 'n',
+      returnTo: 'http://localhost:5173/organizations/x?tab=settings',
+      iat: new Date('2026-04-24T12:00:00.000Z').getTime(),
+    }), 'utf8').toString('base64url');
+    const sig = createHmac('sha256', 'jwt-secret').update(payload).digest('base64url');
+    const forgedState = `${payload}.${sig}`;
+
+    const res = await request(app)
+      .get('/api/v1/integrations/docusign/oauth/callback')
+      .set('host', 'worker.test')
+      .query({ code: 'x', state: forgedState });
+
+    // Forged state must redirect with invalid_state — not be accepted.
+    expect(res.status).toBe(302);
+    expect(res.headers.location).toContain('docusign_error=invalid_state');
+  });
+
   it('starts OAuth for org admins and returns a DocuSign authorization URL', async () => {
     const db = {
       from: vi.fn(() => mockQuery({ data: { role: 'admin' }, error: null })),

@@ -152,20 +152,39 @@ function hmac(input: string, secret: string): string {
   return createHmac('sha256', secret).update(input).digest('base64url');
 }
 
-function getStateSecret(deps: DocusignOAuthDeps): string {
-  return deps.stateSecret ?? config.supabaseJwtSecret ?? config.supabaseServiceKey;
+/**
+ * Resolve the dedicated HMAC secret for OAuth state signing.
+ *
+ * 2026-04-24 forensic audit finding H1: previously this fell back to
+ * `config.supabaseJwtSecret` then `config.supabaseServiceKey` — general-purpose
+ * secrets used on unrelated paths. Coupling OAuth state validity to the
+ * Supabase JWT secret meant rotating that secret silently invalidated every
+ * in-flight OAuth flow, and reusing the user-auth verification secret as the
+ * OAuth-CSRF signing secret collapsed two trust boundaries (a leaked JWT secret
+ * would make every DocuSign `state` forgeable). We now require a dedicated
+ * `INTEGRATION_STATE_HMAC_SECRET` env var (or an explicit `stateSecret` override
+ * for tests). Fail-closed if neither is provided. Mirrors the Drive remediation
+ * in drive-oauth.ts (SCRUM-1236 / AUDIT-0424-11); this closes the DocuSign half.
+ */
+function resolveStateSecret(deps: DocusignOAuthDeps): string {
+  if (deps.stateSecret) return deps.stateSecret;
+  const envSecret = (deps.env ?? process.env).INTEGRATION_STATE_HMAC_SECRET;
+  if (envSecret && envSecret.length > 0) return envSecret;
+  throw new Error(
+    'INTEGRATION_STATE_HMAC_SECRET is required for DocuSign OAuth state signing — fail-closed (audit H1)',
+  );
 }
 
-function signState(payload: StatePayload, deps: DocusignOAuthDeps): string {
+function signState(payload: StatePayload, secret: string): string {
   const encoded = base64Url(JSON.stringify(payload));
-  return `${encoded}.${hmac(encoded, getStateSecret(deps))}`;
+  return `${encoded}.${hmac(encoded, secret)}`;
 }
 
-function verifyState(state: string, deps: DocusignOAuthDeps): StatePayload | null {
+function verifyState(state: string, secret: string, deps: DocusignOAuthDeps): StatePayload | null {
   const [encoded, signature] = state.split('.');
   if (!encoded || !signature) return null;
 
-  const expected = hmac(encoded, getStateSecret(deps));
+  const expected = hmac(encoded, secret);
   const sigBuffer = Buffer.from(signature);
   const expectedBuffer = Buffer.from(expected);
   if (
@@ -414,6 +433,9 @@ async function reprovisionDocusignConnectIntegration(args: {
 export function createDocusignOAuthRouter(deps: DocusignOAuthDeps = {}): Router {
   const router = Router();
   const db = (deps.db ?? defaultDb) as DbClient;
+  // Audit H1: resolve at construction time so a misconfigured deploy fails fast
+  // (server boot) rather than at the first OAuth attempt. Mirrors drive-oauth.ts.
+  const stateSecret = resolveStateSecret(deps);
 
   router.post('/docusign/oauth/start', async (req: Request, res: Response) => {
     const userId = getUserId(req);
@@ -443,7 +465,7 @@ export function createDocusignOAuthRouter(deps: DocusignOAuthDeps = {}): Router 
         nonce: randomUUID(),
         returnTo,
         iat: (deps.now?.() ?? new Date()).getTime(),
-      }, deps);
+      }, stateSecret);
       const authorizationUrl = buildDocusignAuthorizationUrl({
         redirectUri,
         state,
@@ -461,7 +483,7 @@ export function createDocusignOAuthRouter(deps: DocusignOAuthDeps = {}): Router 
     const state = typeof req.query.state === 'string' ? req.query.state : '';
     const code = typeof req.query.code === 'string' ? req.query.code : '';
     const errorParam = typeof req.query.error === 'string' ? req.query.error : '';
-    const payload = verifyState(state, deps);
+    const payload = verifyState(state, stateSecret, deps);
     const returnTo = payload?.returnTo ?? `${deps.frontendUrl ?? config.frontendUrl}/organizations`;
 
     if (!payload) {
@@ -845,4 +867,14 @@ export function createDocusignOAuthRouter(deps: DocusignOAuthDeps = {}): Router 
   return router;
 }
 
-export const docusignOAuthRouter = createDocusignOAuthRouter();
+// Lazy router export — `createDocusignOAuthRouter()` validates
+// `INTEGRATION_STATE_HMAC_SECRET` at construction time and throws when missing
+// (audit H1). Eager construction at module-import time would crash unrelated
+// tests that import the module without setting the env var. We expose a wrapper
+// Router that defers real construction until the first request mounts on it.
+let cachedRouter: Router | null = null;
+export const docusignOAuthRouter: Router = Router();
+docusignOAuthRouter.use((req, res, next) => {
+  if (!cachedRouter) cachedRouter = createDocusignOAuthRouter();
+  return cachedRouter(req, res, next);
+});
