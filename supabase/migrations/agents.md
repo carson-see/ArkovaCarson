@@ -7,12 +7,13 @@ This directory now starts with the Path C baseline, `00000000000000_baseline_at_
 - Treat migrations as prod-bound: a migration PR is not Done until prod Supabase schema/ledger evidence is captured.
 - **Before claiming a numeric prefix, add a row to the reservation table below in the same PR.** The 2026-06-01 three-way `0327` collision (#971/#1038/#1047) happened because parallel sessions skipped this step.
 
-## In-flight migration reservations (0327–0334) — recorded 2026-06-01, updated 2026-06-05
+## In-flight migration reservations (0327–0336) — recorded 2026-06-01, updated 2026-06-05
 
 `main` HEAD is **0331** as of 2026-06-05 (`0330`/`0331` merged ✓). The lowest unmerged prefix is `0327`; the next free prefix is **`0334`**. Canonical assignment for the currently-open / reserved migration PRs:
 ## In-flight migration reservations (0327–0339) — recorded 2026-06-01, updated 2026-06-07
 
 `main` HEAD is **0331** as of 2026-06-07 (`0330`/`0331` merged). The lowest unmerged prefix is `0327`. This branch owns **`0334`** and must merge only after lower numeric prefixes land. Canonical assignment for the currently-open / reserved migration PRs:
+`main` HEAD is **0331** as of 2026-06-05 (`0330`/`0331` merged ✓). The lowest unmerged prefix is `0327`; the next free prefix is **`0337`** (0332–0336 now reserved). Canonical assignment for the currently-open / reserved migration PRs:
 
 | Prefix | PR | Story | File | Status |
 |---|---|---|---|---|
@@ -35,8 +36,10 @@ This directory now starts with the Path C baseline, `00000000000000_baseline_at_
 | `0338` | #1107 | SCRUM-2250 | `0338_scrum2250_webhook_delivery_backfill.sql` | reserved — T3, soak pending; after #1114 webhook delivery changes |
 | `0339` | #1122 | BUG-1 | `0339_get_public_anchor_by_fingerprint.sql` | reserved — T3, soak pending after 0332–0338 |
 | `0335` | #1111 | SCRUM-2236 | `0335_scrum2236_dashboard_cache_budgets.sql` | **reserved 2026-06-05** — HARDEN-1 on the 4 dashboard cache refreshers. Review-fix (2026-06-05): (1) cancel path no longer writes a `{stale,…,value}` wrapper — it preserves the prior BARE cache_value (ON CONFLICT DO NOTHING; bare `[]`/`{}` seeded only when no row exists) so `get_anchor_type_counts`/`get_distinct_record_types`/`count_public_records_by_source` (which read the bare value) never throw; (2) durable fix is index-resident scans via operator-applied `CREATE INDEX CONCURRENTLY` (net-new `idx_anchors_status_active_count (status) WHERE deleted_at IS NULL`; the type/source/record_type scans reuse existing partial/btree indexes), since `SET LOCAL statement_timeout` arms vs the OUTER statement and gives the inner scan ~0 budget under the cron wrapper. The 1s budget + explicit 57014 catch stay as a safety net only. T3, soak pending |
+| `0335` | (sibling) | (sibling PR) | (sibling-session migration) | reserved by a parallel sibling session — do not reuse `0335` |
+| `0336` | (pending) | SCRUM-2252 | `0336_scrum2252_revocation_metadata.sql` | **reserved 2026-06-05** — adds additive-nullable `anchors.revocation_metadata` (jsonb) + `revocation_metadata_hash` (text) so the on-chain revocation hash is reconstructible (BUG-2026-05-16-003); T3, soak pending |
 
-- **Merge order must follow prefix order** (`0327→0334`): migrations apply monotonically, so merging a higher prefix before a lower one strands the lower one as out-of-order.
+- **Merge order must follow prefix order** (`0327→0336`): migrations apply monotonically, so merging a higher prefix before a lower one strands the lower one as out-of-order.
 - Each of these soaks on its **own dedicated isolated Supabase project**, never shared staging — `main` is at `0326`, so applying any unmerged prefix to shared staging would gap the ledger and contaminate every parallel soak.
 - **Merge order must follow prefix order** (`0327→0339`): migrations apply monotonically, so merging a higher prefix before a lower one strands the lower one as out-of-order.
 - Each of these soaks on its **own dedicated isolated Supabase project**, never shared staging — applying unmerged prefixes to shared staging would gap the ledger and contaminate every parallel soak.
