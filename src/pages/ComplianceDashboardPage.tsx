@@ -6,7 +6,7 @@
  * Links out to existing detail pages (attestations, review queue).
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
 import { Link } from 'react-router-dom';
 import { Clock, XCircle, Link2, AlertTriangle, CheckCircle, Activity, ArrowRight, FileCheck, Ban, Download, BarChart3 } from 'lucide-react';
@@ -71,6 +71,23 @@ interface ActivityEvent {
   timestamp: string;
   type: 'created' | 'active' | 'revoked' | 'expired';
   subject: string;
+}
+
+type CpeReportingPeriod = 'year-to-date' | 'last-90-days' | 'last-12-months' | 'all-time';
+
+interface OrgCpeRecord {
+  id: string;
+  status: string;
+  category: string;
+  provider: string;
+  credits: number;
+  completedAt: string | null;
+}
+
+interface OrgCpeSummaryGroup {
+  label: string;
+  count: number;
+  credits: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -140,6 +157,110 @@ function eventDescription(att: Attestation): { description: string; type: Activi
   return { description: COMPLIANCE_LABELS.EVENT_CREATED, type: 'created' };
 }
 
+function metadataString(metadata: Record<string, unknown>, ...keys: string[]): string | null {
+  for (const key of keys) {
+    const value = metadata[key];
+    if (typeof value === 'string' && value.trim()) {
+      return value.trim();
+    }
+  }
+  return null;
+}
+
+function metadataNumber(metadata: Record<string, unknown>, ...keys: string[]): number {
+  for (const key of keys) {
+    const value = metadata[key];
+    if (typeof value === 'number' && Number.isFinite(value) && value >= 0) {
+      return value;
+    }
+    if (typeof value === 'string' && value.trim()) {
+      const parsed = Number.parseFloat(value);
+      if (Number.isFinite(parsed) && parsed >= 0) return parsed;
+    }
+  }
+  return 0;
+}
+
+function titleCase(value: string): string {
+  return value
+    .replace(/[_-]+/g, ' ')
+    .trim()
+    .replace(/\w\S*/g, word => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase());
+}
+
+function formatCredits(value: number): string {
+  return Number.isInteger(value) ? String(value) : value.toFixed(1);
+}
+
+function normalizeCpeStatus(rowStatus: unknown, metadata: Record<string, unknown>): string {
+  const extractedStatus = metadataString(metadata, 'status', 'compliance_status');
+  const requiresReview = metadata.requires_manual_review === true || extractedStatus === 'needs_review';
+  if (requiresReview) return 'Needs Review';
+
+  if (typeof rowStatus === 'string' && rowStatus.trim()) {
+    return titleCase(rowStatus);
+  }
+
+  if (extractedStatus) return titleCase(extractedStatus);
+  return 'Unknown';
+}
+
+function normalizeOrgCpeRecord(row: Record<string, unknown>): OrgCpeRecord | null {
+  const metadata = row.cpe_metadata;
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return null;
+  const cpeMetadata = metadata as Record<string, unknown>;
+  const id = typeof row.id === 'string'
+    ? row.id
+    : typeof row.public_id === 'string'
+      ? row.public_id
+      : null;
+  if (!id) return null;
+
+  return {
+    id,
+    status: normalizeCpeStatus(row.status, cpeMetadata),
+    category: metadataString(cpeMetadata, 'field_of_study', 'fieldOfStudy', 'category', 'credit_type', 'creditType') ?? 'Uncategorized',
+    provider: metadataString(cpeMetadata, 'provider', 'provider_name', 'providerName', 'sponsor', 'issuer_name', 'issuerName') ?? 'Unknown provider',
+    credits: metadataNumber(cpeMetadata, 'credit_hours', 'creditHours', 'credits', 'cpe_credits', 'cpeCredits'),
+    completedAt: metadataString(cpeMetadata, 'completion_date', 'completionDate', 'completed_at', 'completedAt')
+      ?? (typeof row.issued_at === 'string' ? row.issued_at : null),
+  };
+}
+
+function periodStart(period: CpeReportingPeriod): Date | null {
+  const now = new Date();
+  if (period === 'year-to-date') {
+    return new Date(now.getFullYear(), 0, 1);
+  }
+  if (period === 'last-90-days') {
+    return new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
+  }
+  if (period === 'last-12-months') {
+    return new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000);
+  }
+  return null;
+}
+
+function withinReportingPeriod(record: OrgCpeRecord, period: CpeReportingPeriod): boolean {
+  const start = periodStart(period);
+  if (!start) return true;
+  if (!record.completedAt) return false;
+  const completedAt = new Date(record.completedAt);
+  return Number.isFinite(completedAt.getTime()) && completedAt >= start;
+}
+
+function summarizeBy(records: OrgCpeRecord[], key: keyof Pick<OrgCpeRecord, 'status' | 'category' | 'provider'>): OrgCpeSummaryGroup[] {
+  const groups = new Map<string, OrgCpeSummaryGroup>();
+  for (const record of records) {
+    const label = record[key];
+    const existing = groups.get(label) ?? { label, count: 0, credits: 0 };
+    existing.count += 1;
+    existing.credits += record.credits;
+    groups.set(label, existing);
+  }
+  return [...groups.values()].sort((a, b) => b.count - a.count || a.label.localeCompare(b.label));
+}
+
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
@@ -159,6 +280,10 @@ export function ComplianceDashboardPage() {
   const [coverageData, setCoverageData] = useState<{ securedCount: number; controlIds: Set<string>; typeCounts: Map<string, number> } | null>(null);
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState<'pdf' | 'csv' | null>(null);
+  const [cpeRecords, setCpeRecords] = useState<OrgCpeRecord[]>([]);
+  const [cpeLoading, setCpeLoading] = useState(true);
+  const [cpeError, setCpeError] = useState<string | null>(null);
+  const [cpeReportingPeriod, setCpeReportingPeriod] = useState<CpeReportingPeriod>('year-to-date');
 
   // NCE: Compliance scoring state
   const [selectedJurisdiction, setSelectedJurisdiction] = useState('US-CA');
@@ -313,6 +438,72 @@ export function ComplianceDashboardPage() {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- async data fetch; setState is post-await
     fetchData();
   }, [fetchData]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function fetchCpeRecords() {
+      if (!orgId) {
+        setCpeRecords([]);
+        setCpeLoading(false);
+        return;
+      }
+
+      setCpeLoading(true);
+      setCpeError(null);
+      try {
+        // New CPE summary endpoint is not present in the worker contract yet;
+        // use the same org-scoped anchors read pattern as the coverage section.
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const res = await (supabase.from('anchors') as any)
+          .select('id, public_id, status, issued_at, credential_type, cpe_metadata')
+          .eq('org_id', orgId)
+          .eq('credential_type', 'CPE')
+          .not('cpe_metadata', 'is', null)
+          .order('issued_at', { ascending: false })
+          .limit(1000);
+
+        if (cancelled) return;
+        if (res.error) {
+          setCpeError('Unable to load CPE records.');
+          setCpeRecords([]);
+          return;
+        }
+
+        const rows = Array.isArray(res.data) ? res.data : [];
+        setCpeRecords(
+          rows
+            .map((row: Record<string, unknown>) => normalizeOrgCpeRecord(row))
+            .filter((record: OrgCpeRecord | null): record is OrgCpeRecord => record !== null),
+        );
+      } catch {
+        if (!cancelled) {
+          setCpeError('Unable to load CPE records.');
+          setCpeRecords([]);
+        }
+      } finally {
+        if (!cancelled) setCpeLoading(false);
+      }
+    }
+
+    void fetchCpeRecords();
+    return () => {
+      cancelled = true;
+    };
+  }, [orgId]);
+
+  const filteredCpeRecords = useMemo(
+    () => cpeRecords.filter((record) => withinReportingPeriod(record, cpeReportingPeriod)),
+    [cpeRecords, cpeReportingPeriod],
+  );
+
+  const cpeTotalCredits = useMemo(
+    () => filteredCpeRecords.reduce((sum, record) => sum + record.credits, 0),
+    [filteredCpeRecords],
+  );
+
+  const cpeStatusSummary = useMemo(() => summarizeBy(filteredCpeRecords, 'status'), [filteredCpeRecords]);
+  const cpeCategorySummary = useMemo(() => summarizeBy(filteredCpeRecords, 'category'), [filteredCpeRecords]);
+  const cpeProviderSummary = useMemo(() => summarizeBy(filteredCpeRecords, 'provider'), [filteredCpeRecords]);
 
   const anchoredRate = stats && stats.totalCount > 0
     ? Math.round((stats.anchoredCount / stats.totalCount) * 100)
@@ -470,6 +661,79 @@ export function ComplianceDashboardPage() {
 
         {/* Section 0: Nessie Intelligence Query */}
         <NessieIntelligencePanel />
+
+        {/* SCRUM-1862: Organization CPE dashboard */}
+        <Card className="bg-card border-border" data-testid="org-cpe-dashboard">
+          <CardHeader className="pb-3">
+            <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+              <div>
+                <CardTitle className="text-lg font-semibold flex items-center gap-2">
+                  <FileCheck className="h-5 w-5 text-[#00d4ff]" />
+                  CPE Dashboard
+                </CardTitle>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Organization-level CPE totals by reporting period, status, category, and provider.
+                </p>
+              </div>
+              <label className="flex flex-col gap-1 text-xs font-medium text-muted-foreground md:min-w-[180px]" htmlFor="org-cpe-reporting-period">
+                Reporting period
+                <select
+                  id="org-cpe-reporting-period"
+                  value={cpeReportingPeriod}
+                  onChange={(event) => setCpeReportingPeriod(event.target.value as CpeReportingPeriod)}
+                  className="h-9 rounded-md border bg-background px-2 text-sm text-foreground"
+                >
+                  <option value="year-to-date">Year to date</option>
+                  <option value="last-90-days">Last 90 days</option>
+                  <option value="last-12-months">Last 12 months</option>
+                  <option value="all-time">All time</option>
+                </select>
+              </label>
+            </div>
+          </CardHeader>
+          <CardContent>
+            {cpeLoading ? (
+              <div className="space-y-3" role="status" aria-live="polite">
+                <Skeleton className="h-16 w-full" />
+                <Skeleton className="h-24 w-full" />
+              </div>
+            ) : cpeError ? (
+              <div role="alert" className="rounded-md border border-destructive/40 bg-destructive/5 p-4 text-sm text-destructive">
+                <AlertTriangle className="mr-2 inline h-4 w-4" aria-hidden="true" />
+                {cpeError}
+              </div>
+            ) : filteredCpeRecords.length === 0 ? (
+              <div className="text-center py-8">
+                <FileCheck className="h-10 w-10 text-muted-foreground mx-auto mb-2" />
+                <p className="text-sm font-medium text-foreground">No CPE records in this period</p>
+                <p className="text-xs text-muted-foreground mt-1">CPE summaries appear after secured CPE records are available for the selected period.</p>
+              </div>
+            ) : (
+              <div className="space-y-5">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  <div>
+                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">CPE Records</p>
+                    <p className="text-2xl font-bold text-foreground mt-1">{filteredCpeRecords.length}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Credits Logged</p>
+                    <p className="text-2xl font-bold text-foreground mt-1">{formatCredits(cpeTotalCredits)}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Providers</p>
+                    <p className="text-2xl font-bold text-foreground mt-1">{cpeProviderSummary.length}</p>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                  <CpeSummaryList title="Status" groups={cpeStatusSummary} />
+                  <CpeSummaryList title="Category" groups={cpeCategorySummary} />
+                  <CpeSummaryList title="Provider" groups={cpeProviderSummary} />
+                </div>
+              </div>
+            )}
+          </CardContent>
+        </Card>
 
         {/* Section 1: Health Overview Cards */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -836,6 +1100,29 @@ function StatCard({ title, value, icon, loading, highlight, subtitle, suffix }: 
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+interface CpeSummaryListProps {
+  title: string;
+  groups: OrgCpeSummaryGroup[];
+}
+
+function CpeSummaryList({ title, groups }: Readonly<CpeSummaryListProps>) {
+  return (
+    <div className="rounded-md border border-border p-3">
+      <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-3">{title}</p>
+      <div className="space-y-2">
+        {groups.slice(0, 5).map((group) => (
+          <div key={group.label} className="flex items-center justify-between gap-3 text-sm">
+            <span className="min-w-0 truncate text-foreground">{group.label}</span>
+            <span className="shrink-0 text-xs text-muted-foreground">
+              {group.count} / {formatCredits(group.credits)} credits
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 
