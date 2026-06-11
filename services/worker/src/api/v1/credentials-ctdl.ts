@@ -51,6 +51,11 @@ function auditErrorMessage(error: unknown): string {
   return String(error);
 }
 
+function recordOrNull(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+}
+
 function warnAuditFailure(args: AuditArgs, error: unknown): void {
   logger.warn({
     public_id: args.publicId,
@@ -102,6 +107,8 @@ function normalizeAnchorRow(row: Record<string, unknown>): CtdlAnchor {
     label: typeof row.label === 'string' ? row.label : null,
     description: typeof row.description === 'string' ? row.description : null,
     metadata: row.metadata,
+    cpeMetadata: recordOrNull(row.cpe_metadata),
+    cleMetadata: recordOrNull(row.cle_metadata),
     createdAt: String(row.created_at ?? ''),
     chainTimestamp: typeof row.chain_timestamp === 'string' ? row.chain_timestamp : null,
     issuedAt: typeof row.issued_at === 'string' ? row.issued_at : null,
@@ -122,7 +129,7 @@ export const defaultCredentialsCtdlLookup: CredentialsCtdlLookup = {
     const { data, error } = await db
       .from('anchors')
       .select(
-        'public_id, status, credential_type, sub_type, label, description, metadata, ' +
+        'public_id, status, credential_type, sub_type, label, description, metadata, cpe_metadata, cle_metadata, ' +
           'created_at, chain_timestamp, issued_at, expires_at, revoked_at, revocation_reason, org_id, ' +
           'organization:org_id(display_name, public_id, website_url, domain)',
       )

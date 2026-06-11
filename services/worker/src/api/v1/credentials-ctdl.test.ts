@@ -1,19 +1,37 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import express from 'express';
 import request from 'supertest';
-import { buildCredentialsCtdlRouter, type CredentialsCtdlLookup } from './credentials-ctdl.js';
+import {
+  buildCredentialsCtdlRouter,
+  defaultCredentialsCtdlLookup,
+  type CredentialsCtdlLookup,
+} from './credentials-ctdl.js';
 import type { CtdlAnchor } from '../../ctdl/ctdl-serializer.js';
 import { validateCtdlJsonLd } from '../../ctdl/ctdl-validation.js';
 
-const { insertAudit, loggerWarn } = vi.hoisted(() => ({
-  insertAudit: vi.fn(),
-  loggerWarn: vi.fn(),
-}));
+const { anchorsQuery, insertAudit, loggerWarn } = vi.hoisted(() => {
+  const anchorsQuery = {
+    select: vi.fn(),
+    eq: vi.fn(),
+    is: vi.fn(),
+    single: vi.fn(),
+  };
+  anchorsQuery.select.mockReturnValue(anchorsQuery);
+  anchorsQuery.eq.mockReturnValue(anchorsQuery);
+  anchorsQuery.is.mockReturnValue(anchorsQuery);
+
+  return {
+    anchorsQuery,
+    insertAudit: vi.fn(),
+    loggerWarn: vi.fn(),
+  };
+});
 
 vi.mock('../../utils/db.js', () => ({
   db: {
     from: vi.fn((table: string) => {
       if (table === 'audit_events') return { insert: insertAudit };
+      if (table === 'anchors') return anchorsQuery;
       return { select: vi.fn() };
     }),
   },
@@ -61,6 +79,10 @@ function buildApp(lookup: CredentialsCtdlLookup) {
 describe('GET /credentials/:publicId/ctdl', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    anchorsQuery.single.mockReset();
+    anchorsQuery.select.mockReturnValue(anchorsQuery);
+    anchorsQuery.eq.mockReturnValue(anchorsQuery);
+    anchorsQuery.is.mockReturnValue(anchorsQuery);
     insertAudit.mockReturnValue({ error: null });
   });
 
@@ -105,6 +127,58 @@ describe('GET /credentials/:publicId/ctdl', () => {
       credential_status: 'SECURED',
       credential_type: 'DEGREE',
     });
+  });
+
+  it('maps CPE credit columns from the default DB lookup into public CTDL ValueProfiles', async () => {
+    anchorsQuery.single.mockResolvedValueOnce({
+      data: {
+        public_id: 'ARK-2026-CPE-001',
+        status: 'SECURED',
+        credential_type: 'CPE',
+        sub_type: 'accounting_cpe',
+        label: 'Forensic Accounting Update',
+        description: 'NASBA CPE completion.',
+        metadata: { recipient_email: 'learner@example.edu', fingerprint: 'a'.repeat(64) },
+        cpe_metadata: {
+          credit_hours: 8,
+          credit_type: 'NASBA CPE',
+        },
+        cle_metadata: null,
+        created_at: '2026-05-20T12:00:00.000Z',
+        chain_timestamp: '2026-05-20T12:10:00.000Z',
+        issued_at: '2026-05-01T00:00:00.000Z',
+        expires_at: null,
+        revoked_at: null,
+        revocation_reason: null,
+        org_id: 'org-1',
+        organization: {
+          display_name: 'Arkova CPA Institute',
+          public_id: 'ORG-CPA',
+          website_url: 'https://example.edu/cpe',
+          domain: 'example.edu',
+        },
+      },
+      error: null,
+    });
+
+    const res = await request(buildApp(defaultCredentialsCtdlLookup)).get('/ARK-2026-CPE-001/ctdl');
+
+    expect(res.status).toBe(200);
+    expect(anchorsQuery.select).toHaveBeenCalledWith(expect.stringContaining('cpe_metadata, cle_metadata'));
+    expect(res.body['ceterms:requires']).toEqual([{
+      '@type': 'ceterms:ConditionProfile',
+      'ceterms:name': 'Continuing education credit value',
+      'ceterms:creditValue': [{
+        '@type': 'ceterms:ValueProfile',
+        'schema:value': 8,
+        'ceterms:creditUnitType': 'creditUnit:ContactHour',
+        'schema:description': 'CPE credit hours',
+      }],
+    }]);
+    expect(res.body).not.toHaveProperty('ceterms:expirationDate');
+    expect(validateCtdlJsonLd(res.body)).toEqual({ valid: true, errors: [] });
+    expect(JSON.stringify(res.body)).not.toContain('learner@example.edu');
+    expect(JSON.stringify(res.body)).not.toContain('fingerprint');
   });
 
   it('still returns CTDL JSON-LD when audit logging fails', async () => {
