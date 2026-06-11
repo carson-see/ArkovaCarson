@@ -3380,6 +3380,7 @@ export type Database = {
           created_at: string
           encrypted_tokens: string | null
           id: string
+          inherited_from_org_id: string | null
           last_page_token: string | null
           last_renewal_at: string | null
           last_renewal_error: string | null
@@ -3403,6 +3404,7 @@ export type Database = {
           created_at?: string
           encrypted_tokens?: string | null
           id?: string
+          inherited_from_org_id?: string | null
           last_page_token?: string | null
           last_renewal_at?: string | null
           last_renewal_error?: string | null
@@ -3426,6 +3428,7 @@ export type Database = {
           created_at?: string
           encrypted_tokens?: string | null
           id?: string
+          inherited_from_org_id?: string | null
           last_page_token?: string | null
           last_renewal_at?: string | null
           last_renewal_error?: string | null
@@ -3454,6 +3457,13 @@ export type Database = {
             columns: ["org_id"]
             isOneToOne: false
             referencedRelation: "public_org_profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "org_integrations_inherited_from_org_id_fkey"
+            columns: ["inherited_from_org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
             referencedColumns: ["id"]
           },
         ]
