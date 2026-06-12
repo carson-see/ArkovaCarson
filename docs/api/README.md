@@ -36,6 +36,7 @@ The rich v1 verification response includes shipped API-RICH-02 fields `descripti
 | Group | Endpoints | Auth | Docs |
 |---|---|---|---|
 | Verification | `GET /verify/{publicId}`, `POST /verify/batch` | Optional API key (rate-limit boost) | [OpenAPI](./openapi.yaml) |
+| CTDL JSON-LD | `GET /credentials/{publicId}/ctdl` | Anonymous, optional API key (rate-limit boost) | [OpenAPI](./openapi.yaml) |
 | Anchoring | `POST /anchor` | API key | [OpenAPI](./openapi.yaml) |
 | Webhooks | `POST/GET/PATCH/DELETE /webhooks`, `POST /webhooks/test`, `GET /webhooks/deliveries` | API key | [Webhooks guide](./webhooks.md) |
 | API key management | `POST/GET/PATCH/DELETE /keys` | Supabase JWT | [OpenAPI](./openapi.yaml) |

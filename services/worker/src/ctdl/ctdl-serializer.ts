@@ -28,9 +28,12 @@ export interface CtdlAnchor {
   label?: string | null;
   description?: string | null;
   metadata?: unknown;
+  cpeMetadata?: Record<string, unknown> | null;
+  cleMetadata?: Record<string, unknown> | null;
   createdAt: string;
   chainTimestamp?: string | null;
   issuedAt?: string | null;
+  /** Issued-person expiry. Do not serialize as CTDL resource availability. */
   expiresAt?: string | null;
   revokedAt?: string | null;
   revocationReason?: string | null;
@@ -39,6 +42,19 @@ export interface CtdlAnchor {
 
 export interface BuildCtdlOptions {
   verifyUrl: string;
+}
+
+export interface CtdlCreditValueProfile {
+  '@type': 'ceterms:ValueProfile';
+  'schema:value': number;
+  'ceterms:creditUnitType': 'creditUnit:ContactHour';
+  'schema:description': string;
+}
+
+export interface CtdlConditionProfile {
+  '@type': 'ceterms:ConditionProfile';
+  'ceterms:name': string;
+  'ceterms:creditValue': CtdlCreditValueProfile[];
 }
 
 export interface CtdlJsonLd {
@@ -67,6 +83,7 @@ export interface CtdlJsonLd {
     'ceterms:identifierType': string;
     'ceterms:identifierValue': string;
   };
+  'ceterms:requires'?: CtdlConditionProfile[];
   'ceterms:description'?: string;
 }
 
@@ -74,6 +91,13 @@ export class CtdlPiiSafetyError extends Error {
   constructor(message = 'CTDL PII safety gate blocked public serialization') {
     super(message);
     this.name = 'CtdlPiiSafetyError';
+  }
+}
+
+export class CtdlCreditMetadataError extends Error {
+  constructor(message = 'Invalid CTDL credit metadata') {
+    super(message);
+    this.name = 'CtdlCreditMetadataError';
   }
 }
 
@@ -110,6 +134,7 @@ const CONTEXTUAL_LEARNER_NAME_PATTERN = new RegExp(
 const NAME_FIRST_LEARNER_PATTERN = new RegExp(
   String.raw`\b${FULL_NAME}(?:'s)?\s+(?:transcript|student record|learner record|certificate|credential|degree|completion)\b`,
 );
+const MAX_CREDIT_HOURS = 1000;
 
 function containsHighConfidencePii(value: string): boolean {
   return EMAIL_PATTERN.test(value) || SSN_PATTERN.test(value) || PHONE_PATTERN.test(value);
@@ -190,6 +215,108 @@ function realCtid(value: unknown): string | null {
   const clean = cleanPublicString(value, 80);
   if (!clean || !REAL_CTID_PATTERN.test(clean)) return null;
   return clean;
+}
+
+function positiveNumber(value: unknown): number | null {
+  if (typeof value === 'number') {
+    return Number.isFinite(value) && value > 0 && value <= MAX_CREDIT_HOURS ? value : null;
+  }
+
+  const clean = cleanPublicString(value, 40);
+  if (!clean || !/^\d+(?:\.\d+)?$/.test(clean)) return null;
+  const parsed = Number(clean);
+  return Number.isFinite(parsed) && parsed > 0 && parsed <= MAX_CREDIT_HOURS ? parsed : null;
+}
+
+function hasCreditMetadata(metadata: Record<string, unknown>): boolean {
+  return (
+    metadata.credit_hours !== undefined ||
+    metadata.creditHours !== undefined ||
+    metadata.ethics_hours !== undefined ||
+    metadata.ethicsHours !== undefined
+  );
+}
+
+function nestedMetadata(metadata: Record<string, unknown>, keys: readonly string[]): Record<string, unknown> {
+  for (const key of keys) {
+    const nested = asRecord(metadata[key]);
+    if (hasCreditMetadata(nested)) return nested;
+  }
+  return hasCreditMetadata(metadata) ? metadata : {};
+}
+
+function professionalEducationCreditMetadata(
+  anchor: CtdlAnchor,
+  metadata: Record<string, unknown>,
+): { kind: 'CLE' | 'CPE'; metadata: Record<string, unknown> } | null {
+  const credentialType = anchor.credentialType?.toUpperCase();
+  if (credentialType === 'CLE') {
+    return {
+      kind: 'CLE',
+      metadata: hasCreditMetadata(asRecord(anchor.cleMetadata))
+        ? asRecord(anchor.cleMetadata)
+        : nestedMetadata(metadata, ['cle_metadata', 'cleMetadata']),
+    };
+  }
+  if (credentialType === 'CPE') {
+    return {
+      kind: 'CPE',
+      metadata: hasCreditMetadata(asRecord(anchor.cpeMetadata))
+        ? asRecord(anchor.cpeMetadata)
+        : nestedMetadata(metadata, ['cpe_metadata', 'cpeMetadata']),
+    };
+  }
+  return null;
+}
+
+function readCreditValue(metadata: Record<string, unknown>, snakeKey: string, camelKey: string, label: string): number | null {
+  const value = metadata[snakeKey] ?? metadata[camelKey];
+  if (value === undefined || value === null || value === '') return null;
+  const parsed = positiveNumber(value);
+  if (!parsed) throw new CtdlCreditMetadataError(`Invalid CTDL credit value: ${label}`);
+  return parsed;
+}
+
+function creditDescription(kind: 'CLE' | 'CPE', suffix: string): string {
+  return `${kind} ${suffix}`;
+}
+
+function creditValueProfile(value: number, description: string): CtdlCreditValueProfile {
+  return {
+    '@type': 'ceterms:ValueProfile',
+    'schema:value': value,
+    'ceterms:creditUnitType': 'creditUnit:ContactHour',
+    'schema:description': description,
+  };
+}
+
+function creditRequirements(anchor: CtdlAnchor, metadata: Record<string, unknown>): CtdlConditionProfile[] | null {
+  const source = professionalEducationCreditMetadata(anchor, metadata);
+  if (!source) return null;
+
+  const creditHours = readCreditValue(source.metadata, 'credit_hours', 'creditHours', `${source.kind} credit hours`);
+  const ethicsHours = readCreditValue(source.metadata, 'ethics_hours', 'ethicsHours', `${source.kind} ethics credit hours`);
+  const creditValue: CtdlCreditValueProfile[] = [];
+
+  if (creditHours) {
+    creditValue.push(creditValueProfile(
+      creditHours,
+      creditDescription(source.kind, 'credit hours'),
+    ));
+  }
+  if (ethicsHours) {
+    creditValue.push(creditValueProfile(
+      ethicsHours,
+      creditDescription(source.kind, 'ethics credit hours'),
+    ));
+  }
+
+  if (creditValue.length === 0) return null;
+  return [{
+    '@type': 'ceterms:ConditionProfile',
+    'ceterms:name': 'Continuing education credit value',
+    'ceterms:creditValue': creditValue,
+  }];
 }
 
 function metadataTextValues(value: unknown): string[] {
@@ -273,6 +400,9 @@ export function buildCtdlJsonLd(anchor: CtdlAnchor, options: BuildCtdlOptions): 
 
   const credentialCtid = realCtid(anchor.ctid);
   if (credentialCtid) jsonLd['ceterms:ctid'] = credentialCtid;
+
+  const requires = creditRequirements(anchor, metadata);
+  if (requires) jsonLd['ceterms:requires'] = requires;
 
   const description = cleanPublicFreeText(anchor.description, 500);
   if (description) jsonLd['ceterms:description'] = description;

@@ -213,4 +213,109 @@ describe('buildCtdlJsonLd', () => {
     expect(jsonLd['ceterms:ctid']).toBe('ce-11111111-1111-1111-1111-111111111111');
     expect(jsonLd['ceterms:offeredBy']['ceterms:ctid']).toBe('ce-22222222-2222-2222-2222-222222222222');
   });
+
+  it('maps CLE credit and ethics hours as CTDL ValueProfiles without competency overclaim', () => {
+    const jsonLd = buildCtdlJsonLd({
+      ...baseAnchor,
+      credentialType: 'CLE',
+      metadata: {
+        cle_metadata: {
+          credit_hours: 6,
+          ethics_hours: 2,
+          credit_type: 'CLE',
+          jurisdiction: 'MI',
+        },
+        claimed_skills: ['Professional Responsibility'],
+      },
+    }, {
+      verifyUrl: 'https://app.arkova.ai/verify/ARK-2026-CTDL-001',
+    });
+
+    expect(jsonLd['ceterms:requires']).toEqual([{
+      '@type': 'ceterms:ConditionProfile',
+      'ceterms:name': 'Continuing education credit value',
+      'ceterms:creditValue': [
+        {
+          '@type': 'ceterms:ValueProfile',
+          'schema:value': 6,
+          'ceterms:creditUnitType': 'creditUnit:ContactHour',
+          'schema:description': 'CLE credit hours',
+        },
+        {
+          '@type': 'ceterms:ValueProfile',
+          'schema:value': 2,
+          'ceterms:creditUnitType': 'creditUnit:ContactHour',
+          'schema:description': 'CLE ethics credit hours',
+        },
+      ],
+    }]);
+    const body = JSON.stringify(jsonLd);
+    expect(body).not.toContain('Professional Responsibility');
+    expect(body).not.toContain('claimed_skills');
+    expect(body).not.toContain('ceterms:targetCompetency');
+    expect(body).not.toContain('ceasn:competencyText');
+  });
+
+  it('maps CPE credit hours from source metadata without leaking unsafe credit type text', () => {
+    const jsonLd = buildCtdlJsonLd({
+      ...baseAnchor,
+      credentialType: 'CPE',
+      metadata: {
+        cpe_metadata: {
+          credit_hours: 4.5,
+          credit_type: 'NASBA CPE for jane.learner@example.edu',
+        },
+      },
+    }, {
+      verifyUrl: 'https://app.arkova.ai/verify/ARK-2026-CTDL-001',
+    });
+
+    expect(jsonLd['ceterms:requires']).toEqual([{
+      '@type': 'ceterms:ConditionProfile',
+      'ceterms:name': 'Continuing education credit value',
+      'ceterms:creditValue': [{
+        '@type': 'ceterms:ValueProfile',
+        'schema:value': 4.5,
+        'ceterms:creditUnitType': 'creditUnit:ContactHour',
+        'schema:description': 'CPE credit hours',
+      }],
+    }]);
+    expect(JSON.stringify(jsonLd)).not.toContain('jane.learner@example.edu');
+  });
+
+  it('uses deterministic CLE credit descriptions instead of learner-bearing credit type text', () => {
+    const jsonLd = buildCtdlJsonLd({
+      ...baseAnchor,
+      credentialType: 'CLE',
+      metadata: {
+        cle_metadata: {
+          credit_hours: 1,
+          credit_type: 'CLE for Jane Q Student',
+        },
+      },
+    }, {
+      verifyUrl: 'https://app.arkova.ai/verify/ARK-2026-CTDL-001',
+    });
+
+    expect(jsonLd['ceterms:requires']?.[0]['ceterms:creditValue'][0]['schema:description']).toBe('CLE credit hours');
+    expect(JSON.stringify(jsonLd)).not.toContain('Jane Q Student');
+  });
+
+  it.each([
+    ['negative', -1],
+    ['not numeric', 'NaN'],
+    ['too large', 1001],
+  ])('rejects %s CPE credit hour values instead of publishing invalid CTDL', (_label, creditHours) => {
+    expect(() => buildCtdlJsonLd({
+      ...baseAnchor,
+      credentialType: 'CPE',
+      metadata: {
+        cpe_metadata: {
+          credit_hours: creditHours,
+        },
+      },
+    }, {
+      verifyUrl: 'https://app.arkova.ai/verify/ARK-2026-CTDL-001',
+    })).toThrow(/Invalid CTDL credit value: CPE credit hours/);
+  });
 });

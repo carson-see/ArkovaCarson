@@ -7,7 +7,12 @@
  */
 
 import { Router, type Request } from 'express';
-import { buildCtdlJsonLd, CtdlPiiSafetyError, type CtdlAnchor } from '../../ctdl/ctdl-serializer.js';
+import {
+  buildCtdlJsonLd,
+  CtdlCreditMetadataError,
+  CtdlPiiSafetyError,
+  type CtdlAnchor,
+} from '../../ctdl/ctdl-serializer.js';
 import { isCtdlPublishableStatus } from '../../ctdl/ctdl-type-map.js';
 import { buildVerifyUrl } from '../../lib/urls.js';
 import { db } from '../../utils/db.js';
@@ -23,7 +28,15 @@ export interface CredentialsCtdlLookup {
 interface AuditArgs {
   req: Request;
   publicId: string;
-  outcome: 'invalid' | 'not_found' | 'not_publishable' | 'safety_blocked' | 'published' | 'revoked' | 'error';
+  outcome:
+    | 'invalid'
+    | 'not_found'
+    | 'not_publishable'
+    | 'safety_blocked'
+    | 'invalid_credit_metadata'
+    | 'published'
+    | 'revoked'
+    | 'error';
   httpStatus: number;
   credentialStatus?: string | null;
   credentialType?: string | null;
@@ -49,6 +62,11 @@ function auditErrorMessage(error: unknown): string {
     if (typeof message === 'string' && message.trim()) return message;
   }
   return String(error);
+}
+
+function recordOrNull(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
 }
 
 function warnAuditFailure(args: AuditArgs, error: unknown): void {
@@ -102,6 +120,8 @@ function normalizeAnchorRow(row: Record<string, unknown>): CtdlAnchor {
     label: typeof row.label === 'string' ? row.label : null,
     description: typeof row.description === 'string' ? row.description : null,
     metadata: row.metadata,
+    cpeMetadata: recordOrNull(row.cpe_metadata),
+    cleMetadata: recordOrNull(row.cle_metadata),
     createdAt: String(row.created_at ?? ''),
     chainTimestamp: typeof row.chain_timestamp === 'string' ? row.chain_timestamp : null,
     issuedAt: typeof row.issued_at === 'string' ? row.issued_at : null,
@@ -122,7 +142,7 @@ export const defaultCredentialsCtdlLookup: CredentialsCtdlLookup = {
     const { data, error } = await db
       .from('anchors')
       .select(
-        'public_id, status, credential_type, sub_type, label, description, metadata, ' +
+        'public_id, status, credential_type, sub_type, label, description, metadata, cpe_metadata, cle_metadata, ' +
           'created_at, chain_timestamp, issued_at, expires_at, revoked_at, revocation_reason, org_id, ' +
           'organization:org_id(display_name, public_id, website_url, domain)',
       )
@@ -189,6 +209,23 @@ export function buildCredentialsCtdlRouter(lookup: CredentialsCtdlLookup = defau
           req,
           publicId,
           outcome: 'safety_blocked',
+          httpStatus: 404,
+          credentialStatus: anchor?.status,
+          credentialType: anchor?.credentialType,
+          orgId: anchor?.orgId,
+        });
+        res.status(404).json({ error: 'not_found' });
+        return;
+      }
+      if (error instanceof CtdlCreditMetadataError) {
+        logger.warn({
+          public_id: publicId,
+          error: error.message,
+        }, 'Blocked CTDL response with invalid credit metadata');
+        logCtdlRequested({
+          req,
+          publicId,
+          outcome: 'invalid_credit_metadata',
           httpStatus: 404,
           credentialStatus: anchor?.status,
           credentialType: anchor?.credentialType,
