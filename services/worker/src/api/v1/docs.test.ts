@@ -75,17 +75,20 @@ describe('OpenAPI spec', () => {
       '@context',
       '@type',
       'ceterms:name',
-      'ceterms:ctid',
       'ceterms:offeredBy',
-      'ceterms:credentialStatusType',
-      'ceterms:dateEffective',
       'ceterms:verificationServiceProfile',
-      'ceterms:identifier',
     ]));
-    expect(schema.properties['ceterms:identifier'].required).toEqual([
-      'ceterms:identifierType',
-      'ceterms:identifierValue',
-    ]);
+    expect(schema.required).not.toContain('ceterms:ctid');
+    expect(schema.required).not.toContain('ceterms:credentialStatusType');
+    expect(schema.required).not.toContain('ceterms:dateEffective');
+    expect(schema.required).not.toContain('ceterms:identifier');
+    expect(schema.properties['ceterms:identifier']).toMatchObject({
+      type: 'object',
+      required: ['ceterms:identifierType', 'ceterms:identifierValue'],
+      description: expect.stringContaining('non-PII'),
+    });
+    expect(schema.properties).not.toHaveProperty('ceterms:expirationDate');
+    expect(schema.properties).not.toHaveProperty('ceterms:revocationDate');
     expect(JSON.stringify(schema)).not.toContain('org_id');
     expect(JSON.stringify(schema)).not.toContain('user_id');
     expect(JSON.stringify(schema)).not.toContain('fingerprint');

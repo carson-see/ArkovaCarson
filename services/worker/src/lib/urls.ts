@@ -30,6 +30,11 @@ export function buildVerifyUrl(publicId: string): string {
   return `${BASE}/verify/${publicId}`;
 }
 
+/** Public verification service root. Use in CTDL class metadata instead of a per-issued credential URL. */
+export function buildVerificationServiceUrl(): string {
+  return `${BASE}/verify`;
+}
+
 /** Server-side proof endpoint URL — used in evidence packages so partner
  *  receivers get a stable, share-safe link to the merkle proof. */
 export function buildProofUrl(publicId: string): string {

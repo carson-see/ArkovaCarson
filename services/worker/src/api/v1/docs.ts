@@ -1260,12 +1260,8 @@ export const openApiSpec: Record<string, any> = {
           '@context',
           '@type',
           'ceterms:name',
-          'ceterms:ctid',
           'ceterms:offeredBy',
-          'ceterms:credentialStatusType',
-          'ceterms:dateEffective',
           'ceterms:verificationServiceProfile',
-          'ceterms:identifier',
         ],
         additionalProperties: true,
         properties: {
@@ -1280,7 +1276,7 @@ export const openApiSpec: Record<string, any> = {
           'ceterms:name': { type: 'string' },
           'ceterms:ctid': {
             type: 'string',
-            pattern: '^ce-.+',
+            pattern: '^ce-[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$',
           },
           'ceterms:offeredBy': {
             type: 'object',
@@ -1289,15 +1285,13 @@ export const openApiSpec: Record<string, any> = {
             properties: {
               '@type': { type: 'string', enum: ['ceterms:Organization'] },
               'ceterms:name': { type: 'string' },
-              'ceterms:ctid': { type: 'string' },
+              'ceterms:ctid': {
+                type: 'string',
+                pattern: '^ce-[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$',
+              },
               'ceterms:subjectWebpage': { type: 'string', format: 'uri' },
             },
           },
-          'ceterms:credentialStatusType': {
-            type: 'string',
-            enum: ['ceterms:Active', 'ceterms:Revoked', 'ceterms:Expired', 'ceterms:Superseded'],
-          },
-          'ceterms:dateEffective': { type: 'string', format: 'date-time' },
           'ceterms:verificationServiceProfile': {
             type: 'object',
             required: ['@type', 'ceterms:name', 'ceterms:verificationService'],
@@ -1312,15 +1306,13 @@ export const openApiSpec: Record<string, any> = {
             type: 'object',
             required: ['ceterms:identifierType', 'ceterms:identifierValue'],
             additionalProperties: false,
+            description: 'Public, non-PII identifier linking this CTDL body back to the requested Arkova credential.',
             properties: {
-              'ceterms:identifierType': { type: 'string' },
-              'ceterms:identifierValue': { type: 'string' },
+              'ceterms:identifierType': { type: 'string', enum: ['Arkova public ID'] },
+              'ceterms:identifierValue': { type: 'string', minLength: 3, maxLength: 128 },
             },
           },
           'ceterms:description': { type: 'string' },
-          'ceterms:expirationDate': { type: 'string', format: 'date-time' },
-          'ceterms:revocationDate': { type: 'string', format: 'date-time' },
-          'ceterms:revocationReason': { type: 'string' },
         },
       },
       BatchResponse: {

@@ -28,6 +28,7 @@ const UNSAFE_PUBLIC_KEYS = new Set([
   'orgId',
   'metadata',
 ]);
+const REAL_CTID_PATTERN = /^ce-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -49,6 +50,10 @@ function isAbsoluteHttpUrl(value: unknown): boolean {
   } catch {
     return false;
   }
+}
+
+function isRealCtid(value: unknown): boolean {
+  return isNonEmptyString(value) && REAL_CTID_PATTERN.test(value);
 }
 
 function isIsoDateLike(value: unknown): boolean {
@@ -100,8 +105,8 @@ export function validateCtdlJsonLd(value: unknown): CtdlValidationResult {
     errors.push('@type must be a ceterms type');
   }
   addRequiredStringError(errors, value, 'ceterms:name');
-  if (!isNonEmptyString(value['ceterms:ctid']) || !value['ceterms:ctid'].startsWith('ce-')) {
-    errors.push('ceterms:ctid must be a CTID starting with ce-');
+  if (value['ceterms:ctid'] !== undefined && !isRealCtid(value['ceterms:ctid'])) {
+    errors.push('ceterms:ctid must be a real Credential Engine CTID when present');
   }
 
   const offeredBy = value['ceterms:offeredBy'];
@@ -112,12 +117,18 @@ export function validateCtdlJsonLd(value: unknown): CtdlValidationResult {
       errors.push('ceterms:offeredBy.@type must be ceterms:Organization');
     }
     addRequiredStringError(errors, offeredBy, 'ceterms:name', 'ceterms:offeredBy.ceterms:name');
+    if (offeredBy['ceterms:ctid'] !== undefined && !isRealCtid(offeredBy['ceterms:ctid'])) {
+      errors.push('ceterms:offeredBy.ceterms:ctid must be a real Credential Engine CTID when present');
+    }
   }
 
-  if (!isNonEmptyString(value['ceterms:credentialStatusType']) || !SAFE_CTLD_STATUS_TYPES.has(value['ceterms:credentialStatusType'])) {
+  if (
+    value['ceterms:credentialStatusType'] !== undefined &&
+    (!isNonEmptyString(value['ceterms:credentialStatusType']) || !SAFE_CTLD_STATUS_TYPES.has(value['ceterms:credentialStatusType']))
+  ) {
     errors.push('ceterms:credentialStatusType must be a supported CTDL status');
   }
-  if (!isIsoDateLike(value['ceterms:dateEffective'])) {
+  if (value['ceterms:dateEffective'] !== undefined && !isIsoDateLike(value['ceterms:dateEffective'])) {
     errors.push('ceterms:dateEffective must be a date string');
   }
 
@@ -140,9 +151,9 @@ export function validateCtdlJsonLd(value: unknown): CtdlValidationResult {
   }
 
   const identifier = value['ceterms:identifier'];
-  if (!isRecord(identifier)) {
+  if (identifier !== undefined && !isRecord(identifier)) {
     errors.push('ceterms:identifier must be an object');
-  } else {
+  } else if (isRecord(identifier)) {
     addRequiredStringError(
       errors,
       identifier,
