@@ -38,6 +38,7 @@ import {
   resolveDocusignSecretManagerProjectId,
   type DocusignRefreshTokenStore,
 } from '../../../integrations/connectors/docusign-token-store.js';
+import { resolveIntegrationStateSecret, createLazyOAuthRouter } from './oauth-state.js';
 
 const Provider = 'docusign' as const;
 const StateTtlMs = 10 * 60 * 1000;
@@ -155,21 +156,16 @@ function hmacSign(input: string, secret: string): string {
   return createHmac('sha256', secret).update(input).digest('base64url');
 }
 
-function getStateSecret(deps: DocusignMemberOAuthDeps): string {
-  if (!deps.stateSecret) throw new Error('STATE_SECRET required for member OAuth state signing');
-  return deps.stateSecret;
-}
-
-function signState(payload: MemberStatePayload, deps: DocusignMemberOAuthDeps): string {
+function signState(payload: MemberStatePayload, secret: string): string {
   const encoded = base64Url(JSON.stringify(payload));
-  return `${encoded}.${hmacSign(encoded, getStateSecret(deps))}`;
+  return `${encoded}.${hmacSign(encoded, secret)}`;
 }
 
-function verifyState(state: string, deps: DocusignMemberOAuthDeps): MemberStatePayload | null {
+function verifyState(state: string, secret: string, deps: DocusignMemberOAuthDeps): MemberStatePayload | null {
   const [encoded, signature] = state.split('.');
   if (!encoded || !signature) return null;
 
-  const expected = hmacSign(encoded, getStateSecret(deps));
+  const expected = hmacSign(encoded, secret);
   const sigBuffer = Buffer.from(signature);
   const expectedBuffer = Buffer.from(expected);
   if (
@@ -269,6 +265,8 @@ async function recordIntegrationEvent(db: DbClient, args: {
 export function createDocusignMemberOAuthRouter(deps: DocusignMemberOAuthDeps = {}): Router {
   const router = Router();
   const db = (deps.db ?? defaultDb) as DbClient;
+  // Audit H1: resolve at construction time so a misconfigured deploy fails fast.
+  const stateSecret = resolveIntegrationStateSecret(deps, 'DocuSign member');
 
   // ─── POST /docusign/member/oauth/start ───
   router.post('/docusign/member/oauth/start', async (req: Request, res: Response) => {
@@ -300,7 +298,7 @@ export function createDocusignMemberOAuthRouter(deps: DocusignMemberOAuthDeps = 
         nonce: randomUUID(),
         returnTo,
         iat: (deps.now?.() ?? new Date()).getTime(),
-      }, deps);
+      }, stateSecret);
       const authorizationUrl = buildDocusignAuthorizationUrl({
         redirectUri,
         state,
@@ -319,7 +317,7 @@ export function createDocusignMemberOAuthRouter(deps: DocusignMemberOAuthDeps = 
     const state = typeof req.query.state === 'string' ? req.query.state : '';
     const code = typeof req.query.code === 'string' ? req.query.code : '';
     const errorParam = typeof req.query.error === 'string' ? req.query.error : '';
-    const payload = verifyState(state, deps);
+    const payload = verifyState(state, stateSecret, deps);
     const returnTo = payload?.returnTo ?? `${deps.frontendUrl ?? config.frontendUrl}/organizations`;
 
     if (!payload) {
@@ -628,6 +626,10 @@ export function createDocusignMemberOAuthRouter(deps: DocusignMemberOAuthDeps = 
   return router;
 }
 
-export const docusignMemberOAuthRouter = createDocusignMemberOAuthRouter({
-  stateSecret: config.supabaseJwtSecret,
-});
+// Lazy router export — defer construction (which validates
+// INTEGRATION_STATE_HMAC_SECRET and throws when missing) to the first request,
+// not module import. Audit H1: NEVER fall back to config.supabaseJwtSecret (the
+// previous eager export hardcoded it, collapsing two trust boundaries).
+export const docusignMemberOAuthRouter: Router = createLazyOAuthRouter(
+  () => createDocusignMemberOAuthRouter(),
+);

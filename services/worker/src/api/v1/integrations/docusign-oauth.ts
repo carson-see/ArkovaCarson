@@ -38,6 +38,7 @@ import {
   type DocusignRefreshTokenStore,
 } from '../../../integrations/connectors/docusign-token-store.js';
 import type { TypeSafeDatabase } from '../../../types/database-overrides.js';
+import { resolveIntegrationStateSecret, createLazyOAuthRouter } from './oauth-state.js';
 
 type OrgMemberRow = TypeSafeDatabase['public']['Tables']['org_members']['Row'];
 type OrgIntegrationRow = TypeSafeDatabase['public']['Tables']['org_integrations']['Row'];
@@ -152,20 +153,16 @@ function hmac(input: string, secret: string): string {
   return createHmac('sha256', secret).update(input).digest('base64url');
 }
 
-function getStateSecret(deps: DocusignOAuthDeps): string {
-  return deps.stateSecret ?? config.supabaseJwtSecret ?? config.supabaseServiceKey;
-}
-
-function signState(payload: StatePayload, deps: DocusignOAuthDeps): string {
+function signState(payload: StatePayload, secret: string): string {
   const encoded = base64Url(JSON.stringify(payload));
-  return `${encoded}.${hmac(encoded, getStateSecret(deps))}`;
+  return `${encoded}.${hmac(encoded, secret)}`;
 }
 
-function verifyState(state: string, deps: DocusignOAuthDeps): StatePayload | null {
+function verifyState(state: string, secret: string, deps: DocusignOAuthDeps): StatePayload | null {
   const [encoded, signature] = state.split('.');
   if (!encoded || !signature) return null;
 
-  const expected = hmac(encoded, getStateSecret(deps));
+  const expected = hmac(encoded, secret);
   const sigBuffer = Buffer.from(signature);
   const expectedBuffer = Buffer.from(expected);
   if (
@@ -417,6 +414,9 @@ async function reprovisionDocusignConnectIntegration(args: {
 export function createDocusignOAuthRouter(deps: DocusignOAuthDeps = {}): Router {
   const router = Router();
   const db = (deps.db ?? defaultDb) as DbClient;
+  // Audit H1: resolve at construction time so a misconfigured deploy fails fast
+  // (server boot) rather than at the first OAuth attempt. Mirrors drive-oauth.ts.
+  const stateSecret = resolveIntegrationStateSecret(deps, 'DocuSign');
 
   router.post('/docusign/oauth/start', async (req: Request, res: Response) => {
     const userId = getUserId(req);
@@ -446,7 +446,7 @@ export function createDocusignOAuthRouter(deps: DocusignOAuthDeps = {}): Router 
         nonce: randomUUID(),
         returnTo,
         iat: (deps.now?.() ?? new Date()).getTime(),
-      }, deps);
+      }, stateSecret);
       const authorizationUrl = buildDocusignAuthorizationUrl({
         redirectUri,
         state,
@@ -464,7 +464,7 @@ export function createDocusignOAuthRouter(deps: DocusignOAuthDeps = {}): Router 
     const state = typeof req.query.state === 'string' ? req.query.state : '';
     const code = typeof req.query.code === 'string' ? req.query.code : '';
     const errorParam = typeof req.query.error === 'string' ? req.query.error : '';
-    const payload = verifyState(state, deps);
+    const payload = verifyState(state, stateSecret, deps);
     const returnTo = payload?.returnTo ?? `${deps.frontendUrl ?? config.frontendUrl}/organizations`;
 
     if (!payload) {
@@ -848,4 +848,8 @@ export function createDocusignOAuthRouter(deps: DocusignOAuthDeps = {}): Router 
   return router;
 }
 
-export const docusignOAuthRouter = createDocusignOAuthRouter();
+// Lazy router export — `createDocusignOAuthRouter()` validates
+// `INTEGRATION_STATE_HMAC_SECRET` at construction time and throws when missing
+// (audit H1). Defer real construction to the first request so importing the
+// module without the env var doesn't crash unrelated tests.
+export const docusignOAuthRouter: Router = createLazyOAuthRouter(() => createDocusignOAuthRouter());

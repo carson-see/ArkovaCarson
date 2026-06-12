@@ -1,18 +1,20 @@
 # OAuth State HMAC Secret Rotation (D3)
 
-**Status:** action required by Carson
+**Status:** code remediation COMPLETE — Drive (SCRUM-1236), GRC (SCRUM-1238), and DocuSign org + member (this PR / 2026-04-24 finding H1) all fail closed. `INTEGRATION_STATE_HMAC_SECRET` is now MANDATORY in production when `ENABLE_DRIVE_OAUTH` or `ENABLE_DOCUSIGN_OAUTH` is true — provision it via the steps below.
 **Discovered:** 2026-04-24 forensic security audit (finding H1)
-**Affects:** Drive OAuth, DocuSign OAuth, GRC OAuth (any integration that signs `state` in the OAuth flow)
+**Affects:** Drive OAuth, DocuSign OAuth (org + member), GRC OAuth (any integration that signs `state` in the OAuth flow)
 
-## What's wrong today
+## Background — the vulnerability (now remediated in code)
 
-`getStateSecret()` in `services/worker/src/api/v1/integrations/drive-oauth.ts:73` and `docusign-oauth.ts:74` **falls back to `config.supabaseJwtSecret`** when `INTEGRATION_STATE_HMAC_SECRET` is unset.
+`getStateSecret()` in the OAuth routers **previously fell back to `config.supabaseJwtSecret`** (and ultimately `config.supabaseServiceKey`) when `INTEGRATION_STATE_HMAC_SECRET` was unset — i.e. it failed OPEN.
 
 - `supabaseJwtSecret` is the secret Supabase Auth uses to sign every user JWT.
-- Reusing it as the OAuth state HMAC secret means:
+- Reusing it as the OAuth state HMAC secret meant:
   1. If `supabaseJwtSecret` ever leaks, every OAuth state token is forgeable.
   2. Rotation is impossible — rotating the JWT secret invalidates every active user session.
   3. Two trust boundaries (user-auth and OAuth-CSRF) collapse into one.
+
+The code now **fails closed**: `resolveStateSecret()` in `drive-oauth.ts`, `docusign-oauth.ts`, and `docusign-member-oauth.ts` requires the dedicated `INTEGRATION_STATE_HMAC_SECRET` (no JWT/service-role fallback) and throws when it is unset; `config.ts` additionally rejects boot in production when an OAuth flow is enabled without it. The operational task that remains is **provisioning** the secret.
 
 ## What rotating fixes
 
@@ -70,7 +72,7 @@ gcloud run services update arkova-worker \
   --update-secrets=INTEGRATION_STATE_HMAC_SECRET=INTEGRATION_STATE_HMAC_SECRET:latest
 ```
 
-This adds the secret as an env var. The worker code already reads it in `drive-oauth.ts:73` and `docusign-oauth.ts:74` — the fallback to `supabaseJwtSecret` is only used when the env var is absent.
+This adds the secret as an env var. The worker reads it via `resolveStateSecret()` in `drive-oauth.ts`, `docusign-oauth.ts`, and `docusign-member-oauth.ts`. There is **no fallback** — if `ENABLE_DRIVE_OAUTH` or `ENABLE_DOCUSIGN_OAUTH` is true in production and this secret is absent, config validation fails the worker at boot (fail-closed).
 
 ### 5. Verify the worker picked it up
 
@@ -109,24 +111,35 @@ That's the count of orgs that will need to re-OAuth ONCE if their state token is
 
 ## Rollback
 
-If this breaks something:
+> ⚠️ **Do NOT roll back by removing the secret.** Since the code now fails closed,
+> `--remove-secrets=INTEGRATION_STATE_HMAC_SECRET` will break the worker at boot
+> in production whenever `ENABLE_DRIVE_OAUTH` or `ENABLE_DOCUSIGN_OAUTH` is true
+> (and fails every OAuth `start`/`callback` even when those flags are off). There
+> is no `supabaseJwtSecret` fallback anymore.
+
+If a *new* secret value breaks something (e.g. a bad rotation), roll forward to a
+known-good secret version instead:
 ```bash
+# Re-point the worker at the previous good version (replace N)
 gcloud run services update arkova-worker \
   --region=us-central1 \
   --project=arkova1 \
-  --remove-secrets=INTEGRATION_STATE_HMAC_SECRET
+  --update-secrets=INTEGRATION_STATE_HMAC_SECRET=INTEGRATION_STATE_HMAC_SECRET:N
 ```
 
-The code falls back to `supabaseJwtSecret` (current behavior). Re-investigate before re-attempting.
+If you must take the OAuth flows offline entirely, set `ENABLE_DRIVE_OAUTH=false`
+and `ENABLE_DOCUSIGN_OAUTH=false` (the `/google_drive` and `/docusign` routes
+then return 503 via the kill switch) — do not remove the HMAC secret. To revert
+the *code* behavior, roll the Cloud Run worker back to the prior revision.
 
-## Follow-up code change (separate PR)
+## Follow-up code change — DONE
 
-After this rotation completes, file a follow-up PR that:
-1. Removes the `?? config.supabaseJwtSecret` fallback in `getStateSecret()` for Drive and DocuSign.
-2. Throws at startup if `INTEGRATION_STATE_HMAC_SECRET` is unset in `production` mode.
-3. Adds the env var to `docs/reference/ENV.md` as required.
+The follow-up PR work is complete:
+1. ✅ Removed the `?? config.supabaseJwtSecret` fallback in the OAuth state path — Drive (SCRUM-1236), DocuSign org + member (this PR). Member OAuth previously hardcoded `stateSecret: config.supabaseJwtSecret` in its eager export; that is gone.
+2. ✅ Throws at startup if `INTEGRATION_STATE_HMAC_SECRET` is unset in `production` mode when an OAuth flow is enabled (`config.ts` cross-field guard) — and `resolveStateSecret()` fails closed at router construction.
+3. ✅ `docs/reference/ENV.md` documents the env var as required.
 
-This PR exists as part of the Integration Hardening epic.
+This work is part of the Integration Hardening epic.
 
 ## Why we couldn't fully automate this
 

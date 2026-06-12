@@ -422,20 +422,22 @@ const ConfigSchema = z.object({
     });
   }
 
-  // Drive + GRC OAuth flows sign their `state` parameter with a dedicated
-  // HMAC secret (SCRUM-1236). Without it the state is unsigned and an attacker
-  // can forge the OAuth callback. Worker fails closed when the flow is on
-  // and the secret is missing.
+  // Drive + DocuSign OAuth flows sign their `state` parameter with a dedicated
+  // HMAC secret (Drive: SCRUM-1236; DocuSign: 2026-04-24 audit finding H1).
+  // Without it the state is unsigned and an attacker can forge the OAuth
+  // callback. Worker fails closed at boot when either flow is on and the secret
+  // is missing.
   if (
     cfg.nodeEnv === 'production'
-    && cfg.enableDriveOauth
+    && (cfg.enableDriveOauth || cfg.enableDocusignOauth)
     && !cfg.integrationStateHmacSecret
   ) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       message:
-        'ENABLE_DRIVE_OAUTH=true in production requires INTEGRATION_STATE_HMAC_SECRET '
-        + '(SCRUM-1236). Without it, OAuth `state` is unsigned and forgeable.',
+        'ENABLE_DRIVE_OAUTH / ENABLE_DOCUSIGN_OAUTH=true in production requires '
+        + 'INTEGRATION_STATE_HMAC_SECRET (SCRUM-1236 / audit H1). Without it, '
+        + 'OAuth `state` is unsigned and forgeable.',
       path: ['integrationStateHmacSecret'],
     });
   }
