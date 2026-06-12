@@ -1,6 +1,6 @@
 # Train C CE Lane Packet - 2026-06-11
 
-Status: Train C CE tag environment created; targeted CTDL smoke passed; 48-hour T3 read soak started.
+Status: Train C CE tag environment created; targeted CTDL smoke passed; 48-hour T3 health/read soak and bounded CTDL-route soak started.
 
 This packet is for the cumulative Credential Engine / CTDL stack only. It does not cover DocuSign, Google Drive, CPE/CLE UI, CSI/Accredible, or Udemy native work.
 
@@ -93,12 +93,13 @@ Do not start long soak until the start gates above are complete.
 - 2026-06-11 14:02 EDT: Bounded authenticated tag probes returned `/health` HTTP 200; `/api/v1/docs/spec.json` and `/api/v1/docs` returned HTTP 401, confirming those docs endpoints are not a useful unauthenticated route-presence smoke on the tag.
 - 2026-06-12 10:00 EDT: Targeted CTDL smoke used two publishable CPE public IDs and one publishable generic public ID against the `train-c-ce` tag. All three returned HTTP 200 with `application/ld+json`; each request wrote exactly one expected `ctdl.requested` audit row (`0 -> 1` for each target); summarized evidence found no learner/student/email/SSN/DOB guard terms.
 - 2026-06-12 10:01 EDT: Sampled the first 200 publishable CPE/CLE staging rows for credit-hour metadata. No sampled rows had `credit_hours`, `creditHours`, ethics hours, or other credit-like metadata, so live staging data still does not prove `ceterms:requires -> ceterms:ConditionProfile -> ceterms:creditValue -> ceterms:ValueProfile` output.
-- 2026-06-12 10:02 EDT: Started 48-hour T3 read soak in screen `train-c-ce-t3-read-soak-20260612T140237Z`. Mode is `reads` with `STAGING_READ_PATHS=/health` against `https://train-c-ce---arkova-worker-staging-kvojbeutfa-uc.a.run.app`. Evidence target: `/Volumes/Extreme/Arkova/release-evidence/train-c/ce/soak-train-c-ce-t3-read-20260612T140237Z.json`. Expected end: `2026-06-14T14:02:37Z`.
+- 2026-06-12 10:02 EDT: Started 48-hour T3 health/read soak in screen `train-c-ce-t3-read-soak-20260612T140237Z`. Mode is `reads` with `STAGING_READ_PATHS=/health` against `https://train-c-ce---arkova-worker-staging-kvojbeutfa-uc.a.run.app`. Evidence target: `/Volumes/Extreme/Arkova/release-evidence/train-c/ce/soak-train-c-ce-t3-read-20260612T140237Z.json`. Expected end: `2026-06-14T14:02:37Z`.
 - 2026-06-12 10:03 EDT: First soak telemetry: 50 OK, 0 fail, statuses `200=50`, p50 101ms, p95 261ms, p99 843ms.
+- 2026-06-12 11:35 EDT: Started a second bounded CTDL-route soak in screen `train-c-ce-t3-ctdl-soak-20260612T153435Z`, using the same three public IDs from targeted smoke every 300 seconds. Evidence: `/Volumes/Extreme/Arkova/release-evidence/train-c/ce/soak-train-c-ce-t3-ctdl-20260612T153435Z.jsonl` and summary `/Volumes/Extreme/Arkova/release-evidence/train-c/ce/soak-train-c-ce-t3-ctdl-20260612T153435Z.summary.json`. Expected end: `2026-06-14T15:35:45Z`. First cycle: 3 OK, 0 fail, statuses `200=3`, no PII guard terms, credit value still absent because sampled staging CPE/CLE rows lack credit-hour metadata.
 
 ## Remaining During Soak / Before Merge-Grade Readiness
 
-- Let the 48-hour T3 read soak complete and capture final JSON evidence.
+- Let the 48-hour T3 health/read soak and bounded CTDL-route soak complete and capture final JSON/JSONL evidence.
 - Confirm Jeanne-aligned CTDL decisions are reflected in acceptance criteria before any public Registry publishing.
 - Add or identify staging CPE/CLE records with real credit-hour metadata, then rerun targeted CTDL smoke to prove `ConditionProfile` / `ValueProfile` output.
-- Keep the soak health-only unless release owner explicitly approves higher-volume CTDL route traffic, because CTDL requests write `audit_events` rows by design.
+- Keep CTDL-route traffic bounded unless release owner explicitly approves higher-volume CTDL route traffic, because CTDL requests write `audit_events` rows by design.
