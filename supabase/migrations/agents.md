@@ -12,8 +12,11 @@ This directory now starts with the Path C baseline, `00000000000000_baseline_at_
 `main` HEAD is **0331** as of 2026-06-07 (`0330`/`0331` merged). The lowest unmerged prefix is `0327`. `0332`–`0338` are reserved by earlier migration PRs; this branch now takes the tail slot **`0339`**. Canonical assignment for the currently-open / reserved migration PRs:
 `main` HEAD is **0331** as of 2026-06-05 (`0330`/`0331` merged ✓). The lowest unmerged prefix is `0327`; the next free prefix is **`0334`**. Canonical assignment for the currently-open / reserved migration PRs:
 ## In-flight migration reservations (0327–0339) — recorded 2026-06-01, updated 2026-06-07
+## Release-drain migration reservations (0327–0339) — updated 2026-06-13
 
-`main` HEAD is **0331** as of 2026-06-07 (`0330`/`0331` merged). The lowest unmerged prefix is `0327`. This branch owns **`0334`** and must merge only after lower numeric prefixes land. Canonical assignment for the currently-open / reserved migration PRs:
+Remote/main is at least `b73a0545a20bab0fb9682b4e346031af2ca986ba` for the active release-drain lane after #1114 merged. This is a documentation/control-plane note only; it does not change migrations or production evidence.
+
+Merged during release drain:
 
 | Prefix | PR | Story | File | Status |
 |---|---|---|---|---|
@@ -40,18 +43,27 @@ This directory now starts with the Path C baseline, `00000000000000_baseline_at_
 - **Merge order must follow prefix order** (`0327→0339`): migrations apply monotonically, so merging a higher prefix before a lower one strands the lower one as out-of-order.
 - Each of these soaks on its **own dedicated isolated Supabase project**, never shared staging — applying any unmerged prefix to shared staging would gap the ledger and contaminate every parallel soak.
 | `0339` | #1122 | BUG-1 | `0339_get_public_anchor_by_fingerprint.sql` | reserved — T3, soak pending after 0332–0338 |
+| `0327` | #1047 | SCRUM-2225 | `0327_scrum2225_free_tier_quota.sql` | merged to `main` during release drain |
+| `0328` | #971 | SCRUM-2045 | `0328_org_integrations_suborg_inheritance.sql` | merged to `main` during release drain |
+| `0329` | #1038 | SCRUM-1611 | `0329_member_integrations_credential_providers.sql` | merged to `main` during release drain |
+| `0333` | #1101 | SCRUM-2193 | `0333_scrum2193_validate_anchors_metadata_constraints.sql` | merged to `main` during release drain |
+| `0334` | #1100 | SCRUM-2248 | `0334_scrum2248_sanitize_metadata_strip_underscore.sql` | merged to `main` during release drain |
+| `0335` | #1111 | SCRUM-2236 | `0335_scrum2236_dashboard_cache_budgets.sql` | merged to `main` during release drain |
+| `0336` | #1112 | SCRUM-2252 | `0336_scrum2252_revocation_metadata.sql` | merged to `main` during release drain |
+| `0337` | #1114 | SCRUM-2250 | `0337_scrum2250_webhook_event_sequence.sql` | merged to `main` during release drain |
 
-- **Merge order must follow prefix order** (`0327→0334`): migrations apply monotonically, so merging a higher prefix before a lower one strands the lower one as out-of-order.
-- Each of these soaks on its **own dedicated isolated Supabase project**, never shared staging — `main` is at `0326`, so applying any unmerged prefix to shared staging would gap the ledger and contaminate every parallel soak.
-- **Merge order must follow prefix order** (`0327→0339`): migrations apply monotonically, so merging a higher prefix before a lower one strands the lower one as out-of-order.
-- Each of these soaks on its **own dedicated isolated Supabase project**, never shared staging — applying unmerged prefixes to shared staging would gap the ledger and contaminate every parallel soak.
-- Remove a row once its PR merges to `main` and gets a permanent `## Recent migrations` entry below.
-
-## In-flight migration reservations (0333) — recorded 2026-06-05
+Remaining strict order:
 
 | Prefix | PR | Story | File | Status |
 |---|---|---|---|---|
-| `0333` | (pending) | SCRUM-2193 | `0333_scrum2193_validate_anchors_metadata_constraints.sql` | **reserved** — validation-only forward migration; runs `VALIDATE CONSTRAINT` on `anchors_cpe_metadata_is_object` + `anchors_cle_metadata_is_object` to close repo↔prod NOT-VALID drift from 0315. No schema/column change. T3 (touches `supabase/migrations/`). Soaks on its **own isolated Supabase project** that reproduces prod's NOT VALID state — shared staging creates these VALID via 0315, so it cannot prove the NOT-VALID→VALID transition. Prefix `0332` left unclaimed by this PR. |
+| `0338` | #1107 | SCRUM-2244 | `0338_scrum2244_dlq_idempotency.sql` | current strict-order PR |
+| `0339` | #1122 | SCRUM-2285 | `0339_get_public_anchor_by_fingerprint.sql` | fixed at `06f5b75e`; hold behind #1107 |
+
+- Remaining migration order is strict: #1107 -> #1122.
+- Do not reserve or reuse `0327`, `0328`, `0329`, `0333`, `0334`, `0335`, `0336`, or `0337`; those prefixes are already consumed by merged drain PRs.
+- Do not infer a current `0332` release-drain owner from older stale reservations; no active `0332` release-drain PR is asserted by this mirror sync.
+- Remaining soaks must use a dedicated isolated Supabase project or a proven `clean_mirror`, never dirty shared staging.
+- Remove a remaining row once its PR merges to `main` and gets a durable `## Recent migrations` entry below.
 
 ## Recent migrations (PR #817)
 

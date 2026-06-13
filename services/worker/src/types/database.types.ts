@@ -539,6 +539,8 @@ export type Database = {
           recipient_email: string | null
           retention_until: string | null
           revocation_block_height: number | null
+          revocation_metadata: Json | null
+          revocation_metadata_hash: string | null
           revocation_reason: string | null
           revocation_tx_id: string | null
           revoked_at: string | null
@@ -582,6 +584,8 @@ export type Database = {
           recipient_email?: string | null
           retention_until?: string | null
           revocation_block_height?: number | null
+          revocation_metadata?: Json | null
+          revocation_metadata_hash?: string | null
           revocation_reason?: string | null
           revocation_tx_id?: string | null
           revoked_at?: string | null
@@ -625,6 +629,8 @@ export type Database = {
           recipient_email?: string | null
           retention_until?: string | null
           revocation_block_height?: number | null
+          revocation_metadata?: Json | null
+          revocation_metadata_hash?: string | null
           revocation_reason?: string | null
           revocation_tx_id?: string | null
           revoked_at?: string | null
@@ -6409,6 +6415,7 @@ export type Database = {
         Returns: undefined
       }
       lookup_org_by_email_domain: { Args: { p_email: string }; Returns: Json }
+      next_webhook_sequence: { Args: never; Returns: number }
       record_msgraph_nonce_and_enqueue: {
         Args: {
           p_change_type: string
