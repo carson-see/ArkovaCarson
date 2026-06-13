@@ -9,7 +9,7 @@ This directory now starts with the Path C baseline, `00000000000000_baseline_at_
 
 ## Release-drain migration reservations (0327–0339) — updated 2026-06-13
 
-Remote/main is at least `8e62198345932a8e9ff25c41421adf112e3af6a0` for the active release-drain lane after #1107 merged. This is a documentation/control-plane note only; it does not change migrations or production evidence.
+Remote/main is at least `e51087a7990b349c09adca97797718a87c173e06` for the completed Train A/B release-drain lane after #1122 merged. This is a documentation/control-plane note only; it does not change migrations or production evidence.
 
 Merged during release drain:
 
@@ -24,18 +24,17 @@ Merged during release drain:
 | `0336` | #1112 | SCRUM-2252 | `0336_scrum2252_revocation_metadata.sql` | merged to `main` during release drain |
 | `0337` | #1114 | SCRUM-2250 | `0337_scrum2250_webhook_event_sequence.sql` | merged to `main` during release drain |
 | `0338` | #1107 | SCRUM-2244 | `0338_scrum2244_dlq_idempotency.sql` | merged to `main` during release drain |
+| `0339` | #1122 | SCRUM-2285 | `0339_get_public_anchor_by_fingerprint.sql` | merged to `main` during release drain |
 
-Remaining strict order:
+Remaining strict order: none. Train A/B release drain is complete through #1122.
 
-| Prefix | PR | Story | File | Status |
-|---|---|---|---|---|
-| `0339` | #1122 | SCRUM-2285 | `0339_get_public_anchor_by_fingerprint.sql` | current strict-order PR |
-
-- Remaining migration order is strict: #1122.
-- Do not reserve or reuse `0327`, `0328`, `0329`, `0333`, `0334`, `0335`, `0336`, `0337`, or `0338`; those prefixes are already consumed by merged drain PRs.
+- Do not reserve or reuse `0327`, `0328`, `0329`, `0333`, `0334`, `0335`, `0336`, `0337`, `0338`, or `0339`; those prefixes are already consumed by merged drain PRs.
 - Do not infer a current `0332` release-drain owner from older stale reservations; no active `0332` release-drain PR is asserted by this mirror sync.
 - Remaining soaks must use a dedicated isolated Supabase project or a proven `clean_mirror`, never dirty shared staging.
-- Remove a remaining row once its PR merges to `main` and gets a durable `## Recent migrations` entry below.
+
+## Recent migrations (SCRUM-2285)
+
+- **0339_get_public_anchor_by_fingerprint.sql**: Adds SECURITY DEFINER RPC `get_public_anchor_by_fingerprint(text)` for Edge MCP `verify` / `verify_document` fingerprint lookup. The function normalizes fingerprints, returns only non-deleted `SECURED` anchors, uses deterministic `created_at DESC, id DESC` ordering, delegates public projection to `get_public_anchor(public_id)`, and preserves UNKNOWN/not-found behavior for pending/submitted fingerprints to avoid a global existence oracle.
 
 ## Recent migrations (PR #817)
 
