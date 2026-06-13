@@ -9,7 +9,7 @@ This directory now starts with the Path C baseline, `00000000000000_baseline_at_
 
 ## Release-drain migration reservations (0327–0339) — updated 2026-06-13
 
-Remote/main is at least `e51087a7990b349c09adca97797718a87c173e06` for the completed Train A/B release-drain lane after #1122 merged. This is a documentation/control-plane note only; it does not change migrations or production evidence.
+Remote/main is at least `e51087a7990b349c09adca97797718a87c173e06` for the completed Train A/B release-drain lane after #1122 merged. Current `main` has since advanced to non-migration dependency merge `7220fb4b41f2b0bae5662bbdfea721d867f53638` via #1155. This is a documentation/control-plane note only; it does not change migrations or production evidence.
 
 Merged during release drain:
 

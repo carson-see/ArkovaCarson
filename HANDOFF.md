@@ -15,7 +15,7 @@
 
 ## Now
 
-### 2026-06-13 18:30 EDT - Train A/B release drain complete through #1122
+### 2026-06-13 19:18 EDT - Train A/B drain closed; dependency lane resumed
 
 **Current A/B evidence truth:** the restarted Train A/B T3 cron soaks completed
 their full 48h windows at `2026-06-13T14:12:58Z` /
@@ -61,6 +61,22 @@ uses the canonical not-found mock, and cleans the migration ledger.
 code-clean soaks separately; do not treat Train C CE/mixed/quality diagnostics
 as merge-grade evidence.
 
+**Post-drain dependency lane:** #1155 (`chore(deps): bump esbuild from 0.28.0
+to 0.28.1`) was stale on base
+`3f906c991988f9b2ed6e71e1a70b64020cebd2fb`. It was refreshed onto #1122's
+main commit `e51087a7990b349c09adca97797718a87c173e06`, reached head
+`c18561bcae19510e63de74de1e84a66275e0453a`, passed required checks, entered
+Mergify's queue, then was direct-merged with exact-head guard after the queue
+remained pending past the batch tick. #1155 merged to `main` at
+`2026-06-13T23:16:37Z` as
+`7220fb4b41f2b0bae5662bbdfea721d867f53638`.
+
+**Why no other requeue happened:** no open PR currently has the `dequeued`
+label. Recent dequeued release-drain PRs #1107, #1114, and #1122 are already
+merged. #1158 is not requeue-safe: it is a worker dependency bundle with a
+failed `Staging Soak Evidence Gate`. Train C PRs remain drafts or isolated soak
+lanes and must not be queued until their own evidence closes.
+
 **Jira/Confluence sync:** Confluence page `74022939` is updated to version 11
 and SCRUM-2285 page `72581121` is updated to version 4 with #1122 merged.
 Jira SCRUM-2285 is Done with closeout comment `16509`. Parent epic SCRUM-1703
@@ -85,7 +101,7 @@ it after every merge-state change before making a docs PR.
 
 **Other train soaks:** Train C code-clean CTDL and ops soaks are alive under
 `/Volumes/Extreme/Arkova/release-evidence/train-c/code/20260612T-clean-isolated/`.
-Latest local summaries are CTDL `642/642` ok and ops `4800/4800` ok, zero
+Latest local summaries are CTDL `662/662` ok and ops `4950/4950` ok, zero
 failures. Train C mixed, quality-low-rate, and repaired CE attempts are
 diagnostic-only unless a fresh counted soak is explicitly started and
 documented.
@@ -94,6 +110,6 @@ documented.
 own 48h windows and final evidence. Do not restart, merge, or mutate other
 trains without a fresh release-owner lane decision.
 
-_Last refreshed: 2026-06-13 18:30 EDT by Codex using A/B final evidence JSONs,
+_Last refreshed: 2026-06-13 19:18 EDT by Codex using A/B final evidence JSONs,
 `gh pr view/checks/merge`, Jira/Confluence MCP updates, local screen/evidence
-checks, and SSD mirror status._
+checks, #1155 guarded merge readback, and SSD mirror status._

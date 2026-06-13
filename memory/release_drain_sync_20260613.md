@@ -34,6 +34,24 @@ checks green on the current head.
 `2026-06-13T22:26:18Z` as
 `e51087a7990b349c09adca97797718a87c173e06`; Jira SCRUM-2285 is Done.
 
+After the A/B drain closed, dependency-lane PR #1155 was refreshed from old
+base `3f906c991988f9b2ed6e71e1a70b64020cebd2fb` onto current main
+`e51087a7990b349c09adca97797718a87c173e06`, reached head
+`c18561bcae19510e63de74de1e84a66275e0453a`, passed required checks, entered
+Mergify's queue, and was direct-merged with exact-head guard after the queue
+remained pending past the batch tick. #1155 merged at
+`2026-06-13T23:16:37Z` as
+`7220fb4b41f2b0bae5662bbdfea721d867f53638`.
+
+Open-PR disposition after #1155:
+
+- No open PR has the `dequeued` label; recent dequeued #1107, #1114, and #1122
+  are merged.
+- #1158 is not requeue-safe until its failed `Staging Soak Evidence Gate` is
+  fixed and green.
+- Train C PRs remain draft/isolated soak lanes and must not be queued until
+  their own final evidence closes.
+
 ## Already Closed In This Drain
 
 - #1047 / SCRUM-2225: merged and Jira Done.
@@ -49,7 +67,7 @@ checks green on the current head.
 
 ## Other Train Status
 
-- Train C code-clean CTDL and ops screens are active and clean as of the latest local summaries: CTDL `642/642` ok, ops `4800/4800` ok, zero failures.
+- Train C code-clean CTDL and ops screens are active and clean as of the latest local summaries: CTDL `662/662` ok, ops `4950/4950` ok, zero failures.
 - Train C mixed, quality-low-rate, and CE repaired runs are non-merge-grade evidence unless a fresh counted soak is explicitly started and documented.
 
 ## Sync State
@@ -57,7 +75,7 @@ checks green on the current head.
 - Extreme mirror working tree `/Volumes/Extreme/Arkova/worktrees/hygiene-sync-20260603` is on `main` with synchronized coordination docs.
 - Crucial mirror working tree `/Volumes/Crucial X9/Arkova/arkova-mvpcopy-main` is on `main` with synchronized coordination docs.
 - Active Extreme checkout `/Volumes/Extreme/Arkova/arkova-mvpcopy-main` is intentionally dirty with release coordination docs/evidence; do not clean or reset it.
-- GitHub docs-sync branch `codex/release-drain-doc-sync-20260613` carries the final #1122 closeout sync.
+- GitHub docs-sync branch `codex/release-drain-doc-sync-20260613` carries the final #1122 closeout sync plus the post-drain #1155 dependency-lane merge disposition.
 
 ## Stale-State Trap
 

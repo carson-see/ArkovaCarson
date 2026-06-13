@@ -7,6 +7,7 @@ This file used to describe the pre-#1055 T3 launch blocker state from 2026-06-08
 - #1055 has merged to `main`.
 - Train A/B restarted 48h soaks completed cleanly on 2026-06-13.
 - #1047, #1101, #1100, #971, #1038, #1111, #1112, #1114, #1107, and #1122 have merged in the release drain.
+- Post-drain dependency PR #1155 also merged to `main` at `2026-06-13T23:16:37Z` as `7220fb4b41f2b0bae5662bbdfea721d867f53638`.
 - The old #1111 -> #1112 -> #1114 -> #1107 -> #1122 queue is obsolete; no Train A/B release-drain PRs remain.
 - Current SSD, Jira, Confluence, and soak guardrails live in `memory/release_drain_sync_20260613.md`.
 

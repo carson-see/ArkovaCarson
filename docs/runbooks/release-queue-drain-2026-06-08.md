@@ -33,6 +33,13 @@ Remaining strict order: none. Train A/B release drain is complete.
 `2026-06-13T22:26:18Z` as `e51087a7990b349c09adca97797718a87c173e06`
 from head `6ca17b237b29f53a3f53fc9409e9ca2ef632c9e1` on that base.
 
+Post-drain dependency-lane PR #1155 merged at `2026-06-13T23:16:37Z` as
+`7220fb4b41f2b0bae5662bbdfea721d867f53638` after being refreshed from stale
+base onto #1122's main commit, passing required checks, entering Mergify queue,
+and direct-merging with exact-head guard when the queue remained pending past
+the batch tick. #1158 remains blocked by failed `Staging Soak Evidence Gate` and
+must not be requeued until fixed.
+
 ### Release queue unblocker #1141 - merged 2026-06-10
 
 PR #1141 (`fix(release): unblock parallel soak lanes`) merged via Mergify at
