@@ -9,7 +9,7 @@ This directory now starts with the Path C baseline, `00000000000000_baseline_at_
 
 ## Release-drain migration reservations (0327–0339) — updated 2026-06-13
 
-Remote/main is at least `21d72078259918df13b0f573bb30861f4afae5fe` for the active release-drain lane after #1112 merged. This is a documentation/control-plane note only; it does not change migrations or production evidence.
+Remote/main is at least `b73a0545a20bab0fb9682b4e346031af2ca986ba` for the active release-drain lane after #1114 merged. This is a documentation/control-plane note only; it does not change migrations or production evidence.
 
 Merged during release drain:
 
@@ -22,17 +22,17 @@ Merged during release drain:
 | `0334` | #1100 | SCRUM-2248 | `0334_scrum2248_sanitize_metadata_strip_underscore.sql` | merged to `main` during release drain |
 | `0335` | #1111 | SCRUM-2236 | `0335_scrum2236_dashboard_cache_budgets.sql` | merged to `main` during release drain |
 | `0336` | #1112 | SCRUM-2252 | `0336_scrum2252_revocation_metadata.sql` | merged to `main` during release drain |
+| `0337` | #1114 | SCRUM-2250 | `0337_scrum2250_webhook_event_sequence.sql` | merged to `main` during release drain |
 
 Remaining strict order:
 
 | Prefix | PR | Story | File | Status |
 |---|---|---|---|---|
-| `0337` | #1114 | SCRUM-2250 | `0337_scrum2250_webhook_event_sequence.sql` | current strict-order PR |
-| `0338` | #1107 | SCRUM-2244 | `0338_scrum2244_dlq_idempotency.sql` | hold behind #1114 |
+| `0338` | #1107 | SCRUM-2244 | `0338_scrum2244_dlq_idempotency.sql` | current strict-order PR |
 | `0339` | #1122 | SCRUM-2285 | `0339_get_public_anchor_by_fingerprint.sql` | fixed at `06f5b75e`; hold behind #1107 |
 
-- Remaining migration order is strict: #1114 -> #1107 -> #1122.
-- Do not reserve or reuse `0327`, `0328`, `0329`, `0333`, or `0334`; those prefixes are already consumed by merged drain PRs.
+- Remaining migration order is strict: #1107 -> #1122.
+- Do not reserve or reuse `0327`, `0328`, `0329`, `0333`, `0334`, `0335`, `0336`, or `0337`; those prefixes are already consumed by merged drain PRs.
 - Do not infer a current `0332` release-drain owner from older stale reservations; no active `0332` release-drain PR is asserted by this mirror sync.
 - Remaining soaks must use a dedicated isolated Supabase project or a proven `clean_mirror`, never dirty shared staging.
 - Remove a remaining row once its PR merges to `main` and gets a durable `## Recent migrations` entry below.
