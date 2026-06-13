@@ -10,6 +10,9 @@ This directory now starts with the Path C baseline, `00000000000000_baseline_at_
 ## In-flight migration reservations (0327–0337) — recorded 2026-06-01, updated 2026-06-05
 
 `main` HEAD is **0331** as of 2026-06-05 (`0330`/`0331` merged ✓). The lowest unmerged prefix is `0327`; the next free prefix is **`0338`**. Canonical assignment for the currently-open / reserved migration PRs:
+## In-flight migration reservations (0327–0336) — recorded 2026-06-01, updated 2026-06-05
+
+`main` HEAD is **0331** as of 2026-06-05 (`0330`/`0331` merged ✓). The lowest unmerged prefix is `0327`; the next free prefix is **`0337`** (0332–0336 now reserved). Canonical assignment for the currently-open / reserved migration PRs:
 `main` HEAD is **0331** as of 2026-06-05 (`0330`/`0331` merged ✓). The lowest unmerged prefix is `0327`; the next free prefix is **`0334`**. Canonical assignment for the currently-open / reserved migration PRs:
 ## In-flight migration reservations (0327–0339) — recorded 2026-06-01, updated 2026-06-07
 
@@ -28,6 +31,9 @@ This directory now starts with the Path C baseline, `00000000000000_baseline_at_
 | `0335` | (sibling) | — | (sibling PR) | reserved — sibling-PR slot |
 | `0336` | (sibling) | SCRUM-2252 | `0336_scrum2252_revocation_metadata.sql` | reserved — sibling PR (revocation metadata) |
 | `0337` | #1114 | SCRUM-2250 | `0337_scrum2250_webhook_event_sequence.sql` | **reserved 2026-06-05** — replica-safe `webhook_event_sequence` + `next_webhook_sequence()` RPC for per-resource webhook ordering; re-tiers PR to **T3**, soak pending on its own isolated project |
+| `0335` | (sibling) | (sibling PR) | (sibling-session migration) | reserved by a parallel sibling session — do not reuse `0335` |
+| `0336` | (pending) | SCRUM-2252 | `0336_scrum2252_revocation_metadata.sql` | **reserved 2026-06-05** — adds additive-nullable `anchors.revocation_metadata` (jsonb) + `revocation_metadata_hash` (text) so the on-chain revocation hash is reconstructible (BUG-2026-05-16-003); T3, soak pending |
+| `0335` | #1111 | SCRUM-2236 | `0335_scrum2236_dashboard_cache_budgets.sql` | **reserved 2026-06-05** — HARDEN-1 on the 4 dashboard cache refreshers. Review-fix (2026-06-05): (1) cancel path no longer writes a `{stale,…,value}` wrapper — it preserves the prior BARE cache_value (ON CONFLICT DO NOTHING; bare `[]`/`{}` seeded only when no row exists) so `get_anchor_type_counts`/`get_distinct_record_types`/`count_public_records_by_source` (which read the bare value) never throw; (2) durable fix is index-resident scans via operator-applied `CREATE INDEX CONCURRENTLY` (net-new `idx_anchors_status_active_count (status) WHERE deleted_at IS NULL`; the type/source/record_type scans reuse existing partial/btree indexes), since `SET LOCAL statement_timeout` arms vs the OUTER statement and gives the inner scan ~0 budget under the cron wrapper. The 1s budget + explicit 57014 catch stay as a safety net only. T3, soak pending |
 | `0330` | #1022 | SCRUM-2203 | `0330_scrum2203_unembedded_records_query_perf.sql` | renumbered ✓ (head `2a8d1b1c`) |
 | `0331` | #1031 | SCRUM-1847/1869 | `0331_scrum1847_1869_public_anchor_cpe_cle_metadata.sql` | renumbered ✓ (head `431ddbff`) |
 | `0332` | (reserved) | SCRUM-2229 | `0332_scrum2229_sub_org_credit_rollup.sql` | reserved by earlier lane; merge before this PR if still open |
@@ -40,6 +46,7 @@ This directory now starts with the Path C baseline, `00000000000000_baseline_at_
 | `0339` | #1122 | BUG-1 | `0339_get_public_anchor_by_fingerprint.sql` | reserved — T3, soak pending after 0332–0338 |
 
 - **Merge order must follow prefix order** (`0327→0337`): migrations apply monotonically, so merging a higher prefix before a lower one strands the lower one as out-of-order.
+- **Merge order must follow prefix order** (`0327→0336`): migrations apply monotonically, so merging a higher prefix before a lower one strands the lower one as out-of-order.
 - Each of these soaks on its **own dedicated isolated Supabase project**, never shared staging — `main` is at `0326`, so applying any unmerged prefix to shared staging would gap the ledger and contaminate every parallel soak.
 - **Merge order must follow prefix order** (`0327→0339`): migrations apply monotonically, so merging a higher prefix before a lower one strands the lower one as out-of-order.
 - Each of these soaks on its **own dedicated isolated Supabase project**, never shared staging — applying unmerged prefixes to shared staging would gap the ledger and contaminate every parallel soak.

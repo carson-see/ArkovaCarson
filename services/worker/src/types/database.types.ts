@@ -539,6 +539,8 @@ export type Database = {
           recipient_email: string | null
           retention_until: string | null
           revocation_block_height: number | null
+          revocation_metadata: Json | null
+          revocation_metadata_hash: string | null
           revocation_reason: string | null
           revocation_tx_id: string | null
           revoked_at: string | null
@@ -582,6 +584,8 @@ export type Database = {
           recipient_email?: string | null
           retention_until?: string | null
           revocation_block_height?: number | null
+          revocation_metadata?: Json | null
+          revocation_metadata_hash?: string | null
           revocation_reason?: string | null
           revocation_tx_id?: string | null
           revoked_at?: string | null
@@ -625,6 +629,8 @@ export type Database = {
           recipient_email?: string | null
           retention_until?: string | null
           revocation_block_height?: number | null
+          revocation_metadata?: Json | null
+          revocation_metadata_hash?: string | null
           revocation_reason?: string | null
           revocation_tx_id?: string | null
           revoked_at?: string | null
