@@ -186,9 +186,10 @@ describe('handleVerifyBatch (real RPC fixture)', () => {
 //   /rest/v1/public_records?content_hash=eq...&select=...public_id...
 // which 400s in prod (the select column set / table shape is wrong) and,
 // even when it didn't, returned a non-canonical shape. PR-2 re-points it at
-// the SECURITY DEFINER RPC get_public_anchor_by_fingerprint and maps the
-// result through shapeAnchorRow, so verify returns the SAME truthful shape
-// as get_anchor / verify_credential.
+// the SECURITY DEFINER RPC get_public_anchor_by_fingerprint and maps secured
+// results through shapeAnchorRow. Unlike public_id verification, fingerprint
+// lookup intentionally hides in-flight anchors so it cannot expose pending
+// content-hash existence globally.
 
 const FP = 'f'.repeat(64);
 
@@ -276,35 +277,32 @@ describe('handleVerifyDocument (BUG-1: RPC by fingerprint)', () => {
     expect(parsed.fingerprint).toBe(mixed.toLowerCase());
   });
 
-  it('PENDING anchor → status PENDING (NOT UNKNOWN), evidence fields gated to null per the RPC', async () => {
+  it('PENDING fingerprint filtered by RPC → UNKNOWN, not an existence leak', async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
-      json: async () => pendingPublicAnchorRow({ public_id: 'ARK-PENDING' }),
+      json: async () => ({ error: 'Record not found' }),
     });
 
     const result = await handleVerifyDocument({ content_hash: FP }, CONFIG);
     const parsed = JSON.parse(result.content[0].text);
     expect(parsed.verified).toBe(false);
-    // A genuinely-found in-flight anchor must surface PENDING, not collapse to
-    // UNKNOWN (which an agent reads as not-found).
-    expect(parsed.status).toBe('PENDING');
-    expect(parsed.public_id).toBe('ARK-PENDING');
+    expect(parsed.status).toBe('UNKNOWN');
+    expect(parsed.public_id).toBeNull();
     expect(parsed.network_receipt_id).toBeNull();
     expect(parsed.anchor_timestamp).toBeNull();
   });
 
-  it('SUBMITTED anchor → status SUBMITTED (NOT UNKNOWN), still unverified', async () => {
+  it('SUBMITTED fingerprint filtered by RPC → UNKNOWN until secured', async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
-      json: async () =>
-        pendingPublicAnchorRow({ public_id: 'ARK-SUBMITTED', status: 'SUBMITTED' }),
+      json: async () => ({ error: 'Record not found' }),
     });
 
     const result = await handleVerifyDocument({ content_hash: FP }, CONFIG);
     const parsed = JSON.parse(result.content[0].text);
     expect(parsed.verified).toBe(false);
-    expect(parsed.status).toBe('SUBMITTED');
-    expect(parsed.public_id).toBe('ARK-SUBMITTED');
+    expect(parsed.status).toBe('UNKNOWN');
+    expect(parsed.public_id).toBeNull();
     expect(parsed.network_receipt_id).toBeNull();
   });
 });

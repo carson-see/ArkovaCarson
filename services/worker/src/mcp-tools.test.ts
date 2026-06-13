@@ -669,7 +669,7 @@ describe('handleVerifyDocument (PH1-SDK-03)', () => {
   it('returns verified=false when no record found', async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
-      json: async () => ([]),
+      json: async () => ({ error: 'Record not found' }),
     });
     const result = await handleVerifyDocument({ content_hash: validHash }, CONFIG);
     const parsed = JSON.parse(result.content[0].text);
@@ -694,16 +694,16 @@ describe('handleVerifyDocument (PH1-SDK-03)', () => {
     expect(parsed.network_receipt_id).toBe('tx-123');
   });
 
-  it('returns PENDING when not yet anchored', async () => {
+  it('returns UNKNOWN when fingerprint exists but is not yet secured', async () => {
     mockFetch.mockResolvedValueOnce({
       ok: true,
-      json: async () => pendingPublicAnchorRow({ fingerprint: validHash }),
+      json: async () => ({ error: 'Record not found' }),
     });
 
     const result = await handleVerifyDocument({ content_hash: validHash }, CONFIG);
     const parsed = JSON.parse(result.content[0].text);
     expect(parsed.verified).toBe(false);
-    expect(parsed.status).toBe('PENDING');
+    expect(parsed.status).toBe('UNKNOWN');
     expect(parsed.network_receipt_id).toBeNull();
     expect(parsed.anchor_timestamp).toBeNull();
   });

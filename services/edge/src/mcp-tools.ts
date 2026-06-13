@@ -1263,14 +1263,14 @@ export async function handleAnchorDocument(
  * Verify a document by its content hash / fingerprint (PH1-SDK-03, BUG-1).
  *
  * Calls the `get_public_anchor_by_fingerprint` SECURITY DEFINER RPC
- * (migration 0339) and maps the result through `shapeAnchorRow`, so verify
+ * (migration 0339) and maps SECURED results through `shapeAnchorRow`, so verify
  * returns the SAME truthful, redacted anchor shape as `get_anchor` /
- * `verify_credential`. The prior implementation hit
+ * `verify_credential` once a document is actually anchored. The prior implementation hit
  * `/rest/v1/public_records?...&select=...public_id...` with a column set that
  * does not match the table shape — it returned HTTP 400 universally and the
  * tool was 100% broken.
  *
- * An unknown fingerprint is NOT an error: the RPC returns
+ * An unknown or not-yet-secured fingerprint is NOT an error: the RPC returns
  * `{ error: 'Record not found' }` and this maps to a verified:false /
  * status:UNKNOWN envelope (HTTP-200-equivalent). A `message` is retained so
  * `handleAgentSearch(type:'fingerprint')`'s found-guard still treats it as a
@@ -1318,10 +1318,15 @@ export async function handleVerifyDocument(
       });
     }
 
+    const publicId = typeof data.public_id === 'string' ? data.public_id : '';
+    if (!publicId) {
+      return errorResult('Document lookup returned malformed public anchor payload');
+    }
+
     // Pass the RPC's own public_id so the envelope echoes it AND builds the
     // correct record_uri (the single-record verify contract surfaces
     // public_id; the public verify URL is derived from it).
-    return textResult(shapeAnchorRow(data, (data.public_id as string | undefined) ?? ''));
+    return textResult(shapeAnchorRow(data, publicId));
   } catch (error) {
     const msg = error instanceof Error && error.name === 'AbortError'
       ? 'Document verification timed out'

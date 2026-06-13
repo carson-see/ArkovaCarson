@@ -108,26 +108,28 @@ column set that does not match the table shape, so PostgREST 400'd every call.
 
 - **New RPC `get_public_anchor_by_fingerprint(text)`** (migration
   `0339_get_public_anchor_by_fingerprint.sql`, prefix 0339 — 0327–0338 were
-  already reserved). `LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path
+  already consumed by the release-drain lane). `LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path
   = public`. Lowercases input, matches `lower(a.fingerprint) =
-  lower(p_fingerprint)`, filters `status IN ('SECURED','SUBMITTED','PENDING')
-  AND deleted_at IS NULL`, takes the LATEST by `created_at DESC LIMIT 1`, then
+  lower(p_fingerprint)`, filters `status = 'SECURED'
+  AND deleted_at IS NULL`, takes the LATEST by `created_at DESC, id DESC LIMIT 1`, then
   **delegates the whole jsonb projection to `get_public_anchor(public_id)`** so
   redaction (recipient SHA-256 hash, provenance strip, PENDING evidence
-  gating, no `org_id`/internal id) lives in exactly one place. Unknown
+  gating, no `org_id`/internal id) lives in exactly one place. Unknown or
+  not-yet-secured
   fingerprint → `{"error":"Record not found"}`, same envelope as
   `get_public_anchor`. Granted to `anon, authenticated`. Validated locally
   (rolled-back txn): SECURED→ACTIVE w/ receipt, UPPERCASE input still matches,
-  PENDING gates receipt+anchor_ts to null, unknown/empty→error, latest-wins,
-  soft-deleted excluded.
+  PENDING/SUBMITTED are hidden from fingerprint lookup, unknown/empty→error,
+  latest-wins, soft-deleted excluded.
 - **`handleVerifyDocument` (mcp-tools.ts)** now POSTs the RPC and maps through
   the PR-1-fixed `shapeAnchorRow` (passing `data.public_id` so the envelope
   echoes `public_id` and builds the correct `record_uri`). Verify now returns
   the SAME shape as the `get_anchor` / `verify_credential` (`get_public_anchor`)
   envelope (§1.8 fix-to-spec, PO-approved) — this is the get_public_anchor
-  envelope, NOT the worker's leaner `/verify/:fingerprint` shape. PENDING /
-  SUBMITTED are surfaced as first-class statuses (not collapsed to UNKNOWN) so a
-  genuinely-found in-flight anchor doesn't read not-found. Unknown fingerprint →
+  envelope, NOT the worker's leaner `/verify/:fingerprint` shape. Public-id
+  verification may surface PENDING/SUBMITTED; fingerprint verification only
+  resolves SECURED anchors to avoid exposing in-flight content hashes. Unknown
+  or not-yet-secured fingerprint →
   `{verified:false, status:'UNKNOWN', fingerprint:<lowercased>, public_id:null,
   network_receipt_id:null, message}` at HTTP 200, never a 400/error result (the
   `fingerprint` echo matches the worker's not-found body). The `message` is

@@ -20,10 +20,10 @@
 --   * input fingerprint is lowercased and matched against the bare (already
 --     lowercase) `fingerprint` column (`a.fingerprint = lower(p_fingerprint)`),
 --     which keeps idx_anchors_fingerprint_lookup usable;
---   * only non-deleted anchors in SECURED / SUBMITTED / PENDING are
---     considered (the lifecycle states a fingerprint lookup should surface —
---     mirrors get_public_anchor's public-verify intent);
---   * the LATEST such anchor wins (`ORDER BY a.created_at DESC LIMIT 1`);
+--   * only non-deleted SECURED anchors are considered. Public-id verification
+--     can show known in-flight anchors, but fingerprint lookup must not become
+--     a global existence oracle for pending/submitted content hashes;
+--   * the LATEST such anchor wins (`ORDER BY a.created_at DESC, a.id DESC LIMIT 1`);
 --   * redaction stays in ONE place: this function delegates the whole
 --     jsonb-shaping + recipient-hash + provenance redaction to
 --     `get_public_anchor(a.public_id)` so the two RPCs cannot drift.
@@ -52,9 +52,9 @@ BEGIN
     RETURN jsonb_build_object('error', 'Record not found');
   END IF;
 
-  -- Resolve the latest non-deleted anchor for this fingerprint. Status set is
-  -- intentionally narrower than get_public_anchor's (no REVOKED/EXPIRED/
-  -- SUPERSEDED) — a fingerprint lookup surfaces the live securing state.
+  -- Resolve the latest non-deleted SECURED anchor for this fingerprint.
+  -- Public-id verification can surface known in-flight anchors; fingerprint
+  -- verification should only confirm already-secured public anchors.
   -- Fingerprints are stored lowercase (the worker writes them via
   -- `.eq('fingerprint', fp.toLowerCase())`), so lowercase only the INPUT and
   -- compare against the bare column. A column-side `lower(a.fingerprint)`
@@ -64,9 +64,9 @@ BEGIN
     INTO v_public_id
   FROM anchors a
   WHERE a.fingerprint = lower(p_fingerprint)
-    AND a.status IN ('SECURED', 'SUBMITTED', 'PENDING')
+    AND a.status = 'SECURED'
     AND a.deleted_at IS NULL
-  ORDER BY a.created_at DESC
+  ORDER BY a.created_at DESC, a.id DESC
   LIMIT 1;
 
   IF v_public_id IS NULL THEN
@@ -82,7 +82,7 @@ GRANT EXECUTE ON FUNCTION public.get_public_anchor_by_fingerprint(text) TO anon,
 
 COMMENT ON FUNCTION public.get_public_anchor_by_fingerprint(text)
   IS 'Fingerprint-keyed sibling of get_public_anchor. Lowercases input, returns '
-     'the latest non-deleted SECURED/SUBMITTED/PENDING anchor in the SAME '
+     'the latest non-deleted SECURED anchor in the SAME '
      'redacted jsonb shape (delegates projection to get_public_anchor so '
      'redaction stays in one place). Unknown fingerprint → {"error":"Record not found"}.';
 
