@@ -72,14 +72,21 @@ export async function processRevocation(anchorId: string): Promise<boolean> {
     // We reuse the same fingerprint but add REVOKE metadata so the OP_RETURN
     // payload is: ARKV + SHA-256(fingerprint) — same as anchoring.
     // The metadata field distinguishes it as a revocation in our records.
+    // SCRUM-2252 (BUG-2026-05-16-003): keep the exact metadata object we submit
+    // so it can be persisted verbatim. The chain client returns
+    // receipt.metadataHash = SHA-256 of the canonical (sorted-key) JSON of this
+    // object; persisting both lets us recompute and verify the on-chain hash
+    // from our own records.
+    const revocationMetadata: Record<string, string> = {
+      type: 'REVOKE',
+      original_tx_id: anchorRecord.chain_tx_id,
+    };
+
     const chainClient = await getChainClientAsync();
     const receipt = await chainClient.submitFingerprint({
       fingerprint: anchorRecord.fingerprint,
       timestamp: new Date().toISOString(),
-      metadata: {
-        type: 'REVOKE',
-        original_tx_id: anchorRecord.chain_tx_id,
-      },
+      metadata: revocationMetadata,
     });
 
     // RACE-5 fix: Add status guard to prevent concurrent revocation overwrites
@@ -88,6 +95,10 @@ export async function processRevocation(anchorId: string): Promise<boolean> {
       .update({
         revocation_tx_id: receipt.receiptId,
         revocation_block_height: receipt.blockHeight,
+        // SCRUM-2252: persist the metadata + its canonical hash alongside the tx
+        // id so the committed hash is reconstructible/verifiable from our records.
+        revocation_metadata: revocationMetadata,
+        revocation_metadata_hash: receipt.metadataHash ?? null,
       })
       .eq('id', anchorId)
       .eq('status', 'REVOKED')
