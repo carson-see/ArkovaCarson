@@ -10,6 +10,9 @@ This directory now starts with the Path C baseline, `00000000000000_baseline_at_
 ## In-flight migration reservations (0327–0334) — recorded 2026-06-01, updated 2026-06-05
 
 `main` HEAD is **0331** as of 2026-06-05 (`0330`/`0331` merged ✓). The lowest unmerged prefix is `0327`; the next free prefix is **`0334`**. Canonical assignment for the currently-open / reserved migration PRs:
+## In-flight migration reservations (0327–0339) — recorded 2026-06-01, updated 2026-06-07
+
+`main` HEAD is **0331** as of 2026-06-07 (`0330`/`0331` merged). The lowest unmerged prefix is `0327`. This branch owns **`0334`** and must merge only after lower numeric prefixes land. Canonical assignment for the currently-open / reserved migration PRs:
 
 | Prefix | PR | Story | File | Status |
 |---|---|---|---|---|
@@ -22,10 +25,28 @@ This directory now starts with the Path C baseline, `00000000000000_baseline_at_
 | `0333` | #1101 | SCRUM-2193 | `0333_scrum2193_validate_anchors_metadata_constraints.sql` | reserved — T3, soak pending |
 | `0334` | (pending) | SCRUM-2229 | `0334_scrum2229_sub_org_credit_rollup.sql` | **reserved 2026-06-05** — sub-org credit allocation rollup RPC; PR not yet opened |
 | `0338` | #1107 | SCRUM-2244 | `0338_scrum2244_dlq_idempotency.sql` | **reserved 2026-06-05** — DLQ dedup: `failure_kind` discriminator column + partial unique index on `(endpoint_id, event_type, event_id, failure_kind) WHERE resolved = false`. Renumbered 0337→0338 on 2026-06-05: SCRUM-2250 (#1114) holds 0337 (webhook_event_sequence); 2244 took 0338 to resolve the collision. |
+| `0330` | #1022 | SCRUM-2203 | `0330_scrum2203_unembedded_records_query_perf.sql` | renumbered ✓ (head `2a8d1b1c`) |
+| `0331` | #1031 | SCRUM-1847/1869 | `0331_scrum1847_1869_public_anchor_cpe_cle_metadata.sql` | renumbered ✓ (head `431ddbff`) |
+| `0332` | (reserved) | SCRUM-2229 | `0332_scrum2229_sub_org_credit_rollup.sql` | reserved by earlier lane; merge before this PR if still open |
+| `0333` | #1101 | SCRUM-2193 | `0333_scrum2193_validate_anchors_metadata_constraints.sql` | reserved — T3, soak pending |
+| `0334` | #1100 | SCRUM-2248 | `0334_scrum2248_sanitize_metadata_strip_underscore.sql` | **keep** — SEV1 anon metadata-leak fix (BUG-2026-06-05-001); T3, soak pending after 0332/0333 |
+| `0335` | #1111 | SCRUM-2236 | `0335_scrum2236_dashboard_cache_budgets.sql` | reserved — T3, soak pending; requires operator-applied concurrent index evidence |
+| `0336` | #1112 | SCRUM-2252 | `0336_scrum2252_revocation_observability.sql` | reserved — T3, soak pending |
+| `0337` | #1114 | SCRUM-2258 | `0337_scrum2258_webhook_delivery_observability.sql` | reserved — T3, soak pending |
+| `0338` | #1107 | SCRUM-2250 | `0338_scrum2250_webhook_delivery_backfill.sql` | reserved — T3, soak pending; after #1114 webhook delivery changes |
+| `0339` | #1122 | BUG-1 | `0339_get_public_anchor_by_fingerprint.sql` | reserved — T3, soak pending after 0332–0338 |
 
 - **Merge order must follow prefix order** (`0327→0334`): migrations apply monotonically, so merging a higher prefix before a lower one strands the lower one as out-of-order.
 - Each of these soaks on its **own dedicated isolated Supabase project**, never shared staging — `main` is at `0326`, so applying any unmerged prefix to shared staging would gap the ledger and contaminate every parallel soak.
+- **Merge order must follow prefix order** (`0327→0339`): migrations apply monotonically, so merging a higher prefix before a lower one strands the lower one as out-of-order.
+- Each of these soaks on its **own dedicated isolated Supabase project**, never shared staging — applying unmerged prefixes to shared staging would gap the ledger and contaminate every parallel soak.
 - Remove a row once its PR merges to `main` and gets a permanent `## Recent migrations` entry below.
+
+## In-flight migration reservations (0333) — recorded 2026-06-05
+
+| Prefix | PR | Story | File | Status |
+|---|---|---|---|---|
+| `0333` | (pending) | SCRUM-2193 | `0333_scrum2193_validate_anchors_metadata_constraints.sql` | **reserved** — validation-only forward migration; runs `VALIDATE CONSTRAINT` on `anchors_cpe_metadata_is_object` + `anchors_cle_metadata_is_object` to close repo↔prod NOT-VALID drift from 0315. No schema/column change. T3 (touches `supabase/migrations/`). Soaks on its **own isolated Supabase project** that reproduces prod's NOT VALID state — shared staging creates these VALID via 0315, so it cannot prove the NOT-VALID→VALID transition. Prefix `0332` left unclaimed by this PR. |
 
 ## Recent migrations (PR #817)
 
@@ -69,3 +90,6 @@ _Rollback rehearsed: 2026-05-16 on staging (ujtlwnoqfhtitcmsnrpq). Both tables d
 ## Recent migrations (SCRUM-1847 / SCRUM-1869)
 
 - **0331_scrum1847_1869_public_anchor_cpe_cle_metadata.sql**: `CREATE OR REPLACE get_public_anchor` — adds additive-nullable `cpe_metadata` / `cle_metadata` keys built from an **explicit public allowlist** (`jsonb_build_object` + `jsonb_strip_nulls`, sourced from the `anchors` jsonb columns with `->`). Only public display keys are projected — CPE: `credit_hours`, `field_of_study`, `delivery_method`, `nasba_status`, `nasba_lookup_date`, `requires_manual_review`; CLE: `credit_hours`, `ethics_hours`, `jurisdiction`, `approved_provider_name`, `provider_approval_status`, `provider_lookup_date`, `delivery_format`, `course_title`, `requires_manual_review`. Internal fields (`sponsor_id`/`course_id`/`reporting_period_*`/`extraction_confidence`/`extraction_source`, and any FUTURE internal field) are excluded by default — the allowlist mirrors the worker `Cpe`/`CleMetadataSchema` and the frontend `cpe`/`cleMetadataView` allowlists (#1023/#1025). Replaced the original 2-key denylist (`a.cpe_metadata - 'extraction_confidence' - 'extraction_source'`) which under-stripped and would have leaked `sponsor_id`/`course_id`/`reporting_period_*` to anonymous callers (MEDIUM data-exposure fix). Body otherwise unchanged from the prod/0311 definition — preserves SECURITY DEFINER + `search_path` + status filter + `deleted_at` guard + recipient SHA-256 hash; only the two additive keys are new. §1.8 additive — no API version bump. (Renumbered 0329→0331 to resolve a cross-session 0327 collision; the agreed order above main HEAD 0326 is: 0327 #1047 → 0328 #971 → 0329 #1038 → 0330 #1022 → 0331 this PR, taking the top slot to stay collision-proof.)
+## Recent migrations (SCRUM-1611 CSI-04A)
+
+- **0329_member_integrations_credential_providers.sql**: Widens the `member_integrations.provider` CHECK constraint from `{'docusign'}` to `{'docusign', 'credly', 'accredible', 'udemy'}` so the same table can hold credential-source provider tokens for the SCRUM-1596 epic. Adds `kek_version smallint NOT NULL DEFAULT 1` for KMS key-rotation tracking (RFC 9700). No new RLS policies — the policies established by 0320 apply to all providers polymorphically. Tier T2 (CHECK widening + additive column). Rollback rehearsal pending on staging.
