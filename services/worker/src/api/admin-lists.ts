@@ -384,10 +384,11 @@ export async function handleAdminOrganizations(
       return;
     }
 
-    // Enrich with member count + anchor count
+    // Enrich with member count + anchor count + free-tier cap (SCRUM-2225)
     const orgIds = (orgs ?? []).map((o: { id: string }) => o.id);
     const memberCounts: Record<string, number> = {};
     const anchorCounts: Record<string, number> = {};
+    const quotaByOrg: Record<string, { is_test: boolean; anchor_quota: number | null }> = {};
 
     if (orgIds.length > 0) {
       // Member counts
@@ -413,6 +414,19 @@ export async function handleAdminOrganizations(
           if (a.org_id) anchorCounts[a.org_id] = (anchorCounts[a.org_id] ?? 0) + 1;
         }
       }
+
+      // Free-tier testing cap (org_credits.is_test + anchor_quota) so the admin
+      // UI can show and edit each org's allowance. SCRUM-2225.
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data: credits } = await (db as any)
+        .from('org_credits')
+        .select('org_id, is_test, anchor_quota')
+        .in('org_id', orgIds);
+      if (credits) {
+        for (const c of credits as Array<{ org_id: string; is_test: boolean; anchor_quota: number | null }>) {
+          quotaByOrg[c.org_id] = { is_test: c.is_test, anchor_quota: c.anchor_quota };
+        }
+      }
     }
 
     res.json({
@@ -420,6 +434,8 @@ export async function handleAdminOrganizations(
         ...o,
         member_count: memberCounts[o.id] ?? 0,
         anchor_count: anchorCounts[o.id] ?? 0,
+        is_test: quotaByOrg[o.id]?.is_test ?? false,
+        anchor_quota: quotaByOrg[o.id]?.anchor_quota ?? null,
       })),
       total: count ?? 0,
       page,
