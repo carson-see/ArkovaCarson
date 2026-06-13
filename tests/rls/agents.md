@@ -15,6 +15,8 @@ Row Level Security integration tests. Verify RLS policies enforce tenant isolati
 - **`x402_payments.test.ts`** — x402 payment protocol RLS tests.
 - **`get_org_members_public.test.ts`** — public org members RPC access tests.
 - **`public-org-profiles-security-invoker.test.ts`** — org profile view security tests.
+- **`docusign-integrations.test.ts`** — RLS for the 6 DocuSign tables, including `member_integrations` (own-rows / org-admin / deny-write).
+- **`credential-source-providers.test.ts`** — SCRUM-1611: verifies migration 0329 widens `member_integrations.provider` for Credly/Accredible/Udemy while preserving DocuSign back-compat, RLS policies extend to the new providers, and unknown providers stay CHECK-rejected.
 
 ## Conventions
 - Requires local Supabase running (`supabase start`) with seed data (`supabase db reset`).

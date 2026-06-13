@@ -34,6 +34,7 @@ import { docusignWebhookRouter, extractNotaryData } from './docusign.js';
 
 const TEST_HMAC_KEY = 'fixture-key-not-a-secret-aaaa';
 const ORG_ID = '11111111-1111-4111-8111-111111111111';
+const SUB_ORG_ID = '22222222-2222-4222-8222-222222222222';
 const VALID_DOC_SHA256 = 'b'.repeat(64);
 
 function createApp() {
@@ -84,6 +85,10 @@ function integrationLookup(data: unknown, error: unknown = null) {
   };
 }
 
+function noInheritedMarkers() {
+  return integrationLookup(null);
+}
+
 function insertResult(error: { code: string; message?: string } | null = null) {
   return {
     insert: vi.fn().mockResolvedValue({ data: null, error }),
@@ -115,6 +120,7 @@ describe('POST /webhooks/docusign', () => {
     dbFromMock.mockReturnValueOnce(
       integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1', hmac_keys: null }),
     );
+    dbFromMock.mockReturnValueOnce(noInheritedMarkers());
     const body = validBody();
     const res = await postSignedBody(body);
 
@@ -127,6 +133,7 @@ describe('POST /webhooks/docusign', () => {
     dbFromMock.mockReturnValueOnce(
       integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1', hmac_keys: null }),
     );
+    dbFromMock.mockReturnValueOnce(noInheritedMarkers());
     const body = validBody();
     const res = await request(createApp())
       .post('/webhooks/docusign')
@@ -135,7 +142,7 @@ describe('POST /webhooks/docusign', () => {
       .send(body.replace('env-1', 'env-2'));
 
     expect(res.status).toBe(401);
-    expect(dbFromMock).toHaveBeenCalledTimes(1); // integration lookup only
+    expect(dbFromMock).toHaveBeenCalledTimes(2); // integration + inherited-marker lookup only
     expect(rpcMock).not.toHaveBeenCalled();
     expect(submitJobMock).not.toHaveBeenCalled();
   });
@@ -219,6 +226,7 @@ describe('POST /webhooks/docusign', () => {
     dbFromMock.mockReturnValueOnce(
       integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1', hmac_keys: null }),
     );
+    dbFromMock.mockReturnValueOnce(noInheritedMarkers());
     dbFromMock.mockReturnValueOnce(nonceInsert());
     rpcMock.mockResolvedValueOnce({ data: '22222222-2222-4222-8222-222222222222', error: null });
     submitJobMock.mockResolvedValueOnce('job-1');
@@ -257,10 +265,71 @@ describe('POST /webhooks/docusign', () => {
     }));
   });
 
+  it('attributes a parent-owned DocuSign account to the single inherited sub-org marker', async () => {
+    dbFromMock.mockReturnValueOnce(
+      integrationLookup({ id: 'parent-int-1', org_id: ORG_ID, account_id: 'acct-1', hmac_keys: null }),
+    );
+    dbFromMock.mockReturnValueOnce(
+      integrationLookup({
+        id: 'marker-int-1',
+        org_id: SUB_ORG_ID,
+        account_id: null,
+        hmac_keys: null,
+      }),
+    );
+    dbFromMock.mockReturnValueOnce(nonceInsert());
+    rpcMock.mockResolvedValueOnce({ data: 'evt-suborg-1', error: null });
+    submitJobMock.mockResolvedValueOnce('job-suborg-1');
+    const body = validBody();
+
+    const res = await postSignedBody(body);
+
+    expect(res.status).toBe(202);
+    expect(rpcMock).toHaveBeenCalledWith('enqueue_rule_event', expect.objectContaining({
+      p_org_id: SUB_ORG_ID,
+      p_payload: expect.objectContaining({
+        integration_id: 'marker-int-1',
+        account_id: 'acct-1',
+        envelope_id: 'env-1',
+      }),
+    }));
+    expect(submitJobMock).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'docusign.envelope_completed',
+      payload: expect.objectContaining({
+        org_id: SUB_ORG_ID,
+        integration_id: 'marker-int-1',
+        account_id: 'acct-1',
+        envelope_id: 'env-1',
+        rule_event_id: 'evt-suborg-1',
+      }),
+    }));
+  });
+
+  it('rejects parent-owned DocuSign account attribution when multiple sub-org markers inherit it', async () => {
+    dbFromMock.mockReturnValueOnce(
+      integrationLookup({ id: 'parent-int-1', org_id: ORG_ID, account_id: 'acct-1', hmac_keys: null }),
+    );
+    dbFromMock.mockReturnValueOnce(
+      integrationLookup([
+        { id: 'marker-int-1', org_id: SUB_ORG_ID, account_id: null, hmac_keys: null },
+        { id: 'marker-int-2', org_id: '33333333-3333-4333-8333-333333333333', account_id: null, hmac_keys: null },
+      ]),
+    );
+    dbFromMock.mockReturnValueOnce(webhookDlqInsert());
+    const body = validBody();
+
+    const res = await postSignedBody(body);
+
+    expect(res.status).toBe(500);
+    expect(rpcMock).not.toHaveBeenCalled();
+    expect(submitJobMock).not.toHaveBeenCalled();
+  });
+
   it('deduplicates repeated DocuSign document hashes before deriving document_sha256', async () => {
     dbFromMock.mockReturnValueOnce(
       integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1' }),
     );
+    dbFromMock.mockReturnValueOnce(noInheritedMarkers());
     dbFromMock.mockReturnValueOnce(nonceInsert());
     rpcMock.mockResolvedValueOnce({ data: '33333333-3333-4333-8333-333333333333', error: null });
     submitJobMock.mockResolvedValueOnce('job-dup-hash');
@@ -296,6 +365,7 @@ describe('POST /webhooks/docusign', () => {
     dbFromMock.mockReturnValueOnce(
       integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1', hmac_keys: null }),
     );
+    dbFromMock.mockReturnValueOnce(noInheritedMarkers());
     dbFromMock.mockReturnValueOnce(nonceInsert());
     rpcMock.mockResolvedValueOnce({ data: '22222222-2222-4222-8222-222222222222', error: null });
     submitJobMock.mockResolvedValueOnce('job-1');
@@ -333,6 +403,7 @@ describe('POST /webhooks/docusign', () => {
     dbFromMock.mockReturnValueOnce(
       integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1', hmac_keys: null }),
     );
+    dbFromMock.mockReturnValueOnce(noInheritedMarkers());
     dbFromMock.mockReturnValueOnce(nonceInsert());
     dbFromMock.mockReturnValueOnce(rollback);
     dbFromMock.mockReturnValueOnce(webhookDlqInsert());
@@ -362,6 +433,7 @@ describe('POST /webhooks/docusign', () => {
     dbFromMock.mockReturnValueOnce(
       integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1' }),
     );
+    dbFromMock.mockReturnValueOnce(noInheritedMarkers());
     dbFromMock.mockReturnValueOnce(nonceInsert());
     rpcMock.mockResolvedValueOnce({ data: 'evt-first', error: null });
     submitJobMock.mockResolvedValueOnce(null);
@@ -376,6 +448,7 @@ describe('POST /webhooks/docusign', () => {
     dbFromMock.mockReturnValueOnce(
       integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1' }),
     );
+    dbFromMock.mockReturnValueOnce(noInheritedMarkers());
     dbFromMock.mockReturnValueOnce(nonceInsert());
     rpcMock.mockResolvedValueOnce({ data: 'evt-second', error: null });
     submitJobMock.mockResolvedValueOnce('job-retry');
@@ -393,6 +466,7 @@ describe('POST /webhooks/docusign', () => {
     dbFromMock.mockReturnValueOnce(
       integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1' }),
     );
+    dbFromMock.mockReturnValueOnce(noInheritedMarkers());
     dbFromMock.mockReturnValueOnce(nonceInsert());
     dbFromMock.mockReturnValueOnce(rollback);
     dbFromMock.mockReturnValueOnce(webhookDlqInsert());
@@ -413,6 +487,7 @@ describe('POST /webhooks/docusign', () => {
     dbFromMock.mockReturnValueOnce(
       integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1', hmac_keys: null }),
     );
+    dbFromMock.mockReturnValueOnce(noInheritedMarkers());
     dbFromMock.mockReturnValueOnce(
       nonceInsert({ code: '23505', message: 'duplicate key value violates unique constraint' }),
     );
@@ -432,6 +507,7 @@ describe('POST /webhooks/docusign', () => {
     dbFromMock.mockReturnValueOnce(
       integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1', hmac_keys: null }),
     );
+    dbFromMock.mockReturnValueOnce(noInheritedMarkers());
     dbFromMock.mockReturnValueOnce(firstNonce);
     rpcMock.mockResolvedValueOnce({ data: 'evt-1', error: null });
     submitJobMock.mockResolvedValueOnce('job-1');
@@ -443,6 +519,7 @@ describe('POST /webhooks/docusign', () => {
     dbFromMock.mockReturnValueOnce(
       integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1', hmac_keys: null }),
     );
+    dbFromMock.mockReturnValueOnce(noInheritedMarkers());
     dbFromMock.mockReturnValueOnce(secondNonce);
     const retry = await postSignedBody(body);
 
@@ -480,6 +557,7 @@ describe('POST /webhooks/docusign', () => {
     dbFromMock.mockReturnValueOnce(
       integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1', hmac_keys: null }),
     );
+    dbFromMock.mockReturnValueOnce(noInheritedMarkers());
     dbFromMock.mockReturnValueOnce(
       nonceInsert({ code: '08006', message: 'connection failure' }),
     );
@@ -504,6 +582,7 @@ describe('POST /webhooks/docusign', () => {
     dbFromMock.mockReturnValueOnce(
       integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1', hmac_keys: null }),
     );
+    dbFromMock.mockReturnValueOnce(noInheritedMarkers());
     dbFromMock.mockReturnValueOnce(nonceInsert());
     rpcMock.mockResolvedValueOnce({ data: 'evt-mercy', error: null });
     submitJobMock.mockResolvedValueOnce('job-mercy');
@@ -538,6 +617,7 @@ describe('POST /webhooks/docusign', () => {
     dbFromMock.mockReturnValueOnce(
       integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1', hmac_keys: null }),
     );
+    dbFromMock.mockReturnValueOnce(noInheritedMarkers());
     dbFromMock.mockReturnValueOnce(nonceInsert());
     rpcMock.mockResolvedValueOnce({ data: 'evt-kevin', error: null });
     submitJobMock.mockResolvedValueOnce('job-kevin');
@@ -629,6 +709,7 @@ describe('POST /webhooks/docusign', () => {
     dbFromMock.mockReturnValueOnce(
       integrationLookup({ id: 'int-org', org_id: ORG_ID, account_id: 'acct-1', hmac_keys: null }),
     );
+    dbFromMock.mockReturnValueOnce(noInheritedMarkers());
     dbFromMock.mockReturnValueOnce(nonceInsert());
     rpcMock.mockResolvedValueOnce({ data: 'evt-org', error: null });
     submitJobMock.mockResolvedValueOnce('job-org');
@@ -641,8 +722,8 @@ describe('POST /webhooks/docusign', () => {
       .send(body);
 
     expect(res.status).toBe(202);
-    // Only 2 from() calls: org_integrations + nonce (no member_integrations)
-    expect(dbFromMock).toHaveBeenCalledTimes(2);
+    // Only 3 from() calls: org_integrations + inherited markers + nonce (no member_integrations)
+    expect(dbFromMock).toHaveBeenCalledTimes(3);
     expect(rpcMock).toHaveBeenCalledWith('enqueue_rule_event', expect.objectContaining({
       p_payload: expect.objectContaining({
         integration_id: 'int-org',
@@ -695,6 +776,7 @@ describe('POST /webhooks/docusign', () => {
     dbFromMock.mockReturnValueOnce(
       integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1', hmac_keys: null }),
     );
+    dbFromMock.mockReturnValueOnce(noInheritedMarkers());
     dbFromMock.mockReturnValueOnce(nonceInsert());
     rpcMock.mockResolvedValueOnce({ data: 'evt-notary', error: null });
     // First submitJob for envelope-completed, second for notarization
@@ -748,6 +830,7 @@ describe('POST /webhooks/docusign', () => {
     dbFromMock.mockReturnValueOnce(
       integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1', hmac_keys: null }),
     );
+    dbFromMock.mockReturnValueOnce(noInheritedMarkers());
     dbFromMock.mockReturnValueOnce(nonceInsert());
     rpcMock.mockResolvedValueOnce({ data: 'evt-plain', error: null });
     submitJobMock.mockResolvedValueOnce('job-plain');
@@ -769,6 +852,7 @@ describe('POST /webhooks/docusign', () => {
     dbFromMock.mockReturnValueOnce(
       integrationLookup({ id: 'int-1', org_id: ORG_ID, account_id: 'acct-1', hmac_keys: null }),
     );
+    dbFromMock.mockReturnValueOnce(noInheritedMarkers());
     dbFromMock.mockReturnValueOnce(nonceInsert());
     rpcMock.mockResolvedValueOnce({ data: 'evt-notary-fail', error: null });
     // First submitJob succeeds, second (notarization) fails
