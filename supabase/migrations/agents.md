@@ -9,12 +9,7 @@ This directory now starts with the Path C baseline, `00000000000000_baseline_at_
 
 ## Release-drain migration reservations (0327–0339) — updated 2026-06-13
 
-Remote/main is at least `b4d6cad1144d330fbb42322fdee8112630d9f2b4` for the active release-drain lane after #1111 merged. This is a documentation/control-plane note only; it does not change migrations or production evidence.
-## In-flight migration reservations (0327–0336) — recorded 2026-06-01, updated 2026-06-05
-
-`main` HEAD is **0331** as of 2026-06-05 (`0330`/`0331` merged ✓). The lowest unmerged prefix is `0327`; the next free prefix is **`0337`** (0332–0336 now reserved). Canonical assignment for the currently-open / reserved migration PRs:
-`main` HEAD is **0331** as of 2026-06-05 (`0330`/`0331` merged ✓). The lowest unmerged prefix is `0327`; the next free prefix is **`0334`**. Canonical assignment for the currently-open / reserved migration PRs:
-## In-flight migration reservations (0327–0339) — recorded 2026-06-01, updated 2026-06-07
+Remote/main is at least `21d72078259918df13b0f573bb30861f4afae5fe` for the active release-drain lane after #1112 merged. This is a documentation/control-plane note only; it does not change migrations or production evidence.
 
 Merged during release drain:
 
@@ -26,46 +21,17 @@ Merged during release drain:
 | `0333` | #1101 | SCRUM-2193 | `0333_scrum2193_validate_anchors_metadata_constraints.sql` | merged to `main` during release drain |
 | `0334` | #1100 | SCRUM-2248 | `0334_scrum2248_sanitize_metadata_strip_underscore.sql` | merged to `main` during release drain |
 | `0335` | #1111 | SCRUM-2236 | `0335_scrum2236_dashboard_cache_budgets.sql` | merged to `main` during release drain |
+| `0336` | #1112 | SCRUM-2252 | `0336_scrum2252_revocation_metadata.sql` | merged to `main` during release drain |
 
 Remaining strict order:
-| `0327` | #1047 | SCRUM-2225 | `0327_scrum2225_free_tier_quota.sql` | **keep** — actively soaking on its isolated project; do not renumber |
-| `0328` | #971 | SCRUM-2045 | `0328_org_integrations_suborg_inheritance.sql` | renumber `0327→0328` |
-| `0329` | #1038 | SCRUM-1611 | `0329_member_integrations_credential_providers.sql` | renumber `0327→0329` |
-| `0330` | #1022 | SCRUM-2203 | `0330_scrum2203_unembedded_records_query_perf.sql` | merged ✓ |
-| `0331` | #1031 | SCRUM-1847/1869 | `0331_scrum1847_1869_public_anchor_cpe_cle_metadata.sql` | merged ✓ |
-| `0332` | #1100 | SCRUM-2248 | `0332_scrum2248_sanitize_metadata_strip_underscore.sql` | reserved — T3, soak pending |
-| `0333` | #1101 | SCRUM-2193 | `0333_scrum2193_validate_anchors_metadata_constraints.sql` | reserved — T3, soak pending |
-| `0334` | (pending) | SCRUM-2229 | `0334_scrum2229_sub_org_credit_rollup.sql` | **reserved 2026-06-05** — sub-org credit allocation rollup RPC; PR not yet opened |
-| `0335` | (sibling) | (sibling PR) | (sibling-session migration) | reserved by a parallel sibling session — do not reuse `0335` |
-| `0336` | (pending) | SCRUM-2252 | `0336_scrum2252_revocation_metadata.sql` | **reserved 2026-06-05** — adds additive-nullable `anchors.revocation_metadata` (jsonb) + `revocation_metadata_hash` (text) so the on-chain revocation hash is reconstructible (BUG-2026-05-16-003); T3, soak pending |
-| `0335` | #1111 | SCRUM-2236 | `0335_scrum2236_dashboard_cache_budgets.sql` | **reserved 2026-06-05** — HARDEN-1 on the 4 dashboard cache refreshers. Review-fix (2026-06-05): (1) cancel path no longer writes a `{stale,…,value}` wrapper — it preserves the prior BARE cache_value (ON CONFLICT DO NOTHING; bare `[]`/`{}` seeded only when no row exists) so `get_anchor_type_counts`/`get_distinct_record_types`/`count_public_records_by_source` (which read the bare value) never throw; (2) durable fix is index-resident scans via operator-applied `CREATE INDEX CONCURRENTLY` (net-new `idx_anchors_status_active_count (status) WHERE deleted_at IS NULL`; the type/source/record_type scans reuse existing partial/btree indexes), since `SET LOCAL statement_timeout` arms vs the OUTER statement and gives the inner scan ~0 budget under the cron wrapper. The 1s budget + explicit 57014 catch stay as a safety net only. T3, soak pending |
-| `0330` | #1022 | SCRUM-2203 | `0330_scrum2203_unembedded_records_query_perf.sql` | renumbered ✓ (head `2a8d1b1c`) |
-| `0331` | #1031 | SCRUM-1847/1869 | `0331_scrum1847_1869_public_anchor_cpe_cle_metadata.sql` | renumbered ✓ (head `431ddbff`) |
-| `0332` | (reserved) | SCRUM-2229 | `0332_scrum2229_sub_org_credit_rollup.sql` | reserved by earlier lane; merge before this PR if still open |
-| `0333` | #1101 | SCRUM-2193 | `0333_scrum2193_validate_anchors_metadata_constraints.sql` | reserved — T3, soak pending |
-| `0334` | #1100 | SCRUM-2248 | `0334_scrum2248_sanitize_metadata_strip_underscore.sql` | **keep** — SEV1 anon metadata-leak fix (BUG-2026-06-05-001); T3, soak pending after 0332/0333 |
-| `0335` | #1111 | SCRUM-2236 | `0335_scrum2236_dashboard_cache_budgets.sql` | reserved — T3, soak pending; requires operator-applied concurrent index evidence |
-| `0336` | #1112 | SCRUM-2252 | `0336_scrum2252_revocation_observability.sql` | reserved — T3, soak pending |
-| `0337` | #1114 | SCRUM-2258 | `0337_scrum2258_webhook_delivery_observability.sql` | reserved — T3, soak pending |
-| `0338` | #1107 | SCRUM-2250 | `0338_scrum2250_webhook_delivery_backfill.sql` | reserved — T3, soak pending; after #1114 webhook delivery changes |
-| `0339` | #1122 | BUG-1 | `0339_get_public_anchor_by_fingerprint.sql` | reserved — T3, soak pending after 0332–0338 |
-
-- **Merge order must follow prefix order** (`0327→0336`): migrations apply monotonically, so merging a higher prefix before a lower one strands the lower one as out-of-order.
-- Each of these soaks on its **own dedicated isolated Supabase project**, never shared staging — `main` is at `0326`, so applying any unmerged prefix to shared staging would gap the ledger and contaminate every parallel soak.
-- **Merge order must follow prefix order** (`0327→0339`): migrations apply monotonically, so merging a higher prefix before a lower one strands the lower one as out-of-order.
-- Each of these soaks on its **own dedicated isolated Supabase project**, never shared staging — applying unmerged prefixes to shared staging would gap the ledger and contaminate every parallel soak.
-- Remove a row once its PR merges to `main` and gets a permanent `## Recent migrations` entry below.
-
-## In-flight migration reservations (0333) — recorded 2026-06-05
 
 | Prefix | PR | Story | File | Status |
 |---|---|---|---|---|
-| `0336` | #1112 | SCRUM-2252 | `0336_scrum2252_revocation_metadata.sql` | current strict-order PR; queued by Mergify draft #1165 |
-| `0337` | #1114 | SCRUM-2250 | `0337_scrum2250_webhook_event_sequence.sql` | hold behind #1112 |
+| `0337` | #1114 | SCRUM-2250 | `0337_scrum2250_webhook_event_sequence.sql` | current strict-order PR |
 | `0338` | #1107 | SCRUM-2244 | `0338_scrum2244_dlq_idempotency.sql` | hold behind #1114 |
 | `0339` | #1122 | SCRUM-2285 | `0339_get_public_anchor_by_fingerprint.sql` | fixed at `06f5b75e`; hold behind #1107 |
 
-- Remaining migration order is strict: #1112 -> #1114 -> #1107 -> #1122.
+- Remaining migration order is strict: #1114 -> #1107 -> #1122.
 - Do not reserve or reuse `0327`, `0328`, `0329`, `0333`, or `0334`; those prefixes are already consumed by merged drain PRs.
 - Do not infer a current `0332` release-drain owner from older stale reservations; no active `0332` release-drain PR is asserted by this mirror sync.
 - Remaining soaks must use a dedicated isolated Supabase project or a proven `clean_mirror`, never dirty shared staging.

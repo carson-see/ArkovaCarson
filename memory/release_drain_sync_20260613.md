@@ -21,14 +21,13 @@ Current operational guardrails for the Train A/B release drain and adjacent soak
 
 Do not let Mergify merge this migration chain out of order:
 
-1. #1112 / SCRUM-2252 / migration 0336 / `8fd4a7ad52bcd887b8e387fa8a3b2d80117e4f82` / currently queued by Mergify draft #1165.
-2. #1114 / SCRUM-2250 / migration 0337 / `c564fc585a8cb066feffa3d0ca89ac3074150197`
-3. #1107 / SCRUM-2244 / migration 0338 / `11f0b4c236ea762b0ccb512cb8fe0d9f04669634`
-4. #1122 / SCRUM-2285 / migration 0339 / `06f5b75eb4225114859abaf91c61c33c05c3a258`
+1. #1114 / SCRUM-2250 / migration 0337 / `563829b05f2e945ba5c65606628379d1fbad9170` / active checks running.
+2. #1107 / SCRUM-2244 / migration 0338 / `11f0b4c236ea762b0ccb512cb8fe0d9f04669634`
+3. #1122 / SCRUM-2285 / migration 0339 / `06f5b75eb4225114859abaf91c61c33c05c3a258`
 
 Queue exactly one remaining PR at a time. After each merge, transition the matching Jira issue to Done, add the closeout comment, update the Confluence ledger, and only then queue the next PR.
 
-#1111 / SCRUM-2236 / migration 0335 merged to `main` at `2026-06-13T18:56:41Z` as `b4d6cad1144d330fbb42322fdee8112630d9f2b4`; Jira SCRUM-2236 is Done. #1112 was dequeued after that main movement, merge-updated to head `8fd4a7ad52bcd887b8e387fa8a3b2d80117e4f82`, evidence metadata refreshed, and requeued with comment `4699564735`. #1114, #1107, and #1122 remain intentionally dequeued/held behind strict migration order.
+#1111 / SCRUM-2236 / migration 0335 merged to `main` at `2026-06-13T18:56:41Z` as `b4d6cad1144d330fbb42322fdee8112630d9f2b4`; Jira SCRUM-2236 is Done. #1112 / SCRUM-2252 / migration 0336 merged to `main` at `2026-06-13T20:12:01Z` as `21d72078259918df13b0f573bb30861f4afae5fe`; Jira SCRUM-2252 is Done. #1114 was merge-updated onto #1112, PR-body evidence metadata refreshed, and pushed at head `563829b05f2e945ba5c65606628379d1fbad9170`. #1107 and #1122 remain intentionally dequeued/held behind strict migration order.
 
 ## Already Closed In This Drain
 
@@ -38,6 +37,7 @@ Queue exactly one remaining PR at a time. After each merge, transition the match
 - #971 / SCRUM-2045: merged and Jira Done.
 - #1038 / SCRUM-1611: merged and Jira Done.
 - #1111 / SCRUM-2236: merged and Jira Done.
+- #1112 / SCRUM-2252: merged and Jira Done.
 
 ## Other Train Status
 
