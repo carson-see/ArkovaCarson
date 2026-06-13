@@ -21,16 +21,17 @@ PR #1055 merged 2026-06-10T23:35:49Z at merge commit
 Final A/B soaks completed 2026-06-13T14:12:58Z /
 2026-06-13T14:12:59Z with `2880/2880` ok and zero failures in both lanes.
 
-Merged drain PRs: #1047, #1101, #1100, #971, #1038, #1111, #1112, #1114.
+Merged drain PRs: #1047, #1101, #1100, #971, #1038, #1111, #1112, #1114, #1107.
 
-Remaining strict order: #1107 -> #1122.
+Remaining strict order: #1122.
 
 #1112 merged at `2026-06-13T20:12:01Z` as
 `21d72078259918df13b0f573bb30861f4afae5fe`. #1114 merged at
 `2026-06-13T20:53:34Z` as `b73a0545a20bab0fb9682b4e346031af2ca986ba`.
-#1107 was merge-updated onto that base, refreshed to head
-`8f7fea5e46a494876671846c7d3ae2e2d8ddce76`, and is the active strict-order PR
-while checks run.
+#1107 merged at `2026-06-13T21:38:31Z` as
+`8e62198345932a8e9ff25c41421adf112e3af6a0`. #1122 was merge-updated onto
+that base, refreshed to head `6ca17b237b29f53a3f53fc9409e9ca2ef632c9e1`,
+and is the active final strict-order PR while checks run.
 
 ### Release queue unblocker #1141 - merged 2026-06-10
 
@@ -191,11 +192,9 @@ If this proof is missing or inconsistent, stop the train and do not begin T3 wor
 
 Current remaining strict order:
 
-1. #1114.
-2. #1107.
-3. #1122.
+1. #1122.
 
-Already merged during the drain: #1055, #1047, #1101, #1100, #971, #1038, #1111, #1112.
+Already merged during the drain: #1055, #1047, #1101, #1100, #971, #1038, #1111, #1112, #1114, #1107.
 
 Protected and no-touch PRs:
 
@@ -222,13 +221,14 @@ Drain progress note:
   `21d72078259918df13b0f573bb30861f4afae5fe`; SCRUM-2252 is Done.
 - #1114 merged 2026-06-13T20:53:34Z as
   `b73a0545a20bab0fb9682b4e346031af2ca986ba`; SCRUM-2250 is Done.
-- #1107 is the active PR on head
-  `8f7fea5e46a494876671846c7d3ae2e2d8ddce76`; #1122 stays held until
-  its predecessor actually merges.
+- #1107 merged 2026-06-13T21:38:31Z as
+  `8e62198345932a8e9ff25c41421adf112e3af6a0`; SCRUM-2244 is Done.
+- #1122 is the active final-tail PR on head
+  `6ca17b237b29f53a3f53fc9409e9ca2ef632c9e1`; required checks are running.
 - Final A/B soaks completed 2026-06-13T14:12:58Z /
   2026-06-13T14:12:59Z with `2880/2880` ok and zero failures.
 - Recalculate any future ETA from the remaining strict order:
-  #1107 -> #1122.
+  #1122.
 - Safe development now: isolated feature branches/worktrees may continue if they do not mutate shared staging, main, Mergify, or the release queue.
 - Safe normal dev merges: resume only after the RC manifest gate lands and the active release train can preserve evidence across controlled main movement, or after the current queue drains under the old process.
 

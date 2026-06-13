@@ -19,14 +19,13 @@ Current operational guardrails for the Train A/B release drain and adjacent soak
 
 ## Merge Queue Order
 
-Do not let Mergify merge this migration chain out of order:
+Do not let Mergify merge stale-base migration PRs out of order:
 
-1. #1107 / SCRUM-2244 / migration 0338 / `8f7fea5e46a494876671846c7d3ae2e2d8ddce76` / active checks running.
-2. #1122 / SCRUM-2285 / migration 0339 / `06f5b75eb4225114859abaf91c61c33c05c3a258`
+1. #1122 / SCRUM-2285 / migration 0339 / `6ca17b237b29f53a3f53fc9409e9ca2ef632c9e1` / final tail, checks running on base `8e62198345932a8e9ff25c41421adf112e3af6a0`.
 
-Queue exactly one remaining PR at a time. After each merge, transition the matching Jira issue to Done, add the closeout comment, update the Confluence ledger, and only then queue the next PR.
+Queue exactly one remaining PR at a time. #1122 may be requeued only after all required checks are green on `6ca17b237b29f53a3f53fc9409e9ca2ef632c9e1`. After merge, transition SCRUM-2285 to Done, add the closeout comment, update the Confluence ledger, and close the Train A/B release drain.
 
-#1111 / SCRUM-2236 / migration 0335 merged to `main` at `2026-06-13T18:56:41Z` as `b4d6cad1144d330fbb42322fdee8112630d9f2b4`; Jira SCRUM-2236 is Done. #1112 / SCRUM-2252 / migration 0336 merged to `main` at `2026-06-13T20:12:01Z` as `21d72078259918df13b0f573bb30861f4afae5fe`; Jira SCRUM-2252 is Done. #1114 / SCRUM-2250 / migration 0337 merged to `main` at `2026-06-13T20:53:34Z` as `b73a0545a20bab0fb9682b4e346031af2ca986ba`; Jira SCRUM-2250 is Done. #1107 was merge-updated onto #1114, PR-body evidence metadata refreshed, and pushed at head `8f7fea5e46a494876671846c7d3ae2e2d8ddce76`. #1122 remains intentionally dequeued/held behind strict migration order.
+#1111 / SCRUM-2236 / migration 0335 merged to `main` at `2026-06-13T18:56:41Z` as `b4d6cad1144d330fbb42322fdee8112630d9f2b4`; Jira SCRUM-2236 is Done. #1112 / SCRUM-2252 / migration 0336 merged to `main` at `2026-06-13T20:12:01Z` as `21d72078259918df13b0f573bb30861f4afae5fe`; Jira SCRUM-2252 is Done. #1114 / SCRUM-2250 / migration 0337 merged to `main` at `2026-06-13T20:53:34Z` as `b73a0545a20bab0fb9682b4e346031af2ca986ba`; Jira SCRUM-2250 is Done. #1107 / SCRUM-2244 / migration 0338 merged to `main` at `2026-06-13T21:38:31Z` as `8e62198345932a8e9ff25c41421adf112e3af6a0`; Jira SCRUM-2244 is Done. #1122 is merge-updated and remains In Progress while checks run.
 
 ## Already Closed In This Drain
 
@@ -38,10 +37,11 @@ Queue exactly one remaining PR at a time. After each merge, transition the match
 - #1111 / SCRUM-2236: merged and Jira Done.
 - #1112 / SCRUM-2252: merged and Jira Done.
 - #1114 / SCRUM-2250: merged and Jira Done.
+- #1107 / SCRUM-2244: merged and Jira Done.
 
 ## Other Train Status
 
-- Train C code-clean CTDL and ops screens are active and clean as of the latest local summaries: CTDL `604/604` ok, ops `4515/4515` ok, zero failures.
+- Train C code-clean CTDL and ops screens are active and clean as of the latest local summaries: CTDL `626/626` ok, ops `4680/4680` ok, zero failures.
 - Train C mixed, quality-low-rate, and CE repaired runs are non-merge-grade evidence unless a fresh counted soak is explicitly started and documented.
 
 ## Sync State
