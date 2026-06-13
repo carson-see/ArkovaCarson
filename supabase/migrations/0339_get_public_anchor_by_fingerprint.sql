@@ -43,7 +43,7 @@ CREATE OR REPLACE FUNCTION public.get_public_anchor_by_fingerprint(p_fingerprint
   LANGUAGE plpgsql
   STABLE
   SECURITY DEFINER
-  SET search_path TO 'public'
+  SET search_path = public
 AS $$
 DECLARE
   v_public_id text;
