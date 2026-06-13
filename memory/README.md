@@ -1,8 +1,5 @@
 # Arkova Memory Files — `feedback_*.md` rule index
 
-> Rule index only. This directory records durable engineering preferences and
-> enforcement mechanisms; it is not project status, backlog, or release truth.
-
 These files capture engineering preferences and policy decisions that
 should outlast individual sessions. Each rule is enforced one of three ways:
 
@@ -40,6 +37,13 @@ should outlast individual sessions. Each rule is enforced one of three ways:
 | `feedback_worker_hands_off.md` | Documentation only (agent-author detection unreliable) | 📖 docs only |
 | `feedback_local_matches_prod.md` | CI lint stub (`feedback_local_matches_prod.ts`, needs Supabase MCP) | ⏳ stub (SCRUM-1306) |
 | `feedback_dont_recommend_do.md` | CI lint advisory (`feedback_dont_recommend_do.ts`) | ✅ live (SCRUM-1306) |
+
+## Operational notes
+
+| Memory file | Scope |
+|---|---|
+| `release_drain_sync_20260613.md` | Current Train A/B release drain, merge-order, evidence, Jira/Confluence, and SSD sync guardrails |
+| `t2_t3_rollout_sync_20260608.md` | Historical T2/T3 rollout snapshot; superseded by `release_drain_sync_20260613.md` |
 
 ## Override pattern
 

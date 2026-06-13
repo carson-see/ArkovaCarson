@@ -7,6 +7,7 @@ Staging rig documentation and soak evidence artifacts. Required by CLAUDE.md 1.1
 - **`README.md`** — staging rig setup guide: Supabase preview branch, Cloud Run service, cost estimates.
 - **`PR_TEMPLATE.md`** — risk-tiered staging evidence PR body template with tier matrix fields.
 - **`PATH_C_*.md`** — path-C cutover verification records.
+- **`t2-t3-rollout-status-*.md`** — current rollout coordination snapshots; these are not soak evidence.
 - **`soak-pr*.json`** — machine-readable soak evidence for specific PRs.
 - **`staging-only-rpcs.sql`** — staging-specific RPCs (not applied to prod).
 - **`staging_lease.sql`** — lease table DDL for the staging environment.
@@ -17,3 +18,9 @@ Staging rig documentation and soak evidence artifacts. Required by CLAUDE.md 1.1
 - T0 docs/tests/CI/tooling-only PRs need CI only; T1/T2/T3 prod-bound PRs must include a `## Staging Soak Evidence` block with the exact fields in `PR_TEMPLATE.md`.
 - Soak JSON files are append-only evidence; do not modify after creation.
 - These are engineering artifacts, not documentation (Confluence is the doc source of truth).
+
+## Current Release Evidence Note
+
+- Current Train A/B final evidence lives under `/Volumes/Extreme/Arkova/release-evidence/train-a/` and `/Volumes/Extreme/Arkova/release-evidence/train-b/`; use the `20260611T141256Z` final JSON files for the completed 48h cron soaks.
+- Current Train C code-clean evidence lives under `/Volumes/Extreme/Arkova/release-evidence/train-c/code/20260612T-clean-isolated/`.
+- Discarded Train A/B `20260611T121541Z` runs, Train C mixed/quality-low-rate attempts, and repaired CE attempts are diagnostic-only unless a later release owner explicitly promotes a fresh counted soak.

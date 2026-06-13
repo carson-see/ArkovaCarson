@@ -8,6 +8,29 @@ This is a time-boxed, risk-scoped change-management operating mode. It is not an
 
 ## Current State
 
+### Drain mirror sync - 2026-06-13
+
+The clean mirror target for remote/main was
+`1b32847632bd75e24ddcaa7e380f6cb3919d4b3f` when this drain note was refreshed.
+This is a documentation/control-plane sync across the active Extreme checkout,
+the clean Extreme mirror, and the Crucial mirror. It does not change code,
+migrations, production evidence, or queue state.
+
+PR #1055 merged 2026-06-10T23:35:49Z at merge commit
+`3f906c991988f9b2ed6e71e1a70b64020cebd2fb`.
+
+Final A/B soaks completed 2026-06-13T14:12:58Z /
+2026-06-13T14:12:59Z with `2880/2880` ok and zero failures in both lanes.
+
+Merged drain PRs: #1047, #1101, #1100, #971, #1038, #1111.
+
+Remaining strict order: #1112 -> #1114 -> #1107 -> #1122.
+
+#1112 was dequeued after #1111 moved `main`, merge-updated onto
+`b4d6cad1144d330fbb42322fdee8112630d9f2b4`, refreshed to head
+`8fd4a7ad52bcd887b8e387fa8a3b2d80117e4f82`, and requeued. Current Mergify
+draft is #1165.
+
 ### Release queue unblocker #1141 - merged 2026-06-10
 
 PR #1141 (`fix(release): unblock parallel soak lanes`) merged via Mergify at
@@ -45,7 +68,7 @@ through SCRUM-2318, plus SCRUM-2319 for the host-validation review follow-up.
 Non-secret lane-dashboard sample:
 `/Volumes/Extreme/Arkova/release-evidence/pr-1141/scrum-2312-soak-lanes-20260610T155859Z.txt`.
 
-Latest captured dashboard sample, 2026-06-10T15:59:01Z:
+Earlier captured dashboard sample before #1055 completion, 2026-06-10T15:59:01Z:
 
 - Active lane: PR #1055, detached screen, cron `2495 ok / 0 fail`, status
   `200=2495`, final JSON missing as expected before the 48h completion gate.
@@ -165,12 +188,14 @@ If this proof is missing or inconsistent, stop the train and do not begin T3 wor
 
 ## Short-Term Queue Drain
 
-Default merge-readiness order:
+Current remaining strict order:
 
-1. #1055.
-2. Train A: #1047 -> #971 -> #1038.
-3. Stacked CSI: #1039 -> #1040 -> #1041.
-4. Train B: #1101 -> #1100 -> #1111 -> #1112 -> #1114 -> #1107 -> #1122.
+1. #1112.
+2. #1114.
+3. #1107.
+4. #1122.
+
+Already merged during the drain: #1055, #1047, #1101, #1100, #971, #1038, #1111.
 
 Protected and no-touch PRs:
 
@@ -187,10 +212,19 @@ Queue-drain rules:
 - If `main` moves, classify the drift before continuing. Main movement alone does not invalidate a soak. T0 docs/tests/CI/tooling-only drift may preserve evidence when the PR body records `Base drift impact:` with changed files, a no-runtime/schema/migration/staging/soak/deploy-impact assessment, and a named approver. Runtime, schema, migration, staging, deploy, or worker-image drift requires release-owner re-scope/retest.
 - Capture why each PR is allowed into the lane: risk tier, CI status, soak/evidence status, owner approval, and rollback posture.
 
-ETA assumptions:
+Drain progress note:
 
-- Old per-PR process: #1055 alone is roughly 48 hours after a real clean T3 soak starts; Train A plus Train B serially pushes total drain toward three or more weeks.
-- RC manifest process: realistic drain is about 5-8 calendar days if dirty branches restack cleanly, the RC gate implementation lands, and one approved RC soak can cover the planned migration train.
+- #1055 merged 2026-06-10T23:35:49Z; older estimates that treated #1055 as
+  pending are superseded.
+- #1111 merged 2026-06-13T18:56:41Z as
+  `b4d6cad1144d330fbb42322fdee8112630d9f2b4`; SCRUM-2236 is Done.
+- #1112 is the active queue PR on head
+  `8fd4a7ad52bcd887b8e387fa8a3b2d80117e4f82`; #1114/#1107/#1122 stay held
+  until their predecessor actually merges.
+- Final A/B soaks completed 2026-06-13T14:12:58Z /
+  2026-06-13T14:12:59Z with `2880/2880` ok and zero failures.
+- Recalculate any future ETA from the remaining strict order:
+  #1112 -> #1114 -> #1107 -> #1122.
 - Safe development now: isolated feature branches/worktrees may continue if they do not mutate shared staging, main, Mergify, or the release queue.
 - Safe normal dev merges: resume only after the RC manifest gate lands and the active release train can preserve evidence across controlled main movement, or after the current queue drains under the old process.
 
