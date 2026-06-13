@@ -211,6 +211,25 @@ interface WebhookPayload {
   event_id: string;
   timestamp: string;
   data: Record<string, unknown>;
+  // ─── SCRUM-2250 (BUG-2026-05-16-001) per-resource ordering ───────────
+  // `resource_key` identifies the logical resource a lifecycle event belongs
+  // to (a document/anchor/attestation `public_id`). `sequence` is a strictly
+  // monotonic integer assigned at dispatch time from a GLOBAL Postgres sequence
+  // (`next_webhook_sequence` RPC, migration 0337), so it is monotonic across
+  // ALL worker replicas — not just within one process. Together they let a
+  // consumer detect/reject out-of-order delivery for the SAME resource: if a
+  // retried earlier event (lower `sequence`) arrives AFTER a later one (higher
+  // `sequence`) for the same `resource_key`, the consumer can drop the stale
+  // update. Both fields are ADDITIVE + NULLABLE on the wire (CLAUDE.md §1.8
+  // frozen-API: no v2 bump) — `resource_key` is null for events with no single
+  // resource identity (e.g. anchor.batch_secured); `sequence` is null only when
+  // the sequence RPC was unreachable at dispatch (in which case NO ordering is
+  // asserted for that event), and older payloads replayed from the DB simply
+  // omit both. The values are frozen into `webhook_delivery_logs.payload`, so a
+  // retry preserves the original dispatch-time `sequence` even when delivered
+  // later.
+  resource_key?: string | null;
+  sequence?: number | null;
 }
 
 interface WebhookEndpoint {
@@ -566,6 +585,87 @@ async function deliverToEndpoint(
   }
 }
 
+// ─── SCRUM-2250 per-resource ordering helpers ───────────────────────────
+//
+// `nextSequence()` returns a strictly-monotonic-increasing integer that is
+// globally monotonic across ALL worker replicas, sourced from a single
+// Postgres SEQUENCE via the `next_webhook_sequence` SECURITY DEFINER RPC
+// (migration 0337_scrum2250_webhook_event_sequence.sql).
+//
+// REVIEW-FIX (defect #1, the SEV1 root cause): the original implementation
+// used an in-process counter seeded from Date.now(). The worker runs 2-10
+// Cloud Run replicas, and same-resource lifecycle events
+// (anchor.submitted/secured/revoked) are emitted from DIFFERENT replicas.
+// With a per-process counter, replica A's clock could be skewed ahead of
+// replica B, so a LATER event dispatched on B got a LOWER `sequence` than an
+// EARLIER event on A — the consumer then drops the newer event as stale. That
+// is exactly BUG-2026-05-16-001. A Postgres sequence is atomic and globally
+// monotonic with no clock dependency, so nextval() is correct across every
+// replica and connection. The worker reaches Postgres only through PostgREST
+// (service_role), so the sequence is consumed via a SECURITY DEFINER RPC
+// rather than a raw `nextval` call. One DB round-trip per dispatch.
+//
+// Failure handling: if the RPC errors (transient DB blip), we MUST NOT
+// fabricate a sequence — a wrong value reintroduces the inversion bug.
+// Instead we return null. A null `sequence` is treated by both the consumer
+// contract and the retry sweep exactly like a legacy/pre-2250 payload: no
+// ordering is asserted for that event (it is never head-of-line-blocked and
+// never blocks others). The failure is surfaced to Sentry/logger so it is
+// visible rather than a silent ordering downgrade. This preserves liveness
+// (the event still delivers) without ever asserting a FALSE ordering.
+async function nextSequence(): Promise<number | null> {
+  const { data, error } = await db.rpc('next_webhook_sequence');
+  if (error || data == null) {
+    logger.error(
+      { error },
+      'next_webhook_sequence RPC failed — dispatching with null sequence (no ordering asserted for this event)',
+    );
+    Sentry.captureException(
+      error instanceof Error ? error : new Error('next_webhook_sequence RPC failed'),
+      {
+        tags: { subsystem: 'webhooks', stage: 'sequence_alloc' },
+        extra: { rpc_error: (error as { message?: string } | null)?.message ?? 'null data' },
+      },
+    );
+    return null;
+  }
+  return Number(data);
+}
+
+/**
+ * Exported for testing — historically reset the in-process sequence counter.
+ * The sequence is now sourced from a global Postgres sequence (no in-process
+ * state), so this is a no-op kept only so existing test `beforeEach` blocks
+ * keep compiling. Tests control ordering by stubbing the
+ * `next_webhook_sequence` RPC return value.
+ */
+export function __resetSequenceForTest(): void {
+  /* no in-process state to reset — sequence is DB-backed (migration 0337) */
+}
+
+/**
+ * Derive the per-resource ordering key from an event's data block. The
+ * resource identity for every anchor/credential/attestation lifecycle event
+ * is its `public_id` (the document/anchor/attestation slug). Aggregate events
+ * with no single resource (e.g. anchor.batch_secured carries `public_ids[]`)
+ * return null — they are not ordered against any one resource. Returning null
+ * means the retry-sweep guard treats them as un-keyed and never serializes
+ * them against per-resource events.
+ */
+export function deriveResourceKey(
+  eventType: string,
+  data: Record<string, unknown>,
+): string | null {
+  const pid = data.public_id;
+  if (typeof pid === 'string' && pid.length > 0) {
+    // Namespace by event family so an anchor and a credential that happen to
+    // share a public_id slug are still ordered independently.
+    const family = eventType.split('.')[0] || 'event';
+    return `${family}:${pid}`;
+  }
+  return null;
+}
+
 /**
  * Dispatch an event to all matching endpoints
  */
@@ -643,9 +743,20 @@ export async function dispatchWebhookEvent(
     event_id: eventId,
     timestamp: new Date().toISOString(),
     data,
+    // SCRUM-2250: stamp ordering metadata at dispatch time so it is frozen
+    // into webhook_delivery_logs.payload and preserved verbatim across retries.
+    // `sequence` is allocated from a global Postgres sequence (replica-safe),
+    // so two same-resource events emitted from DIFFERENT replicas still receive
+    // strictly-ordered values. Awaited so the value is settled before the
+    // payload is signed and frozen into the delivery log.
+    resource_key: deriveResourceKey(eventType, data),
+    sequence: await nextSequence(),
   };
 
-  // Deliver to all endpoints (in parallel)
+  // Deliver to all endpoints (in parallel). Different resources, and multiple
+  // endpoints for the same event, still fan out concurrently — the ordering
+  // guarantee is enforced per-resource in the retry sweep, not by serializing
+  // the happy-path dispatch.
   await Promise.all(endpoints.map((endpoint) => deliverToEndpoint(endpoint, payload)));
 }
 
@@ -919,12 +1030,30 @@ export async function replayDelivery(
  * Process pending retries
  */
 export async function processWebhookRetries(): Promise<number> {
-  // Get logs that need retry
+  // Get logs that need retry.
+  //
+  // REVIEW-FIX (defect #2): the limit(50) is applied to a backlog, so the
+  // window MUST be ordered by `sequence` ascending — otherwise a newer event
+  // (higher sequence) for a resource could land inside the 50-row window while
+  // its older head-of-line sibling (lower sequence) sits OUTSIDE the window,
+  // and the JS grouping below would then wrongly treat the newer row as the
+  // head and re-fire it ahead of the older one — the exact out-of-order bug.
+  //
+  // Ordering by `payload->sequence` ASC (NULLS FIRST) makes the window the
+  // globally-OLDEST outstanding events. `payload->sequence` uses the jsonb `->`
+  // accessor (NOT `->>`), so Postgres compares the values numerically
+  // (3 < 20 < 100), not lexicographically. NULLS FIRST puts legacy/aggregate
+  // rows (no sequence) ahead of sequenced ones so they always drain promptly
+  // and are never starved. Consequence: if a resource's true head is excluded
+  // from the window, it is only because ≥50 strictly-older events (each the
+  // head of its own resource) are ahead of it and will drain first — which is
+  // exactly correct head-of-line behavior.
   const { data: logs, error } = await db
     .from('webhook_delivery_logs')
     .select('*, webhook_endpoints(*)')
     .eq('status', 'retrying')
     .lte('next_retry_at', new Date().toISOString())
+    .order('payload->sequence', { ascending: true, nullsFirst: true })
     .limit(50);
 
   if (error) {
@@ -936,19 +1065,99 @@ export async function processWebhookRetries(): Promise<number> {
     return 0;
   }
 
-  let retried = 0;
-
-  for (const log of logs) {
-    const endpoint = log.webhook_endpoints as WebhookEndpoint;
-    if (!endpoint?.is_active) continue;
-
-    await deliverToEndpoint(
-      endpoint,
-      log.payload as unknown as WebhookPayload,
-      log.attempt_number + 1
-    );
-    retried++;
+  // ─── SCRUM-2250 (BUG-2026-05-16-001) per-resource ordering guard ─────
+  //
+  // Before this fix, the sweep delivered every `retrying` row in whatever
+  // arbitrary order the query returned them. For the SAME document that meant
+  // a retried earlier event (event 1, failed) could be re-fired AFTER a later
+  // event (event 2) had already been delivered — corrupting consumer state.
+  //
+  // Fix: partition rows by `(endpoint_id, resource_key)`. Within each resource
+  // group, only the SINGLE lowest-`sequence` outstanding event is delivered
+  // this sweep (head-of-line). The newer events for that resource wait until
+  // the older one drains (succeeds → leaves 'retrying', or exhausts retries →
+  // 'failed'), so a newer event is never delivered while an older one for the
+  // same resource is still outstanding. Different resources (and rows with no
+  // resource_key — legacy payloads or aggregate events) are NOT serialized
+  // against each other: each forms its own group and all groups are delivered
+  // concurrently, so throughput across distinct documents is preserved.
+  interface RetryRow {
+    id: string;
+    attempt_number: number;
+    payload: WebhookPayload;
+    webhook_endpoints: WebhookEndpoint | null;
   }
 
-  return retried;
+  const groups = new Map<string, RetryRow[]>();
+  let ungroupedCounter = 0;
+  for (const raw of logs as unknown as RetryRow[]) {
+    const endpoint = raw.webhook_endpoints;
+    if (!endpoint?.is_active) continue;
+
+    const payload = raw.payload as WebhookPayload;
+    const resourceKey = payload?.resource_key;
+    // Rows with a resource_key are serialized within their group. Rows without
+    // one (legacy payloads predating SCRUM-2250, or aggregate events) get a
+    // unique group so they are never head-of-line-blocked by, or block, any
+    // other row — preserving the pre-fix concurrent behavior for them.
+    const groupKey =
+      resourceKey != null
+        ? `${endpoint.id}::${resourceKey}`
+        : `__ungrouped__::${endpoint.id}::${ungroupedCounter++}`;
+
+    const bucket = groups.get(groupKey);
+    if (bucket) bucket.push(raw);
+    else groups.set(groupKey, [raw]);
+  }
+
+  // For each group, pick the head-of-line row: the lowest `sequence`. Rows
+  // without a sequence (legacy) sort first (treated as oldest) so they always
+  // drain before any sequenced event for the same resource.
+  const headRows: RetryRow[] = [];
+  for (const bucket of groups.values()) {
+    bucket.sort((a, b) => {
+      const sa = a.payload?.sequence ?? Number.NEGATIVE_INFINITY;
+      const sb = b.payload?.sequence ?? Number.NEGATIVE_INFINITY;
+      if (sa !== sb) return sa - sb;
+      // Deterministic tie-break when sequences collide (shouldn't, but legacy
+      // rows can both be -Infinity): older attempt first, then id.
+      if (a.attempt_number !== b.attempt_number) return a.attempt_number - b.attempt_number;
+      return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+    });
+    headRows.push(bucket[0]);
+  }
+
+  // Deliver one head row per resource concurrently — distinct documents do
+  // not serialize against each other. allSettled so a single delivery throwing
+  // never aborts the sweep for the other resources.
+  //
+  // ─── Drop-to-DLQ ordering contract (defect #3) ──────────────────────
+  // The head-of-line row is delivered via deliverToEndpoint(), which on a
+  // successful response leaves the 'retrying' state; on a non-final failure
+  // stays 'retrying' with a later next_retry_at; and on the FINAL attempt
+  // (attempt >= MAX_RETRIES) transitions the row to 'failed' AND moves it to
+  // the dead-letter queue (moveToDeadLetterQueue). Once the head leaves
+  // 'retrying' by either path, it no longer matches this sweep's
+  // `status = 'retrying'` filter, so on the NEXT sweep the next-lowest-sequence
+  // event for that resource becomes the head and proceeds. A poison head that
+  // exhausts its retries therefore does NOT block its resource forever: it
+  // drops to the DLQ and the newer events advance in order. Consumers should
+  // treat a gap in the per-resource `sequence` (a missing intermediate event)
+  // as "an earlier event was dead-lettered" and reconcile via the DLQ, not as
+  // a reason to reject the newer event. This is the documented, intended
+  // liveness/ordering trade-off: strict per-resource order while the head is
+  // live, fail-forward (drop the dead head, deliver the rest in order) once it
+  // is dead-lettered.
+  await Promise.allSettled(
+    headRows.map((row) =>
+      deliverToEndpoint(
+        row.webhook_endpoints as WebhookEndpoint,
+        row.payload,
+        row.attempt_number + 1,
+      ),
+    ),
+  );
+
+  // Count of resource head-rows attempted this sweep.
+  return headRows.length;
 }
