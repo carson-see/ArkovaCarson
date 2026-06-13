@@ -42,6 +42,8 @@ Mergify's queue, and was direct-merged with exact-head guard after the queue
 remained pending past the batch tick. #1155 merged at
 `2026-06-13T23:16:37Z` as
 `7220fb4b41f2b0bae5662bbdfea721d867f53638`.
+Confluence ledger footer comment `78413842` records this post-drain dependency
+lane disposition.
 
 Open-PR disposition after #1155:
 
