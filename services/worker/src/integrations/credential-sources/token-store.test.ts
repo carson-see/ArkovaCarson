@@ -16,7 +16,7 @@ import {
   type CredentialProvider,
   type MemberIntegrationRowDeps,
 } from './token-store.js';
-import type { OAuthTokens } from '../oauth/crypto.js';
+import type { KmsClient, OAuthTokens } from '../oauth/crypto.js';
 
 const ARKOVA_ORG_ID = '11111111-1111-4111-8111-111111111111';
 const ARKOVA_USER_ID = '22222222-2222-4222-8222-222222222222';
@@ -31,16 +31,22 @@ const sampleTokens: OAuthTokens = {
   scope: 'read:badges',
 };
 
-function makeFakeKms(): {
-  encrypt: ReturnType<typeof vi.fn>;
-  decrypt: ReturnType<typeof vi.fn>;
-} {
+type FakeKmsClient = KmsClient & {
+  encrypt: ReturnType<
+    typeof vi.fn<(args: { keyName: string; plaintext: Buffer }) => Promise<Buffer>>
+  >;
+  decrypt: ReturnType<
+    typeof vi.fn<(args: { keyName: string; ciphertext: Buffer }) => Promise<Buffer>>
+  >;
+};
+
+function makeFakeKms(): FakeKmsClient {
   // Simulate KMS: ciphertext = plaintext reversed (deterministic, non-trivial).
   return {
-    encrypt: vi.fn(async ({ plaintext }: { plaintext: Buffer }) => {
+    encrypt: vi.fn(async ({ plaintext }: { keyName: string; plaintext: Buffer }) => {
       return Buffer.from(plaintext).reverse();
     }),
-    decrypt: vi.fn(async ({ ciphertext }: { ciphertext: Buffer }) => {
+    decrypt: vi.fn(async ({ ciphertext }: { keyName: string; ciphertext: Buffer }) => {
       return Buffer.from(ciphertext).reverse();
     }),
   };
