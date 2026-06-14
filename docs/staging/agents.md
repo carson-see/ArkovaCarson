@@ -22,5 +22,5 @@ Staging rig documentation and soak evidence artifacts. Required by CLAUDE.md 1.1
 ## Current Release Evidence Note
 
 - Current Train A/B final evidence lives under `/Volumes/Extreme/Arkova/release-evidence/train-a/` and `/Volumes/Extreme/Arkova/release-evidence/train-b/`; use the `20260611T141256Z` final JSON files for the completed 48h cron soaks.
-- Current Train C code-clean evidence lives under `/Volumes/Extreme/Arkova/release-evidence/train-c/code/20260612T-clean-isolated/`.
-- Discarded Train A/B `20260611T121541Z` runs, Train C mixed/quality-low-rate attempts, and repaired CE attempts are diagnostic-only unless a later release owner explicitly promotes a fresh counted soak.
+- Current active Train C merge-grade candidate is #1154 main-sync repair under `/Volumes/Extreme/Arkova/release-evidence/train-c/code/20260614T-main-sync-repair/`; active CTDL/OPS screens are `train-c-code-main-sync-t3-ctdl-soak-20260614T172004Z` and `train-c-code-main-sync-t3-ops-soak-20260614T172004Z`, with earliest valid completion `2026-06-16T17:22:34Z`.
+- Discarded Train A/B `20260611T121541Z` runs and older Train C code-clean, mixed/quality-low-rate, and CE attempts are diagnostic-only/non-merge-grade unless a later release owner explicitly promotes a fresh counted soak.

@@ -40,6 +40,29 @@ and direct-merging with exact-head guard when the queue remained pending past
 the batch tick. #1158 remains blocked by failed `Staging Soak Evidence Gate` and
 must not be requeued until fixed.
 
+Deploy-unblocker PR #1169 merged at `2026-06-14T04:09:47Z` as
+`e795f8c8f4247b337d72bceef2687ced0aaf29ba`. It fixed the worker deploy
+typecheck failure by typing the test fake KMS client, then Deploy Worker run
+`27487930839` completed successfully and production `/health` reported
+`git_sha=e795f8c8f4247b337d72bceef2687ced0aaf29ba` with database, anchoring,
+and KMS checks ok. Migration Drift Check run `27487930828` passed with `0`
+local migrations missing in prod. Main CI run `27487930827` also completed
+successfully for the same SHA, including E2E.
+
+Train C #1154 was rebuilt on current main/prod base and restarted with fresh
+main-sync repair evidence. The only active healthy merge-grade soak candidate is
+`/Volumes/Extreme/Arkova/release-evidence/train-c/code/20260614T-main-sync-repair/`
+at head `cfaee18e063e68145ef2113a563c20cece708c64`, revision
+`arkova-worker-staging-00285-yiv`, isolated Supabase `bwkskvbmcjodwxklpzyl`,
+minScale/maxScale `1/2`. Active screens:
+`train-c-code-main-sync-t3-ctdl-soak-20260614T172004Z` and
+`train-c-code-main-sync-t3-ops-soak-20260614T172004Z`. Latest live summaries at
+`2026-06-14T18:00Z` are CTDL `16/16` ok and OPS `116/116` ok, zero failures.
+Earliest merge-grade completion is `2026-06-16T17:22:34Z` /
+`2026-06-16 13:22:34 EDT`. Older Train C code-clean, CE, mixed, and quality
+artifacts are stopped/diagnostic/non-merge-grade and must not be counted as
+healthy active soaks.
+
 ### Release queue unblocker #1141 - merged 2026-06-10
 
 PR #1141 (`fix(release): unblock parallel soak lanes`) merged via Mergify at
@@ -103,9 +126,13 @@ read-only lane dashboard that lists active `screen` soak sessions, latest local
 soak summaries, missing final JSON, and idle open PRs whose titles still look
 like T3, migration, or soak-pending candidates.
 
+- Historical status block, superseded by current prod/main proof
+  `e795f8c8f4247b337d72bceef2687ced0aaf29ba` after #1169. Keep the
+  June 8 evidence below for audit history only; do not use it as current
+  release state.
 - Checked at: 2026-06-08T19:46:40Z.
 - Repository: `carson-see/ArkovaCarson`.
-- Live `main` SHA: `35023952a7657966c95e029ca480d38195507a14`.
+- Historical live `main` SHA at that check: `35023952a7657966c95e029ca480d38195507a14`.
 - PR #1121 merged at: 2026-06-08T18:57:19Z.
 - PR #1121 merge commit: `35023952a7657966c95e029ca480d38195507a14`.
 - PR #1121 head SHA: `7918753029aa9b8d761930e520695e44f29bc9af`.
@@ -182,18 +209,31 @@ Do not change current open PRs except for documented release-queue execution ste
 
 Documentation updates are allowed because they are the control record for the release-first mode.
 
-## PR #1121 Production Proof
+## Production Proof Gate
 
-Before any T3 or migration-bearing PR starts soak or merge-readiness work, confirm #1121 is production-active. Required proof:
+Historical note: the original #1121 production-active proof at
+`35023952a7657966c95e029ca480d38195507a14` is superseded by the
+completed A/B release drain and #1169 deploy-unblocker proof.
 
-- Production deployment references `35023952a7657966c95e029ca480d38195507a14` or an immutable image/revision proven to contain that commit.
-- Production health check is green after deployment.
-- Smoke test covers the `edge-mcp` Nessie proxy path changed by #1121.
-- Deploy log, image digest, Cloud Run revision, and health endpoint agree on the active SHA or immutable revision.
+Before any new T3 or migration-bearing PR starts soak or merge-readiness
+work, confirm the current prod/main anchor instead. Required proof:
+
+- Production `/health` reports `e795f8c8f4247b337d72bceef2687ced0aaf29ba`
+  or a newer intentionally classified deploy.
+- Production health check is green after deployment, with
+  database/anchoring/kms OK on mainnet.
+- Main CI, Deploy Worker, Migration Drift Check, and Revision Drift Alert
+  are green for the active prod/main SHA.
+- Deploy log, image digest, Cloud Run revision, and health endpoint agree
+  on the active SHA or immutable revision.
 - Rollback path is known and can return to the prior production revision.
-- Evidence is captured in the release record with timestamp, actor, command/log links, and observed result.
+- Evidence is captured in the release record with timestamp, actor,
+  command/log links, and observed result.
 
-If this proof is missing or inconsistent, stop the train and do not begin T3 work.
+If this proof is missing or inconsistent, stop the train and do not begin
+new T3 work. Current Train C #1154 remains blocked until its fresh
+main-sync 48h evidence completes cleanly and the evidence gate is updated
+truthfully.
 
 ## Short-Term Queue Drain
 
@@ -236,7 +276,10 @@ Drain progress note:
   2026-06-13T14:12:59Z with `2880/2880` ok and zero failures.
 - No Train A/B drain PRs remain.
 - Safe development now: isolated feature branches/worktrees may continue if they do not mutate shared staging, main, Mergify, or the release queue.
-- Safe normal dev merges: resume only after the RC manifest gate lands and the active release train can preserve evidence across controlled main movement, or after the current queue drains under the old process.
+- Safe normal dev merges: may proceed through normal branch protection/Mergify
+  when PR-specific evidence is green. Active Train C soak evidence remains
+  protected; runtime, schema, migration, staging, deploy, soak-behavior, or
+  worker-image drift still requires release-owner re-scope/retest.
 
 ## T3 And Migration Safeguards
 

@@ -15,6 +15,65 @@
 
 ## Now
 
+### 2026-06-14 14:00 EDT - Prod current; fresh Train C #1154 soak running
+
+**Current production truth:** `origin/main` and production worker health both
+report `e795f8c8f4247b337d72bceef2687ced0aaf29ba`.
+
+- #1169 (`fix(worker): type token-store fake KMS client`) merged at
+  `2026-06-14T04:09:47Z` as
+  `e795f8c8f4247b337d72bceef2687ced0aaf29ba`.
+- Deploy Worker run `27487930839` completed successfully: pre-deploy quality
+  gates passed, canary smoke passed, and canary was promoted to 100% traffic.
+- Production `/health` is healthy on `mainnet` with `database=ok`,
+  `anchoring=ok`, and `kms=ok`.
+- Cloud Run `arkova-worker` latest ready revision is `arkova-worker-00902-gov`
+  on image
+  `us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker:e795f8c8f4247b337d72bceef2687ced0aaf29ba`.
+- Migration Drift Check run `27487930828` passed for the same main SHA with
+  `48` local migrations, `67` prod applied keys, and `0` missing in prod.
+- Main CI run `27487930827` completed successfully for the same main SHA,
+  including E2E.
+
+**Finished-soak PR state:** all Train A/B finished-soak PRs are merged. There
+is no finished-soak PR left waiting for Mergify pickup.
+
+**Open queue state:** there is no open non-draft green PR currently ready for
+Mergify pickup. #1158 is the only non-draft recent open PR, and it is not
+queue-safe. Its failed `Staging Soak Evidence Gate` is a PR-body/evidence block:
+the log requires a `Tier: T1` or stronger justified declaration under
+`## Staging Soak Evidence`. Do not requeue or force it until the dependency
+bundle has valid risk classification and evidence. #1154 remains a draft Train C
+soak lane and must stay out of queue until its fresh 48h evidence completes.
+#1153 has an old green `Staging Soak Evidence Gate`, but it is not a
+completed-soak landing PR: the gate predates valid Train C 48h completion and
+belongs to the superseded Train C prep/CE visibility lane. It has GitHub
+comment `4703319658`, the `do-not-merge` label, and must remain draft/out of
+Mergify unless explicitly closed or re-scoped by the release owner.
+
+**Train C #1154 fresh main-sync repair soak:** the only active healthy
+merge-grade candidate is under
+`/Volumes/Extreme/Arkova/release-evidence/train-c/code/20260614T-main-sync-repair/`.
+Active screens are `train-c-code-main-sync-t3-ctdl-soak-20260614T172004Z` and
+`train-c-code-main-sync-t3-ops-soak-20260614T172004Z`. Latest local summaries at
+`2026-06-14T22:57Z` are CTDL `136/136` ok and OPS `1012/1012` ok, zero failures.
+Head `cfaee18e063e68145ef2113a563c20cece708c64` is based on/prod-matched to
+`e795f8c8f4247b337d72bceef2687ced0aaf29ba`; revision
+`arkova-worker-staging-00285-yiv`; image digest
+`sha256:aaff2831bc1f68d2ba919767ac3c10a68d9f37200230d734198377253f1c0303`;
+isolated Supabase `bwkskvbmcjodwxklpzyl`; minScale/maxScale `1/2`. Earliest
+merge-grade completion is `2026-06-16T17:22:34Z` /
+`2026-06-16 13:22:34 EDT`.
+
+Older Train C CE, mixed, quality, and code-clean artifacts are stopped or
+diagnostic/non-merge-grade. Do not cite them as healthy active soaks.
+
+**Docs/Jira/Confluence:** Jira SCRUM-2402 comments through `16542`,
+SCRUM-2295 comment `16524`, Confluence page `74022939`, and Confluence PRD page
+`77758466` record this corrected state. Keep this file and
+`memory/release_drain_sync_20260613.md` mirrored across the Extreme and Crucial
+SSD sync worktrees.
+
 ### 2026-06-13 19:18 EDT - Train A/B drain closed; dependency lane resumed
 
 **Current A/B evidence truth:** the restarted Train A/B T3 cron soaks completed
@@ -57,9 +116,9 @@ non-deleted `SECURED` anchors only, adds a deterministic
 `created_at DESC, id DESC` tie-breaker, adds a malformed RPC payload guard,
 uses the canonical not-found mock, and cleans the migration ledger.
 
-**Closeout:** no Train A/B release-drain PRs remain. Continue monitoring Train C
-code-clean soaks separately; do not treat Train C CE/mixed/quality diagnostics
-as merge-grade evidence.
+**Closeout:** no Train A/B release-drain PRs remain. Continue monitoring the
+fresh Train C #1154 main-sync repair soaks separately; do not treat older Train C
+CE/mixed/quality/code-clean diagnostics as merge-grade evidence.
 
 **Post-drain dependency lane:** #1155 (`chore(deps): bump esbuild from 0.28.0
 to 0.28.1`) was stale on base
@@ -101,17 +160,16 @@ worktree carry synchronized coordination docs for:
 The GitHub docs-sync branch is `codex/release-drain-doc-sync-20260613`; update
 it after every merge-state change before making a docs PR.
 
-**Other train soaks:** Train C code-clean CTDL and ops soaks are alive under
-`/Volumes/Extreme/Arkova/release-evidence/train-c/code/20260612T-clean-isolated/`.
-Latest local summaries are CTDL `662/662` ok and ops `4950/4950` ok, zero
-failures. Train C mixed, quality-low-rate, and repaired CE attempts are
-diagnostic-only unless a fresh counted soak is explicitly started and
+**Other train soaks:** only fresh Train C #1154 main-sync repair CTDL/OPS soaks
+are active and clean. Older Train C code-clean/CE/mixed/quality attempts are
+diagnostic/non-merge-grade unless a fresh counted soak is explicitly started and
 documented.
 
-**Next safe sequence:** keep Train C code-clean soaks monitored through their
-own 48h windows and final evidence. Do not restart, merge, or mutate other
-trains without a fresh release-owner lane decision.
+**Next safe sequence:** keep Train C #1154 main-sync repair soaks monitored
+through their 48h windows and final evidence. Do not undraft, requeue, merge, or
+mutate #1154 until the full evidence gate is truthful and green. Do not restart,
+merge, or mutate other trains without a fresh release-owner lane decision.
 
-_Last refreshed: 2026-06-13 19:18 EDT by Codex using A/B final evidence JSONs,
-`gh pr view/checks/merge`, Jira/Confluence MCP updates, local screen/evidence
-checks, #1155 guarded merge readback, and SSD mirror status._
+_Last refreshed: 2026-06-14 14:00 EDT by Codex using A/B final evidence JSONs,
+Train C #1154 fresh summary JSONs, `screen -ls`, `ps`, `gh pr view/list`, prod
+`/health`, GitHub run checks, Jira/Confluence MCP reads, and SSD mirror status._

@@ -6,9 +6,27 @@ Current operational guardrails for the Train A/B release drain and adjacent soak
 
 - Train A final evidence: `/Volumes/Extreme/Arkova/release-evidence/train-a/soak-train-a-t3-cron-20260611T141256Z.json`.
 - Train B final evidence: `/Volumes/Extreme/Arkova/release-evidence/train-b/soak-train-b-t3-cron-20260611T141256Z.json`.
-- Train C code-clean evidence directory: `/Volumes/Extreme/Arkova/release-evidence/train-c/code/20260612T-clean-isolated/`.
+- Fresh Train C #1154 main-sync repair evidence directory: `/Volumes/Extreme/Arkova/release-evidence/train-c/code/20260614T-main-sync-repair/`.
 - T3 migration ledger Confluence page: `74022939`.
 - SCRUM-2285 Confluence page: `72581121`.
+
+## Current Production Proof - 2026-06-14 00:28 EDT
+
+- #1169 (`fix(worker): type token-store fake KMS client`) merged at
+  `2026-06-14T04:09:47Z` as
+  `e795f8c8f4247b337d72bceef2687ced0aaf29ba`.
+- `origin/main` is `e795f8c8f4247b337d72bceef2687ced0aaf29ba`.
+- Deploy Worker run `27487930839` completed successfully, including
+  pre-deploy quality gates, canary smoke, and 100% traffic promotion.
+- Production `/health` returns `status=healthy`, `network=mainnet`,
+  `git_sha=e795f8c8f4247b337d72bceef2687ced0aaf29ba`, `database=ok`,
+  `anchoring=ok`, and `kms=ok`.
+- Cloud Run `arkova-worker` latest ready revision is `arkova-worker-00902-gov`
+  on image tag `e795f8c8f4247b337d72bceef2687ced0aaf29ba`.
+- Migration Drift Check run `27487930828` passed for the same SHA with `48`
+  local migrations, `67` prod applied keys, and `0` missing in prod.
+- Main CI run `27487930827` completed successfully for the same SHA, including
+  E2E, at the 2026-06-14T04:39Z check.
 
 ## Train A/B State
 
@@ -45,14 +63,22 @@ remained pending past the batch tick. #1155 merged at
 Confluence ledger footer comment `78413842` records this post-drain dependency
 lane disposition.
 
-Open-PR disposition after #1155:
+Open-PR disposition after #1169:
 
 - No open PR has the `dequeued` label; recent dequeued #1107, #1114, and #1122
   are merged.
 - #1158 is not requeue-safe until its failed `Staging Soak Evidence Gate` is
-  fixed and green.
-- Train C PRs remain draft/isolated soak lanes and must not be queued until
-  their own final evidence closes.
+  fixed and green. The current failure is a PR-body/evidence block requiring a
+  `Tier: T1` or stronger justified declaration under `## Staging Soak Evidence`;
+  do not manufacture evidence for the worker dependency bundle.
+- #1154 remains a draft isolated Train C soak lane and must not be queued until
+  its fresh 48h CTDL/OPS evidence closes cleanly, final evidence exists, and the
+  PR body/evidence gate are truthful and green.
+- #1153 has a stale green evidence gate from the superseded Train C prep/CE
+  visibility lane, not completed merge-grade evidence. Keep it draft/out of
+  Mergify unless the release owner explicitly closes or re-scopes it. It now has
+  GitHub comment `4703319658` and the `do-not-merge` label as a hard queue
+  guard; Jira `SCRUM-2402` and Confluence page `74022939` record the disposition.
 
 ## Already Closed In This Drain
 
@@ -69,15 +95,28 @@ Open-PR disposition after #1155:
 
 ## Other Train Status
 
-- Train C code-clean CTDL and ops screens are active and clean as of the latest local summaries: CTDL `662/662` ok, ops `4950/4950` ok, zero failures.
-- Train C mixed, quality-low-rate, and CE repaired runs are non-merge-grade evidence unless a fresh counted soak is explicitly started and documented.
+- Fresh Train C #1154 main-sync repair CTDL and OPS screens are the only active
+  healthy merge-grade soak candidates:
+  `train-c-code-main-sync-t3-ctdl-soak-20260614T172004Z` and
+  `train-c-code-main-sync-t3-ops-soak-20260614T172004Z`.
+- Latest live summaries at `2026-06-14T22:57Z`: CTDL `136/136` ok, OPS
+  `1012/1012` ok, zero failures.
+- Exact head `cfaee18e063e68145ef2113a563c20cece708c64`, base/prod
+  `e795f8c8f4247b337d72bceef2687ced0aaf29ba`, revision
+  `arkova-worker-staging-00285-yiv`, isolated Supabase `bwkskvbmcjodwxklpzyl`,
+  minScale/maxScale `1/2`.
+- Earliest merge-grade completion is `2026-06-16T17:22:34Z` /
+  `2026-06-16 13:22:34 EDT`.
+- Older Train C code-clean, mixed, quality-low-rate, and CE repaired runs are
+  stopped/diagnostic/non-merge-grade unless a fresh counted soak is explicitly
+  started and documented.
 
 ## Sync State
 
-- Extreme mirror working tree `/Volumes/Extreme/Arkova/worktrees/hygiene-sync-20260603` is on `main` with synchronized coordination docs.
-- Crucial mirror working tree `/Volumes/Crucial X9/Arkova/arkova-mvpcopy-main` is on `main` with synchronized coordination docs.
-- Active Extreme checkout `/Volumes/Extreme/Arkova/arkova-mvpcopy-main` is intentionally dirty with release coordination docs/evidence; do not clean or reset it.
-- GitHub docs-sync branch `codex/release-drain-doc-sync-20260613` carries the final #1122 closeout sync plus the post-drain #1155 dependency-lane merge disposition.
+- Extreme mirror working tree `/Volumes/Extreme/Arkova/worktrees/hygiene-sync-20260603` is a local mirror with synchronized coordination docs; verify and fast-forward before treating its git HEAD as current `origin/main`.
+- Crucial mirror working tree `/Volumes/Crucial X9/Arkova/arkova-mvpcopy-main` is a local mirror with synchronized coordination docs; verify and fast-forward before treating its git HEAD as current `origin/main`.
+- Active Extreme checkout `/Volumes/Extreme/Arkova/arkova-mvpcopy-main` is intentionally dirty with release coordination docs/evidence; do not clean or reset it. Current prod/main proof is `e795f8c8f4247b337d72bceef2687ced0aaf29ba` after #1169.
+- GitHub docs-sync branch `codex/release-drain-doc-sync-20260613` must carry the final #1122 closeout sync, post-drain #1155 dependency-lane disposition, and #1169 production deploy proof before any docs PR.
 
 ## Stale-State Trap
 
