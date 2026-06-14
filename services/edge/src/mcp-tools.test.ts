@@ -14,6 +14,8 @@ import {
   shapeAnchorRow,
   handleVerifyCredential,
   handleVerifyBatch,
+  handleVerifyDocument,
+  handleAgentVerify,
   handleNessieQuery,
   type SupabaseConfig,
 } from './mcp-tools.js';
@@ -94,7 +96,9 @@ describe('shapeAnchorRow (BUG-2 key realignment)', () => {
     const shaped = shapeAnchorRow(row);
 
     expect(shaped.verified).toBe(false);
-    expect(shaped.status).toBe('UNKNOWN'); // PENDING not in mapStatus -> UNKNOWN
+    // PENDING is surfaced as a first-class in-flight status (not collapsed to
+    // UNKNOWN) so a genuinely-found in-flight anchor doesn't read not-found.
+    expect(shaped.status).toBe('PENDING');
     expect(shaped.network_receipt_id).toBeNull();
     expect(shaped.anchor_timestamp).toBeNull();
     // issuer/dates still present on the row even while gated fields are null
@@ -173,6 +177,150 @@ describe('handleVerifyBatch (real RPC fixture)', () => {
     expect(parsed.results[0].issuer_name).toBe('University of Michigan');
     expect(parsed.results[0].network_receipt_id).toBe('tx-batch-1');
     expect(parsed.results[0].recipient_identifier).toBe('d'.repeat(64));
+  });
+});
+
+// ── BUG-1: verify-by-fingerprint via get_public_anchor_by_fingerprint ─
+//
+// handleVerifyDocument used to fetch
+//   /rest/v1/public_records?content_hash=eq...&select=...public_id...
+// which 400s in prod (the select column set / table shape is wrong) and,
+// even when it didn't, returned a non-canonical shape. PR-2 re-points it at
+// the SECURITY DEFINER RPC get_public_anchor_by_fingerprint and maps secured
+// results through shapeAnchorRow. Unlike public_id verification, fingerprint
+// lookup intentionally hides in-flight anchors so it cannot expose pending
+// content-hash existence globally.
+
+const FP = 'f'.repeat(64);
+
+describe('handleVerifyDocument (BUG-1: RPC by fingerprint)', () => {
+  it('SECURED fingerprint → verified:true, ACTIVE, non-null public_id + receipt + record_uri', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () =>
+        realPublicAnchorRow({
+          public_id: 'ARK-2026-001',
+          network_receipt_id: 'tx-secured-fp',
+        }),
+    });
+
+    const result = await handleVerifyDocument({ content_hash: FP }, CONFIG);
+    expect(result.isError).toBeUndefined();
+
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.verified).toBe(true);
+    expect(parsed.status).toBe('ACTIVE');
+    expect(parsed.public_id).toBe('ARK-2026-001');
+    expect(parsed.network_receipt_id).toBe('tx-secured-fp');
+    expect(parsed.record_uri).toBe('https://app.arkova.ai/verify/ARK-2026-001');
+  });
+
+  it('hits the RPC get_public_anchor_by_fingerprint, NOT /rest/v1/public_records?...public_id', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => realPublicAnchorRow(),
+    });
+
+    await handleVerifyDocument({ content_hash: FP }, CONFIG);
+
+    const url = String(mockFetch.mock.calls[0][0]);
+    const init = mockFetch.mock.calls[0][1] ?? {};
+    expect(url).toContain('/rest/v1/rpc/get_public_anchor_by_fingerprint');
+    expect(init.method).toBe('POST');
+    // Negative guard: must NOT use the old broken public_records query.
+    expect(url).not.toContain('/rest/v1/public_records');
+    expect(url).not.toContain('select=');
+  });
+
+  it('lowercases a mixed-case fingerprint before sending it to the RPC', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => realPublicAnchorRow(),
+    });
+
+    const mixed = 'A'.repeat(32) + 'b'.repeat(32);
+    await handleVerifyDocument({ content_hash: mixed }, CONFIG);
+
+    const body = JSON.parse(String(mockFetch.mock.calls[0][1].body));
+    expect(body.p_fingerprint).toBe(mixed.toLowerCase());
+  });
+
+  it('unknown fingerprint (RPC returns {error}) → verified:false, status UNKNOWN, NOT an error result', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ error: 'Record not found' }),
+    });
+
+    const result = await handleVerifyDocument({ content_hash: FP }, CONFIG);
+    // Crucial: this is HTTP-200-equivalent, not a 400/error tool result.
+    expect(result.isError).toBeUndefined();
+
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.verified).toBe(false);
+    expect(parsed.status).toBe('UNKNOWN');
+    expect(parsed.network_receipt_id).toBeNull();
+    expect(parsed.public_id).toBeNull();
+    // Contract parity with the worker's not-found body: echo the lowercased
+    // fingerprint that was looked up.
+    expect(parsed.fingerprint).toBe(FP);
+  });
+
+  it('echoes the lowercased fingerprint on the UNKNOWN envelope (case-normalized)', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ error: 'Record not found' }),
+    });
+
+    const mixed = 'A'.repeat(32) + 'b'.repeat(32);
+    const result = await handleVerifyDocument({ content_hash: mixed }, CONFIG);
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.fingerprint).toBe(mixed.toLowerCase());
+  });
+
+  it('PENDING fingerprint filtered by RPC → UNKNOWN, not an existence leak', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ error: 'Record not found' }),
+    });
+
+    const result = await handleVerifyDocument({ content_hash: FP }, CONFIG);
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.verified).toBe(false);
+    expect(parsed.status).toBe('UNKNOWN');
+    expect(parsed.public_id).toBeNull();
+    expect(parsed.network_receipt_id).toBeNull();
+    expect(parsed.anchor_timestamp).toBeNull();
+  });
+
+  it('SUBMITTED fingerprint filtered by RPC → UNKNOWN until secured', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ error: 'Record not found' }),
+    });
+
+    const result = await handleVerifyDocument({ content_hash: FP }, CONFIG);
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.verified).toBe(false);
+    expect(parsed.status).toBe('UNKNOWN');
+    expect(parsed.public_id).toBeNull();
+    expect(parsed.network_receipt_id).toBeNull();
+  });
+});
+
+describe('handleAgentVerify (BUG-1: strips internal ids)', () => {
+  it('returns the canonical shape with no record_id / internal id leak', async () => {
+    mockFetch.mockResolvedValueOnce({
+      ok: true,
+      json: async () =>
+        realPublicAnchorRow({ public_id: 'ARK-2026-001' } as never),
+    });
+
+    const result = await handleAgentVerify({ fingerprint: FP }, CONFIG);
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.verified).toBe(true);
+    expect(parsed.public_id).toBe('ARK-2026-001');
+    expect(parsed).not.toHaveProperty('record_id');
+    expect(parsed).not.toHaveProperty('id');
   });
 });
 

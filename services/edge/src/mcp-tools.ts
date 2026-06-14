@@ -817,7 +817,9 @@ export async function handleAgentSearch(
           type: 'fingerprint',
           public_id: parsed.public_id,
           score: 1,
-          snippet: parsed.title ?? parsed.content_hash ?? '',
+          // shapeAnchorRow carries no title/content_hash, so fall back to the
+          // public_id as the snippet (the only human-meaningful handle here).
+          snippet: parsed.public_id ?? '',
           metadata: { status: parsed.status ?? null },
         }] : [],
         next_cursor: null,
@@ -1258,9 +1260,21 @@ export async function handleAnchorDocument(
 }
 
 /**
- * Verify a document by its content hash (PH1-SDK-03).
+ * Verify a document by its content hash / fingerprint (PH1-SDK-03, BUG-1).
  *
- * Looks up the public_records table for a matching content_hash and returns anchor proof.
+ * Calls the `get_public_anchor_by_fingerprint` SECURITY DEFINER RPC
+ * (migration 0339) and maps SECURED results through `shapeAnchorRow`, so verify
+ * returns the SAME truthful, redacted anchor shape as `get_anchor` /
+ * `verify_credential` once a document is actually anchored. The prior implementation hit
+ * `/rest/v1/public_records?...&select=...public_id...` with a column set that
+ * does not match the table shape — it returned HTTP 400 universally and the
+ * tool was 100% broken.
+ *
+ * An unknown or not-yet-secured fingerprint is NOT an error: the RPC returns
+ * `{ error: 'Record not found' }` and this maps to a verified:false /
+ * status:UNKNOWN envelope (HTTP-200-equivalent). A `message` is retained so
+ * `handleAgentSearch(type:'fingerprint')`'s found-guard still treats it as a
+ * miss.
  */
 export async function handleVerifyDocument(
   input: VerifyDocumentInput,
@@ -1274,45 +1288,45 @@ export async function handleVerifyDocument(
     return errorResult('Error: content_hash must be a valid 64-character SHA-256 hex string');
   }
 
+  // The RPC matches case-insensitively, but normalize client-side too so the
+  // request body is deterministic.
+  const fingerprint = input.content_hash.toLowerCase();
+
   try {
-    const response = await supabaseFetch(
-      config,
-      `/rest/v1/public_records?content_hash=eq.${encodeURIComponent(input.content_hash)}&select=id,public_id,source,source_url,record_type,title,content_hash,metadata,anchor_id&limit=1`,
-    );
+    const response = await supabaseFetch(config, '/rest/v1/rpc/get_public_anchor_by_fingerprint', {
+      method: 'POST',
+      body: JSON.stringify({ p_fingerprint: fingerprint }),
+    });
 
     if (!response.ok) {
       return errorResult(`Document lookup failed: HTTP ${response.status}`);
     }
 
-    const records = await response.json() as Array<Record<string, unknown>>;
+    const data = (await response.json()) as Record<string, unknown> | null;
 
-    if (!Array.isArray(records) || records.length === 0) {
-      return textResult({ verified: false, message: 'No anchored document found with this fingerprint.' });
+    // Unknown fingerprint → RPC returns { error: 'Record not found' }.
+    // Surface a verified:false envelope, NOT an MCP error result.
+    if (!data || typeof data !== 'object' || 'error' in data) {
+      return textResult({
+        verified: false,
+        status: 'UNKNOWN',
+        fingerprint,
+        public_id: null,
+        network_receipt_id: null,
+        anchor_timestamp: null,
+        message: 'No anchored document found with this fingerprint.',
+      });
     }
 
-    const record = records[0];
-    const meta = (record.metadata as Record<string, unknown>) ?? {};
-    const isAnchored = !!record.anchor_id;
+    const publicId = typeof data.public_id === 'string' ? data.public_id : '';
+    if (!publicId) {
+      return errorResult('Document lookup returned malformed public anchor payload');
+    }
 
-    return textResult({
-      verified: isAnchored,
-      status: isAnchored ? 'ANCHORED' : 'PENDING',
-      public_id: record.public_id,
-      record_id: record.id,
-      source: record.source,
-      source_url: record.source_url,
-      record_type: record.record_type,
-      title: record.title,
-      content_hash: record.content_hash,
-      anchor_proof: isAnchored
-        ? {
-            chain_tx_id: (meta.chain_tx_id as string) ?? null,
-            merkle_root: (meta.merkle_root as string) ?? null,
-            content_hash: record.content_hash,
-            anchored_at: (meta.anchored_at as string) ?? null,
-          }
-        : null,
-    });
+    // Pass the RPC's own public_id so the envelope echoes it AND builds the
+    // correct record_uri (the single-record verify contract surfaces
+    // public_id; the public verify URL is derived from it).
+    return textResult(shapeAnchorRow(data, publicId));
   } catch (error) {
     const msg = error instanceof Error && error.name === 'AbortError'
       ? 'Document verification timed out'
@@ -1324,10 +1338,11 @@ export async function handleVerifyDocument(
 /**
  * Agent-friendly alias for API v2 `verify(fingerprint)`.
  *
- * Strips the internal `record_id` from `handleVerifyDocument`'s response
- * before returning. The agent-facing `get_fingerprint` MCP tool advertises
- * a "public-safe" contract; leaving `record_id` in would expose the
- * internal `public_records.id` UUID.
+ * As of BUG-1 (PR-2) `handleVerifyDocument` returns the redacted
+ * `shapeAnchorRow` envelope, which never carries an internal `record_id` /
+ * `id`. The `record_id` strip is retained as defense-in-depth: if any future
+ * change to the verify path reintroduces an internal id key, this guarantees
+ * the agent-facing `get_fingerprint` contract stays public-safe.
  */
 export async function handleAgentVerify(
   input: AgentVerifyInput,
@@ -1512,6 +1527,10 @@ function mapStatus(status: string | null | undefined): string {
       return 'SUPERSEDED';
     case 'EXPIRED':
       return 'EXPIRED';
+    case 'PENDING':
+      return 'PENDING';
+    case 'SUBMITTED':
+      return 'SUBMITTED';
     default:
       return 'UNKNOWN';
   }
