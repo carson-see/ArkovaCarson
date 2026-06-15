@@ -22,6 +22,21 @@ Also this session (planning): §1.6A connector server-side-fingerprint carve-out
 
 _Last refreshed: 2026-06-15 by Claude (carson@arkova.io) — ledger reconcile verified via Supabase MCP `execute_sql` on `vzwyaatejekddvltxyye` (UPDATE … RETURNING 7 rows numeric; post-write SELECT remaining_nonnumeric=0, numeric_head=0339); §1.6A via `git push origin main` (`e795f8c8..f8b70d55`)._
 
+### 2026-06-15 (cont.) — Train D rigs up + two launch-blocker foundation branches ready for soak
+
+Autonomous build cycle (Carson away). **Nothing merged; no PR opened; Train C/CSI soaks untouched.** Retro: Confluence **81199128** (child of Sprint-1 plan 81100802).
+
+**2 isolated Train D rigs (paid ~$10/mo each — tear down at launch, §7):** proof `ykbkueelkxngyrwkutxt`, queue/credit `bkstqckfldajpaehveaa` — both us-east-2, PG 17.6, **ACTIVE_HEALTHY**, schema head **0339**, synthetic fixtures only (no prod clone/PII). Cloud Run `arkova-worker-train-d-{proof,queue}-staging` on the prod-pinned image, `USE_MOCKS=true`, anchoring off. **Preflight reads `soak_artifact` (not `clean_mirror`)** — sole cause is the pre-existing duplicate migration name `0302/0303_validate_api_key_rpc_hardening` (SCRUM-2192), faithfully recorded by `db push`; NOT contamination, deliberately not masked. SCRUM-2500 (full-ledger audit) must whitelist this until 2192 fixes the dup.
+
+**2 foundation branches pushed — ready for review + 48h T3 soak + merge (all human-gated):**
+- `feat/train-d-proof-foundation` @ `d11deed3` — FIX-1 + PROOF-02 + PROOF-VERIFY (SCRUM-2490/2491): verdict now from Merkle recomputation, never `anchors.status`; migration **0340** adds proof-completeness columns + a "SECURED⇒complete" constraint trigger **GUC-gated OFF** (`arkova.proof_enforce_secured_complete`, default off) so it can't reject the empty-branch back-catalogue; resumable manual-trigger backfill, not run on prod.
+- `feat/train-d-credit-foundation` @ `5c914cbd` — QUEUE-03 + QUEUE-04 (SCRUM-2349/2350): migration **0341** makes `org_credit_deductions` append-only (drops amount>0/balance_after CHECKs, adds signed-amount CHECK + BEFORE-UPDATE/DELETE trigger + **REVOKE DELETE FROM service_role**, refund=positive row) + atomic `debit_and_enqueue_anchor` RPC. **Rewrites live ledger semantics — review hard before prod.**
+- **Merge in prefix order (0340 before 0341); both branches edit `services/worker/src/jobs/batch-anchor.ts` → second-to-merge needs a conflict resolve.** Pre-existing `src/types/database.types.ts` 0323 drift (missing `external_document_versions`) spun off as a separate resync task, not folded in.
+
+Open decisions still on Carson: DISC-02 legal signoff, DISC-03 fee (rec OP_RETURN-only at launch), confirm OP_RETURN version byte `0x01` + GetBlock as header/inclusion-proof source before any mainnet broadcast.
+
+_Last refreshed: 2026-06-15 by Claude (carson@arkova.io) — rigs verified via Supabase MCP `list_projects` (both refs ACTIVE_HEALTHY, us-east-2, PG 17.6, created 18:15–18:16Z); branches via `git branch -a` (both on origin) + `git show --stat` (`d11deed3`, `5c914cbd`, migrations 0340/0341 in-diff); rig schema-head 0339 + `soak_artifact` preflight as reported by the OPS-01 build, not re-run this turn. No prod schema/worker state changed._
+
 ### 2026-06-10 — Release queue unblocker #1141 merged; dev may resume under isolated-lane rules
 
 **PR #1141 merged via Mergify** at 2026-06-10T15:56:23Z, merge commit `3f678e7cb7b6f0bcb954141c75094730b49ef45e`; `origin/main` now points at that SHA. The merged release-process change preserves exact PR-head evidence integrity while allowing release-owner-approved T0 docs/tests/CI/tooling-only base drift through a non-placeholder `Base drift impact:` note. Runtime, schema, migration, staging, deploy, soak-behavior, or worker-image drift still fails closed and requires re-scope/retest.
