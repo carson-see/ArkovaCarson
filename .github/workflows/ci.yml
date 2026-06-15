@@ -51,7 +51,7 @@ jobs:
           fetch-depth: 0
 
       - name: TruffleHog Secret Scan
-        uses: trufflesecurity/trufflehog@37b77001d0174ebec2fcca2bd83ff83a6d45a3ab # v3.95.3
+        uses: trufflesecurity/trufflehog@d411fff7b8879a62509f3fa98c07f247ac089a51 # v3.95.5
         with:
           extra_args: --only-verified
 
@@ -192,7 +192,7 @@ jobs:
         # step is skipped entirely (see "Skip Sonatype Lifecycle notice"
         # below). When secrets ARE set, real findings should fail the PR.
         if: env.SONATYPE_LIFECYCLE_URL != '' && env.SONATYPE_LIFECYCLE_USERNAME != '' && env.SONATYPE_LIFECYCLE_PASSWORD != '' && env.SONATYPE_LIFECYCLE_APPLICATION_ID != ''
-        uses: sonatype/actions/evaluate@761de36d3d4a3ad414385f6b96e635438f1de664 # v1
+        uses: sonatype/actions/evaluate@3bec72e6daf541cf541636e4493212c2fcf0a149 # v1
         with:
           iq-server-url: ${{ env.SONATYPE_LIFECYCLE_URL }}
           username: ${{ env.SONATYPE_LIFECYCLE_USERNAME }}

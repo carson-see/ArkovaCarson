@@ -21,8 +21,8 @@ import {
 } from './token-store.js';
 import type { KmsClient, OAuthTokens } from '../oauth/crypto.js';
 
-const ARKOVA_ORG_ID = '00000000-0000-0000-0000-000000000001';
-const ARKOVA_USER_ID = '00000000-0000-0000-0000-000000000010';
+const ARKOVA_ORG_ID = '11111111-1111-4111-8111-111111111111';
+const ARKOVA_USER_ID = '22222222-2222-4222-8222-222222222222';
 const TEST_KEY_NAME =
   'projects/test-arkova/locations/global/keyRings/test/cryptoKeys/integration-tokens';
 
@@ -34,16 +34,22 @@ const sampleTokens: OAuthTokens = {
   scope: 'read:badges',
 };
 
-function makeFakeKms(): {
-  encrypt: ReturnType<typeof vi.fn<KmsClient['encrypt']>>;
-  decrypt: ReturnType<typeof vi.fn<KmsClient['decrypt']>>;
-} {
+type FakeKmsClient = KmsClient & {
+  encrypt: ReturnType<
+    typeof vi.fn<(args: { keyName: string; plaintext: Buffer }) => Promise<Buffer>>
+  >;
+  decrypt: ReturnType<
+    typeof vi.fn<(args: { keyName: string; ciphertext: Buffer }) => Promise<Buffer>>
+  >;
+};
+
+function makeFakeKms(): FakeKmsClient {
   // Simulate KMS: ciphertext = plaintext reversed (deterministic, non-trivial).
   return {
-    encrypt: vi.fn<KmsClient['encrypt']>(async ({ plaintext }) => {
+    encrypt: vi.fn(async ({ plaintext }: { keyName: string; plaintext: Buffer }) => {
       return Buffer.from(plaintext).reverse();
     }),
-    decrypt: vi.fn<KmsClient['decrypt']>(async ({ ciphertext }) => {
+    decrypt: vi.fn(async ({ ciphertext }: { keyName: string; ciphertext: Buffer }) => {
       return Buffer.from(ciphertext).reverse();
     }),
   };
@@ -167,7 +173,7 @@ describe('SCRUM-1611 — credential-source token-store', () => {
           { kms: fakeKms, keyName: TEST_KEY_NAME, rowStore: store.deps },
         );
       }
-      expect(store.rows.map((r) => r.provider).sort()).toEqual([
+      expect(store.rows.map((r) => r.provider).sort((a, b) => a.localeCompare(b))).toEqual([
         'accredible',
         'credly',
         'udemy',
@@ -188,6 +194,37 @@ describe('SCRUM-1611 — credential-source token-store', () => {
           { kms: fakeKms, keyName: TEST_KEY_NAME, rowStore: store.deps },
         ),
       ).rejects.toThrow(/unsupported credential provider/i);
+      expect(fakeKms.encrypt).not.toHaveBeenCalled();
+      expect(store.rows).toHaveLength(0);
+    });
+
+    it('rejects non-UUID userId and orgId before encrypting', async () => {
+      await expect(
+        storeCredentialProviderTokens(
+          {
+            userId: 'not-a-uuid',
+            orgId: ARKOVA_ORG_ID,
+            provider: 'credly',
+            accountId: 'credly-acct-1',
+            tokens: sampleTokens,
+          },
+          { kms: fakeKms, keyName: TEST_KEY_NAME, rowStore: store.deps },
+        ),
+      ).rejects.toThrow(/uuid/i);
+
+      await expect(
+        storeCredentialProviderTokens(
+          {
+            userId: ARKOVA_USER_ID,
+            orgId: 'not-a-uuid',
+            provider: 'credly',
+            accountId: 'credly-acct-1',
+            tokens: sampleTokens,
+          },
+          { kms: fakeKms, keyName: TEST_KEY_NAME, rowStore: store.deps },
+        ),
+      ).rejects.toThrow(/uuid/i);
+
       expect(fakeKms.encrypt).not.toHaveBeenCalled();
       expect(store.rows).toHaveLength(0);
     });
@@ -278,6 +315,35 @@ describe('SCRUM-1611 — credential-source token-store', () => {
         expect.objectContaining({ keyName: oldKey }),
       );
     });
+
+    it('propagates KMS decrypt failures without returning tokens', async () => {
+      const kmsError = new Error('kms unavailable');
+      fakeKms.decrypt.mockRejectedValueOnce(kmsError);
+
+      await store.deps.upsertEncryptedRow({
+        userId: ARKOVA_USER_ID,
+        orgId: ARKOVA_ORG_ID,
+        provider: 'credly',
+        accountId: 'credly-acct-1',
+        ciphertext: Buffer.from('encrypted-token-payload'),
+        kmsKeyName: TEST_KEY_NAME,
+        kekVersion: 1,
+      });
+
+      await expect(
+        readCredentialProviderTokens(
+          {
+            userId: ARKOVA_USER_ID,
+            orgId: ARKOVA_ORG_ID,
+            provider: 'credly',
+            accountId: 'credly-acct-1',
+          },
+          { kms: fakeKms, rowStore: store.deps },
+        ),
+      ).rejects.toThrow('kms unavailable');
+
+      expect(fakeKms.decrypt).toHaveBeenCalledTimes(1);
+    });
   });
 });
 
@@ -318,7 +384,6 @@ describe('SCRUM-1612 — issuer credentials (client_credentials grant)', () => {
       const row = store.rows[0];
       expect(row.provider).toBe('credly');
       expect(row.kek_version).toBe(1);
-      // The client_secret must NEVER appear in the stored ciphertext as plaintext
       expect(row.encrypted_tokens?.toString('utf8')).not.toContain('super-secret');
       expect(row.encrypted_tokens?.toString('utf8')).not.toContain('credly-issuer-app');
     });
@@ -340,7 +405,38 @@ describe('SCRUM-1612 — issuer credentials (client_credentials grant)', () => {
       expect(fakeKms.encrypt).not.toHaveBeenCalled();
     });
 
-    it('rejects missing client_secret (Zod parse fails before KMS call)', async () => {
+    it('rejects non-UUID userId and orgId before encrypting', async () => {
+      await expect(
+        storeIssuerCredentials(
+          {
+            userId: 'not-a-uuid',
+            orgId: ARKOVA_ORG_ID,
+            provider: 'credly',
+            accountId: 'credly-org-1',
+            credentials: sampleIssuerCredentials,
+          },
+          { kms: fakeKms, keyName: TEST_KEY_NAME, rowStore: store.deps },
+        ),
+      ).rejects.toThrow(/uuid/i);
+
+      await expect(
+        storeIssuerCredentials(
+          {
+            userId: ARKOVA_USER_ID,
+            orgId: 'not-a-uuid',
+            provider: 'credly',
+            accountId: 'credly-org-1',
+            credentials: sampleIssuerCredentials,
+          },
+          { kms: fakeKms, keyName: TEST_KEY_NAME, rowStore: store.deps },
+        ),
+      ).rejects.toThrow(/uuid/i);
+
+      expect(fakeKms.encrypt).not.toHaveBeenCalled();
+      expect(store.rows).toHaveLength(0);
+    });
+
+    it('rejects missing client_secret before encrypting', async () => {
       await expect(
         storeIssuerCredentials(
           {
@@ -359,7 +455,7 @@ describe('SCRUM-1612 — issuer credentials (client_credentials grant)', () => {
   });
 
   describe('readIssuerCredentials', () => {
-    it('round-trips: store → fetch → decrypt yields original credentials', async () => {
+    it('round-trips: store -> fetch -> decrypt yields original credentials', async () => {
       await storeIssuerCredentials(
         {
           userId: ARKOVA_USER_ID,
@@ -400,9 +496,7 @@ describe('SCRUM-1612 — issuer credentials (client_credentials grant)', () => {
       expect(result).toBeNull();
     });
 
-    it('throws on corrupted JSON (defence-in-depth)', async () => {
-      // Insert a row whose plaintext (after our fake KMS reverse-decrypt)
-      // is not valid JSON.
+    it('throws on corrupted JSON', async () => {
       await store.deps.upsertEncryptedRow({
         userId: ARKOVA_USER_ID,
         orgId: ARKOVA_ORG_ID,

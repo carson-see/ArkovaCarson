@@ -36,11 +36,11 @@ import {
  * Issuer credentials for OAuth 2.0 `client_credentials` grant flows
  * (Credly, Accredible API-key, Udemy Business xAPI). Distinct from
  * `OAuthTokens` because these flows have no end-user authorisation code or
- * refresh token — the credentials are the durable issuer-app secret, and
- * the access token is a cache that the worker re-mints on expiry.
+ * refresh token: the credentials are the durable issuer-app secret, and the
+ * access token is a cache that the worker re-mints on expiry.
  *
- * Stored in the same `encrypted_tokens` bytea column as the existing
- * DocuSign refresh tokens. The `provider` column on `member_integrations`
+ * Stored in the same `encrypted_tokens` bytea column as the existing DocuSign
+ * refresh tokens. The `provider` column on `member_integrations`
  * discriminates which shape lives inside.
  */
 export const IssuerCredentialsSchema = z.object({
@@ -58,7 +58,7 @@ export type IssuerCredentials = z.infer<typeof IssuerCredentialsSchema>;
 
 /**
  * Supported credential-source providers. Mirrors the widened CHECK constraint
- * established by migration 0327. Adding a new provider requires:
+ * established by migration 0329. Adding a new provider requires:
  *   1. A new migration that widens the CHECK constraint
  *   2. Updating this union (and the runtime guard below)
  */
@@ -108,8 +108,13 @@ export interface MemberIntegrationRowDeps {
   } | null>;
 }
 
-/** Default KEK version for new rows. Migration 0327 sets the same default. */
+/** Default KEK version for new rows. Migration 0329 sets the same default. */
 const DEFAULT_KEK_VERSION = 1;
+
+const StoreCredentialProviderTokenIdsSchema = z.object({
+  userId: z.string().uuid(),
+  orgId: z.string().uuid(),
+});
 
 export interface StoreTokensInput {
   userId: string;
@@ -117,7 +122,7 @@ export interface StoreTokensInput {
   provider: CredentialProvider;
   accountId: string;
   tokens: OAuthTokens;
-  /** Optional override. Defaults to 1 — matches migration 0327. */
+  /** Optional override. Defaults to 1 — matches migration 0329. */
   kekVersion?: number;
 }
 
@@ -133,7 +138,7 @@ export interface StoreTokensDeps {
  * Encrypt and persist a credential-source provider's OAuth tokens.
  *
  * Validates `provider` against the supported enum (defence-in-depth alongside
- * the migration 0327 CHECK constraint).
+ * the migration 0329 CHECK constraint).
  *
  * Stores `kek_version` so a future KMS key rotation can identify which key
  * wrapped each row without forcing an immediate re-encrypt sweep
@@ -147,6 +152,11 @@ export async function storeCredentialProviderTokens(
   // assertion above (`as any` in callers) can slip through.
   assertSupportedProvider(input.provider);
 
+  const ids = StoreCredentialProviderTokenIdsSchema.parse({
+    userId: input.userId,
+    orgId: input.orgId,
+  });
+
   // Validate the token shape before we encrypt — saves a KMS round-trip
   // on malformed input.
   const parsed = OAuthTokensSchema.parse(input.tokens);
@@ -159,8 +169,8 @@ export async function storeCredentialProviderTokens(
   });
 
   return deps.rowStore.upsertEncryptedRow({
-    userId: input.userId,
-    orgId: input.orgId,
+    userId: ids.userId,
+    orgId: ids.orgId,
     provider: input.provider,
     accountId: input.accountId,
     ciphertext,
@@ -210,7 +220,7 @@ export async function readCredentialProviderTokens(
 }
 
 // ---------------------------------------------------------------------------
-// Issuer credentials variant (client_credentials providers — Credly etc.)
+// Issuer credentials variant (client_credentials providers: Credly etc.)
 // ---------------------------------------------------------------------------
 
 export interface StoreIssuerCredentialsInput {
@@ -223,10 +233,10 @@ export interface StoreIssuerCredentialsInput {
 }
 
 /**
- * Encrypt and persist client_credentials issuer secrets (client_id +
- * client_secret + optional cached access_token) into `member_integrations`.
+ * Encrypt and persist client_credentials issuer secrets into
+ * `member_integrations`.
  *
- * Same KMS-backed encryption path as `storeCredentialProviderTokens` but
+ * Same KMS-backed encryption path as `storeCredentialProviderTokens`, but it
  * accepts the issuer-credentials shape. Choose this for Credly /
  * Accredible-API-key / Udemy-Business-xAPI flows; choose
  * `storeCredentialProviderTokens` for end-user OAuth refresh-token flows.
@@ -237,18 +247,19 @@ export async function storeIssuerCredentials(
 ): Promise<{ id: string }> {
   assertSupportedProvider(input.provider);
 
+  const ids = StoreCredentialProviderTokenIdsSchema.parse({
+    userId: input.userId,
+    orgId: input.orgId,
+  });
   const parsed = IssuerCredentialsSchema.parse(input.credentials);
   const keyName = deps.keyName ?? getIntegrationTokenKeyName(deps.env);
 
-  // Reuse the OAuth crypto module's primitives: encrypt the JSON blob bytes
-  // directly. We are NOT calling encryptTokens (which assumes OAuthTokens
-  // shape) because the issuer-credentials shape includes client_secret.
   const plaintext = Buffer.from(JSON.stringify(parsed), 'utf8');
   const ciphertext = await deps.kms.encrypt({ keyName, plaintext });
 
   return deps.rowStore.upsertEncryptedRow({
-    userId: input.userId,
-    orgId: input.orgId,
+    userId: ids.userId,
+    orgId: ids.orgId,
     provider: input.provider,
     accountId: input.accountId,
     ciphertext,

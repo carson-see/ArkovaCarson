@@ -13,6 +13,10 @@
  */
 
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { useAuth } from '@/hooks/useAuth';
+import { useProfile } from '@/hooks/useProfile';
+import { AppShell } from '@/components/layout';
 import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
 import { Download, FileText, FileCheck, Scale, Lock, BarChart3, AlertCircle, Loader2 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -20,6 +24,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
 import { workerFetch } from '@/lib/workerClient';
+import { ROUTES } from '@/lib/routes';
 
 function downloadBlob(data: string, filename: string, type: string) {
   const blob = new Blob([data], { type });
@@ -32,8 +37,16 @@ function downloadBlob(data: string, filename: string, type: string) {
 }
 
 export default function SignatureCompliancePage() {
+  const navigate = useNavigate();
+  const { user, signOut } = useAuth();
+  const { profile, loading: profileLoading } = useProfile();
   const [loading, setLoading] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  const handleSignOut = async () => {
+    await signOut();
+    navigate(ROUTES.LOGIN);
+  };
 
   const downloadExport = async (format: 'json' | 'csv') => {
     setLoading(`export-${format}`);
@@ -102,6 +115,12 @@ export default function SignatureCompliancePage() {
   };
 
   return (
+    <AppShell
+      user={user}
+      profile={profile}
+      profileLoading={profileLoading}
+      onSignOut={handleSignOut}
+    >
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-semibold text-white flex items-center gap-2">
@@ -249,5 +268,6 @@ export default function SignatureCompliancePage() {
         </CardContent>
       </Card>
     </div>
+    </AppShell>
   );
 }

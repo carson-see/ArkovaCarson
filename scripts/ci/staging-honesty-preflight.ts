@@ -40,7 +40,8 @@
  */
 
 import { createClient } from '@supabase/supabase-js';
-import { resolve } from 'node:path';
+import { readdirSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 // ---------------------------------------------------------------------------
@@ -324,6 +325,105 @@ export function computeProdDivergence(
 }
 
 /**
+ * Parse the canonical migration version (the `NNNN_` prefix, or the all-zero
+ * baseline prefix) from a migration filename. Mirrors the convention enforced
+ * by scripts/ci/check-migration-prefix-uniqueness.ts so the preflight reads the
+ * repo the same way the rest of CI does.
+ *
+ * Returns null for files that carry no numeric prefix (templates, READMEs).
+ */
+export function parseRepoMigrationVersion(filename: string): string | null {
+  // Strip any leading directory component, then match a leading 4+-digit prefix.
+  const base = filename.split('/').pop() ?? filename;
+  const m = base.match(/^(\d{4,})_/);
+  return m ? m[1] : null;
+}
+
+/**
+ * True when the ledger contains the canonical squashed-baseline row. The
+ * baseline row is recognised by EITHER its version or its name matching the
+ * canonical init/baseline set (the squash records version `00000000000000`
+ * with name `baseline_at_main_HEAD`).
+ *
+ * Presence of this row means the rig was built from a squashed baseline, so the
+ * baseline legitimately subsumes all pre-baseline prod history — those prod rows
+ * being "missing" from the rig is expected, not contamination.
+ */
+export function hasCanonicalBaseline(rows: MigrationRow[]): boolean {
+  return rows.some((r) => CANONICAL_INIT_NAMES.has(r.version) || CANONICAL_INIT_NAMES.has(r.name));
+}
+
+/**
+ * Structured verdict from the repo-files-as-source-of-truth divergence analysis.
+ */
+export interface ProdDivergenceVerdict {
+  /** Rig carries the canonical squashed-baseline row. */
+  baselinePresent: boolean;
+  /** Rig versions absent from prod AND absent from the repo (potential contamination). MUST FAIL. */
+  unexplainedExtras: string[];
+  /** Repo migration versions absent from the rig ledger (rig incomplete / behind main). MUST FAIL. */
+  missingRepoMigrations: string[];
+  /** Prod versions absent from the rig (informational under a baseline squash; failure otherwise). */
+  prodMissing: string[];
+  /** Overall pass/fail for the prod_divergence check. */
+  passed: boolean;
+}
+
+/**
+ * Baseline-squash-aware divergence analysis.
+ *
+ * Legitimacy is judged against the repo migration files (the source of truth
+ * per §1.2 schema-first) plus the canonical baseline — NEVER the rig's own
+ * claims. A clean isolated rig built by squashing pre-baseline history into the
+ * canonical baseline and then applying every repo migration is `clean_mirror`,
+ * even though its ledger diverges from prod's (prod still carries pre-baseline
+ * rows and stores recent migrations under timestamp/descriptive version
+ * strings).
+ *
+ * Buckets (compared by version):
+ *  - unexplainedExtras: rig ∉ prod AND rig ∉ repo AND not the canonical baseline.
+ *    These are rows nothing in the repo or prod can account for → contamination.
+ *  - missingRepoMigrations: repo ∉ rig → the rig is behind the repo / incomplete.
+ *  - prodMissing: prod ∉ rig. Informational when a baseline row is present (the
+ *    baseline subsumes pre-baseline history); otherwise a failure (this preserves
+ *    the old strictness for incremental shared-staging ledgers with no baseline).
+ *
+ * PASS iff unexplainedExtras and missingRepoMigrations are both empty AND
+ * (a baseline is present OR there are no prod-missing rows).
+ */
+export function analyzeProdDivergence(
+  rows: MigrationRow[],
+  prodVersions: string[],
+  repoVersions: ReadonlySet<string>,
+): ProdDivergenceVerdict {
+  const rigVersions = new Set(rows.map((r) => r.version));
+  const prodSet = new Set(prodVersions);
+  const baselinePresent = hasCanonicalBaseline(rows);
+
+  // Rig rows that prod does not have.
+  const extras = [...rigVersions].filter((v) => !prodSet.has(v));
+
+  // An extra is "explained" if it corresponds to a repo migration file or is the
+  // canonical baseline version. Anything else is unaccounted-for → contamination.
+  const unexplainedExtras = extras.filter(
+    (v) => !repoVersions.has(v) && !CANONICAL_INIT_NAMES.has(v),
+  );
+
+  // Every repo migration must be present in the rig ledger.
+  const missingRepoMigrations = [...repoVersions].filter((v) => !rigVersions.has(v));
+
+  // Prod versions the rig lacks.
+  const prodMissing = prodVersions.filter((v) => !rigVersions.has(v));
+
+  const passed =
+    unexplainedExtras.length === 0 &&
+    missingRepoMigrations.length === 0 &&
+    (baselinePresent || prodMissing.length === 0);
+
+  return { baselinePresent, unexplainedExtras, missingRepoMigrations, prodMissing, passed };
+}
+
+/**
  * Check org topology: distinguish single-tenant prod from multi-org staging seeds.
  * Requires org-scoped fixtures (non-seed orgs) when seed orgs are present.
  */
@@ -407,10 +507,17 @@ export function buildReport(opts: {
   migrationRows: MigrationRow[];
   submittedAnchorCount: number;
   prodVersions: string[];
+  /**
+   * Canonical migration versions parsed from supabase/migrations/*.sql (the
+   * repo source of truth). When provided, the prod_divergence check becomes
+   * baseline-squash-aware via analyzeProdDivergence. When omitted, the legacy
+   * strict computeProdDivergence behavior is preserved (any divergence fails).
+   */
+  repoVersions?: ReadonlySet<string>;
   orgTopology?: OrgTopologyData;
   prodFacts?: ProdFactsData;
 }): PreflightReport {
-  const { projectRef, migrationRows, submittedAnchorCount, prodVersions } = opts;
+  const { projectRef, migrationRows, submittedAnchorCount, prodVersions, repoVersions } = opts;
   const checks: CheckResult[] = [];
   let allArtifactRows: MigrationRow[] = [];
 
@@ -466,16 +573,50 @@ export function buildReport(opts: {
       : 'Zero SUBMITTED anchors — environment may lack test fixtures.',
   });
 
-  // Check 6: Prod divergence
+  // Check 6: Prod divergence.
+  // The raw buckets (missingFromStaging / extraVsProd) are always reported for
+  // transparency. When the repo migration files are supplied, the PASS/FAIL
+  // verdict is baseline-squash-aware (analyzeProdDivergence): legitimacy is
+  // judged against repo files + the canonical baseline, never the rig's own
+  // claims. Without repoVersions, the legacy strict rule applies (any
+  // divergence fails) — this preserves shared-staging behavior.
   const divergence = computeProdDivergence(migrationRows, prodVersions);
-  const prodDiverged = divergence.missingFromStaging.length > 0 || divergence.extraVsProd.length > 0;
-  checks.push({
-    name: 'prod_divergence',
-    passed: !prodDiverged,
-    details: prodDiverged
-      ? `Missing from staging: [${divergence.missingFromStaging.join(', ')}]; Extra vs prod: [${divergence.extraVsProd.join(', ')}]`
-      : 'Staging versions match prod ledger.',
-  });
+  if (repoVersions) {
+    const verdict = analyzeProdDivergence(migrationRows, prodVersions, repoVersions);
+    const detailParts: string[] = [];
+    if (verdict.unexplainedExtras.length > 0) {
+      detailParts.push(`Unexplained extras (not in repo or prod): [${verdict.unexplainedExtras.join(', ')}]`);
+    }
+    if (verdict.missingRepoMigrations.length > 0) {
+      detailParts.push(`Repo migrations missing from rig: [${verdict.missingRepoMigrations.join(', ')}]`);
+    }
+    if (!verdict.baselinePresent && verdict.prodMissing.length > 0) {
+      detailParts.push(`Prod versions missing from rig (no baseline to subsume them): [${verdict.prodMissing.join(', ')}]`);
+    }
+    let passDetail: string;
+    if (verdict.passed) {
+      const subsumed = verdict.baselinePresent && verdict.prodMissing.length > 0
+        ? ` ${verdict.prodMissing.length} pre-baseline/version-shape prod row(s) subsumed by the canonical baseline (informational).`
+        : '';
+      passDetail = `Rig ledger reconciles with repo migration files + canonical baseline.${subsumed}`;
+    } else {
+      passDetail = detailParts.join('; ');
+    }
+    checks.push({
+      name: 'prod_divergence',
+      passed: verdict.passed,
+      details: passDetail,
+    });
+  } else {
+    const prodDiverged = divergence.missingFromStaging.length > 0 || divergence.extraVsProd.length > 0;
+    checks.push({
+      name: 'prod_divergence',
+      passed: !prodDiverged,
+      details: prodDiverged
+        ? `Missing from staging: [${divergence.missingFromStaging.join(', ')}]; Extra vs prod: [${divergence.extraVsProd.join(', ')}]`
+        : 'Staging versions match prod ledger.',
+    });
+  }
 
   // Check 7: Org topology (single-tenant prod vs multi-org staging seeds)
   if (opts.orgTopology) {
@@ -672,6 +813,27 @@ async function fetchProdFactsViaManagementApi(projectRef: string, managementApiT
   return mapManagementProdFacts(cronRows, functionRows);
 }
 
+/**
+ * Read the canonical migration versions from supabase/migrations/*.sql.
+ * This is the repo source of truth the divergence verdict reconciles against.
+ * Returns undefined (so buildReport falls back to legacy strictness) if the
+ * directory cannot be read.
+ */
+function loadRepoMigrationVersions(): ReadonlySet<string> | undefined {
+  const migrationsDir = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', 'supabase', 'migrations');
+  try {
+    const versions = new Set<string>();
+    for (const file of readdirSync(migrationsDir)) {
+      if (!file.endsWith('.sql') || file.startsWith('_')) continue;
+      const version = parseRepoMigrationVersion(file);
+      if (version) versions.add(version);
+    }
+    return versions.size > 0 ? versions : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
 
@@ -780,11 +942,14 @@ async function main(): Promise<void> {
     }
   }
 
+  const repoVersions = loadRepoMigrationVersions();
+
   const report = buildReport({
     projectRef: projectRef ?? supabaseUrl,
     migrationRows,
     submittedAnchorCount: count ?? 0,
     prodVersions,
+    repoVersions,
     orgTopology,
     prodFacts,
   });

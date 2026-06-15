@@ -22,8 +22,28 @@
  * edge handler context. Tracked as follow-up story INT-02b.
  */
 
-/** Request timeout for all Supabase fetch calls (ms) */
-const FETCH_TIMEOUT_MS = 10_000;
+/** Request timeout for Supabase fetch calls (ms). */
+const SUPABASE_FETCH_TIMEOUT_MS = 10_000;
+
+/** Request timeout for worker-proxied Nessie context generation (ms). */
+const NESSIE_WORKER_FETCH_TIMEOUT_MS = 30_000;
+
+/**
+ * Embedding model used by the edge nessie vector-search path.
+ *
+ * WARNING (BUG-3a): this Workers AI model (`@cf/baai/bge-base-en-v1.5`,
+ * 768-dim) is NOT the same model family the public-record index was built
+ * with. The index is embedded by the worker with Gemini
+ * `gemini-embedding-001` (see `services/worker/src/ai/gemini-config.ts`
+ * `GEMINI_EMBEDDING_MODEL`). Querying a Gemini-built index with BGE vectors
+ * returns semantically meaningless nearest-neighbours. PR-3 re-routes the
+ * nessie vector path through the worker so both sides share ONE model.
+ * Until then the edge text-fallback (`nessieTextFallback`) is the truthful
+ * path. The cross-service drift-guard test
+ * (`services/worker/src/nessie-embedding-drift.test.ts`) fails if this
+ * literal diverges in family from the worker's index model.
+ */
+export const NESSIE_EMBEDDING_MODEL = '@cf/baai/bge-base-en-v1.5';
 
 /** SHA-256 hex pattern (64 hex chars). Exported so mcp-server.ts can
  *  reuse the single source of truth for its Zod input validator. */
@@ -118,6 +138,23 @@ export interface SupabaseConfig {
   supabaseUrl: string;
   supabaseKey: string;
   userId: string;
+  /**
+   * Base URL of the Arkova worker (e.g. https://api.arkova.ai). When set,
+   * `handleNessieQuery` proxies the vector path to the worker's single
+   * Gemini embedder (`GET /api/v1/nessie/query`) instead of re-embedding
+   * with Cloudflare bge-base against a Gemini-space index (BUG-3a). When
+   * unset (local dev / preview without the binding), the edge degrades to
+   * the lowercase text fallback only.
+   */
+  workerBaseUrl?: string;
+  /**
+   * The RAW API key the caller presented on the inbound MCP request
+   * (X-API-Key auth only; absent for OAuth Bearer callers). Forwarded
+   * verbatim as `X-API-Key` to the worker nessie endpoint so the worker
+   * enforces the caller's org-scoping, scopes, and per-caller rate limits
+   * — NOT a shared service-account key. NEVER logged.
+   */
+  callerApiKey?: string;
 }
 
 const PUBLIC_ID_JSON_SCHEMA: ToolInputSchemaProperty = {
@@ -151,7 +188,7 @@ export function supabaseFetch(
   init?: RequestInit,
 ): Promise<Response> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  const timer = setTimeout(() => controller.abort(), SUPABASE_FETCH_TIMEOUT_MS);
 
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -475,7 +512,18 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
  * (batch uses this to identify rows). When omitted, the single-record
  * contract is preserved.
  */
-function shapeAnchorRow(
+// BUG-2 (PR-1): keys MUST match what `get_public_anchor` actually emits
+// (migration 0311_scrum1599_public_anchor_provenance.sql,
+// jsonb_build_object body). The prior implementation read six keys the RPC
+// never returns — org_name / recipient_hash / issued_at / expires_at /
+// created_at(-as-anchor-time) / chain_tx_id — so every mapped field silently
+// fell back to its default ('Unknown', '', null) for SECURED anchors. The
+// correct RPC keys are issuer_name / recipient_identifier / issued_date /
+// expiry_date / anchor_timestamp / network_receipt_id.
+//
+// `anchor_timestamp` is the network-observed time (CLAUDE.md §1.5); the RPC
+// gates it to NULL for PENDING anchors, so default to null (NOT '') here.
+export function shapeAnchorRow(
   data: Record<string, unknown>,
   publicId?: string,
 ): Record<string, unknown> {
@@ -485,13 +533,13 @@ function shapeAnchorRow(
     ...(publicId !== undefined ? { public_id: publicId } : {}),
     verified: status === 'SECURED' || status === 'ACTIVE',
     status: mapStatus(status),
-    issuer_name: (data?.org_name as string) ?? 'Unknown',
-    recipient_identifier: (data?.recipient_hash as string) ?? '',
+    issuer_name: (data?.issuer_name as string) ?? 'Unknown',
+    recipient_identifier: (data?.recipient_identifier as string) ?? '',
     credential_type: (data?.credential_type as string) ?? 'UNKNOWN',
-    issued_date: (data?.issued_at as string | null) ?? null,
-    expiry_date: (data?.expires_at as string | null) ?? null,
-    anchor_timestamp: (data?.created_at as string) ?? '',
-    network_receipt_id: (data?.chain_tx_id as string | null) ?? null,
+    issued_date: (data?.issued_date as string | null) ?? null,
+    expiry_date: (data?.expiry_date as string | null) ?? null,
+    anchor_timestamp: (data?.anchor_timestamp as string | null) ?? null,
+    network_receipt_id: (data?.network_receipt_id as string | null) ?? null,
     record_uri: `https://app.arkova.ai/verify/${resolvedPublicId}`,
     ...(data?.jurisdiction ? { jurisdiction: data.jurisdiction as string } : {}),
   };
@@ -769,7 +817,9 @@ export async function handleAgentSearch(
           type: 'fingerprint',
           public_id: parsed.public_id,
           score: 1,
-          snippet: parsed.title ?? parsed.content_hash ?? '',
+          // shapeAnchorRow carries no title/content_hash, so fall back to the
+          // public_id as the snippet (the only human-meaningful handle here).
+          snippet: parsed.public_id ?? '',
           metadata: { status: parsed.status ?? null },
         }] : [],
         next_cursor: null,
@@ -808,50 +858,44 @@ export async function handleAgentSearch(
 export async function handleNessieQuery(
   input: NessieQueryInput,
   config: SupabaseConfig,
-  ai?: Ai,
+  _ai?: Ai,
 ): Promise<ToolResult> {
   if (!input.query || input.query.trim().length === 0) {
     return errorResult('Error: query is required');
   }
 
   const matchCount = Math.min(input.limit ?? 10, 50);
+  const mode = input.mode ?? 'retrieval';
 
   try {
-    // Race vector search (Workers AI → pgvector RPC) against text search.
-    // Vector search is higher quality but Workers AI cold starts can take
-    // 5-8 seconds. The text fallback returns in <1 s. Whichever finishes
-    // first wins; if only one branch is available, run that alone.
-    const textSearchPromise = nessieTextFallback(input.query, matchCount, config);
+    // BUG-3a: the edge no longer embeds the query itself. Embedding the
+    // query with Cloudflare bge-base (`NESSIE_EMBEDDING_MODEL`, 768-dim) and
+    // searching a Gemini-space index returned semantically meaningless
+    // neighbours, so this tool silently degraded to `text_fallback`/total=0.
+    // PR-3 proxies the vector path to the worker's SINGLE Gemini embedder
+    // (`GET {workerBaseUrl}/api/v1/nessie/query`) and forwards the caller's
+    // raw API key so the worker enforces org-scoping + per-caller rate limits.
+    //
+    // `_ai` is retained in the signature for backwards-compat but is no longer
+    // used for embedding — the model lives entirely on the worker side now.
 
-    if (!ai) {
-      return await textSearchPromise;
+    // No worker configured (local dev / preview): the truthful path is the
+    // lowercase text fallback (BUG-3b, PR-1). Don't pretend to do vector search.
+    if (!config.workerBaseUrl || !config.callerApiKey) {
+      return await nessieTextFallback(input.query, matchCount, config);
     }
 
-    const vectorSearchPromise = nessieVectorSearch(
+    const workerResult = await nessieWorkerQuery(
       input.query,
-      input.mode ?? 'retrieval',
+      mode,
       matchCount,
       config,
-      ai,
     );
+    if (workerResult) return workerResult;
 
-    // Race: whichever resolves first wins. Both branches are wrapped
-    // so they never reject — they return errorResult instead of throwing.
-    const result = await Promise.race([
-      vectorSearchPromise
-        .then((r) => ({ source: 'vector' as const, result: r }))
-        .catch(() => null),
-      textSearchPromise
-        .then((r) => ({ source: 'text' as const, result: r }))
-        .catch(() => null),
-    ]);
-
-    if (result) return result.result;
-
-    // Both branches errored out — return whatever text search gives
-    return await textSearchPromise.catch(() =>
-      errorResult('Nessie query: all search paths failed'),
-    );
+    // Worker unreachable / errored — degrade gracefully to text fallback
+    // (already PR-1-fixed to lowercase sources) instead of throwing.
+    return await nessieTextFallback(input.query, matchCount, config);
   } catch (error) {
     const msg =
       error instanceof Error && error.name === 'AbortError'
@@ -861,78 +905,177 @@ export async function handleNessieQuery(
   }
 }
 
-/** Vector search: Workers AI embedding → pgvector RPC → hydrate. */
-async function nessieVectorSearch(
+/** Single worker nessie result (mirror of services/worker NessieResult). */
+interface WorkerNessieResult {
+  record_id: string;
+  source: string;
+  source_url: string;
+  record_type: string;
+  title: string | null;
+  relevance_score: number;
+  anchor_proof: Record<string, unknown> | null;
+  metadata?: Record<string, unknown>;
+}
+
+/**
+ * Worker context-mode citation (mirror of services/worker NessieCitation).
+ * mode=context returns a synthesized answer + these citations, NOT `results`.
+ */
+interface WorkerNessieCitation {
+  record_id: string;
+  source: string;
+  source_url: string;
+  title: string | null;
+  relevance_score: number;
+  anchor_proof: Record<string, unknown> | null;
+  excerpt: string;
+}
+
+/**
+ * Worker mode=context response shape (mirror of services/worker
+ * NessieContextResponse). NOTE: there is NO `results` field — the synthesized
+ * answer lives in `answer` and the supporting documents in `citations`.
+ */
+interface WorkerNessieContextResponse {
+  answer: string;
+  citations: WorkerNessieCitation[];
+  confidence: number;
+  risks?: string[];
+  recommendations?: string[];
+  model?: string;
+  query?: string;
+  task_type?: string;
+  tokens_used?: number;
+  cached?: boolean;
+  // Present only on the worker's graceful-degradation fallback branch, where
+  // it falls back to retrieval and emits `results` instead of `answer`.
+  results?: WorkerNessieResult[];
+  fallback?: boolean;
+}
+
+/**
+ * Vector search via the worker's Gemini-space endpoint (BUG-3a).
+ *
+ * Issues `GET {workerBaseUrl}/api/v1/nessie/query?q=&mode=&limit=` with the
+ * caller's raw API key forwarded as `X-API-Key` (never the service-role key).
+ *
+ * The worker returns TWO different shapes depending on `mode`:
+ *   - retrieval → `{results, count, query}` — mapped to the MCP
+ *     `{query, mode, total, results}` contract, preserving `relevance_score`
+ *     (as `similarity`) and the anchor citation.
+ *   - context  → `{answer, citations, confidence, ...}` with NO `results`
+ *     field — mapped to `{query, mode, answer, confidence, citations, total}`
+ *     so the synthesized answer + citations survive (previously dropped → the
+ *     edge silently returned total:0 for every context query).
+ *
+ * Returns `null` on any network/HTTP/shape failure so the caller can fall
+ * back to the text path. NEVER logs `config.callerApiKey`.
+ */
+async function nessieWorkerQuery(
   query: string,
   mode: string,
   matchCount: number,
   config: SupabaseConfig,
-  ai: Ai,
-): Promise<ToolResult> {
-  const embResult = await ai.run('@cf/baai/bge-base-en-v1.5', {
-    text: query,
-  }) as { data: number[][] };
-  const embedding = embResult?.data?.[0];
+): Promise<ToolResult | null> {
+  let base = config.workerBaseUrl ?? '';
+  while (base.endsWith('/')) base = base.slice(0, -1);
+  const callerKey = config.callerApiKey;
+  if (!base || !callerKey) return null;
 
-  if (!embedding || !Array.isArray(embedding) || embedding.length !== 768) {
-    throw new Error('Workers AI returned unexpected embedding shape');
+  const params = new URLSearchParams({
+    q: query,
+    mode,
+    limit: String(matchCount),
+  });
+  const url = `${base}/api/v1/nessie/query?${params.toString()}`;
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), NESSIE_WORKER_FETCH_TIMEOUT_MS);
+  try {
+    const response = await fetch(url, {
+      method: 'GET',
+      headers: {
+        Accept: 'application/json',
+        // Forward the CALLER's key — preserves org-scoping, scopes, and the
+        // worker's per-caller rate limits. Do NOT log this value.
+        'X-API-Key': callerKey,
+      },
+      signal: controller.signal,
+    });
+
+    if (!response.ok) {
+      // Redacted log: status only, never the key or full URL with params.
+      console.warn(`[nessie_query] worker proxy HTTP ${response.status}; falling back to text search`);
+      return null;
+    }
+
+    const body = (await response.json()) as WorkerNessieContextResponse & {
+      results?: WorkerNessieResult[];
+      count?: number;
+    };
+
+    // MODE: context — the worker returns a synthesized {answer, citations,
+    // confidence} envelope with NO top-level `results` field (see
+    // services/worker/src/api/v1/nessie-query.ts context branch). Mapping only
+    // `body.results` here would silently drop the answer + citations and
+    // report total:0. Preserve them into the MCP text contract instead.
+    //
+    // The one exception is the worker's graceful-degradation path: on a
+    // context-generation failure it falls back to retrieval and emits
+    // `{results, fallback:true}`. Detect that by the presence of `results`
+    // (and absence of a synthesized `answer`) and map it like retrieval.
+    const isContextEnvelope =
+      mode === 'context' && !Array.isArray(body.results) && typeof body.answer === 'string';
+
+    if (isContextEnvelope) {
+      const citations = Array.isArray(body.citations) ? body.citations : [];
+      const mappedCitations = citations.map((c) => ({
+        record_id: c.record_id,
+        title: c.title,
+        source: c.source,
+        source_url: c.source_url,
+        similarity: c.relevance_score,
+        anchor_proof: c.anchor_proof ?? null,
+        excerpt: c.excerpt,
+      }));
+
+      return textResult({
+        query,
+        mode,
+        answer: body.answer,
+        confidence: body.confidence,
+        citations: mappedCitations,
+        // `total` reflects citation count so context queries no longer report
+        // total:0 when a real synthesized answer was returned.
+        total: mappedCitations.length,
+        ...(body.risks ? { risks: body.risks } : {}),
+        ...(body.recommendations ? { recommendations: body.recommendations } : {}),
+      });
+    }
+
+    // MODE: retrieval (or context graceful-fallback emitting `results`).
+    const workerResults = Array.isArray(body.results) ? body.results : [];
+
+    const results = workerResults.map((r) => ({
+      record_id: r.record_id,
+      title: r.title,
+      source: r.source,
+      source_url: r.source_url,
+      record_type: r.record_type,
+      similarity: r.relevance_score,
+      anchor_proof: r.anchor_proof ?? null,
+      metadata: r.metadata ?? {},
+    }));
+
+    return textResult({ query, mode, total: results.length, results });
+  } catch (err) {
+    // AbortError or network failure — redacted (no key, no params).
+    const reason = err instanceof Error ? err.name : 'unknown';
+    console.warn(`[nessie_query] worker proxy failed (${reason}); falling back to text search`);
+    return null;
+  } finally {
+    clearTimeout(timer);
   }
-
-  const threshold = mode === 'context' ? 0.55 : 0.65;
-  const vecStr = `[${embedding.join(',')}]`;
-
-  const response = await supabaseFetch(
-    config,
-    '/rest/v1/rpc/search_public_record_embeddings',
-    {
-      method: 'POST',
-      body: JSON.stringify({
-        p_query_embedding: vecStr,
-        p_match_threshold: threshold,
-        p_match_count: matchCount,
-      }),
-    },
-  );
-
-  if (!response.ok) {
-    const errBody = await response.text().catch(() => '');
-    throw new Error(`embedding RPC HTTP ${response.status}: ${errBody}`);
-  }
-
-  const matches = (await response.json()) as Array<{
-    public_record_id: string;
-    similarity: number;
-  }>;
-
-  if (!Array.isArray(matches) || matches.length === 0) {
-    return textResult({ query, mode, total: 0, results: [] });
-  }
-
-  const ids = matches.map((m) => m.public_record_id);
-  const simMap = new Map(matches.map((m) => [m.public_record_id, m.similarity]));
-  const hydrated = await hydratePublicRecords(ids, config);
-  const results = hydrated.map((r) => ({
-    ...r,
-    similarity: simMap.get(r.id as string) ?? 0,
-  }));
-
-  return textResult({ query, mode, total: results.length, results });
-}
-
-/** Hydrate public_records by IDs (for embedding search results). */
-async function hydratePublicRecords(
-  ids: string[],
-  config: SupabaseConfig,
-): Promise<Array<Record<string, unknown>>> {
-  if (ids.length === 0) return [];
-  const inList = ids.map((id) => `"${id}"`).join(',');
-  const resp = await supabaseFetch(
-    config,
-    `/rest/v1/public_records?id=in.(${inList})&select=id,title,source,source_url,record_type,content_hash,anchor_id,created_at`,
-  );
-  if (!resp.ok) return [];
-  const rows = (await resp.json()) as Array<Record<string, unknown>>;
-  return Array.isArray(rows) ? rows : [];
 }
 
 /** Text-based fallback search on public_records (no embeddings needed).
@@ -947,14 +1090,17 @@ async function nessieTextFallback(
 ): Promise<ToolResult> {
   try {
     // Extract known source keywords from the query for indexed filtering.
-    // public_records.source values: "EDGAR", "USPTO", "FEDERAL_REGISTER",
-    // "OPENALEX", etc. If the query mentions one, filter on it.
+    // BUG-3b (PR-1): ingestion fetchers insert LOWERCASE source values —
+    // 'edgar', 'uspto', 'federal_register', 'openalex' (verify in
+    // services/worker/src/jobs/*Fetcher.ts). The previous UPPERCASE literals
+    // ('EDGAR', ...) made `source=eq.EDGAR` never match any row, so every
+    // source-scoped nessie query silently returned the unfiltered recent set.
     const q = query.toLowerCase();
     const sourceFilters: string[] = [];
-    if (q.includes('sec') || q.includes('filing') || q.includes('edgar')) sourceFilters.push('EDGAR');
-    if (q.includes('patent') || q.includes('uspto')) sourceFilters.push('USPTO');
-    if (q.includes('federal') || q.includes('regulation')) sourceFilters.push('FEDERAL_REGISTER');
-    if (q.includes('paper') || q.includes('research') || q.includes('publication')) sourceFilters.push('OPENALEX');
+    if (q.includes('sec') || q.includes('filing') || q.includes('edgar')) sourceFilters.push('edgar');
+    if (q.includes('patent') || q.includes('uspto')) sourceFilters.push('uspto');
+    if (q.includes('federal') || q.includes('regulation')) sourceFilters.push('federal_register');
+    if (q.includes('paper') || q.includes('research') || q.includes('publication')) sourceFilters.push('openalex');
 
     const parts = [
       'select=id,title,source,source_url,record_type,content_hash,anchor_id,created_at',
@@ -1114,9 +1260,21 @@ export async function handleAnchorDocument(
 }
 
 /**
- * Verify a document by its content hash (PH1-SDK-03).
+ * Verify a document by its content hash / fingerprint (PH1-SDK-03, BUG-1).
  *
- * Looks up the public_records table for a matching content_hash and returns anchor proof.
+ * Calls the `get_public_anchor_by_fingerprint` SECURITY DEFINER RPC
+ * (migration 0339) and maps SECURED results through `shapeAnchorRow`, so verify
+ * returns the SAME truthful, redacted anchor shape as `get_anchor` /
+ * `verify_credential` once a document is actually anchored. The prior implementation hit
+ * `/rest/v1/public_records?...&select=...public_id...` with a column set that
+ * does not match the table shape — it returned HTTP 400 universally and the
+ * tool was 100% broken.
+ *
+ * An unknown or not-yet-secured fingerprint is NOT an error: the RPC returns
+ * `{ error: 'Record not found' }` and this maps to a verified:false /
+ * status:UNKNOWN envelope (HTTP-200-equivalent). A `message` is retained so
+ * `handleAgentSearch(type:'fingerprint')`'s found-guard still treats it as a
+ * miss.
  */
 export async function handleVerifyDocument(
   input: VerifyDocumentInput,
@@ -1130,45 +1288,45 @@ export async function handleVerifyDocument(
     return errorResult('Error: content_hash must be a valid 64-character SHA-256 hex string');
   }
 
+  // The RPC matches case-insensitively, but normalize client-side too so the
+  // request body is deterministic.
+  const fingerprint = input.content_hash.toLowerCase();
+
   try {
-    const response = await supabaseFetch(
-      config,
-      `/rest/v1/public_records?content_hash=eq.${encodeURIComponent(input.content_hash)}&select=id,public_id,source,source_url,record_type,title,content_hash,metadata,anchor_id&limit=1`,
-    );
+    const response = await supabaseFetch(config, '/rest/v1/rpc/get_public_anchor_by_fingerprint', {
+      method: 'POST',
+      body: JSON.stringify({ p_fingerprint: fingerprint }),
+    });
 
     if (!response.ok) {
       return errorResult(`Document lookup failed: HTTP ${response.status}`);
     }
 
-    const records = await response.json() as Array<Record<string, unknown>>;
+    const data = (await response.json()) as Record<string, unknown> | null;
 
-    if (!Array.isArray(records) || records.length === 0) {
-      return textResult({ verified: false, message: 'No anchored document found with this fingerprint.' });
+    // Unknown fingerprint → RPC returns { error: 'Record not found' }.
+    // Surface a verified:false envelope, NOT an MCP error result.
+    if (!data || typeof data !== 'object' || 'error' in data) {
+      return textResult({
+        verified: false,
+        status: 'UNKNOWN',
+        fingerprint,
+        public_id: null,
+        network_receipt_id: null,
+        anchor_timestamp: null,
+        message: 'No anchored document found with this fingerprint.',
+      });
     }
 
-    const record = records[0];
-    const meta = (record.metadata as Record<string, unknown>) ?? {};
-    const isAnchored = !!record.anchor_id;
+    const publicId = typeof data.public_id === 'string' ? data.public_id : '';
+    if (!publicId) {
+      return errorResult('Document lookup returned malformed public anchor payload');
+    }
 
-    return textResult({
-      verified: isAnchored,
-      status: isAnchored ? 'ANCHORED' : 'PENDING',
-      public_id: record.public_id,
-      record_id: record.id,
-      source: record.source,
-      source_url: record.source_url,
-      record_type: record.record_type,
-      title: record.title,
-      content_hash: record.content_hash,
-      anchor_proof: isAnchored
-        ? {
-            chain_tx_id: (meta.chain_tx_id as string) ?? null,
-            merkle_root: (meta.merkle_root as string) ?? null,
-            content_hash: record.content_hash,
-            anchored_at: (meta.anchored_at as string) ?? null,
-          }
-        : null,
-    });
+    // Pass the RPC's own public_id so the envelope echoes it AND builds the
+    // correct record_uri (the single-record verify contract surfaces
+    // public_id; the public verify URL is derived from it).
+    return textResult(shapeAnchorRow(data, publicId));
   } catch (error) {
     const msg = error instanceof Error && error.name === 'AbortError'
       ? 'Document verification timed out'
@@ -1180,10 +1338,11 @@ export async function handleVerifyDocument(
 /**
  * Agent-friendly alias for API v2 `verify(fingerprint)`.
  *
- * Strips the internal `record_id` from `handleVerifyDocument`'s response
- * before returning. The agent-facing `get_fingerprint` MCP tool advertises
- * a "public-safe" contract; leaving `record_id` in would expose the
- * internal `public_records.id` UUID.
+ * As of BUG-1 (PR-2) `handleVerifyDocument` returns the redacted
+ * `shapeAnchorRow` envelope, which never carries an internal `record_id` /
+ * `id`. The `record_id` strip is retained as defense-in-depth: if any future
+ * change to the verify path reintroduces an internal id key, this guarantees
+ * the agent-facing `get_fingerprint` contract stays public-safe.
  */
 export async function handleAgentVerify(
   input: AgentVerifyInput,
@@ -1368,6 +1527,10 @@ function mapStatus(status: string | null | undefined): string {
       return 'SUPERSEDED';
     case 'EXPIRED':
       return 'EXPIRED';
+    case 'PENDING':
+      return 'PENDING';
+    case 'SUBMITTED':
+      return 'SUBMITTED';
     default:
       return 'UNKNOWN';
   }

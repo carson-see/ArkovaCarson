@@ -14,6 +14,11 @@ import { z } from 'zod';
 const boolEnv = (v: unknown) => v === 'true' || v === true;
 const boolEnvInverse = (v: unknown) => v !== 'false';
 const boolFlag = (def: boolean) => z.preprocess(boolEnv, z.boolean()).default(def);
+const positiveNumberWithFallback = (def: number) => z.preprocess((v) => {
+  if (v === undefined || v === null || v === '') return def;
+  const parsed = Number(v);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : def;
+}, z.number().positive());
 
 const ConfigSchema = z.object({
   // Server
@@ -183,6 +188,8 @@ const ConfigSchema = z.object({
   // R1-4-followup sub-stories.
   /** Cloud Run service name (auto-injected). Useful as `isCloudRun` derived flag. */
   kService: z.string().optional(),
+  /** Cloud Run revision name (auto-injected). Used for deployment-surface telemetry. */
+  kRevision: z.string().optional(),
   /** Build SHA baked at Docker build via --build-arg (R0-1 SCRUM-1247). 40-char git SHA. */
   buildSha: z.string().regex(/^[0-9a-f]{40}$/i).or(z.literal('unknown')).optional(),
   /** OAuth state HMAC for Drive + GRC OAuth flows (SCRUM-1236). Worker fails closed if unset when ENABLE_DRIVE_OAUTH=true. */
@@ -312,6 +319,18 @@ const ConfigSchema = z.object({
   treasuryAlertEmail: z.string().email().optional(),
   /** TREASURY_LOW_BALANCE_USD — threshold in USD; defaults to 50. */
   treasuryLowBalanceUsd: z.coerce.number().nonnegative().default(50),
+  /** STUCK_ANCHOR_ALERT_HOURS — oldest pending-anchor age threshold; invalid values fall back to 24. */
+  stuckAnchorAlertHours: positiveNumberWithFallback(24),
+
+  // Compliance-log exports (SCRUM-1848 / SCRUM-1870)
+  /**
+   * EXPORTS_STORAGE_BUCKET — Supabase Storage bucket for generated CPE/CLE
+   * compliance-log exports. Defaults to `exports`. The loadConfig() mapping
+   * coalesces an empty string to undefined so the default still applies,
+   * preserving the original `process.env.EXPORTS_STORAGE_BUCKET || 'exports'`
+   * behavior (SCRUM-1258 — read via `config`, not ad-hoc `process.env`).
+   */
+  exportsStorageBucket: z.string().default('exports'),
 }).superRefine((cfg, ctx) => {
   // Fail fast: production must have at least one cron auth method configured
   if (cfg.nodeEnv === 'production' && !cfg.cronSecret && !cfg.cronOidcAudience) {
@@ -599,6 +618,7 @@ function loadConfig(): Config {
     emailFrom: process.env.EMAIL_FROM,
     // SCRUM-1258 (R1-4) — critical absorption
     kService: process.env.K_SERVICE,
+    kRevision: process.env.K_REVISION,
     buildSha: process.env.BUILD_SHA,
     integrationStateHmacSecret: process.env.INTEGRATION_STATE_HMAC_SECRET,
     enableDriveOauth: process.env.ENABLE_DRIVE_OAUTH,
@@ -651,6 +671,12 @@ function loadConfig(): Config {
     slackTreasuryWebhookUrl: process.env.SLACK_TREASURY_WEBHOOK_URL,
     treasuryAlertEmail: process.env.TREASURY_ALERT_EMAIL,
     treasuryLowBalanceUsd: process.env.TREASURY_LOW_BALANCE_USD,
+    stuckAnchorAlertHours: process.env.STUCK_ANCHOR_ALERT_HOURS,
+
+    // Compliance-log exports (SCRUM-1848 / SCRUM-1870). `|| undefined` so an
+    // empty string falls through to the schema default 'exports', preserving
+    // the original `process.env.EXPORTS_STORAGE_BUCKET || 'exports'` behavior.
+    exportsStorageBucket: process.env.EXPORTS_STORAGE_BUCKET || undefined,
   });
 
   if (!result.success) {

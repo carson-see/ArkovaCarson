@@ -20,6 +20,14 @@ COPY package.json package-lock.json .npmrc ./
 RUN npm ci --omit=dev --ignore-scripts && rm -f .npmrc && npm cache clean --force && apk del python3 make g++
 COPY --from=builder /app/dist ./dist
 
+# SCRUM-1922 / SCRUM-900: ship the published public-key registry. The
+# did:web (api/did-web.ts) and proof-key (api/proof-keys.ts) routes resolve
+# it at runtime as `<dist>/api/../../proof-keys.public.json` → /app/proof-keys.public.json.
+# Without this COPY the file is absent in the image and both endpoints 503
+# ("No active signing key published") regardless of the registry contents.
+# PUBLIC keys only — no private material is ever in this file.
+COPY proof-keys.public.json ./
+
 # SEC-014: Non-root user
 RUN addgroup -S appgroup && adduser -S appuser -G appgroup
 USER appuser

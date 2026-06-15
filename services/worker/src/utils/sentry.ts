@@ -10,19 +10,28 @@
 import * as Sentry from '@sentry/node';
 import { nodeProfilingIntegration } from '@sentry/profiling-node';
 import type { Event, ErrorEvent, Breadcrumb } from '@sentry/node';
+import { getBuildSha } from './buildInfo.js';
 
 // ---------------------------------------------------------------------------
 // PII patterns to scrub (Constitution 1.4 + 1.6)
 // ---------------------------------------------------------------------------
 
-const EMAIL_REGEX = /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g;
-const SHA256_REGEX = /\b[a-f0-9]{64}\b/gi;
-const SSN_REGEX = /\b\d{3}-\d{2}-\d{4}\b/g;
-const API_KEY_REGEX = /\bak_(live|test)_[a-zA-Z0-9]+/g;
-const JWT_REGEX = /\beyJ[a-zA-Z0-9_-]+\.eyJ[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+/g;
-const PHONE_REGEX = /(?:\+\d{1,3}[\s.-]?)?\(?\d{2,4}\)?[\s.-]?\d{3,4}[\s.-]?\d{4}\b/g;
-const IPV4_REGEX = /\b(?:\d{1,3}\.){3}\d{1,3}\b/g;
 const URL_TOKEN_REGEX = /(access_token|token|key|secret|password|auth)=[^&\s]+/gi;
+const TEXT_SCRUBBERS: Array<[RegExp, string]> = [
+  [/\b[A-Z0-9._%+-]{1,64}@[A-Z0-9.-]{1,253}\.[A-Z]{2,24}\b/gi, '[EMAIL]'],
+  [/\b[a-f0-9]{64}\b/gi, '[FINGERPRINT]'],
+  [/\b\d{3}-\d{2}-\d{4}\b/g, '[SSN]'],
+  [/\bak_(live|test)_[a-zA-Z0-9]+/g, '[API_KEY]'],
+  [/\beyJ[a-zA-Z0-9_-]+\.eyJ[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+/g, '[JWT]'],
+  [/(?:\+\d{1,3}[\s.-]?)?\(?\d{2,4}\)?[\s.-]?\d{3,4}[\s.-]?\d{4}\b/g, '[PHONE]'],
+  [/\b(?:\d{1,3}\.){3}\d{1,3}\b/g, '[IP_ADDR]'],
+  // SCRUM-2249: project-ref before UUID scrubbing so the host is replaced whole.
+  [/https:\/\/[a-z0-9]{20}\.supabase\.co/gi, 'https://[SUPABASE_PROJECT].supabase.co'],
+  [
+    /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi,
+    '[UUID]',
+  ],
+];
 
 const SENSITIVE_HEADERS = [
   'authorization',
@@ -50,18 +59,13 @@ const SENSITIVE_EXTRA_KEYS = [
 // ---------------------------------------------------------------------------
 
 function scrubString(str: string): string {
-  return str
-    .replace(EMAIL_REGEX, '[EMAIL]')
-    .replace(SHA256_REGEX, '[FINGERPRINT]')
-    .replace(SSN_REGEX, '[SSN]')
-    .replace(API_KEY_REGEX, '[API_KEY]')
-    .replace(JWT_REGEX, '[JWT]')
-    .replace(PHONE_REGEX, '[PHONE]')
-    .replace(IPV4_REGEX, '[IP_ADDR]');
+  return TEXT_SCRUBBERS.reduce((value, [pattern, replacement]) => (
+    value.replace(pattern, replacement)
+  ), str);
 }
 
 function scrubUrl(url: string): string {
-  return url.replace(URL_TOKEN_REGEX, '$1=[FILTERED]');
+  return scrubString(url.replace(URL_TOKEN_REGEX, '$1=[FILTERED]'));
 }
 
 /**
@@ -85,8 +89,19 @@ export function scrubPiiFromEvent(event: Event | null): Event | null {
     event.message = scrubString(event.message);
   }
 
+  // SCRUM-2249: transaction name carries the route, which embeds org_id UUIDs.
+  if (typeof event.transaction === 'string') {
+    event.transaction = scrubString(event.transaction);
+  }
+
   // Scrub request data
   if (event.request) {
+    // SCRUM-2249: request URL embeds org_id / anchor.id UUIDs and may carry
+    // the Supabase project ref — scrub both.
+    if (typeof event.request.url === 'string') {
+      event.request.url = scrubUrl(event.request.url);
+    }
+
     // Strip sensitive headers
     if (event.request.headers) {
       for (const header of SENSITIVE_HEADERS) {
@@ -144,42 +159,74 @@ export function scrubPiiFromEvent(event: Event | null): Event | null {
 export function scrubPiiFromBreadcrumb(breadcrumb: Breadcrumb | null): Breadcrumb | null {
   if (!breadcrumb) return null;
 
-  if (breadcrumb.data) {
-    // Scrub URLs containing tokens
-    if (breadcrumb.data.url && typeof breadcrumb.data.url === 'string') {
-      breadcrumb.data.url = scrubUrl(breadcrumb.data.url);
-    }
-
-    // Strip request bodies from fetch breadcrumbs
-    if (breadcrumb.data.body) {
-      delete breadcrumb.data.body;
-    }
+  const data = breadcrumb.data as
+    | (Record<string, unknown> & { url?: unknown; body?: unknown })
+    | undefined;
+  if (data?.url && typeof data.url === 'string') {
+    data.url = scrubUrl(data.url);
+  }
+  if (data?.body) {
+    delete data.body;
   }
 
-  // Scrub breadcrumb message
-  if (breadcrumb.message) {
-    breadcrumb.message = scrubString(breadcrumb.message);
-  }
+  breadcrumb.message = breadcrumb.message
+    ? scrubString(breadcrumb.message)
+    : breadcrumb.message;
 
   return breadcrumb;
 }
+
+const WORKER_AUTH_NOISE_PATTERNS = [
+  /Navigator ?LockManager/i,
+  /Acquiring an exclusive Navigator LockManager lock/i,
+  /lock:.*-auth-token/i,
+  /AbortError: .*aborted/i,
+  'AbortError',
+] satisfies Array<string | RegExp>;
+
+// Benign, high-volume auth/lock noise; exported for init wiring and unit tests.
+export const IGNORED_ERROR_PATTERNS: (string | RegExp)[] = [...WORKER_AUTH_NOISE_PATTERNS];
 
 // ---------------------------------------------------------------------------
 // Sentry initialization
 // ---------------------------------------------------------------------------
 
-export function initSentry(dsn: string | undefined, environment: string): void {
+export interface SentryRuntimeConfig {
+  kRevision?: string;
+  kService?: string;
+}
+
+export function initSentry(
+  dsn: string | undefined,
+  environment: string,
+  runtime: SentryRuntimeConfig = {},
+): void {
   if (!dsn) {
     // AUDIT-22: console.log intentional here — logger imports config, which
     // creates a circular dependency. These bootstrap messages fire once at startup.
-    console.log('[Sentry] No DSN configured — skipping initialization');  
+    console.log('[Sentry] No DSN configured — skipping initialization');
     return;
   }
+
+  // SCRUM-2254: real build SHA (BUILD_SHA baked at Docker build via
+  // --build-arg, same value /health exposes) instead of the package version.
+  // Falls back to npm_package_version, then '0.1.0' for local dev.
+  const buildSha = getBuildSha();
+  const release =
+    buildSha === 'unknown' ? process.env.npm_package_version ?? '0.1.0' : buildSha;
+
+  // SCRUM-2254: identify the deployment surface. Cloud Run sets K_REVISION
+  // (e.g. arkova-worker-00123-abc) and K_SERVICE; prefer those over the
+  // default 'localhost'.
+  const serverName = runtime.kRevision ?? runtime.kService ?? 'arkova-worker';
 
   Sentry.init({
     dsn,
     environment,
-    release: process.env.npm_package_version ?? '0.1.0',
+    release,
+    serverName,
+    // SCRUM-2256: drop benign GoTrue Navigator-lock + AbortError noise.
+    ignoreErrors: IGNORED_ERROR_PATTERNS,
     integrations: [nodeProfilingIntegration()],
 
     // Performance sampling
@@ -199,6 +246,44 @@ export function initSentry(dsn: string | undefined, environment: string): void {
   });
 
   console.log(`[Sentry] Initialized for ${environment}`);  
+}
+
+// ---------------------------------------------------------------------------
+// Stuck-anchor-monitor fingerprinting (SCRUM-2255 / HARDEN-1-F)
+// ---------------------------------------------------------------------------
+//
+// The stuck-anchor monitor runs hourly. Without an explicit fingerprint, each
+// run produces a fresh Sentry issue (default grouping keys on message + stack),
+// so a persistent stall floods the inbox with 20+ near-duplicate issues. A
+// fixed fingerprint collapses all re-fires into ONE issue that simply keeps
+// incrementing its event count.
+//
+// SEAM FOR PR #1055 (feat/stuck-anchor-monitor, SCRUM-2234): the monitor's
+// Sentry capture is NOT on main yet — it ships with #1055. That PR should call
+// `captureStuckAnchorAlert(...)` from `jobs/pipeline-health.ts` (or wherever the
+// stuck-anchor alert is raised) INSTEAD of a bare `Sentry.captureMessage`, so it
+// inherits the stable fingerprint below. Do not duplicate this helper there.
+export const STUCK_ANCHOR_FINGERPRINT = ['stuck-anchor-monitor'] as const;
+
+/**
+ * Capture a stuck-anchor-monitor alert with a stable fingerprint so hourly
+ * re-fires collapse into a single Sentry issue.
+ *
+ * @param message - Human-readable summary (e.g. "12 anchors stuck in SUBMITTED").
+ * @param extra   - Optional structured context (counts, statuses). Must be
+ *                  PII-free — the beforeSend scrubber still runs, but callers
+ *                  should pass aggregate metrics, never per-document data.
+ */
+export function captureStuckAnchorAlert(
+  message: string,
+  extra?: Record<string, unknown>,
+  level: 'warning' | 'error' = 'warning',
+): void {
+  Sentry.captureMessage(message, {
+    level,
+    fingerprint: [...STUCK_ANCHOR_FINGERPRINT],
+    ...(extra ? { extra } : {}),
+  });
 }
 
 // ---------------------------------------------------------------------------

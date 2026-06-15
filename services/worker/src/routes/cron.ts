@@ -89,10 +89,13 @@ import { runSubscriptionRenewal } from '../jobs/workspace-subscription-renewal.j
 import { runMainnetMigration, getMigrationStatus } from '../jobs/mainnet-migration.js';
 import { checkPipelineHealth } from '../jobs/pipeline-health.js';
 import { runConnectorHealthCheck } from '../jobs/connector-health-alert.js';
+import { runStuckAnchorCheck } from '../jobs/stuck-anchor-monitor.js';
 import { GRACE_EXPIRY_SWEEP_CRON, runGraceExpirySweep } from '../jobs/grace-expiry-sweep.js';
 import { sweepExpiredNonces, makeNonceSweepDb } from '../jobs/nonce-sweep.js';
 import { reconcileDocusignGaps } from '../jobs/docusign-reconciliation.js';
 import { makeReconciliationDeps } from '../jobs/docusign-reconciliation-deps.js';
+import { pollDocusignConnectFailures } from '../jobs/docusign-connect-failures.js';
+import { makeConnectFailuresDeps } from '../jobs/docusign-connect-failures-deps.js';
 import { MONTHLY_ALLOCATION_ROLLOVER_CRON, runAllocationRollover } from '../jobs/monthly-allocation-rollover.js';
 import { runStripeAnchorReconciliation, generateFinancialReport, processFailedPaymentRecovery } from '../billing/reconciliation.js';
 import { logHeapStatus } from '../utils/heapMonitor.js';
@@ -1524,6 +1527,27 @@ cronRouter.post('/connector-health-check', async (_req, res) => {
   }
 });
 
+// ─── SCRUM-2234: Stuck anchor monitor (2026-06-01 incident) ───
+//
+// Detects a stalled anchoring pipeline by the age of the oldest non-deleted
+// PENDING anchor. The daily-anchor-flush 401 blackout went undetected for ~6
+// weeks because nothing alerted on the queue not draining; this closes that
+// gap with an error-level log + Sentry page when the oldest PENDING anchor
+// exceeds STUCK_ANCHOR_ALERT_HOURS (default 24h). Cloud Scheduler ~hourly.
+//
+// A detected stall (healthy:false) is a SUCCESSFUL check → 200 (we do not
+// want Scheduler retrying a correct "pipeline is stuck" result). Only a DB
+// probe failure throws → 500 so Scheduler retries the broken probe.
+cronRouter.post('/check-stuck-anchors', async (_req, res) => {
+  try {
+    const result = await runStuckAnchorCheck(db);
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'Stuck anchor monitor failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
 // ─── SCRUM-2042: DocuSign reconciliation (SOC 2 CC7.2) ───
 cronRouter.post('/docusign-reconciliation', async (_req, res) => {
   try {
@@ -1536,6 +1560,28 @@ cronRouter.post('/docusign-reconciliation', async (_req, res) => {
     res.json(result);
   } catch (error) {
     logger.error({ error }, 'DocuSign reconciliation failed');
+    res.status(500).json({ error: 'Processing failed' });
+  }
+});
+
+// ─── SCRUM-2099 [DS-FAIL-01]: DocuSign Connect Failures hourly poller ───
+// Surgical complement to the 24h Envelopes reconciliation above: polls
+// DocuSign's own Connect Failures API hourly and dedups new gaps against the
+// shared docusign_reconciliation_gaps table. Catches gaps within ~1h.
+cronRouter.post('/docusign-connect-failures-poll', async (_req, res) => {
+  try {
+    const result = await withCronMonitoring(
+      'docusign-connect-failures-poll',
+      '0 * * * *',
+      () => pollDocusignConnectFailures(makeConnectFailuresDeps()),
+    )();
+    if (!result.ok) {
+      res.status(500).json(result);
+      return;
+    }
+    res.json(result);
+  } catch (error) {
+    logger.error({ error }, 'DocuSign Connect failures poll failed');
     res.status(500).json({ error: 'Processing failed' });
   }
 });

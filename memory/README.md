@@ -1,5 +1,8 @@
 # Arkova Memory Files — `feedback_*.md` rule index
 
+> Rule index only. This directory records durable engineering preferences and
+> enforcement mechanisms; it is not project status, backlog, or release truth.
+
 These files capture engineering preferences and policy decisions that
 should outlast individual sessions. Each rule is enforced one of three ways:
 

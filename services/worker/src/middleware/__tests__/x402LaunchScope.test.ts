@@ -29,6 +29,18 @@ describe('x402 launch-scope contract', () => {
     }
   });
 
+  it('mounts Nessie query before root-mounted AdES compliance routers', () => {
+    const nessieRoute = "router.use('/nessie/query', x402PaymentGate('/api/v1/nessie/query')";
+    const signatureComplianceRoot = "router.use('/', adesSignatureGate(), requireAuth, signatureComplianceRouter)";
+    const keyInventoryRoot = "router.use('/', adesSignatureGate(), requireAuth, aiRateLimiter, keyInventoryRouter)";
+
+    expect(routerSource.indexOf(nessieRoute)).toBeGreaterThanOrEqual(0);
+    expect(routerSource.indexOf(signatureComplianceRoot)).toBeGreaterThanOrEqual(0);
+    expect(routerSource.indexOf(keyInventoryRoot)).toBeGreaterThanOrEqual(0);
+    expect(routerSource.indexOf(nessieRoute)).toBeLessThan(routerSource.indexOf(signatureComplianceRoot));
+    expect(routerSource.indexOf(nessieRoute)).toBeLessThan(routerSource.indexOf(keyInventoryRoot));
+  });
+
   it('keeps runtime config and kill-switch prerequisites explicit', () => {
     for (const envName of [
       'X402_FACILITATOR_URL',

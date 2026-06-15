@@ -16,7 +16,8 @@ import { handlePlatformStats } from '../api/admin-stats.js';
 import { handlePipelineStats } from '../api/admin-pipeline-stats.js';
 import { handleSystemHealth } from '../api/admin-health.js';
 import { handleAdminOrganizations, handleAdminUsers, handleAdminUserDetail, handleAdminRecords, handleAdminSubscriptions } from '../api/admin-lists.js';
-import { handlePromoteAdmin, handleChangeRole, handleSetOrg } from '../api/admin-actions.js';
+import { handleAdminOrgMembers, handleAdminUserSearch, handleAdminAddOrgMember } from '../api/admin-org-members.js';
+import { handlePromoteAdmin, handleChangeRole, handleSetOrg, handleSetOrgQuota } from '../api/admin-actions.js';
 import { handleListPendingResolution, handleResolveQueue, handleRunOrgAnchorQueue } from '../api/queue-resolution.js';
 import { handleSupersedeAnchor, handleAnchorLineage } from '../api/anchor-lineage.js';
 import { handleConnectorHealth } from '../api/connector-health.js';
@@ -122,6 +123,18 @@ adminRouter.get('/admin/users', async (req, res) => {
   }
 });
 
+// NOTE: must precede '/admin/users/:id' so "search" isn't captured as an :id param.
+adminRouter.get('/admin/users/search', async (req, res) => {
+  const userId = await extractAuthUserId(req);
+  if (!userId) { res.status(401).json({ error: 'Authentication required' }); return; }
+  try {
+    await handleAdminUserSearch(userId, req, res);
+  } catch (error) {
+    logger.error({ error }, 'Admin user search request failed');
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 adminRouter.get('/admin/users/:id', async (req, res) => {
   const userId = await extractAuthUserId(req);
   if (!userId) { res.status(401).json({ error: 'Authentication required' }); return; }
@@ -129,6 +142,33 @@ adminRouter.get('/admin/users/:id', async (req, res) => {
     await handleAdminUserDetail(userId, req.params.id, req, res);
   } catch (error) {
     logger.error({ error }, 'Admin user detail request failed');
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ─── Admin org roster + add member (platform-admin org-view bugfix) ───
+// The org profile UI queries Supabase directly under RLS, which has no
+// platform-admin bypass on org_members/profiles — so a platform admin viewing
+// an org they don't belong to saw "0 members" / "No user found". These use the
+// service_role db client (RLS bypass), gated on isPlatformAdmin.
+adminRouter.get('/admin/organizations/:id/members', async (req, res) => {
+  const userId = await extractAuthUserId(req);
+  if (!userId) { res.status(401).json({ error: 'Authentication required' }); return; }
+  try {
+    await handleAdminOrgMembers(userId, req.params.id, req, res);
+  } catch (error) {
+    logger.error({ error }, 'Admin org members request failed');
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+adminRouter.post('/admin/organizations/:id/members', async (req, res) => {
+  const userId = await extractAuthUserId(req);
+  if (!userId) { res.status(401).json({ error: 'Authentication required' }); return; }
+  try {
+    await handleAdminAddOrgMember(userId, req.params.id, req, res);
+  } catch (error) {
+    logger.error({ error }, 'Admin add org member request failed');
     res.status(500).json({ error: 'Internal server error' });
   }
 });
@@ -186,6 +226,18 @@ adminRouter.post('/admin/users/:id/set-org', async (req, res) => {
     await handleSetOrg(userId, req.params.id, req, res);
   } catch (error) {
     logger.error({ error }, 'Set org request failed');
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ─── SCRUM-2225: Set an org's free-tier testing cap (platform admin only) ───
+adminRouter.post('/admin/organizations/:id/quota', async (req, res) => {
+  const userId = await extractAuthUserId(req);
+  if (!userId) { res.status(401).json({ error: 'Authentication required' }); return; }
+  try {
+    await handleSetOrgQuota(userId, req.params.id, req, res);
+  } catch (error) {
+    logger.error({ error }, 'Set org quota request failed');
     res.status(500).json({ error: 'Internal server error' });
   }
 });

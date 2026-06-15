@@ -70,6 +70,12 @@ import { webhooksRouter } from './webhooks.js';
 import { driveWebhookRouter } from './webhooks/drive.js';
 import { API_V1_PREFIX, WEBHOOK_PATHS, relativeTo } from '../../constants/webhook-paths.js';
 import { auditExportRouter } from './audit-export.js';
+import { cpeLogExportRouter, cpeLogExportRateLimiter } from './cpe-log-export.js';
+import {
+  orgCpeLogExportRouter,
+  orgCpeLogExportRateLimiter,
+} from './org-cpe-log-export.js';
+import { cleLogExportRouter, cleLogExportRateLimiter } from './cle-log-export.js';
 import { aiProvenanceRouter } from './ai-provenance.js';
 import { aiAccountabilityReportRouter } from './ai-accountability-report.js';
 import { grcRouter } from './grc.js';
@@ -319,6 +325,27 @@ router.use('/ai', aiExtractionGate(), requireAuth, aiRateLimiter, aiTemplateRout
 // ─── Audit export — compliance PDF/CSV for GRC platforms (CML-03) ───
 router.use('/audit-export', requireAuth, auditExportRouter);
 
+// ─── CPE compliance-log export — PDF + JSON signed URLs (CPE-R2 / SCRUM-1848) ───
+// JWT auth + per-user 10/hour rate limit (Constitution 1.10).
+router.use('/exports/cpe-log', requireAuth, cpeLogExportRateLimiter, cpeLogExportRouter);
+
+// ─── ORG-ADMIN per-member CPE export — CPE-R3 / SCRUM-1849 / SCRUM-1863 ───
+// Same JWT auth as the R2 own-user export. Authorization (ORG_ADMIN + the
+// target being a member of the caller's org) is enforced in the handler so an
+// admin of org A can never export a member of org B. Separate 10/hour bucket
+// (`scope: 'org-cpe-log-export'`) so org exports don't share the per-user R2
+// budget. Distinct path from `/exports/cpe-log` (no route shadowing).
+router.use(
+  '/exports/org/cpe-log',
+  requireAuth,
+  orgCpeLogExportRateLimiter,
+  orgCpeLogExportRouter,
+);
+
+// ─── CLE compliance-log export — PDF + JSON signed URLs (CLE-R2 / SCRUM-1870) ───
+// JWT auth + per-user 10/hour rate limit (separate bucket scope from CPE).
+router.use('/exports/cle-log', requireAuth, cleLogExportRateLimiter, cleLogExportRouter);
+
 // ─── GRC platform integrations — Vanta, Drata, Anecdotes (CML-05) ───
 import { killSwitch } from '../../middleware/integrationKillSwitch.js';
 router.use('/grc', killSwitch('ENABLE_GRC_INTEGRATIONS'), grcFeatureGate(), requireAuth, grcRouter);
@@ -404,6 +431,12 @@ router.use('/cle', x402PaymentGate('/api/v1/cle'), cleVerifyRouter);
 
 // Identity & org verification moved to index.ts (outside feature gate)
 
+// ─── Nessie RAG query (PH1-INT-02) ───
+// Keep this before the broad AdES compliance mounts below. Those routers are
+// mounted at `/` because their internals expose signature paths, and their JWT
+// guards would otherwise shadow this API-key/x402 endpoint.
+router.use('/nessie/query', x402PaymentGate('/api/v1/nessie/query'), aiRateLimiter, nessieQueryRouter);
+
 // ─── AdES Signatures — Phase III (PH3-ESIG-01) ───
 // Feature-gated + JWT auth required — signatures are org-managed resources
 router.use('/sign', adesSignatureGate(), requireAuth, signaturesRouter);
@@ -422,10 +455,6 @@ router.use('/compliance/trends', adesSignatureGate(), requireAuth, aiRateLimiter
 // ─── Audit Batch Verification — COMP-06 (ISA 530 sampling) ───
 // JWT auth required, batch rate limit (5 req/min)
 router.use('/audit/batch-verify', requireAuth, batchRateLimiter, auditBatchVerifyRouter);
-
-// ─── Nessie RAG query (PH1-INT-02) ───
-// x402 payment gate + AI rate limiting
-router.use('/nessie/query', x402PaymentGate('/api/v1/nessie/query'), aiRateLimiter, nessieQueryRouter);
 
 // ─── Regulatory change monitoring alerts (NMT-REG) ───
 router.use('/regulatory/alerts', aiRateLimiter, regulatoryAlertsRouter);

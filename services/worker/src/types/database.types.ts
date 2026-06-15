@@ -539,6 +539,8 @@ export type Database = {
           recipient_email: string | null
           retention_until: string | null
           revocation_block_height: number | null
+          revocation_metadata: Json | null
+          revocation_metadata_hash: string | null
           revocation_reason: string | null
           revocation_tx_id: string | null
           revoked_at: string | null
@@ -582,6 +584,8 @@ export type Database = {
           recipient_email?: string | null
           retention_until?: string | null
           revocation_block_height?: number | null
+          revocation_metadata?: Json | null
+          revocation_metadata_hash?: string | null
           revocation_reason?: string | null
           revocation_tx_id?: string | null
           revoked_at?: string | null
@@ -625,6 +629,8 @@ export type Database = {
           recipient_email?: string | null
           retention_until?: string | null
           revocation_block_height?: number | null
+          revocation_metadata?: Json | null
+          revocation_metadata_hash?: string | null
           revocation_reason?: string | null
           revocation_tx_id?: string | null
           revoked_at?: string | null
@@ -3380,6 +3386,7 @@ export type Database = {
           created_at: string
           encrypted_tokens: string | null
           id: string
+          inherited_from_org_id: string | null
           last_page_token: string | null
           last_renewal_at: string | null
           last_renewal_error: string | null
@@ -3403,6 +3410,7 @@ export type Database = {
           created_at?: string
           encrypted_tokens?: string | null
           id?: string
+          inherited_from_org_id?: string | null
           last_page_token?: string | null
           last_renewal_at?: string | null
           last_renewal_error?: string | null
@@ -3426,6 +3434,7 @@ export type Database = {
           created_at?: string
           encrypted_tokens?: string | null
           id?: string
+          inherited_from_org_id?: string | null
           last_page_token?: string | null
           last_renewal_at?: string | null
           last_renewal_error?: string | null
@@ -3454,6 +3463,13 @@ export type Database = {
             columns: ["org_id"]
             isOneToOne: false
             referencedRelation: "public_org_profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "org_integrations_inherited_from_org_id_fkey"
+            columns: ["inherited_from_org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
             referencedColumns: ["id"]
           },
         ]
@@ -6399,6 +6415,7 @@ export type Database = {
         Returns: undefined
       }
       lookup_org_by_email_domain: { Args: { p_email: string }; Returns: Json }
+      next_webhook_sequence: { Args: never; Returns: number }
       record_msgraph_nonce_and_enqueue: {
         Args: {
           p_change_type: string

@@ -312,6 +312,29 @@ vi.mock('../jobs/docusign-notarization-completed.js', () => ({
   runDocusignNotarizationCompletedJobs: (...args: unknown[]) => mockRunDocusignNotarizationCompletedJobs(...args),
 }));
 
+// SCRUM-2234: stuck anchor monitor cron route.
+const mockRunStuckAnchorCheck = vi.fn().mockResolvedValue({
+  healthy: true,
+  alertFired: false,
+  oldestAgeHours: 2,
+  pendingCount: 5,
+  thresholdHours: 24,
+  checkedAt: '2026-06-01T12:00:00.000Z',
+});
+vi.mock('../jobs/stuck-anchor-monitor.js', () => ({
+  runStuckAnchorCheck: (...args: unknown[]) => mockRunStuckAnchorCheck(...args),
+}));
+
+const mockMakeConnectFailuresDeps = vi.fn(() => ({ deps: 'connect-failures' }));
+vi.mock('../jobs/docusign-connect-failures-deps.js', () => ({
+  makeConnectFailuresDeps: () => mockMakeConnectFailuresDeps(),
+}));
+
+const mockPollDocusignConnectFailures = vi.fn().mockResolvedValue({ ok: true, inserted: 0, errors: 0 });
+vi.mock('../jobs/docusign-connect-failures.js', () => ({
+  pollDocusignConnectFailures: (...args: unknown[]) => mockPollDocusignConnectFailures(...args),
+}));
+
 // ─── Import after mocks ───
 import { cronRouter } from './cron.js';
 import { config } from '../config.js';
@@ -1246,6 +1269,52 @@ describe('cron routes', () => {
     });
   });
 
+  describe('Cloud Scheduler bindings', () => {
+    it('registers the DocuSign Connect failures poller hourly', async () => {
+      const fs = await import('node:fs');
+      const path = await import('node:path');
+      const here = path.dirname(new URL(import.meta.url).pathname);
+      const schedulerScript = path.resolve(here, '../../../../scripts/gcp-setup/cloud-scheduler.sh');
+      const contents = fs.readFileSync(schedulerScript, 'utf8');
+      const match = contents.match(/"docusign-connect-failures-poll\|([^|]+)\|(\/jobs\/[^|"]+)\|([^"]+)"/);
+
+      expect(match).not.toBeNull();
+      const [, schedule, scheduledPath, retryPolicy] = match!;
+      expect(schedule).toBe('0 * * * *');
+      expect(scheduledPath).toBe('/jobs/docusign-connect-failures-poll');
+      expect(retryPolicy).toBe('30s,120s,2');
+
+      const app = createApp();
+      const res = await request(app).post(`/cron${scheduledPath.replace('/jobs', '')}`);
+      expect(res.status).toBe(200);
+    });
+  });
+
+  describe('POST /docusign-connect-failures-poll', () => {
+    it('returns the poll result and wires the production dependencies', async () => {
+      const pollResult = { ok: true, inserted: 0, errors: 0 };
+      mockPollDocusignConnectFailures.mockResolvedValueOnce(pollResult);
+
+      const app = createApp();
+      const res = await request(app).post('/cron/docusign-connect-failures-poll');
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual(pollResult);
+      expect(mockMakeConnectFailuresDeps).toHaveBeenCalledTimes(1);
+      expect(mockPollDocusignConnectFailures).toHaveBeenCalledWith({ deps: 'connect-failures' });
+    });
+
+    it('returns 500 when the poller throws', async () => {
+      mockPollDocusignConnectFailures.mockRejectedValueOnce(new Error('docusign down'));
+
+      const app = createApp();
+      const res = await request(app).post('/cron/docusign-connect-failures-poll');
+
+      expect(res.status).toBe(500);
+      expect(res.body).toEqual({ error: 'Processing failed' });
+    });
+  });
+
   describe('POST /reconcile-stripe', () => {
     it('returns result', async () => {
       const app = createApp();
@@ -2042,6 +2111,59 @@ describe('cron routes', () => {
 
       expect(res.status).toBe(500);
       expect(res.body.error).toBe('Processing failed');
+    });
+  });
+
+  // ═══════════════════════════════════════
+  // Stuck Anchor Monitor (SCRUM-2234)
+  // ═══════════════════════════════════════
+
+  describe('POST /check-stuck-anchors', () => {
+    it('returns the monitor result on success', async () => {
+      const app = createApp();
+      const res = await request(app).post('/cron/check-stuck-anchors');
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({
+        healthy: true,
+        alertFired: false,
+        oldestAgeHours: 2,
+        pendingCount: 5,
+        thresholdHours: 24,
+        checkedAt: '2026-06-01T12:00:00.000Z',
+      });
+      expect(mockRunStuckAnchorCheck).toHaveBeenCalled();
+    });
+
+    it('returns 200 with healthy:false when a stall is detected (no Scheduler retry on a correct detection)', async () => {
+      mockRunStuckAnchorCheck.mockResolvedValueOnce({
+        healthy: false,
+        alertFired: true,
+        oldestAgeHours: 30,
+        pendingCount: 2962,
+        thresholdHours: 24,
+        checkedAt: '2026-06-01T12:00:00.000Z',
+      });
+      const app = createApp();
+      const res = await request(app).post('/cron/check-stuck-anchors');
+      expect(res.status).toBe(200);
+      expect(res.body.healthy).toBe(false);
+      expect(res.body.alertFired).toBe(true);
+    });
+
+    it('returns 500 when the DB probe throws (Scheduler retries the broken probe)', async () => {
+      mockRunStuckAnchorCheck.mockRejectedValueOnce(new Error('statement timeout'));
+      const app = createApp();
+      const res = await request(app).post('/cron/check-stuck-anchors');
+      expect(res.status).toBe(500);
+      expect(res.body.error).toBe('Processing failed');
+    });
+
+    it('is protected by cronAuth — 401 unauthenticated in production', async () => {
+      (config as { nodeEnv: string }).nodeEnv = 'production';
+      const app = createApp();
+      const res = await request(app).post('/cron/check-stuck-anchors');
+      expect(res.status).toBe(401);
+      expect(mockRunStuckAnchorCheck).not.toHaveBeenCalled();
     });
   });
 });

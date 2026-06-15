@@ -836,6 +836,42 @@ export const SEARCH_LABELS = {
 } as const;
 
 // =============================================================================
+// SEMANTIC SEARCH (SCRUM-1958 — AI natural-language credential search)
+// =============================================================================
+// User-visible copy for the authenticated, AI-powered semantic search panel on
+// the dashboard. Gated behind ENABLE_SEMANTIC_SEARCH. Respects Constitution
+// §1.3 terminology bans (no Wallet/Hash/Transaction/etc.) — "Fingerprint" is
+// the approved term and match strength is shown as a friendly percentage, never
+// a raw vector score.
+export const SEMANTIC_SEARCH_LABELS = {
+  HEADING: 'Smart Search',
+  SUBHEADING: 'Find your secured documents by describing them in your own words.',
+  PLACEHOLDER: 'Describe what you are looking for…',
+  SEARCH_BUTTON: 'Search',
+  SEARCHING: 'Searching…',
+  RESULTS_COUNT: '{count} result{plural} found',
+  CREDITS_REMAINING: '{count} AI credit{plural} remaining',
+  DOCUMENT_LABEL: 'Document',
+  MATCH_LABEL: '{percent}% match',
+  MATCH_STRENGTH_STRONG: 'Strong match',
+  MATCH_STRENGTH_GOOD: 'Good match',
+  MATCH_STRENGTH_FAIR: 'Fair match',
+  STATUS_SECURED: 'Secured',
+  STATUS_PENDING: 'Pending',
+  STATUS_UNAVAILABLE: 'Unavailable',
+  // Honest empty state — embeddings may legitimately return nothing.
+  EMPTY_TITLE: 'No matching documents',
+  EMPTY_DESC: 'Try describing the document differently, or search by issuer or fingerprint instead.',
+  CLEAR_BUTTON: 'Clear search',
+  // Error states — friendly, non-technical copy.
+  ERROR_AUTH: 'Please sign in to search your documents.',
+  ERROR_NO_CREDITS: 'You are out of AI credits. Upgrade your plan to keep using smart search.',
+  ERROR_UNAVAILABLE: 'Smart search is temporarily unavailable. Please try again in a few minutes.',
+  ERROR_NETWORK: 'Could not reach the service. Check your connection and try again.',
+  ERROR_GENERIC: 'Search failed. Please try again.',
+} as const;
+
+// =============================================================================
 // DASHBOARD
 // =============================================================================
 
@@ -1839,6 +1875,12 @@ export const ERROR_BOUNDARY_LABELS = {
   RETRY: 'Try Again',
   GO_HOME: 'Dashboard',
   SKIP_TO_CONTENT: 'Skip to main content',
+  // SCRUM-2246: shown when a page failed to load because a new version was
+  // deployed while this tab was open. Refreshing pulls the newest files.
+  STALE_VERSION_TITLE: 'A new version is available',
+  STALE_VERSION_DESCRIPTION:
+    'This page could not load because the app was updated while you were away. Refresh to get the newest version.',
+  STALE_VERSION_REFRESH: 'Refresh',
 } as const;
 
 // =============================================================================
@@ -2412,8 +2454,6 @@ export const ENTERPRISE_LABELS = {
   TRUST_ENCRYPTION_DESC: 'Documents never leave the user\'s device. Only cryptographic fingerprints are transmitted and stored.',
   TRUST_RLS_TITLE: 'Row-Level Security',
   TRUST_RLS_DESC: 'Every database query is scoped to the authenticated user\'s organization. Data isolation is enforced at the infrastructure level.',
-  TRUST_DPF_TITLE: 'EU-US Data Privacy Framework',
-  TRUST_DPF_DESC: 'Self-certified under the EU-US Data Privacy Framework for lawful transatlantic personal data transfers with individual redress mechanisms.',
   TRUST_INTL_TITLE: 'International Compliance',
   TRUST_INTL_DESC: 'Compliance controls spanning 13 regulatory frameworks across 10+ jurisdictions including GDPR, LGPD, PDPA, and LFPDPPP.',
   INTEGRATIONS_TITLE: 'Integrations',

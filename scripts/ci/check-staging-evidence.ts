@@ -19,10 +19,21 @@
  * No override label exists. The previous `staging-soak-skip` override
  * was removed on 2026-05-07. The only CI-only path is T0, computed from
  * changed files rather than labels.
+ *
+ * Frontend-T2 evidence mode: a PR that is required-tier T2 purely because it
+ * touches a sensitive *frontend* surface, and whose every changed file is
+ * frontend-only (`isFrontendOnlyChange`), cannot produce worker artifacts. It
+ * satisfies T2 with a Vercel deployment URL + view-E2E + a `### Residual-risk
+ * note` attesting no worker artifacts exist, instead of the worker-artifact
+ * fields. This does NOT change tier classification (`requiredTierFor` is
+ * unchanged) — it only swaps the accepted evidence form for that narrow case.
+ * Any worker/migration/SDK/contract-touching T2 PR keeps the full
+ * worker-artifact requirements.
  */
 
-import { existsSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { existsSync, readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { resolve, sep } from 'node:path';
 import {
   REPO,
   baseRef,
@@ -49,12 +60,14 @@ export const TIER_SPECS: Record<Tier, TierSpec> = {
   },
   T1: {
     tier: 'T1',
-    soakHours: 0,
+    soakHours: 2,
     requiredFields: [
       'Tier:',
       'PR head SHA:',
       'Staging tag URL or N/A explanation:',
       'Health/smoke result:',
+      'Soak start:',
+      'Soak end:',
       'CI/E2E green:',
       'Rollback plan:',
       'Risk rationale:',
@@ -248,7 +261,7 @@ const DOCS_ONLY_RE = /^(?:docs\/|README\.md|ARKOVA_WORKSPACE_README\.md|WORKSPAC
 
 function isT0OnlyFile(file: string): boolean {
   if (PUBLIC_CONTRACT_DOC_RE.test(file)) return false;
-  if (TEST_FILE_RE.test(file) || /agents\.md$/.test(file)) return true;
+  if (TEST_FILE_RE.test(file) || file.endsWith('agents.md')) return true;
   if (/^(?:package-lock\.json|packages\/[^/]+\/package-lock\.json|services\/[^/]+\/package-lock\.json)$/.test(file)) return true;
   if (PATH_RULES.some((rule) => rule.pattern.test(file))) return false;
   return STAGING_TOOLING_ALLOW.some((re) => re.test(file))
@@ -276,6 +289,42 @@ export function requiredTierFor(files: string[]): { tier: Tier; reason: string }
   return { tier: best, reason };
 }
 
+/**
+ * Patterns for any non-frontend, prod-runtime surface. A change that touches
+ * ANY of these can produce real worker/migration/SDK/contract artifacts, so it
+ * must NOT be eligible for the frontend-T2 evidence path — it keeps the full
+ * worker-artifact requirements. This list is intentionally a denylist (not just
+ * "everything outside src/") so the guard fails closed: a future file that
+ * lands under `src/` but matches a server/SDK/contract pattern would still be
+ * pushed onto the standard evidence path.
+ */
+const NON_FRONTEND_SURFACE_RE: RegExp[] = [
+  /^services\//,
+  /^supabase\/(?:migrations|functions)\//,
+  /^packages\//,
+  /^sdks\//,
+  /^docs\/api\//,
+  /^docs\/guides\/API_GUIDE\.md$/,
+  /^\.github\/workflows\//,
+];
+
+/**
+ * True iff EVERY changed file is purely a frontend source file — under `src/`
+ * and not matching any server/migration/SDK/contract surface. This is the
+ * backward-compatibility guard for the frontend-T2 evidence mode: it gates the
+ * alternate (Vercel + view-E2E) evidence path so it can only ever apply to a
+ * PR that genuinely cannot produce worker artifacts.
+ *
+ * An empty fileset returns false: there is nothing to attest as frontend-only,
+ * and a non-frontend caller should never reach the frontend path by default.
+ */
+export function isFrontendOnlyChange(files: string[]): boolean {
+  if (files.length === 0) return false;
+  return files.every(
+    (f) => f.startsWith('src/') && !NON_FRONTEND_SURFACE_RE.some((re) => re.test(f)),
+  );
+}
+
 const EVIDENCE_HEADER_RE = /^##\s+Staging\s+Soak\s+Evidence\s*$/im;
 const UTC_TIMESTAMP_RE = /^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2})(?::(\d{2}))?\s*(?:UTC|Z)\b/i;
 
@@ -297,7 +346,7 @@ export function extractDeclaredTier(body: string): Tier | null {
     const rest = candidate.slice('Tier:'.length).trimStart();
     const value = rest.slice(0, 2);
     const next = rest[2];
-    if (DECLARED_TIER_VALUES.has(value as Tier) && (next === undefined || !/[A-Za-z0-9_]/.test(next))) {
+    if (DECLARED_TIER_VALUES.has(value as Tier) && (next === undefined || !/\w/.test(next))) {
       return value as Tier;
     }
   }
@@ -308,10 +357,16 @@ export function hasEvidenceSection(body: string): boolean {
   return EVIDENCE_HEADER_RE.test(body);
 }
 
-export function missingFields(body: string, tier: Tier): string[] {
-  const spec = TIER_SPECS[tier];
+/** Evidence-block field set key: a standard tier, or the frontend-T2 path. */
+export type FieldSet = Tier | 'T2_FRONTEND';
+
+function requiredFieldsFor(set: FieldSet): readonly string[] {
+  return set === 'T2_FRONTEND' ? T2_FRONTEND_FIELDS : TIER_SPECS[set].requiredFields;
+}
+
+export function missingFields(body: string, set: FieldSet): string[] {
   const missing: string[] = [];
-  for (const field of spec.requiredFields) {
+  for (const field of requiredFieldsFor(set)) {
     // Field labels are line-anchored to avoid matching prose mentions.
     const re = new RegExp(String.raw`^[\s\-*]*(?:\[[ x]\]\s*)?${escapeRegExp(field)}`, 'im');
     if (!re.test(body)) missing.push(field);
@@ -423,15 +478,36 @@ function validatePassingEvidenceField(
 // "Not filled in yet" markers — never acceptable as evidence on any tier.
 // Anchored to the whole (trimmed) value so a legitimate sentence that merely
 // mentions one of these words is not falsely rejected.
-const INCOMPLETE_VALUE_RE =
-  /^(?:pending|tbd|to[\s-]?be[\s-]?(?:determined|announced|filled(?:[\s-]?in)?)|tba|todo|to[\s-]?do|fixme|wip|work[\s-]?in[\s-]?progress|fill[\s-]?in|placeholder|coming[\s-]?soon|see[\s-]?above|xxx+|\?+|-+|_+|\.{2,}|…|<[^>]*>)\.?$/i;
+const INCOMPLETE_VALUE_PATTERNS = [
+  /^pending\.?$/i,
+  /^tbd\.?$/i,
+  /^to[\s-]?be[\s-]?(?:determined|announced|filled(?:[\s-]?in)?)\.?$/i,
+  /^tba\.?$/i,
+  /^todo\.?$/i,
+  /^to[\s-]?do\.?$/i,
+  /^fixme\.?$/i,
+  /^wip\.?$/i,
+  /^work[\s-]?in[\s-]?progress\.?$/i,
+  /^fill[\s-]?in\.?$/i,
+  /^placeholder\.?$/i,
+  /^coming[\s-]?soon\.?$/i,
+  /^see[\s-]?above\.?$/i,
+  /^xxx+\.?$/i,
+  /^\?+\.?$/i,
+  /^-+\.?$/i,
+  /^_+\.?$/i,
+  /^\.{2,}\.?$/i,
+  /^…\.?$/i,
+  /^<[^>]*>\.?$/i,
+];
 
 // "Not applicable" markers — legitimate for some fields (e.g. `Migration
 // applied: none`) but never for a concrete deploy artifact.
 const NOT_APPLICABLE_VALUE_RE = /^(?:n\/?a|n\.?a\.?|none|not[\s-]?applicable|null|nil)\.?$/i;
 
 function isIncompletePlaceholder(value: string): boolean {
-  return INCOMPLETE_VALUE_RE.test(value.trim());
+  const trimmed = value.trim();
+  return INCOMPLETE_VALUE_PATTERNS.some((re) => re.test(trimmed));
 }
 
 function isNotApplicablePlaceholder(value: string): boolean {
@@ -503,6 +579,112 @@ const T2_T3_FILLED_FIELDS = [
   'Daily flush observation:',
   'Per-org isolation check:',
 ];
+
+// ───────────────────────────────────────────────────────────────────────────
+// Frontend-T2 evidence mode (decision (a)).
+//
+// A PR can be required-tier T2 purely by touching a sensitive *frontend*
+// contract surface (the `src/components/{anchor,api,auth,billing,public,
+// verification,verify}/` PATH_RULES rule). Such a PR ships no worker code, no
+// migration, and no SDK/contract change, so it can never produce the worker
+// artifacts (Worker revision, Image digest, Cloud Run URL, Staging deploy-log
+// id) the standard T2 block demands. Instead it satisfies T2 with
+// frontend-appropriate evidence: a Vercel deployment/preview URL, an
+// E2E-on-the-affected-view result, and a `### Residual-risk note` attesting
+// that no worker artifacts exist.
+//
+// This path is reachable ONLY through `isFrontendOnlyChange(files)` — see
+// check(). Any worker- or migration-touching T2 PR keeps the unchanged
+// worker-artifact requirements.
+// ───────────────────────────────────────────────────────────────────────────
+export const T2_FRONTEND_FIELDS = [
+  'Tier:',
+  'PR head SHA:',
+  'Vercel deployment URL:',
+  'E2E result:',
+  'CI/E2E green:',
+  'Rollback plan:',
+];
+
+function validateVercelUrlEvidence(body: string): string | null {
+  const field = 'Vercel deployment URL:';
+  // Must be present, filled, not a placeholder, AND an actual URL.
+  const filled = validateFilledEvidenceField(body, field);
+  if (filled !== null) return filled;
+  const value = extractEvidenceFieldValue(body, field);
+  if (value === null) return null; // label-absence owned by missingFields()
+  return /\bhttps?:\/\/\S+/i.test(value)
+    ? null
+    : `${field} must contain a Vercel deployment or preview URL.`;
+}
+
+/**
+ * Frontend-T2 evidence validation. Mirrors the spirit of the T1 auditable-value
+ * checks (real Vercel URL, real E2E result, CI green, named approver) but swaps
+ * the worker-artifact requirements for a residual-risk note attesting that no
+ * worker artifacts exist. Returns the list of error strings (empty = ok).
+ */
+function frontendT2Errors(body: string): string[] {
+  const errors: (string | null)[] = [];
+
+  // Section + required field labels.
+  if (!hasEvidenceSection(body)) {
+    return [
+      'PR body is missing a `## Staging Soak Evidence` section. '
+      + 'Use docs/staging/PR_TEMPLATE.md (frontend-T2 block) as a starting point.',
+    ];
+  }
+  const missing = missingFields(body, 'T2_FRONTEND');
+  if (missing.length > 0) {
+    errors.push(
+      '`## Staging Soak Evidence` section is missing required fields for the '
+      + 'frontend-T2 evidence path: '
+      + missing.map((f) => `\`${f}\``).join(', ') + '.',
+    );
+  }
+
+  // `CI/E2E green:` must be non-empty AND state a passing result. The
+  // non-empty check runs first because validatePassingEvidenceField
+  // short-circuits to PASS on an empty value — without it a bare
+  // `- CI/E2E green:` line would attest nothing, weaker than the T1 path
+  // (which runs validateNonEmptyEvidenceField over every required field).
+  errors.push(
+    validateVercelUrlEvidence(body),
+    validateFilledEvidenceField(body, 'E2E result:'),
+    validateNonEmptyEvidenceField(body, 'Rollback plan:'),
+    validateNonEmptyEvidenceField(body, 'CI/E2E green:'),
+    validatePassingEvidenceField(
+      body,
+      'CI/E2E green:',
+      /\b(?:green|pass(?:ed|es)?|success(?:ful)?)\b/i,
+      'CI/E2E green: must state that CI/E2E is green.',
+    ),
+  );
+
+  // A frontend-T2 PR substitutes a residual-risk note for the worker
+  // artifacts. The note's sub-fields are frontend-specific (attest no worker
+  // artifacts + name the surfaces) and the validator enforces a real,
+  // non-placeholder `Approved by:`.
+  const note = hasFrontendResidualRiskNote(body);
+  if (!note.valid) {
+    if (note.missing.length > 0) {
+      errors.push(
+        'frontend-T2 `### Residual-risk note` is missing required sub-fields: '
+        + note.missing.map((f) => `\`${f}\``).join(', ')
+        + '. The note must attest that no worker artifacts exist (frontend-only) '
+        + 'and carry a named `Approved by:`.',
+      );
+    } else {
+      errors.push(
+        'frontend-T2 evidence requires a `### Residual-risk note` section '
+        + 'attesting that no worker artifacts exist (frontend-only: no Cloud Run '
+        + 'deploy, no worker revision, no image digest, no staging deploy-log id).',
+      );
+    }
+  }
+
+  return errors.filter((e): e is string => e !== null);
+}
 
 function requiredValueErrors(body: string, tier: Tier): string[] {
   if (tier === 'T0') return [];
@@ -585,7 +767,27 @@ const RESIDUAL_RISK_REQUIRED_FIELDS = [
   'Approved by:',
 ];
 
-export function hasResidualRiskException(body: string): { valid: boolean; missing: string[] } {
+// Frontend-T2 residual-risk note: a frontend-only PR substitutes this for the
+// worker artifacts it cannot produce. The sub-fields are frontend-appropriate
+// (attest no worker artifacts + name the affected surfaces) rather than the
+// DB-contamination fields above, but the SAME real-approver guard applies — a
+// blank/placeholder `Approved by:` is a self-waiver and never valid.
+const FRONTEND_RESIDUAL_RISK_REQUIRED_FIELDS = [
+  'No worker artifacts:',
+  'Surfaces touched:',
+  'Approved by:',
+];
+
+/**
+ * Validate a `### Residual-risk note` section against a required-field list.
+ * Shared by the DB-contamination exception ({@link hasResidualRiskException})
+ * and the frontend-T2 note ({@link hasFrontendResidualRiskNote}). Enforces the
+ * real-approver guard on `Approved by:` for both.
+ */
+function validateResidualRiskNote(
+  body: string,
+  requiredFields: readonly string[],
+): { valid: boolean; missing: string[] } {
   const headerMatch = RESIDUAL_RISK_HEADER_RE.exec(body);
   if (!headerMatch) return { valid: false, missing: [] };
   const sectionStart = headerMatch.index + headerMatch[0].length;
@@ -594,15 +796,15 @@ export function hasResidualRiskException(body: string): { valid: boolean; missin
     ? body.slice(sectionStart)
     : body.slice(sectionStart, sectionStart + nextHeading);
   const missing: string[] = [];
-  for (const field of RESIDUAL_RISK_REQUIRED_FIELDS) {
+  for (const field of requiredFields) {
     const re = new RegExp(String.raw`^[\s\-*]*${escapeRegExp(field)}`, 'im');
     if (!re.test(section)) missing.push(field);
   }
   // `Approved by:` must name a real approver. A present-but-empty or
   // placeholder value (pending/tbd/n/a) is a self-waiver and does NOT grant
-  // the exception, which would otherwise bypass both the clean_mirror preflight
-  // and the soak-duration minimum (CLAUDE.md §1.11A).
-  if (!missing.includes('Approved by:')) {
+  // the exception/path, which would otherwise bypass the gate's protections
+  // (CLAUDE.md §1.11A).
+  if (requiredFields.includes('Approved by:') && !missing.includes('Approved by:')) {
     const approver = extractEvidenceFieldValue(section, 'Approved by:');
     const trimmed = approver?.trim() ?? '';
     if (trimmed.length === 0 || isIncompletePlaceholder(trimmed) || isNotApplicablePlaceholder(trimmed)) {
@@ -610,6 +812,14 @@ export function hasResidualRiskException(body: string): { valid: boolean; missin
     }
   }
   return { valid: missing.length === 0, missing };
+}
+
+export function hasResidualRiskException(body: string): { valid: boolean; missing: string[] } {
+  return validateResidualRiskNote(body, RESIDUAL_RISK_REQUIRED_FIELDS);
+}
+
+export function hasFrontendResidualRiskNote(body: string): { valid: boolean; missing: string[] } {
+  return validateResidualRiskNote(body, FRONTEND_RESIDUAL_RISK_REQUIRED_FIELDS);
 }
 
 function preflightResultErrors(body: string): string[] {
@@ -665,10 +875,92 @@ function shaEvidenceErrors(opts: {
   ];
 }
 
+const BASE_DRIFT_IMPACT_FIELD = 'Base drift impact:';
+const GIT_BIN = '/usr/bin/git';
+
+function changedFilesBetween(fromSha: string, toSha: string): string[] | null {
+  try {
+    return execFileSync(
+      GIT_BIN,
+      ['diff', '--name-only', `${fromSha}..${toSha}`],
+      { cwd: REPO, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+    ).split('\n').map((line) => line.trim()).filter(Boolean);
+  } catch {
+    return null;
+  }
+}
+
+function hasNamedApprover(value: string): boolean {
+  const match = /\bapproved by:\s*([^.;\n]+)/i.exec(value);
+  return match !== null && isFilledValue(match[1] ?? null);
+}
+
+function impactNoteAttestsNoRuntimeEffect(value: string): boolean {
+  const lower = value.toLowerCase();
+  return /\b(?:t0|ci[- ]?only|tooling[- ]?only|docs\/tests\/ci)\b/.test(lower)
+    && /\bno\b.*\b(?:runtime|schema|migration|staging|soak|deploy)\b.*\b(?:impact|change|effect)\b/.test(lower)
+    && hasNamedApprover(value);
+}
+
+function baseDriftImpactErrors(
+  body: string,
+  evidenceBaseSha: string,
+  currentBaseSha: string,
+  driftFilesOverride?: string[],
+): string[] {
+  const impact = extractEvidenceFieldValue(body, BASE_DRIFT_IMPACT_FIELD);
+  if (impact === null || !isFilledValue(impact)) {
+    return [
+      `Base SHA \`${evidenceBaseSha}\` differs from current base \`${currentBaseSha}\`. `
+      + `If the intervening main movement is harmless, add \`${BASE_DRIFT_IMPACT_FIELD}\` `
+      + 'with the changed files, the no-runtime/schema/staging-impact assessment, and a named approver; '
+      + 'otherwise refresh/re-scope the evidence.',
+    ];
+  }
+
+  if (!impactNoteAttestsNoRuntimeEffect(impact)) {
+    return [
+      `${BASE_DRIFT_IMPACT_FIELD} must state T0/CI-only drift, explicitly attest no runtime/schema/migration/staging/soak/deploy impact, and name an approver.`,
+    ];
+  }
+
+  const driftFiles = driftFilesOverride ?? changedFilesBetween(evidenceBaseSha, currentBaseSha);
+  if (driftFiles === null) {
+    return [
+      `Could not inspect changed files between evidence base \`${evidenceBaseSha}\` and current base \`${currentBaseSha}\`; `
+      + 'refresh/re-scope the evidence or run with enough git history to classify base drift.',
+    ];
+  }
+
+  const driftTier = requiredTierFor(driftFiles);
+  if (driftTier.tier !== 'T0') {
+    return [
+      `Base SHA drift from \`${evidenceBaseSha}\` to \`${currentBaseSha}\` touches ${driftTier.tier} surface `
+      + `(${driftTier.reason}); existing soak evidence cannot be preserved without release-owner re-scope/retest.`,
+    ];
+  }
+
+  return [];
+}
+
+function baseShaEvidenceErrors(
+  body: string,
+  expectedSha?: string,
+  driftFilesOverride?: string[],
+): string[] {
+  const evidenceSha = extractShaField(body, 'Base SHA:');
+  if (!evidenceSha) return ['Base SHA: must contain a 40-character commit SHA.'];
+
+  const expected = normalizeSha(expectedSha);
+  if (!expected || evidenceSha === expected) return [];
+
+  return baseDriftImpactErrors(body, evidenceSha, expected, driftFilesOverride);
+}
+
 function stagingIntegrityErrors(
   body: string,
   tier: Tier,
-  opts: { headSha?: string; baseSha?: string } = {},
+  opts: { headSha?: string; baseSha?: string; baseDriftFiles?: string[] } = {},
 ): string[] {
   if (tier === 'T0') return [];
 
@@ -695,13 +987,7 @@ function stagingIntegrityErrors(
       currentLabel: 'PR head',
       staleMessage: 'evidence cannot be copied across commits.',
     }),
-    ...shaEvidenceErrors({
-      body,
-      field: 'Base SHA:',
-      expectedSha: opts.baseSha,
-      currentLabel: 'base',
-      staleMessage: 're-check merge-base drift before claiming merge-grade evidence.',
-    }),
+    ...baseShaEvidenceErrors(body, opts.baseSha, opts.baseDriftFiles),
   ];
 }
 
@@ -721,6 +1007,9 @@ const STAGING_TOOLING_ALLOW = [
   /^scripts\/ci\/staging-honesty-preflight(\.test)?\.ts$/,
   /^scripts\/ci\/lib\//,
   /^scripts\/gcp-setup\//,
+  /^services\/worker\/scripts\/load-test\//,
+  /^tests\/k6\//,
+  /^tests\/load\//,
   /^docs\/staging\//,
   /^docs\/ops\/gemini-model-upgrade\.md$/,
   /^docs\/reference\/STAGING_RIG\.md$/,
@@ -760,7 +1049,525 @@ interface CheckResult {
   notes: string[];
 }
 
-export function check(opts: { body: string; files: string[]; headSha?: string; baseSha?: string }): CheckResult {
+type RcManifestLoader = (path: string) => string | null | undefined;
+
+interface CheckOptions {
+  body: string;
+  files: string[];
+  headSha?: string;
+  baseSha?: string;
+  baseDriftFiles?: string[];
+  prNumber?: number;
+  nowMs?: number;
+  rcManifestLoader?: RcManifestLoader;
+}
+
+function addErrors(result: CheckResult, errors: string[]): void {
+  if (errors.length === 0) return;
+  result.ok = false;
+  result.errors.push(...errors);
+}
+
+function tierDeclarationErrors(declared: Tier, required: { tier: Tier; reason: string }): string[] {
+  if (TIER_RANK[declared] >= TIER_RANK[required.tier]) return [];
+  return [
+    `Declared tier ${declared} is below required tier ${required.tier} `
+    + `for the touched files. Reason: ${required.reason}.`,
+  ];
+}
+
+function isFrontendT2EvidencePath(declared: Tier, required: Tier, files: string[]): boolean {
+  return declared === 'T2'
+    && required === 'T2'
+    && isFrontendOnlyChange(files);
+}
+
+function frontendT2Result(body: string, headSha?: string): CheckResult {
+  const result: CheckResult = { ok: true, errors: [], notes: [] };
+  const feErrors = frontendT2Errors(body);
+  // Exact-head integrity still applies: frontend evidence cannot be copied
+  // across commits any more than worker evidence can.
+  const headShaErrors = shaEvidenceErrors({
+    body,
+    field: 'PR head SHA:',
+    expectedSha: headSha,
+    currentLabel: 'PR head',
+    staleMessage: 'frontend evidence cannot be copied across commits.',
+  });
+
+  addErrors(result, [...feErrors, ...headShaErrors]);
+  if (result.ok) {
+    result.notes.push(
+      'frontend-T2 evidence path accepted (frontend-only change; no worker '
+      + 'artifacts producible — Vercel deployment + view-E2E + residual-risk '
+      + 'note satisfy T2).',
+    );
+  }
+  return result;
+}
+
+function durationValidation(body: string, declared: Tier): { errors: string[]; notes: string[] } {
+  const errors = soakDurationErrors(body, declared);
+  if (errors.length === 0) return { errors: [], notes: [] };
+
+  const riskException = hasResidualRiskException(body);
+  if (riskException.valid) {
+    return {
+      errors: [],
+      notes: [`Soak duration below ${TIER_SPECS[declared].soakHours}h minimum; residual-risk exception accepted.`],
+    };
+  }
+  return { errors, notes: [] };
+}
+
+function standardEvidenceErrors(
+  body: string,
+  declared: Tier,
+  opts: { headSha?: string; baseSha?: string },
+): { errors: string[]; notes: string[] } {
+  const errors: string[] = [];
+  const notes: string[] = [];
+
+  const missing = missingFields(body, declared);
+  if (missing.length > 0) {
+    errors.push(
+      `\`## Staging Soak Evidence\` section is missing required fields for ${declared}: `
+      + missing.map((f) => `\`${f}\``).join(', ') + '.',
+    );
+  }
+
+  const duration = durationValidation(body, declared);
+  notes.push(...duration.notes);
+  errors.push(
+    ...duration.errors,
+    ...requiredValueErrors(body, declared),
+    ...stagingIntegrityErrors(body, declared, opts),
+  );
+
+  const preflightVal = extractEvidenceFieldValue(body, 'Preflight result:');
+  const preflightIsClean = preflightVal !== null && hasCleanMirrorPreflight(preflightVal);
+  if (errors.length === 0 && !preflightIsClean && hasResidualRiskException(body).valid) {
+    notes.push('Preflight is not clean_mirror; residual-risk exception accepted.');
+  }
+
+  return { errors, notes };
+}
+
+const RC_MANIFEST_FIELD = 'RC manifest path:';
+const RC_MANIFEST_PATH_RE = /^docs\/staging\/rc-manifests\/rc-[A-Za-z0-9][A-Za-z0-9._-]*\.json$/;
+const RC_MANIFEST_DIR = resolve(REPO, 'docs/staging/rc-manifests');
+
+function resolveRcManifestPath(path: string): string | null {
+  if (!RC_MANIFEST_PATH_RE.test(path)) return null;
+  const localPath = resolve(REPO, path);
+  return localPath.startsWith(`${RC_MANIFEST_DIR}${sep}`) ? localPath : null;
+}
+
+function defaultRcManifestLoader(path: string): string | null {
+  const localPath = resolveRcManifestPath(path);
+  if (localPath === null || !existsSync(localPath)) return null;
+  return readFileSync(localPath, 'utf8');
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function objectAt(value: Record<string, unknown>, key: string): Record<string, unknown> | null {
+  const child = value[key];
+  return isRecord(child) ? child : null;
+}
+
+function arrayAt(value: Record<string, unknown>, key: string): unknown[] | null {
+  const child = value[key];
+  return Array.isArray(child) ? child : null;
+}
+
+function stringAt(value: Record<string, unknown>, key: string): string | null {
+  const child = value[key];
+  return typeof child === 'string' ? child : null;
+}
+
+function numberAt(value: Record<string, unknown>, key: string): number | null {
+  const child = value[key];
+  return typeof child === 'number' && Number.isFinite(child) ? child : null;
+}
+
+function stringArrayAt(value: Record<string, unknown>, key: string): string[] {
+  const child = value[key];
+  return Array.isArray(child) ? child.filter((entry): entry is string => typeof entry === 'string') : [];
+}
+
+function isFilledValue(value: string | null): boolean {
+  if (value === null) return false;
+  const trimmed = value.trim();
+  return trimmed.length > 0 && !isIncompletePlaceholder(trimmed) && !isNotApplicablePlaceholder(trimmed);
+}
+
+function requireRcString(
+  errors: string[],
+  value: Record<string, unknown>,
+  key: string,
+  label: string,
+): string | null {
+  const field = stringAt(value, key);
+  if (!isFilledValue(field)) {
+    errors.push(`RC manifest ${label} must be a real value, not blank or a placeholder.`);
+    return null;
+  }
+  return field;
+}
+
+function requireRcTimestamp(
+  errors: string[],
+  value: Record<string, unknown>,
+  key: string,
+  label: string,
+): number | null {
+  const raw = requireRcString(errors, value, key, label);
+  if (raw === null) return null;
+  const parsed = parseEvidenceTimestamp(raw);
+  if (parsed === null) {
+    errors.push(`RC manifest ${label} could not parse as a timestamp: \`${raw}\`.`);
+  }
+  return parsed;
+}
+
+function rcTier(value: string | null): Tier | null {
+  if (value === null) return null;
+  const normalized = value.trim().toUpperCase();
+  return DECLARED_TIER_VALUES.has(normalized as Tier) ? normalized as Tier : null;
+}
+
+function rcUrlErrors(value: string | null, label: string): string[] {
+  if (value === null || !isFilledValue(value)) return [`RC manifest ${label} must be a real URL.`];
+  return /\bhttps?:\/\/\S+/i.test(value)
+    ? []
+    : [`RC manifest ${label} must contain an HTTP(S) URL.`];
+}
+
+function rcSoakWindowErrors(
+  startMs: number | null,
+  endMs: number | null,
+  tier: Tier,
+  soak: Record<string, unknown>,
+): string[] {
+  if (startMs === null || endMs === null) return [];
+  if (endMs <= startMs) return ['RC manifest soak.end must be after soak.start.'];
+
+  const errors: string[] = [];
+  const minimumHours = TIER_SPECS[tier].soakHours;
+  const elapsedHours = (endMs - startMs) / 3_600_000;
+  if (elapsedHours < minimumHours) {
+    errors.push(
+      `RC manifest soak duration (${formatHours(elapsedHours)}h) is below the ${minimumHours}h minimum for ${tier}.`,
+    );
+  }
+
+  const declaredHours = numberAt(soak, 'duration_hours');
+  if (declaredHours !== null && declaredHours < minimumHours) {
+    errors.push(`RC manifest soak.duration_hours is below the ${minimumHours}h minimum for ${tier}.`);
+  }
+  return errors;
+}
+
+function rcPassingResultErrors(result: string | null): string[] {
+  if (result === null || /\b(?:green|pass(?:ed|es)?|success(?:ful)?|ok|healthy)\b/i.test(result)) {
+    return [];
+  }
+  return ['RC manifest soak.result must state a passing result.'];
+}
+
+function rcEvidenceTtlErrors(expiresAt: number | null, nowMs: number): string[] {
+  if (expiresAt === null || expiresAt > nowMs) return [];
+  return ['RC manifest evidence is expired; refresh the release-candidate evidence before merging.'];
+}
+
+function rcSoakDurationErrors(
+  soak: Record<string, unknown>,
+  tier: Tier,
+  nowMs: number,
+): string[] {
+  const errors: string[] = [];
+  const startMs = requireRcTimestamp(errors, soak, 'start', 'soak.start');
+  const endMs = requireRcTimestamp(errors, soak, 'end', 'soak.end');
+  errors.push(...rcSoakWindowErrors(startMs, endMs, tier, soak));
+
+  const result = requireRcString(errors, soak, 'result', 'soak.result');
+  errors.push(...rcPassingResultErrors(result));
+
+  requireRcString(errors, soak, 'harness_version', 'soak.harness_version');
+  const evidenceLinks = stringArrayAt(soak, 'evidence_links');
+  if (evidenceLinks.length === 0) {
+    errors.push('RC manifest soak.evidence_links must include at least one evidence link.');
+  }
+
+  const expiresAt = requireRcTimestamp(errors, soak, 'expires_at', 'soak.expires_at');
+  errors.push(...rcEvidenceTtlErrors(expiresAt, nowMs));
+
+  return errors;
+}
+
+function rcCurrentBaseCovered(
+  manifest: Record<string, unknown>,
+  currentBaseSha?: string,
+): boolean {
+  const current = normalizeSha(currentBaseSha);
+  if (current === null) return true;
+
+  const allowed = [
+    stringAt(manifest, 'train_launch_sha'),
+    stringAt(manifest, 'target_main_sha'),
+    ...stringArrayAt(manifest, 'allowed_base_shas'),
+    ...stringArrayAt(manifest, 'covered_main_shas'),
+  ].map((value) => normalizeSha(value ?? undefined)).filter((value): value is string => value !== null);
+
+  return allowed.includes(current);
+}
+
+function rcPrBaseCovered(
+  manifest: Record<string, unknown>,
+  pr: Record<string, unknown>,
+  currentBaseSha?: string,
+): boolean {
+  const prBase = normalizeSha(stringAt(pr, 'base_sha') ?? undefined);
+  if (prBase === null) return false;
+
+  const allowed = [
+    currentBaseSha,
+    stringAt(manifest, 'train_launch_sha'),
+    stringAt(manifest, 'target_main_sha'),
+    ...stringArrayAt(pr, 'allowed_base_shas'),
+  ].map((value) => normalizeSha(value ?? undefined)).filter((value): value is string => value !== null);
+
+  return allowed.includes(prBase);
+}
+
+function findCoveredRcPr(
+  includedPrs: unknown[],
+  opts: { headSha?: string; prNumber?: number },
+): Record<string, unknown> | null {
+  const normalizedHead = normalizeSha(opts.headSha);
+  for (const entry of includedPrs) {
+    if (!isRecord(entry)) continue;
+    const number = numberAt(entry, 'number');
+    const head = normalizeSha(stringAt(entry, 'head_sha') ?? undefined);
+    if (opts.prNumber !== undefined && number === opts.prNumber) return entry;
+    if (normalizedHead !== null && head === normalizedHead) return entry;
+  }
+  return null;
+}
+
+function parseRcManifest(path: string, raw: string, errors: string[]): Record<string, unknown> | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    errors.push(`RC manifest \`${path}\` is not valid JSON: ${err instanceof Error ? err.message : String(err)}.`);
+    return null;
+  }
+
+  if (!isRecord(parsed)) {
+    errors.push(`RC manifest \`${path}\` must be a JSON object.`);
+    return null;
+  }
+  return parsed;
+}
+
+function validateRcManifestMetadata(
+  manifest: Record<string, unknown>,
+  opts: CheckOptions,
+  errors: string[],
+): void {
+  const schemaVersion = numberAt(manifest, 'schema_version');
+  if (schemaVersion !== 1) {
+    errors.push('RC manifest schema_version must be 1.');
+  }
+
+  requireRcString(errors, manifest, 'rc_id', 'rc_id');
+  requireRcTimestamp(errors, manifest, 'created_at', 'created_at');
+  requireRcString(errors, manifest, 'created_by', 'created_by');
+  requireRcString(errors, manifest, 'release_owner', 'release_owner');
+  const approvalStatus = requireRcString(errors, manifest, 'approval_status', 'approval_status');
+  if (approvalStatus !== null && approvalStatus.trim().toLowerCase() !== 'approved') {
+    errors.push('RC manifest approval_status must be approved.');
+  }
+  requireRcString(errors, manifest, 'approval_actor', 'approval_actor');
+  requireRcTimestamp(errors, manifest, 'approval_time', 'approval_time');
+  requireRcString(errors, manifest, 'train_launch_sha', 'train_launch_sha');
+
+  if (!rcCurrentBaseCovered(manifest, opts.baseSha)) {
+    errors.push('RC manifest does not cover the current base SHA; update the manifest or re-check main drift.');
+  }
+}
+
+function validateCoveredRcPr(
+  manifest: Record<string, unknown>,
+  includedPrs: unknown[],
+  declared: Tier,
+  required: { tier: Tier; reason: string },
+  files: string[],
+  opts: CheckOptions,
+  errors: string[],
+): Record<string, unknown> | null {
+  if (includedPrs.length === 0) {
+    errors.push('RC manifest included_prs must list at least one PR.');
+  }
+
+  const coveredPr = findCoveredRcPr(includedPrs, opts);
+  if (coveredPr === null) {
+    errors.push('RC manifest does not include the current PR head SHA.');
+    return null;
+  }
+
+  const entryHead = normalizeSha(stringAt(coveredPr, 'head_sha') ?? undefined);
+  const currentHead = normalizeSha(opts.headSha);
+  if (currentHead !== null && entryHead !== currentHead) {
+    errors.push(`RC manifest current PR entry head SHA \`${entryHead ?? 'missing'}\` does not match current PR head \`${currentHead}\`.`);
+  }
+  if (!rcPrBaseCovered(manifest, coveredPr, opts.baseSha)) {
+    errors.push('RC manifest current PR entry base SHA does not match the current base, train launch SHA, target main SHA, or an allowed base SHA.');
+  }
+
+  const manifestTier = rcTier(stringAt(coveredPr, 'risk_tier'));
+  if (manifestTier === null) {
+    errors.push('RC manifest current PR entry risk_tier must be T1, T2, or T3.');
+  } else {
+    if (TIER_RANK[manifestTier] < TIER_RANK[required.tier]) {
+      errors.push(`RC manifest risk_tier ${manifestTier} is below required tier ${required.tier} for this PR. Reason: ${required.reason}.`);
+    }
+    if (TIER_RANK[manifestTier] < TIER_RANK[declared]) {
+      errors.push(`RC manifest risk_tier ${manifestTier} is below declared tier ${declared}.`);
+    }
+  }
+  requireRcString(errors, coveredPr, 'owner', 'included_prs[].owner');
+  requireRcString(errors, coveredPr, 'ci_summary', 'included_prs[].ci_summary');
+  requireRcString(errors, coveredPr, 'rollback_note', 'included_prs[].rollback_note');
+  if (files.some(touchesMigrationFile) && stringArrayAt(coveredPr, 'migration_files').length === 0) {
+    errors.push('RC manifest included_prs[].migration_files must list migration files for a migration-bearing PR.');
+  }
+  return coveredPr;
+}
+
+function validateRcEnvironment(manifest: Record<string, unknown>, errors: string[]): void {
+  const environment = objectAt(manifest, 'environment');
+  if (environment === null) {
+    errors.push('RC manifest environment must be an object.');
+    return;
+  }
+
+  const scope = normalizeEvidenceScope(stringAt(environment, 'evidence_scope') ?? '');
+  if (!ALLOWED_EVIDENCE_SCOPES.has(scope)) {
+    errors.push('RC manifest environment.evidence_scope must be merge-grade shared staging or merge-grade isolated staging.');
+  }
+
+  const stagingApiBase = stringAt(environment, 'staging_api_base');
+  errors.push(...rcUrlErrors(stagingApiBase, 'environment.staging_api_base'));
+  if (stagingApiBase !== null && /https?:\/\/arkova-worker-staging[-.]/i.test(stagingApiBase)) {
+    errors.push('RC manifest environment.staging_api_base must not point at the main shared staging URL; use a PR tag URL or isolated service URL.');
+  }
+  errors.push(...rcUrlErrors(stringAt(environment, 'staging_url'), 'environment.staging_url'));
+  requireRcString(errors, environment, 'revision', 'environment.revision');
+  requireRcString(errors, environment, 'deploy_tag', 'environment.deploy_tag');
+  requireRcString(errors, environment, 'image_digest', 'environment.image_digest');
+  requireRcString(errors, environment, 'supabase_project_ref', 'environment.supabase_project_ref');
+  requireRcString(errors, environment, 'deploy_log_id', 'environment.deploy_log_id');
+
+  const preflight = requireRcString(errors, environment, 'preflight_result', 'environment.preflight_result');
+  if (preflight !== null && !hasCleanMirrorPreflight(preflight)) {
+    errors.push('RC manifest environment.preflight_result must capture `environment_type=clean_mirror`.');
+  }
+}
+
+function rcEffectiveTier(coveredPr: Record<string, unknown> | null, declared: Tier): Tier {
+  return coveredPr === null ? declared : rcTier(stringAt(coveredPr, 'risk_tier')) ?? declared;
+}
+
+function validateRcSoak(
+  manifest: Record<string, unknown>,
+  effectiveTier: Tier,
+  opts: CheckOptions,
+  errors: string[],
+): void {
+  const soak = objectAt(manifest, 'soak');
+  if (soak === null) {
+    errors.push('RC manifest soak must be an object.');
+    return;
+  }
+  errors.push(...rcSoakDurationErrors(soak, effectiveTier, opts.nowMs ?? Date.now()));
+}
+
+function touchesMigrationFile(file: string): boolean {
+  return file.startsWith('supabase/migrations/');
+}
+
+function validateRcMigrationPlan(
+  manifest: Record<string, unknown>,
+  effectiveTier: Tier,
+  files: string[],
+  errors: string[],
+): void {
+  if (!files.some(touchesMigrationFile) && effectiveTier !== 'T3') return;
+
+  const migrationPlan = objectAt(manifest, 'migration_plan');
+  if (migrationPlan === null) {
+    errors.push('RC manifest migration_plan is required for T3 or migration-bearing PRs.');
+    return;
+  }
+  if (stringArrayAt(migrationPlan, 'order').length === 0) {
+    errors.push('RC manifest migration_plan.order must list migration train order.');
+  }
+  requireRcString(errors, migrationPlan, 'rollback_proof', 'migration_plan.rollback_proof');
+  requireRcString(errors, migrationPlan, 'reapply_proof', 'migration_plan.reapply_proof');
+}
+
+function rcManifestCoverage(
+  body: string,
+  declared: Tier,
+  required: { tier: Tier; reason: string },
+  files: string[],
+  opts: CheckOptions,
+): { errors: string[]; notes: string[] } {
+  const errors: string[] = [];
+  const notes: string[] = [];
+  const path = extractEvidenceFieldValue(body, RC_MANIFEST_FIELD);
+  if (path === null) return { errors, notes };
+
+  if (!hasEvidenceSection(body)) {
+    errors.push('RC manifest coverage must be declared under a `## Staging Soak Evidence` section.');
+  }
+
+  if (resolveRcManifestPath(path) === null) {
+    errors.push(
+      'RC manifest path must be a local JSON file under `docs/staging/rc-manifests/rc-*.json`; arbitrary URLs or paths are not allowed.',
+    );
+    return { errors, notes };
+  }
+
+  const raw = (opts.rcManifestLoader ?? defaultRcManifestLoader)(path);
+  if (!raw) {
+    errors.push(`RC manifest \`${path}\` was not found in the checked-out PR tree.`);
+    return { errors, notes };
+  }
+
+  const parsed = parseRcManifest(path, raw, errors);
+  if (parsed === null) return { errors, notes };
+  validateRcManifestMetadata(parsed, opts, errors);
+  const includedPrs = arrayAt(parsed, 'included_prs') ?? [];
+  const coveredPr = validateCoveredRcPr(parsed, includedPrs, declared, required, files, opts, errors);
+  const effectiveTier = rcEffectiveTier(coveredPr, declared);
+  validateRcEnvironment(parsed, errors);
+  validateRcSoak(parsed, effectiveTier, opts, errors);
+  validateRcMigrationPlan(parsed, effectiveTier, files, errors);
+
+  if (errors.length === 0) {
+    const rcId = stringAt(parsed, 'rc_id') ?? path;
+    notes.push(`RC manifest coverage accepted for ${rcId}; long soak evidence is centralized at the release-candidate level.`);
+  }
+  return { errors, notes };
+}
+
+export function check(opts: CheckOptions): CheckResult {
   const { body, files } = opts;
   const result: CheckResult = { ok: true, errors: [], notes: [] };
 
@@ -771,71 +1578,52 @@ export function check(opts: { body: string; files: string[]; headSha?: string; b
   }
 
   const declared = extractDeclaredTier(body);
-
   if (!declared) {
-    result.ok = false;
-    result.errors.push(
-      `PR body is missing a tier declaration. Add a line \`Tier: ${required.tier}\` under a `
-      + `\`## Staging Soak Evidence\` section. Required tier: ${required.tier} (${required.reason}).`,
-    );
+    return {
+      ok: false,
+      errors: [
+        `PR body is missing a tier declaration. Add a line \`Tier: ${required.tier}\` under a `
+        + `\`## Staging Soak Evidence\` section. Required tier: ${required.tier} (${required.reason}).`,
+      ],
+      notes: [],
+    };
+  }
+
+  addErrors(result, tierDeclarationErrors(declared, required));
+
+  const rcManifestPath = extractEvidenceFieldValue(body, RC_MANIFEST_FIELD);
+  if (rcManifestPath !== null) {
+    const rc = rcManifestCoverage(body, declared, required, files, opts);
+    addErrors(result, rc.errors);
+    result.notes.push(...rc.notes);
     return result;
   }
 
-  if (TIER_RANK[declared] < TIER_RANK[required.tier]) {
-    result.ok = false;
-    result.errors.push(
-      `Declared tier ${declared} is below required tier ${required.tier} `
-      + `for the touched files. Reason: ${required.reason}.`,
-    );
+  // ── Frontend-T2 evidence path (decision (a)) ──
+  // Activates ONLY when the PR is T2 by requirement AND declaration AND every
+  // changed file is purely frontend. Tier classification is unchanged; this
+  // only swaps which evidence T2 accepts for that narrow case.
+  if (isFrontendT2EvidencePath(declared, required.tier, files)) {
+    const frontendResult = frontendT2Result(body, opts.headSha);
+    addErrors(result, frontendResult.errors);
+    result.notes.push(...frontendResult.notes);
+    return result;
   }
 
   if (!hasEvidenceSection(body)) {
-    result.ok = false;
-    result.errors.push(
-      'PR body is missing a `## Staging Soak Evidence` section. '
-      + 'Use docs/staging/PR_TEMPLATE.md as a starting point.',
-    );
-    return result;
+    return {
+      ok: false,
+      errors: [
+        'PR body is missing a `## Staging Soak Evidence` section. '
+        + 'Use docs/staging/PR_TEMPLATE.md as a starting point.',
+      ],
+      notes: result.notes,
+    };
   }
 
-  const missing = missingFields(body, declared);
-  if (missing.length > 0) {
-    result.ok = false;
-    result.errors.push(
-      `\`## Staging Soak Evidence\` section is missing required fields for ${declared}: `
-      + missing.map((f) => `\`${f}\``).join(', ') + '.',
-    );
-  }
-
-  const durationErrors = soakDurationErrors(body, declared);
-  if (durationErrors.length > 0) {
-    const riskException = hasResidualRiskException(body);
-    if (riskException.valid) {
-      result.notes.push(`Soak duration below ${TIER_SPECS[declared].soakHours}h minimum; residual-risk exception accepted.`);
-    } else {
-      result.ok = false;
-      result.errors.push(...durationErrors);
-    }
-  }
-
-  const valueErrors = requiredValueErrors(body, declared);
-  if (valueErrors.length > 0) {
-    result.ok = false;
-    result.errors.push(...valueErrors);
-  }
-
-  const integrityErrors = stagingIntegrityErrors(body, declared, opts);
-  if (integrityErrors.length > 0) {
-    result.ok = false;
-    result.errors.push(...integrityErrors);
-  }
-
-  const preflightVal = extractEvidenceFieldValue(body, 'Preflight result:');
-  const preflightIsClean = preflightVal !== null && hasCleanMirrorPreflight(preflightVal);
-  if (result.ok && !preflightIsClean && hasResidualRiskException(body).valid) {
-    result.notes.push('Preflight is not clean_mirror; residual-risk exception accepted.');
-  }
-
+  const standard = standardEvidenceErrors(body, declared, opts);
+  addErrors(result, standard.errors);
+  result.notes.push(...standard.notes);
   return result;
 }
 
@@ -845,7 +1633,9 @@ function main(): void {
     process.env.HEAD_REF_SHA || process.env.GITHUB_SHA || 'HEAD',
     'CI head ref',
   );
-  const result = check({ body: prBody, files, headSha: currentHeadSha, baseSha: baseRef });
+  const parsedPrNumber = Number.parseInt(process.env.PR_NUMBER ?? '', 10);
+  const prNumber = Number.isFinite(parsedPrNumber) ? parsedPrNumber : undefined;
+  const result = check({ body: prBody, files, headSha: currentHeadSha, baseSha: baseRef, prNumber });
 
   for (const note of result.notes) console.log(`ℹ️  ${note}`);
   if (result.ok) {

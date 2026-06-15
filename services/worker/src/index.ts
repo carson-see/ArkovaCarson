@@ -26,6 +26,7 @@ import { apiV1Router } from './api/v1/router.js';
 import { v1DeprecationHeaders } from './api/v1/deprecation.js';
 import { docsRouter } from './api/v1/docs.js';
 import { badgeRouter } from './api/badge.js';
+import { didWebRouter } from './api/did-web.js';
 
 // Extracted routers (ARCH-1)
 import { billingRouter } from './routes/billing.js';
@@ -62,7 +63,10 @@ import { setIdempotencyStore } from './middleware/idempotency.js';
 import { createFeeEstimator } from './chain/fee-estimator.js';
 
 // Initialize Sentry BEFORE Express app — PII scrubbing mandatory (Constitution 1.4 + 1.6)
-initSentry(config.sentryDsn, config.nodeEnv);
+initSentry(config.sentryDsn, config.nodeEnv, {
+  kRevision: config.kRevision,
+  kService: config.kService,
+});
 
 // Static fee estimator singleton — avoids dynamic import on every /health request
 const feeEstimatorInstance = createFeeEstimator({
@@ -99,7 +103,7 @@ app.get('/health', async (req, res) => {
 
   const deps: HealthCheckDeps = {
     isDbHealthy,
-    dbQuery: () => db.from('plans').select('id').limit(1) as unknown as Promise<{ data: unknown; error: { message: string } | null }>,
+    dbQuery: async () => db.from('plans').select('id').limit(1),
     recordDbSuccess,
     recordDbFailure,
     getDbCircuitState,
@@ -116,18 +120,18 @@ app.get('/health', async (req, res) => {
       bitcoinTreasuryWif: config.bitcoinTreasuryWif,
       enableProdNetworkAnchoring: config.enableProdNetworkAnchoring,
     },
-    getLastSecuredAnchor: () =>
+    getLastSecuredAnchor: async () =>
       db.from('anchors')
         .select('created_at')
         .eq('status', 'SECURED')
         .order('created_at', { ascending: false })
-        .limit(1) as unknown as Promise<{ data: Array<{ created_at: string }> | null; error: { message: string } | null }>,
-    getLastBatchAnchor: () =>
+        .limit(1),
+    getLastBatchAnchor: async () =>
       db.from('anchors')
         .select('updated_at')
         .eq('status', 'SUBMITTED')
         .order('updated_at', { ascending: false })
-        .limit(1) as unknown as Promise<{ data: Array<{ completed_at: string }> | null; error: { message: string } | null }>,
+        .limit(1),
     getPendingAnchorCount: async () => {
       // SCRUM-1259 (R1-5): swapped exact-count on bloated anchors table
       // for get_anchor_status_counts_fast RPC. /health?detailed=true must
@@ -313,6 +317,16 @@ app.use('/api/docs', docsRouter);
 app.get('/.well-known/openapi.json', (_req, res) => {
   res.redirect(301, '/api/docs/spec.json');
 });
+
+// SCRUM-1922 R-CTDL-FR9 — did:web identity documents (public, no auth).
+//   GET /.well-known/did.json            -> did:web:app.arkova.ai
+//   GET /orgs/:orgPublicId/did.json      -> did:web:app.arkova.ai:orgs:{id}
+// Org sub-DIDs (path-segment did:web) serve a plain did.json per the W3C spec;
+// only the bare-host DID lives under /.well-known/. OPS: the edge must route
+// app.arkova.ai (+ /orgs/*) to this worker for the DIDs to resolve; the routes
+// themselves are served here. Public DB-backed reads → behind rateLimiters.api
+// (429/Retry-After), same as badgeRouter.
+app.use(rateLimiters.api, didWebRouter);
 
 // 2026-04-26 — bug-bounty F4. Spec was already publicly inlined in
 // `/api/docs/swagger-ui-init.js`, but `/api/v1/openapi.json` returned 401

@@ -49,6 +49,10 @@ JOBS=(
   # at 06:00 UTC. Polls Envelopes API, diffs against webhook nonces, inserts
   # gap rows, fires Sentry per gap. Also keeps OAuth tokens alive (30-day expiry).
   "docusign-reconciliation|0 6 * * *|/jobs/docusign-reconciliation|30s,120s,2"
+  # SCRUM-2099 (DS-FAIL-01): DocuSign Connect Failures API poller hourly.
+  # Polls failed delivery attempts from DocuSign and dedups into the existing
+  # reconciliation gaps table so actionable webhook gaps surface within ~1h.
+  "docusign-connect-failures-poll|0 * * * *|/jobs/docusign-connect-failures-poll|30s,120s,2"
 )
 # SCRUM-1727 (one-shot historical backfill) is INTENTIONALLY NOT in JOBS.
 # It's a manual operator endpoint at /jobs/bq-export-backfill?table=<name>.
