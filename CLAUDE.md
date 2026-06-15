@@ -135,6 +135,9 @@ Documents never leave the user's device. Foundational privacy guarantee.
 - Only PII-stripped structured metadata + fingerprint may flow to server.
 - Gated by `ENABLE_AI_EXTRACTION` (**default true in production**; `switchboard_flags.enabled = true` and the deploy-worker.yml env-var fallback both set it on). The "default false" wording in earlier revisions of this doc was drift — AI extraction is a launch-required path, not opt-in. Off-prod (local dev / preview) defaults to false unless explicitly enabled. No "raw mode" bypass either way.
 
+### 1.6A Connector-sourced documents (server-side fingerprint carve-out)
+Connector-fetched documents (DocuSign / Google Drive) MAY be fingerprinted server-side in `services/worker/` — a narrow, explicit exception to §1.6 — because they originate from a third-party cloud the user already authorized; there is no client device in the loop to do the hashing. This carve-out is **void unless ALL** of the following hold: fetch → SHA-256 in memory → discard; raw bytes are **never** persisted to Postgres, written to logs, sent to Sentry, stored in `job_queue.last_error`, embedded in error messages, or written to temp files; connector error types carry no raw response body; the pino logger has a redaction guard; the Sentry scrubber drops binary/typed-array values by type (not key name); and a CI lint forbids passing document bytes to any logger / Sentry / `Error` constructor (enforced per SCRUM-2492). Only the fingerprint + bounded, PII-scrubbed metadata may leave the fetch. Applies **only** to connector-fetched documents; user-uploaded documents remain strictly client-side per §1.6, and `generateFingerprint` is still browser-only for uploads.
+
 ### 1.7 Testing
 - RLS tests: `src/tests/rls/helpers.ts` `withUser()` / `withAuth()`.
 - Tests must not call real Stripe or Bitcoin APIs — mock interfaces.
