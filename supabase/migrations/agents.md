@@ -30,8 +30,9 @@ Remaining strict order:
 | Prefix | PR | Story | File | Status |
 |---|---|---|---|---|
 | `0339` | #1122 | SCRUM-2285 | `0339_get_public_anchor_by_fingerprint.sql` | current strict-order PR |
+| `0340` | (Train D, branch `feat/train-d-proof-foundation`) | SCRUM-2335 (PROOF-02) | `0340_scrum2335_proof_completeness_columns_and_trigger.sql` | reserved — T3, soak pending. Branched off `main` head `1a9d35bb` (disk head 0339). |
 
-- Remaining migration order is strict: #1122.
+- Remaining migration order is strict: #1122, then `0340` (Train D proof foundation).
 - Do not reserve or reuse `0327`, `0328`, `0329`, `0333`, `0334`, `0335`, `0336`, `0337`, or `0338`; those prefixes are already consumed by merged drain PRs.
 - Do not infer a current `0332` release-drain owner from older stale reservations; no active `0332` release-drain PR is asserted by this mirror sync.
 - Remaining soaks must use a dedicated isolated Supabase project or a proven `clean_mirror`, never dirty shared staging.
@@ -82,3 +83,7 @@ _Rollback rehearsed: 2026-05-16 on staging (ujtlwnoqfhtitcmsnrpq). Both tables d
 ## Recent migrations (SCRUM-1611 CSI-04A)
 
 - **0329_member_integrations_credential_providers.sql**: Widens the `member_integrations.provider` CHECK constraint from `{'docusign'}` to `{'docusign', 'credly', 'accredible', 'udemy'}` so the same table can hold credential-source provider tokens for the SCRUM-1596 epic. Adds `kek_version smallint NOT NULL DEFAULT 1` for KMS key-rotation tracking (RFC 9700). No new RLS policies — the policies established by 0320 apply to all providers polymorphically. Tier T2 (CHECK widening + additive column). Rollback rehearsal pending on staging.
+
+## Recent migrations (branch feat/train-d-proof-foundation, 0340)
+
+- **0340_scrum2335_proof_completeness_columns_and_trigger.sql** (PROOF-02 / SCRUM-2335, Train D proof-integrity foundation): adds additive-nullable columns on `anchor_proofs` — `block_header bytea`, `block_hash text`, `op_return_payload bytea`, `merkle_index integer`, `proof_schema_version smallint NOT NULL DEFAULT 1` — for the two-layer proof bundle (PROOF-01 contract, Confluence 81330178). Adds the "SECURED ⇒ proof complete" invariant as a **constraint trigger** on `anchors` (a CHECK cannot subquery `anchors.status`), **GATED** behind the GUC `arkova.proof_enforce_secured_complete` which defaults **OFF**. Phase 1 (this migration) ships columns + trigger function + wiring, enforcement INERT so it does NOT reject the ~2.97M pre-existing empty-branch SECURED anchors. Phase 2 flips enforcement on via `ALTER DATABASE … SET arkova.proof_enforce_secured_complete = 'on'` AFTER the SCRUM-2471 `proof-branch-backfill` job has filled the back catalogue (validated on staging). `-- ROLLBACK:` block included. Tier **T3** (migration + anchor lifecycle). Local validation: applied + ROLLBACK + forward-reapply clean on throwaway PG 17; gate-off allows SECURED with empty branch, gate-on rejects incomplete proof / allows complete proof. `database.types.ts` regenerated (hand-synced — local-only). Reserved off `main` head `1a9d35bb` (disk head 0339). Staging soak + Carson sign-off required before Phase 2 / prod apply.

@@ -364,36 +364,51 @@ export type Database = {
         Row: {
           anchor_id: string
           batch_id: string | null
+          block_hash: string | null
+          block_header: string | null
           block_height: number | null
           block_timestamp: string | null
           created_at: string
           id: string
+          merkle_index: number | null
           merkle_root: string | null
+          op_return_payload: string | null
           proof_path: Json | null
+          proof_schema_version: number
           raw_response: Json | null
           receipt_id: string
         }
         Insert: {
           anchor_id: string
           batch_id?: string | null
+          block_hash?: string | null
+          block_header?: string | null
           block_height?: number | null
           block_timestamp?: string | null
           created_at?: string
           id?: string
+          merkle_index?: number | null
           merkle_root?: string | null
+          op_return_payload?: string | null
           proof_path?: Json | null
+          proof_schema_version?: number
           raw_response?: Json | null
           receipt_id: string
         }
         Update: {
           anchor_id?: string
           batch_id?: string | null
+          block_hash?: string | null
+          block_header?: string | null
           block_height?: number | null
           block_timestamp?: string | null
           created_at?: string
           id?: string
+          merkle_index?: number | null
           merkle_root?: string | null
+          op_return_payload?: string | null
           proof_path?: Json | null
+          proof_schema_version?: number
           raw_response?: Json | null
           receipt_id?: string
         }

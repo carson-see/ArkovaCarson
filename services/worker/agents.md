@@ -1,6 +1,18 @@
 # agents.md — services/worker
 
-_Last updated: 2026-06-05 (Edge MCP Truthfulness PR-1)._
+_Last updated: 2026-06-15 (Train D proof-integrity foundation)._
+
+## Train D proof-integrity foundation (2026-06-15, branch `feat/train-d-proof-foundation`)
+
+The #1 MVP launch-blocker: make proof `verified` cryptographic and persist the
+branches that make it possible. Three coupled stories on one branch.
+
+- **`utils/merkle-verify.ts`** (new, SCRUM-2490 / PROOF-VERIFY): `verifyMerkleInclusion(leaf, branch, root, { leafIndex?, leafCount? })` recomputes the app-tree root from the branch using the SAME plain double-SHA256 rule as `utils/merkle.ts::buildMerkleTree` (so it matches what is actually anchored on-chain) and returns `{ valid, reason }`. Hardening: 32-byte (64-hex) leaf/sibling length validation (leaf↔internal domain separation for this Bitcoin-style scheme), the **CVE-2012-2459** duplicated-leaf guard (a self-pair `sibling == running hash` is legitimate ONLY at the rightmost node of an odd-sized level — enforced structurally when `leafIndex` + `leafCount` are known), and empty-branch ⇒ root == leaf. Also exports RFC-6962 `hashLeafTagged` / `hashNodeTagged` for a FUTURE `proof_schema_version=2` — NOT wired into the v1 verdict (tagged hashing would change on-chain root bytes; gated behind the PROOF-01 §4 OP_RETURN version-byte decision).
+- **`api/v1/verify-proof.ts`** (SCRUM-2490): `buildProofResponse` now sets `verified` from `verifyMerkleInclusion(...)`, **never** from `anchors.status` (closes the pre-mortem K1 kill-shot). Threads the new `merkle_index` through the stored-proof + metadata extractors and the prod `anchor_proofs` SELECT. NOTE: `api/v1/verify.ts::buildVerificationResult` `verified` is a DIFFERENT, credential-status semantic (active/non-revoked) and is correctly left status-derived — do not confuse the two.
+- **`jobs/batch-anchor.ts` + `jobs/anchor.ts`** (SCRUM-2471 / FIX-1): the customer batch path (`processBatchAnchors`, both the claim path and the legacy fallback) and the single-anchor path (`processAnchor`) now persist each leaf's branch + integer `merkleIndex` into `anchor_proofs` via `utils/anchorProofs.ts::upsertAnchorProofs` (`buildMerkleTree`'s `tree.proofs` was previously discarded; only `publicRecordAnchor.ts` wrote branches). Single-leaf = empty branch, `merkle_root == fingerprint`. Persistence is NON-FATAL (the TX is already broadcast; a miss is recoverable via the backfill — never revert a broadcast over a proof write).
+- **`utils/anchorProofs.ts`**: `AnchorProofUpsertRow` gains `merkleIndex?` → persisted as `anchor_proofs.merkle_index`.
+- **`jobs/proof-branch-backfill.ts`** (new, SCRUM-2471): resumable, self-validating backfill for EXISTING SECURED customer anchors missing a branch. Reconstructs each batch's tree from `created_at,id`-ordered fingerprints, recomputes the root, and persists branches **only if the recomputed root equals the stored `merkle_root`** (never writes a wrong branch; unrecoverable batches are skipped + counted). The data is the durable watermark (a completed batch stops matching the "incomplete" query). **Manual-trigger only — NOT cron-wired, NOT to be run against prod in this change** (T3 data backfill; needs its own soak + operator sign-off).
+- **Migration `0340`** adds the proof-completeness columns + the gated "SECURED ⇒ proof complete" trigger (see `supabase/migrations/agents.md`). `database.types.ts` (worker + root) hand-synced for the 5 new `anchor_proofs` columns (local-only; no cloud `gen:types`).
 
 ## Edge MCP Truthfulness PR-1 — test realignment + embedding drift guard (2026-06-05)
 
