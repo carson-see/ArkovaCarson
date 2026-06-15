@@ -77,7 +77,8 @@ describe('GET /credentials/:publicId/ctdl', () => {
     expect(res.type).toContain('application/ld+json');
     expect(res.body['@context']).toBe('https://credreg.net/ctdl/schema/context/json');
     expect(res.body['@type']).toBe('ceterms:BachelorDegree');
-    expect(res.body['ceterms:ctid']).toBe('ce-ARK-2026-CTDL-001');
+    expect(res.body).not.toHaveProperty('ceterms:ctid');
+    expect(res.body['ceterms:offeredBy']).not.toHaveProperty('ceterms:ctid');
     expect(res.body['ceterms:verificationServiceProfile']['ceterms:verificationService']).toBe(
       'https://app.arkova.ai/verify/ARK-2026-CTDL-001',
     );
