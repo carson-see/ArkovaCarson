@@ -22,7 +22,7 @@ import { buildMerkleTree, type MerkleTreeResult } from '../utils/merkle.js';
 import { upsertAnchorProofs } from '../utils/anchorProofs.js';
 import { getComplianceControlIds } from '../utils/complianceMapping.js';
 import { config } from '../config.js';
-import { deductOrgCredit, type DeductionResult } from '../utils/orgCredits.js';
+import { debitAndEnqueueAnchor, type DebitAndEnqueueResult } from '../utils/orgCredits.js';
 import type { Json } from '../types/database.types.js';
 
 /**
@@ -248,7 +248,7 @@ async function refundQueueRunCredits(charged: ChargedQueueAnchor[], failure: str
 async function markQueueCreditCharged(
   anchor: ClaimedAnchor,
   reason: string,
-  deduction: DeductionResult,
+  deduction: DebitAndEnqueueResult,
   expectedStatus: 'BROADCASTING' | 'PENDING' = 'BROADCASTING',
 ): Promise<boolean> {
   const metadata = readMetadata(anchor.metadata);
@@ -282,7 +282,7 @@ async function markQueueCreditCharged(
 async function releaseQueueCreditDeniedAnchor(
   anchor: ClaimedAnchor,
   reason: string,
-  deduction?: DeductionResult,
+  deduction?: DebitAndEnqueueResult,
   expectedStatus: 'BROADCASTING' | 'PENDING' = 'BROADCASTING',
 ): Promise<void> {
   const metadata = clearClaimMetadata(readMetadata(anchor.metadata));
@@ -332,13 +332,25 @@ async function applyQueueRunCreditGate(
       continue;
     }
 
-    let deduction: DeductionResult;
+    // SCRUM-2350 (QUEUE-04): debit + status-confirm ATOMICALLY via a single RPC.
+    // The anchor is already in `expectedStatus` (claimed BROADCASTING, or PENDING
+    // in the legacy path), so this is a "confirm-and-debit" call: the debit row
+    // and the anchor status commit (or roll back) together. There is no longer a
+    // window where a charge exists with no enqueued/claimed anchor. The debit is
+    // keyed by the per-anchor id (NOT a batch id) and is idempotent on retry.
+    let deduction: DebitAndEnqueueResult;
     try {
-      deduction = await deductOrgCredit(db, anchor.org_id, 1, reason, anchor.id);
+      deduction = await debitAndEnqueueAnchor(db, {
+        orgId: anchor.org_id,
+        anchorId: anchor.id,
+        reason,
+        targetStatus: expectedStatus,
+        expectedStatus,
+      });
     } catch (err) {
       logger.error(
         { error: err, anchorId: anchor.id, orgId: anchor.org_id, reason },
-        'Queue-run credit deduction threw',
+        'Queue-run atomic debit+enqueue threw',
       );
       await releaseQueueCreditDeniedAnchor(anchor, 'credit_rpc_failure', undefined, expectedStatus);
       continue;
@@ -357,9 +369,19 @@ async function applyQueueRunCreditGate(
     }
 
     if (deduction.reason !== 'feature_disabled') {
+      // The charge already committed atomically with the status. The metadata
+      // marker is now a best-effort annotation, not part of the money path: if it
+      // fails we do NOT refund (the append-only ledger makes a gate retry
+      // idempotent — re-running charges 0), we just release the anchor with a
+      // denial marker. The reconciliation sweeper (org_credit_ledger_divergence)
+      // surfaces any stranded debit. This removes the old irreversible-mis-debit
+      // window that logged DOUBLE_BILLING_RISK.
       const marked = await markQueueCreditCharged(anchor, reason, deduction, expectedStatus);
       if (!marked) {
-        await refundQueueRunCredits([{ id: anchor.id, orgId: anchor.org_id }], 'queue credit metadata update failed');
+        logger.error(
+          { anchorId: anchor.id, orgId: anchor.org_id, reason },
+          'Queue-run credit metadata update failed after atomic debit — leaving charged (idempotent on retry); ledger reconciler will surface if stranded',
+        );
         await releaseQueueCreditDeniedAnchor(anchor, 'credit_metadata_update_failed', undefined, expectedStatus);
         continue;
       }

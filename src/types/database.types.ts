@@ -3463,6 +3463,7 @@ export type Database = {
           amount: number
           balance_after: number
           created_at: string
+          entry_type: string
           id: string
           org_id: string
           reason: string
@@ -3472,6 +3473,7 @@ export type Database = {
           amount: number
           balance_after: number
           created_at?: string
+          entry_type?: string
           id?: string
           org_id: string
           reason: string
@@ -3481,6 +3483,7 @@ export type Database = {
           amount?: number
           balance_after?: number
           created_at?: string
+          entry_type?: string
           id?: string
           org_id?: string
           reason?: string
@@ -6256,6 +6259,17 @@ export type Database = {
         Args: { p_amount?: number; p_org_id?: string; p_user_id?: string }
         Returns: boolean
       }
+      debit_and_enqueue_anchor: {
+        Args: {
+          p_amount?: number
+          p_anchor_id: string
+          p_expected_status?: Database["public"]["Enums"]["anchor_status"]
+          p_org_id: string
+          p_reason?: string
+          p_target_status?: Database["public"]["Enums"]["anchor_status"]
+        }
+        Returns: Json
+      }
       deduct_credit: {
         Args: {
           p_amount?: number
@@ -6638,6 +6652,17 @@ export type Database = {
       }
       lookup_org_by_email_domain: { Args: { p_email: string }; Returns: Json }
       next_webhook_sequence: { Args: never; Returns: number }
+      org_credit_ledger_divergence: {
+        Args: { p_initial_grant?: number; p_org_id?: string }
+        Returns: {
+          balance: number
+          diverged: boolean
+          divergence: number
+          expected: number
+          ledger_sum: number
+          org_id: string
+        }[]
+      }
       record_msgraph_nonce_and_enqueue: {
         Args: {
           p_change_type: string

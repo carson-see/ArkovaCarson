@@ -107,3 +107,128 @@ export async function deductOrgCredit(
   }
   return { allowed: false, error: 'rpc_failure', message: row.error ?? 'unknown' };
 }
+
+// =============================================================================
+// SCRUM-2350 (QUEUE-04): atomic debit + enqueue.
+// =============================================================================
+
+/** Anchor status values the atomic debit+enqueue RPC transitions between. */
+export type AnchorQueueStatus = 'PENDING' | 'BROADCASTING';
+
+export interface DebitAndEnqueueResult {
+  allowed: boolean;
+  /** Present on `allowed=false` to drive caller behavior. */
+  error?:
+    | 'insufficient_credits'
+    | 'org_not_initialized'
+    | 'anchor_not_in_expected_status'
+    | 'rpc_failure';
+  /** Org balance after the debit, or current balance on failure. */
+  balance?: number;
+  /** True when the RPC reused a prior debit for the same per-anchor reference. */
+  idempotent?: boolean;
+  /** Amount that was requested. */
+  required?: number;
+  /** Anchor status after the call (echoed for the caller's bookkeeping). */
+  anchorStatus?: string;
+  /** When `error === 'rpc_failure'`, the underlying message (sanitized). */
+  message?: string;
+  /** Soft signal — the helper short-circuited because the flag is off. */
+  reason?: 'feature_disabled';
+}
+
+interface DebitAndEnqueueRpcRow {
+  success: boolean;
+  balance?: number;
+  deducted?: number;
+  idempotent?: boolean;
+  required?: number;
+  anchor_status?: string;
+  error?: string;
+}
+
+export interface DebitAndEnqueueArgs {
+  orgId: string;
+  /** Per-anchor id — this is the idempotency reference_id, NOT a batch id. */
+  anchorId: string;
+  reason: string;
+  amount?: number;
+  targetStatus?: AnchorQueueStatus;
+  expectedStatus?: AnchorQueueStatus;
+}
+
+/**
+ * Atomically debit one org credit AND transition the anchor's status in a single
+ * DB transaction (SCRUM-2350). Replaces the non-atomic debit→broadcast→
+ * best-effort-refund saga: either both the charge and the status transition
+ * commit, or neither does — there is no window where a charge exists with no
+ * enqueued anchor.
+ *
+ * Behavior matrix:
+ *   - flag off                         → `{ allowed: true, reason: 'feature_disabled' }`
+ *   - RPC success                      → `{ allowed: true, balance, anchorStatus }`
+ *   - RPC success + idempotent replay  → `{ allowed: true, balance, idempotent: true, anchorStatus }`
+ *   - insufficient_credits             → `{ allowed: false, error, balance, required }` (anchor stays queued, no debit)
+ *   - anchor_not_in_expected_status    → `{ allowed: false, error, anchorStatus }` (no debit)
+ *   - org_not_initialized              → `{ allowed: false, error }`
+ *   - PostgREST/network error          → `{ allowed: false, error: 'rpc_failure', message }`
+ */
+export async function debitAndEnqueueAnchor(
+  database: DbLike,
+  args: DebitAndEnqueueArgs,
+): Promise<DebitAndEnqueueResult> {
+  if (!config.enableOrgCreditEnforcement) {
+    return { allowed: true, reason: 'feature_disabled' };
+  }
+
+  const amount = args.amount ?? 1;
+  const targetStatus = args.targetStatus ?? 'BROADCASTING';
+  const expectedStatus = args.expectedStatus ?? 'PENDING';
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { data, error } = await (database.rpc as any)('debit_and_enqueue_anchor', {
+    p_org_id: args.orgId,
+    p_anchor_id: args.anchorId,
+    p_amount: amount,
+    p_reason: args.reason,
+    p_target_status: targetStatus,
+    p_expected_status: expectedStatus,
+  });
+
+  if (error) {
+    return { allowed: false, error: 'rpc_failure', message: error.message };
+  }
+
+  const row = data as DebitAndEnqueueRpcRow | null;
+  if (!row) {
+    return { allowed: false, error: 'rpc_failure', message: 'empty response' };
+  }
+
+  if (row.success === true) {
+    return {
+      allowed: true,
+      balance: row.balance,
+      ...(row.idempotent === true ? { idempotent: true } : {}),
+      ...(row.anchor_status !== undefined ? { anchorStatus: row.anchor_status } : {}),
+    };
+  }
+  if (row.error === 'insufficient_credits') {
+    return {
+      allowed: false,
+      error: 'insufficient_credits',
+      balance: row.balance,
+      required: row.required ?? amount,
+    };
+  }
+  if (row.error === 'anchor_not_in_expected_status') {
+    return {
+      allowed: false,
+      error: 'anchor_not_in_expected_status',
+      ...(row.anchor_status !== undefined ? { anchorStatus: row.anchor_status } : {}),
+    };
+  }
+  if (row.error === 'org_not_initialized') {
+    return { allowed: false, error: 'org_not_initialized' };
+  }
+  return { allowed: false, error: 'rpc_failure', message: row.error ?? 'unknown' };
+}

@@ -505,11 +505,11 @@ describe('processBatchAnchors', () => {
     );
   });
 
-  it('deducts org credits for DocuSign AUTO_ANCHOR queue items during manual org queue runs', async () => {
+  it('atomically debits+enqueues org credits for DocuSign AUTO_ANCHOR queue items during manual org queue runs', async () => {
     mockPendingBacklogReady();
     mockDbRpc
       .mockResolvedValueOnce({ data: [DOCUSIGN_QUEUE_ANCHOR], error: null }) // claim
-      .mockResolvedValueOnce({ data: { success: true, balance: 4, deducted: 1 }, error: null }) // deduct_org_credit
+      .mockResolvedValueOnce({ data: { success: true, balance: 4, deducted: 1, anchor_status: 'BROADCASTING' }, error: null }) // debit_and_enqueue_anchor
       .mockResolvedValueOnce({ data: 1, error: null }); // submit_batch_anchors
 
     const result = await processBatchAnchors({
@@ -518,12 +518,18 @@ describe('processBatchAnchors', () => {
     });
 
     expect(result.processed).toBe(1);
-    expect(mockDbRpc).toHaveBeenCalledWith('deduct_org_credit', expect.objectContaining({
+    // SCRUM-2350: the per-anchor charge is the atomic debit+enqueue RPC, keyed by
+    // the per-anchor id (NOT a batch id), with expected==target=current status.
+    expect(mockDbRpc).toHaveBeenCalledWith('debit_and_enqueue_anchor', expect.objectContaining({
       p_org_id: DOCUSIGN_QUEUE_ANCHOR.org_id,
       p_amount: 1,
       p_reason: 'rule.auto_anchor_queue_run',
-      p_reference_id: DOCUSIGN_QUEUE_ANCHOR.id,
+      p_anchor_id: DOCUSIGN_QUEUE_ANCHOR.id,
+      p_target_status: 'BROADCASTING',
+      p_expected_status: 'BROADCASTING',
     }));
+    // The legacy positional deduct RPC is no longer used by the gate.
+    expect(mockDbRpc).not.toHaveBeenCalledWith('deduct_org_credit', expect.anything());
     expect(mockAnchorsUpdate).toHaveBeenCalledWith(expect.objectContaining({
       metadata: expect.objectContaining({
         credit_denial_reason: null,
@@ -535,12 +541,11 @@ describe('processBatchAnchors', () => {
     expect(mockSubmitFingerprint).toHaveBeenCalledTimes(1);
   });
 
-  it('does not broadcast when queue credit metadata fails schema validation', async () => {
+  it('releases (does not broadcast) when queue credit metadata fails schema validation — but does NOT refund (append-only ledger makes a gate retry idempotent)', async () => {
     mockPendingBacklogReady();
     mockDbRpc
       .mockResolvedValueOnce({ data: [DOCUSIGN_QUEUE_ANCHOR], error: null }) // claim
-      .mockResolvedValueOnce({ data: { success: true, balance: Number.NaN, deducted: 1 }, error: null }) // deduct_org_credit
-      .mockResolvedValueOnce({ data: { success: true }, error: null }); // refund_org_credit
+      .mockResolvedValueOnce({ data: { success: true, balance: Number.NaN, deducted: 1, anchor_status: 'BROADCASTING' }, error: null }); // debit_and_enqueue_anchor
 
     const result = await processBatchAnchors({
       force: true,
@@ -550,6 +555,10 @@ describe('processBatchAnchors', () => {
     expect(result).toEqual({ processed: 0, batchId: null, merkleRoot: null, txId: null });
     expect(mockSubmitFingerprint).not.toHaveBeenCalled();
     expect(mockDbRpc).not.toHaveBeenCalledWith('submit_batch_anchors', expect.anything());
+    // SCRUM-2350: metadata-mark failure no longer triggers a compensating refund —
+    // the debit is in an append-only, idempotent ledger, so re-running the gate
+    // charges 0. The reconciler surfaces any stranded debit.
+    expect(mockDbRpc).not.toHaveBeenCalledWith('refund_org_credit', expect.anything());
     expect(mockAnchorsUpdate).toHaveBeenCalledWith(expect.objectContaining({
       status: 'PENDING',
       metadata: expect.objectContaining({
@@ -565,14 +574,14 @@ describe('processBatchAnchors', () => {
     );
   });
 
-  it('keeps credit-denied DocuSign queue items pending when org credits are insufficient', async () => {
+  it('keeps credit-denied DocuSign queue items pending when org credits are insufficient (no partial debit)', async () => {
     mockPendingBacklogReady();
     mockDbRpc
       .mockResolvedValueOnce({ data: [DOCUSIGN_CREDIT_DENIED_ANCHOR], error: null }) // claim
       .mockResolvedValueOnce({
         data: { success: false, error: 'insufficient_credits', balance: 0, required: 1 },
         error: null,
-      }); // deduct_org_credit
+      }); // debit_and_enqueue_anchor (insufficient — anchor stays queued, no debit)
 
     const result = await processBatchAnchors({
       force: true,
@@ -626,7 +635,7 @@ describe('processBatchAnchors', () => {
           message: 'Could not find the function public.claim_pending_anchors in the schema cache',
         },
       }) // claim_pending_anchors
-      .mockResolvedValueOnce({ data: { success: true, balance: 3, deducted: 1 }, error: null }) // deduct_org_credit
+      .mockResolvedValueOnce({ data: { success: true, balance: 3, deducted: 1, anchor_status: 'PENDING' }, error: null }) // debit_and_enqueue_anchor
       .mockResolvedValueOnce({ data: 1, error: null }); // submit_batch_anchors
     setSelectResult({ data: [DOCUSIGN_QUEUE_ANCHOR], error: null });
 
@@ -636,10 +645,13 @@ describe('processBatchAnchors', () => {
     });
 
     expect(result.processed).toBe(1);
-    expect(mockDbRpc).toHaveBeenCalledWith('deduct_org_credit', expect.objectContaining({
+    // Legacy path holds anchors in PENDING through the gate, so expected==target=PENDING.
+    expect(mockDbRpc).toHaveBeenCalledWith('debit_and_enqueue_anchor', expect.objectContaining({
       p_org_id: DOCUSIGN_QUEUE_ANCHOR.org_id,
       p_reason: 'rule.auto_anchor_queue_run',
-      p_reference_id: DOCUSIGN_QUEUE_ANCHOR.id,
+      p_anchor_id: DOCUSIGN_QUEUE_ANCHOR.id,
+      p_target_status: 'PENDING',
+      p_expected_status: 'PENDING',
     }));
     expect(mockDbRpc).toHaveBeenCalledWith('submit_batch_anchors', expect.objectContaining({
       p_anchor_ids: [DOCUSIGN_QUEUE_ANCHOR.id],
@@ -880,12 +892,12 @@ describe('processBatchAnchors', () => {
 
   // ---- Credit refund failure (double-billing safety) ----
 
-  it('fails closed and keeps claimed anchors out of retry when credit refund fails', async () => {
+  it('fails closed and keeps claimed anchors out of retry when post-broadcast credit refund fails', async () => {
     mockPendingBacklogReady();
     mockDbRpc
       .mockResolvedValueOnce({ data: [DOCUSIGN_QUEUE_ANCHOR], error: null }) // claim
-      .mockResolvedValueOnce({ data: { success: true, balance: 4, deducted: 1 }, error: null }) // deduct_org_credit
-      .mockResolvedValueOnce({ data: null, error: { code: 'PGRST500', message: 'refund RPC down' } }); // refund_org_credit fails
+      .mockResolvedValueOnce({ data: { success: true, balance: 4, deducted: 1, anchor_status: 'BROADCASTING' }, error: null }) // debit_and_enqueue_anchor (gate)
+      .mockResolvedValueOnce({ data: null, error: { code: 'PGRST500', message: 'refund RPC down' } }); // refund_org_credit fails (chain-failure compensation)
     setUpdateResult({ error: null, count: 1 }); // metadata update succeeds
 
     mockSubmitFingerprint.mockRejectedValue(new Error('chain unavailable'));
@@ -915,8 +927,8 @@ describe('processBatchAnchors', () => {
     mockPendingBacklogReady();
     mockDbRpc
       .mockResolvedValueOnce({ data: [DOCUSIGN_QUEUE_ANCHOR], error: null }) // claim
-      .mockResolvedValueOnce({ data: { success: true, balance: 4, deducted: 1 }, error: null }) // deduct_org_credit
-      .mockResolvedValueOnce({ data: { success: true }, error: null }); // refund_org_credit succeeds
+      .mockResolvedValueOnce({ data: { success: true, balance: 4, deducted: 1, anchor_status: 'BROADCASTING' }, error: null }) // debit_and_enqueue_anchor (gate)
+      .mockResolvedValueOnce({ data: { success: true }, error: null }); // refund_org_credit succeeds (chain-failure compensation)
     setUpdateResult({ error: null, count: 1 });
 
     mockSubmitFingerprint.mockRejectedValue(new Error('chain unavailable'));
