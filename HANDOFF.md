@@ -14,6 +14,14 @@
 
 ## Now
 
+### 2026-06-15 — Prod migration ledger reconciled to numeric (corrects the 2026-06-05 claim)
+
+The 2026-06-05 entry asserted 0322–0331 were reconciled to numeric versions; a later MCP `apply_migration` silently re-regressed **7** rows back to timestamp versions. Reconciled via the single §0-rule-10 operator-approved write (Carson, 2026-06-15) on prod `vzwyaatejekddvltxyye`: `UPDATE supabase_migrations.schema_migrations SET version=left(name,4) WHERE version !~ '^[0-9]{4}$' AND name ~ '^[0-9]{4}_'` (RETURNING: 0322,0323,0324,0325,0326,0330,0331 → numeric). **Verified post-write:** 0 remaining non-numeric `NNNN_` rows; numeric head **0339**; contiguous 0300–0331, 0333–0339 (**0332 is an empty gap** — never used; leave documented-dead; Train D starts at **0340**). Follow-ups (normal PR, not done here): SCRUM-2500 adds a full-ledger numeric-integrity CI audit (the migration-drift gate only checks PR-diff migrations today — which is why this re-regressed unseen); drop the stale `0322/0323` `exempt_regex` once confirmed.
+
+Also this session (planning): §1.6A connector server-side-fingerprint carve-out committed to `main` (`f8b70d55`, DS-SEC-conditional / SCRUM-2492). MVP Train D **PRD v2** + **Sprint-1 recut** + **launch pre-mortem** in Confluence space A (pages 77758466 / 81100802 / 81199106); 21 new+amended Jira stories under label `prd-2026-06-12` (incl. launch-blockers SCRUM-2490/2491/2492/2500/2501; self-serve abuse floor 2495–2499/2478 deprioritized to fast-follow per Carson). **Train C (CE) #1146/#1148 soaks + CSI #1039/40/41 — FROZEN, untouched.**
+
+_Last refreshed: 2026-06-15 by Claude (carson@arkova.io) — ledger reconcile verified via Supabase MCP `execute_sql` on `vzwyaatejekddvltxyye` (UPDATE … RETURNING 7 rows numeric; post-write SELECT remaining_nonnumeric=0, numeric_head=0339); §1.6A via `git push origin main` (`e795f8c8..f8b70d55`)._
+
 ### 2026-06-10 — Release queue unblocker #1141 merged; dev may resume under isolated-lane rules
 
 **PR #1141 merged via Mergify** at 2026-06-10T15:56:23Z, merge commit `3f678e7cb7b6f0bcb954141c75094730b49ef45e`; `origin/main` now points at that SHA. The merged release-process change preserves exact PR-head evidence integrity while allowing release-owner-approved T0 docs/tests/CI/tooling-only base drift through a non-placeholder `Base drift impact:` note. Runtime, schema, migration, staging, deploy, soak-behavior, or worker-image drift still fails closed and requires re-scope/retest.
