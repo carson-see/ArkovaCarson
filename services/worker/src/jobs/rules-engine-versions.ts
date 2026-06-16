@@ -62,8 +62,7 @@ export async function detectVersionConflict(
   externalFileId: string,
   newFingerprint: string,
 ): Promise<ConflictResult> {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data, error } = await (db as any)
+  const { data, error } = await db
     .from('anchors')
     .select('id, fingerprint')
     .eq('org_id', orgId)
