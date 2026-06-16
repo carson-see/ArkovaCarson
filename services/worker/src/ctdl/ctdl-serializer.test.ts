@@ -34,8 +34,9 @@ describe('buildCtdlJsonLd', () => {
     expect(jsonLd['@context']).toBe('https://credreg.net/ctdl/schema/context/json');
     expect(jsonLd['@type']).toBe('ceterms:Certificate');
     expect(jsonLd['ceterms:name']).toBe('Ethics CLE Completion');
-    expect(jsonLd['ceterms:ctid']).toBe('ce-ARK-2026-CTDL-001');
+    expect(jsonLd).not.toHaveProperty('ceterms:ctid');
     expect(jsonLd['ceterms:offeredBy']['ceterms:name']).toBe('Michigan Legal Education Board');
+    expect(jsonLd['ceterms:offeredBy']).not.toHaveProperty('ceterms:ctid');
     expect(jsonLd['ceterms:credentialStatusType']).toBe('ceterms:Active');
     expect(jsonLd['ceterms:dateEffective']).toBe('2026-05-19T00:00:00.000Z');
     expect(jsonLd['ceterms:verificationServiceProfile']['ceterms:verificationService']).toBe(
@@ -54,6 +55,24 @@ describe('buildCtdlJsonLd', () => {
     expect(body).not.toContain('filename');
     expect(body).not.toContain('user_id');
     expect(body).not.toContain('org_id');
+    expect(body).not.toContain('ce-ARK-2026-CTDL-001');
+    expect(body).not.toContain('ce-ORG-MI-CLE');
+  });
+
+  it('preserves real Credential Engine CTIDs when provided explicitly', () => {
+    const jsonLd = buildCtdlJsonLd({
+      ...baseAnchor,
+      ctid: 'ce-11111111-1111-1111-1111-111111111111',
+      issuer: {
+        ...baseAnchor.issuer,
+        ctid: 'ce-22222222-2222-2222-2222-222222222222',
+      },
+    }, {
+      verifyUrl: 'https://app.arkova.ai/verify/ARK-2026-CTDL-001',
+    });
+
+    expect(jsonLd['ceterms:ctid']).toBe('ce-11111111-1111-1111-1111-111111111111');
+    expect(jsonLd['ceterms:offeredBy']['ceterms:ctid']).toBe('ce-22222222-2222-2222-2222-222222222222');
   });
 
   it('marks revoked credentials as revoked while still returning a CTDL body', () => {

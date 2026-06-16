@@ -38,7 +38,7 @@ describe('validateCtdlJsonLd', () => {
       '@context': 'https://credreg.net/ctdl/schema/context/json',
       '@type': 'ceterms:BachelorDegree',
       'ceterms:name': 'Bachelor of Science',
-      'ceterms:ctid': 'ce-ARK-2026-CTDL-001',
+      'ceterms:ctid': 'ce-11111111-1111-1111-1111-111111111111',
       'ceterms:credentialStatusType': 'ceterms:Active',
       'ceterms:dateEffective': '2026-05-01T00:00:00.000Z',
       'ceterms:offeredBy': { '@type': 'ceterms:Organization' },
@@ -57,6 +57,29 @@ describe('validateCtdlJsonLd', () => {
       ],
     });
     expect(() => assertValidCtdlJsonLd(invalid)).toThrow(/ceterms:offeredBy\.ceterms:name/);
+  });
+
+  it('rejects fake CTIDs derived from Arkova public IDs', () => {
+    const jsonLd = buildCtdlJsonLd(baseAnchor, {
+      verifyUrl: 'https://app.arkova.ai/verify/ARK-2026-CTDL-001',
+    });
+
+    const invalid = {
+      ...jsonLd,
+      'ceterms:ctid': 'ce-ARK-2026-CTDL-001',
+      'ceterms:offeredBy': {
+        ...jsonLd['ceterms:offeredBy'],
+        'ceterms:ctid': 'ce-ORG-ARKOVA-U',
+      },
+    };
+
+    expect(validateCtdlJsonLd(invalid)).toEqual({
+      valid: false,
+      errors: [
+        'ceterms:ctid must be a real Credential Engine CTID when present',
+        'ceterms:offeredBy.ceterms:ctid must be a real Credential Engine CTID when present',
+      ],
+    });
   });
 
   it('rejects unsafe public JSON-LD keys and internal values anywhere in the document', () => {

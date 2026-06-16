@@ -1260,7 +1260,6 @@ export const openApiSpec: Record<string, any> = {
           '@context',
           '@type',
           'ceterms:name',
-          'ceterms:ctid',
           'ceterms:offeredBy',
           'ceterms:credentialStatusType',
           'ceterms:dateEffective',
@@ -1280,7 +1279,7 @@ export const openApiSpec: Record<string, any> = {
           'ceterms:name': { type: 'string' },
           'ceterms:ctid': {
             type: 'string',
-            pattern: '^ce-.+',
+            pattern: '^ce-[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$',
           },
           'ceterms:offeredBy': {
             type: 'object',
@@ -1289,7 +1288,10 @@ export const openApiSpec: Record<string, any> = {
             properties: {
               '@type': { type: 'string', enum: ['ceterms:Organization'] },
               'ceterms:name': { type: 'string' },
-              'ceterms:ctid': { type: 'string' },
+              'ceterms:ctid': {
+                type: 'string',
+                pattern: '^ce-[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$',
+              },
               'ceterms:subjectWebpage': { type: 'string', format: 'uri' },
             },
           },

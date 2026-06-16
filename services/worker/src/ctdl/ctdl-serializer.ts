@@ -13,12 +13,14 @@ import { ARKOVA_DID } from '../api/did-web.js';
 export interface CtdlIssuer {
   name?: string | null;
   publicId?: string | null;
+  ctid?: string | null;
   websiteUrl?: string | null;
   domain?: string | null;
 }
 
 export interface CtdlAnchor {
   publicId: string;
+  ctid?: string | null;
   /** Internal audit context only. The serializer never emits this field. */
   orgId?: string | null;
   status: string;
@@ -44,7 +46,7 @@ export interface CtdlJsonLd {
   '@context': typeof CTDL_CONTEXT;
   '@type': CtdlType;
   'ceterms:name': string;
-  'ceterms:ctid': string;
+  'ceterms:ctid'?: string;
   'ceterms:offeredBy': {
     '@type': 'ceterms:Organization';
     'ceterms:name': string;
@@ -153,8 +155,12 @@ function effectiveDate(anchor: CtdlAnchor): string {
   return anchor.issuedAt ?? anchor.chainTimestamp ?? anchor.createdAt;
 }
 
-function ctidFromPublicId(publicId: string): string {
-  return `ce-${publicId}`;
+const REAL_CTID_PATTERN = /^ce-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function realCtid(value: unknown): string | null {
+  const clean = cleanPublicString(value, 80);
+  if (!clean || !REAL_CTID_PATTERN.test(clean)) return null;
+  return clean;
 }
 
 export function buildCtdlJsonLd(anchor: CtdlAnchor, options: BuildCtdlOptions): CtdlJsonLd {
@@ -169,8 +175,12 @@ export function buildCtdlJsonLd(anchor: CtdlAnchor, options: BuildCtdlOptions): 
     'ceterms:name': issuerName(anchor, metadata),
   };
 
+  const issuerCtid = realCtid(anchor.issuer?.ctid);
+  if (issuerCtid) {
+    offeredBy['ceterms:ctid'] = issuerCtid;
+  }
+
   if (anchor.issuer?.publicId) {
-    offeredBy['ceterms:ctid'] = ctidFromPublicId(anchor.issuer.publicId);
     // SCRUM-1922 R-CTDL-FR9 — link the org's did:web identity. The public_id
     // is the same value the did:web resolver keys on, so this resolves to
     // https://app.arkova.ai/orgs/{public_id}/did.json.
@@ -186,7 +196,6 @@ export function buildCtdlJsonLd(anchor: CtdlAnchor, options: BuildCtdlOptions): 
     '@context': CTDL_CONTEXT,
     '@type': resolveCtdlType(anchor.credentialType, anchor.subType),
     'ceterms:name': credentialName(anchor, metadata),
-    'ceterms:ctid': ctidFromPublicId(anchor.publicId),
     'ceterms:offeredBy': offeredBy,
     'ceterms:credentialStatusType': statusType,
     'ceterms:dateEffective': effectiveDate(anchor),
@@ -200,6 +209,9 @@ export function buildCtdlJsonLd(anchor: CtdlAnchor, options: BuildCtdlOptions): 
       'ceterms:identifierValue': anchor.publicId,
     },
   };
+
+  const credentialCtid = realCtid(anchor.ctid);
+  if (credentialCtid) jsonLd['ceterms:ctid'] = credentialCtid;
 
   const description = cleanPublicString(anchor.description, 500);
   if (description) jsonLd['ceterms:description'] = description;
