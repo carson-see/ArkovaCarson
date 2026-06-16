@@ -14,6 +14,28 @@
 
 ## Now
 
+### 2026-06-16 (cont.) — Top-risk + hygiene round; API 529 overload deferred the agent streams
+
+Post-replan execution round (top risks + Jira/PR hygiene + endpoints + roadmap). A **sustained Anthropic 529 overload throttled the parallel-agent fan-out — 9 subagent launches died with 0 work** (R1×3, R4×2, R5, Jira-hygiene, PR-hygiene×2). Main loop unaffected → agent-driven streams DEFERRED (nothing lost; failed agents did nothing). Did the rest in-loop.
+
+**Done (in-loop):**
+- **Vertex (§7):** the 5 duplicate `arkova-gemini-fraud-v1` cold-spares (06-05 sweep) are **already gone**; only the golden endpoint remains and it's **EMPTY** (`deployedModels:null`, $0, gated track). At the §7 target. Empty golden shell = keep ($0, named) or delete — Carson's call.
+- **Gemini Golden:** should **NOT** be active — gated by design (`config.ts:281 enableVisualFraudDetection` default false, fails closed pending SCRUM-1955; GEMB2-blocks training). Empty endpoint is correct, not a gap.
+- **R1 de-risked:** prod `org_credit_deductions` is **empty (0 rows)** + `enableOrgCreditEnforcement` default false → 0341's in-place sign-flip is a prod **no-op**. The scariest part of R1 is moot.
+- **Jira hygiene:** `launch-blocker` removed from **2496/2497** (deprioritized abuse-floor, Carson 06-15), **kept on 2495** (does-not-assert disclaimer — pulled into launch per QA+PM); each documented with a comment.
+
+**Deferred — agent-throttled, ALL non-blocking, resume next session / when the throttle clears:**
+- R1 reconciler-wiring (defense-for-live-era; prod ledger empty so non-urgent); R4 token-unify + per-log fast-path (#1203, cosmetic); R5 precise disclosure size (prod `count(*)` timed out — use `pg_class.reltuples` next; backfill self-validation already confirmed sound in the replan).
+- **PR value-check+close** (#1146/#1148/#1153/#1087/#1106 + worker-dep dedup #1158/#1194→#1175) — **not rushed in-loop** per Carson's "check before closing"; teed up for the next agent run.
+- Jira: In-Progress transitions (2490/2491/2349/2350/2492), per-story Confluence pages (§4/§5.1 gap), `[Close-out]` subtasks, the `database.types` resync ticket.
+- **Roadmap (point-5 decision):** refresh PO Roadmap **27591934 in place** + keep it as the §5 source (do NOT anoint a separate page); deferred — a full-body-replace of the large canonical page is risky in-loop, do it carefully via agent.
+
+**State:** main `6731c6d1`; **#1154 soaking, UNTOUCHED** (ends ~06-17 06:32 UTC); held Train D set unchanged (#1203 `dd6ee736`; foundations proof `d11deed3` + credit `78870207`); shared checkout on a concurrent session's branch — worktrees used throughout. Nothing merged; no soak/rig/ledger touched.
+
+**Retro (top-risk round):** Went well — the in-loop fallback delivered the achievable high-value items (Vertex / Gemini-Golden / labels / R1-de-risk) despite the overload; the soak + shared tree stayed clean; failed agents did 0 work (clean failures, nothing to undo). Didn't — a sustained API 529 made the 5-way agent fan-out unviable (9 failures, ~30 min to retries). **Lesson:** under an API overload, don't thrash parallel agents — pivot to the (unthrottled) main loop for read/MCP/gh work and defer the code-agent streams. **Action:** resume the deferred streams via the team when the throttle clears (all non-blocking).
+
+_Last refreshed: 2026-06-16 by Claude (carson@arkova.io) — Vertex via `gcloud ai endpoints list/describe` (us-central1 = 1 empty golden; us-east1/4, us-west1, eu-west4 clean); prod ledger empty via Supabase MCP `execute_sql` on `vzwyaatejekddvltxyye` (`org_credit_deductions` total=0); Gemini Golden gating via `services/worker/src/config.ts:281`; Jira labels via `editJiraIssue` (2496/2497 `launch-blocker` removed) + comments; 9 agent 529s observed (0 tool_uses each). No prod/soak/rig/ledger state changed._
+
 ### 2026-06-16 — Train C soak = #1154 (correction); Train D foundations stacked; no-restart plan
 
 **LIVE Train C soak is PR #1154** (`codex/rc-train-c-code-20260612`, head `cfaee18e`) — **NOT** #1146/#1148. Verified heartbeating 2026-06-16 (OPS 5401/5409, CTDL 722/722; isolated project `bwkskvbmcjodwxklpzyl`, preflight `clean_mirror`); rides the **shared** Cloud Run `arkova-worker-staging` via tag `train-c-1154-cfaee18e`; **expected end 2026-06-17 06:32 UTC**. **Do NOT `gcloud run services update`/deploy `arkova-worker-staging` or touch `bwkskvbmcjodwxklpzyl` until #1154 lands** — a shared-service env rewrite is exactly what killed the CE soak (06-13). CORRECTION to the 06-15 entries below: the #1146/#1148 CE soaks were **aborted 06-13** (non-merge-grade, `release-evidence/train-c/ce/ABORTED-*.md`) and superseded by #1154. CSI #1039/40/41 = **no live soak clock** (un-started, stale evidence, downstream of merged #1038) — hands-off, but nothing is actively soaking there.
