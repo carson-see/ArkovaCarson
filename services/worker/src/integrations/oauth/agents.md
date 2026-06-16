@@ -1,6 +1,6 @@
 # agents.md — services/worker/src/integrations/oauth/
 
-_Last updated: 2026-05-27_
+_Last updated: 2026-06-16 (SCRUM-2492 byte-safe error types)._
 
 ## What This Folder Contains
 
@@ -24,3 +24,4 @@ Shared OAuth infrastructure — token encryption, HMAC webhook verification, and
 - **DO** route DocuSign cron/job API fetches through `docusign-rate-limit.ts` so refresh/document calls share one per-account budget
 - **DO NOT** log response bodies from OAuth token exchanges (contain cleartext tokens)
 - **DO NOT** reuse the Bitcoin asymmetric signing key for OAuth token encryption
+- **DO NOT** add a `body`/raw-response field to `DocusignApiError` / `DriveApiError` (§1.6A / SCRUM-2492). They are byte-safe BY CONSTRUCTION — `{ message, status }` only — so a document-bearing response can never ride an error into a logger/Sentry/`last_error`. On `fetchDocusignCombinedDocument`'s non-2xx path, do NOT read the response body; throw status + message only.

@@ -91,15 +91,24 @@ export class DocusignConfigError extends Error {
   }
 }
 
+/**
+ * DocuSign API error.
+ *
+ * SCRUM-2492 (§1.6A): this error is byte-safe BY CONSTRUCTION — it carries only
+ * a human-authored `message` and the HTTP `status`. It deliberately has NO
+ * `body` field so a raw (potentially document-bearing) response can never be
+ * captured on the error and leak through a logger / Sentry / `last_error`.
+ * Mirrors the byte-free `CredentialSourceImportError` reference shape. If a
+ * future debug aid is needed, add a bounded, PII-scrubbed `detail?: string` —
+ * never the raw response, and never on the document-fetch path.
+ */
 export class DocusignApiError extends Error {
   status: number;
-  body: unknown;
 
-  constructor(message: string, status: number, body: unknown) {
+  constructor(message: string, status: number) {
     super(message);
     this.name = 'DocusignApiError';
     this.status = status;
-    this.body = body;
   }
 }
 
@@ -174,7 +183,7 @@ export async function exchangeDocusignCode(args: {
     body: body.toString(),
   });
   const json = await parseJsonResponse(res);
-  if (!res.ok) throw new DocusignApiError('DocuSign token exchange failed', res.status, json);
+  if (!res.ok) throw new DocusignApiError('DocuSign token exchange failed', res.status);
   return DocusignTokenResponse.parse(json);
 }
 
@@ -199,7 +208,7 @@ export async function refreshDocusignAccessToken(args: {
     body: body.toString(),
   });
   const json = await parseJsonResponse(res);
-  if (!res.ok) throw new DocusignApiError('DocuSign token refresh failed', res.status, json);
+  if (!res.ok) throw new DocusignApiError('DocuSign token refresh failed', res.status);
   return DocusignTokenResponse.parse(json);
 }
 
@@ -213,7 +222,7 @@ export async function getDocusignUserInfo(args: {
     headers: { Authorization: `Bearer ${args.accessToken}` },
   });
   const json = await parseJsonResponse(res);
-  if (!res.ok) throw new DocusignApiError('DocuSign userinfo failed', res.status, json);
+  if (!res.ok) throw new DocusignApiError('DocuSign userinfo failed', res.status);
   return DocusignUserInfo.parse(json);
 }
 
@@ -231,8 +240,9 @@ export async function fetchDocusignCombinedDocument(args: {
     headers: { Authorization: `Bearer ${args.accessToken}` },
   });
   if (!res.ok) {
-    const body = await parseJsonResponse(res);
-    throw new DocusignApiError('DocuSign completed document fetch failed', res.status, body);
+    // §1.6A: do NOT read/attach the response body on the document-fetch path —
+    // an error response here can carry document bytes. Status + message only.
+    throw new DocusignApiError('DocuSign completed document fetch failed', res.status);
   }
   const bytes = Buffer.from(await res.arrayBuffer());
   return { bytes, contentType: res.headers.get('content-type') };
@@ -280,7 +290,6 @@ function parseConnectConfigResponse(
     throw new DocusignApiError(
       `DocuSign Connect ${operation} response schema mismatch: ${e instanceof Error ? e.message : 'unknown'}`,
       status,
-      json,
     );
   }
 }
@@ -324,7 +333,7 @@ async function fetchConnectJson(
     return { json: await parseJsonResponse(response), response };
   } catch (err) {
     if (err instanceof DOMException && err.name === 'AbortError') {
-      throw new DocusignApiError('DocuSign Connect API request timed out after 10s', 408, undefined);
+      throw new DocusignApiError('DocuSign Connect API request timed out after 10s', 408);
     }
     throw err;
   } finally {
@@ -340,7 +349,6 @@ function parseConnectList(json: unknown, status: number): z.infer<typeof Connect
     throw new DocusignApiError(
       `DocuSign Connect list response schema mismatch: ${e instanceof Error ? e.message : 'unknown'}`,
       status,
-      json,
     );
   }
 }
@@ -391,7 +399,7 @@ export async function provisionConnectListener(args: {
 
   const list = await fetchConnectJson(fetchImpl, connectBase, { headers: authHeaders });
   if (!list.response.ok) {
-    throw new DocusignApiError('DocuSign Connect list failed', list.response.status, list.json);
+    throw new DocusignApiError('DocuSign Connect list failed', list.response.status);
   }
 
   // DocuSign may return null or empty body — treat as no existing listeners
@@ -415,7 +423,6 @@ export async function provisionConnectListener(args: {
     throw new DocusignApiError(
       `DocuSign Connect ${operation} failed`,
       mutation.response.status,
-      mutation.json,
     );
   }
 

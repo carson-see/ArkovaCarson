@@ -42,6 +42,90 @@ export interface JobSubmission<T = unknown> {
 
 const DEFAULT_MAX_ATTEMPTS = 3;
 
+// ─── SCRUM-2492 (§1.6A): last_error sanitizer ──────────────────────────────
+//
+// `last_error` is persisted to Postgres (`job_queue.last_error`). For
+// connector jobs (DocuSign / Google Drive document fetch), a failure must not
+// be able to write raw document bytes into that column. `failJob` is typed to
+// take a `string`, but `String(someBuffer)` (or a stringified
+// `{ "type":"Buffer","data":[...] }`) would smuggle bytes in. This sanitizer
+// detects those shapes and replaces them with a bounded token, then caps the
+// length. It is intentionally conservative: it never persists raw byte runs.
+
+export const REDACTED_LAST_ERROR_TOKEN = '[redacted: binary content]';
+const LAST_ERROR_MAX_LENGTH = 1000;
+
+// `{ "type": "Buffer", "data": [ ... ] }` — Node's JSON form of a Buffer.
+const SERIALIZED_BUFFER_RE = /\{\s*"?type"?\s*:\s*"Buffer"\s*,\s*"?data"?\s*:\s*\[/i;
+const CONTROL_RUN_THRESHOLD = 8;
+// A run of identical characters this long is not a plausible human/error
+// message — it is a low-entropy byte fill coerced to text (e.g. a PDF padding
+// region, or `Buffer.alloc(n, b).toString()`).
+const REPEAT_RUN_THRESHOLD = 32;
+
+/**
+ * Heuristic: does `text` look like raw document bytes coerced to a string?
+ * Two signals, both rare in real error messages:
+ *   (a) a dense run of non-printable control bytes (binary content / invalid
+ *       UTF-8 decoded to U+FFFD), or
+ *   (b) a long run of a single repeated character (low-entropy byte fill).
+ * Implemented programmatically (no control chars in source).
+ */
+function looksLikeRawBytes(text: string): boolean {
+  let controlRun = 0;
+  let repeatRun = 1;
+  let prev = -1;
+  for (let i = 0; i < text.length; i += 1) {
+    const code = text.charCodeAt(i);
+
+    const isNonPrintable =
+      (code <= 0x1f && code !== 0x09 && code !== 0x0a && code !== 0x0d) ||
+      code === 0x7f ||
+      code === 0xfffd; // U+FFFD replacement char from invalid UTF-8
+    if (isNonPrintable) {
+      controlRun += 1;
+      if (controlRun >= CONTROL_RUN_THRESHOLD) return true;
+    } else {
+      controlRun = 0;
+    }
+
+    if (code === prev) {
+      repeatRun += 1;
+      if (repeatRun >= REPEAT_RUN_THRESHOLD) return true;
+    } else {
+      repeatRun = 1;
+      prev = code;
+    }
+  }
+  return false;
+}
+
+/**
+ * Strip byte-ish content from a `last_error` string before it is persisted.
+ * Returns a bounded, byte-free string.
+ */
+export function sanitizeLastError(raw: unknown): string {
+  // Coerce defensively — `failJob`'s caller may hand us a non-string.
+  let text: string;
+  if (typeof raw === 'string') {
+    text = raw;
+  } else if (raw === null || raw === undefined) {
+    text = '';
+  } else if (typeof Buffer !== 'undefined' && Buffer.isBuffer(raw)) {
+    return REDACTED_LAST_ERROR_TOKEN;
+  } else if (ArrayBuffer.isView(raw as ArrayBufferView) || raw instanceof ArrayBuffer) {
+    return REDACTED_LAST_ERROR_TOKEN;
+  } else {
+    text = String(raw);
+  }
+
+  if (SERIALIZED_BUFFER_RE.test(text) || looksLikeRawBytes(text)) {
+    return REDACTED_LAST_ERROR_TOKEN;
+  }
+
+  return text.length > LAST_ERROR_MAX_LENGTH ? text.slice(0, LAST_ERROR_MAX_LENGTH) : text;
+}
+
 export type JobHandler<T = unknown> = (job: Job<T>) => Promise<void>;
 
 export interface ProcessJobResult {
@@ -123,12 +207,17 @@ export async function completeJob(jobId: string): Promise<void> {
 export async function failJob(jobId: string, errorMessage: string, attempts: number, maxAttempts: number): Promise<void> {
   const status: JobStatus = attempts >= maxAttempts ? 'dead' : 'failed';
 
+  // SCRUM-2492 (§1.6A): never persist raw document bytes into job_queue.last_error.
+  // Route through the byte-safe sanitizer (which also caps length) instead of a
+  // bare substring.
+  const safeLastError = sanitizeLastError(errorMessage);
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { error } = await (db as any)
     .from('job_queue')
     .update({
       status,
-      last_error: errorMessage.substring(0, 1000),
+      last_error: safeLastError,
       updated_at: new Date().toISOString(),
       // Exponential backoff for retry: 2^attempts * 30 seconds
       ...(status === 'failed' ? {
@@ -141,7 +230,10 @@ export async function failJob(jobId: string, errorMessage: string, attempts: num
   }
 
   if (status === 'dead') {
-    logger.warn({ jobId, attempts, error: errorMessage }, 'Job moved to dead letter queue');
+    // Log the sanitized value — the raw errorMessage could be a stringified
+    // Buffer that the pino binary guard (which is type-based) would not catch
+    // once it is already a string.
+    logger.warn({ jobId, attempts, error: safeLastError }, 'Job moved to dead letter queue');
   }
 }
 

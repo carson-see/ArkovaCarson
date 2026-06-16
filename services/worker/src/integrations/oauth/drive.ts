@@ -48,14 +48,21 @@ export class DriveConfigError extends Error {
   }
 }
 
+/**
+ * Google Drive API error.
+ *
+ * SCRUM-2492 (§1.6A): byte-safe BY CONSTRUCTION — carries only a human-authored
+ * `msg` and the HTTP `status`, with NO `body` field, so a raw (potentially
+ * document-bearing) Drive response can never be captured on the error and leak
+ * through a logger / Sentry / `last_error`. Mirrors the byte-free
+ * `CredentialSourceImportError` reference shape.
+ */
 export class DriveApiError extends Error {
   status: number;
-  body: unknown;
-  constructor(msg: string, status: number, body: unknown) {
+  constructor(msg: string, status: number) {
     super(msg);
     this.name = 'DriveApiError';
     this.status = status;
-    this.body = body;
   }
 }
 
@@ -122,7 +129,7 @@ export async function exchangeCode(args: {
   });
   const json = await res.json().catch(() => null);
   if (!res.ok) {
-    throw new DriveApiError('Drive token exchange failed', res.status, json);
+    throw new DriveApiError('Drive token exchange failed', res.status);
   }
   return OAuthTokenResponse.parse(json);
 }
@@ -150,7 +157,7 @@ export async function refreshAccessToken(args: {
   });
   const json = await res.json().catch(() => null);
   if (!res.ok) {
-    throw new DriveApiError('Drive token refresh failed', res.status, json);
+    throw new DriveApiError('Drive token refresh failed', res.status);
   }
   return OAuthTokenResponse.parse(json);
 }
@@ -174,7 +181,7 @@ export async function createChangesWatch(args: {
   });
   const startJson = (await startRes.json().catch(() => null)) as { startPageToken?: string } | null;
   if (!startRes.ok || !startJson?.startPageToken) {
-    throw new DriveApiError('Drive startPageToken failed', startRes.status, startJson);
+    throw new DriveApiError('Drive startPageToken failed', startRes.status);
   }
 
   const watchBody = {
@@ -200,7 +207,7 @@ export async function createChangesWatch(args: {
     expiration?: string;
   } | null;
   if (!res.ok || !json?.resourceId) {
-    throw new DriveApiError('Drive changes.watch failed', res.status, json);
+    throw new DriveApiError('Drive changes.watch failed', res.status);
   }
   // Drive expiration is a Unix ms string — normalise to ISO for Postgres.
   const expirationIso = json.expiration
@@ -229,8 +236,7 @@ export async function stopDriveChannel(args: {
     }),
   });
   if (!res.ok) {
-    const json = await res.json().catch(() => null);
-    throw new DriveApiError('Drive channels.stop failed', res.status, json);
+    throw new DriveApiError('Drive channels.stop failed', res.status);
   }
 }
 
@@ -247,8 +253,7 @@ export async function revokeOAuthToken(args: {
     body: body.toString(),
   });
   if (!res.ok) {
-    const json = await res.json().catch(() => null);
-    throw new DriveApiError('Drive token revoke failed', res.status, json);
+    throw new DriveApiError('Drive token revoke failed', res.status);
   }
 }
 
@@ -270,7 +275,7 @@ export async function getFileMetadata(args: {
     driveId?: string;
   } | null;
   if (!res.ok || !json?.id || !json.name) {
-    throw new DriveApiError('Drive files.get failed', res.status, json);
+    throw new DriveApiError('Drive files.get failed', res.status);
   }
   return {
     id: json.id,
@@ -352,7 +357,7 @@ export async function listChanges(args: {
   });
   const json = await res.json().catch(() => null);
   if (!res.ok) {
-    throw new DriveApiError('Drive changes.list failed', res.status, json);
+    throw new DriveApiError('Drive changes.list failed', res.status);
   }
   return ChangesListResponse.parse(json);
 }

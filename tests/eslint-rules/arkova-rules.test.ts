@@ -30,6 +30,8 @@ const requireErrorCodeAssertion = require('../../eslint-rules/require-error-code
 const noMockEcho = require('../../eslint-rules/no-mock-echo.cjs');
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const tenantIsolation = require('../../eslint-rules/tenant-isolation.cjs');
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const noConnectorBytesToSink = require('../../eslint-rules/no-connector-bytes-to-sink.cjs');
 
 describe('arkova/no-unscoped-service-test', () => {
   ruleTester.run('no-unscoped-service-test', noUnscopedServiceTest, {
@@ -300,6 +302,197 @@ describe('arkova/missing-org-filter', () => {
         filename: 'worker.ts',
         code: "await db.from('audit_events').insert({ event_type: 'smoke_test.completed', event_category: 'SYSTEM' });",
         errors: [{ messageId: 'missingOrgFilter' }],
+      },
+    ],
+  });
+});
+
+// SCRUM-2492 — §1.6A connector-byte handling. Raw document bytes must never
+// reach a logger, Sentry, an Error, last_error, a temp file, or Postgres.
+// Cases map to the architect/security/QA-converged spec: positive (P1-P10),
+// negative (N1-N7), and edge cases.
+describe('arkova/no-connector-bytes-to-sink', () => {
+  ruleTester.run('no-connector-bytes-to-sink', noConnectorBytesToSink, {
+    valid: [
+      // N1 — `.byteLength` numeric terminal (the canonical safe metadata write).
+      {
+        filename: 'docusign.ts',
+        code: "logger.info({ byteLength: documentBytes.byteLength }, 'fetched');",
+      },
+      // N2 — `.length` numeric terminal.
+      {
+        filename: 'docusign.ts',
+        code: "logger.info({ size: buffer.length }, 'fetched');",
+      },
+      // N3 — the fingerprint hex string from createHash(...).digest('hex').
+      {
+        filename: 'docusign.ts',
+        code: "const fingerprint = createHash('sha256').update(documentBytes).digest('hex'); logger.info({ fingerprint }, 'hashed');",
+      },
+      // N4 — the canonical enqueueSignedDocument sink persists only byte_length.
+      {
+        filename: 'docusign-envelope-completed.ts',
+        code: "await db.from('integration_events').insert({ org_id: orgId, details: { byte_length: documentBytes.byteLength, content_type: contentType } });",
+      },
+      // N5 — PKI/timestamp reader throws carry only the HTTP status, not bytes.
+      {
+        filename: 'crlManager.ts',
+        code: "const raw = Buffer.from(await response.arrayBuffer()); if (!response.ok) throw new Error(`CRL fetch returned HTTP ${response.status}`);",
+      },
+      // N6 — byte-free connector error (status + message only).
+      {
+        filename: 'docusign.ts',
+        code: "throw new DocusignApiError('DocuSign completed document fetch failed', res.status);",
+      },
+      // N7 — fingerprint passed to Sentry context (not raw bytes).
+      {
+        filename: 'docusign.ts',
+        code: "Sentry.setContext('document', { fingerprint, byteLength: documentBytes.byteLength });",
+      },
+      // Edge — `.toString('hex')` is a safe textual digest, not raw bytes.
+      {
+        filename: 'docusign.ts',
+        code: "logger.info({ digest: documentBytes.toString('hex') }, 'digest');",
+      },
+      // Edge — `.toString('base64')` is also a safe encoding.
+      {
+        filename: 'docusign.ts',
+        code: "logger.debug({ b64: buffer.toString('base64') });",
+      },
+      // Edge — dynamically-typed value with no byte-ish name is NOT flagged.
+      {
+        filename: 'docusign.ts',
+        code: "logger.info({ result }, 'done');",
+      },
+      // Edge — non-connector metadata object reaching a logger.
+      {
+        filename: 'docusign.ts',
+        code: "logger.warn({ envelopeId, accountId, status }, 'envelope processed');",
+      },
+      // Edge — a digest var named `sha256` is not raw bytes.
+      {
+        filename: 'docusign.ts',
+        code: "throw new Error(`anchor mismatch: ${sha256}`);",
+      },
+      // Edge — Postgres write of plain metadata (no bytes).
+      {
+        filename: 'docusign.ts',
+        code: "await db.from('integration_events').update({ status: 'success', details: { envelope_id: envelopeId } });",
+      },
+    ],
+    invalid: [
+      // P1 — Buffer/identifier `documentBytes` into logger.error.
+      {
+        filename: 'docusign.ts',
+        code: "logger.error({ documentBytes }, 'fetch failed');",
+        errors: [{ messageId: 'bytesToSink', data: { sink: 'logger' } }],
+      },
+      // P2 — `*.bytes` member into a logger object key.
+      {
+        filename: 'docusign.ts',
+        code: "logger.info({ payload: document.bytes }, 'fetched');",
+        errors: [{ messageId: 'bytesToSink' }],
+      },
+      // P3 — Buffer.from(await res.arrayBuffer()) directly into a logger.
+      {
+        filename: 'docusign.ts',
+        code: "logger.warn(Buffer.from(await res.arrayBuffer()), 'raw');",
+        errors: [{ messageId: 'bytesToSink' }],
+      },
+      // P4 — bytes into a new Error message via template literal.
+      {
+        filename: 'docusign.ts',
+        code: "throw new Error(`fetch failed for ${documentBytes}`);",
+        errors: [{ messageId: 'bytesToSink', data: { sink: 'Error' } }],
+      },
+      // P5 — bytes into a custom connector error constructor.
+      {
+        filename: 'docusign.ts',
+        code: "throw new DocusignApiError('fetch failed', res.status, documentBytes);",
+        errors: [{ messageId: 'bytesToSink' }],
+      },
+      // P6 — bytes into `last_error:` inside a Postgres `.update({...})`.
+      // The DB-write sink (outer, visited first) owns the report; the dedicated
+      // `last_error` Property visitor catches the same value in non-DB objects
+      // (e.g. a plain object handed to a helper). Range-dedupe → exactly one.
+      {
+        filename: 'jobQueue.ts',
+        code: "await db.from('job_queue').update({ status: 'failed', last_error: documentBytes });",
+        errors: [{ messageId: 'bytesToSink', data: { sink: 'Postgres write' } }],
+      },
+      // P6b — standalone `last_error:` object (not a DB call) is still caught.
+      {
+        filename: 'jobQueue.ts',
+        code: "const patch = { status: 'failed', last_error: documentBytes }; return patch;",
+        errors: [{ messageId: 'bytesToSink', data: { sink: 'last_error' } }],
+      },
+      // P7 — bytes into failJob(...).
+      {
+        filename: 'docusign-envelope-completed.ts',
+        code: "await failJob(jobId, documentBytes, attempts, maxAttempts);",
+        errors: [{ messageId: 'bytesToSink', data: { sink: 'last_error (failJob)' } }],
+      },
+      // P8 — bytes written to a temp file.
+      {
+        filename: 'docusign.ts',
+        code: "await fs.writeFile('/tmp/doc.pdf', documentBytes);",
+        errors: [{ messageId: 'bytesToSink', data: { sink: 'fs write' } }],
+      },
+      // P9 — bytes into a Postgres .insert object value.
+      {
+        filename: 'docusign-envelope-completed.ts',
+        code: "await db.from('integration_events').insert({ org_id: orgId, details: { raw: documentBytes } });",
+        errors: [{ messageId: 'bytesToSink', data: { sink: 'Postgres write' } }],
+      },
+      // P10 — Sentry.captureException with bytes in extra.
+      {
+        filename: 'docusign.ts',
+        code: "Sentry.captureException(err, { extra: { documentBytes } });",
+        errors: [{ messageId: 'bytesToSink', data: { sink: 'Sentry' } }],
+      },
+      // Edge — JSON.stringify(bytes) inside new Error(...). The inner
+      // JSON.stringify is the sink that touches raw bytes (the Error only ever
+      // sees the resulting string); range-dedupe → exactly one report.
+      {
+        filename: 'docusign.ts',
+        code: "throw new Error(JSON.stringify(documentBytes));",
+        errors: [{ messageId: 'bytesToSink', data: { sink: 'JSON.stringify' } }],
+      },
+      // Edge — raw `.toString()` (no encoding) re-exposes bytes as text.
+      {
+        filename: 'docusign.ts',
+        code: "logger.error({ text: documentBytes.toString() }, 'failed');",
+        errors: [{ messageId: 'bytesToSink' }],
+      },
+      // Edge — raw `.toString('utf8')` likewise.
+      {
+        filename: 'docusign.ts',
+        code: "logger.error({ text: buffer.toString('utf8') });",
+        errors: [{ messageId: 'bytesToSink' }],
+      },
+      // Edge — typed-array literal into a logger.
+      {
+        filename: 'docusign.ts',
+        code: "logger.info({ data: new Uint8Array(raw) }, 'bytes');",
+        errors: [{ messageId: 'bytesToSink' }],
+      },
+      // Edge — deeply nested object property still reaches the logger.
+      {
+        filename: 'docusign.ts',
+        code: "logger.error({ ctx: { document: { payload: documentBytes } } }, 'failed');",
+        errors: [{ messageId: 'bytesToSink' }],
+      },
+      // Edge — single-hop alias of the bytes value (same scope).
+      {
+        filename: 'docusign.ts',
+        code: "const copy = documentBytes; logger.error({ copy }, 'failed');",
+        errors: [{ messageId: 'bytesToSink' }],
+      },
+      // Edge — child logger (logger.child({...}).warn(bytes)).
+      {
+        filename: 'docusign.ts',
+        code: "logger.child({ rpc: 'docusign' }).warn({ documentBytes }, 'failed');",
+        errors: [{ messageId: 'bytesToSink' }],
       },
     ],
   });

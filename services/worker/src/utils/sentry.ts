@@ -55,6 +55,67 @@ const SENSITIVE_EXTRA_KEYS = [
 ];
 
 // ---------------------------------------------------------------------------
+// SCRUM-2492 (§1.6A): type-based binary scrub
+// ---------------------------------------------------------------------------
+//
+// Connector-fetched document bytes must never reach Sentry. The existing
+// scrubber below is key-NAME based (it only redacts known field names). This
+// type-based pass runs FIRST and drops any binary value — Buffer, any
+// TypedArray/DataView, ArrayBuffer, or the serialized `{ type: 'Buffer',
+// data: [...] }` shape — by TYPE, regardless of the key it appears under,
+// recursively across the whole event (contexts, extra, tags, exception
+// values, breadcrumb data, arbitrary nested objects).
+
+export const REDACTED_BYTES_TOKEN = '[REDACTED_BYTES]';
+
+// Bound the recursive walk (Sentry events can nest; avoid pathological depth).
+const MAX_SCRUB_DEPTH = 8;
+
+function isBinaryValue(value: unknown): boolean {
+  if (typeof Buffer !== 'undefined' && Buffer.isBuffer(value)) return true;
+  if (ArrayBuffer.isView(value as ArrayBufferView)) return true; // every TypedArray + DataView
+  if (value instanceof ArrayBuffer) return true;
+  return false;
+}
+
+function isSerializedBufferShape(value: unknown): boolean {
+  if (!value || typeof value !== 'object') return false;
+  const obj = value as Record<string, unknown>;
+  return obj.type === 'Buffer' && Array.isArray(obj.data);
+}
+
+/**
+ * Recursively replace any binary value (by type, regardless of key) with a
+ * redaction token. Mutates the passed object in place (Sentry expects the same
+ * event object back) and also returns it. Strings/numbers/etc. pass through —
+ * the existing PII string scrubbers handle those.
+ */
+export function scrubBinaryValues<T>(value: T, depth = 0): T {
+  if (depth >= MAX_SCRUB_DEPTH || value === null || typeof value !== 'object') {
+    return value;
+  }
+  if (isSerializedBufferShape(value)) {
+    return REDACTED_BYTES_TOKEN as unknown as T;
+  }
+  if (Array.isArray(value)) {
+    for (let i = 0; i < value.length; i += 1) {
+      value[i] = isBinaryValue(value[i]) ? REDACTED_BYTES_TOKEN : scrubBinaryValues(value[i], depth + 1);
+    }
+    return value;
+  }
+  const obj = value as Record<string, unknown>;
+  for (const key of Object.keys(obj)) {
+    const child = obj[key];
+    if (isBinaryValue(child) || isSerializedBufferShape(child)) {
+      obj[key] = REDACTED_BYTES_TOKEN;
+    } else {
+      obj[key] = scrubBinaryValues(child, depth + 1);
+    }
+  }
+  return value;
+}
+
+// ---------------------------------------------------------------------------
 // Scrubbing functions
 // ---------------------------------------------------------------------------
 
@@ -74,6 +135,12 @@ function scrubUrl(url: string): string {
  */
 export function scrubPiiFromEvent(event: Event | null): Event | null {
   if (!event) return null;
+
+  // SCRUM-2492 (§1.6A): drop binary values BY TYPE first, across the whole
+  // event (contexts, extra, tags, exception values, arbitrary nested keys),
+  // before the key-name-based PII passes below. Connector document bytes must
+  // never reach Sentry regardless of the field they ride on.
+  scrubBinaryValues(event);
 
   // Scrub exception messages
   if (event.exception?.values) {
@@ -158,6 +225,11 @@ export function scrubPiiFromEvent(event: Event | null): Event | null {
  */
 export function scrubPiiFromBreadcrumb(breadcrumb: Breadcrumb | null): Breadcrumb | null {
   if (!breadcrumb) return null;
+
+  // SCRUM-2492 (§1.6A): type-based binary scrub over the breadcrumb (incl. its
+  // `data` bag) before the key-name pass — document bytes must never ride a
+  // breadcrumb into Sentry.
+  scrubBinaryValues(breadcrumb);
 
   const data = breadcrumb.data as
     | (Record<string, unknown> & { url?: unknown; body?: unknown })

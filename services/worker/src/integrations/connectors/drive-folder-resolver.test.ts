@@ -8,13 +8,12 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('../oauth/drive.js', () => ({
+  // SCRUM-2492: byte-safe DriveApiError — message + status only, no body field.
   DriveApiError: class DriveApiError extends Error {
     status: number;
-    body: unknown;
-    constructor(msg: string, status: number, body: unknown) {
+    constructor(msg: string, status: number) {
       super(msg);
       this.status = status;
-      this.body = body;
     }
   },
   getFileMetadata: vi.fn(),
@@ -106,7 +105,7 @@ describe('resolveDriveFolderPath', () => {
   });
 
   it('returns null on DriveApiError (permission / deleted)', async () => {
-    mockGet.mockRejectedValueOnce(new DriveApiError('forbidden', 403, null));
+    mockGet.mockRejectedValueOnce(new DriveApiError('forbidden', 403));
     const cache = makeCache();
     const path = await resolveDriveFolderPath({
       orgId: ORG,
