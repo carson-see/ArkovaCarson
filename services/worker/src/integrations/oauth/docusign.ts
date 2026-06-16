@@ -12,6 +12,7 @@
  */
 import { z } from 'zod';
 import { DocusignEnvelopeCompleted as DocusignEnvelopeCompletedSchema } from '../connectors/schemas.js';
+import { boundedErrorDetail } from '../../utils/byte-safety.js';
 import { verifyHmacSha256Base64 } from './hmac.js';
 
 const DOCUSIGN_DEMO_AUTH_BASE = 'https://account-d.docusign.com';
@@ -94,21 +95,29 @@ export class DocusignConfigError extends Error {
 /**
  * DocuSign API error.
  *
- * SCRUM-2492 (§1.6A): this error is byte-safe BY CONSTRUCTION — it carries only
- * a human-authored `message` and the HTTP `status`. It deliberately has NO
- * `body` field so a raw (potentially document-bearing) response can never be
- * captured on the error and leak through a logger / Sentry / `last_error`.
- * Mirrors the byte-free `CredentialSourceImportError` reference shape. If a
- * future debug aid is needed, add a bounded, PII-scrubbed `detail?: string` —
- * never the raw response, and never on the document-fetch path.
+ * SCRUM-2492 (§1.6A): this error never carries a raw response BODY — it deliberately
+ * has NO `body` field, so a raw (potentially document-bearing) response can never
+ * be captured on the error and leak through a logger / Sentry / `last_error`.
+ *
+ * The optional `detail` is a BOUNDED, byte-safe, PII-scrubbed string built BY
+ * CONSTRUCTION via {@link boundedErrorDetail} — capped at ~500 chars, byte-runs
+ * and binary containers collapse to a redaction token, and email/UUID/JWT/token
+ * PII is scrubbed. It exists to restore connector-ops debuggability on the
+ * NON-document paths (token exchange/refresh, userinfo, Connect) whose error
+ * body is safe OAuth/API error JSON (e.g. `{ "error": "invalid_grant" }`).
+ * `detail` is NEVER the raw document-fetch response: `fetchDocusignCombinedDocument`
+ * constructs this error with status + message only (no detail).
  */
 export class DocusignApiError extends Error {
   status: number;
+  /** Bounded (~500 char), byte-safe, PII-scrubbed; never the raw document-fetch body. */
+  detail?: string;
 
-  constructor(message: string, status: number) {
+  constructor(message: string, status: number, detail?: string) {
     super(message);
     this.name = 'DocusignApiError';
     this.status = status;
+    if (detail !== undefined) this.detail = detail;
   }
 }
 
@@ -183,7 +192,11 @@ export async function exchangeDocusignCode(args: {
     body: body.toString(),
   });
   const json = await parseJsonResponse(res);
-  if (!res.ok) throw new DocusignApiError('DocuSign token exchange failed', res.status);
+  if (!res.ok) {
+    // Non-document path: token endpoint returns safe OAuth error JSON
+    // (e.g. `{ "error":"invalid_grant" }`) — surface a bounded, scrubbed detail.
+    throw new DocusignApiError('DocuSign token exchange failed', res.status, boundedErrorDetail(json));
+  }
   return DocusignTokenResponse.parse(json);
 }
 
@@ -208,7 +221,10 @@ export async function refreshDocusignAccessToken(args: {
     body: body.toString(),
   });
   const json = await parseJsonResponse(res);
-  if (!res.ok) throw new DocusignApiError('DocuSign token refresh failed', res.status);
+  if (!res.ok) {
+    // Non-document path: refresh endpoint returns safe OAuth error JSON.
+    throw new DocusignApiError('DocuSign token refresh failed', res.status, boundedErrorDetail(json));
+  }
   return DocusignTokenResponse.parse(json);
 }
 
@@ -222,7 +238,10 @@ export async function getDocusignUserInfo(args: {
     headers: { Authorization: `Bearer ${args.accessToken}` },
   });
   const json = await parseJsonResponse(res);
-  if (!res.ok) throw new DocusignApiError('DocuSign userinfo failed', res.status);
+  if (!res.ok) {
+    // Non-document path: userinfo returns safe account/profile error JSON.
+    throw new DocusignApiError('DocuSign userinfo failed', res.status, boundedErrorDetail(json));
+  }
   return DocusignUserInfo.parse(json);
 }
 
@@ -287,9 +306,12 @@ function parseConnectConfigResponse(
   try {
     return ConnectConfigurationResponse.parse(json);
   } catch (e) {
+    // Non-document path: the Connect config response is small JSON; a bounded,
+    // scrubbed detail of the actual body aids diagnosing the schema mismatch.
     throw new DocusignApiError(
       `DocuSign Connect ${operation} response schema mismatch: ${e instanceof Error ? e.message : 'unknown'}`,
       status,
+      boundedErrorDetail(json),
     );
   }
 }
@@ -333,7 +355,13 @@ async function fetchConnectJson(
     return { json: await parseJsonResponse(response), response };
   } catch (err) {
     if (err instanceof DOMException && err.name === 'AbortError') {
-      throw new DocusignApiError('DocuSign Connect API request timed out after 10s', 408);
+      // Non-document path: no response body here — surface the abort reason as a
+      // bounded, scrubbed detail (it is a fixed string, byte-free by construction).
+      throw new DocusignApiError(
+        'DocuSign Connect API request timed out after 10s',
+        408,
+        boundedErrorDetail('AbortError: request exceeded 10s timeout'),
+      );
     }
     throw err;
   } finally {
@@ -346,9 +374,11 @@ function parseConnectList(json: unknown, status: number): z.infer<typeof Connect
   try {
     return ConnectListResponse.parse(json);
   } catch (e) {
+    // Non-document path: Connect list response is small JSON; bounded+scrubbed detail.
     throw new DocusignApiError(
       `DocuSign Connect list response schema mismatch: ${e instanceof Error ? e.message : 'unknown'}`,
       status,
+      boundedErrorDetail(json),
     );
   }
 }
@@ -399,7 +429,12 @@ export async function provisionConnectListener(args: {
 
   const list = await fetchConnectJson(fetchImpl, connectBase, { headers: authHeaders });
   if (!list.response.ok) {
-    throw new DocusignApiError('DocuSign Connect list failed', list.response.status);
+    // Non-document path: Connect list error body is safe API JSON.
+    throw new DocusignApiError(
+      'DocuSign Connect list failed',
+      list.response.status,
+      boundedErrorDetail(list.json),
+    );
   }
 
   // DocuSign may return null or empty body — treat as no existing listeners
@@ -420,9 +455,11 @@ export async function provisionConnectListener(args: {
   });
   if (!mutation.response.ok) {
     const operation = action === 'updated' ? 'update' : 'create';
+    // Non-document path: Connect create/update error body is safe API JSON.
     throw new DocusignApiError(
       `DocuSign Connect ${operation} failed`,
       mutation.response.status,
+      boundedErrorDetail(mutation.json),
     );
   }
 

@@ -251,3 +251,166 @@ describe('SCRUM-2492 L6 — thrown connector errors carry no document bytes', ()
     expectNoCanary(JSON.stringify({ ...err, message: err.message }));
   });
 });
+
+// ──────────────────────────────────────────────────────────────────────────
+// 5. boundedErrorDetail: bounded + byte-safe + PII-scrubbed by construction.
+//    Restores connector-ops debuggability on NON-document paths (SCRUM-2492
+//    follow-up) WITHOUT reopening the byte-leak surface §1.6A closed.
+// ──────────────────────────────────────────────────────────────────────────
+describe('SCRUM-2492 — boundedErrorDetail (non-document connector error detail)', () => {
+  it('returns undefined for null/undefined/empty', async () => {
+    const { boundedErrorDetail } = await import('../utils/byte-safety.js');
+    expect(boundedErrorDetail(null)).toBeUndefined();
+    expect(boundedErrorDetail(undefined)).toBeUndefined();
+    expect(boundedErrorDetail('')).toBeUndefined();
+    expect(boundedErrorDetail({})).toBe('{}'); // empty object still serializes
+  });
+
+  it('stringifies a safe OAuth error body and passes strings through', async () => {
+    const { boundedErrorDetail } = await import('../utils/byte-safety.js');
+    // The canonical safe OAuth/API error JSON the task calls out.
+    const detail = boundedErrorDetail({ error: 'invalid_grant', error_description: 'Token expired' });
+    expect(detail).toBe('{"error":"invalid_grant","error_description":"Token expired"}');
+    expect(boundedErrorDetail('already a string')).toBe('already a string');
+  });
+
+  it('PII-scrubs email / UUID / JWT / token-in-URL out of the detail', async () => {
+    const { boundedErrorDetail } = await import('../utils/byte-safety.js');
+    const detail = boundedErrorDetail({
+      error: 'invalid_request',
+      user: 'alice@example.com',
+      org_id: '550e8400-e29b-41d4-a716-446655440000',
+      assertion: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjMifQ.abcDEFghiJKL',
+      redirect: 'https://x.test/cb?access_token=supersecretvalue123',
+    });
+    expect(detail).toBeDefined();
+    const d = detail as string;
+    // Each PII class is removed by the shared sentry/pii-scrub regexes. We assert
+    // the security property (raw PII absent) — the exact replacement token can
+    // vary where two scrubber patterns overlap (the trailing UUID digit run is
+    // matched by the phone pass first), which is fine: no raw value escapes.
+    expect(d).not.toContain('alice@example.com');
+    expect(d).toContain('[EMAIL]');
+    expect(d).not.toContain('550e8400-e29b-41d4-a716-446655440000');
+    expect(d).not.toContain('eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9');
+    expect(d).toContain('[JWT]');
+    expect(d).not.toContain('supersecretvalue123');
+    expect(d).toContain('[FILTERED]');
+    // The safe, non-PII error code survives.
+    expect(d).toContain('invalid_request');
+  });
+
+  it('caps the detail at ~500 chars', async () => {
+    const { boundedErrorDetail } = await import('../utils/byte-safety.js');
+    // Varied (non-repeating) content so the low-entropy byte-fill heuristic does
+    // not (correctly) redact it — this exercises the length cap, not the guard.
+    const varied = Array.from({ length: 5000 }, (_v, i) => String.fromCharCode(97 + (i % 26))).join('');
+    const long = boundedErrorDetail(varied);
+    expect(long).toBeDefined();
+    expect((long as string).length).toBe(500);
+  });
+
+  it('redacts a detail built from a byte-bearing body (Buffer / typed-array / ArrayBuffer / serialized shape)', async () => {
+    const { boundedErrorDetail, REDACTED_BYTES_TOKEN } = await import('../utils/byte-safety.js');
+    // (c) the mandated case: a detail built from raw document bytes is redacted.
+    expect(boundedErrorDetail(documentBytes)).toBe(REDACTED_BYTES_TOKEN);
+    expect(boundedErrorDetail(new Uint8Array(documentBytes))).toBe(REDACTED_BYTES_TOKEN);
+    expect(boundedErrorDetail(documentBytes.buffer.slice(0, 64))).toBe(REDACTED_BYTES_TOKEN);
+    expect(boundedErrorDetail({ type: 'Buffer', data: [37, 37, 37, 37, 37] })).toBe(
+      REDACTED_BYTES_TOKEN,
+    );
+    // A string that is actually the 5MB buffer coerced to text is caught too.
+    const detail = boundedErrorDetail(documentBytes.toString());
+    expect(detail).toBe(REDACTED_BYTES_TOKEN);
+    expectNoCanary(detail ?? '');
+  });
+
+  it('(a) a NON-document connector error carries a bounded, byte-free, PII-scrubbed detail', async () => {
+    const { exchangeDocusignCode, DocusignApiError } = await import(
+      '../integrations/oauth/docusign.js'
+    );
+    const { exchangeCode, DriveApiError } = await import('../integrations/oauth/drive.js');
+
+    // DocuSign token exchange failure → safe OAuth error JSON in the body.
+    const dsFetch = vi.fn(async () =>
+      new Response(JSON.stringify({ error: 'invalid_grant', error_description: 'expired' }), {
+        status: 400,
+      }),
+    ) as unknown as typeof fetch;
+    let dsErr: unknown;
+    try {
+      await exchangeDocusignCode({
+        code: 'bad',
+        redirectUri: 'https://x.test/cb',
+        deps: {
+          env: { DOCUSIGN_INTEGRATION_KEY: 'ik', DOCUSIGN_CLIENT_SECRET: 'cs' } as NodeJS.ProcessEnv,
+          fetchImpl: dsFetch,
+        },
+      });
+    } catch (e) {
+      dsErr = e;
+    }
+    expect(dsErr).toBeInstanceOf(DocusignApiError);
+    const dse = dsErr as InstanceType<typeof DocusignApiError>;
+    expect(dse.status).toBe(400);
+    expect(dse.detail).toBe('{"error":"invalid_grant","error_description":"expired"}');
+    expectNoCanary(dse.detail ?? '');
+
+    // Drive token exchange failure → safe Google API error JSON in the body.
+    const drFetch = vi.fn(async () =>
+      new Response(JSON.stringify({ error: 'invalid_grant' }), { status: 401 }),
+    ) as unknown as typeof fetch;
+    let drErr: unknown;
+    try {
+      await exchangeCode({
+        code: 'bad',
+        redirectUri: 'https://x.test/cb',
+        deps: {
+          env: {
+            GOOGLE_OAUTH_CLIENT_ID: 'cid',
+            GOOGLE_OAUTH_CLIENT_SECRET: 'sec',
+          } as NodeJS.ProcessEnv,
+          fetchImpl: drFetch,
+        },
+      });
+    } catch (e) {
+      drErr = e;
+    }
+    expect(drErr).toBeInstanceOf(DriveApiError);
+    const dre = drErr as InstanceType<typeof DriveApiError>;
+    expect(dre.status).toBe(401);
+    expect(dre.detail).toBe('{"error":"invalid_grant"}');
+  });
+
+  it('(b) the document-fetch error has NO detail even when the failing body is 5MB of bytes', async () => {
+    const { fetchDocusignCombinedDocument, DocusignApiError } = await import(
+      '../integrations/oauth/docusign.js'
+    );
+
+    // A failing response whose BODY is the 5 MB document — the doc-fetch path
+    // must NOT read it. Status + message only, detail stays undefined.
+    const fetchImpl = vi.fn(async () =>
+      new Response(documentBytes, { status: 502, headers: { 'content-type': 'application/pdf' } }),
+    ) as unknown as typeof fetch;
+
+    let caught: unknown;
+    try {
+      await fetchDocusignCombinedDocument({
+        baseUri: 'https://demo.docusign.net',
+        accountId: 'acct-1',
+        envelopeId: 'env-1',
+        accessToken: 'token',
+        deps: { fetchImpl },
+      });
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(DocusignApiError);
+    const err = caught as InstanceType<typeof DocusignApiError>;
+    expect(err.status).toBe(502);
+    // The document-fetch path is detail-FREE (and body-free) by construction.
+    expect(err.detail).toBeUndefined();
+    expect('body' in err).toBe(false);
+    expectNoCanary(JSON.stringify({ ...err, message: err.message, stack: err.stack }));
+  });
+});

@@ -11,27 +11,18 @@ import * as Sentry from '@sentry/node';
 import { nodeProfilingIntegration } from '@sentry/profiling-node';
 import type { Event, ErrorEvent, Breadcrumb } from '@sentry/node';
 import { getBuildSha } from './buildInfo.js';
+import { scrubString, scrubUrl } from './pii-scrub.js';
 
 // ---------------------------------------------------------------------------
 // PII patterns to scrub (Constitution 1.4 + 1.6)
 // ---------------------------------------------------------------------------
-
-const URL_TOKEN_REGEX = /(access_token|token|key|secret|password|auth)=[^&\s]+/gi;
-const TEXT_SCRUBBERS: Array<[RegExp, string]> = [
-  [/\b[A-Z0-9._%+-]{1,64}@[A-Z0-9.-]{1,253}\.[A-Z]{2,24}\b/gi, '[EMAIL]'],
-  [/\b[a-f0-9]{64}\b/gi, '[FINGERPRINT]'],
-  [/\b\d{3}-\d{2}-\d{4}\b/g, '[SSN]'],
-  [/\bak_(live|test)_[a-zA-Z0-9]+/g, '[API_KEY]'],
-  [/\beyJ[a-zA-Z0-9_-]+\.eyJ[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+/g, '[JWT]'],
-  [/(?:\+\d{1,3}[\s.-]?)?\(?\d{2,4}\)?[\s.-]?\d{3,4}[\s.-]?\d{4}\b/g, '[PHONE]'],
-  [/\b(?:\d{1,3}\.){3}\d{1,3}\b/g, '[IP_ADDR]'],
-  // SCRUM-2249: project-ref before UUID scrubbing so the host is replaced whole.
-  [/https:\/\/[a-z0-9]{20}\.supabase\.co/gi, 'https://[SUPABASE_PROJECT].supabase.co'],
-  [
-    /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi,
-    '[UUID]',
-  ],
-];
+//
+// SCRUM-2492 (§1.6A): the email / fingerprint / SSN / API-key / JWT / phone /
+// IP / Supabase-ref / UUID regexes + `scrubString` / `scrubUrl` were extracted
+// to `./pii-scrub.ts` so the bounded connector-error `detail` builder
+// (`utils/byte-safety.ts`) reuses the SAME PII redaction. Re-exported here so
+// existing `utils/sentry.ts` importers keep working.
+export { scrubString, scrubUrl };
 
 const SENSITIVE_HEADERS = [
   'authorization',
@@ -118,16 +109,8 @@ export function scrubBinaryValues<T>(value: T, depth = 0): T {
 // ---------------------------------------------------------------------------
 // Scrubbing functions
 // ---------------------------------------------------------------------------
-
-function scrubString(str: string): string {
-  return TEXT_SCRUBBERS.reduce((value, [pattern, replacement]) => (
-    value.replace(pattern, replacement)
-  ), str);
-}
-
-function scrubUrl(url: string): string {
-  return scrubString(url.replace(URL_TOKEN_REGEX, '$1=[FILTERED]'));
-}
+// `scrubString` / `scrubUrl` are imported from `./pii-scrub.js` (re-exported
+// above) — SCRUM-2492 single-source-of-truth for the PII regexes.
 
 /**
  * Scrub PII from a Sentry event before it's sent.

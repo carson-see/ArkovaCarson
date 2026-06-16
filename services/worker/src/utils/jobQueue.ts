@@ -14,6 +14,12 @@
 
 import { db } from './db.js';
 import { logger } from './logger.js';
+import {
+  REDACTED_BYTES_TOKEN,
+  SERIALIZED_BUFFER_RE,
+  isBinaryValue,
+  looksLikeRawBytes,
+} from './byte-safety.js';
 
 export type JobStatus = 'pending' | 'processing' | 'completed' | 'failed' | 'dead';
 
@@ -51,54 +57,16 @@ const DEFAULT_MAX_ATTEMPTS = 3;
 // `{ "type":"Buffer","data":[...] }`) would smuggle bytes in. This sanitizer
 // detects those shapes and replaces them with a bounded token, then caps the
 // length. It is intentionally conservative: it never persists raw byte runs.
+//
+// The byte-detection primitives (`isBinaryValue`, `looksLikeRawBytes`,
+// `SERIALIZED_BUFFER_RE`, the redaction token) now live in `./byte-safety.ts`
+// so the bounded connector-error `detail` builder reuses the SAME heuristics —
+// there is one source of truth, not a drifting copy.
 
-export const REDACTED_LAST_ERROR_TOKEN = '[redacted: binary content]';
+// Re-exported for back-compat with existing importers/tests that referenced the
+// jobQueue token. Value is unchanged (`'[redacted: binary content]'`).
+export const REDACTED_LAST_ERROR_TOKEN = REDACTED_BYTES_TOKEN;
 const LAST_ERROR_MAX_LENGTH = 1000;
-
-// `{ "type": "Buffer", "data": [ ... ] }` — Node's JSON form of a Buffer.
-const SERIALIZED_BUFFER_RE = /\{\s*"?type"?\s*:\s*"Buffer"\s*,\s*"?data"?\s*:\s*\[/i;
-const CONTROL_RUN_THRESHOLD = 8;
-// A run of identical characters this long is not a plausible human/error
-// message — it is a low-entropy byte fill coerced to text (e.g. a PDF padding
-// region, or `Buffer.alloc(n, b).toString()`).
-const REPEAT_RUN_THRESHOLD = 32;
-
-/**
- * Heuristic: does `text` look like raw document bytes coerced to a string?
- * Two signals, both rare in real error messages:
- *   (a) a dense run of non-printable control bytes (binary content / invalid
- *       UTF-8 decoded to U+FFFD), or
- *   (b) a long run of a single repeated character (low-entropy byte fill).
- * Implemented programmatically (no control chars in source).
- */
-function looksLikeRawBytes(text: string): boolean {
-  let controlRun = 0;
-  let repeatRun = 1;
-  let prev = -1;
-  for (let i = 0; i < text.length; i += 1) {
-    const code = text.charCodeAt(i);
-
-    const isNonPrintable =
-      (code <= 0x1f && code !== 0x09 && code !== 0x0a && code !== 0x0d) ||
-      code === 0x7f ||
-      code === 0xfffd; // U+FFFD replacement char from invalid UTF-8
-    if (isNonPrintable) {
-      controlRun += 1;
-      if (controlRun >= CONTROL_RUN_THRESHOLD) return true;
-    } else {
-      controlRun = 0;
-    }
-
-    if (code === prev) {
-      repeatRun += 1;
-      if (repeatRun >= REPEAT_RUN_THRESHOLD) return true;
-    } else {
-      repeatRun = 1;
-      prev = code;
-    }
-  }
-  return false;
-}
 
 /**
  * Strip byte-ish content from a `last_error` string before it is persisted.
@@ -111,9 +79,8 @@ export function sanitizeLastError(raw: unknown): string {
     text = raw;
   } else if (raw === null || raw === undefined) {
     text = '';
-  } else if (typeof Buffer !== 'undefined' && Buffer.isBuffer(raw)) {
-    return REDACTED_LAST_ERROR_TOKEN;
-  } else if (ArrayBuffer.isView(raw as ArrayBufferView) || raw instanceof ArrayBuffer) {
+  } else if (isBinaryValue(raw)) {
+    // Buffer / TypedArray / DataView / ArrayBuffer — never coerce to text.
     return REDACTED_LAST_ERROR_TOKEN;
   } else {
     text = String(raw);
