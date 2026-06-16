@@ -144,6 +144,79 @@ describe('findDuplicateNames', () => {
     expect(dupes).toContain('0294_refund_org_credit');
     expect(dupes).toHaveLength(1);
   });
+
+  // --- version-prefix normalization (repoVersions-aware) ---
+
+  it('does NOT flag two distinct-version migrations whose db-push names dropped their numeric prefix', () => {
+    // `supabase db push` stores both 0302_* and 0303_* migrations under the bare
+    // name `validate_api_key_rpc_hardening`. Distinct repo-backed versions → not a dup.
+    const rigRows: MigrationRow[] = [
+      { version: '0302', name: 'validate_api_key_rpc_hardening' },
+      { version: '0303', name: 'validate_api_key_rpc_hardening' },
+    ];
+    const repoVersions = new Set(['0302', '0303']);
+    expect(findDuplicateNames(rigRows, repoVersions)).toEqual([]);
+  });
+
+  it('still flags a same-version+same-name replay as a duplicate (repoVersions-aware)', () => {
+    const replayRows: MigrationRow[] = [
+      { version: '0294', name: '0294_refund_org_credit' },
+      { version: '0294', name: '0294_refund_org_credit' },
+    ];
+    const repoVersions = new Set(['0294']);
+    expect(findDuplicateNames(replayRows, repoVersions)).toContain('0294_refund_org_credit');
+  });
+
+  it('still flags a prefixed-name collision across versions (contamination) when normalized', () => {
+    // A prefixed name is authoritative: a row carrying name `0294_refund_org_credit`
+    // under version 0298 still collides with the real 0294 row under the shared name.
+    const rows: MigrationRow[] = [
+      { version: '0294', name: '0294_refund_org_credit' },
+      { version: '0298', name: '0294_refund_org_credit' },
+    ];
+    const repoVersions = new Set(['0294', '0298']);
+    expect(findDuplicateNames(rows, repoVersions)).toContain('0294_refund_org_credit');
+  });
+
+  it('flags a bare-name collision when NEITHER colliding version is repo-backed', () => {
+    // No repo backing for either row → both fall back to the bare name, so a real
+    // bare-name collision still surfaces (a non-repo version cannot manufacture a
+    // phantom-distinct identity to mask it).
+    const rows: MigrationRow[] = [
+      { version: '88888888888888', name: 'validate_api_key_rpc_hardening' },
+      { version: '99999999999999', name: 'validate_api_key_rpc_hardening' },
+    ];
+    const repoVersions = new Set(['0294']); // neither colliding version is repo-backed
+    expect(findDuplicateNames(rows, repoVersions)).toContain('validate_api_key_rpc_hardening');
+  });
+
+  it('does not treat one repo-backed + one unbacked bare name as a dup (contamination caught by classifyMigrationRow, not Check 2)', () => {
+    // Identity differs (0303_… vs bare …), so Check 2 alone reports no dup. The
+    // unbacked timestamp row is contamination, but it is classifyMigrationRow /
+    // Check 1's job to flag — verified at the buildReport level below.
+    const rows: MigrationRow[] = [
+      { version: '0303', name: 'validate_api_key_rpc_hardening' },
+      { version: '99999999999999', name: 'validate_api_key_rpc_hardening' },
+    ];
+    const repoVersions = new Set(['0303']); // timestamp version is NOT repo-backed
+    expect(findDuplicateNames(rows, repoVersions)).toEqual([]);
+
+    // Safety net: the unbacked timestamp row still trips Check 1, so the rig is
+    // never mislabeled clean_mirror.
+    const report = buildReport({
+      projectRef: 'isolated-rig',
+      migrationRows: [
+        { version: '00000000000000', name: 'baseline_at_main_HEAD' },
+        ...rows,
+      ],
+      submittedAnchorCount: 3,
+      prodVersions: ['00000000000000', '0303'],
+      repoVersions,
+    });
+    expect(report.checks.find((c) => c.name === 'duplicate_names')!.passed).toBe(true);
+    expect(report.checks.find((c) => c.name === 'staging_only_rows')!.passed).toBe(false);
+    expect(report.environment_type).toBe('soak_artifact');
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -549,6 +622,69 @@ describe('buildReport with repoVersions (baseline-squash-aware)', () => {
     });
     const divCheck = report.checks.find((c) => c.name === 'prod_divergence');
     expect(divCheck!.passed).toBe(false);
+    expect(report.environment_type).toBe('soak_artifact');
+  });
+
+  // -------------------------------------------------------------------------
+  // Regression: db-push dropped-prefix duplicate-NAME false positive.
+  // Two genuinely-distinct migrations (0302 vs 0303 of the same descriptive
+  // name) whose stored names lost their numeric prefix on `supabase db push`
+  // must NOT make the duplicate_names check fail on a legitimately-clean rig.
+  // -------------------------------------------------------------------------
+
+  // Prod stores the prefixed, distinct names; repo backs both numeric versions.
+  const DUPNAME_PROD_VERSIONS = [
+    '00000000000000', '0290', '0292', '0293', '0294', '0302', '0303', '20260510120000',
+  ];
+  const DUPNAME_REPO_VERSIONS = new Set([
+    '00000000000000', '0294', '0295', '0296', '0297', '0302', '0303', '0330', '0331',
+  ]);
+  // Clean baseline-squashed rig whose 0302/0303 rows lost their prefix on push.
+  const DUPNAME_RIG_ROWS: MigrationRow[] = [
+    { version: '00000000000000', name: 'baseline_at_main_HEAD' },
+    { version: '0294', name: '0294_refund_org_credit' },
+    { version: '0295', name: '0295_add_webhook_events' },
+    { version: '0296', name: '0296_api_key_hmac' },
+    { version: '0297', name: '0297_audit_log_cleanup' },
+    { version: '0302', name: 'validate_api_key_rpc_hardening' },
+    { version: '0303', name: 'validate_api_key_rpc_hardening' },
+    { version: '0330', name: '0330_candidate_a' },
+    { version: '0331', name: '0331_candidate_b' },
+  ];
+
+  it('passes duplicate_names AND classifies clean_mirror when db-push dropped the numeric prefix off two distinct migrations', () => {
+    const report = buildReport({
+      projectRef: 'isolated-rig',
+      migrationRows: DUPNAME_RIG_ROWS,
+      submittedAnchorCount: 3, // SUBMITTED anchor present
+      prodVersions: DUPNAME_PROD_VERSIONS,
+      repoVersions: DUPNAME_REPO_VERSIONS,
+    });
+    const dupeCheck = report.checks.find((c) => c.name === 'duplicate_names');
+    expect(dupeCheck).toBeDefined();
+    expect(dupeCheck!.passed).toBe(true);
+    expect(report.environment_type).toBe('clean_mirror');
+    expect(report.checks.every((c) => c.passed)).toBe(true);
+  });
+
+  it('still FAILS duplicate_names (soak_artifact) on a genuine same-version+same-name replay', () => {
+    // A truly-duplicated migration: 0294_refund_org_credit replayed under the
+    // SAME version. This is real contamination and must still trip the gate.
+    const replayRig: MigrationRow[] = [
+      ...DUPNAME_RIG_ROWS,
+      { version: '0294', name: '0294_refund_org_credit' },
+    ];
+    const report = buildReport({
+      projectRef: 'isolated-rig',
+      migrationRows: replayRig,
+      submittedAnchorCount: 3,
+      prodVersions: DUPNAME_PROD_VERSIONS,
+      repoVersions: DUPNAME_REPO_VERSIONS,
+    });
+    const dupeCheck = report.checks.find((c) => c.name === 'duplicate_names');
+    expect(dupeCheck).toBeDefined();
+    expect(dupeCheck!.passed).toBe(false);
+    expect(dupeCheck!.details).toMatch(/0294_refund_org_credit/);
     expect(report.environment_type).toBe('soak_artifact');
   });
 });
