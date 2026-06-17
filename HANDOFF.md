@@ -14,6 +14,19 @@
 
 ## Now
 
+### 2026-06-17 — PI-1 Sprint 0 (Lane 1 + train roles): foundation docs + drift/parity spike + gates — all DRAFT, nothing merged
+
+PI-1 Sprint 0 kickoff. Scope = **Lane 1 (Trust & Chain) + the train roles**, executed in the outlined order under Carson's merge gate. **No prod/staging/Supabase/soak mutation; nothing merged; Train C #1154 + the two Train D rigs untouched.** Created GitHub milestone `Sprint 0 — Foundation & Hardening` (#24).
+
+**Draft PRs (Sprint-0 milestone — Carson merges):**
+- **S0-E1+E2+E6+E7 + Lane-1 pre-design** (T0 docs, `s0/train-foundation`): lane manifest + RACI (machine+human) + session operating model + dry-run; read-only source-of-truth reconciliation (every correction is a *proposal*); infra/SSD/Vertex inventory; external-gate tracker; chain-resilience + MIT-verifier pre-design; Lane-1 visibility signal inventory.
+- **S0-E3** CLAUDE.md v-next draft (T0, Carson-review — rule change).
+- **S0-E5.2** config↔reality drift + cross-runtime parity gate spike (T1, Lane-1 code).
+
+**Flagged for Carson (read-only findings; all action GATED):** PO Roadmap 27591934 superseded by 82444290 (banner + re-point CLAUDE.md §5/memory); possible-false-Done SCRUM-1044/1049 (changelog + child-rollup); SDK-PY overlaps Done SCRUM-1112; VC-W3C front-runs open spike SCRUM-2296; orphan paid Supabase project `xrefmwydaatppieoxfxn` (PR #1055 merged 06-10) → dashboard delete; CAIQ v1 sheets flagged-not-moved. Jira filing (S0-2.2), Confluence creates, infra deletes, CE-key→Secret-Manager, and external outreach are all gated — not done.
+
+_Last refreshed: 2026-06-17 by Claude (carson@arkova.io) — claims verified against gcloud/MCP/CI output: Cloud Run via `gcloud run services list --project=arkova1` (4 services, all prod/active-soak); Vertex via `gcloud ai endpoints list --region=us-central1` (1 golden endpoint); Supabase via MCP `list_projects` (8 projects; orphan `xrefmwydaatppieoxfxn` confirmed via `gh pr view 1055` = MERGED); milestone via `gh api repos/.../milestones` (#24). No prod state asserted or changed this session._
+
 ### 2026-06-16 (cont.) — Top-risk + hygiene round; API 529 overload deferred the agent streams
 
 Post-replan execution round (top risks + Jira/PR hygiene + endpoints + roadmap). A **sustained Anthropic 529 overload throttled the parallel-agent fan-out — 9 subagent launches died with 0 work** (R1×3, R4×2, R5, Jira-hygiene, PR-hygiene×2). Main loop unaffected → agent-driven streams DEFERRED (nothing lost; failed agents did nothing). Did the rest in-loop.
