@@ -340,6 +340,9 @@ jobs:
           BASE_REF_SHA: ${{ github.event.pull_request.base.sha }}
         run: npx tsx scripts/ci/compute-merge-authority.ts
 
+      - name: Config↔reality drift + cross-runtime parity gate (S0-5.2)
+        run: npx tsx scripts/ci/check-config-drift.ts
+
       - name: HANDOFF.md verification lint
         env:
           BASE_REF_SHA: ${{ github.event.pull_request.base.sha }}

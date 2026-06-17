@@ -1,0 +1,28 @@
+{
+  "_note": "ASSERTED prod config — what the repo SAYS prod should be. SPIKE: hand-declared from deploy-worker.yml --set-env-vars + services/worker/src/config.ts defaults + vercel.json CSP connect-src. Sprint 1 auto-derives this from source instead of hand-maintaining it. Provider 'getblock' = the post-2026-04-25 sovereign-broadcast posture.",
+  "flags": {
+    "ENABLE_PROD_NETWORK_ANCHORING": true,
+    "ENABLE_AI_EXTRACTION": true,
+    "ENABLE_VERIFICATION_API": true,
+    "ENABLE_SEMANTIC_SEARCH": false
+  },
+  "bitcoinUtxoProvider": "getblock",
+  "bitcoinFeeStrategy": "mempool",
+  "cspConnectSrc": [
+    "https://arkova-worker-270018525501.us-central1.run.app",
+    "https://edge.arkova.ai"
+  ],
+  "runtimes": {
+    "worker": {
+      "runtime": "worker",
+      "origin": "https://arkova-worker-270018525501.us-central1.run.app",
+      "flags": { "ENABLE_AI_FALLBACK": false },
+      "bitcoinUtxoProvider": "getblock"
+    },
+    "edge": {
+      "runtime": "edge",
+      "origin": "https://edge.arkova.ai",
+      "flags": { "ENABLE_AI_FALLBACK": false }
+    }
+  }
+}

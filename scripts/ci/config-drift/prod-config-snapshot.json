@@ -1,0 +1,15 @@
+{
+  "_note": "RUNNING prod config — REFERENCE snapshot of the INTENDED prod state (not a live capture this session; matches the asserted file so the gate is green at rest). Sprint 1 replaces this with a read-only cron capture of GET /health + the flag registry; any divergence (e.g. the 2026-05-30 env-vs-DB fail-open, or a silent provider flip to mempool) then fails the gate. Never embeds secrets.",
+  "flags": {
+    "ENABLE_PROD_NETWORK_ANCHORING": true,
+    "ENABLE_AI_EXTRACTION": true,
+    "ENABLE_VERIFICATION_API": true,
+    "ENABLE_SEMANTIC_SEARCH": false
+  },
+  "bitcoinUtxoProvider": "getblock",
+  "bitcoinFeeStrategy": "mempool",
+  "cspConnectSrc": [
+    "https://arkova-worker-270018525501.us-central1.run.app",
+    "https://edge.arkova.ai"
+  ]
+}
