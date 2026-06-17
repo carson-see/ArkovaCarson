@@ -1,6 +1,8 @@
 #!/usr/bin/env -S npx tsx
 /**
- * S0-5.2 (Lane 1) — config↔reality drift gate (SPIKE). Retires risk R-5.
+ * S0-5.2 (Lane 1) — config↔reality drift gate (SPIKE). SCAFFOLDS the R-5
+ * mitigation — it does NOT yet retire R-5 (live source-parse + /health capture
+ * is Sprint 1; see config-drift/README.md "Known SPIKE limitations").
  *
  * Diffs the ASSERTED prod config (what the repo says prod should be:
  * `services/worker/src/config.ts` defaults + `deploy-worker.yml` --set-env-vars
@@ -23,6 +25,7 @@
 import { readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { z } from 'zod';
 import {
   compareRuntimeConfigs,
   type RuntimeConfig,
@@ -74,6 +77,21 @@ export function diffConfigState(asserted: ConfigState, running: ConfigState): Co
         asserted: String(want),
         running: String(have),
         message: `flag ${key} asserted ${want} but running ${have}`,
+      });
+    }
+  }
+
+  // Reverse flags: a flag ENABLED in running but NOT pinned in asserted is an
+  // unexpected enablement (the fail-open / silent re-enable class — the headline
+  // R-5 risk). Mirrors the bidirectional CSP check. Benign when disabled.
+  for (const [key, have] of Object.entries(running.flags)) {
+    if (have === true && !(key in asserted.flags)) {
+      drift.push({
+        dimension: 'flag',
+        key,
+        asserted: 'unpinned',
+        running: 'true',
+        message: `flag ${key} enabled in running but not pinned in asserted (unexpected enablement — pin it or investigate)`,
       });
     }
   }
@@ -141,8 +159,29 @@ interface SnapshotFile extends ConfigState {
   runtimes?: { worker: RuntimeConfig; edge: RuntimeConfig };
 }
 
+// Fail CLOSED on a malformed/degraded config file: a degraded asserted file
+// (e.g. empty `flags`) must NOT silently pass as "no drift". Zod throws on a
+// bad shape → caught in main() → exit 1. `.passthrough()` tolerates `_note`.
+const RuntimeConfigSchema = z.object({
+  runtime: z.enum(['worker', 'edge']),
+  origin: z.string().min(1),
+  flags: z.record(z.string(), z.boolean()),
+  bitcoinUtxoProvider: z.string().min(1).optional(),
+});
+const SnapshotFileSchema = z
+  .object({
+    flags: z
+      .record(z.string(), z.boolean())
+      .refine((f) => Object.keys(f).length > 0, { message: 'flags must be a non-empty object' }),
+    bitcoinUtxoProvider: z.string().min(1),
+    bitcoinFeeStrategy: z.string().min(1).optional(),
+    cspConnectSrc: z.array(z.string().min(1)).min(1),
+    runtimes: z.object({ worker: RuntimeConfigSchema, edge: RuntimeConfigSchema }).optional(),
+  })
+  .passthrough();
+
 export function loadConfigFile(path: string): SnapshotFile {
-  return JSON.parse(readFileSync(path, 'utf8')) as SnapshotFile;
+  return SnapshotFileSchema.parse(JSON.parse(readFileSync(path, 'utf8'))) as SnapshotFile;
 }
 
 export function loadAssertedConfig(): SnapshotFile {
@@ -158,9 +197,12 @@ export function runConfigDriftCheck(
   running: SnapshotFile,
 ): { drift: ConfigDrift[]; parity: ParityFinding[] } {
   const drift = diffConfigState(asserted, running);
-  const parity = asserted.runtimes
-    ? compareRuntimeConfigs(asserted.runtimes.worker, asserted.runtimes.edge, asserted.cspConnectSrc)
-    : [];
+  // Parity compares the two RUNNING runtimes (worker vs edge as observed) against
+  // the running CSP. SPIKE: running.runtimes is a committed reference snapshot;
+  // Sprint 1 captures both runtimes + CSP from live GET /health. Falls back to the
+  // asserted declaration only if the running snapshot omits runtimes.
+  const rt = running.runtimes ?? asserted.runtimes;
+  const parity = rt ? compareRuntimeConfigs(rt.worker, rt.edge, running.cspConnectSrc) : [];
   return { drift, parity };
 }
 
