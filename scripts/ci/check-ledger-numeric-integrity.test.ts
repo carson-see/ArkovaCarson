@@ -51,6 +51,33 @@ describe('auditLedgerRows — prod ledger numeric integrity (SCRUM-2500 / S0-4.2
     expect(auditLedgerRows(rows).map((x) => x.code)).toContain('ledger-duplicate-version');
   });
 
+  it('SKIPS a documented-exempt prefix even with a timestamp version (the 0287–0310 backlog)', () => {
+    const rows: LedgerRow[] = [
+      { version: '20260503192636_0285', name: '0302_validate_api_key_rpc_hardening' },
+    ];
+    // Without the exemption it would fail; with it, the known backlog is skipped.
+    expect(auditLedgerRows(rows)).not.toEqual([]);
+    expect(auditLedgerRows(rows, new Set(['0302']))).toEqual([]);
+  });
+
+  it('STILL fails a NON-exempt numeric row that re-regressed, even when other prefixes are exempt', () => {
+    const rows: LedgerRow[] = [
+      { version: '20260503192636_0285', name: '0302_validate_api_key_rpc_hardening' }, // exempt
+      { version: '20260615120000', name: '0322_bump_cloud_logging' }, // NOT exempt → must fail
+    ];
+    const v = auditLedgerRows(rows, new Set(['0302']));
+    expect(v.map((x) => x.code)).toContain('ledger-nonnumeric-version');
+    expect(v.some((x) => x.message.includes('0322'))).toBe(true);
+  });
+
+  it('skips exempt rows for the duplicate-name check too (the 0302/0303 dup, SCRUM-2192)', () => {
+    const rows: LedgerRow[] = [
+      { version: '0302', name: '0302_validate_api_key_rpc_hardening' },
+      { version: '0303', name: '0302_validate_api_key_rpc_hardening' },
+    ];
+    expect(auditLedgerRows(rows, new Set(['0302']))).toEqual([]);
+  });
+
   it('does not require non-numeric-named rows (baseline / operator names) to carry a numeric version', () => {
     const rows: LedgerRow[] = [
       { version: '00000000000000', name: '00000000000000_baseline_at_main_HEAD' },

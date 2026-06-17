@@ -13,8 +13,9 @@
  *
  * This is advisory/annotation tooling (it emits a GitHub Actions output +
  * notice). The enforcing control is branch protection + Mergify, which Carson
- * codifies per the drafted diff in
- * docs/runbooks/mergify-stacked-pr-playbook.md.
+ * codifies per the drafted diff in the "S0-E4 — Mergify / Stacked-PR +
+ * Tiered-Merge Playbook" Google Doc (Drive: ARKOVA PI-1-S0):
+ * https://docs.google.com/document/d/1iontJPUkhLQkQyZG4PETGuPj3kf23Kgn-1kDxqukfr8/edit
  */
 
 import { appendFileSync } from 'node:fs';
@@ -47,6 +48,30 @@ export function mergeAuthorityFor(files: string[]): MergeAuthorityResult {
 
 function main(): void {
   const files = changedFiles();
+
+  // A real PR always changes at least one file. An empty set here almost always
+  // means `git diff` failed (shallow checkout / unfetched base), not a genuine
+  // no-op — so fail closed to needs-carson rather than reporting council via the
+  // T0 default (pre-mortem P4 / review #3). The pure function keeps empty→T0 for
+  // unit-test clarity; this CLI policy is the safety net around it.
+  if (files.length === 0) {
+    console.log('## Tiered-merge authority (S0-4.3)');
+    console.log('- Changed files: 0 (could not determine — failing closed)');
+    console.log('- Merge authority: needs-carson');
+    console.log(
+      '::notice title=Merge gate::Could not determine the changeset (empty git diff — ' +
+        'shallow checkout or unfetched base). Failing closed to needs-carson.',
+    );
+    if (process.env.GITHUB_OUTPUT) {
+      try {
+        appendFileSync(process.env.GITHUB_OUTPUT, 'merge_authority=needs-carson\ntier=unknown\n');
+      } catch {
+        /* best-effort */
+      }
+    }
+    return;
+  }
+
   const { authority, tier, reason } = mergeAuthorityFor(files);
 
   console.log('## Tiered-merge authority (S0-4.3)');

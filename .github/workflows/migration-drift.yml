@@ -389,11 +389,16 @@ jobs:
       # timestamp-version re-regression pass unseen (drift gate only checks the
       # PR diff; this checks the ENTIRE ledger every run). Fail-closed: skipped
       # only when the read-only ledger fetch didn't run (e.g. Dependabot).
-      - name: Full-ledger numeric-integrity audit (SCRUM-2500 / S0-4.2)
+      # --report-only: emits LOUD warnings for ledger drift but does NOT block,
+      # because the prod ledger still carries a documented-unreconciled backlog
+      # (the same set this workflow's exempt_regex carves out). Flipping this to
+      # blocking + emptying scripts/ci/snapshots/ledger-numeric-exemptions.json is
+      # the Carson-gated S0-4.2d step, once prod is confirmed numeric-clean.
+      - name: Full-ledger numeric-integrity audit (SCRUM-2500 / S0-4.2, report-only)
         if: ${{ env.PROD_LEDGER_JSON_PATH != '' }}
         env:
           LEDGER_JSON_PATH: ${{ env.PROD_LEDGER_JSON_PATH }}
-        run: npx tsx scripts/ci/check-ledger-numeric-integrity.ts
+        run: npx tsx scripts/ci/check-ledger-numeric-integrity.ts --report-only
 
       - name: Check prod drain function body and grants
         if: ${{ !(github.event_name == 'pull_request' && github.actor == 'dependabot[bot]') && hashFiles('supabase/migrations/0283_drain_submitted_to_secured_helper.sql') != '' }}

@@ -185,32 +185,50 @@ echo
 # matching jobs and delete each. Failures to find jobs are non-fatal.
 # ---------------------------------------------------------------------------
 echo "# Step 2/3 — delete Cloud Scheduler cron jobs for '$SERVICE'"
+# gcloud's `name ~ X` is a substring REGEX — `lane-a` would also match
+# `lane-a-2`, deleting a sibling rig's triggers mid-soak (review #4). List all
+# jobs, then keep only those whose short name is exactly $SERVICE or starts with
+# "$SERVICE-" (boundary-anchored), matched in bash — no regex surprises.
 print_cmd gcloud scheduler jobs list \
   --project="$GCP_PROJECT" \
   --location="$CLOUD_RUN_REGION" \
-  --filter="name ~ ${SERVICE}" \
   --format="value(name)"
 if [[ $APPLY -eq 1 ]]; then
-  echo "executing: gcloud scheduler jobs list (filter ~ $SERVICE)" >&2
-  jobs="$(gcloud scheduler jobs list \
+  echo "executing: gcloud scheduler jobs list (exact-boundary match on $SERVICE)" >&2
+  all_jobs="$(gcloud scheduler jobs list \
     --project="$GCP_PROJECT" \
     --location="$CLOUD_RUN_REGION" \
-    --filter="name ~ ${SERVICE}" \
     --format="value(name)" || true)"
-  if [[ -z "$jobs" ]]; then
-    echo "No matching scheduler jobs found; continuing." >&2
-  else
-    while IFS= read -r job; do
-      [[ -n "$job" ]] || continue
+  matched=0
+  while IFS= read -r job; do
+    [[ -n "$job" ]] || continue
+    job_base="${job##*/}" # strip projects/.../jobs/ prefix if present
+    if [[ "$job_base" == "$SERVICE" || "$job_base" == "$SERVICE-"* ]]; then
+      matched=1
       run_cmd gcloud scheduler jobs delete "$job" \
         --project="$GCP_PROJECT" \
         --location="$CLOUD_RUN_REGION" \
         --quiet
-    done <<<"$jobs"
-  fi
+    fi
+  done <<<"$all_jobs"
+  [[ $matched -eq 1 ]] || echo "No scheduler jobs matched '$SERVICE' exactly; continuing." >&2
 else
-  echo "#   then for each returned job: gcloud scheduler jobs delete <job> --quiet"
+  echo "#   then delete only jobs whose name == '$SERVICE' or starts with '$SERVICE-'"
+  echo "#   (exact-boundary match so a sibling rig like '${SERVICE/-staging/-2-staging}' is never touched)."
 fi
+echo
+
+# ---------------------------------------------------------------------------
+# Step 2b — delete the per-rig Secret Manager secrets the provision step wired
+# (the now-dead service-role key + url). Otherwise the deleted project's
+# service-role key lingers in Secret Manager (review #3). Derive the rig name
+# from the service: arkova-worker-<name>-staging.
+# ---------------------------------------------------------------------------
+RIG_NAME="${SERVICE#arkova-worker-}"; RIG_NAME="${RIG_NAME%-staging}"
+echo "# Step 2b/3 — delete per-rig secrets for '$RIG_NAME'"
+for secret in "supabase-url-${RIG_NAME}-staging" "supabase-service-role-key-${RIG_NAME}-staging"; do
+  run_cmd gcloud secrets delete "$secret" --project="$GCP_PROJECT" --quiet
+done
 echo
 
 # ---------------------------------------------------------------------------

@@ -204,24 +204,46 @@ fi
 echo "# Step 1/4 — create standalone Supabase project (cost-gated; \$10/mo Pro)"
 echo "#   MCP-equivalent: get_cost -> confirm_cost -> create_project"
 echo "#   region=$SUPABASE_REGION, postgres major=$SUPABASE_PG_MAJOR, org=$SUPABASE_ORG"
-run_cmd npx supabase projects create "$PROJECT_NAME" \
-  --org-id "$SUPABASE_ORG" \
-  --region "$SUPABASE_REGION" \
-  --db-password "REDACTED_GENERATE_AT_RUNTIME"
-echo "#   -> capture the returned project ref into NEW_PROJECT_REF before continuing."
-echo "#   -> assert NEW_PROJECT_REF != $PROD_SUPABASE_REF and != $SHARED_STAGING_SUPABASE_REF."
+NEW_PROJECT_REF='<captured-from-step-1>'
+if [[ $APPLY -eq 1 ]]; then
+  print_cmd npx supabase projects create "$PROJECT_NAME" --org-id "$SUPABASE_ORG" --region "$SUPABASE_REGION"
+  echo "executing: npx supabase projects create $PROJECT_NAME" >&2
+  # Capture the new ref so links/pushes/preflight target the validated project,
+  # never whatever happens to be linked on disk (review #1). Fail loudly if the
+  # ref can't be captured — better to abort than orphan + push blind (review #2).
+  NEW_PROJECT_REF="$(npx supabase projects create "$PROJECT_NAME" \
+    --org-id "$SUPABASE_ORG" \
+    --region "$SUPABASE_REGION" \
+    --output json 2>/dev/null | jq -r '.id // .ref // empty')"
+  if [[ -z "$NEW_PROJECT_REF" ]]; then
+    echo "ERROR: could not capture the new project ref from 'supabase projects create'." >&2
+    echo "       Capture it manually, verify it is NOT prod/shared, then run the remaining steps." >&2
+    exit 1
+  fi
+  # Re-validate the freshly created ref against the deny list BEFORE any schema push.
+  if [[ "$NEW_PROJECT_REF" == "$PROD_SUPABASE_REF" || "$NEW_PROJECT_REF" == "$SHARED_STAGING_SUPABASE_REF" ]]; then
+    deny "created/resolved ref '$NEW_PROJECT_REF' is prod/shared — aborting before any schema push."
+  fi
+  echo "captured NEW_PROJECT_REF=$NEW_PROJECT_REF" >&2
+else
+  print_cmd npx supabase projects create "$PROJECT_NAME" --org-id "$SUPABASE_ORG" --region "$SUPABASE_REGION"
+  echo "#   -> (apply mode captures the returned ref into NEW_PROJECT_REF and re-validates it"
+  echo "#       against $PROD_SUPABASE_REF / $SHARED_STAGING_SUPABASE_REF before any push)."
+fi
 echo
 
 # ---------------------------------------------------------------------------
 # Step 2 — replay repo schema onto the new project.
 #
-# `db push --linked` uses the Supabase CLI parser (recognises lettered-suffix
-# files like 0055b_*), unlike the preview-branch builder. Bootstrap extensions +
-# enum pre-adds per docs/reference/STAGING_RIG.md "How to populate".
+# Link to the CAPTURED ref (not the on-disk link, review #1), then push. The
+# CLI parser recognises lettered-suffix files like 0055b_* (unlike the
+# preview-branch builder). Bootstrap extensions + enum pre-adds per
+# docs/reference/STAGING_RIG.md "How to populate".
 # ---------------------------------------------------------------------------
-echo "# Step 2/4 — link + replay repo schema (CLI parser, lettered-suffix safe)"
-run_cmd npx supabase link --project-ref "\${NEW_PROJECT_REF:?set from step 1}"
+echo "# Step 2/4 — link to the captured ref + replay repo schema (CLI parser, lettered-suffix safe)"
+run_cmd npx supabase link --project-ref "$NEW_PROJECT_REF"
 echo "#   bootstrap extensions + enum pre-adds (see STAGING_RIG.md) via MCP execute_sql / Mgmt API"
+echo "#   db push --linked now targets the just-linked $NEW_PROJECT_REF (validated above)."
 run_cmd npx supabase db push --linked
 echo
 
@@ -260,14 +282,16 @@ echo
 # ---------------------------------------------------------------------------
 echo "# Step 4/4 — clean_mirror preflight (CLAUDE.md §1.11A)"
 run_cmd npx tsx scripts/ci/staging-honesty-preflight.ts \
-  --project-ref "\${NEW_PROJECT_REF:?set from step 1}" \
+  --project-ref "$NEW_PROJECT_REF" \
   --format text
 echo
 echo "# Provision plan complete."
 if [[ $APPLY -eq 1 ]]; then
   echo "# Verify the preflight printed environment_type=clean_mirror above."
   echo "# Record NEW_PROJECT_REF, service URL, image digest, and preflight result"
-  echo "# into the rig inventory (see docs/runbooks/isolated-soak-rig-automation.md)."
+  echo "# into the rig inventory (see the 'Isolated Soak-Rig Automation Runbook'"
+  echo "# Google Doc in Drive ARKOVA PI-1-S0:"
+  echo "#   https://docs.google.com/document/d/1c0F_9NSy9ldfeR28xlY7s7zFFwKpS8cmTzvhI9dI__E/edit )."
 else
   echo "# (dry-run — nothing was created)"
 fi

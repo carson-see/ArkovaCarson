@@ -326,7 +326,8 @@ jobs:
       # from the changed files (reusing requiredTierFor) and reports whether the
       # council may merge or it needs Carson. Fails closed to needs-carson.
       # Enforcement is branch protection + Mergify (Carson-applied per the
-      # mergify-stacked-pr-playbook); this step is informational + sets outputs.
+      # "S0-E4 — Mergify / Stacked-PR + Tiered-Merge Playbook" Google Doc, Drive
+      # ARKOVA PI-1-S0); this step is informational + sets outputs.
       - name: Tiered-merge authority (S0-E4)
         env:
           BASE_REF_SHA: ${{ github.event.pull_request.base.sha }}

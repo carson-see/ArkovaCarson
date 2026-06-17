@@ -32,6 +32,7 @@ import { resolve, join } from 'node:path';
 const REPO = process.env.LEDGER_AUDIT_REPO_ROOT ?? resolve(import.meta.dirname, '..', '..');
 const MIGRATIONS_DIR = join(REPO, 'supabase', 'migrations');
 const PREFIX_BASELINE_PATH = join(REPO, 'scripts', 'ci', 'snapshots', 'migration-prefix-baseline.json');
+const LEDGER_EXEMPTIONS_PATH = join(REPO, 'scripts', 'ci', 'snapshots', 'ledger-numeric-exemptions.json');
 const BASELINE_FILE = '00000000000000_baseline_at_main_HEAD.sql';
 
 export interface LedgerRow {
@@ -57,8 +58,18 @@ const LOCAL_NUMERIC_RE = /^(\d{4})([a-z])?_/;
  * Only rows whose `name` looks like a numeric Arkova migration are required to
  * carry a numeric version — operator-applied names (e.g. the Path-C baseline,
  * `public_verification_revoked`) are left alone.
+ *
+ * `exemptPrefixes` is the documented-unreconciled backlog (mirrors the
+ * migration-drift.yml exempt_regex). A row whose numeric name-prefix is exempt
+ * is skipped entirely so the audit does not block CI on the known backlog —
+ * while any NON-exempt numeric row that re-regresses to a timestamp version (or
+ * a NEW duplicate) still fails. The exempt set shrinks to empty as prod
+ * reconciliation lands (S0-4.2d).
  */
-export function auditLedgerRows(rows: LedgerRow[]): Violation[] {
+export function auditLedgerRows(
+  rows: LedgerRow[],
+  exemptPrefixes: Set<string> = new Set(),
+): Violation[] {
   const violations: Violation[] = [];
   const seenNames = new Map<string, number>();
   const seenVersions = new Map<string, number>();
@@ -66,6 +77,9 @@ export function auditLedgerRows(rows: LedgerRow[]): Violation[] {
   for (const row of rows) {
     const name = (row.name ?? '').toString();
     const version = (row.version ?? '').toString();
+
+    const prefix = name.match(NUMERIC_NAME_RE)?.[1];
+    if (prefix && exemptPrefixes.has(prefix)) continue; // documented backlog (S0-4.2d)
 
     if (name) seenNames.set(name, (seenNames.get(name) ?? 0) + 1);
     if (version) seenVersions.set(version, (seenVersions.get(version) ?? 0) + 1);
@@ -116,6 +130,12 @@ export function auditLocalFiles(files: string[], grandfathered: Set<string>): Vi
 
     const numeric = file.match(LOCAL_NUMERIC_RE);
     if (numeric) {
+      // Lettered-suffix variants (`0055b_`) are intentional correctives that
+      // share a numeric prefix with their base — they do NOT count as
+      // collisions (matches check-migration-prefix-uniqueness.ts semantics,
+      // which only extracts a pure `\d{4,}_` run). Only bare NNNN_ files
+      // participate in duplicate-prefix detection.
+      if (numeric[2]) continue;
       const prefix = numeric[1];
       if (!byPrefix.has(prefix)) byPrefix.set(prefix, []);
       byPrefix.get(prefix)!.push(file);
@@ -159,6 +179,18 @@ function loadGrandfathered(): Set<string> {
   }
 }
 
+function loadLedgerExemptPrefixes(): Set<string> {
+  if (!existsSync(LEDGER_EXEMPTIONS_PATH)) return new Set();
+  try {
+    const raw = JSON.parse(readFileSync(LEDGER_EXEMPTIONS_PATH, 'utf8')) as {
+      exemptPrefixes?: string[];
+    };
+    return new Set(raw.exemptPrefixes ?? []);
+  } catch {
+    return new Set();
+  }
+}
+
 function readLocalFiles(): string[] {
   if (!existsSync(MIGRATIONS_DIR)) return [];
   return readdirSync(MIGRATIONS_DIR).filter((f) => f.endsWith('.sql') && !f.startsWith('_'));
@@ -174,9 +206,15 @@ export function parseLedgerPayload(raw: string): LedgerRow[] {
 }
 
 function main(): void {
-  const fail = (vs: Violation[]) => {
-    for (const v of vs) console.error(`::error::${v.code}: ${v.message}`);
-  };
+  // --report-only downgrades PROD-LEDGER violations to warnings (exit 0). The
+  // prod ledger still carries a documented-unreconciled backlog this sandbox
+  // can't fully enumerate, so blocking on it blind would brick the required
+  // migration-drift workflow for every PR (review finding #1). migration-drift.yml
+  // runs the ledger pass in --report-only for observability; S0-4.2d (Carson)
+  // flips it to blocking + empties the exemptions once prod is confirmed clean.
+  // The local-file pass ALWAYS blocks — it is deterministic and verified clean.
+  const reportOnly =
+    process.argv.includes('--report-only') || process.env.LEDGER_AUDIT_REPORT_ONLY === '1';
 
   // 1. Local-file integrity (always; network-free).
   const localFiles = readLocalFiles();
@@ -196,7 +234,7 @@ function main(): void {
     if (ledgerPath) raw = readFileSync(ledgerPath, 'utf8');
     else if (inlineLedger) raw = inlineLedger;
     if (raw) {
-      ledgerViolations = auditLedgerRows(parseLedgerPayload(raw));
+      ledgerViolations = auditLedgerRows(parseLedgerPayload(raw), loadLedgerExemptPrefixes());
       ledgerChecked = true;
     }
   } catch (err) {
@@ -208,12 +246,11 @@ function main(): void {
     process.exit(1);
   }
 
-  const all = [...localViolations, ...ledgerViolations];
   console.log('## Full-ledger numeric-integrity audit (SCRUM-2500 / S0-4.2)');
   console.log(`- Local migration files: ${localFiles.length}`);
   console.log(`- Local violations: ${localViolations.length}`);
   if (ledgerChecked) {
-    console.log(`- Ledger violations: ${ledgerViolations.length}`);
+    console.log(`- Ledger violations: ${ledgerViolations.length}${reportOnly ? ' (report-only)' : ''}`);
   } else {
     console.log(
       '::notice title=Ledger pass skipped::No ledger payload supplied (LEDGER_JSON / --ledger). ' +
@@ -221,15 +258,29 @@ function main(): void {
     );
   }
 
-  if (all.length > 0) {
-    fail(all);
+  // Local-file violations ALWAYS block (deterministic). Ledger violations block
+  // unless --report-only (observability mode until prod is reconciled — S0-4.2d).
+  const blocking = [...localViolations, ...(reportOnly ? [] : ledgerViolations)];
+  const warnOnly = reportOnly ? ledgerViolations : [];
+
+  for (const v of warnOnly) console.warn(`::warning::${v.code}: ${v.message}`);
+  for (const v of blocking) console.error(`::error::${v.code}: ${v.message}`);
+
+  if (warnOnly.length > 0) {
+    console.warn(
+      `::warning title=Ledger drift (report-only)::${warnOnly.length} prod-ledger row(s) need ` +
+        'reconciliation (CLAUDE.md §0 rule 10). Not blocking yet — see S0-4.2d in ' +
+        'docs/runbooks/migration-drift-playbook.md.',
+    );
+  }
+  if (blocking.length > 0) {
     console.error(
       '\nResolution: see docs/runbooks/migration-drift-playbook.md. Do not run migration repair ' +
         'or prod db push from CI — reconcile with Carson/operator sign-off (CLAUDE.md §1.11A).',
     );
     process.exit(1);
   }
-  console.log('::notice title=Ledger integrity OK::No numeric-prefix or duplicate violations found.');
+  console.log('::notice title=Ledger integrity OK::No blocking numeric-prefix or duplicate violations found.');
 }
 
 const isDirectInvocation = (() => {

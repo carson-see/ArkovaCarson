@@ -1,0 +1,23 @@
+{
+  "_comment": "S0-4.2 / SCRUM-2500. Numeric-prefix migrations whose PROD ledger rows are DOCUMENTED-UNRECONCILED (timestamp-format versions and/or the 0302/0303 duplicate-name, SCRUM-2192). This mirrors the .github/workflows/migration-drift.yml exempt_regex backlog. check-ledger-numeric-integrity.ts skips these rows so the full-ledger audit does NOT block CI on the known backlog, while STILL catching any NEW regression (e.g. an already-reconciled 0322+ row sliding back to a timestamp version). S0-4.2d (Carson-gated): shrink exemptPrefixes to [] as prod ledger reconciliation lands (CLAUDE.md §0 rule 10), then delete this file and the matching migration-drift.yml entries together.",
+  "exemptPrefixes": [
+    "0285",
+    "0286",
+    "0287",
+    "0288",
+    "0289",
+    "0297",
+    "0299",
+    "0300",
+    "0301",
+    "0302",
+    "0303",
+    "0304",
+    "0305",
+    "0306",
+    "0307",
+    "0308",
+    "0309",
+    "0310"
+  ]
+}

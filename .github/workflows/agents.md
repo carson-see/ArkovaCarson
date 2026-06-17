@@ -48,5 +48,5 @@ Continue-on-error remaining (3 of 6 stripped in R0-2): RLS tests, E2E tests, Lig
 ## Related
 
 - `docs/runbooks/migration-drift-playbook.md` — operator runbook for when the drift check fails
-- `docs/runbooks/mergify-stacked-pr-playbook.md` — S0-4.3 stacked-PR + tiered-merge playbook (drafted Mergify/branch-protection diff for Carson)
+- S0-4.3 stacked-PR + tiered-merge playbook (drafted Mergify/branch-protection diff for Carson) → Google Doc "ARKOVA PI-1 S0-E4 — Mergify / Stacked-PR + Tiered-Merge Playbook" (Drive ARKOVA PI-1-S0): https://docs.google.com/document/d/1iontJPUkhLQkQyZG4PETGuPj3kf23Kgn-1kDxqukfr8/edit
 - `docs/confluence/16_migration_drift_prevention.md` — ADR for Option A (read-only diff)
