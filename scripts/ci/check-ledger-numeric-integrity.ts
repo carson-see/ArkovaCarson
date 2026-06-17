@@ -28,6 +28,7 @@
 
 import { readdirSync, existsSync, readFileSync } from 'node:fs';
 import { resolve, join } from 'node:path';
+import { isMainModule } from './lib/ciContext.js';
 
 const REPO = process.env.LEDGER_AUDIT_REPO_ROOT ?? resolve(import.meta.dirname, '..', '..');
 const MIGRATIONS_DIR = join(REPO, 'supabase', 'migrations');
@@ -75,8 +76,8 @@ export function auditLedgerRows(
   const seenVersions = new Map<string, number>();
 
   for (const row of rows) {
-    const name = (row.name ?? '').toString();
-    const version = (row.version ?? '').toString();
+    const name = row.name ?? '';
+    const version = row.version ?? '';
 
     const prefix = name.match(NUMERIC_NAME_RE)?.[1];
     if (prefix && exemptPrefixes.has(prefix)) continue; // documented backlog (S0-4.2d)
@@ -169,23 +170,13 @@ export function auditLocalFiles(files: string[], grandfathered: Set<string>): Vi
   return violations;
 }
 
-function loadGrandfathered(): Set<string> {
-  if (!existsSync(PREFIX_BASELINE_PATH)) return new Set();
+/** Read a string[] under `key` from a snapshot JSON into a Set (missing/bad → empty). */
+function loadStringSet(path: string, key: string): Set<string> {
+  if (!existsSync(path)) return new Set();
   try {
-    const raw = JSON.parse(readFileSync(PREFIX_BASELINE_PATH, 'utf8')) as { grandfathered?: string[] };
-    return new Set(raw.grandfathered ?? []);
-  } catch {
-    return new Set();
-  }
-}
-
-function loadLedgerExemptPrefixes(): Set<string> {
-  if (!existsSync(LEDGER_EXEMPTIONS_PATH)) return new Set();
-  try {
-    const raw = JSON.parse(readFileSync(LEDGER_EXEMPTIONS_PATH, 'utf8')) as {
-      exemptPrefixes?: string[];
-    };
-    return new Set(raw.exemptPrefixes ?? []);
+    const raw = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
+    const arr = raw[key];
+    return new Set(Array.isArray(arr) ? (arr as string[]) : []);
   } catch {
     return new Set();
   }
@@ -218,7 +209,7 @@ function main(): void {
 
   // 1. Local-file integrity (always; network-free).
   const localFiles = readLocalFiles();
-  const localViolations = auditLocalFiles(localFiles, loadGrandfathered());
+  const localViolations = auditLocalFiles(localFiles, loadStringSet(PREFIX_BASELINE_PATH, 'grandfathered'));
 
   // 2. Prod-ledger integrity (when a payload is supplied).
   //    --ledger <path>, LEDGER_JSON env, or LEDGER_JSON_PATH env.
@@ -234,7 +225,10 @@ function main(): void {
     if (ledgerPath) raw = readFileSync(ledgerPath, 'utf8');
     else if (inlineLedger) raw = inlineLedger;
     if (raw) {
-      ledgerViolations = auditLedgerRows(parseLedgerPayload(raw), loadLedgerExemptPrefixes());
+      ledgerViolations = auditLedgerRows(
+        parseLedgerPayload(raw),
+        loadStringSet(LEDGER_EXEMPTIONS_PATH, 'exemptPrefixes'),
+      );
       ledgerChecked = true;
     }
   } catch (err) {
@@ -283,9 +277,4 @@ function main(): void {
   console.log('::notice title=Ledger integrity OK::No blocking numeric-prefix or duplicate violations found.');
 }
 
-const isDirectInvocation = (() => {
-  if (typeof process === 'undefined' || !process.argv?.[1]) return false;
-  return resolve(process.argv[1]) === resolve(new URL(import.meta.url).pathname);
-})();
-
-if (isDirectInvocation) main();
+if (isMainModule(import.meta.url, process.argv[1])) main();

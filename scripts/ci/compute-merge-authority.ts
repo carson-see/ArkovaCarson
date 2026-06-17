@@ -19,9 +19,8 @@
  */
 
 import { appendFileSync } from 'node:fs';
-import { resolve } from 'node:path';
 import { requiredTierFor, type Tier } from './check-staging-evidence.ts';
-import { changedFiles } from './lib/ciContext.js';
+import { changedFiles, isMainModule } from './lib/ciContext.js';
 
 export type MergeAuthority = 'council' | 'needs-carson';
 
@@ -99,9 +98,4 @@ function main(): void {
   // Advisory: always exit 0. Enforcement is branch protection + Mergify.
 }
 
-const isDirectInvocation = (() => {
-  if (typeof process === 'undefined' || !process.argv?.[1]) return false;
-  return resolve(process.argv[1]) === resolve(new URL(import.meta.url).pathname);
-})();
-
-if (isDirectInvocation) main();
+if (isMainModule(import.meta.url, process.argv[1])) main();

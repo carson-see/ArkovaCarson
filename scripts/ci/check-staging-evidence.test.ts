@@ -69,6 +69,7 @@ describe('check-staging-evidence', () => {
           'scripts/ci/check-ledger-numeric-integrity.ts',
           'scripts/ci/check-agents-md-migration-collision.ts',
           'scripts/ci/compute-merge-authority.ts',
+          'scripts/ci/snapshots/ledger-numeric-exemptions.json',
         ]).tier,
       ).toBe('T0');
     });

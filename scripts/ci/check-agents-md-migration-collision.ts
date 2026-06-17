@@ -12,6 +12,7 @@
 
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve, join } from 'node:path';
+import { isMainModule } from './lib/ciContext.js';
 
 const REPO = process.env.AGENTS_MD_LINT_REPO_ROOT ?? resolve(import.meta.dirname, '..', '..');
 const TARGET = join(REPO, 'supabase', 'migrations', 'agents.md');
@@ -77,9 +78,4 @@ function main(): void {
   process.exit(1);
 }
 
-const isDirectInvocation = (() => {
-  if (typeof process === 'undefined' || !process.argv?.[1]) return false;
-  return resolve(process.argv[1]) === resolve(new URL(import.meta.url).pathname);
-})();
-
-if (isDirectInvocation) main();
+if (isMainModule(import.meta.url, process.argv[1])) main();

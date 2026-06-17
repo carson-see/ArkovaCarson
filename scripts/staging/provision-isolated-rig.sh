@@ -132,10 +132,8 @@ fi
 if [[ "$NAME" == *"$SHARED_STAGING_SUPABASE_REF"* ]]; then
   deny "rig name resolves toward the shared staging ref ($SHARED_STAGING_SUPABASE_REF)."
 fi
-# An isolated rig must NOT be the shared service even via case variants.
-case "$CLOUD_RUN_SERVICE" in
-  arkova-worker-staging|arkova-worker) deny "Cloud Run service '$CLOUD_RUN_SERVICE' is shared/prod." ;;
-esac
+# (The shared-service exact-match deny is the loop above; $NAME is already
+# regex-locked to lowercase DNS-safe, so there are no other "case variants".)
 
 # ---------------------------------------------------------------------------
 # Apply-mode confirmation gate.
@@ -204,17 +202,17 @@ fi
 echo "# Step 1/4 — create standalone Supabase project (cost-gated; \$10/mo Pro)"
 echo "#   MCP-equivalent: get_cost -> confirm_cost -> create_project"
 echo "#   region=$SUPABASE_REGION, postgres major=$SUPABASE_PG_MAJOR, org=$SUPABASE_ORG"
+# Define the create command once (no triple copy-paste, no drift). The apply
+# path appends --output json so the new ref can be captured + re-validated.
+CREATE_CMD=(npx supabase projects create "$PROJECT_NAME" --org-id "$SUPABASE_ORG" --region "$SUPABASE_REGION")
 NEW_PROJECT_REF='<captured-from-step-1>'
+print_cmd "${CREATE_CMD[@]}"
 if [[ $APPLY -eq 1 ]]; then
-  print_cmd npx supabase projects create "$PROJECT_NAME" --org-id "$SUPABASE_ORG" --region "$SUPABASE_REGION"
-  echo "executing: npx supabase projects create $PROJECT_NAME" >&2
+  echo "executing: ${CREATE_CMD[*]} --output json" >&2
   # Capture the new ref so links/pushes/preflight target the validated project,
   # never whatever happens to be linked on disk (review #1). Fail loudly if the
   # ref can't be captured — better to abort than orphan + push blind (review #2).
-  NEW_PROJECT_REF="$(npx supabase projects create "$PROJECT_NAME" \
-    --org-id "$SUPABASE_ORG" \
-    --region "$SUPABASE_REGION" \
-    --output json 2>/dev/null | jq -r '.id // .ref // empty')"
+  NEW_PROJECT_REF="$("${CREATE_CMD[@]}" --output json 2>/dev/null | jq -r '.id // .ref // empty')"
   if [[ -z "$NEW_PROJECT_REF" ]]; then
     echo "ERROR: could not capture the new project ref from 'supabase projects create'." >&2
     echo "       Capture it manually, verify it is NOT prod/shared, then run the remaining steps." >&2
@@ -226,7 +224,6 @@ if [[ $APPLY -eq 1 ]]; then
   fi
   echo "captured NEW_PROJECT_REF=$NEW_PROJECT_REF" >&2
 else
-  print_cmd npx supabase projects create "$PROJECT_NAME" --org-id "$SUPABASE_ORG" --region "$SUPABASE_REGION"
   echo "#   -> (apply mode captures the returned ref into NEW_PROJECT_REF and re-validates it"
   echo "#       against $PROD_SUPABASE_REF / $SHARED_STAGING_SUPABASE_REF before any push)."
 fi

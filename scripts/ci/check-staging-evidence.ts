@@ -1010,6 +1010,7 @@ const STAGING_TOOLING_ALLOW = [
   /^scripts\/ci\/check-ledger-numeric-integrity(\.test)?\.ts$/,
   /^scripts\/ci\/check-agents-md-migration-collision(\.test)?\.ts$/,
   /^scripts\/ci\/compute-merge-authority(\.test)?\.ts$/,
+  /^scripts\/ci\/snapshots\//, // CI baselines/snapshots — tooling, never prod runtime
   /^scripts\/ci\/lib\//,
   /^scripts\/gcp-setup\//,
   /^services\/worker\/scripts\/load-test\//,
