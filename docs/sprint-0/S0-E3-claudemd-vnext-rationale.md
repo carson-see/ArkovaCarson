@@ -2,20 +2,24 @@
 
 > Sprint-0 epic S0-E3 (CTO+RTE author; **Carson-only merge** — constitution/rule change). This documents every edit so the diff review is fast and no load-bearing rule is silently lost.
 
+## ⚠ Merge order (must-read — pre-mortem finding #1)
+
+This v-next references files that live on **other unmerged branches**: `docs/operating-model/lane-manifest.yaml` + `session-operating-model.md` (PR #1208) and `scripts/ci/check-config-drift.ts` (PR #1209). **Merge #1208 (and #1209) BEFORE this PR**, or this CLAUDE.md points at paths absent from `main` — a self-inflicted constitution outage for the first session after merge. The Sprint-0 plan encodes the same order (S0-E1 manifest *blocks* S0-E3). Recommend merging the set in order: **#1208 → #1209 → #1210**.
+
 ## Size
 
 | | origin/main | v-next | Δ |
 |---|---|---|---|
-| Lines | 291 | **299** | +8 (≤300 rule held) |
-| ~Tokens (chars/4) | ~7,175 | ~7,628 | **+453** |
-| git diff | — | +17 / −9 | surgical |
+| Lines | 291 | **292** | +1 (≤300 rule held) |
+| ~Tokens (chars/4) | ~7,175 | ~7,480 | **+305** |
+| git diff | — | see PR #1210 | surgical, rule-preserving |
 
-**Honesty note on the AC's "measured token reduction":** this v-next is a *net token increase* (+~453), because it ADDS four load-bearing encodings the AC required (manifest pointer, operating model, tiered-merge, drift + claims gates). I did **not** force a net reduction — safely cutting constitution prose needs your eyes (the AC also says "no load-bearing rule lost"). A reduction pass is proposed below as candidates for your call, not executed.
+**Honesty note on the AC's "measured token reduction":** this v-next is still a *net token increase* (**+~305** after removing the Sarah note), because it ADDS four load-bearing encodings the AC required (manifest pointer, operating model, tiered-merge, drift + claims gates). So the AC's "measured token reduction" is **NOT met** — flagged, not faked. I did not force a reduction by cutting constitution prose blind (the AC also says "no load-bearing rule lost"). Resolve by either (a) rewording the AC to "no token bloat without load-bearing justification" (the honest outcome), or (b) executing one of the reduction candidates below. **Do not tick the Sprint-0 DoD "leaner / token-efficient" box until one is true.**
 
 ## Edits (all rule-preserving)
 
 1. **§0.1 read-list** — bootstrap now includes the lane manifest + the session operating model + the `ack-claude-bootstrap.sh` step + "ACTIVE SOAKS (never disrupt)". (Encodes the manifest pointer + operating model.)
-2. **§0 Sarah note bullet 2** — collapsed the duplicated read-list (now canonical in §0.1) to a pointer. *Duplicate removed; intent preserved.* **← please confirm this collapse.**
+2. **§0 "Note for Sarah" — REMOVED entirely** (per Carson, 2026-06-17). It was a personal onboarding + `docs/SARAH_BACKLOG.md` pointer, both now duplicated: never-merge → §1.13 + rule 8; get-caught-up → §0.1 + the operating model. The `docs/SARAH_BACKLOG.md` reference is **dropped** (confirm that backlog is dead). Also **strengthened §1.13** to lead with "**Claude never merges to `main`, ever**" so the cardinal rule stays prominent after the note's removal.
 3. **§0 rule 10** — updated the stale trailing clause ("drop 0322/0323 exempt_regex once reconciled") to current truth: ledger reconciled numeric 2026-06-15; the full-ledger audit lands via SCRUM-2500 / S0-E4, which retires the exemptions.
 4. **§1.6** — trimmed the historical "earlier revisions were drift" meta-commentary; the rule (default true in prod; off-prod false; no raw-mode bypass) is unchanged.
 5. **§1.13 (NEW)** — encodes: one-lane-per-session (+ Sprint-0 train-led exception) → manifest; **tiered-merge** (council T0/T1 via Mergify; Carson sole T2/T3; path detector fails closed); **config-drift/parity gate (R-5)** → `scripts/ci/check-config-drift.ts`; **claims-review gate (R-7)**.

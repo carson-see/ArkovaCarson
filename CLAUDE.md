@@ -8,13 +8,6 @@
 
 ---
 
-## 📣 Note for Sarah (and Sarah's agent)
-
-1. **Never merge a PR to `main`.** Ever. Commit on a branch, open a PR, stop. Carson + human reviewers own the merge. Your task is done when the PR is green and awaiting review. Hard rule, no exceptions — see `memory/feedback_never_merge_without_ok.md`.
-2. **Get caught up before coding.** Follow §0.1 + the session operating model (`docs/operating-model/session-operating-model.md`); your curated task list is `docs/SARAH_BACKLOG.md` (excludes Nessie + Gemini Golden). Only start once you can say in a sentence what last session shipped and what you're picking up; if the task is an existing PR/story, read the Jira ticket + recent comments first.
-
----
-
 ## 0. MANDATORY METHODOLOGY (10 rules)
 
 ### 1. TDD
@@ -186,7 +179,7 @@ Batched T2/T3 release candidates may centralize long soak evidence in `docs/stag
 
 ### 1.13 Operating model, tiered-merge & the drift / claims gates
 - **One lane per session** (Sprint 0 = train-led exception). Execute only your lane's surfaces per [`docs/operating-model/lane-manifest.yaml`](./docs/operating-model/lane-manifest.yaml); a cross-lane change is a handoff, not a reach-in. Bootstrap + SDLC self-routing: [`docs/operating-model/session-operating-model.md`](./docs/operating-model/session-operating-model.md).
-- **Tiered merge:** the council (Tech Lead + RTE + Release Manager) holds **T0/T1** (routine CI-green auto-merge via Mergify); **Carson holds sole T2/T3** — migrations, RLS/schema, chain/treasury, credits/billing, anchor lifecycle, security, public API/contract, CLAUDE.md. The path detector computes tier and **fails CLOSED to "needs Carson."**
+- **Tiered merge — Claude never merges to `main`, ever** (hook-enforced; see `memory/feedback_never_merge_without_ok.md`). The council (Tech Lead + RTE + Release Manager) holds **T0/T1** (routine CI-green auto-merge via Mergify); **Carson holds sole T2/T3** — migrations, RLS/schema, chain/treasury, credits/billing, anchor lifecycle, security, public API/contract, CLAUDE.md. The path detector computes tier and **fails CLOSED to "needs Carson."**
 - **Config-drift / parity gate (R-5):** `scripts/ci/check-config-drift.ts` diffs asserted config (`config.ts` / `deploy-worker.yml` / `vercel.json`: flags / providers / CSP) vs running prod + worker↔edge parity, failing closed. Keep the asserted-state manifest honest when you change a flag/provider/CSP.
 - **Claims-review gate (R-7):** never make a public/UI claim of external status we don't hold (e.g. "listed in the Credential Registry" when CE only approved us *to publish*). Proof copy states what is measured vs asserted vs **NOT** asserted (extends §1.5).
 
