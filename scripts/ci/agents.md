@@ -51,6 +51,8 @@ Baseline/snapshot data consumed by gate scripts (one source-of-truth fixture per
 - 2026-05-30 PR #980: closed two defense-in-depth gaps in `check-staging-evidence.ts` — T2/T3 deploy-evidence fields are now value-checked (not just label-present), and the residual-risk `Approved by:` must name a real approver. T1 logic unchanged; no existing check loosened. 14 new tests (90/90 green).
 - 2026-05-26 PR #884: added `services/edge/package.json` to staging-tooling allowlist (edge-only, not worker).
 
+- 2026-06-17 S0-E4 (epic SCRUM-2313; story S0-4.2 reuses SCRUM-2500): added `check-ledger-numeric-integrity.ts` (full-ledger numeric-integrity audit — local-file grammar pass runs network-free in ci.yml; prod-ledger pass runs in `migration-drift.yml` over the already-fetched payload; injected-timestamp row fails) + `check-agents-md-migration-collision.ts` (S0-4.3; enforces unique `## Recent migrations (…)` headers per CLAUDE.md §6) + `compute-merge-authority.ts` (S0-4.3; reuses `requiredTierFor`, emits council/needs-carson, fails closed). All three registered in `STAGING_TOOLING_ALLOW` so they classify T0. 23 new tests. NOT merged — T2/T3 actions (prod exemption removal, branch-protection/Mergify apply) gated to Carson; see `docs/sprint-0/S0-E4-refinement-planning-premortem.md`.
+
 ## Open work
 
-- None currently.
+- S0-4.2 follow-up (Carson-gated): once `check-ledger-numeric-integrity.ts` runs green against prod, retire the stale `0299–0310` exemptions in `.github/workflows/migration-drift.yml` `exempt_regex` (fail-closed — verify first).

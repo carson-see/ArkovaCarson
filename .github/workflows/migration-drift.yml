@@ -197,6 +197,12 @@ jobs:
           prod_keys_file=$(mktemp)
           echo "$prod_applied_keys" > "$prod_keys_file"
 
+          # S0-4.2 / SCRUM-2500: hand the raw prod ledger payload to the
+          # full-ledger numeric-integrity audit, which runs as the next step
+          # (set before any early exit so the audit always sees the ledger).
+          printf '%s' "$prod_response" > "$RUNNER_TEMP/prod_ledger.json"
+          echo "PROD_LEDGER_JSON_PATH=$RUNNER_TEMP/prod_ledger.json" >> "$GITHUB_ENV"
+
           missing=$(
             while IFS= read -r local_name; do
               local_version="${local_name%%_*}"
@@ -377,6 +383,17 @@ jobs:
           fi
 
           echo "::notice title=Migration drift check passed::All local migrations are applied in prod."
+
+      # S0-4.2 / SCRUM-2500 — full-ledger numeric-integrity audit over the prod
+      # ledger payload fetched above. Closes the gap that let the 2026-06-15
+      # timestamp-version re-regression pass unseen (drift gate only checks the
+      # PR diff; this checks the ENTIRE ledger every run). Fail-closed: skipped
+      # only when the read-only ledger fetch didn't run (e.g. Dependabot).
+      - name: Full-ledger numeric-integrity audit (SCRUM-2500 / S0-4.2)
+        if: ${{ env.PROD_LEDGER_JSON_PATH != '' }}
+        env:
+          LEDGER_JSON_PATH: ${{ env.PROD_LEDGER_JSON_PATH }}
+        run: npx tsx scripts/ci/check-ledger-numeric-integrity.ts
 
       - name: Check prod drain function body and grants
         if: ${{ !(github.event_name == 'pull_request' && github.actor == 'dependabot[bot]') && hashFiles('supabase/migrations/0283_drain_submitted_to_secured_helper.sql') != '' }}

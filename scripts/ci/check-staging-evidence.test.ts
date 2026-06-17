@@ -63,6 +63,16 @@ describe('check-staging-evidence', () => {
       expect(requiredTierFor(['src/components/Foo.tsx']).tier).toBe('T1');
     });
 
+    it('returns T0 for the S0-E4 release-pipeline CI tooling scripts', () => {
+      expect(
+        requiredTierFor([
+          'scripts/ci/check-ledger-numeric-integrity.ts',
+          'scripts/ci/check-agents-md-migration-collision.ts',
+          'scripts/ci/compute-merge-authority.ts',
+        ]).tier,
+      ).toBe('T0');
+    });
+
     it('returns T0 for worker load-test tooling scripts', () => {
       expect(
         requiredTierFor([

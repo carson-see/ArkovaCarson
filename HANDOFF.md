@@ -14,6 +14,21 @@
 
 ## Now
 
+### 2026-06-17 — Sprint 0 S0-E4 (parallel-safe pipeline) built; NOT merged (Carson-gated)
+
+Executed Sprint-0 epic **S0-E4** (Release-Management Process Fixes / parallel-safe pipeline; reuses SCRUM-2313, story S0-4.2 reuses SCRUM-2500) — the non-negotiable Sprint-1 entry gate that retires roadmap **R-3**. Ran refinement + planning + pre-mortem first (recorded in `docs/sprint-0/S0-E4-refinement-planning-premortem.md`), then built across 3 parallel personas. **Nothing merged; no PR opened; no infra provisioned; no prod/staging/ledger mutation.** Branch `claude/s0-e4-refinement-planning-myy61i`.
+
+**Built + green (T0 CI/docs/tooling):**
+- **S0-4.2 (SCRUM-2500):** `scripts/ci/check-ledger-numeric-integrity.ts` — full-ledger numeric-integrity audit. Local-file grammar pass runs network-free in `ci.yml`; the prod-ledger pass runs in `migration-drift.yml` over the payload the drift step already fetches (read-only, same token, fail-closed). Closes the gap that let the 2026-06-15 timestamp-version re-regression pass unseen (drift gate only checked PR-diff). Injected-timestamp row fails (CLI-proven); 0 false-positives on the real 48-file set.
+- **S0-4.3:** `compute-merge-authority.ts` (reuses `requiredTierFor`; emits council/needs-carson; fails closed) + `check-agents-md-migration-collision.ts` (unique `## Recent migrations (…)` headers, CLAUDE.md §6) + `docs/runbooks/mergify-stacked-pr-playbook.md`. All wired into `ci.yml`; 3 new checks registered in `STAGING_TOOLING_ALLOW` (classify T0).
+- **S0-4.1:** `scripts/staging/{provision,teardown}-isolated-rig.sh` (dry-run DEFAULT; prod `vzwyaatejekddvltxyye` + shared staging `ujtlwnoqfhtitcmsnrpq` + shared Cloud Run hard-denied, exit 1) + `docs/runbooks/isolated-soak-rig-automation.md`.
+
+**Verification:** `vitest run scripts/` 530/530 green (+23 new); `tsc --noEmit` 0 errors; staging scripts `bash -n` + dry-run/deny paths exercised.
+
+**Carson-gated (NOT done — by design):** retire stale `0299–0310` `exempt_regex` entries in `migration-drift.yml` once the new audit runs green vs prod (S0-4.2d, fail-closed); apply the drafted `.mergify.yml`/branch-protection tiered-merge change (S0-4.3d); the live "2 concurrent T3 soaks" rehearsal that fully closes S0-4.1's AC (T3 infra); S0-E4 Jira transitions + Confluence per-story pages.
+
+_Last refreshed: 2026-06-17 by Claude (carson@arkova.io) — no prod/staging/ledger state asserted or mutated; all claims are about repo artifacts on branch `claude/s0-e4-refinement-planning-myy61i` verified via `vitest run scripts/` (530/530), `tsc --noEmit` (0 errors), and `bash -n` + dry-run/deny execution of the staging scripts. Bootstrap acked (`scripts/agent/ack-claude-bootstrap.sh`)._
+
 ### 2026-06-16 (cont.) — Top-risk + hygiene round; API 529 overload deferred the agent streams
 
 Post-replan execution round (top risks + Jira/PR hygiene + endpoints + roadmap). A **sustained Anthropic 529 overload throttled the parallel-agent fan-out — 9 subagent launches died with 0 work** (R1×3, R4×2, R5, Jira-hygiene, PR-hygiene×2). Main loop unaffected → agent-driven streams DEFERRED (nothing lost; failed agents did nothing). Did the rest in-loop.

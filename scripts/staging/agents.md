@@ -113,6 +113,10 @@ npm run staging:rotate-iam
 npm run staging:rotate-iam -- --apply --confirm SCRUM-1821
 ```
 
+## S0-E4 isolated-rig automation (2026-06-17, story S0-4.1)
+
+- `provision-isolated-rig.sh` / `teardown-isolated-rig.sh` — one-command provision/teardown of a CLEAN isolated soak rig (standalone Supabase project + wired `arkova-worker-<name>-staging` Cloud Run + `clean_mirror` preflight), so multiple T3 trains can soak in parallel without a shared dirty DB (retires roadmap R-3). **`--dry-run` is the DEFAULT**; a live run needs `--apply` + matching `CONFIRM_PROVISION`/`CONFIRM_TEARDOWN`. Prod (`vzwyaatejekddvltxyye`) + shared staging (`ujtlwnoqfhtitcmsnrpq`) + shared Cloud Run services are **hard-denied** (exit 1). The live "2 concurrent soaks" rehearsal is Carson-gated — see [docs/runbooks/isolated-soak-rig-automation.md](../../docs/runbooks/isolated-soak-rig-automation.md).
+
 ## What this folder does NOT do
 
 - Create the Supabase project itself (`mcp__supabase__create_project` — operator-run, billed).
