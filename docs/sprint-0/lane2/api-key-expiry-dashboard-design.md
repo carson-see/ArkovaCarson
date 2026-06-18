@@ -158,7 +158,7 @@ The expiry monitor is a **once-daily** sibling, not 5-minutely.
 - **Endpoint:** `cronRouter.post('/key-expiry', …)` in `cron.ts`, wrapped:
   `withCronMonitoring('key-expiry-monitor', '0 13 * * *', …)` — daily at
   13:00 UTC (off-peak; one check/day is sufficient for a 30-day horizon).
-  Auth reuses the existing `verifyCronAuth` (`cron.ts:67`) —
+  Auth reuses the existing `verifyCronAuth` (`cron.ts:161`) —
   X-Cron-Secret / platform-admin Bearer / Google OIDC — no new auth surface.
 - **Resilience:** mirror db-health's `Promise.allSettled` fan-out
   (`db-health-monitor.ts:222`) so a failed RPC read doesn't blank the
@@ -186,7 +186,7 @@ above are for *hard expiry dates* like the CE key and `api_keys.expires_at`.)
    `api_key_expiry` / `secret_rotation_overdue` / `ce_key_expiry`), and
    context tags (`key_prefix`, `secret_name`, `days_to_expiry`,
    `owner_lane`). **No values** — `key_prefix` and `name` only. The Sentry
-   `beforeSend` scrubber (`services/worker/src/utils/sentry.ts:75-154`) is an
+   `scrubPiiFromEvent` scrubber (`services/worker/src/utils/sentry.ts:75-154`, invoked by `beforeSend` at `sentry.ts:237`) is an
    additional backstop (it redacts `ak_(live|test)_…`, JWTs, emails, UUIDs),
    but the monitor must never *rely* on the scrubber — it passes
    metadata-only by construction.

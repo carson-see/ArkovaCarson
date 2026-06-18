@@ -98,7 +98,7 @@ Create (in Stripe, by Carson at impl time — **T2**) one **Product** "Verified 
 
 ### 3.4 Entitlement granted
 - `profiles.subscription_tier = 'verified_individual'` + `subscriptions.status='active'` with `plan_id ∈ {individual_verified_monthly, individual_verified_annual}`.
-- Anchor quota read by `useEntitlements` (`src/hooks/useEntitlements.ts`): joins `subscriptions.plan_id` → `plans.records_per_month`; falls back to Free (`3`) when no active sub.
+- Anchor quota read by `useEntitlements` (`src/hooks/useEntitlements.ts`): joins `subscriptions.plan_id` → `plans.records_per_month`; falls back to the Free **plan row** (a `plans` lookup, not a hard-coded `3`) when no active sub.
 - **Monthly credit allotment** for instant anchoring: the verified tier must seed/refresh a credit allocation (see §4.4 — the allocation mechanism is the same ledger the credit packs top up).
 
 ### 3.5 Data-model touchpoints

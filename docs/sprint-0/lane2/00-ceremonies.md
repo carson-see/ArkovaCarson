@@ -104,3 +104,16 @@ One owned P0 (S0-5.1); 3 pre-designs in parallel. No T2/T3 in this slice (none t
 - Carson triage of F1–F7 → bug-tracker entries (canonical Confluence log) once verified against prod.
 - On #1208 merge: land the HANDOFF entry; obtain the Bitcoin-Dev formal sign-off on S0-5.1; resolve the shared-threshold-module home so VIS-01 + S0-5.2 import one definition.
 - Sprint-1 VIS-01 must wire the two residual live cases (env↔DB split; 100%-fallback SPOF) the spec calls out.
+
+## 5. Post-execution pre-mortem (pre-merge: "the spec shipped and caused a problem — what was it?")
+
+| # | Failure mode | Defused by |
+|---|---|---|
+| Q1 | VIS-01 builds the DOUBLE_BILLING_RISK metric as a naive `reference_id = anchors.id` join → silent under/over-count | Spec §2.1 + DBA review flag that `reference_id` is NOT a FK (FAST_TRACK uses `organization_rule_executions.id`); verification CONFIRMED the 3-table ledger split (F5) — the metric must resolve the chain, not join |
+| Q2 | The 2 "source pending Lane-1" metrics (M1c, M2b) get built on a guessed source | Rendered explicitly as "pending Lane-1"; Bitcoin-Dev review gates them; not shipped as real numbers |
+| Q3 | F1–F7 read as "Lane 2 already fixed these" | README + Jira state CONFIRMED-but-NOT-fixed, with owners + fix locations; bug-tracker filing gated to Carson |
+| Q4 | F1 over-stated as a blanket auth hole → fire drill | **Verified PARTIAL** (edge-scoped; worker paths reject expired keys); corrected in README + Confluence |
+| Q5 | VIS-01 thresholds drift from Lane-1's S0-5.2 gate | §5 shared-threshold table = single definition; "module home" is an open Carson decision so both import one source |
+| Q6 | Marking the story Done pre-merge reads as overclaim | Done = spec delivered + in-lane reviewed + filed (Confluence/Drive/PR); merge is the only remaining step (tracked on the PR); BTC formal review noted as a follow-up |
+
+**Top watch:** Q1 (the join trap) and Q4 (F1 scoping) — both already defused by the verification pass.

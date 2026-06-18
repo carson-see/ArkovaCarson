@@ -23,7 +23,7 @@ Arkova secures (anchors) a document by writing its fingerprint to the production
 
 | | **Nightly batch (default)** | **Instant Secure (this design)** |
 |---|---|---|
-| **When** | Swept by the 3am batch drain (`processBatchAnchors`, `services/worker/src/jobs/batch-anchor.js`; manual force path `POST /api/queue/run` → `processBatchAnchors({ force: true, orgId })` in `services/worker/src/api/queue-resolution.ts`). | Immediately on submit. |
+| **When** | Swept by the 3am batch drain (`processBatchAnchors`, `services/worker/src/jobs/batch-anchor.ts`; manual force path `POST /api/queue/run` → `processBatchAnchors({ force: true, orgId })` in `services/worker/src/api/queue-resolution.ts`). | Immediately on submit. |
 | **Economics** | Cheap: ~10k docs share one network receipt (Merkle batch). Covered by the subscription; **no per-document fee**. | Funded per-document by the **monthly credit allotment** first, then **paid credits ($1.25 each)**. |
 | **Funding primitive** | Subscription / payment guard only (`checkPaymentGuard`). | Payment guard **+ credit debit** (`deduct_org_credit` today; atomic `debit_and_enqueue_anchor` once 0341 lands). |
 | **Risk class** | Standard worker path. | **Money path → fail-CLOSED.** A bug double-charges a customer or charges-without-securing. |
@@ -285,7 +285,7 @@ This is a **T2/T3 prod change** (billing + flag flip on a money path) → **Cars
 - `services/worker/src/jobs/rule-action-dispatcher.ts` — existing FAST_TRACK_ANCHOR ("DS-06, instant secure") fail-closed two-step debit→submitJob path (the precedent + the atomicity gap 0341 closes).
 - `services/worker/src/middleware/flagRegistry.ts` — env vs DB flag pattern; `getFlag` returns false for unknown (fail-closed).
 - `services/worker/src/config.ts` — `enableProdNetworkAnchoring` (:101), `enableOrgCreditEnforcement` (:110) flag definitions.
-- `services/worker/src/api/queue-resolution.ts` + `jobs/batch-anchor.js` — the nightly/manual batch path (`processBatchAnchors`).
+- `services/worker/src/api/queue-resolution.ts` + `jobs/batch-anchor.ts` — the nightly/manual batch path (`processBatchAnchors`).
 - `src/components/anchor/FileUpload.tsx`, `src/components/upload/BulkUploadWizard.tsx`, `src/lib/copy.ts` (`SECURE_DIALOG_LABELS` :643, `ANCHOR_STATUS_*` :14) — upload entry + copy surfaces + terminology.
 - `src/hooks/useCredits.ts` (`get_user_credits` → balance/allocation/purchased) + `src/components/dashboard/CreditUsageWidget.tsx` — credit pre-check UI.
 - `docs/sprint-0/lane2/00-ceremonies.md` — L2-D scope/AC/DoR/DoD + pre-mortem. **HANDOFF.md** (2026-06-15 lines 65–66; 2026-06-16 line 24) — Train D 0341 state, prod ledger empty, `enableOrgCreditEnforcement` default false. PI-1 Master §6 — critical-path sequencing.

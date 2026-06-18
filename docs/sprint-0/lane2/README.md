@@ -16,6 +16,8 @@ This PR is the Lane-2 slice of Sprint 0 — **specs + designs only**, no code. I
 | [`api-key-expiry-dashboard-design.md`](./api-key-expiry-dashboard-design.md) | API-key / secret expiry dashboard + T-30 alarm design (deep mechanism for Signal 3) | Sprint-1 **KEY-EXPIRY** (SCRUM-2507) |
 | [`revenue-funnel-predesign.md`](./revenue-funnel-predesign.md) | verified_individual pricing/sell, credit-pack purchase + ledger UI, self-serve org signup + domain verification | Sprint-3 monetization (objective O2) |
 | [`instant-secure-predesign.md`](./instant-secure-predesign.md) | Instant-Secure product/UX + flag-flip (money path fail-CLOSED; gated by DOUBLE_BILLING_RISK alarm) | S4→S7 Instant Secure (objective O3) |
+| [`verification-findings.md`](./verification-findings.md) | Code-review + debug pass verifying F1–F7 against real code (verdicts + `file:line` evidence) | this sprint |
+| [`spec-citation-audit.md`](./spec-citation-audit.md) | Independent audit of ~150 spec citations ("technically sound: YES"; 5 minor fixes applied) | this sprint |
 
 ## Sprint-0 Lane-2 Definition-of-Done scorecard
 
@@ -28,17 +30,17 @@ This PR is the Lane-2 slice of Sprint 0 — **specs + designs only**, no code. I
 | Onboarding (read list, bootstrap-ack, first low-risk T0/T1 PR) | **DONE** — read list covered; `ack-claude-bootstrap.sh` passed; this docs PR is the first T0 |
 | Tests written-first + green **where code is involved** | **N/A** — specs only this sprint (no production code; the plan scopes Lane-2 Sprint-0 as T0 read-only) |
 | Confluence current | **DONE** — S0-5.1 spec page filed under Sprint-0 AUDIT (83689473) |
-| Jira transitioned with subtasks closed | **DONE (to Needs Human)** — S0-5.1 story filed under SCRUM-2513 with subtasks; **no premature Done** (gates need code-on-main + prod-green) |
+| Jira transitioned with subtasks closed | **DONE** — SCRUM-2530 + subtasks 2531–2534 transitioned to Done (2026-06-18). Spec stories carry no code-on-main/prod-green gate, so "Needs Human" was wrong — corrected per Carson |
 | agents.md / HANDOFF updated | agents.md **DONE** (this folder); **HANDOFF entry deferred** to avoid a merge collision with #1208 (both append to "Now") — ready-to-paste text below (CLAUDE.md §6) |
 | Reviewed + merged per tiered-merge | **Carson merges** (this PR is T0/docs but references the #1208 manifest → merge after #1208) |
 
 ## Findings surfaced during pre-design (NOT fixed — Lane-2 is specs-only this sprint)
 
-The grounded code reading turned up several **candidate issues**. They are documented here (durable, in-repo) and flagged for Carson. **None were fixed** (out of T0 spec scope), **none filed to the bug tracker yet** (they need prod verification per "assert prod state directly," and the security/money ones need Carson's severity/disclosure call; soak-window cascade discipline = no spin-off tasks now). Recommend bug-tracker entries after triage.
+The grounded code reading turned up several issues. A **code-review + debug pass verified each against the actual code** (see [`verification-findings.md`](./verification-findings.md)): **F2–F7 CONFIRMED**, **F1 PARTIAL** (narrower than first flagged). They are documented here and flagged for Carson. **None were fixed** (out of T0 spec scope; F3/F4/F5 are billing/credits = T2 → your merge + staging soak), **none auto-filed to the bug tracker** (the auth one needs your severity/disclosure call). Recommend bug-tracker entries — I can file F1–F7 on your go.
 
 | # | Finding | Severity (candidate) | Source cited | Where captured |
 |---|---|---|---|---|
-| **F1** | `validate_api_key` RPC filters on `key_hash` + `is_active` only — **ignores `api_keys.expires_at`**; an expired key still authenticates until `is_active` is manually flipped | **High (auth)** | `supabase/migrations/0299_validate_api_key_rpc.sql:81-83` (+0302/0303) | key-expiry design §flags |
+| **F1** | `validate_api_key` ignores `api_keys.expires_at` → expired key still authenticates. **VERIFIED PARTIAL** — the hole is on the **edge MCP path only** (`mcp-server.ts:781-808`); worker `/api/v1`+`/api/v2` *do* reject expired keys (`apiKeyAuth.ts:189`, `v2/auth.ts:59`) | **High (edge-scoped)** | `0299_validate_api_key_rpc.sql:82` (+0302/0303); edge `mcp-server.ts:781` | verification-findings.md |
 | **F2** | `services/worker/src/jobs/secret-rotation-reminder.ts` is effectively **dead** — `getSecretInventory()` hardcodes `lastRotatedAt: new Date()` and `runSecretRotationCheck()` is wired to no cron, so it never fires | **Med** | `secret-rotation-reminder.ts:20-38` | key-expiry design §flags |
 | **F3** | **No webhook branch grants credits** for a paid `mode:'payment'` credit-pack checkout (`handleCheckoutComplete` handles subscriptions only; dev-mode grants directly, "never in production") | **High (revenue)** | `stripe/handlers.ts` `handleCheckoutComplete` | revenue-funnel §6 (story S3-CREDIT-GRANT) |
 | **F4** | `check_unified_credits` returns `(50,0,50,true)` (fail-**OPEN**) for a missing balance row | **High (money-safety)** | worker `check_unified_credits` | revenue-funnel §8 |
