@@ -7,7 +7,7 @@
  */
 
 import { Router, type Request } from 'express';
-import { buildCtdlJsonLd, type CtdlAnchor } from '../../ctdl/ctdl-serializer.js';
+import { buildCtdlJsonLd, CtdlPiiSafetyError, type CtdlAnchor } from '../../ctdl/ctdl-serializer.js';
 import { isCtdlPublishableStatus } from '../../ctdl/ctdl-type-map.js';
 import { buildVerifyUrl } from '../../lib/urls.js';
 import { db } from '../../utils/db.js';
@@ -23,7 +23,7 @@ export interface CredentialsCtdlLookup {
 interface AuditArgs {
   req: Request;
   publicId: string;
-  outcome: 'invalid' | 'not_found' | 'not_publishable' | 'published' | 'revoked' | 'error';
+  outcome: 'invalid' | 'not_found' | 'not_publishable' | 'safety_blocked' | 'published' | 'revoked' | 'error';
   httpStatus: number;
   credentialStatus?: string | null;
   credentialType?: string | null;
@@ -146,8 +146,9 @@ export function buildCredentialsCtdlRouter(lookup: CredentialsCtdlLookup = defau
       return;
     }
 
+    let anchor: CtdlAnchor | null = null;
     try {
-      const anchor = await lookup.lookupByPublicId(publicId);
+      anchor = await lookup.lookupByPublicId(publicId);
       if (!anchor) {
         logCtdlRequested({ req, publicId, outcome: 'not_found', httpStatus: 404 });
         res.status(404).json({ error: 'not_found' });
@@ -183,6 +184,22 @@ export function buildCredentialsCtdlRouter(lookup: CredentialsCtdlLookup = defau
       });
       res.status(httpStatus).type('application/ld+json').json(body);
     } catch (error) {
+      if (error instanceof CtdlPiiSafetyError) {
+        // Fail closed: a transcript-like record tripped the learner-PII gate, so
+        // we emit no public CTDL body. Surface a generic 404 (never leak that a
+        // record exists or why it was withheld) and audit as safety_blocked.
+        logCtdlRequested({
+          req,
+          publicId,
+          outcome: 'safety_blocked',
+          httpStatus: 404,
+          credentialStatus: anchor?.status,
+          credentialType: anchor?.credentialType,
+          orgId: anchor?.orgId,
+        });
+        res.status(404).json({ error: 'not_found' });
+        return;
+      }
       logger.error({
         public_id: publicId,
         error: error instanceof Error ? error.message : String(error),
