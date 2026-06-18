@@ -14,6 +14,32 @@
 
 ## Now
 
+### 2026-06-18 — S0-E4 activated to the line of Carson-gated steps; PR #1211, Jira/Confluence/Drive updated
+
+Continued S0-E4 from the 2026-06-17 build. **Prod ledger verified clean** via read-only Supabase MCP (`vzwyaatejekddvltxyye`: 48 rows, 47 numeric, head **0339**, 0 non-numeric numeric-named rows, 0 dups) → **S0-4.2d done**: drained `ledger-numeric-exemptions.json` to `[]` + removed `--report-only`, so the full-ledger audit now **blocks** (clean ledger passes; a 0322-style timestamp row exits 1). **S0-4.3d done in-repo**: applied the tiered-merge gate to `.mergify.yml` (`needs-carson-merge` on default+urgent+both PR rules) + new `.github/workflows/merge-authority.yml`; added a **merge-control-plane carve-out** to `compute-merge-authority.ts` (`.mergify.yml`/`CLAUDE.md`/the workflow/the script/CODEOWNERS → needs-carson regardless of path tier — closes the self-grading blind spot the RM flagged, and the CLAUDE.md-as-council gap).
+
+QA + Release-Manager personas reviewed **PR #1211** (draft); findings worked through: added CLI/subprocess tests (BLOCK vs `--report-only` WARN vs fail-closed parse; merge-authority empty-changeset fail-closed). `vitest run scripts/` **542/542**; `tsc --noEmit` 0 errors. Nothing merged; only read-only prod access.
+
+Jira: created **SCRUM-2528** (S0-4.1) + **SCRUM-2529** (S0-4.3) under SCRUM-2313 → Needs Human; **SCRUM-2500** → In Progress (1 of 5 mechanisms done) + comment; epics SCRUM-2313/2513 commented. Confluence: sprint report **page 84705281** (child of Sprint-0 AUDIT 83689473) + S0-E4 rows added to the AUDIT page. Drive: sprint report Doc in the PI-1 sprint-reports folder + the 3 ceremony/playbook/runbook Docs in `ARKOVA PI-1-S0`.
+
+**Carson-gated remainder:** merge #1211 (carve-out marks it needs-carson); add the `Merge Authority` check to main's required checks (GitHub setting); run the live 2-concurrent-soak rehearsal S0-4.1c (needs a gcloud + Supabase-admin env — absent in the agent sandbox); SCRUM-2500's other 4 mechanisms.
+
+_Last refreshed: 2026-06-18 by Claude (carson@arkova.io) — ledger clean verified via Supabase MCP `execute_sql` on `vzwyaatejekddvltxyye` (0 non-numeric/dup, head 0339); tests via `vitest run scripts/` (542/542) + `tsc --noEmit` (0); Jira via `createJiraIssue`/`transitionJiraIssue`/`addCommentToJiraIssue`; Confluence via `createConfluencePage`/`updateConfluencePage`; Drive via `create_file`. No prod/staging/ledger state mutated; nothing merged._
+
+### 2026-06-17 — Sprint 0 S0-E4 (parallel-safe pipeline) built; NOT merged (Carson-gated)
+
+Executed Sprint-0 epic **S0-E4** (Release-Management Process Fixes / parallel-safe pipeline; reuses SCRUM-2313, story S0-4.2 reuses SCRUM-2500) — the non-negotiable Sprint-1 entry gate that retires roadmap **R-3**. Ran refinement + planning + pre-mortem first (+ code review, post-build pre-mortem, retro — recorded in the Google Doc "ARKOVA PI-1 S0-E4 — Refinement, Planning, Pre-Mortem, Code Review & Retro" in Drive ARKOVA PI-1-S0: https://docs.google.com/document/d/1nFgOufZNenCHLBG3JKRX__iKhQ3nZTs8YiyFye4k-30/edit), then built across 3 parallel personas. **Nothing merged; no PR opened; no infra provisioned; no prod/staging/ledger mutation.** Branch `claude/s0-e4-refinement-planning-myy61i`.
+
+**Built + green (T0 CI/docs/tooling):**
+- **S0-4.2 (SCRUM-2500):** `scripts/ci/check-ledger-numeric-integrity.ts` — full-ledger numeric-integrity audit. Local-file grammar pass runs network-free in `ci.yml`; the prod-ledger pass runs in `migration-drift.yml` over the payload the drift step already fetches (read-only, same token, fail-closed). Closes the gap that let the 2026-06-15 timestamp-version re-regression pass unseen (drift gate only checked PR-diff). Injected-timestamp row fails (CLI-proven); 0 false-positives on the real 48-file set.
+- **S0-4.3:** `compute-merge-authority.ts` (reuses `requiredTierFor`; emits council/needs-carson; fails closed) + `check-agents-md-migration-collision.ts` (unique `## Recent migrations (…)` headers, CLAUDE.md §6) + the Mergify/Stacked-PR + Tiered-Merge Playbook (Google Doc, Drive ARKOVA PI-1-S0: https://docs.google.com/document/d/1iontJPUkhLQkQyZG4PETGuPj3kf23Kgn-1kDxqukfr8/edit). All wired into `ci.yml`; 3 new checks registered in `STAGING_TOOLING_ALLOW` (classify T0).
+- **S0-4.1:** `scripts/staging/{provision,teardown}-isolated-rig.sh` (dry-run DEFAULT; prod `vzwyaatejekddvltxyye` + shared staging `ujtlwnoqfhtitcmsnrpq` + shared Cloud Run hard-denied, exit 1) + the Isolated Soak-Rig Automation Runbook (Google Doc, Drive ARKOVA PI-1-S0: https://docs.google.com/document/d/1c0F_9NSy9ldfeR28xlY7s7zFFwKpS8cmTzvhI9dI__E/edit).
+
+**Verification:** `vitest run scripts/` 530/530 green (+23 new); `tsc --noEmit` 0 errors; staging scripts `bash -n` + dry-run/deny paths exercised.
+
+**Carson-gated (NOT done — by design):** retire stale `0299–0310` `exempt_regex` entries in `migration-drift.yml` once the new audit runs green vs prod (S0-4.2d, fail-closed); apply the drafted `.mergify.yml`/branch-protection tiered-merge change (S0-4.3d); the live "2 concurrent T3 soaks" rehearsal that fully closes S0-4.1's AC (T3 infra); S0-E4 Jira transitions + Confluence per-story pages.
+
+_Last refreshed: 2026-06-17 by Claude (carson@arkova.io) — no prod/staging/ledger state asserted or mutated; all claims are about repo artifacts on branch `claude/s0-e4-refinement-planning-myy61i` verified via `vitest run scripts/` (530/530), `tsc --noEmit` (0 errors), and `bash -n` + dry-run/deny execution of the staging scripts. Bootstrap acked (`scripts/agent/ack-claude-bootstrap.sh`)._
 ### 2026-06-17 — PI-1 Sprint 0 (Lane 1 + train roles): foundation docs + drift/parity spike + gates — all DRAFT, nothing merged
 
 PI-1 Sprint 0 kickoff. Scope = **Lane 1 (Trust & Chain) + the train roles**, executed in the outlined order under Carson's merge gate. **No prod/staging/Supabase/soak mutation; nothing merged; Train C #1154 + the two Train D rigs untouched.** Created GitHub milestone `Sprint 0 — Foundation & Hardening` (#24).

@@ -1,0 +1,62 @@
+# Merge Authority — tiered-merge label (S0-4.3 / epic S0-E4)
+#
+# Computes the required tier for the PR's changed files via the single
+# path→tier detector (scripts/ci/compute-merge-authority.ts, which reuses
+# requiredTierFor) and applies a `needs-carson-merge` label to T2/T3 PRs.
+# .mergify.yml refuses to auto-queue any PR carrying that label, so T2/T3
+# surfaces (migrations, RLS/schema, chain/treasury, credits/billing, anchor
+# lifecycle, security, public API/contract, CLAUDE.md) fall to Carson's manual
+# merge while the council keeps auto-queuing T0/T1.
+#
+# Fails closed: compute-merge-authority.ts resolves to needs-carson on any
+# error / unknown surface / empty changeset.
+
+name: Merge Authority
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    branches: [main]
+
+concurrency:
+  group: merge-authority-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compute:
+    name: Merge Authority
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write # to add/remove the label
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 20
+
+      - name: Install deps
+        run: npm ci --ignore-scripts
+
+      - id: authority
+        name: Compute tiered-merge authority
+        env:
+          BASE_REF_SHA: ${{ github.event.pull_request.base.sha }}
+        run: npx tsx scripts/ci/compute-merge-authority.ts
+
+      - name: Apply needs-carson-merge label (T2/T3)
+        if: ${{ steps.authority.outputs.merge_authority == 'needs-carson' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.number }}
+        run: gh pr edit "$PR" --add-label needs-carson-merge
+
+      - name: Remove needs-carson-merge label (T0/T1)
+        if: ${{ steps.authority.outputs.merge_authority == 'council' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.number }}
+        run: gh pr edit "$PR" --remove-label needs-carson-merge || true
