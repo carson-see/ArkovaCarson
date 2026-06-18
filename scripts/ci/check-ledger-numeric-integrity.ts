@@ -197,13 +197,11 @@ export function parseLedgerPayload(raw: string): LedgerRow[] {
 }
 
 function main(): void {
-  // --report-only downgrades PROD-LEDGER violations to warnings (exit 0). The
-  // prod ledger still carries a documented-unreconciled backlog this sandbox
-  // can't fully enumerate, so blocking on it blind would brick the required
-  // migration-drift workflow for every PR (review finding #1). migration-drift.yml
-  // runs the ledger pass in --report-only for observability; S0-4.2d (Carson)
-  // flips it to blocking + empties the exemptions once prod is confirmed clean.
-  // The local-file pass ALWAYS blocks — it is deterministic and verified clean.
+  // --report-only downgrades PROD-LEDGER violations to warnings (exit 0). It is
+  // an available escape valve for re-introducing the gate after a known dirty
+  // window, but NOT used in steady state: as of 2026-06-18 prod is verified
+  // clean and migration-drift.yml runs this BLOCKING (no --report-only) with an
+  // empty exemptions snapshot. The local-file pass ALWAYS blocks (deterministic).
   const reportOnly =
     process.argv.includes('--report-only') || process.env.LEDGER_AUDIT_REPORT_ONLY === '1';
 
