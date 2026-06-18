@@ -23,7 +23,7 @@ export const stripe = new Stripe(config.stripeSecretKey, {
   // Bumped after stripe SDK upgrade (PR #615 production-deps group). Pinning
   // to the SDK's expected API version keeps webhook payload shape consistent
   // with what the SDK types declare.
-  apiVersion: '2026-04-22.dahlia',
+  apiVersion: '2026-05-27.dahlia',
   typescript: true,
 });
 
