@@ -75,13 +75,13 @@ describe('OpenAPI spec', () => {
       '@context',
       '@type',
       'ceterms:name',
-      'ceterms:ctid',
       'ceterms:offeredBy',
       'ceterms:credentialStatusType',
       'ceterms:dateEffective',
       'ceterms:verificationServiceProfile',
       'ceterms:identifier',
     ]));
+    expect(schema.required).not.toContain('ceterms:ctid');
     expect(schema.properties['ceterms:identifier'].required).toEqual([
       'ceterms:identifierType',
       'ceterms:identifierValue',

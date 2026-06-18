@@ -24,6 +24,8 @@ const {
   endpointsSelect,
   // Retry logs query chain
   retryLogsSelect,
+  // SCRUM-2244: dead-letter-queue upsert chain
+  dlqUpsert,
   // RPC mock
   mockRpc,
 } = vi.hoisted(() => {
@@ -98,18 +100,70 @@ const {
     contains: endpointsContains,
   };
 
-  // Retry logs chain: .select().eq().lte().limit()
+  // Retry logs chain: .select().eq().lte().order().limit()
+  // SCRUM-2250 review-fix (defect #2): processWebhookRetries now inserts an
+  // `.order('payload->sequence', { ascending: true, nullsFirst: true })` step
+  // between `.lte()` and `.limit()` so the 50-row window is the globally-oldest
+  // outstanding events (correct head-of-line under backlog). The mock chain
+  // must mirror that or `.order(...)` is undefined at runtime.
   const retryLogsLimit = vi.fn();
-  const retryLogsLte = vi.fn(() => ({ limit: retryLogsLimit }));
+  const retryLogsOrder = vi.fn(() => ({ limit: retryLogsLimit }));
+  const retryLogsLte = vi.fn(() => ({ order: retryLogsOrder }));
   const retryLogsEq = vi.fn(() => ({ lte: retryLogsLte }));
   const retryLogsSelect = {
     select: vi.fn((_columns?: string) => ({ eq: retryLogsEq })),
     eq: retryLogsEq,
     lte: retryLogsLte,
+    order: retryLogsOrder,
     limit: retryLogsLimit,
   };
 
-  const mockRpc = vi.fn();
+  // SCRUM-2244: dead-letter-queue upsert chain — .from(...).upsert(row, opts)
+  // returns a resolved promise so `await (db as any).from(...).upsert(...)`
+  // works. The upsert (was a plain insert) dedupes on the partial unique index
+  // (endpoint_id, event_type, event_id, failure_kind) with ignoreDuplicates so
+  // re-DLQ of the same event (retry/re-emit during a DB outage) is a no-op and
+  // does NOT create a duplicate audit row. dlqUpsert lets tests assert both the
+  // durable-preservation contract and the onConflict/ignoreDuplicates options.
+  const dlqUpsert = vi.fn(
+    (_row?: unknown, _opts?: unknown): Promise<{ data: unknown; error: unknown }> =>
+      Promise.resolve({ data: null, error: null }),
+  );
+
+  // mockRpc is name-aware: the delivery engine now makes TWO kinds of RPC call
+  // — `get_flag` (feature flag) and `next_webhook_sequence` (SCRUM-2250
+  // replica-safe ordering source, migration 0337). A single
+  // `mockResolvedValue({ data: true })` would have made next_webhook_sequence
+  // return `true` → Number(true) === 1 for every dispatch, collapsing the
+  // sequence. Instead:
+  //   - `get_flag`              → rpcState.flag (default true)
+  //   - `next_webhook_sequence` → rpcState.seqOverride if set, else a
+  //                               strictly-increasing counter so two dispatches
+  //                               get distinct, ordered sequences.
+  const rpcState: {
+    flag: { data: unknown };
+    seq: number;
+    seqOverride: { data: unknown; error?: unknown } | null;
+  } = { flag: { data: true }, seq: 0, seqOverride: null };
+  const mockRpc = vi.fn((fn: string) => {
+    if (fn === 'next_webhook_sequence') {
+      if (rpcState.seqOverride) return Promise.resolve(rpcState.seqOverride);
+      rpcState.seq += 1;
+      return Promise.resolve({ data: rpcState.seq, error: null });
+    }
+    // get_flag (and any other rpc) → the flag slot. Tests drive this via
+    // mockRpc.mockResolvedValue(...) (legacy) which is bridged onto the flag.
+    return Promise.resolve(rpcState.flag);
+  });
+  // Bridge legacy `mockRpc.mockResolvedValue({ data: X })` (feature-flag setup)
+  // onto rpcState.flag WITHOUT clobbering the name-aware implementation above.
+  Object.assign(mockRpc, {
+    mockResolvedValue: (val: { data: unknown }) => {
+      rpcState.flag = val;
+      return mockRpc;
+    },
+  });
+  (mockRpc as unknown as { __rpcState: typeof rpcState }).__rpcState = rpcState;
 
   const mockFetch = vi.fn();
 
@@ -126,9 +180,26 @@ const {
     deliveryLogUpdate,
     endpointsSelect,
     retryLogsSelect,
+    dlqUpsert,
     mockRpc,
   };
 });
+
+// Test helpers for the name-aware RPC mock (SCRUM-2250 review-fix). These read
+// the rpcState bridged onto mockRpc above.
+function rpcStateOf(): { flag: { data: unknown }; seq: number; seqOverride: { data: unknown; error?: unknown } | null } {
+  return (mockRpc as unknown as { __rpcState: { flag: { data: unknown }; seq: number; seqOverride: { data: unknown; error?: unknown } | null } }).__rpcState;
+}
+/** Reset the strictly-increasing next_webhook_sequence counter + override. */
+function resetRpcSequence(): void {
+  const s = rpcStateOf();
+  s.seq = 0;
+  s.seqOverride = null;
+}
+/** Force next_webhook_sequence to return a fixed value/error (replica-skew + failure tests). */
+function setRpcSequence(value: { data: unknown; error?: unknown } | null): void {
+  rpcStateOf().seqOverride = value;
+}
 
 // ---- Module mocks ----
 
@@ -166,7 +237,13 @@ vi.stubGlobal('fetch', mockFetch);
 // We need to import the internal helpers too for direct testing.
 // Since signPayload and getRetryDelay are not exported, we test them
 // indirectly through deliverToEndpoint and processWebhookRetries.
-import { dispatchWebhookEvent, processWebhookRetries } from './delivery.js';
+import {
+  dispatchWebhookEvent,
+  processWebhookRetries,
+  deriveResourceKey,
+  __resetSequenceForTest,
+  resetCircuitBreakers,
+} from './delivery.js';
 
 // We also need direct access for HMAC verification — import crypto
 import crypto from 'node:crypto';
@@ -225,6 +302,10 @@ function setupDbRouting(overrides: Record<string, unknown> = {}) {
       case 'webhook_endpoints':
         return {
           select: endpointsSelect.select,
+        };
+      case 'webhook_dead_letter_queue':
+        return {
+          upsert: dlqUpsert,
         };
       default:
         return {};
@@ -671,6 +752,185 @@ describe('deliverToEndpoint', () => {
         }),
       }),
     );
+  });
+
+  it('SCRUM-2244: preserves the event in the dead-letter queue when the delivery_log write fails persistently (audit-integrity)', async () => {
+    vi.useRealTimers();
+
+    // Idempotency lookup: no existing row (first attempt, insert path).
+    deliveryLogSelect.single.mockResolvedValue({ data: null, error: null });
+    // Both the first insert AND the single transient retry fail with the same
+    // persistent transient error. Pre-fix: Sentry capture + return false, and
+    // the audit row is silently dropped (no durable record of the event).
+    deliveryLogInsert.single
+      .mockResolvedValueOnce({ data: null, error: { message: 'TypeError: fetch failed' } })
+      .mockResolvedValueOnce({ data: null, error: { message: 'TypeError: fetch failed' } });
+
+    mockRpc.mockResolvedValue({ data: true });
+    endpointsSelect.contains.mockResolvedValue({ data: [MOCK_ENDPOINT], error: null });
+    dlqUpsert.mockClear();
+    dlqUpsert.mockReturnValue(Promise.resolve({ data: { id: 'dlq-1' }, error: null }));
+    setupDbRouting();
+
+    await dispatchWebhookEvent('org-001', 'anchor.secured', 'evt-audit-001', MOCK_PAYLOAD_DATA);
+
+    // No HTTP delivery attempted — the log row never committed.
+    expect(mockFetch).not.toHaveBeenCalled();
+
+    // AUDIT-INTEGRITY CONTRACT: the event is NOT silently dropped. It is
+    // durably preserved in the dead-letter queue, keyed by the same
+    // idempotency_key the delivery-log row would have used, so it can be
+    // reconciled/replayed later.
+    expect(dlqUpsert).toHaveBeenCalledTimes(1);
+    const dlqRow = dlqUpsert.mock.calls[0][0] as unknown as {
+      endpoint_id: string;
+      org_id: string;
+      event_type: string;
+      event_id: string;
+      failure_kind: string;
+      payload: { event_id: string; data: Record<string, unknown> };
+      error_message: string;
+    };
+    expect(dlqRow.endpoint_id).toBe('ep-001');
+    expect(dlqRow.org_id).toBe('org-001');
+    expect(dlqRow.event_type).toBe('anchor.secured');
+    expect(dlqRow.event_id).toBe('evt-audit-001');
+    // SCRUM-2244: this path is the log-write failure, distinct from HTTP failure.
+    expect(dlqRow.failure_kind).toBe('log_write');
+    // The full webhook payload is preserved so the event can be replayed.
+    expect(dlqRow.payload.event_id).toBe('evt-audit-001');
+    // The error_message records WHY it landed in the DLQ (log-write failure,
+    // not HTTP-delivery failure) and carries the idempotency key for dedupe.
+    expect(dlqRow.error_message).toMatch(/delivery_log/i);
+    expect(dlqRow.error_message).toContain('ep-001-anchor.secured-evt-audit-001');
+
+    // SCRUM-2244 dedup: the write is an UPSERT with ignoreDuplicates so a
+    // re-DLQ of the same event during a DB outage is a no-op (no duplicate row).
+    const dlqOpts = dlqUpsert.mock.calls[0][1] as unknown as {
+      onConflict?: string;
+      ignoreDuplicates?: boolean;
+    };
+    expect(dlqOpts.onConflict).toBe('endpoint_id,event_type,event_id,failure_kind');
+    expect(dlqOpts.ignoreDuplicates).toBe(true);
+
+    // Still surfaced to Sentry for alerting (existing SCRUM-1805 behaviour).
+    expect(mockSentry.captureException).toHaveBeenCalledWith(
+      expect.any(Error),
+      expect.objectContaining({
+        tags: expect.objectContaining({ stage: 'delivery_log_insert' }),
+      }),
+    );
+
+    vi.useFakeTimers();
+  }, 10_000);
+
+  it('SCRUM-2244: both the log-write AND the DLQ write fail (full DB outage) → event is dropped, Sentry fired (residual risk, no throw)', async () => {
+    // RESIDUAL-RISK CONTRACT (honest behavior): under a full-DB outage the
+    // delivery_log write fails AND the dead-letter-queue write fails too. There
+    // is no durable store left to preserve the event, so it is dropped. The
+    // honest, asserted behavior is: (1) no crash/throw escapes the dispatcher,
+    // (2) the loss is surfaced to Sentry for alerting, (3) no HTTP delivery.
+    vi.useRealTimers();
+
+    deliveryLogSelect.single.mockResolvedValue({ data: null, error: null });
+    deliveryLogInsert.single
+      .mockResolvedValueOnce({ data: null, error: { message: 'TypeError: fetch failed' } })
+      .mockResolvedValueOnce({ data: null, error: { message: 'TypeError: fetch failed' } });
+
+    // The DLQ write ALSO fails (same outage). moveToDeadLetterQueue catches and
+    // logs; the event is now genuinely lost — assert we don't pretend otherwise.
+    dlqUpsert.mockClear();
+    dlqUpsert.mockRejectedValue(new Error('DLQ unreachable: connection refused'));
+
+    mockRpc.mockResolvedValue({ data: true });
+    endpointsSelect.contains.mockResolvedValue({ data: [MOCK_ENDPOINT], error: null });
+    setupDbRouting();
+
+    // Must not throw — dispatch fans out best-effort.
+    await expect(
+      dispatchWebhookEvent('org-001', 'anchor.secured', 'evt-outage-001', MOCK_PAYLOAD_DATA),
+    ).resolves.toBeUndefined();
+
+    // No HTTP delivery (log row never committed).
+    expect(mockFetch).not.toHaveBeenCalled();
+    // The DLQ write was attempted (and failed).
+    expect(dlqUpsert).toHaveBeenCalledTimes(1);
+    // The original log-write failure was surfaced to Sentry (SCRUM-1805).
+    expect(mockSentry.captureException).toHaveBeenCalledWith(
+      expect.any(Error),
+      expect.objectContaining({
+        tags: expect.objectContaining({ stage: 'delivery_log_insert' }),
+      }),
+    );
+    // The DLQ-write failure (the actual data loss) is logged so an alert can
+    // trip — this is the honest residual-risk signal, not a silent drop.
+    expect(mockLogger.error).toHaveBeenCalledWith(
+      expect.objectContaining({ endpointId: 'ep-001', eventId: 'evt-outage-001' }),
+      'Failed to write to dead letter queue',
+    );
+
+    vi.useFakeTimers();
+  }, 10_000);
+
+  it('SCRUM-2244: HTTP-delivery permanent failure DLQs via upsert with http_delivery discriminator + dedup options', async () => {
+    // The OTHER DLQ path (permanent HTTP failure on the final attempt) must
+    // also be an idempotent upsert so a re-emit/retry does not duplicate the
+    // audit row. It uses failure_kind='http_delivery' so it is a distinct row
+    // from any log_write failure of the same event.
+    deliveryLogSelect.single.mockResolvedValue({ data: null, error: null });
+    deliveryLogInsert.single.mockResolvedValue({ data: { id: 'log-001' }, error: null });
+    // Final attempt (MAX_RETRIES = 5) so shouldRetry is false → permanent fail.
+    mockFetch.mockResolvedValue({ ok: false, status: 500, text: () => Promise.resolve('err') });
+    deliveryLogUpdate.eq.mockResolvedValue({ error: null });
+    dlqUpsert.mockClear();
+    dlqUpsert.mockReturnValue(Promise.resolve({ data: { id: 'dlq-http' }, error: null }));
+
+    // Drive deliverToEndpoint at the terminal attempt via processWebhookRetries.
+    retryLogsSelect.limit.mockResolvedValue({
+      data: [
+        {
+          id: 'log-001',
+          attempt_number: 5, // +1 → 5 = MAX_RETRIES, shouldRetry false
+          payload: {
+            event_type: 'anchor.secured',
+            event_id: 'evt-http-001',
+            timestamp: '2026-03-10T11:55:00Z',
+            data: MOCK_PAYLOAD_DATA,
+          },
+          webhook_endpoints: MOCK_ENDPOINT,
+        },
+      ],
+      error: null,
+    });
+
+    mockDbFrom.mockImplementation((table: string) => {
+      if (table === 'webhook_delivery_logs') {
+        return {
+          select: (...args: string[]) => {
+            if (args[0]?.includes('webhook_endpoints')) {
+              return { eq: retryLogsSelect.eq };
+            }
+            return { eq: vi.fn(() => ({ single: deliveryLogSelect.single })) };
+          },
+          insert: deliveryLogInsert.insert,
+          update: deliveryLogUpdate.update,
+        };
+      }
+      if (table === 'webhook_dead_letter_queue') {
+        return { upsert: dlqUpsert };
+      }
+      return {};
+    });
+
+    await processWebhookRetries();
+
+    expect(dlqUpsert).toHaveBeenCalledTimes(1);
+    const dlqRow = dlqUpsert.mock.calls[0][0] as unknown as { failure_kind: string; event_id: string };
+    expect(dlqRow.failure_kind).toBe('http_delivery');
+    expect(dlqRow.event_id).toBe('evt-http-001');
+    const dlqOpts = dlqUpsert.mock.calls[0][1] as unknown as { onConflict?: string; ignoreDuplicates?: boolean };
+    expect(dlqOpts.onConflict).toBe('endpoint_id,event_type,event_id,failure_kind');
+    expect(dlqOpts.ignoreDuplicates).toBe(true);
   });
 
   it('retries delivery_log insert once on transient fetch failure', async () => {
@@ -1120,5 +1380,294 @@ describe('processWebhookRetries', () => {
     await processWebhookRetries();
 
     expect(retryLogsSelect.limit).toHaveBeenCalledWith(50);
+  });
+});
+
+// ================================================================
+// SCRUM-2250 (BUG-2026-05-16-001) — per-resource webhook ordering
+// ================================================================
+
+describe('deriveResourceKey (SCRUM-2250)', () => {
+  it('derives a family-namespaced key from data.public_id', () => {
+    expect(deriveResourceKey('anchor.secured', { public_id: 'pub-001' })).toBe('anchor:pub-001');
+    expect(deriveResourceKey('credential.issued', { public_id: 'pub-001' })).toBe(
+      'credential:pub-001',
+    );
+  });
+
+  it('namespaces by event family so anchor and credential with same slug differ', () => {
+    expect(deriveResourceKey('anchor.secured', { public_id: 'X' })).not.toBe(
+      deriveResourceKey('credential.issued', { public_id: 'X' }),
+    );
+  });
+
+  it('returns null for events with no single resource (no public_id)', () => {
+    expect(deriveResourceKey('anchor.batch_secured', { public_ids: ['a', 'b'] })).toBeNull();
+    expect(deriveResourceKey('anchor.secured', { public_id: '' })).toBeNull();
+  });
+});
+
+describe('dispatchWebhookEvent ordering metadata (SCRUM-2250)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    __resetSequenceForTest();
+    resetRpcSequence();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-03-10T12:00:00Z'));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  async function dispatchOnce(eventId: string, data: Record<string, unknown>) {
+    mockRpc.mockResolvedValue({ data: true });
+    endpointsSelect.contains.mockResolvedValue({ data: [MOCK_ENDPOINT], error: null });
+    deliveryLogSelect.single.mockResolvedValue({ data: null, error: null });
+    deliveryLogInsert.single.mockResolvedValue({ data: { id: `log-${eventId}` }, error: null });
+    mockFetch.mockResolvedValue({ ok: true, status: 200, text: () => Promise.resolve('OK') });
+    deliveryLogUpdate.eq.mockResolvedValue({ error: null });
+    setupDbRouting();
+    await dispatchWebhookEvent('org-001', 'anchor.secured', eventId, data);
+  }
+
+  it('stamps resource_key + monotonic sequence into the delivered payload', async () => {
+    await dispatchOnce('evt-1', MOCK_PAYLOAD_DATA);
+
+    const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+    expect(body.resource_key).toBe('anchor:pub-001');
+    expect(typeof body.sequence).toBe('number');
+  });
+
+  it('assigns a strictly greater sequence to a later event for the SAME document', async () => {
+    // Event 1 (earlier) then event 2 (later) for the same public_id.
+    await dispatchOnce('evt-1', MOCK_PAYLOAD_DATA);
+    const seq1 = JSON.parse(mockFetch.mock.calls[0][1].body).sequence;
+
+    mockFetch.mockClear();
+    await dispatchOnce('evt-2', MOCK_PAYLOAD_DATA);
+    const seq2 = JSON.parse(mockFetch.mock.calls[0][1].body).sequence;
+
+    // Same resource_key, strictly increasing sequence → consumer can order
+    // them even if event 1 is later RE-delivered (retry) after event 2.
+    expect(seq2).toBeGreaterThan(seq1);
+  });
+
+  it('persists ordering metadata into the delivery_log payload (frozen for retries)', async () => {
+    await dispatchOnce('evt-1', MOCK_PAYLOAD_DATA);
+    const insertCalls = deliveryLogInsert.insert.mock.calls as unknown as Array<
+      [{ payload: { resource_key?: unknown; sequence?: unknown } }]
+    >;
+    const inserted = insertCalls[0]?.[0];
+    expect(inserted?.payload.resource_key).toBe('anchor:pub-001');
+    expect(typeof inserted?.payload.sequence).toBe('number');
+  });
+
+  it('sources sequence from the next_webhook_sequence RPC (DB-backed, not the clock)', async () => {
+    // REVIEW-FIX defect #1: prove the sequence comes from the RPC, not Date.now.
+    await dispatchOnce('evt-1', MOCK_PAYLOAD_DATA);
+    expect(mockRpc).toHaveBeenCalledWith('next_webhook_sequence');
+  });
+
+  it('CROSS-REPLICA SKEW: ordering follows the DB sequence even when the wall clock INVERTS', async () => {
+    // The SEV1 bug: two same-resource events emitted from DIFFERENT replicas.
+    // Replica A (event 1, the EARLIER event) has a clock skewed AHEAD; replica B
+    // (event 2, the LATER event) has a clock BEHIND. The old in-process
+    // Date.now() counter would have stamped event 1 with a HIGHER sequence than
+    // event 2 (clock-driven), inverting their order so the consumer drops the
+    // newer event. With the DB sequence, dispatch ORDER (not wall clock) decides
+    // the value: event 1 dispatched first → lower sequence, event 2 second →
+    // higher, regardless of the system clock each replica reports.
+
+    // Event 1: dispatched first, but on a replica whose clock is FAR AHEAD.
+    setRpcSequence(null); // use the strictly-increasing DB counter
+    vi.setSystemTime(new Date('2026-03-10T12:00:05Z')); // skewed +5s ahead
+    await dispatchOnce('evt-1', MOCK_PAYLOAD_DATA);
+    const ev1 = JSON.parse(mockFetch.mock.calls[0][1].body);
+
+    // Event 2: dispatched second, on a replica whose clock is BEHIND event 1's.
+    mockFetch.mockClear();
+    vi.setSystemTime(new Date('2026-03-10T12:00:00Z')); // 5s BEHIND event 1
+    await dispatchOnce('evt-2', MOCK_PAYLOAD_DATA);
+    const ev2 = JSON.parse(mockFetch.mock.calls[0][1].body);
+
+    // Same resource. Despite event 2's wall clock being EARLIER, its DB sequence
+    // is strictly GREATER because it was allocated later → consumer orders them
+    // correctly and does NOT drop event 2 as stale.
+    expect(ev1.resource_key).toBe('anchor:pub-001');
+    expect(ev2.resource_key).toBe('anchor:pub-001');
+    expect(ev2.sequence).toBeGreaterThan(ev1.sequence);
+  });
+
+  it('degrades to a NULL sequence (no false ordering) + Sentry when the RPC fails', async () => {
+    // If next_webhook_sequence errors, we must NOT fabricate a value (that could
+    // invert ordering). We stamp null (treated as "no ordering asserted") and
+    // surface to Sentry, but still deliver the event (liveness).
+    setRpcSequence({ data: null, error: { message: 'connection terminated' } });
+    await dispatchOnce('evt-1', MOCK_PAYLOAD_DATA);
+
+    const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+    expect(body.sequence).toBeNull();
+    expect(mockFetch).toHaveBeenCalledOnce(); // still delivered
+    expect(mockSentry.captureException).toHaveBeenCalledWith(
+      expect.any(Error),
+      expect.objectContaining({
+        tags: expect.objectContaining({ subsystem: 'webhooks', stage: 'sequence_alloc' }),
+      }),
+    );
+  });
+});
+
+describe('processWebhookRetries per-resource ordering (SCRUM-2250)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    __resetSequenceForTest();
+    resetCircuitBreakers();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-03-10T12:00:00Z'));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function retryRow(id: string, opts: {
+    resourceKey: string | null;
+    sequence: number | null;
+    attempt?: number;
+    endpoint?: typeof MOCK_ENDPOINT;
+  }) {
+    return {
+      id,
+      attempt_number: opts.attempt ?? 1,
+      payload: {
+        event_type: 'anchor.secured',
+        event_id: id,
+        timestamp: '2026-03-10T11:55:00Z',
+        data: MOCK_PAYLOAD_DATA,
+        resource_key: opts.resourceKey,
+        sequence: opts.sequence,
+      },
+      webhook_endpoints: opts.endpoint ?? RETRY_ENDPOINT,
+    };
+  }
+
+  // Literal public IP (TEST-NET-2) so deliverToEndpoint's SSRF guard skips DNS
+  // resolution — vi.clearAllMocks() wipes the node:dns mock impls, which would
+  // otherwise fail-closed and block delivery intermittently under concurrency.
+  const RETRY_ENDPOINT = { ...MOCK_ENDPOINT, url: 'https://198.51.100.1/cb' };
+
+  /** Route DB so the retry query returns `rows` and deliverToEndpoint works. */
+  function routeRetry(rows: unknown[]) {
+    retryLogsSelect.limit.mockResolvedValue({ data: rows, error: null });
+    deliveryLogSelect.single.mockResolvedValue({ data: null, error: null });
+    deliveryLogInsert.single.mockResolvedValue({ data: { id: 'log-retry' }, error: null });
+    mockFetch.mockResolvedValue({ ok: true, status: 200, text: () => Promise.resolve('OK') });
+    deliveryLogUpdate.eq.mockResolvedValue({ error: null });
+
+    mockDbFrom.mockImplementation((table: string) => {
+      if (table === 'webhook_delivery_logs') {
+        return {
+          select: (...args: string[]) => {
+            if (args[0]?.includes('webhook_endpoints')) {
+              return { eq: retryLogsSelect.eq };
+            }
+            return { eq: vi.fn(() => ({ single: deliveryLogSelect.single })) };
+          },
+          insert: deliveryLogInsert.insert,
+          update: deliveryLogUpdate.update,
+        };
+      }
+      return {};
+    });
+  }
+
+  it('delivers ONLY the lower-sequence (older) event for a resource, holding the newer one', async () => {
+    // Two retrying events for the SAME document: event 1 (seq 100, older) and
+    // event 2 (seq 200, newer). The sweep must NOT fire the newer event while
+    // the older one is still outstanding.
+    const older = retryRow('evt-1', { resourceKey: 'anchor:pub-001', sequence: 100 });
+    const newer = retryRow('evt-2', { resourceKey: 'anchor:pub-001', sequence: 200 });
+    // Intentionally return newer first to prove order-independence.
+    routeRetry([newer, older]);
+
+    const result = await processWebhookRetries();
+
+    // Exactly one head-of-line delivery for the resource this sweep.
+    expect(result).toBe(1);
+    expect(mockFetch).toHaveBeenCalledOnce();
+    // And it must be the OLDER event (event_id evt-1), not the newer.
+    const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+    expect(body.event_id).toBe('evt-1');
+    expect(body.sequence).toBe(100);
+  });
+
+  it('delivers events for DIFFERENT documents concurrently (no global serialization)', async () => {
+    const docA = retryRow('evt-a', { resourceKey: 'anchor:pub-A', sequence: 100 });
+    const docB = retryRow('evt-b', {
+      resourceKey: 'anchor:pub-B',
+      sequence: 110,
+      endpoint: { ...MOCK_ENDPOINT, id: 'ep-002', url: 'https://198.51.100.2/cb' },
+    });
+    routeRetry([docA, docB]);
+
+    const result = await processWebhookRetries();
+
+    // Both distinct resources delivered in the same sweep.
+    expect(result).toBe(2);
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    const ids = mockFetch.mock.calls.map((c) => JSON.parse(c[1].body).event_id).sort();
+    expect(ids).toEqual(['evt-a', 'evt-b']);
+  });
+
+  it('does not block legacy rows (no resource_key) against each other', async () => {
+    // Pre-SCRUM-2250 payloads have no resource_key/sequence — they must keep
+    // the old concurrent behavior, never head-of-line-blocked.
+    const legacy1 = retryRow('evt-l1', { resourceKey: null, sequence: null });
+    const legacy2 = retryRow('evt-l2', { resourceKey: null, sequence: null });
+    routeRetry([legacy1, legacy2]);
+
+    const result = await processWebhookRetries();
+
+    expect(result).toBe(2);
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('REVIEW-FIX defect #2: orders the retry window by payload->sequence ASC (NULLS FIRST) before limit(50)', async () => {
+    // The limit(50) is applied to a backlog, so it MUST be ordered by sequence
+    // ascending — otherwise a newer event could enter the window while its older
+    // head-of-line sibling is excluded. Assert the exact ordering clause + that
+    // it precedes the limit in the chain.
+    routeRetry([]);
+
+    await processWebhookRetries();
+
+    expect(retryLogsSelect.order).toHaveBeenCalledWith('payload->sequence', {
+      ascending: true,
+      nullsFirst: true,
+    });
+    expect(retryLogsSelect.limit).toHaveBeenCalledWith(50);
+    // order() resolves to the object carrying limit() → ordering happens first.
+    const orderResult = retryLogsSelect.order.mock.results[0]?.value as { limit?: unknown };
+    expect(orderResult).toHaveProperty('limit');
+  });
+
+  it('BACKLOG WINDOW: picks the true per-resource head from the ordered window (older sibling NOT starved)', async () => {
+    // Simulate what the SQL ORDER BY guarantees: the window is the globally
+    // OLDEST outstanding events. For resource pub-001 the older event (seq 100)
+    // is present alongside the newer (seq 200); the sweep must fire only the
+    // older one. (Pre-fix, an arbitrary window order let the newer row win.)
+    const head = retryRow('evt-head', { resourceKey: 'anchor:pub-001', sequence: 100 });
+    const newer = retryRow('evt-newer', { resourceKey: 'anchor:pub-001', sequence: 200 });
+    // DB returns them sequence-ASC (as the new ORDER BY produces).
+    routeRetry([head, newer]);
+
+    const result = await processWebhookRetries();
+
+    expect(result).toBe(1);
+    expect(mockFetch).toHaveBeenCalledOnce();
+    const body = JSON.parse(mockFetch.mock.calls[0][1].body);
+    expect(body.event_id).toBe('evt-head');
+    expect(body.sequence).toBe(100);
   });
 });

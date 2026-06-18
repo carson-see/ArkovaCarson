@@ -17,7 +17,7 @@ import { handlePipelineStats } from '../api/admin-pipeline-stats.js';
 import { handleSystemHealth } from '../api/admin-health.js';
 import { handleAdminOrganizations, handleAdminUsers, handleAdminUserDetail, handleAdminRecords, handleAdminSubscriptions } from '../api/admin-lists.js';
 import { handleAdminOrgMembers, handleAdminUserSearch, handleAdminAddOrgMember } from '../api/admin-org-members.js';
-import { handlePromoteAdmin, handleChangeRole, handleSetOrg } from '../api/admin-actions.js';
+import { handlePromoteAdmin, handleChangeRole, handleSetOrg, handleSetOrgQuota } from '../api/admin-actions.js';
 import { handleListPendingResolution, handleResolveQueue, handleRunOrgAnchorQueue } from '../api/queue-resolution.js';
 import { handleSupersedeAnchor, handleAnchorLineage } from '../api/anchor-lineage.js';
 import { handleConnectorHealth } from '../api/connector-health.js';
@@ -226,6 +226,18 @@ adminRouter.post('/admin/users/:id/set-org', async (req, res) => {
     await handleSetOrg(userId, req.params.id, req, res);
   } catch (error) {
     logger.error({ error }, 'Set org request failed');
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// ─── SCRUM-2225: Set an org's free-tier testing cap (platform admin only) ───
+adminRouter.post('/admin/organizations/:id/quota', async (req, res) => {
+  const userId = await extractAuthUserId(req);
+  if (!userId) { res.status(401).json({ error: 'Authentication required' }); return; }
+  try {
+    await handleSetOrgQuota(userId, req.params.id, req, res);
+  } catch (error) {
+    logger.error({ error }, 'Set org quota request failed');
     res.status(500).json({ error: 'Internal server error' });
   }
 });
