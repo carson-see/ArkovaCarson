@@ -1,9 +1,24 @@
 import { describe, it, expect } from 'vitest';
+import { spawnSync } from 'node:child_process';
 import {
   auditLedgerRows,
   auditLocalFiles,
+  parseLedgerPayload,
   type LedgerRow,
 } from './check-ledger-numeric-integrity.ts';
+
+// vitest runs from the repo root; reference the script by repo-relative path.
+const SCRIPT = 'scripts/ci/check-ledger-numeric-integrity.ts';
+
+/** Run the CLI; return exit status + combined stdout+stderr (warnings go to stderr). */
+function runCli(env: Record<string, string>, args: string[] = []): { status: number; out: string } {
+  const r = spawnSync('npx', ['tsx', SCRIPT, ...args], {
+    env: { ...process.env, ...env },
+    encoding: 'utf8',
+  });
+  return { status: r.status ?? 1, out: `${r.stdout ?? ''}${r.stderr ?? ''}` };
+}
+
 
 const BASELINE = '00000000000000_baseline_at_main_HEAD.sql';
 
@@ -127,5 +142,42 @@ describe('auditLocalFiles — local migration filename grammar (S0-4.2)', () => 
   it('allows a grandfathered duplicate prefix', () => {
     const v = auditLocalFiles(['0022_one.sql', '0022_two.sql'], grandfathered);
     expect(v.map((x) => x.code)).not.toContain('local-duplicate-prefix');
+  });
+});
+
+describe('parseLedgerPayload — fail-closed boundary (P1)', () => {
+  it('throws on a non-array payload', () => {
+    expect(() => parseLedgerPayload('{}')).toThrow(/not a JSON array/);
+  });
+  it('parses an array of rows, coercing version to string', () => {
+    expect(parseLedgerPayload('[{"version":330,"name":"x"}]')).toEqual([{ version: '330', name: 'x' }]);
+  });
+});
+
+describe('CLI exit codes — BLOCK vs WARN vs fail-closed (S0-4.2 main())', () => {
+  const dirty = JSON.stringify([{ version: '20260615120000', name: '0322_bump_cloud_logging' }]);
+
+  it('BLOCKS (exit 1) on a non-exempt timestamp-version row in default (blocking) mode', () => {
+    const r = runCli({ LEDGER_JSON: dirty });
+    expect(r.status).toBe(1);
+    expect(r.out).toContain('ledger-nonnumeric-version');
+  });
+
+  it('WARNS (exit 0) on the same row with --report-only', () => {
+    const r = runCli({ LEDGER_JSON: dirty }, ['--report-only']);
+    expect(r.status).toBe(0);
+    expect(r.out).toContain('::warning::');
+  });
+
+  it('fails closed (exit 1) on an unparseable supplied ledger', () => {
+    const r = runCli({ LEDGER_JSON: 'not json' });
+    expect(r.status).toBe(1);
+    expect(r.out).toContain('ledger-parse-failure');
+  });
+
+  it('passes (exit 0) with no ledger payload — local-file pass only', () => {
+    const r = runCli({ LEDGER_JSON: '' });
+    expect(r.status).toBe(0);
+    expect(r.out).toContain('Ledger pass skipped');
   });
 });

@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
+import { execFileSync } from 'node:child_process';
 import { mergeAuthorityFor } from './compute-merge-authority.ts';
+
+// vitest runs from the repo root; reference the script by repo-relative path.
+const SCRIPT = 'scripts/ci/compute-merge-authority.ts';
 
 describe('mergeAuthorityFor — tiered-merge authority (S0-4.3)', () => {
   it('routes docs/tests/tooling-only (T0) to the council', () => {
@@ -32,7 +36,33 @@ describe('mergeAuthorityFor — tiered-merge authority (S0-4.3)', () => {
     expect(r.authority).toBe('needs-carson');
   });
 
-  it('treats an empty changeset as council (T0)', () => {
+  it('treats an empty changeset as council (T0) at the pure-function layer', () => {
     expect(mergeAuthorityFor([]).authority).toBe('council');
+  });
+
+  it('forces needs-carson for merge-control-plane / constitution files regardless of path tier (RM review #1)', () => {
+    for (const f of ['.mergify.yml', 'CLAUDE.md', '.github/workflows/merge-authority.yml', 'scripts/ci/compute-merge-authority.ts', 'CODEOWNERS']) {
+      const r = mergeAuthorityFor([f]);
+      expect(r.authority, f).toBe('needs-carson');
+    }
+  });
+
+  it('still routes a plain docs change to council (carve-out is not over-broad)', () => {
+    expect(mergeAuthorityFor(['docs/x.md']).authority).toBe('council');
+  });
+
+  it('CLI fails closed to needs-carson on an empty changeset (QA #3 — diff HEAD...HEAD)', () => {
+    // baseRef === HEAD ⇒ `${base}...HEAD` is empty ⇒ changedFiles() returns [].
+    const head = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+    let out = '';
+    try {
+      out = execFileSync('npx', ['tsx', SCRIPT], {
+        env: { ...process.env, BASE_REF_SHA: head },
+        encoding: 'utf8',
+      });
+    } catch (e) {
+      out = `${(e as { stdout?: string }).stdout ?? ''}${(e as { stderr?: string }).stderr ?? ''}`;
+    }
+    expect(out).toContain('needs-carson');
   });
 });

@@ -30,9 +30,37 @@ export interface MergeAuthorityResult {
   reason: string;
 }
 
+const TIER_RANK: Record<Tier, number> = { T0: 0, T1: 1, T2: 2, T3: 3 };
+
+/**
+ * Merge-control plane + constitution: surfaces that change *who/how* code
+ * merges, or the rules themselves. requiredTierFor (a soak-risk detector)
+ * reasonably grades these T0 because they have no prod *runtime* surface — but
+ * they must never be council-mergeable: a change to the merge policy graded by
+ * the merge-policy grader is the self-referential blind spot the RM review
+ * flagged. These force needs-carson regardless of path tier (CLAUDE.md §0 rule 1
+ * + the S0-4.3 tiered-merge contract, which lists CLAUDE.md as Carson-only).
+ */
+const MERGE_CONTROL_PLANE: RegExp[] = [
+  /^CLAUDE\.md$/,
+  /^\.mergify\.yml$/,
+  /^\.github\/workflows\/merge-authority\.yml$/,
+  /^scripts\/ci\/compute-merge-authority\.ts$/,
+  /^(?:\.github\/)?CODEOWNERS$/,
+];
+
 export function mergeAuthorityFor(files: string[]): MergeAuthorityResult {
   try {
     const { tier, reason } = requiredTierFor(files);
+    if (files.some((f) => MERGE_CONTROL_PLANE.some((re) => re.test(f)))) {
+      // Display at least T2 so tier and authority don't read inconsistently.
+      const shown: Tier = TIER_RANK[tier] >= TIER_RANK.T2 ? tier : 'T2';
+      return {
+        authority: 'needs-carson',
+        tier: shown,
+        reason: 'merge-control plane / constitution change — Carson regardless of path tier',
+      };
+    }
     const authority: MergeAuthority = tier === 'T0' || tier === 'T1' ? 'council' : 'needs-carson';
     return { authority, tier, reason };
   } catch (err) {
