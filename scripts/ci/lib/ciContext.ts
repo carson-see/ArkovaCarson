@@ -11,9 +11,20 @@
 
 import { execFileSync } from 'node:child_process';
 import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { Buffer } from 'node:buffer';
 
 export const REPO = resolve(import.meta.dirname, '..', '..', '..');
+
+/**
+ * True when a module is being run directly (not imported). Uses fileURLToPath
+ * so a checkout path containing a space or `%` is URL-decoded correctly —
+ * `new URL(metaUrl).pathname` does NOT decode and would silently no-op the
+ * CLI. Mirrors the helper in check-api-contract-drift.ts / staging-honesty-preflight.ts.
+ */
+export function isMainModule(metaUrl: string, argvPath: string | undefined): boolean {
+  return argvPath !== undefined && resolve(fileURLToPath(metaUrl)) === resolve(argvPath);
+}
 
 // Code-review issue #N (PR #563): on push events ci.yml passes the literal
 // string 'HEAD~1' as BASE_REF_SHA. On a single-commit branch or shallow

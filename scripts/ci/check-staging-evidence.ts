@@ -1005,6 +1005,12 @@ const STAGING_TOOLING_ALLOW = [
   /^scripts\/ci\/check-staging-evidence(\.test)?\.ts$/,
   /^scripts\/ci\/check-staging-gcloud-policy(\.test)?\.ts$/,
   /^scripts\/ci\/staging-honesty-preflight(\.test)?\.ts$/,
+  // S0-4.2 / S0-4.3 (epic S0-E4): release-pipeline CI tooling. These run only
+  // in CI and never ship to prod runtime, so they are T0 tooling.
+  /^scripts\/ci\/check-ledger-numeric-integrity(\.test)?\.ts$/,
+  /^scripts\/ci\/check-agents-md-migration-collision(\.test)?\.ts$/,
+  /^scripts\/ci\/compute-merge-authority(\.test)?\.ts$/,
+  /^scripts\/ci\/snapshots\//, // CI baselines/snapshots — tooling, never prod runtime
   /^scripts\/ci\/lib\//,
   /^scripts\/gcp-setup\//,
   /^services\/worker\/scripts\/load-test\//,

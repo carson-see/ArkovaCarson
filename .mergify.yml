@@ -41,6 +41,8 @@ queue_rules:
     queue_conditions:
       - -draft
       - label = hotfix
+      # Fail-closed: even hotfixes touching T2/T3 surfaces go to Carson (S0-4.3).
+      - -label = needs-carson-merge
       - "#changes-requested-reviews-by = 0"
     merge_conditions:
       # All 13 required status checks from branch protection
@@ -68,6 +70,10 @@ queue_rules:
       - -label = work-in-progress
       - -label = do-not-merge
       - -label = hotfix
+      # Tiered-merge (S0-4.3): T2/T3 PRs carry needs-carson-merge (applied by the
+      # Merge Authority workflow from compute-merge-authority.ts). The council
+      # queue may not auto-merge them; Carson merges them manually.
+      - -label = needs-carson-merge
       - "#changes-requested-reviews-by = 0"
       # Staging evidence must pass before entering queue. T0/T1 can move fast,
       # while T2/T3 must complete merge-grade evidence before queueing.
@@ -112,6 +118,8 @@ pull_request_rules:
       - -label = work-in-progress
       - -label = do-not-merge
       - -label = hotfix
+      # Tiered-merge (S0-4.3): never auto-queue a needs-carson-merge PR.
+      - -label = needs-carson-merge
       - "#changes-requested-reviews-by = 0"
       - check-success = Staging Soak Evidence Gate
     actions:
@@ -124,6 +132,7 @@ pull_request_rules:
       - base = main
       - -draft
       - label = hotfix
+      - -label = needs-carson-merge
       - check-success = Staging Soak Evidence Gate
     actions:
       queue:

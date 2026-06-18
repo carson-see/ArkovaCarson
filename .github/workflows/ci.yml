@@ -108,6 +108,17 @@ jobs:
       - name: Block migration prefix collisions (SCRUM-1287)
         run: npx tsx scripts/ci/check-migration-prefix-uniqueness.ts
 
+      # S0-4.2 / SCRUM-2500 — local-file half of the full-ledger numeric-integrity
+      # audit (network-free). The prod-ledger half runs in migration-drift.yml,
+      # which already holds the read-only Supabase Management API token.
+      - name: Audit local migration ledger integrity (SCRUM-2500)
+        run: npx tsx scripts/ci/check-ledger-numeric-integrity.ts
+
+      # S0-4.3 — block colliding migration agents.md "Recent migrations" blocks
+      # (CLAUDE.md §6); each block must carry a (PR #NNNN) discriminator.
+      - name: Block migration agents.md collisions (S0-E4)
+        run: npx tsx scripts/ci/check-agents-md-migration-collision.ts
+
       - name: Require justification for new anchors indexes (SCRUM-1286)
         run: npm run ci:anchor-index-justification
 
@@ -310,6 +321,17 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
           GITHUB_HEAD_REF: ${{ github.head_ref }}
         run: npx tsx scripts/ci/check-feedback-rules.ts
+
+      # S0-4.3 — tiered-merge authority (advisory). Computes the required tier
+      # from the changed files (reusing requiredTierFor) and reports whether the
+      # council may merge or it needs Carson. Fails closed to needs-carson.
+      # Enforcement is branch protection + Mergify (Carson-applied per the
+      # "S0-E4 — Mergify / Stacked-PR + Tiered-Merge Playbook" Google Doc, Drive
+      # ARKOVA PI-1-S0); this step is informational + sets outputs.
+      - name: Tiered-merge authority (S0-E4)
+        env:
+          BASE_REF_SHA: ${{ github.event.pull_request.base.sha }}
+        run: npx tsx scripts/ci/compute-merge-authority.ts
 
       - name: HANDOFF.md verification lint
         env:
