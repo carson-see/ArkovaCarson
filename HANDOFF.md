@@ -40,6 +40,18 @@ Executed Sprint-0 epic **S0-E4** (Release-Management Process Fixes / parallel-sa
 **Carson-gated (NOT done — by design):** retire stale `0299–0310` `exempt_regex` entries in `migration-drift.yml` once the new audit runs green vs prod (S0-4.2d, fail-closed); apply the drafted `.mergify.yml`/branch-protection tiered-merge change (S0-4.3d); the live "2 concurrent T3 soaks" rehearsal that fully closes S0-4.1's AC (T3 infra); S0-E4 Jira transitions + Confluence per-story pages.
 
 _Last refreshed: 2026-06-17 by Claude (carson@arkova.io) — no prod/staging/ledger state asserted or mutated; all claims are about repo artifacts on branch `claude/s0-e4-refinement-planning-myy61i` verified via `vitest run scripts/` (530/530), `tsc --noEmit` (0 errors), and `bash -n` + dry-run/deny execution of the staging scripts. Bootstrap acked (`scripts/agent/ack-claude-bootstrap.sh`)._
+### 2026-06-17 — PI-1 Sprint 0 (Lane 1 + train roles): foundation docs + drift/parity spike + gates — all DRAFT, nothing merged
+
+PI-1 Sprint 0 kickoff. Scope = **Lane 1 (Trust & Chain) + the train roles**, executed in the outlined order under Carson's merge gate. **No prod/staging/Supabase/soak mutation; nothing merged; Train C #1154 + the two Train D rigs untouched.** Created GitHub milestone `Sprint 0 — Foundation & Hardening` (#24).
+
+**Draft PRs (Sprint-0 milestone — Carson merges):**
+- **S0-E1+E2+E6+E7 + Lane-1 pre-design** (T0 docs, `s0/train-foundation`): lane manifest + RACI (machine+human) + session operating model + dry-run; read-only source-of-truth reconciliation (every correction is a *proposal*); infra/SSD/Vertex inventory; external-gate tracker; chain-resilience + MIT-verifier pre-design; Lane-1 visibility signal inventory.
+- **S0-E3** CLAUDE.md v-next draft (T0, Carson-review — rule change).
+- **S0-E5.2** config↔reality drift + cross-runtime parity gate spike (T1, Lane-1 code).
+
+**Flagged for Carson (read-only findings; all action GATED):** PO Roadmap 27591934 superseded by 82444290 (banner + re-point CLAUDE.md §5/memory); possible-false-Done SCRUM-1044/1049 (changelog + child-rollup); SDK-PY overlaps Done SCRUM-1112; VC-W3C front-runs open spike SCRUM-2296; orphan paid Supabase project `xrefmwydaatppieoxfxn` (PR #1055 merged 06-10) → dashboard delete; CAIQ v1 sheets flagged-not-moved. Jira filing (S0-2.2), Confluence creates, infra deletes, CE-key→Secret-Manager, and external outreach are all gated — not done.
+
+_Last refreshed: 2026-06-17 by Claude (carson@arkova.io) — claims verified against gcloud/MCP/CI output: Cloud Run via `gcloud run services list --project=arkova1` (4 services, all prod/active-soak); Vertex via `gcloud ai endpoints list --region=us-central1` (1 golden endpoint); Supabase via MCP `list_projects` (8 projects; orphan `xrefmwydaatppieoxfxn` confirmed via `gh pr view 1055` = MERGED); milestone via `gh api repos/.../milestones` (#24). No prod state asserted or changed this session._
 
 ### 2026-06-16 (cont.) — Top-risk + hygiene round; API 529 overload deferred the agent streams
 
