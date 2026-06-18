@@ -42,7 +42,7 @@ export function compareRuntimeConfigs(
   // 1. Shared flags must agree.
   const sharedKeys = Object.keys(worker.flags)
     .filter((key) => key in edge.flags)
-    .sort();
+    .sort((a, b) => a.localeCompare(b));
   for (const key of sharedKeys) {
     if (worker.flags[key] !== edge.flags[key]) {
       findings.push({
