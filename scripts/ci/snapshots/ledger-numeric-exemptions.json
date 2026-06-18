@@ -1,0 +1,4 @@
+{
+  "_comment": "S0-4.2 / SCRUM-2500. DRAINED 2026-06-18: prod ledger (vzwyaatejekddvltxyye) verified clean via read-only Supabase MCP — 0 numeric-named rows with non-numeric versions, 0 duplicate names/versions, numeric head 0339. The documented-unreconciled backlog this list used to mirror is gone, so exemptPrefixes is now EMPTY and the prod-ledger audit runs BLOCKING (the --report-only valve was removed from migration-drift.yml). Re-add a prefix here ONLY with a dated runbook note if an operator-applied row is knowingly left non-numeric pending reconciliation; otherwise a non-numeric numeric-named row is a real regression and must block.",
+  "exemptPrefixes": []
+}

@@ -37,6 +37,17 @@ Remaining strict order:
 - Remaining soaks must use a dedicated isolated Supabase project or a proven `clean_mirror`, never dirty shared staging.
 - Remove a remaining row once its PR merges to `main` and gets a durable `## Recent migrations` entry below.
 
+## Train D migration reservations (2026-06-16)
+
+Reserved by the Train D MVP-launch train (GitHub milestone #2). **Pre-soak; not yet merged.** Merge order is strict **0340 → 0341** (0341 is stacked on 0340). Do not reserve or reuse `0340` or `0341`.
+
+| Prefix | Branch | Story | File | Status |
+|---|---|---|---|---|
+| `0340` | `feat/train-d-proof-foundation` | SCRUM-2335 / 2490 / 2491 | `0340_scrum2335_proof_completeness_columns_and_trigger.sql` | RESERVED — pre-soak |
+| `0341` | `feat/train-d-credit-foundation` (stacked on 0340) | SCRUM-2349 / 2350 | `0341_scrum2349_2350_credit_integrity_foundation.sql` | RESERVED — pre-soak |
+
+Train D soaks once (consolidated RC) after Train C (#1154) merges, then rebases onto the new `main`; see HANDOFF.md + the "Release Soak Protection — No-Restart Process" Confluence page.
+
 ## Recent migrations (PR #817)
 
 - **0311_scrum1599_public_anchor_provenance.sql**: Replaces `get_public_anchor` so public verification can return `SUPERSEDED` records and CSI-03 source provenance fields from sanitized anchor metadata.
