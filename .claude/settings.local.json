@@ -167,7 +167,9 @@
       "Bash(git rebase:*)",
       "mcp__52fad70b-47fd-4f28-948d-155ddb7ec81a__searchJiraIssuesUsingJql",
       "mcp__1ae86eb5-9b90-481b-9355-7535904e24f3__execute_sql",
-      "mcp__3c310765-3921-4ad8-a271-8fdcbd5e50bd__whoami"
+      "mcp__3c310765-3921-4ad8-a271-8fdcbd5e50bd__whoami",
+      "mcp__52fad70b-47fd-4f28-948d-155ddb7ec81a__createJiraIssue",
+      "mcp__52fad70b-47fd-4f28-948d-155ddb7ec81a__addCommentToJiraIssue"
     ]
   },
   "enableAllProjectMcpServers": true,
