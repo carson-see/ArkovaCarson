@@ -18,6 +18,13 @@
 
 **Takeaway:** R-1 is a *relationship/credential-custody* risk, not a code-path-down risk. No anchor/verify flow depends on the CE key. The fatal mode: the trial key expires, the CTID path lapses, and **nobody is alerted** (key not inventoried + reminder dead). Fix custody + alerting now; pre-wire the consuming path for when SCRUM-1928 unblocks.
 
+## 0a. UPDATE — 2026-06-19 (executed; supersedes the rename recommendation below)
+
+Carson confirmed the CE key is **already in Secret Manager** as `Credential_Engine` — there is **no "move" to do**. Acting on that:
+- **DONE this session (in place; value never read):** added the per-secret `roles/secretmanager.secretAccessor` binding for the worker runtime SA (`270018525501-compute@developer.gserviceaccount.com`, region us-central1) and inventory labels (`owner=lane3, category=api-key, service=credential-engine, risk=r-1, rotation-cadence-days=90`) on `Credential_Engine`. Verified via `gcloud secrets get-iam-policy` + `describe`. The project-level grant is unaffected; this is additive least-privilege.
+- **Decision change:** keep `Credential_Engine` as the live secret. The kebab-case rename + 2-secret split in §2/§4 below is **NOT pursued** — a rename would force an unnecessary value migration. If/when CE issues a distinct sandbox key, add `credential-engine-api-key-sandbox` then; until then the single hardened secret stands. Treat §2/§4's "create/migrate" steps as **superseded**; §4's rotation procedure still applies to `Credential_Engine` in place.
+- **Still open (genuinely external):** the permanent-key/sandbox request to CE (drafted in Gmail + doc 04) and the paid Developer Agreement decision before ~2026-09-09. The rotation-reminder code wiring (SCRUM-2536) is a Sprint-1 build.
+
 ## 1. Current-state detail (file:line)
 
 | Concern | Reality | Cite |

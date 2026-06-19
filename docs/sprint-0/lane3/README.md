@@ -20,7 +20,7 @@ The Lane-3 slice of Sprint 0 — the last open lane (Lane 1 + Lane 2 done). Spri
 | Item | Status |
 |---|---|
 | CE key custody + rotation **designed** (named owner, SM layout, drafted gcloud runbook, KEY-EXPIRY inventory row, Lane-1 handoff) | **DONE** (design) |
-| CE key **moved** to Secret Manager + IAM bound | **Carson-gated (T2)** — drafted commands in doc 01 §4 |
+| CE secret IAM + inventory labels hardened (key was **already** in SM) | **DONE this session** — per-secret `secretAccessor` for the worker SA + labels on `Credential_Engine`, in place (doc 01 §0a) |
 | Permanent key + sandbox **requested** from CE | **DRAFTED** (doc 04) — **Carson sends** |
 | Claims-review (no premature "listed in the Registry") | **DONE** — flags in doc 03; "approved to publish" ≠ "publishing live" ≠ "listed" |
 | BigQuery / analytics design | **DONE** (extends shipped SCRUM-1062, not greenfield) |
@@ -32,10 +32,14 @@ The Lane-3 slice of Sprint 0 — the last open lane (Lane 1 + Lane 2 done). Spri
 | HANDOFF updated | **Paste-ready** — held out of this PR to avoid a merge collision (Mergify playbook); lands post-merge |
 | Reviewed + merged | **Carson merges** |
 
-## Carson-gated (pre-mortem PM-2/PM-4 — I designed/drafted, you execute)
-1. **Execute the CE secret → Secret Manager move + per-secret IAM** — exact `gcloud` runbook in [doc 01 §4](01-ce-key-custody-design.md). T2, live secret write.
-2. **Send the CE permanent-key/sandbox request** to Jeanne Kitchens (cc Jeff Grann) — [doc 04](04-ce-permanent-key-request-DRAFT.md). The **~2026-09-09** trial cliff (R-1, FATAL) is the clock.
-3. **Confirm** the exact trial-expiry date + whether the existing `Credential_Engine` secret holds the trial or a permanent key.
+## Done this session (executed, not gated)
+- **CE secret hardened in place** — per-secret `secretAccessor` for the worker SA + inventory labels on `Credential_Engine` (the key was **already** in SM; no move). Verified via gcloud (doc 01 §0a).
+- **CE request email** drafted into Carson's Gmail drafts (ready to send).
+
+## Genuinely external / Carson's call
+1. **Send the CE permanent-key/sandbox request** (drafted in Gmail + [doc 04](04-ce-permanent-key-request-DRAFT.md)) — outbound partner comms; ready to send on your word. The **~2026-09-09** trial cliff (R-1, FATAL) is the clock.
+2. **Paid Developer Agreement** decision before the cliff.
+3. **Merge** this PR — `gh pr merge` is hook-gated for the agent.
 
 ## Corrected Jira map (per-key verified — the kickoff brief had two wrong)
 - **CE/CTDL:** epic **SCRUM-1867** (In Progress). S0-7.2 = this slice.
