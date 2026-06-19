@@ -202,10 +202,88 @@ function findDuplicates(rows: MigrationRow[], field: keyof MigrationRow): string
 }
 
 /**
- * Find migration names that appear more than once.
+ * Reconstruct a canonical name identity for a ledger row so that two genuinely
+ * distinct migrations whose stored `name` merely dropped its numeric prefix are
+ * not mistaken for a duplicate.
+ *
+ * `supabase db push` records a migration's `name` WITHOUT its numeric prefix
+ * (e.g. both `0302_validate_api_key_rpc_hardening` and
+ * `0303_validate_api_key_rpc_hardening` collapse to the bare
+ * `validate_api_key_rpc_hardening`), while keeping the distinct numeric
+ * `version` (0302 vs 0303). Prod, by contrast, stores the prefixed name. Naively
+ * counting bare names flags the two distinct migrations as a duplicate on a
+ * legitimately-clean isolated rig.
+ *
+ * Identity rules:
+ *  - If the stored `name` already carries a `NNNN_` numeric prefix, the name is
+ *    authoritative and used verbatim. This preserves genuine-duplicate detection
+ *    (two rows with the SAME prefixed name collide regardless of version) and
+ *    keeps contamination signals (a prefixed name whose own prefix disagrees with
+ *    its version still collides with the original under the shared prefixed name).
+ *  - Otherwise the prefix was dropped on push, so reconstruct `${version}_${name}`
+ *    — but only when the row's `version` is a real repo-backed numeric version
+ *    (present in `repoVersions`). That guard means two distinct migrations whose
+ *    bare names match are separated by their distinct repo-backed versions, while
+ *    a non-repo/garbage version cannot manufacture a phantom-distinct identity to
+ *    mask a real collision (it falls through to the bare name).
  */
-export function findDuplicateNames(rows: MigrationRow[]): string[] {
-  return findDuplicates(rows, 'name');
+function canonicalNameIdentity(row: MigrationRow, repoVersions?: ReadonlySet<string>): string {
+  const { version, name } = row;
+
+  // Name already carries its own numeric prefix → authoritative, use verbatim.
+  if (/^\d{4,}_/.test(name)) return name;
+
+  // Bare (prefix-dropped) name: reconstruct identity from the numeric version,
+  // but only when that version is a real repo migration. Without a repo set, or
+  // for a version the repo does not back, fall back to the bare name so genuine
+  // collisions (and contamination) still surface.
+  if (version && repoVersions?.has(version)) {
+    return `${version}_${name}`;
+  }
+
+  return name;
+}
+
+/**
+ * Find migration names that appear more than once.
+ *
+ * When `repoVersions` (the repo source-of-truth numeric versions) is supplied,
+ * identity is normalized via {@link canonicalNameIdentity} so that two
+ * genuinely-distinct migrations whose stored names merely dropped their numeric
+ * prefix on `supabase db push` are NOT flagged — while same-version+same-name
+ * replays and prefixed-name collisions still are. Returns the stored `name`(s)
+ * whose canonical identity collides.
+ *
+ * Without `repoVersions`, behavior is the legacy bare-name count.
+ */
+export function findDuplicateNames(rows: MigrationRow[], repoVersions?: ReadonlySet<string>): string[] {
+  if (!repoVersions) {
+    return findDuplicates(rows, 'name');
+  }
+
+  // Count by canonical identity, but report the human-readable stored name.
+  const identityCounts = new Map<string, number>();
+  const identityToNames = new Map<string, Set<string>>();
+  for (const row of rows) {
+    const identity = canonicalNameIdentity(row, repoVersions);
+    identityCounts.set(identity, (identityCounts.get(identity) ?? 0) + 1);
+    let names = identityToNames.get(identity);
+    if (!names) {
+      names = new Set<string>();
+      identityToNames.set(identity, names);
+    }
+    names.add(row.name);
+  }
+
+  const duplicates: string[] = [];
+  for (const [identity, count] of identityCounts) {
+    if (count > 1) {
+      for (const name of identityToNames.get(identity) ?? []) {
+        duplicates.push(name);
+      }
+    }
+  }
+  return duplicates;
 }
 
 /**
@@ -534,8 +612,14 @@ export function buildReport(opts: {
       : `${classified.length} suspect row(s): ${classified.map((c) => `${c.row.name} (${c.reason})`).join('; ')}`,
   });
 
-  // Check 2: Duplicate names
-  const dupeNames = findDuplicateNames(migrationRows);
+  // Check 2: Duplicate names.
+  // When repo migration versions are supplied, normalize identity by the numeric
+  // version prefix: `supabase db push` stores a rig's names WITHOUT their numeric
+  // prefix, so two genuinely-distinct migrations (e.g. 0302 and 0303 of the same
+  // descriptive name) collapse to one repeated bare name on the rig. Those are NOT
+  // a duplicate. Same-version+same-name replays and prefixed-name collisions are
+  // still flagged. Without repoVersions, the legacy bare-name count applies.
+  const dupeNames = findDuplicateNames(migrationRows, repoVersions);
   checks.push({
     name: 'duplicate_names',
     passed: dupeNames.length === 0,
