@@ -1,0 +1,29 @@
+{
+  "_note": "ASSERTED = intended EFFECTIVE prod config. For kill-switch flags the effective value is the DB (switchboard_flags) resolution, NOT the raw deploy env var: e.g. ENABLE_SEMANTIC_SEARCH and ENABLE_AI_FRAUD are env=true (deploy-worker.yml) but DB=false/gated (fail closed) => effective=false; both are pinned here so a silent re-enable is caught. cspConnectSrc is the cross-runtime-relevant SUBSET (worker+edge), not the full vercel.json connect-src. SPIKE: hand-declared; Sprint 1 captures env AND DB per flag so the env<->DB delta (the 2026-05-30 fail-open class) becomes the compared dimension. Provider 'getblock' = post-2026-04-25 sovereign-broadcast posture.",
+  "flags": {
+    "ENABLE_PROD_NETWORK_ANCHORING": true,
+    "ENABLE_AI_EXTRACTION": true,
+    "ENABLE_VERIFICATION_API": true,
+    "ENABLE_SEMANTIC_SEARCH": false,
+    "ENABLE_AI_FRAUD": false
+  },
+  "bitcoinUtxoProvider": "getblock",
+  "bitcoinFeeStrategy": "mempool",
+  "cspConnectSrc": [
+    "https://arkova-worker-270018525501.us-central1.run.app",
+    "https://edge.arkova.ai"
+  ],
+  "runtimes": {
+    "worker": {
+      "runtime": "worker",
+      "origin": "https://arkova-worker-270018525501.us-central1.run.app",
+      "flags": { "ENABLE_AI_FALLBACK": false },
+      "bitcoinUtxoProvider": "getblock"
+    },
+    "edge": {
+      "runtime": "edge",
+      "origin": "https://edge.arkova.ai",
+      "flags": { "ENABLE_AI_FALLBACK": false }
+    }
+  }
+}
