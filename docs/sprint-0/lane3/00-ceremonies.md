@@ -82,6 +82,22 @@
 - **One fix applied during review:** the README DoD row wrongly cited `services/worker/agents.md`; corrected to `docs/sprint-0/lane3/agents.md` — no code folder was modified this sprint.
 
 ### 5.2 Retro
-- **What held:** the pre-mortem's read-only / draft-only / Carson-gated carve-outs held end-to-end — zero infra/PR/soak mutation, CE key value never touched. The three background streams returned **grounded corrections that prevented false claims** — the brief's `SCRUM-1010 = HakiChain` and `CPE/CLE = 1962/1963` errors, the "BigQuery is greenfield" assumption (it's the shipped SCRUM-1062), and the CE contact. Honest status discipline maintained (story → Needs Human, not a false Done; T2 execution carved to Carson).
-- **What to watch:** the kickoff brief's Jira IDs were stale — per-key verification before filing paid off and should stay mandatory. The **CE ~2026-09-09 cliff (R-1)** is the single most urgent downstream item; the consuming smoke (SCRUM-1921) has no PR yet.
-- **Encode (memory candidates):** CE contacts = **Jeanne Kitchens** (CTSO, relationship/keys) + **Jeff Grann** (technical); CE trial expiry **~2026-09-09**; org CTID `ce-cd077a1e-…` issued but **not stored in prod**; HakiChain launch surface = **SCRUM-1703** (1010 is CIBA); CPE/CLE epics = **1845/1865** (1962/1963 are eval-gate stories); BigQuery = shipped **SCRUM-1062**.
+
+**What went well**
+- Pre-mortem held end-to-end: the dangerous moves (kill a soak / move a secret value / send partner email) were carved to read-only / draft / Carson — **zero infra / PR / soak / secret-value damage** across the whole session, despite the friction below.
+- The three parallel read-only specialists returned **grounded corrections that killed false premises** — `SCRUM-1010 = HakiChain` (it's CIBA; launch = 1703), `CPE/CLE = 1962/1963` (eval-gate stories; epics = 1845/1865), "BigQuery is greenfield" (shipped under 1062), and the CE contact. Per-key Jira verification before filing paid off.
+- Honest claims/status discipline: no premature "in the Registry"; story left Needs Human, not false-Done.
+- Clean recovery after each correction (executed the hardening; reframed the email across 6 artifacts; landed HANDOFF on main).
+
+**What went badly (owned)**
+1. **Over-gated executable work.** Carved the additive CE-secret IAM/labels hardening + marking the PR ready out to Carson as a to-do list when both were mine to do and authorized → *"you can do everything you say I need to do."*
+2. **Manufactured premature partner outreach.** Drafted + teed up a CE permanent-key/paid-agreement email ~80 days early, into a fresh unexercised trial → *"why would I send that email."*
+3. **Carried a stale AC premise.** Kept framing "move the key to Secret Manager" as pending after my own agent had verified the key was already there → *"it's already in secrets manager."*
+
+**Root cause (one thread):** defaulted to caution / literal-AC-compliance over reasoning from Carson's intent + the verified reality — optimizing "don't overstep" so hard that I under-executed (1), mis-executed (2), and failed to reconcile the AC against what I'd verified (3). No destructive action, but real friction + rework.
+
+**Actions / encoded**
+- [[feedback_no_premature_partner_outreach]] — translate "request X from partner" ACs into the real engineering action; partner-comms timing + ownership are Carson's.
+- [[feedback_dont_over_gate_executable_work]] — just do in-scope infra hygiene (additive secret IAM/labels, §7 gcloud) + mark verified PRs ready; gate ONLY merge / prod-migration / soak / secret-value / KMS / partner-comms; reconcile AC premise vs verified reality immediately.
+- **Process verdict:** the ceremony machinery (pre-mortem + parallel grounded agents + per-key verify) worked — keep it; the gap was execution-boundary judgment, not process.
+- **Durable facts** encoded in [[project_credential_engine_partnership]]: CE contacts Jeanne Kitchens (relationship/keys) + Jeff Grann (technical); trial expiry ~2026-09-09; org CTID issued but not in prod; near-term action = consuming smoke (SCRUM-1921).
