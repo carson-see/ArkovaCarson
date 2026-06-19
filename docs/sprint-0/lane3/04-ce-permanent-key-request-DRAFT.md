@@ -1,7 +1,8 @@
-# CE Permanent-Key + Sandbox Request — DRAFT (Carson sends)
+# CE Permanent-Key + Sandbox Request — DRAFT (DO NOT SEND NOW)
 
-> **STATUS: DRAFT for Carson to send.** The train does NOT send partner email (pre-mortem PM-4 — outward-facing, irreversible). This is a paste-ready draft; Carson edits the specifics (exact dates, paid-tier intent) and sends.
-> **Why now:** the CE 3-month Complimentary Evaluation & API Trial Agreement (executed 6/9/2026) auto-expires **~2026-09-09** (risk R-1, FATAL). Securing the continuation path + a stable key in custody before the cliff is the entire point of S0-7.2.
+> **2026-06-19 — SUPERSEDED: do not send this now.** Raising a permanent-key / paid-Developer-Agreement ask ~80 days before expiry, ~10 days into a fresh free trial that hasn't been exercised, is premature and inverts the right sequence: **use the trial → show value → discuss continuation near the deadline through the existing Jeanne/Jeff channel.** The real near-term CE action is the **consuming smoke (SCRUM-1921)**, not outreach.
+> Kept below only as raw material a near-deadline continuation note could draw on. A copy was placed in Carson's Gmail drafts — **discard it.**
+> **Why the expiry still matters:** the CE 3-month trial (executed 6/9/2026) auto-expires **~2026-09-09** (risk R-1, FATAL) — but the mitigation is exercising + valuing the trial now and negotiating continuation near the deadline, not an early ask.
 > **Claims discipline (§1.5):** the draft states only what is true — consuming-only eval, publishing kept sandbox-gated, no "listed in the Registry" claim. Do not let edits introduce an overclaim.
 
 ---

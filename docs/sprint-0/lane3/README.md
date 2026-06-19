@@ -37,7 +37,7 @@ The Lane-3 slice of Sprint 0 — the last open lane (Lane 1 + Lane 2 done). Spri
 - **CE request email** drafted into Carson's Gmail drafts (ready to send).
 
 ## Genuinely external / Carson's call
-1. **Send the CE permanent-key/sandbox request** (drafted in Gmail + [doc 04](04-ce-permanent-key-request-DRAFT.md)) — outbound partner comms; ready to send on your word. The **~2026-09-09** trial cliff (R-1, FATAL) is the clock.
+1. **CE continuation is NOT a now-action.** Use the trial first — run the consuming smoke (SCRUM-1921) against the live Registry to capture value; raise continuation/expiry with Jeanne/Jeff via the existing sync cadence near the **~2026-09-09** deadline (R-1). A premature draft email landed in Carson's Gmail drafts — **discard it** (see [doc 04](04-ce-permanent-key-request-DRAFT.md), reframed DO-NOT-SEND).
 2. **Paid Developer Agreement** decision before the cliff.
 3. **Merge** this PR — `gh pr merge` is hook-gated for the agent.
 
