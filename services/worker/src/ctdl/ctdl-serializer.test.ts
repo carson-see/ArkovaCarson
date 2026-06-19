@@ -90,6 +90,76 @@ describe('buildCtdlJsonLd', () => {
     expect(jsonLd['ceterms:revocationReason']).toBe('Issuer revoked the completion.');
   });
 
+  it('suppresses PII-bearing free-text values before public CTDL serialization', () => {
+    const jsonLd = buildCtdlJsonLd({
+      ...baseAnchor,
+      label: null,
+      description: 'Learner contact jane.student@example.edu or 555-867-5309.',
+      metadata: {
+        title: 'Course certificate for jane.student@example.edu',
+        courseTitle: 'Ethics and Professional Responsibility',
+      },
+    }, {
+      verifyUrl: 'https://app.arkova.ai/verify/ARK-2026-CTDL-001',
+    });
+    const body = JSON.stringify(jsonLd);
+
+    expect(jsonLd['ceterms:name']).toBe('Ethics and Professional Responsibility');
+    expect(jsonLd).not.toHaveProperty('ceterms:description');
+    expect(body).not.toContain('jane.student@example.edu');
+    expect(body).not.toContain('555-867-5309');
+  });
+
+  it('fails closed for transcript-like education records when learner-name PII confidence is low', () => {
+    expect(() => buildCtdlJsonLd({
+      ...baseAnchor,
+      credentialType: 'DEGREE',
+      subType: 'transcript',
+      label: 'Official transcript for Jane Q Student',
+      description: 'Transcript record for learner Jane Q Student.',
+      metadata: {
+        document_type: 'official transcript',
+      },
+    }, {
+      verifyUrl: 'https://app.arkova.ai/verify/ARK-2026-CTDL-001',
+    })).toThrow(/CTDL PII safety gate/);
+  });
+
+  it('fails closed for name-first transcript labels that previously evaded the learner-name gate', () => {
+    expect(() => buildCtdlJsonLd({
+      ...baseAnchor,
+      credentialType: 'DEGREE',
+      subType: 'academic_record',
+      label: "Jane Q Student's transcript",
+      description: 'Official academic record.',
+      metadata: {
+        document_type: 'transcript',
+      },
+    }, {
+      verifyUrl: 'https://app.arkova.ai/verify/ARK-2026-CTDL-001',
+    })).toThrow(/CTDL PII safety gate/);
+  });
+
+  it('suppresses learner-name free text across non-transcript credential types', () => {
+    const jsonLd = buildCtdlJsonLd({
+      ...baseAnchor,
+      credentialType: 'CLE',
+      subType: 'ethics_cle',
+      label: 'Certificate awarded to Jane Q Student',
+      description: 'Completion credential held by Jane Q Student',
+      metadata: {
+        courseTitle: 'Ethics and Professional Responsibility',
+      },
+    }, {
+      verifyUrl: 'https://app.arkova.ai/verify/ARK-2026-CTDL-001',
+    });
+    const body = JSON.stringify(jsonLd);
+
+    expect(jsonLd['ceterms:name']).toBe('Ethics and Professional Responsibility');
+    expect(jsonLd).not.toHaveProperty('ceterms:description');
+    expect(body).not.toContain('Jane Q Student');
+  });
+
   it('throws for non-publishable statuses so routes can return 404', () => {
     expect(() => buildCtdlJsonLd({
       ...baseAnchor,
