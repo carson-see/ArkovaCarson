@@ -1,6 +1,44 @@
 # agents.md — services/worker
 
-_Last updated: 2026-06-05 (Edge MCP Truthfulness PR-1)._
+_Last updated: 2026-06-16 (SCRUM-2492 connector-byte handling hardening)._
+
+## SCRUM-2492 — connector-byte handling hardening (§1.6A enforcement) (2026-06-16)
+
+Closed the §1.6A gap where 0-of-6 controls were enforced. Connector-fetched
+document bytes (DocuSign / Drive) are now blocked from every leak sink — at
+build time AND runtime. The connector happy path was already clean, so this is
+regression-prevention + closing latent error-path leaks. Six cohesive pieces:
+
+- **`eslint-rules/no-connector-bytes-to-sink.cjs`** (new, ERROR on connector
+  files): flags raw bytes (`Buffer`/typed-array/`*.bytes`/`documentBytes`/raw
+  `.toString()`) reaching `logger.*`, `Sentry.capture*`/breadcrumb/context,
+  `Error`/`throw`/template literals, `last_error:`/`failJob(...)`, `fs.write*`,
+  `.insert/.update/.upsert` row values, or `JSON.stringify(...)`. Single-hop
+  alias tracking; range-dedupe. Scoped via `eslint.config.js` to
+  `src/integrations/**` + `docusign-*` job files; PKI/timestamp `arrayBuffer()`
+  readers (`src/signatures/**`) are out of scope. 0 real violations.
+- **`integrations/oauth/docusign.ts` / `drive.ts`**: `DocusignApiError` /
+  `DriveApiError` are byte-safe BY CONSTRUCTION — dropped the `body: unknown`
+  field; now `{ message, status }` only (mirrors `CredentialSourceImportError`).
+  All ~20 construction sites updated; the document-fetch non-2xx path no longer
+  reads the response body.
+- **`utils/logger.ts`**: `formatters.log` recursively strips any binary value
+  (`Buffer`/TypedArray/DataView/ArrayBuffer + `{type:'Buffer',data:[…]}` shape)
+  to `[REDACTED_BYTES]` by TYPE regardless of key; `redact` paths cover known
+  byte field names; the `err`/`error` serializer runs the same sanitizer.
+  Exported `redactBinaryValues`.
+- **`utils/sentry.ts`**: `scrubBinaryValues` runs FIRST in `scrubPiiFromEvent`
+  and `scrubPiiFromBreadcrumb` — type-based binary drop across contexts/extra/
+  tags/exception/arbitrary keys, before the existing key-name PII pass.
+- **`utils/jobQueue.ts`**: `failJob` routes `last_error` through
+  `sanitizeLastError` (detects raw Buffer/typed-array, `{type:'Buffer'}` JSON,
+  control-byte runs, and low-entropy repeated-char runs → token) instead of a
+  bare `substring(0,1000)`. The dead-letter warn log uses the sanitized value.
+- **`jobs/connector-byte-safety.test.ts`** (new): the mandated runtime test —
+  drives a 5 MiB Buffer (`Buffer.alloc(5*1024*1024, 0x25)`) through every sink
+  and asserts the bytes appear in none of: thrown error message/fields,
+  `job_queue.last_error`, captured pino output, or a Sentry event through
+  `scrubPiiFromEvent`.
 
 ## Edge MCP Truthfulness PR-1 — test realignment + embedding drift guard (2026-06-05)
 

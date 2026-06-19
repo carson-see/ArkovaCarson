@@ -1,6 +1,6 @@
 # agents.md — services/worker/src/integrations/oauth/
 
-_Last updated: 2026-05-27_
+_Last updated: 2026-06-16 (SCRUM-2492 byte-safe error types + bounded `detail` on non-document paths)._
 
 ## What This Folder Contains
 
@@ -24,3 +24,5 @@ Shared OAuth infrastructure — token encryption, HMAC webhook verification, and
 - **DO** route DocuSign cron/job API fetches through `docusign-rate-limit.ts` so refresh/document calls share one per-account budget
 - **DO NOT** log response bodies from OAuth token exchanges (contain cleartext tokens)
 - **DO NOT** reuse the Bitcoin asymmetric signing key for OAuth token encryption
+- **DO NOT** add a `body`/raw-response field to `DocusignApiError` / `DriveApiError` (§1.6A / SCRUM-2492). They carry NO raw response body — a document-bearing response must never ride an error into a logger/Sentry/`last_error`. On `fetchDocusignCombinedDocument`'s non-2xx path (the only document-fetch path), do NOT read the response body and do NOT pass a `detail`; throw status + message only.
+- **DO** use the optional `detail?: string` (3rd ctor arg) ONLY on the NON-document paths (token exchange/refresh, userinfo, DocuSign Connect list/mutation/parse/timeout; Drive token exchange/refresh, startPageToken, changes.watch, channels.stop, token revoke, files.get, changes.list) — whose error body is safe OAuth/API error JSON. Always build it with `boundedErrorDetail(json)` from `utils/byte-safety.ts` (bounded ~500 chars, byte-redacted, PII-scrubbed). Never pass a raw string/body directly.

@@ -18,6 +18,7 @@
  *   - 1.4: access tokens never logged.
  */
 import { z } from 'zod';
+import { boundedErrorDetail } from '../../utils/byte-safety.js';
 
 const DRIVE_OAUTH_TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const DRIVE_OAUTH_REVOKE_URL = 'https://oauth2.googleapis.com/revoke';
@@ -48,14 +49,32 @@ export class DriveConfigError extends Error {
   }
 }
 
+/**
+ * Google Drive API error.
+ *
+ * SCRUM-2492 (§1.6A): never carries a raw response BODY — it has NO `body`
+ * field, so a raw (potentially document-bearing) Drive response can never be
+ * captured on the error and leak through a logger / Sentry / `last_error`.
+ *
+ * The optional `detail` is a BOUNDED, byte-safe, PII-scrubbed string built BY
+ * CONSTRUCTION via {@link boundedErrorDetail} — capped at ~500 chars, byte-runs
+ * and binary containers collapse to a redaction token, and email/UUID/JWT/token
+ * PII is scrubbed. It restores connector-ops debuggability on the NON-document
+ * Drive paths (token exchange/refresh, startPageToken, changes.watch,
+ * channels.stop, token revoke, files.get metadata, changes.list) whose error
+ * body is safe Google API error JSON (e.g. `{ "error": { "message": "..." } }`).
+ * Drive currently exposes no document-fetch helper here; were one added, it
+ * MUST construct this error with status + message only (no detail).
+ */
 export class DriveApiError extends Error {
   status: number;
-  body: unknown;
-  constructor(msg: string, status: number, body: unknown) {
+  /** Bounded (~500 char), byte-safe, PII-scrubbed; never a raw document-fetch body. */
+  detail?: string;
+  constructor(msg: string, status: number, detail?: string) {
     super(msg);
     this.name = 'DriveApiError';
     this.status = status;
-    this.body = body;
+    if (detail !== undefined) this.detail = detail;
   }
 }
 
@@ -122,7 +141,8 @@ export async function exchangeCode(args: {
   });
   const json = await res.json().catch(() => null);
   if (!res.ok) {
-    throw new DriveApiError('Drive token exchange failed', res.status, json);
+    // Non-document path: Google token endpoint returns safe OAuth error JSON.
+    throw new DriveApiError('Drive token exchange failed', res.status, boundedErrorDetail(json));
   }
   return OAuthTokenResponse.parse(json);
 }
@@ -150,7 +170,8 @@ export async function refreshAccessToken(args: {
   });
   const json = await res.json().catch(() => null);
   if (!res.ok) {
-    throw new DriveApiError('Drive token refresh failed', res.status, json);
+    // Non-document path: Google token refresh returns safe OAuth error JSON.
+    throw new DriveApiError('Drive token refresh failed', res.status, boundedErrorDetail(json));
   }
   return OAuthTokenResponse.parse(json);
 }
@@ -174,7 +195,8 @@ export async function createChangesWatch(args: {
   });
   const startJson = (await startRes.json().catch(() => null)) as { startPageToken?: string } | null;
   if (!startRes.ok || !startJson?.startPageToken) {
-    throw new DriveApiError('Drive startPageToken failed', startRes.status, startJson);
+    // Non-document path: changes/startPageToken returns small API JSON.
+    throw new DriveApiError('Drive startPageToken failed', startRes.status, boundedErrorDetail(startJson));
   }
 
   const watchBody = {
@@ -200,7 +222,8 @@ export async function createChangesWatch(args: {
     expiration?: string;
   } | null;
   if (!res.ok || !json?.resourceId) {
-    throw new DriveApiError('Drive changes.watch failed', res.status, json);
+    // Non-document path: changes.watch returns small channel/API JSON.
+    throw new DriveApiError('Drive changes.watch failed', res.status, boundedErrorDetail(json));
   }
   // Drive expiration is a Unix ms string — normalise to ISO for Postgres.
   const expirationIso = json.expiration
@@ -229,8 +252,9 @@ export async function stopDriveChannel(args: {
     }),
   });
   if (!res.ok) {
+    // Non-document path: channels.stop error body is safe Google API JSON.
     const json = await res.json().catch(() => null);
-    throw new DriveApiError('Drive channels.stop failed', res.status, json);
+    throw new DriveApiError('Drive channels.stop failed', res.status, boundedErrorDetail(json));
   }
 }
 
@@ -247,8 +271,9 @@ export async function revokeOAuthToken(args: {
     body: body.toString(),
   });
   if (!res.ok) {
+    // Non-document path: token revoke error body is safe OAuth API JSON.
     const json = await res.json().catch(() => null);
-    throw new DriveApiError('Drive token revoke failed', res.status, json);
+    throw new DriveApiError('Drive token revoke failed', res.status, boundedErrorDetail(json));
   }
 }
 
@@ -270,7 +295,9 @@ export async function getFileMetadata(args: {
     driveId?: string;
   } | null;
   if (!res.ok || !json?.id || !json.name) {
-    throw new DriveApiError('Drive files.get failed', res.status, json);
+    // Non-document path: files.get returns metadata-only JSON (fields mask =
+    // id,name,parents,driveId) — no document content; bounded+scrubbed detail.
+    throw new DriveApiError('Drive files.get failed', res.status, boundedErrorDetail(json));
   }
   return {
     id: json.id,
@@ -352,7 +379,9 @@ export async function listChanges(args: {
   });
   const json = await res.json().catch(() => null);
   if (!res.ok) {
-    throw new DriveApiError('Drive changes.list failed', res.status, json);
+    // Non-document path: changes.list returns a metadata-only feed (fields mask
+    // pulls file id/parents/revision/actor — no bytes); bounded+scrubbed detail.
+    throw new DriveApiError('Drive changes.list failed', res.status, boundedErrorDetail(json));
   }
   return ChangesListResponse.parse(json);
 }
