@@ -14,6 +14,20 @@
 
 ## Now
 
+### 2026-06-19 — PI-0 launch-readiness PLANNED + FILED (C-suite gate → kicked back → planned; no prod/soak touched)
+
+**C-suite launch-readiness gate (2026-06-19) did NOT approve launch** — strategic direction approved, kicked back to the ART for a real plan. Outcome: **PI-0** (the pre-launch increment; renamed from the Sprint-0 doc's "Train D / PI-1" framing — post-launch = PI-1+) is now planned, gated, and filed. Builds on Sprint-0 (S0-E4 #1211 landed; lanes onboarded).
+
+**Artifacts:** ART PI-0 plan = Google Doc `1kS6eFsOgT7lFytDgtc2xvt6SZgNJi_kgtaoAEWLA4Mk` (PI Plan + Pre-Mortem + Retro) + Confluence index **85524482**. Per-lane SM team plans (Drive "Sprints" folder): Lane 1 `1feSaWt5...`, Lane 2 `1bvCozrbTm...`, Lane 3 `1oyqaGCSlG...`. Lane Confluence pages **85557250** (L1) / **85590017** (L2) / **85491717** (L3). Cross-lane sync = **Program Board** page **85622786**.
+
+**Jira (reconciled, NOT duplicated):** the existing `prd-2026-06-12` backlog (8 MVP-D epics SCRUM-2325/2328/2329/2330/2331/2332/2333/2334 + ~78 stories, already full AC/DoD/tier/subtasks) was reorganized into PI-0 via labels — every epic+story now carries `pi-0` + `lane-1|2|3` (+ `sprint-1..4` on stories). DoD = the 13 launch gates (PRD §11); **OPS-02 / SCRUM-2400 = the 48h integration-soak launch gate**; 4 sprints, assumed start **2026-06-22**, re-gate ~08-14.
+
+**Decisions (PO-confirmed 06-19):** FE-PROOF-GATE **SCRUM-2501 → lane-2** (was lane-1); chain posture **OP_RETURN 0x01 + GetBlock as header/inclusion-proof source** confirmed (unblocks L1 chain-drift pack); instant-secure stays HIDDEN until QUEUE-08+ledger pass T3; **end-S3 code-freeze gates OPS-02**; 0340 prod-apply before 0341. Cross-lane **Blocks** links wired: 2348→2363, 2335→2349, 2338/2340→2501, 2363/2340/2505→2400.
+
+**INCIDENT (logged to memory):** the Atlassian MCP key-resolver **misroutes ~30% of lookups under CONCURRENT sessions** (parallel agents writing Jira), and `editJiraIssue` replaces fields → clobber risk. **No data was corrupted** — defensive read-backs held, parallel agents were stopped, and the sole-session guarded re-run completed all 59 remaining labels clean (0 misroutes). Rule: never fan out parallel agents writing the Atlassian MCP; single-session + read/write key-verify, or address by numeric issue ID.
+
+_Last refreshed: 2026-06-19 by Claude (carson@arkova.io) — PLANNING ARTIFACTS ONLY, no prod/worker/schema/soak state changed and no PR merged. Verified via Confluence create responses (pages 85524482/85557250/85590017/85491717/85622786), Jira label query (`labels in (pi-0,lane-1,lane-2,lane-3)`) + per-issue `getJiraIssue` read-back (8 epics + 78 stories labeled; 2501=lane-2; 7 Blocks links confirmed on 2400/2501/2363/2349), and Drive doc creates. Train C #1154 + Train D foundation branches untouched._
+
 ### 2026-06-19 — Lane 3 Sprint-0 slice filed; CE secret hardened in place
 
 Lane 3 (Credential Network & Intelligence) — the **last open Sprint-0 lane** (L1+L2 done) — delivered its slice (T0 design/audit) + executed the in-scope CE custody hardening. **Nothing merged; no existing PR/branch/soak touched** (Train C #1154, Train D rigs, #1208/#1211/#1213 hands-off). PR **#1224** (`lane3/s0-ce-custody-bq-design`, head `67e2c67e`, base `f3f72767`, **draft** (CI pending — promote on green), milestone Sprint 0); Jira **SCRUM-2542** (Needs Human; ↳ 2543/2544/2545 Done, 2546 continuation/merge) under SCRUM-2513; Confluence **85393410**; Drive report in *ARKOVA PI-1-S0*.
