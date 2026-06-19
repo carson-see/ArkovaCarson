@@ -60,7 +60,7 @@
 
 | ID | Failure mode (imagined post-hoc) | Sev | Mitigation baked into the plan |
 |---|---|---|---|
-| PM-1 | Killed a live soak — ran `gcloud run services update` / `supabase db push --linked` / `apply_migration` against shared `arkova-worker-staging` or a Train-D rig (the 2026-06-13 CE-soak-kill class). | 🔴 | **Read-only against all infra.** No Cloud Run / Supabase / migration mutation. Train C #1154 + Train D rigs hands-off. Bootstrap hook is the backstop. |
+| PM-1 | Killed a live soak — ran `gcloud run services update` / `supabase db push --linked` / `apply_migration` against shared staging or a Train-D rig (the 2026-06-13 CE-soak-kill class). | 🔴 | **Read-only against all infra.** No Cloud Run / Supabase / migration mutation. Train C #1154 + Train D rigs hands-off. Bootstrap hook is the backstop. |
 | PM-2 | Moved a real CE secret / bound IAM autonomously (T2, Carson-only). | 🔴 | Design + draft exact commands; **Carson executes**. Train never runs `--apply`. |
 | PM-3 | Leaked the CE key value (printed/logged/committed). | 🔴 | Work with secret **names/paths/metadata only**, never the value (§1.4). |
 | PM-4 | Sent the CE partner email autonomously (irreversible outward action). | 🔴 | **Draft only**; Carson sends/approves. |

@@ -14,14 +14,14 @@ The Lane-3 slice of Sprint 0 — the last open lane (Lane 1 + Lane 2 done). Spri
 | 01 | [CE key → Secret Manager custody + rotation design](01-ce-key-custody-design.md) | S0-7.2 (↔ epic SCRUM-1867) | T0 design / **T2 execute = Carson** |
 | 02 | [BigQuery / analytics design](02-bigquery-analytics-design.md) | ↔ SCRUM-1062 (GCP-MAX-02) | T0 |
 | 03 | [Partnership-history audit (CE / CPE-CLE / Haki)](03-partnership-history-audit.md) | supports S0-E2 (↔ SCRUM-2517) | T0 |
-| 04 | [CE permanent-key + sandbox request — DRAFT](04-ce-permanent-key-request-DRAFT.md) | S0-7.2 | **Carson sends** |
+| 04 | [CE permanent-key + sandbox request — DRAFT](04-ce-permanent-key-request-DRAFT.md) | S0-7.2 | **DRAFT — do not send (premature)** |
 
 ## Definition-of-Done scorecard (Lane 3)
 | Item | Status |
 |---|---|
 | CE key custody + rotation **designed** (named owner, SM layout, drafted gcloud runbook, KEY-EXPIRY inventory row, Lane-1 handoff) | **DONE** (design) |
 | CE secret IAM + inventory labels hardened (key was **already** in SM) | **DONE this session** — per-secret `secretAccessor` for the worker SA + labels on `Credential_Engine`, in place (doc 01 §0a) |
-| Permanent key + sandbox **requested** from CE | **DRAFTED** (doc 04) — **Carson sends** |
+| Permanent key + sandbox requested from CE | **Not a now-action** — premature; draft kept (doc 04); continuation near the ~2026-09-09 deadline via Jeanne/Jeff (R-1) |
 | Claims-review (no premature "listed in the Registry") | **DONE** — flags in doc 03; "approved to publish" ≠ "publishing live" ≠ "listed" |
 | BigQuery / analytics design | **DONE** (extends shipped SCRUM-1062, not greenfield) |
 | CE/CPE/CLE/Haki history → S0-E2 current note | **DONE** (doc 03) + external-gate tracker rows |

@@ -7,7 +7,7 @@ Lane 3 (Credential Network & Intelligence) Sprint-0 deliverables. **T0 design/au
 - `01-ce-key-custody-design.md` — S0-7.2 (↔ epic SCRUM-1867); the **T2 secret move + IAM is Carson-gated** (drafted gcloud runbook in §4)
 - `02-bigquery-analytics-design.md` — extends the shipped SCRUM-1062 subsystem (not greenfield)
 - `03-partnership-history-audit.md` — S0-E2 support; CE/CPE/CLE/Haki current-state + claims-review + external-gate rows
-- `04-ce-permanent-key-request-DRAFT.md` — **Carson sends** (outward partner email)
+- `04-ce-permanent-key-request-DRAFT.md` — outward partner email; **DRAFT / do not send (premature)** — real near-term action is the consuming smoke (SCRUM-1921), continuation near deadline via Jeanne/Jeff
 - `README.md` — index + DoD scorecard
 
 ## Guardrails honored
