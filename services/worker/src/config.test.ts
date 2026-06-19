@@ -380,6 +380,22 @@ describe('SCRUM-1258 vendor connector cross-field guards', () => {
     });
   });
 
+  // 2026-04-24 audit finding H1: DocuSign OAuth signs `state` with the same
+  // dedicated HMAC secret. Boot must fail closed in production when the flow is
+  // on and the secret is missing (parity with the Drive guard above). All other
+  // DocuSign requirements are satisfied so the missing state secret is the only
+  // rejection cause.
+  it('rejects production with ENABLE_DOCUSIGN_OAUTH=true and missing INTEGRATION_STATE_HMAC_SECRET', async () => {
+    await expectConfigToReject({
+      ...PROD_SIGNET,
+      ENABLE_DOCUSIGN_OAUTH: 'true',
+      DOCUSIGN_INTEGRATION_KEY: 'fake-integration-key',
+      DOCUSIGN_CLIENT_SECRET: 'fake-client-secret',
+      GCP_KMS_INTEGRATION_TOKEN_KEY: 'projects/p/locations/l/keyRings/r/cryptoKeys/integration-tokens',
+      INTEGRATION_STATE_HMAC_SECRET: undefined,
+    });
+  });
+
   it('rejects when DOCUSIGN_INTEGRATION_KEY is set but DOCUSIGN_CLIENT_SECRET is missing', async () => {
     await expectConfigToReject({
       DOCUSIGN_INTEGRATION_KEY: 'fake-integration-key',
@@ -437,6 +453,23 @@ describe('SCRUM-1258 vendor connector cross-field guards', () => {
         expect(mod.config.googleOauthClientId).toBe('fake-client-id');
         expect(mod.config.integrationStateHmacSecret).toBe('fake-hmac');
         expect(mod.config.gcpKmsIntegrationTokenKey).toContain('integration-tokens');
+      },
+    );
+  });
+
+  it('accepts production when DocuSign OAuth is fully configured (incl. INTEGRATION_STATE_HMAC_SECRET)', async () => {
+    await withConfig(
+      {
+        ...PROD_SIGNET,
+        ENABLE_DOCUSIGN_OAUTH: 'true',
+        DOCUSIGN_INTEGRATION_KEY: 'fake-integration-key',
+        DOCUSIGN_CLIENT_SECRET: 'fake-client-secret',
+        INTEGRATION_STATE_HMAC_SECRET: 'fake-hmac',
+        GCP_KMS_INTEGRATION_TOKEN_KEY: 'projects/p/locations/l/keyRings/r/cryptoKeys/integration-tokens',
+      },
+      (mod) => {
+        expect(mod.config.enableDocusignOauth).toBe(true);
+        expect(mod.config.integrationStateHmacSecret).toBe('fake-hmac');
       },
     );
   });

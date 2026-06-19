@@ -1,6 +1,6 @@
 # agents.md — services/worker/src/api/v1/integrations/
 
-_Last updated: 2026-05-27_
+_Last updated: 2026-06-11_
 
 ## What This Folder Contains
 
@@ -22,5 +22,7 @@ User-facing OAuth flow endpoints for third-party integrations. Each integration 
 
 - **DO** encrypt tokens with the OAuth crypto helper before storage (cleartext never in Postgres)
 - **DO** use timing-safe comparison for HMAC state parameters
+- **DO** sign the OAuth `state` HMAC with the dedicated `INTEGRATION_STATE_HMAC_SECRET` via `resolveStateSecret()`, resolved at router construction. Fail closed if it is unset — audit finding H1 (Drive SCRUM-1236, DocuSign org + member). The eager router exports are lazy wrappers so importing a module without the env var doesn't throw at import time.
 - **DO** write to `audit_events` (event_category `SECURITY`) on disconnect, not just `integration_events` — SOC 2 CC7.2 requires audit trail for all integration lifecycle events (SCRUM-2039)
 - **DO NOT** log cleartext access/refresh tokens
+- **DO NOT** fall back to `config.supabaseJwtSecret` / `config.supabaseServiceKey` for state signing — that collapses the user-auth and OAuth-CSRF trust boundaries (the H1 finding)
