@@ -1011,6 +1011,9 @@ const STAGING_TOOLING_ALLOW = [
   /^scripts\/ci\/check-agents-md-migration-collision(\.test)?\.ts$/,
   /^scripts\/ci\/compute-merge-authority(\.test)?\.ts$/,
   /^scripts\/ci\/snapshots\//, // CI baselines/snapshots — tooling, never prod runtime
+  // S0-5.2 (epic S0-E5): config↔reality drift + cross-runtime parity gate (CI tooling).
+  /^scripts\/ci\/check-config-drift(\.test)?\.ts$/,
+  /^scripts\/ci\/config-drift\//,
   /^scripts\/ci\/lib\//,
   /^scripts\/gcp-setup\//,
   /^services\/worker\/scripts\/load-test\//,
