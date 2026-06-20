@@ -25,15 +25,6 @@ function makeOkResponse(body: unknown, status = 200): ReturnType<FetchLike> {
   });
 }
 
-function makeErrResponse(status: number): ReturnType<FetchLike> {
-  return Promise.resolve({
-    ok: false,
-    status,
-    json: async () => ({}),
-    text: async () => '',
-  });
-}
-
 function makeErrResponseWithBody(
   status: number,
   body: string,
