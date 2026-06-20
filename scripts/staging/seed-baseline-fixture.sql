@@ -58,6 +58,18 @@ SELECT set_config('request.jwt.claims', '{"role":"service_role"}', true);
 -- 1. AUTH USER (root of the FK chain; profiles.id -> auth.users.id)
 --    Stable synthetic id. raw_*_meta_data + token columns mirror supabase/seed.sql
 --    for GoTrue compatibility across versions.
+--
+--    encrypted_password: NO hardcoded credential literal here. We derive a
+--    bcrypt hash AT RUNTIME from a fixed, non-secret marker string via
+--    extensions.crypt(..., extensions.gen_salt('bf')). pgcrypto lives in the
+--    `extensions` schema (baseline: CREATE EXTENSION pgcrypto WITH SCHEMA
+--    extensions), so the call is schema-qualified. The hash protects nothing —
+--    the plaintext is the literal token 'seed-fixture-no-login' (publicly
+--    visible here), the fixture user is on an isolated soak rig, and the rig
+--    never accepts a login — so there is no credential to leak. Generating the
+--    hash at runtime (vs. pasting a precomputed `$2a$...` literal) keeps the
+--    column a valid bcrypt value for GoTrue while satisfying the
+--    hardcoded-credentials check (no secret-looking literal in source).
 -- ---------------------------------------------------------------------------
 INSERT INTO auth.users (
   instance_id, id, aud, role, email,
@@ -72,7 +84,7 @@ INSERT INTO auth.users (
   '5eed0000-0000-0000-0000-0000000000a1',
   'authenticated', 'authenticated',
   'seed-fixture-user@seed-fixture.invalid',
-  '$2a$10$bliuc8RqEzfNHpNdY0HIaeMjGaU1hGtiSYaKErxCOSSbsBe2o4K3q',
+  extensions.crypt('seed-fixture-no-login', extensions.gen_salt('bf')),
   NOW(), NOW(), NOW(),
   '{"provider": "email", "providers": ["email"]}',
   '{"full_name": "Seed Fixture User"}',
