@@ -50,10 +50,13 @@ const VALID_UUID = '11111111-1111-4111-8111-111111111111';
 function makeApp(deps: IssuerPartnershipsRouterDeps, userId?: string) {
   const app = express();
   app.use(express.json());
-  // Stub the upstream auth middleware
+  // Stub the upstream auth middleware. The real integrationsAuthGate
+  // (routes/middleware.ts requireAuth) sets `req.userId` — NOT `req.user` —
+  // so the stub must mirror that exact contract or the router would 401 in
+  // prod while passing tests (the wiring bug this fixture used to mask).
   app.use((req: Request, _res: Response, next: NextFunction) => {
     if (userId) {
-      (req as Request & { user?: { id: string } }).user = { id: userId };
+      (req as Request & { userId?: string }).userId = userId;
     }
     next();
   });
