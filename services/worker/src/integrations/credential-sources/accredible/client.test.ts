@@ -9,14 +9,20 @@ import {
   DEFAULT_ACCREDIBLE_API_BASE,
   type AccredibleClientDeps,
 } from './client.js';
-import type { FetchLike } from '../credly/client.js';
+import type { FetchLike } from '../types.js';
 
-function ok(body: unknown, status = 200): ReturnType<FetchLike> {
+/** Build a fake fetch Response. `contentType` defaults to JSON. */
+function ok(
+  body: unknown,
+  status = 200,
+  contentType = 'application/json; charset=utf-8',
+): ReturnType<FetchLike> {
   return Promise.resolve({
     ok: status >= 200 && status < 300,
     status,
+    headers: { get: (name: string) => (name.toLowerCase() === 'content-type' ? contentType : null) },
     json: async () => body,
-    text: async () => JSON.stringify(body),
+    text: async () => (typeof body === 'string' ? body : JSON.stringify(body)),
   });
 }
 
@@ -24,6 +30,7 @@ function err(status: number): ReturnType<FetchLike> {
   return Promise.resolve({
     ok: false,
     status,
+    headers: { get: () => 'application/json' },
     json: async () => ({}),
     text: async () => '',
   });
@@ -162,6 +169,61 @@ describe('SCRUM-1613 — Accredible API-key client', () => {
       await client.listIssuedCredentials({ apiKey: 'ak' });
       const [url] = fetchMock.mock.calls[0];
       expect(url).toMatch(/^https:\/\/staging\.api\.accredible\.example\/v1\/credentials/);
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Carson code-review P2 hardening (SCRUM-1613) — parity with Credly client
+  // -------------------------------------------------------------------------
+  describe('request hardening (review P2)', () => {
+    it('P2.2 — passes an AbortSignal so a hung endpoint cannot block forever', async () => {
+      fetchMock.mockReturnValueOnce(ok({ credentials: [], meta: {} }));
+      const client = createAccredibleClient(deps);
+
+      await client.listIssuedCredentials({ apiKey: 'ak' });
+
+      const init = getFetchInit(fetchMock.mock.calls[0]);
+      expect(init.signal).toBeInstanceOf(AbortSignal);
+    });
+
+    it('P2.3 — rejects a 200 response whose Content-Type is not JSON (HTML error page)', async () => {
+      // Accredible (or a proxy) returns an HTML maintenance page with status 200.
+      fetchMock.mockReturnValueOnce(
+        ok('<!doctype html><title>Maintenance</title>', 200, 'text/html; charset=utf-8'),
+      );
+      const client = createAccredibleClient(deps);
+
+      await expect(
+        client.listIssuedCredentials({ apiKey: 'ak' }),
+      ).rejects.toThrow(/non-JSON|content-type|text\/html/i);
+    });
+
+    it('P2.3 — accepts a JSON Content-Type with parameters (charset)', async () => {
+      fetchMock.mockReturnValueOnce(
+        ok({ credentials: [], meta: {} }, 200, 'application/json; charset=utf-8'),
+      );
+      const client = createAccredibleClient(deps);
+
+      await expect(
+        client.listIssuedCredentials({ apiKey: 'ak' }),
+      ).resolves.toBeDefined();
+    });
+
+    it('P2.1 — a failure with a recipientEmail filter does not leak the email in the error', async () => {
+      fetchMock.mockReturnValueOnce(err(500));
+      const client = createAccredibleClient(deps);
+
+      const email = 'private.person@example.com';
+      try {
+        await client.listIssuedCredentials({ apiKey: 'ak', recipientEmail: email });
+        throw new Error('should have thrown');
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        expect(msg).toMatch(/HTTP 500/);
+        // The recipient email must never appear in a thrown error (it would
+        // otherwise reach logs/Sentry). PII discipline, CLAUDE.md §1.4/§1.6A.
+        expect(msg).not.toContain(email);
+      }
     });
   });
 });

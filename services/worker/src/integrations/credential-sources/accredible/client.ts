@@ -18,10 +18,17 @@
  * No real HTTP traffic in tests: callers inject a `fetch`-shaped function.
  */
 import { z } from 'zod';
-import type { FetchLike } from '../credly/client.js';
+import type { FetchLike, FetchResponseLike } from '../types.js';
 
 /** Default Accredible API base. Override per environment via deps. */
 export const DEFAULT_ACCREDIBLE_API_BASE = 'https://api.accredible.com/v1';
+
+/**
+ * Abort a request after this long so a hung Accredible endpoint cannot block
+ * a worker slot indefinitely (SCRUM-1613 review P2.2). Matches the Credly
+ * client's bounded-request posture.
+ */
+const REQUEST_TIMEOUT_MS = 30_000;
 
 /**
  * Subset of Accredible's credential payload that we currently consume.
@@ -108,6 +115,23 @@ function trimTrailingSlashes(value: string): string {
   return value.slice(0, end);
 }
 
+/**
+ * Parse a JSON response, but first guard the `Content-Type` (SCRUM-1613
+ * review P2.3). If a proxy or maintenance page returns HTML with a 2xx
+ * status, `resp.json()` would otherwise throw an opaque parse error. We
+ * surface a clear, actionable error instead. Tolerates a missing header
+ * (Node 20's `fetch` always sets it; some fakes may not).
+ */
+async function parseJsonResponse(resp: FetchResponseLike): Promise<unknown> {
+  const contentType = resp.headers?.get('content-type');
+  if (contentType && !/\bapplication\/(?:[\w.+-]+\+)?json\b/i.test(contentType)) {
+    throw new Error(
+      `Accredible returned a non-JSON response (content-type: ${contentType})`,
+    );
+  }
+  return resp.json();
+}
+
 export function createAccredibleClient(deps: AccredibleClientDeps): AccredibleClient {
   const apiBase = trimTrailingSlashes(
     deps.apiBase ?? DEFAULT_ACCREDIBLE_API_BASE,
@@ -128,6 +152,11 @@ export function createAccredibleClient(deps: AccredibleClientDeps): AccredibleCl
     url.searchParams.set('page', String(page));
     url.searchParams.set('page_size', String(perPage));
     if (recipientEmail) {
+      // Accredible's issuer API only exposes recipient filtering as a
+      // server-to-server query parameter on this authenticated call. The
+      // full URL (which contains the email) is never logged, surfaced to the
+      // client, or embedded in a thrown error — PII discipline per
+      // CLAUDE.md §1.4/§1.6A (SCRUM-1613 review P2.1).
       url.searchParams.set('recipient.email', recipientEmail);
     }
 
@@ -139,13 +168,17 @@ export function createAccredibleClient(deps: AccredibleClientDeps): AccredibleCl
         Authorization: `Token token=${apiKey}`,
         Accept: 'application/json',
       },
+      // Bound the request so a hung endpoint can't pin a worker slot (P2.2).
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
     if (!resp.ok) {
+      // Note: only the status is included — never the URL (which carries the
+      // recipient email) and never the api_key.
       throw new Error(
         `Accredible credentials request failed: HTTP ${resp.status}`,
       );
     }
-    return AccredibleCredentialPageSchema.parse(await resp.json());
+    return AccredibleCredentialPageSchema.parse(await parseJsonResponse(resp));
   }
 
   return { listIssuedCredentials };
