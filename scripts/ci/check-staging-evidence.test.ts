@@ -202,6 +202,40 @@ describe('check-staging-evidence', () => {
         ]).tier,
       ).toBe('T2');
     });
+
+    it('returns T0 for a peripheral integrations lockfile bump', () => {
+      expect(
+        requiredTierFor(['integrations/zapier/package-lock.json']).tier,
+      ).toBe('T0');
+    });
+
+    it('returns T0 for a peripheral packages/* manifest + lockfile bump', () => {
+      expect(
+        requiredTierFor([
+          'packages/embed/package.json',
+          'packages/embed/package-lock.json',
+        ]).tier,
+      ).toBe('T0');
+    });
+
+    it('returns T0 for a peripheral integrations/* manifest + lockfile bump', () => {
+      expect(
+        requiredTierFor([
+          'integrations/zapier/package.json',
+          'integrations/zapier/package-lock.json',
+        ]).tier,
+      ).toBe('T0');
+    });
+
+    it('keeps services/* package.json above T0 (guards runtime deps)', () => {
+      expect(
+        requiredTierFor(['services/worker/package.json']).tier,
+      ).not.toBe('T0');
+    });
+
+    it('keeps the root package.json above T0 (guards runtime deps)', () => {
+      expect(requiredTierFor(['package.json']).tier).not.toBe('T0');
+    });
   });
 
   describe('extractDeclaredTier', () => {
@@ -534,6 +568,35 @@ describe('check-staging-evidence', () => {
           'services/worker/package-lock.json',
         ]).pass,
       ).toBe(true);
+    });
+
+    it('passes for integrations/* lockfiles (Dependabot peripheral bumps)', () => {
+      expect(
+        isStagingToolingOnly([
+          'integrations/zapier/package-lock.json',
+        ]).pass,
+      ).toBe(true);
+    });
+
+    it('passes for peripheral packages/* and integrations/* manifest bumps', () => {
+      expect(
+        isStagingToolingOnly([
+          'packages/embed/package.json',
+          'packages/embed/package-lock.json',
+        ]).pass,
+      ).toBe(true);
+      expect(
+        isStagingToolingOnly([
+          'integrations/zapier/package.json',
+          'integrations/zapier/package-lock.json',
+        ]).pass,
+      ).toBe(true);
+    });
+
+    it('fails for root package.json (guards runtime deps)', () => {
+      expect(
+        isStagingToolingOnly(['package.json']).pass,
+      ).toBe(false);
     });
 
     it('passes for E2E test specs (test infrastructure, not deployed code)', () => {
