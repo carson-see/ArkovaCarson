@@ -4,9 +4,35 @@
  * No real Postgres, no real KMS — every test injects fakes. Exercises the
  * Express router via supertest.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import express, { type Request, type Response, type NextFunction } from 'express';
 import request from 'supertest';
+
+// The router module imports `logger` and `db` at top level, both of which call
+// loadConfig() at import time and throw without a full worker env. Every test
+// here injects its own fakes via deps, so stub these modules to inert values so
+// importing the router never touches real config / Postgres (matches the
+// docusign-member-oauth.test.ts convention in this folder).
+vi.mock('../../../config.js', () => ({
+  config: {
+    frontendUrl: 'http://localhost:5173',
+    supabaseJwtSecret: 'jwt-secret',
+    supabaseServiceKey: 'service-secret',
+  },
+}));
+
+vi.mock('../../../utils/logger.js', () => ({
+  logger: {
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+    debug: vi.fn(),
+  },
+}));
+
+vi.mock('../../../utils/db.js', () => ({
+  db: {},
+}));
 
 import {
   createIssuerPartnershipsRouter,
@@ -309,6 +335,18 @@ describe('SCRUM-2082 — GET /api/v1/integrations/issuer-partnerships', () => {
 describe('SCRUM-2082 — POST /api/v1/integrations/issuer-partnerships', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // storeIssuerCredentials/storeApiKeyCredentials resolve the symmetric KMS
+    // key name from GCP_KMS_INTEGRATION_TOKEN_KEY (getIntegrationTokenKeyName)
+    // when the handler does not pass an explicit keyName. The KMS client itself
+    // is faked, so only the key *name* needs to exist for the encrypt call.
+    vi.stubEnv(
+      'GCP_KMS_INTEGRATION_TOKEN_KEY',
+      'projects/test/locations/global/keyRings/test/cryptoKeys/integration-token',
+    );
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
   });
 
   it('401 when no user is present', async () => {
