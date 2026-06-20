@@ -194,4 +194,35 @@ describe('SCRUM-1613 — accredibleCredentialToEvidence', () => {
     });
     expect(a.package.evidencePackageHash).toBe(b.package.evidencePackageHash);
   });
+
+  it('produces a DIFFERENT evidencePackageHash when a meaningful field changes (review P3.8)', () => {
+    const base = accredibleCredentialToEvidence(PLAIN_CREDENTIAL, {
+      fetchedAt: '2026-05-01T00:00:00.000Z',
+      payloadHash: RAW_BYTES_HASH,
+      payloadByteLength: RAW_BYTES.length,
+    });
+    // Different credential id -> different leaf -> different package hash.
+    const differentId = accredibleCredentialToEvidence(
+      { ...PLAIN_CREDENTIAL, id: 222333 },
+      {
+        fetchedAt: '2026-05-01T00:00:00.000Z',
+        payloadHash: RAW_BYTES_HASH,
+        payloadByteLength: RAW_BYTES.length,
+      },
+    );
+    // Different recipient email -> different recipientIdentifierHash.
+    const differentRecipient = accredibleCredentialToEvidence(PLAIN_CREDENTIAL, {
+      fetchedAt: '2026-05-01T00:00:00.000Z',
+      payloadHash: RAW_BYTES_HASH,
+      payloadByteLength: RAW_BYTES.length,
+      recipientEmail: 'someone.else@example.com',
+    });
+
+    expect(differentId.package.evidencePackageHash).not.toBe(
+      base.package.evidencePackageHash,
+    );
+    expect(differentRecipient.package.evidencePackageHash).not.toBe(
+      base.package.evidencePackageHash,
+    );
+  });
 });

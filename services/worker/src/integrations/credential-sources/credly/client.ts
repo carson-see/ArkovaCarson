@@ -26,6 +26,13 @@
  */
 import { z } from 'zod';
 
+import type { FetchLike } from '../types.js';
+
+// Re-exported for back-compat: callers and tests that imported `FetchLike`
+// from this module continue to work. The canonical definition now lives in
+// `../types.ts` so no provider client depends on another (SCRUM-1613 P2.4).
+export type { FetchLike } from '../types.js';
+
 /** Default Credly API base. Override per environment via deps. */
 export const DEFAULT_CREDLY_API_BASE = 'https://api.credly.com';
 
@@ -93,22 +100,6 @@ export const CredlyIssuedBadgePageSchema = z.object({
     .optional(),
 });
 export type CredlyIssuedBadgePage = z.infer<typeof CredlyIssuedBadgePageSchema>;
-
-/** Minimal `fetch`-compatible shape. Tests inject a vi.fn(); prod uses global. */
-export type FetchLike = (
-  input: string,
-  init?: {
-    method?: string;
-    headers?: Record<string, string>;
-    body?: string;
-    signal?: AbortSignal;
-  },
-) => Promise<{
-  ok: boolean;
-  status: number;
-  json(): Promise<unknown>;
-  text(): Promise<string>;
-}>;
 
 /** Skew window subtracted from `expires_in` so we re-mint before expiry. */
 const TOKEN_REFRESH_SKEW_MS = 60_000;
