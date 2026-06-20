@@ -410,6 +410,43 @@ describe('SCRUM-2082 — POST /api/v1/integrations/issuer-partnerships', () => {
     expect(res.status).toBe(201);
     expect(res.body.data.provider).toBe('accredible');
   });
+
+  it('500 without echoing the secret when credential storage throws', async () => {
+    // §1.4 regression pin: when the encrypt/store path fails, the response
+    // must be a generic 500 and must NOT reflect the submitted secret back to
+    // the caller (the catch branch logs via the redaction-aware path only).
+    const db = makeFakeDb({
+      org_members: [
+        { org_id: ARKOVA_ORG_ID, user_id: ARKOVA_ADMIN_USER_ID, role: 'admin' },
+      ],
+      member_integrations: [],
+    });
+    const throwingKms = {
+      encrypt: vi.fn(async () => {
+        throw new Error('kms unavailable');
+      }),
+      decrypt: vi.fn(async ({ ciphertext }: { ciphertext: Buffer }) =>
+        Buffer.from(ciphertext).reverse(),
+      ),
+    };
+    const SECRET = 'super-secret-client-value';
+    const app = makeApp(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      { db: db as any, kms: throwingKms, rowStore: makeFakeRowStore() },
+      ARKOVA_ADMIN_USER_ID,
+    );
+    const res = await request(app)
+      .post('/api/v1/integrations/issuer-partnerships')
+      .send({
+        provider: 'credly',
+        org_id: ARKOVA_ORG_ID,
+        account_id: 'credly-org-1',
+        credentials: { client_id: 'cid', client_secret: SECRET },
+      });
+    expect(res.status).toBe(500);
+    expect(JSON.stringify(res.body)).not.toContain(SECRET);
+    expect(res.body.error.code).toBe('internal');
+  });
 });
 
 describe('SCRUM-2082 — DELETE /api/v1/integrations/issuer-partnerships/:rowId', () => {
@@ -426,6 +463,28 @@ describe('SCRUM-2082 — DELETE /api/v1/integrations/issuer-partnerships/:rowId'
     );
     const res = await request(app).delete(
       '/api/v1/integrations/issuer-partnerships/not-a-uuid',
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it('400 on a 36-char hex string that is not a valid UUID layout', async () => {
+    // Regression pin for the tightened RFC-4122 matcher: a 36-char all-hex
+    // string with no dashes in the canonical positions is NOT a UUID. The
+    // previous loose /^[0-9a-fA-F-]{36}$/ guard would have accepted it.
+    const db = makeFakeDb({
+      org_members: [
+        { org_id: ARKOVA_ORG_ID, user_id: ARKOVA_ADMIN_USER_ID, role: 'admin' },
+      ],
+      member_integrations: [],
+    });
+    const app = makeApp(
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      { db: db as any, kms: fakeKms, rowStore: makeFakeRowStore() },
+      ARKOVA_ADMIN_USER_ID,
+    );
+    const notAUuid = '1234567890abcdef1234567890abcdef1234'; // 36 hex chars
+    const res = await request(app).delete(
+      `/api/v1/integrations/issuer-partnerships/${notAUuid}`,
     );
     expect(res.status).toBe(400);
   });
