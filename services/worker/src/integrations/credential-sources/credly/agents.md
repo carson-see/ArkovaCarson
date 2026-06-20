@@ -24,8 +24,12 @@ Credly-specific integration for the SCRUM-1596 Credential Source Import epic. Pe
 - **DO** persist the raw Credly payload bytes alongside the evidence package — v1.1 verification needs them. The adapter expects `payloadHash` to be computed over the exact bytes received.
 - **DO** hash recipient email + credential id; **do not** copy raw PII into the evidence package. The adapter enforces this.
 - **DO NOT** log `client_secret` or the bearer access token (Constitution §1.4). The error messages in `client.ts` deliberately exclude both.
-- **DO NOT** add any Credly-API call that does not flow through this client — single point of token caching + rate-limit handling is the whole point.
+- **DO NOT** add any Credly-API call that does not flow through this client — it is the single point of `client_credentials` token caching, and is the intended single chokepoint for rate-limit handling when that lands (see follow-up below).
 - **DO NOT** promote `verification_level` to `source_signed` from this module. That belongs in the future v1.1 cryptographic verification pass, never here.
+
+## Follow-up: rate-limit handling not yet implemented
+
+`client.ts` currently does **not** implement 429 / `Retry-After` / exponential-backoff retry — Credly's published rate limits are unconfirmed (open question on SCRUM-2131). The single-chokepoint design above exists so this can be added in one place later; until then, callers should treat a Credly 429 as a normal transient HTTP error and let the surrounding job-queue retry. Add real backoff here (not at call sites) once limits are confirmed.
 
 ## Related References
 

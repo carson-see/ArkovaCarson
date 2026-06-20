@@ -1,15 +1,16 @@
 # agents.md — services/worker/src/integrations/credential-sources/
 
-_Last updated: 2026-06-01 (SCRUM-1611 CSI-04A)_
+_Last updated: 2026-06-01 (SCRUM-1612 CSI-04B; foundation SCRUM-1611 CSI-04A)_
 
 ## What This Folder Contains
 
 Issuer-partnership credential ingestion for the SCRUM-1596 epic. Stores tokens/keys for Credly / Accredible / Udemy issuer accounts in the polymorphic `member_integrations` table, encrypted via GCP KMS.
 
-| File | Purpose |
+| File / Folder | Purpose |
 |------|---------|
-| `token-store.ts` | Thin wrapper around `../oauth/crypto.ts` that encrypts credential-source provider tokens and persists `member_integrations` rows. Records `kek_version` for safe KMS key rotation. |
+| `token-store.ts` | Thin wrapper around `../oauth/crypto.ts` that encrypts credential-source provider tokens **and** issuer client_credentials secrets, then persists `member_integrations` rows. Records `kek_version` for safe KMS key rotation. |
 | `token-store.test.ts` | Unit tests using a fake `KmsClient` and an in-memory row store. No real KMS or Postgres traffic. |
+| `credly/` | **SCRUM-1612 CSI-04B**: Credly HTTP client (client_credentials grant + `issued_badges` API) and badge-to-evidence adapter. Verification stays at `account_linked`; OB3 proof verification deferred to v1.1 per PRD §13. |
 
 ## Why This Folder Exists Separately From `oauth/`
 
