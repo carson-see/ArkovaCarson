@@ -49,16 +49,47 @@ In `deploy-worker.yml` the deploy job runs **build → scan → push → deploy*
    `aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25` (v0.36.0,
    pinned to a 40-char commit SHA per the repo supply-chain convention):
    ```yaml
-   image-ref: ${{ steps.build.outputs.image }}
-   scan-type: image
-   vuln-type: os
-   severity: HIGH,CRITICAL
-   ignore-unfixed: true
-   exit-code: '1'
+   if: github.event.inputs.bypass_image_scan != 'true'   # operator break-glass (§3a)
+   timeout-minutes: 10                                    # fail fast on a hung DB fetch
+   env:
+     TRIVY_DB_REPOSITORY: public.ecr.aws/aquasecurity/trivy-db
+     TRIVY_JAVA_DB_REPOSITORY: public.ecr.aws/aquasecurity/trivy-java-db
+   with:
+     image-ref: ${{ steps.build.outputs.image }}
+     scan-type: image
+     pkg-types: os                                        # current input (vuln-type is deprecated)
+     severity: HIGH,CRITICAL
+     ignore-unfixed: true
+     exit-code: '1'
+     cache: true                                          # reuse the vuln DB across runs
+     github-token: ${{ secrets.GITHUB_TOKEN }}            # authenticated GHCR pulls
    ```
 3. **Push image** — only runs if the scan passed (exit 0). A vulnerable image
    therefore never reaches Artifact Registry or Cloud Run.
 4. **Deploy canary → promote** — unchanged.
+
+### 3a. Break-glass (operator-only, audited)
+
+A transient scanner-infra outage — e.g. a Trivy/GHCR vuln-DB
+`TOOMANYREQUESTS` rate-limit — would otherwise fail the scan step and block
+**every** prod worker deploy, including incident hotfixes. The DB-fetch
+hardening above (cache + authenticated pulls + ECR mirror + fast timeout) makes
+that rare, but for a hard outage there is an explicit, auditable escape:
+
+- **Trigger:** a maintainer manually re-runs the deploy via
+  `workflow_dispatch` with the boolean input **`bypass_image_scan = true`**
+  (default `false`). Push-to-`main` deploys can never set it; it is never
+  bypassable by default or by untrusted input.
+- **Effect:** the `if:` on the scan step skips **only** the scan. The build,
+  push, canary, smoke test, and promote steps all still run — the deploy is not
+  weakened beyond the one skipped scan.
+- **Audit:** the "Audit image-scan bypass (break-glass)" step echoes
+  `⚠️ image scan bypassed by ${{ github.actor }}` plus the reason and run URL,
+  so every use is attributable to an operator in the run log.
+
+This is a **runtime** escape for a wedged scanner. It is deliberately distinct
+from a PR-time override label: the gate **config** (severity, fixable-only,
+40-char pinning, OS `pkg-types` scope) stays non-overridable — see §5.
 
 **Gate semantics**
 
@@ -98,8 +129,19 @@ unpins, or weakens the gate. It asserts the scan step:
 4. Gates HIGH **and** CRITICAL severities.
 5. Gates fixable CVEs only (`ignore-unfixed` / `only-fixed`).
 6. Runs **after** `docker build` and **before** the deploy step.
+7. Declares an explicit OS package-type scope key that is **present and
+   correct** (Trivy `pkg-types: os`, the deprecated alias `vuln-type: os`, or
+   Grype `only-package-types: os`). Asserting the key — not merely that a step
+   exists — means a future action-version rename can't silently drop OS scanning.
+8. Is guarded by an **auditable operator break-glass** (§3a): a
+   `workflow_dispatch` boolean input that the scan step's `if:` references (so a
+   manual dispatch skips only the scan) **and** an audit step that logs the
+   bypass with `github.actor`. The break-glass does **not** relax assertions
+   2–7 — it only lets a named operator skip a wedged scanner run.
 
-There is **no override label** — this is a security control, not a style rule.
+There is **no override label** to weaken the gate config — this is a security
+control, not a style rule. The break-glass in (8) is a separate, logged runtime
+escape for scanner-infra outages, not a config override.
 Unit tests: `scripts/ci/check-image-scan-gate.test.ts`.
 
 ## 6. Verification evidence (2026-06-11)
@@ -129,9 +171,13 @@ This confirms the gate (a) detects real, shipping, fixable base-image CVEs and
 - **SARIF → GitHub Security tab.** Optionally add a second, non-gating Trivy run
   emitting SARIF and uploading via `github/codeql-action/upload-sarif` for
   centralized finding history (needs `security-events: write`).
-- **Trivy DB rate limits.** If GHCR anonymous pulls of the Trivy vuln DB rate-limit
-  in CI, pass a token to `aquasecurity/setup-trivy` (via the action's
-  `token`/`trivy` inputs).
+- **Trivy DB rate limits.** ~~If GHCR anonymous pulls of the Trivy vuln DB
+  rate-limit in CI, pass a token…~~ **Addressed (2026-06-19):** the scan step
+  now pulls the DBs from the `public.ecr.aws/aquasecurity/*` mirror
+  (`TRIVY_DB_REPOSITORY` / `TRIVY_JAVA_DB_REPOSITORY`), uses `cache: true` and an
+  authenticated `github-token`, and has a `timeout-minutes` fast-fail. For a
+  hard scanner-infra outage that still blocks every deploy, the operator
+  break-glass in §3a is the escape.
 
 ## 8. References
 

@@ -18,7 +18,21 @@
  *   4. …on fixable CVEs only (`ignore-unfixed`), mirroring the CVSS>=7
  *      fixable-gate intent in `sonatype-scan.yml`…
  *   5. …positioned AFTER the image build and BEFORE the deploy step, so a
- *      vulnerable image is gated out before it can ship.
+ *      vulnerable image is gated out before it can ship…
+ *   6. …scoped to OS packages via an explicit package-type key (Trivy
+ *      `pkg-types: os`, the deprecated alias `vuln-type: os`, or Grype
+ *      `only-package-types: os`). Asserting the key is *present and correct*
+ *      means a future action-version rename can't silently drop OS scanning…
+ *   7. …guarded by an auditable, operator-only break-glass: a
+ *      `workflow_dispatch` boolean input that skips ONLY the scan step (never
+ *      the deploy) and echoes a clear, attributed log line when used. This is a
+ *      RUNTIME operator escape for a transient scanner-infra outage (e.g. a
+ *      Trivy/GHCR vuln-DB `TOOMANYREQUESTS` rate-limit that would otherwise
+ *      block every prod deploy — including incident hotfixes). It is
+ *      deliberately DIFFERENT from a PR-time override label: there is still NO
+ *      label to *weaken the gate config* (severity / fixable / pinning); the
+ *      break-glass only lets a named operator skip a wedged scanner run, and
+ *      every use is logged.
  *
  * Run standalone in CI: `npx tsx scripts/ci/check-image-scan-gate.ts`.
  * No override label — this is a security control, not a style rule. If the
@@ -34,10 +48,21 @@ const DEPLOY_STEP_RE = /name:\s*Deploy canary/i;
 const BUILD_STEP_RE = /docker build\b/;
 /** 6-space step bullet (`      - `) — the step boundary in this workflow. */
 const STEP_BULLET_RE = /^ {6}- /;
-/** Supported container scanners, each → the `uses:` owner/repo to match. */
-const SCANNERS: ReadonlyArray<{ name: string; action: string }> = [
-  { name: 'Trivy', action: 'aquasecurity/trivy-action' },
-  { name: 'Grype', action: 'anchore/scan-action' },
+/**
+ * Supported container scanners, each → the `uses:` owner/repo to match and the
+ * set of input keys that scope the scan to OS packages. Trivy renamed
+ * `vuln-type` → `pkg-types`; both are accepted so the deprecated alias keeps
+ * working, but ONE of them must be present (assertion 6) so a silent rename
+ * can't disable OS scanning. `pkgTypeKeys[0]` is the preferred (current) key,
+ * surfaced in the failure message.
+ */
+const SCANNERS: ReadonlyArray<{
+  name: string;
+  action: string;
+  pkgTypeKeys: readonly string[];
+}> = [
+  { name: 'Trivy', action: 'aquasecurity/trivy-action', pkgTypeKeys: ['pkg-types', 'vuln-type'] },
+  { name: 'Grype', action: 'anchore/scan-action', pkgTypeKeys: ['only-package-types'] },
 ];
 
 export interface AuditResult {
@@ -56,6 +81,26 @@ function stepBlock(lines: string[], bulletIdx: number): string[] {
     block.push(line);
   }
   return block;
+}
+
+/**
+ * Walk back from a `uses:`/config line to the `- ` bullet that opens its step,
+ * then collect the WHOLE step (bullet through the line before the next bullet).
+ * The scanner is located by its `uses:` line, but step-level keys like `if:`
+ * can sit ABOVE `uses:` (between `- name:` and `uses:`), so the break-glass
+ * guard check needs the full step, not just `uses:`-onward.
+ */
+function enclosingStepBlock(lines: string[], innerIdx: number): string[] {
+  let start = innerIdx;
+  for (let i = innerIdx; i >= 0; i--) {
+    if (STEP_BULLET_RE.test(lines[i])) {
+      start = i;
+      break;
+    }
+    // Dedented out of the steps list without finding a bullet — give up.
+    if (/^ {0,4}\S/.test(lines[i]) && i !== innerIdx) break;
+  }
+  return stepBlock(lines, start);
 }
 
 /**
@@ -151,6 +196,45 @@ export function auditImageScanGate(workflowText: string): AuditResult {
     );
   }
 
+  // (6) OS package-type scope present and correct. Trivy `pkg-types: os`
+  // (current) or `vuln-type: os` (deprecated alias); Grype
+  // `only-package-types: os`. Asserting the KEY is present — not just that the
+  // step exists — means a future action-version rename that drops/renames the
+  // input can't silently widen or disable the scope. The value must be `os`
+  // (the gate is intentionally scoped to OS packages so it complements, rather
+  // than double-gates, the dependency scanners — see
+  // docs/compliance/container-image-scanning.md §2).
+  let pkgTypeKeyFound: string | null = null;
+  let pkgTypeValue: string | null = null;
+  for (const key of matchedScanner.pkgTypeKeys) {
+    const m = new RegExp(String.raw`(?:^|\n)\s*${key}:\s*['"]?([^'"\n]+)['"]?`).exec(block);
+    if (m) {
+      pkgTypeKeyFound = key;
+      pkgTypeValue = m[1].trim();
+      break;
+    }
+  }
+  const preferredKey = matchedScanner.pkgTypeKeys[0];
+  if (!pkgTypeKeyFound) {
+    errors.push(
+      `${matchedScanner.name} scan must declare an OS package-type scope key `
+      + `(\`${preferredKey}: os\``
+      + (matchedScanner.pkgTypeKeys.length > 1
+        ? ` — or the deprecated \`${matchedScanner.pkgTypeKeys[1]}: os\``
+        : '')
+      + `). The key was not found, so a future action-version rename could `
+      + `silently disable OS scanning. See docs/compliance/`
+      + `container-image-scanning.md.`,
+    );
+  } else if (!/\bos\b/i.test(pkgTypeValue ?? '')) {
+    errors.push(
+      `${matchedScanner.name} scan package-type scope (\`${pkgTypeKeyFound}\`) `
+      + `must include \`os\` (got \`${pkgTypeValue ?? '<empty>'}\`). The image `
+      + `gate owns the OS / base-image layer; the dependency scanners own the `
+      + `library layer (no double-gating).`,
+    );
+  }
+
   // (5) Ordering: after `docker build`, before the deploy step.
   const buildIdx = lines.findIndex((l) => BUILD_STEP_RE.test(l));
   const deployIdx = lines.findIndex((l) => DEPLOY_STEP_RE.test(l));
@@ -169,6 +253,64 @@ export function auditImageScanGate(workflowText: string): AuditResult {
     errors.push(
       `${matchedScanner.name} scan step runs before the image is built — it `
       + `must scan the built image (after \`docker build\`).`,
+    );
+  }
+
+  // (7) Auditable, operator-only break-glass for a transient scanner-infra
+  // outage. A Trivy/GHCR vuln-DB rate-limit (`TOOMANYREQUESTS`) would otherwise
+  // fail the scan step and block EVERY prod worker deploy — including incident
+  // hotfixes — with no escape. The break-glass must:
+  //   (a) be an explicit operator signal: a `workflow_dispatch` boolean input
+  //       (default false) — not bypassable by default or by untrusted input;
+  //   (b) skip ONLY the scan step, via an `if:` guard on the scan step that
+  //       references that input (the deploy still runs);
+  //   (c) be logged: an audit step echoes a clear, attributed line when used.
+  // This is a RUNTIME escape for a wedged scanner, NOT a PR-time label to
+  // weaken the gate config — assertions (2)–(6) remain non-overridable.
+  const dispatchHasBypassBoolean = (() => {
+    const wfDispatchIdx = lines.findIndex((l) => /^\s*workflow_dispatch:/.test(l));
+    if (wfDispatchIdx === -1) return false;
+    // Scan the dispatch inputs region (until the next top-level key / `jobs:`).
+    let region = '';
+    for (let i = wfDispatchIdx + 1; i < lines.length; i++) {
+      if (/^\S/.test(lines[i]) || /^jobs:/.test(lines[i])) break;
+      region += lines[i] + '\n';
+    }
+    // A `bypass*_image_scan*`-style boolean input under workflow_dispatch.
+    const hasBypassInput = /(?:^|\n)\s*(?:image_scan_bypass|bypass_image_scan)\w*:/i.test(region);
+    const isBoolean = /type:\s*boolean/i.test(region);
+    return hasBypassInput && isBoolean;
+  })();
+
+  // The scan step itself must be guarded by that bypass input so a manual
+  // dispatch skips ONLY the scan (not the deploy). The `if:` can sit above
+  // `uses:`, so search the WHOLE enclosing step, not just `uses:`-onward.
+  const fullScanStep = enclosingStepBlock(lines, scanBulletIdx).join('\n');
+  const scanStepGuarded =
+    /if:\s*[^\n]*\b(?:image_scan_bypass|bypass_image_scan)\w*\b/i.test(fullScanStep);
+
+  // The bypass must be logged when used (audited): an echo naming the actor.
+  const bypassAudited =
+    /echo[^\n]*(?:image[\s_-]*scan[\s_-]*bypass|bypass[^\n]*image[\s_-]*scan)/i.test(
+      workflowText,
+    ) && /github\.actor/.test(workflowText);
+
+  if (!dispatchHasBypassBoolean || !scanStepGuarded) {
+    errors.push(
+      `${matchedScanner.name} scan has no auditable operator break-glass. A `
+      + `transient scanner-infra outage (e.g. a Trivy/GHCR vuln-DB `
+      + `\`TOOMANYREQUESTS\` rate-limit) would block EVERY prod deploy with no `
+      + `escape. Add a \`workflow_dispatch\` boolean input (e.g. `
+      + `\`bypass_image_scan\`, default false) and guard the scan step with an `
+      + `\`if:\` that references it so it skips ONLY the scan, never the deploy. `
+      + `This is a runtime operator escape, not a gate-weakening label.`,
+    );
+  } else if (!bypassAudited) {
+    errors.push(
+      `${matchedScanner.name} scan break-glass must be logged when used: add an `
+      + `audit step that echoes a clear, attributed line (e.g. `
+      + `"⚠️ image scan bypassed by \${{ github.actor }}") so every bypass is `
+      + `traceable to an operator.`,
     );
   }
 
