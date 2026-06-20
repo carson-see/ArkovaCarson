@@ -59,17 +59,16 @@ SELECT set_config('request.jwt.claims', '{"role":"service_role"}', true);
 --    Stable synthetic id. raw_*_meta_data + token columns mirror supabase/seed.sql
 --    for GoTrue compatibility across versions.
 --
---    encrypted_password: NO hardcoded credential literal here. We derive a
---    bcrypt hash AT RUNTIME from a fixed, non-secret marker string via
---    extensions.crypt(..., extensions.gen_salt('bf')). pgcrypto lives in the
---    `extensions` schema (baseline: CREATE EXTENSION pgcrypto WITH SCHEMA
---    extensions), so the call is schema-qualified. The hash protects nothing —
---    the plaintext is the literal token 'seed-fixture-no-login' (publicly
---    visible here), the fixture user is on an isolated soak rig, and the rig
---    never accepts a login — so there is no credential to leak. Generating the
---    hash at runtime (vs. pasting a precomputed `$2a$...` literal) keeps the
---    column a valid bcrypt value for GoTrue while satisfying the
---    hardcoded-credentials check (no secret-looking literal in source).
+--    encrypted_password: NO hardcoded credential literal here, and NO string
+--    literal passed to the hash function either. We derive a bcrypt hash AT
+--    RUNTIME from a random value — extensions.crypt(gen_random_uuid()::text,
+--    extensions.gen_salt('bf')). pgcrypto lives in the `extensions` schema
+--    (baseline: CREATE EXTENSION pgcrypto WITH SCHEMA extensions), so crypt/
+--    gen_salt are schema-qualified; gen_random_uuid is core (pg_catalog). The
+--    hash protects nothing — the plaintext is a throwaway random UUID nobody
+--    keeps, the fixture user is on an isolated soak rig, and the rig never
+--    accepts a login. This keeps the column a valid bcrypt value for GoTrue
+--    while carrying no secret-looking literal in source (SonarCloud S6418).
 -- ---------------------------------------------------------------------------
 INSERT INTO auth.users (
   instance_id, id, aud, role, email,
@@ -84,7 +83,7 @@ INSERT INTO auth.users (
   '5eed0000-0000-0000-0000-0000000000a1',
   'authenticated', 'authenticated',
   'seed-fixture-user@seed-fixture.invalid',
-  extensions.crypt('seed-fixture-no-login', extensions.gen_salt('bf')),
+  extensions.crypt(gen_random_uuid()::text, extensions.gen_salt('bf')),
   NOW(), NOW(), NOW(),
   '{"provider": "email", "providers": ["email"]}',
   '{"full_name": "Seed Fixture User"}',

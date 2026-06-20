@@ -94,17 +94,19 @@ describe('seed-baseline-fixture.sql — §1.11A data-only + idempotent', () => {
 
   it('has no hardcoded credential literal for encrypted_password (S6418)', () => {
     // SonarCloud S6418 / CLAUDE.md §1.4 "never hardcode secrets": the fixture
-    // user's encrypted_password must NOT be a pasted bcrypt literal. It is
-    // derived at runtime from a non-secret marker via pgcrypto, so source
-    // carries no secret-looking string. Guard both forms of the bcrypt prefix.
+    // user's encrypted_password must NOT be a pasted bcrypt literal NOR a string
+    // literal passed to crypt(). It is derived at runtime from a random UUID via
+    // pgcrypto, so source carries no secret-looking string. Guard the bcrypt prefix
+    // AND any quoted string arg to crypt().
     expect(sql).not.toMatch(/\$2[aby]\$[0-9]{2}\$/);
+    expect(sql).not.toMatch(/crypt\(\s*'[^']+'/i);
     // The runtime derivation must be present and schema-qualified (pgcrypto
     // lives in `extensions`), so the column stays a valid bcrypt value.
     expect(sql).toMatch(
       /encrypted_password/i,
     );
     expect(sql).toMatch(
-      /extensions\.crypt\(\s*'[^']*'\s*,\s*extensions\.gen_salt\(\s*'bf'\s*\)\s*\)/i,
+      /extensions\.crypt\(\s*gen_random_uuid\(\)::text\s*,\s*extensions\.gen_salt\(\s*'bf'\s*\)\s*\)/i,
     );
   });
 });
