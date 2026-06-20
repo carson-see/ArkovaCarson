@@ -13,7 +13,7 @@
  *   - Disconnect: soft-revoke via `revoked_at = now()`
  *
  * Auth model:
- *   - Caller must be authenticated (req.user set by upstream auth middleware)
+ *   - Caller must be authenticated (req.userId set by the upstream requireAuth middleware)
  *   - Caller must be `owner` or `admin` on the target org_id (verified via
  *     org_members row; service_role queries used so RLS doesn't shadow the
  *     admin check)
@@ -305,7 +305,7 @@ export function createIssuerPartnershipsRouter(
 
   // ---- GET /api/v1/integrations/issuer-partnerships -----------------------
   router.get('/', async (req: Request, res: Response) => {
-    const userId = (req as Request & { user?: { id?: string } }).user?.id;
+    const userId = (req as Request & { userId?: string }).userId;
     if (!userId) {
       res.status(401).json({ error: { code: 'unauthorized' } });
       return;
@@ -352,7 +352,7 @@ export function createIssuerPartnershipsRouter(
 
   // ---- POST /api/v1/integrations/issuer-partnerships ----------------------
   router.post('/', async (req: Request, res: Response) => {
-    const userId = (req as Request & { user?: { id?: string } }).user?.id;
+    const userId = (req as Request & { userId?: string }).userId;
     if (!userId) {
       res.status(401).json({ error: { code: 'unauthorized' } });
       return;
@@ -426,7 +426,7 @@ export function createIssuerPartnershipsRouter(
 
   // ---- DELETE /api/v1/integrations/issuer-partnerships/:rowId -------------
   router.delete('/:rowId', async (req: Request, res: Response) => {
-    const userId = (req as Request & { user?: { id?: string } }).user?.id;
+    const userId = (req as Request & { userId?: string }).userId;
     if (!userId) {
       res.status(401).json({ error: { code: 'unauthorized' } });
       return;
