@@ -39,6 +39,83 @@ import {
 } from '../../../integrations/credential-sources/token-store.js';
 
 // ---------------------------------------------------------------------------
+// Local DB typing
+//
+// `member_integrations` is not present in the generated `database.types.ts`
+// (DocuSign + this feature both write it via the same pattern). Rather than
+// scatter `as unknown as never` casts — which silence the type checker and
+// hide real mistakes — we declare a narrow, hand-written DB facade that
+// describes exactly the tables + operations these endpoints touch. This
+// mirrors the established approach in `docusign-member-oauth.ts`.
+// ---------------------------------------------------------------------------
+
+/** A supabase-js result envelope. */
+type DbResult<T> = { data: T | null; error: unknown };
+
+/** Row shape read back from `org_members` for the admin check. */
+interface OrgMemberRoleRow {
+  role: string;
+}
+
+/** Row shape read back from `member_integrations` by the list endpoint. */
+interface MemberIntegrationListRow {
+  id: string;
+  org_id: string;
+  provider: CredentialProvider;
+  account_id: string;
+  account_label: string | null;
+  connected_at: string;
+  revoked_at: string | null;
+  kek_version: number;
+}
+
+/** Row shape read back when resolving a single integration for revoke. */
+interface MemberIntegrationRevokeRow {
+  id: string;
+  org_id: string;
+  provider: string;
+  revoked_at: string | null;
+}
+
+/** Row shape read back for the rowStore upsert/fetch helpers. */
+interface MemberIntegrationIdRow {
+  id: string;
+}
+
+interface MemberIntegrationEncryptedRow {
+  encrypted_tokens: Buffer | null;
+  token_kms_key_id: string | null;
+  kek_version: number;
+}
+
+/**
+ * Minimal fluent query-builder facade — the subset of the supabase-js builder
+ * these endpoints rely on. The builder is itself awaitable (PromiseLike),
+ * resolving to a {@link DbResult}. `select<Row>()` re-parameterises the row
+ * type so each call site stays type-safe with no per-column casts.
+ */
+interface DbQuery<TRow> extends PromiseLike<DbResult<TRow[]>> {
+  select<Row = TRow>(columns?: string): DbQuery<Row>;
+  insert(value: Record<string, unknown>): DbQuery<TRow>;
+  update(value: Record<string, unknown>): DbQuery<TRow>;
+  eq(column: string, value: unknown): DbQuery<TRow>;
+  is(column: string, value: null): DbQuery<TRow>;
+  in(column: string, values: ReadonlyArray<unknown>): DbQuery<TRow>;
+  order(column: string, opts: { ascending: boolean }): DbQuery<TRow>;
+  limit(count: number): DbQuery<TRow>;
+}
+
+/**
+ * Narrow DB facade — only the tables these endpoints touch. Each `from()`
+ * overload starts an untyped builder; call sites pin the row type via
+ * `.select<Row>()` (reads) so results are typed without casts.
+ */
+export interface IssuerPartnershipsDb {
+  from(table: 'org_members'): DbQuery<OrgMemberRoleRow>;
+  from(table: 'member_integrations'): DbQuery<MemberIntegrationIdRow>;
+}
+
+// ---------------------------------------------------------------------------
 // Request schemas
 // ---------------------------------------------------------------------------
 
@@ -96,24 +173,28 @@ const CREDENTIAL_PROVIDERS: ReadonlyArray<CredentialProvider> = [
   'udemy',
 ];
 
+/** RFC 4122 UUID matcher for the :rowId path param. */
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
 /**
  * Verify the caller is org_admin / owner on the target org. Returns true
  * when authorised. Uses the service_role db client (not the per-request RLS
  * client) so we read membership without depending on whatever RLS sees.
  */
 export async function isOrgAdmin(
-  db: typeof defaultDb,
+  db: IssuerPartnershipsDb,
   userId: string,
   orgId: string,
 ): Promise<boolean> {
   const { data, error } = await db
     .from('org_members')
-    .select('role')
+    .select<OrgMemberRoleRow>('role')
     .eq('org_id', orgId)
     .eq('user_id', userId)
     .limit(1);
   if (error) throw error;
-  const role = (data?.[0] as { role: string } | undefined)?.role;
+  const role = data?.[0]?.role;
   return role === 'admin' || role === 'owner';
 }
 
@@ -122,22 +203,36 @@ export async function isOrgAdmin(
 // ---------------------------------------------------------------------------
 
 export interface IssuerPartnershipsRouterDeps {
-  db?: typeof defaultDb;
+  db?: IssuerPartnershipsDb;
   kms?: KmsClient;
   rowStore?: MemberIntegrationRowDeps;
+}
+
+/**
+ * Adapt the real service_role supabase-js client to the narrow
+ * {@link IssuerPartnershipsDb} facade. This is the single seam where the
+ * untyped-for-`member_integrations` client meets our hand-written types; the
+ * cast is intentional and localised (mirrors `docusign-member-oauth.ts`).
+ */
+function asIssuerPartnershipsDb(
+  db: typeof defaultDb,
+): IssuerPartnershipsDb {
+  return db as unknown as IssuerPartnershipsDb;
 }
 
 /**
  * Default rowStore that talks to Postgres via the service_role db client.
  * Tests inject an in-memory rowStore instead.
  */
-function createDefaultRowStore(db: typeof defaultDb): MemberIntegrationRowDeps {
+function createDefaultRowStore(
+  db: IssuerPartnershipsDb,
+): MemberIntegrationRowDeps {
   return {
     async upsertEncryptedRow(input) {
       // Try update first (existing active row), then insert if none.
       const { data: existing, error: selErr } = await db
         .from('member_integrations')
-        .select('id')
+        .select<MemberIntegrationIdRow>('id')
         .eq('user_id', input.userId)
         .eq('org_id', input.orgId)
         .eq('provider', input.provider)
@@ -145,15 +240,15 @@ function createDefaultRowStore(db: typeof defaultDb): MemberIntegrationRowDeps {
         .is('revoked_at', null)
         .limit(1);
       if (selErr) throw selErr;
-      const existingId = (existing?.[0] as { id: string } | undefined)?.id;
+      const existingId = existing?.[0]?.id;
 
       if (existingId) {
         const { error } = await db
           .from('member_integrations')
           .update({
-            encrypted_tokens: input.ciphertext as unknown as never,
+            encrypted_tokens: input.ciphertext,
             token_kms_key_id: input.kmsKeyName,
-            kek_version: input.kekVersion as unknown as never,
+            kek_version: input.kekVersion,
           })
           .eq('id', existingId);
         if (error) throw error;
@@ -167,21 +262,23 @@ function createDefaultRowStore(db: typeof defaultDb): MemberIntegrationRowDeps {
           org_id: input.orgId,
           provider: input.provider,
           account_id: input.accountId,
-          encrypted_tokens: input.ciphertext as unknown as never,
+          encrypted_tokens: input.ciphertext,
           token_kms_key_id: input.kmsKeyName,
-          kek_version: input.kekVersion as unknown as never,
+          kek_version: input.kekVersion,
         })
-        .select('id')
+        .select<MemberIntegrationIdRow>('id')
         .limit(1);
       if (insErr) throw insErr;
-      const id = (inserted?.[0] as { id: string } | undefined)?.id;
+      const id = inserted?.[0]?.id;
       if (!id) throw new Error('member_integrations insert returned no id');
       return { id };
     },
     async fetchEncryptedRow(input) {
       const { data, error } = await db
         .from('member_integrations')
-        .select('encrypted_tokens, token_kms_key_id, kek_version')
+        .select<MemberIntegrationEncryptedRow>(
+          'encrypted_tokens, token_kms_key_id, kek_version',
+        )
         .eq('user_id', input.userId)
         .eq('org_id', input.orgId)
         .eq('provider', input.provider)
@@ -189,13 +286,7 @@ function createDefaultRowStore(db: typeof defaultDb): MemberIntegrationRowDeps {
         .is('revoked_at', null)
         .limit(1);
       if (error) throw error;
-      const row = data?.[0] as
-        | {
-            encrypted_tokens: Buffer | null;
-            token_kms_key_id: string | null;
-            kek_version: number;
-          }
-        | undefined;
+      const row = data?.[0];
       if (!row?.encrypted_tokens || !row.token_kms_key_id) return null;
       return {
         ciphertext: Buffer.from(row.encrypted_tokens),
@@ -210,7 +301,7 @@ export function createIssuerPartnershipsRouter(
   deps: IssuerPartnershipsRouterDeps = {},
 ): Router {
   const router = Router();
-  const db = deps.db ?? defaultDb;
+  const db: IssuerPartnershipsDb = deps.db ?? asIssuerPartnershipsDb(defaultDb);
 
   // ---- GET /api/v1/integrations/issuer-partnerships -----------------------
   router.get('/', async (req: Request, res: Response) => {
@@ -236,7 +327,7 @@ export function createIssuerPartnershipsRouter(
       }
       const { data, error } = await db
         .from('member_integrations')
-        .select(
+        .select<MemberIntegrationListRow>(
           'id, org_id, provider, account_id, account_label, connected_at, revoked_at, kek_version',
         )
         .eq('org_id', orgId)
@@ -244,10 +335,7 @@ export function createIssuerPartnershipsRouter(
         .order('connected_at', { ascending: false });
       if (error) throw error;
 
-      const rows = (data ?? []) as Array<Omit<
-        IssuerPartnershipSummary,
-        'last_sync_at' | 'credential_count'
-      >>;
+      const rows = data ?? [];
       const summaries: IssuerPartnershipSummary[] = rows.map((r) => ({
         ...r,
         // Reserved for CSI-05 (Sprint 2). Returned as null until the cron
@@ -257,7 +345,7 @@ export function createIssuerPartnershipsRouter(
       }));
       res.status(200).json({ data: summaries });
     } catch (e) {
-      logger.error('issuer-partnerships list failed', { error: e });
+      logger.error({ error: e }, 'issuer-partnerships list failed');
       res.status(500).json({ error: { code: 'internal' } });
     }
   });
@@ -322,15 +410,16 @@ export function createIssuerPartnershipsRouter(
             .update({ account_label: body.account_label })
             .eq('id', result.id);
         } catch (e) {
-          logger.warn('issuer-partnerships: account_label update failed', {
-            error: e,
-          });
+          logger.warn(
+            { error: e },
+            'issuer-partnerships: account_label update failed',
+          );
         }
       }
 
       res.status(201).json({ data: { id: result.id, provider: body.provider } });
     } catch (e) {
-      logger.error('issuer-partnerships connect failed', { error: e });
+      logger.error({ error: e }, 'issuer-partnerships connect failed');
       res.status(500).json({ error: { code: 'internal' } });
     }
   });
@@ -343,7 +432,7 @@ export function createIssuerPartnershipsRouter(
       return;
     }
     const rowId = req.params.rowId;
-    if (!rowId || !/^[0-9a-fA-F-]{36}$/.test(rowId)) {
+    if (typeof rowId !== 'string' || !UUID_RE.test(rowId)) {
       res.status(400).json({ error: { code: 'invalid_row_id' } });
       return;
     }
@@ -352,13 +441,11 @@ export function createIssuerPartnershipsRouter(
       // Resolve the row's org_id so we can run the admin check against it.
       const { data, error: selErr } = await db
         .from('member_integrations')
-        .select('id, org_id, provider, revoked_at')
+        .select<MemberIntegrationRevokeRow>('id, org_id, provider, revoked_at')
         .eq('id', rowId)
         .limit(1);
       if (selErr) throw selErr;
-      const row = data?.[0] as
-        | { id: string; org_id: string; provider: string; revoked_at: string | null }
-        | undefined;
+      const row = data?.[0];
       if (!row) {
         res.status(404).json({ error: { code: 'not_found' } });
         return;
@@ -382,7 +469,7 @@ export function createIssuerPartnershipsRouter(
 
       res.status(200).json({ data: { id: rowId, revoked: true } });
     } catch (e) {
-      logger.error('issuer-partnerships disconnect failed', { error: e });
+      logger.error({ error: e }, 'issuer-partnerships disconnect failed');
       res.status(500).json({ error: { code: 'internal' } });
     }
   });
