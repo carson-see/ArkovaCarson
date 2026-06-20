@@ -107,7 +107,7 @@ async function checkRlsEnabled(
       };
     }
 
-    const enabled = (pgData as any).rowsecurity === true;
+    const enabled = (pgData as { rowsecurity?: boolean }).rowsecurity === true;
     return {
       name: `RLS enabled: ${table}`,
       passed: enabled,
@@ -115,7 +115,7 @@ async function checkRlsEnabled(
     };
   }
 
-  const enabled = data === true || (data as any)?.enabled === true;
+  const enabled = data === true || (data as { enabled?: boolean } | null)?.enabled === true;
   return {
     name: `RLS enabled: ${table}`,
     passed: enabled,

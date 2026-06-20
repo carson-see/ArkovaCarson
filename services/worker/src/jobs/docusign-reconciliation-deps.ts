@@ -17,17 +17,47 @@ import type {
   EnvelopeSummary,
 } from './docusign-reconciliation.js';
 
+/**
+ * Minimal structural shape of the Supabase query builder this module uses.
+ * The full SupabaseClient generic types are impractical to thread through a
+ * test-injectable shim, so we model only the `from`/`rpc` surface. Each query
+ * chain is a thenable PostgrestBuilder; we model it loosely and narrow the
+ * awaited `{ data, error }` results at each call site.
+ */
+type PostgrestLikeBuilder = {
+  select: (cols: string) => PostgrestLikeBuilder;
+  eq: (col: string, val: unknown) => PostgrestLikeBuilder;
+  is: (col: string, val: unknown) => PostgrestLikeBuilder;
+  in: (col: string, vals: readonly unknown[]) => PostgrestLikeBuilder;
+  insert: (row: Record<string, unknown>) => PromiseLike<{ error: unknown }>;
+  then: Promise<{ data: unknown; error: unknown }>['then'];
+};
+
+type SupabaseQueryDb = {
+  from: (table: string) => PostgrestLikeBuilder;
+  rpc?: (...args: unknown[]) => unknown;
+};
+
 export interface ReconciliationDepOptions {
-  db?: { from: (table: string) => any; rpc?: (...args: any[]) => any };
+  db?: SupabaseQueryDb;
   env?: NodeJS.ProcessEnv;
   fetchImpl?: typeof fetch;
   refreshTokenStore?: DocusignRefreshTokenStore;
 }
 
+/** Row shape returned by the integration listing queries. */
+interface IntegrationRow {
+  id: string;
+  org_id: string;
+  account_id: string | null;
+  base_uri: string | null;
+  token_secret_name: string | null;
+}
+
 export function makeReconciliationDeps(
   options: ReconciliationDepOptions = {},
 ): ReconciliationDeps {
-  const db = options.db ?? (defaultDb as any);
+  const db = options.db ?? (defaultDb as unknown as SupabaseQueryDb);
   const env = options.env ?? process.env;
   const fetchImpl = options.fetchImpl ?? fetch;
   const refreshTokenStore =
@@ -36,27 +66,35 @@ export function makeReconciliationDeps(
 
   return {
     async listActiveIntegrations(): Promise<ActiveIntegration[]> {
-      // Org-level integrations (existing)
-      const { data: orgData, error: orgError } = await db
+      // Org-level integrations (existing).
+      // tenant-isolation suppressed: this is a service-role cron (invoked from
+      // src/routes/cron.ts) that intentionally enumerates DocuSign integrations
+      // across ALL orgs to reconcile each tenant's envelopes. There is no
+      // per-org caller context; each row carries its own org_id which scopes all
+      // downstream work. Org-agnostic by design (SCRUM-2042 reconciliation job).
+      // eslint-disable-next-line arkova/missing-org-filter
+      const { data: orgData, error: orgError } = (await db
         .from('org_integrations')
         .select('id, org_id, account_id, base_uri, token_secret_name')
         .eq('provider', 'docusign')
-        .is('revoked_at', null);
+        .is('revoked_at', null)) as { data: IntegrationRow[] | null; error: { message?: string } | null };
 
       if (orgError) throw new Error(`integration_list_failed: ${orgError.message ?? orgError}`);
 
-      // SCRUM-2044: Member-level integrations
-      const { data: memberData, error: memberError } = await db
+      // SCRUM-2044: Member-level integrations (member_integrations is not in the
+      // multi-tenant table set; same cross-tenant cron rationale applies).
+      const { data: memberData, error: memberError } = (await db
         .from('member_integrations')
         .select('id, org_id, account_id, base_uri, token_secret_name')
         .eq('provider', 'docusign')
-        .is('revoked_at', null);
+        .is('revoked_at', null)) as { data: IntegrationRow[] | null; error: { message?: string } | null };
 
       if (memberError) throw new Error(`member_integration_list_failed: ${memberError.message ?? memberError}`);
 
-      const allRows = [...(orgData ?? []), ...(memberData ?? [])];
+      const allRows: IntegrationRow[] = [...(orgData ?? []), ...(memberData ?? [])];
       return allRows.filter(
-        (row: any) => row.account_id && row.base_uri && row.token_secret_name,
+        (row): row is ActiveIntegration =>
+          Boolean(row.account_id && row.base_uri && row.token_secret_name),
       );
     },
 
@@ -135,7 +173,7 @@ export function makeReconciliationDeps(
           }
         } catch (err) {
           if (err instanceof Error && err.name === 'AbortError') {
-            throw new Error('envelopes_api_timeout');
+            throw new Error('envelopes_api_timeout', { cause: err });
           }
           throw err;
         } finally {
@@ -151,13 +189,22 @@ export function makeReconciliationDeps(
       envelopeIds: string[],
     ): Promise<Set<string>> {
       if (envelopeIds.length === 0) return new Set();
-      const { data, error } = await db
+      // tenant-isolation suppressed: docusign_webhook_nonces is a GLOBAL
+      // replay-protection nonce table with NO org_id column (schema keyed on
+      // envelope_id, event_id, generated_at — see baseline migration). There is
+      // no tenant column to filter on; the lookup is already scoped to a known,
+      // bounded set of envelope_ids derived from one integration's envelopes.
+      // eslint-disable-next-line arkova/missing-org-filter
+      const { data, error } = (await db
         .from('docusign_webhook_nonces')
         .select('envelope_id')
-        .in('envelope_id', envelopeIds);
+        .in('envelope_id', envelopeIds)) as {
+        data: Array<{ envelope_id: string }> | null;
+        error: { message?: string } | null;
+      };
 
       if (error) throw new Error(`nonce_lookup_failed: ${error.message ?? error}`);
-      return new Set((data ?? []).map((r: { envelope_id: string }) => r.envelope_id));
+      return new Set((data ?? []).map((r) => r.envelope_id));
     },
 
     async insertGap(gap) {
