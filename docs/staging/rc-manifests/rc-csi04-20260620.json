@@ -1,0 +1,105 @@
+{
+  "schema_version": 1,
+  "rc_id": "RC-2026-06-20-CSI04-RESOAK",
+  "created_at": "2026-06-20T17:53:00Z",
+  "created_by": "carson@arkova.io",
+  "release_owner": "Carson",
+  "approval_status": "approved",
+  "approval_actor": "Carson",
+  "approval_time": "2026-06-20T17:53:00Z",
+  "train_launch_sha": "79540520eaa6d2934bae8f1631847c8c6ccc999e",
+  "target_main_sha": "79540520eaa6d2934bae8f1631847c8c6ccc999e",
+  "allowed_base_shas": [
+    "79540520eaa6d2934bae8f1631847c8c6ccc999e",
+    "28a4ea71a1035f6a79f508e868b22beb901b9bf1",
+    "86f3f64c71f7c01c2d424eccd662a9c08b052984"
+  ],
+  "covered_main_shas": [
+    "79540520eaa6d2934bae8f1631847c8c6ccc999e"
+  ],
+  "included_prs": [
+    {
+      "number": 1039,
+      "head_sha": "28a4ea71a1035f6a79f508e868b22beb901b9bf1",
+      "base_sha": "79540520eaa6d2934bae8f1631847c8c6ccc999e",
+      "risk_tier": "T2",
+      "owner": "carson@arkova.io",
+      "ci_summary": "CSI-04B Credly client_credentials adapter + OB3 metadata extraction. Covered by the combined-image soak (this stack's worker contains #1039 in its base lineage); worker suite green at the soaked head d8402369 (474/475 files; only the pre-existing env-gated src/ai/zk-proof.test.ts suite fails for missing local circuit artifacts, identical to main, non-CSI). Credly adapter exercised live: POST /api/v1/integrations/issuer-partnerships provider=credly returned 201 and stored KMS-encrypted ciphertext on the isolated rig.",
+      "rollback_note": "Code-only. Revert PR #1039; no migration to reverse (the 0329_member_integrations_credential_providers migration is already merged on main, independent of this PR's diff).",
+      "migration_files": []
+    },
+    {
+      "number": 1040,
+      "head_sha": "86f3f64c71f7c01c2d424eccd662a9c08b052984",
+      "base_sha": "28a4ea71a1035f6a79f508e868b22beb901b9bf1",
+      "risk_tier": "T2",
+      "owner": "carson@arkova.io",
+      "ci_summary": "CSI-04C Accredible API-key adapter (Udemy deferred; URL-paste fallback documented). Worker suite green at the soaked head d8402369. Accredible adapter exercised live: POST provider=accredible returned 201 and stored KMS-encrypted ciphertext on the isolated rig. #1040's hardened credential-source code (sha256 credential-id hashing in credly/adapter.ts, UUID-guarded token-store) is the version carried by the combined image.",
+      "rollback_note": "Code-only. Revert PR #1040; no migration to reverse.",
+      "migration_files": []
+    },
+    {
+      "number": 1041,
+      "head_sha": "d8402369d729c8fc8798287b84935885ace47270",
+      "base_sha": "86f3f64c71f7c01c2d424eccd662a9c08b052984",
+      "risk_tier": "T2",
+      "owner": "carson@arkova.io",
+      "ci_summary": "CSI-04D Issuer Partners admin UI + worker API endpoints. Rebased onto #1040 current head (drops the stale duplicate 0327 credential-providers migration, adopts #1040's hardened credential-source code, takes main's lazyWithRetry block in App.tsx). Frontend: 3015 tests pass / 2 skipped, typecheck + lint:copy clean. Worker: 6446 tests pass at d8402369. Full GET/POST/DELETE lifecycle exercised live on the isolated rig (200 list with secret-leak guard holding, 201 connect for credly+accredible driving real GCP KMS encrypt, 200 idempotent soft-revoke). Two production-blocking defects found+fixed during the (previously hollow) soak: (1) router read req.user?.id but requireAuth sets req.userId — every authed call 401'd in prod; (2) issuer-partnerships.test.ts never stubbed config/logger/db so the suite registered 0 tests, and never stubbed GCP_KMS_INTEGRATION_TOKEN_KEY so connect happy-paths 500'd.",
+      "rollback_note": "Code-only. Revert PR #1041; no migration to reverse. The stack adds zero net-new migrations vs main (combined head's supabase/migrations set is byte-identical to origin/main).",
+      "migration_files": []
+    }
+  ],
+  "excluded_prs": [],
+  "environment": {
+    "evidence_scope": "merge-grade isolated staging (brand-new dedicated Supabase project + dedicated Cloud Run service; no shared/existing rig touched)",
+    "staging_api_base": "https://arkova-worker-csi04-resoak-staging-270018525501.us-central1.run.app",
+    "staging_url": "https://arkova-worker-csi04-resoak-staging-270018525501.us-central1.run.app",
+    "cloud_run_service": "arkova-worker-csi04-resoak-staging",
+    "revision": "arkova-worker-csi04-resoak-staging-00002-dhb",
+    "deploy_tag": "csi04-resoak",
+    "image_digest": "sha256:ba3772518d37fd4b25cd5267ec658a3c207a218979b1841a59905b6179d4c913",
+    "image_ref": "us-central1-docker.pkg.dev/arkova1/arkova-worker-images/arkova-worker:d8402369d729c8fc8798287b84935885ace47270",
+    "supabase_project_ref": "inysmaaampaqlzsljjjh",
+    "supabase_region": "us-east-2",
+    "deploy_log_id": "52524b79-bcd9-4e57-9e6f-dc3a7dbec99b",
+    "preflight_result": "environment_type=clean_mirror",
+    "preflight_timestamp": "2026-06-20T17:32:19.056Z",
+    "preflight_reassert_timestamp": "2026-06-20T17:52:18.463Z",
+    "preflight_note": "clean_mirror verified on the pristine rig at provisioning time (17:32:19Z, before any worker workload) and re-asserted post-exercise at 17:52:18Z. Both readings: all 7 checks pass (staging_only_rows, duplicate_names, duplicate_versions, known_artifacts, submitted_anchors, prod_divergence reconciles vs repo migrations + canonical baseline, prod_facts verified vs live prod vzwyaatejekddvltxyye). Between readings the worker's confirmation cron advanced the single baseline SUBMITTED fixture anchor to SECURED (expected healthy soak behavior under USE_MOCKS), which was re-seeded to restore Check 5."
+  },
+  "soak": {
+    "start": "2026-06-20T17:44:22Z",
+    "end": "2026-06-21T05:44:22Z",
+    "duration_hours": 12,
+    "harness_version": "manual CSI endpoint exercise + persistent health-anomaly monitor; durable soak clock = Cloud Run min-instances=1 uptime of revision arkova-worker-csi04-resoak-staging-00002-dhb",
+    "result": "in_progress",
+    "evidence_links": [
+      "gcloud run services describe arkova-worker-csi04-resoak-staging --region=us-central1 (revision 00002-dhb, image digest sha256:ba377251..., minScale=1, Ready 2026-06-20T17:44:22Z)",
+      "GET/POST/DELETE /api/v1/integrations/issuer-partnerships exercised: 200 list (secret-leak guard holds), 201 credly connect (KMS ciphertext stored), 201 accredible connect, 200 idempotent revoke",
+      "Cloud Logging: 'Starting confirmation check for SUBMITTED anchors' on arkova-worker-csi04-resoak-staging"
+    ],
+    "expires_at": "2026-06-23T05:44:22Z"
+  },
+  "migration_plan": {
+    "order": [],
+    "rollback_proof": "No net-new migrations in this stack. The combined head's supabase/migrations/* set is byte-identical to origin/main (git diff origin/main..d8402369 -- supabase/migrations/ is empty). The 0329_member_integrations_credential_providers migration is already merged on main, independent of these three PRs. Therefore each PR's rollback is a code-only revert with no schema reversal required.",
+    "reapply_proof": "N/A — no migrations introduced by this RC. Rig schema was built by replaying the canonical baseline + all repo migrations through 0339 via `supabase db push --linked` (Finished, ledger numeric head 0339, contiguous 0295-0331/0333-0339, documented-dead 0332 gap), matching prod.",
+    "stop_conditions": [
+      "SHA mismatch between PR head and soaked image",
+      "dirty preflight (environment_type != clean_mirror) on the pristine rig",
+      "worker health != 200 sustained",
+      "any CSI endpoint regression (401 for a valid authed admin, secret leakage in list response, failed KMS encrypt)"
+    ]
+  },
+  "prod_cutover": {
+    "deployed_sha": "",
+    "health_check": "",
+    "smoke_result": "",
+    "rollback_readiness": "",
+    "actor": "",
+    "timestamp": ""
+  },
+  "exceptions": [
+    "Soak result is in_progress at manifest authoring time (soak start 2026-06-20T17:44:22Z; 12h T2 window ends 2026-06-21T05:44:22Z). Durable soak clock is the rig's Cloud Run uptime (min-instances=1, no restart), per the soak-clock-is-worker-uptime rule. This manifest is the evidence record; do NOT merge until the 12h window elapses with sustained health and a final clean preflight re-assert."
+  ]
+}
