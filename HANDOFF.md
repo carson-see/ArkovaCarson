@@ -14,6 +14,12 @@
 
 ## Now
 
+### 2026-06-21 — CSI-04C/04D recovery PR #1242 (stranded #1040+#1041 → main; no prod/soak touched)
+
+The CSI stacked merge tangled: **#1039** (Credly) is on main, but **#1041** (CSI-04D Issuer Partners admin UI + worker API) merged into **#1040's branch** `feat/scrum-1613-csi-04c-accredible-adapter` (merge commit `771e398d`) **not main**, and **#1040** (CSI-04C Accredible adapter) is **closed-never-merged**. So the Accredible adapter + Issuer Partners UI/API were **stranded** on `feat/scrum-1613` and missing from main.
+
+**Recovery: [PR #1242](https://github.com/carson-see/ArkovaCarson/pull/1242)** (`recover/csi-04cd-to-main`, head `0dc08d1c`, base main) — branched from the **exact soaked CSI head `d8402369`** and rebased onto current main (`7fdde07d`). The rebase had **zero conflicts** (the CSI commits and main's advance #1147/#1153 have an empty changed-file intersection). **Zero runtime loss verified:** `git diff d8402369 HEAD -- <csi runtime>` is EMPTY (all 21 CSI runtime blobs byte-identical to the soaked head); both soak-caught prod bugs present (`req.userId` 401 fix; the test-never-ran stub fix). Net delta vs main = the 22 CSI files (#1040+#1041) + the RC manifest. Local checks green (FE `tsc`/`lint:copy`/3019 tests; worker `tsc`/6460 tests — only the pre-existing env-gated zk-proof suite fails, non-CSI). **T2 staging evidence** cites the real CSI soak (clean_mirror rig `inysmaaampaqlzsljjjh`, soaked head `d8402369`, `2026-06-20T17:44:22Z`→19.8h) + RC manifest `docs/staging/rc-manifests/rc-csi04-20260620.json`; **residual-risk = no re-soak** (rebase touched only docs/config, CSI runtime byte-identical → soak carries forward, the #1152 precedent). **Draft, awaiting Carson's review/merge** — Claude does not merge. Supersedes closed #1040 + mis-merged #1041.
+
 ### 2026-06-19 — PI-0 launch-readiness PLANNED + FILED (C-suite gate → kicked back → planned; no prod/soak touched)
 
 **C-suite launch-readiness gate (2026-06-19) did NOT approve launch** — strategic direction approved, kicked back to the ART for a real plan. Outcome: **PI-0** (the pre-launch increment; renamed from the Sprint-0 doc's "Train D / PI-1" framing — post-launch = PI-1+) is now planned, gated, and filed. Builds on Sprint-0 (S0-E4 #1211 landed; lanes onboarded).
@@ -251,4 +257,4 @@ _Last refreshed: 2026-05-30 by Claude (PO reconciliation) — prod `/health` git
 
 ---
 
-_Last refreshed: 2026-06-05 by Claude (carson@arkova.io) — claims verified against gcloud/MCP/CI output._
+_Last refreshed: 2026-06-21 by Claude (carson@arkova.io) — claims verified against gcloud/MCP/CI output. The CSI-04C/04D recovery (PR #1242) entry asserts PR/recovery state only — no prod/worker/schema/soak state changed; the byte-identity check `git diff d8402369 HEAD -- <csi runtime>` is empty, and the local check runs are cited in the PR #1242 body._
