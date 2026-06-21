@@ -103,9 +103,6 @@ export function ProfessionalEducationExportPanel({ userId }: Readonly<Profession
       return;
     }
 
-    setLoading(kind);
-    setMessage(null);
-
     const body = {
       user_id: userId,
       ...(kind === 'cle' ? { jurisdiction: state.jurisdiction } : {}),
@@ -114,10 +111,16 @@ export function ProfessionalEducationExportPanel({ userId }: Readonly<Profession
       format,
     };
 
+    // Validate BEFORE entering the loading state. Setting loading first and
+    // returning on a Zod failure left the button spinning forever (e.g. a
+    // >32-char/whitespace jurisdiction or a malformed userId).
     if (!exportRequestSchema.safeParse(body).success) {
       setMessage({ kind: 'error', text: LABELS.REQUIRED_FIELDS });
       return;
     }
+
+    setLoading(kind);
+    setMessage(null);
 
     try {
       const response = await workerFetch(`/api/v1/exports/${kind}-log`, {

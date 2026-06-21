@@ -127,4 +127,43 @@ describe('ProfessionalEducationExportPanel', () => {
     expect(await screen.findByText('The export completed, but the download link was not safe to open.')).toBeInTheDocument();
     expect(openMock).not.toHaveBeenCalled();
   });
+
+  it('does not leave the button stuck loading when Zod rejects the request (over-long jurisdiction)', async () => {
+    const user = userEvent.setup();
+
+    render(<ProfessionalEducationExportPanel userId={userId} />);
+
+    // 33 chars > the schema's .max(32) jurisdiction cap → safeParse fails,
+    // but the start <= end pre-check passes, so we exercise the Zod guard.
+    await user.type(screen.getByLabelText('CLE jurisdiction'), 'X'.repeat(33));
+    await user.type(screen.getByLabelText('CLE period start'), '2026-01-01');
+    await user.type(screen.getByLabelText('CLE period end'), '2026-12-31');
+
+    const exportButton = screen.getByRole('button', { name: 'Export CLE log' });
+    await user.click(exportButton);
+
+    // Validation error surfaces…
+    expect(await screen.findByText('Choose a valid reporting period before exporting.')).toBeInTheDocument();
+    // …the network is never hit (Zod blocked it before workerFetch)…
+    expect(workerFetchMock).not.toHaveBeenCalled();
+    // …and the button is NOT stuck in the loading state.
+    expect(screen.getByRole('button', { name: 'Export CLE log' })).toBeEnabled();
+    expect(screen.queryByRole('button', { name: 'Exporting CLE log' })).not.toBeInTheDocument();
+  });
+
+  it('does not leave the button stuck loading when Zod rejects a malformed user id', async () => {
+    const user = userEvent.setup();
+
+    render(<ProfessionalEducationExportPanel userId="not-a-uuid" />);
+
+    await user.type(screen.getByLabelText('CPE period start'), '2026-01-01');
+    await user.type(screen.getByLabelText('CPE period end'), '2026-12-31');
+
+    await user.click(screen.getByRole('button', { name: 'Export CPE log' }));
+
+    expect(await screen.findByText('Choose a valid reporting period before exporting.')).toBeInTheDocument();
+    expect(workerFetchMock).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: 'Export CPE log' })).toBeEnabled();
+    expect(screen.queryByRole('button', { name: 'Exporting CPE log' })).not.toBeInTheDocument();
+  });
 });
