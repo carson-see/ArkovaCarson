@@ -67,6 +67,34 @@ describe('shapeAnchorRow (BUG-2 key realignment)', () => {
     expect(shaped.recipient_identifier).toBe('c'.repeat(64));
   });
 
+  // ── SCRUM-2226: bitcoin_block propagation ──────────────────────────
+  // The `get_public_anchor` RPC emits `bitcoin_block`
+  // (= a.chain_block_height, gated to NULL for PENDING — see migration
+  // 0311_scrum1599_public_anchor_provenance.sql line ~34). The BUG-2 key
+  // realignment fixed the six mismatched keys but never surfaced this
+  // seventh field: the mapper silently dropped the on-chain block height,
+  // so the public verification envelope could not show *which* block
+  // confirmed the anchor. These two cases lock the field into the
+  // contract and gate it the same way the RPC does.
+  it('propagates bitcoin_block from a SECURED row into the envelope', () => {
+    const row = realPublicAnchorRow({ bitcoin_block: 840000 });
+
+    const shaped = shapeAnchorRow(row);
+
+    // Currently dropped: shapeAnchorRow never reads/emits bitcoin_block.
+    expect(shaped.bitcoin_block).toBe(840000);
+  });
+
+  it('yields null bitcoin_block on a PENDING row (gated like the RPC)', () => {
+    const row = pendingPublicAnchorRow();
+
+    const shaped = shapeAnchorRow(row);
+
+    // PENDING anchors have no confirmed block yet — the RPC gates
+    // bitcoin_block to NULL, so the mapper must surface null (not omit it).
+    expect(shaped.bitcoin_block).toBeNull();
+  });
+
   it('does NOT read the legacy wrong keys (org_name/chain_tx_id/created_at/recipient_hash/issued_at/expires_at)', () => {
     // A row that ONLY carries the old wrong keys must map to defaults —
     // proving the mapper no longer reads them.
