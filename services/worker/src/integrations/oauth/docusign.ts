@@ -297,6 +297,25 @@ export interface ProvisionConnectResult {
   action: 'created' | 'updated';
 }
 
+export interface ArkovaConnectConfig {
+  urlToPublishTo: string;
+  name: string;
+  configurationType: 'custom';
+  allowEnvelopePublish: 'true';
+  enableLog: 'true';
+  allUsers: 'true';
+  includeHMAC: 'true';
+  hmacEnabled: true;
+  hmacSecret: string;
+  includeDocumentFields: 'true';
+  requiresAcknowledgement: 'true';
+  envelopeEvents: string[];
+  events: string[];
+  payloadFormat: 'json';
+  payloadVersion: 'restv2.1';
+  eventData: { format: 'json'; version: 'restv2.1' };
+}
+
 /** Parse and validate a Connect API response, throwing DocusignApiError on mismatch. */
 function parseConnectConfigResponse(
   json: unknown,
@@ -343,6 +362,30 @@ function requireConnectConfig(env: NodeJS.ProcessEnv): {
   return { connectHmacSecret, workerPublicUrl };
 }
 
+export function buildArkovaConnectConfig(env: NodeJS.ProcessEnv = process.env): ArkovaConnectConfig {
+  const { connectHmacSecret, workerPublicUrl } = requireConnectConfig(env);
+  const webhookUrl = `${trimTrailingSlashes(workerPublicUrl)}/webhooks/docusign`;
+
+  return {
+    urlToPublishTo: webhookUrl,
+    name: 'Arkova Connect',
+    configurationType: 'custom',
+    allowEnvelopePublish: 'true',
+    enableLog: 'true',
+    allUsers: 'true',
+    includeHMAC: 'true',
+    hmacEnabled: true,
+    hmacSecret: connectHmacSecret,
+    includeDocumentFields: 'true',
+    requiresAcknowledgement: 'true',
+    envelopeEvents: ['Completed'],
+    events: ['envelope-completed'],
+    payloadFormat: 'json',
+    payloadVersion: 'restv2.1',
+    eventData: { format: 'json', version: 'restv2.1' },
+  };
+}
+
 async function fetchConnectJson(
   fetchImpl: typeof fetch,
   input: string,
@@ -384,26 +427,25 @@ function parseConnectList(json: unknown, status: number): z.infer<typeof Connect
 }
 
 function buildConnectPayload(args: {
-  connectHmacSecret: string;
+  config: ArkovaConnectConfig;
   existingConnectId?: string;
-  webhookUrl: string;
 }): Record<string, unknown> {
   return {
-    urlToPublishTo: args.webhookUrl,
-    name: 'Arkova Connect',
-    configurationType: 'custom',
-    allowEnvelopePublish: 'true',
-    enableLog: 'true',
-    allUsers: 'true',
-    includeHMAC: 'true',
+    urlToPublishTo: args.config.urlToPublishTo,
+    name: args.config.name,
+    configurationType: args.config.configurationType,
+    allowEnvelopePublish: args.config.allowEnvelopePublish,
+    enableLog: args.config.enableLog,
+    allUsers: args.config.allUsers,
+    includeHMAC: args.config.includeHMAC,
     // DocuSign must sign deliveries with the same key the webhook verifier uses.
     // Never log this Connect payload.
-    hmacSecret: args.connectHmacSecret, // NOSONAR
-    includeDocumentFields: 'true',
-    requiresAcknowledgement: 'true',
-    envelopeEvents: ['Completed'],
-    events: ['envelope-completed'],
-    eventData: { format: 'json', version: 'restv2.1' },
+    hmacSecret: args.config.hmacSecret, // NOSONAR
+    includeDocumentFields: args.config.includeDocumentFields,
+    requiresAcknowledgement: args.config.requiresAcknowledgement,
+    envelopeEvents: args.config.envelopeEvents,
+    events: args.config.events,
+    eventData: args.config.eventData,
     ...(args.existingConnectId ? { connectId: args.existingConnectId } : {}),
   };
 }
@@ -420,9 +462,8 @@ export async function provisionConnectListener(args: {
 }): Promise<ProvisionConnectResult> {
   const env = args.deps?.env ?? process.env;
   const fetchImpl = args.deps?.fetchImpl ?? fetch;
-  const { connectHmacSecret, workerPublicUrl } = requireConnectConfig(env);
+  const config = buildArkovaConnectConfig(env);
 
-  const webhookUrl = `${trimTrailingSlashes(workerPublicUrl)}/webhooks/docusign`;
   const base = trimTrailingSlashes(args.baseUri);
   const connectBase = `${base}/restapi/v2.1/accounts/${encodeURIComponent(args.accountId)}/connect`;
   const authHeaders = { Authorization: `Bearer ${args.accessToken}` };
@@ -439,13 +480,12 @@ export async function provisionConnectListener(args: {
 
   // DocuSign may return null or empty body — treat as no existing listeners
   const listData = parseConnectList(list.json, list.response.status);
-  const existing = listData.configurations.find((cfg) => cfg.urlToPublishTo === webhookUrl);
+  const existing = listData.configurations.find((cfg) => cfg.urlToPublishTo === config.urlToPublishTo);
   const method = existing ? 'PUT' : 'POST';
   const action: 'updated' | 'created' = existing ? 'updated' : 'created';
   const payload = buildConnectPayload({
-    connectHmacSecret,
+    config,
     existingConnectId: existing?.connectId,
-    webhookUrl,
   });
 
   const mutation = await fetchConnectJson(fetchImpl, connectBase, {
