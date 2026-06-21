@@ -205,6 +205,77 @@ function normalizeCpeStatus(rowStatus: unknown, metadata: Record<string, unknown
   return 'Unknown';
 }
 
+// PostgREST projection that pulls ONLY the aggregate keys the org dashboard
+// renders, via jsonb arrow operators — never the whole `cpe_metadata` blob.
+// Member PII (participantName, licenseNumber, …) is therefore never selected,
+// so it never leaves Postgres (§1.6). Keys are the canonical snake_case the
+// worker writes (see services/worker/src/exports/cpe-log-export.ts and
+// src/components/credentials/cpeMetadataView.ts).
+const ORG_CPE_AGGREGATE_SELECT = [
+  'id',
+  'public_id',
+  'status',
+  'issued_at',
+  'credential_type',
+  'cpe_field_of_study:cpe_metadata->>field_of_study',
+  'cpe_credit_hours:cpe_metadata->>credit_hours',
+  'cpe_provider:cpe_metadata->>provider',
+  'cpe_status:cpe_metadata->>status',
+  'cpe_requires_manual_review:cpe_metadata->requires_manual_review',
+  'cpe_completion_date:cpe_metadata->>completion_date',
+].join(', ');
+
+// Explicit allowlist of the cpe_metadata keys the dashboard may consume. Used to
+// reshape a row back into a bounded `cpe_metadata` object so that even if an
+// upstream source (or a test fixture) over-shares, only these keys survive.
+const ORG_CPE_METADATA_ALLOWLIST = [
+  'field_of_study',
+  'credit_hours',
+  'provider',
+  'status',
+  'requires_manual_review',
+  'completion_date',
+] as const;
+
+/**
+ * Normalize a fetched anchor row into the shape {@link normalizeOrgCpeRecord}
+ * expects, reconstructing a bounded `cpe_metadata` that contains ONLY the
+ * aggregate allowlist keys. Handles two input shapes:
+ *   - prod: flat `cpe_*`-aliased columns from {@link ORG_CPE_AGGREGATE_SELECT};
+ *   - tests / legacy: a nested `cpe_metadata` object (only allowlisted keys are
+ *     copied across — member PII is dropped here as a second layer).
+ */
+function reshapeProjectedCpeRow(row: Record<string, unknown>): Record<string, unknown> {
+  const nested = row.cpe_metadata && typeof row.cpe_metadata === 'object' && !Array.isArray(row.cpe_metadata)
+    ? (row.cpe_metadata as Record<string, unknown>)
+    : null;
+
+  const aliased: Record<string, unknown> = {
+    field_of_study: row.cpe_field_of_study,
+    credit_hours: row.cpe_credit_hours,
+    provider: row.cpe_provider,
+    status: row.cpe_status,
+    requires_manual_review: row.cpe_requires_manual_review,
+    completion_date: row.cpe_completion_date,
+  };
+
+  const cpe_metadata: Record<string, unknown> = {};
+  for (const key of ORG_CPE_METADATA_ALLOWLIST) {
+    const value = aliased[key] ?? nested?.[key];
+    if (value !== undefined && value !== null) cpe_metadata[key] = value;
+  }
+
+  return {
+    id: row.id,
+    public_id: row.public_id,
+    status: row.status,
+    issued_at: row.issued_at,
+    // Preserve "no usable CPE metadata" as null so normalizeOrgCpeRecord keeps
+    // skipping such rows rather than rendering all-default aggregates.
+    cpe_metadata: Object.keys(cpe_metadata).length > 0 ? cpe_metadata : null,
+  };
+}
+
 function normalizeOrgCpeRecord(row: Record<string, unknown>): OrgCpeRecord | null {
   const metadata = row.cpe_metadata;
   if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return null;
@@ -453,9 +524,16 @@ export function ComplianceDashboardPage() {
       try {
         // New CPE summary endpoint is not present in the worker contract yet;
         // use the same org-scoped anchors read pattern as the coverage section.
+        //
+        // PII boundary (§1.6): the org dashboard only renders aggregates
+        // (field of study, credit hours, provider, status). The previous
+        // `select('... cpe_metadata')` pulled the WHOLE jsonb — including
+        // member PII like participantName / licenseNumber — for every anchor in
+        // the org. We instead project ONLY the aggregate keys via PostgREST
+        // jsonb arrow operators, so member PII never leaves Postgres.
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const res = await (supabase.from('anchors') as any)
-          .select('id, public_id, status, issued_at, credential_type, cpe_metadata')
+          .select(ORG_CPE_AGGREGATE_SELECT)
           .eq('org_id', orgId)
           .eq('credential_type', 'CPE')
           .not('cpe_metadata', 'is', null)
@@ -472,7 +550,7 @@ export function ComplianceDashboardPage() {
         const rows = Array.isArray(res.data) ? res.data : [];
         setCpeRecords(
           rows
-            .map((row: Record<string, unknown>) => normalizeOrgCpeRecord(row))
+            .map((row: Record<string, unknown>) => normalizeOrgCpeRecord(reshapeProjectedCpeRow(row)))
             .filter((record: OrgCpeRecord | null): record is OrgCpeRecord => record !== null),
         );
       } catch {

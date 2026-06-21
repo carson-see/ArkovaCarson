@@ -1,7 +1,7 @@
 /**
  * SCRUM-1862 ComplianceDashboardPage — org CPE dashboard panel.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { ComplianceDashboardPage } from './ComplianceDashboardPage';
@@ -50,14 +50,18 @@ type CpeTestRow = {
   public_id: string;
   status: string;
   issued_at: string;
+  // Canonical snake_case keys — the shape the worker actually writes into
+  // cpe_metadata (see services/worker/src/exports/cpe-log-export.ts and
+  // src/components/credentials/cpeMetadataView.ts). participant_name /
+  // license_number are member PII and must never reach the rendered aggregates.
   cpe_metadata: {
-    providerName?: string;
-    fieldOfStudy?: string;
-    creditHours?: number;
-    completionDate?: string;
+    provider?: string;
+    field_of_study?: string;
+    credit_hours?: number;
+    completion_date?: string;
     status?: string;
-    participantName?: string;
-    licenseNumber?: string;
+    participant_name?: string;
+    license_number?: string;
   };
 };
 
@@ -69,13 +73,13 @@ const cpeRows = vi.hoisted((): { current: CpeTestRow[] } => ({
       status: 'SECURED',
       issued_at: '2026-01-15T12:00:00Z',
       cpe_metadata: {
-        providerName: 'AICPA',
-        fieldOfStudy: 'Accounting',
-        creditHours: 4,
-        completionDate: '2026-01-15',
+        provider: 'AICPA',
+        field_of_study: 'Accounting',
+        credit_hours: 4,
+        completion_date: '2026-01-15',
         status: 'eligible',
-        participantName: 'Pat Private',
-        licenseNumber: 'CPA-12345',
+        participant_name: 'Pat Private',
+        license_number: 'CPA-12345',
       },
     },
     {
@@ -84,10 +88,10 @@ const cpeRows = vi.hoisted((): { current: CpeTestRow[] } => ({
       status: 'PENDING',
       issued_at: '2026-02-10T12:00:00Z',
       cpe_metadata: {
-        providerName: 'NASBA Registry',
-        fieldOfStudy: 'Ethics',
-        creditHours: 2.5,
-        completionDate: '2026-02-10',
+        provider: 'NASBA Registry',
+        field_of_study: 'Ethics',
+        credit_hours: 2.5,
+        completion_date: '2026-02-10',
         status: 'needs_review',
       },
     },
@@ -97,10 +101,10 @@ const cpeRows = vi.hoisted((): { current: CpeTestRow[] } => ({
       status: 'SECURED',
       issued_at: '2025-11-01T12:00:00Z',
       cpe_metadata: {
-        providerName: 'AICPA',
-        fieldOfStudy: 'Taxes',
-        creditHours: 8,
-        completionDate: '2025-11-01',
+        provider: 'AICPA',
+        field_of_study: 'Taxes',
+        credit_hours: 8,
+        completion_date: '2025-11-01',
         status: 'eligible',
       },
     },
@@ -140,6 +144,7 @@ function createSupabaseBuilder(table: string) {
   const builder = {
     select: vi.fn((clause?: string) => {
       selectClause = clause;
+      if (clause !== undefined) supabaseSelectCalls.push(clause);
       return builder;
     }),
     eq: vi.fn((column: string, value: unknown) => {
@@ -158,6 +163,7 @@ function createSupabaseBuilder(table: string) {
 
 const mockEq = vi.hoisted(() => vi.fn());
 const supabaseEqCalls = vi.hoisted(() => [] as Array<[string, unknown]>);
+const supabaseSelectCalls = vi.hoisted(() => [] as string[]);
 const supabaseFromMock = vi.hoisted(() => vi.fn((table: string) => createSupabaseBuilder(table)));
 
 vi.mock('@/lib/supabase', () => ({
@@ -179,14 +185,27 @@ function renderPage() {
 
 describe('SCRUM-1862 org CPE dashboard', () => {
   beforeEach(() => {
+    // Pin "now" so the default `year-to-date` reporting window is deterministic.
+    // The fixtures are dated Jan/Feb 2026 (in-window) + Nov 2025 (out-of-window);
+    // without a fixed clock these assertions rot once the real date leaves 2026.
+    // `shouldAdvanceTime` keeps RTL's findBy/waitFor polling working under fake
+    // timers.
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    vi.setSystemTime(new Date('2026-06-21T00:00:00Z'));
+
     supabaseFromMock.mockClear();
     mockEq.mockClear();
     supabaseEqCalls.length = 0;
+    supabaseSelectCalls.length = 0;
     cpeQueryState.failCpeRecords = false;
     cpeRows.current = initialCpeRows.map((row) => ({
       ...row,
       cpe_metadata: { ...row.cpe_metadata },
     }));
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it('summarizes org CPE records for a reporting period without exposing member PII', async () => {
@@ -214,6 +233,22 @@ describe('SCRUM-1862 org CPE dashboard', () => {
 
     expect(panel).not.toHaveTextContent('Pat Private');
     expect(panel).not.toHaveTextContent('CPA-12345');
+
+    // PII boundary (§1.6): the org CPE query must PROJECT only the aggregate
+    // jsonb keys — it must NOT pull the whole `cpe_metadata` blob (which carries
+    // member PII like participantName / licenseNumber).
+    const cpeSelect = supabaseSelectCalls.find(
+      (clause) => clause.includes('cpe_metadata') && clause.includes('field_of_study'),
+    );
+    expect(cpeSelect).toBeDefined();
+    // No bare full-column request for cpe_metadata.
+    expect(cpeSelect).not.toMatch(/(^|,)\s*cpe_metadata\s*(,|$)/);
+    // Only the allowlisted aggregate keys are projected.
+    expect(cpeSelect).toContain('cpe_metadata->>field_of_study');
+    expect(cpeSelect).toContain('cpe_metadata->>credit_hours');
+    expect(cpeSelect).toContain('cpe_metadata->>provider');
+    expect(cpeSelect).not.toContain('participant');
+    expect(cpeSelect).not.toContain('license');
   });
 
   it('shows an error state without exposing member PII when CPE records fail to load', async () => {
