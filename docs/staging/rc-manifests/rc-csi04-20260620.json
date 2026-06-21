@@ -21,8 +21,8 @@
   ],
   "included_prs": [
     {
-      "number": "RECOVERY_PR_NUMBER_PLACEHOLDER",
-      "head_sha": "RECOVERY_HEAD_SHA_PLACEHOLDER",
+      "number": 1242,
+      "head_sha": "d8402369d729c8fc8798287b84935885ace47270",
       "base_sha": "7fdde07d9929369847b16a87f5a0fdb378adf118",
       "risk_tier": "T2",
       "owner": "carson@arkova.io",
