@@ -1,6 +1,16 @@
 # agents.md — services/worker/src/api/
 
-_Last updated: 2026-06-01 (platform-admin org roster/search/add — admin-org-members.ts)_
+_Last updated: 2026-06-16 (worker types resync 0339 — version-resolution.ts fully typed)_
+
+## 2026-06-16 — version-resolution.ts fully typed (untypedDb removed)
+
+The worker `database.types.ts` resync to head 0339 added `external_document_versions`
+and `version_reviews`, so the `const untypedDb = db as unknown as SupabaseClient<any>`
+escape hatch (and its `@supabase/supabase-js` `SupabaseClient` import) is gone — all six
+`external_document_versions` / `version_reviews` reads/writes now run on the typed `db`
+client. No runtime change (casts are type-erased); the win is compile-time column/shape
+checking. Per the DON'T rule in `services/worker/agents.md`: don't reintroduce
+`(db as any)` for a table that's in `database.types.ts` — run `gen:types` instead.
 
 ## 2026-06-01 Platform-admin org roster + add member (RLS-bypass via service_role)
 

@@ -2,6 +2,17 @@
 
 Background workers for anchor lifecycle, billing reconciliation, drive ingestion, and chain maintenance.
 
+## 2026-06-16 — rules-engine-versions.ts upsert now typed (head-0339 types resync)
+
+The `database.types.ts` resync to head 0339 added `external_document_versions`, so the
+`(db as any)` cast on the `insertVersionRecord` upsert was removed: it now type-checks on
+the typed `db` client, with only the Zod-validated dynamic `metadata` narrowed via
+`as Json` (same pattern as `chain-maintenance.ts` / `batch-anchor.ts`). Zero runtime
+change. NOTE: the separate `(db as any)` in `detectVersionConflict` is **intentionally
+retained** — it exists for the `.eq('metadata->>external_file_id', …)` JSON-arrow filter
+on the always-typed `anchors` table (not a missing-table escape hatch); removing it
+depends on supabase-js `.eq()` path-string tolerance and warrants its own verification.
+
 ## Files
 - `anchor.ts` — `processPendingAnchors()` mints fingerprint Bitcoin txs.
 - `batch-anchor.ts` — `processBatchAnchors()` aggregates submitted-but-not-yet-broadcast anchors.
