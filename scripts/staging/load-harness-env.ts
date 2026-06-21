@@ -4,7 +4,7 @@ const SHARED_STAGING_HOSTS = new Set([
 ]);
 
 function formatEnvError(message: string): Error {
-  return new Error(`${message} Set STAGING_API_BASE to the per-PR Cloud Run tag URL printed by scripts/staging/deploy.sh.`);
+  return new Error(`${message} Set STAGING_API_BASE to the per-PR or named train Cloud Run tag URL printed by scripts/staging/deploy.sh.`);
 }
 
 function trimTrailingSlashes(value: string): string {
@@ -15,14 +15,20 @@ function trimTrailingSlashes(value: string): string {
   return value.slice(0, end);
 }
 
-function isPrTagHostname(hostname: string): boolean {
-  const prefix = 'pr-';
+function isAllowedTag(tag: string): boolean {
+  if (tag.startsWith('pr-')) {
+    const prNumber = tag.slice('pr-'.length);
+    return prNumber.length > 0 && [...prNumber].every((char) => char >= '0' && char <= '9');
+  }
+  return /^train-[a-z0-9-]*[a-z0-9]$/.test(tag);
+}
+
+function isIsolatedTagHostname(hostname: string): boolean {
   const separator = '---';
-  if (!hostname.startsWith(prefix)) return false;
-  const separatorIndex = hostname.indexOf(separator, prefix.length);
-  if (separatorIndex <= prefix.length) return false;
-  const prNumber = hostname.slice(prefix.length, separatorIndex);
-  if (![...prNumber].every((char) => char >= '0' && char <= '9')) return false;
+  const separatorIndex = hostname.indexOf(separator);
+  if (separatorIndex <= 0) return false;
+  const tag = hostname.slice(0, separatorIndex);
+  if (!isAllowedTag(tag)) return false;
 
   const routedHost = hostname.slice(separatorIndex + separator.length);
   return routedHost.startsWith('arkova-worker-') && routedHost.endsWith('.run.app');
@@ -49,8 +55,8 @@ export function resolveStagingApiBase(env: { STAGING_API_BASE?: string }): strin
     throw formatEnvError(`STAGING_API_BASE points at shared/main staging (${url.hostname}), which would contaminate parallel soaks.`);
   }
 
-  if (!isPrTagHostname(url.hostname)) {
-    throw formatEnvError(`STAGING_API_BASE must be a tag-routed per-PR Cloud Run URL; received host \`${url.hostname}\`.`);
+  if (!isIsolatedTagHostname(url.hostname)) {
+    throw formatEnvError(`STAGING_API_BASE must be a tag-routed per-PR or named train Cloud Run URL; received host \`${url.hostname}\`.`);
   }
 
   url.pathname = trimTrailingSlashes(url.pathname);

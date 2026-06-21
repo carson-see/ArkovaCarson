@@ -6,7 +6,8 @@ import { parseArgs } from 'node:util';
 import { pathToFileURL } from 'node:url';
 
 export interface ScreenSoakSession {
-  prNumber: number;
+  laneId: string;
+  prNumber?: number;
   sessionName: string;
   state: string;
 }
@@ -32,7 +33,8 @@ export interface OpenPullRequest {
 }
 
 export interface ActiveLane {
-  prNumber: number;
+  laneId: string;
+  prNumber?: number;
   sessionName: string;
   state: string;
   summary: SoakSummary | null;
@@ -87,6 +89,11 @@ function prNumberFromSessionName(sessionName: string): number | null {
   return Number.parseInt(sessionName.slice(offset, end), 10);
 }
 
+function trainIdFromSessionName(sessionName: string): string | null {
+  const match = /^train-[a-z0-9]+(?:-|$)/i.exec(sessionName);
+  return match === null ? null : match[0].replace(/-$/, '').toLowerCase();
+}
+
 function parseScreenSessionLine(line: string): ScreenSoakSession | null {
   const stateEnd = line.lastIndexOf(')');
   const stateStart = stateEnd === line.length - 1 ? line.lastIndexOf('(') : -1;
@@ -96,10 +103,12 @@ function parseScreenSessionLine(line: string): ScreenSoakSession | null {
   const dot = screenToken.indexOf('.');
   const sessionName = dot === -1 ? screenToken : screenToken.slice(dot + 1);
   const prNumber = prNumberFromSessionName(sessionName);
-  if (prNumber === null) return null;
+  const trainId = trainIdFromSessionName(sessionName);
+  if (prNumber === null && trainId === null) return null;
 
   return {
-    prNumber,
+    laneId: prNumber === null ? trainId as string : `#${prNumber}`,
+    ...(prNumber === null ? {} : { prNumber }),
     sessionName,
     state: line.slice(stateStart + 1, stateEnd),
   };
@@ -242,7 +251,7 @@ function renderActiveLaneRows(lanes: ActiveLane[]): string[] {
   }
   return lanes.map((lane) => {
     const s = lane.summary;
-    return `| #${lane.prNumber} | ${safeCell(lane.state)} | ${s?.mode ?? '-'} | ${s?.ok ?? '-'} | ${s?.fail ?? '-'} | ${s?.errorRate ?? '-'} | ${safeCell(s?.statuses ?? '-')} | ${lane.evidenceJson} |`;
+    return `| ${safeCell(lane.laneId)} | ${safeCell(lane.state)} | ${s?.mode ?? '-'} | ${s?.ok ?? '-'} | ${s?.fail ?? '-'} | ${s?.errorRate ?? '-'} | ${safeCell(s?.statuses ?? '-')} | ${lane.evidenceJson} |`;
   });
 }
 
@@ -272,7 +281,7 @@ export function renderSoakLaneDashboard(dashboard: SoakLaneDashboard): string {
     '',
     '## Active Soak Lanes',
     '',
-    '| PR | Screen state | Mode | OK | Fail | Error rate | Statuses | Final JSON |',
+    '| Lane | Screen state | Mode | OK | Fail | Error rate | Statuses | Final JSON |',
     '| --- | --- | --- | ---: | ---: | --- | --- | --- |',
     ...renderActiveLaneRows(dashboard.activeLanes),
     '',
@@ -317,25 +326,29 @@ function newestMatchingFile(root: string, predicate: (path: string) => boolean):
   return files[0] ?? null;
 }
 
-function evidenceStateForPr(evidenceRoot: string, prNumber: number): 'present' | 'missing' {
-  const root = join(evidenceRoot, `pr-${prNumber}`);
+function evidenceRootForSession(evidenceRoot: string, session: ScreenSoakSession): string {
+  if (session.prNumber !== undefined) return join(evidenceRoot, `pr-${session.prNumber}`);
+  return join(evidenceRoot, session.laneId);
+}
+
+function evidenceStateForSession(evidenceRoot: string, session: ScreenSoakSession): 'present' | 'missing' {
+  const root = evidenceRootForSession(evidenceRoot, session);
   const evidence = newestMatchingFile(root, (path) => path.endsWith('.json') && path.includes('soak'));
   return evidence === null ? 'missing' : 'present';
 }
 
 function logHintsForSession(session: ScreenSoakSession): string[] {
-  const suffix = session.sessionName.replace(/^pr-?\d+-?/, '');
+  const suffix = session.prNumber === undefined
+    ? session.sessionName.replace(new RegExp(`^${session.laneId}-?`, 'i'), '')
+    : session.sessionName.replace(/^pr-?\d+-?/, '');
   if (!suffix || suffix === session.sessionName) return [];
   const normalizedSuffix = suffix.replace('-soak-', '-');
-  return [...new Set([
-    `soak-pr-${session.prNumber}-${suffix}`,
-    `soak-pr-${session.prNumber}-${normalizedSuffix}`,
-  ])];
+  const prefix = session.prNumber === undefined ? `soak-${session.laneId}` : `soak-pr-${session.prNumber}`;
+  return [...new Set([`${prefix}-${suffix}`, `${prefix}-${normalizedSuffix}`])];
 }
 
 function summaryForSession(evidenceRoot: string, session: ScreenSoakSession): SoakSummary | null {
-  const prNumber = session.prNumber;
-  const root = join(evidenceRoot, `pr-${prNumber}`);
+  const root = evidenceRootForSession(evidenceRoot, session);
   const hints = logHintsForSession(session);
   const log = newestMatchingFile(
     root,
@@ -376,11 +389,13 @@ export function buildSoakLaneDashboard(input: {
   currentMainSha: string;
 }): SoakLaneDashboard {
   const sessions = parseScreenSessions(input.screenOutput);
-  const activePrs = new Set(sessions.map((session) => session.prNumber));
+  const activePrs = new Set(
+    sessions.flatMap((session) => session.prNumber === undefined ? [] : [session.prNumber]),
+  );
   const activeLanes = sessions.map((session) => ({
     ...session,
     summary: summaryForSession(input.evidenceRoot, session),
-    evidenceJson: evidenceStateForPr(input.evidenceRoot, session.prNumber),
+    evidenceJson: evidenceStateForSession(input.evidenceRoot, session),
   }));
   const candidateEntries = input.openPullRequests
     .map((pr) => ({ pr, reason: soakCandidateReason(pr) }))
