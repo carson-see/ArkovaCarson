@@ -6,5 +6,6 @@ export { ExpiringDocumentsCard } from './ExpiringDocumentsCard';
 export { GradeBadge } from './GradeBadge';
 export { JurisdictionPrivacyNotices } from './JurisdictionPrivacyNotices';
 export { MissingDocumentsCard } from './MissingDocumentsCard';
+export { ProfessionalEducationExportPanel } from './ProfessionalEducationExportPanel';
 export { RecommendationsCard } from './RecommendationsCard';
 export { SessionTimeoutBanner } from './SessionTimeoutBanner';
