@@ -104,6 +104,8 @@ export const ROUTES = {
   ADMIN_ORGANIZATIONS: '/admin/organizations',
   ADMIN_USER_DETAIL: '/admin/users/:id',
   ADMIN_CONTROLS: '/admin/controls',
+  // SCRUM-2082 / CSI-04D — Issuer Partners admin (Credly, Accredible, Udemy)
+  ADMIN_ISSUER_PARTNERSHIPS: '/admin/issuer-partnerships',
 
   // Billing routes
   BILLING: '/billing',
