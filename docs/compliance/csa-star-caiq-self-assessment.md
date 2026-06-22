@@ -104,6 +104,7 @@ This self-assessment covers Arkova's credential verification platform against th
 | IVS-01 | Is network segmentation implemented? | Yes | Cloudflare Tunnel, no public ports |
 | IVS-02 | Are firewalls/WAF configured? | Yes | Cloudflare WAF + rate limiting |
 | IVS-03 | Is infrastructure monitored? | Yes | Sentry, `database-monitoring.md` |
+| IVS-04 | Are container images scanned for OS/base-image vulnerabilities before deploy? | Yes | Trivy gate in `deploy-worker.yml` (fixable HIGH/CRITICAL OS CVEs block the deploy), `container-image-scanning.md` |
 
 ### LOG — Logging & Monitoring
 
@@ -128,6 +129,14 @@ This self-assessment covers Arkova's credential verification platform against th
 | STA-01 | Is there a vendor risk program? | Yes | `vendor-register.md` |
 | STA-02 | Are dependencies tracked? | Yes | `license-audit.md`, SBOM generation planned |
 | STA-03 | Are SLAs defined? | Yes | Enterprise SLA terms |
+
+### TVM — Threat & Vulnerability Management
+
+| ID | Question | Answer | Evidence |
+|----|----------|--------|----------|
+| TVM-01 | Is there a vulnerability management program? | Yes | `dependency-update-policy.md`; CI/CD scan gates (below) |
+| TVM-02 | Are vulnerabilities identified via automated scanning of dependencies **and** container images? | Yes | Dependency graph: Sonatype OSS Index (`sonatype-scan.yml`, CVSS ≥ 7 gate) + `npm audit` (`ci.yml`). Container image (OS/base layer): Trivy gate in `deploy-worker.yml` — `container-image-scanning.md` |
+| TVM-03 | Are identified vulnerabilities remediated on a defined timeline? | Yes | Fixable HIGH/CRITICAL findings hard-block the PR/deploy; base-image CVEs remediated via `services/worker/Dockerfile` package refresh; `dependency-update-policy.md` |
 
 ---
 

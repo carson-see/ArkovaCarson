@@ -15,6 +15,7 @@
  * rule matches but before creating an anchor execution.
  */
 import { z } from 'zod';
+import type { Json } from '../types/database.types.js';
 import { db } from '../utils/db.js';
 import { logger } from '../utils/logger.js';
 
@@ -62,8 +63,7 @@ export async function detectVersionConflict(
   externalFileId: string,
   newFingerprint: string,
 ): Promise<ConflictResult> {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const { data, error } = await (db as any)
+  const { data, error } = await db
     .from('anchors')
     .select('id, fingerprint')
     .eq('org_id', orgId)
@@ -135,13 +135,12 @@ export async function insertVersionRecord(
       return { success: false, error: 'invalid version record' };
     }
 
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { error } = await (db as any)
+    const { error } = await db
       .from('external_document_versions')
-      .upsert(parsed.data, {
-        onConflict: 'org_id,external_file_id,fingerprint',
-        ignoreDuplicates: true,
-      });
+      .upsert(
+        { ...parsed.data, metadata: parsed.data.metadata as Json },
+        { onConflict: 'org_id,external_file_id,fingerprint', ignoreDuplicates: true },
+      );
 
     if (error) {
       logger.warn(

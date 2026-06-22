@@ -1,6 +1,6 @@
 # agents.md — services/worker/src/integrations/connectors/
 
-_Last updated: 2026-05-27_
+_Last updated: 2026-06-16 (SCRUM-2492 connector-byte-safety Do/Don't)._
 
 ## What This Folder Contains
 
@@ -22,3 +22,28 @@ Vendor connector services and canonical event adapters. Each connector owns OAut
 - **DO** keep adapters as pure functions (no I/O, no DB) for testability
 - **DO** use the injected `db` and `fetch` for all I/O in connector services
 - **DO NOT** persist raw OAuth tokens — connector services must use KMS encryption
+
+### Connector document-byte safety (§1.6A / SCRUM-2492)
+
+Connector-fetched documents (DocuSign / Google Drive) MAY be fingerprinted
+server-side, but the raw bytes are radioactive: fetch → SHA-256 in memory →
+discard. They must NEVER touch a logger, Sentry, an Error, `job_queue.last_error`,
+a temp file, or Postgres. An ESLint rule (`arkova/no-connector-bytes-to-sink`,
+ERROR on this tree + the `docusign-*` job files) enforces this at build time.
+
+- **DON'T** log/throw/persist `documentBytes` (or any `Buffer`/`Uint8Array`/`*.bytes`).
+  Pass only the fingerprint or `documentBytes.byteLength`. The canonical sink
+  `enqueueSignedDocument` (`jobs/docusign-envelope-completed.ts`) persists only
+  `byte_length` — keep it that way.
+- **DON'T** give a connector error a `body`/raw-response field. `DocusignApiError`
+  and `DriveApiError` are byte-safe BY CONSTRUCTION (`{ message, status }`, no
+  body). On the document-fetch path, never read `response.body`/`arrayBuffer()`
+  into an error — status + message only.
+- **DON'T** rely solely on the lint. The runtime defences are: byte-safe error
+  types, pino binary redaction (`utils/logger.ts` `redactBinaryValues`), type-based
+  Sentry scrub (`utils/sentry.ts` `scrubBinaryValues`), and the `last_error`
+  sanitizer (`utils/jobQueue.ts` `sanitizeLastError`). The multi-MB leak test is
+  `jobs/connector-byte-safety.test.ts`.
+- **DO** remember the lint is AST-only — a spread (`{ ...obj }`), cross-file flow,
+  or a helper-return can hide bytes from it. The runtime guards above are the
+  backstop; do not defeat them.

@@ -7,6 +7,22 @@ on:
       - 'services/worker/**'
       - '.github/workflows/deploy-worker.yml'
   workflow_dispatch:
+    inputs:
+      # BREAK-GLASS (operator-only): skip ONLY the Trivy image-scan step when a
+      # transient scanner-infra outage (e.g. a Trivy/GHCR vuln-DB
+      # `TOOMANYREQUESTS` rate-limit) wedges every deploy — including incident
+      # hotfixes. The deploy itself still runs; the scan is the only thing
+      # skipped, and the bypass is logged with the actor (see the
+      # "Audit image-scan bypass" step). Defaults false: never bypassable by
+      # default, and `workflow_dispatch` inputs come only from an authorized
+      # actor manually dispatching the run — never from untrusted PR input.
+      # This is a RUNTIME escape for a wedged scanner, NOT a label to weaken the
+      # gate config (severity / fixable / pinning stay non-overridable, enforced
+      # by scripts/ci/check-image-scan-gate.ts).
+      bypass_image_scan:
+        description: 'BREAK-GLASS: skip the Trivy image scan (scanner-infra outage only — logged)'
+        type: boolean
+        default: false
 
 concurrency:
   group: deploy-worker
@@ -132,7 +148,8 @@ jobs:
       - name: Configure Docker for Artifact Registry
         run: gcloud auth configure-docker ${{ env.REGISTRY }} --quiet
 
-      - name: Build & push image
+      - name: Build image
+        id: build
         run: |
           # Build on the runner instead of Cloud Build. GitHub's WIF principal
           # can push to Artifact Registry, but `gcloud builds submit` requires
@@ -146,8 +163,70 @@ jobs:
             --tag "${IMAGE}" \
             --tag "${LATEST}" \
             services/worker
-          docker push "${IMAGE}"
-          docker push "${LATEST}"
+          echo "image=${IMAGE}" >> "$GITHUB_OUTPUT"
+          echo "latest=${LATEST}" >> "$GITHUB_OUTPUT"
+
+      # BREAK-GLASS audit trail: if an operator manually dispatched this deploy
+      # with `bypass_image_scan=true`, record WHO bypassed the scan and WHY the
+      # escape exists, so every use is traceable in the run log. This step only
+      # runs when the bypass is active; the scan step below is skipped by the
+      # same condition. The deploy still proceeds — only the scan is skipped.
+      - name: Audit image-scan bypass (break-glass)
+        if: github.event.inputs.bypass_image_scan == 'true'
+        run: |
+          echo "⚠️ image scan bypassed by ${{ github.actor }}"
+          echo "Reason: operator break-glass for a Trivy/GHCR scanner-infra outage."
+          echo "Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+      # TVM/IVS (CSA STAR CAIQ): scan the built worker image for OS-layer /
+      # base-image CVEs BEFORE it is pushed or deployed. sonatype-scan.yml
+      # covers the npm dependency graph; this closes the base-image / OS-package
+      # gap flagged in the CAIQ self-assessment. Scanning before push means a
+      # vulnerable image never reaches Artifact Registry or Cloud Run. Fails the
+      # deploy on FIXABLE HIGH/CRITICAL OS CVEs (mirrors the CVSS>=7 fixable gate
+      # in sonatype-scan.yml). `ignore-unfixed: true` tracks — does not gate on —
+      # CVEs with no upstream patch, so an unpatchable base-image CVE cannot
+      # wedge every deploy. `pkg-types: os` keeps library CVEs in sonatype's lane
+      # (no double-gating; `pkg-types` is the current Trivy input — `vuln-type`
+      # is deprecated). Control doc: docs/compliance/container-image-scanning.md.
+      # Invariant enforced at PR time by scripts/ci/check-image-scan-gate.ts.
+      #
+      # DB-fetch hardening (so a transient vuln-DB outage doesn't wedge deploys):
+      #   - `cache: true` reuses the Trivy DB across runs (fewer cold pulls);
+      #   - `github-token` makes GHCR DB pulls authenticated (higher rate limit);
+      #   - `TRIVY_DB_REPOSITORY` / `TRIVY_JAVA_DB_REPOSITORY` pull the DBs from
+      #     the public ECR mirror instead of the shared ghcr.io pool that is the
+      #     usual source of `TOOMANYREQUESTS`;
+      #   - `timeout-minutes` fails fast if a fetch hangs instead of burning the
+      #     full job timeout.
+      # If the scanner infra is hard-down, an operator can still ship via the
+      # `bypass_image_scan` break-glass above (manual workflow_dispatch, logged).
+      - name: Scan image for base-image CVEs (Trivy)
+        if: github.event.inputs.bypass_image_scan != 'true'
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        timeout-minutes: 10
+        env:
+          # Escape the shared ghcr.io pool (the usual TOOMANYREQUESTS source).
+          TRIVY_DB_REPOSITORY: public.ecr.aws/aquasecurity/trivy-db
+          TRIVY_JAVA_DB_REPOSITORY: public.ecr.aws/aquasecurity/trivy-java-db
+        with:
+          image-ref: ${{ steps.build.outputs.image }}
+          scan-type: image
+          pkg-types: os
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: '1'
+          format: table
+          # Reuse the vuln DB across runs + authenticate GHCR pulls so a
+          # transient rate-limit doesn't fail the scan and block every deploy.
+          cache: true
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push image
+        run: |
+          set -euo pipefail
+          docker push "${{ steps.build.outputs.image }}"
+          docker push "${{ steps.build.outputs.latest }}"
 
       - name: Clear conflicting env/secret types
         run: |
@@ -173,7 +252,7 @@ jobs:
             --timeout 3600 \
             --tag canary \
             --no-traffic \
-            --set-secrets "SUPABASE_URL=supabase-url:latest,SUPABASE_SERVICE_ROLE_KEY=supabase-service-role-key:latest,SUPABASE_JWT_SECRET=supabase-jwt-secret:latest,STRIPE_SECRET_KEY=stripe-secret-key:latest,STRIPE_WEBHOOK_SECRET=stripe-webhook-secret:latest,BITCOIN_TREASURY_WIF=bitcoin-treasury-wif:latest,SENTRY_DSN=sentry-dsn:latest,API_KEY_HMAC_SECRET=api-key-hmac-secret:latest,GEMINI_API_KEY=gemini-api-key:latest,CRON_SECRET=cron-secret:latest,RESEND_API_KEY=resend-api-key:latest,TOGETHER_API_KEY=together-api-key:latest,COURTLISTENER_API_TOKEN=courtlistener-api-token:latest,OPENSTATES_API_KEY=openstates-api-key:latest,BITCOIN_RPC_URL=bitcoin-rpc-url:latest,UPSTASH_REDIS_REST_URL=UPSTASH_REDIS_REST_URL:latest,UPSTASH_REDIS_REST_TOKEN=UPSTASH_REDIS_REST_TOKEN:latest,RUNPOD_API_KEY=runpod-api-key:latest,EDGAR_USER_AGENT=edgar-user-agent:latest,SAM_GOV_API_KEY=sam-gov-api-key:latest,CLOUDFLARE_API_TOKEN=cloudflare-api-token:latest,CLOUDFLARE_TUNNEL_TOKEN=cloudflare-tunnel-token:latest,GOOGLE_OAUTH_CLIENT_ID=google-oauth-client-id:latest,GOOGLE_OAUTH_CLIENT_SECRET=google-oauth-client-secret:latest,DOCUSIGN_INTEGRATION_KEY=docusign_integration_key:latest,DOCUSIGN_CLIENT_SECRET=docusign_client_secret:latest,DOCUSIGN_CONNECT_HMAC_SECRET=docusign_connect_hmac_secret:latest" \
+            --set-secrets "SUPABASE_URL=supabase-url:latest,SUPABASE_SERVICE_ROLE_KEY=supabase-service-role-key:latest,SUPABASE_JWT_SECRET=supabase-jwt-secret:latest,STRIPE_SECRET_KEY=stripe-secret-key:latest,STRIPE_WEBHOOK_SECRET=stripe-webhook-secret:latest,BITCOIN_TREASURY_WIF=bitcoin-treasury-wif:latest,SENTRY_DSN=sentry-dsn:latest,API_KEY_HMAC_SECRET=api-key-hmac-secret:latest,GEMINI_API_KEY=gemini-api-key:latest,CRON_SECRET=cron-secret:latest,RESEND_API_KEY=resend-api-key:latest,TOGETHER_API_KEY=together-api-key:latest,COURTLISTENER_API_TOKEN=courtlistener-api-token:latest,OPENSTATES_API_KEY=openstates-api-key:latest,BITCOIN_RPC_URL=bitcoin-rpc-url:latest,UPSTASH_REDIS_REST_URL=UPSTASH_REDIS_REST_URL:latest,UPSTASH_REDIS_REST_TOKEN=UPSTASH_REDIS_REST_TOKEN:latest,RUNPOD_API_KEY=runpod-api-key:latest,EDGAR_USER_AGENT=edgar-user-agent:latest,SAM_GOV_API_KEY=sam-gov-api-key:latest,CLOUDFLARE_API_TOKEN=cloudflare-api-token:latest,CLOUDFLARE_TUNNEL_TOKEN=cloudflare-tunnel-token:latest,GOOGLE_OAUTH_CLIENT_ID=google-oauth-client-id:latest,GOOGLE_OAUTH_CLIENT_SECRET=google-oauth-client-secret:latest,DOCUSIGN_INTEGRATION_KEY=docusign_integration_key:latest,DOCUSIGN_CLIENT_SECRET=docusign_client_secret:latest,DOCUSIGN_CONNECT_HMAC_SECRET=docusign_connect_hmac_secret:latest,INTEGRATION_STATE_HMAC_SECRET=INTEGRATION_STATE_HMAC_SECRET:latest" \
             --set-env-vars "^||^NODE_ENV=production||LOG_LEVEL=info||BITCOIN_NETWORK=mainnet||ENABLE_PROD_NETWORK_ANCHORING=true||USE_MOCKS=false||FRONTEND_URL=https://app.arkova.ai||CORS_ALLOWED_ORIGINS=https://app.arkova.ai,https://arkova-carson.vercel.app,https://arkova-26.vercel.app||AI_PROVIDER=gemini||GEMINI_MODEL=gemini-2.5-flash||ENABLE_AI_EXTRACTION=true||ENABLE_SEMANTIC_SEARCH=true||ENABLE_AI_FRAUD=true||ENABLE_AI_REPORTS=true||CRON_OIDC_AUDIENCE=https://arkova-worker-270018525501.us-central1.run.app||KMS_PROVIDER=gcp||GCP_KMS_KEY_RESOURCE_NAME=projects/arkova1/locations/global/keyRings/arkova-signing/cryptoKeys/bitcoin-mainnet/cryptoKeyVersions/1||GCP_KMS_INTEGRATION_TOKEN_KEY=projects/arkova1/locations/global/keyRings/arkova-signing/cryptoKeys/integration-tokens||ENABLE_VERIFICATION_API=true||BATCH_ANCHOR_MAX_SIZE=10000||X402_FACILITATOR_URL=https://edge.arkova.ai/x402/verify||X402_NETWORK=eip155:84532||BITCOIN_UTXO_PROVIDER=getblock||BITCOIN_FEE_STRATEGY=mempool||ENABLE_DOCUSIGN_OAUTH=true||ENABLE_DOCUSIGN_WEBHOOK=true||DOCUSIGN_DEMO=true||WORKER_PUBLIC_URL=https://arkova-worker-270018525501.us-central1.run.app||TOGETHER_MODEL=carson_6cec/Meta-Llama-3.1-8B-Instruct-Reference-arkova-nessie-e3cda031" \
             --quiet
 

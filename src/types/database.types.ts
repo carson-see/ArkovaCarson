@@ -2277,6 +2277,73 @@ export type Database = {
           },
         ]
       }
+      external_document_versions: {
+        Row: {
+          anchor_id: string | null
+          created_at: string
+          detected_at: string
+          external_file_id: string
+          fingerprint: string
+          id: string
+          metadata: Json | null
+          org_id: string
+          source: string
+          status: string
+          updated_at: string
+          version_number: number
+        }
+        Insert: {
+          anchor_id?: string | null
+          created_at?: string
+          detected_at?: string
+          external_file_id: string
+          fingerprint: string
+          id?: string
+          metadata?: Json | null
+          org_id: string
+          source: string
+          status?: string
+          updated_at?: string
+          version_number?: number
+        }
+        Update: {
+          anchor_id?: string | null
+          created_at?: string
+          detected_at?: string
+          external_file_id?: string
+          fingerprint?: string
+          id?: string
+          metadata?: Json | null
+          org_id?: string
+          source?: string
+          status?: string
+          updated_at?: string
+          version_number?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "external_document_versions_anchor_id_fkey"
+            columns: ["anchor_id"]
+            isOneToOne: false
+            referencedRelation: "anchors"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "external_document_versions_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "external_document_versions_org_id_fkey"
+            columns: ["org_id"]
+            isOneToOne: false
+            referencedRelation: "public_org_profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       extraction_feedback: {
         Row: {
           action: string
@@ -3674,6 +3741,20 @@ export type Database = {
         }
         Relationships: [
           {
+            foreignKeyName: "org_integrations_inherited_from_org_id_fkey"
+            columns: ["inherited_from_org_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "org_integrations_inherited_from_org_id_fkey"
+            columns: ["inherited_from_org_id"]
+            isOneToOne: false
+            referencedRelation: "public_org_profiles"
+            referencedColumns: ["id"]
+          },
+          {
             foreignKeyName: "org_integrations_org_id_fkey"
             columns: ["org_id"]
             isOneToOne: false
@@ -3685,13 +3766,6 @@ export type Database = {
             columns: ["org_id"]
             isOneToOne: false
             referencedRelation: "public_org_profiles"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "org_integrations_inherited_from_org_id_fkey"
-            columns: ["inherited_from_org_id"]
-            isOneToOne: false
-            referencedRelation: "organizations"
             referencedColumns: ["id"]
           },
         ]
@@ -5706,6 +5780,41 @@ export type Database = {
           },
         ]
       }
+      version_reviews: {
+        Row: {
+          decision: string
+          id: string
+          notes: string | null
+          reviewed_at: string
+          reviewer_id: string
+          version_id: string
+        }
+        Insert: {
+          decision: string
+          id?: string
+          notes?: string | null
+          reviewed_at?: string
+          reviewer_id: string
+          version_id: string
+        }
+        Update: {
+          decision?: string
+          id?: string
+          notes?: string | null
+          reviewed_at?: string
+          reviewer_id?: string
+          version_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "version_reviews_version_id_fkey"
+            columns: ["version_id"]
+            isOneToOne: false
+            referencedRelation: "external_document_versions"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       webhook_dead_letter_queue: {
         Row: {
           created_at: string
@@ -5715,6 +5824,7 @@ export type Database = {
           event_id: string
           event_type: string
           failed_at: string
+          failure_kind: string
           id: string
           last_attempt: number
           org_id: string
@@ -5730,6 +5840,7 @@ export type Database = {
           event_id: string
           event_type: string
           failed_at?: string
+          failure_kind?: string
           id?: string
           last_attempt?: number
           org_id: string
@@ -5745,6 +5856,7 @@ export type Database = {
           event_id?: string
           event_type?: string
           failed_at?: string
+          failure_kind?: string
           id?: string
           last_attempt?: number
           org_id?: string
@@ -6105,6 +6217,32 @@ export type Database = {
         Args: { p_new_role: string; p_user_id: string }
         Returns: undefined
       }
+      admin_set_org_anchor_quota: {
+        Args: {
+          p_actor: string
+          p_anchor_quota: number
+          p_is_test: boolean
+          p_org_id: string
+        }
+        Returns: {
+          anchor_quota: number | null
+          balance: number
+          created_at: string
+          cycle_end: string
+          cycle_start: string
+          is_test: boolean
+          monthly_allocation: number
+          org_id: string
+          purchased: number
+          updated_at: string
+        }
+        SetofOptions: {
+          from: "*"
+          to: "org_credits"
+          isOneToOne: true
+          isSetofReturn: false
+        }
+      }
       admin_set_platform_admin: {
         Args: { p_is_admin: boolean; p_user_id: string }
         Returns: undefined
@@ -6139,6 +6277,10 @@ export type Database = {
       batch_insert_anchors: { Args: { p_anchors: Json }; Returns: Json }
       bulk_create_anchors: { Args: { anchors_data: Json }; Returns: Json }
       bulk_promote_confirmed: { Args: { p_tx_ids: string[] }; Returns: number }
+      bump_cloud_logging_retry_counts: {
+        Args: { p_audit_ids: string[]; p_error_msg?: string }
+        Returns: undefined
+      }
       can_export_user_data: { Args: { p_user_id: string }; Returns: boolean }
       check_ai_credits: {
         Args: { p_org_id?: string; p_user_id?: string }
@@ -6456,6 +6598,10 @@ export type Database = {
       }
       get_pipeline_stats: { Args: never; Returns: Json }
       get_public_anchor: { Args: { p_public_id: string }; Returns: Json }
+      get_public_anchor_by_fingerprint: {
+        Args: { p_fingerprint: string }
+        Returns: Json
+      }
       get_public_issuer_registry: {
         Args: { p_limit?: number; p_offset?: number; p_org_id: string }
         Returns: Json
@@ -7311,3 +7457,4 @@ export const Constants = {
     },
   },
 } as const
+

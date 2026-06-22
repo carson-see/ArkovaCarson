@@ -262,7 +262,17 @@ const DOCS_ONLY_RE = /^(?:docs\/|README\.md|ARKOVA_WORKSPACE_README\.md|WORKSPAC
 function isT0OnlyFile(file: string): boolean {
   if (PUBLIC_CONTRACT_DOC_RE.test(file)) return false;
   if (TEST_FILE_RE.test(file) || file.endsWith('agents.md')) return true;
-  if (/^(?:package-lock\.json|packages\/[^/]+\/package-lock\.json|services\/[^/]+\/package-lock\.json)$/.test(file)) return true;
+  // Dependency bumps that don't touch a core runtime surface are T0:
+  //   - ANY package-lock.json (root / packages/* / services/* / integrations/*) —
+  //     a lockfile is a deterministic re-resolution of the manifest, not a source
+  //     change; it carries no behavior a soak could exercise on its own.
+  //   - package.json MANIFESTS only for peripheral, non-core workspaces
+  //     (packages/* libraries + integrations/* connectors). These are SDK/embed/
+  //     integration surfaces, not the deployed Cloud Run worker or app root.
+  // Deliberately NOT exempt: root `package.json` and `services/*/package.json`
+  // manifests — those govern the prod worker / app runtime dependency tree, so a
+  // manifest bump there must still earn a tier (the lockfile counterparts stay T0).
+  if (/^(?:package-lock\.json|(?:packages|services|integrations)\/[^/]+\/package-lock\.json|(?:packages|integrations)\/[^/]+\/package\.json)$/.test(file)) return true;
   if (PATH_RULES.some((rule) => rule.pattern.test(file))) return false;
   return STAGING_TOOLING_ALLOW.some((re) => re.test(file))
     || DOCS_ONLY_RE.test(file)
@@ -1005,6 +1015,15 @@ const STAGING_TOOLING_ALLOW = [
   /^scripts\/ci\/check-staging-evidence(\.test)?\.ts$/,
   /^scripts\/ci\/check-staging-gcloud-policy(\.test)?\.ts$/,
   /^scripts\/ci\/staging-honesty-preflight(\.test)?\.ts$/,
+  // S0-4.2 / S0-4.3 (epic S0-E4): release-pipeline CI tooling. These run only
+  // in CI and never ship to prod runtime, so they are T0 tooling.
+  /^scripts\/ci\/check-ledger-numeric-integrity(\.test)?\.ts$/,
+  /^scripts\/ci\/check-agents-md-migration-collision(\.test)?\.ts$/,
+  /^scripts\/ci\/compute-merge-authority(\.test)?\.ts$/,
+  /^scripts\/ci\/snapshots\//, // CI baselines/snapshots — tooling, never prod runtime
+  // S0-5.2 (epic S0-E5): config↔reality drift + cross-runtime parity gate (CI tooling).
+  /^scripts\/ci\/check-config-drift(\.test)?\.ts$/,
+  /^scripts\/ci\/config-drift\//,
   /^scripts\/ci\/lib\//,
   /^scripts\/gcp-setup\//,
   /^services\/worker\/scripts\/load-test\//,
@@ -1022,11 +1041,21 @@ const STAGING_TOOLING_ALLOW = [
   /^\.gitignore$/,
   /^\.claude\/settings\.json$/,
   /^\.claude\/hooks\//,
-  /^package\.json$/,
+  // Lockfiles are deterministic re-resolutions of a manifest — T0 at every
+  // workspace (root / packages/* / services/* / integrations/*).
   /^package-lock\.json$/,
   /^packages\/[^/]+\/package-lock\.json$/,
-  /^services\/edge\/package\.json$/,
   /^services\/[^/]+\/package-lock\.json$/,
+  /^integrations\/[^/]+\/package-lock\.json$/,
+  // Peripheral package.json MANIFESTS only: packages/* libraries (SDK/embed) and
+  // integrations/* connectors are non-core surfaces. Root `package.json` and
+  // `services/worker/package.json` are intentionally absent — they govern the prod
+  // worker / app runtime dependency tree and must still earn a tier.
+  /^packages\/[^/]+\/package\.json$/,
+  /^integrations\/[^/]+\/package\.json$/,
+  // services/edge is the peripheral Cloudflare edge worker (PR #884), not the
+  // deployed Cloud Run worker — its manifest stays T0 by explicit carve-out.
+  /^services\/edge\/package\.json$/,
   /agents\.md$/,
   /^eslint-rules\//,
   /(^|\/)eslint\.config\.(js|cjs|mjs)$/,

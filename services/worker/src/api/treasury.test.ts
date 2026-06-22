@@ -359,7 +359,7 @@ async function runHealthWithTableErrors({
   const { db } = await import('../utils/db.js');
   // Route by table name so platformAdmin lookup stays on profiles and
   // treasury_cache / treasury_alert_state each get their own chain result.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+   
   vi.mocked(db.from).mockImplementation(((table: string) => {
     if (table === 'profiles') {
       return buildChain('select.eq.single', {

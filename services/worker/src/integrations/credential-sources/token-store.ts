@@ -33,6 +33,44 @@ import {
 } from '../oauth/crypto.js';
 
 /**
+ * Issuer credentials for OAuth 2.0 `client_credentials` grant flows
+ * (Credly). Distinct from `OAuthTokens` because client_credentials has no
+ * end-user authorisation code or refresh token — the credentials are the
+ * durable issuer-app secret, and the access token is a cache that the
+ * worker re-mints on expiry.
+ *
+ * Stored in the same `encrypted_tokens` bytea column as the existing
+ * DocuSign refresh tokens. The `provider` column on `member_integrations`
+ * discriminates which shape lives inside.
+ */
+export const IssuerCredentialsSchema = z.object({
+  client_id: z.string().min(1),
+  client_secret: z.string().min(1),
+  /** Cached access token from the most recent client_credentials exchange. */
+  access_token: z.string().optional(),
+  /** ISO 8601 expiry of the cached access token. Re-mint past this. */
+  expires_at: z.string().optional(),
+  /** Optional space-delimited scope claim. Credly: 'issued_badges'. */
+  scope: z.string().optional(),
+});
+
+export type IssuerCredentials = z.infer<typeof IssuerCredentialsSchema>;
+
+/**
+ * Static API-key credentials — Accredible's auth model and the shape Udemy
+ * Business xAPI uses too. The whole secret is `api_key`; there is no
+ * exchange step, no expiry, and no refresh. The `key_label` is a
+ * human-readable name (e.g. "prod 2026-Q2") that helps Issuer Partners
+ * recognise which key is active when they rotate.
+ */
+export const ApiKeyCredentialsSchema = z.object({
+  api_key: z.string().min(1),
+  key_label: z.string().optional(),
+});
+
+export type ApiKeyCredentials = z.infer<typeof ApiKeyCredentialsSchema>;
+
+/**
  * Supported credential-source providers. Mirrors the widened CHECK constraint
  * established by migration 0329. Adding a new provider requires:
  *   1. A new migration that widens the CHECK constraint
@@ -193,4 +231,157 @@ export async function readCredentialProviderTokens(
     kms: deps.kms,
     keyName: row.kmsKeyName,
   });
+}
+
+// ---------------------------------------------------------------------------
+// Issuer credentials variant (client_credentials providers — Credly etc.)
+// ---------------------------------------------------------------------------
+
+export interface StoreIssuerCredentialsInput {
+  userId: string;
+  orgId: string;
+  provider: CredentialProvider;
+  accountId: string;
+  credentials: IssuerCredentials;
+  kekVersion?: number;
+}
+
+/**
+ * Encrypt and persist client_credentials issuer secrets (client_id +
+ * client_secret + optional cached access_token) into `member_integrations`.
+ *
+ * Same KMS-backed encryption path as `storeCredentialProviderTokens` but
+ * accepts the issuer-credentials shape. Choose this for Credly /
+ * Accredible-API-key / Udemy-Business-xAPI flows; choose
+ * `storeCredentialProviderTokens` for end-user OAuth refresh-token flows.
+ */
+export async function storeIssuerCredentials(
+  input: StoreIssuerCredentialsInput,
+  deps: StoreTokensDeps,
+): Promise<{ id: string }> {
+  assertSupportedProvider(input.provider);
+
+  const parsed = IssuerCredentialsSchema.parse(input.credentials);
+  const keyName = deps.keyName ?? getIntegrationTokenKeyName(deps.env);
+
+  // Reuse the OAuth crypto module's primitives: encrypt the JSON blob bytes
+  // directly. We are NOT calling encryptTokens (which assumes OAuthTokens
+  // shape) because the issuer-credentials shape includes client_secret.
+  const plaintext = Buffer.from(JSON.stringify(parsed), 'utf8');
+  const ciphertext = await deps.kms.encrypt({ keyName, plaintext });
+
+  return deps.rowStore.upsertEncryptedRow({
+    userId: input.userId,
+    orgId: input.orgId,
+    provider: input.provider,
+    accountId: input.accountId,
+    ciphertext,
+    kmsKeyName: keyName,
+    kekVersion: input.kekVersion ?? DEFAULT_KEK_VERSION,
+  });
+}
+
+/**
+ * Read and decrypt client_credentials issuer secrets. Returns null if no row
+ * exists for (user, org, provider, account). Uses the row-recorded
+ * `kmsKeyName` to support KEK rotation windows.
+ */
+export async function readIssuerCredentials(
+  input: ReadTokensInput,
+  deps: ReadTokensDeps,
+): Promise<IssuerCredentials | null> {
+  assertSupportedProvider(input.provider);
+
+  const row = await deps.rowStore.fetchEncryptedRow({
+    userId: input.userId,
+    orgId: input.orgId,
+    provider: input.provider,
+    accountId: input.accountId,
+  });
+  if (!row) return null;
+
+  const plaintext = await deps.kms.decrypt({
+    keyName: row.kmsKeyName,
+    ciphertext: row.ciphertext,
+  });
+  let json: unknown;
+  try {
+    json = JSON.parse(plaintext.toString('utf8'));
+  } catch {
+    throw new Error('Decrypted issuer-credentials payload is not valid JSON');
+  }
+  return IssuerCredentialsSchema.parse(json);
+}
+
+// ---------------------------------------------------------------------------
+// API-key credentials variant (Accredible + Udemy Business xAPI)
+// ---------------------------------------------------------------------------
+
+export interface StoreApiKeyCredentialsInput {
+  userId: string;
+  orgId: string;
+  provider: CredentialProvider;
+  accountId: string;
+  credentials: ApiKeyCredentials;
+  kekVersion?: number;
+}
+
+/**
+ * Encrypt and persist a static API-key credential (Accredible / Udemy
+ * Business xAPI) into `member_integrations`. Same KMS-backed encryption
+ * path as `storeIssuerCredentials`; the `provider` column on the row
+ * discriminates which shape lives inside.
+ */
+export async function storeApiKeyCredentials(
+  input: StoreApiKeyCredentialsInput,
+  deps: StoreTokensDeps,
+): Promise<{ id: string }> {
+  assertSupportedProvider(input.provider);
+
+  const parsed = ApiKeyCredentialsSchema.parse(input.credentials);
+  const keyName = deps.keyName ?? getIntegrationTokenKeyName(deps.env);
+
+  const plaintext = Buffer.from(JSON.stringify(parsed), 'utf8');
+  const ciphertext = await deps.kms.encrypt({ keyName, plaintext });
+
+  return deps.rowStore.upsertEncryptedRow({
+    userId: input.userId,
+    orgId: input.orgId,
+    provider: input.provider,
+    accountId: input.accountId,
+    ciphertext,
+    kmsKeyName: keyName,
+    kekVersion: input.kekVersion ?? DEFAULT_KEK_VERSION,
+  });
+}
+
+/**
+ * Read and decrypt an API-key credential. Returns null if no row exists.
+ * Uses the row-recorded `kmsKeyName` for decrypt to support KEK rotation.
+ */
+export async function readApiKeyCredentials(
+  input: ReadTokensInput,
+  deps: ReadTokensDeps,
+): Promise<ApiKeyCredentials | null> {
+  assertSupportedProvider(input.provider);
+
+  const row = await deps.rowStore.fetchEncryptedRow({
+    userId: input.userId,
+    orgId: input.orgId,
+    provider: input.provider,
+    accountId: input.accountId,
+  });
+  if (!row) return null;
+
+  const plaintext = await deps.kms.decrypt({
+    keyName: row.kmsKeyName,
+    ciphertext: row.ciphertext,
+  });
+  let json: unknown;
+  try {
+    json = JSON.parse(plaintext.toString('utf8'));
+  } catch {
+    throw new Error('Decrypted api-key payload is not valid JSON');
+  }
+  return ApiKeyCredentialsSchema.parse(json);
 }

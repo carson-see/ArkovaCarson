@@ -168,6 +168,22 @@ The `docusign-reconciliation` cron runs daily at 06:00 UTC (`POST /jobs/docusign
 
 A single gap is usually benign (transient Connect delivery failure that resolved on DocuSign retry). Multiple gaps in one reconciliation run indicate a Connect delivery problem or listener misconfiguration.
 
+#### Listener drift alerts (SCRUM-2098)
+
+The `docusign-listener-drift` cron runs hourly at minute 15 UTC (`POST /jobs/docusign-listener-drift`). It reads DocuSign Connect listener configuration for every active DocuSign integration and compares it with Arkova's expected provisioning payload. Detection is read-only: it does not create, update, or delete DocuSign listeners.
+
+Sentry fires a `warning` when the expected listener is missing or has config drift:
+
+- Missing listener for the expected Arkova webhook URL
+- Listener disabled (`allowEnvelopePublish` not true)
+- HMAC signing disabled
+- Required envelope or Connect events missing
+- Wrong payload format or version
+
+Sentry tags: `integration_id`, `org_id`. Extra: `account_id`, `reasons`, `detected_at`.
+
+Normal output: `{ ok: true, integrations_checked: N, drift_detected: 0, in_sync: N, errors: [], drifts: [] }`. If `ok: false`, at least one integration could not be checked, usually due to token refresh or DocuSign Connect API failure. Scheduler retries transient failures with `30s,120s,2`.
+
 #### Nonce sweep interpretation (SCRUM-2040)
 
 The `nonce-sweep` cron runs daily at 04:00 UTC (`POST /jobs/nonce-sweep`). It sweeps all four webhook nonce tables (`docusign_webhook_nonces`, `drive_webhook_nonces`, `ats_webhook_nonces`, `microsoft_graph_webhook_nonces`) via the `sweep_webhook_nonces` RPC (migration 0316, service_role only). Default retention is 14 days.

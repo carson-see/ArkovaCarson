@@ -2,6 +2,17 @@
 
 Background workers for anchor lifecycle, billing reconciliation, drive ingestion, and chain maintenance.
 
+## 2026-06-16 — rules-engine-versions.ts upsert now typed (head-0339 types resync)
+
+The `database.types.ts` resync to head 0339 added `external_document_versions`, so the
+`(db as any)` cast on the `insertVersionRecord` upsert was removed: it now type-checks on
+the typed `db` client, with only the Zod-validated dynamic `metadata` narrowed via
+`as Json` (same pattern as `chain-maintenance.ts` / `batch-anchor.ts`). Zero runtime
+change. NOTE: the separate `(db as any)` in `detectVersionConflict` is **intentionally
+retained** — it exists for the `.eq('metadata->>external_file_id', …)` JSON-arrow filter
+on the always-typed `anchors` table (not a missing-table escape hatch); removing it
+depends on supabase-js `.eq()` path-string tolerance and warrants its own verification.
+
 ## Files
 - `anchor.ts` — `processPendingAnchors()` mints fingerprint Bitcoin txs.
 - `batch-anchor.ts` — `processBatchAnchors()` aggregates submitted-but-not-yet-broadcast anchors.
@@ -59,3 +70,4 @@ Key implementation patterns:
 - SCRUM-2040 — `nonce-sweep.ts` sweeps all 4 webhook nonce tables (14-day retention). Migration 0316 adds `sweep_webhook_nonces` RPC (service_role only, REVOKE PUBLIC). Cron route `/nonce-sweep` in `cron.ts`. Scheduler: daily 04:00 UTC.
 - SCRUM-2041 — `connector-health-alert.ts` pure decision function + `runConnectorHealthCheck(db)`. Fires Sentry alerts on connector state transitions (connected/degraded/disconnected), 1h cooldown, recovery notifications. Migration 0317 adds `connector_alert_state` table (RLS deny-all for anon+authenticated). Scheduler: every 15 min. **Fail-close (PR #924 review fix):** alert state read failure throws (prevents spurious alerts from empty state map); upsert failure returns `ok:false` / 500 (prevents lost cooldown state). **V1 limitation:** classifies health from `revoked_at` only — does not use `classify()` from `connector-health.ts` for degraded states (subscription_expiry, processing_failure). Future work to integrate full health inputs.
 - SCRUM-2042 — `docusign-reconciliation.ts` pure reconciliation function + `docusign-reconciliation-deps.ts` factory. Polls DocuSign Envelopes API for completed envelopes (24h lookback), diffs against `docusign_webhook_nonces`, inserts gap rows into `docusign_reconciliation_gaps` (migration 0318), fires Sentry alert per new gap. Also refreshes OAuth tokens to prevent 30-day expiry on idle connections. SCRUM-2044: `listActiveIntegrations()` now queries both `org_integrations` and `member_integrations`. Cron route `/docusign-reconciliation` in `cron.ts`. Scheduler: daily 06:00 UTC.
+- SCRUM-2098 — `docusign-listener-drift.ts` pure Connect-listener config drift check + `docusign-listener-drift-deps.ts` factory. Reuses the SCRUM-2042 active-integration/token-refresh dependency path, reads DocuSign GET `/connect`, compares against the same `buildArkovaConnectConfig()` payload used by provisioning, and reports Sentry warnings for missing/disabled/HMAC/event/payload-format drift. Detection only; no DocuSign writes. Cron route: `/jobs/docusign-listener-drift`. Scheduler: hourly at minute 15 via `scripts/gcp-setup/cloud-scheduler.sh`.

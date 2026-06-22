@@ -77,7 +77,8 @@ describe('GET /credentials/:publicId/ctdl', () => {
     expect(res.type).toContain('application/ld+json');
     expect(res.body['@context']).toBe('https://credreg.net/ctdl/schema/context/json');
     expect(res.body['@type']).toBe('ceterms:BachelorDegree');
-    expect(res.body['ceterms:ctid']).toBe('ce-ARK-2026-CTDL-001');
+    expect(res.body).not.toHaveProperty('ceterms:ctid');
+    expect(res.body['ceterms:offeredBy']).not.toHaveProperty('ceterms:ctid');
     expect(res.body['ceterms:verificationServiceProfile']['ceterms:verificationService']).toBe(
       'https://app.arkova.ai/verify/ARK-2026-CTDL-001',
     );
@@ -150,6 +151,54 @@ describe('GET /credentials/:publicId/ctdl', () => {
       outcome: 'not_publishable',
       http_status: 404,
       credential_status: 'PENDING',
+    });
+  });
+
+  it('fails closed without CTDL output when transcript-like free text has low-confidence learner PII', async () => {
+    const lookup: CredentialsCtdlLookup = {
+      lookupByPublicId: vi.fn().mockResolvedValue(anchor({
+        credentialType: 'DEGREE',
+        subType: 'transcript',
+        label: 'Official transcript for Jane Q Student',
+        description: 'Transcript record for learner Jane Q Student.',
+        metadata: { document_type: 'official transcript' },
+      })),
+    };
+
+    const res = await request(buildApp(lookup)).get('/ARK-2026-CTDL-001/ctdl');
+
+    expect(res.status).toBe(404);
+    expect(res.body).toEqual({ error: 'not_found' });
+    expect(JSON.stringify(res.body)).not.toContain('Jane Q Student');
+    const auditPayload = insertAudit.mock.calls[0][0];
+    expect(JSON.parse(auditPayload.details)).toMatchObject({
+      outcome: 'safety_blocked',
+      http_status: 404,
+      credential_status: 'SECURED',
+      credential_type: 'DEGREE',
+    });
+  });
+
+  it('fails closed for name-first learner PII in transcript-like output', async () => {
+    const lookup: CredentialsCtdlLookup = {
+      lookupByPublicId: vi.fn().mockResolvedValue(anchor({
+        credentialType: 'DEGREE',
+        subType: 'transcript',
+        label: "Jane Q Student's transcript",
+        description: 'Official learner record.',
+        metadata: { document_type: 'official transcript' },
+      })),
+    };
+
+    const res = await request(buildApp(lookup)).get('/ARK-2026-CTDL-001/ctdl');
+
+    expect(res.status).toBe(404);
+    expect(res.body).toEqual({ error: 'not_found' });
+    expect(JSON.stringify(res.body)).not.toContain('Jane Q Student');
+    const auditPayload = insertAudit.mock.calls[0][0];
+    expect(JSON.parse(auditPayload.details)).toMatchObject({
+      outcome: 'safety_blocked',
+      http_status: 404,
     });
   });
 

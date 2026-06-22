@@ -49,6 +49,22 @@ describe('resolveStagingApiBase', () => {
     ).toBe('https://pr-1055---arkova-worker-pr-1055-staging-kvojbeutfa-uc.a.run.app');
   });
 
+  it('accepts and normalizes a named Train C tag URL', () => {
+    expect(
+      resolveStagingApiBase({
+        STAGING_API_BASE: 'https://train-c-ce---arkova-worker-staging-kvojbeutfa-uc.a.run.app/',
+      }),
+    ).toBe('https://train-c-ce---arkova-worker-staging-kvojbeutfa-uc.a.run.app');
+  });
+
+  it('rejects non-train named tag URLs', () => {
+    expect(() =>
+      resolveStagingApiBase({
+        STAGING_API_BASE: 'https://candidate-c---arkova-worker-staging-kvojbeutfa-uc.a.run.app',
+      }),
+    ).toThrow(/tag-routed per-PR or named train/);
+  });
+
   it('fails load-harness dry-run when STAGING_API_BASE is missing', () => {
     const tsxCli = join(process.cwd(), 'node_modules', 'tsx', 'dist', 'cli.mjs');
     const result = spawnSync(process.execPath, [tsxCli, 'scripts/staging/load-harness.ts', '--dry-run'], {

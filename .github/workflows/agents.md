@@ -28,6 +28,12 @@
 - Revision-drift Sentry tags must match `infra/sentry/alert-rules.json`: `source=revision-drift`, `story`, `deployed_sha`, and `head_sha`.
 - Deploy gate ≡ CI lint job: deploy-worker.yml + ci.yml `Lint worker` step BOTH invoke `npm run lint` from `services/worker/`. Drift between them is enforced by `scripts/ci/check-deploy-lint-parity.ts`. Override label: `ci-config-change`.
 
+## Container-image CVE scan gate (TVM/IVS) + break-glass
+
+- `deploy-worker.yml` runs a Trivy base-image CVE scan (`build → scan → push → deploy`) that fails the deploy on FIXABLE HIGH/CRITICAL OS CVEs (`pkg-types: os`, `severity: HIGH,CRITICAL`, `ignore-unfixed: true`, `exit-code: '1'`). `pkg-types` is the current Trivy input (`vuln-type` is deprecated). Invariant guarded at PR time by `scripts/ci/check-image-scan-gate.ts` (wired into ci.yml as "Enforce container-image CVE scan gate (TVM/IVS)"); unit tests in `scripts/ci/check-image-scan-gate.test.ts`. No PR override label — security control, not style.
+- **DB-fetch hardening** so a transient vuln-DB outage doesn't wedge deploys: `cache: true`, `github-token: ${{ secrets.GITHUB_TOKEN }}` (authenticated pulls), `TRIVY_DB_REPOSITORY` + `TRIVY_JAVA_DB_REPOSITORY` set to the `public.ecr.aws/aquasecurity/*` mirror (escapes the shared ghcr.io `TOOMANYREQUESTS` pool), and `timeout-minutes: 10` (fail fast on a hung fetch).
+- **Operator break-glass** for a hard scanner-infra outage: `workflow_dispatch` boolean input `bypass_image_scan` (default false). When an operator manually dispatches a deploy with it set, the scan step is skipped via `if: github.event.inputs.bypass_image_scan != 'true'` and an "Audit image-scan bypass (break-glass)" step echoes `⚠️ image scan bypassed by ${{ github.actor }}` + run URL. It skips ONLY the scan step — the deploy still runs. This is a RUNTIME escape for a wedged scanner, distinct from a PR-time gate-weakening label: the scan-gate guard's severity/fixable/pinning/`pkg-types`/break-glass assertions remain non-overridable. `check-image-scan-gate.ts` asserts the break-glass is both wired (boolean input + guarded scan step) and audited (logged with the actor).
+
 ## R0 anti-false-done CI jobs (SCRUM-1246 wave)
 
 | Job | Script | Override label |
@@ -40,7 +46,13 @@
 
 Continue-on-error remaining (3 of 6 stripped in R0-2): RLS tests, E2E tests, Lighthouse, Generated Types Check. Each carries an inline `SCRUM-1248` annotation pointing at the follow-up sub-story (SCRUM-1301/1302/1303/1309) that must close before strip.
 
+## S0-E4 release-pipeline additions (2026-06-17)
+
+- `ci.yml` gained three steps: "Audit local migration ledger integrity (SCRUM-2500)" + "Block migration agents.md collisions (S0-E4)" (first lint job) and "Tiered-merge authority (S0-E4)" (policy-lints, advisory).
+- `migration-drift.yml` gained "Full-ledger numeric-integrity audit (SCRUM-2500 / S0-4.2)" — runs `check-ledger-numeric-integrity.ts` over the prod ledger payload the drift step already fetches (read-only; reuses the same token; skipped only when the fetch didn't run, e.g. Dependabot). Closes the gap that let the 2026-06-15 timestamp re-regression pass unseen.
+
 ## Related
 
 - `docs/runbooks/migration-drift-playbook.md` — operator runbook for when the drift check fails
+- S0-4.3 stacked-PR + tiered-merge playbook (drafted Mergify/branch-protection diff for Carson) → Google Doc "ARKOVA PI-1 S0-E4 — Mergify / Stacked-PR + Tiered-Merge Playbook" (Drive ARKOVA PI-1-S0): https://docs.google.com/document/d/1iontJPUkhLQkQyZG4PETGuPj3kf23Kgn-1kDxqukfr8/edit
 - `docs/confluence/16_migration_drift_prevention.md` — ADR for Option A (read-only diff)

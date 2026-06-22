@@ -36,9 +36,10 @@
  *   fill the PR's `## Staging Soak Evidence` block.
  *
  * Env:
- *   STAGING_API_BASE       REQUIRED per-PR tag URL printed by
+ *   STAGING_API_BASE       REQUIRED per-PR or named train tag URL printed by
  *                          `scripts/staging/deploy.sh`:
  *                          https://pr-N---arkova-worker-staging-...run.app
+ *                          https://train-c-ce---arkova-worker-staging-...run.app
  *                          That URL routes to your tagged revision only,
  *                          so parallel soaks don't contaminate each other.
  *                          Shared/main staging URLs are refused.
