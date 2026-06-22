@@ -108,6 +108,7 @@ describe('nerPiiDetector', () => {
     }) {
       const env = {
         allowRemoteModels: true, // intentionally the unsafe default; loader must flip it
+        allowLocalModels: false, // intentionally off; loader must turn it ON
         localModelPath: '/models/', // library default; loader should set explicitly
         remoteHost: 'https://huggingface.co',
         backends: { onnx: { wasm: { numThreads: undefined as number | undefined } } },
@@ -147,6 +148,8 @@ describe('nerPiiDetector', () => {
 
       // §1.6: remote fetch from the HF CDN must be turned OFF.
       expect(env.allowRemoteModels).toBe(false);
+      // Local-origin loading must be explicitly ON (pinned, not trusted as a default).
+      expect(env.allowLocalModels).toBe(true);
       // Model is pinned to the self-hosted app-origin path.
       expect(env.localModelPath).toBe(NER_LOCAL_MODEL_PATH);
       // Pipeline was actually invoked for the NER model.
@@ -217,6 +220,30 @@ describe('nerPiiDetector', () => {
       await expect(detectPIIWithNER('Some text', 'wasm')).rejects.toBeInstanceOf(
         NERModelLoadError,
       );
+    });
+
+    it('maps a CONCURRENT first-load failure to NERModelLoadError for ALL racing callers', async () => {
+      // Two PII-strip calls race the single initial model load, which fails.
+      // BOTH must reject with the TYPED error: a racing caller receiving a raw
+      // error would slip past WEBEXT-03's `instanceof NERModelLoadError` check
+      // and fall back to regex (a §1.6 fail-OPEN under a race). The gated loader
+      // makes the shared-promise path deterministic.
+      let failLoad: (e: Error) => void = () => {};
+      const gate = new Promise<never>((_resolve, reject) => {
+        failLoad = reject;
+      });
+      __setTransformersLoaderForTesting(() => gate);
+
+      const p1 = detectPIIWithNER('text one', 'wasm');
+      const p2 = detectPIIWithNER('text two', 'wasm');
+      await Promise.resolve(); // let both callers reach the shared _pipelinePromise
+      failLoad(new Error('transient bundle fetch error'));
+
+      const [a, b] = await Promise.allSettled([p1, p2]);
+      expect(a.status).toBe('rejected');
+      expect(b.status).toBe('rejected');
+      expect((a as PromiseRejectedResult).reason).toBeInstanceOf(NERModelLoadError);
+      expect((b as PromiseRejectedResult).reason).toBeInstanceOf(NERModelLoadError);
     });
 
     it('does not cache a failed load — a later success can still load', async () => {

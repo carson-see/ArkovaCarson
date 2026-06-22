@@ -119,6 +119,8 @@ export class NERModelLoadError extends Error {
 interface TransformersJsEnv {
   /** When false, transformers.js never fetches from the remote (HF CDN) host. */
   allowRemoteModels: boolean;
+  /** When true, transformers.js may load model files from the local origin. Pinned explicitly. */
+  allowLocalModels: boolean;
   /** App-origin path local model weights are loaded from (e.g. `/models/`). */
   localModelPath: string;
   backends?: {
@@ -164,7 +166,7 @@ export function __resetTransformersLoaderForTesting(): void {
 // Singleton pipeline — loaded once, reused across calls
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let _pipeline: any = null;
-let _pipelinePromise: Promise<void> | null = null;
+let _pipelinePromise: Promise<{ pipeline: unknown; loadTimeMs: number }> | null = null;
 let _loadTimeMs = 0;
 
 /**
@@ -194,70 +196,77 @@ async function getNERPipeline(
   }
 
   if (_pipelinePromise) {
-    await _pipelinePromise;
-    return { pipeline: _pipeline, loadTimeMs: _loadTimeMs };
+    // Concurrent first-load: return the SAME promise so every racing caller gets
+    // the SAME typed result/error. The rejection→NERModelLoadError mapping lives
+    // INSIDE the promise below (not on one privileged call site), so a racing
+    // caller can't receive a raw, untyped error that slips past WEBEXT-03's
+    // `instanceof NERModelLoadError` fail-closed check (a §1.6 fail-OPEN under a race).
+    return _pipelinePromise;
   }
 
   const start = Date.now();
   onProgress?.({ stage: 'loading', progress: 0, message: 'Loading NER model...' });
 
   _pipelinePromise = (async () => {
-    const { pipeline, env } = await _transformersLoader();
+    try {
+      const { pipeline, env } = await _transformersLoader();
 
-    // §1.6 / SCRUM-2503: SELF-HOST. Forbid the HF CDN and pin loading to the
-    // Arkova app origin. `allowRemoteModels = false` is the equivalent of
-    // `local_files_only=true`, so a missing local file throws instead of
-    // silently hitting the network (which prod CSP would block anyway).
-    env.allowRemoteModels = false;
-    env.localModelPath = NER_LOCAL_MODEL_PATH;
+      // §1.6 / SCRUM-2503: SELF-HOST. Forbid the HF CDN and pin loading to the
+      // Arkova app origin. `allowRemoteModels = false` is the equivalent of
+      // `local_files_only=true`, so a missing local file throws instead of
+      // silently hitting the network (which prod CSP would block anyway).
+      // `allowLocalModels = true` is pinned explicitly (not trusted as a library
+      // default) so remote-off + local-on is enforced in code and tested.
+      env.allowRemoteModels = false;
+      env.allowLocalModels = true;
+      env.localModelPath = NER_LOCAL_MODEL_PATH;
 
-    // Configure backend
-    if (backend === 'webgpu' && env.backends?.onnx?.wasm) {
-      env.backends.onnx.wasm.numThreads = 1;
+      // Configure backend
+      if (backend === 'webgpu' && env.backends?.onnx?.wasm) {
+        env.backends.onnx.wasm.numThreads = 1;
+      }
+
+      // Determine device based on backend
+      const device = backend === 'webgpu' ? 'webgpu' : 'wasm';
+
+      onProgress?.({ stage: 'loading', progress: 30, message: 'Loading model weights...' });
+
+      const loaded = await pipeline('token-classification', NER_MODEL_ID, {
+        device,
+        dtype: 'q8', // 8-bit quantized — ~130MB vs ~420MB fp32
+      });
+
+      // FAIL LOUD: a self-hosted model that builds to nothing is not usable.
+      // Never let the pipeline be a falsy value that downstream treats as "no PII".
+      if (!loaded) {
+        throw new Error('NER pipeline resolved to an empty value');
+      }
+
+      _pipeline = loaded;
+      _loadTimeMs = Date.now() - start;
+      onProgress?.({ stage: 'loading', progress: 100, message: 'Model loaded' });
+      return { pipeline: _pipeline, loadTimeMs: _loadTimeMs };
+    } catch (err) {
+      // Do NOT cache a rejected load — clear the singletons so a later attempt
+      // (after the weights are vendored / a transient error clears) can retry
+      // instead of every future call rejecting forever. The typed-error mapping
+      // is HERE so the creator AND every concurrent awaiter get NERModelLoadError.
+      _pipeline = null;
+      _pipelinePromise = null;
+      _loadTimeMs = 0;
+
+      if (err instanceof NERModelLoadError) throw err;
+      const detail = err instanceof Error ? err.message : String(err);
+      throw new NERModelLoadError(
+        `Failed to load the self-hosted NER model from '${NER_LOCAL_MODEL_PATH}${NER_MODEL_ID}'. ` +
+          'Ensure the weights are vendored under public/models/ (see scripts/fetch-ner-model.ts) ' +
+          `and that the runtime bundle is reachable from the app origin. Cause: ${detail}`,
+        { cause: err },
+      );
     }
-
-    // Determine device based on backend
-    const device = backend === 'webgpu' ? 'webgpu' : 'wasm';
-
-    onProgress?.({ stage: 'loading', progress: 30, message: 'Loading model weights...' });
-
-    const loaded = await pipeline('token-classification', NER_MODEL_ID, {
-      device,
-      dtype: 'q8', // 8-bit quantized — ~130MB vs ~420MB fp32
-    });
-
-    // FAIL LOUD: a self-hosted model that builds to nothing is not usable.
-    // Never let the pipeline be a falsy value that downstream treats as "no PII".
-    if (!loaded) {
-      throw new Error('NER pipeline resolved to an empty value');
-    }
-
-    _pipeline = loaded;
-    _loadTimeMs = Date.now() - start;
-    onProgress?.({ stage: 'loading', progress: 100, message: 'Model loaded' });
   })();
 
-  try {
-    await _pipelinePromise;
-  } catch (err) {
-    // Do NOT cache a rejected load — clear the singletons so a later attempt
-    // (e.g. after the weights are vendored / a transient fetch error clears)
-    // can retry instead of every future call rejecting forever.
-    _pipeline = null;
-    _pipelinePromise = null;
-    _loadTimeMs = 0;
-
-    if (err instanceof NERModelLoadError) throw err;
-    const detail = err instanceof Error ? err.message : String(err);
-    throw new NERModelLoadError(
-      `Failed to load the self-hosted NER model from '${NER_LOCAL_MODEL_PATH}${NER_MODEL_ID}'. ` +
-        'Ensure the weights are vendored under public/models/ (see scripts/fetch-ner-model.ts) ' +
-        `and that the runtime bundle is reachable from the app origin. Cause: ${detail}`,
-      { cause: err },
-    );
-  }
-
-  return { pipeline: _pipeline, loadTimeMs: _loadTimeMs };
+  return _pipelinePromise;
 }
 
 /**
