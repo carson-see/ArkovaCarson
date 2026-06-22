@@ -1,5 +1,5 @@
 /**
- * PERF: org Compliance/CPE-CLE dashboard partial indexes (migration 0340).
+ * PERF: org Compliance/CPE-CLE dashboard partial indexes (migration 0342).
  *
  * src/pages/ComplianceDashboardPage.tsx builds the org CPE/CLE reporting panels
  * with, per panel:
@@ -9,7 +9,7 @@
  * created_at-ordered composites with no cpe_metadata/cle_metadata predicate — so
  * the planner does a full Parallel Seq Scan + Sort and the query exceeds the
  * statement timeout for large orgs (the primary org owns ~99% of rows). Migration
- * 0340 adds two PARTIAL (org_id, issued_at DESC) indexes — one WHERE cpe_metadata
+ * 0342 adds two PARTIAL (org_id, issued_at DESC) indexes — one WHERE cpe_metadata
  * IS NOT NULL, one WHERE cle_metadata IS NOT NULL — that store only the few
  * CPE/CLE rows and serve both the filter and the ordering.
  *
@@ -19,7 +19,7 @@
  * 0335 convention — the migration body is a transactional marker (a DO/RAISE NOTICE
  * no-op) and the CREATE INDEX CONCURRENTLY statements are documented as
  * operator-applied, NON-TRANSACTIONAL, IF NOT EXISTS steps. These assertions read
- * migration 0340 directly (content-guard), mirroring the convention in
+ * migration 0342 directly (content-guard), mirroring the convention in
  * scrum-2236-dashboard-cache-budgets.test.ts and scrum-2203-unembedded-query-perf.test.ts.
  */
 
@@ -29,7 +29,7 @@ import * as path from 'node:path';
 
 const MIGRATION_PATH = path.join(
   process.cwd(),
-  'supabase/migrations/0340_cpe_cle_dashboard_partial_index.sql',
+  'supabase/migrations/0342_cpe_cle_dashboard_partial_index.sql',
 );
 
 function migration(): string {
@@ -70,8 +70,8 @@ const INDEX_NAME: Record<(typeof COLUMNS)[number], string> = {
   cle_metadata: 'idx_anchors_org_cle_metadata_issued',
 };
 
-describe('PERF: org CPE/CLE dashboard partial indexes (migration 0340)', () => {
-  it('migration file exists at the reserved 0340 prefix', () => {
+describe('PERF: org CPE/CLE dashboard partial indexes (migration 0342)', () => {
+  it('migration file exists at the reserved 0342 prefix', () => {
     expect(fs.existsSync(MIGRATION_PATH)).toBe(true);
   });
 

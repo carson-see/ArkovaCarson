@@ -103,7 +103,7 @@
 
 DO $$
 BEGIN
-  RAISE NOTICE 'Migration 0340 records the org CPE/CLE dashboard partial indexes. The concurrent index builds are operator-applied OUTSIDE a transaction on the live anchors table; see this file header.';
+  RAISE NOTICE 'Migration 0342 records the org CPE/CLE dashboard partial indexes. The concurrent index builds are operator-applied OUTSIDE a transaction on the live anchors table; see this file header.';
 END $$;
 
 -- ===========================================================================
