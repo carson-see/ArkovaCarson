@@ -19,11 +19,11 @@ This proves the **mechanism**. Sprint 1 (S0-E5 → VIS-01 / CHAIN-RESIL) hardens
 3. The parity harness grows the marked extension points (route contracts, per-route auth mode, rate-limit headers, embedding-model parity).
 4. Thresholds shared with the VIS-01 dashboard (see `docs/sprint-0/lane1/visibility-signal-inventory.md`).
 5. **env↔DB modeling** — capture env AND DB per flag so the env↔DB delta (the actual 2026-05-30 fail-open) is the compared dimension; today a flag is a single effective boolean.
-6. **Provider-default SPOF** — parse `config.ts` (default `mempool`) + `deploy-worker.yml` (`getblock`) so a dropped env line that silently falls back to `mempool` is caught; today both sides are hand-set to `getblock`.
+6. ✅ **Provider-default SPOF — DONE (S1.5).** `config-drift/providerSpof.ts` parses the REAL `config.ts` default (`mempool`) + `deploy-worker.yml` override (`getblock`) and is wired into `check-config-drift.ts` main(): a dropped env line (silent fallback to a non-asserted provider) **or** a wrong override **fails CI**; a latent code-default divergence the deploy currently masks surfaces as a non-blocking `::warning::`. 11 tests (`providerSpof.test.ts`) incl. real-tree smoke. Fail-safe follow-up (recommended): align the `config.ts` default to the asserted provider so a dropped override fails safe — a chain-touching change, T3 / Carson-gated.
 
 ## Known SPIKE limitations (do not mistake for the mitigation)
 
-- asserted + running are hand-authored committed JSON → the gate is green at rest and cannot yet see a *real* prod divergence;
+- asserted + running are hand-authored committed JSON → the *flag / CSP / fee* dimensions are green at rest and cannot yet see a *real* prod divergence (the **provider** dimension now reads real source via `providerSpof.ts` — item #6 above, done);
 - parity validates the committed runtime declarations, not a live worker-vs-edge capture;
 - the CSP list is a worker+edge subset of the full `vercel.json` connect-src.
 
