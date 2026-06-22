@@ -155,6 +155,14 @@ jobs:
           PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
         run: npx tsx scripts/ci/check-webhook-hmac-consolidation.ts
 
+      - name: Enforce container-image CVE scan gate (TVM/IVS)
+        # deploy-worker.yml must keep a Trivy base-image CVE scan gating the
+        # deploy on fixable HIGH/CRITICAL OS CVEs. This guard fails the PR if
+        # that control is removed, unpinned, or weakened. Complements the npm
+        # audit / Sonatype dependency scans below (which cover the library
+        # layer). Control doc: docs/compliance/container-image-scanning.md.
+        run: npx tsx scripts/ci/check-image-scan-gate.ts
+
       - name: Run npm audit (root production dependencies)
         # Fail on critical severity. Known high-severity exceptions (no upstream fix):
         # - xlsx (SheetJS): GHSA-4r6h-8v6p-xvw6, GHSA-5pgg-2g8v-p4x9

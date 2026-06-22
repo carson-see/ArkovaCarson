@@ -14,7 +14,12 @@ RUN npm run build
 
 # Stage 2: Production (minimal image, non-root)
 FROM node:20-alpine
-RUN apk add --no-cache python3 make g++
+# SEC: refresh OS packages so the shipped image picks up Alpine security
+# patches (openssl/libssl3/libcrypto3, etc.) not yet baked into the upstream
+# node:20-alpine tag. The container-image CVE gate in deploy-worker.yml
+# (Trivy, vuln-type=os, HIGH/CRITICAL fixable) fails the deploy if a fixable
+# base-image CVE would otherwise ship to Cloud Run.
+RUN apk upgrade --no-cache && apk add --no-cache python3 make g++
 WORKDIR /app
 COPY package.json package-lock.json .npmrc ./
 RUN npm ci --omit=dev --ignore-scripts && rm -f .npmrc && npm cache clean --force && apk del python3 make g++
