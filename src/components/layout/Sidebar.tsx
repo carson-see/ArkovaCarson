@@ -20,7 +20,7 @@
 import { useState, useEffect } from 'react';
 import { ArkovaIcon } from '@/components/layout/ArkovaLogo';
 import { Link, useLocation } from 'react-router-dom';
-import { LayoutDashboard, Building2, ChevronLeft, ChevronRight, X, Search, Landmark, Moon, Sun, Monitor, BarChart3, Activity, Database, DollarSign, ChevronDown, ChevronUp, Users, FileCheck, ToggleRight, FileText, Settings as SettingsIcon, CreditCard, KeyRound } from 'lucide-react';
+import { LayoutDashboard, Building2, ChevronLeft, ChevronRight, X, Search, Landmark, Moon, Sun, Monitor, BarChart3, Activity, Database, DollarSign, ChevronDown, ChevronUp, Users, FileCheck, ToggleRight, FileText, Settings as SettingsIcon, CreditCard, KeyRound, ShieldCheck } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { ArkovaLogo } from '@/components/layout/ArkovaLogo';
 import { ROUTES, destinationToRoute } from '@/lib/routes';
@@ -84,6 +84,7 @@ import { isPlatformAdmin as checkPlatformAdmin } from '@/lib/platform';
 
 const adminNavItems: NavItem[] = [
   { label: 'Overview', icon: BarChart3, to: ROUTES.ADMIN_OVERVIEW },
+  { label: NAV_LABELS.COMPLIANCE, icon: ShieldCheck, to: ROUTES.COMPLIANCE_DASHBOARD },
   { label: 'Users', icon: Users, to: ROUTES.ADMIN_USERS },
   { label: 'Organizations', icon: Building2, to: ROUTES.ADMIN_ORGANIZATIONS },
   { label: 'Records', icon: FileCheck, to: ROUTES.ADMIN_RECORDS },

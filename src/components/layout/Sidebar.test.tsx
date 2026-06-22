@@ -275,6 +275,31 @@ describe('Sidebar', () => {
     expect(screen.queryByText('Treasury')).toBeNull();
   });
 
+  // ── Compliance Intelligence dashboard was orphaned (no sidebar link) ──
+  // The route /organization/compliance hosts the CPE export panel (#1149) and
+  // the org CPE dashboard (#1150) but had no nav entry — reachable only by URL.
+  // Surface it in the Admin section so it is discoverable. The admin section is
+  // collapsed by default but auto-expands when an admin route is active, so we
+  // assert the link is present while sitting on the compliance route.
+  it('surfaces the Compliance link in the admin section for platform admins', () => {
+    renderSidebar({ userEmail: 'carson@arkova.ai' }, [ROUTES.COMPLIANCE_DASHBOARD]);
+    expect(hrefSet()).toContain(ROUTES.COMPLIANCE_DASHBOARD);
+    expect(screen.getAllByText('Compliance').length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('hides the Compliance link from non-admin users', () => {
+    renderSidebar({ userEmail: 'user@example.com' }, [ROUTES.COMPLIANCE_DASHBOARD]);
+    expect(hrefSet()).not.toContain(ROUTES.COMPLIANCE_DASHBOARD);
+  });
+
+  it('highlights the active Compliance route', () => {
+    renderSidebar({ userEmail: 'carson@arkova.ai' }, [ROUTES.COMPLIANCE_DASHBOARD]);
+    const complianceLink = screen
+      .getAllByRole('link')
+      .find((a) => a.getAttribute('href') === ROUTES.COMPLIANCE_DASHBOARD);
+    expect(complianceLink?.className).toMatch(/border-\[#00d4ff\]/);
+  });
+
   it('shows org name when provided (UF-09)', () => {
     renderSidebar({ orgName: 'Test University' });
     expect(screen.getAllByText('Test University').length).toBeGreaterThanOrEqual(1);
