@@ -31,6 +31,7 @@ import {
   type RuntimeConfig,
   type ParityFinding,
 } from './lib/runtimeParity.js';
+import { runProviderSpofCheck } from './config-drift/providerSpof.js';
 
 export interface ConfigState {
   /** Feature-flag name → expected/observed enabled state. */
@@ -215,8 +216,25 @@ function main(): void {
   const running = loadRunningSnapshot();
   const { drift, parity } = runConfigDriftCheck(asserted, running);
 
-  if (drift.length === 0 && parity.length === 0) {
-    console.log('✅ config↔reality: no drift; cross-runtime parity intact.');
+  // S1 hardening (README item #6): provider-SPOF — parse the REAL config.ts default
+  // + deploy-worker.yml override so a dropped/wrong BITCOIN_UTXO_PROVIDER fails CI, not
+  // prod. repoRoot = scripts/ci/../.. (HERE = scripts/ci).
+  const repoRoot = resolve(HERE, '..', '..');
+  const spof = runProviderSpofCheck(asserted.bitcoinUtxoProvider, {
+    configTsPath: resolve(repoRoot, 'services/worker/src/config.ts'),
+    deployYmlPath: resolve(repoRoot, '.github/workflows/deploy-worker.yml'),
+  });
+  const spofErrors = spof.filter((f) => f.severity === 'error');
+  const spofWarnings = spof.filter((f) => f.severity === 'warn');
+
+  // Warnings never fail the gate but always surface (e.g. the latent code-default SPOF
+  // that the deploy currently masks — a defense-in-depth signal, not a blocker).
+  for (const w of spofWarnings) {
+    console.warn(`::warning::S1 provider-SPOF [${w.code}] ${w.message}`);
+  }
+
+  if (drift.length === 0 && parity.length === 0 && spofErrors.length === 0) {
+    console.log('✅ config↔reality: no drift; cross-runtime parity intact; provider-SPOF clear.');
     return;
   }
 
@@ -229,6 +247,10 @@ function main(): void {
   if (parity.length > 0) {
     console.error(`::error::S0-5.2 cross-runtime parity: ${parity.length} finding(s):`);
     for (const p of parity) console.error(`  [${p.kind}] ${p.message}`);
+  }
+  if (spofErrors.length > 0) {
+    console.error(`::error::S1 provider-SPOF: ${spofErrors.length} issue(s):`);
+    for (const s of spofErrors) console.error(`  [${s.code}] ${s.message}`);
   }
   process.exit(1);
 }
