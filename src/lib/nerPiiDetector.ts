@@ -13,6 +13,18 @@
  * 3. Merge NER detections with regex patterns for comprehensive PII stripping
  * 4. Regex handles structured patterns (SSN, email, phone, DOB, IDs)
  * 5. NER handles unstructured names, locations, org references
+ *
+ * Self-hosting (S1.4 / WEBEXT-CSP / SCRUM-2503):
+ * The model weights are loaded from an Arkova app-origin path (`/models/`,
+ * served from `public/models/` → covered by `connect-src 'self'`), NOT the
+ * HuggingFace CDN. We set `env.allowRemoteModels = false` so transformers.js
+ * never reaches out to the HF CDN — that fetch is blocked by the production
+ * CSP and previously caused a SILENT regex fallback (a §1.6 fail-OPEN).
+ * If the self-hosted model cannot be loaded, the loader throws a typed
+ * `NERModelLoadError` (it never silently returns null), so the fail-CLOSED
+ * stripper (WEBEXT-03) can catch it and refuse to let unstripped text leave
+ * the browser. Vendor the weights with `scripts/fetch-ner-model.ts` (ops step;
+ * the binaries are git-ignored, never committed).
  */
 
 import type { MLBackend } from './mlRuntime';
@@ -63,18 +75,90 @@ const NER_CONFIDENCE_THRESHOLD = 0.7;
 const MAX_TEXT_LENGTH = 15_000; // Limit input to avoid OOM
 const TRANSFORMERS_BROWSER_MODULE = '/vendor/transformers.web.min.js';
 
-interface TransformersJsModule {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  pipeline: (...args: any[]) => Promise<unknown>;
-  env: {
-    backends?: {
-      onnx?: {
-        wasm?: {
-          numThreads?: number;
-        };
+/**
+ * App-origin path the NER model weights are served from.
+ *
+ * Files live in `public/models/<repo>/...` and Vite serves `public/` at the
+ * site root, so this resolves to a same-origin URL — covered by the existing
+ * `connect-src 'self'` CSP. Must stay a leading-slash, app-relative path
+ * (never an absolute HTTP(S) URL / CDN host) so §1.6 self-hosting holds.
+ *
+ * NOTE: transformers.js itself defaults `localModelPath` to `/models/`; we set
+ * it explicitly so the contract is enforced in code (and tested) rather than
+ * relying on a library default that a future upgrade could change.
+ */
+export const NER_LOCAL_MODEL_PATH = '/models/';
+
+/**
+ * Thrown when the self-hosted NER model cannot be loaded — e.g. the weights are
+ * missing under `public/models/`, the vendored runtime bundle fails to load, or
+ * `pipeline(...)` rejects/returns nothing.
+ *
+ * This is intentionally a distinct, typed error so the fail-closed PII stripper
+ * (Lane 2 / WEBEXT-03, enhancedPiiStripper.ts) can `instanceof`-detect a model
+ * load failure and refuse to release text, rather than the loader silently
+ * returning null and falling back to regex-only stripping (a §1.6 fail-OPEN).
+ */
+export class NERModelLoadError extends Error {
+  /**
+   * The underlying error that caused the load to fail (transformers.js error,
+   * bundle fetch failure, etc.). Declared explicitly rather than via the
+   * ES2022 `Error.cause` option because the project targets ES2020/lib ES2021.
+   */
+  readonly cause?: unknown;
+
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message);
+    this.name = 'NERModelLoadError';
+    this.cause = options?.cause;
+    // Maintain prototype chain for `instanceof` after TS downlevel.
+    Object.setPrototypeOf(this, NERModelLoadError.prototype);
+  }
+}
+
+interface TransformersJsEnv {
+  /** When false, transformers.js never fetches from the remote (HF CDN) host. */
+  allowRemoteModels: boolean;
+  /** App-origin path local model weights are loaded from (e.g. `/models/`). */
+  localModelPath: string;
+  backends?: {
+    onnx?: {
+      wasm?: {
+        numThreads?: number;
       };
     };
   };
+}
+
+interface TransformersJsModule {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  pipeline: (...args: any[]) => Promise<unknown>;
+  env: TransformersJsEnv;
+}
+
+/**
+ * Module-loader seam. Production loads the vendored browser bundle from the app
+ * origin via a dynamic import; tests override this so no network/bundle access
+ * is needed. Kept overridable rather than `vi.mock`-ed because the bundle is
+ * imported by absolute URL string, which the mocker can't intercept.
+ */
+type TransformersLoader = () => Promise<TransformersJsModule>;
+
+const defaultTransformersLoader: TransformersLoader = async () =>
+  // Keep the large, on-demand NER runtime out of the homepage bundle.
+  // Vite serves `public/` files at the site root in both dev and prod.
+  (await import(/* @vite-ignore */ TRANSFORMERS_BROWSER_MODULE)) as TransformersJsModule;
+
+let _transformersLoader: TransformersLoader = defaultTransformersLoader;
+
+/** TEST-ONLY: inject a fake transformers.js module loader. */
+export function __setTransformersLoaderForTesting(loader: TransformersLoader): void {
+  _transformersLoader = loader;
+}
+
+/** TEST-ONLY: restore the real dynamic-import loader. */
+export function __resetTransformersLoaderForTesting(): void {
+  _transformersLoader = defaultTransformersLoader;
 }
 
 // Singleton pipeline — loaded once, reused across calls
@@ -118,9 +202,14 @@ async function getNERPipeline(
   onProgress?.({ stage: 'loading', progress: 0, message: 'Loading NER model...' });
 
   _pipelinePromise = (async () => {
-    // Keep the large, on-demand NER runtime out of the homepage bundle.
-    // Vite serves `public/` files at the site root in both dev and prod.
-    const { pipeline, env } = await import(/* @vite-ignore */ TRANSFORMERS_BROWSER_MODULE) as TransformersJsModule;
+    const { pipeline, env } = await _transformersLoader();
+
+    // §1.6 / SCRUM-2503: SELF-HOST. Forbid the HF CDN and pin loading to the
+    // Arkova app origin. `allowRemoteModels = false` is the equivalent of
+    // `local_files_only=true`, so a missing local file throws instead of
+    // silently hitting the network (which prod CSP would block anyway).
+    env.allowRemoteModels = false;
+    env.localModelPath = NER_LOCAL_MODEL_PATH;
 
     // Configure backend
     if (backend === 'webgpu' && env.backends?.onnx?.wasm) {
@@ -130,18 +219,44 @@ async function getNERPipeline(
     // Determine device based on backend
     const device = backend === 'webgpu' ? 'webgpu' : 'wasm';
 
-    onProgress?.({ stage: 'loading', progress: 30, message: 'Downloading model weights...' });
+    onProgress?.({ stage: 'loading', progress: 30, message: 'Loading model weights...' });
 
-    _pipeline = await pipeline('token-classification', NER_MODEL_ID, {
+    const loaded = await pipeline('token-classification', NER_MODEL_ID, {
       device,
       dtype: 'q8', // 8-bit quantized — ~130MB vs ~420MB fp32
     });
 
+    // FAIL LOUD: a self-hosted model that builds to nothing is not usable.
+    // Never let the pipeline be a falsy value that downstream treats as "no PII".
+    if (!loaded) {
+      throw new Error('NER pipeline resolved to an empty value');
+    }
+
+    _pipeline = loaded;
     _loadTimeMs = Date.now() - start;
     onProgress?.({ stage: 'loading', progress: 100, message: 'Model loaded' });
   })();
 
-  await _pipelinePromise;
+  try {
+    await _pipelinePromise;
+  } catch (err) {
+    // Do NOT cache a rejected load — clear the singletons so a later attempt
+    // (e.g. after the weights are vendored / a transient fetch error clears)
+    // can retry instead of every future call rejecting forever.
+    _pipeline = null;
+    _pipelinePromise = null;
+    _loadTimeMs = 0;
+
+    if (err instanceof NERModelLoadError) throw err;
+    const detail = err instanceof Error ? err.message : String(err);
+    throw new NERModelLoadError(
+      `Failed to load the self-hosted NER model from '${NER_LOCAL_MODEL_PATH}${NER_MODEL_ID}'. ` +
+        'Ensure the weights are vendored under public/models/ (see scripts/fetch-ner-model.ts) ' +
+        `and that the runtime bundle is reachable from the app origin. Cause: ${detail}`,
+      { cause: err },
+    );
+  }
+
   return { pipeline: _pipeline, loadTimeMs: _loadTimeMs };
 }
 
