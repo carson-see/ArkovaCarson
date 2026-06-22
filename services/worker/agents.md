@@ -1,6 +1,23 @@
 # agents.md — services/worker
 
-_Last updated: 2026-06-15 (Train D proof-integrity foundation)._
+_Last updated: 2026-06-22 (PROOF-03 confirmation-proof fetch, stacked on Train D proof-foundation)._
+
+## PROOF-03 (SCRUM-2336) confirmation-proof fetch (2026-06-22, branch `lane1/s1-proof03-confirmation-fetch`, stacked on `feat/train-d-proof-foundation` @ d11deed3)
+
+Builds on the proof-foundation: FIX-1 persists the **app-tree** branch
+(`merkle_root` / `proof_path` / `merkle_index`) at broadcast; PROOF-03 adds the
+**bitcoin-tree** confirmation evidence so a proof bundle carries
+independently-checkable chain-confirmation: `document fingerprint → app_merkle_root
+→ (committed in OP_RETURN of) tx → (this layer) block merkleroot → block header`.
+
+- **`chain/confirmation-proof.ts`** (new): `fetchConfirmationProof(provider, req)` → `ConfirmationProof` ( `confirmed | pending | stale`, with `blockHeader`/`blockHash`/`blockMerkleRoot`/`merkleBranch`/`txIndex`). Pending never fabricates a branch; reorg/missing → `stale`, never throws. `parseTxOutProof()` parses the GetBlock `gettxoutproof` CMerkleBlock and verifies the matched leaf == target txid. Source = GetBlock RPC (DISC-03); OP_RETURN format out of scope.
+- **`chain/utxo-provider.ts`**: OPTIONAL `getBlockHeaderHex` + `getTxOutProof` on `UtxoProvider`; new `ConfirmationProofProvider` slice; implemented on RPC + GetBlockHybrid (sovereign), header-only on Mempool (no fabricated branch).
+- **`utils/anchorProofs.ts`**: `AnchorProofUpsertRow` gains OPTIONAL `blockHeader`/`blockHash`, emitted only when supplied (so the FIX-1 app-tree-only upsert never writes `block_header: null` over a populated header). New `updateAnchorConfirmationProofs()` does a per-anchor UPDATE of ONLY `block_header`/`block_hash` (never clobbers app-tree columns), counting `missing` for rows with no `anchor_proofs` row (skipped, never created header-only).
+- **`jobs/confirmation-proof-populate.ts`** (new): `populateConfirmationProofs(client, provider, candidates)` groups anchors by shared tx and fetches ONE proof per UNIQUE tx via `runWithConcurrency` (a 10k-anchor / 3-merkle-tx run makes 3 fetches, not 10k), then writes confirmed proofs to every anchor of the tx; pending/stale are not persisted. `populateConfirmationProofsForSecuredAnchors()` is the bounded, resumable cron scan (SECURED + `merkle_root` present + `block_header IS NULL`) — deliberately SEPARATE from the hot `check-confirmations.ts` bulk-drain path so that latency-critical path is not re-opened. **NOT yet cron-wired in `routes/scheduled.ts`** (entrypoint exists; wiring + soak is the follow-up — see "Incomplete" in the PR/handoff).
+- **0340 columns used:** `block_header` + `block_hash`. NO new migration (the 0340 columns already exist). `merkle_index` (FIX-1) feeds the `txIndex`-style structure; `op_return_payload` + `proof_schema_version` untouched (S2 verifier / format concerns).
+- Tests (NO real Bitcoin API): `chain/confirmation-proof.test.ts` (21), `jobs/confirmation-proof-populate.test.ts` (10), `utils/anchorProofs.test.ts` (+7), `chain/utxo-provider.test.ts` (+6). Full worker suite green except the pre-existing `ai/zk-proof.test.ts` env gate (needs `npm run build:circuit`).
+
+## Train D proof-integrity foundation (2026-06-15, branch `feat/train-d-proof-foundation`)
 
 ## Train D proof-integrity foundation (2026-06-15, branch `feat/train-d-proof-foundation`)
 
