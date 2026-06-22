@@ -20,7 +20,8 @@
  *   5. …positioned AFTER the image build and BEFORE the deploy step, so a
  *      vulnerable image is gated out before it can ship…
  *   6. …scoped to OS packages via an explicit package-type key (Trivy
- *      `pkg-types: os`, the deprecated alias `vuln-type: os`, or Grype
+ *      `vuln-type: os` — the SUPPORTED input at the pinned action version; NOT
+ *      `pkg-types`, which the action rejects — or Grype
  *      `only-package-types: os`). Asserting the key is *present and correct*
  *      means a future action-version rename can't silently drop OS scanning…
  *   7. …guarded by an auditable, operator-only break-glass: a
@@ -50,18 +51,28 @@ const BUILD_STEP_RE = /docker build\b/;
 const STEP_BULLET_RE = /^ {6}- /;
 /**
  * Supported container scanners, each → the `uses:` owner/repo to match and the
- * set of input keys that scope the scan to OS packages. Trivy renamed
- * `vuln-type` → `pkg-types`; both are accepted so the deprecated alias keeps
- * working, but ONE of them must be present (assertion 6) so a silent rename
- * can't disable OS scanning. `pkgTypeKeys[0]` is the preferred (current) key,
- * surfaced in the failure message.
+ * set of input keys that scope the scan to OS packages. `pkgTypeKeys[0]` is the
+ * preferred (current) key, surfaced in the failure message.
+ *
+ * Trivy's OS/library scope knob is `vuln-type`. The pinned
+ * `aquasecurity/trivy-action@ed142fd…` (v0.36.0) does NOT define `pkg-types` —
+ * that rename is a `# TODO` in its action.yaml, not a shipped input — so a
+ * workflow passing `pkg-types` fails with "Unexpected input(s)" and the action
+ * falls back to its default `vuln-type: os,library` (gating library CVEs that
+ * belong in sonatype's lane). That mismatch blocked every prod deploy on
+ * 2026-06-22 (run 27969852143) while THIS guard passed, because the guard then
+ * accepted `pkg-types`. The guard therefore requires the SUPPORTED `vuln-type`
+ * key and does NOT accept `pkg-types`, so the guard fails closed against the
+ * exact deploy-blocking config that the action rejects at runtime. Re-add a
+ * second accepted key here only once it is a real input at the pinned action
+ * version.
  */
 const SCANNERS: ReadonlyArray<{
   name: string;
   action: string;
   pkgTypeKeys: readonly string[];
 }> = [
-  { name: 'Trivy', action: 'aquasecurity/trivy-action', pkgTypeKeys: ['pkg-types', 'vuln-type'] },
+  { name: 'Trivy', action: 'aquasecurity/trivy-action', pkgTypeKeys: ['vuln-type'] },
   { name: 'Grype', action: 'anchore/scan-action', pkgTypeKeys: ['only-package-types'] },
 ];
 
@@ -196,13 +207,14 @@ export function auditImageScanGate(workflowText: string): AuditResult {
     );
   }
 
-  // (6) OS package-type scope present and correct. Trivy `pkg-types: os`
-  // (current) or `vuln-type: os` (deprecated alias); Grype
-  // `only-package-types: os`. Asserting the KEY is present — not just that the
-  // step exists — means a future action-version rename that drops/renames the
-  // input can't silently widen or disable the scope. The value must be `os`
-  // (the gate is intentionally scoped to OS packages so it complements, rather
-  // than double-gates, the dependency scanners — see
+  // (6) OS package-type scope present and correct. Trivy `vuln-type: os` (the
+  // SUPPORTED input at the pinned action SHA — `pkg-types` is NOT yet a real
+  // input and is rejected at runtime); Grype `only-package-types: os`.
+  // Asserting the KEY is present — not just that the step exists — means a
+  // future action-version rename that drops/renames the input can't silently
+  // widen or disable the scope. The value must be `os` (the gate is
+  // intentionally scoped to OS packages so it complements, rather than
+  // double-gates, the dependency scanners — see
   // docs/compliance/container-image-scanning.md §2).
   let pkgTypeKeyFound: string | null = null;
   let pkgTypeValue: string | null = null;

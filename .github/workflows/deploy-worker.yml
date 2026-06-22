@@ -186,14 +186,21 @@ jobs:
       # deploy on FIXABLE HIGH/CRITICAL OS CVEs (mirrors the CVSS>=7 fixable gate
       # in sonatype-scan.yml). `ignore-unfixed: true` tracks — does not gate on —
       # CVEs with no upstream patch, so an unpatchable base-image CVE cannot
-      # wedge every deploy. `pkg-types: os` keeps library CVEs in sonatype's lane
-      # (no double-gating; `pkg-types` is the current Trivy input — `vuln-type`
-      # is deprecated). Control doc: docs/compliance/container-image-scanning.md.
-      # Invariant enforced at PR time by scripts/ci/check-image-scan-gate.ts.
+      # wedge every deploy. `vuln-type: os` keeps library CVEs in sonatype's lane
+      # (no double-gating). NOTE: `vuln-type` is the SUPPORTED input at the pinned
+      # action SHA — `pkg-types` is a `# TODO` rename in the action's repo, NOT a
+      # real input yet; passing it fails with "Unexpected input(s)" and the action
+      # falls back to scanning `os,library` (gating library CVEs → blocked every
+      # prod deploy on 2026-06-22, run 27969852143). Re-evaluate only when the
+      # pinned action version actually ships `pkg-types`. Control doc:
+      # docs/compliance/container-image-scanning.md. Invariant enforced at PR time
+      # by scripts/ci/check-image-scan-gate.ts.
       #
       # DB-fetch hardening (so a transient vuln-DB outage doesn't wedge deploys):
       #   - `cache: true` reuses the Trivy DB across runs (fewer cold pulls);
-      #   - `github-token` makes GHCR DB pulls authenticated (higher rate limit);
+      #   - `github-pat` makes GHCR DB pulls authenticated (higher rate limit) —
+      #     this is the action's supported input name; `github-token` is NOT a
+      #     valid input at the pinned SHA (it was silently ignored);
       #   - `TRIVY_DB_REPOSITORY` / `TRIVY_JAVA_DB_REPOSITORY` pull the DBs from
       #     the public ECR mirror instead of the shared ghcr.io pool that is the
       #     usual source of `TOOMANYREQUESTS`;
@@ -212,7 +219,7 @@ jobs:
         with:
           image-ref: ${{ steps.build.outputs.image }}
           scan-type: image
-          pkg-types: os
+          vuln-type: os
           severity: HIGH,CRITICAL
           ignore-unfixed: true
           exit-code: '1'
@@ -220,7 +227,7 @@ jobs:
           # Reuse the vuln DB across runs + authenticate GHCR pulls so a
           # transient rate-limit doesn't fail the scan and block every deploy.
           cache: true
-          github-token: ${{ secrets.GITHUB_TOKEN }}
+          github-pat: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Push image
         run: |
