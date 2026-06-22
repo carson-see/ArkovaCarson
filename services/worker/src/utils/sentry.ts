@@ -11,27 +11,18 @@ import * as Sentry from '@sentry/node';
 import { nodeProfilingIntegration } from '@sentry/profiling-node';
 import type { Event, ErrorEvent, Breadcrumb } from '@sentry/node';
 import { getBuildSha } from './buildInfo.js';
+import { scrubString, scrubUrl } from './pii-scrub.js';
 
 // ---------------------------------------------------------------------------
 // PII patterns to scrub (Constitution 1.4 + 1.6)
 // ---------------------------------------------------------------------------
-
-const URL_TOKEN_REGEX = /(access_token|token|key|secret|password|auth)=[^&\s]+/gi;
-const TEXT_SCRUBBERS: Array<[RegExp, string]> = [
-  [/\b[A-Z0-9._%+-]{1,64}@[A-Z0-9.-]{1,253}\.[A-Z]{2,24}\b/gi, '[EMAIL]'],
-  [/\b[a-f0-9]{64}\b/gi, '[FINGERPRINT]'],
-  [/\b\d{3}-\d{2}-\d{4}\b/g, '[SSN]'],
-  [/\bak_(live|test)_[a-zA-Z0-9]+/g, '[API_KEY]'],
-  [/\beyJ[a-zA-Z0-9_-]+\.eyJ[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+/g, '[JWT]'],
-  [/(?:\+\d{1,3}[\s.-]?)?\(?\d{2,4}\)?[\s.-]?\d{3,4}[\s.-]?\d{4}\b/g, '[PHONE]'],
-  [/\b(?:\d{1,3}\.){3}\d{1,3}\b/g, '[IP_ADDR]'],
-  // SCRUM-2249: project-ref before UUID scrubbing so the host is replaced whole.
-  [/https:\/\/[a-z0-9]{20}\.supabase\.co/gi, 'https://[SUPABASE_PROJECT].supabase.co'],
-  [
-    /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi,
-    '[UUID]',
-  ],
-];
+//
+// SCRUM-2492 (§1.6A): the email / fingerprint / SSN / API-key / JWT / phone /
+// IP / Supabase-ref / UUID regexes + `scrubString` / `scrubUrl` were extracted
+// to `./pii-scrub.ts` so the bounded connector-error `detail` builder
+// (`utils/byte-safety.ts`) reuses the SAME PII redaction. Re-exported here so
+// existing `utils/sentry.ts` importers keep working.
+export { scrubString, scrubUrl };
 
 const SENSITIVE_HEADERS = [
   'authorization',
@@ -55,18 +46,71 @@ const SENSITIVE_EXTRA_KEYS = [
 ];
 
 // ---------------------------------------------------------------------------
+// SCRUM-2492 (§1.6A): type-based binary scrub
+// ---------------------------------------------------------------------------
+//
+// Connector-fetched document bytes must never reach Sentry. The existing
+// scrubber below is key-NAME based (it only redacts known field names). This
+// type-based pass runs FIRST and drops any binary value — Buffer, any
+// TypedArray/DataView, ArrayBuffer, or the serialized `{ type: 'Buffer',
+// data: [...] }` shape — by TYPE, regardless of the key it appears under,
+// recursively across the whole event (contexts, extra, tags, exception
+// values, breadcrumb data, arbitrary nested objects).
+
+export const REDACTED_BYTES_TOKEN = '[REDACTED_BYTES]';
+
+// Bound the recursive walk (Sentry events can nest; avoid pathological depth).
+const MAX_SCRUB_DEPTH = 8;
+
+function isBinaryValue(value: unknown): boolean {
+  if (typeof Buffer !== 'undefined' && Buffer.isBuffer(value)) return true;
+  if (ArrayBuffer.isView(value as ArrayBufferView)) return true; // every TypedArray + DataView
+  if (value instanceof ArrayBuffer) return true;
+  return false;
+}
+
+function isSerializedBufferShape(value: unknown): boolean {
+  if (!value || typeof value !== 'object') return false;
+  const obj = value as Record<string, unknown>;
+  return obj.type === 'Buffer' && Array.isArray(obj.data);
+}
+
+/**
+ * Recursively replace any binary value (by type, regardless of key) with a
+ * redaction token. Mutates the passed object in place (Sentry expects the same
+ * event object back) and also returns it. Strings/numbers/etc. pass through —
+ * the existing PII string scrubbers handle those.
+ */
+export function scrubBinaryValues<T>(value: T, depth = 0): T {
+  if (depth >= MAX_SCRUB_DEPTH || value === null || typeof value !== 'object') {
+    return value;
+  }
+  if (isSerializedBufferShape(value)) {
+    return REDACTED_BYTES_TOKEN as unknown as T;
+  }
+  if (Array.isArray(value)) {
+    for (let i = 0; i < value.length; i += 1) {
+      value[i] = isBinaryValue(value[i]) ? REDACTED_BYTES_TOKEN : scrubBinaryValues(value[i], depth + 1);
+    }
+    return value;
+  }
+  const obj = value as Record<string, unknown>;
+  for (const key of Object.keys(obj)) {
+    const child = obj[key];
+    if (isBinaryValue(child) || isSerializedBufferShape(child)) {
+      obj[key] = REDACTED_BYTES_TOKEN;
+    } else {
+      obj[key] = scrubBinaryValues(child, depth + 1);
+    }
+  }
+  return value;
+}
+
+// ---------------------------------------------------------------------------
 // Scrubbing functions
 // ---------------------------------------------------------------------------
-
-function scrubString(str: string): string {
-  return TEXT_SCRUBBERS.reduce((value, [pattern, replacement]) => (
-    value.replace(pattern, replacement)
-  ), str);
-}
-
-function scrubUrl(url: string): string {
-  return scrubString(url.replace(URL_TOKEN_REGEX, '$1=[FILTERED]'));
-}
+// `scrubString` / `scrubUrl` are imported from `./pii-scrub.js` (re-exported
+// above) — SCRUM-2492 single-source-of-truth for the PII regexes.
 
 /**
  * Scrub PII from a Sentry event before it's sent.
@@ -74,6 +118,12 @@ function scrubUrl(url: string): string {
  */
 export function scrubPiiFromEvent(event: Event | null): Event | null {
   if (!event) return null;
+
+  // SCRUM-2492 (§1.6A): drop binary values BY TYPE first, across the whole
+  // event (contexts, extra, tags, exception values, arbitrary nested keys),
+  // before the key-name-based PII passes below. Connector document bytes must
+  // never reach Sentry regardless of the field they ride on.
+  scrubBinaryValues(event);
 
   // Scrub exception messages
   if (event.exception?.values) {
@@ -158,6 +208,11 @@ export function scrubPiiFromEvent(event: Event | null): Event | null {
  */
 export function scrubPiiFromBreadcrumb(breadcrumb: Breadcrumb | null): Breadcrumb | null {
   if (!breadcrumb) return null;
+
+  // SCRUM-2492 (§1.6A): type-based binary scrub over the breadcrumb (incl. its
+  // `data` bag) before the key-name pass — document bytes must never ride a
+  // breadcrumb into Sentry.
+  scrubBinaryValues(breadcrumb);
 
   const data = breadcrumb.data as
     | (Record<string, unknown> & { url?: unknown; body?: unknown })

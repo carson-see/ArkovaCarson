@@ -8,13 +8,6 @@
 
 ---
 
-## 📣 Note for Sarah (and Sarah's agent)
-
-1. **Never merge a PR to `main`.** Ever. Commit on a branch, open a PR, stop. Carson + human reviewers own the merge. Your task is done when the PR is green and awaiting review. Hard rule, no exceptions — see `memory/feedback_never_merge_without_ok.md`.
-2. **Get caught up before coding in a new session.** At session start, in order: (a) this file, (b) [HANDOFF.md](./HANDOFF.md), (c) the relevant `agents.md` in each folder you'll touch, (d) `docs/SARAH_BACKLOG.md` (your curated task list — excludes Nessie and Gemini Golden tracks). Only start coding once you can say in a sentence what last session shipped and what you are picking up. If the task is an existing PR or story, also read the Jira ticket and recent comments first.
-
----
-
 ## 0. MANDATORY METHODOLOGY (10 rules)
 
 ### 1. TDD
@@ -54,17 +47,19 @@ When the carve-out applies, the workflow is just `git commit` + `git push origin
 `deploy-worker.yml` worker-lint step and `ci.yml` `Lint worker (deploy-gate parity)` step BOTH invoke `npm run lint` from `services/worker/` — the script in `services/worker/package.json`. Drift between them caused the 2026-04-25 12-hour deploy blackout (deploy gate ran a stricter eslint than CI). `scripts/ci/check-deploy-lint-parity.ts` enforces this at PR time. Override via PR label `ci-config-change` only. Followup R4 story drives worker eslint warnings to zero so we can re-add `--max-warnings 0` everywhere.
 
 ### 10. MCP `apply_migration` ledger reconciliation
-The Supabase MCP `apply_migration` records a timestamp-style `version` in `supabase_migrations.schema_migrations`, but the migration-drift gate's "PR numeric ledger drift" check requires the migration's **NUMERIC prefix** (`NNNN`) present in prod. After applying a PR-owned numeric migration via MCP, reconcile in-session: `UPDATE supabase_migrations.schema_migrations SET version='NNNN' WHERE name='<file>' AND version !~ '^[0-9]{4}$';` (operator-approved per §1.11A — this is the **one expected ledger write**, not a `migration repair`). Then confirm `list_migrations` shows the numeric head **before** declaring the migration done. Drop the `0322`/`0323` `exempt_regex` entries once in-flight migrations are reconciled.
+The Supabase MCP `apply_migration` records a timestamp-style `version` in `supabase_migrations.schema_migrations`, but the migration-drift gate's "PR numeric ledger drift" check requires the migration's **NUMERIC prefix** (`NNNN`) present in prod. After applying a PR-owned numeric migration via MCP, reconcile in-session: `UPDATE supabase_migrations.schema_migrations SET version='NNNN' WHERE name='<file>' AND version !~ '^[0-9]{4}$';` (operator-approved per §1.11A — this is the **one expected ledger write**, not a `migration repair`). Then confirm `list_migrations` shows the numeric head **before** declaring the migration done. (Ledger reconciled to numeric 2026-06-15; SCRUM-2500 / S0-E4 adds the full-ledger numeric-integrity audit and then retires the stale `0322`/`0323` `exempt_regex`.)
 
 ---
 
 ## 0.1. READ FIRST — EVERY SESSION
 
 ```
-1. CLAUDE.md     <- Rules (this file).
-2. HANDOFF.md    <- Current state, open blockers, decisions.
-3. agents.md     <- In any folder you're about to edit.
-4. Jira ticket   <- If the task references one.
+1. CLAUDE.md       <- Rules (this file). Then run scripts/agent/ack-claude-bootstrap.sh.
+2. HANDOFF.md      <- Current state, open blockers, ACTIVE SOAKS (never disrupt one).
+3. lane-manifest   <- docs/operating-model/lane-manifest.yaml: your lane, RACI, merge council.
+4. operating-model <- docs/operating-model/session-operating-model.md: bootstrap + SDLC self-route.
+5. agents.md       <- In any folder you're about to edit.
+6. Sprint lane block + Jira ticket <- the sprint doc's lane block; Jira if the task references one.
 ```
 
 Do NOT read `docs/archive/MEMORY_deprecated.md`, `ARCHIVE_memory.md`, or pre-2026-04-21 CLAUDE.md iterations — historical only.
@@ -133,7 +128,7 @@ Documents never leave the user's device. Foundational privacy guarantee.
 - Client-side OCR (PDF.js + Tesseract.js) extracts text on device.
 - Client-side PII stripping removes all PII before anything leaves browser.
 - Only PII-stripped structured metadata + fingerprint may flow to server.
-- Gated by `ENABLE_AI_EXTRACTION` (**default true in production**; `switchboard_flags.enabled = true` and the deploy-worker.yml env-var fallback both set it on). The "default false" wording in earlier revisions of this doc was drift — AI extraction is a launch-required path, not opt-in. Off-prod (local dev / preview) defaults to false unless explicitly enabled. No "raw mode" bypass either way.
+- Gated by `ENABLE_AI_EXTRACTION` (**default true in production**; `switchboard_flags.enabled = true` and the deploy-worker.yml env-var fallback both set it on — it is a launch-required path, not opt-in). Off-prod (local dev / preview) defaults to false unless explicitly enabled. No "raw mode" bypass either way.
 
 ### 1.6A Connector-sourced documents (server-side fingerprint carve-out)
 Connector-fetched documents (DocuSign / Google Drive) MAY be fingerprinted server-side in `services/worker/` — a narrow, explicit exception to §1.6 — because they originate from a third-party cloud the user already authorized; there is no client device in the loop to do the hashing. This carve-out is **void unless ALL** of the following hold: fetch → SHA-256 in memory → discard; raw bytes are **never** persisted to Postgres, written to logs, sent to Sentry, stored in `job_queue.last_error`, embedded in error messages, or written to temp files; connector error types carry no raw response body; the pino logger has a redaction guard; the Sentry scrubber drops binary/typed-array values by type (not key name); and a CI lint forbids passing document bytes to any logger / Sentry / `Error` constructor (enforced per SCRUM-2492). Only the fingerprint + bounded, PII-scrubbed metadata may leave the fetch. Applies **only** to connector-fetched documents; user-uploaded documents remain strictly client-side per §1.6, and `generateFingerprint` is still browser-only for uploads.
@@ -181,6 +176,12 @@ Every prod-affecting PR declares its tier in the body. The path-based detector i
 | **T3** Critical | Migrations, data integrity, concurrency/fan-out, security, chain/treasury, anchor lifecycle, cron-on-anchors | 48 h soak + multiple trigger cycles + clean-mirror or isolated staging | T2 fields + Trigger A fires, Trigger B fires, Daily flush observation, Per-org isolation check |
 
 Batched T2/T3 release candidates may centralize long soak evidence in `docs/staging/rc-manifests/rc-*.json` while preserving per-PR authorization, CI, risk tier, exact head SHA coverage, rollback notes, and production proof. RC manifests are audited evidence, not a bypass: stale heads/bases, dirty preflight, expired evidence, missing approval, or missing migration rollback/reapply proof fail the same `Staging Soak Evidence Gate`.
+
+### 1.13 Operating model, tiered-merge & the drift / claims gates
+- **One lane per session** (Sprint 0 = train-led exception). Execute only your lane's surfaces per [`docs/operating-model/lane-manifest.yaml`](./docs/operating-model/lane-manifest.yaml); a cross-lane change is a handoff, not a reach-in. Bootstrap + SDLC self-routing: [`docs/operating-model/session-operating-model.md`](./docs/operating-model/session-operating-model.md).
+- **Tiered merge — Claude never merges to `main`, ever** (hook-enforced; see `memory/feedback_never_merge_without_ok.md`). The council (Tech Lead + RTE + Release Manager) holds **T0/T1** (routine CI-green auto-merge via Mergify); **Carson holds sole T2/T3** — migrations, RLS/schema, chain/treasury, credits/billing, anchor lifecycle, security, public API/contract, CLAUDE.md. The path detector computes tier and **fails CLOSED to "needs Carson."**
+- **Config-drift / parity gate (R-5):** `scripts/ci/check-config-drift.ts` diffs asserted config (`config.ts` / `deploy-worker.yml` / `vercel.json`: flags / providers / CSP) vs running prod + worker↔edge parity, failing closed. Keep the asserted-state manifest honest when you change a flag/provider/CSP.
+- **Claims-review gate (R-7):** never make a public/UI claim of external status we don't hold (e.g. "listed in the Credential Registry" when CE only approved us *to publish*). Proof copy states what is measured vs asserted vs **NOT** asserted (extends §1.5).
 
 ---
 
@@ -232,7 +233,7 @@ Migration state (reality, not aspiration): see HANDOFF.md.
 
 Source of truth: [Jira SCRUM board](https://arkova.atlassian.net/jira/software/projects/SCRUM). Do NOT maintain a per-story status table in this file — it will drift (and did, for months, until the 2026-04-21 audit).
 
-**Product Owner roadmap (priority order across releases → epics → stories):** [PO Roadmap](https://arkova.atlassian.net/wiki/spaces/A/pages/27591934) — read this before picking up new work. If a Jira label disagrees with the roadmap, the roadmap wins and the Jira label is fixed.
+**Roadmap (priority order):** the canonical roadmap is the [12-Month Technical Roadmap v3](https://arkova.atlassian.net/wiki/spaces/A/pages/82444290), executed via the [PI-1 Program Increment Plan](https://arkova.atlassian.net/wiki/spaces/A/pages/83296257) — read before picking up new work; if a Jira label disagrees, the roadmap wins and the label is fixed. (The 2026-05-05 PO Roadmap 27591934 is **SUPERSEDED** by 82444290.)
 
 For confluence audit pages, see [Confluence space A](https://arkova.atlassian.net/wiki/spaces/A) — every epic has an audit page titled `SCRUM-N — <summary> — AUDIT`.
 
@@ -288,4 +289,4 @@ Moved to [HANDOFF.md](./HANDOFF.md). This file no longer carries a rolling narra
 
 ---
 
-_Directive version: 2026-04-21 (post-audit refactor); amended 2026-06-05 (migration-merge retro: §0 rule 10 ledger reconciliation, §6 Mergify-queue + agents.md-union rows, §7 infra-cost sweep). ≤300 lines by design. State → HANDOFF.md. Env → docs/reference/ENV.md. Status → Jira. Docs → Confluence. Mandates here._
+_Directive version: 2026-04-21 (post-audit refactor); amended 2026-06-05 (migration-merge retro). **DRAFT v-next 2026-06-17 (S0-E3): §0.1 manifest + operating-model read-list; §1.13 operating-model / tiered-merge / drift + claims gates; §5 re-pointed to roadmap v3 (82444290).** ≤300 lines by design. State → HANDOFF.md. Env → docs/reference/ENV.md. Status → Jira. Docs → Confluence. Mandates here._

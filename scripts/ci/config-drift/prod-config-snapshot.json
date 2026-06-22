@@ -1,0 +1,29 @@
+{
+  "_note": "RUNNING = REFERENCE snapshot of the intended EFFECTIVE state (NOT a live capture this session); matches asserted so the gate is green at rest. Sprint 1 replaces it with a read-only GET /health + flag-registry capture (env AND DB per flag, both runtimes' /health, the live CSP); divergence — env=true/DB=false fail-open, a silent provider flip to mempool, CSP drift, or worker<->edge disagreement — then fails the gate. Never embeds secrets.",
+  "flags": {
+    "ENABLE_PROD_NETWORK_ANCHORING": true,
+    "ENABLE_AI_EXTRACTION": true,
+    "ENABLE_VERIFICATION_API": true,
+    "ENABLE_SEMANTIC_SEARCH": false,
+    "ENABLE_AI_FRAUD": false
+  },
+  "bitcoinUtxoProvider": "getblock",
+  "bitcoinFeeStrategy": "mempool",
+  "cspConnectSrc": [
+    "https://arkova-worker-270018525501.us-central1.run.app",
+    "https://edge.arkova.ai"
+  ],
+  "runtimes": {
+    "worker": {
+      "runtime": "worker",
+      "origin": "https://arkova-worker-270018525501.us-central1.run.app",
+      "flags": { "ENABLE_AI_FALLBACK": false },
+      "bitcoinUtxoProvider": "getblock"
+    },
+    "edge": {
+      "runtime": "edge",
+      "origin": "https://edge.arkova.ai",
+      "flags": { "ENABLE_AI_FALLBACK": false }
+    }
+  }
+}

@@ -63,6 +63,13 @@ jobs:
       contents: read
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          # SCRUM-1246: full history so scripts/ci/lib/ciContext.ts can resolve
+          # the PR base SHA. Without it the default shallow checkout cannot reach
+          # the base commit, ciContext exits 1, every tsx check in this job dies,
+          # and the required "Dependency Scanning" gate goes red — which silently
+          # jammed the Mergify queue (queue-wide false failure, not a real vuln).
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
@@ -108,6 +115,17 @@ jobs:
       - name: Block migration prefix collisions (SCRUM-1287)
         run: npx tsx scripts/ci/check-migration-prefix-uniqueness.ts
 
+      # S0-4.2 / SCRUM-2500 — local-file half of the full-ledger numeric-integrity
+      # audit (network-free). The prod-ledger half runs in migration-drift.yml,
+      # which already holds the read-only Supabase Management API token.
+      - name: Audit local migration ledger integrity (SCRUM-2500)
+        run: npx tsx scripts/ci/check-ledger-numeric-integrity.ts
+
+      # S0-4.3 — block colliding migration agents.md "Recent migrations" blocks
+      # (CLAUDE.md §6); each block must carry a (PR #NNNN) discriminator.
+      - name: Block migration agents.md collisions (S0-E4)
+        run: npx tsx scripts/ci/check-agents-md-migration-collision.ts
+
       - name: Require justification for new anchors indexes (SCRUM-1286)
         run: npm run ci:anchor-index-justification
 
@@ -136,6 +154,14 @@ jobs:
         env:
           PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
         run: npx tsx scripts/ci/check-webhook-hmac-consolidation.ts
+
+      - name: Enforce container-image CVE scan gate (TVM/IVS)
+        # deploy-worker.yml must keep a Trivy base-image CVE scan gating the
+        # deploy on fixable HIGH/CRITICAL OS CVEs. This guard fails the PR if
+        # that control is removed, unpinned, or weakened. Complements the npm
+        # audit / Sonatype dependency scans below (which cover the library
+        # layer). Control doc: docs/compliance/container-image-scanning.md.
+        run: npx tsx scripts/ci/check-image-scan-gate.ts
 
       - name: Run npm audit (root production dependencies)
         # Fail on critical severity. Known high-severity exceptions (no upstream fix):
@@ -310,6 +336,20 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
           GITHUB_HEAD_REF: ${{ github.head_ref }}
         run: npx tsx scripts/ci/check-feedback-rules.ts
+
+      # S0-4.3 — tiered-merge authority (advisory). Computes the required tier
+      # from the changed files (reusing requiredTierFor) and reports whether the
+      # council may merge or it needs Carson. Fails closed to needs-carson.
+      # Enforcement is branch protection + Mergify (Carson-applied per the
+      # "S0-E4 — Mergify / Stacked-PR + Tiered-Merge Playbook" Google Doc, Drive
+      # ARKOVA PI-1-S0); this step is informational + sets outputs.
+      - name: Tiered-merge authority (S0-E4)
+        env:
+          BASE_REF_SHA: ${{ github.event.pull_request.base.sha }}
+        run: npx tsx scripts/ci/compute-merge-authority.ts
+
+      - name: Config↔reality drift + cross-runtime parity gate (S0-5.2)
+        run: npx tsx scripts/ci/check-config-drift.ts
 
       - name: HANDOFF.md verification lint
         env:

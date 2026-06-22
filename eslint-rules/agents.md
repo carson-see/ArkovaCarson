@@ -22,6 +22,13 @@ Custom ESLint plugin (`eslint-plugin-arkova`) enforcing test quality standards.
 **Fix:** Assert transformations, business logic, side effects, or error handling — not that data passes through unchanged.
 **Current violations:** 8 test blocks
 
+### `arkova/no-connector-bytes-to-sink` (error — connector files only)
+**What:** Flags a statically-identifiable raw-bytes value — a `Buffer.from(...)`/`Buffer.concat/alloc`, a typed-array (`new Uint8Array(...)`), a `*.bytes` member, an identifier/property matching `/(?:^|_)bytes$|buffer$|documentBytes/i`, or a raw `<bytes>.toString()` / `.toString('utf8'|'latin1'|…)` — reaching a sink that could leak it: `logger.*` (incl. nested object keys + child loggers), `Sentry.capture*`/`addBreadcrumb`/`setContext`/`setExtra`, `new <Foo>Error(...)`/`throw`/template literals, `last_error:` assignments + `failJob(...)`, `fs.write*`/`createWriteStream`, `.insert/.update/.upsert` row-object values, and `JSON.stringify(<bytes>)`. Does light single-hop same-scope alias tracking. Reports each leaf bytes value once (range-dedupe across overlapping sinks).
+**Why:** CLAUDE.md §1.6A lets connector-fetched documents (DocuSign / Google Drive) be fingerprinted server-side, but raw document bytes must NEVER reach a logger, Sentry, an Error, `job_queue.last_error`, a temp file, or Postgres. SCRUM-2492 made this a build-time gate (was 0-of-6 controls enforced). The connector happy path is already clean, so the rule is regression-prevention.
+**Does NOT flag:** `.byteLength`/`.length` numeric terminals, the fingerprint hex string, `createHash(...).update(bytes).digest('hex')`, `.toString('hex'|'base64')`, the canonical `enqueueSignedDocument` sink (persists only `byte_length`), or crypto `.update(<bytes>)` (object-only DB-write detection). The PKI/timestamp `arrayBuffer()` readers (`src/signatures/**`) are out of scope via the eslint config `files` list.
+**Static-only blind spots (documented in the rule's `meta.docs`):** object spreads (`{ ...obj }`), cross-file/module flow, multi-hop reassignment, and helper-return values are not tracked. Backstopped by the byte-safe error types (L0), pino redaction (L2), type-based Sentry scrub (L3), `last_error` sanitizer (L4), and the multi-MB runtime leak test (L6).
+**Scope:** ERROR on `src/integrations/**` plus the `docusign-*` connector job files in `services/worker/eslint.config.js`. Current violations: 0.
+
 ### `arkova/missing-org-filter` (warn — production files only)
 **What:** Flags Supabase `.from('<table>')` calls against multi-tenant tables that lack a tenant-scoping filter (`.eq('org_id', ...)` or `.is('org_id', null)`) in the method chain. Also checks `.insert()`/`.upsert()` payloads for scope keys.
 **Why:** SCRUM-1208 found three cross-tenant bugs in production (docusign webhook, ATS webhook, search endpoint). The rule makes tenant isolation visible at the query site.
@@ -30,10 +37,11 @@ Custom ESLint plugin (`eslint-plugin-arkova`) enforcing test quality standards.
 **Worker override:** Cross-tenant system crons (`*Fetcher.ts`, `attestationAnchor.ts`, `chain-maintenance.ts`, etc.) are exempted in `services/worker/eslint.config.js`. Org-scoped jobs (`report.ts`, `rules-engine.ts`, `rule-action-dispatcher.ts`, `queue-reminders.ts`) keep the rule active.
 
 ## Architecture
-- ESLint v9 flat config
+- ESLint v9/v10 flat config
 - Plugin registered as `file:./eslint-rules` in `package.json` devDependencies
-- Test-quality rules apply to test files; `missing-org-filter` applies to production files
-- All rules are AST-based (no regex on source text)
+- Test-quality rules apply to test files; `missing-org-filter` applies to production files; `no-connector-bytes-to-sink` applies to worker connector files only
+- All rules are AST-based (no regex on source text). `no-connector-bytes-to-sink` does light single-hop alias resolution via the scope manager (`sourceCode.getScope(node)`); the scope travels through an explicit `ctx` bag because ESLint's `context` is not safe to stash per-node state on.
+- RuleTester coverage for every rule lives in `tests/eslint-rules/arkova-rules.test.ts` (run via root `npm test`, not `npm run lint`).
 
 ## Escalation Plan
 1. **Now:** All 3 rules at `warn` — CI passes, violations visible

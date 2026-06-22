@@ -7,20 +7,23 @@ Tooling for the standing `arkova-staging` Supabase rig + `arkova-worker-staging`
 | File | Purpose |
 |---|---|
 | `seed.ts` | Synthesize prod-shape data on the staging rig. Tier flag (`--smoke` / `--standard` / `--full`) controls volume. Goes through the `staging_seed_auth_users` RPC (staging-only) so profiles satisfy the `auth.users` FK. Synthetic data only — never copies real customer rows. |
-| `load-harness.ts` | Drive sustained synthetic load against the worker. Modes: `anchor`, `burst`, `oscillate`, `webhooks`, `events`, `cron`, `reads`, `mixed` (default). Mixed runs all four pressure types concurrently. Requires `STAGING_API_BASE` to be the per-PR tag URL printed by `deploy.sh`; shared/main staging URLs are refused so parallel soaks don't contaminate each other (SCRUM-1803). |
-| `soak-lanes.ts` | Read-only active-lane dashboard. Lists active `screen` soak sessions, latest local evidence summaries, missing final JSON, idle open PRs whose titles indicate `T3`, `migration NNNN`, or `soak PENDING`, and blocked soak candidates with labels such as `do-not-merge`. |
+| `load-harness.ts` | Drive sustained synthetic load against the worker. Modes: `anchor`, `burst`, `oscillate`, `webhooks`, `events`, `cron`, `reads`, `mixed` (default). Mixed runs all four pressure types concurrently. Requires `STAGING_API_BASE` to be the per-PR or named train tag URL printed by `deploy.sh`; shared/main staging URLs are refused so parallel soaks don't contaminate each other (SCRUM-1803). |
+| `soak-lanes.ts` | Read-only active-lane dashboard. Lists active `screen` soak sessions, latest local evidence summaries, missing final JSON, idle open PRs whose titles indicate `T3`, `migration NNNN`, or `soak PENDING`, and blocked soak candidates with labels such as `do-not-merge`. It recognizes both per-PR sessions (`pr1055-*`) and named train sessions (`train-a-*`, `train-b-*`, `train-c-*`) so release-train soaks stay visible. |
 | `claim.sh` | Per-PR lease (multi-tenant after SCRUM-1803). Acquire / release / status the staging-rig lease. Posts to `#eng-staging` if `SLACK_WEBHOOK_URL` is set. |
-| `deploy.sh` | **Lease-enforced, tag-routed worker deploys (SCRUM-1803/SCRUM-1821).** Refuses to deploy without a `staging_lease` row for the PR (override with a structured `--force "<Jira>: <reason>"`). Checks image existence (retries to absorb Artifact Registry indexing lag on a fresh push — see below), blocks recent other-PR revisions, gates `--promote` behind the per-day Secret Manager token, deploys with `--tag pr-N --no-traffic`, and writes an audit row to `staging_deploy_log`. Replaces ad-hoc Cloud Run update calls. |
+| `deploy.sh` | **Lease-enforced, tag-routed worker deploys (SCRUM-1803/SCRUM-1821).** Refuses to deploy without a `staging_lease` row for the PR (override with a structured `--force "<Jira>: <reason>"`). Checks image existence (retries to absorb Artifact Registry indexing lag on a fresh push — see below), blocks recent other-PR revisions, gates `--promote` behind the per-day Secret Manager token, deploys with `--tag pr-N --no-traffic` by default or `--lane train-c-*` for named release-train lanes, and writes an audit row to `staging_deploy_log`. Replaces ad-hoc Cloud Run update calls. |
 | `cleanup-orphan-tags.sh` | Orphan tag janitor for `pr-*` Cloud Run traffic tags. Uses `gh api` to keep open PRs and removes tags for closed/merged PRs older than 7 days. Dry-run by default; live removal requires `--apply` for Cloud Scheduler / maintenance job use. |
 | `rotate-deploy-iam.sh` | SCRUM-1821 item 8 deploy-only IAM rotation. Dry-run by default; live apply requires `--apply --confirm SCRUM-1821`. Creates/uses `arkova-staging-deployer`, grants `roles/artifactregistry.reader` on `arkova-worker-images`, grants conditioned `roles/run.developer` for `arkova-worker-staging`, grants `roles/iam.serviceAccountUser` on the runtime SA, and revokes `roles/run.developer` from the default compute SA. Includes `--rollback`. |
 | `migrations/staging_only_deploy_log_and_lease_pk.sql` | **Staging-only schema migration (SCRUM-1803).** Adds PRIMARY KEY to `staging_lease` (one row per PR), creates append-only `staging_deploy_log` audit table, ships `record_staging_deploy` SECURITY DEFINER RPC. Apply via Supabase MCP `apply_migration` to `ujtlwnoqfhtitcmsnrpq` only. Never to prod. |
 | `teardown-and-reset.sh` | Lease-aware truncate + migration sync + reseed. Run between PRs. Note: superseded by `seed.ts --reset` (which uses the new `staging_purge_synthetic_data` RPC); keep this script around only for the migration-sync step. |
+| `seed-baseline-fixture.sql` | **Baseline fixture for ISOLATED rigs.** Inserts the minimal valid FK chain (`auth.users` → `auth.identities` → `organizations` → `profiles` → one `anchors` row with `status='SUBMITTED'`) so `staging-honesty-preflight.ts` Check 5 passes. Without it a fresh isolated rig has zero SUBMITTED anchors → `fixture_seeded` → HOLLOW soak. **Data-only (§1.11A):** no migration-ledger writes, no `migration repair`; idempotent via `ON CONFLICT (id) DO NOTHING` on `5eed0000-…` fixture ids. Unlike `seed.ts` it inserts `auth.users` directly (isolated rigs lack the `staging_seed_auth_users` RPC). Sets a txn-local `service_role` JWT claim so `protect_anchor_status_transition()` permits the SUBMITTED insert. Run via `supabase db query --linked --file …` (the Mgmt API read-write `/database/query` endpoint is Cloudflare-blocked, HTTP 403 `error code: 1010`, for automated clients). |
+| `seed-baseline-fixture.test.ts` | Vitest structural-contract tests for the fixture + its wiring: asserts the SUBMITTED anchor, full FK chain, idempotency, no ledger writes, synthetic ids, and that `provision-isolated-rig.sh` runs the seed after deploy and before the preflight. |
+| `provision-isolated-rig.sh` | S0-4.1 one-command isolated-rig provision (create project → schema replay → deploy worker → **seed baseline fixture** → `clean_mirror` preflight). `--dry-run` default; live run needs `--apply` + `CONFIRM_PROVISION=<name>`. Hard-denies prod (`vzwyaatejekddvltxyye`) + shared staging. |
 
 ## Required env
 
 - `STAGING_SUPABASE_URL` — `https://ujtlwnoqfhtitcmsnrpq.supabase.co`. Pull from `gcloud secrets versions access latest --secret=supabase-url-staging --project=arkova1`.
 - `STAGING_SUPABASE_SERVICE_ROLE_KEY` — `gcloud secrets versions access latest --secret=supabase-service-role-key-staging --project=arkova1`.
-- `STAGING_API_BASE` — load harness only. Required per-PR tag URL from `deploy.sh` (for example `https://pr-<N>---arkova-worker-staging-...run.app`). The harness refuses missing values, shared/main staging URLs, and untagged Cloud Run hosts.
+- `STAGING_API_BASE` — load harness only. Required per-PR or named train tag URL from `deploy.sh` (for example `https://pr-<N>---arkova-worker-staging-...run.app` or `https://train-c-ce---arkova-worker-staging-...run.app`). The harness refuses missing values, shared/main staging URLs, and untagged Cloud Run hosts.
 - `STAGING_SUPABASE_DB_URL` — `teardown-and-reset.sh` only — for `supabase db push`.
 
 ## Optional env
@@ -98,6 +101,10 @@ export STAGING_API_BASE="https://pr-<N>---arkova-worker-staging-270018525501.us-
 npm run staging:load -- --mode mixed --duration 720 \
   --evidence-out docs/staging/soak-pr-<N>-$(date +%Y%m%dT%H%M).json
 
+# Named release-train lanes use the same lease/audit owner but a train-scoped tag.
+./scripts/staging/deploy.sh --pr <N> --lane train-c-ce --image <ref>
+export STAGING_API_BASE="https://train-c-ce---arkova-worker-staging-270018525501.us-central1.run.app"
+
 # Check active/idle/blocked soak lanes without mutating GitHub or staging
 npm run staging:soak-lanes
 
@@ -112,6 +119,10 @@ npm run staging:soak-lanes
 npm run staging:rotate-iam
 npm run staging:rotate-iam -- --apply --confirm SCRUM-1821
 ```
+
+## S0-E4 isolated-rig automation (2026-06-17, story S0-4.1)
+
+- `provision-isolated-rig.sh` / `teardown-isolated-rig.sh` — one-command provision/teardown of a CLEAN isolated soak rig (standalone Supabase project + wired `arkova-worker-<name>-staging` Cloud Run + `clean_mirror` preflight), so multiple T3 trains can soak in parallel without a shared dirty DB (retires roadmap R-3). **`--dry-run` is the DEFAULT**; a live run needs `--apply` + matching `CONFIRM_PROVISION`/`CONFIRM_TEARDOWN`. Prod (`vzwyaatejekddvltxyye`) + shared staging (`ujtlwnoqfhtitcmsnrpq`) + shared Cloud Run services are **hard-denied** (exit 1). The live "2 concurrent soaks" rehearsal is Carson-gated — see the Google Doc "ARKOVA PI-1 S0-E4 — Isolated Soak-Rig Automation Runbook" (Drive ARKOVA PI-1-S0): https://docs.google.com/document/d/1c0F_9NSy9ldfeR28xlY7s7zFFwKpS8cmTzvhI9dI__E/edit
 
 ## What this folder does NOT do
 

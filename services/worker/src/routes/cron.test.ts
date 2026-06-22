@@ -335,6 +335,23 @@ vi.mock('../jobs/docusign-connect-failures.js', () => ({
   pollDocusignConnectFailures: (...args: unknown[]) => mockPollDocusignConnectFailures(...args),
 }));
 
+const mockMakeListenerDriftDeps = vi.fn(() => ({ deps: 'listener-drift' }));
+vi.mock('../jobs/docusign-listener-drift-deps.js', () => ({
+  makeListenerDriftDeps: () => mockMakeListenerDriftDeps(),
+}));
+
+const mockReconcileListenerDrift = vi.fn().mockResolvedValue({
+  ok: true,
+  integrations_checked: 1,
+  drift_detected: 0,
+  in_sync: 1,
+  errors: [],
+  drifts: [],
+});
+vi.mock('../jobs/docusign-listener-drift.js', () => ({
+  reconcileListenerDrift: (...args: unknown[]) => mockReconcileListenerDrift(...args),
+}));
+
 // ─── Import after mocks ───
 import { cronRouter } from './cron.js';
 import { config } from '../config.js';
@@ -1312,6 +1329,56 @@ describe('cron routes', () => {
 
       expect(res.status).toBe(500);
       expect(res.body).toEqual({ error: 'Processing failed' });
+    });
+  });
+
+  describe('POST /docusign-listener-drift', () => {
+    it('returns the drift reconciliation result and wires production dependencies', async () => {
+      const driftResult = {
+        ok: true,
+        integrations_checked: 1,
+        drift_detected: 0,
+        in_sync: 1,
+        errors: [],
+        drifts: [],
+      };
+      mockReconcileListenerDrift.mockResolvedValueOnce(driftResult);
+
+      const app = createApp();
+      const res = await request(app).post('/cron/docusign-listener-drift');
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual(driftResult);
+      expect(mockMakeListenerDriftDeps).toHaveBeenCalledTimes(1);
+      expect(mockReconcileListenerDrift).toHaveBeenCalledWith({ deps: 'listener-drift' });
+    });
+
+    it('returns 500 when listener drift reconciliation throws', async () => {
+      mockReconcileListenerDrift.mockRejectedValueOnce(new Error('docusign down'));
+
+      const app = createApp();
+      const res = await request(app).post('/cron/docusign-listener-drift');
+
+      expect(res.status).toBe(500);
+      expect(res.body).toEqual({ error: 'Processing failed' });
+    });
+
+    it('returns 500 when listener drift reconciliation reports dependency errors', async () => {
+      const driftResult = {
+        ok: false,
+        integrations_checked: 1,
+        drift_detected: 0,
+        in_sync: 0,
+        errors: [{ integration_id: 'int-1', error: 'connect_api: timeout' }],
+        drifts: [],
+      };
+      mockReconcileListenerDrift.mockResolvedValueOnce(driftResult);
+
+      const app = createApp();
+      const res = await request(app).post('/cron/docusign-listener-drift');
+
+      expect(res.status).toBe(500);
+      expect(res.body).toEqual(driftResult);
     });
   });
 

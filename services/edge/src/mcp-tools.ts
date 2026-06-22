@@ -523,6 +523,12 @@ export const TOOL_DEFINITIONS: ToolDefinition[] = [
 //
 // `anchor_timestamp` is the network-observed time (CLAUDE.md §1.5); the RPC
 // gates it to NULL for PENDING anchors, so default to null (NOT '') here.
+//
+// SCRUM-2226: `bitcoin_block` (= a.chain_block_height, migration 0311 ~line 34)
+// is the seventh field the RPC emits and the mapper used to drop. It is gated
+// to NULL for PENDING anchors exactly like anchor_timestamp / network_receipt_id,
+// so it defaults to null here — surfacing which block confirmed the anchor in
+// the public verification envelope.
 export function shapeAnchorRow(
   data: Record<string, unknown>,
   publicId?: string,
@@ -539,6 +545,7 @@ export function shapeAnchorRow(
     issued_date: (data?.issued_date as string | null) ?? null,
     expiry_date: (data?.expiry_date as string | null) ?? null,
     anchor_timestamp: (data?.anchor_timestamp as string | null) ?? null,
+    bitcoin_block: (data?.bitcoin_block as number | null) ?? null,
     network_receipt_id: (data?.network_receipt_id as string | null) ?? null,
     record_uri: `https://app.arkova.ai/verify/${resolvedPublicId}`,
     ...(data?.jurisdiction ? { jurisdiction: data.jurisdiction as string } : {}),

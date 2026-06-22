@@ -33,6 +33,34 @@ export default tseslint.config(
       'preserve-caught-error': 'warn',
     },
   },
+  // SCRUM-2492 (§1.6A): connector-fetched document bytes must never reach a
+  // logger, Sentry, an Error, last_error, a temp file, or Postgres. Enforced as
+  // an ERROR on the connector code paths only — the integrations tree plus the
+  // connector job files that own the byte-handling sink. The connector happy
+  // path is already clean, so this is regression-prevention: a future edit that
+  // logs/throws/persists `documentBytes` (or a Buffer/Uint8Array) fails the
+  // build. The PKI/timestamp `arrayBuffer()` readers
+  // (src/signatures/**) are deliberately OUT of scope — they are not
+  // connector files (their `Buffer.from(await response.arrayBuffer())` is for
+  // CRL/OCSP/TSA responses, and they only ever log/throw the HTTP status).
+  {
+    files: [
+      'src/integrations/**/*.ts',
+      'src/jobs/docusign-envelope-completed.ts',
+      'src/jobs/docusign-notarization-completed.ts',
+      'src/jobs/docusign-connect-failures.ts',
+      'src/jobs/docusign-connect-failures-deps.ts',
+      'src/jobs/docusign-reconciliation.ts',
+      'src/jobs/docusign-reconciliation-deps.ts',
+    ],
+    ignores: ['src/**/*.test.ts', 'src/**/*.spec.ts'],
+    plugins: {
+      arkova: arkovaPlugin,
+    },
+    rules: {
+      'arkova/no-connector-bytes-to-sink': 'error',
+    },
+  },
   // Cross-tenant system crons that run under the service-role client with no
   // per-user/org context. The tenant-isolation rule stays active for org-scoped
   // jobs (report.ts, rules-engine.ts, rule-action-dispatcher.ts, queue-reminders.ts).

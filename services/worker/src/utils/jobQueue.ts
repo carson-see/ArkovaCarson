@@ -14,6 +14,12 @@
 
 import { db } from './db.js';
 import { logger } from './logger.js';
+import {
+  REDACTED_BYTES_TOKEN,
+  SERIALIZED_BUFFER_RE,
+  isBinaryValue,
+  looksLikeRawBytes,
+} from './byte-safety.js';
 
 export type JobStatus = 'pending' | 'processing' | 'completed' | 'failed' | 'dead';
 
@@ -41,6 +47,51 @@ export interface JobSubmission<T = unknown> {
 }
 
 const DEFAULT_MAX_ATTEMPTS = 3;
+
+// ─── SCRUM-2492 (§1.6A): last_error sanitizer ──────────────────────────────
+//
+// `last_error` is persisted to Postgres (`job_queue.last_error`). For
+// connector jobs (DocuSign / Google Drive document fetch), a failure must not
+// be able to write raw document bytes into that column. `failJob` is typed to
+// take a `string`, but `String(someBuffer)` (or a stringified
+// `{ "type":"Buffer","data":[...] }`) would smuggle bytes in. This sanitizer
+// detects those shapes and replaces them with a bounded token, then caps the
+// length. It is intentionally conservative: it never persists raw byte runs.
+//
+// The byte-detection primitives (`isBinaryValue`, `looksLikeRawBytes`,
+// `SERIALIZED_BUFFER_RE`, the redaction token) now live in `./byte-safety.ts`
+// so the bounded connector-error `detail` builder reuses the SAME heuristics —
+// there is one source of truth, not a drifting copy.
+
+// Re-exported for back-compat with existing importers/tests that referenced the
+// jobQueue token. Value is unchanged (`'[redacted: binary content]'`).
+export const REDACTED_LAST_ERROR_TOKEN = REDACTED_BYTES_TOKEN;
+const LAST_ERROR_MAX_LENGTH = 1000;
+
+/**
+ * Strip byte-ish content from a `last_error` string before it is persisted.
+ * Returns a bounded, byte-free string.
+ */
+export function sanitizeLastError(raw: unknown): string {
+  // Coerce defensively — `failJob`'s caller may hand us a non-string.
+  let text: string;
+  if (typeof raw === 'string') {
+    text = raw;
+  } else if (raw === null || raw === undefined) {
+    text = '';
+  } else if (isBinaryValue(raw)) {
+    // Buffer / TypedArray / DataView / ArrayBuffer — never coerce to text.
+    return REDACTED_LAST_ERROR_TOKEN;
+  } else {
+    text = String(raw);
+  }
+
+  if (SERIALIZED_BUFFER_RE.test(text) || looksLikeRawBytes(text)) {
+    return REDACTED_LAST_ERROR_TOKEN;
+  }
+
+  return text.length > LAST_ERROR_MAX_LENGTH ? text.slice(0, LAST_ERROR_MAX_LENGTH) : text;
+}
 
 export type JobHandler<T = unknown> = (job: Job<T>) => Promise<void>;
 
@@ -123,12 +174,17 @@ export async function completeJob(jobId: string): Promise<void> {
 export async function failJob(jobId: string, errorMessage: string, attempts: number, maxAttempts: number): Promise<void> {
   const status: JobStatus = attempts >= maxAttempts ? 'dead' : 'failed';
 
+  // SCRUM-2492 (§1.6A): never persist raw document bytes into job_queue.last_error.
+  // Route through the byte-safe sanitizer (which also caps length) instead of a
+  // bare substring.
+  const safeLastError = sanitizeLastError(errorMessage);
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const { error } = await (db as any)
     .from('job_queue')
     .update({
       status,
-      last_error: errorMessage.substring(0, 1000),
+      last_error: safeLastError,
       updated_at: new Date().toISOString(),
       // Exponential backoff for retry: 2^attempts * 30 seconds
       ...(status === 'failed' ? {
@@ -141,7 +197,10 @@ export async function failJob(jobId: string, errorMessage: string, attempts: num
   }
 
   if (status === 'dead') {
-    logger.warn({ jobId, attempts, error: errorMessage }, 'Job moved to dead letter queue');
+    // Log the sanitized value — the raw errorMessage could be a stringified
+    // Buffer that the pino binary guard (which is type-based) would not catch
+    // once it is already a string.
+    logger.warn({ jobId, attempts, error: safeLastError }, 'Job moved to dead letter queue');
   }
 }
 

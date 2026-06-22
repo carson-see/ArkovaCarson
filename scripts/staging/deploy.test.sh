@@ -80,6 +80,16 @@ assert_match "rejects unstructured --force reason"   "SCRUM-1821:" "$out"
 out=$($DEPLOY --pr 742 --image foo --bogus 2>&1); rc=$?
 assert_exit  "unknown flag"                 2 "$rc"
 
+out=$(STAGING_SUPABASE_URL=x STAGING_SUPABASE_SERVICE_ROLE_KEY=x \
+      $DEPLOY --pr 742 --image foo --lane Train-C --dry-run 2>&1); rc=$?
+assert_exit  "uppercase --lane rejected"     2 "$rc"
+assert_match "lane lowercase error"          "lowercase Cloud Run tag slug" "$out"
+
+out=$(STAGING_SUPABASE_URL=x STAGING_SUPABASE_SERVICE_ROLE_KEY=x \
+      $DEPLOY --pr 742 --image foo --lane candidate-c --dry-run 2>&1); rc=$?
+assert_exit  "non-train --lane rejected"     2 "$rc"
+assert_match "lane prefix error"             "must start with train-" "$out"
+
 echo ""
 echo "─── promote authorization gate ─────────────────────────────"
 
@@ -175,6 +185,11 @@ cat >"${FAKEBIN}/gcloud" <<'EOF'
 args="$*"
 printf '%s\n' "$args" >>"${STAGING_FAKE_GCLOUD_LOG}"
 
+if [[ "$args" == *"auth list"* ]]; then
+  printf 'staging-test@arkova1.iam.gserviceaccount.com\n'
+  exit 0
+fi
+
 if [[ "$args" == *"artifacts docker images describe"* ]]; then
   exit "${STAGING_FAKE_IMAGE_RC:-0}"
 fi
@@ -259,6 +274,11 @@ cat >"${FAKEBIN}/gcloud" <<'EOF'
 args="$*"
 printf '%s\n' "$args" >>"${STAGING_FAKE_GCLOUD_LOG}"
 
+if [[ "$args" == *"auth list"* ]]; then
+  printf 'staging-test@arkova1.iam.gserviceaccount.com\n'
+  exit 0
+fi
+
 if [[ "$args" == *"artifacts docker images describe"* ]]; then
   n=$(cat "${STAGING_FAKE_DESCRIBE_COUNTER}")
   n=$((n + 1))
@@ -297,6 +317,10 @@ cat >"${FAKEBIN}/gcloud" <<'EOF'
 #!/usr/bin/env bash
 args="$*"
 printf '%s\n' "$args" >>"${STAGING_FAKE_GCLOUD_LOG}"
+if [[ "$args" == *"auth list"* ]]; then
+  printf 'staging-test@arkova1.iam.gserviceaccount.com\n'
+  exit 0
+fi
 if [[ "$args" == *"artifacts docker images describe"* ]]; then exit 1; fi
 if [[ "$args" == *"run revisions list"* ]]; then printf '[]\n'; exit 0; fi
 if [[ "$args" == *"run services describe"* && "$args" == *"status.url"* ]]; then
@@ -323,6 +347,25 @@ if grep -q "manifest inspect" "${DOCKER_LOG}"; then
   PASS=$((PASS + 1))
 else
   echo "  FAIL  fallback did not invoke docker manifest inspect"
+  FAIL=$((FAIL + 1))
+fi
+
+GCLOUD_LOG="${TMP_DIR}/gcloud-named-lane.log"
+DOCKER_LOG="${TMP_DIR}/docker-named-lane.log"
+out=$(PATH="${FAKEBIN}:$PATH" STAGING_FAKE_GCLOUD_LOG="${GCLOUD_LOG}" \
+      STAGING_FAKE_DOCKER_LOG="${DOCKER_LOG}" STAGING_FAKE_DOCKER_MANIFEST_RC=0 \
+      IMAGE_READABILITY_ATTEMPTS=1 IMAGE_READABILITY_DELAY_SECONDS=0 \
+      STAGING_DEPLOY_NOW_EPOCH=1778760150 \
+      STAGING_SUPABASE_URL=https://staging.example STAGING_SUPABASE_SERVICE_ROLE_KEY=test \
+      $DEPLOY --pr 742 --lane train-c-ce --image us-central1-docker.pkg.dev/arkova1/worker/existing:tag 2>&1); rc=$?
+assert_exit  "named train lane deploy succeeds" 0 "$rc"
+assert_match "named train lane prints tag URL" "STAGING_API_BASE=https://train-c-ce---arkova-worker-staging-270018525501.us-central1.run.app" "$out"
+if grep -q -- "--tag=train-c-ce" "${GCLOUD_LOG}" && grep -q "lane=train-c-ce" "${GCLOUD_LOG}"; then
+  echo "  PASS  named train lane passed to gcloud tag and labels"
+  PASS=$((PASS + 1))
+else
+  echo "  FAIL  named train lane was not passed to gcloud as tag+label"
+  echo "        gcloud log:" && cat "${GCLOUD_LOG}"
   FAIL=$((FAIL + 1))
 fi
 
