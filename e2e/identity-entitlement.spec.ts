@@ -14,16 +14,32 @@
  *
  * Requires the worker running on E2E_WORKER_URL (default localhost:3001) and a
  * local Supabase. Cleans up all rows it creates.
+ *
+ * Live-worker-only, like `api-verify-flow.spec.ts`: every assertion drives the
+ * real worker over HTTP and a real Supabase session, so the whole suite is a
+ * no-op unless the live-worker env is wired (anon key + seed password — both
+ * are present in the CI E2E job and during a staging soak, absent on a bare
+ * local checkout). The skip is evaluated at the `test.describe` top so it short-
+ * circuits BEFORE `beforeAll` runs — the bespoke `createClient(...)` (which on
+ * Node < 22 needs the `ws` realtime-transport polyfill) is never constructed
+ * when the env is missing, instead of throwing in a hook and red-failing CI.
  */
 
 import { createClient } from '@supabase/supabase-js';
 import { test, expect, getServiceClient, SEED_USERS } from './fixtures';
+import { WS_CLIENT_OPTIONS } from './fixtures/supabase';
 
 const WORKER_URL = process.env.E2E_WORKER_URL || 'http://localhost:3001';
 const SUPABASE_URL = process.env.E2E_SUPABASE_URL || 'http://127.0.0.1:54321';
 const ANON_KEY = process.env.VITE_SUPABASE_ANON_KEY || '';
 const SEED_PASSWORD = process.env.E2E_SEED_PASSWORD || '';
 const VERIFIED_IDENTITY_ENTITLEMENT = 'identity_verified';
+
+// Live-worker env presence: the anon key (to mint a real session) and the seed
+// password (to sign the seed individual in) are the two vars without which this
+// suite cannot exercise anything real. When either is absent we skip the whole
+// group rather than construct clients / hit a worker that isn't there.
+const LIVE_WORKER_ENV = Boolean(ANON_KEY) && Boolean(SEED_PASSWORD);
 
 const USER = SEED_USERS.individual;
 
@@ -32,14 +48,27 @@ function iso(offsetMs: number): string {
 }
 
 test.describe('Verified-Identity Entitlement Gate (PAY-01)', () => {
+  // Skip-guard at the describe level so it runs before `beforeAll`: with no
+  // live-worker env (normal local run / non-app-affecting CI), the suite is
+  // reported SKIPPED and the `createClient(...)` below never executes. In CI's
+  // E2E job and in a staging soak the env IS wired, so every test runs for real.
+  test.skip(
+    !LIVE_WORKER_ENV,
+    'Live-worker E2E: requires VITE_SUPABASE_ANON_KEY + E2E_SEED_PASSWORD (set in CI E2E job / staging soak)',
+  );
+
   const service = getServiceClient();
   let accessToken: string | null = null;
   let planId: string | null = null;
 
   test.beforeAll(async () => {
-    // Mint a real worker token for the seed individual.
+    // Mint a real worker token for the seed individual. Pass WS_CLIENT_OPTIONS
+    // (the `ws` realtime transport) like getServiceClient()/profile-session.ts —
+    // without it @supabase/realtime-js throws "Node.js 20 detected without
+    // native WebSocket support" at construction on the Node 20 CI runner.
     const anon = createClient(SUPABASE_URL, ANON_KEY, {
       auth: { autoRefreshToken: false, persistSession: false },
+      ...WS_CLIENT_OPTIONS,
     });
     const { data, error } = await anon.auth.signInWithPassword({
       email: USER.email,
