@@ -14,6 +14,16 @@
 
 ## Now
 
+### 2026-06-23 (Lane 1 SM) — PI-0 S1 stakeholder demo held; back-catalogue proof backfill APPROVED; demo prod-status reconciled
+
+**Stakeholder demo / sprint review (C-suite + business)** of all Lane-1 S1 work, run by the SM + 4 specialists with live evidence (live test runs, code diffs, 3× soak `/health`, live GetBlock RPC matrix). Record: Confluence [87719938](https://arkova.atlassian.net/wiki/spaces/A/pages/87719938) (child of S1 report 87293954) + Drive deck in `ARKOVA PI-0-S1` (the `[CORRECTED]` copy is canonical). Shown: #1251 provider-SPOF (merged), #1255 verify-by-math foundation (soaking), #1254 PROOF-03 (soaking), #1253 WEBEXT-CSP fail-closed (preview-gated), 0341 credit fix; DISC-03 retired via live curl-matrix.
+
+**Carson APPROVED the back-catalogue proof backfill** (~2.97M SECURED anchors) — the gate between "0340 machinery shipped" and "trigger enforced." Logged on epic SCRUM-2325. Scheduled, NOT run: remaining gates = #1255 code on main + backfill-job staging rehearsal, then flip the GUC trigger ON. The "0340 prod-applied" dependency is **already met**.
+
+**Demo prod-status reconciled (caught against main):** the demo was delivered on stale Lane-1 context framing 0340/0341 as "not in prod." Live prod query confirms BOTH already applied (per Lane-2 entry below): ledger head 0340/0341, `anchor_proofs` +5 cols, trigger present + GUC inert, `org_credit_deductions` append-only + 0 rows. The 0341 "row-count" caveat is RESOLVED (empty table → zero data risk). Confluence record + Drive deck corrected.
+
+_Verified via: live prod Supabase MCP `list_migrations` (head 0340,0341) + `execute_sql` on `vzwyaatejekddvltxyye` (anchor_proofs 5 new cols; trigger `trg_anchors_proof_complete_on_secured` present; GUC null/inert; `org_credit_deductions` 0 rows + 3 signed CHECKs + append-only trigger); 3× Cloud Run `/health` (3e3aa1d7 / a6635c32 / cc440bd2); live GetBlock getblockheader+gettxoutproof on mainnet block 955029; Confluence v2 page 87719938 + Drive [CORRECTED] doc; Jira SCRUM-2325 comment 16686._
+
 ### 2026-06-23 (RTE ops) — #1250 deploy-gate fix → worker on latest; soak-rig teardown; prod Disk-IO budget fix (dashboard cron `*/2`→`*/15`)
 
 **Deploy gate unblocked + worker on latest.** #1250 (Trivy deploy-gate input fix `pkg-types`→`vuln-type` / `github-token`→`github-pat`, + behavior-identical SonarCloud maintainability refactor of `check-image-scan-gate.ts`, 15/15) **admin-merged by Carson** → deploy-worker run **28031108914** green, **Trivy scan PASS** (the step that blocked every worker deploy since 06-22). Prod worker now **rev `arkova-worker-00950-xev` @ 100% traffic**, `/health` git_sha `2a9d0526` (= #1250 merge commit), db/anchoring/kms ok. All worker deploys unblocked.
