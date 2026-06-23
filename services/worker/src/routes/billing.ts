@@ -152,6 +152,54 @@ function normalizeStatus(raw: string | null | undefined): SubscriptionStatus {
   return raw && SUBSCRIPTION_STATUSES.has(raw) ? (raw as SubscriptionStatus) : 'canceled';
 }
 
+/** UTC start-of-current-month, ISO. Mirrors the SECURITY DEFINER RPC
+ *  `get_user_monthly_anchor_count` (`created_at >= date_trunc('month', now())`)
+ *  that the frontend `useEntitlements` hook already gates on. */
+function currentMonthStartIso(now: Date = new Date()): string {
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString();
+}
+
+/**
+ * SCRUM-1791 (HARDEN-1, SEV1) — read-side defense against a stale
+ * `subscriptions.current_period_start`.
+ *
+ * The usage meter is `count(anchors WHERE created_at >= <lower bound>)`. Scoping
+ * that bound to `current_period_start` is correct **only while the stored window
+ * is current**. The write-side roll-forward keeps it fresh on every renewal, but
+ * it depends on the Stripe webhook landing with a usable period; when BOTH
+ * documented fallbacks fire (a missed `customer.subscription.updated` AND an
+ * invoice with no line period), the row stays stale — the 18-day-stale prod row
+ * that produced Carson's false over-limit toast. A stale `period_start` then
+ * counts anchors from several past cycles → `recordsUsed` inflates →
+ * `percentUsed > 100` → a paid+current user is gated out.
+ *
+ * This picks the lower bound defensively:
+ *   - window is current (`current_period_end` in the future) → trust
+ *     `current_period_start` verbatim (honors custom/annual cycles);
+ *   - window is stale (`current_period_end` missing or in the past) → clamp to
+ *     the current calendar month, exactly the boundary the already-safe frontend
+ *     RPC uses, so the meter always reflects the CURRENT cycle.
+ *
+ * Never counts further back than the current month — the meter can never span
+ * multiple periods because of a webhook that did not land.
+ */
+function effectiveUsagePeriodStart(
+  periodStart: string | null,
+  periodEnd: string | null,
+  now: Date = new Date(),
+): string {
+  const monthStart = currentMonthStartIso(now);
+  if (!periodStart) return monthStart;
+  const endMs = periodEnd ? Date.parse(periodEnd) : NaN;
+  // Stale when there is no usable end, or the stored window has already elapsed.
+  const stale = Number.isNaN(endMs) || endMs < now.getTime();
+  if (stale) return monthStart;
+  // Fresh window: trust the stored start, but never reach further back than the
+  // current month (defensive belt-and-braces against a pathological future end
+  // paired with an ancient start).
+  return Date.parse(periodStart) < Date.parse(monthStart) ? monthStart : periodStart;
+}
+
 /**
  * Best-effort count of the caller's anchors in the current billing period.
  *
@@ -251,10 +299,14 @@ export async function handleBillingStatus(
 
     // Best-effort usage count — scoped by org_id, or by user_id for individual
     // (non-org) subscriptions so the meter is correct on individual/free plans.
+    // SCRUM-1791: the lower bound is the EFFECTIVE period start — the stored
+    // `current_period_start` only while the window is current, otherwise the
+    // current calendar month — so a stale (un-rolled-forward) row can never
+    // make the meter span multiple cycles and falsely gate a paid user.
     const recordsUsed = await countAnchorUsage({
       orgId: sub.org_id,
       userId,
-      periodStart: sub.current_period_start,
+      periodStart: effectiveUsagePeriodStart(sub.current_period_start, sub.current_period_end),
     });
 
     const status = normalizeStatus(sub.status);
