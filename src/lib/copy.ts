@@ -1296,6 +1296,32 @@ export const AI_EXTRACTION_LABELS = {
   EXTRACTING: 'Analyzing...',
   EXTRACT_DESCRIPTION: 'Automatically extract credential fields from the uploaded document',
   EXTRACTION_FAILED_TOAST: 'AI extraction unavailable — document will be secured without metadata.',
+  /**
+   * §1.6 FAIL-CLOSED (WEBEXT-03). Shown when the on-device privacy tools (the
+   * personal-information remover or the on-device document reader) could not
+   * run, so nothing was analyzed and nothing was sent. This is a LOUD failure,
+   * deliberately distinct from EXTRACTION_FAILED_TOAST — we did NOT proceed.
+   */
+  PRIVACY_GUARANTEE_FAILED:
+    'On-device privacy protection couldn’t run, so this document was not analyzed and nothing was sent. Your file never left your device. Reload and try again, or continue without AI metadata.',
+} as const;
+
+// =============================================================================
+// §1.6 ON-DEVICE PRIVACY FAIL-CLOSED (WEBEXT-03 / SCRUM-2505)
+// Loud, explicit failure surface for when on-device PII stripping or OCR could
+// not run. The whole point: the user is told plainly that nothing was sent.
+// =============================================================================
+
+export const PRIVACY_FAIL_CLOSED_LABELS = {
+  TITLE: 'On-Device Privacy Protection Unavailable',
+  BODY:
+    'Arkova removes personal information on your device before anything is sent. That on-device step couldn’t run just now, so this document was not analyzed and no information was sent. Your file never left your device.',
+  WHAT_HAPPENED_LABEL: 'What happened',
+  WHAT_HAPPENED:
+    'The on-device privacy tools (the personal-information remover or the document reader) failed to load. To protect you, we stopped instead of sending anything that wasn’t fully checked.',
+  RETRY: 'Reload and Try Again',
+  CONTINUE_WITHOUT: 'Continue Without AI Metadata',
+  REASSURANCE: 'No information was sent to Arkova or anyone else.',
 } as const;
 
 // =============================================================================
@@ -2135,6 +2161,13 @@ export const OCR_LABELS = {
     `Unsupported file type for text extraction: ${typeOrExt}. ` +
     'Supported: PDF, Word (.docx), images, and text files. ' +
     'The document can still be secured without AI metadata.',
+  /**
+   * §1.6 FAIL-CLOSED (WEBEXT-03). Surfaced when the on-device document reader
+   * (OCR engine) could not load or run. Fixed copy — never includes the
+   * underlying error, which may reference document-derived text.
+   */
+  OCR_ENGINE_UNAVAILABLE:
+    'The on-device document reader couldn’t start, so this document was not read and nothing was sent. Your file never left your device.',
 } as const;
 
 export const CONFIRMATION_PROGRESS_LABELS = {
