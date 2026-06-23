@@ -13,7 +13,7 @@
 
 **Freezes** (so the credit-ledger + processor work in SCRUM-2328 has one typed, named vocabulary):
 - the canonical **queue lifecycle states** and their user-visible labels;
-- the **credit-debit touchpoint states** (spent / pending / refunded), mapped 1:1 to the `debit_and_enqueue` + reconciler model;
+- the **credit-debit touchpoint states** (spent / pending / refunded), mapped 1:1 to the `debit_and_enqueue_anchor` + reconciler model (the function arrives with Train-D migration 0341 — INCOMING, not yet on `main`);
 - the **launch posture**: queue-first is the only exposed securing path; **Secure Instantly is HIDDEN** (absent, not greyed) until a server capability turns it on;
 - the **three distinct "queue" surfaces** so we never ship two pages both titled "Review queue".
 
@@ -60,21 +60,23 @@ A document moves through this **ordered** lifecycle from "added to the queue" to
 
 ---
 
-## 3. Credit-debit touchpoints (maps 1:1 to `debit_and_enqueue` + reconciler)
+## 3. Credit-debit touchpoints (maps 1:1 to `debit_and_enqueue_anchor` + reconciler)
 
 The funding model (memory: subscription + nightly batch drain; monthly credit allotment for instant; paid credits $1.25 each) means **the charge is for *instant* securing, and it happens at securing — never at queueing.** `CREDIT_DEBIT_TIMING = 'on_securing'`.
 
-| Credit state (`CreditDebitState`) | Label (`CREDIT_DEBIT_LABELS`) | Ledger meaning (`org_credit_deductions`, append-only) |
-|---|---|---|
-| `spent` | **Credit used** | A committed debit row exists — the atomic `debit_and_enqueue` committed; 1 credit consumed. |
-| `pending` | **Credit pending** | A provisional debit awaiting the **nightly reconciler**'s confirm pass (instant submitted, not yet reconciled). |
-| `refunded` | **Credit refunded** | A **reversing (positive) row** returned the credit (reorg invalidated a charged anchor, or securing failed after a provisional debit). Append-only — the original debit row is preserved; never a delete. |
+> **Status note — these are 0341-INCOMING guarantees, not present-state facts about `main`.** The ledger function `debit_and_enqueue_anchor`, the append-only constraint, the revoked `service_role` DELETE, and the money invariants below all arrive with **Train-D migration 0341** (Lane-1), which is **INCOMING — not yet on `main`**. This contract freezes the *vocabulary the credit-ledger work will satisfy once 0341 lands + soaks*; it does **not** assert that any of it is true on `main` today. Read every "is / exists / committed" below as "**will hold once 0341 lands**."
 
-**Money invariants the contract assumes (proven by Lane-1's T3 soak, not here):**
-- **No double-charge** — idempotency keyed on a deterministic per-submission reference id; a retry collapses to the same ledger row. There is *no* "double charge" state by construction.
-- **No charge-without-secure** — debit + enqueue commit in one transaction (`debit_and_enqueue`, 0341). If it doesn't commit, no debit row exists → the item is `failed`, never silently charged.
+| Credit state (`CreditDebitState`) | Label (`CREDIT_DEBIT_LABELS`) | Ledger meaning (`org_credit_deductions`; append-only **once 0341 lands**) |
+|---|---|---|
+| `spent` | **Credit used** | A committed debit row exists — the atomic `debit_and_enqueue_anchor` committed; 1 credit consumed. |
+| `pending` | **Credit pending** | A provisional debit awaiting the **nightly reconciler**'s confirm pass (instant submitted, not yet reconciled). |
+| `refunded` | **Credit refunded** | A **reversing (positive) row** returns the credit (reorg invalidated a charged anchor, or securing failed after a provisional debit). Append-only — the original debit row is preserved; never a delete. |
+
+**Money invariants the contract assumes — GUARANTEED ONCE Train-D 0341 LANDS (INCOMING, not asserted of `main`; to be proven by Lane-1's T3 soak, not here):**
+- **No double-charge** — idempotency will be keyed on a deterministic per-submission reference id, so a retry collapses to the same ledger row. By construction there is then *no* "double charge" state.
+- **No charge-without-secure** — once 0341 lands, debit + enqueue commit in one transaction (`debit_and_enqueue_anchor`, 0341). If it doesn't commit, no debit row exists → the item is `failed`, never silently charged.
 - **No secure-without-charge** — an instant anchor is never enqueued without its debit row in the same transaction.
-- **Refunds are append-only reversing entries** — `org_credit_deductions` drops the delete path; refunds are positive rows (per Train D 0341 hardening).
+- **Refunds are append-only reversing entries** — under 0341, `org_credit_deductions` drops the delete path and refunds become positive rows (Train-D 0341 hardening). Until 0341 lands, this constraint is INCOMING, not present on `main`.
 
 On the **queue (batch) path**, `QueueItemContract.creditState` is `null` — there is no charge to show.
 
@@ -115,7 +117,7 @@ These are **assumptions this contract depends on**, listed for the backend/credi
 1. **Capability source.** The instant-secure capability (`canSecureInstantly`) is an **additive** field the worker returns. Today `/api/billing/status` returns `{ status, plan, usage, billing }` (`services/worker/src/routes/billing.ts` `handleBillingStatus`) and does **not** carry an instant-secure flag. The build must add a server-derived capability (composing `ENABLE_INSTANT_SECURE` ⊕ `ENABLE_PROD_NETWORK_ANCHORING` ⊕ credit-enforcement ⊕ sufficient balance) and the client must read it — never default it on. `SecuringCapability` in `queueContract.ts` is the assumed shape (`canSecureInstantly`, `creditBalance`, `instantSecureCost`).
 2. **Charge timing.** Charge at securing, not at queueing. Queueing writes no `org_credit_deductions` row.
 3. **Atomic debit+enqueue.** Instant securing rides Lane-1's `debit_and_enqueue_anchor` (migration 0341, Train D — INCOMING, not on `main`). Until it lands + soaks, instant stays hidden.
-4. **Append-only ledger.** `org_credit_deductions` is append-only under 0341; refunds are positive reversing rows; `service_role` DELETE revoked.
+4. **Append-only ledger.** Once Train-D migration 0341 lands, `org_credit_deductions` becomes append-only — refunds as positive reversing rows, `service_role` DELETE revoked. This is the 0341 hardening (INCOMING, not yet on `main`); the contract assumes it as the post-0341 state, not as current prod.
 5. **Idempotency.** Deterministic per-submission `reference_id` so retries charge exactly once (`org_credit_deductions` UNIQUE `(org_id, reference_id, reason)`, per 0326).
 6. **Cost.** Contract assumes **1 credit / instant secure**; confirm against the fee model (paid credits $1.25 each). If a premium multiplier applies, `instantSecureCost` + `COST_PREVIEW` copy change.
 

@@ -9,7 +9,9 @@
  * Scope (Tier T0 — spec + types + copy only):
  *  - canonical queue lifecycle states + their helper guard;
  *  - the credit-debit touchpoint states (spent / pending / refunded), mapped
- *    1:1 to the `debit_and_enqueue` + nightly reconciler model;
+ *    1:1 to the `debit_and_enqueue_anchor` + nightly reconciler model (that
+ *    ledger function arrives with Train-D migration 0341 — INCOMING, not yet
+ *    on `main`; this module freezes the vocabulary, not present prod state);
  *  - the securing-path union and the LAUNCH posture (queue-first only; instant
  *    is HIDDEN/absent until a server capability turns it on);
  *  - the three distinct "queue" surfaces that must never collide in copy.
@@ -80,23 +82,26 @@ export function isQueueLifecycleState(value: unknown): value is QueueLifecycleSt
 
 /**
  * The user-visible state of a credit charge tied to a securing action. Mapped
- * 1:1 to the credit-ledger model (`debit_and_enqueue` + the nightly reconciler;
- * `org_credit_deductions` is append-only — refunds are positive reversing rows,
- * never deletes):
+ * 1:1 to the credit-ledger model (`debit_and_enqueue_anchor` + the nightly
+ * reconciler). NOTE: that ledger function and its append-only guarantee arrive
+ * with Train-D migration 0341 — INCOMING, not yet on `main`. Once 0341 lands,
+ * `org_credit_deductions` is append-only (refunds are positive reversing rows,
+ * never deletes); this module freezes the post-0341 vocabulary, not present
+ * prod state. Read the per-state notes below as "holds once 0341 lands":
  *
  *  spent     — a committed debit row exists for this item; the credit is gone
- *              (the atomic debit_and_enqueue committed).
+ *              (the atomic debit_and_enqueue_anchor committed).
  *  pending   — a debit is in flight / provisional and not yet reconciled by the
  *              nightly reconciler (e.g. instant secure submitted, awaiting the
  *              reconciler's confirm pass).
- *  refunded  — a reversing (positive) ledger row returned the credit (e.g. a
+ *  refunded  — a reversing (positive) ledger row returns the credit (e.g. a
  *              reorg invalidated an already-charged anchor, or securing failed
  *              after a provisional debit). Append-only; the original debit row
  *              is preserved.
  *
- * There is no "double charge" state by construction: idempotency is keyed on a
- * deterministic per-submission reference id, so a retry collapses to the same
- * ledger row.
+ * There is no "double charge" state by construction: once 0341 lands, idempotency
+ * is keyed on a deterministic per-submission reference id, so a retry collapses
+ * to the same ledger row.
  */
 export const CREDIT_DEBIT_STATES = ['spent', 'pending', 'refunded'] as const;
 export type CreditDebitState = (typeof CREDIT_DEBIT_STATES)[number];
@@ -104,8 +109,9 @@ export type CreditDebitState = (typeof CREDIT_DEBIT_STATES)[number];
 /**
  * WHEN a credit is charged. The contract freezes this to securing, NOT queueing
  * — adding a document to the queue is always free (PRD AC: "Queueing does not
- * consume credits"). Instant secure charges at the atomic debit_and_enqueue
- * step; batch securing charges (if at all) when the batch materializes.
+ * consume credits"). Instant secure charges at the atomic debit_and_enqueue_anchor
+ * step (Train-D 0341, INCOMING); batch securing charges (if at all) when the
+ * batch materializes.
  */
 export const CREDIT_DEBIT_TIMING = 'on_securing' as const;
 export type CreditDebitTiming = typeof CREDIT_DEBIT_TIMING;
