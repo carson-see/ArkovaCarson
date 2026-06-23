@@ -39,7 +39,7 @@ vi.mock('../lib/urls.js', () => ({
   BILLING_PORTAL_RETURN_URL: 'https://example.test/return',
 }));
 
-import { handleBillingStatus } from './billing.js';
+import { handleBillingStatus, effectiveUsagePeriodStart } from './billing.js';
 import type { Request, Response } from 'express';
 
 /**
@@ -383,5 +383,77 @@ describe('handleBillingStatus — SCRUM-1791 stale-period read clamp', () => {
     await handleBillingStatus(mockReq(), res);
     const body = res.body as { billing: { currentPeriodEnd?: string } };
     expect(body.billing.currentPeriodEnd).toBe('2026-04-20T00:00:00.000Z');
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────
+// SCRUM-1791 (follow-up) — effectiveUsagePeriodStart must NOT clamp a FRESH
+// cycle up to the current calendar-month start.
+//
+// The original SEV1 fix added a month clamp on BOTH branches. The staleness
+// guard (current_period_end in the past / absent) already handles the
+// elapsed-window case the clamp was meant to defend. But the clamp also fired
+// on the FRESH branch: whenever current_period_start fell in a PRIOR calendar
+// month (a perfectly normal monthly cycle viewed after the 1st, and every
+// annual/quarterly cycle), it raised the usage lower bound to the 1st of the
+// current month — UNDER-counting the part of the current billing cycle that
+// happened before this calendar month. That defeats SCRUM-1791's purpose
+// (count usage within the current billing CYCLE, not the calendar month) and
+// lets subscribers exceed their entitlement.
+//
+// These tests drive effectiveUsagePeriodStart directly with a fixed `now` so
+// the prior-calendar-month boundary is unambiguous (never run on the 1st).
+// ─────────────────────────────────────────────────────────────────────────
+describe('effectiveUsagePeriodStart — fresh-cycle clamp regression (SCRUM-1791)', () => {
+  // Fixed clock mid-month so "prior calendar month" is unambiguous.
+  const now = new Date('2026-06-10T12:00:00.000Z');
+  const currentMonthStart = '2026-06-01T00:00:00.000Z';
+
+  it('counts the full fresh cycle when current_period_start is in a prior calendar month', () => {
+    // Monthly sub: started 2026-05-15 (~26 days ago, PRIOR calendar month),
+    // ends 2026-06-15 (in the future → window is current/fresh). The meter must
+    // count from 2026-05-15, NOT clamp up to 2026-06-01 (which would drop the
+    // May 15–31 portion of the CURRENT cycle and under-count usage).
+    const periodStart = '2026-05-15T00:00:00.000Z';
+    const periodEnd = '2026-06-15T00:00:00.000Z';
+    expect(effectiveUsagePeriodStart(periodStart, periodEnd, now)).toBe(periodStart);
+    // And explicitly NOT the buggy clamped value.
+    expect(effectiveUsagePeriodStart(periodStart, periodEnd, now)).not.toBe(currentMonthStart);
+  });
+
+  it('counts from the annual start for a yearly plan whose cycle began months ago', () => {
+    // Annual sub: started 2026-01-01, ends 2026-12-31 (in the future → fresh).
+    // The whole year-to-date is the current cycle; clamping to 2026-06-01 would
+    // erase ~5 months of usage and badly under-count an annual entitlement.
+    const periodStart = '2026-01-01T00:00:00.000Z';
+    const periodEnd = '2026-12-31T23:59:59.000Z';
+    expect(effectiveUsagePeriodStart(periodStart, periodEnd, now)).toBe(periodStart);
+    expect(effectiveUsagePeriodStart(periodStart, periodEnd, now)).not.toBe(currentMonthStart);
+  });
+
+  it('still clamps to month-start for a genuinely stale/elapsed window (does not regress the SEV1 fix)', () => {
+    // current_period_end is in the PAST → stale → must clamp to the current
+    // calendar month so the meter can never span multiple elapsed cycles.
+    expect(
+      effectiveUsagePeriodStart('2026-01-20T00:00:00.000Z', '2026-04-20T00:00:00.000Z', now),
+    ).toBe(currentMonthStart);
+  });
+
+  it('clamps to month-start when current_period_start is null', () => {
+    expect(effectiveUsagePeriodStart(null, '2026-06-15T00:00:00.000Z', now)).toBe(currentMonthStart);
+  });
+
+  it('fails safe to month-start when current_period_start is unparseable (fresh window)', () => {
+    // A garbage start with a fresh (future) end must NOT be passed verbatim into
+    // the `.gte('created_at', ...)` filter — it fails safe to the current month.
+    expect(effectiveUsagePeriodStart('not-a-date', '2026-06-15T00:00:00.000Z', now)).toBe(
+      currentMonthStart,
+    );
+  });
+
+  it('trusts a same-calendar-month fresh start verbatim', () => {
+    // Sanity: a fresh window that started earlier THIS month is unaffected.
+    const periodStart = '2026-06-03T00:00:00.000Z';
+    expect(effectiveUsagePeriodStart(periodStart, '2026-07-03T00:00:00.000Z', now)).toBe(periodStart);
   });
 });

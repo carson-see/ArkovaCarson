@@ -175,15 +175,23 @@ function currentMonthStartIso(now: Date = new Date()): string {
  *
  * This picks the lower bound defensively:
  *   - window is current (`current_period_end` in the future) → trust
- *     `current_period_start` verbatim (honors custom/annual cycles);
- *   - window is stale (`current_period_end` missing or in the past) → clamp to
- *     the current calendar month, exactly the boundary the already-safe frontend
- *     RPC uses, so the meter always reflects the CURRENT cycle.
+ *     `current_period_start` verbatim (honors custom/annual/quarterly cycles
+ *     that legitimately begin in a prior calendar month);
+ *   - window is stale (`current_period_end` missing or in the past) OR the
+ *     stored start is missing/unparseable → clamp to the current calendar
+ *     month, exactly the boundary the already-safe frontend RPC uses, so the
+ *     meter still reflects the CURRENT cycle.
  *
- * Never counts further back than the current month — the meter can never span
- * multiple periods because of a webhook that did not land.
+ * A stale (un-rolled-forward) row can therefore never make the meter span
+ * multiple elapsed periods, while a fresh row is always metered from its true
+ * cycle start — we never under-count the current cycle by clamping a fresh
+ * prior-month start up to the 1st (SCRUM-1791 follow-up: that clamp let
+ * subscribers exceed their entitlement).
+ *
+ * Exported for direct unit testing with an injectable `now` (SCRUM-1791): the
+ * prior-calendar-month boundary case is only unambiguous against a fixed clock.
  */
-function effectiveUsagePeriodStart(
+export function effectiveUsagePeriodStart(
   periodStart: string | null,
   periodEnd: string | null,
   now: Date = new Date(),
@@ -194,10 +202,20 @@ function effectiveUsagePeriodStart(
   // Stale when there is no usable end, or the stored window has already elapsed.
   const stale = Number.isNaN(endMs) || endMs < now.getTime();
   if (stale) return monthStart;
-  // Fresh window: trust the stored start, but never reach further back than the
-  // current month (defensive belt-and-braces against a pathological future end
-  // paired with an ancient start).
-  return Date.parse(periodStart) < Date.parse(monthStart) ? monthStart : periodStart;
+  // Fresh window: freshness is established by `current_period_end` being in the
+  // future, so the stored `current_period_start` is the authoritative lower
+  // bound for the CURRENT billing CYCLE — even when it began in a prior calendar
+  // month. Trust it verbatim; do NOT clamp up to the calendar-month start. A
+  // month clamp here would under-count the part of the current cycle that
+  // happened before this calendar month (every monthly sub viewed after the
+  // 1st, and every annual/quarterly cycle), letting subscribers exceed their
+  // entitlement (SCRUM-1791 follow-up). The staleness guard above already
+  // defends the elapsed/old-window case the clamp was meant to cover.
+  const startMs = Date.parse(periodStart);
+  // Fail safe: an unparseable stored start must not be passed verbatim into the
+  // `.gte('created_at', ...)` usage filter — fall back to the current month.
+  if (Number.isNaN(startMs)) return monthStart;
+  return periodStart;
 }
 
 /**
