@@ -158,7 +158,7 @@ describe('check-image-scan-gate — auditImageScanGate', () => {
   // --- package-type scope is present and uses the SUPPORTED action input ---
   //
   // The pinned `aquasecurity/trivy-action@ed142fd…` defines `vuln-type`, NOT
-  // `pkg-types` (the rename is a `# TODO` in its action.yaml, not yet shipped).
+  // `pkg-types` (the rename is only a placeholder in its action.yaml, not yet shipped).
   // A workflow passing `pkg-types` triggers an "Unexpected input(s)" failure and
   // the action falls back to scanning `os,library` → library CVEs gate the
   // deploy. The guard must REQUIRE `vuln-type: os` and REJECT a `pkg-types`-only

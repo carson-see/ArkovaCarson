@@ -188,8 +188,8 @@ jobs:
       # CVEs with no upstream patch, so an unpatchable base-image CVE cannot
       # wedge every deploy. `vuln-type: os` keeps library CVEs in sonatype's lane
       # (no double-gating). NOTE: `vuln-type` is the SUPPORTED input at the pinned
-      # action SHA — `pkg-types` is a `# TODO` rename in the action's repo, NOT a
-      # real input yet; passing it fails with "Unexpected input(s)" and the action
+      # action SHA — `pkg-types` is only a placeholder rename in the action's repo,
+      # NOT a real input yet; passing it fails with "Unexpected input(s)" and the action
       # falls back to scanning `os,library` (gating library CVEs → blocked every
       # prod deploy on 2026-06-22, run 27969852143). Re-evaluate only when the
       # pinned action version actually ships `pkg-types`. Control doc:

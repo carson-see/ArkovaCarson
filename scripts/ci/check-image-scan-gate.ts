@@ -56,7 +56,7 @@ const STEP_BULLET_RE = /^ {6}- /;
  *
  * Trivy's OS/library scope knob is `vuln-type`. The pinned
  * `aquasecurity/trivy-action@ed142fd…` (v0.36.0) does NOT define `pkg-types` —
- * that rename is a `# TODO` in its action.yaml, not a shipped input — so a
+ * that rename is only a placeholder in its action.yaml, not a shipped input — so a
  * workflow passing `pkg-types` fails with "Unexpected input(s)" and the action
  * falls back to its default `vuln-type: os,library` (gating library CVEs that
  * belong in sonatype's lane). That mismatch blocked every prod deploy on
@@ -114,111 +114,93 @@ function enclosingStepBlock(lines: string[], innerIdx: number): string[] {
   return stepBlock(lines, start);
 }
 
-/**
- * Audit the text of `deploy-worker.yml` for the container-image scan gate.
- * Pure (operates on the passed string) so it is unit-testable against
- * fixtures as well as the real workflow file.
- */
-export function auditImageScanGate(workflowText: string): AuditResult {
-  const errors: string[] = [];
-  const lines = workflowText.split(/\r?\n/);
+type Scanner = (typeof SCANNERS)[number];
 
-  // Locate the scanner step (the bullet line carries `- uses: <action>@<ref>`).
-  let scanBulletIdx = -1;
-  let matchedScanner: (typeof SCANNERS)[number] | undefined;
-  let ref: string | null = null;
+interface ScannerMatch {
+  scanBulletIdx: number;
+  matchedScanner: Scanner;
+  ref: string;
+}
+
+const NO_SCANNER_MSG =
+  `No container-image CVE scan step found in ${WORKFLOW_REL}. Add a `
+  + `Trivy (\`aquasecurity/trivy-action\`) or Grype (\`anchore/scan-action\`) `
+  + `step that scans the built worker image before deploy. See `
+  + `docs/compliance/container-image-scanning.md.`;
+
+/**
+ * Locate the scanner step. `uses:` may sit on the step bullet (`- uses: …`) or
+ * on its own line under a named step (`- name: …` then `  uses: …`).
+ */
+function findScanner(lines: string[]): ScannerMatch | null {
   for (let i = 0; i < lines.length; i++) {
     for (const scanner of SCANNERS) {
-      // `uses:` may sit on the step bullet (`- uses: …`) or on its own line
-      // under a named step (`- name: …` then `  uses: …`). Match both.
       const m = new RegExp(
         String.raw`^\s*-?\s*uses:\s*${scanner.action}@(\S+)`,
       ).exec(lines[i]);
-      if (m) {
-        scanBulletIdx = i;
-        matchedScanner = scanner;
-        ref = m[1];
-        break;
-      }
+      if (m) return { scanBulletIdx: i, matchedScanner: scanner, ref: m[1] };
     }
-    if (scanBulletIdx !== -1) break;
   }
+  return null;
+}
 
-  if (scanBulletIdx === -1 || !matchedScanner || ref === null) {
-    return {
-      ok: false,
-      errors: [
-        `No container-image CVE scan step found in ${WORKFLOW_REL}. Add a `
-        + `Trivy (\`aquasecurity/trivy-action\`) or Grype (\`anchore/scan-action\`) `
-        + `step that scans the built worker image before deploy. See `
-        + `docs/compliance/container-image-scanning.md.`,
-      ],
-    };
-  }
+/** (2) Pinned to a full 40-char commit SHA, not a tag/branch. */
+function checkShaPin(scanner: Scanner, ref: string): string | null {
+  const cleanRef = ref.split('#')[0].trim();
+  if (/^[0-9a-f]{40}$/i.test(cleanRef)) return null;
+  return `${scanner.name} scan action must be pinned to a full 40-char `
+    + `commit SHA (got \`@${cleanRef}\`). Tag/branch refs are mutable — `
+    + `see .github/workflows/agents.md "pinned action SHAs".`;
+}
 
-  // (2) Pinned to a full 40-char commit SHA, not a tag/branch.
-  const cleanRef = ref.replace(/#.*$/, '').trim();
-  if (!/^[0-9a-f]{40}$/i.test(cleanRef)) {
-    errors.push(
-      `${matchedScanner.name} scan action must be pinned to a full 40-char `
-      + `commit SHA (got \`@${cleanRef}\`). Tag/branch refs are mutable — `
-      + `see .github/workflows/agents.md "pinned action SHAs".`,
-    );
-  }
-
-  const block = stepBlock(lines, scanBulletIdx).join('\n');
-
-  // (3) Fails the build on findings. Trivy: `exit-code: '1'`. Grype:
-  // `fail-build: true`.
+/** (3) Fails the build on findings. Trivy `exit-code: '1'`, Grype `fail-build: true`. */
+function checkFailOnFindings(scanner: Scanner, block: string): string | null {
   const exitCode = /exit-code:\s*['"]?(\d+)['"]?/.exec(block);
   const grypeFail = /fail-build:\s*['"]?true['"]?/i.test(block);
-  if (!grypeFail && (!exitCode || exitCode[1] !== '1')) {
-    errors.push(
-      `${matchedScanner.name} scan must fail the deploy on findings `
-      + `(Trivy \`exit-code: '1'\` or Grype \`fail-build: true\`). A non-failing `
-      + `scan is advisory only and does not gate the deploy.`,
-    );
-  }
+  if (grypeFail || exitCode?.[1] === '1') return null;
+  return `${scanner.name} scan must fail the deploy on findings `
+    + `(Trivy \`exit-code: '1'\` or Grype \`fail-build: true\`). A non-failing `
+    + `scan is advisory only and does not gate the deploy.`;
+}
 
-  // (3b) HIGH and CRITICAL both gated. Trivy: `severity: HIGH,CRITICAL`.
-  // Grype: `severity-cutoff: high`.
+/** (3b) HIGH and CRITICAL both gated. Trivy `severity:`, Grype `severity-cutoff:`. */
+function checkSeverity(scanner: Scanner, block: string): string | null {
   const severity = /severity(?:-cutoff)?:\s*['"]?([^'"\n]+)['"]?/i.exec(block);
   const sevValue = (severity?.[1] ?? '').toUpperCase();
-  const gatesHighCritical = matchedScanner.name === 'Grype'
+  const gatesHighCritical = scanner.name === 'Grype'
     ? /\bHIGH\b/.test(sevValue) // cutoff=high implies critical too
     : sevValue.includes('HIGH') && sevValue.includes('CRITICAL');
-  if (!gatesHighCritical) {
-    errors.push(
-      `${matchedScanner.name} scan must gate HIGH and CRITICAL severities `
-      + `(Trivy \`severity: HIGH,CRITICAL\` or Grype \`severity-cutoff: high\`). `
-      + `Got \`${severity?.[1]?.trim() ?? '<none>'}\`.`,
-    );
-  }
+  if (gatesHighCritical) return null;
+  return `${scanner.name} scan must gate HIGH and CRITICAL severities `
+    + `(Trivy \`severity: HIGH,CRITICAL\` or Grype \`severity-cutoff: high\`). `
+    + `Got \`${severity?.[1]?.trim() ?? '<none>'}\`.`;
+}
 
-  // (4) Fixable-only, so unpatchable base-image CVEs don't wedge every deploy.
+/** (4) Fixable-only, so unpatchable base-image CVEs don't wedge every deploy. */
+function checkFixableOnly(scanner: Scanner, block: string): string | null {
   const ignoresUnfixed = /ignore-unfixed:\s*['"]?true['"]?/i.test(block)
     || /only-fixed:\s*['"]?true['"]?/i.test(block);
-  if (!ignoresUnfixed) {
-    errors.push(
-      `${matchedScanner.name} scan should gate on FIXABLE CVEs only `
-      + `(Trivy \`ignore-unfixed: true\` / Grype \`only-fixed: true\`) so that `
-      + `base-image CVEs with no upstream patch are tracked, not block every `
-      + `deploy. Matches the fixable-gate intent in sonatype-scan.yml.`,
-    );
-  }
+  if (ignoresUnfixed) return null;
+  return `${scanner.name} scan should gate on FIXABLE CVEs only `
+    + `(Trivy \`ignore-unfixed: true\` / Grype \`only-fixed: true\`) so that `
+    + `base-image CVEs with no upstream patch are tracked, not block every `
+    + `deploy. Matches the fixable-gate intent in sonatype-scan.yml.`;
+}
 
-  // (6) OS package-type scope present and correct. Trivy `vuln-type: os` (the
-  // SUPPORTED input at the pinned action SHA — `pkg-types` is NOT yet a real
-  // input and is rejected at runtime); Grype `only-package-types: os`.
-  // Asserting the KEY is present — not just that the step exists — means a
-  // future action-version rename that drops/renames the input can't silently
-  // widen or disable the scope. The value must be `os` (the gate is
-  // intentionally scoped to OS packages so it complements, rather than
-  // double-gates, the dependency scanners — see
-  // docs/compliance/container-image-scanning.md §2).
+/**
+ * (6) OS package-type scope present and correct. Trivy `vuln-type: os` (the
+ * SUPPORTED input at the pinned action SHA — `pkg-types` is NOT yet a real
+ * input and is rejected at runtime); Grype `only-package-types: os`. Asserting
+ * the KEY is present — not just that the step exists — means a future
+ * action-version rename that drops/renames the input can't silently widen or
+ * disable the scope. The value must be `os` so the image gate complements,
+ * rather than double-gates, the dependency scanners (see
+ * docs/compliance/container-image-scanning.md §2).
+ */
+function checkPkgTypeScope(scanner: Scanner, block: string): string | null {
   let pkgTypeKeyFound: string | null = null;
   let pkgTypeValue: string | null = null;
-  for (const key of matchedScanner.pkgTypeKeys) {
+  for (const key of scanner.pkgTypeKeys) {
     const m = new RegExp(String.raw`(?:^|\n)\s*${key}:\s*['"]?([^'"\n]+)['"]?`).exec(block);
     if (m) {
       pkgTypeKeyFound = key;
@@ -226,28 +208,29 @@ export function auditImageScanGate(workflowText: string): AuditResult {
       break;
     }
   }
-  const preferredKey = matchedScanner.pkgTypeKeys[0];
+  const preferredKey = scanner.pkgTypeKeys[0];
   if (!pkgTypeKeyFound) {
-    errors.push(
-      `${matchedScanner.name} scan must declare an OS package-type scope key `
+    return `${scanner.name} scan must declare an OS package-type scope key `
       + `(\`${preferredKey}: os\``
-      + (matchedScanner.pkgTypeKeys.length > 1
-        ? ` — or the deprecated \`${matchedScanner.pkgTypeKeys[1]}: os\``
+      + (scanner.pkgTypeKeys.length > 1
+        ? ` — or the deprecated \`${scanner.pkgTypeKeys[1]}: os\``
         : '')
       + `). The key was not found, so a future action-version rename could `
       + `silently disable OS scanning. See docs/compliance/`
-      + `container-image-scanning.md.`,
-    );
-  } else if (!/\bos\b/i.test(pkgTypeValue ?? '')) {
-    errors.push(
-      `${matchedScanner.name} scan package-type scope (\`${pkgTypeKeyFound}\`) `
+      + `container-image-scanning.md.`;
+  }
+  if (!/\bos\b/i.test(pkgTypeValue ?? '')) {
+    return `${scanner.name} scan package-type scope (\`${pkgTypeKeyFound}\`) `
       + `must include \`os\` (got \`${pkgTypeValue ?? '<empty>'}\`). The image `
       + `gate owns the OS / base-image layer; the dependency scanners own the `
-      + `library layer (no double-gating).`,
-    );
+      + `library layer (no double-gating).`;
   }
+  return null;
+}
 
-  // (5) Ordering: after `docker build`, before the deploy step.
+/** (5) Ordering: after `docker build`, before the deploy step. */
+function checkOrdering(scanner: Scanner, lines: string[], scanBulletIdx: number): string[] {
+  const errors: string[] = [];
   const buildIdx = lines.findIndex((l) => BUILD_STEP_RE.test(l));
   const deployIdx = lines.findIndex((l) => DEPLOY_STEP_RE.test(l));
   if (deployIdx === -1) {
@@ -257,50 +240,56 @@ export function auditImageScanGate(workflowText: string): AuditResult {
     );
   } else if (scanBulletIdx > deployIdx) {
     errors.push(
-      `${matchedScanner.name} scan step runs AFTER the deploy step — it must `
+      `${scanner.name} scan step runs AFTER the deploy step — it must `
       + `run before "Deploy canary" to gate the deploy.`,
     );
   }
   if (buildIdx !== -1 && scanBulletIdx < buildIdx) {
     errors.push(
-      `${matchedScanner.name} scan step runs before the image is built — it `
+      `${scanner.name} scan step runs before the image is built — it `
       + `must scan the built image (after \`docker build\`).`,
     );
   }
+  return errors;
+}
 
-  // (7) Auditable, operator-only break-glass for a transient scanner-infra
-  // outage. A Trivy/GHCR vuln-DB rate-limit (`TOOMANYREQUESTS`) would otherwise
-  // fail the scan step and block EVERY prod worker deploy — including incident
-  // hotfixes — with no escape. The break-glass must:
-  //   (a) be an explicit operator signal: a `workflow_dispatch` boolean input
-  //       (default false) — not bypassable by default or by untrusted input;
-  //   (b) skip ONLY the scan step, via an `if:` guard on the scan step that
-  //       references that input (the deploy still runs);
-  //   (c) be logged: an audit step echoes a clear, attributed line when used.
-  // This is a RUNTIME escape for a wedged scanner, NOT a PR-time label to
-  // weaken the gate config — assertions (2)–(6) remain non-overridable.
-  const dispatchHasBypassBoolean = (() => {
-    const wfDispatchIdx = lines.findIndex((l) => /^\s*workflow_dispatch:/.test(l));
-    if (wfDispatchIdx === -1) return false;
-    // Scan the dispatch inputs region (until the next top-level key / `jobs:`).
-    let region = '';
-    for (let i = wfDispatchIdx + 1; i < lines.length; i++) {
-      if (/^\S/.test(lines[i]) || /^jobs:/.test(lines[i])) break;
-      region += lines[i] + '\n';
-    }
-    // A `bypass*_image_scan*`-style boolean input under workflow_dispatch.
-    const hasBypassInput = /(?:^|\n)\s*(?:image_scan_bypass|bypass_image_scan)\w*:/i.test(region);
-    const isBoolean = /type:\s*boolean/i.test(region);
-    return hasBypassInput && isBoolean;
-  })();
+/** A `workflow_dispatch` boolean `bypass_image_scan`-style input is declared. */
+function hasDispatchBypassBoolean(lines: string[]): boolean {
+  const wfDispatchIdx = lines.findIndex((l) => /^\s*workflow_dispatch:/.test(l));
+  if (wfDispatchIdx === -1) return false;
+  // Scan the dispatch inputs region (until the next top-level key / `jobs:`).
+  let region = '';
+  for (let i = wfDispatchIdx + 1; i < lines.length; i++) {
+    if (/^\S/.test(lines[i]) || lines[i].startsWith('jobs:')) break;
+    region += lines[i] + '\n';
+  }
+  const hasBypassInput = /(?:^|\n)[ \t]*(?:image_scan_bypass|bypass_image_scan)\w*:/i.test(region);
+  const isBoolean = /type:\s*boolean/i.test(region);
+  return hasBypassInput && isBoolean;
+}
 
-  // The scan step itself must be guarded by that bypass input so a manual
-  // dispatch skips ONLY the scan (not the deploy). The `if:` can sit above
-  // `uses:`, so search the WHOLE enclosing step, not just `uses:`-onward.
+/**
+ * (7) Auditable, operator-only break-glass for a transient scanner-infra
+ * outage. A Trivy/GHCR vuln-DB rate-limit (`TOOMANYREQUESTS`) would otherwise
+ * fail the scan step and block EVERY prod worker deploy — including incident
+ * hotfixes — with no escape. The break-glass must: (a) be an explicit operator
+ * signal — a `workflow_dispatch` boolean input (default false); (b) skip ONLY
+ * the scan step via an `if:` guard referencing that input (deploy still runs);
+ * (c) be logged — an audit step echoes a clear, attributed line when used. This
+ * is a RUNTIME escape for a wedged scanner, NOT a PR-time label to weaken the
+ * gate config — assertions (2)–(6) remain non-overridable.
+ */
+function checkBreakGlass(
+  scanner: Scanner,
+  lines: string[],
+  scanBulletIdx: number,
+  workflowText: string,
+): string | null {
+  const dispatchHasBypassBoolean = hasDispatchBypassBoolean(lines);
+  // The `if:` can sit above `uses:`, so search the WHOLE enclosing step.
   const fullScanStep = enclosingStepBlock(lines, scanBulletIdx).join('\n');
   const scanStepGuarded =
-    /if:\s*[^\n]*\b(?:image_scan_bypass|bypass_image_scan)\w*\b/i.test(fullScanStep);
-
+    /if:[^\n]*\b(?:image_scan_bypass|bypass_image_scan)\w*\b/i.test(fullScanStep);
   // The bypass must be logged when used (audited): an echo naming the actor.
   const bypassAudited =
     /echo[^\n]*(?:image[\s_-]*scan[\s_-]*bypass|bypass[^\n]*image[\s_-]*scan)/i.test(
@@ -308,23 +297,49 @@ export function auditImageScanGate(workflowText: string): AuditResult {
     ) && /github\.actor/.test(workflowText);
 
   if (!dispatchHasBypassBoolean || !scanStepGuarded) {
-    errors.push(
-      `${matchedScanner.name} scan has no auditable operator break-glass. A `
+    return `${scanner.name} scan has no auditable operator break-glass. A `
       + `transient scanner-infra outage (e.g. a Trivy/GHCR vuln-DB `
       + `\`TOOMANYREQUESTS\` rate-limit) would block EVERY prod deploy with no `
       + `escape. Add a \`workflow_dispatch\` boolean input (e.g. `
       + `\`bypass_image_scan\`, default false) and guard the scan step with an `
       + `\`if:\` that references it so it skips ONLY the scan, never the deploy. `
-      + `This is a runtime operator escape, not a gate-weakening label.`,
-    );
-  } else if (!bypassAudited) {
-    errors.push(
-      `${matchedScanner.name} scan break-glass must be logged when used: add an `
+      + `This is a runtime operator escape, not a gate-weakening label.`;
+  }
+  if (!bypassAudited) {
+    return `${scanner.name} scan break-glass must be logged when used: add an `
       + `audit step that echoes a clear, attributed line (e.g. `
       + `"⚠️ image scan bypassed by \${{ github.actor }}") so every bypass is `
-      + `traceable to an operator.`,
-    );
+      + `traceable to an operator.`;
   }
+  return null;
+}
+
+/**
+ * Audit the text of `deploy-worker.yml` for the container-image scan gate.
+ * Pure (operates on the passed string) so it is unit-testable against
+ * fixtures as well as the real workflow file.
+ */
+export function auditImageScanGate(workflowText: string): AuditResult {
+  const lines = workflowText.split(/\r?\n/);
+
+  const found = findScanner(lines);
+  if (!found) {
+    return { ok: false, errors: [NO_SCANNER_MSG] };
+  }
+  const { scanBulletIdx, matchedScanner, ref } = found;
+  const block = stepBlock(lines, scanBulletIdx).join('\n');
+
+  // Checks run in source order: SHA pin (2), fail-on-find (3), severity (3b),
+  // fixable-only (4), package-type scope (6), ordering (5), break-glass (7).
+  const errors = [
+    checkShaPin(matchedScanner, ref),
+    checkFailOnFindings(matchedScanner, block),
+    checkSeverity(matchedScanner, block),
+    checkFixableOnly(matchedScanner, block),
+    checkPkgTypeScope(matchedScanner, block),
+    ...checkOrdering(matchedScanner, lines, scanBulletIdx),
+    checkBreakGlass(matchedScanner, lines, scanBulletIdx, workflowText),
+  ].filter((e): e is string => e !== null);
 
   return { ok: errors.length === 0, errors };
 }
